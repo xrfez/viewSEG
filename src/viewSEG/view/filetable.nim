@@ -15,6 +15,7 @@ type
     fcType = "Type"
     fcSize = "Size"
     fcModified = "Modified"
+    fcFolder = "Folder" ## the subfolders below the folder listed; shown when they are included
 
   FileOrder* = object
     ## How the table is sorted.
@@ -52,6 +53,7 @@ func cmpEntries(a, b: FileEntry; column: FileColumn): int =
   of fcType: cmp(kindRank[a.kind], kindRank[b.kind])
   of fcSize: cmp(a.size, b.size)
   of fcModified: cmp(a.modified, b.modified)
+  of fcFolder: naturalCmp(a.folder, b.folder)
 
 func cmpRows(list: FileList; order: FileOrder; a, b: int): int {.inline.} =
   ## The order of entries `a` and `b` in the table. The entries are in
@@ -82,7 +84,7 @@ proc follow(t: var FileTable; list: FileList; changes: openArray[EntryChange]) =
   ## keep their order (only their indices move), and the entries added or
   ## changed are sorted alone and merged in. A row moves only when its entry
   ## changed in what the table sorts by.
-  let moves = t.order.column in {fcType, fcSize, fcModified}
+  let moves = t.order.column in {fcType, fcSize, fcModified, fcFolder}
   t.touched.setLen 0
   for c in changes:
     case c.kind

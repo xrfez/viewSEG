@@ -112,6 +112,8 @@ type
       listed*: seq[FileEntry] ## seismic files, in natural order
       others*: int ## files found that are not seismic
       unreadable*: int ## files that could not be read
+      listVisited*: int ## a scan that goes through subfolders: the files it has looked at so far
+      listCapped*: bool ## the tree had more files than `MaxTreeFiles`: the scan stopped there
       subfolders*: int ## the folders listed hold this many folders (the last message)
       listDone*: bool ## the scan's last message
       listFolder*: string ## the folder listed, once known; "" for files chosen one by one

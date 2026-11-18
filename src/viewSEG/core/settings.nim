@@ -73,6 +73,9 @@ type
     followLatest*: bool
       ## show each new file in the plot once it is completely written; off:
       ## the plot stays on the file the user chose
+    subfolders*: bool
+      ## list the files of the folder's subfolders too ("Include subfolders"), when no
+      ## project is open (a project keeps its own)
     prepareNext*: bool = true
       ## open the next file of the list in the background while one is
       ## shown (its index, its first view's samples), so that stepping

@@ -296,16 +296,49 @@ proc sniff*(path: string): FileKind =
   var opened: bool
   sniff(path, opened)
 
-proc listedNames(paths: openArray[string]): seq[string] =
-  ## The files `paths` name: each folder's files (not its subfolders, nor
-  ## hidden files), and each file itself; absolute, normalized, once each,
-  ## in natural order of their names. Raises `OSError` when a folder cannot
-  ## be read.
+proc treeNames*(root: string; cap: int; capped: var bool;
+    visit: proc (found: int): bool {.gcsafe, raises: [].}): seq[string] =
+  ## The files of folder `root` and of every folder below it (normalized): not
+  ## hidden files or folders, and no folder that is a symbolic link is entered, so
+  ## a loop of links ends. Stops at `cap` files (`capped` says so) and when `visit`,
+  ## called every 256 files with how many were found, returns false (then what was
+  ## found so far is returned). Raises `OSError` when `root` cannot be read; a
+  ## folder below it that cannot be is left out.
+  var stack = @[root]
+  var n = 0
+  while stack.len > 0:
+    let dir = stack.pop()
+    try:
+      for kind, path in fs.walkDir(dir, checkDir = true):
+        let name = path.extractFilename
+        if name.startsWith("."): continue
+        if kind == pcDir:
+          stack.add path
+        elif kind in {pcFile, pcLinkToFile}:
+          if result.len >= cap:
+            capped = true
+            return
+          result.add path.normalizedPath
+        inc n
+        if n mod 256 == 0 and not visit(result.len): return
+    except OSError:
+      if dir == root: raise
+
+proc listedNames(paths: openArray[string]; recursive = false; capped: var bool;
+    visit: proc (found: int): bool {.gcsafe, raises: [].} = nil): seq[string] =
+  ## The files `paths` name: each folder's files (and, when `recursive`, those of
+  ## the folders below it: `treeNames`; otherwise not its subfolders), not hidden
+  ## files, and each file itself; absolute, normalized, once each, in natural order
+  ## of their names. Raises `OSError` when a folder cannot be read.
   for p in paths:
     if fs.dirExists(p):
-      for kind, path in fs.walkDir(p, checkDir = true):
-        if kind in {pcFile, pcLinkToFile} and not path.extractFilename.startsWith("."):
-          result.add path.normalizedPath
+      if recursive:
+        result.add treeNames(p, MaxTreeFiles, capped, if visit.isNil:
+          (proc (found: int): bool {.gcsafe, raises: [].} = true) else: visit)
+      else:
+        for kind, path in fs.walkDir(p, checkDir = true):
+          if kind in {pcFile, pcLinkToFile} and not path.extractFilename.startsWith("."):
+            result.add path.normalizedPath
     elif p.len > 0:
       result.add p.normalizedPath
   result.sort(proc (a, b: string): int =
@@ -316,17 +349,25 @@ proc listedNames(paths: openArray[string]): seq[string] =
     if unique.len == 0 or unique[^1] != p: unique.add p
   result = unique
 
+func treeFolder(roots: openArray[string]; path: string): string =
+  ## The subfolders of the first of `roots` that holds `path` (`folderOf`).
+  for r in roots:
+    if path.startsWith(r): return folderOf(r, path)
+
 const ListPause = initDuration(milliseconds = 100) ## a scan posts at least this often
 
-proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
+proc scanWork*(gen: uint64; paths: seq[string]; to: Poster; recursive = false): JobWork =
   ## The work of a job that lists the seismic and survey files `paths` name
   ## (folders and files, absolute) and posts them as `mkListed` messages for listing
   ## `gen`, in batches, the last one with `listDone`. One file alone stands
   ## for its folder: the folder is listed, and the first message names both
   ## (`listFolder`, `listChosen`); one folder is named in it too; the last
   ## one has every file it looked at (`listLooked`), for the folder's watch.
-  ## Raises `OSError` when a folder cannot be read, `IOError` when the one
-  ## path given does not exist; stops at a cancel.
+  ## With `recursive`, the folders' subfolders are listed too (`treeNames`: at
+  ## most `MaxTreeFiles` files, each entry's `folder` is the path below the
+  ## folder listed, and the scan says how many files it has looked at as it
+  ## goes). Raises `OSError` when a folder cannot be read, `IOError` when the
+  ## one path given does not exist; stops at a cancel.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading the folder"
     var asked = paths
@@ -348,7 +389,13 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
         to.post move first
         return
       to.post move first
-    let names = listedNames(asked)
+    var capped = false
+    let post = to
+    let jobId = ctx.id
+    let names = listedNames(asked, recursive, capped, proc (found: int): bool {.gcsafe, raises: [].} =
+      post.post Msg(job: jobId, kind: mkListed, listGen: gen, listVisited: found)
+      not ctx.cancelled)
+    if ctx.cancelled: raise newException(JobCancelledError, "cancelled")
     ctx.setPhase "looking at the files"
     var batch = Msg(job: ctx.id, kind: mkListed, listGen: gen)
     var looked = newSeqOfCap[WatchedFile](names.len)
@@ -370,6 +417,7 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
           elif kind == fkUnknown: inc batch.others
           else:
             batch.listed.add FileEntry(path: path, name: path.extractFilename, kind: kind,
+              folder: if recursive: asked.treeFolder(path) else: "",
               size: info.size, modified: info.lastWriteTime)
       except OSError:
         inc batch.unreadable
@@ -387,5 +435,6 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
         except OSError:
           discard # the files were listed: the folder count is only a hint
     batch.listDone = true
+    batch.listCapped = capped
     batch.listLooked = move looked
     to.post move batch

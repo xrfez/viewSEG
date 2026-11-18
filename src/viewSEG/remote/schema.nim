@@ -44,7 +44,7 @@ const
     ckPilotReference, ckPilotPreview, ckSelectReference, ckDeleteReference, ckRenameReference,
     ckCopyReference,
     ckViewReference, ckCloseRefView, ckSetCompare, ckClearCompare, ckSwapCompare,
-    ckCompareDisplay, ckCompareWindow}
+    ckCompareDisplay, ckCompareWindow, ckSubfolders}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The survey

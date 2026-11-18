@@ -29,6 +29,9 @@ export filekinds
 const
   SniffBytes* = 4096 ## the bytes read from each file to tell its standard
   ListBatch* = 64    ## entries a scan posts at a time, at most
+  MaxTreeFiles* = 20_000
+    ## files a listing with the subfolders included looks at, at most: a tree
+    ## with more is cut there, and the list says so
   MaxChanges* = 4096 ## changes of the entries kept for the file table, at most
   ManyChanges* = 64
     ## files gone or new in one look beyond which the entries are made again
@@ -46,11 +49,14 @@ type
     ## One file of the list: a seismic file, or a survey file.
     path*: string ## absolute and normalized, as files are opened
     name*: string
+    folder*: string
+      ## the subfolders between the folder listed and the file, "a/b" (always
+      ## "/"); "" for a file in the folder itself, or when subfolders are not included
     kind*: FileKind
     size*: int64
     modified*: Time
     status*: FileStatus
-    isNew*: bool  ## it appeared after the folder was listed, and has not been shown yet
+    isNew*: bool ## it appeared after the folder was listed, and has not been shown yet
 
   WatchedFile* = object
     ## A file as a look at the folder (or a scan) found it.
@@ -88,6 +94,9 @@ type
     others*: int             ## files that are neither, so not listed
     unreadable*: int         ## files that could not be read
     subfolders*: int         ## folders inside the folder listed (not hidden ones)
+    recursive*: bool         ## the subfolders' files are listed too ("Include subfolders")
+    looked*: int             ## files looked at so far by a scan that goes through subfolders
+    capped*: bool            ## the tree has more than `MaxTreeFiles` files: the list stops there
     scanning*: bool          ## the scan has not finished
     job*: JobId              ## the scan's job; `NoJob` for none
     gen*: uint64             ## bumped by each new listing; what a scan posts carries it
@@ -104,7 +113,7 @@ func subfoldersNote*(f: FileList): string =
   ## What an empty listing of a folder that has only subfolders says, so the empty
   ## list is not left unexplained; "" otherwise.
   if f.title.len > 0 and not f.scanning and f.error.len == 0 and f.entries.len == 0 and
-      f.subfolders > 0:
+      f.subfolders > 0 and not f.recursive:
     result = "No seismic files here; " & $f.subfolders &
       (if f.subfolders == 1: " subfolder" else: " subfolders")
 
@@ -142,6 +151,15 @@ func filterWords*(filter: string): seq[string] =
   ## The words of a filter typed by the user, in lower case.
   filter.toLowerAscii.splitWhitespace
 
+func folderOf*(root, path: string): string =
+  ## The subfolders `path` is in below `root`, "a/b", with "/" between them whatever
+  ## the system's separator; "" for a file in `root` itself or outside it.
+  let dir = path.parentDir
+  let start = if root.endsWith(DirSep) or root.endsWith(AltSep): root.len else: root.len + 1
+  if root.len == 0 or dir.len < start or not dir.startsWith(root): return ""
+  result = dir[start .. ^1]
+  when DirSep != '/': result = result.replace(DirSep, '/')
+
 func holds(name, word: string): bool =
   ## Whether `name` holds `word` (lower case), in any case. Allocates
   ## nothing: the file table runs it on every file of a folder.
@@ -152,15 +170,15 @@ func holds(name, word: string): bool =
   false
 
 func matches*(e: FileEntry; words: openArray[string]): bool =
-  ## Whether `e`'s name holds every one of `words` (`filterWords`), in any
-  ## case; no words match every file.
+  ## Whether every one of `words` (`filterWords`) is in `e`'s name or in the
+  ## subfolders it is in, in any case; no words match every file.
   for word in words:
-    if not e.name.holds(word): return false
+    if not e.name.holds(word) and not e.folder.holds(word): return false
   true
 
 func matches*(e: FileEntry; filter: string): bool =
-  ## Whether `e`'s name holds every word of `filter`, in any case; an empty
-  ## filter matches every file.
+  ## Whether every word of `filter` is in `e`'s name or its subfolders, in any
+  ## case; an empty filter matches every file.
   e.matches(filterWords(filter))
 
 func entryCmp(name, path: string; e: FileEntry): int =

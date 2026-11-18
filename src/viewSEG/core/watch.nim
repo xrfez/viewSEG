@@ -57,6 +57,7 @@ type
     lock: Lock
     gen: uint64              ## the listing watched; 0: none
     paths: seq[string]       ## what the listing names: a folder, or files
+    recursive: bool          ## the folders' subfolders are watched too
     looked: seq[WatchedFile] ## what its scan found, until the thread takes it
     fresh: bool              ## a new listing (or none) to take
     open: seq[string]
@@ -90,6 +91,7 @@ type
     p: ptr WatchObj
     gen: uint64
     paths: seq[string]
+    recursive: bool
     isDir: seq[bool]          ## per path: a folder, when the listing was taken
     open: seq[string]
     announce: HashSet[string] ## open files to report at the next look, changed or not
@@ -169,6 +171,7 @@ proc look(w: var Watcher): seq[WatchedFile] =
   ## One look at the listed files and the open ones: what changed.
   inc w.turn
   var problem = ""
+  var incomplete = false # a tree cut at the cap: what is not seen is not gone
   if w.gen != 0:
     for i, p in w.paths:
       if not w.isDir[i]:
@@ -176,6 +179,16 @@ proc look(w: var Watcher): seq[WatchedFile] =
       else:
         try:
           var n = 0
+          if w.recursive:
+            # every file below it, as the scan listed them (`treeNames`)
+            var capped = false
+            let quit = w.p
+            for path in treeNames(p, MaxTreeFiles, capped,
+                proc (found: int): bool {.gcsafe, raises: [].} = not quit.quitting):
+              w.see(path, true, result)
+            if w.p.quitting: return
+            if capped: incomplete = true
+            continue
           for kind, name in fs.walkDir(p, relative = true, checkDir = true):
             # `p` is normalized, so `p / name` is the path the scan listed.
             if kind in {pcFile, pcLinkToFile} and not name.startsWith("."):
@@ -186,7 +199,7 @@ proc look(w: var Watcher): seq[WatchedFile] =
           problem = p & " cannot be read" & (if e.msg.len > 0: " (" & e.msg & ")" else: "")
   for p in w.open: w.see(p, false, result)
   # What no look saw this turn is gone, unless the folder could not be read.
-  if problem.len == 0:
+  if problem.len == 0 and not incomplete:
     var gone: seq[string]
     for path, s in w.seen:
       if s.turn != w.turn: gone.add path
@@ -212,6 +225,7 @@ proc take(w: var Watcher) =
       w.p.fresh = false
       w.gen = w.p.gen
       w.paths = w.p.paths
+      w.recursive = w.p.recursive
       looked = move w.p.looked
       w.p.looked.setLen 0
     if w.p.openFresh:
@@ -308,13 +322,16 @@ proc newFolderWatch*(poster: sink Poster; interval = WatchInterval): FolderWatch
   createThread(p.thread, run, p)
   p.started = true
 
-proc watch*(x: FolderWatch; gen: uint64; paths: seq[string]; looked: sink seq[WatchedFile]) =
+proc watch*(x: FolderWatch; gen: uint64; paths: seq[string]; looked: sink seq[WatchedFile];
+    recursive = false) =
   ## Watches the files of listing `gen`: those of the folders and the files
-  ## `paths` names, starting from what its scan found (`looked`).
+  ## `paths` names (and of the folders below them when `recursive`), starting
+  ## from what its scan found (`looked`).
   if x.p != nil:
     withLock x.p.lock:
       x.p.gen = gen
       x.p.paths = paths
+      x.p.recursive = recursive
       x.p.looked = looked
       x.p.fresh = true
 

@@ -87,7 +87,15 @@ folder start in it.
 
 A folder with no seismic files but with subfolders (a data folder with one folder a day, say)
 is listed empty, and the Files panel says so under the list: "No seismic files here; 2
-subfolders". Open one of the subfolders.
+subfolders", with an **Include subfolders** button: click it, or tick **Include
+subfolders** under the filter, to list the seismic files of every folder below the one chosen
+too (not hidden folders; a folder that is a link is not entered, so a loop of links ends).
+A Folder column then shows the path below the chosen folder (click its header to sort by it;
+the filter matches it as it matches the name), and the listing runs in the background with the
+count of files looked at so far and a Cancel button. A tree of more than 20 000 files is cut
+there and the list says so. Follow the latest file works across the subfolders, and a
+new file in a subfolder is listed. The switch is off by default and is kept in the project when
+one is open, else in your settings. Or open one of the subfolders.
 
 The **Files** window, at the left, lists the seismic files (SEG-Y, SEG-D, SEG-2) and the
 survey files (SPS S, R and X, P1) of a folder with their type, size and date; other files

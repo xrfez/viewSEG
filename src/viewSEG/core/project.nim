@@ -98,6 +98,8 @@ type
       ## N (from 0, as listed in `data`) and the path below it ("" for the folder itself),
       ## so it is found again wherever the data folder is; listed again when the project
       ## opens
+    includeSubfolders*: bool
+      ## the Files panel lists the subfolders' files too
     vibRoles*: seq[string]
       ## the vibrator signature's roles chosen by hand in this project, per file layout
       ## (`choiceText`)

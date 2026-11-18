@@ -391,6 +391,7 @@ proc settingsDocument*(s: Settings): string =
   w.value("cursorLine", s.cursorLine)
   w.open("files")
   w.value("followLatest", s.files.followLatest)
+  if s.files.subfolders: w.value("subfolders", true)
   w.value("prepareNext", s.files.prepareNext)
   w.close()
   w.open("map")
@@ -928,6 +929,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
       of "files":
         for k in c.kids:
           if k.isTree("followLatest"): r.flag(k, result.files.followLatest)
+          elif k.isTree("subfolders"): r.flag(k, result.files.subfolders)
           elif k.isTree("prepareNext"): r.flag(k, result.files.prepareNext)
           else: r.unknown(k, "files")
       of "map":

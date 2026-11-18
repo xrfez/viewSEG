@@ -174,6 +174,7 @@ schema (in the tool list) gives every field and value; the most used:
 | `clear compare` | `compareSlot` (`A`, `B` or `both`) | Clears that slot, or both |
 | `swap compare` | | Swaps the two slots |
 | `compare display` | `compareShow` (`difference`, `shiftPeak`, `shiftMs` null for none, `matchRms`, `flip`, `fromMs` and `toMs` null for the span of both, `phasePicture`) | What the window draws and how B is aligned. A difference and a correlation need one sample grid; otherwise `compare` says why |
+| `subfolders` | `subfolders` (true when not given) | The Files window's "Include subfolders": true lists the seismic files of the subfolders too (each entry of `state`'s `fileList` has its `folder`, and `fileList` says `subfolders`, `looked` (files looked at while the scan runs) and `capped` (the tree has more than 20 000 files)); the folder is listed again. For the session only: the choice is not kept in the settings or the project |
 | `compare window` | `compareOpen` (true when not given) | Opens or closes the compare window. `screenshot` `compare` is its picture |
 | `theme` | `theme` (a theme file's name, as View > Theme lists them: `tokyo-night`, `catppuccin-latte`; `""` follows the system) | Draws the program in that theme, as View > Theme does; for the session only. `state`'s `program` says the theme in effect (`theme`) and the themes there are (`themes`) |
 | `clear edits`, `reverse all`, `back`, `map back`, `hover`, `clear selection`, `close`, `load survey`, `unload survey`, `cancel job`, ... | | As in the windows |

@@ -282,6 +282,7 @@ proc prefill(state: AppState; given: Command; c: var Command) =
   of ckSpectrumPanel: c.onScreen = true
   of ckCompareDisplay: c.compareShow = state.compareOptions
   of ckCompareWindow: c.compareOpen = true
+  of ckSubfolders: c.subfolders = true
   of ckSetCompare:
     c.compareSlot = if given.compareSlot == cwBoth: cwA else: given.compareSlot
     c.compareTrace = given.compareTrace
@@ -451,13 +452,14 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
 proc fileListJson(state: AppState; limit: int): JsonNode =
   let l = state.fileList
   result = %*{"title": l.title, "folder": l.folder, "scanning": l.scanning,
-    "chosen": l.chosen, "count": l.entries.len, "others": l.others,
+    "chosen": l.chosen, "subfolders": l.recursive, "capped": l.capped,
+    "looked": l.looked, "count": l.entries.len, "others": l.others,
     "unreadable": l.unreadable, "failed": l.failed, "error": l.error}
   var entries = newJArray()
   for i in 0 ..< min(l.entries.len, limit):
     let e = l.entries[i]
     entries.add %*{"name": e.name, "path": e.path, "kind": $e.kind, "size": e.size,
-      "status": $e.status, "new": e.isNew}
+      "status": $e.status, "new": e.isNew, "folder": e.folder}
   result["entries"] = entries
 
 proc pointJson(state: AppState; p: PointRef): JsonNode =

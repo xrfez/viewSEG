@@ -227,6 +227,13 @@ that is new and steady is shown in the main panel, once, through an open made wi
 `whole`: if parseSEG finds it cut short (a `truncated` diagnostic), it is not shown (and
 not cached), and it is tried again once it has changed. Without it, nothing moves: the
 plot stays on the file the user chose.
+**Include subfolders** (`ckSubfolders`; `Settings.files.subfolders`, or the project's `includeSubfolders`
+while one is open: `AppState.includesSubfolders`) makes the scan (`scanWork(recursive)`, `treeNames`)
+and the watch (`watch(recursive)`) go through every folder below the one listed: hidden folders and
+folders that are symbolic links are not entered, at most `MaxTreeFiles` files are looked at (a
+cut tree is `FileList.capped`, and the watch then takes nothing it does not see for gone), each
+entry's `folder` is its path below the folder listed, and the table's Folder column (`fcFolder`) and
+the name filter use it.
 
 **An open file that changes on disk.** The watch also looks at the open files
 (`watchOpen`), and `AppState` compares each with its size and time when it was opened

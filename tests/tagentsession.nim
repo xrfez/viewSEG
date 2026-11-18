@@ -87,7 +87,8 @@ const Reached = {
   "scale.speed": "",
   "calibrations": "", "readout": "", "sortPresets": "", "customOrder": "sort",
   "messages.autoScroll": "", "messages.hidden": "", "cursorLine": "",
-  "files.followLatest": "", "files.prepareNext": "", "map.info": "", "map.lengths": "",
+  "files.followLatest": "", "files.subfolders": "subfolders", "files.prepareNext": "",
+  "map.info": "", "map.lengths": "",
   "map.hiddenGroups": "", "map.templateBox": "", "map.spreadTemplate.shape": "",
   "map.spreadTemplate.lines": "", "map.spreadTemplate.channels": "",
   "map.spreadTemplate.inlineHalf": "", "map.spreadTemplate.crosslineHalf": "",
@@ -462,6 +463,7 @@ proc main*() =
       # while a file is shown, so the choice is seen to change and not be saved
       st.agent(%*{"kind": "trace filter", "filter": {"seismic": false, "auxiliary": true}})
       st.agent(%*{"kind": "close", "file": int(st.sessions[0].id)})
+      st.agent(%*{"kind": "subfolders", "subfolders": true}) # for the session only
       st.agent(%*{"kind": "new project", "projectPath": fx.dir / "the agent's job",
         "dataFolders": [agentDir]})
       doAssert st.inProject and st.settings.lastProject == fx.dir / "the agent's job"
@@ -531,6 +533,7 @@ proc main*() =
       doAssert st.settle(st.references.entries.len >= 1 and busy(st, fe).len == 0),
         "the window's reference was not stored"
       st.apply Command(kind: ckSelectReference, refId: st.references.entries[0].id)
+      st.apply Command(kind: ckSubfolders, subfolders: true)
       st.apply Command(kind: ckNewProject, projectPath: fx.dir / "my job", dataFolders: @[agentDir])
       doAssert st.settle(st.inProject and busy(st, fe).len == 0)
       var d = st.panel(MainPanel).layers[0].display

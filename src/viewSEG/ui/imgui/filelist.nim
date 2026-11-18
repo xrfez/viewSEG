@@ -160,17 +160,25 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
     ImGui_TableFlags_Sortable.cint or ImGui_TableFlags_Resizable.cint or
     ImGui_TableFlags_Hideable.cint or ImGui_TableFlags_BordersInnerV.cint or
     ImGui_TableFlags_SizingFixedFit.cint
-  let footer = igGetTextLineHeightWithSpacing() + igGetStyle().ItemSpacing.y
-  if not igBeginTable("##files", 4, flags, ImVec2_c(x: 0, y: -footer), 0): return
+  # one line under the table, two while it has a button (Cancel, "Include subfolders")
+  let lines = if (f.scanning and f.job != NoJob) or f.subfoldersNote.len > 0: 2 else: 1
+  let footer = igGetTextLineHeightWithSpacing() * lines.float32 + igGetStyle().ItemSpacing.y
+  let tree = f.recursive # the Folder column is there while subfolders are included
+  let columns = if tree: 5 else: 4
+  if not igBeginTable(if tree: "##filestree" else: "##files", cint(columns), flags,
+      ImVec2_c(x: 0, y: -footer), 0): return
   igTableSetupScrollFreeze(0, 1)
   igTableSetupColumn("Name", ImGui_TableColumnFlags_DefaultSort.cint or
     ImGui_TableColumnFlags_WidthStretch.cint or ImGui_TableColumnFlags_NoHide.cint, 1, 0)
+  if tree: igTableSetupColumn("Folder", ImGui_TableColumnFlags_WidthStretch.cint, 1, 4)
   igTableSetupColumn("Type", 0, 0, 1)
   igTableSetupColumn("Size", ImGui_TableColumnFlags_PreferSortDescending.cint, 0, 2)
   igTableSetupColumn("Modified", ImGui_TableColumnFlags_PreferSortDescending.cint, 0, 3)
   igPushItemFlag(ImGui_ItemFlags_NoTabStop.cint, true) # the list is one stop of Tab
   igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
-  for c, name in ["Name", "Type", "Size", "Modified"]:
+  let heads = if tree: @["Name", "Folder", "Type", "Size", "Modified"]
+    else: @["Name", "Type", "Size", "Modified"]
+  for c, name in heads:
     if igTableSetColumnIndex(cint(c)):
       igTableHeader(name.cstring)
       tip("Click to sort by " & name)
@@ -178,9 +186,11 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   let specs = igTableGetSortSpecs()
   if specs != nil and specs.SpecsCount > 0:
     let s = specs.Specs[]
-    ui.order = FileOrder(column: FileColumn(clamp(int(s.ColumnIndex), 0, 3)),
+    ui.order = FileOrder(column: FileColumn(clamp(int(s.ColumnUserID), 0, 4)),
       descending: s.SortDirection == ImGui_SortDirection_Descending)
     specs.SpecsDirty = false
+  elif ui.order.column == fcFolder and not tree:
+    ui.order = FileOrder() # the Folder column went with the subfolders
   ui.table.update(f, ui.filterText, ui.order)
   let chosenRow = ui.table.chosenRow(f, f.chosen)
   let today = getTime()
@@ -253,6 +263,9 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
           vec4(if failed: t.roles[rlError] else: t.roles[rlTextDim]))
       igTextUnformatted(e.name.cstring, nil)
       if failed or dim: igPopStyleColor(1)
+      if tree:
+        discard igTableNextColumn()
+        igTextUnformatted(e.folder.cstring, nil)
       discard igTableNextColumn()
       igTextUnformatted(typeText(e).cstring, nil)
       discard igTableNextColumn()
@@ -267,7 +280,7 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   igEndTable()
   marks.mark("files.table")
 
-proc footer(f: FileList; shown: int; t: Theme) =
+proc footer(f: FileList; shown: int; t: Theme; marks: var Marks; res: var FileListOutput) =
   ## What the list holds, or how far the listing is, under the table: how
   ## many files are seismic and survey files, and new and being written.
   var text = ""
@@ -277,6 +290,7 @@ proc footer(f: FileList; shown: int; t: Theme) =
     colour = t.roles[rlWarning]
   elif f.scanning:
     text = "Listing... " & $f.entries.len & " seismic files so far"
+    if f.recursive and f.looked > 0: text.add " (" & $f.looked & " files looked at)"
   elif f.title.len == 0:
     text = menuLabel(maOpenFolder) & " to list its seismic files."
   else:
@@ -298,9 +312,22 @@ proc footer(f: FileList; shown: int; t: Theme) =
     if writing > 0: text.add ", " & $writing & " being written"
     if f.others > 0: text.add "; " & $f.others & " other files not listed"
     if f.unreadable > 0: text.add "; " & $f.unreadable & " could not be read"
+    if f.capped:
+      text.add "; stopped at " & $MaxTreeFiles & " files: the list is not complete"
+      colour = t.roles[rlWarning]
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(colour))
   igTextUnformatted(text.cstring, nil)
   igPopStyleColor(1)
+  if f.scanning and f.job != NoJob:
+    if igSmallButton("Cancel##filescan"):
+      res.commands.add Command(kind: ckCancelJob, job: f.job)
+    marks.mark("files.cancel")
+    tip("Stop listing the folder: what was found stays listed")
+  elif f.subfoldersNote.len > 0:
+    if igSmallButton("Include subfolders##filenote"):
+      res.commands.add Command(kind: ckSubfolders, subfolders: true)
+    marks.mark("files.subfolders.note")
+    tip("List the seismic files of the subfolders too")
 
 proc handleKeys(ui: var FileListUi; f: FileList; res: var FileListOutput) =
   ## Up / Down, Page Up / Down, Home / End while the window has the focus
@@ -345,7 +372,8 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
       cast[cstring](addr ui.filter[0]), csize_t(ui.filter.len), 0, nil, nil)
     marks.mark("files.filter")
     focused(marks)
-    tip("Show only the files whose names hold every word typed here")
+    tip("Show only the files whose names (or, with the subfolders included, whose " &
+      "subfolders) hold every word typed here")
     igSameLine(0, -1)
     if following: # drawn selected, as the plot's toggles are
       igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(t.roles[rlSelection]))
@@ -357,8 +385,15 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
     marks.mark("files.follow")
     focused(marks)
     tip(FollowWords & ": " & (if following: "on" else: "off") & ".\n" & FollowHelp)
+    var subs = st.includesSubfolders
+    if igCheckbox("Include subfolders##filesubs", addr subs):
+      result.commands.add Command(kind: ckSubfolders, subfolders: subs)
+    marks.mark("files.subfolders")
+    tip("List the seismic files of every folder below this one too, with the folder " &
+      "each is in shown in the Folder column. Kept with the project when one is open, " &
+      "else in the settings.")
     ui.drawRows(st, f, t, marks, result)
-    footer(f, ui.table.rows.len, t)
+    footer(f, ui.table.rows.len, t, marks, result)
     marks.mark("files.footer")
     let wait = st.listingWait()
     if wait.kind != wkNone:

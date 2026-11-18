@@ -272,6 +272,8 @@ type
       ## what the compare window draws, and how B is aligned
     ckCompareWindow = "compare window"
       ## open or close the compare window
+    ckSubfolders = "subfolders"
+      ## the file list includes the subfolders' files, or not; the folder is listed again
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -531,6 +533,8 @@ type
         ## ckCompareDisplay: the window's alignment and what it draws
       compareOpen*: bool
         ## ckCompareWindow: true opens the window, false closes it
+    of ckSubfolders:
+      subfolders*: bool ## true: the subfolders' files are listed too
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -6544,6 +6548,12 @@ proc showListedShot(state: var AppState; cmd: Command): bool =
       return true
   false
 
+func includesSubfolders*(state: AppState): bool =
+  ## Whether the file list lists the subfolders' files too: the open project's
+  ## choice, else the settings'.
+  if state.project.dir.len > 0: state.project.doc.includeSubfolders
+  else: state.settings.files.subfolders
+
 proc startListing(state: var AppState; paths: seq[string]; title, folder: string;
     by: CommandOrigin) =
   ## Lists the files `paths` (canonical) name in the file list, in place of
@@ -6555,11 +6565,12 @@ proc startListing(state: var AppState; paths: seq[string]; title, folder: string
   state.watch.unwatch() # until the scan is done
   state.listedBy = by
   let gen = state.files.gen + 1
+  let recursive = state.includesSubfolders
   state.files = FileList(title: title, folder: folder, asked: paths, scanning: true, gen: gen,
-    chosen: state.files.chosen, revision: state.files.revision + 1)
+    recursive: recursive, chosen: state.files.chosen, revision: state.files.revision + 1)
   state.files.job = state.jobs.submit(JobSpec(title: "List the files in " &
     (if folder.len > 0: folder.extractFilename else: title), lane: jlBackground),
-    scanWork(gen, paths, state.inbox.poster))
+    scanWork(gen, paths, state.inbox.poster, recursive))
 
 proc takeListed(state: var AppState; m: sink Msg) =
   ## What a scan found for the file list; shows the first file found (or the
@@ -6582,6 +6593,8 @@ proc takeListed(state: var AppState; m: sink Msg) =
         state.projectChanged()
   for e in m.listed:
     if e.kind.isSurvey and e.path in state.loadNamed: state.loadSurvey(e.path, quiet = true)
+  f.looked = max(f.looked, m.listVisited)
+  if m.listCapped: f.capped = true
   f.merge(m.listed)
   f.others += m.others
   f.unreadable += m.unreadable
@@ -6590,7 +6603,7 @@ proc takeListed(state: var AppState; m: sink Msg) =
     f.scanning = false
     # Watched from what the scan found: a folder listed, or the files chosen.
     let paths = if f.folder.len > 0: @[f.folder] else: f.asked
-    state.folderWatch.watch(f.gen, paths, move m.listLooked)
+    state.folderWatch.watch(f.gen, paths, move m.listLooked, f.recursive)
   inc f.revision
   if state.showFound != NoPanel:
     var target = m.listChosen # (an open job finds it a survey file, if it is one)
@@ -6753,7 +6766,8 @@ proc takeWatched(state: var AppState; m: sink Msg) =
       elif i < 0:
         if w.kind != fkUnknown:
           fresh.add FileEntry(path: w.path, name: w.path.extractFilename,
-            kind: w.kind, size: w.size, modified: w.modified,
+            folder: if f.recursive: f.folder.folderOf(w.path) else: "", kind: w.kind, size: w.size,
+                modified: w.modified,
             status: (if w.changing: fsWriting else: fsSteady), isNew: true)
       else:
         template e: untyped = f.entries[i]
@@ -7639,6 +7653,21 @@ proc showCompare(state: var AppState; cmd: Command) =
   state.compareOptions = cmd.compareShow
   state.refreshCompare()
 
+proc setSubfolders(state: var AppState; cmd: Command) =
+  ## "Include subfolders": kept in the open project, else in the settings (an
+  ## agent's choice is for the session only), and the folder listed again when
+  ## the choice changed.
+  if cmd.subfolders == state.includesSubfolders: return
+  if state.project.dir.len > 0:
+    state.project.doc.includeSubfolders = cmd.subfolders
+    if keeps(cmd.origin) and not state.project.readOnly: state.projectChanged()
+  else:
+    state.change(cmd.origin, x): x.files.subfolders = cmd.subfolders
+  template f: untyped = state.files
+  if f.title.len > 0:
+    let paths = if f.folder.len > 0: @[f.folder] else: f.asked
+    if paths.len > 0: state.startListing(paths, f.title, f.folder, state.listedBy)
+
 proc setCompareWindow(state: var AppState; cmd: Command) =
   state.compareOpen = cmd.compareOpen
 
@@ -8257,6 +8286,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckSwapCompare: state.swapCompare()
   of ckCompareDisplay: state.showCompare(cmd)
   of ckCompareWindow: state.setCompareWindow(cmd)
+  of ckSubfolders: state.setSubfolders(cmd)
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept
