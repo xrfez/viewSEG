@@ -1,7 +1,8 @@
 # Synthetic samples
 
 A small synthetic survey for screenshots, documentation and demos. It is
-not field data. Share it freely. Regenerate with `nim samples`
+not field data, except the four vibrator signature records in
+`samples/vib/field/` (see the README there). Share it freely. Regenerate with `nim samples`
 (`tools/sampledata.nim`). The committed files are the ones to open: float
 samples are not regenerated in tests.
 
