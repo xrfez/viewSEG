@@ -61,6 +61,11 @@ type
     notes*: seq[string]   ## a value the boxes refused, in the unit the user typed
     openReferences*: bool ## the References button was pressed
 
+const PeakFromMassesTip = "Judged on GF from M and B: the peak force formed from the masses " &
+  "and the accelerations can read lower than the vibrator's own peak force figure (about " &
+  "5 % lower at the median on the files reviewed), so a peak near the limit may pass here " &
+  "and be flagged there. The numbers are not adjusted"
+
 var forcedVibratorSize*: (float32, float32) = (0'f32, 0'f32)
   ## tests: a vibrator window is held at this size (points), as a dock pane would hold it;
   ## 0: the window keeps its own
@@ -437,17 +442,24 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
   let forceShown = forceLimitOf(judgedAxis, units)
   qcLine.follow(textBoxWidth("100 % force =", box))
   label("100 % force =")
-  let hundred = showScaled(p.forceHundredPct, forceShown.divisor)
-  if limitBox("##hundred." & forceShown.unit, hundred, box, typed):
+  # the full scale of the signal judged (GF in counts, GF (M, B) in kg × counts)
+  let weighted = w.result.judged == "GF (M, B)"
+  let shownHundred = if weighted: p.forceHundredWeighted else: p.forceHundredPct
+  let hundred = showScaled(shownHundred, forceShown.divisor)
+  if limitBox("##hundred." & (if weighted: "m." else: "g.") & forceShown.unit, hundred, box,
+      typed):
     let stored = storeScaled(typed, forceShown.divisor)
     if typed.isNaN or MassKgRange.allows(stored):
-      if not (stored.isNaN and p.forceHundredPct.isNaN) and stored !=
-          p.forceHundredPct:
-        (p.forceHundredPct, changed) = (stored, true)
+      if not (stored.isNaN and shownHundred.isNaN) and stored != shownHundred:
+        if weighted: p.forceHundredWeighted = stored
+        else: p.forceHundredPct = stored
+        changed = true
     else:
       res.notes.add "100 % force must be above 0, not " & sensible(typed) & "."
   marks.mark(name & ".force target")
-  tip("The force that is 100 % (full scale), in the file's own unit" &
+  tip("The force that is 100 % (full scale) of " &
+    (if weighted: "GF from M and B" else: "GF as recorded") &
+    " (each has its own: counts, or kg x counts), in the file's own unit" &
     (if forceShown.unit.len > 0: " (" & forceShown.unit & ")" else: "") &
         ". The file cannot tell it (no sensor sensitivities): take it from the vibrator's " &
     "own QC of one sweep. The peak force limit is in % of it; the average force limit is " &
@@ -941,7 +953,7 @@ proc drawVerdict(name: string; q: QcReport; t: Theme; marks: var Marks) =
     "then the average and the worst window against the limits below. Distortion is the " &
     "in-band one (harmonics up to the sweep's top frequency)")
 
-proc drawQcTable(name: string; q: QcReport; t: Theme; marks: var Marks) =
+proc drawQcTable(name: string; q: QcReport; judged: string; t: Theme; marks: var Marks) =
   ## The limits table, always shown: a row per limit with the measured value, the limit and
   ## a sign as text (a tick, a cross, or a dash when not judged), then where the worst
   ## window is, or why the limit was not judged.
@@ -974,6 +986,8 @@ proc drawQcTable(name: string; q: QcReport; t: Theme; marks: var Marks) =
           if status == qsNotJudged: igPopStyleColor(1)
         else:
           igTextUnformatted(cell.cstring, nil)
+          if k == 1 and q.rows[i].limit == qlPeakForce and judged == "GF (M, B)":
+            tip(PeakFromMassesTip)
     igEndTable()
     marks.mark(name & ".qc table")
   let s = q.stats
@@ -1101,7 +1115,7 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   marks.mark(name & ".summary")
   # a vibrator signature's table, with its limits on; a correlation's, of several traces
   if w.view == avVibrator and r.problem.len == 0 and r.qc.rows.len > 0:
-    drawQcTable(name, r.qc, t, marks)
+    drawQcTable(name, r.qc, r.judged, t, marks)
   let tabled = if w.view == avCorrelation: r.table.len > 2
                else: r.table.len > 1 and w.params.limitsOn
   if tabled and r.problem.len == 0:

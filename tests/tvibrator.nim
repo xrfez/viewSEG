@@ -129,7 +129,7 @@ proc main*() =
     # no limits: none drawn, none judged
     for p in r.plots:
       for c in p.curves:
-        doAssert c.style == csLine or " limit" in c.name,
+        doAssert c.style == csLine or c.name.isQcLimitLine,
           "a limit drawn while limits are off: " & c.name
     doAssert r.table.len == 6 and r.table[0][^1] == "Max peak", $r.table[0]
     # each row names the stored unit of its force columns, the one in its axis
@@ -194,13 +194,13 @@ proc main*() =
     let signed = vibratorOf(unitRows, names, inOrder, Dt, p)
     var both = 0
     for c in signed.plots[0].curves:
-      if c.style == csLimit and " limit" notin c.name: inc both
+      if c.style == csLimit and not c.name.isQcLimitLine: inc both
     doAssert both == 2, "Signed: the limit at both ends, " & $both
     p.phaseShow = psAbsolute
     let r = vibratorOf(unitRows, names, inOrder, Dt, p)
     var drawn, marked = 0
     for c in r.plots[0].curves:
-      if c.style == csLimit and " limit" notin c.name:
+      if c.style == csLimit and not c.name.isQcLimitLine:
         inc drawn
         doAssert c.ys == @[10.0, 10.0], "Absolute: the one size, " & $c.ys
       elif c.style == csLine:
@@ -237,7 +237,7 @@ proc main*() =
         "a force limit on the weighted sum: " & c.name
     var lines = 0
     for c in r.plots[1].curves:
-      if c.style == csLimit and " limit" notin c.name: inc lines
+      if c.style == csLimit and not c.name.isQcLimitLine: inc lines
     doAssert lines == 1, $lines & " force limit lines on GF"
     for row in r.table[1 .. ^1]:
       if row[0] == "GF": doAssert row[^1] == "fail: force low", $row

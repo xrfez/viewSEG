@@ -217,7 +217,9 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     try: windowStats(t, judging, p.qcWindowMs)
     except ValueError: windowStats(t, judging)
   let stats = statsOf(u.tracks[judged])
-  result.qc = judge(stats.summary, p.qcWindowMs, p.qc, p.forceHundredPct, p.targetPct,
+  # each signal has its own full scale (counts, or kg × counts)
+  let hundredFor = if judged == vsWeightedSum: p.forceHundredWeighted else: p.forceHundredPct
+  result.qc = judge(stats.summary, p.qcWindowMs, p.qc, hundredFor, p.targetPct,
     (if both: $judged else: ""))
   result.judged = $judged
   result.bothSignals = both
@@ -226,27 +228,40 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     else: "Force (" & forceUnit(u.units[vsGroundForce]) & ")"
   if both and p.roles.judge == joRecorded:
     # the recorded GF is the weighted sum the recorder wrote with its own masses: say so when
-    # the sum formed here with the typed masses tells another story (degrees of phase, dB of shape)
+    # the sum formed here with the typed masses tells another story (phase by window, the
+    # level ratio's range in dB)
     let other = statsOf(u.tracks[vsWeightedSum])
-    var dPhase = NaN
-    if not (stats.summary.meanAbsPhaseDeg.isNaN or other.summary.meanAbsPhaseDeg.isNaN):
-      dPhase = abs(stats.summary.meanAbsPhaseDeg - other.summary.meanAbsPhaseDeg)
-    var dbs: seq[float64] = @[]
+    # window by window: the level ratio recorded / formed here in dB (its range along the
+    # sweep: a constant gain is no mismatch) and the difference of the signed phases
+    var lo, hi = NaN
     for i in 0 ..< min(stats.startMs.len, other.startMs.len):
       if stats.meanForce[i] > 0 and other.meanForce[i] > 0:
-        dbs.add 20 * log10(other.meanForce[i] / stats.meanForce[i])
-    var dDb = NaN
-    if dbs.len > 0:
-      var mean = 0.0
-      for d in dbs: mean += d
-      mean /= float64(dbs.len)
-      dDb = 0.0
-      for d in dbs: dDb += abs(d - mean)
-      dDb /= float64(dbs.len)
-    if dPhase > 10 or dDb > 3:
-      result.judgeWarning = "the recorded GF does not match M and B with the typed masses (" &
-        number(dPhase, 0) & " degrees, " & number(dDb, 1) &
-        " dB): check the masses, or judge GF from M and B"
+        let r = 20 * log10(stats.meanForce[i] / other.meanForce[i])
+        lo = if lo.isNaN: r else: min(lo, r)
+        hi = if hi.isNaN: r else: max(hi, r)
+    let rangeDb = if lo.isNaN: NaN else: hi - lo
+    var maxPhase = NaN
+    let tg = u.tracks[vsGroundForce]
+    let tw = u.tracks[vsWeightedSum]
+    for i in 0 ..< min(stats.startMs.len, other.startMs.len):
+      var sx, sy = 0.0
+      var n = 0
+      for m in 0 ..< tg.len:
+        let t = tg.timeMs[m]
+        if t >= stats.startMs[i] and t < stats.startMs[i] + stats.windowMs and
+            not (tg.phaseDeg[m].isNaN or tw.phaseDeg[m].isNaN):
+          let d = degToRad(tg.phaseDeg[m] - tw.phaseDeg[m])
+          sx += cos(d)
+          sy += sin(d)
+          inc n
+      if n > 0:
+        let d = abs(radToDeg(arctan2(sy, sx)))
+        maxPhase = if maxPhase.isNaN: d else: max(maxPhase, d)
+    if rangeDb > 3 or maxPhase > 10:
+      result.judgeWarning = "the recorded GF does not match M and B with the typed masses " &
+        "(level ratio varies by " & number(rangeDb, 1) & " dB along the sweep, phase differs " &
+        "by up to " & number(maxPhase, 0) & " degrees): check the masses, or judge GF from " &
+        "M and B"
   # Phase to the reference
   var phase = AnalysisPlot(title: "Phase to the reference", xLabel: "Sweep time (ms)",
     xUnit: "ms", yLabel: "Phase (°)", yUnit: "°", xs: xs)
@@ -308,7 +323,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       for x in [stats.startMs[i], stats.startMs[i] + stats.windowMs]:
         result.xs.add x
         result.ys.add values[i]
-  let hundredRaw = if p.forceHundredPct > 0 and p.forceHundredPct < Inf: p.forceHundredPct
+  let hundredRaw = if hundredFor > 0 and hundredFor < Inf: hundredFor
                    else: NaN
   let forcePlot = if judged == vsWeightedSum and main != vsWeightedSum: addr generated
                   else: addr force
@@ -445,20 +460,29 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       chordHz: chord,
     typed: not topHz.isNaN, exact: topHz.isNaN and not exactTopHz.isNaN)
   if not usedHz.isNaN and not chord.isNaN and chord > 0:
-    # the chord is a lower bound of the top, short of it by the sweep's rate over the end
-    # taper and half the chord's length: below it by more than 0.5 % is wrong, above it by
+    # the chord is a lower bound of the top, short of it by the sweep's rate over its end
+    # (a down sweep's start) taper and half the chord's length: below it by more than 0.5 % is wrong, above it by
     # more than that slack (with 25 % over and 1 % of the chord) is
     let e0 = u.reference.extent
+    let hz = u.tracks[vsReference].referenceHz
+    var first, last = -1
+    for m in 1 ..< xs.len:
+      if not hz[m].isNaN and not hz[m - 1].isNaN:
+        if first < 0: first = m
+        last = m
+    # the top is where the frequency is highest: the end of an up sweep, the start of a down
+    # sweep (the rate and the taper are those of that side)
     var rate = 0.0
-    var last = -1
-    for m in countdown(xs.len - 1, 1):
-      if last < 0 and not u.tracks[vsReference].referenceHz[m].isNaN and
-          not u.tracks[vsReference].referenceHz[m - 1].isNaN: last = m
-    if last > 0:
-      rate = abs(u.tracks[vsReference].referenceHz[last] -
-        u.tracks[vsReference].referenceHz[last - 1]) / ((xs[last] - xs[last - 1]) / 1000)
-    let taperS = if e0.endMs.isNaN or e0.flatEndMs.isNaN: 0.0
-                 else: max(0.0, e0.endMs - e0.flatEndMs) / 1000
+    var taperS = 0.0
+    if first > 0:
+      let atStart = hz[first - 1] > hz[last]
+      let m = if atStart: first else: last
+      rate = abs(hz[m] - hz[m - 1]) / ((xs[m] - xs[m - 1]) / 1000)
+      if atStart:
+        if not (e0.startMs.isNaN or e0.flatStartMs.isNaN):
+          taperS = max(0.0, e0.flatStartMs - e0.startMs) / 1000
+      elif not (e0.endMs.isNaN or e0.flatEndMs.isNaN):
+        taperS = max(0.0, e0.endMs - e0.flatEndMs) / 1000
     let slack = rate * (taperS + 0.125) * 1.25 + 0.01 * chord
     if usedHz < chord * 0.995 or usedHz > chord + slack:
       result.band.warning = "top frequency " & number(usedHz, 1) & " Hz does not fit the " &

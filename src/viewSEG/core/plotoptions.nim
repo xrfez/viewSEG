@@ -49,6 +49,7 @@ type
     qc*: QcLimits
     targetPct*: float64 = 100.0
     forceHundredPct*: float64 = NaN
+    forceHundredWeighted*: float64 = NaN
 
   EnvelopeOptions* = object
     phaseAgainst*: PhaseAgainst = paReference
@@ -107,7 +108,8 @@ func optionsOf*(p: AnalysisParams; view: AnalysisView): PlotOptions =
       limitsOn: p.limitsOn,
       limits: p.limits, rolesOpen: p.rolesOpen, noteOpen: p.noteOpen, tops: p.tops,
       qcWindowMs: p.qcWindowMs, qc: p.qc,
-      forceHundredPct: p.forceHundredPct, targetPct: p.targetPct)
+      forceHundredPct: p.forceHundredPct,
+      forceHundredWeighted: p.forceHundredWeighted, targetPct: p.targetPct)
   of avFk: result.fk = FkOptions(floorDb: p.floorDb, colourMap: p.colourMap, raw: p.fkRaw)
   of avOrientation: discard
 
@@ -144,6 +146,7 @@ func applied*(o: PlotOptions; view: AnalysisView; p: AnalysisParams): AnalysisPa
        o.vibrator.harmonics, o.vibrator.phaseShow, o.vibrator.projectReference, o.vibrator.limitsOn,
        o.vibrator.limits)
     result.targetPct = o.vibrator.targetPct
+    result.forceHundredWeighted = o.vibrator.forceHundredWeighted
     (result.rolesOpen, result.noteOpen) = (o.vibrator.rolesOpen, o.vibrator.noteOpen)
     (result.tops, result.qcWindowMs, result.qc, result.forceHundredPct) = (
       o.vibrator.tops, o.vibrator.qcWindowMs, o.vibrator.qc,

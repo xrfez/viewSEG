@@ -22,7 +22,7 @@
 ## `vibRoles` (settings); the plot options `plotOptions.vibrator.*` (settings); the typed top
 ## frequency `plotOptions.vibrator.tops` (settings) and `vibTop` (project).
 
-import std/[math, os]
+import std/[math, os, strutils]
 import viewSEG/core/[analysis, persist, settings, state]
 import utils/[fixtures, vibfiles, waiting]
 
@@ -150,6 +150,7 @@ proc main*() =
       p.qc.avgPhaseDeg = 4
       p.qc.peakForcePct = NaN
       p.forceHundredPct = 4000
+      p.forceHundredWeighted = 9000
       p.tops = p.tops.withTop(key, 180)
 
     proc checkBoxes(p: AnalysisParams; key: string; what: string) =
@@ -157,7 +158,8 @@ proc main*() =
       doAssert p.harmonics == 7 and p.limitsOn and p.limits.phaseDeg == 12, what & ": limits"
       doAssert p.qcWindowMs == 250 and p.qc.avgPhaseDeg == 4 and p.qc.peakForcePct.isNaN and
         p.qc.peakDistortionPct == 60, what & ": pass or fail limits"
-      doAssert p.forceHundredPct == 4000, what & ": 100 % force"
+      doAssert p.forceHundredPct == 4000 and p.forceHundredWeighted == 9000,
+        what & ": 100 % force (each signal's own)"
       doAssert p.tops.topOf(key) == 180, what & ": top frequency"
 
     block the_other_boxes_with_no_project:
@@ -175,6 +177,25 @@ proc main*() =
       let v = back.open(fx.vibFourAgainSegy())
       back.plots[v].params.checkBoxes(back.vibTopKey(back.plots[v]), "no project")
       discard back.shutdown()
+
+    block an_older_single_full_scale_belongs_to_the_signal_judged_then:
+      # a file with one value and the masses typed: it was GF (M, B)'s; with no masses: GF's
+      let dir = fx.dir / "config-g"
+      createDir(dir)
+      var st = started(dir)
+      let w = st.open(fx.vibFourSegy())
+      var p = st.plots[w].params
+      (p.reactionMassKg, p.baseplateMassKg, p.forceHundredPct) = (3600.0, 1800.0, 4000.0)
+      st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p,
+        origin: coWindow)
+      doAssert st.settle(not st.plots[w].waiting)
+      discard st.shutdown()
+      var text = readFile(dir / "settings.nif")
+      text = text.replace("(forceHundredScoped true)", "")
+      writeFile(dir / "settings.nif", text)
+      let loaded = loadSettings(dir / "settings.nif").settings.plotOptions.vibrator
+      doAssert loaded.forceHundredWeighted == 4000 and loaded.forceHundredPct.isNaN,
+        $(loaded.forceHundredPct, loaded.forceHundredWeighted)
 
     block the_other_boxes_in_a_project:
       let dir = fx.dir / "config-e"

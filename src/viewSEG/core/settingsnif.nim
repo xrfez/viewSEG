@@ -284,6 +284,9 @@ proc writePlotOptions(w: var NifWriter; o: PlotOptions) =
   w.value("targetPct", o.vibrator.targetPct)
   if not o.vibrator.forceHundredPct.isNaN: w.value("forceHundredPct",
       o.vibrator.forceHundredPct)
+  if not o.vibrator.forceHundredWeighted.isNaN:
+    w.value("forceHundredWeighted", o.vibrator.forceHundredWeighted)
+  w.value("forceHundredScoped", true)
   w.open("tops")
   for t in o.vibrator.tops:
     w.open("top")
@@ -836,6 +839,7 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
         elif c.isTree("phaseShow"): r.choice(c, PhaseShowNames, o.envelope.phaseShow)
         else: r.unknown(c, "envelope")
     elif k.isTree("vibrator"):
+      var scoped = false # the 100 % force is kept per judged signal (older files: one value)
       for c in k.kids:
         if c.isTree("reactionMassKg"): r.ranged(c, MassKgRange, o.vibrator.reactionMassKg)
         elif c.isTree("baseplateMassKg"): r.ranged(c, MassKgRange, o.vibrator.baseplateMassKg)
@@ -861,6 +865,9 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
         elif c.isTree("targetPct"): r.ranged(c, TargetPctRange, o.vibrator.targetPct)
         elif c.isTree("forceHundredPct"): r.ranged(c, MassKgRange,
             o.vibrator.forceHundredPct)
+        elif c.isTree("forceHundredWeighted"): r.ranged(c, MassKgRange,
+            o.vibrator.forceHundredWeighted)
+        elif c.isTree("forceHundredScoped"): scoped = true
         elif c.isTree("qc"):
           # a limit written is on; one left out is off
           o.vibrator.qc = QcLimits(avgPhaseDeg: NaN, peakPhaseDeg: NaN,
@@ -887,6 +894,12 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
             else: r.unusable(t, "tops", "(top \"reference\" hertz)")
           o.vibrator.tops = got
         else: r.unknown(c, "vibrator")
+      if not scoped and not o.vibrator.forceHundredPct.isNaN and
+          o.vibrator.reactionMassKg > 0 and o.vibrator.baseplateMassKg > 0:
+        # the one value of an older file belongs to the signal judged then: with the masses
+        # typed that was GF (M, B) (the recorded GF is judged alone only without them)
+        (o.vibrator.forceHundredWeighted, o.vibrator.forceHundredPct) = (
+          o.vibrator.forceHundredPct, NaN)
     elif k.isTree("fk"):
       for c in k.kids:
         if c.isTree("floorDb"): r.ranged(c, FloorDbRange, o.fk.floorDb)

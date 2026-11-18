@@ -919,10 +919,15 @@ in the order you meet them:
    and baseplate acceleration the recorder wrote with its own masses; **GF from M and B**
    is the same sum formed here with the masses you typed. Pick the one the crew's
    specification means; the verdict line names it ("PASS on GF (M, B)"). When the two do
-   not agree (the phase by more than 10 degrees, or the force's shape by more than 3 dB) a
+   not agree (their phases differ by more than 10 degrees in some window, or the level ratio varies by more than 3 dB along the sweep) a
    line under the verdict says "the recorded GF does not match M and B with the typed
    masses": check the masses, or judge GF from M and B. The choice is remembered with the
-   roles for that file layout.
+   roles for that file layout. Each of the two has its own "100 % force =" value (counts for
+   GF as recorded, kg x counts for GF from M and B): the box shows the one of the signal
+   judged, and is empty (the force rows "not judged") until you type it. The peak force of
+   GF from M and B can read lower than the vibrator's own peak force figure (about 5 % lower
+   at the median on the files reviewed), so a peak near the limit may pass here and be
+   flagged there; the numbers are not adjusted.
 8b. **window (ms).** The length of the windows the sweep is judged in (500, as the
    controllers use): each window gives a mean, and the limits are on the average and the
    worst of the windows.

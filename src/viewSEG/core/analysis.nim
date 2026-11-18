@@ -148,6 +148,9 @@ type
     targetPct*: float64 = 100.0
       ## vibrator signature: the drive level the sweep was set to, % of the full scale
       ## (`forceHundredPct`): the average force is judged against it
+    forceHundredWeighted*: float64 = NaN
+      ## the same for GF (M, B), which is in another unit (kg × counts): each judged signal has
+      ## its own full scale, and the box shows the one of the signal judged
     forceHundredPct*: float64 = NaN
       ## vibrator signature: the force that is 100 % (the file's unit), for the force
       ## limits; NaN: not given, the force limits are not judged
@@ -558,6 +561,7 @@ func settingProblem*(p: AnalysisParams; view: AnalysisView): string =
     for name, v in fieldPairs(p.qc):
       check("qc." & name, v, NumberRange, none = true)
     check("forceHundredPct", p.forceHundredPct, MassKgRange, none = true)
+    check("forceHundredWeighted", p.forceHundredWeighted, MassKgRange, none = true)
     check("targetPct", p.targetPct, TargetPctRange)
     for t in p.tops: check("tops[" & t.reference & "].hz", t.hz, TopHzRange)
   ""

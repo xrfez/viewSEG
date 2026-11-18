@@ -17,7 +17,7 @@
 ## (`readoutText`), with the point and curve under the pointer, for the
 ## keys to start from.
 
-import std/[hashes, math, tables]
+import std/[hashes, math, strutils, tables]
 import imguin/cimgui
 import ../../core/[geometry, plotcursor, references]
 import ../../view/[axisfit, curveplot, plotink, theme]
@@ -149,7 +149,11 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   # The label that runs up the left (rotated) is cut to the pane's height, so that stacked
   # panes' labels do not run into each other; the whole label is the axis's tooltip.
   let upLabel = if turned: p.xLabel else: p.yLabel
-  let upShown = if size.y > 0: shortenEnd(upLabel, size.y - igGetFontSize() * 4.5)
+  # (on a short plot the unit's bracket goes before the word is cut: "Phase", not "Phase (...")
+  var upFit = upLabel
+  if size.y > 0 and textWidth(upLabel) > size.y - igGetFontSize() * 4.5 and " (" in upLabel:
+    upFit = upLabel[0 ..< upLabel.find(" (")]
+  let upShown = if size.y > 0: shortenEnd(upFit, size.y - igGetFontSize() * 4.5)
                 else: upLabel
   let bare = p.bareX and not turned
   ImPlot_SetupAxis(ImAxis_X1.cint, (if turned: p.yLabel else: p.xLabel).cstring,

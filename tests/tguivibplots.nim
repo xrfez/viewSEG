@@ -24,7 +24,7 @@ import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[analysis, geometry, state, references, units]
 import viewSEG/view/[analysisview, curveplot, theme]
 import viewSEG/ui/imgui/app
-import utils/[fixtures, waiting]
+import utils/[curvepixels, fixtures, waiting]
 
 const sample = currentSourcePath().parentDir.parentDir / "samples" / "vib" /
   "vib_signature.sgd"
@@ -66,22 +66,13 @@ proc main*() =
             (child.size.y > 0 and r.pos.y + r.size.y > child.pos.y + child.size.y):
           continue # partly scrolled out of view
         let what = p.yLabel & " (plot " & $(i + 1) & ")"
-        var curve, ink = 0
-        # (the whole area: a flat line may lie on its first or last row)
-        for y in int(r.pos.y) ..< int(r.pos.y + r.size.y):
-          for x in int(r.pos.x) + 1 ..< int(r.pos.x + r.size.x) - 1:
-            let px = f.readPixel(x, y)
-            # (a curve's own colour, or anything clearly off the plot's background: two curves
-            # lying on each other blend, and a flat line may be one row)
-            var drawnPx = distance(px, f.theme.roles[rlPlotBackground]) > 60
-            for c in p.curves:
-              if distance(px, c.colour) <= 8: drawnPx = true
-            if drawnPx: inc curve
+        var ink = 0
+        let missing = f.missingCurves(r, p)
         for y in int(r.pos.y) ..< int(r.pos.y + r.size.y):
           for x in max(0, int(r.pos.x) - 70) ..< int(r.pos.x) - 1:
             if distance(f.readPixel(x, y), f.theme.roles[rlText]) <= 90: inc ink
         # (the legend is outside the area: its swatches no longer count as curve pixels)
-        doAssert curve > 100, what & ": " & $curve & " curve pixels"
+        doAssert missing.len == 0, what & ": curves not drawn: " & $missing
         doAssert ink > 20, what & ": " & $ink & " pixels of y tick labels"
         drawn.incl i
     proc scrollTo(notches: float32) =

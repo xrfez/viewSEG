@@ -378,6 +378,7 @@ proc fourRows(gf, m, b: SynthSweep; p: AnalysisParams; topHz = 100.0): AnalysisR
   var q = p
   (q.reactionMassKg, q.baseplateMassKg) = (3000.0, 1000.0)
   if q.forceHundredPct.isNaN: q.forceHundredPct = Hundred
+  if q.forceHundredWeighted.isNaN: q.forceHundredWeighted = Hundred
   result = vibratorOf(rows, @["R", "GF", "M", "B"], [vsReference: 0, vsGroundForce: 1,
     vsMass: 2, vsBaseplate: 3], gf.dtMs, q, -1, topHz)
   doAssert result.problem == "", result.problem
@@ -411,17 +412,50 @@ proc judgeChoice() =
     doAssert off.judged == "GF" and off.qc.verdict == qvPass, off.qc.line
     doAssert "the recorded GF does not match M and B with the typed masses (" in
       off.judgeWarning and "or judge GF from M and B" in off.judgeWarning, off.judgeWarning
-    doAssert "39 degrees" in off.judgeWarning or "38 degrees" in off.judgeWarning or
-      "40 degrees" in off.judgeWarning, off.judgeWarning
+    doAssert "phase differs by up to 39 degrees" in off.judgeWarning or
+      "phase differs by up to 40 degrees" in off.judgeWarning, off.judgeWarning
     # chosen by the user: judged on the sum, no warning
     var q = AnalysisParams()
     q.roles.judge = joWeighted
     let chosen = fourRows(good(), m2, b2, q)
     doAssert chosen.judgeWarning.len == 0 and chosen.judged == "GF (M, B)"
     doAssert near(chosen.qc.stats.avgPhaseDeg, 40, 0.5), $chosen.qc.stats.avgPhaseDeg
+    # a phase that swings either way (+15 degrees for a second against a flat sum) is a
+    # mismatch by window though the averages agree; a constant gain offset alone is none
+    var swing = good()
+    swing.burstAtS = 3.0
+    swing.burstLenS = 1.0
+    swing.burstPhaseDeg = 15
+    let sw = fourRows(swing, m, b, AnalysisParams())
+    doAssert "phase differs by up to" in sw.judgeWarning, "no warning: " & sw.judgeWarning
+    var half = good()
+    half.amp = 500 # the sum is 1000: a factor of two everywhere
+    let gain = fourRows(half, m, b, AnalysisParams())
+    doAssert gain.judgeWarning.len == 0, gain.judgeWarning
     # one ground force only: no choice, no name in the line
     let single = judgeOf(good())
     doAssert not single.bothSignals and single.qc.line.startsWith("✓ PASS:")
+
+proc fullScalePerSignal() =
+  block each_judged_signal_has_its_own_full_scale:
+    let (m, b) = massesFor(1)
+    # only the recorded GF's full scale typed: judging GF (M, B) leaves the force rows not
+    # judged (not 2000 % of a number in another unit)
+    let rows = @[good().referenceOf.sweepRow, good().sweepRow, m.sweepRow, b.sweepRow]
+    var p = AnalysisParams(reactionMassKg: 3000, baseplateMassKg: 1000, forceHundredPct: 500)
+    p.roles.judge = joWeighted
+    let at = [vsReference: 0, vsGroundForce: 1, vsMass: 2, vsBaseplate: 3]
+    let none = vibratorOf(rows, @["R", "GF", "M", "B"], at, 1.0, p, -1, 100.0)
+    doAssert none.judged == "GF (M, B)"
+    for l in [qlAvgForce, qlPeakForce]:
+      doAssert none.row(l).status == qsNotJudged, $l & ": " & $none.row(l).measured
+    # its own typed: judged on it; the recorded GF's 500 is used when that is judged
+    p.forceHundredWeighted = 1000
+    let weighted = vibratorOf(rows, @["R", "GF", "M", "B"], at, 1.0, p, -1, 100.0)
+    doAssert near(weighted.row(qlAvgForce).measured, 100, 1.5), $weighted.row(qlAvgForce).measured
+    p.roles.judge = joRecorded
+    let recorded = vibratorOf(rows, @["R", "GF", "M", "B"], at, 1.0, p, -1, 100.0)
+    doAssert near(recorded.row(qlAvgForce).measured, 200, 3), $recorded.row(qlAvgForce).measured
 
 proc targetForce() =
   block the_target_force_is_the_drive_level:
@@ -466,6 +500,21 @@ proc bandWarnings() =
       doAssert judgeOf(spec, topHz = 0.9 * top).band.warning.len > 0, tag & ": 10 % low"
       doAssert judgeOf(spec, topHz = 1.1 * top).band.warning.len > 0, tag & ": 10 % high"
 
+proc downSweepBand() =
+  block a_down_sweeps_top_is_at_its_start:
+    for (taper, expo, seconds) in [(0.5, false, 12.0), (1.0, false, 12.0), (0.5, true, 12.0)]:
+      var spec = good()
+      (spec.f0, spec.f1, spec.seconds, spec.taperS, spec.expo) = (220.0, 6.0, seconds, taper,
+        expo)
+      let tag = "220-6 Hz " & (if expo: "exponential" else: "linear") & ", taper " & $taper
+      doAssert judgeOf(spec, topHz = 220).band.warning.len == 0, tag & ": " &
+        judgeOf(spec, topHz = 220).band.warning
+      # (an exponential sweep's chord reads 14 % under its top: the rate over the taper is
+      # large, so only a top further off than that can be told wrong)
+      let (low, high) = if expo: (0.8, 1.15) else: (0.9, 1.1)
+      doAssert judgeOf(spec, topHz = 220 * low).band.warning.len > 0, tag & ": too low"
+      doAssert judgeOf(spec, topHz = 220 * high).band.warning.len > 0, tag & ": too high"
+
 proc fractionalShift() =
   block the_stored_reference_is_placed_to_a_fraction_of_a_sample:
     for (delay, dt) in [(100.3, 1.0), (100.5, 1.0), (145.2, 0.5)]:
@@ -509,6 +558,15 @@ proc verdictWords() =
       maxPeak: 1000)
     let r = judge(s, 500, QcLimits(), 1000)
     doAssert "5.04° > 5°" in r.line, r.line
+    # a value that rounds to its limit however long it is cut shows its digits
+    let tiny = judge(WindowSummary(windows: 3, meanAbsPhaseDeg: 5.0001, maxAbsPhaseDeg: 5.0001,
+      maxAbsPhaseAtMs: 1000, meanThdPct: 1, maxThdPct: 1, meanForce: 1000, minForce: 1000,
+      maxPeak: 1000), 500, QcLimits(), 1000)
+    doAssert "5.0001° > 5°" in tiny.line, tiny.line
+    let low = judge(WindowSummary(windows: 3, meanAbsPhaseDeg: 1, maxAbsPhaseDeg: 1,
+      maxAbsPhaseAtMs: 1000, meanThdPct: 1, maxThdPct: 1, meanForce: 899.99, minForce: 899.99,
+      maxPeak: 1000), 500, QcLimits(), 1000)
+    doAssert "89.999 % < 90 %" in low.line, low.line
 
 proc plotsShowWhatIsJudged() =
   block the_phase_plot_holds_the_judged_signal_and_its_limits:
@@ -540,8 +598,10 @@ proc plotsShowWhatIsJudged() =
 proc main*() =
   baseTests()
   judgeChoice()
+  fullScalePerSignal()
   targetForce()
   bandWarnings()
+  downSweepBand()
   fractionalShift()
   verdictWords()
   zeroPhaseIsClearOfTheBorder()

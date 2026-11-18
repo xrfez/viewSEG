@@ -915,8 +915,12 @@ right of that line's first row. A change works it out again.
     settings; an agent's change is for the session) and in the agent state (`judged`,
     `bothSignals`, `judgeWarning`, `roles.judge`). The recorded GF is the weighted sum the
     recorder wrote with its own masses; the other is the same sum formed here. When the
-    recorded one does not match (more than 10 degrees of phase, or 3 dB in the shape of the
-    force over the windows) the default stays and one line says so.
+    recorded one does not match (the level ratio between the two varies by more than 3 dB
+    along the sweep, or their phases differ by more than 10 degrees in some window) the
+    default stays and one line says so. Each signal has its own **100 % force =** value (the
+    recorded GF is in counts, GF from M and B in kg x counts); the box shows that of the
+    signal judged. The peak force of GF from M and B can read lower than the vibrator's own
+    peak force figure (about 5 % lower at the median on the files reviewed).
   - **What the plots show of the verdict.** The phase, distortion and force plots draw the
     judged signal's window means as a stepped line and the limits as lines, and the phase
     axis is fitted to them with a margin: M and B may run off it, the legend then says

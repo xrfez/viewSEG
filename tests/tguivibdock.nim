@@ -112,7 +112,7 @@ proc main*() =
       for y in int(d0.pos.y) + 1 ..< int(d0.pos.y + d0.size.y):
         for x in countup(int(d0.pos.x) + 4, int(d0.pos.x + d0.size.x) - 4, 2):
           for c in plots[0].curves:
-            if " limit" notin c.name and distance(f.readPixel(x, y), c.colour) <= 8:
+            if not c.name.isQcLimitLine and distance(f.readPixel(x, y), c.colour) <= 8:
               lowest = max(lowest, y)
       doAssert lowest >= 0, what & ": no GF pixel in the phase plot"
       doAssert float32(lowest) <= d0.pos.y + d0.size.y - 3, what &

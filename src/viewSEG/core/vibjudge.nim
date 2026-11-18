@@ -125,11 +125,16 @@ func boundText*(r: QcRow): string =
   else: (if r.limit.isLowerBound: "≥ " else: "≤ ") & plain(r.bound) & r.limit.unitOf & of100
 
 func measuredText*(r: QcRow): string =
-  ## "7.2°"; "-" for none. Two decimals when one would read the same as the limit.
-  if r.measured.isNaN: "-"
-  else:
-    let same = not r.bound.isNaN and plain(r.measured) == plain(r.bound)
-    plain(r.measured, (if same: 2 else: 1)) & r.limit.unitOf
+  ## "7.2°"; "-" for none. With decimals added (up to 4, none stripped at the last) when
+  ## fewer would read the same as the limit ("5.0001° > 5°", not "5° > 5°").
+  if r.measured.isNaN: return "-"
+  var digits = 1
+  if not r.bound.isNaN:
+    while digits < 4 and plain(r.measured, digits) == plain(r.bound): inc digits
+  let text = if digits == 4 and plain(r.measured, 4) == plain(r.bound):
+               formatFloat(r.measured, ffDecimal, 4)
+             else: plain(r.measured, digits)
+  text & r.limit.unitOf
 
 func markText*(r: QcRow): string =
   ## The mark as text, never colour alone: "✓", "✗", or "–" (not judged).
@@ -229,6 +234,14 @@ func judge*(s: WindowSummary; windowMs: float64; limits: QcLimits;
   else:
     result.line = "NOT JUDGED: no limit could be judged" &
       (if noScale.len > 0: " (" & noScale & ")" else: "")
+
+func isQcLimitLine*(name: string): bool =
+  ## Whether a curve is one of the verdict's limit lines (always drawn), by its name, and
+  ## not a point limit ("limit 10°", "THD limit", "harmonic limit": drawn only when the point
+  ## limits are on).
+  for head in ["peak phase limit", "average phase limit", "peak distortion limit",
+      "average distortion limit", "peak force limit", "average force limit"]:
+    if name.startsWith(head): return true
 
 func tableOf*(r: QcReport): seq[seq[string]] =
   ## The limits table: a header, then a row per limit: the mark (first, so a narrow window never
