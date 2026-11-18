@@ -113,13 +113,15 @@ proc drawControls(w: SpectrumWindow; name: string; t: Theme;
       d.scale = ssDb
       changed = true
     marks.mark(name & ".db")
-    tip("Amplitude in dB, 0 dB at the largest of the curves (raw and processed on one scale)")
+    tip("Amplitude in dB, 0 dB at the largest of the curves (raw and processed on one scale); " &
+      "a sine between two bins reads up to about 3 dB low")
     igSameLine(0, -1)
     if igRadioButton_Bool("Linear", d.scale == ssLinear):
       d.scale = ssLinear
       changed = true
     marks.mark(name & ".linear")
-    tip("Amplitude in the file's sample units: a sine of amplitude A on a bin reads A")
+    tip("Amplitude in the file's sample units: a sine of amplitude A on a bin reads A; " &
+      "between two bins it reads up to about 3 dB (a factor of 0.71) low")
     igSameLine(0, -1)
     if igCheckbox("Log frequency", addr d.logFrequency): changed = true
     marks.mark(name & ".log")

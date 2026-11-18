@@ -263,6 +263,7 @@ func spectrogramText(f: ExplainFacts): string =
       "One cell is one frame and one frequency bin."),
     part("Computed from", f.what("The traces chosen."),
       (if f.count > 1: "Several traces are combined as their power average (RMS)." else: ""),
+      "Each trace's mean is removed first.",
       closed(frame & " (Hann), overlapping by " & (if known(f.overlap): num(f.overlap) &
         " %" else: "the overlap set above")), f.filterClause, f.editsClause),
     part("Reading it", "A sweep is a line climbing (or falling) across the picture; a " &
@@ -338,7 +339,8 @@ func instFrequencyText(f: ExplainFacts): string =
 func phaseAmplitudeText(f: ExplainFacts): string =
   join4(part("Shows", "Amplitude in dB below its peak (0 dB at the top) against frequency in Hz."),
     part("Computed from", f.what("The first trace chosen."),
-      "The whole trace, with no taper, zero padded to four times its length; phase is drawn " &
+      "The whole trace, its mean removed, with no taper, zero padded to four times its " &
+      "length; phase is drawn " &
       "only where this curve is within " & (if known(f.withinDb): num(f.withinDb) else:
     "the dB set above") & " dB of its peak.", f.filterClause, f.editsClause),
     part("Reading it", "It tells where the phase below can be trusted: the phase means " &
@@ -349,7 +351,8 @@ func phaseText(f: ExplainFacts): string =
   join4(part("Shows", "Phase in degrees up, against frequency in Hz across, for one trace.",
       PhaseMeaning[f.picture]),
     part("Computed from", f.what("The first trace chosen."),
-      "Phase from the trace's first sample, the trace zero padded to four times its length, " &
+      "Phase from the trace's first sample, the trace's mean removed and zero padded to " &
+      "four times its length, " &
       "drawn where the amplitude is within " & (if known(f.withinDb): num(f.withinDb) else:
     "the dB set above") & " dB of its peak.", f.filterClause, f.editsClause),
     part("Reading it", "A straight slope means a pure time delay; a flat line none. " &
@@ -497,7 +500,8 @@ func fkText(f: ExplainFacts): string =
       "below the largest value" &
       (if known(f.floorDb): " (" & num(f.floorDb) & " dB the lowest colour)" else: "") & "."),
     part("Computed from", f.what("The traces chosen (4 at least)."), "A box of " & box &
-      " and every trace, tapered 10 % at each end in both directions.",
+      " and every trace, each trace's mean removed, tapered 10 % at each end in both " &
+      "directions.",
       (if f.fkRaw: "The plot's filters are left out." else: f.filterClause), f.editsClause,
       (if f.velocity.len > 0: "The cursor reads the apparent velocity (" & f.velocity &
          ") as frequency over wavenumber." else: "")),

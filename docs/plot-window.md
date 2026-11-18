@@ -714,7 +714,8 @@ right of that line's first row. A change works it out again.
 - **Spectrogram:** the frame's length (ms; a Hann window: a frame of W ms resolves about
   2/W kHz; 128 ms at first), the frames' overlap (%, 75 at first), the floor (the lowest
   dB drawn, -60 at first) and the colour map (density's maps; viridis at first). Each
-  frame is placed at its centre's time.
+  frame is placed at its centre's time. Each trace's mean is removed first, so a direct
+  current offset is not the brightest row.
 - **Phase spectrum:** the phase is drawn **only where the amplitude is within N dB of its
   peak** (20 dB at first): elsewhere it is noise, a gap, and the unwrap starts again on
   the far side from the last drawn value. The picture is **Unwrapped** at first.
@@ -727,11 +728,15 @@ right of that line's first row. A change works it out again.
   as drawn and, unless the picture is signed, the signed value in brackets. A sweep's
   phase climbs steeply because its delay grows with frequency; for vibrator QC, read
   the phase against the pilot in the vibrator signature plot. The phase is from the
-  trace's first sample, of the whole trace,
-  untapered, **zero-padded to 4 times its length**: between bins the phase of energy
+  trace's first sample, of the whole trace, **its mean removed first** (as an FFT
+  window does; the note under the title says "mean removed"), untapered,
+  **zero-padded to 4 times its length**: between bins the phase of energy
   arriving at time t steps 360°·t/(4T), at most a quarter turn for any t within the
   trace (length T), so the unwrap cannot alias. Unpadded, a step passes half a turn once
   t is past T/2, and a sweep's phase (which falls all the way) turned and rose there.
+  A trace with a sample that is not a number is left out and counted in the window's line of
+  words ("1 left out (killed, dead or unreadable; 1 with a sample that is not a number)"),
+  as the FFT window does, not drawn as 0; so are such traces of a spectrogram and an f-k.
 - **Cross-correlation:** the reference is the one chosen in Operations > References,
   and only that. The bar says "Reference: <name>" and **References** opens that window.
   Nothing else chooses a reference from here. With none chosen, the plot area says
@@ -757,7 +762,10 @@ right of that line's first row. A change works it out again.
   window's filters, so the effect of a filter shows; on: the plot's filters left out.
   A trace's own filter is applied either way). The box is
   tapered (a cosine over 10 % at each end) along time and across the traces, which are
-  zero-padded to twice their number. The wavenumber is worked out from the trace spacing
+  zero-padded to twice their number; each trace's mean over the box is removed first. A
+  trace with a sample that is not a number is left out, and the note says so: the traces
+  that remain are taken as they are, so when that makes their spacing irregular the rule
+  for irregular offsets applies (wavenumber per trace). The wavenumber is worked out from the trace spacing
   when it is regular (the signed offsets, else the receivers' distances along the line) and
   the unit of the file's distances (the unit confirmed with its import, else what its
   headers say: the measurement system, the coordinate unit, the CRS). Trace offsets are
@@ -1491,7 +1499,10 @@ the 12 000 selected").
 demeaned, tapered (a sin² ramp over 10 % at each end) and zero-padded to the next power
 of two, or further while a bin is wider than half the plot's narrowest filter feature
 (a ramp, half a notch: `narrowestRampHz`), up to 8 times; amplitudes are one-sided and
-corrected for the taper, so a sine of amplitude A on a bin reads A. Several traces are averaged over power (the RMS amplitude across them).
+corrected for the taper, so a sine of amplitude A on a bin reads A. A sine between two bins reads
+up to about 3 dB (a factor of about 0.71) low with the window used, at each of its two
+neighbouring bins: read a tone's amplitude where it is on a bin, or take it as at least what
+the curve shows. Several traces are averaged over power (the RMS amplitude across them).
 The frequency axis runs from 0 Hz to Nyquist (500 / interval in ms). Left out, and
 counted in the window's line of words: killed traces, traces the file marks dead, traces
 that cannot be read or hold a sample that is not a number, and traces at another sample
@@ -1522,7 +1533,10 @@ logarithmic (0 Hz is then left out). A spectrum of one trace has its phase too (
 degrees, from the window's first sample, drawn under the amplitude). The picture is
 **Unwrapped** at first; **Magnitude 0-180** (absolute value, axis fixed 0 to 180),
 **Signed +-180** and **Delay removed** are the other choices, kept with the window's
-other choices. Where the amplitude is more than 60 dB below that curve's peak the phase is
+other choices. The Unwrapped and Delay removed pictures are unwrapped on a grid 4 times finer
+than the bins (the trace zero-padded to 4 times the FFT's length, as the Phase spectrum
+plot does) and read at the bins, so an arrival late in the window (past half of the FFT's
+length) is not folded the wrong way. Where the amplitude is more than 60 dB below that curve's peak the phase is
 not drawn, and the unwrap does not run across the gap. The readout gives the phase as
 drawn and, unless the picture is signed, the signed value in brackets; Delay removed
 also says the delay in ms. A sweep's phase climbs steeply because its delay grows with
@@ -1577,7 +1591,9 @@ processed curve went through, never only what the plot has set now.
 
 **Time.** An FFT window is over the whole trace by default; "Visible time" takes the
 time the Seismic window showed when it was opened (and the whole trace again when
-unticked). The live panel is over the visible time by default. How a window shows its
+unticked). That time is read on the Seismic window's time axis, which starts at one time
+for every trace (the first seismic trace's start time, as the plot draws them), so a trace
+recorded with a delay is cut where the plot shows it, not at its own start time. The live panel is over the visible time by default. How a window shows its
 spectrum (dB or linear, the axis, the curves, the time, the phase) is kept: a new FFT
 window starts as the last one changed, and the live panel as it was left.
 

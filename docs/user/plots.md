@@ -38,7 +38,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Time in ms across, frequency in Hz up; the colour is the amplitude in dB below the largest amplitude in the picture (0 dB is the brightest cell). One cell is one frame and one frequency bin.
 
-**Computed from.** The traces chosen. Hann frames of the length set above (Hann), overlapping by the overlap set above. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The traces chosen. Each trace's mean is removed first. Hann frames of the length set above (Hann), overlapping by the overlap set above. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
 
 **Reading it.** A sweep is a line climbing (or falling) across the picture; a vertical streak is a short broadband burst such as a spike; a horizontal band is a steady tone such as power-line noise; a band that fades shows lost energy at those frequencies.
 
@@ -78,7 +78,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Amplitude in dB below its peak (0 dB at the top) against frequency in Hz.
 
-**Computed from.** The first trace chosen. The whole trace, with no taper, zero padded to four times its length; phase is drawn only where this curve is within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The first trace chosen. The whole trace, its mean removed, with no taper, zero padded to four times its length; phase is drawn only where this curve is within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
 
 **Reading it.** It tells where the phase below can be trusted: the phase means something only where the amplitude is high.
 
@@ -88,7 +88,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Phase in degrees up, against frequency in Hz across, for one trace. The phase followed along frequency without jumps: a delay is a straight slope, a sweep a curve.
 
-**Computed from.** The first trace chosen. Phase from the trace's first sample, the trace zero padded to four times its length, drawn where the amplitude is within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The first trace chosen. Phase from the trace's first sample, the trace's mean removed and zero padded to four times its length, drawn where the amplitude is within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
 
 **Reading it.** A straight slope means a pure time delay; a flat line none. A sweep's phase climbs steeply because its delay grows with frequency (a linear sweep is a parabola); for vibrator QC, read the phase against the pilot in the vibrator signature plot.
 
@@ -178,7 +178,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Wavenumber (cycles per km or per kft with a regular spacing and a length unit, else per trace) across, frequency in Hz up; the colour is the amplitude in dB below the largest value.
 
-**Computed from.** The traces chosen (4 at least). A box of the whole time of the traces and every trace, tapered 10 % at each end in both directions. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The traces chosen (4 at least). A box of the whole time of the traces and every trace, each trace's mean removed, tapered 10 % at each end in both directions. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
 
 **Reading it.** An event of constant speed lies on a straight line through the origin, steeper for a faster one: its slope is the apparent velocity. Slow events such as ground roll lie at high wavenumber, reflections near the frequency axis.
 
