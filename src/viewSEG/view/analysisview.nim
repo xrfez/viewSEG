@@ -52,16 +52,24 @@ func curvePlots*(r: AnalysisResult; t: Theme; units = usMetric): seq[CurvePlot] 
       of csLimit:
         c.curves.add Curve(name: curve.name, colour: t.roles[rlError], ys: ys,
           xs: curve.xs, width: 1)
-      of csPast:
+      of csFail:
         c.curves.add Curve(name: curve.name, colour: t.roles[rlError], ys: ys,
-          xs: curve.xs, marks: true)
+          xs: curve.xs, width: 3, overlay: true)
       of csReference:
         c.curves.add Curve(name: curve.name, colour: t.roles[rlTextDim], ys: ys,
           xs: curve.xs, width: 1)
     result.add c
-  # a vibrator's plots share one sweep time: only the last names it, so each has the room
+  # a vibrator's plots share one sweep time: only the last names it, so each has the room;
+  # their legends are small and inside the plot (none for a plot of one curve), so that every
+  # plot has the whole width
   if r.view == avVibrator:
     for i in 0 ..< result.high: result[i].bareX = true
+    for c in result.mitems:
+      var shown = 0
+      for k in c.curves:
+        if not k.overlay: inc shown
+      c.legendInside = true
+      c.legend = shown > 1
 
 func cellAt*(img: AnalysisImage; x, y: float64): PlotCursor =
   ## The cell whose centre is nearest (`x`, `y`), within the image; `x` -1

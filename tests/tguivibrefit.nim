@@ -109,7 +109,7 @@ proc main*() =
       doAssert not w.waiting and w.result.problem.len == 0, what & ": " &
           w.result.problem
       let plots = w.result.curvePlots(f.theme, f.core.settings.units)
-      doAssert plots.len == 5, what & ": " & $plots.len & " plots"
+      doAssert plots.len == (if w.params.details: 5 else: 4), what & ": " & $plots.len & " plots"
       var now: seq[Span] = @[]
       var lefts, rights: seq[float32] = @[]
       for i, p in plots:
@@ -138,9 +138,10 @@ proc main*() =
             if not y.isNaN:
               doAssert y <= now[0].hi + 1e-9 and y >= now[0].lo - 1e-9,
                 what & ": the judged curve is clipped: " & $y & " in " & $now[0]
-      if changed and last.len == 5:
-        for i in 0 ..< 5:
-          if i in [3, 4]: continue # frequency: the same sweep; distortion: its fit is the tapers
+      if changed and last.len == plots.len:
+        for i in 0 ..< plots.len:
+          # frequency: the same sweep; distortion: its fit is the tapers
+          if plots[i].yLabel.startsWith("Frequency") or plots[i].yLabel.startsWith("Dist"): continue
           doAssert not (near(now[i].lo, last[i].lo) and near(now[i].hi, last[
               i].hi)),
             what & ": plot " & $i & " kept the axis " & $now[i]
@@ -158,15 +159,15 @@ proc main*() =
       proc (f: FrameInfo): bool =
         f.core.plots.len == 1 and not f.core.plots[0].waiting and
           f.core.plots[0].result.problem.len == 0 and f.core.plots[
-              0].result.plots.len == 5)
+              0].result.plots.len in 4 .. 5)
     step("settle", noop, after(25))
     step("record 1", noop, proc (f: FrameInfo): bool = f.check("record 1", false))
     step("the next record", proc (f: FrameInfo) =
       f.apply(Command(kind: ckGather, panel: MainPanel, gather: 1)),
       proc (f: FrameInfo): bool =
         f.core.plots.len == 1 and not f.core.plots[0].waiting and
-          f.core.plots[0].result.plots.len == 5 and
-          f.core.plots[0].result.plots[1].curves[0].ys.biggest > 2000)
+          f.core.plots[0].result.plots.len in 4 .. 5 and
+          f.core.plots[0].result.plots[1].curves[0].ys.biggest > 200)
     step("settle 2", noop, after(25))
     step("record 2 (larger)", noop, proc (f: FrameInfo): bool = f.check(
         "record 2", true))
@@ -174,8 +175,8 @@ proc main*() =
       f.apply(Command(kind: ckGather, panel: MainPanel, gather: 0)),
       proc (f: FrameInfo): bool =
         f.core.plots.len == 1 and not f.core.plots[0].waiting and
-          f.core.plots[0].result.plots.len == 5 and
-          f.core.plots[0].result.plots[1].curves[0].ys.biggest < 2000)
+          f.core.plots[0].result.plots.len in 4 .. 5 and
+          f.core.plots[0].result.plots[1].curves[0].ys.biggest < 200)
     step("settle 3", noop, after(25))
     step("record 1 again (smaller)", noop, proc (f: FrameInfo): bool = f.check(
         "record 1 again", true))
@@ -183,8 +184,8 @@ proc main*() =
       f.apply(Command(kind: ckShowFile, panel: MainPanel, path: large)),
       proc (f: FrameInfo): bool =
         f.core.plots.len == 1 and not f.core.plots[0].waiting and
-          f.core.plots[0].result.plots.len == 5 and
-          f.core.plots[0].result.plots[1].curves[0].ys.biggest > 2000)
+          f.core.plots[0].result.plots.len in 4 .. 5 and
+          f.core.plots[0].result.plots[1].curves[0].ys.biggest > 200)
     step("settle 6", noop, after(25))
     step("another file (larger)", noop, proc (f: FrameInfo): bool = f.check(
         "file large", true))
@@ -192,14 +193,15 @@ proc main*() =
       f.apply(Command(kind: ckShowFile, panel: MainPanel, path: small)),
       proc (f: FrameInfo): bool =
         f.core.plots.len == 1 and not f.core.plots[0].waiting and
-          f.core.plots[0].result.plots.len == 5 and
-          f.core.plots[0].result.plots[1].curves[0].ys.biggest < 2000)
+          f.core.plots[0].result.plots.len in 4 .. 5 and
+          f.core.plots[0].result.plots[1].curves[0].ys.biggest < 200)
     step("settle 7", noop, after(25))
     step("another file (smaller)", noop, proc (f: FrameInfo): bool = f.check(
         "file small", true))
     step("judged on M and B, signed phase", proc (f: FrameInfo) =
       var p = f.core.plots[0].params
       p.roles.judge = joWeighted
+      p.details = true
       p.roles.massPolarity = poReversed
       p.phaseShow = psSigned
       f.apply(Command(kind: ckPlotDisplay, plot: 1, plotParams: p)),
@@ -222,6 +224,7 @@ proc main*() =
       var p = f.core.plots[0].params
       p.roles.judge = joRecorded
       p.roles.massPolarity = poAsRecorded
+      p.details = false # (the five plots do not all fit the window: four are drawn)
       p.phaseShow = psSigned
       f.apply(Command(kind: ckPlotDisplay, plot: 1, plotParams: p))
       f.apply(Command(kind: ckShowFile, panel: MainPanel, path: flip)),
@@ -229,7 +232,7 @@ proc main*() =
         f.core.plots[0].result.judged == "GF" and not f.core.plots[
             0].waiting and
           f.core.plots[0].params.phaseShow == psSigned and
-          f.core.plots[0].result.plots.len == 5 and
+          f.core.plots[0].result.plots.len in 4 .. 5 and
           f.core.plots[0].result.plots[0].curves.len > 0 and
           f.core.plots[0].result.plots[0].curves[0].ys.biggest > 170)
     step("settle 8", noop, after(25))

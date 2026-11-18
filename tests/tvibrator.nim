@@ -9,11 +9,11 @@
 ##   fundamental 1000, its THD 10 %, its frequency the sweep's; GF (M, B)
 ##   the weighted sum's amplitude and phase worked out here from the masses;
 ## - the roles in another order (B, Ref, M, GF) give the same numbers;
-## - limits: off, nothing is drawn or judged; a phase limit of 10° fails GF
-##   (its points past it marked, the table says "fail: phase"), one of 20°
-##   passes it;
+## - the verdict's limits are no lines on the plots: a peak phase limit of 10° fails GF
+##   (the windows past it drawn as an error-colour stretch of its phase curve), one of 20°
+##   passes it (no stretch); the judged signal alone is drawn unless Details is on;
 ## - the recorded force and the one generated from the masses are in plots and axes of
-##   their own (counts; kg × counts); a force limit is drawn and judged on GF alone;
+##   their own (counts; kg × counts), the one judged first;
 ## - without masses there is no generated force, and the words say how to
 ##   have one; without a reference, or with an impulse as the reference,
 ##   nothing (the problem said).
@@ -21,8 +21,7 @@
 ## Seen to fail: with the phase plot fed the reference's phase instead of
 ## each signal's, "GF's phase is not the library's"; with the harmonics
 ## taken as a fraction rather than %, "GF H2 0.10002390139435 %, want 10";
-## with the limits applied while off, "a limit drawn while limits are off:
-## limit ±10.0°"; with a reference that has an extent but no measured
+## with a limit line drawn, "a limit drawn: ..."; with a reference that has an extent but no measured
 ## point taken as a sweep, `"trace 1, the reference, is not a sweep" in
 ## impulse.problem` (no problem said: every number a dash).
 
@@ -76,14 +75,19 @@ proc library(rows: seq[seq[float32]]; at: array[VibRole, int]): UnitSignature[fl
   var counts = newSeq[int](rows.len)
   for c in counts.mitems: c = N
   let meta = initChunkMeta(rowsOf(keys, counts), Dt)
-  let tp = initSweepTrackPlan(float32, TrackParams(thdHarmonics: thAllThatFit,
-      harmonicBandAuto: true), Dt, N)
   var ws = initWorkspace()
-  ws.reserve(vibratorWorkspace(tp))
   var unit = initVibUnit(at[vsReference], at[vsGroundForce], at[vsMass], at[vsBaseplate],
     mass(Mr, muKilogram), mass(Mb, muKilogram))
   var res: seq[UnitSignature[float32]] = @[]
-  tp.analyzeVibrators(rowBlock(work, rows.len, N), meta, [unit], VibLimits(), res, ws)
+  # the band's edge is the reference's top frequency, fitted to its own track (as the window
+  # does): a first pass to read it, a second with it
+  var band = NaN
+  for pass in 0 .. 1:
+    let tp = initSweepTrackPlan(float32, TrackParams(thdHarmonics: thAllThatFit,
+      harmonicBandHz: band, harmonicBandAuto: band.isNaN), Dt, N)
+    ws.reserve(vibratorWorkspace(tp))
+    tp.analyzeVibrators(rowBlock(work, rows.len, N), meta, [unit], VibLimits(), res, ws)
+    if pass == 0: band = fittedTopHz(res[0].tracks[vsReference], res[0].reference.extent)
   res[0]
 
 func sameAs(a, b: seq[float64]): bool =
@@ -106,7 +110,7 @@ proc main*() =
   let unitRows = @[wave(1, 0), wave(1000, 15, 0.1), wave(30, 10), wave(25, -170)]
   let names = @["trace 1", "trace 2", "trace 3", "trace 4"]
   let inOrder = [vsReference: 0, vsGroundForce: 1, vsMass: 2, vsBaseplate: 3]
-  let params = AnalysisParams(reactionMassKg: Mr, baseplateMassKg: Mb)
+  let params = AnalysisParams(reactionMassKg: Mr, baseplateMassKg: Mb, details: true)
 
   block theLibrarysNumbers:
     let r = vibratorOf(unitRows, names, inOrder, Dt, params)
@@ -114,23 +118,22 @@ proc main*() =
     doAssert r.plots.len == 5 and r.used == 4 and r.plots[2].title == "Force from M and B"
     let lib = library(unitRows, inOrder)
     doAssert r.plots[0].xs.sameAs(lib.tracks[vsReference].timeMs)
-    doAssert r.curve(0, "GF").sameAs(sizes(lib.tracks[vsGroundForce].phaseDeg)),
+    doAssert r.curve(0, "GF as recorded").sameAs(sizes(lib.tracks[vsGroundForce].phaseDeg)),
       "GF's phase is not the library's"
-    doAssert r.curve(0, "GF (M, B)").sameAs(sizes(lib.tracks[vsWeightedSum].phaseDeg))
+    doAssert r.curve(0, "GF from M and B").sameAs(sizes(lib.tracks[vsWeightedSum].phaseDeg))
     doAssert r.curve(0, "M").sameAs(sizes(lib.tracks[vsMass].phaseDeg))
     doAssert r.curve(0, "B").sameAs(sizes(lib.tracks[vsBaseplate].phaseDeg))
-    doAssert r.curve(1, "GF fundamental").sameAs(lib.tracks[vsGroundForce].amplitude[0])
-    doAssert r.curve(1, "GF peak").sameAs(lib.tracks[vsGroundForce].peak)
-    doAssert r.curve(2, "GF (M, B) fundamental").sameAs(lib.tracks[vsWeightedSum].amplitude[0])
+    doAssert r.curve(1, "GF as recorded fundamental").sameAs(lib.tracks[vsGroundForce].amplitude[0])
+    doAssert r.curve(1, "GF as recorded peak").sameAs(lib.tracks[vsGroundForce].peak)
+    doAssert r.curve(2, "GF from M and B fundamental").sameAs(lib.tracks[vsWeightedSum].amplitude[0])
     doAssert r.curve(3, "Ref").sameAs(lib.tracks[vsReference].referenceHz)
-    doAssert r.curve(3, "GF").sameAs(lib.tracks[vsGroundForce].frequencyHz)
-    doAssert r.curve(4, "GF THD").sameAs(lib.tracks[vsGroundForce].thdPct)
-    doAssert r.curve(4, "GF (M, B) THD").sameAs(lib.tracks[vsWeightedSum].thdPct)
-    # no limits: none drawn, none judged
+    doAssert r.curve(3, "GF as recorded").sameAs(lib.tracks[vsGroundForce].frequencyHz)
+    doAssert r.curve(4, "GF as recorded THD").sameAs(lib.tracks[vsGroundForce].thdPct)
+    doAssert r.curve(4, "GF from M and B THD").sameAs(lib.tracks[vsWeightedSum].thdPct)
+    # no limit lines, whatever the verdict says
     for p in r.plots:
       for c in p.curves:
-        doAssert c.style == csLine or c.name.isQcLimitLine,
-          "a limit drawn while limits are off: " & c.name
+        doAssert c.style in {csLine, csFail}, "a limit drawn: " & c.name
     doAssert r.table.len == 6 and r.table[0][^1] == "Max peak", $r.table[0]
     # each row names the stored unit of its force columns, the one in its axis
     # Seen to fail: with no unit kept, forceUnits was empty and the window
@@ -148,16 +151,16 @@ proc main*() =
     # all along the sweep)
     let r = vibratorOf(unitRows, names, inOrder, Dt, params, -1, 1000.0)
     let xs = r.plots[0].xs
-    let phase = r.curve(0, "GF")
-    let fund = r.curve(1, "GF fundamental")
-    let thd = r.curve(4, "GF THD")
-    let h2 = r.curve(4, "GF H2")
-    let hz = r.curve(3, "GF")
+    let phase = r.curve(0, "GF as recorded")
+    let fund = r.curve(1, "GF as recorded fundamental")
+    let thd = r.curve(4, "GF as recorded THD")
+    let h2 = r.curve(4, "GF as recorded H2")
+    let hz = r.curve(3, "GF as recorded")
     # the generated force: Mr·M + Mb·B, as phasors
     let z = Mr * 30.0 * exp(complex(0.0, degToRad(10.0))) +
       Mb * 25.0 * exp(complex(0.0, degToRad(-170.0)))
-    let ws = r.curve(2, "GF (M, B) fundamental")
-    let wsPhase = r.curve(0, "GF (M, B)")
+    let ws = r.curve(2, "GF from M and B fundamental")
+    let wsPhase = r.curve(0, "GF from M and B")
     let points = judged(xs)
     doAssert points.len > 400, $points.len
     for m in points:
@@ -186,69 +189,78 @@ proc main*() =
           a.plots[p].curves[c].name & " differs with the roles in another order"
     doAssert "Ref trace 2 · GF trace 4 · M trace 3 · B trace 1" in b.note, b.note
 
-  block limits:
+  block failingWindows:
+    # the windows past the peak phase limit are a stretch of the judged phase curve in the
+    # error colour (`csFail`); no limit line, and nothing when the limit is met
+    # Seen to fail: with the overlay left out, "no failing stretch"; with a limit of 20°
+    # still drawn, "a stretch where the limit is met".
     var p = params
-    p.limitsOn = true
-    p.limits = VibLimits(phaseDeg: 10)
-    p.phaseShow = psSigned
-    let signed = vibratorOf(unitRows, names, inOrder, Dt, p)
-    var both = 0
-    for c in signed.plots[0].curves:
-      if c.style == csLimit and not c.name.isQcLimitLine: inc both
-    doAssert both == 2, "Signed: the limit at both ends, " & $both
-    p.phaseShow = psAbsolute
-    let r = vibratorOf(unitRows, names, inOrder, Dt, p)
-    var drawn, marked = 0
-    for c in r.plots[0].curves:
-      if c.style == csLimit and not c.name.isQcLimitLine:
-        inc drawn
-        doAssert c.ys == @[10.0, 10.0], "Absolute: the one size, " & $c.ys
-      elif c.style == csLine:
-        for y in c.ys: doAssert y.isNaN or y >= 0, "Absolute phase below 0: " & $y
-      if c.style == csPast and c.name == "GF past a limit":
-        for y in c.ys:
-          if not y.isNaN:
-            doAssert abs(y) > 10, $y
-            inc marked
-    doAssert drawn == 1 and marked > 400, $(drawn, marked)
-    doAssert r.table[0][^1] == "Limits"
-    for row in r.table[1 .. ^1]:
-      if row[0] == "GF": doAssert row[^1] == "fail: phase", $row
-      if row[0] == "M": doAssert row[^1] == "not judged", $row
-    doAssert "judged from " in r.note, r.note
-    p.limits = VibLimits(phaseDeg: 20)
+    p.qc.peakPhaseDeg = 10
+    for show in [psAbsolute, psSigned]:
+      p.phaseShow = show
+      let r = vibratorOf(unitRows, names, inOrder, Dt, p)
+      var stretches, points = 0
+      for c in r.plots[0].curves:
+        doAssert c.style != csLimit, "a limit line: " & c.name
+        if c.style == csFail:
+          inc stretches
+          doAssert c.name == "GF as recorded (past a limit)", c.name
+          for y in c.ys:
+            if not y.isNaN:
+              doAssert abs(y) > 10, $y
+              inc points
+      doAssert stretches == 1 and points > 400, $(show, stretches, points)
+      doAssert r.qc.verdict == qvFail, r.qc.line
+    p.qc.peakPhaseDeg = 20
     let ok = vibratorOf(unitRows, names, inOrder, Dt, p)
-    for row in ok.table[1 .. ^1]:
-      if row[0] == "GF": doAssert row[^1] == "pass", $row
+    for c in ok.plots[0].curves: doAssert c.style != csFail, "a stretch where the limit is met"
+    # the distortion: GF's THD of 10 % past a peak limit of 5 %
+    p.qc.peakDistortionPct = 5
+    let thd = vibratorOf(unitRows, names, inOrder, Dt, p)
+    var failing = false
+    for c in thd.plots[4].curves:
+      if c.style == csFail and c.name == "GF as recorded THD (past a limit)": failing = true
+    doAssert failing, "no failing stretch of the distortion"
+    # the force: judged in % of the 100 % force when it is given, windows past the peak limit
+    p.forceHundredPct = 500 # GF is 1000: 200 % of it
+    let f = vibratorOf(unitRows, names, inOrder, Dt, p)
+    doAssert f.plots[1].yLabel == "Force (%)", f.plots[1].yLabel
+    doAssert f.curve(1, "GF as recorded fundamental")[350] > 150, $f.curve(1,
+        "GF as recorded fundamental")[350]
+    var forceFail = false
+    for c in f.plots[1].curves:
+      if c.style == csFail: forceFail = true
+    doAssert forceFail, "no failing stretch of the force"
+    # Details off: the judged signal alone, four plots
+    var alone = p
+    alone.details = false
+    let one = vibratorOf(unitRows, names, inOrder, Dt, alone)
+    doAssert one.plots.len == 4 and one.plots[0].curves[0].name == "GF", $one.plots.len
+    for c in one.plots[0].curves: doAssert c.name notin ["M", "B", "GF from M and B",
+        "GF as recorded"], c.name
 
   block forceInItsOwnUnit:
     # the recorded GF (1000, as recorded) and the weighted sum (2.4e6, kg x as
-    # recorded) are on axes of their own, and a force limit is judged on GF only
-    var p = params
-    p.limitsOn = true
-    p.limits = VibLimits(forceLow: 2000)
-    let r = vibratorOf(unitRows, names, inOrder, Dt, p)
+    # recorded) are on axes of their own (with Details), the recorded one judged first
+    let r = vibratorOf(unitRows, names, inOrder, Dt, params)
     doAssert r.plots[1].title == "Force" and r.plots[2].title == "Force from M and B"
     doAssert "as recorded" in r.plots[1].yLabel and "kg × as recorded" in r.plots[2].yLabel,
       r.plots[1].yLabel & " / " & r.plots[2].yLabel
-    for c in r.plots[1].curves: doAssert not c.name.startsWith("GF (M, B)"), c.name
+    for c in r.plots[1].curves: doAssert not c.name.startsWith("GF from M and B"), c.name
     for c in r.plots[2].curves:
-      doAssert c.name.startsWith("GF (M, B)") and c.style == csLine,
-        "a force limit on the weighted sum: " & c.name
-    var lines = 0
-    for c in r.plots[1].curves:
-      if c.style == csLimit and not c.name.isQcLimitLine: inc lines
-    doAssert lines == 1, $lines & " force limit lines on GF"
-    for row in r.table[1 .. ^1]:
-      if row[0] == "GF": doAssert row[^1] == "fail: force low", $row
-      if row[0] == "GF (M, B)": doAssert row[^1] == "pass", $row
-    doAssert "uncalibrated without accelerometer sensitivities" in r.note and
-      "not applied" in r.note, r.note
+      doAssert c.name.startsWith("GF from M and B") and c.style == csLine, c.name
+    doAssert "uncalibrated without accelerometer sensitivities" in r.note, r.note
+    # judged on the one from M and B, it is the first force plot and the recorded GF follows
+    var q = params
+    q.roles.judge = joWeighted
+    let w = vibratorOf(unitRows, names, inOrder, Dt, q)
+    doAssert w.plots[1].title == "Force from M and B" and w.plots[2].title ==
+      "Force (GF as recorded)", w.plots[1].title & " / " & w.plots[2].title
 
   block noMassesNoReference:
     let r = vibratorOf(unitRows, names, inOrder, Dt, AnalysisParams())
     doAssert r.problem == ""
-    for c in r.plots[0].curves: doAssert c.name != "GF (M, B)"
+    for c in r.plots[0].curves: doAssert c.name != "GF from M and B"
     doAssert "enter both masses" in r.note, r.note
     let none = vibratorOf(unitRows, names, [vsReference: -1, vsGroundForce: 1, vsMass: 2,
       vsBaseplate: 3], Dt, params)
@@ -266,10 +278,7 @@ proc main*() =
     # the table's mean phase is the mean of |phase|, the one the limit judges:
     # +8° then -8° is 8 on average, not 0
     let rows = @[unitRows[0], waveSplit(1000, 8, -8), unitRows[2], unitRows[3]]
-    var p = params
-    p.limitsOn = true
-    p.limits = VibLimits(phaseDeg: 20, meanPhaseDeg: 5)
-    let r = vibratorOf(rows, names, inOrder, Dt, p)
+    let r = vibratorOf(rows, names, inOrder, Dt, params)
     doAssert r.problem == "", r.problem
     doAssert r.table[0][3] == "Mean |phase| (°)", r.table[0][3]
     var found = false
@@ -278,7 +287,7 @@ proc main*() =
         found = true
         let mean = parseFloat(row[3])
         doAssert abs(mean - 8) < 0.5, "mean |phase| " & row[3] & ", want about 8"
-        doAssert row[^1] == "fail: mean phase", row[^1]
+        doAssert abs(r.qc.stats.avgPhaseDeg - 8) < 0.5, $r.qc.stats.avgPhaseDeg
     doAssert found
 
   block noGroundForce:
@@ -289,9 +298,9 @@ proc main*() =
       vsBaseplate: 3], Dt, params)
     doAssert r.problem == "", r.problem
     let f = r.plots[1]
-    doAssert f.title == "Force from M and B" and f.yLabel == "GF (M, B) (kg × as recorded)",
+    doAssert f.title == "Force from M and B" and f.yLabel == "Force (kg × as recorded)",
       f.title & " / " & f.yLabel
-    doAssert f.curves.len == 2 and f.curves[0].name == "GF (M, B) fundamental", $f.curves.len
+    doAssert f.curves.len == 2 and f.curves[0].name == "GF fundamental", $f.curves.len
 
   block thdPastNyquist:
     # THD at each time sums the harmonics still below 80 % of Nyquist (400 Hz at 1 ms):
@@ -303,8 +312,8 @@ proc main*() =
     p.harmonics = 16
     let r = vibratorOf(unitRows, names, inOrder, Dt, p)
     doAssert r.problem == "", r.problem
-    let thd = r.curve(4, "GF THD")
-    let h16 = r.curve(4, "GF H16")
+    let thd = r.curve(4, "GF as recorded THD")
+    let h16 = r.curve(4, "GF as recorded H16")
     var (nThd, nH16, thdAfterH16) = (0, 0, 0)
     var lastH16 = -1
     for m in 0 ..< thd.len:
@@ -341,6 +350,10 @@ proc main*() =
     discard r.curve(3, RecordedRef)
     let plain = vibratorOf(unitRows, names, inOrder, Dt, params)
     doAssert plain.table.len == 6
+    var alone = params
+    alone.details = false
+    for c in vibratorOf(rows, all, inOrder, Dt, alone, recorded = 4).plots[0].curves:
+      doAssert c.name != RecordedRef, "the recorded pilot drawn without Details"
     for row in plain.table: doAssert row[0] != RecordedRef
 
   echo "tvibrator: ok"

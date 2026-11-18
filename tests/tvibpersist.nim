@@ -8,7 +8,7 @@
 ## - a choice kept before polarities were (no polarity in its text) loads as recorded;
 ## - a polarity set through the agent is for the session: nothing is saved (settings file
 ##   and project document alike);
-## - the other boxes (masses, harmonics, point limits and whether they are on, the six pass or
+## - the other boxes (masses, harmonics, Details, whether Setup is unfolded, the six pass or
 ##   fail limits, the window length, "100 % force =") are plot options, kept in the user's
 ##   settings whether or not a project is open; the top frequency typed per reference is kept
 ##   in the project too, so it travels with it (a second user's empty settings, the same
@@ -144,8 +144,8 @@ proc main*() =
       p.reactionMassKg = 3600
       p.baseplateMassKg = 1800
       p.harmonics = 7
-      p.limitsOn = true
-      p.limits.phaseDeg = 12
+      p.details = true
+      (p.setupOpen, p.setupSet) = (false, true)
       p.qcWindowMs = 250
       p.qc.avgPhaseDeg = 4
       p.qc.peakForcePct = NaN
@@ -155,7 +155,8 @@ proc main*() =
 
     proc checkBoxes(p: AnalysisParams; key: string; what: string) =
       doAssert p.reactionMassKg == 3600 and p.baseplateMassKg == 1800, what & ": masses"
-      doAssert p.harmonics == 7 and p.limitsOn and p.limits.phaseDeg == 12, what & ": limits"
+      doAssert p.harmonics == 7 and p.details and p.setupSet and not p.setupOpen,
+        what & ": details, set-up folded"
       doAssert p.qcWindowMs == 250 and p.qc.avgPhaseDeg == 4 and p.qc.peakForcePct.isNaN and
         p.qc.peakDistortionPct == 60, what & ": pass or fail limits"
       doAssert p.forceHundredPct == 4000 and p.forceHundredWeighted == 9000,
@@ -176,6 +177,34 @@ proc main*() =
       var back = started(dir)
       let v = back.open(fx.vibFourAgainSegy())
       back.plots[v].params.checkBoxes(back.vibTopKey(back.plots[v]), "no project")
+      discard back.shutdown()
+
+    block a_full_scale_taken_from_the_sweep_is_kept:
+      # "Set from this sweep" puts the sweep's average force over the target's share in the
+      # box of the signal judged: a hand change, kept like a typed value, after a restart
+      let dir = fx.dir / "config-h"
+      createDir(dir)
+      var st = started(dir)
+      let w = st.open(fx.vibFourSegy())
+      var p = st.plots[w].params
+      p.targetPct = 60
+      st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p,
+        origin: coWindow)
+      doAssert st.settle(not st.plots[w].waiting)
+      let average = st.plots[w].result.qc.stats.avgForce
+      doAssert average > 0, "the sweep has an average force"
+      p = st.plots[w].params
+      p.forceHundredPct = average / 0.6
+      st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p,
+        origin: coWindow)
+      doAssert st.settle(not st.plots[w].waiting)
+      doAssert abs(st.plots[w].result.qc.stats.avgForcePct - 100) < 1e-6,
+        "the average is the target's 100 %: " & $st.plots[w].result.qc.stats.avgForcePct
+      discard st.shutdown()
+      var back = started(dir)
+      let v = back.open(fx.vibFourAgainSegy())
+      doAssert abs(back.plots[v].params.forceHundredPct - average / 0.6) < 1e-6 * average and
+        back.plots[v].params.targetPct == 60, "the value came back after a restart"
       discard back.shutdown()
 
     block an_older_single_full_scale_belongs_to_the_signal_judged_then:

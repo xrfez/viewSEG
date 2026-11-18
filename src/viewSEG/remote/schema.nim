@@ -229,6 +229,8 @@ proc decode*[T](n: JsonNode; x: var T; path: string; problems: var seq[string]) 
             # A window saved before the correlation's own reference went: the
             # field is ignored, the chosen reference is the only one.
             if key == "reference": found = true
+            # the point limits are gone: an older command's are accepted and left out
+            if key == "limitsOn" or key == "limits": found = true
           if not found:
             problems.add path & ": no field " & escapeJson(key.substr(0, 79))
   else:

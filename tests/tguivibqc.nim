@@ -92,7 +92,7 @@ proc main*() =
       doAssert f.markOf("new plot 1.scrolls").size.x == 0, what & ": the window scrolls"
       doAssert f.markOf("new plot 1.plots scroll").size.x == 0,
         what & ": the plots scroll in a child of their own"
-      for part in ["verdict", "qc table", "top frequency", "force target", "qc window"]:
+      for part in ["verdict", "qc table", "top frequency", "force target", "set hundred", "setup"]:
         doAssert f.markOf("new plot 1." & part).inside(win), what & ": " &
             part &
           " is not in view: " & $f.markOf("new plot 1." & part) & " in " & $win
@@ -119,7 +119,7 @@ proc main*() =
       proc (f: FrameInfo): bool = f.core.chosenReference == refId)
     step("a vibrator signature", proc (f: FrameInfo) =
       let b = f.core.sessions[0].base
-      var p = AnalysisParams(forceHundredPct: 1000)
+      var p = AnalysisParams(forceHundredPct: 1000, setupOpen: true, setupSet: true)
       f.apply(Command(kind: ckOpenPlot, plotView: avVibrator,
         plotTraces: @[b, b + 1, b + 2, b + 3], plotParams: p)),
       proc (f: FrameInfo): bool =

@@ -483,10 +483,10 @@ proc main*() =
       doAssert st.plots.len == before + 1 and "reactionMassKg must be" in st.log.lastText,
         st.log.lastText
       huge = AnalysisParams()
-      huge.limits.phaseDeg = 1e300
+      huge.qc.peakPhaseDeg = 1e300
       st.apply Command(kind: ckOpenPlot, plotView: avVibrator, plotTraces: @[s.base],
         plotParams: huge)
-      doAssert st.plots.len == before + 1 and "phaseDeg must be" in st.log.lastText,
+      doAssert st.plots.len == before + 1 and "peakPhaseDeg must be" in st.log.lastText,
         st.log.lastText
       discard st.drainInbox()
       var env = AnalysisParams()

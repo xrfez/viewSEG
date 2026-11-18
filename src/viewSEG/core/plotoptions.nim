@@ -39,11 +39,11 @@ type
     harmonics*: int = 5
     phaseShow*: PhaseShow = psAbsolute
     projectReference*: bool = true
-    limitsOn*: bool = false
     rolesOpen*: bool = false
     noteOpen*: bool = false
-    limits*: VibLimits = VibLimits(phaseDeg: 10, meanPhaseDeg: 5, thdPct: 40,
-      meanThdPct: 20)
+    details*: bool = false
+    setupOpen*: bool = false
+    setupSet*: bool = false
     tops*: seq[TopFrequency]
     qcWindowMs*: float64 = 500.0
     qc*: QcLimits
@@ -105,8 +105,8 @@ func optionsOf*(p: AnalysisParams; view: AnalysisView): PlotOptions =
     result.vibrator = VibratorOptions(reactionMassKg: p.reactionMassKg,
       baseplateMassKg: p.baseplateMassKg, harmonics: p.harmonics,
       phaseShow: p.phaseShow, projectReference: p.projectReference,
-      limitsOn: p.limitsOn,
-      limits: p.limits, rolesOpen: p.rolesOpen, noteOpen: p.noteOpen, tops: p.tops,
+      rolesOpen: p.rolesOpen, noteOpen: p.noteOpen, details: p.details,
+      setupOpen: p.setupOpen, setupSet: p.setupSet, tops: p.tops,
       qcWindowMs: p.qcWindowMs, qc: p.qc,
       forceHundredPct: p.forceHundredPct,
       forceHundredWeighted: p.forceHundredWeighted, targetPct: p.targetPct)
@@ -141,10 +141,10 @@ func applied*(o: PlotOptions; view: AnalysisView; p: AnalysisParams): AnalysisPa
       o.envelope.phaseShow)
   of avVibrator:
     (result.reactionMassKg, result.baseplateMassKg, result.harmonics, result.phaseShow,
-     result.projectReference,
-     result.limitsOn, result.limits) = (o.vibrator.reactionMassKg, o.vibrator.baseplateMassKg,
-       o.vibrator.harmonics, o.vibrator.phaseShow, o.vibrator.projectReference, o.vibrator.limitsOn,
-       o.vibrator.limits)
+     result.projectReference) = (o.vibrator.reactionMassKg, o.vibrator.baseplateMassKg,
+       o.vibrator.harmonics, o.vibrator.phaseShow, o.vibrator.projectReference)
+    (result.details, result.setupOpen, result.setupSet) = (o.vibrator.details,
+      o.vibrator.setupOpen, o.vibrator.setupSet)
     result.targetPct = o.vibrator.targetPct
     result.forceHundredWeighted = o.vibrator.forceHundredWeighted
     (result.rolesOpen, result.noteOpen) = (o.vibrator.rolesOpen, o.vibrator.noteOpen)

@@ -63,14 +63,16 @@ proc main*() =
     doAssert problems.len == 0 and old.plotOptions == PlotOptions(), "an older document"
     let bad = readSettings("""(settings (version 1) (plotOptions
  (spectrogram (windowMs -5.0) (overlap 50.0) (colourMap neon))
- (vibrator (harmonics 40) (reactionMassKg 0.0) (limits (phaseDeg 9.0) (colour 3)))
+ (vibrator (harmonics 40) (reactionMassKg 0.0) (colour 3) (limitsOn true) (limits (phaseDeg 9.0)))
  (sonar (range 3))))""", "settings.nif", Settings(), problems)
     doAssert bad.plotOptions.spectrogram.windowMs == 128 and
       bad.plotOptions.spectrogram.overlap == 50 and
       bad.plotOptions.spectrogram.colourMap == cmViridis, "out of range keeps the built-in"
     doAssert bad.plotOptions.vibrator.harmonics == 5 and
-      bad.plotOptions.vibrator.reactionMassKg.isNaN and
-      bad.plotOptions.vibrator.limits.phaseDeg == 9, $bad.plotOptions.vibrator
+      bad.plotOptions.vibrator.reactionMassKg.isNaN, $bad.plotOptions.vibrator
+    # the point limits of an older document are read and left out, no problem said
+    doAssert "limits" notin problems.join("\n") and "phaseDeg" notin problems.join("\n"),
+      $problems
     doAssert problems.len >= 5, $problems
     let kinds = problems.join("\n")
     for word in ["windowMs", "colourMap", "harmonics", "reactionMassKg", "colour", "sonar"]:
@@ -113,14 +115,15 @@ proc main*() =
     let k2 = st.open(avFk)
     doAssert st.paramsOf(k2).fkRaw and st.paramsOf(k2).floorDb == -90 and
       st.paramsOf(k2).fkFromMs.isNaN, "the f-k's box was remembered"
-    # the vibrator's masses and limits, a mass left empty
-    var vib = AnalysisParams(reactionMassKg: 3000, harmonics: 8, limitsOn: true)
-    vib.limits.phaseDeg = 7
+    # the vibrator's masses and fold states, a mass left empty
+    var vib = AnalysisParams(reactionMassKg: 3000, harmonics: 8, details: true)
+    vib.qc.peakPhaseDeg = 7
     let v = st.open(avVibrator)
     st.show(v, vib)
     let v2 = st.open(avVibrator)
     doAssert st.paramsOf(v2).reactionMassKg == 3000 and st.paramsOf(v2).harmonics == 8 and
-      st.paramsOf(v2).limits.phaseDeg == 7 and st.paramsOf(v2).baseplateMassKg.isNaN
+      st.paramsOf(v2).qc.peakPhaseDeg == 7 and st.paramsOf(v2).details and
+      st.paramsOf(v2).baseplateMassKg.isNaN
     # the envelope's phase, against the reference or of the trace itself
     let e = st.open(avEnvelope)
     doAssert st.paramsOf(e).phaseAgainst == paReference

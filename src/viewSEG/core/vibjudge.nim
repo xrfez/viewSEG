@@ -235,14 +235,6 @@ func judge*(s: WindowSummary; windowMs: float64; limits: QcLimits;
     result.line = "NOT JUDGED: no limit could be judged" &
       (if noScale.len > 0: " (" & noScale & ")" else: "")
 
-func isQcLimitLine*(name: string): bool =
-  ## Whether a curve is one of the verdict's limit lines (always drawn), by its name, and
-  ## not a point limit ("limit 10°", "THD limit", "harmonic limit": drawn only when the point
-  ## limits are on).
-  for head in ["peak phase limit", "average phase limit", "peak distortion limit",
-      "average distortion limit", "peak force limit", "average force limit"]:
-    if name.startsWith(head): return true
-
 func tableOf*(r: QcReport): seq[seq[string]] =
   ## The limits table: a header, then a row per limit: the mark (first, so a narrow window never
   ## cuts it off), what, measured, limit, where.

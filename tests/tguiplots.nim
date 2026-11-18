@@ -16,8 +16,8 @@
 ##   so and the old reference buttons are gone;
 ## - closed (`close plot`), a window goes;
 ## - Window > New plot > Vibrator signature on four selected traces shows
-##   its roles' table and four plots; Limits... opens the check, and
-##   checking it draws the phase limits and shows the table;
+##   its roles' table and four plots; Details adds the other signals and the table of every signal;
+##   Limits... opens the six limits of the verdict and the window length (no point limits);
 ## - an f-k of the record: its image's cursor, held by the keys, reads the
 ##   wavenumber (per trace), the frequency, dB and the apparent velocity;
 ## - seven more windows each open inside the main window;
@@ -28,7 +28,7 @@
 ## - each Freeze pin toggles (the envelope and the vibrator signature): frozen
 ##   on, the window keeps its filters while the plot's change; off, it follows.
 ##
-## Seen to fail: with the Limits label left as "harmonic", "no label Harmonic";
+## Seen to fail: with the Limits popup left as it was (point limits offered), "a point limit is offered";
 ## with the pin's click not flipping `frozen`, "frozen new plot
 ## 1.freeze did not happen"; with the image's keys not read (`keyMove` never called),
 ## "Right did not move the cursor"; with the menu's entry not sent
@@ -39,7 +39,7 @@
 ## used), "new plot 5 at (pos: (x: 492.0, y: 272.0), size: (x: 640.0, y:
 ## 620.0)) is not inside the main window's (pos: (x: 0.0, y: 67.0), size:
 ## (x: 1400.0, y: 806.0))" (it opened as a window of its own, outside); with
-## the vibrator signature's table not drawn, "limits on did not happen";
+## the vibrator signature's table not drawn, "details on did not happen";
 ## with an f-k's velocity not read, "0.0 /trace · 125.2 Hz: -49.35 dB";
 ## with the toolbar's Spectrogram dispatch left out of the app, "the toolbar's
 ## Spectrogram opens its window did not happen".
@@ -247,19 +247,22 @@ proc main*() =
         for role in ["Ref", "GF", "M", "B"]:
           doAssert f.markOf("new plot 2.role " & role).size.x > 0, "no role " & role)
     click("new plot 2.roles header")
-    click("new plot 2.limits")
-    click("new plot 2.limits.check")
-    step("limits on", noop, proc (f: FrameInfo): bool =
-      result = f.core.plots[1].params.limitsOn and not f.core.plots[1].waiting and
+    click("new plot 2.details")
+    step("details on", noop, proc (f: FrameInfo): bool =
+      result = f.core.plots[1].params.details and not f.core.plots[1].waiting and
         f.markOf("new plot 2.table").size.x > 0
       if result:
-        var limits = 0
         for c in f.core.plots[1].result.plots[0].curves:
-          if c.style == csLimit and not c.name.isQcLimitLine: inc limits
-        doAssert limits == 1, $limits & " phase limits drawn (Absolute: the one size)"
-        for label in ["Phase ±", "Phase mean", "THD", "THD mean", "Harmonic", "Force from",
-            "Force to", "Peak force"]:
-          doAssert f.markOf("new plot 2.limit " & label).size.x > 0, "no label " & label)
+          doAssert c.style != csLimit, "a limit line: " & c.name)
+    click("new plot 2.limits")
+    step("the six limits", noop, proc (f: FrameInfo): bool =
+      result = f.markOf("new plot 2.qc limit Average phase ≤").size.x > 0
+      if result:
+        for label in ["Average phase ≤", "Peak phase ≤", "Average distortion ≤",
+            "Peak distortion ≤", "Average force ≥", "Peak force ≤"]:
+          doAssert f.markOf("new plot 2.qc limit " & label).size.x > 0, "no label " & label
+        doAssert f.markOf("new plot 2.qc window").size.x > 0, "no window length"
+        doAssert f.markOf("new plot 2.limit Phase ±").size.x == 0, "a point limit is offered")
     key("Esc closes the limits", skEscape) # the popover is over the pin: Esc shuts it
     freezePin("new plot 2.freeze", 1)
     step("the vibrator signature closed", proc (f: FrameInfo) =

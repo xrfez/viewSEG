@@ -156,19 +156,20 @@ type
       ## limits; NaN: not given, the force limits are not judged
     rolesOpen*: bool = false ## vibrator signature: the roles' table is unfolded
     noteOpen*: bool = false ## vibrator signature: the note ("how this was measured") is unfolded
-    limitsOn*: bool = false
-      ## vibrator signature: the limits drawn, the points past them marked
-      ## and a pass or fail table shown
-    limits*: VibLimits = VibLimits(phaseDeg: 10, meanPhaseDeg: 5, thdPct: 40,
-      meanThdPct: 20)
-      ## vibrator signature: the limits (NaN: none); judged on the ground
-      ## forces over the sweep less its tapers
+    details*: bool = false
+      ## vibrator signature: the other signals, the harmonics and the per-signal table
+      ## too (off: the judged signal alone)
+    setupOpen*: bool = false
+      ## vibrator signature: the set-up controls are unfolded (when `setupSet`)
+    setupSet*: bool = false
+      ## vibrator signature: the user has folded or unfolded the set-up; until then it is
+      ## open while the 100 % force is not set
 
   CurveStyle* = enum
     ## How a curve is drawn.
     csLine = "line"           ## a line: the data
     csLimit = "limit"         ## a limit: a thin line in the colour of a failure
-    csPast = "past a limit"   ## the points past a limit, marked
+    csFail = "failing windows" ## the stretches of a curve in windows past a limit, in the error colour
     csReference = "reference" ## the reference's own, drawn dim beside the data
 
   AnalysisCurve* = object
@@ -555,8 +556,6 @@ func settingProblem*(p: AnalysisParams; view: AnalysisView): string =
     check("reactionMassKg", p.reactionMassKg, MassKgRange, none = true)
     check("baseplateMassKg", p.baseplateMassKg, MassKgRange, none = true)
     check("harmonics", float64(p.harmonics), HarmonicRange)
-    for name, v in fieldPairs(p.limits):
-      check(name, v, NumberRange, none = true)
     check("qcWindowMs", p.qcWindowMs, WindowMsRange)
     for name, v in fieldPairs(p.qc):
       check("qc." & name, v, NumberRange, none = true)

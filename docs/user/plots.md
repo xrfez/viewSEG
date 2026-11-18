@@ -126,9 +126,9 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 ## Vibrator signature: phase to the reference
 
-**Shows.** Phase in degrees up, against sweep time in ms across (a point every 10 ms): one line per signal, GF, GF (M, B), M and B, each measured against the pilot, Ref. Shown absolute (0 to 180 degrees; the bracketed value is the signed one); the Phase drop-down above the plot changes it.
+**Shows.** Phase in degrees up, against sweep time in ms across (a point every 10 ms): the signal judged (GF, or GF (M, B)) measured against the pilot, Ref. Shown absolute (0 to 180 degrees; the bracketed value is the signed one); the Phase drop-down above the plot changes it.
 
-**Computed from.** The traces of the window's roles. Each signal's phase to the reference where the pilot's envelope is within 40 dB of its peak. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set. Limits you set are drawn as thin lines and the points past them marked.
+**Computed from.** The traces of the window's roles. Each signal's phase to the reference where the pilot's envelope is within 40 dB of its peak. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set. A stretch in the error colour is a window past a limit of the verdict.
 
 **Reading it.** A ground force within a few degrees of 0° along the sweep means the vibrator follows the pilot. A drift means poor control; a steady 180° means the polarity is reversed (see Polarity).
 
@@ -138,7 +138,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Force against sweep time in ms: the ground force's fundamental amplitude and its peak.
 
-**Computed from.** The traces of the window's roles. The fundamental is tracked along the pilot's frequency. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set. Limits you set are drawn as thin lines and the points past them marked.
+**Computed from.** The traces of the window's roles. The fundamental is tracked along the pilot's frequency. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set. A stretch in the error colour is a window past a limit of the verdict.
 
 **Reading it.** A steady fundamental through the sweep is a vibrator putting out constant force. Dips mean lost output or hold-down; a peak far above the fundamental means distortion or bouncing.
 
@@ -152,7 +152,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Reading it.** It should follow the recorded ground force's shape. A large difference between the two means a wrong mass or a bad accelerometer channel.
 
-**Careful.** Without the accelerometers' sensitivities this force is uncalibrated and on an axis of its own: do not compare its level with the recorded force, and the force limits are not applied to it.
+**Careful.** Without the accelerometers' sensitivities this force is uncalibrated and on an axis of its own: do not compare its level with the recorded force, and the force limits are in % of the judged signal's own 100 % force.
 
 ## Vibrator signature: frequency
 
@@ -168,7 +168,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Distortion in % up, against sweep time in ms across: the total harmonic distortion (THD) of each ground force, and each harmonic (H2 up to the highest harmonic set) of the ground force as a % of its fundamental.
 
-**Computed from.** The traces of the window's roles. THD is the in-band distortion a vibrator controller reports: it sums the harmonics, from the 2nd, whose frequency stays within the top frequency box (the sweep's top, Hz); where none is in band it is 0. A harmonic above 80 % of Nyquist is never measured. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set. Limits you set are drawn as thin lines and the points past them marked.
+**Computed from.** The traces of the window's roles. THD is the in-band distortion a vibrator controller reports: it sums the harmonics, from the 2nd, whose frequency stays within the top frequency box (the sweep's top, Hz); where none is in band it is 0. A harmonic above 80 % of Nyquist is never measured. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set. A stretch in the error colour is a window past a limit of the verdict.
 
 **Reading it.** Lower is better. A smooth low THD is a clean sweep; a rise at one point is a resonance or a stroke limit; one harmonic standing out is a specific fault.
 

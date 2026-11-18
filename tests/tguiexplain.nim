@@ -296,11 +296,22 @@ proc main*() =
         plotParams: AnalysisParams(reactionMassKg: 3600, baseplateMassKg: 1800))),
       proc (f: FrameInfo): bool =
         f.core.plots.len == 1 and not f.core.plots[0].waiting and
-          f.core.plots[0].result.problem.len == 0 and f.core.plots[0].result.plots.len == 5 and
+          f.core.plots[0].result.problem.len == 0 and f.core.plots[0].result.plots.len == 4 and
           f.markOf("new plot 1.explain").size.x > 0)
     hoverAll("new plot 1", proc (f: FrameInfo): int = f.core.plots[0].result.plots.len,
       proc (f: FrameInfo; pane: int): string = f.core.explainPane(f.core.plots[0], pane),
       reach = true)
+    # with Details the other ground force has its own force plot: its icon too (the window
+    # then scrolls, so only the panes drawn on the screen are tried)
+    step("Details on", proc (f: FrameInfo) =
+      var p = f.core.plots[0].params
+      p.details = true
+      f.apply(Command(kind: ckPlotDisplay, plot: f.core.plots[0].id, plotParams: p)),
+      proc (f: FrameInfo): bool =
+        f.core.plots.len == 1 and not f.core.plots[0].waiting and
+          f.core.plots[0].result.plots.len == 5 and f.markOf("new plot 1.explain").size.x > 0)
+    hoverAll("new plot 1", proc (f: FrameInfo): int = f.core.plots[0].result.plots.len,
+      proc (f: FrameInfo; pane: int): string = f.core.explainPane(f.core.plots[0], pane))
     step("the vibrator window closes", proc (f: FrameInfo) =
       f.apply(Command(kind: ckClosePlot, plot: f.core.plots[0].id)),
       proc (f: FrameInfo): bool = f.core.plots.len == 0)

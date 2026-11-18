@@ -41,6 +41,9 @@ type
     unit*: string ## the readout's unit of `reads`; "": the plot's `yUnit`
     short*: string ## its name in the readout, when shorter than the legend's; "": `name`
     marks*: bool ## drawn as marks at its points, not a line (points past a limit)
+    overlay*: bool
+      ## drawn over another curve (the stretches of it past a limit): no legend entry, not in
+      ## the readout, not a curve the cursor goes to
     brackets*: seq[float64]
       ## a second value the readout adds in brackets, per x (a phase's signed
       ## value, when the picture is not the signed one); empty or NaN: none
@@ -77,6 +80,9 @@ type
       ## leave room right of the plot for the last tick label (a plot whose x axis
       ## ends on a number that would be clipped)
     legend*: bool = true ## the legend box; a plot of one series does not need it
+    legendInside*: bool
+      ## the legend, small, in the plot's top right corner, over the data's room (else outside
+      ## the plotting area: a column at the right, or a row above)
     note*: string ## shown over an empty plot: why it is empty
     aside*: string ## appended to the readout (a delay taken off, in ms)
     bareX*: bool ## the x axis has no label and no tick labels (a plot above one that shares it)
@@ -313,7 +319,7 @@ func readoutText*(p: CurvePlot; r: Reading): string =
   if r.index < 0: return ""
   result = p.xText(r.x) & (if p.xUnit.len > 0: " " & p.xUnit else: "")
   for i, c in p.curves:
-    if i < r.values.len:
+    if i < r.values.len and not c.overlay:
       let unit = p.unitOf(c)
       result.add "   " & (if c.short.len > 0: c.short else: c.name) & " " &
         yText(r.values[i], unit) &

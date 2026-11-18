@@ -84,7 +84,7 @@ proc main*() =
     step("a vibrator signature, no masses", proc (f: FrameInfo) =
       let b = f.core.sessions[0].base
       f.apply(Command(kind: ckOpenPlot, plotView: avVibrator,
-        plotTraces: @[b, b + 1, b + 2, b + 3])),
+        plotTraces: @[b, b + 1, b + 2, b + 3], plotParams: AnalysisParams(details: true))),
       proc (f: FrameInfo): bool =
         f.core.plots.len == 1 and not f.core.plots[0].waiting and
           f.core.plots[0].result.plots.len == 4 and

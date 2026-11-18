@@ -92,7 +92,7 @@ proc main*() =
       doAssert f.markOf("new plot 1.scrolls").size.x == 0, what & ": the window scrolls"
       doAssert f.markOf("new plot 1.plots scroll").size.x == 0,
         what & ": the plots scroll in a child of their own"
-      for part in ["verdict", "qc table", "top frequency", "force target", "qc window"]:
+      for part in ["verdict", "qc table", "setup"]:
         doAssert f.markOf("new plot 1." & part).inside(win), what & ": " & part &
           " is not in view: " & $f.markOf("new plot 1." & part) & " in " & $win
       let plots = f.core.plots[0].result.curvePlots(f.theme, f.core.settings.units)
@@ -112,7 +112,10 @@ proc main*() =
       for y in int(d0.pos.y) + 1 ..< int(d0.pos.y + d0.size.y):
         for x in countup(int(d0.pos.x) + 4, int(d0.pos.x + d0.size.x) - 4, 2):
           for c in plots[0].curves:
-            if not c.name.isQcLimitLine and distance(f.readPixel(x, y), c.colour) <= 8:
+            # (a line a pixel and a half wide may be shared by two rows: either is a hit)
+            let px = f.readPixel(x, y)
+            if distance(px, c.colour) <= 70 and
+                distance(px, f.theme.roles[rlPlotBackground]) > 100:
               lowest = max(lowest, y)
       doAssert lowest >= 0, what & ": no GF pixel in the phase plot"
       doAssert float32(lowest) <= d0.pos.y + d0.size.y - 3, what &
@@ -160,7 +163,7 @@ proc main*() =
       let b = f.core.sessions[0].base
       f.apply(Command(kind: ckOpenPlot, plotView: avVibrator,
         plotTraces: @[b, b + 1, b + 2, b + 3],
-        plotParams: AnalysisParams(forceHundredPct: 1000))),
+        plotParams: AnalysisParams(forceHundredPct: 1000, setupOpen: false, setupSet: true))),
       proc (f: FrameInfo): bool =
         f.core.plots.len == 1 and not f.core.plots[0].waiting and
           f.core.plots[0].result.problem.len == 0 and f.core.plots[0].result.qc.rows.len == 6)

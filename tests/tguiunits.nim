@@ -1,7 +1,7 @@
 ## The vibrator signature's mass fields on samples/vib, in the running
 ## frontend: the kg / lb switch converts the number in place (the stored
 ## kilograms do not change), a value typed in pounds is stored in kilograms,
-## and File > Settings sets the same Units. The force-limit boxes name the
+## and File > Settings sets the same Units. The 100 % force box names the
 ## unit the force axis shows.
 ##
 ## Seen to fail: with the unit switch not issuing `ckSettings`, "imperial
@@ -132,12 +132,9 @@ proc main*() =
           f.markOf("new plot 1.reaction mass").size.x > 0 and
           f.markOf("new plot 1.unit kg").size.x > 0 and
           f.markOf("new plot 1.unit lb").size.x > 0)
-    click("new plot 1.limits")
     step("the force unit beside the box", noop, proc (f: FrameInfo): bool =
-      f.markOf("new plot 1.limit unit Force from").size.x > 0 and
-        f.markOf("new plot 1.limit unit Force to").size.x > 0 and
-        f.markOf("new plot 1.limit unit Peak force").size.x > 0)
-    key(skEscape)
+      f.markOf("new plot 1.force target").size.x > 0 and
+        f.markOf("new plot 1.force unit").size.x > 0)
     click("new plot 1.unit lb")
     step("imperial from the mass field", proc (f: FrameInfo) =
       if f.core.settings.units != usImperial:

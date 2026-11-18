@@ -259,15 +259,11 @@ proc baseTests() =
     doAssert found
 
   block the_note_says_what_sets_the_judged_part:
-    # D9: skips of 1000 ms are not "the sweep less its tapers"
-    var p = AnalysisParams(limitsOn: true)
-    p.limits.skipStartMs = 1000
-    p.limits.skipEndMs = 1000
-    let r = judgeOf(good(), p)
-    doAssert "less 1000 ms at its start and 1000 ms at its end" in r.note, r.note
-    doAssert "less its tapers" notin r.note, r.note
+    # the judged part is the sweep less its tapers, and the note says so (there is no other
+    # judged span: the point limits and their skips are gone)
     let tapers = judgeOf(good())
-    doAssert "less its tapers" in tapers.note
+    doAssert "less its tapers" in tapers.note, tapers.note
+    doAssert "judged from " in tapers.note, tapers.note
 
   block no_false_signal_end_at_2_and_4_ms:
     # D4: the fundamental is measured to 80 % of Nyquist only (200 Hz at 2 ms, 100 Hz at 4 ms)
@@ -399,10 +395,10 @@ proc judgeChoice() =
     var p = AnalysisParams()
     let r = fourRows(good(), m, b, p)
     doAssert r.bothSignals and r.judged == "GF" and r.judgeWarning.len == 0, r.judgeWarning
-    doAssert r.qc.line.startsWith("✓ PASS on GF:"), r.qc.line
+    doAssert r.qc.line.startsWith("✓ PASS on GF as recorded:"), r.qc.line
     p.roles.judge = joWeighted
     let w = fourRows(good(), m, b, p)
-    doAssert w.judged == "GF (M, B)" and w.qc.line.startsWith("✓ PASS on GF (M, B):"),
+    doAssert w.judged == "GF (M, B)" and w.qc.line.startsWith("✓ PASS on GF from M and B:"),
       w.qc.line
     doAssert near(w.qc.stats.avgPhaseDeg, 1, 0.3), $w.qc.stats.avgPhaseDeg
     doAssert near(w.qc.stats.avgForcePct, 100, 1.5), $w.qc.stats.avgForcePct
@@ -515,6 +511,28 @@ proc downSweepBand() =
       doAssert judgeOf(spec, topHz = 220 * low).band.warning.len > 0, tag & ": too low"
       doAssert judgeOf(spec, topHz = 220 * high).band.warning.len > 0, tag & ": too high"
 
+proc topFromTheReference() =
+  block with_no_top_typed_the_reference_gives_its_own:
+    # the top frequency comes from the reference's frequency track alone (a line to the sweep's
+    # end, in f or in ln f, rounded to a whole hertz within 0.5 % of one): the designed top
+    # comes back, up or down, linear or exponential, and is the same for every record; a
+    # typed one still wins
+    # Seen to fail: with the library's own estimate (220.4 Hz on a linear 6-220 Hz sweep with
+    # tapers), "6.0-220.0 Hz ... 220.4".
+    for (f0, f1, seconds, taper, expo) in [(6.0, 220.0, 12.0, 0.2, false),
+        (6.0, 220.0, 12.0, 0.5, false), (220.0, 6.0, 12.0, 0.5, false),
+        (8.0, 80.0, 8.0, 0.1, false), (6.0, 220.0, 12.0, 0.5, true)]:
+      var spec = good()
+      (spec.f0, spec.f1, spec.seconds, spec.taperS, spec.expo) = (f0, f1, seconds, taper, expo)
+      let tag = $f0 & "-" & $f1 & " Hz, taper " & $taper & (if expo: ", exponential" else: "")
+      let r = judgeOf(spec, topHz = NaN)
+      let top = max(f0, f1)
+      doAssert r.band.hz == top and r.band.suggestedHz == top and not r.band.typed and
+        not r.band.exact, tag & ": the band is " & $r.band.hz & " (" & $r.band.suggestedHz & ")"
+      let again = judgeOf(spec, topHz = NaN)
+      doAssert again.band.hz == r.band.hz, tag & ": not the same twice"
+      doAssert judgeOf(spec, topHz = 150).band.hz == 150, tag & ": a typed top is not used"
+
 proc fractionalShift() =
   block the_stored_reference_is_placed_to_a_fraction_of_a_sample:
     for (delay, dt) in [(100.3, 1.0), (100.5, 1.0), (145.2, 0.5)]:
@@ -569,7 +587,9 @@ proc verdictWords() =
     doAssert "89.999 % < 90 %" in low.line, low.line
 
 proc plotsShowWhatIsJudged() =
-  block the_phase_plot_holds_the_judged_signal_and_its_limits:
+  block the_phase_plot_holds_the_judged_signal:
+    # the judged signal's curve alone (no limit lines, no window means), the axis fitted to it;
+    # with Details the others too, B off the scale and said so
     var spec = good()
     spec.phaseDeg = 2
     var m = good()
@@ -583,17 +603,17 @@ proc plotsShowWhatIsJudged() =
       $[phase.yLo, phase.yHi]
     var names: seq[string] = @[]
     for c in phase.curves: names.add c.name
-    doAssert "window means, GF" in names and "peak phase limit 10°" in names and
-      "B off scale" in names, $names
-    for c in phase.curves:
-      if c.name == "peak phase limit 10°": doAssert c.style == csLimit
-      if c.name == "window means, GF":
-        # a stepped line: each window twice, at its start and at its end
-        doAssert c.xs.len == 2 * r.qc.stats.windows and c.xs[1] - c.xs[0] == 500
-        doAssert near(c.ys[0], 2, 0.3)
+    doAssert names == @["GF"], $names
     var dist: seq[string] = @[]
     for c in r.plots[^1].curves: dist.add c.name
-    doAssert "peak distortion limit 60 %" in dist and "window means, GF THD" in dist, $dist
+    doAssert dist == @["GF THD"], $dist
+    var detailed = AnalysisParams(details: true)
+    let all = fourRows(spec, m, b, detailed)
+    names = @[]
+    for c in all.plots[0].curves: names.add c.name
+    doAssert "GF as recorded" in names and "M" in names and "B" in names and "B off scale" in names,
+      $names
+    for c in all.plots[0].curves: doAssert c.style != csLimit, c.name
 
 proc main*() =
   baseTests()
@@ -602,6 +622,7 @@ proc main*() =
   targetForce()
   bandWarnings()
   downSweepBand()
+  topFromTheReference()
   fractionalShift()
   verdictWords()
   zeroPhaseIsClearOfTheBorder()

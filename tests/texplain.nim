@@ -89,7 +89,7 @@ proc main*() =
       for j in 0 ..< r.len: r[j] = t[0, j]
       rows.add r
     f.close()
-    var vp = AnalysisParams(reactionMassKg: 3600, baseplateMassKg: 1800, limitsOn: true)
+    var vp = AnalysisParams(reactionMassKg: 3600, baseplateMassKg: 1800, details: true)
     let vib = vibratorOf(rows, ["R", "GF", "M", "B"], [vsReference: 0, vsGroundForce: 1,
       vsMass: 2, vsBaseplate: 3], 4.0, vp)
     doAssert vib.problem.len == 0, vib.problem
@@ -105,9 +105,7 @@ proc main*() =
     doAssert "3600 kg" in metric and "kg" in metric, metric
     doAssert "lb" in imperial and "3600 kg" notin imperial, imperial
     doAssert metric != imperial
-    doAssert "Limits are on" in w.explainPane(usMetric, 0), w.explainPane(usMetric, 0)
-    w.params.limitsOn = false
-    doAssert "Limits are off" in w.explainPane(usMetric, 0)
+    doAssert "error colour" in w.explainPane(usMetric, 0), w.explainPane(usMetric, 0)
 
   block the_words_follow_the_settings:
     var f = ExplainFacts(live: true, label: "trace 12 · FFID 151 · shot.sgd", count: 1)

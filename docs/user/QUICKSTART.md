@@ -881,67 +881,82 @@ or behind another tab.
 
 Window > New plot > Vibrator signature judges one vibrator unit (its reference, ground
 force, reaction mass and baseplate traces) and says at the top whether the sweep passed.
-Nothing has to be typed to get an answer: every box starts at a sensible value. The boxes,
-in the order you meet them:
+It is meant to answer one question: did the vibrator do what it should, when it should,
+all the way through the sweep. So it shows the ground force judged, the six limits of the
+verdict, and where the sweep failed them; the rest is one click away (**Details**).
+
+What you see, top down:
 
 1. **The verdict line.** PASS, FAIL or NOT JUDGED, with a tick or a cross. A FAIL names the
    worst failing value and when it happened ("FAIL: peak force 157 % > 120 % at 9.5 s").
-2. **The roles line.** Who is Ref, GF, M and B ("Ref trace 1 · GF trace 2 ..."). Click it to
-   open the roles: the trace for each role, GF's and M and B's polarity, and the project
-   reference. The roles come from the traces' vibrator codes; **Swap mass and baseplate**
-   puts the two right when a converter swapped them.
-3. **Masses: reaction, baseplate** (kg or lb). Optional: with both, the ground force is
-   also made from M and B and drawn in a plot of its own. Take them from the vibrator's
-   data sheet; leave them empty otherwise.
-4. **Harmonics to** (2 to 16). How many harmonics the distortion plot draws a line for.
-5. **Phase** (Absolute or Signed). How phases are drawn.
-6. **Top frequency (Hz).** The sweep's top frequency; distortion counts only the harmonics
-   up to it, as the vibrator's own electronics do. A generated reference fills it in
-   exactly; for another reference it is an estimate ("(estimate)" beside it): type the
-   top frequency of the sweep design (the "6-220 Hz" sweep's 220). It is kept with the
-   reference in the project (for a recorded reference, per file layout: a file of another
-   kind does not take it). A line warns when it does not fit the largest frequency the
-   reference shows in its flat part (a top 10 % off, not the small shortfall every sweep
-   has).
-7. **100 % force =** (the file's unit, counts or N). The full-scale force. The file cannot
-   tell it: the recorded force is in counts and the file carries no sensor sensitivities, so
-   a number in counts has no meaning in newtons. Take it from the vibrator's own QC for one
-   sweep (the force value its log shows as 100 %), once per kind of unit. The force that counts as 100 %: the
-   average and peak force limits are in percent of it. It is not known from the file:
-   take it from the controller's force setting, or from a sweep you know is at full
-   output. Left empty, the two force rows of the table say so and the other four limits
-   still give the verdict.
-8. **Target force (%).** The drive level the sweep was set to, as a percent of 100 % force
-   (60 for a sweep run at 60 % drive). The average force is judged as a percent of the
-   target (100 % of it means the vibrator delivered what it was set to); the peak force is
-   a percent of the 100 % force itself. 100 (the default) for a full-scale sweep.
-8a. **Judge:** (only when the unit has both). The recorded GF is the weighted sum of mass
-   and baseplate acceleration the recorder wrote with its own masses; **GF from M and B**
-   is the same sum formed here with the masses you typed. Pick the one the crew's
-   specification means; the verdict line names it ("PASS on GF (M, B)"). When the two do
-   not agree (their phases differ by more than 10 degrees in some window, or the level ratio varies by more than 3 dB along the sweep) a
-   line under the verdict says "the recorded GF does not match M and B with the typed
-   masses": check the masses, or judge GF from M and B. The choice is remembered with the
-   roles for that file layout. Each of the two has its own "100 % force =" value (counts for
-   GF as recorded, kg x counts for GF from M and B): the box shows the one of the signal
-   judged, and is empty (the force rows "not judged") until you type it. The peak force of
-   GF from M and B can read lower than the vibrator's own peak force figure (about 5 % lower
-   at the median on the files reviewed), so a peak near the limit may pass here and be
-   flagged there; the numbers are not adjusted.
-8b. **window (ms).** The length of the windows the sweep is judged in (500, as the
-   controllers use): each window gives a mean, and the limits are on the average and the
-   worst of the windows.
-9. **Limits...** The six pass or fail limits, each with its unit: average phase (at most
-   5°), peak phase (10°), average distortion (30 %), peak distortion (60 %), average force
-   (at least 90 % of 100 %), peak force (at most 120 %). Change them to the crew's or the
-   client's specification; empty a box to turn that limit off. Below them are the point
-   limits, drawn as lines on the plots.
-10. **The limits table.** One row per limit: what was measured, the limit, ✓ (met), ✗
-    (failed) or – (not judged, and the last column says which box to fill), and where the
-    worst window is. The sweep's tapers are left out and shown dimmed on the plots.
+2. **Ground force judged** (only when the unit has both ground forces and the two masses are
+   typed). The recorded GF is the weighted sum of mass and baseplate acceleration the
+   recorder wrote with its own masses; **GF from M and B** is the same sum formed here with
+   the masses you typed. Whatever you pick is *the* ground force of the window: every plot,
+   the verdict and the limits table use it, and the plots call it "GF" (the verdict line
+   and this box say which one it is; with Details on the two are told apart). When the two
+   do not agree (phases differing by more than 10 degrees in some window, or a level ratio
+   varying by more than 3 dB along the sweep) a line under the verdict says "the recorded
+   GF does not match M and B with the typed masses": check the masses, or judge GF from M
+   and B. The choice is remembered with the roles for that file layout. Each of the two has
+   its own "100 % force =" value (counts for GF as recorded, kg x counts for GF from M
+   and B). The peak force of GF from M and B can read lower than the vibrator's own peak
+   force figure (about 5 % lower at the median on the files reviewed), so a peak near the
+   limit may pass here and be flagged there; the numbers are not adjusted.
+3. **Setup** (a fold; open until the 100 % force is set, then folded; your own opening or
+   folding is kept), **Details**, **Limits...**, **Reset options** and **Freeze**, on one
+   line. Under Setup:
+   - **The roles line.** Who is Ref, GF, M and B. Click it to open the roles: the trace
+     for each role, GF's and M and B's polarity, and the project reference. The roles come
+     from the traces' vibrator codes; **Swap mass and baseplate** puts the two right when a
+     converter swapped them.
+   - **Masses: reaction, baseplate** (kg or lb). Optional: with both, the ground force is
+     also made from M and B. Take them from the vibrator's data sheet; leave them empty
+     otherwise.
+   - **Harmonics to** (2 to 16), drawn with Details. **Phase** (Absolute or Signed).
+   - **Top frequency (Hz).** The sweep's top frequency; distortion counts only the
+     harmonics up to it, as the vibrator's own electronics do. It is read from the project
+     reference with nothing typed ("(from the reference)" beside it): a generated reference
+     gives its exact end frequency; for a recorded one a line is fitted to its frequency
+     track over the flat part (straight, or straight in log f for an exponential sweep) and
+     taken to the sweep's end, rounded to a whole hertz when it is within 0.5 % of one (a
+     "6-220 Hz" sweep reads 220). Type a value to override it; that is kept with the
+     reference in the project (for a recorded reference, per file layout). A line warns
+     when it does not fit the largest frequency the reference shows in its flat part.
+   - **100 % force =** (the file's unit, counts or N), with **Set from this sweep**. The
+     full-scale force: the file cannot tell it (the recorded force is in counts and carries
+     no sensor sensitivities). Take it from the vibrator's own QC, or press **Set from this
+     sweep** on a sweep where the vibrator held its target force: the box becomes this
+     sweep's average force divided by the target's share. It is kept like a typed value,
+     per signal judged. Left empty, the two force rows of the table say so and the other
+     four limits still give the verdict.
+   - **Target force (%).** The drive level the sweep was set to, as a percent of 100 %
+     force (60 for a sweep run at 60 % drive). The average force is judged as a percent of
+     the target; the peak force as a percent of the 100 % force itself. 100 (the default)
+     for a full-scale sweep.
+4. **The limits table.** One row per limit: what was measured, the limit, ✓ (met), ✗ (failed) or – (not
+   judged, and the last column says which box to fill), and where the worst window is.
+   **Limits...** opens the six limits (average phase at most 5°, peak phase at most 10°, average
+   distortion 30 %, peak distortion 60 %, average force at least 90 % of the target, peak
+   force at most 120 % of 100 %), each editable (empty turns that limit off), and the
+   **QC window**: the sweep is cut into pieces of that length (500 ms, as controllers use);
+   each limit is checked on the average inside a piece. Average = mean of all pieces; peak =
+   the worst piece. These six are the only limits; the sweep's tapers are left out and shown
+   dimmed on the plots.
+5. **Four plots against sweep time.** Phase to the reference, Force (in % of the 100 %
+   force when it is set, else as recorded; its fundamental and its peak), Frequency (the
+   reference and the ground force) and Distortion (THD). A stretch drawn in the error
+   colour is a piece of the sweep past a peak limit: that is where the vibrator did not do
+   what it should. There are no limit lines and no window means on the plots. The four
+   plots share their time axis, so what happens at one time is one column down.
+
+**Details** (off at first, kept) adds the other ground force, M and B, the recorded pilot
+and the harmonics to the plots, the force of each ground force on its own axis, and the table
+of every signal's numbers.
 
 The window keeps its size and place when you step to the next record: only its numbers
-change, so records can be flipped through.
+change, and every plot fits its axes to the new record unless you zoomed that axis by
+hand (double click shows it all again), so records can be flipped through.
 
 ## Compare two traces
 

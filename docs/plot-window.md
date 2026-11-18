@@ -706,7 +706,7 @@ settings works out from the traces it is frozen on.
 | **Envelope and instantaneous phase** | the first trace | the trace and its envelope; its instantaneous phase (°), or with a chosen reference the phase against it (trace minus reference, -180 to 180); its instantaneous frequency (Hz), with the reference's dim | `analyticInto`, `wrapDeg` |
 | **Phase spectrum** | the first trace | amplitude (dB) and phase against frequency | `amplitudeInto` |
 | **Cross-correlation** | each trace (up to 8) against a reference | the correlation coefficient and its envelope against lag; the amplitude ratio (dB) and phase difference (°) per frequency | `crossCorrelateInto`, `compareInto` |
-| **Vibrator signature** | a vibrator unit: its reference (Ref), ground force (GF), reaction-mass (M) and baseplate (B) traces | against sweep time: the phase to the reference (GF, GF from M and B, M, B); the force (fundamental and peak); the frequency (Ref's, the ground forces'); the distortion (THD, each harmonic, %); a table per signal | `analyzeVibrators` |
+| **Vibrator signature** | a vibrator unit: its reference (Ref), ground force (GF), reaction-mass (M) and baseplate (B) traces | against sweep time, for the ground force judged: its phase to the reference; its force (fundamental and peak, in % of the 100 % force when that is set); the frequency (Ref's and the ground force's); the distortion (THD, %); the stretches past a peak limit in the error colour; with Details also the other ground force, M, B, the recorded pilot, the harmonics and a table per signal | `analyzeVibrators` |
 | **f-k** | a box of traces × time (opened on fewer than 4 traces: the seismic traces of the first one's record; of more than 256, the first 256, side by side) | amplitude against wavenumber and frequency, in dB from the largest, in a density colour map, with its scale | `forward` (composed: along time, then across the traces) |
 | **Node orientation** | the traces the Seismic plot shows, in its order, whatever is selected (a component filter is respected) | the node's roll, pitch and azimuth (°) from each trace's orientation header (SEG-D Rev 3), one point per trace as shown: a step or drift is the node moving; a trace without the header is a gap, and traces none of which has one say "These traces carry no orientation header." (SEG-Y always); no samples are read | `traceOrientation` (parseSEG) |
 
@@ -874,21 +874,25 @@ right of that line's first row. A change works it out again.
     A polarity chosen by hand is remembered with the roles for the file layout (in the
     project when one is open, else in the user settings), so a later file of that layout
     opens with it, also after a restart; a choice made by an agent is for the session only.
-    The other boxes (masses, harmonics, the limits and whether the point limits are on,
-    the window, **100 % force =**) are plot options kept in the user settings; the top
-    frequency is kept with its reference in the project as well, so it travels with it.
+    The other boxes (masses, harmonics, the six limits, the window, **100 % force =**, the
+    target, **Details**, whether **Setup** is unfolded) are plot options kept in the user
+    settings; the top frequency is kept with its reference in the project as well, so it
+    travels with it. Point limits stored by an older version (`limitsOn`, `limits`) are read
+    and ignored.
   - **GF from M and B.** With the reaction mass and the baseplate's mass entered (kg, or
     lb when File > Settings > Units is Imperial; **kg | lb** after the two boxes is that
     setting, the selected one drawn lit, and the numbers convert in place, pounds to a
     tenth: 3600 kg reads 7936.6 lb, and what is stored stays in kilograms; empty at first, as no default fits
-    every vibrator), `GF (M, B) = Mr·M + Mb·B` is
-    drawn with the recorded GF in the phase, frequency and distortion plots, and its row
-    added to the table. Its force is in **a plot of its own** ("Force from M and B", kg ×
-    recorded units, or lb × when Units is Imperial; the stored numbers stay in kilograms): the recorded force (counts) and the weighted sum are not in one unit,
-    so neither shares the other's axis. Without accelerometer sensitivities it is
-    uncalibrated, and the window says so.
+    every vibrator), `GF (M, B) = Mr·M + Mb·B` is a second ground force, and the **Ground
+    force judged** choice at the top (beside the verdict, never folded away) says which of
+    the two the window uses: that one is "GF" in every plot, in the verdict and in the limits
+    table. With **Details** on, the plots tell them apart ("GF as recorded", "GF from M and
+    B"), each force on **a plot of its own** (the one from M and B in kg × recorded units,
+    or lb × when Units is Imperial; the stored numbers stay in kilograms): the recorded
+    force (counts) and the weighted sum are not in one unit, so neither shares the other's
+    axis. Without accelerometer sensitivities it is uncalibrated, and the window says so.
   - **Harmonics** tracked to the 5th at first (2 to 16): the highest harmonic the
-    distortion plot draws one line for. Distortion itself is the **in-band** one (below).
+    distortion plot draws one line for (with Details). Distortion itself is the **in-band** one (below).
   - **The verdict.** One line at the top of the window says PASS, FAIL or NOT JUDGED, in
     words and a sign (a tick or a cross), never by colour alone; a FAIL names the worst
     failing value (the one furthest past its limit, in proportion) and the time of its
@@ -900,8 +904,9 @@ right of that line's first row. A change works it out again.
     window against six limits, on the sweep less its tapers (dimmed on the plots). Defaults:
     average phase at most 5°, peak phase at most 10°, average distortion 30 %, peak distortion
     60 %, average force at least 90 % and peak force at most 120 % of the force that is 100 %.
-    The limits are in the **Limits...** popup, above the point limits; an empty box turns
-    that limit off. The force limits need the **100 % force =** box (the force, in the
+    The limits, and the length of the windows, are in the **Limits...** popup; an empty box
+    turns that limit off. These six are the only limits: the point-by-point limits of older
+    versions are gone. The force limits need the **100 % force =** box (the force, in the
     file's unit, that counts as 100 %): with it empty the table says which box to fill
     and the other four limits still give the verdict. A trace shorter than its reference
     is judged to its own end (the note says so).
@@ -909,9 +914,9 @@ right of that line's first row. A change works it out again.
     (the **Target force (%)** box, 100 at first: the drive level the sweep was set to, a
     percent of the 100 % force); the minimum shown is in the same percent; the peak force
     limit is a percent of the 100 % force itself (the table says "of target" and "of
-    100 %"). With both ground forces the **Judge:** choice (GF as recorded, or GF from M
-    and B with the masses typed) says which the verdict judges; it is named in the verdict
-    line, remembered with the roles and the polarity for the file layout (project, else
+    100 %"). With both ground forces the **Ground force judged** choice (GF as recorded, or
+    GF from M and B with the masses typed) says which the window uses (plots, verdict and
+    table); it is named in the verdict line, remembered with the roles and the polarity for the file layout (project, else
     settings; an agent's change is for the session) and in the agent state (`judged`,
     `bothSignals`, `judgeWarning`, `roles.judge`). The recorded GF is the weighted sum the
     recorder wrote with its own masses; the other is the same sum formed here. When the
@@ -921,17 +926,27 @@ right of that line's first row. A change works it out again.
     recorded GF is in counts, GF from M and B in kg x counts); the box shows that of the
     signal judged. The peak force of GF from M and B can read lower than the vibrator's own
     peak force figure (about 5 % lower at the median on the files reviewed).
-  - **What the plots show of the verdict.** The phase, distortion and force plots draw the
-    judged signal's window means as a stepped line and the limits as lines, and the phase
-    axis is fitted to them with a margin: M and B may run off it, the legend then says
-    "M, B off scale". With Absolute phase the axis floor lies a little under 0 so a line at
-    0 degrees is visible.
+  - **What the plots show of the verdict.** The judged ground force alone (Details adds the
+    rest). **Phase**: its phase to the reference, the axis fitted to the curve as drawn (its
+    maximum is never clipped, also signed around a half turn), with Absolute phase the
+    floor a little under 0 so a line at 0 degrees is visible. **Force**: its fundamental
+    and peak, in % of the 100 % force ("Force (%)") when that is set, else as recorded.
+    **Frequency**: Ref and the ground force. **Distortion**: its THD. The pieces of the
+    sweep (the QC windows) whose mean phase or distortion, or whose peak force, is past the
+    *peak* limit are drawn over the curve in the error colour; no limit lines, no window
+    means. A plot of one curve has no legend, a plot of two a small one inside its top
+    right corner, so the four plots share one left and one right edge. Each plot fits its
+    own axes to what it shows, again whenever another record or file is shown or a setting
+    changes the curve, unless that axis was zoomed by hand.
   - **In-band distortion.** The **Top frequency (Hz)** box is the sweep's top: THD sums
     the harmonics, from the 2nd, whose frequency stays within it, as the controller's
     distortion does, and is 0 where none is in band (the reference above half the top).
-    It is filled in for you: exactly from a generated reference's end frequency, else
-    by an estimate from the reference's frequency track (named "(estimate)" beside the
-    box: type the sweep's design value). A typed value is kept with that reference in the
+    It is filled in from the project reference, with nothing typed ("(from the reference)"
+    beside the box): exactly from a generated reference's end frequency, else from a line
+    fitted to the recorded reference's frequency track over its flat part (in f, or in ln f
+    for an exponential sweep, whichever fits better) taken to the sweep's end (the start of a
+    sweep that falls), rounded to a whole hertz when within 0.5 % of one (6-220 Hz reads 220,
+    not 220.4); the same for every record. A typed value is kept with that reference in the
     project. A line warns when it is below the largest frequency measured in the flat part of the
     reference by more than 0.5 %, or above it by more than the sweep's rate over its end
     taper and half a chord, with 25 % and 1 % to spare (the chord reads a little under the
@@ -945,29 +960,23 @@ right of that line's first row. A change works it out again.
     the note says the two are taken to share the record's first sample. Against a
     reference nothing is filtered: the raw trace is measured against the raw reference
     whatever the plot's filters are, and the note says so.
-  - **Fitting.** At its default size one unit shows its verdict, its limits table and all
-    its plots with nothing to scroll; the roles' table and the note fold under one line
-    each (click to open). The plots share one time axis, labelled on the last. Stepping to
-    the next record keeps the window's size and place and only updates it.
-  - **Limits...** opens the six pass or fail limits (always applied), then **Check
-    against limits** (the point limits, drawn selected while they are on; off at first)
-    and the eight boxes, greyed while that check is off: the largest |phase| at a
-    point (10° at first) and its mean (5°), THD at a point (40 %) and its mean (20 %), any one
-    Harmonic (%), the fundamental's lowest and highest, the largest peak (empty: none).
-    The force boxes show the unit the force axis shows, written beside the box: newtons
-    under Metric, pounds-force under Imperial, counts when that force is uncalibrated
-    (and that plot's own unit when the force from M and B carries the limits). What is
-    stored stays in the stored unit, so the line and the pass or fail agree with the
-    number typed; toggling Units converts the number in place and does not store it
-    again. They are drawn and judged on GF alone, never on GF (M, B), whose unit is
-    another (with no recorded GF they apply to it).
-    On, they are drawn on the plots as thin lines in the error colour, the points past
-    them marked, and the table shows each signal's statistics with **pass** or **fail**
-    and the limits failed. The table's mean force, minimum force and maximum peak are
-    in the same unit as that signal's axis; the column names the unit when every row
-    shares it, and a row in another unit names its own. They are judged on the two
-    ground forces over the sweep less
-    its tapers (the span is said under the title); M and B are summarised, not judged.
+  - **Fitting.** At its default size one unit shows its verdict, its limits table and its
+    four plots with nothing to scroll; the controls fold under **Setup** (open until the
+    100 % force is set), the roles' table and the note under one line each. The plots share
+    one time axis, labelled on the last. Stepping to the next record keeps the window's size
+    and place and only updates it.
+  - **Set from this sweep** (beside **100 % force =**) sets the judged signal's 100 % force to
+    this record's average force divided by the target's share (the verdict's average force,
+    in the stored unit, over Target force / 100): for a sweep where the vibrator held its
+    target. It is a hand change, kept like a typed value (per signal judged), also after a
+    restart.
+  - **Limits...** opens the six pass or fail limits (always applied) and the **QC window**
+    (500 ms): the sweep is cut into pieces of that length and each limit is checked on the
+    average inside a piece; average = mean of all pieces, peak = the worst piece.
+    **Details** adds, under the verdict's table, each signal's statistics (mean and
+    maximum phase, THD, mean and minimum force, maximum peak, in the same unit as that
+    signal's axis; the column names the unit when every row shares it, and a row in another
+    unit names its own); M and B are summarised, not judged.
   - The values are as recorded (no calibration yet): the force in the recorded units,
     or a weighted sum of M and B's recorded values.
   - All the plots share sweep time, so the held cursor reads them at the same time.

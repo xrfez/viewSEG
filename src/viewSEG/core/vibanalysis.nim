@@ -6,26 +6,25 @@
 ##
 ## | Plot | Curves |
 ## |---|---|
-## | Phase to the reference | GF, GF (M, B), M, B (degrees) |
-## | Force | the fundamental's amplitude and the peak, of GF |
-## | Force from M and B | the same of GF (M, B), on an axis of its own (kg × recorded) |
-## | Frequency | the reference's and the ground forces' instantaneous frequency |
-## | Distortion | THD of GF and GF (M, B); each harmonic of the ground force, % of the fundamental |
+## | Phase to the reference | the judged signal's phase (degrees) |
+## | Force | the judged signal's fundamental amplitude and peak, in % of its 100 % force when that is given |
+## | Frequency | the reference's and the judged signal's instantaneous frequency |
+## | Distortion | THD of the judged signal |
+##
+## The windows past a peak limit of the verdict (the QC windows of the judged signal) are
+## drawn in the error colour (`csFail`), no limit lines. With `AnalysisParams.details` the
+## other ground force (its force on a plot and an axis of its own: another unit), M and B,
+## the recorded pilot and the harmonics are drawn too, and the table says each signal's numbers.
 ##
 ## - **GF (M, B)** is the ground force generated from M and B, `Mr·a_M +
 ##   Mb·a_B`, once both masses are entered. Its unit is not the recorded
-##   force's (kg × counts, uncalibrated without accelerometer sensitivities),
-##   so its force is a plot of its own and the force limits are not applied to it.
-## - **Limits** (`AnalysisParams.limitsOn`, off at first) are drawn on the
-##   plots (thin lines), the points past them marked, and judged on the two
-##   ground forces over the sweep less its tapers; the table says pass or
-##   fail per signal.
+##   force's (kg × counts, uncalibrated without accelerometer sensitivities).
 ## - The values are as recorded (no calibration): the force in the
 ##   recorded units, or N from M and B in m/s² (they are not, unscaled).
 ##
 ## Pure: samples in, an `AnalysisResult` out; never raises.
 
-import std/[math, strutils]
+import std/[math, sequtils, strutils]
 import parseSEG
 import processSEG/core/[rows, types, units, workspace]
 import processSEG/vibroseis/[sweeptrack, vibqc]
@@ -37,8 +36,6 @@ const
   RecordedRef* = "Ref (recorded)"
     ## the recorded pilot measured against the project's reference: its name in the plots
     ## and the table
-  RecordedMean = "window means, "
-    ## the start of the name of a stepped curve of the window means of the judged signal
   Shown = [vsReference, vsGroundForce, vsWeightedSum, vsMass, vsBaseplate]
     ## the signals in the order the plots and the table give them
 
@@ -52,11 +49,12 @@ func forceCell(x: float64): string =
   ## 0.001 2, one in counts 13 202), scientific outside 0.001 to 10 million.
   forceNumber(x)
 
-func past(name: string; xs, ys: seq[float64]; at: seq[bool]): AnalysisCurve =
-  ## The points of `ys` where `at`, marked.
-  result = AnalysisCurve(name: name & " past a limit", style: csPast,
-    ys: newSeq[float64](ys.len))
-  for m in 0 ..< ys.len: result.ys[m] = if at[m]: ys[m] else: NaN
+func addFailing(curves: var seq[AnalysisCurve]; c: AnalysisCurve) =
+  ## `c`, the stretches past a limit, when there is any.
+  for y in c.ys:
+    if not y.isNaN:
+      curves.add c
+      return
 
 func phaseCurve(name: string; deg: seq[float64]; mode: PhaseShow): AnalysisCurve =
   ## A phase to the reference as `mode` shows it (`phaseshow`); Absolute keeps the signed
@@ -64,15 +62,6 @@ func phaseCurve(name: string; deg: seq[float64]; mode: PhaseShow): AnalysisCurve
   let shown = shownPhase(deg, mode)
   result = AnalysisCurve(name: name, ys: shown.ys)
   if mode == psAbsolute: result.brackets = shown.signed
-
-func limitLine(name: string; xs: seq[float64]; value: float64): AnalysisCurve =
-  ## A limit across the sweep: its two ends.
-  AnalysisCurve(name: name, style: csLimit, xs: @[xs[0], xs[^1]], ys: @[value, value])
-
-func anyOf(s: seq[bool]): bool =
-  for v in s:
-    if v: return true
-  false
 
 func forceUnit(u: AmplitudeUnit): string =
   if u == auForce: "N" elif u == auRecorded: "as recorded" else: $u
@@ -105,6 +94,53 @@ func shortEndMs(track: SweepTrack; p: TrackParams; counts: openArray[int];
       if result.isNaN and not f.isNaN and f > 0 and
           track.timeMs[m] + 500.0 * float64(windowPeriods(p, f)) / f <= last:
         result = track.timeMs[m]
+
+func fittedTopHz*(track: SweepTrack; e: SweepExtent): float64 =
+  ## The reference's top frequency, Hz, from its frequency track alone: a line through the
+  ## track over the flat part, in f against time or in ln f against time (whichever fits
+  ## better, a linear sweep or an exponential one), taken to the sweep's end (the start of a
+  ## sweep that falls), and rounded to a whole hertz when it lies within 0.5 % of one (a
+  ## designed 6 to 220 Hz sweep reads 220, not 220.4). NaN without a sweep or enough points.
+  result = NaN
+  if e.startMs.isNaN or e.endMs.isNaN or e.flatStartMs.isNaN or e.flatEndMs.isNaN: return
+  var ts, fs: seq[float64] = @[]
+  for m in 0 ..< track.len:
+    let (t, f) = (track.timeMs[m], track.referenceHz[m])
+    if not f.isNaN and f > 0 and t >= e.flatStartMs and t <= e.flatEndMs:
+      ts.add t / 1000
+      fs.add f
+  if ts.len < 20: return
+  func line(xs, ys: seq[float64]): (float64, float64) =
+    ## least squares: intercept and slope
+    var (sx, sy, sxx, sxy) = (0.0, 0.0, 0.0, 0.0)
+    for i in 0 ..< xs.len:
+      sx += xs[i]
+      sy += ys[i]
+      sxx += xs[i] * xs[i]
+      sxy += xs[i] * ys[i]
+    let n = float64(xs.len)
+    let d = n * sxx - sx * sx
+    if d == 0: return (sy / n, 0.0)
+    let b = (n * sxy - sx * sy) / d
+    ((sy - b * sx) / n, b)
+  let lf = fs.mapIt(ln(it))
+  let (a1, b1) = line(ts, fs)
+  let (a2, b2) = line(ts, lf)
+  var (e1, e2) = (0.0, 0.0)
+  for i in 0 ..< ts.len:
+    e1 += (a1 + b1 * ts[i] - fs[i]) ^ 2
+    e2 += (exp(a2 + b2 * ts[i]) - fs[i]) ^ 2
+  let rising = fs[^1] > fs[0]
+  # the sweep's envelope is measured down to `minReferenceDb` below its peak: a cos² taper
+  # goes on a little past that point (this fraction of its length, of the rest of it)
+  let share = 2 / PI * arcsin(sqrt(pow(10.0, -abs(TrackParams().minReferenceDb) / 20)))
+  let more = share / (1 - share)
+  let at = (if rising: e.endMs + more * max(0.0, e.endMs - e.flatEndMs)
+    else: e.startMs - more * max(0.0, e.flatStartMs - e.startMs)) / 1000
+  let est = if e1 <= e2: a1 + b1 * at else: exp(a2 + b2 * at)
+  if not (est > 0 and est < Inf): return
+  let whole = round(est)
+  result = if abs(est - whole) <= 0.005 * est: whole else: round(est * 10) / 10
 
 proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     at: array[VibRole, int]; dtMs: float64; p: AnalysisParams;
@@ -159,31 +195,44 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   var limits = VibLimits()
   var cutMs = NaN # the judged part ends here: the shortest trace's last measurable point
   var band = NaN
+  var fitted = NaN # the top frequency fitted to the reference's track
   try:
     if pair and masses:
       unit.reactionMass = mass(p.reactionMassKg, muKilogram)
       unit.baseplateMass = mass(p.baseplateMassKg, muKilogram)
-    limits = if p.limitsOn: p.limits else: VibLimits()
     let meta = initChunkMeta(rowsOf(keys, counts), dtMs)
     band = if topHz.isNaN: exactTopHz else: topHz
-    let tp = initSweepTrackPlan(float32, TrackParams(harmonics: clamp(
-        p.harmonics, 2, 16),
-      thdHarmonics: thAllThatFit, harmonicBandHz: band,
-          harmonicBandAuto: band.isNaN),
-      dtMs, cols)
+    func planFor(band: float64): SweepTrackPlan[float32] =
+      initSweepTrackPlan(float32, TrackParams(harmonics: clamp(p.harmonics, 2, 16),
+        thdHarmonics: thAllThatFit, harmonicBandHz: band, harmonicBandAuto: band.isNaN),
+        dtMs, cols)
+    var tp = planFor(band)
     var ws = initWorkspace()
     ws.reserve(vibratorWorkspace(tp))
     var units = @[unit]
     if withRecorded:
       units.add VibUnit(rows: [vsReference: at[vsReference], vsGroundForce: recorded,
         vsMass: -1, vsBaseplate: -1])
-    for pass in 0 .. 1:
+    var bandSet = not band.isNaN # typed, or a generated reference's own
+    var cutLooked = false
+    for pass in 0 .. 3:
       tp.analyzeVibrators(rowBlock(work, rows.len, cols), meta, units, limits,
           results, ws)
+      if not bandSet:
+        # no top frequency given: the reference's own, from its frequency track (the same
+        # for every record), and the pass made again with it as the band's edge
+        bandSet = true
+        let est = fittedTopHz(results[0].tracks[vsReference], results[0].reference.extent)
+        if not est.isNaN:
+          (band, fitted) = (est, est)
+          tp = planFor(band)
+          ws.reserve(vibratorWorkspace(tp))
+          continue
+      if cutLooked: break
+      cutLooked = true
       # a trace shorter than the reference ends the judged part: its zero-padded rest is no
       # measurement (a point whose window reaches past its last sample stays out)
-      let cut = if pass == 0: shortEndMs(results[0].tracks[vsReference], tp.params, counts, at,
-                  dtMs, cols) else: NaN
+      let cut = shortEndMs(results[0].tracks[vsReference], tp.params, counts, at, dtMs, cols)
       if cut.isNaN: break
       cutMs = cut
       limits.toMs = if limits.toMs.isNaN: cutMs else: min(limits.toMs, cutMs)
@@ -220,7 +269,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   # each signal has its own full scale (counts, or kg × counts)
   let hundredFor = if judged == vsWeightedSum: p.forceHundredWeighted else: p.forceHundredPct
   result.qc = judge(stats.summary, p.qcWindowMs, p.qc, hundredFor, p.targetPct,
-    (if both: $judged else: ""))
+    (if both: (if judged == vsWeightedSum: "GF from M and B" else: "GF as recorded")
+      else: ""))
   result.judged = $judged
   result.bothSignals = both
   result.judgedAxis = if judged == vsWeightedSum:
@@ -262,163 +312,130 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
         "(level ratio varies by " & number(rangeDb, 1) & " dB along the sweep, phase differs " &
         "by up to " & number(maxPhase, 0) & " degrees): check the masses, or judge GF from " &
         "M and B"
+  # What is judged, drawn: the judged signal alone (with Details: the other signals, M and B,
+  # the recorded pilot and the harmonics too), the windows past a peak limit in the error colour
+  let details = p.details
+  func nameOf(s: VibSignal): string =
+    ## A signal as the plots call it: the ground force judged is simply "GF" (the verdict says
+    ## which); with Details, when the unit has both, they are told apart
+    if s notin {vsGroundForce, vsWeightedSum}: $s
+    elif details and both: (if s == vsGroundForce: "GF as recorded" else: "GF from M and B")
+    else: "GF"
+  let q = p.qc
+  func overlay(name: string; ys: seq[float64]; values: seq[float64]; limit: float64;
+      scale = 1.0): AnalysisCurve =
+    ## `ys` where the window the point lies in has `values` (one per window) past `limit`.
+    result = AnalysisCurve(name: name & " (past a limit)", style: csFail,
+      ys: newSeq[float64](ys.len))
+    for m in 0 ..< ys.len: result.ys[m] = NaN
+    if limit.isNaN or limit == Inf: return
+    for i in 0 ..< min(stats.startMs.len, values.len):
+      if values[i] * scale > limit:
+        for m in 0 ..< min(xs.len, ys.len):
+          if xs[m] >= stats.startMs[i] and xs[m] < stats.startMs[i] + stats.windowMs:
+            result.ys[m] = ys[m]
+  let hundredRaw = if hundredFor > 0 and hundredFor < Inf: hundredFor
+                   else: NaN
+  let percentScale = if hundredRaw.isNaN: 1.0 else: 100 / hundredRaw
+  var others: seq[VibSignal] = @[] # the ground forces that are not judged
+  for s in forces:
+    if s in u.signals and s != judged: others.add s
   # Phase to the reference
   var phase = AnalysisPlot(title: "Phase to the reference", xLabel: "Sweep time (ms)",
     xUnit: "ms", yLabel: "Phase (°)", yUnit: "°", xs: xs)
-  for s in [vsGroundForce, vsWeightedSum, vsMass, vsBaseplate]:
-    if s in u.signals: phase.curves.add phaseCurve($s, u.tracks[s].phaseDeg, p.phaseShow)
-  if withRecorded:
-    phase.curves.add phaseCurve(RecordedRef, results[1].tracks[vsGroundForce].phaseDeg,
-      p.phaseShow)
-  # Force: the recorded ground force and the weighted sum of the masses are in
-  # different units (counts; kg x counts): a plot, an axis and a unit each
-  # (with no recorded ground force, the force is the one from M and B: its unit)
-  let fromMasses = main == vsWeightedSum
-  var force = AnalysisPlot(xLabel: "Sweep time (ms)", xUnit: "ms", xs: xs,
-    title: (if fromMasses: "Force from M and B" else: "Force"),
-    yLabel: (if fromMasses: "GF (M, B) (" & weightedUnit(u.units[vsWeightedSum]) & ")"
-    else: "Force (" & forceUnit(u.units[main]) & ")"))
-  var generated = AnalysisPlot(title: "Force from M and B", xLabel: "Sweep time (ms)",
-    xUnit: "ms", yLabel: "GF (M, B) (" & weightedUnit(u.units[vsWeightedSum]) & ")", xs: xs)
-  for s in forces:
-    if s in u.signals:
-      let (plot, name) = if s == vsWeightedSum and main != vsWeightedSum: (addr generated, $s)
-                         else: (addr force, $s)
-      plot[].curves.add AnalysisCurve(name: name & " fundamental",
-        ys: u.tracks[s].amplitude[0])
-      plot[].curves.add AnalysisCurve(name: name & " peak", ys: u.tracks[s].peak)
-  # Frequency
-  var freq = AnalysisPlot(title: "Frequency", xLabel: "Sweep time (ms)", xUnit: "ms",
-    yLabel: "Frequency (Hz)", yUnit: "Hz", xs: xs)
-  freq.curves.add AnalysisCurve(name: "Ref", ys: u.tracks[vsReference].referenceHz)
-  if withRecorded:
-    freq.curves.add AnalysisCurve(name: RecordedRef,
-      ys: results[1].tracks[vsGroundForce].frequencyHz)
-  for s in forces:
-    if s in u.signals: freq.curves.add AnalysisCurve(name: $s, ys: u.tracks[s].frequencyHz)
-  # Distortion: THD, and each harmonic of the main ground force
-  var dist = AnalysisPlot(title: "Distortion", xLabel: "Sweep time (ms)", xUnit: "ms",
-    yLabel: "Distortion (%)", yUnit: "%", xs: xs)
-  for s in forces:
-    if s in u.signals: dist.curves.add AnalysisCurve(name: $s & " THD", ys: u.tracks[s].thdPct)
-  let t = u.tracks[main]
-  var largest = newSeq[float64](xs.len) # the largest harmonic per point, %
-  for m in 0 ..< xs.len: largest[m] = NaN
-  # the harmonics drawn: those asked for, of the tracked ones (a band tracks all 16)
-  let tracked = trackedHarmonics(TrackParams(harmonics: clamp(p.harmonics, 2, 16),
-    harmonicBandHz: band, harmonicBandAuto: band.isNaN))
-  for k in 2 .. (if main in u.signals: min(t.amplitude.len, min(tracked,
-      clamp(p.harmonics, 2, 16))) else: 0):
-    var pct = newSeq[float64](xs.len)
-    for m in 0 ..< xs.len:
-      let a1 = t.amplitude[0][m]
-      pct[m] = if a1 > 0: 100 * t.amplitude[k - 1][m] / a1 else: NaN
-      if not pct[m].isNaN and (largest[m].isNaN or pct[m] > largest[m]): largest[m] = pct[m]
-    dist.curves.add AnalysisCurve(name: $main & " H" & $k, ys: pct)
-  # What is judged, drawn: the window means as steps, the limits as lines, and the phase
-  # axis fitted to them (M and B may run off it: the legend says so)
-  proc steps(name: string; values: seq[float64]): AnalysisCurve =
-    result = AnalysisCurve(name: name, style: csLine)
-    for i in 0 ..< min(stats.startMs.len, values.len):
-      for x in [stats.startMs[i], stats.startMs[i] + stats.windowMs]:
-        result.xs.add x
-        result.ys.add values[i]
-  let hundredRaw = if hundredFor > 0 and hundredFor < Inf: hundredFor
-                   else: NaN
-  let forcePlot = if judged == vsWeightedSum and main != vsWeightedSum: addr generated
-                  else: addr force
-  if stats.startMs.len > 0:
-    if p.phaseShow == psAbsolute:
-      phase.curves.add steps(RecordedMean & $judged, stats.meanAbsPhaseDeg)
-    dist.curves.add steps(RecordedMean & $judged & " THD", stats.meanThdPct)
-    if not hundredRaw.isNaN:
-      forcePlot[].curves.add steps(RecordedMean & $judged & " force", stats.meanForce)
-  let q = p.qc
-  if q.peakPhaseDeg < Inf:
-    phase.curves.add limitLine("peak phase limit " & plain(q.peakPhaseDeg) & "°", xs,
-      q.peakPhaseDeg)
-    if p.phaseShow == psSigned:
-      phase.curves.add limitLine("peak phase limit -" & number(q.peakPhaseDeg) & "°", xs,
-        -q.peakPhaseDeg)
-  if q.avgPhaseDeg < Inf and p.phaseShow == psAbsolute:
-    phase.curves.add limitLine("average phase limit " & plain(q.avgPhaseDeg) & "°", xs,
-      q.avgPhaseDeg)
-  if q.peakDistortionPct < Inf:
-    dist.curves.add limitLine("peak distortion limit " & plain(q.peakDistortionPct) & " %", xs,
-      q.peakDistortionPct)
-  if q.avgDistortionPct < Inf:
-    dist.curves.add limitLine("average distortion limit " & plain(q.avgDistortionPct) & " %",
-      xs, q.avgDistortionPct)
-  if not hundredRaw.isNaN:
-    let target = if p.targetPct > 0: p.targetPct else: 100.0
-    if q.avgForcePct < Inf:
-      forcePlot[].curves.add limitLine("average force limit", xs,
-        hundredRaw * target / 100 * q.avgForcePct / 100)
-    if q.peakForcePct < Inf:
-      forcePlot[].curves.add limitLine("peak force limit", xs, hundredRaw * q.peakForcePct / 100)
+  let judgedPhase = phaseCurve(nameOf(judged), u.tracks[judged].phaseDeg, p.phaseShow)
+  phase.curves.add judgedPhase
+  phase.curves.addFailing overlay(nameOf(judged), judgedPhase.ys, stats.meanAbsPhaseDeg,
+    q.peakPhaseDeg)
+  if details:
+    for s in others & @[vsMass, vsBaseplate]:
+      if s in u.signals: phase.curves.add phaseCurve(nameOf(s), u.tracks[s].phaseDeg, p.phaseShow)
+    if withRecorded:
+      phase.curves.add phaseCurve(RecordedRef, results[1].tracks[vsGroundForce].phaseDeg,
+        p.phaseShow)
   block fitPhase:
-    # the axis holds the judged signal and its limits, with a margin
-    # (of the curve as drawn: signed, it runs up to a turn either side of its centre)
+    # the axis holds the judged curve as drawn, with a margin (signed, it runs up to a turn
+    # either side of its centre); the others may run off it, and the legend says so
     var top = 0.0
-    for v in shownPhase(u.tracks[judged].phaseDeg, p.phaseShow).ys:
+    for v in judgedPhase.ys:
       if not v.isNaN: top = max(top, abs(v))
-    for l in [q.peakPhaseDeg, q.avgPhaseDeg]:
-      if l < Inf: top = max(top, l)
     top = max(15.0, min(if p.phaseShow == psSigned: 360.0 else: 180.0, 1.3 * top))
     var off: seq[string] = @[]
-    for s in [vsMass, vsBaseplate]:
-      if s in u.signals:
-        var m = 0.0
-        for v in u.tracks[s].phaseDeg:
-          if not v.isNaN: m = max(m, abs(v))
-        if m > top: off.add $s
+    if details:
+      for s in [vsMass, vsBaseplate]:
+        if s in u.signals and s != judged:
+          var m = 0.0
+          for v in u.tracks[s].phaseDeg:
+            if not v.isNaN: m = max(m, abs(v))
+          if m > top: off.add $s
     if off.len > 0:
       phase.curves.add AnalysisCurve(name: off.join(", ") & " off scale",
         ys: newSeq[float64](0))
     if p.phaseShow == psAbsolute:
       (phase.yLo, phase.yHi) = (-0.04 * top, top) # a line at 0 is clear of the border
     else: (phase.yLo, phase.yHi) = (-top, top)
-  # Limits: drawn, and the points past them marked
-  if p.limitsOn:
-    let l = p.limits
-    if l.phaseDeg < Inf:
-      phase.curves.add limitLine("limit" & (if p.phaseShow == psSigned: " ±" else: " ") &
-        number(l.phaseDeg) & "°", xs, l.phaseDeg)
-      if p.phaseShow == psSigned:
-        phase.curves.add limitLine("limit ±" & number(l.phaseDeg) & "°", xs, -l.phaseDeg)
-    # the force limits are in the unit of the signal the force plot is of (`main`):
-    # never drawn or judged on a curve in another unit
-    if l.forceLow < Inf: force.curves.add limitLine("lowest force", xs, l.forceLow)
-    if l.forceHigh < Inf: force.curves.add limitLine("highest force", xs, l.forceHigh)
-    if l.peakForce < Inf: force.curves.add limitLine("highest peak", xs, l.peakForce)
-    if l.thdPct < Inf: dist.curves.add limitLine("THD limit", xs, l.thdPct)
-    if l.harmonicPct < Inf: dist.curves.add limitLine("harmonic limit", xs, l.harmonicPct)
-    for s in forces:
-      if s notin u.signals: continue
-      template flagged(kinds: set[LimitKind]): seq[bool] =
-        var f = newSeq[bool](xs.len)
-        for m in 0 ..< xs.len: f[m] = (u.flags[s][m] * kinds) != {}
-        f
-      let ph = flagged({lkPhase})
-      if ph.anyOf: phase.curves.add past($s, xs,
-        shownPhase(u.tracks[s].phaseDeg, p.phaseShow).ys, ph)
-      let lowHigh = flagged({lkForceLow, lkForceHigh})
-      if lowHigh.anyOf and s == main:
-        force.curves.add past($s & " fundamental", xs, u.tracks[s].amplitude[0], lowHigh)
-      let pk = flagged({lkPeakForce})
-      if pk.anyOf and s == main: force.curves.add past($s & " peak", xs, u.tracks[s].peak, pk)
-      let th = flagged({lkThd})
-      if th.anyOf: dist.curves.add past($s & " THD", xs, u.tracks[s].thdPct, th)
-      if s == main:
-        let hk = flagged({lkHarmonic})
-        if hk.anyOf: dist.curves.add past($s & " harmonic", xs, largest, hk)
-  result.plots = @[phase, force]
-  if generated.curves.len > 0: result.plots.add generated
-  result.plots.add [freq, dist]
+  # Force: the judged signal, in % of its 100 % force when that is given, else as recorded
+  # (the recorded ground force and the one from M and B are in different units)
+  func forcePlotOf(s: VibSignal; percent: bool): AnalysisPlot =
+    let fromMasses = s == vsWeightedSum
+    result = AnalysisPlot(xLabel: "Sweep time (ms)", xUnit: "ms", xs: xs,
+      title: (if fromMasses: "Force from M and B" elif s == judged: "Force"
+      else: "Force (GF as recorded)"),
+      yLabel: (if percent: "Force (%)"
+      elif fromMasses:
+        (if details and both: "GF from M and B" else: "Force") & " (" &
+          weightedUnit(u.units[vsWeightedSum]) & ")"
+      else: "Force (" & forceUnit(u.units[s]) & ")"),
+      yUnit: (if percent: "%" else: ""))
+    let k = if percent: percentScale else: 1.0
+    func scaled(v: seq[float64]): seq[float64] =
+      result = newSeq[float64](v.len)
+      for m in 0 ..< v.len: result[m] = v[m] * k
+    let named = nameOf(s)
+    let fundamental = AnalysisCurve(name: named & " fundamental",
+      ys: scaled(u.tracks[s].amplitude[0]))
+    let peak = AnalysisCurve(name: named & " peak", ys: scaled(u.tracks[s].peak))
+    result.curves.add [fundamental, peak]
+    if s == judged and not hundredRaw.isNaN:
+      result.curves.addFailing overlay(named & " peak", peak.ys, stats.peak, q.peakForcePct,
+        percentScale)
+  var plots: seq[AnalysisPlot] = @[phase, forcePlotOf(judged, not hundredRaw.isNaN)]
+  if details:
+    for s in others: plots.add forcePlotOf(s, false)
+  # Frequency
+  var freq = AnalysisPlot(title: "Frequency", xLabel: "Sweep time (ms)", xUnit: "ms",
+    yLabel: "Frequency (Hz)", yUnit: "Hz", xs: xs)
+  freq.curves.add AnalysisCurve(name: "Ref", ys: u.tracks[vsReference].referenceHz)
+  if details and withRecorded:
+    freq.curves.add AnalysisCurve(name: RecordedRef,
+      ys: results[1].tracks[vsGroundForce].frequencyHz)
+  for s in @[judged] & others:
+    if (s == judged or details) and s in u.signals:
+      freq.curves.add AnalysisCurve(name: nameOf(s), ys: u.tracks[s].frequencyHz)
+  # Distortion: the judged signal's THD; with Details the other's, and each harmonic
+  var dist = AnalysisPlot(title: "Distortion", xLabel: "Sweep time (ms)", xUnit: "ms",
+    yLabel: "Distortion (%)", yUnit: "%", xs: xs)
+  let thd = AnalysisCurve(name: nameOf(judged) & " THD", ys: u.tracks[judged].thdPct)
+  dist.curves.add thd
+  dist.curves.addFailing overlay(nameOf(judged) & " THD", thd.ys, stats.meanThdPct,
+    q.peakDistortionPct)
+  if details:
+    for s in others: dist.curves.add AnalysisCurve(name: nameOf(s) & " THD", ys: u.tracks[s].thdPct)
+    let t = u.tracks[judged]
+    # the harmonics drawn: those asked for, of the tracked ones (a band tracks all 16)
+    let tracked = trackedHarmonics(TrackParams(harmonics: clamp(p.harmonics, 2, 16),
+      harmonicBandHz: band, harmonicBandAuto: band.isNaN))
+    for k in 2 .. min(t.amplitude.len, min(tracked, clamp(p.harmonics, 2, 16))):
+      var pct = newSeq[float64](xs.len)
+      for m in 0 ..< xs.len:
+        let a1 = t.amplitude[0][m]
+        pct[m] = if a1 > 0: 100 * t.amplitude[k - 1][m] / a1 else: NaN
+      dist.curves.add AnalysisCurve(name: nameOf(judged) & " H" & $k, ys: pct)
+  plots.add [freq, dist]
+  result.plots = plots
   # The table: one row per signal
   var head = @["Signal", "Trace", "Polarity", "Mean |phase| (°)", "Max |phase| (°)",
     "Mean THD (%)", "Max THD (%)", "Mean force", "Min force", "Max peak"]
-  if p.limitsOn: head.add "Limits"
   result.table.add head
   for s in Shown:
     if s notin u.signals: continue
@@ -428,18 +445,6 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       number(m.meanAbsPhaseDeg), number(m.maxAbsPhaseDeg), number(m.meanThdPct),
       number(m.maxThdPct), forceCell(m.meanForce), forceCell(m.minForce),
       forceCell(m.maxPeak)]
-    # the force limits are not applied to a force in another unit than theirs
-    let ownUnit = if s == vsWeightedSum and main != vsWeightedSum:
-                    {lkForceLow, lkForceHigh, lkPeakForce, lkMeanForce}
-                  else: {}
-    if p.limitsOn:
-      row.add(if s notin forces: "not judged"
-              elif m.points == 0: "not judged (no point)"
-              elif m.failed - ownUnit == {}: "pass"
-              else:
-                var what: seq[string] = @[]
-                for k in m.failed - ownUnit: what.add $k
-                "fail: " & what.join(", "))
     result.table.add row
     result.forceUnits.add(if s == vsWeightedSum: weightedUnit(u.units[s])
                            else: forceUnit(u.units[s]))
@@ -449,7 +454,6 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     var row = @[RecordedRef, names[recorded], "as recorded", number(m.meanAbsPhaseDeg),
       number(m.maxAbsPhaseDeg), number(m.meanThdPct), number(m.maxThdPct),
       forceCell(m.meanForce), forceCell(m.minForce), forceCell(m.maxPeak)]
-    if p.limitsOn: row.add "not judged"
     var at1 = result.table.len
     for i in 1 ..< result.table.len:
       if result.table[i][0] == $vsReference: at1 = i + 1
@@ -457,8 +461,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     result.forceUnits.insert(forceUnit(results[1].units[vsGroundForce]), at1 - 1)
   let usedHz = u.tracks[main].bandHz
   let chord = largestChordHz(u.reference)
-  result.band = BandReport(hz: usedHz, suggestedHz: topFrequencyHz(u.reference),
-      chordHz: chord,
+  result.band = BandReport(hz: usedHz, suggestedHz: (if fitted.isNaN: topFrequencyHz(
+      u.reference) else: fitted), chordHz: chord,
     typed: not topHz.isNaN, exact: topHz.isNaN and not exactTopHz.isNaN)
   if not usedHz.isNaN and not chord.isNaN and chord > 0:
     # the chord is a lower bound of the top, short of it by the sweep's rate over its end
@@ -520,9 +524,6 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   if vsWeightedSum in u.signals:
     words.add "; GF (M, B) is uncalibrated without accelerometer sensitivities: in " &
       weightedUnit(u.units[vsWeightedSum]) & ", on an axis of its own"
-    if p.limitsOn and main != vsWeightedSum:
-      words.add " (the force limits are in " & forceUnit(u.units[main]) &
-        " and are not applied to it)"
   let e = u.reference.extent
   words.add "; judged from " & number(span.a, 0) & " to " & number(span.b, 0) &
       " ms (" &

@@ -96,11 +96,12 @@ proc main*() =
     step("a vibrator signature", proc (f: FrameInfo) =
       let b = f.core.sessions[0].base
       f.apply(Command(kind: ckOpenPlot, plotView: avVibrator,
-        plotTraces: @[b, b + 1, b + 2, b + 3], plotParams: AnalysisParams(harmonics: 5))),
+        plotTraces: @[b, b + 1, b + 2, b + 3], plotParams: AnalysisParams(harmonics: 5,
+            details: true))),
       proc (f: FrameInfo): bool =
         f.core.plots.len == 1 and not f.core.plots[0].waiting and
           f.core.plots[0].result.problem.len == 0 and f.core.plots[0].result.plots.len == 4 and
-          f.markOf("new plot 1.plot 3.data").size.x > 0)
+          f.markOf("new plot 1.plot 2.data").size.x > 0)
     # the masses typed a digit at a time, results arriving behind the keystrokes
     var digits = 0
     step("the masses typed", noop, proc (f: FrameInfo): bool =
@@ -115,7 +116,7 @@ proc main*() =
         return false
       f.core.plots[0].params.baseplateMassKg == 1800 and not f.core.plots[0].waiting and
         f.core.plots[0].result.plots.len == 5 and
-        f.markOf("new plot 1.plot 3.data").size.x > 0)
+        f.markOf("new plot 1.plot 2.data").size.x > 0)
     step("settle", noop, after(20))
     step("the top plots drawn", noop, proc (f: FrameInfo): bool =
       checkPlots(f)

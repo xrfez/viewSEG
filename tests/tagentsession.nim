@@ -180,16 +180,12 @@ const PlotShown = AnalysisParams(windowMs: 64, overlap: 50, floorDb: -80, colour
   phaseWithinDb: 30, phasePicture: ppSigned, maxLagMs: 100, fkRaw: true, phaseAgainst: paSelf,
   phaseShow: psSigned,
   reactionMassKg: 3500, baseplateMassKg: 1500, harmonics: 8, projectReference: false,
-  limitsOn: true,
-  limits: VibLimits(phaseDeg: 12, thdPct: 30, harmonicPct: 8, forceLow: 100, forceHigh: 500,
-  peakForce: 900, meanPhaseDeg: 6, meanThdPct: 15, meanForceLow: 120, skipStartMs: 50,
-  skipEndMs: 60, fromMs: 10, toMs: 900),
   tops: @[TopFrequency(reference: "a reference", hz: 180), TopFrequency(reference: RecordedKey &
   " 4/21.19.18.20",
   hz: 210)], qcWindowMs: 250,
   qc: QcLimits(avgPhaseDeg: 4, peakPhaseDeg: 9, avgDistortionPct: 25, peakDistortionPct: 55,
   avgForcePct: 85, peakForcePct: 130), forceHundredPct: 4000, forceHundredWeighted: 9000,
-  rolesOpen: true, noteOpen: true, targetPct: 50)
+  rolesOpen: true, noteOpen: true, details: true, setupOpen: true, setupSet: true, targetPct: 50)
   ## the options of every kind of New plot window away from their defaults
 
 const PlotViews = [avSpectrogram, avEnvelope, avPhase, avCorrelation, avVibrator, avFk]

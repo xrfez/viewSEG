@@ -269,13 +269,10 @@ proc writePlotOptions(w: var NifWriter; o: PlotOptions) =
   w.value("harmonics", o.vibrator.harmonics)
   w.choice("phaseShow", PhaseShowNames[o.vibrator.phaseShow])
   w.value("projectReference", o.vibrator.projectReference)
-  w.value("limitsOn", o.vibrator.limitsOn)
   w.value("rolesOpen", o.vibrator.rolesOpen)
   w.value("noteOpen", o.vibrator.noteOpen)
-  w.open("limits")
-  for name, x in fieldPairs(o.vibrator.limits):
-    if not x.isNaN: w.value(name, x)
-  w.close()
+  w.value("details", o.vibrator.details)
+  if o.vibrator.setupSet: w.value("setupOpen", o.vibrator.setupOpen)
   w.value("qcWindowMs", o.vibrator.qcWindowMs)
   w.open("qc")
   for name, x in fieldPairs(o.vibrator.qc):
@@ -849,17 +846,14 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
           o.vibrator.harmonics = h
         elif c.isTree("phaseShow"): r.choice(c, PhaseShowNames, o.vibrator.phaseShow)
         elif c.isTree("projectReference"): r.flag(c, o.vibrator.projectReference)
-        elif c.isTree("limitsOn"): r.flag(c, o.vibrator.limitsOn)
+        elif c.isTree("limitsOn") or c.isTree("limits"):
+          discard # the point limits are gone: an older file's are read and left out
         elif c.isTree("rolesOpen"): r.flag(c, o.vibrator.rolesOpen)
         elif c.isTree("noteOpen"): r.flag(c, o.vibrator.noteOpen)
-        elif c.isTree("limits"):
-          for l in c.kids:
-            var known = false
-            for name, x in fieldPairs(o.vibrator.limits):
-              if l.isTree(name):
-                known = true
-                r.ranged(l, NumberRange, x)
-            if not known: r.unknown(l, "limits")
+        elif c.isTree("details"): r.flag(c, o.vibrator.details)
+        elif c.isTree("setupOpen"):
+          r.flag(c, o.vibrator.setupOpen)
+          o.vibrator.setupSet = true
         elif c.isTree("qcWindowMs"): r.ranged(c, WindowMsRange,
             o.vibrator.qcWindowMs)
         elif c.isTree("targetPct"): r.ranged(c, TargetPctRange, o.vibrator.targetPct)

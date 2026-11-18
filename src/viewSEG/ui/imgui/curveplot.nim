@@ -190,9 +190,11 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
     if fit.y: ImPlot_Cond_Always.cint else: ImPlot_Cond_Once.cint)
   # One rule for every plot: the legend is outside the drawing area, never over the curves,
   # at the right when the pane is wide enough or short, else in a row above it.
-  let legendRight = size.x <= 0 or size.x >= igGetFontSize() * 40 or
-    size.y < igGetFontSize() * 12 # (a short pane has no room for a row above)
-  if legendRight:
+  let legendRight = not p.legendInside and (size.x <= 0 or size.x >= igGetFontSize() * 40 or
+    size.y < igGetFontSize() * 12) # (a short pane has no room for a row above)
+  if p.legendInside:
+    ImPlot_SetupLegend(ImPlot_Location_NorthEast.cint, 0)
+  elif legendRight:
     ImPlot_SetupLegend(ImPlot_Location_NorthEast.cint, ImPlot_LegendFlags_Outside.cint)
   else:
     ImPlot_SetupLegend(ImPlot_Location_North.cint,
@@ -242,6 +244,7 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
     ImPlot_PlotLine_doublePtrdoublePtr("##lo".cstring, xs, lo, n, 0, 0, cint(sizeof(float64)))
   for c in ui.screen:
     let cxs = p.xsOf(c)
+    let label = if c.overlay: "##" & c.name else: c.name
     var from0 = 0
     if p.logX:
       while from0 < cxs.len and not (cxs[from0] > 0): inc from0
@@ -251,25 +254,25 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
       let ys = cast[ptr cdouble](unsafeAddr c.ys[from0])
       if not turned and not c.shadeTo.isNaN:
         ImPlot_SetNextFillStyle(vec4(c.colour), 0.16)
-        ImPlot_PlotShaded_doublePtrdoublePtrInt(c.name.cstring, xs, ys, cint(n),
+        ImPlot_PlotShaded_doublePtrdoublePtrInt(label.cstring, xs, ys, cint(n),
           c.shadeTo, 0, 0, cint(sizeof(float64)))
       if c.marks:
         let size = 2.5 * c.width * width
         ImPlot_SetNextMarkerStyle(ImPlot_Marker_Circle.cint, size, vec4(c.colour), 0,
           vec4(c.colour))
         if turned:
-          ImPlot_PlotScatter_doublePtrdoublePtr(c.name.cstring, ys, xs, cint(n), 0, 0,
+          ImPlot_PlotScatter_doublePtrdoublePtr(label.cstring, ys, xs, cint(n), 0, 0,
             cint(sizeof(float64)))
         else:
-          ImPlot_PlotScatter_doublePtrdoublePtr(c.name.cstring, xs, ys, cint(n), 0, 0,
+          ImPlot_PlotScatter_doublePtrdoublePtr(label.cstring, xs, ys, cint(n), 0, 0,
             cint(sizeof(float64)))
         continue
       ImPlot_SetNextLineStyle(vec4(c.colour), c.width * width)
       if turned:
-        ImPlot_PlotLine_doublePtrdoublePtr(c.name.cstring, ys, xs, cint(n), 0, 0,
+        ImPlot_PlotLine_doublePtrdoublePtr(label.cstring, ys, xs, cint(n), 0, 0,
           cint(sizeof(float64)))
       else:
-        ImPlot_PlotLine_doublePtrdoublePtr(c.name.cstring, xs, ys, cint(n), 0, 0,
+        ImPlot_PlotLine_doublePtrdoublePtr(label.cstring, xs, ys, cint(n), 0, 0,
           cint(sizeof(float64)))
   # The stretches left out of a judgement (a sweep's tapers), dimmed over the curves.
   if p.dimmed.len > 0 and not turned:
@@ -301,7 +304,7 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
       var best = -1
       var gap = Inf
       for i, v in r.drawn:
-        if v.classify notin {fcNan, fcInf, fcNegInf}:
+        if v.classify notin {fcNan, fcInf, fcNegInf} and not p.curves[i].overlay:
           let q = if turned: ImPlot_PlotToPixels_double(v, r.x, ImAxis_X1.cint, ImAxis_Y1.cint)
                   else: ImPlot_PlotToPixels_double(r.x, v, ImAxis_X1.cint, ImAxis_Y1.cint)
           let d = if turned: abs(q.x - io.MousePos.x) else: abs(q.y - io.MousePos.y)

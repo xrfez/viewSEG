@@ -108,9 +108,7 @@ type
     # the vibrator signature
     roles*: string
     reactionMass*, baseplateMass*: string ## shown in the Units setting's mass unit
-    limitsOn*: bool
-    phaseLimit*, thdLimit*, harmonicLimit*: float64 = NaN
-    forceLimits*: bool
+    details*: bool ## the vibrator signature shows every signal and the harmonics
     harmonics*: int
     axis*: string ## the force axis as it is labelled now
     # the header graph, the map, a generated or stored reference, Compare
@@ -417,34 +415,28 @@ func ratioPhaseText(f: ExplainFacts): string =
 func rolesWords(f: ExplainFacts): string =
   if f.live and f.roles.len > 0: "Roles: " & f.roles & "." else: ""
 
-func limitsWords(f: ExplainFacts; which: string): string =
-  ## The limits of one plot, in words, while they are on.
-  if not f.live: return "Limits you set are drawn as thin lines and the points past them marked."
-  if not f.limitsOn: return "Limits are off."
-  var lim = ""
+func failingWords(f: ExplainFacts; which: string): string =
+  ## What the error colour means on one plot of the vibrator signature.
+  if not f.live: return "A stretch in the error colour is a window past a limit of the verdict."
   case which
-  of "phase":
-    if known(f.phaseLimit): lim = "±" & num(f.phaseLimit) & "°"
-  of "distortion":
-    if known(f.thdLimit): lim = "THD " & num(f.thdLimit) & " %"
-    if known(f.harmonicLimit):
-      lim.add (if lim.len > 0: ", " else: "") & "one harmonic " & num(f.harmonicLimit) & " %"
-  of "force":
-    if f.forceLimits: lim = "the lowest force, the highest force and the highest peak you set"
-  else: discard
-  if lim.len == 0: "Limits are on, none for this plot."
-  else: "Limits are on (" & lim & "): drawn as thin lines, points past them marked."
+  of "phase": "A stretch in the error colour is a window whose mean |phase| is past the peak " &
+    "phase limit."
+  of "distortion": "A stretch in the error colour is a window whose mean distortion is past " &
+    "the peak distortion limit."
+  of "force": "A stretch in the error colour is a window whose peak is past the peak force " &
+    "limit (in % of the 100 % force)."
+  else: ""
 
 func vibTrace(f: ExplainFacts): string =
   f.what("The traces of the window's roles.")
 
 func vibPhaseText(f: ExplainFacts): string =
   join4(part("Shows", "Phase in degrees up, against sweep time in ms across (a point every " &
-      "10 ms): one line per signal, GF, GF (M, B), M and B, each measured against the pilot, " &
-      "Ref. " & f.showWords),
+      "10 ms): the signal judged (GF, or GF (M, B)) measured against the pilot, Ref" &
+      (if f.details: ", with the other ground force, M and B" else: "") & ". " & f.showWords),
     part("Computed from", f.vibTrace, f.rolesWords, "Each signal's phase to the reference " &
       "where the pilot's envelope is within 40 dB of its peak.", f.rawClause,
-      f.limitsWords("phase")),
+      f.failingWords("phase")),
     part("Reading it", "A ground force within a few degrees of 0° along the sweep means the " &
       "vibrator follows the pilot. A drift means poor control; a steady 180° means the " &
       "polarity is reversed (see Polarity)."),
@@ -455,7 +447,7 @@ func vibForceText(f: ExplainFacts): string =
   join4(part("Shows", "Force against sweep time in ms: the ground force's fundamental " &
       "amplitude and its peak" & (if f.axis.len > 0: ", on the axis " & f.axis else: "") & "."),
     part("Computed from", f.vibTrace, f.rolesWords, "The fundamental is tracked along the " &
-      "pilot's frequency.", f.rawClause, f.limitsWords("force")),
+      "pilot's frequency.", f.rawClause, f.failingWords("force")),
     part("Reading it", "A steady fundamental through the sweep is a vibrator putting out " &
       "constant force. Dips mean lost output or hold-down; a peak far above the fundamental " &
       "means distortion or bouncing."),
@@ -475,7 +467,7 @@ func vibForceMBText(f: ExplainFacts): string =
       "difference between the two means a wrong mass or a bad accelerometer channel."),
     part("Careful", "Without the accelerometers' sensitivities this force is uncalibrated and " &
       "on an axis of its own: do not compare its level with the recorded force, and the " &
-      "force limits are not applied to it."))
+      "force limits are in % of the judged signal's own 100 % force."))
 
 func vibFrequencyText(f: ExplainFacts): string =
   join4(part("Shows", "Instantaneous frequency in Hz up, against sweep time in ms across: the " &
@@ -495,7 +487,7 @@ func vibDistortionText(f: ExplainFacts): string =
       "vibrator controller reports: it sums the harmonics, from the 2nd, whose frequency " &
       "stays within the top frequency box (the sweep's top, Hz); where none is in band " &
       "it is 0. A harmonic above 80 % of Nyquist is never measured.",
-      f.rawClause, f.limitsWords("distortion")),
+      f.rawClause, f.failingWords("distortion")),
     part("Reading it", "Lower is better. A smooth low THD is a clean sweep; a rise at one " &
       "point is a resonance or a stroke limit; one harmonic standing out is a specific fault."),
     part("Careful", "Distortion falls to 0 in the later part of a sweep, where the 2nd " &
@@ -723,7 +715,7 @@ func kindOfPane*(v: AnalysisView; title: string): PlotKind =
     else: pkCorrelation
   of avVibrator:
     case title
-    of "Force": pkVibForce
+    of "Force", "Force (GF as recorded)": pkVibForce
     of "Force from M and B": pkVibForceMB
     of "Frequency": pkVibFrequency
     of "Distortion": pkVibDistortion
@@ -745,11 +737,7 @@ func factsOf*(w: AnalysisWindow; units: UnitSystem): ExplainFacts =
     fkRaw: p.fkRaw, colourMap: p.colourMap,
     against: w.view == avEnvelope and w.result.plots.len > 1 and
       w.result.plots[1].title == "Phase against the reference", harmonics: p.harmonics,
-          limitsOn: p.limitsOn,
-    phaseLimit: p.limits.phaseDeg, thdLimit: p.limits.thdPct,
-    harmonicLimit: p.limits.harmonicPct,
-    forceLimits: known(p.limits.forceLow) or known(p.limits.forceHigh) or
-      known(p.limits.peakForce))
+          details: p.details)
   if w.result.passedBy > 0: result.skipped = passedWords(w.result.passedBy)
   if w.view == avFk:
     result.wavenumber = w.result.image.xUnit
