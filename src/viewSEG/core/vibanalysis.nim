@@ -312,8 +312,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   # the time shown, the reference's sweep at `extent.endMs`)
   let traceRow = if main == vsGroundForce: at[vsGroundForce] else: at[vsMass]
   if traceRow in 0 ..< rows.len:
-    let traceMs = spanMs(rows[traceRow].len, dtMs)
-    result.warning = shortWords("trace", traceMs, spanMs(rows[at[vsReference]].len, dtMs))
+    let traceMs = float64(rows[traceRow].len) * dtMs
+    result.warning = shortWords("trace", traceMs, float64(rows[at[vsReference]].len) * dtMs)
     let early = endWords("", lastLoudMs(u.tracks[main].amplitude[0], xs), e.endMs, traceMs)
     if early.len > 0:
       result.warning.add (if result.warning.len > 0: "\n" else: "") & early

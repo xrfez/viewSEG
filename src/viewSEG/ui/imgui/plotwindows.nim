@@ -25,6 +25,7 @@ import chrome, curveplot as curves, explainmenu, overflow, icons, marks, placeme
   style
 
 const
+  CorrelationWidth = 900'f32        ## a correlation of several traces: room for its table's columns
   PlotSize = (640'f32, 620'f32)     ## a window's first size, at 100 %
   VibratorSize = (760'f32, 900'f32) ## a vibrator signature's: its roles and four plots
 
@@ -766,6 +767,8 @@ proc drawTable(name: string; table: seq[seq[string]]; t: Theme; marks: var Marks
           igPopStyleColor(1)
         else:
           igTextUnformatted(cell.cstring, nil)
+    # a table wider than its window scrolls sideways: said, so a test can see it does not
+    if igGetScrollMaxX() > 0: marks.mark(name & ".table scrolls")
     igEndTable()
     marks.mark(name & ".table")
 
@@ -777,13 +780,14 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   drawSettings(st, w, name, t, marks, res)
   let r = w.result
   var words = if w.frozen: "Frozen · " & w.label else: w.label
+  # against a reference (one actually used) nothing is filtered: the filters' words are not
+  # shown, and a trace's own filter is said not to be applied (the note says so too)
+  let rawWindow = w.view in {avCorrelation, avVibrator} or
+    (w.view == avEnvelope and r.plots.len > 1 and r.plots[1].title == "Phase against the reference")
   let own = w.ownLine
-  if own.len > 0: words.add " · " & own
+  if own.len > 0: words.add " · " & own & (if rawWindow: " (not applied here)" else: "")
   let rev = w.reverseLine
   if rev.len > 0: words.add " · " & rev
-  # against a reference the plot's filters are not applied (the note says so)
-  let rawWindow = w.view in {avCorrelation, avVibrator} or
-    (w.view == avEnvelope and w.reference.len > 0 and w.params.phaseAgainst == paReference)
   if w.filters.len > 0 and not rawWindow:
     words.add " · filters: " & w.filters
     if r.passedBy > 0: words.add " (" & passedWords(r.passedBy) & ")"
@@ -800,7 +804,26 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   if w.waiting: words.add " · working it out..."
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   igTextWrapped("%s", words.cstring)
-  if r.warning.len > 0 and r.problem.len == 0 and not w.waiting:
+  # The warning and the note may be many lines (eight traces' words): above a third of the
+  # window they scroll in a child of their own, so that the plots keep their room.
+  let wrapW = igGetContentRegionAvail().x
+  let warnShown = r.warning.len > 0 and r.problem.len == 0 and not w.waiting
+  let refProblem = w.view == avCorrelation and not w.waiting and r.problem.len > 0 and
+    r.plots.len == 0 and r.image.isEmpty
+  let noteShown = w.goneNote.len == 0 and r.problem.len == 0 and r.note.len > 0 and not refProblem
+  let said = if noteShown:
+               (if r.against.len > 0: r.against & ". " else: "") &
+                 shownNote(r.note, w.params.reactionMassKg, w.params.baseplateMassKg,
+                 st.settings.units)
+             else: ""
+  var wordsH = 0.0'f32
+  if warnShown: wordsH += igCalcTextSize(r.warning.cstring, nil, false, wrapW).y
+  if noteShown: wordsH += igCalcTextSize(said.cstring, nil, false, wrapW).y
+  let wordsCap = max(igGetContentRegionAvail().y * 0.34'f32, igGetTextLineHeightWithSpacing() * 6)
+  let scrollWords = w.view == avCorrelation and wordsH > wordsCap
+  if scrollWords:
+    discard igBeginChild_Str(("##words" & name).cstring, ImVec2_c(x: 0, y: wordsCap), 0, 0)
+  if warnShown:
     # a trace that cannot be matched to the whole of its reference, before anything else
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
     igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
@@ -808,18 +831,15 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     igPopTextWrapPos()
     igPopStyleColor(1)
     marks.mark(name & ".warning")
-  let refProblem = w.view == avCorrelation and not w.waiting and r.problem.len > 0 and
-    r.plots.len == 0 and r.image.isEmpty
   if w.goneNote.len > 0 and not refProblem: igTextWrapped("%s", w.goneNote.cstring)
   elif r.problem.len > 0 and not refProblem:
     igTextWrapped("%s", ("Nothing to show: " & r.problem).cstring)
-  elif r.note.len > 0 and not refProblem:
-    let said = (if r.against.len > 0: r.against & ". " else: "") &
-      shownNote(r.note, w.params.reactionMassKg, w.params.baseplateMassKg, st.settings.units)
+  elif noteShown:
     # wrapped at the window's width (the settings rows above are wider than a note)
     igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
     igTextUnformatted(said.cstring, nil)
     igPopTextWrapPos()
+  if scrollWords: igEndChild()
   igPopStyleColor(1)
   marks.mark(name & ".summary")
   # a vibrator signature's table, with its limits on; a correlation's, of several traces
@@ -951,7 +971,7 @@ proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: floa
     # a correlation of several traces has a line or two each above its plots: taller
     let size = if w.view == avVibrator: VibratorSize
                elif w.view == avCorrelation and w.traces.len > 2:
-                 (PlotSize[0], PlotSize[1] + 2 * float32(min(w.traces.len, 8)) *
+                 (CorrelationWidth, PlotSize[1] + 2 * float32(min(w.traces.len, 8)) *
                    igGetFontSize() / scale)
                else: PlotSize
     placeNext(w.id, size, scale)

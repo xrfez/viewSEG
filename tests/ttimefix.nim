@@ -29,13 +29,16 @@
 ## phase taken from the unshifted traces, the 10 ms copy's mean phase was 117.0; with the
 ## signal end compared with the reference's length, the rotated and inverted copies warned
 ## "signal ends at about 700 ms"; with the plot's filters applied to the traces
-## alone, the band-passed copies read match 0.75 and -14.1 dB.
+## alone, the band-passed copies read match 0.75 and -14.1 dB; with the ratio rule off, the
+## -20 dB sweeps read "no clear match"; with the edge check before the weak one, noise on the
+## last lag read "no peak"; with the shift left out of the signal-end check, the sweep 300 ms
+## early warned; with `peakLagMs` the raw sample, it read 2.0 for 3 ms.
 
 import std/[math, os, strutils]
 import parseSEG
 import processSEG/fft/hilbert
 import processSEG/core/workspace
-import viewSEG/core/[analysis, compare, processing, state]
+import viewSEG/core/[analysis, compare, edits, matchpeak, processing, state]
 import utils/[chosenref, fixtures, waiting]
 
 const
@@ -104,6 +107,18 @@ proc recordOf(fx: Fixtures; traces: seq[seq[float32]]): string =
     w.writeTrace(k, buf)
   doAssert w.close().len == 0
 
+func sweepOf(dtMs, startMs, durMs, totalMs: float64): seq[float32] =
+  ## 8 to 60 Hz for `durMs` from `startMs`, tapered by a cos² over its first and last 10 %,
+  ## quiet for the rest of `totalMs`.
+  result = newSeq[float32](int(totalMs / dtMs))
+  for i in 0 ..< result.len:
+    let n = float64(i) * dtMs - startMs
+    if n < 0 or n >= durMs: continue
+    let t = n / 1000
+    let edge = min(n, durMs - n) / (0.1 * durMs)
+    let w = if edge >= 1: 1.0 else: sin(PI / 2 * edge) ^ 2
+    result[i] = float32(w * sin(2 * PI * (8 * t + 0.5 * (52 / (durMs / 1000)) * t * t)))
+
 template section(name: string; body: untyped) =
   ## `TIMEFIX_ONLY=<name>` runs one section (to see one fail on its own).
   if getEnv("TIMEFIX_ONLY") in ["", name]:
@@ -131,16 +146,59 @@ proc main*() =
     doAssert "early: best match 1.00 at -1.0 ms (arrives 1.0 ms before the reference)" in r.note,
       r.note
     doAssert r.table[1][2] == "+3.0" and r.table[2][2] == "-1.0", $r.table
+    doAssert abs(r.peakLagMs(0) - 3) < 0.05 and abs(r.peakLagMs(1) + 1) < 0.05,
+      "the agent's peakLagMs: " & $r.peakLagMs(0)
 
   section "peakAtTheEdge":
-    let r = against([("far", ricker(delayMs = 40))], maxLagMs = 5)
+    let r = against([("far", ricker(delayMs = 10))], maxLagMs = 5)
     doAssert "far: no peak within ±6.0 ms: widen the time shifts" in r.note, r.note
     doAssert "Time shifts shown: ±6.0 ms" in r.note, r.note
     doAssert "arrives" notin r.note and "best match" notin r.note, r.note
     doAssert r.table[1][1] == "-" and r.table[1][2] == "-" and r.table[1][4] == "-" and
       r.table[1][5] == "-", $r.table
+    doAssert r.peakLagMs(0).isNaN and r.verdictOf(0) == "no peak"
     doAssert r.plots[2].curves[0].ys.nanCount == r.plots[2].curves[0].ys.len,
       "a phase was drawn for a trace with no peak"
+
+  section "noisySweepsAreClearByTheirRatio":
+    # -20 dB per sample: the coefficient is far under 0.3, the peak stands over 4.5 times above the
+    # envelope elsewhere, so the shift is said to the whole millisecond ("about +4 ms")
+    for dt in [0.5, 1.0]:
+      let reference = sweepOf(dt, 100, 4000, 4400)
+      let trace = sweepOf(dt, 104, 4000, 4400).noisy(-20)
+      let r = correlationOf([("n", trace)], reference, "the sweep", dt,
+        AnalysisParams(maxLagMs: 250))
+      doAssert r.matches[0].verdict == mvClear, $dt & " ms: " & r.note
+      doAssert "n: best match 0." in r.note and "at about +" in r.note and
+        " ms (arrives about " in r.note, r.note
+      doAssert r.table[1][2].startsWith("about +"), $r.table
+      # the shift is good to a few ms at this noise; 4 ms is the truth
+      doAssert abs(r.peakLagMs(0) - 4) < 3 and r.verdictOf(0) == "match", $r.peakLagMs(0)
+    # a Ricker at -20 and -25 dB is no clear match (at -10 and -12 dB it is clear: 0.31 and 0.26, and 4.5 times above)
+    for snr in [-20.0, -25.0]:
+      let r = against([("n", ricker().noisy(snr))])
+      doAssert r.matches[0].verdict == mvWeak, $snr & " dB: " & r.note
+      doAssert r.peakLagMs(0).isNaN and r.verdictOf(0) == "no clear match"
+
+  section "pureNoiseOnTheLastLagIsNoClearMatch":
+    let r = against([("far", ricker(delayMs = 40))], maxLagMs = 5)
+    doAssert "far: no clear match (" in r.note and "no peak" notin r.note, r.note
+
+  section "earlySweepIsNotWarned":
+    # a sweep that arrives 300 ms early ends 300 ms before the reference's end
+    let reference = sweepOf(2.0, 600, 2000, 3200)
+    let r = correlationOf([("t", sweepOf(2.0, 300, 2000, 3200))], reference, "the sweep", 2.0,
+      AnalysisParams(maxLagMs: 400))
+    doAssert "at -300.0 ms" in r.note, r.note
+    doAssert r.warning == "", r.warning
+    # and one whose signal really stops early is still said
+    let cut = sweepOf(2.0, 600, 1000, 3200)
+    let c = correlationOf([("t", cut)], reference, "the sweep", 2.0, AnalysisParams(maxLagMs: 400))
+    doAssert "signal ends at about" in c.warning, c.warning
+
+  section "signedMirrorImageIsOneEighty":
+    let r = against([("t", ricker(scale = -1))], phaseShow = psSigned)
+    doAssert r.table[1][4] == "180.0", $r.table
 
   section "weakMatch":
     let r = against([("n", ricker().noisy(-20))])
@@ -219,6 +277,16 @@ proc main*() =
         doAssert row[1] == "1.00" and row[3] == "0.0" and row[2] == "0.0", $r.table
       doAssert r.table == off.table, "the numbers changed with the filters"
       doAssert "\n" & RawAgainstReference in r.note and "through" notin r.note, r.note
+      # an own filter alone is named too, and changes nothing
+      st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Processing())
+      doAssert st.settle(st.answered(w) and st.plots[w].filters.len == 0), "filters still on"
+      let asks = st.plots[w].asks
+      st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 1], on: true,
+        processing: Processing(band: pbBandPass, f1: 20, f2: 25, f3: 35, f4: 40),
+        filterPlace: fpAfter)
+      doAssert st.settle(st.plots[w].asks > asks and st.answered(w)), "own filter not asked"
+      doAssert st.plots[w].result.table == off.table and
+        RawAgainstReference in st.plots[w].result.note, st.plots[w].result.note
       # an envelope against the reference, too
       st.apply Command(kind: ckOpenPlot, plotView: avEnvelope, plotTraces: @[base + 1])
       let e = st.plots.high

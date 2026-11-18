@@ -658,8 +658,8 @@ last such one that stay above half of that level belong to the signal (a hystere
 decaying tail does not end at its first dip). The trace's end is compared with where the
 reference's own signal ends, found the same way (not with the reference's length: a short
 wavelet's copies are not "early"); one that ends within 150 ms or 3 % of it is taken to end
-with it. Lengths are said as `(samples - 1)` intervals: 1 001 samples at 2 ms run to
-2 000 ms. A trace longer than the reference
+with it. A length is samples times the interval (12 000 samples at 1 ms are 12 000 ms); a range is
+given by its first and last sample times. A trace longer than the reference
 (a lead-in before the sweep) gets neither line: the correlation's time shift takes the
 lead-in up (a delay), but the phase to the reference, measured as if both started together,
 does not.
@@ -709,9 +709,11 @@ Auxiliary traces go through the filters only when "Filter the Aux traces too" is
 it is not, the window says how many the filters passed by (under the title, "the auxiliary trace is
 not filtered: Filters > Filter the Aux traces too is off"), as the spectrum windows do, and `state`'s `passedBy` counts them. Against a reference (Cross-correlation, an Envelope's phase against the reference, Vibrator
 signature) neither side is filtered: the raw trace is compared with the raw reference, whatever
-the plot's filters and a trace's own filter are, and the window's note says so ("the plot's
-filters are not applied here: raw trace against the raw reference") when the plot has
-filters on. Its "filters:" chip is not shown there. A polarity reversal is still applied (to the
+the plot's filters and a trace's own filter are, and the window's note says so ("the plot's and
+the traces' own filters are not applied here: raw trace against the raw reference") when the plot
+or a trace has a filter. Its "filters:" chip is not shown there, and a trace's own-filter line
+says "(not applied here)"; an Envelope whose reference is named but unusable is filtered, and
+shows its chip. A polarity reversal is still applied (to the
 trace, and to a pilot reference that is reversed). An Envelope with no reference (its own phase)
 is filtered as ever.
 
@@ -773,10 +775,16 @@ right of that line's first row. A change works it out again.
   parabola through the peak and its two neighbours), so a delay of 3 ms at 2 ms sampling
   reads +3.0. The **rotation** is the phase of the correlation at the peak: "rotated 90°" for
   a trace that is the reference's Hilbert transform; nothing is said within 10° of 0, and
-  "reversed polarity" within 30° of 180°. A peak under 0.3 is "no clear match (0.06)", with no
-  shift, direction or rotation; a peak at the first or last lag shown is "no peak within
-  ±250.0 ms: widen the time shifts" ("-" in the table), and its trace has no phase per
-  frequency. The note says the time shifts really shown (the box's value rounded to whole
+  "reversed polarity" within 30° of 180°. A peak is clear at 0.3, or lower when it stands at least 4.5 times above
+  the envelope's RMS beyond ±20 ms of it (a noisy sweep: the shift is good though the
+  coefficient is small; checked when at least 40 ms of lags lie there). A clear match under
+  0.7 whose ratio is under 20, or one clear by the ratio alone, says its shift to the whole
+  millisecond ("at about +4 ms", "about +4" in the table). Any other peak is "no clear match
+  (0.06)", with no shift, direction or rotation (checked before the next); a clear peak at the
+  first or last lag shown is "no peak within ±250.0 ms: widen the time shifts" ("-" in the
+  table), and its trace has no phase per frequency. A trace arriving by its found shift is
+  not warned that its signal ends early. `state`'s `peakLagMs` is the shift as the window
+  says it (null for no clear match or no peak, with `verdicts` saying which). The note says the time shifts really shown (the box's value rounded to whole
   samples). The amplitude ratio and the phase per frequency are measured after the found
   shift is removed ("phase after removing the time shift"; a trace with no clear match or no
   peak is not shifted), so a delay is not read as a phase error. The Compare window words the

@@ -67,8 +67,8 @@ proc main*() =
   let reference = sweep(SweepMs)
 
   block traceShorterThanTheReference:
-    let trace = sweep(SweepMs)[0 ..< 4920] # 4 920 samples run to 9 838 ms
-    let line = "trace is 9 838 ms, the reference is 11 998 ms: the last 2 160 ms of the " &
+    let trace = sweep(SweepMs)[0 ..< 4920] # 9 840 ms
+    let line = "trace is 9 840 ms, the reference is 12 000 ms: the last 2 160 ms of the " &
       "reference have no data"
     for (view, r) in [("vibrator", vibrator(trace, reference)),
         ("correlation", correlation(trace, reference)),

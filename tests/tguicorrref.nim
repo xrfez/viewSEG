@@ -133,6 +133,25 @@ proc main*() =
         doAssert f.markOf("new plot 1.reference selected").size.x == 0
         doAssert f.markOf("new plot 1.reference pilot").size.x == 0)
 
+    proc openEight(f: FrameInfo) {.closure.} =
+      let base = f.core.sessions[0].base
+      var traces: seq[int] = @[]
+      for i in 0 ..< 8: traces.add base + i
+      f.apply Command(kind: ckOpenPlot, plotView: avCorrelation, plotTraces: traces)
+
+    step("eight traces at the default size", openEight, proc (f: FrameInfo): bool =
+      result = f.core.plots.len == 3 and not f.core.plots[2].waiting and
+        f.core.plots[2].result.plots.len > 0 and f.core.plots[2].result.table.len == 9 and
+        f.markOf("new plot 3.table").size.x > 0
+      if result:
+        # every plot is drawn (it has axes) and the table's last column is in view
+        for i in 0 .. 2:
+          let axes = f.frontend.plotAxes("new plot 3.plot " & $i)
+          doAssert not axes.xLo.isNaN and not axes.xHi.isNaN,
+            "plot " & $i & " of eight traces was not drawn at the default size"
+        doAssert f.markOf("new plot 3.table scrolls").size.x == 0,
+          "the table needs a horizontal scroll bar at the default size")
+
     proc onFrame(f: FrameInfo) =
       inc wait
       if at >= steps.len: f.stop()

@@ -320,12 +320,11 @@ proc correlate(a, b: openArray[float32]; dtMs: float64): tuple[xs, ys: seq[float
   except ValueError as e:
     result.why = e.msg
 
-func directionWords(shiftMs: float64): string =
+func directionWords(m: Match): string =
   ## Which way B is from A: "B lags A by 4.0 ms" (a copy of A delayed by τ peaks at +τ),
   ## "B leads A by", "B is in step with A".
-  if signedMs(shiftMs) == "0.0": "B is in step with A"
-  else: "B " & (if shiftMs > 0: "lags" else: "leads") & " A by " &
-    formatFloat(abs(shiftMs), ffDecimal, 1) & " ms"
+  if m.inStep: "B is in step with A"
+  else: "B " & (if m.shiftMs > 0: "lags" else: "leads") & " A by " & m.shiftSize
 
 proc applyAlign(b: var seq[float32]; a: openArray[float32]; dtMs: float64;
     opt: CompareOptions; peakMs: float64): tuple[note: string; shiftMs: float64] =
@@ -464,7 +463,7 @@ proc pictureOf*(a, b: CompareSlot; opt: CompareOptions): ComparePicture =
         result.table.match = corr.match
         let shownMs = max(abs(corr.xs[0]), abs(corr.xs[^1]))
         result.table.matchWords = verdictWords(corr.match, shownMs,
-          directionWords(corr.match.shiftMs))
+          directionWords(corr.match))
   elif result.refusal.len > 0:
     result.table.whyNot = result.refusal
   let aligned = applyAlign(workB, workA, workDt, opt, if result.sameGrid: peakMs else: NaN)
