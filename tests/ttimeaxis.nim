@@ -3,12 +3,18 @@
 ## widest tick label of a record covers every label Dear ImPlot's axis can
 ## write for it, at every zoom, so the axis never grows.
 ##
-## Seen to fail: with Nim's `formatFloat` taken as it is, 702.34 ms at 2 ms
+## The end labels (`timeEnds`): the whole of a 12 000-sample, 1 ms record is
+## labelled "11999" at the last sample, "0" at the first, a round tick near
+## either gives way, and a zoomed view is labelled at its own ends.
+##
+## Seen to fail: with `timeEnds` taking the last sample as `samples * dt`,
+## "11999" read "12000"; with `givesWay` always false, "11900" was kept
+## beside the end label. With Nim's `formatFloat` taken as it is, 702.34 ms at 2 ms
 ## read "702." and -0.2 ms "0."; with the finest step's decimals left out of
 ## `timeLabelChars`, "dt 0.125, 8 samples from 0.0 ms: "0.5" is longer
 ## than 1".
 
-import std/math
+import std/[math, strutils]
 import viewSEG/core/[viewport, zoom]
 import viewSEG/view/timeaxis
 
@@ -78,6 +84,38 @@ proc main*() =
     doAssert timeLabelChars(PanelLayout(traces: 24, samples: 500, dtMs: 2)) == 3
     doAssert timeLabelChars(PanelLayout(traces: 24, samples: 3000, dtMs: 2)) == 4
     doAssert timeLabelChars(PanelLayout(traces: 24, samples: 3000, dtMs: 0.5, t0Ms: -100)) == 6
+
+  block endLabels:
+    let layout = PanelLayout(traces: 10, samples: 12_000, dtMs: 1)
+    let bounds = limitsOf(layout)[axTime].bounds
+    let chars = timeLabelChars(layout)
+    let px = 600.0 # a plot 600 pixels tall, 20 pixels a label
+    let whole = timeEnds(bounds, bounds, 1, chars, px / bounds.width, 20)
+    doAssert whole.lastText.strip == "11999", whole.lastText
+    doAssert whole.firstText.strip == "0" and whole.showFirst
+    doAssert whole.last == 11999 and whole.lastText.len == chars
+    doAssert whole.givesWay(11999) and whole.givesWay(0)
+    doAssert whole.givesWay(11900) and whole.givesWay(300) # within 20 pixels (400 ms)
+    doAssert not whole.givesWay(11000) and not whole.givesWay(1000)
+    # the round ticks of a full view that are kept never come within a label
+    # of the end labels (pixels)
+    for k in 0 .. 12:
+      let t = float64(k) * 1000
+      if not whole.givesWay(t):
+        doAssert abs(t - whole.last) * whole.pxPerMs >= 20 and abs(t - whole.first) *
+            whole.pxPerMs >= 20
+    # zoomed: the view's own last and first time
+    let zoom = timeEnds(Span(lo: 2437.4, hi: 3100.6), bounds, 1, chars, px / 663.2, 20)
+    doAssert zoom.lastText.strip == "3101" and zoom.firstText.strip == "2437", zoom.lastText
+    # a view past the record's ends is cut to them
+    let over = timeEnds(Span(lo: -5, hi: 20000), bounds, 1, chars, 0.03, 20)
+    doAssert over.lastText.strip == "11999" and over.firstText.strip == "0"
+    # sub-ms samples: the decimals of the interval
+    let fine = timeEnds(Span(lo: 0, hi: 99.875), Span(lo: 0, hi: 99.875), 0.125, 7, 5, 20)
+    doAssert fine.lastText.strip == "99.875", fine.lastText
+    # two labels that would touch: the first is dropped, the last stays
+    let tiny = timeEnds(Span(lo: 0, hi: 4), Span(lo: 0, hi: 100), 1, chars, 2, 20)
+    doAssert not tiny.showFirst and tiny.lastText.strip == "4"
 
 when isMainModule:
   main()

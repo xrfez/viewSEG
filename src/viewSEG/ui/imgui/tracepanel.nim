@@ -565,6 +565,21 @@ proc button(label: string; t: Theme; marks: var Marks; mark: string): bool =
   result = igButton(label.cstring, ImVec2_c(x: 0, y: 0))
   marks.mark(mark)
 
+var
+  axisEnds: TimeEnds # the time axis's end labels this frame, read by `axisLabel`
+  axisChars: int
+
+proc snprintf(buf: cstring; n: csize_t; fmt: cstring): cint {.importc, header: "<stdio.h>",
+  varargs.}
+
+proc axisLabel(v: cdouble; buf: cstring; size: cint; data: pointer): cint {.cdecl.} =
+  ## ImPlot's formatter for the time axis: `%g` padded to the axis's width,
+  ## blank where the tick gives way to an end label.
+  if axisEnds.givesWay(v):
+    snprintf(buf, csize_t(size), "%*s", cint(axisChars), "")
+  else:
+    snprintf(buf, csize_t(size), "%*g", cint(axisChars), v)
+
 proc drawHeaderChoice(p: Panel; marks: var Marks; prefix: string; res: var PanelOutput) =
   ## The display header's fields: automatic, or the ones ticked; each box
   ## marked `prefix` and "auto" or the field's name.
@@ -2425,10 +2440,25 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
           else: ImPlot_AxisFlags_NoGridLines.cint or ImPlot_AxisFlags_NoTickMarks.cint) or
         (if inverted[s]: ImPlot_AxisFlags_Invert.cint else: 0)
       ImPlot_SetupAxis(implot, nil, flags)
-    if turn.along[axTime] == saY:
-      # Every label as wide as the longest the record can have, so the axis,
-      # and the plot's left edge, stay put as the labels change length.
-      ImPlot_SetupAxisFormat_Str(ImAxis_Y1.cint, ("%" & $timeLabelChars(p.layout) & "g").cstring)
+    # Every label as wide as the longest the record can have, so the axis,
+    # and the plot's left edge, stay put as the labels change length. The
+    # first and last time in view are always labelled: a round tick near one
+    # gives way to it (`timeEnds`).
+    let timeAxis = if turn.along[axTime] == saY: ImAxis_Y1.cint else: ImAxis_X1.cint
+    let chars = timeLabelChars(p.layout)
+    let across = turn.along[axTime] == saX
+    let ppm = (if across: max(1, avail.x - room.x) else: max(1, avail.y - room.y)) /
+      max(1e-9, next.timeMs.hi - next.timeMs.lo)
+    let gap = if across: float32(chars + 1) * igCalcTextSize("0", nil, false, -1).x
+      else: 1.5 * lineH
+    let ends = timeEnds(next.timeMs, lim[axTime].bounds, p.layout.dtMs, chars, ppm, gap)
+    axisEnds = ends
+    axisChars = chars
+    ImPlot_SetupAxisFormat_PlotFormatter(timeAxis, axisLabel, nil)
+    var endTimes = [ends.last, ends.first]
+    var endTexts = [ends.lastText.cstring, ends.firstText.cstring]
+    ImPlot_SetupAxisTicks_doublePtr(timeAxis, addr endTimes[0], (if ends.showFirst: 2 else: 1).cint,
+      cast[ptr UncheckedArray[cstring]](addr endTexts[0]), true)
     let (xs, ys) = (next.span(turn.axisAlong(saX)), next.span(turn.axisAlong(saY)))
     ImPlot_SetupAxesLimits(xs.lo, xs.hi, ys.lo, ys.hi, ImPlot_Cond_Always.cint)
     ImPlot_SetupFinish()
@@ -2438,6 +2468,20 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     let fb = igGetIO_Nil().DisplayFramebufferScale
     let view = next.sized(turn, int(round(size.x * fb.x)), int(round(size.y * fb.y)))
     marks.markRect("plot.data", pos, ImVec2_c(x: pos.x + size.x, y: pos.y + size.y))
+    block endLabels:
+      # where the time axis writes its first and last time
+      let tw = igCalcTextSize(ends.lastText.cstring, nil, false, -1)
+      for (name, t, shown) in [("plot.time end", ends.last, true),
+          ("plot.time start", ends.first, ends.showFirst)]:
+        if not shown: continue
+        let at = if across: ImPlot_PlotToPixels_double(t, ys.lo, ImAxis_X1.cint, ImAxis_Y1.cint)
+          else: ImPlot_PlotToPixels_double(xs.lo, t, ImAxis_X1.cint, ImAxis_Y1.cint)
+        if across:
+          marks.markRect(name, ImVec2_c(x: at.x - tw.x / 2, y: pos.y + size.y),
+            ImVec2_c(x: at.x + tw.x / 2, y: pos.y + size.y + tw.y))
+        else:
+          marks.markRect(name, ImVec2_c(x: pos.x - tw.x, y: at.y - tw.y / 2),
+            ImVec2_c(x: pos.x, y: at.y + tw.y / 2))
     if tp.gpuError.len == 0 and tp.started:
       let faces = buttonFaces(p.componentCodes, p.componentSensors, p.componentCounts)
       let slots = componentSlots(faces)

@@ -56,6 +56,11 @@
   the axis keeps one width and the plot's left edge does not move when the labels grow
   from "999" to "1000" as the view pans. (When time is across, its values run along the
   bottom, where their width moves nothing.)
+  The last visible time is always labelled: with the whole trace in view it is the last
+  sample's time (11999 for 12 000 samples at 1 ms, where the round ticks stop at 11000),
+  zoomed in it is the last time in view, and the first visible time is labelled at the
+  other end. A round tick too near an end label to be read beside it is left out. The
+  same holds with time across and in the density display.
 - **The cursor's time line**, the **Cursor time line** checkbox under Plot in the gear's
   Look tab (off by default, remembered between runs): when on, a thin line runs along the pointer's pixel row
   from the pointer across the plot to the time axis, and the pointer's time is written

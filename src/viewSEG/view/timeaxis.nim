@@ -74,3 +74,31 @@ func cursorTimeText*(tMs, dtMs: float64): string =
   if result.endsWith('.'): result.setLen(result.len - 1) # Nim writes "702." with no decimals
   if result.startsWith("-") and result.strip(chars = {'-', '0', '.'}).len == 0:
     result = result[1 .. ^1] # "-0" from a time just before 0
+
+type
+  TimeEnds* = object
+    ## The two times the axis always labels: the first and the last in view.
+    first*, last*: float64
+    firstText*, lastText*: string ## written like the cursor's time, padded to the axis's width
+    showFirst*: bool              ## false where the two labels would touch (a view of a few pixels)
+    pxPerMs*: float64
+    gapPx*: float64               ## a tick closer than this to an end's label gives way to it
+
+func timeEnds*(view, bounds: Span; dtMs: float64; chars: int; pxPerMs, gapPx: float64): TimeEnds =
+  ## The end labels of a time axis showing `view` of a record whose times run
+  ## over `bounds` (first to last sample): the view's own ends, which are the
+  ## first and last sample's times when the whole record is in view. `chars`
+  ## is the axis's label width, `pxPerMs` the plot's pixels per ms along it
+  ## and `gapPx` the room one label needs along it.
+  let lo = max(view.lo, bounds.lo)
+  let hi = min(view.hi, bounds.hi)
+  result = TimeEnds(first: lo, last: hi, pxPerMs: pxPerMs, gapPx: gapPx,
+    firstText: cursorTimeText(lo, dtMs).align(chars),
+    lastText: cursorTimeText(hi, dtMs).align(chars))
+  result.showFirst = (hi - lo) * pxPerMs >= gapPx
+
+func givesWay*(e: TimeEnds; t: float64): bool =
+  ## Whether the ordinary tick at time `t` is left out: it is where an end
+  ## label stands, or so near that the two would overlap.
+  if not (e.pxPerMs > 0): return false
+  abs(t - e.last) * e.pxPerMs < e.gapPx or (e.showFirst and abs(t - e.first) * e.pxPerMs < e.gapPx)
