@@ -62,8 +62,8 @@ proc main*() =
       result = f.core.plots.len == 1 and not f.core.plots[0].waiting and
         f.core.plots[0].result.problem == "" and f.markOf("new plot 1.warning").size.x > 0
       if result:
-        doAssert f.core.plots[0].result.warning.startsWith("trace is 3 000 ms, the reference " &
-          "is 4 000 ms: " & Said), f.core.plots[0].result.warning
+        doAssert f.core.plots[0].result.warning.startsWith("trace is 2 998 ms, the reference " &
+          "is 3 998 ms: " & Said), f.core.plots[0].result.warning
         if shots.len > 0: doAssert f.savePng(shots / "short-reference.png"))
     proc another(f: FrameInfo) =
       let base = f.core.sessions[0].base

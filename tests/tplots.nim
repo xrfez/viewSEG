@@ -40,7 +40,7 @@
 
 import std/[math, os, strutils]
 import parseSEG
-import viewSEG/core/[edits, log, processing, state]
+import viewSEG/core/[analysis, edits, log, processing, state]
 import viewSEG/view/analysisview
 import utils/[chosenref, fixtures, waiting]
 
@@ -300,9 +300,9 @@ proc main*() =
       let spec = st.plots[1].result # a spectrogram of the pilot alone
       doAssert spec.passedBy == 1 and "the auxiliary trace is not filtered" in spec.note and
         "through" notin spec.note, $spec.passedBy & ": " & spec.note
-      let corr = st.plots[0].result # the seismic traces filtered; the archive reference stays raw
-      doAssert corr.passedBy == 0 and "through" in corr.note and
-        "is not filtered" notin corr.note, $corr.passedBy & ": " & corr.note
+      let corr = st.plots[0].result # against a reference: raw, whatever the plot's filters
+      doAssert corr.passedBy == 0 and "through" notin corr.note and
+        RawAgainstReference in corr.note, $corr.passedBy & ": " & corr.note
       # the same filters with Aux on: nothing passed by
       var on = band
       on.aux = true

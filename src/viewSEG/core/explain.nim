@@ -151,9 +151,13 @@ func what(f: ExplainFacts; generic: string): string =
   ## "Of trace 12 · FFID 151 · shot.sgd." for a real window, else `generic`.
   if f.live and f.label.len > 0: "Of " & f.label & "." else: generic
 
+const RawWords = "Raw: the plot's filters and a trace's own filter are not applied against " &
+  "a reference, on either side (the raw trace against the raw reference)."
+
 func filterClause(f: ExplainFacts): string =
   ## Which filters are applied: "As recorded (no filter is on)." or "After your
-  ## filters (10-60 Hz)." and what they left out.
+  ## filters (10-60 Hz)." and what they left out. Against a reference: none.
+  if f.against: return RawWords
   if not f.live:
     return "Through the filters set in the Seismic window, if any are on."
   if f.filters.len == 0: "As recorded: no filter is on."
@@ -162,6 +166,7 @@ func filterClause(f: ExplainFacts): string =
 
 func editsClause(f: ExplainFacts): string =
   ## What was done to single traces: their own filter and their polarity.
+  if f.against: return (if f.reversal.len > 0: closed(f.reversal) else: "No trace is reversed.")
   if not f.live: return "A trace's own filter and a reversed polarity are applied as set."
   result = (if f.own.len > 0: closed(f.own) else: "No trace has its own filter.")
   result.add " " & (if f.reversal.len > 0: closed(f.reversal) else: "No trace is reversed.")
@@ -360,19 +365,27 @@ func phaseText(f: ExplainFacts): string =
     part("Careful", "Phase depends on where the trace starts. Where there is no line the " &
       "amplitude is too low for the phase to mean anything."))
 
+func rawClause(f: ExplainFacts): string =
+  ## The words of a window that compares traces with a reference: raw, and the reversal.
+  RawWords & " " & (if f.live and f.reversal.len > 0: closed(f.reversal)
+    elif f.live: "No trace is reversed." else: "A reversed polarity is applied as set.")
+
 func correlationText(f: ExplainFacts): string =
   join4(part("Shows", "How well each trace matches the reference, up (1 is the reference's " &
       "own shape whatever its amplitude, -1 its mirror image), against the time shift in ms " &
       "across, one line per trace and its envelope over it."),
     part("Computed from", f.what("The traces chosen (the first eight at most)."),
       f.referenceWords, "Lags within ±" & (if known(f.lagMs): num(f.lagMs) & " ms" else:
-    "the span set above") & " of zero.", f.filterClause, f.editsClause,
+    "the span set above") & " of zero.", f.rawClause,
     "A trace that is the reference delayed by T peaks at +T."),
     part("Reading it", "One sharp peak at 0 ms near +1 means the trace has the reference's " &
       "shape and timing. A lower peak means a different shape; a peak away from 0 is a time " &
       "shift of that many ms (a positive shift: the trace arrives after the reference). A " &
       "peak near -1 means reversed polarity. The words under the plot give each trace's best " &
-      "match and shift. The reference's own trace, among others, is said so and not drawn."),
+      "match (the envelope's peak: the shape's match whatever the phase turn), its shift " &
+      "between samples and its phase turn (\"rotated 90°\", \"reversed polarity\"); under " &
+      "0.3 there is no clear match, and a peak at an end of the lags means the shift is past " &
+      "them. The reference's own trace, among others, is said so and not drawn."),
     part("Careful", "The envelope peaks at the delay even when the phases of trace and " &
       "reference differ, where the line itself peaks lower. A different reference gives a " &
       "different picture."))
@@ -382,8 +395,7 @@ func ratioText(f: ExplainFacts): string =
       "amplitude over the reference's; 0 dB is the same amplitude."),
     part("Computed from", f.what("The traces chosen."), f.referenceWords,
       "Drawn only where the reference has energy, within " & (if known(f.withinDb):
-    num(f.withinDb) else: "the dB set above") & " dB of its peak.", f.filterClause,
-    f.editsClause),
+    num(f.withinDb) else: "the dB set above") & " dB of its peak.", f.rawClause),
     part("Reading it", "A flat line near 0 dB means the trace has the reference's spectrum. " &
       "A line that falls with frequency means high frequencies are lost; a step shows a band " &
       "that is weaker or stronger."),
@@ -395,7 +407,7 @@ func ratioPhaseText(f: ExplainFacts): string =
       "trace's phase minus the reference's. " & f.showWords),
     part("Computed from", f.what("The traces chosen."), f.referenceWords,
       "Drawn where the reference has energy, within " & (if known(f.withinDb): num(f.withinDb)
-    else: "the dB set above") & " dB of its peak.", f.filterClause, f.editsClause),
+    else: "the dB set above") & " dB of its peak.", f.rawClause),
     part("Reading it", "A flat line at 0° means no phase difference. A straight slope means " &
       "a time delay (a delay T reads -360° × frequency × T). A flat line at 180° means " &
       "reversed polarity."),
@@ -431,7 +443,7 @@ func vibPhaseText(f: ExplainFacts): string =
       "10 ms): one line per signal, GF, GF (M, B), M and B, each measured against the pilot, " &
       "Ref. " & f.showWords),
     part("Computed from", f.vibTrace, f.rolesWords, "Each signal's phase to the reference " &
-      "where the pilot's envelope is within 40 dB of its peak.", f.filterClause, f.editsClause,
+      "where the pilot's envelope is within 40 dB of its peak.", f.rawClause,
       f.limitsWords("phase")),
     part("Reading it", "A ground force within a few degrees of 0° along the sweep means the " &
       "vibrator follows the pilot. A drift means poor control; a steady 180° means the " &
@@ -443,7 +455,7 @@ func vibForceText(f: ExplainFacts): string =
   join4(part("Shows", "Force against sweep time in ms: the ground force's fundamental " &
       "amplitude and its peak" & (if f.axis.len > 0: ", on the axis " & f.axis else: "") & "."),
     part("Computed from", f.vibTrace, f.rolesWords, "The fundamental is tracked along the " &
-      "pilot's frequency.", f.filterClause, f.editsClause, f.limitsWords("force")),
+      "pilot's frequency.", f.rawClause, f.limitsWords("force")),
     part("Reading it", "A steady fundamental through the sweep is a vibrator putting out " &
       "constant force. Dips mean lost output or hold-down; a peak far above the fundamental " &
       "means distortion or bouncing."),
@@ -458,7 +470,7 @@ func vibForceMBText(f: ExplainFacts): string =
       "accelerations, against sweep time in ms: its fundamental amplitude and its peak" &
       (if f.axis.len > 0: ", on the axis " & f.axis else: "") & "."),
     part("Computed from", f.vibTrace, f.rolesWords, "GF (M, B) = Mr·a(M) + Mb·a(B).", masses,
-      f.filterClause, f.editsClause),
+      f.rawClause),
     part("Reading it", "It should follow the recorded ground force's shape. A large " &
       "difference between the two means a wrong mass or a bad accelerometer channel."),
     part("Careful", "Without the accelerometers' sensitivities this force is uncalibrated and " &
@@ -469,7 +481,7 @@ func vibFrequencyText(f: ExplainFacts): string =
   join4(part("Shows", "Instantaneous frequency in Hz up, against sweep time in ms across: the " &
       "pilot's (Ref) and the ground forces'."),
     part("Computed from", f.vibTrace, f.rolesWords, "Each signal's frequency is tracked along " &
-      "the sweep.", f.filterClause, f.editsClause),
+      "the sweep.", f.rawClause),
     part("Reading it", "The ground force's line should lie on the pilot's. A gap between them " &
       "means the vibrator does not follow the sweep."),
     part("Careful", "Tracking is lost where a signal is weak, which leaves gaps."))
@@ -482,7 +494,7 @@ func vibDistortionText(f: ExplainFacts): string =
     part("Computed from", f.vibTrace, f.rolesWords, "THD sums the harmonics from the 2nd " &
       "to the highest set that are below 80 % of Nyquist at that time; harmonics above " &
       "Nyquist are left out. Where none is below it, there is no THD.",
-      f.filterClause, f.editsClause, f.limitsWords("distortion")),
+      f.rawClause, f.limitsWords("distortion")),
     part("Reading it", "Lower is better. A smooth low THD is a clean sweep; a rise at one " &
       "point is a resonance or a stroke limit; one harmonic standing out is a specific fault."),
     part("Careful", "A harmonic is measured only while it stays below 80 % of Nyquist, so " &

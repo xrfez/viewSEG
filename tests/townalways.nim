@@ -63,8 +63,9 @@ proc answered(st: AppState): bool =
   not p.pending.isEmpty and p.pending.gen == p.requestGen and st.tiles(0).len > 0 and
     st.tiles(0)[^1].request == p.pending
 
-proc openPlot(st: var AppState; view: AnalysisView; traces: seq[int]): int =
-  st.apply Command(kind: ckOpenPlot, plotView: view, plotTraces: traces)
+proc openPlot(st: var AppState; view: AnalysisView; traces: seq[int];
+    params = AnalysisParams()): int =
+  st.apply Command(kind: ckOpenPlot, plotView: view, plotTraces: traces, plotParams: params)
   result = st.plots.high
   doAssert st.settle(st.plots[result].result.gen > 0 and not st.plots[result].waiting),
     "no answer for " & $view & ": " & st.plots[result].result.problem
@@ -95,7 +96,8 @@ proc main*() =
     doAssert plainPower > 0, "trace 2 has no energy below 20 Hz"
     let spec = st.openPlot(avSpectrogram, @[base + 1])
     let specPower = st.plots[spec].result.image.imageOutside(20)
-    let env = st.openPlot(avEnvelope, @[base + 1])
+    # the trace's own phase (against a reference nothing is filtered, raw against raw)
+    let env = st.openPlot(avEnvelope, @[base + 1], AnalysisParams(phaseAgainst: paSelf))
     let phase = st.openPlot(avPhase, @[base + 1])
     let phasePower = st.plots[phase].result.plots[0].ampOutside(20)
     discard st.chooseStored(root / ".scratch" / ("own-land-" & $getCurrentProcessId()),
@@ -154,6 +156,7 @@ proc main*() =
     doAssert st.settle(st.plots[corr].result.gen == st.plots[corr].asked and
       not st.plots[corr].waiting)
     doAssert st.plots[corr].result.problem == "", st.plots[corr].result.problem
+    # against a reference neither side is filtered: the ratio is flat (an own filter is not applied)
     let ratio = st.plots[corr].result.plots[1]
     var low = 0.0
     var nLow = 0
@@ -162,8 +165,9 @@ proc main*() =
           not ratio.curves[1].ys[i].isNaN:
         low += ratio.curves[1].ys[i]
         inc nLow
-    doAssert nLow > 4 and low / float64(nLow) < -12, "the correlation does not show the filter: " &
+    doAssert nLow > 4 and low / float64(nLow) > -3, "the correlation was filtered: " &
       $nLow & " points, " & $(low / float64(max(nLow, 1))) & " dB"
+    doAssert RawAgainstReference in st.plots[corr].result.note, st.plots[corr].result.note
     doAssert st.settle(st.plots[fk].result.gen == st.plots[fk].asked and not st.plots[fk].waiting)
     let fkCut = st.plots[fk].result.image.imageOutside(20)
     doAssert abs(fkCut - fkPower) / fkPower > 0.05, "the f-k ignored the one trace's own filter: " &
@@ -235,14 +239,9 @@ proc main*() =
     doAssert st.settle(st.plots[w].result.gen == st.plots[w].asked and not st.plots[w].waiting)
     doAssert st.plots[w].result.problem == "", st.plots[w].result.problem
     let after = st.plots[w].result.refHz
-    doAssert after != before, "the vibrator signature ignored the own filter"
-    var inBand, loud = 0
-    for f in after:
-      if not f.isNaN and f > 1:
-        inc loud
-        if f >= 30 and f <= 70: inc inBand
-    doAssert loud > 10 and inBand > loud * 8 div 10, "the sweep's frequency left the band: " &
-      $inBand & " of " & $loud
+    # the raw trace against the raw reference: an own filter is not applied here
+    doAssert $after == $before, "the vibrator signature was filtered" # (NaN is not equal to NaN)
+    doAssert RawAgainstReference in st.plots[w].result.note, st.plots[w].result.note
     doAssert st.plots[w].ownLine.find("own filter") >= 0, st.plots[w].ownLine
     st.shutdown()
 

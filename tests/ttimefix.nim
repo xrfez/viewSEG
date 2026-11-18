@@ -15,9 +15,12 @@
 ## - a transient reference gives no "signal ends early" warning for its own copies, rotated,
 ##   inverted, delayed or with float ripple in their tails;
 ## - through the program (an archive reference, the plot's band-pass 20-25-35-40 Hz): exact
-##   copies of the reference match 1.00 at 0.0 dB, as they do unfiltered, because the filter
-##   is run on the reference too, and the note says "trace and reference through";
-## - the window and the Compare window say the same of one pair, in the same words.
+##   copies of the reference match 1.00 at 0.0 dB, the table is the same as with no filter (raw
+##   trace against raw reference), and the note says the plot's filters are not applied;
+## - the window and the Compare window say the same of one pair, in the same words (the 90°
+##   copy: "best match 1.00 at 0.0 ms ... rotated 90°" in both, not "0.874 at -8 ms" in one);
+##   "Shift B by the correlation peak" moves B by that match's shift, and which way B lies is
+##   said ("B lags A by 4.0 ms", "B leads A by").
 ##
 ## Seen to fail: with the match taken from the correlation at the envelope's peak (`cs[best]`),
 ## the 90° copy read "best match 0.00" and the 45° "0.71"; with the shift on whole samples, +3 ms
@@ -25,14 +28,14 @@
 ## weak-match test off, the -20 dB trace gave "arrives 4.0 ms after the reference"; with the
 ## phase taken from the unshifted traces, the 10 ms copy's mean phase was 117.0; with the
 ## signal end compared with the reference's length, the rotated and inverted copies warned
-## "signal ends at about 700 ms"; with the reference not filtered, the band-passed copies read
-## match 0.75 and -14.1 dB.
+## "signal ends at about 700 ms"; with the plot's filters applied to the traces
+## alone, the band-passed copies read match 0.75 and -14.1 dB.
 
 import std/[math, os, strutils]
 import parseSEG
 import processSEG/fft/hilbert
 import processSEG/core/workspace
-import viewSEG/core/[analysis, processing, state]
+import viewSEG/core/[analysis, compare, processing, state]
 import utils/[chosenref, fixtures, waiting]
 
 const
@@ -166,7 +169,31 @@ proc main*() =
       AnalysisParams())
     doAssert own.warning == "", own.warning
 
-  section "archiveReferenceThroughThePlotsFilters":
+  section "compareAgreesWithTheCorrelation":
+    func slot(samples: seq[float32]; name: string): CompareSlot =
+      CompareSlot(filled: true, fileName: name, trace: 1, dtMs: DtMs, t0Ms: 0,
+        toMs: 2000, samples: samples)
+    let a = slot(ricker(), "a.sgy")
+    let turned = ricker().rotated(90)
+    let p = pictureOf(a, slot(turned, "b.sgy"), CompareOptions())
+    let r = against([("t", turned)])
+    let words = r.note.split("\n")[^1]
+    doAssert words == "t: " & p.table.matchWords.replace("B is in step with A",
+      "in step with the reference"), words & " | " & p.table.matchWords
+    doAssert "best match 1.00 at 0.0 ms" in p.table.matchWords and
+      "rotated 90°" in p.table.matchWords, p.table.matchWords
+    let late = pictureOf(a, slot(ricker(delayMs = 4), "late.sgy"), CompareOptions())
+    doAssert "best match 1.00 at +4.0 ms (B lags A by 4.0 ms)" in late.table.matchWords,
+      late.table.matchWords
+    let early = pictureOf(a, slot(ricker(delayMs = -6), "early.sgy"), CompareOptions())
+    doAssert "(B leads A by 6.0 ms)" in early.table.matchWords, early.table.matchWords
+    # shifting B by the peak moves it by the match's shift, whatever the rotation
+    let moved = pictureOf(a, slot(ricker(delayMs = 4).rotated(90), "both.sgy"),
+      CompareOptions(shiftPeak: true))
+    doAssert moved.appliedShiftMs == 4.0 and "shifted 4.0 ms (earlier)" in moved.alignNote,
+      moved.alignNote
+
+  section "rawAgainstTheReference":
     withFixtures fx:
       var traces = @[ricker()]
       for _ in 0 ..< 3: traces.add ricker()
@@ -180,7 +207,9 @@ proc main*() =
         plotTraces: @[base + 1, base + 2, base + 3])
       let w = st.plots.high
       doAssert st.settle(st.answered(w)), "no answer"
-      doAssert st.plots[w].result.table[1][1] == "1.00" and st.plots[w].result.warning == ""
+      let off = st.plots[w].result
+      doAssert off.table[1][1] == "1.00" and off.warning == "" and
+        RawAgainstReference notin off.note, off.note
       st.apply Command(kind: ckProcessing, panel: MainPanel,
         processing: Processing(band: pbBandPass, f1: 20, f2: 25, f3: 35, f4: 40))
       doAssert st.settle(st.answered(w) and "20-25" in st.plots[w].filters), "not filtered"
@@ -188,7 +217,37 @@ proc main*() =
       doAssert r.problem == "" and r.warning == "", r.problem & r.warning
       for row in r.table[1 .. ^1]:
         doAssert row[1] == "1.00" and row[3] == "0.0" and row[2] == "0.0", $r.table
-      doAssert "\ntrace and reference through 20-25-35-40 Hz" in r.note, r.note
+      doAssert r.table == off.table, "the numbers changed with the filters"
+      doAssert "\n" & RawAgainstReference in r.note and "through" notin r.note, r.note
+      # an envelope against the reference, too
+      st.apply Command(kind: ckOpenPlot, plotView: avEnvelope, plotTraces: @[base + 1])
+      let e = st.plots.high
+      doAssert st.settle(st.answered(e)), "no answer"
+      doAssert RawAgainstReference in st.plots[e].result.note, st.plots[e].result.note
+      discard st.shutdown()
+
+  section "vibratorRawToo":
+    let sample = currentSourcePath().parentDir.parentDir / "samples" / "vib" / "vib_uncorrelated.sgd"
+    doAssert fileExists(sample), sample
+    withFixtures fx:
+      var st = initAppState()
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: sample)
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      let base = st.sessions[0].base
+      discard st.chooseStored(fx.dir / "refs", base, "intended")
+      st.apply Command(kind: ckOpenPlot, plotView: avVibrator,
+        plotTraces: @[base, base + 1, base + 2, base + 3],
+        plotParams: AnalysisParams(reactionMassKg: 3600, baseplateMassKg: 1800))
+      doAssert st.settle(st.plots.len == 1 and st.answered(0)), "no answer"
+      let off = st.plots[0].result
+      doAssert off.problem == "" and RawAgainstReference notin off.note, off.problem
+      st.apply Command(kind: ckProcessing, panel: MainPanel,
+        processing: Processing(band: pbBandPass, f1: 20, f2: 25, f3: 35, f4: 40))
+      doAssert st.settle(st.answered(0) and "20-25" in st.plots[0].filters and
+        st.plots[0].result.gen > off.gen), "not asked again"
+      let r = st.plots[0].result
+      doAssert r.problem == "" and r.table == off.table, "the table changed with the filters"
+      doAssert RawAgainstReference in r.note, r.note
       discard st.shutdown()
 
   echo "ttimefix: ok"

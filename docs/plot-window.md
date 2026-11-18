@@ -224,7 +224,7 @@
     | Gain | Let viewSEG choose (AGC on shot and receiver records, none on stacked data) |
     | AGC window | 500 ms |
     | Fixed amplitude | none until Fixed is chosen: then the record's clip percentile |
-    | Normalized | each trace, to its clip percentile |
+    | Normalized | each trace, to its clip percentile of the whole trace (zooming does not change the level; the reader decodes whole traces, as it does for filters) |
     | Exponential | 6 dB per second (the power of time: 2), until 2 000 ms |
     | Clip percentile | 99 (of \|x\|) |
     | Gain amount | 0 dB, in steps of 3 dB (12 dB with Shift), -300 to +300 dB |
@@ -302,8 +302,10 @@
 - **The status bar** (the main window's bottom edge) reads out what lies under the
   pointer in the plot: the time at the cursor, trace (its number in the file) and
   channel, receiver line / point, source line / point, FFID, offset, amplitude and the
-  shot time (the record's UTC time). The amplitude is the value drawn there: after the
-  display's processing and gain, and zoomed out the largest of the samples drawn at that
+  shot time (the record's UTC time). The amplitude is the sample after the display's
+  processing and the gain types that change the samples (AGC, Exponential, Normalized for each
+  trace), not the gain amount or the scale-only types (None, Fixed, Float, Normalized for the
+  whole record); zoomed out the largest of the samples drawn at that
   pixel ("peak of 4"). Right-click the bar to choose the fields and their order; any of
   the trace's keys can be added (sample number, UTC at the cursor, CDP, inline,
   crossline, source, receiver and midpoint coordinates, elevations, component, trace
@@ -650,8 +652,14 @@ trace is long enough but its signal stops before the reference does. The Vibrato
 signature takes the end of the signal from the sweep tracker's fundamental of the force
 (`amplitude[0]`) and the reference's from the tracker's `extent`; the other two have
 no tracker and look at the trace in 100 ms blocks. The signal ends where it falls to a
-tenth of its usual level (the 90th percentile of the levels); one that ends within 150 ms
-or 3 % of the reference's end is taken to end with it. A trace longer than the reference
+tenth of its usual level (the 90th percentile of the levels) and to at least 60 dB below
+its loudest block (float ripple left in a wavelet's tail is no signal); blocks after the
+last such one that stay above half of that level belong to the signal (a hysteresis, so a
+decaying tail does not end at its first dip). The trace's end is compared with where the
+reference's own signal ends, found the same way (not with the reference's length: a short
+wavelet's copies are not "early"); one that ends within 150 ms or 3 % of it is taken to end
+with it. Lengths are said as `(samples - 1)` intervals: 1 001 samples at 2 ms run to
+2 000 ms. A trace longer than the reference
 (a lead-in before the sweep) gets neither line: the correlation's time shift takes the
 lead-in up (a delay), but the phase to the reference, measured as if both started together,
 does not.
@@ -699,7 +707,13 @@ settings works out from the traces it is frozen on.
 
 Auxiliary traces go through the filters only when "Filter the Aux traces too" is ticked: when
 it is not, the window says how many the filters passed by (under the title, "the auxiliary trace is
-not filtered: Filters > Filter the Aux traces too is off"), as the spectrum windows do, and `state`'s `passedBy` counts them. A cross-correlation's reference is the chosen archive reference and is not filtered.
+not filtered: Filters > Filter the Aux traces too is off"), as the spectrum windows do, and `state`'s `passedBy` counts them. Against a reference (Cross-correlation, an Envelope's phase against the reference, Vibrator
+signature) neither side is filtered: the raw trace is compared with the raw reference, whatever
+the plot's filters and a trace's own filter are, and the window's note says so ("the plot's
+filters are not applied here: raw trace against the raw reference") when the plot has
+filters on. Its "filters:" chip is not shown there. A polarity reversal is still applied (to the
+trace, and to a pilot reference that is reversed). An Envelope with no reference (its own phase)
+is filtered as ever.
 
 One reader thread works out every window's numbers in turn, and a long computation (an f-k,
 a spectrogram, a correlation) is given up between its steps, within about 100 ms, when its
@@ -752,8 +766,24 @@ right of that line's first row. A change works it out again.
   reference's shape whatever its amplitude, -1 for its mirror image). A trace delayed by
   τ from the reference peaks at +τ. Under the title, one line per trace says its best
   match, its shift and which way ("arrives 2.0 ms after the reference", "before", "in
-  step"), and a table of the several traces adds the mean amplitude ratio and the mean
-  phase difference. A trace that is the reference itself is said so ("it matches exactly
+  step"), and a table of the several traces adds the mean amplitude ratio, the mean
+  phase difference and the rotation.
+  The **match** is the correlation envelope's peak: the shape's match whatever the constant
+  phase turn of the trace. The **shift** is that peak's place, found between samples (a
+  parabola through the peak and its two neighbours), so a delay of 3 ms at 2 ms sampling
+  reads +3.0. The **rotation** is the phase of the correlation at the peak: "rotated 90°" for
+  a trace that is the reference's Hilbert transform; nothing is said within 10° of 0, and
+  "reversed polarity" within 30° of 180°. A peak under 0.3 is "no clear match (0.06)", with no
+  shift, direction or rotation; a peak at the first or last lag shown is "no peak within
+  ±250.0 ms: widen the time shifts" ("-" in the table), and its trace has no phase per
+  frequency. The note says the time shifts really shown (the box's value rounded to whole
+  samples). The amplitude ratio and the phase per frequency are measured after the found
+  shift is removed ("phase after removing the time shift"; a trace with no clear match or no
+  peak is not shifted), so a delay is not read as a phase error. The Compare window words the
+  same pair the same way ("best match 1.00 at +4.0 ms (B lags A by 4.0 ms; rotated 90°)"),
+  and under it the largest correlation magnitude, which "Shift B by the correlation peak"
+  does not use: it moves B by the match's shift. A positive shift moves B earlier; the chip
+  says "(earlier)" or "(later)". A trace that is the reference itself is said so ("it matches exactly
   (1.00 at 0 ms)") and is not drawn among others. The amplitude ratio and the phase
   difference are given where the reference's amplitude is within the same N dB (20) of
   its peak. The time shifts shown: ±250 ms at first.

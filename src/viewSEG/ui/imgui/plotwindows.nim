@@ -781,7 +781,10 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   if own.len > 0: words.add " · " & own
   let rev = w.reverseLine
   if rev.len > 0: words.add " · " & rev
-  if w.filters.len > 0:
+  # against a reference the plot's filters are not applied (the note says so)
+  let rawWindow = w.view in {avCorrelation, avVibrator} or
+    (w.view == avEnvelope and w.reference.len > 0 and w.params.phaseAgainst == paReference)
+  if w.filters.len > 0 and not rawWindow:
     words.add " · filters: " & w.filters
     if r.passedBy > 0: words.add " (" & passedWords(r.passedBy) & ")"
   if r.notDrawn > 0:
@@ -865,12 +868,16 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     let room = avail.y - lineH
     var each = (room - gap * float32(max(plots.len - 1, 0))) / float32(max(plots.len, 1))
     let scrolls = each < round(igGetFontSize() * 9)
+    # Words and a table that leave no room for a plot (eight traces' lines): the plots
+    # follow below them at their least height and the window scrolls, none is left out.
+    let inWindow = scrolls and room < round(igGetFontSize() * 12)
     var wide = avail.x
     if scrolls:
       each = round(igGetFontSize() * 9)
-      discard igBeginChild_Str(("##plots" & name).cstring, ImVec2_c(x: 0, y: max(room, 60)),
-        0, 0)
-      wide = igGetContentRegionAvail().x
+      if not inWindow:
+        discard igBeginChild_Str(("##plots" & name).cstring, ImVec2_c(x: 0, y: max(room, 60)),
+          0, 0)
+        wide = igGetContentRegionAvail().x
     # The cursor: held by the keys in one plot (and at the same x in the
     # plots that share its x axis), else under the pointer.
     let on = clamp(w.cursorOn, 0, max(plots.len - 1, 0))
@@ -898,7 +905,7 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
         text = p.readoutText(o.reading)
       elif held.held and i == on:
         text = p.readoutText(o.reading)
-    if scrolls: igEndChild()
+    if scrolls and not inWindow: igEndChild()
     ui.curves[w.id] = uis
     for p in plots:
       if p.aside.len > 0 and text.find(p.aside) < 0: text.add "   " & p.aside
@@ -941,7 +948,13 @@ proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: floa
       y: vp.WorkPos.y + vp.WorkSize.y))
   for w in st.plots:
     ids.add w.id
-    placeNext(w.id, (if w.view == avVibrator: VibratorSize else: PlotSize), scale)
+    # a correlation of several traces has a line or two each above its plots: taller
+    let size = if w.view == avVibrator: VibratorSize
+               elif w.view == avCorrelation and w.traces.len > 2:
+                 (PlotSize[0], PlotSize[1] + 2 * float32(min(w.traces.len, 8)) *
+                   igGetFontSize() / scale)
+               else: PlotSize
+    placeNext(w.id, size, scale)
     if w.id in ui.toFront:
       ui.toFront.excl w.id
       igSetNextWindowFocus()

@@ -307,8 +307,10 @@ proc main*() =
         st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
           processing: Processing(band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16),
           filterPlace: fpAfter)), "a filter of the pilot's own did not ask again"
-      doAssert abs(st.plots[w].result.peakValue(0) - plain) > 1e-3,
-        "the pilot's own filter changed nothing"
+      # against a reference nothing is filtered: the pilot's own filter changes nothing
+      doAssert abs(st.plots[w].result.peakValue(0) - plain) < 1e-6,
+        "the pilot's own filter reached a correlation"
+      doAssert RawAgainstReference in st.plots[w].result.note, st.plots[w].result.note
       st.apply Command(kind: ckUndoEdit, panel: MainPanel)
       doAssert st.settle(abs(st.plots[w].result.peakValue(0) - plain) < 1e-6 and
         not st.plots[w].waiting)
