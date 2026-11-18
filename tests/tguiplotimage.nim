@@ -64,6 +64,11 @@ proc expected(t: Tile; v: Viewport; st: WiggleStyle; hover: int; selected: seq[b
   let (_, ts) = t.span
   if tm >= ts.lo and tm < ts.hi:
     let ser = t.series
+    for r in 0 ..< t.request.count: # the marked traces' tint, under the traces
+      let m = markOf(r, hover, selected)
+      let pos = float64(t.request.position(r))
+      if m != tmNone and abs(x - pos) <= st.reach:
+        result = tintInk((x - pos) * st.pixelsPerTrace, st, ink, m).onto(result)
     for pass in 0 .. 1:
       for r in 0 ..< t.request.count:
         let m = markOf(r, hover, selected)

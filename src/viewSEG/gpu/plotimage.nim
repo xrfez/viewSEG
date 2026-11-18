@@ -7,8 +7,8 @@
 ##
 ## Tiles are drawn oldest first, each over the ones before it: its area
 ## first (density, or the plot's background under wiggles alone), then its
-## wiggles (`gpu/wiggle`), then its hovered and selected traces once more,
-## on top. Under density alone, a hovered or selected trace's column is
+## wiggles (`gpu/wiggle`) over the tint of its hovered and selected traces'
+## columns, then those traces once more, on top. Under density alone, a hovered or selected trace's column is
 ## tinted (`gpu/density`). A tile that a newer one covers in view is not
 ## drawn (`hidden`): it would be painted over.
 ##
@@ -260,6 +260,7 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
         if f.wiggles:
           glEnable(GL_BLEND)
           r.wiggle.use(f.view, f.turn, f.style, f.ink, f.componentInk, f.componentColours)
+          r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = true, tint = true)
           r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = false)
           r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = true)
   if stripes.len > 0:

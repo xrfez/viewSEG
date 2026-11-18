@@ -196,19 +196,37 @@ func onto*(top: Ink; below: Rgba): Rgba =
   Rgba(r: channel(top.r, below.r, top.a), g: channel(top.g, below.g, top.a),
     b: channel(top.b, below.b, top.a), a: 255)
 
+const
+  BandPx* = 6.0
+    ## a marked trace's line that spans more than this many pixels across at one
+    ## pixel of time is a band (a sweep, or a trace swinging faster than the pixels
+    ## resolve): it keeps the normal ink, so the mark never turns it into a block
+  TintAlpha* = 0.3
+    ## how much of a selected trace's column the selection colour covers, under the
+    ## data (a hovered one's: 0.6 of it)
+
+func tintInk*(xPx: float64; st: WiggleStyle; colours: WiggleInk; mark: TraceMark): Ink =
+  ## What the tint of a hovered or selected trace's column puts on the pixel
+  ## whose centre lies `xPx` pixels from the trace's baseline: the mark's
+  ## colour at `TintAlpha` (hovered: 0.6 of it) within half a trace spacing, at
+  ## least half a pixel, of the baseline; nothing for another mark.
+  if mark == tmNone or abs(xPx) > max(0.5 * st.pixelsPerTrace, 0.5): return Ink()
+  let a = if mark == tmHovered: 0.6 * TintAlpha else: TintAlpha
+  ink(if mark == tmHovered: colours.hover else: colours.selected, a)
+
 func traceInk*(t: Tile; s: Series; row: int; xPx, tMs: float64; st: WiggleStyle;
     ink: WiggleInk; mark = tmNone): Ink =
   ## What row `row`'s trace puts on the pixel whose centre lies `xPx` pixels
   ## from the trace's baseline towards later positions at time `tMs`: its
-  ## fill, then its line over it, in the colours of `mark`; nothing for a
-  ## killed or dead trace, which is drawn blank. With `st.swing` -1 the
-  ## wiggle is mirrored about its baseline.
+  ## fill, then its line over it; nothing for a killed or dead trace, which is
+  ## drawn blank. A hovered or selected trace keeps its ink for the fills, and
+  ## its line takes the mark's colour (and `markedWidth`) only where it reads
+  ## as a line (not a band, `BandPx`); the tint of its column is `tintInk`.
+  ## With `st.swing` -1 the wiggle is mirrored about its baseline.
   if t.isBlank(row): return Ink()
   let xPx = xPx * st.swing # pixels towards where a positive amplitude swings
-  let (line, positive, negative, width) = case mark
-    of tmHovered: (ink.hover, ink.hover, ink.hover, st.markedWidth)
-    of tmSelected: (ink.selected, ink.selected, ink.selected, st.markedWidth)
-    of tmNone: (ink.line, ink.positive, ink.negative, st.lineWidth)
+  let (line, positive, negative) = (ink.line, ink.positive, ink.negative)
+  let width = if mark == tmNone: st.lineWidth else: st.markedWidth
   let (x0, x1) = (xPx - 0.5, xPx + 0.5)
   var fill = Ink()
   if st.fills != {}:
@@ -219,9 +237,13 @@ func traceInk*(t: Tile; s: Series; row: int; xPx, tMs: float64; st: WiggleStyle;
   if width > 0:
     let half = st.msPerPixel / 2
     let (lo, hi) = t.lineExtent(s, row, tMs - half, tMs + half, st.scale, st.overlap)
-    let c = covered(lo * st.pixelsPerTrace - width / 2, hi * st.pixelsPerTrace + width / 2,
-      x0, x1)
-    result = ink(line, c).over(fill)
+    var (stroke, w) = (line, width)
+    if mark != tmNone:
+      if (hi - lo) * st.pixelsPerTrace > BandPx: w = st.lineWidth
+      else: stroke = if mark == tmHovered: ink.hover else: ink.selected
+    let c = if w > 0: covered(lo * st.pixelsPerTrace - w / 2, hi * st.pixelsPerTrace + w / 2,
+      x0, x1) else: 0.0
+    result = ink(stroke, c).over(fill)
 
 func reach*(st: WiggleStyle): float64 =
   ## How far from its baseline a trace can put ink, in trace spacings: the

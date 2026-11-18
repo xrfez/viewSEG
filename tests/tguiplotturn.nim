@@ -113,6 +113,11 @@ proc expected(t: Tile; p: Picture; i, j: int): Rgba =
   let (_, ts) = t.span
   if wiggles and tm >= ts.lo and tm < ts.hi:
     let ser = t.series
+    for r in 0 ..< t.request.count: # the marked traces' tint, under the traces
+      let m = markOf(r, p.hover, p.selected)
+      let pos = float64(t.request.position(r))
+      if m != tmNone and abs(x - pos) <= p.style.reach:
+        result = tintInk((x - pos) * p.style.pixelsPerTrace, p.style, ink, m).onto(result)
     for pass in 0 .. 1:
       for r in 0 ..< t.request.count:
         let m = markOf(r, p.hover, p.selected)

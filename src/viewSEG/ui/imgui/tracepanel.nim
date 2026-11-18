@@ -176,6 +176,8 @@ type
     instead: string ## what the window said last frame in place of the plot
     marks: int ## bumped whenever a tile's marks of selected traces change
     selected: seq[bool] ## scratch: a tile's selected rows
+    markerKey: (int, seq[uint64], int) ## what `markerAt` was found for: revision, tiles, base
+    markerAt: seq[int] ## the positions of the selected traces the tiles hold, sorted
     lit: seq[bool] ## scratch: a tile's rows the map's pointer lights up
     hovering: bool ## the selection's hover was set by this plot
     gpuError: string ## why it cannot draw; "" when it can
@@ -490,6 +492,74 @@ func headerJoined(tiles: openArray[Tile]; fields: openArray[HeaderField]; row,
       return (tiles[i].joinedAt((position - r.first) div r.stride) *
         joinGroupsOf(fields[row])) != {}
   false
+
+const MarkerSize = 6'f32 ## a selection marker's height, in pixels (its bar's thickness)
+
+proc selectedPositions(tp: var TracePanelUi; tiles: openArray[Tile]; base: int;
+    sel: Selection): seq[int] =
+  ## The positions of the selected traces the tiles hold, ascending, each
+  ## once; found again only when the selection or the tiles change.
+  var ids = newSeq[uint64](tiles.len)
+  for i, t in tiles: ids[i] = t.id
+  let key = (sel.selectedRevision, ids, base)
+  if key != tp.markerKey:
+    tp.markerKey = key
+    tp.markerAt.setLen 0
+    if base >= 0 and sel.selected.len > 0:
+      for t in tiles:
+        let r = t.request
+        for row, trace in t.traces:
+          if row < r.count and base + trace in sel.selected: tp.markerAt.add r.position(row)
+      tp.markerAt.sort()
+      var n = 0
+      for p in tp.markerAt:
+        if n == 0 or tp.markerAt[n - 1] != p:
+          tp.markerAt[n] = p
+          inc n
+      tp.markerAt.setLen n
+  tp.markerAt
+
+proc drawSelectionMarkers(tp: var TracePanelUi; tiles: openArray[Tile]; base: int;
+    sel: Selection; view: Viewport; layout: PanelLayout; m: Turn; plotPos, plotSize: ImVec2_c;
+    t: Theme; marks: var Marks) =
+  ## A marker above (time down) or left of (time across) each selected trace,
+  ## in the selection colour, on the strip the display header's values stand
+  ## in: a small triangle for a lone trace, a bar for traces so close that
+  ## their markers meet. One draw list entry per run, never per trace beyond
+  ## what is visible.
+  let at = tp.selectedPositions(tiles, base, sel)
+  if at.len == 0: return
+  let dl = igGetWindowDrawList()
+  let ta = m.along[axTraces]
+  let ba = m.along[axTime]
+  let perPos = plotSize.along(ta) / max(view.traces.width, 1e-9)
+  let vis = visiblePositions(layout, view)
+  let colour = u32(readableOn(t.roles[rlSelected], t.roles[rlBackdrop]))
+  let (t0, t1) = (plotPos.along(ta), plotPos.along(ta) + plotSize.along(ta))
+  let edge = plotPos.along(ba) # the plot's edge the markers stand against
+  let (e0, e1) = (edge - MarkerSize, edge)
+  var runs: seq[(float32, float32)] # the screen extent of each run along the traces
+  var runLo, runHi = -1'f32
+  for p in at:
+    if p < vis.a or p > vis.b: continue
+    let c = traceAt(view, m, plotPos, plotSize, float64(p))
+    if runLo < 0: (runLo, runHi) = (c, c)
+    elif c - runHi <= 6: runHi = c
+    else:
+      runs.add (runLo, runHi)
+      (runLo, runHi) = (c, c)
+  if runLo >= 0: runs.add (runLo, runHi)
+  for i, (lo, hi) in runs:
+    let (a, b) = (clamp(lo - 3, t0 - 3, t1 + 3), clamp(hi + 3, t0 - 3, t1 + 3))
+    if hi - lo < 1: # a lone trace: a triangle pointing at it
+      let c = (a + b) / 2
+      ImDrawList_AddTriangleFilled(dl, vec(ta, c - 3.5, e0), vec(ta, c + 3.5, e0),
+        vec(ta, c, e1), colour)
+    else:
+      ImDrawList_AddRectFilled(dl, vec(ta, a, e0 + 2), vec(ta, b, e1), colour, 0, 0)
+    marks.markRect("plot.selection marker " & $(i + 1), vec(ta, a, e0), vec(ta, b, e1))
+  if runs.len > 0:
+    marks.markRect("plot.selection markers", vec(ta, t0, e0), vec(ta, t1, e1))
 
 proc button(label: string; t: Theme; marks: var Marks; mark: string): bool =
   result = igButton(label.cstring, ImVec2_c(x: 0, y: 0))
@@ -2401,6 +2471,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     let stride = if p.pending.isEmpty: 1 else: p.pending.stride
     tp.drawHeader(tiles, fields, stride, view, p.layout, turn, bands, headerTop, pos, size, t,
       marks)
+    tp.drawSelectionMarkers(tiles, base, st.selection, view, p.layout, turn, pos, size, t, marks)
     if edited:
       let path = if source >= 0: st.sessions[source].path else: ""
       drawEditRow(tp, st.editsOf(k), tiles, view, p.layout, turn, bands, pos, size, t, marks,

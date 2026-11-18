@@ -447,12 +447,13 @@ on its own as well is as recorded, and a graph does not call it reversed. It is 
 edit, remembered and undoable: every record of the file is reversed, it comes back with
 the file, and another file is shown as you left it.
 
-**Highlight.** The trace under the pointer is drawn in orange, line and fill (under
-density, its column is tinted), and the status bar reads it out. Click a trace to select
+**Highlight.** The trace under the pointer gets an orange line and a light orange tint
+behind it (under density, its column is tinted), and the status bar reads it out. Click a trace to select
 it; Ctrl + click adds another or takes one out; Shift + click selects every trace from
 the one clicked last to this one, in the order shown; Esc clears the selection. Selected
-traces are drawn in the theme's accent colour (another of its colours where the accent
-is too close to the traces). Nothing is read again for any of this.
+traces have a marker above them and a tinted column in the theme's accent colour (another of
+its colours where the accent is too close to the traces); the trace itself keeps its ink, and only
+its line, where it is a line and not a dense band, takes the colour. Nothing is read again for any of this.
 
 **Gain.** The drop-down in the strip shows the gain, and its settings are in the same
 list. The first row is a checkbox, **Let viewSEG choose**, ticked at first: AGC on shot

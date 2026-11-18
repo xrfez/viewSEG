@@ -408,8 +408,9 @@ signals can start time across.
   on wiggles as on density, and the gain amount reads nothing again.
 - **The fills** cover the area between the trace's baseline and its line, on the side
   chosen, edge to edge with the line.
-- **Order:** each trace is drawn over the one before it; the hovered and selected traces
-  once more, on top, so a neighbour's fill never hides a highlight. The line is one pixel
+- **Order:** the tint of the hovered and selected traces' columns first, then each trace
+  over the one before it; the hovered and selected traces once more, on top, so a
+  neighbour's fill never hides a highlight. The line is one pixel
   wide (at 100 %), two for a hovered or selected trace, and never wider than a quarter of
   the trace spacing: where traces are a few pixels apart a full line would cover the
   fills, and at one pixel a trace every column would be line, a black plot; a thinner
@@ -462,9 +463,16 @@ signals can start time across.
 - **"Paper":** white background, black wiggles and black positive fill, the theme's red
   (darkened to read on white) for the negative fill, whatever the UI theme. **"Follow
   the theme":** the theme's plot background, trace and fill colours.
-- **Highlighting recolours the traces themselves:** the hovered trace and the selected
-  traces are redrawn in their colours (line and fill), never marked with a band behind
-  them; under density alone, their columns are tinted. Hover is the theme's highlight
+- **Highlighting marks the trace without hiding its data:** a selected trace has a
+  marker above it (a small triangle, or a bar where markers meet, in the selection colour;
+  left of the plot when time is across), its whole column is tinted behind the data (the
+  selection colour at low opacity, at least a pixel wide however far the plot is zoomed
+  out), and its line, where it reads as a line, is drawn in the selection colour. A
+  fill, and a line so dense that it is a band (a sweep, a trace swinging faster than the
+  pixels resolve: more than 6 pixels across at one pixel of time), keep their normal ink,
+  so selecting a sweep or the only trace of a record never turns the plot into a block of
+  one colour. The hovered trace is marked the same way, with a weaker tint and no marker;
+  under density alone, a column is tinted towards the colour. Hover is the theme's highlight
   colour (orange); the selection is the theme's accent colour (the colour of a selected
   button), so the two never look alike. The theme's own "selection" colour is a
   background tint, which would not show as a line on paper. Each is darkened or

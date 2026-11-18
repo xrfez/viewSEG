@@ -13,9 +13,15 @@
 ## hovered row), are the block's marks texture. So a change of any of them
 ## draws again at once and reads nothing; only the marks are uploaded again.
 ##
-## A second pass draws the hovered and selected traces again, on top: the
-## quads of the other traces are collapsed in the vertex shader. A killed
-## trace's quad is always collapsed: it is drawn blank.
+## A pass before the traces tints the column of each hovered and selected
+## trace (its slot, the whole block's time span, at least a pixel wide: a
+## translucent colour under the data, in one instanced draw per block); a
+## pass after them draws the hovered and selected traces again, on top: the
+## quads of the other traces are collapsed in the vertex shader. A marked
+## trace keeps its ink where it is a fill, or a line so close to the next
+## pixel's that it is a band (`BandPx`); only a line that reads as a line takes
+## the mark's colour. A killed trace's quad is always collapsed: it is drawn
+## blank.
 ##
 ## Positions and times reach the shaders relative to the view's first
 ## position and earliest time, taken in float64 here: in float32, position
@@ -44,7 +50,7 @@ type
     wuMarkedHalf = "markedHalf", wuFills = "fills", wuLine = "lineColour",
     wuPositive = "positiveColour", wuNegative = "negativeColour", wuHover = "hoverColour",
     wuSelected = "selectedColour", wuComponentInk = "componentInk",
-    wuCompColour = "compColour[0]"
+    wuCompColour = "compColour[0]", wuTintPass = "tintPass", wuTintAlpha = "tintAlpha"
 
   WiggleProgram* = object
     ## The wiggle shader and the empty vertex array it draws from.
@@ -66,6 +72,8 @@ uniform float reach;     // how far a trace puts ink, in trace spacings
 uniform vec2 tSpan;      // the block's time span, ms
 uniform int hoverRow;    // the block's hovered row; -1 for none
 uniform int markedOnly;  // 1: only the hovered and selected traces
+uniform int tintPass;    // 1: the marked traces' slots, as flat quads
+uniform float pxPerPos;
 uniform sampler2D marks;
 flat out int row;
 flat out int marked;     // 0 none, 1 selected, 2 hovered
@@ -81,21 +89,24 @@ void main() {
   bool lit = (m & 4) != 0; // lit up from the map: drawn as the hovered trace
   marked = (row == hoverRow || lit) ? 2 : (selected ? 1 : 0);
   int corner = gl_VertexID;
-  xOff = ((corner & 1) == 0 ? -1.0 : 1.0) * reach;
+  xOff = ((corner & 1) == 0 ? -1.0 : 1.0) * (tintPass == 1 ? max(0.5, 0.5 / pxPerPos) : reach);
   tMs = (corner & 2) == 0 ? tSpan.x : tSpan.y;
   float x = firstPos + float(row) * stride + xOff;
   vec2 p = x * posNdc + tMs * timeNdc + ndcOrigin;
-  if (killed || (markedOnly == 1 && marked == 0)) p = vec2(-2.0, -2.0); // collapsed: nothing drawn
+  if (killed || ((markedOnly == 1 || tintPass == 1) && marked == 0)) p = vec2(-2.0, -2.0); // collapsed: nothing drawn
   gl_Position = vec4(p, 0.0, 1.0);
 }
 """
   # As `valueAt`, `swing`, `lineExtent`, `covered` and `traceInk`.
   fragmentShader = """
 #version 330 core
+const float bandPx = """ & $BandPx & """;
 uniform sampler2D series;
 uniform int count;
 uniform float firstMs, stepMs; // times relative to the view's top edge, as tMs
 uniform float scale, overlap, pxPerPos, msPerPx, lineHalf, markedHalf;
+uniform int tintPass;
+uniform float tintAlpha;
 uniform float swingSign; // 1, or -1: the wiggle mirrored about its baseline
 uniform int fills;       // 1 positive, 2 negative
 uniform vec4 lineColour, positiveColour, negativeColour, hoverColour, selectedColour;
@@ -131,10 +142,12 @@ void main() {
     vec4 c = compColour[compKind - 1];
     line = c; positive = c; negative = c;
   }
-  float halfWidth = lineHalf;
-  if (marked == 2) { line = hoverColour; positive = hoverColour; negative = hoverColour; }
-  if (marked == 1) { line = selectedColour; positive = selectedColour; negative = selectedColour; }
-  if (marked != 0) halfWidth = markedHalf;
+  if (tintPass == 1) {
+    vec4 c = marked == 2 ? hoverColour : selectedColour;
+    colour = vec4(c.rgb, 1.0) * (marked == 2 ? 0.6 * tintAlpha : tintAlpha);
+    return;
+  }
+  float halfWidth = marked != 0 ? markedHalf : lineHalf;
   float x = swingSign * xOff * pxPerPos; // pixels towards a positive swing
   float x0 = x - 0.5, x1 = x + 0.5;
   vec4 ink = vec4(0.0);
@@ -154,8 +167,14 @@ void main() {
       lo = min(lo, d);
       hi = max(hi, d);
     }
-    float c = covered(lo * pxPerPos - halfWidth, hi * pxPerPos + halfWidth, x0, x1);
-    ink = vec4(line.rgb, 1.0) * c + ink * (1.0 - c);
+    vec4 stroke = line;
+    float hw = halfWidth;
+    if (marked != 0) {
+      if ((hi - lo) * pxPerPos > bandPx) hw = lineHalf; // a band: the normal ink
+      else stroke = marked == 2 ? hoverColour : selectedColour;
+    }
+    float c = hw > 0.0 ? covered(lo * pxPerPos - hw, hi * pxPerPos + hw, x0, x1) : 0.0;
+    ink = vec4(stroke.rgb, 1.0) * c + ink * (1.0 - c);
   }
   if (ink.a <= 0.0) discard;
   colour = ink;
@@ -203,21 +222,24 @@ proc use*(w: WiggleProgram; view: Viewport; m: Turn; st: WiggleStyle; ink: Wiggl
   uniform4(loc(wuNegative), ink.negative)
   uniform4(loc(wuHover), ink.hover)
   uniform4(loc(wuSelected), ink.selected)
+  glUniform1f(loc(wuTintAlpha), float32(TintAlpha))
   glUniform1i(loc(wuComponentInk), GLint(componentInk))
   for i, c in componentColours:
     uniform4(loc(wuCompColour) + GLint(i), c)
   glBindVertexArray(w.vao)
 
 proc draw*(w: WiggleProgram; view: Viewport; t: Tile; tt: TileTextures; hoverRow: int;
-    markedOnly: bool) =
+    markedOnly: bool; tint = false) =
   ## Draws the traces of tile `t` (its GPU copy `tt`) as they fall in `view`
   ## (the one given to `use`): every trace, or only the hovered (`hoverRow`,
-  ## -1 for none) and selected ones.
+  ## -1 for none) and selected ones. With `tint`, only the columns of those, as
+  ## a flat translucent colour (drawn before the traces).
   let s = t.series
   let r = t.request
   let (x0, t0) = (view.traces.lo, view.timeMs.lo) # the shaders' origin
   template loc(u: WiggleUniform): GLint = w.loc[u]
   glUniform1i(loc(wuMarkedOnly), GLint(markedOnly))
+  glUniform1i(loc(wuTintPass), GLint(tint))
   glUniform1f(loc(wuStride), float32(r.stride))
   for k, b in tt.blocks:
     let q = t.quad(b)

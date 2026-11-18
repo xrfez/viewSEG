@@ -198,9 +198,29 @@ proc main*() =
     let (lo, hi) = t.lineExtent(s, 0, 1.5, 2.5, 1, 1)
     doAssert lo == -0.5 and hi == 0.5, $(lo, hi)
     doAssert t.traceInk(s, 0, 5, 2, coarse, ink).a == 1
-    # a hovered trace in the hover colour, line and fill
-    doAssert t.traceInk(s, 0, 10, 1, st, ink, tmHovered).onto(white) == ink.hover
+    # a hovered or selected trace keeps its fill; its line, where it reads as a
+    # line, takes the mark's colour
+    doAssert t.traceInk(s, 0, 10, 1, st, ink, tmHovered).onto(white) == ink.positive
+    doAssert t.traceInk(s, 0, 10, 1, st, ink, tmSelected).onto(white) == ink.positive
+    doAssert t.traceInk(s, 0, 20, 1, st, ink, tmHovered).onto(white) == ink.hover
     doAssert t.traceInk(s, 0, 20, 1, st, ink, tmSelected).onto(white) == ink.selected
+    # a line that is a band (a pixel's time spans more than `BandPx` of swing) keeps
+    # the normal ink: marking a sweep does not turn it into a block
+    var fast = st
+    fast.msPerPixel = 2 # the whole swing of the trace, 40 px, in one pixel's time
+    doAssert t.traceInk(s, 0, 0, 2, fast, ink, tmSelected).onto(white) ==
+      t.traceInk(s, 0, 0, 2, fast, ink).onto(white)
+    doAssert t.traceInk(s, 0, 15, 2, fast, ink, tmSelected).onto(white) ==
+      t.traceInk(s, 0, 15, 2, fast, ink).onto(white)
+    # the tint of a marked trace's column: translucent, within half a spacing (a
+    # pixel at least), under the data
+    let tint = tintInk(3, st, ink, tmSelected).onto(white)
+    doAssert tint != white and tint.r > 0 and tint.g > tint.r and tintInk(11, st, ink,
+      tmSelected).a == 0 and tintInk(3, st, ink, tmNone).a == 0
+    var far = st
+    far.pixelsPerTrace = 0.01 # zoomed far out: still a pixel wide
+    doAssert tintInk(0.4, far, ink, tmSelected).a > 0 and tintInk(0.6, far, ink,
+      tmSelected).a == 0
     # half a pixel of line at its edge
     let edge = t.traceInk(s, 0, 20.5, 1, st, ink)
     doAssert abs(edge.a - 0.5) < 1e-9, $edge
