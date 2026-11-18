@@ -107,8 +107,17 @@ proc recordRows*(f: SeismicFile; gathers: openArray[Gather]): seq[RecordRow] =
       ensemble: NaN, srcLine: NaN, srcPoint: NaN, rcvLine: NaN, rcvPoint: NaN)
     if keyed and g.traces.len > 0:
       var t = g.traces.a
-      while t < g.traces.b and not isSeismic(f.index, t): inc t
-      if not isSeismic(f.index, t): t = g.traces.a
+      # the first seismic trace with a record number (a run of 0s kept with the record
+      # before it does not give it its number)
+      while t < g.traces.b and not (isSeismic(f.index, t) and f.index.keys[t].record != 0):
+        inc t
+      if not (isSeismic(f.index, t) and f.index.keys[t].record != 0):
+        t = g.traces.a # else the first trace with one, else the first seismic trace
+        while t < g.traces.b and f.index.keys[t].record == 0: inc t
+        if f.index.keys[t].record == 0:
+          t = g.traces.a
+          while t < g.traces.b and not isSeismic(f.index, t): inc t
+          if not isSeismic(f.index, t): t = g.traces.a
       # Only what the gather's kind holds constant tells records apart: a
       # shot's FFID and source, a receiver gather's receiver, a CMP's CDP.
       let k = f.index.keys[t]

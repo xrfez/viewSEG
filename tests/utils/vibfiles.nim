@@ -42,7 +42,7 @@ func vibSample*(trace, i: int): float32 =
   float32((1.0 + 0.25 * float64(trace)) * sin(phase + 0.1 * float64(trace)))
 
 proc writeVib(path: string; codes: openArray[int16]; record: float64; loud: bool;
-    claimed = 0; located: set[0 .. 15] = {}; zeroFrom = 99; major = 1'u8) =
+    claimed = 0; located: set[0 .. 15] = {}; zeroFrom = 99; major = 1'u8; shotTime = 0.0) =
   var w = openSeismicWriter(path, SegyOutputOptions(revision: SegyRevision(major: major, minor: 0),
     traceSorting: 1, measurementSystem: 1, text: @["C01 viewSEG test fixture: vibrator codes"]))
   var buf = newSeq[float32](VibSamples)
@@ -55,6 +55,7 @@ proc writeVib(path: string; codes: openArray[int16]; record: float64; loud: bool
     (k.record, k.channel, k.t0Ms, k.intervalUs) = (number, float64(n + 1), 0.0,
       VibDtMs * 1000)
     k.traceCode = code
+    if shotTime != 0: k.time = shotTime
     # the writer keeps a code only when the status agrees with it
     k.status = if code == 1 or code in 11'i16 .. 17'i16 or
         (major >= 2 and code in 27'i16 .. 41'i16): tsLive elif code in 18'i16 .. 21'i16 or
@@ -115,6 +116,18 @@ proc vibZeroTailSegy*(fx: Fixtures): string =
   ## the last (the ground force).
   result = fx.dir / "vib-zero-tail.sgy"
   if not fileExists(result): writeVib(result, VibFourCodes, 7, false, zeroFrom = 3)
+
+proc vibZeroSeismicSegy*(fx: Fixtures): string =
+  ## Five seismic traces: record 7 on three, 0 on the last two; no shot time.
+  result = fx.dir / "zero-seismic.sgy"
+  if not fileExists(result): writeVib(result, [1'i16, 1, 1, 1, 1], 7, false, zeroFrom = 3)
+
+proc vibZeroTimedSegy*(fx: Fixtures): string =
+  ## Three auxiliary traces of record 7, then two seismic traces of record 0, all with
+  ## the same shot time.
+  result = fx.dir / "zero-timed.sgy"
+  if not fileExists(result):
+    writeVib(result, [21'i16, 19, 18, 1, 1], 7, false, zeroFrom = 3, shotTime = 1_700_000_000.0)
 
 proc vibPlainSegy*(fx: Fixtures): string =
   result = fx.dir / "vib-plain.sgy"

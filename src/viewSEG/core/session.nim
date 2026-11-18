@@ -12,7 +12,7 @@
 ## Trace ids are survey-wide: `base + index`. Bases are never reused, so an id
 ## kept by a view never names a trace of a file opened later.
 
-import std/[os, strutils, times]
+import std/[math, os, strutils, times]
 import parseSEG
 import filesystem, headers, records
 
@@ -79,18 +79,28 @@ func lengthUnitOf*(c: CoordinateReference): string =
       return u
 
 proc keepZeroRecords(f: SeismicFile; gathers: var seq[Gather]): int =
-  ## A SEG-Y file gathered by field record number: a run of traces whose field
-  ## record number is 0 that directly follows a record of another number is not a
-  ## record of its own (0 is "not set"), so it joins that record, and the gather is
-  ## counted again. Returns the traces so kept. A file whose first traces are 0, or
-  ## whose every number is 0, is left as it is; so is one gathered by ensemble,
-  ## receiver or offset.
+  ## A SEG-Y file gathered by field record number: a run of traces whose field record number
+  ## is 0 (not a number: "not set") that directly follows a record of another number joins
+  ## that record, and the gather is counted again, when every trace of the run is
+  ## auxiliary by its identification code (a vibrator's force trace, say) or the run's shot
+  ## time equals the previous record's and is set. Otherwise it stays a record of its own,
+  ## as before. Returns the traces so kept. A file whose first traces are 0, or whose every
+  ## number is 0, is left as it is; so is one gathered by ensemble, receiver or offset.
   if f.kind != skSegy or f.index.keys.len != f.len or
       int(f.index.segy.binary.traceSorting) in [2, 3, 4, 6, 7, 8, 9]: return
+  template k(t: int): untyped = f.index.keys[t]
   var kept: seq[Gather] = @[]
   for g in gathers:
-    if kept.len > 0 and f.index.keys[g.traces.a].record == 0 and
-        f.index.keys[kept[^1].traces.a].record != 0:
+    var joins = false
+    if kept.len > 0 and k(g.traces.a).record == 0 and k(kept[^1].traces.a).record != 0:
+      var allAux = true
+      for t in g.traces:
+        if k(t).status != tsAuxiliary:
+          allAux = false
+          break
+      let (now, before) = (k(g.traces.a).time, k(kept[^1].traces.a).time)
+      joins = allAux or (now == before and not now.isNaN and now != 0)
+    if joins:
       result += g.traces.len
       kept[^1] = f.index.classify(kept[^1].traces.a .. g.traces.b)
     else: kept.add g
