@@ -15,7 +15,7 @@ func inkA*(t: Theme): Rgba {.inline.} = t.roles[rlAccent]
 func inkB*(t: Theme): Rgba {.inline.} = t.series[1]
 
 proc curve(name: string; colour: Rgba; xs, ys: seq[float64]): Curve =
-  ## The series whole. The plot keeps the peak of each bin of the range on
+  ## The series whole. The plot keeps the minimum and maximum of each bin of the range on
   ## screen (`CurvePlot.forScreen`) and redoes that when the view changes,
   ## so a zoom reaches single samples. Nothing is thrown away here.
   Curve(name: name, colour: colour, xs: xs, ys: ys)

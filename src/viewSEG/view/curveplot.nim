@@ -117,8 +117,9 @@ proc takePoint(c: Curve; xs: openArray[float64]; j: int; outc: var Curve) =
 
 proc forScreen*(p: CurvePlot; xLo, xHi: float64; pixels: int): seq[Curve] =
   ## The curves to draw for x in `xLo` .. `xHi`, at most about `pixels`
-  ## points each. Each bin keeps the finite sample of largest magnitude
-  ## (`peakBins`, the trace plot's `decimatePeakInto`), and a bin with none
+  ## points each, of at most `pixels` points in all. Each bin keeps its finite
+  ## minimum and maximum in sample order (`extremeBins`), so neither a peak
+  ## nor a notch is lost, whatever the sign of the values; a bin with none
   ## stays a gap. A range that fits in `pixels` is every sample, so a zoom
   ## reaches single samples. One sample either side of the range is kept, so
   ## the line enters the view. The caller redoes this when the view changes.
@@ -142,10 +143,13 @@ proc forScreen*(p: CurvePlot; xLo, xHi: float64; pixels: int): seq[Curve] =
         for j in fromI .. toI: c.takePoint(xs, j, outc)
       else:
         if left >= 0: c.takePoint(xs, left, outc)
-        let step = (n + px - 1) div px
+        let bins = max(px div 2, 1)
+        let step = (n + bins - 1) div bins
         var bin = 0
-        for at in peakBins(c.ys.toOpenArray(a0, b), step):
-          if at >= 0: c.takePoint(xs, a0 + at, outc)
+        for (lo, hi) in extremeBins(c.ys.toOpenArray(a0, b), step):
+          if lo >= 0:
+            c.takePoint(xs, a0 + lo, outc)
+            if hi != lo: c.takePoint(xs, a0 + hi, outc)
           else:
             let j = min(b, a0 + bin * step)
             outc.xs.add if j < xs.len: xs[j] else: NaN

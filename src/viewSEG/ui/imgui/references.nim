@@ -4,7 +4,7 @@
 
 import std/[algorithm, math, strutils, tables]
 import imguin/cimgui
-import ../../core/[explain, references, state]
+import ../../core/[explain, references, state, viewport]
 import ../../view/[curveplot, theme]
 import curveplot as curves, explainmenu, fittext, focus, genpreview, icons, marks, placement,
   style
@@ -777,13 +777,16 @@ proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
     igEndPopup()
 
 proc thinPair(xs, ys: seq[float64]): (seq[float64], seq[float64]) =
+  ## At most about 4000 points that keep every peak and notch (`extremeBins`).
   if ys.len <= 4000: return (xs, ys)
-  let step = max(1, ys.len div 4000)
-  var i = 0
-  while i < ys.len:
-    result[0].add xs[min(i, xs.high)]
-    result[1].add ys[i]
-    inc i, step
+  let step = (ys.len + 1999) div 2000
+  for (lo, hi) in extremeBins(ys, step):
+    if lo >= 0:
+      result[0].add xs[min(lo, xs.high)]
+      result[1].add ys[lo]
+      if hi != lo:
+        result[0].add xs[min(hi, xs.high)]
+        result[1].add ys[hi]
 
 proc pilotLine(w: RefView): string =
   ## What a pilot of the record's window says of where it is from.

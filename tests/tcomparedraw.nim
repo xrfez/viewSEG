@@ -48,7 +48,7 @@ proc main*() =
     var p = CurvePlot()
     p.curves.add Curve(name: "g", xs: @[0.0, 1, 2, 3, 4, 5, 6, 7],
       ys: @[NaN, NaN, NaN, NaN, 9.0, NaN, NaN, NaN])
-    let d = p.forScreen(0, 7, 2)
+    let d = p.forScreen(0, 7, 4) # two bins of four, two points each
     var sawNan, saw9, saw0 = false
     for y in d[0].ys:
       if y.isNaN: sawNan = true

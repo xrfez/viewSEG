@@ -302,24 +302,26 @@ func decimatePeakInto*(src: openArray[float32]; n: int; dst: var openArray[float
     i += n
   for m in k ..< dst.len: dst[m] = 0
 
-func peakBins*(src: openArray[float64]; n: int): seq[int] =
-  ## One index into `src` per bin of `n` samples: the finite sample of
-  ## largest magnitude, with the same rule as `decimatePeakInto` (the first
-  ## of equal magnitude, non-finite ignored). -1 when the bin has none, so a
-  ## gap stays a gap rather than a zero. Raises `ValueError` for `n < 1`.
+func extremeBins*(src: openArray[float64]; n: int): seq[(int, int)] =
+  ## One pair of indices into `src` per bin of `n` samples: the finite
+  ## minimum and the finite maximum, `a <= b` (the first of equal values, so
+  ## they come in sample order; `a == b` when the bin has one extreme). Peaks
+  ## and troughs both survive, whatever the sign of the values. `(-1, -1)`
+  ## when the bin has no finite sample, so a gap stays a gap rather than a
+  ## zero. Raises `ValueError` for `n < 1`.
   if n < 1: raise newException(ValueError, "decimation must be at least 1, got " & $n)
   var i = 0
   while i < src.len:
-    var best = -1.0
-    var at = -1
-    let hi = min(src.len, i + n)
-    for j in i ..< hi:
+    var lo = -1
+    var hi = -1
+    let e = min(src.len, i + n)
+    for j in i ..< e:
       let v = src[j]
-      if v.classify notin {fcNan, fcInf, fcNegInf} and abs(v) > best:
-        best = abs(v)
-        at = j
-    result.add at
-    i = hi
+      if v.classify notin {fcNan, fcInf, fcNegInf}:
+        if lo < 0 or v < src[lo]: lo = j
+        if hi < 0 or v > src[hi]: hi = j
+    result.add (min(lo, hi), max(lo, hi))
+    i = e
 
 func splitBlocks*(rows, cols, maxSize: int): seq[TileBlock] =
   ## Blocks of at most `maxSize` × `maxSize` that cover a `rows` × `cols`

@@ -195,7 +195,7 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   (result.plotPos, result.plotSize) = (pos, area)
   notePlot(pos, area)
   marks.markRect(id & ".data", pos, ImVec2_c(x: pos.x + area.x, y: pos.y + area.y))
-  # Peak-keep for the pixels of the range on screen, redone when the view
+  # Min and max kept per bin for the pixels of the range on screen, redone when the view
   # or the data changes. The cursor still reads the full series.
   let lim = ImPlot_GetPlotLimits(xAxis, yAxis)
   let px = max(1, int(if turned: area.y else: area.x))
