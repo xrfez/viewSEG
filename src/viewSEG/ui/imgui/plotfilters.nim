@@ -71,6 +71,21 @@ proc hertz(id, what: string; value: var float64; lo, hi: float64; width: float32
         formatFloat(hiOk, ffDefault, 9) & " Hz (low-cut start <= its end <= high-cut " &
         "start <= its end <= Nyquist)"
 
+proc harmonicsBox(value: var int; width: float32): bool =
+  ## A box for how many multiples of a notch's frequency are notched, typed
+  ## (Enter, Tab or a click away); one outside 1 .. `MaxHarmonics` is refused with a line.
+  var v = cint(value)
+  igSetNextItemWidth(width)
+  discard igInputInt("##harmonics", addr v, 0, 0, 0)
+  if igIsItemDeactivatedAfterEdit():
+    if v in 1 .. cint(MaxHarmonics):
+      value = int(v)
+      hzNote = ""
+      result = true
+    else:
+      hzNote = "Notch harmonics: " & $v & " is not possible here, it must be from 1 to " &
+        $MaxHarmonics
+
 func reachText*(reach: FilterReach): string =
   ## What the filters' tooltip and drop-down say of the traces they do not
   ## reach; "" when they reach every one shown.
@@ -160,10 +175,7 @@ proc drawSettings(p: Panel; pr: Processing; hasAux: bool; reach: FilterReach;
     marks.mark("plot.filters notch " & $i & " width")
     tip("The notch's width: the gain is 1 again half of it away")
     igSameLine(0, -1)
-    var h = cint(notch.harmonics)
-    igSetNextItemWidth(round(w * 0.3))
-    if igSliderInt("##harmonics", addr h, 1, cint(MaxHarmonics), "x%d", 0.ImGuiSliderFlags):
-      n.notches[i].harmonics = int(h)
+    if harmonicsBox(n.notches[i].harmonics, round(w * 0.3)):
       p.send(n, cmds)
     marks.mark("plot.filters notch " & $i & " harmonics")
     tip("Notched at this many multiples of the frequency (x1: the frequency alone; " &
@@ -352,10 +364,7 @@ proc drawOwnFilter*(draft: var OwnFilter; mixed: bool; n: int; dtMs: float64;
     igSameLine(0, -1)
     discard hertz("##width", "Notch width", pr.notches[i].widthHz, MinNotchWidthHz, 20, round(w * 0.4))
     igSameLine(0, -1)
-    var h = cint(notch.harmonics)
-    igSetNextItemWidth(round(w * 0.3))
-    if igSliderInt("##harmonics", addr h, 1, cint(MaxHarmonics), "x%d", 0.ImGuiSliderFlags):
-      pr.notches[i].harmonics = int(h)
+    discard harmonicsBox(pr.notches[i].harmonics, round(w * 0.3))
     igSameLine(0, -1)
     if igSmallButton("Remove"): drop = i
     igPopID()
