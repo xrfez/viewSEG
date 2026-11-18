@@ -46,7 +46,8 @@ proc sortRowsInto*(rows: TraceRows; order: openArray[SortKey]; dst: var seq[int]
       let last = min(n, i + StopEvery)
       for m in i ..< last:
         let row = dst[m]
-        let v = rows.keysAt(row).value(key.field, rows.traceOf(row))
+        let v = rows.keysAt(row).value(key.field, rows.traceOf(row),
+          rows.channelSetIndex(row))
         cols[0][m] = if key.descending: -v else: v # NaN stays last either way
       i = last
       if stop.stopped: result = false

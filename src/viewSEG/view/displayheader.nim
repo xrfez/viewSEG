@@ -9,6 +9,8 @@
 
 import std/math
 from ../core/readout import numberText
+from ../core/panels import HeaderField, hfChannelSet, hfTraceId
+from ../core/traceids import traceIdText
 
 func headerStep*(stride: int; pixelsPerPosition, labelPixels: float64): int =
   ## The step between labelled positions: `stride` times the smallest of 1,
@@ -34,3 +36,12 @@ func headerText*(v: float64): string =
   ## A header value as the header shows it: whole numbers without decimals,
   ## others with up to two; "" when unknown (as the status bar shows them).
   numberText(v)
+
+func headerLabel*(f: HeaderField; v: float64; channelSet: string): string =
+  ## What the header shows for value `v` of field `f`: `headerText`, except
+  ## for the channel set (`channelSet`, its number and type in words, when the
+  ## tile has it) and the trace ID code (the code in words).
+  case f
+  of hfChannelSet: (if channelSet.len > 0: channelSet else: headerText(v))
+  of hfTraceId: (if v.isNaN: "" else: traceIdText(int(v)))
+  else: headerText(v)

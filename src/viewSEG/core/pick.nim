@@ -25,6 +25,7 @@ type
     position*: int = -1       ## the position of the trace drawn there; -1 when none
     trace*: int = -1          ## its index in its file; -1 when not known
     keys*: TraceKeys          ## its keys; every field unknown when not `found`
+    channelSet*: string       ## its SEG-D channel set in words ("2 · seismic"); "" for none
     amplitude*: float32 = NaN ## the value drawn at the nearest sample; NaN when not held
     raw*: float32 = NaN       ## the file's sample there, before anything; NaN when not held
     binned*: int = 1          ## samples behind `amplitude`: more than 1 zoomed out
@@ -60,6 +61,7 @@ func pickAt*(tiles: openArray[Tile]; layout: PanelLayout; at: DataPoint): Pick =
   result.position = t.request.position(row)
   if row < t.traces.len: result.trace = t.traces[row]
   if row < t.keys.len: result.keys = t.keys[row]
+  if row < t.sets.len: result.channelSet = t.sets[row]
   result.edits = t.editsAt(row)
   result.joined = t.joinedAt(row)
   if full and t.columns > 0:

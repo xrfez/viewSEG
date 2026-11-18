@@ -199,6 +199,12 @@ type
     hfRcvPoint = "point" ## receiver point (the station)
     hfComponent = "component" ## of a multi-component station (parseSEG's `TraceKeys.component`)
     hfChannel = "channel"
+    hfChannelSet = "channel set"
+      ## SEG-D: the trace's channel set (counted from 1) and, in the header, its
+      ## type; unknown for SEG-Y
+    hfTraceId = "trace ID code"
+      ## SEG-Y trace identification code (the header shows its name); unknown
+      ## when 0 and for SEG-D
     hfRecord = "FFID" ## field record
     hfSrcLine = "source line"
     hfSrcPoint = "source point"
@@ -347,13 +353,16 @@ func shows*(layer: Layer; file: SessionId): bool =
   ## Whether `layer` draws traces of `file`.
   layer.source.kind == lsRecord and layer.source.file == file
 
-func value*(k: TraceKeys; field: HeaderField; trace: int): float64 =
-  ## `field` of the trace with keys `k` and index `trace`; NaN when unknown.
+func value*(k: TraceKeys; field: HeaderField; trace: int; channelSet = -1): float64 =
+  ## `field` of the trace with keys `k`, index `trace` and 0-based channel
+  ## set `channelSet` (-1 for none); NaN when unknown.
   case field
   of hfRcvLine: k.rcvLine
   of hfRcvPoint: k.rcvPoint
   of hfComponent: (if componentOf(k) == 0: NaN else: float64(componentOf(k)))
   of hfChannel: k.channel
+  of hfChannelSet: (if channelSet < 0: NaN else: float64(channelSet + 1))
+  of hfTraceId: (if k.traceCode == 0: NaN else: float64(k.traceCode))
   of hfRecord: k.record
   of hfSrcLine: k.srcLine
   of hfSrcPoint: k.srcPoint

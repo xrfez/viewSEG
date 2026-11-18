@@ -39,14 +39,17 @@ type
     envelope*: seq[float32] ## with `request.envelope`: the columns' extremes (`core/wiggle`)
     traces*: seq[int]       ## per row: the trace's index in its file
     keys*: seq[TraceKeys]   ## per row: the trace's keys
+    sets*: seq[string]
+      ## per row: the trace's SEG-D channel set in words (`core/channelsets`); empty
+      ## when the file has none
     fields*: seq[HeaderField]
     header*: seq[seq[float64]]
       ## per field, one value per trace (NaN when unknown)
     edits*: seq[set[TraceEdit]]
       ## per row: the edits its samples were made with; empty when none has any
-    level*: Level           ## RMS, peak and clip percentile of |x| over the live traces
-    failed*: int            ## traces that could not be decoded (zero rows)
-    cached*: bool           ## the reader made it from samples it held, not from the file
+    level*: Level ## RMS, peak and clip percentile of |x| over the live traces
+    failed*: int ## traces that could not be decoded (zero rows)
+    cached*: bool ## the reader made it from samples it held, not from the file
     levelOnly*: bool
       ## its `level` alone counts: the record's, which the panel's reader
       ## worked out for it (`PanelReader.askLevel`); it holds no samples and

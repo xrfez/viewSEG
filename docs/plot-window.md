@@ -280,8 +280,8 @@
     is greyed, unless it is the order in use. Other orders are keys of the user's own, from
     **Custom...** in the same list, and the drop-down then says "custom", while
     such an order is in use: a small popover lists the keys, the first first, each a
-    display header field (line, point, component, channel, FFID, source line and point,
-    offset, CDP, inline, crossline, trace number) and each ascending or descending; "Sort"
+    display header field (line, point, component, channel, channel set, trace ID code, FFID,
+    source line and point, offset, CDP, inline, crossline, trace number) and each ascending or descending; "Sort"
     applies them, "File order" goes back. Traces equal in every key keep the file's order,
     and unknown values come last either way. The keys sorted by last are remembered and
     offered again; the presets themselves are data in the settings (`sortPresets` in
@@ -307,7 +307,7 @@
   pixel ("peak of 4"). Right-click the bar to choose the fields and their order; any of
   the trace's keys can be added (sample number, UTC at the cursor, CDP, inline,
   crossline, source, receiver and midpoint coordinates, elevations, component, trace
-  status), and the **raw amplitude** (the user: "ok but off by default"): the sample as
+  status, trace ID code, SEG-D channel set), and the **raw amplitude** (the user: "ok but off by default"): the sample as
   it is in the file at the cursor, before polarity, edits, processing and gain (zoomed
   out, the largest of the samples there, as the amplitude). It is off until chosen;
   while it is on, each tile carries the file's samples beside the drawn ones, cut the

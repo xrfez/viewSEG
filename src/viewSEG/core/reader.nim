@@ -88,7 +88,7 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, pool, rows, types, workspace]
 import processSEG/gain/stats
-import components, cutfile, edits, filesystem, inbox, jobs, log, panels, processing, readout,
+import channelsets, components, cutfile, edits, filesystem, inbox, jobs, log, panels, processing, readout,
   sorting, threads, tiles, viewport, wiggle
 
 const
@@ -389,7 +389,7 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
       let t = rd.positions.traceAt(k)
       let keys = f[].traceKeys(t)
       for field in HeaderField:
-        if not keys.value(field, t).isNaN: known.incl field
+        if not keys.value(field, t, f[].channelSetIndexOf(t)).isNaN: known.incl field
       k += step
     # The longest value of each field the traces have, over all of them: the
     # header's columns, time across, keep their widths as the view pans.
@@ -397,7 +397,8 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
       let t = rd.positions.traceAt(k)
       let keys = f[].traceKeys(t)
       for field in known:
-        widest[field] = max(widest[field], numberChars(keys.value(field, t)))
+        widest[field] = max(widest[field],
+          numberChars(keys.value(field, t, f[].channelSetIndexOf(t))))
     if layout.samples == 0:
       rd.note(sevWarning, "The traces shown of " & rd.name & " have no samples, so the plot " &
         "stays empty.")
@@ -764,7 +765,10 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
         if tile.joined.len == 0: tile.joined = newSeq[set[JoinGroup]](q.count)
         tile.joined[row] = joined
       for i, field in req.fields:
-        tile.header[i][row] = keys.value(field, list[row])
+        tile.header[i][row] = keys.value(field, list[row], f[].channelSetIndexOf(list[row]))
+      if f[].kind == skSegd:
+        if tile.sets.len == 0: tile.sets = newSeq[string](q.count)
+        tile.sets[row] = f[].channelSetText(list[row])
 
   var failed: seq[int]
   var atHand = addr rd.raw # the samples at hand that hold the request's, if any

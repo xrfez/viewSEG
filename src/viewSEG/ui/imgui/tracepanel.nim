@@ -251,12 +251,18 @@ type
     pick*: Pick         ## what lies under the mouse; `noPick()` when it is not over the plot
     notes*: seq[string] ## warnings for the log (a scale that is not a number)
 
+func setOf(t: Tile; row: int): string {.inline.} =
+  ## The channel set in words of row `row` of tile `t`; "" for none.
+  if row < t.sets.len: t.sets[row] else: ""
+
 func caption(f: HeaderField): string =
   ## A header row's name as it stands left of the plot: short, so it fits
   ## beside the time axis.
   case f
   of hfComponent: "comp"
   of hfChannel: "chan"
+  of hfChannelSet: "set"
+  of hfTraceId: "id"
   of hfSrcLine: "S line"
   of hfSrcPoint: "S point"
   of hfCrossline: "xline"
@@ -395,8 +401,8 @@ proc labelChars(tp: var TracePanelUi; t: Tile): int =
   ## The length of the longest header label of tile `t`.
   if t.id notin tp.labelChars:
     var n = 1
-    for row in t.header:
-      for v in row: n = max(n, headerText(v).len)
+    for i, row in t.header:
+      for r, v in row: n = max(n, headerLabel(t.fields[i], v, setOf(t, r)).len)
     tp.labelChars[t.id] = n
   tp.labelChars[t.id]
 
@@ -414,7 +420,8 @@ proc bandChars(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[H
       if t.id notin tp.fieldChars:
         var chars = newSeq[int](t.header.len)
         for i, row in t.header:
-          for v in row: chars[i] = max(chars[i], headerText(v).len)
+          for r, v in row:
+            chars[i] = max(chars[i], headerLabel(t.fields[i], v, setOf(t, r)).len)
         tp.fieldChars[t.id] = chars
       for i, n in tp.fieldChars[t.id]:
         if i < tp.bandChars.len: tp.bandChars[i] = max(tp.bandChars[i], n)
@@ -460,15 +467,17 @@ proc inBand(b: HeaderBands; i: int; extent: float32): float32 =
   else: b.start[i] + b.size[i] - extent - round(igGetFontSize() * 0.4)
 
 func headerValue(tiles: openArray[Tile]; fields: openArray[HeaderField]; row,
-    position: int): (bool, float64) =
+    position: int): (bool, float64, string) =
   ## The value of header row `row` at `position`, from the newest tile that
-  ## has it with these fields.
+  ## has it with these fields, and the trace's channel set in words (""
+  ## when the tile has none).
   for i in countdown(tiles.high, 0):
     let r = tiles[i].request
     if tiles[i].fields == fields and position >= r.first and position <= r.last and
         (position - r.first) mod r.stride == 0:
-      return (true, tiles[i].header[row][(position - r.first) div r.stride])
-  (false, NaN)
+      let at = (position - r.first) div r.stride
+      return (true, tiles[i].header[row][at], tiles[i].setOf(at))
+  (false, NaN, "")
 
 func headerJoined(tiles: openArray[Tile]; fields: openArray[HeaderField]; row,
     position: int): bool =
@@ -1512,9 +1521,9 @@ proc drawHeader(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[
     ImDrawList_AddText_Vec2(dl, at, dim, name.cstring, nil)
     ImDrawList_PushClipRect(dl, vec(ta, t0, b0), vec(ta, t1, b1), true)
     for pos in labelled(vis, step):
-      let (have, v) = headerValue(tiles, fields, i, pos)
+      let (have, v, set) = headerValue(tiles, fields, i, pos)
       if have:
-        let text = headerText(v)
+        let text = headerLabel(f, v, set)
         if text.len > 0:
           let c = traceAt(view, m, plotPos, plotSize, float64(pos))
           let ts = igCalcTextSize(text.cstring, nil, false, -1)
@@ -2039,8 +2048,8 @@ proc drawCursorHeader(tp: var TracePanelUi; tiles: openArray[Tile];
   let (t0, t1) = (plotPos.along(ta), plotPos.along(ta) + plotSize.along(ta))
   let pad = if ta == saX: 6'f32 else: 2'f32 # around the text, along the traces
   for i, f in fields:
-    let (have, v) = headerValue(tiles, fields, i, position)
-    let text = if have: headerText(v) else: ""
+    let (have, v, set) = headerValue(tiles, fields, i, position)
+    let text = if have: headerLabel(f, v, set) else: ""
     tp.cursorHeader.add text
     if text.len > 0:
       let ts = igCalcTextSize(text.cstring, nil, false, -1)

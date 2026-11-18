@@ -399,6 +399,7 @@ func valueChars(f: ReadoutField): int =
   of rfComponent: 2
   of rfStatus: 9
   of rfTraceId: 34
+  of rfChannelSet: 24
 
 proc readoutField(fonts: Fonts; f: ReadoutField; value: string; t: Theme;
     marks: var Marks; joined = false) =

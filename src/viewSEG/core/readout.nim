@@ -42,6 +42,7 @@ type
     rfComponent = "component"
     rfStatus = "trace status"         ## live, dead or auxiliary
     rfTraceId = "trace ID code"       ## the SEG-Y code in words: "vibrator baseplate (19)"
+    rfChannelSet = "channel set"      ## SEG-D: its number and type: "2 · signature, filtered"
 
 const
   DefaultReadout* = [rfTime, rfTrace, rfChannel, rfReceiver, rfSource, rfRecord, rfOffset,
@@ -74,6 +75,7 @@ func caption*(f: ReadoutField): string =
   of rfComponent: "comp"
   of rfStatus: "status"
   of rfTraceId: "id"
+  of rfChannelSet: "set"
 
 func known(v: float64): bool {.inline.} = v.classify notin {fcNan, fcInf, fcNegInf}
 
@@ -165,6 +167,7 @@ proc text*(p: Pick; f: ReadoutField): string =
       of tsDead: "dead"
       of tsAuxiliary: "auxiliary"
     of rfTraceId: traceIdText(int(k.traceCode), k.status != tsUnknown)
+    of rfChannelSet: p.channelSet
     of rfTime, rfSample, rfAmplitude, rfRawAmplitude: "" # handled above
 
 func joinGroupsOf*(f: ReadoutField): set[JoinGroup] =

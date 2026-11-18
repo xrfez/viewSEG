@@ -109,7 +109,7 @@ const
   TraceMatchNames: array[TraceMatch, string] = ["auto", "station", "channel"]
   MaxLineNames = 1000  ## line names mapped to numbers, kept
   FieldNames: array[HeaderField, string] = ["rcvLine", "rcvPoint", "component", "channel",
-    "ffid", "srcLine", "srcPoint", "offset", "cdp", "inline", "crossline", "trace"]
+    "channelSet", "traceId", "ffid", "srcLine", "srcPoint", "offset", "cdp", "inline", "crossline", "trace"]
   SeverityNames: array[Severity, string] = ["info", "warning", "error", "fatal"]
   HeadersTabNames: array[HeadersTab, string] = ["summary", "fileHeaders", "trace", "traceTable"]
   TableScopeNames: array[TableScope, string] = ["record", "file"]
@@ -124,7 +124,7 @@ const
   ReadoutNames: array[ReadoutField, string] = ["time", "trace", "channel", "receiver",
     "source", "ffid", "offset", "amplitude", "shotTime", "cursorUtc", "sample", "cdp",
     "inline", "crossline", "sourceXY", "receiverXY", "midpointXY", "sourceZ", "receiverZ",
-    "component", "status", "rawAmplitude", "traceId"]
+    "component", "status", "rawAmplitude", "traceId", "channelSet"]
 
 type
   Reading = object

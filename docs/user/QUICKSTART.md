@@ -263,7 +263,10 @@ variable-area section rather than a band of lines. In wiggles the plot reaches a
 last trace, as far as their swing goes (the trace overlap), so their whole wave shows; a
 record of a single trace shows whole. The rows of labels over the traces are the display header (receiver line and
 point by default): right-click them, or their names at the left, to choose its fields
-(automatic, or the ones you tick); the gear button has the same choice.
+(automatic, or the ones you tick); the gear button has the same choice. Two rows are never
+on until you tick them: **channel set** (SEG-D: the trace's channel set and its type, "2 · seismic",
+to tell the traces of a record of auxiliary signals apart) and **trace ID code** (SEG-Y: the
+code in words). A type parseSEG has no name for is shown as its code.
 
 | To | Mouse | Keys |
 |---|---|---|
@@ -479,7 +482,7 @@ not count in the brightness, and the status bar says "dead" over it. A trace tha
 seismic data says what it is there too, by its SEG-Y trace identification code in words
 ("vibrator baseplate (19)"); a code the standard does not list is shown as it is ("code 29
 (not in the standard)"), never guessed at. The same words follow the code in the Headers
-window's Trace tab, and **trace ID code** is a field you can add to the status bar
+window's Trace tab, and **trace ID code** (and, for SEG-D, **channel set**) is a field you can add to the status bar
 (right-click it).
 
 The view never goes past the data: panning and zooming stop at the first and last trace

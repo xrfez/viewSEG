@@ -69,8 +69,10 @@ const
   MaxGraphBuckets* = 2048 ## the graph's points along the rows, at most
   MaxTableColumns* = 32   ## the columns a table shows, at most
   ColumnStep* = 65_536    ## traces a whole column is read by, between looks for a newer request
-  KeyColumns*: array[23, tuple[name, label: string]] = [
+  KeyColumns*: array[25, tuple[name, label: string]] = [
     ("keys.record", "FFID"), ("keys.channel", "Channel"),
+    ("keys.channelSet", "Channel set (SEG-D, from 1)"),
+    ("keys.traceCode", "Trace ID code (SEG-Y)"),
     ("keys.srcLine", "Source line"), ("keys.srcPoint", "Source point"),
     ("keys.rcvLine", "Receiver line"), ("keys.rcvPoint", "Receiver point"),
     ("keys.component", "Component"), ("keys.offset", "Offset"), ("keys.ensemble", "CDP"),
@@ -93,9 +95,12 @@ func keyLabel*(name: string): string =
   for (n, label) in KeyColumns:
     if n == name: return label
 
-func keyValue*(k: TraceKeys; name: string): float64 =
-  ## Key column `name` of a trace's keys; NaN for a name of no key.
+func keyValue*(k: TraceKeys; name: string; channelSet = -1): float64 =
+  ## Key column `name` of a trace's keys and 0-based channel set `channelSet`
+  ## (-1 for none); NaN for a name of no key, and for a value the trace lacks.
   case name
+  of "keys.channelSet": (if channelSet < 0: NaN else: float64(channelSet + 1))
+  of "keys.traceCode": (if k.traceCode == 0: NaN else: float64(k.traceCode))
   of "keys.record": k.record
   of "keys.channel": k.channel
   of "keys.srcLine": k.srcLine

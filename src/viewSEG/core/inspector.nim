@@ -45,7 +45,7 @@ import std/[heapqueue, intsets, locks, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
-import cutfile, edits, filesystem, headers, inbox, jobs, log, processing, selection, session,
+import channelsets, cutfile, edits, filesystem, headers, inbox, jobs, log, processing, selection, session,
   threads, tracetable, vendormaps
 
 export tracetable
@@ -312,7 +312,8 @@ proc readRows(f: ptr SeismicFile; name: string; traces: openArray[int];
   if name.isKey:
     let keyed = f[].index.keys.len == f[].len
     for k, t in traces:
-      dst[k] = keyValue(if keyed: f[].index.keys[t] else: f[].traceKeys(t), name)
+      dst[k] = keyValue(if keyed: f[].index.keys[t] else: f[].traceKeys(t), name,
+        f[].channelSetIndexOf(t))
   else:
     let column = f[].traceFieldColumn(name, traces) # (the rows on screen: a few hundred)
     for k in 0 ..< column.len: dst[k] = column[k]
@@ -324,7 +325,8 @@ proc readRange(f: ptr SeismicFile; name: string; traces: Slice[int];
     let keyed = f[].index.keys.len == f[].len
     for k in 0 ..< traces.len:
       let t = traces.a + k
-      dst[k] = keyValue(if keyed: f[].index.keys[t] else: f[].traceKeys(t), name)
+      dst[k] = keyValue(if keyed: f[].index.keys[t] else: f[].traceKeys(t), name,
+        f[].channelSetIndexOf(t))
   else:
     f[].traceFieldColumnInto(name, traces, dst)
 
