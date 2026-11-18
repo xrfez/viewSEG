@@ -138,7 +138,14 @@ Right-click a trace in the Seismic window, seismic or auxiliary, and choose **St
 reference...**. The name starts as "<file> rec <record> tr <trace>" and can be changed. A
 name already used is refused. **From** and **To** are in milliseconds and start as the
 whole trace; if the file's headers give a sweep length, **To** starts there, because the
-rest of the record is usually listen time. The length of the trace is shown.
+rest of the record is usually listen time. **From** and **To** are the times of the first
+and last sample taken, both included: a trace of 12 000 samples at 1 ms runs from 0 to
+11999 ms and is 12 000 ms long, and the dialog says it under the boxes ("Takes 0 to 11 999
+ms: 12 000 samples at 1 ms = 12 000 ms (12 s)"; hover **To** for the same in a tooltip). A
+**To** typed past the last sample is brought back to it, and the dialog says so. The
+length of N samples at an interval of dt is N times dt everywhere: here, in the archive's
+Length column ("12000 ms (12000)"), in the stored file's text header and in the message
+that says the reference was stored.
 
 The stored samples are the file's raw samples: no plot filters, no trace filter, no gain,
 and no polarity edit. The read runs in the background; the window does not wait on the file.

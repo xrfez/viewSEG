@@ -60,8 +60,11 @@ type
     wasOpen: bool
     trace: int
     name: string
-    fromMs, toMs, durationMs: float64
+    fromMs, toMs: float64
+    samples: int    ## the whole trace's sample count
+    dtMs: float64   ## and its interval
     sweep: bool
+    clamped: string ## said when a typed "To" was brought back to the last sample
     message: string
 
   ReferencesOutput* = object
@@ -137,13 +140,16 @@ proc openGenerate*(ui: var ReferencesUi; dtMs: float64) =
   setBuf(ui.genName, defaultGenerateName(g))
   ui.autoName = defaultGenerateName(g)
 
-proc openStore*(d: var StoreDialog; trace: int; name: string; fromMs, toMs, durationMs: float64;
-    sweep: bool) =
+proc openStore*(d: var StoreDialog; trace: int; name: string; fromMs, toMs: float64;
+    samples: int; dtMs: float64; sweep: bool) =
+  ## Asks for the dialog on trace `trace` of `samples` samples `dtMs` apart: the window is
+  ## `fromMs` .. `toMs`, the times of the first and last sample taken.
   d.ask = true
   d.trace = trace
   setBuf(d.name, name)
-  (d.fromMs, d.toMs, d.durationMs, d.sweep) = (fromMs, toMs, durationMs, sweep)
+  (d.fromMs, d.toMs, d.samples, d.dtMs, d.sweep) = (fromMs, toMs, samples, dtMs, sweep)
   d.message = ""
+  d.clamped = ""
 
 proc number(label: string; v: var float64; mark: string; marks: var Marks): bool =
   igTextUnformatted(label.cstring, nil)
@@ -460,6 +466,9 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
   if d.ask:
     igOpenPopup_Str(id.cstring, 0)
     d.ask = false
+  let vp = igGetMainViewport() # centred on the main window, as it opens, never above it
+  igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + vp.WorkSize.x / 2,
+    y: vp.WorkPos.y + vp.WorkSize.y / 2), ImGui_Cond_Appearing.cint, ImVec2_c(x: 0.5, y: 0.5))
   let open = igBeginPopupModal(id.cstring, nil, ImGui_WindowFlags_AlwaysAutoResize.cint)
   if d.wasOpen and not open:
     # The modal had the keys. Give them back to the plot, which this is drawn from.
@@ -481,14 +490,34 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
   igSameLine(igGetFontSize() * 8, -1)
   discard igInputDouble("##store.from", addr d.fromMs, 0, 0, "%.9g", 0)
   marks.mark("store.from")
+  tip("The time of the first sample taken (0 is the trace's first sample).")
   igTextUnformatted("To ms", nil)
   igSameLine(igGetFontSize() * 8, -1)
-  discard igInputDouble("##store.to", addr d.toMs, 0, 0, "%.9g", 0)
+  let lastMs = if d.samples > 0 and d.dtMs > 0: float64(d.samples - 1) * d.dtMs else: Inf
+  if igInputDouble("##store.to", addr d.toMs, 0, 0, "%.9g", 0):
+    let (to, clamped) = clampedTo(d.toMs, lastMs, d.dtMs)
+    d.toMs = to
+    d.clamped = if clamped: "The trace's last sample is at " & msWords(lastMs) &
+      " ms: To is brought back to it." else: ""
   marks.mark("store.to")
-  let length = "Trace length " & msWords(d.durationMs) & " ms" &
+  tip("The time of the last sample taken: the window includes it (inclusive). A trace of " &
+    "12 000 samples at 1 ms ends at 11 999 ms and is 12 000 ms long.")
+  if d.samples > 0 and d.dtMs > 0:
+    let r = cutRange(d.samples, d.dtMs * 1000, d.fromMs, d.toMs)
+    let taken = max(r.b - r.a + 1, 0)
+    let words = if taken > 0: "Takes " & rangeWords(float64(r.a) * d.dtMs, float64(r.b) * d.dtMs,
+                  taken, d.dtMs)
+                else: "The window holds no sample"
+    igTextWrapped("%s", words.cstring)
+    marks.mark("store.taken:" & words)
+  if d.clamped.len > 0:
+    igTextWrapped("%s", d.clamped.cstring)
+    marks.mark("store.clamped:" & d.clamped)
+  let length = "The whole trace: " & lengthWords(d.samples, d.dtMs) &
     (if d.sweep: " (To is the sweep length from the file's headers; the rest is listen time)"
       else: " (usually cut to the sweep length; the rest is listen time)")
   igTextWrapped("%s", length.cstring)
+  marks.mark("store.length")
   if d.message.len > 0:
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
     igTextWrapped("%s", d.message.cstring)
@@ -824,7 +853,8 @@ proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
           if w.pilotTrace >= 0 and igButton("Store this pilot as a fixed reference",
               ImVec2_c(x: 0, y: 0)):
             ui.fixed.openStore(w.pilotTrace, w.name & " (" & w.record & ")", w.pilotFrom,
-              w.pilotTo, w.pilotTraceMs, false)
+              w.pilotTo, (if w.dtMs > 0: int(round(w.pilotTraceMs / w.dtMs)) else: 0), w.dtMs,
+              false)
           marks.mark("reference.view.fix")
           tip("Saves this record's cut pilot as an ordinary stored waveform: the file's " &
             "raw samples, as Store does (not turned over, not filtered)")

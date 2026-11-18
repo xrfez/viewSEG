@@ -222,7 +222,7 @@ proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
         news.dtMs = dt
         news.fromMs = max(rule.startMs, 0.0)
         news.pilotTrace = surveyTrace
-        news.pilotTraceMs = float64(samples.len - 1) * dt
+        news.pilotTraceMs = traceLengthMs(samples.len, dt)
         news.pilotFrom = news.fromMs
         news.pilotTo = news.fromMs + float64(cut.len - 1) * dt
         if preview:

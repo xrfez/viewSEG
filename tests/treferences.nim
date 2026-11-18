@@ -5,7 +5,13 @@
 ## missing SEG-Y file, an atomic write, a copy from one archive into
 ## another, and a sweep generated against processSEG called by hand.
 ##
-## Seen to fail: with the stored window taken as samples past `toMs` as well
+## The words for a trace's length: N samples at dt are N·dt ("12 000 samples at 1 ms =
+## 12 000 ms (12 s)", their times 0 to 11 999), the archive's Length column says the same,
+## and a typed "to" past the last sample is brought back to it.
+##
+## Seen to fail: with the length taken as (N - 1)·dt, "lengthWords" said 11 999 ms and the
+## column "11999 ms (12000)"; with `clampedTo` returning its argument, "a to past the end
+## is clamped". With the stored window taken as samples past `toMs` as well
 ## (`cutSamples` keeping `i1` exclusive of the sample at `toMs` dropped),
 ## "the window keeps the sample at 4 ms"; with a damaged index read as
 ## empty and silent, "a damaged index is said".
@@ -29,6 +35,23 @@ proc main*() =
     let cut = cutSamples(x, 2000, 2, 6) # 2 ms samples: times 0, 2, 4, 6, 8
     doAssert cut == @[2'f32, 3, 4], "the window keeps the sample at 4 ms, got " & $cut
     doAssert cutSamples(x, 2000, 0, -1) == x
+
+  block length_words:
+    doAssert lengthWords(12_000, 1) == "12 000 samples at 1 ms = 12 000 ms (12 s)",
+      lengthWords(12_000, 1)
+    doAssert rangeWords(0, 11_999, 12_000, 1) ==
+      "0 to 11 999 ms: 12 000 samples at 1 ms = 12 000 ms (12 s)", rangeWords(0, 11_999, 12_000, 1)
+    doAssert lengthWords(500, 0.5) == "500 samples at 0.5 ms = 250 ms", lengthWords(500, 0.5)
+    doAssert traceLengthMs(12_000, 1) == 12_000
+    let e = ReferenceEntry(samples: 12_000, intervalUs: 1000, origin: ReferenceOrigin(
+      generated: false, fileName: "a.sgy"))
+    doAssert lengthText(e) == "12000 ms (12000)", lengthText(e)
+    let r = cutRange(12_000, 1000, 0, 11_999)
+    doAssert r.a == 0 and r.b == 11_999
+    doAssert clampedTo(20_000, 11_999, 1) == (11_999.0, true), "a to past the end is clamped"
+    doAssert clampedTo(5000, 11_999, 1) == (5000.0, false)
+    doAssert clampedTo(11_999, 11_999, 1) == (11_999.0, false)
+    doAssert clampedTo(-1, 11_999, 1) == (-1.0, false)
 
   block store_list_rename_delete:
     let dir = tempDir()

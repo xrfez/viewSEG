@@ -272,6 +272,33 @@ func msWords*(ms: float64): string {.inline.} =
   ## A sample interval in the sentence a plot says when it refuses one.
   numberText(ms)
 
+func groupedText(x: float64): string =
+  ## `numberText(x)` with its whole part's thousands apart: "11 999", "12 000.5".
+  let t = numberText(x)
+  let dot = t.find('.')
+  let whole = if dot < 0: t else: t[0 ..< dot]
+  let neg = whole.startsWith("-")
+  result = (if neg: "-" else: "") & insertSep(if neg: whole[1 .. ^1] else: whole, ' ')
+  if dot >= 0: result.add t[dot .. ^1]
+
+func traceLengthMs*(samples: int; dtMs: float64): float64 {.inline.} =
+  ## The length of `samples` samples `dtMs` apart: each stands for one interval, so
+  ## 12 000 samples at 1 ms are 12 000 ms (their times run 0 to 11 999).
+  float64(samples) * dtMs
+
+func lengthWords*(samples: int; dtMs: float64): string =
+  ## "12 000 samples at 1 ms = 12 000 ms (12 s)": what a trace of `samples` samples at
+  ## `dtMs` is, the sum written out (the seconds only from a second on).
+  let ms = traceLengthMs(samples, dtMs)
+  result = groupedText(float64(samples)) & " samples at " & numberText(dtMs) & " ms = " &
+    groupedText(ms) & " ms"
+  if ms >= 1000: result.add " (" & groupedText(ms / 1000) & " s)"
+
+func rangeWords*(fromMs, toMs: float64; samples: int; dtMs: float64): string =
+  ## "0 to 11 999 ms: 12 000 samples at 1 ms = 12 000 ms (12 s)": the times of the first
+  ## and last sample taken (both included), then what they add up to.
+  groupedText(fromMs) & " to " & groupedText(toMs) & " ms: " & lengthWords(samples, dtMs)
+
 func intervalRefusal*(refMs, fileMs: float64): string =
   ## What a plot says instead of drawing, when the reference's sample
   ## interval is not the file's. Nothing is resampled.
@@ -386,13 +413,27 @@ func sourceText*(e: ReferenceEntry): string =
     e.origin.fileName & " rec " & rec & " tr " & $e.origin.trace
 
 func lengthText*(e: ReferenceEntry): string =
-  ## The length in time, and the sample count.
+  ## The length in time, and the sample count. A stored trace is its samples times its
+  ## interval (12 000 samples at 1 ms: "12000 ms"); a generated sweep is its own length.
   if e.isPilot: return numberText(e.origin.spanMs) & " ms (of each record)"
-  let ms = if e.intervalUs > 0 and e.samples > 0:
-             float64(e.samples - 1) * e.intervalUs / 1000
+  let ms = if e.origin.generated and e.origin.durationMs > 0: e.origin.durationMs
+           elif e.intervalUs > 0 and e.samples > 0:
+             traceLengthMs(e.samples, e.intervalUs / 1000)
            else:
              0.0
   numberText(ms) & " ms (" & $e.samples & ")"
+
+func lengthSaid*(index: ReferenceIndex; id: string): string =
+  ## ": 12 000 samples at 1 ms = 12 000 ms (12 s)" for the entry `id` of `index`, as the
+  ## messages after a store or a generate end; "" when it is not there.
+  for e in index.entries:
+    if e.id == id and e.samples > 0 and e.intervalUs > 0:
+      if e.origin.generated and e.origin.durationMs > 0:
+        # a sweep runs from 0 to its length, both ends a sample
+        return ": a sweep of " & groupedText(e.origin.durationMs) & " ms, " &
+          groupedText(float64(e.samples)) & " samples at " & numberText(e.intervalUs / 1000) &
+          " ms"
+      return ": " & lengthWords(e.samples, e.intervalUs / 1000)
 
 func intervalText*(e: ReferenceEntry): string =
   if e.isPilot: return "the record's"
@@ -480,21 +521,29 @@ func indexedSpan*(f: ptr SeismicFile; trace: int): tuple[samples: int; intervalU
   if f[].index.kind == skSegy and f[].index.segy.binary.sweepLength > 0:
     result.sweepMs = float64(f[].index.segy.binary.sweepLength)
 
+func cutRange*(count: int; intervalUs, fromMs, toMs: float64): Slice[int] =
+  ## The indices `cutSamples` takes of `count` samples: those whose time is in `fromMs` ..
+  ## `toMs` (`toMs` below 0: through the last sample). Empty (`a > b`) when none is.
+  if count <= 0: return 1 .. 0
+  if not (intervalUs > 0 and intervalUs < Inf): return 0 .. count - 1
+  let dt = intervalUs / 1000
+  let i0 = clamp(int(round(fromMs / dt)), 0, count)
+  let i1 = if toMs < 0: count
+           else: clamp(int(round(toMs / dt)) + 1, i0, count)
+  i0 .. i1 - 1
+
+func clampedTo*(toMs, lastMs, dtMs: float64): tuple[toMs: float64; clamped: bool] =
+  ## A typed "to" time for a trace whose last sample is at `lastMs`: past that sample it
+  ## becomes the last sample's time (`clamped`); a negative one (the trace's end) stays.
+  if toMs > lastMs + dtMs / 2: (lastMs, true) else: (toMs, false)
+
 proc cutSamples*(samples: openArray[float32]; intervalUs, fromMs, toMs: float64): seq[float32] =
   ## The samples whose time is in `fromMs` .. `toMs` (both ends kept when
   ## they fall on a sample). `toMs` below 0 keeps through the last sample.
   ## `intervalUs` must be positive; otherwise the samples are returned whole.
-  if samples.len == 0: return
-  if not (intervalUs > 0 and intervalUs < Inf):
-    result = newSeq[float32](samples.len)
-    for i, v in samples: result[i] = v
-    return
-  let dt = intervalUs / 1000
-  let i0 = clamp(int(round(fromMs / dt)), 0, samples.len)
-  let i1 = if toMs < 0: samples.len
-           else: clamp(int(round(toMs / dt)) + 1, i0, samples.len)
-  result = newSeq[float32](i1 - i0)
-  for i in 0 ..< result.len: result[i] = samples[i0 + i]
+  let r = cutRange(samples.len, intervalUs, fromMs, toMs)
+  result = newSeq[float32](max(r.b - r.a + 1, 0))
+  for i in 0 ..< result.len: result[i] = samples[r.a + i]
 
 proc cutPilot*(samples: openArray[float32]; dtMs: float64; r: PilotRule; record: string):
     tuple[samples: seq[float32]; problem: string] =
@@ -1059,6 +1108,8 @@ proc writeReferenceFile*(path, name: string; intervalUs: float64; samples: openA
   elif origin.fileName.len > 0:
     lines.add "stored from " & origin.fileName & ", trace " & $origin.trace &
       ", " & numberText(origin.fromMs) & " to " & numberText(origin.toMs) & " ms"
+    if intervalUs > 0:
+      lines.add "length " & lengthWords(samples.len, intervalUs / 1000)
   var problems: seq[string] = @[]
   {.cast(gcsafe).}:
     var w = openSeismicWriter(path, SegyOutputOptions(text: lines))

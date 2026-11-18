@@ -298,6 +298,17 @@ proc markOf*(frame: FrameInfo; name: string): Rect =
   for (n, r) in frame.ui.marks:
     if n == name: result = r
 
+proc modalOpen*(frame: FrameInfo): bool =
+  ## A modal popup is open and visible (Dear ImGui dims the rest of the window behind it).
+  ## For tests.
+  not igGetTopMostAndVisiblePopupModal().isNil
+
+proc keepInMainWindow*(frame: FrameInfo) =
+  ## Dear ImGui draws every window inside the main one from now on (no window of its own
+  ## for a dialog or popup), so a screenshot of the frame holds them. For tests.
+  let io = igGetIO_Nil()
+  io.ConfigFlags = io.ConfigFlags and not ImGui_ConfigFlags_ViewportsEnable.cint
+
 proc markNames*(frame: FrameInfo; prefix: string): seq[string] =
   ## The names of the parts drawn in this frame that start with `prefix`
   ## (`markOf`), in the order drawn.

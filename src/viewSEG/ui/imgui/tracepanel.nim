@@ -1723,15 +1723,15 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
       let span = indexedSpan(s.filePtr, local)
       let dt = if span.intervalUs > 0: span.intervalUs / 1000
                elif p.laidOut and not p.layout.noInterval: p.layout.dtMs else: 2.0
-      let traceMs = if span.samples > 1: float64(span.samples - 1) * dt else: 0.0
+      let lastMs = if span.samples > 1: float64(span.samples - 1) * dt else: 0.0
       let sweep = span.sweepMs > 0
-      let toMs = if sweep: span.sweepMs elif traceMs > 0: traceMs else: -1.0
+      let toMs = if sweep: span.sweepMs elif lastMs > 0: lastMs else: -1.0
       let g = s.gatherOf(local)
       let rec = if g >= 0 and g < s.records.len and abs(s.records[g].record) < 1e15:
                   $int(s.records[g].record) else: $(max(g, 0) + 1)
       let stem = s.name.splitFile.name
       tp.store.openStore(under, stem & " rec " & rec & " tr " & $(local + 1), 0, toMs,
-        traceMs, sweep)
+        int(span.samples), dt, sweep)
   marks.mark("plot.menu.store")
   tip("Keep this trace's raw samples as a reference (no filters, no gain, no polarity edit)")
   # The trace under the pointer, not the selection: a comparison is one trace a slot.

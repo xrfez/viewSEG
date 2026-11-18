@@ -7553,9 +7553,11 @@ proc takeReferences(state: var AppState; m: sink Msg) =
     if n.failure.len > 0:
       state.log.add(sevWarning, "references", n.failure & ".")
   elif n.act == raStored:
-    state.log.add(sevInfo, "references", "Stored the reference \"" & n.name & "\".")
+    state.log.add(sevInfo, "references", "Stored the reference \"" & n.name & "\"" &
+      n.index.lengthSaid(n.id) & ".")
   elif n.act == raGenerated:
-    state.log.add(sevInfo, "references", "Generated the reference \"" & n.name & "\".")
+    state.log.add(sevInfo, "references", "Generated the reference \"" & n.name & "\"" &
+      n.index.lengthSaid(n.id) & ".")
   elif n.act == raRuleStored:
     state.log.add(sevInfo, "references", "Stored the pilot reference \"" & n.name & "\".")
   elif n.act == raRenamed:
