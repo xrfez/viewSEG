@@ -772,7 +772,10 @@ proc showPlot(state: var AppState; cmd: Command) =
       if params.tops.topOf(t.reference).isNaN: kept = kept.withTop(t.reference, NaN)
     state.project.doc.vibTops = kept.topTexts
     state.projectChanged()
-  let changed = params != pw.params
+  # (unfolding the roles or the note is no reason to measure again)
+  var measured = params
+  (measured.rolesOpen, measured.noteOpen) = (pw.params.rolesOpen, pw.params.noteOpen)
+  let changed = measured != pw.params
   pw.params = params
   # what the user set becomes what a new window of the kind opens with
   if pw.view.hasOptions and

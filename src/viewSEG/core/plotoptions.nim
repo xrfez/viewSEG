@@ -40,6 +40,8 @@ type
     phaseShow*: PhaseShow = psAbsolute
     projectReference*: bool = true
     limitsOn*: bool = false
+    rolesOpen*: bool = false
+    noteOpen*: bool = false
     limits*: VibLimits = VibLimits(phaseDeg: 10, meanPhaseDeg: 5, thdPct: 40,
       meanThdPct: 20)
     tops*: seq[TopFrequency]
@@ -102,7 +104,8 @@ func optionsOf*(p: AnalysisParams; view: AnalysisView): PlotOptions =
       baseplateMassKg: p.baseplateMassKg, harmonics: p.harmonics,
       phaseShow: p.phaseShow, projectReference: p.projectReference,
       limitsOn: p.limitsOn,
-      limits: p.limits, tops: p.tops, qcWindowMs: p.qcWindowMs, qc: p.qc,
+      limits: p.limits, rolesOpen: p.rolesOpen, noteOpen: p.noteOpen, tops: p.tops,
+      qcWindowMs: p.qcWindowMs, qc: p.qc,
       forceHundredPct: p.forceHundredPct)
   of avFk: result.fk = FkOptions(floorDb: p.floorDb, colourMap: p.colourMap, raw: p.fkRaw)
   of avOrientation: discard
@@ -139,6 +142,7 @@ func applied*(o: PlotOptions; view: AnalysisView; p: AnalysisParams): AnalysisPa
      result.limitsOn, result.limits) = (o.vibrator.reactionMassKg, o.vibrator.baseplateMassKg,
        o.vibrator.harmonics, o.vibrator.phaseShow, o.vibrator.projectReference, o.vibrator.limitsOn,
        o.vibrator.limits)
+    (result.rolesOpen, result.noteOpen) = (o.vibrator.rolesOpen, o.vibrator.noteOpen)
     (result.tops, result.qcWindowMs, result.qc, result.forceHundredPct) = (
       o.vibrator.tops, o.vibrator.qcWindowMs, o.vibrator.qc,
           o.vibrator.forceHundredPct)

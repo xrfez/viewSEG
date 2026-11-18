@@ -141,6 +141,8 @@ type
     forceHundredPct*: float64 = NaN
       ## vibrator signature: the force that is 100 % (the file's unit), for the force
       ## limits; NaN: not given, the force limits are not judged
+    rolesOpen*: bool = false ## vibrator signature: the roles' table is unfolded
+    noteOpen*: bool = false ## vibrator signature: the note ("how this was measured") is unfolded
     limitsOn*: bool = false
       ## vibrator signature: the limits drawn, the points past them marked
       ## and a pass or fail table shown

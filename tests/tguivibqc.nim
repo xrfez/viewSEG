@@ -139,7 +139,7 @@ proc main*() =
       if shot.len > 0: discard f.savePng(shot)
       f.fits("the good record")
       firstWin = f.markOf("new plot 1")
-      for x in r.qc.tableOf[1 .. ^1]: doAssert x[3] == "✓", $x
+      for x in r.qc.tableOf[1 .. ^1]: doAssert x[0] == "✓", $x
       true)
     step("the next record", proc (f: FrameInfo) =
       f.apply(Command(kind: ckGather, panel: MainPanel, gather: 1)),
@@ -160,7 +160,7 @@ proc main*() =
         "the window moved or changed size: " & $firstWin & " -> " & $win
       var crosses = 0
       for x in r.qc.tableOf[1 .. ^1]:
-        if x[3] == "✗": inc crosses
+        if x[0] == "✗": inc crosses
       doAssert crosses >= 2, "crosses " & $crosses
       true)
     var at = 0

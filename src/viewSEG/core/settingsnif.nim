@@ -270,6 +270,8 @@ proc writePlotOptions(w: var NifWriter; o: PlotOptions) =
   w.choice("phaseShow", PhaseShowNames[o.vibrator.phaseShow])
   w.value("projectReference", o.vibrator.projectReference)
   w.value("limitsOn", o.vibrator.limitsOn)
+  w.value("rolesOpen", o.vibrator.rolesOpen)
+  w.value("noteOpen", o.vibrator.noteOpen)
   w.open("limits")
   for name, x in fieldPairs(o.vibrator.limits):
     if not x.isNaN: w.value(name, x)
@@ -843,6 +845,8 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
         elif c.isTree("phaseShow"): r.choice(c, PhaseShowNames, o.vibrator.phaseShow)
         elif c.isTree("projectReference"): r.flag(c, o.vibrator.projectReference)
         elif c.isTree("limitsOn"): r.flag(c, o.vibrator.limitsOn)
+        elif c.isTree("rolesOpen"): r.flag(c, o.vibrator.rolesOpen)
+        elif c.isTree("noteOpen"): r.flag(c, o.vibrator.noteOpen)
         elif c.isTree("limits"):
           for l in c.kids:
             var known = false

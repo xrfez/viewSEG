@@ -21,7 +21,8 @@ import std/[math, sets, strutils, tables]
 import imguin/cimgui
 import ../../core/[colourmaps, explain, geometry, plotcursor, plotoptions, state, units]
 import ../../view/[analysisview, axisfit, curveplot, theme]
-import chrome, curveplot as curves, explainmenu, overflow, icons, marks, placement, spectrumwindow,
+import chrome, curveplot as curves, explainmenu, fittext, overflow, icons, marks, placement,
+    spectrumwindow,
   style
 
 const
@@ -30,7 +31,7 @@ const
   VibratorSize = (780'f32, 980'f32)
     ## a vibrator signature's: its verdict, roles, limits table and all its plots, with
     ## nothing to scroll for one unit
-  VibratorPlotLines = 5 ## the least a vibrator's plot is, in lines of text (others: 9)
+  VibratorPlotLines = 6 ## the least a vibrator's plot is, in lines of text (others: 9)
 
 type
   HeatCache = object
@@ -59,6 +60,10 @@ type
     commands*: seq[Command]
     notes*: seq[string]   ## a value the boxes refused, in the unit the user typed
     openReferences*: bool ## the References button was pressed
+
+var forcedVibratorSize*: (float32, float32) = (0'f32, 0'f32)
+  ## tests: a vibrator window is held at this size (points), as a dock pane would hold it;
+  ## 0: the window keeps its own
 
 proc tip(text: string) =
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
@@ -217,7 +222,11 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
   # scrolling; click the line to change the roles, their polarity, or the reference)
   let rolesLabel = if planeAt >= 0: st.vibRolesLine(w,
       long = false) else: "Roles"
-  let rolesOpen = igTreeNodeEx_Str((rolesLabel & "##roles" & name).cstring, 0)
+  # (cut to one line: a long trace name never wraps it; the tooltip has the whole line)
+  let shownRoles = shortenEnd(rolesLabel, igGetContentRegionAvail().x - 3 * igGetFontSize())
+  igSetNextItemOpen(p.rolesOpen, ImGui_Cond_Always.cint)
+  let rolesOpen = igTreeNodeEx_Str((shownRoles & "##roles" & name).cstring, 0)
+  if rolesOpen != p.rolesOpen: (p.rolesOpen, changed) = (rolesOpen, true)
   marks.mark(name & ".roles line")
   marks.mark(name & ".roles header")
   tip((if planeAt >= 0: st.vibRolesLine(w) & "\n" else: "") &
@@ -460,9 +469,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
   igTextUnformatted("ms", nil)
   if band.warning.len > 0:
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
-    igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
-    igTextUnformatted(band.warning.cstring, nil)
-    igPopTextWrapPos()
+    fittedText(band.warning, igGetContentRegionAvail().x)
     igPopStyleColor(1)
     marks.mark(name & ".top frequency warning")
   if igBeginPopup("##limits", 0):
@@ -891,9 +898,7 @@ proc drawVerdict(name: string; q: QcReport; t: Theme; marks: var Marks) =
     of qvFail: t.roles[rlError]
     of qvNotJudged: t.roles[rlWarning]
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(colour))
-  igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
-  igTextUnformatted(q.line.cstring, nil)
-  igPopTextWrapPos()
+  fittedText(q.line, igGetContentRegionAvail().x)
   igPopStyleColor(1)
   marks.mark(name & ".verdict")
   tip("The sweep judged as a vibrator controller's QC does: the mean of each " &
@@ -905,8 +910,11 @@ proc drawQcTable(name: string; q: QcReport; t: Theme; marks: var Marks) =
   ## The limits table, always shown: a row per limit with the measured value, the limit and
   ## a sign as text (a tick, a cross, or a dash when not judged), then where the worst
   ## window is, or why the limit was not judged.
+  # columns drag to a width (ImGui keeps them for the session), and the sign is the first
+  # column, so a narrow window never cuts it off
   const flags = ImGui_TableFlags_SizingFixedFit.cint or
-      ImGui_TableFlags_BordersInnerH.cint
+      ImGui_TableFlags_BordersInnerH.cint or ImGui_TableFlags_Resizable.cint or
+      ImGui_TableFlags_BordersInnerV.cint
   let table = q.tableOf
   igPushStyleVar_Vec2(ImGui_StyleVar_CellPadding.cint, ImVec2_c(x: 4, y: 1))
   defer: igPopStyleVar(1)
@@ -918,15 +926,17 @@ proc drawQcTable(name: string; q: QcReport; t: Theme; marks: var Marks) =
       let status = q.rows[i].status
       for k, cell in row:
         discard igTableSetColumnIndex(cint(k))
-        if k == 3 and status != qsNotJudged:
+        if k == 0 and status != qsNotJudged:
           igPushStyleColor_Vec4(ImGui_Col_Text.cint,
             vec4(if status == qsFail: t.roles[rlError] else: t.roles[rlOk]))
           igTextUnformatted(cell.cstring, nil)
           igPopStyleColor(1)
-        elif k == 4 and status == qsNotJudged:
-          igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-          igTextUnformatted(cell.cstring, nil)
-          igPopStyleColor(1)
+        elif k == 4:
+          # the last column: cut to what is left, the whole text in a tooltip
+          if status == qsNotJudged:
+            igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+          fittedText(cell, igGetContentRegionAvail().x)
+          if status == qsNotJudged: igPopStyleColor(1)
         else:
           igTextUnformatted(cell.cstring, nil)
     igEndTable()
@@ -940,8 +950,8 @@ proc drawQcTable(name: string; q: QcReport; t: Theme; marks: var Marks) =
       " at " & seconds(s.minForceAtMs)
     if q.forceNote.len > 0: line.add "; force not judged: " & q.forceNote
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    fittedText(line, igGetContentRegionAvail().x)
     igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
-    igTextUnformatted(line.cstring, nil)
     igPopTextWrapPos()
     igPopStyleColor(1)
     marks.mark(name & ".qc windows")
@@ -1010,9 +1020,13 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   if warnShown:
     # a trace that cannot be matched to the whole of its reference, before anything else
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
-    igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
-    igTextUnformatted(r.warning.cstring, nil)
-    igPopTextWrapPos()
+    if w.view == avVibrator:
+      # a line each, cut to the width (the whole line in a tooltip)
+      for line in r.warning.splitLines: fittedText(line, igGetContentRegionAvail().x)
+    else:
+      igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
+      igTextUnformatted(r.warning.cstring, nil)
+      igPopTextWrapPos()
     igPopStyleColor(1)
     marks.mark(name & ".warning")
   if w.goneNote.len > 0 and not refProblem: igTextWrapped("%s", w.goneNote.cstring)
@@ -1021,11 +1035,21 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   elif folds:
     igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
     let head = if r.against.len > 0: r.against else: "How this was measured"
-    if igTreeNodeEx_Str((head & "##notes" & name).cstring, 0):
+    let shownHead = shortenEnd(head, igGetContentRegionAvail().x - 3 * igGetFontSize())
+    igSetNextItemOpen(w.params.noteOpen, ImGui_Cond_Always.cint)
+    let noteOpen = igTreeNodeEx_Str((shownHead & "##notes" & name).cstring, 0)
+    marks.mark(name & ".against")
+    tip((if shownHead != head: head & "\n" else: "") &
+      "Click for what the numbers are, in words")
+    if noteOpen != w.params.noteOpen:
+      var q = w.params
+      q.noteOpen = noteOpen
+      res.commands.add Command(kind: ckPlotDisplay, plot: w.id, plotParams: q,
+        plotFrozen: w.frozen)
+    if noteOpen:
       if foldedWords: igTextUnformatted(plainWords.cstring, nil)
       igTextUnformatted(measured.cstring, nil)
       igTreePop()
-    tip("Click for what the numbers are, in words")
     igPopTextWrapPos()
   elif noteShown:
     # wrapped at the window's width (the settings rows above are wider than a note)
@@ -1175,6 +1199,12 @@ proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: floa
                    igGetFontSize() / scale)
                else: PlotSize
     placeNext(w.id, size, scale)
+    if forcedVibratorSize[0] > 0 and w.view == avVibrator:
+      let vp = igGetMainViewport()
+      igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + 20, y: vp.WorkPos.y + 10),
+        ImGui_Cond_Always.cint, ImVec2_c(x: 0, y: 0))
+      igSetNextWindowSize(ImVec2_c(x: forcedVibratorSize[0], y: forcedVibratorSize[1]),
+        ImGui_Cond_Always.cint)
     if w.id in ui.toFront:
       ui.toFront.excl w.id
       igSetNextWindowFocus()

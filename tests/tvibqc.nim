@@ -96,7 +96,7 @@ proc main*() =
     doAssert near(s.peakForcePct, 100 * top / Hundred, 1)
     doAssert r.qc.line.startsWith("✓ PASS"), r.qc.line
     # the table has a mark as text on every row
-    for x in r.qc.tableOf[1 .. ^1]: doAssert x[3] == "✓", $x
+    for x in r.qc.tableOf[1 .. ^1]: doAssert x[0] == "✓", $x
     # the tapers are dimmed on every plot and left out of the judged part
     for p in r.plots:
       doAssert p.dimmed.len == 2, p.title & ": " & $p.dimmed

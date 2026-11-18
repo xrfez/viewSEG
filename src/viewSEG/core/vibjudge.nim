@@ -218,8 +218,9 @@ func judge*(s: WindowSummary; windowMs: float64; limits: QcLimits;
       (if noScale.len > 0: " (" & noScale & ")" else: "")
 
 func tableOf*(r: QcReport): seq[seq[string]] =
-  ## The limits table: a header, then a row per limit: what, measured, limit, mark, where.
-  result = @[@["Limit", "Measured", "Limit value", "", "Worst window"]]
+  ## The limits table: a header, then a row per limit: the mark (first, so a narrow window never
+  ## cuts it off), what, measured, limit, where.
+  result = @[@["Met", "Limit", "Measured", "Limit value", "Worst window"]]
   for row in r.rows:
-    result.add @[$row.limit, row.measuredText, row.boundText, row.markText,
+    result.add @[row.markText, $row.limit, row.measuredText, row.boundText,
       (if row.status == qsNotJudged: row.why else: row.atText)]
