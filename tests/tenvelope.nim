@@ -48,7 +48,9 @@ proc main*() =
     let r = envelopeOf(pilot, "pilot", dtMs, 0.0, AnalysisParams(), pilot, "the pilot")
     doAssert r.problem == "", r.problem
     doAssert r.plots.len == 3 and r.plots[1].title == "Phase against the reference"
-    doAssert r.plots[1].yLo == 0 and r.plots[1].yHi == 10, "a flat 0 fits 0 to 10° (sizes: never below 0)"
+    # (the floor lies a little under 0, 4 % of the range: a line at 0 is not on the border)
+    doAssert abs(r.plots[1].yLo - (-0.04 * 185)) < 1e-9 and r.plots[1].yHi == 10,
+      "a flat 0 fits -7.4 to 10°: " & $(r.plots[1].yLo, r.plots[1].yHi)
     let ys = r.plots[1].curves[0].ys
     let drawn = ys.finite
     doAssert drawn.len > 1000, $drawn.len & " samples drawn"
@@ -91,7 +93,7 @@ proc main*() =
     doAssert "mean |phase| 6" in r.plots[1].aside or "mean |phase| 5" in r.plots[1].aside or
       "mean |phase| 7" in r.plots[1].aside, r.plots[1].aside
     # not drawn where the reference is gone: the listen time after the sweep
-    doAssert r.plots[1].yLo >= 0 and r.plots[1].yHi > 6 and
+    doAssert r.plots[1].yLo >= -0.04 * 185 - 1e-9 and r.plots[1].yHi > 6 and
       r.plots[1].yHi <= 185, "the axis holds the drawn values: " & $(r.plots[1].yLo,
       r.plots[1].yHi)
     for i, y in ys:

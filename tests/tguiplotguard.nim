@@ -64,19 +64,21 @@ proc main*() =
       let r = f.markOf(idOf(i) & ".data")
       doAssert r.size.x > 0, what & ": plot " & $i & " not drawn"
       var curve, ink = 0
-      for yy in int(r.pos.y) + 1 ..< int(r.pos.y + r.size.y) - 1:
+      for yy in int(r.pos.y) ..< int(r.pos.y + r.size.y):
         for xx in int(r.pos.x) + 1 ..< int(r.pos.x + r.size.x) - 1:
           let px = f.readPixel(xx, yy)
+          # (a curve's colour, or anything clearly off the plot's background: curves lying on
+          # each other blend, and a flat line may be one row)
+          var drawnPx = distance(px, f.theme.roles[rlPlotBackground]) > 60
           for c in p.curves:
-            if distance(px, c.colour) <= 8:
-              inc curve
-              break
+            if distance(px, c.colour) <= 8: drawnPx = true
+          if drawnPx: inc curve
       for yy in int(r.pos.y) ..< int(r.pos.y + r.size.y):
         for xx in max(0, int(r.pos.x) - 70) ..< int(r.pos.x) - 1:
           if distance(f.readPixel(xx, yy), f.theme.roles[rlText]) <= 90: inc ink
       if curve <= 20 and getEnv("VIBFIX_SHOT").len > 0: discard f.savePng(getEnv("VIBFIX_SHOT"))
       # (the legend is outside the area: its swatches no longer count as curve pixels)
-      doAssert curve > 10, what & ": plot " & $i & " has " & $curve & " curve pixels"
+      doAssert curve > 100, what & ": plot " & $i & " has " & $curve & " curve pixels"
       doAssert ink > 20, what & ": plot " & $i & " has " & $ink & " pixels of y tick labels"
     proc wholeInView(f: FrameInfo; i: int): bool =
       let r = f.markOf(idOf(i) & ".data")

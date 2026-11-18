@@ -104,7 +104,8 @@ proc main*() =
     doAssert nDrawn > 10
     doAssert r.note.find("delay 80.0 ms") >= 0, r.note
     let mag = phaseOf(x, "impulse", 2.0, AnalysisParams(phasePicture: ppMagnitude))
-    doAssert mag.plots[1].yLo == 0 and mag.plots[1].yHi == 180, "the default axis is not 0..180"
+    doAssert abs(mag.plots[1].yLo - (-0.04 * 180)) < 1e-9 and mag.plots[1].yHi == 180,
+      "the default axis is not -7.2..180 (0 a little above the floor)"
     for y in mag.plots[1].curves[0].ys:
       doAssert y.isNaN or (y >= -1e-6 and y <= 180 + 1e-4), $y
     doAssert mag.note.find("0 to 180") >= 0, mag.note
