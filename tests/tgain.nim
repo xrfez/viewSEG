@@ -20,7 +20,9 @@
 ## `exponentialGain` found trace 0's sample 79 at 0.271 where 0.303 is due;
 ## with a new clip percentile dropping the tiles for a read (as every change
 ## of processing does), `clipPercentileFromTheSamples` found "none: the
-## picture went while the reader worked".
+## picture went while the reader worked"; with Normalized per trace reading
+## only the samples in view (no whole traces), `normalizedLevelIgnoresTheZoom`
+## found the quiet part at 1.0 zoomed and 0.01 not.
 
 import std/[algorithm, fenv, math, os, sequtils, strutils]
 import parseSEG
@@ -329,6 +331,45 @@ proc main*() =
         let k = int(floor(h))
         let p99 = a[k] + (h - float64(k)) * (a[min(k + 1, a.high)] - a[k])
         doAssert near(p99, 1, 1e-4), "trace " & $row & ": " & $p99
+      st.shutdown()
+
+  block normalizedLevelIgnoresTheZoom:
+    # A trace loud for its first second and quiet after it: Normalized for each trace takes
+    # its level from the whole trace, so the quiet part is 0.01 of the loud part zoomed in
+    # on it or not (it read 1.0 when only the samples in view set the level).
+    withFixtures fx:
+      let path = fx.dir / "loud-then-quiet.sgy"
+      var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
+        text: @["C01 viewSEG test: loud, then quiet"]))
+      for c in 0 ..< 3:
+        var buf = newSeq[float32](4000)
+        for i in 0 ..< buf.len:
+          buf[i] = float32((if i < 1000: 10.0 else: 0.1) * sin(2 * PI * 25 * float64(i) / 1000))
+        var k = initTraceKeys()
+        (k.record, k.channel, k.t0Ms, k.intervalUs) = (1.0, float64(c + 1), 0.0, 1000.0)
+        k.status = tsLive
+        w.writeTrace(k, buf)
+      doAssert w.close().len == 0
+      var st = initAppState()
+      st.apply Command(kind: ckOpen, paths: @[path])
+      doAssert st.settle(st.main.layout.traces > 0)
+      st.look(first = -0.5, last = 2.5, t0 = 0, t1 = 3999)
+      var d = st.main.layers[0].display
+      d.gain = dgNormalized
+      st.display(d)
+      doAssert st.settle(st.answered)
+      proc quietLevel(st: AppState; fromMs, toMs: int): float64 =
+        ## The largest |sample| of trace 0 between the two times, from the newest tile.
+        let t = st.shown[^1]
+        for i in 0 ..< t.columns:
+          let ms = t.request.firstSample + i * t.request.decimation
+          if ms in fromMs .. toMs: result = max(result, abs(float64(t.data[i])))
+      let whole = st.quietLevel(3000, 3100)
+      doAssert whole > 0 and whole < 0.02, "the whole view: " & $whole
+      st.look(first = -0.5, last = 2.5, t0 = 3000, t1 = 3100)
+      doAssert st.settle(st.answered)
+      let zoomed = st.quietLevel(3000, 3100)
+      doAssert abs(zoomed - whole) < 0.002, "zoomed " & $zoomed & ", whole " & $whole
       st.shutdown()
 
   block clipPercentileFromTheSamples:

@@ -476,6 +476,12 @@ proc timeGainCurve*(d: DisplaySettings): GainCurve =
   of tgDbPerSecond: heldGain(exponentialGain(d.dbPerS), until)
   of tgPower: heldGain(powerGain(d.power), until)
 
+func normalizesWhole*(layer: Layer; kind: GatherKind): bool =
+  ## Whether the display gain sets each trace's level from the whole trace (Normalized,
+  ## for each trace): the reader then decodes whole traces, as it does for the filters,
+  ## so that the level does not change with the part in view.
+  layer.display.cpuGain(kind) == dgNormalized
+
 func displayPipeline*(layer: Layer; kind: GatherKind): Pipeline =
   ## What the reader runs on layer `layer`'s samples: the polarity reversal
   ## when every trace is reversed (`polarityOp`), its pipeline, then the CPU

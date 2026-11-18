@@ -2457,7 +2457,11 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
   # working it out takes processSEG long for narrow notches (seconds for a
   # few with many harmonics), on this thread, at every view. A trace's own
   # frequency filter asks for the same, so its edges are outside the window.
-  let margin = if filters.len > 0 or ownHz:
+  # Normalized for each trace takes its level from the whole trace, so a zoom does not
+  # change it: whole traces here too.
+  let wholeTraces = filters.len > 0 or ownHz or
+    p.layers[0].normalizesWhole(state.gatherKind(p.layers[0]))
+  let margin = if wholeTraces:
                  max(displayMargin(flow, p.layout.dtMs), p.layout.samples)
                else: displayMargin(flow, p.layout.dtMs)
   let wiggles = p.layers[0].display.drawsWiggles
