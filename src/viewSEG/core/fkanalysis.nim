@@ -128,11 +128,19 @@ proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
     if stop.stopped:
       result.cancelled = true
       return
+    # the trace's mean over the box removed, as the FFT window does
+    var mean = 0.0
+    var count = 0
+    for j in 0 ..< n:
+      if first + j < rows[t].len:
+        mean += float64(rows[t][first + j])
+        inc count
+    if count > 0: mean /= float64(count)
     for j in 0 ..< nt: x[j] = 0
     let across = cosTaper(t, ntr, FkTaper)
     for j in 0 ..< n:
       let s = first + j
-      let v = if s < rows[t].len: float64(rows[t][s]) else: 0.0
+      let v = if s < rows[t].len: float64(rows[t][s]) - mean else: 0.0
       x[j] = v * cosTaper(j, n, FkTaper) * across
     tp.forward(x, r1, i1, ws)
     for b in 0 ..< nb: (re[t * nb + b], im[t * nb + b]) = (r1[b], i1[b])
@@ -187,6 +195,7 @@ proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
         ", not a length: wavenumber per trace (the import's unit choice sets it)"
     else: "the traces " & $spacing & " " & $unit & " apart (from their " & spacingFrom & ")"
   result.note = $ntr & " traces × " & $n & " samples (" & $(float64(first) * dtMs + t0Ms) &
-    " to " & $(float64(last) * dtMs + t0Ms) & " ms), tapered 10 % at each end both ways; " &
+    " to " & $(float64(last) * dtMs + t0Ms) & " ms), each trace's mean removed, tapered 10 % at " &
+    "each end both ways; " &
     apart & "; dB from the largest" &
       (if p.fkRaw: "; the plot's filters left out" else: "")

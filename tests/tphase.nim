@@ -94,10 +94,13 @@ proc main*() =
     doAssert r.problem == "", r.problem
     let ph = r.plots[1].curves[0].ys
     var nDrawn = 0
-    for y in ph:
+    let hz = r.plots[1].xs
+    for k, y in ph:
       if not y.isNaN:
         inc nDrawn
-        doAssert abs(y) < 1.0, "residual " & $y & " after the delay was taken off"
+        # (removing the mean adds a sinc, 1/(π·f·T) radians of the impulse's flat amplitude)
+        let slack = 1.0 + 2 * 360 / (PI * PI * hz[k] * 1.024)
+        doAssert abs(y) < slack, "residual " & $y & " after the delay was taken off"
     doAssert nDrawn > 10
     doAssert r.note.find("delay 80.0 ms") >= 0, r.note
     let mag = phaseOf(x, "impulse", 2.0, AnalysisParams(phasePicture: ppMagnitude))

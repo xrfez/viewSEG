@@ -136,9 +136,14 @@ proc main*() =
     doAssert r.problem == ""
     let hz = r.plots[1].xs
     let ph = r.plots[1].curves[0].ys
+    # The trace's mean is removed: that adds the boxcar's sinc, whose size against
+    # the impulse's flat amplitude is 1/(π·f·T) radians at most.
+    let span = float64(n) * DtMs / 1000
     for k in 1 ..< hz.len - 1:
       let want = -360 * hz[k] * float64(m) * DtMs / 1000
-      doAssert near(ph[k], want, 1e-3), "phase at " & $hz[k] & " Hz: " & $ph[k] & ", want " & $want
+      let slack = 1e-3 + 360 / (PI * PI * hz[k] * span)
+      doAssert abs(ph[k] - want) <= slack,
+        "phase at " & $hz[k] & " Hz: " & $ph[k] & ", want " & $want
     let wrapped = phaseOf(x, "impulse", DtMs, AnalysisParams(phasePicture: ppSigned))
     var lo, hi = 0.0
     for v in wrapped.plots[1].curves[0].ys:

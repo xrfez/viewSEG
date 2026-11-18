@@ -5,7 +5,7 @@
 ## near the noise, and "deep notch" saw no notch.
 
 import std/[math, os, strutils]
-import viewSEG/core/[spectra, state]
+import viewSEG/core/[analysis, fkanalysis, spectra, state]
 import viewSEG/view/[curveplot, spectrumview, theme]
 import viewSEG/view/analysisview
 import utils/[fixtures, waiting]
@@ -79,6 +79,43 @@ proc main*() =
       if not y.isNaN: low = min(low, y)
     doAssert low < -99, "the notch is drawn at " & $low
     doAssert drawn[0].ys.len <= 400 + 2, "drew " & $drawn[0].ys.len
+
+  block meanIsRemoved:
+    # DC 3 + 25 Hz tone, 2000 x 2 ms: the tone is the peak, not the direct current.
+    var x = newSeq[float32](2000)
+    for i in 0 ..< x.len: x[i] = float32(3 + 2 * cos(2 * PI * 25 * float64(i) * 0.002))
+    let sg = spectrogramOf([x], 2.0, 0, AnalysisParams())
+    let img = sg.image
+    let mid = img.cols div 2
+    doAssert img.valueAt(mid, 0) < -40, "0 Hz row of a middle frame: " & $img.valueAt(mid, 0)
+    doAssert "mean removed" in sg.note, sg.note
+    # Phase spectrum: DC 5 + a cosine on 97.66 Hz (1000 x 2 ms).
+    var y = newSeq[float32](1000)
+    for i in 0 ..< y.len: y[i] = float32(5 + cos(2 * PI * 97.65625 * float64(i) * 0.002))
+    let ph = phaseOf(y, "y", 2.0, AnalysisParams(phaseWithinDb: 40))
+    let db = ph.plots[0].curves[0].ys
+    var top = 0
+    for k in 0 ..< db.len:
+      if db[k] > db[top]: top = k
+    doAssert abs(ph.plots[0].xs[top] - 97.65625) < 1.5, "the peak is at " & $ph.plots[0].xs[top]
+    doAssert db[0] < -30, "the direct current reads " & $db[0] & " dB"
+    doAssert "mean removed" in ph.note, ph.note
+    # f-k: DC 4 + a dipping 30 Hz event on 8 traces, 25 m apart.
+    var rows: seq[seq[float32]]
+    for i in 0 ..< 8:
+      var r = newSeq[float32](500)
+      for j in 0 ..< 500:
+        r[j] = float32(4 + cos(2 * PI * 30.0 * (float64(j) * 0.002 - float64(i) * 0.0125)))
+      rows.add r
+    let fk = fkOf(rows, 25.0, "offsets", suMetres, 2.0, 0, AnalysisParams())
+    var best = -1000.0'f32
+    var bestRow = 0
+    for c in 0 ..< fk.image.cols:
+      for r in 0 ..< fk.image.rows:
+        if fk.image.valueAt(c, r) > best: (best, bestRow) = (fk.image.valueAt(c, r), r)
+    doAssert abs(fk.image.yOf(bestRow) - 30) < 2 * fk.image.dy, "f-k peaks at " &
+      $fk.image.yOf(bestRow) & " Hz"
+    doAssert "mean removed" in fk.note, fk.note
 
   withFixtures fx:
     block lateArrivalPhase:

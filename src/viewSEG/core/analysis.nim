@@ -459,11 +459,19 @@ proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
   ws.reserve(sg.workspaceSize)
   var amp = newSeq[float64](sg.frames * sg.bins)
   var power = newSeq[float64](amp.len)
+  var work: seq[float32] = @[]
   for r in rows:
     if stop.stopped:
       result.cancelled = true
       return
-    sg.spectrogramInto(r, amp, ws)
+    # each trace's mean removed first, as the FFT window does: a direct current
+    # offset is not the brightest row
+    var mean = 0.0
+    for v in r: mean += float64(v)
+    if r.len > 0: mean /= float64(r.len)
+    work.setLen r.len
+    for i, v in r: work[i] = float32(float64(v) - mean)
+    sg.spectrogramInto(work, amp, ws)
     for k in 0 ..< amp.len: power[k] += amp[k] * amp[k]
   for k in 0 ..< power.len: power[k] = sqrt(power[k] / float64(rows.len))
   var db = newSeq[float64](power.len)
@@ -477,7 +485,7 @@ proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
   result.image = img
   result.note = $windowLen & "-sample frames (" & $(float64(windowLen) * dtMs) &
       " ms, Hann) every " &
-    $hop & " samples; dB from the largest amplitude" &
+    $hop & " samples; each trace's mean removed; dB from the largest amplitude" &
     (if rows.len > 1: "; the power average of " & $rows.len & " traces" else: "")
 
 # --------------------------------------------------------------- envelope --
@@ -651,7 +659,7 @@ proc phaseOf*(x: openArray[float32]; name: string; dtMs: float64;
   var sp: SpectrumPlan[float32]
   try:
     sp = initSpectrumPlan(float32, dtMs, x.len, taperFraction = 0.0,
-      nfft = nextFastLen(PhasePadding * x.len), demean = false)
+      nfft = nextFastLen(PhasePadding * x.len), demean = true)
   except ValueError as e:
     result.problem = e.msg
     return
@@ -686,8 +694,8 @@ proc phaseOf*(x: openArray[float32]; name: string; dtMs: float64;
     of ppSigned: "within -180 to 180 degrees, "
     of ppUnwrapped: "unwrapped along frequency, "
     of ppDelayRemoved: "unwrapped, with its best straight line (a pure time delay) taken off, "
-  result.note = "Phase from the trace's first sample (the trace zero-padded to " &
-    $PhasePadding & " times its length), " & picture &
+  result.note = "Phase from the trace's first sample (the trace's mean removed, then " &
+    "zero-padded to " & $PhasePadding & " times its length), " & picture &
     "where the amplitude is within " & $within & " dB of its peak. " & PhaseHelp
   if phasePlot.aside.len > 0: result.note.add " " & phasePlot.aside & "."
 
