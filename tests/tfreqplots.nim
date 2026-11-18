@@ -80,6 +80,10 @@ proc main*() =
     doAssert low < -99, "the notch is drawn at " & $low
     doAssert drawn[0].ys.len <= 400 + 2, "drew " & $drawn[0].ys.len
 
+  block degreesToATenth:
+    doAssert yText(-7207.04, "°") == "-7207.0" and yText(-7207.04, "deg") == "-7207.0"
+    doAssert yText(12.345, "dB") == "12.3"
+
   block meanIsRemoved:
     # DC 3 + 25 Hz tone, 2000 x 2 ms: the tone is the peak, not the direct current.
     var x = newSeq[float32](2000)

@@ -290,11 +290,11 @@ func xText*(p: CurvePlot; x: float64): string =
 
 func yText*(y: float64; unit: string): string =
   ## A value as the cursor says it: in dB and degrees to a tenth ("-23.4",
-  ## "0.0", never "-0.0"), others to four significant digits ("0.005513");
+  ## "0.0", never "-0.0"; the unit "°" is degrees), others to four significant digits ("0.005513");
   ## "-" for NaN.
   if y.isNaN: return "-"
   if y.classify in {fcInf, fcNegInf}: return valueText(y)
-  if unit in ["dB", "deg"]:
+  if unit in ["dB", "deg", "°"]:
     result = formatFloat(y, ffDecimal, 1)
     if result == "-0.0": result = "0.0"
   else: result = valueText(y, 4)
