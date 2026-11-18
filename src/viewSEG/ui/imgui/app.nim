@@ -195,6 +195,11 @@ type
   RunOptions* = object
     maxFrames*: int            ## stop after this many frames; 0 runs until the window closes
     onFrame*: FrameHook        ## called once per frame, nil for none
+    allowToolkitErrors*: bool
+      ## a run with `onFrame` (a test) fails on a Dear ImGui check that fails (a Pop...()
+      ## too many times, an unbalanced Begin/End or ID stack): a debug build aborts at it,
+      ## a release build raises `AssertionDefect` at the end of `run`; true for a test
+      ## that causes one on purpose
     theme*: ThemeChoice
       ## `followSystem` (the default) also honours the VIEWSEG_THEME
       ## environment variable.
@@ -2096,4 +2101,7 @@ proc run*(opts = RunOptions()): int =
       inc frame
       try: ui.savingFrame(window, opts, frame)
       except Exception: discard) # a frame that fails only stops the message
+  when RoutedChecks:
+    if opts.onFrame != nil and not opts.allowToolkitErrors and checkCount() > 0:
+      raise newException(AssertionDefect, "Dear ImGui's checks failed:\n" & checkReport())
   0

@@ -58,3 +58,11 @@ func describe*(c: ImguiCheck): string =
   ## `c` in plain words, for the log.
   "Internal display error: Dear ImGui's check `" & c.expr & "` failed (" & c.file & ":" &
     $c.line & "). viewSEG carries on; please report this message."
+
+proc checkCount*(): int =
+  ## How many distinct checks have failed since the program started.
+  checks.len
+
+proc checkReport*(): string =
+  ## Every failed check, in words; "" when none has failed.
+  for c in checks: result.add c.describe & "\n"

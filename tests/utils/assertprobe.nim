@@ -19,7 +19,7 @@ proc probe(f: FrameInfo) =
       if "Dear ImGui's check" in m.text: logged.add m.text
 
 let code = run(RunOptions(maxFrames: 4, userThemeDir: some(getTempDir() / "no-user-themes"),
-  onFrame: probe))
+  onFrame: probe, allowToolkitErrors: true))
 echo "assertprobe: ", logged.len, " checks logged"
 for text in logged: echo text # the program echoes its log only to a terminal
 quit(if code == 0 and logged.len == 2 and "PopStyleColor" in logged.join: 0 else: 2)
