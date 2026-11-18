@@ -71,6 +71,10 @@ type
     own*: seq[FilterEntry] ## those that carry a filter of their own, ascending
     fromMs*, toMs*: float64 = NaN
       ## the time window; NaN: the whole trace
+    axisT0Ms*: float64 = NaN
+      ## the time of sample 0 on the plot's time axis, which `fromMs` and `toMs` are
+      ## read on: the Seismic plot draws every trace from its first seismic trace's start
+      ## time, whatever the others' own are. NaN: the first trace's own
     processing*: Processing
       ## the plot's filters (shown raw or not, alike), with whether an
       ## auxiliary trace goes through them too
@@ -230,12 +234,15 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   for t in list: longest = max(longest, cache.traces[t].samples.len)
   let t0 = f[].traceKeys(list[0]).t0Ms
   let t0Ms = if t0.classify in {fcNan, fcInf, fcNegInf}: 0.0 else: t0
-  let window = windowColumns(a.fromMs, a.toMs, t0Ms, dtMs, longest)
+  # A time window is the plot's: its time axis starts at one time for every trace
+  let windowed = not (a.fromMs.isNaN or a.toMs.isNaN)
+  let origin = if windowed and abs(a.axisT0Ms) < Inf: a.axisT0Ms else: t0Ms
+  let window = windowColumns(a.fromMs, a.toMs, origin, dtMs, longest)
   if window.len == 0:
     answer.problem = "the time window holds no sample of these traces"
     return true
-  answer.fromMs = t0Ms + float64(window.a) * dtMs
-  answer.toMs = t0Ms + float64(window.b) * dtMs
+  answer.fromMs = origin + float64(window.a) * dtMs
+  answer.toMs = origin + float64(window.b) * dtMs
   answer.windowLen = window.len
   var pr = a.processing
   pr.raw = false

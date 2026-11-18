@@ -3204,6 +3204,8 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   let reversed = reversedOf(e, traces)
   inc state.spectrumGen
   template sw: untyped = state.spectra[w]
+  let pk = state.findPanel(sw.panel)
+  let axisT0 = if pk >= 0 and state.panels[pk].laidOut: state.panels[pk].layout.t0Ms else: NaN
   sw.asked = state.spectrumGen
   sw.waiting = true
   sw.killed = killed
@@ -3215,7 +3217,7 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   state.spectrumReaderFor(s.path).ask SpectrumAsk(id: sw.id, gen: state.spectrumGen,
     session: int(s.id), file: s.filePtr, path: s.path, size: s.size, traces: traces,
     killed: killed, reversed: reversed, allReversed: e.allReversed, own: own,
-    fromMs: window[0], toMs: window[1], processing: processing)
+    fromMs: window[0], toMs: window[1], axisT0Ms: axisT0, processing: processing)
   true
 
 func spread(list: var seq[int]; samples: int) =

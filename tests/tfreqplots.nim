@@ -5,7 +5,7 @@
 ## near the noise, and "deep notch" saw no notch.
 
 import std/[math, os, strutils]
-import viewSEG/core/[analysis, fkanalysis, spectra, state]
+import viewSEG/core/[analysis, fkanalysis, panels, processing, spectra, state, viewport]
 import viewSEG/view/[curveplot, spectrumview, theme]
 import viewSEG/view/analysisview
 import utils/[fixtures, waiting]
@@ -178,6 +178,27 @@ proc main*() =
           $readings[0][0]
       doAssert readings[0][0] * readings[1][0] > 0,
         "the sign of k: " & $readings[0][0] & " then " & $readings[1][0]
+
+    block visibleTimeIsThePlots:
+      # The Seismic plot draws every trace from the first seismic trace's start time (one
+      # time axis per panel), so trace 2, which starts 500 ms later, shows its first
+      # samples at 0 ms. The visible time of an FFT window cuts what the plot shows.
+      var rows: seq[seq[float32]]
+      for i in 0 ..< 2:
+        var r = newSeq[float32](1000)
+        for j in 0 ..< 1000: r[j] = float32(cos(2 * PI * 25.0 * float64(j) * 0.002))
+        rows.add r
+      let path = fx.tracesSegy("delays.sgy", rows, t0Ms = [0.0, 500.0])
+      var st = initAppState()
+      st.open(path)
+      let base = st.sessions[0].base
+      var v = st.panel(MainPanel).view
+      v.timeMs = Span(lo: 300, hi: 400)
+      st.apply Command(kind: ckView, panel: MainPanel, view: v)
+      let w = st.fft(@[base + 1], SpectrumDisplay(time: stVisible))
+      let sp = st.spectra[w].spectrum
+      doAssert sp.problem == "" and sp.fromMs == 300 and sp.toMs == 400 and sp.windowLen == 51,
+        "trace 2 over 300 to 400 ms: " & sp.problem & " " & $sp.fromMs & " " & $sp.windowLen
 
     block notANumberIsLeftOut:
       # 8 traces of a 25 Hz cosine, trace 3 with one NaN: the New plot windows leave it
