@@ -184,9 +184,10 @@ type
       ## columns ("N", "as recorded", "kg × m/s²", ...); empty when the
       ## table has none
     used*: int ## traces it is of
-    leftOut*: int ## of those asked about: killed, dead, not decoded, or (a Spectrogram, f-k or
+    leftOut*: int ## of those asked about: killed, dead, not decoded, or (a Spectrogram or
                     ## Phase spectrum) with a sample that is not a number
     notNumber*: int ## of `leftOut`, those with a sample that is not a number
+    zeroed*: int ## an f-k: traces with a sample that is not a number, taken as zeros
     atOtherInterval*: int ## of those asked about: sampled at another interval, or none
     notDrawn*: int
       ## live traces asked about that were not read at all, because the view draws

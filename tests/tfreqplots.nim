@@ -251,27 +251,34 @@ proc main*() =
         for j in 0 ..< 500: r[j] = float32(cos(2 * PI * 25.0 * float64(j) * 0.002))
         rows.add r
       rows[3][200] = NaN
-      let path = fx.tracesSegy("nan.sgy", rows)
+      var spread: seq[float64]
+      for i in 0 ..< 8: spread.add 25.0 * float64(i)
+      let path = fx.tracesSegy("nan.sgy", rows, offsets = spread)
       var st = initAppState()
       st.open(path)
       let base = st.sessions[0].base
       let ids = @[base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 6, base + 7]
       for view in [avSpectrogram, avFk]:
+        let fk = view == avFk
         st.apply Command(kind: ckOpenPlot, plotView: view, plotTraces: ids)
         let w = st.plots.high
         doAssert st.settle(st.answered(w) and not st.plots[w].waiting)
         let r = st.plots[w].result
         doAssert r.problem == "", r.problem
-        doAssert r.used == 7 and r.leftOut == 1 and r.notNumber == 1,
-          $view & ": used " & $r.used & ", left out " & $r.leftOut
-        if view == avFk:
-          doAssert "not a number left out" in r.note, r.note
+        if fk:
+          # the row stays as zeros, so the spacing and units are as for a clean record
+          doAssert r.used == 8 and r.leftOut == 0 and r.zeroed == 1, "f-k: used " & $r.used &
+            ", left out " & $r.leftOut & ", zeroed " & $r.zeroed
+          doAssert "taken as zeros" in r.note and "not regular" notin r.note, r.note
+        else:
+          doAssert r.used == 7 and r.leftOut == 1 and r.notNumber == 1,
+            $view & ": used " & $r.used & ", left out " & $r.leftOut
       # a Phase spectrum of the bad trace alone has nothing to use
       st.apply Command(kind: ckOpenPlot, plotView: avPhase, plotTraces: @[base + 3])
       let w = st.plots.high
       doAssert st.settle(st.answered(w) and not st.plots[w].waiting)
-      doAssert st.plots[w].result.leftOut == 1 and st.plots[w].result.problem.len > 0,
-        "the phase spectrum used a trace with a NaN"
+      doAssert st.plots[w].result.leftOut == 1 and
+        "not a number" in st.plots[w].result.problem, st.plots[w].result.problem
 
   echo "tfreqplots: ok"
 

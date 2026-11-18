@@ -426,9 +426,10 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
         var rows: seq[seq[float32]] = @[]
         var failed, notNumber: seq[bool] = @[]
         if not p.readRows(f, a.path, list, a.id, rows, failed, notNumber): return false
-        # A Spectrogram, an f-k and a Phase spectrum leave out a trace with a sample that is
-        # not a number, and count it, as an FFT window does; the others draw it as 0.
-        let leaveOut = a.view in {avSpectrogram, avFk, avPhase}
+        # A Spectrogram and a Phase spectrum leave out a trace with a sample that is not a
+        # number, and count it, as an FFT window does. An f-k keeps its row (as zeros: its
+        # spacing and units stay) and counts it; the others draw it as 0.
+        let leaveOut = a.view in {avSpectrogram, avPhase}
         var kept: seq[seq[float32]] = @[]
         var keptNames: seq[string] = @[]
         var keptList: seq[int] = @[]
@@ -438,6 +439,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             inc answer.leftOut
             inc answer.notNumber
           else:
+            if notNumber[i] and a.view == avFk: inc answer.zeroed
             kept.add move rows[i]
             keptNames.add names[i]
             keptList.add list[i]
@@ -454,8 +456,11 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
           else:
             through.add " (" & passedWords(passed) & ")"
         let notNumbers = answer.notNumber
+        let zeroed = answer.zeroed
         if kept.len == 0:
-          answer.problem = "none of the traces could be read"
+          answer.problem = if notNumbers == 0: "none of the traces could be read"
+            elif notNumbers == 1: "the trace holds a sample that is not a number"
+            else: "the traces hold a sample that is not a number"
         else:
           case a.view
           of avSpectrogram:
@@ -597,9 +602,11 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                   else: answer.note.add "; " & words
           if answer.cancelled: return false # its window closed or asked again: nothing to say
           answer.notNumber = notNumbers
-          if notNumbers > 0 and a.view == avFk and answer.problem.len == 0:
-            answer.note.add "; " & $notNumbers & (if notNumbers == 1: " trace" else: " traces") &
-              " with a sample that is not a number left out, so the spacing is that of the rest"
+          answer.zeroed = zeroed
+          if zeroed > 0 and answer.problem.len == 0:
+            answer.note.add "; " & $zeroed & (if zeroed == 1: " trace has" else: " traces have") &
+              " a sample that is not a number, taken as zeros (its row stays, so the spacing " &
+              "and units are unchanged)"
           answer.gen = a.gen
           answer.id = a.id
           answer.passedBy = passed

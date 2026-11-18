@@ -791,6 +791,8 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     words.add " · " & $r.leftOut & " left out (killed, dead or unreadable" &
       (if r.notNumber > 0: "; " & $r.notNumber & " with a sample that is not a number" else: "") &
       ")"
+  if r.zeroed > 0:
+    words.add " · " & $r.zeroed & " with a sample that is not a number, taken as zeros"
   if r.atOtherInterval > 0: words.add " · " & $r.atOtherInterval & " at another interval"
   if w.waiting: words.add " · working it out..."
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
