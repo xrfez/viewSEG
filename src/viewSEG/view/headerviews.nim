@@ -17,6 +17,9 @@ type
     ## One row of a header table: a field, with a value per column; or a
     ## block's title.
     title*: string ## a block's title: the row says only that; "" for a field
+    note*: bool
+      ## `title` is a quiet line, not a block's title (the survey matched this
+      ## trace and gave it nothing): drawn dim, in the ordinary font, across the row
     description*: string ## the field in plain words
     name*: string ## its name as parseSEG gives it: block.field
     bytes*: string ## the bytes it takes in its block, from 1: "1-4"
@@ -241,7 +244,7 @@ func traceTable*(traces: openArray[TraceDetail];
     for k in shown:
       if k < status.len and status[k] != ssUnmatched:
         let label = if shown.len > 1: ", " & traceLabel(traces[k], withFile) else: ""
-        lines.add TableRow(title: surveyLine(traces[k], status[k], label))
+        lines.add TableRow(title: surveyLine(traces[k], status[k], label), note: true)
     lines.add result.rows
     result.rows = move lines
     return

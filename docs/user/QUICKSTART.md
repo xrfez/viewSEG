@@ -1046,7 +1046,11 @@ holds, read-only, in four tabs:
   (File > Import > Survey), the table starts with **From the survey**: the stations,
   coordinates, offset and midpoint the survey gave, in the accent colour for each trace it
   gave them to ("from the survey, not the trace header" when pointed at); the
-  header's own fields follow, as the file holds them. **Data** lists the
+  header's own fields follow, as the file holds them. When the survey changed nothing in a
+  trace (its headers already name stations the survey has, with the same values), one dim
+  line takes the place of those rows: "From the survey: source 519 / 136 and receiver
+  100 / 316 are in the project's survey; the headers already agree", or that they are
+  not both in it, or that an auxiliary trace is left alone. **Data** lists the
   samples: index, time in ms and a column per trace, as the file holds them, or **As
   displayed** (after kills, polarity reversals, the trace's own filter and the gain's
   processing: what the status bar's amplitude reads); the row at the time under the pointer in the plot is marked and

@@ -73,11 +73,12 @@
 ## coordinates replaced (its Trace > Header and Summary then).
 
 import std/[math, monotimes, options, os, strutils, times]
-import viewSEG/core/[geometry, state]
+import parseSEG
+import viewSEG/core/[geometry, state, vendormaps]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/[agentshot, app, headerswindow]
 import privatefiles
-import utils/[faultyfs, fixtures, waiting]
+import utils/[faultyfs, fixtures, stations100, waiting]
 
 func centre(r: Rect): Vec2 =
   vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
@@ -513,6 +514,46 @@ proc main*() =
         fx.dir / "cache")
       doAssert worst < initDuration(seconds = 5), "a frame waited " & $worst & " for the drive"
       doAssert uiCalls().len == 0, "the UI thread called the file system:\n" & uiCalls().join("\n")
+
+  block theSurveyLine:
+    # The file's headers name the survey's stations and hold its coordinates
+    # (the stations times 100, read through the shipped map): the survey
+    # changes nothing, and the Trace tab's table says so in one quiet line.
+    withFixtures fx:
+      let path = fx.dir / "x100.sgy"
+      writeFile100(path)
+      var reg: VendorRegistry
+      reg.addMap loadVendorMap(readFile(MapPath), MapPath)
+      publishVendors(reg)
+      let sps = writeSurveySps(fx.dir)
+      let files = @[JoinFile(path: sps.s, kind: jkSps), JoinFile(path: sps.r, kind: jkSps)]
+      runSteps(path, @[
+        ("shown", Step(proc (f: FrameInfo; wait: int): bool =
+          f.laidOut and wait > 3))] &
+        enlarge() & @[
+        ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
+          f.click(wait, "headers.tab trace")
+          wait > 8 and f.core.settings.headers.tab == htTrace)),
+        ("matched", Step(proc (f: FrameInfo; wait: int): bool =
+          if wait == 1:
+            f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id, joinFiles: files,
+              joinUnits: JoinUnits(survey: suMetres))
+          result = wait > 4 and f.core.joinReport.serial > 0 and f.core.joinUnderWay.job == NoJob
+          if result:
+            doAssert f.core.joinReport.outcome == joJoined, $f.core.joinReport.words
+            doAssert "No trace's keys changed" in f.core.joinReport.words.join(" "),
+              $f.core.joinReport.words)),
+        ("a trace", Step(proc (f: FrameInfo; wait: int): bool =
+          let base = f.core.sessions[0].base
+          if wait == 1:
+            f.apply Command(kind: ckSelect, traces: @[base + 1], mode: smReplace)
+          result = wait > 6 and f.answered([base + 1]) and f.shown("headers.trace note 0")
+          if result:
+            doAssert f.core.inspection.answer.traces[0].joined == {}
+            doAssert not f.shown("headers.trace name keys.srcLine"), "the group shows"
+            f.shootWindow("surveyline.png")))],
+        fx.dir / "cache")
+      publishVendors(VendorRegistry())
 
   block theJoinedValues:
     withFixtures fx:

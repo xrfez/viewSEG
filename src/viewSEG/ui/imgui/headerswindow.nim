@@ -365,7 +365,21 @@ proc drawFieldTable(ui: var HeadersUi; id: string; whole: FieldTable; st: AppSta
       template row: untyped = table.rows[i]
       igTableNextRow(0, 0)
       igPushID_Int(cint(i))
-      if row.title.len > 0:
+      if row.title.len > 0 and row.note:
+        # a quiet line: dim, across the whole row (a clip rect as wide as the
+        # window), the whole of it in the tooltip
+        discard igTableSetColumnIndex(0)
+        let at = igGetCursorScreenPos()
+        let (wp, ws) = (igGetWindowPos(), igGetWindowSize())
+        igPushClipRect(at, ImVec2_c(x: wp.x + ws.x, y: at.y + igGetTextLineHeightWithSpacing()), false)
+        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+        igTextUnformatted(row.title.cstring, nil)
+        igPopStyleColor(1)
+        igPopClipRect()
+        if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
+          igSetTooltip("%s", row.title.cstring)
+        marks.mark(id & " note " & $i)
+      elif row.title.len > 0:
         igTableSetBgColor(ImGui_TableBgTarget_RowBg1.cint, u32(t.roles[rlBar]), -1)
         discard igTableSetColumnIndex(0)
         fonts.withFont(frHeading, 0):
