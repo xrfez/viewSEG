@@ -30,9 +30,9 @@ proc writeFile100*(path: string) =
     let at = 3600 + t * 244
     b.put(at, 4, t + 1)
     b.put(at + 28, 2, s[4])
-    b.put(at + 40, 4, 10)  # receiver and source elevation
+    b.put(at + 40, 4, 10) # receiver and source elevation
     b.put(at + 44, 4, 10)
-    b.put(at + 68, 2, 1)   # the scalars
+    b.put(at + 68, 2, 1) # the scalars
     b.put(at + 70, 2, 1)
     b.put(at + 72, 4, 1000) # source X, Y
     b.put(at + 76, 4, 2000)

@@ -49,7 +49,8 @@ proc main*() =
     block agrees:
       let t = traceTable([d[0]], [st[0]])
       doAssert t.titles[0] == "From the survey: source 519 / 136 and receiver 100 / 316 " &
-        "are in the project's survey; the headers already agree", "no line for a trace that agrees: " & $t.titles
+        "are in the project's survey; the headers already agree",
+            "no line for a trace that agrees: " & $t.titles
       doAssert t.rows[0].title == t.titles[0], "the line is the table's first row"
       doAssert traceTable([d[0]], [ssUnmatched]).titles.len == 0
     block fraction:
