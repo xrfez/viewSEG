@@ -375,9 +375,7 @@ proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: f
         result.name = a.archiveName & " (" & a.pilotRecord & ", " &
           pilotWords(a.pilotRule.aux, a.pilotRule.trace) & ")"
         # the cut keeps its place in time: from its start, not from the trace's first sample
-        let skip = max(0, int(ceil(a.pilotRule.startMs / dtMs - 1e-9)))
-        result.samples = newSeq[float32](skip)
-        result.samples.add cut
+        result.samples = placedPilot(cut, a.pilotRule.startMs, dtMs)
 
 proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
   ## Reads, works out and posts what `a` asks for; false when a newer

@@ -340,6 +340,7 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
     discard number("Start frequency (Hz)", ui.genF1, "generate.f1", marks)
     discard number("End frequency (Hz)", ui.genF2, "generate.f2", marks)
     discard number("Length (ms)", ui.genLength, "generate.length", marks)
+    tip(lengthTip(ui.genLength, ui.genDt, true))
     discard number("Sample interval (ms)", ui.genDt, "generate.dt", marks)
     discard number("Amplitude", ui.genAmp, "generate.amplitude", marks)
     if combo("Type", lawTitle(ui.genLaw), "generate.law", marks):
@@ -390,7 +391,8 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
     discard number("Start (ms)", ui.pilotStart, "generate.pilot.start", marks)
     discard number("Length (ms)", ui.pilotLength, "generate.pilot.length", marks)
     tip("The window from Start for Length, cut to the end of the trace. The whole " &
-      "trace is filled in while a file is open.")
+      "trace is filled in while a file is open. " &
+      lengthTip(ui.pilotLength, st.shownIntervalMs, false))
   var g = GeneratedReference()
   var rule = PilotRule()
   var problem = ""
@@ -514,7 +516,8 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
     igTextWrapped("%s", d.clamped.cstring)
     marks.mark("store.clamped:" & d.clamped)
   let length = "The whole trace: " & lengthWords(d.samples, d.dtMs) &
-    (if d.sweep: " (To is the sweep length from the file's headers; the rest is listen time)"
+    (if d.sweep: " (To is the last sample of the sweep, whose length the file's headers give; " &
+      "the rest is listen time)"
       else: " (usually cut to the sweep length; the rest is listen time)")
   igTextWrapped("%s", length.cstring)
   marks.mark("store.length")
@@ -818,10 +821,10 @@ proc thinPair(xs, ys: seq[float64]): (seq[float64], seq[float64]) =
         result[1].add ys[hi]
 
 proc pilotLine(w: RefView): string =
-  ## What a pilot of the record's window says of where it is from.
+  ## What a pilot of the record's window says of where it is from: its length and its start.
   "From " & (if w.record.len > 0: w.record else: "the record on show") & ", " &
-    pilotWords(w.pilot.aux, w.pilot.trace) & ", " & msWords(w.pilot.startMs) & " to " &
-    msWords(w.pilot.startMs + w.pilot.spanMs) & " ms. Another record has its own pilot."
+    pilotWords(w.pilot.aux, w.pilot.trace) & ", " & msWords(w.pilot.spanMs) & " ms from " &
+    msWords(w.pilot.startMs) & " ms. Another record has its own pilot."
 
 proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
     marks: var Marks): seq[Command] =

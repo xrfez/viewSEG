@@ -43,6 +43,15 @@ func msText*(ms: float64): string =
   ## A time in ms in its shortest form; "" when not known.
   if ms.isNaN: "" else: exactText(ms) & " ms"
 
+func traceLengthText*(samples: int; intervalUs: float64): string =
+  ## "4001 samples x 1 ms = 4001 ms (last sample at 4000 ms)": a trace's length is N x dt,
+  ## and its last sample is one interval before that. "" when either is not known.
+  if samples <= 0 or intervalUs.isNaN or not (intervalUs > 0): return ""
+  let dt = intervalUs / 1000
+  grouped(samples) & " samples x " & exactText(dt) & " ms = " &
+    msText(float64(samples) * dt) & " (last sample at " &
+    msText(float64(samples - 1) * dt) & ")"
+
 func gatherWord(k: GatherKind): string =
   case k
   of gkShot: "shot record"
@@ -153,7 +162,10 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
   result.add "Sample interval", (if sm.sampleIntervalUs.isNaN: "differs between " &
     (if sm.standard == skSegd: "channel sets" else: "traces")
     else: exactText(sm.sampleIntervalUs / 1000) & " ms")
-  result.add "Record length", msText(sm.recordLengthMs)
+  let traceLength = traceLengthText(sm.samplesPerTrace, sm.sampleIntervalUs)
+  if traceLength.len > 0: result.add "Trace length", traceLength
+  if sm.standard == skSegd and not sm.recordLengthMs.isNaN:
+    result.add "Record length (header)", msText(sm.recordLengthMs)
   var joined = -1
   for j, x in joins:
     if x.session == s.id: joined = j

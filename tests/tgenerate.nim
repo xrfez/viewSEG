@@ -66,10 +66,10 @@ proc main*() =
     let g = GeneratedReference(law: rlLinear, f1Hz: 10, f2Hz: 40, durationMs: 60_000,
       dtMs: 0.5, taperStartMs: 500, taperEndMs: 500, amplitude: 1, taperShape: tpCos2)
     let samples = generateSamples(g)
-    doAssert samples.len == 120_001, $samples.len
+    doAssert samples.len == 120_000, $samples.len # 60 000 ms at 0.5 ms: N x dt
     let env = columnEnvelope(samples, 0.0, g.dtMs, 800)
     doAssert env.xs[0] == 0.0
-    doAssert abs(env.xs[^1] - 60_000.0) < 1e-3, "the preview is not the whole sweep"
+    doAssert abs(env.xs[^1] - 59_999.5) < 1e-3, "the preview is not the whole sweep"
     doAssert abs(env.ys[0]) < 0.05, "the start taper is not in the preview"
     doAssert abs(env.ys[^1]) < 0.05, "the end taper is not in the preview"
     var mid = 0.0
@@ -85,16 +85,16 @@ proc main*() =
     let samples = generateSamples(g)
     let env = columnEnvelope(samples, 0.0, g.dtMs, 400)
     doAssert env.xs[0] == 0.0
-    doAssert abs(env.xs[^1] - 60_000.0) < 1e-3
+    doAssert abs(env.xs[^1] - 59_999.5) < 1e-3 # the last sample, 0.5 ms before 60 000 ms
     doAssert abs(env.ys[0] - float64(samples[0])) < 1e-4,
       "t=0 shows " & $env.ys[0] & " not the true sample " & $samples[0]
     doAssert abs(env.ys[^1] - float64(samples[^1])) < 1e-4,
       "t=end shows " & $env.ys[^1] & " not the true sample " & $samples[^1]
     doAssert abs(float64(samples[0])) < 1e-3, "the taper does not start at 0"
-    doAssert abs(float64(samples[^1])) < 1e-3, "the taper does not end at 0"
+    doAssert abs(float64(samples[^1])) < 5e-3, "the taper does not end near 0"
 
   block a_long_sweep_is_a_band:
-    # 60 s at 0.5 ms (120 001 samples) in 800 columns: a band of each
+    # 60 s at 0.5 ms (120 000 samples) in 800 columns: a band of each
     # column's extremes. Every sample is inside its column's band, the true
     # extremes are kept, and the tapers narrow the band to nothing.
     let g = GeneratedReference(law: rlLinear, f1Hz: 8, f2Hz: 80, durationMs: 60_000,
@@ -121,7 +121,8 @@ proc main*() =
     doAssert abs(min(band.lo) - trueMin) < 1e-9 and abs(max(band.hi) - trueMax) < 1e-9,
       "the band lost the true extremes"
     doAssert band.hi[0] - band.lo[0] < 0.05, "the start taper does not narrow the band"
-    doAssert band.hi[^2] - band.lo[^2] < 0.05, "the end taper does not narrow the band"
+    # the last column is 75 ms of the ramp that ends at 60 000 ms, one interval past the last sample
+    doAssert band.hi[^2] - band.lo[^2] < 0.1, "the end taper does not narrow the band"
     var wide = 0.0
     for i in band.xs.len div 3 ..< band.xs.len * 2 div 3:
       wide = max(wide, band.hi[i] - band.lo[i])

@@ -18,6 +18,11 @@ file on show, when there is one), the amplitude (1 unless you set another) and t
 type: linear, exponential, dB/octave or dB/Hz. dB/octave and dB/Hz also ask for the
 boost (dB).
 
+The length is samples times the interval: a sweep of 12 000 ms at 1 ms is 12 000 samples
+(2 ms: 6 000; 0.5 ms: 24 000), the first at 0 ms and the last at 11 999 ms. The length must
+be a whole number of intervals, or Generate says so and stays disabled; hover **Length** for
+the count it makes now. The end ramp ends at the length, one interval after the last sample.
+
 **Taper.** The shape of the ramp at each end, every shape processSEG offers, and the
 length of the start and end ramps. Cosine squared is the usual one, and the default.
 Kaiser, Gaussian and power ask for one more number (beta, sigma, exponent), filled with
@@ -52,9 +57,11 @@ trace of the record, and the window cut from it.
   pilot, a time break), or trace N of the record (counted among all of its traces, in
   file order). N starts at 1.
 - **Start** and **Length**, in milliseconds. The length starts as the whole trace of the
-  record on show and is required. The window runs from Start for Length and is clipped to
+  record on show (samples times the interval) and is required. The window is Length / interval
+  samples (12 000 ms at 1 ms: 12 000 samples; a length that is not a whole number of intervals
+  is cut down to whole samples) from the sample nearest Start, and is clipped to
   the end of the trace; if nothing is left of it, that is the error.
-- **Name**: filled in from the rule, such as "Pilot: aux 1, 0-12000 ms", and kept in step
+- **Name**: filled in from the rule, such as "Pilot: aux 1, 12000 ms from 0 ms", and kept in step
   with it while you do not edit it.
 
 Under the settings the dialog shows the pilot of the record on show, the same signal and
@@ -137,7 +144,8 @@ open cross-correlation that is not frozen says that name and does not draw.
 Right-click a trace in the Seismic window, seismic or auxiliary, and choose **Store as
 reference...**. The name starts as "<file> rec <record> tr <trace>" and can be changed. A
 name already used is refused. **From** and **To** are in milliseconds and start as the
-whole trace; if the file's headers give a sweep length, **To** starts there, because the
+whole trace; if the file's headers give a sweep length, **To** starts at that sweep's last
+sample (its length less one interval), because the
 rest of the record is usually listen time. **From** and **To** are the times of the first
 and last sample taken, both included: a trace of 12 000 samples at 1 ms runs from 0 to
 11999 ms and is 12 000 ms long, and the dialog says it under the boxes ("Takes 0 to 11 999

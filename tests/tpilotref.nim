@@ -140,8 +140,8 @@ proc main*() =
     var s = newSeq[float32](101)
     for i in 0 ..< s.len: s[i] = float32(i)
     let cut = cutPilot(s, 2.0, PilotRule(aux: true, trace: 1, startMs: 20, spanMs: 30), "FFID 7")
-    doAssert cut.problem == "" and cut.samples.len == 16 and cut.samples[0] == 10 and
-      cut.samples[^1] == 25, "the cut is not exact: " & $cut.samples
+    doAssert cut.problem == "" and cut.samples.len == 15 and cut.samples[0] == 10 and
+      cut.samples[^1] == 24, "the cut is not exact: " & $cut.samples
     let clipped = cutPilot(s, 2.0, PilotRule(aux: true, trace: 1, startMs: 190, spanMs: 100),
       "FFID 7")
     doAssert clipped.samples.len == 6 and clipped.samples[^1] == 100, $clipped.samples
@@ -167,6 +167,10 @@ proc main*() =
     let base = st.sessions[0].base
     doAssert st.sessions[0].gathers.len == 2, $st.sessions[0].gathers.len
 
+    block the_shown_length_is_n_times_dt:
+      # 400 samples at 2 ms are 800 ms (the pilot Length field starts there), not 798.
+      doAssert st.shownLengthMs == float64(Samples) * DtMs, $st.shownLengthMs
+
     block each_record_has_its_own_pilot:
       let first = st.shownPilot(PilotRule(aux: true, trace: 1, startMs: 0, spanMs: 1000))
       doAssert first.problem == "", first.problem
@@ -188,8 +192,8 @@ proc main*() =
 
     block the_window_is_cut_exactly:
       let cut = st.shownPilot(PilotRule(aux: true, trace: 1, startMs: 100, spanMs: 50))
-      doAssert cut.samples.len == 26, "the cut is not exact: " & $cut.samples.len & " " & cut.problem
-      doAssert cut.samples[0] == pilotSample(1, 50) and cut.samples[25] == pilotSample(1, 75)
+      doAssert cut.samples.len == 25, "the cut is not exact: " & $cut.samples.len & " " & cut.problem
+      doAssert cut.samples[0] == pilotSample(1, 50) and cut.samples[24] == pilotSample(1, 74)
       let past = st.shownPilot(PilotRule(aux: true, trace: 1, startMs: 700, spanMs: 1000))
       doAssert past.samples.len == 50 and past.problem == "", past.problem
       doAssert past.samples[^1] == pilotSample(1, Samples - 1)

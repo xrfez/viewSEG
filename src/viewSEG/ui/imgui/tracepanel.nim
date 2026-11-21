@@ -1725,7 +1725,7 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
                elif p.laidOut and not p.layout.noInterval: p.layout.dtMs else: 2.0
       let lastMs = if span.samples > 1: float64(span.samples - 1) * dt else: 0.0
       let sweep = span.sweepMs > 0
-      let toMs = if sweep: span.sweepMs elif lastMs > 0: lastMs else: -1.0
+      let toMs = if sweep: sweepStoreToMs(span.sweepMs, dt) elif lastMs > 0: lastMs else: -1.0
       let g = s.gatherOf(local)
       let rec = if g >= 0 and g < s.records.len and abs(s.records[g].record) < 1e15:
                   $int(s.records[g].record) else: $(max(g, 0) + 1)
