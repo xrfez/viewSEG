@@ -34,11 +34,9 @@ proc listWork*(folder: string; main: bool; to: Poster): JobWork =
 
 proc storeWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
     fromMs, toMs, intervalUs, record: float64; fileName, name, folder: string;
-    traceShown: int; flip: bool; own: seq[FilterEntry]; phaseDeg: float64;
-    to: Poster): JobWork =
-  ## Reads trace `trace` of the open file, turns it over when `flip` (the trace's own
-  ## reversal) and puts it through its own filter `own`: nothing of the plot's (no plot
-  ## filter, reverse-all or gain). Cuts it to `fromMs` .. `toMs` (`toMs` below 0: the
+    traceShown: int; flip: bool; phaseDeg: float64; to: Poster): JobWork =
+  ## Reads trace `trace` of the open file as recorded, turns it over when `flip` (the
+  ## trace's own reversal): no filter of any kind, nothing of the plot's. Cuts it to `fromMs` .. `toMs` (`toMs` below 0: the
   ## trace's end), turns the cut over when `phaseDeg` is 180, and stores it in the
   ## archive `folder`.
   result = proc (ctx: JobContext) {.gcsafe.} =
@@ -56,13 +54,8 @@ proc storeWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
         raise newException(IOError, "the trace could not be read")
       if not (us > 0 and us < Inf):
         raise newException(ValueError, "the trace has no sample interval")
-      if flip or own.len > 0:
-        var rows = @[samples]
-        var passed = 0
-        {.cast(gcsafe).}:
-          discard filtered(rows, file, @[trace], Processing(), own,
-            (if flip: @[trace] else: @[]), us / 1000, passed)
-        samples = rows[0]
+      if flip:
+        for v in samples.mitems: v = -v
       let cut = turnedOver(cutSamples(samples, us, fromMs, toMs), PilotRule(phaseDeg: phaseDeg))
       if cut.len == 0:
         raise newException(ValueError, "the window holds no sample")
@@ -179,11 +172,11 @@ proc pilotRuleWork*(rule: PilotRule; folder: string; to: Poster): JobWork =
 
 proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
     rule: PilotRule; flip: bool; record: string; surveyTrace, window: int;
-    key, name, folder: string; own: seq[FilterEntry]; to: Poster): JobWork =
-  ## Reads trace `trace` of the open file, turns it over when `flip` (the trace's
-  ## own reversal), puts it through its own filter `own` (nothing of the plot's: no
-  ## plot filter, no reverse-all, no gain), cuts the window `rule` names and
-  ## applies the rule's phase (180 turns the cut over). For a reference window (`window` above
+    key, name, folder: string; to: Poster): JobWork =
+  ## Reads trace `trace` of the open file as recorded, turns it over when `flip` (the
+  ## trace's own reversal): no filter, nothing of the plot's (no plot filter, no
+  ## reverse-all, no gain). Cuts the window `rule` names and applies the rule's phase
+  ## (180 turns the cut over). For a reference window (`window` above
   ## 0) it posts `raViewed`; else `raPilotShown` for the Generate dialog's
   ## preview, with the amplitude spectrum in dB in `amps`. A trace or window that
   ## is not there is said in `failure`.
@@ -203,23 +196,14 @@ proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
       if samples.len == 0:
         raise newException(IOError, "the trace could not be read")
       let dt = if us > 0 and us < Inf: us / 1000 else: 0.0
-      if dt > 0:
-        var rows = @[samples]
-        var passed = 0
-        {.cast(gcsafe).}:
-          discard filtered(rows, file, @[trace], Processing(), own,
-            (if flip: @[trace] else: @[]), dt, passed)
-        samples = rows[0]
-        let ownAt = entryAt(own, trace)
-        if ownAt >= 0 and own[ownAt].filter.changesSamples:
-          let words = "its own filter: " & ownBrief(own[ownAt].filter)
-          news.note = if news.note.len > 0: news.note & "; " & words else: words
-      elif flip:
+      if flip:
         for v in samples.mitems: v = -v
+        news.note = "the recorded trace, reversed (its own reversal)"
       let (cut0, problem) = cutPilot(samples, dt, rule, record)
       let cut = turnedOver(cut0, rule)
       if rule.phaseDeg == 180:
-        news.note = (if news.note.len > 0: news.note & "; " else: "") & "phase 180: turned over"
+        news.note = (if news.note.len > 0: news.note & ", " else: "the recorded trace, ") &
+          "turned again by the 180 deg phase"
       if problem.len > 0:
         news.failure = problem
       else:

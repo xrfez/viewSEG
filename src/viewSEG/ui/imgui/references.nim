@@ -405,8 +405,8 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
         marks.mark("generate.pilot.phase " & $int(deg))
       igEndCombo()
     tip("A recorded trace takes 0 or 180 degrees; 180 reverses its polarity, after the " &
-      "trace is taken (with its own reversal and its own filter, never the plot's " &
-      "settings) and cut. A trace you also reversed on the plot is turned twice: back " &
+      "trace is taken (as recorded, reversed when the trace is, never with a filter or the " &
+      "plot's settings) and cut. A trace you also reversed on the plot is turned twice: back " &
       "as recorded.")
   var g = GeneratedReference()
   var rule = PilotRule()
@@ -498,16 +498,11 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
   if ti >= 0:
     let s = st.sessions[ti]
     let local = d.trace - s.base
-    let reversed = st.hasEditAt(s.path, local, teReversed)
-    let (hasOwn, own) = st.ownAt(s.path, local)
-    let ownRuns = hasOwn and own.spec.hasFilters
-    if reversed and ownRuns: applied = "stored with this trace's own reversal and filter"
-    elif reversed: applied = "stored with this trace's own reversal"
-    elif ownRuns: applied = "stored with this trace's own filter"
+    if st.hasEditAt(s.path, local, teReversed): applied = "stored reversed (this trace is reversed)"
     if st.hasEditAt(s.path, local, teKilled):
       applied = "this trace is killed: it cannot be stored"
-  igTextWrapped("%s", ("The trace is " & applied & ". The plot's filters, reverse-all and gain " &
-    "are never applied.").cstring)
+  igTextWrapped("%s", ("The trace is " & applied &
+      ". No filter, reverse-all or gain is applied.").cstring)
   marks.mark("store.raw")
   marks.mark("store.applied:" & applied)
   igTextUnformatted("Name", nil)
@@ -867,7 +862,7 @@ proc pilotLine(w: RefView): string =
   "From " & (if w.record.len > 0: w.record else: "the record on show") & ", " &
     pilotWords(w.pilot.aux, w.pilot.trace) & ", " & msWords(w.pilot.spanMs) & " ms from " &
     msWords(w.pilot.startMs) & " ms" &
-    (if w.pilot.phaseDeg == 180: ", phase 180" else: "") & ". Another record has its own pilot."
+    (if w.pilot.phaseDeg == 180: ", 180 deg phase" else: "") & ". Another record has its own pilot."
 
 proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
     marks: var Marks): seq[Command] =
@@ -903,8 +898,8 @@ proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
               false, w.pilot.phaseDeg)
           marks.mark("reference.view.fix")
           tip("Saves this record's cut pilot as an ordinary stored waveform, the " &
-            "pilot as the rule gives it for this record: the trace's own reversal and own filter, " &
-            "the cut, and the rule's phase. Nothing of the plot's settings is in it.")
+            "pilot as the rule gives it for this record: the recorded trace, reversed when the " &
+            "trace is, the cut, and the rule's phase. No filter, nothing of the plot's.")
         if w.pilotNote.len > 0:
           igTextWrapped("%s", ("Pilot: " & w.pilotNote).cstring)
           marks.mark("reference.view.pilotnote")

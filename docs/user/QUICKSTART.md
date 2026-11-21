@@ -428,7 +428,9 @@ selection when that trace is selected. Then:
 
 Edited traces are marked in a row of the display header, **edits**, that is there only
 while the record has an edit: a red **K** over a killed trace, an **R** in the accent
-colour over a reversed one, and the filter icon in that same accent colour over a trace
+colour over a reversed one, an **E** over a trace excluded from the plot's filters (right-click
+the trace, **Exclude from plot filters**, or press `E`: the Filters menu's filters, the Aux
+traces too option included, never touch it; its own filter still runs), and the filter icon in that same accent colour over a trace
 that has its own filter (red, with the **K**, when the trace is also killed). Hovering a
 mark highlights it. The tooltip names the edit ("Killed", "Polarity reversed", or the
 filter in words, "Band-pass 10-60 Hz, after the plot's filters") and ends with

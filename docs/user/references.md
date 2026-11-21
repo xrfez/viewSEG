@@ -51,7 +51,7 @@ sweep is made by processSEG; viewSEG adds no sweep of its own.
 
 The **Source** choice at the top of the Generate dialog takes **Sweep settings** (the
 sweep above) or **A trace of the record**. The second stores a rule, not samples: which
-trace of the record, and the window cut from it.
+trace of the record, the window cut from it, and a phase.
 
 - **Which trace.** Auxiliary trace N (counted among the record's auxiliary traces: a
   pilot, a time break), or trace N of the record (counted among all of its traces, in
@@ -61,8 +61,12 @@ trace of the record, and the window cut from it.
   samples (12 000 ms at 1 ms: 12 000 samples; a length that is not a whole number of intervals
   is cut down to whole samples) from the sample nearest Start, and is clipped to
   the end of the trace; if nothing is left of it, that is the error.
-- **Name**: filled in from the rule, such as "Pilot: aux 1, 12000 ms from 0 ms", and kept in step
-  with it while you do not edit it.
+- **Phase**: 0 or 180 degrees, as the sweep's start phase is, limited to what a recorded
+  trace can take. 180 reverses the polarity of the cut. It is stored in the rule (a rule
+  stored before it reads as 0). A trace you also reversed on the plot is turned twice: back
+  as recorded.
+- **Name**: filled in from the rule, such as "Pilot: aux 1, 12000 ms from 0 ms" (with
+  ", 180 deg phase" when it is 180), and kept in step with it while you do not edit it.
 
 Under the settings the dialog shows the pilot of the record on show, the same signal and
 spectrum plots as the sweep, and says which record it is from. With no file open it says
@@ -71,12 +75,17 @@ to open one. The preview is read in the background.
 When this reference is the chosen one, each record uses its own trace by the rule: a
 Correlation window of the next record takes that record's trace, and the window's note
 (under the plot) names the record and the trace ("Reference: <name> (FFID 2, auxiliary
-trace 1)"). The trace is used as the plot shows it: a reversed trace (its own reversal or
-reverse-all, not both) is turned over, the plot's filters apply (an auxiliary trace
-only when Filters > Filter the Aux traces too is on) and so does the trace's own filter,
-then the window is cut. The dialog's preview and the reference's window show it the same
-way, with a line saying what the filters did. Reversing the pilot, killing it or giving it
-a filter of its own asks an open correlation again. A record that lacks the trace says so
+trace 1)"). The trace is the recorded trace: the file's samples, turned over only when
+the trace itself is reversed (R); then the window is cut; then the rule's phase (180
+turns the cut over). A reference never carries a filter: not the plot's filters (the Aux
+traces too option included), not the trace's own filter (F), not "Reverse polarity of all
+traces", not gain or any other display processing; excluding the trace from the plot's
+filters (E) makes no difference to it. The dialog's preview and the reference's window
+show it the same way, with a line saying it is the recorded trace, reversed when the trace
+is (and turned again by the 180 deg phase). (Earlier versions used the pilot as the plot showed
+it: with reverse-all and, in the preview and the View window, the filters.) Reversing the
+pilot or killing it asks an open correlation again; a change of any filter or of
+reverse-all does not, for the pilot's sake. A record that lacks the trace says so
 in place of the plot, naming the record ("FFID 3 has only 1 auxiliary trace, not an
 auxiliary trace 2."), and so does a pilot that is killed or marked dead ("FFID 3's
 auxiliary trace 1 is killed."); no other trace is used instead. A window whose traces
@@ -89,8 +98,8 @@ In the archive the row says "pilot: auxiliary trace 1", the length in ms and "of
 record", and the interval "the record's". It can be chosen, renamed, deleted and copied
 into a project like another. **View** opens the pilot of the record on show, and says
 which record; its button **Store this pilot as a fixed reference** keeps the record's cut
-pilot as an ordinary stored waveform: the file's raw samples, as Store does, so not turned
-over and not filtered. A rule is not
+pilot as an ordinary stored waveform, exactly as the rule gives it for the record on show:
+the recorded trace, reversed when the trace is, the cut and the rule's phase. A rule is not
 one waveform, so it cannot be compared as A or B.
 
 ## Reference archive
@@ -155,8 +164,13 @@ length of N samples at an interval of dt is N times dt everywhere: here, in the 
 Length column ("12000 ms (12000)"), in the stored file's text header and in the message
 that says the reference was stored.
 
-The stored samples are the file's raw samples: no plot filters, no trace filter, no gain,
-and no polarity edit. The read runs in the background; the window does not wait on the file.
+The stored samples are the file's samples with the trace's own reversal: a trace you
+reversed is stored reversed. No filter is applied (not the plot's, not the trace's own),
+nor "Reverse polarity of all traces" or the gain. The dialog says "stored as recorded" or
+"stored reversed (this trace is reversed)". The dialog's **Phase**
+(0 or 180 degrees) turns the stored window over after that, as the pilot's rule does. A
+killed trace, or one the file marks dead, is refused. (Earlier versions stored the file's
+samples never reversed; references stored then keep their samples, nothing is recomputed.) The read runs in the background; the window does not wait on the file.
 
 ## Compare as A or B
 

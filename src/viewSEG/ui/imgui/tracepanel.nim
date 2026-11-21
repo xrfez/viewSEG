@@ -1740,7 +1740,8 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
       tp.store.openStore(under, stem & " rec " & rec & " tr " & $(local + 1), 0, toMs,
         int(span.samples), dt, sweep)
   marks.mark("plot.menu.store")
-  tip("Keep this trace's raw samples as a reference (no filters, no gain, no polarity edit)")
+  tip("Keep this trace as a reference: as recorded, reversed when the trace is reversed; " &
+    "never the plot's filters, reverse-all or gain, and no filter")
   # The trace under the pointer, not the selection: a comparison is one trace a slot.
   if igMenuItem_Bool("Compare: set as A", nil, false, under >= 0):
     res.commands.add Command(kind: ckSetCompare, compareSlot: cwA, compareTrace: under)

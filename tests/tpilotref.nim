@@ -7,11 +7,12 @@
 ## first trace, "no sentence for a missing trace"; with the reversal not read
 ## for the pilot, "a reversed pilot is not turned over"; with the rule stored
 ## with a file, "a rule has a file"; with the note not naming the pilot's own
-## filter (the plot's filters off), "the pilot's own filter is not named"; with the plot's
-## filters or reverse-all let reach the pilot, "the plot's filters reached the pilot" and
-## "reverse-all reached the pilot"; with the rule's phase left out, "phase 180 does not
+## filter (the plot's filters off), "the pilot's own filter is not named" (now: a filter
+## of its own reaches nothing); with the plot's filters or reverse-all let reach the pilot, "the plot's filters reached the pilot" and
+## "reverse-all reached the pilot"; with the rule's phase left out, "a phase of 180 does not
 ## negate the pilot"; with a store not applying the trace's own reversal or filter, "a
-## reversed trace is not stored negated".
+## reversed trace is not stored negated". With the close not clearing the dialog's preview (`closeSession`), "the preview holds
+## the closed file's pilot".
 
 import std/[json, math, monotimes, os, sequtils, strutils, times]
 import parseSEG
@@ -256,19 +257,19 @@ proc main*() =
         phaseDeg: 180))
       doAssert turned.samples.len == plain.samples.len and plain.samples.len == 25
       for i in 0 ..< turned.samples.len:
-        doAssert turned.samples[i] == -plain.samples[i], "phase 180 does not negate the pilot"
-      doAssert "phase 180" in turned.note, turned.note
+        doAssert turned.samples[i] == -plain.samples[i], "a phase of 180 does not negate the pilot"
+      doAssert "180 deg phase" in turned.note, turned.note
       st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[0],
         on: true)
       let twice = st.shownPilot(PilotRule(aux: true, trace: 1, startMs: 100, spanMs: 50,
         phaseDeg: 180))
-      doAssert twice.samples == plain.samples, "a trace reversed and phase 180 are not " &
+      doAssert twice.samples == plain.samples, "a trace reversed and a phase of 180 are not " &
         "turned twice"
       st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[0],
         on: false)
       doAssert pilotProblem(PilotRule(aux: true, trace: 1, spanMs: 5, phaseDeg: 90)).len > 0
       doAssert defaultPilotName(PilotRule(aux: true, trace: 1, spanMs: 5, phaseDeg: 180)).endsWith(
-        "phase 180")
+        "180 deg phase")
 
     block a_correlation_uses_each_records_pilot:
       st.apply Command(kind: ckPilotReference, refPilot: PilotRule(name: "record pilot",
@@ -345,18 +346,17 @@ proc main*() =
         st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base],
           on: false)), "making the pilot live again did not ask again"
       doAssert st.plots[w].result.plots.len > 0
-      doAssert st.edited(w, proc (st: var AppState) =
-        st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
-          processing: Processing(band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16),
-          filterPlace: fpAfter)), "a filter of the pilot's own did not ask again"
-      # the pilot's own filter is the trace's own setting: the pilot goes through it
-      doAssert abs(st.plots[w].result.peakValue(0) - plain) > 1e-6,
-        "the pilot's own filter did not reach a correlation"
-      doAssert "the pilot trace's own filter is applied" in st.plots[w].result.note,
-        st.plots[w].result.note
+      # a reference is never filtered: a filter of the pilot's own asks nothing again
+      let asksNow = st.plots[w].asks
+      st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
+        processing: Processing(band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16),
+        filterPlace: fpAfter)
+      for _ in 0 ..< 40:
+        discard st.drainInbox()
+        sleep(10)
+      doAssert st.plots[w].asks == asksNow and abs(st.plots[w].result.peakValue(0) - plain) < 1e-6,
+        "a filter of the pilot's own reached the correlation"
       st.apply Command(kind: ckUndoEdit, panel: MainPanel)
-      doAssert st.settle(abs(st.plots[w].result.peakValue(0) - plain) < 1e-6 and
-        not st.plots[w].waiting)
 
     block the_preview_is_what_the_correlation_uses:
       let rule = PilotRule(aux: true, trace: 1, startMs: 0, spanMs: 1000)
@@ -374,27 +374,23 @@ proc main*() =
       st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
         processing: spec, filterPlace: fpAfter)
       let own = st.shownPilot(rule)
-      doAssert own.samples != plain.samples and own.samples.len == plain.samples.len,
-        "the pilot's own filter is not in the preview"
-      doAssert "its own filter: " in own.note and ownBrief(OwnFilter(spec: spec)) in own.note,
-        "the note does not name the pilot's own filter: " & own.note
+      doAssert own.samples == plain.samples and own.note.len == 0,
+        "the pilot's own filter is in the preview"
       st.apply Command(kind: ckUndoEdit, panel: MainPanel)
       st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Processing())
       doAssert st.shownPilot(rule).samples == plain.samples
 
-    block the_note_names_a_filter_of_the_pilots_own_alone:
-      # With the plot's filters off, `filtered` words nothing: the dialog's note
-      # under "From FFID 1 ..." still says which filter the pilot went through.
+    block the_note_says_the_recorded_trace:
       let rule = PilotRule(aux: true, trace: 1, startMs: 0, spanMs: 1000)
       let spec = Processing(band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16)
       doAssert st.shownPilot(rule).note.len == 0, "a plain pilot has a note"
       st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
         processing: spec, filterPlace: fpAfter)
-      let own = st.shownPilot(rule)
-      doAssert own.note == "its own filter: " & ownBrief(OwnFilter(spec: spec)),
-        "the pilot's own filter is not named: \"" & own.note & "\""
+      doAssert st.shownPilot(rule).note.len == 0, "a filter of the pilot's own is named"
       st.apply Command(kind: ckUndoEdit, panel: MainPanel)
-      doAssert st.shownPilot(rule).note.len == 0
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[0], on: true)
+      doAssert "the recorded trace, reversed" in st.shownPilot(rule).note
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[0], on: false)
 
     block a_killed_pilot_is_not_used:
       st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base],
@@ -438,8 +434,8 @@ proc main*() =
       doAssert c.refPilot == PilotRule(name: "agent rule", aux: true, trace: 3, startMs: 5,
         spanMs: 40)
     block a_stored_trace_is_the_trace_as_set_on_it:
-      # Store (and a pilot's fixed copy): the trace's own reversal and own filter, then
-      # the cut and a phase; never the plot's filters, reverse-all or gain
+      # Store (and a pilot's fixed copy): the recorded samples, the trace's own reversal,
+      # the cut and a phase; no filter of any kind, never reverse-all or gain
       st.apply Command(kind: ckGather, panel: MainPanel, gather: 0)
       doAssert st.settle(st.panel(MainPanel).layers[0].source.gather == 0 and
         st.panel(MainPanel).laidOut)
@@ -473,16 +469,15 @@ proc main*() =
         doAssert flipped[i] == -raw[i], "a reversed trace is not stored negated"
       let rule = PilotRule(aux: true, trace: 1, startMs: 0, spanMs: 1000, phaseDeg: 180)
       let fixed = st.stored(n, base, 180)
-      doAssert fixed == raw, "a reversed trace with phase 180 is not stored as recorded"
+      doAssert fixed == raw, "a reversed trace with a phase of 180 is not stored as recorded"
       st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[base], on: false)
       let spec = Processing(band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16)
       st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
         processing: spec, filterPlace: fpAfter)
       let filteredOwn = st.stored(n, base)
-      doAssert filteredOwn != raw and filteredOwn.len == raw.len,
-        "a trace's own filter is not in what is stored"
+      doAssert filteredOwn == raw, "a trace's own filter reached what is stored"
       let fixedPhase = st.stored(n, base, 180)
-      doAssert fixedPhase == filteredOwn.mapIt(-it)
+      doAssert fixedPhase == raw.mapIt(-it)
       doAssert st.shownPilot(rule).samples == fixedPhase,
         "the pilot's fixed copy is not the rule's pilot, sample for sample"
       doAssert st.shownPilot(PilotRule(aux: true, trace: 1, startMs: 0, spanMs: 1000)).samples ==
@@ -507,7 +502,7 @@ proc main*() =
         if e.name == "turned pilot": turned = e.id
         if e.name == "record pilot": plainId = e.id
       doAssert st.references.entries.anyIt(it.id == turned and it.origin.pilotPhaseDeg == 180 and
-        sourceText(it).endsWith("phase 180"))
+        sourceText(it).endsWith("180 deg phase"))
       st.apply Command(kind: ckSelectReference, refId: plainId)
       st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
         plotTraces: @[base + 1, base + 2, base + 3])
@@ -520,8 +515,45 @@ proc main*() =
       let w2 = st.plots.high
       doAssert st.settle(st.plots[w2].result.gen > 0 and not st.plots[w2].waiting)
       doAssert abs(st.plots[w2].result.peakValue(0) + plain) < 1e-6 and plain > 0.5,
-        "phase 180 did not flip the correlation: " & $plain & " and " &
+        "a phase of 180 did not flip the correlation: " & $plain & " and " &
         $st.plots[w2].result.peakValue(0)
+
+    block closing_the_file_releases_its_pilot:
+      # Before this was handled the dialog's preview, a reference's View window and the
+      # correlation against the rule went on showing the closed file's pilot.
+      var turned = ""
+      for e in st.references.entries:
+        if e.name == "turned pilot": turned = e.id
+      let rule = PilotRule(aux: true, trace: 1, startMs: 0, spanMs: 1000)
+      doAssert st.shownPilot(rule).samples.len == Samples
+      st.apply Command(kind: ckViewReference, refId: turned)
+      let view = st.refViews.high
+      doAssert st.settle(st.refViews[view].ys.len > 0 and not st.refViews[view].waiting)
+      let free = st.plots.high # the unfrozen correlation against the rule
+      doAssert not st.plots[free].frozen and st.plots[free].result.plots.len > 0
+      var frozen = -1
+      for k, p in st.plots:
+        if p.frozen and p.result.plots.len > 0: frozen = k
+      doAssert frozen >= 0, "no frozen window to keep what it showed"
+      let keptCurves = st.plots[frozen].result.plots.len
+      st.apply Command(kind: ckClose, file: st.sessions[0].id)
+      doAssert st.settle(st.sessions.len == 0)
+      doAssert st.pilotPreview.samples.len == 0 and st.pilotPreview.hz.len == 0 and
+        st.pilotPreview.problem == NoFilePilot, "the preview holds the closed file's pilot"
+      doAssert st.refViews[view].ys.len == 0 and st.refViews[view].amps.len == 0 and
+        st.refViews[view].pilotTrace < 0 and st.refViews[view].note == NoFilePilot,
+        "the View window shows the closed file's pilot"
+      doAssert st.plots[free].result.plots.len == 0 and st.plots[free].result.problem ==
+          NoFilePilot,
+        "the correlation shows the closed file's pilot: " & st.plots[free].result.problem
+      doAssert st.plots[frozen].result.plots.len == keptCurves, "a frozen window lost what it showed"
+      doAssert st.references.entries.anyIt(it.id == turned), "the rule left the archive"
+      # another file: the rule gives that file's pilot
+      withFixtures fx3:
+        st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx3.chirpRecord())
+        doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+        let again = st.shownPilot(rule)
+        doAssert again.problem == "" and again.samples.len == Samples, again.problem
 
     discard st.shutdown()
 

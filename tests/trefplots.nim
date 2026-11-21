@@ -92,7 +92,7 @@ proc main*() =
     block correlation_matches_the_file:
       # filters off: the file's pilot is then the raw trace, as the stored copy is
       st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Processing())
-      st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[id], on: false)
+      st.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: false)
       var seismic = -1
       var f = openSeismic(vib, keys = true)
       for i in 0 ..< f.len:

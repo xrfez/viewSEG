@@ -42,9 +42,9 @@ type
     ## Where a reference's samples came from.
     case generated*: bool
     of false:
-      fileName*: string ## the seismic file's name, not its path
-      record*: float64  ## the record number; NaN when the headers name none
-      trace*: int       ## the trace, from 1, as the plot names it
+      fileName*: string       ## the seismic file's name, not its path
+      record*: float64        ## the record number; NaN when the headers name none
+      trace*: int             ## the trace, from 1, as the plot names it
       fromMs*, toMs*: float64
       pilot*: bool
         ## a rule, not samples: each record's own trace by `pilotAux`, `trace`
@@ -323,6 +323,10 @@ func intervalRefusal*(refMs, fileMs: float64): string =
   ## interval is not the file's. Nothing is resampled.
   "the reference is " & msWords(refMs) & " ms, this file is " & msWords(fileMs) & " ms"
 
+const NoFilePilot* = "Open a file: the pilot is taken from the record on show."
+  ## what the pilot's windows say when no file is open (the Generate dialog's preview, a
+  ## reference's window, a correlation against it)
+
 const NoReferenceChosen* = "No reference is chosen. Choose one in References."
   ## A cross-correlation with no reference selected in References.
 
@@ -364,7 +368,7 @@ func defaultPilotName*(r: PilotRule): string =
   ## "Pilot: aux 1, 12000 ms from 0 ms", from the rule: a length, then where it starts.
   "Pilot: " & (if r.aux: "aux " else: "trace ") & $r.trace & ", " & numberText(r.spanMs) &
     " ms from " & numberText(r.startMs) & " ms" &
-    (if r.phaseDeg == 180: ", phase 180" else: "")
+    (if r.phaseDeg == 180: ", 180 deg phase" else: "")
 
 func pilotProblem*(r: PilotRule): string =
   ## Why `r` names no pilot; "" when it does (the name is judged apart).
@@ -429,7 +433,7 @@ func sourceText*(e: ReferenceEntry): string =
     "generated, " & lawTitle(e.origin.law)
   elif e.origin.pilot:
     "pilot: " & pilotWords(e.origin.pilotAux, e.origin.trace) &
-      (if e.origin.pilotPhaseDeg == 180: ", phase 180" else: "")
+      (if e.origin.pilotPhaseDeg == 180: ", 180 deg phase" else: "")
   else:
     let rec = if e.origin.record.isNaN: "none" else: numberText(e.origin.record)
     e.origin.fileName & " rec " & rec & " tr " & $e.origin.trace
@@ -1290,7 +1294,8 @@ proc storePilotRule*(folder: string; r: PilotRule): string {.gcsafe.} =
   let id = newId(index)
   index.entries.add ReferenceEntry(id: id, name: name, date: nowText(),
     origin: ReferenceOrigin(generated: false, pilot: true, pilotAux: r.aux, trace: r.trace,
-    fromMs: r.startMs, spanMs: r.spanMs, pilotPhaseDeg: r.phaseDeg, record: NaN, toMs: -1)) # a rule has no interval: no last sample
+    fromMs: r.startMs, spanMs: r.spanMs, pilotPhaseDeg: r.phaseDeg, record: NaN,
+    toMs: -1)) # a rule has no interval: no last sample
   fs.createDir(folder)
   writeIndex(folder, index)
   id

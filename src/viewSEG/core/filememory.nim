@@ -642,7 +642,8 @@ proc rowsOf(l: EditLists): seq[(int, TraceEdit)] =
   for edit in [teKilled, teReversed, teExcluded]:
     for t in l.lists[edit]: result.add (t, edit)
   result.sort(proc (a, b: (int, TraceEdit)): int =
-    if a[0] != b[0]: cmp(a[0], b[0]) else: cmp(ord(a[1] == teReversed) + 2 * ord(a[1] == teExcluded),
+    if a[0] != b[0]: cmp(a[0], b[0]) else: cmp(ord(a[1] == teReversed) + 2 * ord(a[1] ==
+        teExcluded),
       ord(b[1] == teReversed) + 2 * ord(b[1] == teExcluded)))
 
 proc notchText(n: NotchFilter): string =

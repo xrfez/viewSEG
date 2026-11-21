@@ -27,7 +27,7 @@
 ## - **A file cut short, or that cannot be looked at,** is not read: the
 ##   answer says why. Each read is marked through the seam (`fs.mappedRead`).
 
-import std/[algorithm, locks, math, monotimes, options, os, sequtils, strutils, times]
+import std/[algorithm, locks, math, monotimes, options, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
@@ -38,27 +38,27 @@ import analysis, cutfile, filesystem, fkanalysis, inbox, jobs, join, log,
 type
   AnalysisAsk* = object
     ## What an analysis window asks the reader for.
-    id*: int                    ## the window's
+    id*: int                ## the window's
     gen*: uint64
     view*: AnalysisView
     params*: AnalysisParams
-    file*: ptr SeismicFile      ## held by the caller
+    file*: ptr SeismicFile  ## held by the caller
     path*: string
-    size*: int64                ## its size when it was opened; -1 when not known
-    traces*: seq[int]           ## indices in the file, in the order drawn
-    unit*: SurveyUnit           ## the unit of the file's distances (coordinates)
-    offsetUnit*: SurveyUnit     ## the unit of the file's trace offsets
-    names*: seq[string]         ## per trace, what the curves call it: "trace 12"
-    killed*: seq[int]           ## those of `traces` killed, ascending: left out
-    reversed*: seq[int]         ## those of `traces` effectively reversed, ascending: samples times -1 first
-    allReversed*: bool          ## reverse-all was on for this file
-    own*: seq[FilterEntry]      ## traces that carry a filter of their own, ascending
-    processing*: Processing     ## the plot's filters and its Aux toggle
+    size*: int64            ## its size when it was opened; -1 when not known
+    traces*: seq[int]       ## indices in the file, in the order drawn
+    unit*: SurveyUnit       ## the unit of the file's distances (coordinates)
+    offsetUnit*: SurveyUnit ## the unit of the file's trace offsets
+    names*: seq[string]     ## per trace, what the curves call it: "trace 12"
+    killed*: seq[int]       ## those of `traces` killed, ascending: left out
+    reversed*: seq[int]     ## those of `traces` effectively reversed, ascending: samples times -1 first
+    allReversed*: bool      ## reverse-all was on for this file
+    own*: seq[FilterEntry]  ## traces that carry a filter of their own, ascending
+    processing*: Processing ## the plot's filters and its Aux toggle
     refName*: string
-    archivePath*: string        ## a reference from the archive, instead of a trace
+    archivePath*: string    ## a reference from the archive, instead of a trace
     archiveName*: string
     archiveIntervalUs*: float64
-    archiveGone*: string        ## selected, but not usable: said, and nothing is drawn
+    archiveGone*: string    ## selected, but not usable: said, and nothing is drawn
     archiveStartMs*: float64 = 0.0
       ## the stored reference's own first sample time (an archive window's From)
     topHz*: float64 = NaN
@@ -71,7 +71,6 @@ type
     pilotRule*: PilotRule
     pilotRecord*: string ## which record that is, for the sentences
     pilotReversed*: bool ## that trace is reversed on its own (R): turned over first
-    pilotOwn*: seq[FilterEntry] ## its own filter, when it has one
     vibWhy*: string
       ## a vibrator signature measured against its recorded Ref trace: why not the project
       ## reference ("no project reference is chosen", "the project reference is not used")
@@ -366,11 +365,10 @@ proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: f
     elif not sameDt(rdt, dtMs):
       result.problem = intervalRefusal(rdt, dtMs)
     else:
-      # the trace as it was set on the trace itself: its own reversal and own filter,
-      # nothing of the plot's; then the cut, then the rule's phase
-      var passed = 0
-      discard filtered(refRows, f, @[rt], Processing(), a.pilotOwn,
-        (if a.pilotReversed: @[rt] else: @[]), dtMs, passed)
+      # the recorded samples, turned over when the trace is reversed on its own (R):
+      # nothing of the plot's, no filter; then the cut, then the rule's phase
+      if a.pilotReversed:
+        for v in refRows[0].mitems: v = -v
       let (cut0, why) = cutPilot(refRows[0], dtMs, a.pilotRule, a.pilotRecord)
       let cut = turnedOver(cut0, a.pilotRule)
       if why.len > 0:
@@ -467,9 +465,6 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             passed = 0
             if a.processing.hasFilters or a.own.len > 0:
               through = RawAgainstReference
-            if a.pilotTrace >= 0 and a.pilotOwn.len > 0 and a.pilotOwn.anyIt(it.filter.spec.hasFilters):
-              let words = "the pilot trace's own filter is applied to it: nothing of the plot's"
-              through = if through.len > 0: through & "; " & words else: words
           else:
             through = filtered(kept, f, keptList, a.processing, a.own, a.reversed, dtMs,
               passed, plotOn)

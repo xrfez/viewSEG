@@ -102,7 +102,8 @@
   of a multi-component station), and there can be several; the default is receiver
   **line** and **point**. While the record has an edited trace, a last row, **edits**,
   marks each one over its trace, as the edits are now: **K** (killed, in the theme's
-  error colour), **R** (reversed, in its accent colour), **KR** for both, a thin bar where
+  error colour), **R** (reversed, in its accent colour), **E** (excluded from the plot's
+  filters), **KR** for both, a thin bar where
   traces are too close for the letters; the row goes when the record has no edit left.
   Hovering a mark highlights it, and the tooltip ends with "Right-click to remove".
   A right-click on a mark opens a menu to take that trace's edits away (one step each;
@@ -1457,6 +1458,7 @@ traces"); the selection stays as it was. Over no trace it says "No trace here".
 |---|---|---|
 | Reverse polarity | `R` | that trace or the selection, 180 degrees out of phase; ticked while the trace under the pointer is reversed, and then it puts the polarity back |
 | Kill / Restore | `K` | drawn blank (or left out of the plot: the gear popover's "Hide killed traces"), left out of the processing, of the levels the gain computes over the record and of spectra; "Restore" over a killed trace |
+| Exclude from plot filters | `E` | the plot's filters (the Filters menu's, the Aux traces too when that is on) never touch that trace or the selection; ticked while the trace under the pointer is excluded, and then it puts the filters back. A filter of the trace's own (Filter this trace...) still runs; marked **E** |
 | FFT in a new window | `F` | that trace's amplitude spectrum, or the selection's averaged, raw and through the plot's filters, in a window of its own ([Spectra](#spectra)); several can be open |
 | Compare: set as A / Compare: set as B | | copies the trace under the pointer into that slot, even when it is one of a selection. The copy does not follow the plot. Filling the second slot opens Compare two traces (the user guide) |
 | Select its receiver on the map | `M` | the receiver the trace was recorded at (in a receiver gather, its source), or those of the selection, with their traces; greyed out where the trace has no place on the map |
@@ -1551,7 +1553,7 @@ as remembered: an edit shown for the session only (agent control's) is left out,
 list handed on outlives the session, and Messages says how many; one an agent hid for the
 session is in it,
 as a CSV table (`trace,record,channel,edit,file`: the trace's number in the file from 1,
-its field record and channel from the headers, `killed` or `reversed`, "all" for reverse
+its field record and channel from the headers, `killed`, `reversed` or `excluded`, "all" for reverse
 all, and the name of the file the list is for on every row) or as viewSEG's own NIF
 document (with the file's identity), for processing. File > Import > Trace edits... reads
 either (a CSV table needs a header naming a `trace` column, within its first lines;

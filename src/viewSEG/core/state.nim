@@ -236,7 +236,7 @@ type
     ckListReferences = "list references"
       ## read the reference archive in force (and the main one, when a project is open)
     ckStoreReference = "store reference"
-      ## store a trace's raw samples, cut to a time window, as a named reference
+      ## store a trace (as recorded, reversed when the trace is), cut to a time window, as a named reference
     ckGenerateReference = "generate reference"
       ## make a sweep with processSEG and store it as a named reference
     ckPilotReference = "pilot reference"
@@ -498,8 +498,8 @@ type
     of ckStoreReference:
       refStore*: StoredReference
         ## ckStoreReference: the trace (a survey-wide id), the window in ms
-        ## (the trace as the file has it, with its own reversal and own filter and
-        ## nothing the plot decides; `phaseDeg` 180 turns it over after the cut)
+        ## (the trace as the file has it, turned over when it is reversed on its own,
+        ## nothing else the plot decides; `phaseDeg` 180 turns it over after the cut)
         ## (`toMs` below 0: the trace's end) and the name
     of ckGenerateReference:
       refGenerate*: GeneratedReference
@@ -2665,6 +2665,15 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
       if not kept: discard state.jobs.cancel(job.id)
   state.selection.forget(s.id, s.traceIds)
   if not state.inspector.isNil: state.inspector.dropSession(int(s.id))
+  # the pilots taken from this file's records: the dialog's preview, and the windows of
+  # references (their reads were cancelled with the file's jobs; a late answer is dropped)
+  if state.pilotShown.key.startsWith(s.path & "|"):
+    inc state.pilotShown.gen
+    state.pilotShown = PilotPreview(key: "none", problem: NoFilePilot, gen: state.pilotShown.gen)
+  for w in state.refViews.mitems:
+    if w.pilot.trace > 0 and w.pilotTrace >= 0 and w.pilotTrace in s:
+      w = RefView(id: w.id, refId: w.refId, name: w.name, pilot: w.pilot, pilotTrace: -1,
+        note: NoFilePilot, revision: w.revision + 1)
   # the analysis windows of the file: what is being worked out for them stops,
   # and a window waiting for it says why and waits for nothing
   for k in 0 ..< state.plots.len:
@@ -2672,6 +2681,16 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
     let ofFile = pw.traces.len > 0 and pw.traces[0] in s
     if ofFile:
       if not state.analysisReader.isNil: state.analysisReader.cancel(pw.id)
+      if not pw.frozen and pw.pilotKey.len > 0:
+        # taken against a pilot of this file's records: nothing of it is kept, and
+        # the window says there is no file (a frozen one keeps what it showed)
+        inc state.plotGen
+        pw.asked = state.plotGen
+        pw.result = AnalysisResult(view: pw.view, gen: state.plotGen, id: pw.id,
+          problem: NoFilePilot)
+        pw.pilotKey = ""
+        pw.since = state.plotGen
+        inc pw.revision
       if pw.waiting:
         pw.waiting = false
         # A window that already has numbers keeps them (a frozen one, as a
@@ -3177,9 +3196,7 @@ func ownKeyOf(e: FileEdits; traces: openArray[int]): string =
 
 func pilotKeyOf(e: FileEdits; trace: int): string =
   ## What a pilot taken by a rule depends on in its trace's edits: the trace's own
-  ## reversal and own filter, nothing the plot decides (reverse-all, excluded).
-  let (has, f) = e.ownOf(trace)
-  if has: result.add $f.place & ":" & $f.spec & ";"
+  ## reversal, nothing else (no filter, nothing the plot decides).
   if e.has(teReversed, trace): result.add "r;"
 
 proc reversedOf(e: FileEdits; traces: openArray[int]): seq[int] =
@@ -3201,18 +3218,6 @@ func ownOfTraces(e: FileEdits; traces: openArray[int]): seq[FilterEntry] =
     if t < lo: lo = t
     if t > hi: hi = t
   for f in e.plotFiltersIn(lo .. hi):
-    if f.trace in traces: result.add f
-
-func pilotOwnOf(e: FileEdits; traces: openArray[int]): seq[FilterEntry] =
-  ## The own filters of `traces` as stored, ascending: a pilot taken by a rule
-  ## uses nothing the plot decides, so no exclusion is added.
-  if traces.len == 0: return
-  var lo = traces[0]
-  var hi = traces[0]
-  for t in traces:
-    if t < lo: lo = t
-    if t > hi: hi = t
-  for f in e.filtersIn(lo .. hi):
     if f.trace in traces: result.add f
 
 proc pilotOfRecord(s: Session; g: int; rule: PilotRule; e: FileEdits): tuple[trace: int;
@@ -7302,8 +7307,7 @@ proc storeReference(state: var AppState; cmd: Command) =
   discard state.jobs.submit(JobSpec(title: "Store a reference", lane: jlInteractive,
     reads: @[s.path]), storeWork(s.filePtr, s.path, s.size, local, cmd.refStore.fromMs,
     cmd.refStore.toMs, span.intervalUs, record, s.name, name, state.refsHome, local + 1,
-    edits.has(teReversed, local), pilotOwnOf(edits, [local]), cmd.refStore.phaseDeg,
-    state.inbox.poster))
+    edits.has(teReversed, local), cmd.refStore.phaseDeg, state.inbox.poster))
 
 proc generateReference(state: var AppState; cmd: Command) =
   let why = state.refsWritable
@@ -7365,13 +7369,12 @@ proc pilotPreviewAsk(state: var AppState; cmd: Command) =
     state.say(bad, "", "bad")
     return
   if i < 0:
-    state.say("Open a file: the pilot is taken from the record on show.", "", "none")
+    state.say(NoFilePilot, "", "none")
     return
   let s = state.sessions[i]
   let edits = state.editsAt(s.path)
   let (trace, record, problem) = s.pilotOfRecord(g, rule, edits)
   let flip = trace >= 0 and edits.has(teReversed, trace)
-  let own = if trace >= 0: pilotOwnOf(edits, [trace]) else: @[]
   let key = pilotKey(rule, s.path, record, trace, flip, "",
     if trace >= 0: pilotKeyOf(edits, trace) else: "")
   if problem.len > 0:
@@ -7384,7 +7387,7 @@ proc pilotPreviewAsk(state: var AppState; cmd: Command) =
   shown.problem = ""
   discard state.jobs.submit(JobSpec(title: "Read the pilot of the record", lane: jlInteractive,
     reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace, rule, flip, record,
-    s.base + trace, 0, key, rule.name, state.refsHome, own, state.inbox.poster))
+    s.base + trace, 0, key, rule.name, state.refsHome, state.inbox.poster))
 
 proc pilotReference(state: var AppState; cmd: Command) =
   let why = state.refsWritable
@@ -7470,7 +7473,7 @@ proc viewReference(state: var AppState; cmd: Command) =
     var w = RefView(id: id, refId: e.id, name: e.name, pilot: rule, pilotTrace: -1)
     let (si, g) = state.shownRecord
     if si < 0:
-      w.note = "Open a file: this pilot is taken from the record on show."
+      w.note = NoFilePilot
       state.refViews.add w
       return
     let s = state.sessions[si]
@@ -7488,7 +7491,7 @@ proc viewReference(state: var AppState; cmd: Command) =
     discard state.jobs.submit(JobSpec(title: "Read the reference " & e.name,
       lane: jlInteractive, reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace,
       rule, flip, record, s.base + trace, id, "", e.name, state.refsHome,
-      pilotOwnOf(edits, [trace]), state.inbox.poster))
+      state.inbox.poster))
     return
   if e.blocked or not singleFileName(e.file):
     state.ignore(cmd, "the reference \"" & e.name &
@@ -7554,6 +7557,8 @@ proc clearGoneChoice(state: var AppState; name: string) =
 proc takeReferences(state: var AppState; m: sink Msg) =
   ## A reference job's result.
   let n = m.refNews
+  if n.pilotTrace >= 0 and state.findTrace(n.pilotTrace) < 0:
+    return # a pilot of a file closed since: dropped
   if n.act == raPilotShown:
     if n.key == state.pilotShown.key:
       inc state.pilotShown.gen
