@@ -39,14 +39,14 @@ next part's.
 
 Capabilities are the rows below, each counted by the first part of its status ("in part": built, with a part still planned or to plan). Names are the names each library exports, enum values not counted, each at the most advanced status of the rows that name it.
 
-| Status | parseSEG 0.16.1: capabilities | names | processSEG 0.8.0: capabilities | names |
+| Status | parseSEG 0.17.0: capabilities | names | processSEG 0.9.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 53 (20 in part) | 176 | 34 (23 in part) | 152 |
 | `internal` | 15 | 43 | 4 | 38 |
 | `planned` | 32 | 220 | 45 | 399 |
 | `to plan` | 2 | 10 | 1 | 5 |
 | `not applicable` | 20 | 362 | 6 | 66 |
-| all | 122 | 811 | 90 | 660 |
+| all | 122 | 813 | 90 | 662 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
