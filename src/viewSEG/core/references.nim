@@ -102,6 +102,9 @@ type
     trace*: int      ## a survey-wide trace id
     fromMs*: float64 ## the window's start; 0 the trace's start
     toMs*: float64   ## its end; below 0: the trace's end
+    phaseDeg*: float64
+      ## 0 (left out), or 180: the stored window is turned over, after the trace's own
+      ## reversal and own filter are applied (nothing of the plot's is)
 
   GeneratedReference* = object
     ## What `generate reference` names. `dtMs` 0: the file on show.

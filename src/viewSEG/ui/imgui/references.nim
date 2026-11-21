@@ -65,6 +65,7 @@ type
     samples: int    ## the whole trace's sample count
     dtMs: float64   ## and its interval
     sweep: bool
+    phase: float64  ## 0 or 180 degrees
     clamped: string ## said when a typed "To" was brought back to the last sample
     message: string
 
@@ -143,13 +144,14 @@ proc openGenerate*(ui: var ReferencesUi; dtMs: float64) =
   ui.autoName = defaultGenerateName(g)
 
 proc openStore*(d: var StoreDialog; trace: int; name: string; fromMs, toMs: float64;
-    samples: int; dtMs: float64; sweep: bool) =
+    samples: int; dtMs: float64; sweep: bool; phaseDeg = 0.0) =
   ## Asks for the dialog on trace `trace` of `samples` samples `dtMs` apart: the window is
   ## `fromMs` .. `toMs`, the times of the first and last sample taken.
   d.ask = true
   d.trace = trace
   setBuf(d.name, name)
   (d.fromMs, d.toMs, d.samples, d.dtMs, d.sweep) = (fromMs, toMs, samples, dtMs, sweep)
+  d.phase = phaseDeg
   d.message = ""
   d.clamped = ""
 
@@ -491,9 +493,23 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
   d.wasOpen = open
   if not open: return
   marks.markWindow("store")
-  igTextWrapped("%s", "The stored samples are the file's raw samples: no plot filters, " &
-    "no trace filter, no gain, no polarity edit.")
+  var applied = "stored as recorded"
+  let ti = st.findTrace(d.trace)
+  if ti >= 0:
+    let s = st.sessions[ti]
+    let local = d.trace - s.base
+    let reversed = st.hasEditAt(s.path, local, teReversed)
+    let (hasOwn, own) = st.ownAt(s.path, local)
+    let ownRuns = hasOwn and own.spec.hasFilters
+    if reversed and ownRuns: applied = "stored with this trace's own reversal and filter"
+    elif reversed: applied = "stored with this trace's own reversal"
+    elif ownRuns: applied = "stored with this trace's own filter"
+    if st.hasEditAt(s.path, local, teKilled):
+      applied = "this trace is killed: it cannot be stored"
+  igTextWrapped("%s", ("The trace is " & applied & ". The plot's filters, reverse-all and gain " &
+    "are never applied.").cstring)
   marks.mark("store.raw")
+  marks.mark("store.applied:" & applied)
   igTextUnformatted("Name", nil)
   igSameLine(igGetFontSize() * 8, -1)
   igSetNextItemWidth(igGetFontSize() * 22)
@@ -501,6 +517,19 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
   discard igInputText("##store.name", cast[cstring](addr d.name[0]), csize_t(d.name.len),
     0, nil, nil)
   marks.mark("store.name")
+  igTextUnformatted("Phase", nil)
+  igSameLine(igGetFontSize() * 8, -1)
+  igSetNextItemWidth(igGetFontSize() * 14)
+  let phaseText = if d.phase == 180: "180 degrees (reversed)" else: "0 degrees"
+  if igBeginCombo("##store.phase", phaseText.cstring, 0):
+    for (deg, label) in [(0.0, "0 degrees"), (180.0, "180 degrees (reversed)")]:
+      if igSelectable_Bool(label.cstring, deg == d.phase, 0, ImVec2_c(x: 0, y: 0)):
+        d.phase = deg
+      marks.mark("store.phase " & $int(deg))
+    igEndCombo()
+  marks.mark("store.phase")
+  tip("A recorded trace takes 0 or 180 degrees; 180 turns the stored window over, after " &
+    "the trace's own reversal (a trace you reversed is turned twice: as recorded).")
   igTextUnformatted("From ms", nil)
   igSameLine(igGetFontSize() * 8, -1)
   discard igInputDouble("##store.from", addr d.fromMs, 0, 0, "%.9g", 0)
@@ -546,7 +575,7 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
       d.message = if name.len == 0: "a reference needs a name" else: problem
     else:
       result.add Command(kind: ckStoreReference, refStore: StoredReference(name: name,
-        trace: d.trace, fromMs: d.fromMs, toMs: d.toMs))
+        trace: d.trace, fromMs: d.fromMs, toMs: d.toMs, phaseDeg: d.phase))
       igCloseCurrentPopup()
   marks.mark("store.ok")
   igSameLine(0, -1)
@@ -871,10 +900,11 @@ proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
               ImVec2_c(x: 0, y: 0)):
             ui.fixed.openStore(w.pilotTrace, w.name & " (" & w.record & ")", w.pilotFrom,
               w.pilotTo, (if w.dtMs > 0: int(round(w.pilotTraceMs / w.dtMs)) else: 0), w.dtMs,
-              false)
+              false, w.pilot.phaseDeg)
           marks.mark("reference.view.fix")
-          tip("Saves this record's cut pilot as an ordinary stored waveform: the file's " &
-            "raw samples, as Store does (not turned over, not filtered; a phase of 180 is not applied)")
+          tip("Saves this record's cut pilot as an ordinary stored waveform, the " &
+            "pilot as the rule gives it for this record: the trace's own reversal and own filter, " &
+            "the cut, and the rule's phase. Nothing of the plot's settings is in it.")
         if w.pilotNote.len > 0:
           igTextWrapped("%s", ("Pilot: " & w.pilotNote).cstring)
           marks.mark("reference.view.pilotnote")

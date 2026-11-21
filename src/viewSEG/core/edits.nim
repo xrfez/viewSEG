@@ -359,8 +359,9 @@ func plotFiltersIn*(e: FileEdits; traces: Slice[int]): seq[FilterEntry] =
     if i < own.len and own[i].trace == t:
       entry = own[i]
       inc i
-    if j < ex.len and ex[j] == t: inc j
-    entry.filter.place = fpInstead
+    if j < ex.len and ex[j] == t:
+      inc j
+      entry.filter.place = fpInstead
     result.add entry
 
 func ownNeedsWhole*(e: FileEdits; traces: Slice[int]): bool =

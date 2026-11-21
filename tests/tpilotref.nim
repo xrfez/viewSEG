@@ -7,7 +7,11 @@
 ## first trace, "no sentence for a missing trace"; with the reversal not read
 ## for the pilot, "a reversed pilot is not turned over"; with the rule stored
 ## with a file, "a rule has a file"; with the note not naming the pilot's own
-## filter (the plot's filters off), "the pilot's own filter is not named".
+## filter (the plot's filters off), "the pilot's own filter is not named"; with the plot's
+## filters or reverse-all let reach the pilot, "the plot's filters reached the pilot" and
+## "reverse-all reached the pilot"; with the rule's phase left out, "phase 180 does not
+## negate the pilot"; with a store not applying the trace's own reversal or filter, "a
+## reversed trace is not stored negated".
 
 import std/[json, math, monotimes, os, sequtils, strutils, times]
 import parseSEG
@@ -88,6 +92,21 @@ proc shownPilot(st: var AppState; rule: PilotRule): PilotPreview =
   st.pilotPreview
 
 proc main*() =
+
+  block an_old_rule_reads_as_phase_0:
+    withFixtures fx2:
+      let folder = fx2.dir / "refs-old"
+      discard storePilotRule(folder, PilotRule(name: "old", aux: true, trace: 1, spanMs: 100))
+      let old = loadIndex(folder)
+      doAssert old.entries.len == 1 and pilotRuleOf(old.entries[0]).phaseDeg == 0
+      discard storePilotRule(folder, PilotRule(name: "new", aux: true, trace: 1, spanMs: 100,
+        phaseDeg: 180))
+      let back = loadIndex(folder)
+      var got = -1.0
+      for e in back.entries:
+        if e.name == "new": got = pilotRuleOf(e).phaseDeg
+      doAssert got == 180
+
 
   block the_rule_is_kept_and_has_no_samples:
     withFixtures fx:
@@ -212,7 +231,7 @@ proc main*() =
       doAssert tr9.samples.len == 0 and "has 4 traces, not a trace 9." in tr9.problem,
         tr9.problem
 
-    block reversal_follows_the_plot:
+    block reversal_is_the_traces_own:
       let rule = PilotRule(aux: true, trace: 1, startMs: 0, spanMs: 1000)
       let plain = st.shownPilot(rule)
       st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[0],
@@ -221,16 +240,35 @@ proc main*() =
       doAssert own.samples.len == plain.samples.len
       for i in 0 ..< own.samples.len:
         doAssert own.samples[i] == -plain.samples[i], "a reversed pilot is not turned over"
+      # nothing the plot decides reaches a pilot taken by a rule
       st.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: true)
-      let both = st.shownPilot(rule)
-      doAssert both.samples == plain.samples, "own and reverse-all together are not a " &
-        "single reversal"
+      doAssert st.shownPilot(rule).samples == own.samples, "reverse-all reached the pilot"
       st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[0],
         on: false)
-      let all = st.shownPilot(rule)
-      doAssert all.samples[10] == -plain.samples[10], "reverse-all does not turn it over"
+      doAssert st.shownPilot(rule).samples == plain.samples, "reverse-all reached the pilot"
       st.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: false)
       doAssert st.shownPilot(rule).samples == plain.samples
+
+    block the_rules_phase_turns_the_cut_over:
+      let rule = PilotRule(aux: true, trace: 1, startMs: 100, spanMs: 50)
+      let plain = st.shownPilot(rule)
+      let turned = st.shownPilot(PilotRule(aux: true, trace: 1, startMs: 100, spanMs: 50,
+        phaseDeg: 180))
+      doAssert turned.samples.len == plain.samples.len and plain.samples.len == 25
+      for i in 0 ..< turned.samples.len:
+        doAssert turned.samples[i] == -plain.samples[i], "phase 180 does not negate the pilot"
+      doAssert "phase 180" in turned.note, turned.note
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[0],
+        on: true)
+      let twice = st.shownPilot(PilotRule(aux: true, trace: 1, startMs: 100, spanMs: 50,
+        phaseDeg: 180))
+      doAssert twice.samples == plain.samples, "a trace reversed and phase 180 are not " &
+        "turned twice"
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[0],
+        on: false)
+      doAssert pilotProblem(PilotRule(aux: true, trace: 1, spanMs: 5, phaseDeg: 90)).len > 0
+      doAssert defaultPilotName(PilotRule(aux: true, trace: 1, spanMs: 5, phaseDeg: 180)).endsWith(
+        "phase 180")
 
     block a_correlation_uses_each_records_pilot:
       st.apply Command(kind: ckPilotReference, refPilot: PilotRule(name: "record pilot",
@@ -311,10 +349,11 @@ proc main*() =
         st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
           processing: Processing(band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16),
           filterPlace: fpAfter)), "a filter of the pilot's own did not ask again"
-      # against a reference nothing is filtered: the pilot's own filter changes nothing
-      doAssert abs(st.plots[w].result.peakValue(0) - plain) < 1e-6,
-        "the pilot's own filter reached a correlation"
-      doAssert RawAgainstReference in st.plots[w].result.note, st.plots[w].result.note
+      # the pilot's own filter is the trace's own setting: the pilot goes through it
+      doAssert abs(st.plots[w].result.peakValue(0) - plain) > 1e-6,
+        "the pilot's own filter did not reach a correlation"
+      doAssert "the pilot trace's own filter is applied" in st.plots[w].result.note,
+        st.plots[w].result.note
       st.apply Command(kind: ckUndoEdit, panel: MainPanel)
       doAssert st.settle(abs(st.plots[w].result.peakValue(0) - plain) < 1e-6 and
         not st.plots[w].waiting)
@@ -325,8 +364,13 @@ proc main*() =
       let spec = Processing(band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16)
       st.apply Command(kind: ckProcessing, panel: MainPanel, processing: spec)
       let off = st.shownPilot(rule)
-      doAssert off.samples == plain.samples and "not filtered" in off.note,
-        "an auxiliary trace passed by the plot's filters: " & off.note
+      doAssert off.samples == plain.samples and off.note.len == 0,
+        "the plot's filters reached the pilot: " & off.note
+      st.apply Command(kind: ckProcessing, panel: MainPanel,
+        processing: Processing(band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16, aux: true))
+      doAssert st.shownPilot(rule).samples == plain.samples,
+        "Filter the Aux traces too reached the pilot"
+      st.apply Command(kind: ckProcessing, panel: MainPanel, processing: spec)
       st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
         processing: spec, filterPlace: fpAfter)
       let own = st.shownPilot(rule)
@@ -393,6 +437,92 @@ proc main*() =
       doAssert problems.len == 0, $problems
       doAssert c.refPilot == PilotRule(name: "agent rule", aux: true, trace: 3, startMs: 5,
         spanMs: 40)
+    block a_stored_trace_is_the_trace_as_set_on_it:
+      # Store (and a pilot's fixed copy): the trace's own reversal and own filter, then
+      # the cut and a phase; never the plot's filters, reverse-all or gain
+      st.apply Command(kind: ckGather, panel: MainPanel, gather: 0)
+      doAssert st.settle(st.panel(MainPanel).layers[0].source.gather == 0 and
+        st.panel(MainPanel).laidOut)
+      var n = st.references.entries.len
+      proc stored(st: var AppState; n: var int; trace: int; phase = 0.0): seq[float32] =
+        let name = "stored " & $n
+        st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: name,
+          trace: trace, fromMs: 0, toMs: -1, phaseDeg: phase))
+        doAssert st.settle(st.references.entries.len == n + 1), "not stored: " &
+          st.log[st.log.len - 1].text
+        inc n
+        for e in st.references.entries:
+          if e.name == name:
+            var f = openSeismic(st.referencesHome / e.file, keys = true)
+            let rows = f.readTraces(0 .. 0)
+            result = newSeq[float32](rows.shape[1])
+            for i in 0 ..< result.len: result[i] = rows[0, i]
+            f.close()
+        doAssert result.len > 0
+      let raw = st.stored(n, base)
+      for i in 0 ..< Samples: doAssert raw[i] == pilotSample(1, i), "stored is not the file's"
+      st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Processing(aux: true,
+        band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16))
+      st.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: true)
+      doAssert st.stored(n, base) == raw, "the plot's filters or reverse-all reached what is stored"
+      st.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: false)
+      st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Processing())
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[base], on: true)
+      let flipped = st.stored(n, base)
+      for i in 0 ..< Samples:
+        doAssert flipped[i] == -raw[i], "a reversed trace is not stored negated"
+      let rule = PilotRule(aux: true, trace: 1, startMs: 0, spanMs: 1000, phaseDeg: 180)
+      let fixed = st.stored(n, base, 180)
+      doAssert fixed == raw, "a reversed trace with phase 180 is not stored as recorded"
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[base], on: false)
+      let spec = Processing(band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16)
+      st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
+        processing: spec, filterPlace: fpAfter)
+      let filteredOwn = st.stored(n, base)
+      doAssert filteredOwn != raw and filteredOwn.len == raw.len,
+        "a trace's own filter is not in what is stored"
+      let fixedPhase = st.stored(n, base, 180)
+      doAssert fixedPhase == filteredOwn.mapIt(-it)
+      doAssert st.shownPilot(rule).samples == fixedPhase,
+        "the pilot's fixed copy is not the rule's pilot, sample for sample"
+      doAssert st.shownPilot(PilotRule(aux: true, trace: 1, startMs: 0, spanMs: 1000)).samples ==
+        filteredOwn
+      st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+      # a killed trace is refused
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base], on: true)
+      let count = st.references.entries.len
+      st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "no",
+        trace: base, fromMs: 0, toMs: -1))
+      doAssert "killed" in st.log[st.log.len - 1].text, st.log[st.log.len - 1].text
+      doAssert st.references.entries.len == count
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base], on: false)
+
+    block a_correlation_with_phase_180_flips_sign:
+      st.apply Command(kind: ckPilotReference, refPilot: PilotRule(name: "turned pilot",
+        aux: true, trace: 1, startMs: 0, spanMs: 1000, phaseDeg: 180))
+      doAssert st.settle(st.references.entries.anyIt(it.name == "turned pilot"))
+      var turned = ""
+      var plainId = ""
+      for e in st.references.entries:
+        if e.name == "turned pilot": turned = e.id
+        if e.name == "record pilot": plainId = e.id
+      doAssert st.references.entries.anyIt(it.id == turned and it.origin.pilotPhaseDeg == 180 and
+        sourceText(it).endsWith("phase 180"))
+      st.apply Command(kind: ckSelectReference, refId: plainId)
+      st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
+        plotTraces: @[base + 1, base + 2, base + 3])
+      let w1 = st.plots.high
+      doAssert st.settle(st.plots[w1].result.gen > 0 and not st.plots[w1].waiting)
+      let plain = st.plots[w1].result.peakValue(0)
+      st.apply Command(kind: ckSelectReference, refId: turned)
+      st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
+        plotTraces: @[base + 1, base + 2, base + 3])
+      let w2 = st.plots.high
+      doAssert st.settle(st.plots[w2].result.gen > 0 and not st.plots[w2].waiting)
+      doAssert abs(st.plots[w2].result.peakValue(0) + plain) < 1e-6 and plain > 0.5,
+        "phase 180 did not flip the correlation: " & $plain & " and " &
+        $st.plots[w2].result.peakValue(0)
+
     discard st.shutdown()
 
   block a_cut_pilot_keeps_its_place_in_time:

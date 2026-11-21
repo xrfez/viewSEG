@@ -72,9 +72,7 @@ proc main*() =
     # filters on: a store that used the plot's samples would not match the file
     st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Processing(aux: true,
       dc: dcTrend, band: pbBandPass, f1: 8, f2: 12, f3: 40, f4: 60))
-    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[id], on: true,
-      processing: Processing(band: pbBandPass, f1: 10, f2: 14, f3: 50, f4: 70),
-      filterPlace: fpInstead)
+    st.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: true)
     let dt = st.sessions[0].filePtr.indexedSpan(pilot).intervalUs
     doAssert dt > 0, "the pilot has no sample interval"
     st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "the pilot",

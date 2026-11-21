@@ -34,10 +34,13 @@ proc listWork*(folder: string; main: bool; to: Poster): JobWork =
 
 proc storeWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
     fromMs, toMs, intervalUs, record: float64; fileName, name, folder: string;
-    traceShown: int; to: Poster): JobWork =
-  ## Reads trace `trace` of the open file raw (no filter, gain or polarity),
-  ## cuts it to `fromMs` .. `toMs` (`toMs` below 0: the trace's end) and
-  ## stores it in the archive `folder`.
+    traceShown: int; flip: bool; own: seq[FilterEntry]; phaseDeg: float64;
+    to: Poster): JobWork =
+  ## Reads trace `trace` of the open file, turns it over when `flip` (the trace's own
+  ## reversal) and puts it through its own filter `own`: nothing of the plot's (no plot
+  ## filter, reverse-all or gain). Cuts it to `fromMs` .. `toMs` (`toMs` below 0: the
+  ## trace's end), turns the cut over when `phaseDeg` is 180, and stores it in the
+  ## archive `folder`.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading the trace"
     try:
@@ -53,7 +56,14 @@ proc storeWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
         raise newException(IOError, "the trace could not be read")
       if not (us > 0 and us < Inf):
         raise newException(ValueError, "the trace has no sample interval")
-      let cut = cutSamples(samples, us, fromMs, toMs)
+      if flip or own.len > 0:
+        var rows = @[samples]
+        var passed = 0
+        {.cast(gcsafe).}:
+          discard filtered(rows, file, @[trace], Processing(), own,
+            (if flip: @[trace] else: @[]), us / 1000, passed)
+        samples = rows[0]
+      let cut = turnedOver(cutSamples(samples, us, fromMs, toMs), PilotRule(phaseDeg: phaseDeg))
       if cut.len == 0:
         raise newException(ValueError, "the window holds no sample")
       let dt = us / 1000
@@ -200,7 +210,6 @@ proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
           discard filtered(rows, file, @[trace], Processing(), own,
             (if flip: @[trace] else: @[]), dt, passed)
         samples = rows[0]
-        news.note = "the plot's settings are not applied"
         let ownAt = entryAt(own, trace)
         if ownAt >= 0 and own[ownAt].filter.changesSamples:
           let words = "its own filter: " & ownBrief(own[ownAt].filter)

@@ -498,6 +498,8 @@ type
     of ckStoreReference:
       refStore*: StoredReference
         ## ckStoreReference: the trace (a survey-wide id), the window in ms
+        ## (the trace as the file has it, with its own reversal and own filter and
+        ## nothing the plot decides; `phaseDeg` 180 turns it over after the cut)
         ## (`toMs` below 0: the trace's end) and the name
     of ckGenerateReference:
       refGenerate*: GeneratedReference
@@ -7283,6 +7285,16 @@ proc storeReference(state: var AppState; cmd: Command) =
     return
   let s = state.sessions[i]
   let local = cmd.refStore.trace - s.base
+  let edits = state.editsAt(s.path)
+  if cmd.refStore.phaseDeg != 0 and cmd.refStore.phaseDeg != 180:
+    state.ignore(cmd, "the phase of a recorded trace is 0 or 180 degrees")
+    return
+  if edits.has(teKilled, local):
+    state.ignore(cmd, "the trace is killed")
+    return
+  if local in 0 ..< s.filePtr[].len and s.filePtr[].traceKeys(local).status == tsDead:
+    state.ignore(cmd, "the trace is marked dead")
+    return
   var record = NaN
   let g = s.gatherOf(local)
   if g >= 0 and g < s.records.len: record = s.records[g].record
@@ -7290,6 +7302,7 @@ proc storeReference(state: var AppState; cmd: Command) =
   discard state.jobs.submit(JobSpec(title: "Store a reference", lane: jlInteractive,
     reads: @[s.path]), storeWork(s.filePtr, s.path, s.size, local, cmd.refStore.fromMs,
     cmd.refStore.toMs, span.intervalUs, record, s.name, name, state.refsHome, local + 1,
+    edits.has(teReversed, local), pilotOwnOf(edits, [local]), cmd.refStore.phaseDeg,
     state.inbox.poster))
 
 proc generateReference(state: var AppState; cmd: Command) =
@@ -7320,7 +7333,7 @@ proc pilotKey(rule: PilotRule; file, record: string; trace: int; flip: bool;
   ## What a pilot of the record depends on, so a late answer is dropped and a
   ## change of its reversal, filters or own filter asks again.
   file & "|" & record & "|" & $trace & "|" & $flip & "|" & $rule.aux & "|" & $rule.trace &
-    "|" & $rule.startMs & "|" & $rule.spanMs & "|" & filters & "|" & own
+    "|" & $rule.startMs & "|" & $rule.spanMs & "|" & $rule.phaseDeg & "|" & filters & "|" & own
 
 proc shownRecord(state: AppState): tuple[i, g: int] =
   ## The file and the gather (record) the Seismic window shows; -1 for none.
