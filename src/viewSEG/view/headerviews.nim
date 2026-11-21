@@ -190,6 +190,21 @@ func keyText(k: TraceKeys; name: string): string =
   of "component": $componentOf(k)
   else: ""
 
+func surveyLine(d: TraceDetail; status: SurveyStatus; label: string): string =
+  ## The one quiet line for a trace the survey changed nothing in.
+  func at(line, point: string): string = (if line.len > 0: line else: "?") & " / " &
+    (if point.len > 0: point else: "?")
+  result = JoinedTitle & label & ": "
+  case status
+  of ssAux: result.add "an auxiliary trace is left alone"
+  of ssAgrees, ssNotIn:
+    let (s, r) = (at(keyText(d.keys, "srcLine"), keyText(d.keys, "srcPoint")),
+      at(keyText(d.keys, "rcvLine"), keyText(d.keys, "rcvPoint")))
+    result.add "source " & s & " and receiver " & r
+    result.add(if status == ssAgrees: " are in the project's survey; the headers already agree"
+               else: " are not both in the project's survey")
+  of ssUnmatched: result = ""
+
 func traceStandard(traces: openArray[TraceDetail]): SeismicKind =
   ## The standard of the traces' header blocks (the first listed).
   result = skSegy
@@ -200,12 +215,15 @@ func traceStandard(traces: openArray[TraceDetail]): SeismicKind =
       of hbSeg2Trace: return skSeg2
       else: return skSegy
 
-func traceTable*(traces: openArray[TraceDetail]): FieldTable =
+func traceTable*(traces: openArray[TraceDetail];
+    status: openArray[SurveyStatus] = []): FieldTable =
   ## The Trace tab's Header table: a value column per trace whose header
   ## fields were read, the fields that differ between them marked; first,
   ## when a geometry join gave some of their keys, a row per key it gave
   ## (in the groups it gave to any of them, `JoinedKeys`), each value from
-  ## the keys, marked `joined` where the join gave it to that trace.
+  ## the keys, marked `joined` where the join gave it to that trace. When
+  ## it gave none, a line per trace the survey matched (`status`) says that
+  ## the survey was used and agrees, or has not the trace (`surveyLine`).
   let withFile = traces.manyFiles
   var columns: seq[seq[FieldRow]]
   var labels: seq[string]
@@ -218,7 +236,15 @@ func traceTable*(traces: openArray[TraceDetail]): FieldTable =
   result = fieldTable(columns, labels, traceStandard(traces))
   var groups: set[JoinGroup]
   for k in shown: groups.incl traces[k].joined
-  if groups == {}: return
+  if groups == {}:
+    var lines: seq[TableRow]
+    for k in shown:
+      if k < status.len and status[k] != ssUnmatched:
+        let label = if shown.len > 1: ", " & traceLabel(traces[k], withFile) else: ""
+        lines.add TableRow(title: surveyLine(traces[k], status[k], label))
+    lines.add result.rows
+    result.rows = move lines
+    return
   var rows = @[TableRow(title: JoinedTitle)]
   for (group, name, words) in JoinedKeys:
     if group in groups:

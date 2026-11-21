@@ -1842,6 +1842,16 @@ func joins*(state: AppState): lent seq[Joined] {.inline.} =
   ## The open files joined with survey files, and how.
   state.joins
 
+type
+  SurveyStatus* = enum
+    ## What the project's survey did for a trace, when its file is matched.
+    ssUnmatched = "none"
+      ## no match covers it, or the survey changed some of its keys (the
+      ## "From the survey" rows show those)
+    ssAgrees = "agrees" ## its stations are in the survey and its headers already agree
+    ssAux = "auxiliary" ## an auxiliary trace: the survey leaves it alone
+    ssNotIn = "notInSurvey" ## its source or receiver is not in the survey
+
 func joinedOf*(state: AppState; session: SessionId): int =
   ## The index in `joins` of open file `session`'s join; -1 when it is not
   ## joined.
@@ -2039,6 +2049,23 @@ func findTrace*(state: AppState; trace: int): int =
   for i, s in state.sessions:
     if trace in s: return i
   -1
+
+func surveyStatus*(j: Joined; d: TraceDetail): SurveyStatus =
+  ## What the join `j` of a trace's file did for `d`: `ssUnmatched` when it
+  ## changed some of its keys (the survey rows show them) or when no match
+  ## covers it.
+  if j.plan.traces == 0 or d.joined != {}: return ssUnmatched
+  if not d.keys.isSeismic: return ssAux
+  if j.plan.unmatched.binarySearch(d.trace) >= 0: ssNotIn else: ssAgrees
+
+proc surveyStatuses*(st: AppState; traces: openArray[TraceDetail]): seq[SurveyStatus] =
+  ## `surveyStatus` of each trace, by the join of its file.
+  result = newSeq[SurveyStatus](traces.len)
+  for k, d in traces:
+    let i = st.findTrace(d.id)
+    if i >= 0 and d.problem.len == 0:
+      let j = st.joinedOf(st.sessions[i].id)
+      if j >= 0: result[k] = surveyStatus(st.joins[j], d)
 
 func traceEdits*(state: AppState; trace: int): set[TraceEdit] =
   ## The edits of survey-wide trace `trace` now; none for a trace no open

@@ -756,11 +756,12 @@ proc headersJson(state: AppState; limit: int): JsonNode =
     "followPointer": view.followPointer, "asDisplayed": view.asDisplayed,
     "onScreen": toJson(ins.parts)}
   var answered = newJArray()
+  let statuses = state.surveyStatuses(ins.answer.traces)
   for i in 0 ..< min(ins.answer.traces.len, limit):
     let d = ins.answer.traces[i]
     answered.add %*{"trace": d.id, "file": d.file, "index": d.trace, "fields": d.rows.len,
       "samples": d.samples.len, "samplesLeftOut": d.cut, "asDisplayed": d.displayed,
-      "joined": toJson(d.joined), "problem": d.problem, "vendor": vendorJson(d.vendor)}
+      "joined": toJson(d.joined), "survey": $statuses[i], "problem": d.problem, "vendor": vendorJson(d.vendor)}
   result["trace"] = %*{"chosenBy": $ins.chosen.by, "traces": clipped(ins.chosen.traces, limit),
     "total": ins.chosen.total, "reading": ins.waiting, "read": answered}
   result["notAnswering"] = %state.headersWait.words # "" while its reader answers

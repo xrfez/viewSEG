@@ -914,9 +914,12 @@ proc drawTraceHeader(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; ma
         drawVendorBlocks(v.blocks, t, fonts, marks)
         igDummy(ImVec2_c(x: 0, y: igGetStyle().ItemSpacing.y))
   const id = "headers.trace"
-  let key = $answer.gen
+  var matched = 0
+  for j in st.joins: matched += j.plan.matched + j.plan.unmatched.len
+  let key = $answer.gen & ":" & $st.joins.len & ":" & $matched
   if id notin ui.tables or ui.tables[id].key != key:
-    ui.tables[id] = CachedTable(key: key, table: traceTable(answer.traces))
+    ui.tables[id] = CachedTable(key: key,
+      table: traceTable(answer.traces, st.surveyStatuses(answer.traces)))
   ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output, ui.tableHeight(id))
   # the blocks of the trace whose value was picked (the columns are the
   # traces whose fields were read, in order)
