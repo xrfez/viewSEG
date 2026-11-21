@@ -491,7 +491,8 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     let average = w.result.qc.stats.avgForce
     let fromSweep = average / ((if p.targetPct > 0: p.targetPct else: 100.0) / 100)
     qcLine.follow(buttonWidth("Set from this sweep"))
-    igBeginDisabled(not (fromSweep > 0 and fromSweep < Inf))
+    let fromSweepOk = MassKgRange.allows(fromSweep)
+    igBeginDisabled(not fromSweepOk)
     if igSmallButton("Set from this sweep##hundred"):
       if weighted: p.forceHundredWeighted = fromSweep
       else: p.forceHundredPct = fromSweep
@@ -500,7 +501,10 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     marks.mark(name & ".set hundred")
     tip("Use on a sweep where the vibrator held its target force: 100 % force becomes this " &
       "sweep's average force divided by the target (" &
-      (if p.targetPct > 0: sensible(p.targetPct) else: "100") & " %). Kept like a typed value")
+      (if p.targetPct > 0: sensible(p.targetPct) else: "100") & " %). Kept like a typed value" &
+      (if fromSweepOk: "" else: ". Not available here: this sweep's value is " &
+        (if fromSweep.isNaN: "not a number" else: sensible(fromSweep)) &
+        ", which the setting does not take (" & MassKgRange.words & ")"))
     qcLine.follow(textBoxWidth("Target force (%)", box))
     label("Target force (%)")
     if limitBox("##targetpct", p.targetPct, box, typed):
@@ -541,8 +545,8 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
       "The largest average of the windows' mean in-band distortion, %")
     qcLimit("Peak distortion ≤", "##qcpeakdist", peakDistortionPct, "%",
       "The largest window's mean in-band distortion, %")
-    qcLimit("Average force ≥", "##qcavgforce", avgForcePct, "% of 100 %",
-      "The smallest average of the windows' mean force, % of the 100 % force")
+    qcLimit("Average force ≥", "##qcavgforce", avgForcePct, "% of target",
+      "The smallest average of the windows' mean force, % of the target force")
     qcLimit("Peak force ≤", "##qcpeakforce", peakForcePct, "% of 100 %",
       "The largest peak of a window, % of the 100 % force")
     igSeparator()

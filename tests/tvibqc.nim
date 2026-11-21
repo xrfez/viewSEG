@@ -533,6 +533,78 @@ proc topFromTheReference() =
       doAssert again.band.hz == r.band.hz, tag & ": not the same twice"
       doAssert judgeOf(spec, topHz = 150).band.hz == 150, tag & ": a typed top is not used"
 
+proc noisyBandOf(spec: SynthSweep; noise: float64; spikeAtMs = -1.0): float64 =
+  ## The band the reference's own track gives with no top typed, for a reference with
+  ## pseudo-random noise of standard deviation `noise` (of the sweep's amplitude 1) all over
+  ## the record, and a spike of 0.1 at `spikeAtMs` (when not negative).
+  var x = spec.referenceOf.sweepRow
+  var seed = 12345'u32
+  func next(s: var uint32): float64 =
+    s = s * 1664525'u32 + 1013904223'u32
+    float64(s shr 8) / 16777216.0
+  for j in 0 ..< x.len:
+    var g = -6.0
+    for k in 0 ..< 12: g += seed.next
+    x[j] += float32(noise * g)
+  if spikeAtMs >= 0: x[int(spikeAtMs / spec.dtMs)] += 0.1
+  let r = vibratorOf(@[x, x], @["R", "GF"], [vsReference: 0, vsGroundForce: 1, vsMass: -1,
+    vsBaseplate: -1], spec.dtMs, AnalysisParams(forceHundredPct: 1.0), -1, NaN)
+  doAssert r.problem == "", r.problem
+  r.band.hz
+
+proc topInNoise() =
+  block noise_or_a_spike_outside_the_sweep_does_not_stretch_its_end_taper:
+    # Seen to fail: with the extrapolation to the last sample above -40 dB anywhere, a
+    # 120 Hz sweep with listen-time noise read 130 Hz, a 220 Hz one 277 Hz, a spike 1.5 s
+    # after the sweep 249 Hz, a down sweep with noise before it 130 Hz.
+    var up = SynthSweep(f0: 6, f1: 120, seconds: 12, dtMs: 2, taperS: 0.3, tailS: 3)
+    doAssert near(noisyBandOf(up, 0.007), 120, 0.5), "120 Hz: " & $noisyBandOf(up, 0.007)
+    var high = SynthSweep(f0: 6, f1: 220, seconds: 12, dtMs: 1, taperS: 0.3, tailS: 3)
+    doAssert near(noisyBandOf(high, 0.007), 220, 0.5), "220 Hz: " & $noisyBandOf(high, 0.007)
+    doAssert near(noisyBandOf(high, 0.0, 13500), 220, 0.5), "spike: " & $noisyBandOf(high, 0.0, 13500)
+    var down = SynthSweep(f0: 120, f1: 6, seconds: 12, dtMs: 2, taperS: 0.3, delayMs: 1000,
+      tailS: 0)
+    doAssert near(noisyBandOf(down, 0.007), 120, 0.5), "down: " & $noisyBandOf(down, 0.007)
+
+    # a clean sweep's end is the reference's own: the top reads as designed (Seen to fail: with
+    # the end taken 5 to 8 ms short, these read 149, 149, 199, 99, 99 and 79.5)
+    for (f0, f1, seconds, expo, want) in [(5.0, 150.0, 8.0, true, 150.0),
+        (150.0, 5.0, 8.0, true, 150.0), (3.0, 200.0, 6.0, true, 200.0),
+        (2.0, 100.0, 4.0, true, 100.0), (6.0, 100.0, 0.5, false, 100.0),
+        (8.0, 79.6, 8.0, false, 79.6)]:
+      var spec = SynthSweep(f0: f0, f1: f1, seconds: seconds, dtMs: 1, taperS: seconds / 10,
+        expo: expo)
+      doAssert near(noisyBandOf(spec, 0.0), want, 0.05), $f0 & "-" & $f1 & " Hz: " &
+        $noisyBandOf(spec, 0.0)
+
+proc failingStretchStaysInTheJudgedPart() =
+  block the_failing_window_is_not_painted_over_the_taper:
+    # Seen to fail: with the whole last window painted, the error-colour curve had points past
+    # the judged part's end (7 900 ms) in the taper.
+    var spec = good()
+    (spec.burstAtS, spec.burstLenS, spec.burstPhaseDeg) = (7.0, 0.8, 30.0)
+    let r = judgeOf(spec)
+    var painted = 0
+    for plot in r.plots:
+      for c in plot.curves:
+        if c.style == csFail:
+          for m in 0 ..< c.ys.len:
+            if not c.ys[m].isNaN:
+              inc painted
+              doAssert plot.xs[m] >= 100 and plot.xs[m] <= 7900, plot.title & ": painted at " &
+                $plot.xs[m]
+    doAssert painted > 0, "no failing stretch drawn"
+
+proc bandWarningOnCleanSweeps() =
+  block clean_sweeps_raise_no_false_top_frequency_warning:
+    for (f0, f1, dt) in [(8.0, 110.0, 2.0), (8.0, 110.0, 4.0), (110.0, 8.0, 2.0)]:
+      for taper in [0.1, 0.5]:
+        var spec = good()
+        (spec.f0, spec.f1, spec.dtMs, spec.taperS) = (f0, f1, dt, taper)
+        let r = judgeOf(spec, topHz = max(f0, f1))
+        doAssert r.band.warning.len == 0, $f0 & "-" & $f1 & " Hz at " & $dt & " ms, taper " &
+          $taper & ": " & r.band.warning
+
 proc fractionalShift() =
   block the_stored_reference_is_placed_to_a_fraction_of_a_sample:
     for (delay, dt) in [(100.3, 1.0), (100.5, 1.0), (145.2, 0.5)]:
@@ -623,6 +695,9 @@ proc main*() =
   bandWarnings()
   downSweepBand()
   topFromTheReference()
+  topInNoise()
+  failingStretchStaysInTheJudgedPart()
+  bandWarningOnCleanSweeps()
   fractionalShift()
   verdictWords()
   zeroPhaseIsClearOfTheBorder()

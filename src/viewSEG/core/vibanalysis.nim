@@ -135,8 +135,36 @@ func fittedTopHz*(track: SweepTrack; e: SweepExtent): float64 =
   # goes on a little past that point (this fraction of its length, of the rest of it)
   let share = 2 / PI * arcsin(sqrt(pow(10.0, -abs(TrackParams().minReferenceDb) / 20)))
   let more = share / (1 - share)
-  let at = (if rising: e.endMs + more * max(0.0, e.endMs - e.flatEndMs)
-    else: e.startMs - more * max(0.0, e.flatStartMs - e.startMs)) / 1000
+  func predict(t: float64): float64 =
+    if e1 <= e2: a1 + b1 * t else: exp(a2 + b2 * t)
+  # the sweep's end: the stretch of the track beyond the flat part that keeps to the line (a
+  # window's frequency within 1 % of it), a window longer at most; noise or a transient after
+  # the sweep (or before a sweep that falls) lies beyond it and stretches no taper
+  let (p0, flatStart, flatEnd) = (TrackParams(), e.flatStartMs, e.flatEndMs)
+  var edge = if rising: flatEnd else: flatStart
+  var lost = false # the line is lost (not just the end of the measured points)
+  for k in 0 ..< track.len:
+    let m = if rising: k else: track.len - 1 - k
+    let (t, f) = (track.timeMs[m], track.referenceHz[m])
+    if (rising and t <= flatEnd) or (not rising and t >= flatStart): continue
+    if (rising and t > e.endMs) or (not rising and t < e.startMs): break
+    if f.isNaN: break
+    if abs(f - predict(t / 1000)) > 0.01 * f:
+      lost = true
+      break
+    edge = t
+  let endHz = max(1.0, if rising: fs[^1] else: fs[0])
+  let slack = 500.0 * float64(windowPeriods(p0, endHz)) / endHz
+  # the measured points end a half window short of the sweep's own end: the sweep's end is
+  # then known (`endMs`); where they stop for another reason the sweep ends about there
+  # (a half window on where the line was lost: its taper is down in the noise)
+  let toEnd = abs((if rising: e.endMs - edge else: edge - e.startMs) - slack)
+  let clean = toEnd <= 0.25 * slack
+  let reach = if lost: slack else: 0.0
+  let endMs = if clean: e.endMs else: min(e.endMs, edge + reach)
+  let startMs = if clean: e.startMs else: max(e.startMs, edge - reach)
+  let at = (if rising: endMs + more * max(0.0, endMs - flatEnd)
+    else: startMs - more * max(0.0, flatStart - startMs)) / 1000
   let est = if e1 <= e2: a1 + b1 * at else: exp(a2 + b2 * at)
   if not (est > 0 and est < Inf): return
   let whole = round(est)
@@ -332,7 +360,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     for i in 0 ..< min(stats.startMs.len, values.len):
       if values[i] * scale > limit:
         for m in 0 ..< min(xs.len, ys.len):
-          if xs[m] >= stats.startMs[i] and xs[m] < stats.startMs[i] + stats.windowMs:
+          if xs[m] >= stats.startMs[i] and xs[m] < stats.startMs[i] + stats.windowMs and
+              (span.a.isNaN or xs[m] >= span.a) and (span.b.isNaN or xs[m] <= span.b):
             result.ys[m] = ys[m]
   let hundredRaw = if hundredFor > 0 and hundredFor < Inf: hundredFor
                    else: NaN
@@ -482,7 +511,11 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     if first > 0:
       let atStart = hz[first - 1] > hz[last]
       let m = if atStart: first else: last
-      rate = abs(hz[m] - hz[m - 1]) / ((xs[m] - xs[m - 1]) / 1000)
+      # the rate over the last ten points (one difference of two is the noise of a window)
+      var o = if atStart: min(m + 10, last) else: max(m - 10, first - 1)
+      if hz[o].isNaN: o = m - 1
+      if o == m: o = m - 1
+      rate = abs(hz[m] - hz[o]) / (abs(xs[m] - xs[o]) / 1000)
       if atStart:
         if not (e0.startMs.isNaN or e0.flatStartMs.isNaN):
           taperS = max(0.0, e0.flatStartMs - e0.startMs) / 1000
