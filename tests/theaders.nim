@@ -107,6 +107,30 @@ proc main*() =
       doAssert "Sample interval\t2 ms\n" in summaryText(lines)
       st.shutdown()
 
+  block recordLengthDiffers:
+    # The header's record length and channel set ends are shown as the header
+    # has them; a note is added when they are not N x dt. Seen to fail first:
+    # the note removed (the row was the bare header value).
+    withFixtures fx:
+      var st = initAppState()
+      let short = st.shown(fx.twoSetSegd())
+      let a = summaryLines(short, 0)
+      doAssert a.valueOf("Record length (header)") == "998 ms (header; the traces hold " &
+        $SegdSamples & " samples = 1000 ms)", a.valueOf("Record length (header)")
+      doAssert a.valueOf("Set 3").endsWith("0 to 998 ms (header; " & $SegdSamples &
+        " samples at 2 ms end at 1000 ms)"), a.valueOf("Set 3")
+      st.shutdown()
+
+  block recordLengthAgrees:
+    withFixtures fx:
+      var st = initAppState()
+      let exact = st.shown(fx.exactLengthSegd())
+      let b = summaryLines(exact, 0)
+      doAssert b.valueOf("Record length (header)") == "1000 ms", b.valueOf("Record length (header)")
+      doAssert b.valueOf("Set 3").endsWith("0 to 1000 ms"), b.valueOf("Set 3")
+      doAssert "header;" notin b.valueOf("Set 1")
+      st.shutdown()
+
   block summaryOfARecordShortOfTraces:
     withFixtures fx:
       var st = initAppState()
@@ -134,7 +158,8 @@ proc main*() =
         " samples at 2 ms"), lines.valueOf("Set 1")
       doAssert lines.valueOf("Set 3") == "seismic, " & $SegdChannels & " traces, " &
         $SegdSamples & " samples at 2 ms, 0 to " & $(float64(SegdSamples - 1) * DtMs).int &
-        " ms", lines.valueOf("Set 3")
+        " ms (header; " & $SegdSamples & " samples at 2 ms end at " &
+        $(float64(SegdSamples) * DtMs).int & " ms)", lines.valueOf("Set 3")
       doAssert lines.valueOf("Set 5") == ""
       doAssert lines.valueOf("Auxiliary") == "2", lines.valueOf("Auxiliary")
       doAssert lines.valueOf("Seismic") == $(2 * SegdChannels)

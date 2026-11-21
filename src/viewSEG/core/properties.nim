@@ -52,6 +52,31 @@ func traceLengthText*(samples: int; intervalUs: float64): string =
     msText(float64(samples) * dt) & " (last sample at " &
     msText(float64(samples - 1) * dt) & ")"
 
+func sameMs(a, b: float64): bool =
+  ## True when two times in ms agree to a thousandth of a ms.
+  abs(a - b) < 1e-3
+
+func recordLengthText*(headerMs: float64; samples: int; intervalUs: float64): string =
+  ## The record length a SEG-D header gives, with a note when the traces hold
+  ## another N x dt: "4000 ms (header; the traces hold 4001 samples = 4001 ms)".
+  ## "" when `headerMs` is not known.
+  result = msText(headerMs)
+  if result.len == 0 or samples <= 0 or intervalUs.isNaN or not (intervalUs > 0): return
+  let traceMs = float64(samples) * intervalUs / 1000
+  if not sameMs(headerMs, traceMs):
+    result.add " (header; the traces hold " & grouped(samples) & " samples = " &
+      msText(traceMs) & ")"
+
+func endTimeText*(startMs, endMs: float64; samples: int; intervalUs: float64): string =
+  ## A channel set's "start to end" from its descriptor, with a note when the
+  ## end is not start + N x dt: "0 to 998 ms (header; 500 samples at 2 ms end at 1000 ms)".
+  result = exactText(startMs) & " to " & msText(endMs)
+  if samples <= 0 or intervalUs.isNaN or not (intervalUs > 0): return
+  let wantMs = startMs + float64(samples) * intervalUs / 1000
+  if not sameMs(endMs, wantMs):
+    result.add " (header; " & grouped(samples) & " samples at " & msText(intervalUs / 1000) &
+      " end at " & msText(wantMs) & ")"
+
 func gatherWord(k: GatherKind): string =
   case k
   of gkShot: "shot record"
@@ -165,7 +190,8 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
   let traceLength = traceLengthText(sm.samplesPerTrace, sm.sampleIntervalUs)
   if traceLength.len > 0: result.add "Trace length", traceLength
   if sm.standard == skSegd and not sm.recordLengthMs.isNaN:
-    result.add "Record length (header)", msText(sm.recordLengthMs)
+    result.add "Record length (header)",
+      recordLengthText(sm.recordLengthMs, sm.samplesPerTrace, sm.sampleIntervalUs)
   var joined = -1
   for j, x in joins:
     if x.session == s.id: joined = j
@@ -232,7 +258,7 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
               channelTypeName(rev3, c.channelType) & ", " & $c.traceCount &
               (if c.traceCount == 1: " trace, " else: " traces, ") & $c.samplesPerTrace &
               " samples at " & msText(c.sampleIntervalUs / 1000) & ", " &
-              exactText(c.startTimeMs) & " to " & msText(c.endTimeMs)
+              endTimeText(c.startTimeMs, c.endTimeMs, c.samplesPerTrace, c.sampleIntervalUs)
   for p in facts.problems:
     result.add "Not read", p
 
