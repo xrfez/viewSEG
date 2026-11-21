@@ -15,7 +15,7 @@ import std/[math, os, strutils, times]
 import parseSEG
 import processSEG/fft/spectrum
 import processSEG/vibroseis/[sweep, taper]
-import processSEG/core/workspace
+import processSEG/core/[types, workspace]
 import cutfile, filesystem, nif, threads, wiggle
 
 const
@@ -294,6 +294,19 @@ func lengthWords*(samples: int; dtMs: float64): string =
     groupedText(ms) & " ms"
   if ms >= 1000: result.add " (" & groupedText(ms / 1000) & " s)"
 
+func lengthTip*(length, dtMs: float64; mustBeWhole: bool): string =
+  ## What a typed length means, for the field's tooltip: samples × interval (12 000 ms at
+  ## 1 ms is 12 000 samples, the first at 0 ms and the last at 11 999 ms), the count now
+  ## typed, and what happens to a length that is not a whole number of intervals.
+  result = "A length is the number of samples times the interval: 12 000 ms at 1 ms is " &
+    "12 000 samples, the first at 0 ms and the last at 11 999 ms."
+  let n = samplesInLength(length, dtMs)
+  if n > 0:
+    result.add " Now: " & groupedText(float64(n)) & " samples at " & numberText(dtMs) &
+      " ms, the last at " & groupedText(float64(n - 1) * dtMs) & " ms."
+  result.add (if mustBeWhole: " The length must be a whole number of intervals."
+    else: " A length that is not a whole number of intervals is cut down to whole samples.")
+
 func rangeWords*(fromMs, toMs: float64; samples: int; dtMs: float64): string =
   ## "0 to 11 999 ms: 12 000 samples at 1 ms = 12 000 ms (12 s)": the times of the first
   ## and last sample taken (both included), then what they add up to.
@@ -342,9 +355,9 @@ func pilotWords*(aux: bool; trace: int): string =
   if aux: "auxiliary trace " & $trace else: "trace " & $trace & " of the record"
 
 func defaultPilotName*(r: PilotRule): string =
-  ## "Pilot: aux 1, 0-12000 ms", from the rule.
-  "Pilot: " & (if r.aux: "aux " else: "trace ") & $r.trace & ", " & numberText(r.startMs) &
-    "-" & numberText(r.startMs + r.spanMs) & " ms"
+  ## "Pilot: aux 1, 12000 ms from 0 ms", from the rule: a length, then where it starts.
+  "Pilot: " & (if r.aux: "aux " else: "trace ") & $r.trace & ", " & numberText(r.spanMs) &
+    " ms from " & numberText(r.startMs) & " ms"
 
 func pilotProblem*(r: PilotRule): string =
   ## Why `r` names no pilot; "" when it does (the name is judged apart).
@@ -413,26 +426,23 @@ func sourceText*(e: ReferenceEntry): string =
     e.origin.fileName & " rec " & rec & " tr " & $e.origin.trace
 
 func lengthText*(e: ReferenceEntry): string =
-  ## The length in time, and the sample count. A stored trace is its samples times its
-  ## interval (12 000 samples at 1 ms: "12000 ms"); a generated sweep is its own length.
+  ## The length in time, and the sample count: the stored samples times their interval (12 000
+  ## samples at 1 ms: "12000 ms"), also for a generated sweep, so that the text never
+  ## contradicts the count (a sweep stored by an older version has 12 001 samples: "12001 ms").
   if e.isPilot: return numberText(e.origin.spanMs) & " ms (of each record)"
-  let ms = if e.origin.generated and e.origin.durationMs > 0: e.origin.durationMs
-           elif e.intervalUs > 0 and e.samples > 0:
+  let ms = if e.intervalUs > 0 and e.samples > 0:
              traceLengthMs(e.samples, e.intervalUs / 1000)
+           elif e.origin.generated and e.origin.durationMs > 0: e.origin.durationMs
            else:
              0.0
   numberText(ms) & " ms (" & $e.samples & ")"
 
 func lengthSaid*(index: ReferenceIndex; id: string): string =
   ## ": 12 000 samples at 1 ms = 12 000 ms (12 s)" for the entry `id` of `index`, as the
-  ## messages after a store or a generate end; "" when it is not there.
+  ## messages after a store or a generate end; "" when it is not there. Always the stored
+  ## samples times their interval.
   for e in index.entries:
     if e.id == id and e.samples > 0 and e.intervalUs > 0:
-      if e.origin.generated and e.origin.durationMs > 0:
-        # a sweep runs from 0 to its length, both ends a sample
-        return ": a sweep of " & groupedText(e.origin.durationMs) & " ms, " &
-          groupedText(float64(e.samples)) & " samples at " & numberText(e.intervalUs / 1000) &
-          " ms"
       return ": " & lengthWords(e.samples, e.intervalUs / 1000)
 
 func intervalText*(e: ReferenceEntry): string =
@@ -545,12 +555,35 @@ proc cutSamples*(samples: openArray[float32]; intervalUs, fromMs, toMs: float64)
   result = newSeq[float32](max(r.b - r.a + 1, 0))
   for i in 0 ..< result.len: result[i] = samples[r.a + i]
 
+func pilotStartIndex*(startMs, dtMs: float64): int {.inline.} =
+  ## The index of the first sample of a pilot window that starts at `startMs`: the sample
+  ## nearest that time (0 for a start before the trace).
+  if not (dtMs > 0 and dtMs < Inf) or startMs.isNaN or startMs <= 0: 0
+  elif startMs / dtMs > float64(high(int32)): high(int32)
+  else: int(round(startMs / dtMs))
+
+func placedPilot*(cut: seq[float32]; startMs, dtMs: float64): seq[float32] =
+  ## A cut pilot at its place in time: zeros for the samples before its first one, which
+  ## `cutPilot` took at `pilotStartIndex`, so the trace's time axis is the pilot's.
+  result = newSeq[float32](pilotStartIndex(startMs, dtMs))
+  result.add cut
+
+func sweepStoreToMs*(sweepMs, dtMs: float64): float64 =
+  ## The "To" the store dialog starts at for a file whose headers give a sweep of `sweepMs`:
+  ## the time of the sweep's last sample, `(samples - 1) x dt` of `samplesInLength`, so that a
+  ## sweep that is not a whole number of intervals (12 001 ms at 2 ms) never takes more than
+  ## the header's length. 0 when the sweep is under one interval.
+  max(float64(samplesInLength(sweepMs, dtMs) - 1) * dtMs, 0.0)
+
 proc cutPilot*(samples: openArray[float32]; dtMs: float64; r: PilotRule; record: string):
     tuple[samples: seq[float32]; problem: string] =
-  ## The window of a pilot trace `r` names: from its start for its length (both
-  ## ends kept when they fall on a sample), clipped to the trace's end. A start
-  ## past the end, or nothing left, is a `problem` naming `record`; the samples
-  ## are copied, not changed.
+  ## The window of a pilot trace `r` names: `r.spanMs / dtMs` samples (a length is N × dt:
+  ## 12 000 ms at 1 ms is 12 000 samples, the last 11 999 ms after the first), from the
+  ## sample nearest the start. A length that is not a whole multiple of `dtMs` is cut down
+  ## to whole samples. Clipped to the trace's end; a window ending within one interval of the
+  ## last sample (an old rule's length of 11 999 ms on 12 000 samples at 1 ms) takes the trace
+  ## to its end. A start past the end, or nothing left,
+  ## is a `problem` naming `record`; the samples are copied, not changed.
   let bad = pilotProblem(r)
   if bad.len > 0: return (@[], bad)
   let who = recordSentence(record) & "'s " & pilotWords(r.aux, r.trace)
@@ -560,11 +593,22 @@ proc cutPilot*(samples: openArray[float32]; dtMs: float64; r: PilotRule; record:
   if r.startMs > lastMs + dtMs / 2:
     return (@[], who & " ends at " & numberText(lastMs) & " ms, so a window from " &
       numberText(r.startMs) & " ms is past its end.")
-  # clamp before the sample arithmetic: a huge length is the trace's end
-  let stopMs = min(r.startMs + r.spanMs, lastMs)
-  result.samples = cutSamples(samples, dtMs * 1000, r.startMs, stopMs)
+  let first = pilotStartIndex(r.startMs, dtMs)
+  # a length past the trace is the trace's end: clamp before the sample arithmetic
+  # a window that ends within one interval of the last sample takes the trace to its end: a rule
+  # saved by an earlier version stored the trace's last-sample time (11 999 ms of 12 000
+  # samples at 1 ms) as its length, and means the whole trace
+  let toEnd = r.spanMs >= float64(samples.len) * dtMs or
+    r.startMs + r.spanMs > lastMs - dtMs * (1 - 1e-9)
+  let wanted = if toEnd: samples.len - first
+               else: samplesInLength(r.spanMs, dtMs)
+  let stop = min(first + wanted, samples.len)
+  result.samples = newSeq[float32](max(stop - first, 0))
+  for i in 0 ..< result.samples.len: result.samples[i] = samples[first + i]
   if result.samples.len == 0:
-    result.problem = who & " has no sample from " & numberText(r.startMs) & " ms."
+    result.problem = who & " has no sample from " & numberText(r.startMs) & " ms" &
+      (if wanted == 0: " (a length of " & numberText(r.spanMs) & " ms is under one sample of " &
+        numberText(dtMs) & " ms)" else: "") & "."
 
 func taperShapeTitle*(shape: TaperShape): string =
   ## The ramp shape as the Generate dialog names it.
@@ -1228,7 +1272,7 @@ proc storePilotRule*(folder: string; r: PilotRule): string {.gcsafe.} =
   let id = newId(index)
   index.entries.add ReferenceEntry(id: id, name: name, date: nowText(),
     origin: ReferenceOrigin(generated: false, pilot: true, pilotAux: r.aux, trace: r.trace,
-    fromMs: r.startMs, spanMs: r.spanMs, record: NaN, toMs: r.startMs + r.spanMs))
+    fromMs: r.startMs, spanMs: r.spanMs, record: NaN, toMs: -1)) # a rule has no interval: no last sample
   fs.createDir(folder)
   writeIndex(folder, index)
   id

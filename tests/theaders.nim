@@ -90,7 +90,8 @@ proc main*() =
         $(FirstRecord + Shots - 1)
       doAssert lines.valueOf("Samples per trace") == $Samples
       doAssert lines.valueOf("Sample interval") == "2 ms"
-      doAssert lines.valueOf("Record length") == $(float64(Samples - 1) * DtMs).int & " ms"
+      doAssert lines.valueOf("Trace length") == $Samples & " samples x 2 ms = " &
+        $(Samples * 2) & " ms (last sample at " & $((Samples - 1) * 2) & " ms)"
       doAssert lines.valueOf("Units") == "metres", lines.valueOf("Units")
       # the record shown (the second): what tells it apart and its counts
       doAssert lines.hasHeading("The record shown: 2 of 3")

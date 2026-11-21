@@ -7198,11 +7198,12 @@ proc shownDtMs(state: AppState): float64 =
 
 func shownLengthMs*(state: AppState): float64 =
   ## The length of the longest trace of the record the Seismic window shows, in ms
-  ## (first sample to last); 0 when it shows none, or the headers give no interval.
+  ## (samples × interval, 12 000 samples at 1 ms are 12 000 ms); 0 when it shows none, or the
+  ## headers give no interval.
   let k = state.findPanel(MainPanel)
   if k < 0 or not state.panels[k].laidOut or state.panels[k].layout.noInterval or
       state.panels[k].layout.samples < 2: return 0
-  float64(state.panels[k].layout.samples - 1) * state.panels[k].layout.dtMs
+  float64(state.panels[k].layout.samples) * state.panels[k].layout.dtMs
 
 func shownIntervalMs*(state: AppState): float64 {.inline.} =
   ## `shownDtMs`, for the Generate dialog's default.

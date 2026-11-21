@@ -45,7 +45,7 @@ proc main*() =
       let p = f.core.panels[f.core.findPanel(MainPanel)]
       p.laidOut and f.core.referencesLoaded and f.core.shownIntervalMs > 0)
     proc generate(f: FrameInfo) =
-      for (name, ms) in [("Long", 3998.0), ("Same", 2998.0)]:
+      for (name, ms) in [("Long", 4000.0), ("Same", 3000.0)]:
         f.apply Command(kind: ckGenerateReference, refGenerate: GeneratedReference(name: name,
           law: rlLinear, f1Hz: 10, f2Hz: 200, durationMs: ms, dtMs: f.core.shownIntervalMs,
           amplitude: 1))

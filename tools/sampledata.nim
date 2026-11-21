@@ -360,8 +360,8 @@ proc writeVib(dir: string; t0: float64) =
   let spec = linearSweep(SweepF1, SweepF2, SweepMs, VibDt,
     initSweepTaper(VibTaperMs, VibTaperMs))
   let pilot = generatePilot(spec, float32)
-  let nRec = spec.sweepLen + int(ListenMs / VibDt) - 1
-  let nOut = nRec - pilot.len + 1
+  let nRec = spec.sweepLen + int(ListenMs / VibDt)
+  let nOut = nRec - pilot.len
   doAssert nOut == int(ListenMs / VibDt), "listen length " & $nOut
   var force = spec
   force.amplitude = 2.0
