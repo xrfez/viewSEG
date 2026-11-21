@@ -27,6 +27,22 @@ says what each gave.
 Each folder viewSEG makes holds `README.txt` and `WRITING-A-MAP.md`, the guide to the format of
 a map. A file already there is never replaced.
 
+## Numbers a file stores times 100
+
+Some recording systems store the source and receiver line and point numbers times 100 in the
+trace headers (so that a point like 100.5 fits a whole number) and say so in the textual
+header. A map can carry a `(layout)`: the header bytes that hold such a number, and a
+`(divisor 100)`. viewSEG then reads the number itself, everywhere: the plot's line and
+station numbering, the trace table, the Headers window's survey rows, and the survey join
+(which matches the file's stations to the SPS ones by number). A whole number is shown
+whole (519), and decimals only when the value has a fraction (100.5).
+
+The shipped map `segy-x100-stations.nif` does this for a SEG-Y file whose textual header
+holds "LINE AND POINT NUMBERS ARE X 100 IN TRACE HEADERS": bytes 181-196 are the receiver line and point and the
+source line and point. A map for another layout is a copy of it with other bytes and
+another match (`WRITING-A-MAP.md`, "Layouts"). The auxiliary traces of such a file (time
+break, sweep) may hold other data in those bytes; they take no part in the join.
+
 ## Reload
 
 Opening or closing a project loads the maps again, and so does **File > Reload vendor maps**:
