@@ -109,7 +109,7 @@ proc openSession*(path: string; progress: Progress = nil; cache = "";
   var opened: SeismicFile
   {.cast(gcsafe).}:
     opened = openSeismic(path, keys = true, progress = progress,
-      opts = openOptions(choice, cache))
+      opts = openOptions(choice, cache, currentVendors()))
   let damaged = damagedSegyWhy(opened)
   if damaged.len > 0: raise newException(IOError, damaged)
   let info = fs.getFileInfo(path)

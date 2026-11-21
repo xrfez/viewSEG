@@ -80,12 +80,14 @@ func verifyOf*(c: OpenChoice): VerifyMode =
   ## How much of the file's headers the open checks.
   if c.verifyAll: vfFull else: vfSampled
 
-func openOptions*(c: OpenChoice; cache = ""): OpenOptions =
+func openOptions*(c: OpenChoice; cache = ""; vendors = VendorRegistry()): OpenOptions =
   ## What parseSEG's `openSeismic` is given for `c`, with the index cache
-  ## file `cache` when `c` may use it (`usesCache`).
+  ## file `cache` when `c` may use it (`usesCache`) and the vendor maps
+  ## `vendors` (their layouts read a SEG-Y file's line and point numbers as
+  ## the file's own header says: the same numbers to every consumer).
   OpenOptions(kind: kindOf(c.standard), verify: verifyOf(c),
     twosComplement8015: c.twosComplement, access: accessOf(c.access), demuxDir: c.demuxDir,
-    cache: (if c.usesCache: cache else: ""))
+    cache: (if c.usesCache: cache else: ""), vendors: vendors)
 
 func standardName*(k: SeismicKind): string =
   ## A standard's name: "SEG-Y", "SEG-D", "SEG-2"; "not recognised".
