@@ -862,6 +862,7 @@ func pilotFacts*(rule: PilotRule; record, note: string): ExplainFacts =
   ## The Generate dialog's pilot taken from the record.
   let which = if rule.aux: "auxiliary trace " & $rule.trace else: "trace " & $rule.trace
   var o = "Cut from " & num(rule.startMs) & " ms for " & num(rule.spanMs) & " ms."
+  if rule.phaseDeg == 180: o.add " Phase 180: turned over."
   if note.len > 0: o.add " " & closed(note).capitalizeAscii
   ExplainFacts(live: true, subject: "the pilot, " & which & " of " &
     (if record.len > 0: record else: "the record on show"), options: o)

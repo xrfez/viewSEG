@@ -201,7 +201,8 @@ func editNote*(p: Pick): string =
   if p.keys.status == tsDead: result = "dead"
   elif p.keys.status in {tsAuxiliary, tsUnknown} and p.keys.traceCode != 0:
     result = traceIdText(int(p.keys.traceCode), p.keys.status != tsUnknown)
-  for (edit, word) in [(teKilled, "killed"), (teReversed, "polarity reversed")]:
+  for (edit, word) in [(teKilled, "killed"), (teReversed, "polarity reversed"),
+      (teExcluded, "excluded from the plot's filters")]:
     if edit in p.edits: result.add (if result.len > 0: ", " else: "") & word
   if p.filterNote.len > 0: result.add (if result.len > 0: ", " else: "") & p.filterNote
 

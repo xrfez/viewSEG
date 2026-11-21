@@ -81,7 +81,7 @@
 ## act on the trace under the pointer, or on the whole selection when that
 ## trace is in it (`ckEdit`); Ctrl + Z undoes the file's last edit. The
 ## edited traces are marked in a row of the display header that is there
-## only while the gather has an edit: "K" killed, "R" reversed. A right
+## only while the gather has an edit: "K" killed, "R" reversed, "E" excluded from the plot's filters. A right
 ## click on a mark opens a menu for that trace's edits (and, zoomed out,
 ## for the traces that share its pixel); a right click elsewhere is the
 ## plot's menu or the header's, as before. Killed
@@ -1688,6 +1688,13 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.kill")
   tip(if teKilled in has: "Restore this killed trace (K)"
       else: "Kill this trace: leave it out of the plot and the processing (K)")
+  # Ticked while the trace under the pointer is excluded from the plot's filters.
+  if igMenuItem_Bool("Exclude from plot filters", "E", teExcluded in has, under >= 0):
+    res.commands.add editCommand(st, p, under, teExcluded)
+  marks.mark("plot.menu.exclude")
+  tip("Never filter this trace with the plot's filters (E), the Aux traces too option " &
+    "included. A tick means it is excluded; a click puts it back. A filter of its own " &
+    "(Filter this trace...) still runs.")
   let targets = if under >= 0: st.selection.targets(under) else: @[]
   let filterMany = targets.len > 1
   let filterItem = if filterMany: "Filter " & $targets.len & " selected traces..."
@@ -1810,6 +1817,7 @@ proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
   ## pointer is over a trace (a menu click can leave the focus elsewhere):
   ## `R` reverses the polarity of the trace under the pointer (or of the
   ## selection that holds it) or puts it back, `K` kills or restores it,
+  ## `E` excludes it from the plot's filters or puts it back,
   ## `M` selects its station on the map, `F` opens its FFT window. Undo and
   ## redo are the Edit menu's, from any window.
   if igGetIO_Nil().WantTextInput: return
@@ -1820,6 +1828,8 @@ proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
       res.commands.add editCommand(st, p, under, teReversed)
     if plotPressed("plot.kill", over):
       res.commands.add editCommand(st, p, under, teKilled)
+    if plotPressed("plot.exclude", over):
+      res.commands.add editCommand(st, p, under, teExcluded)
     if plotPressed("plot.station", over):
       let c = stationCommand(st, k, under)
       if c.points.len > 0: res.commands.add c
@@ -1851,8 +1861,8 @@ proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; vie
   ## The display header's band of edits, its last (a row under its other
   ## rows; a column next to the plot when time is across): over each edited
   ## trace in view, as the file's edits `e` are now, "K" (killed, in the
-  ## theme's error colour) or "R" (reversed, in its accent colour), "KR" for
-  ## both, and the filter icon in the accent colour (the error colour when
+  ## theme's error colour), "R" (reversed, in its accent colour) or "E"
+  ## (excluded from the plot's filters), "KRE" for all, and the filter icon in the accent colour (the error colour when
   ## the trace is also killed); a thin bar where traces are too close for
   ## the letters. An edit shown but not remembered (an agent's, for the
   ## session), or a filter that differs from the one remembered, has a "*"
@@ -1902,6 +1912,7 @@ proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; vie
       if has != {} or kept != {} or shownF or keptF or badge.len > 0:
         func letters(s: set[TraceEdit]; filtered: bool): string =
           (if teKilled in s: "K" else: "") & (if teReversed in s: "R" else: "") &
+            (if teExcluded in s: "E" else: "") &
             (if filtered: IconFilter else: "")
         let session = has - kept # shown, not remembered
         let hidden = kept - has # remembered, not shown
@@ -2049,12 +2060,15 @@ proc drawMarkMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
       of miRemoveReverse, miRemoveReverseSelected:
         res.commands.add Command(kind: ckEdit, panel: p.id, edit: teReversed,
           edited: choice.traces, on: false)
+      of miRemoveExclude, miRemoveExcludeSelected:
+        res.commands.add Command(kind: ckEdit, panel: p.id, edit: teExcluded,
+          edited: choice.traces, on: false)
       of miRemoveFilter, miRemoveFilterSelected:
         res.commands.add Command(kind: ckOwnFilter, panel: p.id, edited: choice.traces,
           on: false)
       of miRemoveAll:
         res.commands.add Command(kind: ckEdit, panel: p.id, edit: teKilled,
-          edited: choice.traces, on: false, alsoDrop: {teReversed}, alsoFilter: true)
+          edited: choice.traces, on: false, alsoDrop: {teReversed, teExcluded}, alsoFilter: true)
       of miEditFilter:
         let start = st.startingFilter(choice.traces)
         tp.ownDraft = start.filter

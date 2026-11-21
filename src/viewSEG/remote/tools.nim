@@ -432,6 +432,7 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
     let all = 0 ..< state.sessions[i].len
     result["killed"] = clipped(e.listIn(teKilled, all), limit)
     result["reversedTraces"] = clipped(e.listIn(teReversed, all), limit)
+    result["excludedTraces"] = clipped(e.listIn(teExcluded, all), limit)
     var own = newJArray()
     for f in e.filtersIn(all):
       if own.len >= limit: break

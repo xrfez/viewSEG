@@ -333,7 +333,7 @@ proc memoryDocument*(r: FileRecord): string =
     w.open "unconfirmed"
     w.add true
     w.close
-  for edit in [teKilled, teReversed]:
+  for edit in [teKilled, teReversed, teExcluded]:
     if r.edits.lists[edit].len > 0:
       w.open $edit
       w.add runsText(r.edits.lists[edit])
@@ -516,8 +516,11 @@ proc readEditsIn(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo:
   for k in n.kids:
     if k.kind == nkTree:
       case k.tag
-      of "killed", "reversed":
-        let edit = if k.tag == "killed": teKilled else: teReversed
+      of "killed", "reversed", "excluded":
+        let edit = case k.tag
+          of "killed": teKilled
+          of "reversed": teReversed
+          else: teExcluded
         for v in k.kids:
           if v.kind == nkString:
             addRuns(v.text, runs[edit], problems, k.tag, high(int32), upTo, beyond[edit])
@@ -636,10 +639,11 @@ func csvCells*(line: string; sep: char): seq[string] =
 
 proc rowsOf(l: EditLists): seq[(int, TraceEdit)] =
   ## A row per trace and edit: by trace, a kill before a reversal.
-  for edit in [teKilled, teReversed]:
+  for edit in [teKilled, teReversed, teExcluded]:
     for t in l.lists[edit]: result.add (t, edit)
   result.sort(proc (a, b: (int, TraceEdit)): int =
-    if a[0] != b[0]: cmp(a[0], b[0]) else: cmp(a[1] == teReversed, b[1] == teReversed))
+    if a[0] != b[0]: cmp(a[0], b[0]) else: cmp(ord(a[1] == teReversed) + 2 * ord(a[1] == teExcluded),
+      ord(b[1] == teReversed) + 2 * ord(b[1] == teExcluded)))
 
 proc notchText(n: NotchFilter): string =
   ## `hz/width/harmonics`, with `/0` when the notch is off.
@@ -778,6 +782,7 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]; upTo: int;
         case e
         of "killed", "kill", "k": edit = teKilled
         of "reversed", "reverse", "r", "polarity": edit = teReversed
+        of "excluded", "exclude", "e": edit = teExcluded
         of "filtered", "filter": edit = teKilled # not used: a filter row, below
         else:
           ok = false
@@ -987,6 +992,7 @@ func keptWords*(l: EditLists): string =
   var parts: seq[string]
   if l.lists[teKilled].len > 0: parts.add $l.lists[teKilled].len & " killed"
   if l.lists[teReversed].len > 0: parts.add $l.lists[teReversed].len & " reversed"
+  if l.lists[teExcluded].len > 0: parts.add $l.lists[teExcluded].len & " excluded"
   if l.filters.len > 0: parts.add $l.filters.len & " filtered"
   if l.allReversed: parts.add "all reversed"
   if parts.len == 0: "nothing" else: parts.join(", ")

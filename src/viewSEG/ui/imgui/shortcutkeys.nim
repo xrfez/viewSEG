@@ -9,6 +9,7 @@ func imguiKey*(name: string): ImGuiKey =
   case name
   of "F": ImGui_Key_F
   of "K": ImGui_Key_K
+  of "E": ImGui_Key_E
   of "R": ImGui_Key_R
   of "M": ImGui_Key_M
   of "P": ImGui_Key_P

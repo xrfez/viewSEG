@@ -12,6 +12,10 @@
 ##   as the plot's "Reverse polarity of all traces" asks; a trace reversed on
 ##   its own as well is reversed twice, so as recorded. Every graph uses that
 ##   same effective reversal (`effectivelyReversed`).
+## - **Excluded:** the plot's filters (the Filters menu, the Aux traces too
+##   when that is on) never touch the trace; its own filter still runs, if
+##   it has one (`plotFiltersIn` says it to the readers as an own filter that
+##   runs instead of the plot's).
 ## - **Own filter:** a trace's frequency filters (`OwnFilter`), run after
 ##   the plot's or instead of them. A killed trace keeps its filter; the
 ##   kill wins on screen (the row stays blank).
@@ -62,6 +66,7 @@ type
     ## What an edit does to a trace.
     teReversed = "reversed" ## polarity reversed: 180 degrees out of phase
     teKilled = "killed"     ## drawn blank, left out of the panel's levels
+    teExcluded = "excluded" ## never touched by the plot's filters
 
   StepKind* = enum
     skNone = "none"          ## no step: nothing to undo or redo
@@ -145,12 +150,13 @@ func span(list: openArray[int]; traces: Slice[int]): Slice[int] =
 func isEmpty*(l: EditLists): bool =
   ## Whether `l` holds no edit.
   not l.allReversed and l.lists[teReversed].len == 0 and l.lists[teKilled].len == 0 and
-    l.filters.len == 0
+    l.lists[teExcluded].len == 0 and l.filters.len == 0
 
 func count*(l: EditLists): int =
   ## How many edits `l` holds: traces per list, a filter as one, and all
   ## reversed as one.
-  l.lists[teReversed].len + l.lists[teKilled].len + l.filters.len + ord(l.allReversed)
+  l.lists[teReversed].len + l.lists[teKilled].len + l.lists[teExcluded].len + l.filters.len +
+    ord(l.allReversed)
 
 func placeOf(filters: openArray[FilterEntry]; trace: int): tuple[at: int; found: bool] =
   ## Where `trace` sits in `filters` (ascending), and whether it is there.
@@ -334,6 +340,28 @@ func keptFilter*(e: FileEdits; trace: int): tuple[has: bool; filter: OwnFilter] 
 func filtersIn*(e: FileEdits; traces: Slice[int]): seq[FilterEntry] {.inline.} =
   ## The filters of traces in `traces` (as shown), ascending.
   e.shown.filtersIn(traces)
+
+func plotFiltersIn*(e: FileEdits; traces: Slice[int]): seq[FilterEntry] =
+  ## The own filters of traces in `traces` (as shown) as the readers of the
+  ## plot's filters need them, ascending: a trace excluded from the plot's
+  ## filters runs its own filter (none when it has none) instead of the
+  ## plot's. The one place that decides whether the plot's filters apply to a
+  ## trace, besides the auxiliary traces' own rule (`Processing.aux`).
+  let own = e.shown.filtersIn(traces)
+  let ex = e.listIn(teExcluded, traces)
+  if ex.len == 0: return own
+  result = newSeqOfCap[FilterEntry](own.len + ex.len)
+  var i = 0
+  var j = 0
+  while i < own.len or j < ex.len:
+    let t = if j >= ex.len or (i < own.len and own[i].trace <= ex[j]): own[i].trace else: ex[j]
+    var entry = FilterEntry(trace: t)
+    if i < own.len and own[i].trace == t:
+      entry = own[i]
+      inc i
+    if j < ex.len and ex[j] == t: inc j
+    entry.filter.place = fpInstead
+    result.add entry
 
 func ownNeedsWhole*(e: FileEdits; traces: Slice[int]): bool =
   ## Whether a trace in `traces` has a frequency filter of its own: the
@@ -828,6 +856,8 @@ func describe*(s: EditStep): string =
     case s.edit
     of teKilled: what & (if s.on: " killed" else: " restored")
     of teReversed: "polarity of " & what & (if s.on: " reversed" else: " put back")
+    of teExcluded:
+      what & (if s.on: " excluded from the plot's filters" else: " given the plot's filters again")
   of skFilter:
     let what = tracesText(s.traces)
     if s.on: what & " filtered"

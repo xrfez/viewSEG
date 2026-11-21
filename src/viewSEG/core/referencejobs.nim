@@ -169,12 +169,11 @@ proc pilotRuleWork*(rule: PilotRule; folder: string; to: Poster): JobWork =
 
 proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
     rule: PilotRule; flip: bool; record: string; surveyTrace, window: int;
-    key, name, folder: string; pr: Processing; own: seq[FilterEntry]; to: Poster): JobWork =
-  ## Reads trace `trace` of the open file, turns it over when `flip` (its
-  ## polarity as the plot shows it: the trace's own reversal or reverse-all),
-  ## puts it through what a correlation puts it through (`filtered`: the
-  ## plot's filters `pr`, an auxiliary trace only when the Aux toggle says so,
-  ## then its own filter `own`) and cuts the window `rule` names. For a reference window (`window` above
+    key, name, folder: string; own: seq[FilterEntry]; to: Poster): JobWork =
+  ## Reads trace `trace` of the open file, turns it over when `flip` (the trace's
+  ## own reversal), puts it through its own filter `own` (nothing of the plot's: no
+  ## plot filter, no reverse-all, no gain), cuts the window `rule` names and
+  ## applies the rule's phase (180 turns the cut over). For a reference window (`window` above
   ## 0) it posts `raViewed`; else `raPilotShown` for the Generate dialog's
   ## preview, with the amplitude spectrum in dB in `amps`. A trace or window that
   ## is not there is said in `failure`.
@@ -197,25 +196,21 @@ proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
       if dt > 0:
         var rows = @[samples]
         var passed = 0
-        var through = ""
         {.cast(gcsafe).}:
-          through = filtered(rows, file, @[trace], pr, own, (if flip: @[trace] else: @[]), dt,
-            passed)
+          discard filtered(rows, file, @[trace], Processing(), own,
+            (if flip: @[trace] else: @[]), dt, passed)
         samples = rows[0]
-        if passed > 0 and through.startsWith("through "):
-          news.note = "not filtered: " & AuxFilterOff
-        else:
-          news.note = through
-        # `filtered` words the plot's filters only: the trace's own filter,
-        # which runs whatever they are, is named here (a pilot with no plot
-        # filter on would else say nothing of it)
+        news.note = "the plot's settings are not applied"
         let ownAt = entryAt(own, trace)
         if ownAt >= 0 and own[ownAt].filter.changesSamples:
           let words = "its own filter: " & ownBrief(own[ownAt].filter)
           news.note = if news.note.len > 0: news.note & "; " & words else: words
       elif flip:
         for v in samples.mitems: v = -v
-      let (cut, problem) = cutPilot(samples, dt, rule, record)
+      let (cut0, problem) = cutPilot(samples, dt, rule, record)
+      let cut = turnedOver(cut0, rule)
+      if rule.phaseDeg == 180:
+        news.note = (if news.note.len > 0: news.note & "; " else: "") & "phase 180: turned over"
       if problem.len > 0:
         news.failure = problem
       else:

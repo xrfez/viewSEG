@@ -27,7 +27,7 @@
 ## - **A file cut short, or that cannot be looked at,** is not read: the
 ##   answer says why. Each read is marked through the seam (`fs.mappedRead`).
 
-import std/[algorithm, locks, math, monotimes, options, os, strutils, times]
+import std/[algorithm, locks, math, monotimes, options, os, sequtils, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
@@ -70,7 +70,7 @@ type
       ## takes by the rule `pilotRule`; -1 for none
     pilotRule*: PilotRule
     pilotRecord*: string ## which record that is, for the sentences
-    pilotReversed*: bool ## that trace is effectively reversed: turned over first
+    pilotReversed*: bool ## that trace is reversed on its own (R): turned over first
     pilotOwn*: seq[FilterEntry] ## its own filter, when it has one
     vibWhy*: string
       ## a vibrator signature measured against its recorded Ref trace: why not the project
@@ -366,9 +366,13 @@ proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: f
     elif not sameDt(rdt, dtMs):
       result.problem = intervalRefusal(rdt, dtMs)
     else:
-      if a.pilotReversed:
-        for v in refRows[0].mitems: v = -v
-      let (cut, why) = cutPilot(refRows[0], dtMs, a.pilotRule, a.pilotRecord)
+      # the trace as it was set on the trace itself: its own reversal and own filter,
+      # nothing of the plot's; then the cut, then the rule's phase
+      var passed = 0
+      discard filtered(refRows, f, @[rt], Processing(), a.pilotOwn,
+        (if a.pilotReversed: @[rt] else: @[]), dtMs, passed)
+      let (cut0, why) = cutPilot(refRows[0], dtMs, a.pilotRule, a.pilotRecord)
+      let cut = turnedOver(cut0, a.pilotRule)
       if why.len > 0:
         result.problem = why
       else:
@@ -461,8 +465,11 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
           if raw:
             discard filtered(kept, f, keptList, Processing(), [], a.reversed, dtMs, passed)
             passed = 0
-            if a.processing.hasFilters or a.own.len > 0 or a.pilotOwn.len > 0:
+            if a.processing.hasFilters or a.own.len > 0:
               through = RawAgainstReference
+            if a.pilotTrace >= 0 and a.pilotOwn.len > 0 and a.pilotOwn.anyIt(it.filter.spec.hasFilters):
+              let words = "the pilot trace's own filter is applied to it: nothing of the plot's"
+              through = if through.len > 0: through & "; " & words else: words
           else:
             through = filtered(kept, f, keptList, a.processing, a.own, a.reversed, dtMs,
               passed, plotOn)

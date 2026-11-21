@@ -51,6 +51,7 @@ type
         ## (N from 1), `fromMs` and `spanMs`; there is no file and no sample
       pilotAux*: bool ## `pilot`: auxiliary trace N of the record; else trace N of it
       spanMs*: float64 ## `pilot`: the window's length
+      pilotPhaseDeg*: float64 ## `pilot`: 180 turns the cut trace over; 0 (and older rules) not
     of true:
       law*: ReferenceLaw
       f1Hz*, f2Hz*: float64
@@ -129,6 +130,8 @@ type
     trace*: int ## N, from 1
     startMs*: float64
     spanMs*: float64 ## more than 0
+    phaseDeg*: float64
+      ## 0, or 180 (the polarity reversed) after the cut; a recorded trace takes no other
 
   RefAct* = enum
     raListed = "listed"
@@ -357,7 +360,8 @@ func pilotWords*(aux: bool; trace: int): string =
 func defaultPilotName*(r: PilotRule): string =
   ## "Pilot: aux 1, 12000 ms from 0 ms", from the rule: a length, then where it starts.
   "Pilot: " & (if r.aux: "aux " else: "trace ") & $r.trace & ", " & numberText(r.spanMs) &
-    " ms from " & numberText(r.startMs) & " ms"
+    " ms from " & numberText(r.startMs) & " ms" &
+    (if r.phaseDeg == 180: ", phase 180" else: "")
 
 func pilotProblem*(r: PilotRule): string =
   ## Why `r` names no pilot; "" when it does (the name is judged apart).
@@ -365,12 +369,13 @@ func pilotProblem*(r: PilotRule): string =
   elif r.startMs.isNaN or r.startMs < 0 or r.startMs == Inf:
     "the start is 0 ms or later"
   elif not (r.spanMs > 0 and r.spanMs < Inf): "the length must be more than 0 ms"
+  elif r.phaseDeg != 0 and r.phaseDeg != 180: "the phase of a recorded trace is 0 or 180 degrees"
   else: ""
 
 func pilotRuleOf*(e: ReferenceEntry): PilotRule =
   ## The rule a pilot entry stores.
   PilotRule(name: e.name, aux: e.origin.pilotAux, trace: e.origin.trace,
-    startMs: e.origin.fromMs, spanMs: e.origin.spanMs)
+    startMs: e.origin.fromMs, spanMs: e.origin.spanMs, phaseDeg: e.origin.pilotPhaseDeg)
 
 func isPilot*(e: ReferenceEntry): bool {.inline.} =
   ## A pilot taken from the record: a rule with no samples and no file.
@@ -420,7 +425,8 @@ func sourceText*(e: ReferenceEntry): string =
   if e.origin.generated:
     "generated, " & lawTitle(e.origin.law)
   elif e.origin.pilot:
-    "pilot: " & pilotWords(e.origin.pilotAux, e.origin.trace)
+    "pilot: " & pilotWords(e.origin.pilotAux, e.origin.trace) &
+      (if e.origin.pilotPhaseDeg == 180: ", phase 180" else: "")
   else:
     let rec = if e.origin.record.isNaN: "none" else: numberText(e.origin.record)
     e.origin.fileName & " rec " & rec & " tr " & $e.origin.trace
@@ -574,6 +580,13 @@ func sweepStoreToMs*(sweepMs, dtMs: float64): float64 =
   ## sweep that is not a whole number of intervals (12 001 ms at 2 ms) never takes more than
   ## the header's length. 0 when the sweep is under one interval.
   max(float64(samplesInLength(sweepMs, dtMs) - 1) * dtMs, 0.0)
+
+func turnedOver*(samples: openArray[float32]; r: PilotRule): seq[float32] =
+  ## The samples of a cut pilot with the rule's phase applied: negated for 180 degrees (the
+  ## polarity reversed, after the trace's own reversal and filter and the cut), else copied.
+  result = @samples
+  if r.phaseDeg == 180:
+    for v in result.mitems: v = -v
 
 proc cutPilot*(samples: openArray[float32]; dtMs: float64; r: PilotRule; record: string):
     tuple[samples: seq[float32]; problem: string] =
@@ -892,6 +905,7 @@ proc writeOrigin(w: var NifWriter; o: ReferenceOrigin) =
     w.value("trace", o.trace)
     w.value("fromMs", o.fromMs)
     w.value("spanMs", o.spanMs)
+    if o.pilotPhaseDeg != 0: w.value("phaseDeg", o.pilotPhaseDeg)
   else:
     w.value("fileName", o.fileName)
     if not o.record.isNaN: w.value("record", o.record)
@@ -1004,7 +1018,8 @@ proc readOrigin(n: NifNode; problems: var seq[string]): ReferenceOrigin =
   else:
     ReferenceOrigin(generated: false, fileName: fileName, record: record, trace: trace,
       fromMs: (if fromMs == fromMs: fromMs else: 0.0), toMs: toMs, pilot: pilot,
-      pilotAux: pilotAux, spanMs: (if spanMs == spanMs: spanMs else: 0.0))
+      pilotAux: pilotAux, spanMs: (if spanMs == spanMs: spanMs else: 0.0),
+      pilotPhaseDeg: (if pilot and phase == 180: 180.0 else: 0.0))
 
 proc readEntry(n: NifNode; problems: var seq[string]): ReferenceEntry =
   for c in n.kids:
@@ -1272,7 +1287,7 @@ proc storePilotRule*(folder: string; r: PilotRule): string {.gcsafe.} =
   let id = newId(index)
   index.entries.add ReferenceEntry(id: id, name: name, date: nowText(),
     origin: ReferenceOrigin(generated: false, pilot: true, pilotAux: r.aux, trace: r.trace,
-    fromMs: r.startMs, spanMs: r.spanMs, record: NaN, toMs: -1)) # a rule has no interval: no last sample
+    fromMs: r.startMs, spanMs: r.spanMs, pilotPhaseDeg: r.phaseDeg, record: NaN, toMs: -1)) # a rule has no interval: no last sample
   fs.createDir(folder)
   writeIndex(folder, index)
   id

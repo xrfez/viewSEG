@@ -156,7 +156,7 @@ proc pilotFollowKey(state: AppState; w: int): string =
   if rule.trace < 1: return "none|" & NoFileReference
   let (rt, _, problem) = s.pilotOfRecord(g, rule, e)
   if rt < 0: return "none|" & problem
-  $rt & "|" & $reversedOf(e, [rt]).len & "|" & ownKeyOf(e, [rt])
+  $rt & "|" & pilotKeyOf(e, rt)
 
 proc showCorrelationProblem(state: var AppState; w: int; problem, name: string) =
   ## The correlation window says `problem` and draws nothing. A later answer
@@ -223,8 +223,8 @@ proc chosenReferenceFor(state: var AppState; w: int; s: Session; dtMs: float64;
     a.pilotTrace = rt
     a.pilotRule = rule
     a.pilotRecord = record
-    a.pilotReversed = reversedOf(edits, [rt]).len > 0
-    a.pilotOwn = ownOfTraces(edits, [rt])
+    a.pilotReversed = edits.has(teReversed, rt)
+    a.pilotOwn = pilotOwnOf(edits, [rt])
     a.archiveName = FileReferenceName
     pw.reference = FileReferenceName
     return ("", FileReferenceName)
@@ -249,8 +249,8 @@ proc chosenReferenceFor(state: var AppState; w: int; s: Session; dtMs: float64;
     a.pilotTrace = rt
     a.pilotRule = rule
     a.pilotRecord = record
-    a.pilotReversed = reversedOf(edits, [rt]).len > 0
-    a.pilotOwn = ownOfTraces(edits, [rt])
+    a.pilotReversed = edits.has(teReversed, rt)
+    a.pilotOwn = pilotOwnOf(edits, [rt])
     a.archiveName = e.name
   else:
     a.archivePath = state.refsHome / e.file

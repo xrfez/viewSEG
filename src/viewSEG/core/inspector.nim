@@ -270,7 +270,8 @@ proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace;
     if blank or not (abs(x) < Inf): x = 0
   if not blank and teReversed in t.edits: reversePolarity(d.samples) # as the reader does
   let list = [t.trace]
-  let plotIt = not blank and req.filters.len > 0 and not (t.hasOwn and t.own.place == fpInstead)
+  let plotIt = not blank and req.filters.len > 0 and teExcluded notin t.edits and
+    not (t.hasOwn and t.own.place == fpInstead)
   if plotIt:
     let plan = req.filters.compile(float32, d.dtMs, whole, recordSamples = n)
     ws.reserve(plan)

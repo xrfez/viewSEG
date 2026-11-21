@@ -42,11 +42,13 @@ type
   MarkItem* = enum
     miRemoveKill
     miRemoveReverse
+    miRemoveExclude
     miRemoveFilter
     miEditFilter
     miRemoveAll
     miRemoveKillSelected
     miRemoveReverseSelected
+    miRemoveExcludeSelected
     miRemoveFilterSelected
 
   MarkEntry* = object
@@ -142,6 +144,7 @@ func markTip*(hit: MarkHit; marks: openArray[EditMark]): string =
   if hit.shared: parts.add $hit.traces.len & " traces here"
   if teKilled in edits: parts.add "Killed"
   if teReversed in edits: parts.add "Polarity reversed"
+  if teExcluded in edits: parts.add "Excluded from the plot's filters"
   if notes.len > 0: parts.add notes.join("\n")
   elif filtered: parts.add "Filtered"
   if parts.len == 0: return ""
@@ -149,7 +152,7 @@ func markTip*(hit: MarkHit; marks: openArray[EditMark]): string =
   parts.join("\n")
 
 func kindCount(edits: set[TraceEdit]; hasFilter: bool): int =
-  ord(teKilled in edits) + ord(teReversed in edits) + ord(hasFilter)
+  ord(teKilled in edits) + ord(teReversed in edits) + ord(teExcluded in edits) + ord(hasFilter)
 
 func selectedWord(n: int): string =
   if n == 1: "1 selected trace" else: $n & " selected traces"
@@ -159,6 +162,7 @@ func entryText*(e: MarkEntry; shared: bool): string =
   case e.item
   of miRemoveKill: "Remove kill"
   of miRemoveReverse: "Remove reversal"
+  of miRemoveExclude: "Remove the exclusion from the plot's filters"
   of miRemoveFilter: "Remove the trace's filter"
   of miEditFilter:
     if shared and e.count > 1: "Edit the filters of " & $e.count & " traces..."
@@ -168,6 +172,7 @@ func entryText*(e: MarkEntry; shared: bool): string =
     else: "Remove all edits of this trace"
   of miRemoveKillSelected: "Remove kill from " & selectedWord(e.count)
   of miRemoveReverseSelected: "Remove reversal from " & selectedWord(e.count)
+  of miRemoveExcludeSelected: "Remove the exclusion from " & selectedWord(e.count)
   of miRemoveFilterSelected: "Remove the filter from " & selectedWord(e.count)
 
 proc withEdit(rows: openArray[TraceEditView]; traces: openArray[int];
@@ -231,6 +236,7 @@ proc markEntries*(hit: MarkHit; rows: openArray[TraceEditView];
 
   addKind(miRemoveKill, miRemoveKillSelected, teKilled)
   addKind(miRemoveReverse, miRemoveReverseSelected, teReversed)
+  addKind(miRemoveExclude, miRemoveExcludeSelected, teExcluded)
   addFilter()
   if kindCount(unionEdits, unionFilter) > 1:
     entries.add MarkEntry(item: miRemoveAll, traces: hit.traces, count: hit.traces.len)

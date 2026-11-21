@@ -37,6 +37,7 @@ type
     autoName: string        ## the name the dialog filled in last (replaced while it is not edited)
     pilotAux: bool
     pilotN, pilotStart, pilotLength: float64
+    pilotPhase: float64     ## 0 or 180 degrees
     pilotAsked: string      ## the pilot ask last sent
     pilotLive: string
     pilotStable: int
@@ -118,6 +119,7 @@ proc openGenerate*(ui: var ReferencesUi; dtMs: float64) =
   ui.pilotN = 1
   ui.pilotStart = 0
   ui.pilotLength = 0
+  ui.pilotPhase = 0
   ui.pilotLengthFilled = false
   ui.pilotAsked = ""
   ui.pilotLive = ""
@@ -168,7 +170,7 @@ proc asked(ui: ReferencesUi): GeneratedReference =
 func pilotRule(ui: ReferencesUi): PilotRule =
   PilotRule(name: bufText(ui.genName), aux: ui.pilotAux,
     trace: (if ui.pilotN.isNaN or abs(ui.pilotN) > 1e9: 0 else: int(ui.pilotN)),
-    startMs: ui.pilotStart, spanMs: ui.pilotLength)
+    startMs: ui.pilotStart, spanMs: ui.pilotLength, phaseDeg: ui.pilotPhase)
 
 func settingsKey(g: GeneratedReference): string {.inline.} =
   generateSettingsKey(g)
@@ -393,6 +395,17 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
     tip("The window from Start for Length, cut to the end of the trace. The whole " &
       "trace is filled in while a file is open. " &
       lengthTip(ui.pilotLength, st.shownIntervalMs, false))
+    let phase = if ui.pilotPhase == 180: "180 degrees (polarity reversed)" else: "0 degrees"
+    if combo("Phase", phase, "generate.pilot.phase", marks):
+      for (deg, label) in [(0.0, "0 degrees"), (180.0, "180 degrees (polarity reversed)")]:
+        if igSelectable_Bool(label.cstring, deg == ui.pilotPhase, 0, ImVec2_c(x: 0, y: 0)):
+          ui.pilotPhase = deg
+        marks.mark("generate.pilot.phase " & $int(deg))
+      igEndCombo()
+    tip("A recorded trace takes 0 or 180 degrees; 180 reverses its polarity, after the " &
+      "trace is taken (with its own reversal and its own filter, never the plot's " &
+      "settings) and cut. A trace you also reversed on the plot is turned twice: back " &
+      "as recorded.")
   var g = GeneratedReference()
   var rule = PilotRule()
   var problem = ""
@@ -824,7 +837,8 @@ proc pilotLine(w: RefView): string =
   ## What a pilot of the record's window says of where it is from: its length and its start.
   "From " & (if w.record.len > 0: w.record else: "the record on show") & ", " &
     pilotWords(w.pilot.aux, w.pilot.trace) & ", " & msWords(w.pilot.spanMs) & " ms from " &
-    msWords(w.pilot.startMs) & " ms. Another record has its own pilot."
+    msWords(w.pilot.startMs) & " ms" &
+    (if w.pilot.phaseDeg == 180: ", phase 180" else: "") & ". Another record has its own pilot."
 
 proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
     marks: var Marks): seq[Command] =
@@ -860,7 +874,7 @@ proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
               false)
           marks.mark("reference.view.fix")
           tip("Saves this record's cut pilot as an ordinary stored waveform: the file's " &
-            "raw samples, as Store does (not turned over, not filtered)")
+            "raw samples, as Store does (not turned over, not filtered; a phase of 180 is not applied)")
         if w.pilotNote.len > 0:
           igTextWrapped("%s", ("Pilot: " & w.pilotNote).cstring)
           marks.mark("reference.view.pilotnote")

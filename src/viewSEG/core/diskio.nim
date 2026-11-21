@@ -204,7 +204,7 @@ proc mergeOthers(w: var Writer; t: var Task; removing: bool): bool =
         # they would not be applied (`takePending`), so they are said and
         # written over
         var lists: seq[string]
-        for edit in [teKilled, teReversed]:
+        for edit in [teKilled, teReversed, teExcluded]:
           if theirs.edits.lists[edit].len > 0:
             lists.add $edit & " " & runsText(theirs.edits.lists[edit])
         if theirs.edits.filters.len > 0:

@@ -511,7 +511,8 @@ type
       refPilot*: PilotRule
         ## ckPilotReference, ckPilotPreview: `aux` true: auxiliary trace `trace`
         ## of the record, else trace `trace` of the record (from 1); the window
-        ## from `startMs` for `spanMs`; `name` "": one made from the rule
+        ## from `startMs` for `spanMs`; `phaseDeg` 0 (left out) or 180 (turned
+        ## over after the cut); `name` "": one made from the rule
     of ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference,
         ckViewReference, ckCloseRefView:
       refId*: string
@@ -2474,7 +2475,7 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
     template e: untyped = state.edits[state.keyOf(state.sessions[i].path)]
     reversed = e.listIn(teReversed, traces)
     killed = e.listIn(teKilled, traces)
-    own = e.filtersIn(traces)
+    own = e.plotFiltersIn(traces)
   let ownHz = i >= 0 and state.keyOf(state.sessions[i].path) in state.edits and
     state.edits[state.keyOf(state.sessions[i].path)].ownNeedsWhole(traces)
   # While it filters, whole traces: a filter's margin grows as its ramp
@@ -2992,7 +2993,11 @@ proc followInspect(state: var AppState) =
       let i = state.findTrace(t)
       if i >= 0:
         let s = state.sessions[i]
-        let (has, f) = state.editsAt(s.path).ownOf(t - s.base)
+        let e = state.editsAt(s.path)
+        var (has, f) = e.ownOf(t - s.base)
+        if e.has(teExcluded, t - s.base): # the plot's filters never touch it: its own run instead
+          has = true
+          f.place = fpInstead
         want.hasOwn.add has
         want.own.add f
       else:
@@ -3166,6 +3171,14 @@ func ownKeyOf(e: FileEdits; traces: openArray[int]): string =
     let (has, f) = e.ownOf(t)
     if has: result.add $t & ":" & $f.place & ":" & $f.spec & ";"
     if e.has(teReversed, t): result.add $t & ":r;"
+    if e.has(teExcluded, t): result.add $t & ":e;"
+
+func pilotKeyOf(e: FileEdits; trace: int): string =
+  ## What a pilot taken by a rule depends on in its trace's edits: the trace's own
+  ## reversal and own filter, nothing the plot decides (reverse-all, excluded).
+  let (has, f) = e.ownOf(trace)
+  if has: result.add $f.place & ":" & $f.spec & ";"
+  if e.has(teReversed, trace): result.add "r;"
 
 proc reversedOf(e: FileEdits; traces: openArray[int]): seq[int] =
   ## Those of `traces` effectively reversed (`effectivelyReversed`: own
@@ -3176,7 +3189,21 @@ proc reversedOf(e: FileEdits; traces: openArray[int]): seq[int] =
   result.sort()
 
 func ownOfTraces(e: FileEdits; traces: openArray[int]): seq[FilterEntry] =
-  ## The own filters of `traces`, ascending.
+  ## The own filters of `traces` as the readers of the plot's filters need them,
+  ## ascending: a trace excluded from the plot's filters has its own run instead
+  ## of them (`plotFiltersIn`).
+  if traces.len == 0: return
+  var lo = traces[0]
+  var hi = traces[0]
+  for t in traces:
+    if t < lo: lo = t
+    if t > hi: hi = t
+  for f in e.plotFiltersIn(lo .. hi):
+    if f.trace in traces: result.add f
+
+func pilotOwnOf(e: FileEdits; traces: openArray[int]): seq[FilterEntry] =
+  ## The own filters of `traces` as stored, ascending: a pilot taken by a rule
+  ## uses nothing the plot decides, so no exclusion is added.
   if traces.len == 0: return
   var lo = traces[0]
   var hi = traces[0]
@@ -3732,7 +3759,7 @@ proc takePending(state: var AppState; i: int; p: FileRecord; fits: bool): string
     return rec.doc
   r.pending = true # removed now
   var lists: seq[string]
-  for edit in [teKilled, teReversed]:
+  for edit in [teKilled, teReversed, teExcluded]:
     if p.edits.lists[edit].len > 0: lists.add $edit & " " & runsText(p.edits.lists[edit])
   if p.edits.filters.len > 0: lists.add $p.edits.filters.len & " filtered"
   if p.edits.allReversed: lists.add "all reversed"
@@ -7330,11 +7357,10 @@ proc pilotPreviewAsk(state: var AppState; cmd: Command) =
   let s = state.sessions[i]
   let edits = state.editsAt(s.path)
   let (trace, record, problem) = s.pilotOfRecord(g, rule, edits)
-  let flip = trace >= 0 and reversedOf(edits, [trace]).len > 0
-  let pr = state.panels[state.findPanel(MainPanel)].spectrumFilters
-  let own = if trace >= 0: ownOfTraces(edits, [trace]) else: @[]
-  let key = pilotKey(rule, s.path, record, trace, flip, filtersText(pr),
-    if trace >= 0: ownKeyOf(edits, [trace]) else: "")
+  let flip = trace >= 0 and edits.has(teReversed, trace)
+  let own = if trace >= 0: pilotOwnOf(edits, [trace]) else: @[]
+  let key = pilotKey(rule, s.path, record, trace, flip, "",
+    if trace >= 0: pilotKeyOf(edits, trace) else: "")
   if problem.len > 0:
     state.say(problem, record, key)
     return
@@ -7345,7 +7371,7 @@ proc pilotPreviewAsk(state: var AppState; cmd: Command) =
   shown.problem = ""
   discard state.jobs.submit(JobSpec(title: "Read the pilot of the record", lane: jlInteractive,
     reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace, rule, flip, record,
-    s.base + trace, 0, key, rule.name, state.refsHome, pr, own, state.inbox.poster))
+    s.base + trace, 0, key, rule.name, state.refsHome, own, state.inbox.poster))
 
 proc pilotReference(state: var AppState; cmd: Command) =
   let why = state.refsWritable
@@ -7445,12 +7471,11 @@ proc viewReference(state: var AppState; cmd: Command) =
     w.waiting = true
     w.pilotTrace = s.base + trace
     state.refViews.add w
-    let flip = reversedOf(edits, [trace]).len > 0
-    let pr = state.panels[state.findPanel(MainPanel)].spectrumFilters
+    let flip = edits.has(teReversed, trace)
     discard state.jobs.submit(JobSpec(title: "Read the reference " & e.name,
       lane: jlInteractive, reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace,
-      rule, flip, record, s.base + trace, id, "", e.name, state.refsHome, pr,
-      ownOfTraces(edits, [trace]), state.inbox.poster))
+      rule, flip, record, s.base + trace, id, "", e.name, state.refsHome,
+      pilotOwnOf(edits, [trace]), state.inbox.poster))
     return
   if e.blocked or not singleFileName(e.file):
     state.ignore(cmd, "the reference \"" & e.name &
