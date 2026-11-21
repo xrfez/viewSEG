@@ -41,11 +41,11 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.17.0: capabilities | names | processSEG 0.9.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 53 (20 in part) | 176 | 34 (23 in part) | 152 |
+| `built` | 53 (20 in part) | 176 | 34 (23 in part) | 153 |
 | `internal` | 15 | 43 | 4 | 38 |
-| `planned` | 32 | 220 | 45 | 399 |
+| `planned` | 32 | 220 | 45 | 400 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 20 | 362 | 6 | 66 |
+| `not applicable` | 20 | 364 | 6 | 66 |
 | all | 122 | 813 | 90 | 662 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
@@ -131,7 +131,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | UTC and GPS time | `TraceKeys.time`, `generalHeaderUtc`, `timestampToUnix`, `gpsMinusUtc` | Status bar: shot time and time within the record | built (the status bar's fields "shot time" and "UTC at the cursor", from `TraceKeys.time`); not applicable (`generalHeaderUtc`, `timestampToUnix`, `gpsMinusUtc`: parseSEG puts the time in the keys) |
 | Values joined from survey files, by group | `joinedTraces`, `joinedGroups`, `JoinGroup`, `changedGroups` | Values from the survey (an import) are drawn in the accent colour in the display header, the cursor's header box and the status bar (`Tile.joined`), and in the Headers window's Trace > Header table, a row per key the join gave above the header's own fields, marked per trace; the Summary names the join, its files and the units confirmed | built; not applicable (`changedGroups`: parseSEG's join records what it changed) |
 | Keys revision for stale-data checks | `keysRevision`, `markJoined` | internal: overlays, bins and processed tiles rebuilt when keys change | internal; not applicable (`markJoined`: the viewer joins through parseSEG, which marks what it changes) |
-| Vendor header blocks decoded by maps | `decodeVendorAreas`, `VendorRegistry`, `checkVendorMap`, `VendorRevision`, `SegdBlockSize`, `SegdTraceHeaderSize`, `TraceHeaderSize`, `decodeTraceHeader`, `SegyTrace`, `loadVendorMaps`, `vendorSearchPath`, `registerVendorDecoder` | Headers window, File headers: the Vendor tab shows decoded vendor blocks; Trace, Header: a Vendor group of the trace's own; `vendormaps` folders in the project, the settings folder, beside the program and `PARSESEG_VENDOR_PATH`; File > Reload vendor maps (docs/user/vendor-maps.md) | built (the Vendor tab and the Trace tab's Vendor group, the folders, the reload; the trace's header bytes are cut into a `SegdTrace` or `SegyTrace` for `decodeVendorAreas`); not applicable (`loadVendorMaps`: the viewer reads each folder through its file seam, off the UI thread, and gives parseSEG each map's text; `vendorSearchPath`: parseSEG's own list is its repository's, the viewer has its folders; `registerVendorDecoder`: code decoders are for programs that link their own) |
+| Vendor header blocks decoded by maps | `decodeVendorAreas`, `vendorLayout`, `overlayLayout`, `VendorRegistry`, `checkVendorMap`, `VendorRevision`, `SegdBlockSize`, `SegdTraceHeaderSize`, `TraceHeaderSize`, `decodeTraceHeader`, `SegyTrace`, `loadVendorMaps`, `vendorSearchPath`, `registerVendorDecoder` | Headers window, File headers: the Vendor tab shows decoded vendor blocks; Trace, Header: a Vendor group of the trace's own; `vendormaps` folders in the project, the settings folder, beside the program and `PARSESEG_VENDOR_PATH`; File > Reload vendor maps (docs/user/vendor-maps.md) | built (the Vendor tab and the Trace tab's Vendor group, the folders, the reload; the trace's header bytes are cut into a `SegdTrace` or `SegyTrace` for `decodeVendorAreas`); not applicable (`loadVendorMaps`: the viewer reads each folder through its file seam, off the UI thread, and gives parseSEG each map's text; `vendorSearchPath`: parseSEG's own list is its repository's, the viewer has its folders; `registerVendorDecoder`: code decoders are for programs that link their own) |
 | Starting maps for undecoded vendor blocks | `scaffoldVendorMap`, `toNif` | "Create vendor map for this file…" | planned |
 | Byte-level codecs (endians, BCD, IBM float, EBCDIC) | `parseSEG/codecs`, `getNum`, `loadNum`, `loadU24`, `beU8`, `beU16`, `beU24`, `beU32`, `beU64`, `beI8`, `beI16`, `beI24`, `beI32`, `beI64`, `beF32`, `beF64`, `hostOrder`, `swapBytes`, `ByteBuf`, `byteBuf` | Headers window, the hex pane under a header table: the field's bytes read as whole numbers big- and little-endian, signed and not, IEEE and IBM floats, BCD and text | built |
 | Field values by kind | `FieldValue`, `FieldValueKind`, `HeaderScope`, `BlockRef`, `toFieldValue`, `toFloat`, `$` | The header tables show each value by its kind (integer, real, text, bytes): the Headers window's File headers and Trace > Header | built (the Headers window); not applicable (`HeaderScope`, `BlockRef`, `toFieldValue`, `toFloat`: the header rows give the values) |
@@ -361,7 +361,7 @@ name, so these are building blocks for code that works on raw headers.
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Sweep tapers (nine shapes) | `initSweepTaper`, `TaperShape`, `applyTaper`, `taperWeight`, `noTaper`, `SweepTaper`, `checkFits` | Operations → References → Generate a reference | built (Operations → References → Generate a reference: every taper shape, its parameter and the phase); planned (applying a taper to samples already read) |
+| Sweep tapers (nine shapes) | `initSweepTaper`, `TaperShape`, `applyTaper`, `samplesInLength`, `lengthOfSamples`, `taperWeight`, `noTaper`, `SweepTaper`, `checkFits` | Operations → References → Generate a reference | built (Operations → References → Generate a reference: every taper shape, its parameter and the phase); planned (applying a taper to samples already read) |
 | Sweep generation (linear, dB/octave, dB/Hz, exponential, table) | `linearSweep`, `dbPerOctaveSweep`, `dbPerHzSweep`, `exponentialSweep`, `tableSweep`, `generatePilot`, `sweepSamples`, `SweepSpec`, `SweepLaw`, `SweepPoint`, `sweepLen`, `sweepInto` | Operations → References → Generate a reference | built (Operations → References → Generate a reference); planned (table sweeps) |
 | Sweep harmonics (known distortion) | `SweepHarmonic`, `sweepHarmonics`, `sweepHarmonicsInto` | Sample vibrator records with known distortion, to check the vibrator QC | planned |
 | Instantaneous frequency and phase | `frequencyAt`, `phaseAt` | Compare pilots: frequency at the cursor | planned |
