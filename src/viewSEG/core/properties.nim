@@ -11,7 +11,7 @@
 
 import std/[math, os, strutils, times]
 import parseSEG
-import state
+import sigtypes, state
 
 type
   SummaryLine* = object
@@ -152,6 +152,131 @@ proc openedLines(lines: var seq[SummaryLine]; o: OpenFacts; standard: SeismicKin
   lines.add "Options", (if o.choice.isDefault: "the defaults (File > Reopen with options " &
     "changes them)" else: choiceText(o.choice))
 
+func yesNo(v: bool): string = (if v: "yes" else: "no")
+
+func intervalWords(f: SignatureFacts): string =
+  let ms = exactText(f.choice.intervalUs / 1000) & " ms"
+  let typed = f.choice.intervalUs != defaultIntervalUs(f.kind)
+  if typed: ms & " (typed)"
+  else: ms & " (assumed: the file does not state its interval; Reopen with options changes it)"
+
+func channelLines(lines: var seq[SummaryLine]; f: SignatureFacts) =
+  for i, t in f.traces:
+    lines.add (if i == 0: "Channels" else: ""), $(i + 1) & " " & t.name & " (" & $t.code & ")"
+
+func qcLines(lines: var seq[SummaryLine]; q: ControllerQc) =
+  lines.heading "The controller's QC"
+  if not q.valid:
+    lines.add "Record", "none: a stopped recording has no QC record"
+    return
+  lines.add "Sweep number", (if q.sweepNumber == 16: "16 (a pulse record)" else: $q.sweepNumber)
+  lines.add "Checksums", "sweep " & toHex(q.sweepChecksum, 4) & ", parameters " &
+    toHex(q.paramChecksum, 4)
+  lines.add "Force, % of the hold-down weight", "max " & $q.brief.forceMaxPct & ", min " &
+    $q.brief.forceMinPct & ", avg " & $q.brief.forceAvgPct
+  lines.add "Distortion (THD), %", "max " & $q.brief.thdMaxPct & ", avg " & $q.brief.thdAvgPct &
+    " (the controller's own definition)"
+  lines.add "Phase max", exactText(q.brief.phaseMaxDeg) & " degrees (probable)"
+  var limits = ""
+  for l in q.brief.limits: limits.add $l
+  lines.add "Limits tripped", (if limits.len == 0: "none" else: limits &
+    " (the meanings of the letters are not known)")
+  lines.add "Stiffness", "max " & $q.stiffness.max & ", min " & $q.stiffness.min & ", avg " &
+    $q.stiffness.avg
+  lines.add "Viscosity", "max " & $q.viscosity.max & ", min " & $q.viscosity.min & ", avg " &
+    $q.viscosity.avg
+  if q.targetForceLbf >= 0: lines.add "Target force", $q.targetForceLbf & " lbf"
+  lines.add "GNSS quality", $q.satellites & " satellites, PDOP " & exactText(q.pdop) &
+    ", HDOP " & exactText(q.hdop) & ", VDOP " & exactText(q.vdop) & ", correction age " &
+    $q.correctionAgeS & " s, height " & exactText(float64(q.heightCm) / 100) & " m"
+  lines.add "Its own correlation", (if q.correlationStored:
+    "stored (zero-lag value " & $q.correlationLagZero & ")" else: "not stored")
+
+func positionWords(p: SignaturePosition): string =
+  if not p.valid: return ""
+  exactText(p.latitudeDeg) & ", " & exactText(p.longitudeDeg) &
+    (if p.altitudeM.isNaN: "" else: ", altitude " & exactText(p.altitudeM) & " m") &
+    ", fix quality " & $p.fixQuality & ", " & $p.satellites & " satellites, HDOP " &
+    (if p.hdop.isNaN: "?" else: exactText(p.hdop))
+
+func signatureLines*(f: SignatureFacts): seq[SummaryLine] =
+  ## The Summary's "Signature file" section and the controller's QC, for a signature
+  ## file (`f.kind` not `sgNone`); nothing for any other. The same words reach the agent's
+  ## `properties`.
+  if f.kind == sgNone: return
+  let i = f.info
+  result.heading "Signature file"
+  result.add "Kind", (if f.kind == sgDat: "vibrator controller .dat signature file"
+    else: "vibrator controller .vib signature record")
+  result.add "Decoded as", f.decodedAs
+  if f.kind == sgDat:
+    result.add "Controller (serial)", intToStr(int(i.controller), 4)
+    result.add "Vibrator ID", (if f.qc.valid: $i.vibrator else: "not in a stopped recording")
+    if f.qc.valid: result.add "Crew", $f.qc.crew
+    result.add "File number", $i.fileNumber
+    result.add "Trigger (UTC)", timeText(i.triggerNs)
+    result.add "Samples", groupDigits(i.samples) & " per channel at " & intervalWords(f)
+    result.add "Length", secondsWords(float64(i.samples) * f.choice.intervalUs / 1e6)
+    result.add "Recording", (if i.complete: "complete" else: f.warnings.join(" "))
+    result.channelLines f
+    if f.choice.swapForces: result.add "", "force channels swapped by your choice"
+    result.add "Units", "raw counts"
+    result.add "Polarity", "as recorded: no sign is changed"
+    for (label, v) in [("Source line", i.line), ("Source station", i.station),
+        ("Source index", i.sourceIndex), ("Shot id", i.shotId), ("Sweep id", i.sweepId)]:
+      result.add label, (if v == 0: "not given" else: $v)
+    result.add "Position (GGA)", positionWords(f.gga)
+    result.add "Position record fix", (if f.fix.valid: positionWords(f.fix) &
+      " (a different fix from the GGA)" else: "")
+    result.qcLines f.qc
+  else:
+    result.add "Recording began (UTC)", timeText(i.triggerNs, 0) &
+      " (to the second: the file holds no finer time)"
+    let t = f.trigger
+    case t.source
+    of trEstimated:
+      result.add "Trigger", "frame " & exactText(t.frame) & " (" &
+        exactText(t.frame * f.choice.intervalUs / 1000) & " ms after the first frame), " &
+        "estimated from the reference (a linear-sweep fit; one sigma " &
+        exactText(t.sigmaFrames) & " frames). The scatter to expect is wider: a " &
+        "controller's reference can sit about 0.02 frames off its trigger." &
+        (if t.timeZero == "first frame": " t = 0 is at the first frame, by your choice." else: "")
+      result.add "Sweep (estimated)", "start " & exactText(t.startHz) & " Hz, rate " &
+        exactText(t.rateHzPerS) & " Hz/s, " & $t.crossings & " zero crossings, largest " &
+        "residual " & exactText(t.residualCycles) & " cycles"
+    else:
+      result.add "Trigger", "not found: " & t.why & ". t = 0 is the first frame."
+    result.add "Samples", groupDigits(i.samples) & " frames per channel at " & intervalWords(f)
+    result.add "Recording", (if not i.complete: "cut short: its whole frames are shown"
+      elif f.endsInSweep: "ends inside the sweep: a stopped recording (shown as recorded)"
+      else: "complete")
+    result.add "Controller (serial)", (if i.serialFrom == sfFolder:
+      intToStr(int(i.controller), 4) & " (from the folder name, not in the file)"
+      elif i.serialFrom == sfPair: intToStr(int(i.controller), 4) & " (from the .dat of this sweep)"
+      else: "not in the file")
+    if i.fileNumber >= 0:
+      result.add "File counter", $i.fileNumber &
+        " (the controller's count of .vib files, not the .dat file number)"
+    let m = f.masses
+    result.add "From the header", "hold-down weight " & exactText(m.holdDownLb) &
+      " lb, baseplate weight " & exactText(m.baseplateLb) & " lb, reaction-mass weight " &
+      exactText(m.massLb) & " lb"
+    result.add "", "accelerometer sensitivity " & exactText(f.sensitivities.first) & " and " &
+      exactText(f.sensitivities.second) & " (which sensor each belongs to is not known)"
+    result.add "", "valve calibration " & exactText(f.calibrations.valve) &
+      ", mass-displacement calibration " & exactText(f.calibrations.mass) &
+      ", two values of unknown meaning"
+    result.channelLines f
+    result.add "Accelerometer sets", "set B (traces 2-4): the set the .dat file records; the " &
+      "primary set"
+    result.add "", "set A (traces 5-7): the set the controller's QC report follows (probable)"
+    result.add "", "two acquisition paths of the vibrator's motion; which runs through the " &
+      "controller's electronics is not known"
+    result.add "Units", "raw counts; ground forces in pound-counts (the header's weights x counts)"
+    result.add "Polarity", "as recorded: no sign is changed"
+    result.heading "The controller's QC"
+    result.add "Record", "not in a .vib file: it is in the .dat of this sweep"
+
 proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
     units = ImportUnits()): seq[SummaryLine] =
   ## The Summary tab of file `s` with its gather `gather` shown (-1 for
@@ -169,6 +294,7 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
   result.add "Folder", s.path.parentDir
   if s.size >= 0: result.add "Size", bytesText(s.size)
   if s.modified != Time(): result.add "Modified", s.modified.local.format("yyyy-MM-dd HH:mm:ss")
+  result.add signatureLines(s.signature)
   result.heading "Format"
   result.add "Standard", standardText(sm)
   if sm.standard in {skSegy, skSeg2}:
@@ -186,7 +312,14 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
   if facts.opened.wide:
     result.add "Precision", "some samples hold more digits than a 4-byte float: they are " &
       "shown as 4-byte floats (about 7 significant digits)"
-  openedLines(result, facts.opened, sm.standard)
+  if s.isSignature:
+    result.heading "How it was opened"
+    result.add "Options", (if s.signature.choice.intervalUs == defaultIntervalUs(
+        s.signature.kind) and
+      not s.signature.choice.swapForces and not s.signature.choice.fromFirstFrame:
+      "the defaults" else: "interval " & exactText(s.signature.choice.intervalUs / 1000) & " ms")
+  else:
+    openedLines(result, facts.opened, sm.standard)
   result.heading "Traces"
   result.add "Traces", grouped(sm.traceCount)
   result.add "Records", grouped(s.gathers.len) &

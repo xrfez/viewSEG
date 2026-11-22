@@ -166,7 +166,9 @@ proc text*(p: Pick; f: ReadoutField): string =
       of tsLive: "live"
       of tsDead: "dead"
       of tsAuxiliary: "auxiliary"
-    of rfTraceId: traceIdText(int(k.traceCode), k.status != tsUnknown)
+    of rfTraceId: (if p.channelSet.len > 0 and k.traceCode != 0: p.channelSet & " (" &
+        $k.traceCode & ")"
+      else: traceIdText(int(k.traceCode), k.status != tsUnknown))
     of rfChannelSet: p.channelSet
     of rfTime, rfSample, rfAmplitude, rfRawAmplitude: "" # handled above
 
@@ -200,7 +202,8 @@ func editNote*(p: Pick): string =
   if not (p.inside and p.found): return ""
   if p.keys.status == tsDead: result = "dead"
   elif p.keys.status in {tsAuxiliary, tsUnknown} and p.keys.traceCode != 0:
-    result = traceIdText(int(p.keys.traceCode), p.keys.status != tsUnknown)
+    result = if p.channelSet.len > 0: p.channelSet & " (" & $p.keys.traceCode & ")"
+             else: traceIdText(int(p.keys.traceCode), p.keys.status != tsUnknown)
   for (edit, word) in [(teKilled, "killed"), (teReversed, "polarity reversed"),
       (teExcluded, "excluded from the plot's filters")]:
     if edit in p.edits: result.add (if result.len > 0: ", " else: "") & word

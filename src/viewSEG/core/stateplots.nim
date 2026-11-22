@@ -305,12 +305,14 @@ proc askPlot(state: var AppState; w: int): bool =
   for t in pw.traces:
     if t in s:
       traces.add t - s.base
-      labels.add "trace " & $(t - s.base + 1)
+      labels.add(if s.isSignature and t - s.base in 0 ..< s.signature.traces.len:
+        s.signature.traces[t - s.base].name else: "trace " & $(t - s.base + 1))
   if pw.view in {avCorrelation, avEnvelope}:
     pw.fileRef = fileReferencePlace(s, s.gatherOf(pw.traces[0] - s.base)) > 0
   var a = AnalysisAsk(id: pw.id, view: pw.view, params: pw.params, file: s.filePtr,
     path: s.path, size: s.size, traces: traces, names: labels,
     processing: pw.processing)
+  if s.isSignature: a.forceNote = signatureForceNote(s.signature)
   # the unit of the file's distances: as imported, else what its headers say
   let joined = state.joinedOf(s.id)
   let imported = joined >= 0 and state.joins[joined].units.file != suNotGiven
@@ -474,7 +476,9 @@ proc shapeOpened(state: AppState; view: AnalysisView; i: int; traces: var seq[in
           let (isCoded, _) = s.codeRolesIn(coded, VibRoles())
           if isCoded:
             var t = coded[0]
-            while coded.len < MaxVibratorTraces and t <= record.b:
+            # (a signature file's window holds its four coded traces: the rest are other
+            # channels, not candidates for a role)
+            while not s.isSignature and coded.len < MaxVibratorTraces and t <= record.b:
               if t notin coded: coded.add t
               inc t
             coded.sort()
@@ -507,6 +511,12 @@ proc rolesOf(state: AppState; s: Session; fileTraces: openArray[int]; roles: Vib
   ## the identification codes give them when they are the vibrator's; else the roles are
   ## as they were (the window's order at first).
   result = roles
+  if s.isSignature:
+    # The channels are named by the file: the codes decide, never a remembered layout or a
+    # hand-made choice (the polarity the user chose stays).
+    let (found, byCodes) = s.codeRolesIn(fileTraces, roles)
+    if found: result = byCodes
+    return
   if fileTraces.len == 0 or roles.source == rsHand and roles.handFile == file: return
   let g = s.gatherOf(fileTraces[0])
   if g notin 0 ..< s.gathers.len: return
@@ -627,6 +637,14 @@ proc rememberedNotUsed(state: AppState; w: AnalysisWindow): bool =
   if g notin 0 ..< s.gathers.len: return false
   var places: array[4, int]
   state.vibLayouts.choiceFor(layoutKey(s.recordCodes(g), s.gathers[g].traces.len), places)
+
+proc vibForceNote*(state: AppState; w: int): string =
+  ## For a vibrator window of a signature file (plot `w`): what its ground force and masses
+  ## are, in words ("M and B are forces already ..."); "" for any other file.
+  if w < 0 or w >= state.plots.len: return
+  let i = state.vibWindowFile(w)
+  if i >= 0 and state.sessions[i].isSignature:
+    result = signatureForceNote(state.sessions[i].signature)
 
 proc vibRolesLine*(state: AppState; w: AnalysisWindow; long = true): string =
   ## Where each role of a vibrator signature comes from, in one line. `long`: "Reference:

@@ -112,6 +112,9 @@ type
     filter*: TraceFilter
     order*: seq[SortKey]   ## the layer's order; empty: the file's
     hidden*: seq[int]      ## traces of the gather left out (killed, hidden), ascending
+    traceNames*: seq[string]
+      ## a signature file's name of each trace, by its index in the file (empty for any other
+      ## file): the tile's `sets` carry them, so the readout and the display header say them
 
   ReaderRequest* = object
     ## What a panel asks its reader for.
@@ -774,6 +777,9 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
       if f[].kind == skSegd:
         if tile.sets.len == 0: tile.sets = newSeq[string](q.count)
         tile.sets[row] = f[].channelSetText(list[row])
+      elif rd.src.traceNames.len > 0:
+        if tile.sets.len == 0: tile.sets = newSeq[string](q.count)
+        if list[row] in 0 ..< rd.src.traceNames.len: tile.sets[row] = rd.src.traceNames[list[row]]
 
   var failed: seq[int]
   var atHand = addr rd.raw # the samples at hand that hold the request's, if any

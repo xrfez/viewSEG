@@ -849,6 +849,45 @@ proc vendorMapsJson(state: AppState): JsonNode =
     "problems": problems, "shadowed": load.shadowed,
     "loads": state.vendorGen}
 
+proc signatureJson(f: SignatureFacts): JsonNode =
+  ## What `state.files[]` says of a vibrator controller's signature file decoded in memory.
+  let i = f.info
+  let stopped = if f.kind == sgDat: (if i.complete: "" else: f.warnings.join(" "))
+                elif f.endsInSweep: "the record ends inside the sweep" else: ""
+  result = %*{"kind": (if f.kind == sgDat: "dat" else: "vib"),
+    "samples": i.samples, "intervalUs": f.choice.intervalUs,
+    "intervalAssumed": not f.intervalStated, "complete": i.complete and not f.endsInSweep,
+    "stopped": stopped, "decodedAs": f.decodedAs, "traces": newJArray()}
+  for t in f.traces: result["traces"].add %*{"name": t.name, "code": int(t.code), "unit": t.unit}
+  if f.kind == sgDat:
+    result["controller"] = %i.controller
+    result["vibrator"] = %i.vibrator
+    result["fileNumber"] = %i.fileNumber
+    result["trigger"] = %timeText(i.triggerNs)
+    result["declared"] = %i.declared
+    result["forceChannels"] = %true
+    result["swapped"] = %f.choice.swapForces
+  else:
+    result["controller"] = (if i.serialFrom == sfNone: newJNull() else: %i.controller)
+    result["controllerFrom"] = %(case i.serialFrom
+      of sfFolder: "folder"
+      of sfPair: "pair"
+      else: "")
+    result["fileCounter"] = %i.fileNumber
+    result["recordingBegan"] = %timeText(i.triggerNs, 0)
+    result["frames"] = %i.samples
+    result["trigger"] = %*{"source": (case f.trigger.source
+      of trEstimated: "estimated"
+      of trGiven: "given"
+      else: "none"), "frame": (if f.trigger.frame.isNaN: newJNull() else: %f.trigger.frame),
+      "sigmaFrames": (if f.trigger.sigmaFrames.isNaN: newJNull() else: %f.trigger.sigmaFrames),
+      "startHz": (if f.trigger.startHz.isNaN: newJNull() else: %f.trigger.startHz),
+      "rateHzPerS": (if f.trigger.rateHzPerS.isNaN: newJNull() else: %f.trigger.rateHzPerS),
+      "crossings": f.trigger.crossings}
+    result["timeZero"] = %f.trigger.timeZero
+    result["primarySet"] = %"B"
+    result["pair"] = newJNull()
+
 proc propertiesJson(state: AppState): JsonNode =
   ## The properties of the file the Seismic window shows, as its Headers
   ## window's Summary gives them (sections of lines: what it is, how it was
@@ -923,8 +962,10 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
   if "files" in wanted:
     var files = newJArray()
     for s in state.sessions:
-      files.add %*{"id": int(s.id), "path": s.path, "name": s.name, "traces": s.len,
+      var f = %*{"id": int(s.id), "path": s.path, "name": s.name, "traces": s.len,
         "firstTrace": s.base, "gathers": s.gathers.len}
+      if s.isSignature: f["signature"] = signatureJson(s.signature)
+      files.add f
     r["files"] = files
   if "panels" in wanted:
     var panels = newJArray()

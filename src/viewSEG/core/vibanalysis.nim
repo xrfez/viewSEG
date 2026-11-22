@@ -198,7 +198,7 @@ func roundedTop*(est: float64): float64 =
 
 proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     at: array[VibRole, int]; dtMs: float64; p: AnalysisParams;
-    recorded = -1; topHz = NaN; exactTopHz = NaN): AnalysisResult =
+    recorded = -1; topHz = NaN; exactTopHz = NaN; forceNote = ""): AnalysisResult =
   ## The vibrator signature of the unit whose role `r` is row `at[r]` of
   ## `rows` (traces from their first sample at `dtMs`, named `names`; -1:
   ## the unit has none), with the masses, polarities, harmonics and limits
@@ -210,6 +210,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   ## Distortion is the harmonics within a band whose edge is `topHz` (typed; NaN: none
   ## typed), else `exactTopHz` (a generated reference's end frequency; NaN: not generated),
   ## else the reference's own estimated top (`result.band` says which).
+  ## `forceNote`, for a signature file, says that the ground force is in the file (a trace of
+  ## its own) and no typed mass is applied: GF (M, B) is not formed, whatever the masses say.
   result = AnalysisResult(view: avVibrator, dtMs: dtMs)
   if at[vsReference] notin 0 ..< rows.len:
     result.problem = "no reference (Ref): give the pilot's trace that role"
@@ -233,14 +235,14 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   var unit = VibUnit()
   unit.rows = at
   let pair = at[vsMass] >= 0 and at[vsBaseplate] >= 0
-  let masses = p.reactionMassKg > 0 and p.reactionMassKg < Inf and p.baseplateMassKg > 0 and
-    p.baseplateMassKg < Inf
+  let masses = forceNote.len == 0 and p.reactionMassKg > 0 and p.reactionMassKg < Inf and
+    p.baseplateMassKg > 0 and p.baseplateMassKg < Inf
   var said: seq[string] = @[]
   unit.polarity[vsGroundForce] = p.roles.groundForcePolarity
   var mb = p.roles.massPolarity
   if mb == poAutomatic and not (pair and masses):
     mb = poAsRecorded
-    said.add "M and B as recorded (their automatic polarity is decided from the force " &
+    if forceNote.len == 0: said.add "M and B as recorded (their automatic polarity is decided from the force " &
       "they make: it needs both, and both masses)"
   unit.polarity[vsMass] = mb
   unit.polarity[vsBaseplate] = mb
@@ -599,6 +601,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   if vsWeightedSum in u.signals:
     words.add "; GF (M, B) = " & number(p.reactionMassKg, 0) & " kg·M + " &
       number(p.baseplateMassKg, 0) & " kg·B"
+  elif forceNote.len > 0:
+    words.add "; " & forceNote
   elif pair:
     words.add "; enter both masses to generate GF from M and B"
   words.add "; phase plot: " & PhaseShowWords[p.phaseShow] & "; the table's phases are " &

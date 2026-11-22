@@ -43,5 +43,7 @@ func headerLabel*(f: HeaderField; v: float64; channelSet: string): string =
   ## tile has it) and the trace ID code (the code in words).
   case f
   of hfChannelSet: (if channelSet.len > 0: channelSet else: headerText(v))
-  of hfTraceId: (if v.isNaN: "" else: traceIdText(int(v)))
+  of hfTraceId:
+    (if v.isNaN: "" elif channelSet.len > 0: channelSet # (a signature file's own names)
+      else: traceIdText(int(v)))
   else: headerText(v)

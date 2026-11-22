@@ -778,12 +778,22 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
   let standard = facts.summary.standard
   let fileKey = $int(ses.id)
   if not igBeginTabBar("##filetabs", 0): return
+  let inMemory = ses.isSignature
+  if inMemory and subTab(if ses.signature.kind == sgDat: ".dat file" else: ".vib file", marks):
+    # The file's own bytes come first; the SEG-Y tabs after them are what it is decoded into.
+    const id = "headers.signature"
+    if ui.stale(id, fileKey):
+      ui.tables[id] = CachedTable(key: fileKey, table: fieldTable([ses.signature.rows],
+        ["Value"], skSegy))
+    ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output, ui.tableHeight(id))
+    ui.drawHex(id, ses.signature.blocks, fonts, t, marks)
+    igEndTabItem()
   case standard
   of skSegy:
-    if subTab("Text", marks):
+    if subTab(if inMemory: "Text (in memory)" else: "Text", marks):
       ui.drawText("##text", fileKey, proc (): string = facts.text.join("\n"), fonts, marks)
       igEndTabItem()
-    if subTab("Binary", marks):
+    if subTab(if inMemory: "Binary (in memory)" else: "Binary", marks):
       const id = "headers.binary"
       if ui.stale(id, fileKey):
         ui.tables[id] = CachedTable(key: fileKey, table: fieldTable([rowsOf(facts.rows,

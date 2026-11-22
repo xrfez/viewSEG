@@ -222,6 +222,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
                      igGetFrameHeight() + 2 * igGetStyle().FramePadding.x))
                  else: combo
   let planeAt = st.findPlot(w.id)
+  let forceNote = st.vibForceNote(planeAt)
   let fileRefPlace = if planeAt >= 0: st.vibReferencePlace(planeAt) else: -1
   # The top line: Setup (folded away once the 100 % force is set, until the user unfolds it),
   # Details (the other signals, the harmonics and the table), the limits, Reset, Freeze.
@@ -329,6 +330,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
                 (p.roles.field, changed) = (v, true)
             igEndCombo()
           tip(what)
+        igBeginDisabled(forceNote.len > 0) # (a signature file's channels are named by its codes)
         roleRow("Ref", reference, "The reference: the pilot, the phase origin")
         discard igTableSetColumnIndex(2)
         if planeAt >= 0 and igSmallButton("Roles from the codes##codes"):
@@ -353,6 +355,9 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
         tip("B has M's polarity. This button: the mass takes the baseplate's trace and the " &
           "baseplate the mass's. Remembered for files of this layout (the record's trace " &
           "count and codes), in the project when one is open")
+        igEndDisabled()
+        if forceNote.len > 0:
+          igTextDisabled("from the controller's channels (trace codes)")
         igEndTable()
       igTreePop()
     let units = st.settings.units
@@ -370,6 +375,11 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
         else:
           res.notes.add "The " & which & " must be " & massLimitWords(units) & ", not " &
             sensible(typed) & " " & unitWord & "."
+    if forceNote.len > 0:
+      igPushTextWrapPos(0)
+      igTextUnformatted(forceNote.cstring, nil)
+      igPopTextWrapPos()
+    igBeginDisabled(forceNote.len > 0) # (no typed mass is applied to a signature file)
     let line = beginControlLine()
     label("Masses: reaction")
     let shownReaction = massBoxValue(p.reactionMassKg, units)
@@ -413,6 +423,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
       tip("Show masses in " & massName(u) & " (" & systemName(u) & "). The numbers convert " &
         "in place, so the masses do not change; they are kept in kilograms. This is the " &
         "Units setting.")
+    igEndDisabled()
     line.follow(textBoxWidth("harmonics to", box))
     label("harmonics to")
     var h = cint(p.harmonics)
