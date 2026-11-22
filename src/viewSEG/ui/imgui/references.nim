@@ -402,7 +402,7 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
       for (deg, label) in [(0.0, "0 degrees"), (180.0, "180 degrees (polarity reversed)")]:
         if igSelectable_Bool(label.cstring, deg == ui.pilotPhase, 0, ImVec2_c(x: 0, y: 0)):
           ui.pilotPhase = deg
-        marks.mark("generate.pilot.phase " & $int(deg))
+        marks.mark("generate.pilot.deg " & $int(deg))
       igEndCombo()
     tip("A recorded trace takes 0 or 180 degrees; 180 reverses its polarity, after the " &
       "trace is taken (as recorded, reversed when the trace is, never with a filter or the " &
@@ -520,7 +520,7 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
     for (deg, label) in [(0.0, "0 degrees"), (180.0, "180 degrees (reversed)")]:
       if igSelectable_Bool(label.cstring, deg == d.phase, 0, ImVec2_c(x: 0, y: 0)):
         d.phase = deg
-      marks.mark("store.phase " & $int(deg))
+      marks.mark("store.deg " & $int(deg))
     igEndCombo()
   marks.mark("store.phase")
   tip("A recorded trace takes 0 or 180 degrees; 180 turns the stored window over, after " &

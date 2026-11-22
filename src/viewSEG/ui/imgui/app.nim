@@ -187,7 +187,7 @@ type
     skEquals, skMinus, skKeypadPlus, skKeypadMinus, skLeft, skRight, skUp, skDown,
     skBackspace, skZero, skEscape, skEnter, skCtrl, skShift, skAlt, skTab, skHome, skEnd,
     skPageUp, skPageDown, skW, skG, skR, skK, skZ, skLeftBracket, skRightBracket, skM, skY, skP, skF,
-    skF1
+    skF1, skE
 
   SimMod* = enum
     smCtrl, smShift, smAlt
@@ -480,7 +480,8 @@ proc pressKey*(frame: FrameInfo; key: SimKey; down: bool; mods: set[SimMod] = {}
     SDL_SCANCODE_LALT, SDL_SCANCODE_TAB, SDL_SCANCODE_HOME, SDL_SCANCODE_END,
     SDL_SCANCODE_PAGEUP, SDL_SCANCODE_PAGEDOWN, SDL_SCANCODE_W, SDL_SCANCODE_G, SDL_SCANCODE_R,
     SDL_SCANCODE_K, SDL_SCANCODE_Z, SDL_SCANCODE_LEFTBRACKET, SDL_SCANCODE_RIGHTBRACKET,
-    SDL_SCANCODE_M, SDL_SCANCODE_Y, SDL_SCANCODE_P, SDL_SCANCODE_F, SDL_SCANCODE_F1]
+    SDL_SCANCODE_M, SDL_SCANCODE_Y, SDL_SCANCODE_P, SDL_SCANCODE_F, SDL_SCANCODE_F1,
+    SDL_SCANCODE_E]
   var m = 0'u16
   if smCtrl in mods: m = m or uint16(SDL_KMOD_LCTRL)
   if smShift in mods: m = m or uint16(SDL_KMOD_LSHIFT)

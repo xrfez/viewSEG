@@ -106,6 +106,24 @@ proc main*() =
       if not f.pickShape("tpLinear"): return false
       f.markOf("generate.param").size.x == 0 and "tpLinear" in f.previewKey)
 
+    var phaseOpened = false
+    step("a trace of the record: the Phase choice", noop, proc (f: FrameInfo): bool =
+      if f.markOf("generate.pilot.phase").size.x > 0:
+        if not phaseOpened:
+          if wait mod 6 == 3: f.click(f.markOf("generate.pilot.phase").centre)
+          if f.markOf("generate.pilot.deg 180").size.x > 0:
+            phaseOpened = true
+            f.click(f.markOf("generate.pilot.deg 180").centre)
+          return false
+        let shot = getEnv("PILOT_PHASE_SHOT")
+        if shot.len > 0 and wait > 8: discard f.savePng(shot)
+        return wait > 8
+      let src = f.markOf("generate.source 1")
+      if src.size.x > 0:
+        if wait mod 6 == 3: f.click(src.centre)
+      elif wait mod 8 == 0: f.click(f.markOf("generate.source").centre)
+      false)
+
     step("the dialog closes", noop, proc (f: FrameInfo): bool =
       discard f.clickMark("generate.cancel")
       f.markOf("generate").size.x == 0)

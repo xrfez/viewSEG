@@ -124,11 +124,14 @@ type
     flowAux*: bool            ## and through `flow` (`flowReachesAux`)
     clipPercentile*: float64
     reversed*: seq[int]       ## the gather's traces whose polarity is reversed, ascending
-    killed*: seq[int]         ## the gather's traces killed, ascending
+    excluded*: seq[int]
+      ## the gather's traces the plot's filters never touch, ascending (the readers get
+      ## them as own filters that run instead: `own`; this is for the tile's marks)
+    killed*: seq[int] ## the gather's traces killed, ascending
     own*: seq[FilterEntry]
       ## the gather's traces that carry a filter of their own, ascending
-    raw*: bool                ## the tile carries the samples as the file has them too
-    chunkTraces*: int         ## traces per read from the file; 0: `ChunkTraces`
+    raw*: bool ## the tile carries the samples as the file has them too
+    chunkTraces*: int ## traces per read from the file; 0: `ChunkTraces`
     basis*: bool
       ## the record's level is taken over these traces and samples: the
       ## reader keeps them apart (`askLevel` reads nothing when it asks for them)
@@ -698,12 +701,13 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
   tile.header = newSeq[seq[float64]](req.fields.len)
   for h in tile.header.mitems: h = newSeq[float64](q.count)
   # the edits of each row
-  if req.killed.len > 0 or req.reversed.len > 0:
+  if req.killed.len > 0 or req.reversed.len > 0 or req.excluded.len > 0:
     pr.edits = newSeq[set[TraceEdit]](q.count)
     var any = false
     for row, t in list:
       if req.killed.binarySearch(t) >= 0: pr.edits[row].incl teKilled
       if req.reversed.binarySearch(t) >= 0: pr.edits[row].incl teReversed
+      if req.excluded.binarySearch(t) >= 0: pr.edits[row].incl teExcluded
       if pr.edits[row] != {}: any = true
     if any: tile.edits = pr.edits
     else: pr.edits.setLen 0

@@ -2470,13 +2470,14 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
                             else: (ReadAhead, KeepAhead, MaxAheadValues)
   let flow = p.layers[0].displayPipeline(state.gatherKind(p.layers[0]))
   let filters = p.layers[0].processing.filterPipeline(p.layout)
-  var reversed, killed: seq[int]
+  var reversed, killed, excluded: seq[int]
   var own: seq[FilterEntry]
   let (i, traces) = state.shownTraces(k)
   if i >= 0 and state.keyOf(state.sessions[i].path) in state.edits:
     template e: untyped = state.edits[state.keyOf(state.sessions[i].path)]
     reversed = e.listIn(teReversed, traces)
     killed = e.listIn(teKilled, traces)
+    excluded = e.listIn(teExcluded, traces)
     own = e.plotFiltersIn(traces)
   let ownHz = i >= 0 and state.keyOf(state.sessions[i].path) in state.edits and
     state.edits[state.keyOf(state.sessions[i].path)].ownNeedsWhole(traces)
@@ -2522,7 +2523,7 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
     filters: filters, filterAux: p.layers[0].processing.aux,
     flowAux: p.layers[0].flowReachesAux(state.gatherKind(p.layers[0])),
     clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
-    own: own,
+    excluded: excluded, own: own,
     raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0,
     basis: first and req.sameReach(p.basis))
   if p.relevel and not p.levelAsked and not req.sameReach(p.basis):
@@ -7297,7 +7298,7 @@ proc storeReference(state: var AppState; cmd: Command) =
   if edits.has(teKilled, local):
     state.ignore(cmd, "the trace is killed")
     return
-  if local in 0 ..< s.filePtr[].len and s.filePtr[].traceKeys(local).status == tsDead:
+  if local in 0 ..< s.filePtr[].index.keys.len and s.filePtr[].index.keys[local].status == tsDead:
     state.ignore(cmd, "the trace is marked dead")
     return
   var record = NaN
@@ -7557,7 +7558,8 @@ proc clearGoneChoice(state: var AppState; name: string) =
 proc takeReferences(state: var AppState; m: sink Msg) =
   ## A reference job's result.
   let n = m.refNews
-  if n.pilotTrace >= 0 and state.findTrace(n.pilotTrace) < 0:
+  if n.act in {raPilotShown, raViewed} and n.pilotTrace >= 0 and
+      state.findTrace(n.pilotTrace) < 0:
     return # a pilot of a file closed since: dropped
   if n.act == raPilotShown:
     if n.key == state.pilotShown.key:

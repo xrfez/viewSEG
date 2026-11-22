@@ -392,7 +392,7 @@ proc main*() =
       # with its edits, removed
       writeFile(config / StoreFolder / pendingName(b), memoryDocument(FileRecord(
         identity: FileIdentity(size: getFileSize(b) + 1), name: "renamed.sgy", path: b,
-        opened: getTime(), modified: kept[1], edits: EditLists(lists: [@[], @[4, 5, 6]]))))
+        opened: getTime(), modified: kept[1], edits: EditLists(lists: [@[], @[4, 5, 6], @[]]))))
       st = start(config)
       st.showFile(b)
       doAssert st.settle("are not applied: it changed since" in st.lastWarning), st.lastWarning
@@ -435,7 +435,7 @@ proc main*() =
       let months = getTime() - initDuration(days = 200)
       let doc = docName(id, 1)
       let text = memoryDocument(FileRecord(identity: id, name: "hand-edited.sgy", path: d,
-        opened: months, modified: t, edits: EditLists(lists: [@[], @[2]]))).replace(
+        opened: months, modified: t, edits: EditLists(lists: [@[], @[2], @[]]))).replace(
         "(killed \"3\")", "(killed \"3 x\")")
       writeFile(config / StoreFolder / doc, text)
       proc listedOpened(st: var AppState): Time =

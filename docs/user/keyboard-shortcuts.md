@@ -58,6 +58,7 @@ Mouse gestures are listed after the keys of each group.
 | Ctrl+A | Select every trace the Seismic window shows |
 | R | Reverse the polarity of the trace under the pointer, or put it back |
 | K | Kill the trace under the pointer, or restore it |
+| E | Exclude the trace under the pointer from the plot's filters, or put it back |
 | F | Open the amplitude spectrum of the trace under the pointer |
 | M | Select the trace's station on the map |
 | Escape | Cancel the drag, or clear the selection |

@@ -418,6 +418,24 @@ proc main*() =
     shootStep("reversed")
     menuStep("Undo last edit", 14, "Trace 15", "undo")
     waitEdits("put back", 14, {})
+    # Exclude from plot filters: the menu entry, the mark E over the trace, the key E
+    menuStep("Exclude from plot filters", 14, "Trace 15", "exclude")
+    waitEdits("excluded", 14, {teExcluded})
+    headerMarkStep("the header marks the exclusion", 14, 14)
+    step("a menu with the exclusion ticked", proc (f: FrameInfo) =
+      let q = f.pointAt(14)
+      f.moveMouse(q)
+      f.click(q, button = 3), proc (f: FrameInfo): bool =
+      result = f.markOf("plot.menu").size.x > 0 and wait > 4
+      if result:
+        doAssert f.markOf("plot.menu.exclude").size.x > 0
+        let shot = getEnv("EXCLUDE_SHOT")
+        if shot.len > 0: discard f.savePng(shot)
+        f.chord(skEscape))
+    step("the menu closes", noop, proc (f: FrameInfo): bool =
+      f.markOf("plot.menu").size.x == 0)
+    keyStep("E puts the plot's filters back", 14, skE)
+    waitEdits("not excluded", 14, {})
     # density: the keys
     step("density", look(dmDensity, {}), proc (f: FrameInfo): bool =
       f.answered and f.panel.layers[0].display.mode == dmDensity and wait > 3)

@@ -330,7 +330,7 @@ proc main*() =
       writeFile(c2 / StoreFolder / pendingName(p), memoryDocument(FileRecord(
         identity: FileIdentity(size: getFileSize(p)), name: "pend.sgy", path: p,
         opened: getTime(), modified: getLastModificationTime(p),
-        edits: EditLists(lists: [@[], @[4]]))))
+        edits: EditLists(lists: [@[], @[4], @[]]))))
       var st = start(c2)
       st.showFile(p)
       doAssert st.settle(st.remembering(p).known and st.said("Apply or Forget"))
