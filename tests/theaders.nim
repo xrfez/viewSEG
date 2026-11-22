@@ -36,7 +36,7 @@
 import std/[intsets, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
-import viewSEG/core/[fielddocs, inspector, state]
+import viewSEG/core/[fielddocs, inspector, properties, state]
 import viewSEG/view/[byteview, headerviews]
 import utils/[fixtures, waiting]
 
@@ -115,8 +115,8 @@ proc main*() =
       var st = initAppState()
       let short = st.shown(fx.twoSetSegd())
       let a = summaryLines(short, 0)
-      doAssert a.valueOf("Record length (header)") == "998 ms (header; the traces hold " &
-        $SegdSamples & " samples = 1000 ms)", a.valueOf("Record length (header)")
+      doAssert a.valueOf("Record length (header)") ==
+          "998 ms (header; the channel sets end at 1000 ms)", a.valueOf("Record length (header)")
       doAssert a.valueOf("Set 3").endsWith("0 to 998 ms (header; " & $SegdSamples &
         " samples at 2 ms end at 1000 ms)"), a.valueOf("Set 3")
       st.shutdown()
@@ -130,6 +130,23 @@ proc main*() =
       doAssert b.valueOf("Set 3").endsWith("0 to 1000 ms"), b.valueOf("Set 3")
       doAssert "header;" notin b.valueOf("Set 1")
       st.shutdown()
+
+  block recordLengthWithALateStart:
+    # Sets starting at 100 ms end at 1100 ms: a header of 1100 ms is right, one
+    # of 1000 ms (the span without the start) is flagged; and a Rev 3 set with
+    # start and end 0 gets no note.
+    withFixtures fx:
+      var st = initAppState()
+      let right = summaryLines(st.shown(fx.lateStartSegd(1100)), 0)
+      doAssert right.valueOf("Record length (header)") == "1100 ms",
+        right.valueOf("Record length (header)")
+      doAssert right.valueOf("Set 3").endsWith("100 to 1100 ms"), right.valueOf("Set 3")
+      let wrong = summaryLines(st.shown(fx.lateStartSegd(1000)), 0)
+      doAssert wrong.valueOf("Record length (header)") ==
+        "1000 ms (header; the channel sets end at 1100 ms)"
+      st.shutdown()
+    doAssert endTimeText(0, 0, 500, 2000, rev3 = true) == "0 to 0 ms"
+    doAssert endTimeText(0, 0, 500, 2000) == "0 to 0 ms (header; 500 samples at 2 ms end at 1000 ms)"
 
   block summaryOfARecordShortOfTraces:
     withFixtures fx:

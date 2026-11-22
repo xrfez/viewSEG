@@ -56,22 +56,35 @@ func sameMs(a, b: float64): bool =
   ## True when two times in ms agree to a thousandth of a ms.
   abs(a - b) < 1e-3
 
-func recordLengthText*(headerMs: float64; samples: int; intervalUs: float64): string =
-  ## The record length a SEG-D header gives, with a note when the traces hold
-  ## another N x dt: "4000 ms (header; the traces hold 4001 samples = 4001 ms)".
-  ## "" when `headerMs` is not known.
-  result = msText(headerMs)
-  if result.len == 0 or samples <= 0 or intervalUs.isNaN or not (intervalUs > 0): return
-  let traceMs = float64(samples) * intervalUs / 1000
-  if not sameMs(headerMs, traceMs):
-    result.add " (header; the traces hold " & grouped(samples) & " samples = " &
-      msText(traceMs) & ")"
+func longestEndMs*(sets: openArray[ChannelSetSummary]): float64 =
+  ## The latest start + N x dt among the channel sets that hold samples (the
+  ## record the traces make); NaN when none does.
+  result = NaN
+  for c in sets:
+    if c.samplesPerTrace > 0 and not c.sampleIntervalUs.isNaN and c.sampleIntervalUs > 0:
+      let e = c.startTimeMs + float64(c.samplesPerTrace) * c.sampleIntervalUs / 1000
+      if result.isNaN or e > result: result = e
 
-func endTimeText*(startMs, endMs: float64; samples: int; intervalUs: float64): string =
+func recordLengthText*(headerMs, longestEndMs: float64): string =
+  ## The record length a SEG-D header gives, with a note when the channel sets
+  ## end elsewhere (start + N x dt of the longest): "4000 ms (header; the
+  ## channel sets end at 4001 ms)". A set starting at 100 ms with 12 samples at
+  ## 1 ms ends at 112 ms: that header is right, 12 ms is not. "" when `headerMs`
+  ## is not known.
+  result = msText(headerMs)
+  if result.len == 0 or longestEndMs.isNaN: return
+  if not sameMs(headerMs, longestEndMs):
+    result.add " (header; the channel sets end at " & msText(longestEndMs) & ")"
+
+func endTimeText*(startMs, endMs: float64; samples: int; intervalUs: float64;
+    rev3 = false): string =
   ## A channel set's "start to end" from its descriptor, with a note when the
   ## end is not start + N x dt: "0 to 998 ms (header; 500 samples at 2 ms end at 1000 ms)".
+  ## A Rev 3 set with start and end 0 has its times in the trace timestamps:
+  ## no note.
   result = exactText(startMs) & " to " & msText(endMs)
   if samples <= 0 or intervalUs.isNaN or not (intervalUs > 0): return
+  if rev3 and startMs == 0 and endMs == 0: return
   let wantMs = startMs + float64(samples) * intervalUs / 1000
   if not sameMs(endMs, wantMs):
     result.add " (header; " & grouped(samples) & " samples at " & msText(intervalUs / 1000) &
@@ -191,7 +204,7 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
   if traceLength.len > 0: result.add "Trace length", traceLength
   if sm.standard == skSegd and not sm.recordLengthMs.isNaN:
     result.add "Record length (header)",
-      recordLengthText(sm.recordLengthMs, sm.samplesPerTrace, sm.sampleIntervalUs)
+      recordLengthText(sm.recordLengthMs, longestEndMs(facts.channelSets))
   var joined = -1
   for j, x in joins:
     if x.session == s.id: joined = j
@@ -258,7 +271,8 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
               channelTypeName(rev3, c.channelType) & ", " & $c.traceCount &
               (if c.traceCount == 1: " trace, " else: " traces, ") & $c.samplesPerTrace &
               " samples at " & msText(c.sampleIntervalUs / 1000) & ", " &
-              endTimeText(c.startTimeMs, c.endTimeMs, c.samplesPerTrace, c.sampleIntervalUs)
+              endTimeText(c.startTimeMs, c.endTimeMs, c.samplesPerTrace, c.sampleIntervalUs,
+                rev3)
   for p in facts.problems:
     result.add "Not read", p
 

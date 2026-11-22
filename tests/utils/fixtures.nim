@@ -993,7 +993,7 @@ proc areaBytes(text: string; blocks: int): seq[byte] =
   for i in 0 ..< result.len: result[i] = (if i < text.len: byte(text[i]) else: 0x20'u8)
 
 proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stations = true;
-    positioned = true; areas = false; exact = false) =
+    positioned = true; areas = false; exact = false; startMs = 0; recordMs = -1) =
   ## One Rev 3.0 record (file number `SegdRecordNo`, format 8058) with the
   ## channel sets `sets`: an auxiliary set holds one trace, a seismic set
   ## `SegdChannels`. The source is line 1, point 1001, at mid-spread; not
@@ -1026,9 +1026,13 @@ proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stat
     r.external = areaBytes(SegdExternalText, 2)
   # Header lengths as a field system writes them: one sample short of N x dt,
   # unless `exact` (then TE = TF + NS x SR).
-  let endUs = int32(DtMs * 1000 * float64(if exact: SegdSamples else: SegdSamples - 1))
+  # `startMs`: every set starts then (end = start + N x dt); `recordMs` >= 0
+  # sets the header's record length.
+  let startUs = int32(startMs * 1000)
+  let endUs = startUs + int32(DtMs * 1000 * float64(if exact or startMs > 0: SegdSamples
+    else: SegdSamples - 1))
   r.gh2Rev3 = SegdGeneralHeader2Rev3(extFileNumber: SegdRecordNo, revisionMajor: 3,
-    extRecordLength: uint32(endUs), blockType: 2,
+    extRecordLength: uint32(if recordMs >= 0: recordMs * 1000 else: int(endUs)), blockType: 2,
     extChannelSetsPerScanType: (if sets.len > 99: uint16(sets.len) else: 0))
   r.gh3 = SegdGeneralHeader3(timeZero: 1_478_000_000_000_000, blockType: 3)
   var descs: seq[SegdChannelSetDescriptorRev3]
@@ -1036,7 +1040,7 @@ proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stat
     let seismic = s.channelType == 0x10
     descs.add SegdChannelSetDescriptorRev3(scanTypeNumber: 1,
       channelSetNumber: uint16(if s.number > 0: s.number else: n + 1),
-      channelType: s.channelType, endTime: endUs, numSamples: SegdSamples,
+      channelType: s.channelType, startTime: startUs, endTime: endUs, numSamples: SegdSamples,
       descaleMultiplier: 1.0, channelsInSet: uint32(if seismic: SegdChannels else: 1),
       samplingInterval: uint32(DtMs * 1000),
       traceHeaderExtensions: (if seismic and positioned: 4 else: 1),
@@ -1273,6 +1277,15 @@ proc exactLengthSegd*(fx: Fixtures): string =
     writeSegdRecord(result, [SetSpec(channelType: 0x20), SetSpec(channelType: 0x98),
       SetSpec(channelType: 0x10, line: RcvLine, y: OriginY, scale: 1),
       SetSpec(channelType: 0x10, line: RcvLine + 1, y: OriginY + 50, scale: 1)], exact = true)
+
+proc lateStartSegd*(fx: Fixtures; recordMs: int): string =
+  ## `twoSetSegd`'s record with every set starting at 100 ms (ending at
+  ## 1100 ms) and a header record length of `recordMs`.
+  result = fx.dir / ("late-start-" & $recordMs & ".sgd")
+  if not fileExists(result):
+    writeSegdRecord(result, [SetSpec(channelType: 0x20), SetSpec(channelType: 0x98),
+      SetSpec(channelType: 0x10, line: RcvLine, y: OriginY, scale: 1)], startMs = 100,
+      recordMs = recordMs)
 
 proc numberedSetsSegd*(fx: Fixtures): string =
   ## A record of three one-trace auxiliary channel sets whose numbers in the headers
