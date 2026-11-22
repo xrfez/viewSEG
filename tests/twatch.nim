@@ -383,7 +383,17 @@ proc main*() =
       let dir = fx.dir / "many"
       createDir(dir)
       let one = fx.twoSetSegd()
-      for i in 0 ..< 20_000: createHardlink(one, dir / ("shot" & align($i, 5, '0') & ".sgd"))
+      # Windows allows 1 023 links to one file: there a fresh copy starts
+      # each thousand.
+      proc links(prefix: string; n: int) =
+        var base = one
+        for i in 0 ..< n:
+          let dst = dir / (prefix & align($i, 5, '0') & ".sgd")
+          if defined(windows) and i mod 1000 == 0:
+            copyFile(one, dst)
+            base = dst
+          else: createHardlink(base, dst)
+      links("shot", 20_000)
       var st = initAppState(watchEvery = Look)
       st.apply Command(kind: ckBrowse, paths: @[dir])
       doAssert waitUntil((discard st.drainInbox(); not st.fileList.scanning and
@@ -406,7 +416,7 @@ proc main*() =
         $removed.inMilliseconds & " ms"
       doAssert table.rows.len == 16_000 and st.fileList.find(dir / "shot00005.sgd") < 0 and
         st.fileList.find(dir / "shot00001.sgd") >= 0
-      for i in 0 ..< 4_000: createHardlink(one, dir / ("new" & align($i, 5, '0') & ".sgd"))
+      links("new", 4_000)
       let added = st.frames(table, proc (st: AppState): bool = st.fileList.entries.len == 20_000)
       doAssert added < initDuration(milliseconds = 100), "4 000 new: the longest frame took " &
         $added.inMilliseconds & " ms"
