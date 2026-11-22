@@ -563,6 +563,17 @@ proc main*() =
         "the correlation shows the closed file's pilot: " & st.plots[free].result.problem
       doAssert st.plots[frozen].result.plots.len == keptCurves, "a frozen window lost what it showed"
       doAssert st.references.entries.anyIt(it.id == turned), "the rule left the archive"
+      # a file of the same shape (the same trace numbers, none of the closed file's pilot):
+      # the window left open takes it up, as the Envelope and the others do
+      withFixtures fx2:
+        st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx2.twoRecords())
+        doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+        doAssert st.settle(st.plots[free].result.plots.len > 0 and not st.plots[free].waiting),
+          "the correlation did not take up a file of the same shape: " &
+          st.plots[free].result.problem
+        st.apply Command(kind: ckClose, file: st.sessions[0].id)
+        doAssert st.settle(st.sessions.len == 0)
+        doAssert st.plots[free].result.problem == NoFilePilot, st.plots[free].result.problem
       # another file: the rule gives that file's pilot
       withFixtures fx3:
         st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx3.chirpRecord())
