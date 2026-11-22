@@ -829,7 +829,7 @@ proc archiveColumns(index: ReferenceIndex): ArchiveColumns =
   for w in [addr result.name, addr result.length, addr result.interval, addr result.frequency,
       addr result.date, addr result.source]:
     w[] = round(w[] + pad)
-  result.use = round(max(textWidth("Use"), igGetFrameHeight()) + pad)
+  result.use = round(max(textWidth("Use"), igGetFontSize()) + pad)
 
 func tableKey(c: ArchiveColumns): string =
   ## Part of the table's id: its widths, so that texts that grew give the columns a fresh fit.
@@ -969,16 +969,24 @@ proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; inMain: bool; st: App
     if not isNone:
       missing = index.entries[i].missing
       name = index.entries[i].name
+    # The selectable takes the clicks only; the highlight is the table's row background,
+    # which is exactly the row.
+    for c in [ImGui_Col_Header, ImGui_Col_HeaderHovered, ImGui_Col_HeaderActive]:
+      igPushStyleColor_Vec4(c.cint, ImVec4_c(x: 0, y: 0, z: 0, w: 0))
     if igSelectable_Bool("##row", selected, ImGui_SelectableFlags_SpanAllColumns.cint or
         ImGui_SelectableFlags_AllowOverlap.cint or ImGui_SelectableFlags_AllowDoubleClick.cint,
         ImVec2_c(x: 0, y: 0)):
       ui.selected = id
       ui.selMain = inMain
+    igPopStyleColor(3)
     marks.mark(rowMark)
+    let table = igGetCurrentTable()
+    if selected or igIsItemHovered(0):
+      let shade = if selected: ImGui_Col_Header else: ImGui_Col_HeaderHovered
+      igTableSetBgColor(ImGui_TableBgTarget_RowBg0.cint, igGetColorU32_Col(shade.cint, 1), -1)
     if igIsItemHovered(0) and igIsMouseDoubleClicked_Nil(ImGui_MouseButton_Left.cint):
       if st.actionsOf(id, inMain)[aaView].enabled: ui.perform(res, aaView, id, st)
     if selected:
-      marks.mark("references.selected")
       if ui.scrollToSelected:
         if not igIsItemVisible(): igSetScrollHereY(0.5)
         ui.scrollToSelected = false
@@ -995,7 +1003,17 @@ proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; inMain: bool; st: App
     igSetCursorScreenPos(start)
     if writable:
       let used = if isNone: chosen.len == 0 else: id == chosen
-      if igRadioButton_Bool("##use", used):
+      # a ring and a dot the size of the text, no filled disc
+      igPushStyleVar_Vec2(ImGui_StyleVar_FramePadding.cint, ImVec2_c(x: 0, y: 0))
+      igPushStyleVar_Float(ImGui_StyleVar_FrameBorderSize.cint, 1)
+      let ring = igGetStyleColorVec4(ImGui_Col_TextDisabled.cint)[]
+      igPushStyleColor_Vec4(ImGui_Col_Border.cint, ring)
+      for c in [ImGui_Col_FrameBg, ImGui_Col_FrameBgHovered, ImGui_Col_FrameBgActive]:
+        igPushStyleColor_Vec4(c.cint, ImVec4_c(x: 0, y: 0, z: 0, w: 0))
+      let picked = igRadioButton_Bool("##use", used)
+      igPopStyleColor(4)
+      igPopStyleVar(2)
+      if picked:
         res.commands.add Command(kind: ckSelectReference,
           refId: (if used or isNone: "" else: id))
       marks.mark(if isNone: "references.none" else: markPrefix & ".use." & $(n - 1))
@@ -1045,6 +1063,10 @@ proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; inMain: bool; st: App
       discard igTableNextColumn()
       igTextUnformatted(e.date.cstring, nil)
       markCell(marks, markPrefix, k, "date", 6)
+    if selected:
+      # the highlight: the whole row, known now that every cell is drawn
+      let (a, b) = (igTableGetCellBgRect(table, 0), igTableGetCellBgRect(table, 6))
+      marks.markRect("references.selected", a.Min, b.Max)
     igPopID()
 
 proc drawTable(ui: var ReferencesUi; index: ReferenceIndex; inMain: bool; st: AppState;

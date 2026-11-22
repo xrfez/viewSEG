@@ -123,7 +123,26 @@ proc main*() =
     step("another row's click moves the selection", noop, proc (f: FrameInfo): bool =
       f.tap("references.row.2")
       result = f.selectedAt(2) and wait > 8
-      if result: doAssert f.core.refViews.len == 0, "a single click viewed a row")
+      if result:
+        doAssert f.core.refViews.len == 0, "a single click viewed a row"
+        # the highlight is the whole row: as tall as the row's cells, as wide as the table,
+        # and the Use mark and the text are centred in it
+        let band = f.markOf("references.selected")
+        let table = f.markOf("references.table")
+        for column in ["length", "date"]:
+          let cell = f.markOf("references." & column & " column.2")
+          doAssert abs(band.pos.y - cell.pos.y) <= 1 and abs(band.size.y - cell.size.y) <= 1,
+            "the highlight is not the row: " & $band & " against " & $cell
+        doAssert band.pos.x <= table.pos.x + 2 and
+          band.pos.x + band.size.x >= table.pos.x + table.size.x - f.scale * 20,
+          "the highlight does not span the table: " & $band & " in " & $table
+        let mark = f.markOf("references.use.2")
+        doAssert mark.size.x > 0 and abs(mark.size.x - mark.size.y) <= 1 and
+          abs(mark.pos.y + mark.size.y / 2 - (band.pos.y + band.size.y / 2)) <= 1,
+          "the Use mark is not centred in the row: " & $mark & " in " & $band
+        let text = f.markOf("references.length.2")
+        doAssert abs(text.pos.y + text.size.y / 2 - (band.pos.y + band.size.y / 2)) <= 1,
+          "the text is not centred in the row")
 
     step("Use puts the selected row in use", noop, proc (f: FrameInfo): bool =
       if f.core.chosenReference.len == 0: discard f.clickMark("references.act.use")
