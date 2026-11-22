@@ -35,7 +35,8 @@ proc expectedFiles(os: string): seq[string] =
   ## Files every release must hold (relative to its folder).
   result = @[exeName(os), "vendormaps/README.md", "vendormaps/WRITING-A-MAP.md",
       "vendormaps/mfr09-rev2.nif", "vendormaps/mfr50-rev3.nif",
-      "vendormaps/parseSSDAT-segy-1.nif", "vendormaps/parseSSDAT-segd-1.nif", "config/README.md",
+      "vendormaps/parseSSDAT-segy-1.nif", "vendormaps/parseSSDAT-segd-1.nif",
+      "vendormaps/parseSSVIB-segy-1.nif", "vendormaps/parseSSVIB-segd-1.nif", "config/README.md",
     "config/vendormaps/README.md", "logs/README.md", "docs/README.md", "docs/QUICKSTART.md",
     "docs/BUILD.txt", "licences/README.md", "licences/viewSEG-LICENSE.txt",
     "licences/SDL3-LICENSE.txt", "licences/DearImGui-LICENSE.txt",

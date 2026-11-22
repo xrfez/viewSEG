@@ -1,5 +1,5 @@
-## The vendor header maps live in three repositories: viewSEG's `vendormaps/` (shipped with
-## the program), parseSEG's `vendormaps/` and parseSSDAT's `vendormaps/` (each shipped with
+## The vendor header maps live in four repositories: viewSEG's `vendormaps/` (shipped with
+## the program), parseSEG's, parseSSDAT's and parseSSVIB's `vendormaps/` (each shipped with
 ## its library). Every `.nif` in a library's folder is byte-identical to the same-named file
 ## in viewSEG's, and viewSEG's folder has no `.nif` that neither library has.
 ##
@@ -18,7 +18,7 @@ proc names(dir: string): HashSet[string] =
 proc main*() =
   let ours = root / "vendormaps"
   let libs = [root / "deps" / "parseSEG" / "vendormaps",
-    root / "deps" / "parseSSDAT" / "vendormaps"]
+    root / "deps" / "parseSSDAT" / "vendormaps", root / "deps" / "parseSSVIB" / "vendormaps"]
   doAssert dirExists(ours), "viewSEG's vendormaps folder is missing"
   let a = names(ours)
   doAssert a.len > 0, "no maps"

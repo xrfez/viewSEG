@@ -19,13 +19,14 @@
 ## the first-look defaults off in `show`, `firstLook` found gain "automatic";
 ## with the writer asked for `voFile` order, `layout` found code 257 at trace 2;
 ## with the keys' status not set to auxiliary at the open, `layout` found trace 5 seismic; with `vibratorOf`
-## ignoring `forceNote`, the masses made a GF (M, B).
+## ignoring `forceNote`, the masses made a GF (M, B); with the shot block not added to the
+## in-memory SEG-Y, `shotBlock` found no block for the shipped maps to decode.
 
 import std/[json, os, sequtils, strutils]
 import parseSEG
 import parseSSVIB
 import parseSEG/model/indexwalk
-import viewSEG/core/[filejobs, filekinds, properties, readout, sigtypes, state]
+import viewSEG/core/[filejobs, filekinds, properties, readout, sigtypes, state, vendormaps]
 import viewSEG/remote/tools
 import utils/[chosenref, faultyfs, fixtures, sigfiles, waiting]
 
@@ -287,6 +288,24 @@ proc main*() =
       doAssert readFile(path) == before
       doAssert st.survey.layers.len == 0
       doAssert uiCalls().len == 0, $uiCalls()
+      st.shutdown()
+  block shotBlock:
+    # the library's shot block rides in the in-memory SEG-Y: the shipped maps decode it by name
+    withFixtures fx:
+      var st = initAppState()
+      let path = vibFile(fx.dir / "0042" / "20010203", "0007.VIB")
+      let shot = parseVib(cast[seq[byte]](readFile(path)))
+      doAssert st.openIt(path)
+      let maps = currentSourcePath.parentDir.parentDir / "vendormaps"
+      let load = loadVendorFolders([VendorFolder(dir: maps, origin: voProgram)])
+      let s = st.sessions[0]
+      let shown = vendorBlocks(s.filePtr[], -1, load.registry)
+      doAssert shown.blocks.len == 1 and shown.blocks[0].name == "parseSSVIBShot",
+        $shown.blocks.len
+      var frames = ""
+      for f in shown.blocks[0].fields:
+        if f.name == "frames": frames = f.value
+      doAssert frames == $shot.frames, frames
       st.shutdown()
   echo "tvibopen: ok"
 

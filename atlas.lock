@@ -93,13 +93,13 @@
     "parseSSDAT": {
       "dir": "$deps/parseSSDAT",
       "url": "https://github.com/xrfez/parseSSDAT",
-      "commit": "3105fda810ab9afbf45f3fd097124b6d0a844a3f",
+      "commit": "cda5cd50155a0dd81a8859c011099ccdf02c9dee",
       "version": ""
     },
     "parseSSVIB": {
       "dir": "$deps/parseSSVIB",
       "url": "https://github.com/xrfez/parseSSVIB",
-      "commit": "11736ca5fbdb184c0ed2abf7614d64ffd47d29cd",
+      "commit": "5330d4bd411430c4b2504e138d3457e5bcf301a0",
       "version": ""
     }
   },
@@ -144,7 +144,7 @@
       "requires \"nim >= 2.4.0\"",
       "requires \"https://github.com/xrfez/parseSEG >= 0.19.1\"",
       "requires \"https://github.com/xrfez/processSEG >= 0.11.0\"",
-      "requires \"https://github.com/xrfez/parseSSDAT >= 0.1.0\"",
+      "requires \"https://github.com/xrfez/parseSSDAT >= 0.1.1\"",
       "requires \"https://github.com/xrfez/parseSSVIB >= 0.1.0\"",
       "requires \"https://github.com/dinau/imguin >= 1.92.9.0\"",
       "requires \"https://github.com/dinau/sdl3_nim >= 3.4.18.0\"",

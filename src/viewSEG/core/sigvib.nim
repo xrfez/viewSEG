@@ -195,11 +195,15 @@ proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice
       discard # a trigger the library does not take: the .vib stands alone
   var wopts = VibWriteOptions(cycleValues: true, groundForce: {vsA, vsB}, primary: vsB,
     timeAxis: (if choice.fromFirstFrame: vaRecord else: vaTrigger), units: vuCounts,
-    traceOrder: voForces)
+    traceOrder: voForces, vendorLayout: true)
+  if paired:
+    wopts.controllerSerial = pair.controller
+    wopts.datFileNumber = nameNumberOf(pair.path)
   var o = SegyOutputOptions()
   try:
     o.text = textCards(shot, wopts)
     var w = openSeismicWriterBytes(o, path)
+    w.addShotBlock(shot, wopts) # the library's shot block: the vendor maps decode it by name
     w.writeSegyTraces(shot, wopts, extHeader = true, major = 2)
     result.segy = w.finishBytes(log)
   except VibWriteError as e:

@@ -52,6 +52,10 @@ fields by name (unit serial, trigger, line, station, the QC record and the file'
 records). Leave the two maps in place: they are the library's, and a new release replaces
 them.
 
+`parseSSVIB-segy-1.nif` and `parseSSVIB-segd-1.nif` do the same for a file the library
+parseSSVIB writes from a `.vib` signature file (a 1280-byte shot block). A `.vib` opened in
+viewSEG carries that block in memory too. These two maps are the library's as well.
+
 ## Reload
 
 Opening or closing a project loads the maps again, and so does **Tools > Reload vendor maps**:
