@@ -10,6 +10,12 @@
 ## "of the trace itself did not happen"; with the Reset button left out of the
 ## envelope's line, "an envelope did not happen".
 ##
+## The windows are kept inside the main one (`keepInMainWindow`): on a loaded machine a tooltip
+## that reaches past the window edge becomes a window of its own in the very frame a click is
+## sent, and Dear ImGui's SDL backend takes that window for the one under the pointer, so the
+## click opens nothing (seen under `taskset -c 0` with busy loops: 14 of 20 runs failed, with
+## no viewport but the main one 0 of 6).
+##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
 import std/[math, monotimes, options, os, strutils]
@@ -96,6 +102,7 @@ proc main*() =
       if at >= steps.len or failed.len > 0:
         f.stop()
         return
+      if f.index == 0: f.keepInMainWindow # (see the module doc)
       if not started:
         steps[at].act(f)
         started = true
