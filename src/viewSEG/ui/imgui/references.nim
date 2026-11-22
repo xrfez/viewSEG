@@ -751,9 +751,6 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
     "the trace's own reversal (a trace you reversed is turned twice: as recorded).")
   igTextUnformatted("From ms", nil)
   igSameLine(igGetFontSize() * 8, -1)
-  # (Dear ImGui 1.92.9 writes a typed number back when the box is left; the
-  # line under the boxes says what they take as they are typed in)
-  igPushItemFlag(ImGui_ItemFlags_LiveEditOnInputScalar.cint, true)
   discard igInputDouble("##store.from", addr d.fromMs, 0, 0, "%.9g", 0)
   marks.mark("store.from")
   tip("The time of the first sample taken (0 is the trace's first sample).")
@@ -765,7 +762,6 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
     d.toMs = to
     d.clamped = if clamped: "The trace's last sample is at " & msWords(lastMs) &
       " ms: To is brought back to it." else: ""
-  igPopItemFlag()
   marks.mark("store.to")
   tip("The time of the last sample taken: the window includes it (inclusive). A trace of " &
     "12 000 samples at 1 ms ends at 11 999 ms and is 12 000 ms long.")

@@ -2055,7 +2055,12 @@ proc run*(opts = RunOptions()): int =
       ImGui_Impl_OpenGL3_NewFrame()
       ImGui_ImplSDL3_NewFrame()
       igNewFrame()
+      # The program was made with a typed number taking effect as it is typed (Dear ImGui 1.92.9
+      # turned that off: a number is then written back only when its box is left), so every
+      # number box has it back, from this one place.
+      igPushItemFlag(ImGui_ItemFlags_LiveEditOnInputScalar.cint, true)
       let actions = ui.drawUi()
+      igPopItemFlag()
       ui.mark "render"
       igRender()
       for c in newImguiChecks():
