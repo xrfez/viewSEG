@@ -206,6 +206,18 @@ task packageTest, "nim package, then check dist/ and run the packaged Linux bina
   selfExec define & " package"
   selfExec "c -r --hints:off" & define & " tests/package/tpackage.nim"
 
+task smoke, "Start-up smoke check of a built binary: nim smoke [new | <binary>]":
+  ## tools/smoke.nim: `bin/viewSEG` (`new`: `bin/viewSEG.new`, or a path) on a
+  ## private X server and private folders: --version, a start with no file, with
+  ## samples/land/shots.sgy and with shots.sgd, a screenshot and `state` through
+  ## the agent interface, and a clean exit. Needs `nim samples` done and Xvfb.
+  var rest = ""
+  var seen = false
+  for i in 1 .. paramCount():
+    if seen: rest.add " " & quoteShell(paramStr(i))
+    elif paramStr(i) == "smoke": seen = true
+  selfExec "r --hints:off --warnings:off tools/smoke.nim" & rest
+
 # Every test task builds the runner tests/tester.nim once, in debug; the runner
 # compiles the suite as one program and runs each tests/t*.nim with the flags
 # given after it, several files at a time, each run on an Xvfb display of its

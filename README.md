@@ -74,6 +74,17 @@ archives. It never reaches the network: the Windows SDL3 build must exist (run
 OS; `nim packageTest` packages, then checks `dist/` and runs the packaged Linux binary
 (`tests/package/tpackage.nim`).
 
+**Start-up smoke check.** Before a build goes out, `nim smoke` (`nim smoke new` for
+`bin/viewSEG.new`, or `nim smoke <binary>`) starts the built binary, with no file, with
+`samples/land/shots.sgy` and with `samples/land/shots.sgd` (`nim samples` writes them), and
+checks that `--version` prints the three versions, that the program stays up for a few
+seconds and answers on its agent interface (`state` names the file, and a screenshot of the
+window is not blank), and that it leaves on Ctrl+C with exit code 0 and no "Internal display
+error" or start-up failure in its output or log folder (`tools/smoke.nim`). It runs on a
+private Xvfb display with a private home, XDG folders and agent socket, on a copy of the
+binary in a folder of its own: it opens no window on the desktop and touches neither your
+settings nor a running viewSEG. It needs Xvfb.
+
 **Portable mode.** While `config/` next to the executable exists and is writable, viewSEG
 writes everything (settings, `logs/`, `cache/`) inside its own folder. Without it, or in a
 read-only location such as `Program Files`, it uses the per-user directories of the OS.
