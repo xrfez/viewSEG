@@ -89,6 +89,12 @@
       "url": "https://github.com/nim-lang/basic2d",
       "commit": "6187392211fc701067e3c206a3024d291b98804c",
       "version": ""
+    },
+    "parseSSDAT": {
+      "dir": "$deps/parseSSDAT",
+      "url": "https://github.com/xrfez/parseSSDAT",
+      "commit": "d7e02744578e8e368d17aa70e08126013ea58b19",
+      "version": ""
     }
   },
   "nimcfg": [
@@ -104,6 +110,7 @@
     "--path:\"deps/nimlapack\"",
     "--path:\"deps/opencl/src\"",
     "--path:\"deps/parseSEG/src\"",
+    "--path:\"deps/parseSSDAT/src\"",
     "--path:\"deps/processSEG/src\"",
     "--path:\"deps/sdl3/src\"",
     "--path:\"deps/stb_image\"",
@@ -130,6 +137,7 @@
       "requires \"nim >= 2.4.0\"",
       "requires \"https://github.com/xrfez/parseSEG >= 0.18.0\"",
       "requires \"https://github.com/xrfez/processSEG >= 0.10.0\"",
+      "requires \"https://github.com/xrfez/parseSSDAT >= 0.1.0\"",
       "requires \"https://github.com/dinau/imguin >= 1.92.9.0\"",
       "requires \"https://github.com/dinau/sdl3_nim >= 3.4.18.0\"",
       ""

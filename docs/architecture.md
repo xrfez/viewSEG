@@ -25,7 +25,7 @@ src/viewSEG/view/             view models: what each panel shows, toolkit-neutra
         ▼
 src/viewSEG/core/             application state, commands, jobs, kernels; no UI, no OS windows
         ▼
-parseSEG, processSEG          (deps/, bind-mounted in the devcontainer)
+parseSEG, processSEG, parseSSDAT   (deps/, locked in atlas.lock; the first two bind-mounted in the devcontainer)
 
 src/viewSEG/platform/         OS integration that needs raw OS APIs (Windows resources,
                               window chrome, config paths); used by the frontend

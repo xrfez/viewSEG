@@ -106,6 +106,9 @@ jobs:
 
       # The package's tests also run inside `nim test`; this is its own entry point,
       # so a break in how it runs alone (its folder, its config) shows up here.
+      - name: Fetch parseSSDAT's own dependencies
+        run: nim r tools/deps.nim sync --root:deps/parseSSDAT
+
       - name: Run the parseSSDAT tests alone
         run: nim parseSSDATTest
 
