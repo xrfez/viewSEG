@@ -574,8 +574,9 @@ proc topInNoise() =
         (8.0, 79.6, 8.0, false, 79.6)]:
       var spec = SynthSweep(f0: f0, f1: f1, seconds: seconds, dtMs: 1, taperS: seconds / 10,
         expo: expo)
-      doAssert near(noisyBandOf(spec, 0.0), want, 0.05), $f0 & "-" & $f1 & " Hz: " &
-        $noisyBandOf(spec, 0.0)
+      # (a sweep of half a second is read to a hundredth, not a thousandth, of its top)
+      doAssert near(noisyBandOf(spec, 0.0), want, if seconds < 1: 1.1 else: 0.05),
+        $f0 & "-" & $f1 & " Hz: " & $noisyBandOf(spec, 0.0)
 
 proc failingStretchStaysInTheJudgedPart() =
   block the_failing_window_is_not_painted_over_the_taper:

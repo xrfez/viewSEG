@@ -944,22 +944,26 @@ right of that line's first row. A change works it out again.
     distortion does, and is 0 where none is in band (the reference above half the top).
     It is filled in from the project reference, with nothing typed ("(from the reference)"
     beside the box): exactly from a generated reference's end frequency, else read from the
-    recorded reference's samples: a line fitted to its frequency track over the flat part (in
-    f, or in ln f for an exponential sweep, whichever fits better) taken to where the sweep
-    ends (the start of a sweep that falls). The end is found from the fall of the end taper,
-    between 3 % and 12 to 35 % of the sweep's amplitude (higher where noise limits it): the
-    fall is tried against a few shapes (powers of the time left, and the cosine squared) and
-    the data weigh them, so no taper shape is assumed; the fall ends where it stops
-    steepening, so a ring-down or leakage after the taper (a gentle slope) does not lengthen
-    the sweep, and a sweep with no taper ends at its step. The reading is rounded
-    to a whole hertz when within 0.5 % of one (6-220 Hz reads 220, not 220.4); the same for
-    every record. Its uncertainty (twice the standard error) is the line's error at the end
-    plus the end's, from the fit of the fall, the shapes that fit it about as well and the
-    stretch it is extended over, times the sweep's rate; when it exceeds 0.6 % of the
-    frequency (readings within that were within 1 %, the tolerance of the check below, on
-    every synthetic sweep tried) the band's warning says "uncertain", with the uncertainty in hertz, and
-    `analysis.band.uncertain` is set. Where no reading can be made the band follows the
-    library's own estimate and the warning says so. A typed value is kept with that reference in the
+    recorded reference's samples: the sweep's frequency law, fitted to its frequency track over
+    the last part of the flat part (a line or a parabola, in f or in ln f, whichever fits
+    better, so a sweep with a boost in dB per octave is followed), taken to where the sweep
+    ends (the start of a sweep that falls). The end is found from the fall of the end taper's
+    envelope (the analytic envelope, the noise in it estimated from its own scatter over the
+    flat part and taken off): the fall, down to 3 % of the amplitude or the noise's reach, is
+    tried against a few shapes (powers of the time left, and the cosine squared) and the data
+    weigh them, so no taper shape is assumed; the fall ends where it stops steepening, so a
+    ring-down or leakage after the taper (a gentle slope) does not lengthen the sweep, and a
+    sweep with no taper, or one that ends on a step, ends where its envelope does. The reading
+    is rounded to a whole hertz when within 0.5 % of one (6-220 Hz reads 220, not 220.4); the
+    same for every record. Its uncertainty is three standard errors (the error lay within it in 77 to 100 % of the families of synthetic sweeps tried): the law's error at the
+    end, and the end's, from the fit of the fall, the shapes that fit it about as well, the
+    stretch it is extended over and the envelope's blur, times the sweep's rate. When it
+    exceeds 0.6 % of the frequency the band's warning says "uncertain", with the uncertainty
+    in hertz, and `analysis.band.uncertain` is set: the number is then the reading, no surer
+    than that. Most clean sweeps are marked when their end taper is long and the sweep fast;
+    a reading that the sweep's frequency, Nyquist or its own uncertainty (above 5 %) makes
+    absurd is not used: the band follows the library's own estimate and the warning says so.
+    A typed value is kept with that reference in the
     project. A line warns when it is below the largest frequency measured in the flat part of the
     reference by more than 0.5 %, or above it by more than the sweep's rate over its end
     taper and half a chord, with 25 % and 1 % to spare (the chord reads a little under the

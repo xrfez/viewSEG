@@ -219,7 +219,7 @@ type
     warning*: string              ## the estimate and the chord differ by more than 2 %, or the
                                   ## reading of the top frequency is uncertain; "" for none
     uncertain*: bool              ## the top frequency was read from the reference and is not sure
-    uncertaintyHz*: float64 = NaN ## its stated uncertainty (1 sigma), Hz
+    uncertaintyHz*: float64 = NaN ## its stated uncertainty (three standard errors), Hz
 
   AlignReport* = object
     ## How a stored reference was placed against the unit's records.

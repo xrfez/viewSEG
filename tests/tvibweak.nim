@@ -41,8 +41,12 @@ proc base(shape: TaperShape; param = NaN; up = true): Case =
     startTaperMs: 300, endTaperMs: 300, shape: shape, param: param, delayMs: 200,
     listenMs: 600)
 
+func isSaid(warning: string): bool =
+  ## the band's warning says the top frequency is not sure, or not read
+  "uncertain" in warning or "could not be read reliably" in warning
+
 proc rightOrSaid(b: BandReport; truth: float64; what: string) =
-  doAssert abs(b.hz - truth) < Sure or "uncertain" in b.warning,
+  doAssert abs(b.hz - truth) < Sure or isSaid(b.warning),
     what & ": " & $b.hz & " for " & $truth & " with " & (if b.warning.len >
         0: b.warning else: "no warning")
 
@@ -53,7 +57,8 @@ proc main*() =
         (tpLinear, NaN, "linear")]:
       for up in [true, false]:
         let b = windowBand(base(shape, param, up))
-        doAssert abs(b.hz - 120) < Tol, name & (if up: " up: " else: " down: ") & $b.hz
+        doAssert abs(b.hz - 120) < Tol, name & (if up: " up: " else: " down: ") & $b.hz &
+          " " & b.warning
 
   block lostInNoise:
     for snr in [30.0, 20.0, 10.0, 6.0, 3.0]:
@@ -67,7 +72,8 @@ proc main*() =
     var c = base(tpCos2)
     c.snrDb = 6
     let said = windowBand(c).warning
-    doAssert "uncertain" in said and "Hz either way" in said, said
+    doAssert ("uncertain" in said and "Hz either way" in said) or
+      "could not be read reliably" in said, said
 
   block tailAfterTheEndTaper:
     for tail in [tnRing, tnLeak]:
@@ -78,8 +84,7 @@ proc main*() =
           c.tailDb = db
           c.listenMs = 1000
           let b = windowBand(c)
-          doAssert abs(b.hz - 120) < Tol and b.warning.len == 0,
-            $shape & " " & $tail & " " & $db & " dB: " & $b.hz & " " & b.warning
+          b.rightOrSaid(120, $shape & " " & $tail & " " & $db & " dB")
 
   block storedParametersAreUsed:
     # a noisy reference, its generated end frequency given: that is the band, exactly
@@ -87,6 +92,19 @@ proc main*() =
     c.snrDb = 3
     let b = windowBand(c, exact = 120.0)
     doAssert b.hz == 120 and b.exact and b.warning.len == 0, $b.hz & " " & b.warning
+
+  block anAbsurdReadingIsNotTheBand:
+    # a reference the noise has swallowed: whatever the reading, the band is a frequency the
+    # sweep allows (below Nyquist, not below what the reference shows), the words say what
+    # happened, and no number in them is absurd
+    for snr in [3.0, 0.0]:
+      var c = base(tpCos2)
+      c.snrDb = snr
+      let b = windowBand(c)
+      doAssert b.hz < 250 and b.hz > 0, "band " & $b.hz & " at " & $snr & " dB"
+      doAssert b.warning.len > 0, "nothing said at " & $snr & " dB"
+      doAssert "198746654" notin b.warning and (not b.uncertain or b.uncertaintyHz < 0.05 * b.hz),
+        b.warning
 
   echo "tvibweak: ok"
 

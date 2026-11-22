@@ -920,14 +920,17 @@ What you see, top down:
      harmonics up to it, as the vibrator's own electronics do. It is read from the project
      reference with nothing typed ("(from the reference)" beside it): a generated reference
      gives its exact end frequency; for a recorded one it is read from the reference's own
-     samples: a line is fitted to its frequency track over the flat part (straight, or
-     straight in log f for an exponential sweep) and taken to where the sweep ends, found
-     from the fall of its end taper whatever that taper's shape; a ring-down or leakage
-     after the taper (told from it by its gentle slope) does not lengthen the sweep. It
-     is rounded to a whole hertz when it is within 0.5 % of one (a "6-220 Hz" sweep reads
-     220). When the reading is not sure (noise hides the end of the sweep or its taper, so
-     the value could be off by more than 0.6 %) the box's line says "uncertain" with how far
-     it could be off, in hertz either way: check it, or type the value. Type a value to
+     samples: the sweep's frequency law is fitted to its frequency track near the top (a line
+     or a parabola, straight or in log f, so a boost in dB per octave is followed) and taken to
+     where the sweep ends, found from the fall of its end taper whatever that taper's shape; a
+     ring-down or leakage after the taper (told from it by its gentle slope) does not lengthen
+     the sweep. It is rounded to a whole hertz when it is within 0.5 % of one (a "6-220 Hz"
+     sweep reads 220). When the reading is not sure (noise hides the end of the sweep or its
+     taper, or its taper is long and the sweep fast, so the value could be off by more than
+     about 0.6 %) the box's line says "uncertain" with how far it could be off, in hertz
+     either way: check it, or type the value; a reading that cannot be right (above Nyquist,
+     below the largest frequency the reference shows, or uncertain by more than 5 %) is left
+     out, the line says so and the library's own estimate stands in. Type a value to
      override it; that is kept with the
      reference in the project (for a recorded reference, per file layout). A line warns
      when it does not fit the largest frequency the reference shows in its flat part.

@@ -12,18 +12,21 @@ type
       ## the sweep's amplitude; tnLeak: the sweep's own law goes on at that level, decaying
 
   Case* = object
-    f1*, f2*: float64      ## Hz, start and end
+    f1*, f2*: float64            ## Hz, start and end
     law*: SweepLaw
     lengthMs*, dtMs*: float64
     startTaperMs*, endTaperMs*: float64
     shape*: TaperShape
     param*: float64 = NaN
-    delayMs*: float64      ## zeros before the sweep
-    listenMs*: float64     ## after the sweep (zeros, noise, the tail)
-    snrDb*: float64 = Inf  ## sweep rms / noise rms; Inf: no noise
+    delayMs*: float64            ## zeros before the sweep
+    listenMs*: float64           ## after the sweep (zeros, noise, the tail)
+    snrDb*: float64 = Inf        ## sweep rms / noise rms; Inf: no noise
     tail*: Tail
-    tailDb*: float64 = -40 ## the tail's start, dB below the sweep's amplitude
+    tailDb*: float64 = -40       ## the tail's start, dB below the sweep's amplitude
     seed*: uint64 = 12345
+    nyquistShare*: float64 = 0.8 ## the top frequency allowed, of Nyquist
+    boostDb*: float64            ## dB per octave of a slDbPerOctave sweep
+    dc*: float64                 ## a constant added to every sample, as a share of the amplitude
 
 proc gaussians(n: int; seed: uint64): seq[float64] =
   ## splitmix64 + Box-Muller: the same numbers on every machine
@@ -47,8 +50,11 @@ proc gaussians(n: int; seed: uint64): seq[float64] =
 proc makeRef*(c: Case): seq[float32] =
   let tp = initSweepTaper(c.startTaperMs, c.endTaperMs, c.shape, c.param)
   let spec = case c.law
-    of slExponential: exponentialSweep(c.f1, c.f2, c.lengthMs, c.dtMs, tp)
-    else: linearSweep(c.f1, c.f2, c.lengthMs, c.dtMs, tp)
+    of slExponential: exponentialSweep(c.f1, c.f2, c.lengthMs, c.dtMs, tp,
+      maxNyquistFraction = c.nyquistShare)
+    of slDbPerOctave: dbPerOctaveSweep(c.f1, c.f2, c.lengthMs, c.dtMs, c.boostDb, tp,
+      maxNyquistFraction = c.nyquistShare)
+    else: linearSweep(c.f1, c.f2, c.lengthMs, c.dtMs, tp, maxNyquistFraction = c.nyquistShare)
   let sw = sweepSamples(spec)
   let nd = int(round(c.delayMs / c.dtMs))
   let nl = int(round(c.listenMs / c.dtMs))
@@ -64,6 +70,8 @@ proc makeRef*(c: Case): seq[float32] =
       let ph = if c.tail == tnRing: ph1 + 2 * PI * c.f2 * s
         else: ph1 + 2 * PI * (c.f2 * s + 0.5 * k * s * s)
       x[nd + sw.len + j] = env * sin(ph)
+  if c.dc != 0:
+    for v in x.mitems: v += c.dc
   if c.snrDb < Inf:
     let sigma = (1 / sqrt(2.0)) / pow(10.0, c.snrDb / 20)
     let g = gaussians(x.len, c.seed)

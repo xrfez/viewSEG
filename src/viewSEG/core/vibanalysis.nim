@@ -95,6 +95,14 @@ func shortEndMs(track: SweepTrack; p: TrackParams; counts: openArray[int];
           track.timeMs[m] + 500.0 * float64(windowPeriods(p, f)) / f <= last:
         result = track.timeMs[m]
 
+func unusable(r: TopReading; chordHz, nyquistHz: float64): string =
+  ## Why a reading is not made the band's edge ("" when it is): the library's estimate stands in.
+  if r.hz >= nyquistHz: "it lies at or above half the sampling rate"
+  elif not chordHz.isNaN and r.hz < 0.995 * chordHz:
+    "it lies below the largest frequency the reference shows"
+  elif r.uncertaintyHz > 0.05 * r.hz: "it is uncertain by more than 5 %"
+  else: ""
+
 func roundedTop*(est: float64): float64 =
   ## `est` rounded to a whole hertz when it lies within 0.5 % of one (a designed 6 to 220 Hz
   ## sweep reads 220, not 220.4), else to a tenth.
@@ -184,6 +192,9 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
         bandSet = true
         reading = readTop(rows[at[vsReference]], dtMs, results[0].tracks[vsReference],
           results[0].reference.extent)
+        if not reading.hz.isNaN:
+          let why = unusable(reading, largestChordHz(results[0].reference), 500.0 / dtMs)
+          if why.len > 0: reading = TopReading(hz: NaN, why: why)
         if not reading.hz.isNaN:
           let est = roundedTop(reading.hz)
           (band, fitted) = (est, est)
@@ -471,8 +482,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     # the top frequency was read from the reference's samples: say when it is not sure
     var said = ""
     if reading.hz.isNaN:
-      said = "the reference's top frequency could not be read (the sweep is too short or " &
-        "too noisy): type it, or the band follows the library's own estimate"
+      said = "the reference's top frequency could not be read reliably (" & reading.why &
+        "): the band follows the library's own estimate; type the top frequency to be sure"
     elif reading.uncertain:
       result.band.uncertain = true
       result.band.uncertaintyHz = reading.uncertaintyHz
