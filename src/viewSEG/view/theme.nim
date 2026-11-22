@@ -91,6 +91,8 @@ type
     rlFlagEdited = "flag_edited" ## the map's marks of the user's edits (killed, reversed)
     rlFlagSpread = "flag_spread" ## the map's marks of the spread (missing from the template, ...)
     rlTextSelection = "text_selection" ## behind selected text in an input
+    rlBreakModel = "break_model" ## the first-break overlay's bar where the model expects the break
+    rlBreakPick = "break_pick" ## the first-break overlay's bar where the break was picked
 
   FontRole* = enum
     ## The faces of the interface.
@@ -328,6 +330,8 @@ func plainRoles(p: Palette; mode: ThemeMode): array[Role, Rgba] =
   result[rlFlagEdited] = p[bcCyan]
   result[rlFlagSpread] = p[bcBrown]
   result[rlTextSelection] = mix(result[rlFrame], p[bcAccent], 0.35)
+  result[rlBreakModel] = p[bcCyan]
+  result[rlBreakPick] = p[bcMagenta]
 
 const
   TextContrast* = 4.5
@@ -348,6 +352,8 @@ const
     ## on paper and on the theme's own plot background
   MarksApart* = 30.0
     ## `deltaE` of the hovered trace from the selected ones
+  BreaksApart* = 40.0
+    ## `deltaE` of the first-break overlay's two bars from each other
   PointsApart* = 20.0
     ## `deltaE` of sources and receivers on the map from the hovered and
     ## selected points (which are larger, and outlined)
@@ -619,6 +625,14 @@ func legible(r: var array[Role, Rgba]; p, builtin: Palette) =
     if margin > bestMargin: (best, bestMargin) = (chosen, margin)
     if bestMargin >= 0 or not order.nextPermutation: break
   for i in 0 ..< 4: r[flags[i][0]] = best[i]
+  # The first-break overlay's two bars: the pick (the warm colour) and the
+  # model's time (the cool one) apart from the traces, from the marked traces
+  # and from each other, on paper and on the theme's plot.
+  let marked = [(r[rlSelected], MarkApart), (r[rlHighlight], MarkApart)]
+  r[rlBreakPick] = pick(r[rlBreakPick], [bcMagenta, bcRed, bcBrightMagenta, bcBrightRed,
+    bcYellow], p, builtin, schemes, marked, MarkApart)
+  r[rlBreakModel] = pick(r[rlBreakModel], [bcCyan, bcBlue, bcBrightCyan, bcBrightBlue,
+    bcGreen], p, builtin, schemes, @marked & @[(r[rlBreakPick], BreaksApart)], MarkApart)
 
 func deriveRoles*(p: Palette; mode: ThemeMode): array[Role, Rgba] =
   ## The roles built from the palette. Backgrounds: `backdrop` is

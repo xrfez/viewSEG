@@ -107,13 +107,15 @@ from processSEG/pipeline import Pipeline, items, initPipeline
 from processing import changesSamples, ownShownWords, reverseShownWords
 import signatures
 import analysis, analysisreader, closer, compare, comparejobs, components, diskio, edits, filejobs,
-  filelist, filememory, filesystem, identity, inbox, inspector, jobs, join, layouts, log,
+  filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
+      join, layouts, log,
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, reader,
   recordqc, referencejobs, references, selection, session, settings, shots, spectra,
   spectrumreader, spread, survey, surveyjobs, threads, tiles, traceids, vendorjobs, vendormaps,
   watch, zoom
 
-export analysis, compare, edits, filelist, filememory, identity, inbox, jobs, join, layouts, log,
+export analysis, compare, edits, filelist, filememory, firstbreaks, identity, inbox, jobs, join,
+    layouts, log,
   mapstate, panels, persist, pick, project, recordqc, references, selection, session, settings,
   shots, spectra, spread, survey, threads, tiles, traceids, vendormaps, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues, MaxTableRows
@@ -944,6 +946,10 @@ type
       ## the folder listed's shots, matched to the survey's sources (`core/shots`)
     recordQc: RecordQc
       ## what the map's filters find in the record shown (`core/recordqc`)
+    breaks: seq[FirstBreaks]
+      ## the first-break overlay's results, one per record a panel with the
+      ## overlay on shows (and the last few it showed), oldest first
+    breaksReplaced: seq[JobId] ## jobs given up for a newer key: they end quietly
     qcHeld: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
       ## the relation records each filters' job reads in place, kept until it ends
     unitsWarned: string
@@ -1893,6 +1899,26 @@ func recordQc*(state: AppState): lent RecordQc {.inline.} =
   ## What the map's filters found in the record shown, as its job read it
   ## (`core/recordqc`); `filterHits` gives every filter.
   state.recordQc
+
+func firstBreaks*(state: AppState): lent seq[FirstBreaks] {.inline.} =
+  ## The first-break overlay's results (`core/firstbreaks`), oldest first.
+  state.breaks
+
+func breaksOn*(state: AppState; id: PanelId): bool =
+  ## Whether panel `id` has the first-break overlay on.
+  for p in state.panels:
+    if p.id == id: return p.layers.len > 0 and p.layers[0].display.firstBreaks
+
+func breaksIndex*(state: AppState; k: int): int =
+  ## The index in `firstBreaks` of the result for the record panel `panels[k]`
+  ## shows; -1 when it has none (the overlay is off, or no record is shown).
+  result = -1
+  if k < 0 or k >= state.panels.len or state.panels[k].layers.len == 0: return
+  let src = state.panels[k].layers[0].source
+  if src.kind != lsRecord: return
+  for i in countdown(state.breaks.high, 0):
+    if state.breaks[i].key.file == src.file and state.breaks[i].key.gather == src.gather:
+      return i
 
 func surveyHead*(state: AppState; path: string): int =
   ## The index in `heads` of what survey file `path`'s headers say (as
@@ -6428,12 +6454,98 @@ func filterHits*(state: AppState): array[MapFilter, FilterHits] =
     if sp.job == NoJob:
       for d in sp.differing: result[mfSpreadDiffers].sources.add d.source
 
+proc breakKeyOf(state: AppState; k: int): (bool, BreakKey, int) =
+  ## What the first-break overlay of `panels[k]` is of, when it is on and the
+  ## panel shows a record: its key, and the session's index.
+  result[2] = -1
+  template p: untyped = state.panels[k]
+  if p.shows != psTraces or p.layers.len == 0 or not p.layers[0].display.firstBreaks: return
+  let src = p.layers[0].source
+  if src.kind != lsRecord: return
+  let i = state.findSession(src.file)
+  if i < 0 or src.gather notin 0 ..< state.sessions[i].gathers.len: return
+  let s = state.sessions[i]
+  result = (true, (src.file, src.gather, s.keysRevision,
+    state.editsAt(s.path).listIn(teKilled, s.gathers[src.gather].traces)), i)
+
+proc followFirstBreaks(state: var AppState) =
+  ## The first-break overlay's jobs follow what the panels show: a record a
+  ## panel with the overlay on shows, as its file's keys and killed traces
+  ## are now, is found once (`core/firstbreakjobs`) and kept (the last few
+  ## records stay, so stepping back is instant); a result or a job of a key
+  ## no panel wants any more (an edit, a join, another record of the same
+  ## panel) is dropped, and a job still running is cancelled.
+  var wanted: seq[(BreakKey, int)]
+  for k in 0 ..< state.panels.len:
+    let (on, key, i) = state.breakKeyOf(k)
+    if on and (key, i) notin wanted: wanted.add (key, i)
+  var kept: seq[FirstBreaks]
+  for b in state.breaks.mitems:
+    var superseded = state.findSession(b.key.file) < 0
+    var wantedNow = false
+    for (key, _) in wanted:
+      if key == b.key: wantedNow = true
+      elif key.file == b.key.file and key.gather == b.key.gather: superseded = true
+    if superseded or (not wantedNow and b.state == bkComputing):
+      if b.job != NoJob:
+        discard state.jobs.cancel(b.job)
+        state.breaksReplaced.add b.job
+    else: kept.add move b
+  while kept.len > MaxBreakRecords:
+    var drop = -1
+    for j, b in kept: # the oldest that no panel wants
+      if drop < 0 and b.state != bkComputing:
+        var w = false
+        for (key, _) in wanted: w = w or key == b.key
+        if not w: drop = j
+    if drop < 0: break
+    kept.delete drop
+  state.breaks = kept
+  for (key, i) in wanted:
+    var have = false
+    for b in state.breaks: have = have or b.key == key
+    if not have:
+      let s = state.sessions[i]
+      var b = FirstBreaks(key: key, state: bkComputing, first: s.gathers[key.gather].traces.a)
+      b.job = state.jobs.submit(JobSpec(title: "Find the first breaks of the record shown",
+        lane: jlBackground, auto: true, reads: @[s.path]), firstBreaksWork(s.filePtr, s.path,
+        key, s.gathers[key.gather].traces, state.inbox.poster))
+      state.breaks.add b
+
+proc takeFirstBreaks(state: var AppState; m: sink Msg) =
+  ## A record's first breaks, while its key is still wanted; the answer of a
+  ## job given up for a newer key is dropped.
+  for b in state.breaks.mitems:
+    if b.job == m.job and b.state == bkComputing:
+      let (job, key, rev) = (b.job, b.key, b.revision + 1)
+      b = move m.breaks
+      (b.job, b.key, b.revision) = (job, key, rev)
+      return
+
+proc endBreaksWork(state: var AppState; job: JobInfo): bool =
+  ## A first-break job ended: forgotten, a failure or a stop said on its
+  ## result; false when `job` is none of them.
+  let gone = state.breaksReplaced.find(job.id)
+  if gone >= 0:
+    state.breaksReplaced.delete gone
+    return true
+  for b in state.breaks.mitems:
+    if b.job == job.id:
+      b.job = NoJob
+      if b.state == bkComputing:
+        b.state = bkFailed
+        b.why = if job.state == jsFailed: "the record could not be read: " & job.error
+                else: "stopped"
+        inc b.revision
+      return true
+
 proc followMapWork(state: var AppState) =
   ## After every command and drained inbox: the map's jobs follow what they
   ## depend on.
   state.followSpreads()
   state.followShots()
   state.followRecordQc()
+  state.followFirstBreaks()
   state.followUnits()
 
 proc endMapWork(state: var AppState; job: JobInfo): bool =
@@ -6529,6 +6641,7 @@ proc onFinished(state: var AppState; job: JobInfo) =
       state.refreshCompare()
   if state.endProjectWork(job): return
   if state.endMapWork(job): return
+  if state.endBreaksWork(job): return
   if state.endMemoryWork(job): return
   for k, h in state.headJobs:
     if h.job == job.id:
@@ -8719,6 +8832,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkSpreads: state.takeSpreads(move m)
     of mkShots: state.takeShots(move m)
     of mkRecordQc: state.takeRecordQc(move m)
+    of mkFirstBreaks: state.takeFirstBreaks(move m)
     of mkIdentified: state.takeIdentified(move m)
     of mkHashed: state.takeHashed(move m)
     of mkMemoryList: state.takeMemoryList(move m)

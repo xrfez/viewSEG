@@ -3,7 +3,9 @@
 ## the display modes (wiggle, positive fill, negative fill, greyscale density,
 ## wiggle over density),
 ## the gather domains (shot, receiver), the map markers (source, receiver),
-## the cursor's time line and the plot's turn (time across).
+## the cursor's time line, the plot's turn (time across) and the first-break
+## overlay (two bars across a trace, where the model expects the break and
+## where it was picked).
 ##
 ## Traces run downwards (time increases down the screen), as in the trace
 ## panel; drawn `turned`, the plot's symbols turn with a plot whose time
@@ -30,6 +32,7 @@ type
     syReceiver = "Receiver"
     syCursorTime = "Cursor time line"
     syTimeAcross = "Time across"
+    syFirstBreaks = "First-break overlay"
 
   SymbolColours* = object
     line*: Rgba ## strokes and markers
@@ -167,6 +170,14 @@ proc drawSymbol*(dl: ptr ImDrawList; sym: Symbol; topLeft: ImVec2_c; size: float
     line(dl, b, 0.22, 0.5, 0.78, 0.5, u32(c.fill), thick * 1.5)
     line(dl, b, 0.78, 0.34, 0.78, 0.66, line, thick)
     line(dl, b, 0.62, 0.5, 0.94, 0.5, line, thick)
+  of syFirstBreaks:
+    # a trace running down the middle, crossed by two bars at different
+    # times with a thin connector between them: the model's (the fill
+    # colour) above, the pick's (the stroke colour) below
+    line(dl, b, 0.5, 0.06, 0.5, 0.94, line, thick)
+    line(dl, b, 0.5, 0.36, 0.5, 0.66, u32(c.fill), thick)
+    line(dl, b, 0.14, 0.36, 0.86, 0.36, u32(c.fill), thick * 1.8)
+    line(dl, b, 0.14, 0.66, 0.86, 0.66, line, thick * 1.8)
   of syTimeAcross:
     # a trace lying along a time axis that points to the right: the plot
     # turned, time across and a positive swing up

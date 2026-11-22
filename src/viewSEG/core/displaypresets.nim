@@ -35,16 +35,19 @@ const
 
 func asPreset*(d: DisplaySettings): DisplaySettings =
   ## What a preset keeps of `d`: all of it, shown, the orientation left at
-  ## its default, each number within its control's range (`bounded`).
+  ## its default, each number within its control's range (`bounded`). The
+  ## first-break overlay is not a look to keep: it is left off.
   result = bounded(d)
   result.visible = true
   result.orientation = DisplaySettings().orientation
+  result.firstBreaks = false
 
 func withPreset*(shown, preset: DisplaySettings): DisplaySettings =
   ## `preset` drawn on a plot whose display is `shown`: its orientation
-  ## kept.
+  ## and its first-break overlay kept.
   result = asPreset(preset)
   result.orientation = shown.orientation
+  result.firstBreaks = shown.firstBreaks
 
 func sameValue[T](a, b: T): bool =
   ## `a == b`, field by field, a number that is not a number equal to

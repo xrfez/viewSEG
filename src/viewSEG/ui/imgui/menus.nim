@@ -59,7 +59,8 @@ type
     maShortcuts = "Keyboard shortcuts", maAbout = "About viewSEG",
     maGenerateReference = "Generate a reference...",
     maReferenceArchive = "Reference archive...",
-    maCompare = "Compare two traces"
+    maCompare = "Compare two traces",
+    maFirstBreaks = "First-break overlay"
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
@@ -100,6 +101,7 @@ type
     vendorChoice*: string ## the project's rule: "automatic", "none" or a map's name
     archiveShown*: bool ## the Reference archive window is open
     compareShown*: bool ## the compare window is open
+    firstBreaksOn*: bool ## the Seismic window's first-break overlay is on
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -146,7 +148,7 @@ const
     maShowFiles: 0, maShowRecords: 0, maShowMap: 0, maShowHeaders: 0, maShowJobs: 0,
     maShowMessages: 0,
     maShortcuts: ImGui_Key_F1.cint, maAbout: 0, maGenerateReference: 0,
-    maReferenceArchive: 0, maCompare: 0]
+    maReferenceArchive: 0, maCompare: 0, maFirstBreaks: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
@@ -164,7 +166,7 @@ const
     maShowFiles: IconList, maShowRecords: IconRecords, maShowMap: IconMap,
     maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog,
     maShortcuts: IconList, maAbout: IconInfo, maGenerateReference: IconVibrator,
-    maReferenceArchive: IconReference, maCompare: IconPulse]
+    maReferenceArchive: IconReference, maCompare: IconPulse, maFirstBreaks: IconTarget]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
     awMessages: IconLog, awSpectrum: IconPulse]
@@ -519,6 +521,13 @@ proc drawAnalysisMenu(input: MenuInput; res: var MenuResult) =
     res.actions.incl maCompare
   marked[].mark("menu." & $maCompare)
   tip("Overlay two traces, from one file or from two, for QC")
+  if igMenuItem_Bool(label(maFirstBreaks).cstring, nil, input.firstBreaksOn, true):
+    res.actions.incl maFirstBreaks
+  marked[].mark("menu." & $maFirstBreaks)
+  tip("Draw, over each trace of the Seismic window, a bar where a refraction model fitted to " &
+    "the picks expects the first break and another where it was picked. The model needs " &
+    "source-receiver offsets: a survey, or coordinates in the file. Also a button on the " &
+    "window's strip.")
   igSeparatorText("References")
   item(maGenerateReference, res)
   tip("Make a sweep and keep it as a reference")

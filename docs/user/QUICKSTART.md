@@ -586,6 +586,17 @@ a trace the file marks dead, "killed" or "polarity reversed" for an edited trace
 one of the fields you can add; it is off until you do. Right-click the status bar to choose the fields
 and their order.
 
+**First-break overlay.** The last button of the display group on the Seismic window's strip,
+or **Analysis > First-break overlay** (ticked while on), draws over each trace two thin bars:
+one where a refraction model fitted to the record's picks expects the first break (the cool
+colour) and one where the first break was picked (the warm colour). Where they differ by
+more than 12 ms a line joins them: a trace whose header places it at the wrong station, or
+whose break is late, stands out. The model needs source-receiver offsets: the imported survey's,
+or the file's own coordinates; without them only the picks are drawn and the key at the plot's
+corner says so. A killed trace has no bars. With the pointer on a trace the status bar adds
+the model's time, the pick's and their difference. It is off until you turn it on, and
+works in the background, so stepping through records is not held up.
+
 ## The map
 
 Only seismic traces are placed on the map. A file whose coordinates are on its auxiliary
@@ -1187,7 +1198,7 @@ mode, fills, overlap, colours, the gain type and amount and every setting of eve
 type, also the ones not in use: the AGC window, Fixed's amplitude, Normalized's choices,
 Exponential's rate, power and cutoff; the sort order and the display header: a new plot
 starts as you left the last one; polarity is not kept), the cursor
-time line, scale units and screen calibrations, the status bar's fields, the sort presets
+time line, whether the first-break overlay is on, scale units and screen calibrations, the status bar's fields, the sort presets
 and your own sort keys, the Messages window's toggles, and the Headers window's tabs,
 toggles and columns, and the options of each kind of graph window (above). It is saved a
 second after a change and when you quit.

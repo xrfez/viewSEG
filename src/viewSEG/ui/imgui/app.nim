@@ -1056,6 +1056,12 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       else:
         ui.refs.open()
         ui.core.apply Command(kind: ckListReferences)
+    of maFirstBreaks:
+      let pk = ui.core.findPanel(MainPanel)
+      if pk >= 0 and ui.core.panels[pk].layers.len > 0:
+        var d = ui.core.panels[pk].layers[0].display
+        d.firstBreaks = not d.firstBreaks
+        ui.core.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
     of maCompare:
       ui.core.apply Command(kind: ckCompareWindow, compareOpen: not ui.core.compareOpen)
     of maNewProject:
@@ -1307,7 +1313,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     vendorMaps: ui.core.vendorLoad.maps.mapIt(it.name),
     vendorChoice: ui.core.vendorChoice.choiceWords,
     projectShown: ui.project.shown, archiveShown: ui.refs.shown,
-    compareShown: ui.core.compareOpen)
+    compareShown: ui.core.compareOpen, firstBreaksOn: ui.core.breaksOn(MainPanel))
   let menu = drawMainMenu(menuInput, ui.marks)
   if menu.newPlot:
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: menu.newPlotView)

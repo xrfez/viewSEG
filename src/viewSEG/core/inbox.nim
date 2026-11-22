@@ -11,7 +11,8 @@
 
 import std/[locks, times]
 import parseSEG
-import analysis, compare, edits, filelist, filememory, identity, join, jobs, layouts, log, mapkinds,
+import analysis, compare, edits, filelist, filememory, firstbreaks, identity, join, jobs, layouts,
+    log, mapkinds,
   nif, panels, project, references, session, shotfiles, spectra, survey, tiles, vendormaps
 
 type
@@ -35,6 +36,8 @@ type
     mkShots          ## a listed file's shots, for the map (`core/shots`)
     mkRecordQc
       ## what the map's filters find in the record shown (`core/recordqc`)
+    mkFirstBreaks
+      ## a record's first breaks, picked and modelled, for the overlay (`core/firstbreakjobs`)
     mkTraceRead
       ## one trace's keys and header fields, read on a job (`readTraceHeaders`)
     mkIdentified
@@ -208,6 +211,8 @@ type
         ## the relation record it was checked against; -1 for none
       qcByPlace*: bool
         ## that record found with the station at the record's place
+    of mkFirstBreaks:
+      breaks*: FirstBreaks ## moved, never shared
     of mkTraceRead:
       readKeys*: TraceKeys
         ## the trace's keys, as the index holds them

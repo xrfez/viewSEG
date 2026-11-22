@@ -176,6 +176,10 @@ type
     orientation*: Orientation = orTimeDown
       ## which way the plot is turned (`core/orientation`): the panel's
       ## layer 0 decides for the whole plot
+    firstBreaks*: bool
+      ## the first-break overlay (`core/firstbreaks`) is drawn: a bar at the
+      ## time the model expects each trace's first break and another at the
+      ## pick. Off by default; like the orientation, not part of a preset
 
   Layer* = object
     source*: LayerSource

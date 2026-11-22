@@ -552,6 +552,42 @@ back in the next run; a settings file of an earlier build has none, and reads wi
 word. An agent can apply, save, rename and delete them too (the `display preset`
 command), for the session only, as with every other setting it changes.
 
+## First-break overlay
+
+A toggle button on the Seismic window's strip, beside the display modes and fills, and
+**Analysis > First-break overlay** (ticked while it is on; it has no shortcut) turn on the
+same setting. For each trace of the record shown the plot draws, in the theme's two roles
+`break_model` and `break_pick`, a short thin bar across the trace's column:
+
+- at the time a refraction model expects the first break (processSEG's `fitShot`, fitted to
+  the confident picks of the record against the traces' source-receiver offsets; the
+  bar is the model's `modelMs`), and
+- at the time the first break was picked (processSEG's first-break picker, its defaults).
+
+Where the pick differs from the model by more than 12 ms (or three samples, if more) a thin
+line joins the two bars and the pick bar is heavier; a pick of low confidence (below 0.5)
+is drawn faint. A trace with no pick shows only the model bar; a trace the model cannot
+place (no offset) only the pick. The bars have a halo in the plot's background colour, so they
+read over the wiggles and over density. They are the traces' own: they follow zoom, pan, the
+sort order and the trace filter, are drawn for the traces in view only, and a killed trace has
+none. Where the traces are closer than three pixels the bars become two lines through the
+times (the model's and the pick's). A key in the plot's corner names the two colours and says
+what the overlay lacks (while it is working, why it failed, or that the model needs a survey).
+
+The offsets are the trace keys': the imported survey's when one is joined to the file, else
+the header's, else derived from the file's own coordinates. With neither the picks are drawn
+alone and the key says so. The record is taken as one spread; a record of several components
+or receiver lines is fitted as one. The work runs on a job (Jobs lists it) for the record shown
+and is kept for it (the last few records stay, so stepping back is immediate); it is made
+again when the file's keys change (a join, a header edit) or a trace of the record is killed or
+restored, and a result that arrives after the record, the keys or the edits it was made for have
+changed is dropped. The status bar adds, for the trace under the pointer, the model's time, the
+pick's and their difference.
+
+The setting is the window's, off in a new one until turned on, and kept with the plot's
+display (`firstBreaks` in `settings.nif`) so a new plot starts as the last was left; a display
+preset does not carry it.
+
 ## Polarity
 
 Reversing the polarity turns the trace data 180 degrees out of phase: an operation on the

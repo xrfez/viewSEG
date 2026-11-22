@@ -93,8 +93,9 @@ import std/[algorithm, math, os, strutils, tables]
 import imguin/cimgui
 import ../../core/[components, editmarks, explain, geometry, openchoice, state, wiggle]
 import ../../gpu/[plotimage, textures]
-import ../../view/[displayheader, maplayers, plotink, strip, theme, timeaxis]
-import chrome, dpi, explainmenu, focus, fonts, icons, menus, plotbars, plotfilters, plotgain, plotsort,
+import ../../view/[breakbars, displayheader, maplayers, plotink, strip, theme, timeaxis]
+import breakdraw, chrome, dpi, explainmenu, focus, fonts, icons, menus, plotbars, plotfilters,
+    plotgain, plotsort,
   shortcutkeys,
   plotviews, references, style,
   symbols
@@ -1282,6 +1283,18 @@ proc componentToggle(label: string; on: bool; colour: Rgba; t: Theme): bool =
   result = igButton(label.cstring, ImVec2_c(x: 0, y: 0))
   igPopStyleColor(4)
 
+func breakTip(on: bool; b: FirstBreaks): string =
+  ## The overlay button's tooltip after its name: what the two bars are,
+  ## whether it is on, and what it lacks.
+  result = (if on: " (on)" else: " (off)") &
+    "\nA bar across each trace at the time a refraction model fitted to the picks" &
+    "\nexpects its first break (the cool colour), and another where the first" &
+    "\nbreak was picked (the warm one, faint when the pick is low in confidence)." &
+    "\nA line joins them where they differ by more than " & $int(mismatchMs(b.dtMs)) &
+    " ms." &
+    "\nThe model needs source-receiver offsets: a survey, or coordinates in the file."
+  if on and b.statusWords.len > 0: result.add "\n" & b.statusWords
+
 proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks: var Marks;
     res: var PanelOutput; ask: var ViewAsk; ppi: float64; mon: MonitorInfo) =
   ## The strip at the top of the window, in groups that wrap onto more lines
@@ -1372,6 +1385,14 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
               var nd = d
               if wf in nd.fills: nd.fills.excl wf else: nd.fills.incl wf
               res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+        igSameLine(0, 2)
+        let bi = st.breaksIndex(st.findPanel(p.id))
+        if symbolButton(syFirstBreaks, icon, t, marks, selected = d.firstBreaks,
+            markPrefix = "plot.", turned = turned, note = breakTip(d.firstBreaks,
+            if bi >= 0: st.firstBreaks[bi] else: FirstBreaks())):
+          var nd = d
+          nd.firstBreaks = not d.firstBreaks
+          res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
     of sgGain:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         drawGainControls(p, tp.gainBox, t, marks, res.commands, res.notes)
@@ -2535,6 +2556,13 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     tp.drawHeader(tiles, fields, stride, view, p.layout, turn, bands, headerTop, pos, size, t,
       marks)
     tp.drawSelectionMarkers(tiles, base, st.selection, view, p.layout, turn, pos, size, t, marks)
+    block firstBreaks:
+      let bi = st.breaksIndex(k)
+      if layer.display.firstBreaks and bi >= 0:
+        let g = breakGeometry(st.firstBreaks[bi], p.shown, p.layout, view, turn,
+          Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y)))
+        drawBreakMarks(g, ink, marks)
+        drawBreakKey(st.firstBreaks[bi], ink, t, pos, marks)
     if edited:
       let path = if source >= 0: st.sessions[source].path else: ""
       drawEditRow(tp, st.editsOf(k), tiles, view, p.layout, turn, bands, pos, size, t, marks,
@@ -2619,6 +2647,9 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       let mouse = if held: tp.menuMouse else: igGetIO_Nil().MousePos
       res.pick = if held: tp.menuPick
                  else: pick(tiles, p.layout, view, plot, vec2(mouse.x, mouse.y), turn)
+      if layer.display.firstBreaks and res.pick.found and res.pick.trace >= 0:
+        let bi = st.breaksIndex(k)
+        if bi >= 0: res.pick.breaks = st.firstBreaks[bi].readoutText(res.pick.trace)
       if st.settings.cursorLine and res.pick.inside:
         tp.drawCursorLine(mouse, pos, size, turn, res.pick.at.tMs, p.layout.dtMs, ink, t, marks)
         if res.pick.found and res.pick.position >= 0:

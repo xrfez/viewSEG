@@ -34,6 +34,9 @@ type
     ## The colours a plot is drawn in.
     background*: Rgba
     wiggle*: WiggleInk
+    breakModel*, breakPick*: Rgba
+      ## the first-break overlay's bars: where the model expects the break and
+      ## where it was picked, each readable on `background`
 
 func readableOn*(c, background: Rgba; ratio = MinContrast): Rgba {.inline.} =
   ## `c`, darkened on a light background or lightened on a dark one, just
@@ -43,6 +46,9 @@ func readableOn*(c, background: Rgba; ratio = MinContrast): Rgba {.inline.} =
 
 func opaque(c: Rgba): Rgba {.inline.} = Rgba(r: c.r, g: c.g, b: c.b, a: 255)
 
+func breakInk(t: Theme; background: Rgba): (Rgba, Rgba) =
+  (readableOn(t.roles[rlBreakModel], background), readableOn(t.roles[rlBreakPick], background))
+
 func plotInk*(t: Theme; d: DisplaySettings): PlotInk =
   ## The colours of a layer drawn with `d` in theme `t`.
   let paper = PlotInk(background: PaperBackground, wiggle: WiggleInk(line: PaperInk,
@@ -50,20 +56,24 @@ func plotInk*(t: Theme; d: DisplaySettings): PlotInk =
     hover: readableOn(t.roles[rlHighlight], PaperBackground),
     selected: readableOn(t.roles[rlSelected], PaperBackground)))
   case d.colours
-  of pcPaper: paper
+  of pcPaper:
+    result = paper
+    (result.breakModel, result.breakPick) = breakInk(t, paper.background)
   of pcTheme:
     let bg = opaque(t.roles[rlPlotBackground])
-    PlotInk(background: bg, wiggle: WiggleInk(line: opaque(t.roles[rlTrace]),
+    result = PlotInk(background: bg, wiggle: WiggleInk(line: opaque(t.roles[rlTrace]),
       positive: opaque(t.roles[rlFillPositive]), negative: opaque(t.roles[rlFillNegative]),
       hover: readableOn(opaque(t.roles[rlHighlight]), bg),
       selected: readableOn(opaque(t.roles[rlSelected]), bg)))
+    (result.breakModel, result.breakPick) = breakInk(t, bg)
   of pcCustom:
     func pick(c, fallback: Rgba): Rgba = (if c.a == 0: fallback else: opaque(c))
     let c = d.custom
-    PlotInk(background: pick(c.background, paper.background), wiggle: WiggleInk(
+    result = PlotInk(background: pick(c.background, paper.background), wiggle: WiggleInk(
       line: pick(c.line, paper.wiggle.line), positive: pick(c.positive, paper.wiggle.positive),
       negative: pick(c.negative, paper.wiggle.negative),
       hover: pick(c.hover, paper.wiggle.hover), selected: pick(c.selected, paper.wiggle.selected)))
+    (result.breakModel, result.breakPick) = breakInk(t, result.background)
 
 func drawnComponentColours*(stored: array[4, Rgba]; background: Rgba): array[4, Rgba] =
   ## `stored` (hydrophone, vertical, inline, crossline) darkened or lightened

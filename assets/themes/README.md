@@ -49,6 +49,7 @@ limits, and leaves it alone where it does not:
 | The map's sources | its receivers, on paper and in the theme's colours | a colour difference of 40 |
 | The map's sources and receivers | the hovered and the selected points (larger, outlined) | a colour difference of 20 |
 | The map's marks of what its filters find: failed traces, amplitude flags, your edits, the spread (`flag_failed`, `flag_amplitude`, `flag_edited`, `flag_spread`) | the map, on paper and in the theme's colours; its sources, receivers, the record's receivers, the hovered and selected points; each other | contrast 3; a colour difference of 20 |
+| The first-break overlay's two bars: where the model expects the break and where it was picked (`break_model`, `break_pick`) | the plot, on paper and in the theme's colours; the traces, the selected and hovered traces; each other | contrast 3; a colour difference of 25 from the traces and marked traces, 40 from each other |
 
 Text and status colours are lightened on a dark theme and darkened on a light one;
 secondary text that is brighter than the text is dimmed; a selection that does not

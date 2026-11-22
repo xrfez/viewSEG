@@ -190,6 +190,7 @@ proc display(w: var NifWriter; d: DisplaySettings; turned = true) =
   for f in d.fills: w.ident FillNames[f]
   w.close()
   w.value("overlap", d.overlap)
+  if d.firstBreaks: w.value("firstBreaks", true)
   w.choice("colours", ColourNames[d.colours])
   w.open("custom")
   for (tag, c) in [("background", d.custom.background), ("line", d.custom.line),
@@ -601,6 +602,7 @@ proc display(r: var Reading; n: NifNode; d: var DisplaySettings) =
           else: ok = false
         if ok: d.fills = fills
       of "overlap": r.number(c, MinOverlap, MaxOverlap, d.overlap)
+      of "firstBreaks": r.flag(c, d.firstBreaks)
       of "colours": r.choice(c, ColourNames, d.colours)
       of "custom":
         for k in c.kids:

@@ -626,6 +626,10 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
       igPopStyleColor(1)
       marks.mark("status.edits")
       igSameLine(0, 16)
+    if mapCursor.len == 0 and at.breaks.len > 0:
+      igTextUnformatted(at.breaks.cstring, nil)
+      marks.mark("status.firstbreak")
+      igSameLine(0, 16)
     if linkNote.len > 0:
       igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
       igTextUnformatted(linkNote.cstring, nil)

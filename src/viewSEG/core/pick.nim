@@ -32,6 +32,10 @@ type
     edits*: set[TraceEdit]    ## the trace's edits, as drawn: killed, reversed
     filterNote*: string       ## its own filter, in words; "" for none
     joined*: set[JoinGroup]   ## the groups of its keys a geometry join gave
+    breaks*: string
+      ## the first-break overlay's model time, pick time and their difference for
+      ## this trace, in words (`core/firstbreaks`); "" when the overlay is off or
+      ## has nothing for it. Set by whoever asks the overlay, never by `pickAt`
 
 func noPick*(): Pick =
   ## A point over nothing.
