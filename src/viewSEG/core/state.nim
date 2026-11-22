@@ -6496,6 +6496,9 @@ proc breakKeyFor(state: AppState; i, gather: int): BreakKey =
   (s.id, gather, s.keysRevision, state.editsAt(s.path).listIn(teKilled, s.gathers[gather].traces),
     newSeq[uint8]())
 
+const SignatureNoFilters = NoiseFilters + {mfMissing, mfUnlisted}
+  ## the filters a signature file has no receivers for: the noise test and the template's
+
 proc followRecordQc(state: var AppState) =
   ## Reads the record shown on a job for the map's filters when one of
   ## `TraceFilters` is on, or the template box (which draws the relation
@@ -6507,8 +6510,13 @@ proc followRecordQc(state: var AppState) =
   let g = state.selection.activeGather
   let i = state.findSession(g.file)
   let shown = i >= 0 and g.gather in 0 ..< state.sessions[i].gathers.len
-  let filters = state.settings.map.filters * TraceFilters
-  if (filters == {} and not state.settings.map.templateBox) or not shown:
+  var filters = state.settings.map.filters * TraceFilters
+  var box = state.settings.map.templateBox
+  if shown and state.sessions[i].isSignature:
+    # no receivers: no noise test and no template check (`filterHits` says so)
+    filters = filters - SignatureNoFilters
+    box = false
+  if (filters == {} and not box) or not shown:
     if q.job != NoJob:
       discard state.jobs.cancel(q.job)
       q.replaced.add q.job
@@ -6534,6 +6542,7 @@ proc followRecordQc(state: var AppState) =
       if b.key == work.key:
         if b.state == bkDone: (work.shared, share) = (b, 2)
         elif b.state == bkComputing: share = 1
+        else: share = 2 # failed or stopped: a result too, the job does not ask again
   let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
     domain, state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
     ownKeyOf(state.editsAt(s.path), gatherTraces), work.settings, work.key, share)
@@ -6599,6 +6608,9 @@ func filterHits*(state: AppState): array[MapFilter, FilterHits] =
   for f in TraceFilters * on: result[f] = state.recordQc.hits[f]
   let g = state.selection.activeGather
   let i = state.findSession(g.file)
+  if i >= 0 and state.sessions[i].isSignature:
+    for f in SignatureNoFilters * on:
+      result[f] = FilterHits(state: fsDone, note: "does not apply to a signature file")
   if i >= 0 and g.gather in 0 ..< state.sessions[i].gathers.len:
     let s = state.sessions[i]
     let traces = s.gathers[g.gather].traces
