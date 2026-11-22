@@ -184,7 +184,7 @@ proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
     ctx.setPhase "reading the pilot"
     let preview = window <= 0
     var news = ReferenceNews(home: folder, act: (if preview: raPilotShown else: raViewed),
-      key: key, name: name, window: window, record: record, pilotTrace: -1)
+      key: key, name: name, window: window, record: record, pilotTrace: surveyTrace)
     try:
       var samples: seq[float32] = @[]
       var us = 0.0

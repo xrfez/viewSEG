@@ -2674,7 +2674,7 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
   for w in state.refViews.mitems:
     if w.pilot.trace > 0 and w.pilotTrace >= 0 and w.pilotTrace in s:
       w = RefView(id: w.id, refId: w.refId, name: w.name, pilot: w.pilot, pilotTrace: -1,
-        note: NoFilePilot, revision: w.revision + 1)
+        note: NoFilePilot, noFile: true, revision: w.revision + 1)
   # the analysis windows of the file: what is being worked out for them stops,
   # and a window waiting for it says why and waits for nothing
   for k in 0 ..< state.plots.len:
@@ -7457,6 +7457,47 @@ proc nextRefView(state: AppState): int =
         taken = true
         inc result
 
+proc readPilotView(state: var AppState; wi: int; s: Session; trace: int; edits: FileEdits) =
+  ## Reads the pilot of trace `trace` of `s` for the window `refViews[wi]`, with the trace's
+  ## own reversal as it is now.
+  template w: untyped = state.refViews[wi]
+  w.waiting = true
+  w.noFile = false
+  w.pilotTrace = s.base + trace
+  w.pilotFlip = edits.has(teReversed, trace)
+  discard state.jobs.submit(JobSpec(title: "Read the reference " & w.name,
+    lane: jlInteractive, reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace,
+    w.pilot, w.pilotFlip, w.record, s.base + trace, w.id, "", w.name, state.refsHome,
+    state.inbox.poster))
+
+proc refreshPilotViews(state: var AppState) =
+  ## The View windows of pilot rules follow the pilot trace's own reversal (the correlation
+  ## does), so that a window, the preview and a fixed copy always agree; one whose file was
+  ## closed takes the next file shown.
+  for wi in 0 ..< state.refViews.len:
+    template w: untyped = state.refViews[wi]
+    if w.pilot.trace <= 0 or w.waiting: continue
+    if w.pilotTrace >= 0:
+      let i = state.findTrace(w.pilotTrace)
+      if i >= 0:
+        let s = state.sessions[i]
+        let edits = state.editsAt(s.path)
+        if edits.has(teReversed, w.pilotTrace - s.base) != w.pilotFlip:
+          state.readPilotView(wi, s, w.pilotTrace - s.base, edits)
+    elif w.noFile:
+      let (si, g) = state.shownRecord
+      if si >= 0:
+        let s = state.sessions[si]
+        let edits = state.editsAt(s.path)
+        let (trace, record, problem) = s.pilotOfRecord(g, w.pilot, edits)
+        w.record = record
+        w.noFile = false
+        if problem.len > 0:
+          w.note = problem
+        else:
+          w.note = ""
+          state.readPilotView(wi, s, trace, edits)
+
 proc viewReference(state: var AppState; cmd: Command) =
   ## Opens `cmd.refId` in its own window. The file under QC is not closed
   ## and no plot is retargeted.
@@ -7475,6 +7516,7 @@ proc viewReference(state: var AppState; cmd: Command) =
     let (si, g) = state.shownRecord
     if si < 0:
       w.note = NoFilePilot
+      w.noFile = true
       state.refViews.add w
       return
     let s = state.sessions[si]
@@ -7485,14 +7527,8 @@ proc viewReference(state: var AppState; cmd: Command) =
       w.note = problem
       state.refViews.add w
       return
-    w.waiting = true
-    w.pilotTrace = s.base + trace
     state.refViews.add w
-    let flip = edits.has(teReversed, trace)
-    discard state.jobs.submit(JobSpec(title: "Read the reference " & e.name,
-      lane: jlInteractive, reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace,
-      rule, flip, record, s.base + trace, id, "", e.name, state.refsHome,
-      state.inbox.poster))
+    state.readPilotView(state.refViews.high, s, trace, edits)
     return
   if e.blocked or not singleFileName(e.file):
     state.ignore(cmd, "the reference \"" & e.name &
@@ -8484,6 +8520,7 @@ proc drainInbox*(state: var AppState): bool =
   let finished = state.jobs.takeFinished()
   state.inbox.drainInto(state.mail)
   result = finished.len > 0 or state.mail.len > 0
+  state.refreshPilotViews()
   for m in state.mail.mitems:
     case m.kind
     of mkOpened:

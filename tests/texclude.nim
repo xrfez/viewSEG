@@ -13,7 +13,7 @@
 
 import std/[os, strutils]
 import parseSEG
-import viewSEG/core/[editmarks, edits, filememory, identity, nif, processing, state]
+import viewSEG/core/[editmarks, edits, filememory, identity, nif, processing, spectra, state]
 import utils/[fixtures, waiting]
 
 proc answered(st: AppState): bool =
@@ -78,6 +78,23 @@ proc main*() =
     doAssert ",excluded," in csv, csv
     var bad: seq[string]
     doAssert readEditsCsv(csv, "x.csv", bad) == l and bad.len == 0, $bad
+    # the list read is not also kept as a later version's node (it came back after a removal);
+    # the store's merge reads documents through `readMemoryFile`, the same reader
+    doAssert back.later.len == 0, "an excluded node is kept as a later version's"
+    var cleared = back
+    cleared.edits.lists[teExcluded] = @[]
+    let text2 = memoryDocument(cleared)
+    doAssert "(excluded" notin text2, "the removed exclusion is written again: " & text2
+    var p2: seq[string]
+    let again = readMemory(parseNif(text2, "x"), rec.doc, p2)
+    doAssert again.edits.lists[teExcluded].len == 0 and again.later.len == 0, "it came back"
+    let dir = getTempDir() / "viewSEG-texclude-" & $getCurrentProcessId()
+    createDir(dir)
+    writeFile(dir / "doc.nif", text)
+    var p3: seq[string]
+    let viaFile = readMemoryFile(dir / "doc.nif", p3)
+    removeDir(dir)
+    doAssert viaFile.later.len == 0 and viaFile.edits.lists[teExcluded] == @[2, 3, 9]
 
   block menu:
     let rows = [TraceEditView(trace: 4, edits: {teExcluded})]
@@ -111,6 +128,19 @@ proc main*() =
       let t = st.tiles(0)[^1]
       doAssert t.rowOf(5) == both.rowOf(5), "an unmarked trace is filtered as before"
       doAssert t.rowOf(5) != raw.rowOf(5)
+      # a spectrum window: the plot's filter does not touch the excluded trace (processed ==
+      # raw) and does touch an unmarked one
+      proc spectrumOf(st: var AppState; trace: int): Spectrum =
+        st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: @[trace],
+          spectrumShow: SpectrumDisplay())
+        let w = st.spectra.high
+        doAssert st.settle(not st.spectra[w].waiting and st.spectra[w].spectrum.raw.len > 0 and
+          st.spectra[w].spectrum.processed.len > 0), "no spectrum"
+        st.spectra[w].spectrum
+      let ex = st.spectrumOf(base + 4)
+      doAssert ex.processed == ex.raw, "the plot's filter touched the excluded trace's spectrum"
+      let other = st.spectrumOf(base + 5)
+      doAssert other.processed != other.raw, "the plot's filter did not touch an unmarked trace"
       # its own filter is a separate choice and still runs
       st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 4], on: true,
         processing: Processing(band: pbLowCut, f1: 20, f2: 30), filterPlace: fpAfter)

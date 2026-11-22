@@ -571,7 +571,7 @@ proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string
           of "unconfirmed":
             result.unconfirmed = k.kids.len == 1 and k.kids[0].kind == nkIdent and
               k.kids[0].text == "true"
-          of "killed", "reversed", "allReversed", "filtered": discard # readEditsIn
+          of "killed", "reversed", "excluded", "allReversed", "filtered": discard # readEditsIn
           else: result.later.add k # a later version's: kept as it is
       readEditsIn(n, result, problems, upTo, outside)
   if not found:

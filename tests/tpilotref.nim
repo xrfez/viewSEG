@@ -536,8 +536,23 @@ proc main*() =
         if p.frozen and p.result.plots.len > 0: frozen = k
       doAssert frozen >= 0, "no frozen window to keep what it showed"
       let keptCurves = st.plots[frozen].result.plots.len
+      # a rule whose read FAILS (a window from 900 ms of a 800 ms trace), closed over at once:
+      # the late failure must not land in the window of the closed file
+      st.apply Command(kind: ckPilotReference, refPilot: PilotRule(name: "failing pilot",
+        aux: true, trace: 1, startMs: 700, spanMs: 100))
+      doAssert st.settle(st.references.entries.anyIt(it.name == "failing pilot"))
+      var failingId = ""
+      for e in st.references.entries:
+        if e.name == "failing pilot": failingId = e.id
+      st.apply Command(kind: ckViewReference, refId: failingId)
+      let failing = st.refViews.high
       st.apply Command(kind: ckClose, file: st.sessions[0].id)
       doAssert st.settle(st.sessions.len == 0)
+      for _ in 0 ..< 30:
+        discard st.drainInbox()
+        sleep(10)
+      doAssert st.refViews[failing].note == NoFilePilot and st.refViews[failing].ys.len == 0,
+        "a late failure landed in the window of the closed file: " & st.refViews[failing].note
       doAssert st.pilotPreview.samples.len == 0 and st.pilotPreview.hz.len == 0 and
         st.pilotPreview.problem == NoFilePilot, "the preview holds the closed file's pilot"
       doAssert st.refViews[view].ys.len == 0 and st.refViews[view].amps.len == 0 and
@@ -554,6 +569,31 @@ proc main*() =
         doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
         let again = st.shownPilot(rule)
         doAssert again.problem == "" and again.samples.len == Samples, again.problem
+        # the View windows pick up the next file's pilot
+        doAssert st.settle(st.refViews[view].ys.len > 0 and not st.refViews[view].waiting),
+          "the View window did not take the next file's pilot"
+        doAssert st.refViews[view].note.len == 0
+        # it follows the pilot trace's own reversal, and the fixed copy is what it shows
+        let shown = st.refViews[view].ys
+        let b2 = st.sessions[0].base
+        st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[b2],
+          on: true)
+        doAssert st.settle(st.refViews[view].ys.len == shown.len and
+          st.refViews[view].ys[5] == -shown[5] and not st.refViews[view].waiting),
+          "the View window did not follow the trace's reversal"
+        let w = st.refViews[view]
+        let n0 = st.references.entries.len
+        st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "fixed copy",
+          trace: w.pilotTrace, fromMs: w.pilotFrom, toMs: w.pilotTo, phaseDeg: w.pilot.phaseDeg))
+        doAssert st.settle(st.references.entries.len == n0 + 1)
+        for e in st.references.entries:
+          if e.name == "fixed copy":
+            var f = openSeismic(st.referencesHome / e.file, keys = true)
+            let rows = f.readTraces(0 .. 0)
+            doAssert rows.shape[1] == w.ys.len
+            for i in 0 ..< w.ys.len:
+              doAssert float64(rows[0, i]) == w.ys[i], "the fixed copy is not the window's pilot"
+            f.close()
 
     discard st.shutdown()
 

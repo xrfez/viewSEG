@@ -104,7 +104,7 @@ type
     toMs*: float64   ## its end; below 0: the trace's end
     phaseDeg*: float64
       ## 0 (left out), or 180: the stored window is turned over, after the trace's own
-      ## reversal and own filter are applied (nothing of the plot's is)
+      ## reversal is applied (no filter, nothing of the plot's)
 
   GeneratedReference* = object
     ## What `generate reference` names. `dtMs` 0: the file on show.
@@ -167,6 +167,8 @@ type
     record*: string ## a pilot of the record: the record it shows
     pilot*: PilotRule ## a pilot of the record: the rule (`pilot.trace` 0: not one)
     pilotTrace*: int ## a pilot of the record: the survey-wide trace id; -1 for none
+    pilotFlip*: bool ## ... read with the trace's own reversal (R) on
+    noFile*: bool ## a pilot's window waiting for a file: the one it showed was closed
     pilotTraceMs*: float64 ## ... the length of that whole trace, in ms
     pilotNote*: string ## ... what the plot's filters did to it, in words
     pilotFrom*, pilotTo*: float64 ## a pilot of the record: the window, in ms
@@ -590,7 +592,7 @@ func sweepStoreToMs*(sweepMs, dtMs: float64): float64 =
 
 func turnedOver*(samples: openArray[float32]; r: PilotRule): seq[float32] =
   ## The samples of a cut pilot with the rule's phase applied: negated for 180 degrees (the
-  ## polarity reversed, after the trace's own reversal and filter and the cut), else copied.
+  ## polarity reversed, after the trace's own reversal and the cut), else copied.
   result = @samples
   if r.phaseDeg == 180:
     for v in result.mitems: v = -v
