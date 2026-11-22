@@ -186,8 +186,10 @@ the main window, and the archive has the keyboard again when it closes.
 "Reference: <name>", docked like a New plot window. It draws the reference's samples
 against time, from the archive's From and To and its sample interval, and in the same
 window its amplitude spectrum. The Seismic window, the open file, and every other window
-stay as they were. The window shows that reference until you close it. If you rename the
-reference, the title follows. If you delete it, the window says so.
+stay as they were. A stored waveform needs no file open: it is read from the archive, and
+when it cannot be read the window says why. (A pilot of the record is a rule, not a
+waveform: it needs the file whose record is on show, and says so when none is open.) The window shows that reference until you close it. If you rename
+the reference, the title follows. If you delete it, the window says so.
 
 The table takes the height of the window. With a project open, the **Main archive** header
 stays at the window's bottom; open it and the two tables share the height.

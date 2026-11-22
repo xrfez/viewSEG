@@ -136,11 +136,11 @@ proc viewWork*(folder, file, id, name: string; window: int; fromMs: float64;
       for i, v in samples: ys[i] = float64(v)
       var news = ReferenceNews(home: folder, act: raViewed, id: id, name: name,
         window: window, fromMs: fromMs, dtMs: dt, ys: ys, hz: spec.hz, amps: spec.amp,
-        index: loadIndex(folder))
+        index: loadIndex(folder), pilotTrace: -1)
       post(to, ctx.id, news)
     except CatchableError as e:
       var news = ReferenceNews(home: folder, act: raFailed, id: id, name: name,
-        window: window, failure: e.msg)
+        window: window, failure: e.msg, pilotTrace: -1)
       post(to, ctx.id, news)
 
 proc copyWork*(fromFolder, toFolder, id: string; to: Poster): JobWork =

@@ -2,8 +2,9 @@
 ## headless. Screenshots of the three dialogs are written under .scratch
 ## (the sample file only).
 ##
-## Seen to fail: with no Operations menu, "Operations > Generate a reference...
-## did not happen"; with the store item missing from the plot's menu, "the
+## Seen to fail: with the View answer dropped when no file is open, "View with no file open
+## shows the reference did not happen"; with no Operations menu, "Operations > Generate a
+## reference... did not happen"; with the store item missing from the plot's menu, "the
 ## store dialog did not happen".
 
 import std/[math, monotimes, options, os, strutils]
@@ -141,6 +142,21 @@ proc main*() =
         discard f.savePng(shots / "reference-view.png")
         if f.core.refViews.len > 0:
           f.apply Command(kind: ckCloseRefView, refWindow: f.core.refViews[0].id))
+
+    step("the file is closed", noop, proc (f: FrameInfo): bool =
+      if f.core.sessions.len > 0: f.apply Command(kind: ckClose, file: f.core.sessions[0].id)
+      f.core.sessions.len == 0)
+
+    step("View with no file open shows the reference", noop, proc (f: FrameInfo): bool =
+      # Double-click and the View button are the same command. Before, the answer was
+      # dropped as a pilot of a closed file and the window stayed on "Reading...".
+      if f.core.refViews.len == 0: discard f.actOnFirst("view")
+      result = f.core.refViews.len >= 1 and not f.core.refViews[0].waiting and
+        f.core.refViews[0].ys.len > 0 and f.markOf("reference.view.time.data").size.x > 0 and
+        f.markOf("reference.view.spectrum.data").size.x > 0 and wait > 8
+      if result:
+        discard f.savePng(shots / "reference-view-no-file.png")
+        f.apply Command(kind: ckCloseRefView, refWindow: f.core.refViews[0].id))
 
     # The confirmation opens in the middle of the main window, and when it closes, by Delete
     # or by Cancel, the archive window has the focus again.
