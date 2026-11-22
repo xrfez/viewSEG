@@ -10,6 +10,9 @@
 ## Seen to fail: with the frame loop not setting the flag, the key kept the old length, the
 ## line the old window and the option NaN until the box was left.
 ##
+## The windows are kept inside the main one (`keepInMainWindow`: a tooltip that becomes a window
+## of its own takes a click on a loaded machine; see `tguienvelope`).
+##
 ## Needs a display: run under the tester, which gives each file its own.
 
 import std/[math, monotimes, options, os, strutils]
@@ -67,7 +70,8 @@ proc main*() =
         f.typing and wait > 3)
       for n in 1 .. digits.len: digit(box, digits[0 ..< n], follows)
 
-    step("the file opens", noop, proc (f: FrameInfo): bool =
+    step("the file opens", proc (f: FrameInfo) = f.keepInMainWindow,
+      proc (f: FrameInfo): bool =
       let p = f.core.panels[f.core.findPanel(MainPanel)]
       p.laidOut and f.has("plot.data") and f.core.referencesLoaded)
 
