@@ -8,7 +8,10 @@
 ##
 ## Seen to fail: with the dialog's boxes alone (no "store.taken" line) "no line says what
 ## the window takes"; with "To" not clamped, "no clamp is said" and the box kept 20000;
-## with the length taken as (N - 1)·dt, "11 999 ms" in the line.
+## with the length taken as (N - 1)·dt, "11 999 ms" in the line; with the From and To boxes
+## not live (Dear ImGui 1.92.9 writes a typed number back only when the box is left:
+## `ImGui_ItemFlags_LiveEditOnInputScalar` off), "no clamp is said" when the machine is busy
+## (one CPU shared with busy loops).
 ##
 ## Needs a display: run under the tester, which gives each file its own.
 
@@ -68,10 +71,10 @@ proc main*() =
         let box = f.markOf("store.to")
         if not f.typing:
           if wait mod 8 == 3: f.click(box.centre)
-        elif wait mod 8 != 0 and f.nameWith("store.clamped:").len == 0:
-          f.pressKey(skCtrl, true, {smCtrl})
-          f.typeText("a")
-          f.pressKey(skCtrl, false)
+        elif wait mod 8 == 5 and f.nameWith("store.clamped:").len == 0:
+          # (the box selects its text when it takes the keyboard, so no select-all key is
+          # needed; a held Ctrl makes a box ignore text, and a key pressed and released in
+          # one frame reaches Dear ImGui over several)
           f.typeText("20000")
         if f.nameWith("store.clamped:").len > 0:
           let said = f.nameWith("store.clamped:")
