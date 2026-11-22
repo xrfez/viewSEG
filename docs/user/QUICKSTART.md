@@ -919,10 +919,16 @@ What you see, top down:
    - **Top frequency (Hz).** The sweep's top frequency; distortion counts only the
      harmonics up to it, as the vibrator's own electronics do. It is read from the project
      reference with nothing typed ("(from the reference)" beside it): a generated reference
-     gives its exact end frequency; for a recorded one a line is fitted to its frequency
-     track over the flat part (straight, or straight in log f for an exponential sweep) and
-     taken to the sweep's end, rounded to a whole hertz when it is within 0.5 % of one (a
-     "6-220 Hz" sweep reads 220). Type a value to override it; that is kept with the
+     gives its exact end frequency; for a recorded one it is read from the reference's own
+     samples: a line is fitted to its frequency track over the flat part (straight, or
+     straight in log f for an exponential sweep) and taken to where the sweep ends, found
+     from the fall of its end taper whatever that taper's shape; a ring-down or leakage
+     after the taper (told from it by its gentle slope) does not lengthen the sweep. It
+     is rounded to a whole hertz when it is within 0.5 % of one (a "6-220 Hz" sweep reads
+     220). When the reading is not sure (noise hides the end of the sweep or its taper, so
+     the value could be off by more than 0.6 %) the box's line says "uncertain" with how far
+     it could be off, in hertz either way: check it, or type the value. Type a value to
+     override it; that is kept with the
      reference in the project (for a recorded reference, per file layout). A line warns
      when it does not fit the largest frequency the reference shows in its flat part.
    - **100 % force =** (the file's unit, counts or N), with **Set from this sweep**. The

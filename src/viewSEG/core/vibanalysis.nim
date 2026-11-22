@@ -28,7 +28,7 @@ import std/[math, sequtils, strutils]
 import parseSEG
 import processSEG/core/[rows, types, units, workspace]
 import processSEG/vibroseis/[sweeptrack, vibqc]
-import analysis, signalend, vibjudge
+import analysis, signalend, sweepedge, vibjudge
 
 export VibRole, VibSignal
 
@@ -95,80 +95,11 @@ func shortEndMs(track: SweepTrack; p: TrackParams; counts: openArray[int];
           track.timeMs[m] + 500.0 * float64(windowPeriods(p, f)) / f <= last:
         result = track.timeMs[m]
 
-func fittedTopHz*(track: SweepTrack; e: SweepExtent): float64 =
-  ## The reference's top frequency, Hz, from its frequency track alone: a line through the
-  ## track over the flat part, in f against time or in ln f against time (whichever fits
-  ## better, a linear sweep or an exponential one), taken to the sweep's end (the start of a
-  ## sweep that falls), and rounded to a whole hertz when it lies within 0.5 % of one (a
-  ## designed 6 to 220 Hz sweep reads 220, not 220.4). NaN without a sweep or enough points.
-  result = NaN
-  if e.startMs.isNaN or e.endMs.isNaN or e.flatStartMs.isNaN or e.flatEndMs.isNaN: return
-  var ts, fs: seq[float64] = @[]
-  for m in 0 ..< track.len:
-    let (t, f) = (track.timeMs[m], track.referenceHz[m])
-    if not f.isNaN and f > 0 and t >= e.flatStartMs and t <= e.flatEndMs:
-      ts.add t / 1000
-      fs.add f
-  if ts.len < 20: return
-  func line(xs, ys: seq[float64]): (float64, float64) =
-    ## least squares: intercept and slope
-    var (sx, sy, sxx, sxy) = (0.0, 0.0, 0.0, 0.0)
-    for i in 0 ..< xs.len:
-      sx += xs[i]
-      sy += ys[i]
-      sxx += xs[i] * xs[i]
-      sxy += xs[i] * ys[i]
-    let n = float64(xs.len)
-    let d = n * sxx - sx * sx
-    if d == 0: return (sy / n, 0.0)
-    let b = (n * sxy - sx * sy) / d
-    ((sy - b * sx) / n, b)
-  let lf = fs.mapIt(ln(it))
-  let (a1, b1) = line(ts, fs)
-  let (a2, b2) = line(ts, lf)
-  var (e1, e2) = (0.0, 0.0)
-  for i in 0 ..< ts.len:
-    e1 += (a1 + b1 * ts[i] - fs[i]) ^ 2
-    e2 += (exp(a2 + b2 * ts[i]) - fs[i]) ^ 2
-  let rising = fs[^1] > fs[0]
-  # the sweep's envelope is measured down to `minReferenceDb` below its peak: a cos² taper
-  # goes on a little past that point (this fraction of its length, of the rest of it)
-  let share = 2 / PI * arcsin(sqrt(pow(10.0, -abs(TrackParams().minReferenceDb) / 20)))
-  let more = share / (1 - share)
-  func predict(t: float64): float64 =
-    if e1 <= e2: a1 + b1 * t else: exp(a2 + b2 * t)
-  # the sweep's end: the stretch of the track beyond the flat part that keeps to the line (a
-  # window's frequency within 1 % of it), a window longer at most; noise or a transient after
-  # the sweep (or before a sweep that falls) lies beyond it and stretches no taper
-  let (p0, flatStart, flatEnd) = (TrackParams(), e.flatStartMs, e.flatEndMs)
-  var edge = if rising: flatEnd else: flatStart
-  var lost = false # the line is lost (not just the end of the measured points)
-  for k in 0 ..< track.len:
-    let m = if rising: k else: track.len - 1 - k
-    let (t, f) = (track.timeMs[m], track.referenceHz[m])
-    if (rising and t <= flatEnd) or (not rising and t >= flatStart): continue
-    if (rising and t > e.endMs) or (not rising and t < e.startMs): break
-    if f.isNaN: break
-    if abs(f - predict(t / 1000)) > 0.01 * f:
-      lost = true
-      break
-    edge = t
-  let endHz = max(1.0, if rising: fs[^1] else: fs[0])
-  let slack = 500.0 * float64(windowPeriods(p0, endHz)) / endHz
-  # the measured points end a half window short of the sweep's own end: the sweep's end is
-  # then known (`endMs`); where they stop for another reason the sweep ends about there
-  # (a half window on where the line was lost: its taper is down in the noise)
-  let toEnd = abs((if rising: e.endMs - edge else: edge - e.startMs) - slack)
-  let clean = toEnd <= 0.25 * slack
-  let reach = if lost: slack else: 0.0
-  let endMs = if clean: e.endMs else: min(e.endMs, edge + reach)
-  let startMs = if clean: e.startMs else: max(e.startMs, edge - reach)
-  let at = (if rising: endMs + more * max(0.0, endMs - flatEnd)
-    else: startMs - more * max(0.0, flatStart - startMs)) / 1000
-  let est = if e1 <= e2: a1 + b1 * at else: exp(a2 + b2 * at)
-  if not (est > 0 and est < Inf): return
+func roundedTop*(est: float64): float64 =
+  ## `est` rounded to a whole hertz when it lies within 0.5 % of one (a designed 6 to 220 Hz
+  ## sweep reads 220, not 220.4), else to a tenth.
   let whole = round(est)
-  result = if abs(est - whole) <= 0.005 * est: whole else: round(est * 10) / 10
+  if abs(est - whole) <= 0.005 * est: whole else: round(est * 10) / 10
 
 proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     at: array[VibRole, int]; dtMs: float64; p: AnalysisParams;
@@ -223,7 +154,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   var limits = VibLimits()
   var cutMs = NaN # the judged part ends here: the shortest trace's last measurable point
   var band = NaN
-  var fitted = NaN # the top frequency fitted to the reference's track
+  var fitted = NaN # the top frequency read from the reference's samples
+  var reading = TopReading(hz: NaN) # ... and how far to trust it
   try:
     if pair and masses:
       unit.reactionMass = mass(p.reactionMassKg, muKilogram)
@@ -250,8 +182,10 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
         # no top frequency given: the reference's own, from its frequency track (the same
         # for every record), and the pass made again with it as the band's edge
         bandSet = true
-        let est = fittedTopHz(results[0].tracks[vsReference], results[0].reference.extent)
-        if not est.isNaN:
+        reading = readTop(rows[at[vsReference]], dtMs, results[0].tracks[vsReference],
+          results[0].reference.extent)
+        if not reading.hz.isNaN:
+          let est = roundedTop(reading.hz)
           (band, fitted) = (est, est)
           tp = planFor(band)
           ws.reserve(vibratorWorkspace(tp))
@@ -521,12 +455,32 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
           taperS = max(0.0, e0.flatStartMs - e0.startMs) / 1000
       elif not (e0.endMs.isNaN or e0.flatEndMs.isNaN):
         taperS = max(0.0, e0.endMs - e0.flatEndMs) / 1000
+    if not reading.hz.isNaN and not e0.flatStartMs.isNaN:
+      # read from the samples: the rate and the taper are those of the sweep itself, not of
+      # a ring-down after it (whose frequency stands still and whose level stretches the extent)
+      rate = reading.rateHzS
+      taperS = max(0.0, (if first > 0 and hz[first - 1] > hz[last]: e0.flatStartMs - reading.endMs
+        else: reading.endMs - e0.flatEndMs)) / 1000
     let slack = rate * (taperS + 0.125) * 1.25 + 0.01 * chord
     if usedHz < chord * 0.995 or usedHz > chord + slack:
       result.band.warning = "top frequency " & number(usedHz, 1) & " Hz does not fit the " &
         "largest frequency measured in the flat part of the reference (" &
         number(chord, 1) & " Hz, the top lies " & (if usedHz < chord: "not below" else:
         "within " & number(slack, 1) & " Hz above") & " it): check it"
+  if topHz.isNaN and exactTopHz.isNaN:
+    # the top frequency was read from the reference's samples: say when it is not sure
+    var said = ""
+    if reading.hz.isNaN:
+      said = "the reference's top frequency could not be read (the sweep is too short or " &
+        "too noisy): type it, or the band follows the library's own estimate"
+    elif reading.uncertain:
+      result.band.uncertain = true
+      result.band.uncertaintyHz = reading.uncertaintyHz
+      said = "the top frequency " & number(usedHz, 1) & " Hz, read from the reference, is " &
+        "uncertain (about " & number(reading.uncertaintyHz, 1) & " Hz either way; " &
+        reading.why & "): check it, or type it"
+    if said.len > 0:
+      result.band.warning.add (if result.band.warning.len > 0: "; " else: "") & said
   # the tapers, dimmed on the plots that run along the sweep
   if not (span.a.isNaN or span.b.isNaN):
     for plot in result.plots.mitems:

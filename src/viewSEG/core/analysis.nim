@@ -211,12 +211,15 @@ type
 
   BandReport* = object
     ## Where a vibrator signature's distortion band ends, and how that was set.
-    hz*: float64          ## the edge used (NaN: no band: every harmonic counted)
-    suggestedHz*: float64 ## `topFrequencyHz` of the reference (an estimate); NaN: none
-    chordHz*: float64     ## `largestChordHz`: a lower bound of the top; NaN: none
-    typed*: bool          ## the edge was typed (else prefilled)
-    exact*: bool          ## prefilled exactly: a generated reference's end frequency
-    warning*: string      ## the estimate and the chord differ by more than 2 %; "" for none
+    hz*: float64                  ## the edge used (NaN: no band: every harmonic counted)
+    suggestedHz*: float64         ## `topFrequencyHz` of the reference (an estimate); NaN: none
+    chordHz*: float64             ## `largestChordHz`: a lower bound of the top; NaN: none
+    typed*: bool                  ## the edge was typed (else prefilled)
+    exact*: bool                  ## prefilled exactly: a generated reference's end frequency
+    warning*: string              ## the estimate and the chord differ by more than 2 %, or the
+                                  ## reading of the top frequency is uncertain; "" for none
+    uncertain*: bool              ## the top frequency was read from the reference and is not sure
+    uncertaintyHz*: float64 = NaN ## its stated uncertainty (1 sigma), Hz
 
   AlignReport* = object
     ## How a stored reference was placed against the unit's records.

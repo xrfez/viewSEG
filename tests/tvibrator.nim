@@ -29,7 +29,7 @@ import std/[complex, math, strutils]
 import parseSEG
 import processSEG/core/[rows, types, units, workspace]
 import processSEG/vibroseis/[sweeptrack, vibqc]
-import viewSEG/core/[analysis, vibanalysis]
+import viewSEG/core/[analysis, sweepedge, vibanalysis]
 
 const
   Dt = 1.0
@@ -87,7 +87,8 @@ proc library(rows: seq[seq[float32]]; at: array[VibRole, int]): UnitSignature[fl
       harmonicBandHz: band, harmonicBandAuto: band.isNaN), Dt, N)
     ws.reserve(vibratorWorkspace(tp))
     tp.analyzeVibrators(rowBlock(work, rows.len, N), meta, [unit], VibLimits(), res, ws)
-    if pass == 0: band = fittedTopHz(res[0].tracks[vsReference], res[0].reference.extent)
+    if pass == 0: band = roundedTop(readTop(rows[at[vsReference]], Dt, res[0].tracks[vsReference],
+      res[0].reference.extent).hz)
   res[0]
 
 func sameAs(a, b: seq[float64]): bool =

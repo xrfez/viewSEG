@@ -632,7 +632,8 @@ proc plotJson(w: AnalysisWindow; fe: Frontend; units: UnitSystem; limit: int): J
     result["band"] = %*{"hz": toJson(r.band.hz), "suggestedHz": toJson(
         r.band.suggestedHz),
       "largestChordHz": toJson(r.band.chordHz), "typed": r.band.typed,
-      "exact": r.band.exact, "warning": r.band.warning}
+      "exact": r.band.exact, "warning": r.band.warning, "uncertain": r.band.uncertain,
+      "uncertaintyHz": toJson(r.band.uncertaintyHz)}
     result["alignment"] = %*{"kind": r.alignment.kind, "shiftMs": toJson(
         r.alignment.shiftMs),
       "match": toJson(r.alignment.match), "words": r.alignment.words}

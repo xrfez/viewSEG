@@ -172,7 +172,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Reading it.** Lower is better. A smooth low THD is a clean sweep; a rise at one point is a resonance or a stroke limit; one harmonic standing out is a specific fault.
 
-**Careful.** Distortion falls to 0 in the later part of a sweep, where the 2nd harmonic is above the top frequency: that is how the controller reports it. A wrong top frequency changes every number (the box and the verdict use it).
+**Careful.** Distortion falls to 0 in the later part of a sweep, where the 2nd harmonic is above the top frequency: that is how the controller reports it. A wrong top frequency changes every number (the box and the verdict use it). Read from the reference's own samples when nothing is typed, it is marked uncertain, with how far it could be off, when noise hides the end of the sweep.
 
 ## f-k
 
