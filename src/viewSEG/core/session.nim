@@ -14,9 +14,9 @@
 
 import std/[math, os, strutils, times]
 import parseSEG
-import filesystem, headers, records
+import filesystem, headers, records, sigtypes
 
-export headers, records
+export headers, records, sigtypes
 
 type
   SessionId* = distinct int
@@ -59,6 +59,9 @@ type
       ## its keys' revision (parseSEG's `keysRevision`) as the UI thread knows it
     zeroKept: int
       ## traces with field record number 0 kept with the record before them
+    signature: SignatureFacts
+      ## a vibrator controller's signature file decoded in memory: what is known of it beyond
+      ## the SEG-Y (`kind` `sgNone` for any other file)
 
 const NoSession* = SessionId(0)
 
@@ -95,7 +98,7 @@ proc keepZeroRecords(f: SeismicFile; gathers: var seq[Gather]): int =
     if kept.len > 0 and k(g.traces.a).record == 0 and k(kept[^1].traces.a).record != 0:
       var allAux = true
       for t in g.traces:
-        if k(t).status != tsAuxiliary:
+        if not f.auxLike(k(t)):
           allAux = false
           break
       let (now, before) = (k(g.traces.a).time, k(kept[^1].traces.a).time)
@@ -107,7 +110,7 @@ proc keepZeroRecords(f: SeismicFile; gathers: var seq[Gather]): int =
   if result > 0: gathers = kept
 
 proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
-    modified = Time(); choice = OpenChoice()): Session =
+    modified = Time(); choice = OpenChoice(); signature = SignatureFacts()): Session =
   ## A session for `file`, opened from `path`, with its gathers and the
   ## record list's rows, its coordinates and what the Headers window shows of
   ## it (`facts`, with how it was opened with `choice`); `size` and
@@ -115,11 +118,17 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
   ## the thread that opened the file: the file's own headers are read from
   ## its map here (`fs.mappedRead`), so a drive that does not answer holds
   ## this thread, never the UI's, and one that fails leaves them unread, said
-  ## in `facts.problems`.
-  result = Session(path: path, file: file, size: size, modified: modified)
+  ## in `facts.problems`. A signature file (`signature.kind` not `sgNone`) is decoded in
+  ## memory: `path` is still the user's file, `size` and `modified` its own, and the
+  ## memory file's bytes are not mapped from `path`.
+  result = Session(path: path, file: file, size: size, modified: modified, signature: signature)
   result.gathers = result.file.gathers
   result.zeroKept = keepZeroRecords(result.file, result.gathers)
   result.records = recordRows(result.file, result.gathers)
+  if signature.kind != sgNone:
+    # every trace of a signature file counts as auxiliary (`auxLike`)
+    for r in result.records.mitems:
+      (r.seismic, r.dead, r.aux) = (0, 0, r.traces)
   var anySeismic = false
   for r in result.records:
     if r.seismic > 0: anySeismic = true
@@ -130,7 +139,7 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
   result.columns = columnsOf(result.records)
   var readable = true
   try:
-    fs.mappedRead(path, headers = true)
+    if signature.kind == sgNone: fs.mappedRead(path, headers = true) # (a memory file has no map)
   except OSError as e:
     readable = false
     var msg = e.msg # its first line: the system's words
@@ -161,6 +170,21 @@ proc register*(s: Session; id: SessionId; base: int) =
   ## does this when it adopts the session).
   s.id = id
   s.base = base
+
+func signature*(s: Session): lent SignatureFacts {.inline.} = s.signature
+  ## What is known of a signature file beyond its in-memory SEG-Y.
+func traceNames*(s: Session): seq[string] =
+  ## A signature file's name of each trace, in the file's order; empty for any other file.
+  for t in s.signature.traces: result.add t.name
+
+func isSignature*(s: Session): bool {.inline.} = s.signature.kind != sgNone
+  ## Whether the file is a vibrator controller's signature file, decoded in memory.
+
+func auxLike*(s: Session; k: TraceKeys): bool {.inline.} =
+  ## Whether viewSEG treats the trace as auxiliary: its status says so, or the file is a
+  ## signature file, all of whose traces are (a `.vib`'s codes above 22 read back with
+  ## status unknown, which would count them as seismic data).
+  s.file.auxLike(k) or s.signature.kind != sgNone
 
 func id*(s: Session): SessionId {.inline.} = s.id
 func base*(s: Session): int {.inline.} = s.base

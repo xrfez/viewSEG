@@ -31,6 +31,7 @@ import std/[algorithm, locks, math, monotimes, options, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
+import sigtypes
 import analysis, cutfile, filesystem, fkanalysis, inbox, jobs, join, log,
     processing, references,
   threads, vibalign, vibanalysis
@@ -49,16 +50,19 @@ type
     unit*: SurveyUnit       ## the unit of the file's distances (coordinates)
     offsetUnit*: SurveyUnit ## the unit of the file's trace offsets
     names*: seq[string]     ## per trace, what the curves call it: "trace 12"
-    killed*: seq[int]       ## those of `traces` killed, ascending: left out
-    reversed*: seq[int]     ## those of `traces` effectively reversed, ascending: samples times -1 first
-    allReversed*: bool      ## reverse-all was on for this file
-    own*: seq[FilterEntry]  ## traces that carry a filter of their own, ascending
+    forceNote*: string
+      ## a signature file's vibrator window: the ground force is a trace of the file, so no
+      ## typed mass is applied; the words for the note ("" for any other file)
+    killed*: seq[int] ## those of `traces` killed, ascending: left out
+    reversed*: seq[int] ## those of `traces` effectively reversed, ascending: samples times -1 first
+    allReversed*: bool ## reverse-all was on for this file
+    own*: seq[FilterEntry] ## traces that carry a filter of their own, ascending
     processing*: Processing ## the plot's filters and its Aux toggle
     refName*: string
-    archivePath*: string    ## a reference from the archive, instead of a trace
+    archivePath*: string ## a reference from the archive, instead of a trace
     archiveName*: string
     archiveIntervalUs*: float64
-    archiveGone*: string    ## selected, but not usable: said, and nothing is drawn
+    archiveGone*: string ## selected, but not usable: said, and nothing is drawn
     archiveStartMs*: float64 = 0.0
       ## the stored reference's own first sample time (an archive window's From)
     topHz*: float64 = NaN
@@ -266,7 +270,7 @@ proc filtered*(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
     return "the filters could not run: " & e.msg
   for i in 0 ..< rows.len:
     if rows[i].len > 0: copyMem(addr rows[i][0], addr work[i * cols], rows[i].len * 4)
-    if applyPlot and not q.aux and f[].traceKeys(list[i]).status == tsAuxiliary:
+    if applyPlot and not q.aux and f[].auxLike(f[].traceKeys(list[i])):
       inc passed
   if applyPlot and filters.len > 0:
     result = "through " & q.describe
@@ -627,7 +631,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                 let n = (answer.leftOut, answer.atOtherInterval)
                 answer = vibratorOf(rows, names, at, dtMs, a.params, recorded,
                   a.topHz,
-                  a.exactTopHz)
+                  a.exactTopHz, a.forceNote)
                 (answer.leftOut, answer.atOtherInterval) = n
                 if answer.problem.len == 0:
                   answer.against = against

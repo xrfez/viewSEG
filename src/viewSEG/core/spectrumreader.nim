@@ -48,6 +48,7 @@ import std/[algorithm, locks, monotimes, os, strutils, tables, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
+import sigtypes
 import processSEG/filter/design
 import cutfile, filesystem, inbox, jobs, log, processing, spectra, threads
 
@@ -267,7 +268,7 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   var insteadReached = 0
   var reached = 0
   for k, ow in ownAll:
-    let aux = f[].traceKeys(list[k]).status == tsAuxiliary
+    let aux = f[].auxLike(f[].traceKeys(list[k]))
     if pr.aux or not aux:
       inc reached
       if ow.place == fpInstead: inc insteadReached
@@ -363,7 +364,7 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
       var passed = failed
       if not pr.aux:
         for k in 0 ..< ownHere.len:
-          if rows.keysAt(k).status == tsAuxiliary and failed.binarySearch(k) < 0:
+          if f[].auxLike(rows.keysAt(k)) and failed.binarySearch(k) < 0:
             passed.add k
         passed.sort()
       let sumMeta = if pr.aux: initChunkMeta(live, dtMs, 0, failed)

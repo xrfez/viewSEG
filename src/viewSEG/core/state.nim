@@ -105,6 +105,7 @@ import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
 from processing import changesSamples, ownShownWords, reverseShownWords
+import signatures
 import analysis, analysisreader, closer, compare, comparejobs, components, diskio, edits, filejobs,
   filelist, filememory, filesystem, identity, inbox, inspector, jobs, join, layouts, log,
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, reader,
@@ -2370,7 +2371,7 @@ proc newSource(state: var AppState; k: int) =
       if state.jobs.hold(s.path):
         src = ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path, size: s.size,
           traces: s.gathers[g].traces, filter: p.layers[0].filter, order: p.layers[0].order,
-          hidden: p.hidden)
+          hidden: p.hidden, traceNames: s.traceNames)
         state.heldBack.keepItIf(it != p.id)
       elif s.path == state.joining.path and state.joining.step == jpJoining:
         busy = true # shown once the join is done
@@ -4852,10 +4853,15 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   inc state.nextFile
   s.register(id, state.nextBase)
   state.nextBase += s.len
-  state.log.add(s.file.log, s.name)
-  state.log.add(sevInfo, "open", "Opened " & s.name & ": " & plural(s.len, "trace") &
-    " in " & plural(s.gathers.len, "gather") &
-    (if s.file.fromCache: " (index from the cache)." else: "."))
+  if s.isSignature:
+    state.log.add(sevInfo, "open", signatureOpened(s.name, s.signature, s.len))
+    for w in s.signature.warnings: state.log.add(sevWarning, s.name, w)
+    for w in s.signature.notes: state.log.add(sevInfo, s.name, w)
+  else:
+    state.log.add(s.file.log, s.name)
+    state.log.add(sevInfo, "open", "Opened " & s.name & ": " & plural(s.len, "trace") &
+      " in " & plural(s.gathers.len, "gather") &
+      (if s.file.fromCache: " (index from the cache)." else: "."))
   if s.zeroKept > 0:
     state.log.add(sevInfo, s.name, plural(s.zeroKept, "trace") & " with field record number " &
       "0 " & (if s.zeroKept == 1: "was" else: "were") & " kept with the record before " &
@@ -4873,7 +4879,8 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   state.sessions.add s
   if state.project.dir.len > 0 and state.project.doc.hasSurvey:
     state.project.queue.add id # matched to the project's survey (`followProject`)
-  state.readPositions(state.sessions[^1])
+  if not state.sessions[^1].isSignature: # (a signature file has no place on the map)
+    state.readPositions(state.sessions[^1])
   if state.relationLayer >= 0: state.checkRecords(state.sessions[^1])
   state.watchOpen()
   let k = state.findPanel(panel)
@@ -4899,12 +4906,13 @@ proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
   if o.unwanted or o.swapped: return
   case how
   of jsFailed:
+    # (a signature file's refusal is a sentence of its own, naming the file)
+    let said = if error.startsWith(name & " "): error else: "Cannot open " & p & ": " & error
     if o.reopened and o.revived:
-      state.log.add(sevError, name, "Cannot open " & p & ": " & error &
-        ". It is opened again as it was.")
+      state.log.add(sevError, name, said & ". It is opened again as it was.")
       state.openAsItWas(o)
     else:
-      state.log.add(sevError, name, "Cannot open " & p & ": " & error)
+      state.log.add(sevError, name, said)
   of jsCancelled: state.log.add(sevInfo, name, "Opening " & name & " was cancelled.")
   else: discard # done: `adopt` took the file
   if how in {jsFailed, jsCancelled} and o.panel == MainPanel:
@@ -6196,7 +6204,8 @@ proc queueShots(state: var AppState) =
   var listed: HashSet[string]
   for i in 0 ..< state.files.entries.len:
     template e: untyped = state.files.entries[i]
-    if e.kind.isSeismic:
+    # (a signature file is decoded in memory: it has no shots)
+    if e.kind.isSeismic and e.kind notin SignatureFileKinds:
       listed.incl e.path
       if e.status == fsSteady and e.path notin x.queued:
         let now = e.path in x.files and x.files[e.path].size == e.size and
@@ -7177,8 +7186,10 @@ proc prepareNext(state: var AppState) =
   if state.sessions.anyIt(it.path == want) or state.opening.anyIt(not it.unwanted) or
       want in state.openChoices: # (opened as its options say when it is shown)
     return
+  # (a signature file is decoded when it is shown)
   let e = state.files.find(want)
   if e < 0 or not state.files.entries[e].kind.isSeismic or
+      state.files.entries[e].kind in SignatureFileKinds or
       state.files.entries[e].status != fsSteady or state.files.entries[e].size > MaxPrepareBytes:
     return # (a file being written is opened when it is shown)
   let k = state.findPanel(MainPanel)

@@ -214,10 +214,11 @@ proc postShellEvent*(ev: sink ShellEvent) =
 
 let seismicFilters = [
   SDL_DialogFileFilter(name: "Seismic and survey files",
-    pattern: "sgy;segy;sgd;segd;sg2;sps;rps;xps;ops;s;r;x;p1"),
-  SDL_DialogFileFilter(name: "Seismic files (SEG-Y, SEG-D, SEG-2)",
-    pattern: "sgy;segy;sgd;segd;sg2"),
+    pattern: "sgy;segy;sgd;segd;sg2;dat;vib;sps;rps;xps;ops;s;r;x;p1"),
+  SDL_DialogFileFilter(name: "Seismic and signature files",
+    pattern: "sgy;segy;sgd;segd;sg2;dat;vib"),
   SDL_DialogFileFilter(name: "Survey files (SPS, SEG P1)", pattern: "sps;rps;xps;ops;s;r;x;p1"),
+  SDL_DialogFileFilter(name: "Vibrator signature files (*.dat, *.vib)", pattern: "dat;vib"),
   SDL_DialogFileFilter(name: "SEG-Y (*.sgy, *.segy)", pattern: "sgy;segy"),
   SDL_DialogFileFilter(name: "SEG-D (*.sgd, *.segd)", pattern: "sgd;segd"),
   SDL_DialogFileFilter(name: "SEG-2 (*.sg2)", pattern: "sg2"),

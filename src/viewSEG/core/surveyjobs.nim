@@ -33,7 +33,7 @@
 import std/[cpuinfo, locks, options, os, strutils, times]
 import parseSEG
 import processSEG/qc/record
-import filejobs, filekinds, filesystem, inbox, jobs, join, log, session, survey, threads
+import filejobs, filekinds, filesystem, inbox, jobs, join, log, session, signatures, survey, threads
 
 const
   SurveyChunk* = 4 * 1024 * 1024 ## bytes of an SPS file parsed at a time
@@ -476,13 +476,27 @@ proc openFileWork*(path: string; to: Poster; cache = "";
     cacheBudget = DefaultIndexCacheBudget; whole = false; lines = JoinOptions();
     choice = OpenChoice()): JobWork =
   ## The work of a job that opens what the user named: a survey file is
-  ## loaded into the survey (`mkSurvey`, its line names as `lines` says),
-  ## anything else opened as a seismic file (`openWork`, `mkOpened`) with
-  ## the options `choice`.
+  ## loaded into the survey (`mkSurvey`, its line names as `lines` says), a
+  ## vibrator controller's signature file decoded in memory (`signatures`:
+  ## nothing is written, no cache), anything else opened as a seismic file
+  ## (`openWork`, `mkOpened`) with the options `choice`. A file no kind claims
+  ## that has words of its own (empty, a `.vib` of another kind) is refused
+  ## in them.
   let open = openWork(path, to, cache, cacheBudget, whole, choice)
   let load = surveyWork(path, to, lines)
+  let signature = openSignatureWork(path, to)
   result = proc (ctx: JobContext) {.gcsafe.} =
-    if choice.standard == scDetect and sniff(path).isSurvey: load(ctx) else: open(ctx)
+    if choice.standard != scDetect:
+      open(ctx)
+    else:
+      let kind = sniff(path)
+      if kind.isSurvey: load(ctx)
+      elif kind in SignatureFileKinds: signature(ctx)
+      elif kind == fkUnknown:
+        let why = refusalOf(path)
+        if why.len > 0: raise newException(SignatureError, why)
+        open(ctx)
+      else: open(ctx)
 
 proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[int]];
     relations: ptr SurveyGeometry; against: string; layer: SurveyLayerId;

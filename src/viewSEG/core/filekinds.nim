@@ -5,6 +5,11 @@
 ## same before it opens a file, so survey files are listed as what they are
 ## and opened into the survey instead of the plot.
 ##
+## **Signature files.** A vibrator controller's `.dat` and `.vib` files are told by their
+## content (never their extension) after every other kind, so a SEG file is never taken for
+## one; the kind-6 `.vib` and an empty file are not signature files (`core/signatures`
+## gives their refusal on an explicit open).
+##
 ## **Survey files.** Text, in 80-column cards. A head (at most `SniffBytes`)
 ## that holds anything but text (a NUL, control characters, mostly bytes
 ## above 127) is not one. An SPS file is known by its data records (an `R`
@@ -22,6 +27,7 @@
 import std/[os, strutils]
 import parseSEG/common/seismickind
 import parseSEG/model/indexwalk
+import sigdat, sigtypes, sigvib
 
 type
   FileKind* = enum
@@ -35,9 +41,13 @@ type
     fkSpsRelation = "SPS X" ## SPS relations (X or O records)
     fkSps = "SPS"           ## SPS of more than one kind of record, or of no data yet
     fkP1 = "P1"             ## SEG P1 shotpoint positions
+    fkDat = "vibrator .dat" ## a vibrator controller's .dat signature file (`core/sigdat`)
+    fkVib = "vibrator .vib" ## its .vib signature record (`core/sigvib`)
 
 const
-  SeismicKinds* = {fkSegy, fkSegd, fkSeg2}
+  SignatureFileKinds* = {fkDat, fkVib}
+    ## signature files: decoded into SEG-Y in memory when opened (`core/signatures`)
+  SeismicKinds* = {fkSegy, fkSegd, fkSeg2, fkDat, fkVib}
   SpsKinds* = {fkSpsSource, fkSpsReceiver, fkSpsRelation, fkSps}
   SurveyKinds* = SpsKinds + {fkP1}
 
@@ -168,3 +178,8 @@ func fileKindOf*(head: openArray[byte]; name: string; whole: bool): FileKind =
   copyMem(addr text[0], addr head[0], head.len)
   result = surveyKind(text, name, whole)
   if result == fkUnknown: result = fileKind(detectKind(head))
+  if result == fkUnknown:
+    # (a SEG file always wins: the signature kinds are told last)
+    result = case datKind(head)
+      of sgDat: fkDat
+      else: (if vibKindOf(head) == sgVib: fkVib else: fkUnknown)
