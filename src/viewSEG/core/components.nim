@@ -142,7 +142,7 @@ func slotOfKind(kind: ComponentKind): int =
   of ckInline: 3
   of ckCrossline: 4
 
-func rankOf(code: uint8): int =
+func rankOf*(code: uint8): int =
   ## Button order of a sensor or SEG-Y code: hydrophone, vertical, inline,
   ## crossline, then others.
   rankOfKind(kindOf(code))

@@ -6465,8 +6465,11 @@ proc breakKeyOf(state: AppState; k: int): (bool, BreakKey, int) =
   let i = state.findSession(src.file)
   if i < 0 or src.gather notin 0 ..< state.sessions[i].gathers.len: return
   let s = state.sessions[i]
+  var off: seq[uint8]
+  for c in 0 .. 255:
+    if uint8(c) in p.layers[0].filter.components: off.add uint8(c)
   result = (true, (src.file, src.gather, s.keysRevision,
-    state.editsAt(s.path).listIn(teKilled, s.gathers[src.gather].traces)), i)
+    state.editsAt(s.path).listIn(teKilled, s.gathers[src.gather].traces), off), i)
 
 proc followFirstBreaks(state: var AppState) =
   ## The first-break overlay's jobs follow what the panels show: a record a

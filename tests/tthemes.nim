@@ -191,6 +191,19 @@ func seen(c: Rgba; v: Vision): Rgba =
 
 proc main*() =
 
+  block breakBarsApart:
+    # the first-break overlay's two bars on paper and on the theme's own plot: both read,
+    # and differ in hue and in lightness (they blur together at whole-record zoom otherwise)
+    for (file, _, _) in Shipped:
+      let t = load(file)
+      for colours in [pcPaper, pcTheme]:
+        let ink = plotInk(t, DisplaySettings(colours: colours))
+        let (m, p, bg) = (ink.breakModel, ink.breakPick, ink.background)
+        let what = file & " on " & $colours & ": model " & toHex(m) & ", pick " & toHex(p)
+        doAssert contrast(m, bg) >= 3 and contrast(p, bg) >= 3, what & " do not read"
+        doAssert contrast(m, p) >= 1.8, what & ": lightness " & $contrast(m, p)
+        doAssert deltaE(m, p) >= 40, what & ": colour difference " & $deltaE(m, p)
+
   block allShipped:
     # the Omarchy themes that may ship, and Everforest Light, under its own
     # name and mode; those that may not are not there

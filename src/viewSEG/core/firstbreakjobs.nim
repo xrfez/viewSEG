@@ -30,24 +30,57 @@ type BreakProgress* = proc (done, total: int): bool {.closure, gcsafe.}
   ## Called after each chunk; false asks the work to stop (`JobCancelledError`).
 
 proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
-    killed: openArray[int]; progress: BreakProgress = nil): FirstBreaks =
+    killed: openArray[int]; progress: BreakProgress = nil;
+    off: openArray[uint8] = []): FirstBreaks =
   ## The first breaks of the record `traces` of `file` (at `path`), the
   ## traces in `killed` (file trace numbers, ascending) left out. Reads
   ## the record in place; raises `JobCancelledError` when `progress` says stop.
+  ##
+  ## - The sample interval is the first seismic trace's that has one, as
+  ##   the plot's reader takes it; a trace with another interval is not live.
+  ##   Without one the result is `bkFailed`.
+  ## - A trace's times are on its own axis (`t0Ms`; one without a `t0Ms` is
+  ##   taken to start where the plot's axis does); `shiftMs` moves them to the plot's.
+  ## - The model is fitted from the traces `fitMask` says (all, unless the
+  ##   record has several components; `off` are those the panel switches off);
+  ##   every live trace gets its time from it. A header offset of 0 is unset.
   template f: untyped = file[]
   let n = traces.len
   result = FirstBreaks(state: bkDone, first: traces.a, pickMs: newSeq[float64](n),
-    modelMs: newSeq[float64](n), confidence: newSeq[float64](n), dtMs: NaN)
+    modelMs: newSeq[float64](n), confidence: newSeq[float64](n), shiftMs: newSeq[float64](n),
+    flagged: newSeq[bool](n), dtMs: NaN, thresholdMs: NaN)
   for i in 0 ..< n:
     result.pickMs[i] = NaN
     result.modelMs[i] = NaN
   if n == 0: return
-  let dt = f.index.keys[traces.a].intervalUs / 1000
-  result.dtMs = if dt > 0: dt else: NaN
-  if not (dt > 0): return
-  var dead: seq[int] # rows of the record that are not live: killed, then undecodable
+  var keys = newSeq[TraceKeys](n)
+  var dt = NaN
+  var layoutT0 = 0.0
+  var firstUs = NaN
+  for i in 0 ..< n:
+    keys[i] = f.index.keys[traces.a + i]
+    let k = keys[i]
+    if dt.isNaN and k.isSeismic and k.intervalUs > 0 and k.intervalUs < Inf:
+      (dt, firstUs) = (k.intervalUs / 1000, k.intervalUs)
+      if k.t0Ms.classify notin {fcNan, fcInf, fcNegInf}: layoutT0 = k.t0Ms
+  if dt.isNaN:
+    result.state = bkFailed
+    result.why = "the sample interval is not known"
+    return
+  result.dtMs = dt
+  var dead: seq[int] # rows of the record that are not live: killed, other interval, undecodable
   for t in killed:
     if t in traces: dead.add t - traces.a
+  var fixT0 = false
+  for i in 0 ..< n:
+    let k = keys[i]
+    if k.isSeismic and k.intervalUs > 0 and k.intervalUs < Inf and
+        abs(k.intervalUs - firstUs) > 1e-9 * firstUs:
+      dead.add i
+    if keys[i].t0Ms.classify in {fcNan, fcInf, fcNegInf}:
+      keys[i].t0Ms = layoutT0
+      fixT0 = true
+    result.shiftMs[i] = layoutT0 - keys[i].t0Ms
   let cols = max(1, f.maxSamples(traces))
   let plan = initFirstBreakPlan(float32, FirstBreakParams(), dt, cols)
   var ws = initWorkspace()
@@ -59,7 +92,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     fs.mappedRead(path)
     var log: DiagLog
     let samples = f.readTraces(part, 0 ..< cols, log)
-    var failed: seq[int] # rows of this chunk (0-based in it): undecodable, then killed
+    var failed: seq[int] # rows of this chunk (0-based in it): undecodable, then the others
     for d in log:
       if d.loc.trace in part:
         failed.add d.loc.trace - part.a
@@ -68,7 +101,14 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
       if r + traces.a in part: failed.add r + traces.a - part.a
     failed.sort()
     failed = deduplicate(failed, isSorted = true)
-    let meta = initChunkMeta(f.rowsOf(part), dt, 0, failed)
+    let own = f.rowsOf(part)
+    var chunkKeys: seq[TraceKeys] = @[]
+    var counts: seq[int] = @[]
+    if fixT0:
+      for r in 0 ..< part.len:
+        chunkKeys.add keys[part.a - traces.a + r]
+        counts.add own.numSamples(r)
+    let meta = initChunkMeta(if fixT0: rowsOf(chunkKeys, counts) else: own, dt, 0, failed)
     plan.pickInto(samples, meta, picks.toOpenArray(part.a - traces.a, part.b - traces.a), ws)
     first = part.b + 1
     if progress != nil and not progress(part.b - traces.a + 1, n):
@@ -79,28 +119,38 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     result.pickMs[i] = picks[i].timeMs
     result.confidence[i] = picks[i].confidence
     if not picks[i].timeMs.isNaN: inc result.picked
-  # The offsets: the keys' (a join's, the headers', or derived from the file's coordinates).
-  var keys = newSeq[TraceKeys](n)
+  # The offsets: the keys' (a join's, the headers', or derived from the file's
+  # coordinates); a header offset of exactly 0 is one left unset.
   var any = false
   var surveyed = false
   for i in 0 ..< n:
-    let t = traces.a + i
-    keys[i] = f.index.keys[t]
     let x = keys[i].offset
-    if keys[i].isSeismic and not x.isNaN and x != 0:
+    if x == 0: keys[i].offset = NaN
+    elif keys[i].isSeismic and not x.isNaN:
       any = true
-      if jgDerived in f.index.joinedGroups(t): surveyed = true
+      if jgDerived in f.index.joinedGroups(traces.a + i): surveyed = true
   result.source = if not any: bsNone elif surveyed: bsSurvey else: bsFile
   if not any: return
-  let counts = newSeq[int](n)
-  let meta = initChunkMeta(rowsOf(keys, counts), dt, 0, dead)
+  # one kind of sensor is fitted (a node record's components are not comparable);
+  # the others are given the model's time
+  let (mask, what) = fitMask(keys, off)
+  result.fittedFrom = what
+  var fitPicks = picks
+  for i in 0 ..< n:
+    if not mask[i]: fitPicks[i].confidence = 0
+  let zeros = newSeq[int](n)
+  let meta = initChunkMeta(rowsOf(keys, zeros), dt, 0, dead)
   var fit: ShotFit
   try:
-    fitShot(meta, picks, ShotFitParams(), fit)
+    fitShot(meta, fitPicks, ShotFitParams(), fit)
   except ValueError:
     return # no model: the picks stand alone
   result.used = fit.used
-  for i in 0 ..< n: result.modelMs[i] = fit.modelMs[i]
+  result.thresholdMs = fit.threshold
+  for i in 0 ..< n:
+    result.modelMs[i] = fit.modelMs[i]
+    result.flagged[i] = fit.suspect[i]
+    if not fit.modelMs[i].isNaN: inc result.modelled
 
 proc firstBreaksWork*(file: ptr SeismicFile; path: string; key: BreakKey;
     traces: Slice[int]; to: Poster): JobWork =
@@ -112,7 +162,7 @@ proc firstBreaksWork*(file: ptr SeismicFile; path: string; key: BreakKey;
     {.cast(gcsafe).}:
       ctx.setPhase "picking and fitting the first breaks"
       found = breaksOfRecord(file, path, traces, key.killed,
-        proc (done, total: int): bool = ctx.progress(done, total))
+        proc (done, total: int): bool = ctx.progress(done, total), key.off)
       found.key = key
     discard ctx.progress(1, 1)
     clearCycleRoots()

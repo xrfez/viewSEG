@@ -167,6 +167,11 @@ proc session(fx: Fixtures; name: string; choice: ThemeChoice; file: string;
   if assertions:
     step("the bars are on the traces", noop, proc (f: FrameInfo): bool =
       f.barsOnTheTraces(PlantedTrace)
+      # the key is in the strip, never over the traces
+      let (key, data) = (f.markOf("plot.first break key"), f.markOf("plot.data"))
+      doAssert key.size.x > 0 and (key.pos.y + key.size.y <= data.pos.y or
+        key.pos.x + key.size.x <= data.pos.x or key.pos.x >= data.pos.x + data.size.x or
+        key.pos.y >= data.pos.y + data.size.y), "the key is over the plot: " & $key & " " & $data
       true)
     step("sorted: the other way round", proc (f: FrameInfo) =
       f.apply(Command(kind: ckSort, panel: MainPanel,

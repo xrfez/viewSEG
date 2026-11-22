@@ -10,10 +10,17 @@
 ## 10.0 ms"; with the killed traces not passed as not live, "killed trace picked";
 ## with the offsets taken from nowhere, "coordinates: source none"; with the state
 ## filling the entry of the newer key from the older job's answer, "stale answer
-## kept: the newer key's entry was filled by the older job's".
+## kept: the newer key's entry was filled by the older job's"; with a trace of another
+## interval left live, "a trace of another interval is live"; with the node record fitted
+## whole, "vertical 3"; with the raw residual against 12 ms for the flag, "trace 0 flagged,
+## difference 23.9"; with a header offset of 0 fitted, the zero-offset trace modelled; with
+## `hasModel` counting the picks used, "not b.hasModel"; with the second record's rows not
+## taken from the record's start, "trace 650: 572.0, pickInto nan".
 
 import std/[math, os, strutils]
 import parseSEG
+import processSEG/core/[types, workspace]
+import processSEG/qc/firstbreak
 import viewSEG/core/[displaypresets, firstbreakjobs, firstbreaks]
 import viewSEG/core/state {.all.}
 import utils/[breakfiles, fixtures, waiting]
@@ -177,6 +184,128 @@ proc main*() =
       doAssert st.firstBreaks[0].key.killed == @[7] and st.firstBreaks[0].pickOf(7).isNaN,
         "stale answer kept: trace 7 has a pick"
       st.shutdown()
+
+  block aTraceOfAnotherIntervalIsNotLive:
+    # the plot's axis is the first seismic trace's interval: a trace of another one is
+    # drawn at it, so it is not picked (the writer refuses a trace without an interval,
+    # so the record without any, `bkFailed`, is not a file to make)
+    withFixtures fx:
+      let path = fx.customShot("interval.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
+        if i == 5: k.intervalUs = 4000
+        arrivalMs(k.offset))
+      let b = breaksOf(path)
+      doAssert b.state == bkDone and abs(b.dtMs - Dt) < 1e-9, "dt " & $b.dtMs
+      doAssert b.pickOf(5).isNaN and b.modelOf(5).isNaN, "a trace of another interval is live"
+      doAssert abs(b.pickOf(20) - arrivalMs(offsetOf(20))) <= 12, "pick " & $b.pickOf(20)
+
+  block twoRecordsADelayAndKilledTracesPickAsTheLibraryDoes:
+    # the second record starts at trace 600 of the file, past a read chunk, and its data
+    # start at 100 ms: every pick is what processSEG's pickInto gives that record's traces
+    withFixtures fx:
+      let path = fx.customShot("two.sgy", 1200, proc (i: int; k: var TraceKeys): float64 =
+        k.record = float64(1 + i div 600)
+        if i >= 600: k.t0Ms = 100
+        arrivalMs(k.offset))
+      let killed = [650, 1111, 1112]
+      var f = openSeismic(path, keys = true)
+      let rec = 600 .. 1199
+      let b = breaksOfRecord(addr f, path, rec, killed)
+      let cols = f.maxSamples(rec)
+      var log: DiagLog
+      let samples = f.readTraces(rec, 0 ..< cols, log)
+      var failed: seq[int]
+      for t in killed: failed.add t - rec.a
+      let meta = initChunkMeta(f.rowsOf(rec), Dt, 0, failed)
+      var want = newSeq[FirstBreakPick](rec.len)
+      let plan = initFirstBreakPlan(float32, FirstBreakParams(), Dt, cols)
+      var ws = initWorkspace()
+      ws.reserve(plan.workspaceSize)
+      plan.pickInto(samples, meta, want, ws)
+      var none: seq[int]
+      for t in rec:
+        let (got, ref1) = (b.pickOf(t), want[t - rec.a].timeMs)
+        doAssert (got.isNaN and ref1.isNaN) or got == ref1, "trace " & $t & ": " & $got &
+          ", pickInto " & $ref1
+        if got.isNaN: none.add t
+      doAssert none == @killed, "no pick at " & $none
+      doAssert abs(b.pickOf(700) - arrivalMs(offsetOf(700 mod Traces))) <= 12,
+        "delayed record: " & $b.pickOf(700)
+      doAssert b.shiftOf(700) == 0.0
+      f.close()
+
+  block aTraceThatStartsLaterIsDrawnWhereItsSamplesAre:
+    withFixtures fx:
+      let path = fx.customShot("t0.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
+        if i == 5: k.t0Ms = 50
+        arrivalMs(k.offset))
+      let b = breaksOf(path)
+      doAssert b.shiftOf(5) == -50.0 and b.shiftOf(6) == 0.0, $b.shiftOf(5)
+      # its time is on its own axis (its break is at the true time), the plot's is 50 ms earlier
+      doAssert abs(b.pickOf(5) - arrivalMs(offsetOf(5))) <= 12 and
+        abs(b.modelOf(5) - arrivalMs(offsetOf(5))) <= 8
+
+  block aSmoothDriftIsNotAMismatch:
+    # the residual from the model drifts past 12 ms along the spread, the fit's own residual
+    # against the neighbours' does not: nothing is flagged
+    withFixtures fx:
+      let path = fx.customShot("drift.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
+        let u = (float64(i) - 24) / 14
+        arrivalMs(k.offset) + (if abs(u) < 1: 80 * (0.5 + 0.5 * cos(PI * u)) else: 0.0))
+      let b = breaksOf(path)
+      var worst = 0.0
+      for t in 0 ..< Traces:
+        doAssert not b.mismatched(t), "trace " & $t & " flagged, difference " & $b.differenceMs(t)
+        if not b.differenceMs(t).isNaN: worst = max(worst, abs(b.differenceMs(t)))
+      doAssert worst > 12, "the drift is only " & $worst & " ms: the test is not one"
+
+  block offsetZeroIsUnset:
+    withFixtures fx:
+      let path = fx.customShot("zero.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
+        if i < 4: k.offset = 0
+        arrivalMs(offsetOf(i)))
+      let b = breaksOf(path)
+      for t in 0 ..< 4:
+        doAssert b.modelOf(t).isNaN and not b.mismatched(t), "trace " & $t & " modelled at 0"
+        doAssert not b.pickOf(t).isNaN
+      doAssert b.modelled == Traces - 4, "modelled " & $b.modelled
+      doAssert abs(b.modelOf(10) - arrivalMs(offsetOf(10))) <= 8
+
+  block noModelWhenAllPicksShareAnOffset:
+    withFixtures fx:
+      let path = fx.customShot("same.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
+        k.offset = 1000
+        arrivalMs(1000))
+      let b = breaksOf(path)
+      doAssert b.used >= 3 and b.modelled == 0, "used " & $b.used & " modelled " & $b.modelled
+      doAssert not b.hasModel and b.modelNote.len > 0 and b.statusWords.len > 0
+
+  block nodesAreFittedFromOneSensor:
+    # unrotated node components are never fitted together: the horizontals here arrive late
+    withFixtures fx:
+      let vertical = fx.customShot("nodes.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
+        k.traceCode = int16(12 + i mod 3) # vertical, crossline, inline
+        if i mod 3 == 0: arrivalMs(k.offset) else: 20 + 0.8 * k.offset)
+      var b = breaksOf(vertical)
+      doAssert b.fittedFrom == "the vertical traces", "fitted from " & b.fittedFrom
+      for t in [0, 3, 30]:
+        doAssert abs(b.modelOf(t) - arrivalMs(offsetOf(t))) <= 8, "vertical " & $t
+      doAssert abs(b.modelOf(4) - arrivalMs(offsetOf(4))) <= 8, "the model is a function " &
+        "of offset: a horizontal trace is given the vertical's"
+      doAssert abs(b.pickOf(4) - (20 + 0.8 * offsetOf(4))) <= 12, "its own pick is shown"
+      # the panel's filter: the verticals switched off, the next kind in order is fitted
+      var f = openSeismic(vertical, keys = true)
+      b = breaksOfRecord(addr f, vertical, 0 ..< f.len, [], nil, [12'u8])
+      f.close()
+      doAssert b.fittedFrom == "the inline traces" or b.fittedFrom == "the crossline traces",
+        b.fittedFrom
+      # a hydrophone, when there is one
+      let hydro = fx.customShot("hydro.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
+        k.traceCode = int16(11 + i mod 3)
+        if i mod 3 == 0: arrivalMs(k.offset) else: 20 + 0.8 * k.offset)
+      b = breaksOf(hydro)
+      doAssert b.fittedFrom == "the hydrophone traces", b.fittedFrom
+      doAssert abs(b.modelOf(5) - arrivalMs(offsetOf(5))) <= 8, "model " & $b.modelOf(5)
+      doAssert "hydrophone" in b.statusWords, b.statusWords
 
   block theOverlayIsPerPanelAndOneResultServesBoth:
     withFixtures fx:

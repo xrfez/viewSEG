@@ -1290,9 +1290,10 @@ func breakTip(on: bool; b: FirstBreaks): string =
     "\nA bar across each trace at the time a refraction model fitted to the picks" &
     "\nexpects its first break (the cool colour), and another where the first" &
     "\nbreak was picked (the warm one, faint when the pick is low in confidence)." &
-    "\nA line joins them where they differ by more than " & $int(mismatchMs(b.dtMs)) &
-    " ms." &
-    "\nThe model needs source-receiver offsets: a survey, or coordinates in the file."
+    "\nA line joins them where the fit finds the pick off the model: further from" &
+    "\nits neighbours' residuals than its threshold (12 ms or more)." &
+    "\nThe model needs source-receiver offsets: a survey, or coordinates in the file." &
+    "\nA record with several components is fitted from one kind of sensor."
   if on and b.statusWords.len > 0: result.add "\n" & b.statusWords
 
 proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks: var Marks;
@@ -1393,6 +1394,8 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
           var nd = d
           nd.firstBreaks = not d.firstBreaks
           res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+        if d.firstBreaks:
+          drawBreakKey(if bi >= 0: st.firstBreaks[bi] else: FirstBreaks(), t, icon, marks)
     of sgGain:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         drawGainControls(p, tp.gainBox, t, marks, res.commands, res.notes)
@@ -2562,7 +2565,6 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
         let g = breakGeometry(st.firstBreaks[bi], p.shown, p.layout, view, turn,
           Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y)))
         drawBreakMarks(g, ink, marks)
-        drawBreakKey(st.firstBreaks[bi], ink, t, pos, marks)
     if edited:
       let path = if source >= 0: st.sessions[source].path else: ""
       drawEditRow(tp, st.editsOf(k), tiles, view, p.layout, turn, bands, pos, size, t, marks,

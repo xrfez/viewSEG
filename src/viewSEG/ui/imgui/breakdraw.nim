@@ -1,7 +1,8 @@
 ## Draws the first-break overlay (`view/breakbars`) over a Seismic plot: the
 ## model's bar and the pick's, each with a thin halo in the plot's background
-## colour so it reads over the waveform and over density, and, in the plot's
-## corner, a small key naming the two colours and what the overlay cannot show.
+## colour so it reads over the waveform and over density, and, in the Seismic
+## window's strip beside the overlay's button, a small key naming the two
+## colours and what the overlay cannot show (never over the traces).
 ## The bars are marked ("plot.first break model N", "plot.first break pick N",
 ## "plot.first break link N" for the first few in view) for tests.
 
@@ -13,7 +14,7 @@ import marks, style
 const
   MarkedBars = 400 ## the marks of one frame that are named, at most
   KeyMarks* = ["plot.first break key", "plot.first break note"]
-    ## the key and the note under it
+    ## the key and the note beside it
 
 func mix(c: Rgba; a: float32): Rgba =
   Rgba(r: c.r, g: c.g, b: c.b, a: uint8(clamp(a, 0, 1) * 255))
@@ -59,38 +60,35 @@ proc drawBreakMarks*(g: BreakGeometry; ink: PlotInk; marks: var Marks) =
           inc drawn
   ImPlot_PopPlotClipRect()
 
-proc drawBreakKey*(b: FirstBreaks; ink: PlotInk; t: Theme; pos: ImVec2_c; marks: var Marks) =
-  ## The key at the plot's top-left: a swatch and a word for each bar, and
-  ## under it the overlay's own words while it is working, failed or has no
-  ## model (`statusWords`).
+proc drawBreakKey*(b: FirstBreaks; t: Theme; height: float32; marks: var Marks) =
+  ## The key, in the strip right of the overlay's button (never over the
+  ## traces): a swatch and a word for each bar, then the overlay's own words
+  ## while it is working, failed or has no model or fits one kind of sensor
+  ## (`statusWords`), in dim text. One item `height` high.
   let dl = igGetWindowDrawList()
-  let pad = igGetStyle().FramePadding
   let u = max(1'f32, igGetFontSize() / 15)
   let words = ["model", "pick"]
-  let swatch = 22 * u
+  let swatch = 18 * u
   let h = igGetTextLineHeight()
+  let note = b.statusWords
   var width = 0'f32
   for w in words: width += swatch + 4 * u + igCalcTextSize(w.cstring, nil, false, -1).x + 10 * u
-  let note = b.statusWords
-  var noteW = 0'f32
-  if note.len > 0: noteW = igCalcTextSize(note.cstring, nil, false, -1).x
-  let (boxW, boxH) = (max(width, noteW) + 2 * pad.x, h * (if note.len > 0: 2.0 else: 1.0) +
-    2 * pad.y + (if note.len > 0: 2 * u else: 0'f32))
-  let top = ImVec2_c(x: pos.x + 6, y: pos.y + 6)
-  ImDrawList_AddRectFilled(dl, top, ImVec2_c(x: top.x + boxW, y: top.y + boxH),
-    u32(mix(t.roles[rlPopup], 0.9)), igGetStyle().FrameRounding, 0)
-  var x = top.x + pad.x
-  let y = top.y + pad.y
+  let keyWidth = width
+  if note.len > 0: width += igCalcTextSize(note.cstring, nil, false, -1).x
+  igSameLine(0, 12 * u)
+  let top = igGetCursorScreenPos()
+  igDummy(ImVec2_c(x: width, y: height))
+  let y = top.y + (height - h) / 2
+  var x = top.x
   for i, w in words:
-    let c = if i == 0: ink.breakModel else: ink.breakPick
+    let role = if i == 0: rlBreakModel else: rlBreakPick
     ImDrawList_AddLine(dl, ImVec2_c(x: x, y: y + h / 2), ImVec2_c(x: x + swatch, y: y + h / 2),
-      u32(c), 3 * u)
+      u32(readableOn(t.roles[role], t.roles[rlWindow])), 3 * u)
     x += swatch + 4 * u
     ImDrawList_AddText_Vec2(dl, ImVec2_c(x: x, y: y), u32(t.roles[rlText]), w.cstring, nil)
     x += igCalcTextSize(w.cstring, nil, false, -1).x + 10 * u
-  marks.markRect(KeyMarks[0], top, ImVec2_c(x: top.x + boxW, y: top.y + h + 2 * pad.y))
+  marks.markRect(KeyMarks[0], top, ImVec2_c(x: top.x + keyWidth, y: top.y + height))
   if note.len > 0:
-    ImDrawList_AddText_Vec2(dl, ImVec2_c(x: top.x + pad.x, y: y + h + 2 * u),
-      u32(t.roles[rlTextDim]), note.cstring, nil)
-    marks.markRect(KeyMarks[1], ImVec2_c(x: top.x, y: top.y + h + 2 * pad.y),
-      ImVec2_c(x: top.x + boxW, y: top.y + boxH))
+    ImDrawList_AddText_Vec2(dl, ImVec2_c(x: x, y: y), u32(t.roles[rlTextDim]), note.cstring, nil)
+    marks.markRect(KeyMarks[1], ImVec2_c(x: x, y: top.y),
+      ImVec2_c(x: top.x + width, y: top.y + height))

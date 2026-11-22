@@ -10,10 +10,13 @@
 ## - Only the traces in view are looked at.
 ## - Where the traces are closer than `LineBelow` pixels, a bar would be
 ##   narrower than its own thickness: the bars become a line through the
-##   times of the traces (one per pixel or so), the model's and the pick's.
-## - A pick that differs from the model by more than the tolerance
-##   (`mismatched`) has a link along time between the two bars and a heavier
-##   pick bar.
+##   times of the traces, the model's and the pick's: for each pixel column
+##   from the earliest to the latest time of the traces in it, so no trace's
+##   time is dropped; a flagged trace is drawn on its own as well.
+## - A pick the fit finds off the model (`mismatched`) has a link along time
+##   between the two bars and a heavier pick bar.
+## - Times are drawn where the plot draws that sample: each trace's own time
+##   axis moved to the layout's (`shiftOf`).
 ## - A pick of low confidence (below `ConfidentPick`) is `faint`.
 
 import std/math
@@ -23,7 +26,7 @@ const
   LineBelow* = 3.0     ## pixels a trace, under which the marks are lines
   MaxBarShare* = 0.8   ## of the trace's column a bar spans, at most
   MaxBarPixels* = 40.0 ## the longest a bar is
-  MaxLineMarks* = 4000 ## the most segments of a line
+  MaxLineMarks* = 2000 ## the most flagged traces drawn on their own in a line
 
 type
   MarkKind* = enum
@@ -83,7 +86,8 @@ func breakGeometry*(b: FirstBreaks; shown: openArray[int]; layout: PanelLayout;
     let half = min(perPos * MaxBarShare, MaxBarPixels) / 2
     for p in vis.a .. min(vis.b, shown.high):
       let trace = shown[p]
-      let (model, pick) = (b.modelOf(trace), b.pickOf(trace))
+      let sh = b.shiftOf(trace)
+      let (model, pick) = (b.modelOf(trace) + sh, b.pickOf(trace) + sh)
       let c = centre(p)
       let off = b.mismatched(trace)
       var ym, yp = NaN.float32
@@ -101,24 +105,43 @@ func breakGeometry*(b: FirstBreaks; shown: openArray[int]; layout: PanelLayout;
         result.marks.add BreakMark(kind: bmLink, a: tb.other.at(c, ym), b: tb.other.at(c, yp),
           position: p, trace: trace)
   else:
-    # a line through the times: one point about a pixel, joined where the
-    # traces next to each other both have a time
-    let step = max(1, int(ceil(1.0 / max(perPos, 1e-3))))
-    var prevModel, prevPick: (bool, Vec2, int)
-    var p = vis.a
-    while p <= min(vis.b, shown.high) and result.marks.len < MaxLineMarks:
+    # a line through the times, drawn per pixel column from the earliest to the
+    # latest time any trace of the column has (so no trace's time is dropped when
+    # several share a pixel), and each flagged trace on its own
+    let width = int(ceil(plot.size.along(ta))) + 1
+    var lo, hi: array[bmModel .. bmPick, seq[float32]]
+    for k in bmModel .. bmPick:
+      lo[k] = newSeq[float32](width)
+      hi[k] = newSeq[float32](width)
+      for i in 0 ..< width:
+        lo[k][i] = Inf
+        hi[k][i] = -Inf
+    var flagged = 0
+    for p in vis.a .. min(vis.b, shown.high):
       let trace = shown[p]
+      let sh = b.shiftOf(trace)
       let c = centre(p)
-      for (kind, value) in [(bmModel, b.modelOf(trace)), (bmPick, b.pickOf(trace))]:
-        var pt: (bool, Vec2, int)
-        pt[0] = not value.isNaN
-        pt[2] = p
-        if pt[0]:
-          pt[1] = tb.other.at(c, screenOf(view, m, plot, axTime, value))
-        let prev = if kind == bmModel: prevModel else: prevPick
-        if pt[0] and prev[0] and inside(pt[1].along(tb)) and inside(prev[1].along(tb)) and
-            p - prev[2] <= 2 * step:
-          result.marks.add BreakMark(kind: kind, a: prev[1], b: pt[1], position: prev[2],
-            trace: -1, faint: false)
-        if kind == bmModel: prevModel = pt else: prevPick = pt
-      p += step
+      let col = clamp(int(floor(c - plot.pos.along(ta))), 0, width - 1)
+      var ys: array[bmModel .. bmPick, float32]
+      for (kind, value) in [(bmModel, b.modelOf(trace) + sh), (bmPick, b.pickOf(trace) + sh)]:
+        ys[kind] = NaN.float32
+        if not value.isNaN:
+          ys[kind] = screenOf(view, m, plot, axTime, value)
+          if inside(ys[kind]):
+            lo[kind][col] = min(lo[kind][col], ys[kind])
+            hi[kind][col] = max(hi[kind][col], ys[kind])
+      if b.mismatched(trace) and flagged < MaxLineMarks and not ys[bmModel].isNaN and
+          not ys[bmPick].isNaN:
+        inc flagged
+        result.marks.add BreakMark(kind: bmLink, a: tb.other.at(c, ys[bmModel]),
+          b: tb.other.at(c, ys[bmPick]), position: p, trace: trace)
+        result.marks.add BreakMark(kind: bmPick, a: tb.other.at(c - 2, ys[bmPick]),
+          b: tb.other.at(c + 2, ys[bmPick]), position: p, trace: trace, heavy: true)
+    for kind in bmModel .. bmPick:
+      for col in 0 ..< width:
+        if hi[kind][col] >= lo[kind][col]:
+          # at least a pixel long, so a column of one time shows
+          let (y0, y1) = (lo[kind][col] - 0.6, hi[kind][col] + 0.6)
+          let x = plot.pos.along(ta) + float32(col) + 0.5
+          result.marks.add BreakMark(kind: kind, a: tb.other.at(x, y0), b: tb.other.at(x, y1),
+            position: -1, trace: -1)

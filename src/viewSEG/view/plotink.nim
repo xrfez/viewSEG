@@ -17,6 +17,7 @@
 ## alike; the theme keeps the two apart from the traces and from each other
 ## (`deriveRoles`).
 
+import std/math
 import ../core/[geometry, panels, wiggle]
 import theme
 
@@ -46,8 +47,56 @@ func readableOn*(c, background: Rgba; ratio = MinContrast): Rgba {.inline.} =
 
 func opaque(c: Rgba): Rgba {.inline.} = Rgba(r: c.r, g: c.g, b: c.b, a: 255)
 
+const
+  DeepContrast = 9.0  ## the model's bar against the plot: the strong one, deep or pale
+  VividContrast = 3.3 ## the pick's: a mid tone, so the two differ in lightness as in hue
+
+func toHsl(c: Rgba): (float64, float64, float64) =
+  let (r, g, b) = (c.r.float64 / 255, c.g.float64 / 255, c.b.float64 / 255)
+  let (hi, lo) = (max(r, max(g, b)), min(r, min(g, b)))
+  let l = (hi + lo) / 2
+  if hi == lo: return (0.0, 0.0, l)
+  let d = hi - lo
+  let s = if l > 0.5: d / (2 - hi - lo) else: d / (hi + lo)
+  var h = if hi == r: (g - b) / d + (if g < b: 6.0 else: 0.0)
+          elif hi == g: (b - r) / d + 2
+          else: (r - g) / d + 4
+  (h / 6, s, l)
+
+func fromHsl(h, s, l: float64): Rgba =
+  func channel(p, q, t0: float64): float64 =
+    var t = t0
+    if t < 0: t += 1
+    if t > 1: t -= 1
+    if t < 1 / 6: p + (q - p) * 6 * t
+    elif t < 1 / 2: q
+    elif t < 2 / 3: p + (q - p) * (2 / 3 - t) * 6
+    else: p
+  let q = if l < 0.5: l * (1 + s) else: l + s - l * s
+  let p = 2 * l - q
+  func byte(x: float64): uint8 = uint8(round(clamp(x, 0, 1) * 255))
+  Rgba(r: byte(channel(p, q, h + 1 / 3)), g: byte(channel(p, q, h)),
+    b: byte(channel(p, q, h - 1 / 3)), a: 255)
+
+func tuned(c, background: Rgba; want: float64): Rgba =
+  ## `c`'s hue, as saturated as a bar needs to read, at the lightness where its
+  ## contrast with `background` is `want` (deeper on a light background, paler
+  ## on a dark one), found by bisection.
+  let (h, s0, _) = toHsl(opaque(c))
+  let s = max(s0, 0.65)
+  let lightBg = luminance(background) > 0.18
+  var (lo, hi) = if lightBg: (0.0, 0.75) else: (0.3, 1.0)
+  for _ in 0 ..< 24:
+    let mid = (lo + hi) / 2
+    let enough = contrast(fromHsl(h, s, mid), background) > want
+    if enough == lightBg: lo = mid else: hi = mid
+  fromHsl(h, s, (lo + hi) / 2)
+
 func breakInk(t: Theme; background: Rgba): (Rgba, Rgba) =
-  (readableOn(t.roles[rlBreakModel], background), readableOn(t.roles[rlBreakPick], background))
+  ## The overlay's two bars on `background`: the model's strong (deep on
+  ## light, pale on dark), the pick's a mid tone, each in its role's hue.
+  (tuned(t.roles[rlBreakModel], background, DeepContrast),
+   tuned(t.roles[rlBreakPick], background, VividContrast))
 
 func plotInk*(t: Theme; d: DisplaySettings): PlotInk =
   ## The colours of a layer drawn with `d` in theme `t`.

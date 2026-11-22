@@ -19,7 +19,7 @@
 
 import std/[math, strutils]
 import parseSEG
-import jobs, session
+import components, jobs, session
 
 type
   BreakSource* = enum
@@ -31,9 +31,11 @@ type
   BreakState* = enum
     bkComputing, bkDone, bkFailed
 
-  BreakKey* = tuple[file: SessionId; gather, keys: int; killed: seq[int]]
+  BreakKey* = tuple[file: SessionId; gather, keys: int; killed: seq[int]; off: seq[uint8]]
     ## What a result is of: the record, the file's keys as they were read
-    ## (a join or a header edit changes them) and the traces killed in it.
+    ## (a join or a header edit changes them), the traces killed in it, and
+    ## the components the panel's filter switches off (which traces a node
+    ## record's model is fitted from, `fitMask`).
 
   FirstBreaks* = object
     ## One record's first breaks, as its job found them.
@@ -44,26 +46,61 @@ type
     pickMs*: seq[float64]     ## per trace of the record; NaN for no pick
     modelMs*: seq[float64]    ## per trace of the record; NaN where the model gives none
     confidence*: seq[float64] ## of each pick, 0 .. 1
-    dtMs*: float64            ## the record's sample interval
+    shiftMs*: seq[float64]
+      ## per trace: what to add to its times (they are on its own time axis)
+      ## for the plot's, which draws every trace from the layout's first time
+    flagged*: seq[bool] ## per trace: the fit finds its pick off the model (`ShotFit.suspect`)
+    dtMs*: float64 ## the record's sample interval
     source*: BreakSource
-    used*: int                ## the confident picks the model was fitted to
-    picked*: int              ## traces with a pick
-    why*: string              ## state `bkFailed`: the reason in words
-    revision*: int            ## bumped when the lists change
+    used*: int ## the confident picks the model was fitted to
+    modelled*: int ## traces the model gives a time for
+    picked*: int ## traces with a pick
+    fittedFrom*: string
+      ## which traces the model was fitted from when not all of them ("the
+      ## hydrophone traces", "the components shown"); "" for all
+    thresholdMs*: float64 ## the fit's `|localMs|` above which a trace is flagged
+    why*: string ## state `bkFailed`: the reason in words
+    revision*: int ## bumped when the lists change
 
 const
-  MinMismatchMs* = 12.0
-    ## a pick this far from the model (or 3 samples, if more) is drawn as
-    ## a mismatch: processSEG's `ShotFitParams.maxResidualMs`
   ConfidentPick* = 0.5
     ## the confidence from which a pick counts in the model (processSEG's
     ## `ShotFitParams.minConfidence`)
   MaxBreakRecords* = 6 ## results kept, at most, with the jobs in flight
 
-func mismatchMs*(dtMs: float64): float64 =
-  ## The difference between pick and model above which they are said to
-  ## disagree: 12 ms, or three samples where they are longer.
-  if dtMs > 0 and dtMs < Inf: max(MinMismatchMs, 3 * dtMs) else: MinMismatchMs
+func isHydrophone(k: TraceKeys): bool =
+  if k.sensorType == 1: true
+  elif k.sensorType == 0: kindOf(componentOf(k)) == ckHydrophone and componentOf(k) != 0
+  else: false
+
+func fitMask*(keys: openArray[TraceKeys]; off: openArray[uint8]): tuple[mask: seq[bool];
+    what: string] =
+  ## Which traces of a record the model is fitted from: all of them, unless
+  ## the record has several components (distinct, non-zero). The model is
+  ## a function of offset alone, so one kind of sensor serves every trace;
+  ## geophone components of unrotated nodes are never fitted together: the
+  ## hydrophone traces when there are any, else the one component shown
+  ## (`off` are those the panel switches off) that comes first in button
+  ## order (vertical, inline, crossline, others), whatever the others.
+  result.mask = newSeq[bool](keys.len)
+  var seen: seq[uint8]
+  var hydro = false
+  for k in keys:
+    if k.isSeismic:
+      let c = componentOf(k)
+      if c != 0 and c notin seen: seen.add c
+      if isHydrophone(k): hydro = true
+  if seen.len <= 1:
+    for i in 0 ..< keys.len: result.mask[i] = true
+    return
+  var chosen = 0'u8
+  var best = high(int)
+  for c in seen:
+    if c notin off and (rankOf(c) < best or (rankOf(c) == best and c < chosen)):
+      (chosen, best) = (c, rankOf(c))
+  for i, k in keys:
+    result.mask[i] = if hydro: isHydrophone(k) else: chosen != 0 and componentOf(k) == chosen
+  result.what = if hydro: "the hydrophone traces" else: "the " & nameOf(chosen) & " traces"
 
 func known(x: float64): bool {.inline.} = not x.isNaN
 
@@ -93,13 +130,21 @@ func differenceMs*(b: FirstBreaks; trace: int): float64 =
   if known(p) and known(m): p - m else: NaN
 
 func mismatched*(b: FirstBreaks; trace: int): bool =
-  ## Whether pick and model of file trace `trace` differ by more than `mismatchMs`.
-  let d = b.differenceMs(trace)
-  known(d) and abs(d) > mismatchMs(b.dtMs)
+  ## Whether the fit finds the pick of file trace `trace` off the model:
+  ## processSEG's `suspect` (its residual against the neighbours' median
+  ## past `thresholdMs`, so a residual that drifts smoothly along the
+  ## spread is not).
+  let i = b.place(trace)
+  i >= 0 and i < b.flagged.len and b.flagged[i]
+
+func shiftOf*(b: FirstBreaks; trace: int): float64 =
+  ## What to add to the times of file trace `trace` for the plot's axis.
+  let i = b.place(trace)
+  if i >= 0 and i < b.shiftMs.len and not b.shiftMs[i].isNaN: b.shiftMs[i] else: 0.0
 
 func hasModel*(b: FirstBreaks): bool =
   ## Whether the model could be fitted: some trace has a model time.
-  b.state == bkDone and b.used >= 3 and b.source != bsNone
+  b.state == bkDone and b.modelled > 0
 
 func modelNote*(b: FirstBreaks): string =
   ## Why the overlay shows no model bars, in plain words; "" when it does
@@ -110,8 +155,11 @@ func modelNote*(b: FirstBreaks): string =
       "carry coordinates. Only the picks are shown."
   elif b.picked == 0:
     "No first break could be picked in this record, so there is no model."
-  else:
+  elif b.used < 3:
     "Too few confident picks (" & $b.used & ", at least 3 are needed) to fit the model. " &
+      "Only the picks are shown."
+  else:
+    "The confident picks all lie at one offset, so no model can be fitted. " &
       "Only the picks are shown."
 
 func statusWords*(b: FirstBreaks): string =
@@ -122,10 +170,12 @@ func statusWords*(b: FirstBreaks): string =
   of bkComputing: "Finding the first breaks..."
   of bkFailed: "First breaks: " & b.why
   of bkDone:
-    if b.modelNote.len == 0: ""
+    if b.modelNote.len == 0:
+      if b.fittedFrom.len > 0: "Model fitted to " & b.fittedFrom else: ""
     elif b.source == bsNone: "The model needs a survey or coordinates: picks only"
     elif b.picked == 0: "No first break could be picked"
-    else: "Too few confident picks for a model: picks only"
+    elif b.used < 3: "Too few confident picks for a model: picks only"
+    else: "No model: the confident picks share one offset"
 
 func ms(x: float64): string = formatFloat(x, ffDecimal, 1) & " ms"
 
