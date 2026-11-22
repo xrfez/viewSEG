@@ -358,7 +358,10 @@ proc main*() =
       discard st.drainInbox()
       let look = st.watchLook
       echo "  a look at 5 000 files: ", look.inMicroseconds, " us"
-      doAssert look < initDuration(milliseconds = 250), $look
+      # The Windows CI machine took 413 and 429 ms for this look (its file
+      # calls cost about five times what they do here), so it gets 1 s.
+      let lookLimit = when defined(windows): 1000 else: 250
+      doAssert look < initDuration(milliseconds = lookLimit), $look
       writeFile(dir / "shot5000.sgd", segd)
       var longest = Duration()
       doAssert waitUntil((
