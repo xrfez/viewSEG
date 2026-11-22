@@ -44,6 +44,12 @@ read it and what can mislead. The words for each plot are in
 **Project**, between File and Edit, holds this job's folder: **New project...** makes
 one, **Open project...** and **Recent projects** open one, **Project...** opens its
 window (ticked while it is open) and **Close project** goes back to working without one.
+The toolbar under the menu bar repeats the menus' most used items, in groups set
+apart by a thin line: Open file, Open folder and Reopen with options; Undo and Redo
+(grey while there is nothing to undo or redo); a button for each plot of the selected
+traces, then the Reference archive; Jobs. Each has the menu item's name, and its
+shortcut, in its tooltip.
+
 The right end of the toolbar names the project that is open (its icon, then its name;
 **(read-only)** when it is), or dim **No project** when none is. A long name is
 shortened in the middle, and at a narrow window the name gives way and the icon stays.

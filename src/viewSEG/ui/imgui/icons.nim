@@ -85,7 +85,7 @@ const
   IconTray* = "\u{EB09}"        ## nf-cod-inbox
   IconMinimize* = "\u{EABA}"    ## nf-cod-chrome_minimize
   IconPin* = "\u{EB2B}"         ## nf-cod-pin
-  IconReference* = "\u{EA84}"   ## nf-cod-bookmark
+  IconReference* = "\u{EAA5}"   ## nf-cod-bookmark
 
   AllIcons* = [IconOpenFile, IconOpenFiles, IconOpenFolder, IconFolder, IconProject, IconSave,
     IconSettings, IconLog, IconMap, IconFilter, IconEye, IconEyeOff, IconZoomIn,

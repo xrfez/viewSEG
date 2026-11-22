@@ -185,8 +185,11 @@ proc symbolButton*(sym: Symbol; size: float32; t: Theme; marks: var Marks;
   clicked
 
 const
-  ButtonGap = 2'f32 ## between buttons of one group
-  GroupGap = 14'f32 ## between groups, as on the Seismic strip
+  ButtonGap = 2'f32          ## between buttons of one group
+  GroupGap = 14'f32          ## between groups, as on the Seismic strip
+  DividerSide = 6.5'f32      ## the room each side of a divider between toolbar groups
+  DividerShare = 0.6'f32     ## a divider's height, of the buttons'
+  DividerStrength = 0.55'f32 ## a divider's opacity, of the theme's border colour
 
 type
   ToolbarResult* = object
@@ -349,10 +352,28 @@ proc drawProjectButton(p: ProjectBar; size: float32; t: Theme; marks: var Marks;
     if asked.vendorMap.len > 0: res.vendorMap = asked.vendorMap
     igEndPopup()
 
+proc groupDivider(t: Theme; size: float32) =
+  ## The quiet line between two toolbar groups: one logical pixel wide, 60 %
+  ## of the buttons' height, centred on them, in the theme's border colour at
+  ## reduced strength, with the same room either side. The next button follows
+  ## on the same row.
+  let scale = igGetFontSize() / t.metrics.fontSize
+  let width = max(1'f32, round(scale))
+  let side = round(DividerSide * scale)
+  igSameLine(0, side)
+  let pos = igGetCursorScreenPos()
+  igDummy(ImVec2_c(x: width, y: size))
+  var col = t.roles[rlBorder]
+  col.a = uint8(round(float32(col.a) * DividerStrength))
+  let inset = round(size * (1 - DividerShare) / 2)
+  ImDrawList_AddRectFilled(igGetWindowDrawList(), ImVec2_c(x: pos.x, y: pos.y + inset),
+    ImVec2_c(x: pos.x + width, y: pos.y + size - inset), u32(col), 0, 0)
+  igSameLine(0, side)
+
 proc drawToolbar*(t: Theme; marks: var Marks; input: MenuInput;
     project: ProjectBar): ToolbarResult =
-  ## The icon toolbar under the menu bar: opening files and folders, a button
-  ## per plot of the Seismic window's selection, the jobs, and at the right
+  ## The icon toolbar under the menu bar: opening files and folders, undo and
+  ## redo, a button per plot of the Seismic window's selection, the jobs, and at the right
   ## end the project that is open (or "No project"). A click on the project
   ## opens the Project menu's items. Plot buttons are greyed while
   ## `input.plotTraces` is 0.
@@ -370,7 +391,21 @@ proc drawToolbar*(t: Theme; marks: var Marks; input: MenuInput;
         tipText = menuLabel(maOpenFolder)):
       result.actions.incl maOpenFolder
     let plotsOn = input.plotTraces > 0
-    igSameLine(0, GroupGap)
+    igSameLine(0, ButtonGap)
+    if iconButton(IconRefresh, "Reopen with options", "", size, t, marks,
+        tipText = menuLabel(maReopen), enabled = input.canClose):
+      result.actions.incl maReopen
+    groupDivider(t, size)
+    if iconButton(IconUndo, "Undo", shortcutName(maUndo), size, t, marks,
+        tipText = (if input.undo.len > 0: "Undo " & input.undo else: menuLabel(maUndo)),
+        enabled = input.undo.len > 0):
+      result.actions.incl maUndo
+    igSameLine(0, ButtonGap)
+    if iconButton(IconRedo, "Redo", redoShortcut(), size, t, marks,
+        tipText = (if input.redo.len > 0: "Redo " & input.redo else: menuLabel(maRedo)),
+        enabled = input.redo.len > 0):
+      result.actions.incl maRedo
+    groupDivider(t, size)
     for i, e in PlotEntries:
       if i > 0: igSameLine(0, ButtonGap)
       # the shortcut is in the tip's text, so it is not appended again
@@ -378,7 +413,11 @@ proc drawToolbar*(t: Theme; marks: var Marks; input: MenuInput;
           tipText = e.tip(plotsOn)):
         if e.fft: result.fft = true
         else: (result.plot, result.plotView) = (true, e.view)
-    igSameLine(0, GroupGap)
+    igSameLine(0, ButtonGap)
+    if iconButton(IconReference, "Reference archive", "", size, t, marks,
+        tipText = menuLabel(maReferenceArchive)):
+      result.actions.incl maReferenceArchive
+    groupDivider(t, size)
     if iconButton(IconTasks, "Jobs", "", size, t, marks):
       result.actions.incl maShowJobs
     drawProjectButton(project, size, t, marks, input, result)
