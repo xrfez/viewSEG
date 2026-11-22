@@ -2,6 +2,10 @@
 ## and the lower layers never import the ones above them. Checked from the import
 ## statements of every module under src/viewSEG/.
 ##
+## parseSSDAT (deps/parseSSDAT, a library of its own) may be imported only from `core/`.
+## Seen to fail: with `import parseSSDAT` planted in `src/viewSEG/view/x.nim`,
+## `ssdatOnlyFromCore` names it.
+##
 ## And no file under src/, tests/ or tools/ imports `std/re`, `std/nre` or
 ## `std/pcre`: they load libpcre (PCRE1) at run time, which newer Linux
 ## releases no longer ship. Seen to fail: with tests/tfilesystem.nim importing
@@ -67,6 +71,15 @@ proc violations(layer, file, text: string, banned: openArray[string]): seq[strin
       if b in parts and (parts[0] in ["..", "viewSEG"] or parts[0] == b):
         result.add file & " (" & layer & ") imports " & imp
 
+proc ssdatUsers(file, text: string): seq[string] =
+  ## Each import of parseSSDAT in `text`, when `file` (relative to src/viewSEG) is not
+  ## under `core/`.
+  if not file.replace('\\', '/').startsWith("core/"):
+    for imp in imports(text):
+      let name = imp.replace('\\', '/')
+      if name == "parseSSDAT" or name.startsWith("parseSSDAT/"):
+        result.add file & " imports " & imp
+
 proc main*() =
 
   block layerRules:
@@ -93,6 +106,20 @@ proc main*() =
       ["ui", "gpu", "view", "platform"]).len == 2 # the layer and the toolkit
     doAssert violations("core", "c.nim", "from ../remote/tools import busy\n",
       ["remote"]).len == 1
+
+  block ssdatOnlyFromCore:
+    var problems: seq[string]
+    for file in walkDirRec(srcDir):
+      if file.endsWith(".nim"):
+        problems.add ssdatUsers(file.relativePath(srcDir), readFile(file))
+    doAssert problems.len == 0, "only core/ may import parseSSDAT:\n  " & problems.join("\n  ")
+
+  block ssdatCheckerCatchesViolations:
+    doAssert ssdatUsers("view/x.nim", "import parseSSDAT\n").len == 1
+    doAssert ssdatUsers("ui/imgui/x.nim", "import parseSSDAT/decode\n").len == 1
+    doAssert ssdatUsers("view/x.nim", "import std/os, parseSSDAT/[types, decode]\n").len == 1
+    doAssert ssdatUsers("core/x.nim", "import parseSSDAT\nimport parseSSDAT/decode\n").len == 0
+    doAssert ssdatUsers("view/x.nim", "import parseSEG\nimport ../core/parseSSDATlike\n").len == 0
 
   block noRegexEngine:
     var problems: seq[string]
