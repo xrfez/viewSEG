@@ -11,7 +11,7 @@ import std/[os, strutils, times]
 import imguin/cimgui
 import ../../core/state
 import ../../view/theme
-import chrome, focus, icons, style
+import chrome, clearsurvey, focus, icons, style
 
 type
   ProjectAsk* = enum
@@ -38,8 +38,9 @@ type
 
   ProjectOutput* = object
     commands*: seq[Command]
-    ask*: ProjectAsk ## a folder dialog to show
-    askAt*: string   ## where it starts
+    ask*: ProjectAsk   ## a folder dialog to show
+    askAt*: string     ## where it starts
+    clearSurvey*: bool ## Clear survey was clicked: ask for its confirmation
 
 proc open*(ui: var ProjectUi) =
   ## Shows the Project window, in front.
@@ -332,6 +333,10 @@ proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks
           if o.state == osChanged: igTextColored(vec4(t.roles[rlWarning]), "%s", line.cstring)
           else: igTextUnformatted(line.cstring, nil)
           tip("Copied from " & c.original.absolute)
+        if button(IconTrash & "  " & ClearSurveyWords, "project.survey.clear",
+            (if p.readOnly: "Not offered: the project is open read-only (" & p.whyReadOnly & ")"
+            else: ClearSurveyHelp), not p.readOnly, marks) and ui.focusProject.acts:
+          res.clearSurvey = true
       igSeparator()
       if button(IconClose & "  Close project", "project.close", "Write what is pending, close " &
           "its files and survey and go back to working without a project", true, marks):

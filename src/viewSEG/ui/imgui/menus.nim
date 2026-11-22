@@ -24,7 +24,7 @@ import imguin/cimgui
 import ../../core/[analysis, layouts]
 import ../../core/shortcuts as shortcutTable
 import ../../view/theme
-import icons, marks, plotviews, thememenu, windows
+import clearsurvey, icons, marks, plotviews, thememenu, windows
 
 type
   MenuAction* = enum
@@ -35,7 +35,8 @@ type
     maOpenFolder = "Open folder...", maClose = "Close",
     maReopen = "Reopen with options...",
     maReloadVendors = "Reload vendor maps",
-    maImportSurvey = "Import survey...", maImportSettings = "Import settings...",
+    maImportSurvey = "Import survey...", maClearSurvey = "Clear survey",
+    maImportSettings = "Import settings...",
     maImportLayout = "Import layout...", maImportEdits = "Import trace edits...",
     maExportLog = "Export messages...", maExportSettings = "Export settings...",
     maExportLayout = "Export layout...", maExportEdits = "Export trace edits...",
@@ -75,6 +76,7 @@ type
     shown*: set[AppWindow]       ## the windows ticked under Window
     seismicName*: string         ## what the Seismic window is called now (`windowTitle`)
     joinShown*: bool             ## the "Import survey" window is open
+    surveyImported*: bool        ## a survey is in effect (File > Import > Clear survey)
     undo*, redo*: string
       ## Edit > Undo and Redo: the step each makes, in words ("trace 21
       ## killed"); "" when there is none
@@ -126,7 +128,8 @@ const
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
     maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
     maReopen: 0, maReloadVendors: 0,
-    maImportSurvey: 0, maImportSettings: 0, maImportLayout: 0, maImportEdits: 0,
+    maImportSurvey: 0, maClearSurvey: 0, maImportSettings: 0, maImportLayout: 0,
+    maImportEdits: 0,
     maExportLog: 0, maExportSettings: 0, maExportLayout: 0, maExportEdits: 0,
     maFileMemory: 0, maNewProject: 0, maOpenProject: 0, maProject: 0, maCloseProject: 0,
     maSettings: 0, maResetSettings: 0,
@@ -146,7 +149,8 @@ const
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
     maReopen: IconRefresh, maReloadVendors: IconRefresh,
-    maImportSurvey: IconSurvey, maImportSettings: IconSliders, maImportLayout: IconLayout,
+    maImportSurvey: IconSurvey, maClearSurvey: IconTrash, maImportSettings: IconSliders,
+    maImportLayout: IconLayout,
     maImportEdits: IconWriting, maExportLog: IconExport, maExportSettings: IconSliders,
     maExportLayout: IconLayout, maExportEdits: IconWriting, maFileMemory: IconMemory,
     maNewProject: IconProject, maOpenProject: IconProject, maProject: IconProject,
@@ -218,7 +222,8 @@ proc item(a: MenuAction; res: var MenuResult) =
   if marked != nil: marked[].mark("menu." & $a)
 
 proc tip(text: string) =
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
 
@@ -316,7 +321,7 @@ proc drawProjectItems*(input: MenuInput; marks: var Marks): MenuResult =
   drawProjects(input, result)
   marked = saved
 
-proc drawImports(res: var MenuResult) =
+proc drawImports(input: MenuInput; res: var MenuResult) =
   ## File > Import: everything that is read in, each from here only.
   let open = igBeginMenu((IconOpenFile & "  Import").cstring, true)
   if marked != nil: marked[].mark("menu.Import")
@@ -325,6 +330,10 @@ proc drawImports(res: var MenuResult) =
     tip("A survey's files (SPS, SEG P1, a CSV table of stations) matched to an open file's " &
       "traces, so they have their sources' and receivers' coordinates; in memory only, the " &
       "file is not changed")
+    igBeginDisabled(not input.surveyImported)
+    item(maClearSurvey, res)
+    igEndDisabled()
+    tip(if input.surveyImported: ClearSurveyHelp else: NoSurveyHelp)
     item(maImportSettings, res)
     tip("Take in the settings of a file exported before (here or on another computer); " &
       "those it does not hold stay as they are")
@@ -529,7 +538,7 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
         "(its index and its first view), so that the next step does not wait for a slow " &
         "or network drive")
       igSeparator()
-      drawImports(result)
+      drawImports(input, result)
       drawExports(result)
       if igMenuItem_Bool(label(maFileMemory).cstring, nil, input.memoryShown, true):
         result.actions.incl maFileMemory

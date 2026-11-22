@@ -45,8 +45,8 @@ import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
 import curveplot as curveplotui
 import ../../view/jobstatus
-import aboutbox, agentshot, chrome, dpi, filelist, fonts, frames, genpreview, headerswindow, icons,
-  settingswindow, shortcutswindow,
+import aboutbox, agentshot, chrome, clearsurvey, dpi, filelist, fonts, frames, genpreview,
+  headerswindow, icons, settingswindow, shortcutswindow,
   jobswindow, joindialog, mapwindow, memorywindow, menus, messages, plotwindows, projectwindow,
   placement, references,
   recordlist, reopendialog, shell, spectrumwindow, style, tracepanel, windows, comparewindow
@@ -95,6 +95,7 @@ type
     files: FileListUi                          ## the file list's window
     records: RecordListUi                      ## the record list's window
     join: JoinUi                               ## the "Import survey" window
+    clearSurvey: ClearSurveyUi                 ## Clear survey's confirmation
     memory: MemoryUi                           ## the "File memory" window
     refs: ReferencesUi                         ## the Reference archive window and Generate
     project: ProjectUi                         ## the "Project" and "New project" windows
@@ -1034,6 +1035,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
       if i >= 0: ui.core.apply Command(kind: ckClose, file: ui.core.sessions[i].id)
     of maImportSurvey: ui.join.open()
+    of maClearSurvey: ui.clearSurvey.ask()
     of maReopen: ui.openReopen()
     of maReloadVendors: ui.core.apply Command(kind: ckReloadVendors)
     of maAbout: ui.about.open()
@@ -1297,6 +1299,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     prepareNext: ui.core.settings.files.prepareNext,
     shown: {AppWindow.low .. AppWindow.high} - ui.windows.hidden,
     seismicName: ui.core.windowTitle(MainPanel), joinShown: ui.join.shown,
+    surveyImported: ui.core.surveyInEffect,
     trayIcon: ui.core.settings.tray.icon, trayMinimize: ui.core.settings.tray.minimize,
     trayProblem: ui.trayProblem, trayAvailable: trayShown(),
     plotTraces: ui.core.selectedIn(shownAt), recentProjects: ui.core.settings.recentProjects,
@@ -1473,6 +1476,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   of paPlace: ui.ask(dkProjectPlace, project.askAt)
   of paData: ui.ask(dkProjectData, project.askAt)
   of paLocate: ui.ask(dkLocateFolder, project.askAt)
+  if join.clearSurvey: ui.clearSurvey.ask(joinTitle)
+  if project.clearSurvey: ui.clearSurvey.ask(projectTitle)
+  for c in ui.clearSurvey.drawClearSurvey(ui.marks):
+    ui.core.apply c
   if join.addFiles:
     let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
     let folder = if i >= 0: ui.core.sessions[i].path.parentDir & DirSep else: ""

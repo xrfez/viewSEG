@@ -467,6 +467,7 @@ proc main*() =
       st.agent(%*{"kind": "trace filter", "filter": {"seismic": false, "auxiliary": true}})
       st.agent(%*{"kind": "close", "file": int(st.sessions[0].id)})
       st.agent(%*{"kind": "subfolders", "subfolders": true}) # for the session only
+      st.agent(%*{"kind": "clear survey"}) # in memory only (ignored here: none is imported)
       st.agent(%*{"kind": "new project", "projectPath": fx.dir / "the agent's job",
         "dataFolders": [agentDir]})
       doAssert st.inProject and st.settings.lastProject == fx.dir / "the agent's job"

@@ -36,7 +36,7 @@ import imguin/cimgui
 import parseSEG
 import ../../core/[filekinds, geometry, state]
 import ../../view/theme
-import chrome, focus, icons, style
+import chrome, clearsurvey, focus, icons, style
 
 type
   JoinUi* = object
@@ -62,7 +62,8 @@ type
 
   JoinOutput* = object
     commands*: seq[Command]
-    addFiles*: bool ## show the file dialog for survey files to add
+    addFiles*: bool    ## show the file dialog for survey files to add
+    clearSurvey*: bool ## Clear survey was clicked: ask for its confirmation
 
 func kindByName*(path: string): JoinFileKind =
   ## What a file added to the import is, by its name (the import reads its
@@ -497,6 +498,14 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     if igButton("Close", ImVec2_c(x: 0, y: 0)): ui.shown = false
     marks.marked("join.close")
     tip("Close this window (the survey already imported stays)")
+    igSameLine(0, -1)
+    igBeginDisabled(not st.surveyInEffect)
+    if igButton((IconTrash & "  " & ClearSurveyWords).cstring, ImVec2_c(x: 0, y: 0)) and
+        ui.focus.acts and st.surveyInEffect:
+      result.clearSurvey = true
+    igEndDisabled()
+    marks.marked("join.clear")
+    tip(if st.surveyInEffect: ClearSurveyHelp else: NoSurveyHelp)
     if busy:
       igSameLine(0, -1)
       let info = st.jobs.info(underWay.job)

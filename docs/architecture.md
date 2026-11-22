@@ -517,6 +517,13 @@ stations with `addCsv`) are joined to an open file's trace keys in memory: the f
 never changed, and a file opened again is as it is on disk. Two jobs, so that the plot
 stops reading the file only for the moment its keys change:
 
+**Clear survey** (`ckClearSurvey`, `clearSurvey` in `core/state`; the confirmation is `ui/imgui/clearsurvey`,
+asked from the File menu, the Import survey window and the Project window). The keys of an open
+file hold the survey's coordinates in memory, so the file is read again (`dropKeys`: opened anew
+and swapped in as Reopen with options does, or closed when no panel shows it); the project's
+document and `survey/` folder lose the survey; an import under way is cancelled and marked
+(`Joining.cleared`) so that whatever its job still does is undone, never recorded.
+
 1. **Read and plan** (`joinReadWork`, interactive lane, the file and the survey files in
    `reads`): the survey files are read into one `SurveyGeometry` with the join's options
    (`mapLine`, `trailingDigits`, `multiComponent`), SPS a chunk at a time as the survey

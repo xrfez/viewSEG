@@ -783,6 +783,17 @@ checks each record against the survey's relation records. A file closed and open
 is read as it is on disk: import the survey again (the window keeps your files and
 options).
 
+**Clear survey** takes the imported survey away again, when you want none (**File > Import >
+Clear survey**, the **Clear survey** button of the Import survey window, and in the Project
+window beside the project's survey). The traces show their own file's coordinates again (the
+open files joined with the survey are read again: their selection and windows stay), the map
+loses the survey's points, and a project keeps no survey (its copies of the survey files and
+its survey record are removed, so it does not come back when the project is opened again; a
+read-only project cannot be cleared). An import under way is cancelled, and nothing of it is
+applied afterwards. It asks first, and says the survey files on disk are not touched; the
+seismic files are never changed. There is no undo: to have the survey again, import it again.
+The item is disabled, with the tooltip "No survey is imported", when there is nothing to clear.
+
 ```
 bin/viewSEG samples/land/shots.sgy samples/land/land.?
 ```

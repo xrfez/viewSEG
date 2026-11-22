@@ -223,6 +223,10 @@ type
       ## close the project open: back to working without one (its files and survey closed)
     ckProjectFolder = "project folder"
       ## add or remove a data folder of the project open, or say where a missing one is now
+    ckClearSurvey = "clear survey"
+      ## take the imported survey away: the open files' traces have their own
+      ## coordinates again, the map its survey files out, the project (if open)
+      ## no survey; an import under way is cancelled. No file is changed
     ckUpdateSurvey = "update survey"
       ## copy the project's survey files again from the originals that changed, and read them
     ckReopen = "reopen"
@@ -490,7 +494,8 @@ type
       folderAction*: FolderAction ## add, remove, or locate (found at `folderPath`)
       folderPath*: string ## the folder added or removed, or where a missing one is now
       folderWas*: string ## locate: the missing folder, as the project names it
-    of ckCloseProject, ckUpdateSurvey, ckListReferences, ckReloadVendors: discard
+    of ckCloseProject, ckUpdateSurvey, ckClearSurvey, ckListReferences, ckReloadVendors:
+      discard
     of ckVendorMap:
       vendorMap*: string
         ## ckVendorMap: "automatic", "none", or the name of a loaded map (a map named
@@ -682,6 +687,9 @@ type
       ## a file opened again: the match is said to start then, and kept or
       ## dropped only once it ends
     by: CommandOrigin ## who asked for the import (the user's is kept in the project)
+    cleared: bool
+      ## Clear survey came while it ran: it is cancelled, and whatever its job
+      ## still does is undone (its end never records a join)
 
   Joined* = object
     ## An open file joined with survey files: what it was joined with and how.
@@ -1915,6 +1923,16 @@ func joinUnderWay*(state: AppState): tuple[job: JobId; step: JoinStep; session: 
   ## The join under way: its job (`NoJob` for none), what it does, and the
   ## file it joins to.
   (state.joining.job, state.joining.step, state.joining.session)
+
+func surveyInEffect*(state: AppState): bool =
+  ## Whether a survey is imported: a file joined with one, a survey file on the
+  ## map, one kept in the project open, or an import under way (Clear survey
+  ## has something to take away).
+  if state.joins.len > 0 or state.joining.job != NoJob or state.joining.loads.len > 0 or
+      state.joining.waits or state.project.doc.hasSurvey or state.project.doc.hasImport:
+    return true
+  for i in 0 ..< state.survey.layers.len: # by index: `for l in` copies every layer
+    if state.survey.layers[i].origin == loSurveyFile: return true
 
 func importing*(state: AppState): bool {.inline.} =
   ## Whether a survey import is under way: its match, or the loads of its
@@ -4635,6 +4653,7 @@ proc showAgain(state: var AppState; path: string)
 proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = false;
   by: CommandOrigin; asked = OpenChoice(); forced = false)
 proc startJoin(state: var AppState; i: int; cmd: Command; carried = false)
+proc dropKeys(state: var AppState; session: SessionId)
 
 proc carryOf(state: AppState; s: Session): Carry =
   ## What `s`, an open file about to be replaced by the same file opened
@@ -5169,7 +5188,7 @@ proc takeJoinPlan(state: var AppState; m: sink Msg) =
   ## trace's keys, the readers of the file let go of it and the join's second
   ## job (`joinApplyWork`, the file to itself) does it; else it ends here.
   template j: untyped = state.joining
-  if m.job != j.job or j.step != jpReading: return # (a join no longer wanted)
+  if m.job != j.job or j.step != jpReading or j.cleared: return # (a join no longer wanted)
   let i = state.findSession(m.planSession)
   if i < 0: return # closed meanwhile: the job's end says so
   if not m.geometry.isNil: j.geometry = move m.geometry # (a project's match keeps its own)
@@ -6491,7 +6510,13 @@ proc onFinished(state: var AppState; job: JobInfo) =
   if job.id == state.joining.job:
     case job.state
     of jsDone:
-      if state.joining.step == jpJoining:
+      if state.joining.cleared:
+        # Clear survey came meanwhile: never recorded, and keys it changed go
+        let session = state.joining.session
+        let changed = state.joining.joined
+        state.endJoin(joCancelled)
+        if changed: state.dropKeys(session)
+      elif state.joining.step == jpJoining:
         if state.joining.joined: state.endJoin(joJoined)
         else: state.endJoin(joFailed, "it ended without matching")
       else: state.endJoin(joCancelled) # the file was closed before its plan came
@@ -6818,6 +6843,93 @@ proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: Comma
     whole = false, lines = state.settings.join, choice = choice))
   state.opening.add Pending(job: job, path: path, panel: if panel == NoPanel: MainPanel
     else: panel, gather: gather, by: by, reopened: true, tried: choice, replacesOpen: true)
+
+proc dropKeys(state: var AppState; session: SessionId) =
+  ## The keys of open file `session` hold a survey's coordinates (a join): the
+  ## file is read again, so that its traces have its own. A file a panel
+  ## shows is opened anew and takes its place (`reopenWith`: its selection and
+  ## windows stay); another is closed. The file on disk is not changed.
+  let i = state.findSession(session)
+  if i >= 0:
+    let s = state.sessions[i]
+    var shown = false
+    for p in state.panels:
+      if p.layers.len > 0 and p.layers[0].shows(s.id): shown = true
+    if shown: state.reopenWith(s.path, state.openChoiceOf(s.path), coWindow)
+    else: state.closeSession(i, quiet = true)
+
+proc clearSurvey(state: var AppState; cmd: Command) =
+  ## `ckClearSurvey`: the survey is taken away wherever it is held. An import
+  ## under way is cancelled, and nothing of it is applied later. The files
+  ## joined are read again (`dropKeys`), the survey files go off the map, and
+  ## the project open forgets its survey (its document, and on a job its
+  ## copies and `survey.bin`), so that it does not come back at the next open.
+  template p: untyped = state.project
+  let keptInProject = state.inProject and (p.doc.hasSurvey or p.doc.hasImport)
+  if not state.surveyInEffect: state.ignore(cmd, "no survey is imported")
+  elif keptInProject and cmd.origin == coAgent:
+    state.ignore(cmd, "agent control writes nothing into a project, and the survey is kept in " &
+      "this one")
+  elif keptInProject and p.readOnly:
+    state.ignore(cmd, "the project is open read-only (" & p.whyReadOnly & ")")
+  else:
+    # An import under way: cancelled, and what its job does after this is undone.
+    if state.joining.job != NoJob:
+      state.joining.cleared = true
+      discard state.jobs.cancel(state.joining.job)
+    elif state.importing:
+      for job in state.joining.loads:
+        discard state.jobs.cancel(job)
+        state.droppedLoads.add job
+      state.joining = Joining()
+    # The project's survey.
+    if state.inProject:
+      if p.surveyJob != NoJob: discard state.jobs.cancel(p.surveyJob)
+      if p.originalsJob != NoJob: discard state.jobs.cancel(p.originalsJob)
+      p.surveyJob = NoJob
+      p.originalsJob = NoJob
+      p.originals.setLen 0
+      p.offer = false
+      p.geometry = nil
+      p.joinSurvey = JoinSurvey()
+      p.queue.setLen 0
+      p.survey = srNone
+      p.surveyNote = ""
+      p.restoreMs = 0
+      p.rebuilding = false
+      p.layersAfterKeep = false
+      if keptInProject:
+        p.doc.survey.setLen 0
+        p.doc.importing.setLen 0
+        p.doc.notes.setLen 0
+        p.doc.units = JoinUnits()
+        p.doc.imported = Time()
+        p.doc.store = StoreInfo()
+        state.projectChanged()
+        discard state.jobs.submit(JobSpec(title: "Remove the survey from the project",
+          lane: jlBackground, exclusive: @[p.dir.partOf(SurveyFolder)]),
+          clearSurveyWork(p.dir))
+      inc p.revision
+    # The files joined: read again, with their own coordinates. Not the one an
+    # import under way will undo when its job ends.
+    var joined: seq[SessionId]
+    for j in state.joins: joined.add j.session
+    state.joins.setLen 0
+    # The map's survey files.
+    var ids: seq[SurveyLayerId]
+    for i in 0 ..< state.survey.layers.len:
+      if state.survey.layers[i].origin == loSurveyFile: ids.add state.survey.layers[i].id
+    for id in ids: discard state.survey.remove(id)
+    state.map.followed(state.survey)
+    for id in joined: state.dropKeys(id)
+    for s in state.sessions: # the records are checked against no survey now
+      if s.id notin joined and state.joinedRelations(s.id) < 0: state.checkRecords(s)
+    state.joinReport = JoinReport(serial: state.joinReport.serial + 1, session: NoSession,
+      outcome: joNone, words: @["The survey was removed: the traces show their own file's " &
+      "coordinates again."])
+    state.log.add(sevInfo, "survey", "The survey was removed" & (if joined.len > 0:
+      ": " & plural(joined.len, "open file") & " read again, with its own coordinates" else: "") &
+      (if keptInProject: "; the project " & p.doc.name & " keeps no survey now" else: "") & ".")
 
 proc onDisk(state: var AppState; w: WatchedFile) =
   ## What the watch saw of a file that is open, or that a panel waits for:
@@ -8192,6 +8304,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
         "automatically")
     else: state.setVendorChoice(cmd.origin, parseChoice(cmd.vendorMap))
   of ckProjectFolder: state.projectFolder(cmd)
+  of ckClearSurvey: state.clearSurvey(cmd)
   of ckUpdateSurvey:
     template p: untyped = state.project
     if not state.inProject: state.ignore(cmd, "no project is open")

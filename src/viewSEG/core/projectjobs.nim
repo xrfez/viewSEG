@@ -9,6 +9,8 @@
 ## - `keepSurveyWork` (background lane) copies the survey files imported
 ##   into the project and writes `survey.bin` from the copies;
 ##   `updateSurveyWork` copies the originals that changed again.
+## - `clearSurveyWork` (background lane) takes the survey's copies and
+##   `survey.bin` out of the project folder again (Clear survey).
 ## - `restoreWork` (background lane) makes the survey from `survey.bin`: the
 ##   map's layers (`mkSurvey`, one per file) and the joins' geometry
 ##   (`pnSurvey`), without reading a survey file.
@@ -368,6 +370,14 @@ proc sweepTemporaries(dir: string; recorded: openArray[SurveyCopy]) =
             path.extractFilename notin names: discard fs.tryRemoveFile(path)
   except OSError:
     discard
+
+proc clearSurveyWork*(dir: string): JobWork =
+  ## The work of a job that removes the survey folder of the project in `dir`
+  ## (its copies of the survey files, `survey.bin`, a copy's temporaries):
+  ## Clear survey. The survey files the copies were made from are not touched.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    {.cast(gcsafe).}:
+      discard fs.tryRemoveDir(dir.partOf(SurveyFolder)) # (`os.removeDir`: with what is in it)
 
 type Resumed = tuple[path: string; outside: bool]
 
