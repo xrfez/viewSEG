@@ -39,14 +39,14 @@ next part's.
 
 Capabilities are the rows below, each counted by the first part of its status ("in part": built, with a part still planned or to plan). Names are the names each library exports, enum values not counted, each at the most advanced status of the rows that name it.
 
-| Status | parseSEG 0.19.0: capabilities | names | processSEG 0.10.0: capabilities | names |
+| Status | parseSEG 0.19.1: capabilities | names | processSEG 0.11.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 54 (20 in part) | 179 | 37 (26 in part) | 175 |
 | `internal` | 17 | 46 | 5 | 39 |
-| `planned` | 33 | 220 | 43 | 397 |
+| `planned` | 33 | 220 | 44 | 414 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 20 | 366 | 6 | 65 |
-| all | 126 | 821 | 92 | 681 |
+| `not applicable` | 21 | 367 | 6 | 65 |
+| all | 127 | 822 | 93 | 698 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -84,6 +84,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Library version | `PackageVersion` | `viewSEG --version` and agent control's server name give parseSEG's version; Help > About viewSEG: parseSEG and processSEG versions | built |
 | The trace index | `f.index`, `TraceIndex`, `f.traceEntry(i)`, `TraceEntry`, `TraceCodec`, `NoChannelSet`, `sampleOffset`, `dataBytes`, `known` | internal: the Records window reads the format's own headers from `f.index` (the SEG-Y binary header, the SEG-D records), the plot the values a join gave | internal; not applicable (the entries' byte locations and codecs: the viewer reads samples through the prefetcher) |
 | Keys made and derived by hand | `initTraceKeys`, `deriveGeometry`, `hasSourceXY`, `hasReceiverXY`, `Coordinates`, `StationKey`, `stationKey`, `hash`, `segdStatus` | internal: the cursor's pick starts from empty keys (`initTraceKeys`); the survey and the join find stations by `StationKey`, a coordinate pair is `Coordinates` | internal; not applicable (`deriveGeometry`, `hasSourceXY`, `hasReceiverXY`, `segdStatus`: the keys parseSEG gives hold the offset, midpoint and status already) |
+| The trace-code revision a trace's codes were read under | `TraceCodeRev` (`tcrRev0`, `tcrRev1`, `tcrRev2`, `tcrCaller`), `TraceKeys.traceCodeRev` | not shown: the viewer reads and never writes trace headers, so the revision only keeps parseSEG's index caches right (an old cache is rebuilt once) | not applicable (the viewer never writes a trace header) |
 | The summary's parts | `ChannelSetSummary`, `StandardRevision`, `$` (a summary in one line) | "File properties" panel, with the summary above: the Headers window's Summary tab, a SEG-D record's channel sets | built (the Summary tab); not applicable (`StandardRevision`: the summary's revision, shown without being named) |
 
 ### Reading samples
@@ -354,6 +355,7 @@ name, so these are building blocks for code that works on raw headers.
 | Coherence SNR of a flattened gather | `coherenceSnrInto`, `coherenceSnrWorkspace` | SNR-against-time plot for an NMO or LMO flattened gather | planned |
 | Amplitude flags per trace (dead, clipped, spiky, DC, weak, noisy) | `traceAmplitudeInto` (also on the pool), `AmplitudeParams`, `AmplitudeFlag`, `TraceAmplitude`, `traceAmplitude`, `traceAmplitudeWorkspace` | The map's filters on the record shown (each flag a filter, default thresholds, a job per record shown); trace flags with thresholds on a histogram | built (the map's filters); planned (thresholds, the survey) |
 | Record-level amplitude outliers | `recordAmplitude`, `RecordAmplitude` (`robustZ`), `recordAmplitudeWorkspace` | The map's filters weak and noisy on the record shown; trace flags (weak, noisy) survey-wide | built (the map's filters); planned (the survey) |
+| Noisy traces judged beside their neighbours, outside an exclusion area | `noiseQc`, `noiseWorkspace`, `traceRolesInto`, `gatherDomainOf`, `ExclusionParams`, `NoiseResult`, `GroupNoise`, `TraceRole`, `SensorClass`, `GatherDomain`, `AreaChoice` (`acAuto`, `acOff`, `acFixedTime`, `acFixedRadius`, `acSteps`, `acTrend`), `AreaRule` (`arNone`, `arModel`, `arFixedTime`, `arFixedRadius`, `arRadius`, `arSteps`, `arTrend`), `AreaReason` (`rnNoPicks`, `rnFewPicks`, `rnFewArrivals`, `rnBadModel`, `rnAllInside`, `rnFewTraces`, `rnNoOffsets`, `rnNoHeaderOffsets`, `rnNoPosition`, `rnNoLoudness`, `rnNoStationIds`, `rnOneStation`, `rnUnknownSensors`, `rnOverrideNeedsModel`, `rnOverrideNeedsOffsets`), `LineSource` (`lsHeaders`, `lsCoordinates`, `lsStations`, `lsUnknown`), `NeighbourState` (`nbJudged`, `nbInArea`, `nbUngrouped`, `nbUnusable`, `nbFewNeighbours`), `NoiseState` (`nsJudged`, `nsInArea`, `nsUngrouped`, `nsUnusable`, `nsIncompleteNode`), `OffsetOrigin` (`ooHeaders`, `ooSurvey`, `ooUnknown`), `SensorClass` (`scMotion`, `scPressure`, `scSingle`) | planned: the record QC's noisy traces with the area chosen by the library | planned |
 | Automatic bin grid of a survey | `surveyGrid` | Fold map: grid proposed from the SPS | planned |
 | Pre-plot, actual and difference fold | `preplotFold`, `initFoldMap`, `addFold`, `foldDifference`, `FoldMap` (`fold`, `binned`, `outside`, `noCoordinates`, `notLive`, `options`), `clone` | Fold map layers and their difference | planned |
 | Fold by offset class and azimuth sector, offset range | `FoldOptions`, `offsetFold`, `azimuthFold`, `offsetMin`, `offsetMax` | Fold map: offset-class and azimuth layers, min / max offset maps | planned |
