@@ -48,7 +48,7 @@
 
 import std/[math, strutils]
 import imguin/cimgui
-import ../../core/[explain, geometry, join, mapthin, state]
+import ../../core/[explain, geometry, join, mapthin, noisearea, state]
 import ../../gpu/mappoints
 import ../../view/[maplayers, theme]
 import explainmenu, focus, icons, marks, style
@@ -362,6 +362,8 @@ proc glyphIcon(c, background: Rgba; shape: FlagShape; symbol: FlagSymbol; id: st
   of syBar: ImDrawList_AddLine(dl, p(-k, 0), p(k, 0), col, ws)
   of syUpright: ImDrawList_AddLine(dl, p(0, -k), p(0, k), col, ws)
   of syRing: ImDrawList_AddCircle(dl, p(0, 0), 0.7 * k, col, 0, ws)
+  of syDot: ImDrawList_AddCircleFilled(dl, p(0, 0), 0.35 * k, col, 0)
+  of syDash: ImDrawList_AddLine(dl, p(-0.7 * k, 0.7 * k), p(0.7 * k, -0.7 * k), col, ws)
 
 proc layerRow(l: MapLayerView; i: int; marks: var Marks; res: var MapOutput) =
   ## One layer of the popover: its colour, its own toggle and its points.
@@ -508,11 +510,13 @@ const filterTips: array[MapFilter, string] = [
   "Traces the file marks dead in their headers",
   "Traces whose samples could not be decoded",
   "Traces you killed (the plot's menu, K)",
-  "Traces whose RMS is far above the record's (robust z over 3.5)",
+  "Traces outside the exclusion area (near the source) whose RMS is far above the others'" &
+    " (robust z over 3.5)",
   "Traces with runs of samples at their maximum: a recorder or a conversion that saturated",
   "Traces with samples far above their neighbours (spikes)",
   "Traces whose every sample is the same value, not zero",
-  "Traces whose RMS is far below the record's (robust z under -3.5)",
+  "Traces whose RMS is far below the others' (robust z under -3.5), judged against the traces" &
+    " outside the exclusion area",
   "Traces whose mean is large against their deviation",
   "Traces whose every sample is 0, whatever the header says",
   "Traces with a sample that is not a number, or infinite",
@@ -522,7 +526,27 @@ const filterTips: array[MapFilter, string] = [
   "Traces that are not seismic (time breaks, pilots): counted, they have no place on the map",
   "Seismic traces the map cannot place (no coordinates, and no survey file has their station)",
   "Traces whose polarity you reversed (the plot's menu, R)",
-  "Shots whose listed receivers are not those of the template the relation records describe"]
+  "Shots whose listed receivers are not those of the template the relation records describe",
+  "Traces outside the exclusion area far louder than those either side of them on their own" &
+    " line (a station that is loud against its neighbours, not noisy against the record)",
+  "Traces whose noise was not judged: inside the exclusion area, whose sensor or station is" &
+    " not known, or of a node with a component missing. They are not shown as good"]
+
+const NoiseWrapEm = 30'f32 ## the words' lines wrap at this many font sizes
+
+func noiseLines(st: AppState): seq[string] =
+  ## The lines the noisy-trace test's words take under "Filters" (none while no
+  ## noise filter is on or the record has no result), each as the list shows it.
+  let n = st.recordQc.noise
+  if n.ready and st.settings.map.filters * NoiseFilters != {}:
+    for line in [n.areaWords & ".", n.notesWords, "Not judged: " & n.notJudgedWords & "."]:
+      if line.len > 1: result.add line
+
+const FilterOrder = [mfDead, mfUndecodable, mfKilled, mfNoisy, mfLouder, mfWeak, mfNotJudged,
+  mfClipped, mfSpiky, mfConstant, mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted,
+  mfDuplicate, mfAuxiliary, mfNoPosition, mfReversed, mfSpreadDiffers]
+  ## the order the filters are listed in: the noisy-trace test's findings together
+static: doAssert FilterOrder.len == ord(high(MapFilter)) + 1, "a filter is not listed"
 
 proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; marks: var Marks;
     res: var MapOutput) =
@@ -531,8 +555,18 @@ proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; mar
   ## with the reason in its tooltip), and Select for those that found
   ## traces (they are selected in the plot).
   igSeparatorText("Filters: the record shown")
+  let words = noiseLines(st)
+  if words.len > 0:
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    igPushTextWrapPos(igGetCursorPosX() + NoiseWrapEm * igGetFontSize())
+    for line in words: igTextUnformatted(line.cstring, nil)
+    igPopTextWrapPos()
+    igPopStyleColor(1)
+    marks.mark("map.noise area")
+    tip("The noisy-trace test leaves the traces near the source out of the judgement. " &
+      "Choose how the area is set in Tools > Settings.")
   let ink = mapInk(t, st.settings.plot.display.colours, st.settings.plot.display.custom)
-  for f in MapFilter:
+  for f in FilterOrder:
     igPushID_Int(cint(ord(f) + 1000))
     # its mark, as the map draws it: a shape of its own, the colour of its kind
     glyphIcon(filterInk(t, f, ink.background), ink.background, f.shapeOf, FilterMarks[f].symbol,
@@ -619,7 +653,7 @@ proc placePopover(at: ImVec2_c; width: float32) =
   igSetNextWindowSizeConstraints(ImVec2_c(x: 0, y: 0), ImVec2_c(x: vp.WorkSize.x,
     y: max(igGetFrameHeight() * 4, vp.WorkPos.y + vp.WorkSize.y - at.y - 8)), nil, nil)
 
-proc layersWidth(layers: openArray[MapLayerView]): float32 =
+proc layersWidth(layers: openArray[MapLayerView]; words: openArray[string]): float32 =
   ## The widest line of the Layers popover.
   var lines = @[$mgPreplot & ": the survey files", TemplateLabel,
     "Shots in the folder: 10000 of 10000 sources have a file",
@@ -627,7 +661,8 @@ proc layersWidth(layers: openArray[MapLayerView]): float32 =
     "No survey file loaded (open SPS or SEG P1 files)",
     "No seismic file whose traces carry positions is open"]
   for l in layers: lines.add l.name & "  (" & $l.points & ")"
-  widest(lines) + igGetStyle().IndentSpacing
+  max(widest(lines), min(widest(words), NoiseWrapEm * igGetFontSize())) +
+    igGetStyle().IndentSpacing
 
 proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
     res: var MapOutput; ask: var MapAskKind; t: Theme) =
@@ -673,7 +708,7 @@ proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; mar
     if button(IconSettings & "##more", marks, "map.more"): igOpenPopup_Str(moreId, 0)
     under[1] = ImVec2_c(x: igGetItemRectMin().x, y: igGetItemRectMax().y)
     tip("Where the map describes the point under the pointer, and the unit of its lengths")
-  placePopover(under[0], layersWidth(layers))
+  placePopover(under[0], layersWidth(layers, noiseLines(st)))
   if igBeginPopup(layersId, 0):
     drawLayers(st, layers, marks, res, mu.hits, t)
     igEndPopup()

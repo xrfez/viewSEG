@@ -48,16 +48,16 @@ type
     lines*: bool          ## the marks are lines through the traces, not a bar each
     perPosition*: float32 ## the pixels between two traces
 
-func along(p: Vec2; s: ScreenAxis): float32 {.inline.} =
+func along*(p: Vec2; s: ScreenAxis): float32 {.inline.} =
   if s == saX: p.x else: p.y
 
-func at(s: ScreenAxis; a, b: float32): Vec2 {.inline.} =
+func at*(s: ScreenAxis; a, b: float32): Vec2 {.inline.} =
   ## The point `a` along screen axis `s` and `b` along the other.
   if s == saX: Vec2(x: a, y: b) else: Vec2(x: b, y: a)
 
-func other(s: ScreenAxis): ScreenAxis {.inline.} = (if s == saX: saY else: saX)
+func other*(s: ScreenAxis): ScreenAxis {.inline.} = (if s == saX: saY else: saX)
 
-func screenOf(view: Viewport; m: Turn; plot: Rect; axis: Axis; value: float64): float32 =
+func screenOf*(view: Viewport; m: Turn; plot: Rect; axis: Axis; value: float64): float32 =
   ## Where `value` (a position, or ms) lies on the screen along `axis`'s screen axis.
   let s = m.along[axis]
   let span = if axis == axTraces: view.traces else: view.timeMs

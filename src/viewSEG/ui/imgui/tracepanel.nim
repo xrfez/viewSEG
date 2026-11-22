@@ -93,7 +93,7 @@ import std/[algorithm, math, os, strutils, tables]
 import imguin/cimgui
 import ../../core/[components, editmarks, explain, geometry, openchoice, state, wiggle]
 import ../../gpu/[plotimage, textures]
-import ../../view/[breakbars, displayheader, maplayers, plotink, strip, theme, timeaxis]
+import ../../view/[areabands, breakbars, displayheader, maplayers, plotink, strip, theme, timeaxis]
 import breakdraw, chrome, dpi, explainmenu, focus, fonts, icons, menus, plotbars, plotfilters,
     plotgain, plotsort,
   shortcutkeys,
@@ -2572,6 +2572,13 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     tp.drawHeader(tiles, fields, stride, view, p.layout, turn, bands, headerTop, pos, size, t,
       marks)
     tp.drawSelectionMarkers(tiles, base, st.selection, view, p.layout, turn, pos, size, t, marks)
+    block noiseArea:
+      let q = st.recordQc
+      if q.noise.ready and st.settings.map.filters * NoiseFilters != {} and
+          layer.source.kind == lsRecord and q.key.file == layer.source.file and
+          q.key.gather == layer.source.gather:
+        drawAreaBands(areaBands(q.noise, p.shown, p.layout, view, turn,
+          Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y))), ink, marks)
     block firstBreaks:
       let bi = st.breaksIndex(k)
       if layer.display.firstBreaks and bi >= 0:

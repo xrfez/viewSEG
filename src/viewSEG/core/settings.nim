@@ -22,10 +22,10 @@
 ## change from one to the other).
 
 import std/math
-import components, displaypresets, geometry, join, log, mapkinds, panels, plotoptions, readout,
-  scales, spectra, tracetable, units
+import components, displaypresets, geometry, join, log, mapkinds, noisearea, panels, plotoptions,
+  readout, scales, spectra, tracetable, units
 
-export displaypresets, join, mapkinds, plotoptions, readout, scales, spectra, units
+export displaypresets, join, mapkinds, noisearea, plotoptions, readout, scales, spectra, units
 
 type
   Calibration* = object
@@ -161,6 +161,9 @@ type
     units*: UnitSystem
       ## how a plot shows a physical value (a mass, a force, a velocity);
       ## Metric, the default. An older file that does not say loads as Metric.
+    noise*: NoiseSettings
+      ## how the noisy-trace test sets its exclusion area: automatic, or a fixed time, a
+      ## radius or a number of stations
     window*: WindowPlacement
     recentFiles*: seq[string] ## the files opened last, newest first
     recentFolders*: seq[string] ## their folders, newest first
@@ -301,6 +304,7 @@ func cleaned*(s: Settings): (Settings, int) =
   if not (r.window.width > 0 and r.window.height > 0):
     r.window = WindowPlacement()
   r.map.spreadTemplate = bounded(s.map.spreadTemplate)
+  r.noise = bounded(s.noise)
   r.displayPresets = cleaned(s.displayPresets)
   (r, s.calibrations.len - r.calibrations.len + s.readout.len - r.readout.len +
     s.sortPresets.len - r.sortPresets.len + s.displayPresets.len - r.displayPresets.len)

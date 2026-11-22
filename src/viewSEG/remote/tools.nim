@@ -572,6 +572,13 @@ proc mapJson(state: AppState; limit: int): JsonNode =
       filters[$f] = %*{"state": $hits[f].state, "count": hits[f].count, "note": hits[f].note,
         "traces": clipped(hits[f].traces, limit)}
     result["filters"] = filters
+    let n = state.recordQc.noise
+    if n.ready:
+      result["noise"] = %*{"area": n.areaWords, "notes": n.notesWords,
+        "choice": NoiseChoiceNames[n.asked.choice], "judged": n.judged, "inArea": n.inArea,
+        "sensorOrStationUnknown": n.unknown, "incompleteNodes": n.incomplete,
+        "noSamples": n.unusable, "notJudged": n.notJudged, "noisy": n.noisy, "weak": n.weak,
+        "louder": n.louderCount, "lines": n.lines, "linesReached": n.linesReached}
   var selected = newJArray()
   for i in 0 ..< min(state.selection.points.len, limit):
     selected.add state.pointJson(state.selection.points[i])

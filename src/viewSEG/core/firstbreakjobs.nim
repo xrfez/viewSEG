@@ -129,6 +129,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     elif keys[i].isSeismic and not x.isNaN:
       any = true
       if jgDerived in f.index.joinedGroups(traces.a + i): surveyed = true
+  result.picks = picks
   result.source = if not any: bsNone elif surveyed: bsSurvey else: bsFile
   if not any: return
   # one kind of sensor is fitted (a node record's components are not comparable);
@@ -145,6 +146,8 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     fitShot(meta, fitPicks, ShotFitParams(), fit)
   except ValueError:
     return # no model: the picks stand alone
+  result.fit = fit
+  result.hasFit = true
   result.used = fit.used
   result.thresholdMs = fit.threshold
   for i in 0 ..< n:

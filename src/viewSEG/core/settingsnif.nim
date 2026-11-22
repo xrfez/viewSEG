@@ -36,6 +36,7 @@
 ##  (map (info popup) (lengths survey) (hide recorded) (templateBox false) (folderShots true)
 ##   (filters noisy clipped)
 ##   (template (shape patch) (lines 8) (channels 120) (inline 1500.0) (crossline 500.0)))
+##  (noise (area auto) (timeMs 100.0) (radius 500.0) (steps 8) (allLines false))
 ##  (join (trailingDigits false) (multiComponent false) (coordinates fill)
 ##   (recordMatch auto) (traceMatch auto) (lineNames (line "CLT4960" 4960)))
 ##  (headers (tab summary) (traceTab header) (followPointer true) (asDisplayed false)
@@ -73,7 +74,7 @@
 ## making old files unreadable.
 
 import std/[math, strutils]
-import analysis, geometry, join, log, nif, panels, plotoptions, readout, scales, settings,
+import analysis, geometry, join, log, nif, noisearea, panels, plotoptions, readout, scales, settings,
   tracetable, units
 
 export nif
@@ -103,7 +104,8 @@ const
   TemplateShapeNames: array[TemplateShape, string] = ["patch", "box"]
   MapFilterNames: array[MapFilter, string] = ["dead", "undecodable", "killed", "noisy",
     "clipped", "spiky", "constant", "weak", "dcOffset", "allZero", "notANumber", "missing",
-    "unlisted", "duplicate", "auxiliary", "noPosition", "reversed", "spreadDiffers"]
+    "unlisted", "duplicate", "auxiliary", "noPosition", "reversed", "spreadDiffers", "louder",
+    "notJudged"]
   CoordinateNames: array[HeaderCoordinates, string] = ["fill", "replace"]
   RecordMatchNames: array[RecordMatch, string] = ["auto", "source", "ffid"]
   TraceMatchNames: array[TraceMatch, string] = ["auto", "station", "channel"]
@@ -431,6 +433,13 @@ proc settingsDocument*(s: Settings): string =
   w.value("inline", s.map.spreadTemplate.inlineHalf)
   w.value("crossline", s.map.spreadTemplate.crosslineHalf)
   w.close()
+  w.close()
+  w.open("noise")
+  w.choice("area", NoiseChoiceNames[s.noise.choice])
+  w.value("timeMs", s.noise.edgeMs)
+  w.value("radius", s.noise.radius)
+  w.value("steps", s.noise.steps)
+  w.value("allLines", s.noise.allLines)
   w.close()
   w.writeJoinOptions(s.join)
   w.open("headers")
@@ -1020,6 +1029,14 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
               elif v.isTree("crossline"): r.number(v, 1e-6, 1e12, t.crosslineHalf)
               else: r.unknown(v, "template")
           else: r.unknown(k, "map")
+      of "noise":
+        for k in c.kids:
+          if k.isTree("area"): r.choice(k, NoiseChoiceNames, result.noise.choice)
+          elif k.isTree("timeMs"): r.number(k, 1e-3, 1e9, result.noise.edgeMs)
+          elif k.isTree("radius"): r.number(k, 1e-6, 1e12, result.noise.radius)
+          elif k.isTree("steps"): r.integer(k, 0, MaxStations, result.noise.steps)
+          elif k.isTree("allLines"): r.flag(k, result.noise.allLines)
+          else: r.unknown(k, "noise")
       of "join": r.join(c, result.join)
       of "headers":
         for k in c.kids:

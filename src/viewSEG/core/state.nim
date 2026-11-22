@@ -6437,6 +6437,35 @@ func qcRelations(state: AppState; domain: RelationDomain): (ref SurveyGeometry, 
     (state.spreads.relations, "the template generated")
   else: (nil, "")
 
+proc breakKeyOf(state: AppState; k: int): (bool, BreakKey, int) =
+  ## What the first-break overlay of `panels[k]` is of, when it is on and the
+  ## panel shows a record: its key, and the session's index.
+  result[2] = -1
+  template p: untyped = state.panels[k]
+  if p.shows != psTraces or p.layers.len == 0 or not p.layers[0].display.firstBreaks: return
+  let src = p.layers[0].source
+  if src.kind != lsRecord: return
+  let i = state.findSession(src.file)
+  if i < 0 or src.gather notin 0 ..< state.sessions[i].gathers.len: return
+  let s = state.sessions[i]
+  var off: seq[uint8]
+  for c in 0 .. 255:
+    if uint8(c) in p.layers[0].filter.components: off.add uint8(c)
+  result = (true, (src.file, src.gather, s.keysRevision,
+    state.editsAt(s.path).listIn(teKilled, s.gathers[src.gather].traces), off), i)
+
+proc breakKeyFor(state: AppState; i, gather: int): BreakKey =
+  ## The key of the first breaks of record `gather` of session `i`: that of a
+  ## panel showing it with the overlay on (so the noisy-trace test and the
+  ## overlay share one result), else its file's keys with the traces killed in it
+  ## and no component switched off.
+  for k in 0 ..< state.panels.len:
+    let (on, key, j) = state.breakKeyOf(k)
+    if on and j == i and key.gather == gather: return key
+  let s = state.sessions[i]
+  (s.id, gather, s.keysRevision, state.editsAt(s.path).listIn(teKilled, s.gathers[gather].traces),
+    newSeq[uint8]())
+
 proc followRecordQc(state: var AppState) =
   ## Reads the record shown on a job for the map's filters when one of
   ## `TraceFilters` is on, or the template box (which draws the relation
@@ -6466,9 +6495,18 @@ proc followRecordQc(state: var AppState) =
   for i in 0 ..< tr.len: gatherTraces[i] = tr.a + i
   let own = ownOfTraces(state.editsAt(s.path), gatherTraces)
   let reversed = reversedOf(state.editsAt(s.path), gatherTraces)
+  var work = NoiseWork(on: samples and filters * NoiseFilters != {})
+  var share = 0
+  if work.on:
+    work.settings = state.settings.noise.bounded
+    work.key = state.breakKeyFor(i, g.gather)
+    for b in state.breaks:
+      if b.key == work.key:
+        if b.state == bkDone: (work.shared, share) = (b, 2)
+        elif b.state == bkComputing: share = 1
   let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
     domain, state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
-    ownKeyOf(state.editsAt(s.path), gatherTraces))
+    ownKeyOf(state.editsAt(s.path), gatherTraces), work.settings, work.key, share)
   if key == q.key: return
   if q.job != NoJob:
     discard state.jobs.cancel(q.job)
@@ -6476,13 +6514,35 @@ proc followRecordQc(state: var AppState) =
   q.key = key
   for m in TraceFilters: q.hits[m] = FilterHits(state: fsComputing)
   (q.record, q.byPlace) = (-1'i64, false)
+  q.noise = NoiseSummary()
+  q.picks = work.on and share == 0
+  q.pickKey = work.key
+  q.job = NoJob
   inc q.revision
+  if share == 1: return # the overlay's job is finding the first breaks: this one follows it
   q.job = state.jobs.submit(JobSpec(title: "Check the record shown for the map's filters",
     lane: jlBackground, auto: true, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
     g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
     state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
-    own, reversed, state.inbox.poster))
+    own, reversed, work, state.inbox.poster))
   if not rel.isNil: state.qcHeld.add (q.job, rel)
+
+proc keepBreaks(state: var AppState; found: sink FirstBreaks) =
+  ## The first breaks a record's check found for itself (`core/recordqc`): kept
+  ## for the overlay, which then does not look for them. A result of the same key
+  ## that is not done (a job started at the same time) is given up for it.
+  for b in state.breaks.mitems:
+    if b.key == found.key:
+      if b.state == bkDone: return
+      if b.job != NoJob:
+        discard state.jobs.cancel(b.job)
+        state.breaksReplaced.add b.job
+      let rev = b.revision + 1
+      b = move found
+      (b.job, b.revision) = (NoJob, rev)
+      return
+  found.revision = 1
+  state.breaks.add found
 
 proc takeRecordQc(state: var AppState; m: sink Msg) =
   ## What the filters' job found in the record it read, while that record,
@@ -6492,7 +6552,12 @@ proc takeRecordQc(state: var AppState; m: sink Msg) =
       m.qcKeys == q.key.keys:
     for f in TraceFilters: q.hits[f] = move m.qcHits[f]
     (q.record, q.byPlace) = (m.qcRecord, m.qcByPlace)
+    q.noise = move m.qcNoise
+    q.picks = false
     inc q.revision
+    if m.qcPicked:
+      state.keepBreaks(move m.qcBreaks)
+      q.key.share = 2 # the result it posted is the shared one now: no second job for it
 
 func filterHits*(state: AppState): array[MapFilter, FilterHits] =
   ## What each filter the settings show marks now (the others `fsOff`): in
@@ -6541,23 +6606,6 @@ func filterHits*(state: AppState): array[MapFilter, FilterHits] =
     if sp.job == NoJob:
       for d in sp.differing: result[mfSpreadDiffers].sources.add d.source
 
-proc breakKeyOf(state: AppState; k: int): (bool, BreakKey, int) =
-  ## What the first-break overlay of `panels[k]` is of, when it is on and the
-  ## panel shows a record: its key, and the session's index.
-  result[2] = -1
-  template p: untyped = state.panels[k]
-  if p.shows != psTraces or p.layers.len == 0 or not p.layers[0].display.firstBreaks: return
-  let src = p.layers[0].source
-  if src.kind != lsRecord: return
-  let i = state.findSession(src.file)
-  if i < 0 or src.gather notin 0 ..< state.sessions[i].gathers.len: return
-  let s = state.sessions[i]
-  var off: seq[uint8]
-  for c in 0 .. 255:
-    if uint8(c) in p.layers[0].filter.components: off.add uint8(c)
-  result = (true, (src.file, src.gather, s.keysRevision,
-    state.editsAt(s.path).listIn(teKilled, s.gathers[src.gather].traces), off), i)
-
 proc followFirstBreaks(state: var AppState) =
   ## The first-break overlay's jobs follow what the panels show: a record a
   ## panel with the overlay on shows, as its file's keys and killed traces
@@ -6594,6 +6642,9 @@ proc followFirstBreaks(state: var AppState) =
   for (key, i) in wanted:
     var have = false
     for b in state.breaks: have = have or b.key == key
+    # the record's check is finding them itself (`RecordQc.picks`): its answer is kept
+    have = have or (state.recordQc.job != NoJob and state.recordQc.picks and
+      state.recordQc.pickKey == key)
     if not have:
       let s = state.sessions[i]
       var b = FirstBreaks(key: key, state: bkComputing, first: s.gathers[key.gather].traces.a)

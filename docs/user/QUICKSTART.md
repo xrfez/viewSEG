@@ -680,13 +680,36 @@ a folder listed again is not read again (what was found is kept with the index c
 
 Under **Filters: the record shown**, tick what to mark on the map in the record shown, each
 in its own colour, with its count beside it: traces **dead** in the headers, **not
-decodable**, **killed**; **noisy**, **clipped**, spiky, constant, weak, DC offset, all zero,
-not a number (processSEG's amplitude checks, default thresholds); stations **missing from
+decodable**, **killed**; **noisy**, **louder than its neighbours**, weak and **not judged
+for noise** (below), **clipped**, spiky, constant, DC offset, all zero, not a number
+(processSEG's amplitude checks, default thresholds); stations **missing from
 the template** (planned in the X file, no trace in the record), traces **not in the
 template**, stations **recorded twice**; auxiliary traces, traces **without a position**,
 **reversed** ones; and the shots whose X record stands out from its template (**spread not
 the template**). Hover a filter for what it counts; **Select** selects its traces in the
 plot; point at a ringed receiver and its description says which filters mark it.
+
+**Noisy traces and the area left out.** The traces nearest the source are loud, and are not
+noisy, so the test leaves an **exclusion area** out of its judgement and judges the rest.
+With one of the noise filters ticked, the Layers list says under "Filters" which rule set
+the area ("Area set by the first-break model", "Area set by a radius from the offsets or
+coordinates in the trace headers", "Area set by 8 stations either side of the source on
+each line", or "No area: every trace judged (no offsets, coordinates or station numbers)")
+and how many traces were **not judged**: inside the area, with the sensor or station
+unknown (a trace that was not judged is never shown as good), or of a node with a
+component missing. **Louder than its neighbours** is its own finding, a station far above
+those either side of it on its line; **noisy** and **weak** are judged against the traces
+outside the area. In a **receiver gather** the area holds the shots too close to the
+receiver. The Seismic window draws a quiet grey band behind the traces not judged while
+one of these filters is ticked. **Tools > Settings...** chooses how the area is set:
+**Automatic** (the first-break model, else a radius from the offsets or the headers'
+coordinates, else a number of stations, else every trace judged), **A fixed time** (on the
+first-break model: the window says when the record has none), **A radius** (in the
+offsets' unit) or **A number of stations** (8 by default; each receiver line is counted on
+its own, so the count never runs onto another line), with a tick for counting on every
+line and not only the lines the shot reaches. A number you type acts as you type it. Whatever
+you choose, the components of unrotated nodes are never compared across nodes: the
+hydrophone is judged on its own, and a node on the energy of all its motion traces.
 
 ![Land sample, field record 3: the template box of X record 3 (96 receivers planned), filters on](../images/land-map.png)
 

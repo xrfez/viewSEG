@@ -7,9 +7,18 @@
 ##   thresholds (`AmplitudeParams()`): each seismic trace's statistics
 ##   (`traceAmplitudeInto`, a chunk of traces at a time, so a record of any
 ##   size is read in bounded memory) after a reversed trace is multiplied by
-##   -1 and that trace's own filter, then the
-##   record's (`recordAmplitude`, over its seismic traces: weak and noisy
-##   against their median).
+##   -1 and that trace's own filter, then the record's noisy-trace test
+##   (processSEG's `qc/exclusion`, `noiseQc`, with the area the user chose,
+##   `core/noisearea`): the traces near the source (or, in a receiver
+##   gather, the shots near the receiver) are left out of the judgement, the
+##   noisy and weak ones are found against those outside the area, and
+##   the traces louder than their neighbours on the line are their own
+##   finding (`mfLouder`). The traces not judged are `mfNotJudged`, and the
+##   result says which rule set the area (`NoiseSummary`). The test needs the
+##   record's first breaks and their model: the first-break overlay's job
+##   (`core/firstbreakjobs`) finds them, and this job takes them from it
+##   (`NoiseWork.shared`) or, when none is there, finds them itself and
+##   posts them for the overlay, so a record is picked once.
 ## - **Against the template** (the relation records of the record's domain:
 ##   a shot's X record, found as processSEG's `recordCompleteness` finds it,
 ##   or a receiver gather's O record), the stations planned that the record
@@ -37,8 +46,9 @@ import std/[algorithm, math, sets, tables]
 import parseSEG
 import processSEG/core/[rows, types, workspace]
 import processSEG/pipeline
-import processSEG/qc/[amplitude, record]
-import components, filesystem, inbox, jobs, mapkinds, processing, session, threads
+import processSEG/qc/[amplitude, exclusion, record]
+import components, filesystem, firstbreakjobs, firstbreaks, inbox, jobs, mapkinds, noisearea,
+  processing, session, threads
 
 export mapkinds
 
@@ -55,13 +65,20 @@ type
     job*: JobId = NoJob                 ## the job reading it; `NoJob` for none
     key*: tuple[file: SessionId; gather, keys: int; relations: pointer; domain: RelationDomain;
         recordMatch: RecordMatch; traceMatch: TraceMatch; placed: Placed; samples: bool;
-        own: string]
-      ## what the job, or `hits`, were made from
+        own: string; noise: NoiseSettings; breaks: BreakKey; share: int]
+      ## what the job, or `hits`, were made from (`noise`, `breaks` and `share` only when the
+      ## noisy-trace test runs: `share` 0 finds the first breaks itself, 1 waits for the
+      ## overlay's job to end, 2 takes the overlay's result)
     hits*: array[MapFilter, FilterHits] ## of the filters in `TraceFilters`
     record*: int64 = -1
       ## the relation record (X: a shot's; O: a receiver gather's) the job
       ## checked the record against; -1 for none, or while it runs
     byPlace*: bool ## found with the station at the record's place (`Placed`)
+    noise*: NoiseSummary ## what the noisy-trace test found in the record (`ready` once it has)
+    picks*: bool
+      ## the job finds the record's first breaks itself, and posts them (`pickKey`): the
+      ## overlay waits for them instead of starting a second job
+    pickKey*: BreakKey
     revision*: int ## bumped when `hits` change
     replaced*: seq[JobId] ## jobs given up for a newer record: they end quietly
 
@@ -69,8 +86,17 @@ const
   AmplitudeFilters: array[AmplitudeFlag, MapFilter] = [mfNotANumber, mfAllZero,
     mfConstant, mfClipped, mfSpiky, mfDcOffset, mfWeak, mfNoisy]
   SampleFilters* = {mfUndecodable, mfNoisy, mfClipped, mfSpiky, mfConstant, mfWeak,
-    mfDcOffset, mfAllZero, mfNotANumber}
+    mfDcOffset, mfAllZero, mfNotANumber, mfLouder, mfNotJudged}
     ## the filters of `TraceFilters` that read the record's samples
+
+type NoiseWork* = object
+  ## What the noisy-trace test of a record's job is given.
+  on*: bool      ## run it (a filter of `NoiseFilters` is on)
+  settings*: NoiseSettings
+  key*: BreakKey ## the first breaks it needs: the record, its keys, its killed traces
+  shared*: FirstBreaks
+    ## the record's first breaks when they exist (`bkDone`): used, not found again; else
+    ## the job finds them and posts them
 
 func hasStation(line, point: float64): bool {.inline.} =
   # As processSEG's completeness: both zero is a header left empty.
@@ -280,10 +306,68 @@ proc applyOwnQc(samples: var Tensor[float32]; f: SeismicFile; part: Slice[int];
         ws.reserve(plan)
         plan.apply(b, initChunkMeta(rows, (if dt > 0: dt else: 1.0), 0, skip), ws)
 
+proc noiseOfRecord(f: SeismicFile; traces: Slice[int]; amps: var seq[TraceAmplitude];
+    unread: openArray[int]; br: FirstBreaks; settings: NoiseSettings): NoiseSummary =
+  ## The noisy-trace test of the record `traces` of `f`, on its traces'
+  ## statistics `amps` (the rows `unread` could not be read), its first breaks
+  ## `br` (none when they failed) and the area `settings` choose. Sets the noisy
+  ## and weak flags in `amps`. Raises `ValueError` for what the library refuses.
+  let n = traces.len
+  var dt = 1.0
+  for t in traces:
+    let k = f.index.keys[t]
+    if k.isSeismic and k.intervalUs > 0 and k.intervalUs < Inf:
+      dt = k.intervalUs / 1000
+      break
+  let meta = initChunkMeta(f.rowsOf(traces), dt, 0, unread)
+  var rotated = newSeq[bool](n)
+  var any = false
+  for i in 0 ..< n:
+    if f.index.keys[traces.a + i].isSeismic:
+      try:
+        let o = f.traceOrientation(traces.a + i)
+        if o.isSome and o.get.rotationApplied != 0:
+          rotated[i] = true
+          any = true
+      except CatchableError:
+        discard # no orientation to read: not rotated
+  let domain = gatherDomainOf(meta)
+  var roles = newSeq[TraceRole](n)
+  meta.traceRolesInto(domain, (if any: rotated else: @[]), roles)
+  let origin = case br.source
+    of bsSurvey: ooSurvey
+    of bsFile: ooHeaders
+    of bsNone: ooUnknown
+  let params = settings.paramsOf(origin)
+  var ws = initWorkspace()
+  ws.reserve(noiseWorkspace(n))
+  var res: NoiseResult
+  let picks = if br.state == bkDone: br.picks else: @[]
+  if picks.len == n and br.hasFit:
+    noiseQc(meta, amps, picks, br.fit, roles, AmplitudeParams(), params, domain, res, ws)
+  else:
+    noiseQc(meta, amps, picks, roles, AmplitudeParams(), params, domain, res, ws)
+  result = NoiseSummary(ready: true, first: traces.a, asked: settings, domain: domain,
+    rule: res.rule, reasons: res.reasons, origin: origin, edgeMs: res.edgeMs,
+    radius: res.radius, steps: res.steps, lines: res.lines, linesReached: res.linesReached,
+    inside: res.inside, state: res.state, louder: res.louder)
+  for i in 0 ..< n:
+    if f.index.keys[traces.a + i].isSeismic:
+      case res.state[i]
+      of nsJudged: inc result.judged
+      of nsInArea: inc result.inArea
+      of nsUngrouped: inc result.unknown
+      of nsIncompleteNode: inc result.incomplete
+      of nsUnusable: inc result.unusable
+      if res.louder[i]: inc result.louderCount
+      if afNoisy in amps[i].flags: inc result.noisy
+      if afWeak in amps[i].flags: inc result.weak
+
 proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base, gather: int;
     traces: Slice[int]; domain: RelationDomain; relations: ptr SurveyGeometry;
     against: string; recordMatch: RecordMatch; traceMatch: TraceMatch; placed: Placed;
-    samples: bool; own: seq[FilterEntry]; reversed: seq[int]; to: Poster): JobWork =
+    samples: bool; own: seq[FilterEntry]; reversed: seq[int]; noise: NoiseWork;
+    to: Poster): JobWork =
   ## The work of a job that reads gather `gather` (`traces`) of open file
   ## `session` (`file`, at `path`; its trace 0 is survey-wide `base`) and
   ## posts what the filters in `TraceFilters` find in it (`mkRecordQc`):
@@ -296,14 +380,20 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
   ## from the keys alone: the filters that need the samples (not decodable,
   ## the amplitude flags) are said not checked. `own` is each trace's own
   ## filter; `reversed` the traces multiplied by -1 first, both before the
-  ## amplitude flags. Submitted with the file in
-  ## `reads`; `relations` is read in place, never copied.
+  ## amplitude flags. With `noise.on` it also runs the noisy-trace test
+  ## (`noise.settings`), on the first breaks `noise.shared` holds or, when it
+  ## holds none, on those it finds itself and posts with the result. Submitted
+  ## with the file in `reads`; `relations` is read in place, never copied.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var hits: array[MapFilter, FilterHits]
     for m in TraceFilters: hits[m].state = fsDone
     var revision = 0
     var record = -1'i64
     var byPlace = false
+    var summary = NoiseSummary()
+    var found = FirstBreaks()
+    var picked = false
+    var noiseError = ""
     {.cast(gcsafe).}:
       template f: untyped = file[]
       revision = f.keysRevision
@@ -312,6 +402,20 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       var ws = initWorkspace()
       let cols = max(1, f.maxSamples(traces))
       ws.reserve(traceAmplitudeWorkspace(cols))
+      let wantNoise = samples and noise.on
+      var br = FirstBreaks()
+      if wantNoise:
+        if noise.shared.state == bkDone: br = noise.shared
+        else:
+          ctx.setPhase "picking the first breaks"
+          br = breaksOfRecord(file, path, traces, noise.key.killed,
+            proc (done, total: int): bool = ctx.progress(done, 2 * total), noise.key.off)
+          br.key = noise.key
+          found = br
+          picked = true
+      let span = if picked: 2 * n else: n
+      let spent = if picked: n else: 0
+      var unreadRows: seq[int] # rows of the record whose samples could not be read
       ctx.setPhase "reading the record"
       discard f.cutShort # parseSEG's guard: stale cached bytes are not read past a cut
       var first = if samples: traces.a else: traces.b + 1
@@ -335,12 +439,13 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
             if d.loc.trace == part.a + r and d.code in {dcTruncated, dcIo}: unread = true
           if not unread: notDecoded.add r
         failed.sort()
+        for r in failed: unreadRows.add part.a - traces.a + r
         for r in notDecoded: hits[mfUndecodable].traces.add base + part.a + r
         let dt = f.index.keys[part.a].intervalUs / 1000
         let meta = initChunkMeta(f.rowsOf(part), (if dt > 0: dt else: 1.0), 0, failed)
         traceAmplitudeInto(samples, meta, AmplitudeParams(), amps.toOpenArray(part.a - traces.a,
           part.b - traces.a), ws)
-        if not ctx.progress(part.b - traces.a + 1, n):
+        if not ctx.progress(spent + part.b - traces.a + 1, span):
           raise newException(JobCancelledError, "cancelled")
         first = part.b + 1
       # The record's statistics over its seismic traces.
@@ -351,16 +456,30 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
         else:
           seismic.add i
           if k.status == tsDead: hits[mfDead].traces.add base + traces.a + i
-      var stats = newSeq[TraceAmplitude](seismic.len)
-      for j, i in seismic: stats[j] = amps[i]
+      if wantNoise:
+        ctx.setPhase "judging the noisy traces"
+        try:
+          summary = noiseOfRecord(f, traces, amps, unreadRows, br, noise.settings)
+        except ValueError as e:
+          noiseError = e.msg
       if samples:
-        ws.reserve(recordAmplitudeWorkspace(stats.len))
-        discard recordAmplitude(stats, AmplitudeParams(), ws)
-        for j, i in seismic:
-          for flag in stats[j].flags: hits[AmplitudeFilters[flag]].traces.add base + traces.a + i
+        for i in seismic:
+          for flag in amps[i].flags:
+            if wantNoise or flag notin {afNoisy, afWeak}:
+              hits[AmplitudeFilters[flag]].traces.add base + traces.a + i
+        if summary.ready:
+          for i in seismic:
+            if summary.louder[i]: hits[mfLouder].traces.add base + traces.a + i
+            if summary.state[i] in {nsInArea, nsUngrouped, nsIncompleteNode}:
+              hits[mfNotJudged].traces.add base + traces.a + i
       for m in TraceFilters - {mfMissing, mfUnlisted, mfDuplicate}:
         hits[m].count = hits[m].traces.len
         hits[m].note = "traces"
+      if noiseError.len > 0:
+        for m in NoiseFilters: (hits[m].state, hits[m].note) = (fsNotChecked, noiseError)
+      if summary.ready:
+        hits[mfNotJudged].note = "traces not judged for noise: " & summary.notJudgedWords
+        hits[mfLouder].note = "traces outside the area louder than those beside them"
       if not samples:
         for m in SampleFilters:
           (hits[m].state, hits[m].note) = (fsNotChecked, "the samples were not read")
@@ -379,4 +498,5 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
     discard ctx.progress(1, 1)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkRecordQc, qcSession: session, qcGather: gather,
-      qcKeys: revision, qcHits: move hits, qcRecord: record, qcByPlace: byPlace)
+      qcKeys: revision, qcHits: move hits, qcRecord: record, qcByPlace: byPlace,
+      qcNoise: move summary, qcBreaks: move found, qcPicked: picked)

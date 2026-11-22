@@ -87,6 +87,10 @@ type
     mfReversed = "reversed"                 ## traces whose polarity the user reversed
     mfSpreadDiffers = "spread not the template"
       ## shots whose listed receivers differ from those the template plans
+    mfLouder = "louder than its neighbours"
+      ## traces outside the exclusion area far above those either side of them on their line
+    mfNotJudged = "not judged for noise"
+      ## traces inside the exclusion area, or whose sensor or station is unknown
 
   FlagFamily* = enum
     ## What kind of finding a filter's mark says, in its colour.
@@ -112,6 +116,8 @@ type
     syBar = "a bar"
     syUpright = "an upright bar"
     syRing = "a ring"
+    syDot = "a dot"
+    syDash = "a slash"
 
   FilterMark* = tuple[family: FlagFamily; symbol: FlagSymbol]
     ## how a filter's points are marked on the map: its kind's colour and
@@ -142,15 +148,19 @@ const
     (ffAmplitude, syUpright), (ffAmplitude, syRing), (ffAmplitude, syCross),
     (ffAmplitude, syPlus), (ffFailed, syRing), (ffFailed, syCross), (ffSpread, syNone),
     (ffSpread, syPlus), (ffSpread, syRing), (ffSpread, syBar), (ffSpread, syUpright),
-    (ffEdited, syNone), (ffSpread, syCross)]
+    (ffEdited, syNone), (ffSpread, syCross), (ffAmplitude, syDot), (ffAmplitude, syDash)]
     ## each filter's mark, in `MapFilter`'s order: no two alike, and the
     ## filters most used plain outlines (dead a square, noisy a circle,
     ## missing from the template a triangle, reversed a diamond; killed an X
     ## in a diamond, over its station); auxiliary traces and those without a
     ## position are counted, not marked
   TraceFilters* = {mfDead, mfUndecodable, mfNoisy, mfClipped, mfSpiky, mfConstant, mfWeak,
-    mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted, mfDuplicate, mfAuxiliary}
+    mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted, mfDuplicate, mfAuxiliary,
+    mfLouder, mfNotJudged}
     ## the filters found by reading the record shown on a job (`core/recordqc`)
+  NoiseFilters* = {mfNoisy, mfWeak, mfLouder, mfNotJudged}
+    ## those that come from the noisy-trace test (`core/noisearea`): they run it, and the
+    ## Seismic window marks the exclusion area while one is on
   MaxTemplateLines* = 1000 ## a patch's lines, at most
   MaxTemplateChannels* = 100_000 ## a patch's stations on a line, at most
 

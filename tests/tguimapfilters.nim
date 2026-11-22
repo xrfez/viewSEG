@@ -88,7 +88,8 @@ proc runMain() =
       f.click(f.markOf("map.layers").centre), proc (f: FrameInfo): bool =
       result = wait > 3 and f.markOf("map.filter " & $mfDead).size.x > 0
       if result: f.shot("map-filters-opened.png"))
-    for m in [mfDead, mfNoisy, mfMissing]: step("ticked " & $m, filterTick(m), ticked(m))
+    # (noisy last: its result puts a line of words above the list, moving every row below it)
+    for m in [mfDead, mfMissing, mfNoisy]: step("ticked " & $m, filterTick(m), ticked(m))
     step("counted", noop, proc (f: FrameInfo): bool =
       result = f.core.recordQc.job == NoJob and f.core.recordQc.hits[mfDead].state == fsDone and
         wait > 4

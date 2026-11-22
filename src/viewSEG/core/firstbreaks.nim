@@ -19,6 +19,7 @@
 
 import std/[math, strutils]
 import parseSEG
+import processSEG/qc/[firstbreak, shotfit]
 import components, jobs, session
 
 type
@@ -60,6 +61,11 @@ type
       ## hydrophone traces", "the components shown"); "" for all
     thresholdMs*: float64 ## the fit's `|localMs|` above which a trace is flagged
     why*: string ## state `bkFailed`: the reason in words
+    picks*: seq[FirstBreakPick]
+      ## the picker's result per trace of the record, as picked: the record's noisy-trace
+      ## test (`core/recordqc`) uses it, so a record is picked once for both
+    fit*: ShotFit ## the model's fit to the confident picks, shared with that test
+    hasFit*: bool ## `fit` was made (the traces have offsets)
     revision*: int ## bumped when the lists change
 
 const

@@ -60,7 +60,8 @@ import utils/[fixtures, waiting]
 # at the quit (`lastProject`) is the agent's for the session, and its
 # `close project` takes it back.
 const Reached = {
-  "theme": "theme", "units": "", "window.x": "", "window.y": "", "window.width": "",
+  "theme": "theme", "units": "", "noise.choice": "", "noise.edgeMs": "", "noise.radius": "",
+  "noise.steps": "", "noise.allLines": "", "window.x": "", "window.y": "", "window.width": "",
   "window.height": "",
   "window.maximized": "", "recentFiles": "open", "recentFolders": "browse",
   "recentProjects": "new project", "lastProject": "", "reopenProject": "",

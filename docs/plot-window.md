@@ -1284,7 +1284,9 @@ under the pointer then, as desktop programs do.
   noisy as well, clipped"), under "Filters: the record shown" in the Layers list, each a
   tick with its count and its mark, none on by default: traces dead in the headers, not
   decodable, killed; the amplitude flags of processSEG's `qc/amplitude` with its default
-  thresholds (noisy, clipped, spiky, constant, weak, DC offset, all zero, not a number);
+  thresholds (clipped, spiky, constant, DC offset, all zero, not a number) and, for **noisy**,
+  **weak**, **louder than its neighbours** and **not judged for noise**, processSEG's
+  `qc/exclusion` (`noiseQc`; see **Noisy traces** below);
   missing from the template (the stations the X record plans that the record has no trace
   of: `recordCompleteness`'s `missingStations`), not in the template (its traces at
   stations the X record does not list), recorded twice; auxiliary; without a position;
@@ -1324,7 +1326,28 @@ under the pointer then, as desktop programs do.
   took 335 ms a frame, optimised). In the Layers list each
   filter shows its mark as the map draws it, and its tooltip names the shape and the kind;
   Select selects its traces in the plot; the point under the pointer says which filters
-  mark it ("Marked: noisy"). The record is read on a background job when one of the filters that need it is
+  mark it ("Marked: noisy"). **Noisy traces** (the user: automatic with an override, a station
+  count that "should not jump to a new line in record", on receiver gathers too, never
+  across unrotated components): `core/recordqc` runs `noiseQc` on the record's traces
+  with the area `Settings.noise` (`core/noisearea`) chooses, on one pick and one
+  `fitShot` result that the first-break overlay shares (`FirstBreaks.picks`, `.fit`: the
+  job that gets there first posts them, the other takes them; a record is picked once,
+  off the UI thread). The area is the library's automatic chain (the refraction model,
+  else a radius from the offsets, the survey's or the headers', else a number of
+  stations, default 8, else none), or the user's fixed time, radius or station count
+  (Tools > Settings, saved in the settings file as `(noise ...)`; the experimental
+  first-break trend is not offered), counted on every line or only the lines the shot
+  reaches. Weak is judged everywhere against the traces outside the area; noisy only
+  outside it; **louder than its neighbours** is its own filter (a station against the
+  median of those beside it on its line); **not judged for noise** counts the traces
+  inside the area and those with the sensor or station unknown (`NoiseSummary`,
+  `RecordQc.noise`: said in the Layers list as `areaWords`, `notesWords`,
+  `notJudgedWords`, and in the agent's `state` `noise`). The Seismic window draws the
+  traces inside the area as a quiet grey band behind them (`view/areabands`, "plot.noise
+  area N"), following the plot's order, while a noise filter is on. Unrotated node
+  geophones are never compared across nodes: the library judges a node on the summed energy of
+  its motion traces and the hydrophone as a group of its own, and the viewer has no
+  control for it. The record is read on a background job when one of the filters that need it is
   on and the record shown changes (a chunk of 512 traces at a time); the rest come from the
   state at once. For a file of receiver gathers the template is the O record of the
   receiver, and the filters mark the gather's sources. A layer's points get smaller as they crowd on the screen (from 5

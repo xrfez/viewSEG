@@ -12,8 +12,8 @@
 import std/[locks, times]
 import parseSEG
 import analysis, compare, edits, filelist, filememory, firstbreaks, identity, join, jobs, layouts,
-  log, mapkinds, nif, panels, project, references, session, shotfiles, sigtypes, spectra, survey,
-  tiles, vendormaps
+  log, mapkinds, nif, noisearea, panels, project, references, session, shotfiles, sigtypes,
+  spectra, survey, tiles, vendormaps
 
 type
   MsgKind* = enum
@@ -220,6 +220,11 @@ type
         ## the relation record it was checked against; -1 for none
       qcByPlace*: bool
         ## that record found with the station at the record's place
+      qcNoise*: NoiseSummary
+        ## what the noisy-trace test found (not `ready` when it did not run)
+      qcBreaks*: FirstBreaks
+        ## the record's first breaks, when the job found them itself (`qcPicked`)
+      qcPicked*: bool
     of mkFirstBreaks:
       breaks*: FirstBreaks ## moved, never shared
     of mkTraceRead:

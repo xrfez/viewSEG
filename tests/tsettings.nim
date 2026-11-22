@@ -46,6 +46,7 @@ proc everyFieldSet(): Settings =
     recentProjects: @["/jobs/Land 2026", r"D:\jobs\Line 7"],
     lastProject: "/jobs/Land 2026", reopenProject: false,
     scale: ScaleUnits(length: luCm, speed: true),
+    noise: NoiseSettings(choice: ncSteps, edgeMs: 140, radius: 640, steps: 3, allLines: true),
     calibrations: @[Calibration(monitor: "DELL U2720Q 3840x2160", ppi: 163.25),
       Calibration(monitor: "eDP-1 1920x1080", ppi: 141)],
     readout: @[rfAmplitude, rfTime, rfMidpointXY, rfStatus, rfRawAmplitude],
@@ -215,6 +216,8 @@ proc main*() =
     for name, a, b in fieldPairs(s.plot.display, d.plot.display):
       when name != "visible": # not kept: `remembered`
         doAssert a != b, "display field " & name & " is at its default"
+    for name, a, b in fieldPairs(s.noise, d.noise):
+      doAssert a != b, "noise field " & name & " is at its default"
     for name, a, b in fieldPairs(s.window, d.window):
       doAssert a != b, "window field " & name & " is at its default"
     for name, a, b in fieldPairs(s.headers, d.headers):

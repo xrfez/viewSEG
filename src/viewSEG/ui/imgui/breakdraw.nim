@@ -8,7 +8,7 @@
 
 import imguin/cimgui
 import ../../core/[firstbreaks, geometry, orientation, viewport]
-import ../../view/[breakbars, plotink, theme]
+import ../../view/[areabands, breakbars, plotink, theme]
 import marks, style
 
 const
@@ -92,3 +92,28 @@ proc drawBreakKey*(b: FirstBreaks; t: Theme; height: float32; marks: var Marks) 
     ImDrawList_AddText_Vec2(dl, ImVec2_c(x: x, y: y), u32(t.roles[rlTextDim]), note.cstring, nil)
     marks.markRect(KeyMarks[1], ImVec2_c(x: x, y: top.y),
       ImVec2_c(x: top.x + width, y: top.y + height))
+
+proc drawAreaBands*(bands: openArray[AreaBand]; ink: PlotInk; marks: var Marks) =
+  ## The exclusion area of the record's noisy-trace test in the current plot's
+  ## clip rectangle: a quiet grey band behind the traces not judged, with a thin
+  ## line at each end, so the data stays readable through it. Each is marked
+  ## ("plot.noise area N", N from 1) for tests.
+  if bands.len == 0: return
+  let dl = igGetWindowDrawList()
+  let u = max(1'f32, igGetFontSize() / 15)
+  ImPlot_PushPlotClipRect(0)
+  let fill = u32(Rgba(r: 128, g: 128, b: 128, a: 70))
+  let edge = u32(Rgba(r: 150, g: 150, b: 150, a: 210))
+  for i, bd in bands:
+    let (lo, hi) = (ImVec2_c(x: min(bd.a.x, bd.b.x), y: min(bd.a.y, bd.b.y)),
+      ImVec2_c(x: max(bd.a.x, bd.b.x), y: max(bd.a.y, bd.b.y)))
+    ImDrawList_AddRectFilled(dl, lo, hi, fill, 0, 0)
+    # the two ends across the traces' axis: the long sides of the band
+    if hi.x - lo.x >= hi.y - lo.y:
+      ImDrawList_AddLine(dl, ImVec2_c(x: lo.x, y: lo.y), ImVec2_c(x: lo.x, y: hi.y), edge, u)
+      ImDrawList_AddLine(dl, ImVec2_c(x: hi.x, y: lo.y), ImVec2_c(x: hi.x, y: hi.y), edge, u)
+    else:
+      ImDrawList_AddLine(dl, ImVec2_c(x: lo.x, y: lo.y), ImVec2_c(x: hi.x, y: lo.y), edge, u)
+      ImDrawList_AddLine(dl, ImVec2_c(x: lo.x, y: hi.y), ImVec2_c(x: hi.x, y: hi.y), edge, u)
+    marks.markRect("plot.noise area " & $(i + 1), lo, hi)
+  ImPlot_PopPlotClipRect()
