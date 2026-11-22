@@ -7,22 +7,20 @@
 ## file and is not a listed job: a preview is not something the Jobs window
 ## should queue.
 
-import std/locks
+import std/[locks, math]
 import ../../core/[references, threads]
 
 type
   GenAsk = object
     gen: int
     serial: int
-    law: ReferenceLaw
-    shape: TaperShape
-    f1Hz, f2Hz, durationMs, dtMs, taperStartMs, taperEndMs: float64
-    taperParam, amplitude, boostDb, phaseDeg: float64
+    g: GeneratedReference ## the settings, the name left empty
 
   GenReady = object
     samples: seq[float32]
     hz, db: seq[float64]
     problem: string
+    delay: float64
 
   PreviewBox = object
     lock: Lock
@@ -38,10 +36,7 @@ type
 var box: ptr PreviewBox
 
 proc toGenerated(a: GenAsk): GeneratedReference =
-  GeneratedReference(law: a.law, f1Hz: a.f1Hz, f2Hz: a.f2Hz, durationMs: a.durationMs,
-    dtMs: a.dtMs, taperStartMs: a.taperStartMs, taperEndMs: a.taperEndMs,
-    taperShape: a.shape, taperParam: a.taperParam, phaseDeg: a.phaseDeg,
-    amplitude: a.amplitude, boostDb: a.boostDb)
+  a.g
 
 proc takeAsk(p: ptr PreviewBox): GenAsk =
   withLock p.lock:
@@ -56,13 +51,14 @@ proc runPreview(p: ptr PreviewBox) {.thread.} =
   while true:
     let ask = p.takeAsk()
     if ask.gen == 0: break
-    var made = GenReady(samples: @[], hz: @[], db: @[])
+    var made = GenReady(samples: @[], hz: @[], db: @[], delay: NaN)
     try:
       let built = buildGeneratePreview(ask.toGenerated)
       made.samples = built.samples
       made.hz = built.hz
       made.db = built.db
       made.problem = built.problem
+      made.delay = built.delay
     except CatchableError as e:
       made.problem = e.msg
     clearCycleRoots()
@@ -93,19 +89,19 @@ proc askGeneratePreview*(gen: int; g: GeneratedReference) =
   ensureWorker()
   withLock box.lock:
     inc box.askSerial
-    box.ask = GenAsk(gen: gen, serial: box.askSerial, law: g.law, shape: g.taperShape,
-      f1Hz: g.f1Hz, f2Hz: g.f2Hz, durationMs: g.durationMs, dtMs: g.dtMs,
-      taperStartMs: g.taperStartMs, taperEndMs: g.taperEndMs, taperParam: g.taperParam,
-      amplitude: g.amplitude, boostDb: g.boostDb, phaseDeg: g.phaseDeg)
+    var copy = g
+    copy.name = ""
+    box.ask = GenAsk(gen: gen, serial: box.askSerial, g: copy)
     signal box.changed
 
 proc takeGeneratePreview*(): tuple[gen: int; samples: seq[float32]; hz, db: seq[float64];
-    problem, key: string; got: bool] =
+    problem, key: string; got: bool; delay: float64] =
   ## The newest preview the worker has finished and this thread has not taken,
   ## or `got` false. `key` is the settings it was computed for. UI thread.
   result.samples = @[]
   result.hz = @[]
   result.db = @[]
+  result.delay = NaN
   if box == nil: return
   withLock box.lock:
     if box.readySerial == 0 or box.readySerial == box.givenSerial: return
@@ -114,10 +110,11 @@ proc takeGeneratePreview*(): tuple[gen: int; samples: seq[float32]; hz, db: seq[
     result.hz = move box.ready.hz
     result.db = move box.ready.db
     result.problem = move box.ready.problem
+    result.delay = box.ready.delay
     result.key = box.readyKey
     result.got = true
     box.givenSerial = box.readySerial
-    box.ready = GenReady(samples: @[], hz: @[], db: @[])
+    box.ready = GenReady(samples: @[], hz: @[], db: @[], delay: NaN)
     box.readyKey = ""
 
 proc stopGeneratePreview*() =

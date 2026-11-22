@@ -508,7 +508,15 @@ type
         ## degrees). `dtMs` 0: the file on show. `name` "": one made from the
         ## parameters. `taperShape` left out: cosine squared. `taperParam`
         ## left out or null: the shape's default. `phaseDeg` left out: 0;
-        ## 180 degrees reverses the polarity. There is no separate polarity
+        ## 180 degrees reverses the polarity. There is no separate polarity.
+        ## `filter` left out: none (the sweep as it is). Else `kind`
+        ## "linear phase" (`taps`, `highCutHz`, `highSlopeDb`, `lowCutHz`,
+        ## `lowSlopeDb`) or "minimum phase" (`coefficients`, the filter's
+        ## taps; or `family` "Butterworth" or "Chebyshev" with `highOrder`,
+        ## `lowOrder`, the cutoffs and, for Chebyshev, `rippleDb`); a cutoff
+        ## of 0 is off. `shiftSamples`: the bulk delay to back out, in whole
+        ## samples, used when `shiftTyped` is true (else linear phase uses
+        ## (taps - 1) / 2, and a minimum-phase filter none). Nothing is read from a file's headers
     of ckPilotReference, ckPilotPreview:
       refPilot*: PilotRule
         ## ckPilotReference, ckPilotPreview: `aux` true: auxiliary trace `trace`

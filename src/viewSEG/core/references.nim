@@ -16,7 +16,8 @@ import parseSEG
 import processSEG/fft/spectrum
 import processSEG/vibroseis/[sweep, taper]
 import processSEG/core/[types, workspace]
-import cutfile, filesystem, nif, threads, wiggle
+import cutfile, filesystem, nif, reffilter, threads, wiggle
+export reffilter
 
 const
   ReferencesFolder* = "references"
@@ -67,6 +68,9 @@ type
         ## start phase in degrees; 0 starts at zero, and 180 reverses the polarity
       amplitude*: float64
       boostDb*: float64
+      filter*: RefFilter
+        ## the recording filter and shift the samples went through; an older archive
+        ## leaves it out and gets none
 
   ReferenceEntry* = object
     ## One reference, as the index holds it. `missing` is not written: it
@@ -122,6 +126,9 @@ type
       ## start phase in degrees (`SweepSpec.startPhaseDeg`); 180 reverses the polarity
     amplitude*: float64
     boostDb*: float64
+    filter*: RefFilter
+      ## the recording filter and its bulk delay, applied to the sweep (only here:
+      ## a reference stored from a record is never filtered); left out: none
 
   PilotRule* = object
     ## What a pilot taken from the record names: which trace of the record
@@ -360,7 +367,7 @@ func lengthRule*(refLen, traceLen: int): string =
 func defaultGenerateName*(g: GeneratedReference): string =
   ## "Linear 8-80 Hz 8 s", from the parameters.
   lawTitle(g.law) & " " & numberText(g.f1Hz) & "-" & numberText(g.f2Hz) & " Hz " &
-    numberText(g.durationMs / 1000) & " s"
+    numberText(g.durationMs / 1000) & " s" & filterNameSuffix(g.filter)
 
 func pilotWords*(aux: bool; trace: int): string =
   ## Which trace a pilot of the record takes, as the dialog says it.
@@ -482,7 +489,7 @@ func generateSettingsKey*(g: GeneratedReference): string =
   ## latest ask. The name is not part of it.
   $g.law & " " & $g.f1Hz & " " & $g.f2Hz & " " & $g.durationMs & " " & $g.dtMs & " " &
     $g.taperStartMs & " " & $g.taperEndMs & " " & $g.taperShape & " " & $g.taperParam &
-    " " & $g.amplitude & " " & $g.boostDb & " " & $g.phaseDeg
+    " " & $g.amplitude & " " & $g.boostDb & " " & $g.phaseDeg & " " & filterKey(g.filter)
 
 func sweepTooLong*(g: GeneratedReference): string =
   ## Why `g` is too long for processSEG, in plain words; "" when it is not.
@@ -693,8 +700,8 @@ proc generateProblem*(g: GeneratedReference): string =
   let tooLong = sweepTooLong(g)
   if tooLong.len > 0: return tooLong
   try:
-    discard sweepSpec(g)
-    ""
+    let spec = sweepSpec(g)
+    filterProblem(g.filter, g.dtMs, spec.sweepLen)
   except CatchableError as e:
     plainGenerateMessage(e.msg)
 
@@ -703,7 +710,7 @@ proc generateSamples*(g: GeneratedReference): seq[float32] {.gcsafe.} =
   ## library does (a frequency past the anti-alias limit, a length that is
   ## not a whole number of samples, tapers that overlap, a parameter or a
   ## phase it refuses). No file is read.
-  sweepSpec(g).sweepSamples(float32)
+  filteredSamples(sweepSpec(g).sweepSamples(float32), g.dtMs, g.filter)
 
 proc columnEnvelope*(values: openArray[float32]; x0, dx: float64; columns: int):
     tuple[xs, ys: seq[float64]] =
@@ -841,15 +848,19 @@ proc previewSpectrum*(samples: openArray[float32]; dtMs: float64):
     toDbInto(spec.amp, result.db)
 
 proc buildGeneratePreview*(g: GeneratedReference): tuple[samples: seq[float32];
-    hz, db: seq[float64]; problem: string] {.gcsafe.} =
-  ## The whole sweep `g` names and its amplitude spectrum in dB, or
-  ## processSEG's reason it cannot be made (then no samples).
+    hz, db: seq[float64]; problem: string; delay: float64] {.gcsafe.} =
+  ## The whole sweep `g` names (through its recording filter and shift) and its
+  ## amplitude spectrum in dB, or processSEG's reason it cannot be made (then no
+  ## samples). `delay` is the filter's bulk delay over the sweep's band in samples
+  ## (NaN: no filter), a suggestion for the dialog.
   result.samples = @[]
   result.hz = @[]
   result.db = @[]
+  result.delay = NaN
   result.problem = generateProblem(g)
   if result.problem.len > 0: return
   result.samples = generateSamples(g)
+  result.delay = suggestedDelay(g.filter, g.dtMs, g.f1Hz, g.f2Hz)
   let spec = previewSpectrum(result.samples, g.dtMs)
   result.hz = spec.hz
   result.db = spec.db
@@ -892,6 +903,25 @@ proc value(w: var NifWriter; tag: string; b: bool) =
   w.add b
   w.close
 
+proc writeFilter(w: var NifWriter; f: RefFilter) =
+  ## Only a filter that is on: an older program ignores the unknown `filter`.
+  if f.kind == rfNone: return
+  w.open "filter"
+  w.value("kind", $f.kind)
+  w.value("taps", f.taps)
+  w.value("highCutHz", f.highCutHz)
+  w.value("highSlopeDb", f.highSlopeDb)
+  w.value("lowCutHz", f.lowCutHz)
+  w.value("lowSlopeDb", f.lowSlopeDb)
+  if f.coefficients.len > 0: w.value("coefficients", coefficientsText(f.coefficients))
+  w.value("family", $f.family)
+  w.value("highOrder", f.highOrder)
+  w.value("lowOrder", f.lowOrder)
+  w.value("rippleDb", f.rippleDb)
+  w.value("shiftSamples", f.shiftSamples)
+  w.value("shiftTyped", f.shiftTyped)
+  w.close
+
 proc writeOrigin(w: var NifWriter; o: ReferenceOrigin) =
   w.open "source"
   w.value("generated", o.generated)
@@ -908,6 +938,7 @@ proc writeOrigin(w: var NifWriter; o: ReferenceOrigin) =
     w.value("phaseDeg", o.phaseDeg)
     w.value("amplitude", o.amplitude)
     w.value("boostDb", o.boostDb)
+    w.writeFilter o.filter
   elif o.pilot:
     w.value("pilot", true)
     w.value("pilotAux", o.pilotAux)
@@ -961,6 +992,44 @@ proc kidInt(n: NifNode): int =
 proc kidBool(n: NifNode): bool =
   n.kids.len >= 1 and n.kids[0].kind == nkIdent and n.kids[0].text == "true"
 
+proc readFilter(n: NifNode; problems: var seq[string]): RefFilter =
+  ## A filter an older archive does not have, or one this version cannot read,
+  ## is none.
+  for c in n.kids:
+    if c.kind != nkTree: continue
+    case c.tag
+    of "kind":
+      let s = kidString(c)
+      var found = false
+      for v in RefFilterKind:
+        if $v == s:
+          result.kind = v
+          found = true
+      if not found and s.len > 0:
+        problems.add "a recording filter \"" & s & "\" is not one this version makes: kept as none"
+    of "taps": result.taps = kidInt(c)
+    of "highCutHz": result.highCutHz = kidNumber(c)
+    of "highSlopeDb": result.highSlopeDb = kidNumber(c)
+    of "lowCutHz": result.lowCutHz = kidNumber(c)
+    of "lowSlopeDb": result.lowSlopeDb = kidNumber(c)
+    of "coefficients":
+      let t = parseCoefficients(kidString(c))
+      if t.problem.len == 0: result.coefficients = t.taps
+      else: problems.add "the recording filter's coefficients: " & t.problem
+    of "family":
+      let s = kidString(c)
+      for v in RefFilterFamily:
+        if $v == s: result.family = v
+    of "highOrder": result.highOrder = kidInt(c)
+    of "lowOrder": result.lowOrder = kidInt(c)
+    of "rippleDb": result.rippleDb = kidNumber(c)
+    of "shiftSamples": result.shiftSamples = kidInt(c)
+    of "shiftTyped": result.shiftTyped = kidBool(c)
+    else: discard
+  for x in [addr result.highCutHz, addr result.highSlopeDb, addr result.lowCutHz,
+      addr result.lowSlopeDb, addr result.rippleDb]:
+    if x[].isNaN: x[] = 0
+
 proc readOrigin(n: NifNode; problems: var seq[string]): ReferenceOrigin =
   var generated = false
   var law = rlLinear
@@ -971,6 +1040,7 @@ proc readOrigin(n: NifNode; problems: var seq[string]): ReferenceOrigin =
   var trace = 0
   var pilot, pilotAux = false
   var spanMs = NaN
+  var filter = RefFilter()
   var sawGenerated = false
   for c in n.kids:
     if c.kind != nkTree: continue
@@ -1017,12 +1087,13 @@ proc readOrigin(n: NifNode; problems: var seq[string]): ReferenceOrigin =
     of "pilot": pilot = kidBool(c)
     of "pilotAux": pilotAux = kidBool(c)
     of "spanMs": spanMs = kidNumber(c)
+    of "filter": filter = readFilter(c, problems)
     else: discard
   if not sawGenerated: generated = f1 == f1 # a frequency was given
   if generated:
     ReferenceOrigin(generated: true, law: law, f1Hz: f1, f2Hz: f2, durationMs: durationMs,
       dtMs: dt, taperStartMs: t0, taperEndMs: t1, taperShape: shape, taperParam: param,
-      phaseDeg: phase,
+      phaseDeg: phase, filter: filter,
       amplitude: (if amp == amp: amp else: 1.0), boostDb: (if boost == boost: boost else: 0.0))
   else:
     ReferenceOrigin(generated: false, fileName: fileName, record: record, trace: trace,

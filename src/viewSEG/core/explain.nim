@@ -856,6 +856,7 @@ func generateFacts*(g: GeneratedReference): ExplainFacts =
       " ms at the end (" & $g.taperShape & ")."
   if g.phaseDeg != 0: o.add "Start phase " & num(g.phaseDeg) & "°."
   if g.amplitude > 0 and g.amplitude != 1: o.add "Amplitude " & num(g.amplitude) & "."
+  if g.filter.filterOn: o.add filterWords(g.filter)
   ExplainFacts(live: true, subject: g.sweepWords, options: o.join(" "))
 
 func pilotFacts*(rule: PilotRule; record, note: string): ExplainFacts =
