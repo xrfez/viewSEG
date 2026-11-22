@@ -324,11 +324,13 @@ proc drawFieldTable(ui: var HeadersUi; id: string; whole: FieldTable; st: AppSta
   # The description is at most 18 em, and 40 % of the window, so
   # that the first values show beside it in a narrow window (a long one is
   # cut, and said whole when pointed at); it can be widened, until the
-  # window's width changes. (The columns' order changed: "v2", so a width
-  # Dear ImGui kept for the old order is not taken for another column.)
+  # window's width changes. (The table's name holds its number of columns: a
+  # record of more or fewer channel sets than the one before gets a table of
+  # its own, so that no order, width or hidden column Dear ImGui kept for the
+  # other count is taken for this one's; "v2": the columns' order changed.)
   let avail = igGetContentRegionAvail().x
   let describe = round(clamp(0.4 * avail, 8 * igGetFontSize(), 18 * igGetFontSize()))
-  if not igBeginTable((id & "##v2").cstring, cint(n), flags, ImVec2_c(x: 0, y: height), 0):
+  if not igBeginTable((id & "##v2." & $n).cstring, cint(n), flags, ImVec2_c(x: 0, y: height), 0):
     return
   igTableSetupScrollFreeze(1, 1)
   igTableSetupColumn(($hcDescription).cstring, ImGui_TableColumnFlags_NoHide.cint or
@@ -347,13 +349,20 @@ proc drawFieldTable(ui: var HeadersUi; id: string; whole: FieldTable; st: AppSta
   # The header row: Find in the description's place, the columns' names
   # (right-click one to show or hide columns).
   igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
+  # (each shown column named by its place, for tests: a column out of view is
+  # no cell, and its place is what the order is)
+  let placed = cast[ptr UncheckedArray[ImGuiTableColumn]](igGetCurrentTable().Columns.Data)
+  for c in 0 ..< n:
+    if (igTableGetColumnFlags(cint(c)) and ImGui_TableColumnFlags_IsEnabled.cint) != 0:
+      marks.markRect(id & " column " & $placed[c].DisplayOrder & " " &
+        $igTableGetColumnName_Int(cint(c)), ImVec2_c(x: 0, y: 0), ImVec2_c(x: 1, y: 1))
   for c in 0 ..< n:
     if igTableSetColumnIndex(cint(c)):
       if c == 0: ui.findCell(id, marks)
       else:
         fonts.withFont(frHeading, 0):
           igTableHeader(igTableGetColumnName_Int(cint(c)))
-  ui.syncColumns(id, values, st, output)
+  ui.syncColumns(id & "." & $n, values, st, output)
   let warning = vec4(t.roles[rlWarning])
   # The cells are no stops of Tab (it moves between the window's controls,
   # not through every value); the arrow keys reach them.
