@@ -17,8 +17,8 @@ type
     shortcut*: string   ## as shown ("F"); "" for none
 
 const
-  SelectTracesFirst* = "Select traces in the Seismic window first (or right-click one there)."
-    ## The toolbar's tooltip ends with this while no trace is selected, and
+  OpenFileFirst* = "Open a file first."
+    ## The toolbar's tooltip ends with this while no file is open, and
     ## Analysis > New plot says it then.
   PlotEntries* = [
     PlotEntry(fft: true, icon: IconFft, shortcut: "F",
@@ -55,8 +55,8 @@ func fftEntry*(): PlotEntry =
 
 func tip*(e: PlotEntry; enabled: bool): string =
   ## The toolbar tooltip: the name, what it shows, the shortcut ("Shortcut: F"),
-  ## and, when no trace is selected, what to do first. That last sentence
-  ## always ends the text, so the shortcut comes before it.
+  ## and, when no file is open, what to do first. That last sentence always ends
+  ## the text, so the shortcut comes before it.
   result = e.name & "\n" & e.sentence
   if e.shortcut.len > 0: result.add "\nShortcut: " & e.shortcut
-  if not enabled: result.add "\n" & SelectTracesFirst
+  if not enabled: result.add "\n" & OpenFileFirst

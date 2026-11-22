@@ -1294,7 +1294,7 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     marks.mark(name & ".warning")
   if w.goneNote.len > 0 and not refProblem: igTextWrapped("%s", w.goneNote.cstring)
   elif r.problem.len > 0 and not refProblem:
-    igTextWrapped("%s", ("Nothing to show: " & r.problem).cstring)
+    igTextWrapped("%s", (if r.awaiting: r.problem else: "Nothing to show: " & r.problem).cstring)
   elif folds:
     igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
     let head = if r.against.len > 0: r.against else: "How this was measured"

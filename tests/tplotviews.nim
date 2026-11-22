@@ -5,7 +5,7 @@
 ##
 ## Seen to fail: with the FFT row moved after Spectrogram, "FFT is first";
 ## with Spectrogram and Envelope given the same icon, "icons are distinct";
-## with the shortcut a bare "F", "shortcut before the select-first"; with
+## with the shortcut a bare "F", "shortcut before the open-a-file sentence"; with
 ## correlation put back on the swap arrows, "correlation compares"; with the
 ## vibrator left as a music note, "vibrator is a truck".
 
@@ -60,12 +60,13 @@ proc main*() =
   block tip:
     let off = PlotEntries[0].tip(false)
     doAssert off.startsWith("FFT\n")
-    doAssert SelectTracesFirst in off
-    doAssert SelectTracesFirst notin PlotEntries[0].tip(true)
-    # the select-first sentence ends the tip, and the shortcut comes before it
-    doAssert off.endsWith(SelectTracesFirst), off
-    let at = off.find(SelectTracesFirst)
-    doAssert off[0 ..< at].endsWith("\nShortcut: F\n"), "shortcut before the select-first: " & off
+    doAssert OpenFileFirst in off
+    doAssert OpenFileFirst notin PlotEntries[0].tip(true)
+    # the open-a-file sentence ends the tip, and the shortcut comes before it
+    doAssert off.endsWith(OpenFileFirst), off
+    let at = off.find(OpenFileFirst)
+    doAssert off[0 ..< at].endsWith("\nShortcut: F\n"),
+        "shortcut before the open-a-file sentence: " & off
     doAssert PlotEntries[0].tip(true).endsWith("\nShortcut: F"), "shortcut ends an enabled tip"
 
   echo "tplotviews: ok"

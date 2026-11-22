@@ -93,6 +93,9 @@ type
     trayMinimize*: bool ## Window > Minimize to the tray is checked
     trayProblem*: string ## why the tray icon cannot be shown; "" when it can
     trayAvailable*: bool ## the icon is in a tray that is seen (minimizing to it can work)
+    canPlot*: bool
+      ## the Seismic window shows a file: the plots (FFT, New plot) can be opened, with
+      ## or without a trace selected
     plotTraces*: int
       ## Analysis > New plot: the selected traces of the file shown; 0: none
       ## (its views are then offered on the trace under the pointer, from
@@ -428,12 +431,14 @@ proc drawEditMenu(input: MenuInput; res: var MenuResult) =
 
 proc drawNewPlot(input: MenuInput; res: var MenuResult) =
   ## Analysis > New plot: a window of the selected traces for each view.
-  let open = igBeginMenu((IconPulse & "  New plot").cstring, input.plotTraces > 0)
+  let open = igBeginMenu((IconPulse & "  New plot").cstring, input.canPlot)
   if marked != nil: marked[].mark("menu.window.newplot")
   tip(if input.plotTraces > 0: "A window of the " & $input.plotTraces & " selected traces: " &
         "a spectrogram, their envelope and instantaneous phase, the phase spectrum, a " &
         "cross-correlation against a pilot. It follows the Seismic window unless frozen"
-      else: SelectTracesFirst)
+      elif input.canPlot: "A window of the selected traces: it opens now and shows them " &
+        "once you click a trace in the Seismic window"
+      else: OpenFileFirst)
   if open:
     for e in PlotEntries:
       if not e.fft:

@@ -47,7 +47,8 @@ window (ticked while it is open) and **Close project** goes back to working with
 The toolbar under the menu bar repeats the menus' most used items, in groups set
 apart by a thin line: Open file, Open folder and Reopen with options; Undo and Redo
 (grey while there is nothing to undo or redo); a button for each plot of the selected
-traces, then the Reference archive; Jobs. Each has the menu item's name, and its
+traces (enabled whenever a file is shown: with no trace selected, a plot opens
+and says which trace to click), then the Reference archive; Jobs. Each has the menu item's name, and its
 shortcut, in its tooltip.
 
 The right end of the toolbar names the project that is open (its icon, then its name;

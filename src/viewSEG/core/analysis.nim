@@ -248,8 +248,11 @@ type
     gen*: uint64
     id*: int
     view*: AnalysisView
+    awaiting*: bool
+      ## the window shows no trace yet and `problem` says what to click: an empty
+      ## state, not a failure
     plots*: seq[AnalysisPlot]
-    image*: AnalysisImage           ## a spectrogram's; empty otherwise
+    image*: AnalysisImage ## a spectrogram's; empty otherwise
     table*: seq[seq[string]]
       ## a vibrator signature's summary per signal, the first row the
       ## columns' names; empty for none. The force columns stay in the
@@ -1211,6 +1214,23 @@ func viewName*(v: AnalysisView): string =
   of avVibrator: "Vibrator signature"
   of avFk: "f-k"
   of avOrientation: "Node orientation"
+
+func awaitingWords*(v: AnalysisView): string =
+  ## What an analysis window of view `v` says while it has no trace to show:
+  ## what to click in the Seismic window.
+  case v
+  of avSpectrogram: "Click a trace in the Seismic window to show its spectrogram."
+  of avEnvelope:
+    "Click a trace in the Seismic window to show its envelope and instantaneous phase."
+  of avPhase: "Click a trace in the Seismic window to show its phase spectrum."
+  of avCorrelation:
+    "Click a trace in the Seismic window to correlate it with the chosen reference."
+  of avVibrator:
+    "Click a trace of a vibrator record in the Seismic window to show its reference, " &
+      "ground force, mass and baseplate."
+  of avFk:
+    "Select at least " & $MinFkTraces & " traces in the Seismic window to show their f-k."
+  of avOrientation: "Open a record with traces to show the node's orientation."
 
 func ownLine*(w: AnalysisWindow): string =
   ## What the window says of its traces' own filters, in the place it names

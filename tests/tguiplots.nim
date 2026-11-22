@@ -21,9 +21,8 @@
 ## - an f-k of the record: its image's cursor, held by the keys, reads the
 ##   wavenumber (per trace), the frequency, dB and the apparent velocity;
 ## - seven more windows each open inside the main window;
-## - the toolbar's Spectrogram button is greyed with no trace selected (a
-##   click on it opens nothing) and, with two selected, opens the window the
-##   menu opens.
+## - the toolbar's Spectrogram button is enabled with no trace selected: a click
+##   opens a window that says what to click, which two selected traces then fill.
 ##
 ## - each Freeze pin toggles (the envelope and the vibrator signature): frozen
 ##   on, the window keeps its filters while the plot's change; off, it follows.
@@ -42,12 +41,13 @@
 ## the vibrator signature's table not drawn, "details on did not happen";
 ## with an f-k's velocity not read, "0.0 /trace · 125.2 Hz: -49.35 dB";
 ## with the toolbar's Spectrogram dispatch left out of the app, "the toolbar's
-## Spectrogram opens its window did not happen".
+## Spectrogram opens its window did not happen"; with no empty window opened, "a click on it
+## opens an empty window did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
 import std/[math, options, os, sets, strutils]
-import viewSEG/core/[geometry, state]
+import viewSEG/core/[analysis, geometry, state]
 import viewSEG/ui/imgui/app
 import viewSEG/remote/tools
 import utils/fixtures
@@ -357,27 +357,30 @@ proc main*() =
               r.pos.y + r.size.y <= room.pos.y + room.size.y,
               "new plot " & $w.id & " at " & $r & " is not inside the main window's " & $room)
 
-    # the toolbar's Spectrogram button, as Analysis > New plot > Spectrogram: greyed
-    # with no trace selected, and with two selected it opens their window
+    # the toolbar's Spectrogram button, as Analysis > New plot > Spectrogram: enabled
+    # with no trace selected, where it opens a window that says what to click; two
+    # traces clicked then fill that window without reopening it
     var plots = 0
     step("no trace selected", proc (f: FrameInfo) =
       f.apply(Command(kind: ckClearSelection)), after(2))
-    step("the greyed Spectrogram button", proc (f: FrameInfo) =
+    step("the Spectrogram button with no selection", proc (f: FrameInfo) =
       doAssert f.core.selection.selectedCount == 0
       plots = f.core.plots.len, after(1))
     click("tool." & avSpectrogram.viewName)
-    step("a click on it opens nothing", noop, proc (f: FrameInfo): bool =
-      doAssert f.core.plots.len == plots, "a greyed Spectrogram button opened a window"
-      true)
-    step("two selected for the toolbar", proc (f: FrameInfo) =
-      f.apply(Command(kind: ckSelect, traces: @[0, 1], mode: smReplace)),
-      proc (f: FrameInfo): bool = f.core.selection.selectedCount == 2)
-    click("tool." & avSpectrogram.viewName)
-    step("the toolbar's Spectrogram opens its window", noop, proc (f: FrameInfo): bool =
+    step("a click on it opens an empty window", noop, proc (f: FrameInfo): bool =
       result = f.core.plots.len == plots + 1
       if result:
         let w = f.core.plots[^1]
-        doAssert w.view == avSpectrogram and w.traces == @[0, 1], $w.view & " " & $w.traces)
+        doAssert w.view == avSpectrogram and w.traces.len == 0 and w.result.awaiting and
+          w.result.problem == awaitingWords(avSpectrogram), "the empty window: " & $w.traces)
+    step("two selected for the toolbar", proc (f: FrameInfo) =
+      f.apply(Command(kind: ckSelect, traces: @[0, 1], mode: smReplace)),
+      proc (f: FrameInfo): bool =
+        f.core.selection.selectedCount == 2 and f.core.plots[^1].traces == @[0, 1])
+    step("the empty window filled in", noop, proc (f: FrameInfo): bool =
+      let w = f.core.plots[^1]
+      doAssert w.view == avSpectrogram and plots + 1 == f.core.plots.len, "no new window"
+      not w.result.awaiting)
 
     var at = 0
     var started = false

@@ -54,7 +54,7 @@ func spectrumPlot*(w: SpectrumWindow; t: Theme; along = saX): CurvePlot =
   if sp.raw.len == 0:
     result.note = if sp.problem.len > 0: "No spectrum: " & sp.problem & "."
                   elif w.waiting: "Computing the spectrum..."
-                  elif w.traces.len == 0: "No trace to show the spectrum of."
+                  elif w.traces.len == 0: "Click a trace in the Seismic window to show its spectrum."
                   else: ""
     return
   result.xs = newSeq[float64](sp.raw.len)
@@ -136,6 +136,7 @@ func summaryText*(w: SpectrumWindow): string =
   if sp.raw.len == 0:
     return if sp.problem.len > 0: "No spectrum: " & sp.problem
            elif w.waiting: "Computing..."
+           elif w.traces.len == 0: "" # the plot says what to click
            else: "Nothing to show"
   result = if sp.averaged == 1: "1 trace" else: $sp.averaged & " traces averaged"
   var left: seq[string]

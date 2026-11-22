@@ -720,8 +720,10 @@ given by its first and last sample times. A trace longer than the reference
 lead-in up (a delay), but the phase to the reference, measured as if both started together,
 does not.
 
-- **Analysis > New plot**, on the traces selected in the Seismic window (greyed out until
-  some are);
+- **Analysis > New plot**, on the traces selected in the Seismic window (greyed out only
+  while no file is shown: with no trace selected the window opens and says what to click,
+  for example "Click a trace in the Seismic window to show its spectrogram.", and fills in
+  as soon as one is selected);
 - **the plot's right-click menu > New plot**, on the trace under the pointer, or on the
   selection when that trace is in it.
 

@@ -820,6 +820,30 @@ proc vibRolesLine*(state: AppState; w: AnalysisWindow; long = true): string =
     result.add "; the choice remembered for this file layout is not used: some of its " &
       "traces are not in the window"
 
+func plotsCanOpen*(state: AppState; panel: PanelId): bool =
+  ## Whether the analysis windows (FFT, New plot) can be opened on `panel`: it
+  ## shows a file. Nothing else is needed: with no trace selected they open
+  ## and say what to click.
+  let k = state.findPanel(panel)
+  k >= 0 and state.shownFile(k) >= 0
+
+proc blockPlot(state: var AppState; w, i: int; problem: string; awaiting = false)
+
+proc openEmptyPlot(state: var AppState; cmd: Command; k, i: int) =
+  ## A new analysis window with no trace to show (none is selected or under the
+  ## pointer): it opens and says what to click, and follows the plot, so a
+  ## selection fills it without reopening it.
+  template p: untyped = state.panels[k]
+  let params = if cmd.plotParams == AnalysisParams():
+                 state.settings.plotOptions.applied(cmd.plotView, cmd.plotParams)
+               else: cmd.plotParams
+  state.plots.add AnalysisWindow(id: freePlotId(state.plots), view: cmd.plotView,
+    params: params, panel: p.id, file: state.sessions[i].name, processing: spectrumFilters(p),
+    since: state.plotGen + 1)
+  state.plots[^1].filters = filtersText(state.plots[^1].processing)
+  state.blockPlot(state.plots.high, i, awaitingWords(cmd.plotView), awaiting = true)
+  state.stampPick(state.plots.high, k, i)
+
 proc openPlot(state: var AppState; cmd: Command) =
   ## `ckOpenPlot`: a new analysis window of `cmd.plotTraces` (else the
   ## selected traces of the panel's file, else the trace under the
@@ -861,9 +885,11 @@ proc openPlot(state: var AppState; cmd: Command) =
     if t in s: traces.add t - s.base
     else: inc outside
   traces = deduplicate(traces)
+  if traces.len == 0 and ids.len == 0:
+    state.openEmptyPlot(cmd, k, i)
+    return
   if traces.len == 0:
-    state.ignore(cmd, if ids.len == 0: "no trace is selected or under the pointer in " & s.name
-                      else: "none of the traces is in " & s.name)
+    state.ignore(cmd, "none of the traces is in " & s.name)
     return
   if cmd.plotView == avFk and traces.len >= MinFkTraces and traces.len > MaxPlotTraces:
     # the first ones, side by side: taken evenly, their spacing would not be
@@ -1158,18 +1184,20 @@ proc defaultOf(state: AppState; view: AnalysisView; k, i: int; order: seq[int]):
     if seismic.len > MaxPlotTraces: seismic.setLen MaxPlotTraces
     (seismic, "")
 
-proc blockPlot(state: var AppState; w, i: int; problem: string) =
-  ## The window stays open and says `problem`; nothing is asked.
+proc blockPlot(state: var AppState; w, i: int; problem: string; awaiting = false) =
+  ## The window stays open and says `problem`; nothing is asked. `awaiting`:
+  ## it has no trace yet and `problem` says what to click (an empty state).
   template pw: untyped = state.plots[w]
   if not state.analysisReader.isNil: state.analysisReader.cancel(pw.id)
   let name = if i >= 0: state.sessions[i].name else: ""
-  if pw.result.problem == problem and pw.traces.len == 0 and not pw.waiting and pw.file == name:
+  if pw.result.problem == problem and pw.result.awaiting == awaiting and pw.traces.len == 0 and
+      not pw.waiting and pw.file == name:
     return
   pw.waiting = false
   pw.traces.setLen 0
   pw.file = name
   pw.record = ""
-  pw.result = AnalysisResult(view: pw.view, problem: problem)
+  pw.result = AnalysisResult(view: pw.view, problem: problem, awaiting: awaiting)
   pw.since = state.plotGen + 1
   inc pw.revision
 
@@ -1353,7 +1381,7 @@ proc followSpectrumFilters(state: var AppState; w, k: int) =
   ## kills of the traces it already shows, and the plot's visible time when
   ## that is what it shows. `sameFollow` is the comparison.
   template sw: untyped = state.spectra[w]
-  if state.panels[k].layers.len == 0: return
+  if state.panels[k].layers.len == 0 or sw.traces.len == 0: return
   let pr = spectrumFilters(state.panels[k])
   let (_, _, revision) = state.killedNow(sw)
   var ownMoved = false
@@ -1479,7 +1507,7 @@ proc followPlots(state: var AppState) =
         (pw.archiveSeen != state.chosenRef or pw.archiveRev != state.refsRev):
       # The file may already be closed: `askPlot` then cannot replace the
       # picture, and the old curves must not remain.
-      if not state.askPlot(w) and pw.view == avCorrelation and
+      if not state.askPlot(w) and pw.view == avCorrelation and not pw.result.awaiting and
           state.findTrace(if pw.traces.len > 0: pw.traces[0] else: -1) < 0:
         let blocked = state.correlationBlock(0.0)
         state.showCorrelationProblem(w, blocked.problem, blocked.name)

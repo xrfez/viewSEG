@@ -375,8 +375,9 @@ proc drawToolbar*(t: Theme; marks: var Marks; input: MenuInput;
   ## The icon toolbar under the menu bar: opening files and folders, undo and
   ## redo, a button per plot of the Seismic window's selection, the jobs, and at the right
   ## end the project that is open (or "No project"). A click on the project
-  ## opens the Project menu's items. Plot buttons are greyed while
-  ## `input.plotTraces` is 0.
+  ## opens the Project menu's items. Plot buttons are greyed only while
+  ## no file is open (`input.canPlot`): with no trace selected they open a window that
+  ## says what to click.
   let style = igGetStyle()
   let size = round(igGetFontSize() * IconScale + 2 * style.FramePadding.y + 2)
   let height = size + 2 * round(style.FramePadding.y)
@@ -390,7 +391,7 @@ proc drawToolbar*(t: Theme; marks: var Marks; input: MenuInput;
     if iconButton(IconOpenFolder, "Open folder", shortcutName(maOpenFolder), size, t, marks,
         tipText = menuLabel(maOpenFolder)):
       result.actions.incl maOpenFolder
-    let plotsOn = input.plotTraces > 0
+    let plotsOn = input.canPlot
     igSameLine(0, ButtonGap)
     if iconButton(IconRefresh, "Reopen with options", "", size, t, marks,
         tipText = menuLabel(maReopen), enabled = input.canClose):

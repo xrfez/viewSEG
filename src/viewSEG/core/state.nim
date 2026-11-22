@@ -3635,9 +3635,20 @@ proc openSpectrum(state: var AppState; cmd: Command) =
   traces = deduplicate(traces, isSorted = true)
   let count = traces.len
   traces.spread(state.panels[k].layout.samples)
+  if traces.len == 0 and ids.len == 0:
+    # nothing selected: the window opens saying what to click, and the selection fills it
+    template p: untyped = state.panels[k]
+    state.spectra.add SpectrumWindow(id: freeSpectrumId(state.spectra),
+      display: cmd.spectrumShow, chosen: soNothing, heldOpen: true, file: s.name, panel: p.id,
+      visibleMs: p.view.timeMs, axisT0Ms: state.axisT0Of(k), processing: spectrumFilters(p),
+      since: state.spectrumGen + 1)
+    state.spectra[^1].filters = filtersText(state.spectra[^1].processing)
+    state.stampSpectrum(state.spectra.high, k, i)
+    state.change(cmd.origin, x):
+      x.spectrum.window = cmd.spectrumShow
+    return
   if traces.len == 0:
-    state.ignore(cmd, if ids.len == 0: "no trace is selected in " & s.name
-                             else: "none of the traces is in " & s.name)
+    state.ignore(cmd, "none of the traces is in " & s.name)
     return
   if traces.len > 1 and chosen == soTrace: chosen = soSelection
   template p: untyped = state.panels[k]

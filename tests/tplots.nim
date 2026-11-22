@@ -355,7 +355,11 @@ proc main*() =
       doAssert st.findPlot(id) < 0 and st.plots.len == 3
       st.apply Command(kind: ckClearSelection)
       st.apply Command(kind: ckOpenPlot, plotView: avEnvelope)
-      doAssert st.plots.len == 3 and "no trace is selected" in st.log.lastText, st.log.lastText
+      # with no trace selected the window opens and says what to click (it was refused)
+      doAssert st.plots.len == 4 and st.plots[3].traces.len == 0 and st.plots[3].result.awaiting and
+        st.plots[3].result.problem == awaitingWords(avEnvelope), st.log.lastText
+      st.apply Command(kind: ckClosePlot, plot: st.plots[3].id)
+      doAssert st.plots.len == 3
 
     block vibrator:
       # the file's pilot, not the archive reference chosen for the correlation
