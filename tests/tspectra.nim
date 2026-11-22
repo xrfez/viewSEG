@@ -841,38 +841,35 @@ proc main*() =
 
     st.shutdown()
 
-    when not defined(windows):
-      # A file opened by its symbolic link reads as empty on Windows: parseSEG sizes it
-      # with `std/os.getFileSize`, which there answers the link's own size (0).
-      block twoPaths:
-        # One file opened under two paths (a symbolic link): one set of edits,
-        # kept under the first path. A kill made with the link on show is left
-        # out of the link's spectra too, in an FFT window and in the live panel.
-        let link = fx.dir / "spectrum-link.sgy"
-        createSymlink(path, link)
-        var two = initAppState()
-        two.rememberFilesIn(fx.dir / "config")
-        template ready(cond: untyped): bool =
-          waitUntil((discard two.drainInbox(); two.persist(); cond))
-        for p in [path, link]:
-          two.apply Command(kind: ckShowFile, panel: MainPanel, path: p)
-          doAssert ready(two.sessions.len >= 1 and two.sessions[^1].path == p and
-            two.panel(MainPanel).laidOut and two.remembering(p).known), "not shown: " & p
-        let b = two.sessions[^1].base
-        two.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[b + 8], on: true)
-        doAssert teKilled in two.traceEdits(b + 8), "the kill was not made"
-        two.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,
-          spectrumTraces: toSeq(b ..< b + SpectrumTraces))
-        let w = two.spectra.high
-        doAssert ready(not two.spectra[w].waiting and two.spectra[w].spectrum.raw.len > 0)
-        doAssert two.spectra[w].spectrum.killed == 1 and two.spectra[w].spectrum.averaged == 8,
-          "the link's kill was taken into its spectrum: " & $two.spectra[w].spectrum.killed &
-          " killed, " & $two.spectra[w].spectrum.averaged & " averaged"
-        two.apply Command(kind: ckSpectrumPanel, onScreen: true)
-        doAssert ready(not two.spectra[0].waiting and two.spectra[0].spectrum.raw.len > 0)
-        doAssert two.spectra[0].spectrum.killed == 1,
-          "the live panel took in the link's kill: " & $two.spectra[0].spectrum.killed & " killed"
-        two.shutdown()
+    block twoPaths:
+      # One file opened under two paths (a symbolic link): one set of edits,
+      # kept under the first path. A kill made with the link on show is left
+      # out of the link's spectra too, in an FFT window and in the live panel.
+      let link = fx.dir / "spectrum-link.sgy"
+      createSymlink(path, link)
+      var two = initAppState()
+      two.rememberFilesIn(fx.dir / "config")
+      template ready(cond: untyped): bool =
+        waitUntil((discard two.drainInbox(); two.persist(); cond))
+      for p in [path, link]:
+        two.apply Command(kind: ckShowFile, panel: MainPanel, path: p)
+        doAssert ready(two.sessions.len >= 1 and two.sessions[^1].path == p and
+          two.panel(MainPanel).laidOut and two.remembering(p).known), "not shown: " & p
+      let b = two.sessions[^1].base
+      two.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[b + 8], on: true)
+      doAssert teKilled in two.traceEdits(b + 8), "the kill was not made"
+      two.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,
+        spectrumTraces: toSeq(b ..< b + SpectrumTraces))
+      let w = two.spectra.high
+      doAssert ready(not two.spectra[w].waiting and two.spectra[w].spectrum.raw.len > 0)
+      doAssert two.spectra[w].spectrum.killed == 1 and two.spectra[w].spectrum.averaged == 8,
+        "the link's kill was taken into its spectrum: " & $two.spectra[w].spectrum.killed &
+        " killed, " & $two.spectra[w].spectrum.averaged & " averaged"
+      two.apply Command(kind: ckSpectrumPanel, onScreen: true)
+      doAssert ready(not two.spectra[0].waiting and two.spectra[0].spectrum.raw.len > 0)
+      doAssert two.spectra[0].spectrum.killed == 1,
+        "the live panel took in the link's kill: " & $two.spectra[0].spectrum.killed & " killed"
+      two.shutdown()
 
     block finishedNotDropped:
       # An answer read and computed whole is posted even when a newer request

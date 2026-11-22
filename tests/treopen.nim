@@ -347,33 +347,35 @@ proc main*() =
       st.apply Command(kind: ckSelect, traces: @[s.base + 3], mode: smReplace)
       st.shutdown()
 
-  when not defined(windows):
-    # Windows opens a file it maps for reading with sharing for reading only, so no
-    # program (this test) can write to it while it is shown: parseSEG's map (std/memfiles).
-    block anotherTraceCountDropsWhatItKept:
-      withFixtures fx:
-        let path = fx.surveySegy()
-        var st = initAppState()
-        st.showIt(path)
-        let base = st.sessions[0].base
-        let count = st.sessions[0].len
-        st.apply Command(kind: ckSelect, traces: @[base + 3], mode: smReplace)
-        st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: @[base + 6])
-        st.pump(50)
-        doAssert st.spectra.len == 2
-        # the file grows by a trace (a copy of its last) before it is read again
-        var bytes = readFile(path)
-        let step = (bytes.len - 3600 - 3200) div count # (one extended text header)
-        doAssert 3600 + 3200 + step * count == bytes.len
-        writeFile(path, bytes & bytes[bytes.len - step ..< bytes.len])
-        st.reopen(path, OpenChoice(verifyAll: true))
-        doAssert st.settle(st.sessions.len == 1 and st.sessions[0].len == count + 1 and
-          st.panel(MainPanel).laidOut), "not reopened"
-        doAssert st.selection.selectedCount == 0, "the selection of another file's ids was kept"
-        doAssert st.spectra.len == 1, "the FFT window of the old traces was kept"
-        doAssert st.log.has("dropped the selection, 1 plot window (it has " & $(count + 1) &
-          " traces, it had " & $count & " traces)"), "what was dropped was not said"
-        st.shutdown()
+  block anotherTraceCountDropsWhatItKept:
+    withFixtures fx:
+      let path = fx.surveySegy()
+      var st = initAppState()
+      st.showIt(path)
+      let base = st.sessions[0].base
+      let count = st.sessions[0].len
+      st.apply Command(kind: ckSelect, traces: @[base + 3], mode: smReplace)
+      st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: @[base + 6])
+      st.pump(50)
+      doAssert st.spectra.len == 2
+      # the file grows by a trace (a copy of its last) before it is read again
+      var bytes = readFile(path)
+      let step = (bytes.len - 3600 - 3200) div count # (one extended text header)
+      doAssert 3600 + 3200 + step * count == bytes.len
+      # appended, as a recorder does: Windows refuses to cut a file that is mapped (and
+      # `writeFile` cuts it first), but lets another program append to it
+      var more: File
+      doAssert open(more, path, fmAppend)
+      more.write(bytes[bytes.len - step ..< bytes.len])
+      more.close()
+      st.reopen(path, OpenChoice(verifyAll: true))
+      doAssert st.settle(st.sessions.len == 1 and st.sessions[0].len == count + 1 and
+        st.panel(MainPanel).laidOut), "not reopened"
+      doAssert st.selection.selectedCount == 0, "the selection of another file's ids was kept"
+      doAssert st.spectra.len == 1, "the FFT window of the old traces was kept"
+      doAssert st.log.has("dropped the selection, 1 plot window (it has " & $(count + 1) &
+        " traces, it had " & $count & " traces)"), "what was dropped was not said"
+      st.shutdown()
 
   block closedAfterTheOpenPostedStaysClosed:
     # The open job has posted (jsDone) and the inbox has not been drained: closing
@@ -564,8 +566,8 @@ proc main*() =
       st.shutdown()
 
   when not defined(windows):
-    # Windows opens a file it maps for reading with sharing for reading only, so no
-    # program (this test) can write to it while it is shown: parseSEG's map (std/memfiles).
+    # Windows refuses to cut a file that has a mapped view (error 1224): the file this test
+    # cuts cannot be cut there.
     block cutDuringKeptReopenIsReadOnce:
       # The open is held after it has read the file's size, the file is cut, and
       # the watch sees it. The kept open comes back as the file is now; the watch's

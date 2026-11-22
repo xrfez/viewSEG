@@ -580,86 +580,83 @@ proc main*() =
       doAssert not st.rec("far.sgy").gone
       st.apply Command(kind: ckForgetFiles, forget: docs)
       st.shutdown()
-    when not defined(windows):
-      # A file opened by its symbolic link reads as empty on Windows: parseSEG sizes it with
-      # `std/os.getFileSize`, which there answers the link's own size (0).
-      block onePathAndAnother:
-        # one file opened under two paths (a symbolic link: at once; a copy
-        # with a time of its own: once both are hashed whole): one set of
-        # edits, every path's kept, in one document, back under any path
-        let l = fx.dir / "link.sgy"
-        createSymlink(b, l)
-        let c = fx.dir / "same-copy.sgy"
-        writeFile(c, readFile(b))
-        var st = start(config)
-        st.showFile(b)
-        doAssert st.settle(st.remembering(b).known)
-        # paths of one content are linked only once the edits brought back are
-        # confirmed: the edits come after the hash
-        doAssert st.settle(st.remembering(b).confirmed and not st.remembering(b).looking)
-        st.edit(teKilled, 4)
-        st.edit(teKilled, 12)
-        st.flushFiles() # the document has 12 killed ...
-        st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[st.base + 12],
-          on: false) # ... and the user takes it back, not written yet
-        st.showFile(l)
-        doAssert st.settle(st.remembering(l).known)
-        # the link's edits, brought back from the document, are checked first:
-        # the two paths join once both hashes agree
-        doAssert st.settle(st.remembering(l).confirmed and not st.remembering(l).looking)
-        doAssert st.editsOf(0).has(teKilled, 4), "the link does not share the edits"
-        doAssert not st.editsOf(0).has(teKilled, 12), "a kill taken back came back with the link"
-        st.edit(teKilled, 8)
-        st.showFile(b)
-        doAssert st.editsOf(0).has(teKilled, 8), "the file does not share its link's edit"
-        st.showFile(c)
-        doAssert st.settle(st.remembering(c).confirmed and st.remembering(b).confirmed and
-          not st.remembering(c).looking and st.editsOf(0).has(teKilled, 4)),
-          "the copy does not share the edits once hashed"
-        st.edit(teKilled, 6)
-        st.flushFiles()
-        var t: Time
-        let key = quickIdentity(b, t).key
-        var d: seq[string]
-        for x in docs(config): # (the rewritten copy's, of the same ends, is another file's)
-          if x.extractFilename.startsWith(key) and "rewritten.sgy" notin readFile(x): d.add x
-        var texts = ""
-        for x in d: texts.add readFile(x) & "\n"
-        doAssert d.len == 1, "one file, documents: " & texts
-        doAssert "(killed \"5 7 9\")" in readFile(d[0]), readFile(d[0])
-        st.showFile(b)
-        doAssert st.editsOf(0).has(teKilled, 6), "the file does not share its copy's edit"
-        # a file of the same size, ends and time but another content: taken at
-        # once for the same file, and apart again when its hash says so
-        var bytes = readFile(b)
-        bytes[bytes.len div 2] = char(ord(bytes[bytes.len div 2]) xor 0x20)
-        let x = fx.dir / "same-ends.sgy"
-        writeFile(x, bytes)
-        setLastModificationTime(x, getLastModificationTime(b))
-        holdStep("reading every byte")
-        st.showFile(x)
-        doAssert st.settle(st.remembering(x).known and st.editsOf(0).has(teKilled, 4))
-        releaseStep("reading every byte")
-        doAssert st.settle(st.remembering(x).confirmed and not st.remembering(x).looking)
-        doAssert st.editsOf(0).isEmpty, "a file of another content keeps the edits of the other"
-        doAssert "its content differs" in st.lastWarning, st.lastWarning
-        st.showFile(b)
-        doAssert st.editsOf(0).has(teKilled, 4) and st.editsOf(0).has(teKilled, 6) and
-          st.editsOf(0).has(teKilled, 8), "the file lost its edits to the other"
-        st.shutdown()
-        removeFile(x)
-        st = start(config)
-        st.showFile(l)
-        doAssert st.settle(st.remembering(l).known and st.editsOf(0).has(teKilled, 6) and
-          st.editsOf(0).has(teKilled, 4) and st.editsOf(0).has(teKilled, 8)),
-          "the edits of the three paths did not all come back"
-        # cleared once the hash agrees: during the check a clearing is the user's
-        # own state, kept apart as an unconfirmed record
-        doAssert st.settle(st.remembering(l).confirmed and not st.remembering(l).looking)
-        st.apply Command(kind: ckClearEdits, panel: MainPanel)
-        st.shutdown()
-        removeFile(l)
-        removeFile(c)
+    block onePathAndAnother:
+      # one file opened under two paths (a symbolic link: at once; a copy
+      # with a time of its own: once both are hashed whole): one set of
+      # edits, every path's kept, in one document, back under any path
+      let l = fx.dir / "link.sgy"
+      createSymlink(b, l)
+      let c = fx.dir / "same-copy.sgy"
+      writeFile(c, readFile(b))
+      var st = start(config)
+      st.showFile(b)
+      doAssert st.settle(st.remembering(b).known)
+      # paths of one content are linked only once the edits brought back are
+      # confirmed: the edits come after the hash
+      doAssert st.settle(st.remembering(b).confirmed and not st.remembering(b).looking)
+      st.edit(teKilled, 4)
+      st.edit(teKilled, 12)
+      st.flushFiles() # the document has 12 killed ...
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[st.base + 12],
+        on: false) # ... and the user takes it back, not written yet
+      st.showFile(l)
+      doAssert st.settle(st.remembering(l).known)
+      # the link's edits, brought back from the document, are checked first:
+      # the two paths join once both hashes agree
+      doAssert st.settle(st.remembering(l).confirmed and not st.remembering(l).looking)
+      doAssert st.editsOf(0).has(teKilled, 4), "the link does not share the edits"
+      doAssert not st.editsOf(0).has(teKilled, 12), "a kill taken back came back with the link"
+      st.edit(teKilled, 8)
+      st.showFile(b)
+      doAssert st.editsOf(0).has(teKilled, 8), "the file does not share its link's edit"
+      st.showFile(c)
+      doAssert st.settle(st.remembering(c).confirmed and st.remembering(b).confirmed and
+        not st.remembering(c).looking and st.editsOf(0).has(teKilled, 4)),
+        "the copy does not share the edits once hashed"
+      st.edit(teKilled, 6)
+      st.flushFiles()
+      var t: Time
+      let key = quickIdentity(b, t).key
+      var d: seq[string]
+      for x in docs(config): # (the rewritten copy's, of the same ends, is another file's)
+        if x.extractFilename.startsWith(key) and "rewritten.sgy" notin readFile(x): d.add x
+      var texts = ""
+      for x in d: texts.add readFile(x) & "\n"
+      doAssert d.len == 1, "one file, documents: " & texts
+      doAssert "(killed \"5 7 9\")" in readFile(d[0]), readFile(d[0])
+      st.showFile(b)
+      doAssert st.editsOf(0).has(teKilled, 6), "the file does not share its copy's edit"
+      # a file of the same size, ends and time but another content: taken at
+      # once for the same file, and apart again when its hash says so
+      var bytes = readFile(b)
+      bytes[bytes.len div 2] = char(ord(bytes[bytes.len div 2]) xor 0x20)
+      let x = fx.dir / "same-ends.sgy"
+      writeFile(x, bytes)
+      setLastModificationTime(x, getLastModificationTime(b))
+      holdStep("reading every byte")
+      st.showFile(x)
+      doAssert st.settle(st.remembering(x).known and st.editsOf(0).has(teKilled, 4))
+      releaseStep("reading every byte")
+      doAssert st.settle(st.remembering(x).confirmed and not st.remembering(x).looking)
+      doAssert st.editsOf(0).isEmpty, "a file of another content keeps the edits of the other"
+      doAssert "its content differs" in st.lastWarning, st.lastWarning
+      st.showFile(b)
+      doAssert st.editsOf(0).has(teKilled, 4) and st.editsOf(0).has(teKilled, 6) and
+        st.editsOf(0).has(teKilled, 8), "the file lost its edits to the other"
+      st.shutdown()
+      removeFile(x)
+      st = start(config)
+      st.showFile(l)
+      doAssert st.settle(st.remembering(l).known and st.editsOf(0).has(teKilled, 6) and
+        st.editsOf(0).has(teKilled, 4) and st.editsOf(0).has(teKilled, 8)),
+        "the edits of the three paths did not all come back"
+      # cleared once the hash agrees: during the check a clearing is the user's
+      # own state, kept apart as an unconfirmed record
+      doAssert st.settle(st.remembering(l).confirmed and not st.remembering(l).looking)
+      st.apply Command(kind: ckClearEdits, panel: MainPanel)
+      st.shutdown()
+      removeFile(l)
+      removeFile(c)
     block twoPrograms:
       # two viewSEG at once (two states on one store), the same file open in
       # both: neither write drops the other's edits; each shows the other's

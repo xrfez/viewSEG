@@ -43,11 +43,8 @@ macro sourceDirOf(sym: typed): string =
 const
   ViewSEGVersion* = nimbleVersionIn(currentSourcePath().parentDir, "viewSEG")
     ## viewSEG's version, from viewSEG.nimble
-  ParseSEGVersion* =
-    if parseSEG.PackageVersion != "unknown": parseSEG.PackageVersion
-    else: nimbleVersionIn(sourceDirOf(SeismicFile), "parseSEG")
-    ## parseSEG's own `PackageVersion`; its nimble file read here when that cannot
-    ## find it (a cross-build for Windows: its search joins paths with the target's `\`)
+  ParseSEGVersion* = parseSEG.PackageVersion
+    ## parseSEG's own `PackageVersion`, from its nimble file
   ProcessSEGVersion* = nimbleVersionIn(sourceDirOf(Pipeline), "processSEG")
     ## processSEG's version, from its nimble file
   BuildMode* = when defined(danger): "danger" elif defined(release): "release" else: "debug"
