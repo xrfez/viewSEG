@@ -114,6 +114,8 @@ Mouse gestures are listed after the keys of each group.
 | Tab / Shift+Tab | The next or previous control of the window |
 | Enter / Space | Act on the control Tab reached |
 | Ctrl+C | Copy the header value, or the row, that has the focus |
+| Delete | Delete the selected reference in the Reference archive (it asks first) |
+| F2 | Rename the selected reference in the Reference archive |
 | Click a row | Show that file or record (when the window already had the focus) |
 | Double-click a header row | Show that trace's record in the plot |
 | Shift + click a header row | Select the traces from the row clicked last |

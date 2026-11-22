@@ -496,7 +496,6 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
   igSetNextWindowSize(ImVec2_c(x: font * 46, y: font * 64), ImGui_Cond_FirstUseEver.cint)
   igSetNextWindowSizeConstraints(ImVec2_c(x: font * 36, y: font * 64),
     ImVec2_c(x: 4000, y: 4000), nil, nil)
-  centreModal(id)
   if not igBeginPopupModal(id.cstring, nil, 0): return
   marks.markWindow("generate")
   let footer = igGetFrameHeightWithSpacing()
@@ -688,7 +687,9 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
   if d.ask:
     igOpenPopup_Str(id.cstring, 0)
     d.ask = false
-  centreModal(id)
+  let vp = igGetMainViewport() # centred on the main window, as it opens, never above it
+  igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + vp.WorkSize.x / 2,
+    y: vp.WorkPos.y + vp.WorkSize.y / 2), ImGui_Cond_Appearing.cint, ImVec2_c(x: 0.5, y: 0.5))
   let open = igBeginPopupModal(id.cstring, nil, ImGui_WindowFlags_AlwaysAutoResize.cint)
   if d.wasOpen and not open:
     # The modal had the keys. Give them back to the plot, which this is drawn from.
@@ -964,7 +965,7 @@ proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; inMain: bool; st: App
     let start = igGetCursorScreenPos()
     let selected = ui.selected == id and ui.selMain == inMain
     var missing = false
-    var name = "None"
+    var name = NoneChoiceLabel
     if not isNone:
       missing = index.entries[i].missing
       name = index.entries[i].name
