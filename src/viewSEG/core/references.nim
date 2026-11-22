@@ -471,13 +471,25 @@ func intervalText*(e: ReferenceEntry): string =
   if e.isPilot: return "the record's"
   if e.intervalUs > 0: numberText(e.intervalUs / 1000) & " ms" else: "none"
 
+func windowsDeviceName(file: string): bool =
+  ## Whether `file` (with or without an extension) is a name Windows keeps for
+  ## a device: `CON`, `NUL`, `COM1`, `LPT3` ...; opening one reaches the
+  ## device, not a file.
+  let stem = file.split('.', 1)[0].strip(leading = false).toUpperAscii
+  stem in ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"] or
+    (stem.len == 4 and stem[0 .. 2] in ["COM", "LPT"] and stem[3] in {'1' .. '9'})
+
 func singleFileName*(file: string): bool =
   ## A single file name inside the archive folder: no separator, no "..",
-  ## not absolute. A name such as `../outside.sgy` is not one.
+  ## not absolute. A name such as `../outside.sgy` is not one. A colon is
+  ## refused as well (on Windows `C:x` is a path on a drive's current folder
+  ## and `a:b` a stream of a file), and so is a device name or a trailing dot
+  ## or space (Windows drops them): the program writes `<id>.sgy` only.
   if file.len == 0 or file == "." or file == "..": return false
   if isAbsolute(file): return false
   for c in file:
-    if c in {'/', '\\', '\0'}: return false
+    if c in {'/', '\\', ':', '\0'}: return false
+  if file[^1] in {'.', ' '} or file.windowsDeviceName: return false
   ".." notin file
 
 func archiveLockPath*(folder: string): string =

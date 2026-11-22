@@ -193,6 +193,15 @@ proc main*() =
     doAssert fileExists(indexPath(folder))
     removeTemp(dir)
 
+  block file_names_that_windows_reads_as_more_than_a_name:
+    # Seen to fail: with `singleFileName` as it was (separators and ".." only),
+    # "C:evil.sgy", "nul.sgy" and "r1.sgy " were taken for names in the archive.
+    for good in ["r1700000000-1.sgy", "a.b.sgy", "x"]:
+      doAssert singleFileName(good), good
+    for bad in ["", ".", "..", "../x.sgy", "a/b.sgy", "a\\b.sgy", "C:evil.sgy", "a:stream",
+        "nul.sgy", "CON", "com1.sgy", "Lpt9", "r1.sgy.", "r1.sgy ", "x\0y"]:
+      doAssert not singleFileName(bad), bad.escape
+
   block orphans_are_said_and_left:
     # Seen to fail: with no word about a SEG-Y the index does not name,
     # the message was empty and the file was removed.

@@ -146,10 +146,17 @@ proc say(w: Writer; severity: Severity; text: string) =
 
 proc warn(w: Writer; text: string) = w.say(sevWarning, text)
 
+when defined(windows):
+  proc c_commit(fd: cint): cint {.importc: "_commit", header: "<io.h>".}
+  proc c_fileno(f: File): cint {.importc: "_fileno", header: "<stdio.h>".}
+
 proc syncToDisk(f: File) =
-  ## Asks the OS to put what was written on the disk (POSIX; on Windows the
-  ## rename that follows is enough for a document this small).
-  when not defined(windows):
+  ## Asks the OS to put what was written on the disk (`fsync` on POSIX,
+  ## `_commit` on Windows), so the rename that follows never puts a cut-short
+  ## file in place.
+  when defined(windows):
+    discard c_commit(c_fileno(f))
+  else:
     discard fsync(getFileHandle(f))
 
 proc body(t: Task): string =

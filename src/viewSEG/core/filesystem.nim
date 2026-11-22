@@ -214,9 +214,25 @@ proc createDir*(_: FileSystem; dir: string) {.raises: [OSError, IOError].} =
   os.createDir(dir)
 
 proc moveFile*(_: FileSystem; source, dest: string) {.raises: [OSError, IOError, Exception].} =
-  ## `os.moveFile`.
+  ## `os.moveFile`. On Windows, a file another program has open (a reader of
+  ## the document, a virus scanner, the indexer) cannot be replaced until that
+  ## program lets go, which takes milliseconds: the move is tried again for
+  ## about a fifth of a second when Windows says access denied, sharing or lock
+  ## violation, before it fails.
   enter(foWrite, dest)
-  os.moveFile(source, dest)
+  when defined(windows):
+    var attempt = 0
+    while true:
+      try:
+        os.moveFile(source, dest)
+        return
+      except OSError as e:
+        inc attempt
+        if attempt >= 10 or e.errorCode notin [5'i32, 32, 33]:
+          raise
+        sleep 20
+  else:
+    os.moveFile(source, dest)
 
 proc copyFile*(_: FileSystem; source, dest: string) {.raises: [OSError, IOError, Exception].} =
   ## `os.copyFile`.
@@ -244,7 +260,14 @@ proc tryRemoveFile*(_: FileSystem; path: string): bool {.raises: [].} =
     enter(foWrite, path)
   except OSError:
     return false
-  os.tryRemoveFile(path)
+  when defined(windows):
+    # a file another program has open stays until it lets go (see `moveFile`)
+    for attempt in 0 ..< 5:
+      if os.tryRemoveFile(path): return true
+      sleep 20
+    false
+  else:
+    os.tryRemoveFile(path)
 
 proc setLastModificationTime*(_: FileSystem; path: string; t: Time) {.raises: [OSError].} =
   ## `os.setLastModificationTime`.

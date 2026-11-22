@@ -2227,14 +2227,26 @@ proc logProblems(state: var AppState; source: string; problems: openArray[string
   notes.addProblems(problems)
   for (severity, text) in notes: state.log.add(severity, source, text)
 
+func samePath*(a, b: string): bool =
+  ## Whether two canonical paths (`canonical`) name one file: on Windows,
+  ## where a drive's names are not case-sensitive, those that differ in case
+  ## only do; elsewhere none do.
+  when defined(windows): cmpIgnoreCase(a, b) == 0
+  else: a == b
+
 proc seismicAt(state: AppState; path: string): bool =
   ## Whether `path` names a seismic file the program has open, is opening or
   ## closing, or lists: what it writes of its own never goes over one
-  ## (Working rules: a loaded file is never changed).
+  ## (Working rules: a loaded file is never changed). On Windows `C:\Data\A.SGY`
+  ## and `c:\data\a.sgy` are one file (`samePath`).
   let p = canonical(path)
-  state.sessions.anyIt(it.path == p) or state.opening.anyIt(it.path == p) or
-    state.closing.anyIt(it.path == p) or state.files.find(p) >= 0 or
+  result = state.sessions.anyIt(samePath(it.path, p)) or
+    state.opening.anyIt(samePath(it.path, p)) or
+    state.closing.anyIt(samePath(it.path, p)) or state.files.find(p) >= 0 or
     state.survey.findFile(p) >= 0
+  when defined(windows):
+    result = result or state.files.entries.anyIt(samePath(it.path, p)) or
+      state.survey.layers.anyIt(it.origin == loSurveyFile and samePath(it.path, p))
 
 proc refusedWrite(state: var AppState; cmd: Command; path: string): bool =
   ## Says why `cmd` (an export) writes nothing to `path`, when it may not:
