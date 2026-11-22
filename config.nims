@@ -333,6 +333,13 @@ task parseSSDATTest, "Run parseSSDAT's own test suite in deps/parseSSDAT":
   withDir "deps/parseSSDAT":
     exec quoteShell(getCurrentCompilerExe()) & " --skipParentCfg test"
 
+task parseSSVIBTest, "Run parseSSVIB's own test suite in deps/parseSSVIB":
+  ## As `parseSSDATTest`: needs the package's own deps/ (`nim r tools/deps.nim sync
+  ## --root:deps/parseSSVIB`). The package's tests also run inside `nim test`
+  ## (tests/tssvib).
+  withDir "deps/parseSSVIB":
+    exec quoteShell(getCurrentCompilerExe()) & " --skipParentCfg test"
+
 task processSEGTest, "Run processSEG's own test suite in deps/processSEG":
   ## Builds against the real parseSEG: the devcontainer also mounts it over
   ## deps/processSEG/deps/parseSEG. Fill a missing deps/ with

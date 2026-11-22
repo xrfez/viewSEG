@@ -25,7 +25,7 @@ src/viewSEG/view/             view models: what each panel shows, toolkit-neutra
         ▼
 src/viewSEG/core/             application state, commands, jobs, kernels; no UI, no OS windows
         ▼
-parseSEG, processSEG, parseSSDAT   (deps/, locked in atlas.lock; the first two bind-mounted in the devcontainer)
+parseSEG, processSEG, parseSSDAT, parseSSVIB   (deps/, locked in atlas.lock; the first two bind-mounted in the devcontainer)
 
 src/viewSEG/platform/         OS integration that needs raw OS APIs (Windows resources,
                               window chrome, config paths); used by the frontend
@@ -58,10 +58,11 @@ src/viewSEG/platform/         OS integration that needs raw OS APIs (Windows res
    frontend passes `SDL_PROP_WINDOW_WIN32_HWND_POINTER` and similar. A different toolkit
    passes its own handle and gets the same Mica, dark title bar and tray.
 
-6. **`parseSSDAT` is a library of its own.** It decodes a vibrator controller's `.dat`
-   signature files and writes them through parseSEG, in a repository of its own, as
-   parseSEG and processSEG are (`deps/parseSSDAT`). Nothing in it imports viewSEG, and
-   under `src/viewSEG/` only `core` may import it (`tests/tlayers.nim`).
+6. **`parseSSDAT` and `parseSSVIB` are libraries of their own.** They decode a vibrator
+   controller's `.dat` and `.vib` signature files and write them through parseSEG, each in
+   a repository of its own (`deps/parseSSDAT`, `deps/parseSSVIB`). Nothing in them
+   imports viewSEG, and under `src/viewSEG/` only `core/sigdat.nim` imports parseSSDAT and
+   only `core/sigvib.nim` imports parseSSVIB (`tests/tlayers.nim`).
 
 Swapping toolkits means writing `ui/<toolkit>/` (widgets bound to the same view models and
 commands), plus `gpu/` if the new toolkit is not OpenGL. `core`, `view`, `platform` and all

@@ -112,6 +112,12 @@ jobs:
       - name: Run the parseSSDAT tests alone
         run: nim parseSSDATTest
 
+      - name: Fetch parseSSVIB's own dependencies
+        run: nim r tools/deps.nim sync --root:deps/parseSSVIB
+
+      - name: Run the parseSSVIB tests alone
+        run: nim parseSSVIBTest
+
       # dist/viewSEG-<version>-linux-x64.tar.gz; packageTest also unpacks it and runs
       # the binary with --paths (no window, so no display needed).
       - name: Package (Linux)

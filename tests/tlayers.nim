@@ -2,9 +2,10 @@
 ## and the lower layers never import the ones above them. Checked from the import
 ## statements of every module under src/viewSEG/.
 ##
-## parseSSDAT (deps/parseSSDAT, a library of its own) may be imported only from `core/`.
+## parseSSDAT and parseSSVIB (deps/, libraries of their own) may be imported only from
+## `core/`: parseSSDAT only by `core/sigdat.nim`, parseSSVIB only by `core/sigvib.nim`.
 ## Seen to fail: with `import parseSSDAT` planted in `src/viewSEG/view/x.nim`,
-## `ssdatOnlyFromCore` names it.
+## `ssdatOnlyFromCore` names it; likewise `ssvibOnlyFromCore` for `import parseSSVIB`.
 ##
 ## And no file under src/, tests/ or tools/ imports `std/re`, `std/nre` or
 ## `std/pcre`: they load libpcre (PCRE1) at run time, which newer Linux
@@ -71,14 +72,22 @@ proc violations(layer, file, text: string, banned: openArray[string]): seq[strin
       if b in parts and (parts[0] in ["..", "viewSEG"] or parts[0] == b):
         result.add file & " (" & layer & ") imports " & imp
 
-proc ssdatUsers(file, text: string): seq[string] =
-  ## Each import of parseSSDAT in `text`, when `file` (relative to src/viewSEG) is not
-  ## under `core/`.
-  if not file.replace('\\', '/').startsWith("core/"):
+proc libraryUsers(lib, only, file, text: string): seq[string] =
+  ## Each import of the library `lib` in `text`, when `file` (relative to src/viewSEG) is
+  ## not the one module `only`.
+  if file.replace('\\', '/') != only:
     for imp in imports(text):
       let name = imp.replace('\\', '/')
-      if name == "parseSSDAT" or name.startsWith("parseSSDAT/"):
+      if name == lib or name.startsWith(lib & "/"):
         result.add file & " imports " & imp
+
+proc ssdatUsers(file, text: string): seq[string] =
+  ## parseSSDAT: only `core/sigdat.nim` reads a `.dat` signature file.
+  libraryUsers("parseSSDAT", "core/sigdat.nim", file, text)
+
+proc ssvibUsers(file, text: string): seq[string] =
+  ## parseSSVIB: only `core/sigvib.nim` reads a `.vib` signature file.
+  libraryUsers("parseSSVIB", "core/sigvib.nim", file, text)
 
 proc main*() =
 
@@ -112,14 +121,34 @@ proc main*() =
     for file in walkDirRec(srcDir):
       if file.endsWith(".nim"):
         problems.add ssdatUsers(file.relativePath(srcDir), readFile(file))
-    doAssert problems.len == 0, "only core/ may import parseSSDAT:\n  " & problems.join("\n  ")
+    doAssert problems.len == 0,
+      "only core/sigdat.nim may import parseSSDAT:\n  " & problems.join("\n  ")
+
+  block ssvibOnlyFromCore:
+    var problems: seq[string]
+    for file in walkDirRec(srcDir):
+      if file.endsWith(".nim"):
+        problems.add ssvibUsers(file.relativePath(srcDir), readFile(file))
+    doAssert problems.len == 0,
+      "only core/sigvib.nim may import parseSSVIB:\n  " & problems.join("\n  ")
 
   block ssdatCheckerCatchesViolations:
     doAssert ssdatUsers("view/x.nim", "import parseSSDAT\n").len == 1
     doAssert ssdatUsers("ui/imgui/x.nim", "import parseSSDAT/decode\n").len == 1
     doAssert ssdatUsers("view/x.nim", "import std/os, parseSSDAT/[types, decode]\n").len == 1
-    doAssert ssdatUsers("core/x.nim", "import parseSSDAT\nimport parseSSDAT/decode\n").len == 0
+    doAssert ssdatUsers("core/sigvib.nim", "import parseSSDAT\n").len == 1
+    doAssert ssdatUsers("core/signatures.nim", "import parseSSDAT/types\n").len == 1
+    doAssert ssdatUsers("core/sigdat.nim", "import parseSSDAT\nimport parseSSDAT/decode\n").len == 0
     doAssert ssdatUsers("view/x.nim", "import parseSEG\nimport ../core/parseSSDATlike\n").len == 0
+
+  block ssvibCheckerCatchesViolations:
+    doAssert ssvibUsers("view/x.nim", "import parseSSVIB\n").len == 1
+    doAssert ssvibUsers("ui/imgui/x.nim", "import parseSSVIB/decode\n").len == 1
+    doAssert ssvibUsers("view/x.nim", "import std/os, parseSSVIB/[types, decode]\n").len == 1
+    doAssert ssvibUsers("core/sigdat.nim", "import parseSSVIB\n").len == 1
+    doAssert ssvibUsers("core/signatures.nim", "import parseSSVIB/types\n").len == 1
+    doAssert ssvibUsers("core/sigvib.nim", "import parseSSVIB\nimport parseSSVIB/decode\n").len == 0
+    doAssert ssvibUsers("view/x.nim", "import parseSEG\nimport ../core/parseSSVIBlike\n").len == 0
 
   block noRegexEngine:
     var problems: seq[string]
