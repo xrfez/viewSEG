@@ -218,6 +218,11 @@ drawing, and every button works, however slow the drive is.
   A file cut short or a drive that fails fails the reads that need what is gone, not the
   program (parseSEG's guard on its memory maps; on Windows a mapped file cannot be cut).
   A hung read, as on a share that stops answering, holds only the thread that made it.
+- **On Windows, close a file before another program replaces it.** While viewSEG shows a
+  file on a local disk, Windows lets another program add to it or delete it, but not
+  overwrite it, cut it or rename another file over it: close it in viewSEG first (or
+  reopen it unmapped with **Reopen with options...**, which allows an overwrite but still
+  not a rename over it).
 
 ## Step through the records of a file
 
