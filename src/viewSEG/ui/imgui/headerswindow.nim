@@ -299,6 +299,20 @@ proc findCell(ui: var HeadersUi; id: string; marks: var Marks) =
     marks.mark(id & " find clear")
     if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint): igSetTooltip("Every field again")
 
+proc shortened(text: string; width: float32): string =
+  ## `text` as it is, or cut with "..." to take at most `width` pixels.
+  result = text
+  if igCalcTextSize(text.cstring, nil, false, -1).x > width:
+    var n = text.len
+    result = "..."
+    while n > 0:
+      dec n
+      while n > 0 and (text[n].uint8 and 0xC0) == 0x80: dec n # (not inside a character)
+      let cut = text[0 ..< n] & "..."
+      if igCalcTextSize(cut.cstring, nil, false, -1).x <= width:
+        result = cut
+        n = 0
+
 proc drawFieldTable(ui: var HeadersUi; id: string; whole: FieldTable; st: AppState;
     fonts: Fonts; t: Theme; marks: var Marks; output: var HeadersOutput; height = 0'f32) =
   ## A header table: Find, then a row per field (titles between blocks), its
@@ -376,13 +390,16 @@ proc drawFieldTable(ui: var HeadersUi; id: string; whole: FieldTable; st: AppSta
       igPushID_Int(cint(i))
       if row.title.len > 0 and row.note:
         # a quiet line: dim, across the whole row (a clip rect as wide as the
-        # window), the whole of it in the tooltip
+        # window), cut with "..." to the window's width when it is wider, the
+        # whole of it in the tooltip
         discard igTableSetColumnIndex(0)
         let at = igGetCursorScreenPos()
         let (wp, ws) = (igGetWindowPos(), igGetWindowSize())
+        let style = igGetStyle()
+        let room = wp.x + ws.x - at.x - style.ScrollbarSize - style.ItemSpacing.x
         igPushClipRect(at, ImVec2_c(x: wp.x + ws.x, y: at.y + igGetTextLineHeightWithSpacing()), false)
         igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-        igTextUnformatted(row.title.cstring, nil)
+        igTextUnformatted(row.title.shortened(room).cstring, nil)
         igPopStyleColor(1)
         igPopClipRect()
         if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
