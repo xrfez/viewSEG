@@ -264,6 +264,7 @@ proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice
   try:
     o.text = textCards(shot, wopts, dpGga)
     var w = openSeismicWriterBytes(o, path)
+    w.addShotBlock(shot, wopts) # the library's shot block: the vendor maps decode it by name
     w.writeSegyTraces(shot, wopts, extHeader = true)
     result.segy = w.finishBytes(log)
   except DatWriteError as e:

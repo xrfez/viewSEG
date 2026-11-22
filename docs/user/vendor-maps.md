@@ -43,6 +43,15 @@ source line and point. A map for another layout is a copy of it with other bytes
 another match (`WRITING-A-MAP.md`, "Layouts"). The auxiliary traces of such a file (time
 break, sweep) may hold other data in those bytes; they take no part in the join.
 
+## The shot block of a signature file
+
+`parseSSDAT-segy-1.nif` and `parseSSDAT-segd-1.nif` decode the shot block that the library
+parseSSDAT writes into a SEG-Y or SEG-D file made from a vibrator `.dat` signature file. A
+`.dat` opened in viewSEG carries the same block in memory, so the Headers window shows its
+fields by name (unit serial, trigger, line, station, the QC record and the file's raw
+records). Leave the two maps in place: they are the library's, and a new release replaces
+them.
+
 ## Reload
 
 Opening or closing a project loads the maps again, and so does **Tools > Reload vendor maps**:

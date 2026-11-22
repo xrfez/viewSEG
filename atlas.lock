@@ -93,7 +93,7 @@
     "parseSSDAT": {
       "dir": "$deps/parseSSDAT",
       "url": "https://github.com/xrfez/parseSSDAT",
-      "commit": "d7e02744578e8e368d17aa70e08126013ea58b19",
+      "commit": "3105fda810ab9afbf45f3fd097124b6d0a844a3f",
       "version": ""
     },
     "parseSSVIB": {

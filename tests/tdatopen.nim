@@ -15,14 +15,15 @@
 ## file SEG-Y; with the open job sending a chosen standard to the SEG-Y opener, `reopenAsSegy` found
 ## the SEG-Y reader's refusal; with `adopt` reading positions for a signature file, `noMapPoint` found a
 ## layer; with the signature branch of `rolesOf` off, `vibratorWindow` found the hand-made
-## swap in the next window's roles; with `vibratorOf` ignoring `forceNote`, the masses made a
+## swap in the next window's roles; with the shot block not added to the in-memory SEG-Y,
+## `shotBlock` found no block for the shipped maps to decode; with `vibratorOf` ignoring `forceNote`, the masses made a
 ## GF (M, B).
 
 import std/[json, os, sequtils, strutils]
 import parseSEG
 import parseSSDAT
 import parseSEG/model/indexwalk
-import viewSEG/core/[filejobs, filekinds, openchoice, properties, state]
+import viewSEG/core/[filejobs, filekinds, openchoice, properties, state, vendormaps]
 import viewSEG/remote/tools
 import utils/[chosenref, faultyfs, fixtures, sigfiles, waiting]
 
@@ -135,6 +136,29 @@ proc main*() =
       doAssert st.openIt(datFile(fx.dir, "a.dat"))
       doAssert st.settle(st.jobs.active.len == 0)
       doAssert st.survey.layers.len == 0, "a signature file put a layer on the map"
+      st.shutdown()
+
+  block shotBlock:
+    # the library's shot block rides in the in-memory SEG-Y: the shipped maps decode it by
+    # name, and the Summary reads the same facts
+    withFixtures fx:
+      var st = initAppState()
+      let path = datFile(fx.dir, "a.dat")
+      let shot = parseDat(cast[seq[byte]](readFile(path)))
+      doAssert st.openIt(path)
+      let maps = currentSourcePath.parentDir.parentDir / "vendormaps"
+      let load = loadVendorFolders([VendorFolder(dir: maps, origin: voProgram)])
+      doAssert load.maps.len >= 2, load.foldersText
+      let s = st.sessions[0]
+      let shown = vendorBlocks(s.filePtr[], -1, load.registry)
+      doAssert shown.blocks.len == 1 and shown.blocks[0].name == "parseSSDATShot",
+        $shown.blocks.len
+      var serial, samples = ""
+      for f in shown.blocks[0].fields:
+        if f.name == "unitSerial": serial = f.value
+        if f.name == "samples": samples = f.value
+      doAssert serial == $shot.controllerSerial and samples == "12000", serial & " " & samples
+      doAssert "Controller (serial)\t4321" in summaryText(summaryLines(s, 0))
       st.shutdown()
 
   block stopped:
