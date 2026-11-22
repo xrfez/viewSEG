@@ -191,7 +191,7 @@ proc prepareVendorFolder(dir: string) =
     discard
 
 var
-  releasing: seq[tuple[id: int, dir: string, lock: FileLock]]
+  releasing: seq[tuple[id: int; dir: string; lock: FileLock]]
     ## the locks that are to be let go by a job queued but not yet run
   releasingNext = 0
   releasingGuard: Lock
@@ -213,7 +213,7 @@ proc letGo(id: int; dir: string) =
   var mine: seq[FileLock] = @[]
   withLock releasingGuard:
     {.cast(gcsafe).}:
-      var kept: seq[tuple[id: int, dir: string, lock: FileLock]] = @[]
+      var kept: seq[tuple[id: int; dir: string; lock: FileLock]] = @[]
       for r in releasing:
         if (id != 0 and r.id == id) or (id == 0 and r.dir == dir): mine.add r.lock
         else: kept.add r
