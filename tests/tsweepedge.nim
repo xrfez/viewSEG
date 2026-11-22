@@ -179,6 +179,17 @@ proc main*() =
       doAssert (if up: r.endMs >= r.lastMs else: r.endMs <= r.lastMs),
         "end " & $r.endMs & " before the last point " & $r.lastMs
 
+  block theWeighedEndIsNotBeforeTheLastPoint:
+    # roots all before the last point fitted: the end is that point, in either direction (the
+    # call in `readTop` that keeps it there is what this fails without)
+    let up = weighShapes([8.0, 8.1], [1e-6, 2e-6], [1e-6, 1e-6], [0.01, 0.01], 40, 5.0, 8.5, 1)
+    doAssert up.tEnd == 8.5 and up.best == 0
+    let down = weighShapes([0.3, 0.25], [1e-6, 2e-6], [1e-6, 1e-6], [0.01, 0.01], 40, 5.0, 0.1, -1)
+    doAssert down.tEnd == 0.1
+    # a root past it stands
+    let past = weighShapes([8.6, 8.7], [1e-6, 1e-3], [1e-6, 1e-6], [0.01, 0.01], 40, 5.0, 8.5, 1)
+    doAssert abs(past.tEnd - 8.6) < 1e-6
+
   echo "tsweepedge: ok"
 
 when isMainModule:

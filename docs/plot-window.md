@@ -962,7 +962,10 @@ right of that line's first row. A change works it out again.
     in hertz, and `analysis.band.uncertain` is set: the number is then the reading, no surer
     than that. Most clean sweeps are marked when their end taper is long and the sweep fast;
     a reading that the sweep's frequency, Nyquist or its own uncertainty (above 5 %) makes
-    absurd is not used: the band follows the library's own estimate and the warning says so.
+    absurd is not used: the band follows the median of the estimates that fit (the reading, the line through the
+    frequency track and the library's own estimate, those below Nyquist and not below the
+    largest frequency the reference shows) and the warning says so; the same when the
+    reading is uncertain by more than 3 %.
     A typed value is kept with that reference in the
     project. A line warns when it is below the largest frequency measured in the flat part of the
     reference by more than 0.5 %, or above it by more than the sweep's rate over its end

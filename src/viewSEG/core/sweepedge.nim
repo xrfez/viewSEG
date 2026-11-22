@@ -205,6 +205,37 @@ func notBefore*(tEnd, tLast: float64; dir: int): float64 =
   ## envelope does.
   if dir > 0: max(tEnd, tLast) else: min(tEnd, tLast)
 
+type Weighed* = object
+  ## the shapes' roots weighed by their fits
+  tEnd*: float64   ## the weighted root, kept at or past the last point fitted
+  seSq*: float64   ## the weighted squared standard error of the roots that count
+  spread*: float64 ## the standard deviation of the roots between the shapes
+  best*: int       ## the shape that fits best
+
+func weighShapes*(roots, sses, floors, rootSe: openArray[float64]; n: int;
+    kCorr, tLast: float64; dir: int): Weighed =
+  ## The shapes weighted by how well each fits (a Gaussian likelihood: the misfit above the
+  ## best one's over twice its floor, which includes the noise's share and a share of the
+  ## range; the points overlap, so only one in `kCorr` of the `n` counts). The end is never
+  ## short of the last point fitted.
+  var sw, sr, sr2, se2 = 0.0
+  var bestSse = Inf
+  for v in sses: bestSse = min(bestSse, v)
+  for qi in 0 ..< roots.len:
+    if sses[qi] < sses[result.best]: result.best = qi
+    if not roots[qi].isNaN:
+      let fl = max(floors[qi], OwnMisfit * bestSse / float64(n))
+      let w = exp(-(sses[qi] - bestSse) / (2.0 * fl * kCorr))
+      sw += w
+      sr += w * roots[qi]
+      sr2 += w * roots[qi] * roots[qi]
+      if w > 1e-3: se2 += w * rootSe[qi] ^ 2
+  let mean = sr / sw
+  result.spread = sqrt(max(0.0, sr2 / sw - mean * mean))
+  result.seSq = se2 / sw
+  # never short of the last point fitted
+  result.tEnd = notBefore(mean, tLast, dir)
+
 func shapeAmp(sine: bool; q, y: float64): float64 =
   ## the amplitude a shape gives at the straight line's value `y` (0 at the end, 1 at one)
   let v = clamp(y, 0.0, 1.0)
@@ -409,25 +440,10 @@ proc readTop*(x: openArray[float32]; dtMs: float64; track: SweepTrack;
   var sigT = Inf
   var why = ""
   if nFit >= 4 and bestSse < Inf:
-    # the shapes weighted by how well each fits (a Gaussian likelihood: the misfit above the
-    # best one's over twice its floor, which includes the noise's share and a share of the
-    # range; the points overlap, so only one in `kCorr` counts)
-    var sw, sr, sr2, se2 = 0.0
-    var bestAt = 0
-    for qi in 0 ..< roots.len:
-      if sses[qi] < sses[bestAt]: bestAt = qi
-      if not roots[qi].isNaN:
-        let fl = max(floors[qi], OwnMisfit * bestSse / float64(tt.len))
-        let w = exp(-(sses[qi] - bestSse) / (2.0 * fl * kCorr))
-        sw += w
-        sr += w * roots[qi]
-        sr2 += w * roots[qi] * roots[qi]
-        if w > 1e-3: se2 += w * rootSe[qi] ^ 2
-    tEnd = sr / sw
-    let spread = sqrt(max(0.0, sr2 / sw - tEnd * tEnd))
-    # never short of the last point fitted
-    tEnd = notBefore(tEnd, tLast, dir)
-    sigT = sqrt(se2 / sw + spread ^ 2 + (ModelShare * abs(tEnd - tLast)) ^ 2 +
+    let weighed = weighShapes(roots, sses, floors, rootSe, tt.len, kCorr, tLast, dir)
+    let (bestAt, se2, spread) = (weighed.best, weighed.seSq, weighed.spread)
+    tEnd = weighed.tEnd
+    sigT = sqrt(se2 + spread ^ 2 + (ModelShare * abs(tEnd - tLast)) ^ 2 +
       (0.25 * width) ^ 2)
     # a ramp that ends on a floor, then a step: the best shape still has the envelope above the
     # lowest level two windows past the last point reached, the measured one is below it

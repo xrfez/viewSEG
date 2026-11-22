@@ -24,7 +24,7 @@
 ##
 ## Pure: samples in, an `AnalysisResult` out; never raises.
 
-import std/[math, sequtils, strutils]
+import std/[algorithm, math, sequtils, strutils]
 import parseSEG
 import processSEG/core/[rows, types, units, workspace]
 import processSEG/vibroseis/[sweeptrack, vibqc]
@@ -96,12 +96,99 @@ func shortEndMs(track: SweepTrack; p: TrackParams; counts: openArray[int];
         result = track.timeMs[m]
 
 func unusable(r: TopReading; chordHz, nyquistHz: float64): string =
-  ## Why a reading is not made the band's edge ("" when it is): the library's estimate stands in.
+  ## Why a reading is not made the band's edge ("" when it is): the median of the estimates that fit stands in.
   if r.hz >= nyquistHz: "it lies at or above half the sampling rate"
   elif not chordHz.isNaN and r.hz < 0.995 * chordHz:
     "it lies below the largest frequency the reference shows"
   elif r.uncertaintyHz > 0.05 * r.hz: "it is uncertain by more than 5 %"
   else: ""
+
+func lineTopHz(track: SweepTrack; e: SweepExtent): float64 =
+  ## The top frequency of the line through the reference's frequency track over the flat part
+  ## (f or ln f against time, whichever fits better), taken to the sweep's measured end with a
+  ## cosine-squared taper's share added (the estimate before `readTop`, unrounded). NaN without
+  ## a sweep or enough points.
+  result = NaN
+  if e.startMs.isNaN or e.endMs.isNaN or e.flatStartMs.isNaN or e.flatEndMs.isNaN: return
+  var ts, fs: seq[float64] = @[]
+  for m in 0 ..< track.len:
+    let (t, f) = (track.timeMs[m], track.referenceHz[m])
+    if not f.isNaN and f > 0 and t >= e.flatStartMs and t <= e.flatEndMs:
+      ts.add t / 1000
+      fs.add f
+  if ts.len < 20: return
+  func line(xs, ys: seq[float64]): (float64, float64) =
+    ## least squares: intercept and slope
+    var (sx, sy, sxx, sxy) = (0.0, 0.0, 0.0, 0.0)
+    for i in 0 ..< xs.len:
+      sx += xs[i]
+      sy += ys[i]
+      sxx += xs[i] * xs[i]
+      sxy += xs[i] * ys[i]
+    let n = float64(xs.len)
+    let d = n * sxx - sx * sx
+    if d == 0: return (sy / n, 0.0)
+    let b = (n * sxy - sx * sy) / d
+    ((sy - b * sx) / n, b)
+  let lf = fs.mapIt(ln(it))
+  let (a1, b1) = line(ts, fs)
+  let (a2, b2) = line(ts, lf)
+  var (e1, e2) = (0.0, 0.0)
+  for i in 0 ..< ts.len:
+    e1 += (a1 + b1 * ts[i] - fs[i]) ^ 2
+    e2 += (exp(a2 + b2 * ts[i]) - fs[i]) ^ 2
+  let rising = fs[^1] > fs[0]
+  # the sweep's envelope is measured down to `minReferenceDb` below its peak: a cos² taper
+  # goes on a little past that point (this fraction of its length, of the rest of it)
+  let share = 2 / PI * arcsin(sqrt(pow(10.0, -abs(TrackParams().minReferenceDb) / 20)))
+  let more = share / (1 - share)
+  func predict(t: float64): float64 =
+    if e1 <= e2: a1 + b1 * t else: exp(a2 + b2 * t)
+  # the sweep's end: the stretch of the track beyond the flat part that keeps to the line (a
+  # window's frequency within 1 % of it), a window longer at most; noise or a transient after
+  # the sweep (or before a sweep that falls) lies beyond it and stretches no taper
+  let (p0, flatStart, flatEnd) = (TrackParams(), e.flatStartMs, e.flatEndMs)
+  var edge = if rising: flatEnd else: flatStart
+  var lost = false # the line is lost (not just the end of the measured points)
+  for k in 0 ..< track.len:
+    let m = if rising: k else: track.len - 1 - k
+    let (t, f) = (track.timeMs[m], track.referenceHz[m])
+    if not ((rising and t <= flatEnd) or (not rising and t >= flatStart)):
+      if (rising and t > e.endMs) or (not rising and t < e.startMs): break
+      if f.isNaN: break
+      if abs(f - predict(t / 1000)) > 0.01 * f:
+        lost = true
+        break
+      edge = t
+  let endHz = max(1.0, if rising: fs[^1] else: fs[0])
+  let slack = 500.0 * float64(windowPeriods(p0, endHz)) / endHz
+  # the measured points end a half window short of the sweep's own end: the sweep's end is
+  # then known (`endMs`); where they stop for another reason the sweep ends about there
+  # (a half window on where the line was lost: its taper is down in the noise)
+  let toEnd = abs((if rising: e.endMs - edge else: edge - e.startMs) - slack)
+  let clean = toEnd <= 0.25 * slack
+  let reach = if lost: slack else: 0.0
+  let endMs = if clean: e.endMs else: min(e.endMs, edge + reach)
+  let startMs = if clean: e.startMs else: max(e.startMs, edge - reach)
+  let at = (if rising: endMs + more * max(0.0, endMs - flatEnd)
+    else: startMs - more * max(0.0, flatStart - startMs)) / 1000
+  let est = if e1 <= e2: a1 + b1 * at else: exp(a2 + b2 * at)
+  if not (est > 0 and est < Inf): return
+  result = est
+
+func plausible*(hz, chordHz, nyquistHz: float64): bool =
+  ## a top frequency below half the sampling rate and not below the largest one measured
+  hz > 0 and hz < nyquistHz and (chordHz.isNaN or hz >= 0.995 * chordHz)
+
+func markedTopHz*(readHz, lineHz, libraryHz, chordHz, nyquistHz: float64): float64 =
+  ## The band's edge when the reading is marked: the median of those of the reading, the line's
+  ## top (`lineTopHz`) and the library's estimate that are plausible (two: their mean); NaN when
+  ## none is.
+  var c: seq[float64] = @[]
+  for v in [readHz, lineHz, libraryHz]:
+    if plausible(v, chordHz, nyquistHz): c.add v
+  c.sort()
+  if c.len == 0: NaN elif c.len == 2: 0.5 * (c[0] + c[1]) else: c[c.len div 2]
 
 func roundedTop*(est: float64): float64 =
   ## `est` rounded to a whole hertz when it lies within 0.5 % of one (a designed 6 to 220 Hz
@@ -192,11 +279,16 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
         bandSet = true
         reading = readTop(rows[at[vsReference]], dtMs, results[0].tracks[vsReference],
           results[0].reference.extent)
-        if not reading.hz.isNaN:
-          let why = unusable(reading, largestChordHz(results[0].reference), 500.0 / dtMs)
-          if why.len > 0: reading = TopReading(hz: NaN, why: why)
-        if not reading.hz.isNaN:
-          let est = roundedTop(reading.hz)
+        let (chord0, nyquist) = (largestChordHz(results[0].reference), 500.0 / dtMs)
+        var edge = reading.hz
+        let why = if reading.hz.isNaN: reading.why else: unusable(reading, chord0, nyquist)
+        if why.len > 0 or reading.uncertaintyHz > 0.03 * reading.hz:
+          # a reading uncertain by more than 3 %, or unusable: the median of the plausible estimates
+          edge = markedTopHz(reading.hz, lineTopHz(results[0].tracks[vsReference],
+            results[0].reference.extent), topFrequencyHz(results[0].reference), chord0, nyquist)
+        if why.len > 0: reading = TopReading(hz: NaN, why: why)
+        if not edge.isNaN:
+          let est = roundedTop(edge)
           (band, fitted) = (est, est)
           tp = planFor(band)
           ws.reserve(vibratorWorkspace(tp))
@@ -483,7 +575,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     var said = ""
     if reading.hz.isNaN:
       said = "the reference's top frequency could not be read reliably (" & reading.why &
-        "): the band follows the library's own estimate; type the top frequency to be sure"
+        "): the band follows the median of the estimates that fit; type the top frequency to be " &
+        "sure"
     elif reading.uncertain:
       result.band.uncertain = true
       result.band.uncertaintyHz = reading.uncertaintyHz

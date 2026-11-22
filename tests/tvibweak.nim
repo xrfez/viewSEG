@@ -106,6 +106,48 @@ proc main*() =
       doAssert "198746654" notin b.warning and (not b.uncertain or b.uncertaintyHz < 0.05 * b.hz),
         b.warning
 
+  block theMarkAndTheBandWhenMarked:
+    # a Gaussian ramp with a ring-down at -30 dB: the reading is a little over 1 % off and its
+    # uncertainty about 0.9 %: marked by the 0.6 % bound (not by one of 1.2 %), and, below 3 %,
+    # still the band's edge
+    var c = base(tpGaussian)
+    c.tail = tnRing
+    c.tailDb = -30
+    c.listenMs = 1000
+    let ring = windowBand(c)
+    doAssert "uncertain" in ring.warning, "not marked: " & ring.warning
+    doAssert "median of the estimates" notin ring.warning, ring.warning
+    # a noisy ramp is honest about the noise: marked at 30 dB (the shapes' spread is kept)
+    for shape in [tpBlackman, tpCos2]:
+      var d = base(shape)
+      d.snrDb = 30
+      doAssert "uncertain" in windowBand(d).warning, $shape & " at 30 dB not marked"
+    # a reading uncertain by more than 3 % (the noise at 3 dB) gives the band to the median of
+    # the estimates that fit, and the words say so
+    var e = base(tpCos2)
+    e.snrDb = 3
+    let lost = windowBand(e)
+    doAssert "median of the estimates that fit" in lost.warning, lost.warning
+    doAssert plausible(lost.hz, NaN, 250.0), $lost.hz
+
+  block shapesAreWeighedNotPicked:
+    # a cosine squared ramp at 30 dB (the noise of seed 1): the shapes that fit alike share the
+    # weight, so the band is right (the best shape alone read 123)
+    var c = base(tpCos2)
+    (c.snrDb, c.seed) = (30.0, 1'u64)
+    let b = windowBand(c)
+    doAssert abs(b.hz - 120) < Sure, $b.hz & " " & b.warning
+
+  block theMedianOfThePlausibleEstimates:
+    let (nyq, chord) = (250.0, 100.0)
+    doAssert markedTopHz(NaN, NaN, NaN, chord, nyq).isNaN # none
+    doAssert markedTopHz(120.0, 300.0, 50.0, chord, nyq) == 120.0 # one
+    doAssert markedTopHz(120.0, 118.0, 50.0, chord, nyq) == 119.0 # two: their mean
+    doAssert markedTopHz(120.0, 118.0, 140.0, chord, nyq) == 120.0 # three: the median
+    doAssert markedTopHz(NaN, 118.0, 122.0, NaN, nyq) == 120.0 # no chord: every one fits
+    doAssert not plausible(250.0, chord, nyq) and not plausible(99.0, chord, nyq)
+    doAssert plausible(99.6, chord, nyq)
+
   echo "tvibweak: ok"
 
 when isMainModule:

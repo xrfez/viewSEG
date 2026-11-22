@@ -930,7 +930,8 @@ What you see, top down:
      about 0.6 %) the box's line says "uncertain" with how far it could be off, in hertz
      either way: check it, or type the value; a reading that cannot be right (above Nyquist,
      below the largest frequency the reference shows, or uncertain by more than 5 %) is left
-     out, the line says so and the library's own estimate stands in. Type a value to
+     out, the line says so and the band follows the median of the estimates that fit; so it does
+     when the reading is uncertain by more than 3 %. Type a value to
      override it; that is kept with the
      reference in the project (for a recorded reference, per file layout). A line warns
      when it does not fit the largest frequency the reference shows in its flat part.
