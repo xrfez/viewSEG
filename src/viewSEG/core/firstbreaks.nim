@@ -302,13 +302,6 @@ func fitAsModel*(b: FirstBreaks): BreakModel =
   BreakModel(source: bmGiven, v1: b.fit.v1, interceptMs: b.fit.interceptMs,
     v2: (if two: b.fit.v2 else: 0.0), crossover: (if two: b.fit.crossover else: 0.0)).bounded
 
-func keyWord*(b: FirstBreaks; unit: SurveyUnit): string =
-  ## The key's word for the model bar: "model", or, for the given model, "model (given: 2500
-  ## m/s)" so it is never taken for the fit.
-  if b.isGiven and b.hasModel:
-    "model (given: " & $int(round(b.given.v1)) & " " & unit.velocityShort & ")"
-  else: "model"
-
 func segments*(b: FirstBreaks): int =
   ## The model's straight segments: 0 when it has no fit, 1 or 2.
   if not (b.hasModel and b.hasFit): 0
@@ -318,7 +311,10 @@ func segments*(b: FirstBreaks): int =
 func number(x: float64): string =
   if x.isNaN or abs(x) == Inf: "?" else: $int(round(x))
 
-func modelWords*(b: FirstBreaks; unit: SurveyUnit): string =
+const UnitFromSurvey* =
+  "The unit is taken from the project's survey: the file names none."
+
+func modelWordsOf(b: FirstBreaks; unit: SurveyUnit): string =
   ## What the model is, for the key's tooltip: a straight-line refraction fit to this
   ## record's own picks against offset, with no velocity typed in, the fitted velocity or
   ## velocities (`unit`: the offsets' unit, per second), the intercept, the crossover offset
@@ -355,3 +351,25 @@ func modelWords*(b: FirstBreaks; unit: SurveyUnit): string =
   result.add "\nFitted to " & $b.used & " confident picks"
   if b.fittedFrom.len > 0: result.add " (" & b.fittedFrom & ")"
   result.add "\nOffsets from " & b.offsetsFrom & "."
+
+func modelWords*(b: FirstBreaks; unit: SurveyUnit; fromSurvey = false): string =
+  ## `modelWordsOf`, with a line saying where the unit came from when it is the survey's
+  ## (`fromSurvey`: the file names none).
+  result = b.modelWordsOf(unit)
+  if result.len > 0 and fromSurvey: result.add "\n" & UnitFromSurvey
+
+type KeyParts* = object
+  ## What the overlay's key shows (it is one width whatever the model).
+  given*: bool ## the model is the given one: a small marker says so
+  off*: string ## "358 off" when some traces are off the given model; else ""
+
+func keyParts*(b: FirstBreaks): KeyParts =
+  ## The key's two small extras: the marker for a given model and the count of traces
+  ## off it. The velocity, intercept, median and where offsets came from are the tooltip's.
+  result = KeyParts(given: b.isGiven and b.hasModel)
+  if result.given and b.offModel > 0: result.off = $b.offModel & " off"
+
+func keyNote*(b: FirstBreaks): string =
+  ## The words the key shows beside itself: the overlay's own words while it is working,
+  ## failed or has no model; "" once it has one (the tooltip says the rest).
+  if b.state == bkDone and b.hasModel: "" else: b.statusWords

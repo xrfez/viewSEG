@@ -43,7 +43,7 @@ proc capture*(f: FrameInfo): Shot =
   let d = p.layers[0].display
   let (img, width, _) = f.tracePanel.plotImage
   let v = f.tracePanel.drawnView
-  let scale = displayScale(p.reference, d.gainDb)
+  let scale = displayScale(p.reference, d.appliedGainDb(p.kind))
   result = Shot(image: img, width: width, w: v.columns, h: v.rows, turn: d.turn, view: v,
     display: d, ink: plotInk(f.theme, d),
     style: d.styleFor(v, scale, 1, 2), scale: scale, density: d.mode != dmWiggle,

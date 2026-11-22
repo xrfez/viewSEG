@@ -25,7 +25,7 @@
 import std/[math, strutils]
 import parseSEG
 import viewSEG/core/[breakmodel, firstbreakjobs, firstbreaks, join, project, projectnif,
-  settingsnif, settings, panels]
+  settingsnif, settings, panels, geometry]
 import utils/[breakfiles, fixtures]
 
 const Truth = BreakModel(source: bmGiven, v1: 2500, interceptMs: 20)
@@ -144,10 +144,20 @@ proc main*() =
   block theKeysWords:
     withFixtures fx:
       let b = breaksOf(fx.shotSegy("words.sgy", gHeaderOffset))
-      doAssert b.keyWord(suMetres) == "model"
+      doAssert b.keyParts == KeyParts() and b.keyNote == "", "a fitted model: a bare key"
       let g = b.withModel(Truth)
-      doAssert g.keyWord(suMetres) == "model (given: 2500 m/s)", "key word: " & g.keyWord(suMetres)
-      doAssert g.keyWord(suFeet) == "model (given: 2500 ft/s)"
+      # compact whatever the model: a marker for the given one and a count of those off it;
+      # the velocity and the rest are in the tooltip
+      doAssert g.keyParts.given and g.keyParts.off == $g.offModel & " off", $g.keyParts
+      doAssert g.offModel > 0 and g.keyNote == "", "no long note beside the key: " & g.keyNote
+      let aligned = b.withModel(BreakModel(source: bmGiven, v1: b.fit.v1,
+        interceptMs: b.fit.interceptMs))
+      doAssert aligned.keyParts.given and (aligned.offModel > 0 or aligned.keyParts.off == ""),
+        $aligned.keyParts
+      doAssert "2500 ft/s" in g.modelWords(suFeet) and "unit is taken from the project's" notin
+        g.modelWords(suFeet)
+      doAssert "unit is taken from the project's survey: the file names none" in
+        g.modelWords(suUsFeet, fromSurvey = true), g.modelWords(suUsFeet, true)
       let w = g.modelWords(suMetres)
       doAssert "the one you gave" in w and "not fitted to the picks" in w, w
       doAssert "Velocity: 2500 m/s" in w and "Intercept: 20.0 ms" in w, w
@@ -155,6 +165,27 @@ proc main*() =
       let two = b.withModel(BreakModel(source: bmGiven, v1: 2500, v2: 4000, crossover: 1500))
       doAssert "Beyond 1500 m offset: 4000 m/s" in two.modelWords(suMetres),
         two.modelWords(suMetres)
+
+  block lookPersistsAndIsNoPresetsBusiness:
+    # Seen to fail: with the pick colour left out of the settings writer, "the pick colour
+    # was not kept"; with asPreset keeping the size, "a preset keeps no size".
+    var d = DisplaySettings(breakPickColour: Rgba(r: 10, g: 200, b: 30, a: 255),
+      breakModelColour: Rgba(r: 250, g: 128, b: 0, a: 255), breakSize: bzLarge)
+    var s = Settings()
+    s.plot.display = d
+    var problems: seq[string]
+    let back = readSettings(settingsDocument(s), "settings.nif", Settings(), problems)
+    doAssert problems.len == 0, $problems
+    doAssert back.plot.display.breakPickColour == d.breakPickColour, "the pick colour was not kept"
+    doAssert back.plot.display.breakModelColour == d.breakModelColour
+    doAssert back.plot.display.breakSize == bzLarge
+    doAssert settingsDocument(Settings()).count("breakPickColour") == 0, "defaults are not written"
+    doAssert asPreset(d).breakSize == bzMedium and asPreset(d).breakPickColour.a == 0,
+      "a preset keeps no size"
+    doAssert withPreset(d, DisplaySettings()).breakSize == bzLarge
+    doAssert DisplaySettings().breakSize == bzMedium
+    doAssert bounded(DisplaySettings(breakPickColour: Rgba(r: 1, g: 2, b: 3, a: 7))).
+      breakPickColour.a == 255
 
   echo "tbreakmodel: ok"
 

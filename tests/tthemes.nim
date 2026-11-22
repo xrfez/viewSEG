@@ -204,6 +204,19 @@ proc main*() =
         doAssert contrast(m, p) >= 1.8, what & ": lightness " & $contrast(m, p)
         doAssert deltaE(m, p) >= 40, what & ": colour difference " & $deltaE(m, p)
 
+  block breakColoursChosen:
+    # a colour the user chose for a bar is the one drawn, as chosen; unchosen keeps the
+    # theme's. Seen to fail: with the pick colour ignored, "the pick colour was changed".
+    let t = load(Shipped[0][0])
+    let mine = Rgba(r: 10, g: 200, b: 30, a: 255)
+    for colours in [pcPaper, pcTheme, pcCustom]:
+      let plain = plotInk(t, DisplaySettings(colours: colours))
+      let ink = plotInk(t, DisplaySettings(colours: colours, breakPickColour: mine))
+      doAssert ink.breakPick == mine, "the pick colour was changed: " & toHex(ink.breakPick)
+      doAssert ink.breakModel == plain.breakModel, "the model colour moved with the pick's"
+      let both = plotInk(t, DisplaySettings(colours: colours, breakModelColour: mine))
+      doAssert both.breakModel == mine and both.breakPick == plain.breakPick
+
   block allShipped:
     # the Omarchy themes that may ship, and Everforest Light, under its own
     # name and mode; those that may not are not there

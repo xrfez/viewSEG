@@ -340,6 +340,28 @@ proc main*() =
       doAssert st.settle(st.survey.findFile(ms) >= 0)
       doAssert st.unitsDisagree.len > 0
 
+  block theFirstBreakKeyTakesTheSurveysUnitWhereTheFileNamesNone:
+    # The first-break overlay's velocity label (nothing is converted): a file whose binary
+    # header names no measurement system takes the project's survey's unit (US survey feet);
+    # one that names metres keeps metres, whatever the survey says, with no warning.
+    withFixtures fx:
+      let sps = fx.surveySpsIn("keyunit", "feet", "0.3048006096")
+      for (system, unit, fromSurvey) in [(0'i16, suUsFeet, true), (1'i16, suMetres, false),
+          (2'i16, suFeet, false)]:
+        let segy = fx.surveySegy(measurementSystem = system)
+        var st = initAppState()
+        st.apply Command(kind: ckShowFile, panel: MainPanel, path: segy)
+        doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+        let k = st.findPanel(MainPanel)
+        doAssert st.breakOffsetUnit(k) == (if system == 0: suNotGiven else: unit),
+          "no survey yet: the file's own unit"
+        doAssert not st.breakUnitFromSurvey(k)
+        st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
+        doAssert st.settle(st.survey.findFile(sps.s) >= 0 and st.survey.findFile(sps.r) >= 0)
+        doAssert st.breakOffsetUnit(k) == unit, "measurement system " & $system & ": " &
+          $st.breakOffsetUnit(k)
+        doAssert st.breakUnitFromSurvey(k) == fromSurvey, "measurement system " & $system
+
   block notReadFirst:
     withFixtures fx:
       # An import whose units nobody chose (an agent's with none given, or the

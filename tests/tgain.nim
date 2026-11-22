@@ -9,6 +9,8 @@
 ## file), under the types that take it from the record, the view or each
 ## trace.
 ##
+## The type none applies 0 dB whatever the amount (`appliedGainDb`), the amount kept for the
+## other types. Seen to fail (none): with the amount applied under none, "none applied 6.0 dB".
 ## Seen to fail: with the gain amount left out of `displayScale`,
 ## `amountRescalesWithNoRead` found the scale unchanged at +6 dB; with a
 ## change of the gain amount reading again (as every display change did),
@@ -180,11 +182,19 @@ proc main*() =
         doAssert st.settle(st.answered and not st.main.reference.isNaN), $g & " never drawn"
         let gen = st.main.requestGen
         let ids = st.shown.mapIt(it.id)
-        let before = displayScale(st.main.reference, st.main.layers[0].display.gainDb)
+        let kind = st.main.kind
+        let before = displayScale(st.main.reference,
+          st.main.layers[0].display.appliedGainDb(kind))
         st.display(d.withGainDb(20 * log10(2.0)))
         doAssert st.main.layers[0].display.gainDb == 20 * log10(2.0)
-        let after = displayScale(st.main.reference, st.main.layers[0].display.gainDb)
-        doAssert near(after, 2 * before, 1e-5), $g & ": " & $before & " became " & $after
+        let shown = st.main.layers[0].display
+        let after = displayScale(st.main.reference, shown.appliedGainDb(kind))
+        if shown.effectiveGain(kind) == dgNone:
+          # the type none applies no gain: the amount is kept, not applied
+          doAssert shown.appliedGainDb(kind) == 0 and near(after, before, 1e-6),
+            $g & ": none applied " & $shown.appliedGainDb(kind) & " dB"
+        else:
+          doAssert near(after, 2 * before, 1e-5), $g & ": " & $before & " became " & $after
         doAssert st.main.requestGen == gen and st.shown.mapIt(it.id) == ids,
           $g & ": the gain amount read again"
       st.shutdown()

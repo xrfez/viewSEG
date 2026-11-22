@@ -88,6 +88,7 @@ const
   MaxText = 4096       ## the longest path or name taken
 
   OrientationNames: array[Orientation, string] = ["timeDown", "timeAcross"]
+  BreakSizeNames: array[BreakSize, string] = ["small", "medium", "large"]
   ModeNames: array[DisplayMode, string] = ["density", "wiggle", "wiggleDensity"]
   BandNames: array[PassBand, string] = ["none", "lowCut", "highCut", "bandPass"]
   DcNames: array[DcRemoval, string] = ["none", "mean", "trend"]
@@ -139,7 +140,8 @@ type
 func persistedNames*(): seq[seq[string]] =
   ## Every table of names written for a choice (for tests: each must be a
   ## NIF identifier and unique in its table).
-  @[@ModeNames, @BandNames, @DcNames, @FillNames, @ColourNames, @ColourMapNames, @GainNames,
+  @[@ModeNames, @BreakSizeNames, @BandNames, @DcNames, @FillNames, @ColourNames, @ColourMapNames,
+    @GainNames,
     @TimeGainNames, @ScopeNames,
     @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
     @TraceTabNames, @HeaderColumnNames, @SpectrumScaleNames, @SpectrumTimeNames,
@@ -208,6 +210,9 @@ proc display(w: var NifWriter; d: DisplaySettings; turned = true) =
   w.value("overlap", d.overlap)
   if d.firstBreaks: w.value("firstBreaks", true)
   if d.breakModel != BreakModel(): w.writeBreakModel(d.breakModel)
+  if d.breakPickColour.a != 0: w.value("breakPickColour", colourText(d.breakPickColour))
+  if d.breakModelColour.a != 0: w.value("breakModelColour", colourText(d.breakModelColour))
+  if d.breakSize != DisplaySettings().breakSize: w.choice("breakSize", BreakSizeNames[d.breakSize])
   w.choice("colours", ColourNames[d.colours])
   w.open("custom")
   for (tag, c) in [("background", d.custom.background), ("line", d.custom.line),
@@ -658,6 +663,9 @@ proc display(r: var Reading; n: NifNode; d: var DisplaySettings) =
       of "overlap": r.number(c, MinOverlap, MaxOverlap, d.overlap)
       of "firstBreaks": r.flag(c, d.firstBreaks)
       of "breakModel": r.breakModel(c, d.breakModel)
+      of "breakPickColour": r.colour(c, d.breakPickColour)
+      of "breakModelColour": r.colour(c, d.breakModelColour)
+      of "breakSize": r.choice(c, BreakSizeNames, d.breakSize)
       of "colours": r.choice(c, ColourNames, d.colours)
       of "custom":
         for k in c.kids:

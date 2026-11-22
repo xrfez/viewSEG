@@ -2,16 +2,21 @@
 ## a click on the key opens where the model comes from; "Use this record's fit" keeps the
 ## record's fitted velocity and intercept as the given model; with a given model held for
 ## the record, whose source is named wrongly (offsets 400 m too long), the bars sit off the
-## picks, the key reads "model (given: 2500 m/s)" and says how far the record is off, and
+## picks, the key is the same width and marks it "given" with the count off it (the tooltip says
+## how far the record is off), and
 ## "Fitted to this record" gives the fit back.
 ##
 ## With `VIEWSEG_SCREENSHOTS=<dir>` the window is saved with the popover open and with the
 ## given model on the moved record (breakmodel-*.png); with `VIEWSEG_SHOT_FILE` too, that file
 ## (a shot of the land sample) is shown instead of the synthetic one.
 ##
+## The popover also has the bars' colours and size and, behind the "Two layers" checkbox, the
+## second velocity and crossover; Reset colours puts the colours back.
+##
 ## Seen to fail: with the click on the key not opening the popover, "the key did not open
 ## the popover"; with "Use this record's fit" not switching to Given, "the fit was not kept as
-## the given model"; with the key's word left "model", "the key does not say it is given".
+## the given model"; with the given marker left out of the key, "the key does not say it is given"; with the
+## second velocity shown always, "the second velocity shows only with Two layers".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -127,10 +132,44 @@ proc main*() =
         let m = f.display.breakModel
         let raw = f.core.firstBreaks[f.core.breaksIndex(f.core.findPanel(MainPanel))]
         doAssert m.v1 == raw.fit.v1 and m.interceptMs == raw.fit.interceptMs, $m
-        doAssert "(given: " in f.now.keyWord(suMetres), "the key does not say it is given")
+        doAssert f.now.keyParts.given, "the key does not say it is given")
     step("the popover with the given numbers", noop, proc (f: FrameInfo): bool =
       result = f.markOf("plot.first break model v1").size.x > 0 and f.shown
       if result: f.shoot("popover-given"))
+    var twoBefore = false
+    step("Two layers is a checkbox", proc (f: FrameInfo) =
+      twoBefore = f.display.breakModel.segments == 2
+      doAssert f.markOf("plot.first break model two layers").size.x > 0, "no Two layers"
+      doAssert (f.markOf("plot.first break model v2").size.x > 0) == twoBefore,
+        "the second velocity shows only with Two layers"
+      f.moveMouse(f.markOf("plot.first break model two layers").centre),
+      proc (f: FrameInfo): bool = waited > 5)
+    step("click Two layers", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break model two layers").centre), proc (f: FrameInfo): bool =
+      result = (f.display.breakModel.segments == 2) != twoBefore
+      doAssert waited < 200 or result, "Two layers did not switch")
+    step("the second layer's boxes follow", noop, proc (f: FrameInfo): bool =
+      result = (f.markOf("plot.first break model v2").size.x > 0) == (not twoBefore)
+      doAssert waited < 200 or result, "the second velocity does not follow the checkbox"
+      if result:
+        doAssert f.markOf("plot.first break pick colour").size.x > 0 and
+          f.markOf("plot.first break model colour").size.x > 0 and
+          f.markOf("plot.first break reset colours").size.x > 0, "no colours in the popover"
+        f.shoot("popover-look"))
+    step("click Large", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break size large").centre), proc (f: FrameInfo): bool =
+      result = f.display.breakSize == bzLarge
+      doAssert waited < 200 or result, "Large did not set the size")
+    step("a chosen colour", proc (f: FrameInfo) =
+      var d = f.display
+      d.breakPickColour = Rgba(r: 10, g: 200, b: 30, a: 255)
+      f.apply(Command(kind: ckDisplay, panel: MainPanel, display: d)),
+      proc (f: FrameInfo): bool = f.display.breakPickColour.a == 255 and waited > 5)
+    step("Reset colours", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break reset colours").centre), proc (f: FrameInfo): bool =
+      result = f.display.breakPickColour.a == 0
+      doAssert waited < 200 or result, "Reset colours kept the colour"
+      doAssert f.display.breakSize == bzLarge, "Reset colours changed the size")
     step("a model held from another record", proc (f: FrameInfo) =
       var d = f.display
       d.breakModel = BreakModel(source: bmGiven, v1: 2500, interceptMs: 20)
@@ -155,6 +194,46 @@ proc main*() =
       result = f.display.breakModel.source == bmFitted and not f.now.isGiven
       doAssert waited < 200 or result, "Fitted to this record did not give the fit back")
     runSteps("model", opts, steps)
+    if shots.len > 0:
+      # pictures for a look: the overlay at normal zoom and, on records of more traces,
+      # dense (bars close together) and denser (two lines); the key with a given model;
+      # and the gain type none with its amount greyed
+      for (label, traces) in [("overlay-normal", Traces), ("overlay-dense", 150),
+          ("overlay-lines", 600)]:
+        let name = label
+        let big = fx.customShot(name & ".sgy", traces, moved)
+        let cfg = fx.dir / ("config-" & name)
+        createDir(cfg)
+        var o = opts
+        o.openPaths = @[big]
+        o.configDir = some(cfg)
+        var more: seq[Step]
+        proc add(n: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+          more.add Step(name: n, act: act, done: done)
+        add("opened", noop, proc (f: FrameInfo): bool = f.ready)
+        add("on", proc (f: FrameInfo) =
+          var d = f.display
+          d.firstBreaks = true
+          d.mode = dmWiggle
+          d.fills = {wfPositive}
+          d.gain = dgFixed
+          d.breakModel = BreakModel(source: bmGiven, v1: 2500, interceptMs: 20)
+          f.apply(Command(kind: ckDisplay, panel: MainPanel, display: d)),
+          proc (f: FrameInfo): bool = f.ready and f.shown and waited > 20)
+        add("shot", noop, proc (f: FrameInfo): bool =
+          f.shoot(name)
+          waited > 25)
+        if name == "overlay-normal":
+          add("gain none", proc (f: FrameInfo) =
+            var d = f.display
+            d.gain = dgNone
+            d.gainDb = 6
+            f.apply(Command(kind: ckDisplay, panel: MainPanel, display: d)),
+            proc (f: FrameInfo): bool = waited > 20)
+          add("shot none", noop, proc (f: FrameInfo): bool =
+            f.shoot("gain-none")
+            waited > 25)
+        runSteps(name, o, more)
   echo "tguibreakmodel: ok"
 
 when isMainModule:

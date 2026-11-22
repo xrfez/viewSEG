@@ -397,10 +397,11 @@ proc pictureOf(state: AppState; k: int; fe: Frontend): string =
     else:
       result = "complete"
 
-proc breaksJson(b: FirstBreaks; unit: SurveyUnit): JsonNode =
+proc breaksJson(b: FirstBreaks; unit: SurveyUnit; fromSurvey: bool): JsonNode =
   ## What the first-break overlay's model is (`core/firstbreaks`), for the panel's `state`.
   result = %*{"state": $b.state, "picked": b.picked, "modelled": b.modelled,
-    "offsetsFrom": $b.source, "words": b.modelWords(unit)}
+    "offsetsFrom": $b.source, "words": b.modelWords(unit, fromSurvey),
+    "unitFromSurvey": fromSurvey, "key": {"given": b.keyParts.given, "off": b.keyParts.off}}
   result["model"] = %(if b.isGiven: "given" else: "fitted")
   if b.isGiven:
     let m = b.given
@@ -441,9 +442,11 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
         if g in 0 ..< state.sessions[i].records.len:
           result["record"] = toJson(state.sessions[i].records[g])
     result["display"] = toJson(layer.display)
+    result["gainDbApplied"] = %layer.display.appliedGainDb(p.kind)
     if layer.display.firstBreaks:
       if state.breaksIndex(k) >= 0:
-        result["firstBreaks"] = breaksJson(state.shownBreaks(k), state.breakOffsetUnit(k))
+        result["firstBreaks"] = breaksJson(state.shownBreaks(k), state.breakOffsetUnit(k),
+          state.breakUnitFromSurvey(k))
     let shown = state.settings.displayPresets.shownPreset(layer.display)
     result["displayPreset"] = %(if shown >= 0: state.settings.displayPresets[shown].name else: "")
     result["filter"] = toJson(layer.filter)

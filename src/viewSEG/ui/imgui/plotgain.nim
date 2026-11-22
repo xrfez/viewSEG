@@ -17,6 +17,7 @@ import ../../view/[strip, theme]
 import chrome, style
 
 const
+  noGainTip = "No gain: the samples as stored. Choose Fixed to scale them."
   gainTypes = [dgNone, dgFixed, dgNormalized, dgExponential, dgFloat, dgAgc]
   dbKeysTip = "] or keypad * for more, [ or keypad / for less; with Shift, " &
     "12 dB a step"
@@ -44,7 +45,8 @@ func explanation(g: DisplayGain; d: DisplaySettings): string =
   of dgAuto: ""
 
 proc tip(text: string) =
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
 
@@ -139,6 +141,8 @@ proc settings(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Comm
     if d.gain == dgAuto:
       igTextUnformatted("Stacked data is shown with no gain.", nil)
   of dgNone:
+    igTextUnformatted("No gain, whatever the amount: it is applied again under another type.",
+      nil)
     igTextUnformatted(("Amplitudes past the record's " & pct & " of |x|\n" &
       "are drawn at full scale (the colour map's ends).").cstring, nil)
   of dgFixed:
@@ -292,14 +296,21 @@ proc drawGainControls*(p: Panel; box: var GainBox; t: Theme; marks: var Marks;
   # the amount: the buttons repeat while held, 12 dB a step with Shift.
   # The unit is in the box ("+0.0 dB"); a bare number still applies.
   let step = if igGetIO_Nil().KeyShift: GainShiftStepDb else: GainStepDb
+  # the type none applies no gain: the amount is kept for the other types, shown as 0 and
+  # greyed
+  let none = d.effectiveGain(p.kind) == dgNone
+  igBeginDisabled(none)
   igSameLine(0, 2)
   igPushItemFlag(ImGui_ItemFlags_ButtonRepeat.cint, true)
   if igButton("-##gainless", ImVec2_c(x: 0, y: 0)):
     p.send(d.withGainDb(d.gainDb - step), cmds)
   marks.mark("plot.gain less")
-  tip("Less gain, " & significant(GainStepDb, 2) & " dB; held, it repeats (" & dbKeysTip & ")")
+  tip(if none: noGainTip
+      else: "Less gain, " & significant(GainStepDb, 2) & " dB; held, it repeats (" &
+        dbKeysTip & ")")
   igSameLine(0, 2)
-  if not box.editing: box.fill(gainDbText(d.gainDb))
+  if none: box.fill("0.0 dB")
+  elif not box.editing: box.fill(gainDbText(d.gainDb))
   igSetNextItemWidth(round(igCalcTextSize("+000.0 dB", nil, false, -1).x +
     2 * style.FramePadding.x))
   discard igInputText("##gaindb", cast[cstring](addr box.text[0]), csize_t(box.text.len),
@@ -312,14 +323,18 @@ proc drawGainControls*(p: Panel; box: var GainBox; t: Theme; marks: var Marks;
     elif typed != d.gainDb:
       p.send(d.withGainDb(typed), cmds) # a scale only, nothing is read
   marks.mark("plot.gain dB")
-  tip("Gain amount in dB, -" & significant(MaxGainDb) & " to +" & significant(MaxGainDb) &
-    ", on top of any gain type: it rescales the display at once (" & dbKeysTip & ")")
+  tip(if none: noGainTip
+      else: "Gain amount in dB, -" & significant(MaxGainDb) & " to +" & significant(MaxGainDb) &
+        ", on top of any gain type: it rescales the display at once (" & dbKeysTip & ")")
   igSameLine(0, 2)
   if igButton("+##gainmore", ImVec2_c(x: 0, y: 0)):
     p.send(d.withGainDb(d.gainDb + step), cmds)
   marks.mark("plot.gain more")
-  tip("More gain, " & significant(GainStepDb, 2) & " dB; held, it repeats (" & dbKeysTip & ")")
+  tip(if none: noGainTip
+      else: "More gain, " & significant(GainStepDb, 2) & " dB; held, it repeats (" &
+        dbKeysTip & ")")
   igPopItemFlag()
+  igEndDisabled()
 
 proc gainKeys*(p: Panel; over: bool; cmds: var seq[Command]) =
   ## The gain amount's keys, while the plot window has the focus, or the
@@ -331,6 +346,7 @@ proc gainKeys*(p: Panel; over: bool; cmds: var seq[Command]) =
   template pressed(key: untyped; mods = 0): bool =
     igShortcut_Nil(cint(mods) or key.cint, ImGui_InputFlags_Repeat.cint or route)
   let d = p.layers[0].display
+  if d.effectiveGain(p.kind) == dgNone: return # no gain: the amount is not applied
   var db = 0.0
   for (mods, step) in [(0, GainStepDb), (ImGui_Mod_Shift.int, GainShiftStepDb)]:
     if pressed(ImGui_Key_RightBracket, mods) or pressed(ImGui_Key_KeypadMultiply, mods):

@@ -91,7 +91,7 @@ proc capture(f: FrameInfo): Shot =
   let d = p.layers[0].display
   let (img, w, h) = f.tracePanel.plotImage
   let v = f.tracePanel.drawnView
-  let scale = displayScale(p.reference, d.gainDb)
+  let scale = displayScale(p.reference, d.appliedGainDb(p.kind))
   result = Shot(image: img, w: w, h: h, view: v, display: d, ink: plotInk(f.theme, d),
     style: d.styleFor(v, scale, 1, 2), scale: scale, density: d.mode != dmWiggle,
     wiggles: d.mode != dmDensity, hover: f.core.selection.hover,
@@ -622,7 +622,9 @@ proc main*() =
       for a in amounts:
         doAssert a.before.gen == a.after.gen and a.before.ids == a.after.ids,
           $a.gain & ": the amount read again"
-        doAssert abs(a.after.scale - 2 * a.before.scale) <= 1e-5 * abs(a.after.scale),
+        # the type none applies no gain, so the amount changes nothing there
+        let factor = if a.gain == dgNone: 1.0 else: 2.0
+        doAssert abs(a.after.scale - factor * a.before.scale) <= 1e-5 * abs(a.after.scale),
           $a.gain & ": scale " & $a.before.scale & " became " & $a.after.scale
         for s in [a.before, a.after]:
           doAssert s.wiggles, $a.gain & ": no wiggles"
@@ -631,7 +633,8 @@ proc main*() =
         var changed = 0
         for k in countup(0, a.after.image.high, 7):
           if distance(a.before.image[k], a.after.image[k]) > 6: inc changed
-        doAssert changed > a.after.image.len div 7 div 50, $a.gain & ": only " & $changed &
+        doAssert (changed == 0) == (a.gain == dgNone) and (a.gain == dgNone or
+            changed > a.after.image.len div 7 div 50), $a.gain & ": only " & $changed &
           " pixels changed"
 
     block polarity:

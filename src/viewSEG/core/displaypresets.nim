@@ -14,7 +14,7 @@
 ## preset` command, and says in the log what one could not do.
 
 import std/[math, strutils, unicode]
-import panels
+import geometry, panels
 
 type
   DisplayPreset* = object
@@ -42,6 +42,9 @@ func asPreset*(d: DisplaySettings): DisplaySettings =
   result.orientation = DisplaySettings().orientation
   result.firstBreaks = false
   result.breakModel = BreakModel()
+  result.breakPickColour = Rgba()
+  result.breakModelColour = Rgba()
+  result.breakSize = DisplaySettings().breakSize
 
 func withPreset*(shown, preset: DisplaySettings): DisplaySettings =
   ## `preset` drawn on a plot whose display is `shown`: its orientation
@@ -50,6 +53,9 @@ func withPreset*(shown, preset: DisplaySettings): DisplaySettings =
   result.orientation = shown.orientation
   result.firstBreaks = shown.firstBreaks
   result.breakModel = shown.breakModel
+  result.breakPickColour = shown.breakPickColour
+  result.breakModelColour = shown.breakModelColour
+  result.breakSize = shown.breakSize
 
 func sameValue[T](a, b: T): bool =
   ## `a == b`, field by field, a number that is not a number equal to

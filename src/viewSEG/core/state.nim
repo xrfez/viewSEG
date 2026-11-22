@@ -6465,10 +6465,12 @@ func shownBreaks*(state: AppState; k: int): FirstBreaks =
   if bi < 0: return FirstBreaks()
   state.breaks[bi].withModel(state.panels[k].layers[0].display.breakModel)
 
-func breakOffsetUnit*(state: AppState; k: int): SurveyUnit =
-  ## The unit of the offsets the first-break model of the record panel `panels[k]` shows
-  ## was fitted on: the import's when the file is joined, else its header's measurement
-  ## system (as an analysis reads them).
+func lengthUnitKnown(u: SurveyUnit): bool {.inline.} = u in {suMetres, suFeet, suUsFeet}
+
+func fileOffsetUnit(state: AppState; k: int): SurveyUnit =
+  ## The unit the file names for the offsets of the record panel `panels[k]`: the import's
+  ## when the file is joined, else its header's measurement system; not given when it names
+  ## none.
   if k < 0 or k >= state.panels.len or state.panels[k].layers.len == 0: return suNotGiven
   let src = state.panels[k].layers[0].source
   if src.kind != lsRecord: return suNotGiven
@@ -6477,6 +6479,29 @@ func breakOffsetUnit*(state: AppState; k: int): SurveyUnit =
   let joined = state.joinedOf(src.file)
   if joined >= 0 and state.joins[joined].units.file != suNotGiven: state.joins[joined].units.file
   else: offsetUnitOf(state.sessions[i].crs)
+
+func surveyLengthUnit(state: AppState): SurveyUnit =
+  ## The unit of the project's survey, when it is a length: the one an import confirmed or
+  ## read from its headers, else the first survey file's; not given otherwise.
+  result = suNotGiven
+  for j in state.joins:
+    if result == suNotGiven and j.units.survey.lengthUnitKnown: result = j.units.survey
+  for l in state.survey.layers:
+    if result == suNotGiven and l.origin == loSurveyFile and l.gridUnit.known and
+        unitOf(l.gridUnit).lengthUnitKnown:
+      result = unitOf(l.gridUnit)
+
+func breakOffsetUnit*(state: AppState; k: int): SurveyUnit =
+  ## The unit of the offsets the first-break model of the record panel `panels[k]` shows
+  ## was fitted on, as a label (nothing is converted): the file's (the import's when the
+  ## file is joined, else its header's measurement system, as an analysis reads them); when
+  ## the file names none, the project's survey's, if it names a length.
+  result = state.fileOffsetUnit(k)
+  if result == suNotGiven: result = state.surveyLengthUnit
+
+func breakUnitFromSurvey*(state: AppState; k: int): bool =
+  ## Whether `breakOffsetUnit` is the project's survey's because the file names none.
+  state.fileOffsetUnit(k) == suNotGiven and state.surveyLengthUnit != suNotGiven
 
 proc breakKeyOf(state: AppState; k: int): (bool, BreakKey, int) =
   ## What the first-break overlay of `panels[k]` is of, when it is on and the

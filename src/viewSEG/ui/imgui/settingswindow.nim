@@ -149,9 +149,9 @@ proc drawSettingsWindow*(ui: var SettingsUi; st: AppState; t: Theme; marks: var 
     marks.markWindow("settings")
     igTextUnformatted("Units", nil)
     marks.mark("settings.units")
-    tip("How a plot shows a mass, a force, a velocity, an acceleration or a pressure, " &
-      "and how a mass box reads what you type. What is saved stays in kilograms, " &
-      "metres and newtons.")
+    tip("How the Vibrator window shows masses (kg or lb) and forces (N or lbf), and how a " &
+      "mass box reads what you type. What is saved stays in kilograms and newtons. " &
+      "Distances, offsets and velocities are not changed by it.")
     var s = st.settings
     var changed = false
     for u in UnitSystem:
@@ -163,9 +163,11 @@ proc drawSettingsWindow*(ui: var SettingsUi; st: AppState; t: Theme; marks: var 
           else: "Pounds, feet per second, pounds-force")
     if changed: result.add Command(kind: ckSettings, settings: s)
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    igTextWrapped("Changes masses and forces in the Vibrator window (kg and N, or lb and " &
+      "lbf). It does not change distances, offsets or velocities: they always follow the " &
+      "file's or the survey's own units.")
     igTextWrapped("A mass box has the same switch beside it. The number converts in place, " &
-      "so the mass does not change. An f-k's velocity follows the file's own units when " &
-      "the file names them.")
+      "so the mass does not change.")
     igPopStyleColor(1)
     var noise = s.noise
     if drawNoiseSettings(st, noise, marks, t):

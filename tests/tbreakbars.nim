@@ -10,7 +10,7 @@
 ## "trace 5's pick bar is at 24.0 px, the plot draws its sample at 14.0".
 
 import std/[math, strutils]
-import viewSEG/core/[firstbreaks, geometry, orientation, viewport]
+import viewSEG/core/[firstbreaks, geometry, orientation, panels, viewport]
 import viewSEG/view/breakbars
 
 proc made(n: int): FirstBreaks =
@@ -68,6 +68,32 @@ proc main*() =
     let want = float32((b.pickMs[5] - 50) * 400 / 2000)
     doAssert abs(got - want) < 0.5, "trace 5's pick bar is at " & $got & " px, the plot " &
       "draws its sample at " & $want
+
+  block barSizes:
+    # Seen to fail: with the least left out of Medium, "a bar is 2.4 px on a dense record".
+    for ui in [1'f32, 2]:
+      doAssert barWidth(bzMedium, 3.2, ui) == 7 * ui, "a bar is " & $barWidth(bzMedium, 3.2, ui)
+      doAssert barWidth(bzMedium, 20, ui) == 16, $barWidth(bzMedium, 20, ui)
+      doAssert barWidth(bzMedium, 500, ui) == 40 * ui
+      doAssert barWidth(bzSmall, 3.2, ui) < 3 and barWidth(bzLarge, 3.2, ui) == 10 * ui
+    for k in [bmModel, bmPick]:
+      doAssert barThickness(bzMedium, k, false, false) >= 3
+      doAssert barThickness(bzSmall, k, false, false) < barThickness(bzLarge, k, false, false)
+    var b = made(60)
+    var shown = newSeq[int](60)
+    for i in 0 ..< 60: shown[i] = i
+    let layout = PanelLayout(traces: 60, samples: 1000, dtMs: 2, t0Ms: 0)
+    let view = Viewport(traces: Span(lo: -0.5, hi: 59.5), timeMs: Span(lo: 0, hi: 2000),
+      columns: 600, rows: 400)
+    for size in BreakSize:
+      let g = breakGeometry(b, shown, layout, view, TimeDown, plot, size)
+      for m in g.marks:
+        if m.kind == bmModel:
+          doAssert abs((m.b.x - m.a.x) - barWidth(size, 10, 1)) < 0.01, $size
+    let dense = breakGeometry(b, shown, layout, Viewport(traces: Span(lo: -0.5, hi: 59.5),
+      timeMs: Span(lo: 0, hi: 2000), columns: 600, rows: 400), TimeDown,
+      Rect(pos: vec2(0, 0), size: vec2(150, 400)))
+    doAssert dense.lines, "2.5 px a trace: two lines, not dashes"
 
   echo "tbreakbars: ok"
 

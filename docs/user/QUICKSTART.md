@@ -497,7 +497,8 @@ the record shown (**now: AGC 500 ms**, or **now: none, stacked data**). Untick t
 to pick the type yourself; ticking it again hands the choice back. Under a line, the six
 types are radios, the one in use selected (the one viewSEG picked, while the box is
 ticked; clicking a radio unticks the box and sets that type): **None** (the samples as
-recorded, one scale for the record), **Fixed** (one scale for every record, so records
+recorded, one scale for the record, and no gain amount: the amount's buttons and box are
+greyed and read 0.0 dB; what you set is kept for the other types), **Fixed** (one scale for every record, so records
 compare), **Normalized** (every trace, or the record, to the same level), **Exponential**
 (more gain later in the record: dB per second, or a power of time, rising until the time
 in its "until" box, 2 000 ms at first, and held after it, so the deep part of the record
@@ -609,11 +610,16 @@ corner says so. Point at the key ("model", "pick") and it says what the model is
 straight-line refraction fit to this record's own picks against offset, with no velocity
 typed in, the fitted velocity (or two, with the offset where they change) in the offsets'
 unit per second, the intercept in ms, how many picks it was fitted to and where the offsets
-came from (the survey or the file's headers). Click the key to **give a model instead**: a
-velocity, an intercept (ms, 0 by default) and optionally a second velocity beyond a crossover
-offset, held for every record. A model fitted to each record follows its picks and so hides a
+came from (the survey or the file's headers). The key itself stays short: "model", "pick", a small "given" when the model is the one
+you gave and, in the warning colour, how many traces are off it ("358 off"). Click it to **give
+a model instead**: a velocity, an intercept (ms, 0 by default) and, behind **Two layers**, a
+second velocity beyond a crossover offset, held for every record. The same popover
+chooses the two bars' colours (**Reset colours** puts the theme's back) and their **Size**
+(Small, Medium, Large; Medium, the default, makes each bar about 80 % of a trace's width,
+at least 7 pixels, and 3 pixels thick). When the file names no length unit the velocity
+takes the project's survey's (the tooltip says so; only the label). A model fitted to each record follows its picks and so hides a
 source named or placed wrongly; a given one does not, so use it to check geometry: the bars sit
-on the picks where source and stations are right, and the key's note says how far the record
+on the picks where source and stations are right, and the key's tooltip says how far the record
 is off ("median pick less model -160 ms, 45 of 47 traces off by more than 12 ms"). **Use this
 record's fit** copies the fit of a good record into the boxes to hold for the others. The model
 is kept in the project when one is open, else in the settings. A killed trace has no bars. With the pointer on a trace the status bar adds
@@ -1263,9 +1269,11 @@ and your own sort keys, the Messages window's toggles, and the Headers window's 
 toggles and columns, and the options of each kind of graph window (above). It is saved a
 second after a change and when you quit.
 
-**Tools > Settings...** chooses **Units**: **Metric** (the default: kilograms, metres per
-second, newtons) or **Imperial** (pounds, feet per second, pounds-force). A plot's mass
-boxes, force-limit boxes, force and velocity labels, the vibrator table's force
+**Tools > Settings...** chooses **Units**: **Metric** (the default: kilograms, newtons) or
+**Imperial** (pounds, pounds-force). It changes masses and forces in the Vibrator window and
+nothing about distances, offsets or velocities, which always follow the file's or the
+survey's own units (so it does not change the first-break overlay's velocity). A plot's mass
+boxes, force-limit boxes, force labels, the vibrator table's force
 columns, and the words under a vibrator signature follow it. A mass box has **kg** / **lb** beside it, and a force-limit box
 has the unit of the force axis (pounds-force, newtons, or counts): that number converts
 in place, so the mass or the limit does not change. What is saved, and what a command

@@ -124,6 +124,12 @@ type
     background*, line*, positive*, negative*: Rgba
     hover*, selected*: Rgba ## a hovered or selected trace: line and fills
 
+  BreakSize* = enum
+    ## How large the first-break overlay's bars are drawn (`view/breakbars`).
+    bzSmall = "small"
+    bzMedium = "medium"
+    bzLarge = "large"
+
   DisplayGain* = enum
     ## The gain type a layer is shown with, after its pipeline (the module
     ## documentation says what each does).
@@ -184,6 +190,10 @@ type
     breakModel*: BreakModel
       ## where the overlay's model comes from: fitted to the record, or the velocity
       ## model the user gives (`core/breakmodel`); not part of a preset either
+    breakPickColour*, breakModelColour*: Rgba
+      ## the overlay's pick and model bars in the colours the user chose; alpha 0 (the
+      ## default) leaves the theme's; not part of a preset either
+    breakSize*: BreakSize = bzMedium ## the overlay's bars' size; not part of a preset either
 
   Layer* = object
     source*: LayerSource
@@ -561,11 +571,20 @@ func reference*(p: Panel): float64 =
           of normPercentile: p.level.clip
     else: result = p.level.clip
 
+func appliedGainDb*(d: DisplaySettings; kind: GatherKind): float64 =
+  ## The gain amount `d` draws a gather of `kind` with: 0 under the type none (the samples
+  ## as stored; the amount is kept for the other types), else `gainDb`.
+  if d.effectiveGain(kind) == dgNone: 0.0 else: d.gainDb
+
 func withGainDb*(d: DisplaySettings; db: float64): DisplaySettings =
   ## `d` with the gain amount `db`, within ± `MaxGainDb` (0 for a value that
   ## is not a number).
   result = d
   result.gainDb = if db.isNaN: 0.0 else: clamp(db, -MaxGainDb, MaxGainDb)
+
+func opaqueOrNone(c: Rgba): Rgba =
+  ## A colour a user chose, opaque; alpha 0 (none chosen) stays that.
+  if c.a == 0: Rgba() else: Rgba(r: c.r, g: c.g, b: c.b, a: 255)
 
 func bounded*(d: DisplaySettings): DisplaySettings =
   ## `d` with each number within the range the gain's controls and the
@@ -589,6 +608,8 @@ func bounded*(d: DisplaySettings): DisplaySettings =
   result.clipPercentile = within(d.clipPercentile, MinClipPercentile, 100.0,
     defaults.clipPercentile)
   result.breakModel = d.breakModel.bounded
+  result.breakPickColour = d.breakPickColour.opaqueOrNone
+  result.breakModelColour = d.breakModelColour.opaqueOrNone
 
 func drawsWiggles*(d: DisplaySettings): bool {.inline.} =
   ## Whether a layer drawn with `d` shows wiggles: in the wiggle modes, at

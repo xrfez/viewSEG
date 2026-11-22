@@ -20,12 +20,10 @@
 ## - A pick of low confidence (below `ConfidentPick`) is `faint`.
 
 import std/math
-import ../core/[firstbreaks, geometry, orientation, viewport]
+import ../core/[firstbreaks, geometry, orientation, panels, viewport]
 
 const
   LineBelow* = 3.0     ## pixels a trace, under which the marks are lines
-  MaxBarShare* = 0.8   ## of the trace's column a bar spans, at most
-  MaxBarPixels* = 40.0 ## the longest a bar is
   MaxLineMarks* = 2000 ## the most flagged traces drawn on their own in a line
 
 type
@@ -48,6 +46,31 @@ type
     lines*: bool          ## the marks are lines through the traces, not a bar each
     perPosition*: float32 ## the pixels between two traces
 
+func barWidth*(size: BreakSize; perPos, ui: float32): float32 =
+  ## How long the model's bar is, in pixels, for traces `perPos` pixels apart on a screen
+  ## whose interface scale is `ui` (1 = 100 %): a share of one trace's width, kept between
+  ## a least (so it shows on a dense record) and a most. Small is the overlay's first size,
+  ## with no least.
+  case size
+  of bzSmall: min(perPos * 0.8, 40 * ui)
+  of bzMedium: clamp(perPos * 0.8, 7 * ui, 40 * ui)
+  of bzLarge: clamp(perPos, 10 * ui, 60 * ui)
+
+func pickShare*(size: BreakSize): float32 =
+  ## The pick's bar's length as a share of the model's (a little shorter, so a pick on the
+  ## model leaves its ends showing).
+  if size == bzSmall: 0.7 else: 0.8
+
+func barThickness*(size: BreakSize; kind: MarkKind; heavy, lines: bool): float32 =
+  ## A mark's thickness in interface units (a pixel at 100 %; the frontend scales it): at
+  ## least 3 for a bar, a pick that disagrees with the model heavier, a line thinner.
+  if kind == bmLink: return 1.4
+  if lines: return (if size == bzLarge: 2.2 else: 1.8)
+  case size
+  of bzSmall: (if kind == bmModel: 2.6 elif heavy: 4.0 else: 3.2)
+  of bzMedium: (if kind == bmPick and heavy: 5.0 else: 3.4)
+  of bzLarge: (if kind == bmPick and heavy: 6.5 else: 4.6)
+
 func along*(p: Vec2; s: ScreenAxis): float32 {.inline.} =
   if s == saX: p.x else: p.y
 
@@ -66,9 +89,9 @@ func screenOf*(view: Viewport; m: Turn; plot: Rect; axis: Axis; value: float64):
   if m.reversed[axis]: plot.pos.along(s) + extent - d else: plot.pos.along(s) + d
 
 func breakGeometry*(b: FirstBreaks; shown: openArray[int]; layout: PanelLayout;
-    view: Viewport; m: Turn; plot: Rect): BreakGeometry =
+    view: Viewport; m: Turn; plot: Rect; size = bzMedium; ui = 1'f32): BreakGeometry =
   ## The marks of the traces of `layout` in `view`, in `plot` (pixels),
-  ## turned as `m` says. `shown[position]` is the file trace at each
+  ## turned as `m` says, bars of `size` (`barWidth`; `ui`: the interface scale). `shown[position]` is the file trace at each
   ## position. Empty unless `b` is done.
   result = BreakGeometry()
   if b.state != bkDone or shown.len == 0 or layout.traces <= 0: return
@@ -83,7 +106,7 @@ func breakGeometry*(b: FirstBreaks; shown: openArray[int]; layout: PanelLayout;
   func centre(p: int): float32 = screenOf(view, m, plot, axTraces, float64(p))
   result.lines = perPos < LineBelow
   if not result.lines:
-    let half = min(perPos * MaxBarShare, MaxBarPixels) / 2
+    let half = barWidth(size, perPos, ui) / 2
     for p in vis.a .. min(vis.b, shown.high):
       let trace = shown[p]
       let sh = b.shiftOf(trace)
@@ -97,7 +120,7 @@ func breakGeometry*(b: FirstBreaks; shown: openArray[int]; layout: PanelLayout;
         result.marks.add BreakMark(kind: bmModel, a: tb.other.at(c - half, ym),
           b: tb.other.at(c + half, ym), position: p, trace: trace)
       if not yp.isNaN and inside(yp):
-        let h = half * 0.7
+        let h = half * pickShare(size)
         result.marks.add BreakMark(kind: bmPick, a: tb.other.at(c - h, yp),
           b: tb.other.at(c + h, yp), position: p, trace: trace,
           faint: b.confidenceOf(trace) < ConfidentPick, heavy: off)

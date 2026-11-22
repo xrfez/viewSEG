@@ -98,8 +98,7 @@ func breakInk(t: Theme; background: Rgba): (Rgba, Rgba) =
   (tuned(t.roles[rlBreakModel], background, DeepContrast),
    tuned(t.roles[rlBreakPick], background, VividContrast))
 
-func plotInk*(t: Theme; d: DisplaySettings): PlotInk =
-  ## The colours of a layer drawn with `d` in theme `t`.
+func inkOf(t: Theme; d: DisplaySettings): PlotInk =
   let paper = PlotInk(background: PaperBackground, wiggle: WiggleInk(line: PaperInk,
     positive: PaperInk, negative: readableOn(t.roles[rlFillNegative], PaperBackground),
     hover: readableOn(t.roles[rlHighlight], PaperBackground),
@@ -123,6 +122,13 @@ func plotInk*(t: Theme; d: DisplaySettings): PlotInk =
       negative: pick(c.negative, paper.wiggle.negative),
       hover: pick(c.hover, paper.wiggle.hover), selected: pick(c.selected, paper.wiggle.selected)))
     (result.breakModel, result.breakPick) = breakInk(t, result.background)
+
+func plotInk*(t: Theme; d: DisplaySettings): PlotInk =
+  ## The colours of a layer drawn with `d` in theme `t`; the overlay's bars in the
+  ## colours the user chose, as chosen, else in the theme's, tuned to read.
+  result = inkOf(t, d)
+  if d.breakModelColour.a != 0: result.breakModel = opaque(d.breakModelColour)
+  if d.breakPickColour.a != 0: result.breakPick = opaque(d.breakPickColour)
 
 func drawnComponentColours*(stored: array[4, Rgba]; background: Rgba): array[4, Rgba] =
   ## `stored` (hydrophone, vertical, inline, crossline) darkened or lightened

@@ -194,7 +194,10 @@
     (a factor of 10^15 either way: raw records span far more than 60 dB between the
     first breaks and the late times). The amount rescales the drawing at once and never
     reads or processes again; where the scale passes what the GPU's numbers hold, every
-    sample that is not 0 is drawn at full scale.
+    sample that is not 0 is drawn at full scale. The type **None** applies no gain of
+    any kind, so no amount either: its - and + buttons and box are greyed and read
+    0.0 dB, and the amount you set is kept for the other types, not applied (no
+    time gain either: the exponential gain's settings belong to Exponential only).
     A *reference* amplitude is drawn at **full scale** at 0 dB: at the ends of the
     density colour map (black for positive and white for negative in grey, blue and red
     in red-white-blue, yellow and dark purple in viridis), and a wiggle's full swing (the
@@ -208,7 +211,7 @@
     | Type | On the samples | Reference (full scale at 0 dB) | Settings |
     |---|---|---|---|
     | Let viewSEG choose (default; not a type) | AGC on shot and receiver records, nothing on stacked data | as AGC or None | the AGC window |
-    | None | nothing | the record's clip percentile of \|x\| (99 by default), held while panning | |
+    | None | nothing; 0 dB whatever the amount (greyed) | the record's clip percentile of \|x\| (99 by default), held while panning | |
     | Fixed | nothing | one amplitude, the same for every record and file until changed, so records compare; taken from the record shown when Fixed is chosen | the amplitude; "From this record" |
     | Normalized | each trace to the same level (per trace), or nothing (whole record) | that level: RMS, peak or clip percentile, of each trace or of the record | per trace or the whole record; the level |
     | Exponential | `10^(dB/s · t / 20)`, or `(t / 1 s)^n`, rising until a cutoff time and held at its value after it | the record's clip percentile after the gain | dB per second (6 by default), or the power of time (2); the cutoff, "until" (2 000 ms by default) |
@@ -571,8 +574,23 @@ place (no offset) only the pick. The bars have a halo in the plot's background c
 read over the wiggles and over density. They are the traces' own: they follow zoom, pan, the
 sort order and the trace filter, are drawn for the traces in view only, and a killed trace has
 none. Where the traces are closer than three pixels the bars become two lines through the
-times (the model's and the pick's). A key in the plot's corner names the two colours and says
-what the overlay lacks (while it is working, why it failed, or that the model needs a survey).
+times (the model's and the pick's). A key beside the overlay's button names the two colours
+("model", "pick"), marks a given model with a small "given" and, in the warning colour, counts
+the traces more than 12 ms off it ("358 off"); it is the same width whatever the model, and
+says what the overlay lacks (while it is working, why it failed, or that the model needs a
+survey) beside it. Hover it for everything else: the model's velocity or velocities,
+intercept, crossover, the record's median of pick less model, the counts, and where the
+offsets came from.
+
+**Colours and size.** The key's popover has a colour box for each bar (the pick's and the
+model's), a **Reset colours** button (back to the theme's pink and blue) and a **Size**
+choice. Medium, the default, makes a bar about 80 % of one trace's width on the screen
+(at least 7 pixels, at most about 40) and at least 3 pixels thick, with a halo so it reads
+over black fill and over white paper; Small is the thin short bar of before, Large a longer
+and thicker one. The joining line uses the pick's colour. Colours and size are kept with
+the plot's display (`breakPickColour`, `breakModelColour`, `breakSize` in `settings.nif`) and
+no display preset carries them; the agent's `display` command takes them, and a panel's
+`state` shows them in its display.
 
 The offsets are the trace keys': the imported survey's when one is joined to the file, else
 the header's, else derived from the file's own coordinates. With neither the picks are drawn
@@ -594,9 +612,13 @@ a model instead: a velocity (in the offsets' unit per second), an intercept in m
 default) and, optionally, a second velocity beyond a crossover offset (the same two-segment
 shape as the fit, continuous at the crossover). The expected break of every trace with an
 offset is then the intercept plus its offset over the velocity, the same for every record; the
-key reads "model (given: 2500 m/s)", the line joining model and pick uses the same 12 ms limit,
-and the key's note gives the record's median of pick less model and how many traces are more
-than 12 ms off. **Use this record's fit** copies the fitted numbers of the record shown into
+second velocity and crossover are behind a **Two layers** checkbox (off: velocity and
+intercept only; "Use this record's fit" turns it on when the fit has a second segment); the
+key shows "given" and the count off the model, the line joining model and pick uses the same
+12 ms limit, and the key's tooltip gives the velocity, the record's median of pick less model
+and how many traces are more than 12 ms off. The velocity's unit is the offsets' (the
+file's, or the import's); a file that names none takes the project's survey's, when it
+names a length, and the tooltip says so (only the label: nothing is converted). **Use this record's fit** copies the fitted numbers of the record shown into
 the boxes and switches to Given: a model calculated once on a good record and held for the
 others. It is kept in the project when one is open, else in the settings (`breakModel` inside
 the plot's display in `settings.nif`; a preset does not carry it). The noisy-trace test's

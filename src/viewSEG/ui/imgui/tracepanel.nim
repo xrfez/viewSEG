@@ -1408,11 +1408,10 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
           res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
         if d.firstBreaks:
           let unit = st.breakOffsetUnit(pk)
-          let chosen = drawBreakKey(shownBreaks, unit, d.breakModel, t, icon, marks)
+          let chosen = drawBreakKey(shownBreaks, unit, st.breakUnitFromSurvey(pk), d,
+            plotInk(t, d), t, icon, marks)
           if chosen.changed:
-            var nd = d
-            nd.breakModel = chosen.model
-            res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+            res.commands.add Command(kind: ckDisplay, panel: p.id, display: chosen.display)
     of sgGain:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         drawGainControls(p, tp.gainBox, t, marks, res.commands, res.notes)
@@ -2545,7 +2544,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       let slots = componentSlots(faces)
       tp.sync(tiles, base, st.selection, slots, faces.len > 1)
       let d = layer.display
-      let scale = displayScale(p.reference, d.gainDb)
+      let scale = displayScale(p.reference, d.appliedGainDb(p.kind))
       var shown = view # what ImPlot shows along each screen axis
       let (sx, sy) = (Span(lo: lim2.X.Min, hi: lim2.X.Max), Span(lo: lim2.Y.Min, hi: lim2.Y.Max))
       (shown.traces, shown.timeMs) = if turn.axisAlong(saX) == axTraces: (sx, sy) else: (sy, sx)
@@ -2589,8 +2588,9 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       let bi = st.breaksIndex(k)
       if layer.display.firstBreaks and bi >= 0:
         let g = breakGeometry(st.shownBreaks(k), p.shown, p.layout, view, turn,
-          Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y)))
-        drawBreakMarks(g, ink, marks)
+          Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y)), layer.display.breakSize,
+          max(1'f32, igGetFontSize() / 15))
+        drawBreakMarks(g, ink, layer.display.breakSize, marks)
     if edited:
       let path = if source >= 0: st.sessions[source].path else: ""
       drawEditRow(tp, st.editsOf(k), tiles, view, p.layout, turn, bands, pos, size, t, marks,

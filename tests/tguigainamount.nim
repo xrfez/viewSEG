@@ -9,6 +9,9 @@
 ## (the clip holds where amplitude times scale is an infinity), and at -300
 ## dB the density is mid grey and the wiggles lie on their baselines.
 ##
+## Under the type none the + button is greyed: "+ under none changed the amount" with it
+## left enabled.
+##
 ## Seen to fail: with `MaxGainDb` at 60, "typed 1000: 60.0 dB, not 300.0";
 ## with the buttons not repeating (no `ButtonRepeat`), "+ held did not
 ## happen"; with `displayScale` giving 0 past a float32 (as it did), "+300
@@ -166,6 +169,17 @@ proc main*() =
     step("the file is shown", noop, proc (f: FrameInfo): bool =
       f.panel.laidOut and f.panel.layers.len > 0 and f.settled and f.db == 0)
     step("density", shows(dmDensity, dgAuto), after(2))
+    # the type none applies no gain: its - and + are greyed and a click on them does nothing
+    step("none", shows(dmDensity, dgNone), after(3))
+    moveTo("plot.gain more")
+    step("+ under none", proc (f: FrameInfo) =
+      f.note
+      f.pressMouse(pointAt, true)
+      f.pressMouse(pointAt, false), after(8))
+    step("none ignored it", noop, proc (f: FrameInfo): bool =
+      doAssert f.db == before, "+ under none changed the amount: " & $f.db
+      true)
+    step("auto again", shows(dmDensity, dgAuto), after(3))
     click("plot.gain more", adds = 3)
     click("plot.gain more", shift = true, adds = 12)
     click("plot.gain less", adds = -3)

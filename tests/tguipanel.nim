@@ -111,7 +111,8 @@ proc capture(f: FrameInfo): Shot =
   let k = f.core.findPanel(MainPanel)
   let p = f.core.panels[k]
   result = Shot(pixels: f.readFrame, width: f.width, plot: f.markOf("plot.data"),
-    view: f.tracePanel.drawnView, scale: displayScale(p.reference, p.layers[0].display.gainDb))
+    view: f.tracePanel.drawnView, scale: displayScale(p.reference, p.layers[
+        0].display.appliedGainDb(p.kind)))
   for t in f.core.tiles(k): result.tiles.add t
   for name in ["plot.Greyscale density", "plot.Wiggle", "tool.Greyscale density", "toolbar",
       "plot.explain"]:
@@ -350,7 +351,9 @@ proc main*() =
       # reference at the new scale, many change, and nothing is read again.
       for a in amounts:
         doAssert a.gens[0] == a.gens[1] and a.ids[0] == a.ids[1], $a.gain & ": the amount read again"
-        doAssert abs(a.after.scale - 2 * a.before.scale) <= 1e-5 * abs(a.after.scale),
+        # the type none applies no gain, so the amount changes nothing there
+        let factor = if a.gain == dgNone: 1.0 else: 2.0
+        doAssert abs(a.after.scale - factor * a.before.scale) <= 1e-5 * abs(a.after.scale),
           $a.gain & ": scale " & $a.before.scale & " became " & $a.after.scale
         let (bad, seen) = a.after.mismatches()
         doAssert bad == 0, $a.gain & ": " & $bad & " of " & $seen & " pixels off the reference"
@@ -361,7 +364,8 @@ proc main*() =
             if distance(a.before.pixels[y * a.before.width + x],
                 a.after.pixels[y * a.after.width + x]) > 6:
               inc changed
-        doAssert changed > seen div 10, $a.gain & ": only " & $changed & " pixels changed"
+        doAssert (changed == 0) == (a.gain == dgNone) and (a.gain == dgNone or
+            changed > seen div 10), $a.gain & ": only " & $changed & " pixels changed"
         echo "tguipanel: ", a.gain, " +6 dB, ", changed, " of ", seen, " pixels changed"
 
     block controlsInTheWindow:
