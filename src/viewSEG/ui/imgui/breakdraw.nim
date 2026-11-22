@@ -7,7 +7,7 @@
 ## "plot.first break link N" for the first few in view) for tests.
 
 import imguin/cimgui
-import ../../core/[firstbreaks, geometry, orientation, viewport]
+import ../../core/[firstbreaks, geometry, join, orientation, viewport]
 import ../../view/[areabands, breakbars, plotink, theme]
 import marks, style
 
@@ -60,11 +60,13 @@ proc drawBreakMarks*(g: BreakGeometry; ink: PlotInk; marks: var Marks) =
           inc drawn
   ImPlot_PopPlotClipRect()
 
-proc drawBreakKey*(b: FirstBreaks; t: Theme; height: float32; marks: var Marks) =
+proc drawBreakKey*(b: FirstBreaks; unit: SurveyUnit; t: Theme; height: float32;
+    marks: var Marks) =
   ## The key, in the strip right of the overlay's button (never over the
   ## traces): a swatch and a word for each bar, then the overlay's own words
   ## while it is working, failed or has no model or fits one kind of sensor
-  ## (`statusWords`), in dim text. One item `height` high.
+  ## (`statusWords`), in dim text. One item `height` high. Hovering the key says what the
+  ## model is (`modelWords`; `unit` is the offsets').
   let dl = igGetWindowDrawList()
   let u = max(1'f32, igGetFontSize() / 15)
   let words = ["model", "pick"]
@@ -78,6 +80,9 @@ proc drawBreakKey*(b: FirstBreaks; t: Theme; height: float32; marks: var Marks) 
   igSameLine(0, 12 * u)
   let top = igGetCursorScreenPos()
   igDummy(ImVec2_c(x: width, y: height))
+  let what = b.modelWords(unit)
+  if what.len > 0 and igIsItemHovered(0):
+    igSetTooltip("%s", what.cstring)
   let y = top.y + (height - h) / 2
   var x = top.x
   for i, w in words:

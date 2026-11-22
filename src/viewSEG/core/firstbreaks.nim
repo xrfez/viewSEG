@@ -16,11 +16,14 @@
 ##   the file (`bsSurvey`), else the headers' own, or derived from the
 ##   file's own coordinates (`bsFile`); with neither (`bsNone`) there is no
 ##   model and `modelNote` says what is missing.
+## - What the model is, in words (`modelWords`, for the key's tooltip) and as
+##   numbers (`velocityUnit`, `segments`): a refraction fit to the record's own
+##   picks, its velocity or velocities in the offsets' unit per second.
 
 import std/[math, strutils]
 import parseSEG
 import processSEG/qc/[firstbreak, shotfit]
-import components, jobs, session
+import components, jobs, join, session
 
 type
   BreakSource* = enum
@@ -198,3 +201,55 @@ func readoutText*(b: FirstBreaks; trace: int): string =
   let d = p - m
   if known(d):
     result.add ", " & (if d >= 0: "+" else: "") & formatFloat(d, ffDecimal, 1) & " ms"
+
+func velocityUnit*(u: SurveyUnit): string =
+  ## The unit the fitted velocity is read in, as the f-k's velocity label follows the
+  ## file's units: "m/s", "ft/s", else "offset units per second" (the unit is not named).
+  case u
+  of suMetres: "m/s"
+  of suFeet, suUsFeet: "ft/s"
+  else: "offset units per second"
+
+func lengthUnit(u: SurveyUnit): string =
+  case u
+  of suMetres: "m"
+  of suFeet, suUsFeet: "ft"
+  else: "offset units"
+
+func offsetsFrom*(b: FirstBreaks): string =
+  ## Where the offsets the model used came from, in words; "" when it has none.
+  case b.source
+  of bsSurvey: "the imported survey"
+  of bsFile: "the file's own headers"
+  of bsNone: ""
+
+func segments*(b: FirstBreaks): int =
+  ## The model's straight segments: 0 when it has no fit, 1 or 2.
+  if not (b.hasModel and b.hasFit): 0
+  elif b.fit.v2.isNaN or b.fit.crossover.isNaN or b.fit.crossover == Inf: 1
+  else: 2
+
+func number(x: float64): string =
+  if x.isNaN or abs(x) == Inf: "?" else: $int(round(x))
+
+func modelWords*(b: FirstBreaks; unit: SurveyUnit): string =
+  ## What the model is, for the key's tooltip: a straight-line refraction fit to this
+  ## record's own picks against offset, with no velocity typed in, the fitted velocity or
+  ## velocities (`unit`: the offsets' unit, per second), the intercept, the crossover offset
+  ## with two segments, the picks it was fitted to and where the offsets came from.
+  ## "" without a model.
+  let n = b.segments
+  if n == 0: return ""
+  let (v, len) = (unit.velocityUnit, unit.lengthUnit)
+  result = "The model is a straight-line refraction fit to this record's own picks " &
+    "against offset. No velocity is typed in: it is found from the picks."
+  if n == 1:
+    result.add "\nVelocity: " & number(b.fit.v1) & " " & v
+  else:
+    result.add "\nVelocities: " & number(b.fit.v1) & " " & v & " near the source, " &
+      number(b.fit.v2) & " " & v & " beyond " & number(b.fit.crossover) & " " & len &
+      " offset"
+  result.add "\nIntercept: " & formatFloat(b.fit.interceptMs, ffDecimal, 1) & " ms"
+  result.add "\nFitted to " & $b.used & " confident picks"
+  if b.fittedFrom.len > 0: result.add " (" & b.fittedFrom & ")"
+  result.add "\nOffsets from " & b.offsetsFrom & "."

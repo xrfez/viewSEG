@@ -36,6 +36,8 @@ type
     radius*: float64 = 500.0 ## `ncRadius`: in the length unit of the offsets
     steps*: int = 8          ## `ncSteps`, and what the automatic choice falls back to
     allLines*: bool          ## `ncSteps` on every line, not only the lines the shot reaches
+    templateOnly*: bool = true
+      ## with a relation file's template for the record, judge only the traces in it
 
   NoiseSummary* = object
     ## What the noisy-trace test found in one record (`ready`), per trace of
@@ -52,6 +54,8 @@ type
     inside*: seq[bool] ## per trace: inside the exclusion area
     state*: seq[NoiseState] ## per trace: judged, or why not
     louder*: seq[bool] ## per trace: louder than its neighbours
+    outside*: seq[bool] ## per trace: outside the template, left out; empty when none were
+    outsideCount*: int ## the traces left out for being outside the template
     judged*, inArea*, unknown*, incomplete*, unusable*: int ## traces, by state
     noisy*, weak*, louderCount*: int
 
@@ -175,19 +179,26 @@ func notesWords*(n: NoiseSummary): string =
 
 func notJudgedWords*(n: NoiseSummary): string =
   ## The traces not judged for noise and why, in words: "12 inside the
-  ## area, 3 with the sensor or station unknown, 1 node incomplete". A trace
+  ## area, 5 outside the template, 3 with the sensor or station unknown, 1 node
+  ## incomplete". A trace
   ## with no usable samples is not counted here: it has its own flags.
   if not n.ready: return ""
   var parts: seq[string]
   if n.inArea > 0: parts.add $n.inArea & " inside the area"
+  if n.outsideCount > 0: parts.add $n.outsideCount & " outside the template"
   if n.unknown > 0: parts.add $n.unknown & " with the sensor or station unknown"
   if n.incomplete > 0: parts.add plural(n.incomplete, "trace", "traces") & " of an incomplete node"
   result = if parts.len == 0: "none" else: parts.join(", ")
 
 func notJudged*(n: NoiseSummary): int =
-  ## The traces not judged for noise: inside the area, with the sensor or
-  ## station unknown, or of an incomplete node.
-  n.inArea + n.unknown + n.incomplete
+  ## The traces not judged for noise: inside the area, outside the template, with
+  ## the sensor or station unknown, or of an incomplete node.
+  n.inArea + n.outsideCount + n.unknown + n.incomplete
+
+func outsideAt*(n: NoiseSummary; trace: int): bool =
+  ## Whether file trace `trace` was left out for being outside the template.
+  let i = trace - n.first
+  n.ready and i >= 0 and i < n.outside.len and n.outside[i]
 
 func insideAt*(n: NoiseSummary; trace: int): bool =
   ## Whether file trace `trace` lies inside the exclusion area.

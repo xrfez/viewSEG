@@ -119,6 +119,14 @@ proc drawNoiseSettings(st: AppState; s: var NoiseSettings; marks: var Marks; t: 
       result = true
     marks.mark("settings.noise fallback steps")
     tip(NoiseTips[ncSteps])
+  if igCheckbox("Only inside the template, when a relation file gives one",
+      addr s.templateOnly):
+    result = true
+  marks.mark("settings.noise template only")
+  tip("With a relation file, the record's template is the stations it plans for the " &
+    "record. Traces outside it are not judged for noise, and do not count in what the " &
+    "others are judged against. Off, every trace is judged. Without a relation file " &
+    "there is no template, and every trace is judged.")
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   igTextWrapped("Whatever you choose, the components of unrotated nodes are never compared " &
     "across nodes: the hydrophone is judged on its own, and nodes on the energy of their " &

@@ -24,7 +24,8 @@
 
 import std/[algorithm, base64, json, math, monotimes, os, sets, strutils, tables, times]
 import parseSEG
-import ../core/[explain, geometry, log, properties, shortcuts, state, units, versions]
+import ../core/[explain, firstbreaks, geometry, join, log, properties, shortcuts, state, units,
+  versions]
 import protocol, schema
 
 const
@@ -396,6 +397,17 @@ proc pictureOf(state: AppState; k: int; fe: Frontend): string =
     else:
       result = "complete"
 
+proc breaksJson(b: FirstBreaks; unit: SurveyUnit): JsonNode =
+  ## What the first-break overlay's model is (`core/firstbreaks`), for the panel's `state`.
+  result = %*{"state": $b.state, "picked": b.picked, "modelled": b.modelled,
+    "offsetsFrom": $b.source, "words": b.modelWords(unit)}
+  if b.segments > 0:
+    result["velocityUnit"] = %unit.velocityUnit
+    result["velocities"] = %(if b.segments == 1: @[b.fit.v1] else: @[b.fit.v1, b.fit.v2])
+    result["interceptMs"] = %b.fit.interceptMs
+    result["crossover"] = (if b.segments == 2: %b.fit.crossover else: newJNull())
+    result["picksUsed"] = %b.used
+
 proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
   template p: untyped = state.panels[k]
   result = %*{"id": int(p.id), "title": state.windowTitle(p.id), "shows": $p.shows,
@@ -416,6 +428,9 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
         if g in 0 ..< state.sessions[i].records.len:
           result["record"] = toJson(state.sessions[i].records[g])
     result["display"] = toJson(layer.display)
+    if layer.display.firstBreaks:
+      let bi = state.breaksIndex(k)
+      if bi >= 0: result["firstBreaks"] = breaksJson(state.firstBreaks[bi], state.breakOffsetUnit(k))
     let shown = state.settings.displayPresets.shownPreset(layer.display)
     result["displayPreset"] = %(if shown >= 0: state.settings.displayPresets[shown].name else: "")
     result["filter"] = toJson(layer.filter)
@@ -576,6 +591,8 @@ proc mapJson(state: AppState; limit: int): JsonNode =
     if n.ready:
       result["noise"] = %*{"area": n.areaWords, "notes": n.notesWords,
         "choice": NoiseChoiceNames[n.asked.choice], "judged": n.judged, "inArea": n.inArea,
+            "outsideTemplate": n.outsideCount,
+        "outsideTemplate": n.outsideCount,
         "sensorOrStationUnknown": n.unknown, "incompleteNodes": n.incomplete,
         "noSamples": n.unusable, "notJudged": n.notJudged, "noisy": n.noisy, "weak": n.weak,
         "louder": n.louderCount, "lines": n.lines, "linesReached": n.linesReached}

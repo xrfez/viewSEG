@@ -1190,13 +1190,15 @@ const
     ## all among the ten `mapXps` plans for source line 1 (`mapPlannedFirst(0)`)
   MapUnplacedPoint* = 199 ## the receiver point `mdUnplaced` names
 
-proc mapShotSegd*(fx: Fixtures; line, k: int; defects: set[MapDefect] = {}; name = ""): string =
+proc mapShotSegd*(fx: Fixtures; line, k: int; defects: set[MapDefect] = {}; name = "";
+    loud: openArray[(int, int)] = []): string =
   ## The shot record of `mapSps`'s source `k` of source line `line` (0-based) as
   ## a SEG-D Rev 3.0 file (format 8058), its file number its X record's
   ## (`mapRecord`): a time break (trace 0), then a channel set per receiver
   ## line, a trace for each of its 21 receivers, with the stations and
   ## positions of source and receivers in the headers; with `defects`
-  ## planted (`MapDefectAt`).
+  ## planted (`MapDefectAt`); the receivers `loud` (line, point along it, 0-based) 100 times
+  ## louder, wherever they are.
   result = fx.dir / (if name.len > 0: name else: "shot-" & $mapRecord(line, k) & ".sgd")
   if fileExists(result): return
   let fmt = sd8058
@@ -1270,6 +1272,8 @@ proc mapShotSegd*(fx: Fixtures; line, k: int; defects: set[MapDefect] = {}; name
       var v = newSeq[float32](SegdSamples)
       for i in 0 ..< SegdSamples: v[i] = mapWave(offset, i)
       if mdNoisy in defects and MapDefectAt[mdNoisy] == (rl, rk):
+        for x in v.mitems: x *= 100
+      if (rl, rk) in loud:
         for x in v.mitems: x *= 100
       if mdClipped in defects and MapDefectAt[mdClipped] == (rl, rk):
         var top = 0'f32

@@ -1406,7 +1406,8 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
           nd.firstBreaks = not d.firstBreaks
           res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
         if d.firstBreaks:
-          drawBreakKey(if bi >= 0: st.firstBreaks[bi] else: FirstBreaks(), t, icon, marks)
+          drawBreakKey(if bi >= 0: st.firstBreaks[bi] else: FirstBreaks(),
+            st.breakOffsetUnit(st.findPanel(p.id)), t, icon, marks)
     of sgGain:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         drawGainControls(p, tp.gainBox, t, marks, res.commands, res.notes)

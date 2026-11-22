@@ -191,11 +191,14 @@ proc withSource(f: SeismicFile; traces: Slice[int]; st: StationKey): seq[TraceKe
 proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: int;
     traces: Slice[int]; g: SurveyGeometry; against: string; domain: RelationDomain;
     recordMatch: RecordMatch; traceMatch: TraceMatch; placed: Placed;
-    byPlace: var bool): int64 =
+    byPlace, onStations: var bool): int64 =
   ## The stations planned that the record lacks, its traces at stations not
   ## planned, and its stations recorded twice; the relation record they are
-  ## of (-1 for none). `byPlace`: found with the station `placed`.
+  ## of (-1 for none). `byPlace`: found with the station `placed`. `onStations`:
+  ## the traces are matched to the record's stations (not by channel), so
+  ## which are in the template is known.
   result = -1
+  onStations = false
   for m in [mfMissing, mfUnlisted, mfDuplicate]: hits[m].state = fsDone
   template notChecked(why: string) =
     for m in [mfMissing, mfUnlisted, mfDuplicate]:
@@ -252,7 +255,25 @@ proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: 
     for m in [mfMissing, mfUnlisted, mfDuplicate]:
       hits[m].note.add " (matched by channel: not placed)"
     return
+  onStations = true
   hits.placeTraces(f.index.keys, base, traces, g, record, domain)
+
+proc outsideTemplate*(keys: openArray[TraceKeys]; traces: Slice[int]; g: SurveyGeometry;
+    record: int64; domain: RelationDomain): seq[bool] =
+  ## Per trace of `traces`: whether it is outside the template, a live seismic trace at
+  ## a station relation record `record` of `domain` does not plan (the traces of the
+  ## `mfUnlisted` filter). A trace whose headers name no station is not outside: where
+  ## it stands is not known.
+  result = newSeq[bool](traces.len)
+  let plan = g.plannedOf(record, domain)
+  for i in 0 ..< traces.len:
+    let k = keys[traces.a + i]
+    if k.isSeismic and k.status != tsDead:
+      let (line, point, index) = if domain == rdSource: (k.rcvLine, k.rcvPoint, k.rcvIndex)
+                                 else: (k.srcLine, k.srcPoint, k.srcIndex)
+      if hasStation(line, point):
+        let st = stationKey(line, point, max(index, 0'i16))
+        result[i] = not plan.planned(st.line, st.point, index)
 
 proc negateQc(samples: var Tensor[float32]; part: Slice[int]; reversed: openArray[int]) =
   ## Multiplies each reversed trace of `part` by -1, before its own filter
@@ -307,19 +328,33 @@ proc applyOwnQc(samples: var Tensor[float32]; f: SeismicFile; part: Slice[int];
         plan.apply(b, initChunkMeta(rows, (if dt > 0: dt else: 1.0), 0, skip), ws)
 
 proc noiseOfRecord(f: SeismicFile; traces: Slice[int]; amps: var seq[TraceAmplitude];
-    unread: openArray[int]; br: FirstBreaks; settings: NoiseSettings): NoiseSummary =
+    unread: openArray[int]; outside: openArray[bool]; br: FirstBreaks;
+    settings: NoiseSettings): NoiseSummary =
   ## The noisy-trace test of the record `traces` of `f`, on its traces'
   ## statistics `amps` (the rows `unread` could not be read), its first breaks
-  ## `br` (none when they failed) and the area `settings` choose. Sets the noisy
-  ## and weak flags in `amps`. Raises `ValueError` for what the library refuses.
+  ## `br` (none when they failed) and the area `settings` choose. The traces
+  ## `outside` the template (none given: empty) are passed to the library as it is
+  ## passed a killed trace: not judged, and not in the statistics the others are
+  ## judged against. Sets the noisy and weak flags in `amps`. Raises `ValueError`
+  ## for what the library refuses.
   let n = traces.len
+  var skipped = newSeq[bool](n)
+  var outsideCount = 0
+  for r in unread: skipped[r] = true
+  for i in 0 ..< outside.len:
+    if outside[i]:
+      skipped[i] = true
+      inc outsideCount
+  var skip: seq[int]
+  for i in 0 ..< n:
+    if skipped[i]: skip.add i
   var dt = 1.0
   for t in traces:
     let k = f.index.keys[t]
     if k.isSeismic and k.intervalUs > 0 and k.intervalUs < Inf:
       dt = k.intervalUs / 1000
       break
-  let meta = initChunkMeta(f.rowsOf(traces), dt, 0, unread)
+  let meta = initChunkMeta(f.rowsOf(traces), dt, 0, skip)
   var rotated = newSeq[bool](n)
   var any = false
   for i in 0 ..< n:
@@ -350,7 +385,8 @@ proc noiseOfRecord(f: SeismicFile; traces: Slice[int]; amps: var seq[TraceAmplit
   result = NoiseSummary(ready: true, first: traces.a, asked: settings, domain: domain,
     rule: res.rule, reasons: res.reasons, origin: origin, edgeMs: res.edgeMs,
     radius: res.radius, steps: res.steps, lines: res.lines, linesReached: res.linesReached,
-    inside: res.inside, state: res.state, louder: res.louder)
+    inside: res.inside, state: res.state, louder: res.louder, outsideCount: outsideCount)
+  if outsideCount > 0: result.outside = @outside
   for i in 0 ..< n:
     if f.index.keys[traces.a + i].isSeismic:
       case res.state[i]
@@ -358,7 +394,8 @@ proc noiseOfRecord(f: SeismicFile; traces: Slice[int]; amps: var seq[TraceAmplit
       of nsInArea: inc result.inArea
       of nsUngrouped: inc result.unknown
       of nsIncompleteNode: inc result.incomplete
-      of nsUnusable: inc result.unusable
+      of nsUnusable:
+        if not (outside.len > 0 and outside[i]): inc result.unusable
       if res.louder[i]: inc result.louderCount
       if afNoisy in amps[i].flags: inc result.noisy
       if afWeak in amps[i].flags: inc result.weak
@@ -390,6 +427,8 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
     var revision = 0
     var record = -1'i64
     var byPlace = false
+    var onStations = false
+    var outside: seq[bool] = @[]
     var summary = NoiseSummary()
     var found = FirstBreaks()
     var picked = false
@@ -456,10 +495,24 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
         else:
           seismic.add i
           if k.status == tsDead: hits[mfDead].traces.add base + traces.a + i
+      if relations.isNil:
+        for m in [mfMissing, mfUnlisted, mfDuplicate]:
+          (hits[m].state, hits[m].note) = (fsNotChecked, "no relation file is loaded, and " &
+            "no template generated")
+      else:
+        ctx.setPhase "checking the record against the template"
+        try:
+          record = hits.completeness(f, base, traces, relations[], against, domain,
+            recordMatch, traceMatch, placed, byPlace, onStations)
+        except ValueError as e:
+          for m in [mfMissing, mfUnlisted, mfDuplicate]:
+            (hits[m].state, hits[m].note) = (fsNotChecked, e.msg)
+      if record >= 0 and onStations and noise.settings.templateOnly:
+        outside = outsideTemplate(f.index.keys, traces, relations[], record, domain)
       if wantNoise:
         ctx.setPhase "judging the noisy traces"
         try:
-          summary = noiseOfRecord(f, traces, amps, unreadRows, br, noise.settings)
+          summary = noiseOfRecord(f, traces, amps, unreadRows, outside, br, noise.settings)
         except ValueError as e:
           noiseError = e.msg
       if samples:
@@ -470,7 +523,8 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
         if summary.ready:
           for i in seismic:
             if summary.louder[i]: hits[mfLouder].traces.add base + traces.a + i
-            if summary.state[i] in {nsInArea, nsUngrouped, nsIncompleteNode}:
+            if summary.state[i] in {nsInArea, nsUngrouped, nsIncompleteNode} or
+                summary.outsideAt(traces.a + i):
               hits[mfNotJudged].traces.add base + traces.a + i
       for m in TraceFilters - {mfMissing, mfUnlisted, mfDuplicate}:
         hits[m].count = hits[m].traces.len
@@ -483,18 +537,6 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       if not samples:
         for m in SampleFilters:
           (hits[m].state, hits[m].note) = (fsNotChecked, "the samples were not read")
-      if relations.isNil:
-        for m in [mfMissing, mfUnlisted, mfDuplicate]:
-          (hits[m].state, hits[m].note) = (fsNotChecked, "no relation file is loaded, and " &
-            "no template generated")
-      else:
-        ctx.setPhase "checking the record against the template"
-        try:
-          record = hits.completeness(f, base, traces, relations[], against, domain,
-            recordMatch, traceMatch, placed, byPlace)
-        except ValueError as e:
-          for m in [mfMissing, mfUnlisted, mfDuplicate]:
-            (hits[m].state, hits[m].note) = (fsNotChecked, e.msg)
     discard ctx.progress(1, 1)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkRecordQc, qcSession: session, qcGather: gather,

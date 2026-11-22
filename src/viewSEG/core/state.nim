@@ -6440,6 +6440,19 @@ func qcRelations(state: AppState; domain: RelationDomain): (ref SurveyGeometry, 
     (state.spreads.relations, "the template generated")
   else: (nil, "")
 
+func breakOffsetUnit*(state: AppState; k: int): SurveyUnit =
+  ## The unit of the offsets the first-break model of the record panel `panels[k]` shows
+  ## was fitted on: the import's when the file is joined, else its header's measurement
+  ## system (as an analysis reads them).
+  if k < 0 or k >= state.panels.len or state.panels[k].layers.len == 0: return suNotGiven
+  let src = state.panels[k].layers[0].source
+  if src.kind != lsRecord: return suNotGiven
+  let i = state.findSession(src.file)
+  if i < 0: return suNotGiven
+  let joined = state.joinedOf(src.file)
+  if joined >= 0 and state.joins[joined].units.file != suNotGiven: state.joins[joined].units.file
+  else: offsetUnitOf(state.sessions[i].crs)
+
 proc breakKeyOf(state: AppState; k: int): (bool, BreakKey, int) =
   ## What the first-break overlay of `panels[k]` is of, when it is on and the
   ## panel shows a record: its key, and the session's index.

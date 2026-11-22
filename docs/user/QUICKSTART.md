@@ -604,7 +604,11 @@ colour) and one where the first break was picked (the warm colour). Where they d
 more than 12 ms a line joins them: a trace whose header places it at the wrong station, or
 whose break is late, stands out. The model needs source-receiver offsets: the imported survey's,
 or the file's own coordinates; without them only the picks are drawn and the key at the plot's
-corner says so. A killed trace has no bars. With the pointer on a trace the status bar adds
+corner says so. Point at the key ("model", "pick") and it says what the model is: a
+straight-line refraction fit to this record's own picks against offset, with no velocity
+typed in, the fitted velocity (or two, with the offset where they change) in the offsets'
+unit per second, the intercept in ms, how many picks it was fitted to and where the offsets
+came from (the survey or the file's headers). A killed trace has no bars. With the pointer on a trace the status bar adds
 the model's time, the pick's and their difference. It is off until you turn it on, and
 works in the background, so stepping through records is not held up.
 
@@ -694,7 +698,13 @@ template**, stations **recorded twice**; auxiliary traces, traces **without a po
 the template**). Hover a filter for what it counts; **Select** selects its traces in the
 plot; point at a ringed receiver and its description says which filters mark it.
 
-**Noisy traces and the area left out.** The traces nearest the source are loud, and are not
+**Noisy traces and the area left out.** With a relation file, **noisy** and **weak** are
+judged only inside the record's template, the stations the relation records plan for it:
+the traces outside it are counted as "N outside the template" among those not judged, are
+never flagged, and do not count in what the others are judged against. Without a relation
+file for the record every trace is judged. A tick in Tools > Settings, "Only inside the
+template, when a relation file gives one" (on by default), turns this off. The traces
+nearest the source are loud, and are not
 noisy, so the test leaves an **exclusion area** out of its judgement and judges the rest.
 With one of the noise filters ticked, the Layers list says under "Filters" which rule set
 the area ("Area set by the first-break model", "Area set by a radius from the offsets or
