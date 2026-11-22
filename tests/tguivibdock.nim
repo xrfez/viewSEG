@@ -6,11 +6,9 @@
 ## - in each size and for each record nothing scrolls (no scrollbar of the window, none of the
 ##   plots' own region) and the verdict, the limits table and the bottom of each of the four plots
 ##   are inside the window; the plots share what the rest leaves;
-## - with the note folded nothing above the limits table takes more than one line, whatever the
-##   length of the reference's name (cut with an ellipsis, the whole in a tooltip);
+## - nothing above the limits table takes more than one line, whatever the length of the
+##   reference's name (the note and the roles are tooltips and popovers, not lines);
 ## - the limits table's first column is the sign (so it can never be cut off on the right);
-## - the folded state of the roles and the note is part of the window's options and is kept in the
-##   settings.
 ##
 ## `VIBQC2_DOCKED` and `VIBQC2_FLOAT` name PNG files the 1230 x 850 and the default views are
 ## saved to.
@@ -170,17 +168,6 @@ proc main*() =
     step("settle", noop, after(25))
     phase("floating", (0'f32, 0'f32), "VIBQC2_FLOAT")
     phase("docked", (1230'f32, 850'f32), "VIBQC2_DOCKED")
-    # the folded state is part of the window's options, kept in the settings
-    step("the note opened", proc (f: FrameInfo) =
-      let r = f.markOf("new plot 1.against")
-      let c = vec2(r.pos.x + 20, r.pos.y + r.size.y / 2)
-      f.moveMouse(c)
-      f.pressMouse(c, true)
-      f.pressMouse(c, false),
-      proc (f: FrameInfo): bool =
-        result = f.core.plots[0].params.noteOpen
-        if result:
-          doAssert f.core.settings.plotOptions.vibrator.noteOpen, "not kept in the settings")
     var at = 0
     var started = false
     var wait = 0

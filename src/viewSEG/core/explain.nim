@@ -457,7 +457,7 @@ func vibForceText(f: ExplainFacts): string =
 func vibForceMBText(f: ExplainFacts): string =
   let masses = if f.live and f.reactionMass.len > 0 and f.baseplateMass.len > 0:
       "Mr = " & f.reactionMass & " (reaction mass), Mb = " & f.baseplateMass & " (baseplate)."
-    else: "Needs the reaction mass and the baseplate mass, both entered above."
+    else: "Needs the reaction mass and the baseplate mass, both entered in the settings wheel (Masses)."
   join4(part("Shows", "GF (M, B), the ground force generated from the masses' " &
       "accelerations, against sweep time in ms: its fundamental amplitude and its peak" &
       (if f.axis.len > 0: ", on the axis " & f.axis else: "") & "."),
