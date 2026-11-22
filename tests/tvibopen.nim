@@ -12,12 +12,13 @@
 ## Vibrator window on trace 1 takes traces 1-4, is not changed by typed masses and says the
 ## file's weights. The four field signature recordings in samples/vib/field open as SEG-Y.
 ##
-## Seen to fail: with the writer asked for `voFile` order, `layout` found code 258... at trace
-## 2; with `fromFirstFrame` ignored, `firstFrame` found t0 not 0; with the ground forces
-## swapped between sets, `groundForces` differed from the library's; with `auxLike` returning
-## the status only, `allAuxiliary` found trace 5 seismic; with `vibratorOf` ignoring
-## `forceNote`, the masses made a GF (M, B); with `signatureKindOf` testing the extension, the
-## renamed file `kindByContent` was not a signature.
+## The first look: a signature file opens with each trace scaled on its own (normalized) and
+## the trace's name in the display header; a SEG-Y file shown after it has the defaults back.
+##
+## Seen to fail: with the first-look defaults off in `show`, `firstLook` found gain "automatic";
+## with the writer asked for `voFile` order, `layout` found code 257 at trace 2;
+## with `auxLike` returning the status only, `layout` found trace 5 seismic; with `vibratorOf`
+## ignoring `forceNote`, the masses made a GF (M, B).
 
 import std/[json, os, sequtils, strutils]
 import parseSEG
@@ -43,6 +44,10 @@ func has(log: MessageLog; part: string; severity = sevInfo): bool =
 proc openIt(st: var AppState; path: string): bool =
   st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
   st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+
+proc shownPath(st: AppState): string =
+  let i = st.shownFile(st.findPanel(MainPanel))
+  if i >= 0: st.sessions[i].path else: ""
 
 proc main*() =
   block layout:
@@ -201,6 +206,25 @@ proc main*() =
       # the whole trace, its pre-trigger included; the archive keeps a reference's samples
       # from its first one, as it does for a SEG-Y file (it holds no t0)
       doAssert e.samples == 6601 and e.origin.fromMs == 0, $(e.samples, e.origin.fromMs)
+      st.shutdown()
+
+  block firstLook:
+    # A signature file's traces differ in scale by orders of magnitude: each is scaled on its own
+    # at first and the display header names it; a SEG-Y file keeps the defaults.
+    withFixtures fx:
+      var st = initAppState()
+      doAssert st.openIt(vibFile(fx.dir, "0007.VIB"))
+      let p = st.panel(MainPanel)
+      doAssert p.layers[0].display.gain == dgNormalized, $p.layers[0].display.gain
+      doAssert p.layers[0].display.overlap < 1 and p.layers[0].display.fills == {}
+      doAssert p.shownFields == @[hfTraceId, hfTrace], $p.shownFields
+      doAssert st.sessions[0].traceNames[4] == "mass A\treaction-mass acceleration, set A"
+      doAssert headerName(st.sessions[0].traceNames[4]) == "mass A"
+      doAssert fullName(st.sessions[0].traceNames[4]) == "reaction-mass acceleration, set A"
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.surveySegy())
+      doAssert st.settle(st.shownPath == fx.surveySegy() and st.panel(MainPanel).laidOut)
+      let q = st.panel(MainPanel)
+      doAssert q.layers[0].display.gain == dgAuto and q.header.auto, "a SEG-Y file was changed"
       st.shutdown()
 
   block nothingIsWritten:

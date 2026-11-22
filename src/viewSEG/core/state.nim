@@ -2419,6 +2419,11 @@ proc applyRememberedTraces(state: AppState; file: SessionId; filter: var TraceFi
     filter.seismic = true
     filter.auxiliary = false
 
+const SignatureOverlap = 0.45
+
+const SignatureHeader = HeaderChoice(auto: false, fields: @[hfTraceId, hfTrace])
+  ## a signature file's display header: the trace's name from its layout, then its number
+
 proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
   ## Points layer 0 of `panel` at `gather` of `file`. A later record of the
   ## same file keeps the filter, including which components are off. Another
@@ -2464,6 +2469,27 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
         state.log.add(sevInfo, s.name, "Every trace of " & s.name & "'s record is " &
           "auxiliary (pilot, reference or monitor channels), so Aux is switched on: " &
           "there are no seismic traces to show.")
+  # A signature file's traces differ in scale by orders of magnitude (counts, forces, a
+  # per-cycle value near 1e9): each is scaled on its own at first, and the display header names
+  # the trace. A choice already made (any other gain; another header) wins; nothing but the
+  # display changes, no sample.
+  if i >= 0 and (state.panels[k].layers.len > 0):
+    template layer: untyped = state.panels[k].layers[0]
+    if state.sessions[i].isSignature:
+      if layer.display.gain == dgAuto:
+        layer.display.gain = dgNormalized
+        if layer.display.fills == {wfPositive}: layer.display.fills = {}
+        if layer.display.overlap == 1.0: layer.display.overlap = SignatureOverlap # (bands that do not touch)
+      if state.panels[k].header.auto: state.panels[k].header = SignatureHeader
+    else:
+      # (left a signature file: what its first look set goes back to the user's)
+      if state.panels[k].header == SignatureHeader:
+        state.panels[k].header = state.settings.plot.header
+      if layer.display.gain == dgNormalized and layer.display.overlap == SignatureOverlap and
+          layer.display.fills == {}:
+        let d = state.settings.plot.display
+        (layer.display.gain, layer.display.overlap, layer.display.fills) = (d.gain, d.overlap,
+          d.fills)
   state.newSource(k)
   state.selection.activeGather = GatherRef(file: file, gather: gather)
   inc state.selection.revision

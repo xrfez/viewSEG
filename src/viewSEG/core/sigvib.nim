@@ -22,6 +22,8 @@ import headers, sigtypes
 
 const
   VibKindName = ".vib"
+  Shorts = ["ref", "mass B", "plate B", "GF B", "mass A", "plate A", "GF A", "torque", "valve",
+      "stroke", "drive", "cycle 1", "cycle 2"]
   Layout = [
     ("reference", 21'i16, "counts"),
     ("reaction-mass acceleration, set B", 18'i16, "counts"),
@@ -188,8 +190,8 @@ proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice
     endsInSweep: shot.endsInSweep,
     decodedAs: "SEG-Y Rev 2.1 in memory (no file written)")
   f.choice.intervalUs = interval
-  for (n, code, unit) in Layout:
-    f.traces.add SignatureTrace(name: n, code: code, unit: unit)
+  for i, (n, code, unit) in Layout:
+    f.traces.add SignatureTrace(name: n, short: Shorts[i], code: code, unit: unit)
   let fit = shot.sweep
   f.trigger = SignatureTrigger(source: trNone, clockFrom: "the second the recording began",
     timeZero: "first frame", crossings: fit.crossings, residualCycles: fit.residualCycles)

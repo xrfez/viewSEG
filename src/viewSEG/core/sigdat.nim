@@ -19,6 +19,7 @@ const
   DatKindName = ".dat"
   TraceNames = ["reference", "reaction-mass force", "baseplate force",
     "ground force (the controller's: the sum of 2 and 3)"]
+  TraceShorts = ["ref", "mass F", "plate F", "GF"]
   TraceCodes = [21'i16, 18, 19, 20]
 
 func datKind*(head: openArray[byte]): SignatureKind =
@@ -271,7 +272,8 @@ proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice
   f.trigger = SignatureTrigger(source: trGiven, frame: 0, timeZero: "trigger",
     clockFrom: "the trigger time of the header record")
   for i in 0 ..< 4:
-    f.traces.add SignatureTrace(name: TraceNames[i], code: TraceCodes[i], unit: "counts")
+    f.traces.add SignatureTrace(name: TraceNames[i], short: TraceShorts[i], code: TraceCodes[i],
+        unit: "counts")
   if not shot.complete:
     let shown = shot.len
     f.warnings.add name & ": the recording stopped after " &

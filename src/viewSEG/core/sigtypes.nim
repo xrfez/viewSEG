@@ -92,9 +92,10 @@ type
     clockFrom*: string ## "the second the recording began" or "the .dat of this sweep"
 
   SignatureTrace* = object
-    name*: string ## what the plots call the trace
-    code*: int16  ## its SEG-Y trace identification code
-    unit*: string ## "counts", "pound-counts"
+    name*: string  ## what the plots call the trace
+    short*: string ## the same in a few letters, for a narrow header column
+    code*: int16   ## its SEG-Y trace identification code
+    unit*: string  ## "counts", "pound-counts"
 
   SignaturePosition* = object
     valid*: bool
@@ -163,9 +164,11 @@ func daysFromCivil(y0, m, d: int): int64 =
 
 func unixNs*(year, month, day, hour, minute, second, nanosecond: int): int64 =
   ## UTC nanoseconds since 1970 of a date and time of day the library has checked
-  ## (1970 to 9999), a leap second counted as the second after the 59th.
-  (daysFromCivil(year, month, day) * 86400 + int64(hour * 3600 + minute * 60 + second)) *
-    1_000_000_000 + int64(nanosecond)
+  ## (1970 to 9999), a leap second counted as the second after the 59th. Past the year 2262,
+  ## which 64 bits of nanoseconds cannot hold, it is the largest value (never an overflow).
+  let secs = daysFromCivil(year, month, day) * 86400 + int64(hour * 3600 + minute * 60 + second)
+  if secs >= 9_223_372_035'i64: high(int64)
+  else: secs * 1_000_000_000 + int64(nanosecond)
 
 func timeText*(ns: int64; fraction = 9): string =
   ## `ns` (UTC nanoseconds since 1970) as "2001-02-03 04:05:06.789012345", with `fraction`
@@ -207,3 +210,13 @@ func auxLike*(f: SeismicFile; k: TraceKeys): bool {.inline.} =
   ## file decoded in memory, which only a signature file is (every trace of one is
   ## auxiliary, and a `.vib`'s codes above 22 read back with status unknown).
   k.status == tsAuxiliary or f.inMemory
+
+func headerName*(label: string): string =
+  ## The short part of a signature trace's label ("short\tfull"), for a narrow header column.
+  let at = label.find('\t')
+  if at >= 0: label[0 ..< at] else: label
+
+func fullName*(label: string): string =
+  ## The full part of a signature trace's label ("short\tfull"), for the readout.
+  let at = label.find('\t')
+  if at >= 0: label[at + 1 .. ^1] else: label

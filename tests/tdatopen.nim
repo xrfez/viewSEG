@@ -11,12 +11,10 @@
 ## added. The Vibrator window on the four traces takes its roles from the codes, forms no
 ## GF (M, B) and is not changed by typed masses.
 ##
-## Seen to fail: with `decode` writing the traces in the order 21, 19, 18, 20, `layout` found
-## code 19 at trace 2; with `adopt` reading positions for a signature file, `noMapPoint`
-## found a layer; with `decodeToSession` writing the index cache, `nothingIsWritten` saw a
-## write call; with `rolesOf` not reading the codes of a signature file, `vibratorWindow`
-## found the roles by position; with `vibratorOf` ignoring `forceNote`, the masses made a GF
-## (M, B).
+## Seen to fail: with `adopt` reading positions for a signature file, `noMapPoint` found a
+## layer; with the signature branch of `rolesOf` off, `vibratorWindow` found the hand-made
+## swap in the next window's roles; with `vibratorOf` ignoring `forceNote`, the masses made a
+## GF (M, B).
 
 import std/[json, os, sequtils, strutils]
 import parseSEG
@@ -74,6 +72,10 @@ proc main*() =
         doAssert force[i] == mass[i] + base[i], "trace 4 is not trace 2 + trace 3 at " & $i
       doAssert st.log.has("vibrator .dat signature file of controller 4321, vibrator 12, 4 traces")
       doAssert st.log.has("decoded in memory")
+      let first = st.panel(MainPanel)
+      doAssert first.layers[0].display.gain == dgNormalized and
+        first.shownFields == @[hfTraceId, hfTrace], "the first look of a .dat"
+      doAssert s.traceNames[0] == "ref\treference"
       doAssert not st.log.has("from the cache")
       st.shutdown()
 

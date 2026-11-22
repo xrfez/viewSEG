@@ -11,6 +11,7 @@ import std/math
 from ../core/readout import numberText
 from ../core/panels import HeaderField, hfChannelSet, hfTraceId
 from ../core/traceids import traceIdText
+from ../core/sigtypes import headerName
 
 func headerStep*(stride: int; pixelsPerPosition, labelPixels: float64): int =
   ## The step between labelled positions: `stride` times the smallest of 1,
@@ -42,8 +43,8 @@ func headerLabel*(f: HeaderField; v: float64; channelSet: string): string =
   ## for the channel set (`channelSet`, its number and type in words, when the
   ## tile has it) and the trace ID code (the code in words).
   case f
-  of hfChannelSet: (if channelSet.len > 0: channelSet else: headerText(v))
+  of hfChannelSet: (if channelSet.len > 0: headerName(channelSet) else: headerText(v))
   of hfTraceId:
-    (if v.isNaN: "" elif channelSet.len > 0: channelSet # (a signature file's own names)
+    (if v.isNaN: "" elif channelSet.len > 0: headerName(channelSet) # (a signature file's own names)
       else: traceIdText(int(v)))
   else: headerText(v)

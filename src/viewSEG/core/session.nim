@@ -175,7 +175,7 @@ func signature*(s: Session): lent SignatureFacts {.inline.} = s.signature
   ## What is known of a signature file beyond its in-memory SEG-Y.
 func traceNames*(s: Session): seq[string] =
   ## A signature file's name of each trace, in the file's order; empty for any other file.
-  for t in s.signature.traces: result.add t.name
+  for t in s.signature.traces: result.add t.short & "\t" & t.name
 
 func isSignature*(s: Session): bool {.inline.} = s.signature.kind != sgNone
   ## Whether the file is a vibrator controller's signature file, decoded in memory.
