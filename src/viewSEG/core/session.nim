@@ -98,7 +98,7 @@ proc keepZeroRecords(f: SeismicFile; gathers: var seq[Gather]): int =
     if kept.len > 0 and k(g.traces.a).record == 0 and k(kept[^1].traces.a).record != 0:
       var allAux = true
       for t in g.traces:
-        if not f.auxLike(k(t)):
+        if k(t).status != tsAuxiliary:
           allAux = false
           break
       let (now, before) = (k(g.traces.a).time, k(kept[^1].traces.a).time)
@@ -125,10 +125,6 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
   result.gathers = result.file.gathers
   result.zeroKept = keepZeroRecords(result.file, result.gathers)
   result.records = recordRows(result.file, result.gathers)
-  if signature.kind != sgNone:
-    # every trace of a signature file counts as auxiliary (`auxLike`)
-    for r in result.records.mitems:
-      (r.seismic, r.dead, r.aux) = (0, 0, r.traces)
   var anySeismic = false
   for r in result.records:
     if r.seismic > 0: anySeismic = true
@@ -179,12 +175,6 @@ func traceNames*(s: Session): seq[string] =
 
 func isSignature*(s: Session): bool {.inline.} = s.signature.kind != sgNone
   ## Whether the file is a vibrator controller's signature file, decoded in memory.
-
-func auxLike*(s: Session; k: TraceKeys): bool {.inline.} =
-  ## Whether viewSEG treats the trace as auxiliary: its status says so, or the file is a
-  ## signature file, all of whose traces are (a `.vib`'s codes above 22 read back with
-  ## status unknown, which would count them as seismic data).
-  s.file.auxLike(k) or s.signature.kind != sgNone
 
 func id*(s: Session): SessionId {.inline.} = s.id
 func base*(s: Session): int {.inline.} = s.base

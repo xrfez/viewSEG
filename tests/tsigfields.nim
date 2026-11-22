@@ -3,9 +3,7 @@
 ## number the library decoded; offsets are in the file; the hex pane's blocks are the file's
 ## own bytes at those offsets.
 ##
-## Seen to fail: with the `.dat` table's trigger year read at byte 500, `datRows` found the
-## year row different from the decoded trigger; with the `.vib` weights' offsets swapped,
-## `vibRows` found the baseplate weight equal to the mass.
+## Seen to fail: with the height read unsigned, `negativeHeight` found 65526.
 
 import std/[math, os, strutils]
 import parseSEG
@@ -57,6 +55,18 @@ proc main*() =
       for b in f.blocks:
         doAssert b.bytes == bytes[int(b.offset) ..< int(b.offset) + b.size], b.blockName
       doAssert f.blocks.len == 4 # header, position, trailer, QC
+
+  block negativeHeight:
+    withFixtures fx:
+      var b = cast[seq[byte]](readFile(datFile(fx.dir, "a.dat")))
+      b[512 + 147] = 0xF6 # the position record's height, 16 bits signed: -10
+      b[512 + 148] = 0xFF
+      fixChecksum(b, 1)
+      writeBytes(fx.dir / "neg.dat", b)
+      let f = decodeFacts(fx.dir / "neg.dat")
+      doAssert f.rowOf("positionRecord", "height").number == -10, $f.rowOf("positionRecord",
+          "height").value
+      doAssert parseDat(b).fix.heightDm == -10
 
   block vibRows:
     withFixtures fx:

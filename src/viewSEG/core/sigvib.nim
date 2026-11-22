@@ -57,7 +57,7 @@ func sigError(name, words: string): ref SignatureError =
     " file: " & words)
 
 func startNs(t: VibTime): int64 =
-  posixSeconds(t) * 1_000_000_000
+  unixNs(t.year, t.month, t.day, t.hour, t.minute, t.second, 0)
 
 func infoOf(s: VibInfo; path: string): SweepInfo =
   let serial = serialFromPath(path)
@@ -164,6 +164,9 @@ proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice
     raise sigError(name, e.msg)
   except ValueError as e:
     raise sigError(name, e.msg)
+  if shot.start.year > MaxYear:
+    raise sigError(name, "its start date (the year " & $shot.start.year & ") is past the year " &
+      $MaxYear & ", a time this program cannot hold: the file cannot mean it")
   shot.nameNumber = nameNumberOf(path)
   var wopts = VibWriteOptions(cycleValues: true, groundForce: {vsA, vsB}, primary: vsB,
     timeAxis: (if choice.fromFirstFrame: vaRecord else: vaTrigger), units: vuCounts,

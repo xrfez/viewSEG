@@ -31,7 +31,6 @@ import std/[algorithm, locks, math, monotimes, options, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
-import sigtypes
 import analysis, cutfile, filesystem, fkanalysis, inbox, jobs, join, log,
     processing, references,
   threads, vibalign, vibanalysis
@@ -270,7 +269,7 @@ proc filtered*(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
     return "the filters could not run: " & e.msg
   for i in 0 ..< rows.len:
     if rows[i].len > 0: copyMem(addr rows[i][0], addr work[i * cols], rows[i].len * 4)
-    if applyPlot and not q.aux and f[].auxLike(f[].traceKeys(list[i])):
+    if applyPlot and not q.aux and f[].traceKeys(list[i]).status == tsAuxiliary:
       inc passed
   if applyPlot and filters.len > 0:
     result = "through " & q.describe

@@ -135,6 +135,9 @@ type
 
 const
   SignatureKinds* = {sgDat, sgVib}
+  MaxYear* = 2262
+    ## the last year whose time in nanoseconds since 1970 fits 64 bits: a signature file's
+    ## date beyond it is refused, not wrapped
   DatIntervalUs* = 1000.0
   VibIntervalUs* = 500.0
 
@@ -205,11 +208,6 @@ func groupDigits*(n: int64): string =
     result.add c
   if n < 0: result = "-" & result
 
-func auxLike*(f: SeismicFile; k: TraceKeys): bool {.inline.} =
-  ## Whether viewSEG treats a trace of `f` as auxiliary: its status says so, or `f` is a
-  ## file decoded in memory, which only a signature file is (every trace of one is
-  ## auxiliary, and a `.vib`'s codes above 22 read back with status unknown).
-  k.status == tsAuxiliary or f.inMemory
 
 func headerName*(label: string): string =
   ## The short part of a signature trace's label ("short\tfull"), for a narrow header column.

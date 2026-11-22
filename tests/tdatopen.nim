@@ -11,7 +11,9 @@
 ## added. The Vibrator window on the four traces takes its roles from the codes, forms no
 ## GF (M, B) and is not changed by typed masses.
 ##
-## Seen to fail: with `adopt` reading positions for a signature file, `noMapPoint` found a
+## Seen to fail: with the signature kinds told after `detectKind`, `segyLookalike` found the
+## file SEG-Y; with the open job sending a chosen standard to the SEG-Y opener, `reopenAsSegy` found
+## the SEG-Y reader's refusal; with `adopt` reading positions for a signature file, `noMapPoint` found a
 ## layer; with the signature branch of `rolesOf` off, `vibratorWindow` found the hand-made
 ## swap in the next window's roles; with `vibratorOf` ignoring `forceNote`, the masses made a
 ## GF (M, B).
@@ -19,7 +21,8 @@
 import std/[json, os, sequtils, strutils]
 import parseSEG
 import parseSSDAT
-import viewSEG/core/[filejobs, properties, state]
+import parseSEG/model/indexwalk
+import viewSEG/core/[filejobs, filekinds, openchoice, properties, state]
 import viewSEG/remote/tools
 import utils/[chosenref, faultyfs, fixtures, sigfiles, waiting]
 
@@ -59,7 +62,7 @@ proc main*() =
       for t in 0 ..< 4:
         let k = fp[].traceKeys(t)
         doAssert k.traceCode == codes[t], "trace " & $t & " has code " & $k.traceCode
-        doAssert k.status == tsAuxiliary and s.auxLike(k)
+        doAssert k.status == tsAuxiliary and not isSeismic(fp[].index, t)
         doAssert k.record == 7001 and k.intervalUs == 1000
       doAssert fp[].traceKeys(0).time == posixTime(shot.trigger)
       let (ref0, mass, base, force) = (samples(fp[], 0), samples(fp[], 1), samples(fp[], 2),
@@ -77,6 +80,52 @@ proc main*() =
         first.shownFields == @[hfTraceId, hfTrace], "the first look of a .dat"
       doAssert s.traceNames[0] == "ref\treference"
       doAssert not st.log.has("from the cache")
+      st.shutdown()
+
+  block segyLookalike:
+    # Some signature files' bytes make parseSEG's `detectKind` say SEG-Y (a plausible binary
+    # header at byte 3200, inside a data block): the signature kind is told first.
+    withFixtures fx:
+      let good = datFile(fx.dir, "plain.dat")
+      var b = cast[seq[byte]](readFile(good))
+      for i in 3200 ..< 3584: b[i] = 0
+      b[3216] = 0x03 # sample interval 1000 (big-endian), 100 samples, format code 5
+      b[3217] = 0xE8
+      b[3221] = 100
+      b[3225] = 5
+      fixChecksum(b, 6)
+      writeBytes(fx.dir / "lookalike.dat", b)
+      doAssert detectKind(b) == skSegy, "the synthetic bytes do not look like SEG-Y"
+      doAssert sniff(fx.dir / "lookalike.dat") == fkDat
+      var st = initAppState(indexCache = fx.dir / "cache")
+      doAssert st.openIt(fx.dir / "lookalike.dat")
+      doAssert st.sessions[0].isSignature and st.sessions[0].len == 4
+      doAssert not dirExists(fx.dir / "cache") or toSeq(walkDir(fx.dir / "cache")).len == 0
+      st.shutdown()
+
+  block dateTooFar:
+    withFixtures fx:
+      var st = initAppState()
+      for year in [2300, 9999]:
+        let name = "y" & $year & ".dat"
+        let path = datFile(fx.dir, name, SynthDat(samples: 600, trigger: DatTime(year: year,
+          month: 2, day: 3, hour: 4, minute: 5, second: 6, nanosecond: 789_000_000)))
+        st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+        doAssert st.settle(st.log.has(name & " could not be opened as a vibrator .dat file: " &
+          "its trigger date (the year " & $year & ") is past the year 2262", sevError)), $year
+        doAssert st.sessions.len == 0
+      st.shutdown()
+
+  block reopenAsSegy:
+    # A remembered "read as SEG-Y" never sends a signature file to the SEG-Y reader.
+    withFixtures fx:
+      let path = datFile(fx.dir, "a.dat")
+      var st = initAppState()
+      doAssert st.openIt(path)
+      st.apply Command(kind: ckReopen, reopenPath: path, openChoice: OpenChoice(standard: scSegy))
+      doAssert st.settle(st.jobs.active.len == 0 and st.sessions.len == 1)
+      doAssert st.sessions[0].isSignature and st.sessions[0].len == 4
+      doAssert not st.log.has("is not a SEG-Y", sevError), "the SEG-Y reader was given the file"
       st.shutdown()
 
   block noMapPoint:

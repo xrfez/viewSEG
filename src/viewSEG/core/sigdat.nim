@@ -85,7 +85,8 @@ func text(b: openArray[byte]; first, last: int): string =
   result = result.strip(leading = false, chars = {' ', '.'})
 
 type Field = tuple[name, words: string; at, size: int; kind: char]
-  ## `kind`: 'l' little-endian number, 'b' big-endian number, 's' text, 'c' one letter
+  ## `kind`: 'l' little-endian number, 'i' signed little-endian, 'b' big-endian number, 's' text,
+  ## 'c' one letter
 
 func fld(name, words: string; at, size: int; kind: char): Field =
   (name, words, at, size, kind)
@@ -118,7 +119,7 @@ const
     fld("longitudeDegrees", "Longitude, whole degrees", 141, 1, 'l'),
     fld("longitudeMinutesE6", "Longitude, minutes in millionths", 142, 4, 'l'),
     fld("longitudeHemisphere", "Longitude, E or W", 146, 1, 'c'),
-    fld("height", "Height as stored (its meaning is not certain)", 147, 2, 'l'),
+    fld("height", "Height as stored (its meaning is not certain)", 147, 2, 'i'),
     fld("fixQuality", "Fix quality", 149, 1, 'l'),
     fld("satellites", "Satellites", 150, 1, 'l'),
     fld("hdopTenths", "HDOP in tenths", 151, 1, 'l'),
@@ -165,6 +166,10 @@ func valueOf(b: openArray[byte]; f: Field): (string, float64) =
   case f.kind
   of 's': (text(b, f.at, f.at + f.size - 1), NaN)
   of 'c': ($char(b[f.at]), NaN)
+  of 'i':
+    let u = le(b, f.at, f.size)
+    let v = if u >= (1'i64 shl (8 * f.size - 1)): u - (1'i64 shl (8 * f.size)) else: u
+    ($v, float64(v))
   else:
     let v = if f.kind == 'l': le(b, f.at, f.size) else: be(b, f.at, f.size)
     ($v, float64(v))
@@ -250,6 +255,10 @@ proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice
     raise sigError(name, e.msg)
   except ValueError as e:
     raise sigError(name, e.msg)
+  if shot.trigger.year > MaxYear:
+    raise sigError(name, "its trigger date (the year " & $shot.trigger.year &
+      ") is past the year " &
+      $MaxYear & ", a time this program cannot hold: the file cannot mean it")
   let wopts = DatWriteOptions(positions: dpGga, swapForces: choice.swapForces)
   var o = SegyOutputOptions()
   try:

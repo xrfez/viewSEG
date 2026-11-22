@@ -486,17 +486,17 @@ proc openFileWork*(path: string; to: Poster; cache = "";
   let load = surveyWork(path, to, lines)
   let signature = openSignatureWork(path, to)
   result = proc (ctx: JobContext) {.gcsafe.} =
-    if choice.standard != scDetect:
+    let kind = sniff(path)
+    if kind in SignatureFileKinds:
+      signature(ctx) # (whatever the choice says: a signature file is not read as SEG-Y or SEG-D)
+    elif choice.standard != scDetect:
       open(ctx)
-    else:
-      let kind = sniff(path)
-      if kind.isSurvey: load(ctx)
-      elif kind in SignatureFileKinds: signature(ctx)
-      elif kind == fkUnknown:
-        let why = refusalOf(path)
-        if why.len > 0: raise newException(SignatureError, why)
-        open(ctx)
-      else: open(ctx)
+    elif kind.isSurvey: load(ctx)
+    elif kind == fkUnknown:
+      let why = refusalOf(path)
+      if why.len > 0: raise newException(SignatureError, why)
+      open(ctx)
+    else: open(ctx)
 
 proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[int]];
     relations: ptr SurveyGeometry; against: string; layer: SurveyLayerId;

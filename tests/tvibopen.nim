@@ -15,14 +15,16 @@
 ## The first look: a signature file opens with each trace scaled on its own (normalized) and
 ## the trace's name in the display header; a SEG-Y file shown after it has the defaults back.
 ##
-## Seen to fail: with the first-look defaults off in `show`, `firstLook` found gain "automatic";
+## Seen to fail: with the signature kinds told after `detectKind`, `segyLookalike` found SEG-Y; with
+## the first-look defaults off in `show`, `firstLook` found gain "automatic";
 ## with the writer asked for `voFile` order, `layout` found code 257 at trace 2;
-## with `auxLike` returning the status only, `layout` found trace 5 seismic; with `vibratorOf`
+## with the keys' status not set to auxiliary at the open, `layout` found trace 5 seismic; with `vibratorOf`
 ## ignoring `forceNote`, the masses made a GF (M, B).
 
 import std/[json, os, sequtils, strutils]
 import parseSEG
 import parseSSVIB
+import parseSEG/model/indexwalk
 import viewSEG/core/[filejobs, filekinds, properties, readout, sigtypes, state]
 import viewSEG/remote/tools
 import utils/[chosenref, faultyfs, fixtures, sigfiles, waiting]
@@ -58,13 +60,15 @@ proc main*() =
       doAssert st.openIt(path)
       let s = st.sessions[0]
       doAssert s.signature.kind == sgVib and s.path == path and s.file.inMemory
+      doAssert s.noSeismic and s.records[0].seismic == 0 and s.records[0].aux == 13
       doAssert s.len == 13 and s.gathers.len == 1
       let fp = s.filePtr
       let codes = [21'i16, 18, 19, 20, 258, 257, 267, 261, 262, 263, 264, 265, 266]
       for t in 0 ..< 13:
         let k = fp[].traceKeys(t)
         doAssert k.traceCode == codes[t], "trace " & $(t + 1) & " has code " & $k.traceCode
-        doAssert s.auxLike(k) and fp[].auxLike(k), "allAuxiliary: trace " & $(t + 1)
+        doAssert k.status == tsAuxiliary and not isSeismic(fp[].index, t),
+          "allAuxiliary: trace " & $(t + 1)
         doAssert k.record == 7 and k.intervalUs == 500
       doAssert abs(fp[].traceKeys(0).t0Ms + 600.37 * 0.5) < 0.05, $fp[].traceKeys(0).t0Ms
       doAssert s.signature.trigger.source == trEstimated and
@@ -165,7 +169,8 @@ proc main*() =
           "5 reaction-mass acceleration, set A (258)", "assumed"]:
         doAssert part in text, part & " is missing from:\n" & text
       for bad in ["real", "true", "measured", "simulated"]:
-        doAssert bad notin text.toLowerAscii.replace("true", ""), bad
+        for w in text.toLowerAscii.split({' ', '\n', '\t', ',', '.', ';', ':', '(', ')'}):
+          doAssert w != bad, "the Summary says \"" & bad & "\""
       let sig = st.stateReport(Frontend(), """{"parts":["files"]}""").body["files"][0]["signature"]
       doAssert sig["kind"].getStr == "vib" and sig["primarySet"].getStr == "B"
       doAssert sig["trigger"]["source"].getStr == "estimated" and sig["timeZero"].getStr == "trigger"
@@ -206,6 +211,48 @@ proc main*() =
       # the whole trace, its pre-trigger included; the archive keeps a reference's samples
       # from its first one, as it does for a SEG-Y file (it holds no t0)
       doAssert e.samples == 6601 and e.origin.fromMs == 0, $(e.samples, e.origin.fromMs)
+      st.shutdown()
+
+  block segyLookalike:
+    withFixtures fx:
+      var b = cast[seq[byte]](readFile(vibFile(fx.dir, "plain.VIB")))
+      b[3216] = 0x03 # a plausible SEG-Y binary header at byte 3200, in the frames
+      b[3217] = 0xE8
+      b[3221] = 100
+      b[3225] = 5
+      writeBytes(fx.dir / "lookalike.VIB", b)
+      doAssert detectKind(b) == skSegy, "the synthetic bytes do not look like SEG-Y"
+      doAssert sniff(fx.dir / "lookalike.VIB") == fkVib
+      var st = initAppState(indexCache = fx.dir / "cache")
+      doAssert st.openIt(fx.dir / "lookalike.VIB")
+      doAssert st.sessions[0].isSignature and st.sessions[0].len == 13
+      doAssert not dirExists(fx.dir / "cache") or toSeq(walkDir(fx.dir / "cache")).len == 0
+      st.shutdown()
+
+  block seismicSamplesNotClaimed:
+    var n = 0
+    for pattern in ["*.sgy", "*.segy", "*.sgd", "*.segd", "*.sg2"]:
+      for f in walkDirRec(root / "samples", yieldFilter = {pcFile}):
+        if f.extractFilename.endsWith(pattern[1 .. ^1]):
+          doAssert sniff(f) notin {fkDat, fkVib}, f & " was taken for a signature file"
+          inc n
+    doAssert n > 0
+    withFixtures fx:
+      doAssert sniff(fx.surveySegy()) == fkSegy and sniff(fx.twoSetSegd()) == fkSegd
+
+  block dateTooFar:
+    withFixtures fx:
+      var st = initAppState()
+      for year in [2300, 9999]:
+        var b = cast[seq[byte]](readFile(vibFile(fx.dir, "g.VIB")))
+        b[45] = byte(year and 0xFF)
+        b[46] = byte(year shr 8)
+        let name = $year & ".VIB"
+        writeBytes(fx.dir / name, b)
+        st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.dir / name)
+        doAssert st.settle(st.log.has(name & " could not be opened as a vibrator .vib file: " &
+          "its start date (the year " & $year & ") is past the year 2262", sevError)), $year
+        doAssert st.sessions.len == 0
       st.shutdown()
 
   block firstLook:

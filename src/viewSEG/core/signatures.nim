@@ -14,6 +14,7 @@
 
 import std/[math, os, strutils, times]
 import parseSEG
+import parseSEG/model/traceindex # (`mindex`: the one place a key's status is set, below)
 import filesystem, inbox, jobs, openchoice, session, sigdat, sigtypes, sigvib, threads,
   vendormaps
 
@@ -102,6 +103,11 @@ proc decodeToSession*(bytes: openArray[byte]; path: string; modified: Time;
   except ValueError as e:
     raise newException(SignatureError, name & " could not be opened as a " & $kind &
       " file: " & e.msg)
+  # Every trace of a signature file is auxiliary to viewSEG. A `.vib`'s codes above 22 read back
+  # with status unknown, which parseSEG counts as seismic data: set at the source, before any
+  # reader, record row or layer is made from the keys, so every check agrees.
+  {.cast(gcsafe).}:
+    for k in opened.mindex.keys.mitems: k.status = tsAuxiliary
   result = newSession(path, move opened, int64(bytes.len), modified, OpenChoice(), facts)
 
 proc openSignatureWork*(path: string; to: Poster; choice = SignatureChoice()): JobWork =
@@ -123,9 +129,14 @@ proc openSignatureWork*(path: string; to: Poster; choice = SignatureChoice()): J
       raise newException(SignatureError, name & " is larger than any " &
         (if kind == sgVib: ".vib" else: ".dat") & " signature file (" &
         $(MaxSignatureBytes shr 20) & " MiB): not opened")
-    let bytes = readBytes(path, size)
+    # The time before the read: a file that changes while it is read keeps the older stamp, so
+    # the watch sees the change and opens it again (one retry when it moved meanwhile).
+    var modified = fs.getLastModificationTime(path)
+    var bytes = readBytes(path, size)
+    if fs.getLastModificationTime(path) != modified:
+      modified = fs.getLastModificationTime(path)
+      bytes = readBytes(path, fs.getFileSize(path))
     ctx.checkCancelled()
-    let modified = fs.getLastModificationTime(path)
     var log: DiagLog
     var s = decodeToSession(bytes, path, modified, choice, log)
     ctx.checkCancelled() # the file closes here, on the thread that made it

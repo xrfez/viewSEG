@@ -6,8 +6,8 @@
 ## and opened into the survey instead of the plot.
 ##
 ## **Signature files.** A vibrator controller's `.dat` and `.vib` files are told by their
-## content (never their extension) after every other kind, so a SEG file is never taken for
-## one; the kind-6 `.vib` and an empty file are not signature files (`core/signatures`
+## content (never their extension) before the SEG kinds, whose detection takes some of their
+## bytes for a SEG-Y header, and after the survey (text) kinds; the kind-6 `.vib` and an empty file are not signature files (`core/signatures`
 ## gives their refusal on an explicit open).
 ##
 ## **Survey files.** Text, in 80-column cards. A head (at most `SniffBytes`)
@@ -177,9 +177,11 @@ func fileKindOf*(head: openArray[byte]; name: string; whole: bool): FileKind =
   var text = newString(head.len)
   copyMem(addr text[0], addr head[0], head.len)
   result = surveyKind(text, name, whole)
-  if result == fkUnknown: result = fileKind(detectKind(head))
   if result == fkUnknown:
-    # (a SEG file always wins: the signature kinds are told last)
+    # The signature kinds are told before parseSEG's `detectKind`, which takes some of their
+    # bytes for a SEG-Y header. Their own tests are strict (a checksummed first block, `VIB` and
+    # 11 and a date), and none of the SEG samples passes them (`tests/tdatopen`, `tvibopen`).
     result = case datKind(head)
       of sgDat: fkDat
       else: (if vibKindOf(head) == sgVib: fkVib else: fkUnknown)
+  if result == fkUnknown: result = fileKind(detectKind(head))
