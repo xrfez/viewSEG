@@ -118,6 +118,8 @@ const
   SummaryEnd* = "<!-- end of summary -->"
   NextHeading = "## In the next library release"
   KnownHomonyms* = {
+    "decodeInto": "parseSSDAT's and parseSSVIB's (core/sigdat, core/sigvib), not parseSEG's " &
+      "streaming decoder",
     "endTimeMs": "a field of parseSEG's channel-set summary the Headers window reads, " &
       "not the exported func of a channel set descriptor",
     "recordLengthMs": "a field of parseSEG's file summary the Headers window reads, not " &

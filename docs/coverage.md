@@ -41,12 +41,12 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.19.0: capabilities | names | processSEG 0.10.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 53 (20 in part) | 176 | 35 (24 in part) | 166 |
-| `internal` | 15 | 43 | 5 | 39 |
-| `planned` | 34 | 225 | 45 | 406 |
+| `built` | 54 (20 in part) | 179 | 35 (24 in part) | 166 |
+| `internal` | 17 | 46 | 5 | 39 |
+| `planned` | 33 | 220 | 45 | 406 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 20 | 367 | 6 | 65 |
-| all | 124 | 821 | 92 | 681 |
+| `not applicable` | 20 | 366 | 6 | 65 |
+| all | 126 | 821 | 92 | 681 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -76,7 +76,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Open options: force the standard, verify every header, two's-complement mantissas (SEG-D 8015, SEG-2 format 3), demux folder | `OpenOptions(kind, verify: vfFull, twosComplement8015, demuxDir)`, `VerifyMode` | File > Reopen with options…, and its button on the Headers window's Summary (which says so when the file is not recognised): the standard, every header checked, two's-complement mantissas, mapped or not, the demultiplexed copy's folder; the Summary says how the file was opened | built |
 | Files on a network share read without a map | `FileAccess` (`faAuto`, `faMapped`, `faUnmapped`), `OpenOptions.access`, `DefaultAccess`, `f.access` | Every open (from the menus, the file list, the next file prepared): `faAuto`, the default, reads a file on a network file system through parseSEG's block cache instead of a map, so a share that stops answering fails a read, which is tried again, instead of holding the program in a page fault; the Headers window's Summary tab says which access an open used ("How it was opened", "Reading"), and Reopen with options chooses it (automatic, mapped, unmapped) | built |
 | Multiplexed SEG-D read transparently | `openSeismic` (demux copy), `f.demuxPath`, `dcMultiplexed` | Opens like any file; a log note says a temporary copy is used | internal (`demuxPath`: a demultiplexed copy's index is not cached); to plan (priority 7: the open path takes such a file, and parseSEG's note goes to Messages, but no multiplexed file has been opened in the viewer yet) |
-| Open a file held in memory | `openSeismicBytes`, `inMemory` | Opening a vibrator controller's signature files (decoded to SEG-Y in memory) | planned |
+| Open a file held in memory | `openSeismicBytes`, `inMemory` | Opening a vibrator controller's signature files (decoded to SEG-Y in memory) | built (File > Open, the Files list, a drop: a `.dat` or `.vib` signature file) |
 | File facts in one summary | `summary` (`FileSummary`: standard, revision, byte order (`ByteOrder`), format, counts, interval, record length, `coordinateUnits`, `decodable`), `channelSets` (`ChannelSetSummary`), `crsText`, `recordCount`, `maxSamples`, `index.prefersFloat64` | Headers window, Summary tab: what the file is in plain words, the record shown with its counts and (SEG-D) its channel sets, read on the open job, and how it was opened (`prefersFloat64`: "Precision") | built |
 | Coordinate reference text | `crsText`, `summary.crsFormat`, `CrsTextFormat` | Project → Import survey: the file's CRS as it gives it (read-only); the Headers window's Summary tab; default CRS for the basemap | built (join, Summary); planned (basemap) |
 | Datum and projection as values | `crs` (an SPS file's, a seismic file's), `parseCrsText`, `CoordinateReference`, `CrsKind`, `GeodeticDatum`, `MapProjection`, `CrsParameter`, `parameter`, `kindOf`, `known` | Project → Import survey: the survey files' and the seismic files' datum, ellipsoid, projection and zone in words, checked against each other beside the units the import confirms; the Headers window's Summary tab; the basemap's coordinate system; the unit of length a seismic file's CRS names (its projection's parameters) makes the import's unit for the file exact (`FileCrs.lengthUnit`: "feet" in the headers and a CRS in US survey feet are US survey feet) | built (the import's units: `crs`, `parseCrsText` (OGP P1/11 survey files), `CoordinateReference`, `MapProjection`, `CrsParameter`); planned (the rest) |
@@ -187,7 +187,8 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | New SEG-Y from keys | `openSeismicWriter(path, SegyOutputOptions)`, `writeTrace(keys, samples)` | Analysis → References → Generate a reference, and Store as reference | built |
 | New SEG-D Rev 3 from keys | `openSeismicWriter(path, SegdOutputOptions)`, `SegdOutputOptions` (`revision`, `format`, `sampleIntervalUs`, `numSamples`, `units`, `crsText`, `time`), `SegdChannelType` with every channel-type value (`sctAcceleration`, `sctAcousticRange`, `sctAcousticRefMeasured`, `sctAcousticRefNominal`, `sctAngle`, `sctAuxDataTrailer`, `sctCalibration`, `sctClockTimeBreak`, `sctCurrent`, `sctDepth`, `sctEm`, `sctExternalData`, `sctFieldTimeBreak`, `sctOther`, `sctPressure`, `sctRadioRefSweep`, `sctRadioSimilarity`, `sctSeismic`, `sctSignatureFiltered`, `sctSignatureUnfiltered`, `sctSourceBasePlate`, `sctSourceExcitation`, `sctSourceMass`, `sctSourceOther`, `sctSourceOverload`, `sctSourceRefPilot`, `sctSourceRefSweep`, `sctSourceSigEstimated`, `sctSourceSigFiltered`, `sctSourceSigMeasured`, `sctSourceSigUnfiltered`, `sctSourceValve`, `sctTension`, `sctTilt`, `sctTimeBreak`, `sctTimeCounter`, `sctTrueRefSweep`, `sctUnused`, `sctUpHole`, `sctVelocity`, `sctVoltage`, `sctWaterBreak`, `sctWind`, `sctWirelineRefSweep`), `writeTrace(keys, samples, overrides, channelType)` | Export a selection as SEG-D; the synthetic sample set (tools/sampledata) | planned |
 | Per-standard streaming writers | `openSegyWriter`, `openSegdWriter`, `writeSegd`, `openSeg2Writer`, `SegyWriter`, `SegyWriteOptions`, `initSegyWriteOptions`, `tracesWritten`, `SegdWriter`, `SegdWriteOptions`, `writeRecordHeaders`, `endRecord`, `setRev3Trailer`, `computeRev3Sizes`, `MaxFixedBlock`, `Seg2Writer`, `Seg2WriteOptions`, `initSeg2File`, `abandon` | Conversion and the test suite's fixtures | not applicable (the viewer writes through `openSeismicWriter` and `convertFile`; its tests build their fixtures with these) |
-| Write a file to memory | `openSeismicWriterBytes`, `finishBytes`, `addTextStanza` | Opening a vibrator controller's signature files (decoded to SEG-Y in memory) | planned |
+| Write a file to memory | `openSeismicWriterBytes`, `finishBytes` | Opening a vibrator controller's signature files (decoded to SEG-Y in memory) | internal (the open job of a signature file) |
+| Write a stanza into a memory file | `addTextStanza` | Opening a vibrator controller's signature files (decoded to SEG-Y in memory) | planned |
 
 ### Header edits
 
@@ -234,7 +235,8 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Logs as files | `toNif`, `writeNif`, `readDiagnostics`, `parseDiagnostics` | Log window: save and open; attached to the QC report (Messages exports its own text, File → Export messages...) | to plan (priority 8: a file's problems saved as NIF and opened again, attached to the QC report) |
 | Exceptions turned into entries | `recordException`, `tryRecord`, `tryRecordFatal` | internal: jobs report failures to the log | not applicable (a job's failure goes to Messages in the viewer's own words) |
 | The log, read and counted | `add`, `report`, `count`, `hasErrors`, `isFatal`, `items`, `pairs`, `[]`, `$`, `len` | internal: Messages takes each file's entries; the Headers window's Trace > Data tells a trace that could not be decoded (`hasErrors`) | internal; not applicable (`isFatal`: Messages counts its entries by severity itself) |
-| Exceptions for custom decoders | `SegError`, `SegFormatError`, `SegTruncatedError`, `SegUnlocatableError`, `raiseFormat`, `raiseTruncated`, `raiseUnlocatable`, `raiseCancelled` | Every failure of a read is reported in Messages as it is | not applicable (the viewer reports a read that fails, whatever it raises; raising them is for code that decodes) |
+| A memory file's writer refuses the shot | `SegFormatError` | A signature file that cannot be written in memory is refused in words | internal (the open job of a signature file) |
+| Exceptions for custom decoders | `SegError`, `SegTruncatedError`, `SegUnlocatableError`, `raiseFormat`, `raiseTruncated`, `raiseUnlocatable`, `raiseCancelled` | Every failure of a read is reported in Messages as it is | not applicable (the viewer reports a read that fails, whatever it raises; raising them is for code that decodes) |
 
 ### Header objects and codecs
 

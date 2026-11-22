@@ -150,6 +150,25 @@ proc main*() =
     doAssert ssvibUsers("core/sigvib.nim", "import parseSSVIB\nimport parseSSVIB/decode\n").len == 0
     doAssert ssvibUsers("view/x.nim", "import parseSEG\nimport ../core/parseSSVIBlike\n").len == 0
 
+  block noLibraryPathProcs:
+    # The signature libraries' path forms use std IO, which goes past `fs` (docs/architecture.md,
+    # "Network drives"): viewSEG hands them bytes only.
+    const names = ["readDat", "readDatInfo", "readDatInto", "readVib", "readVibInfo",
+      "readVibInto", "writeSegy", "writeSegd", "writeSegyTo", "writeSegdTo"]
+    var problems: seq[string]
+    for file in walkDirRec(srcDir):
+      if file.endsWith(".nim"):
+        let text = readFile(file)
+        for n in names:
+          for sep in ["(", " "]:
+            var at = text.find(n & sep)
+            while at >= 0:
+              let before = if at > 0: text[at - 1] else: ' '
+              if before notin IdentChars and not text.substr(max(0, at - 8), at - 1).contains("proc "):
+                problems.add file.relativePath(srcDir) & " calls " & n
+              at = text.find(n & sep, at + 1)
+    doAssert problems.len == 0, "a library path proc is called:\n  " & problems.join("\n  ")
+
   block noRegexEngine:
     var problems: seq[string]
     for dir in ["src", "tests", "tools"]:

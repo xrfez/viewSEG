@@ -68,6 +68,31 @@ Swapping toolkits means writing `ui/<toolkit>/` (widgets bound to the same view 
 commands), plus `gpu/` if the new toolkit is not OpenGL. `core`, `view`, `platform` and all
 tests stay as they are.
 
+## Signature files
+
+A vibrator controller's `.dat` and `.vib` signature files open like any file (File > Open, the
+Files list, a drop, the command line, a recent file) and are told by their content, after every
+SEG kind (`core/filekinds`: `fkDat`, `fkVib`), never by their extension. Both go through one seam:
+
+- `core/sigtypes` holds the plain values the rest of viewSEG may use (`SignatureFacts`,
+  `SweepInfo`, `ControllerQc`, the choice); no library type crosses the two readers.
+- `core/sigdat` (the only module that imports parseSSDAT) and `core/sigvib` (the only one that
+  imports parseSSVIB) are pure: bytes in, SEG-Y bytes and facts out. They make no file system
+  call (the libraries' path procs are never called: `tests/tlayers.nim` greps for them).
+- `core/signatures` reads the file's bytes through `fs` (at most 64 MiB), calls the reader,
+  opens the SEG-Y Rev 2.1 it wrote into memory with parseSEG's `openSeismicBytes`, and posts the
+  session. **No file is written**: no index cache, no temporary file. `Session.path` is the
+  signature file's own; `Session.signature` holds the facts; the parseSEG file is `inMemory`.
+- A `.dat` is four traces (reference 21, reaction-mass force 18, baseplate force 19, the
+  controller's ground force 20, the sum of the two); a `.vib` is 13 in the order
+  `voForces` writes (the same four roles of set B first, then set A's 258, 257 and 267, then
+  the hydraulics, drive and per-cycle values). All are auxiliary to viewSEG (`auxLike`); the
+  trace names come from the layout (`Session.traceNames`, shown by the readout and the display
+  header); samples are raw counts exactly as recorded. A signature file adds nothing to the
+  map, has no shots and no cache.
+- The Vibrator window takes its roles from the codes and applies no typed mass: trace 4 is the
+  ground force (`AnalysisAsk.forceNote`).
+
 ## Windows: what makes the window look native
 
 There are two parts, and both are needed. SDL and GLFW cannot supply the first.
