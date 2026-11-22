@@ -32,6 +32,7 @@ type
     mainOpen: bool            ## the Main archive header was open last frame
     confirmWasOpen: bool      ## the delete confirmation was showing last frame
     genAsk: bool
+    genWide: bool             ## the Generate dialog had its settings and plots side by side last frame
     genName: string
     genF1, genF2, genLength, genDt, genTaper0, genTaper1, genAmp, genBoost: float64
     genPhase: float64
@@ -483,24 +484,38 @@ proc followPilot(ui: var ReferencesUi; st: AppState; rule: PilotRule;
     ui.previewF2 = if shown.dtMs > 0: 500.0 / shown.dtMs else: 0.0
     ui.shownGen = 1_000_000 + shown.gen
 
+const WideDialog = 70 ## the width in font heights from which the Generate dialog has two columns
+
 proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks):
     ReferencesOutput =
   const id = "Generate a reference###generate-reference"
+  let font = igGetFontSize()
+  let vp = igGetMainViewport()
+  let openWide = min(font * 84, vp.WorkSize.x * 0.92) >= font * WideDialog
   if ui.genAsk:
     igOpenPopup_Str(id.cstring, 0)
     ui.genAsk = false
-  let font = igGetFontSize()
-  # font×64 holds the settings, including the optional boost and parameter and the filter choice,
-  # both plots and the buttons. The buttons are drawn under a child that
-  # takes the rest, so they stay inside at any size.
-  igSetNextWindowSize(ImVec2_c(x: font * 46, y: font * 64), ImGui_Cond_FirstUseEver.cint)
-  igSetNextWindowSizeConstraints(ImVec2_c(x: font * 36, y: font * 64),
-    ImVec2_c(x: 4000, y: 4000), nil, nil)
+    ui.genWide = openWide # (the size it opens with: its minimum height follows)
+  # Narrow (under font×70 wide): font×64 holds the settings, including the optional boost and
+  # parameter and the filter choice, both plots and the buttons, one under the other. Wide: the
+  # settings are a column of their own that scrolls, the plots another; it opens as tall as the
+  # screen allows (font×64 at most) and font×40 is tall enough. The buttons are drawn under a child that takes the rest, so they stay inside at any
+  # size.
+  igSetNextWindowSize(ImVec2_c(x: (if openWide: min(font * 84, vp.WorkSize.x * 0.92)
+    else: font * 46), y: (if openWide: min(font * 64, vp.WorkSize.y * 0.92) else: font * 64)),
+    ImGui_Cond_FirstUseEver.cint)
+  igSetNextWindowSizeConstraints(ImVec2_c(x: font * 36,
+    y: if ui.genWide: font * 40 else: font * 64), ImVec2_c(x: 4000, y: 4000), nil, nil)
   if not igBeginPopupModal(id.cstring, nil, 0): return
   marks.markWindow("generate")
   let footer = igGetFrameHeightWithSpacing()
+  let wide = igGetContentRegionAvail().x >= font * WideDialog
+  ui.genWide = wide
   discard igBeginChild_Str("##generate.body", ImVec2_c(x: 0, y: -footer),
     ImGui_ChildFlags_NavFlattened.cint, 0)
+  if wide:
+    discard igBeginChild_Str("##generate.settings", ImVec2_c(x: max(font * 36,
+      igGetContentRegionAvail().x * 0.46), y: 0), 0, 0)
   let before = ui.genSource
   if combo("Source", (if ui.genSource == 0: SourceSweep else: SourceRecord), "generate.source",
       marks):
@@ -630,6 +645,10 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
   ui.previewKey = key
   igDummy(ImVec2_c(x: 1, y: 1))
   marks.mark("generate.previewkey." & key)
+  if wide:
+    igEndChild() # the settings
+    igSameLine(0, -1)
+    discard igBeginChild_Str("##generate.preview", ImVec2_c(x: 0, y: 0), 0, 0)
   let spacing = igGetStyle().ItemSpacing.y
   let room = igGetContentRegionAvail().y
   let plotH = max(font * 4, (room - spacing) / 2) # a long dialog scrolls
@@ -663,6 +682,7 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
   else:
     igTextUnformatted("Computing the preview...", nil)
     marks.mark("generate.computing")
+  if wide: igEndChild() # the preview
   igEndChild()
   igBeginDisabled(problem.len > 0)
   if igButton("Generate", ImVec2_c(x: 0, y: 0)) and problem.len == 0:

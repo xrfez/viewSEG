@@ -71,7 +71,20 @@ proc main*() =
         elif item.size.x == 0 and wait mod 8 == 0: f.click(f.markOf(comboMark).centre)
         item.size.x == 0 and wait > 12
 
+    proc scrollTo(mark: string) =
+      ## The settings are a column that scrolls (the dialog opens as tall as the screen
+      ## allows): wheel it until `mark` is in view.
+      step("scroll to " & mark, noop, proc (f: FrameInfo): bool =
+        let (win, item, ok) = (f.markOf("generate"), f.markOf(mark), f.markOf("generate.ok"))
+        if item.size.x == 0: return false
+        result = item.pos.y >= win.pos.y + 3 * ok.size.y and
+          item.pos.y + item.size.y <= ok.pos.y - ok.size.y
+        if not result and wait mod 3 == 1:
+          f.scrollWheel(vec2(win.pos.x + win.size.x / 4, win.pos.y + win.size.y / 2),
+            if item.pos.y < win.pos.y + win.size.y / 2: 3 else: -3))
+
     proc enter(mark, text: string) =
+      scrollTo(mark)
       step("click " & mark, proc (f: FrameInfo) = f.click(f.markOf(mark).centre),
         proc (f: FrameInfo): bool = wait >= 3)
       step("type " & text & " in " & mark, proc (f: FrameInfo) =
@@ -144,6 +157,7 @@ proc main*() =
       let shot = getEnv("VIEWSEG_FILTER_SHOT")
       if shot.len > 0: discard f.savePng(shot), proc (f: FrameInfo): bool = wait >= 3)
     # a coefficient that overflows the sample type: refused in the dialog, Generate disabled
+    scrollTo("generate.filter.coef")
     step("click the coefficients", proc (f: FrameInfo) = f.click(f.markOf(
         "generate.filter.coef").centre),
       proc (f: FrameInfo): bool = wait >= 3)
