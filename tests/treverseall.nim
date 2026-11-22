@@ -273,7 +273,7 @@ proc main*() =
     let asksP1 = st.plots[plot].asks
     st.apply Command(kind: ckUndoEdit, panel: MainPanel)
     doAssert st.settle(st.spectra[spec].asks > asksS1 and st.plots[plot].asks > asksP1 and
-      not st.plots[plot].waiting),
+      not st.spectra[spec].waiting and not st.plots[plot].waiting),
       "an open window did not ask again when the reversal was undone"
     doAssert "reversed" notin st.spectra[spec].filterText, st.spectra[spec].filterText
     doAssert st.plots[plot].reverseLine.len == 0, st.plots[plot].reverseLine
