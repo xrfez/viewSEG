@@ -76,11 +76,11 @@ proc main*() =
       p.laidOut and f.has("plot.data") and f.core.referencesLoaded)
 
     # the Generate dialog
-    step("Operations > Generate a reference...", proc (f: FrameInfo) =
-      f.moveMouse(f.markOf("menu.Operations").centre), proc (f: FrameInfo): bool =
+    step("Analysis > Generate a reference...", proc (f: FrameInfo) =
+      f.moveMouse(f.markOf("menu.Analysis").centre), proc (f: FrameInfo): bool =
       let it = f.markOf("menu.Generate a reference...")
       if it.size.x == 0:
-        if wait mod 8 == 0: f.click(f.markOf("menu.Operations").centre)
+        if wait mod 8 == 0: f.click(f.markOf("menu.Analysis").centre)
       elif wait mod 6 == 3: f.click(it.centre)
       f.has("generate") and f.has("generate.length") and
         f.nameWith("generate.previewkey.").len > 0)
