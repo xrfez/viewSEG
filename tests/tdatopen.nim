@@ -123,7 +123,8 @@ proc main*() =
       var st = initAppState()
       doAssert st.openIt(path)
       st.apply Command(kind: ckReopen, reopenPath: path, openChoice: OpenChoice(standard: scSegy))
-      doAssert st.settle(st.jobs.active.len == 0 and st.sessions.len == 1)
+      doAssert st.settle(st.log.has("a.dat is opened again") and st.jobs.active.len == 0),
+        "the reopen was not taken in"
       doAssert st.sessions[0].isSignature and st.sessions[0].len == 4
       doAssert not st.log.has("is not a SEG-Y", sevError), "the SEG-Y reader was given the file"
       st.shutdown()
