@@ -135,7 +135,7 @@ proc main*() =
       proc (f: FrameInfo): bool =
         f.core.spectra.len == 2 and not f.core.spectra[1].waiting and
           f.markOf("fft 1.freeze").size.x > 0)
-    click("menu.Window")
+    click("menu.View")
     click("menu.window.spectrum")
     step("spectrum on screen", noop, proc (f: FrameInfo): bool =
       f.core.spectra[0].shown and f.markOf("spectrum.freeze").size.x > 0 and

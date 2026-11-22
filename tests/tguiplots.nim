@@ -2,7 +2,7 @@
 ## real clicks and keys, on a record of four seismic traces and a pilot
 ## (an auxiliary trace):
 ##
-## - Window > New plot > Spectrogram, with two traces selected, opens a
+## - Analysis > New plot > Spectrogram, with two traces selected, opens a
 ##   window of them: an image in many colours (the colour map), and its
 ##   scale;
 ## - its cursor, the window focused, steps a frame with Right and a
@@ -15,7 +15,7 @@
 ##   window of the trace under the pointer; with no reference chosen it says
 ##   so and the old reference buttons are gone;
 ## - closed (`close plot`), a window goes;
-## - Window > New plot > Vibrator signature on four selected traces shows
+## - Analysis > New plot > Vibrator signature on four selected traces shows
 ##   its roles' table and four plots; Details adds the other signals and the table of every signal;
 ##   Limits... opens the six limits of the verdict and the window length (no point limits);
 ## - an f-k of the record: its image's cursor, held by the keys, reads the
@@ -32,7 +32,7 @@
 ## with the pin's click not flipping `frozen`, "frozen new plot
 ## 1.freeze did not happen"; with the image's keys not read (`keyMove` never called),
 ## "Right did not move the cursor"; with the menu's entry not sent
-## (`newPlot` dropped in the app), "Window > New plot did not open a window";
+## (`newPlot` dropped in the app), "Analysis > New plot did not open a window";
 ## with a curve view's Right not read, "Right did not hold the curve plot's
 ## cursor: (held: false, ...)"; with the windows placed a step further for
 ## each number from the middle, whether or not they fit (`placeNext` not
@@ -130,11 +130,11 @@ proc main*() =
     step("two selected", proc (f: FrameInfo) =
       f.apply(Command(kind: ckSelect, traces: @[0, 1], mode: smReplace)),
       proc (f: FrameInfo): bool = f.core.selection.selectedCount == 2)
-    click("menu.Window")
+    click("menu.Analysis")
     to("menu.window.newplot")
     click("menu.newplot." & $avSpectrogram)
     step("its window", noop, proc (f: FrameInfo): bool =
-      doAssert f.core.plots.len == 1, "Window > New plot did not open a window"
+      doAssert f.core.plots.len == 1, "Analysis > New plot did not open a window"
       result = not f.core.plots[0].waiting and f.markOf("new plot 1.image").size.x > 0
       if result:
         let w = f.core.plots[0]
@@ -228,7 +228,7 @@ proc main*() =
     step("four selected", proc (f: FrameInfo) =
       f.apply(Command(kind: ckSelect, traces: @[0, 1, 2, 3], mode: smReplace)),
       proc (f: FrameInfo): bool = f.core.selection.selectedCount == 4)
-    click("menu.Window")
+    click("menu.Analysis")
     to("menu.window.newplot")
     click("menu.newplot." & $avVibrator)
     step("a vibrator signature", noop, proc (f: FrameInfo): bool =
@@ -357,7 +357,7 @@ proc main*() =
               r.pos.y + r.size.y <= room.pos.y + room.size.y,
               "new plot " & $w.id & " at " & $r & " is not inside the main window's " & $room)
 
-    # the toolbar's Spectrogram button, as Window > New plot > Spectrogram: greyed
+    # the toolbar's Spectrogram button, as Analysis > New plot > Spectrogram: greyed
     # with no trace selected, and with two selected it opens their window
     var plots = 0
     step("no trace selected", proc (f: FrameInfo) =

@@ -1,5 +1,5 @@
 ## The plot table the toolbar and both menus read (`ui/imgui/plotviews`):
-## FFT, then the six New plot views in Window > New plot's order, each with
+## FFT, then the six New plot views in Analysis > New plot's order, each with
 ## its own icon and one sentence. The names are the views' own, so a menu
 ## that reads the table cannot drift from `viewName`.
 ##

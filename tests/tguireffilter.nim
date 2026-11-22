@@ -99,10 +99,10 @@ proc main*() =
       let p = f.core.panels[f.core.findPanel(MainPanel)]
       p.laidOut and f.markOf("plot.data").size.x > 0 and f.core.referencesLoaded)
 
-    step("Operations > Generate a reference...", proc (f: FrameInfo) =
-      f.moveMouse(f.markOf("menu.Operations").centre), proc (f: FrameInfo): bool =
+    step("Analysis > Generate a reference...", proc (f: FrameInfo) =
+      f.moveMouse(f.markOf("menu.Analysis").centre), proc (f: FrameInfo): bool =
       let it = f.markOf("menu.Generate a reference...")
-      let bar = f.markOf("menu.Operations")
+      let bar = f.markOf("menu.Analysis")
       if it.size.x == 0:
         if wait mod 8 == 0: f.click(bar.centre)
       elif wait mod 6 == 3: f.click(it.centre)

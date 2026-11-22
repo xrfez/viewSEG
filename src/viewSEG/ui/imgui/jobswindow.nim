@@ -4,7 +4,7 @@
 ## (the foreground lane, for what the user waits on, or the background one)
 ## or removed; a finished job says how it ended and how long it took, and
 ## can be cleared from the list. The status bar's job field, the toolbar
-## and Window > Jobs bring the window forward.
+## and View > Jobs bring the window forward.
 
 import std/monotimes
 import imguin/cimgui

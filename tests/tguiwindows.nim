@@ -116,14 +116,14 @@ proc drive(steps: seq[Step]; opts: RunOptions) =
   doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
 
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
-# local only), the menus are saved open over the private land record: File >
-# Import (menus-import.png), File > Export (menus-export.png) and Window
-# (menus-window.png); docs/images/ holds the committed ones.
+# local only), the menus are saved open over the private land record: Project
+# (menus-project.png), Tools (menus-tools.png) and Window (menus-window.png);
+# docs/images/ holds the committed ones.
 
 proc menuShots(dir: string) =
   let record = privateFile("landSegd")
-  let shots = [("menu.File", "menu.Import", "menus-import.png"),
-    ("menu.File", "menu.Export", "menus-export.png"), ("menu.Window", "", "menus-window.png")]
+  let shots = [("menu.Project", "", "menus-project.png"),
+    ("menu.Tools", "", "menus-tools.png"), ("menu.Window", "", "menus-window.png")]
   var stage = 0
   var wait = 0 # frames since the stage began, at `since`
   var since = getMonoTime()
@@ -173,15 +173,16 @@ proc main*() =
     var main: Rect
 
     proc menu(name, item: string; then: proc (f: FrameInfo): bool) =
-      ## Window opened by a click on its title, then a click on `item` while
+      ## The menu (View for a window's tick, else Window) opened by a click on its title, then a click on `item` while
       ## that item is still drawn. The title can lie off the left of the screen
       ## (the main window hangs there): the pointer warp is clamped to the
       ## screen's edge, which can rest on the next title and take the open
       ## menu, so the pointer is parked past the last title at once.
       var clicked = false
-      step(name & ": Window", proc (f: FrameInfo) =
+      let bar = if item.startsWith("menu.window."): "menu.View" else: "menu.Window"
+      step(name & ": " & bar, proc (f: FrameInfo) =
         clicked = false
-        let title = f.markOf("menu.Window")
+        let title = f.markOf(bar)
         f.click(title.centre)
         let last = f.markOf("menu.Help")
         f.moveMouse(vec2(last.pos.x + last.size.x + 40, title.centre.y)),

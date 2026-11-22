@@ -1,25 +1,24 @@
-## File > Import and File > Export in the running frontend, headless, driven
-## by real clicks on the menu bar, with the settings in a folder of the
-## test's own and the system's file dialogs answered by the test
-## (`RunOptions.dialogs`): each entry asks for the dialog the old entry
-## asked for and does what it did.
+## The imports and exports in their menus (Tools, Window, Project) in the
+## running frontend, headless, driven by real clicks on the menu bar, with the
+## settings in a folder of the test's own and the system's file dialogs
+## answered by the test (`RunOptions.dialogs`): each entry asks for the dialog
+## the old entry asked for and does what it did.
 ##
-## - Import > Settings...: the settings of a file are taken in (the cursor
-##   line on);
-## - Export > Settings...: the settings are written to the file chosen;
-## - Export > Layout...: the arrangement is written to the file chosen;
-## - Import > Layout...: a layout file arranges the windows and is kept among
-##   the user's layouts (Window > Load);
-## - Export > Messages...: the messages are written to the file chosen;
-## - Import > Survey...: the survey's window opens;
-## - Reset the settings: back to the defaults (the cursor line off);
-## - the old places are gone: no Settings submenu in File, no layout export
-##   or import under Window.
+## - Tools > Import settings...: the settings of a file are taken in (the
+##   cursor line on);
+## - Tools > Export settings...: the settings are written to the file chosen;
+## - Window > Export layout...: the arrangement is written to the file chosen;
+## - Window > Import layout...: a layout file arranges the windows and is kept
+##   among the user's layouts (Window > Load);
+## - Tools > Export messages...: the messages are written to the file chosen;
+## - Project > Import survey...: the survey's window opens;
+## - Tools > Reset the settings: back to the defaults (the cursor line off);
+## - the old places are gone: File has no Import or Export submenu and none of
+##   their items.
 ##
-## Seen to fail: with Import > Settings... asking for the layout's dialog,
-## "Import > Import settings... asked for @[Import layout]"; with Export >
-## Messages... left out of the submenu, "File > Export > Export messages...
-## did not happen" (items are marked by their names outside the submenus).
+## Seen to fail: with Import settings... asking for the layout's dialog,
+## "Tools > Import settings... asked for @[Import layout]"; with Export
+## messages... left out of Tools, "Tools > Export messages... did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -63,22 +62,19 @@ proc main*() =
       steps.add Step(name: name, act: act, done: done)
     proc noop(f: FrameInfo) = discard
 
-    proc fileMenu(sub, item: string; chosen: seq[string]; wanted: DialogKind;
+    proc fileMenu(menu, item: string; chosen: seq[string]; wanted: DialogKind;
         then: proc (f: FrameInfo): bool) =
-      ## Steps: File, then the submenu `sub` (by the pointer over it; "" for
-      ## none), then a click on its item `item`, the dialog answered with
-      ## `chosen`; the dialog asked for must be `wanted`.
-      step("File > " & sub & " > " & item, proc (f: FrameInfo) =
+      ## Steps: the menu `menu`, then a click on its item `item`, the dialog
+      ## answered with `chosen`; the dialog asked for must be `wanted`.
+      step(menu & " > " & item, proc (f: FrameInfo) =
         asked.setLen 0
         answer = chosen
-        f.click(f.markOf("menu.File").centre), proc (f: FrameInfo): bool =
+        f.click(f.markOf("menu." & menu).centre), proc (f: FrameInfo): bool =
         let it = f.markOf("menu." & item)
         if it.size.x > 0 and wait mod 5 == 0: f.click(it.centre)
-        elif sub.len > 0 and f.markOf("menu." & sub).size.x > 0 and wait mod 10 == 0:
-          f.click(f.markOf("menu." & sub).centre)
         asked.len > 0)
       let check = proc (f: FrameInfo) =
-        doAssert asked == @[wanted], sub & " > " & item & " asked for " & $asked
+        doAssert asked == @[wanted], menu & " > " & item & " asked for " & $asked
       step(item & " does what it did", check, then)
 
     step("the file is shown", noop, proc (f: FrameInfo): bool =
@@ -87,13 +83,13 @@ proc main*() =
     var theirs = Settings()
     theirs.cursorLine = true
     writeFile(outDir / "theirs.nif", settingsDocument(theirs))
-    fileMenu("Import", "Import settings...", @[outDir / "theirs.nif"], dkImportSettings,
+    fileMenu("Tools", "Import settings...", @[outDir / "theirs.nif"], dkImportSettings,
       proc (f: FrameInfo): bool = f.core.settings.cursorLine)
-    fileMenu("Export", "Export settings...", @[outDir / "mine.nif"], dkExportSettings,
+    fileMenu("Tools", "Export settings...", @[outDir / "mine.nif"], dkExportSettings,
       proc (f: FrameInfo): bool =
       fileExists(outDir / "mine.nif") and "(cursorLine true)" in readFile(outDir / "mine.nif"))
     # --------------------------------------------------------- layouts --
-    fileMenu("Export", "Export layout...", @[outDir / "arranged.nif"], dkExportLayout,
+    fileMenu("Window", "Export layout...", @[outDir / "arranged.nif"], dkExportLayout,
       proc (f: FrameInfo): bool =
       result = fileExists(outDir / "arranged.nif")
       if result:
@@ -106,7 +102,7 @@ proc main*() =
       true)
     let preset = currentSourcePath().parentDir.parentDir / "assets" / "layouts" / "Wide plot.nif"
     copyFile(preset, outDir / "Theirs.nif")
-    fileMenu("Import", "Import layout...", @[outDir / "Theirs.nif"], dkImportLayout,
+    fileMenu("Window", "Import layout...", @[outDir / "Theirs.nif"], dkImportLayout,
       proc (f: FrameInfo): bool =
       result = f.core.layoutLoads > loads
       if result:
@@ -115,33 +111,29 @@ proc main*() =
           if not l.preset and l.name == "Wide plot": kept = true
         result = kept)
     # -------------------------------------------------------- messages --
-    fileMenu("Export", "Export messages...", @[outDir / "messages.log"], dkExportLog,
+    fileMenu("Tools", "Export messages...", @[outDir / "messages.log"], dkExportLog,
       proc (f: FrameInfo): bool =
       fileExists(outDir / "messages.log") and "Session log:" in readFile(outDir / "messages.log"))
     # ---------------------------------------------------------- survey --
-    step("File > Import > Survey...", proc (f: FrameInfo) =
-      f.click(f.markOf("menu.File").centre), proc (f: FrameInfo): bool =
+    step("Project > Import survey...", proc (f: FrameInfo) =
+      f.click(f.markOf("menu.Project").centre), proc (f: FrameInfo): bool =
       let it = f.markOf("menu.Import survey...")
       if it.size.x > 0 and wait mod 5 == 0: f.click(it.centre)
-      elif f.markOf("menu.Import").size.x > 0 and wait mod 10 == 0:
-        f.click(f.markOf("menu.Import").centre)
       f.joinWindow.shown)
     # ------------------------------------------------- reset, old places --
-    step("File > Reset the settings", proc (f: FrameInfo) =
-      f.click(f.markOf("menu.File").centre), proc (f: FrameInfo): bool =
+    step("Tools > Reset the settings", proc (f: FrameInfo) =
+      f.click(f.markOf("menu.Tools").centre), proc (f: FrameInfo): bool =
       let it = f.markOf("menu.Reset the settings")
-      if it.size.x > 0 and wait mod 5 == 0:
-        for old in ["menu.Settings", "menu.Export...", "menu.Import..."]:
-          doAssert f.markOf(old).size.x == 0, "File still has " & old
-        f.click(it.centre)
+      if it.size.x > 0 and wait mod 5 == 0: f.click(it.centre)
       not f.core.settings.cursorLine)
-    step("Window has no layout export or import", proc (f: FrameInfo) =
-      f.click(f.markOf("menu.Window").centre), proc (f: FrameInfo): bool =
-      result = f.markOf("menu.Reset the windows").size.x > 0
+    step("File has no import, export or settings", proc (f: FrameInfo) =
+      f.click(f.markOf("menu.File").centre), proc (f: FrameInfo): bool =
+      result = f.markOf("menu.Quit").size.x > 0
       if result:
-        for old in ["menu.Export layout...", "menu.Import layout..."]:
-          doAssert f.markOf(old).size.x == 0, "Window still has " & old
-        doAssert f.markOf("menu.Save layout as...").size.x > 0)
+        for old in ["menu.Import", "menu.Export", "menu.Settings...", "menu.Import settings...",
+            "menu.Export settings...", "menu.Reset the settings", "menu.Export messages...",
+            "menu.Import survey..."]:
+          doAssert f.markOf(old).size.x == 0, "File still has " & old)
 
     var at = 0
     var started = false

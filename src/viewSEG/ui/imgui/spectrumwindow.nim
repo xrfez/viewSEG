@@ -1,6 +1,6 @@
 ## The spectrum windows: the FFT windows opened from the plot's menu (`F`),
 ## each a window of its own that docks, titled by what it shows, and the
-## live Spectrum panel (Window > Spectrum), which follows the Seismic
+## live Spectrum panel (View > Spectrum), which follows the Seismic
 ## window's view or selection while it is on screen.
 ##
 ## Each shows a line of controls in three groups (the scale: dB or linear and

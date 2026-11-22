@@ -545,7 +545,7 @@ proc agentField(a: AgentSign; t: Theme; marks: var Marks) =
       nil)
     if a.names.len > 0:
       igTextUnformatted(("Connected: " & a.names.join(", ")).cstring, nil)
-    igTextDisabled("Every call an agent makes is in Messages. File > Agent control turns it off.")
+    igTextDisabled("Every call an agent makes is in Messages. Tools > Agent control turns it off.")
     igEndTooltip()
   igSameLine(0, 16)
 

@@ -1,4 +1,4 @@
-## The geometry join behind File > Import > Survey (the user imports a
+## The geometry join behind Project > Import survey (the user imports a
 ## survey; parseSEG and this code call it a join): survey files joined to an
 ## open seismic file's trace keys, so that traces whose headers give
 ## stations only (or record and channel numbers only) get their sources'

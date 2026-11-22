@@ -4,7 +4,7 @@
 ## The survey import's units in `core`, without a window: what survey files'
 ## headers say of their coordinates' unit, read as soon as a file is chosen,
 ## and the seismic file's unit following the survey's, so that the user
-## enters a unit once at most (File > Import > Survey):
+## enters a unit once at most (Project > Import survey):
 ##
 ## - unit names in any spelling files and CRS texts use (a table: case,
 ##   dots, brackets, plurals, US / U.S. / survey / intl), and names of other

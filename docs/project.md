@@ -245,7 +245,7 @@ window and without reading a survey file (`projectjobs.planWork`, then the impor
 join step). The log says "Matched ... to the project's survey". A file opened before the
 survey is ready is matched once it is.
 
-**Clear survey** (File > Import, the Import survey window, this window's Survey part) removes the
+**Clear survey** (Project > Clear survey, the Import survey window, this window's Survey part) removes the
 project's survey: its document entries, and on a background job its `survey/` folder (the
 copies and `survey.bin`). The originals the copies were made from are never touched. A
 project open read-only is not cleared.

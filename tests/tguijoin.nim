@@ -3,7 +3,7 @@
 ## whose headers name stations but give (0, 0) coordinates, with the
 ## survey's S, R and X files loaded:
 ##
-## - File > Import > Survey... opens the window, titled "Import survey"
+## - Project > Import survey... opens the window, titled "Import survey"
 ##   (and so named under Window); the loaded survey files are listed,
 ##   ticked; Tab moves between its controls;
 ## - Import matches them to the file's traces: the window says what it did
@@ -139,12 +139,10 @@ proc joinWindow() =
     step("loaded", noop, proc (f: FrameInfo): bool =
       f.core.survey.layers.len == 4 and f.panel.laidOut and
         f.core.tiles(f.core.findPanel(MainPanel)).len > 0)
-    step("File > Import > Survey...", proc (f: FrameInfo) =
-      f.click(f.markOf("menu.File").centre), proc (f: FrameInfo): bool =
+    step("Project > Import survey...", proc (f: FrameInfo) =
+      f.click(f.markOf("menu.Project").centre), proc (f: FrameInfo): bool =
       let item = f.markOf("menu.Import survey...")
       if item.size.x > 0: f.click(item.centre)
-      elif f.markOf("menu.Import").size.x > 0 and f.index mod 10 == 0:
-        f.click(f.markOf("menu.Import").centre)
       f.joinWindow.shown and f.markOf("join").size.x > 0)
     step("the window says import", noop, proc (f: FrameInfo): bool =
       doAssert f.windowName("join").endsWith("  Import survey###join"),
@@ -238,15 +236,13 @@ proc onTheMap(f: FrameInfo; sps: SpsPaths) =
   doAssert f.core.map.view.showsAll(f.core.map.limits), "the map does not show the survey"
 
 proc importSteps(steps: var seq[Step]; name: string; done: proc (f: FrameInfo): bool) =
-  ## File > Import > Survey..., Add files... (the test's dialog answers),
+  ## Project > Import survey..., Add files... (the test's dialog answers),
   ## then Import, until `done`.
   var frames = 0
-  steps.add Step(name: "File > Import > Survey...", act: proc (f: FrameInfo) =
-    f.click(f.markOf("menu.File").centre), done: proc (f: FrameInfo): bool =
+  steps.add Step(name: "Project > Import survey...", act: proc (f: FrameInfo) =
+    f.click(f.markOf("menu.Project").centre), done: proc (f: FrameInfo): bool =
     let item = f.markOf("menu.Import survey...")
     if item.size.x > 0: f.click(item.centre)
-    elif f.markOf("menu.Import").size.x > 0 and f.index mod 10 == 0:
-      f.click(f.markOf("menu.Import").centre)
     f.markOf("join.add").size.x > 0)
   steps.add Step(name: "Add files...", act: proc (f: FrameInfo) =
     f.click(f.markOf("join.add").centre), done: proc (f: FrameInfo): bool =
@@ -346,15 +342,10 @@ proc landSurvey(dir: string) =
     of 3:
       if wait == 2:
         # The window, with what the join did.
-        let m = f.markOf("menu.File")
+        let m = f.markOf("menu.Project")
         f.moveMouse(m.centre)
         f.pressMouse(m.centre, true)
         f.pressMouse(m.centre, false)
-      if wait == 6:
-        let sub = f.markOf("menu.Import")
-        f.moveMouse(sub.centre)
-        f.pressMouse(sub.centre, true)
-        f.pressMouse(sub.centre, false)
       if wait == 14:
         let item = f.markOf("menu.Import survey...")
         if item.size.x > 0:

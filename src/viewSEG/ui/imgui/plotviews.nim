@@ -1,5 +1,5 @@
 ## The plots opened on the Seismic window's selected traces: one table, so
-## the toolbar, Window > New plot and the plot's right-click menu name them,
+## the toolbar, Analysis > New plot and the plot's right-click menu name them,
 ## icon them and describe them the same way.
 
 import ../../core/analysis
@@ -19,7 +19,7 @@ type
 const
   SelectTracesFirst* = "Select traces in the Seismic window first (or right-click one there)."
     ## The toolbar's tooltip ends with this while no trace is selected, and
-    ## Window > New plot says it then.
+    ## Analysis > New plot says it then.
   PlotEntries* = [
     PlotEntry(fft: true, icon: IconFft, shortcut: "F",
       sentence: "The amplitude spectrum of the selected traces, raw and through the filters."),
@@ -37,7 +37,7 @@ const
       sentence: "Amplitude against frequency and wavenumber."),
     PlotEntry(view: avOrientation, icon: IconOrientation,
       sentence: "Roll, pitch and azimuth of the node along the record's traces.")]
-    ## FFT, then Window > New plot's views, in that menu's order.
+    ## FFT, then Analysis > New plot's views, in that menu's order.
 
 func name*(e: PlotEntry): string =
   ## What the menus and the toolbar call `e`.

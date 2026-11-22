@@ -45,7 +45,7 @@ break, sweep) may hold other data in those bytes; they take no part in the join.
 
 ## Reload
 
-Opening or closing a project loads the maps again, and so does **File > Reload vendor maps**:
+Opening or closing a project loads the maps again, and so does **Tools > Reload vendor maps**:
 a map dropped in while viewSEG runs is used without a restart, and the files already open
 show the new decode (the Vendor tab of the Headers window, File headers). Reading the folders
 happens in the background; the window does not wait for it.

@@ -49,7 +49,7 @@ const
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The survey
-    ## import is a user's in a window (File > Import > Survey) and writes nothing:
+    ## import is a user's in a window (Project > Import survey) and writes nothing:
     ## it changes the keys the program holds of an open file, in memory, as
     ## loading a survey file or killing a trace changes what it holds. What
     ## the Headers window has on screen (`ckInspect`) only says what its

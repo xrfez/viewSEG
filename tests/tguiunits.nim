@@ -1,7 +1,7 @@
 ## The vibrator signature's mass fields on samples/vib, in the running
 ## frontend: the kg / lb switch converts the number in place (the stored
 ## kilograms do not change), a value typed in pounds is stored in kilograms,
-## and File > Settings sets the same Units. The 100 % force box names the
+## and Tools > Settings sets the same Units. The 100 % force box names the
 ## unit the force axis shows.
 ##
 ## Seen to fail: with the unit switch not issuing `ckSettings`, "imperial
@@ -155,7 +155,7 @@ proc main*() =
     step("back to metric, the mass unchanged", noop, proc (f: FrameInfo): bool =
       f.core.settings.units == usMetric and
         abs(f.core.plots[0].params.reactionMassKg - stored) < 1e-9)
-    click("menu.File")
+    click("menu.Tools")
     click("menu.Settings...")
     step("the Settings window", noop, proc (f: FrameInfo): bool =
       f.markOf("settings.units").size.x > 0 and f.markOf("settings.unit Imperial").size.x > 0)

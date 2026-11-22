@@ -1,7 +1,7 @@
 ## Clear survey in the running frontend, headless, driven by SDL events as the
 ## user's mouse sends them, on a synthetic SEG-D record and SPS survey:
 ##
-## - File > Import > Clear survey is there under Import survey..., and with no
+## - Project > Clear survey is there under Import survey..., and with no
 ##   survey imported a click on it does nothing (no confirmation opens);
 ## - after the survey is imported, the item works: the confirmation opens in
 ##   the middle of the window; Cancel changes nothing (the file is still
@@ -91,16 +91,14 @@ proc main*() =
       steps.add Step(name: name, act: act, done: done)
     proc noop(f: FrameInfo) = discard
     proc openImport(f: FrameInfo): bool =
-      ## Opens File > Import by clicks; true once the Clear survey item is drawn.
+      ## Opens the Project menu by a click; true once the Clear survey item is drawn.
       if f.markOf("menu.Clear survey").size.x > 0: return true
-      if f.markOf("menu.Import").size.x > 0:
-        if f.index mod 10 == 0: f.click(f.markOf("menu.Import").centre)
-      elif f.index mod 10 == 0: f.click(f.markOf("menu.File").centre)
+      if f.index mod 10 == 0: f.click(f.markOf("menu.Project").centre)
     step("the record is shown", noop, proc (f: FrameInfo): bool =
       result = f.core.panels[f.core.findPanel(MainPanel)].laidOut and
         f.core.survey.findTraces(f.core.sessions[0].id) >= 0
       if result: own = f.core.sessions[0].file.index.keys[1])
-    step("File > Import: Clear survey is listed", proc (f: FrameInfo) = discard openImport(f),
+    step("Project: Clear survey is listed", proc (f: FrameInfo) = discard openImport(f),
       openImport)
     step("with no survey, a click does nothing", proc (f: FrameInfo) =
       f.click(f.markOf("menu.Clear survey").centre), proc (f: FrameInfo): bool =
@@ -118,7 +116,7 @@ proc main*() =
     step("the survey is imported", importIt, proc (f: FrameInfo): bool =
       f.core.joinReport.serial > 0 and not f.core.importing and f.core.joins.len == 1 and
         f.core.sessions[0].file.index.keys[1].rcvX != own.rcvX)
-    step("File > Import again", proc (f: FrameInfo) =
+    step("Project again", proc (f: FrameInfo) =
       f.pressKey(skEscape, true)
       f.pressKey(skEscape, false), openImport)
     step("the item opens the confirmation", proc (f: FrameInfo) =
@@ -138,11 +136,9 @@ proc main*() =
           "Cancel changed something"
         doAssert f.core.sessions[0].file.index.keys[1].rcvX != own.rcvX)
     step("the window's button asks the same", proc (f: FrameInfo) =
-      f.click(f.markOf("menu.File").centre), proc (f: FrameInfo): bool =
+      f.click(f.markOf("menu.Project").centre), proc (f: FrameInfo): bool =
       let item = f.markOf("menu.Import survey...")
       if item.size.x > 0: f.click(item.centre)
-      elif f.markOf("menu.Import").size.x > 0 and f.index mod 10 == 0:
-        f.click(f.markOf("menu.Import").centre)
       f.markOf("join.clear").size.x > 0)
     step("Clear survey in the window", proc (f: FrameInfo) =
       f.click(f.markOf("join.clear").centre), proc (f: FrameInfo): bool =

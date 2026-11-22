@@ -1,6 +1,6 @@
 ## The analysis windows (New plot): each a window of its own that docks,
 ## titled by what it shows ("Spectrogram 2: trace 12 · FFID 151 ·
-## shot.sgd"), opened from Window > New plot or the plot's right-click menu
+## shot.sgd"), opened from Analysis > New plot or the plot's right-click menu
 ## on the selection or the trace under the pointer.
 ##
 ## Each shows a line of its view's settings (a spectrogram's frame length,

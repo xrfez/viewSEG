@@ -499,7 +499,7 @@ joined with its survey (below). Code outside `core/survey` indexes the survey's 
 accessor makes ARC copy the whole seq first, every layer (a hundred megabytes for a
 million points), each time.
 
-**The survey import** (`core/join`, `ckJoin`, File > Import > Import survey; `ui/imgui/joindialog`,
+**The survey import** (`core/join`, `ckJoin`, Project > Import survey; `ui/imgui/joindialog`,
 the "Import survey" window). The user imports a survey; the code keeps parseSEG's word for
 what it does, a join. Its SPS and P1 files not on the map yet, or read with other line
 names than the import's options, are put on it from what the join below reads (each a
@@ -876,9 +876,9 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   first is written). A release that is not portable may carry site defaults in its
   `config/settings.nif`. The exports (`ckExportSettings`, `ckExportLayout`, `ckExportLog`)
   never write over a seismic file the program has open, is opening or closing, or lists.
-  In the menus every import is under File > Import (the survey, settings, a layout) and
-  every export under File > Export (the messages, the settings, the layout), each there
-  only (the Messages window's own Export messages... button aside).
+  In the menus every import and export sits with what it is about: Project (the survey),
+  Edit (the trace edits), Tools (the settings, the messages' export) and Window (the
+  layout), each there only (the Messages window's own Export messages... button aside).
 - **Who changed it: what is saved.** Every `Command` carries where it came from
   (`origin`: `coWindow`, the default, or `coAgent`, which only agent control's `command`
   tool sets). A change from either changes what the program shows and uses; only the
@@ -1020,7 +1020,7 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   of the frontend's own (`[viewSEG][Windows]`, `Hidden=` and the windows' IDs), which Dear
   ImGui writes and reads through a settings handler (`ui/imgui/windows`): a layout without
   it (a preset, an earlier build's), or one that does not name a window, shows it.
-- **The Window menu** (`ui/imgui/windows`, the frontend's alone: no command, so agents
+- **The Window menu** (and View's ticks; `ui/imgui/windows`, the frontend's alone: no command, so agents
   cannot rearrange the user's windows, and what it does is saved as the user's
   arrangement). *Reset the windows* builds the default arrangement again (every window
   shown and docked) and brings the main window onto a screen when it is off every one;
@@ -1682,7 +1682,7 @@ over a **Unix-domain socket**.
 
 ### What keeps it safe
 
-- **Off by default.** No thread and no socket until `--mcp` or File > Agent control turns
+- **Off by default.** No thread and no socket until `--mcp` or Tools > Agent control turns
   it on, for that run only (it is not a setting); turned off, its clients are disconnected
   and the socket removed.
 - **Local only.** The socket's mode is 0600 (its owner only), in a folder made 0700 when

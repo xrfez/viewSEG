@@ -1,9 +1,9 @@
-## Operations > References, the Store dialog and the archive table, driven
+## Analysis > References, the Store dialog and the archive table, driven
 ## headless. Screenshots of the three dialogs are written under .scratch
 ## (the sample file only).
 ##
 ## Seen to fail: with the View answer dropped when no file is open, "View with no file open
-## shows the reference did not happen"; with no Operations menu, "Operations > Generate a
+## shows the reference did not happen"; with no Analysis menu, "Analysis > Generate a
 ## reference... did not happen"; with the store item missing from the plot's menu, "the
 ## store dialog did not happen".
 
@@ -67,10 +67,10 @@ proc main*() =
       result = p.laidOut and f.markOf("plot.data").size.x > 0 and f.core.referencesLoaded
       if result: plot = f.markOf("plot.data"))
 
-    step("Operations > Generate a reference...", proc (f: FrameInfo) =
-      f.moveMouse(f.markOf("menu.Operations").centre), proc (f: FrameInfo): bool =
+    step("Analysis > Generate a reference...", proc (f: FrameInfo) =
+      f.moveMouse(f.markOf("menu.Analysis").centre), proc (f: FrameInfo): bool =
       let it = f.markOf("menu.Generate a reference...")
-      let bar = f.markOf("menu.Operations")
+      let bar = f.markOf("menu.Analysis")
       if it.size.x == 0:
         if wait == 2: f.click(bar.centre)
         elif wait mod 10 == 0: f.click(bar.centre)
@@ -105,11 +105,11 @@ proc main*() =
           if e.name == "AAA synthetic": found = true
         found)
 
-    step("Operations > Reference archive...", proc (f: FrameInfo) =
-      f.click(f.markOf("menu.Operations").centre), proc (f: FrameInfo): bool =
+    step("Analysis > Reference archive...", proc (f: FrameInfo) =
+      f.click(f.markOf("menu.Analysis").centre), proc (f: FrameInfo): bool =
       let it = f.markOf("menu.Reference archive...")
       if it.size.x == 0:
-        if wait mod 8 == 0: f.click(f.markOf("menu.Operations").centre)
+        if wait mod 8 == 0: f.click(f.markOf("menu.Analysis").centre)
       elif wait mod 6 == 3: f.click(it.centre)
       result = f.markOf("references").size.x > 0 and f.markOf("references.row.0").size.x > 0 and
         wait > 6
@@ -207,7 +207,7 @@ proc main*() =
         started = false
         wait = 0
       elif overdue(wait, 400, since):
-        failed = steps[at].name & " did not happen; Operations " & $f.markOf("menu.Operations") &
+        failed = steps[at].name & " did not happen; Analysis " & $f.markOf("menu.Analysis") &
           " item " & $f.markOf("menu.Generate a reference...")
         for e in f.core.log: echo "  log: ", e.text
         discard f.savePng(shots / "references-failed.png")

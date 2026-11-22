@@ -6,7 +6,7 @@
 ## the sort presets, the user's own sort keys, the Messages window's
 ## toggles, the plot's cursor time line, whether the Files window follows
 ## the latest file, where the map shows the point under the pointer, the
-## survey import's options (File > Import > Survey), the Headers window's
+## survey import's options (Project > Import survey), the Headers window's
 ## tabs, toggles and columns, whether killed traces are hidden, how the
 ## spectrum windows show their spectra, the named display presets, the
 ## colours of a multi-component record, and whether a plot shows a physical

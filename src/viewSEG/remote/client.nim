@@ -79,7 +79,7 @@ func idOf(line: string): string =
 
 proc notRunning(path: string): string =
   "viewSEG is not running with agent control on at " & path & ". Start it with " &
-    "`viewSEG --mcp` (with the same socket: `--mcp=" & path & "`), or turn on File > " &
+    "`viewSEG --mcp` (with the same socket: `--mcp=" & path & "`), or turn on Tools > " &
     "Agent control in the running program, then call again."
 
 proc bridge*(path, version: string; input: cint = 0; output = stdout): int =

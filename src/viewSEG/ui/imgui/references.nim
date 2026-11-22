@@ -1,4 +1,4 @@
-## Operations > References: the archive window, Generate a reference, and
+## Analysis > References: the archive window, Generate a reference, and
 ## Store as reference (the plot's menu). The windows issue commands; they
 ## do not read a file.
 

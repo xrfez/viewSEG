@@ -4,7 +4,7 @@
 ##
 ## - Two files open: a SEG-D record whose headers say nothing of their
 ##   units, and a SEG-Y file whose binary header says feet, shown in the
-##   plot. File > Import > Survey...: the SEG-Y file's row reads feet. Add
+##   plot. Project > Import survey...: the SEG-Y file's row reads feet. Add
 ##   files... (the test's dialog answers) with the survey's S, R and X
 ##   files, whose headers say "feet" and 0.3048006096 m a unit (H20, H201:
 ##   US survey feet, as the private land survey does): with nothing
@@ -111,12 +111,10 @@ proc unitsOnce() =
     step("the SEG-Y file open too", proc (f: FrameInfo) =
       f.apply(Command(kind: ckOpen, paths: @[segy])), proc (f: FrameInfo): bool =
       f.core.sessions.len == 2)
-    step("File > Import > Survey...", proc (f: FrameInfo) =
-      f.click(f.markOf("menu.File").centre), proc (f: FrameInfo): bool =
+    step("Project > Import survey...", proc (f: FrameInfo) =
+      f.click(f.markOf("menu.Project").centre), proc (f: FrameInfo): bool =
       let item = f.markOf("menu.Import survey...")
       if item.size.x > 0: f.click(item.centre)
-      elif f.markOf("menu.Import").size.x > 0 and f.index mod 10 == 0:
-        f.click(f.markOf("menu.Import").centre)
       f.markOf("join.add").size.x > 0)
     step("the units before any survey file", noop, proc (f: FrameInfo): bool =
       result = f.markOf("join.file units").size.x > 0
@@ -208,12 +206,10 @@ proc landSurvey(dir: string) =
   steps.add Step(name: "the record", act: proc (f: FrameInfo) = discard,
     done: proc (f: FrameInfo): bool =
     f.core.sessions.len == 1 and f.core.panels[f.core.findPanel(MainPanel)].laidOut)
-  steps.add Step(name: "File > Import > Survey...", act: proc (f: FrameInfo) =
-    f.click(f.markOf("menu.File").centre), done: proc (f: FrameInfo): bool =
+  steps.add Step(name: "Project > Import survey...", act: proc (f: FrameInfo) =
+    f.click(f.markOf("menu.Project").centre), done: proc (f: FrameInfo): bool =
     let item = f.markOf("menu.Import survey...")
     if item.size.x > 0: f.click(item.centre)
-    elif f.markOf("menu.Import").size.x > 0 and f.index mod 10 == 0:
-      f.click(f.markOf("menu.Import").centre)
     f.markOf("join.add").size.x > 0)
   var frames = 0
   steps.add Step(name: "Add files...", act: proc (f: FrameInfo) =

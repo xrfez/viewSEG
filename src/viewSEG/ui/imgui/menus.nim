@@ -2,22 +2,24 @@
 ## ways, and its shortcut is shown in the menu and in the toolbar's tooltips.
 ## Drawing returns what the user asked for; the caller acts on it.
 ##
-## File opens, opens again with other options, follows and closes files,
-## holds every import (File >
-## Import: a survey, settings, a layout, trace edits) and every export (File
-## > Export: the messages, the settings, the layout, trace edits), each in
-## that one place, and opens the File memory window (what is remembered
-## about files: it is about files on disk, so File, not Window, which only
-## arranges windows); Project holds the job's folder (New project, Open
-## project, Recent projects, the Project window, Close project); Edit undoes,
-## redoes and clears the trace edits of the file the Seismic window shows,
-## whichever window has the focus (Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y everywhere
-## but in a text field, which keeps its own undo); View holds the theme;
-## Window puts the windows right (Reset the windows, Bring all windows onto
-## this screen), says whether the program's icon is in the tray and whether
-## minimizing hides it there, shows, hides and brings forward each window,
-## and loads and saves layouts; Help lists the keyboard shortcuts (F1) and
-## says what viewSEG is (About: its version and its libraries').
+## The bar, left to right: File, Project, Edit, View, Analysis, Tools, Window,
+## Help (Reports, after Analysis, and Process, after Reports, are planned).
+## File opens, opens again with other options, follows and closes files;
+## Project holds the job's folder (New project, Open project, Recent projects,
+## the Project window, the vendor map, Import survey and Clear survey, Close
+## project); Edit undoes, redoes and clears the trace edits of the file the
+## Seismic window shows, whichever window has the focus (Ctrl+Z, Ctrl+Shift+Z
+## and Ctrl+Y everywhere but in a text field, which keeps its own undo), imports
+## and exports them, and opens the File memory window (what is remembered about
+## files: it is about files on disk); View shows, hides and brings forward each
+## window and holds the theme; Analysis makes new plots, compares two traces and
+## holds the references; Tools holds the settings (with their import and
+## export), the vendor maps, the messages' export and Agent control; Window puts
+## the windows right (Reset the windows, Bring all windows onto this screen),
+## loads, saves, imports and exports layouts, and says whether the program's
+## icon is in the tray and whether minimizing hides it there; Help lists the
+## keyboard shortcuts (F1) and says what viewSEG is (About: its version and its
+## libraries').
 
 import std/os
 import imguin/cimgui
@@ -67,16 +69,16 @@ type
     recent*: seq[string]         ## File > Open recent, newest first
     recentFolders*: seq[string]  ## the folders there, newest first
     canClose*: bool              ## a file is shown, so File > Close closes it
-    layouts*: seq[SavedLayout]   ## Window: the presets, and the user's under Load
+    layouts*: seq[SavedLayout]   ## Window: the presets, and the user's under Layouts > Load
     keepsLayouts*: bool          ## layouts can be saved by name (the program keeps its settings)
     followLatest*: bool          ## File > Follow the latest file is checked
-    agentOn*: bool               ## File > Agent control is checked
+    agentOn*: bool               ## Tools > Agent control is checked
     agentSocket*: string         ## where agents connect; "" while not known yet
     prepareNext*: bool           ## File > Prepare the next file is checked
-    shown*: set[AppWindow]       ## the windows ticked under Window
+    shown*: set[AppWindow]       ## the windows ticked under View
     seismicName*: string         ## what the Seismic window is called now (`windowTitle`)
     joinShown*: bool             ## the "Import survey" window is open
-    surveyImported*: bool        ## a survey is in effect (File > Import > Clear survey)
+    surveyImported*: bool        ## a survey is in effect (Project > Clear survey)
     undo*, redo*: string
       ## Edit > Undo and Redo: the step each makes, in words ("trace 21
       ## killed"); "" when there is none
@@ -88,7 +90,7 @@ type
     trayProblem*: string ## why the tray icon cannot be shown; "" when it can
     trayAvailable*: bool ## the icon is in a tray that is seen (minimizing to it can work)
     plotTraces*: int
-      ## Window > New plot: the selected traces of the file shown; 0: none
+      ## Analysis > New plot: the selected traces of the file shown; 0: none
       ## (its views are then offered on the trace under the pointer, from
       ## the plot's menu)
     recentProjects*: seq[string] ## Project > Recent projects, newest first
@@ -109,14 +111,14 @@ type
     clearRecent*: bool        ## "Clear the list" under File > Open recent
     loadLayout*: string       ## a layout file to load; "" for none
     toggleFollow*: bool       ## File > Follow the latest file was clicked
-    toggleAgent*: bool        ## File > Agent control was clicked
+    toggleAgent*: bool        ## Tools > Agent control was clicked
     togglePrepare*: bool      ## File > Prepare the next file was clicked
     pickedWindows*: set[AppWindow]
       ## their entries under Window were clicked (`picked`)
     toggleJoin*: bool         ## the "Import survey" window's entry under Window was clicked
     toggleTrayIcon*: bool     ## Window > Icon in the tray was clicked
     toggleTrayMinimize*: bool ## Window > Minimize to the tray was clicked
-    newPlot*: bool            ## Window > New plot > a view was clicked: `newPlotView`
+    newPlot*: bool            ## Analysis > New plot > a view was clicked: `newPlotView`
     newPlotView*: AnalysisView
     openProject*: string      ## a recent project to open; "" for none
     vendorMap*: string        ## Project > Vendor map: the rule chosen ("automatic", "none" or a name); "" for none
@@ -229,7 +231,9 @@ proc tip(text: string) =
 
 proc drawRecent(recent, folders: openArray[string]; res: var MenuResult) =
   ## File > Open recent: the files, then the folders, newest first.
-  if igBeginMenu((IconHistory & "  Open recent").cstring, true):
+  let open = igBeginMenu((IconHistory & "  Open recent").cstring, true)
+  if marked != nil: marked[].mark("menu.Open recent")
+  if open:
     if recent.len == 0 and folders.len == 0:
       igTextDisabled("Nothing opened yet")
     if recent.len > 0: igSeparatorText("Files")
@@ -272,8 +276,8 @@ proc drawRecentProjects*(projects: openArray[string]; chosen: var string;
     igPopID()
 
 proc drawProjects(input: MenuInput; res: var MenuResult) =
-  ## Project's entries: New, Open, the recent ones, then the Project window
-  ## and Close.
+  ## Project's entries: New, Open, the recent ones; the Project window and the
+  ## vendor map; the survey (which works without a project); Close.
   item(maNewProject, res)
   tip("A folder of its own for this job: its files' edits, its survey (imported once, " &
     "never again), its filters, presets and windows; copy the folder to hand it over")
@@ -307,6 +311,16 @@ proc drawProjects(input: MenuInput; res: var MenuResult) =
         "decodes it), one map by name (only that one, and only for the files it matches), or " &
         "None" else: "A vendor map is chosen for a project: outside one, every map loaded is " &
         "offered (Automatic)")
+  igSeparator()
+  item(maImportSurvey, res)
+  tip("A survey's files (SPS, SEG P1, a CSV table of stations) matched to an open file's " &
+    "traces, so they have their sources' and receivers' coordinates; in memory only, the " &
+    "file is not changed")
+  igBeginDisabled(not input.surveyImported)
+  item(maClearSurvey, res)
+  igEndDisabled()
+  tip(if input.surveyImported: ClearSurveyHelp else: NoSurveyHelp)
+  igSeparator()
   igBeginDisabled(input.projectName.len == 0)
   item(maCloseProject, res)
   igEndDisabled()
@@ -320,47 +334,6 @@ proc drawProjectItems*(input: MenuInput; marks: var Marks): MenuResult =
   marked = addr marks
   drawProjects(input, result)
   marked = saved
-
-proc drawImports(input: MenuInput; res: var MenuResult) =
-  ## File > Import: everything that is read in, each from here only.
-  let open = igBeginMenu((IconOpenFile & "  Import").cstring, true)
-  if marked != nil: marked[].mark("menu.Import")
-  if open:
-    item(maImportSurvey, res)
-    tip("A survey's files (SPS, SEG P1, a CSV table of stations) matched to an open file's " &
-      "traces, so they have their sources' and receivers' coordinates; in memory only, the " &
-      "file is not changed")
-    igBeginDisabled(not input.surveyImported)
-    item(maClearSurvey, res)
-    igEndDisabled()
-    tip(if input.surveyImported: ClearSurveyHelp else: NoSurveyHelp)
-    item(maImportSettings, res)
-    tip("Take in the settings of a file exported before (here or on another computer); " &
-      "those it does not hold stay as they are")
-    item(maImportLayout, res)
-    tip("Arrange the windows as a layout file says, and keep it among your layouts " &
-      "(Window > Load)")
-    item(maImportEdits, res)
-    tip("Kill and reverse traces of the file shown as a list says (a CSV table with a " &
-      "\"trace\" column, or a list exported here); one step, which Edit > Undo takes back")
-    igEndMenu()
-
-proc drawExports(res: var MenuResult) =
-  ## File > Export: everything that is written out, each from here only.
-  let open = igBeginMenu((IconExport & "  Export").cstring, true)
-  if marked != nil: marked[].mark("menu.Export")
-  if open:
-    item(maExportLog, res)
-    tip("Write every message of this session to a text file of your choice")
-    item(maExportSettings, res)
-    tip("Write every setting to a file of your choice, to keep or to take to another computer")
-    item(maExportLayout, res)
-    tip("Write the windows' arrangement to a file of your choice")
-    item(maExportEdits, res)
-    tip("Write the killed and reversed traces of the file shown to a file, to hand to " &
-      "processing: a CSV table (trace, record, channel, edit) or viewSEG's own (.nif), " &
-      "which Import reads again here or on another computer")
-    igEndMenu()
 
 proc drawLayouts(input: MenuInput; res: var MenuResult) =
   ## Window's layouts: the presets, the user's own under Load, then saving,
@@ -376,7 +349,9 @@ proc drawLayouts(input: MenuInput; res: var MenuResult) =
       tip("Arrange the windows as this layout, which comes with viewSEG, does")
       igPopID()
     else: mine = true
-  if igBeginMenu((IconLayout & "  Load").cstring, mine):
+  let load = igBeginMenu((IconLayout & "  Load").cstring, mine)
+  if marked != nil: marked[].mark("menu.Load")
+  if load:
     for i, e in input.layouts:
       if not e.preset:
         igPushID_Int(cint(i))
@@ -388,9 +363,13 @@ proc drawLayouts(input: MenuInput; res: var MenuResult) =
       else: "The layouts you save are listed here")
   igBeginDisabled(not input.keepsLayouts)
   item(maSaveLayout, res)
-  tip("Keep the windows as they are now under a name, to load again (a layout file is " &
-    "written and read under File > Export and File > Import)")
+  tip("Keep the windows as they are now under a name, to load again")
   igEndDisabled()
+  item(maImportLayout, res)
+  tip("Arrange the windows as a layout file says, and keep it among your layouts " &
+    "(Window > Load)")
+  item(maExportLayout, res)
+  tip("Write the windows' arrangement to a file of your choice")
 
 proc drawEditMenu(input: MenuInput; res: var MenuResult) =
   ## Edit: the trace edits of the file the Seismic window shows.
@@ -419,6 +398,13 @@ proc drawEditMenu(input: MenuInput; res: var MenuResult) =
   tip("Select every trace the Seismic window shows (as its Seismic / Aux switches and the " &
     "hidden killed traces leave them)")
   igSeparator()
+  item(maImportEdits, res)
+  tip("Kill and reverse traces of the file shown as a list says (a CSV table with a " &
+    "\"trace\" column, or a list exported here); one step, which Edit > Undo takes back")
+  item(maExportEdits, res)
+  tip("Write the killed and reversed traces of the file shown to a file, to hand to " &
+    "processing: a CSV table (trace, record, channel, edit) or viewSEG's own (.nif), " &
+    "which Import trace edits reads again here or on another computer")
   if igMenuItem_Bool(label(maClearEdits).cstring, nil, false, input.edited):
     res.actions.incl maClearEdits
   if marked != nil: marked[].mark("menu." & $maClearEdits)
@@ -426,9 +412,16 @@ proc drawEditMenu(input: MenuInput; res: var MenuResult) =
         ", so its traces are shown as the file holds them (Undo brings them back). The " &
         "file itself is never changed"
       else: "No edits to clear")
+  igSeparator()
+  if igMenuItem_Bool(label(maFileMemory).cstring, nil, input.memoryShown, true):
+    res.actions.incl maFileMemory
+  if marked != nil: marked[].mark("menu." & $maFileMemory)
+  tip("What viewSEG remembers about the files you opened (their kills and polarity " &
+    "reversals, kept beside them, never in them): see it, and remove what is no " &
+    "longer wanted")
 
 proc drawNewPlot(input: MenuInput; res: var MenuResult) =
-  ## Window > New plot: a window of the selected traces for each view.
+  ## Analysis > New plot: a window of the selected traces for each view.
   let open = igBeginMenu((IconPulse & "  New plot").cstring, input.plotTraces > 0)
   if marked != nil: marked[].mark("menu.window.newplot")
   tip(if input.plotTraces > 0: "A window of the " & $input.plotTraces & " selected traces: " &
@@ -444,9 +437,25 @@ proc drawNewPlot(input: MenuInput; res: var MenuResult) =
         if marked != nil: marked[].mark("menu.newplot." & $e.view)
     igEndMenu()
 
+proc drawWindowTicks(input: MenuInput; res: var MenuResult) =
+  ## View's window ticks: each window, then the "Import survey" window.
+  igSeparatorText("Windows")
+  for w in AppWindow:
+    let name = if w == awSeismic and input.seismicName.len > 0: input.seismicName
+               else: WindowNames[w]
+    if igMenuItem_Bool((windowIcons[w] & "  " & name).cstring, nil, w in input.shown, true):
+      res.pickedWindows.incl w
+    if marked != nil: marked[].mark("menu.window." & $w)
+    tip(if w in AlwaysShown: "Always shown: a click brings it forward"
+        else: "Ticked while shown. A click shows it in front when it is hidden or behind " &
+          "another tab, and hides it when it is in sight")
+  if igMenuItem_Bool((IconSurvey & "  Import survey").cstring, nil, input.joinShown, true):
+    res.toggleJoin = true
+  if marked != nil: marked[].mark("menu.window.join")
+  tip("Ticked while open: a click opens it in front, or closes it")
+
 proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
-  ## Window: putting the windows right first, then each window with a tick,
-  ## then the layouts.
+  ## Window: putting the windows right, the layouts, then the tray.
   item(maResetWindows, res)
   tip("Every window shown and docked in the main window, as at a first start (the " &
     "default layout); the main window is brought onto a screen when it is off every one. " &
@@ -455,6 +464,8 @@ proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
   tip("The windows dragged out of the main window, wherever they are (on another screen, " &
     "on one that is gone, or past a screen's edge), and the main window itself, brought " &
     "wholly onto the screen the main window is on")
+  drawLayouts(input, res)
+  igSeparator()
   if igMenuItem_Bool((IconTray & "  Icon in the tray").cstring, nil, input.trayIcon, true):
     res.toggleTrayIcon = true
   if marked != nil: marked[].mark("menu.tray.icon")
@@ -470,27 +481,57 @@ proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
       elif input.trayIcon and input.trayProblem.len > 0: "Not here: " & input.trayProblem
       elif input.trayIcon: "Needs the icon in a tray that is seen"
       else: "Needs the icon in the tray")
-  igSeparatorText("Windows")
-  for w in AppWindow:
-    let name = if w == awSeismic and input.seismicName.len > 0: input.seismicName
-               else: WindowNames[w]
-    if igMenuItem_Bool((windowIcons[w] & "  " & name).cstring, nil, w in input.shown, true):
-      res.pickedWindows.incl w
-    if marked != nil: marked[].mark("menu.window." & $w)
-    tip(if w in AlwaysShown: "Always shown: a click brings it forward"
-        else: "Ticked while shown. A click shows it in front when it is hidden or behind " &
-          "another tab, and hides it when it is in sight")
-  if igMenuItem_Bool((IconSurvey & "  Import survey").cstring, nil, input.joinShown, true):
-    res.toggleJoin = true
-  if marked != nil: marked[].mark("menu.window.join")
-  tip("Ticked while open: a click opens it in front, or closes it")
+
+proc drawToolsMenu(input: MenuInput; res: var MenuResult) =
+  ## Tools: the settings, the vendor maps, the messages, the agent.
+  item(maSettings, res)
+  tip("Units: metric or imperial, for a plot's masses, forces and velocities")
+  item(maImportSettings, res)
+  tip("Take in the settings of a file exported before (here or on another computer); " &
+    "those it does not hold stay as they are")
+  item(maExportSettings, res)
+  tip("Write every setting to a file of your choice, to keep or to take to another computer")
+  item(maResetSettings, res)
+  tip("Every setting back to its default (the recent files and the window's place " &
+    "stay); the settings before are kept in a copy")
+  igSeparator()
+  item(maReloadVendors, res)
+  tip("Read the vendor header maps (*.nif) again from their folders: the project's, your " &
+    "settings folder, beside the program: a map dropped in while viewSEG runs is used " &
+    "without a restart, and the files open show the new decode (Messages says what was " &
+    "loaded)")
+  igSeparator()
+  item(maExportLog, res)
+  tip("Write every message of this session to a text file of your choice")
+  igSeparator()
+  if igMenuItem_Bool((IconAgent & "  Agent control").cstring, nil, input.agentOn, true):
+    res.toggleAgent = true
+  if marked != nil: marked[].mark("menu.Agent control")
+  tip("On: an AI agent (an MCP client) can operate viewSEG while you watch, through " &
+    (if input.agentSocket.len > 0: input.agentSocket else: "a socket next to the " &
+    "program (viewSEG --paths says where)") & ". Every call it makes is written in " &
+    "Messages; it cannot write files. For this run only.")
+
+proc drawAnalysisMenu(input: MenuInput; res: var MenuResult) =
+  ## Analysis: new plots, the comparison, the references.
   drawNewPlot(input, res)
-  drawLayouts(input, res)
+  if igMenuItem_Bool(label(maCompare).cstring, nil, input.compareShown, true):
+    res.actions.incl maCompare
+  marked[].mark("menu." & $maCompare)
+  tip("Overlay two traces, from one file or from two, for QC")
+  igSeparatorText("References")
+  item(maGenerateReference, res)
+  tip("Make a sweep and keep it as a reference")
+  if igMenuItem_Bool(label(maReferenceArchive).cstring, nil, input.archiveShown, true):
+    res.actions.incl maReferenceArchive
+  marked[].mark("menu." & $maReferenceArchive)
+  tip("The stored references, and which one the plots use")
 
 proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
   ## The menu bar over the main window, plus the shortcuts, which work whether
   ## or not a menu is open. Its menus are marked "menu.File", "menu.Project",
-  ## "menu.Edit", "menu.View", "menu.Window" and "menu.Help", its items "menu." and their
+  ## "menu.Edit", "menu.View", "menu.Analysis", "menu.Tools", "menu.Window" and
+  ## "menu.Help", its items "menu." and their
   ## names, the windows' entries "menu.window." and their IDs, the presets
   ## "menu.layout." and their names.
   result = MenuResult()
@@ -522,42 +563,20 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       item(maReopen, result)
       igEndDisabled()
       tip(ReopenTip)
-      item(maReloadVendors, result)
-      tip("Read the vendor header maps (*.nif) again from their folders: the project's, your " &
-        "settings folder, beside the program: a map dropped in while viewSEG runs is used " &
-        "without a restart, and the files open show the new decode (Messages says what was " &
-        "loaded)")
+      igSeparator()
       if igMenuItem_Bool((IconFollow & "  " & FollowWords).cstring, nil,
           input.followLatest, true):
         result.toggleFollow = true
+      marks.mark("menu." & FollowWords)
       tip(FollowHelp)
       if igMenuItem_Bool((IconStep & "  Prepare the next file").cstring, nil,
           input.prepareNext, true):
         result.togglePrepare = true
+      marks.mark("menu.Prepare the next file")
       tip("While a file is shown, open the next file of the list in the background " &
         "(its index and its first view), so that the next step does not wait for a slow " &
         "or network drive")
-      igSeparator()
-      drawImports(input, result)
-      drawExports(result)
-      if igMenuItem_Bool(label(maFileMemory).cstring, nil, input.memoryShown, true):
-        result.actions.incl maFileMemory
-      marks.mark("menu." & $maFileMemory)
-      tip("What viewSEG remembers about the files you opened (their kills and polarity " &
-        "reversals, kept beside them, never in them): see it, and remove what is no " &
-        "longer wanted")
-      item(maSettings, result)
-      tip("Units: metric or imperial, for a plot's masses, forces and velocities")
-      item(maResetSettings, result)
-      tip("Every setting back to its default (the recent files and the window's place " &
-        "stay); the settings before are kept in a copy")
-      igSeparator()
-      if igMenuItem_Bool((IconAgent & "  Agent control").cstring, nil, input.agentOn, true):
-        result.toggleAgent = true
-      tip("On: an AI agent (an MCP client) can operate viewSEG while you watch, through " &
-        (if input.agentSocket.len > 0: input.agentSocket else: "a socket next to the " &
-        "program (viewSEG --paths says where)") & ". Every call it makes is written in " &
-        "Messages; it cannot write files. For this run only.")
+      # Future: "Save as SEG-Y / SEG-D..." and a "Tape" submenu go here, before Quit.
       igSeparator()
       item(maQuit, result)
       igEndMenu()
@@ -574,27 +593,24 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
     let view = igBeginMenu("View", true)
     marks.mark("menu.View")
     if view:
+      drawWindowTicks(input, result)
+      igSeparator()
       result.themeMenu = drawThemeMenu(input.themes, input.theme, input.follows,
         IconTheme & "  Theme", marks)
       (result.pickedTheme, result.theme) = (result.themeMenu.picked, result.themeMenu.theme)
       item(maToggleTheme, result)
       tip("Switch to the other mode's default theme")
       igEndMenu()
-    let operations = igBeginMenu("Operations", true)
-    marks.mark("menu.Operations")
-    if operations:
-      igSeparatorText("References")
-      item(maGenerateReference, result)
-      tip("Make a sweep and keep it as a reference")
-      if igMenuItem_Bool(label(maReferenceArchive).cstring, nil, input.archiveShown, true):
-        result.actions.incl maReferenceArchive
-      marks.mark("menu." & $maReferenceArchive)
-      tip("The stored references, and which one the plots use")
-      igSeparatorText("Compare")
-      if igMenuItem_Bool(label(maCompare).cstring, nil, input.compareShown, true):
-        result.actions.incl maCompare
-      marks.mark("menu." & $maCompare)
-      tip("Overlay two traces, from one file or from two, for QC")
+    let analysis = igBeginMenu("Analysis", true)
+    marks.mark("menu.Analysis")
+    if analysis:
+      drawAnalysisMenu(input, result)
+      igEndMenu()
+    # Future menus: Reports goes here, after Analysis, then Process after Reports.
+    let tools = igBeginMenu("Tools", true)
+    marks.mark("menu.Tools")
+    if tools:
+      drawToolsMenu(input, result)
       igEndMenu()
     let window = igBeginMenu("Window", true)
     marks.mark("menu.Window")

@@ -50,7 +50,7 @@ shortened in the middle, and at a narrow window the name gives way and the icon 
 Click it for the same items as the Project menu. Rest the pointer on it for the
 project's folder and, in one line, how many survey files and data folders it holds. The
 theme is changed from **View > Theme** and **View > Light / dark**, not from the
-toolbar. **Operations > References** keeps pilots and sweeps for the plots that need
+toolbar. **Analysis > References** keeps pilots and sweeps for the plots that need
 one ([References](references.md)).
 
 Files and folders can also be dragged from a file manager and dropped on the window.
@@ -216,8 +216,8 @@ receiver, a CDP), and its key information: its seismic **Traces**, its auxiliary
 (**Aux**, when the file has any), the traces the file marks **Dead**, and the traces
 **Missing** from its patch. Missing counts against what the file itself declares for the
 record (a SEG-D record's seismic channel sets, a SEG-Y file's traces per ensemble) and,
-once the survey's relation file (SPS X) is loaded, or imported for the file (File > Import
-> Survey, below), against the stations its X record plans for the shot; the cell's
+once the survey's relation file (SPS X) is loaded, or imported for the file (Project >
+Import survey, below), against the stations its X record plans for the shot; the cell's
 tooltip says which, and how many of the record's traces are at stations the plan does
 not list. A record with traces missing is drawn
 in the warning colour, and the footer counts them; where nothing says how many traces a
@@ -243,7 +243,7 @@ so records compare one after the other.
 
 Anything that takes a while (opening a large file, listing a folder) runs while you go
 on working. The status bar shows the job running, how far it is and the time left, with
-**Cancel**; click it (or the toolbar's Jobs button, or **Window > Jobs**) for the
+**Cancel**; click it (or the toolbar's Jobs button, or **View > Jobs**) for the
 **Jobs** window, which lists every job:
 
 - **Running:** a progress bar for each, with Cancel.
@@ -587,7 +587,7 @@ traces only (a vibrator's reference and force traces, say) is not "without coord
 Messages says that only auxiliary traces carry them and that they are not placed. A line
 about traces left off the map is said once for a folder, so files of one kind do not repeat it.
 
-The **Map** window (right of the plot at a first start; Window > Map brings it
+The **Map** window (right of the plot at a first start; View > Map brings it
 forward) draws the survey: each survey file's **sources** (the theme's red) and
 **receivers** (its blue, or its green where the blue is the selection's colour, as in
 Everforest; another of its colours where those would be hard to tell apart) as dots, the open file's own
@@ -705,7 +705,7 @@ as large as each other.
 ### Import a survey
 
 Field records often carry stations, or only record and channel numbers, and no
-coordinates. **File > Import > Import survey** imports the survey: its files are put on the
+coordinates. **Project > Import survey** imports the survey: its files are put on the
 map (as File > Open puts survey files there) and its stations are matched to an open
 seismic file's traces, so that each trace has its source's and receiver's coordinates
 (and its stations, offset and midpoint): **in memory only, the file itself is never
@@ -783,7 +783,7 @@ checks each record against the survey's relation records. A file closed and open
 is read as it is on disk: import the survey again (the window keeps your files and
 options).
 
-**Clear survey** takes the imported survey away again, when you want none (**File > Import >
+**Clear survey** takes the imported survey away again, when you want none (**Project >
 Clear survey**, the **Clear survey** button of the Import survey window, and in the Project
 window beside the project's survey). The traces show their own file's coordinates again (the
 open files joined with the survey are read again: their selection and windows stay), the map
@@ -798,7 +798,7 @@ The item is disabled, with the tooltip "No survey is imported", when there is no
 bin/viewSEG samples/land/shots.sgy samples/land/land.?
 ```
 
-then File > Import > Import survey, Import (or open only the record, and choose the three
+then Project > Import survey, Import (or open only the record, and choose the three
 files with Add files...): 6 source points and 96 receiver points are on the map, and all
 576 seismic traces match by the stations in their headers. The coordinates the headers
 give are kept: they are the survey's. Messages quotes the SPS headers: NAD83, Texas
@@ -879,7 +879,7 @@ trace and an axis you have not zoomed fits it, one you have zoomed stays. (The l
 panel keeps your view when its data changes.) The window's line of words says how many traces were averaged and what
 was left out (killed, dead, unreadable).
 
-**Window > Spectrum** is the same, docked and live (a tab beside the map at first): the
+**View > Spectrum** is the same, docked and live (a tab beside the map at first): the
 spectrum of the selection in the record on show, or of the traces in view when nothing
 is selected, over the time it shows, updated as you pan, zoom, select, change record or
 file, or move a filter's slider. A selection left in another record does not keep it
@@ -892,7 +892,7 @@ or behind another tab.
 
 ## Filling in the Vibrator window
 
-Window > New plot > Vibrator signature judges one vibrator unit (its reference, ground
+Analysis > New plot > Vibrator signature judges one vibrator unit (its reference, ground
 force, reaction mass and baseplate traces) and says at the top whether the sweep passed.
 It is meant to answer one question: did the vibrator do what it should, when it should,
 all the way through the sweep. So it shows the ground force judged, the six limits of the
@@ -983,7 +983,7 @@ hand (double click shows it all again), so records can be flipped through.
 
 ## Compare two traces
 
-Operations > Compare two traces opens a window with two slots, A and B. Each holds one
+Analysis > Compare two traces opens a window with two slots, A and B. Each holds one
 trace: right-click that trace (seismic or auxiliary) and choose Compare: set as A or
 Compare: set as B. With several traces selected, the entries still copy the trace under
 the pointer. A stored reference goes into a slot from Compare as A or Compare as B on
@@ -1032,13 +1032,13 @@ Double-click an axis to fit it. The view stays where you left it until the pair 
 
 ## Headers
 
-The **Headers** window (Window > Headers) shows what the file in the Seismic window
+The **Headers** window (View > Headers) shows what the file in the Seismic window
 holds, read-only, in four tabs:
 
 - **Summary:** what the file is, in plain words: its standard and revision, byte order,
   textual header's character set, sample format, how many traces and records, the field
   record numbers, samples per trace, sample interval and record length, the coordinate
-  units and reference (as File > Import > Survey shows them; after an import, the units
+  units and reference (as Project > Import survey shows them; after an import, the units
   you confirmed there, and the import: its files, how many traces matched, what it did);
   **How it was opened**: the standard read as (detected, or as you chose, with what
   detection says), whether its index came from the cache, from a sample of 64 headers (a
@@ -1048,7 +1048,7 @@ holds, read-only, in four tabs:
   more digits than viewSEG shows; then the record shown (what tells it apart: FFID,
   source, receiver) with its counts (traces, seismic, auxiliary, dead, missing: the
   Records window's), and for SEG-D that record's channel sets. A unit you chose by hand
-  in File > Import > Survey is said as such.
+  in Project > Import survey is said as such.
 - **File headers:** a tab per header block, as the format has them. SEG-Y: **Text** (the
   textual header's 40 lines of 80 characters), **Binary** (the binary header's fields) and
   **Extended** (the extended textual headers, when the file has them), and a tape label or
@@ -1066,7 +1066,7 @@ holds, read-only, in four tabs:
   are. **Header** lists every header field of each trace (extensions included): its
   description, a value column per trace (at most 32 side by side) and its bytes, and the
   fields whose values differ between them in the warning colour. After a survey import
-  (File > Import > Survey), the table starts with **From the survey**: the stations,
+  (Project > Import survey), the table starts with **From the survey**: the stations,
   coordinates, offset and midpoint the survey gave, in the accent colour for each trace it
   gave them to ("from the survey, not the trace header" when pointed at); the
   header's own fields follow, as the file holds them. When the survey changed nothing in a
@@ -1153,7 +1153,7 @@ for all of it), jobs that failed. Its strip:
 - **Copy** puts the lines shown on the clipboard (right-click a line to copy only it).
 - **Clear** empties the window; the session's log file keeps everything.
 - **Export messages...** writes every message to a text file of your choice (never over a seismic
-  file viewSEG has open or lists: it refuses, and says so), as File > Export > Export messages...
+  file viewSEG has open or lists: it refuses, and says so), as Tools > Export messages...
   does.
 
 Click a message that names a trace (a damaged trace, say) to see that trace: its record is
@@ -1186,7 +1186,7 @@ and your own sort keys, the Messages window's toggles, and the Headers window's 
 toggles and columns, and the options of each kind of graph window (above). It is saved a
 second after a change and when you quit.
 
-**File > Settings...** chooses **Units**: **Metric** (the default: kilograms, metres per
+**Tools > Settings...** chooses **Units**: **Metric** (the default: kilograms, metres per
 second, newtons) or **Imperial** (pounds, feet per second, pounds-force). A plot's mass
 boxes, force-limit boxes, force and velocity labels, the vibrator table's force
 columns, and the words under a vibrator signature follow it. A mass box has **kg** / **lb** beside it, and a force-limit box
@@ -1208,9 +1208,11 @@ that does not name Units loads as Metric.
 |---|---|
 | **Reset the windows** (Ctrl+Shift+R) | every window shown and docked in the main window, as at a first start; the main window is brought onto a screen if it is off every one |
 | **Bring all windows onto this screen** | every floating window (plots, FFT, the reference archive, About, the dialogs), also those you dragged out of the main window, wherever they are (another screen, a screen that is gone, past a screen's edge): wholly into the main window, made smaller when larger; and the main window itself, wholly onto its screen |
-| Seismic, Files, Records, Map, Headers, Jobs, Messages | ticked while shown; a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown |
+| **Icon in the tray**, **Minimize to the tray** | whether viewSEG's icon is in the system tray, and whether minimizing hides the main window there |
 | Wide plot, Side by side, Plot and map | the presets that ship with viewSEG |
-| Load, Save layout as... | your own layouts: saved under a name, loaded again (a layout file is written and read under File > Export and File > Import) |
+| Load, Save layout as..., Import layout..., Export layout... | your own layouts: saved under a name, loaded again, written to a file and read from one |
+
+The **View** menu ticks each window (Seismic, Files, Records, Map, Headers, Jobs, Messages, Spectrum, Import survey): a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown. It also holds the theme.
 
 A layout saved before a window existed (before the map came, say) docks that window beside
 its neighbours, and shows it. A window a layout puts off every screen (left on a monitor
@@ -1233,23 +1235,23 @@ file; the data file itself is never changed. What you undo and redo is for this 
 only: the next run starts with the edits as you left them, and nothing to undo. Edits an
 AI agent makes through agent control are not remembered.
 
-**File > File memory...** lists what is remembered: each file's name when you last saw
+**Edit > File memory...** lists what is remembered: each file's name when you last saw
 it, when you last opened it, what is kept, its size, the entry's size, and whether the
 file is still where it was. Remove the entry you select, those not opened for a number of
 days, or those whose file is gone: each asks first, listing what goes, and Messages names
-each one. **File > Export > Trace edits...** writes the edits of the file shown as a CSV
+each one. **Edit > Export trace edits...** writes the edits of the file shown as a CSV
 table (`trace,record,channel,edit,file`, for a processing system) or as viewSEG's own `.nif`;
-**File > Import > Trace edits...** takes either back in (here or on another computer;
+**Edit > Import trace edits...** takes either back in (here or on another computer;
 one step that Undo takes back).
 
-**File > Export > Settings...** writes them to a file of your choice (to keep, or to take
-to another computer), **File > Import > Settings...** takes such a file in (what it does
-not hold stays as it is), and **File > Reset the settings** puts them back to the defaults
+**Tools > Export settings...** writes them to a file of your choice (to keep, or to take
+to another computer), **Tools > Import settings...** takes such a file in (what it does
+not hold stays as it is), and **Tools > Reset the settings** puts them back to the defaults
 (the recent files and the window's place stay; the settings before are kept in a copy).
 
-Every import is under **File > Import** (a survey, settings, a layout, trace edits) and
-every export under **File > Export** (the messages, the settings, the layout, trace
-edits), each in that one place.
+Every import and export is in the menu of what it is about: **Project** (the survey),
+**Edit** (the trace edits), **Tools** (the settings, the messages) and **Window** (the
+layout), each in that one place.
 
 `settings.nif` is a text file (NIF) you can read and edit while viewSEG is closed. If it
 is damaged, viewSEG says so in the Messages window, moves it aside as

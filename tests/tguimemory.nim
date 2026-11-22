@@ -6,7 +6,7 @@
 ##   the plot; Ctrl+Z there undoes the kill, Ctrl+Shift+Z makes it again,
 ##   Ctrl+Z and Ctrl+Y the same; Edit > Undo and Edit > Redo do it with the
 ##   mouse;
-## - the kill is written to the store a moment later; File > File memory...
+## - the kill is written to the store a moment later; Edit > File memory...
 ##   lists it beside two entries put there before (one not opened for years,
 ##   one whose file is gone); "Remove those not opened for 90 days" asks
 ##   first, naming the entry, then removes it, and Messages says so; "Remove
@@ -184,7 +184,7 @@ proc main*() =
     step("written to the store", noop, proc (f: FrameInfo): bool =
       f.core.remembering(path).doc.len > 0 and
         fileExists(f.core.store.docPath(f.core.remembering(path).doc)))
-    menu("File > File memory...", "File", "File memory...", proc (f: FrameInfo): bool =
+    menu("Edit > File memory...", "Edit", "File memory...", proc (f: FrameInfo): bool =
       f.markOf("memory").size.x > 0 and f.core.memoryList.listed and
         not f.core.memoryList.listing)
     step("three files listed", noop, proc (f: FrameInfo): bool =

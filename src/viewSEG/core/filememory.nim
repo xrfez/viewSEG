@@ -44,8 +44,8 @@
 ## hashed. A reader skips what it does not know, so later versions can add
 ## flags, notes, the join used and filters beside the edits.
 ##
-## **A file's list** handed to a processor is the same document (File >
-## Export > Trace edits..., `.nif`), or a CSV table (`.csv`) with a row per
+## **A file's list** handed to a processor is the same document (Edit >
+## Export trace edits..., `.nif`), or a CSV table (`.csv`) with a row per
 ## edited trace: its number in the file, its record (field record number),
 ## its channel, and the edit. Either can be imported again (`readEdits`),
 ## here or on another machine.

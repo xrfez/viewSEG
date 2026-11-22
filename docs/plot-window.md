@@ -670,7 +670,7 @@ given by its first and last sample times. A trace longer than the reference
 lead-in up (a delay), but the phase to the reference, measured as if both started together,
 does not.
 
-- **Window > New plot**, on the traces selected in the Seismic window (greyed out until
+- **Analysis > New plot**, on the traces selected in the Seismic window (greyed out until
   some are);
 - **the plot's right-click menu > New plot**, on the trace under the pointer, or on the
   selection when that trace is in it.
@@ -759,7 +759,7 @@ right of that line's first row. A change works it out again.
   A trace with a sample that is not a number is left out and counted in the window's line of
   words ("1 left out (killed, dead or unreadable; 1 with a sample that is not a number)"),
   as the FFT window does, not drawn as 0; so are such traces of a spectrogram and an f-k.
-- **Cross-correlation:** the reference is the one chosen in Operations > References,
+- **Cross-correlation:** the reference is the one chosen in Analysis > References,
   and only that. The bar says "Reference: <name>" and **References** opens that window.
   Nothing else chooses a reference from here. With none chosen, the plot area says
   "No reference is chosen. Choose one in References." With the chosen one gone,
@@ -818,7 +818,7 @@ right of that line's first row. A change works it out again.
   is in cycles/km and the apparent velocity in m/s. **In feet** (international or US survey:
   the foot of the file itself) the axis is in cycles/kft (per 1000 ft) and the velocity in
   ft/s, as a US crew reads them; the note under the title names the unit. The velocity
-  follows the file's units when they are known, not File > Settings > Units; the readout's
+  follows the file's units when they are known, not Tools > Settings > Units; the readout's
   tooltip says which. When the file names no length the velocity is in traces/s, and the
   tooltip says the Units setting does not apply: there is no length to convert. When the spacing is
   not regular, or the unit is an angle (arc seconds, degrees) or not given, the wavenumber is
@@ -881,7 +881,7 @@ right of that line's first row. A change works it out again.
     travels with it. Point limits stored by an older version (`limitsOn`, `limits`) are read
     and ignored.
   - **GF from M and B.** With the reaction mass and the baseplate's mass entered (kg, or
-    lb when File > Settings > Units is Imperial; **kg | lb** after the two boxes is that
+    lb when Tools > Settings > Units is Imperial; **kg | lb** after the two boxes is that
     setting, the selected one drawn lit, and the numbers convert in place, pounds to a
     tenth: 3600 kg reads 7936.6 lb, and what is stored stays in kilograms; empty at first, as no default fits
     every vibrator), `GF (M, B) = Mr·M + Mb·B` is a second ground force, and the **Ground
@@ -1434,7 +1434,7 @@ program's core: neither window talks to the other, each draws what the core hold
   shown (FFID 12)", "No trace here: no seismic file is open".
 
 **Where the positions come from, before a survey is imported for the seismic file**
-(File > Import > Import survey: it writes the survey's stations and coordinates into the
+(Project > Import survey: it writes the survey's stations and coordinates into the
 file's keys, never into the file; then a trace whose headers lack its stations finds them
 too):
 
@@ -1555,7 +1555,7 @@ kept as they are. Edits an agent makes
 through agent control are shown for the session only (docs/agent-control.md), marked so in
 the row of edits.
 
-**File > File memory...** lists what is remembered: the name a file was last seen under,
+**Edit > File memory...** lists what is remembered: the name a file was last seen under,
 when it was last opened, what is kept, the file's size and the entry's, and whether the
 file is gone from where it was ("not found" when its folder is not there, as a network
 drive not connected: that is not counted as gone). The entries come at once; where each
@@ -1567,14 +1567,14 @@ file is gone; each removal lists what it takes away and asks first (a listing th
 meanwhile does not change what it takes), and Messages names each entry forgotten.
 Nothing is ever dropped on its own.
 
-**Handing a list over.** File > Export > Trace edits... writes the edits of the file shown,
+**Handing a list over.** Edit > Export trace edits... writes the edits of the file shown,
 as remembered: an edit shown for the session only (agent control's) is left out, since a
 list handed on outlives the session, and Messages says how many; one an agent hid for the
 session is in it,
 as a CSV table (`trace,record,channel,edit,file`: the trace's number in the file from 1,
 its field record and channel from the headers, `killed`, `reversed` or `excluded`, "all" for reverse
 all, and the name of the file the list is for on every row) or as viewSEG's own NIF
-document (with the file's identity), for processing. File > Import > Trace edits... reads
+document (with the file's identity), for processing. Edit > Import trace edits... reads
 either (a CSV table needs a header naming a `trace` column, within its first lines;
 without an `edit` column every trace listed is killed; a table saved by a spreadsheet,
 with a byte order mark, quoted cells, `;` or tabs, reads as well) onto the file shown, as
@@ -1617,7 +1617,7 @@ window's number is the lowest free one, so a window opened again takes the place
 layout kept for that number; a layout that names FFT windows not open loads without a
 word.
 
-**The live Spectrum panel** (Window > Spectrum; a tab behind the map in the first
+**The live Spectrum panel** (View > Spectrum; a tab behind the map in the first
 layout) shows the same for what the Seismic window shows: the selected traces of the
 record on show when there are some, else the traces in view, over the visible time (or
 the whole trace). A selection left in another record does not keep it there. It follows

@@ -125,7 +125,7 @@ func firstLine*(text: string): string =
 
 func unitWords*(c: CoordinateUnits): string =
   ## The unit a file's headers give its coordinates in, in the words of the
-  ## Import survey window (File > Import > Survey).
+  ## Import survey window (Project > Import survey).
   result = $unitOf(c)
   if c == cuLength: result.add " (the headers say a length, not whether metres or feet)"
 

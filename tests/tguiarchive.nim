@@ -80,7 +80,7 @@ proc main*() =
         f.markOf("references.row." & $row).pos.y) < 1
 
     proc openArchive(f: FrameInfo) =
-      f.click(f.markOf("menu.Operations").centre)
+      f.click(f.markOf("menu.Analysis").centre)
 
     step("the file opens", noop, proc (f: FrameInfo): bool =
       f.core.referencesLoaded and f.markOf("plot.data").size.x > 0)
@@ -94,10 +94,10 @@ proc main*() =
         aux: false, trace: 1, startMs: 0, spanMs: 200))), proc (f: FrameInfo): bool =
       f.core.references.entries.len == 5)
 
-    step("Operations > Reference archive...", openArchive, proc (f: FrameInfo): bool =
+    step("Analysis > Reference archive...", openArchive, proc (f: FrameInfo): bool =
       let it = f.markOf("menu.Reference archive...")
       if it.size.x == 0:
-        if wait mod 8 == 0: f.click(f.markOf("menu.Operations").centre)
+        if wait mod 8 == 0: f.click(f.markOf("menu.Analysis").centre)
       elif wait mod 6 == 3: f.click(it.centre)
       f.markOf("references.row.4").size.x > 0 and wait > 6)
 

@@ -103,7 +103,7 @@ type
     reopen: ReopenUi                           ## the "Reopen with options" dialog
     about: AboutUi                             ## Help > About viewSEG
     shortcuts: ShortcutsUi                     ## Help > Keyboard shortcuts
-    settingsWin: SettingsUi                    ## File > Settings
+    settingsWin: SettingsUi                    ## Tools > Settings
     spectra: SpectraUi                         ## the spectrum windows: the live panel, the FFT windows
     compare: CompareUi                         ## the compare window: two traces, A and B
     plotWins: PlotWindowsUi                    ## the analysis windows (New plot)
@@ -237,7 +237,7 @@ type
       ## the largest texture side the plot uses; 0 for the GPU's limit
       ## (tests set a small one, so that tiles are cut into blocks)
     agent*: bool
-      ## start with agent control on (`--mcp`); File > Agent control turns it
+      ## start with agent control on (`--mcp`); Tools > Agent control turns it
       ## on and off in any case
     agentSocket*: string
       ## the socket agent control listens on; "" for `paths.agentSocket()`
@@ -617,7 +617,7 @@ proc agentControl*(frame: FrameInfo): lent AgentControl =
   frame.ui.agent
 
 proc toggleAgent(ui: var Ui) =
-  ## Turns agent control on or off, as File > Agent control does. The
+  ## Turns agent control on or off, as Tools > Agent control does. The
   ## default socket is found only now: finding it tries the program's folder.
   if ui.agent.running:
     ui.agent.stop(ui.core)
@@ -631,7 +631,7 @@ proc toggleAgent(ui: var Ui) =
     if ui.agent.running: ui.agentSocket = ui.agent.path
 
 proc setAgentControl*(frame: FrameInfo; on: bool) =
-  ## Turns agent control on or off, as File > Agent control does.
+  ## Turns agent control on or off, as Tools > Agent control does.
   if on != frame.ui.agent.running: frame.ui[].toggleAgent()
 
 # ------------------------------------------------------------------ themes --
@@ -1817,7 +1817,7 @@ proc arrange(ui: var Ui; text: string) =
   ui.checkPlaces = CheckFrames
 
 proc followLayouts(ui: var Ui) =
-  ## A layout `core` loaded (Window > a preset, Load, Import) is shown.
+  ## A layout `core` loaded (Window > a preset, Load, Import layout) is shown.
   if ui.core.layoutLoads != ui.layoutLoads:
     ui.layoutLoads = ui.core.layoutLoads
     ui.arrange(ui.core.loadedLayout.imgui)

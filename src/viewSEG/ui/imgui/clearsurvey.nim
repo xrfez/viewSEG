@@ -1,4 +1,4 @@
-## The confirmation of Clear survey (File > Import > Clear survey, the button
+## The confirmation of Clear survey (Project > Clear survey, the button
 ## of the "Import survey" window and the Project window's): one dialog, one
 ## command (`ckClearSurvey`), asked from three places. It opens in the middle
 ## of the main window and gives the focus back to the window that asked.

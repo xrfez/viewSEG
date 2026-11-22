@@ -1,4 +1,4 @@
-## The "File memory" window (File > File memory...): what viewSEG remembers
+## The "File memory" window (Edit > File memory...): what viewSEG remembers
 ## about the files opened (their kills and polarity reversals, kept beside
 ## them by their content, `core/filememory`), a row per file: the name it
 ## was last seen under, when it was last opened, what is kept, the file's

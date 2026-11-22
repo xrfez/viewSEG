@@ -644,7 +644,7 @@ type
     jpJoining = "matching"                 ## the readers stopped, the keys changed
 
   Joining = object
-    ## The survey import under way (File > Import > Survey): one at a time.
+    ## The survey import under way (Project > Import survey): one at a time.
     job: JobId = NoJob           ## the job of its step; `NoJob`: none under way
     step: JoinStep
     session: SessionId

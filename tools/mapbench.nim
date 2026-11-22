@@ -11,7 +11,7 @@
 ## on. The surveys of `tests/utils/bigsurvey` (`tools/surveybench gen`) are
 ## what it was made for. The window is 1600 x 1000 in the "Plot and map"
 ## layout. It opens the seismic file, imports the survey files for it
-## (File > Import > Survey), then: idle frames; 60 frames of zooming, a
+## (Project > Import survey), then: idle frames; 60 frames of zooming, a
 ## wheel notch a frame; 60 of panning (arrow keys); 60 of hovering, the
 ## pointer moving across the map; a box selection (Shift + drag); a click on
 ## a point. For each it prints the time between frames (median, 95th

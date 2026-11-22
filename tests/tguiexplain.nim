@@ -234,14 +234,14 @@ proc main*() =
     step("the FFT window closes", proc (f: FrameInfo) =
       f.apply(Command(kind: ckCloseSpectrum, spectrum: 1)),
       proc (f: FrameInfo): bool = f.core.spectra.len == 1)
-    click("menu.Window")
+    click("menu.View")
     click("menu.window.spectrum")
     step("the Spectrum panel", noop, proc (f: FrameInfo): bool =
       f.core.spectra[0].shown and not f.core.spectra[0].waiting and
         f.markOf("spectrum.explain").size.x > 0)
     hover("spectrum.explain", proc (f: FrameInfo): string =
       f.core.explainSpectrum(f.core.spectra[0], false))
-    click("menu.Window")
+    click("menu.View")
     click("menu.window.spectrum")
     step("the Spectrum panel closes", noop, proc (f: FrameInfo): bool =
       not f.core.spectra[0].shown)
@@ -349,7 +349,7 @@ proc main*() =
       proc (f: FrameInfo): bool = f.core.refViews.len == 0)
 
     # --- the Generate dialog (a sweep), and the Headers window's graph
-    click("menu.Operations")
+    click("menu.Analysis")
     click("menu.Generate a reference...")
     step("the dialog", noop, proc (f: FrameInfo): bool =
       f.markOf("generate.explain 2").size.x > 0 and f.markOf("generate.explain").size.x > 0)

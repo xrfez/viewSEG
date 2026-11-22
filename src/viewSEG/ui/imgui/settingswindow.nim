@@ -1,4 +1,4 @@
-## File > Settings: the Units choice, Metric (the default) or Imperial. What a
+## Tools > Settings: the Units choice, Metric (the default) or Imperial. What a
 ## plot shows and what its boxes ask for follow it. What is stored stays in
 ## SI. An ordinary dockable window.
 

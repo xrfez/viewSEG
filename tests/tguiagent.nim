@@ -1,7 +1,7 @@
 ## Agent control in the running program, headless:
 ##
 ## - off by default: a run without it has no listening socket and no
-##   server; File > Agent control's way (`setAgentControl`) turns it on (the
+##   server; Tools > Agent control's way (`setAgentControl`) turns it on (the
 ##   socket appears, the status bar shows the sign, Messages says so) and
 ##   off (the socket is gone);
 ## - an agent, a client on a thread of its own, opens a fixture, draws it as
@@ -36,7 +36,7 @@
 ## not finish"; with the kill applied as a reversal, "the killed trace's
 ## band: 1153 pixels of ink"; with no trace named to the kill (the
 ## selection not taken), "kill: ... ignored"; with the status bar's sign
-## left out, "no sign while on"; with File > Agent control's way not
+## left out, "no sign while on"; with Tools > Agent control's way not
 ## starting the server, "no listening socket after turning it on"; with the
 ## map's view applied in `core` alone (no `showMapView`), "the map's view was
 ## not taken"; with the sign drawn after the readout, "the sign is out of

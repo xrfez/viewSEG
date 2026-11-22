@@ -4,7 +4,7 @@ A reference is one trace of samples: a vibrator pilot or a sweep, with a name. A
 cross-correlation always uses the one chosen here. A vibrator signature uses it instead
 of the file's pilot when one is chosen.
 
-**Operations > References** holds two items.
+**Analysis > References** holds two items.
 
 ## Generate a reference
 

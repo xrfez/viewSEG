@@ -38,7 +38,7 @@ const
     "Drop vendor header maps (files ending in .nif) in this folder. Each one tells viewSEG how " &
     "to read a manufacturer's own header blocks, which the SEG-D and SEG-Y standards leave " &
     "open: the Headers window then shows their fields by name. WRITING-A-MAP.md, in this " &
-    "folder, is the guide to the format of a map. File > Reload vendor maps (or opening a " &
+    "folder, is the guide to the format of a map. Tools > Reload vendor maps (or opening a " &
     "project) picks up a map dropped here while the program runs.\n"
     ## what the program writes in `README.txt` of each folder it makes
   VendorGuide* = staticRead("../../../vendormaps/WRITING-A-MAP.md")

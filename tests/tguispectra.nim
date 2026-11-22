@@ -21,7 +21,7 @@
 ##   filters (the FFT) while the plot changes, following them again unfrozen.
 ##
 ## Seen to fail: with plot keys only on the focused window, after the Window
-## menu the focusing click missed the plot (the Operations menu had moved it)
+## menu the focusing click missed the plot (the Analysis menu had moved it)
 ## and "killed did not happen"; with the pin's click not flipping `frozen` (the caller's
 ## `frozen = not frozen` left out), "fft 1 frozen did not happen"; with Freeze
 ## still a checkbox at the end of the line, "freeze
@@ -246,7 +246,7 @@ proc main*() =
       f.apply(Command(kind: ckClearSelection)),
       proc (f: FrameInfo): bool = not f.core.spectra[0].waiting and
         f.core.spectra[0].traces == liveWas)
-    click("menu.Window")
+    click("menu.View")
     click("menu.window.spectrum")
     step("the panel hidden", noop, proc (f: FrameInfo): bool =
       result = not f.core.spectra[0].shown
