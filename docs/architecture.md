@@ -58,6 +58,11 @@ src/viewSEG/platform/         OS integration that needs raw OS APIs (Windows res
    frontend passes `SDL_PROP_WINDOW_WIN32_HWND_POINTER` and similar. A different toolkit
    passes its own handle and gets the same Mica, dark title bar and tray.
 
+6. **`parseSSDAT` is a library of its own.** It decodes a vibrator controller's `.dat`
+   signature files and writes them through parseSEG, in a repository of its own, as
+   parseSEG and processSEG are (`deps/parseSSDAT`). Nothing in it imports viewSEG, and
+   under `src/viewSEG/` only `core` may import it (`tests/tlayers.nim`).
+
 Swapping toolkits means writing `ui/<toolkit>/` (widgets bound to the same view models and
 commands), plus `gpu/` if the new toolkit is not OpenGL. `core`, `view`, `platform` and all
 tests stay as they are.
