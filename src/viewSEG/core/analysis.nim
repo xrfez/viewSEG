@@ -30,7 +30,7 @@ import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
 import processSEG/vibroseis/[crosscorrelate, sweeptrack, vibqc]
 import processSEG/core/workspace
 import colourmaps, matchpeak, panels, phasepicture, phaseshow, plotcursor,
-    processing, sigjudge, signalend,
+    processing, sigjudge, signalend, sigtypes,
   traceids, vibjudge
 
 export ColourMap, PlotCursor, Polarity, VibLimits
@@ -1159,6 +1159,7 @@ type
     frozen*: bool ## keeps the traces and the file it had when frozen
     panel*: PanelId ## the plot it is of
     file*: string ## its file's name
+    sweep*: SweepIdentity ## a signature file's sweep: when, which controller, vibrator and point
     record*: string ## the record's FFID, or its place in the file
     traces*: seq[int] ## survey-wide ids, in the order drawn
     first*: int ## the first one's index in its file
@@ -1267,7 +1268,18 @@ func label*(w: AnalysisWindow): string =
 
 func title*(w: AnalysisWindow): string =
   ## A window's title: "Spectrogram 2: trace 12 · FFID 151 · shot.sgd".
-  w.view.viewName & " " & $w.id & ": " & w.label
+  w.view.viewName & " " & $w.id & ": " & w.label &
+    (if w.sweep.clockOf.len > 0: " · " & w.sweep.clockOf else: "")
+
+func identityCopy*(w: AnalysisWindow): string =
+  ## What a click on a signature window's identity line copies, one line of text: the file
+  ## name, the sweep's identity (when, controller, vibrator, the point when the file gives it)
+  ## and the verdict; "" for any other window.
+  let words = w.sweep.identityLine
+  if words.len == 0: return
+  result = (if w.file.len > 0: w.file & " · " else: "") & words
+  if w.sweep.limits.card > 0: result.add " · controller tripped " & w.sweep.limits.limitsWords
+  if w.result.problem.len == 0 and w.result.qc.rows.len > 0: result.add " · " & w.result.qc.line
 
 func freePlotId*(windows: openArray[AnalysisWindow]): int =
   ## The smallest id no window has, from 1.

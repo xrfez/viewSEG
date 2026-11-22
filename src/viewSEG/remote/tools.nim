@@ -678,6 +678,16 @@ proc plotJson(w: AnalysisWindow; fe: Frontend; units: UnitSystem; limit: int): J
       for c in row: cells.add newJString(c)
       rows.add cells
     result["table"] = rows
+  if w.sweep.given:
+    # which sweep a signature file's window is of (null: the file does not give it)
+    let i = w.sweep
+    func given(n: int64): JsonNode = (if n > 0: %n else: newJNull())
+    result["sweep"] = %*{"triggerUtc": (if i.triggerNs == 0: newJNull()
+      else: %timeText(i.triggerNs, (if i.fromStart: 0 else: 9))),
+      "triggerIsRecordingStart": i.fromStart, "controller": given(i.controller),
+      "vibrator": given(i.vibrator), "line": given(i.line), "station": given(i.station),
+      "shotId": given(i.shotId), "sweepId": given(i.sweepId), "words": i.identityLine,
+      "copyLine": w.identityCopy}
   if r.view == avVibrator and r.problem.len == 0 and r.qc.rows.len > 0:
     # the verdict, judged the way a vibrator controller's QC reports it
     let q = r.qc

@@ -92,7 +92,7 @@ proc main*() =
       doAssert f.markOf("new plot 1.scrolls").size.x == 0, what & ": the window scrolls"
       doAssert f.markOf("new plot 1.plots scroll").size.x == 0,
         what & ": the plots scroll in a child of their own"
-      for part in ["verdict", "qc table", "setup"]:
+      for part in ["verdict", "qc table", "wheel", "roles"]:
         doAssert f.markOf("new plot 1." & part).inside(win), what & ": " & part &
           " is not in view: " & $f.markOf("new plot 1." & part) & " in " & $win
       let plots = f.core.plots[0].result.curvePlots(f.theme, f.core.settings.units)
@@ -102,7 +102,7 @@ proc main*() =
         doAssert d.inside(win), what & ": plot " & $i & " is not in view: " & $d
         doAssert d.size.y >= 50, what & ": plot " & $i & " is only " & $d.size.y & " high"
       # nothing above the table wraps: each of these lines is one line high
-      for part in ["verdict", "roles line", "against", "top frequency warning", "warning"]:
+      for part in ["verdict", "identity", "findings", "warning"]:
         let r = f.markOf("new plot 1." & part)
         doAssert r.size.y <= 26, what & ": " & part & " is " & $r.size.y & " high (wrapped)"
       # a GF at 0 degrees is a visible line: the lowest pixel of its colour in the phase plot

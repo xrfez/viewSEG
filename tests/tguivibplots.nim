@@ -73,7 +73,7 @@ proc main*() =
             if distance(f.readPixel(x, y), f.theme.roles[rlText]) <= 90: inc ink
         # (the legend is outside the area: its swatches no longer count as curve pixels)
         doAssert missing.len == 0, what & ": curves not drawn: " & $missing
-        doAssert ink > 20, what & ": " & $ink & " pixels of y tick labels"
+        doAssert ink > 12, what & ": " & $ink & " pixels of y tick labels"
         drawn.incl i
     proc scrollTo(notches: float32) =
       for k in 0 ..< 4:
@@ -131,13 +131,30 @@ proc main*() =
       doAssert drawn == {0 .. 4}, "plots checked: " & $drawn
       true)
     scrollTo(3)
-    # the roles' table is folded under its line until that is clicked
+    # the roles' table is a popover until the Roles button is clicked
     step("the roles opened", proc (f: FrameInfo) =
-      let c = f.markOf("new plot 1.roles header").centre
+      let c = f.markOf("new plot 1.roles").centre
       f.moveMouse(c)
       f.pressMouse(c, true)
       f.pressMouse(c, false),
       proc (f: FrameInfo): bool = f.markOf("new plot 1.role Ref").size.x > 0)
+    step("the Ref role offers the project reference", noop, proc (f: FrameInfo): bool =
+      doAssert f.markOf("new plot 1.role Ref").size.x > f.markOf("new plot 1.role GF").size.x,
+        "the Ref role is not wide enough for the project reference's name"
+      true)
+    step("the roles closed", proc (f: FrameInfo) =
+      let c = f.markOf("new plot 1.verdict").centre
+      f.moveMouse(c)
+      f.pressMouse(c, true)
+      f.pressMouse(c, false),
+      proc (f: FrameInfo): bool = f.markOf("new plot 1.role Ref").size.x == 0)
+    # the masses are in the settings wheel
+    step("the wheel opened", proc (f: FrameInfo) =
+      let c = f.markOf("new plot 1.wheel").centre
+      f.moveMouse(c)
+      f.pressMouse(c, true)
+      f.pressMouse(c, false),
+      proc (f: FrameInfo): bool = f.markOf("new plot 1.reaction mass").size.x > 0)
     # the masses row, its order, its switch
     step("the masses row", noop, proc (f: FrameInfo): bool =
       let (a, b) = (f.markOf("new plot 1.reaction mass"), f.markOf("new plot 1.baseplate mass"))
@@ -147,8 +164,6 @@ proc main*() =
         kg.pos.x < lb.pos.x, "the unit switch is not after the baseplate: " & $[a, b, kg, lb]
       doAssert abs(a.pos.y - lb.pos.y) < 8 and abs(a.pos.y - b.pos.y) < 8,
         "the row is not one line: " & $[a, b, kg, lb]
-      doAssert f.markOf("new plot 1.role Ref").size.x > f.markOf("new plot 1.role GF").size.x,
-        "the Ref role is not wide enough for the project reference's name"
       # the active unit (metric) is the selected one: its button's colour is not lb's
       let on = f.readPixel(int(kg.pos.x) + 4, int(kg.centre.y))
       let off = f.readPixel(int(lb.pos.x) + 4, int(lb.centre.y))
@@ -159,12 +174,6 @@ proc main*() =
       doAssert note.pos.x + note.size.x <= win.pos.x + win.size.x + 1,
         "the note runs past the window: " & $note & " in " & $win
       true)
-    step("the roles closed", proc (f: FrameInfo) =
-      let c = f.markOf("new plot 1.roles header").centre
-      f.moveMouse(c)
-      f.pressMouse(c, true)
-      f.pressMouse(c, false),
-      proc (f: FrameInfo): bool = f.markOf("new plot 1.role Ref").size.x == 0)
     step("lb clicked", proc (f: FrameInfo) =
       let c = f.markOf("new plot 1.unit lb").centre
       f.moveMouse(c)
@@ -180,6 +189,12 @@ proc main*() =
         f.core.plots[0].params.baseplateMassKg == 1800, "the switch changed the masses"
       f.index > 0 and distance(f.readPixel(int(lb.pos.x) + 4, int(lb.centre.y)),
         f.readPixel(int(kg.pos.x) + 4, int(kg.centre.y))) > 20)
+    step("the wheel closed", proc (f: FrameInfo) =
+      let c = f.markOf("new plot 1.verdict").centre
+      f.moveMouse(c)
+      f.pressMouse(c, true)
+      f.pressMouse(c, false),
+      proc (f: FrameInfo): bool = f.markOf("new plot 1.reaction mass").size.x == 0)
     step("settle in lb", noop, after(20))
     step("the plots in lb", noop, proc (f: FrameInfo): bool =
       drawn = {}

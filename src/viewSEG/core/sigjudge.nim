@@ -162,11 +162,10 @@ func controllerRows*(s: SignatureAsk; q: QcStats; hundred: float64;
       "°"), viewseg: (if q.peakPhaseDeg.isNaN: "—" else: formatFloat(q.peakPhaseDeg,
       ffDecimal, 1) & "°"),
     tip: "compares once the polarity is as the controller treats it (see the line above)")
-  var tripped = ""
-  for l in c.limits: tripped.add $l
+  let tripped = limitsWords(c.limits, "\n") # (a line each: the column stays narrow)
   result.add ControllerRow(label: "Limits tripped", viewseg: "—",
     controller: (if tripped.len == 0: "none" else: tripped),
-    tip: "the controller's limit letters; their meanings are not known")
+    tip: "the controller's limit letters. " & LimitsProbable)
 
 func controllerNote*(s: SignatureAsk): string =
   ## The words above the table: where the numbers are from, and for a `.vib` judged on set B

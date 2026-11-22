@@ -108,19 +108,31 @@ proc main*() =
       for p in w.result.plots:
         for c in p.curves: doAssert c.style != csLimit, "a limit line: " & c.name
       doAssert f.markOf("new plot 1.table").size.x == 0, "the table of every signal is shown"
-      let setup = f.markOf("new plot 1.setup")
-      doAssert setup.size.x > 0 and f.markOf("new plot 1.roles line").size.x > 0,
-        "Setup is not open while the 100 % force is not set"
-      # Judge is at the top, over Setup, with the verdict
-      let judge = f.markOf("new plot 1.judge")
-      doAssert judge.size.x > 0, "no Judge box (both ground forces exist)"
-      doAssert judge.pos.y < setup.pos.y, "the Judge box is inside Setup"
-      doAssert judge.pos.y > f.markOf("new plot 1.verdict").pos.y - 1
+      # the settings are behind the wheel: nothing of them is in the window until it is opened
+      doAssert f.markOf("new plot 1.wheel").size.x > 0 and f.markOf("new plot 1.roles").size.x > 0,
+        "no strip"
+      doAssert f.markOf("new plot 1.judge").size.x == 0, "the Judge box is not behind the wheel"
+      doAssert f.markOf("new plot 1.set hundred").size.x == 0, "settings in the window"
       # one ground force, simply GF, in every plot
       for p in w.result.plots:
         for c in p.curves:
           doAssert c.name notin ["GF as recorded", "GF from M and B", "GF (M, B)"], c.name
       true)
+    click("new plot 1.wheel")
+    step("the wheel: Judge is in its Ground force group", noop, proc (f: FrameInfo): bool =
+      let judge = f.markOf("new plot 1.judge")
+      result = judge.size.x > 0
+      if result:
+        doAssert f.markOf("new plot 1.group Ground force").size.x > 0
+        # a SEG-Y record: the masses group, no signature file's groups, no identity line
+        for g in ["Masses", "Force"]:
+          doAssert f.markOf("new plot 1.group " & g).size.x > 0, "no group " & g
+        doAssert f.markOf("new plot 1.group Accelerometer set").size.x == 0 and
+          f.markOf("new plot 1.group Weights from the header").size.x == 0 and
+          f.markOf("new plot 1.masses note").size.x == 0 and
+          f.markOf("new plot 1.identity").size.x == 0, "a group of a signature file"
+        doAssert judge.pos.y > f.markOf("new plot 1.group Ground force").pos.y,
+          "the Judge box (both ground forces exist) is under its group's heading")
     click("new plot 1.set hundred")
     step("the 100 % force set from the sweep", noop, proc (f: FrameInfo): bool =
       let w = f.core.plots[0]
@@ -133,10 +145,10 @@ proc main*() =
           abs(w.result.qc.stats.avgForcePct - 100) < 0.5,
           $w.params.forceHundredPct & " / " & $average)
     step("settle after set", noop, after(25))
-    step("Setup folded, the force in %", noop, proc (f: FrameInfo): bool =
+    click("new plot 1.verdict") # closes the wheel
+    step("the force in %", noop, proc (f: FrameInfo): bool =
       let w = f.core.plots[0]
-      doAssert f.markOf("new plot 1.roles line").size.x == 0, "Setup stays open with the 100 % set"
-      doAssert f.markOf("new plot 1.setup").size.x > 0
+      doAssert f.markOf("new plot 1.wheel popover").size.x == 0, "the wheel stays open"
       doAssert abs(w.result.qc.stats.avgForcePct - 100) < 0.5, $w.result.qc.stats.avgForcePct
       doAssert w.result.plots[1].yLabel == "Force (%)", w.result.plots[1].yLabel
       doAssert w.result.qc.verdict == qvPass, w.result.qc.line
@@ -146,6 +158,13 @@ proc main*() =
       f.apply(Command(kind: ckGather, panel: MainPanel, gather: 1)),
       proc (f: FrameInfo): bool = ready(f) and f.core.plots[0].result.qc.verdict == qvFail)
     step("settle again", noop, after(25))
+    click("new plot 1.wheel")
+    step("the wheel's picture", noop, proc (f: FrameInfo): bool =
+      result = f.markOf("new plot 1.group Masses").size.x > 0
+      let shot = getEnv("VIBSIMPLE_SHOT_WHEEL")
+      if result and shot.len > 0: discard f.savePng(shot)
+    )
+    click("new plot 1.verdict")
     step("the bad record: failing stretches in the error colour", noop,
       proc (f: FrameInfo): bool =
       let w = f.core.plots[0]

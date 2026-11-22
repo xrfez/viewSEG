@@ -177,10 +177,9 @@ func qcLines(lines: var seq[SummaryLine]; q: ControllerQc) =
   lines.add "Distortion (THD), %", "max " & $q.brief.thdMaxPct & ", avg " & $q.brief.thdAvgPct &
     " (the controller's own definition)"
   lines.add "Phase max", exactText(q.brief.phaseMaxDeg) & " degrees (probable)"
-  var limits = ""
-  for l in q.brief.limits: limits.add $l
+  let limits = limitsWords(q.brief.limits)
   lines.add "Limits tripped", (if limits.len == 0: "none" else: limits &
-    " (the meanings of the letters are not known)")
+    ". " & LimitsProbable)
   lines.add "Stiffness", "max " & $q.stiffness.max & ", min " & $q.stiffness.min & ", avg " &
     $q.stiffness.avg
   lines.add "Viscosity", "max " & $q.viscosity.max & ", min " & $q.viscosity.min & ", avg " &

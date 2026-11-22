@@ -971,8 +971,8 @@ What you see, top down:
 
 1. **The verdict line.** PASS, FAIL or NOT JUDGED, with a tick or a cross. A FAIL names the
    worst failing value and when it happened ("FAIL: peak force 157 % > 120 % at 9.5 s").
-2. **Ground force judged** (only when the unit has both ground forces and the two masses are
-   typed). The recorded GF is the weighted sum of mass and baseplate acceleration the
+2. **Ground force judged** (in the settings wheel, under Ground force; only when the unit has
+   both ground forces and the two masses are typed). The recorded GF is the weighted sum of mass and baseplate acceleration the
    recorder wrote with its own masses; **GF from M and B** is the same sum formed here with
    the masses you typed. Whatever you pick is *the* ground force of the window: every plot,
    the verdict and the limits table use it, and the plots call it "GF" (the verdict line
@@ -985,13 +985,21 @@ What you see, top down:
    and B). The peak force of GF from M and B can read lower than the vibrator's own peak
    force figure (about 5 % lower at the median on the files reviewed), so a peak near the
    limit may pass here and be flagged there; the numbers are not adjusted.
-3. **Setup** (a fold; open until the 100 % force is set, then folded; your own opening or
-   folding is kept), **Details**, **Limits...**, **Reset options** and **Freeze**, on one
-   line. Under Setup:
-   - **The roles line.** Who is Ref, GF, M and B. Click it to open the roles: the trace
-     for each role, GF's and M and B's polarity, and the project reference. The roles come
+3. **A strip of icon buttons** under the verdict (each has a tooltip): **Roles**, **Limits...**,
+   **Details**, the **settings wheel** and **Freeze**.
+   - **Roles** opens the roles: the trace for each role, GF's and M and B's polarity (the one
+     place to reverse a polarity; B follows M), and the project reference. The roles come
      from the traces' vibrator codes; **Swap mass and baseplate** puts the two right when a
-     converter swapped them.
+     converter swapped them. When the ground force is opposite to the reference the polarity
+     line under the verdict ends with **Roles...**, which opens it at the GF row.
+   - The **settings wheel** opens a popover with headed groups, only those that apply to
+     the file: **Ground force** (which is judged, harmonics, phase, top frequency),
+     **Masses** (not for a signature file, which says why), **Force** (100 % force, target,
+     the force scale of a signature file), **Accelerometer set** and **Weights from the
+     header** (a `.vib`) and **Reset options**. A finding a group holds (the weights differ
+     across the folder, a typed 100 % force not applied, a top frequency warning, the
+     controller's QC following set A while B is judged) is also told in words under the
+     verdict, and the wheel carries a warning sign. In the wheel:
    - **Masses: reaction, baseplate** (kg or lb). Optional: with both, the ground force is
      also made from M and B. Take them from the vibrator's data sheet; leave them empty
      otherwise.

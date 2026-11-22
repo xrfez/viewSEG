@@ -357,6 +357,7 @@ proc askPlot(state: var AppState; w: int): bool =
   var a = AnalysisAsk(id: pw.id, view: pw.view, params: pw.params, file: s.filePtr,
     path: s.path, size: s.size, traces: traces, names: labels,
     processing: pw.processing)
+  pw.sweep = identityOf(s.signature)
   if s.isSignature:
     a.forceNote = signatureForceNote(s.signature)
     a.sig = state.signatureAsk(s, pw.params)

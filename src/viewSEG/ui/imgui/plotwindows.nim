@@ -31,7 +31,7 @@ const
   VibratorSize = (780'f32, 980'f32)
     ## a vibrator signature's: its verdict, roles, limits table and all its plots, with
     ## nothing to scroll for one unit
-  VibratorPlotLines = 6 ## the least a vibrator's plot is, in lines of text (others: 9)
+  VibratorPlotLines = 5 ## the least a vibrator's plot is, in lines of text (others: 9)
 
 type
   HeatCache = object
@@ -44,7 +44,7 @@ type
 
   PlotWindowsUi* = object
     ## The analysis windows' state between frames.
-    curves: Table[int, seq[CurvePlotUi]] ## per window id, per plot
+    curves: Table[int, seq[CurvePlotUi]]       ## per window id, per plot
     curveKeys: Table[int, seq[string]]
       ## per window id, what each of `curves` is the state of (a plot's axes), so a
       ## plot put in or taken out (the force from M and B, once both masses are
@@ -55,9 +55,17 @@ type
     heat: Table[int, HeatCache] ## per window id: the image as drawn, cut to the pixels
     imageAxes: Table[int, AxisFit] ## per window id: what its image's axes were fitted to
     maps: array[ColourMap, int] ## ImPlot's index of each density colour map + 1; 0: not added
-    weightsOpened: HashSet[int]
-      ## Vibrator windows (ids) whose weights a finding has unfolded, once: the user may fold
-      ## them again
+    findings: Table[int, seq[string]]
+      ## per Vibrator window id: what its settings wheel's groups hold that is a finding, told
+      ## under the verdict (the wheel carries a warning mark while there is one)
+    how: Table[int, string]
+      ## per Vibrator window id: what its numbers are measured against and what they are, in
+      ## words, which is the Roles button's tooltip
+    rolesAsk: Table[int, string]
+      ## per Vibrator window id: the roles popover is to open, pointing at this row (the
+      ## polarity line's "Roles..." button)
+    rolesRow: Table[int, string] ## the row the open roles popover points at
+    rolesSize, wheelSize, limitsSize: ImVec2_c ## the popovers' sizes as drawn last
     weights: tuple[revision, paired, entries: int; found: FleetWeights] = (-1, 0, 0,
       FleetWeights())
       ## the weights per vibrator, of the file list and so one for every window: keyed by its
@@ -211,90 +219,75 @@ proc cachedWeightFindings(ui: var PlotWindowsUi; st: AppState): FleetWeights =
     ui.weights = (list.revision, list.pairs.len, list.entries.len, st.vibWeightFindings())
   ui.weights.found
 
-proc drawSignatureSetup(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; planeAt: int;
-    name: string; box: float32; t: Theme; marks: var Marks; p: var AnalysisParams;
-    changed: var bool; res: var PlotWindowsOutput) =
-  ## What a signature file adds to the Vibrator window's set-up: the accelerometer set of a
-  ## `.vib`, the force scale (the user's, a setting), the header's weights and, across the
-  ## folder, the weights per vibrator. Nothing here changes a sample or a sign.
-  let kind = st.vibSignature(planeAt)
-  var typed = 0.0
-  template label(text: string) =
-    igAlignTextToFramePadding()
-    igTextUnformatted(cstring(text), nil)
-    igSameLine(0, -1)
-  if kind == sgVib:
-    igAlignTextToFramePadding()
-    igTextUnformatted("Accelerometer set:", nil)
-    for (which, text) in [(asB, "B"), (asA, "A")]:
-      igSameLine(0, -1)
-      if igRadioButton_Bool((text & "##set" & $which).cstring, p.accelSet == which) and
-          p.accelSet != which:
-        (p.accelSet, changed) = (which, true)
-      marks.mark(name & ".set " & $which)
-      tip((if which == asB: "B: the set the .dat file records (the default)"
-        else: "A: the set the controller's QC report follows (probable)"))
-    tip("Which of the two accelerometer sets the window judges: M, B and the ground force " &
-      "computed from them. Set B is the default. This choice is this window's only: it is " &
-      "not remembered for the next file")
-  let scale = st.settings.forceScale
-  let (shown, id, what) = if kind == sgDat: (scale.datCountsPerLbf, "##datscale",
-      "counts per lbf") else: (scale.vibAccMvPerCount, "##vibscale", "accelerometer constant")
-  label("Force scale: " & what)
-  if limitBox(id, shown, box, typed):
-    if typed.isNaN or ForceScaleRange.allows(typed):
-      if not sameMass(typed, shown):
-        var s = st.settings
-        if kind == sgDat: s.forceScale.datCountsPerLbf = typed
-        else: s.forceScale.vibAccMvPerCount = typed
-        res.commands.add Command(kind: ckSettings, settings: s)
-    else:
-      res.notes.add "The force scale must be " & ForceScaleRange.words & ", not " &
-        sensible(typed) & "."
-  marks.mark(name & ".force scale")
-  tip((if kind == sgDat: "Your scale for a .dat's force channels: counts per pound-force. "
-    else: "Your accelerometer constant: with the header's sensitivity it turns the pound-" &
-      "counts of the ground force into pounds-force. ") &
-    "Empty: the force stays in counts (pound-counts). It changes what is shown and judged, " &
-    "never the samples. A local setting, kept in your settings and shipped with nothing")
-  if kind == sgVib:
-    let found = ui.cachedWeightFindings(st)
-    let head = "Weights from the header" & (if found.flagged: ": a difference found" else: "")
-    # (a finding is not folded away: opened once when it appears, the user may close it)
-    if found.flagged and w.id notin ui.weightsOpened:
-      igSetNextItemOpen(true, ImGui_Cond_Always.cint)
-      ui.weightsOpened.incl w.id
-    elif not found.flagged: ui.weightsOpened.excl w.id
-    if igTreeNodeEx_Str((head & "##weights" & name).cstring, 0):
-      let wts = st.vibWeights(planeAt)
-      igPushTextWrapPos(0)
-      igTextUnformatted((weightsText(wts) & ".").cstring, nil)
-      marks.mark(name & ".weights")
-      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-      igTextUnformatted(WeightsDepend.cstring, nil)
-      igPopStyleColor(1)
-      igAlignTextToFramePadding()
-      igTextUnformatted("Weights per vibrator in this folder:", nil)
-      template line(text: string; odd: bool) =
-        if odd: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
-        igTextUnformatted(text.cstring, nil)
-        if odd: igPopStyleColor(1)
-      for v in found.vibrators:
-        line(vibratorWords(v), v.differs or v.sensDiffers or v.unlike or v.sensUnlike)
-      for i, l in setsWords(found): line(l, i == 0)
-      if found.unknown > 0: line(unknownWords(found.unknown), false)
-      marks.mark(name & ".fleet")
-      igPopTextWrapPos()
-      igTreePop()
-    marks.mark(name & ".fleet header")
+proc placePopover(left, top: float32; size: ImVec2_c) =
+  ## A popover's place: its left edge at `left`, its top at `top`, moved as far as needed to
+  ## stay inside the main window (past its edge it would be a window of the desktop's own),
+  ## and never larger than it.
+  let vp = igGetMainViewport()
+  let x = max(vp.WorkPos.x, min(left, vp.WorkPos.x + vp.WorkSize.x - size.x))
+  let y = max(vp.WorkPos.y, min(top, vp.WorkPos.y + vp.WorkSize.y - size.y))
+  igSetNextWindowPos(ImVec2_c(x: x, y: y), ImGui_Cond_Always.cint, ImVec2_c(x: 0, y: 0))
+  igSetNextWindowSizeConstraints(ImVec2_c(x: 0, y: 0), vp.WorkSize, nil, nil)
 
-proc drawVibratorSettings(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: string;
-    box: float32; t: Theme; marks: var Marks; p: var AnalysisParams; frozen, changed: var bool;
-    res: var PlotWindowsOutput) =
-  ## A vibrator signature's controls: one line (Setup, Details, Limits..., Reset options, and
-  ## Freeze at the right), and under Setup the roles (a table: role, trace, polarity), the
-  ## masses, harmonics, phase picture, and the top frequency, 100 % force, target force, Judge.
-  ## Limits... opens the six limits of the verdict and the window they are judged in.
+proc group(title, name: string; marks: var Marks) =
+  ## A headed group of the settings wheel, marked `name`.group `title`.
+  igSeparatorText(title.cstring)
+  marks.mark(name & ".group " & title)
+
+proc wrapped(text: string; t: Theme; em = 30'f32; colour = rlTextDim) =
+  ## A paragraph of `em` font sizes' width in the muted (or another role's) colour.
+  igPushTextWrapPos(igGetCursorPos().x + em * igGetFontSize())
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[colour]))
+  igTextUnformatted(text.cstring, nil)
+  igPopStyleColor(1)
+  igPopTextWrapPos()
+
+func broken(text: string; cols = 70): string =
+  ## `text` with a line break at a space near every `cols` characters, for a tooltip (which
+  ## does not wrap).
+  var width = 0
+  for word in text.splitWhitespace:
+    if width > 0 and width + 1 + word.len > cols:
+      result.add '\n'
+      width = 0
+    elif width > 0:
+      result.add ' '
+      inc width
+    result.add word
+    width += word.len
+
+func weightsFinding(found: FleetWeights): string =
+  ## The weights finding in one line, for under the verdict ("" for none).
+  if not found.flagged: return
+  var who: seq[string] = @[]
+  for v in found.vibrators:
+    if v.differs or v.sensDiffers or v.unlike or v.sensUnlike: who.add "vibrator " & $v.vibrator
+  let sets = setsWords(found)
+  result = "Weights from the header differ across this folder" &
+    (if who.len > 0: ": " & who.join(", ") elif sets.len > 0: ": " & sets[0] else: "") &
+    " (listed in the settings wheel)"
+
+proc vibFindings(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; planeAt: int): seq[string] =
+  ## What the settings wheel's groups hold that is a finding, one line each: the weights of the
+  ## folder differ, a typed 100 % force not applied, the top frequency's warning, the
+  ## controller's QC following set A while B is judged. They are told under the verdict, so
+  ## that none is hidden behind the wheel.
+  let kind = st.vibSignature(planeAt)
+  if kind == sgVib:
+    let line = weightsFinding(ui.cachedWeightFindings(st))
+    if line.len > 0: result.add line
+  if w.result.hundredProblem.len > 0: result.add w.result.hundredProblem
+  if w.result.band.warning.len > 0: result.add w.result.band.warning
+  if kind == sgVib and w.params.accelSet == asB and "follows set A" in w.result.controllerNote:
+    result.add "The controller's QC report follows set A (probable) and this window judges " &
+      "set B: choose set A in the settings wheel to compare like with like"
+
+proc drawRolesPopover(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: string;
+    planeAt: int; forceNote: string; at: ImVec2_c; t: Theme; marks: var Marks;
+    p: var AnalysisParams; changed: var bool) =
+  ## The roles: a table (role, trace, polarity) in a popover under the Roles button. The one
+  ## place to reverse a polarity: GF's, and M's with B following it. A signature file's
+  ## channels are named by its codes: the traces cannot be changed, the polarity can.
   let names = st.vibTraceNames(w)
   var longest = igCalcTextSize("trace 00000", nil, false, -1).x
   for n in names: longest = max(longest, igCalcTextSize(n.cstring, nil, false, -1).x)
@@ -305,372 +298,540 @@ proc drawVibratorSettings(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow
   # was meant to sweep, against the recorded trace of what it says it swept.
   var projectName = ""
   if st.referencesLoaded:
-    let at = st.references.findId(st.chosenReference)
-    if at >= 0 and not st.references.entries[at].missing:
-      projectName = st.references.entries[at].name
+    let found = st.references.findId(st.chosenReference)
+    if found >= 0 and not st.references.entries[found].missing:
+      projectName = st.references.entries[found].name
   let projectLabel = "Project reference: " & projectName
   let projectOn = projectName.len > 0 and p.projectReference
   let refCombo = if projectName.len > 0:
                    max(combo, round(igCalcTextSize(projectLabel.cstring, nil, false, -1).x +
                      igGetFrameHeight() + 2 * igGetStyle().FramePadding.x))
                  else: combo
+  let fileRefPlace = if planeAt >= 0: st.vibReferencePlace(planeAt) else: -1
+  placePopover(at.x, at.y, ui.rolesSize)
+  if not igBeginPopup("##roles", 0):
+    ui.rolesRow.del w.id
+    return
+  ui.rolesSize = igGetWindowSize()
+  marks.markWindow(name & ".roles popover")
+  if planeAt >= 0:
+    wrapped(st.vibRolesLine(w), t)
+    marks.mark(name & ".roles line")
+    let notes = st.vibChoiceNotes(w)
+    if notes.len > 0:
+      wrapped(notes[2 .. ^1].capitalizeAscii, t)
+      marks.mark(name & ".choices")
+  const flags = ImGui_TableFlags_SizingFixedFit.cint or ImGui_TableFlags_BordersInnerH.cint
+  if igBeginTable(("##roles" & name).cstring, 3, flags, ImVec2_c(x: 0, y: 0), 0):
+    igTableSetupColumn("Role", 0, 0, 0)
+    igTableSetupColumn("Trace", 0, 0, 0)
+    igTableSetupColumn("Polarity", 0, 0, 0)
+    let pointed = ui.rolesRow.getOrDefault(w.id)
+    template roleRow(role: string; field: untyped; what: string) =
+      igTableNextRow(0, 0)
+      if role == pointed:
+        igTableSetBgColor(ImGui_TableBgTarget_RowBg1.cint,
+          u32(withAlpha(t.roles[rlAccent], 60)), -1)
+      discard igTableSetColumnIndex(0)
+      igAlignTextToFramePadding()
+      igTextUnformatted(role, nil)
+      tip(what)
+      discard igTableSetColumnIndex(1)
+      let project = role == "Ref" and projectName.len > 0
+      igSetNextItemWidth(if project: refCombo else: combo)
+      let now = p.roles.field
+      let fileRef = role == "Ref" and fileRefPlace >= 0
+      let shown = if project and projectOn: projectLabel
+                  elif fileRef and now == fileRefPlace: "This file's reference trace"
+                  elif now in 0 ..< names.len: names[now]
+                  else: "none"
+      if igBeginCombo(("##" & role).cstring, shown.cstring, 0):
+        if project:
+          if igSelectable_Bool(projectLabel.cstring, projectOn, 0, ImVec2_c(x: 0, y: 0)) and
+              not projectOn:
+            (p.projectReference, changed) = (true, true)
+          marks.mark(name & ".role Ref project")
+          tip("What the unit was meant to sweep: the phase, frequency and force are " &
+            "measured against the project's chosen reference. The recorded trace is then " &
+            "measured against it too (Ref (recorded))")
+        if fileRef:
+          let on = now == fileRefPlace and not projectOn
+          if igSelectable_Bool("This file's reference trace", on, 0, ImVec2_c(x: 0, y: 0)) and
+              not on:
+            (p.roles.field, changed) = (fileRefPlace, true)
+            if project: p.projectReference = false
+          marks.mark(name & ".role Ref file")
+          tip("The record's trace with the vibrator reference code (21): the Ref role, " &
+            "measured against by itself, not against the project reference")
+        if igSelectable_Bool("none", now < 0 and not projectOn, 0,
+            ImVec2_c(x: 0, y: 0)) and (now >= 0 or projectOn):
+          (p.roles.field, changed) = (-1, true)
+          if project: p.projectReference = false
+        for i, n in names:
+          igPushID_Int(cint(i))
+          if igSelectable_Bool(n.cstring, i == now and not projectOn, 0,
+              ImVec2_c(x: 0, y: 0)) and (i != now or projectOn):
+            (p.roles.field, changed) = (i, true)
+            if project: p.projectReference = false
+          igPopID()
+        igEndCombo()
+      marks.mark(name & ".role " & role)
+    template polarityCombo(role: string; field: untyped; what: string) =
+      discard igTableSetColumnIndex(2)
+      igSetNextItemWidth(polar)
+      if igBeginCombo(("##polarity " & role).cstring, ($p.roles.field).cstring, 0):
+        for v in Polarity:
+          if v == poAutomatic and forceNote.len > 0: continue # (never offered for a signature file)
+          if igSelectable_Bool(($v).cstring, v == p.roles.field, 0, ImVec2_c(x: 0, y: 0)) and
+              v != p.roles.field:
+            (p.roles.field, changed) = (v, true)
+          marks.mark(name & ".polarity " & role & " " & $v)
+        igEndCombo()
+      marks.mark(name & ".polarity " & role)
+      tip(what)
+    # (a signature file's channels are named by its codes: its traces are not chosen, but a
+    # polarity is)
+    igBeginDisabled(forceNote.len > 0)
+    roleRow("Ref", reference, "The reference: the pilot, the phase origin")
+    discard igTableSetColumnIndex(2)
+    if planeAt >= 0 and igSmallButton("Roles from the codes##codes"):
+      p.roles = st.codeRoles(planeAt)
+      changed = true
+    marks.mark(name & ".roles from codes")
+    tip("Ref is as recorded. This button: the roles as the traces' identification codes " &
+      "give them, and the choice remembered for this file layout forgotten")
+    igEndDisabled()
+    igBeginDisabled(forceNote.len > 0)
+    roleRow("GF", groundForce, "The ground force, as recorded")
+    igEndDisabled()
+    polarityCombo("GF", groundForcePolarity, "Reversed: times -1, for this analysis only: the " &
+      "samples and the file stay as recorded. Remembered for this file layout. Automatic " &
+      "(not for a signature file): reversed when its mean phase to the reference is past " &
+      "±90° (wiring)")
+    igBeginDisabled(forceNote.len > 0)
+    roleRow("M", mass, "The reaction mass's acceleration")
+    igEndDisabled()
+    polarityCombo("M", massPolarity, "M's and B's polarity, together (the baseplate moves " &
+      "against the mass). Automatic needs both and both masses: it is decided from the " &
+      "force they make")
+    igBeginDisabled(forceNote.len > 0)
+    roleRow("B", baseplate, "The baseplate's acceleration")
+    discard igTableSetColumnIndex(2)
+    if igSmallButton("Swap mass and baseplate##swap"):
+      swap(p.roles.mass, p.roles.baseplate)
+      changed = true
+    marks.mark(name & ".swap")
+    tip("B has M's polarity. This button: the mass takes the baseplate's trace and the " &
+      "baseplate the mass's. Remembered for files of this layout (the record's trace " &
+      "count and codes), in the project when one is open")
+    igEndDisabled()
+    igEndTable()
+  if forceNote.len > 0:
+    igTextDisabled("from the controller's channels (trace codes)")
+  igEndPopup()
+
+proc drawGroundForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
+    t: Theme; marks: var Marks; p: var AnalysisParams; changed: var bool;
+    res: var PlotWindowsOutput; st: AppState) =
+  ## Which ground force is judged (when the unit has both), the harmonics, the phase picture
+  ## and the top frequency.
+  var typed = 0.0
+  template label(text: string) =
+    igAlignTextToFramePadding()
+    igTextUnformatted(cstring(text), nil)
+    igSameLine(0, -1)
+  group("Ground force", name, marks)
+  if w.result.bothSignals:
+    const judgeNames = [joRecorded: "as recorded", joWeighted: "from M and B (typed masses)"]
+    label("Judged:")
+    igSetNextItemWidth(buttonWidth(judgeNames[joWeighted]) + igGetFrameHeight())
+    if igBeginCombo("##judge", judgeNames[p.roles.judge].cstring, 0):
+      for j in JudgeOn:
+        if igSelectable_Bool(judgeNames[j].cstring, j == p.roles.judge, 0,
+            ImVec2_c(x: 0, y: 0)) and j != p.roles.judge:
+          (p.roles.judge, changed) = (j, true)
+        marks.mark(name & ".judge " & $j)
+      igEndCombo()
+    marks.mark(name & ".judge")
+    tip("Which ground force the window uses: its plots, the verdict and the limits table. " &
+      "As recorded is the weighted sum of mass and baseplate acceleration the recorder wrote " &
+      "with its own masses; from M and B is the same sum formed here with the masses you " &
+      "typed. Remembered with the roles, for this file layout")
+  label("Harmonics to")
+  var h = cint(p.harmonics)
+  igSetNextItemWidth(box)
+  if igInputInt("##harmonics", addr h, 0, 0, 0) and HarmonicRange.allows(float64(h)) and
+      h != p.harmonics:
+    (p.harmonics, changed) = (int(h), true)
+  marks.mark(name & ".harmonics")
+  tip("The highest harmonic tracked (2 to 16): THD sums them from the 2nd")
+  let line = beginControlLine()
+  line.phaseShowCombo(name, marks, p, changed)
+  # the top frequency of the sweep (the band distortion is judged in)
+  let band = w.result.band
+  let topKey = if planeAt >= 0: st.vibTopKey(st.plots[planeAt]) else: RecordedKey
+  let typedTop = if planeAt >= 0: st.vibTyped(st.plots[planeAt]) else: p.tops.topOf(topKey)
+  let shownTop = if typedTop.isNaN: (if band.hz.isNaN: NaN else: round(band.hz * 10) / 10)
+                 else: typedTop
+  label("Top frequency (Hz)")
+  if limitBox("##topfrequency", shownTop, box, typed):
+    if typed.isNaN:
+      if not typedTop.isNaN: (p.tops, changed) = (p.tops.withTop(topKey, NaN), true)
+    elif TopHzRange.allows(typed):
+      if typed != shownTop: (p.tops, changed) = (p.tops.withTop(topKey, typed), true)
+    else:
+      res.notes.add "The top frequency must be " & TopHzRange.words & ", not " &
+        sensible(typed) & "."
+  marks.mark(name & ".top frequency")
+  tip("The sweep's top frequency, Hz: distortion is the harmonics up to it (the in-band " &
+    "distortion a vibrator controller reports), shown and judged here. A generated " &
+    "reference fills it exactly with its end frequency; another is read from its " &
+    "frequency track (a line to the sweep's end, to a whole hertz when it is within 0.5 % " &
+    "of one: type the sweep's design value when it is not). Empty: from the reference. " &
+    "What is typed is kept with the reference in the project")
+  igSameLine(0, -1)
+  igAlignTextToFramePadding()
+  igTextDisabled(
+    (if not typedTop.isNaN: "(typed)" elif band.hz.isNaN: "" else: "(from the reference)").cstring)
+  marks.mark(name & ".top frequency source")
+
+proc drawMassesGroup(w: AnalysisWindow; name: string; box: float32; forceNote: string; t: Theme;
+    marks: var Marks; p: var AnalysisParams; changed: var bool; res: var PlotWindowsOutput;
+    st: AppState) =
+  ## The reaction and baseplate masses, kg or lb: only where M and B are accelerations that
+  ## need them. A signature file's channels are forces already (or its own weights are used):
+  ## one muted line says so.
+  var typed = 0.0
+  template label(text: string) =
+    igAlignTextToFramePadding()
+    igTextUnformatted(cstring(text), nil)
+    igSameLine(0, -1)
+  if forceNote.len > 0:
+    wrapped("No masses are asked for this file. " & forceNote & ".", t)
+    marks.mark(name & ".masses note")
+    return
+  let units = st.settings.units
+  let unitWord = massName(units)
+  template takeMass(which: string; stored, shown: untyped) =
+    # a number left as the box showed it is no edit (the box rounds a conversion)
+    let kg = if typed.isNaN: NaN else: storeMass(typed, units)
+    if not sameMass(typed, shown):
+      if typed.isNaN or MassKgRange.allows(kg):
+        if not sameMass(kg, stored): (stored, changed) = (kg, true)
+      else:
+        res.notes.add "The " & which & " must be " & massLimitWords(units) & ", not " &
+          sensible(typed) & " " & unitWord & "."
+  group("Masses", name, marks)
+  label("Reaction mass")
+  let shownReaction = massBoxValue(p.reactionMassKg, units)
+  if limitBox("##reaction." & $units, shownReaction, box, typed):
+    takeMass("reaction mass", p.reactionMassKg, shownReaction)
+  marks.mark(name & ".reaction mass")
+  tip("The reaction mass, in " & unitWord & ": with the baseplate's, the ground force is " &
+    "generated from M and B (Mr·M + Mb·B), drawn over the recorded one. Empty: none. " &
+    "A mass is " & massLimitWords(units) & ".")
+  igSameLine(0, -1)
+  label("baseplate")
+  let shownBase = massBoxValue(p.baseplateMassKg, units)
+  if limitBox("##baseplate." & $units, shownBase, box, typed):
+    takeMass("baseplate's mass", p.baseplateMassKg, shownBase)
+  marks.mark(name & ".baseplate mass")
+  tip("The baseplate's mass, in " & unitWord & ". Empty: none. A mass is " &
+    massLimitWords(units) & ".")
+  # kg | lb after both masses: it sets Units (the Settings window's switch), the
+  # numbers convert in place and the stored kilograms stay; the unit shown is the
+  # one selected.
+  igSameLine(0, -1)
+  for i, u in [usMetric, usImperial]:
+    if i > 0: igSameLine(0, 0)
+    let on = units == u
+    if on:
+      igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(withAlpha(t.roles[rlAccent], 110)))
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlText]))
+      igPushStyleColor_Vec4(ImGui_Col_Border.cint, vec4(t.roles[rlAccent]))
+      igPushStyleVar_Float(ImGui_StyleVar_FrameBorderSize.cint, 1)
+    else:
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    if igButton((massName(u) & "##units").cstring, ImVec2_c(x: 0, y: 0)) and not on:
+      var s = st.settings
+      s.units = u
+      res.commands.add Command(kind: ckSettings, settings: s)
+    if on:
+      igPopStyleVar(1)
+      igPopStyleColor(3)
+    else: igPopStyleColor(1)
+    marks.mark(name & ".unit " & massName(u))
+    tip("Show masses in " & massName(u) & " (" & systemName(u) & "). The numbers convert " &
+      "in place, so the masses do not change; they are kept in kilograms. This is the " &
+      "Units setting.")
+
+proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
+    kind: SignatureKind; forceNote: string; t: Theme; marks: var Marks;
+    p: var AnalysisParams; changed: var bool; res: var PlotWindowsOutput; st: AppState) =
+  ## The 100 % force (and Set from this sweep), the target force and, for a signature file, the
+  ## force scale. Nothing here changes a sample or a sign.
+  var typed = 0.0
+  template label(text: string) =
+    igAlignTextToFramePadding()
+    igTextUnformatted(cstring(text), nil)
+    igSameLine(0, -1)
+  let units = st.settings.units
+  group("Force", name, marks)
+  # the unit of the judged force (GF counts, or GF from M and B's kg x counts)
+  let judgedAxis = if w.result.judgedAxis.len > 0: w.result.judgedAxis
+                   else: forceAxisLabel(w.result.plots)
+  let forceShown = forceLimitOf(judgedAxis, units)
+  label("100 % force =")
+  # the full scale of the signal judged (GF in counts, GF (M, B) in kg × counts)
+  let weighted = w.result.judged == "GF (M, B)"
+  let judgedUnit = unitOfLabel(judgedAxis)
+  # (a signature file's typed 100 % force is shown as it is applied: in the unit now on the
+  # axis, or not at all when it was typed in another unit and cannot be converted)
+  let sigWin = forceNote.len > 0 and not weighted
+  let shownHundred = if weighted: p.forceHundredWeighted
+    elif sigWin and p.forceHundredPct > 0:
+      (if w.result.hundredProblem.len > 0: NaN else: w.result.qc.hundredPct)
+    else: p.forceHundredPct
+  let hundred = showScaled(shownHundred, forceShown.divisor)
+  if limitBox("##hundred." & (if weighted: "m." else: "g.") & forceShown.unit, hundred, box,
+      typed):
+    let stored = storeScaled(typed, forceShown.divisor)
+    if typed.isNaN or MassKgRange.allows(stored):
+      if sigWin and stored.isNaN:
+        # emptied: no typed force (one not applied, shown empty, goes too)
+        if not p.forceHundredPct.isNaN:
+          (p.forceHundredPct, p.forceHundredUnit, changed) = (NaN, "", true)
+      elif not (stored.isNaN and shownHundred.isNaN) and stored != shownHundred:
+        if weighted: p.forceHundredWeighted = stored
+        else: (p.forceHundredPct, p.forceHundredUnit) = (stored, judgedUnit)
+        changed = true
+    else:
+      res.notes.add "100 % force must be above 0, not " & sensible(typed) & "."
+  marks.mark(name & ".force target")
+  tip("The force that is 100 % (full scale) of " &
+    (if weighted: "GF from M and B" else: "GF as recorded") &
+    " (each has its own: counts, or kg x counts), in the file's own unit" &
+    (if forceShown.unit.len > 0: " (" & forceShown.unit & ")" else: "") &
+    ". The file cannot tell it (no sensor sensitivities): take it from the vibrator's " &
+    "own QC of one sweep. The peak force limit is in % of it; the average force limit is " &
+    "in % of the target below. Empty: the force is not judged, and the limits table " &
+    "says which box to fill")
+  if forceShown.unit.len > 0:
+    igSameLine(0, -1)
+    igAlignTextToFramePadding()
+    igTextUnformatted(forceShown.unit.cstring, nil)
+    marks.mark(name & ".force unit")
+  if w.result.hundredWords.len > 0 and p.forceHundredPct.isNaN:
+    igSameLine(0, -1)
+    igAlignTextToFramePadding()
+    igTextDisabled(("(" & w.result.hundredWords & ")").cstring)
+    marks.mark(name & ".hundred words")
+  # (a problem is a finding, told under the verdict too; the hint is only help)
+  let hint = if w.result.hundredProblem.len > 0: w.result.hundredProblem
+             else: w.result.hundredHint
+  if hint.len > 0:
+    wrapped(hint, t, colour = rlWarning)
+    marks.mark(name & ".hundred hint")
+  # 100 % from this very sweep: its average force (the verdict's) over the target's share
+  let average = w.result.qc.stats.avgForce
+  let fromSweep = average / ((if p.targetPct > 0: p.targetPct else: 100.0) / 100)
+  let fromSweepOk = MassKgRange.allows(fromSweep)
+  igBeginDisabled(not fromSweepOk)
+  if igSmallButton("Set from this sweep##hundred"):
+    if weighted: p.forceHundredWeighted = fromSweep
+    else: (p.forceHundredPct, p.forceHundredUnit) = (fromSweep, judgedUnit)
+    changed = true
+  igEndDisabled()
+  marks.mark(name & ".set hundred")
+  tip("Use on a sweep where the vibrator held its target force: 100 % force becomes this " &
+    "sweep's average force divided by the target (" &
+    (if p.targetPct > 0: sensible(p.targetPct) else: "100") & " %). Kept like a typed value" &
+    (if fromSweepOk: "" else: ". Not available here: this sweep's value is " &
+      (if fromSweep.isNaN: "not a number" else: sensible(fromSweep)) &
+      ", which the setting does not take (" & MassKgRange.words & ")"))
+  label("Target force (%)")
+  # (a signature file's window: empty until typed, and emptied by clearing it; the limits
+  # then take 100)
+  let sigTarget = forceNote.len > 0
+  if limitBox("##targetpct", p.targetPct, box, typed):
+    if TargetPctRange.allows(typed):
+      if typed != p.targetPct: (p.targetPct, changed) = (typed, true)
+    elif typed.isNaN:
+      if sigTarget:
+        if not p.targetPct.isNaN: (p.targetPct, changed) = (NaN, true)
+      elif p.targetPct != 100: (p.targetPct, changed) = (100.0, true)
+    else:
+      res.notes.add "The target force must be " & TargetPctRange.words & ", not " &
+        sensible(typed) & "."
+  marks.mark(name & ".target force")
+  tip("The drive level the sweep was set to, % of 100 % force (the vibrator's force " &
+    "setting, e.g. 60). The average force is judged as % of this target; the peak force " &
+    "as % of the 100 % force. 100 when the sweep is at full scale. Empty: 100" &
+    (if sigTarget: " for the limits, and not typed: a .dat's 100 % force from the " &
+      "controller's target force needs the drive level typed here, in this window"
+      else: ""))
+  if kind != sgNone:
+    let scale = st.settings.forceScale
+    let (shown, id, what) = if kind == sgDat: (scale.datCountsPerLbf, "##datscale",
+        "counts per lbf") else: (scale.vibAccMvPerCount, "##vibscale", "accelerometer constant")
+    label("Force scale: " & what)
+    if limitBox(id, shown, box, typed):
+      if typed.isNaN or ForceScaleRange.allows(typed):
+        if not sameMass(typed, shown):
+          var s = st.settings
+          if kind == sgDat: s.forceScale.datCountsPerLbf = typed
+          else: s.forceScale.vibAccMvPerCount = typed
+          res.commands.add Command(kind: ckSettings, settings: s)
+      else:
+        res.notes.add "The force scale must be " & ForceScaleRange.words & ", not " &
+          sensible(typed) & "."
+    marks.mark(name & ".force scale")
+    tip((if kind == sgDat: "Your scale for a .dat's force channels: counts per pound-force. "
+      else: "Your accelerometer constant: with the header's sensitivity it turns the pound-" &
+        "counts of the ground force into pounds-force. ") &
+      "Empty: the force stays in counts (pound-counts). It changes what is shown and judged, " &
+      "never the samples. A local setting, kept in your settings and shipped with nothing")
+
+proc drawAccelGroup(name: string; t: Theme; marks: var Marks; p: var AnalysisParams;
+    changed: var bool) =
+  ## A `.vib`'s accelerometer set: the window's own choice, not remembered for the next file.
+  group("Accelerometer set", name, marks)
+  igAlignTextToFramePadding()
+  igTextUnformatted("Judge set", nil)
+  for (which, text) in [(asB, "B"), (asA, "A")]:
+    igSameLine(0, -1)
+    if igRadioButton_Bool((text & "##set" & $which).cstring, p.accelSet == which) and
+        p.accelSet != which:
+      (p.accelSet, changed) = (which, true)
+    marks.mark(name & ".set " & $which)
+    tip((if which == asB: "B: the set the .dat file records (the default)"
+      else: "A: the set the controller's QC report follows (probable)"))
+  tip("Which of the two accelerometer sets the window judges: M, B and the ground force " &
+    "computed from them. Set B is the default. This choice is this window's only: it is " &
+    "not remembered for the next file")
+
+proc drawWeightsGroup(ui: var PlotWindowsUi; st: AppState; planeAt: int; name: string;
+    t: Theme; marks: var Marks) =
+  ## A `.vib`'s weights from its header, and across the folder the weights per vibrator (a
+  ## difference is a finding, in the warning colour; nothing is corrected).
+  let found = ui.cachedWeightFindings(st)
+  igSeparatorText((if found.flagged: "Weights from the header: a difference found"
+    else: "Weights from the header").cstring)
+  marks.mark(name & ".fleet header")
+  marks.mark(name & ".group Weights from the header")
+  let wts = st.vibWeights(planeAt)
+  igPushTextWrapPos(igGetCursorPos().x + 34 * igGetFontSize())
+  igTextUnformatted((weightsText(wts) & ".").cstring, nil)
+  marks.mark(name & ".weights")
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+  igTextUnformatted(WeightsDepend.cstring, nil)
+  igPopStyleColor(1)
+  igAlignTextToFramePadding()
+  igTextUnformatted("Weights per vibrator in this folder:", nil)
+  template line(text: string; odd: bool) =
+    if odd: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+    igTextUnformatted(text.cstring, nil)
+    if odd: igPopStyleColor(1)
+  for v in found.vibrators:
+    line(vibratorWords(v), v.differs or v.sensDiffers or v.unlike or v.sensUnlike)
+  for i, l in setsWords(found): line(l, i == 0)
+  if found.unknown > 0: line(unknownWords(found.unknown), false)
+  marks.mark(name & ".fleet")
+  igPopTextWrapPos()
+
+proc drawWheel(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: string;
+    planeAt: int; kind: SignatureKind; forceNote: string; box: float32; at: ImVec2_c;
+    t: Theme; marks: var Marks; p: var AnalysisParams; changed: var bool;
+    res: var PlotWindowsOutput) =
+  ## The settings wheel's popover, right-aligned under the wheel: headed groups, and only
+  ## those that apply to the file shown.
+  placePopover(at.x - ui.wheelSize.x, at.y, ui.wheelSize)
+  if not igBeginPopup("##wheel", 0): return
+  ui.wheelSize = igGetWindowSize()
+  marks.markWindow(name & ".wheel popover")
+  drawGroundForceGroup(w, name, planeAt, box, t, marks, p, changed, res, st)
+  drawMassesGroup(w, name, box, forceNote, t, marks, p, changed, res, st)
+  drawForceGroup(w, name, planeAt, box, kind, forceNote, t, marks, p, changed, res, st)
+  if kind == sgVib:
+    drawAccelGroup(name, t, marks, p, changed)
+    ui.drawWeightsGroup(st, planeAt, name, t, marks)
+  igSeparator()
+  if w.view.hasOptions:
+    if igSmallButton("Reset options##reset"):
+      p = builtin(w.view, p, kind != sgNone)
+      changed = true
+    marks.mark(name & ".reset")
+    tip(ResetTip)
+  igEndPopup()
+
+proc drawVibratorSettings(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: string;
+    box: float32; t: Theme; marks: var Marks; p: var AnalysisParams; frozen, changed: var bool;
+    res: var PlotWindowsOutput) =
+  ## A vibrator signature's controls: one strip of icon buttons under the verdict (Roles,
+  ## Limits..., Details, the settings wheel and Freeze at the right). Roles opens the roles
+  ## table (the one place to reverse a polarity), the wheel the settings, in headed groups for
+  ## the file shown, Limits... the six limits of the verdict and the window they are judged in.
   let planeAt = st.findPlot(w.id)
   let forceNote = st.vibForceNote(planeAt)
-  let fileRefPlace = if planeAt >= 0: st.vibReferencePlace(planeAt) else: -1
-  # The top line: Setup (folded away once the 100 % force is set, until the user unfolds it),
-  # Details (the other signals, the harmonics and the table), the limits, Reset, Freeze.
-  let top = beginControlLine()
-  let setupShown = if p.setupSet: p.setupOpen
-                   else: p.forceHundredPct.isNaN and p.forceHundredWeighted.isNaN
-  igSetNextItemOpen(setupShown, ImGui_Cond_Always.cint)
-  let setupOpen = igTreeNodeEx_Str(("Setup##setup" & name).cstring,
-    ImGui_TreeNodeFlags_NoTreePushOnOpen.cint)
-  if setupOpen != setupShown:
-    (p.setupOpen, p.setupSet, changed) = (setupOpen, true, true)
-  marks.mark(name & ".setup")
-  tip("The set-up controls: which trace is which, the masses, the harmonics, the phase " &
-    "picture, the top frequency, the 100 % force and the target force. Open until the " &
-    "100 % force is set")
-  top.follow(checkWidth("Details"))
-  if igCheckbox("Details##details", addr p.details): changed = true
-  marks.mark(name & ".details")
-  tip("Off: the judged signal alone, one force plot, the limits table. On: the other ground " &
-    "force, M and B, the recorded pilot and the harmonics too, and a table of every signal")
-  top.follow(buttonWidth("Limits..."))
-  if igButton("Limits...", ImVec2_c(x: 0, y: 0)): igOpenPopup_Str("##limits", 0)
-  marks.mark(name & ".limits")
-  tip("The six limits of the verdict, and the length of the windows they are judged in")
-  top.drawReset(w, name, marks, p, changed, signature = forceNote.len > 0)
-  if top.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks):
+  let kind = st.vibSignature(planeAt)
+  let findings = ui.findings.getOrDefault(w.id)
+  let strip = beginControlLine()
+  let gap = igGetStyle().ItemSpacing.x
+  let size = strip.size
+  # Roles
+  let rolesAt = ImVec2_c(x: strip.left, y: strip.top + size)
+  let rolesTip = (if planeAt >= 0: st.vibRolesLine(w).broken & "\n" else: "") &
+    "Roles: which trace is Ref, GF, M and B, their polarity (the one place to reverse the " &
+    "ground force), and the project reference" &
+    (if forceNote.len > 0: "\n" & forceNote.broken else: "") &
+    (if ui.how.getOrDefault(w.id).len > 0: "\n" & ui.how[w.id].broken else: "")
+  if iconButton(IconTable, "Roles", "", size, t, marks,
+      selected = igIsPopupOpen_Str("##roles", 0), tipText = rolesTip, markName = name & ".roles"):
+    igOpenPopup_Str("##roles", 0)
+  # Limits
+  igSameLine(0, 2)
+  let limitsAt = ImVec2_c(x: igGetCursorScreenPos().x, y: strip.top + size)
+  if iconButton(IconRuler, "Limits...", "", size, t, marks,
+      selected = igIsPopupOpen_Str("##limits", 0), tipText = "Limits...: the six limits of " &
+      "the verdict, and the length of the windows they are judged in",
+      markName = name & ".limits"):
+    igOpenPopup_Str("##limits", 0)
+  # Details
+  igSameLine(0, 2)
+  if iconButton(IconList, "Details", "", size, t, marks, selected = p.details,
+      tipText = "Details" & (if p.details: " (on)" else: " (off)") & ": off, the judged signal " &
+      "alone, one force plot, the limits table.\nOn, the other ground force, M and B, the " &
+      "recorded pilot and the harmonics too, and a table of every signal",
+      markName = name & ".details"):
+    p.details = not p.details
+    changed = true
+  # the settings wheel and Freeze, at the right
+  let wheelX = strip.rowRight - size
+  igSetCursorScreenPos(ImVec2_c(x: wheelX, y: strip.top))
+  let wheelAt = ImVec2_c(x: wheelX + size, y: strip.top + size)
+  let wheelTip = "Settings: the ground force judged, harmonics, phase picture and top " &
+    "frequency" & (if forceNote.len == 0: ", the masses" else: "") &
+    ", the force" & (if kind == sgVib: ", the accelerometer set, the header's weights" else: "") &
+    ", and Reset options" & (if findings.len > 0: "\nFindings kept here:\n" &
+    findings.join("\n").broken else: "")
+  if iconButton(IconSettings, "Settings", "", size, t, marks,
+      selected = igIsPopupOpen_Str("##wheel", 0), tipText = wheelTip,
+      markName = name & ".wheel", badge = findings.len > 0):
+    igOpenPopup_Str("##wheel", 0)
+  if strip.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks):
     frozen = not frozen
     changed = true
+  # the roles asked for from the polarity line: the popover opens at the ground force's row
+  if w.id in ui.rolesAsk:
+    ui.rolesRow[w.id] = ui.rolesAsk[w.id]
+    ui.rolesAsk.del w.id
+    igOpenPopup_Str("##roles", 0)
+  ui.drawRolesPopover(st, w, name, planeAt, forceNote, rolesAt, t, marks, p, changed)
+  ui.drawWheel(st, w, name, planeAt, kind, forceNote, box, wheelAt, t, marks, p, changed, res)
+  placePopover(limitsAt.x, limitsAt.y, ui.limitsSize)
   var typed = 0.0
-  if setupOpen:
-    # who is who, in plain sight
-    # (the roles' table folds under the line that says who is who: a unit fits without
-    # scrolling; click the line to change the roles, their polarity, or the reference)
-    let rolesLabel = if planeAt >= 0: st.vibRolesLine(w,
-        long = false) else: "Roles"
-    # (cut to one line: a long trace name never wraps it; the tooltip has the whole line)
-    let shownRoles = shortenEnd(rolesLabel, igGetContentRegionAvail().x - 3 * igGetFontSize())
-    igSetNextItemOpen(p.rolesOpen, ImGui_Cond_Always.cint)
-    let rolesOpen = igTreeNodeEx_Str((shownRoles & "##roles" & name).cstring, 0)
-    if rolesOpen != p.rolesOpen: (p.rolesOpen, changed) = (rolesOpen, true)
-    marks.mark(name & ".roles line")
-    marks.mark(name & ".roles header")
-    tip((if planeAt >= 0: st.vibRolesLine(w) & "\n" else: "") &
-      "Click to open the roles: which trace is Ref, GF, M and B, their polarity, and the " &
-      "project reference")
-    if planeAt >= 0:
-      let notes = st.vibChoiceNotes(w)
-      if notes.len > 0:
-        igPushTextWrapPos(0)
-        igTextUnformatted(notes[2 .. ^1].capitalizeAscii.cstring, nil)
-        igPopTextWrapPos()
-        marks.mark(name & ".choices")
-    if rolesOpen:
-      const flags = ImGui_TableFlags_SizingFixedFit.cint or ImGui_TableFlags_BordersInnerH.cint
-      if igBeginTable(("##roles" & name).cstring, 3, flags, ImVec2_c(x: 0, y: 0), 0):
-        igTableSetupColumn("Role", 0, 0, 0)
-        igTableSetupColumn("Trace", 0, 0, 0)
-        igTableSetupColumn("Polarity", 0, 0, 0)
-        template roleRow(role: string; field: untyped; what: string) =
-          igTableNextRow(0, 0)
-          discard igTableSetColumnIndex(0)
-          igAlignTextToFramePadding()
-          igTextUnformatted(role, nil)
-          tip(what)
-          discard igTableSetColumnIndex(1)
-          let project = role == "Ref" and projectName.len > 0
-          igSetNextItemWidth(if project: refCombo else: combo)
-          let now = p.roles.field
-          let fileRef = role == "Ref" and fileRefPlace >= 0
-          let shown = if project and projectOn: projectLabel
-                      elif fileRef and now == fileRefPlace: "This file's reference trace"
-                      elif now in 0 ..< names.len: names[now]
-                      else: "none"
-          if igBeginCombo(("##" & role).cstring, shown.cstring, 0):
-            if project:
-              if igSelectable_Bool(projectLabel.cstring, projectOn, 0, ImVec2_c(x: 0, y: 0)) and
-                  not projectOn:
-                (p.projectReference, changed) = (true, true)
-              marks.mark(name & ".role Ref project")
-              tip("What the unit was meant to sweep: the phase, frequency and force are " &
-                "measured against the project's chosen reference. The recorded trace is then " &
-                "measured against it too (Ref (recorded))")
-            if fileRef:
-              let on = now == fileRefPlace and not projectOn
-              if igSelectable_Bool("This file's reference trace", on, 0, ImVec2_c(x: 0, y: 0)) and
-                  not on:
-                (p.roles.field, changed) = (fileRefPlace, true)
-                if project: p.projectReference = false
-              marks.mark(name & ".role Ref file")
-              tip("The record's trace with the vibrator reference code (21): the Ref role, " &
-                "measured against by itself, not against the project reference")
-            if igSelectable_Bool("none", now < 0 and not projectOn, 0,
-                ImVec2_c(x: 0, y: 0)) and (now >= 0 or projectOn):
-              (p.roles.field, changed) = (-1, true)
-              if project: p.projectReference = false
-            for i, n in names:
-              igPushID_Int(cint(i))
-              if igSelectable_Bool(n.cstring, i == now and not projectOn, 0,
-                  ImVec2_c(x: 0, y: 0)) and (i != now or projectOn):
-                (p.roles.field, changed) = (i, true)
-                if project: p.projectReference = false
-              igPopID()
-            igEndCombo()
-          marks.mark(name & ".role " & role)
-        template polarityCombo(role: string; field: untyped; what: string) =
-          discard igTableSetColumnIndex(2)
-          igSetNextItemWidth(polar)
-          if igBeginCombo(("##polarity " & role).cstring, ($p.roles.field).cstring, 0):
-            for v in Polarity:
-              if v == poAutomatic and forceNote.len > 0: continue # (never offered for a signature file)
-              if igSelectable_Bool(($v).cstring, v == p.roles.field, 0, ImVec2_c(x: 0, y: 0)) and
-                  v != p.roles.field:
-                (p.roles.field, changed) = (v, true)
-            igEndCombo()
-          tip(what)
-        igBeginDisabled(forceNote.len > 0) # (a signature file's channels are named by its codes)
-        roleRow("Ref", reference, "The reference: the pilot, the phase origin")
-        discard igTableSetColumnIndex(2)
-        if planeAt >= 0 and igSmallButton("Roles from the codes##codes"):
-          p.roles = st.codeRoles(planeAt)
-          changed = true
-        marks.mark(name & ".roles from codes")
-        tip("Ref is as recorded. This button: the roles as the traces' identification codes " &
-          "give them, and the choice remembered for this file layout forgotten")
-        roleRow("GF", groundForce, "The ground force, as recorded")
-        polarityCombo("GF", groundForcePolarity, "Reversed: times -1. Automatic: reversed " &
-          "when its mean phase to the reference is past ±90° (wiring)")
-        roleRow("M", mass, "The reaction mass's acceleration")
-        polarityCombo("M", massPolarity, "M's and B's polarity, together (the baseplate moves " &
-          "against the mass). Automatic needs both and both masses: it is decided from the " &
-          "force they make")
-        roleRow("B", baseplate, "The baseplate's acceleration")
-        discard igTableSetColumnIndex(2)
-        if igSmallButton("Swap mass and baseplate##swap"):
-          swap(p.roles.mass, p.roles.baseplate)
-          changed = true
-        marks.mark(name & ".swap")
-        tip("B has M's polarity. This button: the mass takes the baseplate's trace and the " &
-          "baseplate the mass's. Remembered for files of this layout (the record's trace " &
-          "count and codes), in the project when one is open")
-        igEndDisabled()
-        if forceNote.len > 0:
-          igTextDisabled("from the controller's channels (trace codes)")
-        igEndTable()
-      igTreePop()
-    let units = st.settings.units
-    let unitWord = massName(units)
-    template label(text: string) =
-      igAlignTextToFramePadding()
-      igTextUnformatted(cstring(text), nil)
-      igSameLine(0, -1)
-    template takeMass(which: string; stored, shown: untyped) =
-      # a number left as the box showed it is no edit (the box rounds a conversion)
-      let kg = if typed.isNaN: NaN else: storeMass(typed, units)
-      if not sameMass(typed, shown):
-        if typed.isNaN or MassKgRange.allows(kg):
-          if not sameMass(kg, stored): (stored, changed) = (kg, true)
-        else:
-          res.notes.add "The " & which & " must be " & massLimitWords(units) & ", not " &
-            sensible(typed) & " " & unitWord & "."
-    if forceNote.len > 0:
-      igPushTextWrapPos(0)
-      igTextUnformatted(forceNote.cstring, nil)
-      igPopTextWrapPos()
-      ui.drawSignatureSetup(st, w, planeAt, name, box, t, marks, p, changed, res)
-    igBeginDisabled(forceNote.len > 0) # (no typed mass is applied to a signature file)
-    let line = beginControlLine()
-    label("Masses: reaction")
-    let shownReaction = massBoxValue(p.reactionMassKg, units)
-    if limitBox("##reaction." & $units, shownReaction, box, typed):
-      takeMass("reaction mass", p.reactionMassKg, shownReaction)
-    marks.mark(name & ".reaction mass")
-    tip("The reaction mass, in " & unitWord & ": with the baseplate's, the ground force is " &
-      "generated from M and B (Mr·M + Mb·B), drawn over the recorded one. Empty: none. " &
-      "A mass is " & massLimitWords(units) & ".")
-    line.follow(textBoxWidth("baseplate", box))
-    label("baseplate")
-    let shownBase = massBoxValue(p.baseplateMassKg, units)
-    if limitBox("##baseplate." & $units, shownBase, box, typed):
-      takeMass("baseplate's mass", p.baseplateMassKg, shownBase)
-    marks.mark(name & ".baseplate mass")
-    tip("The baseplate's mass, in " & unitWord & ". Empty: none. A mass is " &
-      massLimitWords(units) & ".")
-    # kg | lb after both masses: it sets Units (the Settings window's switch), the
-    # numbers convert in place and the stored kilograms stay; the unit shown is the
-    # one selected.
-    line.follow(buttonWidth("kg") + buttonWidth("lb"))
-    for i, u in [usMetric, usImperial]:
-      if i > 0: igSameLine(0, 0)
-      let on = units == u
-      if on:
-        igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(withAlpha(t.roles[rlAccent], 110)))
-        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlText]))
-        igPushStyleColor_Vec4(ImGui_Col_Border.cint, vec4(t.roles[rlAccent]))
-        igPushStyleVar_Float(ImGui_StyleVar_FrameBorderSize.cint, 1)
-      else:
-        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-      if igButton((massName(u) & "##units").cstring, ImVec2_c(x: 0, y: 0)) and not on:
-        var s = st.settings
-        s.units = u
-        res.commands.add Command(kind: ckSettings, settings: s)
-      if on:
-        igPopStyleVar(1)
-        igPopStyleColor(3)
-      else: igPopStyleColor(1)
-      marks.mark(name & ".unit " & massName(u))
-      tip("Show masses in " & massName(u) & " (" & systemName(u) & "). The numbers convert " &
-        "in place, so the masses do not change; they are kept in kilograms. This is the " &
-        "Units setting.")
-    igEndDisabled()
-    line.follow(textBoxWidth("harmonics to", box))
-    label("harmonics to")
-    var h = cint(p.harmonics)
-    igSetNextItemWidth(box)
-    if igInputInt("##harmonics", addr h, 0, 0, 0) and HarmonicRange.allows(float64(h)) and h != p.harmonics:
-      (p.harmonics, changed) = (int(h), true)
-    tip("The highest harmonic tracked (2 to 16): THD sums them from the 2nd")
-    line.phaseShowCombo(name, marks, p, changed)
-    # The QC row, always in view: the top frequency of the sweep (the band distortion is
-    # judged in), what 100 % force is, and the window the statistics are of.
-    let qcLine = beginControlLine()
-    let band = w.result.band
-    let topKey = if planeAt >= 0: st.vibTopKey(st.plots[
-        planeAt]) else: RecordedKey
-    let typedTop = if planeAt >= 0: st.vibTyped(st.plots[planeAt]) else: p.tops.topOf(topKey)
-    let shownTop = if typedTop.isNaN: (if band.hz.isNaN: NaN else: round(band.hz *
-        10) / 10)
-                   else: typedTop
-    label("Top frequency (Hz)")
-    if limitBox("##topfrequency", shownTop, box, typed):
-      if typed.isNaN:
-        if not typedTop.isNaN: (p.tops, changed) = (p.tops.withTop(topKey, NaN), true)
-      elif TopHzRange.allows(typed):
-        if typed != shownTop: (p.tops, changed) = (p.tops.withTop(topKey, typed), true)
-      else:
-        res.notes.add "The top frequency must be " & TopHzRange.words & ", not " &
-          sensible(typed) & "."
-    marks.mark(name & ".top frequency")
-    tip("The sweep's top frequency, Hz: distortion is the harmonics up to it (the in-band " &
-      "distortion a vibrator controller reports), shown and judged here. A generated " &
-      "reference fills it exactly with its end frequency; another is read from its " &
-      "frequency track (a line to the sweep's end, to a whole hertz when it is within 0.5 % " &
-      "of one: type the sweep's design value when it is not). Empty: from the reference. " &
-      "What is typed is kept with the reference in the project")
-    qcLine.follow(textBoxWidth("(typed)", 0))
-    igAlignTextToFramePadding()
-    igTextDisabled(
-      (if not typedTop.isNaN: "(typed)"
-        elif band.hz.isNaN: "" else: "(from the reference)").cstring)
-    marks.mark(name & ".top frequency source")
-    # the unit of the judged force (GF counts, or GF from M and B's kg x counts)
-    let judgedAxis = if w.result.judgedAxis.len > 0: w.result.judgedAxis
-                     else: forceAxisLabel(w.result.plots)
-    let forceShown = forceLimitOf(judgedAxis, units)
-    qcLine.follow(textBoxWidth("100 % force =", box))
-    label("100 % force =")
-    # the full scale of the signal judged (GF in counts, GF (M, B) in kg × counts)
-    let weighted = w.result.judged == "GF (M, B)"
-    let judgedUnit = unitOfLabel(judgedAxis)
-    # (a signature file's typed 100 % force is shown as it is applied: in the unit now on the
-    # axis, or not at all when it was typed in another unit and cannot be converted)
-    let sigWin = forceNote.len > 0 and not weighted
-    let shownHundred = if weighted: p.forceHundredWeighted
-      elif sigWin and p.forceHundredPct > 0:
-        (if w.result.hundredProblem.len > 0: NaN else: w.result.qc.hundredPct)
-      else: p.forceHundredPct
-    let hundred = showScaled(shownHundred, forceShown.divisor)
-    if limitBox("##hundred." & (if weighted: "m." else: "g.") & forceShown.unit, hundred, box,
-        typed):
-      let stored = storeScaled(typed, forceShown.divisor)
-      if typed.isNaN or MassKgRange.allows(stored):
-        if sigWin and stored.isNaN:
-          # emptied: no typed force (one not applied, shown empty, goes too)
-          if not p.forceHundredPct.isNaN:
-            (p.forceHundredPct, p.forceHundredUnit, changed) = (NaN, "", true)
-        elif not (stored.isNaN and shownHundred.isNaN) and stored != shownHundred:
-          if weighted: p.forceHundredWeighted = stored
-          else: (p.forceHundredPct, p.forceHundredUnit) = (stored, judgedUnit)
-          changed = true
-      else:
-        res.notes.add "100 % force must be above 0, not " & sensible(typed) & "."
-    marks.mark(name & ".force target")
-    tip("The force that is 100 % (full scale) of " &
-      (if weighted: "GF from M and B" else: "GF as recorded") &
-      " (each has its own: counts, or kg x counts), in the file's own unit" &
-      (if forceShown.unit.len > 0: " (" & forceShown.unit & ")" else: "") &
-          ". The file cannot tell it (no sensor sensitivities): take it from the vibrator's " &
-      "own QC of one sweep. The peak force limit is in % of it; the average force limit is " &
-      "in % of the target below. Empty: the force is not judged, and the limits table " &
-      "says which box to fill")
-    if forceShown.unit.len > 0:
-      igSameLine(0, -1)
-      igAlignTextToFramePadding()
-      igTextUnformatted(forceShown.unit.cstring, nil)
-      marks.mark(name & ".force unit")
-    if w.result.hundredWords.len > 0 and p.forceHundredPct.isNaN:
-      igSameLine(0, -1)
-      igAlignTextToFramePadding()
-      igTextDisabled(("(" & w.result.hundredWords & ")").cstring)
-      marks.mark(name & ".hundred words")
-    let hint = if w.result.hundredProblem.len > 0: w.result.hundredProblem
-               else: w.result.hundredHint
-    if hint.len > 0:
-      igPushTextWrapPos(0)
-      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
-      igTextUnformatted(hint.cstring, nil)
-      igPopStyleColor(1)
-      igPopTextWrapPos()
-      marks.mark(name & ".hundred hint")
-    # 100 % from this very sweep: its average force (the verdict's) over the target's share
-    let average = w.result.qc.stats.avgForce
-    let fromSweep = average / ((if p.targetPct > 0: p.targetPct else: 100.0) / 100)
-    qcLine.follow(buttonWidth("Set from this sweep"))
-    let fromSweepOk = MassKgRange.allows(fromSweep)
-    igBeginDisabled(not fromSweepOk)
-    if igSmallButton("Set from this sweep##hundred"):
-      if weighted: p.forceHundredWeighted = fromSweep
-      else: (p.forceHundredPct, p.forceHundredUnit) = (fromSweep, judgedUnit)
-      changed = true
-    igEndDisabled()
-    marks.mark(name & ".set hundred")
-    tip("Use on a sweep where the vibrator held its target force: 100 % force becomes this " &
-      "sweep's average force divided by the target (" &
-      (if p.targetPct > 0: sensible(p.targetPct) else: "100") & " %). Kept like a typed value" &
-      (if fromSweepOk: "" else: ". Not available here: this sweep's value is " &
-        (if fromSweep.isNaN: "not a number" else: sensible(fromSweep)) &
-        ", which the setting does not take (" & MassKgRange.words & ")"))
-    qcLine.follow(textBoxWidth("Target force (%)", box))
-    label("Target force (%)")
-    # (a signature file's window: empty until typed, and emptied by clearing it; the limits
-    # then take 100)
-    let sigTarget = forceNote.len > 0
-    if limitBox("##targetpct", p.targetPct, box, typed):
-      if TargetPctRange.allows(typed):
-        if typed != p.targetPct: (p.targetPct, changed) = (typed, true)
-      elif typed.isNaN:
-        if sigTarget:
-          if not p.targetPct.isNaN: (p.targetPct, changed) = (NaN, true)
-        elif p.targetPct != 100: (p.targetPct, changed) = (100.0, true)
-      else:
-        res.notes.add "The target force must be " & TargetPctRange.words & ", not " &
-            sensible(typed) & "."
-    marks.mark(name & ".target force")
-    tip("The drive level the sweep was set to, % of 100 % force (the vibrator's force " &
-      "setting, e.g. 60). The average force is judged as % of this target; the peak force " &
-      "as % of the 100 % force. 100 when the sweep is at full scale. Empty: 100" &
-      (if sigTarget: " for the limits, and not typed: a .dat's 100 % force from the " &
-        "controller's target force needs the drive level typed here, in this window"
-        else: ""))
-    if band.warning.len > 0:
-      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
-      fittedText(band.warning, igGetContentRegionAvail().x)
-      igPopStyleColor(1)
-      marks.mark(name & ".top frequency warning")
   if igBeginPopup("##limits", 0):
+    ui.limitsSize = igGetWindowSize()
     igTextUnformatted("The verdict's limits (judged on the flat part of the sweep)", nil)
     template qcLimit(text, id: string; field: untyped; unit, what: string) =
       igAlignTextToFramePadding()
@@ -711,35 +872,6 @@ proc drawVibratorSettings(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow
     igSameLine(0, -1)
     igTextUnformatted("ms", nil)
     igEndPopup()
-
-proc drawJudge(w: AnalysisWindow; name: string; marks: var Marks;
-    res: var PlotWindowsOutput) =
-  ## "Judge: GF as recorded | GF from M and B" beside the verdict, when the unit has both
-  ## ground forces: the one chosen is the ground force of the whole window, its plots, its
-  ## verdict and its limits table.
-  if not w.result.bothSignals: return
-  var p = w.params
-  const judgeNames = [joRecorded: "GF as recorded",
-    joWeighted: "GF from M and B (typed masses)"]
-  igAlignTextToFramePadding()
-  igTextUnformatted("Ground force judged:", nil)
-  igSameLine(0, -1)
-  igSetNextItemWidth(buttonWidth(judgeNames[joWeighted]) + igGetFrameHeight())
-  var chosen = false
-  if igBeginCombo("##judge", judgeNames[p.roles.judge].cstring, 0):
-    for j in JudgeOn:
-      if igSelectable_Bool(judgeNames[j].cstring, j == p.roles.judge, 0,
-          ImVec2_c(x: 0, y: 0)) and j != p.roles.judge:
-        (p.roles.judge, chosen) = (j, true)
-    igEndCombo()
-  marks.mark(name & ".judge")
-  tip("Which ground force the window uses: its plots, the verdict and the limits table. " &
-    "GF as recorded is the weighted sum of mass and baseplate acceleration the recorder wrote " &
-    "with its own masses; GF from M and B is the same sum formed here with the masses you " &
-    "typed. Remembered with the roles, for this file layout")
-  if chosen:
-    res.commands.add Command(kind: ckPlotDisplay, plot: w.id, plotParams: p,
-      plotFrozen: w.frozen)
 
 proc drawSettings(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: string;
     t: Theme; marks: var Marks; res: var PlotWindowsOutput) =
@@ -1080,6 +1212,31 @@ proc drawTable(name: string; table: seq[seq[string]]; t: Theme; marks: var Marks
     igEndTable()
     marks.mark(name & ".table")
 
+proc drawIdentity(w: AnalysisWindow; name: string; t: Theme; marks: var Marks) =
+  ## Which sweep this is, in one line above the verdict (when it was triggered, controller,
+  ## vibrator, the point when the file gives it): a click on it (or on its copy icon) copies it
+  ## as a line of text with the file name and the verdict.
+  let words = w.sweep.identityLine
+  if words.len == 0: return
+  let copy = w.identityCopy
+  igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(Rgba()))
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+  var clicked = igSmallButton((IconCopy & "##copyidentity").cstring)
+  igPopStyleColor(2)
+  marks.mark(name & ".copy identity")
+  tip("Copy this line (the file name, this sweep's identity and the verdict) as text")
+  igSameLine(0, -1)
+  igAlignTextToFramePadding()
+  igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+  igTextUnformatted(words.cstring, nil)
+  igPopStyleColor(1)
+  igPopTextWrapPos()
+  if igIsItemClicked(0): clicked = true
+  marks.mark(name & ".identity")
+  tip("Click to copy this line, with the file name and the verdict, as one line of text")
+  if clicked: igSetClipboardText(copy.cstring)
+
 proc drawVerdict(name: string; q: QcReport; t: Theme; marks: var Marks) =
   ## A vibrator signature's verdict, one line, in words and a sign (never colour alone):
   ## pass, fail with the worst failing value and its time, or not judged.
@@ -1102,49 +1259,55 @@ proc columnWidth(cells: openArray[string]; most = 320'f32): float32 =
   for c in cells: result = max(result, igCalcTextSize(c.cstring, nil, false, -1).x)
   result = min(result, most) + 12
 
-proc drawPolarity(w: AnalysisWindow; name: string; signature: bool; t: Theme;
-    marks: var Marks; res: var PlotWindowsOutput) =
-  ## The ground force against the reference, in words, and the one explicit choice: reverse the
-  ## ground force for the analysis (never done for the user), or take it back.
+proc drawPolarity(ui: var PlotWindowsUi; w: AnalysisWindow; name: string; signature: bool;
+    t: Theme; marks: var Marks) =
+  ## The ground force against the reference, in words: a finding, reported and never changed.
+  ## When it is opposite (or the user has reversed it), the line ends with "Roles...", which
+  ## opens the roles at the ground force's row, the one place to reverse it or take it back.
   let pol = w.result.polarity
   # (a SEG-Y window keeps its roles' table for the polarity; the line is in its result)
   if pol.line.len == 0 or not signature: return
   let odd = pol.kind in {pkOpposite, pkOther, pkUnclear} and not pol.reversed
+  let link = pol.kind == pkOpposite or w.params.roles.groundForcePolarity == poReversed
   if odd: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
-  igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
+  # (the line wraps before the link's place, so the link ends it)
+  let linkRoom = if link: buttonWidth("Roles...") + igGetStyle().ItemSpacing.x else: 0
+  igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x - linkRoom)
   igTextUnformatted(pol.line.cstring, nil)
   igPopTextWrapPos()
   if odd: igPopStyleColor(1)
   marks.mark(name & ".polarity")
   tip("The mean phase of the ground force to the reference over the judged part, as " &
-    "recorded. It is reported, never changed: reverse it only by your own choice, which " &
-    "affects this analysis alone (the samples and the file stay as recorded)")
-  var p = w.params
-  let reversed = p.roles.groundForcePolarity == poReversed
-  let buttonText = if reversed: "As recorded##polarity"
-                   else: "Reverse the ground force for the analysis##polarity"
-  if igSmallButton(buttonText.cstring):
-    p.roles.groundForcePolarity = if reversed: poAsRecorded else: poReversed
-    res.commands.add Command(kind: ckPlotDisplay, plot: w.id, plotParams: p,
-      plotFrozen: w.frozen)
-  marks.mark(name & ".reverse")
-  tip("Remembered for this file layout (in the project when one is open, else in your " &
-    "settings) and shown in the roles line while it is in force")
+    "recorded. It is reported, never changed: reverse it only by your own choice, in the " &
+    "roles, which affects this analysis alone (the samples and the file stay as recorded)")
+  if link:
+    igSameLine(0, -1)
+    igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(Rgba()))
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
+    if igSmallButton("Roles...##polarity"):
+      ui.rolesAsk[w.id] = "GF"
+    igPopStyleColor(2)
+    marks.mark(name & ".reverse")
+    tip("Open the roles, at the ground force: its polarity is chosen there. Remembered for " &
+      "this file layout (in the project when one is open, else in your settings)")
 
 proc drawController(name: string; r: AnalysisResult; t: Theme; marks: var Marks) =
   ## The controller's own QC numbers beside this window's.
   if r.controller.len == 0: return
-  igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
-  igTextUnformatted((r.controllerNote & ":").cstring, nil)
-  igPopTextWrapPos()
   const flags = ImGui_TableFlags_SizingFixedFit.cint or ImGui_TableFlags_BordersInnerH.cint
+  # (the first column's heading says where the numbers are from, the note is its tooltip)
+  let at = r.controllerNote.find("from ")
+  let source = if at >= 0: r.controllerNote[at + 5 .. ^1].split(", beside")[0] else: ""
+  igPushStyleVar_Vec2(ImGui_StyleVar_CellPadding.cint, ImVec2_c(x: 4, y: 1))
+  defer: igPopStyleVar(1)
   if igBeginTable(("##controller" & name).cstring, 3, flags, ImVec2_c(x: 0, y: 0), 0):
     var labels, mine, theirs: seq[string] = @[]
     for row in r.controller:
       labels.add row.label
       mine.add row.viewseg
       theirs.add row.controller
-    igTableSetupColumn("", 0, columnWidth(labels), 0)
+    let head = "Controller's QC, from " & source
+    igTableSetupColumn(head.cstring, 0, columnWidth(labels & head), 0)
     igTableSetupColumn("This window", 0, columnWidth(mine & "This window"), 0)
     igTableSetupColumn("Controller", 0, columnWidth(theirs & "Controller"), 0)
     igTableHeadersRow()
@@ -1219,14 +1382,30 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   marks.markWindow(name)
   if w.view == avVibrator and w.result.problem.len == 0 and
       w.result.qc.rows.len > 0:
+    drawIdentity(w, name, t, marks)
     drawVerdict(name, w.result.qc, t, marks)
-    drawPolarity(w, name, st.vibSignature(st.findPlot(w.id)) != sgNone, t, marks, res)
-    drawJudge(w, name, marks, res)
+    let how = (if w.result.against.len > 0: w.result.against & ". " else: "") &
+      (if w.result.note.len > 0: shownNote(w.result.note, w.params.reactionMassKg,
+        w.params.baseplateMassKg, st.settings.units) else: "")
+    ui.how[w.id] = how
+    ui.drawPolarity(w, name, st.vibSignature(st.findPlot(w.id)) != sgNone, t, marks)
     if w.result.judgeWarning.len > 0:
       igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
       fittedText(w.result.judgeWarning, igGetContentRegionAvail().x)
       igPopStyleColor(1)
       marks.mark(name & ".judge warning")
+    # what the settings wheel holds that is a finding, in words (muted, wrapped)
+    let found = ui.vibFindings(st, w, st.findPlot(w.id))
+    ui.findings[w.id] = found
+    if found.len > 0:
+      for line in found: wrapped(line, t, em = igGetContentRegionAvail().x / igGetFontSize())
+      marks.mark(name & ".findings")
+    # a limit the controller tripped is a finding too (told here, not behind the wheel)
+    if w.sweep.limits.card > 0:
+      wrapped("The controller tripped: " & w.sweep.limits.limitsWords, t,
+        em = igGetContentRegionAvail().x / igGetFontSize())
+      marks.mark(name & ".tripped")
+      tip(LimitsProbable)
   ui.drawSettings(st, w, name, t, marks, res)
   let r = w.result
   var words = if w.frozen: "Frozen · " & w.label else: w.label
@@ -1264,12 +1443,13 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   let warnShown = r.warning.len > 0 and r.problem.len == 0 and not w.waiting
   let refProblem = w.view == avCorrelation and not w.waiting and r.problem.len > 0 and
     r.plots.len == 0 and r.image.isEmpty
+  # (a vibrator window's note is in its Roles button's tooltip: the plots keep their room)
   let noteShown = w.goneNote.len == 0 and r.problem.len == 0 and r.note.len >
-      0 and not refProblem
+      0 and not refProblem and w.view != avVibrator
   let measured = if noteShown: shownNote(r.note, w.params.reactionMassKg,
                    w.params.baseplateMassKg, st.settings.units) else: ""
   # a vibrator window's note folds under one line, so that its plots keep their room
-  let folds = w.view == avVibrator and noteShown
+  let folds = false
   let said = if noteShown and not folds:
                (if r.against.len > 0: r.against & ". " else: "") & measured
              else: ""
@@ -1504,11 +1684,11 @@ proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: floa
   var gone: seq[int] = @[]
   for id in ui.readout.keys:
     if id notin ids: gone.add id
-  var folded: seq[int] = @[]
-  for id in ui.weightsOpened:
-    if id notin ids: folded.add id
-  for id in folded: ui.weightsOpened.excl id
   for id in gone:
+    ui.findings.del id
+    ui.how.del id
+    ui.rolesAsk.del id
+    ui.rolesRow.del id
     ui.curves.del id
     ui.curveKeys.del id
     ui.under.del id

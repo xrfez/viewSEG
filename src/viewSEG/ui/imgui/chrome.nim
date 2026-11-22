@@ -90,14 +90,19 @@ proc toolButton(id: string; size: float32; selected: bool; t: Theme;
   (clicked, pos)
 
 proc iconButton*(icon, text, shortcut: string; size: float32; t: Theme;
-    marks: var Marks; selected = false; tipText = ""; enabled = true): bool =
+    marks: var Marks; selected = false; tipText = ""; enabled = true; markName = "";
+    badge = false): bool =
   ## A toolbar button showing a Nerd Font `icon`, centred. `tipText` replaces
   ## the tooltip built from `text` and `shortcut`. A button that is not
   ## `enabled` is drawn dim and does not click, and its tooltip still shows.
+  ## `markName` replaces the mark "tool." and `text`. `badge` draws a small
+  ## warning sign at its corner (a finding the button's popover holds); it is
+  ## marked `markName` and " warning".
   if not enabled: igBeginDisabled(true)
   let (clicked, pos) = toolButton("##" & text, size, selected, t)
   if not enabled: igEndDisabled()
-  marks.mark("tool." & text)
+  let mark = if markName.len > 0: markName else: "tool." & text
+  marks.mark(mark)
   # Codicons sit small in their em box: draw them at two thirds of the button
   let (font, px) = (igGetFont(), round(size * 0.68))
   let ts = ImFont_CalcTextSizeA(font, px, high(float32), 0, icon.cstring, nil, nil)
@@ -107,7 +112,15 @@ proc iconButton*(icon, text, shortcut: string; size: float32; t: Theme;
   ImDrawList_AddText_FontPtr(igGetWindowDrawList(), font, px,
     ImVec2_c(x: round(pos.x + (size - ts.x) / 2), y: round(pos.y + (size - ts.y) / 2)),
     u32(col), icon.cstring, nil, 0, nil)
-  if tipText.len > 0: tooltip(tipText, shortcut, t) else: tooltip(text, shortcut, t)
+  if badge:
+    let bpx = round(size * 0.46)
+    let bs = ImFont_CalcTextSizeA(font, bpx, high(float32), 0, IconWarning.cstring, nil, nil)
+    let at = ImVec2_c(x: round(pos.x + size - bs.x), y: round(pos.y))
+    ImDrawList_AddText_FontPtr(igGetWindowDrawList(), font, bpx, at,
+      u32(t.roles[rlWarning]), IconWarning.cstring, nil, 0, nil)
+    marks.markRect(mark & " warning", at, ImVec2_c(x: at.x + bs.x, y: at.y + bs.y))
+  tooltip((if tipText.len > 0: tipText else: text), shortcut, t, addr marks,
+    (if markName.len > 0: markName & " tip" else: ""))
   clicked
 
 type

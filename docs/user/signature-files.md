@@ -58,7 +58,7 @@ The Files window lists signature files with the SEG-Y and SEG-D ones, and reads 
 | Length | the samples at the interval in force |
 | State | `stopped 2.5 s` (a `.dat` that stopped; the tooltip says how many blocks it holds of those its header announces), `pulse`, `cut short` (a `.vib` that ends inside a frame), or the reason a file cannot be shown |
 | Pair | `.vib` on a `.dat` row, `.dat` on a `.vib` row |
-| Force avg %, THD max %, Limits | the controller's QC numbers; the tripped limit letters (their meanings are not known) are in the warning colour |
+| Force avg %, THD max %, Limits | the controller's QC numbers; the tripped limit letters are in the warning colour. Their meanings are probable only (T torque motor, M mass displacement, V valve displacement, F force: deduced from the controller's channels, not confirmed; R is not known) |
 
 Trigger, Controller and Vibrator are shown; the others are in the column chooser (right-click a
 header). A folder of signature files alone starts sorted by Trigger, so a sweep's `.vib` (which
@@ -112,18 +112,38 @@ and a file that breaks its format are refused in words.
 
 ## The Vibrator window on a signature file
 
+Under the verdict one strip of icon buttons (Roles, Limits..., Details, the settings wheel and
+Freeze) holds the controls; the wheel's popover has headed groups, only those that apply to the
+file (a signature file has no Masses group: its channels are forces already, or the file's own
+weights are used). A finding a group holds is also told in words under the verdict, and the wheel
+carries a warning sign.
+
+- **Which sweep this is.** A line at the top of the window gives the trigger time in UTC to
+  the millisecond, the controller and the vibrator, and, only when the file gives them, the
+  line and station and the shot and sweep ids (a point is never derived from the GPS position).
+  A `.vib` with its `.dat` takes the `.dat`'s trigger; a `.vib` alone says "began HH:MM:SS UTC".
+  The window's title carries the time of day. A click on the line (or its copy icon) copies it as
+  one line of text with the file name, a tripped limit and the verdict.
+- **Limits the controller tripped.** The controller's table shows the tripped letters with
+  probable meanings (T torque motor, M mass displacement, V valve displacement, F force), which
+  are deduced from the controller's channels and not confirmed; R's meaning is not known. A
+  tripped letter is a finding: "The controller tripped: M (mass displacement, probable)" stays
+  under the verdict.
+
 The roles come from the trace codes (reference 21, reaction mass 18, baseplate 19, ground force
-20) and no typed mass is applied: trace 4 is the ground force, as the file has it. The role
-pickers are read-only.
+20) and no typed mass is applied: trace 4 is the ground force, as the file has it. The trace
+pickers are read-only; the polarity can be chosen.
 
 - **The ground force against the reference.** A line under the verdict says how the ground force
   stands to the reference over the judged part, as recorded: "opposite" with its mean phase in
   degrees, "in phase", "neither in phase nor opposite", or "unclear" when it follows the
-  reference weakly (little drive, a pulse). Nothing is changed or corrected. If you want the analysis to
-  take the ground force the other way round, press **Reverse the ground force for the analysis**:
-  it affects the analysis only (the samples and the file stay as recorded), is remembered for
+  reference weakly (little drive, a pulse). Nothing is changed or corrected. When it is opposite
+  the line ends with **Roles...**, which opens the roles at the GF row. If you want the analysis to
+  take the ground force the other way round, choose **reversed** in the GF polarity (the one
+  place to reverse a polarity; M's choice carries B with it): it affects the analysis only (the
+  samples and the file stay as recorded), is remembered for
   this file layout (in the project when one is open, else in your settings), and is said in the
-  roles line ("GF reversed for the analysis: your choice") and in the polarity line. **As
+  roles' notes ("GF reversed for the analysis: your choice") and in the polarity line. **as
   recorded** takes it back. Automatic polarity is not offered for a signature file. For a `.dat`
   that stores the controller's own correlation, the line also says where its peak at lag 0 lies
   and, when the ground force is opposite and that peak is negative, that the controller counts the
@@ -132,7 +152,7 @@ pickers are read-only.
   (traces 5 to 7) is the set the controller's QC report follows, probably. The choice is this
   window's only; it is not remembered for the next file.
 - **Force units.** The ground force is in counts (a `.dat`) or pound-counts (a `.vib`) until you
-  give a scale in the window's Setup: counts per lbf for a `.dat`, the accelerometer constant for
+  give a scale in the settings wheel (Force): counts per lbf for a `.dat`, the accelerometer constant for
   a `.vib` (with the header's sensitivity of the set judged). The force then reads in newtons
   (pounds-force with the Units setting), for the display and the verdict only; the samples stay as
   recorded. The scale is a local setting and ships with nothing. With a scale, the 100 % force
@@ -149,8 +169,7 @@ pickers are read-only.
   comes from the file itself; the THD is defined differently
   by the controller (compare its trend, not its value); the phase compares once the polarity is as
   the controller treats it.
-- **The header's weights (a `.vib`).** Under "Weights from the header" (closed, and open by
-  itself when the folder has a finding) the window shows the hold-down, baseplate and
+- **The header's weights (a `.vib`).** In the settings wheel, under "Weights from the header", the window shows the hold-down, baseplate and
   reaction-mass weights and the two accelerometer sensitivities the header states. The reference
   scaled to a force depends on the hold-down weight, which differs with the vibrator type the
   controller's electronics are set up for. The same values are given per vibrator across the

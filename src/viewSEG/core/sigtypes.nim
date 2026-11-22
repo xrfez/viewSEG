@@ -23,8 +23,10 @@ type
     sgVib = "vibrator .vib"
 
   QcLimit* = enum
-    ## The controller's limit letters, as its report prints them; their meanings are
-    ## not known.
+    ## The controller's limit letters, as its report prints them. Their meanings are a
+    ## deduction from the controller's channel list (T torque motor, M mass
+    ## displacement, V valve displacement, F force), probable and not confirmed by the
+    ## format's description; R's is not known.
     qlT = "T", qlM = "M", qlV = "V", qlF = "F", qlR = "R"
 
   SweepQc* = object
@@ -215,6 +217,74 @@ func timeText*(ns: int64; fraction = 9): string =
     intToStr(c.hour, 2) & ":" & intToStr(c.minute, 2) & ":" & intToStr(c.second, 2)
   if fraction > 0:
     result.add "." & intToStr(c.nanosecond, 9)[0 ..< min(fraction, 9)]
+
+const LimitsProbable* = "Probable meanings, deduced from the controller's channels; not confirmed"
+
+func limitWords*(l: QcLimit): string =
+  ## One tripped letter with its probable meaning: "M (mass displacement, probable)"; "R (meaning
+  ## not known)".
+  result = $l & " ("
+  result.add(case l
+    of qlT: "torque motor, probable"
+    of qlM: "mass displacement, probable"
+    of qlV: "valve displacement, probable"
+    of qlF: "force, probable"
+    of qlR: "meaning not known")
+  result.add ")"
+
+func limitsWords*(limits: set[QcLimit]; between = ", "): string =
+  ## The tripped letters with their probable meanings, "T (torque motor, probable), R (meaning
+  ## not known)" (`between` the letters); "" for none.
+  for l in limits:
+    if result.len > 0: result.add between
+    result.add limitWords(l)
+
+type SweepIdentity* = object
+  ## Which sweep a signature file's window is of, so a bad one can be referred to: when it was
+  ## triggered, which controller and vibrator, and the point and ids when the file gives them
+  ## (0 is not given). Never derived from a position.
+  given*: bool ## a signature file's window
+  triggerNs*: int64 ## UTC ns: a .dat's trigger, a `.vib`'s own pair's trigger or, alone, its start
+  fromStart*: bool ## `triggerNs` is only the second the `.vib` began
+  controller*: int64
+  vibrator*: int
+  line*, station*, shotId*, sweepId*: int64
+  limits*: set[QcLimit] ## the limits the controller tripped
+
+func identityOf*(f: SignatureFacts): SweepIdentity =
+  ## The identity of the sweep of `f` (`given` false for any other file).
+  if f.kind == sgNone: return
+  result = SweepIdentity(given: true, triggerNs: f.info.triggerNs,
+    controller: (if f.info.serialFrom != sfNone: f.info.controller else: 0),
+    vibrator: f.info.vibrator, line: f.info.line, station: f.info.station,
+    shotId: f.info.shotId, sweepId: f.info.sweepId)
+  if f.kind == sgDat and f.info.qc.valid: result.limits = f.info.qc.limits
+  if f.kind == sgVib:
+    if f.pair.len > 0 and f.pairTriggerNs != 0: result.triggerNs = f.pairTriggerNs
+    else: result.fromStart = true
+    if f.pair.len > 0 and f.pairQc.valid: result.limits = f.pairQc.limits
+
+func clockOf*(i: SweepIdentity): string =
+  ## The time of day of the sweep, for a window's title: "04:05:06.789" (a `.vib` alone: "04:05:06",
+  ## the second it began); "" for none.
+  if i.given and i.triggerNs != 0:
+    result = timeText(i.triggerNs, (if i.fromStart: 0 else: 3))[11 .. ^1]
+
+func identityLine*(i: SweepIdentity): string =
+  ## The sweep in one line: "2001-02-03 04:05:06.789 UTC · controller 4321 · vibrator 12 · line 5,
+  ## station 101 · shot 77 · sweep 3"; a `.vib` alone: "began 04:05:06 UTC". What the file does
+  ## not give is not said.
+  if not i.given: return
+  result = if i.triggerNs == 0: "no trigger time"
+    elif i.fromStart: "began " & clockOf(i) & " UTC"
+    else: timeText(i.triggerNs, 3) & " UTC"
+  if i.controller > 0: result.add " · controller " & $i.controller
+  if i.vibrator > 0: result.add " · vibrator " & $i.vibrator
+  if i.line > 0 and i.station > 0: result.add " · line " & $i.line & ", station " & $i.station
+  elif i.line > 0: result.add " · line " & $i.line
+  elif i.station > 0: result.add " · station " & $i.station
+  if i.shotId > 0: result.add " · shot " & $i.shotId
+  if i.sweepId > 0: result.add " · sweep " & $i.sweepId
 
 func secondsWords*(seconds: float64): string =
   ## "12.000 s".

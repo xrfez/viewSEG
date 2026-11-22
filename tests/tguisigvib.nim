@@ -2,24 +2,30 @@
 ## sweeps:
 ##
 ## - a `.dat` whose ground force is opposite to the reference: the polarity line is drawn under
-##   the verdict with the button "Reverse the ground force for the analysis"; pressing it puts
-##   the choice in the window ("As recorded" is then the button) and the roles line says so;
-##   the controller's table is drawn; the force scale box is in the set-up, and once a scale is
-##   set the 100 % force says where it comes from;
-## - a `.vib` with its `.dat`: the accelerometer set choice (pressing A makes it the window's
-##   set), the weights line and the sentence that the scaled reference depends on the
-##   hold-down weight, the controller's table "from the .dat of this sweep";
-## - a folder of `.vib` files of three vibrators, one of them with other weights: the weights
-##   per vibrator open by themselves and say the difference in words, in a second window too;
-## - Reset options on a `.dat`'s window leaves no drive level and no 100 % force typed.
+##   the verdict ending with "Roles..."; it opens the roles, where the ground force's polarity
+##   combo reverses it for the analysis (the line then says so); the controller's table is
+##   drawn; the force scale box is in the settings wheel, and once a scale is set the 100 %
+##   force says where it comes from;
+## - a `.vib` with its `.dat`: in the wheel the accelerometer set choice (pressing A makes it
+##   the window's set), the weights line and the sentence that the scaled reference depends on
+##   the hold-down weight, the controller's table "from the .dat of this sweep";
+## - a folder of `.vib` files of three vibrators, one of them with other weights: the
+##   difference is told under the verdict and the wheel carries a warning mark, in a second
+##   window too; the wheel lists the weights per vibrator;
+## - the identity line (trigger time, controller, vibrator) is drawn on each, and a `.dat` that
+##   tripped controller limits tells them under the verdict with their probable meanings;
+## - the wheel's groups are those that apply: a signature file has no Masses group (a muted
+##   line says why), only a `.vib` has the accelerometer set and the weights;
+## - Reset options (in the wheel) on a `.dat`'s window leaves no drive level and no 100 %
+##   force typed.
 ##
 ## With `VIEWSEG_SCREENSHOTS` set, a picture of each step is saved there (synthetic files only).
 ##
-## Seen to fail: with the polarity line not drawn, "no polarity line"; with the button's click
-## not reaching the window ("Reverse" drawn without a command), "the choice was not made"; with
-## one opened-once flag for every window, the second window's weights stayed folded ("a second
-## window opens its weights too" did not finish); with Reset not told the window is a signature
-## file's, the drive level came back as 100 ("Reset options keeps nothing typed").
+## Seen to fail: with the polarity line not drawn, "no polarity line"; with the polarity combo's
+## choice not reaching the window, "reversed in the roles" did not finish; with the findings
+## kept in one list for every window, the second window's "told in a second window" did not
+## finish; with Reset not told the window is a signature file's, the drive level came back as
+## 100 ("Reset options keeps nothing typed").
 
 import std/[math, monotimes, options, os, strutils, times]
 import parseSSDAT
@@ -83,7 +89,8 @@ proc steps(file: string; tmp: string; list: seq[Step]; browse = "") =
     if overdue(f.index, 4000, since):
       failed = (if at < list.len: "step \"" & list[at].name & "\" did not finish; marks " &
         $[f.markOf("new plot 1.polarity"), f.markOf("new plot 1.fleet header"), f.markOf(
-            "new plot 1.set A"), f.markOf("new plot 1.controller")] else: "end")
+            "new plot 1.wheel"), f.markOf("new plot 1.controller"), f.markOf("new plot 1.reverse"),
+          f.markOf("new plot 1.roles popover"), f.markOf("new plot 1.polarity GF")] else: "end")
       f.stop()
   let code = run(RunOptions(windowSize: (1500, 1000), theme: forceDark,
     userThemeDir: some(tmp / "no-user-themes"), indexCacheDir: some(tmp / "cache"),
@@ -111,14 +118,31 @@ proc main*() =
           plotTraces: @[f.core.sessions[0].base])
       do:
         f.shown(W & ".polarity") and f.shown(W & ".reverse") and f.shown(W & ".controller") and
-          f.shown(W & ".force scale") and f.shown(W & ".verdict")
+          f.shown(W & ".wheel") and f.shown(W & ".verdict")
       list.step "the polarity line":
         doAssert f.core.plots[0].result.polarity.kind == pkOpposite,
           f.core.plots[0].result.polarity.line
         f.shoot("sigvib-dat.png")
+        doAssert not f.shown(W & ".scrolls") and not f.shown(W & ".plots scroll"),
+          "the plots are in view without scrolling, a .dat"
       do: true
-      list.step "reversed by the button":
+      list.step "the roles popover":
+        f.click(W & ".roles")
+      do: f.shown(W & ".roles popover")
+      list.step "the roles popover's picture":
+        f.shoot("sigvib-dat-roles.png")
+      do: true
+      list.step "the roles popover closed":
+        f.click(W & ".verdict")
+      do: not f.shown(W & ".roles popover")
+      list.step "the roles opened by the link":
         f.click(W & ".reverse")
+      do: f.shown(W & ".roles popover") and f.shown(W & ".polarity GF")
+      list.step "the polarity combo opened":
+        f.click(W & ".polarity GF")
+      do: f.shown(W & ".polarity GF reversed")
+      list.step "reversed in the roles":
+        f.click(W & ".polarity GF reversed")
       do:
         f.core.plots[0].params.roles.groundForcePolarity == poReversed and
           f.core.plots[0].result.polarity.reversed and f.shown(W & ".reverse")
@@ -127,6 +151,16 @@ proc main*() =
           f.core.plots[0].result.polarity.line
         f.shoot("sigvib-dat-reversed.png")
       do: true
+      list.step "the roles closed, the wheel opened":
+        f.click(W & ".verdict")
+      do: not f.shown(W & ".roles popover")
+      list.step "the wheel opened":
+        f.click(W & ".wheel")
+      do:
+        f.shown(W & ".force scale") and f.shown(W & ".group Force") and
+          f.shown(W & ".masses note") and not f.shown(W & ".group Masses") and
+          not f.shown(W & ".set A") and not f.shown(W & ".group Weights from the header") and
+          f.shown(W & ".identity") and f.shown(W & ".tripped")
       list.step "a scale is set":
         var s = f.core.settings
         s.forceScale.datCountsPerLbf = 8
@@ -163,12 +197,21 @@ proc main*() =
         f.apply Command(kind: ckOpenPlot, plotView: avVibrator,
           plotTraces: @[f.core.sessions[0].base])
       do:
-        f.shown(W & ".polarity") and f.shown(W & ".fleet header") and f.shown(W & ".set A") and
-          f.shown(W & ".controller")
-      list.step "weights closed, no finding":
-        doAssert not f.shown(W & ".weights"), "the weights are folded by default"
-        f.click(W & ".fleet header")
-      do: f.shown(W & ".weights")
+        f.shown(W & ".polarity") and f.shown(W & ".wheel") and f.shown(W & ".controller")
+      list.step "the default window":
+        doAssert not f.shown(W & ".scrolls") and not f.shown(W & ".plots scroll"),
+          "the plots are in view without scrolling, a .vib with its pair"
+        f.shoot("sigvib-vib-default.png")
+      do: true
+      list.step "the controller's set is a finding, the weights are not":
+        doAssert not f.core.vibWeightFindings().flagged, "a folder of one sweep"
+        doAssert f.shown(W & ".findings") and f.shown(W & ".wheel warning"),
+          "the controller's QC follows set A while B is judged: told, the wheel marked"
+        f.click(W & ".wheel")
+      do:
+        f.shown(W & ".weights") and f.shown(W & ".set A") and f.shown(W & ".fleet header") and
+          f.shown(W & ".group Accelerometer set") and not f.shown(W & ".group Masses") and
+          f.shown(W & ".identity")
       list.step "set B":
         doAssert f.core.plots[0].params.accelSet == asB
         doAssert "the .dat of this sweep" in f.core.plots[0].result.controllerNote
@@ -180,6 +223,8 @@ proc main*() =
         f.core.plots[0].params.accelSet == asA and not f.core.plots[0].waiting and
           f.core.plots[0].result.plots.len > 0
       list.step "set A shown":
+        doAssert not f.shown(W & ".findings") and not f.shown(W & ".wheel warning"),
+          "on set A the controller's QC is compared like with like: no finding"
         f.shoot("sigvib-vib-setA.png")
       do: true
       list.step "a scale is set":
@@ -219,18 +264,27 @@ proc main*() =
         f.apply Command(kind: ckOpenPlot, plotView: avVibrator,
           plotTraces: @[f.core.sessions[0].base])
       do:
-        f.shown(W & ".fleet header") and f.shown(W & ".fleet")
+        f.shown(W & ".findings") and f.shown(W & ".wheel warning")
+      list.step "the default window with the warning":
+        f.shoot("sigvib-fleet.png")
+      do: true
       list.step "the difference is said":
         let found = f.core.vibWeightFindings()
         doAssert found.vibrators.len == 3 and found.vibrators[2].unlike, $found.vibrators.len
-        f.shoot("sigvib-fleet.png")
+        f.click(W & ".wheel")
+      do: f.shown(W & ".fleet header") and f.shown(W & ".fleet")
+      list.step "the wheel's picture":
+        f.shoot("sigvib-fleet-wheel.png")
       do: true
-      list.step "a second window opens its weights too":
+      list.step "the wheel closed":
+        f.click(W & ".verdict")
+      do: not f.shown(W & ".fleet")
+      list.step "told in a second window":
         f.apply Command(kind: ckOpenPlot, plotView: avVibrator,
           plotTraces: @[f.core.sessions[0].base])
       do:
-        f.core.plots.len == 2 and f.shown("new plot 2.fleet header") and
-          f.shown("new plot 2.fleet") and f.shown(W & ".fleet")
+        f.core.plots.len == 2 and f.shown("new plot 2.findings") and
+          f.shown("new plot 2.wheel warning")
       steps(first, fx.dir / "c", list, browse = dir)
   echo "tguisigvib: ok"
 

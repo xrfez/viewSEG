@@ -92,7 +92,7 @@ proc main*() =
       doAssert f.markOf("new plot 1.scrolls").size.x == 0, what & ": the window scrolls"
       doAssert f.markOf("new plot 1.plots scroll").size.x == 0,
         what & ": the plots scroll in a child of their own"
-      for part in ["verdict", "qc table", "top frequency", "force target", "set hundred", "setup"]:
+      for part in ["verdict", "qc table", "wheel"]:
         doAssert f.markOf("new plot 1." & part).inside(win), what & ": " &
             part &
           " is not in view: " & $f.markOf("new plot 1." & part) & " in " & $win

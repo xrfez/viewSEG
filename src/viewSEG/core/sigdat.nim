@@ -166,7 +166,9 @@ const
     fld("thdAvgPct", "Distortion (THD) average, %", 23, 1, 'b'),
     fld("sweepChecksum", "Sweep checksum", 24, 2, 'b'),
     fld("paramChecksum", "Parameter checksum", 26, 2, 'b'),
-    fld("limitBits", "Limits tripped, as bits (T M V F R; meanings not known)", 31, 1, 'b'),
+    fld("limitBits", "Limits tripped, as bits (T torque motor, M mass displacement, " &
+      "V valve displacement, F force: probable meanings, deduced from the controller's " &
+      "channels, not confirmed; R: not known)", 31, 1, 'b'),
     fld("correlationMagnitude", "The controller's own correlation: magnitude (probable)", 36, 2, 'b'),
     fld("heightCm", "Height above the ellipsoid, cm", 185, 4, 'b'),
     fld("satellites", "Satellites", 189, 1, 'b'),

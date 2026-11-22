@@ -935,7 +935,7 @@ right of that line's first row. A change works it out again.
     project when one is open, else in the user settings), so a later file of that layout
     opens with it, also after a restart; a choice made by an agent is for the session only.
     The other boxes (masses, harmonics, the six limits, the window, **100 % force =**, the
-    target, **Details**, whether **Setup** is unfolded) are plot options kept in the user
+    target, **Details**) are plot options kept in the user
     settings; the top frequency is kept with its reference in the project as well, so it
     travels with it. Point limits stored by an older version (`limitsOn`, `limits`) are read
     and ignored.
@@ -1040,8 +1040,8 @@ right of that line's first row. A change works it out again.
     reference nothing is filtered: the raw trace is measured against the raw reference
     whatever the plot's filters are, and the note says so.
   - **Fitting.** At its default size one unit shows its verdict, its limits table and its
-    four plots with nothing to scroll; the controls fold under **Setup** (open until the
-    100 % force is set), the roles' table and the note under one line each. The plots share
+    four plots with nothing to scroll; the settings are behind a strip of icon buttons (Roles,
+    Limits..., Details, the settings wheel, Freeze), the note under one line. The plots share
     one time axis, labelled on the last. Stepping to the next record keeps the window's size
     and place and only updates it.
   - **Set from this sweep** (beside **100 % force =**) sets the judged signal's 100 % force to

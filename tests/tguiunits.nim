@@ -129,7 +129,10 @@ proc main*() =
         plotTraces: @[base, base + 1, base + 2, base + 3])),
       proc (f: FrameInfo): bool =
         f.core.plots.len == 1 and not f.core.plots[0].waiting and
-          f.markOf("new plot 1.reaction mass").size.x > 0 and
+          f.markOf("new plot 1.wheel").size.x > 0)
+    click("new plot 1.wheel") # the masses are in the settings wheel
+    step("the masses shown", noop, proc (f: FrameInfo): bool =
+      f.markOf("new plot 1.reaction mass").size.x > 0 and
           f.markOf("new plot 1.unit kg").size.x > 0 and
           f.markOf("new plot 1.unit lb").size.x > 0)
     step("the force unit beside the box", noop, proc (f: FrameInfo): bool =
@@ -155,6 +158,7 @@ proc main*() =
     step("back to metric, the mass unchanged", noop, proc (f: FrameInfo): bool =
       f.core.settings.units == usMetric and
         abs(f.core.plots[0].params.reactionMassKg - stored) < 1e-9)
+    click("new plot 1.verdict") # closes the wheel
     click("menu.Tools")
     click("menu.Settings...")
     step("the Settings window", noop, proc (f: FrameInfo): bool =

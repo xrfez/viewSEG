@@ -372,8 +372,8 @@ func sweepCell*(list: FileList; e: FileEntry; column: FileColumn; timeOnly = fal
     if i.qc.valid:
       result.text = limitsText(i.qc)
       result.warn = i.qc.limits.card > 0
-      result.tip = "the limits the controller's report prints as tripped (T M V F R): their " &
-        "meanings are not known"
+      result.tip = "the limits the controller's report prints as tripped (T M V F R). " &
+        LimitsProbable
   else: discard
 
 func plural(n: int; one, many: string): string =

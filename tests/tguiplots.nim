@@ -239,14 +239,14 @@ proc main*() =
         doAssert w.view == avVibrator and w.traces == @[0, 1, 2, 3], $w.traces
         doAssert w.result.problem == "" and w.result.plots.len in 4 .. 5,
             w.result.problem
-        doAssert f.markOf("new plot 2.roles line").size.x > 0, "no roles line")
-    click("new plot 2.roles header") # the roles' table is folded until it is opened
+        doAssert f.markOf("new plot 2.roles").size.x > 0, "no Roles button")
+    click("new plot 2.roles") # the roles' table is a popover until it is opened
     step("the roles", noop, proc (f: FrameInfo): bool =
       result = f.markOf("new plot 2.role Ref").size.x > 0
       if result:
         for role in ["Ref", "GF", "M", "B"]:
           doAssert f.markOf("new plot 2.role " & role).size.x > 0, "no role " & role)
-    click("new plot 2.roles header")
+    click("new plot 2.verdict") # closes the roles
     click("new plot 2.details")
     step("details on", noop, proc (f: FrameInfo): bool =
       result = f.core.plots[1].params.details and not f.core.plots[1].waiting and

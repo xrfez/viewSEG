@@ -148,7 +148,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** GF (M, B), the ground force generated from the masses' accelerations, against sweep time in ms: its fundamental amplitude and its peak.
 
-**Computed from.** The traces of the window's roles. GF (M, B) = Mr·a(M) + Mb·a(B). Needs the reaction mass and the baseplate mass, both entered above. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set.
+**Computed from.** The traces of the window's roles. GF (M, B) = Mr·a(M) + Mb·a(B). Needs the reaction mass and the baseplate mass, both entered in the settings wheel (Masses). Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set.
 
 **Reading it.** It should follow the recorded ground force's shape. A large difference between the two means a wrong mass or a bad accelerometer channel.
 
