@@ -24,7 +24,8 @@ proc main*() =
       testDir / "utils" / "assertprobe.nim"]))
     doAssert build.exitCode == 0, "the probe did not build:\n" & build.output
     let (output, code) = execCmdEx(quoteShell(exe))
-    echo output.strip
+    # (the probe's output holds the two checks it makes fail on purpose, so it is shown
+    # only when an assertion below fails)
     doAssert code == 0, "the release probe exited with " & $code & ":\n" & output
     doAssert "Internal display error: Dear ImGui's check" in output, output
   finally:
