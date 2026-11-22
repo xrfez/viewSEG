@@ -50,6 +50,7 @@ type
     vibrators: seq[int]                                 ## the vibrator IDs in the listing, sorted
     signatures: int                                     ## signature files in the listing
     seismic: int                                        ## its seismic files that are not signature files
+    sameDay: bool
 
   FileListOutput* = object
     ## What the window asks for.
@@ -91,6 +92,7 @@ proc refreshValues(ui: var FileListUi; f: FileList) =
   ui.vibrators.setLen 0
   ui.signatures = 0
   ui.seismic = 0
+  ui.sameDay = singleDay(f)
   for e in f.entries:
     if e.kind in SignatureFileKinds:
       inc ui.signatures
@@ -232,7 +234,8 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
     ImGui_TableFlags_Hideable.cint or ImGui_TableFlags_BordersInnerV.cint or
     ImGui_TableFlags_SizingFixedFit.cint
   # one line under the table, two while it has a button (Cancel, "Include subfolders")
-  let lines = if (f.scanning and f.job != NoJob) or f.subfoldersNote.len > 0: 2 else: 1
+  let lines = if (f.scanning and f.job != NoJob) or f.subfoldersNote.len > 0 or
+      ui.signatures > 0: 2 else: 1
   let footer = igGetTextLineHeightWithSpacing() * lines.float32 + igGetStyle().ItemSpacing.y
   let tree = f.recursive # the Folder column is there while subfolders are included
                          # A signature file's columns are there while the listing holds one and the tick is on. A
@@ -253,7 +256,7 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   igTableSetupScrollFreeze(0, 1)
   igTableSetupColumn("Name", (if only: 0 else: ImGui_TableColumnFlags_DefaultSort.cint) or
     (if sweeps: ImGui_TableColumnFlags_WidthFixed.cint else: ImGui_TableColumnFlags_WidthStretch.cint) or
-    ImGui_TableColumnFlags_NoHide.cint, (if sweeps: 13 * igGetFontSize() else: 1'f32), 0)
+    ImGui_TableColumnFlags_NoHide.cint, (if sweeps: 11 * igGetFontSize() else: 1'f32), 0)
   if tree: igTableSetupColumn("Folder", ImGui_TableColumnFlags_WidthStretch.cint, 1, 4)
   # With a signature file's columns the name says what a Type column would, and the size and the
   # time of the file are for the column chooser: the room goes to the sweep.
@@ -269,7 +272,7 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
       var width = 0'f32
       case c
       of fcTrigger:
-        width = 14 * em
+        width = (if ui.sameDay: 9 * em else: 14 * em)
         if only: flags = flags or ImGui_TableColumnFlags_DefaultSort.cint
       of fcController, fcVibrator: width = 5 * em
       of fcLength, fcState, fcLimits: width = 7 * em
@@ -380,7 +383,7 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
       if sweeps:
         for c in SweepColumns:
           discard igTableNextColumn()
-          let cell = sweepCell(f, e, c)
+          let cell = sweepCell(f, e, c, ui.sameDay)
           if cell.text.len > 0:
             let colour = if cell.warn: t.roles[rlWarning] elif cell.muted: t.roles[rlTextDim]
               else: t.roles[rlText]
@@ -416,16 +419,11 @@ proc footer(f: FileList; shown, signatures: int; listed: bool; t: Theme; marks: 
     for e in f.entries:
       if e.kind.isSurvey: inc surveys
     let hidden = if listed: 0 else: signatures # (left out of the table: still in the scan)
-    let seismic = f.entries.len - surveys - hidden
+    let seismic = f.entries.len - surveys - signatures
     text = f.subfoldersNote
-    if text.len == 0:
-      text = $seismic & (if seismic == 1: " seismic file" else: " seismic files")
-      if seismic == 0 and hidden > 0: text = ""
-    if surveys == 1: text.add ", 1 survey file"
+    if text.len == 0: text = fileCountWords(seismic, signatures, surveys, listed)
+    elif surveys == 1: text.add ", 1 survey file"
     elif surveys > 1: text.add ", " & $surveys & " survey files"
-    if hidden > 0:
-      text.add (if text.len > 0: ", " else: "") & $hidden & " signature " &
-        (if hidden == 1: "file" else: "files") & " not listed (Signature files is off)"
     if shown < f.entries.len - hidden: text.add ", " & $shown & " shown"
     var fresh, writing = 0
     for e in f.entries:
@@ -439,7 +437,7 @@ proc footer(f: FileList; shown, signatures: int; listed: bool; t: Theme; marks: 
       text.add "; stopped at " & $MaxTreeFiles & " files: the list is not complete"
       colour = t.roles[rlWarning]
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(colour))
-  igTextUnformatted(text.cstring, nil)
+  igTextWrapped("%s", text.cstring)
   igPopStyleColor(1)
   if f.scanning and f.job != NoJob:
     if igSmallButton("Cancel##filescan"):

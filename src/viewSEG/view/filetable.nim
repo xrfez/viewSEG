@@ -6,7 +6,7 @@
 ## (`FileList.changes`): a scan's batch, or a file that appears, grows or
 ## goes while the folder is watched, is merged into the rows there are.
 
-import std/[algorithm, os, strutils, tables, times]
+import std/[algorithm, math, os, strutils, tables, times]
 import ../core/[filelist, sigtypes]
 
 type
@@ -295,7 +295,7 @@ func lengthText(i: SweepInfo): string =
   if i.samples > 0 and i.intervalUs > 0: secondsWords(float64(i.samples) * i.intervalUs / 1e6)
   else: ""
 
-func sweepCell*(list: FileList; e: FileEntry; column: FileColumn): SweepCell =
+func sweepCell*(list: FileList; e: FileEntry; column: FileColumn; timeOnly = false): SweepCell =
   ## What `column`, one of `SweepColumns`, shows of signature file `e` (empty cells for any
   ## other file, and for what a kind does not give). Reads nothing but the list.
   if e.kind notin SignatureFileKinds: return
@@ -313,9 +313,11 @@ func sweepCell*(list: FileList; e: FileEntry; column: FileColumn): SweepCell =
     if e.kind == fkDat:
       result = SweepCell(text: timeText(own.triggerNs, 3), tip: timeText(own.triggerNs, 9) &
         " UTC")
+      if timeOnly: result.text = result.text[11 .. ^1]
     elif w.triggerFromPair:
       result = SweepCell(text: timeText(w.triggerNs, 3), tip: timeText(w.triggerNs, 9) &
         " UTC, from the .dat of this sweep")
+      if timeOnly: result.text = result.text[11 .. ^1]
     else:
       result = SweepCell(text: "began " & timeText(own.triggerNs, 0)[11 .. ^1], muted: true,
         tip: "a .vib file states only the second its recording began; the trigger is 0.2 to " &
@@ -373,6 +375,36 @@ func sweepCell*(list: FileList; e: FileEntry; column: FileColumn): SweepCell =
       result.tip = "the limits the controller's report prints as tripped (T M V F R): their " &
         "meanings are not known"
   else: discard
+
+func plural(n: int; one, many: string): string =
+  $n & " " & (if n == 1: one else: many)
+
+func fileCountWords*(seismic, signatures, surveys: int; listed: bool): string =
+  ## What the list holds, under the table: "11 signature files", "3 seismic files, 8 signature
+  ## files", with the survey files; with the tick off the signature files are said not to be
+  ## listed (short: the line must fit the default Files window).
+  var parts: seq[string] = @[]
+  if seismic > 0 or (signatures == 0 and surveys == 0): parts.add plural(seismic, "seismic file", "seismic files")
+  if signatures > 0:
+    parts.add plural(signatures, "signature file", "signature files") &
+      (if listed: "" else: " hidden (tick off)")
+  if surveys > 0: parts.add plural(surveys, "survey file", "survey files")
+  parts.join(", ")
+
+func dayOf*(ns: int64): int64 =
+  ## The UTC day (since 1970) of `ns`.
+  floorDiv(ns, 86_400_000_000_000'i64)
+
+func singleDay*(list: FileList): bool =
+  ## Whether every signature file of the list that has a readable header lies on one UTC day:
+  ## the Trigger column then drops the date and keeps the time, which tells the sweeps apart.
+  var day = low(int64)
+  for e in list.entries:
+    if e.kind in SignatureFileKinds and e.sweep.problem.len == 0:
+      let d = dayOf(e.sweep.triggerNs)
+      if day == low(int64): day = d
+      elif d != day: return false
+  day != low(int64)
 
 func sizeText*(bytes: int64): string =
   ## "812 B", "4.2 KB", "65.1 MB", "1.27 GB" (powers of 1000, as file

@@ -272,6 +272,37 @@ proc main*() =
       doAssert t.rows.len == 10, $t.rows.len
       st.shutdown()
 
+  block wordsAndDay:
+    doAssert fileCountWords(0, 11, 0, true) == "11 signature files"
+    doAssert fileCountWords(3, 8, 0, true) == "3 seismic files, 8 signature files"
+    doAssert fileCountWords(1, 1, 2, true) == "1 seismic file, 1 signature file, 2 survey files"
+    doAssert fileCountWords(0, 11, 0, false) == "11 signature files hidden (tick off)"
+    doAssert fileCountWords(4, 0, 0, true) == "4 seismic files" and
+      fileCountWords(0, 0, 0, true) == "0 seismic files"
+    doAssert fileCountWords(0, 11, 0, false).len <= 40, "must fit the default Files window"
+    withFixtures fx:
+      let f = build(fx, "day")
+      var st = listed(f.root, fx)
+      # every sweep is on 2001-02-03: the Trigger column shows the time only
+      doAssert singleDay(st.fileList)
+      let (dat, vib) = f.pairs[3]
+      let d = st.fileList.entries[st.fileList.find(dat)]
+      doAssert sweepCell(st.fileList, d, fcTrigger, true).text == "04:05:30.500"
+      doAssert sweepCell(st.fileList, d, fcTrigger).text == "2001-02-03 04:05:30.500"
+      doAssert sweepCell(st.fileList, d, fcTrigger, true).tip.startsWith("2001-02-03 04:05:30")
+      doAssert sweepCell(st.fileList, st.fileList.entries[st.fileList.find(vib)], fcTrigger,
+        true).text == "04:05:30.500" # (a paired .vib shows its .dat's trigger)
+      # a sweep of another day: the date stays
+      discard datFile(f.root / "4321" / Date, "next.dat", SynthDat(samples: 600,
+        trigger: DatTime(year: 2001, month: 2, day: 4, hour: 1, minute: 2, second: 3)))
+      st.apply Command(kind: ckBrowse, paths: @[f.root])
+      doAssert st.settle(not st.fileList.scanning)
+      st.apply Command(kind: ckSubfolders, subfolders: false)
+      st.apply Command(kind: ckSubfolders, subfolders: true)
+      doAssert st.settle(not st.fileList.scanning and st.fileList.entries.len == 75)
+      doAssert not singleDay(st.fileList)
+      st.shutdown()
+
   block tickOff:
     withFixtures fx:
       let f = build(fx, "day")
