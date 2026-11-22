@@ -41,6 +41,7 @@ func asPreset*(d: DisplaySettings): DisplaySettings =
   result.visible = true
   result.orientation = DisplaySettings().orientation
   result.firstBreaks = false
+  result.breakModel = BreakModel()
 
 func withPreset*(shown, preset: DisplaySettings): DisplaySettings =
   ## `preset` drawn on a plot whose display is `shown`: its orientation
@@ -48,6 +49,7 @@ func withPreset*(shown, preset: DisplaySettings): DisplaySettings =
   result = asPreset(preset)
   result.orientation = shown.orientation
   result.firstBreaks = shown.firstBreaks
+  result.breakModel = shown.breakModel
 
 func sameValue[T](a, b: T): bool =
   ## `a == b`, field by field, a number that is not a number equal to

@@ -1,0 +1,161 @@
+## The first-break overlay's model in the running frontend, headless, driven by real clicks:
+## a click on the key opens where the model comes from; "Use this record's fit" keeps the
+## record's fitted velocity and intercept as the given model; with a given model held for
+## the record, whose source is named wrongly (offsets 400 m too long), the bars sit off the
+## picks, the key reads "model (given: 2500 m/s)" and says how far the record is off, and
+## "Fitted to this record" gives the fit back.
+##
+## With `VIEWSEG_SCREENSHOTS=<dir>` the window is saved with the popover open and with the
+## given model on the moved record (breakmodel-*.png); with `VIEWSEG_SHOT_FILE` too, that file
+## (a shot of the land sample) is shown instead of the synthetic one.
+##
+## Seen to fail: with the click on the key not opening the popover, "the key did not open
+## the popover"; with "Use this record's fit" not switching to Given, "the fit was not kept as
+## the given model"; with the key's word left "model", "the key does not say it is given".
+##
+## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
+
+import std/[monotimes, options, os, strutils]
+import std/math
+import parseSEG
+import viewSEG/core/[breakmodel, firstbreaks, geometry, join, panels, state]
+import viewSEG/ui/imgui/app
+import utils/[breakfiles, fixtures, waiting]
+
+var waited = 0 ## frames since the step's action
+
+type
+  Step = object
+    name: string
+    act: proc (f: FrameInfo)
+    done: proc (f: FrameInfo): bool
+
+func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
+
+template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
+
+proc click(f: FrameInfo; at: Vec2) =
+  f.moveMouse(at)
+  f.pressMouse(at, true)
+  f.pressMouse(at, false)
+
+proc ready(f: FrameInfo): bool =
+  f.panel.laidOut and f.core.tiles(f.core.findPanel(MainPanel)).len > 0 and
+    f.core.jobs.active.len == 0 and f.markOf("plot.data").size.x > 0
+
+proc shown(f: FrameInfo): bool =
+  let i = f.core.breaksIndex(f.core.findPanel(MainPanel))
+  i >= 0 and f.core.firstBreaks[i].state == bkDone and f.markOf("plot.first break key").size.x > 0
+
+proc moved(i: int; k: var TraceKeys): float64 =
+  k.offset = offsetOf(i) + 400
+  arrivalMs(offsetOf(i))
+
+proc runSteps(name: string; opts: RunOptions; steps: seq[Step]) =
+  var at = 0
+  var started = false
+  var wait = 0
+  var since = getMonoTime()
+  var failed = ""
+  proc onFrame(f: FrameInfo) =
+    if at >= steps.len or failed.len > 0:
+      f.stop()
+      return
+    if not started:
+      steps[at].act(f)
+      started = true
+      (wait, since) = (0, getMonoTime())
+    else:
+      inc wait
+      waited = wait
+      if wait >= 3 and steps[at].done(f):
+        inc at
+        started = false
+      elif overdue(wait, 400, since):
+        failed = name & ": " & steps[at].name & " did not happen"
+        f.stop()
+  var o = opts
+  o.onFrame = onFrame
+  let code = run(o)
+  doAssert code == 0, name & ": run() exit code " & $code
+  doAssert failed.len == 0, failed
+  doAssert at == steps.len, name & ": stopped at " & steps[min(at, steps.high)].name
+
+proc main*() =
+  withFixtures fx:
+    let shots = getEnv("VIEWSEG_SCREENSHOTS")
+    let file = if getEnv("VIEWSEG_SHOT_FILE").len > 0: getEnv("VIEWSEG_SHOT_FILE")
+               else: fx.customShot("moved.sgy", Traces, moved)
+    let config = fx.dir / "config-model"
+    createDir(config)
+    let opts = RunOptions(openPaths: @[file], windowSize: (1400, 900), theme: forceDark,
+      persist: true, configDir: some(config), logDir: some(fx.dir / "logs"),
+      indexCacheDir: some(fx.dir / "cache"), userThemeDir: some(fx.dir / "no-user-themes"),
+      assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]))
+    var steps: seq[Step]
+    proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+      steps.add Step(name: name, act: act, done: done)
+    proc noop(f: FrameInfo) = discard
+    proc shoot(f: FrameInfo; what: string) =
+      if shots.len > 0:
+        createDir(shots)
+        doAssert f.savePng(shots / ("breakmodel-" & what & ".png")), "cannot save " & what
+    func display(f: FrameInfo): DisplaySettings = f.panel.layers[0].display
+    func now(f: FrameInfo): FirstBreaks =
+      f.core.shownBreaks(f.core.findPanel(MainPanel))
+
+    step("opened", noop, proc (f: FrameInfo): bool = f.ready)
+    step("the overlay on", proc (f: FrameInfo) =
+      var d = f.display
+      d.firstBreaks = true
+      f.apply(Command(kind: ckDisplay, panel: MainPanel, display: d)),
+      proc (f: FrameInfo): bool = f.ready and f.shown and f.markOf("plot.first break key").size.x > 0)
+    step("a click on the key", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break key").centre), proc (f: FrameInfo): bool =
+      result = f.markOf("plot.first break model use fit").size.x > 0
+      doAssert waited < 200 or result, "the key did not open the popover"
+      if result:
+        f.shoot("popover-fitted"))
+    step("move onto the button", proc (f: FrameInfo) =
+      f.moveMouse(f.markOf("plot.first break model use fit").centre), proc (f: FrameInfo): bool =
+      waited > 5)
+    step("use this record's fit", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break model use fit").centre), proc (f: FrameInfo): bool =
+      result = f.display.breakModel.source == bmGiven
+      doAssert waited < 200 or result, "the fit was not kept as the given model"
+      if result:
+        let m = f.display.breakModel
+        let raw = f.core.firstBreaks[f.core.breaksIndex(f.core.findPanel(MainPanel))]
+        doAssert m.v1 == raw.fit.v1 and m.interceptMs == raw.fit.interceptMs, $m
+        doAssert "(given: " in f.now.keyWord(suMetres), "the key does not say it is given")
+    step("the popover with the given numbers", noop, proc (f: FrameInfo): bool =
+      result = f.markOf("plot.first break model v1").size.x > 0 and f.shown
+      if result: f.shoot("popover-given"))
+    step("a model held from another record", proc (f: FrameInfo) =
+      var d = f.display
+      d.breakModel = BreakModel(source: bmGiven, v1: 2500, interceptMs: 20)
+      f.apply(Command(kind: ckDisplay, panel: MainPanel, display: d)),
+      proc (f: FrameInfo): bool =
+      let synthetic = getEnv("VIEWSEG_SHOT_FILE").len == 0
+      result = f.shown and f.now.isGiven and (f.now.medianDiffMs < -100 or not synthetic)
+      if result and synthetic:
+        doAssert f.now.offModel * 10 > f.now.compared * 9, $f.now.offModel
+        doAssert "median" in f.now.statusWords
+      if result: f.shoot("moved-source"))
+    proc reopen(f: FrameInfo) =
+      if f.markOf("plot.first break model fitted").size.x == 0:
+        f.click(f.markOf("plot.first break key").centre)
+    step("the popover again", reopen, proc (f: FrameInfo): bool =
+      f.markOf("plot.first break model fitted").size.x > 0 and waited > 5)
+    step("move onto Fitted", proc (f: FrameInfo) =
+      f.moveMouse(f.markOf("plot.first break model fitted").centre), proc (f: FrameInfo): bool =
+      waited > 5)
+    step("fitted again", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break model fitted").centre), proc (f: FrameInfo): bool =
+      result = f.display.breakModel.source == bmFitted and not f.now.isGiven
+      doAssert waited < 200 or result, "Fitted to this record did not give the fit back")
+    runSteps("model", opts, steps)
+  echo "tguibreakmodel: ok"
+
+when isMainModule:
+  main()

@@ -129,6 +129,12 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     elif keys[i].isSeismic and not x.isNaN:
       any = true
       if jgDerived in f.index.joinedGroups(traces.a + i): surveyed = true
+  result.offsetAbs = newSeq[float64](n)
+  for i in 0 ..< n:
+    result.offsetAbs[i] = if keys[i].isSeismic and not keys[i].offset.isNaN: abs(keys[i].offset)
+                          else: NaN
+  for r in dead:
+    if r in 0 ..< n: result.offsetAbs[r] = NaN # a killed trace has no bars
   result.picks = picks
   result.source = if not any: bsNone elif surveyed: bsSurvey else: bsFile
   if not any: return

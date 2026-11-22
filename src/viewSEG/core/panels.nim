@@ -62,9 +62,10 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/gain/[curves, gain]
 import processSEG/vibroseis/sweep
-import colourmaps, components, geometry, orientation, processing, session, viewport, zoom
+import breakmodel, colourmaps, components, geometry, orientation, processing, session, viewport, zoom
 
-export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, orientation, processing,
+export breakmodel, pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, orientation,
+    processing,
   GatherKind, NormScope, NormStat, ColourMap
 
 type
@@ -180,6 +181,9 @@ type
       ## the first-break overlay (`core/firstbreaks`) is drawn: a bar at the
       ## time the model expects each trace's first break and another at the
       ## pick. Off by default; like the orientation, not part of a preset
+    breakModel*: BreakModel
+      ## where the overlay's model comes from: fitted to the record, or the velocity
+      ## model the user gives (`core/breakmodel`); not part of a preset either
 
   Layer* = object
     source*: LayerSource
@@ -584,6 +588,7 @@ func bounded*(d: DisplaySettings): DisplaySettings =
   result.untilMs = within(d.untilMs, MinUntilMs, MaxUntilMs, defaults.untilMs)
   result.clipPercentile = within(d.clipPercentile, MinClipPercentile, 100.0,
     defaults.clipPercentile)
+  result.breakModel = d.breakModel.bounded
 
 func drawsWiggles*(d: DisplaySettings): bool {.inline.} =
   ## Whether a layer drawn with `d` shows wiggles: in the wiggle modes, at

@@ -1398,16 +1398,21 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
               if wf in nd.fills: nd.fills.excl wf else: nd.fills.incl wf
               res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
         igSameLine(0, 2)
-        let bi = st.breaksIndex(st.findPanel(p.id))
+        let pk = st.findPanel(p.id)
+        let shownBreaks = st.shownBreaks(pk)
         if symbolButton(syFirstBreaks, icon, t, marks, selected = d.firstBreaks,
             markPrefix = "plot.", turned = turned, note = breakTip(d.firstBreaks,
-            if bi >= 0: st.firstBreaks[bi] else: FirstBreaks())):
+            shownBreaks)):
           var nd = d
           nd.firstBreaks = not d.firstBreaks
           res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
         if d.firstBreaks:
-          drawBreakKey(if bi >= 0: st.firstBreaks[bi] else: FirstBreaks(),
-            st.breakOffsetUnit(st.findPanel(p.id)), t, icon, marks)
+          let unit = st.breakOffsetUnit(pk)
+          let chosen = drawBreakKey(shownBreaks, unit, d.breakModel, t, icon, marks)
+          if chosen.changed:
+            var nd = d
+            nd.breakModel = chosen.model
+            res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
     of sgGain:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         drawGainControls(p, tp.gainBox, t, marks, res.commands, res.notes)
@@ -2583,7 +2588,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     block firstBreaks:
       let bi = st.breaksIndex(k)
       if layer.display.firstBreaks and bi >= 0:
-        let g = breakGeometry(st.firstBreaks[bi], p.shown, p.layout, view, turn,
+        let g = breakGeometry(st.shownBreaks(k), p.shown, p.layout, view, turn,
           Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y)))
         drawBreakMarks(g, ink, marks)
     if edited:
@@ -2672,7 +2677,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
                  else: pick(tiles, p.layout, view, plot, vec2(mouse.x, mouse.y), turn)
       if layer.display.firstBreaks and res.pick.found and res.pick.trace >= 0:
         let bi = st.breaksIndex(k)
-        if bi >= 0: res.pick.breaks = st.firstBreaks[bi].readoutText(res.pick.trace)
+        if bi >= 0: res.pick.breaks = st.shownBreaks(k).readoutText(res.pick.trace)
       if st.settings.cursorLine and res.pick.inside:
         tp.drawCursorLine(mouse, pos, size, turn, res.pick.at.tMs, p.layout.dtMs, ink, t, marks)
         if res.pick.found and res.pick.position >= 0:

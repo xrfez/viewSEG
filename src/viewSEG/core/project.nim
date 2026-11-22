@@ -19,7 +19,7 @@
 
 import std/[os, strutils, times]
 import parseSEG
-import displaypresets, filesystem, join, nif, processing, vendormaps
+import breakmodel, displaypresets, filesystem, join, nif, processing, vendormaps
 
 const
   ProjectFileName* = "project.nif"       ## the project document, in the project folder
@@ -91,6 +91,8 @@ type
     processing*: Processing        ## the plot's filters in the project
     hasProcessing*: bool           ## `processing` was set in the project (else the user's stand)
     hasPresets*: bool              ## `displayPresets` were set in the project (else the user's)
+    breakModel*: BreakModel        ## the first-break overlay's model in the project
+    hasBreakModel*: bool           ## `breakModel` was set in the project (else the user's)
     referenceId*: string
       ## the reference the plots use in this project; "" is the file's own pilot
     lastFolder*: string

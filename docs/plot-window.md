@@ -588,6 +588,20 @@ The setting is the window's, off in a new one until turned on, and kept with the
 display (`firstBreaks` in `settings.nif`) so a new plot starts as the last was left; a display
 preset does not carry it.
 
+**The model's source.** By default the model is fitted to the record's own picks, so it follows
+the record and cannot show a source at the wrong place. Click the key ("model", "pick") to give
+a model instead: a velocity (in the offsets' unit per second), an intercept in ms (0 by
+default) and, optionally, a second velocity beyond a crossover offset (the same two-segment
+shape as the fit, continuous at the crossover). The expected break of every trace with an
+offset is then the intercept plus its offset over the velocity, the same for every record; the
+key reads "model (given: 2500 m/s)", the line joining model and pick uses the same 12 ms limit,
+and the key's note gives the record's median of pick less model and how many traces are more
+than 12 ms off. **Use this record's fit** copies the fitted numbers of the record shown into
+the boxes and switches to Given: a model calculated once on a good record and held for the
+others. It is kept in the project when one is open, else in the settings (`breakModel` inside
+the plot's display in `settings.nif`; a preset does not carry it). The noisy-trace test's
+exclusion area keeps using the fitted model.
+
 ## Polarity
 
 Reversing the polarity turns the trace data 180 degrees out of phase: an operation on the

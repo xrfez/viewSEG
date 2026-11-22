@@ -401,7 +401,20 @@ proc breaksJson(b: FirstBreaks; unit: SurveyUnit): JsonNode =
   ## What the first-break overlay's model is (`core/firstbreaks`), for the panel's `state`.
   result = %*{"state": $b.state, "picked": b.picked, "modelled": b.modelled,
     "offsetsFrom": $b.source, "words": b.modelWords(unit)}
-  if b.segments > 0:
+  result["model"] = %(if b.isGiven: "given" else: "fitted")
+  if b.isGiven:
+    let m = b.given
+    result["velocityUnit"] = %unit.velocityUnit
+    result["velocities"] = %(if m.segments == 2: @[m.v1, m.v2] else: @[m.v1])
+    result["interceptMs"] = %m.interceptMs
+    result["crossover"] = (if m.segments == 2: %m.crossover else: newJNull())
+    result["comparedTraces"] = %b.compared
+    result["offModelTraces"] = %b.offModel
+    result["offLimitMs"] = %OffModelMs
+    result["medianPickMinusModelMs"] = (if b.medianDiffMs.isNaN: newJNull()
+      else: %b.medianDiffMs)
+    result["picksUsed"] = %b.used
+  elif b.segments > 0:
     result["velocityUnit"] = %unit.velocityUnit
     result["velocities"] = %(if b.segments == 1: @[b.fit.v1] else: @[b.fit.v1, b.fit.v2])
     result["interceptMs"] = %b.fit.interceptMs
@@ -429,8 +442,8 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
           result["record"] = toJson(state.sessions[i].records[g])
     result["display"] = toJson(layer.display)
     if layer.display.firstBreaks:
-      let bi = state.breaksIndex(k)
-      if bi >= 0: result["firstBreaks"] = breaksJson(state.firstBreaks[bi], state.breakOffsetUnit(k))
+      if state.breaksIndex(k) >= 0:
+        result["firstBreaks"] = breaksJson(state.shownBreaks(k), state.breakOffsetUnit(k))
     let shown = state.settings.displayPresets.shownPreset(layer.display)
     result["displayPreset"] = %(if shown >= 0: state.settings.displayPresets[shown].name else: "")
     result["filter"] = toJson(layer.filter)

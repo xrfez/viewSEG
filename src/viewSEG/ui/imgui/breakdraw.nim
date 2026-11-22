@@ -6,8 +6,9 @@
 ## The bars are marked ("plot.first break model N", "plot.first break pick N",
 ## "plot.first break link N" for the first few in view) for tests.
 
+import std/math
 import imguin/cimgui
-import ../../core/[firstbreaks, geometry, join, orientation, viewport]
+import ../../core/[breakmodel, firstbreaks, geometry, join, orientation, viewport]
 import ../../view/[areabands, breakbars, plotink, theme]
 import marks, style
 
@@ -60,16 +61,88 @@ proc drawBreakMarks*(g: BreakGeometry; ink: PlotInk; marks: var Marks) =
           inc drawn
   ImPlot_PopPlotClipRect()
 
-proc drawBreakKey*(b: FirstBreaks; unit: SurveyUnit; t: Theme; height: float32;
-    marks: var Marks) =
+const BreakPopup = "##breakModel"
+
+proc numberBox(id: string; value: float64; format: string; typed: var float64): bool =
+  ## A box for a number that acts as it is typed: true on each change, the value in `typed`.
+  var v = cdouble(value)
+  igSetNextItemWidth(round(igCalcTextSize("00000000.0", nil, false, -1).x +
+    2 * igGetStyle().FramePadding.x))
+  result = igInputDouble(id.cstring, addr v, 0, 0, format.cstring, 0)
+  typed = float64(v)
+
+proc drawModelChoice(b: FirstBreaks; unit: SurveyUnit; m: var BreakModel; t: Theme;
+    marks: var Marks): bool =
+  ## The popover's content: where the model comes from, the given one's numbers, and the
+  ## button that keeps this record's fit as the given model. True when `m` changed.
+  igTextUnformatted("Where the first-break model comes from", nil)
+  for src in BreakModelSource:
+    if igRadioButton_Bool(($src).cstring, m.source == src) and m.source != src:
+      m.source = src
+      result = true
+    marks.mark("plot.first break model " & (if src == bmFitted: "fitted" else: "given"))
+  if m.source == bmFitted:
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    igTextWrapped("A straight-line refraction fit to this record's own picks. It follows " &
+      "the record, so it cannot show a source at the wrong place: give a model for that.")
+    igPopStyleColor(1)
+  else:
+    let v = unit.velocityShort
+    var typed = 0.0
+    if numberBox("##breakV1", m.v1, "%.1f", typed):
+      m.v1 = typed
+      result = true
+    marks.mark("plot.first break model v1")
+    igSameLine(0, -1)
+    igTextUnformatted(("velocity, " & v).cstring, nil)
+    if numberBox("##breakA", m.interceptMs, "%.1f", typed):
+      m.interceptMs = typed
+      result = true
+    marks.mark("plot.first break model intercept")
+    igSameLine(0, -1)
+    igTextUnformatted("intercept, ms", nil)
+    if numberBox("##breakV2", m.v2, "%.1f", typed):
+      m.v2 = typed
+      result = true
+    marks.mark("plot.first break model v2")
+    igSameLine(0, -1)
+    igTextUnformatted(("second velocity, " & v & " (0: none)").cstring, nil)
+    if numberBox("##breakXc", m.crossover, "%.1f", typed):
+      m.crossover = typed
+      result = true
+    marks.mark("plot.first break model crossover")
+    igSameLine(0, -1)
+    igTextUnformatted("beyond this offset", nil)
+    if m.v1 <= 0:
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+      igTextWrapped("Give a velocity: until then the model fitted to the record is shown.")
+      igPopStyleColor(1)
+  let fit = b.fitAsModel
+  igBeginDisabled(fit.v1 <= 0)
+  if igButton("Use this record's fit", ImVec2_c(x: 0, y: 0)):
+    m = fit
+    result = true
+  igEndDisabled()
+  marks.mark("plot.first break model use fit")
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+  igTextWrapped("Copies this record's fitted velocity, intercept and crossover and holds " &
+    "them for every record: a pick off the model then points to a wrong source or station.")
+  igPopStyleColor(1)
+  m = m.bounded
+
+proc drawBreakKey*(b: FirstBreaks; unit: SurveyUnit; model: BreakModel; t: Theme;
+    height: float32; marks: var Marks): tuple[changed: bool; model: BreakModel] =
   ## The key, in the strip right of the overlay's button (never over the
-  ## traces): a swatch and a word for each bar, then the overlay's own words
-  ## while it is working, failed or has no model or fits one kind of sensor
-  ## (`statusWords`), in dim text. One item `height` high. Hovering the key says what the
-  ## model is (`modelWords`; `unit` is the offsets').
+  ## traces): a swatch and a word for each bar ("model (given: 2500 m/s)" when the model
+  ## is the given one), then the overlay's own words while it is working, failed or has no
+  ## model or fits one kind of sensor (`statusWords`), in dim text. One item `height` high.
+  ## Hovering the key says what the model is (`modelWords`; `unit` is the offsets'); a click
+  ## opens where the model comes from (fitted, or `model` the user gives), and the
+  ## result says whether the user changed it.
+  result = (false, model)
   let dl = igGetWindowDrawList()
   let u = max(1'f32, igGetFontSize() / 15)
-  let words = ["model", "pick"]
+  let words = [b.keyWord(unit), "pick"]
   let swatch = 18 * u
   let h = igGetTextLineHeight()
   let note = b.statusWords
@@ -79,10 +152,19 @@ proc drawBreakKey*(b: FirstBreaks; unit: SurveyUnit; t: Theme; height: float32;
   if note.len > 0: width += igCalcTextSize(note.cstring, nil, false, -1).x
   igSameLine(0, 12 * u)
   let top = igGetCursorScreenPos()
-  igDummy(ImVec2_c(x: width, y: height))
+  if igInvisibleButton("##breakKey", ImVec2_c(x: width, y: height), 0):
+    igOpenPopup_Str(BreakPopup, 0)
   let what = b.modelWords(unit)
-  if what.len > 0 and igIsItemHovered(0):
+  if what.len > 0 and igIsItemHovered(0) and not igIsPopupOpen_Str(BreakPopup, 0):
     igSetTooltip("%s", what.cstring)
+  var m = model
+  igSetNextWindowPos(ImVec2_c(x: top.x, y: top.y + height), ImGuiCond_Appearing.cint,
+    ImVec2_c(x: 0, y: 0))
+  if igBeginPopup(BreakPopup, 0):
+    igPushTextWrapPos(igGetCursorPosX() + 28 * igGetFontSize())
+    if drawModelChoice(b, unit, m, t, marks): result = (true, m)
+    igPopTextWrapPos()
+    igEndPopup()
   let y = top.y + (height - h) / 2
   var x = top.x
   for i, w in words:

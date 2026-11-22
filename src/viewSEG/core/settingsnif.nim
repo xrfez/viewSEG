@@ -75,7 +75,8 @@
 ## making old files unreadable.
 
 import std/[math, strutils]
-import analysis, geometry, join, log, nif, noisearea, panels, plotoptions, readout, scales, settings,
+import analysis, breakmodel, geometry, join, log, nif, noisearea, panels, plotoptions, readout,
+    scales, settings,
   tracetable, units
 
 export nif
@@ -184,6 +185,18 @@ proc keys(w: var NifWriter; order: openArray[SortKey]) =
     if k.descending: w.ident "descending"
     w.close()
 
+const BreakSourceNames: array[BreakModelSource, string] = ["fitted", "given"]
+
+proc writeBreakModel*(w: var NifWriter; m: BreakModel) =
+  ## `m` as a `(breakModel ...)` tree (the project document keeps one too).
+  w.open("breakModel")
+  w.choice("source", BreakSourceNames[m.source])
+  w.value("v1", m.v1)
+  w.value("interceptMs", m.interceptMs)
+  w.value("v2", m.v2)
+  w.value("crossover", m.crossover)
+  w.close()
+
 proc display(w: var NifWriter; d: DisplaySettings; turned = true) =
   ## `d`'s settings; its orientation only when `turned` (a display preset
   ## has none).
@@ -194,6 +207,7 @@ proc display(w: var NifWriter; d: DisplaySettings; turned = true) =
   w.close()
   w.value("overlap", d.overlap)
   if d.firstBreaks: w.value("firstBreaks", true)
+  if d.breakModel != BreakModel(): w.writeBreakModel(d.breakModel)
   w.choice("colours", ColourNames[d.colours])
   w.open("custom")
   for (tag, c) in [("background", d.custom.background), ("line", d.custom.line),
@@ -604,6 +618,27 @@ proc strings(r: var Reading; n: NifNode; x: var seq[string]) =
     elif v.text notin got and got.len < MaxRecent: got.add v.text
   x = got
 
+proc breakModel(r: var Reading; n: NifNode; m: var BreakModel) =
+  for c in n.kids:
+    if c.kind != nkTree: r.unknown(c, "breakModel")
+    else:
+      case c.tag
+      of "source": r.choice(c, BreakSourceNames, m.source)
+      of "v1": r.number(c, 0, MaxBreakVelocity, m.v1)
+      of "interceptMs": r.number(c, -MaxBreakIntercept, MaxBreakIntercept, m.interceptMs)
+      of "v2": r.number(c, 0, MaxBreakVelocity, m.v2)
+      of "crossover": r.number(c, 0, MaxBreakCrossover, m.crossover)
+      else: r.unknown(c, "breakModel")
+  m = m.bounded
+
+proc readBreakModel*(n: NifNode; name: string; base: BreakModel;
+    problems: var seq[string]): BreakModel =
+  ## The model a `(breakModel ...)` tree written by `writeBreakModel` holds, over `base`.
+  var r = Reading(name: name)
+  result = base
+  r.breakModel(n, result)
+  problems.add r.problems
+
 proc display(r: var Reading; n: NifNode; d: var DisplaySettings) =
   for c in n.kids:
     if c.kind != nkTree:
@@ -622,6 +657,7 @@ proc display(r: var Reading; n: NifNode; d: var DisplaySettings) =
         if ok: d.fills = fills
       of "overlap": r.number(c, MinOverlap, MaxOverlap, d.overlap)
       of "firstBreaks": r.flag(c, d.firstBreaks)
+      of "breakModel": r.breakModel(c, d.breakModel)
       of "colours": r.choice(c, ColourNames, d.colours)
       of "custom":
         for k in c.kids:

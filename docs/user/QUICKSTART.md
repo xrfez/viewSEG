@@ -608,7 +608,14 @@ corner says so. Point at the key ("model", "pick") and it says what the model is
 straight-line refraction fit to this record's own picks against offset, with no velocity
 typed in, the fitted velocity (or two, with the offset where they change) in the offsets'
 unit per second, the intercept in ms, how many picks it was fitted to and where the offsets
-came from (the survey or the file's headers). A killed trace has no bars. With the pointer on a trace the status bar adds
+came from (the survey or the file's headers). Click the key to **give a model instead**: a
+velocity, an intercept (ms, 0 by default) and optionally a second velocity beyond a crossover
+offset, held for every record. A model fitted to each record follows its picks and so hides a
+source named or placed wrongly; a given one does not, so use it to check geometry: the bars sit
+on the picks where source and stations are right, and the key's note says how far the record
+is off ("median pick less model -160 ms, 45 of 47 traces off by more than 12 ms"). **Use this
+record's fit** copies the fit of a good record into the boxes to hold for the others. The model
+is kept in the project when one is open, else in the settings. A killed trace has no bars. With the pointer on a trace the status bar adds
 the model's time, the pick's and their difference. It is off until you turn it on, and
 works in the background, so stepping through records is not held up.
 

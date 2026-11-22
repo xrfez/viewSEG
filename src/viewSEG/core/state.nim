@@ -760,6 +760,7 @@ type
     userArrangement: string         ## the user's own window arrangement, back when the project closes
     userPresets: seq[DisplayPreset] ## the presets in effect before it opened, back when it closes
     userProcessing: Processing      ## the plot's filters in effect before it opened, back when it closes
+    userBreakModel: BreakModel      ## the first-break model in effect before it opened, back when it closes
     by: CommandOrigin               ## who opened it
 
   JoinOutcome* = enum
@@ -5503,6 +5504,7 @@ proc leaveProject(state: var AppState; restoreUser: bool) =
   var s = state.settings
   if p.doc.hasPresets: s.displayPresets = p.userPresets
   if p.doc.hasProcessing: s.plot.processing = p.userProcessing
+  if p.doc.hasBreakModel: s.plot.display.breakModel = p.userBreakModel
   state.takeSettings(s)
   if restoreUser and p.userArrangement.len > 0:
     state.loaded = Layout(imgui: p.userArrangement)
@@ -5739,6 +5741,8 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   let userPresets = if wasIn and p.doc.hasPresets: p.userPresets else: state.settings.displayPresets
   let userProcessing = if wasIn and p.doc.hasProcessing: p.userProcessing
                        else: state.settings.plot.processing
+  let userBreakModel = if wasIn and p.doc.hasBreakModel: p.userBreakModel
+                       else: state.settings.plot.display.breakModel
   if wasIn: state.leaveProject(restoreUser = false)
   elif not news.created:
     state.saveProject()
@@ -5751,7 +5755,8 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   p = ProjectState(dir: dir, doc: move news.doc, lock: news.lock, owner: news.owner,
     folders: move news.folders, originals: move news.originals, by: by,
     userArrangement: userArrangement, userPresets: userPresets,
-    userProcessing: userProcessing, surveyJob: NoJob, lookJob: NoJob, originalsJob: NoJob, job: NoJob)
+    userProcessing: userProcessing, userBreakModel: userBreakModel, surveyJob: NoJob,
+    lookJob: NoJob, originalsJob: NoJob, job: NoJob)
   p.readOnly = not p.lock.locked or p.doc.version > ProjectVersion
   p.whyReadOnly = if not p.lock.locked and p.lock.failure.len > 0:
                     "the project's lock file cannot be opened (" & p.lock.failure & ")"
@@ -5777,6 +5782,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   var s = state.settings
   if p.doc.hasPresets: s.displayPresets = p.doc.displayPresets
   if p.doc.hasProcessing: s.plot.processing = p.doc.processing
+  if p.doc.hasBreakModel: s.plot.display.breakModel = p.doc.breakModel
   state.takeSettings(s)
   if news.layout.len > 0:
     state.loaded = Layout(imgui: news.layout)
@@ -6439,6 +6445,14 @@ func qcRelations(state: AppState; domain: RelationDomain): (ref SurveyGeometry, 
   elif not state.spreads.relations.isNil and state.spreads.relations[].relationCount(domain) > 0:
     (state.spreads.relations, "the template generated")
   else: (nil, "")
+
+func shownBreaks*(state: AppState; k: int): FirstBreaks =
+  ## The first-break result of record panel `panels[k]` as its overlay shows it: with the
+  ## model it was given, when the panel's display gives one (`withModel`); an empty
+  ## result (`bkComputing`) when it has none.
+  let bi = state.breaksIndex(k)
+  if bi < 0: return FirstBreaks()
+  state.breaks[bi].withModel(state.panels[k].layers[0].display.breakModel)
 
 func breakOffsetUnit*(state: AppState; k: int): SurveyUnit =
   ## The unit of the offsets the first-break model of the record panel `panels[k]` shows
@@ -8675,8 +8689,18 @@ proc applyCommand(state: var AppState; cmd: Command) =
         swap(p.view.columns, p.view.rows)
       # what this command changed in the display; a new mode leaves the
       # gain as the user had it, whatever an agent made it meanwhile
+      var kept = remembered(d)
+      let modelChanged = d.breakModel != was.breakModel
+      if state.inProject: kept.breakModel = state.settings.plot.display.breakModel
       state.change(cmd.origin, s):
-        s.plot.display = carried(s.plot.display, state.settings.plot.display, remembered(d))
+        s.plot.display = carried(s.plot.display, state.settings.plot.display, kept)
+      if modelChanged and state.inProject:
+        # the project's model: kept in it, not in the user's settings
+        state.change(coAgent, s): s.plot.display.breakModel = d.breakModel
+        if keeps(cmd.origin) and not state.project.readOnly:
+          state.project.doc.breakModel = d.breakModel
+          state.project.doc.hasBreakModel = true
+          state.projectChanged()
       # New limits (a wiggle mode's widest view, the margin of the overlap,
       # a turn): the view stays where it is, a wider one (from density, or
       # a turn to fewer pixels along the traces) narrowed keeping its first

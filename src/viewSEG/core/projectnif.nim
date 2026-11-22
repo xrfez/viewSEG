@@ -30,7 +30,7 @@
 ## it can; the program then opens the project read-only.
 
 import std/[strutils, times]
-import identity, join, nif, processing, project, settingsnif, vendormaps
+import breakmodel, identity, join, nif, processing, project, settingsnif, vendormaps
 
 const
   KindNames: array[JoinFileKind, string] = ["sps", "p1", "csv"]
@@ -150,6 +150,7 @@ proc projectDocument*(d: ProjectDoc): string =
   of vmNone: w.value("vendorMap", "") # (a named map is never empty)
   if d.hasProcessing: w.writeProcessing(d.processing)
   if d.hasPresets: w.writeDisplayPresets(d.displayPresets)
+  if d.hasBreakModel: w.writeBreakModel(d.breakModel)
   for n in d.later: w.add n
   w.close
   w.finish
@@ -346,6 +347,9 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
       of "displayPresets":
         result.displayPresets = readDisplayPresets(c, name, r.problems)
         result.hasPresets = true
+      of "breakModel":
+        result.breakModel = readBreakModel(c, name, BreakModel(), r.problems)
+        result.hasBreakModel = true
       of "referenceId": r.text(c, result.referenceId)
       of "lastFolder": r.text(c, result.lastFolder)
       of "includeSubfolders": r.flag(c, result.includeSubfolders)
