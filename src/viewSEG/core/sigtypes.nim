@@ -74,6 +74,7 @@ type
     triggerNs*: int64
     controller*: int64
     vibrator*: int
+    fileNumber*: int64 ## the `.dat`'s file number (-1: none)
     qc*: SweepQc ## the `.dat`'s QC numbers, which a `.vib` has none of
 
   ControllerQc* = object

@@ -218,7 +218,7 @@ proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice
     traceOrder: voForces, vendorLayout: true)
   if paired:
     wopts.controllerSerial = pair.controller
-    wopts.datFileNumber = nameNumberOf(pair.path)
+    wopts.datFileNumber = pair.fileNumber
   var o = SegyOutputOptions()
   try:
     o.text = textCards(shot, wopts)

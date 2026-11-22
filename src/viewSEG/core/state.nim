@@ -1987,7 +1987,8 @@ func pairArgOf(state: AppState; path: string): SignaturePair =
       info = state.pairAnswers[path].info
     if info.kind == sgDat and info.problem.len == 0:
       result = SignaturePair(path: partner, triggerNs: info.triggerNs,
-        controller: info.controller, vibrator: info.vibrator, qc: info.qc)
+        controller: info.controller, vibrator: info.vibrator,
+        fileNumber: info.fileNumber, qc: info.qc)
 
 func signatureKindOfPath(state: AppState; path: string): SignatureKind =
   ## Which signature file `path` is, as an open session or the file list knows it; `sgNone` when

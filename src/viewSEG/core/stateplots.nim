@@ -305,10 +305,14 @@ proc signatureAsk(state: AppState; s: Session; p: AnalysisParams): SignatureAsk 
     if scale.datCountsPerLbf > 0 and scale.datCountsPerLbf < Inf:
       result.gfToN = NPerLbf / scale.datCountsPerLbf
       result.scaleWords = sensible(scale.datCountsPerLbf) & " counts per lbf"
-      if f.qc.valid and f.qc.targetForceLbf > 0 and p.targetPct > 0:
-        result.hundredN = float64(f.qc.targetForceLbf) * 100 / p.targetPct * NPerLbf
-        result.hundredWords = "100 % from the controller's target force (" &
-          $f.qc.targetForceLbf & " lbf at " & sensible(p.targetPct) & " % of the full scale)"
+      if f.qc.valid and f.qc.targetForceLbf > 0:
+        if p.targetTyped and p.targetPct > 0:
+          result.hundredN = float64(f.qc.targetForceLbf) * 100 / p.targetPct * NPerLbf
+          result.hundredWords = "100 % from the controller's target force (" &
+            $f.qc.targetForceLbf & " lbf at " & sensible(p.targetPct) & " % of the full scale)"
+        else:
+          result.hundredHint = "type the drive level the sweep was set to (Target force " &
+            "%): 100 % is then the controller's target force (" & $f.qc.targetForceLbf & " lbf)"
     if f.qc.valid:
       result.ctlFrom = "this file"
       result.ctl = f.qc.brief
@@ -761,7 +765,7 @@ proc vibWeights*(state: AppState; w: int): VibWeights =
   if state.vibSignature(w) == sgVib: state.sessions[state.vibWindowFile(w)].signature.info.weights
   else: VibWeights()
 
-proc vibWeightFindings*(state: AppState): seq[VibratorWeights] =
+proc vibWeightFindings*(state: AppState): FleetWeights =
   ## The `.vib` header weights of the listed folder, per vibrator (the `.dat` of the sweep tells
   ## which, when it is listed): a vibrator whose sweeps state different weights, or whose weights
   ## differ from those the others state, is flagged (`vibratorWords`). Nothing is corrected.
@@ -776,6 +780,16 @@ proc vibWeightFindings*(state: AppState): seq[VibratorWeights] =
           v = state.files.entries[d].sweep.vibrator
       sweeps.add (v, e.sweep.weights)
   perVibrator(sweeps)
+
+proc vibChoiceNotes*(state: AppState; w: AnalysisWindow): string =
+  ## What the user chose on a signature file's window, in words ("; accelerometer set A, by your
+  ## choice; GF reversed for the analysis: your choice"); "" for none, and for any other file.
+  let at = if w.traces.len > 0: state.findTrace(w.traces[0]) else: -1
+  if at < 0 or not state.sessions[at].isSignature: return
+  if state.sessions[at].signature.kind == sgVib and w.params.accelSet == asA:
+    result.add "; accelerometer set A, by your choice"
+  if w.params.roles.groundForcePolarity == poReversed:
+    result.add "; GF reversed for the analysis: your choice"
 
 proc vibRolesLine*(state: AppState; w: AnalysisWindow; long = true): string =
   ## Where each role of a vibrator signature comes from, in one line. `long`: "Reference:
@@ -799,12 +813,7 @@ proc vibRolesLine*(state: AppState; w: AnalysisWindow; long = true): string =
     of rsHand: "chosen by hand"
     of rsRemembered: "remembered for this file layout")
   let sigAt = if w.traces.len > 0: state.findTrace(w.traces[0]) else: -1
-  if sigAt >= 0 and state.sessions[sigAt].isSignature:
-    # what the user chose on a signature file's window is said wherever the roles are
-    if state.sessions[sigAt].signature.kind == sgVib and w.params.accelSet == asA:
-      result.add "; accelerometer set A, by your choice"
-    if w.params.roles.groundForcePolarity == poReversed:
-      result.add "; GF reversed for the analysis: your choice"
+  if long: result.add state.vibChoiceNotes(w)
   if w.params.roles.source in {rsPosition, rsCodes} and state.rememberedNotUsed(w) and
       not (sigAt >= 0 and state.sessions[sigAt].isSignature):
     result.add "; the choice remembered for this file layout is not used: some of its " &
@@ -881,6 +890,10 @@ proc openPlot(state: var AppState; cmd: Command) =
   w.filters = filtersText(w.processing)
   if w.view == avVibrator:
     if s.signature.kind != sgVib: w.params.accelSet = asB
+    if s.isSignature and cmd.plotParams.forceHundredPct.isNaN:
+      # a typed 100 % force is its window's: the file's own 100 % is never hidden by a
+      # remembered number
+      (w.params.forceHundredPct, w.params.forceHundredUnit) = (NaN, "")
     if samePlaces(cmd.plotParams.roles, VibRoles()):
       w.params.roles = state.rolesOf(s, traces, w.params.roles, s.name, w.params.accelSet)
     else: # the command names the places: that is a choice made on this file
@@ -988,10 +1001,14 @@ proc showPlot(state: var AppState; cmd: Command) =
   let changed = measured != pw.params
   pw.params = params
   # what the user set becomes what a new window of the kind opens with
+  # (a signature file's typed 100 % force belongs to its window: never remembered for the kind)
+  var remembered = cmd.plotParams
+  if sigFile >= 0 and state.sessions[sigFile].isSignature:
+    remembered.forceHundredPct = state.settings.plotOptions.vibrator.forceHundredPct
   if pw.view.hasOptions and
-      state.settings.plotOptions.applied(pw.view, cmd.plotParams) != cmd.plotParams:
+      state.settings.plotOptions.applied(pw.view, remembered) != remembered:
     state.change(cmd.origin, x):
-      x.plotOptions.remember(pw.view, cmd.plotParams)
+      x.plotOptions.remember(pw.view, remembered)
   pw.frozen = cmd.plotFrozen # unfrozen, `followPlots` asks again if the plot changed
   inc pw.revision
   if changed and not state.askPlot(w):

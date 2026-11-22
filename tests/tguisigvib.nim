@@ -77,7 +77,9 @@ proc steps(file: string; tmp: string; list: seq[Step]; browse = "") =
     else:
       f.stop()
     if overdue(f.index, 4000, since):
-      failed = (if at < list.len: "step \"" & list[at].name & "\" did not finish" else: "end")
+      failed = (if at < list.len: "step \"" & list[at].name & "\" did not finish; marks " &
+        $[f.markOf("new plot 1.polarity"), f.markOf("new plot 1.fleet header"), f.markOf(
+            "new plot 1.set A"), f.markOf("new plot 1.controller")] else: "end")
       f.stop()
   let code = run(RunOptions(windowSize: (1500, 1000), theme: forceDark,
     userThemeDir: some(tmp / "no-user-themes"), indexCacheDir: some(tmp / "cache"),
@@ -125,6 +127,9 @@ proc main*() =
         var s = f.core.settings
         s.forceScale.datCountsPerLbf = 8
         f.apply Command(kind: ckSettings, settings: s)
+        var q = f.core.plots[0].params
+        (q.targetPct, q.targetTyped) = (70.0, true)
+        f.apply Command(kind: ckPlotDisplay, plot: f.core.plots[0].id, plotParams: q)
       do:
         f.shown(W & ".hundred words") and f.core.plots[0].result.hundredWords.len > 0
       list.step "the 100 % force says where it comes from":
@@ -148,8 +153,12 @@ proc main*() =
         f.apply Command(kind: ckOpenPlot, plotView: avVibrator,
           plotTraces: @[f.core.sessions[0].base])
       do:
-        f.shown(W & ".polarity") and f.shown(W & ".weights") and f.shown(W & ".set A") and
+        f.shown(W & ".polarity") and f.shown(W & ".fleet header") and f.shown(W & ".set A") and
           f.shown(W & ".controller")
+      list.step "weights closed, no finding":
+        doAssert not f.shown(W & ".weights"), "the weights are folded by default"
+        f.click(W & ".fleet header")
+      do: f.shown(W & ".weights")
       list.step "set B":
         doAssert f.core.plots[0].params.accelSet == asB
         doAssert "the .dat of this sweep" in f.core.plots[0].result.controllerNote
@@ -203,7 +212,7 @@ proc main*() =
         f.shown(W & ".fleet header") and f.shown(W & ".fleet")
       list.step "the difference is said":
         let found = f.core.vibWeightFindings()
-        doAssert found.len == 3 and found[2].unlike, $found.len
+        doAssert found.vibrators.len == 3 and found.vibrators[2].unlike, $found.vibrators.len
         f.shoot("sigvib-fleet.png")
       do: true
       steps(first, fx.dir / "c", list, browse = dir)

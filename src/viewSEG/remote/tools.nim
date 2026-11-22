@@ -699,6 +699,8 @@ proc plotJson(w: AnalysisWindow; fe: Frontend; units: UnitSystem; limit: int): J
       result["controller"] = ctl
       result["controllerNote"] = %r.controllerNote
       result["hundredForce"] = %r.hundredWords
+      result["hundredHint"] = %r.hundredHint
+      result["hundredProblem"] = %r.hundredProblem
       result["forceScale"] = %r.scaleWords
     result["alignment"] = %*{"kind": r.alignment.kind, "shiftMs": toJson(
         r.alignment.shiftMs),

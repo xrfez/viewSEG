@@ -139,6 +139,12 @@ type
       ## generated from M and B; NaN: none entered (no generated force)
     baseplateMassKg*: float64 = NaN ## vibrator signature: the baseplate's mass, kg
     harmonics*: int = 5 ## vibrator signature: the highest harmonic tracked (2 .. 16)
+    targetTyped*: bool = false
+      ## a signature file's window: the drive level (`targetPct`) was typed by the user (a
+      ## default nobody typed does not give the file's 100 % force); of this window only
+    forceHundredUnit*: string = ""
+      ## the unit `forceHundredPct` was typed in ("counts", "pound-counts", "N"); "" when not
+      ## said (a SEG-Y window: the axis's)
     accelSet*: AccelSet = asB
       ## a `.vib`'s vibrator signature: the accelerometer set judged (B, the set the .dat
       ## records, by default); of this window only, never remembered
@@ -287,6 +293,10 @@ type
     hundredWords*: string
       ## a signature file's: where the 100 % force came from when none was typed ("from the
       ## file's hold-down weight"); "" when it was typed or there is none
+    hundredHint*: string
+      ## a signature file's: what to type for the file to give the 100 % force ("" for none)
+    hundredProblem*: string
+      ## a signature file's: a typed 100 % force not applied (typed in another unit)
     scaleWords*: string ## a signature file's force scale ("8 counts per lbf"); "" for none
     problem*: string ## why there is none; "" when there is one
 

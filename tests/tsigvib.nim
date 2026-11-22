@@ -33,7 +33,7 @@ import std/[json, math, os, strutils, times]
 import parseSEG
 import parseSSDAT
 import parseSSVIB
-import viewSEG/core/[analysis, persist, settings, signatures, state, units]
+import viewSEG/core/[analysis, persist, settings, signatures, state, units, vendormaps]
 import utils/[fixtures, sigfiles, waiting]
 
 proc settleIt(st: var AppState; w: int): bool =
@@ -207,7 +207,7 @@ proc main*() =
         doAssert r.cell("GF", "Polarity") == "reversed"
         doAssert r.cell("GF", "Mean |phase| (°)").parseFloat < 20,
           "the analysis did not turn the ground force over"
-        let roles = st.vibRolesLine(st.plots[w], long = false)
+        let roles = st.vibRolesLine(st.plots[w], long = true)
         doAssert "GF reversed for the analysis: your choice" in roles, roles
         doAssert st.settings.vibRoles.len == 1 and st.settings.vibRoles[0].endsWith(" r.a"),
           $st.settings.vibRoles
@@ -313,7 +313,7 @@ proc main*() =
         doAssert r.polarity.kind == pkOpposite
         let peakA = r.cell("GF", "Max peak").parseFloat
         doAssert abs(peakB / peakA - 2.0) < 0.05, "set A is half set B here: " & $(peakA, peakB)
-        doAssert "accelerometer set A, by your choice" in st.vibRolesLine(st.plots[w], long = false)
+        doAssert "accelerometer set A, by your choice" in st.vibRolesLine(st.plots[w], long = true)
         doAssert "following" notin r.controllerNote
         # not remembered: neither the settings nor the next window hold it
         doAssert st.settings.vibRoles == before, $st.settings.vibRoles
@@ -389,21 +389,29 @@ proc main*() =
         let w = st.window(datFile(fx.dir, "a.dat", datOf(1)))
         doAssert st.plots[w].result.qc.hundredPct.isNaN, "no scale: no 100 % force"
         st.setScale(8.0, NaN)
-        doAssert st.settle(st.plots[w].result.qc.hundredPct > 0 and not st.plots[w].waiting)
+        # no drive level typed: the default 100 gives no 100 % force, and the words say what to type
+        doAssert st.settle(st.plots[w].result.scaleWords.len > 0 and not st.plots[w].waiting)
+        doAssert st.plots[w].result.qc.hundredPct.isNaN and st.plots[w].result.hundredWords == "",
+          "a drive level nobody typed gave a 100 % force"
+        doAssert "type the drive level" in st.plots[w].result.hundredHint,
+          st.plots[w].result.hundredHint
         let target = float64(parseDat(cast[seq[byte]](readFile(fx.dir /
             "a.dat"))).qc.targetForceLbf)
         doAssert target > 0
+        # the drive level typed (even 100): 100 % is the controller's target force at that level
+        var p = st.plots[w].params
+        (p.targetPct, p.targetTyped) = (100.0, true)
+        st.change(w, p)
         let r = st.plots[w].result
         doAssert abs(r.qc.hundredPct - target * NPerLbf) < 1e-9 * target, $r.qc.hundredPct
-        doAssert "controller's target force" in r.hundredWords, r.hundredWords
-        # a drive level typed: 100 % is the target force at that level
-        var p = st.plots[w].params
+        doAssert "controller's target force" in r.hundredWords and r.hundredHint == "",
+          r.hundredWords
         p.targetPct = 60
         st.change(w, p)
         doAssert abs(st.plots[w].result.qc.hundredPct - target * 100 / 60 * NPerLbf) <
           1e-9 * target, $st.plots[w].result.qc.hundredPct
         # a 100 % force typed wins, and the words are gone
-        p.forceHundredPct = 1000
+        (p.forceHundredPct, p.forceHundredUnit) = (1000.0, "N")
         st.change(w, p)
         doAssert st.plots[w].result.qc.hundredPct == 1000 and st.plots[w].result.hundredWords == ""
         st.shutdown()
@@ -419,17 +427,146 @@ proc main*() =
         doAssert "hold-down weight" in st.plots[w].result.hundredWords
         st.shutdown()
 
+  block typedHundred:
+    # a typed 100 % force keeps its unit: it survives a scale given and taken away without
+    # changing meaning, is not applied (and says so) when it cannot be converted, and is not
+    # carried into the next window
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      var st = started(dir)
+      let path = datFile(fx.dir, "a.dat", datOf(1))
+      let w = st.window(path)
+      var p = st.plots[w].params
+      (p.forceHundredPct, p.forceHundredUnit) = (1000.0, "counts")
+      st.change(w, p)
+      doAssert st.plots[w].result.qc.hundredPct == 1000
+      st.setScale(8.0, NaN)
+      doAssert st.settle(st.plots[w].result.scaleWords.len > 0 and not st.plots[w].waiting)
+      doAssert abs(st.plots[w].result.qc.hundredPct - 1000 * NPerLbf / 8) < 1e-9 and
+        st.plots[w].result.hundredProblem == "", $st.plots[w].result.qc.hundredPct
+      st.setScale(NaN, NaN)
+      doAssert st.settle(st.plots[w].result.scaleWords.len == 0 and not st.plots[w].waiting)
+      doAssert st.plots[w].result.qc.hundredPct == 1000 and st.plots[w].result.hundredProblem == "",
+        "the typed value changed meaning"
+      # typed in newtons, the scale taken away: not applied, and said
+      st.setScale(8.0, NaN)
+      doAssert st.settle(st.plots[w].result.scaleWords.len > 0 and not st.plots[w].waiting)
+      p = st.plots[w].params
+      (p.forceHundredPct, p.forceHundredUnit) = (5000.0, "N")
+      st.change(w, p)
+      doAssert st.plots[w].result.qc.hundredPct == 5000
+      st.setScale(NaN, NaN)
+      doAssert st.settle(st.plots[w].result.scaleWords.len == 0 and not st.plots[w].waiting)
+      doAssert st.plots[w].result.qc.hundredPct.isNaN and
+        "typed in N" in st.plots[w].result.hundredProblem and
+        "type it again" in st.plots[w].result.hundredProblem, st.plots[w].result.hundredProblem
+      # not carried into a new window of the kind, nor remembered for it
+      doAssert st.settings.plotOptions.vibrator.forceHundredPct.isNaN
+      let v = st.window(datFile(fx.dir, "b.dat", datOf(1)))
+      doAssert st.plots[v].params.forceHundredPct.isNaN
+      discard st.shutdown()
+
+  block fleetCases:
+    # the weights per vibrator, on the pure function: two that differ, a sensitivity-only
+    # difference, vibrators not known, and the wording
+    let base = VibWeights(holdDownLb: 40000, baseplateLb: 6000, massLb: 4000,
+      sensitivity1: 20, sensitivity2: 20)
+    var big = base
+    big.holdDownLb = 60000
+    var sens = base
+    sens.sensitivity1 = 21
+    sens.sensitivity2 = 21
+    let two = perVibrator([(11, base), (11, base), (12, big)])
+    doAssert two.twoDiffer and two.flagged and not two.vibrators[0].unlike and
+      not two.vibrators[1].unlike
+    let said = twoDifferWords(two)
+    doAssert "two vibrators state different weights" in said and "do not say which" in said, said
+    doAssert "wrong vibrator type" notin vibratorWords(two.vibrators[1])
+    let onlySens = perVibrator([(11, base), (12, base), (13, sens)])
+    doAssert onlySens.vibrators[2].sensUnlike and not onlySens.vibrators[2].unlike and
+      not onlySens.twoDiffer and onlySens.flagged
+    let words = vibratorWords(onlySens.vibrators[2])
+    doAssert "sensitivities differ" in words and "wrong vibrator type" notin words, words
+    let aloneSens = perVibrator([(11, base), (11, sens)])
+    doAssert aloneSens.vibrators[0].sensDiffers and not aloneSens.vibrators[0].differs and
+      "wrong vibrator type" notin vibratorWords(aloneSens.vibrators[0])
+    # vibrators not known are listed, never grouped or compared
+    let unknown = perVibrator([(0, base), (0, big), (11, base), (12, base)])
+    doAssert unknown.unknown == 2 and unknown.vibrators.len == 2 and not unknown.flagged
+    doAssert "not known" in unknownWords(unknown.unknown) and "not compared" in
+      unknownWords(unknown.unknown)
+    # the count wording
+    var small = base
+    small.holdDownLb = 30000
+    let one = perVibrator([(11, base), (11, base), (11, small), (12, base), (13, base)])
+    let l = vibratorWords(one.vibrators[0])
+    doAssert "2 sweeps state one set, 1 sweep states the other" in l and "1 of one" notin l, l
+
+  block targetSeventy:
+    # the controller's force numbers and this window's are on one base (% of the 100 % force):
+    # a sweep driven at 70 % of the full scale, the drive level typed as 70, agrees in both
+    withFixtures fx:
+      var st = initAppState()
+      var d = datOf(1)
+      (d.forceMax, d.forceMin, d.forceAvg) = (70, 70, 70)
+      let w = st.window(datFile(fx.dir, "a.dat", d))
+      let target = float64(parseDat(cast[seq[byte]](readFile(fx.dir /
+          "a.dat"))).qc.targetForceLbf)
+      let peak = st.plots[w].result.cell("GF", "Max peak").parseFloat # counts
+                                                                      # a scale that makes the sweep's peak the target force: 100 % is then target / 0.7
+      st.setScale(peak / target, NaN)
+      doAssert st.settle(st.plots[w].result.scaleWords.len > 0 and not st.plots[w].waiting)
+      var p = st.plots[w].params
+      (p.targetPct, p.targetTyped) = (70.0, true)
+      st.change(w, p)
+      let rows = st.plots[w].result.controller
+      doAssert rows[0].label.contains("% of hold-down") and rows[0].controller == "70 %"
+      let mx = rows[0].viewseg.replace(" %", "").parseFloat
+      let av = rows[2].viewseg.replace(" %", "").parseFloat
+      doAssert abs(mx - 70) < 3, "max " & rows[0].viewseg
+      doAssert abs(av - 70) < 10, "average " & rows[2].viewseg & " (on the target's base: " & $(av /
+          0.7) & ")"
+      doAssert "hold-down weight" in rows[0].tip
+      st.shutdown()
+
+  block neither:
+    # a ground force a quarter turn from the reference is neither in phase nor opposite
+    withFixtures fx:
+      var st = initAppState()
+      var s = SynthVib()
+      let ref0 = synthRef(s)
+      s.data[vcReference] = ref0
+      let n = ref0.len
+      for c in [vcBaseplateA, vcMassA, vcBaseplateB, vcMassB]: s.data[c] = newSeq[int16](n)
+      for i in 0 ..< n:
+        let tf = float64(i) - s.preTrigger
+        var v = 0.0
+        if tf > 0:
+          let t = tf * s.intervalUs / 1e6
+          let ph = s.startHz * t + 0.5 * s.rateHzPerS * t * t
+          let e = min(1.0, tf / float64(s.taperFrames)) *
+            min(1.0, max(0.0, (float64(s.afterTrigger) - tf) / float64(s.taperFrames)))
+          v = 0.3 * float64(s.amplitude) * e * sin(2 * PI * ph + PI / 2)
+        for c in [vcBaseplateA, vcMassA, vcBaseplateB, vcMassB]: s.data[c][i] = int16(round(v))
+      let w = st.window(vibFile(fx.dir, "0007.VIB", s))
+      let r = st.plots[w].result
+      doAssert r.polarity.kind == pkOther and abs(abs(r.polarity.meanPhaseDeg) - 90) < 15,
+        r.polarity.line
+      doAssert "neither in phase nor opposite (mean phase " in r.polarity.line, r.polarity.line
+      st.shutdown()
+
   block controller:
     block:
       withFixtures fx:
         var st = initAppState()
         var d = datOf(1)
         d.corr = newSeq[int8](128)
-        d.corr[64] = -126
+        d.corr[64] = -117
         let w = st.window(datFile(fx.dir, "a.dat", d))
         var r = st.plots[w].result
         doAssert r.controller.len == 7, $r.controller.len
-        doAssert r.controller[0].label == "Force, max" and r.controller[0].controller == "61 %"
+        doAssert r.controller[0].label.startsWith("Force, max") and r.controller[0].controller == "61 %"
         doAssert r.controller[1].controller == "58 %" and r.controller[2].controller == "59 %"
         doAssert r.controller[3].controller == "9 %" and r.controller[4].controller == "4 %"
         # force compares only once 100 % is the controller's target force
@@ -437,12 +574,17 @@ proc main*() =
         doAssert "THD" in r.controller[3].label and "defined differently" in r.controller[3].tip
         doAssert "this file" in r.controllerNote
         st.setScale(8.0, NaN)
-        doAssert st.settle(st.plots[w].result.controller.len > 0 and
-          st.plots[w].result.controller[0].viewseg != "—" and not st.plots[w].waiting)
+        doAssert st.settle(st.plots[w].result.scaleWords.len > 0 and not st.plots[w].waiting)
+        # a scale alone is not enough for a .dat: the drive level must be typed
+        doAssert st.plots[w].result.controller[0].viewseg == "—"
+        doAssert "type the drive level" in st.plots[w].result.controller[0].tip
+        var q = st.plots[w].params
+        (q.targetPct, q.targetTyped) = (100.0, true)
+        st.change(w, q)
         r = st.plots[w].result
-        doAssert r.controller[0].viewseg.endsWith(" %") and r.controller[0].tip == ""
+        doAssert r.controller[0].viewseg.endsWith(" %") and "hold-down" in r.controller[0].tip
         # the controller's own correlation, for an in-phase sweep: said without a claim
-        doAssert "peak at lag 0 negative (−126)" in r.polarity.line, r.polarity.line
+        doAssert "peak at lag 0 negative (−117)" in r.polarity.line, r.polarity.line
         plainWords(r.controllerNote)
         st.shutdown()
     block:
@@ -451,7 +593,7 @@ proc main*() =
         var st = initAppState()
         var d = datOf(-1)
         d.corr = newSeq[int8](128)
-        d.corr[64] = -126
+        d.corr[64] = -117
         let w = st.window(datFile(fx.dir, "a.dat", d))
         doAssert "it records the same relation and counts it as in phase" in
           st.plots[w].result.polarity.line, st.plots[w].result.polarity.line
@@ -473,6 +615,15 @@ proc main*() =
         doAssert r.controller.len == 7 and r.controller[0].controller == "61 %", $r.controller.len
         doAssert "the .dat of this sweep" in r.controllerNote and
           "follows set A (probable)" in r.controllerNote, r.controllerNote
+        # the shot block of the .vib in memory holds its pair's file number
+        let maps = currentSourcePath.parentDir.parentDir / "vendormaps"
+        let load = loadVendorFolders([VendorFolder(dir: maps, origin: voProgram)])
+        let blocks = vendorBlocks(st.sessions[i].filePtr[], -1, load.registry)
+        doAssert blocks.blocks.len == 1 and blocks.blocks[0].name == "parseSSVIBShot"
+        var datNumber = ""
+        for f in blocks.blocks[0].fields:
+          if f.name == "datFileNumber": datNumber = f.value
+        doAssert datNumber == "7001", "the shot block's .dat file number: " & datNumber
         var p = st.plots[0].params
         p.accelSet = asA
         st.change(0, p)
@@ -534,7 +685,7 @@ proc main*() =
         var st = initAppState(indexCache = fx.dir / "cache", watchEvery = initDuration(hours = 1))
         st.apply Command(kind: ckBrowse, paths: @[dir])
         doAssert st.settle(not st.fileList.scanning and st.fileList.entries.len == 12)
-        let found = st.vibWeightFindings()
+        let found = st.vibWeightFindings().vibrators
         doAssert found.len == 3, $found.len
         doAssert found[0].vibrator == 11 and found[0].differs and found[0].kinds.len == 2
         doAssert found[1].vibrator == 12 and not found[1].differs and not found[1].unlike

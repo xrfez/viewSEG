@@ -223,9 +223,6 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   ## `sig` says what a signature file adds (its force scale, a 100 % force from the file, the
   ## controller's QC): the ground force's polarity is then reported, never changed, and the
   ## Automatic polarity is not honoured.
-  ## `sig` says what a signature file adds (its force scale, a 100 % force from the file, the
-  ## controller's QC): the ground force's polarity is then reported, never changed (the
-  ## Automatic polarity is not honoured there).
   result = AnalysisResult(view: avVibrator, dtMs: dtMs)
   if at[vsReference] notin 0 ..< rows.len:
     result.problem = "no reference (Ref): give the pilot's trace that role"
@@ -359,11 +356,24 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   # each signal has its own full scale (counts, or kg × counts)
   var hundredFor = if judged == vsWeightedSum: p.forceHundredWeighted else: p.forceHundredPct
   var hundredFromFile = false
+  if sig.given and judged == vsGroundForce and hundredFor > 0 and hundredFor < Inf and
+      p.forceHundredUnit.len > 0:
+    # a typed 100 % force keeps the unit it was typed in: given in the unit now shown only when
+    # the scale makes that exact (raw counts to newtons), else not applied, and said
+    let now = gfUnit(u.units[vsGroundForce], sig, scaled)
+    if p.forceHundredUnit != now:
+      if now == "N" and scaled: hundredFor *= sig.gfToN
+      else:
+        hundredFor = NaN
+        result.hundredProblem = "typed in " & p.forceHundredUnit & "; the axis is now in " &
+          (if now == "N": "newtons" else: now) & ": type it again"
   let typedHundred = hundredFor > 0 and hundredFor < Inf
   let fileHundred = sig.hundredN > 0 and sig.hundredN < Inf
   if sig.given and judged == vsGroundForce and scaled and not typedHundred and fileHundred:
     (hundredFor, hundredFromFile) = (sig.hundredN, true)
     result.hundredWords = sig.hundredWords
+  if sig.given and not typedHundred and not hundredFromFile and result.hundredProblem.len == 0:
+    result.hundredHint = sig.hundredHint
   result.qc = judge(stats.summary, p.qcWindowMs, p.qc, hundredFor, p.targetPct,
     (if both: (if judged == vsWeightedSum: "GF from M and B" else: "GF as recorded")
       else: ""))
@@ -542,7 +552,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     result.polarity = polarityOf(phases, vsGroundForce in u.reversed,
       p.roles.groundForcePolarity == poReversed, sig)
   if sig.given:
-    result.controller = controllerRows(sig, result.qc.stats, hundredFromFile)
+    result.controller = controllerRows(sig, result.qc.stats, hundredFor, hundredFromFile)
     result.controllerNote = controllerNote(sig)
     result.scaleWords = sig.scaleWords
   # The table: one row per signal
@@ -571,7 +581,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     for i in 1 ..< result.table.len:
       if result.table[i][0] == $vsReference: at1 = i + 1
     result.table.insert(row, at1)
-    result.forceUnits.insert(gfUnit(results[1].units[vsGroundForce], sig, scaled), at1 - 1)
+    result.forceUnits.insert(forceUnit(results[1].units[vsGroundForce]), at1 - 1)
   let usedHz = u.tracks[main].bandHz
   let chord = largestChordHz(u.reference)
   result.band = BandReport(hz: usedHz, suggestedHz: (if fitted.isNaN: topFrequencyHz(
@@ -649,7 +659,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   elif forceNote.len > 0:
     words.add "; " & forceNote
     if sig.scaleWords.len > 0:
-      words.add "; the ground force is in newtons from your scale (" & sig.scaleWords &
+      words.add "; the ground force is in force units from your scale (" & sig.scaleWords &
         "), for the display and the verdict only: the samples stay as recorded"
     elif sig.given:
       words.add "; the ground force is in " & (if sig.isDat: "counts" else: "pound-counts") &

@@ -46,6 +46,7 @@ type
       ## the force that is 100 % when the user typed none, from the file itself (the
       ## controller's target force, the header's hold-down weight), in newtons
     hundredWords*: string ## where `hundredN` comes from
+    hundredHint*: string ## what to type for the file to give `hundredN` ("" when it does)
     ctlFrom*: string ## "this file" / "the .dat of this sweep"; "" when there is no QC record
     ctl*: SweepQc
     correlationStored*: bool
@@ -126,10 +127,14 @@ func polarityOf*(phasesDeg: openArray[float64]; reversed, byUser: bool;
     elif result.kind == pkOpposite and v > 0:
       result.line.add ": it counts the relation the other way from this analysis"
 
-func controllerRows*(s: SignatureAsk; q: QcStats; forceComparable: bool): seq[ControllerRow] =
+func controllerRows*(s: SignatureAsk; q: QcStats; hundred: float64;
+    forceComparable: bool): seq[ControllerRow] =
   ## The controller's QC numbers beside viewSEG's: one row per measure. Empty when the file
   ## has none. `forceComparable`: viewSEG's 100 % is the file's own (the target force, the
-  ## hold-down weight), so the force percentages compare one to one.
+  ## hold-down weight), so the force percentages compare one to one. The controller's force
+  ## numbers are % of the hold-down weight, so viewSEG's are given on that base too: % of
+  ## `hundred`, the 100 % force, whatever the drive level (the limits table's average and
+  ## minimum are % of the target).
   if s.ctlFrom.len == 0 or not s.ctl.valid: return
   let c = s.ctl
   func pct(x: int16): string = (if x < 0: "—" else: $x & " %")
@@ -138,12 +143,14 @@ func controllerRows*(s: SignatureAsk; q: QcStats; forceComparable: bool): seq[Co
   let noScale = if s.isDat: "set 100 % from the controller's target force to compare"
                 else: "needs the accelerometer constant: 100 % is then the file's hold-down weight"
   func force(label: string; ctl: int16; own: float64): ControllerRow =
+    let ok = forceComparable and hundred > 0 and hundred < Inf
     ControllerRow(label: label, controller: pct(ctl),
-      viewseg: (if forceComparable: mine(own) else: "—"),
-      tip: (if forceComparable: "" else: noScale))
-  result.add force("Force, max", c.forceMaxPct, q.peakForcePct)
-  result.add force("Force, min", c.forceMinPct, q.minForcePct)
-  result.add force("Force, average", c.forceAvgPct, q.avgForcePct)
+      viewseg: (if ok: mine(100 * own / hundred) else: "—"),
+      tip: (if ok: "% of the hold-down weight (the 100 % force), whatever the target level"
+      else: s.hundredHint & (if s.hundredHint.len > 0: ". " else: "") & noScale))
+  result.add force("Force, max (% of hold-down)", c.forceMaxPct, q.peakForce)
+  result.add force("Force, min (% of hold-down)", c.forceMinPct, q.minForce)
+  result.add force("Force, average (% of hold-down)", c.forceAvgPct, q.avgForce)
   const thd = "the controller's distortion is defined differently (not reproduced): compare " &
     "its trend, not its value"
   result.add ControllerRow(label: "THD, max", controller: pct(c.thdMaxPct),
@@ -186,29 +193,62 @@ const WeightsDepend* = "The reference scaled to a force is the counts times the 
   "the vibrator type the controller's electronics are set up for. Nothing is corrected or " &
   "rescaled from these weights."
 
-func same(a, b: VibWeights): bool =
-  func eq(x, y: float64): bool = x == y or (x.isNaN and y.isNaN)
-  eq(a.holdDownLb, b.holdDownLb) and eq(a.baseplateLb, b.baseplateLb) and
-    eq(a.massLb, b.massLb) and eq(a.sensitivity1, b.sensitivity1) and
-    eq(a.sensitivity2, b.sensitivity2)
+func eq(x, y: float64): bool = x == y or (x.isNaN and y.isNaN)
+
+func sameWeights(a, b: VibWeights): bool =
+  ## The three weights alike (the sensitivities apart).
+  eq(a.holdDownLb, b.holdDownLb) and eq(a.baseplateLb, b.baseplateLb) and eq(a.massLb, b.massLb)
+
+func sameSensitivities(a, b: VibWeights): bool =
+  eq(a.sensitivity1, b.sensitivity1) and eq(a.sensitivity2, b.sensitivity2)
+
+func same(a, b: VibWeights): bool = sameWeights(a, b) and sameSensitivities(a, b)
 
 type
+  WeightSet* = tuple[weights: VibWeights; sweeps: int]
+
   VibratorWeights* = object
     ## The weights one vibrator's sweeps state across a folder.
-    vibrator*: int                                       ## 0: sweeps whose vibrator is not known (grouped as one)
+    vibrator*: int
     sweeps*: int
-    kinds*: seq[tuple[weights: VibWeights; sweeps: int]] ## the sets, the most used first
-    differs*: bool                                       ## its sets are not all alike (changing between sweeps)
-    unlike*: bool                                        ## its main set is not the main set of the other vibrators
+    kinds*: seq[WeightSet] ## the sets, the most used first
+    differs*: bool         ## its sweeps state different weights (changing between sweeps)
+    sensDiffers*: bool     ## its weights are alike but not its sensitivities
+    unlike*: bool          ## its main weights are not those the other vibrators share
+    sensUnlike*: bool      ## its main sensitivities are not those the other vibrators share
 
-func perVibrator*(sweeps: openArray[tuple[vibrator: int; weights: VibWeights]]):
-    seq[VibratorWeights] =
-  ## The `.vib` header weights grouped per vibrator. A vibrator whose sets are not all alike,
-  ## or whose main set is not one that any other vibrator's main set is, is flagged: a finding
-  ## for the user, never a correction.
+  FleetWeights* = object
+    ## The `.vib` header weights of a folder, per vibrator.
+    vibrators*: seq[VibratorWeights] ## vibrators known (from their `.dat`), by number
+    unknown*: int                    ## sweeps whose vibrator is not known: listed, never compared
+    twoDiffer*: bool                 ## exactly two vibrators, stating different weights
+    flagged*: bool                   ## any finding
+
+func oddOne(main: openArray[VibWeights]; i: int; alike: proc (a,
+    b: VibWeights): bool {.noSideEffect.}): bool =
+  ## Whether `main[i]` is alike to none of the others while some two others are alike (so the
+  ## odd one can be told; with only two vibrators nobody can say which one is odd).
+  if main.len < 3: return false
+  var shared = false
+  for a in 0 ..< main.len:
+    for b in a + 1 ..< main.len:
+      if a != i and b != i and alike(main[a], main[b]): shared = true
+  if not shared: return false
+  for j in 0 ..< main.len:
+    if j != i and alike(main[i], main[j]): return false
+  true
+
+func perVibrator*(sweeps: openArray[tuple[vibrator: int; weights: VibWeights]]): FleetWeights =
+  ## The `.vib` header weights grouped per vibrator (0: not known: counted, never grouped or
+  ## compared). A vibrator whose sweeps state different weights, whose weights differ from those
+  ## the others share (three or more vibrators), or two vibrators that differ, is a finding for
+  ## the user, in words; nothing is corrected. A difference in sensitivity alone is told as such.
   var byV = initOrderedTable[int, VibratorWeights]()
   for (v, w) in sweeps:
     if w.holdDownLb.isNaN and w.baseplateLb.isNaN and w.massLb.isNaN: continue
+    if v <= 0:
+      inc result.unknown
+      continue
     var e = byV.getOrDefault(v, VibratorWeights(vibrator: v))
     inc e.sweeps
     var found = false
@@ -220,37 +260,53 @@ func perVibrator*(sweeps: openArray[tuple[vibrator: int; weights: VibWeights]]):
     if not found: e.kinds.add (w, 1)
     byV[v] = e
   for v, e in byV.mpairs:
-    e.kinds.sort(proc(a, b: tuple[weights: VibWeights; sweeps: int]): int = cmp(b.sweeps, a.sweeps))
-    e.differs = e.kinds.len > 1
-    result.add e
-  result.sort(proc(a, b: VibratorWeights): int = cmp(a.vibrator, b.vibrator))
-  if result.len > 1:
-    for i in 0 ..< result.len:
-      var others = false
-      var alike = false
-      for j in 0 ..< result.len:
-        if j != i:
-          others = true
-          if same(result[i].kinds[0].weights, result[j].kinds[0].weights): alike = true
-      result[i].unlike = others and not alike
-  # a set that no other vibrator shares is only a finding when some other vibrators share one
-  var shared = false
-  for i in 0 ..< result.len:
-    for j in i + 1 ..< result.len:
-      if same(result[i].kinds[0].weights, result[j].kinds[0].weights): shared = true
-  if not shared:
-    for e in result.mitems: e.unlike = false
+    e.kinds.sort(proc(a, b: WeightSet): int = cmp(b.sweeps, a.sweeps))
+    for k in e.kinds:
+      if not sameWeights(k.weights, e.kinds[0].weights): e.differs = true
+      elif not sameSensitivities(k.weights, e.kinds[0].weights): e.sensDiffers = true
+    result.vibrators.add e
+  result.vibrators.sort(proc(a, b: VibratorWeights): int = cmp(a.vibrator, b.vibrator))
+  var main: seq[VibWeights] = @[]
+  for e in result.vibrators: main.add e.kinds[0].weights
+  for i in 0 ..< main.len:
+    result.vibrators[i].unlike = oddOne(main, i, sameWeights)
+    result.vibrators[i].sensUnlike = not result.vibrators[i].unlike and
+      oddOne(main, i, sameSensitivities)
+  result.twoDiffer = main.len == 2 and not sameWeights(main[0], main[1])
+  result.flagged = result.twoDiffer
+  for e in result.vibrators:
+    if e.differs or e.sensDiffers or e.unlike or e.sensUnlike: result.flagged = true
+
+func twoDifferWords*(f: FleetWeights): string =
+  ## The finding for exactly two vibrators that state different weights; "" otherwise. It does
+  ## not say which is the odd one.
+  if f.twoDiffer:
+    "The two vibrators state different weights: one of the controllers may be set up for " &
+      "another vibrator type; the headers do not say which"
+  else: ""
+
+func unknownWords*(n: int): string =
+  ## The line for sweeps whose vibrator is not known.
+  if n > 0:
+    $n & (if n == 1: " sweep" else: " sweeps") & " of a vibrator that is not known (no .dat " &
+      "of its sweep listed): listed, not compared"
+  else: ""
 
 func vibratorWords*(v: VibratorWeights): string =
   ## One vibrator's line: its weights, and the finding when it has one.
-  result = (if v.vibrator > 0: "Vibrator " & $v.vibrator else: "Vibrator not known") & " (" &
-    $v.sweeps & (if v.sweeps == 1: " sweep" else: " sweeps") & "): " &
-    weightsText(v.kinds[0].weights)
+  result = "Vibrator " & $v.vibrator & " (" & $v.sweeps &
+    (if v.sweeps == 1: " sweep" else: " sweeps") & "): " & weightsText(v.kinds[0].weights)
   if v.differs:
+    let rest = v.sweeps - v.kinds[0].sweeps
     result.add ". Its sweeps state " & $v.kinds.len & " different sets of weights (" &
-      $v.kinds[0].sweeps & " of one, the others of " & $(v.sweeps - v.kinds[0].sweeps) &
-      " sweeps): the controller's set-up changed between sweeps, or a sweep was set up for " &
-      "another vibrator type"
+      $v.kinds[0].sweeps & (if v.kinds[0].sweeps == 1: " sweep states" else: " sweeps state") &
+      " one set, " & $rest & (if rest == 1: " sweep states" else: " sweeps state") &
+      " the other" & (if v.kinds.len > 2: "s" else: "") & "): the controller's set-up " &
+      "changed between sweeps, or a sweep was set up for another vibrator type"
+  elif v.sensDiffers:
+    result.add ". Its sweeps state different accelerometer sensitivities (the weights are alike)"
   if v.unlike:
     result.add ". Its weights differ from those the other vibrators state: the controller " &
       "may be set up for the wrong vibrator type"
+  elif v.sensUnlike:
+    result.add ". Its accelerometer sensitivities differ from those the other vibrators state"

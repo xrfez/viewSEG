@@ -195,6 +195,18 @@ proc phaseShowCombo(line: ControlLine; name: string; marks: var Marks;
 proc sameMass(a, b: float64): bool {.inline.} =
   a == b or (a.isNaN and b.isNaN)
 
+var weightsOpened = false
+var weightCache: tuple[revision, paired, entries: int; found: FleetWeights] =
+  (-1, 0, 0, FleetWeights())
+
+proc cachedWeightFindings(st: AppState): FleetWeights =
+  ## `vibWeightFindings`, worked out again only when the file list changed.
+  let list = st.fileList
+  if weightCache.revision != list.revision or weightCache.paired != list.pairs.len or
+      weightCache.entries != list.entries.len:
+    weightCache = (list.revision, list.pairs.len, list.entries.len, st.vibWeightFindings())
+  weightCache.found
+
 proc drawSignatureSetup(st: AppState; w: AnalysisWindow; planeAt: int; name: string;
     box: float32; t: Theme; marks: var Marks; p: var AnalysisParams; changed: var bool;
     res: var PlotWindowsOutput) =
@@ -210,12 +222,14 @@ proc drawSignatureSetup(st: AppState; w: AnalysisWindow; planeAt: int; name: str
   if kind == sgVib:
     igAlignTextToFramePadding()
     igTextUnformatted("Accelerometer set:", nil)
-    for (which, text) in [(asB, "B (the set the .dat file records)"),
-        (asA, "A (the set the controller's QC report follows, probable)")]:
+    for (which, text) in [(asB, "B"), (asA, "A")]:
+      igSameLine(0, -1)
       if igRadioButton_Bool((text & "##set" & $which).cstring, p.accelSet == which) and
           p.accelSet != which:
         (p.accelSet, changed) = (which, true)
       marks.mark(name & ".set " & $which)
+      tip((if which == asB: "B: the set the .dat file records (the default)"
+        else: "A: the set the controller's QC report follows (probable)"))
     tip("Which of the two accelerometer sets the window judges: M, B and the ground force " &
       "computed from them. Set B is the default. This choice is this window's only: it is " &
       "not remembered for the next file")
@@ -240,33 +254,35 @@ proc drawSignatureSetup(st: AppState; w: AnalysisWindow; planeAt: int; name: str
     "Empty: the force stays in counts (pound-counts). It changes what is shown and judged, " &
     "never the samples. A local setting, kept in your settings and shipped with nothing")
   if kind == sgVib:
-    let wts = st.vibWeights(planeAt)
-    igPushTextWrapPos(0)
-    igTextUnformatted((weightsText(wts) & ".").cstring, nil)
-    marks.mark(name & ".weights")
-    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-    igTextUnformatted(WeightsDepend.cstring, nil)
-    igPopStyleColor(1)
-    igPopTextWrapPos()
-    let found = st.vibWeightFindings()
-    var flagged = 0
-    for v in found:
-      if v.differs or v.unlike: inc flagged
-    let head = "Weights per vibrator in this folder (" & $found.len & ")" &
-      (if flagged > 0: ": a difference found" else: "")
-    if flagged > 0: igSetNextItemOpen(true, ImGui_Cond_Once.cint) # (a finding is not folded away)
-    let fleetOpen = found.len > 0 and igTreeNodeEx_Str((head & "##fleet" & name).cstring, 0)
-    if found.len > 0: marks.mark(name & ".fleet header")
-    if fleetOpen:
-      for v in found:
-        igPushTextWrapPos(0)
-        let odd = v.differs or v.unlike
+    let found = st.cachedWeightFindings()
+    let head = "Weights from the header" & (if found.flagged: ": a difference found" else: "")
+    # (a finding is not folded away: opened once when it appears, the user may close it)
+    if found.flagged and not weightsOpened:
+      igSetNextItemOpen(true, ImGui_Cond_Always.cint)
+      weightsOpened = true
+    elif not found.flagged: weightsOpened = false
+    if igTreeNodeEx_Str((head & "##weights" & name).cstring, 0):
+      let wts = st.vibWeights(planeAt)
+      igPushTextWrapPos(0)
+      igTextUnformatted((weightsText(wts) & ".").cstring, nil)
+      marks.mark(name & ".weights")
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+      igTextUnformatted(WeightsDepend.cstring, nil)
+      igPopStyleColor(1)
+      igAlignTextToFramePadding()
+      igTextUnformatted("Weights per vibrator in this folder:", nil)
+      template line(text: string; odd: bool) =
         if odd: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
-        igTextUnformatted(vibratorWords(v).cstring, nil)
+        igTextUnformatted(text.cstring, nil)
         if odd: igPopStyleColor(1)
-        igPopTextWrapPos()
+      for v in found.vibrators:
+        line(vibratorWords(v), v.differs or v.sensDiffers or v.unlike or v.sensUnlike)
+      if found.twoDiffer: line(twoDifferWords(found), true)
+      if found.unknown > 0: line(unknownWords(found.unknown), false)
       marks.mark(name & ".fleet")
+      igPopTextWrapPos()
       igTreePop()
+    marks.mark(name & ".fleet header")
 
 proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: float32;
     t: Theme; marks: var Marks; p: var AnalysisParams; frozen, changed: var bool;
@@ -341,6 +357,13 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     tip((if planeAt >= 0: st.vibRolesLine(w) & "\n" else: "") &
       "Click to open the roles: which trace is Ref, GF, M and B, their polarity, and the " &
       "project reference")
+    if planeAt >= 0:
+      let notes = st.vibChoiceNotes(w)
+      if notes.len > 0:
+        igPushTextWrapPos(0)
+        igTextUnformatted(notes[2 .. ^1].capitalizeAscii.cstring, nil)
+        igPopTextWrapPos()
+        marks.mark(name & ".choices")
     if rolesOpen:
       const flags = ImGui_TableFlags_SizingFixedFit.cint or ImGui_TableFlags_BordersInnerH.cint
       if igBeginTable(("##roles" & name).cstring, 3, flags, ImVec2_c(x: 0, y: 0), 0):
@@ -547,7 +570,14 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     label("100 % force =")
     # the full scale of the signal judged (GF in counts, GF (M, B) in kg × counts)
     let weighted = w.result.judged == "GF (M, B)"
-    let shownHundred = if weighted: p.forceHundredWeighted else: p.forceHundredPct
+    let judgedUnit = unitOfLabel(judgedAxis)
+    # (a signature file's typed 100 % force is shown as it is applied: in the unit now on the
+    # axis, or not at all when it was typed in another unit and cannot be converted)
+    let sigWin = forceNote.len > 0 and not weighted
+    let shownHundred = if weighted: p.forceHundredWeighted
+      elif sigWin and p.forceHundredPct > 0:
+        (if w.result.hundredProblem.len > 0: NaN else: w.result.qc.hundredPct)
+      else: p.forceHundredPct
     let hundred = showScaled(shownHundred, forceShown.divisor)
     if limitBox("##hundred." & (if weighted: "m." else: "g.") & forceShown.unit, hundred, box,
         typed):
@@ -555,7 +585,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
       if typed.isNaN or MassKgRange.allows(stored):
         if not (stored.isNaN and shownHundred.isNaN) and stored != shownHundred:
           if weighted: p.forceHundredWeighted = stored
-          else: p.forceHundredPct = stored
+          else: (p.forceHundredPct, p.forceHundredUnit) = (stored, judgedUnit)
           changed = true
       else:
         res.notes.add "100 % force must be above 0, not " & sensible(typed) & "."
@@ -578,6 +608,15 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
       igAlignTextToFramePadding()
       igTextDisabled(("(" & w.result.hundredWords & ")").cstring)
       marks.mark(name & ".hundred words")
+    let hint = if w.result.hundredProblem.len > 0: w.result.hundredProblem
+               else: w.result.hundredHint
+    if hint.len > 0:
+      igPushTextWrapPos(0)
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+      igTextUnformatted(hint.cstring, nil)
+      igPopStyleColor(1)
+      igPopTextWrapPos()
+      marks.mark(name & ".hundred hint")
     # 100 % from this very sweep: its average force (the verdict's) over the target's share
     let average = w.result.qc.stats.avgForce
     let fromSweep = average / ((if p.targetPct > 0: p.targetPct else: 100.0) / 100)
@@ -586,7 +625,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     igBeginDisabled(not fromSweepOk)
     if igSmallButton("Set from this sweep##hundred"):
       if weighted: p.forceHundredWeighted = fromSweep
-      else: p.forceHundredPct = fromSweep
+      else: (p.forceHundredPct, p.forceHundredUnit) = (fromSweep, judgedUnit)
       changed = true
     igEndDisabled()
     marks.mark(name & ".set hundred")
@@ -600,7 +639,8 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     label("Target force (%)")
     if limitBox("##targetpct", p.targetPct, box, typed):
       if TargetPctRange.allows(typed):
-        if typed != p.targetPct: (p.targetPct, changed) = (typed, true)
+        if typed != p.targetPct or not p.targetTyped:
+          (p.targetPct, p.targetTyped, changed) = (typed, true, true)
       elif typed.isNaN:
         if p.targetPct != 100: (p.targetPct, changed) = (100.0, true)
       else:
@@ -1041,6 +1081,12 @@ proc drawVerdict(name: string; q: QcReport; t: Theme; marks: var Marks) =
     "then the average and the worst window against the limits below. Distortion is the " &
     "in-band one (harmonics up to the sweep's top frequency)")
 
+proc columnWidth(cells: openArray[string]; most = 320'f32): float32 =
+  ## The width a column of fixed-fit table needs for `cells`, so its first frame is right
+  ## (ImGui sizes a clipped table's columns to nothing).
+  for c in cells: result = max(result, igCalcTextSize(c.cstring, nil, false, -1).x)
+  result = min(result, most) + 12
+
 proc drawPolarity(w: AnalysisWindow; name: string; signature: bool; t: Theme;
     marks: var Marks; res: var PlotWindowsOutput) =
   ## The ground force against the reference, in words, and the one explicit choice: reverse the
@@ -1078,9 +1124,14 @@ proc drawController(name: string; r: AnalysisResult; t: Theme; marks: var Marks)
   igPopTextWrapPos()
   const flags = ImGui_TableFlags_SizingFixedFit.cint or ImGui_TableFlags_BordersInnerH.cint
   if igBeginTable(("##controller" & name).cstring, 3, flags, ImVec2_c(x: 0, y: 0), 0):
-    igTableSetupColumn("", 0, 0, 0)
-    igTableSetupColumn("This window", 0, 0, 0)
-    igTableSetupColumn("Controller", 0, 0, 0)
+    var labels, mine, theirs: seq[string] = @[]
+    for row in r.controller:
+      labels.add row.label
+      mine.add row.viewseg
+      theirs.add row.controller
+    igTableSetupColumn("", 0, columnWidth(labels), 0)
+    igTableSetupColumn("This window", 0, columnWidth(mine & "This window"), 0)
+    igTableSetupColumn("Controller", 0, columnWidth(theirs & "Controller"), 0)
     igTableHeadersRow()
     for row in r.controller:
       igTableNextRow(0, 0)
@@ -1104,7 +1155,10 @@ proc drawQcTable(name: string; q: QcReport; judged: string; t: Theme; marks: var
   igPushStyleVar_Vec2(ImGui_StyleVar_CellPadding.cint, ImVec2_c(x: 4, y: 1))
   defer: igPopStyleVar(1)
   if igBeginTable(("##qctable" & name).cstring, 5, flags, ImVec2_c(x: 0, y: 0), 0):
-    for c in table[0]: igTableSetupColumn(c.cstring, 0, 0, 0)
+    for k, c in table[0]:
+      var cells: seq[string] = @[]
+      for row in table: cells.add row[k]
+      igTableSetupColumn(c.cstring, 0, columnWidth(cells), 0)
     igTableHeadersRow()
     for i, row in table[1 .. ^1]:
       igTableNextRow(0, 0)

@@ -136,18 +136,26 @@ pickers are read-only.
   a `.vib` (with the header's sensitivity of the set judged). The force then reads in newtons
   (pounds-force with the Units setting), for the display and the verdict only; the samples stay as
   recorded. The scale is a local setting and ships with nothing. With a scale, the 100 % force
-  is the controller's target force (a `.dat`, at the drive level you typed) or the header's
+  is the controller's target force (a `.dat`, once you have typed the drive level: a default nobody typed does not count) or the header's
   hold-down weight (a `.vib`), unless you typed one.
 - **The controller's QC beside this window's.** A table gives the controller's force, THD and
   phase numbers and the limits it tripped next to this window's; a `.vib` shows its `.dat`'s
-  (when the pair is known), headed "from the .dat of this sweep". The force percentages compare
-  one to one only when the 100 % force comes from the file itself; the THD is defined differently
+  (when the pair is known), headed "from the .dat of this sweep". The controller's force numbers are % of the hold-down weight, and this window's are given
+  on that base too (% of the 100 % force, whatever the drive level), compared only when the 100 % force
+  comes from the file itself; the THD is defined differently
   by the controller (compare its trend, not its value); the phase compares once the polarity is as
   the controller treats it.
-- **The header's weights (a `.vib`).** Per sweep the window shows the hold-down, baseplate and
+- **The header's weights (a `.vib`).** Under "Weights from the header" (closed, and open by
+  itself when the folder has a finding) the window shows the hold-down, baseplate and
   reaction-mass weights and the two accelerometer sensitivities the header states. The reference
   scaled to a force depends on the hold-down weight, which differs with the vibrator type the
-  controller's electronics are set up for. Across the listed folder, "Weights per vibrator"
-  gives the same values per vibrator, and says in words when one vibrator's sweeps state
-  different weights or its weights differ from those the other vibrators state: the controller may
-  be set up for the wrong vibrator type. It is a finding only: nothing is corrected or rescaled.
+  controller's electronics are set up for. The same values are given per vibrator across the
+  listed folder, with a finding in words when one vibrator's sweeps state different weights, when
+  its weights differ from those the other vibrators share (the controller may be set up for the
+  wrong vibrator type), when exactly two vibrators state different weights (it does not say which
+  is odd), or when only the accelerometer sensitivities differ (told as that). Sweeps whose
+  vibrator is not known are listed and not compared. It is a finding only: nothing is corrected
+  or rescaled.
+- **A typed 100 % force** keeps the unit it was typed in and belongs to its window. It is
+  converted when a scale makes that exact; otherwise it is not applied and the window says so
+  ("type it again").
