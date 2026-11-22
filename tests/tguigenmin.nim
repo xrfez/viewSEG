@@ -75,10 +75,10 @@ proc main*() =
     proc fits(f: FrameInfo): bool =
       let win = f.markOf("generate")
       let font = fontPx()
-      let tall = font * 6
+      let tall = font * 5.5 # the filter section took a row of the room
       let signal = f.markOf("generate.preview.data")
       let spec = f.markOf("generate.spectrum.data")
-      win.size.y >= font * 62 - 2 and win.size.y <= font * 62 + 8 and
+      win.size.y >= font * 64 - 2 and win.size.y <= font * 64 + 8 and
         inside(f.markOf("generate.ok"), win) and inside(f.markOf("generate.cancel"), win) and
         signal.size.y >= tall and spec.size.y >= tall and
         signal.size.x > font * 8 and spec.size.x > font * 8

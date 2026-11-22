@@ -10,7 +10,7 @@ of the file's pilot when one is chosen.
 
 **Generate a reference...** makes a sweep and stores it. The dialog is resizable; the
 two plots take the extra room, and it does not shrink so far that the settings, the
-plots or the buttons leave the window. The settings are in three groups.
+plots or the buttons leave the window; a long dialog scrolls. The settings are in four groups.
 
 **Sweep.** The name (a default is filled from the parameters, such as "Linear 8-80 Hz
 8 s"), the start and end frequency (Hz), the length (ms), the sample interval (ms; the
@@ -32,6 +32,52 @@ same way, and Generate stays disabled while it stands.
 
 **Phase.** The start phase (deg), one number. 0 starts the sweep at zero. 180 reverses the
 polarity; there is no separate polarity control.
+
+**Recording filter.** A recorder's anti-alias filter changes what it writes, so a reference
+generated to match its data can be passed through the same filter. The default is
+**None**: the sweep is exactly as it was, and nothing more is shown. Every value of the
+other kinds is typed here; nothing is read from a file's headers, because a header's
+cutoff and slope do not say what a minimum-phase filter's type, order and delay are.
+
+- **Linear phase.** The number of taps, and a high-cut and a low-cut, each a cutoff (Hz; 0
+  switches it off) and a slope (dB per octave; the gain is -3 dB at the cutoff). The
+  filter is a symmetric FIR of that length. It delays every frequency by (taps - 1) / 2
+  samples; the **Delay** field shows that number rounded down (31 for 64 taps), computed
+  from the taps, and uses it until you type another. An even number of taps delays by
+  half a sample more, which a whole-sample shift cannot back out, and the dialog says so.
+  Too few taps cannot make a low-cut that low (below about twice the sampling rate over
+  the taps, in Hz); the dialog says so and goes on. **Defined by: Coefficients** takes the
+  taps typed or pasted as below instead (the delay is then floor((count - 1) / 2) of the
+  count typed, and a note says when the coefficients are not symmetric).
+- **Minimum phase.** Either **Coefficients**, the filter's taps pasted or typed into the
+  text field (one number per line, or separated by spaces or commas; a line's text after
+  # is a comment), or a **Family**, Butterworth or Chebyshev, with an order (poles) and a
+  cutoff for the high-cut and for the low-cut (0 Hz switches one off), and for Chebyshev
+  the passband ripple (dB). The **Delay** is the bulk delay to back out, typed in whole
+  samples; it starts at 0. Beside it the dialog shows a suggestion computed from the
+  filter you typed (the least-squares delay over the sweep's band); it is used only when
+  you press **Use it**. One sample of error is 79 degrees at 220 Hz at 1 ms, so type the
+  recorder's own number when you have it.
+
+The delay is backed out as the recorders do, by one shift of whole samples: the data
+move earlier by that many samples (a negative number moves them later). The length stays
+what you typed: 12 000 ms at 1 ms is 12 000 samples, filtered and shifted. The filter runs
+from rest on the sweep followed by zeros, so the ring-out that the shift brings inside the
+length is kept, and what is still past the last sample is cut; zeros fill samples shifted
+in at the start. The plots show the filtered, shifted reference, the name and the settings
+carry the filter, and it is kept in the reference's archive entry (an entry without a
+filter reads as None). A filter and shift exist only here: a reference stored from a record
+is never filtered or shifted, because the recorder has already done it.
+
+Whether the headers' numbers are enough, in plain words:
+
+| Case | Enough? | What you type |
+|---|---|---|
+| Linear-phase anti-alias filter, delay removed by the recorder, sweep well below the cutoff | The filter then does nothing to the sweep | nothing (None is as good) |
+| Linear phase, delay not removed | No | the taps; type 0 as the delay |
+| Minimum-phase low-cut | Mostly: a Butterworth of the header's order is a fair model | the order and cutoff |
+| Minimum-phase anti-alias filter near Nyquist | No: the slope gives no order | the filter's coefficients, or its type and order, and the recorder's delay |
+| Any minimum-phase filter | No for the shift | the recorder's bulk delay in samples |
 
 Under the settings, the whole sweep is drawn against time. While the plot holds more
 samples than it has pixel columns, each column is drawn from its smallest to its

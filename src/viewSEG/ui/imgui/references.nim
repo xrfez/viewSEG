@@ -33,25 +33,38 @@ type
     genLaw: ReferenceLaw
     genShape: TaperShape
     genMessage: string
-    genSource: int          ## 0: the sweep settings; 1: a trace of the record
-    autoName: string        ## the name the dialog filled in last (replaced while it is not edited)
+    genFKind: RefFilterKind   ## the recording filter: every value typed, none by default
+    genFFamily: RefFilterFamily
+    genFByCoef: bool          ## minimum phase: typed coefficients rather than a family
+    genFTaps, genFHigh, genFHighSlope, genFLow, genFLowSlope: float64
+    genFHighOrder, genFLowOrder, genFRipple, genFShift: float64
+    genFShiftTyped: bool
+    genFCoef: string          ## the coefficients' text (a buffer)
+    coefText: string          ## the text `coefTaps` was read from
+    coefTaps: seq[float64]
+    coefProblem: string
+    previewDelay: float64     ## the filter's bulk delay in the preview (NaN: none)
+    delayKey: string          ## the settings `previewDelay` was computed for
+    failKey, failText: string ## settings whose preview failed, and why
+    genSource: int            ## 0: the sweep settings; 1: a trace of the record
+    autoName: string          ## the name the dialog filled in last (replaced while it is not edited)
     pilotAux: bool
     pilotN, pilotStart, pilotLength: float64
-    pilotPhase: float64     ## 0 or 180 degrees
-    pilotAsked: string      ## the pilot ask last sent
+    pilotPhase: float64       ## 0 or 180 degrees
+    pilotAsked: string        ## the pilot ask last sent
     pilotLive: string
     pilotStable: int
-    pilotLengthFilled: bool ## the whole trace was put in Length once; a later edit stands
-    pilotGen: int           ## the preview's picture this dialog copied last
-    fixed: StoreDialog      ## Store this pilot as a fixed reference, from a pilot's window
+    pilotLengthFilled: bool   ## the whole trace was put in Length once; a later edit stands
+    pilotGen: int             ## the preview's picture this dialog copied last
+    fixed: StoreDialog        ## Store this pilot as a fixed reference, from a pilot's window
     previewSamples: seq[float32]
     previewHz, previewDb: seq[float64]
     previewDt, askedDt: float64
     previewF1, previewF2: float64
-    previewKey: string      ## the settings the dialog is showing a key for
-    askedKey: string        ## the settings last sent to the worker
+    previewKey: string        ## the settings the dialog is showing a key for
+    askedKey: string          ## the settings last sent to the worker
     liveKey: string
-    stable: int             ## frames the settings have stayed put
+    stable: int               ## frames the settings have stayed put
     askedGen, shownGen: int
     signalPlot, spectrumPlot: CurvePlotUi
     viewPlots: Table[int, tuple[time, spec: CurvePlotUi, ys: seq[float32], rev: int]]
@@ -115,6 +128,17 @@ proc openGenerate*(ui: var ReferencesUi; dtMs: float64) =
   ui.genPhase = 0
   ui.genParam = NaN
   ui.genMessage = ""
+  ui.genFKind = rfNone
+  ui.genFFamily = rfButterworth
+  ui.genFByCoef = false
+  (ui.genFTaps, ui.genFHigh, ui.genFHighSlope, ui.genFLow, ui.genFLowSlope) = (0.0, 0.0, 0.0, 0.0, 0.0)
+  (ui.genFHighOrder, ui.genFLowOrder, ui.genFRipple, ui.genFShift) = (0.0, 0.0, 0.0, 0.0)
+  ui.genFShiftTyped = false
+  ui.coefText = ""
+  ui.coefTaps = @[]
+  ui.coefProblem = ""
+  ui.previewDelay = NaN
+  if ui.genFCoef.len > 0: ui.genFCoef[0] = '\0'
   ui.genSource = 0
   ui.pilotAux = true
   ui.pilotN = 1
@@ -163,8 +187,25 @@ proc number(label: string; v: var float64; mark: string; marks: var Marks): bool
   result = igInputDouble(("##" & mark).cstring, addr v, 0, 0, fmt.cstring, 0)
   marks.mark(mark)
 
+func whole(x: float64): int =
+  ## A typed number as a whole one; 0 for a number that is not finite or is out of range.
+  if x.isNaN: 0
+  elif x >= float64(high(int32)): int(high(int32))
+  elif x <= float64(low(int32)): int(low(int32))
+  else: int(round(x))
+
+func askedFilter(ui: ReferencesUi): RefFilter =
+  if ui.genFKind == rfNone: return RefFilter()
+  RefFilter(kind: ui.genFKind, taps: whole(ui.genFTaps), highCutHz: ui.genFHigh,
+    highSlopeDb: ui.genFHighSlope, lowCutHz: ui.genFLow, lowSlopeDb: ui.genFLowSlope,
+    coefficients: (if ui.genFByCoef: ui.coefTaps else: @[]),
+    family: ui.genFFamily, highOrder: whole(ui.genFHighOrder), lowOrder: whole(ui.genFLowOrder),
+    rippleDb: ui.genFRipple, shiftSamples: whole(ui.genFShift),
+    shiftTyped: ui.genFShiftTyped or ui.genFKind == rfMinimum)
+
 proc asked(ui: ReferencesUi): GeneratedReference =
-  GeneratedReference(name: bufText(ui.genName), law: ui.genLaw, f1Hz: ui.genF1,
+  GeneratedReference(filter: ui.askedFilter, name: bufText(ui.genName), law: ui.genLaw,
+      f1Hz: ui.genF1,
     f2Hz: ui.genF2, durationMs: ui.genLength, dtMs: ui.genDt, taperStartMs: ui.genTaper0,
     taperEndMs: ui.genTaper1, taperShape: ui.genShape, taperParam: ui.genParam,
     phaseDeg: ui.genPhase, amplitude: ui.genAmp, boostDb: ui.genBoost)
@@ -188,6 +229,151 @@ proc combo(label, current, mark: string; marks: var Marks; flags = 0'i32): bool 
   igSetNextItemWidth(igGetFontSize() * 12)
   result = igBeginCombo(("##" & mark).cstring, current.cstring, flags)
   marks.mark(mark)
+
+const CoefBuffer = 400_000 ## room for 16 384 coefficients typed or pasted
+
+func kindTitle(k: RefFilterKind): string =
+  case k
+  of rfNone: "None"
+  of rfLinear: "Linear phase"
+  of rfMinimum: "Minimum phase"
+
+proc refreshCoefficients(ui: var ReferencesUi) =
+  ## Reads the coefficients' text again when it changed.
+  if ui.genFCoef.len < CoefBuffer: ui.genFCoef.setLen CoefBuffer
+  if ui.genFKind == rfNone or not ui.genFByCoef: return
+  let text = bufText(ui.genFCoef)
+  if text == ui.coefText: return
+  ui.coefText = text
+  let r = parseCoefficients(text)
+  ui.coefTaps = r.taps
+  ui.coefProblem = r.problem
+
+proc warningText(t: Theme; text, mark: string; marks: var Marks) =
+  if text.len == 0: return
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+  igTextWrapped("%s", text.cstring)
+  igPopStyleColor(1)
+  marks.mark(mark)
+
+proc drawCoefficients(ui: var ReferencesUi; t: Theme; marks: var Marks) =
+  igTextUnformatted("Coefficients", nil)
+  igSameLine(igGetFontSize() * 12, -1)
+  discard igInputTextMultiline("##generate.filter.coef", cast[cstring](addr ui.genFCoef[0]),
+    csize_t(ui.genFCoef.len), ImVec2_c(x: -1, y: igGetFontSize() * 6), 0, nil, nil)
+  marks.mark("generate.filter.coef")
+  tip("One number per line, or separated by spaces or commas; a line's text after # is a " &
+    "comment. The filter is used as typed: its gain and delay are the coefficients'.")
+  if ui.coefProblem.len > 0:
+    warningText(t, ui.coefProblem, "generate.filter.coefproblem", marks)
+  else:
+    let words = $ui.coefTaps.len & " coefficients"
+    igTextUnformatted(words.cstring, nil)
+    marks.mark("generate.filter.coefcount:" & words)
+
+proc drawFilter(ui: var ReferencesUi; t: Theme; marks: var Marks) =
+  ## "Recording filter": the filter that backs a generated reference through the recorder's
+  ## response, and the delay to back out. Every value is typed here; none by default.
+  igSeparatorText("Recording filter")
+  if combo("Filter", kindTitle(ui.genFKind), "generate.filter.kind", marks):
+    for k in RefFilterKinds:
+      if igSelectable_Bool(kindTitle(k).cstring, k == ui.genFKind, 0, ImVec2_c(x: 0, y: 0)):
+        if k != ui.genFKind:
+          # each kind's delay starts from its own: computed (linear) or 0 (minimum)
+          ui.genFShift = 0
+          ui.genFShiftTyped = false
+          ui.previewDelay = NaN
+        ui.genFKind = k
+      marks.mark("generate.filter.kind " & $k)
+    igEndCombo()
+  tip("None leaves the sweep as it is. Linear phase and minimum phase pass the generated " &
+    "sweep through the recorder's filter, then back out its delay by a bulk shift of whole " &
+    "samples, so that the reference matches what the recorder wrote. Every value is typed " &
+    "here: nothing is read from a file's headers. Only a generated reference is filtered: " &
+    "one stored from a record already went through the recorder's filter.")
+  if ui.genFKind == rfNone: return
+  let f = ui.askedFilter
+  let designLabel = if ui.genFKind == rfLinear: "Design" else: "Family"
+  let how = if ui.genFByCoef: "Coefficients" else: designLabel
+  if combo("Defined by", how, "generate.filter.by", marks):
+    for (byCoef, label) in [(false, designLabel), (true, "Coefficients")]:
+      if igSelectable_Bool(label.cstring, byCoef == ui.genFByCoef, 0, ImVec2_c(x: 0, y: 0)):
+        ui.genFByCoef = byCoef
+      marks.mark("generate.filter.by " & label)
+    igEndCombo()
+  tip("Type or paste the filter's coefficients (its taps), or give the filter by " &
+    (if ui.genFKind == rfLinear: "its number of taps, cutoffs and slopes."
+      else: "its type, order and cutoff (Butterworth or Chebyshev)."))
+  if ui.genFByCoef:
+    ui.drawCoefficients(t, marks)
+    warningText(t, symmetryNote(f), "generate.filter.symmetry", marks)
+  elif ui.genFKind == rfLinear:
+    discard number("Number of taps", ui.genFTaps, "generate.filter.taps", marks)
+    ui.genFTaps = round(ui.genFTaps)
+    tip("The filter's length: an odd number (it delays by (taps - 1) / 2 samples, a whole " &
+      "number). Up to 2047.")
+    discard number("High-cut (Hz)", ui.genFHigh, "generate.filter.high", marks)
+    discard number("High-cut slope (dB/oct)", ui.genFHighSlope, "generate.filter.highslope",
+      marks)
+    tip("The roll-off in dB per octave above the cutoff (the gain is -3 dB at the cutoff). " &
+      "A filter of N taps cannot roll off faster than its length allows.")
+    discard number("Low-cut (Hz)", ui.genFLow, "generate.filter.low", marks)
+    discard number("Low-cut slope (dB/oct)", ui.genFLowSlope, "generate.filter.lowslope", marks)
+    tip("0 Hz switches a cut off.")
+    warningText(t, lowCutNote(f, ui.genDt), "generate.filter.lowcutnote", marks)
+  else:
+    if combo("Family", $ui.genFFamily, "generate.filter.family", marks):
+      for fam in RefFilterFamily:
+        if igSelectable_Bool(($fam).cstring, fam == ui.genFFamily, 0, ImVec2_c(x: 0, y: 0)):
+          ui.genFFamily = fam
+        marks.mark("generate.filter.family " & $fam)
+      igEndCombo()
+    discard number("High-cut (Hz)", ui.genFHigh, "generate.filter.high", marks)
+    discard number("High-cut order", ui.genFHighOrder, "generate.filter.highorder", marks)
+    ui.genFHighOrder = round(ui.genFHighOrder)
+    tip("The number of poles; the roll-off is 6 dB per octave for each. Up to 32.")
+    discard number("Low-cut (Hz)", ui.genFLow, "generate.filter.low", marks)
+    discard number("Low-cut order", ui.genFLowOrder, "generate.filter.loworder", marks)
+    ui.genFLowOrder = round(ui.genFLowOrder)
+    tip("0 Hz switches a cut off.")
+    if ui.genFFamily == rfChebyshev:
+      discard number("Ripple (dB)", ui.genFRipple, "generate.filter.ripple", marks)
+      tip("The passband ripple; the cutoff is where the gain leaves it. From 0.001 to 12 dB.")
+  # the bulk delay
+  if ui.genFKind == rfLinear:
+    if not ui.genFShiftTyped: ui.genFShift = float64(effectiveShift(f))
+    if number("Delay (samples)", ui.genFShift, "generate.filter.shift", marks):
+      ui.genFShiftTyped = true
+      ui.genFShift = round(ui.genFShift)
+    tip("The delay to back out, in whole samples. It is floor((taps - 1) / 2) from the " &
+      "number of taps, until you type another value.")
+    if ui.genFShiftTyped:
+      igSameLine(0, -1)
+      if igButton("Use (taps - 1) / 2", ImVec2_c(x: 0, y: 0)): ui.genFShiftTyped = false
+      marks.mark("generate.filter.shiftcalc")
+    warningText(t, evenTapsNote(f), "generate.filter.even", marks)
+  else:
+    if number("Delay (samples)", ui.genFShift, "generate.filter.shift", marks):
+      ui.genFShift = round(ui.genFShift)
+    tip("The recorder's bulk delay, which it backs out by moving the data earlier by this " &
+      "many whole samples. Type the recorder's number: a minimum-phase filter's delay " &
+      "depends on frequency, so only the recorder's own shift matches its data.")
+    # a suggestion belongs to the settings it was computed for: never show an older one
+    if ui.previewDelay == ui.previewDelay and ui.delayKey == settingsKey(ui.asked):
+      let words = "Suggested: " & $(if ui.previewDelay >= 0: int(floor(ui.previewDelay + 0.5))
+        else: -int(floor(-ui.previewDelay + 0.5))) & " (" &
+        formatFloat(ui.previewDelay, ffDecimal, 2) & " samples over " & plainFieldText(ui.genF1) &
+        "-" & plainFieldText(ui.genF2) & " Hz)"
+      igTextUnformatted(words.cstring, nil)
+      marks.mark("generate.filter.suggested")
+      igSameLine(0, -1)
+      if igButton("Use it", ImVec2_c(x: 0, y: 0)):
+        ui.genFShift = float64(if ui.previewDelay >= 0: int(floor(ui.previewDelay + 0.5))
+          else: -int(floor(-ui.previewDelay + 0.5)))
+      marks.mark("generate.filter.usesuggested")
+      tip("A suggestion only, from the filter you typed (the least-squares delay over the " &
+        "sweep's band). It is not used unless you press this or type it.")
+  warningText(t, topWarning(f, max(ui.genF1, ui.genF2)), "generate.filter.top", marks)
 
 proc drawPlots(ui: var ReferencesUi; t: Theme; plotH: float32; facts: ExplainFacts;
     marks: var Marks) =
@@ -240,10 +426,15 @@ proc followPreview(ui: var ReferencesUi; g: GeneratedReference; key, problem: st
       ui.previewDb = ready.db
       ui.shownGen = ready.gen
       ui.previewDt = ui.askedDt
+      ui.previewDelay = ready.delay
+      ui.delayKey = ready.key
+      if ui.failKey == ready.key: ui.failKey = ""
       ui.previewF1 = g.f1Hz
       ui.previewF2 = g.f2Hz
     elif problem.len == 0:
       ui.genMessage = ready.problem
+      ui.failKey = ready.key
+      ui.failText = ready.problem
   if problem.len > 0:
     ui.genMessage = problem
     return
@@ -293,11 +484,11 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
     igOpenPopup_Str(id.cstring, 0)
     ui.genAsk = false
   let font = igGetFontSize()
-  # font×62 holds the settings, including the optional boost and parameter,
+  # font×64 holds the settings, including the optional boost and parameter and the filter choice,
   # both plots and the buttons. The buttons are drawn under a child that
   # takes the rest, so they stay inside at any size.
   igSetNextWindowSize(ImVec2_c(x: font * 46, y: font * 64), ImGui_Cond_FirstUseEver.cint)
-  igSetNextWindowSizeConstraints(ImVec2_c(x: font * 36, y: font * 62),
+  igSetNextWindowSizeConstraints(ImVec2_c(x: font * 36, y: font * 64),
     ImVec2_c(x: 4000, y: 4000), nil, nil)
   if not igBeginPopupModal(id.cstring, nil, 0): return
   marks.markWindow("generate")
@@ -326,6 +517,7 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
   if ui.genSource == 1 and not ui.pilotLengthFilled and st.shownLengthMs > 0:
     ui.pilotLength = st.shownLengthMs
     ui.pilotLengthFilled = true
+  ui.refreshCoefficients()
   let defaultName = if ui.genSource == 0: defaultGenerateName(ui.asked)
                     else: defaultPilotName(ui.pilotRule)
   if bufText(ui.genName).len == 0 or bufText(ui.genName) == ui.autoName:
@@ -378,6 +570,7 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
     igSeparatorText("Phase")
     discard number("Start phase (deg)", ui.genPhase, "generate.phase", marks)
     tip("Degrees. 180 reverses the polarity")
+    ui.drawFilter(t, marks)
   else:
     igSeparatorText("Pilot")
     let kind = if ui.pilotAux: "Auxiliary trace" else: "Trace of the record"
@@ -416,6 +609,11 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
     g = ui.asked
     key = settingsKey(g)
     problem = generateProblem(g)
+    if problem.len == 0 and ui.failKey == key: problem = ui.failText
+    if ui.genFKind != rfNone and ui.genFByCoef:
+      if ui.coefProblem.len > 0: problem = ui.coefProblem
+      elif ui.coefTaps.len == 0 and problem.len == 0:
+        problem = "type or paste the filter's coefficients"
     ui.followPreview(g, key, problem)
   else:
     rule = ui.pilotRule
@@ -428,7 +626,7 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
   marks.mark("generate.previewkey." & key)
   let spacing = igGetStyle().ItemSpacing.y
   let room = igGetContentRegionAvail().y
-  let plotH = max(1'f32, (room - spacing) / 2)
+  let plotH = max(font * 4, (room - spacing) / 2) # a long dialog scrolls
   if problem.len > 0:
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
     igTextWrapped("%s", problem.cstring)

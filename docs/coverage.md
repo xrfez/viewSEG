@@ -41,12 +41,14 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.18.0: capabilities | names | processSEG 0.9.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 53 (20 in part) | 176 | 34 (23 in part) | 153 |
-| `internal` | 15 | 43 | 4 | 38 |
-| `planned` | 32 | 220 | 45 | 400 |
+| `built` | 53 (20 in part) | 176 | 34 (23 in part) | 155 |
+| `internal` | 15 | 43 | 5 | 39 |
+| `planned` | 32 | 220 | 45 | 398 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 20 | 364 | 6 | 66 |
-| all | 122 | 813 | 90 | 662 |
+| `not applicable` | 20 | 364 | 6 | 65 |
+| all | 122 | 813 | 91 | 662 |
+
+In the next library release (below): processSEG: 1 capabilities (1 built).
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -365,7 +367,8 @@ name, so these are building blocks for code that works on raw headers.
 | Sweep generation (linear, dB/octave, dB/Hz, exponential, table) | `linearSweep`, `dbPerOctaveSweep`, `dbPerHzSweep`, `exponentialSweep`, `tableSweep`, `generatePilot`, `sweepSamples`, `SweepSpec`, `SweepLaw`, `SweepPoint`, `sweepLen`, `sweepInto` | Operations → References → Generate a reference | built (Operations → References → Generate a reference); planned (table sweeps) |
 | Sweep harmonics (known distortion) | `SweepHarmonic`, `sweepHarmonics`, `sweepHarmonicsInto` | Sample vibrator records with known distortion, to check the vibrator QC | planned |
 | Instantaneous frequency and phase | `frequencyAt`, `phaseAt` | Compare pilots: frequency at the cursor | planned |
-| Recorded pilot from a trace | `pilotFromTrace`, `pilotFromRow`, `sweepFromHeaders`, `energyAbove`, `initPilot`, `Pilot` (`lengthMs`) | Compare pilots: recorded source | planned |
+| Recorded pilot from a trace | `pilotFromTrace`, `pilotFromRow`, `sweepFromHeaders`, `energyAbove`, `Pilot` (`lengthMs`) | Compare pilots: recorded source | planned |
+| A pilot made from samples | `initPilot` | Generate a reference: the filtered sweep is made into a pilot for the recorder's filter | internal |
 | Pilot resampled to the data | `resamplePilot` | Compare pilots | planned |
 | Recorder's instrument filter on a pilot | `InstrumentFilter`, `applyInstrumentFilter` | Compare pilots: "apply recorder filter" | planned |
 | Pilot saved with its sweep fields | `pilotKeys`, `sweepOverrides`, `segySweepType`, `segyTaperType` | Compare pilots: save the generated pilot as SEG-Y | planned |
@@ -404,11 +407,17 @@ name, so these are building blocks for code that works on raw headers.
 
 ## In the next library release
 
-None at present: parseSEG 0.15.0 and processSEG 0.7.0, the releases this repository pins,
-are in the tables above. While a release is being prepared, a working tree of it can be
+processSEG after 0.9.0 adds the recording filter below; parseSEG 0.17.0 and
+processSEG 0.9.0, the releases this repository pins, are in the tables above. While a release is being prepared, a working tree of it can be
 linked at `deps/next/parseSEG` or `deps/next/processSEG`; the check then reads its committed
 `HEAD` and holds the tables of this section, `### parseSEG (after 0.15.0)` and
 `### processSEG (after 0.7.0)`, to the names it adds.
+
+### processSEG (after 0.9.0)
+
+| Capability | Library calls | Viewer feature | Status |
+|---|---|---|---|
+| A generated reference through a typed recorder filter, its bulk delay backed out | `RecordingFilter`, `RecFilterKind`, `RecFilterFamily`, `applyRecordingFilter`, `checkFilter`, `linearPhaseTaps`, `linearDelaySamples`, `linearShiftSamples`, `coefficientsSymmetric`, `responseAt`, `bulkDelaySamples`, `suggestedShift`, `shiftResidualDeg`, `maxDesignTaps`, `maxCoefficients`, `maxOrder`, `minRippleDb`, `maxRippleDb`, `maxSlopeDbPerOctave` | Operations → References → Generate a reference: Recording filter | built (linear phase: taps, cutoffs, slopes; minimum phase: coefficients or Butterworth/Chebyshev, typed delay with a suggestion; `shiftResidualDeg` unused); planned (loading coefficients from a file) |
 
 ## Not exposed
 
