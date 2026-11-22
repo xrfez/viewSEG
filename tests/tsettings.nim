@@ -95,7 +95,7 @@ proc everyFieldSet(): Settings =
         selected: Rgba(b: 200, a: 255)), colourMap: cmRedWhiteBlue,
       gain: dgExponential, gainDb: -7.5, agcWindowMs: 250, fixedClip: 0.125,
       normScope: perPanel, normStat: normRms, timeGain: tgPower, dbPerS: 12, power: 1.5,
-      untilMs: 3500, clipPercentile: 98.5, overlap: 2.5),
+      untilMs: 3500, clipPercentile: 98.5, overlap: 2.5, firstBreaks: true),
     order: @[SortKey(field: hfComponent), SortKey(field: hfOffset, descending: true),
       SortKey(field: hfChannelSet)],
     header: HeaderChoice(auto: false,

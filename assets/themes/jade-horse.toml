@@ -7,7 +7,7 @@
 #
 # Roles viewSEG moves in this theme, to keep it readable and its
 # marks apart (README.md, "Readable in every theme"):
-#   active, receiver, flag_amplitude, flag_edited, flag_spread, text_selection
+#   active, receiver, flag_amplitude, flag_edited, flag_spread, text_selection, break_model
 
 name = "Jade Horse"
 # Year of the Horse: jade palette

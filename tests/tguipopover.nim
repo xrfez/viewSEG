@@ -152,7 +152,9 @@ proc main*() =
     step("First saved", noop, proc (f: FrameInfo): bool = f.presetNames == @["First"])
     proc another(f: FrameInfo) =
       var d = f.display
-      d.mode = dmDensity
+      # not density, which takes the fill buttons off the strip: at this size that can
+      # un-cramp the strip, and the popover opened from inside it goes with the change
+      d.mode = dmWiggleDensity
       d.gain = dgAgc
       d.colourMap = cmViridis
       f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)

@@ -16,7 +16,7 @@
 #
 # Roles viewSEG moves in this theme, to keep it readable and its
 # marks apart (README.md, "Readable in every theme"):
-#   accent, highlight, ok, warning, error, info, source, receiver, flag_failed, flag_amplitude, flag_edited, flag_spread, text_selection
+#   accent, highlight, ok, warning, error, info, source, receiver, flag_failed, flag_amplitude, flag_edited, flag_spread, text_selection, break_model, break_pick
 
 name = "Last Horizon"
 mode = "dark"

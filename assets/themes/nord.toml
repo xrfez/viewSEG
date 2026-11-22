@@ -7,7 +7,7 @@
 #
 # Roles viewSEG moves in this theme, to keep it readable and its
 # marks apart (README.md, "Readable in every theme"):
-#   selection, hover, accent, error, info, flag_amplitude, flag_edited, flag_spread, text_selection
+#   selection, hover, accent, error, info, flag_amplitude, flag_edited, flag_spread, text_selection, break_model, break_pick
 
 name = "Nord"
 mode = "dark"
