@@ -23,6 +23,9 @@
 ## - four client threads at once, while the UI thread answers (run under
 ##   ThreadSanitizer too).
 ##
+## Not on Windows: agent control's socket is a Unix socket and the server and
+## its clients are not built there (`remote/server`: "not available on Windows").
+##
 ## Seen to fail: with the server handling one line per read (the rest
 ## left until more comes), "no answer to this is not JSON"; with
 ## `MaxInFlight` not checked, "17 calls were all taken"; with the socket

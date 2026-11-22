@@ -23,7 +23,18 @@
 ## - `--timeout:S` stops a test whose run takes more than S seconds (default
 ##   300), or whose compile takes more than four times that, and reports it as
 ##   failed.
+## - `--no-display` leaves out the files that need a display (`tgui*`, and any
+##   that imports the window code or the GL layer: `tests/utils/displaytests`):
+##   for a machine without an X server or OpenGL, such as CI's Windows job.
+##   `--no-timing` leaves out the files whose header says `## Runs alone:` (they
+##   measure times, which a shared virtual machine does not keep).
 ## - File names (`tgui` or `tgui.nim`) run only those files.
+##
+## On Windows: files whose header holds `## Not on Windows: <why>` are left out
+## (they use POSIX sockets, signals or a file mode) and so are the reject tests
+## (they read the compiler's output); the rest run one at a
+## time in the environment as it is, each run's output going straight to the
+## console under a line naming it, a run past `--timeout` ended.
 ##
 ## What the files do not share:
 ## - **A display.** Each run gets a new Xvfb server (1920x1080x24, the screen
@@ -66,6 +77,8 @@
 ## see, such as a `=copy` that is an error.
 
 import std/[algorithm, monotimes, os, osproc, sequtils, strutils, tables, tempfiles, times]
+import utils/displaytests
+
 when defined(posix):
   import std/posix
 else:
@@ -74,7 +87,6 @@ else:
 const
   DefaultTimeout = 300                 ## seconds a run may take; a compile, four times that
   Screen = "1920x1080x24"
-  AloneLine = "## Runs alone:"
   SeparateLine = "## Separate binary:" ## compiled alone; the rest of the line says why
   ExpectLine = "## Expect: "
   AggregateFile = "alltests.nim"       ## generated, not a test; one program for the rest
@@ -100,6 +112,8 @@ type
     timeout: Duration
     once: bool      ## a failed run is not run again
     separate: bool  ## every file compiled alone, as before
+    noDisplay: bool ## the files that need a display are left out
+    noTiming: bool  ## the files that run alone (they measure times) are left out
     flags, only: seq[string]
 
   Took = tuple[compile, run: float64] ## seconds
@@ -309,19 +323,32 @@ else:
     Display = object
       number: int
 
-  var lastEnded: Ended
+  var
+    lastEnded: Ended
+    spawnLimit = initDuration(seconds = DefaultTimeout)
+      ## how long the next `spawn` may take; set by `start` (a compile gets more)
 
   proc spawn(argv, env: openArray[string]; log: string): Pid =
-    ## Runs `argv` to its end in this environment, appending its output to
-    ## `log`.
-    let p = startProcess(argv[0], args = argv[1 .. ^1], options = {poStdErrToStdOut})
-    let output = p.outputStream.readAll()
-    let code = p.waitForExit()
+    ## Runs `argv` to its end in this environment, or for `spawnLimit` (it is
+    ## then ended). Its output is not kept in `log`: it goes straight to the
+    ## console, under a line that names the run, as nothing else runs beside
+    ## it.
+    discard env
+    discard log
+    let what = if argv.len > 2 and argv[1] == "c": "compiling " & argv[^1]
+               else: argv[0].extractFilename & " " & argv[1 .. ^1].join(" ")
+    echo "--- ", what
+    flushFile(stdout)
+    let began = getMonoTime()
+    let p = startProcess(argv[0], args = argv[1 .. ^1], options = {poParentStreams})
+    let code = p.waitForExit(int(spawnLimit.inMilliseconds))
     p.close()
-    let f = open(log, fmAppend)
-    f.write output
-    f.close()
-    lastEnded = Ended(done: true, failure: if code == 0: "" else: "exit code " & $code)
+    let took = getMonoTime() - began
+    lastEnded = Ended(done: true, failure: "")
+    if took >= spawnLimit and code != 0:
+      lastEnded.failure = "timed out after " & $spawnLimit.inSeconds & " s, stopped"
+    elif code != 0:
+      lastEnded.failure = "exit code " & $code
     1
 
   proc lowPriority(pid: Pid) = discard
@@ -368,6 +395,10 @@ proc parseOptions(params: seq[string]): Options =
       result.once = true
     elif p == "--separate":
       result.separate = true
+    elif p == "--no-display":
+      result.noDisplay = true
+    elif p == "--no-timing":
+      result.noTiming = true
     elif p.startsWith("-"):
       result.flags.add p
     else:
@@ -375,15 +406,19 @@ proc parseOptions(params: seq[string]): Options =
   result.jobs = max(1, result.jobs)
   result.runs = if result.runs > 0: min(result.runs, result.jobs) else: max(1, result.jobs div 8)
 
-proc testFiles(testDir, binDir, logDir: string; only: seq[string];
-    separate: bool): seq[TestFile] =
+proc testFiles(testDir, binDir, logDir: string; opts: Options): seq[TestFile] =
   ## The test files (all, or those named in `only`), then the reject tests.
   ## A file joins the one program unless `separate`, or its header asks to be
-  ## compiled alone.
+  ## compiled alone. When no file is named, those the platform and the
+  ## switches leave out (`leftOut`) are not listed.
+  let (only, separate) = (opts.only, opts.separate)
   for f in walkFiles(testDir / "t*.nim"):
     let name = f.extractFilename
     if name != "tester.nim" and (only.len == 0 or name in only):
       let head = header(f)
+      if only.len == 0 and leftOut(f, head, opts.noDisplay, opts.noTiming,
+          defined(windows)).len > 0:
+        continue
       result.add TestFile(path: f, name: name, log: logDir / name & ".log",
         exe: binDir / name.changeFileExt(ExeExt),
         alone: head.anyIt(it.startsWith(AloneLine)),
@@ -391,7 +426,9 @@ proc testFiles(testDir, binDir, logDir: string; only: seq[string];
   for name in only:
     if not result.anyIt(it.name == name):
       quit "FAILURE no test file " & name & " in " & testDir
-  if only.len == 0:
+  # Not on Windows, where a run's output is not kept to be read: the contracts
+  # they check do not depend on the system.
+  if only.len == 0 and not defined(windows):
     for f in walkFiles(testDir / "reject" / "r*.nim"):
       result.add TestFile(path: f, name: "reject/" & f.extractFilename, reject: true,
         want: expected(f), log: logDir / f.extractFilename & ".log")
@@ -427,7 +464,7 @@ proc initRunner(opts: Options): Runner =
   let testDir = currentSourcePath().parentDir
   result = Runner(opts: opts, nim: getCurrentCompilerExe(), testDir: testDir, rerun: not opts.once,
     binDir: testDir.parentDir / "bin", logDir: createTempDir("viewseg-tests-", ""))
-  result.files = testFiles(testDir, result.binDir, result.logDir, opts.only, opts.separate)
+  result.files = testFiles(testDir, result.binDir, result.logDir, opts)
   if result.files.len == 0:
     quit "FAILURE no tests found in " & testDir
   when defined(posix):
@@ -476,6 +513,8 @@ proc start(r: Runner; i: int; step: Step): Job =
                  @["--compileOnly", "--path:" & r.testDir.parentDir / "src",
                    "--nimcache:" & r.logDir / "cache-" & f.path.extractFilename]
                else: @["--out:" & f.exe]
+    when not defined(posix):
+      spawnLimit = r.opts.timeout * 4
     result.pid = spawn(@[r.nim, "c"] & r.build & r.opts.flags & args & @[f.path], r.env, f.log)
     lowPriority(result.pid)
   else:
@@ -485,6 +524,8 @@ proc start(r: Runner; i: int; step: Step): Job =
         result.display = startDisplay(r.prefix, r.xvfb, r.env, r.logDir / f.name & ".xvfb.log")
         env.add "DISPLAY=:" & $result.display.number
     let argv = if f.joined: @[r.aggregate, f.name.changeFileExt("")] else: @[f.exe]
+    when not defined(posix):
+      spawnLimit = r.opts.timeout
     result.pid = spawn(r.prefix & argv, env, f.log)
 
 proc report(r: var Runner; f: var TestFile) =
@@ -642,6 +683,8 @@ proc compileAggregate(r: var Runner) =
   echo "Compiling ", names.len, " tests as one binary"
   let started = getMonoTime()
   var pid: Pid
+  when not defined(posix):
+    spawnLimit = r.opts.timeout * 4
   try:
     pid = spawn(args, r.env, log)
   except OSError as e:
