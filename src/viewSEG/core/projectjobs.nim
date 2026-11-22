@@ -23,7 +23,7 @@
 ##
 ## What they find is posted as `mkProject` (`ProjectNews`).
 
-import std/[monotimes, os, strutils, times]
+import std/[locks, monotimes, os, strutils, times]
 import parseSEG
 import diskio, displaypresets, filememory, filesystem, identity, inbox, jobs, join, layouts,
   persist, processing, project, projectnif, session, survey, surveystore, threads, vendormaps
@@ -190,6 +190,36 @@ proc prepareVendorFolder(dir: string) =
   except CatchableError:
     discard
 
+var
+  releasing: seq[tuple[id: int, dir: string, lock: FileLock]]
+    ## the locks that are to be let go by a job queued but not yet run
+  releasingNext = 0
+  releasingGuard: Lock
+
+initLock releasingGuard
+
+proc stageRelease*(dir: string; lock: FileLock): int =
+  ## Notes that `lock` of the project in `dir` is to be let go by `unlockWork(id)`: a program
+  ## that opens that project first lets it go itself, so that a project closed and opened at
+  ## once is not found held by the program that has just closed it.
+  withLock releasingGuard:
+    inc releasingNext
+    result = releasingNext
+    {.cast(gcsafe).}:
+      releasing.add (releasingNext, dir, lock)
+
+proc letGo(id: int; dir: string) =
+  ## Lets go the staged lock `id`, or every one staged for `dir` when `id` is 0.
+  var mine: seq[FileLock] = @[]
+  withLock releasingGuard:
+    {.cast(gcsafe).}:
+      var kept: seq[tuple[id: int, dir: string, lock: FileLock]] = @[]
+      for r in releasing:
+        if (id != 0 and r.id == id) or (id == 0 and r.dir == dir): mine.add r.lock
+        else: kept.add r
+      releasing = kept
+  for l in mine.mitems: fs.unlock(l)
+
 proc openProjectWork*(dir: string; to: Poster; make = false; np = NewProject();
     writes: ptr DiskIo = nil): JobWork =
   ## The work of a job that opens (with `make`, first makes) the project in
@@ -215,6 +245,7 @@ proc openProjectWork*(dir: string; to: Poster; make = false; np = NewProject();
             why & ")")
           news.doc = readProject(text, ProjectFileName, news.problems)
         if news.doc.name.len == 0: news.doc.name = untitled(dir)
+        letGo(0, dir) # (a close of this project not yet carried out: see `stageRelease`)
         news.lock = fs.lockFile(dir / LockName, initDuration())
         if news.lock.locked:
           if news.doc.version <= ProjectVersion: prepareVendorFolder(dir) # (a read-only project is left alone)
@@ -272,12 +303,11 @@ proc originalsWork*(dir: string; doc: ProjectDoc; to: Poster): JobWork =
     discard ctx.progress(doc.survey.len, doc.survey.len)
     to.post(ctx.id, news)
 
-proc unlockWork*(lock: FileLock): JobWork =
+proc unlockWork*(id: int): JobWork =
   ## The work of a job that lets a project's lock go (a close on a share
-  ## may take a moment).
+  ## may take a moment); nothing when the program that opens the project has done it.
   result = proc (ctx: JobContext) {.gcsafe.} =
-    var l = lock
-    fs.unlock(l)
+    letGo(id, "")
 
 proc stopAtCancel(ctx: JobContext; done, total: int64): bool =
   ## A progress callback for `fullHash`: a cancel stops the job.

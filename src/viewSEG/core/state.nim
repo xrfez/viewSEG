@@ -5323,7 +5323,7 @@ proc releaseLock(state: var AppState) =
   ## Lets the project's lock go, on a job (a close on a share may wait).
   if state.project.lock.locked:
     discard state.jobs.submit(JobSpec(title: "Let the project go", lane: jlInteractive,
-      cancellable: false), unlockWork(state.project.lock))
+      cancellable: false), unlockWork(stageRelease(state.project.dir, state.project.lock)))
     state.project.lock = FileLock()
 
 proc leaveProject(state: var AppState; restoreUser: bool) =
@@ -5574,7 +5574,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   if m.job != p.job:
     if news.lock.locked:
       discard state.jobs.submit(JobSpec(title: "Let the project go", lane: jlInteractive,
-        cancellable: false), unlockWork(news.lock))
+        cancellable: false), unlockWork(stageRelease(news.dir, news.lock)))
     return
   p.job = NoJob
   let by = p.jobBy
