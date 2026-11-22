@@ -6,8 +6,8 @@ import std/[algorithm, math, strutils, tables]
 import imguin/cimgui
 import ../../core/[explain, references, state, viewport]
 import ../../view/[curveplot, theme]
-import curveplot as curves, explainmenu, fittext, focus, genpreview, icons, marks, placement,
-  style
+import curveplot as curves, explainmenu, fittext, focus, genpreview, icons, listkeys, marks,
+  placement, style
 
 type
   RefSort* = enum
@@ -25,7 +25,12 @@ type
     renameProblem: string
     confirmId: string
     confirmAsk: bool
-    confirmWasOpen: bool    ## the delete confirmation was showing last frame
+    selected: string          ## the selected row's id: "" for none, `NoneRow` for the None row
+    selMain: bool             ## the selection is in the project's main archive table
+    scrollToSelected: bool
+    renameFocus: bool
+    mainOpen: bool            ## the Main archive header was open last frame
+    confirmWasOpen: bool      ## the delete confirmation was showing last frame
     genAsk: bool
     genName: string
     genF1, genF2, genLength, genDt, genTaper0, genTaper1, genAmp, genBoost: float64
@@ -794,13 +799,13 @@ proc orderOf(index: ReferenceIndex; sort: RefSort; descending: bool): seq[int] =
 
 type ArchiveColumns = object
   ## The widths the archive tables give their columns: the text each holds, at its widest.
-  ## Name, Length, Sample interval, Frequency, Date, Use and the buttons are as wide as
-  ## that; Source takes what is left and shortens its text.
-  name, length, interval, frequency, date, use, buttons, source: float32
+  ## Name takes what is left; Source is as wide as its text, to 24 characters' room, and
+  ## shortens it beyond that.
+  name, length, interval, frequency, date, use, source: float32
 
-proc archiveColumns(index: ReferenceIndex; writable: bool): ArchiveColumns =
+proc archiveColumns(index: ReferenceIndex): ArchiveColumns =
   ## `index`'s columns sized to their texts and headers (a header takes room for the sort
-  ## arrow), the name capped at 28 characters' room.
+  ## arrow), the name capped at 28 characters' room (the window's first width).
   let st = igGetStyle()
   let pad = 2 * st.CellPadding.x + 2
   let arrow = igGetFontSize() + st.ItemInnerSpacing.x
@@ -819,36 +824,33 @@ proc archiveColumns(index: ReferenceIndex; writable: bool): ArchiveColumns =
     result.date = max(result.date, textWidth(e.date))
     result.source = max(result.source, textWidth(sourceText(e)))
   result.name = min(result.name, igGetFontSize() * 28)
+  result.source = min(result.source, igGetFontSize() * 24)
   for w in [addr result.name, addr result.length, addr result.interval, addr result.frequency,
-      addr result.date]:
+      addr result.date, addr result.source]:
     w[] = round(w[] + pad)
-  result.use = round(textWidth("Use") + pad + igGetFrameHeight())
-  result.buttons = round(textWidth("View") + textWidth("Compare as A") +
-    textWidth("Compare as B") + textWidth(if writable: "Delete" else: "Copy into the project") +
-    8 * st.FramePadding.x + 3 * st.ItemSpacing.x + pad)
-  result.source = round(result.source + pad)
+  result.use = round(max(textWidth("Use"), igGetFrameHeight()) + pad)
 
 func tableKey(c: ArchiveColumns): string =
   ## Part of the table's id: its widths, so that texts that grew give the columns a fresh fit.
   $int(c.name + c.length + c.interval + c.frequency + c.date)
 
 proc setupArchiveColumns(c: ArchiveColumns) =
-  ## The columns, in the order `drawRows` fills them.
+  ## The columns, in the order `drawRows` fills them: Use, the name that takes the spare
+  ## width, then the fixed ones.
   const fixed = ImGui_TableColumnFlags_WidthFixed.cint
-  igTableSetupColumn("Name", fixed, c.name, 0)
-  igTableSetupColumn("Length", fixed, c.length, 1)
-  igTableSetupColumn("Sample interval", fixed, c.interval, 2)
-  igTableSetupColumn("Frequency", fixed, c.frequency, 3)
-  igTableSetupColumn("Source", ImGui_TableColumnFlags_WidthStretch.cint, 1, 4)
-  igTableSetupColumn("Date", fixed, c.date, 5)
-  igTableSetupColumn("Use", ImGui_TableColumnFlags_NoSort.cint or fixed, c.use, 6)
-  igTableSetupColumn("", ImGui_TableColumnFlags_NoSort.cint or fixed, c.buttons, 7)
+  igTableSetupColumn("Use", ImGui_TableColumnFlags_NoSort.cint or fixed, c.use, 0)
+  igTableSetupColumn("Name", ImGui_TableColumnFlags_WidthStretch.cint, 1, 1)
+  igTableSetupColumn("Length", fixed, c.length, 2)
+  igTableSetupColumn("Sample interval", fixed, c.interval, 3)
+  igTableSetupColumn("Frequency", fixed, c.frequency, 4)
+  igTableSetupColumn("Source", fixed, c.source, 5)
+  igTableSetupColumn("Date", fixed, c.date, 6)
 
 func archiveWindowWidth(c: ArchiveColumns): float32 =
-  ## The window's width that holds the table: the fixed columns, room for the longest Source (40
-  ## characters at most), the scroll bar and the window's padding.
-  c.name + c.length + c.interval + c.frequency + c.date + c.use + c.buttons +
-    min(c.source, igGetFontSize() * 40) + 2 * igGetStyle().WindowPadding.x + igGetStyle().ScrollbarSize + 16
+  ## The window's width that holds the table: the columns at their widths, the scroll bar
+  ## and the window's padding.
+  c.name + c.length + c.interval + c.frequency + c.date + c.use + c.source +
+    2 * igGetStyle().WindowPadding.x + igGetStyle().ScrollbarSize + 16
 
 proc markCell(marks: var Marks; prefix: string; row: int; column: string; index: int) =
   ## The last item's rectangle as "<prefix>.<column>.<row>" and its column's cell as
@@ -858,100 +860,235 @@ proc markCell(marks: var Marks; prefix: string; row: int; column: string; index:
   marks.markRect(prefix & "." & column & " column." & $row, ImVec2_c(x: cell.Min.x, y: cell.Min.y),
     ImVec2_c(x: cell.Max.x, y: cell.Max.y))
 
-proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; home: string; writable: bool;
-    chosen: string; st: AppState; marks: var Marks; res: var ReferencesOutput;
-    markPrefix: string) =
+proc rightText(text: string) =
+  ## `text` against the right edge of the cell.
+  let room = igGetContentRegionAvail().x - textWidth(text)
+  if room > 0: igSetCursorPosX(igGetCursorPosX() + room)
+  igTextUnformatted(text.cstring, nil)
+
+type
+  ArchiveAct = enum
+    aaUse = "Use", aaView = "View", aaRename = "Rename", aaDelete = "Delete",
+    aaCompareA = "Compare as A", aaCompareB = "Compare as B", aaCopy = "Copy to project"
+
+  ActState = array[ArchiveAct, tuple[enabled: bool, why: string]]
+    ## Which actions the selected row allows, and why one does not (its tooltip).
+
+const NoneRow = "\x01none" ## the selected row's id when it is the None row
+
+const ActMark: array[ArchiveAct, string] = ["use", "view", "rename", "delete", "compareA",
+  "compareB", "copy"]
+
+proc actionsOf(st: AppState; id: string; inMain: bool): ActState =
+  ## What the row `id` (of the main archive's table when `inMain`) allows.
+  const none = "Select a reference in the list first"
+  for a in ArchiveAct: result[a] = (false, none)
+  let writable = not (st.inProject and st.project.readOnly)
+  let index = if inMain: st.mainReferences else: st.references
+  if id == NoneRow:
+    const notOne = "None is not a reference"
+    for a in ArchiveAct: result[a] = (false, notOne)
+    result[aaUse] = (st.chosenReference.len > 0, "No reference is in use already")
+  elif id.len > 0 and index.findId(id) >= 0:
+    let e = index.entries[index.findId(id)]
+    let used = e.id == st.chosenReference and not inMain
+    let unusable = e.missing or e.blocked
+    result[aaUse] = (writable and not inMain and not used,
+      if inMain: "Copy it into the project first" elif not writable: "The project is read only"
+      else: "The plots already use this reference")
+    result[aaView] = (not unusable and st.referencesHome.len > 0 and not inMain,
+      if inMain: "Copy it into the project first" else: "Its file is not there")
+    result[aaRename] = (writable and not inMain, if inMain: "The main archive is not changed " &
+      "from here" else: "The project is read only")
+    result[aaDelete] = (writable and not inMain, result[aaRename].why)
+    let noCompare = if e.isPilot: "A trace of each record is not one waveform: view it, and " &
+        "store it as a fixed reference first" else: "Its file is not there"
+    result[aaCompareA] = (not unusable and not e.isPilot, noCompare)
+    result[aaCompareB] = result[aaCompareA]
+    result[aaCopy] = (inMain, "Only a main archive reference is copied into the project")
+
+proc perform(ui: var ReferencesUi; res: var ReferencesOutput; a: ArchiveAct; id: string;
+    st: AppState) =
+  ## Does action `a` on the row `id`.
+  case a
+  of aaUse: res.commands.add Command(kind: ckSelectReference, refId: (if id ==
+      NoneRow: "" else: id))
+  of aaView: res.commands.add Command(kind: ckViewReference, refId: id)
+  of aaRename:
+    let i = st.references.findId(id)
+    if i >= 0:
+      ui.renameId = id
+      ui.renameFocus = true
+      setBuf(ui.rename, st.references.entries[i].name)
+  of aaDelete:
+    ui.confirmId = id
+    ui.confirmAsk = true
+  of aaCompareA:
+    res.commands.add Command(kind: ckSetCompare, compareSlot: cwA, compareRef: id,
+      compareTrace: -1)
+  of aaCompareB:
+    res.commands.add Command(kind: ckSetCompare, compareSlot: cwB, compareRef: id,
+      compareTrace: -1)
+  of aaCopy: res.commands.add Command(kind: ckCopyReference, refId: id)
+
+proc drawActionBar(ui: var ReferencesUi; st: AppState; marks: var Marks;
+    res: var ReferencesOutput) =
+  ## One row of buttons that act on the selected row, of either table.
+  let acts = st.actionsOf(ui.selected, ui.selMain)
+  for a in ArchiveAct:
+    if a != aaUse: igSameLine(0, -1)
+    igBeginDisabled(not acts[a].enabled)
+    if igButton(($a).cstring, ImVec2_c(x: 0, y: 0)) and acts[a].enabled:
+      ui.perform(res, a, ui.selected, st)
+    igEndDisabled()
+    marks.mark("references.act." & ActMark[a])
+    tip(if acts[a].enabled: ($a & " the selected reference") else: acts[a].why)
+
+proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; inMain: bool; st: AppState;
+    marks: var Marks; res: var ReferencesOutput; markPrefix: string) =
+  ## The rows of one table. One row is selected (`ui.selected`, in the table `ui.selMain`
+  ## names): a click anywhere on it selects it, a double click views it. The radio in the
+  ## first column is the reference in use.
   let order = orderOf(index, ui.sort, ui.descending)
-  for n, i in order:
-    let e = index.entries[i]
-    igPushID_Str(e.id.cstring)
+  let writable = not (st.inProject and st.project.readOnly) and not inMain
+  let chosen = st.chosenReference
+  let rows = (if inMain: @[] else: @[-1]) & order
+  for n, i in rows:
+    let isNone = i < 0
+    let id = if isNone: NoneRow else: index.entries[i].id
+    let rowMark = if isNone: "references.nonerow" else: markPrefix & ".row." & $(n - (
+        if inMain: 0 else: 1))
+    igPushID_Str(id.cstring)
     igTableNextRow(0, 0)
     discard igTableNextColumn()
-    if ui.renameId == e.id and writable:
-      if ui.rename.len < 160: setBuf(ui.rename, e.name)
+    let start = igGetCursorScreenPos()
+    let selected = ui.selected == id and ui.selMain == inMain
+    var missing = false
+    var name = "None"
+    if not isNone:
+      missing = index.entries[i].missing
+      name = index.entries[i].name
+    if igSelectable_Bool("##row", selected, ImGui_SelectableFlags_SpanAllColumns.cint or
+        ImGui_SelectableFlags_AllowOverlap.cint or ImGui_SelectableFlags_AllowDoubleClick.cint,
+        ImVec2_c(x: 0, y: 0)):
+      ui.selected = id
+      ui.selMain = inMain
+    marks.mark(rowMark)
+    if igIsItemHovered(0) and igIsMouseDoubleClicked_Nil(ImGui_MouseButton_Left.cint):
+      if st.actionsOf(id, inMain)[aaView].enabled: ui.perform(res, aaView, id, st)
+    if selected:
+      marks.mark("references.selected")
+      if ui.scrollToSelected:
+        if not igIsItemVisible(): igSetScrollHereY(0.5)
+        ui.scrollToSelected = false
+    if igIsItemClicked(ImGui_MouseButton_Right.cint):
+      ui.selected = id
+      ui.selMain = inMain
+    if igBeginPopupContextItem("##rowmenu", ImGui_PopupFlags_MouseButtonRight.cint):
+      let acts = st.actionsOf(id, inMain)
+      for a in ArchiveAct:
+        if igMenuItem_Bool(($a).cstring, nil, false, acts[a].enabled):
+          ui.perform(res, a, id, st)
+      igEndPopup()
+    # the radio over the row's selectable
+    igSetCursorScreenPos(start)
+    if writable:
+      let used = if isNone: chosen.len == 0 else: id == chosen
+      if igRadioButton_Bool("##use", used):
+        res.commands.add Command(kind: ckSelectReference,
+          refId: (if used or isNone: "" else: id))
+      marks.mark(if isNone: "references.none" else: markPrefix & ".use." & $(n - 1))
+      tip(if isNone: NoneChoiceTip elif used: "The plots use this reference. Click again for none."
+          else: "Use this reference in the plots")
+    discard igTableNextColumn()
+    if ui.renameId == id and writable and not isNone:
+      if ui.renameFocus:
+        igSetKeyboardFocusHere(0)
+        ui.renameFocus = false
       igSetNextItemWidth(-1)
       let enter = igInputText("##rename", cast[cstring](addr ui.rename[0]),
         csize_t(ui.rename.len), ImGui_InputTextFlags_EnterReturnsTrue.cint, nil, nil)
       marks.mark(markPrefix & ".rename")
-      if enter:
-        let name = bufText(ui.rename).strip
-        let problem = index.nameProblem(name)
-        if problem.len == 0 or index.findName(name) == i:
-          res.commands.add Command(kind: ckRenameReference, refId: e.id, refNewName: name)
+      if (igIsItemActive() or igIsItemDeactivated()) and
+          igIsKeyPressed_Bool(ImGui_Key_Escape, false):
+        ui.renameId = ""
+        ui.renameProblem = ""
+      elif enter:
+        let newName = bufText(ui.rename).strip
+        let problem = index.nameProblem(newName)
+        if problem.len == 0 or index.findName(newName) == i:
+          res.commands.add Command(kind: ckRenameReference, refId: id, refNewName: newName)
           ui.renameId = ""
           ui.renameProblem = ""
         else:
-          ui.renameId = e.id
           ui.renameProblem = problem
-    elif igSelectable_Bool((shortenEnd(e.name, igGetContentRegionAvail().x) & "###name").cstring,
-        e.id == chosen,
-        ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)):
-      if writable:
-        ui.renameId = e.id
-        setBuf(ui.rename, e.name)
-    marks.mark(markPrefix & ".row." & $n)
-    tip(if e.missing: "its SEG-Y file is missing" else: e.name)
-    discard igTableNextColumn()
-    igTextUnformatted(lengthText(e).cstring, nil)
-    markCell(marks, markPrefix, n, "length", 1)
-    discard igTableNextColumn()
-    igTextUnformatted(intervalText(e).cstring, nil)
-    markCell(marks, markPrefix, n, "interval", 2)
-    discard igTableNextColumn()
-    igTextUnformatted(frequencyText(e).cstring, nil)
-    markCell(marks, markPrefix, n, "frequency", 3)
-    discard igTableNextColumn()
-    fittedText(sourceText(e), igGetContentRegionAvail().x)
-    discard igTableNextColumn()
-    igTextUnformatted(e.date.cstring, nil)
-    markCell(marks, markPrefix, n, "date", 5)
-    discard igTableNextColumn()
-    if writable:
-      let used = e.id == chosen
-      if igRadioButton_Bool("##use", used):
-        res.commands.add Command(kind: ckSelectReference, refId: (if used: "" else: e.id))
-      marks.mark(markPrefix & ".use." & $n)
-      tip(if used: "The plots use this reference. Click again for none."
-          else: "Use this reference in the plots")
-    discard igTableNextColumn()
-    igBeginDisabled(e.missing or e.blocked or home.len == 0)
-    if igSmallButton("View"):
-      res.commands.add Command(kind: ckViewReference, refId: e.id)
-    igEndDisabled()
-    marks.mark(markPrefix & ".view." & $n)
-    tip(if e.isPilot: "Open the pilot of the record on show in its own window"
-        else: "Open this reference in its own window")
-    igSameLine(0, -1)
-    igBeginDisabled(e.missing or e.blocked or e.isPilot)
-    if igSmallButton("Compare as A"):
-      res.commands.add Command(kind: ckSetCompare, compareSlot: cwA, compareRef: e.id,
-        compareTrace: -1)
-    igEndDisabled()
-    marks.mark(markPrefix & ".compareA." & $n)
-    tip(if e.isPilot: "A trace of each record is not one waveform: view it, and store it " &
-          "as a fixed reference first" else: "Copy this reference into compare slot A")
-    igSameLine(0, -1)
-    igBeginDisabled(e.missing or e.blocked or e.isPilot)
-    if igSmallButton("Compare as B"):
-      res.commands.add Command(kind: ckSetCompare, compareSlot: cwB, compareRef: e.id,
-        compareTrace: -1)
-    igEndDisabled()
-    marks.mark(markPrefix & ".compareB." & $n)
-    tip(if e.isPilot: "A trace of each record is not one waveform: view it, and store it " &
-          "as a fixed reference first" else: "Copy this reference into compare slot B")
-    if writable:
-      igSameLine(0, -1)
-      if igSmallButton("Delete"):
-        ui.confirmId = e.id
-        ui.confirmAsk = true
-      marks.mark(markPrefix & ".delete." & $n)
     else:
-      igSameLine(0, -1)
-      if igSmallButton("Copy into the project"):
-        res.commands.add Command(kind: ckCopyReference, refId: e.id)
-      marks.mark(markPrefix & ".copy." & $n)
-      tip("Copy this reference into the project")
+      let shown = shortenEnd(name, igGetContentRegionAvail().x)
+      if missing: igTextDisabled("%s", shown.cstring) else: igTextUnformatted(shown.cstring, nil)
+      if shown != name or missing:
+        tip(if missing: "its SEG-Y file is missing" else: name)
+    if not isNone:
+      let e = index.entries[i]
+      let k = n - (if inMain: 0 else: 1)
+      discard igTableNextColumn()
+      rightText(lengthText(e))
+      markCell(marks, markPrefix, k, "length", 2)
+      discard igTableNextColumn()
+      rightText(intervalText(e))
+      markCell(marks, markPrefix, k, "interval", 3)
+      discard igTableNextColumn()
+      rightText(frequencyText(e))
+      markCell(marks, markPrefix, k, "frequency", 4)
+      discard igTableNextColumn()
+      fittedText(sourceText(e), igGetContentRegionAvail().x)
+      discard igTableNextColumn()
+      igTextUnformatted(e.date.cstring, nil)
+      markCell(marks, markPrefix, k, "date", 6)
     igPopID()
+
+proc drawTable(ui: var ReferencesUi; index: ReferenceIndex; inMain: bool; st: AppState;
+    marks: var Marks; res: var ReferencesOutput; height: float32; markPrefix: string) =
+  ## One archive table of `height` (at most 0: what is left, less its size).
+  const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_BordersInnerV.cint or
+    ImGui_TableFlags_ScrollY.cint or ImGui_TableFlags_Resizable.cint or
+    ImGui_TableFlags_Sortable.cint
+  let columns = archiveColumns(index)
+  if igBeginTable((markPrefix & ".table" & columns.tableKey).cstring, 7, flags,
+      ImVec2_c(x: 0, y: height), 0):
+    let outer = igGetCurrentTable().OuterRect
+    marks.markRect(markPrefix & ".table", outer.Min, outer.Max)
+    igTableSetupScrollFreeze(0, 1)
+    setupArchiveColumns(columns)
+    igTableHeadersRow()
+    let specs = igTableGetSortSpecs()
+    if specs != nil and specs.SpecsCount > 0:
+      let s = specs.Specs[]
+      ui.sort = RefSort(clamp(int(s.ColumnIndex) - 1, 0, 5))
+      ui.descending = s.SortDirection == ImGui_SortDirection_Descending
+      specs.SpecsDirty = false
+    ui.drawRows(index, inMain, st, marks, res, markPrefix)
+    igEndTable()
+
+proc stepSelection(ui: var ReferencesUi; st: AppState; step: ListStep) =
+  ## The arrow, page, Home and End keys move the selection along the table it is in.
+  var ids: seq[string]
+  let index = if ui.selMain: st.mainReferences else: st.references
+  if not ui.selMain: ids.add NoneRow
+  for i in orderOf(index, ui.sort, ui.descending): ids.add index.entries[i].id
+  if ids.len > 0:
+    let at = ids.find(ui.selected)
+    let last = ids.high
+    let to = case step
+      of lsNext: min(at + 1, last)
+      of lsPrevious: max(at - 1, 0)
+      of lsPageDown: min(max(at, 0) + 10, last)
+      of lsPageUp: max(max(at, 0) - 10, 0)
+      of lsFirst: 0
+      of lsLast: last
+      of lsNone: at
+    if to != at:
+      ui.selected = ids[to]
+      ui.scrollToSelected = true
 
 const ConfirmId = "Delete this reference?###refs.confirm"
 
@@ -965,9 +1102,11 @@ proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
     ui.placeAgain = false
   # wide enough for the table the first time; after that the size is the user's, kept with
   # the layout
-  let columns = archiveColumns(st.references, not (st.inProject and st.project.readOnly))
+  let columns = archiveColumns(st.references)
   igSetNextWindowSize(ImVec2_c(x: min(vp.WorkSize.x - 80, archiveWindowWidth(columns)),
-    y: igGetFontSize() * 22), ImGui_Cond_FirstUseEver.cint)
+    y: igGetFontSize() * 26), ImGui_Cond_FirstUseEver.cint)
+  igSetNextWindowSizeConstraints(ImVec2_c(x: igGetFontSize() * 30, y: igGetFontSize() * 16),
+    ImVec2_c(x: 4000, y: 4000), nil, nil)
   if ui.bringUp:
     igSetWindowFocus_Str(title.cstring)
     ui.bringUp = false
@@ -983,54 +1122,60 @@ proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
     if not st.referencesLoaded: igTextDisabled("Reading...")
     for p in st.references.problems:
       igTextWrapped("%s", p.cstring)
-    if igRadioButton_Bool(NoneChoiceLabel, st.chosenReference.len == 0):
-      result.commands.add Command(kind: ckSelectReference, refId: "")
-    marks.mark("references.none")
-    tip(NoneChoiceTip)
-    let writable = not (st.inProject and st.project.readOnly)
-    const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_Borders.cint or
-      ImGui_TableFlags_ScrollY.cint or ImGui_TableFlags_Resizable.cint or
-      ImGui_TableFlags_Sortable.cint
-    let height = igGetFontSize() * 12
-    if igBeginTable(("##refs" & columns.tableKey).cstring, 8, flags,
-        ImVec2_c(x: 0, y: height), 0):
-      igTableSetupScrollFreeze(0, 1)
-      setupArchiveColumns(columns)
-      igTableHeadersRow()
-      let specs = igTableGetSortSpecs()
-      if specs != nil and specs.SpecsCount > 0:
-        let s = specs.Specs[]
-        ui.sort = RefSort(clamp(int(s.ColumnIndex), 0, 5))
-        ui.descending = s.SortDirection == ImGui_SortDirection_Descending
-        specs.SpecsDirty = false
-      ui.drawRows(st.references, st.referencesHome, writable, st.chosenReference, st, marks,
-        result, "references")
-      igEndTable()
+    # a selection whose row is gone (deleted, another archive) is none
+    if ui.selected != NoneRow:
+      let index = if ui.selMain: st.mainReferences else: st.references
+      if index.findId(ui.selected) < 0: ui.selected = ""
+    if ui.renameId.len > 0 and ui.renameId != ui.selected:
+      ui.renameId = ""
+      ui.renameProblem = ""
+    ui.drawActionBar(st, marks, result)
+    # The first table takes the height that is left. A project's main archive hangs under
+    # it: its header at the window's bottom, and the table, when open, a share of the height.
+    let avail = igGetContentRegionAvail().y
+    let line = igGetTextLineHeightWithSpacing()
+    let mainHeight = max(igGetFontSize() * 7, avail * 0.4)
+    var reserve = 0'f32
+    if ui.renameProblem.len > 0: reserve += line
+    if st.inProject:
+      reserve += igGetFrameHeightWithSpacing()
+      if ui.mainOpen: reserve += mainHeight + line + igGetStyle().ItemSpacing.y
+    ui.drawTable(st.references, false, st, marks, result,
+      if reserve > 0: -reserve else: -1e-30'f32, "references")
     if ui.renameProblem.len > 0:
       igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
       igTextWrapped("%s", ui.renameProblem.cstring)
       igPopStyleColor(1)
       marks.mark("references.rename.problem")
     if st.inProject:
-      if igCollapsingHeader_TreeNodeFlags("Main archive".cstring, 0):
+      ui.mainOpen = igCollapsingHeader_TreeNodeFlags("Main archive".cstring, 0)
+      marks.mark("references.main.header")
+      if ui.mainOpen:
         marks.mark("references.main")
         igTextDisabled("Read-only. Copy one into the project to use it.")
         if st.mainReferences.entries.len == 0: igTextDisabled("The main archive is empty.")
         else:
-          let main = archiveColumns(st.mainReferences, false)
-          if igBeginTable(("##mainrefs" & main.tableKey).cstring, 8, flags,
-              ImVec2_c(x: 0, y: igGetFontSize() * 8), 0):
-            igTableSetupScrollFreeze(0, 1)
-            setupArchiveColumns(main)
-            igTableHeadersRow()
-            ui.drawRows(st.mainReferences, "", false, "", st, marks, result, "references.main")
-            igEndTable()
+          ui.drawTable(st.mainReferences, true, st, marks, result, mainHeight,
+            "references.main")
+    # the keys of the list, while the window has the focus and no name is being typed
+    if ui.renameId.len == 0:
+      let step = stepOf("references")
+      if step != lsNone: ui.stepSelection(st, step)
+      if igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint) and
+          not igGetIO_Nil().WantTextInput:
+        let acts = st.actionsOf(ui.selected, ui.selMain)
+        if igIsKeyPressed_Bool(ImGui_Key_Delete, false) and acts[aaDelete].enabled:
+          ui.perform(result, aaDelete, ui.selected, st)
+        if igIsKeyPressed_Bool(ImGui_Key_F2, false) and acts[aaRename].enabled:
+          ui.perform(result, aaRename, ui.selected, st)
   igEnd()
   if not open: ui.shown = false
   if ui.confirmAsk:
     igOpenPopup_Str(ConfirmId.cstring, 0)
     ui.confirmAsk = false
   centreModal(ConfirmId)
+  igSetNextWindowSizeConstraints(ImVec2_c(x: igGetFontSize() * 26, y: 0),
+    ImVec2_c(x: 4000, y: 4000), nil, nil)
   let confirming = igBeginPopupModal(ConfirmId.cstring, nil,
     ImGui_WindowFlags_AlwaysAutoResize.cint)
   ui.confirmWasOpen.handBack(confirming, title)

@@ -56,6 +56,11 @@ proc main*() =
         true
       else: false
 
+    proc actOnFirst(f: FrameInfo; act: string): bool =
+      ## Selects the first row, then presses the action bar's button `act`.
+      if f.markOf("references.selected").size.x == 0: f.clickMark("references.row.0")
+      else: f.clickMark("references.act." & act)
+
     step("the file opens", noop, proc (f: FrameInfo): bool =
       let p = f.core.panels[f.core.findPanel(MainPanel)]
       result = p.laidOut and f.markOf("plot.data").size.x > 0 and f.core.referencesLoaded
@@ -125,7 +130,7 @@ proc main*() =
     step("View opens the reference in its own window", noop, proc (f: FrameInfo): bool =
       # The file under QC stays open. The reference is a window of its own.
       if f.markOf("reference.view.time.data").size.x == 0:
-        discard f.clickMark("references.view.0")
+        discard f.actOnFirst("view")
       let still = f.core.sessions.len == 1 and f.core.sessions[0].name.endsWith("shots.sgy")
       let shown = f.markOf("reference.view").size.x > 0 and
         f.markOf("reference.view.time.data").size.x > 0 and
@@ -147,7 +152,7 @@ proc main*() =
 
     step("Delete asks, centred", noop, proc (f: FrameInfo): bool =
       if f.core.references.entries.len == 0: return true
-      if f.markOf("references.confirm").size.x == 0: discard f.clickMark("references.delete.0")
+      if f.markOf("references.confirm").size.x == 0: discard f.actOnFirst("delete")
       else:
         let r = f.markOf("references.confirm")
         if wait > 8 and wait mod 6 == 3:
@@ -166,7 +171,7 @@ proc main*() =
       doAssert f.core.references.entries.len > 0, "Cancel deleted")
 
     step("Delete asks again", noop, proc (f: FrameInfo): bool =
-      if f.markOf("references.confirm").size.x == 0: discard f.clickMark("references.delete.0")
+      if f.markOf("references.confirm").size.x == 0: discard f.actOnFirst("delete")
       else: result = wait > 8)
 
     step("Delete confirms and the archive has the focus", noop, proc (f: FrameInfo): bool =

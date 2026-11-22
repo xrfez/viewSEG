@@ -167,18 +167,34 @@ in the folder with no index entry (a write that did not finish) is reported once
 left; it is not deleted.
 
 The table shows the name, length, sample interval, frequency range (for a generated
-sweep), where it came from, and the date. Click a column heading to sort. Click a name to
-rename it; a name already used is refused, the reason is shown in the window, and nothing
-is overwritten. **Delete** asks
-first and names the reference. **View** opens the reference in its own window, titled
+sweep), where it came from, and the date. Click a column heading to sort. The first column
+is the **Use** mark, then the name, which takes the spare width of the window.
+
+Click anywhere on a row to select it: one row is selected at a time, and the Up, Down,
+Page Up, Page Down, Home and End keys move the selection. The buttons above the table act on
+the selected row: **Use**, **View**, **Rename**, **Delete**, **Compare as A**, **Compare as
+B** and, for a row of the main archive under a project, **Copy to project**. A button that
+does not apply is dimmed, and its tooltip says why (nothing selected, a main archive row
+cannot be renamed, a pilot cannot be compared). The same actions are in the menu of a
+right click on a row. Double-click a row to view it; the Delete key deletes it and F2
+renames it. Renaming edits the name in the row: Enter keeps it, Escape leaves the name as
+it was; a name already used is refused, the reason is shown in the window, and nothing is
+overwritten. **Delete** asks first and names the reference; the question opens in the middle of
+the main window, and the archive has the keyboard again when it closes.
+
+**View** opens the reference in its own window, titled
 "Reference: <name>", docked like a New plot window. It draws the reference's samples
 against time, from the archive's From and To and its sample interval, and in the same
 window its amplitude spectrum. The Seismic window, the open file, and every other window
 stay as they were. The window shows that reference until you close it. If you rename the
 reference, the title follows. If you delete it, the window says so.
 
-**Use** selects the one reference the plots use. **None** is the default: no
-reference is chosen. Vibrator plots then use the file's own pilot. A
+The table takes the height of the window. With a project open, the **Main archive** header
+stays at the window's bottom; open it and the two tables share the height.
+
+**Use** (the mark in the first column, or the button) selects the one reference the plots
+use. The **None** row is the default: no reference is chosen; the mark of a chosen row,
+clicked again, goes back to it. Vibrator plots then use the file's own pilot. A
 correlation needs a chosen reference. The Correlation window says
 "No reference is chosen. Choose one in References." The Envelope window takes the chosen
 reference too: its phase plot is then the phase of the trace minus the reference's, in
