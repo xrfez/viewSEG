@@ -4,3 +4,11 @@
 * text=auto eol=lf
 *.cmd -text
 *.bat -text
+*.sgy binary
+*.segy binary
+*.sgd binary
+*.png binary
+*.ico binary
+*.ttf binary
+*.zip binary
+*.7z binary

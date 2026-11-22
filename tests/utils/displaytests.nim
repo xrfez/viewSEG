@@ -11,7 +11,7 @@
 ## or through a helper in `tests/utils`. The scan reads import statements only
 ## (as tests/tlayers does), so it is cheap and needs no compile.
 
-import std/[os, sequtils, strutils]
+import std/[os, sequtils, strutils, times]
 
 const
   AloneLine* = "## Runs alone:"
@@ -78,11 +78,22 @@ proc needsDisplay*(path: string; seen: seq[string] = @[]): bool =
       return true
   false
 
-proc leftOut*(path: string; head: seq[string]; noDisplay, noTiming, windows: bool): string =
+func processFailure*(code: int; took, limit: Duration): string =
+  ## Why a run that ended with exit code `code` after `took` failed ("" when it
+  ## did not). A run past `limit` failed whatever its code: Windows gives a
+  ## process it ended the code its caller asked for, which may be 0.
+  if took >= limit: "timed out after " & $limit.inSeconds & " s, stopped"
+  elif code != 0: "exit code " & $code
+  else: ""
+
+proc leftOut*(path: string; head: seq[string]; noDisplay, noTiming, windows: bool;
+    onlyTiming = false): string =
   ## Why a run leaves the test file at `path` (header lines `head`) out:
-  ## "" when it runs.
+  ## "" when it runs. `onlyTiming` keeps only the files that run alone.
   if windows and head.anyIt(it.startsWith(NotWindowsLine)):
     "not on Windows"
+  elif onlyTiming and not head.anyIt(it.startsWith(AloneLine)):
+    "does not measure times"
   elif noTiming and head.anyIt(it.startsWith(AloneLine)):
     "measures times"
   elif noDisplay and needsDisplay(path):

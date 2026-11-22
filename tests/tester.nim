@@ -27,7 +27,9 @@
 ##   that imports the window code or the GL layer: `tests/utils/displaytests`):
 ##   for a machine without an X server or OpenGL, such as CI's Windows job.
 ##   `--no-timing` leaves out the files whose header says `## Runs alone:` (they
-##   measure times, which a shared virtual machine does not keep).
+##   measure times, which a shared virtual machine does not keep);
+##   `--only-timing` keeps only those (CI's Windows job runs them apart, as
+##   their time bounds are about the machine, but their file work matters).
 ## - File names (`tgui` or `tgui.nim`) run only those files.
 ##
 ## On Windows: files whose header holds `## Not on Windows: <why>` are left out
@@ -108,12 +110,13 @@ type
     done: bool      ## reported
 
   Options = object
-    jobs, runs: int ## steps at a time, of which runs
+    jobs, runs: int  ## steps at a time, of which runs
     timeout: Duration
-    once: bool      ## a failed run is not run again
-    separate: bool  ## every file compiled alone, as before
-    noDisplay: bool ## the files that need a display are left out
-    noTiming: bool  ## the files that run alone (they measure times) are left out
+    once: bool       ## a failed run is not run again
+    separate: bool   ## every file compiled alone, as before
+    noDisplay: bool  ## the files that need a display are left out
+    noTiming: bool   ## the files that run alone (they measure times) are left out
+    onlyTiming: bool ## only the files that run alone are run
     flags, only: seq[string]
 
   Took = tuple[compile, run: float64] ## seconds
@@ -344,11 +347,7 @@ else:
     let code = p.waitForExit(int(spawnLimit.inMilliseconds))
     p.close()
     let took = getMonoTime() - began
-    lastEnded = Ended(done: true, failure: "")
-    if took >= spawnLimit and code != 0:
-      lastEnded.failure = "timed out after " & $spawnLimit.inSeconds & " s, stopped"
-    elif code != 0:
-      lastEnded.failure = "exit code " & $code
+    lastEnded = Ended(done: true, failure: processFailure(code, took, spawnLimit))
     1
 
   proc lowPriority(pid: Pid) = discard
@@ -399,6 +398,8 @@ proc parseOptions(params: seq[string]): Options =
       result.noDisplay = true
     elif p == "--no-timing":
       result.noTiming = true
+    elif p == "--only-timing":
+      result.onlyTiming = true
     elif p.startsWith("-"):
       result.flags.add p
     else:
@@ -417,7 +418,7 @@ proc testFiles(testDir, binDir, logDir: string; opts: Options): seq[TestFile] =
     if name != "tester.nim" and (only.len == 0 or name in only):
       let head = header(f)
       if only.len == 0 and leftOut(f, head, opts.noDisplay, opts.noTiming,
-          defined(windows)).len > 0:
+          defined(windows), opts.onlyTiming).len > 0:
         continue
       result.add TestFile(path: f, name: name, log: logDir / name & ".log",
         exe: binDir / name.changeFileExt(ExeExt),

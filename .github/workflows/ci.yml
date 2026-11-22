@@ -233,6 +233,16 @@ jobs:
           nim c -r --hints:off --nimcache:nimcache-win/tester tests/tester.nim
           --no-display --no-timing --timeout:900 --nimcache:nimcache-win/tests
 
+      # The tests that measure times, apart and one at a time (the load of a
+      # shared runner is what their bounds feel, so a failure here is read
+      # with that in mind), among them the ones that matter most on Windows:
+      # atomic writes over open files, the folder watcher, file locks, truncated
+      # files. Those a file's own header marks `## Not on Windows:` stay out.
+      - name: Run the tests that measure times (no display)
+        run: >
+          nim c -r --hints:off --nimcache:nimcache-win/tester tests/tester.nim
+          --no-display --only-timing --timeout:900 --nimcache:nimcache-win/timing
+
   # bin/viewSEG.exe, the one `windows-exe` built, started on Windows. Agent
   # control does not exist there yet (the stdio bridge and `--mcp-call` say so
   # and exit), so a screenshot or a state read through it is not possible;
@@ -274,10 +284,11 @@ jobs:
           set +e
           echo '{}' | "$exe" --mcp-stdio > out.txt 2> err.txt; code=$?
           echo "--mcp-stdio exit $code"; cat err.txt
-          [ "$code" = 1 ] && grep -q 'not available on Windows' err.txt
+          [ "$code" = 1 ] || exit 1
+          grep -q 'not available on Windows' err.txt || exit 1
           "$exe" --mcp-call state > out.txt 2> err.txt; code=$?
           echo "--mcp-call exit $code"; cat err.txt
-          [ "$code" = 2 ]
+          [ "$code" = 2 ] || exit 1
 
       # OpenGL 3 on a runner without a GPU: Mesa's software renderer (llvmpipe)
       # as opengl32.dll beside the program, from mesa-dist-win, pinned by

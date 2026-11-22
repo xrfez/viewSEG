@@ -261,9 +261,11 @@ proc tryRemoveFile*(_: FileSystem; path: string): bool {.raises: [].} =
   except OSError:
     return false
   when defined(windows):
-    # a file another program has open stays until it lets go (see `moveFile`)
-    for attempt in 0 ..< 5:
+    # a file another program has open stays until it lets go (see `moveFile`):
+    # tried again on access denied, sharing and lock violations only
+    for attempt in 1 .. 5:
       if os.tryRemoveFile(path): return true
+      if attempt == 5 or osLastError().int32 notin [5'i32, 32, 33]: return false
       sleep 20
     false
   else:

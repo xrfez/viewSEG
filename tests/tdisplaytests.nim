@@ -15,14 +15,14 @@
 ## and did not build there ("windres"); with the helpers not followed,
 ## a file importing `utils/assertprobe` was left in.
 
-import std/[os, strutils]
+import std/[os, strutils, times]
 import utils/displaytests
 
 proc main*() =
   let tests = currentSourcePath().parentDir
 
   block the_import_scan:
-    let text = "import std/[os, strutils], parseSEG # a comment: import viewSEG/ui/x\n" &
+    let text = "import std/[os, strutils, times], parseSEG # a comment: import viewSEG/ui/x\n" &
       "from viewSEG/core/state import nil\n" &
       "import\n  utils/fixtures,\n  viewSEG/ui/imgui/[icons, menus]\n" &
       "import viewSEG/[core/state,\n  gpu/textures]\n" &
@@ -89,6 +89,23 @@ proc main*() =
     doAssert leftOut(plain, timing, true, false, false) == "", "timing files stay without the switch"
     doAssert leftOut(plain, sockets, true, true, true) == "not on Windows"
     doAssert leftOut(plain, sockets, true, true, false) == "", "the mark is for Windows only"
+
+  block only_timing_keeps_the_files_that_run_alone:
+    let plain = put("p2.nim", "import std/os\n")
+    let timing = @["## Runs alone: it times things."]
+    doAssert leftOut(plain, timing, true, false, true, onlyTiming = true) == ""
+    doAssert leftOut(plain, @[], true, false, true, onlyTiming = true) != ""
+    doAssert leftOut(plain, @["## Runs alone: x", "## Not on Windows: y"], true, false, true,
+      onlyTiming = true) == "not on Windows"
+
+  block a_timeout_fails_whatever_the_exit_code:
+    # Seen to fail: with the failure decided by the exit code first, a run
+    # ended at its limit with code 0 (Windows' TerminateProcess) passed.
+    let limit = initDuration(seconds = 10)
+    doAssert processFailure(0, initDuration(seconds = 10), limit).startsWith("timed out")
+    doAssert processFailure(1, initDuration(seconds = 11), limit).startsWith("timed out")
+    doAssert processFailure(3, initDuration(seconds = 1), limit) == "exit code 3"
+    doAssert processFailure(0, initDuration(seconds = 1), limit) == ""
 
 when isMainModule:
   main()

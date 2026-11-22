@@ -185,3 +185,24 @@ executable) or `viewSEG.exe --reset-windows`.
 11. **File > Open file / Open folder**: the Explorer dialog with the
     navigation pane, in Windows' mode.
 12. Anything that still looks like a non-Windows program: say what and where.
+
+## Paths and file names: what the checks do not cover
+
+CI runs the tests that need no display on Windows itself (`nim c -r
+tests/tester.nim --no-display`, in two steps: the ordinary tests, then those that
+measure times, `--only-timing`). Two rules about names are deliberately small:
+
+- **`samePath`** (`core/state`) decides whether two paths name one file for the
+  guard that never lets viewSEG write over an open or listed seismic file. On
+  Windows it ignores ASCII case only. It does not cover: case in non-ASCII
+  letters (`É` against `é`), the `\\?\` prefix (`\\?\C:\a.sgy` against `C:\a.sgy`),
+  8.3 short names (`PROGRA~1`), a mapped drive against the UNC path it points
+  to, and junctions, symbolic links and hard links (two names, one file). The
+  other path comparisons in `core/state` and the file memory's "last seen at"
+  note are exact (case-sensitive) on every system.
+- **`singleFileName`** (`core/references`) refuses, for a reference archive
+  entry's file, separators, `..`, a colon, a trailing dot or space and the
+  device names `CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`
+  (with any extension). It does not refuse `COM0` and `LPT0`, which newer
+  Windows versions also keep. The program writes `<id>.sgy` only, so this guards
+  an index edited by hand.
