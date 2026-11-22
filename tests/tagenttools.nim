@@ -520,16 +520,22 @@ proc main*() =
       doAssert not st.run(%*{"kind": "hover points", "points": []}).isError
       doAssert not st.run(%*{"kind": "clear selection"}).isError
 
-    block pathsFromTheProgramsFolder:
-      # an agent elsewhere (a container) knows the program's folder, not its paths
-      let other = fx.twoSetSegd()
-      let relative = relativePath(other, getAppDir())
-      doAssert not relative.isAbsolute
-      doAssert not st.run(%*{"kind": "show file", "path": relative}).isError
-      doAssert st.settle(st.sessions.anyIt(it.path == other) and busy(st, fe).len == 0),
-        "a path relative to the program's folder was not found: " & relative
-      doAssert not st.run(%*{"kind": "show file", "path": path}).isError
-      doAssert st.settle(st.fileList.chosen == path and busy(st, fe).len == 0)
+    # On Windows a path on another drive than the program has no relative form.
+    when defined(windows):
+      let sameDrive = fx.dir[0].toLowerAscii == getAppDir()[0].toLowerAscii
+    else:
+      let sameDrive = true
+    if sameDrive:
+      block pathsFromTheProgramsFolder:
+        # an agent elsewhere (a container) knows the program's folder, not its paths
+        let other = fx.twoSetSegd()
+        let relative = relativePath(other, getAppDir())
+        doAssert not relative.isAbsolute
+        doAssert not st.run(%*{"kind": "show file", "path": relative}).isError
+        doAssert st.settle(st.sessions.anyIt(it.path == other) and busy(st, fe).len == 0),
+          "a path relative to the program's folder was not found: " & relative
+        doAssert not st.run(%*{"kind": "show file", "path": path}).isError
+        doAssert st.settle(st.fileList.chosen == path and busy(st, fe).len == 0)
 
     block selectAndKill:
       let id = st.sessions[0].base + 4

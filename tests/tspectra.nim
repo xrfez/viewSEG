@@ -842,8 +842,8 @@ proc main*() =
     st.shutdown()
 
     when not defined(windows):
-      # On a Windows runner the file opened by its symbolic link was never shown
-      # (the open of the first path was): to be looked at on a Windows machine.
+      # A file opened by its symbolic link reads as empty on Windows: parseSEG sizes it
+      # with `std/os.getFileSize`, which there answers the link's own size (0).
       block twoPaths:
         # One file opened under two paths (a symbolic link): one set of edits,
         # kept under the first path. A kill made with the link on show is left

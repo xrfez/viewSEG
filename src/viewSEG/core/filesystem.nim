@@ -43,7 +43,7 @@
 ## its own folders at start (`platform/paths`) are read outside this module,
 ## from the program's folder and the configuration folder.
 
-import std/[atomics, monotimes, os, times]
+import std/[atomics, monotimes, os, strutils, times]
 
 export FileInfo, PathComponent, FileMode, MonoTime
 
@@ -124,19 +124,58 @@ proc dirExists*(_: FileSystem; path: string): bool {.raises: [].} =
   os.dirExists(path)
 
 proc getFileSize*(_: FileSystem; path: string): int64 {.raises: [OSError].} =
-  ## `os.getFileSize`.
+  ## `os.getFileSize`; of the file a link points to, on Windows too (where
+  ## `os.getFileSize` answers the link's own size, 0).
   enter(foStat, path)
-  os.getFileSize(path)
+  when defined(windows):
+    os.getFileInfo(path).size
+  else:
+    os.getFileSize(path)
 
 proc getLastModificationTime*(_: FileSystem; path: string): Time {.raises: [OSError].} =
   ## `os.getLastModificationTime`.
   enter(foStat, path)
   os.getLastModificationTime(path)
 
+when defined(windows):
+  from std/winlean import nil
+
+  proc finalPathNameByHandle(h: winlean.Handle; buf: WideCString; size: int32;
+    flags: int32): int32 {.importc: "GetFinalPathNameByHandleW", dynlib: "kernel32", stdcall.}
+
+  proc finalPath(path: string): string =
+    ## The path `path` leads to with its links resolved, as Windows gives it
+    ## (the file's own letter case); "" when it cannot be had.
+    let h = winlean.createFileW(newWideCString(path), 0'i32,
+      winlean.FILE_SHARE_READ or winlean.FILE_SHARE_WRITE or winlean.FILE_SHARE_DELETE, nil,
+      winlean.OPEN_EXISTING, winlean.FILE_FLAG_BACKUP_SEMANTICS, 0)
+    if h == winlean.INVALID_HANDLE_VALUE:
+      return ""
+    var buf = newWideCString(1024)
+    var got = finalPathNameByHandle(h, buf, 1024, 0)
+    if got > 1024:
+      buf = newWideCString(got)
+      got = finalPathNameByHandle(h, buf, got, 0)
+    discard winlean.closeHandle(h)
+    if got > 0:
+      result = $buf
+      if result.startsWith("\\\\?\\UNC\\"):
+        result = "\\\\" & result.substr(8)
+      elif result.startsWith("\\\\?\\"):
+        result = result.substr(4)
+
 proc expandFilename*(_: FileSystem; path: string): string {.raises: [OSError].} =
-  ## `os.expandFilename`: the full path, with its links resolved.
+  ## `os.expandFilename`: the full path, with its links resolved (on Windows
+  ## `os.expandFilename` leaves links alone, so `GetFinalPathNameByHandle`
+  ## does it, when it can).
   enter(foStat, path)
-  os.expandFilename(path)
+  when defined(windows):
+    result = os.expandFilename(path)
+    let final = finalPath(result)
+    if final.len > 0:
+      result = final
+  else:
+    result = os.expandFilename(path)
 
 # ----------------------------------------------------------------- list --
 

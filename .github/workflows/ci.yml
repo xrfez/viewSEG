@@ -239,6 +239,7 @@ jobs:
       # atomic writes over open files, the folder watcher, file locks, truncated
       # files. Those a file's own header marks `## Not on Windows:` stay out.
       - name: Run the tests that measure times (no display)
+        if: ${{ !cancelled() }} # whether or not the first step passed: one run shows both
         run: >
           nim c -r --hints:off --nimcache:nimcache-win/tester tests/tester.nim
           --no-display --only-timing --timeout:900 --nimcache:nimcache-win/timing
@@ -291,23 +292,23 @@ jobs:
           [ "$code" = 2 ] || exit 1
 
       # OpenGL 3 on a runner without a GPU: Mesa's software renderer (llvmpipe)
-      # as opengl32.dll beside the program, from mesa-dist-win, pinned by
-      # version and checksum.
+      # as opengl32.dll beside the program, from mesa-dist-win (the MinGW build:
+      # the MSVC one ships no OpenGL), pinned by version and checksum.
       - name: Software OpenGL (Mesa llvmpipe)
         shell: bash
         env:
           MESA_VERSION: '26.2.7'
-          MESA_SHA256: e61153fb1a8e58b9d80b403030cda619eaffbddd9ff99b34163b996ead03d596
+          MESA_SHA256: 19c74aad7b09e682473b8de4c35b47e6498de97b71cae5511a231b8eb02f2b22
         run: |
           curl -fsSL -o mesa.7z \
-            "https://github.com/pal1000/mesa-dist-win/releases/download/$MESA_VERSION/mesa3d-$MESA_VERSION-release-msvc.7z"
+            "https://github.com/pal1000/mesa-dist-win/releases/download/$MESA_VERSION/mesa3d-$MESA_VERSION-release-mingw.7z"
           echo "$MESA_SHA256 *mesa.7z" | sha256sum -c -
           7z x -y -omesa mesa.7z > /dev/null
           gl=$(find mesa -ipath '*x64*' -iname opengl32.dll | head -n 1)
           [ -n "$gl" ] || { find mesa | head -n 60; echo "no x64/opengl32.dll in the Mesa archive"; exit 1; }
           dir=$(dirname "$gl")
           ls "$dir"
-          for f in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+          for f in opengl32.dll libgallium_wgl.dll libdlclose-skip.dll dxil.dll; do
             [ -f "$dir/$f" ] && cp "$dir/$f" app/viewSEG-*-windows-x64/
           done
           ls app/viewSEG-*-windows-x64

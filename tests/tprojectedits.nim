@@ -25,6 +25,10 @@
 ## `writeProvisional`, "the brought document holds the edits made on the
 ## other file"; with `takeHashed` forgetting every edit, "the own edit was
 ## thrown away".
+##
+## Not on Windows: the first block's quit leaves a read held on purpose, and a quit that
+## leaves a thread running keeps the files it may read open to the end of the process
+## (`keepForStragglers`); Windows refuses every later block's rewrite of that file.
 
 import std/[os, strutils, times]
 import viewSEG/core/[edits, filememory, filesystem, identity, project, projectjobs, state]

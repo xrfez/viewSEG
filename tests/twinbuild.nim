@@ -44,6 +44,7 @@ proc main*() =
       writeFile(src, "import viewSEG/core/versions\n" &
         "static:\n  doAssert ViewSEGVersion != \"unknown\", ViewSEGVersion\n" &
         "  doAssert ProcessSEGVersion != \"unknown\", ProcessSEGVersion\n" &
+        "  doAssert ParseSEGVersion != \"unknown\", ParseSEGVersion\n" &
         "echo ViewSEGVersion\n")
       try:
         let built = execCmdEx(quoteShellCommand([getCurrentCompilerExe(), "c", "--hints:off",

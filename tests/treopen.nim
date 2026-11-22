@@ -347,30 +347,33 @@ proc main*() =
       st.apply Command(kind: ckSelect, traces: @[s.base + 3], mode: smReplace)
       st.shutdown()
 
-  block anotherTraceCountDropsWhatItKept:
-    withFixtures fx:
-      let path = fx.surveySegy()
-      var st = initAppState()
-      st.showIt(path)
-      let base = st.sessions[0].base
-      let count = st.sessions[0].len
-      st.apply Command(kind: ckSelect, traces: @[base + 3], mode: smReplace)
-      st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: @[base + 6])
-      st.pump(50)
-      doAssert st.spectra.len == 2
-      # the file grows by a trace (a copy of its last) before it is read again
-      var bytes = readFile(path)
-      let step = (bytes.len - 3600 - 3200) div count # (one extended text header)
-      doAssert 3600 + 3200 + step * count == bytes.len
-      writeFile(path, bytes & bytes[bytes.len - step ..< bytes.len])
-      st.reopen(path, OpenChoice(verifyAll: true))
-      doAssert st.settle(st.sessions.len == 1 and st.sessions[0].len == count + 1 and
-        st.panel(MainPanel).laidOut), "not reopened"
-      doAssert st.selection.selectedCount == 0, "the selection of another file's ids was kept"
-      doAssert st.spectra.len == 1, "the FFT window of the old traces was kept"
-      doAssert st.log.has("dropped the selection, 1 plot window (it has " & $(count + 1) &
-        " traces, it had " & $count & " traces)"), "what was dropped was not said"
-      st.shutdown()
+  when not defined(windows):
+    # Windows opens a file it maps for reading with sharing for reading only, so no
+    # program (this test) can write to it while it is shown: parseSEG's map (std/memfiles).
+    block anotherTraceCountDropsWhatItKept:
+      withFixtures fx:
+        let path = fx.surveySegy()
+        var st = initAppState()
+        st.showIt(path)
+        let base = st.sessions[0].base
+        let count = st.sessions[0].len
+        st.apply Command(kind: ckSelect, traces: @[base + 3], mode: smReplace)
+        st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: @[base + 6])
+        st.pump(50)
+        doAssert st.spectra.len == 2
+        # the file grows by a trace (a copy of its last) before it is read again
+        var bytes = readFile(path)
+        let step = (bytes.len - 3600 - 3200) div count # (one extended text header)
+        doAssert 3600 + 3200 + step * count == bytes.len
+        writeFile(path, bytes & bytes[bytes.len - step ..< bytes.len])
+        st.reopen(path, OpenChoice(verifyAll: true))
+        doAssert st.settle(st.sessions.len == 1 and st.sessions[0].len == count + 1 and
+          st.panel(MainPanel).laidOut), "not reopened"
+        doAssert st.selection.selectedCount == 0, "the selection of another file's ids was kept"
+        doAssert st.spectra.len == 1, "the FFT window of the old traces was kept"
+        doAssert st.log.has("dropped the selection, 1 plot window (it has " & $(count + 1) &
+          " traces, it had " & $count & " traces)"), "what was dropped was not said"
+        st.shutdown()
 
   block closedAfterTheOpenPostedStaysClosed:
     # The open job has posted (jsDone) and the inbox has not been drained: closing
@@ -560,45 +563,48 @@ proc main*() =
         "the other panel came back at the first record"
       st.shutdown()
 
-  block cutDuringKeptReopenIsReadOnce:
-    # The open is held after it has read the file's size, the file is cut, and
-    # the watch sees it. The kept open comes back as the file is now; the watch's
-    # next look must not say that session was cut short and open the file again.
-    install()
-    withFixtures fx:
-      let path = fx.surveySegy()
-      let name = path.extractFilename
-      var st = initAppState(watchEvery = initDuration(hours = 1))
-      st.showIt(path)
-      let before = st.sessions[0].len
-      st.folderWatch.stop() # the looks below are the test's, not the watch thread's
-      fault(path, fkHang, {foMapped})
-      st.reopen(path, OpenChoice(verifyAll: true))
-      doAssert waitUntil(hung() > 0), "the reopen was not held after it read the size"
-      let whole = readFile(path)
-      writeFile(path, whole[0 ..< whole.len div 2])
-      let nowSize = getFileSize(path)
-      let nowTime = getLastModificationTime(path)
-      proc postWatch() =
-        st.mailbox.post Msg(kind: mkWatched, watched: @[WatchedFile(path: canonical(path),
-          exists: true, kind: fkSegy, size: nowSize, modified: nowTime, changing: false)])
-      postWatch()
-      discard st.drainInbox()
+  when not defined(windows):
+    # Windows opens a file it maps for reading with sharing for reading only, so no
+    # program (this test) can write to it while it is shown: parseSEG's map (std/memfiles).
+    block cutDuringKeptReopenIsReadOnce:
+      # The open is held after it has read the file's size, the file is cut, and
+      # the watch sees it. The kept open comes back as the file is now; the watch's
+      # next look must not say that session was cut short and open the file again.
+      install()
+      withFixtures fx:
+        let path = fx.surveySegy()
+        let name = path.extractFilename
+        var st = initAppState(watchEvery = initDuration(hours = 1))
+        st.showIt(path)
+        let before = st.sessions[0].len
+        st.folderWatch.stop() # the looks below are the test's, not the watch thread's
+        fault(path, fkHang, {foMapped})
+        st.reopen(path, OpenChoice(verifyAll: true))
+        doAssert waitUntil(hung() > 0), "the reopen was not held after it read the size"
+        let whole = readFile(path)
+        writeFile(path, whole[0 ..< whole.len div 2])
+        let nowSize = getFileSize(path)
+        let nowTime = getLastModificationTime(path)
+        proc postWatch() =
+          st.mailbox.post Msg(kind: mkWatched, watched: @[WatchedFile(path: canonical(path),
+            exists: true, kind: fkSegy, size: nowSize, modified: nowTime, changing: false)])
+        postWatch()
+        discard st.drainInbox()
+        releaseAll()
+        doAssert st.settle(st.sessions.len == 1 and st.sessions[0].facts.opened.choice.verifyAll and
+          st.sessions[0].len > 0 and st.sessions[0].len < before), "the reopen did not come back"
+        let cuts = st.log.cutShorts
+        let opens = st.opens(name)
+        postWatch() # the look once the new session is open
+        discard st.drainInbox()
+        doAssert st.log.cutShorts == cuts, "said cut short again (" & $st.log.cutShorts & ")"
+        doAssert st.sessions.len == 1 and st.sessions[0].size == nowSize,
+          "not the file as it is now: size " & $(if st.sessions.len == 0: "gone" else:
+          $st.sessions[0].size) & ", the file is " & $nowSize
+        doAssert st.opens(name) == opens, "opened again (" & $st.opens(name) & ")"
+        doAssert st.sessions[0].facts.opened.choice.verifyAll
+        st.shutdown()
       releaseAll()
-      doAssert st.settle(st.sessions.len == 1 and st.sessions[0].facts.opened.choice.verifyAll and
-        st.sessions[0].len > 0 and st.sessions[0].len < before), "the reopen did not come back"
-      let cuts = st.log.cutShorts
-      let opens = st.opens(name)
-      postWatch() # the look once the new session is open
-      discard st.drainInbox()
-      doAssert st.log.cutShorts == cuts, "said cut short again (" & $st.log.cutShorts & ")"
-      doAssert st.sessions.len == 1 and st.sessions[0].size == nowSize,
-        "not the file as it is now: size " & $(if st.sessions.len == 0: "gone" else:
-        $st.sessions[0].size) & ", the file is " & $nowSize
-      doAssert st.opens(name) == opens, "opened again (" & $st.opens(name) & ")"
-      doAssert st.sessions[0].facts.opened.choice.verifyAll
-      st.shutdown()
-    releaseAll()
 
   block shownOnceTheCloseEnds:
     # The open's lane is held after the reopen posts, so the close of the open
