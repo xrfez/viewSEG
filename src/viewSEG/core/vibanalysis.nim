@@ -356,20 +356,31 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   # each signal has its own full scale (counts, or kg × counts)
   var hundredFor = if judged == vsWeightedSum: p.forceHundredWeighted else: p.forceHundredPct
   var hundredFromFile = false
-  if sig.given and judged == vsGroundForce and hundredFor > 0 and hundredFor < Inf and
-      p.forceHundredUnit.len > 0:
-    # a typed 100 % force keeps the unit it was typed in: given in the unit now shown only when
-    # the scale makes that exact (raw counts to newtons), else not applied, and said
+  if sig.given and judged == vsGroundForce and hundredFor > 0 and hundredFor < Inf:
+    # a typed 100 % force keeps the unit it was typed in. It is converted only from this
+    # file's own raw unit (counts of a .dat, pound-counts of a .vib) to newtons with the scale
+    # now given; pound-counts are those of the accelerometer set they were typed on. Any
+    # other mismatch is not applied, and said.
     let now = gfUnit(u.units[vsGroundForce], sig, scaled)
-    if p.forceHundredUnit != now:
-      if now == "N" and scaled: hundredFor *= sig.gfToN
+    let raw = if sig.isDat: "counts" else: "pound-counts"
+    let typedIn = p.forceHundredUnit
+    if typedIn == "pound-counts" and not sig.isDat and p.forceHundredSet != p.accelSet:
+      hundredFor = NaN
+      result.hundredProblem = "typed in pound-counts of accelerometer set " &
+        $p.forceHundredSet & "; the window now judges set " & $p.accelSet &
+        " (another sensitivity): type it again"
+    elif typedIn != now:
+      if typedIn == raw and now == "N" and scaled: hundredFor *= sig.gfToN
       else:
         hundredFor = NaN
-        result.hundredProblem = "typed in " & p.forceHundredUnit & "; the axis is now in " &
-          (if now == "N": "newtons" else: now) & ": type it again"
+        result.hundredProblem = (if typedIn.len == 0: "typed with no unit" else: "typed in " &
+          typedIn) & "; the axis is now in " & (if now == "N": "newtons" else: now) &
+          ": type it again"
   let typedHundred = hundredFor > 0 and hundredFor < Inf
   let fileHundred = sig.hundredN > 0 and sig.hundredN < Inf
-  if sig.given and judged == vsGroundForce and scaled and not typedHundred and fileHundred:
+  # (a typed force not applied is said, and the file's own does not take its place unseen)
+  if sig.given and judged == vsGroundForce and scaled and not typedHundred and fileHundred and
+      result.hundredProblem.len == 0:
     (hundredFor, hundredFromFile) = (sig.hundredN, true)
     result.hundredWords = sig.hundredWords
   if sig.given and not typedHundred and not hundredFromFile and result.hundredProblem.len == 0:

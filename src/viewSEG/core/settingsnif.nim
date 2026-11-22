@@ -281,7 +281,7 @@ proc writePlotOptions(w: var NifWriter; o: PlotOptions) =
   for name, x in fieldPairs(o.vibrator.qc):
     if not x.isNaN: w.value(name, x)
   w.close()
-  w.value("targetPct", o.vibrator.targetPct)
+  if not o.vibrator.targetPct.isNaN: w.value("targetPct", o.vibrator.targetPct)
   if not o.vibrator.forceHundredPct.isNaN: w.value("forceHundredPct",
       o.vibrator.forceHundredPct)
   if not o.vibrator.forceHundredWeighted.isNaN:

@@ -155,6 +155,9 @@ func applied*(o: PlotOptions; view: AnalysisView; p: AnalysisParams): AnalysisPa
       o.fk.colourMap, o.fk.raw)
   of avOrientation: discard
 
-func builtin*(view: AnalysisView; p: AnalysisParams): AnalysisParams =
-  ## `p` with the options of kind `view` at their built-in values.
-  PlotOptions().applied(view, p)
+func builtin*(view: AnalysisView; p: AnalysisParams; signature = false): AnalysisParams =
+  ## `p` with the options of kind `view` at their built-in values. A `signature` file's
+  ## Vibrator window keeps nothing typed: no drive level, no 100 % force and no unit.
+  result = PlotOptions().applied(view, p)
+  if view == avVibrator and signature:
+    (result.targetPct, result.forceHundredPct, result.forceHundredUnit) = (NaN, NaN, "")

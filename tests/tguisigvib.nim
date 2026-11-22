@@ -10,12 +10,16 @@
 ##   set), the weights line and the sentence that the scaled reference depends on the
 ##   hold-down weight, the controller's table "from the .dat of this sweep";
 ## - a folder of `.vib` files of three vibrators, one of them with other weights: the weights
-##   per vibrator open by themselves and say the difference in words.
+##   per vibrator open by themselves and say the difference in words, in a second window too;
+## - Reset options on a `.dat`'s window leaves no drive level and no 100 % force typed.
 ##
 ## With `VIEWSEG_SCREENSHOTS` set, a picture of each step is saved there (synthetic files only).
 ##
 ## Seen to fail: with the polarity line not drawn, "no polarity line"; with the button's click
-## not reaching the window ("Reverse" drawn without a command), "the choice was not made".
+## not reaching the window ("Reverse" drawn without a command), "the choice was not made"; with
+## one opened-once flag for every window, the second window's weights stayed folded ("a second
+## window opens its weights too" did not finish); with Reset not told the window is a signature
+## file's, the drive level came back as 100 ("Reset options keeps nothing typed").
 
 import std/[math, monotimes, options, os, strutils, times]
 import parseSSDAT
@@ -128,13 +132,19 @@ proc main*() =
         s.forceScale.datCountsPerLbf = 8
         f.apply Command(kind: ckSettings, settings: s)
         var q = f.core.plots[0].params
-        (q.targetPct, q.targetTyped) = (70.0, true)
+        q.targetPct = 70.0
         f.apply Command(kind: ckPlotDisplay, plot: f.core.plots[0].id, plotParams: q)
       do:
         f.shown(W & ".hundred words") and f.core.plots[0].result.hundredWords.len > 0
       list.step "the 100 % force says where it comes from":
         f.shoot("sigvib-dat-scale.png")
       do: true
+      list.step "Reset options keeps nothing typed":
+        f.click(W & ".reset")
+      do:
+        f.core.plots[0].params.targetPct.isNaN and f.core.plots[0].params.forceHundredPct.isNaN and
+          not f.core.plots[0].waiting and f.core.plots[0].result.hundredWords.len == 0 and
+          f.shown(W & ".hundred hint")
       steps(path, fx.dir / "a", list)
     block vib:
       let dir = fx.dir / "pair"
@@ -215,6 +225,12 @@ proc main*() =
         doAssert found.vibrators.len == 3 and found.vibrators[2].unlike, $found.vibrators.len
         f.shoot("sigvib-fleet.png")
       do: true
+      list.step "a second window opens its weights too":
+        f.apply Command(kind: ckOpenPlot, plotView: avVibrator,
+          plotTraces: @[f.core.sessions[0].base])
+      do:
+        f.core.plots.len == 2 and f.shown("new plot 2.fleet header") and
+          f.shown("new plot 2.fleet") and f.shown(W & ".fleet")
       steps(first, fx.dir / "c", list, browse = dir)
   echo "tguisigvib: ok"
 

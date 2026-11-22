@@ -26,6 +26,15 @@
 ## limit on the phase consistency (`weak` found the noise sweep not unclear); the weights grouped
 ## by file instead of by vibrator (`fleet`); the reversed choice not remembered (`reversedAsRecorded`
 ## found no choice in the settings) and not read back for the next window (the same test).
+## Also seen to fail: Reset options keeping the typed drive level and 100 % force
+## (`resetKeepsNothing`); a signature window opening with the built-in 100 as if typed (`hundred`);
+## its drive level remembered for the kind (`driveLevelNotTyped`); a window followed from a SEG-Y
+## file keeping the SEG-Y drive level (the same test); a unit outside the four let through
+## (`wrongUnit`); any unit converted to newtons, not only the file's own (`wrongUnit`,
+## `followKinds`); pound-counts applied on the other accelerometer set, or the set not stamped
+## when typed (`setSwitch`); the file's hold-down taking the place of a typed force not applied
+## (`setSwitch`); the sets of weights listed only for two vibrators, and no sensitivity sets
+## (`fleetCases`).
 ## Not mutated: that an agent's polarity is never saved (it is the existing `keeps` rule); the
 ## words of the three kinds of polarity beyond "opposite", "in phase" and "unclear".
 
@@ -33,7 +42,9 @@ import std/[json, math, os, strutils, times]
 import parseSEG
 import parseSSDAT
 import parseSSVIB
-import viewSEG/core/[analysis, persist, settings, signatures, state, units, vendormaps]
+import viewSEG/core/[analysis, persist, plotoptions, settings, signatures, state, units,
+  vendormaps]
+import viewSEG/remote/tools
 import utils/[fixtures, sigfiles, waiting]
 
 proc settleIt(st: var AppState; w: int): bool =
@@ -400,7 +411,7 @@ proc main*() =
         doAssert target > 0
         # the drive level typed (even 100): 100 % is the controller's target force at that level
         var p = st.plots[w].params
-        (p.targetPct, p.targetTyped) = (100.0, true)
+        p.targetPct = 100.0
         st.change(w, p)
         let r = st.plots[w].result
         doAssert abs(r.qc.hundredPct - target * NPerLbf) < 1e-9 * target, $r.qc.hundredPct
@@ -467,6 +478,158 @@ proc main*() =
       doAssert st.plots[v].params.forceHundredPct.isNaN
       discard st.shutdown()
 
+  block driveLevelNotTyped:
+    # a signature file's window opens with no drive level (NaN, the box empty) even when one is
+    # remembered for the kind; what is typed there is not remembered for the kind; a SEG-Y
+    # window opens with the remembered one as before
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      var st = started(dir)
+      var s = st.settings
+      s.plotOptions.vibrator.targetPct = 70
+      st.apply Command(kind: ckSettings, settings: s)
+      let seg = st.window(currentSourcePath.parentDir.parentDir / "samples" / "vib" / "field" /
+        "signature_4trace_a.sgy")
+      doAssert st.plots[seg].params.targetPct == 70, $st.plots[seg].params.targetPct
+      # (a SEG-Y window's drive level must still be a number)
+      var q = st.plots[seg].params
+      q.targetPct = NaN
+      st.apply Command(kind: ckPlotDisplay, plot: st.plots[seg].id, plotParams: q)
+      doAssert st.plots[seg].params.targetPct == 70
+      # (the SEG-Y window follows to the .dat: it takes no drive level from the SEG-Y file)
+      let w = st.window(datFile(fx.dir, "a.dat", datOf(1)))
+      doAssert st.plots[w].params.targetPct.isNaN, $st.plots[w].params.targetPct
+      doAssert st.settle(st.plots[seg].file == "a.dat" and not st.plots[seg].waiting)
+      doAssert st.plots[seg].params.targetPct.isNaN, $st.plots[seg].params.targetPct
+      st.setScale(8.0, NaN)
+      doAssert st.settle(st.plots[w].result.scaleWords.len > 0 and not st.plots[w].waiting)
+      doAssert st.plots[w].result.qc.hundredPct.isNaN and
+        "type the drive level" in st.plots[w].result.hundredHint
+      var p = st.plots[w].params
+      p.targetPct = 60
+      st.change(w, p)
+      doAssert st.plots[w].result.qc.hundredPct > 0
+      doAssert st.settings.plotOptions.vibrator.targetPct == 70,
+        "a signature window's drive level was remembered for the kind"
+      # cleared: not typed again, and the file's 100 % goes with it
+      p.targetPct = NaN
+      st.change(w, p)
+      doAssert st.plots[w].result.qc.hundredPct.isNaN and
+        "type the drive level" in st.plots[w].result.hundredHint
+      discard st.shutdown()
+
+  block resetKeepsNothing:
+    # Reset options on a signature file's window: no drive level, no 100 % force, no unit
+    withFixtures fx:
+      var st = initAppState()
+      let w = st.window(datFile(fx.dir, "a.dat", datOf(1)))
+      st.setScale(8.0, NaN)
+      doAssert st.settle(st.plots[w].result.scaleWords.len > 0 and not st.plots[w].waiting)
+      var p = st.plots[w].params
+      (p.targetPct, p.forceHundredPct, p.forceHundredUnit) = (70.0, 1000.0, "counts")
+      st.change(w, p)
+      doAssert st.plots[w].result.qc.hundredPct > 0
+      st.change(w, builtin(avVibrator, st.plots[w].params, signature = true))
+      let q = st.plots[w].params
+      doAssert q.targetPct.isNaN and q.forceHundredPct.isNaN and q.forceHundredUnit == "", $q
+      doAssert st.plots[w].result.qc.hundredPct.isNaN and st.plots[w].result.hundredWords == "" and
+        "type the drive level" in st.plots[w].result.hundredHint, st.plots[w].result.hundredWords
+      # any other window's Reset is as before: the built-in 100
+      doAssert builtin(avVibrator, q).targetPct == 100
+      st.shutdown()
+
+  block wrongUnit:
+    # an agent's unit outside "", counts, pound-counts and N is refused; "" or another unit than
+    # the file's own raw one is not converted
+    withFixtures fx:
+      var st = initAppState()
+      let w = st.window(datFile(fx.dir, "a.dat", datOf(1)))
+      st.setScale(8.0, NaN)
+      doAssert st.settle(st.plots[w].result.scaleWords.len > 0 and not st.plots[w].waiting)
+      var applied = false
+      let answer = st.runCommand(Frontend(), $(%*{"kind": "plot display", "plot": st.plots[w].id,
+        "plotParams": {"forceHundredPct": 1000, "forceHundredUnit": "kg"}}), applied)
+      doAssert st.settle(not st.plots[w].waiting)
+      doAssert st.plots[w].params.forceHundredPct.isNaN and st.plots[w].params.forceHundredUnit ==
+        "", answer
+      doAssert "forceHundredUnit must be one of" in answer, answer
+      doAssert settingProblem(AnalysisParams(forceHundredUnit: "lbf"), avVibrator,
+        signature = true).len > 0
+      doAssert settingProblem(AnalysisParams(forceHundredUnit: "N"), avVibrator,
+        signature = true).len == 0
+      for (unit, why) in [("pound-counts", "typed in pound-counts"), ("", "typed with no unit")]:
+        var p = st.plots[w].params
+        (p.forceHundredPct, p.forceHundredUnit) = (1000.0, unit)
+        st.change(w, p)
+        doAssert st.plots[w].result.qc.hundredPct.isNaN and
+          why in st.plots[w].result.hundredProblem and
+          "type it again" in st.plots[w].result.hundredProblem, st.plots[w].result.hundredProblem
+      st.shutdown()
+
+  block followKinds:
+    # a window that follows from a .vib to a .dat (and back) does not read the number typed on
+    # the one in the other's unit
+    withFixtures fx:
+      var st = initAppState()
+      let datPath = datFile(fx.dir / "d", "a.dat", datOf(1))
+      let vibPath = vibFile(fx.dir / "v", "0007.VIB", sweepOf(1, 0.3))
+      let w = st.window(vibPath)
+      st.setScale(8.0, 12.5)
+      doAssert st.settle(st.plots[w].result.scaleWords.len > 0 and not st.plots[w].waiting)
+      proc follow(st: var AppState; path: string) =
+        let before = st.plots[w].result.gen
+        discard st.shown(path)
+        doAssert st.settle(st.plots[w].file == path.extractFilename and
+          st.plots[w].result.gen > before and not st.plots[w].waiting and
+          st.plots[w].result.plots.len > 0), st.plots[w].file
+      var p = st.plots[w].params
+      (p.forceHundredPct, p.forceHundredUnit) = (1000.0, "pound-counts")
+      st.change(w, p)
+      doAssert st.plots[w].result.qc.hundredPct > 1000 and st.plots[w].result.hundredProblem == ""
+      st.follow(datPath)
+      doAssert st.plots[w].result.qc.hundredPct.isNaN and
+        "typed in pound-counts" in st.plots[w].result.hundredProblem and
+        "type it again" in st.plots[w].result.hundredProblem, st.plots[w].result.hundredProblem
+      p = st.plots[w].params
+      (p.forceHundredPct, p.forceHundredUnit) = (500.0, "counts")
+      st.change(w, p)
+      doAssert abs(st.plots[w].result.qc.hundredPct - 500 * NPerLbf / 8) < 1e-9
+      st.follow(vibPath)
+      doAssert st.plots[w].result.qc.hundredPct.isNaN and
+        "typed in counts" in st.plots[w].result.hundredProblem and
+        st.plots[w].result.hundredWords == "", st.plots[w].result.hundredProblem
+      st.shutdown()
+
+  block setSwitch:
+    # pound-counts are those of the accelerometer set they were typed on: on the other set the
+    # value is not applied (not converted by the sensitivities), and back on its set it is
+    withFixtures fx:
+      var st = initAppState()
+      let w = st.window(vibFile(fx.dir, "0007.VIB", sweepOf(1, 0.3)))
+      var p = st.plots[w].params
+      (p.forceHundredPct, p.forceHundredUnit) = (1000.0, "pound-counts")
+      st.change(w, p)
+      doAssert st.plots[w].result.qc.hundredPct == 1000 and
+        st.plots[w].params.forceHundredSet == asB
+      p = st.plots[w].params
+      p.accelSet = asA
+      st.change(w, p)
+      doAssert st.plots[w].result.qc.hundredPct.isNaN and
+        "set B" in st.plots[w].result.hundredProblem and
+        "type it again" in st.plots[w].result.hundredProblem, st.plots[w].result.hundredProblem
+      # with a scale: not applied either, and the hold-down does not take its place unseen
+      st.setScale(NaN, 12.5)
+      doAssert st.settle(st.plots[w].result.scaleWords.len > 0 and not st.plots[w].waiting)
+      doAssert st.plots[w].result.qc.hundredPct.isNaN and st.plots[w].result.hundredWords == "" and
+        "set B" in st.plots[w].result.hundredProblem, st.plots[w].result.hundredProblem
+      # typed again on set A: set A's
+      p = st.plots[w].params
+      p.forceHundredPct = 900
+      st.change(w, p)
+      doAssert st.plots[w].params.forceHundredSet == asA and st.plots[w].result.qc.hundredPct > 900
+      st.shutdown()
+
   block fleetCases:
     # the weights per vibrator, on the pure function: two that differ, a sensitivity-only
     # difference, vibrators not known, and the wording
@@ -478,14 +641,46 @@ proc main*() =
     sens.sensitivity1 = 21
     sens.sensitivity2 = 21
     let two = perVibrator([(11, base), (11, base), (12, big)])
-    doAssert two.twoDiffer and two.flagged and not two.vibrators[0].unlike and
+    doAssert two.weightSets.len == 2 and two.flagged and not two.vibrators[0].unlike and
       not two.vibrators[1].unlike
-    let said = twoDifferWords(two)
-    doAssert "two vibrators state different weights" in said and "do not say which" in said, said
+    let said = setsWords(two)
+    doAssert said.len == 3 and "The vibrators state 2 different sets of weights" in said[0] and
+      "do not say which" in said[0], $said
+    doAssert said[1].startsWith("Vibrator 11: Hold-down 40 000 lb") and
+      said[2].startsWith("Vibrator 12: Hold-down 60 000 lb"), $said
     doAssert "wrong vibrator type" notin vibratorWords(two.vibrators[1])
+    # three all different, and two and two: no odd one named, the sets are the finding
+    var third = base
+    third.holdDownLb = 50000
+    let three = perVibrator([(11, base), (12, big), (13, third)])
+    doAssert three.flagged and three.weightSets.len == 3 and
+      not (three.vibrators[0].unlike or three.vibrators[1].unlike or three.vibrators[2].unlike)
+    doAssert "3 different sets of weights" in setsWords(three)[0]
+    let halves = perVibrator([(11, base), (12, base), (13, big), (14, big)])
+    doAssert halves.flagged and halves.weightSets.len == 2, $halves.weightSets.len
+    let h = setsWords(halves)
+    doAssert h[1].startsWith("Vibrators 11 and 12: ") and h[2].startsWith("Vibrators 13 and 14: "),
+      $h
+    for v in halves.vibrators: doAssert not v.unlike and "vibrator type" notin vibratorWords(v)
+    # two odd ones among four: neither is the single odd one
+    let twoOdd = perVibrator([(11, base), (12, base), (13, big), (14, third)])
+    doAssert twoOdd.weightSets.len == 3 and not twoOdd.vibrators[2].unlike and
+      not twoOdd.vibrators[3].unlike
+    doAssert "Vibrators 11 and 12: " in setsWords(twoOdd)[1]
+    # one odd one among three is named, and the sets are not listed
+    let oneOdd = perVibrator([(11, base), (12, base), (13, big)])
+    doAssert oneOdd.vibrators[2].unlike and oneOdd.weightSets.len == 0 and oneOdd.flagged
+    # two vibrators differing only in sensitivity: in the sensitivity wording
+    let twoSens = perVibrator([(11, base), (12, sens)])
+    doAssert twoSens.flagged and twoSens.weightSets.len == 0 and twoSens.sensSets.len == 2
+    let ts = setsWords(twoSens)
+    doAssert "2 different sets of accelerometer sensitivities" in ts[0] and
+      "Vibrator 12: accelerometer sensitivities 21.000 and 21.000" == ts[2], $ts
+    for l in ts: doAssert "vibrator type" notin l, l
+    plainWords(said.join(" ") & h.join(" ") & ts.join(" "))
     let onlySens = perVibrator([(11, base), (12, base), (13, sens)])
     doAssert onlySens.vibrators[2].sensUnlike and not onlySens.vibrators[2].unlike and
-      not onlySens.twoDiffer and onlySens.flagged
+      onlySens.weightSets.len == 0 and onlySens.sensSets.len == 0 and onlySens.flagged
     let words = vibratorWords(onlySens.vibrators[2])
     doAssert "sensitivities differ" in words and "wrong vibrator type" notin words, words
     let aloneSens = perVibrator([(11, base), (11, sens)])
@@ -518,7 +713,7 @@ proc main*() =
       st.setScale(peak / target, NaN)
       doAssert st.settle(st.plots[w].result.scaleWords.len > 0 and not st.plots[w].waiting)
       var p = st.plots[w].params
-      (p.targetPct, p.targetTyped) = (70.0, true)
+      p.targetPct = 70.0
       st.change(w, p)
       let rows = st.plots[w].result.controller
       doAssert rows[0].label.contains("% of hold-down") and rows[0].controller == "70 %"
@@ -579,7 +774,7 @@ proc main*() =
         doAssert st.plots[w].result.controller[0].viewseg == "—"
         doAssert "type the drive level" in st.plots[w].result.controller[0].tip
         var q = st.plots[w].params
-        (q.targetPct, q.targetTyped) = (100.0, true)
+        q.targetPct = 100.0
         st.change(w, q)
         r = st.plots[w].result
         doAssert r.controller[0].viewseg.endsWith(" %") and "hold-down" in r.controller[0].tip

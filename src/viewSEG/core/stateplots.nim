@@ -306,7 +306,8 @@ proc signatureAsk(state: AppState; s: Session; p: AnalysisParams): SignatureAsk 
       result.gfToN = NPerLbf / scale.datCountsPerLbf
       result.scaleWords = sensible(scale.datCountsPerLbf) & " counts per lbf"
       if f.qc.valid and f.qc.targetForceLbf > 0:
-        if p.targetTyped and p.targetPct > 0:
+        # (a drive level nobody typed is NaN: the default 100 gives no 100 % force)
+        if p.targetPct > 0 and p.targetPct < Inf:
           result.hundredN = float64(f.qc.targetForceLbf) * 100 / p.targetPct * NPerLbf
           result.hundredWords = "100 % from the controller's target force (" &
             $f.qc.targetForceLbf & " lbf at " & sensible(p.targetPct) & " % of the full scale)"
@@ -839,7 +840,7 @@ proc openPlot(state: var AppState; cmd: Command) =
   if state.plots.len >= MaxAnalysisWindows:
     state.ignore(cmd, $MaxAnalysisWindows & " plot windows are open; close one first")
     return
-  let problem = settingProblem(cmd.plotParams, cmd.plotView)
+  let problem = settingProblem(cmd.plotParams, cmd.plotView, state.sessions[i].isSignature)
   if problem.len > 0:
     state.ignore(cmd, problem)
     return
@@ -894,6 +895,11 @@ proc openPlot(state: var AppState; cmd: Command) =
       # a typed 100 % force is its window's: the file's own 100 % is never hidden by a
       # remembered number
       (w.params.forceHundredPct, w.params.forceHundredUnit) = (NaN, "")
+    if s.isSignature and cmd.plotParams.targetPct == AnalysisParams().targetPct:
+      # so is the drive level: a signature file's window opens with none typed (the box
+      # empty), unless the command gives one other than the built-in 100
+      w.params.targetPct = NaN
+    w.params.forceHundredSet = w.params.accelSet
     if samePlaces(cmd.plotParams.roles, VibRoles()):
       w.params.roles = state.rolesOf(s, traces, w.params.roles, s.name, w.params.accelSet)
     else: # the command names the places: that is a choice made on this file
@@ -922,13 +928,14 @@ proc showPlot(state: var AppState; cmd: Command) =
     state.ignore(cmd, "there is no plot window " & $cmd.plot)
     return
   template pw: untyped = state.plots[w]
-  let problem = settingProblem(cmd.plotParams, pw.view)
+  let sigFile = if pw.view == avVibrator: state.vibWindowFile(w) else: -1
+  let signature = sigFile >= 0 and state.sessions[sigFile].isSignature
+  let problem = settingProblem(cmd.plotParams, pw.view, signature)
   if problem.len > 0:
     state.ignore(cmd, problem)
     return
   var params = cmd.plotParams
-  let sigFile = if pw.view == avVibrator: state.vibWindowFile(w) else: -1
-  if sigFile >= 0 and state.sessions[sigFile].isSignature:
+  if signature:
     # a signature file's window: the codes decide the places (the user picks no trace), the
     # accelerometer set is the window's own choice, and the ground force's polarity is as
     # recorded unless the user reverses it, which is remembered for the file layout
@@ -966,6 +973,13 @@ proc showPlot(state: var AppState; cmd: Command) =
     params.roles.groundForcePolarity = pol
     (params.roles.massPolarity, params.roles.judge) = (poAsRecorded, joRecorded)
     if pol != had.groundForcePolarity: state.rememberSigPolarity(w, pol, cmd.origin)
+    if not (params.forceHundredPct == pw.params.forceHundredPct or
+        (params.forceHundredPct.isNaN and pw.params.forceHundredPct.isNaN)) or
+        params.forceHundredUnit != pw.params.forceHundredUnit:
+      # a 100 % force typed now: in pound-counts, those of the set judged now (on the other
+      # set it is another force, and is not applied)
+      params.forceHundredSet = params.accelSet
+    else: params.forceHundredSet = pw.params.forceHundredSet
   elif pw.view == avVibrator:
     # where the roles came from is the window's to say: "Roles from the codes" puts the
     # code-given places back (and forgets the layout's remembered choice); a role given
@@ -1002,9 +1016,11 @@ proc showPlot(state: var AppState; cmd: Command) =
   pw.params = params
   # what the user set becomes what a new window of the kind opens with
   # (a signature file's typed 100 % force belongs to its window: never remembered for the kind)
+  # (nor its drive level: a new window of a signature file opens with none typed)
   var remembered = cmd.plotParams
-  if sigFile >= 0 and state.sessions[sigFile].isSignature:
+  if signature:
     remembered.forceHundredPct = state.settings.plotOptions.vibrator.forceHundredPct
+    remembered.targetPct = state.settings.plotOptions.vibrator.targetPct
   if pw.view.hasOptions and
       state.settings.plotOptions.applied(pw.view, remembered) != remembered:
     state.change(cmd.origin, x):
@@ -1229,11 +1245,21 @@ proc repick(state: var AppState; w, k, i: int): bool =
   let oldFile = pw.file
   let oldRecord = pw.record
   let oldRoles = pw.params.roles
+  let oldTyped = (pw.params.targetPct, pw.params.forceHundredPct, pw.params.forceHundredUnit)
+  let oldAt = if oldTraces.len > 0: state.findTrace(oldTraces[0]) else: -1
+  let wasSignature = oldAt >= 0 and state.sessions[oldAt].isSignature
   pw.file = s.name
   pw.record = s.recordText(seed[0])
   pw.traces = ids
   if view == avVibrator:
     pw.params.roles = state.rolesOf(s, seed, oldRoles, s.name, pw.params.accelSet)
+    if s.isSignature != wasSignature:
+      # from another kind of file to a signature file, or back: the drive level and the 100 %
+      # force are those a window of the new kind opens with (a signature file's: none typed)
+      let kind = state.settings.plotOptions.vibrator
+      pw.params.forceHundredPct = if s.isSignature: NaN else: kind.forceHundredPct
+      pw.params.forceHundredUnit = ""
+      pw.params.targetPct = if s.isSignature: NaN else: kind.targetPct
   pw.first = seed[0]
   pw.processing = pr
   if state.askPlot(w):
@@ -1251,6 +1277,7 @@ proc repick(state: var AppState; w, k, i: int): bool =
   pw.file = oldFile
   pw.record = oldRecord
   pw.params.roles = oldRoles
+  (pw.params.targetPct, pw.params.forceHundredPct, pw.params.forceHundredUnit) = oldTyped
   false
 
 proc filesHeldByFollow*(state: AppState): seq[SessionId] =

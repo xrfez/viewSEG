@@ -179,14 +179,21 @@ func controllerNote*(s: SignatureAsk): string =
 
 # ---------------------------------------------------------------- weights --
 
+func massesText(w: VibWeights): string =
+  ## "Hold-down 12 000 lb, baseplate 4 000 lb, reaction mass 9 000 lb".
+  func lb(x: float64): string = (if x.isNaN: "not stated" else: groupDigits(int64(round(x))) & " lb")
+  "Hold-down " & lb(w.holdDownLb) & ", baseplate " & lb(w.baseplateLb) & ", reaction mass " &
+    lb(w.massLb)
+
+func sensitivitiesText(w: VibWeights): string =
+  ## "accelerometer sensitivities 10.200 and 10.200".
+  func sens(x: float64): string = (if x.isNaN: "not stated" else: formatFloat(x, ffDecimal, 3))
+  "accelerometer sensitivities " & sens(w.sensitivity1) & " and " & sens(w.sensitivity2)
+
 func weightsText*(w: VibWeights): string =
   ## "Hold-down 12 000 lb, baseplate 4 000 lb, reaction mass 9 000 lb; accelerometer
-  ## sensitivities 10.2 and 10.2 (which sensor is not known)".
-  func lb(x: float64): string = (if x.isNaN: "not stated" else: groupDigits(int64(round(x))) & " lb")
-  func sens(x: float64): string = (if x.isNaN: "not stated" else: formatFloat(x, ffDecimal, 3))
-  "Hold-down " & lb(w.holdDownLb) & ", baseplate " & lb(w.baseplateLb) & ", reaction mass " &
-    lb(w.massLb) & "; accelerometer sensitivities " & sens(w.sensitivity1) & " and " &
-    sens(w.sensitivity2) & " (which sensor is not known)"
+  ## sensitivities 10.200 and 10.200 (which sensor is not known)".
+  massesText(w) & "; " & sensitivitiesText(w) & " (which sensor is not known)"
 
 const WeightsDepend* = "The reference scaled to a force is the counts times the header's " &
   "hold-down weight over full scale: it depends on the hold-down weight, which differs with " &
@@ -207,6 +214,10 @@ func same(a, b: VibWeights): bool = sameWeights(a, b) and sameSensitivities(a, b
 type
   WeightSet* = tuple[weights: VibWeights; sweeps: int]
 
+  FleetSet* = tuple[weights: VibWeights; vibrators: seq[int]]
+    ## one set of weights (or of sensitivities) the vibrators state, and the vibrators that
+    ## state it
+
   VibratorWeights* = object
     ## The weights one vibrator's sweeps state across a folder.
     vibrator*: int
@@ -221,8 +232,12 @@ type
     ## The `.vib` header weights of a folder, per vibrator.
     vibrators*: seq[VibratorWeights] ## vibrators known (from their `.dat`), by number
     unknown*: int                    ## sweeps whose vibrator is not known: listed, never compared
-    twoDiffer*: bool                 ## exactly two vibrators, stating different weights
-    flagged*: bool                   ## any finding
+    weightSets*: seq[FleetSet]
+      ## the vibrators' weights are not all alike and no single odd one can be named (two
+      ## vibrators, three all different, two and two...): each set and who states it
+    sensSets*: seq[FleetSet]
+      ## the same for the accelerometer sensitivities, when the weights are all alike
+    flagged*: bool ## any finding
 
 func oddOne(main: openArray[VibWeights]; i: int; alike: proc (a,
     b: VibWeights): bool {.noSideEffect.}): bool =
@@ -238,11 +253,24 @@ func oddOne(main: openArray[VibWeights]; i: int; alike: proc (a,
     if j != i and alike(main[i], main[j]): return false
   true
 
+func setsOf(vibrators: openArray[VibratorWeights]; alike: proc (a,
+    b: VibWeights): bool {.noSideEffect.}): seq[FleetSet] =
+  ## The vibrators' main weights grouped by `alike`, in the order first stated.
+  result = @[]
+  for e in vibrators:
+    let w = e.kinds[0].weights
+    var at = -1
+    for j, s in result:
+      if at < 0 and alike(s.weights, w): at = j
+    if at < 0: result.add (w, @[e.vibrator])
+    else: result[at].vibrators.add e.vibrator
+
 func perVibrator*(sweeps: openArray[tuple[vibrator: int; weights: VibWeights]]): FleetWeights =
   ## The `.vib` header weights grouped per vibrator (0: not known: counted, never grouped or
-  ## compared). A vibrator whose sweeps state different weights, whose weights differ from those
-  ## the others share (three or more vibrators), or two vibrators that differ, is a finding for
-  ## the user, in words; nothing is corrected. A difference in sensitivity alone is told as such.
+  ## compared). A vibrator whose sweeps state different weights, or the single one whose weights
+  ## differ from those the others share, is a finding for the user, in words; when no single
+  ## odd one can be named the sets the vibrators state are the finding (`weightSets`). Nothing
+  ## is corrected. A difference in sensitivity alone is told as such (`sensSets`).
   var byV = initOrderedTable[int, VibratorWeights]()
   for (v, w) in sweeps:
     if w.holdDownLb.isNaN and w.baseplateLb.isNaN and w.massLb.isNaN: continue
@@ -268,22 +296,47 @@ func perVibrator*(sweeps: openArray[tuple[vibrator: int; weights: VibWeights]]):
   result.vibrators.sort(proc(a, b: VibratorWeights): int = cmp(a.vibrator, b.vibrator))
   var main: seq[VibWeights] = @[]
   for e in result.vibrators: main.add e.kinds[0].weights
+  var odd, sensOdd = 0
   for i in 0 ..< main.len:
     result.vibrators[i].unlike = oddOne(main, i, sameWeights)
     result.vibrators[i].sensUnlike = not result.vibrators[i].unlike and
       oddOne(main, i, sameSensitivities)
-  result.twoDiffer = main.len == 2 and not sameWeights(main[0], main[1])
-  result.flagged = result.twoDiffer
+    if result.vibrators[i].unlike: inc odd
+    if result.vibrators[i].sensUnlike: inc sensOdd
+  let sets = setsOf(result.vibrators, sameWeights)
+  if sets.len > 1 and odd != 1:
+    # no single odd one: the sets are the finding, nobody is named
+    result.weightSets = sets
+    for e in result.vibrators.mitems: e.unlike = false
+  elif sets.len == 1:
+    let sens = setsOf(result.vibrators, sameSensitivities)
+    if sens.len > 1 and sensOdd != 1:
+      result.sensSets = sens
+      for e in result.vibrators.mitems: e.sensUnlike = false
+  result.flagged = result.weightSets.len > 0 or result.sensSets.len > 0
   for e in result.vibrators:
     if e.differs or e.sensDiffers or e.unlike or e.sensUnlike: result.flagged = true
 
-func twoDifferWords*(f: FleetWeights): string =
-  ## The finding for exactly two vibrators that state different weights; "" otherwise. It does
-  ## not say which is the odd one.
-  if f.twoDiffer:
-    "The two vibrators state different weights: one of the controllers may be set up for " &
-      "another vibrator type; the headers do not say which"
-  else: ""
+func vibratorsText(v: openArray[int]): string =
+  ## "Vibrator 11", "Vibrators 11 and 12", "Vibrators 11, 12 and 13".
+  result = if v.len == 1: "Vibrator " else: "Vibrators "
+  for i, n in v:
+    if i > 0: result.add(if i == v.high: " and " else: ", ")
+    result.add $n
+
+func setsWords*(f: FleetWeights): seq[string] =
+  ## The finding when the vibrators state different sets of weights (or, the weights alike, of
+  ## sensitivities) and no single odd one can be named: a line that says how many sets, then a
+  ## line per set with the vibrators that state it. It names no odd one; empty otherwise.
+  if f.weightSets.len > 0:
+    result.add "The vibrators state " & $f.weightSets.len & " different sets of weights: a " &
+      "controller may be set up for another vibrator type; the headers do not say which"
+    for s in f.weightSets: result.add vibratorsText(s.vibrators) & ": " & massesText(s.weights)
+  elif f.sensSets.len > 0:
+    result.add "The vibrators state " & $f.sensSets.len & " different sets of accelerometer " &
+      "sensitivities (their weights are alike)"
+    for s in f.sensSets:
+      result.add vibratorsText(s.vibrators) & ": " & sensitivitiesText(s.weights)
 
 func unknownWords*(n: int): string =
   ## The line for sweeps whose vibrator is not known.

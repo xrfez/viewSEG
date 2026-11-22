@@ -55,6 +55,13 @@ type
     heat: Table[int, HeatCache] ## per window id: the image as drawn, cut to the pixels
     imageAxes: Table[int, AxisFit] ## per window id: what its image's axes were fitted to
     maps: array[ColourMap, int] ## ImPlot's index of each density colour map + 1; 0: not added
+    weightsOpened: HashSet[int]
+      ## Vibrator windows (ids) whose weights a finding has unfolded, once: the user may fold
+      ## them again
+    weights: tuple[revision, paired, entries: int; found: FleetWeights] = (-1, 0, 0,
+      FleetWeights())
+      ## the weights per vibrator, of the file list and so one for every window: keyed by its
+      ## revision (bumped on every change of an entry or of the pairs) and sizes
 
   PlotWindowsOutput* = object
     commands*: seq[Command]
@@ -161,13 +168,14 @@ proc limitBox(id: string; value: float64; width: float32; typed: var float64): b
   igIsItemDeactivatedAfterEdit()
 
 proc drawReset(line: ControlLine; w: AnalysisWindow; name: string; marks: var Marks;
-    p: var AnalysisParams; changed: var bool) =
+    p: var AnalysisParams; changed: var bool; signature = false) =
   ## "Reset options", on the control line: this kind's options back to the
-  ## built-in ones (a plot of a kind with none has no button).
+  ## built-in ones (a plot of a kind with none has no button); a `signature`
+  ## file's window keeps no typed drive level or 100 % force.
   if not w.view.hasOptions: return
   line.follow(buttonWidth("Reset options"))
   if igSmallButton("Reset options##reset"):
-    p = builtin(w.view, p)
+    p = builtin(w.view, p, signature)
     changed = true
   marks.mark(name & ".reset")
   tip(ResetTip)
@@ -195,21 +203,17 @@ proc phaseShowCombo(line: ControlLine; name: string; marks: var Marks;
 proc sameMass(a, b: float64): bool {.inline.} =
   a == b or (a.isNaN and b.isNaN)
 
-var weightsOpened = false
-var weightCache: tuple[revision, paired, entries: int; found: FleetWeights] =
-  (-1, 0, 0, FleetWeights())
-
-proc cachedWeightFindings(st: AppState): FleetWeights =
+proc cachedWeightFindings(ui: var PlotWindowsUi; st: AppState): FleetWeights =
   ## `vibWeightFindings`, worked out again only when the file list changed.
   let list = st.fileList
-  if weightCache.revision != list.revision or weightCache.paired != list.pairs.len or
-      weightCache.entries != list.entries.len:
-    weightCache = (list.revision, list.pairs.len, list.entries.len, st.vibWeightFindings())
-  weightCache.found
+  if ui.weights.revision != list.revision or ui.weights.paired != list.pairs.len or
+      ui.weights.entries != list.entries.len:
+    ui.weights = (list.revision, list.pairs.len, list.entries.len, st.vibWeightFindings())
+  ui.weights.found
 
-proc drawSignatureSetup(st: AppState; w: AnalysisWindow; planeAt: int; name: string;
-    box: float32; t: Theme; marks: var Marks; p: var AnalysisParams; changed: var bool;
-    res: var PlotWindowsOutput) =
+proc drawSignatureSetup(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; planeAt: int;
+    name: string; box: float32; t: Theme; marks: var Marks; p: var AnalysisParams;
+    changed: var bool; res: var PlotWindowsOutput) =
   ## What a signature file adds to the Vibrator window's set-up: the accelerometer set of a
   ## `.vib`, the force scale (the user's, a setting), the header's weights and, across the
   ## folder, the weights per vibrator. Nothing here changes a sample or a sign.
@@ -254,13 +258,13 @@ proc drawSignatureSetup(st: AppState; w: AnalysisWindow; planeAt: int; name: str
     "Empty: the force stays in counts (pound-counts). It changes what is shown and judged, " &
     "never the samples. A local setting, kept in your settings and shipped with nothing")
   if kind == sgVib:
-    let found = st.cachedWeightFindings()
+    let found = ui.cachedWeightFindings(st)
     let head = "Weights from the header" & (if found.flagged: ": a difference found" else: "")
     # (a finding is not folded away: opened once when it appears, the user may close it)
-    if found.flagged and not weightsOpened:
+    if found.flagged and w.id notin ui.weightsOpened:
       igSetNextItemOpen(true, ImGui_Cond_Always.cint)
-      weightsOpened = true
-    elif not found.flagged: weightsOpened = false
+      ui.weightsOpened.incl w.id
+    elif not found.flagged: ui.weightsOpened.excl w.id
     if igTreeNodeEx_Str((head & "##weights" & name).cstring, 0):
       let wts = st.vibWeights(planeAt)
       igPushTextWrapPos(0)
@@ -277,15 +281,15 @@ proc drawSignatureSetup(st: AppState; w: AnalysisWindow; planeAt: int; name: str
         if odd: igPopStyleColor(1)
       for v in found.vibrators:
         line(vibratorWords(v), v.differs or v.sensDiffers or v.unlike or v.sensUnlike)
-      if found.twoDiffer: line(twoDifferWords(found), true)
+      for i, l in setsWords(found): line(l, i == 0)
       if found.unknown > 0: line(unknownWords(found.unknown), false)
       marks.mark(name & ".fleet")
       igPopTextWrapPos()
       igTreePop()
     marks.mark(name & ".fleet header")
 
-proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: float32;
-    t: Theme; marks: var Marks; p: var AnalysisParams; frozen, changed: var bool;
+proc drawVibratorSettings(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: string;
+    box: float32; t: Theme; marks: var Marks; p: var AnalysisParams; frozen, changed: var bool;
     res: var PlotWindowsOutput) =
   ## A vibrator signature's controls: one line (Setup, Details, Limits..., Reset options, and
   ## Freeze at the right), and under Setup the roles (a table: role, trace, polarity), the
@@ -336,7 +340,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
   if igButton("Limits...", ImVec2_c(x: 0, y: 0)): igOpenPopup_Str("##limits", 0)
   marks.mark(name & ".limits")
   tip("The six limits of the verdict, and the length of the windows they are judged in")
-  top.drawReset(w, name, marks, p, changed)
+  top.drawReset(w, name, marks, p, changed, signature = forceNote.len > 0)
   if top.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks):
     frozen = not frozen
     changed = true
@@ -476,7 +480,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
       igPushTextWrapPos(0)
       igTextUnformatted(forceNote.cstring, nil)
       igPopTextWrapPos()
-      st.drawSignatureSetup(w, planeAt, name, box, t, marks, p, changed, res)
+      ui.drawSignatureSetup(st, w, planeAt, name, box, t, marks, p, changed, res)
     igBeginDisabled(forceNote.len > 0) # (no typed mass is applied to a signature file)
     let line = beginControlLine()
     label("Masses: reaction")
@@ -583,7 +587,11 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
         typed):
       let stored = storeScaled(typed, forceShown.divisor)
       if typed.isNaN or MassKgRange.allows(stored):
-        if not (stored.isNaN and shownHundred.isNaN) and stored != shownHundred:
+        if sigWin and stored.isNaN:
+          # emptied: no typed force (one not applied, shown empty, goes too)
+          if not p.forceHundredPct.isNaN:
+            (p.forceHundredPct, p.forceHundredUnit, changed) = (NaN, "", true)
+        elif not (stored.isNaN and shownHundred.isNaN) and stored != shownHundred:
           if weighted: p.forceHundredWeighted = stored
           else: (p.forceHundredPct, p.forceHundredUnit) = (stored, judgedUnit)
           changed = true
@@ -637,19 +645,26 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
         ", which the setting does not take (" & MassKgRange.words & ")"))
     qcLine.follow(textBoxWidth("Target force (%)", box))
     label("Target force (%)")
+    # (a signature file's window: empty until typed, and emptied by clearing it; the limits
+    # then take 100)
+    let sigTarget = forceNote.len > 0
     if limitBox("##targetpct", p.targetPct, box, typed):
       if TargetPctRange.allows(typed):
-        if typed != p.targetPct or not p.targetTyped:
-          (p.targetPct, p.targetTyped, changed) = (typed, true, true)
+        if typed != p.targetPct: (p.targetPct, changed) = (typed, true)
       elif typed.isNaN:
-        if p.targetPct != 100: (p.targetPct, changed) = (100.0, true)
+        if sigTarget:
+          if not p.targetPct.isNaN: (p.targetPct, changed) = (NaN, true)
+        elif p.targetPct != 100: (p.targetPct, changed) = (100.0, true)
       else:
         res.notes.add "The target force must be " & TargetPctRange.words & ", not " &
             sensible(typed) & "."
     marks.mark(name & ".target force")
     tip("The drive level the sweep was set to, % of 100 % force (the vibrator's force " &
       "setting, e.g. 60). The average force is judged as % of this target; the peak force " &
-      "as % of the 100 % force. 100 when the sweep is at full scale. Empty: 100")
+      "as % of the 100 % force. 100 when the sweep is at full scale. Empty: 100" &
+      (if sigTarget: " for the limits, and not typed: a .dat's 100 % force from the " &
+        "controller's target force needs the drive level typed here, in this window"
+        else: ""))
     if band.warning.len > 0:
       igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
       fittedText(band.warning, igGetContentRegionAvail().x)
@@ -726,8 +741,8 @@ proc drawJudge(w: AnalysisWindow; name: string; marks: var Marks;
     res.commands.add Command(kind: ckPlotDisplay, plot: w.id, plotParams: p,
       plotFrozen: w.frozen)
 
-proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks: var Marks;
-    res: var PlotWindowsOutput) =
+proc drawSettings(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: string;
+    t: Theme; marks: var Marks; res: var PlotWindowsOutput) =
   ## The view's settings, wrapping before the Freeze pin at the right of the
   ## first row; a change is a `ckPlotDisplay`.
   var p = w.params
@@ -771,7 +786,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
   let mapW = round(igCalcTextSize("Red-white-blue", nil, false, -1).x +
     igGetFrameHeight() + 2 * igGetStyle().FramePadding.x)
   if w.view == avVibrator:
-    drawVibratorSettings(st, w, name, box, t, marks, p, frozen, changed, res)
+    ui.drawVibratorSettings(st, w, name, box, t, marks, p, frozen, changed, res)
   else:
     let line = beginControlLine()
     case w.view
@@ -1212,7 +1227,7 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
       fittedText(w.result.judgeWarning, igGetContentRegionAvail().x)
       igPopStyleColor(1)
       marks.mark(name & ".judge warning")
-  drawSettings(st, w, name, t, marks, res)
+  ui.drawSettings(st, w, name, t, marks, res)
   let r = w.result
   var words = if w.frozen: "Frozen · " & w.label else: w.label
   # against a reference (one actually used) nothing is filtered: the filters' words are not
@@ -1489,6 +1504,10 @@ proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: floa
   var gone: seq[int] = @[]
   for id in ui.readout.keys:
     if id notin ids: gone.add id
+  var folded: seq[int] = @[]
+  for id in ui.weightsOpened:
+    if id notin ids: folded.add id
+  for id in folded: ui.weightsOpened.excl id
   for id in gone:
     ui.curves.del id
     ui.curveKeys.del id

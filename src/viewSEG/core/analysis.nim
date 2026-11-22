@@ -139,12 +139,13 @@ type
       ## generated from M and B; NaN: none entered (no generated force)
     baseplateMassKg*: float64 = NaN ## vibrator signature: the baseplate's mass, kg
     harmonics*: int = 5 ## vibrator signature: the highest harmonic tracked (2 .. 16)
-    targetTyped*: bool = false
-      ## a signature file's window: the drive level (`targetPct`) was typed by the user (a
-      ## default nobody typed does not give the file's 100 % force); of this window only
     forceHundredUnit*: string = ""
-      ## the unit `forceHundredPct` was typed in ("counts", "pound-counts", "N"); "" when not
-      ## said (a SEG-Y window: the axis's)
+      ## the unit `forceHundredPct` was typed in (`HundredUnits`: "counts", "pound-counts",
+      ## "N"); "" when not said (a SEG-Y window: the axis's)
+    forceHundredSet*: AccelSet = asB
+      ## a `.vib`'s window: the accelerometer set a 100 % force in pound-counts was typed on
+      ## (each set has its own sensitivity: on the other set it is another force); set when
+      ## the value is typed
     accelSet*: AccelSet = asB
       ## a `.vib`'s vibrator signature: the accelerometer set judged (B, the set the .dat
       ## records, by default); of this window only, never remembered
@@ -157,7 +158,9 @@ type
     qc*: QcLimits ## vibrator signature: the pass or fail limits (NaN: that limit off)
     targetPct*: float64 = 100.0
       ## vibrator signature: the drive level the sweep was set to, % of the full scale
-      ## (`forceHundredPct`): the average force is judged against it
+      ## (`forceHundredPct`): the average force is judged against it. NaN: a signature
+      ## file's window where none was typed (judged as 100; a `.dat` then gives no 100 %
+      ## force of its own)
     forceHundredWeighted*: float64 = NaN
       ## the same for GF (M, B), which is in another unit (kg × counts): each judged signal has
       ## its own full scale, and the box shows the one of the signal judged
@@ -543,6 +546,8 @@ const
     words: "above 0 and at most 1000 %")
   MassKgRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
     words: "above 0 and at most 1000000000 kg")
+  HundredUnits* = ["", "counts", "pound-counts", "N"]
+    ## the units a typed 100 % force may be in ("": not said)
   ForceScaleRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
     words: "above 0 and at most 1000000000")
   NumberRange* = SettingRange(lo: -MaxLimit, hi: MaxLimit,
@@ -555,11 +560,13 @@ func allows*(r: SettingRange; v: float64): bool =
   if v.isNaN or abs(v) == Inf: return false
   (if r.loOpen: v > r.lo else: v >= r.lo) and (if r.hiOpen: v < r.hi else: v <= r.hi)
 
-func settingProblem*(p: AnalysisParams; view: AnalysisView): string =
+func settingProblem*(p: AnalysisParams; view: AnalysisView; signature = false): string =
   ## Why `p` cannot be the settings of a window of `view`, naming the first
   ## setting the view uses that is out of its range, and that range; ""
   ## when it can. A null (NaN) is refused, except where the setting may be
-  ## none: an f-k's box ends, the vibrator's masses and limits.
+  ## none: an f-k's box ends, the vibrator's masses and limits, and the drive
+  ## level of a `signature` file's window (not typed), whose 100 % force has
+  ## one of `HundredUnits`.
   template check(name: string; v: float64; r: SettingRange; none = false) =
     if not (r.allows(v) or (none and v.isNaN)):
       return name & " must be " & r.words & ", not " &
@@ -587,7 +594,10 @@ func settingProblem*(p: AnalysisParams; view: AnalysisView): string =
       check("qc." & name, v, NumberRange, none = true)
     check("forceHundredPct", p.forceHundredPct, MassKgRange, none = true)
     check("forceHundredWeighted", p.forceHundredWeighted, MassKgRange, none = true)
-    check("targetPct", p.targetPct, TargetPctRange)
+    check("targetPct", p.targetPct, TargetPctRange, none = signature)
+    if signature and p.forceHundredUnit notin HundredUnits:
+      return "forceHundredUnit must be one of \"\", \"counts\", \"pound-counts\" and \"N\", " &
+        "not \"" & p.forceHundredUnit.substr(0, 39) & "\""
     for t in p.tops: check("tops[" & t.reference & "].hz", t.hz, TopHzRange)
   ""
 
