@@ -44,6 +44,65 @@ thousandths of a frame). With no fit (a pulse, a sweep that is not linear) time 
 frame, and Properties says so. The clock time is the second the recording began; the trigger
 time to the nanosecond is in the `.dat` of the same sweep.
 
+## A folder of sweeps
+
+The Files window lists signature files with the SEG-Y and SEG-D ones, and reads each file's header
+(never a sample) for these columns, which are there while the folder holds a signature file:
+
+| Column | Says |
+|---|---|
+| Trigger (UTC) | a `.dat`'s trigger, `2001-02-03 04:05:06.789` (the nanoseconds are in the tooltip); a `.vib` with its `.dat` found, the `.dat`'s; a `.vib` alone, `began 04:05:06` in the muted colour (a `.vib` states only the second its recording began) |
+| Controller | the serial, four digits: from the file (a `.dat`), the `.dat` of the sweep, or the number of the folder two levels above a `.vib` (a hint, said in the tooltip) |
+| Vibrator | the vibrator ID of the QC record (from the `.dat`) |
+| Line, Station, Shot, Sweep id | a `.dat`'s, empty where the file gives 0 |
+| Length | the samples at the interval in force |
+| State | `stopped 2.5 s` (a `.dat` that stopped; the tooltip says how many blocks it holds of those its header announces), `pulse`, `cut short` (a `.vib` that ends inside a frame), or the reason a file cannot be shown |
+| Pair | `.vib` on a `.dat` row, `.dat` on a `.vib` row |
+| Force avg %, THD max %, Limits | the controller's QC numbers; the tripped limit letters (their meanings are not known) are in the warning colour |
+
+Trigger, Controller and Vibrator are shown; the others are in the column chooser (right-click a
+header). A folder of signature files alone starts sorted by Trigger, so a sweep's `.vib` (which
+began 0.2 to 1.5 s before its trigger) lies just before its `.dat`. The Controller and Vibrator
+drop-downs above the table show one controller's or one vibrator's sweeps; they combine with the
+name filter. **Signature files** (a tick beside Include subfolders, on by default, kept in the
+settings) turns the signature rows away: they are left out of the table, the arrow keys and
+Follow the latest, and the status line counts them ("11 signature files not listed (Signature
+files is off)"); the folder is not scanned again. An explicit open always works.
+
+Stepping goes file to file in the table's order and filters: the arrow keys in Files, and Page
+Down and Page Up in the Seismic window, which show a sweep's record and so step to the next or
+previous file at the end. "Prepare the next file" decodes the next sweep in the background.
+
+**Follow the latest** treats a newest sweep by its trigger, not the file's modification time. A
+file still being written is not shown yet. A `.dat` that stopped never completes: it is shown,
+flagged, once a newer `.dat` of the same controller is listed, or after it has stayed as it is for
+15 s. A click in Files always shows a file at once.
+
+## The other file of a sweep
+
+A `.dat` and the `.vib` of the same sweep are paired by time: the `.dat`'s trigger lies 0.2 to 1.5 s
+after the second the `.vib` began; when several `.dat` files fit, the one of the controller whose
+serial is the `.vib`'s folder's. File names are never used. One `.dat` pairs with at most one
+`.vib`. A listing pairs what it holds (Include subfolders from the controller's folder lists both
+kinds of `<serial>/<date>/`). The Seismic window's menu, File and the Summary's Pair line offer
+**Open the .vib of this sweep** (on a `.dat`) and **Open the .dat of this sweep** (on a `.vib`),
+which show the partner in the same window; the partner's own offer leads back. With the partner
+not listed, a background search looks in the file's folder and the controller's folder and its
+subfolders (at most 5000 files); when it finds none, Messages says where it looked.
+
+A `.vib` opened with its `.dat` known takes the `.dat`'s trigger time as its clock time (when a
+trigger is found in its reference), and its controller and vibrator ID; Properties says so.
+
+## Reopen with options
+
+File > Reopen with options offers a signature file its own options: the **sample interval**
+(1000 us for a `.dat`, 500 us for a `.vib`, assumed), for a `.dat` "this unit's force channels are
+wired the other way round" (the second and third channels change places; the trace codes stay 21,
+18, 19, 20, so the roles follow the data), and for a `.vib` "t = 0 at the first frame" (for when
+the estimated trigger is wrong). **Use these for every .dat file of this listing** applies them
+to every file of that kind shown from the list, for this run only. The SEG-Y and SEG-D options
+are not shown, and an agent's reopen with them is refused.
+
 ## What it says
 
 The Headers window's Summary has a "Signature file" section (and, for a `.dat`, the controller's

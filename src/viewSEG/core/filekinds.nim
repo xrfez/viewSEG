@@ -51,6 +51,13 @@ const
   SpsKinds* = {fkSpsSource, fkSpsReceiver, fkSpsRelation, fkSps}
   SurveyKinds* = SpsKinds + {fkP1}
 
+func sweepKindOf*(k: FileKind): SignatureKind =
+  ## The signature kind a file kind is; `sgNone` for any other.
+  case k
+  of fkDat: sgDat
+  of fkVib: sgVib
+  else: sgNone
+
 func isSeismic*(k: FileKind): bool {.inline.} = k in SeismicKinds
 func isSurvey*(k: FileKind): bool {.inline.} = k in SurveyKinds
 

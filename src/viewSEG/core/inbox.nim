@@ -12,8 +12,8 @@
 import std/[locks, times]
 import parseSEG
 import analysis, compare, edits, filelist, filememory, firstbreaks, identity, join, jobs, layouts,
-    log, mapkinds,
-  nif, panels, project, references, session, shotfiles, spectra, survey, tiles, vendormaps
+  log, mapkinds, nif, panels, project, references, session, shotfiles, sigtypes, spectra, survey,
+  tiles, vendormaps
 
 type
   MsgKind* = enum
@@ -25,6 +25,7 @@ type
     mkRead           ## a document the disk thread read
     mkListed         ## files a folder scan found
     mkWatched        ## what a look at the listed folder found changed
+    mkPaired         ## the partner a search found for a signature file (`core/sweeppairs`)
     mkSurvey         ## a survey layer: a survey file read, or an open file's positions
     mkChecked        ## an open file's records checked against a relation file
     mkJoining        ## survey files read for a join, and what joining them does
@@ -127,6 +128,14 @@ type
       listLooked*: seq[WatchedFile]
         ## with `listDone`: every file the scan looked at, seismic or not, as it
         ## found it: what the folder's watch starts from
+    of mkPaired:
+      pairFor*: string ## the signature file the search was for
+      pairPath*: string ## its partner; "" when none was found
+      pairInfo*: SweepInfo ## the partner's list facts
+      pairSelf*: SweepInfo ## the file's own
+      pairWords*: string ## why none was: the reason, in words
+      pairCandidates*: seq[string] ## several fit: the files to choose from
+      pairLooked*: int ## files of the other kind looked at
     of mkWatched:
       watchGen*: uint64 ## the file list's `gen` it is for
       watched*: seq[WatchedFile] ## the files that changed, appeared or went, or stopped changing

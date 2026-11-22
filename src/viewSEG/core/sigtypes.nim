@@ -11,6 +11,9 @@
 import std/[math, strutils]
 import parseSEG
 import headers
+from openchoice import SignatureChoice
+
+export SignatureChoice
 
 type
   SignatureKind* = enum
@@ -18,12 +21,6 @@ type
     sgNone = "" ## not a signature file
     sgDat = "vibrator .dat"
     sgVib = "vibrator .vib"
-
-  SignatureChoice* = object
-    ## What the decoding may be asked for. Neither kind states its sample interval.
-    intervalUs*: float64 = 0 ## 0: the kind's default (1000 for a .dat, 500 for a .vib)
-    swapForces*: bool        ## .dat: the force channels wired the other way round
-    fromFirstFrame*: bool    ## .vib: t = 0 at the first frame, not at the trigger
 
   QcLimit* = enum
     ## The controller's limit letters, as its report prints them; their meanings are
@@ -60,6 +57,14 @@ type
     sweepNumber*: int16                                     ## .dat: 16 is a pulse record
     line*, station*, shotId*, sweepId*, sourceIndex*: int64 ## .dat: 0 is not given
     qc*: SweepQc
+
+  SignaturePair* = object
+    ## The `.dat` of a `.vib`'s sweep, as the open job is given it: its trigger time and what
+    ## only it knows (a `.vib` file holds neither the controller nor the vibrator).
+    path*: string ## the `.dat`'s path; "" for no pair
+    triggerNs*: int64
+    controller*: int64
+    vibrator*: int
 
   ControllerQc* = object
     ## The whole QC record of a .dat (a stopped recording has none: `valid` false). A
@@ -128,7 +133,8 @@ type
     decodedAs*: string ## "SEG-Y Rev 2.1 in memory (no file written)"
     warnings*: seq[string] ## said once at the open (stopped, cut short)
     notes*: seq[string] ## information said once at the open (no trigger found)
-    pair*: string ## the partner's path when known (a later stage)
+    pair*: string ## the partner's path when the open was given it (a `.vib`'s `.dat`)
+    pairTriggerNs*: int64 ## with `pair`: the `.dat`'s trigger, the clock time of the `.vib`
 
   SignatureError* = object of CatchableError
     ## A file that cannot be decoded: plain words, the library's.
@@ -173,14 +179,11 @@ func unixNs*(year, month, day, hour, minute, second, nanosecond: int): int64 =
   if secs >= 9_223_372_035'i64: high(int64)
   else: secs * 1_000_000_000 + int64(nanosecond)
 
-func timeText*(ns: int64; fraction = 9): string =
-  ## `ns` (UTC nanoseconds since 1970) as "2001-02-03 04:05:06.789012345", with `fraction`
-  ## digits of a second (none: the whole second only).
+func civilOf*(ns: int64): tuple[year, month, day, hour, minute, second, nanosecond: int] =
+  ## UTC date and time of day of `ns` (nanoseconds since 1970).
   let secs = floorDiv(ns, 1_000_000_000'i64)
-  let frac = int(floorMod(ns, 1_000_000_000'i64))
   let days = floorDiv(secs, 86400'i64)
   let rest = int(floorMod(secs, 86400'i64))
-  # civil date from days since 1970
   let z = days + 719468
   let era = floorDiv(z, 146097'i64)
   let doe = int(z - era * 146097)
@@ -189,12 +192,17 @@ func timeText*(ns: int64; fraction = 9): string =
   let mp = (5 * doy + 2) div 153
   let day = doy - (153 * mp + 2) div 5 + 1
   let month = if mp < 10: mp + 3 else: mp - 9
-  let year = int(era) * 400 + yoe + (if month <= 2: 1 else: 0)
-  result = intToStr(year, 4) & "-" & intToStr(month, 2) & "-" & intToStr(day, 2) & " " &
-    intToStr(rest div 3600, 2) & ":" & intToStr(rest mod 3600 div 60, 2) & ":" &
-    intToStr(rest mod 60, 2)
+  result = (int(era) * 400 + yoe + (if month <= 2: 1 else: 0), month, day, rest div 3600,
+    rest mod 3600 div 60, rest mod 60, int(floorMod(ns, 1_000_000_000'i64)))
+
+func timeText*(ns: int64; fraction = 9): string =
+  ## `ns` (UTC nanoseconds since 1970) as "2001-02-03 04:05:06.789012345", with `fraction`
+  ## digits of a second (none: the whole second only).
+  let c = civilOf(ns)
+  result = intToStr(c.year, 4) & "-" & intToStr(c.month, 2) & "-" & intToStr(c.day, 2) & " " &
+    intToStr(c.hour, 2) & ":" & intToStr(c.minute, 2) & ":" & intToStr(c.second, 2)
   if fraction > 0:
-    result.add "." & intToStr(frac, 9)[0 ..< min(fraction, 9)]
+    result.add "." & intToStr(c.nanosecond, 9)[0 ..< min(fraction, 9)]
 
 func secondsWords*(seconds: float64): string =
   ## "12.000 s".

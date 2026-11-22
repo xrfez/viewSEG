@@ -21,8 +21,8 @@
 ## sorting every row again. Many files gone or new at once (`replaceEntries`)
 ## are one pass over the entries, and the table makes its rows again.
 
-import std/[algorithm, os, strutils, times]
-import filekinds, jobs
+import std/[algorithm, monotimes, os, strutils, tables, times]
+import filekinds, jobs, sigtypes
 
 export filekinds
 
@@ -32,6 +32,9 @@ const
   MaxTreeFiles* = 20_000
     ## files a listing with the subfolders included looks at, at most: a tree
     ## with more is cut there, and the list says so
+  StoppedShowAfter* = initDuration(seconds = 15)
+    ## how long a stopped `.dat` must have stayed as it is before "Follow the latest" shows it
+    ## when no newer `.dat` of its controller is listed
   MaxChanges* = 4096 ## changes of the entries kept for the file table, at most
   ManyChanges* = 64
     ## files gone or new in one look beyond which the entries are made again
@@ -57,16 +60,23 @@ type
     modified*: Time
     status*: FileStatus
     isNew*: bool ## it appeared after the folder was listed, and has not been shown yet
+    sweep*: SweepInfo
+      ## a signature file's facts from its header, never a decoded sample (`kind` is `fkDat` or
+      ## `fkVib`); empty for every other file
+    steadySince*: MonoTime
+      ## when the watch first saw the file as it is now (`fs.now`): a stopped `.dat` is followed
+      ## once it has stayed so for `StoppedShowAfter`; unset for a file not being watched
 
   WatchedFile* = object
     ## A file as a look at the folder (or a scan) found it.
     path*: string
-    exists*: bool   ## false: it is gone (removed, renamed)
-    kind*: FileKind ## fkUnknown: neither seismic nor survey, or not yet (too short to tell)
+    exists*: bool     ## false: it is gone (removed, renamed)
+    kind*: FileKind   ## fkUnknown: neither seismic nor survey, or not yet (too short to tell)
     size*: int64
     modified*: Time
-    changing*: bool ## it changed since the look before, or was not there then
-    listed*: bool   ## one of the files the listing names (else an open file elsewhere)
+    changing*: bool   ## it changed since the look before, or was not there then
+    sweep*: SweepInfo ## a signature file's facts from its header (`fkDat`, `fkVib`)
+    listed*: bool     ## one of the files the listing names (else an open file elsewhere)
     unopened*: bool
       ## it could not be opened to tell what it is (no permission): the watch
       ## tries again at each look, as a change of its permissions changes
@@ -105,6 +115,13 @@ type
     error*: string           ## why the listing failed; "" when it did not
     revision*: int           ## bumped on every change
     entriesRev*: int         ## bumped on every change of `entries`, once per change noted
+    pairs*: Table[string, string]
+      ## the `.dat` and `.vib` of one sweep: each path to its partner's, in both directions
+      ## (`core/sweeps.pairSweeps`); a file of no pair is not in it
+    pairsRev*: int ## bumped when `pairs` changes
+    pairNotes*: Table[string, string]
+      ## why a signature file has no pair when its list knows something: several `.dat` files
+      ## fit, or another `.vib` claims its `.dat`
     changes*: seq[EntryChange]
       ## the newest changes of `entries`, oldest first, at most `MaxChanges`:
       ## the last one made `entriesRev`
@@ -116,6 +133,13 @@ func subfoldersNote*(f: FileList): string =
       f.subfolders > 0 and not f.recursive:
     result = "No seismic files here; " & $f.subfolders &
       (if f.subfolders == 1: " subfolder" else: " subfolders")
+
+func sweepKey*(e: FileEntry): int64 =
+  ## What a list sorts a signature file by: a `.dat`'s trigger, a `.vib`'s start second (a pair
+  ## then lies side by side: the `.vib` began 0.2 to 1.5 s before its trigger). A file that is
+  ## none, or that its library refuses, sorts first.
+  if e.kind in SignatureFileKinds and e.sweep.problem.len == 0: e.sweep.triggerNs
+  else: low(int64)
 
 func isDigit(c: char): bool {.inline.} = c in {'0'..'9'}
 

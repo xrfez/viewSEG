@@ -76,6 +76,10 @@ type
     subfolders*: bool
       ## list the files of the folder's subfolders too ("Include subfolders"), when no
       ## project is open (a project keeps its own)
+    listSignatureFiles*: bool = true
+      ## list a vibrator controller's `.dat` and `.vib` signature files in the Files window,
+      ## step through them and follow them like seismic files ("Signature files"); off: they
+      ## stay in the scan, counted, and are left out of the table, the steps and Follow
     prepareNext*: bool = true
       ## open the next file of the list in the background while one is
       ## shown (its index, its first view's samples), so that stepping

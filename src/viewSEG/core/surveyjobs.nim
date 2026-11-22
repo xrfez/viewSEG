@@ -474,7 +474,7 @@ proc surveyHeadWork*(file: JoinFile; to: Poster): JobWork =
 
 proc openFileWork*(path: string; to: Poster; cache = "";
     cacheBudget = DefaultIndexCacheBudget; whole = false; lines = JoinOptions();
-    choice = OpenChoice()): JobWork =
+    choice = OpenChoice(); pair = SignaturePair()): JobWork =
   ## The work of a job that opens what the user named: a survey file is
   ## loaded into the survey (`mkSurvey`, its line names as `lines` says), a
   ## vibrator controller's signature file decoded in memory (`signatures`:
@@ -484,7 +484,7 @@ proc openFileWork*(path: string; to: Poster; cache = "";
   ## in them.
   let open = openWork(path, to, cache, cacheBudget, whole, choice)
   let load = surveyWork(path, to, lines)
-  let signature = openSignatureWork(path, to)
+  let signature = openSignatureWork(path, to, choice.signature, pair)
   result = proc (ctx: JobContext) {.gcsafe.} =
     let kind = sniff(path)
     if kind in SignatureFileKinds:

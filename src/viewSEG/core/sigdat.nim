@@ -45,6 +45,11 @@ func qcOf(q: DatQc): SweepQc =
   for l in q.limits:
     result.limits.incl QcLimit(ord(l))
 
+func cutPrefixWhy(why: string): string =
+  ## The library's words up to the first colon, the part a list cell can hold.
+  let at = why.find(':')
+  if at > 0: why[0 ..< at] else: why
+
 func infoOf(s: DatInfo; size: int64): SweepInfo =
   ## What a list knows of `s`.
   result = SweepInfo(kind: sgDat, controller: s.controllerSerial, serialFrom: sfFile,
@@ -56,6 +61,20 @@ func infoOf(s: DatInfo; size: int64): SweepInfo =
     station: s.sourceStation, shotId: s.shotId, sweepId: s.sweepId,
     sourceIndex: s.sourceIndex, qc: qcOf(s.qc))
   result.blocks = int32(min(size div DatBlockBytes, int64(s.blocks)))
+
+proc sweepInfo*(first, last: openArray[byte]; size: int64): SweepInfo =
+  ## What a list knows of the `.dat` of `size` bytes whose first bytes are `first` (the first
+  ## two blocks) and whose last whole block is `last`: its header, position record and trailer
+  ## only, never a sample. A file the library refuses gives `problem` in words.
+  try:
+    result = infoOf(parseDatInfo(first, last, size), size)
+  except DatIncompleteError as e:
+    result = SweepInfo(kind: sgDat, problem: if "no samples" in e.msg: "no samples"
+      else: cutPrefixWhy(e.msg))
+  except DatFormatError as e:
+    result = SweepInfo(kind: sgDat, problem: cutPrefixWhy(e.msg))
+  except ValueError as e:
+    result = SweepInfo(kind: sgDat, problem: cutPrefixWhy(e.msg))
 
 func controllerQcOf(q: DatQc): ControllerQc =
   if not q.valid: return

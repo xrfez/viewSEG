@@ -19,7 +19,7 @@
 
 import std/[algorithm, monotimes, os, strutils, times]
 import parseSEG
-import cutfile, filelist, filesystem, inbox, jobs, log, session, threads, vendormaps
+import cutfile, filelist, filesystem, inbox, jobs, log, session, sweepinfo, threads, vendormaps
 from project import ProjectFileName
 
 const
@@ -411,14 +411,17 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster; recursive = false): 
         else:
           var opened: bool
           let kind = sniff(path, opened)
+          let sweep = if kind in SignatureFileKinds:
+              readSweepInfo(path, kind.sweepKindOf, info.size)
+            else: SweepInfo()
           looked.add WatchedFile(path: path, exists: true, kind: kind, size: info.size,
-            modified: info.lastWriteTime, listed: true, unopened: not opened)
+            modified: info.lastWriteTime, listed: true, unopened: not opened, sweep: sweep)
           if not opened: inc batch.unreadable
           elif kind == fkUnknown: inc batch.others
           else:
             batch.listed.add FileEntry(path: path, name: path.extractFilename, kind: kind,
               folder: if recursive: asked.treeFolder(path) else: "",
-              size: info.size, modified: info.lastWriteTime)
+              size: info.size, modified: info.lastWriteTime, sweep: sweep)
       except OSError:
         inc batch.unreadable
       if batch.listed.len >= ListBatch or getMonoTime() - last >= ListPause:

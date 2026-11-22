@@ -89,6 +89,7 @@ const Reached = {
   "calibrations": "", "readout": "", "sortPresets": "", "customOrder": "sort",
   "messages.autoScroll": "", "messages.hidden": "", "cursorLine": "",
   "files.followLatest": "", "files.subfolders": "subfolders", "files.prepareNext": "",
+  "files.listSignatureFiles": "",
   "map.info": "", "map.lengths": "",
   "map.hiddenGroups": "", "map.templateBox": "", "map.spreadTemplate.shape": "",
   "map.spreadTemplate.lines": "", "map.spreadTemplate.channels": "",
@@ -483,6 +484,7 @@ proc main*() =
       st.agent(%*{"kind": "vendor map", "vendorMap": "automatic"})
       st.agent(%*{"kind": "close project"})
       st.agent(%*{"kind": "reload vendor maps"})
+      st.agent(%*{"kind": "open pair"}) # (the panel shows no signature file: ignored, in words)
       doAssert given == Offered, "not given: " & $(Offered - given)
       let session = flat(st.settings)
       let kept = flat(st.keptSettings)

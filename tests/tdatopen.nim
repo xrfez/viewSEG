@@ -12,8 +12,8 @@
 ## GF (M, B) and is not changed by typed masses.
 ##
 ## Seen to fail: with the signature kinds told after `detectKind`, `segyLookalike` found the
-## file SEG-Y; with the open job sending a chosen standard to the SEG-Y opener, `reopenAsSegy` found
-## the SEG-Y reader's refusal; with `adopt` reading positions for a signature file, `noMapPoint` found a
+## file SEG-Y; with the reopen's refusal of a chosen standard taken out, `reopenAsSegy` found no
+## refusal (the open job itself still decodes such a file: `openFileWork` tells the kind first); with `adopt` reading positions for a signature file, `noMapPoint` found a
 ## layer; with the signature branch of `rolesOf` off, `vibratorWindow` found the hand-made
 ## swap in the next window's roles; with the shot block not added to the in-memory SEG-Y,
 ## `shotBlock` found no block for the shipped maps to decode; with `vibratorOf` ignoring `forceNote`, the masses made a
@@ -118,16 +118,17 @@ proc main*() =
       st.shutdown()
 
   block reopenAsSegy:
-    # A remembered "read as SEG-Y" never sends a signature file to the SEG-Y reader.
+    # "Read as SEG-Y" never reaches a signature file: the reopen is refused in words, and the
+    # file stays shown as it was; the open job given such a choice anyway decodes it.
     withFixtures fx:
       let path = datFile(fx.dir, "a.dat")
       var st = initAppState()
       doAssert st.openIt(path)
       st.apply Command(kind: ckReopen, reopenPath: path, openChoice: OpenChoice(standard: scSegy))
-      doAssert st.settle(st.log.has("a.dat is opened again") and st.jobs.active.len == 0),
-        "the reopen was not taken in"
+      doAssert st.log.has("a vibrator signature file is decoded, not read as SEG-Y or SEG-D",
+        sevWarning), "no refusal"
       doAssert st.sessions[0].isSignature and st.sessions[0].len == 4
-      doAssert not st.log.has("is not a SEG-Y", sevError), "the SEG-Y reader was given the file"
+      doAssert st.openChoiceOf(path).isDefault, "the refused choice was kept"
       st.shutdown()
 
   block noMapPoint:

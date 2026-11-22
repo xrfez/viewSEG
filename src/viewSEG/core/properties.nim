@@ -199,10 +199,11 @@ func positionWords(p: SignaturePosition): string =
     ", fix quality " & $p.fixQuality & ", " & $p.satellites & " satellites, HDOP " &
     (if p.hdop.isNaN: "?" else: exactText(p.hdop))
 
-func signatureLines*(f: SignatureFacts): seq[SummaryLine] =
+func signatureLines*(f: SignatureFacts; pairText = ""): seq[SummaryLine] =
   ## The Summary's "Signature file" section and the controller's QC, for a signature
   ## file (`f.kind` not `sgNone`); nothing for any other. The same words reach the agent's
-  ## `properties`.
+  ## `properties`. `pairText` is what the list knows of the other file of the sweep
+  ## (`AppState.pairText`); it gives the Pair line.
   if f.kind == sgNone: return
   let i = f.info
   result.heading "Signature file"
@@ -232,6 +233,14 @@ func signatureLines*(f: SignatureFacts): seq[SummaryLine] =
   else:
     result.add "Recording began (UTC)", timeText(i.triggerNs, 0) &
       " (to the second: the file holds no finer time)"
+    if f.pair.len > 0:
+      if f.trigger.clockFrom == "the .dat of this sweep":
+        result.add "Clock time (UTC)", timeText(f.pairTriggerNs) &
+          " (the trigger time, from the .dat of this sweep)"
+      else:
+        result.add "Clock time (UTC)", "the second the recording began: with no trigger found " &
+          "in the reference the .dat's trigger time is not tied to a sample"
+      result.add "Vibrator ID", $i.vibrator & " (from the .dat of this sweep)"
     let t = f.trigger
     case t.source
     of trEstimated:
@@ -276,9 +285,11 @@ func signatureLines*(f: SignatureFacts): seq[SummaryLine] =
     result.add "Polarity", "as recorded: no sign is changed"
     result.heading "The controller's QC"
     result.add "Record", "not in a .vib file: it is in the .dat of this sweep"
+  if pairText.len > 0:
+    result.add "Pair", pairText
 
 proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
-    units = ImportUnits()): seq[SummaryLine] =
+    units = ImportUnits(); pairText = ""): seq[SummaryLine] =
   ## The Summary tab of file `s` with its gather `gather` shown (-1 for
   ## none): the file, its format, its traces and timing, its coordinates
   ## (as the join window gives them: the units its headers say, or those
@@ -294,7 +305,7 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
   result.add "Folder", s.path.parentDir
   if s.size >= 0: result.add "Size", bytesText(s.size)
   if s.modified != Time(): result.add "Modified", s.modified.local.format("yyyy-MM-dd HH:mm:ss")
-  result.add signatureLines(s.signature)
+  result.add signatureLines(s.signature, pairText)
   result.heading "Format"
   result.add "Standard", standardText(sm)
   if sm.standard in {skSegy, skSeg2}:
@@ -314,10 +325,13 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
       "shown as 4-byte floats (about 7 significant digits)"
   if s.isSignature:
     result.heading "How it was opened"
-    result.add "Options", (if s.signature.choice.intervalUs == defaultIntervalUs(
-        s.signature.kind) and
-      not s.signature.choice.swapForces and not s.signature.choice.fromFirstFrame:
-      "the defaults" else: "interval " & exactText(s.signature.choice.intervalUs / 1000) & " ms")
+    let c = s.signature.choice
+    var said: seq[string] = @[]
+    if c.intervalUs != defaultIntervalUs(s.signature.kind):
+      said.add "interval " & exactText(c.intervalUs / 1000) & " ms, by your choice"
+    if c.swapForces: said.add "force channels swapped, by your choice"
+    if c.fromFirstFrame: said.add "t = 0 at the first frame, by your choice"
+    result.add "Options", (if said.len == 0: "the defaults" else: said.join("; "))
   else:
     openedLines(result, facts.opened, sm.standard)
   result.heading "Traces"

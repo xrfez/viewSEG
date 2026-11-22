@@ -92,6 +92,19 @@ SEG kind (`core/filekinds`: `fkDat`, `fkVib`), never by their extension. Both go
   map, has no shots and no cache.
 - The Vibrator window takes its roles from the codes and applies no typed mass: trace 4 is the
   ground force (`AnalysisAsk.forceNote`).
+- **A folder of sweeps.** The scan and the watch read each signature file's header through `fs`
+  (`core/sweepinfo`: a `.dat`'s first two blocks and its last, a `.vib`'s 47 bytes) into
+  `FileEntry.sweep`; no sample is decoded. `view/filetable` has the sweep columns (`sweepCell`),
+  the Trigger sort (`sweepKey`) and the controller / vibrator / tick filter (`SweepFilter`); the
+  tick is `Settings.files.listSignatureFiles` and costs no scan. `core/sweeppairs` pairs a `.dat`
+  and a `.vib` by time (`pairSweeps`, pure, O(n log n); the list's pairs are made again on the UI
+  thread when a signature entry is added, removed or changed) and searches for the partner of a file
+  opened alone (`findPairWork`, a background job, `mkPaired`). `ckOpenPair` shows the partner in the
+  same panel; a `.vib` open is given its `.dat` (`SignaturePair`). "Follow the latest" takes a
+  signature file by its trigger (`followKey`), a stopped `.dat` by `followable`. The options of
+  Reopen with options are `OpenChoice.signature`; "every file of this listing" is
+  `AppState.sigChoices` (this run, this listing). Page Down after a one-record sweep asks the Files
+  window for its next file (`PanelOutput.stepFile`): the table's order lives in `ui`.
 
 ## Windows: what makes the window look native
 

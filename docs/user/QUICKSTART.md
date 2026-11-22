@@ -103,6 +103,12 @@ there and the list says so. Follow the latest file works across the subfolders, 
 new file in a subfolder is listed. The switch is off by default and is kept in the project when
 one is open, else in your settings. Or open one of the subfolders.
 
+A vibrator controller's `.dat` and `.vib` signature files are listed with the seismic files, with
+columns for the sweep (trigger, controller, vibrator and more), drop-downs for one controller or
+vibrator, and a **Signature files** tick beside Include subfolders. Page Down in the Seismic
+window steps from one sweep to the next, and **Open the .vib of this sweep** (and the `.dat`)
+shows the other file of a sweep in the same window: see `signature-files.md`.
+
 The **Files** window, at the left, lists the seismic files (SEG-Y, SEG-D, SEG-2) and the
 survey files (SPS S, R and X, P1) of a folder with their type, size and date; other files
 are counted at the bottom, not listed.

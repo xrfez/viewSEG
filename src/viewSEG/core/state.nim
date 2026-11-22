@@ -105,7 +105,7 @@ import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
 from processing import changesSamples, ownShownWords, reverseShownWords
-import signatures
+import signatures, sweeppairs
 import analysis, analysisreader, closer, compare, comparejobs, components, diskio, edits, filejobs,
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
       join, layouts, log,
@@ -200,23 +200,27 @@ type
     ckRetry = "retry"                    ## open, read or list again what does not answer
     ckStopReading = "stop reading"       ## leave a panel's read that does not answer
     ckPrepare = "prepare"                ## the file the user is likely to step to next
-    ckInspect = "headers shown"          ## what the Headers window has on screen, to be read for it
-    ckSpectrum = "open spectrum"         ## an FFT window of traces: their amplitude spectrum, raw and processed
+    ckOpenPair = "open pair"
+      ## show the other file of a vibrator signature file's sweep (a `.dat`'s `.vib`, a
+      ## `.vib`'s `.dat`) in the panel, in place of the one it shows; searched for when the list
+      ## does not know it
+    ckInspect = "headers shown" ## what the Headers window has on screen, to be read for it
+    ckSpectrum = "open spectrum" ## an FFT window of traces: their amplitude spectrum, raw and processed
     ckSpectrumDisplay = "spectrum display"
       ## how a spectrum window shows its spectrum, over which time; the live panel frozen or not
-    ckCloseSpectrum = "close spectrum"   ## close an FFT window
-    ckSpectrumPanel = "spectrum panel"   ## the live spectrum panel on screen, or not
+    ckCloseSpectrum = "close spectrum" ## close an FFT window
+    ckSpectrumPanel = "spectrum panel" ## the live spectrum panel on screen, or not
     ckSpectrumCursor = "spectrum cursor"
       ## hold a spectrum window's cursor at a frequency bin and curve, or let it go
     ckStepTrace = "step trace"
       ## select the next or previous trace of the record shown (Alt + arrow)
-    ckOpenPlot = "open plot"             ## New plot: an analysis window of traces (a spectrogram, ...)
-    ckPlotDisplay = "plot display"       ## an analysis window's settings, frozen or not
-    ckPlotCursor = "plot cursor"         ## where an analysis window's cursor is held
-    ckClosePlot = "close plot"           ## close an analysis window
+    ckOpenPlot = "open plot" ## New plot: an analysis window of traces (a spectrogram, ...)
+    ckPlotDisplay = "plot display" ## an analysis window's settings, frozen or not
+    ckPlotCursor = "plot cursor" ## where an analysis window's cursor is held
+    ckClosePlot = "close plot" ## close an analysis window
     ckDisplayPreset = "display preset"
       ## draw a panel as a named display says; keep, rename or forget one
-    ckTheme = "theme"                    ## the theme the program is drawn in, as View > Theme picks it
+    ckTheme = "theme" ## the theme the program is drawn in, as View > Theme picks it
     ckNewProject = "new project"
       ## make a project folder (Project > New project) and open it: the session's files stay open
     ckOpenProject = "open project"
@@ -303,10 +307,13 @@ type
       position*: int ## 0 runs next
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
         ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckExportEdits, ckImportEdits,
-        ckFilter, ckRetry, ckStopReading, ckPrepare, ckProcessing, ckDisplayPreset, ckOwnFilter:
+        ckFilter, ckRetry, ckStopReading, ckPrepare, ckProcessing, ckDisplayPreset, ckOwnFilter,
+        ckOpenPair:
       panel*: PanelId ## the panel's id (1: the Seismic window; 0 retries the folder)
       gather*: int ## ckGather: index into the file's gathers
-      path*: string ## ckShowFile, ckShowTrace: the file to show; ckPrepare: the next
+      path*: string
+        ## ckShowFile, ckShowTrace: the file to show; ckPrepare: the next; ckOpenPair: the
+        ## signature file whose partner is wanted ("": the file the panel shows)
       traceIndex*: int ## ckShowTrace: the trace's index (in its record)
       recordIndex*: int ## ckShowTrace: the SEG-D record it counts in; -1: the file
       listFolder*: bool ## ckShowFile: the file list lists its folder too
@@ -369,6 +376,9 @@ type
       openChoice*: OpenChoice
         ## the options it is opened with from now on, this run (the defaults
         ## detect everything; given in part, the rest are the defaults)
+      reopenAll*: bool
+        ## a signature file's options (`openChoice.signature`) for every file of its kind in
+        ## the listing, this run only
     of ckUnloadSurvey: layer*: SurveyLayerId
       ## the survey layer's id
     of ckMapView:
@@ -998,9 +1008,20 @@ type
     openChoices: Table[string, OpenChoice]
       ## per file: the options "Reopen with options" gave it, used by every
       ## later open of it this run; a file not in it opens with the defaults
+    sigChoices: array[2, SignatureChoice]
+      ## "Use these for every .dat (.vib) file of this listing": the options a signature file of
+      ## that kind opens with when it has none of its own; this run, and only while the
+      ## folder listed stays
+    pairSearch: tuple[job: JobId; path: string; panel: PanelId; by: CommandOrigin]
+      ## the search for a file's partner running (`findPairWork`); `NoJob` for none
+    pairAnswers: Table[string, PairAnswer]
+      ## per file: what a search for its partner found (both ways round when it found one)
+    stoppedWaiting: bool
+      ## a stopped `.dat` is listed and new: Follow shows it after it has stayed so for
+      ## `StoppedShowAfter` (`followNewest` says so), so the program looks again each frame
     followed: HashSet[string]
       ## files "Follow the latest" opened (each is shown once)
-    followedUpTo: Time
+    followedUpTo: int64
       ## the modification time of the file "Follow the latest" showed last:
       ## an older one is never followed after it (it would step back in time)
     onDiskSaid: Table[string, string]
@@ -1147,6 +1168,7 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
     jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
     nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace(),
     files: FileList(job: NoJob), watchEvery: watchEvery, quietScan: NoJob,
+    pairSearch: (NoJob, "", NoPanel, coWindow),
     preparing: (NoJob, ""), prepared: (NoJob, nil), memoryJob: NoJob,
     compareJobA: NoJob, compareJobB: NoJob, comparePicJob: NoJob,
     vendor: VendorState(job: NoJob))
@@ -1927,10 +1949,75 @@ func surveyHead*(state: AppState; path: string): int =
     if state.heads[i].file.path == path: return i
   -1
 
+func sigIndex(k: SignatureKind): int {.inline.} = (if k == sgVib: 1 else: 0)
+
 func openChoiceOf*(state: AppState; path: string): OpenChoice =
   ## The options file `path` (canonical) opens with this run: those
-  ## "Reopen with options" gave it, else the defaults.
-  state.openChoices.getOrDefault(path)
+  ## "Reopen with options" gave it, else (for a signature file) those given for every file of
+  ## its kind in the listing, else the defaults.
+  if path in state.openChoices: return state.openChoices[path]
+  let e = state.files.find(path)
+  if e >= 0 and state.files.entries[e].kind in SignatureFileKinds:
+    result.signature = state.sigChoices[sigIndex(state.files.entries[e].kind.sweepKindOf)]
+
+func hasPrepared*(state: AppState; path: string): bool =
+  ## Whether the file `path` is prepared: decoded or opened in the background, not yet shown.
+  not state.prepared.session.isNil and state.prepared.session.path == path
+
+func partnerOf*(state: AppState; path: string): string =
+  ## The other file of the sweep of signature file `path`: the list's pair, else what a search
+  ## found; "" when none is known.
+  result = state.files.pairs.getOrDefault(path)
+  if result.len == 0 and path in state.pairAnswers: result = state.pairAnswers[path].partner
+
+func pairArgOf(state: AppState; path: string): SignaturePair =
+  ## The `.dat` of the sweep of `.vib` `path` as an open job is given it; none for any other file
+  ## or when no `.dat` is known.
+  let e = state.files.find(path)
+  var vib = e >= 0 and state.files.entries[e].kind == fkVib
+  if not vib and path in state.pairAnswers: vib = state.pairAnswers[path].info.kind == sgDat
+  let partner = if vib: state.partnerOf(path) else: ""
+  if partner.len > 0:
+    var info = SweepInfo()
+    let d = state.files.find(partner)
+    if d >= 0 and state.files.entries[d].kind == fkDat: info = state.files.entries[d].sweep
+    elif path in state.pairAnswers and state.pairAnswers[path].info.kind == sgDat:
+      info = state.pairAnswers[path].info
+    if info.kind == sgDat and info.problem.len == 0:
+      result = SignaturePair(path: partner, triggerNs: info.triggerNs,
+        controller: info.controller, vibrator: info.vibrator)
+
+func signatureKindOfPath(state: AppState; path: string): SignatureKind =
+  ## Which signature file `path` is, as an open session or the file list knows it; `sgNone` when
+  ## it is neither (a file opened alone and not listed is told by its open).
+  for s in state.sessions:
+    if s.path == path: return s.signature.kind
+  let e = state.files.find(path)
+  if e >= 0: result = state.files.entries[e].kind.sweepKindOf
+
+func pairText*(state: AppState; path: string): string =
+  ## What the Summary's Pair line says of signature file `path`: its partner, "not found
+  ## (looked ...)", or "not looked for yet". "" for a file that is not a signature file.
+  let e = state.files.find(path)
+  var kind = if e >= 0: state.files.entries[e].kind.sweepKindOf else: sgNone
+  for s in state.sessions:
+    if s.path == path and s.isSignature: kind = s.signature.kind
+  let partner = state.partnerOf(path)
+  if kind == sgNone and partner.len > 0:
+    # (a file opened alone that another has replaced: its partner's kind says its own)
+    let p = state.files.find(partner)
+    let pk = if p >= 0: state.files.entries[p].kind.sweepKindOf
+      elif path in state.pairAnswers: state.pairAnswers[path].info.kind else: sgNone
+    kind = if pk == sgDat: sgVib elif pk == sgVib: sgDat else: sgNone
+  if kind == sgNone: return ""
+  let other = if kind == sgDat: ".vib" else: ".dat"
+  if partner.len > 0:
+    result = partner.extractFilename & " (the " & other & " of this sweep)"
+  elif path in state.pairAnswers:
+    result = "not found (" & state.pairAnswers[path].words & ")"
+  elif path in state.files.pairNotes: result = state.files.pairNotes[path]
+  else:
+    result = "not looked for yet"
 
 func unitChoices*(state: AppState): lent ImportUnits {.inline.} =
   ## The units the user chose by hand (`ckChooseUnit`): per survey (its
@@ -6751,6 +6838,20 @@ proc onFinished(state: var AppState; job: JobInfo) =
       state.notify(sevInfo, job.spec.title & " is done.")
   of jsQueued, jsRunning: discard
 
+func chosenSignature(c: SignatureChoice; kind: SignatureKind): SignatureChoice =
+  ## `c` with the interval resolved, as a decoded session states it.
+  result = c
+  if result.intervalUs <= 0: result.intervalUs = defaultIntervalUs(kind)
+
+proc preparedAsWanted(state: AppState; path: string): bool =
+  ## Whether the file prepared was decoded as `path` opens now: a signature file with the
+  ## options and the pair that its open would give it (the list's choice may have changed, or a
+  ## `.dat` have been found, since).
+  let s = state.prepared.session
+  if not s.isSignature: return true
+  s.signature.choice == chosenSignature(state.openChoiceOf(path).signature, s.signature.kind) and
+    s.signature.pair == state.pairArgOf(path).path
+
 proc preparedCurrent(state: AppState): bool =
   ## Whether the file prepared is as the folder's watch saw it last: steady,
   ## with the size and time it was opened with.
@@ -6792,7 +6893,8 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
       if not follow: state.opening[o].follow = false # the user's own choice: shown as it is
       if keeps(by): state.opening[o].by = by # the user asked for it too
     elif not forced and not state.prepared.session.isNil and state.prepared.session.path == path and
-        state.preparedCurrent() and path notin state.openChoices:
+        state.preparedCurrent() and path notin state.openChoices and
+        state.preparedAsWanted(path):
       # Opened already, in the background, and not changed since: shown at once.
       let job = state.prepared.job
       var s = move state.prepared.session
@@ -6808,7 +6910,8 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
       let job = state.jobs.submit(JobSpec(title: "Open " & path.extractFilename,
         lane: jlInteractive, reads: @[path]), openFileWork(path, state.inbox.poster,
         indexCacheFile(state.indexCache, path), whole = follow, lines = state.settings.join,
-        choice = if forced: asked else: state.openChoices.getOrDefault(path)))
+        choice = if forced: asked else: state.openChoiceOf(path),
+        pair = state.pairArgOf(path)))
       state.opening.add Pending(job: job, path: path, panel: panel, gather: gather,
         follow: follow, by: by)
 
@@ -6856,6 +6959,9 @@ proc startListing(state: var AppState; paths: seq[string]; title, folder: string
     state.oldScans.add state.files.job # it ends quietly
   state.watch.unwatch() # until the scan is done
   state.listedBy = by
+  if folder != state.files.folder:
+    state.sigChoices = [SignatureChoice(), SignatureChoice()] # (for this listing only)
+    state.pairAnswers.clear()
   let gen = state.files.gen + 1
   let recursive = state.includesSubfolders
   state.files = FileList(title: title, folder: folder, asked: paths, scanning: true, gen: gen,
@@ -6863,6 +6969,74 @@ proc startListing(state: var AppState; paths: seq[string]; title, folder: string
   state.files.job = state.jobs.submit(JobSpec(title: "List the files in " &
     (if folder.len > 0: folder.extractFilename else: title), lane: jlBackground),
     scanWork(gen, paths, state.inbox.poster, recursive))
+
+proc openPair(state: var AppState; cmd: Command) =
+  ## `ckOpenPair`: shows the other file of a signature file's sweep in the panel, in place of
+  ## the one it shows (a click in Files does the same: the selection follows, and the partner's
+  ## own offer leads back). When the list does not know the partner, a background job looks for
+  ## it (`findPairWork`) and the partner is shown when it is found.
+  let k = state.findPanel(cmd.panel)
+  if k < 0:
+    state.ignore(cmd, $cmd.panel & " does not exist")
+    return
+  var path = if cmd.path.len > 0: canonical(cmd.path) else: ""
+  if path.len == 0:
+    let i = state.shownFile(k)
+    if i >= 0: path = state.sessions[i].path
+  if path.len == 0:
+    state.ignore(cmd, $cmd.panel & " shows no file")
+    return
+  let kind = state.signatureKindOfPath(path)
+  if kind == sgNone:
+    state.ignore(cmd, path.extractFilename & " is not a vibrator signature file")
+    return
+  let partner = state.partnerOf(path)
+  if partner.len > 0:
+    state.jump = ("", -1, -1)
+    if cmd.panel == MainPanel: state.showFound = NoPanel
+    state.showPath(k, partner, by = cmd.origin)
+  elif state.pairSearch.job != NoJob and state.pairSearch.path == path:
+    discard # the search for it is running
+  else:
+    if state.pairSearch.job != NoJob: discard state.jobs.cancel(state.pairSearch.job)
+    let job = state.jobs.submit(JobSpec(title: "Look for the " &
+      (if kind == sgDat: ".vib" else: ".dat") & " of " & path.extractFilename,
+      lane: jlBackground, reads: @[path]), findPairWork(path, state.inbox.poster))
+    state.pairSearch = (job, path, cmd.panel, cmd.origin)
+
+proc takePaired(state: var AppState; m: sink Msg) =
+  ## What a search for a file's partner found: kept, so that every offer and the Summary say
+  ## it, and the partner shown in the panel that asked when one was found; else said once.
+  if state.pairSearch.job != m.job: return # a search replaced since
+  let (panel, by) = (state.pairSearch.panel, state.pairSearch.by)
+  state.pairSearch = (NoJob, "", NoPanel, coWindow)
+  state.pairAnswers[m.pairFor] = PairAnswer(partner: m.pairPath, info: m.pairInfo,
+    words: m.pairWords, candidates: m.pairCandidates, looked: m.pairLooked)
+  if m.pairPath.len > 0:
+    state.pairAnswers[m.pairPath] = PairAnswer(partner: m.pairFor, info: m.pairSelf)
+    let k = state.findPanel(panel)
+    if k >= 0:
+      state.jump = ("", -1, -1)
+      if panel == MainPanel: state.showFound = NoPanel
+      state.showPath(k, m.pairPath, by = by)
+  else:
+    state.log.add(sevInfo, m.pairFor.extractFilename, m.pairWords)
+
+proc refreshPairs(state: var AppState) =
+  ## Pairs the listed signature files again (`pairSweeps`: sorted by time, two pointers). Run on
+  ## the UI thread when a scan ends and when the watch adds, removes or changes a signature
+  ## file: at most `MaxTreeFiles` entries, a few milliseconds, no file read.
+  template f: untyped = state.files
+  var keys: seq[PairKey] = @[]
+  for e in f.entries:
+    if e.kind in SignatureFileKinds and e.sweep.problem.len == 0:
+      keys.add pairKeyOf(e.path, e.sweep)
+  let r = pairSweeps(keys)
+  if r.pairs != f.pairs or r.notes != f.pairNotes:
+    f.pairs = r.pairs
+    f.pairNotes = r.notes
+    inc f.pairsRev
+    inc f.revision
 
 proc takeListed(state: var AppState; m: sink Msg) =
   ## What a scan found for the file list; shows the first file found (or the
@@ -6893,6 +7067,7 @@ proc takeListed(state: var AppState; m: sink Msg) =
   f.subfolders += m.subfolders
   if m.listDone:
     f.scanning = false
+    state.refreshPairs()
     # Watched from what the scan found: a folder listed, or the files chosen.
     let paths = if f.folder.len > 0: @[f.folder] else: f.asked
     state.folderWatch.watch(f.gen, paths, move m.listLooked, f.recursive)
@@ -6906,27 +7081,57 @@ proc takeListed(state: var AppState; m: sink Msg) =
       state.showFound = NoPanel
       if k >= 0 and target.len > 0: state.showPath(k, target, by = state.listedBy)
 
+func newerSameController(f: FileList; e: FileEntry): bool =
+  ## Whether a `.dat` of the same controller with a later trigger is listed: the controller
+  ## has moved on, so a stopped recording of it will not be written to again.
+  for o in f.entries:
+    if o.kind == fkDat and o.sweep.problem.len == 0 and o.sweep.controller == e.sweep.controller and
+        o.sweep.triggerNs > e.sweep.triggerNs:
+      return true
+
+proc followable(state: var AppState; e: FileEntry): bool =
+  ## Whether "Follow the latest" may show `e` now, beyond what every file needs (new, steady,
+  ## not shown yet). A signature file is shown only when its sweep is whole, or is a stopped
+  ## `.dat` that will not grow: a newer `.dat` of its controller is listed, or it has stayed as
+  ## it is for `StoppedShowAfter`. A `.vib` cut inside a frame, or a file its library refuses,
+  ## waits (it is tried again once it has changed).
+  if e.kind notin SignatureFileKinds: return true
+  if not state.settings.files.listSignatureFiles or e.sweep.problem.len > 0: return false
+  if e.sweep.complete: return true
+  if e.kind != fkDat: return false
+  if state.files.newerSameController(e): return true
+  if e.steadySince != MonoTime() and fs.now() - e.steadySince >= StoppedShowAfter: return true
+  state.stoppedWaiting = true # (nothing will say when the time is up: asked again each frame)
+
+func followKey(e: FileEntry): int64 =
+  ## How new a file is for "Follow the latest": a signature file by its trigger (the copy's or
+  ## the radio transfer's modification time says nothing), any other by its modification time.
+  if e.kind in SignatureFileKinds: sweepKey(e)
+  else: int64(e.modified.toUnix) * 1_000_000_000 + e.modified.nanosecond
+
 proc followNewest(state: var AppState) =
   ## With "Follow the latest": shows in the main panel the newest file that
   ## appeared since the folder was listed and is steady, unless it was
   ## followed already (each is shown once, so a file the user stepped away
   ## from is not forced back), failed to open, or is older than the file
   ## followed last (new files that came with a newer one are not shown one
-  ## after another, back in time, as the looks go on).
+  ## after another, back in time, as the looks go on). A signature file is the newest by
+  ## its trigger, and a stopped recording is shown by the rule of `followable`.
   if not state.settings.files.followLatest: return
   template f: untyped = state.files
+  state.stoppedWaiting = false
   var best = -1
   for i, e in f.entries:
     if e.kind.isSeismic and e.isNew and e.status == fsSteady and e.path != f.chosen and
         e.path notin state.followed and e.path notin f.failed and
-        e.modified > state.followedUpTo and
-        (best < 0 or e.modified >= f.entries[best].modified):
+        followKey(e) > state.followedUpTo and state.followable(e) and
+        (best < 0 or followKey(e) >= followKey(f.entries[best])):
       best = i
   let k = state.findPanel(MainPanel)
   if best >= 0 and k >= 0:
     let path = f.entries[best].path
     state.followed.incl path
-    state.followedUpTo = f.entries[best].modified
+    state.followedUpTo = followKey(f.entries[best])
     state.showPath(k, path, follow = true, by = coWindow) # the user's own setting
 
 proc showAgain(state: var AppState; path: string) =
@@ -6991,7 +7196,7 @@ proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: Comma
   if keeps(by): state.openedBy[path] = by
   let job = state.jobs.submit(JobSpec(title: "Open " & name, lane: jlInteractive,
     reads: @[path]), openFileWork(path, state.inbox.poster, indexCacheFile(state.indexCache, path),
-    whole = false, lines = state.settings.join, choice = choice))
+    whole = false, lines = state.settings.join, choice = choice, pair = state.pairArgOf(path)))
   state.opening.add Pending(job: job, path: path, panel: if panel == NoPanel: MainPanel
     else: panel, gather: gather, by: by, reopened: true, tried: choice, replacesOpen: true)
 
@@ -7135,11 +7340,15 @@ proc takeWatched(state: var AppState; m: sink Msg) =
   # one by one each moves every entry after it.
   var gone: seq[int]
   var fresh: seq[FileEntry]
+  var sweepsChanged = false # a signature file came, went or changed: the pairs are made again
   for w in m.watched:
     if listing and w.listed:
       let i = f.find(w.path)
+      if w.kind in SignatureFileKinds: sweepsChanged = true
       if not w.exists:
-        if i >= 0: gone.add i
+        if i >= 0:
+          gone.add i
+          sweepsChanged = sweepsChanged or f.entries[i].kind in SignatureFileKinds
         let failed = f.failed.find(w.path)
         if failed >= 0: f.failed.delete(failed)
       elif i < 0:
@@ -7147,12 +7356,16 @@ proc takeWatched(state: var AppState; m: sink Msg) =
           fresh.add FileEntry(path: w.path, name: w.path.extractFilename,
             folder: if f.recursive: f.folder.folderOf(w.path) else: "", kind: w.kind, size: w.size,
                 modified: w.modified,
-            status: (if w.changing: fsWriting else: fsSteady), isNew: true)
+            status: (if w.changing: fsWriting else: fsSteady), isNew: true, sweep: w.sweep,
+            steadySince: (if w.changing: MonoTime() else: fs.now()))
       else:
         template e: untyped = f.entries[i]
         let same = e.size == w.size and e.modified == w.modified
         e.size = w.size
         e.modified = w.modified
+        if w.kind in SignatureFileKinds: e.sweep = w.sweep
+        if w.changing: e.steadySince = MonoTime()
+        elif e.steadySince == MonoTime(): e.steadySince = fs.now()
         if w.changing:
           e.status = fsWriting
           state.followed.excl w.path # a file that changed is followed again once whole
@@ -7168,6 +7381,7 @@ proc takeWatched(state: var AppState; m: sink Msg) =
     gone.sort(Descending) # each index as it is before those after it go
     for i in gone: f.removeAt(i)
     for e in fresh.mitems: discard f.insertEntry(move e)
+  if sweepsChanged: state.refreshPairs()
   state.followNewest()
 
 proc goToGather(state: var AppState; cmd: Command) =
@@ -7328,14 +7542,21 @@ proc prepareNext(state: var AppState) =
   if state.sessions.anyIt(it.path == want) or state.opening.anyIt(not it.unwanted) or
       want in state.openChoices: # (opened as its options say when it is shown)
     return
-  # (a signature file is decoded when it is shown)
   let e = state.files.find(want)
   if e < 0 or not state.files.entries[e].kind.isSeismic or
-      state.files.entries[e].kind in SignatureFileKinds or
       state.files.entries[e].status != fsSteady or state.files.entries[e].size > MaxPrepareBytes:
     return # (a file being written is opened when it is shown)
   let k = state.findPanel(MainPanel)
   if k < 0 or not state.panels[k].laidOut or state.tiles[k].len == 0: return
+  if state.files.entries[e].kind in SignatureFileKinds:
+    # A signature file is decoded whole (there is no first view to read): the same open job as
+    # a click's, with the options and the pair a click would give it.
+    if state.files.entries[e].sweep.problem.len > 0: return
+    let job = state.jobs.submit(JobSpec(title: "Prepare " & want.extractFilename,
+      lane: jlBackground, auto: true, reads: @[want]), openSignatureWork(want,
+      state.inbox.poster, state.openChoiceOf(want).signature, state.pairArgOf(want)))
+    state.preparing = (job, want)
+    return
   let r = state.panels[k].pending # the first view's read, as the next file is shown alike
   let job = state.jobs.submit(JobSpec(title: "Prepare " & want.extractFilename,
     lane: jlBackground, auto: true, reads: @[want]), prepareWork(want, state.inbox.poster,
@@ -8167,7 +8388,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
         let job = state.jobs.submit(JobSpec(title: "Open " & name, lane: jlInteractive,
           reads: @[path]), openFileWork(path, state.inbox.poster,
           indexCacheFile(state.indexCache, path), lines = state.settings.join,
-          choice = state.openChoices.getOrDefault(path)))
+          choice = state.openChoiceOf(path), pair = state.pairArgOf(path)))
         state.opening.add Pending(job: job, path: path, by: cmd.origin)
   of ckBrowse:
     var paths: seq[string]
@@ -8411,7 +8632,33 @@ proc applyCommand(state: var AppState; cmd: Command) =
       state.ignore(cmd, "agent control writes no file, and a demultiplexed copy is one: " &
         "its folder is the user's to choose")
     else:
-      state.reopenWith(canonical(cmd.reopenPath), cmd.openChoice, cmd.origin)
+      let path = canonical(cmd.reopenPath)
+      let kind = state.signatureKindOfPath(path)
+      let c = cmd.openChoice
+      if kind != sgNone and (c.standard != scDetect or c.verifyAll or c.twosComplement or
+          c.access != acAuto or c.demuxDir.len > 0):
+        state.ignore(cmd, "a vibrator signature file is decoded, not read as SEG-Y or SEG-D: " &
+          "only its sample interval and its force channels (a .dat) or its time zero (a .vib) " &
+          "can be chosen")
+      elif kind == sgVib and c.signature.swapForces:
+        state.ignore(cmd, "a .vib's channels are named by the file; choose the accelerometer " &
+          "set in the Vibrator window")
+      elif kind == sgDat and c.signature.fromFirstFrame:
+        state.ignore(cmd, "t = 0 at the first frame is a .vib's option: a .dat's t = 0 is its " &
+          "trigger")
+      elif kind == sgNone and c.signature != SignatureChoice():
+        state.ignore(cmd, "the sample interval, force-channel and time-zero options are for " &
+          "vibrator signature files; this file is not one")
+      elif c.signature.intervalUs != 0 and not (c.signature.intervalUs > 0 and
+          c.signature.intervalUs < Inf):
+        state.ignore(cmd, "the sample interval must be more than 0 us and finite")
+      else:
+        if cmd.reopenAll and kind != sgNone:
+          state.sigChoices[sigIndex(kind)] = c.signature
+          if not state.prepared.session.isNil:
+            state.release(move state.prepared.session) # decoded as it was before
+            state.prepared = (NoJob, nil)
+        state.reopenWith(path, c, cmd.origin)
   of ckTheme:
     if cmd.theme.len > 64 or not cmd.theme.allCharsInSet({'a'..'z', 'A'..'Z', '0'..'9', '-', '_',
         ' ', '.'}) or ".." in cmd.theme:
@@ -8647,6 +8894,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckPrepare:
     state.prepareWanted = if cmd.path.len > 0: canonical(cmd.path) else: ""
     state.prepareNext()
+  of ckOpenPair: state.openPair(cmd)
   of ckRetry:
     if cmd.panel == NoPanel: state.retryListing()
     else:
@@ -8816,6 +9064,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkRead: state.takeIn(m)
     of mkListed: state.takeListed(move m)
     of mkWatched: state.takeWatched(move m)
+    of mkPaired: state.takePaired(move m)
     of mkSurvey: state.takeSurvey(move m.layer, m.job)
     of mkChecked: state.takeChecked(move m)
     of mkJoining: state.takeJoinPlan(move m)
@@ -8935,6 +9184,7 @@ proc drainInbox*(state: var AppState): bool =
     state.onFinished(job)
   if state.leftChecks.len > 0: state.leftChecks.keepItIf(state.jobs.workingOn(it.job))
   state.prepareNext() # (once the main panel has its tile; or a prepare ended)
+  if state.stoppedWaiting: state.followNewest() # (a stopped .dat's time may be up)
   state.map.followed(state.survey) # a layer came, or went with a file
   state.relink()
   state.followHidden()

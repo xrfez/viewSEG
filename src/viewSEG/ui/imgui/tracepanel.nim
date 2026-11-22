@@ -253,6 +253,10 @@ type
     actions*: set[MenuAction]
     pick*: Pick         ## what lies under the mouse; `noPick()` when it is not over the plot
     notes*: seq[string] ## warnings for the log (a scale that is not a number)
+    stepFile*: int
+      ## Page Down (1) or Page Up (-1) at the last or first record of a signature file: the
+      ## Files window's next or previous file is wanted (its order and filters), as its arrow
+      ## keys would show it
 
 func setOf(t: Tile; row: int): string {.inline.} =
   ## The channel set in words of row `row` of tile `t`; "" for none.
@@ -1115,6 +1119,13 @@ func hasAux(st: AppState; p: Panel): bool =
     let g = p.layers[0].source.gather
     result = i >= 0 and g in 0 ..< st.sessions[i].records.len and
       st.sessions[i].records[g].aux > 0
+
+func shownSignature(st: AppState; p: Panel): bool =
+  ## Whether `p` shows a vibrator signature file (one record: the Page keys step to the next
+  ## file instead).
+  if p.layers.len > 0 and p.layers[0].source.kind == lsRecord:
+    let i = st.findSession(p.layers[0].source.file)
+    result = i >= 0 and st.sessions[i].isSignature
 
 func recordOf(st: AppState; p: Panel): (int, int) =
   ## The record (gather) `p` shows and how many its file has; (0, 0) for
@@ -2290,7 +2301,7 @@ proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot
 
 proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot: Rect;
     m: Turn; lim: ViewLimits; hovered: bool; p: Panel; selected: bool; record: (int, int);
-    remember: var bool; res: var PanelOutput) =
+    sweep: bool; remember: var bool; res: var PanelOutput) =
   ## The plot's keys, while its window has the focus (docs/plot-window.md),
   ## in the screen's directions on a plot turned `m`.
   let io = igGetIO_Nil()
@@ -2364,6 +2375,8 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
   if once(ImGui_Key_End.cint): to = count - 1
   if count > 0 and clamp(to, 0, count - 1) != current:
     res.commands.add Command(kind: ckGather, panel: p.id, gather: clamp(to, 0, count - 1))
+  elif sweep and to != current and (to > count - 1 or to < 0):
+    res.stepFile = if to > current: 1 else: -1 # the last record's Page Down: the next sweep
   if plotPressed("plot.goto", hovered): tp.goto.open = true
   gainKeys(p, hovered, res.commands)
   filterKeys(p, hovered, res.commands)
@@ -2638,7 +2651,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     of bePage: (if tp.burst(gsPage): remember = true)
     of beWheel: (if tp.burst(gsBarWheel): remember = true)
     tp.handleKeys(after, view, plot, turn, limNow, hovered, p,
-      st.selection.anySelected, recordOf(st, p), remember, res)
+      st.selection.anySelected, recordOf(st, p), shownSignature(st, p), remember, res)
     tp.cursorText = ""
     tp.cursorHeader.setLen 0
     # While the plot's menu is open, what was under the pointer at the right

@@ -28,6 +28,13 @@ type
     acMapped = "mapped"     ## mapped: the fastest on a local disk
     acUnmapped = "unmapped" ## read into parseSEG's own cache: a failed read fails only that read
 
+  SignatureChoice* = object
+    ## What the decoding of a vibrator controller's signature file may be asked for. Neither
+    ## kind states its sample interval.
+    intervalUs*: float64 = 0 ## 0: the kind's default (1000 for a .dat, 500 for a .vib)
+    swapForces*: bool ## .dat: the force channels wired the other way round
+    fromFirstFrame*: bool ## .vib: t = 0 at the first frame, not at the trigger
+
   OpenChoice* = object
     ## The options a file is opened with; the defaults detect everything.
     standard*: StandardChoice ## the standard; `scDetect` detects it
@@ -41,6 +48,8 @@ type
     demuxDir*: string
       ## where a multiplexed SEG-D file's demultiplexed copy is written; ""
       ## for the system's temporary folder
+    signature*: SignatureChoice
+      ## a vibrator signature file's own options (it is decoded, not read as SEG-Y or SEG-D)
 
   OpenFacts* = object
     ## What an open did, read on its thread.
@@ -109,6 +118,10 @@ func choiceWords*(c: OpenChoice): seq[string] =
   of acMapped: result.add "mapped, wherever it lies"
   of acUnmapped: result.add "read unmapped, wherever it lies"
   if c.demuxDir.len > 0: result.add "its demultiplexed copy written in " & c.demuxDir
+  if c.signature.intervalUs > 0:
+    result.add "sample interval " & $c.signature.intervalUs & " us"
+  if c.signature.swapForces: result.add "force channels wired the other way round"
+  if c.signature.fromFirstFrame: result.add "t = 0 at the first frame"
 
 func choiceMark*(c: OpenChoice): string =
   ## `c` in a few words for a window's title or strip ("as SEG-D · every
@@ -122,6 +135,9 @@ func choiceMark*(c: OpenChoice): string =
   of acMapped: parts.add "mapped"
   of acUnmapped: parts.add "unmapped"
   if c.demuxDir.len > 0: parts.add "demultiplexed copy"
+  if c.signature.intervalUs > 0: parts.add $c.signature.intervalUs & " us"
+  if c.signature.swapForces: parts.add "forces swapped"
+  if c.signature.fromFirstFrame: parts.add "t = 0 at the first frame"
   parts.join(" \u00b7 ")
 
 func choiceText*(c: OpenChoice): string =

@@ -22,7 +22,7 @@
 ## from an agent: every problem with it is a result with `isError`, never an
 ## exception.
 
-import std/[algorithm, base64, json, math, monotimes, os, sets, strutils, times]
+import std/[algorithm, base64, json, math, monotimes, os, sets, strutils, tables, times]
 import parseSEG
 import ../core/[explain, geometry, log, properties, shortcuts, state, units, versions]
 import protocol, schema
@@ -450,6 +450,47 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
     result["remembered"] = %*{"identityKnown": r.known, "confirmed": r.confirmed,
       "document": r.doc}
 
+proc sweepJson(state: AppState; e: FileEntry): JsonNode =
+  ## What the file list knows of a signature file from its header: its trigger (a `.vib`'s start
+  ## second), controller, vibrator, line, station, shot, sweep id, length, state, pair and the
+  ## controller's QC numbers. A `.vib` with a pair takes the controller, vibrator and QC of its
+  ## `.dat`.
+  let i = e.sweep
+  if i.problem.len > 0: return %*{"problem": i.problem}
+  let list = state.fileList
+  var partner = list.pairs.getOrDefault(e.path)
+  var info = i
+  var controllerFrom = i.serialFrom
+  if e.kind == fkVib and partner.len > 0:
+    let d = list.find(partner)
+    if d >= 0 and list.entries[d].kind == fkDat:
+      info.controller = list.entries[d].sweep.controller
+      info.vibrator = list.entries[d].sweep.vibrator
+      info.qc = list.entries[d].sweep.qc
+      controllerFrom = sfPair
+  result = %*{"kind": (if e.kind == fkDat: "dat" else: "vib"),
+    "trigger": timeText(i.triggerNs, if e.kind == fkDat: 9 else: 0),
+    "triggerIsStart": i.timeIsStart,
+    "controller": (if controllerFrom == sfNone: newJNull() else: %info.controller),
+    "controllerFrom": (case controllerFrom
+    of sfFile: "file"
+    of sfFolder: "folder"
+    of sfPair: "pair"
+    else: ""),
+    "vibrator": (if info.vibrator > 0: %info.vibrator else: newJNull()),
+    "fileNumber": i.fileNumber, "samples": i.samples, "declared": i.declared,
+    "intervalUs": i.intervalUs, "lengthS": float(i.samples) * i.intervalUs / 1e6,
+    "complete": i.complete, "pulse": e.kind == fkDat and i.sweepNumber == 16,
+    "pair": (if partner.len > 0: %partner else: newJNull())}
+  if e.kind == fkDat:
+    for (k, v) in [("line", i.line), ("station", i.station), ("shot", i.shotId),
+        ("sweepId", i.sweepId)]:
+      result[k] = if v > 0: %v else: newJNull()
+  var limits = ""
+  for l in info.qc.limits: limits.add $l
+  result["qc"] = if info.qc.valid: %*{"forceAvgPct": int(info.qc.forceAvgPct),
+    "thdMaxPct": int(info.qc.thdMaxPct), "limits": limits} else: newJNull()
+
 proc fileListJson(state: AppState; limit: int): JsonNode =
   let l = state.fileList
   result = %*{"title": l.title, "folder": l.folder, "scanning": l.scanning,
@@ -459,9 +500,13 @@ proc fileListJson(state: AppState; limit: int): JsonNode =
   var entries = newJArray()
   for i in 0 ..< min(l.entries.len, limit):
     let e = l.entries[i]
-    entries.add %*{"name": e.name, "path": e.path, "kind": $e.kind, "size": e.size,
+    var row = %*{"name": e.name, "path": e.path, "kind": $e.kind, "size": e.size,
       "status": $e.status, "new": e.isNew, "folder": e.folder}
+    if e.kind in SignatureFileKinds: row["sweep"] = sweepJson(state, e)
+    entries.add row
   result["entries"] = entries
+  result["signatureFiles"] = %state.settings.files.listSignatureFiles
+  result["pairs"] = %(l.pairs.len div 2)
 
 proc pointJson(state: AppState; p: PointRef): JsonNode =
   ## A map point: its layer, role and index, and where it is.
@@ -886,7 +931,7 @@ proc signatureJson(f: SignatureFacts): JsonNode =
       "crossings": f.trigger.crossings}
     result["timeZero"] = %f.trigger.timeZero
     result["primarySet"] = %"B"
-    result["pair"] = newJNull()
+    result["pair"] = if f.pair.len > 0: %f.pair else: newJNull()
 
 proc propertiesJson(state: AppState): JsonNode =
   ## The properties of the file the Seismic window shows, as its Headers

@@ -24,7 +24,7 @@
 ## incomplete. "Follow the latest", at the foot, shows each new file once it
 ## is whole; off, the plot stays on the file the user chose.
 
-import std/[os, strutils, times]
+import std/[algorithm, os, strutils, tables, times]
 import imguin/cimgui
 import ../../core/[geometry, state]
 import ../../view/[filetable, theme]
@@ -36,19 +36,27 @@ type
     filter: array[128, char]
     table: FileTable
     order: FileOrder
-    chosen: string     ## the chosen file last frame: a new one is scrolled into view
+    chosen: string ## the chosen file last frame: a new one is scrolled into view
     follow: bool
     focus: FocusClicks ## a click on a row acts only in a window that had the focus
-    keys: ListFocus    ## the navigation's cursor follows the file shown
-    nextOf: string     ## the chosen file the next one was found for
-    nextRev: int       ## the list's revision then
-    toldNext: string   ## the next file `core` was told to prepare; "" for none
+    keys: ListFocus                                     ## the navigation's cursor follows the file shown
+    nextOf: string                                      ## the chosen file the next one was found for
+    nextRev: int                                        ## the list's revision then
+    toldNext: string                                    ## the next file `core` was told to prepare; "" for none
+    controller: int64 = -1 ## the Controller drop-down: only this serial's sweeps; -1 for all
+    vibrator: int = -1                                  ## the Vibrator drop-down: only this vibrator's; -1 for all
+    seen: tuple[entriesRev, pairsRev: int; gen: uint64] ## what `values` were made for
+    controllers: seq[int64]                             ## the serials in the listing, sorted
+    vibrators: seq[int]                                 ## the vibrator IDs in the listing, sorted
+    signatures: int                                     ## signature files in the listing
+    seismic: int                                        ## its seismic files that are not signature files
 
   FileListOutput* = object
     ## What the window asks for.
     commands*: seq[Command]
     actions*: set[MenuAction]
-    toggleFollow*: bool ## "Follow the latest" was clicked
+    toggleFollow*: bool     ## "Follow the latest" was clicked
+    toggleSignatures*: bool ## "Signature files" was clicked
 
 proc tip(text: string; dim = Rgba()) =
   ## The last item's tooltip. A line that starts "Shortcut: " is drawn in
@@ -69,6 +77,38 @@ proc tip(text: string; dim = Rgba()) =
     igEndTooltip()
 
 func filterText(ui: FileListUi): string = $cast[cstring](addr ui.filter[0])
+
+func sweepFilter(ui: FileListUi; st: AppState): SweepFilter =
+  SweepFilter(hide: not st.settings.files.listSignatureFiles, controller: ui.controller,
+    vibrator: ui.vibrator)
+
+proc refreshValues(ui: var FileListUi; f: FileList) =
+  ## The listing's controllers, vibrators and counts, made again when its entries or pairs
+  ## changed (a paired `.vib` takes its `.dat`'s).
+  if ui.seen == (f.entriesRev, f.pairsRev, f.gen): return
+  ui.seen = (f.entriesRev, f.pairsRev, f.gen)
+  ui.controllers.setLen 0
+  ui.vibrators.setLen 0
+  ui.signatures = 0
+  ui.seismic = 0
+  for e in f.entries:
+    if e.kind in SignatureFileKinds:
+      inc ui.signatures
+      let w = sweepFacts(f, e)
+      if w.controllerFrom != sfNone and w.info.controller notin ui.controllers:
+        ui.controllers.add w.info.controller
+      if w.info.vibrator > 0 and w.info.vibrator notin ui.vibrators:
+        ui.vibrators.add w.info.vibrator
+    elif e.kind.isSeismic: inc ui.seismic
+  ui.controllers.sort()
+  ui.vibrators.sort()
+
+proc steppedFile*(ui: FileListUi; st: AppState; delta: int): string =
+  ## The file `delta` files after the chosen one in the Files table's order and filters (before
+  ## it, for a negative `delta`): what the plot's Page Down shows after a signature file's last
+  ## record. "" when there is none.
+  let next = ui.table.stepped(st.fileList, st.fileList.chosen, delta)
+  if next != st.fileList.chosen: next else: ""
 
 func markOf(e: FileEntry): string =
   ## The glyph before a file's name: being written, incomplete, new, or none.
@@ -151,6 +191,37 @@ proc drawFolderRow(ui: var FileListUi; f: FileList; recent: openArray[string]; t
   focused(marks)
   tip("List the folder again")
 
+proc drawSweepFilters(ui: var FileListUi; t: Theme; marks: var Marks) =
+  ## The Controller and Vibrator drop-downs: the values seen in the listing; they combine with the
+  ## name filter. A `.vib` with no known controller passes only "All".
+  let w = max(5 * igGetFontSize(), (igGetContentRegionAvail().x - igGetStyle().ItemSpacing.x) / 2)
+  igSetNextItemWidth(w)
+  let cLabel = if ui.controller < 0: "All controllers" else: intToStr(int(ui.controller), 4)
+  if igBeginCombo("##filectl", cLabel.cstring, 0):
+    if igSelectable_Bool("All controllers", ui.controller < 0, 0, ImVec2_c(x: 0, y: 0)):
+      ui.controller = -1
+    for c in ui.controllers:
+      if igSelectable_Bool(intToStr(int(c), 4).cstring, c == ui.controller, 0,
+          ImVec2_c(x: 0, y: 0)):
+        ui.controller = c
+    igEndCombo()
+  marks.mark("files.controller")
+  tip("Show only this controller's sweeps. A .vib takes its controller from the .dat of its " &
+    "sweep, else from the number of the folder two levels above it.")
+  igSameLine(0, -1)
+  igSetNextItemWidth(w)
+  let vLabel = if ui.vibrator < 0: "All vibrators" else: $ui.vibrator
+  if igBeginCombo("##filevib", vLabel.cstring, 0):
+    if igSelectable_Bool("All vibrators", ui.vibrator < 0, 0, ImVec2_c(x: 0, y: 0)):
+      ui.vibrator = -1
+    for v in ui.vibrators:
+      if igSelectable_Bool(($v).cstring, v == ui.vibrator, 0, ImVec2_c(x: 0, y: 0)):
+        ui.vibrator = v
+    igEndCombo()
+  marks.mark("files.vibrator")
+  tip("Show only this vibrator's sweeps (the vibrator ID in the .dat's QC record; a .vib " &
+    "takes it from the .dat of its sweep)")
+
 proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: var Marks;
     res: var FileListOutput) =
   ## The table, sorted as its headers say, with only the rows in view drawn.
@@ -164,20 +235,50 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   let lines = if (f.scanning and f.job != NoJob) or f.subfoldersNote.len > 0: 2 else: 1
   let footer = igGetTextLineHeightWithSpacing() * lines.float32 + igGetStyle().ItemSpacing.y
   let tree = f.recursive # the Folder column is there while subfolders are included
-  let columns = if tree: 5 else: 4
-  if not igBeginTable(if tree: "##filestree" else: "##files", cint(columns), flags,
-      ImVec2_c(x: 0, y: -footer), 0): return
+                         # A signature file's columns are there while the listing holds one and the tick is on. A
+                         # listing of signature files alone starts sorted by Trigger: its own table, so that the sort
+                         # the user chose in a mixed listing is not taken over.
+  let sweeps = ui.signatures > 0 and st.settings.files.listSignatureFiles
+  let only = sweeps and ui.seismic == 0
+  var heads = @["Name"]
+  if tree: heads.add "Folder"
+  heads.add ["Type", "Size", "Modified"]
+  if sweeps:
+    for c in SweepColumns: heads.add $c
+  let id = "##files" & (if tree: "tree" else: "") & (if only: "only" elif sweeps: "sweep" else: "")
+  # (a table of the sweeps' columns scrolls sideways: the room a narrow window has is not enough)
+  let tableFlags = if sweeps: flags or ImGui_TableFlags_ScrollX.cint else: flags
+  if not igBeginTable(id.cstring, cint(heads.len), tableFlags, ImVec2_c(x: 0, y: -footer), 0):
+    return
   igTableSetupScrollFreeze(0, 1)
-  igTableSetupColumn("Name", ImGui_TableColumnFlags_DefaultSort.cint or
-    ImGui_TableColumnFlags_WidthStretch.cint or ImGui_TableColumnFlags_NoHide.cint, 1, 0)
+  igTableSetupColumn("Name", (if only: 0 else: ImGui_TableColumnFlags_DefaultSort.cint) or
+    (if sweeps: ImGui_TableColumnFlags_WidthFixed.cint else: ImGui_TableColumnFlags_WidthStretch.cint) or
+    ImGui_TableColumnFlags_NoHide.cint, (if sweeps: 13 * igGetFontSize() else: 1'f32), 0)
   if tree: igTableSetupColumn("Folder", ImGui_TableColumnFlags_WidthStretch.cint, 1, 4)
-  igTableSetupColumn("Type", 0, 0, 1)
-  igTableSetupColumn("Size", ImGui_TableColumnFlags_PreferSortDescending.cint, 0, 2)
-  igTableSetupColumn("Modified", ImGui_TableColumnFlags_PreferSortDescending.cint, 0, 3)
+  # With a signature file's columns the name says what a Type column would, and the size and the
+  # time of the file are for the column chooser: the room goes to the sweep.
+  let hide = if sweeps: ImGui_TableColumnFlags_DefaultHide.cint else: 0.cint
+  igTableSetupColumn("Type", hide, 0, 1)
+  igTableSetupColumn("Size", ImGui_TableColumnFlags_PreferSortDescending.cint or hide, 0, 2)
+  igTableSetupColumn("Modified", ImGui_TableColumnFlags_PreferSortDescending.cint or hide, 0, 3)
+  if sweeps:
+    let em = igGetFontSize()
+    for c in SweepColumns:
+      # the first three are shown, the rest hidden until the column chooser shows them
+      var flags = ImGui_TableColumnFlags_WidthFixed.cint
+      var width = 0'f32
+      case c
+      of fcTrigger:
+        width = 14 * em
+        if only: flags = flags or ImGui_TableColumnFlags_DefaultSort.cint
+      of fcController, fcVibrator: width = 5 * em
+      of fcLength, fcState, fcLimits: width = 7 * em
+      else: width = 5.5 * em
+      if c notin {fcTrigger, fcController, fcVibrator}:
+        flags = flags or ImGui_TableColumnFlags_DefaultHide.cint
+      igTableSetupColumn(($c).cstring, flags, width, uint32(ord(c)))
   igPushItemFlag(ImGui_ItemFlags_NoTabStop.cint, true) # the list is one stop of Tab
   igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
-  let heads = if tree: @["Name", "Folder", "Type", "Size", "Modified"]
-    else: @["Name", "Type", "Size", "Modified"]
   for c, name in heads:
     if igTableSetColumnIndex(cint(c)):
       igTableHeader(name.cstring)
@@ -186,12 +287,13 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   let specs = igTableGetSortSpecs()
   if specs != nil and specs.SpecsCount > 0:
     let s = specs.Specs[]
-    ui.order = FileOrder(column: FileColumn(clamp(int(s.ColumnUserID), 0, 4)),
+    ui.order = FileOrder(column: FileColumn(clamp(int(s.ColumnUserID), 0, ord(FileColumn.high))),
       descending: s.SortDirection == ImGui_SortDirection_Descending)
     specs.SpecsDirty = false
-  elif ui.order.column == fcFolder and not tree:
-    ui.order = FileOrder() # the Folder column went with the subfolders
-  ui.table.update(f, ui.filterText, ui.order)
+  elif ui.order.column == fcFolder and not tree or ui.order.column in SweepColumns and
+      not sweeps:
+    ui.order = FileOrder() # the Folder column went with the subfolders, the sweep ones with the tick
+  ui.table.update(f, ui.filterText, ui.order, ui.sweepFilter(st))
   let chosenRow = ui.table.chosenRow(f, f.chosen)
   let today = getTime()
   ui.keys.beforeRows()
@@ -275,12 +377,28 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
       igTextUnformatted(size.cstring, nil)
       discard igTableNextColumn()
       igTextUnformatted(shortDateText(e.modified, today).cstring, nil)
+      if sweeps:
+        for c in SweepColumns:
+          discard igTableNextColumn()
+          let cell = sweepCell(f, e, c)
+          if cell.text.len > 0:
+            let colour = if cell.warn: t.roles[rlWarning] elif cell.muted: t.roles[rlTextDim]
+              else: t.roles[rlText]
+            igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(colour))
+            igTextUnformatted(cell.text.cstring, nil)
+            igPopStyleColor(1)
+            marks.mark("files.cell " & $c & " " & e.name)
+          if cell.tip.len > 0 and igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and
+              igBeginItemTooltip():
+            igTextUnformatted(cell.tip.cstring, nil)
+            igEndTooltip()
   ImGuiListClipper_End(clipper)
   ImGuiListClipper_destroy(clipper)
   igEndTable()
   marks.mark("files.table")
 
-proc footer(f: FileList; shown: int; t: Theme; marks: var Marks; res: var FileListOutput) =
+proc footer(f: FileList; shown, signatures: int; listed: bool; t: Theme; marks: var Marks;
+    res: var FileListOutput) =
   ## What the list holds, or how far the listing is, under the table: how
   ## many files are seismic and survey files, and new and being written.
   var text = ""
@@ -297,13 +415,18 @@ proc footer(f: FileList; shown: int; t: Theme; marks: var Marks; res: var FileLi
     var surveys = 0
     for e in f.entries:
       if e.kind.isSurvey: inc surveys
-    let seismic = f.entries.len - surveys
+    let hidden = if listed: 0 else: signatures # (left out of the table: still in the scan)
+    let seismic = f.entries.len - surveys - hidden
     text = f.subfoldersNote
     if text.len == 0:
       text = $seismic & (if seismic == 1: " seismic file" else: " seismic files")
+      if seismic == 0 and hidden > 0: text = ""
     if surveys == 1: text.add ", 1 survey file"
     elif surveys > 1: text.add ", " & $surveys & " survey files"
-    if shown < f.entries.len: text.add ", " & $shown & " shown"
+    if hidden > 0:
+      text.add (if text.len > 0: ", " else: "") & $hidden & " signature " &
+        (if hidden == 1: "file" else: "files") & " not listed (Signature files is off)"
+    if shown < f.entries.len - hidden: text.add ", " & $shown & " shown"
     var fresh, writing = 0
     for e in f.entries:
       if e.isNew: inc fresh
@@ -392,8 +515,20 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
     tip("List the seismic files of every folder below this one too, with the folder " &
       "each is in shown in the Folder column. Kept with the project when one is open, " &
       "else in the settings.")
+    ui.refreshValues(f)
+    if ui.signatures > 0 or not st.settings.files.listSignatureFiles:
+      igSameLine(0, -1)
+      var listed = st.settings.files.listSignatureFiles
+      if igCheckbox("Signature files##filesigs", addr listed): result.toggleSignatures = true
+      marks.mark("files.signatures")
+      tip("List a vibrator controller's .dat and .vib signature files, step through them and " &
+        "follow them like seismic files. Off: they stay in the scan, counted, and are left out " &
+        "of the table, the arrow keys and Follow the latest; an explicit open always works.")
+    if ui.signatures > 0 and st.settings.files.listSignatureFiles:
+      ui.drawSweepFilters(t, marks)
     ui.drawRows(st, f, t, marks, result)
-    footer(f, ui.table.rows.len, t, marks, result)
+    footer(f, ui.table.rows.len, ui.signatures, st.settings.files.listSignatureFiles, t, marks,
+      result)
     marks.mark("files.footer")
     let wait = st.listingWait()
     if wait.kind != wkNone:

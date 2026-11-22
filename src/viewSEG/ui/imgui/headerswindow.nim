@@ -110,7 +110,8 @@ type
 
   HeadersOutput* = object
     commands*: seq[Command]
-    reopen*: bool ## the Summary's "Reopen with options..." was clicked
+    reopen*: bool   ## the Summary's "Reopen with options..." was clicked
+    openPair*: bool ## the Summary's "Open the .vib / .dat of this sweep" was clicked
 
 const JoinedTip = "From the survey, not the trace header"
   ## what a value a geometry join gave says when pointed at, as in the plot
@@ -168,13 +169,23 @@ proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks:
   marks.mark("headers.summary reopen")
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
     igSetTooltip("%s", ReopenTip.cstring)
+  if ses.isSignature:
+    igSameLine(0, -1)
+    let other = if ses.signature.kind == sgDat: ".vib" else: ".dat"
+    if igButton(("Open the " & other & " of this sweep##summarypair").cstring,
+        ImVec2_c(x: 0, y: 0)):
+      output.openPair = true
+    marks.mark("headers.summary pair")
+    if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
+      igSetTooltip("%s", (st.pairText(ses.path) & "\nShown in the same window; the other " &
+        "file's own button leads back.").cstring)
   # Made again when the file, its gather, its keys or the joins change, and
   # twice a second (the record's counts, a relation file loaded): not every
   # frame.
   let key = $int(ses.id) & "." & $gather & "." & $ses.keysRevision & "." & $st.joins.len
   let now = getMonoTime()
   if key != ui.summaryKey or now - ui.summaryAt > initDuration(milliseconds = 500):
-    ui.summary = summaryLines(ses, gather, st.joins, st.unitChoices)
+    ui.summary = summaryLines(ses, gather, st.joins, st.unitChoices, st.pairText(ses.path))
     ui.summaryKey = key
     ui.summaryAt = now
   template lines: untyped = ui.summary

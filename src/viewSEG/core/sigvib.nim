@@ -66,6 +66,20 @@ func infoOf(s: VibInfo; path: string): SweepInfo =
     triggerNs: startNs(s.start), timeIsStart: true, samples: int32(s.frames),
     declared: int32(s.frames), intervalUs: s.sampleIntervalUs, complete: s.complete)
 
+proc sweepInfo*(head: openArray[byte]; size: int64; path: string): SweepInfo =
+  ## What a list knows of the `.vib` at `path` of `size` bytes whose first bytes are `head`
+  ## (the 47-byte header): its start second, frames and whether it ends inside a frame. A file
+  ## the library refuses gives `problem` in words.
+  try:
+    result = infoOf(parseVibInfo(head, size), path)
+  except VibIncompleteError as e:
+    result = SweepInfo(kind: sgVib, problem: if "no samples" in e.msg: "no samples"
+      else: e.msg)
+  except VibFormatError as e:
+    result = SweepInfo(kind: sgVib, problem: e.msg)
+  except ValueError as e:
+    result = SweepInfo(kind: sgVib, problem: e.msg)
+
 # ------------------------------------------------------------ field rows --
 
 func le(b: openArray[byte]; at, n: int): int64 =
@@ -149,7 +163,7 @@ func whyNoFit(s: VibSweep): string =
     "the reference does not fit a linear sweep"
 
 proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice;
-    log: var DiagLog): tuple[segy: seq[byte]; facts: SignatureFacts] =
+    log: var DiagLog; pair = SignaturePair()): tuple[segy: seq[byte]; facts: SignatureFacts] =
   ## Decodes the bytes of the `.vib` file `name` at the interval `choice` says (500 us when
   ## it says none) and writes them as SEG-Y Rev 2.1 into memory, as the file `path`. Raises
   ## `SignatureError` in the library's words.
@@ -168,6 +182,17 @@ proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice
     raise sigError(name, "its start date (the year " & $shot.start.year & ") is past the year " &
       $MaxYear & ", a time this program cannot hold: the file cannot mean it")
   shot.nameNumber = nameNumberOf(path)
+  var paired = false
+  if pair.path.len > 0:
+    # the .dat of this sweep gives the clock time: its trigger, to the nanosecond (the frame
+    # stays the estimate)
+    let c = civilOf(pair.triggerNs)
+    try:
+      shot.setTrigger(VibTime(year: c.year, month: c.month, day: c.day, hour: c.hour,
+        minute: c.minute, second: c.second, nanosecond: c.nanosecond))
+      paired = true
+    except ValueError:
+      discard # a trigger the library does not take: the .vib stands alone
   var wopts = VibWriteOptions(cycleValues: true, groundForce: {vsA, vsB}, primary: vsB,
     timeAxis: (if choice.fromFirstFrame: vaRecord else: vaTrigger), units: vuCounts,
     traceOrder: voForces)
@@ -193,11 +218,19 @@ proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice
     endsInSweep: shot.endsInSweep,
     decodedAs: "SEG-Y Rev 2.1 in memory (no file written)")
   f.choice.intervalUs = interval
+  if paired:
+    f.pair = pair.path
+    f.pairTriggerNs = pair.triggerNs
+    f.info.controller = pair.controller
+    f.info.serialFrom = sfPair
+    f.info.vibrator = pair.vibrator
   for i, (n, code, unit) in Layout:
     f.traces.add SignatureTrace(name: n, short: Shorts[i], code: code, unit: unit)
   let fit = shot.sweep
-  f.trigger = SignatureTrigger(source: trNone, clockFrom: "the second the recording began",
-    timeZero: "first frame", crossings: fit.crossings, residualCycles: fit.residualCycles)
+  f.trigger = SignatureTrigger(source: trNone,
+    clockFrom: (if paired and shot.triggerSource != tsNone: "the .dat of this sweep"
+    else: "the second the recording began"), # (the library keeps the start second without a frame)
+  timeZero: "first frame", crossings: fit.crossings, residualCycles: fit.residualCycles)
   if shot.triggerSource == tsEstimated:
     f.trigger.source = trEstimated
     f.trigger.frame = shot.triggerFrame

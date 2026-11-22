@@ -38,7 +38,7 @@ func signatureRefusal*(head: openArray[byte]; size: int64; name: string): string
   elif isOtherVib(head) or isBrokenVib(head):
     result = name & " could not be opened as a vibrator .vib file: " & vibRefusal(head, size)
 
-proc readHead(path: string; head: var seq[byte]): int64 =
+proc readHead*(path: string; head: var seq[byte]): int64 =
   ## The file's first bytes into `head` and its size; -1 when it cannot be read.
   result = -1
   var f: File
@@ -75,7 +75,7 @@ proc readBytes(path: string; size: int64): seq[byte] =
     close(f)
 
 proc decodeToSession*(bytes: openArray[byte]; path: string; modified: Time;
-    choice = SignatureChoice(); log: var DiagLog): Session =
+    choice = SignatureChoice(); log: var DiagLog; pair = SignaturePair()): Session =
   ## Decodes `bytes`, the file at `path`, in memory and makes its session. Raises
   ## `SignatureError`. Worker-only, as `filejobs.openSession`: it makes the file's objects.
   let name = path.extractFilename
@@ -88,7 +88,7 @@ proc decodeToSession*(bytes: openArray[byte]; path: string; modified: Time;
       (segy, facts) = sigdat.decode(bytes, name, path, choice, log)
   of sgVib:
     {.cast(gcsafe).}:
-      (segy, facts) = sigvib.decode(bytes, name, path, choice, log)
+      (segy, facts) = sigvib.decode(bytes, name, path, choice, log, pair)
   of sgNone:
     let why = signatureRefusal(bytes.toOpenArray(0, min(bytes.len, SignatureHeadBytes) - 1),
       int64(bytes.len), name)
@@ -110,7 +110,8 @@ proc decodeToSession*(bytes: openArray[byte]; path: string; modified: Time;
     for k in opened.mindex.keys.mitems: k.status = tsAuxiliary
   result = newSession(path, move opened, int64(bytes.len), modified, OpenChoice(), facts)
 
-proc openSignatureWork*(path: string; to: Poster; choice = SignatureChoice()): JobWork =
+proc openSignatureWork*(path: string; to: Poster; choice = SignatureChoice();
+    pair = SignaturePair()): JobWork =
   ## The work of a job that opens the signature file at `path` and posts its session
   ## (`mkOpened`). It raises nothing but `SignatureError`, `IOError`, `OSError` and
   ## `JobCancelledError`. The file is read once and nothing is written.
@@ -138,7 +139,7 @@ proc openSignatureWork*(path: string; to: Poster; choice = SignatureChoice()): J
       bytes = readBytes(path, fs.getFileSize(path))
     ctx.checkCancelled()
     var log: DiagLog
-    var s = decodeToSession(bytes, path, modified, choice, log)
+    var s = decodeToSession(bytes, path, modified, choice, log, pair)
     ctx.checkCancelled() # the file closes here, on the thread that made it
     clearCycleRoots() # the UI thread may release the file's objects at once
     to.post Msg(job: ctx.id, kind: mkOpened, session: move s)

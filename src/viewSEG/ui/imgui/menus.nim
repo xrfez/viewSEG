@@ -36,6 +36,7 @@ type
     maOpenFile = "Open file...", maOpenFiles = "Open files...",
     maOpenFolder = "Open folder...", maClose = "Close",
     maReopen = "Reopen with options...",
+    maOpenVib = "Open the .vib of this sweep", maOpenDat = "Open the .dat of this sweep",
     maReloadVendors = "Reload vendor maps",
     maImportSurvey = "Import survey...", maClearSurvey = "Clear survey",
     maImportSettings = "Import settings...",
@@ -70,6 +71,8 @@ type
     recent*: seq[string]         ## File > Open recent, newest first
     recentFolders*: seq[string]  ## the folders there, newest first
     canClose*: bool              ## a file is shown, so File > Close closes it
+    signature*: string           ## the shown file is a vibrator signature file: "dat" or "vib"
+    pairName*: string            ## its other file's name when known; "" when not
     layouts*: seq[SavedLayout]   ## Window: the presets, and the user's under Layouts > Load
     keepsLayouts*: bool          ## layouts can be saved by name (the program keeps its settings)
     followLatest*: bool          ## File > Follow the latest file is checked
@@ -131,7 +134,7 @@ const
     maOpenFiles: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_O.cint,
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
     maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
-    maReopen: 0, maReloadVendors: 0,
+    maReopen: 0, maOpenVib: 0, maOpenDat: 0, maReloadVendors: 0,
     maImportSurvey: 0, maClearSurvey: 0, maImportSettings: 0, maImportLayout: 0,
     maImportEdits: 0,
     maExportLog: 0, maExportSettings: 0, maExportLayout: 0, maExportEdits: 0,
@@ -152,7 +155,8 @@ const
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
-    maReopen: IconRefresh, maReloadVendors: IconRefresh,
+    maReopen: IconRefresh, maOpenVib: IconStep, maOpenDat: IconStep,
+    maReloadVendors: IconRefresh,
     maImportSurvey: IconSurvey, maClearSurvey: IconTrash, maImportSettings: IconSliders,
     maImportLayout: IconLayout,
     maImportEdits: IconWriting, maExportLog: IconExport, maExportSettings: IconSliders,
@@ -572,6 +576,14 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       item(maReopen, result)
       igEndDisabled()
       tip(ReopenTip)
+      if input.signature.len > 0:
+        let action = if input.signature == "dat": maOpenVib else: maOpenDat
+        let label = $action & (if input.pairName.len > 0: " (" & input.pairName & ")" else: "")
+        if igMenuItem_Bool((menuIcons[action] & "  " & label).cstring, nil, false, true):
+          result.actions.incl action
+        marks.mark("menu." & $action)
+        tip("Show the other file of this sweep in the Seismic window: the .dat's .vib, the " &
+          ".vib's .dat. It is looked for when the list does not know it.")
       igSeparator()
       if igMenuItem_Bool((IconFollow & "  " & FollowWords).cstring, nil,
           input.followLatest, true):

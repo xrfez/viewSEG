@@ -6,8 +6,8 @@
 ## (`FileList.changes`): a scan's batch, or a file that appears, grows or
 ## goes while the folder is watched, is merged into the rows there are.
 
-import std/[algorithm, strutils, times]
-import ../core/filelist
+import std/[algorithm, os, strutils, tables, times]
+import ../core/[filelist, sigtypes]
 
 type
   FileColumn* = enum
@@ -15,7 +15,42 @@ type
     fcType = "Type"
     fcSize = "Size"
     fcModified = "Modified"
-    fcFolder = "Folder" ## the subfolders below the folder listed; shown when they are included
+    fcFolder = "Folder"         ## the subfolders below the folder listed; shown when they are included
+    fcTrigger = "Trigger (UTC)" ## signature files: the trigger, or the second a `.vib` began
+    fcController = "Controller"
+    fcVibrator = "Vibrator"
+    fcLine = "Line"
+    fcStation = "Station"
+    fcShot = "Shot"
+    fcSweepId = "Sweep id"
+    fcLength = "Length"
+    fcState = "State"
+    fcPair = "Pair"
+    fcForce = "Force avg %"
+    fcThd = "THD max %"
+    fcLimits = "Limits"
+
+  SweepFilter* = object
+    ## What the Files window's tick and drop-downs ask of the signature files.
+    hide*: bool             ## "Signature files" is off: they are left out of the table
+    controller*: int64 = -1 ## only this controller's; -1 for all
+    vibrator*: int = -1     ## only this vibrator's; -1 for all
+
+  SweepFacts* = object
+    ## What a row shows of a signature file: its own header's facts, and for a `.vib` the
+    ## `.dat` of its sweep's where the pair has them.
+    info*: SweepInfo
+    triggerNs*: int64
+    triggerFromPair*: bool ## `triggerNs` is the pair's `.dat`'s trigger
+    controllerFrom*: SerialFrom
+    pair*: string ## the partner's path; "" for none
+
+  SweepCell* = object
+    ## One cell of a signature column.
+    text*: string
+    tip*: string
+    muted*, warn*: bool
+
 
   FileOrder* = object
     ## How the table is sorted.
@@ -30,12 +65,17 @@ type
     filter: string
     words: seq[string]
     order: FileOrder
+    sweep: SweepFilter
+    pairsRev: int
     made: bool
     rowsRev: int      ## bumped whenever `rows` change
     touched: seq[int] ## `follow`'s own buffer
     chosen: tuple[path: string; row, rowsRev: int]
       ## the row last found for a path
     rebuilt: int      ## how often the rows were made from scratch
+
+const SweepColumns* = {fcTrigger .. fcLimits}
+  ## the columns of a signature file's facts, offered when the list holds one
 
 const kindRank = block:
   ## Each kind's place when the types are sorted by the names shown.
@@ -54,6 +94,47 @@ func cmpEntries(a, b: FileEntry; column: FileColumn): int =
   of fcSize: cmp(a.size, b.size)
   of fcModified: cmp(a.modified, b.modified)
   of fcFolder: naturalCmp(a.folder, b.folder)
+  of fcTrigger: cmp(sweepKey(a), sweepKey(b))
+  of fcController: cmp(a.sweep.controller, b.sweep.controller)
+  of fcVibrator: cmp(a.sweep.vibrator, b.sweep.vibrator)
+  of fcLine: cmp(a.sweep.line, b.sweep.line)
+  of fcStation: cmp(a.sweep.station, b.sweep.station)
+  of fcShot: cmp(a.sweep.shotId, b.sweep.shotId)
+  of fcSweepId: cmp(a.sweep.sweepId, b.sweep.sweepId)
+  of fcLength: cmp(float64(a.sweep.samples) * a.sweep.intervalUs,
+    float64(b.sweep.samples) * b.sweep.intervalUs)
+  of fcState: cmp(ord(not a.sweep.complete), ord(not b.sweep.complete))
+  of fcPair: 0
+  of fcForce: cmp(a.sweep.qc.forceAvgPct, b.sweep.qc.forceAvgPct)
+  of fcThd: cmp(a.sweep.qc.thdMaxPct, b.sweep.qc.thdMaxPct)
+  of fcLimits: cmp(card(a.sweep.qc.limits), card(b.sweep.qc.limits))
+
+func sweepFacts*(list: FileList; e: FileEntry): SweepFacts =
+  ## What a row shows of `e`: its own facts, and the pair's `.dat`'s for a `.vib` that has one.
+  result = SweepFacts(info: e.sweep, triggerNs: e.sweep.triggerNs,
+    controllerFrom: e.sweep.serialFrom, pair: list.pairs.getOrDefault(e.path))
+  if e.kind == fkVib and result.pair.len > 0:
+    let at = list.find(result.pair)
+    if at >= 0 and list.entries[at].kind == fkDat:
+      let d = list.entries[at].sweep
+      result.info.controller = d.controller
+      result.info.vibrator = d.vibrator
+      result.info.qc = d.qc
+      result.controllerFrom = sfPair
+      result.triggerNs = d.triggerNs
+      result.triggerFromPair = true
+
+func passes(list: FileList; e: FileEntry; f: SweepFilter): bool =
+  ## Whether the signature drop-downs and the tick let `e` through.
+  let sig = e.kind in SignatureFileKinds
+  if sig and f.hide: return false
+  if f.controller >= 0 or f.vibrator >= 0:
+    if not sig: return false
+    let w = sweepFacts(list, e)
+    if f.controller >= 0 and (w.controllerFrom == sfNone or w.info.controller != f.controller):
+      return false
+    if f.vibrator >= 0 and w.info.vibrator != f.vibrator: return false
+  true
 
 func cmpRows(list: FileList; order: FileOrder; a, b: int): int {.inline.} =
   ## The order of entries `a` and `b` in the table. The entries are in
@@ -66,7 +147,7 @@ proc rebuild(t: var FileTable; list: FileList) =
   ## Every row again: the entries the filter lets through, sorted.
   t.rows.setLen 0
   for i, e in list.entries:
-    if e.matches(t.words): t.rows.add i
+    if e.matches(t.words) and passes(list, e, t.sweep): t.rows.add i
   if t.order.column != fcName or t.order.descending:
     # By address: a closure that named `list` would hold a copy of every entry.
     let entries = addr list
@@ -113,7 +194,8 @@ proc follow(t: var FileTable; list: FileList; changes: openArray[EntryChange]) =
   # The indices are now the list's: the new rows, sorted, merged in.
   var added = newSeqOfCap[int](t.touched.len)
   for i in t.touched:
-    if i notin added and list.entries[i].matches(t.words): added.add i
+    if i notin added and list.entries[i].matches(t.words) and
+        passes(list, list.entries[i], t.sweep): added.add i
   if added.len == 0: return
   let entries = addr list
   let order = t.order
@@ -134,14 +216,16 @@ proc follow(t: var FileTable; list: FileList; changes: openArray[EntryChange]) =
       dec a
     dec w
 
-proc update*(t: var FileTable; list: FileList; filter: string; order: FileOrder) =
+proc update*(t: var FileTable; list: FileList; filter: string; order: FileOrder;
+    sweep = SweepFilter()) =
   ## Makes the rows again when the listing, the filter or the order changed
   ## since the last call; follows the entries' changes in the rows it has
   ## (`FileList.changes`) when only they did; otherwise does nothing, so it
   ## can run every frame. Making the rows allocates nothing per file, and a
   ## scan's batch or a file that appears costs a pass over the rows, not a
   ## sort of them.
-  if t.made and t.gen == list.gen and t.filter == filter and t.order == order:
+  let wholly = t.sweep != sweep or (sweep.controller >= 0 and t.pairsRev != list.pairsRev)
+  if t.made and t.gen == list.gen and t.filter == filter and t.order == order and not wholly:
     if t.entriesRev == list.entriesRev: return
     let missed = list.entriesRev - t.entriesRev
     if missed > 0 and missed <= list.changes.len:
@@ -155,6 +239,8 @@ proc update*(t: var FileTable; list: FileList; filter: string; order: FileOrder)
     t.filter = filter
     t.words = filterWords(filter)
   t.order = order
+  t.sweep = sweep
+  t.pairsRev = list.pairsRev
   t.made = true
   t.rebuild(list)
   inc t.rebuilt
@@ -201,6 +287,92 @@ func stepped*(t: FileTable; list: FileList; current: string; delta: int): string
       dec left
     i += dir
   list.entries[t.rows[at]].path
+
+func limitsText(q: SweepQc): string =
+  for l in q.limits: result.add $l
+
+func lengthText(i: SweepInfo): string =
+  if i.samples > 0 and i.intervalUs > 0: secondsWords(float64(i.samples) * i.intervalUs / 1e6)
+  else: ""
+
+func sweepCell*(list: FileList; e: FileEntry; column: FileColumn): SweepCell =
+  ## What `column`, one of `SweepColumns`, shows of signature file `e` (empty cells for any
+  ## other file, and for what a kind does not give). Reads nothing but the list.
+  if e.kind notin SignatureFileKinds: return
+  let w = sweepFacts(list, e)
+  let i = w.info
+  let own = e.sweep
+  if own.problem.len > 0:
+    if column == fcState:
+      result = SweepCell(text: own.problem, warn: true,
+        tip: e.name & " holds no readable sweep: " & own.problem & ". It is listed, and a " &
+          "click says why it cannot be shown.")
+    return
+  case column
+  of fcTrigger:
+    if e.kind == fkDat:
+      result = SweepCell(text: timeText(own.triggerNs, 3), tip: timeText(own.triggerNs, 9) &
+        " UTC")
+    elif w.triggerFromPair:
+      result = SweepCell(text: timeText(w.triggerNs, 3), tip: timeText(w.triggerNs, 9) &
+        " UTC, from the .dat of this sweep")
+    else:
+      result = SweepCell(text: "began " & timeText(own.triggerNs, 0)[11 .. ^1], muted: true,
+        tip: "a .vib file states only the second its recording began; the trigger is 0.2 to " &
+          "1.5 s after it")
+  of fcController:
+    if w.controllerFrom != sfNone:
+      result.text = intToStr(int(i.controller), 4)
+      result.tip = case w.controllerFrom
+        of sfFile: "from the file"
+        of sfFolder: "from the folder name, not in the file"
+        of sfPair: "from the .dat of this sweep"
+        of sfNone: ""
+  of fcVibrator:
+    if i.vibrator > 0: result.text = $i.vibrator
+  of fcLine:
+    if e.kind == fkDat and own.line > 0: result.text = $own.line
+  of fcStation:
+    if e.kind == fkDat and own.station > 0: result.text = $own.station
+  of fcShot:
+    if e.kind == fkDat and own.shotId > 0: result.text = $own.shotId
+  of fcSweepId:
+    if e.kind == fkDat and own.sweepId > 0: result.text = $own.sweepId
+  of fcLength:
+    result.text = lengthText(own)
+    if e.kind == fkVib: result.tip = "the frames of the file at the interval in force, the " &
+      "pre-trigger included"
+  of fcState:
+    if e.kind == fkDat and not own.complete:
+      let at = float64(own.samples) * own.intervalUs / 1e6
+      let full = float64(own.declared) * own.intervalUs / 1e6
+      result = SweepCell(text: "stopped " & formatFloat(at, ffDecimal, 1) & " s", warn: true,
+        tip: "the recording stopped after " & secondsWords(at) & " of " & secondsWords(full) &
+          ": the file holds " & $own.blocks & " of the " & $own.blocksDeclared &
+          " blocks its header announces")
+    elif e.kind == fkDat and own.sweepNumber == 16:
+      result.text = "pulse"
+    elif e.kind == fkVib and not own.complete:
+      result = SweepCell(text: "cut short", warn: true,
+        tip: "the file ends inside a frame: a copy cut short, or a file still being written")
+  of fcPair:
+    if w.pair.len > 0:
+      result = SweepCell(text: (if e.kind == fkDat: ".vib" else: ".dat"),
+        tip: "the " & (if e.kind == fkDat: ".vib" else: ".dat") & " of this sweep: " &
+          w.pair.extractFilename)
+    elif e.path in list.pairNotes:
+      result.tip = list.pairNotes[e.path]
+  of fcForce:
+    if i.qc.valid and i.qc.forceAvgPct >= 0: result.text = $i.qc.forceAvgPct
+  of fcThd:
+    if i.qc.valid and i.qc.thdMaxPct >= 0: result.text = $i.qc.thdMaxPct
+  of fcLimits:
+    if i.qc.valid:
+      result.text = limitsText(i.qc)
+      result.warn = i.qc.limits.card > 0
+      result.tip = "the limits the controller's report prints as tripped (T M V F R): their " &
+        "meanings are not known"
+  else: discard
 
 func sizeText*(bytes: int64): string =
   ## "812 B", "4.2 KB", "65.1 MB", "1.27 GB" (powers of 1000, as file

@@ -1021,7 +1021,7 @@ proc openReopen(ui: var Ui) =
   if i < 0: ui.say("Reopen with options: no file is shown.", mlWarning)
   else:
     let s = ui.core.sessions[i]
-    ui.reopen.open(s.path, ui.core.openChoiceOf(s.path), s.facts.opened)
+    ui.reopen.open(s.path, ui.core.openChoiceOf(s.path), s.facts.opened, s.signature.kind)
 
 proc onActions(ui: var Ui; actions: set[MenuAction]) =
   let recent = ui.core.settings.recentFolders
@@ -1037,6 +1037,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maImportSurvey: ui.join.open()
     of maClearSurvey: ui.clearSurvey.ask()
     of maReopen: ui.openReopen()
+    of maOpenVib, maOpenDat: ui.core.apply Command(kind: ckOpenPair, panel: MainPanel)
     of maReloadVendors: ui.core.apply Command(kind: ckReloadVendors)
     of maAbout: ui.about.open()
     of maShortcuts:
@@ -1290,6 +1291,21 @@ proc drawNotices(ui: var Ui) =
   igEnd()
   igPopStyleColor(1)
 
+func shownSignatureFile(st: AppState): int =
+  ## The session of the vibrator signature file the Seismic window shows; -1 for none.
+  let i = st.shownFile(st.findPanel(MainPanel))
+  if i >= 0 and st.sessions[i].isSignature: i else: -1
+
+func signatureWord(st: AppState): string =
+  ## "dat" or "vib" for a signature file shown; "" for any other.
+  let i = st.shownSignatureFile
+  if i < 0: "" elif st.sessions[i].signature.kind == sgDat: "dat" else: "vib"
+
+func pairNameOf(st: AppState): string =
+  ## The other file of the sweep shown, by name; "" when unknown.
+  let i = st.shownSignatureFile
+  if i >= 0: st.partnerOf(st.sessions[i].path).extractFilename else: ""
+
 proc drawUi(ui: var Ui): set[MenuAction] =
   ui.marks.setLen 0
   let shownAt = ui.core.shownFile(ui.core.findPanel(MainPanel))
@@ -1300,6 +1316,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     follows: DefaultThemeNames[resolveTheme(ui.choice, ui.system)],
     recent: ui.core.settings.recentFiles, recentFolders: ui.core.settings.recentFolders,
     canClose: ui.core.shownFile(ui.core.findPanel(MainPanel)) >= 0, layouts: ui.core.layouts,
+    signature: signatureWord(ui.core), pairName: pairNameOf(ui.core),
     keepsLayouts: ui.keepsLayouts, followLatest: ui.core.settings.files.followLatest,
     agentOn: ui.agent.running, agentSocket: ui.agentSocket,
     prepareNext: ui.core.settings.files.prepareNext,
@@ -1412,6 +1429,16 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     var s = ui.core.settings
     s.files.prepareNext = not s.files.prepareNext
     ui.core.apply Command(kind: ckSettings, settings: s)
+  if files.toggleSignatures:
+    var s = ui.core.settings
+    s.files.listSignatureFiles = not s.files.listSignatureFiles
+    ui.core.apply Command(kind: ckSettings, settings: s)
+  if plot.stepFile != 0:
+    # Page Down after a signature file's last record, Page Up before its first: the Files
+    # window's next or previous file, in its order and filters
+    let next = ui.files.steppedFile(ui.core, plot.stepFile)
+    if next.len > 0:
+      ui.core.apply Command(kind: ckShowFile, panel: MainPanel, path: next)
   if files.toggleFollow or menu.toggleFollow:
     var s = ui.core.settings
     s.files.followLatest = not s.files.followLatest
@@ -1433,6 +1460,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     for c in headers.commands.mitems:
       ui.core.apply move c
     if headers.reopen: ui.openReopen()
+    if headers.openPair: ui.core.apply Command(kind: ckOpenPair, panel: MainPanel)
   ui.mapCursor = ""
   if ui.windows.shows(awMap):
     # A layout saved before the map came names no map: it joins the Headers

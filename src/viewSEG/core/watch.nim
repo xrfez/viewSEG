@@ -41,7 +41,7 @@
 ##   Such a thread is left to the end of the process, with its memory.
 
 import std/[locks, monotimes, os, sets, strutils, tables, times]
-import filejobs, filelist, filesystem, inbox, jobs, threads
+import filejobs, filelist, filesystem, inbox, jobs, sweepinfo, threads
 
 export filelist
 
@@ -115,8 +115,10 @@ proc quitting(p: ptr WatchObj): bool =
     result = p.quit
 
 proc report(s: Seen; path: string): WatchedFile =
-  WatchedFile(path: path, exists: true, kind: s.kind, size: s.size, modified: s.modified,
-    changing: s.changing, listed: s.listed)
+  result = WatchedFile(path: path, exists: true, kind: s.kind, size: s.size,
+    modified: s.modified, changing: s.changing, listed: s.listed)
+  if s.kind in SignatureFileKinds: # (its header says what a list shows of it)
+    result.sweep = readSweepInfo(path, s.kind.sweepKindOf, s.size)
 
 proc see(w: var Watcher; path: string; listed: bool; news: var seq[WatchedFile]) =
   ## Looks at `path` once this turn and adds what is news about it to `news`.

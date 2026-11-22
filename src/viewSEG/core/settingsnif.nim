@@ -32,7 +32,7 @@
 ##  (customOrder (key offset))
 ##  (messages (autoScroll true) (hide info))
 ##  (cursorLine false)
-##  (files (followLatest false) (prepareNext true))
+##  (files (followLatest false) (prepareNext true) (listSignatureFiles false))
 ##  (map (info popup) (lengths survey) (hide recorded) (templateBox false) (folderShots true)
 ##   (filters noisy clipped)
 ##   (template (shape patch) (lines 8) (channels 120) (inline 1500.0) (crossline 500.0)))
@@ -411,6 +411,7 @@ proc settingsDocument*(s: Settings): string =
   w.value("followLatest", s.files.followLatest)
   if s.files.subfolders: w.value("subfolders", true)
   w.value("prepareNext", s.files.prepareNext)
+  if not s.files.listSignatureFiles: w.value("listSignatureFiles", false)
   w.close()
   w.open("map")
   w.choice("info", MapInfoNames[s.map.info])
@@ -989,6 +990,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
           if k.isTree("followLatest"): r.flag(k, result.files.followLatest)
           elif k.isTree("subfolders"): r.flag(k, result.files.subfolders)
           elif k.isTree("prepareNext"): r.flag(k, result.files.prepareNext)
+          elif k.isTree("listSignatureFiles"): r.flag(k, result.files.listSignatureFiles)
           else: r.unknown(k, "files")
       of "map":
         for k in c.kids:
