@@ -39,16 +39,14 @@ next part's.
 
 Capabilities are the rows below, each counted by the first part of its status ("in part": built, with a part still planned or to plan). Names are the names each library exports, enum values not counted, each at the most advanced status of the rows that name it.
 
-| Status | parseSEG 0.18.0: capabilities | names | processSEG 0.9.0: capabilities | names |
+| Status | parseSEG 0.18.0: capabilities | names | processSEG 0.10.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 53 (20 in part) | 176 | 34 (23 in part) | 155 |
+| `built` | 53 (20 in part) | 176 | 35 (24 in part) | 165 |
 | `internal` | 15 | 43 | 5 | 39 |
-| `planned` | 32 | 220 | 45 | 398 |
+| `planned` | 32 | 220 | 45 | 407 |
 | `to plan` | 2 | 10 | 1 | 5 |
 | `not applicable` | 20 | 364 | 6 | 65 |
-| all | 122 | 813 | 91 | 662 |
-
-In the next library release (below): processSEG: 1 capabilities (1 built).
+| all | 122 | 813 | 92 | 681 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -405,19 +403,19 @@ name, so these are building blocks for code that works on raw headers.
 |---|---|---|---|
 | Synthetic wavelets, arrivals and noise | `ricker`, `addRicker`, `addSinusoid`, `linearMs`, `hyperbolicMs`, `addLinear`, `addHyperbola`, `addNoise`, `DefaultNoiseSeed` | The synthetic sample set (tools/sampledata); test fixtures | planned |
 
-## In the next library release
-
-processSEG after 0.9.0 adds the recording filter below; parseSEG 0.17.0 and
-processSEG 0.9.0, the releases this repository pins, are in the tables above. While a release is being prepared, a working tree of it can be
-linked at `deps/next/parseSEG` or `deps/next/processSEG`; the check then reads its committed
-`HEAD` and holds the tables of this section, `### parseSEG (after 0.15.0)` and
-`### processSEG (after 0.7.0)`, to the names it adds.
-
-### processSEG (after 0.9.0)
+### Recording filter of a generated reference
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | A generated reference through a typed recorder filter, its bulk delay backed out | `RecordingFilter`, `RecFilterKind`, `RecFilterFamily`, `applyRecordingFilter`, `checkFilter`, `linearPhaseTaps`, `linearDelaySamples`, `linearShiftSamples`, `coefficientsSymmetric`, `responseAt`, `bulkDelaySamples`, `suggestedShift`, `shiftResidualDeg`, `maxDesignTaps`, `maxCoefficients`, `maxOrder`, `minRippleDb`, `maxRippleDb`, `maxSlopeDbPerOctave` | Operations → References → Generate a reference: Recording filter | built (linear phase: taps, cutoffs, slopes; minimum phase: coefficients or Butterworth/Chebyshev, typed delay with a suggestion; `shiftResidualDeg` unused); planned (loading coefficients from a file) |
+
+## In the next library release
+
+None at present: parseSEG 0.18.0 and processSEG 0.10.0, the releases this repository pins,
+are in the tables above. While a release is being prepared, a working tree of it can be
+linked at `deps/next/parseSEG` or `deps/next/processSEG`; the check then reads its committed
+`HEAD` and holds the tables of this section, `### parseSEG (after 0.18.0)` and
+`### processSEG (after 0.10.0)`, to the names it adds.
 
 ## Not exposed
 

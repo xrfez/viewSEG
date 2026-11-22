@@ -9,7 +9,7 @@
     "processSEG": {
       "dir": "$deps/processSEG",
       "url": "https://github.com/xrfez/processSEG",
-      "commit": "851954000a4a490552ac9aa36072f05a38c76122",
+      "commit": "fdf617c8aa10ec6185359cef2616005c0d38010a",
       "version": ""
     },
     "Arraymancer": {
@@ -129,7 +129,7 @@
       "",
       "requires \"nim >= 2.4.0\"",
       "requires \"https://github.com/xrfez/parseSEG >= 0.18.0\"",
-      "requires \"https://github.com/xrfez/processSEG >= 0.9.0\"",
+      "requires \"https://github.com/xrfez/processSEG >= 0.10.0\"",
       "requires \"https://github.com/dinau/imguin >= 1.92.9.0\"",
       "requires \"https://github.com/dinau/sdl3_nim >= 3.4.18.0\"",
       ""
