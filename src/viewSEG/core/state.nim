@@ -106,6 +106,8 @@ from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
 from processing import changesSamples, ownShownWords, reverseShownWords
 import signatures, sweeppairs
+from sigvib import gfPoundForcePerPoundCount
+from units import NPerLbf, sensible
 import analysis, analysisreader, closer, compare, comparejobs, components, diskio, edits, filejobs,
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
       join, layouts, log,
@@ -1985,7 +1987,7 @@ func pairArgOf(state: AppState; path: string): SignaturePair =
       info = state.pairAnswers[path].info
     if info.kind == sgDat and info.problem.len == 0:
       result = SignaturePair(path: partner, triggerNs: info.triggerNs,
-        controller: info.controller, vibrator: info.vibrator)
+        controller: info.controller, vibrator: info.vibrator, qc: info.qc)
 
 func signatureKindOfPath(state: AppState; path: string): SignatureKind =
   ## Which signature file `path` is, as an open session or the file list knows it; `sgNone` when
@@ -8578,7 +8580,13 @@ proc applyCommand(state: var AppState; cmd: Command) =
     let raw = (rfRawAmplitude in s.readout) != (rfRawAmplitude in state.settings.readout)
     # The settings a window sends are those in effect with its change: only
     # that change is the user's (what an agent changed meanwhile is not).
+    let scaled = not sameScale(s.forceScale, state.settings.forceScale)
     state.change(cmd.origin, x): x = carried(x, state.settings, s)
+    if scaled:
+      # a signature file's force scale changed: its Vibrator windows are worked out again
+      for w in 0 ..< state.plots.len:
+        if state.plots[w].view == avVibrator and state.vibSignature(w) != sgNone:
+          discard state.askPlot(w)
     if follow: state.followNewest() # the newest file whole now, at once
     state.prepareNext() # (turned on or off)
     if raw: # the tiles carry their raw samples, or no longer: made again from the samples held

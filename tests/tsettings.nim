@@ -86,7 +86,8 @@ proc everyFieldSet(): Settings =
       fk: FkOptions(floorDb: -90, colourMap: cmGrey, raw: true)),
     componentColours: [Rgba(r: 1, g: 2, b: 3, a: 255), Rgba(r: 4, g: 5, b: 6, a: 255),
       Rgba(r: 7, g: 8, b: 9, a: 255), Rgba(r: 10, g: 11, b: 12, a: 255)],
-    referenceId: "r-pilot", vibRoles: @["4/21.19.18.20 0.3.1.2"], units: usImperial)
+    referenceId: "r-pilot", vibRoles: @["4/21.19.18.20 0.3.1.2"], units: usImperial,
+    forceScale: ForceScale(datCountsPerLbf: 8, vibAccMvPerCount: 12.5))
   result.plot = PlotDefaults(
     display: DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDensity,
       fills: {wfNegative}, colours: pcCustom,

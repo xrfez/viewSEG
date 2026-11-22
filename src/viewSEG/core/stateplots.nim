@@ -292,6 +292,46 @@ func vibTyped*(state: AppState; pw: AnalysisWindow): float64 =
   if result.isNaN and state.inProject:
     result = topsOf(state.project.doc.vibTops).topOf(key)
 
+proc signatureAsk(state: AppState; s: Session; p: AnalysisParams): SignatureAsk =
+  ## What a signature file adds to the Vibrator window's ask: the user's force scale (the
+  ## ground force in newtons, display and verdict only), the 100 % force the file itself
+  ## gives, and the controller's QC record (a `.vib`'s through its pair).
+  let f = s.signature
+  result = SignatureAsk(given: true, isDat: f.kind == sgDat,
+    setA: f.kind == sgVib and p.accelSet == asA)
+  let scale = state.settings.forceScale
+  case f.kind
+  of sgDat:
+    if scale.datCountsPerLbf > 0 and scale.datCountsPerLbf < Inf:
+      result.gfToN = NPerLbf / scale.datCountsPerLbf
+      result.scaleWords = sensible(scale.datCountsPerLbf) & " counts per lbf"
+      if f.qc.valid and f.qc.targetForceLbf > 0 and p.targetPct > 0:
+        result.hundredN = float64(f.qc.targetForceLbf) * 100 / p.targetPct * NPerLbf
+        result.hundredWords = "100 % from the controller's target force (" &
+          $f.qc.targetForceLbf & " lbf at " & sensible(p.targetPct) & " % of the full scale)"
+    if f.qc.valid:
+      result.ctlFrom = "this file"
+      result.ctl = f.qc.brief
+      result.ctl.valid = true
+      result.correlationStored = f.qc.correlationStored
+      result.correlationLagZero = f.qc.correlationLagZero
+  of sgVib:
+    let k = scale.vibAccMvPerCount
+    if k > 0 and k < Inf:
+      let factor = gfPoundForcePerPoundCount(f.info.weights, p.accelSet == asA, k)
+      if factor > 0 and factor < Inf:
+        result.gfToN = factor * NPerLbf
+        result.scaleWords = "accelerometer constant " & sensible(k)
+        let hold = f.info.weights.holdDownLb
+        if hold > 0 and hold < Inf:
+          result.hundredN = hold * NPerLbf
+          result.hundredWords = "100 % from the file's hold-down weight (" &
+            sensible(hold) & " lb)"
+    if f.pair.len > 0 and f.pairQc.valid:
+      result.ctlFrom = "the .dat of this sweep"
+      result.ctl = f.pairQc
+  of sgNone: discard
+
 proc askPlot(state: var AppState; w: int): bool =
   ## Asks the reader for window `plots[w]`'s numbers of its traces, with
   ## the filters it has; false when its file is not open any more or cannot
@@ -312,7 +352,9 @@ proc askPlot(state: var AppState; w: int): bool =
   var a = AnalysisAsk(id: pw.id, view: pw.view, params: pw.params, file: s.filePtr,
     path: s.path, size: s.size, traces: traces, names: labels,
     processing: pw.processing)
-  if s.isSignature: a.forceNote = signatureForceNote(s.signature)
+  if s.isSignature:
+    a.forceNote = signatureForceNote(s.signature)
+    a.sig = state.signatureAsk(s, pw.params)
   # the unit of the file's distances: as imported, else what its headers say
   let joined = state.joinedOf(s.id)
   let imported = joined >= 0 and state.joins[joined].units.file != suNotGiven
@@ -435,12 +477,23 @@ proc gatherOrder(state: AppState; k, i: int): seq[int] =
   else:
     for t in s.gathers[g].traces: result.add t
 
-proc codeRolesIn(s: Session; fileTraces: openArray[int]; roles: VibRoles): (bool, VibRoles) =
+proc codeRolesIn(s: Session; fileTraces: openArray[int]; roles: VibRoles;
+    accelSet = asB): (bool, VibRoles) =
   ## `roles` with the places the identification codes of `fileTraces` (indices in `s`'s
-  ## file, the window's order) give, and whether they gave any.
+  ## file, the window's order) give, and whether they gave any. For a `.vib` judged on set A
+  ## its codes (258, 257, 267) stand for the reaction mass, baseplate and ground force, and
+  ## set B's own codes are not looked at.
   var codes: seq[int16] = @[]
   for t in fileTraces:
     codes.add(if t in 0 ..< s.filePtr[].len: s.filePtr[].traceKeys(t).traceCode else: 0'i16)
+  if accelSet == asA and s.signature.kind == sgVib:
+    for c in codes.mitems:
+      c = case c
+        of VibSetAMassCode: VibReactionMassCode
+        of VibSetABaseplateCode: VibBaseplateCode
+        of VibSetAGroundForceCode: VibGroundForceCode
+        of VibReactionMassCode, VibBaseplateCode, VibGroundForceCode: 0'i16
+        else: c
   var plain = roles
   (plain.source, plain.handFile) = (rsPosition, "")
   let r = plain.withCodeRoles(codes, "")
@@ -503,8 +556,23 @@ proc shapeOpened(state: AppState; view: AnalysisView; i: int; traces: var seq[in
     for j in evenly(traces.len, MaxPlotTraces): kept.add traces[j]
     traces = kept
 
+proc accelSetTraces(s: Session; traces: seq[int]; accelSet: AccelSet): seq[int] =
+  ## The traces (indices in `s`'s file) of a `.vib`'s Vibrator window judging `accelSet`: for
+  ## set B what it holds already; for set A the reference and the three traces of set A of the
+  ## same record, in the file's order. Unchanged when a trace of the set is missing.
+  result = traces
+  if accelSet == asB or s.signature.kind != sgVib or traces.len == 0: return
+  let g = s.gatherOf(traces[0])
+  if g notin 0 ..< s.gathers.len: return
+  let record = s.gathers[g].traces
+  var found: seq[int] = @[]
+  for t in record.a .. min(record.b, record.a + MaxCodeScan - 1):
+    if s.filePtr[].traceKeys(t).traceCode in [VibReferenceCode, VibSetAMassCode,
+        VibSetABaseplateCode, VibSetAGroundForceCode]: found.add t
+  if found.len == 4: result = found
+
 proc rolesOf(state: AppState; s: Session; fileTraces: openArray[int]; roles: VibRoles;
-    file: string): VibRoles =
+    file: string; accelSet = asB): VibRoles =
   ## `roles` of a vibrator signature on `fileTraces` (indices in `s`'s file, the
   ## window's order) of `file`. A choice made by hand on this file stays. Else a choice
   ## remembered for this file layout (the record's trace count and codes) applies; else
@@ -514,8 +582,20 @@ proc rolesOf(state: AppState; s: Session; fileTraces: openArray[int]; roles: Vib
   if s.isSignature:
     # The channels are named by the file: the codes decide, never a remembered layout or a
     # hand-made choice (the polarity the user chose stays).
-    let (found, byCodes) = s.codeRolesIn(fileTraces, roles)
+    let (found, byCodes) = s.codeRolesIn(fileTraces, roles, accelSet)
     if found: result = byCodes
+    # the polarity the user chose for this file layout comes back (the places are the codes');
+    # Automatic is never offered here, and M and B have no polarity of their own
+    result.massPolarity = poAsRecorded
+    result.judge = joRecorded
+    if fileTraces.len > 0:
+      let g = s.gatherOf(fileTraces[0])
+      var places: array[4, int]
+      var polarity = Recorded
+      if g in 0 ..< s.gathers.len and state.vibLayouts.choiceFor(
+          layoutKey(s.recordCodes(g), s.gathers[g].traces.len), places, polarity):
+        result.groundForcePolarity = polarity.gf
+    if result.groundForcePolarity == poAutomatic: result.groundForcePolarity = poAsRecorded
     return
   if fileTraces.len == 0 or roles.source == rsHand and roles.handFile == file: return
   let g = s.gatherOf(fileTraces[0])
@@ -559,7 +639,7 @@ proc codeRoles*(state: AppState; w: int): VibRoles =
   let s = state.sessions[i]
   var local: seq[int] = @[]
   for t in state.plots[w].traces: local.add t - s.base
-  let (found, r) = s.codeRolesIn(local, result)
+  let (found, r) = s.codeRolesIn(local, result, state.plots[w].params.accelSet)
   if found: result = r
 
 proc projectChanged(state: var AppState)
@@ -595,6 +675,29 @@ proc rememberRoles(state: var AppState; w: int; roles: VibRoles; origin: Command
   state.vibLayouts = state.vibLayouts.withChoice(layoutKey(s.recordCodes(g), s.gathers[
       g].traces.len), places, ChosenPolarity(gf: roles.groundForcePolarity,
         mb: roles.massPolarity, judge: roles.judge))
+  state.persistVibLayouts(origin)
+
+proc rememberSigPolarity(state: var AppState; w: int; polarity: Polarity;
+    origin: CommandOrigin) =
+  ## The ground force's polarity chosen on a signature file's window is remembered for its
+  ## layout (in the project, else the settings): the places are the codes' own, so the
+  ## record's trace of Ref, GF, M and B is the one with code 21, 20, 18 and 19.
+  let i = state.vibWindowFile(w)
+  if i < 0: return
+  let s = state.sessions[i]
+  let g = s.gatherOf(state.plots[w].traces[0] - s.base)
+  if g notin 0 ..< s.gathers.len: return
+  let record = s.gathers[g].traces
+  var places = [-1, -1, -1, -1]
+  for t in record.a .. min(record.b, record.a + MaxCodeScan - 1):
+    case s.filePtr[].traceKeys(t).traceCode
+    of VibReferenceCode: (if places[0] < 0: places[0] = t - record.a)
+    of VibGroundForceCode: (if places[1] < 0: places[1] = t - record.a)
+    of VibReactionMassCode: (if places[2] < 0: places[2] = t - record.a)
+    of VibBaseplateCode: (if places[3] < 0: places[3] = t - record.a)
+    else: discard
+  state.vibLayouts = state.vibLayouts.withChoice(layoutKey(s.recordCodes(g), record.len),
+    places, ChosenPolarity(gf: polarity))
   state.persistVibLayouts(origin)
 
 proc forgetRoles(state: var AppState; w: int; origin: CommandOrigin) =
@@ -646,6 +749,34 @@ proc vibForceNote*(state: AppState; w: int): string =
   if i >= 0 and state.sessions[i].isSignature:
     result = signatureForceNote(state.sessions[i].signature)
 
+proc vibSignature*(state: AppState; w: int): SignatureKind =
+  ## Which signature file plot `w` (a Vibrator window) is of; `sgNone` for any other file.
+  if w < 0 or w >= state.plots.len: return sgNone
+  let i = state.vibWindowFile(w)
+  if i >= 0: state.sessions[i].signature.kind else: sgNone
+
+proc vibWeights*(state: AppState; w: int): VibWeights =
+  ## The header's weights and sensitivities of the `.vib` plot `w` is of (NaN for any other
+  ## file).
+  if state.vibSignature(w) == sgVib: state.sessions[state.vibWindowFile(w)].signature.info.weights
+  else: VibWeights()
+
+proc vibWeightFindings*(state: AppState): seq[VibratorWeights] =
+  ## The `.vib` header weights of the listed folder, per vibrator (the `.dat` of the sweep tells
+  ## which, when it is listed): a vibrator whose sweeps state different weights, or whose weights
+  ## differ from those the others state, is flagged (`vibratorWords`). Nothing is corrected.
+  var sweeps: seq[tuple[vibrator: int; weights: VibWeights]] = @[]
+  for e in state.files.entries:
+    if e.kind == fkVib and e.sweep.problem.len == 0:
+      var v = 0
+      let partner = state.files.pairs.getOrDefault(e.path)
+      if partner.len > 0:
+        let d = state.files.find(partner)
+        if d >= 0 and state.files.entries[d].kind == fkDat:
+          v = state.files.entries[d].sweep.vibrator
+      sweeps.add (v, e.sweep.weights)
+  perVibrator(sweeps)
+
 proc vibRolesLine*(state: AppState; w: AnalysisWindow; long = true): string =
   ## Where each role of a vibrator signature comes from, in one line. `long`: "Reference:
   ## trace 1 (vibrator reference, 21) · Ground force: trace 4 (...) · Mass: ... ·
@@ -667,7 +798,15 @@ proc vibRolesLine*(state: AppState; w: AnalysisWindow; long = true): string =
     of rsCodes: "from the trace identification codes"
     of rsHand: "chosen by hand"
     of rsRemembered: "remembered for this file layout")
-  if w.params.roles.source in {rsPosition, rsCodes} and state.rememberedNotUsed(w):
+  let sigAt = if w.traces.len > 0: state.findTrace(w.traces[0]) else: -1
+  if sigAt >= 0 and state.sessions[sigAt].isSignature:
+    # what the user chose on a signature file's window is said wherever the roles are
+    if state.sessions[sigAt].signature.kind == sgVib and w.params.accelSet == asA:
+      result.add "; accelerometer set A, by your choice"
+    if w.params.roles.groundForcePolarity == poReversed:
+      result.add "; GF reversed for the analysis: your choice"
+  if w.params.roles.source in {rsPosition, rsCodes} and state.rememberedNotUsed(w) and
+      not (sigAt >= 0 and state.sessions[sigAt].isSignature):
     result.add "; the choice remembered for this file layout is not used: some of its " &
       "traces are not in the window"
 
@@ -728,6 +867,8 @@ proc openPlot(state: var AppState; cmd: Command) =
     for j, t in order: rank[t] = j
     traces = traces.sortedByIt(rank.getOrDefault(it, order.len))
   state.shapeOpened(cmd.plotView, i, traces, order)
+  if cmd.plotView == avVibrator and s.isSignature:
+    traces = s.accelSetTraces(traces, cmd.plotParams.accelSet)
   template p: untyped = state.panels[k]
   # Settings not given (the built-in ones) open with the options last used for the kind
   let params = if cmd.plotParams == AnalysisParams():
@@ -739,8 +880,9 @@ proc openPlot(state: var AppState; cmd: Command) =
     since: state.plotGen + 1)
   w.filters = filtersText(w.processing)
   if w.view == avVibrator:
+    if s.signature.kind != sgVib: w.params.accelSet = asB
     if samePlaces(cmd.plotParams.roles, VibRoles()):
-      w.params.roles = state.rolesOf(s, traces, w.params.roles, s.name)
+      w.params.roles = state.rolesOf(s, traces, w.params.roles, s.name, w.params.accelSet)
     else: # the command names the places: that is a choice made on this file
       w.params.roles.source = rsHand
       w.params.roles.handFile = s.name
@@ -772,7 +914,46 @@ proc showPlot(state: var AppState; cmd: Command) =
     state.ignore(cmd, problem)
     return
   var params = cmd.plotParams
-  if pw.view == avVibrator:
+  let sigFile = if pw.view == avVibrator: state.vibWindowFile(w) else: -1
+  if sigFile >= 0 and state.sessions[sigFile].isSignature:
+    # a signature file's window: the codes decide the places (the user picks no trace), the
+    # accelerometer set is the window's own choice, and the ground force's polarity is as
+    # recorded unless the user reverses it, which is remembered for the file layout
+    let s = state.sessions[sigFile]
+    let had = pw.params.roles
+    if s.signature.kind != sgVib: params.accelSet = asB
+    if params.accelSet != pw.params.accelSet:
+      var local: seq[int] = @[]
+      for t in pw.traces: local.add t - s.base
+      if params.accelSet == asB:
+        # back to set B: the record's coded traces, as a window opens on them
+        var seed = @[local[0]]
+        state.shapeOpened(avVibrator, sigFile, seed)
+        local = seed
+      else:
+        let before = local
+        local = s.accelSetTraces(local, asA)
+        if local == before:
+          params.accelSet = asB
+          state.log.add(sevWarning, s.name, "This record has no accelerometer set A: the " &
+            "window keeps set B.")
+      if params.accelSet != pw.params.accelSet:
+        pw.traces = local.mapIt(it + s.base)
+        pw.first = local[0]
+        pw.record = s.recordText(local[0])
+    var pol = params.roles.groundForcePolarity
+    if pol == poAutomatic:
+      pol = poAsRecorded
+      state.log.add(sevWarning, s.name, "Automatic polarity is not offered for a signature " &
+        "file: the ground force stays as recorded unless you reverse it.")
+    var local: seq[int] = @[]
+    for t in pw.traces: local.add t - s.base
+    let (found, byCodes) = s.codeRolesIn(local, had, params.accelSet)
+    params.roles = if found: byCodes else: had
+    params.roles.groundForcePolarity = pol
+    (params.roles.massPolarity, params.roles.judge) = (poAsRecorded, joRecorded)
+    if pol != had.groundForcePolarity: state.rememberSigPolarity(w, pol, cmd.origin)
+  elif pw.view == avVibrator:
     # where the roles came from is the window's to say: "Roles from the codes" puts the
     # code-given places back (and forgets the layout's remembered choice); a role given
     # another trace is a choice made on this window's file and remembered for its layout;
@@ -1014,6 +1195,10 @@ proc repick(state: var AppState; w, k, i: int): bool =
     state.blockPlot(w, i, problem)
     return true
   let s = state.sessions[i]
+  if view == avVibrator:
+    # a `.vib` window judging set A keeps to it as it follows; any other file is set B's
+    if s.signature.kind != sgVib: state.plots[w].params.accelSet = asB
+    seed = s.accelSetTraces(seed, state.plots[w].params.accelSet)
   var ids: seq[int] = @[]
   for t in seed: ids.add t + s.base
   template pw: untyped = state.plots[w]
@@ -1030,7 +1215,8 @@ proc repick(state: var AppState; w, k, i: int): bool =
   pw.file = s.name
   pw.record = s.recordText(seed[0])
   pw.traces = ids
-  if view == avVibrator: pw.params.roles = state.rolesOf(s, seed, oldRoles, s.name)
+  if view == avVibrator:
+    pw.params.roles = state.rolesOf(s, seed, oldRoles, s.name, pw.params.accelSet)
   pw.first = seed[0]
   pw.processing = pr
   if state.askPlot(w):

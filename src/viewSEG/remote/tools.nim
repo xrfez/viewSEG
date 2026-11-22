@@ -686,6 +686,20 @@ proc plotJson(w: AnalysisWindow; fe: Frontend; units: UnitSystem; limit: int): J
       "largestChordHz": toJson(r.band.chordHz), "typed": r.band.typed,
       "exact": r.band.exact, "warning": r.band.warning, "uncertain": r.band.uncertain,
       "uncertaintyHz": toJson(r.band.uncertaintyHz)}
+    if r.polarity.line.len > 0 or r.controller.len > 0:
+      # a signature file's: the ground force's relation to the reference (reported, never
+      # changed) and the controller's QC beside this analysis's
+      result["polarity"] = %*{"kind": $r.polarity.kind,
+        "meanPhaseDeg": toJson(r.polarity.meanPhaseDeg),
+        "consistency": toJson(r.polarity.consistency), "reversedForAnalysis": r.polarity.reversed,
+        "line": r.polarity.line}
+      var ctl = newJArray()
+      for c in r.controller:
+        ctl.add %*{"measure": c.label, "thisWindow": c.viewseg, "controller": c.controller}
+      result["controller"] = ctl
+      result["controllerNote"] = %r.controllerNote
+      result["hundredForce"] = %r.hundredWords
+      result["forceScale"] = %r.scaleWords
     result["alignment"] = %*{"kind": r.alignment.kind, "shiftMs": toJson(
         r.alignment.shiftMs),
       "match": toJson(r.alignment.match), "words": r.alignment.words}

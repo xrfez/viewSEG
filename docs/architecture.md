@@ -76,6 +76,9 @@ SEG kind (`core/filekinds`: `fkDat`, `fkVib`), never by their extension. Both go
 
 - `core/sigtypes` holds the plain values the rest of viewSEG may use (`SignatureFacts`,
   `SweepInfo`, `ControllerQc`, the choice); no library type crosses the two readers.
+- `core/sigjudge` is what the Vibrator window adds for a signature file, pure: the ground
+  force's polarity against the reference (reported, never changed), the controller's QC beside
+  viewSEG's, and a `.vib` header's weights per vibrator across a folder.
 - `core/sigdat` (the only module that imports parseSSDAT) and `core/sigvib` (the only one that
   imports parseSSVIB) are pure: bytes in, SEG-Y bytes and facts out. They make no file system
   call (the libraries' path procs are never called: `tests/tlayers.nim` greps for them).

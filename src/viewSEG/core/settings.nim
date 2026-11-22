@@ -156,6 +156,14 @@ type
     live*: SpectrumDisplay = SpectrumDisplay(time: stVisible)
       ## the live panel's (the visible time by default: it follows the view)
 
+  ForceScale* = object
+    ## The user's force scale for a vibrator signature file: display and the verdict only,
+    ## the samples stay raw counts. Never shipped: a local setting.
+    datCountsPerLbf*: float64 = NaN ## a `.dat`: counts per pound-force; NaN: counts
+    vibAccMvPerCount*: float64 = NaN
+      ## a `.vib`: the accelerometer constant (the header's sensitivity turns it into a
+      ## force factor, `scaleOf`); NaN: pound-counts
+
   Settings* = object
     theme*: string                                ## the theme file's name; "" follows the system
     units*: UnitSystem
@@ -172,6 +180,7 @@ type
     reopenProject*: bool = true ## start with the project open at the quit
     referenceId*: string
       ## the reference the plots use when no project is open; "" is the file's own pilot
+    forceScale*: ForceScale ## a signature file's force scale (Vibrator window)
     vibRoles*: seq[string]
       ## the vibrator signature's roles chosen by hand, per file layout, when no project is
       ## open (`choiceText`)
@@ -229,11 +238,21 @@ func remembered*(d: DisplaySettings): DisplaySettings =
   result = d
   result.visible = true
 
+func sameScale*(a, b: ForceScale): bool =
+  ## Whether two force scales are the same (an empty one, NaN, equal to another).
+  func eq(x, y: float64): bool = x == y or (x.isNaN and y.isNaN)
+  eq(a.datCountsPerLbf, b.datCountsPerLbf) and eq(a.vibAccMvPerCount, b.vibAccMvPerCount)
+
+func `==`*(a, b: ForceScale): bool =
+  ## An empty scale (NaN) equals another empty one.
+  sameScale(a, b)
+
 func same[T](a, b: T): bool =
   ## `a == b`, a value that is not a number equal to itself (as the settings
   ## file has it), also inside a list of objects (the display presets).
   when T is SomeFloat: a == b or (a.isNaN and b.isNaN)
   elif T is seq[DisplayPreset]: samePresets(a, b)
+  elif T is ForceScale: sameScale(a, b)
   else: a == b
 
 func carried*[T: Settings | PlotDefaults | DisplaySettings](kept, before, after: T): T =

@@ -115,7 +115,9 @@ const Reached = {
   "spectrum.live.logFrequency": "spectrum display", "spectrum.live.time": "spectrum display",
   "spectrum.live.raw": "spectrum display", "spectrum.live.processed": "spectrum display",
   "displayPresets": "display preset",
-  "referenceId": "select reference", "vibRoles": "plot display"}.toTable
+  "referenceId": "select reference", "vibRoles": "plot display",
+  # a signature file's force scale: set in the Vibrator window's Setup, no agent command
+  "forceScale.datCountsPerLbf": "", "forceScale.vibAccMvPerCount": ""}.toTable
   # `plotOptions.<kind>.<field>`, each New plot kind's remembered options: all
   # reached by "plot display" (`reachedBy`), and all saved when a window sets them
 

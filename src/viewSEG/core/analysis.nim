@@ -30,12 +30,13 @@ import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
 import processSEG/vibroseis/[crosscorrelate, sweeptrack, vibqc]
 import processSEG/core/workspace
 import colourmaps, matchpeak, panels, phasepicture, phaseshow, plotcursor,
-    processing, signalend,
+    processing, sigjudge, signalend,
   traceids, vibjudge
 
 export ColourMap, PlotCursor, Polarity, VibLimits
 export phasepicture, phaseshow
 export vibjudge
+export sigjudge
 export matchpeak.NoClearMatch
 
 const RecordedKey* = "recorded trace"
@@ -138,6 +139,9 @@ type
       ## generated from M and B; NaN: none entered (no generated force)
     baseplateMassKg*: float64 = NaN ## vibrator signature: the baseplate's mass, kg
     harmonics*: int = 5 ## vibrator signature: the highest harmonic tracked (2 .. 16)
+    accelSet*: AccelSet = asB
+      ## a `.vib`'s vibrator signature: the accelerometer set judged (B, the set the .dat
+      ## records, by default); of this window only, never remembered
     tops*: seq[TopFrequency]
       ## vibrator signature: the top frequency typed per reference (Hz): distortion is
       ## the harmonics up to it; a reference with none typed takes its sweep's end
@@ -236,7 +240,7 @@ type
     id*: int
     view*: AnalysisView
     plots*: seq[AnalysisPlot]
-    image*: AnalysisImage   ## a spectrogram's; empty otherwise
+    image*: AnalysisImage           ## a spectrogram's; empty otherwise
     table*: seq[seq[string]]
       ## a vibrator signature's summary per signal, the first row the
       ## columns' names; empty for none. The force columns stay in the
@@ -277,6 +281,13 @@ type
     against*: string
       ## a vibrator signature's reference in one sentence: "Measured against the project
       ## reference X" or "Measured against the recorded reference, trace N"; "" for none
+    polarity*: PolarityReport ## a signature file's: the ground force against the reference
+    controller*: seq[ControllerRow] ## a signature file's: the controller's QC beside this one's
+    controllerNote*: string ## where those numbers are from
+    hundredWords*: string
+      ## a signature file's: where the 100 % force came from when none was typed ("from the
+      ## file's hold-down weight"); "" when it was typed or there is none
+    scaleWords*: string ## a signature file's force scale ("8 counts per lbf"); "" for none
     problem*: string ## why there is none; "" when there is one
 
 type StopCheck* = proc (): bool {.closure, gcsafe.}
@@ -522,6 +533,8 @@ const
     words: "above 0 and at most 1000 %")
   MassKgRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
     words: "above 0 and at most 1000000000 kg")
+  ForceScaleRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
+    words: "above 0 and at most 1000000000")
   NumberRange* = SettingRange(lo: -MaxLimit, hi: MaxLimit,
     words: "from -1000000000 to 1000000000")
     ## a limit: any value in its range

@@ -377,6 +377,13 @@ proc settingsDocument*(s: Settings): string =
   w.close()
   w.writeProcessing(s.plot.processing)
   w.close()
+  if not (s.forceScale.datCountsPerLbf.isNaN and s.forceScale.vibAccMvPerCount.isNaN):
+    w.open("forceScale")
+    if not s.forceScale.datCountsPerLbf.isNaN:
+      w.value("datCountsPerLbf", s.forceScale.datCountsPerLbf)
+    if not s.forceScale.vibAccMvPerCount.isNaN:
+      w.value("vibAccMvPerCount", s.forceScale.vibAccMvPerCount)
+    w.close()
   w.open("scale")
   w.choice("length", LengthNames[s.scale.length])
   w.value("speed", s.scale.speed)
@@ -967,6 +974,13 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
       of "reopenProject": r.flag(c, result.reopenProject)
       of "referenceId": r.text(c, result.referenceId, allowEmpty = true)
       of "vibRoles": r.strings(c, result.vibRoles)
+      of "forceScale":
+        for k in c.kids:
+          if k.isTree("datCountsPerLbf"):
+            r.ranged(k, ForceScaleRange, result.forceScale.datCountsPerLbf)
+          elif k.isTree("vibAccMvPerCount"):
+            r.ranged(k, ForceScaleRange, result.forceScale.vibAccMvPerCount)
+          else: r.unknown(k, "forceScale")
       of "plot": r.plot(c, result.plot)
       of "scale":
         for k in c.kids:

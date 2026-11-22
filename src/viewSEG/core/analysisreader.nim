@@ -49,6 +49,7 @@ type
     unit*: SurveyUnit       ## the unit of the file's distances (coordinates)
     offsetUnit*: SurveyUnit ## the unit of the file's trace offsets
     names*: seq[string]     ## per trace, what the curves call it: "trace 12"
+    sig*: SignatureAsk      ## a signature file's vibrator window: its force scale and QC record
     forceNote*: string
       ## a signature file's vibrator window: the ground force is a trace of the file, so no
       ## typed mass is applied; the words for the note ("" for any other file)
@@ -630,7 +631,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                 let n = (answer.leftOut, answer.atOtherInterval)
                 answer = vibratorOf(rows, names, at, dtMs, a.params, recorded,
                   a.topHz,
-                  a.exactTopHz, a.forceNote)
+                  a.exactTopHz, a.forceNote, a.sig)
                 (answer.leftOut, answer.atOtherInterval) = n
                 if answer.problem.len == 0:
                   answer.against = against

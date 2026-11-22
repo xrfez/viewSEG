@@ -39,6 +39,20 @@ const
     ("per-cycle value 1 (tracks drive / ground force)", 265'i16, "as stored"),
     ("per-cycle value 2 (meaning unknown)", 266'i16, "as stored")]
 
+func gfPoundForcePerPoundCount*(w: VibWeights; setA: bool; accMvPerCount: float64): float64 =
+  ## The factor that turns a `.vib` ground force in pound-counts into pounds-force, for the
+  ## accelerometer set chosen, from the header's sensitivity and the user's accelerometer
+  ## constant, as the library's `scaleOf` gives it (the weights are already in the
+  ## pound-counts). NaN when the sensitivity or the constant is not finite and above 0.
+  var info = VibInfo()
+  info.header.sensitivity1 = float32(w.sensitivity1)
+  info.header.sensitivity2 = float32(w.sensitivity2)
+  try:
+    result = scaleOf(info, (if setA: vcBaseplateA else: vcBaseplateB),
+      VibScale(accMvPerCount: accMvPerCount), force = false)
+  except ValueError:
+    result = NaN
+
 func vibKindOf*(head: openArray[byte]): SignatureKind =
   ## `sgVib` when `head` (the file's first bytes, at least 47) starts as a signature `.vib`.
   if looksLikeVib(head): sgVib else: sgNone
@@ -59,12 +73,18 @@ func sigError(name, words: string): ref SignatureError =
 func startNs(t: VibTime): int64 =
   unixNs(t.year, t.month, t.day, t.hour, t.minute, t.second, 0)
 
+func weightsOf(h: VibHeader): VibWeights =
+  VibWeights(holdDownLb: float64(h.holdDownLb), baseplateLb: float64(h.baseplateLb),
+    massLb: float64(h.massLb), sensitivity1: float64(h.sensitivity1),
+    sensitivity2: float64(h.sensitivity2))
+
 func infoOf(s: VibInfo; path: string): SweepInfo =
   let serial = serialFromPath(path)
   SweepInfo(kind: sgVib, controller: max(serial, 0),
     serialFrom: (if serial >= 0: sfFolder else: sfNone), fileNumber: nameNumberOf(path),
     triggerNs: startNs(s.start), timeIsStart: true, samples: int32(s.frames),
-    declared: int32(s.frames), intervalUs: s.sampleIntervalUs, complete: s.complete)
+    declared: int32(s.frames), intervalUs: s.sampleIntervalUs, complete: s.complete,
+    weights: weightsOf(s.header))
 
 proc sweepInfo*(head: openArray[byte]; size: int64; path: string): SweepInfo =
   ## What a list knows of the `.vib` at `path` of `size` bytes whose first bytes are `head`
@@ -225,6 +245,7 @@ proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice
   if paired:
     f.pair = pair.path
     f.pairTriggerNs = pair.triggerNs
+    f.pairQc = pair.qc
     f.info.controller = pair.controller
     f.info.serialFrom = sfPair
     f.info.vibrator = pair.vibrator

@@ -40,6 +40,14 @@ type
     sfFolder ## a .vib's folder name (a hint, not in the file)
     sfPair   ## the .dat of the same sweep
 
+  VibWeights* = object
+    ## A `.vib` header's weights and accelerometer sensitivities, as the file states them:
+    ## the hold-down, baseplate and reaction-mass weights (pounds) and the two sensitivities.
+    ## NaN when the file is not a `.vib`. Never corrected: they differ with the vibrator
+    ## type the controller's electronics were set up for.
+    holdDownLb*, baseplateLb*, massLb*: float64 = NaN
+    sensitivity1*, sensitivity2*: float64 = NaN
+
   SweepInfo* = object
     ## One signature file as a list knows it, without a decoded sample.
     kind*: SignatureKind
@@ -54,6 +62,7 @@ type
     blocks*, blocksDeclared*: int32                         ## .dat only
     intervalUs*: float64
     complete*: bool
+    weights*: VibWeights                                    ## .vib: the header's weights
     sweepNumber*: int16                                     ## .dat: 16 is a pulse record
     line*, station*, shotId*, sweepId*, sourceIndex*: int64 ## .dat: 0 is not given
     qc*: SweepQc
@@ -65,6 +74,7 @@ type
     triggerNs*: int64
     controller*: int64
     vibrator*: int
+    qc*: SweepQc ## the `.dat`'s QC numbers, which a `.vib` has none of
 
   ControllerQc* = object
     ## The whole QC record of a .dat (a stopped recording has none: `valid` false). A
@@ -135,6 +145,7 @@ type
     notes*: seq[string] ## information said once at the open (no trigger found)
     pair*: string ## the partner's path when the open was given it (a `.vib`'s `.dat`)
     pairTriggerNs*: int64 ## with `pair`: the `.dat`'s trigger, the clock time of the `.vib`
+    pairQc*: SweepQc ## with `pair`: the `.dat`'s QC numbers (the controller's, for this sweep)
 
   SignatureError* = object of CatchableError
     ## A file that cannot be decoded: plain words, the library's.

@@ -110,4 +110,44 @@ QC); its File headers tab starts with the file's own fields and bytes (".dat fil
 then the SEG-Y it is decoded into, labelled "(in memory)". A `.vib` of another kind, an empty file
 and a file that breaks its format are refused in words.
 
-In the Vibrator window the roles come from the trace codes and no typed mass is applied.
+## The Vibrator window on a signature file
+
+The roles come from the trace codes (reference 21, reaction mass 18, baseplate 19, ground force
+20) and no typed mass is applied: trace 4 is the ground force, as the file has it. The role
+pickers are read-only.
+
+- **The ground force against the reference.** A line under the verdict says how the ground force
+  stands to the reference over the judged part, as recorded: "opposite" with its mean phase in
+  degrees, "in phase", "neither in phase nor opposite", or "unclear" when it follows the
+  reference weakly (little drive, a pulse). Nothing is changed or corrected. If you want the analysis to
+  take the ground force the other way round, press **Reverse the ground force for the analysis**:
+  it affects the analysis only (the samples and the file stay as recorded), is remembered for
+  this file layout (in the project when one is open, else in your settings), and is said in the
+  roles line ("GF reversed for the analysis: your choice") and in the polarity line. **As
+  recorded** takes it back. Automatic polarity is not offered for a signature file. For a `.dat`
+  that stores the controller's own correlation, the line also says where its peak at lag 0 lies
+  and, when the ground force is opposite and that peak is negative, that the controller counts the
+  same relation as in phase.
+- **Accelerometer set (a `.vib`).** Set B is the default: the set the `.dat` file records. Set A
+  (traces 5 to 7) is the set the controller's QC report follows, probably. The choice is this
+  window's only; it is not remembered for the next file.
+- **Force units.** The ground force is in counts (a `.dat`) or pound-counts (a `.vib`) until you
+  give a scale in the window's Setup: counts per lbf for a `.dat`, the accelerometer constant for
+  a `.vib` (with the header's sensitivity of the set judged). The force then reads in newtons
+  (pounds-force with the Units setting), for the display and the verdict only; the samples stay as
+  recorded. The scale is a local setting and ships with nothing. With a scale, the 100 % force
+  is the controller's target force (a `.dat`, at the drive level you typed) or the header's
+  hold-down weight (a `.vib`), unless you typed one.
+- **The controller's QC beside this window's.** A table gives the controller's force, THD and
+  phase numbers and the limits it tripped next to this window's; a `.vib` shows its `.dat`'s
+  (when the pair is known), headed "from the .dat of this sweep". The force percentages compare
+  one to one only when the 100 % force comes from the file itself; the THD is defined differently
+  by the controller (compare its trend, not its value); the phase compares once the polarity is as
+  the controller treats it.
+- **The header's weights (a `.vib`).** Per sweep the window shows the hold-down, baseplate and
+  reaction-mass weights and the two accelerometer sensitivities the header states. The reference
+  scaled to a force depends on the hold-down weight, which differs with the vibrator type the
+  controller's electronics are set up for. Across the listed folder, "Weights per vibrator"
+  gives the same values per vibrator, and says in words when one vibrator's sweeps state
+  different weights or its weights differ from those the other vibrators state: the controller may
+  be set up for the wrong vibrator type. It is a finding only: nothing is corrected or rescaled.

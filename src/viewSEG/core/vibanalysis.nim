@@ -66,6 +66,13 @@ func phaseCurve(name: string; deg: seq[float64]; mode: PhaseShow): AnalysisCurve
 func forceUnit(u: AmplitudeUnit): string =
   if u == auForce: "N" elif u == auRecorded: "as recorded" else: $u
 
+func gfUnit(u: AmplitudeUnit; sig: SignatureAsk; scaled: bool): string =
+  ## The unit of a recorded ground force: newtons from the user's scale, else what a signature
+  ## file's trace is in (counts, pound-counts), else as recorded.
+  if scaled: "N"
+  elif sig.given: (if sig.isDat: "counts" else: "pound-counts")
+  else: forceUnit(u)
+
 func weightedUnit(u: AmplitudeUnit): string =
   ## The unit of the weighted sum of the masses: the masses are in kg, the
   ## traces as recorded (counts) unless calibrated.
@@ -198,7 +205,8 @@ func roundedTop*(est: float64): float64 =
 
 proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     at: array[VibRole, int]; dtMs: float64; p: AnalysisParams;
-    recorded = -1; topHz = NaN; exactTopHz = NaN; forceNote = ""): AnalysisResult =
+    recorded = -1; topHz = NaN; exactTopHz = NaN; forceNote = "";
+    sig = SignatureAsk()): AnalysisResult =
   ## The vibrator signature of the unit whose role `r` is row `at[r]` of
   ## `rows` (traces from their first sample at `dtMs`, named `names`; -1:
   ## the unit has none), with the masses, polarities, harmonics and limits
@@ -212,6 +220,12 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   ## else the reference's own estimated top (`result.band` says which).
   ## `forceNote`, for a signature file, says that the ground force is in the file (a trace of
   ## its own) and no typed mass is applied: GF (M, B) is not formed, whatever the masses say.
+  ## `sig` says what a signature file adds (its force scale, a 100 % force from the file, the
+  ## controller's QC): the ground force's polarity is then reported, never changed, and the
+  ## Automatic polarity is not honoured.
+  ## `sig` says what a signature file adds (its force scale, a 100 % force from the file, the
+  ## controller's QC): the ground force's polarity is then reported, never changed (the
+  ## Automatic polarity is not honoured there).
   result = AnalysisResult(view: avVibrator, dtMs: dtMs)
   if at[vsReference] notin 0 ..< rows.len:
     result.problem = "no reference (Ref): give the pilot's trace that role"
@@ -232,6 +246,13 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     keys[i] = initTraceKeys()
     counts[i] = r.len
     if r.len > 0: copyMem(addr work[i * cols], unsafeAddr r[0], r.len * sizeof(float32))
+  let scaled = sig.given and at[vsGroundForce] >= 0 and sig.gfToN > 0 and sig.gfToN < Inf
+  if scaled:
+    # the user's force scale, for the display and the verdict: the samples in memory stay
+    # raw, this copy is the analysis's
+    for k in 0 ..< counts[at[vsGroundForce]]:
+      work[at[vsGroundForce] * cols + k] = float32(float64(work[at[vsGroundForce] * cols + k]) *
+        sig.gfToN)
   var unit = VibUnit()
   unit.rows = at
   let pair = at[vsMass] >= 0 and at[vsBaseplate] >= 0
@@ -239,6 +260,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     p.baseplateMassKg > 0 and p.baseplateMassKg < Inf
   var said: seq[string] = @[]
   unit.polarity[vsGroundForce] = p.roles.groundForcePolarity
+  if sig.given and unit.polarity[vsGroundForce] == poAutomatic:
+    unit.polarity[vsGroundForce] = poAsRecorded # (a signature file's polarity is never decided for the user)
   var mb = p.roles.massPolarity
   if mb == poAutomatic and not (pair and masses):
     mb = poAsRecorded
@@ -334,7 +357,13 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     except ValueError: windowStats(t, judging)
   let stats = statsOf(u.tracks[judged])
   # each signal has its own full scale (counts, or kg × counts)
-  let hundredFor = if judged == vsWeightedSum: p.forceHundredWeighted else: p.forceHundredPct
+  var hundredFor = if judged == vsWeightedSum: p.forceHundredWeighted else: p.forceHundredPct
+  var hundredFromFile = false
+  let typedHundred = hundredFor > 0 and hundredFor < Inf
+  let fileHundred = sig.hundredN > 0 and sig.hundredN < Inf
+  if sig.given and judged == vsGroundForce and scaled and not typedHundred and fileHundred:
+    (hundredFor, hundredFromFile) = (sig.hundredN, true)
+    result.hundredWords = sig.hundredWords
   result.qc = judge(stats.summary, p.qcWindowMs, p.qc, hundredFor, p.targetPct,
     (if both: (if judged == vsWeightedSum: "GF from M and B" else: "GF as recorded")
       else: ""))
@@ -342,7 +371,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   result.bothSignals = both
   result.judgedAxis = if judged == vsWeightedSum:
       "GF (M, B) (" & weightedUnit(u.units[vsWeightedSum]) & ")"
-    else: "Force (" & forceUnit(u.units[vsGroundForce]) & ")"
+    else: "Force (" & gfUnit(u.units[vsGroundForce], sig, scaled) & ")"
   if both and p.roles.judge == joRecorded:
     # the recorded GF is the weighted sum the recorder wrote with its own masses: say so when
     # the sum formed here with the typed masses tells another story (phase by window, the
@@ -453,7 +482,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       elif fromMasses:
         (if details and both: "GF from M and B" else: "Force") & " (" &
           weightedUnit(u.units[vsWeightedSum]) & ")"
-      else: "Force (" & forceUnit(u.units[s]) & ")"),
+      else: "Force (" & (if s == vsGroundForce: gfUnit(u.units[s], sig, scaled)
+        else: forceUnit(u.units[s])) & ")"),
       yUnit: (if percent: "%" else: ""))
     let k = if percent: percentScale else: 1.0
     func scaled(v: seq[float64]): seq[float64] =
@@ -501,6 +531,20 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       dist.curves.add AnalysisCurve(name: nameOf(judged) & " H" & $k, ys: pct)
   plots.add [freq, dist]
   result.plots = plots
+  if vsGroundForce in u.signals:
+    # the ground force against the reference over the judged part, as recorded: reported,
+    # never changed (any window with a recorded ground force says it)
+    var phases: seq[float64] = @[]
+    let t = u.tracks[vsGroundForce]
+    for m in 0 ..< min(xs.len, t.phaseDeg.len):
+      if (span.a.isNaN or xs[m] >= span.a) and (span.b.isNaN or xs[m] <= span.b):
+        phases.add t.phaseDeg[m]
+    result.polarity = polarityOf(phases, vsGroundForce in u.reversed,
+      p.roles.groundForcePolarity == poReversed, sig)
+  if sig.given:
+    result.controller = controllerRows(sig, result.qc.stats, hundredFromFile)
+    result.controllerNote = controllerNote(sig)
+    result.scaleWords = sig.scaleWords
   # The table: one row per signal
   var head = @["Signal", "Trace", "Polarity", "Mean |phase| (°)", "Max |phase| (°)",
     "Mean THD (%)", "Max THD (%)", "Mean force", "Min force", "Max peak"]
@@ -515,6 +559,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       forceCell(m.maxPeak)]
     result.table.add row
     result.forceUnits.add(if s == vsWeightedSum: weightedUnit(u.units[s])
+                           elif s == vsGroundForce: gfUnit(u.units[s], sig, scaled)
                            else: forceUnit(u.units[s]))
   if withRecorded:
     # the recorded pilot, measured against the reference: just after the Ref row
@@ -526,7 +571,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     for i in 1 ..< result.table.len:
       if result.table[i][0] == $vsReference: at1 = i + 1
     result.table.insert(row, at1)
-    result.forceUnits.insert(forceUnit(results[1].units[vsGroundForce]), at1 - 1)
+    result.forceUnits.insert(gfUnit(results[1].units[vsGroundForce], sig, scaled), at1 - 1)
   let usedHz = u.tracks[main].bandHz
   let chord = largestChordHz(u.reference)
   result.band = BandReport(hz: usedHz, suggestedHz: (if fitted.isNaN: topFrequencyHz(
@@ -603,6 +648,12 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       number(p.baseplateMassKg, 0) & " kg·B"
   elif forceNote.len > 0:
     words.add "; " & forceNote
+    if sig.scaleWords.len > 0:
+      words.add "; the ground force is in newtons from your scale (" & sig.scaleWords &
+        "), for the display and the verdict only: the samples stay as recorded"
+    elif sig.given:
+      words.add "; the ground force is in " & (if sig.isDat: "counts" else: "pound-counts") &
+        " until you give a scale"
   elif pair:
     words.add "; enter both masses to generate GF from M and B"
   words.add "; phase plot: " & PhaseShowWords[p.phaseShow] & "; the table's phases are " &
