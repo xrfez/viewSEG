@@ -1,0 +1,6 @@
+# Text files are checked out with LF on every OS (a Windows checkout with
+# autocrlf would otherwise make the generated docs and the sources differ from
+# what the tests and the formatter check); Windows scripts keep their bytes.
+* text=auto eol=lf
+*.cmd -text
+*.bat -text

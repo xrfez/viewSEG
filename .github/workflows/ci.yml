@@ -176,3 +176,167 @@ jobs:
           name: viewSEG-windows-x64
           path: dist/viewSEG-*-windows-x64.zip
           if-no-files-found: error
+
+  # The test suite run on Windows itself, with MinGW gcc (preinstalled on the
+  # runner): every test that needs no display (`--no-display`: `tests/utils/
+  # displaytests` decides) and does not measure times (`--no-timing`), as one
+  # program, one file after another (the runner's Windows mode). What it
+  # checks that the Linux job cannot: paths, file names, renaming over and
+  # deleting open files, file locks, the reference archive and the file
+  # memory on NTFS, line ends. The window tests and the timing tests stay on
+  # Linux: a runner has no display for the first, and its load is not steady.
+  windows-tests:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The runner's git converts line ends to CRLF on checkout. The documents
+      # the tests compare with generated text, and the dependencies' own
+      # (vendormaps/WRITING-A-MAP.md), must be as committed; this repository's
+      # .gitattributes says LF too.
+      - name: Keep line ends as committed
+        run: git config --global core.autocrlf false
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.4.2'
+
+      # Names what the runner has, so a change in its image shows here first.
+      - name: Show the toolchain
+        run: |
+          gcc --version | head -n 1
+          nim --version | head -n 1
+          atlas --version
+          git --version
+
+      - name: Fetch dependencies (Atlas)
+        run: atlas rep atlas.lock
+
+      # An older run's Nim cache: only the files that changed are compiled again.
+      - name: Cache the Nim build
+        uses: actions/cache@v4
+        with:
+          path: nimcache-win
+          key: nimcache-windows-${{ github.sha }}
+          restore-keys: nimcache-windows-
+
+      # No display: `--no-display`. Windows' one-process-at-a-time mode prints
+      # each run's output as it goes, under a line that names the run.
+      - name: Run the test suite (no display)
+        run: >
+          nim c -r --hints:off --nimcache:nimcache-win/tester tests/tester.nim
+          --no-display --no-timing --timeout:900 --nimcache:nimcache-win/tests
+
+  # bin/viewSEG.exe, the one `windows-exe` built, started on Windows. Agent
+  # control does not exist there yet (the stdio bridge and `--mcp-call` say so
+  # and exit), so a screenshot or a state read through it is not possible;
+  # what is checked: the command line, the portable folders of the package, and
+  # a window opened on a sample file and closed again.
+  windows-run:
+    runs-on: windows-latest
+    needs: windows-exe
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download the Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: viewSEG-windows-x64
+          path: pkg
+
+      - name: Unpack it
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem pkg -Filter 'viewSEG-*-windows-x64.zip' | Select-Object -First 1
+          Expand-Archive -Path $zip.FullName -DestinationPath app
+          Get-ChildItem app -Recurse -Depth 1 | Select-Object -First 40 FullName
+
+      # The program has the GUI subsystem: it prints only to a pipe or a file
+      # it was given, so each call's output goes to a file first.
+      - name: Command line
+        shell: bash
+        run: |
+          exe=$(echo app/viewSEG-*-windows-x64/viewSEG.exe)
+          "$exe" --version > out.txt 2> err.txt; echo "--version exit $?"; cat out.txt err.txt
+          grep -q '^viewSEG [0-9]' out.txt
+          "$exe" --paths > out.txt 2> err.txt; echo "--paths exit $?"; cat out.txt err.txt
+          grep -q '^portable: yes' out.txt   # the package's config/ folder is there
+          grep -q '^config: .*config' out.txt
+          "$exe" --help > out.txt 2>&1; grep -q -- '--reset-windows' out.txt
+          set +e
+          echo '{}' | "$exe" --mcp-stdio > out.txt 2> err.txt; code=$?
+          echo "--mcp-stdio exit $code"; cat err.txt
+          [ "$code" = 1 ] && grep -q 'not available on Windows' err.txt
+          "$exe" --mcp-call state > out.txt 2> err.txt; code=$?
+          echo "--mcp-call exit $code"; cat err.txt
+          [ "$code" = 2 ]
+
+      # OpenGL 3 on a runner without a GPU: Mesa's software renderer (llvmpipe)
+      # as opengl32.dll beside the program, from mesa-dist-win, pinned by
+      # version and checksum.
+      - name: Software OpenGL (Mesa llvmpipe)
+        shell: bash
+        env:
+          MESA_VERSION: '26.2.7'
+          MESA_SHA256: e61153fb1a8e58b9d80b403030cda619eaffbddd9ff99b34163b996ead03d596
+        run: |
+          curl -fsSL -o mesa.7z \
+            "https://github.com/pal1000/mesa-dist-win/releases/download/$MESA_VERSION/mesa3d-$MESA_VERSION-release-msvc.7z"
+          echo "$MESA_SHA256 *mesa.7z" | sha256sum -c -
+          7z x -y -omesa mesa.7z > /dev/null
+          gl=$(find mesa -ipath '*x64*' -iname opengl32.dll | head -n 1)
+          [ -n "$gl" ] || { find mesa | head -n 60; echo "no x64/opengl32.dll in the Mesa archive"; exit 1; }
+          dir=$(dirname "$gl")
+          ls "$dir"
+          for f in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+            [ -f "$dir/$f" ] && cp "$dir/$f" app/viewSEG-*-windows-x64/
+          done
+          ls app/viewSEG-*-windows-x64
+
+      # Not yet a gate: a first run shows whether the runner's session gives a
+      # window and llvmpipe an OpenGL 3 context; the log and a picture of the
+      # screen are kept either way. Make it a gate once it has passed.
+      - name: Open a file, close the window
+        id: window
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $dir = (Resolve-Path 'app\viewSEG-*-windows-x64').Path
+          $sample = (Resolve-Path 'samples\land\shots.sgy').Path
+          $env:GALLIUM_DRIVER = 'llvmpipe'
+          $env:MESA_GL_VERSION_OVERRIDE = '4.5'
+          $p = Start-Process -FilePath "$dir\viewSEG.exe" -ArgumentList "`"$sample`"" `
+            -WorkingDirectory $dir -PassThru
+          Start-Sleep -Seconds 30
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($bounds.Location,
+            [System.Drawing.Point]::Empty, $bounds.Size)
+          $bmp.Save("$PWD\screen.png")
+          Get-ChildItem "$dir\logs" -ErrorAction SilentlyContinue | ForEach-Object {
+            "--- $($_.Name)"; Get-Content $_.FullName -Tail 40 }
+          if ($p.HasExited) { throw "viewSEG ended by itself, exit code $($p.ExitCode)" }
+          $p.Refresh()
+          if (-not $p.CloseMainWindow()) { $p.Kill(); throw "no main window to close" }
+          if (-not $p.WaitForExit(30000)) { $p.Kill(); throw "did not end after its window was closed" }
+          if ($p.ExitCode -ne 0) { throw "exit code $($p.ExitCode)" }
+          Get-ChildItem "$dir\config" | Select-Object Name, Length
+
+      - name: Keep the screen and the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-run
+          path: |
+            screen.png
+            app/viewSEG-*-windows-x64/logs
+          if-no-files-found: ignore
