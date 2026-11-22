@@ -247,7 +247,13 @@ proc main*() =
     withFixtures fx:
       let path = fx.surveySegy()
       var st = initAppState()
-      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      when defined(windows):
+        # Windows refuses to write over a file that is open mapped, as the
+        # rewrite below does as another program would: open it unmapped.
+        st.apply Command(kind: ckReopen, reopenPath: path,
+          openChoice: OpenChoice(access: acUnmapped))
+      else:
+        st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
       doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
       let view = TableView(fields: @["keys.channel", "keys.srcPoint"], scope: tsFile,
         sortBy: "keys.channel", rows: 0 .. SurveyTraces - 1)

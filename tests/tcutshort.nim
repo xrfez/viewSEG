@@ -12,7 +12,8 @@
 ## new open, which Retry does.
 ##
 ## Not tested: a real share (the guard's `dcIo` rows: parseSEG's own test
-## covers them), and Windows, where a mapped file cannot be cut.
+## covers them), and a mapped file cut on Windows, which refuses the cut (the
+## unmapped file is cut there, and read as on Linux).
 ##
 ## Seen to fail: against the code before (the reader's own `stat` check
 ## before each read), `aFileCutWhileOpen` found no tile for a view past the
@@ -130,8 +131,12 @@ proc main*() =
 
   block cutIsSaidOnceForTheFile:
     # Gathers stepped to past the cut, and a filter changed, make new sources
-    # for the same file: still one line.
+    # for the same file: still one line. (Mapped, so not on Windows, which
+    # refuses to cut a mapped file: the loop above has said the line once for
+    # an unmapped file there.)
     withFixtures fx:
+      when defined(windows):
+        break cutIsSaidOnceForTheFile
       let path = fx.dir / "gathers.sgy"
       copyFile(fx.manyRecordsSegy(), path)
       var st = initAppState(watchEvery = initDuration(hours = 1))

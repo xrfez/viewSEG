@@ -82,6 +82,18 @@ proc start(dir: string; fx: Fixtures): AppState =
   doAssert result.settle(result.shownPath == dir / "shot1.sgy" and result.laidOut and
     not result.fileList.scanning)
 
+proc unmappedOnWindows(st: var AppState; path: string) =
+  ## Windows refuses to cut or write over a file that is open mapped, which is
+  ## what the tests below do as another program would, so there the shown file
+  ## is opened again unmapped first (parseSEG shares an unmapped file for
+  ## writing and deleting). Elsewhere nothing changes.
+  when defined(windows):
+    let was = st.sessions[st.shownFile(0)].id
+    st.apply Command(kind: ckReopen, reopenPath: path,
+      openChoice: OpenChoice(access: acUnmapped))
+    doAssert st.settle(st.shownPath == path and st.laidOut and
+      st.sessions[st.shownFile(0)].id != was)
+
 proc main*() =
 
   block newFilesAreListed:
@@ -210,6 +222,7 @@ proc main*() =
       let dir = fx.listing("line 4")
       var st = start(dir, fx)
       let path = dir / "shot1.sgy"
+      st.unmappedOnWindows(path)
       st.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
       doAssert st.settle(st.panel(MainPanel).layers[0].source.gather == 1 and st.laidOut)
       var d = st.panel(MainPanel).layers[0].display
@@ -242,6 +255,7 @@ proc main*() =
       var st = initAppState(watchEvery = initDuration(hours = 1))
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
       doAssert st.settle(st.shownPath == path and st.laidOut)
+      st.unmappedOnWindows(path)
       # three traces in view, so the next view (past their read-ahead of a view and
       # a half on each side) must be read
       var v = st.panel(MainPanel).view
@@ -262,6 +276,7 @@ proc main*() =
       let dir = fx.listing("line 5")
       var st = start(dir, fx)
       let path = dir / "shot1.sgy"
+      st.unmappedOnWindows(path)
       let s0 = st.sessions[st.shownFile(0)]
       st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[s0.base + 3],
         on: true)
