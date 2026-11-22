@@ -5,7 +5,7 @@
 ## viewports, as a window of its own outside the main window, where
 ## nobody looks.
 
-import std/math
+import std/[math, tables]
 import imguin/cimgui
 
 const Step = 28'f32 ## the cascade's step, in points at 100 %
@@ -29,3 +29,17 @@ proc placeNext*(number: int; size: (float32, float32); scale: float32) =
     y: round(vp.WorkPos.y + y0 + k * step)), ImGui_Cond_FirstUseEver.cint,
     ImVec2_c(x: 0, y: 0))
   igSetNextWindowSize(ImVec2_c(x: round(w), y: round(h)), ImGui_Cond_FirstUseEver.cint)
+
+var framesOpen: Table[string, int] ## per modal: the frames it has been open
+
+proc centreModal*(id: string) =
+  ## Call just before `igBeginPopupModal(id)`: the confirmation or dialog opens
+  ## in the middle of the main window's work area, whichever window asked for
+  ## it. An auto-sized window has no size in its first frames, so the middle is
+  ## kept for the first few; after that the user may move it.
+  let n = if igIsPopupOpen_Str(id.cstring, 0): framesOpen.getOrDefault(id) + 1 else: 0
+  framesOpen[id] = n
+  if n <= 4:
+    let vp = igGetMainViewport()
+    igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + vp.WorkSize.x / 2,
+      y: vp.WorkPos.y + vp.WorkSize.y / 2), ImGui_Cond_Always.cint, ImVec2_c(x: 0.5, y: 0.5))

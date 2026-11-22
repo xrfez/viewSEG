@@ -34,3 +34,11 @@ func acts*(fc: FocusClicks): bool {.inline.} = fc.pressed
 proc settle*(fc: var FocusClicks) =
   ## Notes whether the window has the focus now. Call just before `igEnd`.
   fc.before = igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint)
+
+proc handBack*(wasOpen: var bool; open: bool; title: string) =
+  ## A modal opened from the window titled `title` was drawn this frame
+  ## (`open`: it is showing). When it has just closed, the window that asked
+  ## gets the focus back and comes to the front, not whichever window ImGui
+  ## picks. Keep `wasOpen` with the window's state.
+  if wasOpen and not open: igSetWindowFocus_Str(title.cstring)
+  wasOpen = open

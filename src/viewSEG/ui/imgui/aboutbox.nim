@@ -8,7 +8,7 @@ import imguin/glad/gl
 import sdl3_nim
 import ../../core/versions
 import ../../view/theme
-import marks, style
+import marks, placement, style
 
 type
   AboutUi* = object
@@ -42,6 +42,7 @@ proc drawAbout*(ui: var AboutUi; t: Theme; marks: var Marks) =
   if ui.ask:
     igOpenPopup_Str(PopupId, 0)
     ui.ask = false
+  centreModal(PopupId)
   if not igBeginPopupModal(PopupId, nil, ImGui_WindowFlags_AlwaysAutoResize.cint): return
   marks.markWindow("about")
   igTextUnformatted(("viewSEG " & ViewSEGVersion).cstring, nil)

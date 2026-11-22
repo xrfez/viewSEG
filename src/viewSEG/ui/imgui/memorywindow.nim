@@ -14,7 +14,7 @@ import std/sequtils
 import imguin/cimgui
 import ../../core/state
 import ../../view/[memorylist, theme]
-import chrome, focus, icons, style
+import chrome, focus, icons, placement, style
 
 type
   Removal = enum
@@ -74,6 +74,7 @@ proc drawConfirm(ui: var MemoryUi; res: var MemoryOutput; marks: var Marks) =
     igOpenPopup_Str(confirmId.cstring, 0)
     ui.popup = false
   igSetNextWindowSize(ImVec2_c(x: igGetFontSize() * 30, y: 0), ImGui_Cond_Appearing.cint)
+  centreModal(confirmId)
   if igBeginPopupModal(confirmId.cstring, nil, ImGui_WindowFlags_AlwaysAutoResize.cint):
     marks.markWindow("memory.confirm")
     let n = ui.going.len

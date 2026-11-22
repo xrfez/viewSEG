@@ -48,7 +48,7 @@ import ../../view/jobstatus
 import aboutbox, agentshot, chrome, dpi, filelist, fonts, frames, genpreview, headerswindow, icons,
   settingswindow, shortcutswindow,
   jobswindow, joindialog, mapwindow, memorywindow, menus, messages, plotwindows, projectwindow,
-  references,
+  placement, references,
   recordlist, reopendialog, shell, spectrumwindow, style, tracepanel, windows, comparewindow
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow, AppWindow, DialogKind,
@@ -302,6 +302,13 @@ proc modalOpen*(frame: FrameInfo): bool =
   ## A modal popup is open and visible (Dear ImGui dims the rest of the window behind it).
   ## For tests.
   not igGetTopMostAndVisiblePopupModal().isNil
+
+proc workArea*(frame: FrameInfo): Rect =
+  ## The main window's work area (under the menu bar), in the marks' units. For tests.
+  let vp = igGetMainViewport()
+  let k = igGetIO_Nil().DisplayFramebufferScale
+  Rect(pos: vec2((vp.WorkPos.x - vp.Pos.x) * k.x, (vp.WorkPos.y - vp.Pos.y) * k.y),
+    size: vec2(vp.WorkSize.x * k.x, vp.WorkSize.y * k.y))
 
 proc keepInMainWindow*(frame: FrameInfo) =
   ## Dear ImGui draws every window inside the main one from now on (no window of its own
@@ -1179,6 +1186,7 @@ proc drawSaveLayout(ui: var Ui) =
   if ui.askLayoutName:
     igOpenPopup_Str(id, 0)
     ui.askLayoutName = false
+  centreModal(id)
   if igBeginPopupModal(id, nil, ImGui_WindowFlags_AlwaysAutoResize.cint):
     ui.marks.markWindow("save layout")
     igTextUnformatted("A name for the arrangement on screen:", nil)

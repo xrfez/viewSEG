@@ -137,11 +137,42 @@ proc main*() =
         if f.core.refViews.len > 0:
           f.apply Command(kind: ckCloseRefView, refWindow: f.core.refViews[0].id))
 
-    step("Delete asks, and confirms", noop, proc (f: FrameInfo): bool =
+    # The confirmation opens in the middle of the main window, and when it closes, by Delete
+    # or by Cancel, the archive window has the focus again.
+    proc archiveFocused(f: FrameInfo): bool = f.markOf("references.focused").size.x > 0
+
+    step("the archive is the window in focus", noop, proc (f: FrameInfo): bool =
+      if not archiveFocused(f): discard f.clickMark("references.which")
+      archiveFocused(f))
+
+    step("Delete asks, centred", noop, proc (f: FrameInfo): bool =
       if f.core.references.entries.len == 0: return true
       if f.markOf("references.confirm").size.x == 0: discard f.clickMark("references.delete.0")
-      elif wait mod 6 == 3: f.click(f.markOf("references.confirm.delete").centre)
-      false)
+      else:
+        let r = f.markOf("references.confirm")
+        if wait > 8 and wait mod 6 == 3:
+          let c = r.centre
+          let w = f.workArea
+          doAssert abs(c.x - (w.pos.x + w.size.x / 2)) <= 2, "the confirmation is not centred " &
+            "across: " & $c.x & " in " & $w
+          doAssert abs(c.y - (w.pos.y + w.size.y / 2)) <= 2, "the confirmation is not centred " &
+            "down: " & $c.y & " " & $r & " in " & $w
+          result = true)
+
+    step("Cancel gives the focus back to the archive", noop, proc (f: FrameInfo): bool =
+      if f.markOf("references.confirm").size.x > 0:
+        if wait mod 6 == 3: f.click(f.markOf("references.confirm.cancel").centre)
+      else: result = wait > 4 and archiveFocused(f)
+      doAssert f.core.references.entries.len > 0, "Cancel deleted")
+
+    step("Delete asks again", noop, proc (f: FrameInfo): bool =
+      if f.markOf("references.confirm").size.x == 0: discard f.clickMark("references.delete.0")
+      else: result = wait > 8)
+
+    step("Delete confirms and the archive has the focus", noop, proc (f: FrameInfo): bool =
+      if f.markOf("references.confirm").size.x > 0:
+        if wait mod 6 == 3: f.click(f.markOf("references.confirm.delete").centre)
+      else: result = wait > 4 and archiveFocused(f))
 
     proc onFrame(f: FrameInfo) =
       inc wait

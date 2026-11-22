@@ -16,7 +16,7 @@ import imguin/cimgui
 from parseSEG import faMapped, faUnmapped
 import ../../core/state
 import ../../view/theme
-import marks, style
+import marks, placement, style
 
 type
   ReopenUi* = object
@@ -81,6 +81,7 @@ proc drawReopen*(ui: var ReopenUi; t: Theme; marks: var Marks): seq[Command] =
     igOpenPopup_Str(PopupId, 0)
     ui.ask = false
   igSetNextWindowSize(ImVec2_c(x: igGetFontSize() * 36, y: 0), ImGui_Cond_Appearing.cint)
+  centreModal(PopupId)
   if not igBeginPopupModal(PopupId, nil, ImGui_WindowFlags_AlwaysAutoResize.cint):
     ui.path = ""
     return

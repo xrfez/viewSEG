@@ -25,6 +25,7 @@ type
     renameProblem: string
     confirmId: string
     confirmAsk: bool
+    confirmWasOpen: bool    ## the delete confirmation was showing last frame
     genAsk: bool
     genName: string
     genF1, genF2, genLength, genDt, genTaper0, genTaper1, genAmp, genBoost: float64
@@ -490,6 +491,7 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
   igSetNextWindowSize(ImVec2_c(x: font * 46, y: font * 64), ImGui_Cond_FirstUseEver.cint)
   igSetNextWindowSizeConstraints(ImVec2_c(x: font * 36, y: font * 64),
     ImVec2_c(x: 4000, y: 4000), nil, nil)
+  centreModal(id)
   if not igBeginPopupModal(id.cstring, nil, 0): return
   marks.markWindow("generate")
   let footer = igGetFrameHeightWithSpacing()
@@ -681,9 +683,7 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
   if d.ask:
     igOpenPopup_Str(id.cstring, 0)
     d.ask = false
-  let vp = igGetMainViewport() # centred on the main window, as it opens, never above it
-  igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + vp.WorkSize.x / 2,
-    y: vp.WorkPos.y + vp.WorkSize.y / 2), ImGui_Cond_Appearing.cint, ImVec2_c(x: 0.5, y: 0.5))
+  centreModal(id)
   let open = igBeginPopupModal(id.cstring, nil, ImGui_WindowFlags_AlwaysAutoResize.cint)
   if d.wasOpen and not open:
     # The modal had the keys. Give them back to the plot, which this is drawn from.
@@ -953,6 +953,8 @@ proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; home: string; writabl
       tip("Copy this reference into the project")
     igPopID()
 
+const ConfirmId = "Delete this reference?###refs.confirm"
+
 proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
     marks: var Marks): ReferencesOutput =
   if not ui.shown: return
@@ -973,6 +975,8 @@ proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
   if igBegin(title.cstring, addr open, ImGui_WindowFlags_NoDocking.cint):
     ui.focus.watch()
     marks.markWindow("references")
+    if igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint):
+      marks.markWindow("references.focused") # for the tests
     let which = referenceArchiveTitle(st)
     igTextUnformatted(("Showing the " & which & " archive.").cstring, nil)
     marks.mark("references.which")
@@ -1024,10 +1028,13 @@ proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
   igEnd()
   if not open: ui.shown = false
   if ui.confirmAsk:
-    igOpenPopup_Str("Delete this reference?###refs.confirm", 0)
+    igOpenPopup_Str(ConfirmId.cstring, 0)
     ui.confirmAsk = false
-  if igBeginPopupModal("Delete this reference?###refs.confirm", nil,
-      ImGui_WindowFlags_AlwaysAutoResize.cint):
+  centreModal(ConfirmId)
+  let confirming = igBeginPopupModal(ConfirmId.cstring, nil,
+    ImGui_WindowFlags_AlwaysAutoResize.cint)
+  ui.confirmWasOpen.handBack(confirming, title)
+  if confirming:
     marks.markWindow("references.confirm")
     var name = ui.confirmId
     let i = st.references.findId(ui.confirmId)
