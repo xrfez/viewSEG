@@ -34,6 +34,27 @@ proc main*() =
         build.output.strip
     finally:
       removeDir(cache)
+    block versionsAreFound:
+      # Seen to fail: with `nimbleVersionIn` joining with `/` (the target's
+      # backslash in a cross-build), the Windows build said "viewSEG unknown
+      # (parseSEG unknown, processSEG unknown)".
+      # under the repository, where nim.cfg's paths apply
+      let src = root / "bin" / ("twinbuildversions" & $getCurrentProcessId() & ".nim")
+      createDir(root / "bin")
+      writeFile(src, "import viewSEG/core/versions\n" &
+        "static:\n  doAssert ViewSEGVersion != \"unknown\", ViewSEGVersion\n" &
+        "  doAssert ProcessSEGVersion != \"unknown\", ProcessSEGVersion\n" &
+        "echo ViewSEGVersion\n")
+      try:
+        let built = execCmdEx(quoteShellCommand([getCurrentCompilerExe(), "c", "--hints:off",
+          "--warnings:off", "--os:windows", "--cpu:amd64", "--compileOnly",
+          "--path:" & root / "src",
+          "--nimcache:" & cache & "-v", src]), workingDir = root)
+        doAssert built.exitCode == 0, "the versions are not found in a Windows build:\n" &
+          built.output.strip
+      finally:
+        removeFile(src)
+        removeDir(cache & "-v")
     echo "twinbuild: ok"
 
 when isMainModule:

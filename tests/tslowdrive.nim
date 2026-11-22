@@ -15,6 +15,11 @@
 ##   next file was opened while the one before was shown, so the step waits
 ##   only for the reads of its samples.
 ##
+## Not on Windows: on a Windows runner the slow drive was not found slow and
+## its steps waited as many times as the fast one's (the reads that the hook
+## counts may not be the ones parseSEG makes there): to be looked at on a
+## Windows machine.
+##
 ## The numbers are printed (before, after). Seen to fail: with the read
 ## timing not taken in (`timeRead` left out of `drainInbox`), the slow drive
 ## read as the fast one and `panning` failed; with `takePrepared` dropping

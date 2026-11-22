@@ -155,7 +155,10 @@ if "linux" in targets:
     doAssert ps.values("logs") == @[pkg / "logs"]
     doAssert ps.values("cache") == @[pkg / "cache"]
     doAssert ps.values("assets") == @[pkg / "assets"]
-    doAssert ps.values("vendormaps") == @[pkg / "config" / "vendormaps", pkg / "vendormaps"]
+    # the folders beside the program, then the development one beside its folder
+    # (listed though it is not there)
+    doAssert ps.values("vendormaps") == @[pkg / "config" / "vendormaps", pkg / "vendormaps",
+      pkg.parentDir / "vendormaps" & " (not there yet)"]
 
   block perUser:
     removeDir(pkg / "config")
@@ -165,7 +168,8 @@ if "linux" in targets:
     doAssert ps.values("config") == @[home / "xdg-config" / "viewSEG"]
     doAssert ps.values("logs") == @[home / "xdg-state" / "viewSEG" / "logs"]
     doAssert ps.values("cache") == @[home / "xdg-cache" / "viewSEG"]
-    doAssert ps.values("vendormaps") == @[pkg / "vendormaps"]
+    doAssert ps.values("vendormaps") == @[home / "xdg-config" / "viewSEG" / "vendormaps" &
+      " (not there yet)", pkg / "vendormaps", pkg.parentDir / "vendormaps" & " (not there yet)"]
     # --paths only reports: nothing was created in the home directory.
     doAssert toSeq(walkDir(home)).len == 0, $toSeq(walkDir(home))
 

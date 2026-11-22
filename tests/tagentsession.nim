@@ -43,7 +43,7 @@
 ## agent's edits (`keep = true`), "the agent's edits are remembered".
 
 import std/[json, math, os, sequtils, strutils, tables]
-import viewSEG/core/[analysis, colourmaps, geometry, phasepicture, plotoptions, state]
+import viewSEG/core/[analysis, colourmaps, geometry, nif, phasepicture, plotoptions, state]
 import viewSEG/remote/[schema, tools]
 import utils/[fixtures, waiting]
 
@@ -269,7 +269,8 @@ proc main*() =
       st.shutdown()
     doAssert fileExists(dir / SettingsFileName), "what the user did by hand was not saved"
     let saved = readFile(dir / SettingsFileName)
-    doAssert mine in saved and "(gain none)" in saved, saved
+    # as the settings write it: NIF writes a backslash and a tilde as \HH (a Windows path)
+    doAssert nifString(mine) in saved and "(gain none)" in saved, saved
 
     block anAgentChangesNothingSaved:
       var st = appIn(dir)

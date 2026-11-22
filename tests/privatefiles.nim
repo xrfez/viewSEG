@@ -81,7 +81,8 @@ proc listedNames*(root = ""): seq[string] =
   if not present:
     return
   for path in paths.values:
-    let rel = relativePath(path, folder)
+    # as the mapping writes it
+    let rel = relativePath(path, folder).replace('\\', '/')
     result.add rel
     let base = rel.extractFilename
     if base != rel:

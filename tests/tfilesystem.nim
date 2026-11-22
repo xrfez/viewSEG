@@ -180,7 +180,8 @@ proc main*() =
     var used: seq[string]
     for path in walkDirRec(src):
       if not path.endsWith(".nim"): continue
-      let rel = path.relativePath(src)
+      # the same on Windows
+      let rel = path.relativePath(src).replace('\\', '/')
       if rel == "core/filesystem.nim": continue
       var allowed: seq[string]
       for (file, calls, why) in PastTheSeam:

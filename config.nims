@@ -11,7 +11,13 @@ switch("outdir", "bin")
 # zig cc rejects gcc's CPU names, so the zig tasks pass -d:zigcc for its own.
 # -d:release is passed per task: a global define would make `nim test` and
 # `nim nimDebug` release builds.
-when defined(amd64) and not defined(baselineCpu):
+# MinGW's gcc on Windows does not keep the stack aligned for AVX code (GCC bug
+# 54412): a build for x86-64-v3 with it crashes with an access violation in
+# unrelated places (`Time.local` first), so it takes the baseline too. zig cc
+# (the release build) aligns the stack and keeps v3.
+const mingwGcc = defined(windows) and not defined(zigcc)
+
+when defined(amd64) and not defined(baselineCpu) and not mingwGcc:
   when defined(zigcc):
     switch("passC", "-mcpu=x86_64_v3")
   else:

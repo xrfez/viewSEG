@@ -25,6 +25,10 @@ import parseSEG
 import viewSEG/core/[jobs, join, nif, processing, project, projectnif, surveystore]
 import utils/[fixtures, waiting]
 
+func h(path: string): string =
+  ## A POSIX-style absolute path as the host writes it: on Windows on drive C.
+  when defined(windows): "C:" & path.replace('/', '\\') else: path
+
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
 proc run(work: JobWork) =
@@ -75,19 +79,19 @@ proc main*() =
     doAssert problems.len == 1 and "line" in problems[0], $problems
 
   block places:
-    let dir = "/jobs/Land 2026"
-    let p = placeOf(dir, "/jobs/field/day1")
-    doAssert p.path == "../field/day1" and p.absolute == "/jobs/field/day1", $p
+    let dir = h"/jobs/Land 2026"
+    let p = placeOf(dir, h"/jobs/field/day1")
+    doAssert p.path == "../field/day1" and p.absolute == h"/jobs/field/day1", $p
     # copied with its data to another drive: its own copy first, then the old
     # place, then a folder of that name beside the project
-    doAssert p.candidates("/media/usb/Land 2026") == @["/media/usb/field/day1",
-      "/jobs/field/day1", "/media/usb/day1"], "a project copied with its data finds its " &
-      "own copy first: " & $p.candidates("/media/usb/Land 2026")
-    let m = p.moved("/jobs/field", "/mnt/field")
-    doAssert m.absolute == "/mnt/field/day1", m.absolute
-    doAssert "/jobs/Land 2026/x".isInside("/jobs/Land 2026") and
-      not "/jobs/Land 20267".isInside("/jobs/Land 2026")
-    doAssert projectDirOf("/a/b/project.nif") == "/a/b" and projectDirOf("/a/b") == "/a/b"
+    doAssert p.candidates(h"/media/usb/Land 2026") == @[h"/media/usb/field/day1",
+      h"/jobs/field/day1", h"/media/usb/day1"], "a project copied with its data finds its " &
+      "own copy first: " & $p.candidates(h"/media/usb/Land 2026")
+    let m = p.moved(h"/jobs/field", h"/mnt/field")
+    doAssert m.absolute == h"/mnt/field/day1", m.absolute
+    doAssert h"/jobs/Land 2026/x".isInside(h"/jobs/Land 2026") and
+      not h"/jobs/Land 20267".isInside(h"/jobs/Land 2026")
+    doAssert projectDirOf(h"/a/b/project.nif") == h"/a/b" and projectDirOf(h"/a/b") == h"/a/b"
     doAssert projectNameProblem("").len > 0 and projectNameProblem("a/b").len > 0 and
         projectNameProblem("Job 1") == ""
     doAssert copyName("a.sps", ["a.sps", "a-2.sps"]) == "a-3.sps"

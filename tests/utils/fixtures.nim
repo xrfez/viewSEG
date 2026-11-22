@@ -151,6 +151,32 @@ proc newFixtures*(): Fixtures =
   ## A new, empty temporary folder.
   Fixtures(dir: createTempDir("viewseg-fixtures-", ""))
 
+when defined(windows):
+  from std/winlean import nil
+
+  proc removeDirLinks(dir: string) =
+    ## Removes the symbolic links to folders under `dir` (not what they point
+    ## to): Windows' `DeleteFile`, which `removeDir` calls on them, refuses.
+    for kind, path in walkDir(dir):
+      if kind == pcLinkToDir:
+        discard winlean.removeDirectoryW(newWideCString(path))
+      elif kind == pcDir:
+        removeDirLinks(path)
+
+proc rewriteFile*(path, text: string) =
+  ## `writeFile` of a file the program under test may still hold open for a
+  ## moment (a read its quit did not wait for): Windows refuses to open such a
+  ## file for writing until it is closed, so it is tried again for up to ten
+  ## seconds.
+  let deadline = getMonoTime() + initDuration(seconds = 10)
+  while true:
+    try:
+      writeFile(path, text)
+      return
+    except IOError:
+      if getMonoTime() > deadline: raise
+      sleep 20
+
 proc remove*(fx: Fixtures) =
   ## Deletes the folder and everything written into it. A thread the
   ## program's quit left writing into it (a bounded quit does not wait for a
@@ -159,6 +185,8 @@ proc remove*(fx: Fixtures) =
   let deadline = getMonoTime() + initDuration(seconds = 60)
   while true:
     try:
+      when defined(windows):
+        removeDirLinks(fx.dir)
       removeDir(fx.dir)
       return
     except OSError:

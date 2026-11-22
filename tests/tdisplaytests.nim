@@ -53,6 +53,15 @@ proc main*() =
       "import viewSEG/platform/paths, viewSEG/view/theme\n"))
     doAssert not needsDisplay(put("t8.nim", "import viewSEG/remote/schema\n"))
 
+  block the_header_says_so:
+    # Seen to fail: with the header line not read, `tasserts` (it builds the
+    # window code without importing it) ran in the Windows job and failed
+    # there on a GLFW error.
+    doAssert needsDisplay(put("t13.nim", "## What it checks.\n##\n## Needs a display: it " &
+      "builds the window code.\n\nimport std/os\n"))
+    doAssert not needsDisplay(put("t14.nim", "## A test.\n\nimport std/os\n" &
+      "## Needs a display: not in the header\n")), "only the header counts"
+
   block helpers_are_followed:
     discard put("utils/windowy.nim", "import viewSEG/ui/imgui/app\n")
     discard put("utils/plain.nim", "import std/os\nimport viewSEG/core/state\n")

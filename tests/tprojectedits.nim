@@ -104,7 +104,7 @@ proc main*() =
         replaceEdits: true)
 
     block quitDuringCheck: # B, same size/ends/time; kill 9 on B during the check; quit
-      writeFile(a, b)
+      rewriteFile(a, b)
       setLastModificationTime(a, t0)
       holdStep("reading every byte")
       var st = start(config)
@@ -130,7 +130,7 @@ proc main*() =
             "the brought document holds the edits made on the other file: " & $r.killedIn
 
     block backOnA: # A opened later: only its own [5]; the unconfirmed [5, 9] is offered
-      writeFile(a, original)
+      rewriteFile(a, original)
       setLastModificationTime(a, t0)
       var st = start(config)
       st.apply Command(kind: ckOpenProject, projectPath: job)
@@ -158,7 +158,7 @@ proc main*() =
         if not r.unconfirmed: doAssert r.killedIn == @[5, 20], "A's record changed: " & $r.killedIn
 
     block backOnB: # B opened later: nothing applied, A's [5] taken off, the unconfirmed offered
-      writeFile(a, b)
+      rewriteFile(a, b)
       setLastModificationTime(a, t0)
       var st = start(config)
       st.apply Command(kind: ckOpenProject, projectPath: job)
@@ -175,7 +175,7 @@ proc main*() =
     block takenOff: # an edit taken off a brought-back one is kept in the unconfirmed state
       removeDir(job)
       removeDir(config)
-      writeFile(a, original)
+      rewriteFile(a, original)
       setLastModificationTime(a, t0)
       made()
       holdStep("reading every byte")
@@ -208,7 +208,7 @@ proc main*() =
     block twoPaths: # A and B (same size, ends, time) open at once, under two paths
       removeDir(job)
       removeDir(config)
-      writeFile(a, original)
+      rewriteFile(a, original)
       setLastModificationTime(a, t0)
       made()
       let c = field / "line7-again.sgy"
@@ -244,10 +244,10 @@ proc main*() =
     block ownKept: # fresh project state: A, then B with a kill 11 during the check; hash differs
       removeDir(job)
       removeDir(config)
-      writeFile(a, original)
+      rewriteFile(a, original)
       setLastModificationTime(a, t0)
       made()
-      writeFile(a, b)
+      rewriteFile(a, b)
       setLastModificationTime(a, t0)
       holdStep("reading every byte")
       var st = start(config)
@@ -273,7 +273,7 @@ proc main*() =
     block agrees: # the same file, kill 12 during the check: joins the record
       removeDir(job)
       removeDir(config)
-      writeFile(a, original)
+      rewriteFile(a, original)
       setLastModificationTime(a, t0)
       made()
       holdStep("reading every byte")
@@ -294,11 +294,11 @@ proc main*() =
     block liveNotOffered: # A checking with an edit saved: another path of its quick identity is not offered it
       removeDir(job)
       removeDir(config)
-      writeFile(a, original)
+      rewriteFile(a, original)
       setLastModificationTime(a, t0)
       made()
       let a2 = field / "line7-again.sgy"
-      writeFile(a2, original)
+      rewriteFile(a2, original)
       setLastModificationTime(a2, t0)
       holdStep("reading every byte")
       var st = start(config)

@@ -7,6 +7,9 @@
 ##
 ## The first build of the probe compiles Dear ImGui in release mode, which
 ## takes a minute; later runs reuse its cache. Needs a display, like tgui.
+##
+## Needs a display: it builds and starts the window code, which the Windows
+## job (no display, no GLFW) does not.
 
 import std/[os, osproc, strutils]
 

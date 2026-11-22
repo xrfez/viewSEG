@@ -61,6 +61,14 @@ proc twoShots(dir: string): string =
       w.writeTrace(k, buf)
   doAssert w.close().len == 0
 
+proc arrived(source, dest: string) =
+  ## `dest` as a file that has just come into the folder: a copy with the time
+  ## of its own, as `cp` makes it. Windows' copy keeps the source's time, which
+  ## "follow the latest" (the file's time past the one followed last) rightly
+  ## takes for an old file.
+  copyFile(source, dest)
+  setLastModificationTime(dest, getTime())
+
 proc main*() =
 
   withFixtures fx:
@@ -169,7 +177,7 @@ proc main*() =
       s.files.followLatest = true
       st.apply Command(kind: ckSettings, settings: s)
       sleep 30
-      copyFile(plain, folder / "shot2.sgy")
+      arrived(plain, folder / "shot2.sgy")
       doAssert st.settle(st.shown == folder / "shot2.sgy" and st.laidOut),
         "the new file was not followed"
       doAssert st.panel(MainPanel).layout.traces > 0, "a shot with no auxiliary traces " &
@@ -177,7 +185,7 @@ proc main*() =
       doAssert not st.settings.plot.seismic and st.settings.plot.auxiliary,
         "following it overwrote the remembered choice"
       sleep 30
-      copyFile(aux, folder / "shot3.sgd")
+      arrived(aux, folder / "shot3.sgd")
       doAssert st.settle(st.shown == folder / "shot3.sgd" and st.laidOut)
       doAssert st.choice == (false, true), "the next shot did not take the remembered choice: " &
         $st.choice

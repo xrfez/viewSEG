@@ -71,40 +71,41 @@ proc main*() =
       let id = jobs.submit(JobSpec(title: "t", lane: jlBackground), work)
       doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
       doAssert fileExists(victim), "a copy named outside survey/files was removed"
-  block oddNames:
-    # survey files whose names hold characters a copy's name cannot (':' and
-    # '\', legal on Linux): kept as copies with safe names, so a reopened project
-    # still has all of them
-    withFixtures fx:
-      let survey = fx.surveySps()
-      let field = fx.dir / "field"
-      createDir field
-      let s2 = fx.dir / "day:1.s"
-      let r2 = fx.dir / "a\\b.r"
-      copyFile(survey.s, s2)
-      copyFile(survey.r, r2)
-      let config = fx.dir / "config"
-      let job = fx.dir / "Job"
-      var st = initAppState()
-      st.rememberFilesIn(config)
-      st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
-      doAssert st.settle(st.inProject and st.projectOpening.len == 0)
-      st.apply Command(kind: ckJoin, joinFile: NoSession, joinFiles: @[
-        JoinFile(path: s2, kind: jkSps), JoinFile(path: r2, kind: jkSps),
-        JoinFile(path: survey.x, kind: jkSps)])
-      doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore),
-        $st.project.survey & " " & st.project.surveyNote
-      doAssert st.project.doc.survey.len == 3
-      st.flushFiles()
-      st.shutdown()
-      var again = initAppState()
-      again.rememberFilesIn(config)
-      again.apply Command(kind: ckOpenProject, projectPath: job)
-      doAssert again.settle(again.inProject and again.project.survey in {srLoaded, srFailed})
-      doAssert again.project.doc.survey.len == 3, "a survey file was dropped: " &
-        $again.project.doc.survey.len
-      again.flushFiles()
-      again.shutdown()
+  when not defined(windows): # Windows cannot hold such names at all
+    block oddNames:
+      # survey files whose names hold characters a copy's name cannot (':' and
+      # '\', legal on Linux): kept as copies with safe names, so a reopened project
+      # still has all of them
+      withFixtures fx:
+        let survey = fx.surveySps()
+        let field = fx.dir / "field"
+        createDir field
+        let s2 = fx.dir / "day:1.s"
+        let r2 = fx.dir / "a\\b.r"
+        copyFile(survey.s, s2)
+        copyFile(survey.r, r2)
+        let config = fx.dir / "config"
+        let job = fx.dir / "Job"
+        var st = initAppState()
+        st.rememberFilesIn(config)
+        st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+        doAssert st.settle(st.inProject and st.projectOpening.len == 0)
+        st.apply Command(kind: ckJoin, joinFile: NoSession, joinFiles: @[
+          JoinFile(path: s2, kind: jkSps), JoinFile(path: r2, kind: jkSps),
+          JoinFile(path: survey.x, kind: jkSps)])
+        doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore),
+          $st.project.survey & " " & st.project.surveyNote
+        doAssert st.project.doc.survey.len == 3
+        st.flushFiles()
+        st.shutdown()
+        var again = initAppState()
+        again.rememberFilesIn(config)
+        again.apply Command(kind: ckOpenProject, projectPath: job)
+        doAssert again.settle(again.inProject and again.project.survey in {srLoaded, srFailed})
+        doAssert again.project.doc.survey.len == 3, "a survey file was dropped: " &
+          $again.project.doc.survey.len
+        again.flushFiles()
+        again.shutdown()
   echo "tprojectpaths: done"
 
 when isMainModule:

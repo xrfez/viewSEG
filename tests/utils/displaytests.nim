@@ -16,6 +16,8 @@ import std/[os, sequtils, strutils, times]
 const
   AloneLine* = "## Runs alone:"
   NotWindowsLine* = "## Not on Windows:" ## left out on Windows; the rest says why
+  NeedsDisplayLine* = "## Needs a display:"
+    ## for a file that builds or starts the window code without importing it
   UiFolder = "ui"
   GpuFolder = "gpu"
   Toolkits = ["imguin", "imgui", "implot", "sdl3", "sdl3_nim", "opengl", "glad"]
@@ -66,6 +68,11 @@ proc needsDisplay*(path: string; seen: seq[string] = @[]): bool =
   let name = path.extractFilename
   if name.startsWith("tgui"):
     return true
+  for line in lines(path):
+    if not line.startsWith("#"):
+      break
+    if line.startsWith(NeedsDisplayLine):
+      return true
   for imp in importsOf(readFile(path)):
     if windowImport(imp):
       return true
