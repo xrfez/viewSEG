@@ -61,7 +61,8 @@ type
     maGenerateReference = "Generate a reference...",
     maReferenceArchive = "Reference archive...",
     maCompare = "Compare two traces",
-    maFirstBreaks = "First-break overlay"
+    maFirstBreaks = "First-break overlay",
+    maTemplateOnly = "Only traces in the template"
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
@@ -108,6 +109,8 @@ type
     archiveShown*: bool ## the Reference archive window is open
     compareShown*: bool ## the compare window is open
     firstBreaksOn*: bool ## the Seismic window's first-break overlay is on
+    templateOnlyOn*: bool ## the Seismic window shows only the traces its record's template lists
+    templateAvailable*: bool ## a relation file is there for that (the item is enabled)
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -154,7 +157,7 @@ const
     maShowFiles: 0, maShowRecords: 0, maShowMap: 0, maShowHeaders: 0, maShowJobs: 0,
     maShowMessages: 0,
     maShortcuts: ImGui_Key_F1.cint, maAbout: 0, maGenerateReference: 0,
-    maReferenceArchive: 0, maCompare: 0, maFirstBreaks: 0]
+    maReferenceArchive: 0, maCompare: 0, maFirstBreaks: 0, maTemplateOnly: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
@@ -173,7 +176,8 @@ const
     maShowFiles: IconList, maShowRecords: IconRecords, maShowMap: IconMap,
     maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog,
     maShortcuts: IconList, maAbout: IconInfo, maGenerateReference: IconVibrator,
-    maReferenceArchive: IconReference, maCompare: IconPulse, maFirstBreaks: IconTarget]
+    maReferenceArchive: IconReference, maCompare: IconPulse, maFirstBreaks: IconTarget,
+    maTemplateOnly: IconTable]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
     awMessages: IconLog, awSpectrum: IconPulse]
@@ -620,6 +624,18 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
     marks.mark("menu.View")
     if view:
       drawWindowTicks(input, result)
+      igSeparator()
+      igBeginDisabled(not input.templateAvailable)
+      if igMenuItem_Bool(label(maTemplateOnly).cstring, nil, input.templateOnlyOn, true):
+        result.actions.incl maTemplateOnly
+      igEndDisabled()
+      marks.mark("menu." & $maTemplateOnly)
+      tip(if input.templateAvailable:
+        "The Seismic window shows only the seismic traces the shot's template lists " &
+          "(the relation file): the others are left out of the plot, the traces beside " &
+          "them close up. Also a button on the window's strip."
+      else: "Needs a relation file in the project: it says which traces each shot's " &
+        "template holds.")
       igSeparator()
       result.themeMenu = drawThemeMenu(input.themes, input.theme, input.follows,
         IconTheme & "  Theme", marks)

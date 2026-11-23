@@ -1063,6 +1063,12 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
         var d = ui.core.panels[pk].layers[0].display
         d.firstBreaks = not d.firstBreaks
         ui.core.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+    of maTemplateOnly:
+      let pk = ui.core.findPanel(MainPanel)
+      if pk >= 0 and ui.core.panels[pk].layers.len > 0:
+        var f = ui.core.panels[pk].layers[0].filter
+        f.templateOnly = not f.templateOnly
+        ui.core.apply Command(kind: ckFilter, panel: MainPanel, filter: f)
     of maCompare:
       ui.core.apply Command(kind: ckCompareWindow, compareOpen: not ui.core.compareOpen)
     of maNewProject:
@@ -1331,7 +1337,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     vendorMaps: ui.core.vendorLoad.maps.mapIt(it.name),
     vendorChoice: ui.core.vendorChoice.choiceWords,
     projectShown: ui.project.shown, archiveShown: ui.refs.shown,
-    compareShown: ui.core.compareOpen, firstBreaksOn: ui.core.breaksOn(MainPanel))
+    compareShown: ui.core.compareOpen, firstBreaksOn: ui.core.breaksOn(MainPanel),
+    templateOnlyOn: ui.core.templateView(ui.core.findPanel(MainPanel)).on,
+    templateAvailable: ui.core.templateView(ui.core.findPanel(MainPanel)).available)
   let menu = drawMainMenu(menuInput, ui.marks)
   if menu.newPlot:
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: menu.newPlotView)

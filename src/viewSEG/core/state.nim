@@ -2469,6 +2469,44 @@ template change(state: var AppState; by: CommandOrigin; s, edit: untyped) =
     edit
     state.takeSettings(s)
 
+func wantsTemplate(state: AppState): bool =
+  ## Whether a plot leaves out the traces the record's template does not list.
+  state.panels.anyIt(it.layers.len > 0 and it.layers[0].filter.templateOnly)
+
+func templateTraces(state: AppState; k: int): (bool, seq[int], int) =
+  ## What the template of the record `panels[k]` shows says of its traces, when its check
+  ## (`recordQc`) is of that record as it is now and found the traces' stations: whether it
+  ## is known, the file's traces the template does not list (ascending), and how many seismic
+  ## traces the record holds.
+  let (i, traces) = state.shownTraces(k)
+  if i < 0: return
+  let s = state.sessions[i]
+  let q = state.recordQc
+  if q.job == NoJob and q.key.file == s.id and q.key.keys == s.keysRevision and
+      q.key.gather == state.panels[k].layers[0].source.gather and q.onStations and
+      q.hits[mfUnlisted].state == fsDone:
+    result[0] = true
+    for t in q.hits[mfUnlisted].traces: result[1].add t - s.base
+    result[1].sort()
+    result[2] = traces.len - (if q.hits[mfAuxiliary].state == fsDone: q.hits[mfAuxiliary].traces.len
+      else: 0)
+
+func hiddenOf(state: AppState; k: int; path: string; traces: Slice[int]): seq[int] =
+  ## The traces of `traces` (the gather `panels[k]` shows, of the file at `path`) its reader
+  ## leaves out, ascending: the killed ones when they are hidden (a setting), and, with the
+  ## filter's `templateOnly` and a template known for the record, those the template does
+  ## not list.
+  if state.settings.hideKilled:
+    result = state.editsAt(path).listIn(teKilled, traces)
+  if state.panels[k].layers.len > 0 and state.panels[k].layers[0].filter.templateOnly:
+    let (known, unlisted, _) = state.templateTraces(k)
+    if known:
+      if result.len == 0: result = unlisted
+      else:
+        result.add unlisted
+        result.sort()
+        result = result.deduplicate(isSorted = true)
+
 proc reader(state: var AppState; k: int): lent PanelReader =
   ## The reader of `panels[k]`, started when first needed.
   if state.readers[k].isNil:
@@ -2516,9 +2554,7 @@ proc newSource(state: var AppState; k: int) =
     if i >= 0 and g in 0 ..< state.sessions[i].gathers.len:
       let s = state.sessions[i]
       p.kind = s.gathers[g].kind
-      p.hidden = if state.settings.hideKilled:
-                   state.editsAt(s.path).listIn(teKilled, s.gathers[g].traces)
-                 else: @[]
+      p.hidden = state.hiddenOf(k, s.path, s.gathers[g].traces)
       if state.jobs.hold(s.path):
         src = ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path, size: s.size,
           traces: s.gathers[g].traces, filter: p.layers[0].filter, order: p.layers[0].order,
@@ -2546,9 +2582,7 @@ proc followHidden(state: var AppState) =
   for k in 0 ..< state.panels.len:
     let (i, traces) = state.shownTraces(k)
     if i >= 0:
-      let want = if state.settings.hideKilled:
-                   state.editsAt(state.sessions[i].path).listIn(teKilled, traces)
-                 else: @[]
+      let want = state.hiddenOf(k, state.sessions[i].path, traces)
       if want != state.panels[k].hidden: state.newSource(k)
 
 func fileHasAuxiliary(state: AppState; file: SessionId): bool =
@@ -2569,6 +2603,7 @@ proc applyRememberedTraces(state: AppState; file: SessionId; filter: var TraceFi
   else:
     filter.seismic = true
     filter.auxiliary = false
+  filter.templateOnly = state.settings.plot.templateOnly
 
 const SignatureOverlap = 0.45
 
@@ -6527,6 +6562,36 @@ func shownBreaksKept*(state: AppState; k: int): bool =
   for c in state.breakViews:
     if c.sameView(v): return true
 
+type
+  TemplateView* = object
+    ## What the "Only traces in the template" button of a plot says.
+    available*: bool    ## a relation file (or a generated template) is there to check against
+    on*: bool           ## the plot's filter asks for it
+    known*: bool
+      ## the record's template was found, and which of its traces it lists (`shown`, `total`)
+    waiting*: bool      ## on, and the record's check has not ended
+    shown*, total*: int ## seismic traces the template lists, and seismic traces in the record
+
+func templateView*(state: AppState; k: int): TemplateView =
+  ## The template of the record plot `panels[k]` shows: whether there is a relation file for
+  ## it, whether the plot asks for the template's traces only, and, once the record is
+  ## checked, how many of its seismic traces the template lists.
+  if k < 0 or k >= state.panels.len or state.panels[k].layers.len == 0: return
+  let i = state.shownFile(k)
+  if i < 0: return
+  let domain = if state.sessions[i].gathers.len > state.panels[k].layers[0].source.gather and
+      state.sessions[i].gathers[state.panels[k].layers[0].source.gather].kind == gkReceiver:
+        rdReceiver
+      else: rdSource
+  result.available = not state.sessions[i].noSeismic and
+    not state.sessions[i].isSignature and not state.qcRelations(domain)[0].isNil
+  result.on = state.panels[k].layers[0].filter.templateOnly
+  let (known, unlisted, total) = state.templateTraces(k)
+  result.known = known
+  result.total = total
+  result.shown = total - unlisted.len
+  result.waiting = result.on and not known and state.recordQc.job != NoJob
+
 func shownBreaks*(state: AppState; k: int): FirstBreaks =
   ## The first-break result of record panel `panels[k]` as its overlay shows it: with the
   ## model it was given, when the panel's display gives one (`withModel`); an empty
@@ -6627,7 +6692,7 @@ proc followRecordQc(state: var AppState) =
   let i = state.findSession(g.file)
   let shown = i >= 0 and g.gather in 0 ..< state.sessions[i].gathers.len
   var filters = state.settings.map.filters * TraceFilters
-  var box = state.settings.map.templateBox
+  var box = state.settings.map.templateBox or state.wantsTemplate
   if shown and state.sessions[i].isSignature:
     # no receivers: no noise test and no template check (`filterHits` says so)
     filters = filters - SignatureNoFilters
@@ -6673,7 +6738,7 @@ proc followRecordQc(state: var AppState) =
     q.replaced.add q.job
   q.key = key
   for m in TraceFilters: q.hits[m] = FilterHits(state: fsComputing)
-  (q.record, q.byPlace) = (-1'i64, false)
+  (q.record, q.byPlace, q.onStations) = (-1'i64, false, false)
   q.noise = NoiseSummary()
   q.picks = work.on and share == 0
   q.pickKey = work.key
@@ -6716,7 +6781,7 @@ proc takeRecordQc(state: var AppState; m: sink Msg) =
   if m.job == q.job and m.qcSession == q.key.file and m.qcGather == q.key.gather and
       m.qcKeys == q.key.keys:
     for f in TraceFilters: q.hits[f] = move m.qcHits[f]
-    (q.record, q.byPlace) = (m.qcRecord, m.qcByPlace)
+    (q.record, q.byPlace, q.onStations) = (m.qcRecord, m.qcByPlace, m.qcOnStations)
     q.noise = move m.qcNoise
     q.picks = false
     inc q.revision
@@ -8735,10 +8800,12 @@ proc applyCommand(state: var AppState; cmd: Command) =
       # display is; which components are off stays with this file only.
       let was = state.panels[k].layers[0].filter
       state.panels[k].layers[0].filter = cmd.filter
-      if cmd.filter.seismic != was.seismic or cmd.filter.auxiliary != was.auxiliary:
+      if cmd.filter.seismic != was.seismic or cmd.filter.auxiliary != was.auxiliary or
+          cmd.filter.templateOnly != was.templateOnly:
         state.change(cmd.origin, s):
           s.plot.seismic = cmd.filter.seismic
           s.plot.auxiliary = cmd.filter.auxiliary
+          s.plot.templateOnly = cmd.filter.templateOnly
       state.newSource(k)
   of ckView:
     let k = state.findPanel(cmd.panel)

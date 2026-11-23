@@ -599,6 +599,17 @@ a trace the file marks dead, "killed" or "polarity reversed" for an edited trace
 one of the fields you can add; it is off until you do. Right-click the status bar to choose the fields
 and their order.
 
+**Only the traces in the template.** When the project has a relation file (it says which
+receivers each shot should have recorded), a table-grid button in the display group of the
+Seismic window's strip, or **View > Only traces in the template**, leaves out the seismic
+traces the record's template does not list: the plot shows, say, the 1100 planned traces
+of the 3950 recorded, and the traces beside them close up. The window's title says
+"template only: 1100 of 3950". Auxiliary traces follow the Seismic / Aux toggles as
+before; killed traces follow Hide killed traces. The button is greyed without a relation
+file; on a record the relation file does not list, every trace is shown and the title says
+so, the button staying on. It is remembered with the other plot choices, as Seismic / Aux
+is, and is off at first.
+
 **First-break overlay.** The last button of the display group on the Seismic window's strip,
 or **Analysis > First-break overlay** (ticked while on), draws over each trace two thin bars:
 one where a refraction model fitted to the record's picks expects the first break (the cool

@@ -1307,6 +1307,24 @@ func breakTip(on: bool; b: FirstBreaks): string =
     "\nA record with several components is fitted from one kind of sensor."
   if on and b.statusWords.len > 0: result.add "\n" & b.statusWords
 
+func templateTip*(v: TemplateView; on: bool): string =
+  ## The tooltip of the "Only traces in the template" button.
+  if not v.available:
+    return "Needs a relation file in the project: it says which traces each shot's " &
+      "template holds."
+  let count = if v.known: " (" & $v.shown & " of " & $v.total & ")" else: ""
+  result = "Show only the traces in this shot's template" & count
+  if on and v.waiting: result.add "\nChecking the record against the template."
+  elif on and not v.known:
+    result.add "\nThis record has no template: every trace is shown."
+
+func templateCaption*(v: TemplateView): string =
+  ## What the Seismic window's title adds while the template's traces only are asked for.
+  if not (v.on and v.available): ""
+  elif v.known: "template only: " & $v.shown & " of " & $v.total
+  elif v.waiting: "template only: checking"
+  else: "no template for this record: every trace shown"
+
 proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks: var Marks;
     res: var PanelOutput; ask: var ViewAsk; ppi: float64; mon: MonitorInfo) =
   ## The strip at the top of the window, in groups that wrap onto more lines
@@ -1399,6 +1417,14 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
               res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
         igSameLine(0, 2)
         let pk = st.findPanel(p.id)
+        let tv = st.templateView(pk)
+        if iconButton(IconTable, "Only traces in the template", "", icon, t, marks,
+            selected = f.templateOnly, tipText = templateTip(tv, f.templateOnly),
+            enabled = tv.available, markName = "plot.template only"):
+          var nf = f
+          nf.templateOnly = not f.templateOnly
+          res.commands.add Command(kind: ckFilter, panel: p.id, filter: nf)
+        igSameLine(0, 2)
         let shownBreaks = st.shownBreaks(pk)
         if symbolButton(syFirstBreaks, icon, t, marks, selected = d.firstBreaks,
             markPrefix = "plot.", turned = turned, note = breakTip(d.firstBreaks,
@@ -2823,8 +2849,10 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
       st.panels[pk].componentCounts)
     hidden = hiddenCaption(faces, st.panels[pk].layers[0].filter.components,
       st.panels[pk].layout.traces)
+  let note = if pk >= 0: templateCaption(st.templateView(pk)) else: ""
   let title = IconPlot & "  " & name & (if opened.isDefault: "" else: "  \u00b7  " &
     choiceMark(opened)) & (if hidden.len > 0: "  \u00b7  " & hidden else: "") &
+    (if note.len > 0: "  \u00b7  " & note else: "") &
     (if checking: "  (edits being checked)" else: "") & "###" & id
   # Arrow keys pan the plot, so they do not move ImGui's keyboard focus here;
   # the wheel zooms, so it does not scroll the window.

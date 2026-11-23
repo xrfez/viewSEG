@@ -220,6 +220,9 @@ type
         ## the relation record it was checked against; -1 for none
       qcByPlace*: bool
         ## that record found with the station at the record's place
+      qcOnStations*: bool
+        ## the traces were matched to the record's stations, so which of them the
+        ## template lists is known
       qcNoise*: NoiseSummary
         ## what the noisy-trace test found (not `ready` when it did not run)
       qcBreaks*: FirstBreaks

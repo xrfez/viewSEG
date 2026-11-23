@@ -54,6 +54,7 @@ type
     processing*: Processing
     seismic*: bool = true ## seismic traces
     auxiliary*: bool ## auxiliary traces
+    templateOnly*: bool ## only the traces the record's template lists (`TraceFilter.templateOnly`)
 
   MessagesView* = object
     ## How the Messages window shows the log.

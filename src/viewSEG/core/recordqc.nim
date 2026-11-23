@@ -74,6 +74,9 @@ type
       ## the relation record (X: a shot's; O: a receiver gather's) the job
       ## checked the record against; -1 for none, or while it runs
     byPlace*: bool ## found with the station at the record's place (`Placed`)
+    onStations*: bool
+      ## the traces are matched to the record's stations (not by channel): the traces the
+      ## template does not list (`hits[mfUnlisted]`) are known
     noise*: NoiseSummary ## what the noisy-trace test found in the record (`ready` once it has)
     picks*: bool
       ## the job finds the record's first breaks itself, and posts them (`pickKey`): the
@@ -542,4 +545,5 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkRecordQc, qcSession: session, qcGather: gather,
       qcKeys: revision, qcHits: move hits, qcRecord: record, qcByPlace: byPlace,
+      qcOnStations: onStations,
       qcNoise: move summary, qcBreaks: move found, qcPicked: picked)

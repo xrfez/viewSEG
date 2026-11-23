@@ -93,6 +93,9 @@ type
     auxiliary*: bool ## auxiliary traces (pilots, time breaks, uphole)
     channelSets*: seq[int] ## SEG-D channel sets to show; empty shows all
     channels*: Slice[int] = 0 .. high(int) ## channel numbers to show
+    templateOnly*: bool
+      ## leave out the seismic traces the record's template does not list (the traces of
+      ## the map's "not in the template" filter); a record with no template shows all
     components*: set[uint8]
       ## components switched off (`TraceKeys.component`); empty shows all,
       ## so a component first seen on a later record is shown. A trace with

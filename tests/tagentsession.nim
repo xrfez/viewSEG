@@ -86,6 +86,7 @@ const Reached = {
   "plot.display.breakSize": "display", "plot.display.breakShowPicks": "display",
   "plot.display.breakShowModel": "display",
   "plot.order": "sort", "plot.seismic": "trace filter", "plot.auxiliary": "trace filter",
+  "plot.templateOnly": "trace filter",
   "plot.header.auto": "display header",
   "plot.header.fields": "display header", "plot.processing.raw": "",
   "plot.processing.aux": "processing", "plot.processing.dc": "processing",
@@ -479,7 +480,8 @@ proc main*() =
         it.facts.opened.choice.verifyAll)), "not reopened"
       # seismic stays on above (the spectrum is of a trace shown); off here,
       # while a file is shown, so the choice is seen to change and not be saved
-      st.agent(%*{"kind": "trace filter", "filter": {"seismic": false, "auxiliary": true}})
+      st.agent(%*{"kind": "trace filter", "filter": {"seismic": false, "auxiliary": true,
+        "templateOnly": true}})
       st.agent(%*{"kind": "close", "file": int(st.sessions[0].id)})
       st.agent(%*{"kind": "subfolders", "subfolders": true}) # for the session only
       st.agent(%*{"kind": "clear survey"}) # in memory only (ignored here: none is imported)
@@ -562,7 +564,8 @@ proc main*() =
       st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
       doAssert st.settle(st.panel(MainPanel).layers[0].display.fixedClip > 0)
       st.apply Command(kind: ckFilter, panel: MainPanel,
-        filter: TraceFilter(seismic: false, auxiliary: true))
+        filter: TraceFilter(seismic: false, auxiliary: true,
+          templateOnly: true))
       let kept = flat(st.keptSettings)
       for path, was in before:
         if reachedBy(path).len > 0:

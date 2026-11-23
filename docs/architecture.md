@@ -1296,6 +1296,13 @@ positions as it applies the trace filter (`ReaderSource.hidden`); after every ch
 out (`Panel.hidden`) and shows the gather again when they differ (a kill, a restore, an
 undo, the setting), at the same scales and positions (`newSource`, `carried`).
 
+**Only the traces in the template** (`TraceFilter.templateOnly`, remembered as
+`Settings.plot.templateOnly`): one more condition of the same hidden set (`hiddenOf`). It
+adds the record's seismic traces the template does not list, found by the map filters' record
+check (`recordQc`, `hits[mfUnlisted]`; `followRecordQc` runs it while a panel asks), once
+that check is of the record shown with its traces matched to stations; before that, and for
+a record with no template, nothing is added. `templateView` tells the strip and the title.
+
 ### One mapping between data and screen
 
 A panel's view is in data coordinates, a span of positions and a span of ms, with the
