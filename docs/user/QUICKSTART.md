@@ -302,7 +302,9 @@ the write is the right, sharing the height; drag the splitter between them. Belo
 
 The left pane is the source. **Change source...** picks another folder. **All**, **None**
 and **Only the shown file** set the ticks. The filter box narrows the tree by file name.
-The tree lists that folder's seismic files and fills the pane. Tick the ones to write.
+The tree lists that folder's seismic files and fills the pane. A folder shows how
+many of its files are ticked, and the line under the tree is the total and its
+size. Tick the ones to write.
 **All** and **None** cover every listed file, including ones the name filter hides.
 **Only the shown file** ticks the file the Seismic window shows, and no other. A folder's
 box is mixed when only some of the files under it are ticked; a click then ticks them

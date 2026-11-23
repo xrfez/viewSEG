@@ -9,7 +9,8 @@
 ## output.cell.file c.sgy]". Panes forced to stack: "panes are not side by
 ## side: @[] @[output.stacked]". Panes forced to stay beside: "panes did not
 ## stack in a narrow window". State line missing while writing: "no writing
-## line: @[]".
+## line: @[]". Folder count missing: "no folder count: @[]". Tally missing:
+## "no tally: @[]".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -152,10 +153,17 @@ proc main*() =
             f.markOf("output.file a.sgy on").size.x > 0 and not beside(f):
           doAssert false, "panes are not side by side: " & $f.markNames("output.beside") &
             " " & $f.markNames("output.stacked")
+        if f.markOf("output.folder sub off").size.x > 0 and
+            f.markOf("output.foldercount sub 0 1").size.x == 0:
+          doAssert false, "no folder count: " & $f.markNames("output.foldercount")
+        if f.markOf("output.file a.sgy on").size.x > 0 and not hasPrefix(f, "output.tally "):
+          doAssert false, "no tally: " & $f.markNames("output.tally")
         result = f.markOf("output.ready").size.x > 0 and
           f.markOf("output.file a.sgy on").size.x > 0 and
           f.markOf("output.file sub/c.sgy off").size.x > 0 and
-          f.markOf("output.folder sub off").size.x > 0 and beside(f)
+          f.markOf("output.folder sub off").size.x > 0 and beside(f) and
+          f.markOf("output.foldercount sub 0 1").size.x > 0 and
+          hasPrefix(f, "output.tally 1 file ticked, ")
         if result:
           let (o, p) = (f.windowPlace("output"), f.windowPlace("plot"))
           doAssert o.inSight and o.docked and not o.apart, "not in the centre dock: " & $o
@@ -168,21 +176,25 @@ proc main*() =
       proc tickSub(f: FrameInfo) = f.click(f.markOf("output.folder sub off").centre)
       proc subOn(f: FrameInfo): bool =
         f.markOf("output.folder sub on").size.x > 0 and
-          f.markOf("output.file sub/c.sgy on").size.x > 0
+          f.markOf("output.file sub/c.sgy on").size.x > 0 and
+          f.markOf("output.foldercount sub 1 1").size.x > 0
       step("a folder tick selects its file", tickSub, subOn)
 
       proc none(f: FrameInfo) = f.click(f.markOf("output.none").centre)
       proc allOff(f: FrameInfo): bool =
         f.markOf("output.file a.sgy off").size.x > 0 and
           f.markOf("output.file b.sgy off").size.x > 0 and
-          f.markOf("output.file sub/c.sgy off").size.x > 0
+          f.markOf("output.file sub/c.sgy off").size.x > 0 and
+          hasPrefix(f, "output.tally 0 files ticked, ")
       step("None clears every file", none, allOff)
 
       proc all(f: FrameInfo) = f.click(f.markOf("output.all").centre)
       proc allOn(f: FrameInfo): bool =
         result = f.markOf("output.file a.sgy on").size.x > 0 and
           f.markOf("output.file b.sgy on").size.x > 0 and
-          f.markOf("output.file sub/c.sgy on").size.x > 0
+          f.markOf("output.file sub/c.sgy on").size.x > 0 and
+          f.markOf("output.foldercount sub 1 1").size.x > 0 and
+          hasPrefix(f, "output.tally 3 files ticked, ")
         if result:
           f.keepInMainWindow()
           doAssert f.savePng(shots / "output-before-run.png"), "before-run shot was not written"

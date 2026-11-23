@@ -67,6 +67,15 @@ func sortTip*(keys: string): string =
     result.add keys
     result.add "."
 
+func tickedLine*(files: int; size: string): string =
+  ## "3 files ticked, 6.4 MB", under the tree.
+  let word = if files == 1: "file" else: "files"
+  $files & " " & word & " ticked, " & size
+
+func folderCount*(name: string; on, total: int): string =
+  ## "sub (1 of 1)": how many of a folder's files are ticked.
+  name & " (" & $on & " of " & $total & ")"
+
 func resultsText*(lines: openArray[string]; written, failed, skipped: int): string =
   ## The results table, as text, for the clipboard.
   result = ColFile & "\t" & ColOutcome & "\t" & ColWritten & "\t" & ColDropped &

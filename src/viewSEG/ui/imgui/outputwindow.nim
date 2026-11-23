@@ -179,17 +179,26 @@ proc setUnder(ui: var OutputUi; n: Node; on: bool) =
     ui.ticks[ui.listed[i].relative] = on
   for k in n.kids: ui.setUnder(k, on)
 
-proc folderState(ui: OutputUi; n: Node): int =
-  ## 0 none ticked, 1 mixed, 2 every file under `n` ticked.
-  var on, off = 0
+proc folderCounts(ui: OutputUi; n: Node): tuple[on, total: int] =
+  ## How many files under `n` are ticked, and how many there are.
+  var on, total = 0
   proc walk(node: Node) =
     if node == nil: return
     for i in node.files:
+      inc total
       if ui.ticks.getOrDefault(ui.listed[i].relative, false): inc on
-      else: inc off
     for k in node.kids: walk(k)
   walk(n)
-  if on == 0: 0 elif off == 0: 2 else: 1
+  (on, total)
+
+proc folderState(ui: OutputUi; n: Node): int =
+  ## 0 none ticked, 1 mixed, 2 every file under `n` ticked.
+  let counted = ui.folderCounts(n)
+  if counted.on == 0: 0 elif counted.on == counted.total: 2 else: 1
+
+proc tickedBytes(ui: OutputUi): int64 =
+  for f in ui.listed:
+    if ui.ticks.getOrDefault(f.relative, false): result += f.size
 
 func filterOf(ui: OutputUi): string =
   $cast[cstring](unsafeAddr ui.filterBuf[0])
@@ -446,10 +455,13 @@ proc drawNode(ui: var OutputUi; n: Node; filt: string; marks: var Marks) =
   if triCheck("##tick", state):
     ui.setUnder(n, state != 2)
   marks.mark("output.folder " & n.rel & " " & word)
+  let counted = ui.folderCounts(n)
+  marks.mark("output.foldercount " & n.rel & " " & $counted.on & " " & $counted.total)
   igSameLine(0, -1)
   let flags = ImGui_TreeNodeFlags_DefaultOpen.cint or ImGui_TreeNodeFlags_OpenOnArrow.cint or
     ImGui_TreeNodeFlags_SpanAvailWidth.cint
-  let open = igTreeNodeEx_Str(n.name.cstring, flags)
+  let label = folderCount(n.name, counted.on, counted.total)
+  let open = igTreeNodeEx_Str(label.cstring, flags)
   igPopID()
   if open:
     for k in n.kids: ui.drawNode(k, filt, marks)
@@ -625,10 +637,20 @@ proc drawLeft(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Output
     cast[cstring](addr ui.filterBuf[0]), csize_t(ui.filterBuf.len), 0, nil, nil)
   marks.mark("output.filter")
   tip(FilterTip)
-  let treeH = max(igGetTextLineHeightWithSpacing() * 3, igGetContentRegionAvail().y)
+  let lineH = igGetTextLineHeightWithSpacing()
+  var foot = lineH
+  if ui.capped: foot += lineH
+  let treeH = max(lineH * 3, igGetContentRegionAvail().y - foot)
   if igBeginChild_Str("##tree", ImVec2_c(x: 0, y: treeH), 0, 0):
     ui.drawTree(marks)
   igEndChild()
+  if ui.capped:
+    igPushTextWrapPos(0)
+    igTextUnformatted(CappedNote.cstring, nil)
+    igPopTextWrapPos()
+  let tally = tickedLine(ui.tickedCount, sizeText(ui.tickedBytes))
+  igTextUnformatted(tally.cstring, nil)
+  marks.mark("output.tally " & tally)
 
 proc optBox(label: cstring; on: var bool; help: string) =
   discard igTableNextColumn()
