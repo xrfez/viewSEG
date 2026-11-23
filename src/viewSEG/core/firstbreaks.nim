@@ -413,13 +413,6 @@ func fitModel*(fit: ShotFit): BreakModel =
   BreakModel(source: bmGiven, v1: fit.v1, interceptMs: fit.interceptMs,
     v2: (if two: fit.v2 else: 0.0), crossover: (if two: fit.crossover else: 0.0)).bounded
 
-func fitAsModel*(b: FirstBreaks): BreakModel =
-  ## The record's fit (its velocity or velocities, intercept and crossover) as a given
-  ## model: what "Use this record's fit" keeps, to hold for the other records. It is the fit
-  ## to the trimmed picks of the second pass, so a stretch of noise picks does not set a
-  ## segment. Without a fit (no velocity), the default model (not given).
-  if not b.hasFit: BreakModel() else: b.fit.fitModel
-
 func segments*(b: FirstBreaks): int =
   ## The model's straight segments: 0 when it has no fit, 1 or 2.
   if not (b.hasModel and b.hasFit): 0
@@ -428,6 +421,62 @@ func segments*(b: FirstBreaks): int =
 
 func number(x: float64): string =
   if x.isNaN or abs(x) == Inf: "?" else: $int(round(x))
+
+func fitRefusal*(b: FirstBreaks): string =
+  ## Why the record's fit cannot be kept as a given model, in words; "" when it can (or there
+  ## is no fit). A velocity above what a given model takes (`MaxBreakVelocity`) would be cut
+  ## to it, a model that is not the fit: it is refused, and the usual reason is offsets that
+  ## are wrongly scaled.
+  if not b.hasFit: return ""
+  let two = b.segments == 2
+  let top = max(b.fit.v1, if two: b.fit.v2 else: 0.0)
+  if top > MaxBreakVelocity and top < Inf:
+    result = "The fit's velocity (" & number(top) & ") is above the " &
+      number(MaxBreakVelocity) & " a given model takes, so it is not kept: the offsets of " &
+      "this record are probably wrongly scaled"
+
+func fitAsModel*(b: FirstBreaks): BreakModel =
+  ## The record's fit (its velocity or velocities, intercept and crossover) as a given
+  ## model: what "Use this record's fit" keeps, to hold for the other records. It is the fit
+  ## to the trimmed picks of the second pass, so a stretch of noise picks does not set a
+  ## segment. Without a fit (no velocity), or with one `fitRefusal` refuses (a velocity the
+  ## given model cannot hold), the default model (not given).
+  if not b.hasFit or b.fitRefusal.len > 0: BreakModel() else: b.fit.fitModel
+
+const
+  PlausibleMinMps* = 300.0    ## the slowest first-break velocity taken as physical (m/s)
+  PlausibleMaxMps* = 30_000.0 ## the fastest (m/s)
+  TypicalMps = 3000.0         ## what the factor of a wrong scale is reckoned against (m/s)
+
+func unitInMetres(u: SurveyUnit): float64 =
+  ## The offsets' unit in metres; 0 when the unit is not a length that is known.
+  case u
+  of suMetres: 1.0
+  of suFeet: 0.3048
+  of suUsFeet: 1200.0 / 3937.0
+  else: 0.0
+
+func scaleWords*(b: FirstBreaks; unit: SurveyUnit): string =
+  ## A statement that the offsets look wrongly scaled, when the fitted velocity lies outside
+  ## the physical range of a first break (`PlausibleMinMps` to `PlausibleMaxMps`) for the
+  ## offsets' `unit`, with the factor it is out by against a typical 3000 m/s (the nearest
+  ## power of ten); "" when it is in range, there is no fit, or the unit is no length (the
+  ## range cannot be told). The model is shown as it is: nothing is corrected.
+  if not b.hasFit or b.segments == 0: return ""
+  let m = unit.unitInMetres
+  let v = b.fit.v1
+  if m == 0 or not (v > 0 and v < Inf): return ""
+  let mps = v * m
+  if mps >= PlausibleMinMps and mps <= PlausibleMaxMps: return ""
+  let power = int(round(log10(mps / TypicalMps)))
+  let factor = "1" & repeat('0', min(abs(power), 30))
+  let by = if power >= 0: "about " & factor & " times too large"
+           else: "about " & factor & " times too small"
+  result = "The offsets look wrongly scaled: the fitted velocity, " & number(v) & " " &
+    unit.velocityUnit & ", is not a first-break velocity (" & number(PlausibleMinMps / m) &
+    " to " & number(PlausibleMaxMps / m) & " " & unit.velocityUnit & "), " & by &
+    " against a typical one. The model is shown as fitted; check the offsets' scale (the " &
+    "vendor map, the coordinate scalar, the units)."
 
 const UnitFromSurvey* =
   "The unit is taken from the project's survey: the file names none."
@@ -500,6 +549,8 @@ func modelWordsOf(b: FirstBreaks; unit: SurveyUnit): string =
     result.add "\nIntercept: " & formatFloat(m.interceptMs, ffDecimal, 1) & " ms"
     result.add "\n" & b.givenWords
     result.add "\nOffsets from " & b.offsetsFrom & "."
+    let sc = b.scaleWords(unit)
+    if sc.len > 0: result.add "\n" & sc
     let w = b.ruleWords(unit)
     if w.len > 0: result.add "\n" & w
     return
@@ -518,6 +569,8 @@ func modelWordsOf(b: FirstBreaks; unit: SurveyUnit): string =
     "the line are left out, so noise at long offsets does not set it)"
   if b.fittedFrom.len > 0: result.add " (" & b.fittedFrom & ")"
   result.add "\nOffsets from " & b.offsetsFrom & "."
+  let sc = b.scaleWords(unit)
+  if sc.len > 0: result.add "\n" & sc
   let w = b.ruleWords(unit)
   if w.len > 0: result.add "\n" & w
 
@@ -537,6 +590,10 @@ func keyParts*(b: FirstBreaks): KeyParts =
   ## off it. The velocity, intercept, median and where offsets came from are the tooltip's.
   result = KeyParts(given: b.isGiven and b.hasModel)
   if result.given and b.offModel > 0: result.off = $b.offModel & " off"
+
+const ScaleNote* = "offsets look wrongly scaled"
+  ## What the key says beside itself when `scaleWords` has something to say (the tooltip has
+  ## the rest).
 
 func keyNote*(b: FirstBreaks): string =
   ## The words the key shows beside itself: the overlay's own words while it is working,

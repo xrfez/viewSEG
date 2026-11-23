@@ -233,12 +233,17 @@ proc drawModelChoice(b: FirstBreaks; unit: SurveyUnit; m: var BreakModel; t: The
       igTextWrapped("Give a velocity: until then the model fitted to the record is shown.")
       igPopStyleColor(1)
   let fit = b.fitAsModel
+  let refused = b.fitRefusal
   igBeginDisabled(fit.v1 <= 0)
   if igButton("Use this record's fit", ImVec2_c(x: 0, y: 0)):
     m = fit
     result = true
   igEndDisabled()
   marks.mark("plot.first break model use fit")
+  if refused.len > 0:
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+    igTextWrapped(refused.cstring)
+    igPopStyleColor(1)
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   igTextWrapped("Copies this record's fitted velocity, intercept and crossover and holds " &
     "them for every record: a pick off the model then points to a wrong source or station.")
@@ -264,7 +269,8 @@ proc drawBreakKey*(b: FirstBreaks; unit: SurveyUnit; fromSurvey: bool; d: Displa
   let parts = b.keyParts
   let swatch = 18 * u
   let h = igGetTextLineHeight()
-  let note = b.keyNote
+  let scaleNote = if b.keyNote.len == 0 and b.scaleWords(unit).len > 0: ScaleNote else: ""
+  let note = if scaleNote.len > 0: scaleNote else: b.keyNote
   let givenW = igCalcTextSize("given", nil, false, -1).x + 10 * u
   let offW = igCalcTextSize("0000 off", nil, false, -1).x
   var width = 0'f32
@@ -364,7 +370,8 @@ proc drawBreakKey*(b: FirstBreaks; unit: SurveyUnit; fromSurvey: bool; d: Displa
   x += offW
   marks.markRect(KeyMarks[0], top, ImVec2_c(x: top.x + keyWidth, y: top.y + height))
   if note.len > 0:
-    ImDrawList_AddText_Vec2(dl, ImVec2_c(x: x, y: y), u32(t.roles[rlTextDim]), note.cstring, nil)
+    ImDrawList_AddText_Vec2(dl, ImVec2_c(x: x, y: y),
+      u32(if scaleNote.len > 0: t.roles[rlWarning] else: t.roles[rlTextDim]), note.cstring, nil)
     marks.markRect(KeyMarks[1], ImVec2_c(x: x, y: top.y),
       ImVec2_c(x: top.x + width, y: top.y + height))
   ImDrawList_AddText_Vec2(dl, ImVec2_c(x: top.x + width + 3 * u, y: y),

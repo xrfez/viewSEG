@@ -700,9 +700,17 @@ is stopped (in Jobs) or fails, the picks guided by the other model stay drawn an
 the tooltip say whose they are; giving the model again picks again. Its boxes take a number
 when Enter is pressed or the box loses focus; Escape puts the old number back.
 
-The offsets are the trace keys': the imported survey's when one is joined to the file, else
-the header's, else derived from the file's own coordinates. With neither the picks are drawn
-alone and the key says so. The model is one time against offset for the record, whatever its
+The offsets are the trace keys': where a join set both ends of a trace, the distance between
+the survey's positions (a header offset the join left is not trusted over them), else the
+header's as the layout the file was opened with reads it (a vendor map's divisor included),
+else derived from the file's own coordinates with the coordinate scalar applied (a negative
+scalar divides, a positive one multiplies, 0 is none). With none the picks are drawn alone and
+the key says so. A join that arrives (or changes) after the overlay was made makes it again.
+The overlay never corrects an offset: when the fitted velocity is no first-break velocity for
+the offsets' unit (under 300 or over 30 000 m/s, in feet likewise), the key says the offsets
+look wrongly scaled, and the hover says by about what factor against a typical 3000 m/s; check
+the vendor map, the coordinate scalar and the units. "Use this record's fit" refuses a fit
+above the 1 000 000 a given model takes, and says why. The model is one time against offset for the record, whatever its
 receiver lines; a record of several components is fitted from one sensor kind. The stations are
 compared along each receiver line. The work runs on a job (Jobs lists it) for the record shown
 and is kept for it (the last few records stay, so stepping back is immediate); it is made

@@ -249,16 +249,21 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     result.pickMs[i] = picks[i].timeMs
     result.confidence[i] = picks[i].confidence
     if not picks[i].timeMs.isNaN: inc result.picked
-  # The offsets: the keys' (a join's, the headers', or derived from the file's
-  # coordinates); a header offset of exactly 0 is one left unset.
+  # The offsets: where a join set both ends of a trace, the distance between the survey's
+  # positions (a header offset the join kept is not trusted over them: it may be scaled);
+  # else the keys': the headers' (as the layout the file was opened with reads them) or
+  # derived from the file's coordinates. A header offset of exactly 0 is one left unset.
   var any = false
   var surveyed = false
   for i in 0 ..< n:
+    let ends = f.index.joinedGroups(traces.a + i)
+    if {jgSourceXy, jgReceiverXy} <= ends and keys[i].hasSourceXY and keys[i].hasReceiverXY:
+      keys[i].offset = hypot(keys[i].rcvX - keys[i].srcX, keys[i].rcvY - keys[i].srcY)
     let x = keys[i].offset
     if x == 0: keys[i].offset = NaN
     elif keys[i].isSeismic and not x.isNaN:
       any = true
-      if jgDerived in f.index.joinedGroups(traces.a + i): surveyed = true
+      if jgDerived in ends or {jgSourceXy, jgReceiverXy} <= ends: surveyed = true
   result.offsetAbs = newSeq[float64](n)
   for i in 0 ..< n:
     result.offsetAbs[i] = if keys[i].isSeismic and not keys[i].offset.isNaN: abs(keys[i].offset)

@@ -39,7 +39,10 @@ whole (519), and decimals only when the value has a fraction (100.5).
 
 The shipped map `segy-x100-stations.nif` does this for a SEG-Y file whose textual header
 holds "LINE AND POINT NUMBERS ARE X 100 IN TRACE HEADERS": bytes 181-196 are the receiver line and point and the
-source line and point. A map for another layout is a copy of it with other bytes and
+source line and point, and the offset (bytes 37-40) is read divided by 100 as well: such a file
+stores the offset in the same hundredths as its coordinates (the coordinate scalar is -100), so the
+first-break overlay, the status bar, sorting by offset and the f-k window see the true distance.
+A map for another layout is a copy of it with other bytes and
 another match (`WRITING-A-MAP.md`, "Layouts"). The auxiliary traces of such a file (time
 break, sweep) may hold other data in those bytes; they take no part in the join.
 
