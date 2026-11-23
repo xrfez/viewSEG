@@ -257,6 +257,27 @@ The next record is shown at the same scales (the same traces and times in view, 
 whole record if the whole one was in view before), with the same gain and trace order,
 so records compare one after the other.
 
+## Missing traces
+
+**Reports > Missing traces...** scans the folder open in the file list, including the
+folders under it, against the loaded relation file. The item stays in the menu. It is
+inactive until a folder is open and a relation file is loaded, and it names whichever
+of those is missing.
+
+The **Missing traces** window opens as a tab beside **Records**. The **Folder** tab is
+one row per station the relation file expected: how many records should have recorded
+it, and how many did not. The **Records** tab is one row per record that was read, and
+how that record compares with the spread planned for it. Click a column header to sort
+by it (again for the other way; Shift-click adds a column). **Skipped** lists files
+that were not seismic or could not be read. **Unmatched** lists records that could not
+be checked against the relation file. **Rescan** runs the scan again; while one is
+running, that button is **Stop**.
+
+**Export CSV...** writes the table on screen. On the Records tab, **with missing
+points** writes one row per missing station instead of one row per record. **totals in
+a second file** also writes a file beside the one you save, with `-totals` before the
+extension. Double-click a record to open that file at that record.
+
 ## Jobs
 
 Anything that takes a while (opening a large file, listing a folder) runs while you go
