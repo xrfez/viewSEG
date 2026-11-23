@@ -341,8 +341,7 @@ proc poll(ui: var OutputUi; st: AppState) =
       if info.get.state == jsFailed and not ui.haveResult:
         ui.status = if info.get.error.len > 0: info.get.error else: WriteFailed
       elif ui.stopped: ui.status = Stopped
-      elif ui.haveResult: ui.status = summaryLine(ui.result.written, ui.result.failed,
-        ui.result.skipped)
+      elif ui.haveResult: ui.status = ""
       ui.runJob = NoJob
 
 proc consider(ui: var OutputUi; st: AppState) =
@@ -656,10 +655,26 @@ proc drawOptions(ui: var OutputUi; st: AppState) =
   optBox(OptSort.cstring, ui.sortOn, sortTip(keys))
   igEndTable()
 
-proc drawRun(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
+proc activityLine(ui: OutputUi; phase: string): string =
+  ## The progress line: the current state, never the results summary.
+  if ui.listing: return Listing
+  if ui.running:
+    if phase.len > 0: return "Writing " & phase
+    return Writing
+  if ui.stopped: return Stopped
+  if ui.checking: return Checking
+  if ui.listFailed.len > 0 and not ui.haveList: return ui.listFailed
+  if not ui.haveResult and ui.status.len > 0 and ui.status != Ready and
+      ui.status != Listing: return ui.status
+  ""
+
+proc drawRun(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
+    outp: var OutputOutput) =
+  let right = lineRight()
   if ui.running:
     if igButton(StopButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.runJob != NoJob:
       outp.commands.add Command(kind: ckCancelJob, job: ui.runJob)
+      marks.mark("output.cancelAsked")
     marks.mark("output.stop")
   else:
     igBeginDisabled(not ui.canRun)
@@ -668,8 +683,14 @@ proc drawRun(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputO
     if ui.canRun: marks.mark("output.run")
     else: marks.mark("output.run.disabled")
     tip(RunTip)
+  let line = ui.activityLine(phase)
+  if line.len > 0:
+    sameLineIfFits(right, textWidth(line) + 4)
+    igTextUnformatted(line.cstring, nil)
+    marks.mark("output.state " & line)
 
-proc drawRight(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
+proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
+    outp: var OutputOutput) =
   let extra = if ui.dest.len > 0: "output.destination " & ui.dest else: ""
   if pathLine(DestLabel, ui.dest, ChangeDest, "output.dest", extra, "output.changeDest",
       marks):
@@ -690,7 +711,7 @@ proc drawRight(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Outpu
   discard igCheckbox(KeepFolders.cstring, addr ui.mirror)
   marks.mark("output.mirror")
   tip(MirrorTip)
-  ui.drawRun(st, marks, outp)
+  ui.drawRun(st, phase, marks, outp)
   ui.drawResults(marks)
 
 proc drawOutput*(ui: var OutputUi; title: string; st: AppState; marks: var Marks): OutputOutput =
@@ -703,19 +724,11 @@ proc drawOutput*(ui: var OutputUi; title: string; st: AppState; marks: var Marks
     marks.markWindow("output")
     if ui.listing: flagMark(marks, "output.listing")
     if ui.haveList and not ui.listing: flagMark(marks, "output.ready")
+    var phase = ""
     if ui.running:
       let info = st.jobs.info(ui.runJob)
-      if info.isSome and info.get.progress.phase.len > 0:
-        flagMark(marks, "output.progress " & info.get.progress.phase)
-    var status = ui.status
-    if status.len == 0:
-      status = if ui.source.len == 0: NeedFolder elif ui.haveList: Ready else: Listing
-    if ui.capped:
-      if status.len > 0: status.add " "
-      status.add CappedNote
-    igPushTextWrapPos(0)
-    igTextUnformatted(status.cstring, nil)
-    igPopTextWrapPos()
+      if info.isSome: phase = info.get.progress.phase
+      if phase.len > 0: flagMark(marks, "output.progress " & phase)
     let wide = igGetMainViewport().Size.x >= 900
     let avail = igGetContentRegionAvail()
     if wide:
@@ -729,7 +742,7 @@ proc drawOutput*(ui: var OutputUi; title: string; st: AppState; marks: var Marks
       if igBeginChild_Str("##out.right", ImVec2_c(x: 0, y: 0),
           ImGui_ChildFlags_Borders.cint, 0):
         marks.markWindow("output.pane.right")
-        ui.drawRight(st, marks, result)
+        ui.drawRight(st, phase, marks, result)
       igEndChild()
       flagMark(marks, "output.beside")
     else:
@@ -742,7 +755,7 @@ proc drawOutput*(ui: var OutputUi; title: string; st: AppState; marks: var Marks
       if igBeginChild_Str("##out.right.stack", ImVec2_c(x: 0, y: 0),
           ImGui_ChildFlags_Borders.cint, 0):
         marks.markWindow("output.pane.right")
-        ui.drawRight(st, marks, result)
+        ui.drawRight(st, phase, marks, result)
       igEndChild()
       flagMark(marks, "output.stacked")
     marks.markOverflow("output")

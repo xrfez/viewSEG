@@ -316,13 +316,14 @@ A SEG-D file is sorted within each record. A file already open is written as it 
 including edits not yet saved. **Keep the sub folders** is on: a file in a sub folder is
 written in that sub folder.
 
-**Run** stays inactive when the
-destination is the source folder, inside it, or holding it. While the write runs, the
-button is **Stop**: the file in progress finishes, and the rest are skipped. The table
-under it is one row per file: the relative path, the outcome (and the reason when it
-failed), how many traces were written and dropped, and the notes. Columns can be
-resized. **Copy results** puts that table on the clipboard. **Open destination** opens
-the folder.
+**Run** stays inactive when the destination is the source folder, inside it, or
+holding it. While the write runs, the button is **Stop** and the line beside it says
+which file is being written. **Stop** finishes the file in progress and skips the
+rest; the line then says **Stopped.** The line above the table is the total (written,
+failed, skipped). The table is one row per file: the relative path, the outcome (and
+the reason when it failed), how many traces were written and dropped, and the notes.
+Columns can be resized. **Copy results** puts that table on the clipboard. **Open
+destination** opens the folder.
 
 ## Jobs
 

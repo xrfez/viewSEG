@@ -8,7 +8,8 @@
 ## show sub/c.sgy: @[output.cell.file a.sgy, output.cell.file b.sgy,
 ## output.cell.file c.sgy]". Panes forced to stack: "panes are not side by
 ## side: @[] @[output.stacked]". Panes forced to stay beside: "panes did not
-## stack in a narrow window".
+## stack in a narrow window". State line missing while writing: "no writing
+## line: @[]".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -60,6 +61,10 @@ proc beside(f: FrameInfo): bool =
   f.markOf("output.beside").size.x > 0 and l.size.x > 0 and r.size.x > 0 and
     abs(l.pos.y - r.pos.y) <= 4 and abs(l.size.y - r.size.y) <= 4 and
     l.pos.x + l.size.x <= r.pos.x + 8
+
+proc hasPrefix(f: FrameInfo; prefix: string): bool =
+  for name in f.markNames(prefix):
+    if name.startsWith(prefix): return true
 
 proc stacked(f: FrameInfo): bool =
   let l = f.markOf("output.pane.left")
@@ -207,7 +212,9 @@ proc main*() =
           c.outcome == "written" and a.dropped >= 1 and
           fileExists(written / "a.sgy") and fileExists(written / "b.sgy") and
           fileExists(written / "sub" / "c.sgy") and
-          f.markOf("output.cell.file sub/c.sgy").size.x > 0
+          f.markOf("output.cell.file sub/c.sgy").size.x > 0 and
+          f.markOf("output.summary 3 0 0").size.x > 0 and
+          not hasPrefix(f, "output.state ")
         if result:
           doAssert f.savePng(shots / "output-after-run.png"), "after-run shot was not written"
       step("Run writes the three files", run, wrote)
@@ -234,23 +241,28 @@ proc main*() =
       step("the stop run has its own destination", armStop, armed)
 
       var stopping = false
-      var stopFrame = -1
+      var asked = false
+      var released = false
       proc startStop(f: FrameInfo) = f.click(f.markOf("output.run").centre)
       proc stoppedRun(f: FrameInfo): bool =
-        if not stopping and sawFile2.isOpen:
-          let stop = f.markOf("output.stop")
-          if stop.size.x > 0:
-            f.click(stop.centre)
-            stopping = true
-            stopFrame = f.index
-        if stopping and f.index > stopFrame + 6: releaseFile2.open()
+        if not stopping and sawFile2.isOpen and f.markOf("output.stop").size.x > 0:
+          if not hasPrefix(f, "output.state Writing file 2"):
+            doAssert false, "no writing line: " & $f.markNames("output.state")
+          f.click(f.markOf("output.stop").centre)
+          stopping = true
+        if stopping and not asked and f.markOf("output.cancelAsked").size.x > 0:
+          asked = true
+        elif asked and not released:
+          releaseFile2.open()
+          released = true
         let a = rowOf(f, "a.sgy")
         let b = rowOf(f, "b.sgy")
         let c = rowOf(f, "sub/c.sgy")
-        releaseFile2.isOpen and a.ok and a.outcome == "written" and
+        released and a.ok and a.outcome == "written" and
           fileExists(stopped / "a.sgy") and b.ok and b.outcome == "skipped" and
           c.ok and c.outcome == "skipped" and not fileExists(stopped / "b.sgy") and
-          not fileExists(stopped / "sub" / "c.sgy")
+          not fileExists(stopped / "sub" / "c.sgy") and
+          f.markOf("output.state Stopped.").size.x > 0
       step("Stop skips the files not started", startStop, stoppedRun)
 
       var at = 0
