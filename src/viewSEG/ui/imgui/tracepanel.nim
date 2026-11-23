@@ -215,6 +215,11 @@ type
     ownDraft: OwnFilter ## the filter the popover is editing
     ownMixed: bool ## the selection holds different filters: the draft starts empty
     ownPos: ImVec2_c ## where the popover opens
+    shiftAsk: bool ## the menu asked for the time-shift popover: open it next frame
+    shiftTraces: seq[int] ## survey-wide ids the popover shifts
+    shiftText: array[32, char] ## the milliseconds being typed
+    shiftMixed: bool ## the selection holds different shifts: the field starts empty
+    shiftPos: ImVec2_c ## where the popover opens
     editMarks: seq[EditMark] ## the edits row as drawn this frame
     editBand0, editBand1: float32 ## the row across the traces, this frame
     editAxis: ScreenAxis ## the traces' axis, this frame
@@ -1455,6 +1460,10 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         if rev.len > 0:
           if named.len > 0: named.add "\n"
           named.add rev
+        let shifted = st.shiftLine(p)
+        if shifted.len > 0:
+          if named.len > 0: named.add "\n"
+          named.add shifted
         drawFilterControls(p, hasAux(st, p), st.filterReach(p), t, marks, res.commands,
           named)
     of sgSort:
@@ -1713,6 +1722,34 @@ func targetOf(under: int; pick: Pick; sel: Selection): string =
     if n == 1: "1 selected trace" else: $n & " selected traces"
   else: "Trace " & $(pick.trace + 1)
 
+proc fillShift(buf: var array[32, char]; text: string) =
+  ## Copies `text` into `buf`, the rest zero, so the popover's field shows it.
+  zeroMem(addr buf[0], buf.len)
+  if text.len > 0: copyMem(addr buf[0], text.cstring, min(text.len, buf.len - 1))
+
+func startingShift(st: AppState; ids: openArray[int]): tuple[text: string; mixed: bool] =
+  ## The shift the popover starts from: the one every trace of `ids` has,
+  ## or empty when they differ (`mixed`). None is "0".
+  var seen = false
+  var ms = 0.0
+  for id in ids:
+    let cur = st.shownShift(id)
+    if not seen:
+      ms = cur
+      seen = true
+    elif cur != ms:
+      return ("", true)
+  (shiftField(ms), false)
+
+proc askShift(tp: var TracePanelUi; st: AppState; ids: openArray[int]; pos: ImVec2_c) =
+  ## Opens the time-shift popover next frame on `ids`, from their current shift.
+  let start = st.startingShift(ids)
+  fillShift(tp.shiftText, start.text)
+  tp.shiftMixed = start.mixed
+  tp.shiftTraces = @ids
+  tp.shiftPos = pos
+  tp.shiftAsk = true
+
 func startingFilter(st: AppState; ids: openArray[int]): tuple[filter: OwnFilter; mixed: bool] =
   ## The filter the popover starts from: the one every trace of `ids` has,
   ## or empty when they differ (`mixed`) or none has one.
@@ -1801,6 +1838,28 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
     marks.mark("plot.menu.filter")
     marks.mark("plot.menu.filter.item " & filterItem)
     tip("Give this trace its own frequency filter, after the plot's filters or instead of them")
+  let seismic = if under >= 0: st.seismicIds(targets) else: @[]
+  let onSeismic = under >= 0 and under in seismic
+  if caps.menuFilters and onSeismic:
+    let shiftMany = seismic.len > 1
+    let shiftItem = if shiftMany: "Time shift of " & $seismic.len & " selected traces..."
+                    else: "Time shift..."
+    if igMenuItem_Bool((IconShift & "  " & shiftItem).cstring, nil, false, true):
+      tp.askShift(st, seismic, igGetIO_Nil().MousePos)
+    marks.mark("plot.menu.shift")
+    marks.mark("plot.menu.shift.item " & shiftItem)
+    tip("Move these traces in time, in milliseconds, positive later. Snapped to a whole sample.")
+    var anyShift = false
+    for id in seismic:
+      if st.shownShift(id) != 0.0: anyShift = true
+    if anyShift:
+      let removeItem = if shiftMany: "Remove the time shifts of " & $seismic.len & " traces"
+                       else: "Remove the time shift"
+      if igMenuItem_Bool((IconShift & "  " & removeItem).cstring, nil, false, true):
+        res.commands.add Command(kind: ckTimeShift, panel: p.id, edited: seismic, on: false)
+      marks.mark("plot.menu.removeshift")
+      marks.mark("plot.menu.removeshift.item " & removeItem)
+      tip("Take the time shift away")
   var anyFilter = false
   for id in targets:
     let file = st.findTrace(id)
@@ -1886,9 +1945,9 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
         not e.isEmpty):
       res.commands.add Command(kind: ckClearEdits, panel: p.id)
     marks.mark("plot.menu.clear")
-    tipAlways("Kills, polarity reversals and a trace's own filter are remembered beside the " &
-      "file, never written into it;\nclearing them shows the traces as the file has them " &
-      "(Ctrl+Z brings them back).")
+    tipAlways("Kills, polarity reversals, a trace's own filter and its time shift are remembered " &
+      "beside the file, never written into it;\nclearing them shows the traces as the file " &
+      "has them (Ctrl+Z brings them back).")
   igSeparator()
   # What it was, cut to a steady width; the whole text is in the tooltip.
   let wide = igGetFontSize() * 14
@@ -1938,17 +1997,22 @@ proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
     if plotPressed("plot.fft", over):
       res.commands.add fftCommand(st, p, under)
 
-func editColour*(has: set[TraceEdit]; shownFilter: bool): Role =
+func editColour*(has: set[TraceEdit]; shownFilter: bool; shownShift = false): Role =
   ## The colour of an edit mark: error when the trace is killed, accent when
-  ## a reversal or a filter is shown, dim when only a remembered edit is hidden.
+  ## a reversal, a filter or a time shift is shown, dim when only a remembered
+  ## edit is hidden.
   if teKilled in has: rlError
-  elif has != {} or shownFilter: rlAccent
+  elif has != {} or shownFilter or shownShift: rlAccent
   else: rlTextDim
 
-func editStar*(has, kept: set[TraceEdit]; shownF, keptF: bool; shown, keptFilter: OwnFilter): bool =
-  ## Whether the mark has a star: an edit shown but not remembered, or a
-  ## filter that differs from the one remembered with the file.
-  (has - kept) != {} or (shownF and not keptF) or (shownF and keptF and shown != keptFilter)
+func editStar*(has, kept: set[TraceEdit]; shownF, keptF: bool; shown, keptFilter: OwnFilter;
+    shownShift = 0.0; keptShift = 0.0): bool =
+  ## Whether the mark has a star: an edit shown but not remembered, a filter
+  ## that differs from the one remembered with the file, or a time shift shown
+  ## that differs from the one remembered. A shift only remembered, not shown,
+  ## is not a star.
+  (has - kept) != {} or (shownF and not keptF) or (shownF and keptF and shown != keptFilter) or
+    (shownShift != 0.0 and shownShift != keptShift)
 
 func holds(t: Tile; position: int): bool {.inline.} =
   ## Whether `t` has a row at `position`.
@@ -1993,7 +2057,7 @@ proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; vie
   var spans: seq[EditMark]
   var badges: seq[string]
   var drawn: seq[tuple[text: string; colour: ImU32; lo, hi: ImVec2_c; bar, outlineBar,
-    session, hidden, filter: bool]]
+    session, hidden, filter, shift: bool]]
   for k in countdown(tiles.high, 0):
     for row in 0 ..< min(tiles[k].request.count, tiles[k].traces.len):
       let pos = tiles[k].request.position(row)
@@ -2007,23 +2071,28 @@ proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; vie
                                   else: (false, OwnFilter())
       let (keptF, keptFilter) = if pos in vis and not newer: e.keptFilter(trace)
                                 else: (false, OwnFilter())
+      let shownShift = if pos in vis and not newer: e.shiftOf(trace) else: 0.0
+      let keptMs = if pos in vis and not newer: e.keptShift(trace) else: 0.0
       var badge = ""
       if pos in vis and not newer and filePath.len > 0:
         if slotAOn and filePath == slotAPath and trace + 1 == slotATrace: badge.add "A"
         if slotBOn and filePath == slotBPath and trace + 1 == slotBTrace: badge.add "B"
-      if has != {} or kept != {} or shownF or keptF or badge.len > 0:
-        func letters(s: set[TraceEdit]; filtered: bool): string =
+      if has != {} or kept != {} or shownF or keptF or shownShift != 0.0 or
+          keptMs != 0.0 or badge.len > 0:
+        func letters(s: set[TraceEdit]; filtered, shifted: bool): string =
           (if teKilled in s: "K" else: "") & (if teReversed in s: "R" else: "") &
             (if teExcluded in s: "E" else: "") &
-            (if filtered: IconFilter else: "")
+            (if filtered: IconFilter else: "") & (if shifted: IconShift else: "")
         let session = has - kept # shown, not remembered
         let hidden = kept - has # remembered, not shown
-        let filterMoved = editStar(has, kept, shownF, keptF, shownFilter, keptFilter)
-        var text = letters(has, shownF)
-        if filterMoved: text.add "*"
-        if hidden != {} or (keptF and not shownF):
-          text.add "(" & letters(hidden, keptF and not shownF) & ")"
-        var colour = u32(t.roles[editColour(has, shownF)])
+        let hiddenShift = keptMs != 0.0 and shownShift == 0.0
+        let starred = editStar(has, kept, shownF, keptF, shownFilter, keptFilter,
+          shownShift, keptMs)
+        var text = letters(has, shownF, shownShift != 0.0)
+        if starred: text.add "*"
+        if hidden != {} or (keptF and not shownF) or hiddenShift:
+          text.add "(" & letters(hidden, keptF and not shownF, hiddenShift) & ")"
+        var colour = u32(t.roles[editColour(has, shownF, shownShift != 0.0)])
         if text.len == 0 and badge.len > 0:
           colour = u32(if 'A' in badge: t.roles[rlAccent] else: t.series[1])
         if badge.len > 0: text.add badge
@@ -2043,16 +2112,19 @@ proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; vie
           hi = vec(ta, c + half, bs + round(bz * 0.8))
         let note = if shownF: filterWords(shownFilter)
                    elif keptF: filterWords(keptFilter) else: ""
+        let shifted = if shownShift != 0.0: shiftWords(shownShift)
+                      elif keptMs != 0.0: shiftWords(keptMs) else: ""
         # A pixel of pad so the edge of a letter still counts as the mark.
         let pad = if asBar: 0'f32 else: 1'f32
         spans.add EditMark(trace: trace, centre: c,
           lo: lo.along(ta) - pad, hi: hi.along(ta) + pad,
           cross0: if asBar: bs else: lo.along(bands.axis) - pad,
           cross1: if asBar: bs + bz else: hi.along(bands.axis) + pad,
-          edits: has, hasFilter: shownF, outline: asBar, filterNote: note)
+          edits: has, hasFilter: shownF, outline: asBar, filterNote: note,
+          shiftNote: shifted)
         drawn.add (text, colour, lo, hi, asBar, has == {} or session == has,
-          session != {} or (shownF and not keptF) or filterMoved, hidden != {},
-          shownF or keptF)
+          session != {} or (shownF and not keptF) or starred, hidden != {} or hiddenShift,
+          shownF or keptF, shownShift != 0.0 or keptMs != 0.0)
   tp.editMarks = spans
   tp.editBand0 = bs
   tp.editBand1 = bs + bz
@@ -2082,6 +2154,7 @@ proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; vie
       if d.session: marks.markRect("plot.header.edit " & $(span.trace + 1) & " session", d.lo, d.hi)
       if d.hidden: marks.markRect("plot.header.edit " & $(span.trace + 1) & " hidden", d.lo, d.hi)
       if d.filter: marks.markRect("plot.header.filter " & $(span.trace + 1), d.lo, d.hi)
+      if d.shift: marks.markRect("plot.header.shift " & $(span.trace + 1), d.lo, d.hi)
       if n < badges.len and 'A' in badges[n]:
         marks.markRect("plot.header.compareA " & $(span.trace + 1), d.lo, d.hi)
       if n < badges.len and 'B' in badges[n]:
@@ -2090,7 +2163,9 @@ proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; vie
       inc marked
   if hit.traces.len > 0:
     let tip = markTip(hit, spans)
-    if tip.len > 0: igSetTooltip("%s", tip.cstring)
+    if tip.len > 0:
+      igSetTooltip("%s", tip.cstring)
+      marks.mark("plot.header.edit tip " & tip.replace("\n", " | "))
   ImDrawList_PopClipRect(dl)
 
 proc openMarkMenu(tp: var TracePanelUi; st: AppState; k, base: int; hit: MarkHit;
@@ -2115,6 +2190,10 @@ proc openMarkMenu(tp: var TracePanelUi; st: AppState; k, base: int; hit: MarkHit
     if base + f.trace in st.selection.selected:
       selected.add f.trace
       wanted.add f.trace
+  for s in st.editsOf(k).shiftsIn(span):
+    if base + s.trace in st.selection.selected:
+      selected.add s.trace
+      wanted.add s.trace
   wanted.sort()
   var n = 0
   for t in wanted:
@@ -2131,7 +2210,8 @@ proc openMarkMenu(tp: var TracePanelUi; st: AppState; k, base: int; hit: MarkHit
   selected.setLen n
   for t in wanted:
     let (has, _) = st.ownAt(path, t)
-    rows.add TraceEditView(trace: t, edits: st.traceEdits(base + t), hasFilter: has)
+    rows.add TraceEditView(trace: t, edits: st.traceEdits(base + t), hasFilter: has,
+      hasShift: st.editsOf(k).hasShift(t))
   let entries = markEntries(hit, rows, selected)
   if entries.len == 0: return
   tp.markAsk = true
@@ -2179,6 +2259,11 @@ proc drawMarkMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
         tp.ownTraces = choice.traces
         tp.ownPos = tp.markMouse
         tp.ownAsk = true
+      of miRemoveShift, miRemoveShiftSelected:
+        res.commands.add Command(kind: ckTimeShift, panel: p.id, edited: choice.traces,
+          on: false)
+      of miEditShift:
+        tp.askShift(st, choice.traces, tp.markMouse)
     marks.mark("plot.editmenu.item " & choice.text)
   igEndPopup()
 
@@ -2788,6 +2873,23 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     tp.ownAsk = false
     igSetNextWindowPos(tp.ownPos, ImGui_Cond_Appearing.cint, ImVec2_c(x: 0, y: 0))
     openOwnFilter()
+  if tp.shiftAsk:
+    tp.shiftAsk = false
+    igSetNextWindowPos(tp.shiftPos, ImGui_Cond_Appearing.cint, ImVec2_c(x: 0, y: 0))
+    openTimeShift()
+  if tp.shiftTraces.len > 0:
+    var applied = 0.0
+    case drawTimeShift(tp.shiftText, tp.shiftMixed, tp.shiftTraces.len,
+        st.panels[k].layout.dtMs, marks, applied)
+    of scNone: discard
+    of scClear:
+      res.commands.add Command(kind: ckTimeShift, panel: st.panels[k].id,
+        edited: tp.shiftTraces, on: false)
+      tp.shiftTraces.setLen 0
+    of scApply:
+      res.commands.add Command(kind: ckTimeShift, panel: st.panels[k].id,
+        edited: tp.shiftTraces, on: true, ms: applied)
+      tp.shiftTraces.setLen 0
   if tp.ownTraces.len > 0 and drawOwnFilter(tp.ownDraft, tp.ownMixed, tp.ownTraces.len,
       st.panels[k].layout.dtMs, tp.ownPos, marks):
     # Nothing set and "after" takes the filter away (no mark; no step when

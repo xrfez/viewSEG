@@ -759,6 +759,10 @@ func shiftStorable*(ms: float64): bool =
   ## `MaxShiftMs` either way.
   ms == ms and ms != Inf and ms != -Inf and abs(ms) <= MaxShiftMs
 
+func shiftRefusal*(ms: float64): string =
+  ## What a refused time shift is told: past `MaxShiftMs`, or not a number.
+  "a shift of " & $ms & " ms is not kept"
+
 proc setTimeShifts*(e: var FileEdits; traces: openArray[int]; ms, dtMs: float64;
     keep = true): int =
   ## Gives every trace of `traces` a time shift of `ms` milliseconds, snapped

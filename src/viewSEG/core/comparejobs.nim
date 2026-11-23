@@ -12,6 +12,7 @@ import parseSEG
 import processSEG/core/[basic, rows, types, workspace]
 import processSEG/pipeline
 import compare, filesystem, inbox, jobs, processing, references, threads
+from editmarks import shiftWords
 
 proc post(to: Poster; job: JobId; news: CompareNews) =
   clearCycleRoots()
@@ -93,6 +94,7 @@ proc compareTraceWork*(file: ptr SeismicFile; path: string; size: int64; trace: 
         news.reversed = true
       if shiftMs != 0.0 and keys.isSeismic:
         applyStoredShift(samples, shiftMs, dt)
+        news.shiftWords = shiftWords(shiftMs)
       if own.spec.hasFilters:
         applyOwn(samples, dt, own)
         news.filtered = true

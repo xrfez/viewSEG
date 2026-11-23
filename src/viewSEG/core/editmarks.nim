@@ -8,6 +8,7 @@
 
 import std/[algorithm, math, strutils]
 import edits
+from processing import snappedShiftMs
 
 export TraceEdit
 
@@ -39,6 +40,7 @@ type
     trace*: int
     edits*: set[TraceEdit]
     hasFilter*: bool
+    hasShift*: bool
 
   MarkItem* = enum
     miRemoveKill
@@ -46,11 +48,14 @@ type
     miRemoveExclude
     miRemoveFilter
     miEditFilter
+    miRemoveShift
+    miEditShift
     miRemoveAll
     miRemoveKillSelected
     miRemoveReverseSelected
     miRemoveExcludeSelected
     miRemoveFilterSelected
+    miRemoveShiftSelected
 
   MarkEntry* = object
     ## One line of the menu. `traces` are file indices, ascending.
@@ -80,9 +85,9 @@ func findView(rows: openArray[TraceEditView]; trace: int): int =
   if lo < rows.len and rows[lo].trace == trace: lo else: -1
 
 func viewAt(rows: openArray[TraceEditView]; trace: int): tuple[edits: set[TraceEdit];
-    hasFilter: bool] =
+    hasFilter, hasShift: bool] =
   let i = findView(rows, trace)
-  if i >= 0: (rows[i].edits, rows[i].hasFilter) else: ({}, false)
+  if i >= 0: (rows[i].edits, rows[i].hasFilter, rows[i].hasShift) else: ({}, false, false)
 
 proc marksAt*(marks: openArray[EditMark]; along, cross, band0, band1: float32): MarkHit =
   ## The edited traces a point (`along` the traces, `cross` across the row)
@@ -136,6 +141,41 @@ func shiftWords*(ms: float64): string =
   let shown = if ms > 0: "+" & body else: body
   "shifted " & shown & " ms"
 
+func shiftField*(ms: float64): string =
+  ## `ms` as the popover's field shows it: a whole number as an integer,
+  ## otherwise 3 decimals. No sign is added to a positive value.
+  if ms == trunc(ms) and abs(ms) < 1e15: $int64(ms) else: formatFloat(ms, ffDecimal, 3)
+
+func shiftNote*(firstTrace: int; ms: openArray[float64]): string =
+  ## What a window says of the time shifts of the traces it shows, in the
+  ## place it names an own filter. One trace: "Trace 12: shifted +8 ms"
+  ## (`firstTrace` its index in the file, from 0). One of several: "1 trace
+  ## is shifted". Several: "N traces are shifted". "" when none is shifted.
+  var n = 0
+  var lone = 0.0
+  for v in ms:
+    if v != 0.0:
+      inc n
+      lone = v
+  if n == 0: ""
+  elif n == 1 and ms.len == 1:
+    "Trace " & $(firstTrace + 1) & ": " & shiftWords(lone)
+  elif n == 1: "1 trace is shifted"
+  else: $n & " traces are shifted"
+
+func shiftApplies*(ms, dtMs: float64): string =
+  ## What the popover says will be applied after snapping: "applies +8 ms:
+  ## 4 samples". "" when `dtMs` is not a usable interval, or `ms` cannot be
+  ## stored. One sample is "1 sample".
+  if not shiftStorable(ms) or not (dtMs > 0) or dtMs >= Inf: return ""
+  let snapped = snappedShiftMs(ms, dtMs)
+  let count = abs(int(round(snapped / dtMs)))
+  let samples = if count == 1: "1 sample" else: $count & " samples"
+  let body = if snapped == trunc(snapped) and abs(snapped) < 1e15: $int64(snapped)
+             else: formatFloat(snapped, ffDecimal, 3)
+  let shown = if snapped > 0: "+" & body else: body
+  "applies " & shown & " ms: " & samples
+
 func markTip*(hit: MarkHit; marks: openArray[EditMark]): string =
   ## The tooltip of the marks `hit` names: what they show, then
   ## "Right-click to remove". "" for none.
@@ -162,8 +202,9 @@ func markTip*(hit: MarkHit; marks: openArray[EditMark]): string =
   parts.add "Right-click to remove"
   parts.join("\n")
 
-func kindCount(edits: set[TraceEdit]; hasFilter: bool): int =
-  ord(teKilled in edits) + ord(teReversed in edits) + ord(teExcluded in edits) + ord(hasFilter)
+func kindCount(edits: set[TraceEdit]; hasFilter, hasShift: bool): int =
+  ord(teKilled in edits) + ord(teReversed in edits) + ord(teExcluded in edits) +
+    ord(hasFilter) + ord(hasShift)
 
 func selectedWord(n: int): string =
   if n == 1: "1 selected trace" else: $n & " selected traces"
@@ -178,6 +219,10 @@ func entryText*(e: MarkEntry; shared: bool): string =
   of miEditFilter:
     if shared and e.count > 1: "Edit the filters of " & $e.count & " traces..."
     else: "Edit the trace's filter..."
+  of miRemoveShift: "Remove the time shift"
+  of miEditShift:
+    if shared and e.count > 1: "Edit the time shifts of " & $e.count & " traces..."
+    else: "Edit the time shift..."
   of miRemoveAll:
     if shared: "Remove all edits of these traces"
     else: "Remove all edits of this trace"
@@ -185,6 +230,7 @@ func entryText*(e: MarkEntry; shared: bool): string =
   of miRemoveReverseSelected: "Remove reversal from " & selectedWord(e.count)
   of miRemoveExcludeSelected: "Remove the exclusion from " & selectedWord(e.count)
   of miRemoveFilterSelected: "Remove the filter from " & selectedWord(e.count)
+  of miRemoveShiftSelected: "Remove the time shift from " & selectedWord(e.count)
 
 proc withEdit(rows: openArray[TraceEditView]; traces: openArray[int];
     kind: TraceEdit): seq[int] =
@@ -194,6 +240,10 @@ proc withEdit(rows: openArray[TraceEditView]; traces: openArray[int];
 proc withFilter(rows: openArray[TraceEditView]; traces: openArray[int]): seq[int] =
   for t in traces:
     if viewAt(rows, t).hasFilter: result.add t
+
+proc withShift(rows: openArray[TraceEditView]; traces: openArray[int]): seq[int] =
+  for t in traces:
+    if viewAt(rows, t).hasShift: result.add t
 
 proc markEntries*(hit: MarkHit; rows: openArray[TraceEditView];
     selected: openArray[int]): seq[MarkEntry] =
@@ -207,10 +257,12 @@ proc markEntries*(hit: MarkHit; rows: openArray[TraceEditView];
   let sel = sortedTraces(selected)
   var unionEdits: set[TraceEdit]
   var unionFilter = false
+  var unionShift = false
   for t in hit.traces:
     let v = viewAt(indexed, t)
     unionEdits.incl v.edits
     if v.hasFilter: unionFilter = true
+    if v.hasShift: unionShift = true
   var clickedSelected = false
   for t in hit.traces:
     if sel.binarySearch(t) >= 0: clickedSelected = true
@@ -245,10 +297,26 @@ proc markEntries*(hit: MarkHit; rows: openArray[TraceEditView];
         entries.add MarkEntry(item: miRemoveFilterSelected, traces: all, count: all.len)
     entries.add MarkEntry(item: miEditFilter, traces: here, count: here.len)
 
+  proc addShift() =
+    if not unionShift: return
+    let here = withShift(indexed, hit.traces)
+    if here.len == 0: return
+    entries.add MarkEntry(item: miRemoveShift, traces: here)
+    if clickedSelected:
+      let all = withShift(indexed, sel)
+      var overlap = false
+      if all.len >= 2:
+        for t in here:
+          if all.binarySearch(t) >= 0: overlap = true
+      if overlap:
+        entries.add MarkEntry(item: miRemoveShiftSelected, traces: all, count: all.len)
+    entries.add MarkEntry(item: miEditShift, traces: here, count: here.len)
+
   addKind(miRemoveKill, miRemoveKillSelected, teKilled)
   addKind(miRemoveReverse, miRemoveReverseSelected, teReversed)
   addKind(miRemoveExclude, miRemoveExcludeSelected, teExcluded)
   addFilter()
-  if kindCount(unionEdits, unionFilter) > 1:
+  addShift()
+  if kindCount(unionEdits, unionFilter, unionShift) > 1:
     entries.add MarkEntry(item: miRemoveAll, traces: hit.traces, count: hit.traces.len)
   result = entries

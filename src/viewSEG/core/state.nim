@@ -105,6 +105,7 @@ import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
 from processing import changesSamples, ownShownWords, reverseShownWords
+from editmarks import shiftNote
 import signatures, sweeppairs
 from sigvib import gfPoundForcePerPoundCount
 from units import NPerLbf, sensible
@@ -2316,6 +2317,51 @@ func reverseLine*(state: AppState; p: Panel): string =
   for k, t in p.shown:
     if e.has(teReversed, t): on[k] = true
   reverseShownWords(p.shown[0], on)
+
+func shiftLine*(state: AppState; p: Panel): string =
+  ## What the plot says of the time shifts of the traces it shows, in the
+  ## place it names an own filter: "Trace 12: shifted +8 ms", or how many.
+  ## "" when none is shifted.
+  if p.layers.len == 0 or not p.laidOut or p.shown.len == 0: return ""
+  let i = state.findSession(p.layers[0].source.file)
+  if i < 0: return ""
+  let e = state.editsAt(state.sessions[i].path)
+  var ms = newSeq[float64](p.shown.len)
+  for k, t in p.shown:
+    ms[k] = e.shiftOf(t)
+  shiftNote(p.shown[0], ms)
+
+func traceIsSeismic*(state: AppState; id: int): bool =
+  ## Whether survey-wide trace `id` is seismic data. An auxiliary trace, or
+  ## one whose file is not open, is not.
+  let i = state.findTrace(id)
+  if i < 0: return false
+  let s = state.sessions[i]
+  let local = id - s.base
+  let f = s.filePtr
+  f != nil and local in 0 ..< f[].len and isSeismic(f[].index, local)
+
+func seismicIds*(state: AppState; ids: openArray[int]): seq[int] =
+  ## The seismic traces of `ids` (survey-wide). An auxiliary trace is left out.
+  for id in ids:
+    if state.traceIsSeismic(id): result.add id
+
+func shownShift*(state: AppState; id: int): float64 =
+  ## The time shift of survey-wide trace `id`, in milliseconds; 0 for none.
+  let i = state.findTrace(id)
+  if i < 0: return 0.0
+  let s = state.sessions[i]
+  state.editsAt(s.path).shiftOf(id - s.base)
+
+func firstAux*(state: AppState; file: int): int =
+  ## The file index of the first auxiliary trace of `sessions[file]`, or -1.
+  if file < 0 or file > state.sessions.high: return -1
+  let s = state.sessions[file]
+  let f = s.filePtr
+  if f == nil: return -1
+  for t in 0 ..< f[].len:
+    if not isSeismic(f[].index, t): return t
+  -1
 
 func ownChangesSamples*(state: AppState; w: SpectrumWindow): bool =
   ## Whether a trace `w` shows has an own filter that changes its samples
@@ -7941,7 +7987,7 @@ proc editTraces(state: var AppState; cmd: Command) =
             dt = us / 1000.0
             break
     if traces.len > 0 and cmd.on and not shiftStorable(cmd.ms):
-      state.ignore(cmd, "a shift of " & $cmd.ms & " ms is not kept")
+      state.ignore(cmd, shiftRefusal(cmd.ms))
     elif traces.len > 0 and cmd.on and not (dt > 0):
       state.ignore(cmd, "the sample interval is not known")
     elif traces.len > 0:
@@ -8844,6 +8890,7 @@ proc fillCompare(slot: var CompareSlot; n: CompareNews) =
   slot.reversed = n.reversed
   slot.filtered = n.filtered
   slot.filterWords = n.filterWords
+  slot.shiftWords = n.shiftWords
 
 proc takeComparePicture(state: var AppState; m: sink Msg) =
   ## The picture a job worked out. One the user has since replaced is

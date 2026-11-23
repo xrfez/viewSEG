@@ -9,9 +9,9 @@
 ## (Enter, Tab or a click away), the panel's reader filters the samples it holds again off this thread, and
 ## the plot keeps what it drew until the new tile comes (`core/processing`).
 
-import std/[math, strutils]
+import std/[math, parseutils, strutils]
 import imguin/cimgui
-import ../../core/state
+import ../../core/[editmarks, edits, state]
 import ../../view/theme
 import chrome, icons, plotsort, shortcutkeys, style
 
@@ -407,6 +407,102 @@ proc drawOwnFilter*(draft: var OwnFilter; mixed: bool; n: int; dtMs: float64;
 proc openOwnFilter*() =
   ## Opens the trace-filter popover. Called the frame after the menu item.
   igOpenPopup_Str(ownId, 0)
+
+const shiftId = "##timeshift"
+
+type
+  ShiftChoice* = enum
+    scNone, scApply, scClear
+
+proc parseShift(text: string): tuple[ms: float64; ok: bool] =
+  ## The milliseconds typed in `text`. Not ok when it is empty or not a number.
+  let s = text.strip
+  if s.len == 0: return
+  var v = 0.0
+  let n = parseutils.parseFloat(s, v)
+  if n == s.len: (v, true) else: (0.0, false)
+
+proc drawTimeShift*(text: var array[32, char]; mixed: bool; n: int; dtMs: float64;
+    marks: var Marks; applied: var float64): ShiftChoice =
+  ## The popover that sets a trace's time shift, in milliseconds (positive
+  ## later). Under the field, the value that will be applied after snapping.
+  ## `scApply` when Apply or Enter takes a value the command will keep;
+  ## `scClear` when Clear takes the shift away. Escape and Cancel close it
+  ## and return `scNone`.
+  if not igBeginPopup(shiftId, 0): return scNone
+  marks.markWindow("plot.timeshift popup")
+  let title = if n == 1: "Time shift" else: "Time shift of " & $n & " traces"
+  igTextUnformatted(title.cstring, nil)
+  if mixed:
+    igTextDisabled("the selected traces have different shifts")
+    marks.mark("plot.timeshift mixed")
+    marks.mark("plot.timeshift mixed the selected traces have different shifts")
+  if igIsWindowAppearing(): igSetKeyboardFocusHere(0)
+  let w = round(igGetFontSize() * 8)
+  igSetNextItemWidth(w)
+  const flags = ImGui_InputTextFlags_EnterReturnsTrue.cint or
+    ImGui_InputTextFlags_AutoSelectAll.cint
+  let entered = igInputText("ms", cast[cstring](addr text[0]), csize_t(text.len), flags, nil, nil)
+  marks.mark("plot.timeshift field")
+  tip("The shift in milliseconds, positive later. It is snapped to a whole sample.")
+  let typed = ($cast[cstring](addr text[0])).strip
+  let parsed = parseShift(typed)
+  var refused = ""
+  if parsed.ok and not shiftStorable(parsed.ms): refused = shiftRefusal(parsed.ms)
+  elif parsed.ok and not (dtMs > 0): refused = "the sample interval is not known"
+  let line = if parsed.ok and refused.len == 0: shiftApplies(parsed.ms, dtMs) else: ""
+  if line.len > 0:
+    igTextDisabled("%s", line.cstring)
+    marks.mark("plot.timeshift applies")
+    marks.mark("plot.timeshift applies " & line)
+  if refused.len > 0:
+    igPushTextWrapPos(igGetFontSize() * 28)
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, hzWarn)
+    igTextWrapped("%s", refused.cstring)
+    igPopStyleColor(1)
+    igPopTextWrapPos()
+    marks.mark("plot.timeshift refused")
+    marks.mark("plot.timeshift refused " & refused)
+  if igButton("+500 ms", ImVec2_c(x: 0, y: 0)):
+    zeroMem(addr text[0], text.len)
+    const preset = "+500"
+    copyMem(addr text[0], preset.cstring, preset.len)
+    igClearActiveID()
+  marks.mark("plot.timeshift +500")
+  tip("Fill the field with +500 ms. Apply stores it.")
+  igSameLine(0, -1)
+  if igButton("0", ImVec2_c(x: 0, y: 0)):
+    zeroMem(addr text[0], text.len)
+    text[0] = '0'
+    igClearActiveID()
+  marks.mark("plot.timeshift 0")
+  tip("Fill the field with 0. Apply takes the shift away.")
+  igSeparator()
+  if igButton("Cancel", ImVec2_c(x: 0, y: 0)) or igIsKeyPressed_Bool(ImGui_Key_Escape, false):
+    igCloseCurrentPopup()
+  marks.mark("plot.timeshift cancel")
+  tip("Close without changing the time shift")
+  igSameLine(0, -1)
+  if igButton("Clear", ImVec2_c(x: 0, y: 0)):
+    result = scClear
+    igCloseCurrentPopup()
+  marks.mark("plot.timeshift clear")
+  tip("Take the time shift away")
+  igSameLine(0, -1)
+  let canApply = parsed.ok and refused.len == 0 and line.len > 0
+  igBeginDisabled(not canApply)
+  if igButton("Apply", ImVec2_c(x: 0, y: 0)) or (entered and canApply):
+    result = scApply
+    applied = parsed.ms
+    igCloseCurrentPopup()
+  igEndDisabled()
+  marks.mark("plot.timeshift apply")
+  tip("Shift the traces by this many milliseconds, snapped to a whole sample")
+  igEndPopup()
+
+proc openTimeShift*() =
+  ## Opens the time-shift popover. Called the frame after the menu item.
+  igOpenPopup_Str(shiftId, 0)
 
 proc filterKeys*(p: Panel; over: bool; cmds: var seq[Command]) =
   ## `P`, while the plot window has the focus, or the pointer is over it:

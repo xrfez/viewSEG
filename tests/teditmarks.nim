@@ -80,6 +80,28 @@ proc main*() =
     let kill = markEntries(hit, rows, [4, 5, 9])[1]
     doAssert kill.item == miRemoveKillSelected and kill.traces == @[4, 5, 9]
 
+  block shift_lines:
+    let hit = MarkHit(traces: @[7])
+    let rows = [TraceEditView(trace: 7, hasShift: true)]
+    let lines = texts(hit, rows, [])
+    doAssert lines == @["Remove the time shift", "Edit the time shift..."], "a shift: " & $lines
+    let shared = MarkHit(traces: @[7, 8], shared: true)
+    let many = [
+      TraceEditView(trace: 7, hasShift: true),
+      TraceEditView(trace: 8, hasShift: true)]
+    let group = texts(shared, many, [7, 8])
+    doAssert "Edit the time shifts of 2 traces..." in group, "shared shifts: " & $group
+    doAssert "Remove the time shift from 2 selected traces" in group, "the selection: " & $group
+    doAssert shiftNote(11, [8.0]) == "Trace 12: shifted +8 ms"
+    doAssert shiftNote(0, [8.0, 0.0]) == "1 trace is shifted"
+    doAssert shiftNote(0, [8.0, -4.0]) == "2 traces are shifted"
+    doAssert shiftNote(0, [0.0, 0.0]) == ""
+    doAssert shiftApplies(7.0, 2.0) == "applies +8 ms: 4 samples", shiftApplies(7.0, 2.0)
+    doAssert shiftApplies(2.0, 2.0) == "applies +2 ms: 1 sample", shiftApplies(2.0, 2.0)
+    doAssert shiftApplies(0.0, 2.0) == "applies 0 ms: 0 samples"
+    doAssert shiftApplies(1e30, 2.0) == ""
+    doAssert "not kept" in shiftRefusal(1e30)
+
   block drop_is_one_step:
     var e = FileEdits()
     let f = bounded(OwnFilter(spec: Processing(band: pbBandPass, f1: 8, f2: 10, f3: 60, f4: 70)))

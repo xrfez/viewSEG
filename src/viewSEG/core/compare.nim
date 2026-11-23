@@ -35,21 +35,22 @@ type
     filled*: bool
     waiting*: bool
     problem*: string
-    path*: string    ## the file that fed it; "" for a reference
+    path*: string       ## the file that fed it; "" for a reference
     fileName*: string
     trace*: int
     recordText*: string
     channelText*: string
     stationText*: string
     dtMs*: float64
-    t0Ms*: float64   ## time of `samples[0]`, in ms
-    fromMs*: float64 ## the copied window, in ms
+    t0Ms*: float64      ## time of `samples[0]`, in ms
+    fromMs*: float64    ## the copied window, in ms
     toMs*: float64
     samples*: seq[float32]
-    reversed*: bool  ## polarity reversed, as the plot shows the trace
-    filtered*: bool  ## the trace's own filter was applied
+    reversed*: bool     ## polarity reversed, as the plot shows the trace
+    filtered*: bool     ## the trace's own filter was applied
     filterWords*: string
-    gen*: uint64     ## the fill this slot is waiting for, or the one it holds
+    shiftWords*: string ## its time shift, in words; "" for none
+    gen*: uint64        ## the fill this slot is waiting for, or the one it holds
 
   CompareOptions* = object
     ## What the window draws, and how B is aligned. Each alignment is off
@@ -113,6 +114,7 @@ type
     reversed*: bool
     filtered*: bool
     filterWords*: string
+    shiftWords*: string
     failure*: string
 
 func secondsText*(ms: float64): string =

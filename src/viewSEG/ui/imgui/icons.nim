@@ -21,6 +21,7 @@ const
   IconLog* = ""              ## nf-cod-output
   IconMap* = ""              ## nf-cod-map
   IconFilter* = ""           ## nf-cod-filter
+  IconShift* = "\u{EB7C}"       ## nf-cod-watch
   IconEye* = ""              ## nf-cod-eye
   IconEyeOff* = ""           ## nf-cod-eye_closed
   IconZoomIn* = ""           ## nf-cod-zoom_in
@@ -88,7 +89,7 @@ const
   IconReference* = "\u{EAA5}"   ## nf-cod-bookmark
 
   AllIcons* = [IconOpenFile, IconOpenFiles, IconOpenFolder, IconFolder, IconProject, IconSave,
-    IconSettings, IconLog, IconMap, IconFilter, IconEye, IconEyeOff, IconZoomIn,
+    IconSettings, IconLog, IconMap, IconFilter, IconShift, IconEye, IconEyeOff, IconZoomIn,
     IconZoomOut, IconFit, IconPlay, IconStep, IconPrevious, IconNext, IconWarning,
     IconError, IconInfo, IconClose, IconCheck, IconTheme, IconTable, IconPlot, IconPulse,
     IconFft, IconSpectrogram, IconEnvelope, IconPhase, IconCorrelation, IconVibrator, IconFk,
