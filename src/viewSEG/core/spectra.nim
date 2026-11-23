@@ -221,6 +221,7 @@ type
       ## closed window of the same number, what the live panel showed before)
     waiting*: bool ## an answer newer than `spectrum` is on its way
     asks*: int ## requests made (for tests: the work follows the view)
+    freezeApplies*: int ## times a display command changed `frozen` (for tests)
     revision*: int ## bumped on every change
     pickSession*: int = -1 ## the plot's file when the traces were last chosen
     pickGather*: int = -1 ## and the record

@@ -3947,6 +3947,7 @@ proc showSpectrum(state: var AppState; cmd: Command) =
   if cmd.spectrum == LiveSpectrum:
     if cmd.frozen != sw.frozen:
       sw.frozen = cmd.frozen
+      inc sw.freezeApplies
       inc sw.revision
     state.change(cmd.origin, x):
       x.spectrum.live = cmd.spectrumShow
@@ -3954,6 +3955,7 @@ proc showSpectrum(state: var AppState; cmd: Command) =
   sw.display = cmd.spectrumShow
   let wasFrozen = sw.frozen
   sw.frozen = cmd.frozen # unfrozen, `followSpectra` follows the plot at once
+  if sw.frozen != wasFrozen: inc sw.freezeApplies
   if wasFrozen and not sw.frozen: sw.heldOpen = false
   inc sw.revision
   state.change(cmd.origin, x):
