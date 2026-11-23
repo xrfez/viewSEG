@@ -161,11 +161,14 @@ func findRecord*(rows: openArray[RecordRow]; ffid: float64): int =
     if r.record == ffid: return i
   -1
 
+func stationNumber*(x: float64): string =
+  ## A line, a point or a record number as `station` prints it: a whole
+  ## number without a fraction, otherwise the value as Nim prints it.
+  if x == round(x) and abs(x) < 1e15: $int64(x) else: $x
+
 func station*(line, point: float64): string =
   ## "1:1001", "1001" with no line, "" with neither.
-  func num(x: float64): string =
-    if x == round(x) and abs(x) < 1e15: $int64(x) else: $x
-  if line.known and point.known: num(line) & ":" & num(point)
-  elif point.known: num(point)
-  elif line.known: num(line) & ":"
+  if line.known and point.known: stationNumber(line) & ":" & stationNumber(point)
+  elif point.known: stationNumber(point)
+  elif line.known: stationNumber(line) & ":"
   else: ""

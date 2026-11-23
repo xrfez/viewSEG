@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.19.2: capabilities | names | processSEG 0.11.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 54 (20 in part) | 180 | 39 (27 in part) | 195 |
+| `built` | 54 (20 in part) | 180 | 40 (28 in part) | 196 |
 | `internal` | 17 | 48 | 5 | 39 |
-| `planned` | 33 | 220 | 42 | 390 |
+| `planned` | 33 | 220 | 41 | 389 |
 | `to plan` | 2 | 10 | 1 | 5 |
 | `not applicable` | 21 | 364 | 6 | 69 |
 | all | 127 | 822 | 93 | 698 |
@@ -361,7 +361,7 @@ name, so these are building blocks for code that works on raw headers.
 | Fold by offset class and azimuth sector, offset range | `FoldOptions`, `offsetFold`, `azimuthFold`, `offsetMin`, `offsetMax` | Fold map: offset-class and azimuth layers, min / max offset maps | planned |
 | Field records against the XPS | `recordCompleteness`, `RecordCompleteness`, `RecordMatch`, `TraceMatch` | Records window: each record's stations missing against the loaded relation file, or the relation records of the survey imported (`expected`, `missing`, `unlisted`, `duplicates` in the cell's tooltip; a job per open file; the record and trace match chosen in Import survey's options); the map's filters missing from the template (`missingStations`), not in the template, recorded twice, on the record shown, and the template box of that record (its `xpsRecord`, the source at the record's place given to the check when the headers name none); survey QC issue list: missing, unlisted, duplicate stations | built (Records, the map's filters); planned (the issue list) |
 | Missing stations of a record | `RecordCompleteness.missingStations`, `missingRanges`, `lines`, `StationRange`, `LineCompleteness` | Missing-stations map layer | planned |
-| Completeness over many records | `summarize`, `CompletenessSummary` | QC report section | planned |
+| Completeness over many records | `summarize`, `CompletenessSummary` | Missing-trace report: folder totals from `summarize`; the report section | built (missing-trace report totals); planned (the report section) |
 
 ### Vibroseis
 
