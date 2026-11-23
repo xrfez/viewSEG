@@ -25,7 +25,7 @@ const
     ## edits imported are remembered with the file; forgetting files removes
     ## what is remembered about them)
   Preferences* = {ckSettings, ckImportSettings, ckLayout, ckLoadLayout, ckProjectFolder,
-    ckUpdateSurvey, ckCorrelate}
+    ckUpdateSurvey}
     ## refused: the user's preferences and the windows' arrangement; a
     ## project's data folders and its survey's update, which are written
     ## into the project
@@ -47,7 +47,7 @@ const
     ckPilotReference, ckPilotPreview, ckSelectReference, ckDeleteReference, ckRenameReference,
     ckCopyReference,
     ckViewReference, ckCloseRefView, ckSetCompare, ckClearCompare, ckSwapCompare,
-    ckCompareDisplay, ckCompareWindow, ckSubfolders}
+    ckCompareDisplay, ckCompareWindow, ckSubfolders, ckCorrelate}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The survey

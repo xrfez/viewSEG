@@ -188,6 +188,8 @@ proc main*() =
       doAssert "Used by" in s["properties"][f.name]["description"].getStr
     # each kind names only the fields it uses (one branch is shared by thirteen)
     doAssert takes(ckSort) == @["panel", "order"], $takes(ckSort)
+    doAssert ckCorrelate in Offered and takes(ckCorrelate) == @["panel", "correlate"],
+      $takes(ckCorrelate)
     doAssert takes(ckTimeShift) == @["panel", "edited", "on", "ms"], $takes(ckTimeShift)
     doAssert takes(ckShowFile) == @["panel", "path", "listFolder"], $takes(ckShowFile)
     doAssert takes(ckClearSelection).len == 0

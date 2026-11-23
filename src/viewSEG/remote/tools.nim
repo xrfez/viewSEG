@@ -112,7 +112,9 @@ proc toolList*(): string =
        "record or a trace, change a panel's view, display, gain, clip percentile, density " &
        "colour map, display presets, filters (\"processing\": " &
        "DC removal, low-cut, high-cut, band-pass, notches; raw or processed; Aux filtered " &
-       "or not), display header, sort or trace filter, kill or reverse traces (kept beside the file, which is never " &
+        "or not), correlate with the selected reference (\"correlate\": true or false), " &
+        "display header, sort or trace filter, kill or reverse traces (kept beside " &
+        "the file, which is never " &
        "changed), select traces, load survey files, move the map, show or hide its " &
        "layers, select or hover points on it, show a point's record. The arguments are " &
        "the command: " &
@@ -316,6 +318,14 @@ proc selectedIn(state: AppState; panel: PanelId): seq[int] =
       if t in state.sessions[i]: result.add t
   result.sort()
 
+func correlateSentence(state: AppState): string =
+  ## What the last correlate command left: the raw record, a job under way, the
+  ## correlated record, or why it cannot.
+  if not state.correlateOn: return "Showing the raw record."
+  if state.correlateNote.len > 0: return state.correlateNote
+  if state.correlating: return "Correlating with the selected reference."
+  "Showing the correlated record."
+
 proc runCommand*(state: var AppState; fe: Frontend; arguments: string;
     applied: var bool): string =
   ## The `command` tool: decodes the command, fills what is not given from
@@ -372,7 +382,8 @@ proc runCommand*(state: var AppState; fe: Frontend; arguments: string;
   for e in state.log.since(before):
     said.add %*{"severity": $e.severity, "source": e.source, "text": e.text}
     if e.source == "commands" and e.severity >= sevWarning: ignored = true
-  let done = %*{"command": $kind, "ignored": ignored, "messages": said}
+  var done = %*{"command": $kind, "ignored": ignored, "messages": said}
+  if kind == ckCorrelate: done["sentence"] = %correlateSentence(state)
   textResult($done, isError = ignored)
 
 # --------------------------------------------------------------- state --
@@ -464,11 +475,14 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
     "shows": $p.shows,
     "picture": state.pictureOf(k, fe), "laidOut": p.laidOut, "layout": toJson(p.layout),
     "view": toJson(p.view), "canGoBack": p.back.len > 0, "header": toJson(p.header),
+    "correlate": state.correlateOn, "correlating": state.correlating,
     "level": toJson(p.level), "levelOver": p.levelSampling}
   let i = state.shownFile(k)
   if i >= 0:
     let s = state.sessions[i]
-    result["file"] = %*{"id": int(s.id), "path": s.path, "firstTrace": s.base}
+    var file = %*{"id": int(s.id), "path": s.path, "firstTrace": s.base}
+    if s.derived: file["origin"] = %s.diskPath
+    result["file"] = file
   if p.layers.len > 0:
     let layer = p.layers[0]
     if layer.source.kind == lsRecord:
@@ -1113,6 +1127,7 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
     for s in state.sessions:
       var f = %*{"id": int(s.id), "path": s.path, "name": s.name, "traces": s.len,
         "firstTrace": s.base, "gathers": s.gathers.len}
+      if s.derived: f["origin"] = %s.diskPath
       if s.isSignature: f["signature"] = signatureJson(s.signature)
       files.add f
     r["files"] = files
