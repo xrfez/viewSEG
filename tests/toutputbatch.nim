@@ -417,6 +417,35 @@ proc main*() =
     doAssert "applied this file's saved edits: 1 killed" in agreed.lines, $agreed.lines
     doAssert agreed.droppedTraces == 1, "a hash that agrees was not applied"
 
+  block cancelBeforeFirst:
+    ## Seen to fail: a cancel before the first item raised before any plan
+    ## existed, so the result listed no items and the unwritten files were
+    ## not skipped.
+    install()
+    defer: releaseAll()
+    let dest = dir / "early-out"
+    fault(dest, fkHang, {foStat})
+    lane = initJobs()
+    let sink = BatchSink()
+    let ask = BatchAsk(root: srcRoot, items: items, destRoot: dest, options: opts,
+      mirrorFolders: true)
+    let id = lane.submit(outputBatchSpec(ask), outputBatchWork(ask, store, @[], sink))
+    doAssert waitUntil(hung() >= 1), "the destination was not held before the first file"
+    doAssert lane.cancel(id)
+    release(dest)
+    doAssert waitUntil(lane.state(id) in {jsDone, jsFailed, jsCancelled}),
+      "the cancel did not finish: " & $lane.state(id)
+    doAssert lane.state(id) == jsCancelled, "a cancel was not a cancel: " & $lane.state(id)
+    doAssert sink.result.cancelled
+    doAssert sink.result.written == 0 and sink.result.failed == 0
+    doAssert sink.result.skipped == items.len, "unwritten files were not skipped: " &
+      $sink.result.skipped & " items " & $sink.result.items.len
+    doAssert sink.result.items.len == items.len
+    for it in sink.result.items:
+      doAssert it.outcome == boSkipped, $it.relative & " " & $it.outcome
+    doAssert not dirExists(dest), "a destination was created after the cancel"
+    doAssert readFile(plain) == plainBytes and readFile(edited) == editedBytes
+
   doAssert readFile(segy) == sampleSegy and readFile(segd) == sampleSegd
   doAssert readFile(plain) == plainBytes and readFile(edited) == editedBytes and
     readFile(segdCopy) == segdBytes

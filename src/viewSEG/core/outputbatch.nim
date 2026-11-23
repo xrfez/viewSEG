@@ -421,10 +421,8 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
   if refused.len > 0: failBatch(sink, refused)
   let count = writing.items.len
   if count == 0: return
-  if ctx.cancelled:
-    if sink != nil: sink.result.cancelled = true
-    raise newException(JobCancelledError, "Cancelled.")
   let plans = planned(writing)
+  if ctx.cancelled: stopBatch(sink, writing, plans, 0)
   var willWrite = false
   for p in plans:
     if p.why.len == 0: willWrite = true
@@ -513,7 +511,8 @@ proc outputBatchWork*(ask: BatchAsk; store: Store; openFiles: seq[OpenFile];
   ## session would bring back once the hash of every byte agrees (or, when
   ## that hash was not stored, the same quick identity and modification
   ## time). One file is open at a time. One file failing does
-  ## not stop the batch. A cancel stops between files and inside a file,
+  ## not stop the batch. A cancel stops before the first file, between files
+  ## and inside a file, and every file not written is listed as skipped. It
   ## removes the current part file, leaves finished files, and says how many
   ## were written. `sink.result` is set before the job returns, fails or is
   ## cancelled.
