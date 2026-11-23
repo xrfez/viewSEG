@@ -1,7 +1,7 @@
 ## The first-break overlay's model in the running frontend, headless, driven by real clicks:
 ## a click on the key opens where the model comes from; "Use this record's fit" keeps the
 ## record's fitted velocity and intercept as the given model; with a given model held for
-## the record, whose source is named wrongly (offsets 400 m too long), the bars sit off the
+## the record, whose source is named wrongly (offsets 100 m too long), the bars sit off the
 ## picks, the key is the same width and marks it "given" with the count off it (the tooltip says
 ## how far the record is off), and
 ## "Fitted to this record" gives the fit back.
@@ -27,7 +27,9 @@ import viewSEG/core/[breakmodel, firstbreaks, geometry, join, panels, state]
 import viewSEG/ui/imgui/app
 import utils/[breakfiles, fixtures, waiting]
 
-var waited = 0 ## frames since the step's action
+var
+  waited = 0            ## frames since the step's action
+  fitBefore: BreakModel ## the record's fit when "Use this record's fit" was clicked
 
 type
   Step = object
@@ -53,7 +55,7 @@ proc shown(f: FrameInfo): bool =
   i >= 0 and f.core.firstBreaks[i].state == bkDone and f.markOf("plot.first break key").size.x > 0
 
 proc moved(i: int; k: var TraceKeys): float64 =
-  k.offset = offsetOf(i) + 400
+  k.offset = offsetOf(i) + 100
   arrivalMs(offsetOf(i))
 
 proc runSteps(name: string; opts: RunOptions; steps: seq[Step]) =
@@ -125,13 +127,15 @@ proc main*() =
       f.moveMouse(f.markOf("plot.first break model use fit").centre), proc (f: FrameInfo): bool =
       waited > 5)
     step("use this record's fit", proc (f: FrameInfo) =
+      # (the given model then guides a new picking: the fit it copied is the one before)
+      fitBefore = f.core.firstBreaks[f.core.breaksIndex(f.core.findPanel(MainPanel))].fitAsModel
       f.click(f.markOf("plot.first break model use fit").centre), proc (f: FrameInfo): bool =
-      result = f.display.breakModel.source == bmGiven
+      # (it is shown again once the given model's guided picking has finished)
+      result = f.display.breakModel.source == bmGiven and f.shown
       doAssert waited < 200 or result, "the fit was not kept as the given model"
       if result:
         let m = f.display.breakModel
-        let raw = f.core.firstBreaks[f.core.breaksIndex(f.core.findPanel(MainPanel))]
-        doAssert m.v1 == raw.fit.v1 and m.interceptMs == raw.fit.interceptMs, $m
+        doAssert m.v1 == fitBefore.v1 and m.interceptMs == fitBefore.interceptMs, $m
         doAssert f.now.keyParts.given, "the key does not say it is given")
     step("the popover with the given numbers", noop, proc (f: FrameInfo): bool =
       result = f.markOf("plot.first break model v1").size.x > 0 and f.shown
@@ -176,7 +180,7 @@ proc main*() =
       f.apply(Command(kind: ckDisplay, panel: MainPanel, display: d)),
       proc (f: FrameInfo): bool =
       let synthetic = getEnv("VIEWSEG_SHOT_FILE").len == 0
-      result = f.shown and f.now.isGiven and (f.now.medianDiffMs < -100 or not synthetic)
+      result = f.shown and f.now.isGiven and (f.now.medianDiffMs < -30 or not synthetic)
       if result and synthetic:
         doAssert f.now.offModel * 10 > f.now.compared * 9, $f.now.offModel
         doAssert "median" in f.now.statusWords

@@ -20,10 +20,12 @@
 ##   numbers (`velocityUnit`, `segments`): a refraction fit to the record's own
 ##   picks, its velocity or velocities in the offsets' unit per second.
 
-import std/[algorithm, math, strutils]
+import std/[math, strutils]
 import parseSEG
 import processSEG/qc/[firstbreak, shotfit]
-import breakmodel, components, jobs, join, session
+import breakmodel, breakrule, components, jobs, join, session
+
+export breakrule
 
 type
   BreakSource* = enum
@@ -35,11 +37,13 @@ type
   BreakState* = enum
     bkComputing, bkDone, bkFailed
 
-  BreakKey* = tuple[file: SessionId; gather, keys: int; killed: seq[int]; off: seq[uint8]]
+  BreakKey* = tuple[file: SessionId; gather, keys: int; killed: seq[int]; off: seq[uint8];
+      guide: BreakModel]
     ## What a result is of: the record, the file's keys as they were read
-    ## (a join or a header edit changes them), the traces killed in it, and
-    ## the components the panel's filter switches off (which traces a node
-    ## record's model is fitted from, `fitMask`).
+    ## (a join or a header edit changes them), the traces killed in it, the
+    ## components the panel's filter switches off (which traces a node
+    ## record's model is fitted from, `fitMask`), and the given model that
+    ## guides the second pass of picking (`BreakModel()` when none is given).
 
   FirstBreaks* = object
     ## One record's first breaks, as its job found them.
@@ -53,7 +57,8 @@ type
     shiftMs*: seq[float64]
       ## per trace: what to add to its times (they are on its own time axis)
       ## for the plot's, which draws every trace from the layout's first time
-    flagged*: seq[bool] ## per trace: the fit finds its pick off the model (`ShotFit.suspect`)
+    flagged*: seq[bool]
+      ## per trace: off the model or off its neighbours (`rule`: `core/breakrule`)
     dtMs*: float64 ## the record's sample interval
     source*: BreakSource
     used*: int ## the confident picks the model was fitted to
@@ -62,7 +67,7 @@ type
     fittedFrom*: string
       ## which traces the model was fitted from when not all of them ("the
       ## hydrophone traces", "the components shown"); "" for all
-    thresholdMs*: float64 ## the fit's `|localMs|` above which a trace is flagged
+    thresholdMs*: float64 ## the record's limit (ms): `rule.limitMs`
     why*: string ## state `bkFailed`: the reason in words
     picks*: seq[FirstBreakPick]
       ## the picker's result per trace of the record, as picked: the record's noisy-trace
@@ -76,16 +81,20 @@ type
       ## the model the user gave, when `withModel` made this result's times from it: the
       ## fit's numbers (`fit`) are then not what the bars show
     isGiven*: bool ## the model times are the given model's (`withModel`)
-    compared*: int ## given: traces with a confident pick and a model time
-    offModel*: int ## of them, those more than `OffModelMs` off
-    medianDiffMs*: float64 ## of them, the median of pick less model; NaN for none
+    compared*: int ## traces whose pick is comparable with the model (`rule.nComparable`)
+    offModel*: int ## traces flagged, off the model or off their neighbours (`rule.nFlagged`)
+    medianDiffMs*: float64 ## of the comparable, the median of pick less model; NaN for none
+    rule*: BreakRule ## what the rule found, per trace and for the record
+    geometry*: RuleGeometry ## where the traces are, as the rule needs it
+    twoPass*: bool ## the picks are those of the second, guided pass
+    passNote*: string
+      ## when the second pass was not made, why, in words (the first-pass picks stand)
     revision*: int ## bumped when the lists change
 
 const
-  ConfidentPick* = 0.5
-    ## the confidence from which a pick counts in the model (processSEG's
-    ## `ShotFitParams.minConfidence`)
-  OffModelMs* = 12.0 ## a pick this far (ms) from the model is joined to it by a line
+  OffModelMs* = LimitFloorMs
+    ## the smallest limit (ms) beyond which a trace is off: the record's limit is this or three
+    ## sigmas of its comparable residuals, whichever is larger (`core/breakrule`)
   MaxBreakRecords* = 6 ## results kept, at most, with the jobs in flight
 
 func isHydrophone(k: TraceKeys): bool =
@@ -150,12 +159,37 @@ func differenceMs*(b: FirstBreaks; trace: int): float64 =
   if known(p) and known(m): p - m else: NaN
 
 func mismatched*(b: FirstBreaks; trace: int): bool =
-  ## Whether the fit finds the pick of file trace `trace` off the model:
-  ## processSEG's `suspect` (its residual against the neighbours' median
-  ## past `thresholdMs`, so a residual that drifts smoothly along the
-  ## spread is not).
+  ## Whether file trace `trace` is flagged: off the model (its residual past the record's
+  ## limit) or off its neighbours (`core/breakrule`). A trace with no break found never is.
   let i = b.place(trace)
   i >= 0 and i < b.flagged.len and b.flagged[i]
+
+func comparableOf*(b: FirstBreaks; trace: int): bool =
+  ## Whether the pick of file trace `trace` was compared with the model: confident and not
+  ## grossly off it.
+  let i = b.place(trace)
+  i >= 0 and i < b.rule.comparable.len and b.rule.comparable[i]
+
+func faintOf*(b: FirstBreaks; trace: int): bool =
+  ## Whether the pick of file trace `trace` is drawn faint: of low confidence, or (with a model)
+  ## no break found at it.
+  let i = b.place(trace)
+  if i < 0 or i >= b.confidence.len: false
+  elif b.confidence[i] < ConfidentPick: true
+  else: i < b.rule.noBreak.len and b.rule.noBreak[i]
+
+func setRule*(b: var FirstBreaks) =
+  ## Applies the rule (`applyRule`) to the picks and the model times of `b`, and sets
+  ## `flagged`, `thresholdMs`, `compared`, `offModel` and `medianDiffMs` from it, so the
+  ## flags, the counts and the words are one finding.
+  let n = b.pickMs.len
+  b.rule = applyRule(b.pickMs, b.confidence, b.modelMs, b.geometry)
+  b.flagged = b.rule.flagged
+  b.flagged.setLen n
+  b.thresholdMs = b.rule.limitMs
+  b.compared = b.rule.nComparable
+  b.offModel = b.rule.nFlagged
+  b.medianDiffMs = b.rule.medianMs
 
 func shiftOf*(b: FirstBreaks; trace: int): float64 =
   ## What to add to the times of file trace `trace` for the plot's axis.
@@ -165,37 +199,19 @@ func shiftOf*(b: FirstBreaks; trace: int): float64 =
 func withModel*(b: FirstBreaks; m: BreakModel): FirstBreaks =
   ## `b` as the overlay shows it with the model `m`: unchanged when `m` is not given (or
   ## has no velocity) or `b` is not done. Otherwise the model times are `m`'s at each
-  ## trace that has an offset (no model at one without), the traces whose pick is more than
-  ## `OffModelMs` from it are flagged (not the fit's `suspect`), and the record is
-  ## summed up: the median of pick less model and how many are off, over the traces with a
-  ## confident pick. The picks, and `fit` (the noisy-trace test's), are unchanged.
+  ## trace that has an offset (no model at one without), and the rule (`setRule`) is applied
+  ## to them: the traces off it are flagged, the record is summed up. The picks, and `fit` (the
+  ## noisy-trace test's), are unchanged.
   if b.state != bkDone or not m.given or b.offsetAbs.len != b.pickMs.len: return b
   result = b
   result.given = m
   result.isGiven = true
   result.modelled = 0
-  result.thresholdMs = OffModelMs
-  result.medianDiffMs = NaN
-  result.compared = 0
-  result.offModel = 0
-  var diffs: seq[float64]
   for i in 0 ..< b.pickMs.len:
     let t = m.modelMs(b.offsetAbs[i])
     result.modelMs[i] = t
-    result.flagged[i] = false
-    if not t.isNaN:
-      inc result.modelled
-      let d = b.pickMs[i] - t
-      if not d.isNaN:
-        result.flagged[i] = abs(d) > OffModelMs
-        if b.confidence[i] >= ConfidentPick:
-          diffs.add d
-          if abs(d) > OffModelMs: inc result.offModel
-  result.compared = diffs.len
-  if diffs.len > 0:
-    diffs.sort()
-    let h = diffs.len div 2
-    result.medianDiffMs = if diffs.len mod 2 == 1: diffs[h] else: (diffs[h - 1] + diffs[h]) / 2
+    if not t.isNaN: inc result.modelled
+  result.setRule()
 
 func hasModel*(b: FirstBreaks): bool =
   ## Whether the model could be fitted: some trace has a model time.
@@ -204,17 +220,46 @@ func hasModel*(b: FirstBreaks): bool =
 func signedMs(x: float64): string =
   (if x >= 0: "+" else: "") & formatFloat(x, ffDecimal, 1) & " ms"
 
+func ruleWords*(b: FirstBreaks): string =
+  ## What the rule found in the record, in plain words, with the limits and the statement about
+  ## the source; "" without a model or any trace compared.
+  if not b.hasModel: return ""
+  let r = b.rule
+  result = $r.nComparable & " traces compared with the model, " & $r.nNoBreak &
+    " with no break found (no confident pick, or one more than " & $int(GrossBandMs) &
+    " ms from the model: not flagged), " & $r.nOffModel & " off the model, " &
+    $r.nOffNeighbours & " off their neighbours"
+  if r.nComparable > 0:
+    result.add "\nOff the model: more than " & formatFloat(r.limitMs, ffDecimal, 1) &
+      " ms away (3 sigmas of the record's scatter, " & formatFloat(r.sigmaMs, ffDecimal, 1) &
+      " ms, not less than " & $int(LimitFloorMs) & " ms)"
+    if not r.stationLimitMs.isNaN:
+      result.add "\nOff its neighbours: more than " & formatFloat(r.stationLimitMs, ffDecimal, 1) &
+        " ms from what the stations beside it say"
+  if r.nNoBreak > r.nComparable:
+    result.add "\nFewer than half of the traces have a pick within " & $int(GrossBandMs) &
+      " ms of the model: the model, or the source's place, does not fit this record"
+  let s = r.statementWords
+  if s.len > 0: result.add "\nThe record: " & s
+  if b.passNote.len > 0: result.add "\n" & b.passNote
+
 func givenWords*(b: FirstBreaks): string =
   ## What the given model finds in the record, in a line: the median of pick less model and
-  ## the traces off by more than `OffModelMs`; "" when the model is not the given one.
+  ## the traces flagged; "" when the model is not the given one.
   if not b.isGiven: return ""
-  if b.compared == 0: return "Given model: no confident pick to compare it with"
+  if b.compared == 0:
+    return if b.rule.nNoBreak > 0: "Given model: no pick lies within " & $int(GrossBandMs) &
+      " ms of it: it does not fit this record"
+    else: "Given model: no confident pick to compare it with"
   "Given model: median pick less model " & b.medianDiffMs.signedMs & ", " & $b.offModel &
-    " of " & $b.compared & " traces off by more than " & $int(OffModelMs) & " ms"
+    " of " & $b.compared & " compared traces flagged (limit " &
+    formatFloat(b.thresholdMs, ffDecimal, 1) & " ms)"
 
 func givenShort(b: FirstBreaks): string =
   ## `givenWords` for the strip's note, which is short.
-  if b.compared == 0: "no pick to compare"
+  if b.compared == 0:
+    if b.rule.nNoBreak > 0: "no pick within " & $int(GrossBandMs) & " ms of it"
+    else: "no pick to compare"
   else: "median " & b.medianDiffMs.signedMs & ", " & $b.offModel & " of " & $b.compared & " off"
 
 func modelNote*(b: FirstBreaks): string =
@@ -226,9 +271,10 @@ func modelNote*(b: FirstBreaks): string =
       "carry coordinates. Only the picks are shown."
   elif b.picked == 0:
     "No first break could be picked in this record, so there is no model."
-  elif b.used < 3:
-    "Too few confident picks (" & $b.used & ", at least 3 are needed) to fit the model. " &
-      "Only the picks are shown."
+  elif b.used < MinTrimmedPicks:
+    "Too few confident picks that hold together (" & $b.used & ", at least " &
+      $MinTrimmedPicks & " are needed) to fit a model. Only the picks are shown, as the " &
+      "first pass found them."
   else:
     "The confident picks all lie at one offset, so no model can be fitted. " &
       "Only the picks are shown."
@@ -246,7 +292,7 @@ func statusWords*(b: FirstBreaks): string =
       if b.fittedFrom.len > 0: "Model fitted to " & b.fittedFrom else: ""
     elif b.source == bsNone: "The model needs a survey or coordinates: picks only"
     elif b.picked == 0: "No first break could be picked"
-    elif b.used < 3: "Too few confident picks for a model: picks only"
+    elif b.used < MinTrimmedPicks: "Too few confident picks for a model: picks only"
     else: "No model: the confident picks share one offset"
 
 func ms(x: float64): string = formatFloat(x, ffDecimal, 1) & " ms"
@@ -264,6 +310,11 @@ func readoutText*(b: FirstBreaks; trace: int): string =
   let d = p - m
   if known(d):
     result.add ", " & (if d >= 0: "+" else: "") & formatFloat(d, ffDecimal, 1) & " ms"
+  let i = b.place(trace)
+  if i >= 0 and i < b.rule.flagged.len:
+    if b.rule.offModel[i]: result.add ", off the model"
+    if b.rule.offNeighbours[i]: result.add ", off its neighbours"
+    if b.rule.noBreak[i]: result.add ", no break found"
 
 func velocityUnit*(u: SurveyUnit): string =
   ## The unit the fitted velocity is read in, as the f-k's velocity label follows the
@@ -293,14 +344,20 @@ func offsetsFrom*(b: FirstBreaks): string =
   of bsFile: "the file's own headers"
   of bsNone: ""
 
+func fitModel*(fit: ShotFit): BreakModel =
+  ## `fit`'s velocity or velocities, intercept and crossover as a given model; the default
+  ## model (not given) without a velocity.
+  if not (fit.v1 > 0 and fit.v1 < Inf): return BreakModel()
+  let two = fit.v2 > 0 and fit.v2 < Inf and fit.crossover > 0 and fit.crossover < Inf
+  BreakModel(source: bmGiven, v1: fit.v1, interceptMs: fit.interceptMs,
+    v2: (if two: fit.v2 else: 0.0), crossover: (if two: fit.crossover else: 0.0)).bounded
+
 func fitAsModel*(b: FirstBreaks): BreakModel =
   ## The record's fit (its velocity or velocities, intercept and crossover) as a given
-  ## model: what "Use this record's fit" keeps, to hold for the other records. Without a
-  ## fit (no velocity), the default model (not given).
-  if not b.hasFit or not (b.fit.v1 > 0 and b.fit.v1 < Inf): return BreakModel()
-  let two = b.fit.v2 > 0 and b.fit.v2 < Inf and b.fit.crossover > 0 and b.fit.crossover < Inf
-  BreakModel(source: bmGiven, v1: b.fit.v1, interceptMs: b.fit.interceptMs,
-    v2: (if two: b.fit.v2 else: 0.0), crossover: (if two: b.fit.crossover else: 0.0)).bounded
+  ## model: what "Use this record's fit" keeps, to hold for the other records. It is the fit
+  ## to the trimmed picks of the second pass, so a stretch of noise picks does not set a
+  ## segment. Without a fit (no velocity), the default model (not given).
+  if not b.hasFit: BreakModel() else: b.fit.fitModel
 
 func segments*(b: FirstBreaks): int =
   ## The model's straight segments: 0 when it has no fit, 1 or 2.
@@ -336,6 +393,8 @@ func modelWordsOf(b: FirstBreaks; unit: SurveyUnit): string =
     result.add "\nIntercept: " & formatFloat(m.interceptMs, ffDecimal, 1) & " ms"
     result.add "\n" & b.givenWords
     result.add "\nOffsets from " & b.offsetsFrom & "."
+    let w = b.ruleWords
+    if w.len > 0: result.add "\n" & w
     return
   let n = b.segments
   if n == 0: return ""
@@ -348,9 +407,12 @@ func modelWordsOf(b: FirstBreaks; unit: SurveyUnit): string =
       number(b.fit.v2) & " " & v & " beyond " & number(b.fit.crossover) & " " & len &
       " offset"
   result.add "\nIntercept: " & formatFloat(b.fit.interceptMs, ffDecimal, 1) & " ms"
-  result.add "\nFitted to " & $b.used & " confident picks"
+  result.add "\nFitted to " & $b.used & " confident picks that agree with it (picks far from " &
+    "the line are left out, so noise at long offsets does not set it)"
   if b.fittedFrom.len > 0: result.add " (" & b.fittedFrom & ")"
   result.add "\nOffsets from " & b.offsetsFrom & "."
+  let w = b.ruleWords
+  if w.len > 0: result.add "\n" & w
 
 func modelWords*(b: FirstBreaks; unit: SurveyUnit; fromSurvey = false): string =
   ## `modelWordsOf`, with a line saying where the unit came from when it is the survey's

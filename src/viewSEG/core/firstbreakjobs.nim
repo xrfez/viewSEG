@@ -1,10 +1,26 @@
 ## The job that finds a record's first breaks for the overlay (`core/firstbreaks`):
-## it reads the record a chunk of traces at a time, picks each trace's first
-## break with processSEG's `qc/firstbreak` (its defaults), and fits one
-## refraction model to the confident picks against the traces' offsets with
-## `qc/shotfit`'s `fitShot`; the model's time at each trace is `ShotFit.modelMs`.
-## Nothing is computed here that those two do not give: the picks are the
-## picker's, the model's times the fit's, the offsets the trace keys'.
+## it reads the record a chunk of traces at a time and picks in two passes with
+## processSEG's `qc/firstbreak`, fitting the model with `qc/shotfit`'s `fitShot`.
+##
+## 1. **First pass**: the picker's defaults over each whole trace. A trace with no visible
+##    break gets a pick on noise, anywhere in the record.
+## 2. **A model without the noise picks** (`trimmedModel`, `core/breakrule`): the fit is
+##    made again on the picks that stay near it (a robust start, then the picks within 3
+##    sigmas, at least 12 ms, of the last fit, up to five rounds), at least 10 picks. Its
+##    segments are one line unless the second has 15 picks and a clearly better fit.
+## 3. **Second pass**: every trace of the fitted sensor is picked again with the picker's own
+##    guide (`guideVelocity`, `guideT0Ms`; `beforeMs`, `afterMs` = 100 ms), one guide line
+##    per segment of the model, so the search window is the model's time plus or minus 100
+##    ms. When the user gave a model (`BreakKey.guide`) the shown picks come from a third
+##    pass guided by it, and the fit (for "Use this record's fit") from the second.
+## 4. The model is fitted again, trimmed the same way, to the second pass's picks; its
+##    times are `ShotFit.modelMs` (or the one line's), and `FirstBreaks.setRule` decides
+##    which traces are off (`core/breakrule`).
+##
+## When the first pass gives no model to trust, its picks stand, and `passNote` says so.
+## The record is taken as one spread for the line (`fitShot`'s own `suspect` flags, which
+## are meaningless for a 3D record, are not used); the stations are compared along their
+## receiver lines by the rule.
 ##
 ## **Offsets.** From the keys, as the file's index holds them: the survey's
 ## when one is joined (the join derives each trace's `offset`), else the
@@ -13,7 +29,7 @@
 ##
 ## **Killed traces** (`BreakKey.killed`) and traces that cannot be decoded are
 ## not live for the picker and the fit: they get no pick, and the model
-## ignores them. The record is taken as one spread, all its seismic traces.
+## ignores them.
 ##
 ## The job is posted as `mkFirstBreaks`; the state drops an answer whose job
 ## it no longer waits for.
@@ -22,16 +38,23 @@ import std/[algorithm, math, sequtils]
 import parseSEG
 import processSEG/core/[rows, types, workspace]
 import processSEG/qc/[firstbreak, shotfit]
-import filesystem, firstbreaks, inbox, jobs, session, threads
+import breakmodel, filesystem, firstbreaks, inbox, jobs, session, threads
 
 const BreakChunk* = 512 ## traces read and picked at a time
+
+func trustNote(what: string; used: int; then: string): string =
+  ## Why a pass gave no model to trust, in words.
+  if used < MinTrimmedPicks:
+    what & " left too few confident picks that hold together (" & $used & ", at least " &
+      $MinTrimmedPicks & " are needed): " & then
+  else: what & " gave picks no model could be fitted to (they share one offset): " & then
 
 type BreakProgress* = proc (done, total: int): bool {.closure, gcsafe.}
   ## Called after each chunk; false asks the work to stop (`JobCancelledError`).
 
 proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     killed: openArray[int]; progress: BreakProgress = nil;
-    off: openArray[uint8] = []): FirstBreaks =
+    off: openArray[uint8] = []; guide: BreakModel = BreakModel()): FirstBreaks =
   ## The first breaks of the record `traces` of `file` (at `path`), the
   ## traces in `killed` (file trace numbers, ascending) left out. Reads
   ## the record in place; raises `JobCancelledError` when `progress` says stop.
@@ -82,37 +105,55 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
       fixT0 = true
     result.shiftMs[i] = layoutT0 - keys[i].t0Ms
   let cols = max(1, f.maxSamples(traces))
-  let plan = initFirstBreakPlan(float32, FirstBreakParams(), dt, cols)
-  var ws = initWorkspace()
-  ws.reserve(plan.workspaceSize)
-  var picks = newSeq[FirstBreakPick](n)
-  var first = traces.a
-  while first <= traces.b:
-    let part = first .. min(traces.b, first + BreakChunk - 1)
-    fs.mappedRead(path)
-    var log: DiagLog
-    let samples = f.readTraces(part, 0 ..< cols, log)
-    var failed: seq[int] # rows of this chunk (0-based in it): undecodable, then the others
-    for d in log:
-      if d.loc.trace in part:
-        failed.add d.loc.trace - part.a
-        dead.add d.loc.trace - traces.a
-    for r in dead:
-      if r + traces.a in part: failed.add r + traces.a - part.a
-    failed.sort()
-    failed = deduplicate(failed, isSorted = true)
-    let own = f.rowsOf(part)
-    var chunkKeys: seq[TraceKeys] = @[]
-    var counts: seq[int] = @[]
-    if fixT0:
+  let passes = if guide.given: 3 else: 2
+  let total = n * passes
+  type Guided = tuple[params: FirstBreakParams; rows: seq[bool]]
+  proc runPass(guides: seq[Guided]; dst: var seq[FirstBreakPick]; doneBefore: int) =
+    ## Picks the rows each guide names with its parameters into `dst` (the others stay), the
+    ## record read a chunk at a time.
+    var plans: seq[FirstBreakPlan[float32]] = @[]
+    var ws = initWorkspace()
+    for g in guides:
+      plans.add initFirstBreakPlan(float32, g.params, dt, cols)
+      ws.reserve(plans[^1])
+    var first = traces.a
+    while first <= traces.b:
+      let part = first .. min(traces.b, first + BreakChunk - 1)
+      fs.mappedRead(path)
+      var log: DiagLog
+      let samples = f.readTraces(part, 0 ..< cols, log)
+      var failed: seq[int] # rows of this chunk (0-based in it): undecodable, then the others
+      for d in log:
+        if d.loc.trace in part:
+          failed.add d.loc.trace - part.a
+          dead.add d.loc.trace - traces.a
+      for r in dead:
+        if r + traces.a in part: failed.add r + traces.a - part.a
+      let own = f.rowsOf(part)
+      var chunkKeys: seq[TraceKeys] = @[]
+      var counts: seq[int] = @[]
       for r in 0 ..< part.len:
         chunkKeys.add keys[part.a - traces.a + r]
         counts.add own.numSamples(r)
-    let meta = initChunkMeta(if fixT0: rowsOf(chunkKeys, counts) else: own, dt, 0, failed)
-    plan.pickInto(samples, meta, picks.toOpenArray(part.a - traces.a, part.b - traces.a), ws)
-    first = part.b + 1
-    if progress != nil and not progress(part.b - traces.a + 1, n):
-      raise newException(JobCancelledError, "cancelled")
+      for gi in 0 ..< plans.len:
+        var skip = failed
+        for r in 0 ..< part.len:
+          if not guides[gi].rows[part.a - traces.a + r]: skip.add r
+        skip.sort()
+        skip = deduplicate(skip, isSorted = true)
+        let meta = initChunkMeta(rowsOf(chunkKeys, counts), dt, 0, skip)
+        var got = newSeq[FirstBreakPick](part.len)
+        plans[gi].pickInto(samples, meta, got, ws)
+        for r in 0 ..< part.len:
+          if guides[gi].rows[part.a - traces.a + r]: dst[part.a - traces.a + r] = got[r]
+      first = part.b + 1
+      if progress != nil and not progress(doneBefore + part.b - traces.a + 1, total):
+        raise newException(JobCancelledError, "cancelled")
+  # The first pass: the picker's defaults over each whole trace.
+  var picks = newSeq[FirstBreakPick](n)
+  var everyRow = newSeq[bool](n)
+  for i in 0 ..< n: everyRow[i] = true
+  runPass(@[(FirstBreakParams(), everyRow)], picks, 0)
   dead.sort()
   dead = deduplicate(dead, isSorted = true)
   for i in 0 ..< n:
@@ -142,24 +183,112 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   # the others are given the model's time
   let (mask, what) = fitMask(keys, off)
   result.fittedFrom = what
-  var fitPicks = picks
+  let offs = result.offsetAbs
+  var eligible = newSeq[bool](n)
+  var lineKey, pointKey, azimuth = newSeq[float64](n)
   for i in 0 ..< n:
-    if not mask[i]: fitPicks[i].confidence = 0
+    eligible[i] = mask[i] and not offs[i].isNaN
+    (lineKey[i], pointKey[i]) = (keys[i].rcvLine, keys[i].rcvPoint)
+    azimuth[i] = NaN
+    let (dx, dy) = (keys[i].rcvX - keys[i].srcX, keys[i].rcvY - keys[i].srcY)
+    if not (dx.isNaN or dy.isNaN) and (dx != 0 or dy != 0): azimuth[i] = arctan2(dy, dx)
+  result.geometry = RuleGeometry(eligible: eligible, lines: stationLines(lineKey, pointKey,
+    eligible), azimuth: azimuth)
   let zeros = newSeq[int](n)
   let meta = initChunkMeta(rowsOf(keys, zeros), dt, 0, dead)
-  var fit: ShotFit
-  try:
-    fitShot(meta, fitPicks, ShotFitParams(), fit)
-  except ValueError:
-    return # no model: the picks stand alone
-  result.fit = fit
-  result.hasFit = true
-  result.used = fit.used
-  result.thresholdMs = fit.threshold
+
+  proc trimOf(src: seq[FirstBreakPick]): tuple[tr: Trimmed; fit: ShotFit] =
+    ## The model of `src`'s picks that noise picks do not set (`trimmedModel`): processSEG's
+    ## fit of the picks still in, whose second segment stays only when it is supported.
+    var pm, cf = newSeq[float64](n)
+    for i in 0 ..< n:
+      pm[i] = src[i].timeMs
+      cf[i] = if mask[i]: src[i].confidence else: 0.0
+    var last: ShotFit
+    let fn = proc (use: openArray[bool]): seq[float64] =
+      var fp = src
+      for i in 0 ..< n:
+        if not use[i]: fp[i].confidence = 0
+      var fit: ShotFit
+      try:
+        fitShot(meta, fp, ShotFitParams(), fit)
+      except ValueError:
+        return @[]
+      if fit.used < 3 or not (fit.v1 > 0 and fit.v1 < Inf): return @[]
+      let one = lineFit(offs, pm, use)
+      if one.ok:
+        let two = fit.v2 > 0 and fit.v2 < Inf and fit.crossover > 0 and fit.crossover < Inf
+        var keep = false
+        if two:
+          var r1, r2: seq[float64]
+          var beyond = 0
+          for i in 0 ..< n:
+            if use[i] and not offs[i].isNaN and not fit.modelMs[i].isNaN:
+              r1.add pm[i] - (one.interceptMs + one.msPerUnit * offs[i])
+              r2.add pm[i] - fit.modelMs[i]
+              if offs[i] > fit.crossover: inc beyond
+          keep = keepSecond(beyond, robustSigma(r1), robustSigma(r2))
+        if not keep:
+          fit.interceptMs = one.interceptMs
+          fit.v1 = 1000 / one.msPerUnit
+          fit.v2 = NaN
+          fit.crossover = Inf
+          for i in 0 ..< n:
+            if not fit.modelMs[i].isNaN:
+              fit.modelMs[i] = one.interceptMs + one.msPerUnit * offs[i]
+      last = fit
+      fit.modelMs
+    result.tr = trimmedModel(offs, pm, cf, fn)
+    result.fit = last
+
+  proc guidedBy(m: BreakModel; src: seq[FirstBreakPick]; doneBefore: int):
+      seq[FirstBreakPick] =
+    ## `src` with each eligible trace picked again within `GuideWindowMs` of the model's time.
+    var guides: seq[Guided] = @[]
+    for gl in guideLines(m):
+      var rows = newSeq[bool](n)
+      for i in 0 ..< n:
+        rows[i] = eligible[i] and offs[i] > gl.above and offs[i] <= gl.upTo
+      guides.add (FirstBreakParams(guideVelocity: gl.velocity, guideT0Ms: gl.t0Ms,
+        beforeMs: GuideWindowMs, afterMs: GuideWindowMs), rows)
+    result = src
+    runPass(guides, result, doneBefore)
+
+  # The second pass: a model from the first pass's picks (without the noise ones), then every
+  # trace picked again near it.
+  let firstTrim = trimOf(picks)
+  var fitted = picks
+  var final = firstTrim
+  if firstTrim.tr.trusted:
+    let again = guidedBy(firstTrim.fit.fitModel, picks, n)
+    let secondTrim = trimOf(again)
+    if secondTrim.tr.trusted:
+      (fitted, final) = (again, secondTrim)
+      result.twoPass = true
+    else:
+      result.passNote = trustNote("The second, guided pass", secondTrim.tr.used,
+        "the first-pass picks are shown")
+  else:
+    result.passNote = trustNote("The first pass", firstTrim.tr.used,
+      "no second pass was made: the first-pass picks are shown")
+  var shown = fitted
+  if guide.given:
+    shown = guidedBy(guide, picks, 2 * n)
+    result.twoPass = true
+  result.picks = fitted
+  result.picked = 0
   for i in 0 ..< n:
-    result.modelMs[i] = fit.modelMs[i]
-    result.flagged[i] = fit.suspect[i]
-    if not fit.modelMs[i].isNaN: inc result.modelled
+    result.pickMs[i] = shown[i].timeMs
+    result.confidence[i] = shown[i].confidence
+    if not shown[i].timeMs.isNaN: inc result.picked
+  result.used = final.tr.used
+  if final.tr.trusted:
+    result.fit = final.fit
+    result.hasFit = true
+    for i in 0 ..< n:
+      result.modelMs[i] = final.fit.modelMs[i]
+      if not result.modelMs[i].isNaN: inc result.modelled
+    result.setRule()
 
 proc firstBreaksWork*(file: ptr SeismicFile; path: string; key: BreakKey;
     traces: Slice[int]; to: Poster): JobWork =
@@ -171,7 +300,7 @@ proc firstBreaksWork*(file: ptr SeismicFile; path: string; key: BreakKey;
     {.cast(gcsafe).}:
       ctx.setPhase "picking and fitting the first breaks"
       found = breaksOfRecord(file, path, traces, key.killed,
-        proc (done, total: int): bool = ctx.progress(done, total), key.off)
+        proc (done, total: int): bool = ctx.progress(done, total), key.off, key.guide)
       found.key = key
     discard ctx.progress(1, 1)
     clearCycleRoots()

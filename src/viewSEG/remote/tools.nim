@@ -409,11 +409,6 @@ proc breaksJson(b: FirstBreaks; unit: SurveyUnit; fromSurvey: bool): JsonNode =
     result["velocities"] = %(if m.segments == 2: @[m.v1, m.v2] else: @[m.v1])
     result["interceptMs"] = %m.interceptMs
     result["crossover"] = (if m.segments == 2: %m.crossover else: newJNull())
-    result["comparedTraces"] = %b.compared
-    result["offModelTraces"] = %b.offModel
-    result["offLimitMs"] = %OffModelMs
-    result["medianPickMinusModelMs"] = (if b.medianDiffMs.isNaN: newJNull()
-      else: %b.medianDiffMs)
     result["picksUsed"] = %b.used
   elif b.segments > 0:
     result["velocityUnit"] = %unit.velocityUnit
@@ -421,6 +416,23 @@ proc breaksJson(b: FirstBreaks; unit: SurveyUnit; fromSurvey: bool): JsonNode =
     result["interceptMs"] = %b.fit.interceptMs
     result["crossover"] = (if b.segments == 2: %b.fit.crossover else: newJNull())
     result["picksUsed"] = %b.used
+  if b.hasModel:
+    # what the rule found (`core/breakrule`): the same numbers the key, the marks and the
+    # words use
+    let r = b.rule
+    func num(x: float64): JsonNode = (if x.isNaN: newJNull() else: %x)
+    result["comparableTraces"] = %r.nComparable
+    result["noBreakFoundTraces"] = %r.nNoBreak
+    result["offModelTraces"] = %r.nOffModel
+    result["offNeighbourTraces"] = %r.nOffNeighbours
+    result["flaggedTraces"] = %r.nFlagged
+    result["limitMs"] = num(r.limitMs)
+    result["sigmaMs"] = num(r.sigmaMs)
+    result["neighbourLimitMs"] = num(r.stationLimitMs)
+    result["medianPickMinusModelMs"] = num(r.medianMs)
+    result["secondPass"] = %b.twoPass
+    result["sourceStatement"] = %r.statementWords
+    if b.passNote.len > 0: result["passNote"] = %b.passNote
 
 proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
   template p: untyped = state.panels[k]

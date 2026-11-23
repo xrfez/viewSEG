@@ -448,7 +448,8 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
         else:
           ctx.setPhase "picking the first breaks"
           br = breaksOfRecord(file, path, traces, noise.key.killed,
-            proc (done, total: int): bool = ctx.progress(done, 2 * total), noise.key.off)
+            proc (done, total: int): bool = ctx.progress(done, 2 * total), noise.key.off,
+              noise.key.guide)
           br.key = noise.key
           found = br
           picked = true

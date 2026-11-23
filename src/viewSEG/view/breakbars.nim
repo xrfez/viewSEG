@@ -17,7 +17,8 @@
 ##   between the two bars and a heavier pick bar.
 ## - Times are drawn where the plot draws that sample: each trace's own time
 ##   axis moved to the layout's (`shiftOf`).
-## - A pick of low confidence (below `ConfidentPick`) is `faint`.
+## - A pick not compared with the model (`faintOf`: low confidence, or no break found) is
+##   `faint`.
 
 import std/math
 import ../core/[firstbreaks, geometry, orientation, panels, viewport]
@@ -131,7 +132,7 @@ func breakGeometry*(b: FirstBreaks; shown: openArray[int]; layout: PanelLayout;
         let h = half * pickShare(size)
         result.marks.add BreakMark(kind: bmPick, a: tb.other.at(c - h, yp),
           b: tb.other.at(c + h, yp), position: p, trace: trace,
-          faint: b.confidenceOf(trace) < ConfidentPick, heavy: off)
+          faint: b.faintOf(trace), heavy: off)
       if off and not ym.isNaN and not yp.isNaN and (inside(ym) or inside(yp)):
         result.marks.add BreakMark(kind: bmLink, a: tb.other.at(c, ym), b: tb.other.at(c, yp),
           position: p, trace: trace)

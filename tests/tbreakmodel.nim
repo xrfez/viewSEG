@@ -4,8 +4,10 @@
 ## - the given model at the shot's true velocity (2500 m/s, 20 ms) puts the model bars on the
 ##   picks: few traces off, the median near 0, the picks and the fit untouched;
 ## - the same shot with its offsets wrong by a constant (a source named or placed wrongly:
-##   the traces are 400 m further out than they are) shows with the given model a median of
-##   about -160 ms and most traces off, while the fitted model follows the picks and hides it;
+##   the traces are 100 m further out than they are) shows with the given model a median of
+##   about -40 ms and most traces off (a 400 m error, 160 ms, is beyond the 100 ms band in
+##   which a pick is compared with the model: no pick is comparable, and the words say the
+##   model does not fit the record), while the fitted model follows the picks and hides it;
 ## - "Use this record's fit" copies the fitted velocity, intercept, second velocity and
 ##   crossover, and switches to given; a record that has no fit gives no model;
 ## - two segments are continuous at the crossover, a trace with no offset (or killed) has
@@ -31,8 +33,8 @@ import utils/[breakfiles, fixtures]
 const Truth = BreakModel(source: bmGiven, v1: 2500, interceptMs: 20)
 
 proc moved(i: int; k: var TraceKeys): float64 =
-  ## A source named wrongly: the headers' offsets are 400 m too long.
-  k.offset = offsetOf(i) + 400
+  ## A source named wrongly: the headers' offsets are 100 m too long.
+  k.offset = offsetOf(i) + 100
   arrivalMs(offsetOf(i))
 
 proc breaksOf(path: string): FirstBreaks =
@@ -69,16 +71,28 @@ proc main*() =
         if b.mismatched(i): inc fittedOff
       doAssert fittedOff <= 3, "the fit follows the record: " & $fittedOff & " flagged"
       let g = b.withModel(Truth)
-      doAssert g.medianDiffMs < -100 and g.medianDiffMs > -200, "median " & $g.medianDiffMs
+      doAssert g.medianDiffMs < -30 and g.medianDiffMs > -50, "median " & $g.medianDiffMs
       doAssert g.offModel * 10 > g.compared * 9, "most traces off: " & $g.offModel & " of " &
         $g.compared
       var flagged = 0
       for i in 0 ..< Traces:
         if g.mismatched(i): inc flagged
       doAssert flagged * 10 > Traces * 9, "most traces off: " & $flagged & " flagged"
-      doAssert "median -1" in g.statusWords and " off" in g.statusWords, g.statusWords
-      doAssert "median pick less model -1" in g.givenWords and "off by more than 12 ms" in
+      doAssert "median -4" in g.statusWords and " off" in g.statusWords, g.statusWords
+      doAssert "median pick less model -4" in g.givenWords and "flagged (limit 12.0 ms)" in
         g.givenWords, g.givenWords
+
+  block aSourceFarOffIsNoBreakFoundNotEveryTraceOff:
+    withFixtures fx:
+      let b = breaksOf(fx.customShot("far.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
+        k.offset = offsetOf(i) + 400
+        arrivalMs(offsetOf(i))))
+      let g = b.withModel(Truth)
+      doAssert g.compared == 0 and g.offModel == 0 and g.rule.nNoBreak == Traces,
+        $g.compared & " compared, " & $g.rule.nNoBreak & " no break found"
+      for i in 0 ..< Traces: doAssert not g.mismatched(i) and g.faintOf(i)
+      doAssert "does not fit this record" in g.givenWords, g.givenWords
+      doAssert "does not fit this record" in g.modelWords(suMetres), g.modelWords(suMetres)
 
   block useThisRecordsFit:
     withFixtures fx:

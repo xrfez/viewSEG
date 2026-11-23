@@ -6517,8 +6517,10 @@ proc breakKeyOf(state: AppState; k: int): (bool, BreakKey, int) =
   var off: seq[uint8]
   for c in 0 .. 255:
     if uint8(c) in p.layers[0].filter.components: off.add uint8(c)
+  let model = p.layers[0].display.breakModel.bounded
   result = (true, (src.file, src.gather, s.keysRevision,
-    state.editsAt(s.path).listIn(teKilled, s.gathers[src.gather].traces), off), i)
+    state.editsAt(s.path).listIn(teKilled, s.gathers[src.gather].traces), off,
+    (if model.given: model else: BreakModel())), i)
 
 proc breakKeyFor(state: AppState; i, gather: int): BreakKey =
   ## The key of the first breaks of record `gather` of session `i`: that of a
@@ -6530,7 +6532,7 @@ proc breakKeyFor(state: AppState; i, gather: int): BreakKey =
     if on and j == i and key.gather == gather: return key
   let s = state.sessions[i]
   (s.id, gather, s.keysRevision, state.editsAt(s.path).listIn(teKilled, s.gathers[gather].traces),
-    newSeq[uint8]())
+    newSeq[uint8](), BreakModel())
 
 const SignatureNoFilters = NoiseFilters + {mfMissing, mfUnlisted}
   ## the filters a signature file has no receivers for: the noise test and the template's

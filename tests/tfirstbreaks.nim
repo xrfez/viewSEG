@@ -198,9 +198,11 @@ proc main*() =
       doAssert b.pickOf(5).isNaN and b.modelOf(5).isNaN, "a trace of another interval is live"
       doAssert abs(b.pickOf(20) - arrivalMs(offsetOf(20))) <= 12, "pick " & $b.pickOf(20)
 
-  block twoRecordsADelayAndKilledTracesPickAsTheLibraryDoes:
+  block twoRecordsADelayAndKilledTracesPickOnTheirOwnAxes:
     # the second record starts at trace 600 of the file, past a read chunk, and its data
-    # start at 100 ms: every pick is what processSEG's pickInto gives that record's traces
+    # start at 100 ms: every killed trace has no pick, and every other trace whose break
+    # lies in the data is picked on that record's time axis (the picks are the second,
+    # guided pass's: the record's first-pass model guides them)
     withFixtures fx:
       let path = fx.customShot("two.sgy", 1200, proc (i: int; k: var TraceKeys): float64 =
         k.record = float64(1 + i div 600)
@@ -210,24 +212,17 @@ proc main*() =
       var f = openSeismic(path, keys = true)
       let rec = 600 .. 1199
       let b = breaksOfRecord(addr f, path, rec, killed)
-      let cols = f.maxSamples(rec)
-      var log: DiagLog
-      let samples = f.readTraces(rec, 0 ..< cols, log)
-      var failed: seq[int]
-      for t in killed: failed.add t - rec.a
-      let meta = initChunkMeta(f.rowsOf(rec), Dt, 0, failed)
-      var want = newSeq[FirstBreakPick](rec.len)
-      let plan = initFirstBreakPlan(float32, FirstBreakParams(), Dt, cols)
-      var ws = initWorkspace()
-      ws.reserve(plan.workspaceSize)
-      plan.pickInto(samples, meta, want, ws)
       var none: seq[int]
+      var checked, near = 0
       for t in rec:
-        let (got, ref1) = (b.pickOf(t), want[t - rec.a].timeMs)
-        doAssert (got.isNaN and ref1.isNaN) or got == ref1, "trace " & $t & ": " & $got &
-          ", pickInto " & $ref1
+        let got = b.pickOf(t)
         if got.isNaN: none.add t
+        elif arrivalMs(offsetOf(t mod Traces)) >= 100 + 30:
+          inc checked
+          if abs(got - arrivalMs(offsetOf(t mod Traces))) <= 12: inc near
       doAssert none == @killed, "no pick at " & $none
+      doAssert b.twoPass and checked > 400 and near * 100 >= checked * 95,
+        $near & " of " & $checked & " picks within 12 ms of the arrival"
       doAssert abs(b.pickOf(700) - arrivalMs(offsetOf(700 mod Traces))) <= 12,
         "delayed record: " & $b.pickOf(700)
       doAssert b.shiftOf(700) == 0.0
@@ -244,9 +239,11 @@ proc main*() =
       doAssert abs(b.pickOf(5) - arrivalMs(offsetOf(5))) <= 12 and
         abs(b.modelOf(5) - arrivalMs(offsetOf(5))) <= 8
 
-  block aSmoothDriftIsNotAMismatch:
-    # the residual from the model drifts past 12 ms along the spread, the fit's own residual
-    # against the neighbours' does not: nothing is flagged
+  block aSmoothDriftIsNotOffItsNeighbours:
+    # the residual from the model drifts past 12 ms along the spread (the record's limit may
+    # flag its largest), the residual against the neighbours' does not: no trace is off its
+    # neighbours. (Before the rule had two parts, the fit's `suspect` alone was the test and
+    # nothing was flagged.)
     withFixtures fx:
       let path = fx.customShot("drift.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
         let u = (float64(i) - 24) / 14
@@ -254,9 +251,11 @@ proc main*() =
       let b = breaksOf(path)
       var worst = 0.0
       for t in 0 ..< Traces:
-        doAssert not b.mismatched(t), "trace " & $t & " flagged, difference " & $b.differenceMs(t)
+        doAssert not b.rule.offNeighbours[t], "trace " & $t & " off its neighbours, difference " &
+          $b.differenceMs(t)
         if not b.differenceMs(t).isNaN: worst = max(worst, abs(b.differenceMs(t)))
       doAssert worst > 12, "the drift is only " & $worst & " ms: the test is not one"
+      doAssert b.rule.nOffModel < Traces div 2, $b.rule.nOffModel & " off the model"
 
   block offsetZeroIsUnset:
     withFixtures fx:

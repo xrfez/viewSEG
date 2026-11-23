@@ -567,9 +567,9 @@ same setting. For each trace of the record shown the plot draws, in the theme's 
   bar is the model's `modelMs`), and
 - at the time the first break was picked (processSEG's first-break picker, its defaults).
 
-Where the pick differs from the model by more than 12 ms (or three samples, if more) a thin
-line joins the two bars and the pick bar is heavier; a pick of low confidence (below 0.5)
-is drawn faint. A trace with no pick shows only the model bar; a trace the model cannot
+A trace is flagged, with a thin line joining the two bars and a heavier pick bar, when it is
+off the model or off its neighbours (below). A pick that is not compared (confidence below 0.5,
+or more than 100 ms from the model) is drawn faint with no line. A trace with no pick shows only the model bar; a trace the model cannot
 place (no offset) only the pick. The bars have a halo in the plot's background colour, so they
 read over the wiggles and over density. They are the traces' own: they follow zoom, pan, the
 sort order and the trace filter, are drawn for the traces in view only, and a killed trace has
@@ -604,10 +604,44 @@ the plot's display (`breakPickColour`, `breakModelColour`, `breakSize` in `setti
 no display preset carries them; the agent's `display` command takes them, and a panel's
 `state` shows them in its display.
 
+**Picking and the model.** The record is picked twice. The first pass has no search window, so a
+trace with no visible break gets a pick on noise. A model is fitted to those picks, dropping
+the picks far from it (a start from the closer half, then the picks within three robust
+sigmas, at least 12 ms, of the fit, up to five rounds; at least 10 picks must remain). The
+second pass picks every trace again in a window of 100 ms either side of that model (the
+picker's own guide and window), and the model is fitted again, trimmed the same way, to those
+picks; it is one straight line unless a second segment has at least 15 trimmed picks beyond
+the crossover and fits clearly better. That fit is what "Use this record's fit" copies. When
+fewer than 10 confident picks hold together, the first-pass picks stay and the key's note says
+so. With a given model the shown picks come from a pass guided by it instead.
+
+**Which traces are flagged** (one rule decides, so the key, the marks, the words and the agent
+state agree):
+
+- *Comparable*: a confident pick (0.5 or more) within 100 ms of the model. Any other trace that
+  has a model time is *no break found*: never flagged.
+- *Off the model*: the residual (pick less model) of a comparable trace is larger than the
+  record's limit, the larger of 12 ms and three times 1.4826 times the median absolute deviation
+  of the comparable residuals.
+- *Off its neighbours*: the residual less the median residual of up to three comparable
+  neighbours on each side along the same receiver line (in receiver point order; file order
+  where lines or points are unknown) is larger than the larger of 12 ms and four times the
+  robust sigma of these differences.
+- *The record's words*: when the traces' azimuths from the source cover at least 180 degrees,
+  the residuals are fitted as a constant plus a cosine and sine of the azimuth. A lean or a
+  constant beyond the larger of 10 ms and two times the scatter left says "the picks lean to one
+  side of the source by N ms: the source may be placed or named wrongly" or "every pick is
+  early (late) by N ms".
+
+The key counts the traces flagged (off the model or off its neighbours). A source placed more
+than about 100 ms of travel time wrong leaves no pick comparable with a given model: the words
+then say the model does not fit the record.
+
 The offsets are the trace keys': the imported survey's when one is joined to the file, else
 the header's, else derived from the file's own coordinates. With neither the picks are drawn
-alone and the key says so. The record is taken as one spread; a record of several components
-or receiver lines is fitted as one. The work runs on a job (Jobs lists it) for the record shown
+alone and the key says so. The model is one time against offset for the record, whatever its
+receiver lines; a record of several components is fitted from one sensor kind. The stations are
+compared along each receiver line. The work runs on a job (Jobs lists it) for the record shown
 and is kept for it (the last few records stay, so stepping back is immediate); it is made
 again when the file's keys change (a join, a header edit) or a trace of the record is killed or
 restored, and a result that arrives after the record, the keys or the edits it was made for have
@@ -626,9 +660,9 @@ shape as the fit, continuous at the crossover). The expected break of every trac
 offset is then the intercept plus its offset over the velocity, the same for every record; the
 second velocity and crossover are behind a **Two layers** checkbox (off: velocity and
 intercept only; "Use this record's fit" turns it on when the fit has a second segment); the
-key shows "given" and the count off the model, the line joining model and pick uses the same
-12 ms limit, and the key's tooltip gives the velocity, the record's median of pick less model
-and how many traces are more than 12 ms off. The velocity's unit is the offsets' (the
+key shows "given" and the count flagged, the flags are the rule above against the given model,
+and the key's tooltip gives the velocity, the record's median of pick less model and how many
+of the compared traces are flagged. The velocity's unit is the offsets' (the
 file's, or the import's); a file that names none takes the project's survey's, when it
 names a length, and the tooltip says so (only the label: nothing is converted). **Use this record's fit** copies the fitted numbers of the record shown into
 the boxes and switches to Given: a model calculated once on a good record and held for the

@@ -602,15 +602,24 @@ and their order.
 **First-break overlay.** The last button of the display group on the Seismic window's strip,
 or **Analysis > First-break overlay** (ticked while on), draws over each trace two thin bars:
 one where a refraction model fitted to the record's picks expects the first break (the cool
-colour) and one where the first break was picked (the warm colour). Where they differ by
-more than 12 ms a line joins them: a trace whose header places it at the wrong station, or
-whose break is late, stands out. The model needs source-receiver offsets: the imported survey's,
+colour) and one where the first break was picked (the warm colour). A line joins them for a
+trace that is flagged. A trace is **off the model** when its pick is farther from the model
+than the record's own scatter allows (three times the scatter of the picks that lie near the
+model, and never less than 12 ms), and **off its neighbours** when it differs by more than that
+from the traces beside it on its receiver line (this finds one wrong station, even where the
+real first breaks bend away from a straight model). A trace where the picker found no break
+(a faint pick, or one more than 100 ms from the model, as at offsets beyond where any break is
+visible) is **no break found**: it is drawn faint with no line, counted apart and never
+flagged. The record's words add when the picks lean to one side of the source, or are all
+early or late by the same amount: the source may be placed or named wrongly. The model needs source-receiver offsets: the imported survey's,
 or the file's own coordinates; without them only the picks are drawn and the key at the plot's
 corner says so. Point at the key ("model", "pick") and it says what the model is: a
 straight-line refraction fit to this record's own picks against offset, with no velocity
 typed in, the fitted velocity (or two, with the offset where they change) in the offsets'
-unit per second, the intercept in ms, how many picks it was fitted to and where the offsets
-came from (the survey or the file's headers). The key itself stays short: "model", "pick", a small "given" when the model is the one
+unit per second, the intercept in ms, how many picks it was fitted to (picks far from the
+line are left out, so noise at long offsets does not set it), where the offsets came from (the
+survey or the file's headers), and the counts: traces compared, no break found, off the model,
+off its neighbours, with the limits in ms. The key itself stays short: "model", "pick", a small "given" when the model is the one
 you gave and, in the warning colour, how many traces are off it ("358 off"). Click the key's "pick" or "model" to hide or show that kind of bar (a hidden one is dimmed and
 struck through in the key). Click the rest of the key, or the small wheel at its end, to **give
 a model instead**: a velocity, an intercept (ms, 0 by default) and, behind **Two layers**, a
@@ -621,7 +630,7 @@ at least 7 pixels, and 3 pixels thick). When the file names no length unit the v
 takes the project's survey's (the tooltip says so; only the label). A model fitted to each record follows its picks and so hides a
 source named or placed wrongly; a given one does not, so use it to check geometry: the bars sit
 on the picks where source and stations are right, and the key's tooltip says how far the record
-is off ("median pick less model -160 ms, 45 of 47 traces off by more than 12 ms"). **Use this
+is off ("median pick less model -40 ms, 45 of 47 compared traces flagged"). **Use this
 record's fit** copies the fit of a good record into the boxes to hold for the others. The model
 is kept in the project when one is open, else in the settings. A killed trace has no bars. With the pointer on a trace the status bar adds
 the model's time, the pick's and their difference. It is off until you turn it on, and

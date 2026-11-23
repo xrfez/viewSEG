@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.19.1: capabilities | names | processSEG 0.11.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 54 (20 in part) | 180 | 37 (25 in part) | 186 |
+| `built` | 54 (20 in part) | 180 | 37 (25 in part) | 187 |
 | `internal` | 17 | 46 | 5 | 39 |
-| `planned` | 33 | 220 | 44 | 399 |
+| `planned` | 33 | 220 | 44 | 398 |
 | `to plan` | 2 | 10 | 1 | 5 |
 | `not applicable` | 21 | 366 | 6 | 69 |
 | all | 127 | 822 | 93 | 698 |
@@ -349,7 +349,7 @@ name, so these are building blocks for code that works on raw headers.
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Geometry flags from the keys | `checkGeometry`, `checkGeometryInto`, `flaggedRows`, `GeometryQc`, `badGeometry`, `GeometryCheck`, `GeometryFlag`, `GeometryFlags` | Survey QC issue list, flags in table and map | planned |
-| First-break picking with confidence | `initFirstBreakPlan`, `pickInto` (also on the pool), `FirstBreakParams`, `FirstBreakPick`, `checkPick`, `FirstBreakPlan` (`params`, `pick`), `PickMethod`, `noPick` | Analysis → First-break overlay, and the button on the Seismic window's strip: a bar across each trace where the first break was picked (processSEG's defaults, on a job, record by record; a pick of low confidence is drawn faint), and the pick in the status bar under the pointer; colouring by confidence beyond that is planned | built (`initFirstBreakPlan`, `pickInto`, `FirstBreakParams`, `FirstBreakPick`); planned (the picker's options, `checkPick`, `FirstBreakPlan`, `PickMethod`, `noPick`) |
+| First-break picking with confidence | `initFirstBreakPlan`, `pickInto` (also on the pool), `FirstBreakParams`, `FirstBreakPick`, `checkPick`, `FirstBreakPlan` (`params`, `pick`), `PickMethod`, `noPick` | Analysis → First-break overlay, and the button on the Seismic window's strip: a bar across each trace where the first break was picked (processSEG's defaults, then a second pass guided by the model, on a job, record by record; a pick not compared with the model is drawn faint), and the pick in the status bar under the pointer; colouring by confidence beyond that is planned | built (`initFirstBreakPlan`, `pickInto`, `FirstBreakParams` (the guided search window of the second pass), `FirstBreakPick`, `FirstBreakPlan`); planned (the picker's other options, `checkPick`, `PickMethod`, `noPick`) |
 | Refraction fit per shot (swapped receivers, misplaced source) | `fitShot`, `ShotFitParams`, `ShotFit` (`suspect`, `asymmetryMs`, `v1`, `v2`), `RefractionModel` | Analysis → First-break overlay: a bar across each trace at the time the model fitted to the confident picks expects the first break (`ShotFit.modelMs`, at the offsets the survey or the file gives), a line to the pick where they differ, and both times in the status bar; the suspect traces and the survey QC issue list are planned | built (`fitShot`, `ShotFitParams`, `ShotFit`: the model's times); planned (the issue list, `RefractionModel`) |
 | Windowed SNR per trace | `windowSnrInto`, `WindowSnrParams`, `powerSnrDb`, `windowSnrDb`, `meanPower`, `SnrEstimator`, `DefaultSnrFloorDb` | SNR attribute: table column, map colour, flag threshold | planned |
 | Coherence SNR of a flattened gather | `coherenceSnrInto`, `coherenceSnrWorkspace` | SNR-against-time plot for an NMO or LMO flattened gather | planned |
