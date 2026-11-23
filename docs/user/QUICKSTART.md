@@ -479,6 +479,18 @@ set last. Changing a corner never reads the file again: viewSEG filters the samp
 already holds, and only the traces and times you are looking at (and a little around
 them), so it is as quick on a huge file as on a small one.
 
+The **Correlate** button beside Raw (or `C`; also under Whole record in the plot's
+menu) shows the record correlated with the reference chosen in References, in place
+of the raw samples, for every window of that file. It is lit while on. With no
+reference chosen it stays dim, and its tooltip says to choose one. The plot's time
+axis ends at the listen time (the record length minus the sweep). Turning it off
+shows the raw record again at once. A change of the reference, or of the file on
+disk, runs the correlation again and keeps the picture until the new one is ready.
+The next file in the folder is correlated too when it has a reference. First-break
+picks made on the raw record are kept but not drawn, and the status line says so
+once. The window title says "correlating" while the job runs and "correlated" when
+the result is shown.
+
 **The plot's menu** (right-click the plot) holds what acts on the data, and nothing about
 how it looks. Its first line names what it acts on: the trace under the pointer, or the
 selection when that trace is selected. Then:
