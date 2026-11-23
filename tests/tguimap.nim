@@ -39,7 +39,11 @@
 ## always starting the ruler (as it did), "Ctrl + click adds the point"
 ## found 1 point selected; with a plain drag not measuring under the Ruler
 ## button, "a plain drag measures" found no reading; with a Ctrl drag not
-## turning the Ruler on, "a Ctrl drag measures" found the button off.
+## turning the Ruler on, "a Ctrl drag measures" found the button off; with
+## the second Ruler click aimed off the button, "the Ruler button turns it
+## on did not happen" names the button rectangle when it was marked and when
+## it was clicked, the pointer, the frames waited, the item under the
+## pointer, rulerOn and the window size.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-*.png there.
@@ -48,6 +52,7 @@ import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/maplayers
+import imguin/cimgui
 import privatefiles
 import utils/[fixtures, waiting]
 
@@ -96,6 +101,9 @@ proc runMain() =
     var backs = 0
     var saved: seq[string]
     var measured = "" # the Ctrl drag's reading, which a plain drag with the Ruler must match
+    var rulerMark, rulerPress, rulerRelease: Rect
+    var pressAt, releaseAt = vec2(0, 0)
+    var pressHover, releaseHover = ""
 
     proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
       steps.add Step(name: name, act: act, done: done)
@@ -106,6 +114,39 @@ proc runMain() =
         if f.savePng(shots / name): saved.add name
     proc settled(f: FrameInfo): bool =
       f.mapWindow.mapShown.isSet and sameMapView(f.mapWindow.mapShown, f.core.map.view)
+    proc pointerFb(): Vec2 =
+      let m = igGetMousePos()
+      let s = igGetIO_Nil().DisplayFramebufferScale
+      let o = igGetMainViewport().Pos
+      vec2((m.x - o.x) * s.x, (m.y - o.y) * s.y)
+    proc px(x: float32): string =
+      if x.isNaN or abs(x) > 1e6: "off" else: $int(round(x))
+    proc box(r: Rect): string =
+      px(r.pos.x) & "," & px(r.pos.y) & " " & px(r.size.x) & "x" & px(r.size.y)
+    proc itemUnder(f: FrameInfo; at: Vec2): string =
+      result = ""
+      for n in f.markNames(""):
+        if f.markOf(n).contains(at): result = n
+      let id = igGetHoveredID()
+      if result.len == 0: result = if id == 0: "none" else: "id " & $id
+      else: result.add " id=" & $id
+    proc noteRuler(f: FrameInfo; press: bool) =
+      let at = pointerFb()
+      let hover = f.itemUnder(at)
+      if press:
+        rulerPress = f.markOf("map.ruler button")
+        pressAt = at
+        pressHover = hover
+      else:
+        rulerRelease = f.markOf("map.ruler button")
+        releaseAt = at
+        releaseHover = hover
+    proc rulerMiss(f: FrameInfo; frames: int): string =
+      "; mark=" & box(rulerMark) & "; click=" & box(rulerRelease) & "; pointer=" &
+        px(releaseAt.x) & "," & px(releaseAt.y) & "; frames=" & $frames & "; hovered=" &
+        releaseHover & "; rulerOn=" & $f.mapWindow.rulerOn & "; window=" & $f.width & "x" &
+        $f.height & "; atPress=" & box(rulerPress) & " pointer=" & px(pressAt.x) & "," &
+        px(pressAt.y) & " hovered=" & pressHover
 
     step("loaded", noop, proc (f: FrameInfo): bool =
       result = f.core.survey.layers.len == 2 and f.mapWindow.mapImagesDrawn > 0 and
@@ -376,10 +417,13 @@ proc runMain() =
       let r = f.markOf("map.ruler button")
       # the name is drawn beside the icon: a button about twice as wide as high
       doAssert r.size.x > 2 * r.size.y, "the Ruler button is an icon alone: " & $r
+      rulerMark = r
       p = stripButtonAt(f, "map.ruler button")
       f.moveMouse(p), proc (f: FrameInfo): bool =
       if wait == 3: f.pressMouse(p, true)
+      if wait == 4: f.noteRuler(true) # the press has been taken
       if wait == 5: f.pressMouse(p, false)
+      if wait == 6: f.noteRuler(false) # the release has been taken
       result = wait > 6 and f.mapWindow.rulerOn
       if result: doAssert f.mapWindow.rulerText.len == 0)
     step("a plain drag measures as the Ctrl drag did", proc (f: FrameInfo) =
@@ -498,6 +542,8 @@ proc runMain() =
           started = false
         elif overdue(wait, 300, since):
           failed = steps[at].name & " did not happen"
+          if steps[at].name == "the Ruler button turns it on":
+            failed.add f.rulerMiss(wait)
           f.stop()
 
     let code = run(RunOptions(openPaths: @[sps.s, sps.r],
