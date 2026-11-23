@@ -1728,7 +1728,8 @@ with the overlays).
 A second trace panel of the same reader, layout and drawing as the Seismic window, with
 fewer controls (`PanelRole`, `capsOf` in `core/panels`): View > Windows > Aux. It is closed
 at a first start, after Reset the windows and in a layout that does not name it; opened, it
-docks below the Seismic window, and its open state and place are kept with the layout.
+docks to the right of the Seismic window, taking 30 % of its width, and its open state and
+place are kept with the layout.
 
 - **What it shows.** The auxiliary traces of the record the Seismic window shows (its panel's
   trace filter is fixed to auxiliary-only), in the file's order, as recorded: the file's

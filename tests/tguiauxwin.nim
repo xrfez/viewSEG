@@ -2,8 +2,8 @@
 ## three seismic and two auxiliary traces, the second with no auxiliary one):
 ##
 ## - closed at the start: no panel, no window, nothing read for it;
-## - View > Windows > Aux opens it, ticked (not among the hidden windows), docked below the
-##   Seismic window, titled "Aux", showing the record's two auxiliary traces;
+## - View > Windows > Aux opens it, ticked (not among the hidden windows), docked to the
+##   right of the Seismic window, titled "Aux", showing the record's two auxiliary traces;
 ## - its strip has the zoom and fit buttons, the wiggle fills, the gain and nothing else (no
 ##   record stepper, filters, sort, Seismic / Aux toggles, template or first-break button, no
 ##   display modes); the fill buttons and the gain are its own (the Seismic window's stay);
@@ -21,9 +21,13 @@
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves aux-docked.png, aux-gear.png, aux-menu.png, aux-view.png
 ## (the View > Windows menu with the tick) and aux-none.png there.
 ##
-## Seen to fail: with the Aux strip drawn for the Seismic window's groups, "the Aux strip
-## has a record stepper"; with `capsOf(prAux).menuMap` true, "the Aux menu has aux.menu.station";
-## with `ckAuxWindow` not opening the window, "the Aux entry did not happen".
+## Seen to fail: with the Aux window still split below the Seismic window, "docked to the
+## right" found its top under the Seismic window; with the window already open, Reset the
+## windows left it undocked; with the gain amount still beside the type on a narrow strip,
+## "click +" did not happen; with the Aux strip drawn for the Seismic window's groups, "the
+## Aux strip has a record stepper"; with `capsOf(prAux).menuMap` true, "the Aux menu has
+## aux.menu.station"; with `ckAuxWindow` not opening the window, "the Aux entry did not
+## happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -216,13 +220,13 @@ proc main*() =
       result = f.core.auxOpen and f.auxAnswered
       if result:
         doAssert awAux notin f.hiddenWindows, "the entry is not ticked")
-    step("docked below the Seismic window", noop, proc (f: FrameInfo): bool =
+    step("docked to the right of the Seismic window", noop, proc (f: FrameInfo): bool =
       result = f.windowPlace("aux").inSight and f.markOf("aux.data").size.x > 0 and wait > 8
       if result:
         let (a, m) = (f.windowPlace("aux"), f.windowPlace("plot"))
         doAssert a.docked and not a.apart, "the Aux window is not docked"
-        doAssert a.rect.pos.y >= m.rect.pos.y + m.rect.size.y - 4,
-          "the Aux window is not below the Seismic window: " & $a.rect & " and " & $m.rect
+        doAssert a.rect.pos.x >= m.rect.pos.x + m.rect.size.x - 4,
+          "the Aux window is not to the right of the Seismic window: " & $a.rect & " and " & $m.rect
         doAssert f.windowName("aux").contains("Aux"), f.windowName("aux")
         doAssert f.aux.role == prAux and f.aux.layout.traces == 2
         doAssert f.aux.shown == @[3, 4], $f.aux.shown
@@ -249,7 +253,10 @@ proc main*() =
           "aux.First breaks", "aux.traces.Seismic", "aux.traces.Aux", "aux.filters",
           "aux.raw", "aux.sort"]
         doAssert f.gone(never).len == 0, "on the Aux strip: " & f.gone(never)
-        doAssert f.markOf("plot.previous record").size.x > 0, "the Seismic strip lost its stepper")
+        doAssert f.markOf("plot.previous record").size.x > 0, "the Seismic strip lost its stepper"
+        let (gain, db) = (f.markOf("aux.gain"), f.markOf("aux.gain dB"))
+        doAssert db.pos.y >= gain.pos.y + gain.size.y - 4,
+          "the gain amount did not wrap under the gain type: " & $db & " and " & $gain)
     # fills: the Aux window's own
     clickMark("aux.Negative fill")
     step("negative fill", noop, proc (f: FrameInfo): bool =
@@ -298,13 +305,14 @@ proc main*() =
       f.click(f.markOf("aux.gain more").centre), proc (f: FrameInfo): bool =
       result = f.aux.layers[0].display.gainDb == 3.0
       if result: doAssert f.main.layers[0].display.gainDb == 0.0)
-    # zoom and fit
+    # zoom and fit. Fit first: a narrow strip can leave the first view short of the record.
     var span = 0.0
     var mainView: Viewport
+    clickMark("aux.fit")
     step("the view", noop, proc (f: FrameInfo): bool =
       span = f.aux.view.timeMs.hi - f.aux.view.timeMs.lo
       mainView = f.main.view
-      span > 0)
+      span > 0 and wait > 4)
     clickMark("aux.zoom in")
     step("zoomed in", noop, proc (f: FrameInfo): bool =
       result = f.aux.view.timeMs.hi - f.aux.view.timeMs.lo < span * 0.9
@@ -366,8 +374,8 @@ proc main*() =
     step("New plot", proc (f: FrameInfo) = f.click(f.markOf("aux.menu.newplot").centre),
       proc (f: FrameInfo): bool =
       f.markOf("aux.menu.newplot.fft").size.x > 0 and wait > 3)
-    step("FFT", proc (f: FrameInfo) = f.click(f.markOf("aux.menu.newplot.fft").centre),
-      proc (f: FrameInfo): bool =
+    clickMark("aux.menu.newplot.fft")
+    step("FFT", noop, proc (f: FrameInfo): bool =
       result = f.core.spectra.len > 1
       if result:
         doAssert f.core.spectra[^1].traces == @[base + 3], $f.core.spectra[^1].traces
@@ -424,6 +432,20 @@ proc main*() =
         doAssert f.aux.layers[0].display.gain == dgNormalized and
           f.aux.layers[0].display.gainDb == 3.0, "opened again, its own display was lost"
         doAssert f.windowPlace("aux").docked)
+    step("reset the windows", proc (f: FrameInfo) = f.resetLayout(),
+      proc (f: FrameInfo): bool =
+      result = awAux in f.hiddenWindows and not f.windowPlace("aux").inSight and wait > 6)
+    step("View after reset", openView,
+      proc (f: FrameInfo): bool = f.markOf("menu.window.aux").size.x > 0 and wait > 3)
+    step("Aux after reset", proc (f: FrameInfo) = f.click(f.markOf("menu.window.aux").centre),
+      proc (f: FrameInfo): bool =
+      result = f.core.auxOpen and f.auxAnswered and f.windowPlace("aux").inSight and wait > 8
+      if result:
+        let (a, m) = (f.windowPlace("aux"), f.windowPlace("plot"))
+        doAssert a.docked and not a.apart, "after Reset the windows the Aux window is not docked"
+        doAssert a.rect.pos.x >= m.rect.pos.x + m.rect.size.x - 4,
+          "after Reset the windows the Aux window is not to the right: " & $a.rect &
+          " and " & $m.rect)
 
     proc drive(steps: seq[Step]) =
       var at = 0
@@ -458,13 +480,13 @@ proc main*() =
 
     # ------------------------------------------------------------- the next run --
     # The run ended with the window open (ticked again above): the layout kept it open and
-    # below the Seismic window, the settings its own display, gain and fills.
+    # to the right of the Seismic window, the settings its own display, gain and fills.
     steps.setLen 0
     step("open at the start", noop, proc (f: FrameInfo): bool =
       result = f.core.auxOpen and f.auxAnswered and f.windowPlace("aux").inSight and wait > 8
       if result:
         let (a, m) = (f.windowPlace("aux"), f.windowPlace("plot"))
-        doAssert a.docked and a.rect.pos.y >= m.rect.pos.y + m.rect.size.y - 4,
+        doAssert a.docked and a.rect.pos.x >= m.rect.pos.x + m.rect.size.x - 4,
           "the Aux window did not keep its place: " & $a.rect
         doAssert awAux notin f.hiddenWindows
         let d = f.aux.layers[0].display

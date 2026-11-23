@@ -46,8 +46,11 @@ type
     hidden*: set[AppWindow] = {awAux} ## not drawn: unticked in the Window menu (`ClosedAtStart`)
     front: set[AppWindow]             ## brought forward when next drawn
     unknown: set[AppWindow]           ## the layout arranged last does not name them
-    shortcutsOpen*: bool              ## Help > Keyboard shortcuts is open
-    dockspace*: ImGuiID               ## the main window's dockspace
+    placeAux: bool = true
+      # dock the Aux window to the right the next time it is shown with no dock
+      # node (a first open, and after Reset the windows)
+    shortcutsOpen*: bool ## Help > Keyboard shortcuts is open
+    dockspace*: ImGuiID ## the main window's dockspace
 
 const
   WindowNames*: array[AppWindow, string] = ["Seismic", "Files", "Records", "Map", "Headers",
@@ -173,6 +176,7 @@ proc showAll*(ws: var WindowsUi) =
   if ws.hidden != ClosedAtStart: changed()
   ws.hidden = ClosedAtStart
   ws.unknown = {}
+  ws.placeAux = true
 
 proc arranged*(ws: var WindowsUi; text: string; docked: bool) =
   ## The layout `text` was applied (and `hidden` read from it): the windows
@@ -184,6 +188,8 @@ proc arranged*(ws: var WindowsUi; text: string; docked: bool) =
       if not text.named(w):
         if w in OffUnlessNamed: ws.hidden.incl w
         ws.unknown.incl w
+    # a layout that names the Aux window keeps its place, floated or docked
+    ws.placeAux = not text.named(awAux)
 
 proc dockIdOf(w: AppWindow): ImGuiID =
   ## The dock node `w` is in, or was put in by the layout; 0 for none.
@@ -200,16 +206,20 @@ proc beforeDrawing*(ws: var WindowsUi; w: AppWindow) =
   ## Just before `w` is drawn (its `igBegin`): brings it forward when asked;
   ## a window the layout did not know is docked beside its neighbours (or
   ## the plot), as a tab.
-  if w == awAux and dockIdOf(w) == 0 and windowOf(w) == nil:
-    # first opened: a strip below the Seismic window (a window of its own, or a layout
-    # that places it, keeps its place)
+  if w == awAux and dockIdOf(w) == 0 and (windowOf(w) == nil or ws.placeAux):
+    # first opened, and after Reset the windows: a strip to the right of the
+    # Seismic window, 30 % of its width (a window of its own, or a layout that
+    # places it, keeps its place)
     ws.unknown.excl w
     let plot = dockIdOf(awSeismic)
     if plot != 0:
-      var below, above: ImGuiID
-      discard igDockBuilderSplitNode(plot, ImGui_Dir_Down, 0.4, addr below, addr above)
-      igSetNextWindowDockID(below, ImGui_Cond_Always.cint)
+      ws.placeAux = false
+      var right, left: ImGuiID
+      discard igDockBuilderSplitNode(plot, ImGuiDir_Right, 0.3, addr right, addr left)
+      igSetNextWindowDockID(right, ImGui_Cond_Always.cint)
       changed()
+  elif w == awAux and dockIdOf(w) != 0:
+    ws.placeAux = false
   elif w in ws.unknown:
     ws.unknown.excl w
     var id: ImGuiID = 0

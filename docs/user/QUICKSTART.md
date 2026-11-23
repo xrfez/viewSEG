@@ -370,8 +370,9 @@ shows its seismic traces and leaves that choice as it was. The gain, the sorts, 
 edits, the display header and the status bar work on them too.
 
 **The Aux window.** To see the auxiliary traces beside the seismic ones, open **View >
-Windows > Aux** (ticked while it is open; it is closed at first). It docks below the Seismic
-window and shows the auxiliary traces of the record the Seismic window shows, as wiggles
+Windows > Aux** (ticked while it is open; it is closed at first). It docks to the right of
+the Seismic window, taking 30 % of its width, and shows the auxiliary traces of the record
+the Seismic window shows, as wiggles
 with a gain of their own, and follows it: the next record, another file, "Follow the latest
 file" and a reload. A record with no auxiliary trace says so in one line. Its strip has the
 zoom and fit buttons (the view is its own: the time range is not tied to the Seismic
