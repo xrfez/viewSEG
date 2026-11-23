@@ -468,6 +468,46 @@ proc readyForProcessing(b: RowBlock[float32]; rows: TraceRows): int =
           bad = true
       if bad: inc result
 
+proc applyPipe(samples: var seq[float32]; keys: TraceKeys; dtMs: float64; pipe: Pipeline;
+    aux: bool) =
+  ## `pipe` on one whole trace, in place. Auxiliary traces are passed by
+  ## unless `aux` (the plot's filters do that; a trace's own filter does not).
+  if pipe.len == 0 or samples.len == 0 or not (dtMs > 0): return
+  var keySeq = @[keys]
+  let counts = @[samples.len]
+  let rows = rowsOf(keySeq, counts)
+  var spareKeys: seq[TraceKeys] = @[]
+  var spareLens: seq[int] = @[]
+  let meta = if aux: initChunkMeta(rows.auxLiveRows(spareKeys, spareLens), dtMs)
+             else: initChunkMeta(rows, dtMs)
+  let plan = pipe.compile(float32, dtMs, samples.len, recordSamples = samples.len)
+  var ws = initWorkspace()
+  ws.reserve(plan)
+  var view = rowBlock(samples, 1, samples.len)
+  plan.apply(view, meta, ws)
+
+proc applyPreparedTrace*(samples: var seq[float32]; keys: TraceKeys; dtMs: float64;
+    reversed: bool; plot: Processing; applyPlot: bool; own: OwnFilter; applyOwn: bool) =
+  ## The sample maths `prepare` runs on one whole trace, without the display
+  ## gain: a dead trace blanked, a sample that is not a number set to 0,
+  ## polarity reversed, then the plot's filters and the trace's own. Nothing
+  ## is done when none of those are asked for, so a trace written as recorded
+  ## stays as it was read. An own filter set to "instead" leaves the plot's
+  ## filters off that trace. Auxiliary traces take the plot's filters only
+  ## when `plot.aux` is on.
+  let plotOn = applyPlot and plot.filtering and own.place != fpInstead
+  let ownOn = applyOwn and own.spec.hasFilters
+  if samples.len == 0 or not reversed and not plotOn and not ownOn: return
+  var keySeq = @[keys]
+  let counts = @[samples.len]
+  let rows = rowsOf(keySeq, counts)
+  var view = rowBlock(samples, 1, samples.len)
+  discard readyForProcessing(view, rows)
+  if keys.status == tsDead: return
+  if reversed: reversePolarity(samples)
+  if plotOn: applyPipe(samples, keys, dtMs, plot.filterPipeline(dtMs), plot.aux)
+  if ownOn: applyPipe(samples, keys, dtMs, own.ownPipeline(dtMs), true)
+
 type Preparing = object
   ## What every block of one request is readied with (`prepare`).
   edits: seq[set[TraceEdit]] ## per row of the request; empty: none
