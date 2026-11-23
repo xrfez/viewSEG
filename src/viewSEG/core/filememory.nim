@@ -346,6 +346,16 @@ proc memoryDocument*(r: FileRecord): string =
     w.open "filtered"
     for e in r.edits.filters: w.writeFilter e
     w.close
+  if r.edits.shifts.len > 0:
+    w.open "shifted"
+    for e in r.edits.shifts:
+      w.open "trace"
+      w.add int64(e.trace + 1)
+      w.open "ms"
+      w.add e.ms
+      w.close
+      w.close
+    w.close
   for n in r.later: w.add n
   w.close
   w.finish
@@ -507,6 +517,40 @@ proc readFilters(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo:
       inc n
   r.edits.filters.setLen n
 
+proc readShifts(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo: int;
+    outside: var int) =
+  ## The `(shifted ...)` node: one `(trace N (ms ...))` per trace, numbers
+  ## from 1. A child this version does not know is skipped. A trace past
+  ## `upTo` is left out and counted in `outside`. A shift of no milliseconds
+  ## is not stored.
+  for k in n.kids:
+    if k.kind != nkTree or k.tag != "trace": continue
+    var number = 0
+    var got = false
+    if k.kids.len >= 1 and k.kids[0].kind == nkInt and k.kids[0].intVal >= 1 and
+        k.kids[0].intVal <= high(int32):
+      number = int(k.kids[0].intVal)
+      got = true
+    if not got:
+      problems.add "shifted: a trace is not a trace number"
+      continue
+    if number - 1 >= upTo:
+      inc outside
+      continue
+    var ms = 0.0
+    if not k.floatChild("ms", ms):
+      problems.add "shifted: ms is not a number"
+      continue
+    if ms == 0.0: continue
+    r.edits.shifts.add ShiftEntry(trace: number - 1, ms: ms)
+  r.edits.shifts.sort(proc (a, b: ShiftEntry): int = cmp(a.trace, b.trace))
+  var n = 0
+  for i in 0 ..< r.edits.shifts.len:
+    if n == 0 or r.edits.shifts[n - 1].trace != r.edits.shifts[i].trace:
+      r.edits.shifts[n] = r.edits.shifts[i]
+      inc n
+  r.edits.shifts.setLen n
+
 proc readEditsIn(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo: int;
     outside: var int) =
   ## The edit lists of the document `n` (its top node), into `r.edits`; the
@@ -534,6 +578,8 @@ proc readEditsIn(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo:
         else: problems.add "allReversed: not true or false"
       of "filtered":
         readFilters(k, r, problems, upTo, outside)
+      of "shifted":
+        readShifts(k, r, problems, upTo, outside)
       else: discard
   for edit in TraceEdit:
     if runs[edit].len > 0: r.edits.lists[edit] = expandRuns(runs[edit], problems, $edit, MaxListTraces)
@@ -571,7 +617,8 @@ proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string
           of "unconfirmed":
             result.unconfirmed = k.kids.len == 1 and k.kids[0].kind == nkIdent and
               k.kids[0].text == "true"
-          of "killed", "reversed", "excluded", "allReversed", "filtered": discard # readEditsIn
+          of "killed", "reversed", "excluded", "allReversed", "filtered", "shifted":
+            discard # readEditsIn
           else: result.later.add k # a later version's: kept as it is
       readEditsIn(n, result, problems, upTo, outside)
   if not found:
@@ -659,6 +706,11 @@ proc notchesText(ns: openArray[NotchFilter]): string =
   for n in ns: parts.add notchText(n)
   parts.join(";")
 
+func msText(ms: float64): string =
+  ## A shift in milliseconds: a whole number as an integer, else 3 decimals.
+  if ms == trunc(ms) and abs(ms) < 1e15: $int64(ms)
+  else: formatFloat(ms, ffDecimal, 3)
+
 proc editsCsv*(l: EditLists; records, channels: openArray[float64]; file: string): string =
   ## `l` as a CSV table: a row per trace and edit, ascending; `records`
   ## and `channels` are each edited trace's field record number and channel
@@ -668,15 +720,20 @@ proc editsCsv*(l: EditLists; records, channels: openArray[float64]; file: string
   ## reversed has a row with trace "all". A trace's own filter is a row
   ## whose edit is `filtered`, with the filter's columns after the file's
   ## name (left out when no trace has one, so an older table is unchanged).
+  ## A time shift is a row whose edit is `shifted`, with an `ms` column
+  ## (left out when no trace has one).
   let f = csvCell(file)
   let extra = l.filters.len > 0
-  result = CsvHeader & (if extra: ",place,band,dc,f1,f2,f3,f4,notches" else: "") & "\n"
+  let shifted = l.shifts.len > 0
+  result = CsvHeader & (if extra: ",place,band,dc,f1,f2,f3,f4,notches" else: "") &
+    (if shifted: ",ms" else: "") & "\n"
   if l.allReversed: result.add "all,,,reversed," & f & "\n"
   for i, (t, edit) in rowsOf(l):
     let rec = if i < records.len and records[i] == records[i]: $int64(records[i]) else: ""
     let chan = if i < channels.len and channels[i] == channels[i]: $int64(channels[i]) else: ""
     result.add $(t + 1) & "," & rec & "," & chan & "," & $edit & "," & f
     if extra: result.add ",,,,,,,"
+    if shifted: result.add ","
     result.add "\n"
   let base = rowsOf(l).len
   for j, e in l.filters:
@@ -689,7 +746,17 @@ proc editsCsv*(l: EditLists; records, channels: openArray[float64]; file: string
       formatFloat(e.filter.spec.f2, ffDecimal, 4) & "," &
       formatFloat(e.filter.spec.f3, ffDecimal, 4) & "," &
       formatFloat(e.filter.spec.f4, ffDecimal, 4) & "," &
-      csvCell(notchesText(e.filter.spec.notches)) & "\n"
+      csvCell(notchesText(e.filter.spec.notches))
+    if shifted: result.add ","
+    result.add "\n"
+  let shiftBase = base + l.filters.len
+  for j, e in l.shifts:
+    let i = shiftBase + j
+    let rec = if i < records.len and records[i] == records[i]: $int64(records[i]) else: ""
+    let chan = if i < channels.len and channels[i] == channels[i]: $int64(channels[i]) else: ""
+    result.add $(e.trace + 1) & "," & rec & "," & chan & ",shifted," & f
+    if extra: result.add ",,,,,,,"
+    result.add "," & msText(e.ms) & "\n"
 
 proc parseNotches(s: string; problems: var seq[string]; at: string): seq[NotchFilter] =
   if s.len == 0: return
@@ -713,6 +780,7 @@ proc csvRows*(l: EditLists): seq[int] =
   ## The traces of the rows `editsCsv` writes, in their order.
   for (t, _) in rowsOf(l): result.add t
   for e in l.filters: result.add e.trace
+  for e in l.shifts: result.add e.trace
 
 func csvTrace(t: string; v: var int): bool =
   ## Whether `t` is a trace number from 1 ("12", or "12.0" as a spreadsheet
@@ -740,7 +808,7 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]; upTo: int;
   if lines.len > 0 and lines[0].startsWith("\xEF\xBB\xBF"): lines[0] = lines[0][3 .. ^1]
   var traceCol, editCol, placeCol, bandCol, dcCol = -1
   var fCol: array[4, int] = [-1, -1, -1, -1]
-  var notchCol = -1
+  var notchCol, msCol = -1
   var sep = ','
   var first = -1
   var looked = 0
@@ -763,6 +831,7 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]; upTo: int;
             of "f3": fCol[2] = i
             of "f4": fCol[3] = i
             of "notches": notchCol = i
+            of "ms": msCol = i
             else: discard
           if traceCol >= 0: (first, sep) = (n, s)
           else: editCol = -1
@@ -785,12 +854,30 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]; upTo: int;
         of "reversed", "reverse", "r", "polarity": edit = teReversed
         of "excluded", "exclude", "e": edit = teExcluded
         of "filtered", "filter": edit = teKilled # not used: a filter row, below
+        of "shifted", "shift": edit = teKilled # not used: a shift row, below
         else:
           ok = false
           if problems.len < WordedProblems: problems.add at & ": \"" & e & "\" is not an edit"
       let filterRow = editCol >= 0 and editCol < cells.len and
         cells[editCol].toLowerAscii in ["filtered", "filter"]
-      if filterRow:
+      let shiftRow = editCol >= 0 and editCol < cells.len and
+        cells[editCol].toLowerAscii in ["shifted", "shift"]
+      if shiftRow:
+        ok = false
+        let t = if traceCol < cells.len: cells[traceCol] else: ""
+        var v: int
+        if csvTrace(t, v) and v - 1 < upTo:
+          let s = if msCol >= 0 and msCol < cells.len: cells[msCol] else: ""
+          var ms: float
+          if s.len == 0 or s.parseFloat(ms) != s.len:
+            if problems.len < WordedProblems:
+              problems.add at & ": \"" & s & "\" is not a shift in milliseconds"
+          elif ms != 0.0:
+            result.shifts.add ShiftEntry(trace: v - 1, ms: ms)
+        elif v - 1 >= upTo and csvTrace(t, v): inc outside
+        elif problems.len < WordedProblems:
+          problems.add at & ": \"" & t & "\" is not a trace number"
+      elif filterRow:
         ok = false # not a kill or a reversal
         let t = if traceCol < cells.len: cells[traceCol] else: ""
         var v: int
@@ -830,6 +917,8 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]; upTo: int;
   for edit in TraceEdit: result.lists[edit] = sortedTraces(lists[edit])
   if result.filters.len > 1:
     result.filters.sort(proc (a, b: FilterEntry): int = cmp(a.trace, b.trace))
+  if result.shifts.len > 1:
+    result.shifts.sort(proc (a, b: ShiftEntry): int = cmp(a.trace, b.trace))
 
 proc readEditsCsv*(text, name: string; problems: var seq[string]): EditLists =
   ## `readEditsCsv` with every trace kept.
@@ -986,6 +1075,7 @@ func merged*(base, ours, theirs: EditLists): EditLists =
   result.allReversed = if ours.allReversed != base.allReversed: ours.allReversed
                        else: theirs.allReversed
   result.filters = mergedFilters(base, ours, theirs)
+  result.shifts = mergedShifts(base, ours, theirs)
 
 func keptWords*(l: EditLists): string =
   ## What `l` keeps, in words: "3 killed, 1 reversed, all reversed";
@@ -995,5 +1085,6 @@ func keptWords*(l: EditLists): string =
   if l.lists[teReversed].len > 0: parts.add $l.lists[teReversed].len & " reversed"
   if l.lists[teExcluded].len > 0: parts.add $l.lists[teExcluded].len & " excluded"
   if l.filters.len > 0: parts.add $l.filters.len & " filtered"
+  if l.shifts.len > 0: parts.add $l.shifts.len & " shifted"
   if l.allReversed: parts.add "all reversed"
   if parts.len == 0: "nothing" else: parts.join(", ")
