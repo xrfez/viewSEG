@@ -3,7 +3,9 @@
 ## seismic, or that cannot be read, is skipped. No survey fails the job
 ## with one sentence. A cancel leaves the sink empty.
 ##
-## Seen to fail: with a cancel during the report still stored, `cancel_during_the_report`
+## Seen to fail: with no index cache saved, `second_scan_uses_the_index` rejected
+## a second scan that walked headers (3 then 3); with a cancel during the report
+## still stored, `cancel_during_the_report`
 ## rejected a job that finished done; with a path scanned once per listing,
 ## `duplicate_path_is_scanned_once`
 ## rejected files 3, records 3; with a receiver gather matched by its record number,
@@ -17,7 +19,7 @@
 ## receiver relations stored as source records, so the library's
 ## source-domain check sees the gather's expected sources.
 
-import std/[os, strutils]
+import std/[os, strutils, times]
 when defined(release):
   import std/[monotimes, times]
 import parseSEG
@@ -105,12 +107,12 @@ proc receiverFile(path: string; record: int; receiver: float64;
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
-proc run(folder: string; paths: seq[string]; relations: ref SurveyGeometry):
+proc run(folder: string; paths: seq[string]; relations: ref SurveyGeometry; cacheDir = ""):
     tuple[st: JobState; sink: MissingSink; error: string] =
   let jobs = initJobs()
   let sink = MissingSink()
   let id = jobs.submit(missingSpec(folder, paths),
-    scanMissing(folder, paths, relations, sink))
+    scanMissing(folder, paths, relations, sink, cacheDir))
   doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
     "the scan did not finish: " & $jobs.state(id)
   let info = jobs.info(id).get
@@ -354,6 +356,30 @@ proc main*() =
     doAssert sink.result.report.records.len == 0
     doAssert sink.result.skipped.len == 0
     doAssert sink.result.unmatched.len == 0
+
+  block second_scan_uses_the_index:
+    install()
+    let cache = dir / "index"
+    let one = dir / "sub" / "cached.sgd"
+    shotFile(one, [(record: 1, src: 1.0, receivers: 1 .. 4)])
+    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4))
+    resetCounts()
+    let first = run(dir, @[one], survey, cache)
+    doAssert first.st == jsDone, first.error
+    doAssert first.sink.result.report.totals.missing == 0
+    let walked = calls(foMapped, one)
+    resetCounts()
+    let again = run(dir, @[one], survey, cache)
+    let reread = calls(foMapped, one)
+    doAssert again.st == jsDone, again.error
+    doAssert again.sink.result.report.totals.missing == 0
+    doAssert reread < walked, "second scan walked headers: " & $reread & " then " & $walked
+    shotFile(one, [(record: 1, src: 1.0, receivers: 1 .. 2)])
+    setLastModificationTime(one, getTime() + initDuration(seconds = 5))
+    let changed = run(dir, @[one], survey, cache)
+    doAssert changed.st == jsDone, changed.error
+    doAssert changed.sink.result.report.totals.missing == 2, "a changed file was not seen: " &
+      $changed.sink.result.report.totals.missing
 
   when defined(release):
     block folder_of_two_hundred:

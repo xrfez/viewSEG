@@ -116,16 +116,28 @@ proc beat(ctx: JobContext; n: int) =
     ctx.checkCancelled()
     i += TraceChunk
 
-proc openKeys(path: string; ctx: JobContext): Session =
+proc openKeys(path, cacheDir: string; ctx: JobContext): Session =
   ## The file at `path`, keys only, closed by the caller. A cancel during
   ## the open is `SegCancelledError`. An unmapped read that fails (`fkIo`)
-  ## raises here, before the file is opened.
+  ## raises here, before the file is opened. A current index cache in
+  ## `cacheDir` is read instead of walking the headers; a walk saves one.
+  ## A save that fails is ignored: the scan still has the keys.
   fs.unmappedFail(path)
+  let index = indexCacheFile(cacheDir, path)
+  let cached = index.len > 0 and fs.fileExists(index)
   let progress: Progress = proc (done, total: int64): bool {.gcsafe, raises: [].} =
     try: fs.mappedRead(path)
     except CatchableError: discard
     ctx.progress(done, total)
-  openSession(path, progress)
+  result = openSession(path, progress, if cached: index else: "")
+  if index.len == 0 or result.file.kind == skUnknown or result.file.fromCache or
+      result.file.demuxPath.len > 0: return
+  try:
+    fs.createDir(cacheDir)
+    {.cast(gcsafe).}:
+      result.file.saveIndex(index)
+  except ValueError, IOError, OSError:
+    discard
 
 proc exchange(a, b: var float64) =
   let t = a
@@ -168,11 +180,13 @@ proc fail(sink: MissingSink; why: string; skipped: seq[tuple[path, why: string]]
   raise newException(ValueError, why)
 
 proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeometry;
-    sink: MissingSink): JobWork =
+    sink: MissingSink; cacheDir = ""): JobWork =
   ## The work of a job that scans `paths` (relative to `folder`) against
   ## `relations` and fills `sink` (`missingSpec` is the spec to submit it
   ## with). Worker-only. A cancel raises `JobCancelledError` and leaves
-  ## `sink` as it was.
+  ## `sink` as it was. `cacheDir` is the index cache folder: a current
+  ## cache is read instead of walking the file, and a walk saves one.
+  ## "" leaves the cache alone.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     if relations == nil or not relations[].hasRelations:
@@ -199,7 +213,7 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
           var records: seq[RecordCompleteness] = @[]
           var listed = false
           try:
-            s = openKeys(path, ctx)
+            s = openKeys(path, cacheDir, ctx)
             if s.file.kind == skUnknown: skip = "not a SEG-Y, SEG-D or SEG-2 file"
             elif s.file.index.keys.len == 0: skip = "has no trace keys"
             else:
