@@ -1,6 +1,9 @@
 ## A background job that correlates one open raw vibrator file with a reference
 ## sweep into a new in-memory seismic file of the listen time only: the record
-## length minus the sweep length.
+## length minus the sweep length. The record length is the seismic traces'
+## sample count. An auxiliary trace of another length is padded or cut to that
+## count before it is handled; one whose sample interval differs is written
+## as zeros of the listen length.
 ##
 ## Submit `correlateWork` on the background lane, cancellable, with the source
 ## path in `reads`, and keep the open file alive until the job has finished.
@@ -74,15 +77,48 @@ proc traceDt(file: ptr SeismicFile; trace: int): float64 =
   let got = if us > 0 and us < Inf: us else: file[].sampleIntervalUs(trace)
   if got.isNaN or got <= 0 or got == Inf: NaN else: got / 1000.0
 
-proc fileDt(file: ptr SeismicFile): float64 =
+type
+  RecordShape = object
+    samples: int
+    dtMs: float64
+    padded, cut: int
+    odd: seq[int]
+
+proc isSeismic(status: TraceStatus): bool {.inline.} =
+  status != tsAuxiliary
+
+proc recordShape(file: ptr SeismicFile): RecordShape =
+  ## The seismic traces' length and interval. A shorter or longer auxiliary
+  ## trace is counted as padded or cut; one at another known interval is
+  ## listed in `odd` and not counted.
   let n = file[].len
   if n == 0: refuse("the file has no traces.")
-  result = traceDt(file, 0)
-  if result.isNaN: refuse("the file has no sample interval.")
-  for i in 1 ..< n:
+  result.odd = @[]
+  var seismic = 0
+  for i in 0 ..< n:
+    if not isSeismic(file[].traceKeys(i).status): continue
     let d = traceDt(file, i)
-    if d.isNaN or not sameInterval(d, result):
-      refuse("the traces do not share one sample interval.")
+    let samples = int(file[].traceEntry(i).numSamples)
+    if seismic == 0:
+      if d.isNaN: refuse("the file has no sample interval.")
+      result.samples = samples
+      result.dtMs = d
+    else:
+      if samples != result.samples:
+        refuse("the seismic traces do not share one length.")
+      if d.isNaN or not sameInterval(d, result.dtMs):
+        refuse("the traces do not share one sample interval.")
+    inc seismic
+  if seismic == 0: refuse("the file has no seismic traces.")
+  for i in 0 ..< n:
+    if isSeismic(file[].traceKeys(i).status): continue
+    let d = traceDt(file, i)
+    if not d.isNaN and not sameInterval(d, result.dtMs):
+      result.odd.add i
+    else:
+      let samples = int(file[].traceEntry(i).numSamples)
+      if samples < result.samples: inc result.padded
+      elif samples > result.samples: inc result.cut
 
 proc checkReference(samples: openArray[float32]) =
   if samples.len == 0: refuse("the reference sweep is empty.")
@@ -183,6 +219,17 @@ proc sweepLine(sweepMs: float64; delayed: int): string =
   let n = if delayed == 1: "1 reference trace" else: $delayed & " reference traces"
   "sweep " & msText(sweepMs) & " ms. " & n & " delayed by " & msText(AuxLeadMs) & " ms."
 
+proc fitLine(padded, cut: int): string =
+  var parts: seq[string] = @[]
+  if padded == 1: parts.add "1 auxiliary trace was padded"
+  elif padded > 1: parts.add $padded & " auxiliary traces were padded"
+  if cut == 1: parts.add "1 auxiliary trace was cut"
+  elif cut > 1: parts.add $cut & " auxiliary traces were cut"
+  if parts.len > 0: result = parts.join(". ") & "."
+
+proc intervalLine(trace: int): string =
+  "auxiliary trace " & $trace & ": it cannot be correlated with this reference."
+
 proc writeRow(w: var SeismicWriter; file: ptr SeismicFile; trace, row, listen: int;
     src, dst: Tensor[float32]; keys: TraceKeys; fromSrc, segd: bool; intervalUs: float64) =
   if segd:
@@ -207,12 +254,15 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   checkReference(ask.reference)
   if ask.referenceDtMs.isNaN or ask.referenceDtMs <= 0 or ask.referenceDtMs == Inf:
     refuse("the reference sweep has no sample interval.")
-  let dtMs = fileDt(file)
+  let shape = recordShape(file)
+  let dtMs = shape.dtMs
   if not sameInterval(ask.referenceDtMs, dtMs):
     refuse("the reference sweep is sampled every " & msText(ask.referenceDtMs) &
       " ms and the record every " & msText(dtMs) & " ms.")
   let nTraces = file[].len
-  let recordSamples = file[].maxSamples
+  let recordSamples = shape.samples
+  var odd = initHashSet[int]()
+  for t in shape.odd: odd.incl(t)
   let sweepLen = ask.reference.len
   if sweepLen >= recordSamples:
     refuse("the reference sweep is as long as the record or longer, " &
@@ -221,7 +271,7 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   let refs = referenceSet(nTraces, ask.referenceTraces)
   var delayed = 0
   for t in ask.referenceTraces:
-    if file[].traceKeys(t).status == tsAuxiliary: inc delayed
+    if file[].traceKeys(t).status == tsAuxiliary and t notin odd: inc delayed
   let pilot = initPilot(ask.reference, ask.referenceDtMs)
   let plan = initCorrelationPlan(float32, pilot, dtMs, recordSamples)
   let segd = file[].kind == skSegd
@@ -254,18 +304,21 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
     if lag != 0:
       let rows = rowBlock(src)
       for r in 0 ..< n:
-        if (start + r) in refs and keys[r].status == tsAuxiliary:
+        let trace = start + r
+        if trace in refs and keys[r].status == tsAuxiliary and trace notin odd:
           timeShift(rows.row(r), lag)
     for r in 0 ..< n:
+      let trace = start + r
       workKeys[r] = keys[r]
-      if keys[r].status == tsAuxiliary and (start + r) notin refs:
+      if keys[r].status == tsAuxiliary and (trace notin refs or trace in odd):
         workKeys[r].status = tsDead
-      counts[r] = int(file[].traceEntry(start + r).numSamples)
+      counts[r] = recordSamples
     let meta = initChunkMeta(rowsOf(workKeys.toOpenArray(0, n - 1),
       counts.toOpenArray(0, n - 1)), dtMs, failed = failed)
     pool.correlateInto(plan, rowBlock(src).sub(0 ..< n), rowBlock(dst).sub(0 ..< n), meta)
     for r in 0 ..< n:
-      let fromSrc = keys[r].status == tsAuxiliary and (start + r) notin refs
+      let trace = start + r
+      let fromSrc = keys[r].status == tsAuxiliary and trace notin refs and trace notin odd
       w.writeRow(file, start + r, r, listen, src, dst, keys[r], fromSrc, segd, outUs)
     let done = start + n
     if not ctx.progress(int64(done), int64(nTraces)):
@@ -286,6 +339,9 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
     $nTraces & " traces, " & $listen & " samples (" & msText(slot[].listenMs) &
       " ms of listen time).",
     sweepLine(slot[].sweepMs, delayed)]
+  let fitted = fitLine(shape.padded, shape.cut)
+  if fitted.len > 0: slot[].lines.add fitted
+  for t in shape.odd: slot[].lines.add intervalLine(t)
   slot[].opened = made
   slot[].ok = true
 

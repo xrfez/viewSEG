@@ -8,7 +8,8 @@
 ## with the library's words ("was cut short while it was open (15760 bytes
 ## mapped, 13760 left); open it again") instead of the file's own reason, and
 ## those zeros would otherwise be adopted. Writing every auxiliary trace as
-## time-break made the uphole trace read back as 32, not 48.
+## time-break made the uphole trace read back as 32, not 48. Seismic traces of
+## 400 and 800 samples were accepted (the job finished) instead of being refused.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -127,6 +128,75 @@ proc writeRaw(path: string; sweep: openArray[float32]) =
     k.traceCodeRev = tcrRev2
     w.writeTrace(k, buf)
   doAssert w.close().len == 0, "the raw file did not close"
+
+proc writeUnequal(path: string) =
+  var w = openSeismicWriter(path, SegyOutputOptions())
+  for i, n in [400, 800]:
+    var k = initTraceKeys()
+    (k.traceCode, k.status) = (1'i16, tsLive)
+    k.record = 1.0
+    k.channel = float64(i + 1)
+    k.intervalUs = DtMs * 1000.0
+    k.t0Ms = 0.0
+    k.time = 1_700_000_000.0
+    var buf = newSeq[float32](n)
+    for j in 0 ..< n: buf[j] = 1
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the unequal file did not close"
+
+proc writeMixed(path: string; sweep: openArray[float32]) =
+  var w = openSeismicWriter(path, SegyOutputOptions())
+  proc put(w: var SeismicWriter; i, n: int; status: TraceStatus; code: int16;
+      buf: openArray[float32]) =
+    var k = initTraceKeys()
+    (k.traceCode, k.status) = (code, status)
+    k.record = 3.0
+    k.channel = float64(i + 1)
+    k.intervalUs = DtMs * 1000.0
+    k.t0Ms = 0.0
+    k.time = 1_700_000_000.0
+    w.writeTrace(k, buf)
+  put(w, 0, 800, tsLive, 1, delayedSweep(sweep, 800, 40))
+  put(w, 1, 300, tsAuxiliary, 5, delayedSweep(sweep, 300, 0))
+  var long = newSeq[float32](900)
+  for j in 0 ..< 900: long[j] = float32(j + 1)
+  put(w, 2, 900, tsAuxiliary, 6, long)
+  doAssert w.close().len == 0, "the mixed file did not close"
+
+proc writeOddInterval(path: string) =
+  var w = openSeismicWriter(path, SegyOutputOptions())
+  for i, dt in [DtMs, 4.0]:
+    var k = initTraceKeys()
+    if i == 0: (k.traceCode, k.status) = (1'i16, tsLive)
+    else: (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+    k.record = 4.0
+    k.channel = float64(i + 1)
+    k.intervalUs = dt * 1000.0
+    k.t0Ms = 0.0
+    k.time = 1_700_000_000.0
+    var buf = newSeq[float32](800)
+    for j in 0 ..< 800: buf[j] = float32(j + 1)
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the interval file did not close"
+
+proc fitted(samples: openArray[float32]; record: int): Tensor[float32] =
+  result = zeros[float32](1, record)
+  let n = min(samples.len, record)
+  for j in 0 ..< n: result[0, j] = samples[j]
+
+proc directFitted(samples: openArray[float32]; sweep: seq[float32]; record, listen: int;
+    shift: bool): Tensor[float32] =
+  var src = fitted(samples, record)
+  if shift: timeShift(rowBlock(src).row(0), wholeSamples(-AuxLeadMs, DtMs))
+  let plan = initCorrelationPlan(float32, initPilot(sweep, DtMs), DtMs, record)
+  result = zeros[float32](1, listen)
+  var keys = @[initTraceKeys()]
+  keys[0].status = tsLive
+  var counts = @[record]
+  let meta = initChunkMeta(rowsOf(keys, counts), DtMs)
+  var ws = initWorkspace()
+  ws.reserve(plan.workspaceSize)
+  plan.correlateInto(src, result, meta, ws)
 
 proc spec(path: string): JobSpec =
   JobSpec(title: "Correlate " & path.extractFilename, lane: jlBackground,
@@ -352,6 +422,94 @@ proc main*() =
       doAssert got.traceEntry(i).channelType == chFile.traceEntry(i).channelType,
         "trace " & $i & " channel type " & $got.traceEntry(i).channelType &
         " is not " & $chFile.traceEntry(i).channelType
+
+  block unequalSeismic:
+    let badPath = dir / "unequal.sgy"
+    writeUnequal(badPath)
+    var bad = openSeismic(badPath, keys = true)
+    defer: bad.close()
+    doAssert int(bad.traceEntry(0).numSamples) == 400
+    doAssert int(bad.traceEntry(1).numSamples) == 800
+    var jobs = initJobs()
+    var slot: CorrelateResult
+    try:
+      let id = jobs.submit(spec(badPath), correlateWork(CorrelateAsk(
+        file: addr bad, path: badPath, reference: sweep, referenceDtMs: DtMs,
+        referenceTraces: @[]), addr slot))
+      doAssert finish(jobs, id) == jsFailed, slot.failure
+    finally:
+      jobs.stop()
+    doAssert not slot.ok
+    doAssert slot.opened.isNil
+    doAssert not slot.cancelled
+    doAssert slot.failure == "the seismic traces do not share one length.", slot.failure
+
+  block mixedLengths:
+    ## An 800-sample record, an auxiliary trace of 300 and one of 900.
+    const
+      Rec = 800
+      Short = 300
+      Long = 900
+      ListenMixed = Rec - SweepLen
+    let mixedPath = dir / "mixed.sgy"
+    writeMixed(mixedPath, sweep)
+    var mixed = openSeismic(mixedPath, keys = true)
+    defer: mixed.close()
+    doAssert int(mixed.traceEntry(0).numSamples) == Rec
+    doAssert int(mixed.traceEntry(1).numSamples) == Short
+    doAssert int(mixed.traceEntry(2).numSamples) == Long
+    var jobs = initJobs()
+    var slot: CorrelateResult
+    try:
+      let id = jobs.submit(spec(mixedPath), correlateWork(CorrelateAsk(
+        file: addr mixed, path: mixedPath, reference: sweep, referenceDtMs: DtMs,
+        referenceTraces: @[1]), addr slot))
+      doAssert finish(jobs, id) == jsDone, slot.failure
+    finally:
+      jobs.stop()
+    doAssert slot.ok, slot.failure
+    doAssert slot.samples == ListenMixed
+    doAssert slot.lines == @[
+      "3 traces, " & $ListenMixed & " samples (" & $(ListenMixed * 2) & " ms of listen time).",
+      "sweep 400 ms. 1 reference trace delayed by 500 ms.",
+      "1 auxiliary trace was padded. 1 auxiliary trace was cut."]
+    template got: untyped = session.file(slot.opened)
+    doAssert got.len == 3
+    let short = mixed.readTraces(1 .. 1)
+    let wantRef = directFitted(rowBlock(short).row(0), sweep, Rec, ListenMixed, shift = true)
+    let gotRef = got.readTraces(1 .. 1)
+    for j in 0 ..< ListenMixed:
+      doAssert gotRef[0, j] == wantRef[0, j], "padded reference sample " & $j
+    let gotOther = got.readTraces(2 .. 2)
+    let cut = fitted(rowBlock(mixed.readTraces(2 .. 2)).row(0), Rec)
+    for j in 0 ..< ListenMixed:
+      doAssert gotOther[0, j] == cut[0, j], "cut auxiliary sample " & $j
+
+  block oddInterval:
+    let oddPath = dir / "odd.sgy"
+    writeOddInterval(oddPath)
+    var odd = openSeismic(oddPath, keys = true)
+    defer: odd.close()
+    doAssert odd.traceKeys(1).intervalUs == 4000.0, $odd.traceKeys(1).intervalUs
+    var jobs = initJobs()
+    var slot: CorrelateResult
+    try:
+      let id = jobs.submit(spec(oddPath), correlateWork(CorrelateAsk(
+        file: addr odd, path: oddPath, reference: sweep, referenceDtMs: DtMs,
+        referenceTraces: @[1]), addr slot))
+      doAssert finish(jobs, id) == jsDone, slot.failure
+    finally:
+      jobs.stop()
+    doAssert slot.ok, slot.failure
+    doAssert slot.lines == @[
+      "2 traces, 600 samples (1200 ms of listen time).",
+      "sweep 400 ms. 0 reference traces delayed by 500 ms.",
+      "auxiliary trace 1: it cannot be correlated with this reference."]
+    template got: untyped = session.file(slot.opened)
+    let row = got.readTraces(1 .. 1)
+    doAssert int(got.traceEntry(1).numSamples) == 600
+    for j in 0 ..< 600:
+      doAssert row[0, j] == 0, "odd-interval sample " & $j & " is " & $row[0, j]
 
   block cancelled:
     holdCorr.close()
