@@ -42,6 +42,8 @@ const
   ColWritten* = "Written"
   ColDropped* = "Dropped"
   ColNotes* = "Notes"
+  TickNone* = "Tick at least one file."
+  NeedDest* = "Choose a destination folder."
   GainTip* = "Display-only gain is not written."
   ProcessingTip* = "The Seismic window's filters. Display-only gain is not written."
   SortTip* = "Write traces in the plot's sort. A SEG-D file is sorted within each record."
@@ -66,6 +68,15 @@ func sortTip*(keys: string): string =
     result.add " Now: "
     result.add keys
     result.add "."
+
+func runWhy*(ticked: int; dest: string): string =
+  ## Why Run stays inactive, or "" when a file is ticked and a destination is set.
+  let none = ticked <= 0
+  let noDest = dest.len == 0
+  if none and noDest: TickNone & " " & NeedDest
+  elif none: TickNone
+  elif noDest: NeedDest
+  else: ""
 
 func tickedLine*(files: int; size: string): string =
   ## "3 files ticked, 6.4 MB", under the tree.

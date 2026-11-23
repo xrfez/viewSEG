@@ -704,7 +704,12 @@ proc drawRun(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
     igEndDisabled()
     if ui.canRun: marks.mark("output.run")
     else: marks.mark("output.run.disabled")
-    tip(RunTip)
+    let why = runWhy(ui.tickedCount, ui.dest)
+    if why.len > 0:
+      tip(why)
+      marks.mark("output.run.why " & why)
+    else:
+      tip(RunTip)
   let line = ui.activityLine(phase)
   if line.len > 0:
     sameLineIfFits(right, textWidth(line) + 4)

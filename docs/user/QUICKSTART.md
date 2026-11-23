@@ -318,8 +318,9 @@ A SEG-D file is sorted within each record. A file already open is written as it 
 including edits not yet saved. **Keep the sub folders** is on: a file in a sub folder is
 written in that sub folder.
 
-**Run** stays inactive when the destination is the source folder, inside it, or
-holding it. While the write runs, the button is **Stop** and the line beside it says
+**Run** writes every ticked file. It stays inactive, and says why, when nothing is
+ticked or no destination is chosen, and when the destination is the source folder,
+inside it, or holding it. While the write runs, the button is **Stop** and the line beside it says
 which file is being written. **Stop** finishes the file in progress and skips the
 rest; the line then says **Stopped.** The line above the table is the total (written,
 failed, skipped). The table is one row per file: the relative path, the outcome (and
