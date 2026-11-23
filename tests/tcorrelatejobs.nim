@@ -18,12 +18,14 @@
 ## The old interval line fails "reference trace 1 is sampled every 4 ms, the
 ## record every 2 ms: not correlated, written as zeros."
 ## Reporting the nominal 500 ms lead fails "delayed by 501 ms".
+## With the mapped-read fault left unset, the cut-short job finished and
+## adopted a result instead of refusing with the file's reason.
 
 import std/[math, options, os, strutils]
 import parseSEG
 import processSEG
 import viewSEG/core/[correlatejobs, cutfile, jobs, session]
-import utils/waiting
+import utils/[faultyfs, waiting]
 
 const
   DtMs = 2.0
@@ -428,37 +430,65 @@ proc main*() =
       jobs.stop()
 
   block cutShort:
-    ## A SEG-Y of 2 traces, opened, then cut inside trace 1's samples.
+    ## A SEG-Y of 2 traces, opened. Trace 1 cannot be read: the job refuses
+    ## with the file's reason and adopts nothing. Windows will not shrink a
+    ## file a mapping still holds, so the on-disk cut runs only where the OS
+    ## allows it. The seam's `mappedRead` hook cannot make parseSEG return a
+    ## failed row (it only marks the read), so that cut stays, and a hook case
+    ## on every system fails the read the same way.
     let cutPath = dir / "cut.sgy"
     writePair(cutPath, Record)
     var cutFile = openSeismic(cutPath, keys = true)
     defer: cutFile.close()
-    let e0 = cutFile.traceEntry(0)
-    let e1 = cutFile.traceEntry(1)
-    let data0 = e0.offset + int64(e0.headerBytes)
-    let span0 = e1.offset - data0
-    doAssert span0 mod int64(e0.numSamples) == 0,
-      "trace 0's samples are not a whole number of bytes"
-    let sampleBytes = span0 div int64(e0.numSamples)
-    let data1 = e1.offset + int64(e1.headerBytes)
-    let cutAt = data1 + (int64(e1.numSamples) div 2) * sampleBytes
-    doAssert cutAt > data1 and cutAt < getFileSize(cutPath), "the cut is not inside trace 1"
-    writeFile(cutPath, readFile(cutPath)[0 ..< int(cutAt)])
-    let why = cutWhy(cutFile)
-    doAssert why.len > 0 and "cut short" in why, why
-    var jobs = initJobs()
-    var slot: CorrelateResult
-    try:
-      let id = jobs.submit(spec(cutPath), correlateWork(CorrelateAsk(
-        file: addr cutFile, path: cutPath, reference: sweep, referenceDtMs: DtMs,
-        referenceTraces: @[]), addr slot))
-      doAssert finish(jobs, id) == jsFailed, slot.failure
-    finally:
-      jobs.stop()
-    doAssert not slot.ok
-    doAssert slot.opened.isNil
-    doAssert not slot.cancelled
-    doAssert slot.failure == why, slot.failure
+    block readFails:
+      install()
+      fault(cutPath, fkFail, {foMapped})
+      defer:
+        release(cutPath)
+        setFsHook(nil)
+        setIoHook(nil)
+      let why = newOSError(OSErrorCode(5), cutPath).msg
+      var jobs = initJobs()
+      var slot: CorrelateResult
+      try:
+        let id = jobs.submit(spec(cutPath), correlateWork(CorrelateAsk(
+          file: addr cutFile, path: cutPath, reference: sweep, referenceDtMs: DtMs,
+          referenceTraces: @[]), addr slot))
+        doAssert finish(jobs, id) == jsFailed, slot.failure
+      finally:
+        jobs.stop()
+      doAssert not slot.ok
+      doAssert slot.opened.isNil
+      doAssert not slot.cancelled
+      doAssert slot.failure == why, slot.failure
+    when not defined(windows):
+      let e0 = cutFile.traceEntry(0)
+      let e1 = cutFile.traceEntry(1)
+      let data0 = e0.offset + int64(e0.headerBytes)
+      let span0 = e1.offset - data0
+      doAssert span0 mod int64(e0.numSamples) == 0,
+        "trace 0's samples are not a whole number of bytes"
+      let sampleBytes = span0 div int64(e0.numSamples)
+      let data1 = e1.offset + int64(e1.headerBytes)
+      let cutAt = data1 + (int64(e1.numSamples) div 2) * sampleBytes
+      doAssert cutAt > data1 and cutAt < getFileSize(cutPath),
+        "the cut is not inside trace 1"
+      writeFile(cutPath, readFile(cutPath)[0 ..< int(cutAt)])
+      let why = cutWhy(cutFile)
+      doAssert why.len > 0 and "cut short" in why, why
+      var jobs = initJobs()
+      var slot: CorrelateResult
+      try:
+        let id = jobs.submit(spec(cutPath), correlateWork(CorrelateAsk(
+          file: addr cutFile, path: cutPath, reference: sweep, referenceDtMs: DtMs,
+          referenceTraces: @[]), addr slot))
+        doAssert finish(jobs, id) == jsFailed, slot.failure
+      finally:
+        jobs.stop()
+      doAssert not slot.ok
+      doAssert slot.opened.isNil
+      doAssert not slot.cancelled
+      doAssert slot.failure == why, slot.failure
 
   block channelTypes:
     ## Up hole, water break, reference sweep, time break, and two seismic traces.
