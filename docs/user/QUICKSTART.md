@@ -493,7 +493,7 @@ set last. Changing a corner never reads the file again: viewSEG filters the samp
 already holds, and only the traces and times you are looking at (and a little around
 them), so it is as quick on a huge file as on a small one.
 
-The **Correlate** button beside Raw (or `C`; also under Whole record in the plot's
+The **Correlate** button on the control strip (or `C`; also under Whole record in the plot's
 menu) shows the record correlated with the reference chosen in References, in place
 of the raw samples, for every window of that file. It is lit while on. With no
 reference chosen it stays dim, and its tooltip says to choose one. The plot's time

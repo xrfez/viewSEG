@@ -1359,6 +1359,9 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     tp.openSort = false
     tp.sortKeys.openSortKeys(p, st.settings)
   let compCols = drawnComponentColours(st.settings.componentColours, plotInk(t, d).background)
+  const MaxStripLines = 8
+  var lineTop, lineRight, lineEdge: array[MaxStripLines, float32]
+  var nLines = 0
   for g in stripGroups(showTraceToggles(hasAux(st, p), f.seismic, f.auxiliary),
       showComponentToggles(p.componentCodes.len), caps):
     case g
@@ -1449,17 +1452,6 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
               plotInk(t, d), t, icon, marks)
             if chosen.changed:
               res.commands.add Command(kind: ckDisplay, panel: p.id, display: chosen.display)
-        if caps.filters:
-          gap()
-          let hasRef = st.chosenReference.len > 0
-          let corrTip = if not hasRef: NoReferenceChosen
-                        elif st.correlateOn: "Correlate with the selected reference (on)"
-                        else: "Correlate with the selected reference"
-          if iconButton(IconCorrelation, "Correlate", "C", icon, t, marks,
-              selected = st.correlateOn, tipText = corrTip, enabled = hasRef,
-              markName = "plot.correlate"):
-            res.commands.add Command(kind: ckCorrelate, panel: p.id,
-              correlate: not st.correlateOn)
     of sgGain:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         drawGainControls(p, tp.gainBox, t, marks, res.commands, res.notes,
@@ -1516,6 +1508,43 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
           tip(face.name & ", " & $face.count & " traces" & (if on: " (on)" else: " (off)") &
             (if on and toggled(p.componentCodes, f.components, face.code) == f.components:
               ": the plot shows it alone, so this one stays on" else: ""))
+    let mn = igGetItemRectMin()
+    let mx = igGetItemRectMax()
+    let edge = if mn.y < origin.y + icon: firstEdge else: fullRight
+    if nLines == 0 or mn.y > lineTop[nLines - 1] + icon * 0.5:
+      if nLines < MaxStripLines:
+        lineTop[nLines] = mn.y
+        lineRight[nLines] = mx.x
+        lineEdge[nLines] = edge
+        inc nLines
+    else:
+      if mn.y < lineTop[nLines - 1]: lineTop[nLines - 1] = mn.y
+      if mx.x > lineRight[nLines - 1]: lineRight[nLines - 1] = mx.x
+  if caps.filters and nLines > 0:
+    var slot = -1
+    var gap = 2.0'f32
+    for i in 0 ..< nLines:
+      let spare = lineEdge[i] - lineRight[i]
+      if spare >= icon + 14:
+        slot = i
+        gap = 14
+        break
+      elif slot < 0 and spare >= icon + 2:
+        slot = i
+        gap = 2
+    if slot >= 0:
+      let back = igGetCursorScreenPos()
+      igSetCursorScreenPos(ImVec2_c(x: lineRight[slot] + gap, y: lineTop[slot]))
+      let hasRef = st.chosenReference.len > 0
+      let corrTip = if not hasRef: NoReferenceChosen
+                    elif st.correlateOn: "Correlate with the selected reference (on)"
+                    else: "Correlate with the selected reference"
+      if iconButton(IconCorrelation, "Correlate", "C", icon, t, marks,
+          selected = st.correlateOn, tipText = corrTip, enabled = hasRef,
+          markName = "plot.correlate"):
+        res.commands.add Command(kind: ckCorrelate, panel: p.id,
+          correlate: not st.correlateOn)
+      igSetCursorScreenPos(back)
   # the gear: the right end of the first line, whatever wrapped below it
   let resume = igGetCursorScreenPos()
   igSetCursorScreenPos(ImVec2_c(x: fullRight - gearReserve, y: origin.y + lift))
