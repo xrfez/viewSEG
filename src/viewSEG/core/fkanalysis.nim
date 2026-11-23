@@ -3,16 +3,12 @@
 ## wavenumber, in dB from its largest value, as an image in a density
 ## colour map.
 ##
-## The 2-D transform is composed here of processSEG's real FFT
-## (`FftPlan.forward`), not its `fkAmplitudeInto`: that one cannot be stopped
-## part way, and an f-k of many long traces must give up when asked. Each
-## trace's samples in the box, tapered (a cosine over the first and last
-## 10 %), go through `forward` along time; then,
-## for each frequency, the traces' complex values, tapered across the
-## traces alike and zero-padded to twice their number, go across the
-## traces: a complex transform made of two real ones, `F(a + ib) = F(a) +
-## i·F(b)`, each real one's negative wavenumbers its positive ones'
-## conjugates.
+## Each trace's samples in the box have their mean removed (`demean`), then
+## processSEG's `fkAmplitudeInto` tapers both axes (a cosine over the first
+## and last 10 %) and transforms. A trace with no sample in the box still
+## takes a slot (one zero), so the taper and the wavenumber axis keep every
+## trace. Asked to stop, the call gives up between traces and between
+## frequencies (`Stopped`).
 ##
 ## - **Wavenumber.** From the trace spacing when it is regular (`spacingOf`:
 ##   the offsets, else the receivers' distances along the line) and the
@@ -28,13 +24,11 @@
 ## Pure: samples in, an `AnalysisResult` out; never raises.
 
 import std/math
-import processSEG/fft/[plan, spectrum]
-import processSEG/vibroseis/taper
-import processSEG/core/workspace
+import parseSEG/model/[keytypes, tracerows]
+import processSEG/core/[basic, rows, workspace]
+import processSEG/core/types except StopCheck
+import processSEG/fft/[fk, spectrum]
 import analysis, join
-
-const
-  FkTaper* = 0.1 ## the fraction of the box tapered at each end, on both axes
 
 func regularSpacing*(positions: openArray[float64]): float64 =
   ## The step of `positions` when each one is within max(1 % of the step,
@@ -66,12 +60,6 @@ func spacingOf*(offsets: openArray[float64]; rcvX, rcvY: openArray[float64]):
     if not d.isNaN: return (d, "receiver coordinates")
   (NaN, "")
 
-func cosTaper(i, n: int; fraction: float64): float64 =
-  ## A cosine taper's weight at `i` of `n`, over `fraction` of `n` at each end.
-  let ramp = max(1, int(round(fraction * float64(n))))
-  let d = min(i, n - 1 - i)
-  if d >= ramp: 1.0 else: taperWeight(tpCos2, (float64(d) + 0.5) / float64(ramp))
-
 func fkLengthOf*(unit: SurveyUnit): tuple[ok: bool; per, velocity: string] =
   ## How an f-k reads a file whose distances are in `unit`: whether its
   ## wavenumber can be per length at all, the unit it is per ("km", "kft"),
@@ -80,6 +68,36 @@ func fkLengthOf*(unit: SurveyUnit): tuple[ok: bool; per, velocity: string] =
   of suMetres: (true, "km", "m/s")
   of suFeet, suUsFeet: (true, "kft", "ft/s")
   else: (false, "", "")
+
+var heldStop {.threadvar.}: StopCheck
+var stopError {.threadvar.}: ref Exception
+
+proc libraryStop(): bool {.gcsafe, raises: [].} =
+  ## processSEG's stop check cannot be a closure and cannot raise, so it reads
+  ## the one `fkOf` held and keeps any error to be raised again after the call.
+  if heldStop.isNil: return false
+  try:
+    heldStop()
+  except Exception as e:
+    stopError = e
+    true
+
+proc fkStopped(plan: FkPlan[float64]; b: RowBlock[float64]; meta: ChunkMeta;
+    amp: var openArray[float64]; ws: var Workspace; stop: StopCheck): int =
+  ## `fkAmplitudeInto`, with `stop` asked the way the library asks its own.
+  if stop.isNil:
+    return plan.fkAmplitudeInto(b, meta, 0, amp, ws)
+  let saved = heldStop
+  let savedErr = stopError
+  heldStop = stop
+  stopError = nil
+  defer:
+    heldStop = saved
+    stopError = savedErr
+  result = plan.fkAmplitudeInto(b, meta, 0, amp, ws, stop = libraryStop)
+  if not stopError.isNil:
+    let e = stopError
+    raise e
 
 proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
     unit: SurveyUnit; dtMs, t0Ms: float64; p: AnalysisParams;
@@ -107,76 +125,55 @@ proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
     result.problem = "the box holds " & $max(n, 0) & " samples: too few (8 at least)"
     return
   let ntr = rows.len
-  let nt = nextFastLen(n)
-  let nk = nextFastLen(2 * ntr)
-  var tp, kp: FftPlan[float64]
+  var data = newSeq[float64](ntr * n)
+  var counts = newSeq[int](ntr)
+  var keys = newSeq[TraceKeys](ntr)
+  for t in 0 ..< ntr:
+    var count = 0
+    let at = t * n
+    for j in 0 ..< n:
+      let s = first + j
+      if s < rows[t].len:
+        data[at + j] = float64(rows[t][s])
+        inc count
+    # no sample in the box still occupies a slot, or the taper and the
+    # wavenumber axis would drop that trace
+    counts[t] = if count == 0: 1 else: count
+    keys[t] = initTraceKeys()
+  let b = rowBlock(data, ntr, n)
+  let meta = initChunkMeta(rowsOf(keys, counts), dtMs)
+  var plan: FkPlan[float64]
   try:
-    tp = initFftPlan(float64, nt)
-    kp = initFftPlan(float64, nk)
+    demean(b, meta)
+    plan = initFkPlan(float64, dtMs, traces = ntr, samples = n, taperFraction = 0.1)
   except ValueError as e:
     result.problem = e.msg
     return
   var ws = initWorkspace()
-  ws.reserve(tp.workspaceSize(batched = false))
-  ws.reserve(kp.workspaceSize(batched = false))
-  let nb = tp.bins
-  # along time: each trace's spectrum, tapered across the traces too
-  var re, im = newSeq[float64](ntr * nb) # [trace * nb + bin]
-  var x = newSeq[float64](nt)
-  var r1, i1 = newSeq[float64](nb)
-  for t in 0 ..< ntr:
-    if stop.stopped:
-      result.cancelled = true
-      return
-    # the trace's mean over the box removed, as the FFT window does
-    var mean = 0.0
-    var count = 0
-    for j in 0 ..< n:
-      if first + j < rows[t].len:
-        mean += float64(rows[t][first + j])
-        inc count
-    if count > 0: mean /= float64(count)
-    for j in 0 ..< nt: x[j] = 0
-    let across = cosTaper(t, ntr, FkTaper)
-    for j in 0 ..< n:
-      let s = first + j
-      let v = if s < rows[t].len: float64(rows[t][s]) - mean else: 0.0
-      x[j] = v * cosTaper(j, n, FkTaper) * across
-    tp.forward(x, r1, i1, ws)
-    for b in 0 ..< nb: (re[t * nb + b], im[t * nb + b]) = (r1[b], i1[b])
-  # across the traces, per frequency: X = F(a) + i·F(b)
-  let kb = kp.bins
-  var a, b = newSeq[float64](nk)
-  var ar, ai, br, bi = newSeq[float64](kb)
-  var amp = newSeq[float64](nk * nb) # [col * nb + bin]
-  for f in 0 ..< nb:
-    if stop.stopped:
-      result.cancelled = true
-      return
-    for t in 0 ..< nk:
-      (a[t], b[t]) = if t < ntr: (re[t * nb + f], im[t * nb + f]) else: (0.0, 0.0)
-    kp.forward(a, ar, ai, ws)
-    kp.forward(b, br, bi, ws)
-    for k in 0 ..< nk:
-      # the full transforms of the real a and b: negative k the conjugates
-      let (aR, aI, bR, bI) = if k < kb: (ar[k], ai[k], br[k], bi[k])
-                             else: (ar[nk - k], -ai[nk - k], br[nk - k], -bi[nk - k])
-      let xr = aR - bI
-      let xi = aI + bR
-      # k (cycles per trace, k/nk) as signed, then turned: later on later
-      # traces is a positive wavenumber
-      let signed = if k < nk div 2: k else: k - nk
-      let col = (-signed + nk div 2 + nk) mod nk
-      let v = hypot(xr, xi)
-      amp[col * nb + f] = v
+  ws.reserve(plan)
+  var amp = newSeq[float64](plan.nK * plan.nFreq)
+  var used = 0
+  try:
+    used = fkStopped(plan, b, meta, amp, ws, stop)
+  except ValueError as e:
+    result.problem = e.msg
+    return
+  if used == Stopped:
+    result.cancelled = true
+    return
+  if used != plan.traces:
+    result.problem = "the f-k used " & $used & " traces, not " & $plan.traces
+    return
+  let nk = plan.nK
+  let nb = plan.nFreq
   let lengths = fkLengthOf(unit)
   let irregular = spacing.isNaN or spacing <= 0
   let perTrace = irregular or not lengths.ok
   let kScale = if perTrace: 1.0 else: 1000 / spacing # cycles per trace -> per km or kft
   let floor = min(p.floorDb, -1)
   var img = AnalysisImage(cols: nk, rows: nb,
-    x0: -float64(nk div 2) / float64(nk) * kScale, dx: kScale / float64(nk),
-    y0: 0, dy: 1000 / (float64(nt) * dtMs),
+    x0: -float64(nk div 2) * plan.dkPerTrace * kScale, dx: kScale * plan.dkPerTrace,
+    y0: 0, dy: plan.dfHz,
     xLabel: (if perTrace: "Wavenumber (cycles per trace)"
     else: "Wavenumber (cycles/" & lengths.per & ")"),
     xUnit: (if perTrace: "/trace" else: "/" & lengths.per), yLabel: "Frequency (Hz)", yUnit: "Hz",

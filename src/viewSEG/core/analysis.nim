@@ -10,7 +10,7 @@
 ## | Phase spectrum | amplitude (dB) and phase against frequency | `amplitudeInto` |
 ## | Cross-correlation | each trace against a reference: against lag, and compared per frequency | `crossCorrelateInto`, `compareInto` |
 ## | Vibrator signature | a unit's Ref, GF, M and B against sweep time: phase, force, frequency, distortion (`core/vibanalysis`) | `analyzeVibrators` |
-## | f-k | a box of traces × time: amplitude against frequency and wavenumber, an image (`core/fkanalysis`) | `forward` (composed) |
+## | f-k | a box of traces × time: amplitude against frequency and wavenumber, an image (`core/fkanalysis`) | `fkAmplitudeInto` |
 ## | Node orientation | roll, pitch and azimuth from the traces' orientation headers, one point per trace; no samples are read | parseSEG's `traceOrientation` |
 ##
 ## Every number here is processSEG's but for what it leaves to the caller:

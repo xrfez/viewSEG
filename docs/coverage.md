@@ -41,11 +41,11 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.19.2: capabilities | names | processSEG 0.12.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 54 (20 in part) | 180 | 40 (28 in part) | 197 |
+| `built` | 54 (20 in part) | 180 | 41 (29 in part) | 203 |
 | `internal` | 17 | 48 | 5 | 39 |
-| `planned` | 33 | 220 | 47 | 435 |
+| `planned` | 33 | 220 | 46 | 435 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 21 | 364 | 6 | 69 |
+| `not applicable` | 21 | 364 | 6 | 63 |
 | all | 127 | 822 | 99 | 745 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
@@ -261,9 +261,9 @@ name, so these are building blocks for code that works on raw headers.
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Chunk metadata from parseSEG reads | `initChunkMeta`, `chunkMeta`, `intervalMs`, `ChunkMeta` (`isLive`, `sampleTimeMs`, `isFailed`, `liveSamples`, `len`, `rows`, `dtMs`, `firstSample`, `failedCount`, `failedRow`, `keys`, `t0Ms`, `sub`), `sameInterval`, `checkShape` | internal: every processing call; killed traces are passed as failed rows, so the processing and the levels pass them by | internal; not applicable (`chunkMeta`, `intervalMs`, `ChunkMeta`, `isLive`, `sampleTimeMs`, `failedCount`, `failedRow`, `sameInterval`, `checkShape`: the reader makes each meta with `initChunkMeta` from its chunk's rows, interval, failed and killed rows) |
-| A long kernel given up between its units of work | `StopCheck`, `Stopped` | A pass that must give up within a fraction of a second when asked (an f-k, a spectrogram average, a spectrum). not used (the viewer's own in core/analysis, core/fkanalysis and core/spectra) | planned |
+| A long kernel given up between its units of work | `StopCheck`, `Stopped` | A pass that must give up within a fraction of a second when asked (an f-k, a spectrogram average, a spectrum) | built (New plot > f-k: the library call asks between traces and between frequencies, and `Stopped` is the cancel); planned (a spectrogram average, a spectrum) |
 | Row views and scratch | `rowBlock`, `RowBlock` (`len`, `cols`, `row`, `rowPtr`, `sub`), `Workspace`, `initWorkspace`, `reserve`, `capacity`, `fits`, `scratch`, `WorkspaceSize` (`+`, `max`), `SampleType` | internal: allocation-free processing | internal; not applicable (`WorkspaceSize`, `fits`, `SampleType`: the reader reserves what its plan needs) |
-| Remove mean or trend | `demean`, `detrend`, `demeanOp`, `detrendOp` | Seismic window: Filters in its strip, "DC removal": the mean (`demeanOp`) or the mean and trend (`detrendOp`), before the filter; `demean` and `detrend` on their own in the processing window | built (the Seismic window's Filters: `demeanOp`, `detrendOp`); planned (the processing window) |
+| Remove mean or trend | `demean`, `detrend`, `demeanOp`, `detrendOp` | Seismic window: Filters in its strip, "DC removal": the mean (`demeanOp`) or the mean and trend (`detrendOp`), before the filter; New plot > f-k removes each trace's mean in the box with `demean`; `demean` and `detrend` on their own in the processing window | built (the Seismic window's Filters: `demeanOp`, `detrendOp`; New plot > f-k: `demean`); planned (the processing window) |
 | Scale, clip, polarity | `scale`, `clip`, `reversePolarity`, `scaleOp`, `clipOp`, `polarityOp` | Seismic window: "Reverse polarity" of a trace or the selection (`R`, the plot's menu: `reversePolarity` on its live samples where the reader prepares them, before the pipeline, as `polarityOp` would; the Headers window's Data tab, as displayed, the same) and "Reverse polarity of all traces" (`polarityOp` first in the window's display pipeline; the analysis graphs apply the same sign flip, own reversal or reverse-all, not both); processing window: scale and clip; the wiggles' clip at the trace overlap is the shader's own | built (polarity of a trace, of the selection, of all traces); planned (the rest) |
 | Top and bottom mutes (time, table, LMO) | `timeMute`, `tableMute`, `lmoMute`, `muteTop`, `muteBottom`, `muteTopOp`, `muteBottomOp`, `muteTimeMs`, `MuteKind`, `MuteCurve`, `kind` | Processing window: mutes, drawn as a line on the panel, table picked by clicking | planned |
 | Pad tapers | `cosTaperInto`, `taperPads` | processSEG's filters pad and taper with them | not applicable (inside processSEG's filters; for a caller's own padded kernels) |
@@ -278,8 +278,8 @@ name, so these are building blocks for code that works on raw headers.
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Real FFT, batched | `inverse`, `forwardLanes`, `inverseLanes`, `gatherLanes`, `scatterLanes`, `isFastLen`, `fftLanes` | Inside the spectra and filters | not applicable (the spectrum and filter plans run them) |
-| One real FFT: the f-k of a box | `initFftPlan`, `forward`, `FftPlan` (`len`, `bins`, `workspaceSize`) | New plot > f-k: the viewer composes the 2-D transform from `forward`, along time per trace, then across the traces per frequency (a complex transform from two real ones), tapered both ways (`taperWeight`), so that a cancelled f-k stops between steps; its dB is `toDbInto` | built |
-| f-k amplitude of a gather | `FkPlan`, `FkAxes`, `initFkPlan`, `fkAmplitudeInto`, `fkRows`, `axes`, `nFreq`, `nK`, `dfHz`, `dkPerTrace`, `traces` | New plot > f-k does not call it: the viewer composes the transform in core/fkanalysis and stops between steps; the library call can be abandoned between traces but is not used | not applicable (the viewer's own composition in core/fkanalysis) |
+| One real FFT: the f-k of a box | `initFftPlan`, `forward`, `FftPlan` (`len`, `bins`, `workspaceSize`) | New plot > f-k no longer composes the transform itself: `fkAmplitudeInto` does, and a cancel stops inside that call | not applicable (inside `fkAmplitudeInto`) |
+| f-k amplitude of a gather | `FkPlan`, `FkAxes`, `initFkPlan`, `fkAmplitudeInto`, `fkRows`, `axes`, `nFreq`, `nK`, `dfHz`, `dkPerTrace`, `traces` | New plot > f-k: the amplitude of a box of traces against frequency and wavenumber, each trace's mean removed first, tapered both ways, in dB; a cancel stops between traces and between frequencies | built (New plot > f-k); not applicable (`FkAxes`, `fkRows`, `axes`: the drawn axes are `nK`, `nFreq`, `dfHz` and `dkPerTrace`) |
 | Phase unwrapped along frequency, delay removed | `unwrapPhaseInto`, `removeDelayInto` | New plot > Phase spectrum, New plot > FFT (`F`) and Compare two traces: the phase unwrapped along the drawn bins, and with its best straight line (a pure time delay, in ms) taken off | built |
 | Power sum of spectra, block by block | `SpectrumAccumulator`, `initSpectrumAccumulator`, `used`, `clear`, `amplitudesInto` | New plot > FFT (`F`) and the live Spectrum panel: the power average of the chosen traces' spectra, read in blocks | built (`SpectrumAccumulator`, `initSpectrumAccumulator`, `used`, `amplitudesInto`); not applicable (`clear`: a new sum is made each time) |
 | A fast FFT length | `nextFastLen` | The phase spectrum (New plot) zero-pads its trace to 4 times its length, rounded up to a fast length | built |

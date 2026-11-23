@@ -10,6 +10,8 @@
 ## - the spacing: regular offsets give it, a split spread's signed offsets
 ##   too, irregular ones none, then receivers' coordinates along the line;
 ## - fewer than four traces, nothing (said);
+## - a direct-current offset does not change the image (the mean is removed);
+## - a trace that ends before the box still keeps its slot;
 ## - whole offsets of a fractional spacing (33.528 m stored as 33 and 34 m
 ##   steps) are regular at 33.53, a missing trace is not. Seen to fail: with
 ##   the step's 1 % test on each step, "spacing nan, want 33.53".
@@ -17,7 +19,10 @@
 ## Seen to fail: with the wavenumber not turned (the transform's own
 ## sign), "peak at -14.58333333333333 cycles/km, want 15.0"; with the
 ## columns not centred on k = 0, "peak at -35.416666666666664 cycles/km,
-## want 15.0".
+## want 15.0"; with the box's mean left in, "a direct-current offset
+## changed the f-k: peak at -7.105427357601002e-15 cycles/km, 0.0 Hz";
+## with a trace that ends before the box left out, "the window has 47
+## live rows, the plan was built for 48".
 
 import std/[math, monotimes, strutils, times]
 import viewSEG/core/[analysis, fkanalysis, join]
@@ -144,6 +149,34 @@ proc main*() =
     doAssert abs(sp - 33.53) <= 0.01, "spacing " & $sp & ", want 33.53"
     pos.delete(20)
     doAssert regularSpacing(pos).isNaN, "a missing trace read as regular"
+
+  block directCurrent:
+    # the mean of the box is removed: a constant added to every sample is not
+    # an event. Seen to fail with that removal left out.
+    let plain = fkOf(planeWave(1), Dx, "offsets", suMetres, Dt, 0, AnalysisParams())
+    var shifted = planeWave(1)
+    for r in shifted.mitems:
+      for i in 0 ..< r.len: r[i] += 1000
+    let withDc = fkOf(shifted, Dx, "offsets", suMetres, Dt, 0, AnalysisParams())
+    doAssert withDc.problem == "", withDc.problem
+    let (k, f, _, _) = withDc.image.peakOf
+    doAssert abs(f - F) <= withDc.image.dy and abs(k - 1000 * F / V) <= withDc.image.dx,
+      "a direct-current offset changed the f-k: peak at " & $k & " cycles/km, " & $f & " Hz"
+    doAssert plain.problem == ""
+
+  block shortTraceKeepsItsSlot:
+    # a trace that ends before the box still counts, so the wavenumber axis
+    # is the gather's. Seen to fail with that trace left out.
+    var rows = planeWave(1)
+    rows[5].setLen(4)
+    var p = AnalysisParams()
+    p.fkFromMs = 400
+    p.fkToMs = 800
+    let r = fkOf(rows, Dx, "offsets", suMetres, Dt, 0, p)
+    doAssert r.problem == "", r.problem
+    doAssert "48 traces" in r.note, r.note
+    let all = fkOf(planeWave(1), Dx, "offsets", suMetres, Dt, 0, p)
+    doAssert r.image.cols == all.image.cols and r.image.rows == all.image.rows
 
   block tooFew:
     let r = fkOf(planeWave(1)[0 .. 2], Dx, "offsets", suMetres, Dt, 0, AnalysisParams())
