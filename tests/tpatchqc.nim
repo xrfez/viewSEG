@@ -158,6 +158,7 @@ proc main*() =
       doAssert none.modelWords(suMetres) == "" and none.segments == 0
       var survey = b
       survey.source = bsSurvey
+      (survey.withOffset, survey.fromPositions) = (b.modelled, b.modelled)
       doAssert "Offsets from the imported survey" in survey.modelWords(suMetres)
 
   echo "tpatchqc: ok"

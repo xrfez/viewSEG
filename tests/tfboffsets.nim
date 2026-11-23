@@ -1,11 +1,12 @@
 ## Where the first-break overlay's offsets come from, on a synthetic Rev 0 SEG-Y shot (2500 m/s
 ## half space, offsets 100 to 2550 m) that a recording system writes with its numbers times 100:
 ##
-## - opened through the shipped map `segy-x100-stations.nif`, a file whose offset field holds the
-##   offset times 100 gives the right offsets (the map's divisor), the model's velocity is the
-##   true one and the overlay says nothing of a scale; opened with no map, the same file gives a
-##   velocity 100 times too large, and the words say the offsets look wrongly scaled (about 100
-##   times too large) while the model is shown as fitted (nothing is corrected);
+## - opened through the shipped map `segy-x100-stations.nif`, a file with the offset and the
+##   coordinates stored times 100 under the scalar -100 (and times 10 under -10) gives the right
+##   offsets (the offset is read through the coordinate scalar), source "file", the model's
+##   velocity is the true one and the overlay says nothing of a scale; opened with no map, the
+##   same file gives a velocity 100 times too large, and the words say the offsets look wrongly
+##   scaled (about 100 times too large) while the model is shown as fitted;
 ## - the coordinate scalar (bytes 71-72) is applied on the file path: a negative, a positive and
 ##   a zero scalar all give the true offsets and velocity;
 ## - a record joined to a survey (both ends set by the join) takes its offsets from the
@@ -14,6 +15,12 @@
 ##   overlay jobs for the join), and the first answer said the offsets looked wrongly scaled;
 ## - "Use this record's fit" refuses a fit above the velocity a given model takes (it was once cut
 ##   to the cap, a wrong model), and says why.
+##
+## - a file with coordinates, scalar -100 and an offset in true units, no map, keeps the true
+##   velocity (the standard reading);
+## - the words and limits: the slowest first-break velocity is 120 m/s, a unit that is not known
+##   uses the metre floor and the foot ceiling, a refused fit names its segment and blames the
+##   scale only when the scale words do, the offsets' source says how many came from the survey.
 ##
 ## Seen to fail: with the offset entry left out of the map, "the velocity is 250000"; with the
 ## words' guard left out, "no word of a wrong scale"; with the join's positions not used for the
@@ -118,7 +125,8 @@ proc main*() =
 
   block theMapDividesTheOffsetField:
     withFixtures fx:
-      let path = fx.rawShot("x100.sgy", Spec(sentence: true, offsetScale: 100, stations: true))
+      let path = fx.rawShot("x100.sgy", Spec(sentence: true, offsetScale: 100, stations: true,
+        coords: true, scalar: -100))
       let mapped = breaksOn(path, true)
       doAssert mapped.source == bsFile and mapped.hasModel, $mapped.source
       doAssert mapped.trueVelocity, "the velocity is " & $mapped.fit.v1
@@ -133,8 +141,8 @@ proc main*() =
         "no word of a wrong scale: " & words
       doAssert "Offsets from the file's own headers" in words, words
       doAssert plain.modelNote == "" and plain.hasModel, "nothing is corrected, nothing hidden"
-      # in a unit that is not a length the range cannot be told
-      doAssert plain.scaleWords(suNotGiven) == ""
+      # in a unit that is not known the metre floor and the foot ceiling still catch it
+      doAssert plain.scaleWords(suNotGiven) != ""
       # a fit in range says nothing; one far too small says so, the other way round
       var slow = mapped
       slow.fit.v1 = 25
@@ -155,6 +163,73 @@ proc main*() =
         doAssert b.trueVelocity, "scalar " & $scalar & ": the velocity is " & $b.fit.v1
         doAssert abs(b.offsetAbs[5] - offsetOf(5)) <= 0.01, "offset " & $b.offsetAbs[5]
         doAssert b.scaleWords(suMetres) == ""
+
+  block anOffsetInTrueUnitsWithACoordinateScalarIsRead:
+    withFixtures fx:
+      # the standard reading: the offset is in the file's own units, the scalar is for the
+      # coordinates; no map is involved
+      let path = fx.rawShot("std.sgy", Spec(coords: true, scalar: -100, offsetScale: 1))
+      let b = breaksOn(path, false)
+      doAssert b.source == bsFile and b.trueVelocity, "the velocity is " & $b.fit.v1
+      doAssert abs(b.offsetAbs[5] - offsetOf(5)) <= 0.01, "offset " & $b.offsetAbs[5]
+
+  block theMapReadsTheOffsetThroughTheCoordinateScalar:
+    withFixtures fx:
+      for (scalar, scale) in [(-100, 100), (-10, 10)]:
+        let sp = Spec(sentence: true, offsetScale: scale, stations: true, coords: true,
+          scalar: scalar)
+        let path = fx.rawShot("scal" & $scale & ".sgy", sp)
+        let mapped = breaksOn(path, true)
+        doAssert mapped.source == bsFile and mapped.trueVelocity,
+          "scalar " & $scalar & ": the velocity is " & $mapped.fit.v1
+        doAssert abs(mapped.offsetAbs[5] - offsetOf(5)) <= 0.01, "offset " & $mapped.offsetAbs[5]
+        doAssert mapped.scaleWords(suMetres) == ""
+        let plain = breaksOn(path, false)
+        doAssert plain.hasFit and not plain.trueVelocity, "no map: " & $plain.fit.v1
+
+  block theWordsAndTheLimits:
+    var b = FirstBreaks(hasFit: true, modelled: 5, state: bkDone)
+    b.fit.v1 = 150
+    b.fit.v2 = NaN
+    b.fit.crossover = NaN
+    doAssert b.scaleWords(suMetres) == "", "150 m/s is a slow dry weathering layer"
+    b.fit.v1 = 100
+    doAssert b.scaleWords(suMetres) != ""
+    # a unit that is not known: the metre floor and the foot ceiling
+    b.fit.v1 = 98_000
+    doAssert b.scaleWords(suNotGiven) == ""
+    b.fit.v1 = 250_000
+    doAssert "about 100 times too large" in b.scaleWords(suNotGiven), b.scaleWords(suNotGiven)
+    b.fit.v1 = 25
+    doAssert "about 100 times too small" in b.scaleWords(suNotGiven)
+    # a refused fit names the segment above the limit, and blames the scale only with the words
+    b.fit.v1 = 2_500_000
+    var r = b.fitRefusal(suMetres)
+    doAssert "The fit's velocity (2500000)" in r and "wrongly scaled" in r, r
+    doAssert b.scaleWords(suMetres).len > 0
+    b.fit.v1 = 2500
+    b.fit.v2 = 2_000_000
+    b.fit.crossover = 500
+    doAssert b.segments == 2
+    r = b.fitRefusal(suMetres)
+    doAssert "second velocity (2000000)" in r and "wrongly scaled" notin r, r
+    doAssert b.scaleWords(suMetres) == ""
+    b.fit.v1 = 2_500_000
+    r = b.fitRefusal(suMetres)
+    doAssert "first velocity (2500000)" in r and "wrongly scaled" in r, r
+
+  block whereTheOffsetsCameFromIsCounted:
+    var b = FirstBreaks(source: bsSurvey, withOffset: 10, fromPositions: 10)
+    doAssert b.offsetsSentence == "Offsets from the imported survey.", b.offsetsSentence
+    b.fromPositions = 4
+    doAssert "the imported survey for 4 of 10 traces" in b.offsetsSentence, b.offsetsSentence
+    doAssert "status bar" notin b.offsetsSentence
+    b.fromPositions = 0
+    doAssert b.offsetsSentence == "Offsets from the file's own headers.", b.offsetsSentence
+    b.headerDiffers = true
+    doAssert "status bar" notin b.offsetsSentence
+    b.fromPositions = 10
+    doAssert "the trace table and status bar show the headers' offsets" in b.offsetsSentence
 
   block aFitAboveTheCapIsRefused:
     withFixtures fx:
@@ -210,6 +285,8 @@ proc main*() =
       doAssert late.scaleWords(suMetres) == "" and late.fitRefusal == ""
       doAssert abs(late.offsetAbs[7] - offsetOf(7)) <= 0.01, "offset " & $late.offsetAbs[7]
       doAssert "Offsets from the imported survey" in late.modelWords(suMetres)
+      doAssert late.fromPositions == late.withOffset and late.headerDiffers, "the header differs"
+      doAssert "show the headers' offsets" in late.modelWords(suMetres)
       # made again once, and nothing asks for it again in 200 frames
       for frame in 0 ..< 200:
         discard st.drainInbox()

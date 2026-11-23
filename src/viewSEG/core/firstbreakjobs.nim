@@ -257,13 +257,22 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   var surveyed = false
   for i in 0 ..< n:
     let ends = f.index.joinedGroups(traces.a + i)
+    var positions = false
     if {jgSourceXy, jgReceiverXy} <= ends and keys[i].hasSourceXY and keys[i].hasReceiverXY:
+      let header = keys[i].offset
       keys[i].offset = hypot(keys[i].rcvX - keys[i].srcX, keys[i].rcvY - keys[i].srcY)
+      positions = true
+      if not header.isNaN and header != 0 and
+          abs(header - keys[i].offset) > 0.005 * abs(keys[i].offset):
+        result.headerDiffers = true
     let x = keys[i].offset
     if x == 0: keys[i].offset = NaN
     elif keys[i].isSeismic and not x.isNaN:
       any = true
-      if jgDerived in ends or {jgSourceXy, jgReceiverXy} <= ends: surveyed = true
+      inc result.withOffset
+      if positions or jgDerived in ends:
+        inc result.fromPositions
+        surveyed = true
   result.offsetAbs = newSeq[float64](n)
   for i in 0 ..< n:
     result.offsetAbs[i] = if keys[i].isSeismic and not keys[i].offset.isNaN: abs(keys[i].offset)

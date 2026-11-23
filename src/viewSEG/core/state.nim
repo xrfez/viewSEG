@@ -6671,11 +6671,18 @@ func surveyLengthUnit(state: AppState): SurveyUnit =
 
 func breakOffsetUnit*(state: AppState; k: int): SurveyUnit =
   ## The unit of the offsets the first-break model of the record panel `panels[k]` shows
-  ## was fitted on, as a label (nothing is converted): the file's (the import's when the
+  ## was fitted on, as a label (nothing is converted): the survey's when the offsets are the
+  ## distance between its positions, else the file's (the import's when the
   ## file is joined, else its header's measurement system, as an analysis reads them); when
   ## the file names none, the project's survey's, if it names a length.
   result = state.fileOffsetUnit(k)
   if result == suNotGiven: result = state.surveyLengthUnit
+  # offsets taken from the survey's positions are in the survey's unit
+  if state.shownBreaks(k).fromPositions > 0:
+    let src = state.panels[k].layers[0].source
+    let joined = if src.kind == lsRecord: state.joinedOf(src.file) else: -1
+    if joined >= 0 and state.joins[joined].units.survey.lengthUnitKnown:
+      result = state.joins[joined].units.survey
 
 func breakUnitFromSurvey*(state: AppState; k: int): bool =
   ## Whether `breakOffsetUnit` is the project's survey's because the file names none.

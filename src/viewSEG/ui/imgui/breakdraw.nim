@@ -233,7 +233,7 @@ proc drawModelChoice(b: FirstBreaks; unit: SurveyUnit; m: var BreakModel; t: The
       igTextWrapped("Give a velocity: until then the model fitted to the record is shown.")
       igPopStyleColor(1)
   let fit = b.fitAsModel
-  let refused = b.fitRefusal
+  let refused = b.fitRefusal(unit)
   igBeginDisabled(fit.v1 <= 0)
   if igButton("Use this record's fit", ImVec2_c(x: 0, y: 0)):
     m = fit

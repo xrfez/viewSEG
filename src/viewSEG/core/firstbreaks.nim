@@ -70,6 +70,12 @@ type
       ## per trace: off the model or off its neighbours (`rule`: `core/breakrule`)
     dtMs*: float64 ## the record's sample interval
     source*: BreakSource
+    withOffset*: int ## traces of the record that have an offset
+    fromPositions*: int
+      ## of them, those whose offset is the distance between the survey's positions (a join set
+      ## both ends); the others' are the headers' or derived from the file's coordinates
+    headerDiffers*: bool
+      ## an offset from the survey's positions differs from the header offset the keys hold
     used*: int ## the confident picks the model was fitted to
     modelled*: int ## traces the model gives a time for
     picked*: int ## traces with a pick
@@ -399,11 +405,21 @@ func lengthUnit(u: SurveyUnit): string =
   else: "offset units"
 
 func offsetsFrom*(b: FirstBreaks): string =
-  ## Where the offsets the model used came from, in words; "" when it has none.
-  case b.source
-  of bsSurvey: "the imported survey"
-  of bsFile: "the file's own headers"
-  of bsNone: ""
+  ## Where the offsets the model used came from, in words; "" when it has none. Only the
+  ## traces the survey gave count as the survey's: a record with some of them says how many.
+  if b.source == bsNone: return ""
+  if b.fromPositions == 0: "the file's own headers"
+  elif b.fromPositions >= b.withOffset: "the imported survey"
+  else: "the imported survey for " & $b.fromPositions & " of " & $b.withOffset &
+    " traces, the file's own headers for the rest"
+
+func offsetsSentence*(b: FirstBreaks): string =
+  ## `offsetsFrom` as a sentence of the key's tooltip; "" when there are no offsets.
+  if b.source == bsNone: return ""
+  result = "Offsets from " & b.offsetsFrom & "."
+  if b.fromPositions > 0 and b.headerDiffers:
+    result = "Offsets from the imported survey's positions (the trace table and status bar " &
+      "show the headers' offsets)."
 
 func fitModel*(fit: ShotFit): BreakModel =
   ## `fit`'s velocity or velocities, intercept and crossover as a given model; the default
@@ -422,29 +438,8 @@ func segments*(b: FirstBreaks): int =
 func number(x: float64): string =
   if x.isNaN or abs(x) == Inf: "?" else: $int(round(x))
 
-func fitRefusal*(b: FirstBreaks): string =
-  ## Why the record's fit cannot be kept as a given model, in words; "" when it can (or there
-  ## is no fit). A velocity above what a given model takes (`MaxBreakVelocity`) would be cut
-  ## to it, a model that is not the fit: it is refused, and the usual reason is offsets that
-  ## are wrongly scaled.
-  if not b.hasFit: return ""
-  let two = b.segments == 2
-  let top = max(b.fit.v1, if two: b.fit.v2 else: 0.0)
-  if top > MaxBreakVelocity and top < Inf:
-    result = "The fit's velocity (" & number(top) & ") is above the " &
-      number(MaxBreakVelocity) & " a given model takes, so it is not kept: the offsets of " &
-      "this record are probably wrongly scaled"
-
-func fitAsModel*(b: FirstBreaks): BreakModel =
-  ## The record's fit (its velocity or velocities, intercept and crossover) as a given
-  ## model: what "Use this record's fit" keeps, to hold for the other records. It is the fit
-  ## to the trimmed picks of the second pass, so a stretch of noise picks does not set a
-  ## segment. Without a fit (no velocity), or with one `fitRefusal` refuses (a velocity the
-  ## given model cannot hold), the default model (not given).
-  if not b.hasFit or b.fitRefusal.len > 0: BreakModel() else: b.fit.fitModel
-
 const
-  PlausibleMinMps* = 300.0    ## the slowest first-break velocity taken as physical (m/s)
+  PlausibleMinMps* = 120.0    ## the slowest first-break velocity taken as physical (m/s)
   PlausibleMaxMps* = 30_000.0 ## the fastest (m/s)
   TypicalMps = 3000.0         ## what the factor of a wrong scale is reckoned against (m/s)
 
@@ -457,26 +452,60 @@ func unitInMetres(u: SurveyUnit): float64 =
   else: 0.0
 
 func scaleWords*(b: FirstBreaks; unit: SurveyUnit): string =
-  ## A statement that the offsets look wrongly scaled, when the fitted velocity lies outside
-  ## the physical range of a first break (`PlausibleMinMps` to `PlausibleMaxMps`) for the
-  ## offsets' `unit`, with the factor it is out by against a typical 3000 m/s (the nearest
-  ## power of ten); "" when it is in range, there is no fit, or the unit is no length (the
-  ## range cannot be told). The model is shown as it is: nothing is corrected.
+  ## A statement that the offsets look wrongly scaled, when the first segment's velocity lies
+  ## outside the physical range of a first break (`PlausibleMinMps` to `PlausibleMaxMps`) for
+  ## the offsets' `unit`, with the factor it is out by against a typical 3000 m/s (the nearest
+  ## power of ten); "" when it is in range or there is no fit. When the unit is no length that
+  ## is known, the range runs from the metre floor to the foot ceiling, so that an error of
+  ## 100 times is still caught. The model is shown as it is: nothing is corrected.
   if not b.hasFit or b.segments == 0: return ""
   let m = unit.unitInMetres
   let v = b.fit.v1
-  if m == 0 or not (v > 0 and v < Inf): return ""
-  let mps = v * m
-  if mps >= PlausibleMinMps and mps <= PlausibleMaxMps: return ""
-  let power = int(round(log10(mps / TypicalMps)))
+  if not (v > 0 and v < Inf): return ""
+  let known = m != 0
+  let lo = PlausibleMinMps / (if known: m else: 1.0)
+  let hi = PlausibleMaxMps / (if known: m else: 0.3048)
+  if v >= lo and v <= hi: return ""
+  let power = int(round(log10(v * (if known: m else: 1.0) / TypicalMps)))
   let factor = "1" & repeat('0', min(abs(power), 30))
   let by = if power >= 0: "about " & factor & " times too large"
            else: "about " & factor & " times too small"
   result = "The offsets look wrongly scaled: the fitted velocity, " & number(v) & " " &
-    unit.velocityUnit & ", is not a first-break velocity (" & number(PlausibleMinMps / m) &
-    " to " & number(PlausibleMaxMps / m) & " " & unit.velocityUnit & "), " & by &
+    unit.velocityUnit & ", is not a first-break velocity (" & number(lo) & " to " &
+    number(hi) & " " & unit.velocityUnit & "), " & by &
     " against a typical one. The model is shown as fitted; check the offsets' scale (the " &
     "vendor map, the coordinate scalar, the units)."
+
+func fitRefusal*(b: FirstBreaks; unit = suNotGiven): string =
+  ## Why the record's fit cannot be kept as a given model, in words; "" when it can (or there
+  ## is no fit). A velocity above what a given model takes (`MaxBreakVelocity`) would be cut
+  ## to it, a model that is not the fit: it is refused. It names the segment that is above the
+  ## limit, and says the offsets are probably wrongly scaled only when `scaleWords` (for the
+  ## offsets' `unit`) says so too.
+  if not b.hasFit: return ""
+  let two = b.segments == 2
+  let (v1, v2) = (b.fit.v1, if two: b.fit.v2 else: 0.0)
+  var which = ""
+  var top = 0.0
+  if v1 > MaxBreakVelocity and v1 < Inf:
+    which = if two: "first velocity" else: "velocity"
+    top = v1
+  elif v2 > MaxBreakVelocity and v2 < Inf:
+    which = "second velocity"
+    top = v2
+  if which.len > 0:
+    result = "The fit's " & which & " (" & number(top) & ") is above the " &
+      number(MaxBreakVelocity) & " a given model takes, so it is not kept"
+    if b.scaleWords(unit).len > 0:
+      result.add ": the offsets of this record are probably wrongly scaled"
+
+func fitAsModel*(b: FirstBreaks): BreakModel =
+  ## The record's fit (its velocity or velocities, intercept and crossover) as a given
+  ## model: what "Use this record's fit" keeps, to hold for the other records. It is the fit
+  ## to the trimmed picks of the second pass, so a stretch of noise picks does not set a
+  ## segment. Without a fit (no velocity), or with one `fitRefusal` refuses (a velocity the
+  ## given model cannot hold), the default model (not given).
+  if not b.hasFit or b.fitRefusal.len > 0: BreakModel() else: b.fit.fitModel
 
 const UnitFromSurvey* =
   "The unit is taken from the project's survey: the file names none."
@@ -548,7 +577,7 @@ func modelWordsOf(b: FirstBreaks; unit: SurveyUnit): string =
         " " & v
     result.add "\nIntercept: " & formatFloat(m.interceptMs, ffDecimal, 1) & " ms"
     result.add "\n" & b.givenWords
-    result.add "\nOffsets from " & b.offsetsFrom & "."
+    result.add "\n" & b.offsetsSentence
     let sc = b.scaleWords(unit)
     if sc.len > 0: result.add "\n" & sc
     let w = b.ruleWords(unit)
@@ -568,7 +597,7 @@ func modelWordsOf(b: FirstBreaks; unit: SurveyUnit): string =
   result.add "\nFitted to " & $b.used & " confident picks that agree with it (picks far from " &
     "the line are left out, so noise at long offsets does not set it)"
   if b.fittedFrom.len > 0: result.add " (" & b.fittedFrom & ")"
-  result.add "\nOffsets from " & b.offsetsFrom & "."
+  result.add "\n" & b.offsetsSentence
   let sc = b.scaleWords(unit)
   if sc.len > 0: result.add "\n" & sc
   let w = b.ruleWords(unit)
