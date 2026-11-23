@@ -34,6 +34,7 @@
 
 import std/[math, strutils]
 import viewSEG/core/[analysis, vibalign, vibanalysis, vibjudge]
+import processSEG/core/shift
 import processSEG/vibroseis/vibqc
 import utils/vibsynth
 
@@ -333,7 +334,7 @@ proc baseTests() =
     let before = alignStored(stored, late.referenceOf.sweepRow, 1.0)
     doAssert before.found and near(before.shiftMs, -115, 1), "shift " &
         $before.shiftMs
-    let moved = stored.placed(int(round(al.shiftMs)))
+    let moved = stored.placedWhole(int(round(al.shiftMs)))
     doAssert moved.len == stored.len + 115 and moved[114] == 0 and moved[115] ==
         stored[0]
     # aligned: the recorded reference measures 0 degrees to it (mean |phase| of Ref (recorded)),
@@ -618,7 +619,7 @@ proc fractionalShift() =
         o.sweepRow)
       let al = alignStored(recorded, stored, dt)
       doAssert al.found and near(al.shiftMs, delay, 0.2), $delay & ": shift " & $al.shiftMs
-      let moved = placedBy(stored, al.shiftMs, dt)
+      let moved = placedSinc(stored, al.shiftMs, dt)
       let r = vibratorOf(@[recorded, late.sweepRow, moved], @["R", "GF", "stored"],
         [vsReference: 2, vsGroundForce: 1, vsMass: -1, vsBaseplate: -1], dt,
         AnalysisParams(forceHundredPct: Hundred), 0, 100.0)

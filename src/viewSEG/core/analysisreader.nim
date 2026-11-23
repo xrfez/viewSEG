@@ -30,7 +30,7 @@
 import std/[algorithm, locks, math, monotimes, options, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
-import processSEG/core/[rows, types, workspace]
+import processSEG/core/[rows, shift, types, workspace]
 import analysis, cutfile, edits, filesystem, fkanalysis, inbox, jobs, join, log,
     processing, references,
   threads, vibalign, vibanalysis
@@ -629,7 +629,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                     placedAt = AlignReport(kind: (
                         if al.found: "aligned" else: "unaligned"),
                       shiftMs: al.shiftMs, match: al.match, words: al.words)
-                    if al.found: stored = placedBy(archiveSamples, al.shiftMs, dtMs)
+                    if al.found: stored = placedSinc(archiveSamples, al.shiftMs, dtMs)
                   else:
                     stored = startedAt(archiveSamples, a.archiveStartMs, dtMs)
                     placedAt.shiftMs = a.archiveStartMs

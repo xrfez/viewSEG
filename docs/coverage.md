@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.19.2: capabilities | names | processSEG 0.12.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 56 (22 in part) | 189 | 43 (28 in part) | 226 |
+| `built` | 56 (22 in part) | 189 | 44 (28 in part) | 228 |
 | `internal` | 17 | 47 | 5 | 39 |
-| `planned` | 31 | 214 | 44 | 412 |
+| `planned` | 31 | 214 | 43 | 410 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 21 | 362 | 6 | 63 |
 | all | 127 | 822 | 99 | 745 |
@@ -268,7 +268,7 @@ name, so these are building blocks for code that works on raw headers.
 | Top and bottom mutes (time, table, LMO) | `timeMute`, `tableMute`, `lmoMute`, `muteTop`, `muteBottom`, `muteTopOp`, `muteBottomOp`, `muteTimeMs`, `MuteKind`, `MuteCurve`, `kind` | Processing window: mutes, drawn as a line on the panel, table picked by clicking | planned |
 | Pad tapers | `cosTaperInto`, `taperPads` | processSEG's filters pad and taper with them | not applicable (inside processSEG's filters; for a caller's own padded kernels) |
 | Whole-sample and fractional shifts | `timeShiftInto`, `timeShift`, `wholeSamples`, `shiftSamples`, `ShiftInterp` | Compare two traces shifts B by a whole number of samples: a typed time snapped to the nearest sample (`wholeSamples`), or the correlation peak's sample lag, moved in place (`timeShift`: a bulk move, zeros in the gap, what moves off the end left out; no interpolation) | built (Compare two traces: `timeShift`, `wholeSamples`); not applicable (`timeShiftInto`: the viewer shifts in place; `shiftSamples`, `ShiftInterp`: a whole number of samples is a move, so no interpolation is chosen) |
-| A stored trace placed later, whole samples or a fraction | `placedWhole`, `placedSinc` | A stored reference put in step with the record: zeros before it, or its first samples dropped, a fraction of a sample included. not used (the viewer's own in core/vibalign) | planned |
+| A stored trace placed later, whole samples or a fraction | `placedWhole`, `placedSinc` | New plot > Vibrator signature: a stored reference put in step with the record: zeros before it, or its first samples dropped, a fraction of a sample included | built |
 | Recorded values in physical units: sensors, masses and recorder scales | `AmplitudeUnit` (`auRecorded`, `auVolt`, `auVelocity`, `auAcceleration`, `auPressure`, `auForce`), `Sensitivity`, `SensitivityUnit`, `SensitivityForm`, `sensitivity`, `openCircuitSensitivity`, `form`, `unit`, `valueIn`, `voltsPerUnit`, `quantityOf`, `isSet`, `Mass`, `MassUnit`, `mass`, `kilograms`, `Descale`, `DescaleUnit`, `descale`, `voltsPerCount`, `FileScale`, `initFileScale`, `$` | Amplitudes in volts, m/s, m/s², Pa or N where the user sets up a sensor table (off otherwise): the readout's unit; the vibrator force plots in newtons (`auForce`, with the masses entered) | built in part (the vibrator signature: its masses entered in kg, shown in lb when Units is imperial, `mass`, and the force's unit said, `AmplitudeUnit`); planned: the sensor table, amplitudes in physical units |
 | Calibration of recorded traces | `Calibration`, `CalibrationPlan`, `CalibrationRule`, `CalibrationStatus`, `CalibrationSummary`, `CalibrationTarget`, `FactorSource`, `FileFactors`, `RatioRange`, `RowCalibration`, `RuleMatch`, `calibrate`, `calibrateInto`, `initCalibration`, `initCalibrationPlan`, `ratioDbInto`, `resolveInto`, `scaleInto`, `scaleRows`, `scaleRowsInto`, `uncalibrate`, `uncalibrateInto`, `target`, `$` | The sensor table's rules applied per trace, before any gain; what each trace was converted with, and what could not be, in Messages | planned |
 | A file's own scales | `ScaleGroup`, `fileScalesInto`, `scaleReport`, `segyUnitOverrides`, `fileScale`, `hasFileScales`, `chunkMeta(..., scales)`, `$` | The Headers window's Summary tab: each channel set's recorder scale and units as the file gives them, to check against the sensor sheet, also without a sensor table | planned |

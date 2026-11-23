@@ -7,17 +7,18 @@
 ##   envelope's peak (`matchOf`, the way the Cross-correlation window reads it) as the
 ##   shift: positive when the recorded trace comes after the stored one starts. A peak
 ##   that is not clear, or that lies at an end of the lags, gives no shift (the two are
-##   taken to start together).
-## - `placed` puts the stored samples where the shift says: zeros before them for a
-##   positive one, the samples before the record's first dropped for a negative one.
+##   taken to start together). It looks no further than `MaxAlignShiftMs` either way.
 ## - Without a recorded reference there is nothing to align to: `startedAt` places the
-##   stored window at its own `timeStart`, which the archive keeps.
+##   stored window at its own `timeStart` (`placedWhole`), which the archive keeps.
+##   A recorded one is placed by `placedSinc`.
 ##
-## Pure; never raises.
+## `alignStored` does not raise. `startedAt` raises `ValueError` only when that start
+## is past the range of a sample count.
 
 import std/math
 import processSEG/vibroseis/crosscorrelate
 import processSEG/core/workspace
+from processSEG/core/shift import placedWhole
 import matchpeak
 
 const
@@ -67,61 +68,11 @@ proc alignStored*(recorded, stored: openArray[float32];
   except ValueError, AssertionDefect:
     discard
 
-func placed*(stored: openArray[float32]; wholeSamples: int): seq[float32] =
-  ## `stored` starting `wholeSamples` after the record's first sample (zeros before it);
-  ## a negative number drops that many of its first samples.
-  if wholeSamples >= 0:
-    result = newSeq[float32](wholeSamples + stored.len)
-    for i, v in stored: result[wholeSamples + i] = v
-  else:
-    let drop = min(-wholeSamples, stored.len)
-    result = newSeq[float32](stored.len - drop)
-    for i in 0 ..< result.len: result[i] = stored[drop + i]
-
-const SincHalf = 24 ## taps each side of the interpolator that moves a stored reference
-
-func besselI0(x: float64): float64 =
-  var term = 1.0
-  result = 1.0
-  for k in 1 .. 30:
-    term *= (x / (2 * float64(k))) ^ 2
-    result += term
-
-func placedBy*(stored: openArray[float32]; shiftMs, dtMs: float64): seq[float32] =
-  ## `stored` moved later by `shiftMs`, a fraction of a sample included: each output sample
-  ## is a Kaiser-windowed sinc (24 taps each side, beta 8) of the stored samples round the
-  ## time it lies at, so a reference leading by 100.3 ms is placed at 100.3 ms and not at
-  ## 100. The stored samples are zero outside their own length (a sweep begins and ends in
-  ## its tapers), so nothing wraps. Longer by the shift (shorter when it is negative).
-  if not (dtMs > 0) or stored.len == 0 or shiftMs.isNaN: return @stored
-  let d = shiftMs / dtMs
-  let whole = int(floor(d))
-  let frac = d - float64(whole)
-  if frac < 1e-9: return placed(stored, whole)
-  let n = max(0, stored.len + int(ceil(d)))
-  result = newSeq[float32](n)
-  let beta = 8.0
-  let norm = besselI0(beta)
-  # the taps: output j takes stored sample k = j - whole - m at x = m - frac samples
-  var taps = newSeq[float64](2 * SincHalf + 1)
-  for i in 0 .. 2 * SincHalf:
-    let m = i - SincHalf
-    let x = float64(m) - frac
-    let r = abs(x) / float64(SincHalf)
-    if r < 1:
-      let w = besselI0(beta * sqrt(1 - r * r)) / norm
-      taps[i] = (if abs(x) < 1e-12: 1.0 else: sin(PI * x) / (PI * x)) * w
-  for j in 0 ..< n:
-    var sum = 0.0
-    for i in 0 .. 2 * SincHalf:
-      let k = j - whole - (i - SincHalf)
-      if k >= 0 and k < stored.len: sum += float64(stored[k]) * taps[i]
-    result[j] = float32(sum)
-
 func startedAt*(stored: openArray[float32]; startMs, dtMs: float64): seq[float32] =
   ## `stored` placed at its own start time (an archive window's From), no alignment.
+  ## Raises `ValueError` when that start is past the range of a sample count.
   if startMs.isNaN or not (dtMs > 0): return @stored
-  placed(stored, int(round(startMs / dtMs)))
+  placedWhole(stored, int(round(startMs / dtMs)))
 
 func startsTogether*(startMs: float64): string =
   ## What the note says when there is no recorded reference to align to.
