@@ -42,8 +42,13 @@
 ## turning the Ruler on, "a Ctrl drag measures" found the button off; with
 ## the second Ruler click aimed off the button, "the Ruler button turns it
 ## on did not happen" names the button rectangle when it was marked and when
-## it was clicked, the pointer, the frames waited, the item under the
-## pointer, rulerOn and the window size.
+## it was clicked, the pointer, the frames waited, rulerOn and the window
+## size. `hovered` there is the last mark whose rectangle contains the
+## pointer (a mark drawn over the whole work area wins over the button), and
+## `id` is ImGui's hovered item id, not a window id. The same line names the
+## hovered window, the active item id, whether a popup is open, whether the
+## press and the release were seen on different frames, and the step just
+## before.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-*.png there.
@@ -104,6 +109,11 @@ proc runMain() =
     var rulerMark, rulerPress, rulerRelease: Rect
     var pressAt, releaseAt = vec2(0, 0)
     var pressHover, releaseHover = ""
+    var beforeStep = ""
+    var pressWin, releaseWin = ""
+    var pressActive, releaseActive: uint32 = 0
+    var pressPopup, releasePopup = false
+    var downSeen, upSeen = -1
 
     proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
       steps.add Step(name: name, act: act, done: done)
@@ -130,23 +140,43 @@ proc runMain() =
       let id = igGetHoveredID()
       if result.len == 0: result = if id == 0: "none" else: "id " & $id
       else: result.add " id=" & $id
+    proc hoveredWindow(): string =
+      ## ImGui's hovered window, not a mark. A mark lookup reports the last
+      ## rectangle that contains the pointer, so the work-area mark hides the
+      ## button.
+      let ctx = igGetCurrentContext()
+      if ctx.isNil or ctx.HoveredWindow.isNil: "none" else: $ctx.HoveredWindow.Name
     proc noteRuler(f: FrameInfo; press: bool) =
       let at = pointerFb()
       let hover = f.itemUnder(at)
+      let win = hoveredWindow()
+      let active = uint32(igGetActiveID())
+      let popup = igIsPopupOpen_Str("", ImGui_PopupFlags_AnyPopup.cint)
       if press:
         rulerPress = f.markOf("map.ruler button")
         pressAt = at
         pressHover = hover
+        pressWin = win
+        pressActive = active
+        pressPopup = popup
       else:
         rulerRelease = f.markOf("map.ruler button")
         releaseAt = at
         releaseHover = hover
+        releaseWin = win
+        releaseActive = active
+        releasePopup = popup
     proc rulerMiss(f: FrameInfo; frames: int): string =
+      let separate = downSeen >= 0 and upSeen > downSeen
+      let before = if beforeStep.len > 0: beforeStep else: "(none)"
       "; mark=" & box(rulerMark) & "; click=" & box(rulerRelease) & "; pointer=" &
         px(releaseAt.x) & "," & px(releaseAt.y) & "; frames=" & $frames & "; hovered=" &
-        releaseHover & "; rulerOn=" & $f.mapWindow.rulerOn & "; window=" & $f.width & "x" &
-        $f.height & "; atPress=" & box(rulerPress) & " pointer=" & px(pressAt.x) & "," &
-        px(pressAt.y) & " hovered=" & pressHover
+        releaseHover & "; win=" & releaseWin & "; active=" & $releaseActive & "; popup=" &
+        $releasePopup & "; separate=" & $separate & "; downFrame=" & $downSeen &
+        "; upFrame=" & $upSeen & "; before=" & before & "; rulerOn=" & $f.mapWindow.rulerOn &
+        "; window=" & $f.width & "x" & $f.height & "; atPress=" & box(rulerPress) &
+        " pointer=" & px(pressAt.x) & "," & px(pressAt.y) & " hovered=" & pressHover &
+        " win=" & pressWin & " active=" & $pressActive & " popup=" & $pressPopup
 
     step("loaded", noop, proc (f: FrameInfo): bool =
       result = f.core.survey.layers.len == 2 and f.mapWindow.mapImagesDrawn > 0 and
@@ -418,12 +448,20 @@ proc runMain() =
       # the name is drawn beside the icon: a button about twice as wide as high
       doAssert r.size.x > 2 * r.size.y, "the Ruler button is an icon alone: " & $r
       rulerMark = r
+      beforeStep = if at > 0: steps[at - 1].name else: ""
       p = stripButtonAt(f, "map.ruler button")
       f.moveMouse(p), proc (f: FrameInfo): bool =
       if wait == 3: f.pressMouse(p, true)
       if wait == 4: f.noteRuler(true) # the press has been taken
       if wait == 5: f.pressMouse(p, false)
       if wait == 6: f.noteRuler(false) # the release has been taken
+      # The hook runs after this frame's events. The press, queued a frame
+      # ago, is down now; the release, queued a frame ago, is up now. The
+      # same frame for both means they were not delivered apart.
+      if wait >= 4 and downSeen < 0 and igIsMouseDown_Nil(ImGui_MouseButton_Left.cint):
+        downSeen = f.index
+      if wait >= 6 and upSeen < 0 and not igIsMouseDown_Nil(ImGui_MouseButton_Left.cint):
+        upSeen = f.index
       result = wait > 6 and f.mapWindow.rulerOn
       if result: doAssert f.mapWindow.rulerText.len == 0)
     step("a plain drag measures as the Ctrl drag did", proc (f: FrameInfo) =
