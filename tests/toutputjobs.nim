@@ -11,8 +11,11 @@
 ## sample path, "the written trace is not the panel reader's whole trace".
 ##
 ## Runs on samples/land/shots.sgy and samples/land/shots.sgd.
+## Removing a directory link with `removeDir` deleted the marker in its target.
 
 import std/[math, os, sequtils, strutils]
+when defined(windows):
+  from std/winlean import nil
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
@@ -22,6 +25,18 @@ import utils/[faultyfs, waiting]
 const root = currentSourcePath().parentDir.parentDir
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
+
+proc dropDirLink(link: string) =
+  ## Removes a directory symlink, not its target. Failure is ignored: cleanup
+  ## of a temp link must not fail the test.
+  try:
+    when defined(windows):
+      if winlean.removeDirectoryW(newWideCString(link)) == 0:
+        raiseOSError(osLastError(), link)
+    else:
+      removeFile(link)
+  except OSError:
+    discard
 
 var sortLane: Jobs
 
@@ -369,20 +384,34 @@ proc main*() =
 
   block symlinkedFolder:
     ## Seen to fail: a destination under a symlinked folder was not resolved,
-    ## so it was not refused as inside an open file's folder. Also, removing
-    ## that directory link with `removeFile` (DeleteFile) raises "Access is
-    ## denied" on Windows; nothing has the link open. `removeDir` removes the
-    ## link and not its target when DeleteFile will not.
+    ## so it was not refused as inside an open file's folder. Creating the
+    ## link raises `OSError` where it is not allowed; the block is skipped.
+    ## `removeFile` (DeleteFile) and `removeDir` on a directory link raise
+    ## "Access is denied" or walk into the target.
     let real = dir / "real-folder"
     createDir(real)
+    let marker = real / "kept.txt"
+    writeFile(marker, "kept")
     let link = dir / "linked-folder"
-    createSymlink(real, link)
-    let why = refuseDestination(link / "out.sgy", @[real / "open.sgy"])
-    doAssert "folder" in why, "a symlinked folder was not resolved: " & why
-    doAssert refuseDestination(dir / "elsewhere.sgy", @[real / "open.sgy"]).len == 0,
-      "a path outside the folder was refused"
-    if not tryRemoveFile(link): removeDir(link)
-    removeDir(real)
+    var made = false
+    try:
+      createSymlink(real, link)
+      made = true
+    except OSError:
+      echo "symlinkedFolder: skipped, a directory symlink could not be created"
+    if made:
+      let why = refuseDestination(link / "out.sgy", @[real / "open.sgy"])
+      doAssert "folder" in why, "a symlinked folder was not resolved: " & why
+      doAssert refuseDestination(dir / "elsewhere.sgy", @[real / "open.sgy"]).len == 0,
+        "a path outside the folder was refused"
+      dropDirLink(link)
+      doAssert readFile(marker) == "kept", "removing the link changed its target"
+    dropDirLink(link)
+    try:
+      removeFile(marker)
+      removeDir(real)
+    except OSError:
+      discard
 
   block cancelRemovesTheFile:
     var src = openSeismic(segy, keys = true)
@@ -565,7 +594,15 @@ proc main*() =
     removeFile(dest)
 
   doAssert readFile(segy) == srcBytes and readFile(segd) == sgdBytes
-  removeDir(dir)
+  dropDirLink(dir / "linked-folder")
+  try:
+    removeDir(dir)
+  except OSError:
+    dropDirLink(dir / "linked-folder")
+    try:
+      removeDir(dir)
+    except OSError:
+      discard
   echo "toutputjobs: ok"
 
 when isMainModule:
