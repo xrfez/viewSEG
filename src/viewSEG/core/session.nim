@@ -11,6 +11,13 @@
 ##
 ## Trace ids are survey-wide: `base + index`. Bases are never reused, so an id
 ## kept by a view never names a trace of a file opened later.
+##
+## A session derived from a file on disk (a correlated record) keeps that
+## file's path in `origin` and a virtual key in `path`, set by `asDerived`
+## before it is adopted. The key is `correlatedPath` of the file on disk: the
+## same for that file every time, and not a path any file system can name.
+## Readers and jobs still hold, read and close by `path`. `diskPath` is the
+## file on disk.
 
 import std/[math, os, strutils, times]
 import parseSEG
@@ -46,6 +53,8 @@ type
     id: SessionId
     base: int
     path: string
+    origin: string
+      ## the path of the file this session was derived from; empty for a file on disk
     file: SeismicFile
     gathers: seq[Gather]
     records: seq[RecordRow]
@@ -64,6 +73,16 @@ type
       ## the SEG-Y (`kind` `sgNone` for any other file)
 
 const NoSession* = SessionId(0)
+
+const CorrelateSuffix = "correlated\0"
+  ## Ends a derived session's path. No file system allows a name to end in
+  ## NUL, so the key cannot be a real path. The word sits before the NUL, so
+  ## a C string of the key does not name the file on disk.
+
+func correlatedPath*(raw: string): string {.inline.} =
+  ## The virtual key of a session derived from the file at `raw`: stable for
+  ## that file, and not a path any file system can name. Built here only.
+  raw & CorrelateSuffix
 
 func `==`*(a, b: SessionId): bool {.borrow.}
 func `$`*(id: SessionId): string = "file " & $int(id)
@@ -161,6 +180,15 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
   else: result.facts.opened = OpenFacts(choice: choice, kind: result.file.kind,
     detected: result.file.kind)
 
+proc asDerived*(s: Session) =
+  ## Records `s.path` as the file this session was derived from and retargets
+  ## `path` to `correlatedPath` of that file. Call after `newSession`, which
+  ## reads the file on disk under the path it was given. A session that
+  ## already has an origin is left as it is.
+  if s.origin.len > 0: return
+  s.origin = s.path
+  s.path = correlatedPath(s.origin)
+
 proc register*(s: Session; id: SessionId; base: int) =
   ## Gives `s` its id and the survey-wide id of its first trace (`AppState`
   ## does this when it adopts the session).
@@ -180,8 +208,17 @@ func id*(s: Session): SessionId {.inline.} = s.id
 func base*(s: Session): int {.inline.} = s.base
   ## The survey-wide id of trace 0.
 func path*(s: Session): lent string {.inline.} = s.path
-func name*(s: Session): string = s.path.extractFilename
-  ## The file's name, for messages and titles.
+func origin*(s: Session): lent string {.inline.} = s.origin
+  ## The path of the file this session was derived from; empty for a file on disk.
+func derived*(s: Session): bool {.inline.} = s.origin.len > 0
+  ## Whether this session was derived from a file on disk.
+func diskPath*(s: Session): string {.inline.} =
+  ## The file on disk: the origin when this session was derived from one,
+  ## otherwise its path.
+  if s.origin.len > 0: s.origin else: s.path
+func name*(s: Session): string = s.diskPath.extractFilename
+  ## The file's name, for messages and titles: the file on disk, never a
+  ## derived session's virtual key.
 func file*(s: Session): lent SeismicFile {.inline.} = s.file
 func zeroKept*(s: Session): int {.inline.} = s.zeroKept
   ## Traces with field record number 0 that were kept with the record before them.
