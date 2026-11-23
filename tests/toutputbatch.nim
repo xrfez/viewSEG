@@ -342,7 +342,7 @@ proc main*() =
       doAssert toOther.wrote.written == 1 and toOther.wrote.failed == 0
       let want = expandFilename(unrelated) / "line1" / "shots.sgy"
       doAssert fileExists(want), "mirror mode did not write into the linked folder"
-      doAssert toOther.wrote.items[0].destination.normalizedPath == want.normalizedPath,
+      doAssert sameFile(toOther.wrote.items[0].destination, want),
         toOther.wrote.items[0].destination
       let missing = linkOk / "new-out"
       let toMissing = runOne(missing)
