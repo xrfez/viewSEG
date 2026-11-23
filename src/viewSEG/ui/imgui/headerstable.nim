@@ -18,6 +18,7 @@ import std/[math, strutils]
 import imguin/cimgui
 from parseSEG import SeismicKind
 import ../../core/[explain, state]
+from ../../core/editmarks import shiftWords
 import ../../view/[headerviews, theme]
 import chrome, explainmenu, fonts, icons, marks, style
 
@@ -334,6 +335,8 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
       if killed: number.add " K"
       if reversed: number.add " R"
       if hasF: number.add " " & IconFilter
+      let shiftMs = if id >= 0: st.shownShift(id) else: 0.0
+      if shiftMs != 0.0: number.add " " & IconShift
       if igSelectable_Bool((number & "##row").cstring, false,
           ImGui_SelectableFlags_SpanAllColumns.cint or
           ImGui_SelectableFlags_AllowDoubleClick.cint, ImVec2_c(x: 0, y: 0)) and id >= 0:
@@ -352,11 +355,17 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
             mode: (if io.KeyCtrl: smToggle else: smReplace))
           ui.lastClicked = row
       if igIsItemHovered(0) and id >= 0: over = id
-      if hasF and igIsItemHovered(0):
-        let words = filterWords(filt)
+      if igIsItemHovered(0) and (hasF or shiftMs != 0.0):
+        var words = ""
+        if hasF: words = filterWords(filt)
+        if shiftMs != 0.0:
+          if words.len > 0: words.add "\n"
+          words.add shiftWords(shiftMs)
         igSetTooltip("%s", words.cstring)
-        if row < 400: marks.mark("table.filter tip " & words)
+        if hasF and row < 400: marks.mark("table.filter tip " & filterWords(filt))
+        if shiftMs != 0.0 and row < 400: marks.mark("table.shift tip " & shiftWords(shiftMs))
       if hasF and row < 400: marks.mark("table.filter " & $row)
+      if shiftMs != 0.0 and row < 400: marks.mark("table.shift " & $row)
       if row < 400: marks.mark("table.row " & $row)
       if id >= 0 and igBeginPopupContextItem("##rowmenu", ImGui_PopupFlags_MouseButtonRight.cint):
         marks.markWindow("table.menu")
