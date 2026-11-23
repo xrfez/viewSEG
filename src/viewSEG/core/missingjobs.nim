@@ -10,7 +10,9 @@
 ## end, on the job thread.
 ##
 ## A file that cannot be opened, or that has no trace keys, is skipped and
-## the scan goes on. A gather whose match is ambiguous is not a row: it is
+## the scan goes on. A path already scanned (compared normalised) is not
+## scanned again and is not listed as skipped. A gather whose match is
+## ambiguous is not a row: it is
 ## listed in `unmatched`, and its survey candidates are not records without
 ## data. No survey (nil, or no relations) fails the job with one sentence
 ## (`NoSurvey`). A cancel leaves the sink untouched.
@@ -183,59 +185,64 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
     var sawReceiver = false
     var receiver: ref SurveyGeometry = nil
     var rels: seq[SpsRelation] = @[]
+    var seen = initHashSet[string]()
     try:
       for i, path in paths:
         ctx.setPhase "reading " & path.extractFilename
         ctx.checkCancelled()
-        let rel = relTo(folder, path)
-        var s: Session = nil
-        var skip = ""
-        var records: seq[RecordCompleteness] = @[]
-        var listed = false
-        try:
-          s = openKeys(path, ctx)
-          if s.file.kind == skUnknown: skip = "not a SEG-Y, SEG-D or SEG-2 file"
-          elif s.file.index.keys.len == 0: skip = "has no trace keys"
-          else:
-            {.cast(gcsafe).}:
-              for g in s.gathers:
-                if g.traces.len == 0: continue
-                beat(ctx, g.traces.len)
-                let receiverGather = g.kind == gkReceiver
-                if receiverGather and receiver == nil:
-                  rels = relations[].receiverRelationsOf(relations[].highestRecord + 1)
-                  var built = initSurveyGeometry()
-                  built.addSps(SpsFile(relations: rels), rdSource)
-                  receiver = new SurveyGeometry
-                  receiver[] = built
-                let checked =
-                  if receiverGather: swappedCompleteness(receiver[], s.file, g.traces, ctx)
-                  else: relations[].recordCompleteness(s.file.rowsOf(g.traces))
-                if checked.isAmbiguous:
-                  listed = true
-                  unmatched.add (path: rel, record: fieldId(checked), why: $checked.candidates.len &
-                    " survey records share this source and the record number matches neither")
-                  for id in checked.candidates: drop.incl id
-                elif receiverGather and checked.xpsRecord < 0:
-                  listed = true
-                  unmatched.add (path: rel, record: fieldId(checked),
-                    why: "no survey record matches this gather")
-                else:
-                  records.add checked
-                  if receiverGather: sawReceiver = true
-                  else: sawShot = true
-        except SegCancelledError:
-          raise newException(JobCancelledError, "cancelled")
-        except JobCancelledError:
-          raise
-        except CatchableError as e:
-          skip = if e.msg.len > 0: e.msg else: $e.name
-        finally:
-          s = nil
-          clearCycleRoots()
-        if skip.len > 0: skipped.add (path: rel, why: skip)
-        elif records.len > 0 or not listed:
-          files.add FileRecords(path: rel, records: records)
+        let key = path.normalizedPath
+        if key notin seen:
+          seen.incl key
+          let rel = relTo(folder, path)
+          var s: Session = nil
+          var skip = ""
+          var records: seq[RecordCompleteness] = @[]
+          var listed = false
+          try:
+            s = openKeys(path, ctx)
+            if s.file.kind == skUnknown: skip = "not a SEG-Y, SEG-D or SEG-2 file"
+            elif s.file.index.keys.len == 0: skip = "has no trace keys"
+            else:
+              {.cast(gcsafe).}:
+                for g in s.gathers:
+                  if g.traces.len == 0: continue
+                  beat(ctx, g.traces.len)
+                  let receiverGather = g.kind == gkReceiver
+                  if receiverGather and receiver == nil:
+                    rels = relations[].receiverRelationsOf(relations[].highestRecord + 1)
+                    var built = initSurveyGeometry()
+                    built.addSps(SpsFile(relations: rels), rdSource)
+                    receiver = new SurveyGeometry
+                    receiver[] = built
+                  let checked =
+                    if receiverGather: swappedCompleteness(receiver[], s.file, g.traces, ctx)
+                    else: relations[].recordCompleteness(s.file.rowsOf(g.traces))
+                  if checked.isAmbiguous:
+                    listed = true
+                    unmatched.add (path: rel, record: fieldId(checked),
+                      why: $checked.candidates.len &
+                      " survey records share this source and the record number matches neither")
+                    for id in checked.candidates: drop.incl id
+                  elif receiverGather and checked.xpsRecord < 0:
+                    listed = true
+                    unmatched.add (path: rel, record: fieldId(checked),
+                      why: "no survey record matches this gather")
+                  else:
+                    records.add checked
+                    if receiverGather: sawReceiver = true
+                    else: sawShot = true
+          except SegCancelledError:
+            raise newException(JobCancelledError, "cancelled")
+          except JobCancelledError:
+            raise
+          except CatchableError as e:
+            skip = if e.msg.len > 0: e.msg else: $e.name
+          finally:
+            s = nil
+            clearCycleRoots()
+          if skip.len > 0: skipped.add (path: rel, why: skip)
+          elif records.len > 0 or not listed:
+            files.add FileRecords(path: rel, records: records)
         if not ctx.progress(i + 1, paths.len):
           raise newException(JobCancelledError, "cancelled")
       var report =

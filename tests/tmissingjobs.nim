@@ -3,7 +3,8 @@
 ## seismic, or that cannot be read, is skipped. No survey fails the job
 ## with one sentence. A cancel leaves the sink empty.
 ##
-## Seen to fail: with a receiver gather matched by its record number,
+## Seen to fail: with a path scanned once per listing, `duplicate_path_is_scanned_once`
+## rejected files 3, records 3; with a receiver gather matched by its record number,
 ## `receiver_matches_by_station` rejected a row of expected 1, present 1
 ## for the other receiver; with an ambiguous gather stored as a row,
 ## `ambiguous_is_unmatched` rejected a row of expected 0, present 0, missing 0;
@@ -196,6 +197,19 @@ proc main*() =
     doAssert skippedWhy(got.sink.result.skipped, "notes.txt") ==
       "not a SEG-Y, SEG-D or SEG-2 file"
     doAssert skippedWhy(got.sink.result.skipped, "gone.sgd") == "Input/output error"
+
+  block duplicate_path_is_scanned_once:
+    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 2, 10, 1, 2))
+    let path = dir / "dup.sgd"
+    shotFile(path, [(record: 1, src: 1.0, receivers: 1 .. 2)])
+    let again = dir / "sub" / ".." / "dup.sgd"
+    let got = run(dir, @[path, path, again], survey)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    let t = got.sink.result.report.totals
+    doAssert t.files == 1 and t.records == 1, $t
+    doAssert t.expected == 2 and t.present == 2 and t.missing == 0, $t
+    doAssert got.sink.result.skipped.len == 0
+    doAssert got.sink.result.report.records[0].alsoIn == 0, $got.sink.result.report.records[0]
 
   block receiver_gather:
     let survey = surveyOf(
