@@ -1015,6 +1015,26 @@ proc dropBrought*(e: var FileEdits; baseline: EditLists) =
   e.shown = e.shown.minus(baseline)
   e.kept = e.kept.minus(baseline)
 
+proc keepIncoming*(e: var FileEdits; incomingShown, incomingKept, baseline: EditLists) =
+  ## A filter or shift the incoming path holds that differs from `baseline`
+  ## wins over what is already linked: a change made while the check ran.
+  let wasShown = e.shown
+  let wasKept = e.kept
+  for f in incomingShown.filters:
+    if not baseline.hasFilter(f.trace) or baseline.filterOf(f.trace) != f.filter:
+      e.shown.assignFilter(f.trace, true, f.filter)
+  for s in incomingShown.shifts:
+    if not baseline.hasShift(s.trace) or baseline.shiftOf(s.trace) != s.ms:
+      e.shown.assignShift(s.trace, true, s.ms)
+  for f in incomingKept.filters:
+    if not baseline.hasFilter(f.trace) or baseline.filterOf(f.trace) != f.filter:
+      e.kept.assignFilter(f.trace, true, f.filter)
+  for s in incomingKept.shifts:
+    if not baseline.hasShift(s.trace) or baseline.shiftOf(s.trace) != s.ms:
+      e.kept.assignShift(s.trace, true, s.ms)
+  if e.shown != wasShown: inc e.revision
+  if e.kept != wasKept: inc e.keptRevision
+
 proc takeOff*(e: var FileEdits; gone: EditLists) =
   ## Takes every edit of `gone` off what is shown and kept. After two paths
   ## of one file are joined, `gone` is the snapshot edits the incoming path

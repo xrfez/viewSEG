@@ -62,6 +62,8 @@
 ## - a path that is not the taker confirms first (a copy, and a copy then a
 ##   link), then the file takes a kill back while its hash is held: the kill
 ##   stays taken back on every path, and a kill made during the check joins;
+## - a filter or shift changed on a copy while its hash is held wins over the
+##   snapshot the file already confirmed;
 ## - the data file's bytes and modification time are as they were through
 ##   all of it, what is remembered of it forgotten (File memory) included.
 ##
@@ -111,10 +113,12 @@
 ## it since, instead of to what was brought back, "a kill taken back came
 ## back with the copy"; with no take-off, after the link's merge, of the
 ## snapshot edits the incoming path no longer has, "a kill taken back came
-## back after the copy confirmed first".
+## back after the copy confirmed first"; with the already-linked filter and
+## shift kept when the incoming value differs from the snapshot, "a filter
+## changed during the check was lost to the snapshot".
 
 import std/[atomics, monotimes, os, sequtils, strutils, times]
-import viewSEG/core/[diskio, filesystem, jobs, state]
+import viewSEG/core/[diskio, filesystem, jobs, processing, state]
 import utils/[faultyfs, fixtures, steps, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
@@ -969,6 +973,48 @@ proc main*() =
           "a kill taken back came back after the copy and the link confirmed"
         st.shutdown()
         removeFile(link)
+    block changedDuringTheCheck:
+      # a filter or shift changed while the copy's hash is held wins over the
+      # snapshot the file already confirmed
+      let cfg = fx.dir / "config-filter"
+      createDir(cfg)
+      let f = fx.dir / "filter.sgy"
+      writeFile(f, readFile(b))
+      setLastModificationTime(f, initTime(getLastModificationTime(f).toUnix - 60, 0))
+      let copy = fx.dir / "filter-copy.sgy"
+      writeFile(copy, readFile(f))
+      setLastModificationTime(copy, getLastModificationTime(f))
+      var st = start(cfg)
+      st.showFile(f)
+      doAssert st.settle(st.remembering(f).known)
+      st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[st.base + 15], on: true,
+        processing: Processing(band: pbLowCut, f1: 8, f2: 16), filterPlace: fpAfter)
+      st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[st.base + 16], on: true,
+        ms: 4.0)
+      doAssert st.editsOf(0).ownOf(15).filter.spec.f1 == 8 and st.editsOf(0).shiftOf(16) == 4.0
+      doAssert st.settle(st.remembering(f).confirmed and not st.remembering(f).looking)
+      st.flushFiles()
+      holdStep("reading every byte")
+      st.showFile(copy)
+      doAssert waitUntil(inStep("reading every byte").len >= 1), "the copy's hash did not start"
+      doAssert st.settle(st.remembering(copy).known and st.editsOf(0).ownOf(15).filter.spec.f1 ==
+          8 and
+        st.editsOf(0).shiftOf(16) == 4.0), "the snapshot filter and shift were not brought back"
+      st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[st.base + 15], on: true,
+        processing: Processing(band: pbLowCut, f1: 20, f2: 30), filterPlace: fpAfter)
+      st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[st.base + 16], on: true,
+        ms: 8.0)
+      releaseStep("reading every byte")
+      doAssert st.settle(st.remembering(copy).confirmed and not st.remembering(copy).looking and
+        st.remembering(f).confirmed)
+      doAssert st.remembering(f).doc.len > 0 and st.remembering(f).doc == st.remembering(copy).doc,
+        "the paths did not share one document"
+      doAssert st.editsOf(0).ownOf(15).filter.spec.f1 == 20 and
+        st.editsOf(0).keptFilter(15).filter.spec.f1 == 20,
+        "a filter changed during the check was lost to the snapshot"
+      doAssert st.editsOf(0).shiftOf(16) == 8.0 and st.editsOf(0).keptShift(16) == 8.0,
+        "a shift changed during the check was lost to the snapshot"
+      st.shutdown()
     doAssert (readFile(b), getLastModificationTime(b)) == kept, "the data file changed"
   echo "tmemory: ok"
 

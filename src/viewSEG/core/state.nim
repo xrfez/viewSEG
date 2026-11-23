@@ -4344,7 +4344,8 @@ proc link(state: var AppState; i, j: int) =
     # kill taken back during the check is not put back, and an edit made
     # during it still joins. What this path no longer has of that snapshot
     # is taken off the other path after the union, so a kill taken back
-    # while the other path had already confirmed does not return.
+    # while the other path had already confirmed does not return. A filter
+    # or shift changed during the check, different from that snapshot, wins.
     let snap = state.remembered[i].brought.doc.len > 0
     let baseline = if snap: state.remembered[i].brought.edits
       elif state.remembered[i].doc.len > 0:
@@ -4353,7 +4354,10 @@ proc link(state: var AppState; i, j: int) =
     if mine.steps != (0, 0) or mine.kept != baseline:
       let gone = baseline.minus(mine.kept)
       if snap: mine.dropBrought(baseline)
+      let incomingShown = mine.shown
+      let incomingKept = mine.kept
       state.edits.mgetOrPut(key, FileEdits()).merge(move mine)
+      if snap: state.edits[key].keepIncoming(incomingShown, incomingKept, baseline)
       state.edits[key].takeOff(gone)
   for p in moved: state.editKey[p] = key
   state.editKey.del key
