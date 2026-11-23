@@ -212,6 +212,9 @@ type
       ## how a spectrum window shows its spectrum, over which time; the live panel frozen or not
     ckCloseSpectrum = "close spectrum" ## close an FFT window
     ckSpectrumPanel = "spectrum panel" ## the live spectrum panel on screen, or not
+    ckAuxWindow = "aux window"
+      ## the Aux window open or closed: its panel then shows the auxiliary traces of the
+      ## record the Seismic window shows, or nothing
     ckSpectrumCursor = "spectrum cursor"
       ## hold a spectrum window's cursor at a frequency bin and curve, or let it go
     ckStepTrace = "step trace"
@@ -433,7 +436,8 @@ type
       table*: TableView
         ## the trace table's columns, scope, order, Find, rows on screen and
         ## graph, while it is on screen
-    of ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel, ckSpectrumCursor,
+    of ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel, ckAuxWindow,
+        ckSpectrumCursor,
         ckStepTrace:
       spectrum*: int
         ## ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumCursor, ckStepTrace:
@@ -465,7 +469,7 @@ type
         ## ckSpectrumDisplay: the window keeps the traces and the file it
         ## shows; off, it follows the plot again
       onScreen*: bool
-        ## ckSpectrumPanel: the live panel is on screen (it follows the
+        ## ckAuxWindow: the Aux window is open; ckSpectrumPanel: the live panel is on screen (it follows the
         ## Seismic window's view or selection, off the UI thread, only then)
     of ckOpenPlot, ckPlotDisplay, ckPlotCursor, ckClosePlot:
       plot*: int
@@ -989,6 +993,7 @@ type
     saidPositions: HashSet[string]
       ## files whose positions' problems were said; folders said to hold no coordinates
     panels: seq[Panel]
+    auxOpen: bool ## the Aux window is open: its panel follows the Seismic window's record
     heldBack: seq[PanelId]
     auxOnNoted: seq[string] ## the first file whose all-auxiliary record switched Aux on: said once a session
                               ## panels that could not show their file: a job had it to itself
@@ -1164,11 +1169,11 @@ type
     leftAnalysisReaders: seq[AnalysisReader]
       ## analysis readers left stuck in a drive that does not answer
 
-proc addPanel*(state: var AppState): PanelId =
+proc addPanel*(state: var AppState; role = prSeismic): PanelId =
   ## Another trace panel, empty until a file is shown in it.
   result = PanelId(state.nextPanel)
   inc state.nextPanel
-  state.panels.add Panel(id: result)
+  state.panels.add Panel(id: result, role: role)
   state.tiles.add newSeq[Tile]()
   state.readers.add PanelReader()
 
@@ -1850,6 +1855,16 @@ func tilesTaken*(state: AppState): int {.inline.} =
 func panels*(state: AppState): lent seq[Panel] {.inline.} =
   ## The trace panels, `MainPanel` first.
   state.panels
+
+func auxOpen*(state: AppState): bool {.inline.} =
+  ## Whether the Aux window is open (`ckAuxWindow`).
+  state.auxOpen
+
+func auxIndex*(state: AppState): int =
+  ## The index in `panels` of the Aux window's panel; -1 while it was never opened.
+  result = -1
+  for i, p in state.panels:
+    if p.role == prAux: return i
 
 func sessions*(state: AppState): lent seq[Session] {.inline.} =
   ## The open files, in the order they were opened.
@@ -2642,6 +2657,45 @@ const SignatureOverlap = 0.45
 const SignatureHeader = HeaderChoice(auto: false, fields: @[hfTraceId, hfTrace])
   ## a signature file's display header: the trace's name from its layout, then its number
 
+proc followAux(state: var AppState) =
+  ## The Aux window's panel shows the auxiliary traces of the record the Seismic window
+  ## shows, and nothing while the window is closed or the Seismic window shows no file. Called
+  ## when the Seismic window's source changes and after every command: it starts no read
+  ## while it already shows that record, and none while closed. It sets neither the
+  ## selection's active record nor anything a record-level job keys on.
+  let a = state.auxIndex
+  if a < 0: return
+  let m = state.findPanel(MainPanel)
+  let on = state.auxOpen and m >= 0 and state.shownFile(m) >= 0
+  if not on:
+    if state.panels[a].layers.len > 0:
+      state.panels[a].layers.setLen 0
+      state.newSource(a)
+    return
+  let src = state.panels[m].layers[0].source
+  let i = state.findSession(src.file)
+  let reversed = state.editsAt(state.sessions[i].path).allReversed
+  if state.panels[a].layers.len == 0:
+    var layer = recordLayer(src.file, src.gather)
+    layer.display = state.settings.aux.display
+    layer.filter = auxFilter()
+    layer.reversed = reversed
+    state.panels[a].layers.add layer
+    state.panels[a].header = state.settings.aux.header
+    state.newSource(a)
+  else:
+    template layer: untyped = state.panels[a].layers[0]
+    if layer.source.kind != lsRecord or layer.source.file != src.file or
+        layer.source.gather != src.gather:
+      if layer.source.kind != lsRecord or layer.source.file != src.file:
+        layer.filter.components = {}
+        state.panels[a].componentCodes.setLen 0
+        state.panels[a].componentCounts.setLen 0
+        state.panels[a].componentSensors.setLen 0
+      layer.source = LayerSource(kind: lsRecord, file: src.file, gather: src.gather)
+      layer.reversed = reversed
+      state.newSource(a)
+
 proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
   ## Points layer 0 of `panel` at `gather` of `file`. A later record of the
   ## same file keeps the filter, including which components are off. Another
@@ -2711,6 +2765,7 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
   state.selection.activeGather = GatherRef(file: file, gather: gather) # (before the read: it
   inc state.selection.revision # asks whether the record's template is known)
   state.newSource(k)
+  if panel == MainPanel: state.followAux()
 
 func gatherKind(state: AppState; layer: Layer): GatherKind =
   ## The kind of the gather `layer` shows; unknown for none.
@@ -2892,9 +2947,14 @@ proc settleGain(state: var AppState; k: int; by: CommandOrigin) =
       inc p.revision
       # kept for the next run too, as a typed amplitude is
       let clip = d.fixedClip
-      state.change(by, s):
-        if s.plot.display.gain == dgFixed and not usable(s.plot.display.fixedClip):
-          s.plot.display.fixedClip = clip
+      if p.role == prAux:
+        state.change(by, s):
+          if s.aux.display.gain == dgFixed and not usable(s.aux.display.fixedClip):
+            s.aux.display.fixedClip = clip
+      else:
+        state.change(by, s):
+          if s.plot.display.gain == dgFixed and not usable(s.plot.display.fixedClip):
+            s.plot.display.fixedClip = clip
   of dgFloat:
     var values: seq[float32]
     for i in countdown(state.tiles[k].high, 0): # the newest tile that meets the view
@@ -7956,6 +8016,7 @@ proc apply*(state: var AppState; cmd: Command) =
   state.map.followed(state.survey) # a layer went (a file closed, a survey file unloaded)
   state.relink()
   state.followHidden()
+  state.followAux()
   state.followInspect()
   let followed = state.filesHeldByFollow()
   state.followSpectrum()
@@ -8731,7 +8792,18 @@ proc takeCompare(state: var AppState; m: sink Msg) =
   if n.failure.len > 0:
     state.log.add(sevWarning, "compare", n.failure & ".")
 
+const AuxRefused = {ckGather, ckShowFile, ckShowTrace, ckSort, ckFilter, ckProcessing,
+  ckDisplayPreset, ckOwnFilter, ckPrepare, ckOpenPair}
+  ## what the Aux window's panel does not take: it follows the Seismic window's record and
+  ## shows the auxiliary traces as recorded, with no filter, sort or preset
+
 proc applyCommand(state: var AppState; cmd: Command) =
+  if cmd.kind in AuxRefused:
+    let a = state.findPanel(cmd.panel)
+    if a >= 0 and state.panels[a].role == prAux:
+      state.ignore(cmd, $cmd.panel & " is the Aux window: it follows the Seismic window's " &
+        "record and shows the auxiliary traces as recorded, so it takes no " & $cmd.kind)
+      return
   case cmd.kind
   of ckOpen:
     if cmd.paths.len == 0: state.ignore(cmd, "no file was named")
@@ -8962,7 +9034,10 @@ proc applyCommand(state: var AppState; cmd: Command) =
       template p: untyped = state.panels[k]
       let was = p.layers[0].display
       let wasLimits = p.viewLimits(p.view.columns)
-      let d = cmd.display.bounded # whoever sent it: the settings file takes it as it is
+      let aux = p.role == prAux
+      # whoever sent it: the settings file takes it as it is; the Aux window's is wiggles
+      # with the gain types it offers
+      let d = if aux: cmd.display.bounded.forAux else: cmd.display.bounded
       p.layers[0].display = d
       inc p.revision
       if d.orientation != was.orientation:
@@ -8973,10 +9048,14 @@ proc applyCommand(state: var AppState; cmd: Command) =
       # gain as the user had it, whatever an agent made it meanwhile
       var kept = remembered(d)
       let modelChanged = d.breakModel != was.breakModel
-      if state.inProject: kept.breakModel = state.settings.plot.display.breakModel
-      state.change(cmd.origin, s):
-        s.plot.display = carried(s.plot.display, state.settings.plot.display, kept)
-      if modelChanged and state.inProject:
+      if aux:
+        state.change(cmd.origin, s):
+          s.aux.display = carried(s.aux.display, state.settings.aux.display, kept)
+      else:
+        if state.inProject: kept.breakModel = state.settings.plot.display.breakModel
+        state.change(cmd.origin, s):
+          s.plot.display = carried(s.plot.display, state.settings.plot.display, kept)
+      if modelChanged and state.inProject and not aux:
         # the project's model: kept in it, not in the user's settings
         state.change(coAgent, s): s.plot.display.breakModel = d.breakModel
         if keeps(cmd.origin) and not state.project.readOnly:
@@ -9111,7 +9190,10 @@ proc applyCommand(state: var AppState; cmd: Command) =
       for f in cmd.header.fields:
         if f notin header.fields: header.fields.add f
       state.panels[k].header = header
-      state.change(cmd.origin, s): s.plot.header = header
+      if state.panels[k].role == prAux:
+        state.change(cmd.origin, s): s.aux.header = header
+      else:
+        state.change(cmd.origin, s): s.plot.header = header
       state.refetch(k, keepTiles = true)
   of ckSort:
     let k = state.findPanel(cmd.panel)
@@ -9319,6 +9401,11 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckPlotDisplay: state.showPlot(cmd)
   of ckPlotCursor: state.holdPlotCursor(cmd)
   of ckClosePlot: state.closePlot(cmd)
+  of ckAuxWindow:
+    if cmd.onScreen != state.auxOpen:
+      state.auxOpen = cmd.onScreen
+      if state.auxOpen and state.auxIndex < 0: discard state.addPanel(prAux)
+      state.followAux()
   of ckSpectrumPanel:
     template live: untyped = state.spectra[0]
     if cmd.onScreen != live.shown:
@@ -9567,6 +9654,7 @@ proc drainInbox*(state: var AppState): bool =
   state.map.followed(state.survey) # a layer came, or went with a file
   state.relink()
   state.followHidden()
+  state.followAux()
   state.followInspect()
   let followed = state.filesHeldByFollow()
   state.followSpectrum()

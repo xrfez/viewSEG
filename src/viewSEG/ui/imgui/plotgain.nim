@@ -247,24 +247,26 @@ proc drawGainControls*(p: Panel; box: var GainBox; t: Theme; marks: var Marks;
     cmds: var seq[Command]; notes: var seq[string]) =
   ## The gain drop-down (a checkbox for letting viewSEG choose, then the six
   ## types, then the type's settings), then the gain amount: -, a box in dB, +.
+  let caps = p.caps
   let d = p.layers[0].display
   let text = gainBarLabel(d, p.kind)
   let style = igGetStyle()
   igSetNextItemWidth(round(igCalcTextSize(text.cstring, nil, false, -1).x +
     igGetFrameHeight() + 3 * style.FramePadding.x))
   if igBeginCombo("##gain", text.cstring, ImGui_ComboFlags_HeightLargest.cint):
-    var choose = d.gain == dgAuto
-    if igCheckbox("Let viewSEG choose", addr choose):
-      var nd = d
-      nd.gain = if choose: dgAuto else: d.effectiveGain(p.kind)
-      p.send(nd, cmds)
-    marks.mark("plot.gain choose")
-    tip("AGC on shot and receiver records, none on stacked data. Untick to pick the " &
-      "type yourself.")
-    igSameLine(0, -1)
-    dimText(gainNow(d, p.kind), t)
-    marks.mark("plot.gain now")
-    igSeparator()
+    if caps.chooseGain:
+      var choose = d.gain == dgAuto
+      if igCheckbox("Let viewSEG choose", addr choose):
+        var nd = d
+        nd.gain = if choose: dgAuto else: d.effectiveGain(p.kind)
+        p.send(nd, cmds)
+      marks.mark("plot.gain choose")
+      tip("AGC on shot and receiver records, none on stacked data. Untick to pick the " &
+        "type yourself.")
+      igSameLine(0, -1)
+      dimText(gainNow(d, p.kind), t)
+      marks.mark("plot.gain now")
+      igSeparator()
     # the radio of the type in use (the one viewSEG picked, while the box is
     # ticked). Clicking one unticks the box and sets that type. The list stays
     # open, so the type's settings can be set at once.
@@ -272,27 +274,32 @@ proc drawGainControls*(p: Panel; box: var GainBox; t: Theme; marks: var Marks;
     # each explanation starts in one column, past the widest radio
     var nameW = 0'f32
     for gt in gainTypes:
-      nameW = max(nameW, igCalcTextSize(shortName(gt).cstring, nil, false, -1).x)
+      if gt in caps.gains:
+        nameW = max(nameW, igCalcTextSize(shortName(gt).cstring, nil, false, -1).x)
     let explainX = round(nameW + igGetFrameHeight() + style.ItemInnerSpacing.x +
       2 * style.ItemSpacing.x)
     for gt in gainTypes:
-      let picked = igRadioButton_Bool(shortName(gt).cstring, shown == gt)
-      marks.mark("plot.gain type " & $gt)
-      igSameLine(explainX, -1)
-      dimText(explanation(gt, d), t)
-      # a click on the explanation picks the type, as a click on the radio does
-      let clicked = igIsItemClicked(0)
-      marks.mark("plot.gain explain " & $gt)
-      if (picked or clicked) and d.gain != gt:
-        var nd = d
-        nd.gain = gt
-        p.send(nd, cmds)
+      if gt in caps.gains:
+        let picked = igRadioButton_Bool(shortName(gt).cstring, shown == gt)
+        marks.mark("plot.gain type " & $gt)
+        igSameLine(explainX, -1)
+        dimText(explanation(gt, d), t)
+        # a click on the explanation picks the type, as a click on the radio does
+        let clicked = igIsItemClicked(0)
+        marks.mark("plot.gain explain " & $gt)
+        if (picked or clicked) and d.gain != gt:
+          var nd = d
+          nd.gain = gt
+          p.send(nd, cmds)
     igSeparatorText("Settings")
     settings(p, d, marks, cmds, notes)
     igEndCombo()
   marks.mark("plot.gain")
-  tip("Gain: how amplitudes are scaled for display. Let viewSEG choose, or pick a type; " &
-    "its settings are in this list.")
+  tip(if caps.chooseGain:
+        "Gain: how amplitudes are scaled for display. Let viewSEG choose, or pick a type; " &
+        "its settings are in this list."
+      else: "Gain: how amplitudes are scaled for display, none, fixed or normalized; " &
+        "the type's settings are in this list. The Aux window's gain is its own.")
   # the amount: the buttons repeat while held, 12 dB a step with Shift.
   # The unit is in the box ("+0.0 dB"); a bare number still applies.
   let step = if igGetIO_Nil().KeyShift: GainShiftStepDb else: GainStepDb

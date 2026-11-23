@@ -1340,6 +1340,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
   let firstEdge = fullRight - gearReserve - 14 # a group gap before the gear
   var started = false
   var onFirst = true
+  let caps = p.caps
   let d = p.layers[0].display
   let turn = d.turn
   let turned = d.orientation == orTimeAcross # the plot's symbols turn with it
@@ -1352,7 +1353,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     tp.sortKeys.openSortKeys(p, st.settings)
   let compCols = drawnComponentColours(st.settings.componentColours, plotInk(t, d).background)
   for g in stripGroups(showTraceToggles(hasAux(st, p), f.seismic, f.auxiliary),
-      showComponentToggles(p.componentCodes.len)):
+      showComponentToggles(p.componentCodes.len), caps):
     case g
     of sgRecord:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
@@ -1396,49 +1397,51 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
           igEndTooltip()
     of sgDisplay:
       tp.stripGroup(g, firstEdge, fullRight, 14, 0, started, onFirst):
-        var modeFirst = true
-        for m in DisplayMode:
-          if not modeFirst: igSameLine(0, 2)
-          modeFirst = false
-          if symbolButton(modeSymbols[m], icon, t, marks, selected = m == d.mode,
-              markPrefix = "plot.", turned = turned) and m != d.mode:
-            var nd = d
-            nd.mode = m
-            res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+        var first = true
+        template gap() =
+          if not first: igSameLine(0, 2)
+          first = false
+        if caps.modes.card > 1:
+          for m in caps.modes:
+            gap()
+            if symbolButton(modeSymbols[m], icon, t, marks, selected = m == d.mode,
+                markPrefix = "plot.", turned = turned) and m != d.mode:
+              var nd = d
+              nd.mode = m
+              res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
         if showFills(d.mode):
-          igSameLine(0, 2)
-          var fillFirst = true
           for wf in WiggleFill:
-            if not fillFirst: igSameLine(0, 2)
-            fillFirst = false
+            gap()
             if symbolButton(fillSymbols[wf], icon, t, marks, selected = wf in d.fills,
                 markPrefix = "plot.", turned = turned):
               var nd = d
               if wf in nd.fills: nd.fills.excl wf else: nd.fills.incl wf
               res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
-        igSameLine(0, 2)
         let pk = st.findPanel(p.id)
-        let tv = st.templateView(pk)
-        if iconButton(IconTable, "Only traces in the template", "", icon, t, marks,
-            selected = f.templateOnly, tipText = templateTip(tv, f.templateOnly),
-            enabled = tv.available, markName = "plot.template only"):
-          var nf = f
-          nf.templateOnly = not f.templateOnly
-          res.commands.add Command(kind: ckFilter, panel: p.id, filter: nf)
-        igSameLine(0, 2)
-        let shownBreaks = st.shownBreaks(pk)
-        if symbolButton(syFirstBreaks, icon, t, marks, selected = d.firstBreaks,
-            markPrefix = "plot.", turned = turned, note = breakTip(d.firstBreaks,
-            shownBreaks)):
-          var nd = d
-          nd.firstBreaks = not d.firstBreaks
-          res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
-        if d.firstBreaks:
-          let unit = st.breakOffsetUnit(pk)
-          let chosen = drawBreakKey(shownBreaks, unit, st.breakUnitFromSurvey(pk), d,
-            plotInk(t, d), t, icon, marks)
-          if chosen.changed:
-            res.commands.add Command(kind: ckDisplay, panel: p.id, display: chosen.display)
+        if caps.templateButton:
+          gap()
+          let tv = st.templateView(pk)
+          if iconButton(IconTable, "Only traces in the template", "", icon, t, marks,
+              selected = f.templateOnly, tipText = templateTip(tv, f.templateOnly),
+              enabled = tv.available, markName = "plot.template only"):
+            var nf = f
+            nf.templateOnly = not f.templateOnly
+            res.commands.add Command(kind: ckFilter, panel: p.id, filter: nf)
+        if caps.breaks:
+          gap()
+          let shownBreaks = st.shownBreaks(pk)
+          if symbolButton(syFirstBreaks, icon, t, marks, selected = d.firstBreaks,
+              markPrefix = "plot.", turned = turned, note = breakTip(d.firstBreaks,
+              shownBreaks)):
+            var nd = d
+            nd.firstBreaks = not d.firstBreaks
+            res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+          if d.firstBreaks:
+            let unit = st.breakOffsetUnit(pk)
+            let chosen = drawBreakKey(shownBreaks, unit, st.breakUnitFromSurvey(pk), d,
+              plotInk(t, d), t, icon, marks)
+            if chosen.changed:
+              res.commands.add Command(kind: ckDisplay, panel: p.id, display: chosen.display)
     of sgGain:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         drawGainControls(p, tp.gainBox, t, marks, res.commands, res.notes)
@@ -1495,9 +1498,12 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
   igSetCursorScreenPos(ImVec2_c(x: fullRight - gearReserve, y: origin.y + lift))
   if button(IconSettings & "##more", t, marks, "plot.more"):
     igOpenPopup_Str(moreId, 0)
-  tip("Display presets, colours, component colours, density's colour map, the cursor time line, time across, " &
-    "killed traces, trace overlap, display header, the scale boxes, scale units and " &
-    "screen calibration")
+  tip(if caps.settingsTabs == {stLook, stTraces, stScales}:
+        "Display presets, colours, component colours, density's colour map, the cursor " &
+        "time line, time across, killed traces, trace overlap, display header, the scale " &
+        "boxes, scale units and screen calibration"
+      else: "Colours, the cursor time line, time across, killed traces, trace overlap and " &
+        "the display header")
   tp.gearWidth = igGetItemRectSize().x
   let gearMax = igGetItemRectMax()
   if igIsPopupOpen_Str(moreId, 0):
@@ -1524,7 +1530,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         if open:
           body
           igEndTabItem()
-      tab("Look", "plot.more tab look"):
+      if stLook in caps.settingsTabs: tab("Look", "plot.more tab look"):
         igSeparatorText("Plot")
         var line = st.settings.cursorLine
         if igCheckbox("Cursor time line", addr line):
@@ -1547,15 +1553,18 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
           "stacked " & stacked & "; click to draw time downwards again"
           else: " (off): click to draw time from left to right, the traces stacked " &
           stacked & ", a positive amplitude up"))
-        igSeparatorText("Display presets")
-        tp.drawPresets(st, p, marks, res)
+        if caps.displayPresets:
+          igSeparatorText("Display presets")
+          tp.drawPresets(st, p, marks, res)
         igSeparatorText("Colours")
         tp.drawColours(p, t, marks, res)
-        igSeparatorText("Density colour map")
-        drawColourMaps(p, t, marks, res)
-        igSeparatorText("Component colours")
-        tp.drawComponentColours(st, t, marks, res)
-      tab("Traces", "plot.more tab traces"):
+        if caps.densityMap:
+          igSeparatorText("Density colour map")
+          drawColourMaps(p, t, marks, res)
+        if caps.componentColours:
+          igSeparatorText("Component colours")
+          tp.drawComponentColours(st, t, marks, res)
+      if stTraces in caps.settingsTabs: tab("Traces", "plot.more tab traces"):
         igSeparatorText("Wiggles")
         drawWiggleSettings(p, marks, res)
         igSeparatorText("Killed traces")
@@ -1569,7 +1578,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
           "Off: they are drawn blank. Either way they are left out of the levels and spectra.")
         igSeparatorText("Display header")
         drawHeaderChoice(p, marks, "plot.more.header.", res)
-      tab("Scales", "plot.more tab scales"):
+      if stScales in caps.settingsTabs: tab("Scales", "plot.more tab scales"):
         tp.drawScaleSettings(st, marks, res, ppi, mon, ask)
       igEndTabBar()
     igEndPopup()
@@ -1753,6 +1762,7 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.target")
   igSeparator()
   let under = tp.menuUnder
+  let caps = p.caps
   let has = st.traceEdits(under)
   # Ticked while the trace under the pointer is reversed: a click puts it back.
   if igMenuItem_Bool("Reverse polarity", "R", teReversed in has, under >= 0):
@@ -1765,33 +1775,35 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.kill")
   tip(if teKilled in has: "Restore this killed trace (K)"
       else: "Kill this trace: leave it out of the plot and the processing (K)")
-  # Ticked while the trace under the pointer is excluded from the plot's filters.
-  if igMenuItem_Bool("Exclude from plot filters", "E", teExcluded in has, under >= 0):
-    res.commands.add editCommand(st, p, under, teExcluded)
-  marks.mark("plot.menu.exclude")
-  tip("Never filter this trace with the plot's filters (E), the Aux traces too option " &
-    "included. A tick means it is excluded; a click puts it back. A filter of its own " &
-    "(Filter this trace...) still runs.")
   let targets = if under >= 0: st.selection.targets(under) else: @[]
+  if caps.menuFilters:
+    # Ticked while the trace under the pointer is excluded from the plot's filters.
+    if igMenuItem_Bool("Exclude from plot filters", "E", teExcluded in has, under >= 0):
+      res.commands.add editCommand(st, p, under, teExcluded)
+    marks.mark("plot.menu.exclude")
+    tip("Never filter this trace with the plot's filters (E), the Aux traces too option " &
+      "included. A tick means it is excluded; a click puts it back. A filter of its own " &
+      "(Filter this trace...) still runs.")
   let filterMany = targets.len > 1
   let filterItem = if filterMany: "Filter " & $targets.len & " selected traces..."
                    else: "Filter this trace..."
-  if igMenuItem_Bool((IconFilter & "  " & filterItem).cstring, nil, false, under >= 0):
-    tp.ownAsk = true
-    tp.ownTraces = targets
-    tp.ownPos = igGetIO_Nil().MousePos
-    let start = st.startingFilter(targets)
-    tp.ownDraft = start.filter
-    tp.ownMixed = start.mixed
-  marks.mark("plot.menu.filter")
-  marks.mark("plot.menu.filter.item " & filterItem)
-  tip("Give this trace its own frequency filter, after the plot's filters or instead of them")
+  if caps.menuFilters:
+    if igMenuItem_Bool((IconFilter & "  " & filterItem).cstring, nil, false, under >= 0):
+      tp.ownAsk = true
+      tp.ownTraces = targets
+      tp.ownPos = igGetIO_Nil().MousePos
+      let start = st.startingFilter(targets)
+      tp.ownDraft = start.filter
+      tp.ownMixed = start.mixed
+    marks.mark("plot.menu.filter")
+    marks.mark("plot.menu.filter.item " & filterItem)
+    tip("Give this trace its own frequency filter, after the plot's filters or instead of them")
   var anyFilter = false
   for id in targets:
     let file = st.findTrace(id)
     if file >= 0 and st.ownAt(st.sessions[file].path, id - st.sessions[file].base).has:
       anyFilter = true
-  if anyFilter:
+  if anyFilter and caps.menuFilters:
     let removeItem = if filterMany: "Remove the filters of " & $targets.len & " traces"
                      else: "Remove the trace's filter"
     if igMenuItem_Bool((IconFilter & "  " & removeItem).cstring, nil, false, true):
@@ -1847,31 +1859,33 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.store")
   tip("Keep this trace as a reference: as recorded, reversed when the trace is reversed; " &
     "never the plot's filters, reverse-all or gain, and no filter")
-  menuHeading(marks, "Map", "plot.menu.heading.find")
-  # Its station on the map: the receiver (in a receiver gather, the source).
-  let role = $st.stationRole(k)
-  let many = under >= 0 and under in st.selection.selected and st.selection.selectedCount > 1
-  let station = if many: "Select their " & role & "s on the map" else: "Select its " & role &
-    " on the map"
-  if igMenuItem_Bool(station.cstring, "M", false, tp.menuStations.points.len > 0):
-    res.commands.add tp.menuStations
-  marks.mark("plot.menu.station")
-  tip("Select this trace's station on the map (M)")
-  menuHeading(marks, "Whole record", "plot.menu.heading.record")
-  # An operation on the samples (processSEG's polarityOp), not a colour.
-  let reversed = p.layers[0].reversed
-  if igMenuItem_Bool("Reverse polarity of all traces", nil, reversed, true):
-    res.commands.add Command(kind: ckReverseAll, panel: p.id, reverse: not reversed)
-  marks.mark("plot.menu.reverse all")
-  tip("Reverse the polarity of every trace in the plot")
+  if caps.menuMap:
+    menuHeading(marks, "Map", "plot.menu.heading.find")
+    # Its station on the map: the receiver (in a receiver gather, the source).
+    let role = $st.stationRole(k)
+    let many = under >= 0 and under in st.selection.selected and st.selection.selectedCount > 1
+    let station = if many: "Select their " & role & "s on the map"
+                  else: "Select its " & role & " on the map"
+    if igMenuItem_Bool(station.cstring, "M", false, tp.menuStations.points.len > 0):
+      res.commands.add tp.menuStations
+    marks.mark("plot.menu.station")
+    tip("Select this trace's station on the map (M)")
   template e: untyped = st.editsOf(k) # not copied
-  if igMenuItem_Bool((IconClearAll & "  Clear all edits for this file").cstring, nil, false,
-      not e.isEmpty):
-    res.commands.add Command(kind: ckClearEdits, panel: p.id)
-  marks.mark("plot.menu.clear")
-  tipAlways("Kills, polarity reversals and a trace's own filter are remembered beside the " &
-    "file, never written into it;\nclearing them shows the traces as the file has them " &
-    "(Ctrl+Z brings them back).")
+  if caps.menuWholeRecord:
+    menuHeading(marks, "Whole record", "plot.menu.heading.record")
+    # An operation on the samples (processSEG's polarityOp), not a colour.
+    let reversed = p.layers[0].reversed
+    if igMenuItem_Bool("Reverse polarity of all traces", nil, reversed, true):
+      res.commands.add Command(kind: ckReverseAll, panel: p.id, reverse: not reversed)
+    marks.mark("plot.menu.reverse all")
+    tip("Reverse the polarity of every trace in the plot")
+    if igMenuItem_Bool((IconClearAll & "  Clear all edits for this file").cstring, nil, false,
+        not e.isEmpty):
+      res.commands.add Command(kind: ckClearEdits, panel: p.id)
+    marks.mark("plot.menu.clear")
+    tipAlways("Kills, polarity reversals and a trace's own filter are remembered beside the " &
+      "file, never written into it;\nclearing them shows the traces as the file has them " &
+      "(Ctrl+Z brings them back).")
   igSeparator()
   # What it was, cut to a steady width; the whole text is in the tooltip.
   let wide = igGetFontSize() * 14
@@ -1913,9 +1927,9 @@ proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
       res.commands.add editCommand(st, p, under, teReversed)
     if plotPressed("plot.kill", over):
       res.commands.add editCommand(st, p, under, teKilled)
-    if plotPressed("plot.exclude", over):
+    if p.caps.menuFilters and plotPressed("plot.exclude", over):
       res.commands.add editCommand(st, p, under, teExcluded)
-    if plotPressed("plot.station", over):
+    if p.caps.menuMap and plotPressed("plot.station", over):
       let c = stationCommand(st, k, under)
       if c.points.len > 0: res.commands.add c
     if plotPressed("plot.fft", over):
@@ -2416,7 +2430,7 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
       res.commands.add Command(kind: ckStepTrace, spectrumOf: p.id,
         stepBy: (if alongTraces > 0: 1 else: -1))
   # Records: Page Down / Up, Home / End, Ctrl+G.
-  let (current, count) = record
+  let (current, count) = if p.caps.stepsRecords: record else: (0, 0)
   var to = current
   if held(ImGui_Key_PageDown.cint): to = current + 1
   if held(ImGui_Key_PageUp.cint): to = current - 1
@@ -2426,9 +2440,9 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
     res.commands.add Command(kind: ckGather, panel: p.id, gather: clamp(to, 0, count - 1))
   elif sweep and to != current and (to > count - 1 or to < 0):
     res.stepFile = if to > current: 1 else: -1 # the last record's Page Down: the next sweep
-  if plotPressed("plot.goto", hovered): tp.goto.open = true
+  if p.caps.stepsRecords and plotPressed("plot.goto", hovered): tp.goto.open = true
   gainKeys(p, hovered, res.commands)
-  filterKeys(p, hovered, res.commands)
+  if p.caps.filters: filterKeys(p, hovered, res.commands)
   if once(ImGui_Key_Escape.cint): # innermost first: a drag, a thumb, the selection
     if tp.drag.kind != dkNone:
       if tp.drag.kind == dkPan and tp.drag.moved: after = tp.drag.start
@@ -2708,7 +2722,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     of bePage: (if tp.burst(gsPage): remember = true)
     of beWheel: (if tp.burst(gsBarWheel): remember = true)
     tp.handleKeys(after, view, plot, turn, limNow, hovered, p,
-      st.selection.anySelected, recordOf(st, p), shownSignature(st, p), remember, res)
+      st.selection.anySelected, recordOf(st, p), shownSignature(st, p) and p.caps.stepsRecords,
+      remember, res)
     tp.cursorText = ""
     tp.cursorHeader.setLen 0
     # While the plot's menu is open, what was under the pointer at the right
@@ -2844,13 +2859,14 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
   # the hash of every byte confirms they are this file's.
   let checking = shown >= 0 and st.editsChecking(st.sessions[shown].path)
   let opened = if shown >= 0: st.sessions[shown].facts.opened.choice else: OpenChoice()
+  let aux = pk >= 0 and st.panels[pk].role == prAux
   var hidden = ""
-  if pk >= 0 and st.panels[pk].layers.len > 0:
+  if pk >= 0 and st.panels[pk].layers.len > 0 and not aux:
     let faces = buttonFaces(st.panels[pk].componentCodes, st.panels[pk].componentSensors,
       st.panels[pk].componentCounts)
     hidden = hiddenCaption(faces, st.panels[pk].layers[0].filter.components,
       st.panels[pk].layout.traces)
-  let note = if pk >= 0: templateCaption(st.templateView(pk)) else: ""
+  let note = if pk >= 0 and not aux: templateCaption(st.templateView(pk)) else: ""
   let title = IconPlot & "  " & name & (if opened.isDefault: "" else: "  \u00b7  " &
     choiceMark(opened)) & (if hidden.len > 0: "  \u00b7  " & hidden else: "") &
     (if note.len > 0: "  \u00b7  " & note else: "") &
@@ -2873,7 +2889,11 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
     marks.markWindow(name.toLowerAscii)
     let k = st.findPanel(panel)
     if k < 0 or st.panels[k].layers.len == 0:
-      drawStartScreen(t, st.settings.recentFiles, st.settings.recentFolders, marks, result)
+      if aux:
+        say("Show a file in the Seismic window: its auxiliary traces appear here.",
+          t.roles[rlTextDim])
+      else:
+        drawStartScreen(t, st.settings.recentFiles, st.settings.recentFolders, marks, result)
     else:
       template p: untyped = st.panels[k]
       let mon = monitorOf(igGetWindowViewport())
@@ -2920,6 +2940,8 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
         say("Reading " & name & "...", t.roles[rlTextDim])
       elif s >= 0 and st.sessions[s].gathers.len == 0:
         say(name & " has no traces to show (see Messages).", t.roles[rlTextDim])
+      elif p.layout.traces == 0 and aux:
+        say("This record has no auxiliary traces.", t.roles[rlTextDim])
       elif p.layout.traces == 0:
         let f = p.layers[0].filter
         let which = if f.seismic and not f.auxiliary: " (it shows seismic traces only)"

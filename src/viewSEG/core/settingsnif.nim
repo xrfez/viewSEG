@@ -26,6 +26,7 @@
 ##   (templateOnly false)
 ##   (processing (dc none) (band bandPass) (f1 4.0) (f2 8.0) (f3 60.0) (f4 80.0)
 ##    (notch (on true) (hz 60.0) (width 2.0) (harmonics 3)) (aux false)))
+##  (aux (mode wiggle) (fills positive negative) (gain normalized) (header auto))
 ##  (scale (length inch) (speed false))
 ##  (calibrations (monitor "DELL U2720Q 3840x2160" 163.2))
 ##  (readout time trace channel receiver)
@@ -200,6 +201,14 @@ proc writeBreakModel*(w: var NifWriter; m: BreakModel) =
   w.value("interceptMs", m.interceptMs)
   w.value("v2", m.v2)
   w.value("crossover", m.crossover)
+  w.close()
+
+proc writeHeader(w: var NifWriter; h: HeaderChoice) =
+  ## A window's display header: `auto`, or the fields, top row first.
+  w.open("header")
+  if h.auto: w.ident "auto"
+  else:
+    for f in h.fields: w.ident FieldNames[f]
   w.close()
 
 proc display(w: var NifWriter; d: DisplaySettings; turned = true) =
@@ -399,12 +408,12 @@ proc settingsDocument*(s: Settings): string =
   w.open("order")
   w.keys(s.plot.order)
   w.close()
-  w.open("header")
-  if s.plot.header.auto: w.ident "auto"
-  else:
-    for f in s.plot.header.fields: w.ident FieldNames[f]
-  w.close()
+  w.writeHeader(s.plot.header)
   w.writeProcessing(s.plot.processing)
+  w.close()
+  w.open("aux")
+  w.display(s.aux.display)
+  w.writeHeader(s.aux.header)
   w.close()
   if not (s.forceScale.datCountsPerLbf.isNaN and s.forceScale.vibAccMvPerCount.isNaN):
     w.open("forceScale")
@@ -749,6 +758,17 @@ proc readProcessing*(n: NifNode; name: string; base: Processing;
   r.readTree(n, result)
   problems.add r.problems
 
+proc header(r: var Reading; c: NifNode; h: var HeaderChoice) =
+  if c.kids.len == 1 and c.kids[0].kind == nkIdent and c.kids[0].text == "auto":
+    h = HeaderChoice(auto: true)
+  else:
+    var fields: seq[HeaderField]
+    for v in c.kids:
+      var f = hfTrace
+      if r.pick(v, FieldNames, "header", f) and f notin fields: fields.add f
+    if fields.len > 0: h = HeaderChoice(auto: false, fields: fields)
+    else: r.unusable(c, "header", "auto, or the fields to show")
+
 proc plot(r: var Reading; n: NifNode; p: var PlotDefaults) =
   var rest = NifNode(kind: nkTree, line: n.line, tag: n.tag)
   for c in n.kids:
@@ -757,18 +777,17 @@ proc plot(r: var Reading; n: NifNode; p: var PlotDefaults) =
     elif c.isTree("auxiliary"): r.flag(c, p.auxiliary)
     elif c.isTree("templateOnly"): r.flag(c, p.templateOnly)
     elif c.isTree("order"): r.keys(c, 0, p.order)
-    elif c.isTree("header"):
-      if c.kids.len == 1 and c.kids[0].kind == nkIdent and c.kids[0].text == "auto":
-        p.header = HeaderChoice(auto: true)
-      else:
-        var fields: seq[HeaderField]
-        for v in c.kids:
-          var f = hfTrace
-          if r.pick(v, FieldNames, "header", f) and f notin fields: fields.add f
-        if fields.len > 0: p.header = HeaderChoice(auto: false, fields: fields)
-        else: r.unusable(c, "header", "auto, or the fields to show")
+    elif c.isTree("header"): r.header(c, p.header)
     else: rest.kids.add c
   r.display(rest, p.display)
+
+proc aux(r: var Reading; n: NifNode; p: var AuxDefaults) =
+  var rest = NifNode(kind: nkTree, line: n.line, tag: n.tag)
+  for c in n.kids:
+    if c.isTree("header"): r.header(c, p.header)
+    else: rest.kids.add c
+  r.display(rest, p.display)
+  p.display = forAux(remembered(p.display))
 
 proc window(r: var Reading; n: NifNode; w: var WindowPlacement) =
   var got = w
@@ -1042,6 +1061,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
             r.ranged(k, ForceScaleRange, result.forceScale.vibAccMvPerCount)
           else: r.unknown(k, "forceScale")
       of "plot": r.plot(c, result.plot)
+      of "aux": r.aux(c, result.aux)
       of "scale":
         for k in c.kids:
           if k.isTree("length"): r.choice(k, LengthNames, result.scale.length)

@@ -266,8 +266,41 @@ type
     psSpectrum = "spectrum" ## amplitude spectra
     psFk = "f-k"            ## an f-k plot
 
+  PanelRole* = enum
+    ## What a trace panel is for. The Seismic window (`prSeismic`) is the whole plot; the
+    ## Aux window (`prAux`) is a restricted second plot of the same record, with the
+    ## controls `capsOf` leaves it.
+    prSeismic = "seismic"
+    prAux = "aux"
+
+  SettingsTab* = enum
+    ## The tabs of a panel's gear popover.
+    stLook = "Look", stTraces = "Traces", stScales = "Scales"
+
+  PanelCaps* = object
+    ## What a panel of a role has: the controls its window draws, the choices its commands
+    ## may carry, and the groups of its right-click menu. Decided here, so that the window
+    ## only draws what it is given and the state refuses the rest.
+    stepsRecords*: bool ## a record stepper, Go to, Page Up / Page Down; else it follows
+    modes*: set[DisplayMode] ## the display modes it can be in
+    gains*: set[DisplayGain] ## the gain types it offers (`dgAuto` is the choice to let go)
+    chooseGain*: bool ## "Let viewSEG choose": the automatic gain
+    breaks*: bool ## the first-break overlay
+    templateButton*: bool ## the "only traces in the template" button
+    filters*: bool ## the frequency filters, Raw, and a trace's own filter
+    sort*: bool ## the sort drop-down
+    traceChoice*: bool ## the Seismic / Aux toggles and the component toggles
+    settingsTabs*: set[SettingsTab] ## the gear's tabs
+    displayPresets*, densityMap*, componentColours*: bool
+      ## the gear's Look tab's sections of that name
+    menuMap*: bool ## the right-click menu's Map group
+    menuWholeRecord*: bool ## its Whole record group
+    menuFilters*: bool ## its Exclude and Filter entries
+
   Panel* = object
     id*: PanelId
+    role*: PanelRole = prSeismic
+      ## what it is for: the Seismic window, or the Aux window (`capsOf`)
     shows*: PanelShows        ## what it draws
     layers*: seq[Layer]       ## drawn in order; layer 0 is the one gather navigation moves
     header*: HeaderChoice
@@ -440,6 +473,36 @@ func shownFields*(p: Panel): seq[HeaderField] =
   ## The rows of `p`'s display header, top first.
   if p.header.auto: defaultFields(p.known, p.kind) else: p.header.fields
 
+const
+  AuxGains* = {dgNone, dgFixed, dgNormalized}
+    ## the gain types the Aux window offers: the others are for seismic data
+
+func capsOf*(role: PanelRole): PanelCaps =
+  ## The controls and choices of a panel of `role`.
+  case role
+  of prSeismic:
+    PanelCaps(stepsRecords: true, modes: {DisplayMode.low .. DisplayMode.high},
+      gains: {DisplayGain.low .. DisplayGain.high}, chooseGain: true, breaks: true,
+      templateButton: true, filters: true, sort: true, traceChoice: true,
+      settingsTabs: {stLook, stTraces, stScales}, displayPresets: true, densityMap: true,
+      componentColours: true, menuMap: true, menuWholeRecord: true, menuFilters: true)
+  of prAux:
+    PanelCaps(modes: {dmWiggle}, gains: AuxGains, settingsTabs: {stLook, stTraces})
+
+func caps*(p: Panel): PanelCaps {.inline.} = capsOf(p.role)
+
+func forAux*(d: DisplaySettings): DisplaySettings =
+  ## `d` as the Aux window can show it: wiggles only, a gain type it offers (Normalized
+  ## in place of the others), no first-break overlay.
+  result = d
+  result.mode = dmWiggle
+  if result.gain notin AuxGains: result.gain = dgNormalized
+  result.firstBreaks = false
+
+func auxFilter*(): TraceFilter =
+  ## The Aux window's trace filter: the auxiliary traces, no seismic one.
+  TraceFilter(seismic: false, auxiliary: true)
+
 func contentName*(p: Panel): string =
   ## What `p` shows, as its window is named: "Seismic" (seismic traces),
   ## "Aux" (auxiliary traces), "Seismic + Aux" (both), "FFT" (spectra),
@@ -449,6 +512,7 @@ func contentName*(p: Panel): string =
   of psSpectrum: "FFT"
   of psFk: "F-K"
   of psTraces:
+    if p.role == prAux: return "Aux"
     let f = if p.layers.len > 0: p.layers[0].filter else: TraceFilter()
     if f.seismic and f.auxiliary: "Seismic + Aux"
     elif f.auxiliary: "Aux"

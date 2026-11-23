@@ -208,7 +208,7 @@ proc main*() =
         doAssert not p.apart, id & " is outside the main window " & what
         doAssert p.rect.inside(m), id & " is not inside the main window " & what & ": " &
           $p.rect & " in " & $m
-      doAssert f.hiddenWindows == {}, "hidden " & what & ": " & $f.hiddenWindows
+      doAssert f.hiddenWindows == {awAux}, "hidden " & what & ": " & $f.hiddenWindows
 
     step("the file is shown", noop, proc (f: FrameInfo): bool =
       let p = f.core.panels[f.core.findPanel(MainPanel)]
@@ -245,7 +245,7 @@ proc main*() =
         doAssert said, "nothing says that the Headers window was off every screen"
         for id in ["records", "Messages"]:
           doAssert not f.windowPlace(id).shown, id & " is drawn"
-        doAssert f.hiddenWindows == {awRecords, awMessages}, $f.hiddenWindows)
+        doAssert f.hiddenWindows == {awRecords, awMessages, awAux}, $f.hiddenWindows)
     menu("Reset the windows", "menu.Reset the windows", proc (f: FrameInfo): bool =
       result = wait > 10 and f.windowPlace("records").shown
       if result: f.allDocked("after the reset"))
@@ -266,7 +266,7 @@ proc main*() =
       if result: doAssert not f.windowPlace("Messages").inSight and awJobs notin f.hiddenWindows)
     menu("the Seismic window: never hidden", "menu.window.plot", proc (f: FrameInfo): bool =
       result = wait > 4
-      if result: doAssert f.windowPlace("plot").inSight and f.hiddenWindows == {})
+      if result: doAssert f.windowPlace("plot").inSight and f.hiddenWindows == {awAux})
     # ---------------------------------------------- onto this screen --
     step("the main window off the left edge, two windows outside it", proc (f: FrameInfo) =
       f.moveMainWindow(int(screen.pos.x) - 300, int(screen.pos.y) + 80)
@@ -316,10 +316,10 @@ proc main*() =
     step("Jobs starts hidden", noop, proc (f: FrameInfo): bool =
       result = wait > 5
       if result:
-        doAssert f.hiddenWindows == {awJobs}, "hidden at start: " & $f.hiddenWindows
+        doAssert f.hiddenWindows == {awJobs, awAux}, "hidden at start: " & $f.hiddenWindows
         doAssert not f.windowPlace("jobs").shown)
     menu("Jobs shown", "menu.window.jobs", proc (f: FrameInfo): bool =
-      wait > 4 and f.windowPlace("jobs").inSight and f.hiddenWindows == {})
+      wait > 4 and f.windowPlace("jobs").inSight and f.hiddenWindows == {awAux})
     next = steps
     drive(next, opts)
     echo "tguiwindows: ", next.len, " steps in the second run"

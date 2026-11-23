@@ -38,7 +38,7 @@ const
     ckShowPoints, ckJoin, ckClearSurvey, ckSelectUnmatched, ckSurveyUnits, ckChooseUnit,
     ckRetry, ckStopReading,
     ckPrepare, ckOpenPair, ckInspect, ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum,
-    ckSpectrumPanel,
+    ckSpectrumPanel, ckAuxWindow,
     ckSpectrumCursor, ckStepTrace, ckDisplayPreset, ckTheme, ckOpenPlot, ckPlotDisplay,
     ckPlotCursor, ckClosePlot, ckNewProject, ckOpenProject,
     ckCloseProject, ckReopen, ckListReferences, ckReloadVendors, ckVendorMap, ckStoreReference,

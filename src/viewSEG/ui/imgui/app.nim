@@ -89,6 +89,8 @@ type
     messages: Messages                         ## the frontend's messages, on their way to the log
     core: AppState                             ## the application state
     trace: TracePanelUi                        ## the main panel's plot window
+    auxTrace: TracePanelUi                     ## the Aux window's plot (its own panel)
+    auxSeen: bool                              ## whether the core had the Aux window open last frame
     map: MapUi                                 ## the map window
     headers: HeadersUi                         ## the Headers window
     mapCursor: string                          ## the pointer's coordinates over the map last frame
@@ -555,6 +557,10 @@ proc tracePanel*(frame: FrameInfo): lent TracePanelUi =
   ## The main plot window's state as this frame drew it: `drawnView`,
   ## `densityImage`.
   frame.ui.trace
+
+proc auxTracePanel*(frame: FrameInfo): lent TracePanelUi =
+  ## The Aux window's plot state as this frame drew it (`drawnView`, `plotShown`).
+  frame.ui.auxTrace
 
 proc joinWindow*(frame: FrameInfo): lent JoinUi =
   ## The "Import survey" window's state (`shown`).
@@ -1312,6 +1318,39 @@ func pairNameOf(st: AppState): string =
   let i = st.shownSignatureFile
   if i >= 0: st.partnerOf(st.sessions[i].path).extractFilename else: ""
 
+const auxId = "aux" ## the Aux window's ImGui ID: "###aux"
+
+proc drawAux(ui: var Ui) =
+  ## The Aux window: its open state is kept in step with the core's (`ckAuxWindow`: what the
+  ## View > Windows tick, or an agent, changed), then its plot is drawn, with its marks named
+  ## "aux.<what>" and its pointer reading and commands taken as the Seismic window's.
+  let open = ui.core.auxOpen
+  if open != ui.auxSeen:
+    ui.auxSeen = open # the core changed it (an agent): the window follows
+    if open: ui.windows.bringForward(awAux) else: ui.windows.hide(awAux)
+  elif ui.windows.shows(awAux) != open:
+    ui.core.apply Command(kind: ckAuxWindow, onScreen: ui.windows.shows(awAux))
+    ui.auxSeen = ui.core.auxOpen
+  let k = ui.core.auxIndex
+  if not ui.windows.shows(awAux) or k < 0: return
+  ui.windows.beforeDrawing(awAux)
+  let before = ui.marks.len
+  var aux = ui.auxTrace.drawTracePanel(auxId, ui.core, ui.core.panels[k].id, ui.theme,
+    ui.fonts, ui.marks)
+  for i in before ..< ui.marks.len:
+    if ui.marks[i][0].startsWith("plot."): ui.marks[i][0] = "aux." & ui.marks[i][0].substr(5)
+  if aux.pick.found or aux.pick.inside:
+    ui.pick = aux.pick
+    if ui.pick.found and ui.pick.trace >= 0:
+      let shown = ui.core.shownFile(ui.core.findPanel(MainPanel))
+      if shown >= 0:
+        let (has, f) = ui.core.ownAt(ui.core.sessions[shown].path, ui.pick.trace)
+        if has: ui.pick.filterNote = filterWords(f)
+  for n in aux.notes:
+    ui.say(n, mlWarning)
+  for c in aux.commands.mitems:
+    ui.core.apply move c
+
 proc drawUi(ui: var Ui): set[MenuAction] =
   ui.marks.setLen 0
   let shownAt = ui.core.shownFile(ui.core.findPanel(MainPanel))
@@ -1429,6 +1468,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.say(n, mlWarning)
   for c in plot.commands.mitems:
     ui.core.apply move c
+  ui.drawAux()
   var files = FileListOutput()
   if ui.windows.shows(awFiles):
     ui.windows.beforeDrawing(awFiles)
@@ -1629,16 +1669,19 @@ proc shoot(ui: var Ui; target: string): Shot =
   ## Read back only: agent control's thread scales and encodes them.
   var pixels: seq[Rgba]
   var w, h = 0
-  if target == "plot":
+  if target in ["plot", "aux plot"]:
     # The image is the plot's last: not what the window shows when it shows
     # no plot now (every trace hidden, a gather being read, behind a tab).
-    if ui.trace.plotShown: (pixels, w, h) = ui.trace.plotImage
-    if ui.trace.plotShown and (w <= 1 or h <= 1):
-      return Shot(error: "the Seismic window leaves its plot no room (" & $w & " x " & $h &
-        " pixels): make the window larger")
+    let aux = target == "aux plot"
+    let window = if aux: "Aux" else: "Seismic"
+    template tp: untyped = (if aux: ui.auxTrace else: ui.trace)
+    if tp.plotShown: (pixels, w, h) = tp.plotImage
+    if tp.plotShown and (w <= 1 or h <= 1):
+      return Shot(error: "the " & window & " window leaves its plot no room (" & $w & " x " &
+        $h & " pixels): make the window larger")
     if w <= 0 or h <= 0:
-      let why = ui.trace.instead
-      return Shot(error: "the Seismic window shows no picture of traces now" &
+      let why = tp.instead
+      return Shot(error: "the " & window & " window shows no picture of traces now" &
         (if why.len > 0: ": it says \"" & why & "\"" else: ""))
   else:
     var fw, fh: cint
@@ -1687,6 +1730,10 @@ proc frontendOf(ui: ptr Ui; minimized: bool): Frontend =
   result.drawnView = proc (panel: PanelId; view: var Viewport): bool =
     result = panel == MainPanel
     if result: view = ui.trace.drawnView
+    else:
+      let a = ui.core.auxIndex
+      result = a >= 0 and ui.core.panels[a].id == panel
+      if result: view = ui.auxTrace.drawnView
   result.plotAxes = proc (id: string): PlotAxes =
     let (x, y) = curveplotui.axisLimitsOf(id)
     let (zx, zy) = curveplotui.axisZoomedOf(id)
@@ -1694,6 +1741,10 @@ proc frontendOf(ui: ptr Ui; minimized: bool): Frontend =
   result.showView = proc (panel: PanelId; view: Viewport): bool =
     result = panel == MainPanel
     if result: ui.trace.show(view)
+    else:
+      let a = ui.core.auxIndex
+      result = a >= 0 and ui.core.panels[a].id == panel
+      if result: ui.auxTrace.show(view)
   result.showMapView = proc (view: MapView): bool =
     ui.map.show(view)
     true
@@ -2023,6 +2074,7 @@ proc run*(opts = RunOptions()): int =
   let gpuError = ui.trace.startGpu(glProc, opts.maxTextureSize)
   if gpuError.len > 0:
     ui.say("The plot cannot be drawn: " & gpuError, mlError)
+  discard ui.auxTrace.startGpu(glProc, opts.maxTextureSize)
   let mapError = ui.map.startGpu()
   if mapError.len > 0:
     ui.say("The map cannot be drawn: " & mapError, mlError)
@@ -2167,6 +2219,7 @@ proc run*(opts = RunOptions()): int =
   # folder may not answer), then the core's threads (`shutdown`).
   ui.agent.stop(ui.core, getMonoTime() + initDuration(milliseconds = 200))
   ui.map.stopGpu() # while the GL context is current
+  ui.auxTrace.stopGpu()
   ui.trace.stopGpu()
   ui.notePlacement()
   ui.core.apply Command(kind: ckLayout, arrangement: $igSaveIniSettingsToMemory(nil))

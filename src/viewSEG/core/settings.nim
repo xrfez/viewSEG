@@ -56,6 +56,13 @@ type
     auxiliary*: bool ## auxiliary traces
     templateOnly*: bool ## only the traces the record's template lists (`TraceFilter.templateOnly`)
 
+  AuxDefaults* = object
+    ## What the Aux window starts with and keeps: its display (wiggles; the gain types
+    ## it offers, Normalized at first) and its display header. Not the main plot's: its
+    ## gain, fills and look are its own.
+    display*: DisplaySettings = DisplaySettings(gain: dgNormalized)
+    header*: HeaderChoice
+
   MessagesView* = object
     ## How the Messages window shows the log.
     autoScroll*: bool = true ## follow new messages; off: stay where the user scrolled
@@ -186,6 +193,7 @@ type
       ## the vibrator signature's roles chosen by hand, per file layout, when no project is
       ## open (`choiceText`)
     plot*: PlotDefaults
+    aux*: AuxDefaults ## the Aux window's display and header
     scale*: ScaleUnits ## per inch or cm; time as ms per length or speed
     calibrations*: seq[Calibration] ## one per calibrated monitor
     readout*: seq[ReadoutField] = @DefaultReadout ## the status bar's fields, in order
@@ -256,7 +264,7 @@ func same[T](a, b: T): bool =
   elif T is ForceScale: sameScale(a, b)
   else: a == b
 
-func carried*[T: Settings | PlotDefaults | DisplaySettings](kept, before, after: T): T =
+func carried*[T: Settings | PlotDefaults | AuxDefaults | DisplaySettings](kept, before, after: T): T =
   ## `kept` with what changed from `before` to `after`: each setting that
   ## differs, as `after` has it. A new plot's defaults and their display are
   ## taken field by field (each is a choice of its own: a new display mode
@@ -266,7 +274,7 @@ func carried*[T: Settings | PlotDefaults | DisplaySettings](kept, before, after:
   for name, r in fieldPairs(result):
     for key, b, a in fieldPairs(before, after):
       when key == name:
-        when r is PlotDefaults or r is DisplaySettings:
+        when r is PlotDefaults or r is AuxDefaults or r is DisplaySettings:
           r = carried(r, b, a)
         else:
           if not same(b, a): r = a
@@ -317,6 +325,7 @@ func cleaned*(s: Settings): (Settings, int) =
   r.customOrder = uniqueKeys(s.customOrder)
   r.plot.order = uniqueKeys(s.plot.order)
   r.plot.display = remembered(s.plot.display)
+  r.aux.display = forAux(remembered(s.aux.display))
   r.plot.processing = remembered(bounded(s.plot.processing))
   r.recentFiles = uniqueItems(s.recentFiles)
   r.recentFolders = uniqueItems(s.recentFolders)

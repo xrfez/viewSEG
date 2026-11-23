@@ -25,7 +25,8 @@
 ## build added): a window is hidden only when a layout says so. The one
 ## exception is the live spectrum panel (`OffUnlessNamed`): it works while
 ## it is on screen, so a layout from before it came keeps it hidden until
-## the Window menu shows it.
+## the Window menu shows it. The Aux window (`ClosedAtStart`) is closed unless a layout
+## shows it, also at a first start and after Reset the windows.
 
 import std/strutils
 import sdl3_nim
@@ -37,28 +38,33 @@ type
     ## The windows the main window docks, in the Window menu's order, by
     ## the IDs their titles end with (`"###plot"`): what layouts store.
     awSeismic = "plot", awFiles = "files", awRecords = "records", awMap = "map",
-    awHeaders = "headers", awJobs = "jobs", awMessages = "Messages", awSpectrum = "spectrum"
+    awHeaders = "headers", awJobs = "jobs", awMessages = "Messages", awSpectrum = "spectrum",
+    awAux = "aux"
 
   WindowsUi* = object
     ## The windows' state between frames.
-    hidden*: set[AppWindow] ## not drawn: unticked in the Window menu
-    front: set[AppWindow]   ## brought forward when next drawn
-    unknown: set[AppWindow] ## the layout arranged last does not name them
-    shortcutsOpen*: bool    ## Help > Keyboard shortcuts is open
-    dockspace*: ImGuiID     ## the main window's dockspace
+    hidden*: set[AppWindow] = {awAux} ## not drawn: unticked in the Window menu (`ClosedAtStart`)
+    front: set[AppWindow]             ## brought forward when next drawn
+    unknown: set[AppWindow]           ## the layout arranged last does not name them
+    shortcutsOpen*: bool              ## Help > Keyboard shortcuts is open
+    dockspace*: ImGuiID               ## the main window's dockspace
 
 const
   WindowNames*: array[AppWindow, string] = ["Seismic", "Files", "Records", "Map", "Headers",
-    "Jobs", "Messages", "Spectrum"]
+    "Jobs", "Messages", "Spectrum", "Aux"]
     ## what the Window menu calls them (the Seismic window's title follows
     ## what it shows: `windowTitle`)
   AlwaysShown* = {awSeismic} ## the plot: brought forward, never hidden
-  OffUnlessNamed* = {awSpectrum}
+  OffUnlessNamed* = {awSpectrum, awAux}
     ## hidden when a layout does not name them (it was written before they came)
+  ClosedAtStart* = {awAux}
+    ## hidden until opened: a first start, a layout that does not say (the Aux window
+    ## shows a second plot of the record, which most work does not want), and Reset the
+    ## windows
   SectionHeader = "[viewSEG][Windows]"
   neighbours: array[AppWindow, seq[AppWindow]] = [awSeismic: @[], awFiles: @[awRecords],
     awRecords: @[awFiles], awMap: @[awHeaders], awHeaders: @[awMap], awJobs: @[awMessages],
-    awMessages: @[awJobs], awSpectrum: @[awMap, awHeaders]]
+    awMessages: @[awJobs], awSpectrum: @[awMap, awHeaders], awAux: @[awSeismic]]
     ## where a window a layout does not know is docked (as a tab): beside
     ## the first of these that is docked, as in the default layout; else
     ## beside the plot
@@ -86,7 +92,7 @@ func named*(text: string; w: AppWindow): bool =
 proc readInit(ctx: ptr ImGuiContext; h: ptr ImGuiSettingsHandler) {.cdecl.} =
   # Before a layout is read: every window shown unless it says otherwise,
   # and the shortcut list closed unless the layout says it is open.
-  cast[ptr WindowsUi](h.UserData).hidden = {}
+  cast[ptr WindowsUi](h.UserData).hidden = ClosedAtStart
   cast[ptr WindowsUi](h.UserData).shortcutsOpen = false
 
 proc readOpen(ctx: ptr ImGuiContext; h: ptr ImGuiSettingsHandler;
@@ -162,9 +168,10 @@ proc picked*(ws: var WindowsUi; w: AppWindow) =
   else: ws.hide(w)
 
 proc showAll*(ws: var WindowsUi) =
-  ## Every window shown, none waiting to be placed (Reset the windows).
-  if ws.hidden != {}: changed()
-  ws.hidden = {}
+  ## Every window shown but the ones closed at start, none waiting to be placed (Reset the
+  ## windows).
+  if ws.hidden != ClosedAtStart: changed()
+  ws.hidden = ClosedAtStart
   ws.unknown = {}
 
 proc arranged*(ws: var WindowsUi; text: string; docked: bool) =
@@ -193,7 +200,17 @@ proc beforeDrawing*(ws: var WindowsUi; w: AppWindow) =
   ## Just before `w` is drawn (its `igBegin`): brings it forward when asked;
   ## a window the layout did not know is docked beside its neighbours (or
   ## the plot), as a tab.
-  if w in ws.unknown:
+  if w == awAux and dockIdOf(w) == 0 and windowOf(w) == nil:
+    # first opened: a strip below the Seismic window (a window of its own, or a layout
+    # that places it, keeps its place)
+    ws.unknown.excl w
+    let plot = dockIdOf(awSeismic)
+    if plot != 0:
+      var below, above: ImGuiID
+      discard igDockBuilderSplitNode(plot, ImGui_Dir_Down, 0.4, addr below, addr above)
+      igSetNextWindowDockID(below, ImGui_Cond_Always.cint)
+      changed()
+  elif w in ws.unknown:
     ws.unknown.excl w
     var id: ImGuiID = 0
     for n in neighbours[w]:

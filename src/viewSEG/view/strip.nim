@@ -48,12 +48,16 @@ func showComponentToggles*(present: int): bool =
   ## filter, has more than one component. They stay while one is off.
   present > 1
 
-func stripGroups*(showTraces: bool; showComponents = false): seq[StripGroup] =
-  ## The groups drawn, in order. `sgComponents` follows `sgTraces` when the
-  ## record has more than one component. The groups before it stay as they are.
-  result = @[sgRecord, sgZoom, sgDisplay, sgGain, sgFilters, sgSort]
-  if showTraces: result.add sgTraces
-  if showComponents: result.add sgComponents
+func stripGroups*(showTraces: bool; showComponents = false;
+    caps = capsOf(prSeismic)): seq[StripGroup] =
+  ## The groups drawn, in order, of a panel with `caps`. `sgComponents` follows `sgTraces`
+  ## when the record has more than one component. The groups before it stay as they are.
+  if caps.stepsRecords: result.add sgRecord
+  result.add [sgZoom, sgDisplay, sgGain]
+  if caps.filters: result.add sgFilters
+  if caps.sort: result.add sgSort
+  if showTraces and caps.traceChoice: result.add sgTraces
+  if showComponents and caps.traceChoice: result.add sgComponents
 
 func sortInUse*(order: openArray[SortKey]; presets: openArray[SortPreset]): string =
   ## What the sort drop-down names: a preset's name, "file order", or "custom".

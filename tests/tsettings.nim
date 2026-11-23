@@ -89,6 +89,10 @@ proc everyFieldSet(): Settings =
       Rgba(r: 7, g: 8, b: 9, a: 255), Rgba(r: 10, g: 11, b: 12, a: 255)],
     referenceId: "r-pilot", vibRoles: @["4/21.19.18.20 0.3.1.2"], units: usImperial,
     forceScale: ForceScale(datCountsPerLbf: 8, vibAccMvPerCount: 12.5))
+  result.aux = AuxDefaults(
+    display: DisplaySettings(mode: dmWiggle, fills: {wfPositive, wfNegative}, colours: pcCustom,
+      gain: dgFixed, gainDb: 4.5, fixedClip: 0.25, overlap: 2.0, orientation: orTimeAcross),
+    header: HeaderChoice(auto: false, fields: @[hfTrace, hfTraceId]))
   result.plot = PlotDefaults(
     display: DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDensity,
       fills: {wfNegative}, colours: pcCustom,

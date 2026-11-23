@@ -33,10 +33,12 @@ const
   StateParts* = ["program", "fileList", "files", "panels", "selection", "map", "jobs",
     "messages", "survey", "headers", "memory", "spectra", "displayPresets", "plots", "project",
     "properties", "compare", "vendorMaps"]
-  ShotTargets* = ["window", "plot", "seismic", "map", "files", "records", "headers", "messages",
+  ShotTargets* = ["window", "plot", "seismic", "aux", "aux plot", "map", "files", "records",
+    "headers", "messages",
     "jobs", "toolbar", "statusbar", "spectrum", "fft", "compare"]
     ## what `screenshot` takes a picture of: the whole window, the Seismic
-    ## window's picture of the traces alone, or one window ("spectrum" the
+    ## window's picture of the traces alone ("aux plot": the Aux window's), or one window
+    ## ("aux" the Aux window, "spectrum" the
     ## live spectrum panel, "fft" the FFT window opened last; "fft 2" names
     ## FFT window 2, "new plot 3" the analysis window 3)
   DefaultShotSide* = 1600 ## the longest side of a screenshot, unless asked
@@ -281,6 +283,7 @@ proc prefill(state: AppState; given: Command; c: var Command) =
       c.plotCursorOn = state.plots[w].cursorOn
   of ckClosePlot: c.plot = given.plot
   of ckSpectrumPanel: c.onScreen = true
+  of ckAuxWindow: c.onScreen = true
   of ckCompareDisplay: c.compareShow = state.compareOptions
   of ckCompareWindow: c.compareOpen = true
   of ckSubfolders: c.subfolders = true
@@ -453,7 +456,8 @@ proc breaksJson(b: FirstBreaks; unit: SurveyUnit; fromSurvey: bool): JsonNode =
 
 proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
   template p: untyped = state.panels[k]
-  result = %*{"id": int(p.id), "title": state.windowTitle(p.id), "shows": $p.shows,
+  result = %*{"id": int(p.id), "title": state.windowTitle(p.id), "role": $p.role,
+    "shows": $p.shows,
     "picture": state.pictureOf(k, fe), "laidOut": p.laidOut, "layout": toJson(p.layout),
     "view": toJson(p.view), "canGoBack": p.back.len > 0, "header": toJson(p.header),
     "level": toJson(p.level), "levelOver": p.levelSampling}
@@ -1110,8 +1114,12 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
     r["files"] = files
   if "panels" in wanted:
     var panels = newJArray()
-    for k in 0 ..< state.panels.len: panels.add state.panelJson(k, fe, limit)
+    for k in 0 ..< state.panels.len:
+      # the Aux window's panel is listed while the window is open
+      if state.panels[k].role != prAux or state.auxOpen:
+        panels.add state.panelJson(k, fe, limit)
     r["panels"] = panels
+    r["auxWindowOpen"] = %state.auxOpen
   if "selection" in wanted:
     var selected: seq[int]
     for t in state.selection.selected: selected.add t
@@ -1385,6 +1393,7 @@ proc busy*(state: AppState; fe: Frontend): seq[string] =
   if state.compareWaiting: result.add "a compare slot: its copy"
   for title in state.plotsWaiting: result.add title & ": its numbers"
   for k in 0 ..< state.panels.len:
+    if state.panels[k].role == prAux and not state.auxOpen: continue
     let picture = state.pictureOf(k, fe)
     if picture notin ["complete", "nothing shown", "nothing to draw", "no room to draw"]:
       result.add state.windowTitle(state.panels[k].id) & " (" & $state.panels[k].id &

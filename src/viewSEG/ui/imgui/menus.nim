@@ -180,7 +180,7 @@ const
     maTemplateOnly: IconTable]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
-    awMessages: IconLog, awSpectrum: IconPulse]
+    awMessages: IconLog, awSpectrum: IconPulse, awAux: IconPlot]
 
 const
   FollowWords* = "Follow the latest file"

@@ -38,6 +38,13 @@ proc main*() =
     doAssert showComponentToggles(2) and showComponentToggles(4)
     doAssert not showComponentToggles(0) and not showComponentToggles(1)
 
+  block auxGroups:
+    # the Aux window's strip: zoom, display (the fills) and gain only, whatever the record has
+    let aux = stripGroups(true, true, capsOf(prAux))
+    doAssert aux == @[sgZoom, sgDisplay, sgGain], $aux
+    doAssert stripGroups(false, false, capsOf(prAux)) == aux
+    doAssert stripGroups(true, true, capsOf(prSeismic)) == stripGroups(true, true)
+
   block whichGroups:
     doAssert showTraceToggles(true, true, false)
     doAssert showTraceToggles(false, false, false) # seismic off, so the toggle stays

@@ -130,7 +130,7 @@ proc main*() =
           doAssert w.shown, id & " is not shown after --reset-windows"
           doAssert w.docked and not w.apart, id & " is not docked after --reset-windows"
           doAssert w.rect.inside(f.mainWindowRect), id & " is outside the main window"
-        doAssert f.hiddenWindows == {}, $f.hiddenWindows
+        doAssert f.hiddenWindows == {awAux}, $f.hiddenWindows
         f.defaultPlace("after --reset-windows")
         doAssert f.said("Started with --reset-windows", sevInfo), "nothing says so"
         doAssert f.core.settings.files.followLatest, "another setting was reset"
@@ -140,7 +140,7 @@ proc main*() =
     doAssert checked, "the run ended before the windows were checked"
     var problems: seq[string]
     let saved = readLayout(readFile(config / LayoutFileName), LayoutFileName, problems).imgui
-    doAssert "Hidden=\n" in saved and "Pos=" & $int(screen.size.x - 150) notin saved,
+    doAssert "Hidden=aux\n" in saved and "Pos=" & $int(screen.size.x - 150) notin saved,
       "the scrambled layout is still saved: " & saved
 
     # ------------------------------- the main window off every screen --
