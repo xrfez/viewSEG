@@ -41,6 +41,7 @@ import sdl3_nim
 import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
 import ../../core/[filesystem, geometry, screens, state, watchdog]
+from ../../core/editmarks import shiftWords
 import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
 import curveplot as curveplotui
@@ -1381,6 +1382,8 @@ proc drawAux(ui: var Ui) =
       if shown >= 0:
         let (has, f) = ui.core.ownAt(ui.core.sessions[shown].path, ui.pick.trace)
         if has: ui.pick.filterNote = filterWords(f)
+        let ms = ui.core.shownShift(ui.core.sessions[shown].base + ui.pick.trace)
+        if ms != 0.0: ui.pick.shiftNote = shiftWords(ms)
   for n in aux.notes:
     ui.say(n, mlWarning)
   for c in aux.commands.mitems:
@@ -1499,6 +1502,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     if shown >= 0:
       let (has, f) = ui.core.ownAt(ui.core.sessions[shown].path, ui.pick.trace)
       if has: ui.pick.filterNote = filterWords(f)
+      let ms = ui.core.shownShift(ui.core.sessions[shown].base + ui.pick.trace)
+      if ms != 0.0: ui.pick.shiftNote = shiftWords(ms)
   for n in plot.notes:
     ui.say(n, mlWarning)
   for c in plot.commands.mitems:

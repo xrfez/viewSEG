@@ -36,6 +36,7 @@ import processSEG/core/types except StopCheck
 import colourmaps, edits, matchpeak, panels, phasepicture, phaseshow, plotcursor,
     processing, sigjudge, signalend, sigtypes,
   traceids, vibjudge
+from editmarks import shiftNote
 
 export ColourMap, PlotCursor, Polarity, VibLimits
 export phasepicture, phaseshow
@@ -1298,6 +1299,16 @@ func ownLine*(w: AnalysisWindow): string =
     let at = entryAt(w.own, t - base)
     if at >= 0: own[i] = w.own[at].filter
   ownShownWords(w.first, own)
+
+func shiftLine*(w: AnalysisWindow): string =
+  ## What the window says of its traces' time shifts, in the place it names
+  ## an own filter: "Trace 12: shifted +8 ms", or how many. "" for none.
+  if w.traces.len == 0: return ""
+  let base = w.traces[0] - w.first
+  var ms = newSeq[float64](w.traces.len)
+  for i, t in w.traces:
+    ms[i] = shiftAt(w.shifts, t - base)
+  shiftNote(w.first, ms)
 
 func reverseLine*(w: AnalysisWindow): string =
   ## What the window says of its traces' reversal, in the place it names an

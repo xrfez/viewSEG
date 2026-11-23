@@ -60,6 +60,10 @@ proc drawCompare*(ui: var CompareUi; st: AppState; t: Theme; scale: float32;
     igTextDisabled("%s", ("A, own filter: " & st.compareA.filterWords).cstring)
   if st.compareB.filterWords.len > 0:
     igTextDisabled("%s", ("B, own filter: " & st.compareB.filterWords).cstring)
+  if st.compareA.shiftWords.len > 0:
+    igTextDisabled("%s", ("A, " & st.compareA.shiftWords).cstring)
+  if st.compareB.shiftWords.len > 0:
+    igTextDisabled("%s", ("B, " & st.compareB.shiftWords).cstring)
   if igSmallButton("Swap"):
     result.add Command(kind: ckSwapCompare)
   marks.mark("compare.swap")

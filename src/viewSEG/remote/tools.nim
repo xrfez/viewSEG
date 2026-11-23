@@ -1063,7 +1063,7 @@ proc slotJson(slot: CompareSlot): JsonNode =
     "dtMs": toJson(slot.dtMs), "t0Ms": toJson(slot.t0Ms), "fromMs": toJson(slot.fromMs),
     "toMs": toJson(slot.toMs), "samples": slot.samples.len, "reversed": slot.reversed,
     "filtered": slot.filtered,
-    "filter": slot.filterWords}
+    "filter": slot.filterWords, "shift": slot.shiftWords}
 
 proc compareJson(state: AppState): JsonNode =
   ## Both slots and the correlation table.

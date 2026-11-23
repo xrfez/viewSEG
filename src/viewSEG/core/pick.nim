@@ -31,6 +31,7 @@ type
     binned*: int = 1          ## samples behind `amplitude`: more than 1 zoomed out
     edits*: set[TraceEdit]    ## the trace's edits, as drawn: killed, reversed
     filterNote*: string       ## its own filter, in words; "" for none
+    shiftNote*: string        ## its time shift, in words; "" for none
     joined*: set[JoinGroup]   ## the groups of its keys a geometry join gave
     breaks*: string
       ## the first-break overlay's model time, pick time and their difference for

@@ -1417,6 +1417,8 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   if own.len > 0: words.add " · " & own & (if rawWindow: " (not applied here)" else: "")
   let rev = w.reverseLine
   if rev.len > 0: words.add " · " & rev
+  let shifted = w.shiftLine
+  if shifted.len > 0: words.add " · " & shifted
   if w.filters.len > 0 and not rawWindow:
     words.add " · filters: " & w.filters
     if r.passedBy > 0: words.add " (" & passedWords(r.passedBy) & ")"

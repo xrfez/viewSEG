@@ -50,6 +50,7 @@ import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
 import processSEG/filter/design
 import cutfile, edits, filesystem, inbox, jobs, log, processing, spectra, threads
+from editmarks import shiftNote
 
 const
   ReadTraces = 64   ## traces per prefetch chunk
@@ -262,6 +263,9 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   for i, t in list:
     if a.reversed.binarySearch(t) >= 0: reversedOn[i] = true
   answer.reverseNote = reverseShownWords(list[0], reversedOn, a.allReversed)
+  var shiftMs = newSeq[float64](list.len)
+  for i, t in list: shiftMs[i] = shiftAt(a.shifts, t)
+  answer.shiftNote = shiftNote(list[0], shiftMs)
   # The response is the plot's filters only. A trace's own filter is already
   # in the raw curve, and does not unlock Processed or Response.
   let responsePipe = if filtering: filters else: initPipeline()

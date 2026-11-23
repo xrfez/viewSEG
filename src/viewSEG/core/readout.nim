@@ -208,6 +208,7 @@ func editNote*(p: Pick): string =
       (teExcluded, "excluded from the plot's filters")]:
     if edit in p.edits: result.add (if result.len > 0: ", " else: "") & word
   if p.filterNote.len > 0: result.add (if result.len > 0: ", " else: "") & p.filterNote
+  if p.shiftNote.len > 0: result.add (if result.len > 0: ", " else: "") & p.shiftNote
 
 func cleaned*(fields: openArray[ReadoutField]): seq[ReadoutField] =
   ## `fields` in their order, each once.

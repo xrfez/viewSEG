@@ -71,7 +71,8 @@ type
     count*: int ## the traces it is of; 0: not known
     filters*: string ## the plot's filters in words; "" none
     skipped*: string ## what the filters left out, in words ("" nothing)
-    own*, reversal*: string ## the traces' own filters, reversal, in words
+    own*, reversal*, shift*: string
+      ## the traces' own filters, reversal and time shift, in words
     # the Seismic plot
     panel*: string = "Seismic"
     mode*: DisplayMode = dmWiggle
@@ -163,11 +164,17 @@ func filterClause(f: ExplainFacts): string =
     (if f.skipped.len > 0: " " & closed(f.skipped).capitalizeAscii else: "")
 
 func editsClause(f: ExplainFacts): string =
-  ## What was done to single traces: their own filter and their polarity.
-  if f.against: return (if f.reversal.len > 0: closed(f.reversal) else: "No trace is reversed.")
-  if not f.live: return "A trace's own filter and a reversed polarity are applied as set."
+  ## What was done to single traces: their own filter, their polarity and
+  ## their time shift.
+  if f.against:
+    result = if f.reversal.len > 0: closed(f.reversal) else: "No trace is reversed."
+    if f.shift.len > 0: result.add " " & closed(f.shift)
+    return result
+  if not f.live:
+    return "A trace's own filter, a reversed polarity and a time shift are applied as set."
   result = (if f.own.len > 0: closed(f.own) else: "No trace has its own filter.")
   result.add " " & (if f.reversal.len > 0: closed(f.reversal) else: "No trace is reversed.")
+  result.add " " & (if f.shift.len > 0: closed(f.shift) else: "No trace is shifted.")
 
 func hzGap(binHz: float64): string =
   if known(binHz): "The frequency step is " & num(binHz) & " Hz: lower frequencies are not resolved."
@@ -365,8 +372,10 @@ func phaseText(f: ExplainFacts): string =
 
 func rawClause(f: ExplainFacts): string =
   ## The words of a window that compares traces with a reference: raw, and the reversal.
-  RawWords & " " & (if f.live and f.reversal.len > 0: closed(f.reversal)
-    elif f.live: "No trace is reversed." else: "A reversed polarity is applied as set.")
+  var words = RawWords & " " & (if f.live and f.reversal.len > 0: closed(f.reversal)
+    elif f.live: "No trace is reversed." else: "A reversed polarity and a time shift are applied as set.")
+  if f.live and f.shift.len > 0: words.add " " & closed(f.shift)
+  words
 
 func correlationText(f: ExplainFacts): string =
   join4(part("Shows", "How well each trace matches the reference, up (1 is the reference's " &
@@ -733,7 +742,8 @@ func factsOf*(w: AnalysisWindow; units: UnitSystem): ExplainFacts =
   ## The settings of analysis window `w`, as its plots' text names them.
   let p = w.params
   result = ExplainFacts(live: true, units: units, label: w.label, count: w.traces.len,
-    filters: w.filters, own: w.ownLine, reversal: w.reverseLine, picture: p.phasePicture,
+    filters: w.filters, own: w.ownLine, reversal: w.reverseLine, shift: w.shiftLine,
+    picture: p.phasePicture,
     phaseShow: p.phaseShow,
     windowMs: p.windowMs, overlap: p.overlap, floorDb: p.floorDb, withinDb: p.phaseWithinDb,
     lagMs: p.maxLagMs, reference: w.reference, fkFromMs: p.fkFromMs, fkToMs: p.fkToMs,
@@ -784,7 +794,7 @@ func factsOf*(w: SpectrumWindow; units: UnitSystem): ExplainFacts =
   template sp: untyped = w.spectrum
   result = ExplainFacts(live: true, units: units, label: w.label, count: w.traces.len,
     filters: (if sp.processed.len > 0: sp.filters else: ""), own: sp.ownNote,
-    reversal: sp.reverseNote, db: w.display.scale == ssDb,
+    reversal: sp.reverseNote, shift: sp.shiftNote, db: w.display.scale == ssDb,
     logFrequency: w.display.logFrequency, wholeTrace: w.display.time == stWhole,
     picture: w.display.phasePicture, averaged: sp.averaged, binHz: sp.binHz,
     nyquistHz: (if sp.dtMs > 0: 500.0 / sp.dtMs else: NaN))
