@@ -10,8 +10,10 @@
 ## end, on the job thread.
 ##
 ## A file that cannot be opened, or that has no trace keys, is skipped and
-## the scan goes on. No survey (nil, or no relations) fails the job with
-## one sentence (`NoSurvey`). A cancel leaves the sink untouched.
+## the scan goes on. A gather whose match is ambiguous is not a row: it is
+## listed in `unmatched`, and its survey candidates are not records without
+## data. No survey (nil, or no relations) fails the job with one sentence
+## (`NoSurvey`). A cancel leaves the sink untouched.
 ##
 ## A gather is a receiver gather when its kind is `gkReceiver`, the same
 ## decision as the record on show; every other kind is checked as a shot.
@@ -25,7 +27,7 @@
 ## copy of the survey with those records added (numbered after the
 ## survey's, so the numbers do not collide) when the folder has both.
 
-import std/[os, strutils]
+import std/[os, sets, strutils]
 import parseSEG
 import processSEG/qc/record
 import filejobs, filesystem, jobs, missingreport, session, threads
@@ -41,6 +43,9 @@ type
     ok*: bool
     report*: MissingReport
     skipped*: seq[tuple[path, why: string]] ## relative to the folder, and why
+    unmatched*: seq[tuple[path: string; record: int64; why: string]]
+      ## A gather not checked: path relative to the folder, the header record
+      ## number (−1 when it has none), and why.
     reason*: string
 
   MissingSink* = ref object
@@ -144,6 +149,14 @@ proc swappedCompleteness(g: SurveyGeometry; f: SeismicFile; traces: Slice[int];
     keys[i] = k
   g.recordCompleteness(rowsOf(keys, counts))
 
+func fieldId(c: RecordCompleteness): int64 =
+  ## The header record number, or −1 when it is not a whole number.
+  let f = c.fieldRecord
+  if f == f and abs(f) < 9e18 and float64(int64(f)) == f: int64(f) else: -1
+
+func isAmbiguous(c: RecordCompleteness): bool =
+  c.xpsRecord < 0 and c.candidates.len > 1
+
 proc fail(sink: MissingSink; why: string; skipped: seq[tuple[path, why: string]]) =
   if sink != nil:
     sink.result = MissingJobResult(ok: false, reason: why, skipped: skipped)
@@ -161,6 +174,8 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
       fail(sink, NoSurvey, @[])
     var files: seq[FileRecords] = @[]
     var skipped: seq[tuple[path, why: string]] = @[]
+    var unmatched: seq[tuple[path: string; record: int64; why: string]] = @[]
+    var drop = initHashSet[int64]()
     var sawShot = false
     var sawReceiver = false
     var receiver: ref SurveyGeometry = nil
@@ -173,6 +188,7 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
         var s: Session = nil
         var skip = ""
         var records: seq[RecordCompleteness] = @[]
+        var listed = false
         try:
           s = openKeys(path, ctx)
           if s.file.kind == skUnknown: skip = "not a SEG-Y, SEG-D or SEG-2 file"
@@ -182,18 +198,25 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
               for g in s.gathers:
                 if g.traces.len == 0: continue
                 beat(ctx, g.traces.len)
-                if g.kind == gkReceiver:
-                  if receiver == nil:
-                    rels = relations[].receiverRelationsOf(relations[].highestRecord + 1)
-                    var built = initSurveyGeometry()
-                    built.addSps(SpsFile(relations: rels), rdSource)
-                    receiver = new SurveyGeometry
-                    receiver[] = built
-                  records.add swappedCompleteness(receiver[], s.file, g.traces, ctx)
-                  sawReceiver = true
+                let receiverGather = g.kind == gkReceiver
+                if receiverGather and receiver == nil:
+                  rels = relations[].receiverRelationsOf(relations[].highestRecord + 1)
+                  var built = initSurveyGeometry()
+                  built.addSps(SpsFile(relations: rels), rdSource)
+                  receiver = new SurveyGeometry
+                  receiver[] = built
+                let checked =
+                  if receiverGather: swappedCompleteness(receiver[], s.file, g.traces, ctx)
+                  else: relations[].recordCompleteness(s.file.rowsOf(g.traces))
+                if checked.isAmbiguous:
+                  listed = true
+                  unmatched.add (path: rel, record: fieldId(checked), why: $checked.candidates.len &
+                    " survey records share this source and the record number matches neither")
+                  for id in checked.candidates: drop.incl id
                 else:
-                  records.add relations[].recordCompleteness(s.file.rowsOf(g.traces))
-                  sawShot = true
+                  records.add checked
+                  if receiverGather: sawReceiver = true
+                  else: sawShot = true
         except SegCancelledError:
           raise newException(JobCancelledError, "cancelled")
         except JobCancelledError:
@@ -204,10 +227,11 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
           s = nil
           clearCycleRoots()
         if skip.len > 0: skipped.add (path: rel, why: skip)
-        else: files.add FileRecords(path: rel, records: records)
+        elif records.len > 0 or not listed:
+          files.add FileRecords(path: rel, records: records)
         if not ctx.progress(i + 1, paths.len):
           raise newException(JobCancelledError, "cancelled")
-      let report =
+      var report =
         if not sawReceiver: missingReport(files, relations[])
         elif not sawShot and receiver != nil: missingReport(files, receiver[])
         else:
@@ -215,8 +239,14 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
           survey.addSps(SpsFile(relations: rels), rdSource)
           missingReport(files, survey)
       clearCycleRoots()
+      if drop.len > 0:
+        var kept = newSeqOfCap[int64](report.totals.xpsWithoutData.len)
+        for id in report.totals.xpsWithoutData:
+          if id notin drop: kept.add id
+        report.totals.xpsWithoutData = kept
       if sink != nil:
-        sink.result = MissingJobResult(ok: true, report: report, skipped: skipped)
+        sink.result = MissingJobResult(ok: true, report: report, skipped: skipped,
+          unmatched: unmatched)
     except JobCancelledError:
       raise
     except SegCancelledError:

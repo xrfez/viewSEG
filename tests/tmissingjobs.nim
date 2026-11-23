@@ -3,8 +3,9 @@
 ## seismic, or that cannot be read, is skipped. No survey fails the job
 ## with one sentence. A cancel leaves the sink empty.
 ##
-## Seen to fail: with the stored path left absolute, `shots_and_skips`
-## rejected a file that was not `sub/one.sgd`.
+## Seen to fail: with an ambiguous gather stored as a row, `ambiguous_is_unmatched`
+## rejected a row of expected 0, present 0, missing 0; with the stored path
+## left absolute, `shots_and_skips` rejected a file that was not `sub/one.sgd`.
 ##
 ## A receiver gather is checked with its stations swapped against the
 ## receiver relations stored as source records, so the library's
@@ -248,6 +249,24 @@ proc main*() =
     doAssert shotMissing and nodeMissing
     doAssert pointAt(got.sink.result.report.points, 10, 2).missingIn >= 1
     doAssert pointAt(got.sink.result.report.points, 1, 3).missingIn >= 1
+
+  block ambiguous_is_unmatched:
+    let survey = surveyOf(
+      xRec(1, "1.00", "1.00", 1, 2, 10, 1, 2),
+      xRec(2, "1.00", "1.00", 1, 2, 10, 1, 2),
+      xRec(3, "1.00", "9.00", 1, 1, 10, 1, 1))
+    let path = dir / "amb.sgd"
+    shotFile(path, [(record: 9, src: 1.0, receivers: 1 .. 1)])
+    let got = run(dir, @[path], survey)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    doAssert got.sink.result.report.records.len == 0, $got.sink.result.report.records
+    doAssert got.sink.result.unmatched.len == 1, $got.sink.result.unmatched.len
+    let u = got.sink.result.unmatched[0]
+    doAssert u.path == "amb.sgd" and u.record == 9, $u
+    doAssert u.why ==
+      "2 survey records share this source and the record number matches neither", u.why
+    doAssert got.sink.result.report.totals.xpsWithoutData == @[3'i64],
+      $got.sink.result.report.totals.xpsWithoutData
 
   block cancel_leaves_the_sink:
     reads = 0
