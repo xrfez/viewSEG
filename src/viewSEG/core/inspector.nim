@@ -37,9 +37,9 @@
 ##   (`filters`, `flow`, as the panel's reader runs them): what the status bar's amplitude reads. As recorded:
 ##   the samples as the file holds them.
 ## - At most `MaxInspectedValues` samples in all are kept per answer; the
-##   rest of a trace is left out and its `cut` says how many. As displayed,
-##   a trace cut so is filtered and processed whole first (up to
-##   `MaxProcessedValues`), so the samples kept are the plot's.
+  ## rest of a trace is left out and its `cut` says how many. As displayed,
+  ## a trace cut so is filtered, shifted and processed whole first (up to
+  ## `MaxProcessedValues`), so the samples kept are the plot's.
 
 import std/[heapqueue, intsets, locks, monotimes, os, strutils, times]
 import parseSEG
@@ -252,11 +252,14 @@ proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace;
   ## displayed. As displayed, a trace with more samples than that is
   ## filtered and processed whole (up to `MaxProcessedValues`), as the
   ## plot's reader does, and then cut: the samples kept are the plot's.
+  ## A time shift asks for the same read: it runs before the cut, so a
+  ## move does not pad with zeros the file holds.
   let n = f[].maxSamples([t.trace])
   let kept = min(n, max(room, 0))
   d.cut = n - kept
   if kept == 0: return
-  let processed = t.displayed and (req.filters.len > 0 or req.flow.len > 0)
+  let processed = t.displayed and (req.filters.len > 0 or req.flow.len > 0 or
+    t.shiftMs != 0.0)
   let whole = if processed and kept < n: min(n, max(kept, MaxProcessedValues)) else: kept
   var log: DiagLog
   let block1 = f[].readTraces([t.trace], 0 ..< whole, log)

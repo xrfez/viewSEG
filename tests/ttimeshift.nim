@@ -28,6 +28,8 @@
 ## stored, "a non-finite shift was stored: @[(trace: 2, ms: nan), ...]". With
 ## `setTimeShifts` keeping a huge value, "a shift of 1e30 ms was stored". With
 ## the command not reporting a refused shift, "not kept" was absent from the log.
+## With the inspector shifting the kept prefix only, "the last kept sample is
+## not in the file: 0.0".
 ##
 ## Runs on samples/land/shots.sgy and a synthetic file with an auxiliary trace.
 
@@ -37,6 +39,7 @@ import processSEG/core/timeshift
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
 import viewSEG/core/[analysisreader, editmarks, edits, filememory, nif, processing, state]
+import viewSEG/core/inspector {.all.}
 import utils/[fixtures, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
@@ -307,6 +310,29 @@ proc main*() =
         doAssert zoomed.rowOf(1) == full[a ..< a + zoomed.columns],
           name & " " & $sign & " is not the whole trace shifted"
     st.shutdown()
+
+  block inspectorShift:
+    # A negative shift of a trace cut to the kept prefix must not end in
+    # zeros the file holds. Seen to fail with the shift applied to the kept
+    # prefix only: the last kept sample was 0.
+    withFixtures fx:
+      let path = fx.longTraceSegy(2000)
+      var f = openSeismic(path, keys = true)
+      let dtMs = f.traceKeys(0).intervalUs / 1000
+      let k = 5
+      let t = InspectTrace(id: 0, at: 0, trace: 0, displayed: true,
+        shiftMs: -float64(k) * dtMs)
+      var d = TraceDetail(keys: f.traceKeys(0), dtMs: dtMs)
+      var ws = initWorkspace()
+      const Kept = 80
+      readSamples(d, addr f, t, InspectRequest(samples: true), Kept, ws)
+      doAssert d.samples.len == Kept, $d.samples.len
+      doAssert d.samples[Kept - 1] == longSample(Kept - 1 + k),
+        "the last kept sample is not in the file: " & $d.samples[Kept - 1]
+      for i in 0 ..< Kept:
+        doAssert d.samples[i] == longSample(i + k),
+          "sample " & $i & " is " & $d.samples[i] & ", not " & $longSample(i + k)
+      f.close()
 
   block auxiliary:
     withFixtures fx:
