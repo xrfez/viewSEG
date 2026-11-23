@@ -1007,6 +1007,14 @@ proc remembered*(e: var FileEdits; l: EditLists) =
   e.kept.unionShifts(l)
   if e.shown != was: inc e.revision
 
+proc dropBrought*(e: var FileEdits; baseline: EditLists) =
+  ## Takes `baseline` out of what is shown and kept. A path that only
+  ## brought a document back must not put those edits onto the other path:
+  ## that one may have taken them back while this one was checked. An edit
+  ## made during the check is not in `baseline`, so it stays.
+  e.shown = e.shown.minus(baseline)
+  e.kept = e.kept.minus(baseline)
+
 proc merge*(e: var FileEdits; other: sink FileEdits) =
   ## Takes the edits of `other` in beside those of `e`, one file's edits
   ## made under two paths (a copy, a link): shown and kept, each the union

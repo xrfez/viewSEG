@@ -48,6 +48,9 @@
 ##   edits, and each shows the other's;
 ## - one file opened under three paths (itself, a symbolic link, a copy)
 ##   has one set of edits, the kills made under each kept, in one document;
+## - a copy that kept the file's modification time, a kill taken back not
+##   written yet, and a save while its check runs: the kill stays taken
+##   back, and the flush after holds the kills made since, in one document;
 ## - a kill taken back in the second before a silent drive answers stays
 ##   taken back (this run's pending document is older than what it shows);
 ##   an earlier run's pending document, its drive silent in this run too,
@@ -100,9 +103,12 @@
 ## earlier run's pending edit is not shown beside this run's"; with a plain
 ## removal leaving the disk thread's stamp of the document (`written`), "the
 ## kill made after the forgetting is gone"; with no lock between programs
-## (`lockStore`), "this program wrote while the other held the lock".
+## (`lockStore`), "this program wrote while the other held the lock"; with
+## `link` comparing what a path brought back to the document as a save wrote
+## it since, instead of to what was brought back, "a kill taken back came
+## back with the copy".
 
-import std/[atomics, os, sequtils, strutils, times]
+import std/[atomics, monotimes, os, sequtils, strutils, times]
 import viewSEG/core/[diskio, filesystem, jobs, state]
 import utils/[faultyfs, fixtures, steps, waiting]
 
@@ -618,17 +624,35 @@ proc main*() =
       var t: Time
       let key = quickIdentity(b, t).key
       var d: seq[string]
-      var texts = ""
       proc held(): bool =
         ## One document of this file, holding the three kills.
         d.setLen 0
-        texts = ""
         for x in docs(config): # (the rewritten copy's, of the same ends, is another file's)
           if x.extractFilename.startsWith(key) and "rewritten.sgy" notin readFile(x):
             d.add x
-            texts.add readFile(x) & "\n"
         d.len == 1 and "(killed \"5 7 9\")" in readFile(d[0])
-      doAssert waitUntil(held()), "one file holding (killed \"5 7 9\"), documents: " & texts
+      let ok = waitUntil(held())
+      if not ok:
+        echo "held failed, matching docs ", d.len
+        for x in docs(config):
+          if not x.extractFilename.startsWith(key): continue
+          let text = readFile(x)
+          var bit = "NONE"
+          if "(killed" in text:
+            let rest = text.split("(killed")[1]
+            bit = if ")" in rest: rest.split(")")[0] else: rest[0 ..< min(40, rest.len)]
+          let mark = if "rewritten.sgy" in text: " rewritten" else: ""
+          echo "doc ", x.extractFilename, " ", bit, mark
+        echo "mem ", st.editsOf(0).kept.lists[teKilled]
+        for path in [b, l, c]:
+          let r = st.remembering(path)
+          echo "rem ", path.extractFilename, " known=", r.known, " conf=", r.confirmed,
+            " look=", r.looking, " doc=", r.doc
+        for j in st.jobs.active:
+          var title = j.spec.title
+          if title.len > 50: title = title[0 ..< 50]
+          echo "job ", j.state, " ", j.progress.phase, " ", title
+      doAssert ok, "one file holding (killed \"5 7 9\")"
       st.showFile(b)
       doAssert st.editsOf(0).has(teKilled, 6), "the file does not share its copy's edit"
       # a file of the same size, ends and time but another content: taken at
@@ -662,6 +686,53 @@ proc main*() =
       st.shutdown()
       removeFile(l)
       removeFile(c)
+    block copyKeepsTheTime:
+      # a copy that kept the file's modification time is brought back at
+      # once, then checked. A save while that check runs must not put back
+      # a kill the user took back; the flush after holds the kills made since.
+      let cfg = fx.dir / "config-mtime"
+      createDir(cfg)
+      let f = fx.dir / "kept-time.sgy"
+      writeFile(f, readFile(b))
+      setLastModificationTime(f, initTime(getLastModificationTime(f).toUnix - 60, 0))
+      let copy = fx.dir / "kept-time-copy.sgy"
+      writeFile(copy, readFile(f))
+      setLastModificationTime(copy, getLastModificationTime(f))
+      var st = start(cfg)
+      st.showFile(f)
+      doAssert st.settle(st.remembering(f).known)
+      st.edit(teKilled, 4)
+      st.edit(teKilled, 12)
+      # no document yet: the hash starts with the edits, then the flush writes them
+      doAssert st.settle(st.remembering(f).confirmed and not st.remembering(f).looking)
+      st.flushFiles()
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[st.base + 12],
+        on: false)
+      st.edit(teKilled, 8)
+      holdStep("reading every byte")
+      st.showFile(copy)
+      let hashing = waitUntil(inStep("reading every byte").len >= 1)
+      if hashing: st.persist(getMonoTime() + initDuration(seconds = 2))
+      releaseStep("reading every byte")
+      doAssert hashing, "the copy's hash did not start"
+      doAssert st.settle(st.remembering(copy).confirmed and not st.remembering(copy).looking)
+      doAssert not st.editsOf(0).has(teKilled, 12), "a kill taken back came back with the copy"
+      doAssert st.editsOf(0).has(teKilled, 4) and st.editsOf(0).has(teKilled, 8)
+      st.edit(teKilled, 6)
+      st.flushFiles()
+      var t: Time
+      let key = quickIdentity(f, t).key
+      var found: seq[string]
+      for x in docs(cfg):
+        if x.extractFilename.startsWith(key): found.add x
+      doAssert found.len == 1, "one document of the copy that kept the time, got " & $found.len
+      let wrote = readFile(found[0])
+      var bit = "NONE"
+      if "(killed" in wrote:
+        let rest = wrote.split("(killed")[1]
+        bit = if ")" in rest: rest.split(")")[0] else: rest[0 ..< min(40, rest.len)]
+      doAssert "(killed \"5 7 9\")" in wrote, "the flush did not hold the kills: " & bit
+      st.shutdown()
     block twoPrograms:
       # two viewSEG at once (two states on one store), the same file open in
       # both: neither write drops the other's edits; each shows the other's

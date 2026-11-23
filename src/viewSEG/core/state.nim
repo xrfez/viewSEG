@@ -4337,13 +4337,19 @@ proc link(state: var AppState; i, j: int) =
     if k == was: moved.add p
   var mine: FileEdits
   if state.edits.pop(was, mine):
-    # Taken in only when this path has edits of its own: what it brought
-    # back from the file's document is the other's already (and may be
-    # older than what the other shows and keeps now).
-    let brought = if state.remembered[i].doc.len > 0:
+    # Taken in only when this path has edits of its own. Compared with what
+    # it brought back, not with the document as a save wrote it since: that
+    # save may have taken a kill back, and merging the copy brought back
+    # would put it back. What was brought back is taken off first, so a
+    # kill taken back during the check is not put back, and an edit made
+    # during it still joins.
+    let snap = state.remembered[i].brought.doc.len > 0
+    let baseline = if snap: state.remembered[i].brought.edits
+      elif state.remembered[i].doc.len > 0:
         state.knownDocs.getOrDefault(state.remembered[i].doc).edits
       else: EditLists()
-    if mine.steps != (0, 0) or mine.kept != brought:
+    if mine.steps != (0, 0) or mine.kept != baseline:
+      if snap: mine.dropBrought(baseline)
       state.edits.mgetOrPut(key, FileEdits()).merge(move mine)
   for p in moved: state.editKey[p] = key
   state.editKey.del key
@@ -4590,7 +4596,8 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     state.editsChanged(r.path)
   r.identity = m.hashed
   r.hashed = true
-  r.brought = FileRecord() # confirmed
+  # `brought` stays until after `linkSame`: the link compares against what
+  # was brought back, not against a document a save wrote during the check.
   if wasChecking and r.doc.len > 0 and not state.knownDocs.getOrDefault(r.doc).damaged:
     r.savedRev = -1 # seen now, but never a damaged document
   if r.doc.len == 0 or r.ownDoc:
@@ -4621,6 +4628,7 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     r.savedRev = -1 # edits made before it was known: a document of its own
   for c in move(r.heldEarlier): state.sayEarlierNew(r.path, c, state.editsAt(r.path).kept)
   state.linkSame(i)
+  r.brought = FileRecord() # confirmed
 
 proc endMemoryWork(state: var AppState; job: JobInfo): bool =
   ## Says how a job of what is remembered ended (quietly when it did);
