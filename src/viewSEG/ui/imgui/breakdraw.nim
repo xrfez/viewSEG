@@ -71,15 +71,17 @@ var typedBoxes: Table[string, float64] ## what a box being edited holds, until i
 proc numberBox(id: string; value: float64; format: string; typed: var float64): bool =
   ## A box for a number that is applied when Enter is pressed or the box loses focus, not as
   ## each key is typed (a given model starts a new picking when it changes): true then, the
-  ## value in `typed`.
+  ## value in `typed`. Escape puts the value back and applies nothing.
   var v = cdouble(value)
   igSetNextItemWidth(round(igCalcTextSize("00000000.0", nil, false, -1).x +
     2 * igGetStyle().FramePadding.x))
   if igInputDouble(id.cstring, addr v, 0, 0, format.cstring, 0): typedBoxes[id] = float64(v)
-  if igIsItemDeactivatedAfterEdit() and id in typedBoxes:
-    typed = typedBoxes[id]
+  if igIsItemDeactivated():
+    # (ImGui may say "deactivated after an edit" for a box left with Escape: its edits count)
+    if id in typedBoxes and not igIsKeyPressed_Bool(ImGui_Key_Escape, false):
+      typed = typedBoxes[id]
+      result = true
     typedBoxes.del id
-    result = true
 
 func medianOffset(b: FirstBreaks): float64 =
   ## The median of the record's offsets: where a second layer is first put; 1000 without any.

@@ -37,6 +37,13 @@ type
   BreakState* = enum
     bkComputing, bkDone, bkFailed
 
+  GuideState* = enum
+    ## Whether the picks shown were guided by the model shown (`shownBreaks` in the state
+    ## shows another model's picks while those of the one asked for are made, or could not be).
+    gdOwn ## guided by the model shown (or by the record's fit, when it is fitted)
+    gdMaking ## guided by another model; the picks guided by this one are being made
+    gdFailed ## guided by another model; picking for this one failed or was stopped
+
   BreakKey* = tuple[file: SessionId; gather, keys: int; killed: seq[int]; off: seq[uint8];
       guide: BreakModel]
     ## What a result is of: the record, the file's keys as they were read
@@ -89,6 +96,11 @@ type
     twoPass*: bool ## the picks are those of the second, guided pass
     passNote*: string
       ## when the second pass was not made, why, in words (the first-pass picks stand)
+    guided*: GuideState ## whether the picks are the model shown's (`guideNote`)
+    guidedBy*: BreakModel
+      ## with `gdMaking` or `gdFailed`: the model the picks shown were guided by (`BreakModel()`:
+      ## the record's fit)
+    guideWhy*: string ## with `gdFailed`: why picking for the model shown did not finish
     revision*: int ## bumped when the lists change
 
 func sameRecord*(a, b: BreakKey): bool =
@@ -103,6 +115,8 @@ const
     ## the smallest limit (ms) beyond which a trace is off: the record's limit is this or three
     ## sigmas of its comparable residuals, whichever is larger (`core/breakrule`)
   MaxBreakRecords* = 6 ## results kept, at most, with the jobs in flight
+  MaxGuidesPerRecord* = 3
+    ## results of one record (each guided by another model) kept, at most, unless more are wanted
 
 func isHydrophone(k: TraceKeys): bool =
   if k.sensorType == 1: true
@@ -202,7 +216,10 @@ func setRule*(b: var FirstBreaks) =
   ## `flagged`, `thresholdMs`, `compared`, `offModel` and `medianDiffMs` from it, so the
   ## flags, the counts and the words are one finding.
   let n = b.pickMs.len
-  b.rule = applyRule(b.pickMs, b.confidence, b.modelMs, b.geometry, b.isGiven)
+  let intercept = if b.isGiven: b.given.interceptMs
+                  elif b.hasFit: b.fit.interceptMs
+                  else: NaN
+  b.rule = applyRule(b.pickMs, b.confidence, b.modelMs, b.geometry, b.isGiven, intercept)
   b.flagged = b.rule.flagged
   b.flagged.setLen n
   b.thresholdMs = b.rule.limitMs
@@ -239,25 +256,30 @@ func hasModel*(b: FirstBreaks): bool =
 func signedMs(x: float64): string =
   (if x >= 0: "+" else: "") & formatFloat(x, ffDecimal, 1) & " ms"
 
+func flaggedWords*(r: BreakRule): string =
+  ## The flagged count and what it is made of: "N flagged (M of K compared off the model, P off
+  ## their neighbours, F far off)". The far-off traces are not among the K compared.
+  $r.nFlagged & " flagged (" & $r.nOffModel & " of " & $r.nComparable &
+    " compared off the model, " & $r.nOffNeighbours & " off their neighbours, " & $r.nFarOff &
+    " far off)"
+
 func givenWords*(b: FirstBreaks): string =
   ## What the given model finds in the record, in a line: the median of pick less model and
-  ## the traces flagged; "" when the model is not the given one.
+  ## the traces flagged (`flaggedWords`); "" when the model is not the given one.
   if not b.isGiven: return ""
   if b.compared == 0:
     return if b.rule.nNoBreak + b.rule.nFarOff > 0: "Given model: no pick lies within " & $int(
-        GrossBandMs) &
-      " ms of it: it does not fit this record"
+        GrossBandMs) & " ms of it: it does not fit this record; " & b.rule.flaggedWords
     else: "Given model: no confident pick to compare it with"
-  "Given model: median pick less model " & b.medianDiffMs.signedMs & ", " & $b.offModel &
-    " of " & $b.compared & " compared traces flagged (limit " &
-    formatFloat(b.thresholdMs, ffDecimal, 1) & " ms)"
+  "Given model: median pick less model " & b.medianDiffMs.signedMs & ", " &
+    b.rule.flaggedWords & ", limit " & formatFloat(b.thresholdMs, ffDecimal, 1) & " ms"
 
 func givenShort(b: FirstBreaks): string =
   ## `givenWords` for the strip's note, which is short.
   if b.compared == 0:
     if b.rule.nNoBreak + b.rule.nFarOff > 0: "no pick within " & $int(GrossBandMs) & " ms of it"
     else: "no pick to compare"
-  else: "median " & b.medianDiffMs.signedMs & ", " & $b.offModel & " of " & $b.compared & " off"
+  else: "median " & b.medianDiffMs.signedMs & ", " & $b.offModel & " flagged"
 
 func modelNote*(b: FirstBreaks): string =
   ## Why the overlay shows no model bars, in plain words; "" when it does
@@ -311,7 +333,9 @@ func readoutText*(b: FirstBreaks; trace: int): string =
   if i >= 0 and i < b.rule.flagged.len:
     if b.rule.offModel[i]: result.add ", off the model"
     if b.rule.offNeighbours[i]: result.add ", off its neighbours"
+    if b.rule.farOff[i]: result.add ", far off the model"
     if b.rule.noBreak[i]: result.add ", no break found"
+    if b.rule.beyond[i]: result.add ", beyond the offsets where breaks are seen"
 
 func velocityUnit*(u: SurveyUnit): string =
   ## The unit the fitted velocity is read in, as the f-k's velocity label follows the
@@ -368,6 +392,21 @@ func number(x: float64): string =
 const UnitFromSurvey* =
   "The unit is taken from the project's survey: the file names none."
 
+func guideWords(m: BreakModel): string =
+  if m.given: "another given model" else: "the record's fit"
+
+func guideNote*(b: FirstBreaks): string =
+  ## When the picks shown were guided by another model than the one shown (`guided`), in words;
+  ## "" when they are the model shown's.
+  case b.guided
+  of gdOwn: ""
+  of gdMaking:
+    "The picks shown were guided by " & guideWords(b.guidedBy) &
+      ": those guided by this model are being made."
+  of gdFailed:
+    "The picks guided by this model could not be made (" & b.guideWhy &
+      "): the picks shown were guided by " & guideWords(b.guidedBy) & "."
+
 func ruleWords*(b: FirstBreaks; unit: SurveyUnit): string =
   ## What the rule found in the record, in plain words, with the limits and the statements about
   ## the model and the source; "" without a model.
@@ -376,8 +415,8 @@ func ruleWords*(b: FirstBreaks; unit: SurveyUnit): string =
   result = $r.nComparable & " traces compared with the model, " & $r.nNoBreak &
     " with no break found within the offsets where breaks are seen, " & $r.nBeyond &
     " beyond those offsets (never a finding), " & $r.nFarOff & " far off the model (a break " &
-    "more than " & $int(GrossBandMs) & " ms from it), " & $r.nOffModel & " off the model, " &
-    $r.nOffNeighbours & " off their neighbours"
+    $int(GrossBandMs) & " to " & $int(FarOffMaxMs) & " ms from it), " & $r.nOffModel &
+    " off the model, " & $r.nOffNeighbours & " off their neighbours; " & $r.nFlagged & " flagged"
   if not r.limitMs.isNaN:
     result.add "\nOff the model: more than " & formatFloat(r.limitMs, ffDecimal, 1) &
       " ms away (3 sigmas of the picks' own scatter, " & formatFloat(r.sigmaMs, ffDecimal, 1) &
@@ -386,13 +425,18 @@ func ruleWords*(b: FirstBreaks; unit: SurveyUnit): string =
       result.add "\nOff its neighbours: more than " & formatFloat(r.stationLimitMs, ffDecimal, 1) &
         " ms from what the stations beside it say"
   if b.isGiven and r.mismatch:
+    # the model is the likelier fault: the rule says nothing of the source then
     result.add "\nThe given model does not match this record's breaks"
     if b.hasFit:
-      result.add ": the record's own fit is " & number(b.fit.v1) & " " & unit.velocityUnit &
-        " with an intercept of " & formatFloat(b.fit.interceptMs, ffDecimal, 1) & " ms"
+      result.add ": the record's own fit is " & number(b.fit.v1) & " " & unit.velocityUnit
+      if b.segments == 2:
+        result.add " (" & number(b.fit.v2) & " beyond " & number(b.fit.crossover) & ")"
+      result.add " with an intercept of " & formatFloat(b.fit.interceptMs, ffDecimal, 1) & " ms"
   let s = r.statementWords
   if s.len > 0: result.add "\nThe record: " & s
   if b.passNote.len > 0: result.add "\n" & b.passNote
+  let g = b.guideNote
+  if g.len > 0: result.add "\n" & g
 
 func modelWordsOf(b: FirstBreaks; unit: SurveyUnit): string =
   ## What the model is, for the key's tooltip: a straight-line refraction fit to this
@@ -456,5 +500,11 @@ func keyParts*(b: FirstBreaks): KeyParts =
 
 func keyNote*(b: FirstBreaks): string =
   ## The words the key shows beside itself: the overlay's own words while it is working,
-  ## failed or has no model; "" once it has one (the tooltip says the rest).
-  if b.state == bkDone and b.hasModel: "" else: b.statusWords
+  ## failed or has no model, or that the picks shown were guided by another model; "" once it
+  ## has its own (the tooltip says the rest).
+  if b.state == bkDone and b.hasModel:
+    case b.guided
+    of gdOwn: ""
+    of gdMaking: "picking again for this model..."
+    of gdFailed: "picks of " & guideWords(b.guidedBy) & ": " & b.guideWhy
+  else: b.statusWords

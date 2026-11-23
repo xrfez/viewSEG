@@ -607,11 +607,16 @@ trace that is flagged. A trace is **off the model** when its pick is farther fro
 than the record's own scatter allows (three times the scatter of the picks that lie near the
 model, and never less than 12 ms), and **off its neighbours** when it differs by more than that
 from the traces beside it on its receiver line (this finds one wrong station, even where the
-real first breaks bend away from a straight model). A trace where the picker found no break
-(a faint pick) is **no break found**, and one beyond the offsets where breaks are seen at all
-is never judged: both are drawn faint with no line, counted apart and never flagged. A trace
-whose break was found more than 100 ms from the model is **far off the model** and flagged. The record's words add when the picks lean to one side of the source, or are all
-early or late by the same amount: the source may be placed or named wrongly. The model needs source-receiver offsets: the imported survey's,
+real first breaks bend away from a straight model, and a block of wrong stations flags only
+itself). A trace where the picker found no break (a faint pick) is **no break found**, and one
+beyond the offsets where breaks are seen at all (where fewer than a fifth of the traces have a
+break near the model) is never judged: both are drawn faint with no line, counted apart and
+never flagged. A trace whose break was found 100 to 400 ms from the model (a station placed a
+few hundred metres wrong) is **far off the model** and flagged; a pick farther off, or before
+any break can arrive, is noise. The record's words add when the picks lean to one side of the
+source, or are all early or late by the same amount: the source may be placed or named wrongly.
+When a model you gave does not match the record at all (too slow, too fast, too late), the
+words say so and give the record's own fit instead, and say nothing of the source. The model needs source-receiver offsets: the imported survey's,
 or the file's own coordinates; without them only the picks are drawn and the key at the plot's
 corner says so. Point at the key ("model", "pick") and it says what the model is: a
 straight-line refraction fit to this record's own picks against offset, with no velocity
@@ -620,7 +625,7 @@ unit per second, the intercept in ms, how many picks it was fitted to (picks far
 line are left out, so noise at long offsets does not set it), where the offsets came from (the
 survey or the file's headers), and the counts: traces compared, no break found, off the model,
 off its neighbours, with the limits in ms. The key itself stays short: "model", "pick", a small "given" when the model is the one
-you gave and, in the warning colour, how many traces are off it ("358 off"). Click the key's "pick" or "model" to hide or show that kind of bar (a hidden one is dimmed and
+you gave and, in the warning colour, how many traces are flagged ("358 off"). Click the key's "pick" or "model" to hide or show that kind of bar (a hidden one is dimmed and
 struck through in the key). Click the rest of the key, or the small wheel at its end, to **give
 a model instead**: a velocity, an intercept (ms, 0 by default) and, behind **Two layers**, a
 second velocity beyond a crossover offset, held for every record. The same popover
@@ -630,8 +635,12 @@ at least 7 pixels, and 3 pixels thick). When the file names no length unit the v
 takes the project's survey's (the tooltip says so; only the label). A model fitted to each record follows its picks and so hides a
 source named or placed wrongly; a given one does not, so use it to check geometry: the bars sit
 on the picks where source and stations are right, and the key's tooltip says how far the record
-is off ("median pick less model -40 ms, 45 of 47 compared traces flagged"). **Use this
-record's fit** copies the fit of a good record into the boxes to hold for the others. The model
+is off ("median pick less model -40 ms, 45 flagged (45 of 47 compared off the model, 0 off
+their neighbours, 0 far off)"). A typed number counts when you press Enter or leave the box;
+Escape puts the old one back. The picks are then made again for that model in the background
+("picking again for this model..." in the key); if that is stopped, the key says whose picks
+are drawn. **Use this record's fit** copies the fit of a good record into the boxes to hold for
+the others. The model
 is kept in the project when one is open, else in the settings. A killed trace has no bars. With the pointer on a trace the status bar adds
 the model's time, the pick's and their difference. It is off until you turn it on, and
 works in the background, so stepping through records is not held up.

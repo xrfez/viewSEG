@@ -111,6 +111,9 @@ proc main*() =
     func now(f: FrameInfo): FirstBreaks =
       f.core.shownBreaks(f.core.findPanel(MainPanel))
 
+    proc reopen(f: FrameInfo) =
+      if f.markOf("plot.first break model fitted").size.x == 0:
+        f.click(f.markOf("plot.first break key settings").centre)
     step("opened", noop, proc (f: FrameInfo): bool = f.ready)
     step("the overlay on", proc (f: FrameInfo) =
       var d = f.display
@@ -140,6 +143,31 @@ proc main*() =
     step("the popover with the given numbers", noop, proc (f: FrameInfo): bool =
       result = f.markOf("plot.first break model v1").size.x > 0 and f.shown
       if result: f.shoot("popover-given"))
+    # a typed velocity is applied on Enter, and Escape puts the old one back. Seen to fail: with
+    # the box applying whatever was typed when it is left, "Escape applied the typed velocity"
+    var v1Before = 0.0
+    step("click into the velocity box", proc (f: FrameInfo) =
+      v1Before = f.display.breakModel.v1
+      f.click(f.markOf("plot.first break model v1").centre), proc (f: FrameInfo): bool =
+      waited > 5)
+    step("type and Escape", proc (f: FrameInfo) =
+      f.typeText("7")
+      f.pressKey(skEscape, true)
+      f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
+      result = waited > 20
+      doAssert f.display.breakModel.v1 == v1Before, "Escape applied the typed velocity: " &
+        $f.display.breakModel.v1)
+    step("the popover after Escape", reopen, proc (f: FrameInfo): bool =
+      f.markOf("plot.first break model v1").size.x > 0 and waited > 5)
+    step("click into the velocity box again", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break model v1").centre), proc (f: FrameInfo): bool =
+      waited > 5)
+    step("type and Enter", proc (f: FrameInfo) =
+      f.typeText("7")
+      f.pressKey(skEnter, true)
+      f.pressKey(skEnter, false), proc (f: FrameInfo): bool =
+      result = f.display.breakModel.v1 != v1Before
+      doAssert waited < 200 or result, "Enter did not apply the typed velocity")
     var twoBefore = false
     step("Two layers is a checkbox", proc (f: FrameInfo) =
       twoBefore = f.display.breakModel.segments == 2
@@ -185,9 +213,6 @@ proc main*() =
         doAssert f.now.offModel * 10 > f.now.compared * 9, $f.now.offModel
         doAssert "median" in f.now.statusWords
       if result: f.shoot("moved-source"))
-    proc reopen(f: FrameInfo) =
-      if f.markOf("plot.first break model fitted").size.x == 0:
-        f.click(f.markOf("plot.first break key settings").centre)
     step("the popover again", reopen, proc (f: FrameInfo): bool =
       f.markOf("plot.first break model fitted").size.x > 0 and waited > 5)
     step("move onto Fitted", proc (f: FrameInfo) =

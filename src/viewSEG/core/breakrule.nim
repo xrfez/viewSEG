@@ -5,21 +5,35 @@
 ## picker found noise (no break at that offset) has a pick that lies anywhere, so it is
 ## "no break found", never "off the model". The rule:
 ##
+## - **Where a break is expected** (`expectedRange`): out to the offset where fewer than
+##   `RangeShare` of the traces have a confident pick near the model, and never past most of the
+##   picks both passes agree on. A trace beyond it is "beyond", counted apart and never judged.
 ## - **Comparable**: a pick of confidence from `ConfidentPick` within `GrossBandMs` of the
-##   model. Everything else with a model time is "no break found" and is never flagged.
+##   model.
 ## - **Off the model**: a comparable trace whose residual (pick less model) is larger than
 ##   the record's limit, `max(LimitFloorMs, LimitSigmas * sigma)`, `sigma` being 1.4826 times
-##   the median absolute deviation (MAD) of the comparable residuals.
+##   the median absolute deviation (MAD) of the picks' own scatter about the record's fit.
+## - **Far off the model**: a trace whose guided pick is not comparable, but whose first-pass
+##   pick is confident and more than `GrossBandMs`, at most `FarOffMaxMs`, from the model,
+##   and not before the model's intercept less the limit (no break comes before the first
+##   possible arrival). Everything else with a model time is "no break found", never flagged.
 ## - **Off its neighbours**: a comparable trace whose residual, less the median residual of up
-##   to `NeighbourCount` comparable neighbours on each side along its receiver line, is larger
-##   than `max(LimitFloorMs, StationSigmas * sigma')`, `sigma'` being the same measure of
-##   these differences over the record. This finds a wrong station and tolerates a model that
-##   bends.
+##   to `NeighbourCount` comparable neighbours on one side along its receiver line (at most
+##   `NeighbourReach` places away; the left side's, the right side's or their mean, whichever is
+##   nearer its own residual), is larger than
+##   `max(LimitFloorMs, StationSigmas * sigma')`, `sigma'` being the same measure of the
+##   differences from the mean of both sides over the record. This finds a wrong station and
+##   tolerates a model that bends.
+## - **A given model that does not match**: its median residual is past the limit, its
+##   misfit's scatter is more than `MismatchSigmas` times the picks' own, or it finds fewer
+##   than half the comparable traces the record's own fit finds.
 ## - **A source in the wrong place**: when the comparable traces' azimuths from the source
 ##   cover at least `LeanMinSpanDeg` degrees, the residuals are fitted (robustly) as `c0 +
 ##   a cos(az) + b sin(az)`. A constant `c0`, or a lean `sqrt(a² + b²)`, above
 ##   `max(StatementFloorMs, StatementSigmas * sigma)` is said in the record's words; `sigma` is
 ##   the scatter left after that fit, so the lean does not widen what it is measured against.
+##   Nothing is said of the source when a given model does not match: the model is the
+##   likelier fault.
 ##
 ## One function (`applyRule`) decides all of it, so the flags, the counts and the words cannot
 ## disagree.
@@ -51,10 +65,21 @@ const
   GrossBandMs* = 100.0 ## a confident pick farther than this from the model is no break found
   LimitFloorMs* = 12.0 ## the smallest limit, on the model and on the neighbours (ms)
   LimitSigmas* = 3.0 ## the record's limit: this many sigmas of the comparable residuals
-  StationSigmas* = 4.0 ## the neighbours' limit: this many sigmas of the local differences
+  StationSigmas* = 4.0
+    ## the neighbours' limit: this many sigmas of the differences from both sides' mean
   NeighbourCount* = 3 ## comparable neighbours on each side that set a station's expectation
+  NeighbourReach* = 2 * NeighbourCount
+    ## the farthest (in places along the line) a neighbour is looked for on each side
   MinNeighbours* = 3 ## the fewest usable neighbours (in all) a trace needs to be judged by them
-  RangePercentile* = 0.98 ## the share of the trimmed picks' offsets that is the expected range
+  FarOffMaxMs* = 400.0
+    ## the farthest a first-pass pick may be from the model to be "far off" it; farther is noise
+  RangeBins* = 20 ## the offset bins `expectedRange` cuts the record into
+  RangeBinTraces* = 10 ## the fewest traces a bin holds (a sparser one is merged outward)
+  RangeShare* = 0.2
+    ## the share of a bin's traces with a confident pick near the model below which no break is
+    ## expected there
+  RangeSupportedPercentile* = 0.95
+    ## the expected range is never beyond this share of the supported picks' offsets
   MinLeanEigen* = 0.15
     ## the smaller eigenvalue of the azimuths' (cos, sin) scatter matrix, per trace, below which
     ## no lean is fitted (a full ring gives 0.5; a line through the source, 0)
@@ -94,14 +119,17 @@ type
     azimuth*: seq[float64] ## source to receiver, radians counter-clockwise from +x; NaN unknown
     offsetAbs*: seq[float64] ## |offset| per trace; NaN unknown (empty: every trace is in range)
     rangeMax*: float64 = NaN
-      ## the largest offset at which a break is expected: that of the trimmed picks
-      ## (`RangePercentile`); beyond it a trace is never judged. NaN: no limit
+      ## the largest offset at which a break is expected (`expectedRange`); beyond it a trace is
+      ## never judged. NaN: no limit
     firstMs*, firstConf*: seq[float64]
       ## the first (unguided) pass's pick and confidence per trace; empty: none
     ownSigmaMs*: float64 = NaN
       ## the pick scatter about the record's OWN fit (robust sigma, ms): the limits come from it
       ## whatever model is shown, so a model that does not fit cannot widen them. NaN: the
       ## scatter about the model shown
+    ownComparable*: int = -1
+      ## the traces comparable with the record's OWN fit within the expected range: a given
+      ## model that finds fewer than half as many does not match. -1: not known
 
   LeanKind* = enum
     lkNone, lkConstant, lkSide
@@ -120,7 +148,7 @@ type
     constantMs*: float64      ## c0 (NaN when not found)
     leanMs*: float64          ## fitted sqrt(a² + b²) (NaN when not fitted)
     earlyTowardDeg*: float64  ## the angle (degrees from +x towards +y) the picks are earliest at
-    statement*: set[LeanKind] ## what is said of the source
+    statement*: set[LeanKind] ## what is said of the source (nothing with `mismatch`)
     mismatch*: bool           ## a given model that does not match the record's breaks
 
 func median*(xs: openArray[float64]): float64 =
@@ -297,6 +325,55 @@ func stationLines*(line, point: openArray[float64]; eligible: openArray[bool]):
       for (_, i) in keyed: ids.add i
     result.add ids
 
+func expectedRange*(offsetAbs: openArray[float64]; eligible, seen, supported: openArray[bool]):
+    float64 =
+  ## The largest offset at which a break is expected: the eligible traces with an offset are cut
+  ## into `RangeBins` bins of offset (a bin of fewer than `RangeBinTraces` traces merged with the
+  ## next one out, a short last one with the one before), and walked outward from the first bin
+  ## where at least `RangeShare` of the traces have a `seen` pick (a confident one near the
+  ## model); the range ends at the outer edge of the last such bin before the first that falls
+  ## below it, and never beyond `RangeSupportedPercentile` of the offsets of the `supported`
+  ## picks (those both passes agree on: a guided pick alone may be noise its window held). NaN
+  ## when no trace has a supported pick.
+  var far = 0.0
+  var held: seq[float64]
+  for i in 0 ..< offsetAbs.len:
+    if eligible[i] and not offsetAbs[i].isNaN:
+      far = max(far, offsetAbs[i])
+      if supported[i]: held.add offsetAbs[i]
+  if held.len == 0: return NaN
+  held.sort()
+  let top = held[min(held.high, max(0, int(ceil(RangeSupportedPercentile * float64(
+    held.len))) - 1))]
+  if far <= 0: return top
+  let width = far / float64(RangeBins)
+  var count, inBin = newSeq[int](RangeBins)
+  for i in 0 ..< offsetAbs.len:
+    if eligible[i] and not offsetAbs[i].isNaN:
+      let b = min(RangeBins - 1, int(offsetAbs[i] / width))
+      inc count[b]
+      if seen[i]: inc inBin[b]
+  # the bins merged: (traces, seen, outer edge)
+  var groups: seq[(int, int, float64)]
+  var (c, h) = (0, 0)
+  for b in 0 ..< RangeBins:
+    c += count[b]
+    h += inBin[b]
+    if c >= RangeBinTraces:
+      groups.add (c, h, width * float64(b + 1))
+      (c, h) = (0, 0)
+  if c > 0:
+    if groups.len > 0:
+      groups[^1][0] += c
+      groups[^1][1] += h
+      groups[^1][2] = far
+    else: groups.add (c, h, far)
+  var edge = NaN
+  for (traces, got, outer) in groups:
+    if float64(got) >= RangeShare * float64(traces): edge = outer
+    elif not edge.isNaN: break
+  if edge.isNaN: top else: min(edge, top)
+
 func solve3(m: var array[3, array[4, float64]]): bool =
   ## Gauss elimination of the 3x4 system; false when singular.
   for c in 0 .. 2:
@@ -358,23 +435,24 @@ func eigenMin(az: openArray[float64]): float64 =
   let det = cc * ss - cs * cs
   (tr - sqrt(max(tr * tr - 4 * det, 0.0))) / 2
 
-func sideMedian(ids: openArray[int]; k, dir: int; usable, res: openArray[float64]):
+func sideMedian(ids: openArray[int]; k, dir: int; res: openArray[float64]):
     tuple[med: float64; count: int] =
-  ## The median residual of up to `NeighbourCount` usable traces from `ids[k]` in direction
-  ## `dir` (`usable[i]` is 1 for a trace to use).
+  ## The median residual of up to `NeighbourCount` traces next to `ids[k]` in direction `dir`,
+  ## looked for at most `NeighbourReach` places away (`ids` are the line's comparable traces).
   var near: seq[float64]
   var j = k + dir
-  while j >= 0 and j < ids.len and near.len < NeighbourCount:
-    if usable[ids[j]] > 0: near.add res[ids[j]]
+  while j >= 0 and j < ids.len and near.len < NeighbourCount and abs(j - k) <= NeighbourReach:
+    near.add res[ids[j]]
     j += dir
   (median(near), near.len)
 
 func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry;
-    given = false): BreakRule =
+    given = false; interceptMs = NaN): BreakRule =
   ## The rule over one record: per trace, its pick, the pick's confidence and the model's time
   ## (NaN where it has none). The traces `g.eligible` says are not part of it are not counted;
   ## those beyond `g.rangeMax` are counted apart and never judged. `given`: the model is one the
-  ## user gave, which may not match the record (`mismatch`).
+  ## user gave, which may not match the record (`mismatch`). `interceptMs`: the model's time at
+  ## offset 0, before which no first-pass pick is far off it (NaN: no such bound).
   let n = pickMs.len
   result = BreakRule(comparable: newSeq[bool](n), noBreak: newSeq[bool](n),
     beyond: newSeq[bool](n), farOff: newSeq[bool](n), offModel: newSeq[bool](n),
@@ -401,14 +479,7 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
           result.comparable[i] = true
           all.add d
           inc result.nComparable
-        elif haveFirst and g.firstConf[i] >= ConfidentPick and
-            abs(g.firstMs[i] - modelMs[i]) > GrossBandMs:
-          # the guided window holds no break, but the first pass found one far from the model
-          result.farOff[i] = true
-          inc result.nFarOff
-        else:
-          result.noBreak[i] = true
-          inc result.nNoBreak
+        else: result.noBreak[i] = true # until the far-off test below
   result.misfitSigmaMs = robustSigma(all)
   result.sigmaMs = if g.ownSigmaMs.isNaN: result.misfitSigmaMs else: g.ownSigmaMs
   if all.len > 0: result.medianMs = median(all)
@@ -417,34 +488,51 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
     for i in 0 ..< n:
       if result.comparable[i] and abs(res[i]) > result.limitMs:
         result.offModel[i] = true
-  # the station rule, along each receiver line: against the median of up to NeighbourCount
-  # usable neighbours (comparable, not off the model) on each side, the side nearer the trace's
-  # own residual when there are both; a trace with fewer than MinNeighbours is not judged
-  var local = newSeq[float64](n)
-  var usable = newSeq[float64](n)
+  # far off: the guided window holds no break, but the first pass found a confident one
+  # beyond it, near enough to be a station placed wrongly, and not before any arrival can be
+  let earliest = interceptMs - (if result.limitMs.isNaN: LimitFloorMs else: result.limitMs)
   for i in 0 ..< n:
-    local[i] = NaN
-    if result.comparable[i] and not result.offModel[i]: usable[i] = 1
+    if result.noBreak[i]:
+      if haveFirst and g.firstConf[i] >= ConfidentPick and not g.firstMs[i].isNaN:
+        let d = abs(g.firstMs[i] - modelMs[i])
+        if d > GrossBandMs and d <= FarOffMaxMs and
+            (earliest.isNaN or g.firstMs[i] >= earliest):
+          (result.farOff[i], result.noBreak[i]) = (true, false)
+          inc result.nFarOff
+      if result.noBreak[i]: inc result.nNoBreak
+  # the station rule, along each receiver line: against the median of up to NeighbourCount
+  # comparable neighbours on each side (off the model or not: a stretch the model misses is
+  # still the line's); a trace with fewer than MinNeighbours is not judged
+  var local = newSeq[float64](n)
+  for i in 0 ..< n: local[i] = NaN
   var lines = g.lines
   if lines.len == 0:
     lines = @[newSeq[int]()]
     for i in 0 ..< n: lines[0].add i
-  var diffs: seq[float64]
+  # sigma' is that of the differences from both sides' mean (the ends' one-sided ones when no
+  # trace has both): the nearer side's alone are narrower than the stations' real scatter, and
+  # a limit from them flags healthy stations
+  var diffs, ends: seq[float64]
   for line in lines:
     var ids: seq[int]
     for i in line:
       if i in 0 ..< n and result.comparable[i]: ids.add i
     for k in 0 ..< ids.len:
-      let (ml, nl) = sideMedian(ids, k, -1, usable, res)
-      let (mr, nr) = sideMedian(ids, k, 1, usable, res)
+      let (ml, nl) = sideMedian(ids, k, -1, res)
+      let (mr, nr) = sideMedian(ids, k, 1, res)
       if nl + nr >= MinNeighbours:
         let r = res[ids[k]]
-        let near = if nl == 0: mr
+        # with both sides: whichever of the left, the right and their mean is nearest (the mean
+        # follows a steep stretch, one side a block's edge)
+        var near = if nl == 0: mr
                    elif nr == 0: ml
                    elif abs(r - ml) <= abs(r - mr): ml
                    else: mr
+        if nl > 0 and nr > 0 and abs(r - (ml + mr) / 2) < abs(r - near): near = (ml + mr) / 2
         local[ids[k]] = r - near
-        diffs.add local[ids[k]]
+        if nl > 0 and nr > 0: diffs.add r - (ml + mr) / 2
+        else: ends.add local[ids[k]]
+  if diffs.len == 0: diffs = ends
   if diffs.len > 0:
     result.stationSigmaMs = robustSigma(diffs)
     result.stationLimitMs = max(LimitFloorMs, StationSigmas * result.stationSigmaMs)
@@ -456,9 +544,10 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
     if result.offModel[i]: inc result.nOffModel
     if result.offNeighbours[i]: inc result.nOffNeighbours
     if result.flagged[i]: inc result.nFlagged
-  # a given model that does not match the record
+  # a given model that does not match the record: by its median, its misfit, or because it
+  # finds far fewer breaks than the record's own fit (so the record's own fit never is one)
   if given and result.nInRange > 0:
-    result.mismatch = result.nComparable * 2 < result.nInRange or
+    result.mismatch = (g.ownComparable > 0 and result.nComparable * 2 < g.ownComparable) or
       (not result.limitMs.isNaN and abs(result.medianMs) > result.limitMs) or
       (not g.ownSigmaMs.isNaN and not result.misfitSigmaMs.isNaN and
         result.misfitSigmaMs > MismatchSigmas * g.ownSigmaMs)
@@ -470,7 +559,10 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
       if result.comparable[i] and not g.azimuth[i].isNaN:
         rs.add res[i]
         az.add g.azimuth[i]
-  var bar = max(StatementFloorMs, StatementSigmas * result.sigmaMs)
+  # the bar is the scatter left after the fit: the one-parameter fit's (the misfit's) when
+  # the azimuths cannot give a lean, else the lean's; never the picks' own scatter about the
+  # record's fit, which a lean widens
+  var bar = max(StatementFloorMs, StatementSigmas * result.misfitSigmaMs)
   var c0 = median(all) # the one-parameter fit, when the azimuths cannot give a lean
   if rs.len >= LeanMinTraces and coverageDeg(az) >= LeanMinSpanDeg and
       eigenMin(az) >= MinLeanEigen:
@@ -480,16 +572,17 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
       result.leanMs = sqrt(f.a * f.a + f.b * f.b)
       # the picks are earliest where the lean is most negative
       result.earlyTowardDeg = arctan2(-f.b, -f.a) * 180.0 / PI
-      if g.ownSigmaMs.isNaN:
-        # the scatter left after the lean and the constant, not before: the lean itself would
-        # otherwise widen the sigma it is measured against
-        var left = newSeq[float64](rs.len)
-        for i in 0 ..< rs.len:
-          left[i] = rs[i] - (f.c0 + f.a * cos(az[i]) + f.b * sin(az[i]))
-        bar = max(StatementFloorMs, StatementSigmas * robustSigma(left))
+      # the scatter left after the lean and the constant, not before: the lean itself would
+      # otherwise widen the sigma it is measured against
+      var left = newSeq[float64](rs.len)
+      for i in 0 ..< rs.len:
+        left[i] = rs[i] - (f.c0 + f.a * cos(az[i]) + f.b * sin(az[i]))
+      bar = max(StatementFloorMs, StatementSigmas * robustSigma(left))
       if result.leanMs > bar: result.statement.incl lkSide
   result.constantMs = c0
   if abs(c0) > bar: result.statement.incl lkConstant
+  # a given model that does not match is the likelier fault: nothing is said of the source
+  if result.mismatch: result.statement = {}
 
 func earlyBearingDeg*(r: BreakRule): float64 =
   ## The direction the picks are earliest in as a compass bearing, clockwise from north, taking

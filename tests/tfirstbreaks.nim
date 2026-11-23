@@ -3,8 +3,9 @@
 ## geometry and a known velocity, the offsets from the headers or from the
 ## file's coordinates (and no model without either), a planted mis-positioned
 ## trace that shows as a difference, killed traces left out, and the job on
-## the state: made off the UI thread, kept per record, a newer key cancelling
-## the older job and its late answer dropped.
+## the state: made off the UI thread, kept per record and guide (two panels with two models
+## each keep theirs), a newer key cancelling the older job and its late answer dropped, a
+## stopped picking said, and what each panel shows made once rather than on every frame.
 ##
 ## Seen to fail: with the model's time taken from the pick, "the model is off by
 ## 10.0 ms"; with the killed traces not passed as not live, "killed trace picked";
@@ -15,13 +16,17 @@
 ## whole, "vertical 3"; with the raw residual against 12 ms for the flag, "trace 0 flagged,
 ## difference 23.9"; with a header offset of 0 fitted, the zero-offset trace modelled; with
 ## `hasModel` counting the picks used, "not b.hasModel"; with the second record's rows not
-## taken from the record's start, "trace 650: 572.0, pickInto nan".
+## taken from the record's start, "trace 650: 572.0, pickInto nan"; with one result per record
+## whatever the guide, "200 jobs in 200 frames" for two panels with two models; with a stopped
+## picking for a given model leaving the fit's picks shown without a word, the stop's check;
+## with the views not kept, "the views are made again on every frame"; with the neighbour rule
+## leaving the traces off the model out, "trace 19 off its neighbours" on the 80 ms drift.
 
 import std/[math, os, strutils]
 import parseSEG
 import processSEG/core/[types, workspace]
 import processSEG/qc/firstbreak
-import viewSEG/core/[breakmodel, displaypresets, firstbreakjobs, firstbreaks]
+import viewSEG/core/[breakmodel, displaypresets, firstbreakjobs, firstbreaks, join]
 import viewSEG/core/state {.all.}
 import utils/[breakfiles, fixtures, waiting]
 
@@ -168,18 +173,100 @@ proc main*() =
       d.breakModel = BreakModel(source: bmGiven, v1: 2000, interceptMs: 20)
       st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
       doAssert waitUntil(breaksHeld.isOpen), "the guided picking was not asked for"
-      # held: the old result is still there, done, and shown with the given model already
-      doAssert st.firstBreaks.len == 1 and st.firstBreaks[0].state == bkDone and
-        st.firstBreaks[0].job != NoJob, "the result was blanked, or no job is making new picks"
+      # held: the old result is still there, done, and shown with the given model already, saying
+      # its picks are the fit's; the given model's own result is being made beside it
+      doAssert st.firstBreaks.len == 2 and st.firstBreaks[0].state == bkDone and
+        st.firstBreaks[1].state == bkComputing and st.firstBreaks[1].job != NoJob,
+        "the result was blanked, or no job is making new picks"
       let shown = st.shownBreaks(0)
       doAssert shown.state == bkDone and shown.isGiven and shown.rule.nFlagged > 0,
         "the given model was not applied to the picks there"
+      doAssert shown.guided == gdMaking and "being made" in shown.guideNote and
+        "picking again" in shown.keyNote, shown.guideNote
       doAssert st.breakKeyFor(0, 0) == keyBefore, "the record's check would start again"
-      doAssert st.firstBreaks[0].key.guide.v1 == 2000
+      doAssert st.firstBreaks[1].key.guide.v1 == 2000
       holdBreaks.open()
       setJobHook(nil)
-      doAssert st.settle(st.firstBreaks[0].job == NoJob and st.jobs.active.len == 0)
-      doAssert st.firstBreaks[0].state == bkDone and st.firstBreaks[0].twoPass
+      doAssert st.settle(st.firstBreaks[^1].job == NoJob and st.jobs.active.len == 0)
+      doAssert st.firstBreaks[^1].state == bkDone and st.firstBreaks[^1].twoPass
+      doAssert st.breaksIndex(0) == st.firstBreaks.high and st.shownBreaks(0).guided == gdOwn
+      st.shutdown()
+
+  block aStoppedRePickSaysThePicksAreAnotherModels:
+    # the picking for a given model is stopped: the picks shown are the fit's, and the overlay
+    # says so (they were once shown as if the given model's, the key naming it)
+    withFixtures fx:
+      let path = fx.shotSegy("stopped.sgy", gHeaderOffset)
+      var st = initAppState()
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut and
+        st.jobs.active.len == 0)
+      var d = st.panel(MainPanel).layers[0].display
+      d.firstBreaks = true
+      st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+      doAssert st.settle(st.firstBreaks.len == 1 and st.firstBreaks[0].state == bkDone and
+        st.jobs.active.len == 0)
+      holdBreaks.close()
+      breaksHeld.close()
+      setJobHook(breaksHook)
+      d.breakModel = BreakModel(source: bmGiven, v1: 2000, interceptMs: 20)
+      st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+      doAssert waitUntil(breaksHeld.isOpen), "the guided picking was not asked for"
+      var job = NoJob
+      for b in st.firstBreaks:
+        if b.key.guide.given: job = b.job
+      doAssert job != NoJob
+      discard st.jobs.cancel(job)
+      holdBreaks.open()
+      setJobHook(nil)
+      doAssert st.settle(st.jobs.active.len == 0 and st.shownBreaks(0).guided == gdFailed),
+        "the stop was not said"
+      let shown = st.shownBreaks(0)
+      doAssert shown.state == bkDone and shown.isGiven, "the fit's picks are no longer shown"
+      doAssert "could not be made (stopped)" in shown.guideNote and
+        "the record's fit" in shown.guideNote, shown.guideNote
+      doAssert "could not be made" in shown.modelWords(suMetres) and
+        "stopped" in shown.keyNote, shown.keyNote
+      # it is not asked for again on its own: the next frames start no job
+      for frame in 0 ..< 20:
+        discard st.drainInbox()
+        doAssert st.jobs.active.len == 0, "a stopped picking was started again"
+      st.shutdown()
+
+  block twoPanelsOnOneRecordWithTwoModelsEachKeepTheirs:
+    # one panel fitted, the other with a given model, on the same record: each has its own
+    # result, the jobs settle, and nothing is cancelled and submitted again frame after frame
+    # (it once was: each panel's key took the one result over in turn)
+    withFixtures fx:
+      let path = fx.shotSegy("two.sgy", gHeaderOffset)
+      var st = initAppState()
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut and
+        st.jobs.active.len == 0)
+      let other = st.addPanel()
+      st.apply Command(kind: ckShowFile, panel: other, path: path)
+      doAssert st.settle(st.panel(other).laidOut and st.jobs.active.len == 0)
+      for (id, given) in [(MainPanel, false), (other, true)]:
+        var d = st.panel(id).layers[0].display
+        d.firstBreaks = true
+        if given: d.breakModel = BreakModel(source: bmGiven, v1: 2000, interceptMs: 20)
+        st.apply Command(kind: ckDisplay, panel: id, display: d)
+      var jobs: seq[JobId]
+      for frame in 0 ..< 200:
+        discard st.drainInbox()
+        for b in st.firstBreaks:
+          if b.job != NoJob and b.job notin jobs: jobs.add b.job
+        sleep 2
+      doAssert jobs.len <= 3, $jobs.len & " jobs in 200 frames"
+      doAssert st.settle(st.jobs.active.len == 0), "the jobs do not settle"
+      let (a, b) = (st.shownBreaks(st.findPanel(MainPanel)), st.shownBreaks(st.findPanel(other)))
+      doAssert a.state == bkDone and b.state == bkDone and a.guided == gdOwn and
+        b.guided == gdOwn, $a.guided & ", " & $b.guided
+      doAssert not a.isGiven and b.isGiven and b.key.guide.v1 == 2000 and
+        not a.key.guide.given, "each panel shows its own"
+      # the view each shows is made once, not on every frame
+      doAssert st.shownBreaksKept(st.findPanel(MainPanel)) and
+        st.shownBreaksKept(st.findPanel(other)), "the views are made again on every frame"
       st.shutdown()
 
   block aNewKeyCancelsTheRunningJobAndItsLateAnswerIsDropped:
@@ -276,15 +363,15 @@ proc main*() =
         abs(b.modelOf(5) - arrivalMs(offsetOf(5))) <= 8
 
   block aSmoothDriftIsNotOffItsNeighbours:
-    # the residual from the model drifts past 12 ms along the spread (the record's limit may
-    # flag its largest), the residual against the neighbours' does not: no trace is off its
-    # neighbours (a gentle drift: the neighbours' medians are within the 12 ms floor of it).
-    # (Before the rule had two parts, the fit's `suspect` alone was the test and
-    # nothing was flagged.)
+    # the residual from the model drifts past 12 ms along the spread, an 80 ms bump over 28
+    # traces (the record's limit flags it), the residual against the neighbours' does not: no
+    # trace is off its neighbours. (Before the rule had two parts, the fit's `suspect` alone was
+    # the test and nothing was flagged; with the traces off the model left out of the
+    # neighbours, the whole bump was off them.)
     withFixtures fx:
       let path = fx.customShot("drift.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
-        let u = (float64(i) - 24) / 22
-        arrivalMs(k.offset) + (if abs(u) < 1: 40 * (0.5 + 0.5 * cos(PI * u)) else: 0.0))
+        let u = (float64(i) - 24) / 14
+        arrivalMs(k.offset) + (if abs(u) < 1: 80 * (0.5 + 0.5 * cos(PI * u)) else: 0.0))
       let b = breaksOf(path)
       var worst = 0.0
       for t in 0 ..< Traces:

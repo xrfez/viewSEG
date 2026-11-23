@@ -16,7 +16,11 @@
 ## - the key's words and the tooltip's: "model (given: 2500 m/s)", the numbers and the
 ##   record's own median.
 ##
-## Seen to fail: with the given model's times left as the fit's, "the given model is off by";
+## - the counts say what the flagged are: "N flagged (M of K compared off the model, P off their
+##   neighbours, F far off)", never "N of K" with N above K.
+##
+## Seen to fail: with the counts' words as they were ("N of K compared traces flagged"), the
+## counts' check; with the given model's times left as the fit's, "the given model is off by";
 ## with the offsets shifted not used (given flagged by the fit's suspect flag), "most traces
 ## off"; with the fit's second velocity left out of the copy, "the fit's second velocity was
 ## not copied"; with the second segment not continuous (no `crossover / v1` term), "not
@@ -78,9 +82,14 @@ proc main*() =
       for i in 0 ..< Traces:
         if g.mismatched(i): inc flagged
       doAssert flagged * 10 > Traces * 9, "most traces off: " & $flagged & " flagged"
-      doAssert "median -4" in g.statusWords and " off" in g.statusWords, g.statusWords
-      doAssert "median pick less model -4" in g.givenWords and "flagged (limit 12.0 ms)" in
-        g.givenWords, g.givenWords
+      # (the counts read "N flagged (M of K compared off the model, ...)": the flagged count
+      # holds the far-off traces, which are not among the K compared, so it is never "N of K")
+      doAssert "median -4" in g.statusWords and " flagged" in g.statusWords, g.statusWords
+      let counts = $g.rule.nFlagged & " flagged (" & $g.rule.nOffModel & " of " & $g.compared &
+        " compared off the model, " & $g.rule.nOffNeighbours & " off their neighbours, " &
+        $g.rule.nFarOff & " far off)"
+      doAssert "median pick less model -4" in g.givenWords and counts in g.givenWords and
+        "limit 12.0 ms" in g.givenWords, g.givenWords
 
   block aSourceFarOffIsFarOffTheModelAndTheModelDoesNotMatch:
     # 400 m too long is 160 ms: beyond the 100 ms band no pick is comparable, but the first pass
@@ -90,13 +99,19 @@ proc main*() =
         k.offset = offsetOf(i) + 400
         arrivalMs(offsetOf(i))))
       let g = b.withModel(Truth)
-      doAssert g.compared == 0 and g.rule.nFarOff == Traces and g.offModel == Traces,
-        $g.compared & " compared, " & $g.rule.nFarOff & " far off"
-      for i in 0 ..< Traces: doAssert g.mismatched(i) and not g.faintOf(i)
+      # (the range where breaks are expected ends at the 95th percentile of the offsets whose
+      # picks both passes agree on: the outermost traces are beyond it)
+      let inRange = Traces - g.rule.nBeyond
+      doAssert g.rule.nBeyond <= 3 and g.compared == 0 and g.rule.nFarOff == inRange and
+        g.offModel == inRange, $g.compared & " compared, " & $g.rule.nFarOff & " far off, " &
+        $g.rule.nBeyond & " beyond"
+      for i in 0 ..< inRange: doAssert g.mismatched(i) and not g.faintOf(i)
       doAssert g.rule.mismatch
       doAssert "does not match this record's breaks" in g.modelWords(suMetres),
         g.modelWords(suMetres)
       doAssert "far off the model" in g.modelWords(suMetres)
+      doAssert $inRange & " flagged (0 of 0 compared off the model, 0 off their neighbours, " &
+        $inRange & " far off)" in g.givenWords, g.givenWords
 
   block useThisRecordsFit:
     withFixtures fx:

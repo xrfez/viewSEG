@@ -438,6 +438,11 @@ proc breaksJson(b: FirstBreaks; unit: SurveyUnit; fromSurvey: bool): JsonNode =
     result["earlyBearingDeg"] = num(r.earlyBearingDeg)
     result["earlyTowardAngleDeg"] = num(r.earlyTowardDeg)
     if b.passNote.len > 0: result["passNote"] = %b.passNote
+    result["picksGuided"] = %(case b.guided
+      of gdOwn: "by this model"
+      of gdMaking: "by another model, while this one's are made"
+      of gdFailed: "by another model: this one's could not be made")
+    if b.guided != gdOwn: result["guideNote"] = %b.guideNote
 
 proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
   template p: untyped = state.panels[k]

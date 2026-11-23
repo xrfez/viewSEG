@@ -2,16 +2,24 @@
 ## two-pass picking that feeds it (`core/firstbreakjobs`), on synthetic records:
 ##
 ## - a healthy record with 10 ms of scatter flags almost nothing (a fixed 12 ms limit would flag
-##   about a quarter of it);
+##   about a quarter of it), over many seeds too;
 ## - one displaced station is off its neighbours, also against a model that bends (the record
-##   limit flags the bend, the station rule only the station); a block of 5 is flagged;
+##   limit flags the bend, the station rule only the station), inside a stretch the model misses
+##   and at a bend it misses; a block of 5 is flagged and nothing beside it;
 ## - a source placed 200 ft sideways gives the record's words about the lean and the sign (the
-##   side the picks are earliest at); a constant offset gives "every pick is late"; azimuths
-##   covering less than a half circle give nothing;
-## - far traces whose picks are not breaks are "no break found", never flagged, and do not move
-##   the fitted model (a fit to every confident pick is far off);
-## - a second segment stays only with enough trimmed picks beyond the crossover and a better fit;
-##   fewer picks than the minimum give no trusted model;
+##   side the picks are earliest at), also against the scatter about the record's own fit; a
+##   constant offset gives "every pick is late"; azimuths covering less than a half circle give
+##   nothing; a given model that does not match says nothing of the source;
+## - far traces whose picks are not breaks are "no break found" or beyond the range, never
+##   flagged, and do not move the fitted model (a fit to every confident pick is far off); the
+##   range ends where few breaks are seen near the model and most picks both passes agree on
+##   end, so noise the guided window held does not widen it; "far off" is a first-pass pick 100
+##   to 400 ms from the model, never one before the first possible arrival;
+## - the record's own fit as a given model matches even where few breaks are seen;
+## - a second segment stays only with enough trimmed picks beyond the crossover and a better fit,
+##   or when it holds clearly more of all the confident picks: a bend whose second segment holds
+##   most picks is two segments, a straight line one; fewer picks than the minimum give no
+##   trusted model;
 ## - through the real job on a record with a refracted arrival and far traces whose events
 ##   are not on the model: the fit is within a few percent of the truth, the picks are the
 ##   guided pass's, few traces are flagged, and the key's count, the flags and the drawn links
@@ -21,11 +29,20 @@
 ## left out (the closer half and the sigma limit both removed), "kept 300" of 200 and the fit
 ## following the noise picks; with the lean's sigma taken before the fit, no statement for a 200 ft
 ## shift; with a fixed 12 ms limit the healthy record's premise ("flags 69") is a sixth of the
-## record, against 0 to 4 with the rule; and the 400 m source of `tbreakmodel` shows every trace
-## as no break found instead of off.
+## record, against 0 to 4 with the rule; the 400 m source of `tbreakmodel` shows every trace
+## as no break found instead of off; with the range the 98th percentile of the kept picks'
+## offsets, "the range ends at 3750"; with far off unbounded, "trace 200 is noise, not far off",
+## and without the intercept's bound "trace 10 is noise"; with the mismatch test "fewer than half
+## of the traces in range compared", "the record's own fit does not match"; with the source's bar
+## from the picks' own scatter, "200 ft: lean 25, nothing said"; with the source sentence kept
+## under a mismatch, "the picks lean to one side ... every pick is early by 59 ms"; with the
+## neighbour rule leaving off-model traces out (and the nearer side alone), "healthy record: 5
+## flagged" (and `tfirstbreaks`' 80 ms drift off its neighbours); without the support test for a
+## second segment, "bend 0.4 to 0.3: one segment".
 
-import std/[math, strutils]
+import std/[math, os, strutils]
 import parseSEG
+import processSEG/synth
 import viewSEG/core/[breakmodel, breakrule, firstbreakjobs, firstbreaks, geometry, join,
   orientation,
   viewport]
@@ -82,6 +99,28 @@ proc ring(shiftX, constant: float64; spanDeg: float64): tuple[pick, conf, model:
     result.conf.add 1.0
     result.g.azimuth[i] = az
 
+proc twoEventShot(fx: Fixtures; name: string; traces: int;
+    events: proc (i: int): (float64, float64); second = 1.0): string =
+  ## A shot of `traces` traces at `100 + 10 i` m, each with two wavelets at the times `events`
+  ## gives (NaN for none), the second `second` as strong as the first, in a little noise.
+  result = fx.dir / name
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 first-break rule test: " & name]))
+  var buf = newSeq[float32](breakfiles.Samples)
+  for i in 0 ..< traces:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(i + 1), 0.0,
+      Dt * 1000, tsLive)
+    k.offset = 100.0 + 10.0 * float64(i)
+    for j in 0 ..< buf.len: buf[j] = 0
+    let (a, b) = events(i)
+    if not a.isNaN: buf.addRicker(Dt, a + 15, 30, 1.0)
+    if not b.isNaN: buf.addRicker(Dt, b + 15, 30, second)
+    buf.addNoise(0.03, int64(i + 1))
+    w.writeTrace(k, buf)
+  let log = w.close()
+  doAssert log.len == 0, $log
+
 proc main*() =
 
   block aHealthyRecordFlagsAlmostNothing:
@@ -94,7 +133,18 @@ proc main*() =
     for i in 0 ..< 400:
       if abs(d.pick[i] - d.model[i]) > 12: inc fixed
     doAssert fixed > 400 div 10, "the premise: a fixed 12 ms flags " & $fixed
-    doAssert r.nFlagged <= 8, "healthy record: " & $r.nFlagged & " flagged"
+    doAssert r.nFlagged <= 4, "healthy record: " & $r.nFlagged & " flagged"
+    # and over many records: the neighbour rule adds next to nothing to the model's 3 sigmas
+    var worst, neighbours = 0
+    for seed in 1'u64 .. 60:
+      let h = line(400, 10, seed * 7919)
+      var g = oneLine(400)
+      g.ownSigmaMs = 10
+      let q = applyRule(h.pick, h.conf, h.model, g)
+      worst = max(worst, q.nFlagged)
+      neighbours += q.nOffNeighbours
+    doAssert worst <= 4 and neighbours <= 6, "healthy records: worst " & $worst & " flagged, " &
+      $neighbours & " off their neighbours in 60"
     doAssert r.statement == {} and statementWords(r) == ""
     doAssert r.nFlagged == r.flagCount(true, true), "the count is the flags"
 
@@ -244,6 +294,7 @@ proc main*() =
       let m = b.fitAsModel
       doAssert abs(m.v1 - 2500) < 125 and m.segments == 1, $m
       doAssert b.rule.nBeyond >= 150, "beyond the offsets of the breaks: " & $b.rule.nBeyond
+      doAssert b.geometry.rangeMax < 2500, "the range ends at " & $b.geometry.rangeMax
       doAssert b.rule.nFarOff == 0, "far traces beyond the range are no finding"
       doAssert b.rule.nComparable >= 200, "compared: " & $b.rule.nComparable
       doAssert b.rule.nFlagged <= 12, "flagged " & $b.rule.nFlagged
@@ -268,6 +319,28 @@ proc main*() =
         $b.offModel
       doAssert "no break found" in b.modelWords(suMetres) and
         "off their neighbours" in b.modelWords(suMetres), b.modelWords(suMetres)
+
+  block throughTheJobNoiseInTheGuidedWindowDoesNotWidenTheRange:
+    # breaks to 2290 m (2500 m/s, 20 ms); beyond, each trace has an event 200 to 400 ms before
+    # the model (which the first pass picks) and one within 90 ms of it (which the guided pass
+    # picks, and the trim keeps on some traces): only picks both passes agree on make the range
+    const n = 400
+    withFixtures fx:
+      let path = fx.twoEventShot("window.sgy", n, proc (i: int): (float64, float64) =
+        let model = 20 + 0.4 * (100.0 + 10.0 * float64(i))
+        if i < 220: (model, NaN)
+        else: (model - 200 - float64((i * 37) mod 200), model - 90 + float64((i * 53) mod 180)),
+        second = 0.4)
+      var f = openSeismic(path, keys = true)
+      let b = breaksOfRecord(addr f, path, 0 ..< f.len, [])
+      f.close()
+      doAssert b.hasModel and abs(b.fit.v1 - 2500) < 125, $b.fit.v1
+      doAssert b.geometry.rangeMax < 2500, "the range ends at " & $b.geometry.rangeMax
+      var far = 0
+      for i in 230 ..< n:
+        if b.mismatched(i): inc far
+      doAssert far == 0, $far & " noise traces beyond the breaks flagged"
+      doAssert b.rule.nFlagged <= 6, "flagged " & $b.rule.nFlagged
 
   block aGivenModelsMisfitDoesNotWidenItsLimits:
     # the picks are a healthy 5 ms scatter about the truth; the given model is 10 % slow
@@ -326,9 +399,9 @@ proc main*() =
     doAssert r.nBeyond == 360 and r.nComparable == 40 and r.nFarOff == 0 and r.nNoBreak == 0,
       $r.nBeyond & " beyond, " & $r.nComparable & " compared"
     doAssert not r.mismatch and r.nFlagged <= 1, "flagged " & $r.nFlagged
-    g.rangeMax = NaN # the old test: nothing is beyond, so most traces have no break found
+    g.rangeMax = NaN # without a range, the confident noise picks near the model are judged
     let old = applyRule(d.pick, d.conf, d.model, g, given = true)
-    doAssert old.mismatch, "the premise: without a range the model seems not to fit"
+    doAssert old.nFarOff > 100, "the premise: without a range noise is far off: " & $old.nFarOff
 
   block aCrookedTwoDimensionalLineHasNoLean:
     for wiggle in [0.5, 2.0, 5.0]:
@@ -393,12 +466,135 @@ proc main*() =
       doAssert abs(b.differenceMs(102) - 250) < 40, "the link spans the break: " & $b.differenceMs(102)
       doAssert "far off the model" in b.modelWords(suMetres)
 
+  block theRangeEndsWhereTheTwoPassesStopAgreeing:
+    # 400 traces to 4090 m: breaks both passes agree on for half the traces out to 2000 m, and
+    # beyond it a guided pick near the model on 1 trace in 4 (noise the window held, which the
+    # first pass did not see there): more than a fifth, so only the agreed picks end the range.
+    # The old rule, the 98th percentile of the kept picks' offsets, ran to the far end. (Here
+    # the picks seen near the model are those kept.)
+    var offs: seq[float64]
+    var eligible, kept, agreed: seq[bool]
+    for i in 0 ..< 400:
+      offs.add 100.0 + 10.0 * float64(i)
+      eligible.add true
+      let near = offs[i] <= 2000
+      kept.add (if near: i mod 2 == 0 else: i mod 4 == 0)
+      agreed.add near and i mod 2 == 0
+    let r = expectedRange(offs, eligible, kept, agreed)
+    doAssert r >= 1900 and r <= 2100, "the range ends at " & $r
+    var held: seq[float64]
+    for i in 0 ..< 400:
+      if kept[i]: held.add offs[i]
+    doAssert held[int(0.98 * float64(held.len)) - 1] > 3500, "the premise"
+    doAssert expectedRange(offs, eligible, kept, kept) > 3500, "guided picks alone: the far end"
+    # a range with no supported pick has no end; a bin where few breaks are seen ends it, while
+    # a stretch the passes do not agree on (breaks the model misses) does not
+    doAssert expectedRange(offs, eligible, kept, newSeq[bool](400)).isNaN
+    var gap = kept
+    for i in 50 ..< 100: gap[i] = false
+    doAssert expectedRange(offs, eligible, gap, agreed) < 800,
+      $expectedRange(offs, eligible, gap, agreed)
+    var missed = agreed
+    for i in 50 ..< 100: missed[i] = false
+    doAssert expectedRange(offs, eligible, kept, missed) >= 1900
+
+  block farOffIsANearMissNotNoise:
+    # the first pass's pick is far off the model only 100 to 400 ms from it, and never before
+    # the model's intercept less the limit: farther, or before any arrival, it is noise
+    var d = line(300, 4, 14)
+    var g = oneLine(300)
+    g.offsetAbs = d.offs
+    g.rangeMax = 4000
+    g.firstMs = d.pick
+    g.firstConf = d.conf
+    var conf = d.conf
+    for i in [100, 101, 102, 103, 104, 200, 201, 202, 10, 11, 12]: conf[i] = 0.1
+    for i in 100 .. 104: g.firstMs[i] = d.model[i] + 250 # a station a few hundred metres off
+    for i in 200 .. 202: g.firstMs[i] = d.model[i] + 900 # noise late in the trace
+    for i in 10 .. 12: g.firstMs[i] = d.model[i] - 150 # before the first possible arrival
+    let r = applyRule(d.pick, conf, d.model, g, interceptMs = 20)
+    for i in 100 .. 104: doAssert r.farOff[i] and r.flagged[i], "trace " & $i
+    for i in [200, 201, 202, 10, 11, 12]:
+      doAssert r.noBreak[i] and not r.flagged[i], "trace " & $i & " is noise, not far off"
+    doAssert r.nFarOff == 5, $r.nFarOff
+    # a confident pick 150 ms early at a long offset is a near miss (it is after the intercept)
+    g.firstMs[250] = d.model[250] - 150
+    conf[250] = 0.1
+    doAssert applyRule(d.pick, conf, d.model, g, interceptMs = 20).farOff[250]
+
+  block theRecordsOwnFitNeverMismatchesWhereFewBreaksAreSeen:
+    # within the range only a third of the traces have a confident pick (a healthy long record):
+    # the given model that is the record's own fit matches; one 20 % slow does not
+    var d = line(300, 4, 15)
+    var conf = d.conf
+    for i in 0 ..< 300:
+      if i mod 3 != 0: conf[i] = 0.1
+    var g = oneLine(300)
+    g.ownSigmaMs = 4
+    g.ownComparable = 100
+    let own = applyRule(d.pick, conf, d.model, g, given = true)
+    doAssert own.nComparable == 100 and own.nNoBreak == 200
+    doAssert not own.mismatch, "the record's own fit does not match"
+    var slow: seq[float64]
+    for x in d.offs: slow.add 20 + 0.5 * x
+    doAssert applyRule(d.pick, conf, slow, g, given = true).mismatch
+
+  block aMovedSourceIsSaidAgainstTheScatterLeftAfterTheLean:
+    # the job's limits come from the picks' scatter about the record's own fit, which holds the
+    # lean; the source's bar must be the scatter left after the lean, or a moved source is
+    # never said
+    for shift in [200.0, 400.0]:
+      let east = ring(shift, 0, 360)
+      var res: seq[float64]
+      for i in 0 ..< east.pick.len: res.add east.pick[i] - east.model[i]
+      var g = east.g
+      g.ownSigmaMs = robustSigma(res)
+      doAssert g.ownSigmaMs > 0.8 * shift / 8, "the premise: the lean is in the scatter"
+      let r = applyRule(east.pick, east.conf, east.model, g)
+      doAssert lkSide in r.statement, $shift & " ft: lean " & $r.leanMs & ", nothing said"
+
+  block aGivenModelThatDoesNotMatchSaysNothingOfTheSource:
+    # receivers farther out towards +y: a slow model's misfit grows with offset, so it leans
+    # with azimuth; the model is the fault, not the source
+    let ring0 = ring(0, 0, 360)
+    var slow: seq[float64]
+    for i in 0 ..< ring0.model.len:
+      let radius = 1000.0 + 5.0 * float64(i)
+      slow.add 20 + radius / 6400 * 1000
+    var g = ring0.g
+    g.ownSigmaMs = 2
+    let r = applyRule(ring0.pick, ring0.conf, slow, g, given = true)
+    doAssert r.mismatch and r.leanMs > StatementFloorMs, "the premise: " & $r.leanMs
+    doAssert r.statement == {} and statementWords(r) == "", statementWords(r)
+
+  block theNeighboursFollowAStretchTheModelMisses:
+    # a 60 ms ramp the model misses over 90 stations: off the model, but none off its neighbours;
+    # a wrong station inside it, and one at a bend the model misses (a V), are found
+    var d = line(300, 3, 16)
+    for i in 0 ..< 90: d.pick[i] += 60.0 * float64(90 - i) / 90
+    var g = oneLine(300)
+    g.ownSigmaMs = 3
+    let r = applyRule(d.pick, d.conf, d.model, g)
+    doAssert r.nOffModel > 30 and r.nOffNeighbours == 0, "ramp: " & $r.nOffNeighbours &
+      " off their neighbours"
+    d.pick[40] += 40
+    let s = applyRule(d.pick, d.conf, d.model, g)
+    doAssert s.offNeighbours[40] and s.nOffNeighbours == 1, $s.nOffNeighbours
+    var v = line(300, 3, 17)
+    for i in 0 ..< 300: v.pick[i] += 0.6 * abs(float64(i - 150)) - 40
+    v.pick[150] += 30
+    let b = applyRule(v.pick, v.conf, v.model, g)
+    doAssert b.offNeighbours[150] and b.nOffNeighbours <= 2, "the station at the bend: " &
+      $b.nOffNeighbours & " off their neighbours, limit " & $b.stationLimitMs
+
   block aBendAtTheCrossoverIsNotACluster:
-    # velocity 1 to velocity 2 (continuous) at 1000 m, over 300 traces to 3090 m. A gentle
-    # bend (2500 to 3333 m/s) must not leave a cluster flagged at the crossover; the numbers
-    # of a strong one (2000 to 4000 m/s) are printed (the fit is then one line, see report)
+    # velocity 1 to velocity 2 (continuous) at 1000 m, over 300 traces to 3090 m: most picks are
+    # on the second segment, so the trimming starts there and the kept set's sigma alone does
+    # not keep the bend. Both a gentle (2500 to 3333 m/s) and a strong (2000 to 4000 m/s) bend
+    # are two segments with the right velocities, and few traces of all are flagged; a straight
+    # line stays one
     const n = 300
-    for (s1, s2, strong) in [(0.4, 0.3, false), (0.5, 0.25, true)]:
+    for (s1, s2) in [(0.4, 0.3), (0.5, 0.25), (0.4, 0.4)]:
       let (slope1, slope2) = (s1, s2)
       withFixtures fx:
         let path = fx.customShot("bend.sgy", n, proc (i: int; k: var TraceKeys): float64 =
@@ -408,12 +604,17 @@ proc main*() =
         var f = openSeismic(path, keys = true)
         let b = breaksOfRecord(addr f, path, 0 ..< f.len, [])
         f.close()
-        var near = 0
-        for i in 80 .. 100:
-          if b.mismatched(i): inc near
-        echo "tbreakrule: bend ", slope1, " to ", slope2, ": segments ", b.segments, ", flagged ",
-          b.rule.nFlagged, " of ", b.rule.nComparable, ", ", near, " at the crossover"
-        if not strong: doAssert near <= 2, "a cluster of " & $near & " flagged at the crossover"
+        let what = "bend " & $slope1 & " to " & $slope2 & ": "
+        if slope1 == slope2:
+          doAssert b.segments == 1, what & "a straight line has " & $b.segments & " segments"
+        else:
+          doAssert b.segments == 2, what & "one segment"
+          doAssert abs(b.fit.v1 - 1 / slope1 * 1000) < 0.05 * 1000 / slope1 and
+            abs(b.fit.v2 - 1000 / slope2) < 0.05 * 1000 / slope2, what & $b.fit.v1 & ", " &
+            $b.fit.v2
+          doAssert abs(b.fit.crossover - 1000) < 100, what & "crossover " & $b.fit.crossover
+        doAssert b.rule.nFlagged <= 6, what & $b.rule.nFlagged & " of " & $b.rule.nComparable &
+          " flagged"
 
   echo "tbreakrule: ok"
 

@@ -7,7 +7,8 @@
 ## 2. **A model without the noise picks** (`trimmedModel`, `core/breakrule`): the fit is
 ##    made again on the picks that stay near it (a robust start, then the picks within 3
 ##    sigmas, at least 12 ms, of the last fit, up to five rounds), at least 10 picks. Its
-##    segments are one line unless the second has 15 picks and a clearly better fit.
+##    segments are one line unless the second has 15 picks and a clearly better fit, or the
+##    two segments hold at least 15 more of all the confident picks than the line does.
 ## 3. **Second pass**: every trace of the fitted sensor is picked again with the picker's own
 ##    guide (`guideVelocity`, `guideT0Ms`; `beforeMs`, `afterMs` = 100 ms), one guide line
 ##    per segment of the model, so the search window is the model's time plus or minus 100
@@ -40,7 +41,10 @@ import processSEG/core/[rows, types, workspace]
 import processSEG/qc/[firstbreak, shotfit]
 import breakmodel, filesystem, firstbreaks, inbox, jobs, session, threads
 
-const BreakChunk* = 512 ## traces read and picked at a time
+const
+  BreakChunk* = 512 ## traces read and picked at a time
+  BendSigmaShare = 1.1
+    ## a second segment kept for its support may leave at most this share of the line's sigma
 
 func trustNote(what: string; used: int; then: string): string =
   ## Why a pass gave no model to trust, in words.
@@ -227,7 +231,22 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
               r1.add pm[i] - (one.interceptMs + one.msPerUnit * offs[i])
               r2.add pm[i] - fit.modelMs[i]
               if offs[i] > fit.crossover: inc beyond
-          keep = keepSecond(beyond, robustSigma(r1), robustSigma(r2))
+          let (s1, s2) = (robustSigma(r1), robustSigma(r2))
+          keep = keepSecond(beyond, s1, s2)
+          if not keep and beyond >= MinSecondPicks and not (s1.isNaN or s2.isNaN):
+            # the support over ALL confident picks, not only those kept: when most picks lie on
+            # the second segment, the trimming starts there, and the few bent picks it lets back
+            # do not move the kept set's sigma, while the confident picks the two segments hold
+            # show the bend
+            let (cut1, cut2) = (max(TrimFloorMs, TrimSigmas * s1), max(TrimFloorMs,
+              TrimSigmas * s2))
+            var sup1, sup2 = 0
+            for i in 0 ..< n:
+              if cf[i] >= ConfidentPick and not pm[i].isNaN and not offs[i].isNaN and
+                  not fit.modelMs[i].isNaN:
+                if abs(pm[i] - (one.interceptMs + one.msPerUnit * offs[i])) <= cut1: inc sup1
+                if abs(pm[i] - fit.modelMs[i]) <= cut2: inc sup2
+            keep = sup2 >= sup1 + MinSecondPicks and s2 <= BendSigmaShare * s1
         if not keep:
           fit.interceptMs = one.interceptMs
           fit.v1 = 1000 / one.msPerUnit
@@ -288,27 +307,33 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     for i in 0 ..< n:
       result.modelMs[i] = final.fit.modelMs[i]
       if not result.modelMs[i].isNaN: inc result.modelled
-    # where a break is expected (the offsets of the picks that held), and the picks' own
-    # scatter about the record's fit: the rule's limits come from these, whatever model is shown
-    var seen: seq[float64]
+    # where a break is expected: out to where few traces have a confident pick near the model,
+    # and not past most of the picks both passes agree on (the guided pick kept by the trim, the
+    # first-pass pick confident and within the trim's cut of the same model): a guided pick
+    # alone may be noise the window held
+    let cut = max(TrimFloorMs, TrimSigmas * (if final.tr.sigmaMs.isNaN: 0.0
+      else: final.tr.sigmaMs))
+    var seenNear, supported = newSeq[bool](n)
     for i in 0 ..< n:
-      if final.tr.kept[i] and not offs[i].isNaN: seen.add offs[i]
-    seen.sort()
-    if seen.len > 0:
-      result.geometry.rangeMax = seen[min(seen.high, int(ceil(RangePercentile * float64(
-          seen.len))) - 1)]
+      let m = final.fit.modelMs[i]
+      seenNear[i] = fitted[i].confidence >= ConfidentPick and
+        abs(fitted[i].timeMs - m) <= GrossBandMs
+      supported[i] = final.tr.kept[i] and picks[i].confidence >= ConfidentPick and
+        abs(picks[i].timeMs - m) <= cut
+    result.geometry.rangeMax = expectedRange(offs, eligible, seenNear, supported)
     result.geometry.offsetAbs = offs
     result.geometry.firstMs = newSeq[float64](n)
     result.geometry.firstConf = newSeq[float64](n)
-    var scatter: seq[float64]
     for i in 0 ..< n:
       result.geometry.firstMs[i] = picks[i].timeMs
       result.geometry.firstConf[i] = picks[i].confidence
-      let d = fitted[i].timeMs - final.fit.modelMs[i]
-      if eligible[i] and not d.isNaN and fitted[i].confidence >= ConfidentPick and
-          abs(d) <= GrossBandMs and offs[i] <= result.geometry.rangeMax:
-        scatter.add d
-    result.geometry.ownSigmaMs = robustSigma(scatter)
+    # the picks' own scatter about the record's fit, and how many it compares within the range:
+    # the rule's limits, and a given model's match, are measured against these
+    var fp, fc = newSeq[float64](n)
+    for i in 0 ..< n: (fp[i], fc[i]) = (fitted[i].timeMs, fitted[i].confidence)
+    let own = applyRule(fp, fc, final.fit.modelMs, result.geometry)
+    result.geometry.ownSigmaMs = own.misfitSigmaMs
+    result.geometry.ownComparable = own.nComparable
     result.setRule()
 
 proc firstBreaksWork*(file: ptr SeismicFile; path: string; key: BreakKey;

@@ -611,45 +611,67 @@ sigmas, at least 12 ms, of the fit, up to five rounds; at least 10 picks must re
 second pass picks every trace again in a window of 100 ms either side of that model (the
 picker's own guide and window), and the model is fitted again, trimmed the same way, to those
 picks; it is one straight line unless a second segment has at least 15 trimmed picks beyond
-the crossover and fits clearly better. That fit is what "Use this record's fit" copies. When
-fewer than 10 confident picks hold together, the first-pass picks stay and the key's note says
-so. With a given model the shown picks come from a pass guided by it instead.
+the crossover and fits clearly better, or the two segments hold at least 15 more of all the
+confident picks than the line does (so a bend whose far segment holds most picks stays two
+segments). That fit is what "Use this record's fit" copies. When fewer than 10 confident picks
+hold together, the first-pass picks stay and the key's note says so. With a given model the
+shown picks come from a pass guided by it instead.
 
 **Which traces are flagged** (one rule decides, so the key, the marks, the words and the agent
 state agree):
 
-- *Where a break is expected*: up to the 98th percentile of the offsets of the picks the fit
-  kept. A trace with a model time beyond that is *beyond the offsets where breaks are seen*:
-  counted apart, never judged, never a finding.
+- *Where a break is expected*: the record's traces are cut into about 20 bins of offset (at
+  least 10 traces a bin), and the range runs out from the nearest offsets to the end of the
+  last bin before one where fewer than a fifth of the traces have a confident pick within
+  100 ms of the record's fit; it never runs past the 95th percentile of the offsets of the
+  picks both passes agree on (kept by the fit, and the first pass's pick confident and as near
+  the fit). So noise the guided window happened to hold at long offsets does not widen it, and
+  a stretch of real breaks the fit misses does not end it. A trace with a model time beyond
+  that is *beyond the offsets where breaks are seen*: counted apart, never judged, never a
+  finding.
 - *Comparable*: within that range, a confident pick (0.5 or more) within 100 ms of the model.
   Any other trace in range is *no break found* and not flagged, unless the first (unguided) pass
-  found a confident break more than 100 ms from the model while the guided window found none:
-  that is *far off the model*, and flagged, drawn with its link to where the break was found.
+  found a confident break 100 to 400 ms from the model, not before the model's intercept less
+  the limit, while the guided window found none: that is *far off the model* (a station placed
+  a few hundred metres wrong), and flagged, drawn with its link to where the break was found.
+  A first-pass pick farther off, or before any break can arrive, is noise.
 - *Off the model*: the residual (pick less model) of a comparable trace is larger than the
   record's limit, the larger of 12 ms and three times 1.4826 times the median absolute deviation
   of the picks' scatter about the record's own fit, whichever model is shown (a given model that
   fits badly cannot widen its own limit).
-- *Off its neighbours*: the residual less the median residual of up to three usable neighbours
-  (comparable, not off the model) on each side along the same receiver line (in receiver point
-  order; file order where lines or points are unknown), against the side's median nearer the
-  trace's own residual, is larger than the larger of 12 ms and four times the robust sigma of
-  these differences. A trace with fewer than three usable neighbours is not judged this way.
+- *Off its neighbours*: the residual less the median residual of up to three comparable
+  neighbours on one side along the same receiver line (in receiver point order; file order
+  where lines or points are unknown; at most six stations away), taking the left side's, the
+  right side's or the mean of the two, whichever is nearest the trace's own residual, is larger
+  than the larger of 12 ms and four times the robust sigma of the differences from the mean of
+  both sides. Traces off the model count as neighbours too, so a stretch the model misses (a
+  bend, a static) is followed, a block of wrong stations flags only itself, and one wrong
+  station inside the stretch is still found. A trace with fewer than three neighbours is not
+  judged this way.
 - *The record's words*: when the traces' azimuths from the source cover at least 180 degrees,
   and the azimuths are spread well enough round the source (a line through it is not enough),
   the residuals are fitted as a constant plus a cosine and sine of the azimuth; otherwise only
   a constant (their median) is looked for. A lean or a constant beyond the larger of 10 ms and
-  two times the scatter says "the picks lean to one side of the source by N ms (earliest
-  towards bearing B degrees, clockwise from north if x is east and y north): the source may be
-  placed or named wrongly" or "every pick is early (late) by N ms".
+  two times the scatter left after that fit says "the picks lean to one side of the source by N
+  ms (earliest towards bearing B degrees, clockwise from north if x is east and y north): the
+  source may be placed or named wrongly" or "every pick is early (late) by N ms".
 - *A given model that does not match*: when its median residual is beyond the limit, the picks'
-  scatter about it is more than twice the picks' own scatter, or fewer than half of the traces
-  in range are comparable, the words say the given model does not match this record's breaks and
-  give the record's own fit (velocity, intercept) beside it.
+  scatter about it is more than twice the picks' own scatter, or it finds fewer than half as
+  many comparable traces as the record's own fit does, the words say the given model does not
+  match this record's breaks and give the record's own fit (velocity or velocities, intercept)
+  beside it, and say nothing of the source: the model is the likelier fault. The record's own
+  fit given as a model always matches.
 
-The key counts the traces flagged (off the model, off its neighbours or far off the model).
-The given model's numbers apply at once to the picks already there; the picks guided by it are
-made again in the background and replace them when done. Its boxes take a number when Enter is
-pressed or the box loses focus.
+The key counts the traces flagged (off the model, off its neighbours or far off the model);
+the tooltip reads "N flagged (M of K compared off the model, P off their neighbours, F far
+off)", the far-off traces not being among the K compared. The given model's numbers apply at
+once to the picks already there; the picks guided by it are made again in the background and
+replace them when done, while the key says "picking again for this model...". Each model a
+panel shows keeps its own picks (two panels on one record with two models each keep theirs;
+the last few models of a record are kept, so going back to one is immediate). If that picking
+is stopped (in Jobs) or fails, the picks guided by the other model stay drawn and the key and
+the tooltip say whose they are; giving the model again picks again. Its boxes take a number
+when Enter is pressed or the box loses focus; Escape puts the old number back.
 
 The offsets are the trace keys': the imported survey's when one is joined to the file, else
 the header's, else derived from the file's own coordinates. With neither the picks are drawn

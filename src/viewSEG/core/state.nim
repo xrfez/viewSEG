@@ -900,6 +900,16 @@ type
     listed*: bool             ## a listing came
     revision*: int            ## bumped when it changes
 
+  BreakView = object
+    ## A record panel's first-break overlay as it shows it (`shownBreaks`): of the result with
+    ## `key` at `revision`, with `model`, and whose picks those are.
+    key: BreakKey
+    revision: int
+    model: BreakModel
+    guided: GuideState
+    why: string
+    shown: FirstBreaks
+
   AppState* = object
     ## Everything the views show. Move-only.
     log: MessageLog
@@ -960,9 +970,14 @@ type
     recordQc: RecordQc
       ## what the map's filters find in the record shown (`core/recordqc`)
     breaks: seq[FirstBreaks]
-      ## the first-break overlay's results, one per record a panel with the
-      ## overlay on shows (and the last few it showed), oldest first
+      ## the first-break overlay's results, one per record and guide (the given model the
+      ## picks were guided by) a panel with the overlay on shows (and the last few it
+      ## showed), oldest first
     breaksReplaced: seq[JobId] ## jobs given up for a newer key: they end quietly
+    breakRevisions: int ## the last `FirstBreaks.revision` given: each change gets a new one
+    breakViews: seq[BreakView]
+      ## each record panel's overlay as it shows it (`shownBreaks`), made when its result or
+      ## its model changes rather than on every frame
     qcHeld: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
       ## the relation records each filters' job reads in place, kept until it ends
     unitsWarned: string
@@ -1934,16 +1949,35 @@ func breaksOn*(state: AppState; id: PanelId): bool =
   for p in state.panels:
     if p.id == id: return p.layers.len > 0 and p.layers[0].display.firstBreaks
 
-func breaksIndex*(state: AppState; k: int): int =
-  ## The index in `firstBreaks` of the result for the record panel `panels[k]`
-  ## shows; -1 when it has none (the overlay is off, or no record is shown).
-  result = -1
+func panelGuide(state: AppState; k: int): BreakModel =
+  ## The model the picks of record panel `panels[k]`'s overlay are to be guided by: its given
+  ## model, or `BreakModel()` (the record's fit).
+  let m = state.panels[k].layers[0].display.breakModel.bounded
+  if m.given: m else: BreakModel()
+
+func guidedIndex(state: AppState; k: int): tuple[exact, other: int] =
+  ## The results in `firstBreaks` of the record panel `panels[k]` shows: the newest of its own
+  ## guide (`exact`) and the newest done one of another (`other`); -1 for none.
+  result = (-1, -1)
   if k < 0 or k >= state.panels.len or state.panels[k].layers.len == 0: return
   let src = state.panels[k].layers[0].source
   if src.kind != lsRecord: return
+  let guide = state.panelGuide(k)
   for i in countdown(state.breaks.high, 0):
-    if state.breaks[i].key.file == src.file and state.breaks[i].key.gather == src.gather:
-      return i
+    template b: untyped = state.breaks[i]
+    if b.key.file == src.file and b.key.gather == src.gather:
+      if b.key.guide == guide:
+        if result.exact < 0: result.exact = i
+      elif b.state == bkDone and result.other < 0: result.other = i
+
+func breaksIndex*(state: AppState; k: int): int =
+  ## The index in `firstBreaks` of the result the record panel `panels[k]` shows; -1 when it
+  ## has none (the overlay is off, or no record is shown). That of its own guide when it is
+  ## done; while that is being made, or when it failed, a done one of another guide, if any
+  ## (`shownBreaks` says so: `FirstBreaks.guided`).
+  let (exact, other) = state.guidedIndex(k)
+  if exact >= 0 and (state.breaks[exact].state == bkDone or other < 0): exact
+  else: other
 
 func surveyHead*(state: AppState; path: string): int =
   ## The index in `heads` of what survey file `path`'s headers say (as
@@ -6457,13 +6491,53 @@ func qcRelations(state: AppState; domain: RelationDomain): (ref SurveyGeometry, 
     (state.spreads.relations, "the template generated")
   else: (nil, "")
 
+func viewOfPanel(state: AppState; k: int): tuple[bi: int; view: BreakView] =
+  ## What `shownBreaks` shows for record panel `panels[k]`, without its lists: the result
+  ## `bi`, the model, and whether the picks are the model's own.
+  let exact = state.guidedIndex(k).exact
+  let bi = state.breaksIndex(k)
+  result.bi = bi
+  if bi < 0: return
+  let b = state.breaks[bi]
+  result.view = BreakView(key: b.key, revision: b.revision,
+    model: state.panels[k].layers[0].display.breakModel, guided: gdOwn)
+  if bi != exact:
+    result.view.guided = if exact >= 0 and state.breaks[exact].state == bkFailed: gdFailed
+                         else: gdMaking
+    if result.view.guided == gdFailed: result.view.why = state.breaks[exact].why
+
+func sameView(a, b: BreakView): bool =
+  a.key == b.key and a.revision == b.revision and a.model == b.model and a.guided == b.guided and
+    a.why == b.why
+
+func madeView(state: AppState; bi: int; v: BreakView): FirstBreaks =
+  ## The result `bi` as view `v` says: with its model applied (`withModel`) and the note on
+  ## whose picks they are.
+  result = state.breaks[bi].withModel(v.model)
+  result.guided = v.guided
+  if v.guided != gdOwn:
+    result.guidedBy = state.breaks[bi].key.guide
+    result.guideWhy = v.why
+
+func shownBreaksKept*(state: AppState; k: int): bool =
+  ## Whether what `shownBreaks` gives record panel `panels[k]` is kept made (`breakViews`), so
+  ## that drawing it on every frame does not apply the rule again.
+  let (bi, v) = state.viewOfPanel(k)
+  if bi < 0: return false
+  for c in state.breakViews:
+    if c.sameView(v): return true
+
 func shownBreaks*(state: AppState; k: int): FirstBreaks =
   ## The first-break result of record panel `panels[k]` as its overlay shows it: with the
   ## model it was given, when the panel's display gives one (`withModel`); an empty
-  ## result (`bkComputing`) when it has none.
-  let bi = state.breaksIndex(k)
+  ## result (`bkComputing`) when it has none. While the picks guided by the panel's model are
+  ## being made, or when they could not be, another guide's picks are shown and `guided` says
+  ## so. Made once for each result and model (`breakViews`), not on every frame.
+  let (bi, v) = state.viewOfPanel(k)
   if bi < 0: return FirstBreaks()
-  state.breaks[bi].withModel(state.panels[k].layers[0].display.breakModel)
+  for c in state.breakViews:
+    if c.sameView(v): return c.shown
+  state.madeView(bi, v)
 
 func lengthUnitKnown(u: SurveyUnit): bool {.inline.} = u in {suMetres, suFeet, suUsFeet}
 
@@ -6580,11 +6654,16 @@ proc followRecordQc(state: var AppState) =
   if work.on:
     work.settings = state.settings.noise.bounded
     work.key = state.breakKeyFor(i, g.gather)
+    # (the record's check uses the picks guided by the record's fit, `FirstBreaks.picks`: any
+    # guide's result has them; a done one first)
     for b in state.breaks:
-      if b.key.sameRecord(work.key):
+      if b.key.sameRecord(work.key) and share != 2:
         if b.state == bkDone: (work.shared, share) = (b, 2)
         elif b.state == bkComputing: share = 1
-        else: share = 2 # failed or stopped: a result too, the job does not ask again
+    if share == 0:
+      for b in state.breaks:
+        if b.key.sameRecord(work.key):
+          share = 2 # failed or stopped: a result too, the job does not ask again
   let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
     domain, state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
     ownKeyOf(state.editsAt(s.path), gatherTraces), work.settings, work.key, share)
@@ -6608,21 +6687,26 @@ proc followRecordQc(state: var AppState) =
     own, reversed, work, state.inbox.poster))
   if not rel.isNil: state.qcHeld.add (q.job, rel)
 
+proc nextBreakRevision(state: var AppState): int =
+  ## A revision no result had before: a view made of a result is of that result as it was.
+  inc state.breakRevisions
+  state.breakRevisions
+
 proc keepBreaks(state: var AppState; found: sink FirstBreaks) =
   ## The first breaks a record's check found for itself (`core/recordqc`): kept
   ## for the overlay, which then does not look for them. A result of the same key
   ## that is not done (a job started at the same time) is given up for it.
   for b in state.breaks.mitems:
-    if b.key.sameRecord(found.key):
+    if b.key == found.key:
       if b.state == bkDone: return
       if b.job != NoJob:
         discard state.jobs.cancel(b.job)
         state.breaksReplaced.add b.job
-      let rev = b.revision + 1
+      let rev = state.nextBreakRevision
       b = move found
       (b.job, b.revision) = (NoJob, rev)
       return
-  found.revision = 1
+  found.revision = state.nextBreakRevision
   state.breaks.add found
 
 proc takeRecordQc(state: var AppState; m: sink Msg) =
@@ -6701,62 +6785,80 @@ proc followFirstBreaks(state: var AppState) =
   for k in 0 ..< state.panels.len:
     let (on, key, i) = state.breakKeyOf(k)
     if on and (key, i) notin wanted: wanted.add (key, i)
+  # one result per record and guide: two panels on one record with different models each keep
+  # theirs, and neither is given up for the other's
   var kept: seq[FirstBreaks]
   for b in state.breaks.mitems:
     var superseded = state.findSession(b.key.file) < 0
     var wantedNow = false
     for (key, _) in wanted:
-      if key.sameRecord(b.key): wantedNow = true
-      elif key.file == b.key.file and key.gather == b.key.gather: superseded = true
-    if superseded or (not wantedNow and b.state == bkComputing):
+      if key == b.key: wantedNow = true
+      elif key.file == b.key.file and key.gather == b.key.gather and
+          not key.sameRecord(b.key):
+        superseded = true
+    # a result no panel wants is kept only when done (to show while another guide's picks are
+    # made, or to step back to); a failed one goes, so asking again picks again
+    if superseded or (not wantedNow and b.state != bkDone):
       if b.job != NoJob:
         discard state.jobs.cancel(b.job)
         state.breaksReplaced.add b.job
     else: kept.add move b
-  while kept.len > MaxBreakRecords:
-    var drop = -1
-    for j, b in kept: # the oldest that no panel wants
-      if drop < 0 and b.state != bkComputing:
-        var w = false
-        for (key, _) in wanted: w = w or key.sameRecord(b.key)
-        if not w: drop = j
-    if drop < 0: break
-    kept.delete drop
+  func wantedKey(wanted: seq[(BreakKey, int)]; key: BreakKey): bool =
+    for (k, _) in wanted:
+      if k == key: return true
+  for (key, _) in wanted: # at most a few guides a record: the oldest no panel wants go
+    var count = 0
+    for b in kept:
+      if b.key.sameRecord(key): inc count
+    var j = 0
+    while count > MaxGuidesPerRecord and j < kept.len:
+      if kept[j].key.sameRecord(key) and kept[j].state != bkComputing and
+          not wanted.wantedKey(kept[j].key):
+        kept.delete j
+        dec count
+      else: inc j
+  var j = 0
+  while kept.len > MaxBreakRecords and j < kept.len:
+    if kept[j].state != bkComputing and not wanted.wantedKey(kept[j].key): kept.delete j
+    else: inc j
   state.breaks = kept
   for (key, i) in wanted:
     var have = false
     let s = state.sessions[i]
     let traces = s.gathers[key.gather].traces
-    for b in state.breaks.mitems:
-      if b.key.sameRecord(key):
-        have = true
-        if b.key.guide != key.guide:
-          # the given model changed: what is there stays drawn (the rule runs on its picks at
-          # once, `shownBreaks`) while the picks guided by the new one are made again
-          if b.job != NoJob:
-            discard state.jobs.cancel(b.job)
-            state.breaksReplaced.add b.job
-          b.key = key
-          if b.state == bkFailed: b.state = bkComputing
-          b.job = state.jobs.submit(JobSpec(title: "Find the first breaks of the record shown",
-            lane: jlBackground, auto: true, reads: @[s.path]), firstBreaksWork(s.filePtr, s.path,
-            key, traces, state.inbox.poster))
-    # the record's check is finding them itself (`RecordQc.picks`): its answer is kept
-    have = have or (state.recordQc.job != NoJob and state.recordQc.picks and
-      state.recordQc.pickKey.sameRecord(key))
+    for b in state.breaks:
+      if b.key == key: have = true # computing, done or failed: an answer, never asked again
+    # the record's check is finding them itself (`RecordQc.picks`, guided by the record's fit):
+    # its answer is kept
+    have = have or (not key.guide.given and state.recordQc.job != NoJob and
+      state.recordQc.picks and state.recordQc.pickKey == key)
     if not have:
       var b = FirstBreaks(key: key, state: bkComputing, first: traces.a)
       b.job = state.jobs.submit(JobSpec(title: "Find the first breaks of the record shown",
         lane: jlBackground, auto: true, reads: @[s.path]), firstBreaksWork(s.filePtr, s.path,
         key, traces, state.inbox.poster))
       state.breaks.add b
+  # what each panel's overlay shows, made again only when its result or model changed
+  var views: seq[BreakView]
+  for k in 0 ..< state.panels.len:
+    var (bi, v) = state.viewOfPanel(k)
+    if bi >= 0:
+      var found = false
+      for c in state.breakViews.mitems:
+        if not found and c.sameView(v):
+          views.add move c
+          found = true
+      if not found:
+        v.shown = state.madeView(bi, v)
+        views.add v
+  state.breakViews = views
 
 proc takeFirstBreaks(state: var AppState; m: sink Msg) =
   ## A record's first breaks, while its key is still wanted; the answer of a
   ## job given up for a newer key is dropped.
   for b in state.breaks.mitems:
     if b.job == m.job and b.job != NoJob:
-      let (job, key, rev) = (b.job, b.key, b.revision + 1)
+      let (job, key, rev) = (b.job, b.key, state.nextBreakRevision)
       b = move m.breaks
       (b.job, b.key, b.revision) = (job, key, rev)
       return
@@ -6775,7 +6877,7 @@ proc endBreaksWork(state: var AppState; job: JobInfo): bool =
         b.state = bkFailed
         b.why = if job.state == jsFailed: "the record could not be read: " & job.error
                 else: "stopped"
-        inc b.revision
+        b.revision = state.nextBreakRevision
       return true
 
 proc followMapWork(state: var AppState) =
