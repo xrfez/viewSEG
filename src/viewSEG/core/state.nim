@@ -4733,7 +4733,7 @@ proc importEdits(state: var AppState; cmd: Command) =
     let job = state.jobs.submit(JobSpec(title: "Import the edits in " &
       cmd.listPath.extractFilename, lane: jlInteractive), importEditsWork(cmd.listPath,
       state.sessions[state.shownFile(k)].len, state.inbox.poster))
-    let path = state.sessions[state.shownFile(k)].path
+    let path = state.sessions[state.shownFile(k)].diskPath
     var label = ""
     if cmd.replaceEdits: # a record kept apart, said in the user's terms: not the store's file name
       for c in state.earlier.getOrDefault(path):
@@ -4752,8 +4752,9 @@ proc takeImported(state: var AppState; m: sink Msg) =
   if w < 0: return
   let (_, path, by, replace, label) = state.editImports[w]
   state.editImports.delete w
+  let disk = diskOf(path)
   let name = m.importedList.extractFilename
-  let target = path.extractFilename
+  let target = disk.extractFilename
   if m.importFailure.len > 0:
     state.log.add(sevError, "edits", "Cannot import the edits in " & m.importedList & ": " &
       m.importFailure & ". Nothing was changed.")
@@ -4766,7 +4767,7 @@ proc takeImported(state: var AppState; m: sink Msg) =
   let i = block:
     var at = -1
     for j, s in state.sessions:
-      if s.path == path: at = j
+      if not s.derived and s.diskPath == disk: at = j
     at
   if i < 0:
     state.log.add(sevWarning, "edits", target & " was closed before its edits in " & name &
@@ -4797,7 +4798,7 @@ proc takeImported(state: var AppState; m: sink Msg) =
       " were on " & target & " already." else: "Every edit in " & name & " was on " & target &
       " already."))
   else:
-    state.editStamps[path] = (s.size, s.modified)
+    state.editStamps[disk] = (s.size, s.modified)
     state.log.add(sevInfo, target, (if replace and label.len > 0: target & "'s edits became " &
       label & ": " & plural(given, "edit") & " given, " & plural(takenOff, "edit") &
       " taken off. Edit > Undo takes it back." else: e.undoText.capitalizeAscii & "."))

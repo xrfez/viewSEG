@@ -10,6 +10,8 @@
 ## the way to the next file, "the raw record was not shown". With the
 ## correlation's hold not kept at the quit, AddressSanitizer reports a
 ## heap-use-after-free in the job's write of the result after shutdown.
+## With an import aimed at the derived key, "the imported kill is not on
+## the raw file".
 
 import std/[os, sequtils, strutils, times]
 import viewSEG/core/[jobs, references, state]
@@ -19,6 +21,43 @@ proc said(st: AppState; text: string): bool =
   for e in st.log:
     if text in e.text: return true
   false
+
+proc importWhileCorrelated(raw, list: string) =
+  ## Imports a kill while the derived view is shown, and turns the toggle
+  ## off before the list is read: the kill must be on the raw file.
+  var st = initAppState(watchEvery = initDuration(hours = 1))
+  var settings = st.settings
+  settings.files.prepareNext = false
+  st.apply Command(kind: ckSettings, settings: settings)
+  st.rememberFilesIn(raw.parentDir / "import-config")
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: raw)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  doAssert st.settle(st.referencesLoaded), "the archive was not read"
+  let trace = st.sessions[0].base
+  st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "import",
+    trace: trace, fromMs: 0, toMs: 100))
+  doAssert st.settle(st.references.entries.anyIt(it.name == "import")),
+    "the sweep was not stored"
+  var id = ""
+  for e in st.references.entries:
+    if e.name == "import": id = e.id
+  st.apply Command(kind: ckSelectReference, refId: id)
+  st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: true)
+  doAssert st.settle(st.sessions.anyIt(it.derived) and
+    st.shownFile(st.findPanel(MainPanel)) >= 0 and
+    st.sessions[st.shownFile(st.findPanel(MainPanel))].derived),
+    "the correlated record was not shown"
+  holdStep("reading the list")
+  st.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: list)
+  doAssert st.settle(inStep("reading the list").len == 1), "the import was not held"
+  st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: false)
+  doAssert st.settle(not st.correlateOn and not st.sessions.anyIt(it.derived)),
+    "the raw record was not shown"
+  releaseStep("reading the list")
+  let k = st.findPanel(MainPanel)
+  doAssert st.settle(st.editsOf(k).has(teKilled, 0)),
+    "the imported kill is not on the raw file"
+  discard st.shutdown()
 
 proc quitWhileCorrelating(raw: string): JobId =
   ## Quits while a correlation is held in its phase; the caller lets it go
@@ -113,6 +152,9 @@ proc main*() =
     discard st.shutdown()
 
     installSteps()
+    let list = fx.dir / "kills.csv"
+    writeFile(list, CsvHeader & "\n1,,,killed," & raw.extractFilename & "\n")
+    importWhileCorrelated(raw, list)
     let held = quitWhileCorrelating(raw)
     releaseStep("correlating")
     doAssert waitUntil(cameBack(held)), "the correlation did not come back"
