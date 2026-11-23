@@ -288,6 +288,32 @@ points** writes one row per missing station instead of one row per record. **tot
 a second file** also writes a file beside the one you save, with `-totals` before the
 extension. Double-click a record to open that file at that record.
 
+## Output
+
+**File > Output...** writes the seismic files of the folder open in the file list, including
+the folders under it, as SEG-Y or SEG-D. The item stays in the menu. It is inactive until
+a folder is open.
+
+The **Output** window stays closed until you ask for it. It opens as a tab beside the
+**Seismic** window, and that tab is the one in front. Closing it and opening it again keeps
+the place you last gave it. **Change source...** picks another folder. The tree lists that
+folder's seismic files. Tick the ones to write. **All** and **None** cover every listed
+file, including ones the name filter hides. **Only the shown file** ticks the file the
+Seismic window shows, and no other. A folder's box is mixed when only some of the files
+under it are ticked; a click then ticks them all. Ticks are not kept.
+
+**Format** is SEG-Y or SEG-D. The boxes under it are on: polarity reversals, dropping
+killed traces, each trace's own filter, the Seismic window's processing, time shifts, and
+the plot's sort. Display-only gain is not written. A SEG-D file is sorted within each
+record. A file already open is written as it stands, including edits not yet saved.
+
+**Change destination...** picks the folder to write into. **Keep the sub folders** is on:
+a file in a sub folder is written in that sub folder. **Run** stays inactive when the
+destination is the source folder, inside it, or holding it. While the write runs, the
+button is **Stop**: the file in progress finishes, and the rest are skipped. The table
+under it is one row per file (written, skipped or failed), then a total. **Copy results**
+puts that table on the clipboard. **Open destination** opens the folder.
+
 ## Jobs
 
 Anything that takes a while (opening a large file, listing a folder) runs while you go
@@ -1395,13 +1421,13 @@ that does not name Units loads as Metric.
 
 | Window menu | What it does |
 |---|---|
-| **Reset the windows** (Ctrl+Shift+R) | every window shown and docked in the main window, as at a first start; the main window is brought onto a screen if it is off every one |
+| **Reset the windows** (Ctrl+Shift+R) | every window shown and docked in the main window, as at a first start; Aux, Missing traces and Output stay closed until asked; the main window is brought onto a screen if it is off every one |
 | **Bring all windows onto this screen** | every floating window (plots, FFT, the reference archive, About, the dialogs), also those you dragged out of the main window, wherever they are (another screen, a screen that is gone, past a screen's edge): wholly into the main window, made smaller when larger; and the main window itself, wholly onto its screen |
 | **Icon in the tray**, **Minimize to the tray** | whether viewSEG's icon is in the system tray, and whether minimizing hides the main window there |
 | Wide plot, Side by side, Plot and map | the presets that ship with viewSEG |
 | Load, Save layout as..., Import layout..., Export layout... | your own layouts: saved under a name, loaded again, written to a file and read from one |
 
-The **View** menu ticks each window (Seismic, Files, Records, Map, Headers, Jobs, Messages, Spectrum, Import survey): a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown. It also holds the theme.
+The **View** menu ticks each window (Seismic, Files, Records, Map, Headers, Jobs, Messages, Spectrum, Aux, Missing traces, Output, Import survey): a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown. It also holds the theme.
 
 A layout saved before a window existed (before the map came, say) docks that window beside
 its neighbours, and shows it. A window a layout puts off every screen (left on a monitor
