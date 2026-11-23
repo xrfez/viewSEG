@@ -1,7 +1,8 @@
 ## Writes one loaded seismic file as SEG-Y or SEG-D, trace by trace, with the
 ## edits set on it. A background job (`outputWork`): the source is never
-## modified, and one block of traces is in memory at a time. A later window
-## calls it once per file.
+## modified. Samples are one trace at a time. With no sort key, only a bounded
+## block of indices is held; a SEG-D sort holds one record; only a SEG-Y sort
+## holds an index of the whole file. A later window calls it once per file.
 ##
 ## An existing destination is refused, never overwritten, and the destination
 ## name is never created here. The writer is given a part file in that
@@ -210,36 +211,69 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
           fs.mappedRead(source, headers = true)
           file[].ensureKeys()
         var dropped = 0
-        var groups: seq[seq[int]] = @[]
+        var written = 0
+        let segdOut = outKind == skSegd
+        var records = 0
         var rec = int64(-1)
+        var firstKept = -1
         for i in 0 ..< n:
           if opts.dropKilled and edits.has(teKilled, i):
             inc dropped
             continue
-          let r = if splitRecords: boundary(file[], i, byEntry, true) else: 0
-          if groups.len == 0 or r != rec:
-            groups.add @[]
-            rec = r
-          groups[^1].add i
-        var order: seq[int] = @[]
-        if opts.sortKeys.len > 0:
-          for g in groups.mitems:
-            if g.len > 1:
-              var perm: seq[int] = @[]
-              let rows = file[].rowsOf(g)
-              if not sortRowsInto(rows, opts.sortKeys, perm):
-                abort(sink, dest, part, claimed, "The sort was stopped.", true)
-              var next = newSeq[int](g.len)
-              for k, row in perm: next[k] = g[row]
-              g = next
-        for g in groups: order.add g
-        if order.len == 0:
+          if firstKept < 0: firstKept = i
+          if segdOut:
+            let r = boundary(file[], i, byEntry, true)
+            if records == 0 or r != rec:
+              inc records
+              rec = r
+        if firstKept < 0:
           abort(sink, dest, part, claimed, "Nothing to write: every trace was left out.", false)
-        let segdOut = outKind == skSegd
-        var sameOrder = order.len == n
-        if sameOrder:
-          for i, t in order:
-            if t != i: sameOrder = false
+        template sortInto(traces: var seq[int]): bool =
+          var changed = false
+          if opts.sortKeys.len > 0 and traces.len > 1:
+            var perm: seq[int] = @[]
+            let rows = file[].rowsOf(traces)
+            if not sortRowsInto(rows, opts.sortKeys, perm):
+              abort(sink, dest, part, claimed, "The sort was stopped.", true)
+            for k, row in perm:
+              if row != k: changed = true
+            var next = newSeq[int](traces.len)
+            for k, row in perm: next[k] = traces[row]
+            traces = next
+          changed
+        var head = firstKept
+        var sameOrder = opts.sortKeys.len == 0 and dropped == 0
+        if segdOut and opts.sortKeys.len > 0:
+          var crosses = false
+          var identity = dropped == 0
+          var prevLast = -1
+          var recTraces: seq[int] = @[]
+          var recId = int64(-1)
+          var firstRecord = true
+          for i in 0 ..< n:
+            if opts.dropKilled and edits.has(teKilled, i): continue
+            let r = boundary(file[], i, byEntry, true)
+            if recTraces.len > 0 and r != recId:
+              if sortInto(recTraces): identity = false
+              if firstRecord: head = recTraces[0]
+              firstRecord = false
+              if prevLast >= 0:
+                var edge = @[prevLast, recTraces[0]]
+                if sortInto(edge): crosses = true
+              prevLast = recTraces[^1]
+              recTraces.setLen 0
+            if recTraces.len == 0: recId = r
+            recTraces.add i
+          if recTraces.len > 0:
+            if sortInto(recTraces): identity = false
+            if firstRecord: head = recTraces[0]
+            if prevLast >= 0:
+              var edge = @[prevLast, recTraces[0]]
+              if sortInto(edge): crosses = true
+          sameOrder = identity
+          if crosses:
+            lines.add "The sort crosses records, so it was applied within each record. " &
+              "SEG-D records stay in input order."
         # SEG-Y's template writer allows any order and a missing trace. SEG-D's
         # does not: a record must be written whole, in input order.
         let like = srcKind == outKind and (srcKind == skSegy or (sameOrder and dropped == 0))
@@ -247,16 +281,6 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
             opts.applyOwnFilters or opts.applyProcessing):
           fs.mappedRead(source, headers = true)
           file[].ensureKeys()
-        if segdOut and opts.sortKeys.len > 0 and order.len > 1:
-          var perm: seq[int] = @[]
-          let rows = file[].rowsOf(order)
-          if sortRowsInto(rows, opts.sortKeys, perm):
-            var crosses = false
-            for i, row in perm:
-              if order[row] != order[i]: crosses = true
-            if crosses:
-              lines.add "The sort crosses records, so it was applied within each record. " &
-                "SEG-D records stay in input order."
         if not like:
           lines.add "Headers were built from the trace keys. Template headers were not copied."
         var samples = newSeq[float32]()
@@ -266,71 +290,93 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
           if like:
             w = openSeismicWriter(part, like = file[])
           elif segdOut:
-            var count = int(file[].traceEntry(order[0]).numSamples)
-            for t in order:
-              let c = int(file[].traceEntry(t).numSamples)
+            var count = int(file[].traceEntry(head).numSamples)
+            for i in 0 ..< n:
+              if opts.dropKilled and edits.has(teKilled, i): continue
+              let c = int(file[].traceEntry(i).numSamples)
               if c != count:
                 abort(sink, dest, part, claimed,
                   "SEG-D output needs one sample count; this file has more than one.", false)
-            var o = SegdOutputOptions(sampleIntervalUs: file[].sampleIntervalUs(order[0]),
+            var o = SegdOutputOptions(sampleIntervalUs: file[].sampleIntervalUs(head),
               numSamples: count)
-            let t0 = file[].traceKeys(order[0]).time
+            let t0 = file[].traceKeys(head).time
             if not t0.isNaN: o.time = t0
             w = openSeismicWriter(part, o)
           else:
             w = openSeismicWriter(part, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
-          var at = 0
-          var seen = int64(-1)
-          while at < order.len:
-            let r = boundary(file[], order[at], byEntry, segdOut)
-            if r != seen:
-              seen = r
+          template writeOne(t: int) =
+            let x = file[].readTraces(t .. t)
+            let cols = x.shape[1]
+            samples.setLen cols
+            for j in 0 ..< cols: samples[j] = x[0, j]
+            # A kill is only applied by leaving the trace out. A killed trace
+            # that is kept is written like any other, options applied. With
+            # no option on, the samples stay as read (no key lookup, so a
+            # file opened without keys still writes).
+            let reversed = opts.applyReversals and edits.effectivelyReversed(t)
+            if reversed or opts.applyOwnFilters or opts.applyProcessing:
+              var own = OwnFilter()
+              if opts.applyOwnFilters or opts.applyProcessing:
+                let listed = edits.plotFiltersIn(t .. t)
+                if listed.len > 0: own = listed[0].filter
+              applyPreparedTrace(samples, file[].traceKeys(t), dtMs, reversed,
+                opts.processing, opts.applyProcessing, own, opts.applyOwnFilters)
+            if like:
+              w.writeTrace(file[], t, samples)
+            else:
+              let keys = file[].traceKeys(t)
+              let channel = if keys.status == tsAuxiliary: sctOther else: sctSeismic
+              w.writeTrace(keys, samples, channelType = channel)
+            inc written
+          template writeList(list: openArray[int]) =
+            if list.len > 0:
               if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
-            var last = at
-            while last < order.len and last - at < TraceBlock and
-                boundary(file[], order[last], byEntry, segdOut) == r:
-              inc last
-            if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
-            fs.mappedRead(source)
-            for t in order[at ..< last]:
-              let x = file[].readTraces(t .. t)
-              let cols = x.shape[1]
-              samples.setLen cols
-              for j in 0 ..< cols: samples[j] = x[0, j]
-              # A kill is only applied by leaving the trace out. A killed trace
-              # that is kept is written like any other, options applied. With
-              # no option on, the samples stay as read (no key lookup, so a
-              # file opened without keys still writes).
-              let reversed = opts.applyReversals and edits.effectivelyReversed(t)
-              if reversed or opts.applyOwnFilters or opts.applyProcessing:
-                var own = OwnFilter()
-                if opts.applyOwnFilters or opts.applyProcessing:
-                  let listed = edits.plotFiltersIn(t .. t)
-                  if listed.len > 0: own = listed[0].filter
-                applyPreparedTrace(samples, file[].traceKeys(t), dtMs, reversed,
-                  opts.processing, opts.applyProcessing, own, opts.applyOwnFilters)
-              if like:
-                w.writeTrace(file[], t, samples)
-              else:
-                let keys = file[].traceKeys(t)
-                let channel = if keys.status == tsAuxiliary: sctOther else: sctSeismic
-                w.writeTrace(keys, samples, channelType = channel)
-            at = last
-            if not ctx.progress(at + dropped, n):
-              abort(sink, dest, part, claimed, "Cancelled.", true)
+              fs.mappedRead(source)
+              for t in list: writeOne(t)
+              if not ctx.progress(written + dropped, n):
+                abort(sink, dest, part, claimed, "Cancelled.", true)
+          template flush(batch: var seq[int]) =
+            if segdOut and opts.sortKeys.len > 0: discard sortInto(batch)
+            var at = 0
+            while at < batch.len:
+              let last = min(batch.len, at + TraceBlock)
+              writeList(toOpenArray(batch, at, last - 1))
+              at = last
+            batch.setLen 0
+          if opts.sortKeys.len > 0 and not segdOut:
+            var whole = newSeqOfCap[int](n - dropped)
+            for i in 0 ..< n:
+              if opts.dropKilled and edits.has(teKilled, i): continue
+              whole.add i
+            discard sortInto(whole)
+            flush(whole)
+          else:
+            var batch: seq[int] = @[]
+            var batchRec = int64(-1)
+            let holdRecord = segdOut and opts.sortKeys.len > 0
+            for i in 0 ..< n:
+              if opts.dropKilled and edits.has(teKilled, i): continue
+              let r = if segdOut: boundary(file[], i, byEntry, true) else: int64(0)
+              let newRecord = segdOut and batch.len > 0 and r != batchRec
+              if newRecord or (batch.len == TraceBlock and not holdRecord):
+                flush(batch)
+                if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
+              if batch.len == 0: batchRec = r
+              batch.add i
+            if batch.len > 0: flush(batch)
           if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
           let log = w.close()
           for d in log: lines.add($d)
           if not fs.moveNoReplace(part, dest):
             let kept = "The file appeared while writing; the output is kept as " & part & "."
             if sink != nil:
-              sink.result = OutputResult(ok: false, written: order.len, dropped: dropped,
+              sink.result = OutputResult(ok: false, written: written, dropped: dropped,
                 lines: lines, path: part, reason: kept)
             claimed = false # the part file is the kept output, not a partial to drop
             raise newException(ValueError, kept)
           claimed = false
           if sink != nil:
-            sink.result = OutputResult(ok: true, written: order.len, dropped: dropped,
+            sink.result = OutputResult(ok: true, written: written, dropped: dropped,
               lines: lines, path: dest)
     except JobCancelledError as e:
       if sink != nil and sink.result.reason.len == 0:

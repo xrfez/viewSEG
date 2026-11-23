@@ -92,6 +92,16 @@ proc main*() =
   var srcBytes = readFile(segy)
   var sgdBytes = readFile(segd)
 
+  block streamsWithoutAWholeFileList:
+    ## Seen to fail: `groups` held every trace, and a second `sortRowsInto`
+    ## sorted the whole file again before anything was written.
+    let text = readFile(currentSourcePath().parentDir.parentDir / "src/viewSEG/core/outputjobs.nim")
+    var sorts = 0
+    for line in text.splitLines:
+      if "sortRowsInto(" in line.split('#')[0]: inc sorts
+    doAssert sorts <= 1, "the whole file is sorted more than once: " & $sorts
+    doAssert "seq[seq[int]]" notin text, "every record is listed before writing"
+
   block noOptions:
     for (path, kind, name) in [(segy, ofSegy, "shots.sgy"), (segd, ofSegd, "shots.sgd")]:
       var src = openSeismic(path, keys = true)
