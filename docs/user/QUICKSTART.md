@@ -611,7 +611,8 @@ straight-line refraction fit to this record's own picks against offset, with no 
 typed in, the fitted velocity (or two, with the offset where they change) in the offsets'
 unit per second, the intercept in ms, how many picks it was fitted to and where the offsets
 came from (the survey or the file's headers). The key itself stays short: "model", "pick", a small "given" when the model is the one
-you gave and, in the warning colour, how many traces are off it ("358 off"). Click it to **give
+you gave and, in the warning colour, how many traces are off it ("358 off"). Click the key's "pick" or "model" to hide or show that kind of bar (a hidden one is dimmed and
+struck through in the key). Click the rest of the key, or the small wheel at its end, to **give
 a model instead**: a velocity, an intercept (ms, 0 by default) and, behind **Two layers**, a
 second velocity beyond a crossover offset, held for every record. The same popover
 chooses the two bars' colours (**Reset colours** puts the theme's back) and their **Size**

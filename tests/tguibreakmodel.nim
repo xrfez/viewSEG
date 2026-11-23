@@ -116,7 +116,7 @@ proc main*() =
       f.apply(Command(kind: ckDisplay, panel: MainPanel, display: d)),
       proc (f: FrameInfo): bool = f.ready and f.shown and f.markOf("plot.first break key").size.x > 0)
     step("a click on the key", proc (f: FrameInfo) =
-      f.click(f.markOf("plot.first break key").centre), proc (f: FrameInfo): bool =
+      f.click(f.markOf("plot.first break key settings").centre), proc (f: FrameInfo): bool =
       result = f.markOf("plot.first break model use fit").size.x > 0
       doAssert waited < 200 or result, "the key did not open the popover"
       if result:
@@ -183,7 +183,7 @@ proc main*() =
       if result: f.shoot("moved-source"))
     proc reopen(f: FrameInfo) =
       if f.markOf("plot.first break model fitted").size.x == 0:
-        f.click(f.markOf("plot.first break key").centre)
+        f.click(f.markOf("plot.first break key settings").centre)
     step("the popover again", reopen, proc (f: FrameInfo): bool =
       f.markOf("plot.first break model fitted").size.x > 0 and waited > 5)
     step("move onto Fitted", proc (f: FrameInfo) =
@@ -193,6 +193,48 @@ proc main*() =
       f.click(f.markOf("plot.first break model fitted").centre), proc (f: FrameInfo): bool =
       result = f.display.breakModel.source == bmFitted and not f.now.isGiven
       doAssert waited < 200 or result, "Fitted to this record did not give the fit back")
+    # the key's two parts hide and show the model bars and the pick bars; the popover's boxes
+    # do the same; the wheel at the key's end opens it. Seen to fail: with the click on a part
+    # still opening the popover, "a click on the model part did not hide the model"; with the
+    # popover's boxes left out, "no Show picks box".
+    step("close the popover", proc (f: FrameInfo) =
+      (f.pressKey(skEscape, true); f.pressKey(skEscape, false)),
+      proc (f: FrameInfo): bool = f.markOf("plot.first break model fitted").size.x == 0)
+    step("a click on the model part", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break key model").centre), proc (f: FrameInfo): bool =
+      result = not f.display.breakShowModel
+      doAssert waited < 200 or result, "a click on the model part did not hide the model"
+      if result:
+        doAssert f.display.breakShowPicks, "the picks went with the model"
+        doAssert f.now.state == bkDone and f.now.modelled > 0, "hiding changed the counts"
+        f.shoot("picks-only"))
+    step("a click on the pick part", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break key pick").centre), proc (f: FrameInfo): bool =
+      result = not f.display.breakShowPicks
+      doAssert waited < 200 or result, "a click on the pick part did not hide the picks"
+      if result:
+        doAssert not f.display.breakShowModel, "the model came back"
+        doAssert f.markOf("plot.first break key").size.x > 0, "the key went with both"
+        f.shoot("both-hidden"))
+    step("the model part again", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break key model").centre), proc (f: FrameInfo): bool =
+      result = f.display.breakShowModel
+      doAssert waited < 200 or result, "a second click did not show the model"
+      if result: f.shoot("model-only"))
+    step("the wheel opens the popover", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break key settings").centre), proc (f: FrameInfo): bool =
+      result = f.markOf("plot.first break show picks").size.x > 0
+      doAssert waited < 200 or result, "the wheel did not open the popover"
+      if result:
+        doAssert f.markOf("plot.first break show model").size.x > 0, "no Show model box")
+    step("move onto Show picks", proc (f: FrameInfo) =
+      f.moveMouse(f.markOf("plot.first break show picks").centre),
+      proc (f: FrameInfo): bool = waited > 5)
+    step("the Show picks box", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break show picks").centre), proc (f: FrameInfo): bool =
+      result = f.display.breakShowPicks and f.display.breakShowModel
+      doAssert waited < 200 or result, "the Show picks box did not show the picks"
+      if result: f.shoot("popover-boxes"))
     runSteps("model", opts, steps)
     if shots.len > 0:
       # pictures for a look: the overlay at normal zoom and, on records of more traces,

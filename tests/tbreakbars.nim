@@ -52,6 +52,18 @@ proc main*() =
       doAssert spans[c][0] - 0.7 <= y and y <= spans[c][1] + 0.7, "trace " & $t & " at " &
         $b.pickOf(t) & " ms has no mark in its column"
 
+  block hiddenKindsDrawNothing:
+    # Seen to fail: with the link drawn whenever the pick is, "a link with the model hidden".
+    for k in [bmModel, bmPick]:
+      doAssert k.shows(true, true)
+    doAssert bmModel.shows(false, true) and not bmModel.shows(true, false)
+    doAssert bmPick.shows(true, false) and not bmPick.shows(false, true)
+    doAssert bmLink.shows(true, true), "no link with both shown"
+    doAssert not bmLink.shows(true, false), "a link with the model hidden"
+    doAssert not bmLink.shows(false, true), "a link with the picks hidden"
+    for k in MarkKind:
+      doAssert not k.shows(false, false), "a mark with both hidden"
+
   block barsWhereThePlotDrawsTheSample:
     var b = made(60)
     b.shiftMs[5] = -50 # its time axis starts 50 ms later than the plot's

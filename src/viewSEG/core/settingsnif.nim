@@ -212,6 +212,8 @@ proc display(w: var NifWriter; d: DisplaySettings; turned = true) =
   if d.breakModel != BreakModel(): w.writeBreakModel(d.breakModel)
   if d.breakPickColour.a != 0: w.value("breakPickColour", colourText(d.breakPickColour))
   if d.breakModelColour.a != 0: w.value("breakModelColour", colourText(d.breakModelColour))
+  if not d.breakShowPicks: w.value("breakShowPicks", false)
+  if not d.breakShowModel: w.value("breakShowModel", false)
   if d.breakSize != DisplaySettings().breakSize: w.choice("breakSize", BreakSizeNames[d.breakSize])
   w.choice("colours", ColourNames[d.colours])
   w.open("custom")
@@ -665,6 +667,8 @@ proc display(r: var Reading; n: NifNode; d: var DisplaySettings) =
       of "breakModel": r.breakModel(c, d.breakModel)
       of "breakPickColour": r.colour(c, d.breakPickColour)
       of "breakModelColour": r.colour(c, d.breakModelColour)
+      of "breakShowPicks": r.flag(c, d.breakShowPicks)
+      of "breakShowModel": r.flag(c, d.breakShowModel)
       of "breakSize": r.choice(c, BreakSizeNames, d.breakSize)
       of "colours": r.choice(c, ColourNames, d.colours)
       of "custom":

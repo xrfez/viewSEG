@@ -71,6 +71,14 @@ func barThickness*(size: BreakSize; kind: MarkKind; heavy, lines: bool): float32
   of bzMedium: (if kind == bmPick and heavy: 5.0 else: 3.4)
   of bzLarge: (if kind == bmPick and heavy: 6.5 else: 4.6)
 
+func shows*(k: MarkKind; picks, model: bool): bool {.inline.} =
+  ## Whether a mark of kind `k` is drawn when the picks are shown (`picks`) and the model is
+  ## (`model`): each bar by its own switch, the joining line only when both are.
+  case k
+  of bmModel: model
+  of bmPick: picks
+  of bmLink: picks and model
+
 func along*(p: Vec2; s: ScreenAxis): float32 {.inline.} =
   if s == saX: p.x else: p.y
 

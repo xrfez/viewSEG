@@ -83,7 +83,8 @@ const Reached = {
   "plot.display.breakModel.v1": "display", "plot.display.breakModel.interceptMs": "display",
   "plot.display.breakModel.v2": "display", "plot.display.breakModel.crossover": "display",
   "plot.display.breakPickColour": "display", "plot.display.breakModelColour": "display",
-  "plot.display.breakSize": "display",
+  "plot.display.breakSize": "display", "plot.display.breakShowPicks": "display",
+  "plot.display.breakShowModel": "display",
   "plot.order": "sort", "plot.seismic": "trace filter", "plot.auxiliary": "trace filter",
   "plot.header.auto": "display header",
   "plot.header.fields": "display header", "plot.processing.raw": "",
@@ -175,7 +176,8 @@ const Everything = DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDens
   clipPercentile: 98.5, overlap: 2.5, firstBreaks: true,
   breakModel: BreakModel(source: bmGiven, v1: 2400, interceptMs: 5, v2: 3500, crossover: 800),
   breakPickColour: Rgba(r: 10, g: 200, b: 30, a: 255),
-  breakModelColour: Rgba(r: 250, g: 128, b: 0, a: 255), breakSize: bzLarge)
+  breakModelColour: Rgba(r: 250, g: 128, b: 0, a: 255), breakSize: bzLarge,
+  breakShowPicks: false, breakShowModel: false)
   ## a display with every field away from its default
 const Keys = @[SortKey(field: hfOffset, descending: true), SortKey(field: hfChannel)]
   ## a sort that is no preset: the user's own keys (`customOrder`) too

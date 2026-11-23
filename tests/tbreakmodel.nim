@@ -179,6 +179,19 @@ proc main*() =
     doAssert back.plot.display.breakPickColour == d.breakPickColour, "the pick colour was not kept"
     doAssert back.plot.display.breakModelColour == d.breakModelColour
     doAssert back.plot.display.breakSize == bzLarge
+    # Seen to fail: with the show switches left out of the settings writer, "the picks'
+    # switch was not kept".
+    d.breakShowPicks = false
+    s.plot.display = d
+    let hidden = readSettings(settingsDocument(s), "settings.nif", Settings(), problems)
+    doAssert problems.len == 0, $problems
+    doAssert not hidden.plot.display.breakShowPicks, "the picks' switch was not kept"
+    doAssert hidden.plot.display.breakShowModel, "the model's switch changed"
+    doAssert asPreset(d).breakShowPicks, "a preset keeps the switch"
+    doAssert not withPreset(d, DisplaySettings()).breakShowPicks
+    doAssert DisplaySettings().breakShowPicks and DisplaySettings().breakShowModel
+    doAssert settingsDocument(Settings()).count("breakShow") == 0, "defaults are not written"
+    d.breakShowPicks = true
     doAssert settingsDocument(Settings()).count("breakPickColour") == 0, "defaults are not written"
     doAssert asPreset(d).breakSize == bzMedium and asPreset(d).breakPickColour.a == 0,
       "a preset keeps no size"

@@ -582,6 +582,18 @@ survey) beside it. Hover it for everything else: the model's velocity or velocit
 intercept, crossover, the record's median of pick less model, the counts, and where the
 offsets came from.
 
+**Showing one kind.** Click the key's "pick" or its "model" to hide that kind of bar and see
+the other alone; a hidden one stays in the key, dimmed with a hollow swatch and its word
+struck through, and a second click shows it again. The line joining a pick to the model is
+drawn only while both are shown; with only the picks shown, a pick off the model keeps its
+heavier look. With both hidden the plot has no overlay drawing but the key stays (the overlay
+is still on). Hiding changes nothing else: the status bar, the tooltip, the counts and the
+agent's `firstBreaks` state are the same. The popover also has **Show picks** and **Show
+model** boxes at the top of its "Colours and size" part, and the small wheel at the key's end
+opens the popover (a click on the key's "given" or count part does too). The two switches are
+`breakShowPicks` and `breakShowModel` in `settings.nif` (written only when off), no display
+preset carries them, and the agent's `display` command takes them.
+
 **Colours and size.** The key's popover has a colour box for each bar (the pick's and the
 model's), a **Reset colours** button (back to the theme's pink and blue) and a **Size**
 choice. Medium, the default, makes a bar about 80 % of one trace's width on the screen

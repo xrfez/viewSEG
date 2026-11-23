@@ -194,6 +194,9 @@ type
       ## the overlay's pick and model bars in the colours the user chose; alpha 0 (the
       ## default) leaves the theme's; not part of a preset either
     breakSize*: BreakSize = bzMedium ## the overlay's bars' size; not part of a preset either
+    breakShowPicks*, breakShowModel*: bool = true
+      ## whether the overlay draws the pick bars and the model bars; each can be hidden to
+      ## see the other alone; not part of a preset either
 
   Layer* = object
     source*: LayerSource
