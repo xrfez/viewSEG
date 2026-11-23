@@ -174,6 +174,7 @@ type
     ckExportLog = "export messages"      ## write the messages to a file of the user's
     ckEdit = "edit traces"               ## kill or restore traces, reverse their polarity or not
     ckOwnFilter = "own filter"           ## set or remove a trace's own frequency filter
+    ckTimeShift = "time shift"           ## set or remove a trace's time shift
     ckUndoEdit = "undo edit"             ## take back the newest change to the edits of a panel's file
     ckRedoEdit = "redo edit"             ## make the change to its edits undone last again
     ckClearEdits = "clear edits"         ## take every edit of a panel's file away
@@ -313,7 +314,7 @@ type
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
         ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckExportEdits, ckImportEdits,
         ckFilter, ckRetry, ckStopReading, ckPrepare, ckProcessing, ckDisplayPreset, ckOwnFilter,
-        ckOpenPair:
+        ckTimeShift, ckOpenPair:
       panel*: PanelId ## the panel's id (1: the Seismic window; 0 retries the folder)
       gather*: int ## ckGather: index into the file's gathers
       path*: string
@@ -329,8 +330,9 @@ type
       order*: seq[SortKey] ## ckSort: layer 0's keys, the first first; empty: the file's order
       reverse*: bool ## ckReverseAll: every trace of layer 0 reversed, or none
       edit*: TraceEdit ## ckEdit: killed, or reversed
-      edited*: seq[int] ## ckEdit, ckOwnFilter: survey-wide ids of traces of the panel's file
-      on*: bool ## ckEdit, ckOwnFilter: given (true) or taken away
+      edited*: seq[int]
+        ## ckEdit, ckOwnFilter, ckTimeShift: survey-wide ids of traces of the panel's file
+      on*: bool ## ckEdit, ckOwnFilter, ckTimeShift: given (true) or taken away
       alsoDrop*: set[TraceEdit]
         ## ckEdit: other edits taken away with `edit` in the same step, when `on` is false
       alsoFilter*: bool
@@ -347,6 +349,9 @@ type
         ## ckOwnFilter: the trace's own frequency filters (raw and aux are not used)
       filterPlace*: FilterPlace
         ## ckOwnFilter: after the plot's filters, or instead of them
+      shiftMs*: float64
+        ## ckTimeShift: the shift in milliseconds, positive later; snapped to the
+        ## sample interval. 0, or `on` false, takes the shift away
       presetAction*: PresetAction
         ## ckDisplayPreset: draw the panel as the preset says (its orientation
         ## kept), save the panel's display under the name (replacing a preset
@@ -798,6 +803,7 @@ type
     own: seq[OwnFilter]
       ## each trace's own filter, when shown as displayed; the default for none
     hasOwn: seq[bool]
+    shiftMs: seq[float64] ## each trace's time shift, when shown as displayed; 0 for none
     displayed: bool
     shown: SessionId
       ## the file the plot shows, when traces are shown as displayed (only
@@ -2810,6 +2816,7 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
   let filters = p.layers[0].processing.filterPipeline(p.layout)
   var reversed, killed, excluded: seq[int]
   var own: seq[FilterEntry]
+  var shifts: seq[ShiftEntry]
   let (i, traces) = state.shownTraces(k)
   if i >= 0 and state.keyOf(state.sessions[i].path) in state.edits:
     template e: untyped = state.edits[state.keyOf(state.sessions[i].path)]
@@ -2817,8 +2824,11 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
     killed = e.listIn(teKilled, traces)
     excluded = e.listIn(teExcluded, traces)
     own = e.plotFiltersIn(traces)
+    shifts = e.shiftsIn(traces)
   let ownHz = i >= 0 and state.keyOf(state.sessions[i].path) in state.edits and
     state.edits[state.keyOf(state.sessions[i].path)].ownNeedsWhole(traces)
+  let shiftWhole = i >= 0 and state.keyOf(state.sessions[i].path) in state.edits and
+    state.edits[state.keyOf(state.sessions[i].path)].shiftNeedsWhole(traces)
   # While it filters, whole traces: a filter's margin grows as its ramp
   # narrows, and the samples the reader holds must still be enough after
   # a slider has moved, so that it filters them again without a read. The
@@ -2826,9 +2836,10 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
   # working it out takes processSEG long for narrow notches (seconds for a
   # few with many harmonics), on this thread, at every view. A trace's own
   # frequency filter asks for the same, so its edges are outside the window.
-  # Normalized for each trace takes its level from the whole trace, so a zoom does not
-  # change it: whole traces here too.
-  let wholeTraces = filters.len > 0 or ownHz or
+  # A time shift asks for the same: samples outside the window would be lost
+  # before the move. Normalized for each trace takes its level from the whole
+  # trace, so a zoom does not change it: whole traces here too.
+  let wholeTraces = filters.len > 0 or ownHz or shiftWhole or
     p.layers[0].normalizesWhole(state.gatherKind(p.layers[0]))
   let margin = if wholeTraces:
                  max(displayMargin(flow, p.layout.dtMs), p.layout.samples)
@@ -2861,7 +2872,7 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
     filters: filters, filterAux: p.layers[0].processing.aux,
     flowAux: p.layers[0].flowReachesAux(state.gatherKind(p.layers[0])),
     clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
-    excluded: excluded, own: own,
+    excluded: excluded, own: own, shifts: shifts,
     raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0,
     basis: first and req.sameReach(p.basis))
   if p.relevel and not p.levelAsked and not req.sameReach(p.basis):
@@ -3365,9 +3376,11 @@ proc followInspect(state: var AppState) =
           f.place = fpInstead
         want.hasOwn.add has
         want.own.add f
+        want.shiftMs.add e.shiftOf(t - s.base)
       else:
         want.hasOwn.add false
         want.own.add OwnFilter()
+        want.shiftMs.add 0.0
     if shown >= 0:
       let layer = state.panels[k].layers[0]
       want.shown = state.sessions[shown].id
@@ -3377,7 +3390,7 @@ proc followInspect(state: var AppState) =
       want.display = layer.display
   template was: untyped = state.asked
   if want.parts == was.parts and want.traces == was.traces and want.edits == was.edits and
-      want.own == was.own and want.hasOwn == was.hasOwn and
+      want.own == was.own and want.hasOwn == was.hasOwn and want.shiftMs == was.shiftMs and
       want.joins == was.joins and want.displayed == was.displayed and
       want.table == was.table and want.tableOf == was.tableOf and
       want.shown == was.shown and want.record == was.record and
@@ -3433,6 +3446,7 @@ proc followInspect(state: var AppState) =
         edits: (if want.displayed: want.edits[n] else: {}),
         own: (if want.displayed and n < want.own.len: want.own[n] else: OwnFilter()),
         hasOwn: want.displayed and n < want.hasOwn.len and want.hasOwn[n],
+        shiftMs: (if want.displayed and n < want.shiftMs.len: want.shiftMs[n] else: 0.0),
         displayed: want.displayed and i == shown)
   if not state.inspector.isNil and state.inspector.silentFor >= StallAfter:
     # Stuck in a drive that does not answer: a request that does not need
@@ -3528,15 +3542,17 @@ func recordText(s: Session; trace: int): string =
 
 func ownKeyOf(e: FileEdits; traces: openArray[int]): string =
   ## The own filters of `traces`, which of them are reversed on their own,
-  ## and whether every trace is reversed, as a key: a change of one asks a
-  ## spectrum or an analysis again. Reverse-all is one mark, not a list of
-  ## every trace.
+  ## their time shifts, and whether every trace is reversed, as a key: a
+  ## change of one asks a spectrum or an analysis again. Reverse-all is one
+  ## mark, not a list of every trace.
   if e.allReversed: result.add "all;"
   for t in traces:
     let (has, f) = e.ownOf(t)
     if has: result.add $t & ":" & $f.place & ":" & $f.spec & ";"
     if e.has(teReversed, t): result.add $t & ":r;"
     if e.has(teExcluded, t): result.add $t & ":e;"
+    let ms = e.shiftOf(t)
+    if ms != 0.0: result.add $t & ":s:" & $ms & ";"
 
 func pilotKeyOf(e: FileEdits; trace: int): string =
   ## What a pilot taken by a rule depends on in its trace's edits: the trace's own
@@ -3550,6 +3566,17 @@ proc reversedOf(e: FileEdits; traces: openArray[int]): seq[int] =
   for t in traces:
     if e.effectivelyReversed(t): result.add t
   result.sort()
+
+func shiftsOfTraces(e: FileEdits; traces: openArray[int]): seq[ShiftEntry] =
+  ## The time shifts of `traces`, ascending. Empty when none is shifted.
+  if traces.len == 0: return
+  var lo = traces[0]
+  var hi = traces[0]
+  for t in traces:
+    if t < lo: lo = t
+    if t > hi: hi = t
+  for s in e.shiftsIn(lo .. hi):
+    if s.trace in traces: result.add s
 
 func ownOfTraces(e: FileEdits; traces: openArray[int]): seq[FilterEntry] =
   ## The own filters of `traces` as the readers of the plot's filters need them,
@@ -3615,6 +3642,7 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   killed.sort()
   let own = ownOfTraces(e, traces)
   let reversed = reversedOf(e, traces)
+  let shifts = shiftsOfTraces(e, traces)
   inc state.spectrumGen
   template sw: untyped = state.spectra[w]
   let axisT0 = sw.axisT0Ms
@@ -3629,6 +3657,7 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   state.spectrumReaderFor(s.path).ask SpectrumAsk(id: sw.id, gen: state.spectrumGen,
     session: int(s.id), file: s.filePtr, path: s.path, size: s.size, traces: traces,
     killed: killed, reversed: reversed, allReversed: e.allReversed, own: own,
+    shifts: shifts,
     fromMs: window[0], toMs: window[1], axisT0Ms: axisT0, processing: processing)
   true
 
@@ -3997,7 +4026,7 @@ proc editsChanged(state: var AppState; path: string; step = EditStep(kind: skCha
     if i >= 0 and state.keyOf(state.sessions[i].path) == state.keyOf(path):
       template layer: untyped = state.panels[j].layers[0]
       let relevel = any or step.touches(teKilled) or step.filterOn.len > 0 or
-        step.filterOff.len > 0
+        step.filterOff.len > 0 or step.shiftOn.len > 0 or step.shiftOff.len > 0
       if layer.reversed != e.allReversed:
         layer.reversed = e.allReversed
         state.resample(j, relevel = relevel)
@@ -6820,6 +6849,7 @@ proc followRecordQc(state: var AppState) =
   for i in 0 ..< tr.len: gatherTraces[i] = tr.a + i
   let own = ownOfTraces(state.editsAt(s.path), gatherTraces)
   let reversed = reversedOf(state.editsAt(s.path), gatherTraces)
+  let shifts = shiftsOfTraces(state.editsAt(s.path), gatherTraces)
   var work = NoiseWork(on: samples and filters * NoiseFilters != {})
   var share = 0
   if work.on:
@@ -6855,7 +6885,7 @@ proc followRecordQc(state: var AppState) =
     lane: jlBackground, auto: true, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
     g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
     state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
-    own, reversed, work, state.inbox.poster))
+    own, reversed, shifts, work, state.inbox.poster))
   if not rel.isNil: state.qcHeld.add (q.job, rel)
 
 proc nextBreakRevision(state: var AppState): int =
@@ -7878,6 +7908,34 @@ proc editTraces(state: var AppState; cmd: Command) =
       changed = e.nextUndo
       said = describe(changed).capitalizeAscii & "."
       state.editStamps[s.path] = (s.size, s.modified)
+  of ckTimeShift:
+    var traces: seq[int]
+    for t in cmd.edited:
+      if t in s: traces.add t - s.base
+    if cmd.edited.len == 0: state.ignore(cmd, "no trace was named")
+    elif traces.len < cmd.edited.len:
+      state.ignore(cmd, plural(cmd.edited.len - traces.len, "trace") & " of " &
+        $cmd.edited.len & " are not in " & s.name)
+    var dt = 0.0
+    if state.panels[k].laidOut and not state.panels[k].layout.noInterval:
+      dt = state.panels[k].layout.dtMs
+    if not (dt > 0) and traces.len > 0 and s.filePtr != nil:
+      let f = s.filePtr
+      for t in traces:
+        if t in 0 ..< f[].len and isSeismic(f[].index, t):
+          let us = f[].sampleIntervalUs(t)
+          if us > 0 and us < Inf:
+            dt = us / 1000.0
+            break
+    if traces.len > 0 and cmd.on and not (dt > 0):
+      state.ignore(cmd, "the sample interval is not known")
+    elif traces.len > 0:
+      let n = if cmd.on: e.setTimeShifts(traces, cmd.shiftMs, dt, keep)
+              else: e.clearTimeShifts(traces, keep)
+      if n > 0:
+        changed = e.nextUndo
+        said = describe(changed).capitalizeAscii & "."
+        state.editStamps[s.path] = (s.size, s.modified)
   of ckReverseAll:
     if e.setAllReversed(cmd.reverse, keep):
       changed = e.nextUndo
@@ -8662,9 +8720,10 @@ proc setCompareTrace(state: var AppState; cmd: Command) =
   let own = state.ownAt(s.path, local)
   let filt = if own.has: own.filter else: OwnFilter()
   let reversed = state.editsAt(s.path).effectivelyReversed(local)
+  let shiftMs = state.editsAt(s.path).shiftOf(local)
   let job = state.jobs.submit(JobSpec(title: "Copy a trace for compare", lane: jlInteractive,
     reads: @[s.path]), compareTraceWork(s.filePtr, s.path, s.size, local, filt, reversed,
-    gen, state.inbox.poster))
+    shiftMs, gen, state.inbox.poster))
   if cmd.compareSlot == cwB: state.compareJobB = job else: state.compareJobA = job
 
 proc setCompareRef(state: var AppState; cmd: Command) =
@@ -8793,7 +8852,7 @@ proc takeCompare(state: var AppState; m: sink Msg) =
     state.log.add(sevWarning, "compare", n.failure & ".")
 
 const AuxRefused = {ckGather, ckShowFile, ckShowTrace, ckSort, ckFilter, ckProcessing,
-  ckDisplayPreset, ckOwnFilter, ckPrepare, ckOpenPair}
+  ckDisplayPreset, ckOwnFilter, ckTimeShift, ckPrepare, ckOpenPair}
   ## what the Aux window's panel does not take: it follows the Seismic window's record and
   ## shows the auxiliary traces as recorded, with no filter, sort or preset
 
@@ -9244,7 +9303,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
           # next ones of a run (a slider dragged) ask for the view alone.
           state.resample(k, relevel = true, readAhead = first)
           p.filterGen = p.requestGen
-  of ckEdit, ckReverseAll, ckUndoEdit, ckRedoEdit, ckClearEdits, ckOwnFilter:
+  of ckEdit, ckReverseAll, ckUndoEdit, ckRedoEdit, ckClearEdits, ckOwnFilter, ckTimeShift:
     # Reversing every trace is an edit of the file, so not a setting: kept with it.
     state.editTraces(cmd)
   of ckExportEdits: state.exportEdits(cmd)
