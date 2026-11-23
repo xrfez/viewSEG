@@ -49,18 +49,25 @@ import breakmodel
 const
   ConfidentPick* = 0.5
     ## the confidence from which a pick counts (processSEG's `ShotFitParams.minConfidence`)
-  MadToSigma* = 1.4826     ## a MAD to a normal distribution's standard deviation
-  TrimSigmas* = 3.0        ## picks farther than this many sigmas from the model are left out of it
-  TrimFloorMs* = 12.0      ## ... but never closer than this (ms)
-  TrimRounds* = 5          ## the most fit-and-drop rounds
+  MadToSigma* = 1.4826       ## a MAD to a normal distribution's standard deviation
+  TrimSigmas* = 3.0          ## picks farther than this many sigmas from the model are left out of it
+  TrimFloorMs* = 12.0        ## ... but never closer than this (ms)
+  TrimRounds* = 5            ## the most fit-and-drop rounds
   MinTrimmedPicks* = 10
     ## the fewest picks left that make a model to trust: fewer, and the first-pass picks stay
-  StartLines* = 300        ## the pairs of picks the start's robust line is chosen from
+  StartLines* = 300          ## the pairs of picks the start's robust line is chosen from
   MinSecondPicks* = 15
     ## the fewest trimmed picks beyond the crossover that keep a second segment
   SecondGain* = 0.9
     ## the second segment must bring the robust sigma of the fit below this share of the
     ## single line's
+  SecondGainMs* = 0.5
+    ## and by at least this many ms: on picks that all lie on the line within a sample, a
+    ## second segment of the same velocity is no finding
+  RestartSigmaShare* = 1.1
+    ## a trim restarted from the picks the first one dropped replaces it when its robust sigma
+    ## is at most this share of the first's (`RestartSigmaFloorMs` at least)
+  RestartSigmaFloorMs* = 2.0 ## the floor of the first trim's sigma in that comparison
   GuideWindowMs* = 100.0 ## the second pass's search window either side of the model (ms)
   GrossBandMs* = 100.0 ## a confident pick farther than this from the model is no break found
   LimitFloorMs* = 12.0 ## the smallest limit, on the model and on the neighbours (ms)
@@ -233,6 +240,8 @@ proc trimmedModel*(offsetAbs, pickMs, confidence: openArray[float64]; fit: Model
   ## model kept for the next round (sigma: the robust sigma of the picks it was fitted to),
   ## until the set no longer changes. Picks dropped may come back when the model moves to them.
   ## Not `trusted` when `fit` gives nothing or fewer than `MinTrimmedPicks` picks are left.
+  ## A trim whose start lies on the record's second segment drops the first as gross: it is made
+  ## again from the picks kept and the nearest dropped ones (the end of this proc).
   let n = pickMs.len
   result = Trimmed(kept: newSeq[bool](n), sigmaMs: NaN)
   var confident = newSeq[bool](n)
@@ -248,43 +257,75 @@ proc trimmedModel*(offsetAbs, pickMs, confidence: openArray[float64]; fit: Model
   let near = medianLineStart(offsetAbs, pickMs, confident)
   if near.len < MinTrimmedPicks: return
   let keep = max(MinTrimmedPicks, (near.len + 1) div 2)
-  use = newSeq[bool](n)
-  for k in 0 ..< keep: use[near[k][1]] = true
-  count = keep
-  var model: seq[float64]
-  for round in 1 .. TrimRounds + 1:
-    model = fit(use)
-    inc result.rounds
-    if model.len != n:
+  var start0 = newSeq[bool](n)
+  for k in 0 ..< keep: start0[near[k][1]] = true
+  let pmS = @pickMs
+  proc fromStart(start: seq[bool]; startCount: int): Trimmed =
+    result = Trimmed(kept: start, used: startCount, sigmaMs: NaN)
+    var use = start
+    var count = startCount
+    var model: seq[float64]
+    for round in 1 .. TrimRounds + 1:
+      model = fit(use)
+      inc result.rounds
+      if model.len != n:
+        result.used = count
+        return
+      var res: seq[float64]
+      for i in 0 ..< n:
+        if use[i] and not model[i].isNaN: res.add pmS[i] - model[i]
+      let sigma = robustSigma(res)
+      let cut = max(TrimFloorMs, TrimSigmas * (if sigma.isNaN: 0.0 else: sigma))
+      var next = newSeq[bool](n)
+      var nextCount = 0
+      for i in 0 ..< n:
+        next[i] = confident[i] and not model[i].isNaN and abs(pmS[i] - model[i]) <= cut
+        if next[i]: inc nextCount
+      if next == use or round > TrimRounds:
+        return Trimmed(trusted: count >= MinTrimmedPicks, model: model, kept: use, used: count,
+          sigmaMs: sigma, rounds: result.rounds)
+      if nextCount < MinTrimmedPicks:
+        result.used = nextCount
+        return
+      use = next
+      count = nextCount
+      result.kept = use
       result.used = count
-      return
-    var res: seq[float64]
-    for i in 0 ..< n:
-      if use[i] and not model[i].isNaN: res.add pickMs[i] - model[i]
-    let sigma = robustSigma(res)
-    let cut = max(TrimFloorMs, TrimSigmas * (if sigma.isNaN: 0.0 else: sigma))
-    var next = newSeq[bool](n)
-    var nextCount = 0
-    for i in 0 ..< n:
-      next[i] = confident[i] and not model[i].isNaN and abs(pickMs[i] - model[i]) <= cut
-      if next[i]: inc nextCount
-    if next == use or round > TrimRounds:
-      # `use` is what `model` was fitted to
-      return Trimmed(trusted: count >= MinTrimmedPicks, model: model, kept: use, used: count,
-        sigmaMs: sigma, rounds: result.rounds)
-    if nextCount < MinTrimmedPicks:
-      result.used = nextCount
-      return
-    use = next
-    count = nextCount
-    result.kept = use
-    result.used = count
+  let first = fromStart(start0, keep)
+  result = first
+  # A strong bend with most picks on the second segment: the start (the closer half to a
+  # straight line) lies on that segment, and the picks on the first are dropped as gross. Start
+  # again from what was kept and the nearest of the dropped picks to their own line, and keep
+  # that trim when it holds at least `MinSecondPicks` more picks as tightly.
+  if not first.trusted: return
+  var rest = newSeq[bool](n)
+  var nRest = 0
+  for i in 0 ..< n:
+    rest[i] = confident[i] and not first.kept[i]
+    if rest[i]: inc nRest
+  if nRest < MinSecondPicks: return
+  let near2 = medianLineStart(offsetAbs, pickMs, rest)
+  let k2 = max(MinSecondPicks, (near2.len + 1) div 2)
+  if near2.len < k2: return
+  var start2 = first.kept
+  var c2 = first.used
+  for k in 0 ..< k2:
+    if not start2[near2[k][1]]:
+      start2[near2[k][1]] = true
+      inc c2
+  let second = fromStart(start2, c2)
+  if second.trusted and second.used >= first.used + MinSecondPicks and
+      second.sigmaMs <= RestartSigmaShare * max(first.sigmaMs, RestartSigmaFloorMs):
+    result = second
+  else:
+    discard fit(first.kept) # the caller's view of the last fit is the first's again
 
 func keepSecond*(beyond: int; sigmaOne, sigmaTwo: float64): bool =
   ## Whether a second segment stays: at least `MinSecondPicks` trimmed picks lie beyond the
-  ## crossover and it brings the robust sigma below `SecondGain` of the single line's.
+  ## crossover and it brings the robust sigma below `SecondGain` of the single line's, and by
+  ## at least `SecondGainMs`.
   beyond >= MinSecondPicks and not sigmaOne.isNaN and not sigmaTwo.isNaN and
-    sigmaTwo < SecondGain * sigmaOne
+    sigmaTwo < SecondGain * sigmaOne and sigmaOne - sigmaTwo >= SecondGainMs
 
 func guideLines*(m: BreakModel): seq[GuideLine] =
   ## The picker's guide for `m` as one line per segment (its own velocity and intercept: the

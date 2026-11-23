@@ -21,7 +21,8 @@ import parseSEG
 import processSEG/core/[rows, types, workspace]
 import processSEG/filter/[design, iir]
 import viewSEG/core/[breakmodel, breakrule, firstbreakjobs, firstbreaks]
-import utils/[fbpickfiles, fixtures]
+import viewSEG/core/panels
+import utils/[breakfiles, fbpickfiles, fixtures]
 
 type Stats = tuple[median, earliest: float64; confident, picked: int; b: FirstBreaks]
 
@@ -120,6 +121,40 @@ proc main*() =
       let short = pickedOn(fx.fbShot("short.sgy", samples = 12, later = false), pbSmoothed)
       doAssert short.b.pickedOn == pbAsRecorded and "too short" in short.b.pickNote,
         short.b.pickedOn.repr & " " & short.b.pickNote
+
+  block aTraceWithANonFiniteSampleIsPickedAsRecorded:
+    # the filter runs forward and backward, so one NaN turns the whole smoothed trace to NaN:
+    # such a trace is picked on its samples as recorded, and the others are not touched.
+    # Seen to fail: with every trace smoothed, "trace 5 has no pick on its raw samples" (its
+    # smoothed copy is NaN).
+    withFixtures fx:
+      let clean = pickedOn(fx.fbShot("clean.sgy"), pbSmoothed)
+      let nan = pickedOn(fx.fbShot("nan.sgy", nanTrace = 5), pbSmoothed)
+      let raw = pickedOn(fx.fbShot("nanraw.sgy", nanTrace = 5), pbAsRecorded)
+      var moved = 0
+      for i in 0 ..< FbTraces:
+        if i != 5 and abs(nan.b.pickOf(i) - clean.b.pickOf(i)) > 4: inc moved
+      doAssert moved <= 1, $moved & " other traces changed their pick"
+      doAssert not raw.b.pickOf(5).isNaN, "the raw trace has no pick at all"
+      doAssert not nan.b.pickOf(5).isNaN, "trace 5 has no pick on its raw samples"
+      doAssert abs(nan.b.pickOf(5) - raw.b.pickOf(5)) <= 4, "trace 5 is not picked as recorded: " &
+        $nan.b.pickOf(5) & " against " & $raw.b.pickOf(5)
+
+  block theResultSaysWhatTheShownPicksWereMadeOn:
+    # without offsets there is no model and no guided pass: the first pass's picks are shown,
+    # whatever was asked; with one, the guided passes'. Seen to fail: with the fields set from
+    # the choice, "the first pass's picks are said to be smoothed".
+    withFixtures fx:
+      let none = pickedOn(fx.shotSegy("nooffsets.sgy", gNothing), pbSmoothed)
+      doAssert none.b.pickedOn == pbAsRecorded and none.b.highCutHz == 0 and
+        none.b.pickWindowMs == FirstPassWindowMs and not none.b.twoPass,
+        "the first pass's picks are said to be smoothed: " & $none.b.pickedOn
+      let guided = pickedOn(fx.fbShot("guided.sgy"), pbSmoothed)
+      doAssert guided.b.twoPass and guided.b.pickedOn == pbSmoothed and
+        guided.b.pickWindowMs == GuidedWindowMs
+      doAssert FirstBreaks().pickedOn == pbAsRecorded and
+        FirstBreaks().pickWindowMs == FirstPassWindowMs
+      doAssert DisplaySettings().breakPickOn == pbSmoothed
 
   echo "tfbpick: ok"
 

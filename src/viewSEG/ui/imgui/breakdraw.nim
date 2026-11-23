@@ -162,6 +162,9 @@ proc drawPickChoice(b: FirstBreaks; d: var DisplaySettings; t: Theme; marks: var
       d.breakPickOn = basis
       result = true
     marks.mark("plot.first break pick on " & (if basis == pbSmoothed: "smoothed" else: "recorded"))
+    if igIsItemHovered(0):
+      igSetTooltip("%s", ("Both choices pick with a " & $int(GuidedWindowMs) &
+        " ms window in the second pass").cstring)
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   igTextWrapped("Smoothed: the picker reads a zero-phase high-cut copy of each trace, so a " &
     "break that builds slowly is found nearer its start. The samples shown are not changed.")

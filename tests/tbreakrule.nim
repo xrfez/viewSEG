@@ -292,7 +292,7 @@ proc main*() =
       doAssert abs(b.fit.interceptMs - 20) < 15, "the intercept is off: " & $b.fit.interceptMs
       doAssert b.segments == 1 or b.fit.crossover > 1500, "a segment follows the noise"
       let m = b.fitAsModel
-      doAssert abs(m.v1 - 2500) < 125 and (m.segments == 1 or abs(m.v2 - 2500) < 125), $m
+      doAssert abs(m.v1 - 2500) < 125 and m.segments == 1, $m
       doAssert b.rule.nBeyond >= 150, "beyond the offsets of the breaks: " & $b.rule.nBeyond
       doAssert b.geometry.rangeMax < 2500, "the range ends at " & $b.geometry.rangeMax
       doAssert b.rule.nFarOff == 0, "far traces beyond the range are no finding"
@@ -594,34 +594,36 @@ proc main*() =
     # are two segments with the right velocities, and few traces of all are flagged; a straight
     # line stays one
     const n = 300
-    for (s1, s2, basis) in [(0.4, 0.3, pbSmoothed), (0.4, 0.3, pbAsRecorded),
-        (0.5, 0.25, pbAsRecorded), (0.4, 0.4, pbSmoothed), (0.4, 0.4, pbAsRecorded)]:
-      # (the strong bend is not run on the smoothed copy: its picks lie on the two lines
-      # within a sample or two, the trimming then starts on the second segment alone and drops
-      # the near offsets as gross, leaving one line of 4000 m/s: the rule's, left as it is)
-      let (slope1, slope2) = (s1, s2)
-      withFixtures fx:
-        let path = fx.customShot("bend.sgy", n, proc (i: int; k: var TraceKeys): float64 =
-          k.offset = 100.0 + 10.0 * float64(i)
-          if k.offset <= 1000: 20 + slope1 * k.offset
-          else: 20 + slope1 * 1000 + slope2 * (k.offset - 1000))
-        var f = openSeismic(path, keys = true)
-        let b = breaksOfRecord(addr f, path, 0 ..< f.len, [], pick = basis)
-        f.close()
-        let what = $basis & " bend " & $slope1 & " to " & $slope2 & ": "
-        if slope1 == slope2:
-          # (the smoothed picks of this noise-free line sit on it within one sample: the fit
-          # may then keep a second segment, of the same velocity, for a hair's better fit)
-          doAssert b.segments == 1 or abs(b.fit.v2 - b.fit.v1) < 0.01 * b.fit.v1,
-            what & "a straight line has " & $b.segments & " segments"
-        else:
-          doAssert b.segments == 2, what & "one segment"
-          doAssert abs(b.fit.v1 - 1 / slope1 * 1000) < 0.05 * 1000 / slope1 and
-            abs(b.fit.v2 - 1000 / slope2) < 0.05 * 1000 / slope2, what & $b.fit.v1 & ", " &
-            $b.fit.v2
-          doAssert abs(b.fit.crossover - 1000) < 100, what & "crossover " & $b.fit.crossover
-        doAssert b.rule.nFlagged <= 6, what & $b.rule.nFlagged & " of " & $b.rule.nComparable &
-          " flagged"
+    # Seen to fail: with the trim not started again from the picks it dropped, "one segment" for
+    # the 2000 to 4000 m/s and 3:1 bends on the smoothed picks (a single line of 4000 m/s, 86
+    # near picks dropped); with the second segment kept for any gain, "a straight line has 2
+    # segments".
+    for (s1, s2) in [(0.4, 0.3), (0.5, 0.25), (0.6, 0.2), (0.4, 0.4)]:
+      for basis in [pbSmoothed, pbAsRecorded]:
+        let (slope1, slope2) = (s1, s2)
+        withFixtures fx:
+          let path = fx.customShot("bend.sgy", n, proc (i: int; k: var TraceKeys): float64 =
+            k.offset = 100.0 + 10.0 * float64(i)
+            if k.offset <= 1000: 20 + slope1 * k.offset
+            else: 20 + slope1 * 1000 + slope2 * (k.offset - 1000))
+          var f = openSeismic(path, keys = true)
+          let b = breaksOfRecord(addr f, path, 0 ..< f.len, [], pick = basis)
+          f.close()
+          let what = $basis & " bend " & $slope1 & " to " & $slope2 & ": "
+          if slope1 == slope2:
+            doAssert b.segments == 1,
+              what & "a straight line has " & $b.segments & " segments"
+          else:
+            doAssert b.segments == 2, what & "one segment"
+            doAssert abs(b.fit.v1 - 1 / slope1 * 1000) < 0.05 * 1000 / slope1 and
+              abs(b.fit.v2 - 1000 / slope2) < 0.05 * 1000 / slope2, what & $b.fit.v1 & ", " &
+              $b.fit.v2
+            doAssert abs(b.fit.crossover - 1000) < 100, what & "crossover " & $b.fit.crossover
+          if slope1 != slope2:
+            doAssert b.used == n, what & "only " & $b.used & " picks used"
+            doAssert b.rule.nFlagged == 0, what & $b.rule.nFlagged & " flagged"
+          doAssert b.rule.nFlagged <= 6, what & $b.rule.nFlagged & " of " & $b.rule.nComparable &
+            " flagged"
 
   echo "tbreakrule: ok"
 

@@ -305,9 +305,11 @@ proc main*() =
           if b.job != NoJob and b.job notin jobs: jobs.add b.job
         sleep 2
       doAssert jobs.len == 1, $jobs.len & " jobs in 200 frames"
-      doAssert st.firstBreaks.len == 1 and st.firstBreaks[0].state == bkDone and
-        st.firstBreaks[0].key.pick == pbAsRecorded and
-        st.firstBreaks[0].pickedOn == pbAsRecorded and st.firstBreaks[0].highCutHz == 0 and
+      # (the smoothed result stays, to step back to: results of other picks coexist)
+      let shown = st.breaksIndex(0)
+      doAssert st.firstBreaks.len == 2 and shown >= 0 and st.firstBreaks[shown].state == bkDone and
+        st.firstBreaks[shown].key.pick == pbAsRecorded and
+        st.firstBreaks[shown].pickedOn == pbAsRecorded and st.firstBreaks[shown].highCutHz == 0 and
         st.jobs.active.len == 0, "the picks were not made again on the samples as recorded"
       doAssert st.shownBreaks(0).key.pick == pbAsRecorded
       doAssert st.breakKeyFor(0, 0).pick == pbAsRecorded, "the record's check follows the choice"
@@ -315,6 +317,64 @@ proc main*() =
       st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
       doAssert st.breakKeyFor(0, 0).pick == pbSmoothed, "the check follows a hidden overlay"
       st.shutdown()
+
+  block twoPanelsOnOneRecordWithTwoPickChoicesEachKeepTheirs:
+    # one panel picking on the smoothed copy, the other on the samples as recorded: each has its
+    # own result, and neither cancels the other's job frame after frame (the choice was once part
+    # of what a result is "of", so each panel's key made the other's result out of date).
+    # Seen to fail: with a result of another choice taken for out of date, "400 jobs in 200
+    # frames"; with the components switched off taken for it, the key check.
+    withFixtures fx:
+      let path = fx.shotSegy("twopick.sgy", gHeaderOffset)
+      var st = initAppState()
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut and
+        st.jobs.active.len == 0)
+      let other = st.addPanel()
+      st.apply Command(kind: ckShowFile, panel: other, path: path)
+      doAssert st.settle(st.panel(other).laidOut and st.jobs.active.len == 0)
+      for (id, basis) in [(MainPanel, pbSmoothed), (other, pbAsRecorded)]:
+        var d = st.panel(id).layers[0].display
+        d.firstBreaks = true
+        d.breakPickOn = basis
+        st.apply Command(kind: ckDisplay, panel: id, display: d)
+      var jobs: seq[JobId]
+      for frame in 0 ..< 200:
+        discard st.drainInbox()
+        for b in st.firstBreaks:
+          if b.job != NoJob and b.job notin jobs: jobs.add b.job
+        sleep 2
+      doAssert jobs.len <= 3, $jobs.len & " jobs in 200 frames"
+      doAssert st.jobs.active.len == 0
+      let (a, b) = (st.shownBreaks(st.findPanel(MainPanel)), st.shownBreaks(st.findPanel(other)))
+      doAssert a.state == bkDone and b.state == bkDone and a.key.pick == pbSmoothed and
+        b.key.pick == pbAsRecorded and a.pickedOn == pbSmoothed and b.pickedOn == pbAsRecorded,
+        $a.state & "/" & $a.key.pick & " " & $b.state & "/" & $b.key.pick
+      st.shutdown()
+
+  block resultsOfOtherChoicesAreNotOutOfDate:
+    # a result is out of date for a wanted key only when the file's keys or the killed traces
+    # differ; the guide, the components switched off and the picking choice make results of
+    # their own (two node panels with different component filters share a record)
+    let base: BreakKey = (SessionId(1), 0, 5, @[2], newSeq[uint8](), BreakModel(), pbSmoothed)
+    var other = base
+    other.pick = pbAsRecorded
+    doAssert not base.supersededBy(other), "another picking choice"
+    other = base
+    other.off = @[uint8(1)]
+    doAssert not base.supersededBy(other), "another component filter"
+    other = base
+    other.guide = BreakModel(source: bmGiven, v1: 2000, interceptMs: 20)
+    doAssert not base.supersededBy(other), "another guide"
+    other = base
+    other.keys = 6
+    doAssert base.supersededBy(other), "another keys revision"
+    other = base
+    other.killed = @[2, 3]
+    doAssert base.supersededBy(other), "another killed set"
+    other = base
+    other.gather = 1
+    doAssert not base.supersededBy(other), "another record"
 
   block aNewKeyCancelsTheRunningJobAndItsLateAnswerIsDropped:
     withFixtures fx:

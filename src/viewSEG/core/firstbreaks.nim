@@ -27,6 +27,8 @@ import breakmodel, breakrule, components, jobs, join, session
 
 export breakrule
 
+const FirstPassWindowMs* = 20.0 ## the first pass's window: the picker's default
+
 type
   BreakSource* = enum
     ## Where the offsets the model used came from.
@@ -93,11 +95,14 @@ type
     medianDiffMs*: float64 ## of the comparable, the median of pick less model; NaN for none
     rule*: BreakRule ## what the rule found, per trace and for the record
     geometry*: RuleGeometry ## where the traces are, as the rule needs it
-    pickedOn*: PickBasis
-      ## what the guided passes read: the smoothed copy, or the samples as recorded (also when
-      ## smoothing was asked and could not be done: `pickNote` says why)
+    pickedOn*: PickBasis = pbAsRecorded
+      ## what the picks shown were made on: the smoothed copy (the guided passes' picks, when
+      ## they are the ones shown), or the samples as recorded (also when smoothing was asked
+      ## and could not be done: `pickNote` says why)
     highCutHz*: float64 ## with `pbSmoothed`: the high cut's corner (Hz); 0 for none
-    pickWindowMs*: float64 ## the picker's window in the guided passes (ms)
+    pickWindowMs*: float64 = FirstPassWindowMs
+      ## the picker's window of the picks shown (ms): `GuidedWindowMs` for the guided passes'
+      ## picks, else the first pass's
     pickNote*: string ## when smoothing was asked and not done, why, in words
     twoPass*: bool ## the picks are those of the second, guided pass
     passNote*: string
@@ -116,6 +121,14 @@ func sameRecord*(a, b: BreakKey): bool =
   ## model changes; only its guided picks are made again.
   a.file == b.file and a.gather == b.gather and a.keys == b.keys and a.killed == b.killed and
     a.off == b.off and a.pick == b.pick
+
+func supersededBy*(old, wanted: BreakKey): bool =
+  ## Whether a result of `old` is out of date for a panel that wants `wanted`: the same record
+  ## of the same file whose keys (a join, a header edit) or killed traces differ. Results that
+  ## differ only in the guide, the components switched off or what the picking reads
+  ## (`pick`) are other panels' own: each is kept, and none given up for another's.
+  old.file == wanted.file and old.gather == wanted.gather and
+    (old.keys != wanted.keys or old.killed != wanted.killed)
 
 const
   PickHighCutHz* = 60.0

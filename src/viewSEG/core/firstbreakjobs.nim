@@ -61,6 +61,12 @@ func trustNote(what: string; used: int; then: string): string =
 type BreakProgress* = proc (done, total: int): bool {.closure, gcsafe.}
   ## Called after each chunk; false asks the work to stop (`JobCancelledError`).
 
+proc hasNonFinite*(samples: Tensor[float32]; row, count: int): bool =
+  ## Whether one of the first `count` samples of `row` is NaN or infinite.
+  for c in 0 ..< min(count, samples.shape[1]):
+    let v = samples[row, c]
+    if not (v == v and abs(v) < Inf): return true
+
 proc smoothedCopy*(samples: Tensor[float32]; meta: ChunkMeta; plan: IirPlan[float32];
     ws: var Workspace): Tensor[float32] =
   ## A copy of the chunk `samples` with each live row of `meta` filtered by `plan` (zero phase,
@@ -112,7 +118,6 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     result.why = "the sample interval is not known"
     return
   result.dtMs = dt
-  result.pickedOn = pbAsRecorded
   var dead: seq[int] # rows of the record that are not live: killed, other interval, undecodable
   for t in killed:
     if t in traces: dead.add t - traces.a
@@ -131,7 +136,6 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   var smoothing: IirPlan[float32]
   var smoothed = false
   var cutHz = 0.0
-  var guidedRan = false # a guided pass was made
   if pick == pbSmoothed:
     let cut = pickCutHz(dt)
     if cut == 0:
@@ -187,7 +191,9 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
           var wanted = false
           for g in guides:
             if g.rows[part.a - traces.a + r]: wanted = true
-          if not wanted: skipSmooth.add r
+          # a non-finite sample would turn the whole filtered trace to NaN (the filter runs
+          # forward and backward): such a trace is picked as recorded
+          if not wanted or samples.hasNonFinite(r, counts[r]): skipSmooth.add r
         skipSmooth.sort()
         skipSmooth = deduplicate(skipSmooth, isSorted = true)
         picked = smoothedCopy(samples, initChunkMeta(rowsOf(chunkKeys, counts), dt, 0,
@@ -210,7 +216,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   var picks = newSeq[FirstBreakPick](n)
   var everyRow = newSeq[bool](n)
   for i in 0 ..< n: everyRow[i] = true
-  runPass(@[(FirstBreakParams(), everyRow)], picks, 0, false)
+  runPass(@[(FirstBreakParams(windowMs: FirstPassWindowMs), everyRow)], picks, 0, false)
   dead.sort()
   dead = deduplicate(dead, isSorted = true)
   for i in 0 ..< n:
@@ -325,7 +331,6 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
         windowMs: GuidedWindowMs, beforeMs: GuideWindowMs, afterMs: GuideWindowMs), rows)
     result = src
     runPass(guides, result, doneBefore, smoothed)
-    guidedRan = true
 
   # The second pass: a model from the first pass's picks (without the noise ones), then every
   # trace picked again near it.
@@ -348,7 +353,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   if guide.given:
     shown = guidedBy(guide, picks, 2 * n)
     result.twoPass = true
-  if guidedRan:
+  if result.twoPass: # the picks shown are the guided passes'
     result.pickWindowMs = GuidedWindowMs
     if smoothed: (result.pickedOn, result.highCutHz) = (pbSmoothed, cutHz)
   result.picks = fitted

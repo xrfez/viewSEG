@@ -625,7 +625,11 @@ recorded and the popover says so. Changing the choice picks the record again onc
 pass does not change); the record's noisy-trace check, which uses the same picks, follows it
 while the overlay is on. Kept as `breakPickOn` in `settings.nif` (written only when "as
 recorded"); no display preset carries it, and the agent's `display` command takes it. Both
-choices use a 40 ms window in the guided pass (the first pass keeps 20 ms).
+choices use a 40 ms window in the guided pass (the first pass keeps 20 ms). A trace holding a
+NaN or infinite sample is always picked as recorded (the filter would spread it over the whole
+trace). The key and the agent's `state` say what the picks shown were made on: when the first
+pass's picks are shown (no model to trust), they say as recorded and 20 ms. Panels on one
+record with different choices each keep their own result.
 
 **Picking and the model.** The record is picked twice. The first pass has no search window, so a
 trace with no visible break gets a pick on noise. A model is fitted to those picks, dropping

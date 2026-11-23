@@ -35,8 +35,10 @@ proc noiseOf(i, j: int): float64 =
     result += float64(x shr 11) / float64(1'u64 shl 53)
   result -= 6
 
-proc fbShot*(fx: Fixtures; name: string; dtMs = 2.0; samples = 1500; later = true): string =
-  ## The shot as a SEG-Y file in the fixtures' folder.
+proc fbShot*(fx: Fixtures; name: string; dtMs = 2.0; samples = 1500; later = true;
+    nanTrace = -1): string =
+  ## The shot as a SEG-Y file in the fixtures' folder; trace `nanTrace` (when not -1) holds one
+  ## NaN sample at the middle of its record.
   result = fx.dir / name
   var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
     text: @["C01 first-break picking test: a slowly building first break"]))
@@ -49,6 +51,7 @@ proc fbShot*(fx: Fixtures; name: string; dtMs = 2.0; samples = 1500; later = tru
       var v = gabor(t, first, 1.0) + NoiseLevels[i mod NoiseLevels.len] * noiseOf(i + 1, j)
       if strong: v += gabor(t, first + LaterMs, 3.0)
       buf[j] = float32(v)
+    if i == nanTrace: buf[samples div 2] = NaN
     var k = initTraceKeys()
     (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(i + 1), 0.0,
       dtMs * 1000, tsLive)

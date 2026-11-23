@@ -6897,8 +6897,7 @@ proc followFirstBreaks(state: var AppState) =
     var wantedNow = false
     for (key, _) in wanted:
       if key == b.key: wantedNow = true
-      elif key.file == b.key.file and key.gather == b.key.gather and
-          not key.sameRecord(b.key):
+      elif b.key.supersededBy(key):
         superseded = true
     # a result no panel wants is kept only when done (to show while another guide's picks are
     # made, or to step back to); a failed one goes, so asking again picks again
