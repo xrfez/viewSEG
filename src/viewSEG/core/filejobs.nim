@@ -245,7 +245,7 @@ proc traceHeadersWork*(file: ptr SeismicFile; path: string; size: int64; index: 
   ## (`cutWhy`) and fails the job in plain words.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading a trace's headers"
-    fs.mappedRead(path, headers = true) # (tests: the drive holds the thread here)
+    if not file[].inMemory: fs.mappedRead(path, headers = true) # (tests: the drive holds the thread)
     var keys: TraceKeys
     var rows: seq[HeaderRow]
     var vendor: VendorShown

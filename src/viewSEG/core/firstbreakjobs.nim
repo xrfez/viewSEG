@@ -191,7 +191,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     var first = traces.a
     while first <= traces.b:
       let part = first .. min(traces.b, first + BreakChunk - 1)
-      fs.mappedRead(path)
+      if not f.inMemory: fs.mappedRead(path)
       var log: DiagLog
       let samples = f.readTraces(part, 0 ..< cols, log)
       var failed: seq[int] # rows of this chunk (0-based in it): undecodable, then the others

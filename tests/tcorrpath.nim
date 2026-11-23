@@ -3,7 +3,8 @@
 ## Seen to fail: with the key's trailing NUL omitted, "the virtual key can end
 ## a file name" (a file system allows that ending). With only a trailing NUL,
 ## "a C string of the key names the file on disk". With `asDerived` stating
-## the key (`fs.fileExists`), "fs was asked to stat the virtual path".
+## the key (`fs.fileExists`), "fs was asked to stat the virtual path". With
+## `diskOf` returning the key, "diskOf kept the virtual key".
 
 import std/[os, strutils]
 import parseSEG
@@ -30,6 +31,10 @@ proc main*() =
     doAssert key[^1] == '\0', "the virtual key can end a file name"
     doAssert $cstring(key) != raw, "a C string of the key names the file on disk"
     doAssert '\0' notin ($cstring(key))
+    doAssert diskOf(raw) == raw, "diskOf changed a file on disk"
+    doAssert diskOf(key) == raw, "diskOf kept the virtual key"
+    doAssert diskOf(key & "x") == key & "x", "diskOf stripped a path that is not a key"
+    doAssert diskOf("") == ""
 
   block derived_session_keeps_the_disk_path:
     setFsHook(note)

@@ -2733,7 +2733,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
           Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y))), ink, marks)
     block firstBreaks:
       let bi = st.breaksIndex(k)
-      if layer.display.firstBreaks and bi >= 0:
+      let derived = source >= 0 and st.sessions[source].derived
+      if layer.display.firstBreaks and bi >= 0 and not derived:
         let g = breakGeometry(st.shownBreaks(k), p.shown, p.layout, view, turn,
           Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y)), layer.display.breakSize,
           max(1'f32, igGetFontSize() / 15), layer.display.breakShowWeak)

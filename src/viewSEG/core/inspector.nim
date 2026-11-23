@@ -373,8 +373,8 @@ proc wholeColumn(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; key, name: 
     let part = ask.traces.a + c.filled .. ask.traces.a + c.filled + step - 1
     p.beat(f.path)
     try:
-      fs.mappedRead(f.path, headers = true)
-      fs.unmappedFail(f.path)
+      if not f.file[].inMemory: fs.mappedRead(f.path, headers = true)
+      if not f.file[].inMemory: fs.unmappedFail(f.path)
       readRange(f.file, name, part, c.values.toOpenArray(c.filled, c.filled + step - 1))
       c.filled += step
     except CatchableError as e:
@@ -403,8 +403,8 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
       cache.catalogue.add CatalogueField(name: name, blockName: "keys", description: label)
     p.beat(f.path)
     try:
-      fs.mappedRead(f.path, headers = true)
-      fs.unmappedFail(f.path)
+      if not f.file[].inMemory: fs.mappedRead(f.path, headers = true)
+      if not f.file[].inMemory: fs.unmappedFail(f.path)
       for r in traceRows(f.file[], ask.traces.a):
         if r.field.len > 0 and r.kind != hbRaw:
           cache.catalogue.add CatalogueField(name: r.blockName & "." & r.field,
@@ -466,8 +466,8 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
     elif answer.rowTraces.len > 0:
       p.beat(f.path)
       try:
-        fs.mappedRead(f.path, headers = true)
-        fs.unmappedFail(f.path)
+        if not f.file[].inMemory: fs.mappedRead(f.path, headers = true)
+        if not f.file[].inMemory: fs.unmappedFail(f.path)
         readRows(f.file, name, answer.rowTraces, buf)
         for k in 0 ..< buf.len: answer.values[k][c] = buf[k]
       except CatchableError as e:
@@ -501,8 +501,8 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
     else:
       p.beat(f.path)
       try:
-        fs.mappedRead(f.path, headers = true)
-        fs.unmappedFail(f.path)
+        if not f.file[].inMemory: fs.mappedRead(f.path, headers = true)
+        if not f.file[].inMemory: fs.unmappedFail(f.path)
         answer.record = readRecordHeaders(f.file[], req.record)
       except CatchableError as e:
         answer.record = RecordHeaders(record: req.record, problem: readProblem(e))
@@ -541,16 +541,16 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
           if usable(abs(d.keys.t0Ms)) or d.keys.t0Ms == 0: d.t0Ms = d.keys.t0Ms
           if req.headers:
             p.beat(f.path)
-            fs.mappedRead(f.path, headers = true)
-            fs.unmappedFail(f.path)
+            if not f.file[].inMemory: fs.mappedRead(f.path, headers = true)
+            if not f.file[].inMemory: fs.unmappedFail(f.path)
             d.rows = traceRows(f.file[], t.trace)
             d.blocks = namedBlocks(f.file[], d.rows)
             let (reg, choice) = currentVendorSet()
             d.vendor = vendorTrace(f.file[], t.trace, reg, req.vendorGen, choice)
           if req.samples:
             p.beat(f.path)
-            fs.mappedRead(f.path)
-            fs.unmappedFail(f.path)
+            if not f.file[].inMemory: fs.mappedRead(f.path)
+            if not f.file[].inMemory: fs.unmappedFail(f.path)
             d.readSamples(f.file, t, req, room, ws)
             room -= d.samples.len
         except CatchableError as e:

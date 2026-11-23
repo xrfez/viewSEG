@@ -169,7 +169,7 @@ proc readMissing(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; cache: var Ca
   var c: PrefetchChunk[float32]
   var given = false
   while pf.nextInto(c):
-    fs.mappedRead(a.path)
+    if not f[].inMemory: fs.mappedRead(a.path)
     let b = rowBlock(c.samples)
     var failed = newSeq[bool](c.count)
     for r in c.failedRows: failed[r] = true

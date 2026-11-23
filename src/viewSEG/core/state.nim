@@ -1426,11 +1426,14 @@ func referenceArchiveTitle*(state: AppState): string =
   if state.project.dir.len > 0: "project " & state.project.doc.name else: "main"
 
 func keyOf(state: AppState; path: string): string =
-  ## The key of `edits` of the file at `path`: its own path, or that of
-  ## another path of the same file opened this run (`linkSame`).
+  ## The key of `edits` of the file at `path`: the file on disk (a derived
+  ## session's origin), or that of another path of the same file opened this
+  ## run (`linkSame`).
+  let path = diskOf(path)
   state.editKey.getOrDefault(path, path)
 
 func rememberedAt(state: AppState; path: string): int =
+  let path = diskOf(path)
   for i, r in state.remembered:
     if r.path == path: return i
   -1
@@ -2791,7 +2794,7 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
       state.panels[k].layers[0].filter.auxiliary = true
       let s = state.sessions[i]
       if state.auxOnNoted.len == 0: # once a session: the next file says the same
-        state.auxOnNoted.add s.path
+        state.auxOnNoted.add s.diskPath
         state.log.add(sevInfo, s.name, "Every trace of " & s.name & "'s record is " &
           "auxiliary (pilot, reference or monitor channels), so Aux is switched on: " &
           "there are no seismic traces to show.")
@@ -3044,13 +3047,15 @@ proc chooseShown(state: var AppState) =
   ## Marks the file the main panel shows as chosen again (an open for it
   ## failed or was cancelled).
   let i = state.shownFile(state.findPanel(MainPanel))
-  state.choose(if i >= 0: state.sessions[i].path else: "")
+  state.choose(if i >= 0: state.sessions[i].diskPath else: "")
 
 proc watchOpen(state: var AppState) =
   ## Tells the folder's watch which files are open now, or are to be shown
   ## again once they stop changing.
   var paths: seq[string]
-  for s in state.sessions: paths.add s.path
+  for s in state.sessions:
+    let p = s.diskPath
+    if p notin paths: paths.add p
   for r in state.reopens:
     if r.path notin paths: paths.add r.path
   if paths.len > 0 or not state.watch.isNil: state.folderWatch.watchOpen(paths)
@@ -3134,10 +3139,12 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
   # Not cancellable: the file must not be released while a job still reads it.
   let job = state.jobs.submit(JobSpec(title: "Close " & s.name, lane: jlInteractive,
     exclusive: @[s.path], cancellable: false), closeWork())
-  if not keepLayers and state.files.chosen == s.path and
+  if not keepLayers and state.files.chosen == s.diskPath and
       state.shownFile(state.findPanel(MainPanel)) < 0:
     state.choose("")
-  if not keepLayers: state.openedBy.del s.path # kept for the file's reopen only
+  # A derived view was never the file the user opened. Deleting by its key
+  # would forget who opened the file on disk.
+  if not keepLayers and not s.derived: state.openedBy.del s.path
   state.closing.add Pending(job: job, path: s.path, session: s, quiet: quiet)
   state.watchOpen()
 
@@ -3160,18 +3167,45 @@ func spectraUse(state: AppState; file: SessionId): bool =
     if w.traces.len > 0 and w.traces[0] in s: return true
   false
 
+proc closeIfUnused(state: var AppState; id: SessionId) =
+  ## Closes open file `id` when no panel shows it and no analysis window
+  ## uses it. A derived view is closed before its origin.
+  if id == NoSession: return
+  if state.panels.anyIt(it.layers.anyIt(it.shows(id))): return
+  if state.plotsUse(id) or state.spectraUse(id): return
+  let i = state.findSession(id)
+  if i >= 0: state.closeSession(i, quiet = true)
+
 proc showReplacing(state: var AppState; k: int; file: SessionId; gather: int) =
   ## Shows `gather` of `file` in `panels[k]`, in place of what it showed,
   ## and closes the file it showed when no other panel shows it and no
   ## analysis window uses it (a pilot it correlates against): stepping
-  ## through a folder keeps one file open, not every file seen.
+  ## through a folder keeps one file open, not every file seen. A derived
+  ## view of the same file on disk does not close that file; leaving it
+  ## closes the derived view first, then the file on disk.
   let shown = state.shownFile(k)
   let old = if shown >= 0: state.sessions[shown].id else: NoSession
+  let oldDisk = if shown >= 0: state.sessions[shown].diskPath else: ""
+  let oldDerived = shown >= 0 and state.sessions[shown].derived
   state.show(state.panels[k].id, file, gather)
-  if old != NoSession and not (old == file) and
-      not state.panels.anyIt(it.layers.anyIt(it.shows(old))) and not state.plotsUse(old) and
-      not state.spectraUse(old):
-    state.closeSession(state.findSession(old), quiet = true)
+  if old == NoSession or old == file: return
+  let ni = state.findSession(file)
+  let newDisk = if ni >= 0: state.sessions[ni].diskPath else: ""
+  if newDisk.len > 0 and newDisk == oldDisk:
+    if oldDerived: state.closeIfUnused(old)
+    return
+  if oldDerived:
+    state.closeIfUnused(old)
+    var origin = NoSession
+    for s in state.sessions:
+      if not s.derived and s.diskPath == oldDisk: origin = s.id
+    state.closeIfUnused(origin)
+  else:
+    var derived = NoSession
+    for s in state.sessions:
+      if s.derived and s.diskPath == oldDisk: derived = s.id
+    if derived != NoSession: state.closeIfUnused(derived)
+    state.closeIfUnused(old)
 
 func gatherOf*(s: Session; trace: int): int =
   ## The index of the gather of `s` that holds trace `trace`; -1 for none.
@@ -4062,17 +4096,32 @@ proc checkEdits(state: var AppState; s: Session) =
   ## Sets the edits of `s`'s path aside (as "Clear all edits" does, so Ctrl+Z
   ## brings them back) when they were made on the file as it was before
   ## another program changed it: by the trace's index, they may not fit.
+  ## A derived view is not a file on disk: its origin was checked when opened.
+  if s.derived: return
   if state.keyOf(s.path) notin state.edits or state.edits[state.keyOf(s.path)].isEmpty: return
   let now = (size: s.size, modified: s.modified)
-  let was = state.editStamps.getOrDefault(s.path, now)
-  state.editStamps[s.path] = now
-  if was != now: state.unlink(s.path) # its other paths, a copy, did not change
+  let was = state.editStamps.getOrDefault(s.diskPath, now)
+  state.editStamps[s.diskPath] = now
+  if was != now: state.unlink(s.diskPath) # its other paths, a copy, did not change
   if was != now and state.edits[state.keyOf(s.path)].clearAll(kind = skSetAside):
     state.log.add(sevWarning, s.name, s.name & " changed on disk after its traces were " &
       "edited, so its kills, polarity reversals and trace filters are set aside: by trace " &
       "number they may not fit the traces it holds now. Edit > Undo (Ctrl+Z) brings them " &
       "back. They stay " &
       "remembered for the file as it was.")
+
+proc stampEdits(state: var AppState; s: Session) =
+  ## Notes the file on disk the edits were made against. A derived view
+  ## stamps its origin's size and time, not the correlated bytes.
+  var size = s.size
+  var modified = s.modified
+  if s.derived:
+    for x in state.sessions:
+      if not x.derived and x.diskPath == s.diskPath:
+        size = x.size
+        modified = x.modified
+        break
+  state.editStamps[s.diskPath] = (size, modified)
 
 proc editsChanged(state: var AppState; path: string; step = EditStep(kind: skChange)) =
   ## The panels that show the file at `path` follow its edits: its polarity
@@ -4107,8 +4156,9 @@ proc sayNotYetRemembered(state: var AppState; i: int) =
 proc identify(state: var AppState; s: Session) =
   ## Looks up what is remembered about the file `s` opened, by its
   ## identity, on a job (`identifyWork`); a file identified before in this
-  ## run and unchanged since is known already.
-  if state.store.isNowhere: return
+  ## run and unchanged since is known already. A derived view is not a file
+  ## on disk: its origin was identified when it was opened.
+  if s.derived or state.store.isNowhere: return
   var i = state.rememberedAt(s.path)
   if i >= 0 and state.remembered[i].known and state.remembered[i].size == s.size and
       state.remembered[i].modified == s.modified:
@@ -4578,11 +4628,20 @@ proc exportEdits(state: var AppState; cmd: Command) =
     state.ignore(cmd, $cmd.panel & " shows no file")
     return
   if state.refusedWrite(cmd, cmd.listPath): return
-  let s = state.sessions[i]
-  template e: untyped = state.editsAt(s.path)
+  var s = state.sessions[i]
+  if s.derived:
+    var oi = -1
+    for j, x in state.sessions:
+      if not x.derived and x.diskPath == s.diskPath: oi = j
+    if oi < 0:
+      state.ignore(cmd, "the file on disk is not open")
+      return
+    s = state.sessions[oi]
+  let disk = s.diskPath
+  template e: untyped = state.editsAt(disk)
   # What is kept, as the next run shows it: an export is handed on and
   # outlives the session, which an agent's edit does not.
-  var r = FileRecord(name: s.name, path: s.path, opened: getTime(), modified: s.modified,
+  var r = FileRecord(name: s.name, path: disk, opened: getTime(), modified: s.modified,
     edits: e.kept)
   let left = e.shown.minus(e.kept).count
   let hidden = e.kept.minus(e.shown).count
@@ -4595,11 +4654,11 @@ proc exportEdits(state: var AppState; cmd: Command) =
       said.add (if left > 0: ", and" else: "") & " holds " & plural(hidden, "remembered edit") &
         " that agent control hid for this session"
     state.log.add(sevInfo, s.name, said & ".")
-  let at = state.rememberedAt(s.path)
+  let at = state.rememberedAt(disk)
   if at >= 0 and state.remembered[at].known: r.identity = state.remembered[at].identity
   else: r.identity.size = s.size
   state.exports.add state.jobs.submit(JobSpec(title: "Export the edits of " & s.name,
-    lane: jlInteractive, reads: @[s.path]), exportEditsWork(s.filePtr, r, cmd.listPath,
+    lane: jlInteractive, reads: @[disk]), exportEditsWork(s.filePtr, r, cmd.listPath,
     state.inbox.poster))
 
 proc takeEditsList(state: var AppState; m: sink Msg) =
@@ -4869,7 +4928,9 @@ proc takeTraceRead*(state: var AppState; job: JobId; keys: var TraceKeys;
 
 proc readPositions(state: var AppState; s: Session) =
   ## Reads the source and receiver positions of open file `s` on a job: its
-  ## layer of the survey.
+  ## layer of the survey. A derived view has no layer of its own: the file
+  ## on disk was read when it was opened.
+  if s.derived: return
   let job = state.jobs.submit(JobSpec(title: "Read the positions in " & s.name,
     lane: jlInteractive, reads: @[s.path]), positionsWork(s.filePtr, s.path,
     fileKind(s.file.kind), s.id, s.base, state.inbox.poster))
@@ -5271,13 +5332,14 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
       "0 " & (if s.zeroKept == 1: "was" else: "were") & " kept with the record before " &
       (if s.zeroKept == 1: "it" else: "them") & ".")
   gather = if s.gathers.len == 0: -1 else: clamp(gather, 0, s.gathers.high)
-  state.change(by, st):
-    st.recentFiles.addRecent(s.path, MaxRecent)
-    st.recentFolders.addRecent(s.path.parentDir, MaxRecent)
-  state.openedBy[s.path] = by
+  if not s.derived:
+    state.change(by, st):
+      st.recentFiles.addRecent(s.path, MaxRecent)
+      st.recentFolders.addRecent(s.path.parentDir, MaxRecent)
+    state.openedBy[s.path] = by
   state.checkEdits(s)
   state.identify(s)
-  let path = s.path
+  let path = s.diskPath
   let short = filejobs.endsEarly(s.file)
   state.onDiskSaid.del path
   state.sessions.add s
@@ -5299,6 +5361,33 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   if swap:
     state.showAgain(path) # the other panels that showed the file
     state.carryOver(carry, state.sessions.high)
+
+proc adoptDerived*(state: var AppState; s: sink Session) =
+  ## Shows a session already bound with `asDerived` in the main panel. The
+  ## file on disk stays open. Not identified, not added to the recent files,
+  ## and not watched under its own path. A derived view of that file already
+  ## open is closed once this one is shown.
+  if s.isNil or not s.derived: return
+  let origin = s.diskPath
+  var previous = NoSession
+  for x in state.sessions:
+    if x.derived and x.diskPath == origin: previous = x.id
+  var gather = 0
+  let k = state.findPanel(MainPanel)
+  if k >= 0 and state.panels[k].layers.len > 0:
+    let shown = state.shownFile(k)
+    if shown >= 0 and state.sessions[shown].diskPath == origin:
+      gather = state.panels[k].layers[0].source.gather
+  let id = SessionId(state.nextFile)
+  inc state.nextFile
+  s.register(id, state.nextBase)
+  state.nextBase += s.len
+  gather = if s.gathers.len == 0: -1 else: clamp(gather, 0, s.gathers.high)
+  state.sessions.add s
+  state.watchOpen()
+  if k >= 0: state.showReplacing(k, id, gather)
+  state.choose(origin)
+  if previous != NoSession: state.closeIfUnused(previous)
 
 proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
   ## Says how open job `opening[i]` ended, and forgets it. An open no longer
@@ -7092,7 +7181,7 @@ proc followFirstBreaks(state: var AppState) =
     # its answer is kept
     have = have or (not key.guide.given and state.recordQc.job != NoJob and
       state.recordQc.picks and state.recordQc.pickKey == key)
-    if not have:
+    if not have and not s.derived:
       var b = FirstBreaks(key: key, state: bkComputing, first: traces.a)
       b.job = state.jobs.submit(JobSpec(title: "Find the first breaks of the record shown",
         lane: jlBackground, auto: true, reads: @[s.path]), firstBreaksWork(s.filePtr, s.path,
@@ -7379,7 +7468,9 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
   ## `forced`, that open uses `asked` rather than the choice already in
   ## force. An open started earlier for this panel and another file is no
   ## longer wanted: it is cancelled, and dropped if it comes all the same;
-  ## so is the wait to show a changed file again.
+  ## so is the wait to show a changed file again. A derived session's key
+  ## is the file on disk: it is never opened or watched as a path.
+  let path = diskOf(path)
   let panel = state.panels[k].id
   for o in state.opening.mitems:
     if o.panel == panel and o.path != path and not o.unwanted:
@@ -7389,7 +7480,7 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
   if panel == MainPanel: state.choose(path)
   var i = -1
   for j, s in state.sessions:
-    if s.path == path: i = j
+    if not s.derived and s.diskPath == path: i = j
   if i >= 0:
     if state.shownFile(k) != i: state.showReplacing(k, state.sessions[i].id, gather)
   else:
@@ -7658,9 +7749,17 @@ proc showAgain(state: var AppState; path: string) =
 proc reopen(state: var AppState; i: int; now: bool) =
   ## Open file `sessions[i]` changed on disk: its panels let it go at once
   ## (keeping their display and view), and show it again, opened anew, now,
-  ## or with `now` false once it stops changing.
+  ## or with `now` false once it stops changing. A derived view is not a
+  ## file on disk: the origin is opened again.
+  if state.sessions[i].derived:
+    let path = state.sessions[i].diskPath
+    var oi = -1
+    for j, x in state.sessions:
+      if not x.derived and x.diskPath == path: oi = j
+    if oi >= 0: state.reopen(oi, now)
+    return
   let s = state.sessions[i]
-  let path = s.path
+  let path = s.diskPath
   for k in 0 ..< state.panels.len:
     template p: untyped = state.panels[k]
     if p.layers.len > 0 and p.layers[0].shows(s.id):
@@ -7689,7 +7788,7 @@ proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: Comma
     state.prepared = (NoJob, nil)
   var i = -1
   for j, s in state.sessions:
-    if s.path == path: i = j
+    if not s.derived and s.diskPath == path: i = j
   if i < 0:
     let k = state.findPanel(MainPanel)
     if k >= 0:
@@ -7722,7 +7821,12 @@ proc dropKeys(state: var AppState; session: SessionId) =
     var shown = false
     for p in state.panels:
       if p.layers.len > 0 and p.layers[0].shows(s.id): shown = true
-    if shown: state.reopenWith(s.path, state.openChoiceOf(s.path), coWindow)
+    if s.derived:
+      var oi = -1
+      for j, x in state.sessions:
+        if not x.derived and x.diskPath == s.diskPath: oi = j
+      if oi >= 0: state.dropKeys(state.sessions[oi].id)
+    elif shown: state.reopenWith(s.diskPath, state.openChoiceOf(s.diskPath), coWindow)
     else: state.closeSession(i, quiet = true)
 
 proc clearSurvey(state: var AppState; cmd: Command) =
@@ -7807,7 +7911,7 @@ proc onDisk(state: var AppState; w: WatchedFile) =
   let name = w.path.extractFilename
   var i = -1
   for j, s in state.sessions:
-    if s.path == w.path: i = j
+    if not s.derived and s.diskPath == w.path: i = j
   if i >= 0:
     let s = state.sessions[i]
     if not w.exists:
@@ -7953,7 +8057,7 @@ proc editTraces(state: var AppState; cmd: Command) =
     if n > 0:
       changed = e.nextUndo
       said = describe(changed).capitalizeAscii & "."
-      state.editStamps[s.path] = (s.size, s.modified) # made on the file as it is now
+      state.stampEdits(s) # made on the file as it is now
   of ckOwnFilter:
     var traces: seq[int]
     for t in cmd.edited:
@@ -7968,7 +8072,7 @@ proc editTraces(state: var AppState; cmd: Command) =
     if n > 0:
       changed = e.nextUndo
       said = describe(changed).capitalizeAscii & "."
-      state.editStamps[s.path] = (s.size, s.modified)
+      state.stampEdits(s)
   of ckTimeShift:
     var traces: seq[int]
     for t in cmd.edited:
@@ -8001,12 +8105,12 @@ proc editTraces(state: var AppState; cmd: Command) =
       said = "Shifted " & plural(traces.len, "trace") & " by " & text & " ms."
       if n > 0:
         changed = e.nextUndo
-        state.editStamps[s.path] = (s.size, s.modified)
+        state.stampEdits(s)
   of ckReverseAll:
     if e.setAllReversed(cmd.reverse, keep):
       changed = e.nextUndo
       said = describe(changed).capitalizeAscii & "."
-      state.editStamps[s.path] = (s.size, s.modified)
+      state.stampEdits(s)
   of ckUndoEdit:
     if state.keyOf(s.path) in state.edits: changed = state.edits[state.keyOf(s.path)].undo(keep)
     said = if changed.kind == skNone: "Nothing to undo."
@@ -8026,7 +8130,7 @@ proc editTraces(state: var AppState; cmd: Command) =
     state.log.add(sevInfo, s.name, said & (if keep or changed.kind == skNone: ""
       else: " (For this session only: an agent's change is not remembered with the file.)"))
   if changed.kind != skNone:
-    state.editsChanged(s.path, changed)
+    state.editsChanged(s.diskPath, changed)
     let at = state.rememberedAt(s.path)
     if keep and at >= 0:
       state.hashFile(at) # its document will name every byte
@@ -9456,8 +9560,19 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckShowPoints:
     state.showPoints(cmd)
   of ckJoin:
-    let i = state.findSession(cmd.joinFile)
-    if i < 0 and cmd.joinFile != NoSession: state.ignore(cmd, $cmd.joinFile & " is not open")
+    var i = state.findSession(cmd.joinFile)
+    var blocked = false
+    if i >= 0 and state.sessions[i].derived:
+      let origin = state.sessions[i].diskPath
+      i = -1
+      for j, s in state.sessions:
+        if not s.derived and s.diskPath == origin: i = j
+      if i < 0:
+        state.ignore(cmd, "the file on disk is not open")
+        blocked = true
+    if blocked: discard
+    elif i < 0 and cmd.joinFile != NoSession:
+      state.ignore(cmd, $cmd.joinFile & " is not open")
     elif state.importing:
       state.ignore(cmd, "a survey import is under way: one at a time")
     elif cmd.joinFiles.len == 0: state.ignore(cmd, "no survey file was named")

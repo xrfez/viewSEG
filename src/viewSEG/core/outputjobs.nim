@@ -230,7 +230,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let byEntry = srcKind == skSegd
       let splitRecords = outKind == skSegd
       if not file[].hasKeys and (opts.sortKeys.len > 0 or (splitRecords and not byEntry)):
-        fs.mappedRead(source, headers = true)
+        if not file[].inMemory: fs.mappedRead(source, headers = true)
         file[].ensureKeys()
       var dropped = 0
       var written = 0
@@ -303,7 +303,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let like = srcKind == outKind and (srcKind == skSegy or (sameOrder and dropped == 0))
       if not file[].hasKeys and (opts.sortKeys.len > 0 or not like or opts.applyReversals or
           opts.applyShifts or opts.applyOwnFilters or opts.applyProcessing):
-        fs.mappedRead(source, headers = true)
+        if not file[].inMemory: fs.mappedRead(source, headers = true)
         file[].ensureKeys()
       if not like:
         lines.add "Headers were built from the trace keys. Template headers were not copied."
@@ -356,7 +356,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         template writeList(list: openArray[int]) =
           if list.len > 0:
             if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
-            fs.mappedRead(source)
+            if not file[].inMemory: fs.mappedRead(source)
             for t in list: writeOne(t)
             if report == nil or not report(written + dropped, n):
               abort(sink, dest, part, claimed, "Cancelled.", true)

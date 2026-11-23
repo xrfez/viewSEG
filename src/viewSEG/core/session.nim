@@ -84,6 +84,12 @@ func correlatedPath*(raw: string): string {.inline.} =
   ## that file, and not a path any file system can name. Built here only.
   raw & CorrelateSuffix
 
+func diskOf*(path: string): string {.inline.} =
+  ## The file on disk a path names. A derived session's virtual key is
+  ## stripped of its suffix; any other path is returned as given.
+  if path.endsWith(CorrelateSuffix): path[0 ..< path.len - CorrelateSuffix.len]
+  else: path
+
 func `==`*(a, b: SessionId): bool {.borrow.}
 func `$`*(id: SessionId): string = "file " & $int(id)
 
@@ -154,7 +160,10 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
   result.columns = columnsOf(result.records)
   var readable = true
   try:
-    if signature.kind == sgNone: fs.mappedRead(path, headers = true) # (a memory file has no map)
+    # A file already in memory has no map: asking about `path` would hand a
+    # virtual key to the file system when this session is derived.
+    if signature.kind == sgNone and not result.file.inMemory:
+      fs.mappedRead(path, headers = true)
   except OSError as e:
     readable = false
     var msg = e.msg # its first line: the system's words

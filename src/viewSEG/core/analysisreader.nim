@@ -153,7 +153,7 @@ proc readRows(p: ptr ReaderObj; f: ptr SeismicFile; path: string; list: seq[int]
   var pf = newPrefetcher[float32](f[], list, chunkTraces = 16, workers = 2, uniform = true)
   var c: PrefetchChunk[float32]
   while pf.nextInto(c):
-    fs.mappedRead(path)
+    if not f[].inMemory: fs.mappedRead(path)
     let b = rowBlock(c.samples)
     for r in c.failedRows: failed[c.first + r] = true
     for k in 0 ..< c.count:
@@ -302,7 +302,7 @@ proc orientationAnswer(p: ptr ReaderObj; a: AnalysisAsk): AnalysisResult =
     for t in a.traces:
       var row = [NaN, NaN, NaN]
       if t in 0 ..< f[].len:
-        fs.mappedRead(a.path)
+        if not f[].inMemory: fs.mappedRead(a.path)
         let o = f[].traceOrientation(t)
         if o.isSome:
           let v = o.get

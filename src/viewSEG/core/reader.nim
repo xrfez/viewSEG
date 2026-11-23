@@ -957,7 +957,7 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
       firstSample = window.a, workers = DecodeWorkers, quickFirst = true, uniform = true)
     var c: PrefetchChunk[float32]
     while pf.nextInto(c):
-      fs.mappedRead(rd.src.path) # (tests: the chunk's pages come late, or never)
+      if not f[].inMemory: fs.mappedRead(rd.src.path) # (tests: the chunk's pages come late)
       tile.readTime += fs.now() - waitFrom
       inc tile.chunks
       let b = rowBlock(c.samples)

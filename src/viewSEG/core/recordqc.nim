@@ -482,7 +482,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       var first = if samples: traces.a else: traces.b + 1
       while first <= traces.b:
         let part = first .. min(traces.b, first + QcChunk - 1)
-        fs.mappedRead(path) # (tests: the drive's next pages come late)
+        if not f.inMemory: fs.mappedRead(path) # (tests: the drive's next pages come late)
         var log: DiagLog
         var samples = f.readTraces(part, 0 ..< cols, log)
         if reversed.len > 0: negateQc(samples, part, reversed)

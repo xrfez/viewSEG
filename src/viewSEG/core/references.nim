@@ -1308,7 +1308,7 @@ proc readRawTrace*(file: ptr SeismicFile; path: string; trace: int): seq[float32
   ## one. Empty when the trace cannot be decoded. Raises `IOError` in plain
   ## words when parseSEG's guard found the file cut short or a read failed.
   assertWorkerThread()
-  fs.mappedRead(path)
+  if not file[].inMemory: fs.mappedRead(path)
   {.cast(gcsafe).}:
     let why = cutWhy(file[])
     if why.len > 0: raise newException(IOError, why)
