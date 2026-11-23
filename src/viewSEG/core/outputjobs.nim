@@ -233,7 +233,8 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
           if opts.sortKeys.len > 0 and traces.len > 1:
             var perm: seq[int] = @[]
             let rows = file[].rowsOf(traces)
-            if not sortRowsInto(rows, opts.sortKeys, perm):
+            let stop = proc (): bool {.gcsafe, raises: [].} = ctx.cancelled
+            if not sortRowsInto(rows, opts.sortKeys, perm, stop):
               abort(sink, dest, part, claimed, "The sort was stopped.", true)
             for k, row in perm:
               if row != k: changed = true

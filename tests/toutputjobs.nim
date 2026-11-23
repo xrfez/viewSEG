@@ -21,6 +21,12 @@ const root = currentSourcePath().parentDir.parentDir
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
+var sortLane: Jobs
+
+proc sortStopHook(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
+  if back or phase != "writing": return
+  discard sortLane.cancel(id)
+
 proc runJob(file: var SeismicFile; source, dest: string; opts: OutputOptions;
     edits: FileEdits; opens: seq[string]): tuple[st: JobState; wrote: OutputResult; error: string] =
   let jobs = initJobs()
@@ -101,6 +107,28 @@ proc main*() =
       if "sortRowsInto(" in line.split('#')[0]: inc sorts
     doAssert sorts <= 1, "the whole file is sorted more than once: " & $sorts
     doAssert "seq[seq[int]]" notin text, "every record is listed before writing"
+
+  block sortStopsWhenCancelled:
+    ## Seen to fail: the sort was not given a stop, so a cancel asked as the
+    ## write began was not seen until after the sort, and the job did not say
+    ## the sort was stopped.
+    var src = openSeismic(segy, keys = true)
+    let dest = dir / "sort-cancel.sgy"
+    sortLane = initJobs()
+    let sink = OutputSink()
+    setJobHook(sortStopHook)
+    defer: setJobHook(nil)
+    let keys = @[SortKey(field: hfChannel, descending: true)]
+    let id = sortLane.submit(outputSpec(segy, dest),
+      outputWork(addr src, segy, dest, OutputOptions(format: ofSegy, sortKeys: keys),
+        FileEdits(), @[segy], sink))
+    doAssert waitUntil(sortLane.state(id) in {jsDone, jsFailed, jsCancelled}),
+      "the sort did not finish: " & $sortLane.state(id)
+    doAssert sortLane.state(id) == jsCancelled, "a cancel during the sort was not a cancel: " &
+      $sortLane.state(id) & " " & sink.result.reason
+    doAssert "sort was stopped" in sink.result.reason, sink.result.reason
+    doAssert not fileExists(dest), "a cancelled sort left a file"
+    src.close()
 
   block noOptions:
     for (path, kind, name) in [(segy, ofSegy, "shots.sgy"), (segd, ofSegd, "shots.sgd")]:
