@@ -2170,7 +2170,8 @@ proc drawMarkMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
           on: false)
       of miRemoveAll:
         res.commands.add Command(kind: ckEdit, panel: p.id, edit: teKilled,
-          edited: choice.traces, on: false, alsoDrop: {teReversed, teExcluded}, alsoFilter: true)
+          edited: choice.traces, on: false, alsoDrop: {teReversed, teExcluded},
+          alsoFilter: true, alsoShift: true)
       of miEditFilter:
         let start = st.startingFilter(choice.traces)
         tp.ownDraft = start.filter
