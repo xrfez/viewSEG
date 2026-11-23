@@ -3,12 +3,16 @@
 ## Seen to fail: a listen length equal to the record is refused ("dst must be
 ## 800 samples wide, got 1000"); omitting the reference shift fails "the
 ## reference auxiliary trace was not shifted"; writing that other auxiliary
-## trace from the correlated rows fails "other aux sample 0".
+## trace from the correlated rows fails "other aux sample 0". Discarding the
+## failed rows of a block read let a SEG-Y cut inside trace 1's samples fail
+## with the library's words ("was cut short while it was open (15760 bytes
+## mapped, 13760 left); open it again") instead of the file's own reason, and
+## those zeros would otherwise be adopted.
 
 import std/[math, options, os, strutils]
 import parseSEG
 import processSEG
-import viewSEG/core/[correlatejobs, jobs, session]
+import viewSEG/core/[correlatejobs, cutfile, jobs, session]
 import utils/waiting
 
 const
@@ -51,6 +55,23 @@ proc delayedSweep(sweep: openArray[float32]; samples, delay: int): seq[float32] 
   for i in 0 ..< samples:
     let j = i - delay
     if j >= 0 and j < sweep.len: result[i] = sweep[j]
+
+proc writePair(path: string; samples: int) =
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
+    measurementSystem: 1, text: @["C01 correlation cut test"]))
+  var buf = newSeq[float32](samples)
+  for j in 0 ..< samples: buf[j] = float32(j + 1)
+  for i in 0 .. 1:
+    var k = initTraceKeys()
+    (k.traceCode, k.status) = (1'i16, tsLive)
+    k.record = 7.0
+    k.ensemble = 10.0 + float64(i)
+    k.channel = float64(i + 1)
+    k.intervalUs = DtMs * 1000.0
+    k.t0Ms = 0.0
+    k.time = 1_700_000_000.0
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the pair did not close"
 
 proc writeRaw(path: string; sweep: openArray[float32]) =
   var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
@@ -253,6 +274,38 @@ proc main*() =
         doAssert slot.failure == sentence, slot.failure
     finally:
       jobs.stop()
+
+  block cutShort:
+    ## A SEG-Y of 2 traces, opened, then cut inside trace 1's samples.
+    let cutPath = dir / "cut.sgy"
+    writePair(cutPath, Record)
+    var cutFile = openSeismic(cutPath, keys = true)
+    defer: cutFile.close()
+    let e0 = cutFile.traceEntry(0)
+    let e1 = cutFile.traceEntry(1)
+    let data0 = e0.offset + int64(e0.headerBytes)
+    let span0 = e1.offset - data0
+    doAssert span0 mod int64(e0.numSamples) == 0, "trace 0's samples are not a whole number of bytes"
+    let sampleBytes = span0 div int64(e0.numSamples)
+    let data1 = e1.offset + int64(e1.headerBytes)
+    let cutAt = data1 + (int64(e1.numSamples) div 2) * sampleBytes
+    doAssert cutAt > data1 and cutAt < getFileSize(cutPath), "the cut is not inside trace 1"
+    writeFile(cutPath, readFile(cutPath)[0 ..< int(cutAt)])
+    let why = cutWhy(cutFile)
+    doAssert why.len > 0 and "cut short" in why, why
+    var jobs = initJobs()
+    var slot: CorrelateResult
+    try:
+      let id = jobs.submit(spec(cutPath), correlateWork(CorrelateAsk(
+        file: addr cutFile, path: cutPath, reference: sweep, referenceDtMs: DtMs,
+        referenceTraces: @[]), addr slot))
+      doAssert finish(jobs, id) == jsFailed, slot.failure
+    finally:
+      jobs.stop()
+    doAssert not slot.ok
+    doAssert slot.opened.isNil
+    doAssert not slot.cancelled
+    doAssert slot.failure == why, slot.failure
 
   block cancelled:
     holdCorr.close()

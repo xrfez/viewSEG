@@ -19,7 +19,7 @@
 import std/[algorithm, cpuinfo, formatfloat, math, sets, strutils]
 import parseSEG
 import processSEG
-import filesystem, jobs, session, threads
+import cutfile, filesystem, jobs, session, threads
 
 const
   AuxLeadMs* = 500.0
@@ -196,6 +196,9 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
     let n = min(BlockTraces, nTraces - start)
     let span = start ..< start + n
     discard file[].readTracesInto(span, src, failed)
+    if failed.len > 0:
+      let why = cutWhy(file[])
+      refuse(if why.len > 0: why else: "a trace could not be read.")
     file[].traceKeysInto(span, keys.toOpenArray(0, n - 1))
     if lag != 0:
       let rows = rowBlock(src)
