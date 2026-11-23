@@ -16,14 +16,19 @@
 ## of the chunk have different live lengths: mixed lengths, two sets of lengths, and rows
 ## skipped, at one, two and eight workers.
 ##
+## `medianLineStart` picks the same line as a full sort of every candidate's distances, on
+## random pick sets (small counts, many ties, Inf, NaN; a fixed seed, 2000 trials).
+##
 ## Seen to fail: with the middle distance of an even count taken from the upper of the two
 ## middle ones only, "trial 80 of 127 picks: used 37 and 37"; with the smoothing filter's corner
 ## one Hz higher than the reference's, "two-layer 1 ms: 1 workers: 281CAF21DB86C439 is not the
 ## reference's C4E6D07679752455"; with the pool's high cut one Hz above `smoothedCopy`'s,
 ## "mixed lengths: 1 workers: 886170 samples differ, worst |d| 0.009104490280151367"; with the
-## task count taken in the progress callback while the pool was still up, "during: 5 tasks, was 1".
+## task count taken in the progress callback while the pool was still up, "during: 5 tasks, was 1";
+## with an even count needing one more distance below the best than half, "trial 4 of 12 picks
+## differs".
 
-import std/[math, os, strutils]
+import std/[algorithm, math, os, strutils]
 import parseSEG
 import processSEG/core/[pool, types, workspace]
 import processSEG/filter/[design, iir]
@@ -154,7 +159,63 @@ proc mixedLengthsAgree() =
     smoothingAgrees("mixed 500 at 2 ms", 512, 500, 2.0, mixed500, @[1, 2, 3, 4, 200], w)
     smoothingAgrees("mixed 4001 at 1 ms", 333, 4001, 1.0, mixed4001, @[0, 17, 18], w)
 
+proc sameLine(a, b: seq[(float64, int)]): bool =
+  if a.len != b.len: return false
+  for i in 0 ..< a.len:
+    if a[i][1] != b[i][1] or cast[uint64](a[i][0]) != cast[uint64](b[i][0]): return false
+  true
+
+proc sortLineStart(offs, pickMs: openArray[float64]; confident: openArray[bool]):
+    seq[(float64, int)] =
+  ## The same search as `medianLineStart`, every line's median by a full sort.
+  var ids: seq[int]
+  for i in 0 ..< pickMs.len:
+    if confident[i] and not offs[i].isNaN: ids.add i
+  if ids.len < 2: return
+  var state = 88172645463325252'u64
+  proc draw(n: int): int =
+    state = state * 6364136223846793005'u64 + 1442695040888963407'u64
+    int((state shr 33) mod uint64(n))
+  var best = Inf
+  var (bestA, bestS) = (0.0, 0.0)
+  var dev = newSeq[float64](ids.len)
+  for line in 0 ..< StartLines:
+    let (i, j) = (ids[draw(ids.len)], ids[draw(ids.len)])
+    if offs[i] != offs[j]:
+      let s = (pickMs[j] - pickMs[i]) / (offs[j] - offs[i])
+      let a = pickMs[i] - s * offs[i]
+      for k, id in ids: dev[k] = abs(pickMs[id] - a - s * offs[id])
+      let m = median(dev)
+      if m < best: (best, bestA, bestS) = (m, a, s)
+  if best == Inf: return
+  for id in ids: result.add (abs(pickMs[id] - bestA - bestS * offs[id]), id)
+  result.sort()
+
+proc medianStartAgrees() =
+  ## `medianLineStart` picks the line a full sort of every line's distances picks.
+  var state = 99'u64
+  proc draw(n: int): int =
+    state = state * 6364136223846793005'u64 + 1442695040888963407'u64
+    int((state shr 33) mod uint64(n))
+  for trial in 0 ..< 2000:
+    let n = 2 + draw(11)
+    let levels = 1 + draw(6)
+    var offs = newSeq[float64](n)
+    var pick = newSeq[float64](n)
+    var conf = newSeq[bool](n)
+    for i in 0 ..< n:
+      let r = draw(100)
+      offs[i] = if r < 2: NaN else: float64(draw(levels)) * 25.0
+      let q = draw(100)
+      pick[i] = if q < 3: Inf elif q < 5 and trial mod 7 == 0: NaN
+        else: float64(draw(levels)) * 0.25
+      conf[i] = draw(5) != 0
+    let want = sortLineStart(offs, pick, conf)
+    let got = medianLineStart(offs, pick, conf)
+    doAssert sameLine(got, want), "trial " & $trial & " of " & $n & " picks differs"
+
 proc main*() =
+  medianStartAgrees()
   trimsAgree()
   mixedLengthsAgree()
   withFixtures fx:

@@ -227,17 +227,45 @@ func selectNth(a: var openArray[float64]; k: int) =
     elif k >= i: lo = i
     else: return
 
-func medianLineStart(offs, pickMs: openArray[float64]; confident: openArray[bool]):
+func medianIfCloser*(dev: var openArray[float64]; best: float64): float64 =
+  ## The median of `dev` when it can lie below `best`, else +Inf. `dev` is rearranged when that
+  ## median is selected. A NaN in `dev` is taken by a full sort, whose order with a NaN in it is
+  ## whatever the sort makes of it.
+  ##
+  ## At least half the distances must lie below `best` before the median is selected, one more
+  ## when the count is odd: fewer, and the median cannot be below `best`. For an even count the
+  ## bound is half, not one more, because the median is the mean of the two middle values.
+  result = Inf
+  if dev.len == 0: return
+  let half = dev.len div 2
+  let need = if dev.len mod 2 == 1: half + 1 else: half # distances below `best` a line needs
+  var below = 0
+  var notNumber = false
+  for d in dev:
+    below += int(d < best)
+    notNumber = notNumber or d.isNaN
+  if notNumber:
+    result = median(dev)
+  elif below >= need:
+    selectNth(dev, half)
+    result = dev[half]
+    if dev.len mod 2 == 0:
+      var lower = dev[0]
+      for k in 1 ..< half: lower = max(lower, dev[k])
+      result = (lower + result) / 2
+
+func medianLineStart*(offs, pickMs: openArray[float64]; confident: openArray[bool]):
     seq[(float64, int)] =
   ## The confident picks with their distance from the straight line of least median of squares
   ## (the best of `StartLines` lines through pairs of picks, the pairs chosen by a fixed
   ## generator), sorted nearest first. That line is not pulled by up to half of the picks being
   ## noise, which a fit of all of them is.
   ##
-  ## A line's median distance is looked for only when it can beat the best so far: at least half
-  ## of the distances must lie below it, which one count over them shows (a random pair of
-  ## picks mostly gives a line that fails that), and then the median is selected, not sorted.
-  ## The line chosen is the one a full sort of every line's distances chooses.
+  ## A line's median distance is looked for only when it can beat the best so far
+  ## (`medianIfCloser`): at least half of the distances must lie below it, which one count over
+  ## them shows (a random pair of picks mostly gives a line that fails that), and then the median
+  ## is selected, not sorted. The line chosen is the one a full sort of every line's distances
+  ## chooses.
   var ids: seq[int]
   for i in 0 ..< pickMs.len:
     if confident[i] and not offs[i].isNaN: ids.add i
@@ -249,30 +277,13 @@ func medianLineStart(offs, pickMs: openArray[float64]; confident: openArray[bool
   var best = Inf
   var (bestA, bestS) = (0.0, 0.0)
   var dev = newSeq[float64](ids.len)
-  let half = ids.len div 2
-  let need = if ids.len mod 2 == 1: half + 1 else: half # distances below `best` a line needs
   for line in 0 ..< StartLines:
     let (i, j) = (ids[draw(state, ids.len)], ids[draw(state, ids.len)])
     if offs[i] != offs[j]:
       let s = (pickMs[j] - pickMs[i]) / (offs[j] - offs[i])
       let a = pickMs[i] - s * offs[i]
-      var below = 0
-      var notNumber = false
-      for k, id in ids:
-        let d = abs(pickMs[id] - a - s * offs[id])
-        dev[k] = d
-        below += int(d < best)
-        notNumber = notNumber or d.isNaN
-      var m = Inf
-      if notNumber:
-        m = median(dev) # (a sort's order with a NaN in it is whatever the sort makes of it)
-      elif below >= need:
-        selectNth(dev, half)
-        m = dev[half]
-        if ids.len mod 2 == 0:
-          var lower = dev[0]
-          for k in 1 ..< half: lower = max(lower, dev[k])
-          m = (lower + m) / 2
+      for k, id in ids: dev[k] = abs(pickMs[id] - a - s * offs[id])
+      let m = medianIfCloser(dev, best)
       if m < best: (best, bestA, bestS) = (m, a, s)
   if best == Inf: return
   for id in ids: result.add (abs(pickMs[id] - bestA - bestS * offs[id]), id)
