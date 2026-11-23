@@ -468,45 +468,96 @@ proc readyForProcessing(b: RowBlock[float32]; rows: TraceRows): int =
           bad = true
       if bad: inc result
 
-proc applyPipe(samples: var seq[float32]; keys: TraceKeys; dtMs: float64; pipe: Pipeline;
-    aux: bool) =
-  ## `pipe` on one whole trace, in place. Auxiliary traces are passed by
-  ## unless `aux` (the plot's filters do that; a trace's own filter does not).
-  if pipe.len == 0 or samples.len == 0 or not (dtMs > 0): return
-  var keySeq = @[keys]
-  let counts = @[samples.len]
-  let rows = rowsOf(keySeq, counts)
-  var spareKeys: seq[TraceKeys] = @[]
-  var spareLens: seq[int] = @[]
-  let meta = if aux: initChunkMeta(rows.auxLiveRows(spareKeys, spareLens), dtMs)
-             else: initChunkMeta(rows, dtMs)
-  let plan = pipe.compile(float32, dtMs, samples.len, recordSamples = samples.len)
+proc applyDirect(plan: PipelinePlan[float32]; b: RowBlock[float32]; meta: ChunkMeta) =
   var ws = initWorkspace()
   ws.reserve(plan)
-  var view = rowBlock(samples, 1, samples.len)
-  plan.apply(view, meta, ws)
+  plan.apply(b, meta, ws)
 
-proc applyPreparedTrace*(samples: var seq[float32]; keys: TraceKeys; dtMs: float64;
-    reversed: bool; plot: Processing; applyPlot: bool; own: OwnFilter; applyOwn: bool) =
-  ## The sample maths `prepare` runs on one whole trace, without the display
-  ## gain: a dead trace blanked, a sample that is not a number set to 0,
-  ## polarity reversed, then the plot's filters and the trace's own. Nothing
-  ## is done when none of those are asked for, so a trace written as recorded
-  ## stays as it was read. An own filter set to "instead" leaves the plot's
-  ## filters off that trace. Auxiliary traces take the plot's filters only
-  ## when `plot.aux` is on.
-  let plotOn = applyPlot and plot.filtering and own.place != fpInstead
-  let ownOn = applyOwn and own.spec.hasFilters
-  if samples.len == 0 or not reversed and not plotOn and not ownOn: return
-  var keySeq = @[keys]
-  let counts = @[samples.len]
-  let rows = rowsOf(keySeq, counts)
-  var view = rowBlock(samples, 1, samples.len)
-  discard readyForProcessing(view, rows)
-  if keys.status == tsDead: return
-  if reversed: reversePolarity(samples)
-  if plotOn: applyPipe(samples, keys, dtMs, plot.filterPipeline(dtMs), plot.aux)
-  if ownOn: applyPipe(samples, keys, dtMs, own.ownPipeline(dtMs), true)
+proc applyVia(pool: var ProcessPool; plan: PipelinePlan[float32]; b: RowBlock[float32];
+    meta: ChunkMeta) =
+  ## `pool.apply`. A separate proc so a pool, which cannot be copied, is
+  ## passed as a variable and not through a pointer dereference.
+  pool.apply(plan, b, meta)
+
+proc applyPlan(pool: ptr ProcessPool; plan: PipelinePlan[float32]; b: RowBlock[float32];
+    meta: ChunkMeta) =
+  if pool == nil: applyDirect(plan, b, meta)
+  else: applyVia(pool[], plan, b, meta)
+
+func unionAsc(a, b: openArray[int]): seq[int]
+
+proc applyPreparedRows(b: RowBlock[float32]; rows: TraceRows; dtMs: float64;
+    edits: openArray[set[TraceEdit]]; editAt: int; shiftRows: openArray[int];
+    shiftMs: openArray[float64]; filtering: var bool; filterPlan: PipelinePlan[float32];
+    filterAux: bool; ownAt: openArray[int]; ownKeys: openArray[OwnFilter];
+    ownPlans: var seq[PipelinePlan[float32]]; ownReady: var seq[bool]; firstSample: int;
+    passed: seq[int]; pool: ptr ProcessPool; name: string; noted: var seq[string]): int =
+  ## The sample maths of one readied block, without the display gain, in the
+  ## plot's order: reversed rows negated, a stored time shift applied (seismic
+  ## rows only, positive later, same length), then the plot's filters and each
+  ## row's own. `prepare` and `applyPreparedTrace` both call this. Rows in
+  ## `passed` (killed, dead or not decoded) are left as they are. A filter that
+  ## stops is named in `noted` and switched off. Returns how many rows were
+  ## offered to the plot's filters.
+  if b.len == 0: return
+  let meta = initChunkMeta(rows, dtMs, firstSample, passed)
+  if edits.len > 0:
+    for k in 0 ..< b.len:
+      if editAt + k < edits.len and teReversed in edits[editAt + k] and not meta.isFailed(k):
+        reversePolarity(b.row(k, meta.liveSamples(k, b.cols)))
+  if shiftRows.len > 0:
+    var si = 0
+    for k in 0 ..< b.len:
+      let row = editAt + k
+      while si < shiftRows.len and shiftRows[si] < row: inc si
+      if si < shiftRows.len and shiftRows[si] == row and not meta.isFailed(k) and
+          rows.keysAt(k).isSeismic:
+        applyStoredShift(b.rowPtr(k).toOpenArray(0, b.cols - 1), shiftMs[si], dtMs)
+  if filtering:
+    try:
+      var instead: seq[int]
+      if ownAt.len > 0:
+        for k in 0 ..< b.len:
+          if editAt + k >= ownAt.len: continue
+          let oi = ownAt[editAt + k]
+          if oi >= 0 and oi < ownKeys.len and ownKeys[oi].place == fpInstead: instead.add k
+      if filterAux and rows.hasAuxiliary:
+        var keys: seq[TraceKeys]
+        var lengths: seq[int]
+        let skip = if instead.len == 0: passed else: unionAsc(passed, instead)
+        let live = initChunkMeta(rows.auxLiveRows(keys, lengths), dtMs, firstSample, skip)
+        applyPlan(pool, filterPlan, b, live)
+      elif instead.len == 0:
+        applyPlan(pool, filterPlan, b, meta)
+      else:
+        let skip = unionAsc(passed, instead)
+        let plotMeta = initChunkMeta(rows, dtMs, firstSample, skip)
+        applyPlan(pool, filterPlan, b, plotMeta)
+      result = b.len
+    except ValueError as e:
+      noted.add "The filters stopped on " & name & ": " & e.msg
+      filtering = false
+  if ownAt.len == 0 or ownReady.len == 0: return
+  for key, ready in ownReady:
+    if not ready or key >= ownPlans.len: continue
+    var group: seq[int]
+    for k in 0 ..< b.len:
+      if editAt + k < ownAt.len and ownAt[editAt + k] == key and passed.binarySearch(k) < 0:
+        group.add k
+    if group.len == 0: continue
+    var skip = newSeqOfCap[int](b.len - group.len)
+    var g = 0
+    for k in 0 ..< b.len:
+      if g < group.len and group[g] == k: inc g
+      else: skip.add k
+    var keys: seq[TraceKeys]
+    var lengths: seq[int]
+    let live = initChunkMeta(rows.auxLiveRows(keys, lengths), dtMs, firstSample, skip)
+    try:
+      applyPlan(pool, ownPlans[key], b, live)
+    except ValueError as e:
+      noted.add "A trace's filter stopped on " & name & ": " & e.msg
+      ownReady[key] = false
 
 type Preparing = object
   ## What every block of one request is readied with (`prepare`).
@@ -554,30 +605,52 @@ func ownIndex(own: openArray[FilterEntry]; trace: int): int =
     else: hi = mid
   if lo < own.len and own[lo].trace == trace: lo else: -1
 
-proc applyOwn(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: TraceRows;
-    first: int; passed: openArray[int]) =
-  ## Each row's own filter, after the plot's (a row set to "instead" was
-  ## left out of those). A killed, dead or undecoded row stays blank.
-  for key, ready in pr.ownReady:
-    if ready:
-      var group: seq[int]
-      for k in 0 ..< b.len:
-        if pr.ownAt[first + k] == key and passed.binarySearch(k) < 0: group.add k
-      if group.len > 0:
-        var skip = newSeqOfCap[int](b.len - group.len)
-        var g = 0
-        for k in 0 ..< b.len:
-          if g < group.len and group[g] == k: inc g
-          else: skip.add k
-        var keys: seq[TraceKeys]
-        var lengths: seq[int]
-        let live = initChunkMeta(rows.auxLiveRows(keys, lengths), rd.layout.dtMs,
-          pr.firstSample, skip)
-        try:
-          rd.poolOf.apply(pr.ownPlans[key], b, live)
-        except ValueError as e:
-          rd.tellFilters("A trace's filter stopped on " & rd.name & ": " & e.msg)
-          pr.ownReady[key] = false
+proc applyPreparedTrace*(samples: var openArray[float32]; keys: TraceKeys; dtMs: float64;
+    reversed: bool; plot: Processing; applyPlot: bool; own: OwnFilter; applyOwn: bool) =
+  ## One whole trace through `applyPreparedRows`, the proc `prepare` calls,
+  ## without the display gain. A dead trace is blanked, a sample that is not
+  ## a number is set to 0, polarity reversed, then the plot's filters and the
+  ## trace's own. Nothing is done when none of those are asked for, so a
+  ## trace written as recorded stays as it was read. An own filter set to
+  ## "instead" leaves the plot's filters off that trace. Auxiliary traces
+  ## take the plot's filters only when `plot.aux` is on. A kill is not applied
+  ## here: a killed trace that is kept is prepared like any other.
+  let plotOn = applyPlot and plot.filtering and own.place != fpInstead
+  let ownOn = applyOwn and own.spec.hasFilters
+  if samples.len == 0 or not reversed and not plotOn and not ownOn: return
+  var keySeq = @[keys]
+  let counts = @[samples.len]
+  let rows = rowsOf(keySeq, counts)
+  var view = rowBlock(samples, 1, samples.len)
+  discard readyForProcessing(view, rows)
+  if keys.status == tsDead: return
+  var edits: array[1, set[TraceEdit]]
+  if reversed: edits[0].incl teReversed
+  var filtering = plotOn
+  var filterPlan: PipelinePlan[float32]
+  if plotOn:
+    filterPlan = plot.filterPipeline(dtMs).compile(float32, dtMs, samples.len,
+      recordSamples = samples.len)
+  var ownAt: array[1, int] = [-1]
+  var ownKeys: seq[OwnFilter]
+  var ownPlans: seq[PipelinePlan[float32]]
+  var ownReady: seq[bool]
+  if ownOn:
+    ownAt[0] = 0
+    let pipe = own.ownPipeline(dtMs)
+    if pipe.len > 0:
+      ownKeys.add own
+      ownPlans.add pipe.compile(float32, dtMs, samples.len, recordSamples = samples.len)
+      ownReady.add true
+    else:
+      ownAt[0] = -1
+  var passed: seq[int]
+  var noted: seq[string]
+  var noShift: seq[int] = @[]
+  var noMs: seq[float64] = @[]
+  discard applyPreparedRows(view, rows, dtMs, edits, 0, noShift, noMs, filtering, filterPlan,
+    plot.aux, ownAt, ownKeys, ownPlans, ownReady, 0, passed, nil, "", noted)
+  if noted.len > 0: raise newException(ValueError, noted[0])
 
 proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: TraceRows;
     first: int; failedRows: openArray[int]) =
@@ -585,9 +658,9 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
   ## (`rows`: their traces; `failedRows`: those not decoded, 0-based in the
   ## block, ascending) for the tile: killed rows and rows marked dead in the
   ## file blanked, samples that are not numbers set to 0, the samples of
-  ## reversed rows negated, then the filters (the auxiliary rows too when
-  ## asked) and the display processing, on the pool, which pass by the
-  ## blank rows and those not decoded.
+  ## reversed rows negated, a stored time shift applied, then the filters
+  ## (the auxiliary rows too when asked) and the display processing, on the
+  ## pool, which pass by the blank rows and those not decoded.
   pr.notNumbers += readyForProcessing(b, rows)
   var passed: seq[int] # rows of the block not decoded, killed or dead, ascending
   var fi = 0
@@ -602,45 +675,15 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
       passed.add k
   try:
     let meta = initChunkMeta(rows, rd.layout.dtMs, pr.firstSample, passed)
-    if pr.edits.len > 0:
-      for k in 0 ..< b.len:
-        if teReversed in pr.edits[first + k] and not meta.isFailed(k):
-          reversePolarity(b.row(k, meta.liveSamples(k, b.cols)))
-    if pr.shiftRows.len > 0 and b.len > 0:
-      var si = 0
-      for k in 0 ..< b.len:
-        let row = first + k
-        while si < pr.shiftRows.len and pr.shiftRows[si] < row: inc si
-        if si < pr.shiftRows.len and pr.shiftRows[si] == row and not meta.isFailed(k) and
-            rows.keysAt(k).isSeismic:
-          applyStoredShift(b.rowPtr(k).toOpenArray(0, b.cols - 1), pr.shiftMs[si],
-            rd.layout.dtMs)
-    if pr.filtering and b.len > 0:
-      try:
-        var instead: seq[int]
-        if pr.ownAt.len > 0:
-          for k in 0 ..< b.len:
-            let oi = pr.ownAt[first + k]
-            if oi >= 0 and pr.ownKeys[oi].place == fpInstead: instead.add k
-        if pr.filterAux and rows.hasAuxiliary:
-          var keys: seq[TraceKeys]
-          var lengths: seq[int]
-          let skip = if instead.len == 0: passed else: unionAsc(passed, instead)
-          let live = initChunkMeta(rows.auxLiveRows(keys, lengths), rd.layout.dtMs,
-            pr.firstSample, skip)
-          rd.poolOf.apply(pr.filterPlan, b, live)
-        elif instead.len == 0:
-          rd.poolOf.apply(pr.filterPlan, b, meta)
-        else:
-          let skip = unionAsc(passed, instead)
-          let plotMeta = initChunkMeta(rows, rd.layout.dtMs, pr.firstSample, skip)
-          rd.poolOf.apply(pr.filterPlan, b, plotMeta)
-        pr.filtered += b.len
-      except ValueError as e:
-        rd.tellFilters("The filters stopped on " & rd.name & ": " & e.msg)
-        pr.filtering = false
-    if pr.ownAt.len > 0 and b.len > 0:
-      rd.applyOwn(pr, b, rows, first, passed)
+    var pool: ptr ProcessPool = nil
+    if pr.filtering or pr.ownAt.len > 0:
+      discard rd.poolOf
+      pool = addr rd.pool
+    var noted: seq[string]
+    pr.filtered += applyPreparedRows(b, rows, rd.layout.dtMs, pr.edits, first, pr.shiftRows,
+      pr.shiftMs, pr.filtering, pr.filterPlan, pr.filterAux, pr.ownAt, pr.ownKeys,
+      pr.ownPlans, pr.ownReady, pr.firstSample, passed, pool, rd.name, noted)
+    for msg in noted: rd.tellFilters(msg)
     if pr.processing:
       if pr.flowAux and rows.hasAuxiliary:
         var keys: seq[TraceKeys]

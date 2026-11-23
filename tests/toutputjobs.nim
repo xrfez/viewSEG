@@ -142,6 +142,25 @@ proc main*() =
       doAssert samplesOf(back, 5) == samplesOf(src, 6), "a killed trace was written"
       back.close()
       removeFile(dest)
+    block keptKilled:
+      ## Seen to fail: a killed trace that was kept was written as recorded,
+      ## so the reversal was not applied.
+      var edits: FileEdits
+      doAssert edits.change(teKilled, [4], true) == 1
+      doAssert edits.change(teReversed, [4], true) == 1
+      let dest = dir / "kept-killed.sgy"
+      let got = runJob(src, segy, dest, OutputOptions(format: ofSegy, dropKilled: false,
+        applyReversals: true), edits, @[segy])
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      doAssert got.wrote.written == n and got.wrote.dropped == 0
+      var back = openSeismic(dest, keys = true)
+      doAssert back.len == n, "a kept killed trace was left out"
+      var expect = samplesOf(src, 4)
+      reversePolarity(expect)
+      doAssert samplesOf(back, 4) == expect, "a kept killed trace was not reversed"
+      doAssert samplesOf(back, 3) == samplesOf(src, 3), "a neighbour was reversed"
+      back.close()
+      removeFile(dest)
     block ownFilter:
       var edits: FileEdits
       let own = bounded(OwnFilter(spec: Processing(band: pbBandPass, f1: 8, f2: 12, f3: 40,

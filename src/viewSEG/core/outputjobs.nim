@@ -33,7 +33,9 @@ type
     ## What to apply while writing one file. Display-only gain is never applied.
     format*: OutputFormat
     applyReversals*: bool   ## reversed traces written reversed
-    dropKilled*: bool       ## killed traces left out; otherwise written as recorded
+    dropKilled*: bool
+      ## Killed traces left out. A killed trace that is kept is written like
+      ## any other, with the chosen options applied: a kill only drops.
     applyOwnFilters*: bool
     applyProcessing*: bool
     processing*: Processing ## the plot's filters, when `applyProcessing`
@@ -295,19 +297,18 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
               let cols = x.shape[1]
               samples.setLen cols
               for j in 0 ..< cols: samples[j] = x[0, j]
-              # A killed trace kept in the file is written as recorded: not blanked,
-              # and not run through the other options. With no option on, the
-              # samples stay as read (no key lookup, so a file opened without
-              # keys still writes).
-              if not edits.has(teKilled, t):
-                let reversed = opts.applyReversals and edits.effectivelyReversed(t)
-                if reversed or opts.applyOwnFilters or opts.applyProcessing:
-                  var own = OwnFilter()
-                  if opts.applyOwnFilters or opts.applyProcessing:
-                    let listed = edits.plotFiltersIn(t .. t)
-                    if listed.len > 0: own = listed[0].filter
-                  applyPreparedTrace(samples, file[].traceKeys(t), dtMs, reversed,
-                    opts.processing, opts.applyProcessing, own, opts.applyOwnFilters)
+              # A kill is only applied by leaving the trace out. A killed trace
+              # that is kept is written like any other, options applied. With
+              # no option on, the samples stay as read (no key lookup, so a
+              # file opened without keys still writes).
+              let reversed = opts.applyReversals and edits.effectivelyReversed(t)
+              if reversed or opts.applyOwnFilters or opts.applyProcessing:
+                var own = OwnFilter()
+                if opts.applyOwnFilters or opts.applyProcessing:
+                  let listed = edits.plotFiltersIn(t .. t)
+                  if listed.len > 0: own = listed[0].filter
+                applyPreparedTrace(samples, file[].traceKeys(t), dtMs, reversed,
+                  opts.processing, opts.applyProcessing, own, opts.applyOwnFilters)
               if like:
                 w.writeTrace(file[], t, samples)
               else:
