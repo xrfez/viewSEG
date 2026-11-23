@@ -21,10 +21,9 @@
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves aux-docked.png, aux-gear.png, aux-menu.png, aux-view.png
 ## (the View > Windows menu with the tick) and aux-none.png there.
 ##
-## Seen to fail: with the Aux strip drawn for the Seismic window's groups, "the Aux strip has
-## a record stepper"; with `capsOf(prAux).menuMap` true, "the Aux menu has the Map group";
-## with `followAux` not run after a command, "the Aux window did not follow the record";
-## with the window's open state not sent to the core, "the Aux window did not open".
+## Seen to fail: with the Aux strip drawn for the Seismic window's groups, "the Aux strip
+## has a record stepper"; with `capsOf(prAux).menuMap` true, "the Aux menu has aux.menu.station";
+## with `ckAuxWindow` not opening the window, "the Aux entry did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -41,6 +40,78 @@ type
     done: proc (f: FrameInfo): bool
 
 func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
+
+const vibSample = currentSourcePath().parentDir.parentDir / "samples" / "vib" /
+  "vib_uncorrelated.sgd"
+
+proc vibShots(dir: string) =
+  ## With `VIEWSEG_SCREENSHOTS`: the Aux window on the synthetic vibrator record (48 seismic
+  ## traces, the pilot and the ground force): docked with the Seismic window
+  ## (aux-vib-docked.png), its gear (aux-vib-gear.png), its right-click menu
+  ## (aux-vib-menu.png) and View > Windows with its tick (aux-vib-view.png).
+  var stage, wait = 0
+  var since = getMonoTime()
+  var saved: seq[string]
+  var at: Vec2
+  proc onFrame(f: FrameInfo) =
+    inc wait
+    template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
+    if f.index == 0: f.moveMouse(vec2(4, 4))
+    let k = f.core.findPanel(MainPanel)
+    let a = f.core.auxIndex
+    case stage
+    of 0:
+      if f.core.panels[k].laidOut and f.core.tiles(k).len > 0 and wait > 20:
+        f.apply Command(kind: ckAuxWindow, onScreen: true)
+        next 1
+    of 1:
+      if a >= 0 and f.core.panels[a].laidOut and f.core.tiles(a).len > 0 and wait > 40:
+        if f.savePng(dir / "aux-vib-docked.png"): saved.add "aux-vib-docked.png"
+        f.moveMouse(f.markOf("aux.more").centre)
+        next 2
+    of 2:
+      if wait == 4: f.pressMouse(f.markOf("aux.more").centre, true)
+      if wait == 5: f.pressMouse(f.markOf("aux.more").centre, false)
+      if wait == 15:
+        if f.savePng(dir / "aux-vib-gear.png"): saved.add "aux-vib-gear.png"
+        f.pressKey(skEscape, true)
+        f.pressKey(skEscape, false)
+        next 3
+    of 3:
+      if wait == 6:
+        let v = f.core.panels[a].view
+        let r = f.markOf("aux.data")
+        let q = v.screenAt(r, DataPoint(x: 0.0, tMs: v.timeMs.lo + (v.timeMs.hi - v.timeMs.lo) / 3))
+        at = vec2(round(q.x), round(q.y))
+        f.moveMouse(at)
+      if wait == 10:
+        f.pressMouse(at, true)
+        f.pressMouse(at, false)
+      if wait == 14:
+        f.pressMouse(at, true, 3)
+        f.pressMouse(at, false, 3)
+      if wait == 24:
+        if f.savePng(dir / "aux-vib-menu.png"): saved.add "aux-vib-menu.png"
+        f.pressKey(skEscape, true)
+        f.pressKey(skEscape, false)
+        next 4
+    of 4:
+      if wait == 6:
+        f.moveMouse(f.markOf("menu.View").centre)
+      if wait == 8:
+        f.pressMouse(f.markOf("menu.View").centre, true)
+        f.pressMouse(f.markOf("menu.View").centre, false)
+      if wait == 30:
+        if f.savePng(dir / "aux-vib-view.png"): saved.add "aux-vib-view.png"
+        f.stop()
+    else: f.stop()
+    if overdue(wait, 1500, since): f.stop()
+  let tmp = getTempDir() / ("viewseg-auxshots-" & $getCurrentProcessId())
+  let code = run(RunOptions(openPaths: @[vibSample], windowSize: (1600, 1000), theme: forceDark,
+    indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"), onFrame: onFrame))
+  removeDir(tmp)
+  doAssert code == 0 and saved.len == 4, "screenshots saved: " & $saved
+  echo "tguiauxwin: saved ", saved.join(", "), " in ", dir
 
 proc main*() =
 
@@ -401,6 +472,7 @@ proc main*() =
           "the Aux window did not keep its display: " & $d.gain & " " & $d.gainDb
         doAssert f.main.layers[0].display.gainDb == 0.0)
     drive(steps)
+    if shots.len > 0 and fileExists(vibSample): vibShots(shots)
     echo "tguiauxwin: ok"
 
 when isMainModule: main()

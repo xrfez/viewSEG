@@ -1119,7 +1119,6 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
       if state.panels[k].role != prAux or state.auxOpen:
         panels.add state.panelJson(k, fe, limit)
     r["panels"] = panels
-    r["auxWindowOpen"] = %state.auxOpen
   if "selection" in wanted:
     var selected: seq[int]
     for t in state.selection.selected: selected.add t

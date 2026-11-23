@@ -132,9 +132,16 @@ const Reached = {
 func reachedBy(path: string): string =
   ## The command an agent gives that changes `path` for the session, "" for none.
   if path.startsWith("plotOptions."): "plot display"
+  elif path.startsWith("aux.header."): "display header"
+  elif path.startsWith("aux.display."):
+    # the Aux window's display: wiggles, no first-break overlay, so those are not reached
+    if path in ["aux.display.visible", "aux.display.mode", "aux.display.firstBreaks"] or
+        path.startsWith("aux.display.break"): ""
+    else: "display"
   else: Reached[path]
 
-func decided(path: string): bool = path.startsWith("plotOptions.") or path in Reached
+func decided(path: string): bool =
+  path.startsWith("plotOptions.") or path.startsWith("aux.") or path in Reached
 
 proc flatten[T](x: T; at: string; into: var OrderedTable[string, string]) =
   ## Every setting in `x` by its path ("plot.display.mode"), with its value
@@ -232,6 +239,8 @@ proc main*() =
       carried(kept, before, after).plot.display.fixedClip.isNaN
     after.plot.display.fixedClip = 0.5
     doAssert carried(kept, before, after).plot.display.fixedClip == 0.5
+    after.aux.display.fixedClip = 0.25
+    doAssert carried(kept, before, after).aux.display.fixedClip == 0.25
     doAssert carried(before, before, after) == after, "carried onto the settings before: after"
 
   block everySettingDecided:
@@ -471,6 +480,17 @@ proc main*() =
       st.agent(%*{"kind": "prepare", "path": third})
       st.agent(%*{"kind": "show file", "path": third})
       doAssert st.sessions.anyIt(it.path == third)
+      # the Aux window's own display and header, given to its panel
+      st.agent(%*{"kind": "aux window"})
+      doAssert st.settle(st.auxIndex >= 0)
+      let auxPanel = int(st.panels[st.auxIndex].id)
+      var auxDisplay = toJson(Everything)
+      for key in ["mode", "firstBreaks", "breakModel", "breakPickColour", "breakModelColour",
+          "breakSize", "breakShowPicks", "breakShowModel", "breakShowWeak", "breakPickOn"]:
+        auxDisplay.delete(key)
+      auxDisplay["gain"] = %"fixed"
+      st.agent(%*{"kind": "display", "panel": auxPanel, "display": auxDisplay})
+      st.agent(%*{"kind": "display header", "panel": auxPanel, "header": toJson(Header)})
       # Fixed, with no amplitude yet: it takes one from the data shown
       st.agent(%*{"kind": "display", "display": {"gain": "fixed", "fixedClip": nil}})
       let shown = st.panel(MainPanel).layers[0].display
@@ -538,6 +558,11 @@ proc main*() =
         presetName: "Mine")
       st.apply Command(kind: ckTheme, theme: "nord")
       st.apply Command(kind: ckHeader, panel: MainPanel, header: Header)
+      st.apply Command(kind: ckAuxWindow, onScreen: true)
+      var auxShown = Everything
+      auxShown.gain = dgFixed
+      st.apply Command(kind: ckDisplay, panel: st.panels[st.auxIndex].id, display: auxShown)
+      st.apply Command(kind: ckHeader, panel: st.panels[st.auxIndex].id, header: Header)
       st.apply Command(kind: ckSort, panel: MainPanel, order: Keys)
       st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Filters)
       st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,

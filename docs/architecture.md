@@ -68,6 +68,26 @@ Swapping toolkits means writing `ui/<toolkit>/` (widgets bound to the same view 
 commands), plus `gpu/` if the new toolkit is not OpenGL. `core`, `view`, `platform` and all
 tests stay as they are.
 
+## Trace panels and their roles
+
+`AppState.panels` is a list of trace panels (`core/panels`); the Seismic window is panel 1
+(`MainPanel`). A panel has a **role** (`PanelRole`): `prSeismic` is the whole plot, `prAux` is
+the Aux window, a second panel of the same reader, layout and drawing path
+(`ui/imgui/tracepanel`) whose layer 0 has a trace filter fixed to auxiliary-only and whose
+source follows the Seismic window's (`followAux`, after every command and inbox drain). What
+a role has is data, not code in the window: `capsOf(role)` is a small capability record (a
+record stepper, the display modes, the gain types, the first-break overlay, the filters, the
+sort, the Seismic / Aux toggles, the gear's tabs and sections, the groups of the right-click
+menu). `view/strip` and the toolkit layer draw what it says; the state refuses the commands
+a role does not take (`AuxRefused`) and cleans a display to what the role can show
+(`forAux`). The Aux window's own display and header are `Settings.aux`, apart from the
+plot's defaults. The panel starts no record-level job: first breaks follow a panel only when
+its overlay is on, the record's check and the template's follow the record the selection
+names, and the panel never moves that; closed, its layer is empty and its reader reads
+nothing. The window is `awAux` in `ui/imgui/windows` (closed at start, docked below the
+Seismic window the first time it is opened); `ckAuxWindow` carries its open state to the
+core, so that agent control can open it.
+
 ## Signature files
 
 A vibrator controller's `.dat` and `.vib` signature files open like any file (File > Open, the

@@ -21,10 +21,12 @@
 ##   it.
 ##
 ## Seen to fail: with `followAux` not retargeting when the record changed, `follows` found
-## the Aux window on the first record; with `AuxRefused` empty, `refused` found its record
-## moved; with the display not cleaned by `forAux`, `ownDisplay` found Exponential gain on it;
-## with the gain written to the plot's remembered display, `ownDisplay` found the plot's
-## defaults changed; with `(aux ...)` not read, `persisted` found the defaults back.
+## the Aux window on the first record; with `AuxRefused` empty, `refused` found its trace
+## filter changed; with the display not cleaned by `forAux`, `ownDisplay` found Exponential
+## gain on it; with the Aux window's display written to the plot's remembered defaults,
+## `ownDisplay` found them changed; with `(aux ...)` not read, `persisted` found the tree
+## unknown; with `followAux` restarting the read at every call (the plot read again each frame,
+## as two panels on one record once did to the jobs), `opened` never settled.
 
 import std/[os, sequtils]
 import parseSEG
@@ -121,6 +123,16 @@ proc main*() =
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
       doAssert st.settle(st.mainReady and st.auxReady and st.aux.layout.traces == 2 and
         st.aux.layers[0].source.file == st.panel(MainPanel).layers[0].source.file)
+
+    block reopened:
+      # the file is opened again (as Reopen with options does): both windows show the new
+      # session
+      let was = st.panel(MainPanel).layers[0].source.file
+      st.apply Command(kind: ckReopen, reopenPath: path)
+      doAssert st.settle(st.mainReady and st.auxReady and
+        st.panel(MainPanel).layers[0].source.file != was and
+        st.aux.layers[0].source.file == st.panel(MainPanel).layers[0].source.file and
+        st.aux.layout.traces == 2), "the Aux window did not follow the reopened file"
 
     block refused:
       let was = st.aux.layers[0]

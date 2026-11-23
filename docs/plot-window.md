@@ -1722,6 +1722,49 @@ that trace are on show, the edits row marks it A or B beside K, R and the filter
 Later: show headers (`H`) and, perhaps, a filter on one trace (as a layer of its own,
 with the overlays).
 
+## The Aux window
+
+A second trace panel of the same reader, layout and drawing as the Seismic window, with
+fewer controls (`PanelRole`, `capsOf` in `core/panels`): View > Windows > Aux. It is closed
+at a first start, after Reset the windows and in a layout that does not name it; opened, it
+docks below the Seismic window, and its open state and place are kept with the layout.
+
+- **What it shows.** The auxiliary traces of the record the Seismic window shows (its panel's
+  trace filter is fixed to auxiliary-only), in the file's order, as recorded: the file's
+  edits (kill, reverse polarity, a trace's own filter) apply, the plot's filters and sort do
+  not. It follows the Seismic window: stepping records, another file, Follow the latest
+  file, a reload. It has no record of its own (the panel refuses `go to gather` and the
+  rest of the commands that would give it one), reads nothing while closed, and starts no
+  record-level job of its own (first breaks, the record's check, the template's). A record
+  with no auxiliary traces says "This record has no auxiliary traces."
+- **Drawing.** Wiggles only, with the positive and negative fill buttons; no density and no
+  display-mode buttons. The gain is its own: None (0 dB, as in the Seismic window), Fixed
+  and Normalized, with the gain amount; it starts Normalized for each trace, as a pilot and
+  a monitor channel differ by orders of magnitude. The gain's list has no "Let viewSEG
+  choose" and no AGC, Exponential or Float.
+- **View.** The same zoom, fit and back buttons and keys as the Seismic window, over a view
+  of its own: the "keep the scales on the next record or file" rule is the Seismic
+  window's, since it is the panel's (`carry`). Its time range is its own; it is not linked
+  to the Seismic window's (the Seismic window has no such link either): aux traces are often
+  shorter or have another length.
+- **Not in it.** The first-break overlay, the frequency filters and Raw, sort, the Seismic
+  and Aux toggles, the template button, the component toggles, the record stepper (Page
+  Up, Page Down, Home, End, Ctrl+G) and the gear's display presets, density colour map,
+  component colours and Scales tab.
+- **The gear** has the Look tab (colours, the cursor time line, time across) and the Traces
+  tab (trace overlap, killed traces hidden or blank, the display header's rows).
+- **The right-click menu** is the Seismic window's one (above) without Map, Whole record,
+  Exclude and Filter: Reverse polarity, Kill / Restore, Analyse (New plot, Compare, Store as
+  reference), Undo, Redo, Explain.
+- **Selection and edits** are the file's and the program's, not the window's: a click on an
+  aux trace there is THE selection (the plots, the spectrum windows, the Vibrator window,
+  the status bar and the Headers window follow it), and a kill or reversal made there shows
+  in the Seismic window when it shows the trace.
+- **Kept** (`settings.nif`, `(aux ...)`): its display (gain, fills, look) and display
+  header, apart from the Seismic window's defaults; whether it is open and where it is
+  docked are the layout's. An agent's changes to it stay for the session, as for the Seismic
+  window.
+
 ### Edits to traces
 
 Killing a trace and reversing its polarity are edits: lists kept per file, by the trace's

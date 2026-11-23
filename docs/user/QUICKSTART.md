@@ -369,6 +369,26 @@ viewSEG show the same traces, when the file has them. A file with no auxiliary t
 shows its seismic traces and leaves that choice as it was. The gain, the sorts, the
 edits, the display header and the status bar work on them too.
 
+**The Aux window.** To see the auxiliary traces beside the seismic ones, open **View >
+Windows > Aux** (ticked while it is open; it is closed at first). It docks below the Seismic
+window and shows the auxiliary traces of the record the Seismic window shows, as wiggles
+with a gain of their own, and follows it: the next record, another file, "Follow the latest
+file" and a reload. A record with no auxiliary trace says so in one line. Its strip has the
+zoom and fit buttons (the view is its own: the time range is not tied to the Seismic
+window's), the **positive** and **negative fill** buttons, and the gain: **None**, **Fixed**
+or **Normalized** (Normalized for each trace at first: a pilot and a monitor channel can
+differ by orders of magnitude) and the gain amount. The gear holds the **Look** (colours,
+the cursor time line, time across) and **Traces** (trace overlap, killed traces, the display
+header's rows) tabs. It has no record buttons, filters, sort, template or first-break
+buttons and no Seismic / Aux toggles: those belong to the Seismic window, which keeps its
+own Seismic and Aux toggles. Its right-click menu is the Seismic window's without the Map and
+Whole record groups and without the plot's filters: reverse polarity, kill or restore, New
+plot (FFT, ...), Compare, Store as reference, Undo, Redo and Explain. A click on a trace
+there selects it as in the Seismic window: the plots, the Spectrum, the Vibrator window, the
+status bar and the Headers window follow that selection. A kill or reversal made there is the
+file's edit, so the Seismic window shows it too (with Aux on). The window's display, gain and
+header, whether it is open and where it is docked are remembered when you quit.
+
 **Filters.** The **Filters** button in the strip (a funnel, after the gain; lit while
 filters are applied; its tooltip and the top of its drop-down say which) sets what the
 traces go through before the gain, and the plot follows each number
