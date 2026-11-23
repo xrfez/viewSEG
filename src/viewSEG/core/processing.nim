@@ -315,6 +315,16 @@ func changesSamples*(f: OwnFilter): bool =
   ## which leaves the plot's filters off that trace even with none of its own.
   f.spec.hasFilters or f.place == fpInstead
 
+func wholeShiftSamples*(ms, dtMs: float64): int =
+  ## Whole samples in a shift of `ms` at `dtMs`, as a non-negative count (the
+  ## margin a window needs on each side). 0 when it cannot be applied. A count
+  ## of `low(int)` is `high(int)`, so `abs` does not overflow.
+  if not (dtMs > 0): return 0
+  let n = wholeSamples(ms, dtMs)
+  if n == low(int): high(int)
+  elif n < 0: -n
+  else: n
+
 func snappedShiftMs*(ms, dtMs: float64): float64 =
   ## The milliseconds a shift of `ms` applies at interval `dtMs`: a whole
   ## number of samples (`wholeSamples`, ties away from zero). 0 when `dtMs`

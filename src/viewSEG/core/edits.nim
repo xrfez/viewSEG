@@ -480,10 +480,18 @@ func ownNeedsWhole*(e: FileEdits; traces: Slice[int]): bool =
     if f.filter.spec.hasFilters: return true
   false
 
-func shiftNeedsWhole*(e: FileEdits; traces: Slice[int]): bool =
-  ## Whether a trace in `traces` carries a time shift: the reader then keeps
-  ## whole traces, so samples outside the window are not lost before the move.
-  e.shown.anyShift(traces)
+func shiftMargin*(e: FileEdits; traces: Slice[int]; dtMs: float64): int =
+  ## Samples a window must keep on each side so a shift of a trace in
+  ## `traces` is not lost before the move: the largest whole-sample shift
+  ## among them. 0 when none is shifted, or `dtMs` is not an interval.
+  let shifts = e.shown.shifts
+  let (a, _) = placeShift(shifts, traces.a)
+  var margin = 0
+  for i in a ..< shifts.len:
+    if shifts[i].trace > traces.b: break
+    let k = wholeShiftSamples(shifts[i].ms, dtMs)
+    if k > margin: margin = k
+  margin
 
 proc turn(l: var EditLists; added, removed: array[TraceEdit, seq[int]];
     allChanged, allTo: bool) =

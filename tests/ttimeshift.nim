@@ -23,9 +23,8 @@
 ## Seen to fail: with `setTimeShifts` storing the asked milliseconds, "stored
 ## 3.0, not the snapped 4 ms". With `prepare` not applying the shift, "trace 2
 ## is not the snapped shift". With the seismic guard off, "an auxiliary trace
-## was shifted". With `shiftNeedsWhole` false, "a shift did not read the whole
-## trace: (gen: 5, first: 0, count: 20, stride: 1, firstSample: 138, samples: 165,
-## decimation: 1, margin: 0, envelope: false)". With a non-finite CSV `ms`
+## was shifted". With `shiftNeedsWhole`, "start 1.0 read more than the shift:
+## (gen: 5, ..., margin: 750, ...)". With a non-finite CSV `ms`
 ## stored, "a non-finite shift was stored: @[(trace: 2, ms: nan), ...]". With
 ## `setTimeShifts` keeping a huge value, "a shift of 1e30 ms was stored". With
 ## the command not reporting a refused shift, "not kept" was absent from the log.
@@ -276,29 +275,37 @@ proc main*() =
     st.shutdown()
 
   block wholeTrace:
-    # A late window, shift only: the read starts at sample 0 and the row is
-    # the whole trace shifted. Seen to fail with `shiftNeedsWhole` false.
+    # A zoomed window of a shifted trace equals the same cut of the whole
+    # trace shifted, at the start, middle and end, both signs. The read keeps
+    # k more samples, not the whole trace. Seen to fail with `shiftNeedsWhole`:
+    # one shift read every trace whole (margin >= the trace length).
     var st = initAppState()
     st.show land
     st.fit(800, 2 * st.panel(MainPanel).layout.samples)
     let raw = st.tiles(0)[^1]
-    let dt = st.panel(MainPanel).layout.dtMs
+    let lay = st.panel(MainPanel).layout
+    let dt = lay.dtMs
+    let n = lay.samples
     let base = st.sessions[0].base
-    var view = fitAll(st.panel(MainPanel).layout, 200, 80)
-    let start = st.panel(MainPanel).layout.t0Ms + 200 * dt
-    view.timeMs = Span(lo: start, hi: start + 40 * dt)
-    view.traces = Span(lo: -0.5, hi: 7.5)
-    st.apply Command(kind: ckView, panel: MainPanel, view: view)
-    st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 1], on: true,
-      shiftMs: 4 * dt)
-    doAssert st.settle(st.answered)
-    let zoomed = st.tiles(0)[^1]
-    doAssert zoomed.request.margin >= st.panel(MainPanel).layout.samples,
-      "a shift did not read the whole trace: " & $zoomed.request
-    let full = moved(raw.rowOf(1), 4 * dt, dt)
-    let a = zoomed.request.firstSample
-    doAssert zoomed.rowOf(1) == full[a ..< a + zoomed.columns],
-      "the late window is not the whole trace shifted"
+    let k = 4
+    for sign in [1.0, -1.0]:
+      st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 1], on: true,
+        shiftMs: sign * float64(k) * dt)
+      let full = moved(raw.rowOf(1), sign * float64(k) * dt, dt)
+      for (name, at) in [("start", 0), ("middle", n div 2), ("end", n - 40)]:
+        var view = fitAll(lay, 200, 80)
+        let t = lay.t0Ms + float64(at) * dt
+        view.timeMs = Span(lo: t, hi: t + 40 * dt)
+        view.traces = Span(lo: -0.5, hi: 7.5)
+        st.apply Command(kind: ckView, panel: MainPanel, view: view)
+        doAssert st.settle(st.answered)
+        let zoomed = st.tiles(0)[^1]
+        doAssert zoomed.request.margin == k, name & " " & $sign &
+          " read more than the shift: " & $zoomed.request
+        doAssert zoomed.request.decimation == 1, $zoomed.request
+        let a = zoomed.request.firstSample
+        doAssert zoomed.rowOf(1) == full[a ..< a + zoomed.columns],
+          name & " " & $sign & " is not the whole trace shifted"
     st.shutdown()
 
   block auxiliary:

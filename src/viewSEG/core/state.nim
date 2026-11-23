@@ -2827,8 +2827,9 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
     shifts = e.shiftsIn(traces)
   let ownHz = i >= 0 and state.keyOf(state.sessions[i].path) in state.edits and
     state.edits[state.keyOf(state.sessions[i].path)].ownNeedsWhole(traces)
-  let shiftWhole = i >= 0 and state.keyOf(state.sessions[i].path) in state.edits and
-    state.edits[state.keyOf(state.sessions[i].path)].shiftNeedsWhole(traces)
+  let shiftExtra = if i < 0 or state.keyOf(state.sessions[i].path) notin state.edits: 0
+                   else: state.edits[state.keyOf(state.sessions[i].path)].shiftMargin(
+                     traces, p.layout.dtMs)
   # While it filters, whole traces: a filter's margin grows as its ramp
   # narrows, and the samples the reader holds must still be enough after
   # a slider has moved, so that it filters them again without a read. The
@@ -2836,14 +2837,21 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
   # working it out takes processSEG long for narrow notches (seconds for a
   # few with many harmonics), on this thread, at every view. A trace's own
   # frequency filter asks for the same, so its edges are outside the window.
-  # A time shift asks for the same: samples outside the window would be lost
-  # before the move. Normalized for each trace takes its level from the whole
-  # trace, so a zoom does not change it: whole traces here too.
-  let wholeTraces = filters.len > 0 or ownHz or shiftWhole or
+  # A time shift of k samples needs k more on each side (the move is one
+  # way, and the margin is on both), added to the margin already asked for:
+  # the shift runs before the display flow, which still needs its own margin
+  # of the shifted samples, so the two add. An own filter does not combine
+  # a margin here; it asks for the whole trace, as the plot's filters do.
+  # Normalized for each trace takes its level from the whole trace, so a
+  # zoom does not change it: whole traces here too.
+  let wholeTraces = filters.len > 0 or ownHz or
     p.layers[0].normalizesWhole(state.gatherKind(p.layers[0]))
-  let margin = if wholeTraces:
-                 max(displayMargin(flow, p.layout.dtMs), p.layout.samples)
-               else: displayMargin(flow, p.layout.dtMs)
+  let base = if wholeTraces:
+               max(displayMargin(flow, p.layout.dtMs), p.layout.samples)
+             else: displayMargin(flow, p.layout.dtMs)
+  let margin = if shiftExtra <= 0: base
+               elif base > high(int) - shiftExtra: high(int)
+               else: base + shiftExtra
   let wiggles = p.layers[0].display.drawsWiggles
   if p.pending.gen == p.requestGen:
     # Enough on hand on every side: nothing to ask. The view itself on hand,
