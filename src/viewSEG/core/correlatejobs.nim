@@ -219,6 +219,16 @@ proc sweepLine(sweepMs: float64; delayed: int): string =
   let n = if delayed == 1: "1 reference trace" else: $delayed & " reference traces"
   "sweep " & msText(sweepMs) & " ms. " & n & " delayed by " & msText(AuxLeadMs) & " ms."
 
+proc waveletLine(listenMs, delayMs: float64): string =
+  if listenMs <= delayMs:
+    "listen time " & msText(listenMs) &
+      " ms: the reference wavelet's peak (at " & msText(delayMs) &
+      " ms) is outside the record."
+  else:
+    "listen time " & msText(listenMs) &
+      " ms: the reference wavelet shows only " & msText(listenMs - delayMs) &
+      " ms after its peak."
+
 proc fitLine(padded, cut: int): string =
   var parts: seq[string] = @[]
   if padded == 1: parts.add "1 auxiliary trace was padded"
@@ -339,6 +349,9 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
     $nTraces & " traces, " & $listen & " samples (" & msText(slot[].listenMs) &
       " ms of listen time).",
     sweepLine(slot[].sweepMs, delayed)]
+  let leadMs = float64(abs(lag)) * dtMs
+  if delayed > 0 and slot[].listenMs < 2.0 * leadMs:
+    slot[].lines.add waveletLine(slot[].listenMs, leadMs)
   let fitted = fitLine(shape.padded, shape.cut)
   if fitted.len > 0: slot[].lines.add fitted
   for t in shape.odd: slot[].lines.add intervalLine(t)

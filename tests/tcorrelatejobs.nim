@@ -10,6 +10,8 @@
 ## those zeros would otherwise be adopted. Writing every auxiliary trace as
 ## time-break made the uphole trace read back as 32, not 48. Seismic traces of
 ## 400 and 800 samples were accepted (the job finished) instead of being refused.
+## Skipping the listen-window line fails "listen time 600 ms: the reference
+## wavelet shows only 100 ms after its peak." and the peak-outside sentence.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -163,6 +165,30 @@ proc writeMixed(path: string; sweep: openArray[float32]) =
   put(w, 2, 900, tsAuxiliary, 6, long)
   doAssert w.close().len == 0, "the mixed file did not close"
 
+proc writeLengths(path: string; record, auxSamples: int; dtMs: float64;
+    sweep: openArray[float32]) =
+  ## Trace 0 is seismic of `record` samples; trace 1 is a reference auxiliary
+  ## of `auxSamples`, holding the start of `sweep`.
+  var w = openSeismicWriter(path, SegyOutputOptions())
+  proc put(w: var SeismicWriter; i, n: int; status: TraceStatus; code: int16;
+      fill: openArray[float32]) =
+    var k = initTraceKeys()
+    (k.traceCode, k.status) = (code, status)
+    k.record = 1.0
+    k.channel = float64(i + 1)
+    k.intervalUs = dtMs * 1000.0
+    k.t0Ms = 0.0
+    k.time = 1_700_000_000.0
+    var buf = newSeq[float32](n)
+    let m = min(n, fill.len)
+    for j in 0 ..< m: buf[j] = fill[j]
+    w.writeTrace(k, buf)
+  var seis = newSeq[float32](record)
+  for j in 0 ..< record: seis[j] = 1
+  put(w, 0, record, tsLive, 1, seis)
+  put(w, 1, auxSamples, tsAuxiliary, 5, sweep)
+  doAssert w.close().len == 0, "the length file did not close"
+
 proc writeOddInterval(path: string) =
   var w = openSeismicWriter(path, SegyOutputOptions())
   for i, dt in [DtMs, 4.0]:
@@ -205,6 +231,21 @@ proc spec(path: string): JobSpec =
 proc finish(jobs: Jobs; id: JobId): JobState =
   doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}), "the job did not finish"
   jobs.state(id)
+
+proc correlated(file: var SeismicFile; path: string; sweep: openArray[float32];
+    dtMs: float64; refs: openArray[int]): CorrelateResult =
+  ## The job, finished. `file` stays the caller's and stays open.
+  var jobs = initJobs()
+  result.opened = nil
+  result.lines = @[]
+  try:
+    let id = jobs.submit(spec(path), correlateWork(CorrelateAsk(
+      file: addr file, path: path, reference: @sweep, referenceDtMs: dtMs,
+      referenceTraces: @refs), addr result))
+    doAssert finish(jobs, id) == jsDone, result.failure
+  finally:
+    jobs.stop()
+  doAssert result.ok, result.failure
 
 proc direct(file: SeismicFile; trace: int; sweep: seq[float32]; shift: bool): Tensor[float32] =
   let plan = initCorrelationPlan(float32, initPilot(sweep, DtMs), DtMs, Record)
@@ -510,6 +551,57 @@ proc main*() =
     doAssert int(got.traceEntry(1).numSamples) == 600
     for j in 0 ..< 600:
       doAssert row[0, j] == 0, "odd-interval sample " & $j & " is " & $row[0, j]
+
+  block listenLopsided:
+    ## Listen 600 ms, delay 500 ms: both sides are not in the window.
+    let p = dir / "lopsided.sgy"
+    writeLengths(p, 500, 500, DtMs, sweep)
+    var f = openSeismic(p, keys = true)
+    defer: f.close()
+    let slot = correlated(f, p, sweep, DtMs, [1])
+    doAssert slot.lines == @[
+      "2 traces, 300 samples (600 ms of listen time).",
+      "sweep 400 ms. 1 reference trace delayed by 500 ms.",
+      "listen time 600 ms: the reference wavelet shows only 100 ms after its peak."],
+      $slot.lines
+
+  block listenPeakOutside:
+    ## Listen 400 ms is under the 500 ms delay: the peak is not in the output.
+    let p = dir / "outside.sgy"
+    writeLengths(p, 400, 400, DtMs, sweep)
+    var f = openSeismic(p, keys = true)
+    defer: f.close()
+    let slot = correlated(f, p, sweep, DtMs, [1])
+    doAssert slot.lines == @[
+      "2 traces, 200 samples (400 ms of listen time).",
+      "sweep 400 ms. 1 reference trace delayed by 500 ms.",
+      "listen time 400 ms: the reference wavelet's peak (at 500 ms) is outside the record."],
+      $slot.lines
+
+  block listenEqualsDelay:
+    ## The peak sits on the first sample past the window, so it is outside.
+    let p = dir / "equal.sgy"
+    writeLengths(p, 450, 450, DtMs, sweep)
+    var f = openSeismic(p, keys = true)
+    defer: f.close()
+    let slot = correlated(f, p, sweep, DtMs, [1])
+    doAssert slot.lines == @[
+      "2 traces, 250 samples (500 ms of listen time).",
+      "sweep 400 ms. 1 reference trace delayed by 500 ms.",
+      "listen time 500 ms: the reference wavelet's peak (at 500 ms) is outside the record."],
+      $slot.lines
+
+  block shortListenNoDelay:
+    ## A short listen window with no delayed reference adds no wavelet line.
+    let p = dir / "nodelay.sgy"
+    writeLengths(p, 400, 400, DtMs, sweep)
+    var f = openSeismic(p, keys = true)
+    defer: f.close()
+    let slot = correlated(f, p, sweep, DtMs, [])
+    doAssert slot.lines == @[
+      "2 traces, 200 samples (400 ms of listen time).",
+      "sweep 400 ms. 0 reference traces delayed by 500 ms."],
+      $slot.lines
 
   block cancelled:
     holdCorr.close()
