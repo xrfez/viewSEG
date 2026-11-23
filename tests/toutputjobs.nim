@@ -6,7 +6,9 @@
 ##
 ## Seen to fail: with `dropKilled` ignored, the killed-trace counts failed
 ## (`written == n - 1`); with a reversal left unapplied, "a reversed trace
-## was not negated".
+## was not negated". With `applyPreparedTrace` passing no shift, "a spike at
+## sample 100 was not written at 104". With that write not using the plot's
+## sample path, "the written trace is not the panel reader's whole trace".
 ##
 ## Runs on samples/land/shots.sgy and samples/land/shots.sgd.
 
@@ -14,7 +16,7 @@ import std/[math, os, sequtils, strutils]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
-import viewSEG/core/[edits, jobs, outputjobs, panels, processing, sorting]
+import viewSEG/core/[edits, jobs, outputjobs, panels, processing, sorting, state]
 import utils/[faultyfs, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
@@ -457,6 +459,107 @@ proc main*() =
     doAssert not left, "cancel left the part file"
     removeFile(dest)
     src.close()
+
+  block timeShift:
+    ## A spike at sample 100, +8 ms at 2 ms, is written at 104, same length.
+    ## With the option off it stays at 100. Seen to fail with the shift left
+    ## off the write: the spike was still at sample 100.
+    let srcDir = dir / "spike-src"
+    let outDir = dir / "spike-out"
+    createDir(srcDir)
+    createDir(outDir)
+    let path = srcDir / "spike.sgy"
+    var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
+      text: @["C01 viewSEG test: a spike at sample 100"]))
+    var buf = newSeq[float32](200)
+    buf[100] = 1
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, 1.0, 0.0, 2000.0, tsLive)
+    w.writeTrace(k, buf)
+    doAssert w.close().len == 0
+    var src = openSeismic(path, keys = true)
+    var edits: FileEdits
+    doAssert edits.setTimeShifts([0], 8.0, 2.0) == 1
+    doAssert edits.shiftOf(0) == 8.0
+    let dest = outDir / "shifted.sgy"
+    let got = runJob(src, path, dest, OutputOptions(format: ofSegy, applyShifts: true),
+      edits, @[path])
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    var back = openSeismic(dest, keys = true)
+    let wrote = samplesOf(back, 0)
+    doAssert wrote.len == 200, "a shifted trace changed length: " & $wrote.len
+    doAssert wrote[104] == 1'f32 and wrote[100] == 0'f32,
+      "a spike at sample 100 was not written at 104"
+    back.close()
+    removeFile(dest)
+    let destOff = outDir / "unshifted.sgy"
+    let off = runJob(src, path, destOff, OutputOptions(format: ofSegy), edits, @[path])
+    doAssert off.st == jsDone, off.error & " / " & off.wrote.reason
+    var plain = openSeismic(destOff, keys = true)
+    let kept = samplesOf(plain, 0)
+    doAssert kept.len == 200 and kept[100] == 1'f32 and kept[104] == 0'f32,
+      "a shift left off was written at 104"
+    plain.close()
+    removeFile(destOff)
+    src.close()
+
+  block sameAsThePlot:
+    ## One trace with a reversal, a shift, an own filter and the plot's
+    ## filters: the written samples are the panel reader's whole trace.
+    ## Display gain is none, so the reader does not add a scale. Seen to fail
+    ## with the shift left off the write.
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: segy)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    var d = st.panel(MainPanel).layers[0].display
+    d.gain = dgNone
+    st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+    let lay = st.panel(MainPanel).layout
+    var view = fitAll(lay, 800, 2 * lay.samples)
+    view.traces = Span(lo: -0.5, hi: float64(min(lay.traces, 8)) - 0.5)
+    st.apply Command(kind: ckView, panel: MainPanel, view: view)
+    let base = st.sessions[0].base
+    let trace = 2
+    let plot = bounded(Processing(band: pbHighCut, f3: 40, f4: 50))
+    let own = bounded(OwnFilter(spec: Processing(band: pbBandPass, f1: 8, f2: 12, f3: 40,
+      f4: 50)))
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[base + trace],
+      on: true)
+    st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + trace], on: true,
+      ms: 8.0)
+    st.apply Command(kind: ckProcessing, panel: MainPanel, processing: plot)
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + trace], on: true,
+      processing: own.spec, filterPlace: fpAfter)
+    proc answered(st: AppState): bool =
+      let p = st.panel(MainPanel)
+      not p.pending.isEmpty and p.pending.gen == p.requestGen and st.tiles(0).len > 0 and
+        st.tiles(0)[^1].request == p.pending
+    doAssert st.settle(answered(st)), "the plot did not answer"
+    let tile = st.tiles(0)[^1]
+    doAssert tile.request.decimation == 1, $tile.request
+    var row = -1
+    for i, t in tile.traces:
+      if t == trace: row = i
+    doAssert row >= 0, "trace 3 is not in the tile"
+    let shown = tile.data[row * tile.columns ..< (row + 1) * tile.columns]
+    let edits = st.editsOf(0)
+    doAssert edits.effectivelyReversed(trace) and edits.shiftOf(trace) == 8.0
+    doAssert shown.len == lay.samples, "the reader did not keep the whole trace: " & $shown.len
+    st.shutdown()
+    var src = openSeismic(segy, keys = true)
+    doAssert shown.len == samplesOf(src, trace).len
+    let dest = dir / "same-as-plot.sgy"
+    let got = runJob(src, segy, dest, OutputOptions(format: ofSegy, applyReversals: true,
+      applyShifts: true, applyOwnFilters: true, applyProcessing: true, processing: plot),
+      edits, @[segy])
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    var back = openSeismic(dest, keys = true)
+    doAssert samplesOf(back, trace) == shown,
+      "the written trace is not the panel reader's whole trace"
+    doAssert samplesOf(back, trace) != samplesOf(src, trace), "the options changed nothing"
+    back.close()
+    src.close()
+    removeFile(dest)
 
   doAssert readFile(segy) == srcBytes and readFile(segd) == sgdBytes
   removeDir(dir)

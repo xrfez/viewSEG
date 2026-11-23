@@ -606,18 +606,22 @@ func ownIndex(own: openArray[FilterEntry]; trace: int): int =
   if lo < own.len and own[lo].trace == trace: lo else: -1
 
 proc applyPreparedTrace*(samples: var openArray[float32]; keys: TraceKeys; dtMs: float64;
-    reversed: bool; plot: Processing; applyPlot: bool; own: OwnFilter; applyOwn: bool) =
+    reversed: bool; shiftMs: float64; plot: Processing; applyPlot: bool; own: OwnFilter;
+    applyOwn: bool) =
   ## One whole trace through `applyPreparedRows`, the proc `prepare` calls,
   ## without the display gain. A dead trace is blanked, a sample that is not
-  ## a number is set to 0, polarity reversed, then the plot's filters and the
-  ## trace's own. Nothing is done when none of those are asked for, so a
-  ## trace written as recorded stays as it was read. An own filter set to
-  ## "instead" leaves the plot's filters off that trace. Auxiliary traces
-  ## take the plot's filters only when `plot.aux` is on. A kill is not applied
-  ## here: a killed trace that is kept is prepared like any other.
+  ## a number is set to 0, polarity reversed, a stored time shift applied
+  ## (seismic traces, positive later, same length, zeros where no sample
+  ## exists), then the plot's filters and the trace's own. Nothing is done
+  ## when none of those are asked for, so a trace written as recorded stays
+  ## as it was read. An own filter set to "instead" leaves the plot's filters
+  ## off that trace. Auxiliary traces take the plot's filters only when
+  ## `plot.aux` is on, and are not shifted. A kill is not applied here: a
+  ## killed trace that is kept is prepared like any other.
   let plotOn = applyPlot and plot.filtering and own.place != fpInstead
   let ownOn = applyOwn and own.spec.hasFilters
-  if samples.len == 0 or not reversed and not plotOn and not ownOn: return
+  let shifting = shiftMs != 0.0 and keys.isSeismic
+  if samples.len == 0 or not reversed and not plotOn and not ownOn and not shifting: return
   var keySeq = @[keys]
   let counts = @[samples.len]
   let rows = rowsOf(keySeq, counts)
@@ -646,10 +650,13 @@ proc applyPreparedTrace*(samples: var openArray[float32]; keys: TraceKeys; dtMs:
       ownAt[0] = -1
   var passed: seq[int]
   var noted: seq[string]
-  var noShift: seq[int] = @[]
-  var noMs: seq[float64] = @[]
-  discard applyPreparedRows(view, rows, dtMs, edits, 0, noShift, noMs, filtering, filterPlan,
-    plot.aux, ownAt, ownKeys, ownPlans, ownReady, 0, passed, nil, "", noted)
+  var shiftRows: seq[int] = @[]
+  var shiftVals: seq[float64] = @[]
+  if shiftMs != 0.0:
+    shiftRows.add 0
+    shiftVals.add shiftMs
+  discard applyPreparedRows(view, rows, dtMs, edits, 0, shiftRows, shiftVals, filtering,
+    filterPlan, plot.aux, ownAt, ownKeys, ownPlans, ownReady, 0, passed, nil, "", noted)
   if noted.len > 0: raise newException(ValueError, noted[0])
 
 proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: TraceRows;

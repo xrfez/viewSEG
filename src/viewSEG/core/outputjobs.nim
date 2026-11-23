@@ -34,6 +34,8 @@ type
     ## What to apply while writing one file. Display-only gain is never applied.
     format*: OutputFormat
     applyReversals*: bool   ## reversed traces written reversed
+    applyShifts*: bool
+      ## Shifted traces are written shifted, same length, zeros where no sample exists.
     dropKilled*: bool
       ## Killed traces left out. A killed trace that is kept is written like
       ## any other, with the chosen options applied: a kill only drops.
@@ -280,7 +282,7 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
         # does not: a record must be written whole, in input order.
         let like = srcKind == outKind and (srcKind == skSegy or (sameOrder and dropped == 0))
         if not file[].hasKeys and (opts.sortKeys.len > 0 or not like or opts.applyReversals or
-            opts.applyOwnFilters or opts.applyProcessing):
+            opts.applyShifts or opts.applyOwnFilters or opts.applyProcessing):
           fs.mappedRead(source, headers = true)
           file[].ensureKeys()
         if not like:
@@ -316,12 +318,13 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
             # no option on, the samples stay as read (no key lookup, so a
             # file opened without keys still writes).
             let reversed = opts.applyReversals and edits.effectivelyReversed(t)
-            if reversed or opts.applyOwnFilters or opts.applyProcessing:
+            let shiftMs = if opts.applyShifts: edits.shiftOf(t) else: 0.0
+            if reversed or shiftMs != 0.0 or opts.applyOwnFilters or opts.applyProcessing:
               var own = OwnFilter()
               if opts.applyOwnFilters or opts.applyProcessing:
                 let listed = edits.plotFiltersIn(t .. t)
                 if listed.len > 0: own = listed[0].filter
-              applyPreparedTrace(samples, file[].traceKeys(t), dtMs, reversed,
+              applyPreparedTrace(samples, file[].traceKeys(t), dtMs, reversed, shiftMs,
                 opts.processing, opts.applyProcessing, own, opts.applyOwnFilters)
             if like:
               w.writeTrace(file[], t, samples)
