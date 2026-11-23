@@ -20,6 +20,12 @@ type
     bmFitted = "Fitted to this record"
     bmGiven = "Given"
 
+  PickBasis* = enum
+    ## What the guided passes of first-break picking read: a zero-phase high-cut copy of
+    ## each trace (the loaded samples are never changed), or the samples as loaded.
+    pbSmoothed = "smoothed"
+    pbAsRecorded = "as recorded"
+
   BreakModel* = object
     ## Where the overlay's model comes from, and the given one's numbers.
     source*: BreakModelSource

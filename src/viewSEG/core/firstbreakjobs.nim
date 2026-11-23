@@ -12,7 +12,11 @@
 ## 3. **Second pass**: every trace of the fitted sensor is picked again with the picker's own
 ##    guide (`guideVelocity`, `guideT0Ms`; `beforeMs`, `afterMs` = 100 ms), one guide line
 ##    per segment of the model, so the search window is the model's time plus or minus 100
-##    ms. When the user gave a model (`BreakKey.guide`) the shown picks come from a third
+##    ms. The passes read a zero-phase high-cut copy of each chunk (`PickBasis`, `pickCutHz`:
+##    the loaded samples are never changed) and pick with a 40 ms window (`GuidedWindowMs`):
+##    a wavelet that builds over some 50 ms is picked too late, or not confidently, on the
+##    samples as loaded. The picker's own band-pass is causal and delays the picks, so it is
+##    not used. When the user gave a model (`BreakKey.guide`) the shown picks come from a third
 ##    pass guided by it, and the fit (for "Use this record's fit") from the second.
 ## 4. The model is fitted again, trimmed the same way, to the second pass's picks; its
 ##    times are `ShotFit.modelMs` (or the one line's), and `FirstBreaks.setRule` decides
@@ -38,6 +42,7 @@
 import std/[algorithm, math, sequtils]
 import parseSEG
 import processSEG/core/[rows, types, workspace]
+import processSEG/filter/[design, iir]
 import processSEG/qc/[firstbreak, shotfit]
 import breakmodel, filesystem, firstbreaks, inbox, jobs, session, threads
 
@@ -56,9 +61,17 @@ func trustNote(what: string; used: int; then: string): string =
 type BreakProgress* = proc (done, total: int): bool {.closure, gcsafe.}
   ## Called after each chunk; false asks the work to stop (`JobCancelledError`).
 
+proc smoothedCopy*(samples: Tensor[float32]; meta: ChunkMeta; plan: IirPlan[float32];
+    ws: var Workspace): Tensor[float32] =
+  ## A copy of the chunk `samples` with each live row of `meta` filtered by `plan` (zero phase,
+  ## whole rows); `samples` is not changed. `ws` must hold `plan.workspaceSize`.
+  result = samples.clone()
+  plan.applyFilter(result, meta, ws)
+
 proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     killed: openArray[int]; progress: BreakProgress = nil;
-    off: openArray[uint8] = []; guide: BreakModel = BreakModel()): FirstBreaks =
+    off: openArray[uint8] = []; guide: BreakModel = BreakModel();
+    pick: PickBasis = pbSmoothed): FirstBreaks =
   ## The first breaks of the record `traces` of `file` (at `path`), the
   ## traces in `killed` (file trace numbers, ascending) left out. Reads
   ## the record in place; raises `JobCancelledError` when `progress` says stop.
@@ -71,6 +84,10 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   ## - The model is fitted from the traces `fitMask` says (all, unless the
   ##   record has several components; `off` are those the panel switches off);
   ##   every live trace gets its time from it. A header offset of 0 is unset.
+  ## - `pick` says what the guided passes read (`pickedOn`, `highCutHz` and `pickNote` of the
+  ##   result say what they did): smoothing is skipped, and said, when the interval leaves
+  ##   the cut under `PickMinCutHz` or the longest trace is no longer than twice the filter's
+  ##   margin. The filter runs on whole traces (each to its live length) of a copy of each chunk.
   template f: untyped = file[]
   let n = traces.len
   result = FirstBreaks(state: bkDone, first: traces.a, pickMs: newSeq[float64](n),
@@ -95,6 +112,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     result.why = "the sample interval is not known"
     return
   result.dtMs = dt
+  result.pickedOn = pbAsRecorded
   var dead: seq[int] # rows of the record that are not live: killed, other interval, undecodable
   for t in killed:
     if t in traces: dead.add t - traces.a
@@ -109,14 +127,37 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
       fixT0 = true
     result.shiftMs[i] = layoutT0 - keys[i].t0Ms
   let cols = max(1, f.maxSamples(traces))
+  # the smoothing of the guided passes: a plan, or why there is none
+  var smoothing: IirPlan[float32]
+  var smoothed = false
+  var cutHz = 0.0
+  var guidedRan = false # a guided pass was made
+  if pick == pbSmoothed:
+    let cut = pickCutHz(dt)
+    if cut == 0:
+      result.pickNote = "The picks are made on the samples as recorded: the sample interval (" &
+        $dt & " ms) leaves less than " & $int(PickMinCutHz) & " Hz for a high cut."
+    else:
+      try:
+        smoothing = initIirPlan(float32, butterHighCut(cut, PickHighCutSlope), dt, cols, ipZero)
+        if cols > 2 * smoothing.requiredMargin:
+          (smoothed, cutHz) = (true, cut)
+        else:
+          result.pickNote = "The picks are made on the samples as recorded: the traces (" &
+            $cols & " samples) are too short for the high cut's margin (" &
+            $smoothing.requiredMargin & " samples on each side)."
+      except ValueError as e:
+        result.pickNote = "The picks are made on the samples as recorded: " & e.msg
   let passes = if guide.given: 3 else: 2
   let total = n * passes
   type Guided = tuple[params: FirstBreakParams; rows: seq[bool]]
-  proc runPass(guides: seq[Guided]; dst: var seq[FirstBreakPick]; doneBefore: int) =
+  proc runPass(guides: seq[Guided]; dst: var seq[FirstBreakPick]; doneBefore: int;
+      smooth: bool) =
     ## Picks the rows each guide names with its parameters into `dst` (the others stay), the
-    ## record read a chunk at a time.
+    ## record read a chunk at a time; with `smooth`, on a zero-phase high-cut copy of the chunk.
     var plans: seq[FirstBreakPlan[float32]] = @[]
     var ws = initWorkspace()
+    if smooth: ws.reserve(smoothing.workspaceSize)
     for g in guides:
       plans.add initFirstBreakPlan(float32, g.params, dt, cols)
       ws.reserve(plans[^1])
@@ -139,6 +180,18 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
       for r in 0 ..< part.len:
         chunkKeys.add keys[part.a - traces.a + r]
         counts.add own.numSamples(r)
+      var picked = samples # what the picker reads: the chunk, or a smoothed copy of it
+      if smooth:
+        var skipSmooth = failed
+        for r in 0 ..< part.len:
+          var wanted = false
+          for g in guides:
+            if g.rows[part.a - traces.a + r]: wanted = true
+          if not wanted: skipSmooth.add r
+        skipSmooth.sort()
+        skipSmooth = deduplicate(skipSmooth, isSorted = true)
+        picked = smoothedCopy(samples, initChunkMeta(rowsOf(chunkKeys, counts), dt, 0,
+          skipSmooth), smoothing, ws)
       for gi in 0 ..< plans.len:
         var skip = failed
         for r in 0 ..< part.len:
@@ -147,7 +200,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
         skip = deduplicate(skip, isSorted = true)
         let meta = initChunkMeta(rowsOf(chunkKeys, counts), dt, 0, skip)
         var got = newSeq[FirstBreakPick](part.len)
-        plans[gi].pickInto(samples, meta, got, ws)
+        plans[gi].pickInto(picked, meta, got, ws)
         for r in 0 ..< part.len:
           if guides[gi].rows[part.a - traces.a + r]: dst[part.a - traces.a + r] = got[r]
       first = part.b + 1
@@ -157,7 +210,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   var picks = newSeq[FirstBreakPick](n)
   var everyRow = newSeq[bool](n)
   for i in 0 ..< n: everyRow[i] = true
-  runPass(@[(FirstBreakParams(), everyRow)], picks, 0)
+  runPass(@[(FirstBreakParams(), everyRow)], picks, 0, false)
   dead.sort()
   dead = deduplicate(dead, isSorted = true)
   for i in 0 ..< n:
@@ -269,9 +322,10 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
       for i in 0 ..< n:
         rows[i] = eligible[i] and offs[i] > gl.above and offs[i] <= gl.upTo
       guides.add (FirstBreakParams(guideVelocity: gl.velocity, guideT0Ms: gl.t0Ms,
-        beforeMs: GuideWindowMs, afterMs: GuideWindowMs), rows)
+        windowMs: GuidedWindowMs, beforeMs: GuideWindowMs, afterMs: GuideWindowMs), rows)
     result = src
-    runPass(guides, result, doneBefore)
+    runPass(guides, result, doneBefore, smoothed)
+    guidedRan = true
 
   # The second pass: a model from the first pass's picks (without the noise ones), then every
   # trace picked again near it.
@@ -294,6 +348,9 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   if guide.given:
     shown = guidedBy(guide, picks, 2 * n)
     result.twoPass = true
+  if guidedRan:
+    result.pickWindowMs = GuidedWindowMs
+    if smoothed: (result.pickedOn, result.highCutHz) = (pbSmoothed, cutHz)
   result.picks = fitted
   result.picked = 0
   for i in 0 ..< n:
@@ -346,7 +403,8 @@ proc firstBreaksWork*(file: ptr SeismicFile; path: string; key: BreakKey;
     {.cast(gcsafe).}:
       ctx.setPhase "picking and fitting the first breaks"
       found = breaksOfRecord(file, path, traces, key.killed,
-        proc (done, total: int): bool = ctx.progress(done, total), key.off, key.guide)
+        proc (done, total: int): bool = ctx.progress(done, total), key.off, key.guide,
+        key.pick)
       found.key = key
     discard ctx.progress(1, 1)
     clearCycleRoots()

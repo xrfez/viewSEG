@@ -47,6 +47,8 @@ func asPreset*(d: DisplaySettings): DisplaySettings =
   result.breakSize = DisplaySettings().breakSize
   result.breakShowPicks = DisplaySettings().breakShowPicks
   result.breakShowModel = DisplaySettings().breakShowModel
+  result.breakShowWeak = DisplaySettings().breakShowWeak
+  result.breakPickOn = DisplaySettings().breakPickOn
 
 func withPreset*(shown, preset: DisplaySettings): DisplaySettings =
   ## `preset` drawn on a plot whose display is `shown`: its orientation
@@ -60,6 +62,8 @@ func withPreset*(shown, preset: DisplaySettings): DisplaySettings =
   result.breakSize = shown.breakSize
   result.breakShowPicks = shown.breakShowPicks
   result.breakShowModel = shown.breakShowModel
+  result.breakShowWeak = shown.breakShowWeak
+  result.breakPickOn = shown.breakPickOn
 
 func sameValue[T](a, b: T): bool =
   ## `a == b`, field by field, a number that is not a number equal to

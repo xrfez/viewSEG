@@ -43,7 +43,7 @@
 ## agent's edits (`keep = true`), "the agent's edits are remembered".
 
 import std/[json, math, os, sequtils, strutils, tables]
-import viewSEG/core/[analysis, colourmaps, geometry, nif, phasepicture, plotoptions, state]
+import viewSEG/core/[analysis, breakmodel, colourmaps, geometry, nif, phasepicture, plotoptions, state]
 import viewSEG/remote/[schema, tools]
 import utils/[fixtures, waiting]
 
@@ -84,7 +84,8 @@ const Reached = {
   "plot.display.breakModel.v2": "display", "plot.display.breakModel.crossover": "display",
   "plot.display.breakPickColour": "display", "plot.display.breakModelColour": "display",
   "plot.display.breakSize": "display", "plot.display.breakShowPicks": "display",
-  "plot.display.breakShowModel": "display",
+  "plot.display.breakShowModel": "display", "plot.display.breakShowWeak": "display",
+  "plot.display.breakPickOn": "display",
   "plot.order": "sort", "plot.seismic": "trace filter", "plot.auxiliary": "trace filter",
   "plot.templateOnly": "trace filter",
   "plot.header.auto": "display header",
@@ -178,7 +179,8 @@ const Everything = DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDens
   breakModel: BreakModel(source: bmGiven, v1: 2400, interceptMs: 5, v2: 3500, crossover: 800),
   breakPickColour: Rgba(r: 10, g: 200, b: 30, a: 255),
   breakModelColour: Rgba(r: 250, g: 128, b: 0, a: 255), breakSize: bzLarge,
-  breakShowPicks: false, breakShowModel: false)
+  breakShowPicks: false, breakShowModel: false, breakShowWeak: true,
+  breakPickOn: pbAsRecorded)
   ## a display with every field away from its default
 const Keys = @[SortKey(field: hfOffset, descending: true), SortKey(field: hfChannel)]
   ## a sort that is no preset: the user's own keys (`customOrder`) too

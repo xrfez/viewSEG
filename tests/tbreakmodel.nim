@@ -230,6 +230,21 @@ proc main*() =
       "a preset keeps no size"
     doAssert withPreset(d, DisplaySettings()).breakSize == bzLarge
     doAssert DisplaySettings().breakSize == bzMedium
+    # Seen to fail: with the weak picks' switch or the picking choice left out of the settings
+    # writer, "the weak picks' switch was not kept" and "the picking choice was not kept".
+    doAssert not DisplaySettings().breakShowWeak and DisplaySettings().breakPickOn == pbSmoothed
+    doAssert settingsDocument(Settings()).count("breakShowWeak") == 0 and
+      settingsDocument(Settings()).count("breakPickOn") == 0, "defaults are not written"
+    d.breakShowWeak = true
+    d.breakPickOn = pbAsRecorded
+    s.plot.display = d
+    let weak = readSettings(settingsDocument(s), "settings.nif", Settings(), problems)
+    doAssert problems.len == 0, $problems
+    doAssert weak.plot.display.breakShowWeak, "the weak picks' switch was not kept"
+    doAssert weak.plot.display.breakPickOn == pbAsRecorded, "the picking choice was not kept"
+    doAssert not asPreset(d).breakShowWeak and asPreset(d).breakPickOn == pbSmoothed
+    doAssert withPreset(d, DisplaySettings()).breakShowWeak and
+      withPreset(d, DisplaySettings()).breakPickOn == pbAsRecorded
     doAssert bounded(DisplaySettings(breakPickColour: Rgba(r: 1, g: 2, b: 3, a: 7))).
       breakPickColour.a == 255
 

@@ -1963,9 +1963,10 @@ func guidedIndex(state: AppState; k: int): tuple[exact, other: int] =
   let src = state.panels[k].layers[0].source
   if src.kind != lsRecord: return
   let guide = state.panelGuide(k)
+  let pick = state.panels[k].layers[0].display.breakPickOn
   for i in countdown(state.breaks.high, 0):
     template b: untyped = state.breaks[i]
-    if b.key.file == src.file and b.key.gather == src.gather:
+    if b.key.file == src.file and b.key.gather == src.gather and b.key.pick == pick:
       if b.key.guide == guide:
         if result.exact < 0: result.exact = i
       elif b.state == bkDone and result.other < 0: result.other = i
@@ -6697,7 +6698,7 @@ proc breakKeyOf(state: AppState; k: int): (bool, BreakKey, int) =
   let model = p.layers[0].display.breakModel.bounded
   result = (true, (src.file, src.gather, s.keysRevision,
     state.editsAt(s.path).listIn(teKilled, s.gathers[src.gather].traces), off,
-    (if model.given: model else: BreakModel())), i)
+    (if model.given: model else: BreakModel()), p.layers[0].display.breakPickOn), i)
 
 proc breakKeyFor(state: AppState; i, gather: int): BreakKey =
   ## The key of the first breaks of record `gather` of session `i`: that of a
@@ -6713,7 +6714,7 @@ proc breakKeyFor(state: AppState; i, gather: int): BreakKey =
       return
   let s = state.sessions[i]
   (s.id, gather, s.keysRevision, state.editsAt(s.path).listIn(teKilled, s.gathers[gather].traces),
-    newSeq[uint8](), BreakModel())
+    newSeq[uint8](), BreakModel(), pbSmoothed)
 
 const SignatureNoFilters = NoiseFilters + {mfMissing, mfUnlisted}
   ## the filters a signature file has no receivers for: the noise test and the template's

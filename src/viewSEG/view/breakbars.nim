@@ -98,10 +98,12 @@ func screenOf*(view: Viewport; m: Turn; plot: Rect; axis: Axis; value: float64):
   if m.reversed[axis]: plot.pos.along(s) + extent - d else: plot.pos.along(s) + d
 
 func breakGeometry*(b: FirstBreaks; shown: openArray[int]; layout: PanelLayout;
-    view: Viewport; m: Turn; plot: Rect; size = bzMedium; ui = 1'f32): BreakGeometry =
+    view: Viewport; m: Turn; plot: Rect; size = bzMedium; ui = 1'f32;
+    showWeak = true): BreakGeometry =
   ## The marks of the traces of `layout` in `view`, in `plot` (pixels),
-  ## turned as `m` says, bars of `size` (`barWidth`; `ui`: the interface scale). `shown[position]` is the file trace at each
-  ## position. Empty unless `b` is done.
+  ## turned as `m` says, bars of `size` (`barWidth`; `ui`: the interface scale). `shown[position]`
+  ## is the file trace at each position. Without `showWeak` a pick that is `faint` has no mark.
+  ## Empty unless `b` is done.
   result = BreakGeometry()
   if b.state != bkDone or shown.len == 0 or layout.traces <= 0: return
   let ta = m.along[axTraces]
@@ -128,7 +130,7 @@ func breakGeometry*(b: FirstBreaks; shown: openArray[int]; layout: PanelLayout;
       if not ym.isNaN and inside(ym):
         result.marks.add BreakMark(kind: bmModel, a: tb.other.at(c - half, ym),
           b: tb.other.at(c + half, ym), position: p, trace: trace)
-      if not yp.isNaN and inside(yp):
+      if not yp.isNaN and inside(yp) and (showWeak or not b.faintOf(trace)):
         let h = half * pickShare(size)
         result.marks.add BreakMark(kind: bmPick, a: tb.other.at(c - h, yp),
           b: tb.other.at(c + h, yp), position: p, trace: trace,
@@ -157,7 +159,7 @@ func breakGeometry*(b: FirstBreaks; shown: openArray[int]; layout: PanelLayout;
       var ys: array[bmModel .. bmPick, float32]
       for (kind, value) in [(bmModel, b.modelOf(trace) + sh), (bmPick, b.pickOf(trace) + sh)]:
         ys[kind] = NaN.float32
-        if not value.isNaN:
+        if not value.isNaN and (showWeak or kind == bmModel or not b.faintOf(trace)):
           ys[kind] = screenOf(view, m, plot, axTime, value)
           if inside(ys[kind]):
             lo[kind][col] = min(lo[kind][col], ys[kind])

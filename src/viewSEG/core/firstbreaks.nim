@@ -45,7 +45,7 @@ type
     gdFailed ## guided by another model; picking for this one failed or was stopped
 
   BreakKey* = tuple[file: SessionId; gather, keys: int; killed: seq[int]; off: seq[uint8];
-      guide: BreakModel]
+      guide: BreakModel; pick: PickBasis]
     ## What a result is of: the record, the file's keys as they were read
     ## (a join or a header edit changes them), the traces killed in it, the
     ## components the panel's filter switches off (which traces a node
@@ -93,6 +93,12 @@ type
     medianDiffMs*: float64 ## of the comparable, the median of pick less model; NaN for none
     rule*: BreakRule ## what the rule found, per trace and for the record
     geometry*: RuleGeometry ## where the traces are, as the rule needs it
+    pickedOn*: PickBasis
+      ## what the guided passes read: the smoothed copy, or the samples as recorded (also when
+      ## smoothing was asked and could not be done: `pickNote` says why)
+    highCutHz*: float64 ## with `pbSmoothed`: the high cut's corner (Hz); 0 for none
+    pickWindowMs*: float64 ## the picker's window in the guided passes (ms)
+    pickNote*: string ## when smoothing was asked and not done, why, in words
     twoPass*: bool ## the picks are those of the second, guided pass
     passNote*: string
       ## when the second pass was not made, why, in words (the first-pass picks stand)
@@ -105,10 +111,31 @@ type
 
 func sameRecord*(a, b: BreakKey): bool =
   ## Whether `a` and `b` are of the same record as it is now: everything but the guide (the
-  ## given model the second pass was guided by). A result stays the record's when the given
+  ## given model the second pass was guided by). What the guided passes read (`pick`) is of
+  ## the record: its picks, and the noisy-trace test's, differ with it. A result stays the record's when the given
   ## model changes; only its guided picks are made again.
   a.file == b.file and a.gather == b.gather and a.keys == b.keys and a.killed == b.killed and
-    a.off == b.off
+    a.off == b.off and a.pick == b.pick
+
+const
+  PickHighCutHz* = 60.0
+    ## the corner (-6 dB, zero phase) of the high cut the guided passes pick on, at most
+  PickHighCutSlope* = 24.0   ## its slope, dB per octave (effective: two passes of two poles)
+  PickCutNyquistShare* = 0.8 ## the cut is at most this share of the record's Nyquist frequency
+  PickMinCutHz* = 40.0
+    ## the cut must lie two octaves above 10 Hz, the lowest break frequency the picker
+    ## expects, else the picks are made on the samples as loaded
+  GuidedWindowMs* = 40.0
+    ## the picker's window in the guided passes (its energy and amplitude windows): a
+    ## wavelet that builds over some 50 ms needs more than the first pass's 20 ms
+
+func pickCutHz*(dtMs: float64): float64 =
+  ## The corner of the high cut the guided passes pick on at sample interval `dtMs`: the
+  ## smaller of `PickHighCutHz` and `PickCutNyquistShare` of the Nyquist frequency; 0 when
+  ## that leaves less than `PickMinCutHz` (a coarse interval) or `dtMs` is not usable.
+  if not (dtMs > 0 and dtMs < Inf): return 0
+  let cut = min(PickHighCutHz, PickCutNyquistShare * 500.0 / dtMs)
+  if cut >= PickMinCutHz: cut else: 0
 
 const
   OffModelMs* = LimitFloorMs

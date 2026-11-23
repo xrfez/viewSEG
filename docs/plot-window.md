@@ -569,7 +569,8 @@ same setting. For each trace of the record shown the plot draws, in the theme's 
 
 A trace is flagged, with a thin line joining the two bars and a heavier pick bar, when it is
 off the model or off its neighbours (below). A pick that is not compared (confidence below 0.5,
-or more than 100 ms from the model) is drawn faint with no line. A trace with no pick shows only the model bar; a trace the model cannot
+or more than 100 ms from the model) is a weak pick: it is not drawn unless **Show weak picks**
+is ticked (below), and then faint with no line; the counts and the flags are the same either way. A trace with no pick shows only the model bar; a trace the model cannot
 place (no offset) only the pick. The bars have a halo in the plot's background colour, so they
 read over the wiggles and over density. They are the traces' own: they follow zoom, pan, the
 sort order and the trace filter, are drawn for the traces in view only, and a killed trace has
@@ -594,6 +595,13 @@ opens the popover (a click on the key's "given" or count part does too). The two
 `breakShowPicks` and `breakShowModel` in `settings.nif` (written only when off), no display
 preset carries them, and the agent's `display` command takes them.
 
+**Showing the weak picks.** The popover's "Colours and size" part has a **Show weak picks** box,
+off by default: a pick that is not compared with the model (low in confidence, or no break
+found near the model) is then left out of the picture, which shows the picks that mean
+something. Tick it to draw them faint as before. It is a drawing choice only (no new picking),
+kept as `breakShowWeak` in `settings.nif` (written only when on); no display preset carries it,
+and the agent's `display` command takes it.
+
 **Colours and size.** The key's popover has a colour box for each bar (the pick's and the
 model's), a **Reset colours** button (back to the theme's pink and blue) and a **Size**
 choice. Medium, the default, makes a bar about 80 % of one trace's width on the screen
@@ -604,12 +612,27 @@ the plot's display (`breakPickColour`, `breakModelColour`, `breakSize` in `setti
 no display preset carries them; the agent's `display` command takes them, and a panel's
 `state` shows them in its display.
 
+**Pick on.** The popover's "Picking" part chooses what the second (guided) pass reads: **Smoothed
+(high cut 60 Hz)**, the default, or **As recorded**. Smoothed picks on a zero-phase high-cut copy
+of each trace (processSEG's Butterworth, 24 dB/octave, corner 60 Hz or 0.8 of the record's
+Nyquist frequency if that is lower, no phase shift); the samples the plot shows are never
+changed. A wavelet that builds slowly is then picked nearer its start, and more of the visible
+breaks get a confident pick (on a record whose wavelet built over 40 ms, the picks came 2 ms
+nearer the onset and 54 of 60 traces had a confident pick, against 39). The words name the cut
+actually used. When the record's sample interval leaves the cut below 40 Hz (an interval over
+10 ms), or its traces are too short for the filter, the picks are made on the samples as
+recorded and the popover says so. Changing the choice picks the record again once (the first
+pass does not change); the record's noisy-trace check, which uses the same picks, follows it
+while the overlay is on. Kept as `breakPickOn` in `settings.nif` (written only when "as
+recorded"); no display preset carries it, and the agent's `display` command takes it. Both
+choices use a 40 ms window in the guided pass (the first pass keeps 20 ms).
+
 **Picking and the model.** The record is picked twice. The first pass has no search window, so a
 trace with no visible break gets a pick on noise. A model is fitted to those picks, dropping
 the picks far from it (a start from the closer half, then the picks within three robust
 sigmas, at least 12 ms, of the fit, up to five rounds; at least 10 picks must remain). The
 second pass picks every trace again in a window of 100 ms either side of that model (the
-picker's own guide and window), and the model is fitted again, trimmed the same way, to those
+picker's own guide, with its energy windows 40 ms long, on the smoothed copy by default), and the model is fitted again, trimmed the same way, to those
 picks; it is one straight line unless a second segment has at least 15 trimmed picks beyond
 the crossover and fits clearly better, or the two segments hold at least 15 more of all the
 confident picks than the line does (so a bend whose far segment holds most picks stays two

@@ -25,7 +25,7 @@ import std/math
 import parseSEG
 import viewSEG/core/[breakmodel, firstbreaks, geometry, join, panels, state]
 import viewSEG/ui/imgui/app
-import utils/[breakfiles, fixtures, waiting]
+import utils/[breakfiles, fbpickfiles, fixtures, waiting]
 
 var
   waited = 0            ## frames since the step's action
@@ -264,6 +264,33 @@ proc main*() =
       result = f.display.breakShowPicks and f.display.breakShowModel
       doAssert waited < 200 or result, "the Show picks box did not show the picks"
       if result: f.shoot("popover-boxes"))
+    # the popover's Picking choice re-picks the record once; the weak picks' box is a drawing
+    # choice only. Seen to fail: with the Picking radio buttons left out, "no Picking choice";
+    # with the choice not in the key, "the picks were not made again".
+    step("the Picking choice is there", noop, proc (f: FrameInfo): bool =
+      result = f.markOf("plot.first break pick on smoothed").size.x > 0
+      doAssert waited < 200 or result, "no Picking choice in the popover"
+      if result:
+        doAssert f.markOf("plot.first break pick on recorded").size.x > 0 and
+          f.markOf("plot.first break show weak").size.x > 0, "no As recorded or weak picks box"
+        doAssert f.now.pickedOn == pbSmoothed and f.now.highCutHz == 60
+        f.shoot("popover-picking"))
+    step("the Show weak picks box", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break show weak").centre), proc (f: FrameInfo): bool =
+      result = f.display.breakShowWeak
+      doAssert waited < 200 or result, "the Show weak picks box did not set the switch")
+    step("click As recorded", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break pick on recorded").centre),
+      proc (f: FrameInfo): bool =
+      result = f.display.breakPickOn == pbAsRecorded and f.shown and f.core.jobs.active.len == 0 and
+        f.now.pickedOn == pbAsRecorded and f.now.key.pick == pbAsRecorded
+      doAssert waited < 400 or result, "the picks were not made again on the samples as recorded")
+    step("click Smoothed", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.first break pick on smoothed").centre),
+      proc (f: FrameInfo): bool =
+      result = f.display.breakPickOn == pbSmoothed and f.shown and f.core.jobs.active.len == 0 and
+        f.now.pickedOn == pbSmoothed
+      doAssert waited < 400 or result, "the picks were not made again on the smoothed copy")
     runSteps("model", opts, steps)
     if shots.len > 0:
       # pictures for a look: the overlay at normal zoom and, on records of more traces,
@@ -305,6 +332,39 @@ proc main*() =
             f.shoot("gain-none")
             waited > 25)
         runSteps(name, o, more)
+      # a slowly building break in noise, whose weak picks are hidden and then shown
+      block weakPicks:
+        let big = fx.fbShot("weak.sgy")
+        let cfg = fx.dir / "config-weak"
+        createDir(cfg)
+        var o = opts
+        o.openPaths = @[big]
+        o.configDir = some(cfg)
+        var more: seq[Step]
+        proc add(n: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+          more.add Step(name: n, act: act, done: done)
+        add("opened", noop, proc (f: FrameInfo): bool = f.ready)
+        add("on", proc (f: FrameInfo) =
+          var d = f.display
+          d.firstBreaks = true
+          d.mode = dmWiggle
+          d.fills = {wfPositive}
+          d.gain = dgFixed
+          d.breakSize = bzLarge
+          f.apply(Command(kind: ckDisplay, panel: MainPanel, display: d)),
+          proc (f: FrameInfo): bool = f.ready and f.shown and waited > 20)
+        add("hidden", noop, proc (f: FrameInfo): bool =
+          f.shoot("weak-hidden")
+          waited > 25)
+        add("weak", proc (f: FrameInfo) =
+          var d = f.display
+          d.breakShowWeak = true
+          f.apply(Command(kind: ckDisplay, panel: MainPanel, display: d)),
+          proc (f: FrameInfo): bool = f.display.breakShowWeak and waited > 20)
+        add("shown", noop, proc (f: FrameInfo): bool =
+          f.shoot("weak-shown")
+          waited > 25)
+        runSteps("weak", o, more)
   echo "tguibreakmodel: ok"
 
 when isMainModule:

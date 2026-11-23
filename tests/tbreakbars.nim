@@ -52,6 +52,50 @@ proc main*() =
       doAssert spans[c][0] - 0.7 <= y and y <= spans[c][1] + 0.7, "trace " & $t & " at " &
         $b.pickOf(t) & " ms has no mark in its column"
 
+  block weakPicksAreLeftOutUnlessAsked:
+    # Seen to fail: with the weak picks always drawn, "a weak pick has a bar" and "a weak pick
+    # is in a line".
+    for n in [40, 2000]:
+      var b = made(n)
+      var weak: seq[int]
+      for i in 0 ..< n:
+        if (n == 40 and i mod 4 == 0) or (n == 2000 and i in 1000 ..< 1500):
+          b.confidence[i] = 0.1
+          weak.add i
+      var shown = newSeq[int](n)
+      for i in 0 ..< n: shown[i] = i
+      let layout = PanelLayout(traces: n, samples: 1000, dtMs: 2, t0Ms: 0)
+      let view = Viewport(traces: Span(lo: -0.5, hi: n.float64 - 0.5),
+        timeMs: Span(lo: 0, hi: 2000), columns: 600, rows: 400)
+      let all = breakGeometry(b, shown, layout, view, TimeDown, plot)
+      let some = breakGeometry(b, shown, layout, view, TimeDown, plot, showWeak = false)
+      doAssert b.faintOf(weak[0]) and not b.faintOf(1)
+      var (faintAll, faintSome, picksAll, picksSome) = (0, 0, 0, 0)
+      for m in all.marks:
+        if m.kind == bmPick:
+          inc picksAll
+          if m.faint: inc faintAll
+      for m in some.marks:
+        if m.kind == bmPick:
+          inc picksSome
+          if m.faint: inc faintSome
+      if n == 40:
+        doAssert all.lines == false and faintAll == 10 and picksAll == 40, $faintAll
+        doAssert faintSome == 0 and picksSome == 30, "a weak pick has a bar: " & $picksSome
+      else:
+        doAssert all.lines and some.lines
+        # a line through the strong picks only: it lacks the pixel columns the weak ones filled
+        # (a quarter of the record, whose columns have no other pick)
+        doAssert picksSome > 0 and picksSome < picksAll,
+          "a weak pick is in a line: " & $picksSome & " of " & $picksAll
+      # the models and the strong picks are the same
+      var modelsAll, modelsSome = 0
+      for m in all.marks:
+        if m.kind == bmModel: inc modelsAll
+      for m in some.marks:
+        if m.kind == bmModel: inc modelsSome
+      doAssert modelsAll == modelsSome
+
   block hiddenKindsDrawNothing:
     # Seen to fail: with the link drawn whenever the pick is, "a link with the model hidden".
     for k in [bmModel, bmPick]:

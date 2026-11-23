@@ -403,6 +403,12 @@ proc breaksJson(b: FirstBreaks; unit: SurveyUnit; fromSurvey: bool): JsonNode =
   result = %*{"state": $b.state, "picked": b.picked, "modelled": b.modelled,
     "offsetsFrom": $b.source, "words": b.modelWords(unit, fromSurvey),
     "unitFromSurvey": fromSurvey, "key": {"given": b.keyParts.given, "off": b.keyParts.off}}
+  if b.state == bkDone:
+    # what the guided passes read (`core/firstbreakjobs`)
+    result["pickedOn"] = %($b.pickedOn)
+    result["highCutHz"] = %b.highCutHz
+    result["pickWindowMs"] = %b.pickWindowMs
+    if b.pickNote.len > 0: result["pickNote"] = %b.pickNote
   result["model"] = %(if b.isGiven: "given" else: "fitted")
   if b.isGiven:
     let m = b.given

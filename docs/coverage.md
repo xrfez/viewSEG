@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.19.1: capabilities | names | processSEG 0.11.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 54 (20 in part) | 180 | 37 (25 in part) | 187 |
+| `built` | 54 (20 in part) | 180 | 39 (27 in part) | 194 |
 | `internal` | 17 | 46 | 5 | 39 |
-| `planned` | 33 | 220 | 44 | 398 |
+| `planned` | 33 | 220 | 42 | 391 |
 | `to plan` | 2 | 10 | 1 | 5 |
 | `not applicable` | 21 | 366 | 6 | 69 |
 | all | 127 | 822 | 93 | 698 |
@@ -290,9 +290,9 @@ name, so these are building blocks for code that works on raw headers.
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Trapezoid band-pass, low-cut, high-cut (zero phase) | `bandPass`, `lowCut`, `highCut`, `Corners`, `bandPassOp`, `filterOp`, `initFilterPlan`, `FilterPlan` (`samples`, `nfft`, `spec`, `dtMs`, `workspaceSize`), `applyFilter`, `FilterSpec`, `ResponseKind` | Seismic window: Filters in its strip: low-cut, high-cut or band-pass by four corners (`bandPassOp(Corners)`; with notches, `filterOp(bandPass(corners).withNotch(...))`), live as a corner is typed, run by the panel's reader on the samples it holds; the filter on its own (`initFilterPlan`, `applyFilter`) for the spectrum and exports | built (the Seismic window's Filters: `bandPass`, `Corners`, `bandPassOp`, `filterOp`); planned (`lowCut`, `highCut`, the filter plan on its own) |
-| Butterworth magnitudes | `butterBandPass`, `butterLowCut`, `butterHighCut` | Processing window: Butterworth | planned |
+| Butterworth magnitudes | `butterBandPass`, `butterLowCut`, `butterHighCut` | First-break overlay: the guided picking on a smoothed copy (a 60 Hz zero-phase high cut, Overlay settings > Picking) | built (`butterHighCut`: the picking's smoothed copy); planned (`butterBandPass`, `butterLowCut`: Butterworth filters in the Processing window) |
 | Notches and zero DC | `withNotch`, `withZeroDc`, `Notch` | Seismic window: Filters in its strip, notches (50 or 60 Hz in one click, any frequency and width, with harmonics: `withNotch` once for each below Nyquist); zero DC in the processing window | built (the Seismic window's Filters: `withNotch`, `Notch`); planned (`withZeroDc`) |
-| IIR, zero or minimum phase | `initIirPlan`, `iirOp`, `IirPhase`, `IirPlan` (`order`, `phase`), `iirLanes`, `causalEnergyFraction` | Processing window: IIR, phase choice | planned |
+| IIR, zero or minimum phase | `initIirPlan`, `iirOp`, `IirPhase`, `IirPlan` (`order`, `phase`), `iirLanes`, `causalEnergyFraction` | First-break overlay: the picking's zero-phase smoothed copy | built (`initIirPlan`, `IirPhase`, `IirPlan`: the picking's zero-phase copy); planned (`iirOp`, `iirLanes`, `causalEnergyFraction`: the IIR filter with a phase choice in the Processing window) |
 | Trend handling at the edges | `TrendRemoval` | Processing window, advanced | planned |
 | Filter response | `response`, `responseInto`, `gainAt`, `magnitudeAt`, `narrowestRampHz`, `appliedResponseInto` | New plot > FFT (`F`) and the live Spectrum panel: the response the plot's filters apply drawn under the spectrum (Response, on by default: measured by an impulse through their plan (`appliedResponseInto`), on a grid of its own dense at each notch and ramp), and the bins made finer for a narrow filter (`narrowestRampHz`); the design's response curve in the processing window | built (the spectrum windows: `narrowestRampHz`); planned (`response`, `responseInto`, `gainAt`, `magnitudeAt`: the processing window); to plan (`appliedResponseInto`: the viewer's folded sum is 10 to 40 times faster; switch when processSEG's is) |
 | Zoom margins | `requiredMargin`, `impulseLength`, `decodeWindow`, `energyFraction` | internal: zoomed tiles decode enough samples | internal; not applicable (`impulseLength`, `energyFraction`: a plan's `requiredMargin` gives the margin) |

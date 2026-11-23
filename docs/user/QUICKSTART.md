@@ -623,8 +623,10 @@ from the traces beside it on its receiver line (this finds one wrong station, ev
 real first breaks bend away from a straight model, and a block of wrong stations flags only
 itself). A trace where the picker found no break (a faint pick) is **no break found**, and one
 beyond the offsets where breaks are seen at all (where fewer than a fifth of the traces have a
-break near the model) is never judged: both are drawn faint with no line, counted apart and
-never flagged. A trace whose break was found 100 to 400 ms from the model (a station placed a
+break near the model) is never judged: both are weak picks, counted apart and never flagged; they are not drawn unless **Show weak picks**
+(overlay settings, the wheel at the key's end) is ticked, and then faint with no line. The overlay settings also choose what the picking reads: **Pick on Smoothed** (the default: a
+60 Hz zero-phase high cut of each trace, so slowly building breaks are picked nearer their
+start; the plot's samples are not changed) or **As recorded**. A trace whose break was found 100 to 400 ms from the model (a station placed a
 few hundred metres wrong) is **far off the model** and flagged; a pick farther off, or before
 any break can arrive, is noise. The record's words add when the picks lean to one side of the
 source, or are all early or late by the same amount: the source may be placed or named wrongly.

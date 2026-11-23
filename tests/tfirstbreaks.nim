@@ -20,7 +20,9 @@
 ## whatever the guide, "200 jobs in 200 frames" for two panels with two models; with a stopped
 ## picking for a given model leaving the fit's picks shown without a word, the stop's check;
 ## with the views not kept, "the views are made again on every frame"; with the neighbour rule
-## leaving the traces off the model out, "trace 19 off its neighbours" on the 80 ms drift.
+## leaving the traces off the model out, "trace 19 off its neighbours" on the 80 ms drift;
+## with the pick choice left out of the key, "0 jobs in 200 frames" for the choice (the picks
+## were not made again on the samples as recorded).
 
 import std/[math, os, strutils]
 import parseSEG
@@ -267,6 +269,51 @@ proc main*() =
       # the view each shows is made once, not on every frame
       doAssert st.shownBreaksKept(st.findPanel(MainPanel)) and
         st.shownBreaksKept(st.findPanel(other)), "the views are made again on every frame"
+      st.shutdown()
+
+  block changingWhatThePickingReadsPicksOnceAndSettles:
+    # the choice is part of the result's key: a new one is made, the old one given up, and no
+    # frame afterwards asks again; the weak picks' switch is only a drawing choice, so it asks
+    # for nothing; the record's check (which uses the guided picks) follows the choice only
+    # while the overlay is on
+    withFixtures fx:
+      let path = fx.shotSegy("basis.sgy", gHeaderOffset)
+      var st = initAppState()
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut and
+        st.jobs.active.len == 0)
+      var d = st.panel(MainPanel).layers[0].display
+      doAssert d.breakPickOn == pbSmoothed and not d.breakShowWeak
+      d.firstBreaks = true
+      st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+      doAssert st.settle(st.firstBreaks.len == 1 and st.firstBreaks[0].state == bkDone and
+        st.jobs.active.len == 0)
+      doAssert st.firstBreaks[0].pickedOn == pbSmoothed and st.firstBreaks[0].highCutHz == 60
+      doAssert st.breakKeyFor(0, 0).pick == pbSmoothed
+      d.breakShowWeak = true
+      st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+      for frame in 0 ..< 20:
+        discard st.drainInbox()
+        doAssert st.jobs.active.len == 0 and st.firstBreaks.len == 1 and
+          st.firstBreaks[0].state == bkDone, "the weak picks' switch asked for new picking"
+      d.breakPickOn = pbAsRecorded
+      st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+      var jobs: seq[JobId]
+      for frame in 0 ..< 200:
+        discard st.drainInbox()
+        for b in st.firstBreaks:
+          if b.job != NoJob and b.job notin jobs: jobs.add b.job
+        sleep 2
+      doAssert jobs.len == 1, $jobs.len & " jobs in 200 frames"
+      doAssert st.firstBreaks.len == 1 and st.firstBreaks[0].state == bkDone and
+        st.firstBreaks[0].key.pick == pbAsRecorded and
+        st.firstBreaks[0].pickedOn == pbAsRecorded and st.firstBreaks[0].highCutHz == 0 and
+        st.jobs.active.len == 0, "the picks were not made again on the samples as recorded"
+      doAssert st.shownBreaks(0).key.pick == pbAsRecorded
+      doAssert st.breakKeyFor(0, 0).pick == pbAsRecorded, "the record's check follows the choice"
+      d.firstBreaks = false
+      st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+      doAssert st.breakKeyFor(0, 0).pick == pbSmoothed, "the check follows a hidden overlay"
       st.shutdown()
 
   block aNewKeyCancelsTheRunningJobAndItsLateAnswerIsDropped:

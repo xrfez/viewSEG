@@ -1,7 +1,8 @@
 ## A synthetic shot over a half space for the first-break overlay's tests: 48
 ## traces of 2000 ms at 2 ms, the offsets 100 m to 2450 m, a first break at
-## 20 ms plus 0.4 ms a metre (2500 m/s) as a Ricker wavelet in a little noise,
-## and one trace (`PlantedTrace`) whose data arrive `PlantedMs` late: its
+## 20 ms plus 0.4 ms a metre (2500 m/s) as a Ricker wavelet whose centre lies 25 ms later (a
+## 30 Hz Ricker's first motion, as a picker sees it, is some 25 ms before its peak) in a
+## little noise, and one trace (`PlantedTrace`) whose data arrive `PlantedMs` late: its
 ## header is wrong. The offsets are in the headers, or derived from the
 ## coordinates, or not given (`Geometry`).
 
@@ -34,7 +35,7 @@ proc shotSegy*(fx: Fixtures; name: string; geometry: Geometry): string =
   for i in 0 ..< Traces:
     for j in 0 ..< Samples: buf[j] = 0
     let late = if i == PlantedTrace: PlantedMs else: 0.0
-    buf.addRicker(Dt, arrivalMs(offsetOf(i)) + late + 15, 30, 1.0)
+    buf.addRicker(Dt, arrivalMs(offsetOf(i)) + late + 25, 30, 1.0)
     buf.addNoise(0.03, int64(i + 1))
     var k = initTraceKeys()
     (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(i + 1), 0.0,
@@ -67,7 +68,7 @@ proc customShot*(fx: Fixtures; name: string; traces: int; tweak: Tweak): string 
     k.offset = offsetOf(i mod Traces)
     let at = tweak(i, k)
     for j in 0 ..< Samples: buf[j] = 0
-    buf.addRicker(Dt, at + 15, 30, 1.0, t0Ms = k.t0Ms)
+    buf.addRicker(Dt, at + 25, 30, 1.0, t0Ms = k.t0Ms)
     buf.addNoise(0.03, int64(i + 1))
     w.writeTrace(k, buf)
   let log = w.close()

@@ -200,6 +200,12 @@ type
     breakShowPicks*, breakShowModel*: bool = true
       ## whether the overlay draws the pick bars and the model bars; each can be hidden to
       ## see the other alone; not part of a preset either
+    breakShowWeak*: bool
+      ## whether the overlay draws the picks not compared with the model (unconfident, or no
+      ## break found) faint; off by default; not part of a preset either
+    breakPickOn*: PickBasis = pbSmoothed
+      ## what the overlay's guided picking reads (`core/firstbreakjobs`): a smoothed copy or
+      ## the samples as recorded; not part of a preset either
 
   Layer* = object
     source*: LayerSource

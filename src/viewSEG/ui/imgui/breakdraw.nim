@@ -113,6 +113,11 @@ proc drawLookChoice(d: var DisplaySettings; ink: PlotInk; marks: var Marks): boo
   igSameLine(0, -1)
   if igCheckbox("Show model", addr d.breakShowModel): result = true
   marks.mark("plot.first break show model")
+  if igCheckbox("Show weak picks", addr d.breakShowWeak): result = true
+  marks.mark("plot.first break show weak")
+  if igIsItemHovered(0):
+    igSetTooltip("%s", ("Draw the picks that are not compared with the model (low in " &
+      "confidence, or no break found) faint").cstring)
   var c = colourChoice("##breakPickColour", "pick bar", d.breakPickColour, ink.breakPick,
     marks, "plot.first break pick colour")
   if c.changed:
@@ -138,6 +143,33 @@ proc drawLookChoice(d: var DisplaySettings; ink: PlotInk; marks: var Marks): boo
       d.breakSize = sz
       result = true
     marks.mark("plot.first break size " & $sz)
+
+func cutWords(b: FirstBreaks): string =
+  ## "high cut 60 Hz": the cut the smoothed picking uses on `b`'s record (its sample interval),
+  ## or says there is none at that interval.
+  let cut = if b.dtMs > 0 and b.dtMs < Inf: pickCutHz(b.dtMs) else: PickHighCutHz
+  if cut > 0: "high cut " & $int(round(cut)) & " Hz"
+  else: "no high cut at this sample interval"
+
+proc drawPickChoice(b: FirstBreaks; d: var DisplaySettings; t: Theme; marks: var Marks): bool =
+  ## What the guided picking reads (`PickBasis`): true when `d` changed.
+  igSeparatorText("Picking")
+  igTextUnformatted("Pick on", nil)
+  for basis in PickBasis:
+    igSameLine(0, -1)
+    let label = if basis == pbSmoothed: "Smoothed (" & b.cutWords & ")" else: "As recorded"
+    if igRadioButton_Bool(label.cstring, d.breakPickOn == basis) and d.breakPickOn != basis:
+      d.breakPickOn = basis
+      result = true
+    marks.mark("plot.first break pick on " & (if basis == pbSmoothed: "smoothed" else: "recorded"))
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+  igTextWrapped("Smoothed: the picker reads a zero-phase high-cut copy of each trace, so a " &
+    "break that builds slowly is found nearer its start. The samples shown are not changed.")
+  igPopStyleColor(1)
+  if b.pickNote.len > 0:
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+    igTextWrapped(b.pickNote.cstring)
+    igPopStyleColor(1)
 
 proc drawModelChoice(b: FirstBreaks; unit: SurveyUnit; m: var BreakModel; t: Theme;
     marks: var Marks): bool =
@@ -273,7 +305,7 @@ proc drawBreakKey*(b: FirstBreaks; unit: SurveyUnit; fromSurvey: bool; d: Displa
     igOpenPopup_Str(BreakPopup, 0)
   let wheelHovered = igIsItemHovered(0)
   if wheelHovered and not igIsPopupOpen_Str(BreakPopup, 0):
-    igSetTooltip("%s", "Overlay settings: the model, colours and size")
+    igSetTooltip("%s", "Overlay settings: the model, picking, colours and size")
   marks.markRect(KeyWheelMark, ImVec2_c(x: top.x + width, y: top.y),
     ImVec2_c(x: top.x + width + wheelW, y: top.y + height))
   var m = d.breakModel
@@ -289,6 +321,9 @@ proc drawBreakKey*(b: FirstBreaks; unit: SurveyUnit; fromSurvey: bool; d: Displa
       igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
       igTextWrapped(UnitFromSurvey.cstring)
       igPopStyleColor(1)
+    if drawPickChoice(b, nd, t, marks):
+      nd.breakModel = m
+      result = (true, nd)
     if drawLookChoice(nd, ink, marks):
       nd.breakModel = m
       result = (true, nd)

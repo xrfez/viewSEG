@@ -1300,7 +1300,8 @@ func breakTip(on: bool; b: FirstBreaks): string =
   result = (if on: " (on)" else: " (off)") &
     "\nA bar across each trace at the time a refraction model fitted to the picks" &
     "\nexpects its first break (the cool colour), and another where the first" &
-    "\nbreak was picked (the warm one, faint when the pick is low in confidence)." &
+    "\nbreak was picked (the warm one; a pick low in confidence is shown only with" &
+    "\nShow weak picks, in the overlay's settings)." &
     "\nA line joins them where the fit finds the pick off the model: further from" &
     "\nits neighbours' residuals than its threshold (12 ms or more)." &
     "\nThe model needs source-receiver offsets: a survey, or coordinates in the file." &
@@ -2632,7 +2633,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       if layer.display.firstBreaks and bi >= 0:
         let g = breakGeometry(st.shownBreaks(k), p.shown, p.layout, view, turn,
           Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y)), layer.display.breakSize,
-          max(1'f32, igGetFontSize() / 15))
+          max(1'f32, igGetFontSize() / 15), layer.display.breakShowWeak)
         drawBreakMarks(g, ink, layer.display, marks)
     if edited:
       let path = if source >= 0: st.sessions[source].path else: ""
