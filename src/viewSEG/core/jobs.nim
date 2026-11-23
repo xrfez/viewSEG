@@ -65,7 +65,7 @@
 ## runner calls it after every job (`core/threads`, "Handing objects to
 ## another thread").
 
-import std/[atomics, locks, monotimes, options, os, sequtils, times]
+import std/[atomics, locks, monotimes, options, os, sequtils, strutils, times]
 import filesystem, threads
 
 export monotimes, options
@@ -304,6 +304,16 @@ proc runner(arg: RunnerArg) {.thread.} =
   let q = arg.q
   let me = arg.me
   let lane = me.lane
+  # A test delays each job's start (a starved machine). Unset: no wait.
+  let jobDelay = block:
+    var n = 0
+    let v = getEnv("VIEWSEG_JOB_DELAY_MS")
+    if v.len > 0:
+      try:
+        n = parseInt(v)
+      except ValueError:
+        n = 0
+    n
   acquire q.lock
   while q.current[lane] == me:
     var at = q.pick(lane)
@@ -325,6 +335,7 @@ proc runner(arg: RunnerArg) {.thread.} =
 
     var error = ""
     var gaveUp = false
+    if jobDelay > 0: sleep jobDelay
     try:
       work(JobContext(q: q, id: id))
     except JobCancelledError:

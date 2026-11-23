@@ -75,6 +75,12 @@ const
 var stopAsked: Atomic[bool] ## Ctrl+C was pressed in the console (`RunOptions.tray`)
 
 type
+  QueuedInput = object
+    ## A test event waiting for a frame. `owned` is an index into `Ui.typed`
+    ## when the event's text points there; -1 otherwise. The pointer is filled
+    ## in at delivery, so a later `typed.add` cannot dangle it.
+    ev: SDL_Event
+    owned: int
   Ui = object
     ## The frontend's own state between frames.
     window: ptr SDL_Window
@@ -151,6 +157,11 @@ type
     trayAsked: bool ## the session bus was asked about a tray since then
     inTray: bool ## the main window is hidden in the tray
     trayHides: int ## times it was hidden there (tests)
+    pendingInput: seq[QueuedInput]
+      ## test input left this frame (`moveMouse`, `pressMouse`, `scrollWheel`,
+      ## `pressKey`, `typeText`, `dropPaths`). Delivered through one button
+      ## change a frame, so a press and a release left together are each seen,
+      ## and a key released after the click is not seen before it
 
   FrameInfo* = object
     ## What a frame hook sees. The hook runs after the main window is drawn and
@@ -443,6 +454,30 @@ proc trayProblem*(frame: FrameInfo): string =
   ## Why the tray icon could not be shown; "" when it could or was not asked.
   frame.ui.trayProblem
 
+proc deliverInput(ui: var Ui) =
+  ## Hands the window the input a test queued, through one button change.
+  ## A press and a release left in the same frame are each seen by a frame:
+  ## together, the release cancels the press and the click is lost. Nothing
+  ## after that button is handed over this frame, so a key released after the
+  ## click is still held when the click is taken.
+  var n = 0
+  var sent = false
+  while n < ui.pendingInput.len:
+    if sent: break
+    var ev = ui.pendingInput[n].ev
+    let owned = ui.pendingInput[n].owned
+    if owned >= 0:
+      let s = ui.typed[owned].cstring
+      if ev.type_field == SDL_EVENT_TEXT_INPUT.uint32: ev.text.text = s
+      elif ev.type_field == SDL_EVENT_DROP_FILE.uint32: ev.drop.data = s
+    discard SDL_PushEvent(addr ev)
+    let kind = ev.type_field
+    inc n
+    if kind == SDL_EVENT_MOUSE_BUTTON_DOWN.uint32 or
+        kind == SDL_EVENT_MOUSE_BUTTON_UP.uint32:
+      sent = true
+  if n > 0: ui.pendingInput.delete(0 ..< n)
+
 proc moveMouse*(frame: FrameInfo; at: Vec2) =
   ## Moves the mouse pointer to `at` (framebuffer pixels from the window's
   ## top-left corner), as the user would; the UI sees it from the next frame.
@@ -454,11 +489,12 @@ proc moveMouse*(frame: FrameInfo; at: Vec2) =
   var ev: SDL_Event
   ev.motion = SDL_MouseMotionEvent(type_field: SDL_EVENT_MOUSE_MOTION,
     windowID: SDL_GetWindowID(w), x: x, y: y)
-  discard SDL_PushEvent(addr ev)
+  frame.ui.pendingInput.add QueuedInput(ev: ev, owned: -1)
 
 proc pressMouse*(frame: FrameInfo; at: Vec2; down: bool; button = 1) =
   ## Presses (`down`) or releases a mouse button (1 left, 2 middle, 3 right)
-  ## at `at`, where `moveMouse` put the pointer. For tests.
+  ## at `at`, where `moveMouse` put the pointer. For tests. A press and a
+  ## release left in one frame are delivered on two frames (`deliverInput`).
   let w = frame.ui.window
   let density = SDL_GetWindowPixelDensity(w)
   let (x, y) = (at.x / density, at.y / density)
@@ -466,7 +502,7 @@ proc pressMouse*(frame: FrameInfo; at: Vec2; down: bool; button = 1) =
   ev.button = SDL_MouseButtonEvent(type_field: (if down: SDL_EVENT_MOUSE_BUTTON_DOWN
     else: SDL_EVENT_MOUSE_BUTTON_UP), windowID: SDL_GetWindowID(w), button: uint8(button),
     down: down, clicks: 1, x: x, y: y)
-  discard SDL_PushEvent(addr ev)
+  frame.ui.pendingInput.add QueuedInput(ev: ev, owned: -1)
 
 proc scrollWheel*(frame: FrameInfo; at: Vec2; notches: float32; sideways = 0'f32) =
   ## Turns the mouse wheel by `notches` (up is positive) and sideways
@@ -478,11 +514,12 @@ proc scrollWheel*(frame: FrameInfo; at: Vec2; notches: float32; sideways = 0'f32
   ev.wheel = SDL_MouseWheelEvent(type_field: SDL_EVENT_MOUSE_WHEEL, windowID: SDL_GetWindowID(w),
     x: sideways, y: notches, direction: SDL_MOUSEWHEEL_NORMAL, mouse_x: at.x / density,
     mouse_y: at.y / density, integer_x: int32(sideways), integer_y: int32(notches))
-  discard SDL_PushEvent(addr ev)
+  frame.ui.pendingInput.add QueuedInput(ev: ev, owned: -1)
 
 proc pressKey*(frame: FrameInfo; key: SimKey; down: bool; mods: set[SimMod] = {}) =
   ## Presses (`down`) or releases `key` with `mods` held, as the keyboard
-  ## would. For tests.
+  ## would. For tests. Queued with the pointer, so a key released after a
+  ## click is still held when the click is taken.
   const scancodes: array[SimKey, SDL_Scancode] = [SDL_SCANCODE_EQUALS, SDL_SCANCODE_MINUS,
     SDL_SCANCODE_KP_PLUS, SDL_SCANCODE_KP_MINUS, SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT,
     SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, SDL_SCANCODE_BACKSPACE, SDL_SCANCODE_0,
@@ -502,7 +539,7 @@ proc pressKey*(frame: FrameInfo; key: SimKey; down: bool; mods: set[SimMod] = {}
     windowID: SDL_GetWindowID(w), scancode: scancodes[key],
     key: SDL_GetKeyFromScancode(scancodes[key], SDL_Keymod(m), true), mod_field: SDL_Keymod(m),
     down: down)
-  discard SDL_PushEvent(addr ev)
+  frame.ui.pendingInput.add QueuedInput(ev: ev, owned: -1)
 
 proc resizeWindow*(frame: FrameInfo; width, height: int) =
   ## Gives the main window a new size in window coordinates, as the user
@@ -519,11 +556,10 @@ proc typeText*(frame: FrameInfo; text: string) =
   ## Types `text` into the item that has the keyboard, as text input
   ## would. For tests.
   let w = frame.ui.window
-  frame.ui.typed.add text # the event points at it
+  frame.ui.typed.add text # the event points at it, filled in at delivery
   var ev: SDL_Event
-  ev.text = SDL_TextInputEvent(type_field: SDL_EVENT_TEXT_INPUT, windowID: SDL_GetWindowID(w),
-    text: frame.ui.typed[^1].cstring)
-  discard SDL_PushEvent(addr ev)
+  ev.text = SDL_TextInputEvent(type_field: SDL_EVENT_TEXT_INPUT, windowID: SDL_GetWindowID(w))
+  frame.ui.pendingInput.add QueuedInput(ev: ev, owned: frame.ui.typed.high)
 
 proc dropPaths*(frame: FrameInfo; paths: openArray[string]) =
   ## Drops `paths` (files or folders) on the main window, as a file manager
@@ -531,14 +567,13 @@ proc dropPaths*(frame: FrameInfo; paths: openArray[string]) =
   let w = frame.ui.window
   var ev: SDL_Event
   ev.drop = SDL_DropEvent(type_field: SDL_EVENT_DROP_BEGIN, windowID: SDL_GetWindowID(w))
-  discard SDL_PushEvent(addr ev)
+  frame.ui.pendingInput.add QueuedInput(ev: ev, owned: -1)
   for p in paths:
-    frame.ui.typed.add p # the event points at it
-    ev.drop = SDL_DropEvent(type_field: SDL_EVENT_DROP_FILE, windowID: SDL_GetWindowID(w),
-      data: frame.ui.typed[^1].cstring)
-    discard SDL_PushEvent(addr ev)
+    frame.ui.typed.add p # the event points at it, filled in at delivery
+    ev.drop = SDL_DropEvent(type_field: SDL_EVENT_DROP_FILE, windowID: SDL_GetWindowID(w))
+    frame.ui.pendingInput.add QueuedInput(ev: ev, owned: frame.ui.typed.high)
   ev.drop = SDL_DropEvent(type_field: SDL_EVENT_DROP_COMPLETE, windowID: SDL_GetWindowID(w))
-  discard SDL_PushEvent(addr ev)
+  frame.ui.pendingInput.add QueuedInput(ev: ev, owned: -1)
 
 proc typing*(frame: FrameInfo): bool =
   ## Whether a text box has the keyboard (for tests).
@@ -2095,7 +2130,20 @@ proc run*(opts = RunOptions()): int =
   var
     frame = 0
     event: SDL_Event
+  # A test slows each frame (a starved machine) without loading the CPU.
+  # Unset, or not a number: no wait.
+  let frameSleep = block:
+    var n = 0
+    let v = getEnv("VIEWSEG_FRAME_SLEEP_MS")
+    if v.len > 0:
+      try:
+        n = parseInt(v)
+      except ValueError:
+        n = 0
+    n
   while ui.running:
+    if frameSleep > 0: sleep frameSleep
+    ui.deliverInput()
     when FrameWatchdogOn:
       ui.dog.beginFrame()
     ui.mark "events"
