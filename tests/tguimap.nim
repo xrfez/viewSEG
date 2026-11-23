@@ -114,6 +114,7 @@ proc runMain() =
     var pressActive, releaseActive: uint32 = 0
     var pressPopup, releasePopup = false
     var downSeen, upSeen = -1
+    var clickDown, clickUp = false
 
     proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
       steps.add Step(name: name, act: act, done: done)
@@ -435,13 +436,34 @@ proc runMain() =
       let r = f.markOf(mark)
       doAssert r.size.x > 0, mark & " is not shown"
       vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
+    proc aimRuler(f: FrameInfo) =
+      ## The live button's centre. A position taken a few frames ago misses
+      ## once the strip has moved.
+      let live = f.markOf("map.ruler button")
+      if live.size.x > 0:
+        p = vec2(round(live.pos.x + live.size.x / 2), round(live.pos.y + live.size.y / 2))
+    proc clickRuler(f: FrameInfo) =
+      ## Press once the pointer is inside the live button (this frame saw
+      ## it), release once that press has been seen. Not on a frame count.
+      f.aimRuler()
+      let live = f.markOf("map.ruler button")
+      if not clickDown:
+        if live.contains(pointerFb()):
+          f.pressMouse(p, true)
+          clickDown = true
+        elif live.size.x > 0:
+          f.moveMouse(p)
+      elif not clickUp and igIsMouseDown_Nil(ImGui_MouseButton_Left.cint):
+        f.pressMouse(p, false)
+        clickUp = true
     step("the lit Ruler button turns it off", proc (f: FrameInfo) =
       doAssert f.mapWindow.rulerOn, "the Ruler was already off"
+      (clickDown, clickUp) = (false, false)
       p = stripButtonAt(f, "map.ruler button")
       f.moveMouse(p), proc (f: FrameInfo): bool =
-      if wait == 3: f.pressMouse(p, true)
-      if wait == 5: f.pressMouse(p, false)
-      result = wait > 6 and not f.mapWindow.rulerOn
+      f.clickRuler()
+      result = clickUp and not igIsMouseDown_Nil(ImGui_MouseButton_Left.cint) and
+        not f.mapWindow.rulerOn
       if result: doAssert f.mapWindow.rulerText.len == 0, "the line stayed")
     step("the Ruler button turns it on", proc (f: FrameInfo) =
       let r = f.markOf("map.ruler button")
@@ -449,20 +471,18 @@ proc runMain() =
       doAssert r.size.x > 2 * r.size.y, "the Ruler button is an icon alone: " & $r
       rulerMark = r
       beforeStep = if at > 0: steps[at - 1].name else: ""
+      (clickDown, clickUp) = (false, false)
+      (downSeen, upSeen) = (-1, -1)
       p = stripButtonAt(f, "map.ruler button")
       f.moveMouse(p), proc (f: FrameInfo): bool =
-      if wait == 3: f.pressMouse(p, true)
-      if wait == 4: f.noteRuler(true) # the press has been taken
-      if wait == 5: f.pressMouse(p, false)
-      if wait == 6: f.noteRuler(false) # the release has been taken
-      # The hook runs after this frame's events. The press, queued a frame
-      # ago, is down now; the release, queued a frame ago, is up now. The
-      # same frame for both means they were not delivered apart.
-      if wait >= 4 and downSeen < 0 and igIsMouseDown_Nil(ImGui_MouseButton_Left.cint):
+      f.clickRuler()
+      if clickDown and downSeen < 0 and igIsMouseDown_Nil(ImGui_MouseButton_Left.cint):
         downSeen = f.index
-      if wait >= 6 and upSeen < 0 and not igIsMouseDown_Nil(ImGui_MouseButton_Left.cint):
+        f.noteRuler(true) # the press has been taken
+      if clickUp and upSeen < 0 and not igIsMouseDown_Nil(ImGui_MouseButton_Left.cint):
         upSeen = f.index
-      result = wait > 6 and f.mapWindow.rulerOn
+        f.noteRuler(false) # the release has been taken
+      result = upSeen >= 0 and f.mapWindow.rulerOn
       if result: doAssert f.mapWindow.rulerText.len == 0)
     step("a plain drag measures as the Ctrl drag did", proc (f: FrameInfo) =
       let (x0, y0) = mapRcv(0, 0)
