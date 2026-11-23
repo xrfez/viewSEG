@@ -32,6 +32,7 @@ Mouse gestures are listed after the keys of each group.
 | Home / End | First or last record |
 | Ctrl+G | Go to a record number |
 | P | Show the traces raw, or through the filters |
+| C | Correlate with the selected reference, or show the raw record |
 | Move the pointer | The trace under it is highlighted, and read out on the status bar |
 | Left click | Select that trace |
 | Ctrl + click | Add the trace to the selection, or take it out |

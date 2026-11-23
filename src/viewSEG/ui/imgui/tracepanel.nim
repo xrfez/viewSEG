@@ -1466,6 +1466,16 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
           named.add shifted
         drawFilterControls(p, hasAux(st, p), st.filterReach(p), t, marks, res.commands,
           named)
+        igSameLine(0, 2)
+        let hasRef = st.chosenReference.len > 0
+        let corrTip = if not hasRef: NoReferenceChosen
+                      elif st.correlateOn: "Correlate with the selected reference (on)"
+                      else: "Correlate with the selected reference"
+        if iconButton(IconCorrelation, "Correlate", "C", icon, t, marks,
+            selected = st.correlateOn, tipText = corrTip, enabled = hasRef,
+            markName = "plot.correlate"):
+          res.commands.add Command(kind: ckCorrelate, panel: p.id,
+            correlate: not st.correlateOn)
     of sgSort:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         tp.sortShown = sortLabel(p.layers[0].order, st.settings.sortPresets)
@@ -1935,6 +1945,14 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   template e: untyped = st.editsOf(k) # not copied
   if caps.menuWholeRecord:
     menuHeading(marks, "Whole record", "plot.menu.heading.record")
+    let canCorrelate = st.chosenReference.len > 0
+    if igMenuItem_Bool((IconCorrelation & "  Correlate").cstring, "C", st.correlateOn,
+        canCorrelate):
+      res.commands.add Command(kind: ckCorrelate, panel: p.id,
+        correlate: not st.correlateOn)
+    marks.mark("plot.menu.correlate")
+    if canCorrelate: tip("Correlate with the selected reference")
+    else: tipAlways(NoReferenceChosen)
     # An operation on the samples (processSEG's polarityOp), not a colour.
     let reversed = p.layers[0].reversed
     if igMenuItem_Bool("Reverse polarity of all traces", nil, reversed, true):
@@ -2814,6 +2832,9 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     tp.handleKeys(after, view, plot, turn, limNow, hovered, p,
       st.selection.anySelected, recordOf(st, p), shownSignature(st, p) and p.caps.stepsRecords,
       remember, res)
+    if p.caps.filters and st.chosenReference.len > 0 and not igGetIO_Nil().WantTextInput and
+        plotPressed("plot.correlate", hovered):
+      res.commands.add Command(kind: ckCorrelate, panel: p.id, correlate: not st.correlateOn)
     tp.cursorText = ""
     tp.cursorHeader.setLen 0
     # While the plot's menu is open, what was under the pointer at the right
