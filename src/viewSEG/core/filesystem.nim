@@ -377,3 +377,27 @@ proc unlock*(_: FileSystem; l: var FileLock) {.raises: [].} =
     when defined(windows): discard winlean.closeHandle(l.handle)
     else: discard posix.close(l.fd)
     l.locked = false
+
+proc createExclusive*(_: FileSystem; path: string): bool {.raises: [OSError].} =
+  ## Creates a new empty file at `path`. True when it did. False when `path`
+  ## already exists: that file is left as it is and never opened. Raises
+  ## `OSError` when it cannot be created for another reason (no folder, a
+  ## drive that does not answer).
+  enter(foWrite, path)
+  when defined(windows):
+    let name = newWideCString(path)
+    let h = winlean.createFileW(name, winlean.GENERIC_WRITE, 0, nil, winlean.CREATE_NEW,
+      winlean.FILE_ATTRIBUTE_NORMAL, 0)
+    if h != winlean.INVALID_HANDLE_VALUE:
+      discard winlean.closeHandle(h)
+      return true
+    if osLastError().int32 == 80: return false # ERROR_FILE_EXISTS
+    raiseOSError(osLastError())
+  else:
+    let fd = posix.open(cstring(path), posix.O_WRONLY or posix.O_CREAT or posix.O_EXCL or
+      posix.O_CLOEXEC, 0o666)
+    if fd >= 0:
+      discard posix.close(fd)
+      return true
+    if posix.errno == posix.EEXIST: return false
+    raiseOSError(osLastError())

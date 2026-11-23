@@ -133,6 +133,18 @@ proc main*() =
     doAssert fs.fileExists(dir / "a.txt"), "another path is not slow"
     release(far)
 
+  block anExclusiveCreateMakesOnlyANewFile:
+    ## Seen to fail: with `createExclusive` missing, this does not compile;
+    ## with it opening an existing file, `a.txt` is no longer "hello".
+    doAssert not fs.createExclusive(dir / "a.txt"), "an existing file is refused"
+    doAssert fs.readFile(dir / "a.txt") == "hello"
+    doAssert fs.createExclusive(dir / "new.txt")
+    doAssert fs.readFile(dir / "new.txt") == ""
+    fault(dir / "nope.txt", fkFail)
+    doAssertRaises OSError: discard fs.createExclusive(dir / "nope.txt")
+    doAssert not fs.fileExists(dir / "nope.txt")
+    release(dir / "nope.txt")
+
   block aFailingCallFails:
     fault(far, fkFail)
     doAssert not fs.fileExists(far / "b.txt"), "a failing drive: no such file"
