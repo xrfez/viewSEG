@@ -104,7 +104,7 @@ proc main*() =
         doAssert want.pickNote.len > 0, "the picks were smoothed"
       else:
         doAssert want.twoPass, c.name & ": no guided pass"
-      for workers in [1, 2, 0]:
+      for workers in [1, 2, 4, 0]:
         let got = c.breaks(path, workers)
         doAssert got.fingerprint == want.fingerprint, c.name & ": " & $workers & " workers: " &
           got.fingerprint.toHex & " is not the reference's " & want.fingerprint.toHex
