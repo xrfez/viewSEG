@@ -137,24 +137,7 @@ const
     "reserveRelations": "the viewer's `SurveyFileBuilder.reserveRelations` (core/survey), " &
       "which calls parseSEG's where it compiles (core/surveyjobs)",
     "StopCheck": "the viewer's own abandon check (core/analysis, core/fkanalysis), " &
-      "not processSEG's",
-    "ConfidentPick": "the viewer's own constant (core/breakrule), not processSEG's",
-    "MadToSigma": "the viewer's own constant (core/breakrule), not processSEG's",
-    "MinSecondPicks": "the viewer's own constant (core/breakrule), not processSEG's",
-    "MinTrimmedPicks": "the viewer's own constant (core/breakrule), not processSEG's",
-    "RestartSigmaFloorMs": "the viewer's own constant (core/breakrule), not processSEG's",
-    "RestartSigmaShare": "the viewer's own constant (core/breakrule), not processSEG's",
-    "SecondGain": "the viewer's own constant (core/breakrule), not processSEG's",
-    "SecondGainMs": "the viewer's own constant (core/breakrule), not processSEG's",
-    "StartLines": "the viewer's own constant (core/breakrule), not processSEG's",
-    "TrimFloorMs": "the viewer's own constant (core/breakrule), not processSEG's",
-    "TrimRounds": "the viewer's own constant (core/breakrule), not processSEG's",
-    "TrimSigmas": "the viewer's own constant (core/breakrule), not processSEG's",
-    "keepSecond": "the viewer's own proc (core/breakrule), not processSEG's",
-    "medianIfCloser": "the viewer's own proc (core/breakrule), not processSEG's",
-    "medianLineStart": "the viewer's own proc (core/breakrule), not processSEG's",
-    "robustSigma": "the viewer's own proc (core/breakrule), not processSEG's",
-    "trimmedModel": "the viewer's own proc (core/breakrule), not processSEG's"}
+      "not processSEG's"}
     ## Library names `src/` names for something of its own too (a field, its
     ## own proc), each checked by hand, with what src/ does with them: a text
     ## search cannot tell them from the library's (`check`)

@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.19.2: capabilities | names | processSEG 0.12.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 54 (20 in part) | 182 | 44 (28 in part) | 228 |
-| `internal` | 19 | 55 | 6 | 43 |
-| `planned` | 31 | 214 | 42 | 406 |
+| `built` | 56 (22 in part) | 189 | 45 (28 in part) | 249 |
+| `internal` | 17 | 47 | 5 | 39 |
+| `planned` | 31 | 214 | 42 | 389 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 21 | 362 | 6 | 63 |
 | all | 127 | 822 | 99 | 745 |
@@ -352,7 +352,7 @@ name, so these are building blocks for code that works on raw headers.
 | Geometry flags from the keys | `checkGeometry`, `checkGeometryInto`, `flaggedRows`, `GeometryQc`, `badGeometry`, `GeometryCheck`, `GeometryFlag`, `GeometryFlags` | Survey QC issue list, flags in table and map | planned |
 | First-break picking with confidence | `initFirstBreakPlan`, `pickInto` (also on the pool), `FirstBreakParams`, `FirstBreakPick`, `checkPick`, `FirstBreakPlan` (`params`, `pick`), `PickMethod`, `noPick` | Analysis → First-break overlay, and the button on the Seismic window's strip: a bar across each trace where the first break was picked (processSEG's defaults, then a second pass guided by the model, on a job, record by record; a pick not compared with the model is drawn faint), and the pick in the status bar under the pointer; colouring by confidence beyond that is planned | built (`initFirstBreakPlan`, `pickInto`, `FirstBreakParams` (the guided search window of the second pass), `FirstBreakPick`, `FirstBreakPlan`); planned (the picker's other options, `checkPick`, `PickMethod`, `noPick`) |
 | Refraction fit per shot (swapped receivers, misplaced source) | `fitShot`, `ShotFitParams`, `ShotFit` (`suspect`, `asymmetryMs`, `v1`, `v2`), `RefractionModel` | Analysis → First-break overlay: a bar across each trace at the time the model fitted to the confident picks expects the first break (`ShotFit.modelMs`, at the offsets the survey or the file gives), a line to the pick where they differ, and both times in the status bar; the suspect traces and the survey QC issue list are planned | built (`fitShot`, `ShotFitParams`, `ShotFit`: the model's times); planned (the issue list, `RefractionModel`) |
-| Robust start and trimmed model of first-break picks | `ConfidentPick`, `MadToSigma`, `TrimSigmas`, `TrimFloorMs`, `TrimRounds`, `MinTrimmedPicks`, `StartLines`, `MinSecondPicks`, `SecondGain`, `SecondGainMs`, `RestartSigmaShare`, `RestartSigmaFloorMs`, `ModelFn`, `Trimmed`, `median`, `robustSigma`, `lineFit`, `medianIfCloser`, `medianLineStart`, `trimmedModel`, `keepSecond` | Analysis → First-break overlay: which confident picks the model is fitted to, a second segment kept only when it is the better fit. not used (the viewer's own in core/breakrule) | planned |
+| Robust start and trimmed model of first-break picks | `ConfidentPick`, `MadToSigma`, `TrimSigmas`, `TrimFloorMs`, `TrimRounds`, `MinTrimmedPicks`, `StartLines`, `MinSecondPicks`, `SecondGain`, `SecondGainMs`, `RestartSigmaShare`, `RestartSigmaFloorMs`, `ModelFn`, `Trimmed`, `median`, `robustSigma`, `lineFit`, `medianIfCloser`, `medianLineStart`, `trimmedModel`, `keepSecond` | Analysis → First-break overlay: which confident picks the model is fitted to, a second segment kept only when it is the better fit | built |
 | Windowed SNR per trace | `windowSnrInto`, `WindowSnrParams`, `powerSnrDb`, `windowSnrDb`, `meanPower`, `SnrEstimator`, `DefaultSnrFloorDb` | SNR attribute: table column, map colour, flag threshold | planned |
 | Coherence SNR of a flattened gather | `coherenceSnrInto`, `coherenceSnrWorkspace` | SNR-against-time plot for an NMO or LMO flattened gather | planned |
 | Amplitude flags per trace (dead, clipped, spiky, DC, weak, noisy) | `traceAmplitudeInto` (also on the pool), `AmplitudeParams`, `AmplitudeFlag`, `TraceAmplitude`, `traceAmplitude`, `traceAmplitudeWorkspace` | The map's filters on the record shown (each flag a filter, default thresholds, a job per record shown); trace flags with thresholds on a histogram | built (the map's filters); planned (thresholds, the survey) |
