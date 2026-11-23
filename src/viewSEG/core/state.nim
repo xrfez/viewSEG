@@ -2507,6 +2507,28 @@ func hiddenOf(state: AppState; k: int; path: string; traces: Slice[int]): seq[in
         result.sort()
         result = result.deduplicate(isSorted = true)
 
+func templateAvailable(state: AppState; k: int): bool
+
+func templatePending(state: AppState; k: int): bool =
+  ## Whether `panels[k]` asks for the template's traces only, for the record the check
+  ## (`recordQc`) is to look at, and the check has not answered yet: the plot is read once it
+  ## has, with the traces the template lists. An answer that finds no template, a failed or a
+  ## stopped check end the wait. Nothing is asked while the option is off.
+  if k < 0 or k >= state.panels.len or state.panels[k].layers.len == 0: return false
+  template layer: untyped = state.panels[k].layers[0]
+  if not layer.filter.templateOnly or layer.source.kind != lsRecord: return false
+  let g = state.selection.activeGather
+  if g.file != layer.source.file or g.gather != layer.source.gather: return false
+  let i = state.findSession(g.file)
+  if i < 0 or g.gather notin 0 ..< state.sessions[i].gathers.len: return false
+  if state.templateTraces(k)[0] or not state.templateAvailable(k): return false
+  let q = state.recordQc
+  # (the answer of this record as it is now, found or not)
+  let answered = q.job == NoJob and q.key.file == state.sessions[i].id and
+    q.key.keys == state.sessions[i].keysRevision and q.key.gather == g.gather and
+    q.hits[mfUnlisted].state != fsComputing
+  not answered
+
 proc reader(state: var AppState; k: int): lent PanelReader =
   ## The reader of `panels[k]`, started when first needed.
   if state.readers[k].isNil:
@@ -2548,6 +2570,7 @@ proc newSource(state: var AppState; k: int) =
     state.readers[k].abandon()
   var src = ReaderSource(gen: p.sourceGen)
   var busy = false
+  p.templateWait = false
   if p.layers.len > 0 and p.layers[0].source.kind == lsRecord:
     let i = state.findSession(p.layers[0].source.file)
     let g = p.layers[0].source.gather
@@ -2555,7 +2578,11 @@ proc newSource(state: var AppState; k: int) =
       let s = state.sessions[i]
       p.kind = s.gathers[g].kind
       p.hidden = state.hiddenOf(k, s.path, s.gathers[g].traces)
-      if state.jobs.hold(s.path):
+      if state.templatePending(k):
+        # which traces the template lists is not known: read once it is, not twice
+        p.templateWait = true
+        busy = true
+      elif state.jobs.hold(s.path):
         src = ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path, size: s.size,
           traces: s.gathers[g].traces, filter: p.layers[0].filter, order: p.layers[0].order,
           hidden: p.hidden, traceNames: s.traceNames)
@@ -2580,8 +2607,12 @@ proc followHidden(state: var AppState) =
   ## undo, the setting turned on or off) shows its gather again without
   ## them (or with them), at the same scales and place.
   for k in 0 ..< state.panels.len:
+    if state.panels[k].templateWait:
+      if not state.templatePending(k): state.newSource(k) # the check answered: read it now
+      continue
     let (i, traces) = state.shownTraces(k)
     if i >= 0:
+      if state.templatePending(k): continue # the check is made again: the plot stays as it is
       let want = state.hiddenOf(k, state.sessions[i].path, traces)
       if want != state.panels[k].hidden: state.newSource(k)
 
@@ -2676,9 +2707,9 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
         let d = state.settings.plot.display
         (layer.display.gain, layer.display.overlap, layer.display.fills) = (d.gain, d.overlap,
           d.fills)
+  state.selection.activeGather = GatherRef(file: file, gather: gather) # (before the read: it
+  inc state.selection.revision # asks whether the record's template is known)
   state.newSource(k)
-  state.selection.activeGather = GatherRef(file: file, gather: gather)
-  inc state.selection.revision
 
 func gatherKind(state: AppState; layer: Layer): GatherKind =
   ## The kind of the gather `layer` shows; unknown for none.
@@ -6572,25 +6603,32 @@ type
     waiting*: bool      ## on, and the record's check has not ended
     shown*, total*: int ## seismic traces the template lists, and seismic traces in the record
 
+func templateAvailable(state: AppState; k: int): bool =
+  ## Whether a relation file (or a generated template) is there to check the record
+  ## `panels[k]` shows against.
+  let i = state.shownFile(k)
+  if i < 0: return false
+  let domain = if state.sessions[i].gathers.len > state.panels[k].layers[0].source.gather and
+      state.sessions[i].gathers[state.panels[k].layers[0].source.gather].kind == gkReceiver:
+        rdReceiver
+      else: rdSource
+  not state.sessions[i].noSeismic and not state.sessions[i].isSignature and
+    not state.qcRelations(domain)[0].isNil
+
 func templateView*(state: AppState; k: int): TemplateView =
   ## The template of the record plot `panels[k]` shows: whether there is a relation file for
   ## it, whether the plot asks for the template's traces only, and, once the record is
   ## checked, how many of its seismic traces the template lists.
   if k < 0 or k >= state.panels.len or state.panels[k].layers.len == 0: return
-  let i = state.shownFile(k)
-  if i < 0: return
-  let domain = if state.sessions[i].gathers.len > state.panels[k].layers[0].source.gather and
-      state.sessions[i].gathers[state.panels[k].layers[0].source.gather].kind == gkReceiver:
-        rdReceiver
-      else: rdSource
-  result.available = not state.sessions[i].noSeismic and
-    not state.sessions[i].isSignature and not state.qcRelations(domain)[0].isNil
+  if state.shownFile(k) < 0: return
+  result.available = state.templateAvailable(k)
   result.on = state.panels[k].layers[0].filter.templateOnly
   let (known, unlisted, total) = state.templateTraces(k)
   result.known = known
   result.total = total
   result.shown = total - unlisted.len
-  result.waiting = result.on and not known and state.recordQc.job != NoJob
+  result.waiting = result.on and not known and
+    (state.recordQc.job != NoJob or state.panels[k].templateWait)
 
 func shownBreaks*(state: AppState; k: int): FirstBreaks =
   ## The first-break result of record panel `panels[k]` as its overlay shows it: with the

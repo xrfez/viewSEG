@@ -1301,7 +1301,12 @@ undo, the setting), at the same scales and positions (`newSource`, `carried`).
 adds the record's seismic traces the template does not list, found by the map filters' record
 check (`recordQc`, `hits[mfUnlisted]`; `followRecordQc` runs it while a panel asks), once
 that check is of the record shown with its traces matched to stations; before that, and for
-a record with no template, nothing is added. `templateView` tells the strip and the title.
+a record with no template, nothing is added. While the check has not answered for the
+record shown (`templatePending`), the record is not read at all (`Panel.templateWait`; the
+picture says it waits, `wait` treats it as busy) and is read once, with the unlisted traces
+left out, when it has: no layout of the whole record is ever seen. A check that failed, was
+stopped or found no template is an answer: every trace is read. `templateView` tells the
+strip and the title.
 
 ### One mapping between data and screen
 

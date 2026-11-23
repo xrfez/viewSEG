@@ -380,6 +380,7 @@ proc pictureOf(state: AppState; k: int; fe: Frontend): string =
   elif p.layers.len == 0 or p.layers[0].source.kind != lsRecord or
       state.shownFile(k) < 0:
     result = "nothing shown"
+  elif p.templateWait: result = "waiting for the check of the record against its template"
   elif not p.laidOut: result = "laying out"
   elif p.layout.traces == 0 or p.layout.samples == 0:
     result = "nothing to draw" # the trace filter hides every trace, or none has samples
@@ -472,6 +473,7 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
     let shown = state.settings.displayPresets.shownPreset(layer.display)
     result["displayPreset"] = %(if shown >= 0: state.settings.displayPresets[shown].name else: "")
     result["filter"] = toJson(layer.filter)
+    if layer.filter.templateOnly: result["templateWait"] = %p.templateWait
     result["order"] = toJson(layer.order)
     result["reversed"] = %layer.reversed
     result["processing"] = toJson(layer.processing)

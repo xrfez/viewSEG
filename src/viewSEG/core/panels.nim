@@ -329,6 +329,9 @@ type
     hidden*: seq[int]
       ## the traces of the gather its reader leaves out of the positions,
       ## ascending: the killed ones, when killed traces are hidden (a setting)
+    templateWait*: bool
+      ## the record is not read yet: "Only traces in the template" is on and the check that
+      ## says which traces the template lists has not ended, so it is read once, without them
     revision*: int ## bumped on every change
 
 const

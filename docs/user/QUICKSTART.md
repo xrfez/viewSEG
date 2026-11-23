@@ -604,7 +604,9 @@ receivers each shot should have recorded), a table-grid button in the display gr
 Seismic window's strip, or **View > Only traces in the template**, leaves out the seismic
 traces the record's template does not list: the plot shows, say, the 1100 planned traces
 of the 3950 recorded, and the traces beside them close up. The window's title says
-"template only: 1100 of 3950". Auxiliary traces follow the Seismic / Aux toggles as
+"template only: 1100 of 3950". When you step to another record, the plot waits a moment
+("template only: checking") and then shows the planned traces at once, without first drawing
+every trace. Auxiliary traces follow the Seismic / Aux toggles as
 before; killed traces follow Hide killed traces. The button is greyed without a relation
 file; on a record the relation file does not list, every trace is shown and the title says
 so, the button staying on. It is remembered with the other plot choices, as Seismic / Aux
