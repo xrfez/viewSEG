@@ -318,6 +318,52 @@ proc main*() =
     dropDirLink(linkParent)
     dropDirLink(linkOk)
 
+  block editLines:
+    ## Seen to fail: an item's lines never said which saved edits were applied,
+    ## nor that none were found, nor that a pending document was left unapplied.
+    let dest = dir / "lines"
+    let ask = BatchAsk(root: srcRoot, items: @[
+      BatchItem(source: edited, relative: "line1" / "shots.sgy"),
+      BatchItem(source: segdCopy, relative: "other" / "extra.sgd")],
+      destRoot: dest, options: opts, mirrorFolders: true)
+    let got = runBatch(ask, store, @[])
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    let applied = itemOf(got.wrote, "line1" / "shots.sgy")
+    doAssert applied.lines.len == 1, $applied.lines
+    doAssert applied.lines[0] == "applied this file's saved edits: " & keptWords(lists),
+      applied.lines[0]
+    doAssert "1 killed, 1 reversed" in applied.lines[0]
+    let none = itemOf(got.wrote, "other" / "extra.sgd")
+    doAssert "no saved edits were found for this file" in none.lines, $none.lines
+    let held = srcRoot / "held.sgy"
+    copyFile(segy, held)
+    var heldTime: Time
+    let heldId = quickIdentity(held, heldTime)
+    var heldLists: EditLists
+    heldLists.lists[teKilled] = @[0]
+    let heldRec = FileRecord(identity: heldId, name: "held.sgy", path: held,
+      opened: getTime(), modified: heldTime, edits: heldLists, unconfirmed: true,
+      doc: docName(heldId, 1))
+    writeFile(store.docPath(heldRec.doc), memoryDocument(heldRec))
+    let pend = srcRoot / "pend.sgy"
+    copyFile(segy, pend)
+    writeFile(store.docPath(pendingName(pend)), "not a document")
+    let ask2 = BatchAsk(root: srcRoot, items: @[
+      BatchItem(source: held, relative: "held.sgy"),
+      BatchItem(source: pend, relative: "pend.sgy")],
+      destRoot: dest / "why", options: opts, mirrorFolders: false)
+    let got2 = runBatch(ask2, store, @[])
+    doAssert got2.st == jsDone, got2.error & " / " & got2.wrote.reason
+    let unconf = itemOf(got2.wrote, "held.sgy")
+    doAssert "Saved edits were left unconfirmed, so they were not applied." in unconf.lines,
+      $unconf.lines
+    doAssert unconf.droppedTraces == 0, "an unconfirmed kill was applied"
+    let pending = itemOf(got2.wrote, "pend.sgy")
+    doAssert "this file has edits that were not yet saved to its document: not applied" in
+      pending.lines, $pending.lines
+    doAssert pending.droppedTraces == 0, "a pending kill was applied"
+    doAssert readFile(store.docPath(pendingName(pend))) == "not a document"
+
   doAssert readFile(segy) == sampleSegy and readFile(segd) == sampleSegd
   doAssert readFile(plain) == plainBytes and readFile(edited) == editedBytes and
     readFile(segdCopy) == segdBytes

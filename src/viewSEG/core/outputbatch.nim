@@ -263,8 +263,15 @@ proc savedEdits(store: Store; path: string; modified: Time; lines: var seq[strin
   ## The edits a session would bring back at once: the store record of this
   ## file's quick identity whose modification time is `modified`. A record
   ## that waits on the hash of every byte, an unconfirmed one, and a pending
-  ## one are not applied. A store that cannot be read is a note, not a failure.
-  if store.isNowhere or path.len == 0: return
+  ## one are not applied. Exactly one line says what was applied, that none
+  ## was found, or why edits were left out. A pending document is not read.
+  ## A store that cannot be read is a note, not a failure.
+  if store.isNowhere or path.len == 0:
+    lines.add "no saved edits were found for this file"
+    return
+  if fs.fileExists(store.docPath(pendingName(path))):
+    lines.add "this file has edits that were not yet saved to its document: not applied"
+    return
   var seen: Time
   var id: FileIdentity
   try:
@@ -285,6 +292,7 @@ proc savedEdits(store: Store; path: string; modified: Time; lines: var seq[strin
     return
   for p in problems: lines.add p
   var matched = false
+  var applied: EditLists
   var other = false
   var unconfirmed = false
   for c in records:
@@ -292,13 +300,18 @@ proc savedEdits(store: Store; path: string; modified: Time; lines: var seq[strin
       unconfirmed = true
     elif not matched and c.modified == modified:
       result.remembered(c.edits)
+      applied = c.edits
       matched = true
     else:
       other = true
-  if not matched and unconfirmed:
+  if matched:
+    lines.add "applied this file's saved edits: " & keptWords(applied)
+  elif unconfirmed:
     lines.add "Saved edits were left unconfirmed, so they were not applied."
-  elif not matched and other:
+  elif other:
     lines.add "Saved edits were not applied: none match this file's time."
+  else:
+    lines.add "no saved edits were found for this file"
 
 proc newDirs(dest, destRoot: string): seq[string] =
   ## Folders from `dest`'s parent up to, not including, `destRoot` that do
