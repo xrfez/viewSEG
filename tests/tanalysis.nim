@@ -29,7 +29,11 @@
 ## Hz: -6.02" (noise read as a ratio); with the phase's transform not
 ## zero-padded (the power of two past the trace), "the phase rises from
 ## -102735.49838558499 at 77.63671875 Hz to -102555.57570173252 at
-## 77.69775390625 Hz" (the unwrap aliases past half the trace's length).
+## 77.69775390625 Hz" (the unwrap aliases past half the trace's length);
+## with the spectrogram's mean not removed, "a direct-current offset changed
+## the spectrogram: peak at 7.8125 Hz"; with an empty trace left out of the
+## average, "the spectrogram used 1 traces, not 2"; with a short trace's
+## samples not copied, "a short trace was left out of the average".
 
 import std/[math, strutils]
 import viewSEG/core/analysis
@@ -68,6 +72,47 @@ proc main*() =
     # two traces: their power average
     let two = spectrogramOf([x, x], DtMs, 0, AnalysisParams())
     doAssert two.image.values == spectrogramOf([x], DtMs, 0, AnalysisParams()).image.values
+
+  block spectrogramDirectCurrent:
+    # a direct-current offset is removed before the transform, so it is not
+    # the brightest row. Seen to fail: without the mean removed, "a
+    # direct-current offset changed the spectrogram: peak at 7.8125 Hz".
+    var x = newSeq[float32](256)
+    for i in 0 ..< x.len:
+      x[i] = float32(sin(2 * PI * 40 * float64(i) * DtMs / 1000))
+    var y = x
+    for v in y.mitems: v += 80
+    let a = spectrogramOf([x], DtMs, 0, AnalysisParams())
+    let b = spectrogramOf([y], DtMs, 0, AnalysisParams())
+    doAssert a.problem == "" and b.problem == "", a.problem & b.problem
+    proc peakHz(img: AnalysisImage): float64 =
+      var (bc, br) = (0, 0)
+      for c in 0 ..< img.cols:
+        for r in 0 ..< img.rows:
+          if img.valueAt(c, r) > img.valueAt(bc, br): (bc, br) = (c, r)
+      img.y0 + float64(br) * img.dy
+    let got = peakHz(b.image)
+    doAssert near(got, peakHz(a.image), a.image.dy),
+      "a direct-current offset changed the spectrogram: peak at " & $got & " Hz"
+
+  block shortTraceInTheAverage:
+    # a short or empty trace still enters the average (one zero if empty),
+    # so the divisor stays the number of traces. Seen to fail: with an empty
+    # trace left out, "the spectrogram used 1 traces, not 2"; with a short
+    # trace's samples not copied, "a short trace was left out of the average".
+    var x = newSeq[float32](128)
+    for i in 0 ..< x.len: x[i] = float32(sin(float64(i) / 5))
+    let one = spectrogramOf([x], DtMs, 0, AnalysisParams())
+    let withShort = spectrogramOf([x, x[0 .. 2]], DtMs, 0, AnalysisParams())
+    let withEmpty = spectrogramOf([x, newSeq[float32](0)], DtMs, 0, AnalysisParams())
+    doAssert withShort.problem == "", withShort.problem
+    doAssert withEmpty.problem == "", withEmpty.problem
+    doAssert "2 traces" in withShort.note, withShort.note
+    doAssert "2 traces" in withEmpty.note, withEmpty.note
+    doAssert withShort.image.cols == one.image.cols and withShort.image.rows == one.image.rows
+    # a zero trace only scales the average, which dB from the peak cancels
+    doAssert withEmpty.image.values == one.image.values
+    doAssert withShort.image.values != one.image.values, "a short trace was left out of the average"
 
   block envelopeOfAModulatedCosine:
     let n = 2001

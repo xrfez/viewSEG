@@ -895,7 +895,7 @@ settings works out from the traces it is frozen on.
 
 | View | Of | Shows | processSEG |
 |---|---|---|---|
-| **Spectrogram** | the traces (several: their power average) | amplitude against time and frequency, in dB from the largest, in a density colour map, with its scale | `spectrogramInto` |
+| **Spectrogram** | the traces (several: their power average) | amplitude against time and frequency, in dB from the largest, in a density colour map, with its scale | `averageSpectrogramInto` |
 | **Envelope and instantaneous phase** | the first trace | the trace and its envelope; its instantaneous phase (°), or with a chosen reference the phase against it (trace minus reference, -180 to 180); its instantaneous frequency (Hz), with the reference's dim | `analyticInto`, `wrapDeg` |
 | **Phase spectrum** | the first trace | amplitude (dB) and phase against frequency | `amplitudeInto` |
 | **Cross-correlation** | each trace (up to 8) against a reference | the correlation coefficient and its envelope against lag; the amplitude ratio (dB) and phase difference (°) per frequency | `crossCorrelateInto`, `compareInto` |
@@ -907,7 +907,7 @@ file's own channel layout: its roles come from the trace codes (Ref 21, M 18, B 
 typed mass is applied, because trace 4 is the ground force already (a `.dat`: the sum of the
 controller's two force channels; a `.vib`: computed from set B's accelerations and the weights in
 the file's header, in pound-counts). The note under the plots says so. The units are counts.
-| **f-k** | a box of traces × time (opened on fewer than 4 traces: the seismic traces of the first one's record; of more than 256, the first 256, side by side) | amplitude against wavenumber and frequency, in dB from the largest, in a density colour map, with its scale | `forward` (composed: along time, then across the traces) |
+| **f-k** | a box of traces × time (opened on fewer than 4 traces: the seismic traces of the first one's record; of more than 256, the first 256, side by side) | amplitude against wavenumber and frequency, in dB from the largest, in a density colour map, with its scale | `fkAmplitudeInto` |
 | **Node orientation** | the traces the Seismic plot shows, in its order, whatever is selected (a component filter is respected) | the node's roll, pitch and azimuth (°) from each trace's orientation header (SEG-D Rev 3), one point per trace as shown: a step or drift is the node moving; a trace without the header is a gap, and traces none of which has one say "These traces carry no orientation header." (SEG-Y always); no samples are read | `traceOrientation` (parseSEG) |
 
 Auxiliary traces go through the filters only when "Filter the Aux traces too" is ticked: when

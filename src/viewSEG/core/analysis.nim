@@ -5,7 +5,7 @@
 ##
 ## | View | What | From processSEG |
 ## |---|---|---|
-## | Spectrogram | amplitude against time and frequency, in dB, an image | `spectrogramInto` |
+## | Spectrogram | amplitude against time and frequency, in dB, an image | `averageSpectrogramInto` |
 ## | Envelope | the trace, its envelope, its instantaneous phase and frequency | `analyticInto` |
 ## | Phase spectrum | amplitude (dB) and phase against frequency | `amplitudeInto` |
 ## | Cross-correlation | each trace against a reference: against lag, and compared per frequency | `crossCorrelateInto`, `compareInto` |
@@ -19,16 +19,20 @@
 ## with the delay taken off) and only where the amplitude is within
 ## `phaseWithinDb` of its peak (elsewhere the phase is noise), and the
 ## spectrogram of several traces, their power average (as the spectrum
-## windows average), summed trace by trace so that it can be stopped between
-## traces (processSEG's `averageSpectrogramInto` is one call).
+## windows average): each trace's mean removed first, then
+## `averageSpectrogramInto`, which stops between traces. processSEG's
+## `demean` rounds a float32 mean, which moves the image, so that
+## subtraction is done here.
 ##
 ## The procs are pure: they take samples and give an `AnalysisResult`, and
 ## never raise (a problem is said in `problem`).
 
 import std/[math, strutils]
+import parseSEG/model/[keytypes, tracerows]
 import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
 import processSEG/vibroseis/[crosscorrelate, sweeptrack, vibqc]
-import processSEG/core/workspace
+import processSEG/core/[rows, workspace]
+import processSEG/core/types except StopCheck
 import colourmaps, edits, matchpeak, panels, phasepicture, phaseshow, plotcursor,
     processing, sigjudge, signalend, sigtypes,
   traceids, vibjudge
@@ -647,6 +651,47 @@ proc orientationOf*(angles: openArray[array[3, float64]]): AnalysisResult =
 
 # ------------------------------------------------------------ spectrogram --
 
+proc removeMean(data: var seq[float32]; at, n: int) =
+  ## Subtracts the float64 mean of `data[at ..< at + n]`, stored back as
+  ## float32. processSEG's `demean` rounds that mean to float32 first, which
+  ## moves the spectrogram.
+  if n == 0: return
+  var mean = 0.0
+  for j in 0 ..< n: mean += float64(data[at + j])
+  mean /= float64(n)
+  for j in 0 ..< n:
+    data[at + j] = float32(float64(data[at + j]) - mean)
+
+var heldStop {.threadvar.}: StopCheck
+var stopError {.threadvar.}: ref Exception
+
+proc libraryStop(): bool {.gcsafe, raises: [].} =
+  ## processSEG's stop check cannot be a closure and cannot raise, so it reads
+  ## the one `spectrogramOf` held and keeps any error to be raised again.
+  if heldStop.isNil: return false
+  try:
+    heldStop()
+  except Exception as e:
+    stopError = e
+    true
+
+proc sgStopped(sg: SpectrogramPlan[float32]; b: RowBlock[float32]; meta: ChunkMeta;
+    amp: var openArray[float64]; ws: var Workspace; stop: StopCheck): int =
+  ## `averageSpectrogramInto`, with `stop` asked once per trace.
+  if stop.isNil:
+    return sg.averageSpectrogramInto(b, meta, amp, ws)
+  let saved = heldStop
+  let savedErr = stopError
+  heldStop = stop
+  stopError = nil
+  defer:
+    heldStop = saved
+    stopError = savedErr
+  result = sg.averageSpectrogramInto(b, meta, amp, ws, stop = libraryStop)
+  if not stopError.isNil:
+    let e = stopError
+    raise e
+
 proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
     p: AnalysisParams; stop: StopCheck = nil): AnalysisResult =
   ## The spectrogram of `rows` (traces at `dtMs`, the first sample at
@@ -669,33 +714,42 @@ proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
   except ValueError as e:
     result.problem = e.msg
     return
+  # an empty trace still enters, as one zero, so it stays in the divisor
+  var data = newSeq[float32](rows.len * samples)
+  var counts = newSeq[int](rows.len)
+  var keys = newSeq[TraceKeys](rows.len)
+  for t, r in rows:
+    counts[t] = if r.len == 0: 1 else: r.len
+    keys[t] = initTraceKeys()
+    if r.len == 0: continue
+    let at = t * samples
+    for j, v in r: data[at + j] = v
+    removeMean(data, at, r.len)
+  let b = rowBlock(data, rows.len, samples)
+  let meta = initChunkMeta(rowsOf(keys, counts), dtMs)
   var ws = initWorkspace()
-  ws.reserve(sg.workspaceSize)
+  ws.reserve(sg.averageWorkspace)
   var amp = newSeq[float64](sg.frames * sg.bins)
-  var power = newSeq[float64](amp.len)
-  var work: seq[float32] = @[]
-  for r in rows:
-    if stop.stopped:
-      result.cancelled = true
-      return
-    # each trace's mean removed first, as the FFT window does: a direct current
-    # offset is not the brightest row
-    var mean = 0.0
-    for v in r: mean += float64(v)
-    if r.len > 0: mean /= float64(r.len)
-    work.setLen r.len
-    for i, v in r: work[i] = float32(float64(v) - mean)
-    sg.spectrogramInto(work, amp, ws)
-    for k in 0 ..< amp.len: power[k] += amp[k] * amp[k]
-  for k in 0 ..< power.len: power[k] = sqrt(power[k] / float64(rows.len))
-  var db = newSeq[float64](power.len)
+  var used = 0
+  try:
+    used = sgStopped(sg, b, meta, amp, ws, stop)
+  except ValueError as e:
+    result.problem = e.msg
+    return
+  if used == Stopped:
+    result.cancelled = true
+    return
+  if used != rows.len:
+    result.problem = "the spectrogram used " & $used & " traces, not " & $rows.len
+    return
+  var db = newSeq[float64](amp.len)
   let floor = min(p.floorDb, -1)
   var img = AnalysisImage(cols: sg.frames, rows: sg.bins, x0: t0Ms, dx: float64(hop) * dtMs,
     y0: 0, dy: sg.binHz(1), xLabel: "Time (ms)", xUnit: "ms", yLabel: "Frequency (Hz)",
     yUnit: "Hz", unit: "dB", lo: float32(floor), hi: 0)
-  img.values = newSeq[float32](power.len)
-  toDbInto(power, db, dbPeak, floor)
-  for k in 0 ..< power.len: img.values[k] = float32(db[k])
+  img.values = newSeq[float32](amp.len)
+  toDbInto(amp, db, dbPeak, floor)
+  for k in 0 ..< amp.len: img.values[k] = float32(db[k])
   result.image = img
   result.note = $windowLen & "-sample frames (" & $(float64(windowLen) * dtMs) &
       " ms, Hann) every " &
