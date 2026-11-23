@@ -36,18 +36,27 @@
 ## not live for the picker and the fit: they get no pick, and the model
 ## ignores them.
 ##
+## **Threads.** The job's own thread reads each chunk, and a `ProcessPool` of its own (half the
+## cores, at most `MaxBreakWorkers`, made for the run and ended with it) filters and picks the
+## chunk's rows (`pool.apply`, `pool.pickInto`): the picks are the single thread's, bit for bit,
+## whatever the number of workers. The fits and the trimmed model run on the job's thread.
+## Progress and cancellation are as before: the job's thread reports after each chunk, and a
+## stop asked for ends the run there, the pool's threads joined.
+##
 ## The job is posted as `mkFirstBreaks`; the state drops an answer whose job
 ## it no longer waits for.
 
-import std/[algorithm, math, sequtils]
+import std/[algorithm, cpuinfo, math, sequtils]
 import parseSEG
-import processSEG/core/[rows, types, workspace]
+import processSEG/core/[pool, rows, types, workspace]
+import processSEG/pipeline
 import processSEG/filter/[design, iir]
 import processSEG/qc/[firstbreak, shotfit]
 import breakmodel, filesystem, firstbreaks, inbox, jobs, session, threads
 
 const
-  BreakChunk* = 512 ## traces read and picked at a time
+  BreakChunk* = 512    ## traces read and picked at a time
+  MaxBreakWorkers* = 8 ## the most threads the picking uses
   BendSigmaShare = 1.1
     ## a second segment kept for its support may leave at most this share of the line's sigma
 
@@ -58,14 +67,24 @@ func trustNote(what: string; used: int; then: string): string =
       $MinTrimmedPicks & " are needed): " & then
   else: what & " gave picks no model could be fitted to (they share one offset): " & then
 
+proc defaultBreakWorkers*(): int =
+  ## The threads the passes pick on: half the cores, at most `MaxBreakWorkers`, as the reader's
+  ## pool takes its share (the interface keeps the rest).
+  clamp(countProcessors() div 2, 1, MaxBreakWorkers)
+
 type BreakProgress* = proc (done, total: int): bool {.closure, gcsafe.}
   ## Called after each chunk; false asks the work to stop (`JobCancelledError`).
 
 proc hasNonFinite*(samples: Tensor[float32]; row, count: int): bool =
   ## Whether one of the first `count` samples of `row` is NaN or infinite.
-  for c in 0 ..< min(count, samples.shape[1]):
-    let v = samples[row, c]
-    if not (v == v and abs(v) < Inf): return true
+  let n = min(count, samples.shape[1])
+  if n <= 0: return false
+  let x = cast[ptr UncheckedArray[uint32]](rowBlock(samples).rowPtr(row))
+  const Exponent = 0x7f800000'u32 # all of a float32's exponent bits set: NaN or infinity
+  var top = 0'u32
+  for c in 0 ..< n: # the largest exponent: no early exit, so that the loop is vectorized
+    top = max(top, x[c] and Exponent)
+  top == Exponent
 
 proc smoothedCopy*(samples: Tensor[float32]; meta: ChunkMeta; plan: IirPlan[float32];
     ws: var Workspace): Tensor[float32] =
@@ -77,7 +96,7 @@ proc smoothedCopy*(samples: Tensor[float32]; meta: ChunkMeta; plan: IirPlan[floa
 proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     killed: openArray[int]; progress: BreakProgress = nil;
     off: openArray[uint8] = []; guide: BreakModel = BreakModel();
-    pick: PickBasis = pbSmoothed): FirstBreaks =
+    pick: PickBasis = pbSmoothed; workers = 0): FirstBreaks =
   ## The first breaks of the record `traces` of `file` (at `path`), the
   ## traces in `killed` (file trace numbers, ascending) left out. Reads
   ## the record in place; raises `JobCancelledError` when `progress` says stop.
@@ -94,6 +113,8 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   ##   result say what they did): smoothing is skipped, and said, when the interval leaves
   ##   the cut under `PickMinCutHz` or the longest trace is no longer than twice the filter's
   ##   margin. The filter runs on whole traces (each to its live length) of a copy of each chunk.
+  ## - `workers` is the number of threads the filtering and picking of a chunk are shared among
+  ##   (0: `defaultBreakWorkers`); the result does not depend on it.
   template f: untyped = file[]
   let n = traces.len
   result = FirstBreaks(state: bkDone, first: traces.a, pickMs: newSeq[float64](n),
@@ -134,6 +155,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   let cols = max(1, f.maxSamples(traces))
   # the smoothing of the guided passes: a plan, or why there is none
   var smoothing: IirPlan[float32]
+  var smoothingFlow: PipelinePlan[float32] # the same filter, for the pool
   var smoothed = false
   var cutHz = 0.0
   if pick == pbSmoothed:
@@ -145,6 +167,8 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
       try:
         smoothing = initIirPlan(float32, butterHighCut(cut, PickHighCutSlope), dt, cols, ipZero)
         if cols > 2 * smoothing.requiredMargin:
+          smoothingFlow = initPipeline([iirOp(butterHighCut(cut, PickHighCutSlope))]).compile(
+            float32, dt, cols)
           (smoothed, cutHz) = (true, cut)
         else:
           result.pickNote = "The picks are made on the samples as recorded: the traces (" &
@@ -152,6 +176,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
             $smoothing.requiredMargin & " samples on each side)."
       except ValueError as e:
         result.pickNote = "The picks are made on the samples as recorded: " & e.msg
+  var pool = newProcessPool(if workers > 0: workers else: defaultBreakWorkers())
   let passes = if guide.given: 3 else: 2
   let total = n * passes
   type Guided = tuple[params: FirstBreakParams; rows: seq[bool]]
@@ -160,11 +185,8 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     ## Picks the rows each guide names with its parameters into `dst` (the others stay), the
     ## record read a chunk at a time; with `smooth`, on a zero-phase high-cut copy of the chunk.
     var plans: seq[FirstBreakPlan[float32]] = @[]
-    var ws = initWorkspace()
-    if smooth: ws.reserve(smoothing.workspaceSize)
     for g in guides:
       plans.add initFirstBreakPlan(float32, g.params, dt, cols)
-      ws.reserve(plans[^1])
     var first = traces.a
     while first <= traces.b:
       let part = first .. min(traces.b, first + BreakChunk - 1)
@@ -196,8 +218,11 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
           if not wanted or samples.hasNonFinite(r, counts[r]): skipSmooth.add r
         skipSmooth.sort()
         skipSmooth = deduplicate(skipSmooth, isSorted = true)
-        picked = smoothedCopy(samples, initChunkMeta(rowsOf(chunkKeys, counts), dt, 0,
-          skipSmooth), smoothing, ws)
+        if skipSmooth.len < part.len:
+          # (the rows not filtered are copied as loaded)
+          picked = newTensorUninit[float32](samples.shape[0], samples.shape[1])
+          pool.apply(smoothingFlow, samples, picked, initChunkMeta(rowsOf(chunkKeys, counts),
+            dt, 0, skipSmooth))
       for gi in 0 ..< plans.len:
         var skip = failed
         for r in 0 ..< part.len:
@@ -206,7 +231,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
         skip = deduplicate(skip, isSorted = true)
         let meta = initChunkMeta(rowsOf(chunkKeys, counts), dt, 0, skip)
         var got = newSeq[FirstBreakPick](part.len)
-        plans[gi].pickInto(picked, meta, got, ws)
+        pool.pickInto(plans[gi], picked, meta, got)
         for r in 0 ..< part.len:
           if guides[gi].rows[part.a - traces.a + r]: dst[part.a - traces.a + r] = got[r]
       first = part.b + 1
