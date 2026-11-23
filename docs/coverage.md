@@ -41,12 +41,12 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.19.2: capabilities | names | processSEG 0.12.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 56 (22 in part) | 189 | 42 (28 in part) | 220 |
-| `internal` | 17 | 47 | 5 | 39 |
-| `planned` | 31 | 214 | 45 | 418 |
-| `to plan` | 2 | 9 | 1 | 5 |
-| `not applicable` | 21 | 363 | 6 | 63 |
-| all | 127 | 822 | 99 | 745 |
+| `built` | 54 (20 in part) | 181 | 39 (27 in part) | 195 |
+| `internal` | 19 | 55 | 6 | 43 |
+| `planned` | 31 | 214 | 41 | 386 |
+| `to plan` | 2 | 10 | 1 | 5 |
+| `not applicable` | 21 | 362 | 6 | 69 |
+| all | 127 | 822 | 93 | 698 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -182,10 +182,10 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Write traces like the input, any subset and order | `openSeismicWriter(path, like)`, `writeTrace(src, trace, samples)`, `headerOverride`, `SeismicWriter`, `HeaderOverride`, `close` | The write job copies one open file like its source and can leave killed traces out | built (the write job); planned (header overrides) |
+| Write traces like the input, any subset and order | `openSeismicWriter(path, like)`, `writeTrace(src, trace, samples)`, `headerOverride`, `SeismicWriter`, `HeaderOverride`, `close` | Export processed traces; export the file without killed traces | internal (`SeismicWriter`, `writeTrace`, the correlation job's in-memory writer); planned (export to a path) |
 | Write with in-memory geometry | `writeTrace(..., keys, fields)` | Export with joined geometry and edits | planned |
 | New SEG-Y from keys | `openSeismicWriter(path, SegyOutputOptions)`, `writeTrace(keys, samples)` | Analysis → References → Generate a reference, and Store as reference | built |
-| New SEG-D Rev 3 from keys | `openSeismicWriter(path, SegdOutputOptions)`, `SegdOutputOptions` (`revision`, `format`, `sampleIntervalUs`, `numSamples`, `units`, `crsText`, `time`), `SegdChannelType` with every channel-type value (`sctAcceleration`, `sctAcousticRange`, `sctAcousticRefMeasured`, `sctAcousticRefNominal`, `sctAngle`, `sctAuxDataTrailer`, `sctCalibration`, `sctClockTimeBreak`, `sctCurrent`, `sctDepth`, `sctEm`, `sctExternalData`, `sctFieldTimeBreak`, `sctOther`, `sctPressure`, `sctRadioRefSweep`, `sctRadioSimilarity`, `sctSeismic`, `sctSignatureFiltered`, `sctSignatureUnfiltered`, `sctSourceBasePlate`, `sctSourceExcitation`, `sctSourceMass`, `sctSourceOther`, `sctSourceOverload`, `sctSourceRefPilot`, `sctSourceRefSweep`, `sctSourceSigEstimated`, `sctSourceSigFiltered`, `sctSourceSigMeasured`, `sctSourceSigUnfiltered`, `sctSourceValve`, `sctTension`, `sctTilt`, `sctTimeBreak`, `sctTimeCounter`, `sctTrueRefSweep`, `sctUnused`, `sctUpHole`, `sctVelocity`, `sctVoltage`, `sctWaterBreak`, `sctWind`, `sctWirelineRefSweep`), `writeTrace(keys, samples, overrides, channelType)` | The write job writes SEG-D from the trace keys when it cannot copy the source; a selection exported as SEG-D and the synthetic sample set to come | built (the write job); planned (export, the other channel types) |
+| New SEG-D Rev 3 from keys | `openSeismicWriter(path, SegdOutputOptions)`, `SegdOutputOptions` (`revision`, `format`, `sampleIntervalUs`, `numSamples`, `units`, `crsText`, `time`), `SegdChannelType` with every channel-type value (`sctAcceleration`, `sctAcousticRange`, `sctAcousticRefMeasured`, `sctAcousticRefNominal`, `sctAngle`, `sctAuxDataTrailer`, `sctCalibration`, `sctClockTimeBreak`, `sctCurrent`, `sctDepth`, `sctEm`, `sctExternalData`, `sctFieldTimeBreak`, `sctOther`, `sctPressure`, `sctRadioRefSweep`, `sctRadioSimilarity`, `sctSeismic`, `sctSignatureFiltered`, `sctSignatureUnfiltered`, `sctSourceBasePlate`, `sctSourceExcitation`, `sctSourceMass`, `sctSourceOther`, `sctSourceOverload`, `sctSourceRefPilot`, `sctSourceRefSweep`, `sctSourceSigEstimated`, `sctSourceSigFiltered`, `sctSourceSigMeasured`, `sctSourceSigUnfiltered`, `sctSourceValve`, `sctTension`, `sctTilt`, `sctTimeBreak`, `sctTimeCounter`, `sctTrueRefSweep`, `sctUnused`, `sctUpHole`, `sctVelocity`, `sctVoltage`, `sctWaterBreak`, `sctWind`, `sctWirelineRefSweep`), `writeTrace(keys, samples, overrides, channelType)` | Export a selection as SEG-D; the synthetic sample set (tools/sampledata) | internal (`SegdOutputOptions`, `sctSeismic`, `sctTimeBreak`, the correlation job); planned (export of a selection, and the other channel types) |
 | Per-standard streaming writers | `openSegyWriter`, `openSegdWriter`, `writeSegd`, `openSeg2Writer`, `SegyWriter`, `SegyWriteOptions`, `initSegyWriteOptions`, `tracesWritten`, `SegdWriter`, `SegdWriteOptions`, `writeRecordHeaders`, `endRecord`, `setRev3Trailer`, `computeRev3Sizes`, `MaxFixedBlock`, `Seg2Writer`, `Seg2WriteOptions`, `initSeg2File`, `abandon` | Conversion and the test suite's fixtures | not applicable (the viewer writes through `openSeismicWriter` and `convertFile`; its tests build their fixtures with these) |
 | Write a file to memory | `openSeismicWriterBytes`, `finishBytes` | Opening a vibrator controller's signature files (decoded to SEG-Y in memory) | internal (the open job of a signature file) |
 | Write a stanza into a memory file | `addTextStanza` | Opening a vibrator controller's signature files (decoded to SEG-Y in memory) | planned |
@@ -379,7 +379,7 @@ name, so these are building blocks for code that works on raw headers.
 | Pilot resampled to the data | `resamplePilot` | Compare pilots | planned |
 | Recorder's instrument filter on a pilot | `InstrumentFilter`, `applyInstrumentFilter` | Compare pilots: "apply recorder filter" | planned |
 | Pilot saved with its sweep fields | `pilotKeys`, `sweepOverrides`, `segySweepType`, `segyTaperType` | Compare pilots: save the generated pilot as SEG-Y | planned |
-| Correlation of uncorrelated records | `initCorrelationPlan`, `correlateInto` (also on the pool), `correlate`, `CorrelationPlan` (`outSamples`, `pilotSamples`, `mode`), `checkCorrelate`, `CorrelationMode` | Correlate records for display | planned |
+| Correlation of uncorrelated records | `initCorrelationPlan`, `correlateInto` (also on the pool), `correlate`, `CorrelationPlan` (`outSamples`, `pilotSamples`, `mode`), `checkCorrelate`, `CorrelationMode` | A background job writes the correlated record in memory | internal (`initCorrelationPlan`, `correlateInto`); planned (`correlate`, `CorrelationMode`, `checkCorrelate`) |
 | Sweep deconvolution | `initCorrelationPlan(mode = cmDeconvolve)` | Correlate records: deconvolve mode | planned |
 | Vertical and diversity stack of repeated sweeps | `initRecordStack`, `addRecord`, `RecordStackParams`, `recordStackMemory`, `RecordStack` (`countAt`), `RecordStackMode`, `DiversityWeight` | "Stack repeated sweeps" at a source point | planned |
 | Vibrator signature analysis: roles, ground force, polarity, limits | `analyzeVibrators`, `VibUnit`, `initVibUnit`, `VibRole`, `VibSignal`, `vibUnitsInOrder`, `defaultOrder`, `groundForceInto`, `Polarity` (`poAsRecorded`, `poReversed`, `poAutomatic`), `automaticPolarity`, `reversePolarity`, `VibLimits`, `LimitKind`, `limitFlagsInto`, `judgedInto`, `judgedPart`, `UnitSignature`, `TrackSummary`, `summarize`, `validate`, `vibratorWorkspace` | Vibrator signature analysis from the plot's selection: each trace's role (reference, ground force, mass, baseplate; by channel, in that order by default), the polarity per role, ground force recorded or made from mass and baseplate, limits: the verdict's six, judged per window (the library's per-point limits are not used), the sweep's ends left out of the judgement | built in part (New plot > Vibrator signature: `analyzeVibrators` on a unit whose roles the window's table assigns, polarity per role, GF from M and B with the masses entered, the point limits of `VibLimits` are not drawn or judged: the six limits of the verdict are the only ones); planned: roles kept with the file and as a rule for a folder, roles from the headers |
