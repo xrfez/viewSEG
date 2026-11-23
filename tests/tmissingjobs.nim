@@ -3,8 +3,11 @@
 ## seismic, or that cannot be read, is skipped. No survey fails the job
 ## with one sentence. A cancel leaves the sink empty.
 ##
-## Seen to fail: with an ambiguous gather stored as a row, `ambiguous_is_unmatched`
-## rejected a row of expected 0, present 0, missing 0; with the stored path
+## Seen to fail: with a receiver gather matched by its record number,
+## `receiver_matches_by_station` rejected a row of expected 1, present 1
+## for the other receiver; with an ambiguous gather stored as a row,
+## `ambiguous_is_unmatched` rejected a row of expected 0, present 0, missing 0;
+## with the stored path
 ## left absolute, `shots_and_skips` rejected a file that was not `sub/one.sgd`.
 ##
 ## A receiver gather is checked with its stations swapped against the
@@ -267,6 +270,35 @@ proc main*() =
       "2 survey records share this source and the record number matches neither", u.why
     doAssert got.sink.result.report.totals.xpsWithoutData == @[3'i64],
       $got.sink.result.report.totals.xpsWithoutData
+
+  block receiver_matches_by_station:
+    ## Derived receiver records are numbered after the survey's. A gather
+    ## whose record number equals one of those is not that other receiver.
+    let survey = surveyOf(
+      xRec(1, "1.00", "1.00", 1, 1, 10, 1, 1),
+      xRec(2, "1.00", "2.00", 1, 1, 10, 2, 2))
+    let wrong = dir / "wrong-node.sgd"
+    receiverFile(wrong, 3, 99.0, [1.0, 2.0])
+    let got = run(dir, @[wrong], survey)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    doAssert got.sink.result.report.records.len == 0, $got.sink.result.report.records
+    doAssert got.sink.result.unmatched.len == 1, $got.sink.result.unmatched
+    let u = got.sink.result.unmatched[0]
+    doAssert u.path == "wrong-node.sgd" and u.record == 3, $u
+    doAssert u.why == "no survey record matches this gather", u.why
+    let plain = dir / "plain-node.sgd"
+    receiverFile(plain, 9, 99.0, [1.0, 2.0])
+    let plainGot = run(dir, @[plain], survey)
+    doAssert plainGot.sink.result.report.records.len == 0, $plainGot.sink.result.report.records
+    doAssert plainGot.sink.result.unmatched.len == 1
+    doAssert plainGot.sink.result.unmatched[0].why == "no survey record matches this gather"
+    let right = dir / "right-node.sgd"
+    receiverFile(right, 3, 2.0, [2.0, 8.0])
+    let rightGot = run(dir, @[right], survey)
+    doAssert rightGot.st == jsDone, rightGot.error
+    doAssert rightGot.sink.result.unmatched.len == 0, $rightGot.sink.result.unmatched
+    let t = rightGot.sink.result.report.totals
+    doAssert t.records == 1 and t.expected == 1 and t.present == 1 and t.missing == 0, $t
 
   block cancel_leaves_the_sink:
     reads = 0

@@ -22,7 +22,10 @@
 ## records (the receiver as the record's source, the sources as its
 ## receivers) and keys with those stations swapped. Those relations are the
 ## loaded O records, or, when none are loaded, the ones `receiverRelations`
-## derives from the X records. The report uses that geometry when every
+## derives from the X records, numbered after the survey's. The match is by
+## that station (`rmSourceStation`), not by the derived record number. A
+## receiver gather that matches nothing is listed in `unmatched`. The report
+## uses that geometry when every
 ## file is a receiver gather, the survey when every file is a shot, and a
 ## copy of the survey with those records added (numbered after the
 ## survey's, so the numbers do not collide) when the folder has both.
@@ -147,7 +150,7 @@ proc swappedCompleteness(g: SurveyGeometry; f: SeismicFile; traces: Slice[int];
     exchange(k.srcPoint, k.rcvPoint)
     exchangeIndex(k.srcIndex, k.rcvIndex)
     keys[i] = k
-  g.recordCompleteness(rowsOf(keys, counts))
+  g.recordCompleteness(rowsOf(keys, counts), rmSourceStation)
 
 func fieldId(c: RecordCompleteness): int64 =
   ## The header record number, or −1 when it is not a whole number.
@@ -213,6 +216,10 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
                   unmatched.add (path: rel, record: fieldId(checked), why: $checked.candidates.len &
                     " survey records share this source and the record number matches neither")
                   for id in checked.candidates: drop.incl id
+                elif receiverGather and checked.xpsRecord < 0:
+                  listed = true
+                  unmatched.add (path: rel, record: fieldId(checked),
+                    why: "no survey record matches this gather")
                 else:
                   records.add checked
                   if receiverGather: sawReceiver = true
