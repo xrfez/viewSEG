@@ -1015,6 +1015,18 @@ proc dropBrought*(e: var FileEdits; baseline: EditLists) =
   e.shown = e.shown.minus(baseline)
   e.kept = e.kept.minus(baseline)
 
+proc takeOff*(e: var FileEdits; gone: EditLists) =
+  ## Takes every edit of `gone` off what is shown and kept. After two paths
+  ## of one file are joined, `gone` is the snapshot edits the incoming path
+  ## no longer has: a kill it took back must not return on the other path.
+  if gone.isEmpty: return
+  let wasShown = e.shown
+  let wasKept = e.kept
+  e.shown = e.shown.minus(gone)
+  e.kept = e.kept.minus(gone)
+  if e.shown != wasShown: inc e.revision
+  if e.kept != wasKept: inc e.keptRevision
+
 proc merge*(e: var FileEdits; other: sink FileEdits) =
   ## Takes the edits of `other` in beside those of `e`, one file's edits
   ## made under two paths (a copy, a link): shown and kept, each the union

@@ -59,6 +59,9 @@
 ##   again: the new kill is kept and shown;
 ## - another program in the middle of its write of the document (it holds
 ##   the store's lock): this one's write waits for it, then merges;
+## - a path that is not the taker confirms first (a copy, and a copy then a
+##   link), then the file takes a kill back while its hash is held: the kill
+##   stays taken back on every path, and a kill made during the check joins;
 ## - the data file's bytes and modification time are as they were through
 ##   all of it, what is remembered of it forgotten (File memory) included.
 ##
@@ -106,7 +109,9 @@
 ## (`lockStore`), "this program wrote while the other held the lock"; with
 ## `link` comparing what a path brought back to the document as a save wrote
 ## it since, instead of to what was brought back, "a kill taken back came
-## back with the copy".
+## back with the copy"; with no take-off, after the link's merge, of the
+## snapshot edits the incoming path no longer has, "a kill taken back came
+## back after the copy confirmed first".
 
 import std/[atomics, monotimes, os, sequtils, strutils, times]
 import viewSEG/core/[diskio, filesystem, jobs, state]
@@ -879,6 +884,91 @@ proc main*() =
         readFile(doc)
       st.apply Command(kind: ckClearEdits, panel: MainPanel)
       st.shutdown()
+    block takenBackAfterTheOtherConfirms:
+      # a path that is not the taker confirms first, then the file takes a
+      # kill back while its hash is held: the kill stays gone. Same when a
+      # link confirms between the copy and the file.
+      proc sameTimeCopy(dir, name, src: string): string =
+        result = dir / name
+        writeFile(result, readFile(src))
+        setLastModificationTime(result, getLastModificationTime(src))
+      block copyFirst:
+        let cfg = fx.dir / "config-order"
+        createDir(cfg)
+        let f = fx.dir / "order.sgy"
+        writeFile(f, readFile(b))
+        setLastModificationTime(f, initTime(getLastModificationTime(f).toUnix - 60, 0))
+        let copy = sameTimeCopy(fx.dir, "order-copy.sgy", f)
+        var st = start(cfg)
+        st.showFile(f)
+        doAssert st.settle(st.remembering(f).known)
+        st.edit(teKilled, 4)
+        doAssert st.settle(st.remembering(f).confirmed and not st.remembering(f).looking)
+        st.flushFiles()
+        st.shutdown()
+        st = start(cfg)
+        st.showFile(copy)
+        doAssert st.settle(st.remembering(copy).confirmed and not st.remembering(copy).looking)
+        st.flushFiles()
+        holdStep("reading every byte")
+        st.showFile(f)
+        doAssert waitUntil(inStep("reading every byte").len >= 1), "the file's hash did not start"
+        doAssert st.settle(st.remembering(f).known and st.editsOf(0).has(teKilled, 4)),
+          "the kill was not brought back while the hash was held"
+        st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[st.base + 4],
+          on: false)
+        st.edit(teKilled, 8)
+        doAssert not st.editsOf(0).has(teKilled, 4)
+        releaseStep("reading every byte")
+        doAssert st.settle(st.remembering(f).confirmed and not st.remembering(f).looking and
+          st.remembering(copy).confirmed)
+        doAssert st.remembering(f).doc.len > 0 and st.remembering(f).doc == st.remembering(
+            copy).doc,
+          "the paths did not share one document"
+        doAssert not st.editsOf(0).has(teKilled, 4),
+          "a kill taken back came back after the copy confirmed first"
+        doAssert st.editsOf(0).has(teKilled, 8), "a kill made during the check did not join"
+        st.showFile(copy)
+        doAssert not st.editsOf(0).has(teKilled, 4), "a kill taken back came back on the copy"
+        st.shutdown()
+      block copyThenLinkThenFile:
+        let cfg = fx.dir / "config-order-link"
+        createDir(cfg)
+        let f = fx.dir / "order-link-file.sgy"
+        writeFile(f, readFile(b))
+        setLastModificationTime(f, initTime(getLastModificationTime(f).toUnix - 60, 0))
+        let copy = sameTimeCopy(fx.dir, "order-link-copy.sgy", f)
+        let link = fx.dir / "order-link.sgy"
+        var st = start(cfg)
+        st.showFile(f)
+        doAssert st.settle(st.remembering(f).known)
+        st.edit(teKilled, 4)
+        doAssert st.settle(st.remembering(f).confirmed and not st.remembering(f).looking)
+        st.flushFiles()
+        st.shutdown()
+        createSymlink(f, link)
+        st = start(cfg)
+        st.showFile(copy)
+        doAssert st.settle(st.remembering(copy).confirmed and not st.remembering(copy).looking)
+        st.flushFiles()
+        st.showFile(link)
+        doAssert st.settle(st.remembering(link).confirmed and not st.remembering(link).looking)
+        holdStep("reading every byte")
+        st.showFile(f)
+        doAssert waitUntil(inStep("reading every byte").len >= 1), "the file's hash did not start"
+        doAssert st.settle(st.remembering(f).known and st.editsOf(0).has(teKilled, 4)),
+          "the kill was not brought back while the hash was held"
+        st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[st.base + 4],
+          on: false)
+        releaseStep("reading every byte")
+        doAssert st.settle(st.remembering(f).confirmed and not st.remembering(f).looking)
+        doAssert st.remembering(f).doc.len > 0 and st.remembering(f).doc == st.remembering(
+            copy).doc and
+          st.remembering(f).doc == st.remembering(link).doc, "the three paths did not share one document"
+        doAssert not st.editsOf(0).has(teKilled, 4),
+          "a kill taken back came back after the copy and the link confirmed"
+        st.shutdown()
+        removeFile(link)
     doAssert (readFile(b), getLastModificationTime(b)) == kept, "the data file changed"
   echo "tmemory: ok"
 

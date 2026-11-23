@@ -4342,15 +4342,19 @@ proc link(state: var AppState; i, j: int) =
     # save may have taken a kill back, and merging the copy brought back
     # would put it back. What was brought back is taken off first, so a
     # kill taken back during the check is not put back, and an edit made
-    # during it still joins.
+    # during it still joins. What this path no longer has of that snapshot
+    # is taken off the other path after the union, so a kill taken back
+    # while the other path had already confirmed does not return.
     let snap = state.remembered[i].brought.doc.len > 0
     let baseline = if snap: state.remembered[i].brought.edits
       elif state.remembered[i].doc.len > 0:
         state.knownDocs.getOrDefault(state.remembered[i].doc).edits
       else: EditLists()
     if mine.steps != (0, 0) or mine.kept != baseline:
+      let gone = baseline.minus(mine.kept)
       if snap: mine.dropBrought(baseline)
       state.edits.mgetOrPut(key, FileEdits()).merge(move mine)
+      state.edits[key].takeOff(gone)
   for p in moved: state.editKey[p] = key
   state.editKey.del key
   # One document for the file: the one its other path has, else this one's.
