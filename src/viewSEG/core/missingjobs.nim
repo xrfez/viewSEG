@@ -245,6 +245,7 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
             files.add FileRecords(path: rel, records: records)
         if not ctx.progress(i + 1, paths.len):
           raise newException(JobCancelledError, "cancelled")
+      ctx.setPhase "reporting"
       var report =
         if not sawReceiver: missingReport(files, relations[])
         elif not sawShot and receiver != nil: missingReport(files, receiver[])
@@ -252,6 +253,7 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
           var survey = relations[]
           survey.addSps(SpsFile(relations: rels), rdSource)
           missingReport(files, survey)
+      ctx.checkCancelled()
       clearCycleRoots()
       if drop.len > 0:
         var kept = newSeqOfCap[int64](report.totals.xpsWithoutData.len)

@@ -3,7 +3,9 @@
 ## seismic, or that cannot be read, is skipped. No survey fails the job
 ## with one sentence. A cancel leaves the sink empty.
 ##
-## Seen to fail: with a path scanned once per listing, `duplicate_path_is_scanned_once`
+## Seen to fail: with a cancel during the report still stored, `cancel_during_the_report`
+## rejected a job that finished done; with a path scanned once per listing,
+## `duplicate_path_is_scanned_once`
 ## rejected files 3, records 3; with a receiver gather matched by its record number,
 ## `receiver_matches_by_station` rejected a row of expected 1, present 1
 ## for the other receiver; with an ambiguous gather stored as a row,
@@ -131,6 +133,9 @@ proc stopOnSecond(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raise
   if back or not phase.startsWith("reading"): return
   inc reads
   if reads >= 2: discard lane.cancel(id)
+
+proc stopOnReport(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
+  if not back and phase == "reporting": discard lane.cancel(id)
 
 proc main*() =
   let dir = getTempDir() / ("viewseg-missing-" & $getCurrentProcessId())
@@ -332,6 +337,23 @@ proc main*() =
     doAssert sink.result.reason.len == 0
     doAssert sink.result.report.records.len == 0
     doAssert sink.result.skipped.len == 0
+
+  block cancel_during_the_report:
+    lane = initJobs()
+    let sink = MissingSink()
+    setJobHook(stopOnReport)
+    defer: setJobHook(nil)
+    let one = dir / "sub" / "one.sgd"
+    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4))
+    let id = lane.submit(missingSpec(dir, @[one]), scanMissing(dir, @[one], survey, sink))
+    doAssert waitUntil(lane.state(id) in {jsDone, jsFailed, jsCancelled}),
+      "the scan did not finish: " & $lane.state(id)
+    doAssert lane.state(id) == jsCancelled, $lane.state(id) & " " & lane.info(id).get.error
+    doAssert not sink.result.ok
+    doAssert sink.result.reason.len == 0
+    doAssert sink.result.report.records.len == 0
+    doAssert sink.result.skipped.len == 0
+    doAssert sink.result.unmatched.len == 0
 
   when defined(release):
     block folder_of_two_hundred:
