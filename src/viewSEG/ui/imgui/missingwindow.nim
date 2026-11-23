@@ -1,5 +1,5 @@
 ## The Missing traces window: a scan of the open folder (subfolders included)
-## against the loaded relation file, and two tables of what the scan found.
+## against the loaded relation file, two tables, and a CSV export.
 ##
 ## The scan is a background job. The window reads its sink only after the job
 ## is no longer running. A cancel leaves the tables already shown. Listing uses
@@ -9,7 +9,7 @@
 import std/[os, strutils]
 import parseSEG
 import imguin/cimgui
-import ../../core/[filejobs, jobs, missingjobs, missingreport, state]
+import ../../core/[filejobs, filesystem, jobs, missingjobs, missingreport, state]
 import ../../core/records as filerecs
 import ../../view/missingwords
 import focus, icons, marks
@@ -17,6 +17,10 @@ import focus, icons, marks
 type
   MissingTab* = enum
     mtFolder, mtRecords
+
+  ExportAsk* = object
+    tab*: MissingTab
+    withPoints*, withTotals*, live*: bool
 
   PendingOpen = object
     path: string
@@ -28,18 +32,22 @@ type
 
   MissingUi* = object
     scanJob: JobId = NoJob
+    exportJob: JobId = NoJob
     sink: MissingSink
     note: ScanNote
     wantScan: bool
     scanning: bool
     have: bool
     capped: bool
+    exported: bool
     folder: string
     status: string
     report: MissingReport
     skipped: seq[tuple[path, why: string]]
     unmatched: seq[tuple[path: string; record: int64; why: string]]
     tab: MissingTab
+    withPoints, withTotals: bool
+    ask: ExportAsk
     pointSort: SortSpec[PointSortColumn]
     recordSort: SortSpec[RecordSortColumn]
     sortsReady, pointDirty, recordDirty: bool
@@ -48,6 +56,8 @@ type
 
   MissingOutput* = object
     commands*: seq[Command]
+    exportAsked*: bool
+    exportPath*: string
 
 proc requestScan*(ui: var MissingUi) =
   ## The next draw starts a scan, cancelling one already running.
@@ -58,6 +68,33 @@ proc canScan(st: AppState): bool =
 
 proc whyNot(st: AppState): string =
   missingWhy(st.fileList.folder.len > 0, st.relationLayer >= 0)
+
+proc writeCsv(path, text: string) =
+  ## `text` written to `path`: a temporary file beside it, then a rename.
+  let tmp = path & "." & $getCurrentProcessId() & ".tmp"
+  var f: syncio.File
+  if not fs.open(f, tmp, fmWrite):
+    raise newException(IOError, "cannot write " & tmp)
+  try:
+    if text.len > 0 and
+        fs.writeBuffer(f, tmp, unsafeAddr text[0], text.len) != text.len:
+      raise newException(IOError, "the disk did not take " & tmp)
+    flushFile(f)
+  finally:
+    close(f)
+  try:
+    fs.moveFile(tmp, path)
+  except OSError as e:
+    discard fs.tryRemoveFile(tmp)
+    raise newException(IOError, e.msg)
+  except IOError:
+    discard fs.tryRemoveFile(tmp)
+    raise
+
+proc totalsBeside(path: string): string =
+  let s = path.splitFile
+  let ext = if s.ext.len == 0: ".csv" else: s.ext
+  s.dir / (s.name & "-totals" & ext)
 
 proc folderScan(folder, cache: string; relations: ref SurveyGeometry; sink: MissingSink;
     note: ScanNote): JobWork =
@@ -75,6 +112,17 @@ proc folderScan(folder, cache: string; relations: ref SurveyGeometry; sink: Miss
     ctx.checkCancelled()
     let scan = scanMissing(folder, paths, relations, sink, cache)
     scan(ctx)
+
+proc exportWork(path, beside: string; points: seq[PointRow];
+    records: seq[missingreport.RecordRow];
+    recordPoints: seq[RecordPointRow]; totals: Totals; ask: ExportAsk): JobWork =
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.checkCancelled()
+    let main = if ask.tab == mtRecords and ask.withPoints: recordPointsCsv(recordPoints)
+      elif ask.tab == mtRecords: recordsCsv(records)
+      else: pointsCsv(points)
+    writeCsv(path, main)
+    if ask.withTotals: writeCsv(beside, totalsCsv(totals))
 
 proc finishScan(ui: var MissingUi; state: JobState; error: string) =
   ui.scanning = false
@@ -109,6 +157,16 @@ proc poll(ui: var MissingUi; st: AppState) =
     else:
       ui.finishScan(info.get.state, info.get.error)
       ui.scanJob = NoJob
+  if ui.exportJob != NoJob:
+    let info = st.jobs.info(ui.exportJob)
+    if info.isNone: ui.exportJob = NoJob
+    elif info.get.state notin {jsQueued, jsRunning}:
+      if info.get.state == jsDone:
+        ui.exported = true
+        ui.status = Written
+      elif info.get.state == jsFailed:
+        ui.status = if info.get.error.len > 0: info.get.error else: ExportFailed
+      ui.exportJob = NoJob
 
 proc submit(ui: var MissingUi; st: AppState) =
   let folder = st.fileList.folder
@@ -139,6 +197,26 @@ proc consider(ui: var MissingUi; st: AppState) =
     ui.wantScan = false
     if canScan(st): ui.submit(st)
     elif not ui.have: ui.status = whyNot(st)
+
+proc startExport*(ui: var MissingUi; st: AppState; path: string) =
+  ## Writes the CSV asked for when Export CSV... was clicked, from the rows
+  ## shown now. `path` gains ".csv" when it has no extension.
+  if not ui.ask.live: return
+  let ask = ui.ask
+  ui.ask.live = false
+  var dest = path
+  if dest.splitFile.ext.len == 0: dest.add ".csv"
+  let beside = totalsBeside(dest)
+  let points = ui.report.points
+  let records = ui.report.records
+  let recordPoints = ui.report.recordPoints
+  let totals = ui.report.totals
+  if ui.exportJob != NoJob:
+    discard st.jobs.cancel(ui.exportJob)
+    ui.exportJob = NoJob
+  ui.exportJob = st.jobs.submit(JobSpec(title: "Export missing traces",
+    lane: jlBackground, reads: @[ui.folder]),
+    exportWork(dest, beside, points, records, recordPoints, totals, ask))
 
 proc takePending(ui: var MissingUi; st: AppState): seq[Command] =
   if not ui.pending.live: return
@@ -432,6 +510,12 @@ proc drawMissing*(ui: var MissingUi; title: string; st: AppState; marks: var Mar
         ui.tab = mtRecords
         igEndTabItem()
       igEndTabBar()
+    if igCheckbox((WithPoints & "##points").cstring, addr ui.withPoints): discard
+    marks.mark("missing.points")
+    tip(PointsTip)
+    if igCheckbox((WithTotals & "##totals").cstring, addr ui.withTotals): discard
+    marks.mark("missing.totalsbox")
+    tip(TotalsTip)
     if ui.scanning:
       if igButton(StopButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.scanJob != NoJob:
         result.commands.add Command(kind: ckCancelJob, job: ui.scanJob)
@@ -441,6 +525,16 @@ proc drawMissing*(ui: var MissingUi; title: string; st: AppState; marks: var Mar
       if igButton(RescanButton.cstring, ImVec2_c(x: 0, y: 0)): ui.requestScan()
       igEndDisabled()
       marks.mark("missing.rescan")
+    igSameLine(0, -1)
+    igBeginDisabled(not ui.have)
+    if igButton(ExportButton.cstring, ImVec2_c(x: 0, y: 0)):
+      ui.ask = ExportAsk(tab: ui.tab, withPoints: ui.withPoints,
+        withTotals: ui.withTotals, live: true)
+      result.exportAsked = true
+      let base = if ui.folder.len > 0: ui.folder else: st.fileList.folder
+      result.exportPath = base / SuggestedName
+    igEndDisabled()
+    marks.mark("missing.export")
     if ui.have and ui.tab == mtFolder: ui.drawPoints(marks)
     elif ui.have: ui.drawRecords(st, marks, result.commands)
   ui.focus.settle()

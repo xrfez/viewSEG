@@ -924,6 +924,8 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
       ui.core.apply Command(kind: ckExportEdits, panel: MainPanel, listPath: path)
     of dkImportEdits:
       ui.core.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: ev.paths[0])
+    of dkExportMissing:
+      ui.missing.startExport(ui.core, ev.paths[0])
   of seCancelled:
     discard # the user closed the dialog: nothing to say
   of seDialogFailed:
@@ -1557,6 +1559,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     var missing = ui.missing.drawMissing(missingTitle, ui.core, ui.marks)
     for c in missing.commands.mitems:
       ui.core.apply move c
+    if missing.exportAsked: ui.ask(dkExportMissing, missing.exportPath)
   if ui.windows.shows(awHeaders):
     ui.windows.beforeDrawing(awHeaders)
     # The pick is this frame's: the plot is drawn first.
