@@ -227,6 +227,7 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
               inc records
               rec = r
         if firstKept < 0:
+          if sink != nil: sink.result.dropped = dropped
           abort(sink, dest, part, claimed, "Nothing to write: every trace was left out.", false)
         template sortInto(traces: var seq[int]): bool =
           var changed = false

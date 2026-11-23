@@ -180,6 +180,18 @@ proc main*() =
       doAssert samplesOf(back, 5) == samplesOf(src, 6), "a killed trace was written"
       back.close()
       removeFile(dest)
+    block everyTraceKilled:
+      ## Seen to fail: every trace was left out, but dropped stayed 0.
+      var edits: FileEdits
+      doAssert edits.change(teKilled, toSeq(0 ..< n), true) == n
+      let dest = dir / "all-killed.sgy"
+      let got = runJob(src, segy, dest, OutputOptions(format: ofSegy, dropKilled: true),
+        edits, @[segy])
+      doAssert got.st == jsFailed, got.error & " / " & got.wrote.reason
+      doAssert got.wrote.written == 0
+      doAssert got.wrote.dropped == n, "dropped was " & $got.wrote.dropped & ", not " & $n
+      doAssert not fileExists(dest), "a write of nothing left a file"
+      doAssert "left out" in got.wrote.reason
     block keptKilled:
       ## Seen to fail: a killed trace that was kept was written as recorded,
       ## so the reversal was not applied.
