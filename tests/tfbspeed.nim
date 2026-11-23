@@ -6,6 +6,8 @@
 ## traces with non-finite samples, a record of noise where the guided pass is skipped, an
 ## interval that leaves no room for the smoothing, one line on the samples as recorded - and with
 ## one, two, four and the default number of worker threads. A cancelled job stops, and says so.
+## No worker thread is left after a normal run, a stop, or an exception from the progress
+## callback (Linux counts the entries of /proc/self/task; other systems skip that count).
 ##
 ## Also `trimmedModel` against the reference's on random picks (noise picks, repeated
 ## distances, odd and even counts, a second line).
@@ -18,9 +20,10 @@
 ## middle ones only, "trial 80 of 127 picks: used 37 and 37"; with the smoothing filter's corner
 ## one Hz higher than the reference's, "two-layer 1 ms: 1 workers: 281CAF21DB86C439 is not the
 ## reference's C4E6D07679752455"; with the pool's high cut one Hz above `smoothedCopy`'s,
-## "mixed lengths: 1 workers: 886170 samples differ, worst |d| 0.009104490280151367".
+## "mixed lengths: 1 workers: 886170 samples differ, worst |d| 0.009104490280151367"; with the
+## task count taken in the progress callback while the pool was still up, "during: 5 tasks, was 1".
 
-import std/[math, strutils]
+import std/[math, os, strutils]
 import parseSEG
 import processSEG/core/[pool, types, workspace]
 import processSEG/filter/[design, iir]
@@ -169,22 +172,49 @@ proc main*() =
         let got = c.breaks(path, workers)
         doAssert got.fingerprint == want.fingerprint, c.name & ": " & $workers & " workers: " &
           got.fingerprint.toHex & " is not the reference's " & want.fingerprint.toHex
-    # a stop asked for after the first chunk ends the job, with the pool's threads joined
+    # a stop asked for after the first chunk ends the job, with the pool's threads joined;
+    # a normal run and an exception from the progress callback join them too
     block aStopEndsTheJob:
+      proc tasks(): int =
+        when defined(linux):
+          for _ in walkDir("/proc/self/task"): inc result
+      proc joined(before: int; what: string) =
+        when defined(linux):
+          # a joined thread's /proc entry can outlive joinThread by a moment
+          var now = tasks()
+          var left = 20
+          while now != before and left > 0:
+            sleep(1)
+            dec left
+            now = tasks()
+          doAssert now == before, what & ": " & $now & " tasks, was " & $before
       let c = Cases[0]
       let path = fx.scene("stop.sgy", c.scene, c.traces, c.samples, c.dtMs)
       var f = openSeismic(path, keys = true)
+      let before = tasks()
+      let done = breaksOfRecord(addr f, path, 0 ..< f.len, [], workers = 4)
+      doAssert done.state == bkDone, $done.state
+      joined(before, "normal")
       var calls = 0
       var stopped = false
       try:
         discard breaksOfRecord(addr f, path, 0 ..< f.len, [],
           proc (done, total: int): bool =
           inc calls
-          calls < 2)
+          calls < 2, workers = 4)
       except JobCancelledError:
         stopped = true
-      f.close()
       doAssert stopped and calls == 2, "stopped " & $stopped & " after " & $calls & " chunks"
+      joined(before, "stop")
+      var raised = false
+      try:
+        discard breaksOfRecord(addr f, path, 0 ..< f.len, [],
+          proc (done, total: int): bool = raise newException(ValueError, "boom"), workers = 4)
+      except ValueError:
+        raised = true
+      doAssert raised, "the progress callback's error was swallowed"
+      joined(before, "exception")
+      f.close()
   echo "tfbspeed: ok"
 
 when isMainModule: main()
