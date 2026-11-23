@@ -324,7 +324,7 @@ proc treeNames*(root: string; cap: int; capped: var bool;
     except OSError:
       if dir == root: raise
 
-proc listedNames(paths: openArray[string]; recursive = false; capped: var bool;
+proc listedNames*(paths: openArray[string]; recursive = false; capped: var bool;
     visit: proc (found: int): bool {.gcsafe, raises: [].} = nil): seq[string] =
   ## The files `paths` name: each folder's files (and, when `recursive`, those of
   ## the folders below it: `treeNames`; otherwise not its subfolders), not hidden

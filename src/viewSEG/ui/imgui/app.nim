@@ -5,7 +5,8 @@
 ## The window holds a menu bar, an icon toolbar, a dockspace with the file
 ## list (`filelist`), the record list (`recordlist`), the trace panel
 ## (`tracepanel`), the map (`mapwindow`), the Headers window (`headerswindow`), the Jobs
-## window (`jobswindow`) and the Messages window, and a status bar with the
+## window (`jobswindow`), the Messages window and the Missing traces window
+## (`missingwindow`), and a status bar with the
 ## running job's progress and its Cancel button, and the readout of what
 ## lies under the mouse in the plot (or its coordinates on the map); files
 ## and folders dropped on the window are opened;
@@ -48,7 +49,7 @@ import curveplot as curveplotui
 import ../../view/[jobstatus, missingwords]
 import aboutbox, agentshot, chrome, clearsurvey, dpi, filelist, fonts, frames, genpreview,
   headerswindow, icons, settingswindow, shortcutswindow,
-  jobswindow, joindialog, mapwindow, memorywindow, menus, messages, plotwindows,
+  jobswindow, joindialog, mapwindow, memorywindow, menus, messages, missingwindow, plotwindows,
   projectwindow,
   placement, references,
   recordlist, reopendialog, shell, spectrumwindow, style, tracepanel, windows, comparewindow
@@ -66,6 +67,7 @@ const
   filesTitle = IconList & "  Files###files"
   jobsTitle = IconTasks & "  Jobs###jobs"
   recordsTitle = IconRecords & "  Records###records"
+  missingTitle = IconTable & "  Missing traces###missing"
   joinTitle = IconSurvey & "  Import survey###join"
   memoryTitle = IconMemory & "  File memory###memory"
   projectTitle = IconProject & "  Project###project"
@@ -104,6 +106,7 @@ type
     mapCursor: string                          ## the pointer's coordinates over the map last frame
     files: FileListUi                          ## the file list's window
     records: RecordListUi                      ## the record list's window
+    missing: MissingUi                         ## the Missing traces window
     join: JoinUi                               ## the "Import survey" window
     clearSurvey: ClearSurveyUi                 ## Clear survey's confirmation
     memory: MemoryUi                           ## the "File memory" window
@@ -1116,6 +1119,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       ui.core.apply Command(kind: ckCompareWindow, compareOpen: not ui.core.compareOpen)
     of maMissingTraces:
       ui.windows.bringForward(awMissing)
+      ui.missing.requestScan()
     of maNewProject:
       ui.project.startNew(projectsHome(), ui.core.fileList.folder)
     of maOpenProject:
@@ -1202,6 +1206,7 @@ proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
   discard igDockBuilderSplitNode(left, ImGui_Dir_Down, 0.3, addr bottom, addr top)
   discard igDockBuilderSplitNode(right, ImGui_Dir_Down, 0.35, addr table, addr map)
   igDockBuilderDockWindow(filesTitle, files)
+  igDockBuilderDockWindow(missingTitle, records)
   igDockBuilderDockWindow(recordsTitle, records)
   igDockBuilderDockWindow("###" & plotId, top)
   igDockBuilderDockWindow(SpectrumWindowTitle, map) # a tab behind the map
@@ -1435,7 +1440,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     if menu.toggleTrayIcon: s.tray.icon = not s.tray.icon
     if menu.toggleTrayMinimize: s.tray.minimize = not s.tray.minimize
     ui.core.apply Command(kind: ckSettings, settings: s)
-  for w in menu.pickedWindows: ui.windows.picked(w)
+  for w in menu.pickedWindows:
+    if w == awMissing and ui.windows.willShow(w): ui.missing.requestScan()
+    ui.windows.picked(w)
   if menu.toggleJoin:
     if ui.join.shown: ui.join.shown = false else: ui.join.open()
   if menu.loadLayout.len > 0:
@@ -1544,6 +1551,11 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     var records = ui.records.drawRecordList(recordsTitle, ui.core, MainPanel, ui.theme,
       ui.marks)
     for c in records.commands.mitems:
+      ui.core.apply move c
+  if ui.windows.shows(awMissing):
+    ui.windows.beforeDrawing(awMissing)
+    var missing = ui.missing.drawMissing(missingTitle, ui.core, ui.marks)
+    for c in missing.commands.mitems:
       ui.core.apply move c
   if ui.windows.shows(awHeaders):
     ui.windows.beforeDrawing(awHeaders)
