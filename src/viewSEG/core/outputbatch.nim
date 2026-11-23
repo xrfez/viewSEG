@@ -259,13 +259,36 @@ proc passed(openFiles: seq[OpenFile]; source: string): int =
     if o.file == nil or o.path.len == 0: continue
     if pathsEqual(o.path, source) or pathsEqual(canonPath(o.path), want): return i
 
-proc savedEdits(store: Store; path: string; modified: Time; lines: var seq[string]): FileEdits =
-  ## The edits a session would bring back at once: the store record of this
-  ## file's quick identity whose modification time is `modified`. A record
-  ## that waits on the hash of every byte, an unconfirmed one, and a pending
-  ## one are not applied. Exactly one line says what was applied, that none
-  ## was found, or why edits were left out. A pending document is not read.
-  ## A store that cannot be read is a note, not a failure.
+proc fileStill(path: string; id: FileIdentity; modified: Time): bool =
+  ## Whether `path` still has quick identity `id` and time `modified`.
+  var now: Time
+  let got = quickIdentity(path, now)
+  got.size == id.size and got.quick == id.quick and now == modified
+
+proc contentHash(ctx: JobContext; path: string; id: FileIdentity; modified: Time;
+    doneFiles, count: int): uint64 =
+  ## The hash of every byte, the proc a session uses, on this job's thread.
+  ## A cancel stops the read (`IOError`, "stopped"). A file that changed
+  ## before or during the read raises `IOError`.
+  if not fileStill(path, id, modified):
+    raise newException(IOError, "it changed since it was opened")
+  let progress = proc (done, total: int64): bool {.gcsafe, raises: [].} =
+    if ctx.cancelled: return false
+    ctx.progress(int64(doneFiles) * BatchScale + shareOf(done, total),
+      int64(count) * BatchScale)
+  result = fullHash(path, progress)
+  if not fileStill(path, id, modified):
+    raise newException(IOError, "it changed while it was read")
+
+proc savedEdits(ctx: JobContext; store: Store; path: string; modified: Time;
+    lines: var seq[string]; doneFiles, count: int): FileEdits =
+  ## The edits a session would bring back once the hash of every byte is
+  ## known: a record whose stored hash equals this file's, or, when the
+  ## record has no such hash, the one whose modification time is `modified`.
+  ## A stored hash that differs is not applied. An unconfirmed record and a
+  ## pending one are not applied. Exactly one line says what was applied,
+  ## that none was found, or why edits were left out. A pending document is
+  ## not read. A store that cannot be read is a note, not a failure.
   if store.isNowhere or path.len == 0:
     lines.add "no saved edits were found for this file"
     return
@@ -291,21 +314,56 @@ proc savedEdits(store: Store; path: string; modified: Time; lines: var seq[strin
     lines.add "Saved edits were not read (" & e.msg & ")."
     return
   for p in problems: lines.add p
-  var matched = false
-  var applied: EditLists
+  var needHash = false
+  for c in records:
+    if not c.unconfirmed and c.identity.fullKnown: needHash = true
+  var hashed = false
+  var full: uint64
+  if needHash:
+    try:
+      full = contentHash(ctx, path, id, modified, doneFiles, count)
+      hashed = true
+    except IOError as e:
+      if e.msg == "stopped" or ctx.cancelled:
+        raise newException(JobCancelledError, "Cancelled.")
+      if "changed" in e.msg:
+        lines.add "The file changed while it was opened; saved edits were not applied."
+      else:
+        lines.add "Saved edits were not read (" & e.msg & ")."
+      return
+    except OSError as e:
+      lines.add "Saved edits were not read (" & e.msg & ")."
+      return
+  var hashHit = -1
+  var timeHit = -1
+  var hashMiss = false
   var other = false
   var unconfirmed = false
-  for c in records:
+  for i, c in records:
     if c.unconfirmed:
       unconfirmed = true
-    elif not matched and c.modified == modified:
-      result.remembered(c.edits)
-      applied = c.edits
-      matched = true
+    elif hashed and c.identity.fullKnown and c.identity.full == full:
+      if hashHit < 0 or c.modified == modified: hashHit = i
+    elif c.modified == modified and not c.identity.fullKnown:
+      if timeHit < 0: timeHit = i
+    elif c.modified == modified and c.identity.fullKnown:
+      hashMiss = true
     else:
       other = true
+  var applied: EditLists
+  var matched = false
+  if hashHit >= 0:
+    applied = records[hashHit].edits
+    result.remembered(applied)
+    matched = true
+  elif timeHit >= 0:
+    applied = records[timeHit].edits
+    result.remembered(applied)
+    matched = true
   if matched:
     lines.add "applied this file's saved edits: " & keptWords(applied)
+  elif hashMiss:
+    lines.add "saved edits belong to a file with other content: not applied"
   elif unconfirmed:
     lines.add "Saved edits were left unconfirmed, so they were not applied."
   elif other:
@@ -406,7 +464,7 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
             int64(count) * BatchScale)
         s = openSession(item.source, progress)
         file = s.filePtr
-        edits = savedEdits(store, item.source, s.modified, itemLines)
+        edits = savedEdits(ctx, store, item.source, s.modified, itemLines, doneFiles, count)
       if ctx.cancelled: raise newException(JobCancelledError, "Cancelled.")
       outSink = OutputSink()
       let report = proc (done, total: int): bool {.gcsafe.} =
@@ -452,8 +510,9 @@ proc outputBatchWork*(ask: BatchAsk; store: Store; openFiles: seq[OpenFile];
   ## A file in `openFiles` whose path is that item's source is written as it
   ## stands, edits included, and is not closed here; every other file is
   ## opened and closed here, and its saved edits are the store record a
-  ## session would bring back at once (the same quick identity and
-  ## modification time). One file is open at a time. One file failing does
+  ## session would bring back once the hash of every byte agrees (or, when
+  ## that hash was not stored, the same quick identity and modification
+  ## time). One file is open at a time. One file failing does
   ## not stop the batch. A cancel stops between files and inside a file,
   ## removes the current part file, leaves finished files, and says how many
   ## were written. `sink.result` is set before the job returns, fails or is

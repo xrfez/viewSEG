@@ -364,6 +364,59 @@ proc main*() =
     doAssert pending.droppedTraces == 0, "a pending kill was applied"
     doAssert readFile(store.docPath(pendingName(pend))) == "not a document"
 
+  block otherContent:
+    ## Seen to fail: a record matched on size, ends and time was applied even
+    ## when its stored hash of every byte was another file's, so a kill from
+    ## that file was dropped from this one.
+    let changed = srcRoot / "changed.sgy"
+    let same = srcRoot / "same.sgy"
+    copyFile(segy, changed)
+    copyFile(segy, same)
+    let originalFull = fullHash(changed)
+    var raw = readFile(changed)
+    let mid = raw.len div 2
+    raw[mid] = char(ord(raw[mid]) xor 0xff)
+    writeFile(changed, raw)
+    # A whole second: setting the time keeps microseconds, not the file's
+    # nanoseconds, and the store keeps the time it is given.
+    let stamp = initTime(getTime().toUnix, 0)
+    setLastModificationTime(changed, stamp)
+    var changedTime: Time
+    var changedId = quickIdentity(changed, changedTime)
+    doAssert changedTime == stamp, "the changed file's time was not the one stored"
+    changedId.full = originalFull
+    changedId.fullKnown = true
+    var kill: EditLists
+    kill.lists[teKilled] = @[0]
+    let hashHome = dir / "hashmem"
+    createDir(hashHome)
+    let hashStore = Store(home: hashHome)
+    let changedRec = FileRecord(identity: changedId, name: "changed.sgy", path: changed,
+      opened: getTime(), modified: changedTime, edits: kill, doc: docName(changedId, 1))
+    writeFile(hashStore.docPath(changedRec.doc), memoryDocument(changedRec))
+    var sameTime: Time
+    var sameId = quickIdentity(same, sameTime)
+    sameId.full = fullHash(same)
+    sameId.fullKnown = true
+    let sameRec = FileRecord(identity: sameId, name: "same.sgy", path: same,
+      opened: getTime(), modified: sameTime, edits: kill, doc: docName(sameId, 2))
+    writeFile(hashStore.docPath(sameRec.doc), memoryDocument(sameRec))
+    let dest = dir / "hash-out"
+    let ask = BatchAsk(root: srcRoot, items: @[
+      BatchItem(source: changed, relative: "changed.sgy"),
+      BatchItem(source: same, relative: "same.sgy")],
+      destRoot: dest, options: opts, mirrorFolders: false)
+    let got = runBatch(ask, hashStore, @[])
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    let wrong = itemOf(got.wrote, "changed.sgy")
+    doAssert "saved edits belong to a file with other content: not applied" in wrong.lines,
+      $wrong.lines
+    doAssert wrong.droppedTraces == 0, "a kill from another file's content was applied"
+    doAssert "applied this file's saved edits" notin wrong.lines.join(" ")
+    let agreed = itemOf(got.wrote, "same.sgy")
+    doAssert "applied this file's saved edits: 1 killed" in agreed.lines, $agreed.lines
+    doAssert agreed.droppedTraces == 1, "a hash that agrees was not applied"
+
   doAssert readFile(segy) == sampleSegy and readFile(segd) == sampleSegd
   doAssert readFile(plain) == plainBytes and readFile(edited) == editedBytes and
     readFile(segdCopy) == segdBytes
