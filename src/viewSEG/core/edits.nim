@@ -1008,12 +1008,18 @@ proc remembered*(e: var FileEdits; l: EditLists) =
   if e.shown != was: inc e.revision
 
 proc dropBrought*(e: var FileEdits; baseline: EditLists) =
-  ## Takes `baseline` out of what is shown and kept. A path that only
-  ## brought a document back must not put those edits onto the other path:
-  ## that one may have taken them back while this one was checked. An edit
-  ## made during the check is not in `baseline`, so it stays.
-  e.shown = e.shown.minus(baseline)
-  e.kept = e.kept.minus(baseline)
+  ## Takes `baseline` out of what is shown and kept, except a value an undo
+  ## step of this session set: that is the user's edit and must join, also
+  ## when it equals a snapshot value. A path that only brought a document
+  ## back must not put the rest onto the other path: that one may have taken
+  ## them back while this one was checked. After this the lists and the
+  ## steps agree (undo removes a value set again, redo restores it).
+  var shownSet, keptSet = EditLists()
+  for s in e.undos:
+    shownSet.turnShown(s, back = false)
+    keptSet.turnKept(s, back = false)
+  e.shown = e.shown.minus(baseline.minus(shownSet))
+  e.kept = e.kept.minus(baseline.minus(keptSet))
 
 proc keepIncoming*(e: var FileEdits; incomingShown, incomingKept, baseline: EditLists) =
   ## A filter or shift the incoming path holds that differs from `baseline`

@@ -57,7 +57,9 @@
 ## `nextUndo` does), "the Edit menu's words take 4904.85 µs a frame"; with
 ## `show` asking the file's edits through `getOrDefault` (a copy of the
 ## lists and the history), "a step to another record allocates 4158 times
-## more with a history of a thousand steps (24 with none)".
+## more with a history of a thousand steps (24 with none)"; with
+## `dropBrought` taking off every snapshot value, a kill set again included,
+## "a kill set again during the check was dropped".
 ##
 ## Runs alone: it bounds the time a frame's questions to the lists take (50 µs).
 
@@ -65,7 +67,7 @@ import std/[algorithm, math, monotimes, os, sequtils, strutils, times]
 import parseSEG
 import processSEG/[adapters, pipeline]
 import processSEG/core/workspace
-import viewSEG/core/state
+import viewSEG/core/[processing, state]
 import utils/[fixtures, waiting]
 
 proc answered(st: AppState): bool =
@@ -628,6 +630,60 @@ proc main*() =
       doAssert st.settle(st.answered)
       doAssert st.tiles(0)[^1].rowOf(dead).blank, "under AGC the dead-marked trace is drawn"
       st.shutdown()
+
+  block reappliedSnapshot:
+    # a snapshot value set again during the check is this session's edit:
+    # dropBrought keeps it, and undo removes it, redo restores it. A snapshot
+    # value never set this session is still taken off.
+    block kill:
+      var baseline: EditLists
+      baseline.lists[teKilled] = @[4, 6]
+      var e: FileEdits
+      e.remembered(baseline)
+      discard e.change(teKilled, [4], on = false)
+      discard e.change(teKilled, [4], on = true)
+      discard e.change(teKilled, [9], on = true)
+      e.dropBrought(baseline)
+      doAssert e.has(teKilled, 4) and teKilled in e.keptOf(4),
+        "a kill set again during the check was dropped"
+      doAssert not e.has(teKilled, 6), "a snapshot kill never set this session stayed"
+      doAssert e.has(teKilled, 9), "a kill made during the check was dropped"
+      discard e.undo()
+      doAssert e.has(teKilled, 4), "undo of another kill removed the one set again"
+      discard e.undo()
+      doAssert not e.has(teKilled, 4), "undo did not remove the kill set again"
+      discard e.redo()
+      doAssert e.has(teKilled, 4) and teKilled in e.keptOf(4),
+        "redo did not restore the kill set again"
+    block filter:
+      var baseline: EditLists
+      let own = bounded(OwnFilter(spec: Processing(band: pbLowCut, f1: 8, f2: 16), place: fpAfter))
+      baseline.filters = @[FilterEntry(trace: 15, filter: own)]
+      var e: FileEdits
+      e.remembered(baseline)
+      discard e.clearOwnFilters([15])
+      discard e.setOwnFilters([15], own)
+      e.dropBrought(baseline)
+      doAssert e.hasFilter(15) and e.ownOf(15).filter == own and e.keptFilter(15).filter == own,
+        "a filter set again during the check was dropped"
+      discard e.undo()
+      doAssert not e.hasFilter(15), "undo did not remove the filter set again"
+      discard e.redo()
+      doAssert e.ownOf(15).filter == own, "redo did not restore the filter set again"
+    block shift:
+      var baseline: EditLists
+      baseline.shifts = @[ShiftEntry(trace: 16, ms: 4.0)]
+      var e: FileEdits
+      e.remembered(baseline)
+      discard e.clearTimeShifts([16])
+      discard e.setTimeShifts([16], 4.0, 2.0)
+      e.dropBrought(baseline)
+      doAssert e.shiftOf(16) == 4.0 and e.keptShift(16) == 4.0,
+        "a shift set again during the check was dropped"
+      discard e.undo()
+      doAssert e.shiftOf(16) == 0.0, "undo did not remove the shift set again"
+      discard e.redo()
+      doAssert e.shiftOf(16) == 4.0, "redo did not restore the shift set again"
 
   block historyNotCopied:
     # Stepping to another record of a file with a long history does not copy
