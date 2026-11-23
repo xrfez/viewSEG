@@ -3,11 +3,13 @@
 ## modified, and one block of traces is in memory at a time. A later window
 ## calls it once per file.
 ##
-## The destination is created exclusively (`fs.createExclusive`). An existing
-## path is refused, never overwritten. The writer puts its bytes in a
-## temporary file and renames that onto the destination when it finishes, so
-## the empty file made here is replaced only by a complete one. A cancel or
-## a failure drops the writer (no rename) and removes that file.
+## An existing destination is refused, never overwritten, and the destination
+## name is never created here. The writer is given a part file in that
+## folder (`<name>.part-<random>`, created exclusively so it is ours). When
+## the writer finishes, `fs.moveNoReplace` moves the part onto the
+## destination, and fails without touching it when that name exists by then.
+## A cancel or a failure drops the writer and removes only the part file
+## (and the writer's own temporary file); the destination name is not touched.
 ##
 ## With no option on, samples are the source's decoded samples and headers
 ## are the writer's template (`like:`). SEG-D's template writer keeps each
@@ -15,7 +17,7 @@
 ## killed trace left out, is written from the trace keys instead, and the
 ## result says so. Display-only gain is never applied.
 
-import std/[math, os, strutils]
+import std/[math, os, random, strutils, times]
 import parseSEG
 import edits, filesystem, jobs, panels, processing, reader, sorting
 
@@ -45,7 +47,7 @@ type
     lines*: seq[string] ## the writer's diagnostics, and a note when records bound a sort
     path*: string
     reason*: string
-    removed*: bool      ## a partial destination was removed
+    removed*: bool      ## a partial file of ours was removed
 
   OutputSink* = ref object
     ## Filled when the job ends, including when it fails or is cancelled.
@@ -104,9 +106,41 @@ proc boundary(file: SeismicFile; trace: int; byEntry, segdOut: bool): int64 =
   elif segdOut: recordKey(file, trace)
   else: 0
 
-proc abort(sink: OutputSink; dest: string; claimed: bool; why: string; cancel: bool) =
+proc claimPart(dest: string): string =
+  ## An empty file next to `dest`, `<dest>.part-<random>`, created exclusively
+  ## so it is ours. "" when every name tried already exists.
+  const hex = "0123456789abcdef"
+  var rng = initRand(getTime().toUnix * 1_000_000_007 + getTime().nanosecond +
+    int64(getCurrentProcessId()) * 7919)
+  for attempt in 0 ..< 16:
+    var name = dest & ".part-"
+    for k in 0 ..< 12: name.add hex[rng.rand(15)]
+    if fs.createExclusive(name): return name
+  ""
+
+proc dropOurs(part: string): bool =
+  ## Removes `part` and the writer's temporary file next to it
+  ## (`<part>.<random>.tmp`). Never a destination name: `part` is a file this
+  ## job created. True when `part` is gone.
+  if part.len == 0: return false
+  result = fs.tryRemoveFile(part)
+  let folder = part.parentDir
+  let dir = if folder.len == 0: "." else: folder
+  let prefix = extractFilename(part) & "."
+  try:
+    for kind, path in fs.walkDir(dir):
+      if kind notin {pcFile, pcLinkToFile}: continue
+      let name = extractFilename(path)
+      if name.startsWith(prefix) and name.endsWith(".tmp"):
+        discard fs.tryRemoveFile(path)
+  except OSError:
+    discard
+
+proc abort(sink: OutputSink; dest, part: string; claimed: bool; why: string; cancel: bool) =
+  ## Ends the job. When `claimed`, removes only `part` (ours); `dest` is never
+  ## touched.
   var removed = false
-  if claimed: removed = fs.tryRemoveFile(dest)
+  if claimed: removed = dropOurs(part)
   var reason = why
   if removed: reason.add " The partial file was removed."
   elif claimed: reason.add " The partial file could not be removed."
@@ -126,12 +160,13 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
   ## Writes `file` to `dest` on a job thread. `file` stays open until the
   ## job ends (submit it with `outputSpec`). `sink.result` is set before the
   ## job returns, fails or is cancelled. A cancel is looked for at each
-  ## record and each block of traces; either that or a failure removes a
-  ## partial destination and says so.
+  ## record and each block of traces; either that or a failure removes the
+  ## part file and says so. The destination name is never touched.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "writing"
     if sink != nil: sink.result = OutputResult(path: dest, lines: @[])
     var claimed = false
+    var part = ""
     var lines: seq[string] = @[]
     try:
       {.cast(gcsafe).}:
@@ -139,22 +174,23 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
         opens.add source
         if file != nil and file[].path.len > 0: opens.add file[].path
         let refused = refuseDestination(dest, opens)
-        if refused.len > 0: abort(sink, dest, false, refused, false)
+        if refused.len > 0: abort(sink, dest, part, false, refused, false)
         if fs.dirExists(dest):
-          abort(sink, dest, false, "The destination is a folder.", false)
+          abort(sink, dest, part, false, "The destination is a folder.", false)
         if fs.fileExists(dest):
-          abort(sink, dest, false, "The destination already exists.", false)
-        if not fs.createExclusive(dest):
-          abort(sink, dest, false, "The destination already exists.", false)
+          abort(sink, dest, part, false, "The destination already exists.", false)
+        part = claimPart(dest)
+        if part.len == 0:
+          abort(sink, dest, part, false, "The destination's folder has no free name.", false)
         claimed = true
         if file == nil or not file[].isOpen:
-          abort(sink, dest, claimed, "The source file is not open.", false)
+          abort(sink, dest, part, claimed, "The source file is not open.", false)
         let n = file[].len
-        if n == 0: abort(sink, dest, claimed, "The file has no traces.", false)
+        if n == 0: abort(sink, dest, part, claimed, "The file has no traces.", false)
         let outKind = kindOf(opts.format)
         let srcKind = file[].kind
         if srcKind notin {skSegy, skSegd, skSeg2}:
-          abort(sink, dest, claimed, "The file is not SEG-Y, SEG-D or SEG-2.", false)
+          abort(sink, dest, part, claimed, "The file is not SEG-Y, SEG-D or SEG-2.", false)
         let byEntry = srcKind == skSegd
         let splitRecords = outKind == skSegd
         if not file[].hasKeys and (opts.sortKeys.len > 0 or (splitRecords and not byEntry)):
@@ -179,13 +215,13 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
               var perm: seq[int] = @[]
               let rows = file[].rowsOf(g)
               if not sortRowsInto(rows, opts.sortKeys, perm):
-                abort(sink, dest, claimed, "The sort was stopped.", true)
+                abort(sink, dest, part, claimed, "The sort was stopped.", true)
               var next = newSeq[int](g.len)
               for k, row in perm: next[k] = g[row]
               g = next
         for g in groups: order.add g
         if order.len == 0:
-          abort(sink, dest, claimed, "Nothing to write: every trace was left out.", false)
+          abort(sink, dest, part, claimed, "Nothing to write: every trace was left out.", false)
         let segdOut = outKind == skSegd
         var sameOrder = order.len == n
         if sameOrder:
@@ -215,33 +251,33 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
         block writing:
           var w: SeismicWriter
           if like:
-            w = openSeismicWriter(dest, like = file[])
+            w = openSeismicWriter(part, like = file[])
           elif segdOut:
             var count = int(file[].traceEntry(order[0]).numSamples)
             for t in order:
               let c = int(file[].traceEntry(t).numSamples)
               if c != count:
-                abort(sink, dest, claimed,
+                abort(sink, dest, part, claimed,
                   "SEG-D output needs one sample count; this file has more than one.", false)
             var o = SegdOutputOptions(sampleIntervalUs: file[].sampleIntervalUs(order[0]),
               numSamples: count)
             let t0 = file[].traceKeys(order[0]).time
             if not t0.isNaN: o.time = t0
-            w = openSeismicWriter(dest, o)
+            w = openSeismicWriter(part, o)
           else:
-            w = openSeismicWriter(dest, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+            w = openSeismicWriter(part, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
           var at = 0
           var seen = int64(-1)
           while at < order.len:
             let r = boundary(file[], order[at], byEntry, segdOut)
             if r != seen:
               seen = r
-              if stopAsked(ctx): abort(sink, dest, claimed, "Cancelled.", true)
+              if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
             var last = at
             while last < order.len and last - at < TraceBlock and
                 boundary(file[], order[last], byEntry, segdOut) == r:
               inc last
-            if stopAsked(ctx): abort(sink, dest, claimed, "Cancelled.", true)
+            if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
             fs.mappedRead(source)
             for t in order[at ..< last]:
               let x = file[].readTraces(t .. t)
@@ -269,19 +305,26 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
                 w.writeTrace(keys, samples, channelType = channel)
             at = last
             if not ctx.progress(at + dropped, n):
-              abort(sink, dest, claimed, "Cancelled.", true)
-          if stopAsked(ctx): abort(sink, dest, claimed, "Cancelled.", true)
+              abort(sink, dest, part, claimed, "Cancelled.", true)
+          if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
           let log = w.close()
-          claimed = false # the writer replaced the claim with the finished file
           for d in log: lines.add($d)
+          if not fs.moveNoReplace(part, dest):
+            let kept = "The file appeared while writing; the output is kept as " & part & "."
+            if sink != nil:
+              sink.result = OutputResult(ok: false, written: order.len, dropped: dropped,
+                lines: lines, path: part, reason: kept)
+            claimed = false # the part file is the kept output, not a partial to drop
+            raise newException(ValueError, kept)
+          claimed = false
           if sink != nil:
             sink.result = OutputResult(ok: true, written: order.len, dropped: dropped,
               lines: lines, path: dest)
     except JobCancelledError as e:
       if sink != nil and sink.result.reason.len == 0:
-        abort(sink, dest, claimed, e.msg, true)
+        abort(sink, dest, part, claimed, e.msg, true)
       raise
     except CatchableError as e:
       if sink != nil and sink.result.reason.len == 0:
-        abort(sink, dest, claimed, e.msg, false)
+        abort(sink, dest, part, claimed, e.msg, false)
       raise

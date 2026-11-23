@@ -325,6 +325,56 @@ proc main*() =
     release(dest)
     src.close()
 
+  block aFileThatAppearsIsKept:
+    ## Seen to fail: the writer renamed onto a file put at the destination
+    ## while the write hung, so "kept" was gone and nothing said it appeared.
+    var src = openSeismic(segy, keys = true)
+    let dest = dir / "appeared.sgy"
+    fault(segy, fkHang, {foMapped})
+    let jobs = initJobs()
+    let sink = OutputSink()
+    let id = jobs.submit(outputSpec(segy, dest),
+      outputWork(addr src, segy, dest, OutputOptions(format: ofSegy), FileEdits(), @[segy], sink))
+    doAssert waitUntil(hung() > 0), "the write did not reach the file"
+    writeFile(dest, "kept")
+    release(segy)
+    doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
+      "the write did not finish: " & $jobs.state(id)
+    doAssert jobs.state(id) == jsFailed, "a file that appeared was overwritten: " & $jobs.state(id)
+    doAssert readFile(dest) == "kept", "the destination was replaced"
+    doAssert "appeared while writing" in sink.result.reason, sink.result.reason
+    doAssert sink.result.path.len > 0 and sink.result.path != dest, sink.result.path
+    doAssert fileExists(sink.result.path), "the output was not kept as the part file"
+    doAssert not sink.result.removed
+    removeFile(dest)
+    removeFile(sink.result.path)
+    src.close()
+
+  block cancelDoesNotDeleteTheirs:
+    ## Seen to fail: cancel unlinked the destination, so a file put there
+    ## while the write hung was deleted.
+    var src = openSeismic(segy, keys = true)
+    let dest = dir / "not-ours.sgy"
+    fault(segy, fkHang, {foMapped})
+    let jobs = initJobs()
+    let sink = OutputSink()
+    let id = jobs.submit(outputSpec(segy, dest),
+      outputWork(addr src, segy, dest, OutputOptions(format: ofSegy), FileEdits(), @[segy], sink))
+    doAssert waitUntil(hung() > 0), "the write did not reach the file"
+    writeFile(dest, "kept")
+    doAssert jobs.cancel(id)
+    release(segy)
+    doAssert waitUntil(jobs.state(id) == jsCancelled), "cancel did not stop the write: " &
+      $jobs.state(id) & " " & sink.result.reason
+    doAssert readFile(dest) == "kept", "cancel deleted a file that was not ours"
+    doAssert "removed" in sink.result.reason
+    var left = false
+    for kind, path in walkDir(dir):
+      if kind == pcFile and path.extractFilename.startsWith("not-ours.sgy.part-"): left = true
+    doAssert not left, "cancel left the part file"
+    removeFile(dest)
+    src.close()
+
   doAssert readFile(segy) == srcBytes and readFile(segd) == sgdBytes
   removeDir(dir)
   echo "toutputjobs: ok"

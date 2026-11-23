@@ -401,3 +401,32 @@ proc createExclusive*(_: FileSystem; path: string): bool {.raises: [OSError].} =
       return true
     if posix.errno == posix.EEXIST: return false
     raiseOSError(osLastError())
+
+proc moveNoReplace*(_: FileSystem; src, dst: string): bool {.raises: [OSError].} =
+  ## Moves `src` onto `dst` only when `dst` does not exist. True when it did:
+  ## `src` is gone and `dst` is that file. False when `dst` already exists:
+  ## both files are left as they are, and neither is opened. Raises `OSError`
+  ## for any other failure (no folder, a drive that does not answer). Atomic,
+  ## so another program cannot see a partial `dst`.
+  enter(foWrite, dst)
+  when defined(windows):
+    const
+      ErrorAlreadyExists = 183'i32 # not a winlean constant
+      ErrorFileExists = 80'i32
+    let fromName = newWideCString(src)
+    let toName = newWideCString(dst)
+    # flags 0: fail when `dst` exists; do not replace it
+    if winlean.moveFileExW(fromName, toName, 0) != 0: return true
+    let err = osLastError().int32
+    if err == ErrorAlreadyExists or err == ErrorFileExists: return false
+    raiseOSError(osLastError())
+  else:
+    if posix.link(cstring(src), cstring(dst)) == 0:
+      if posix.unlink(cstring(src)) != 0:
+        # the new name is ours; drop it so a failed move leaves `dst` free
+        let err = osLastError()
+        discard posix.unlink(cstring(dst))
+        raiseOSError(err)
+      return true
+    if posix.errno == posix.EEXIST: return false
+    raiseOSError(osLastError())

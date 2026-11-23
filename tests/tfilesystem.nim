@@ -145,6 +145,29 @@ proc main*() =
     doAssert not fs.fileExists(dir / "nope.txt")
     release(dir / "nope.txt")
 
+  block aMoveDoesNotReplace:
+    ## Seen to fail: with `moveNoReplace` missing, this does not compile;
+    ## with it replacing, `there.txt` is no longer "kept".
+    writeFile(dir / "from.txt", "moved")
+    writeFile(dir / "there.txt", "kept")
+    doAssert not fs.moveNoReplace(dir / "from.txt", dir / "there.txt"),
+      "an existing file is not replaced"
+    doAssert readFile(dir / "from.txt") == "moved"
+    doAssert readFile(dir / "there.txt") == "kept"
+    doAssert fs.moveNoReplace(dir / "from.txt", dir / "gone.txt")
+    doAssert not fileExists(dir / "from.txt")
+    doAssert readFile(dir / "gone.txt") == "moved"
+    resetCounts()
+    writeFile(dir / "from.txt", "again")
+    doAssert fs.moveNoReplace(dir / "from.txt", dir / "seen.txt")
+    doAssert calls(foWrite, dir / "seen.txt") >= 1, "the test double did not see the move"
+    fault(dir / "bad-move.txt", fkFail)
+    writeFile(dir / "from.txt", "stays")
+    doAssertRaises OSError: discard fs.moveNoReplace(dir / "from.txt", dir / "bad-move.txt")
+    doAssert readFile(dir / "from.txt") == "stays"
+    doAssert not fileExists(dir / "bad-move.txt")
+    release(dir / "bad-move.txt")
+
   block aFailingCallFails:
     fault(far, fkFail)
     doAssert not fs.fileExists(far / "b.txt"), "a failing drive: no such file"
