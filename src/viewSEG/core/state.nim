@@ -5407,6 +5407,10 @@ proc startCorrelate(state: var AppState; originIndex: int; keepView: bool) =
   if originIndex notin 0 ..< state.sessions.len: return
   let s = state.sessions[originIndex]
   if s.derived: return
+  if alreadyCorrelated(s.filePtr):
+    state.showRawOf(s.diskPath)
+    state.sayCorrelate(s.name & " is already correlated (its header says so): shown as it is")
+    return
   let plan = state.planReference(originIndex)
   if plan.why.len > 0:
     if not keepView or not state.derivedShown(s.diskPath): state.showRawOf(s.diskPath)

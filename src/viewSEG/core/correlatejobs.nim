@@ -251,6 +251,21 @@ proc intervalLine(trace: int; reference: bool; traceMs, recordMs: float64): stri
   kind & " trace " & $trace & " is sampled every " & msText(traceMs) &
     " ms, the record every " & msText(recordMs) & " ms: " & tail
 
+proc alreadyCorrelated*(file: ptr SeismicFile): bool =
+  ## Whether the file's own headers say the data are already correlated.
+  ## SEG-Y: binary header byte 3249, or trace header byte 125 of the first
+  ## seismic trace, is 2. Another kind: that field when the headers have it,
+  ## otherwise nothing.
+  if file == nil: return false
+  let binary = file[].fileField("binary.correlated")
+  if binary.kind == fvInt and binary.intVal == CorrelatedYes: return true
+  if file[].kind != skSegy: return false
+  for t in 0 ..< file[].len:
+    if file[].traceKeys(t).status != tsAuxiliary:
+      let v = file[].traceField(t, "trace.correlated")
+      return v.kind == fvInt and v.intVal == CorrelatedYes
+  false
+
 proc binaryUncorrelatedLine(file: ptr SeismicFile): string =
   ## Empty unless the SEG-Y binary header says the data are not correlated.
   ## That copy (byte 3249) has no override in this writer.

@@ -12,7 +12,8 @@
 ## heap-use-after-free in the job's write of the result after shutdown.
 ## With an import aimed at the derived key, "the imported kill is not on
 ## the raw file". With a sweep stored from the correlated view, "the stored
-## sweep is not the raw trace".
+## sweep is not the raw trace". With a file whose header already says
+## correlated, "the raw record was not shown".
 
 import std/[os, sequtils, strutils, times]
 import parseSEG
@@ -109,6 +110,43 @@ proc storeWhileCorrelated(raw: string) =
     " samples, the raw trace has " & $rawSamples.len & ")"
   discard st.shutdown()
 
+proc alreadyCorrelatedFile(fx: Fixtures; raw: string): string =
+  ## A copy of `raw` whose SEG-Y flags say the data are already correlated.
+  result = fx.dir / "already.sgy"
+  copyFile(raw, result)
+  var ed = openEditor(result)
+  doAssert ed.setFileField("binary.correlated", 2), "binary.correlated was refused"
+  doAssert ed.setTraceField(0, "trace.correlated", 2), "trace.correlated was refused"
+  ed.close()
+
+proc refuseAlreadyCorrelated(path: string) =
+  ## A file whose header says correlated is shown raw, and the toggle stays on.
+  var st = initAppState(watchEvery = initDuration(hours = 1))
+  var settings = st.settings
+  settings.files.prepareNext = false
+  st.apply Command(kind: ckSettings, settings: settings)
+  st.rememberFilesIn(path.parentDir / "already-config")
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  doAssert st.settle(st.referencesLoaded), "the archive was not read"
+  let trace = st.sessions[0].base
+  st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "flagged",
+    trace: trace, fromMs: 0, toMs: 100))
+  doAssert st.settle(st.references.entries.anyIt(it.name == "flagged")),
+    "the sweep was not stored"
+  var id = ""
+  for e in st.references.entries:
+    if e.name == "flagged": id = e.id
+  st.apply Command(kind: ckSelectReference, refId: id)
+  st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: true)
+  doAssert st.settle(st.jobs.active.len == 0), "the correlation did not finish"
+  doAssert st.correlateOn, "the toggle turned off"
+  let shown = st.shownFile(st.findPanel(MainPanel))
+  doAssert shown >= 0 and not st.sessions[shown].derived, "the raw record was not shown"
+  doAssert not st.sessions.anyIt(it.derived), "a correlated view was made"
+  doAssert st.said("is already correlated (its header says so)"), "the header was not said"
+  discard st.shutdown()
+
 proc quitWhileCorrelating(raw: string): JobId =
   ## Quits while a correlation is held in its phase; the caller lets it go
   ## on after this state is gone.
@@ -202,6 +240,7 @@ proc main*() =
     discard st.shutdown()
 
     storeWhileCorrelated(raw)
+    refuseAlreadyCorrelated(alreadyCorrelatedFile(fx, raw))
     installSteps()
     let list = fx.dir / "kills.csv"
     writeFile(list, CsvHeader & "\n1,,,killed," & raw.extractFilename & "\n")
