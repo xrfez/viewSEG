@@ -2974,9 +2974,13 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
     hidden = hiddenCaption(faces, st.panels[pk].layers[0].filter.components,
       st.panels[pk].layout.traces)
   let note = if pk >= 0 and not aux: templateCaption(st.templateView(pk)) else: ""
+  var corr = ""
+  if panel == MainPanel and not aux:
+    if st.correlating: corr = "  \u00b7  correlating"
+    elif shown >= 0 and st.sessions[shown].derived: corr = "  \u00b7  correlated"
   let title = IconPlot & "  " & name & (if opened.isDefault: "" else: "  \u00b7  " &
     choiceMark(opened)) & (if hidden.len > 0: "  \u00b7  " & hidden else: "") &
-    (if note.len > 0: "  \u00b7  " & note else: "") &
+    (if note.len > 0: "  \u00b7  " & note else: "") & corr &
     (if checking: "  (edits being checked)" else: "") & "###" & id
   # Arrow keys pan the plot, so they do not move ImGui's keyboard focus here;
   # the wheel zooms, so it does not scroll the window.

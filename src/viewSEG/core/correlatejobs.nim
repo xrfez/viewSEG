@@ -25,7 +25,7 @@
 import std/[algorithm, cpuinfo, formatfloat, math, sets, strutils]
 import parseSEG
 import processSEG
-import cutfile, filesystem, jobs, session, threads
+import cutfile, filesystem, jobs, processing, references, session, threads, traceids
 
 const
   AuxLeadMs* = 500.0
@@ -419,3 +419,84 @@ proc correlateWork*(ask: sink CorrelateAsk; slot: ptr CorrelateResult): JobWork 
         raise
       finally:
         clearCycleRoots()
+
+type
+  CorrelateLoad* = object
+    ## The reference `correlateLoaded` reads before `correlateWork`. An archive
+    ## file is `refPath`. A pilot is `pilotTrace` (0 or above) with `pilot`.
+    refPath*: string
+    pilotTrace*: int
+    pilot*: PilotRule
+    flip*: bool ## the trace's own reversal, before the cut; not reverse-all
+    shiftMs*: float64
+    record*: string
+
+proc loadSweep(file: ptr SeismicFile; path: string; load: CorrelateLoad):
+    tuple[samples: seq[float32]; dtMs: float64] =
+  ## The sweep `load` names, and its sample interval in ms. Raises when it
+  ## cannot be read. On the worker: `readReferenceFile` and `readRawTrace` assert that.
+  if load.refPath.len > 0:
+    let read = readReferenceFile(load.refPath)
+    if read.samples.len == 0:
+      raise newException(ValueError, "the reference file has no sample.")
+    let dt = if read.intervalUs > 0 and read.intervalUs < Inf: read.intervalUs / 1000.0
+             else: 0.0
+    return (read.samples, dt)
+  if load.pilotTrace < 0:
+    raise newException(ValueError, "no reference was given.")
+  var samples = readRawTrace(file, path, load.pilotTrace)
+  var us = 0.0
+  let k = file[].traceKeys(load.pilotTrace)
+  us = if k.intervalUs > 0 and k.intervalUs < Inf: k.intervalUs
+       else: file[].sampleIntervalUs(load.pilotTrace)
+  if samples.len == 0:
+    raise newException(IOError, "the trace could not be read.")
+  let dt = if us > 0 and us < Inf: us / 1000.0 else: 0.0
+  if load.flip:
+    for v in samples.mitems: v = -v
+  applyStoredShift(samples, load.shiftMs, dt)
+  let (cut, problem) = cutPilot(samples, dt, load.pilot, load.record)
+  if problem.len > 0: raise newException(ValueError, problem)
+  (turnedOver(cut, load.pilot), dt)
+
+proc referenceTraces*(file: ptr SeismicFile): seq[int] =
+  ## Auxiliary traces that hold a reference: trace code 5, or a vibrator reference (21).
+  ## The keys already read; no file is opened.
+  result = @[]
+  if file == nil: return
+  for t in 0 ..< file[].len:
+    let k = file[].traceKeys(t)
+    if k.status == tsAuxiliary and (k.traceCode == 5'i16 or k.traceCode == VibReferenceCode):
+      result.add t
+
+proc seismicDtMs*(file: ptr SeismicFile): float64 =
+  ## The seismic traces' sample interval, from keys already read; NaN when none is known.
+  if file == nil: return NaN
+  for t in 0 ..< file[].len:
+    let k = file[].traceKeys(t)
+    if k.status != tsAuxiliary and k.intervalUs > 0 and k.intervalUs < Inf:
+      return k.intervalUs / 1000.0
+  NaN
+
+proc correlateLoaded*(ask: sink CorrelateAsk; load: CorrelateLoad;
+    slot: ptr CorrelateResult): JobWork =
+  ## Loads the reference `load` names, then runs `correlateWork`. `slot` is
+  ## the caller's and must stay alive until the job has finished. A reference
+  ## that cannot be read fails the job and leaves `opened` nil.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    var ready = ask
+    var got: tuple[samples: seq[float32]; dtMs: float64]
+    try:
+      {.cast(gcsafe).}:
+        assertWorkerThread()
+        got = loadSweep(ready.file, ready.path, load)
+      ready.reference = got.samples
+      ready.referenceDtMs = got.dtMs
+    except CatchableError as e:
+      slot[].ok = false
+      slot[].cancelled = false
+      slot[].opened = nil
+      let msg = e.msg
+      slot[].failure = if msg.len == 0: "the reference could not be read." else: msg
+      raise
+    correlateWork(ready, slot)(ctx)

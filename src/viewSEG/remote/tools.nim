@@ -288,6 +288,9 @@ proc prefill(state: AppState; given: Command; c: var Command) =
   of ckCompareDisplay: c.compareShow = state.compareOptions
   of ckCompareWindow: c.compareOpen = true
   of ckSubfolders: c.subfolders = true
+  of ckCorrelate:
+    c.correlate = true
+    if given.panel == NoPanel: c.panel = MainPanel
   of ckSetCompare:
     c.compareSlot = if given.compareSlot == cwBoth: cwA else: given.compareSlot
     c.compareTrace = given.compareTrace

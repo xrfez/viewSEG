@@ -102,6 +102,7 @@
 import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, times]
 from std/unicode import runeSubStr
 import parseSEG
+from processSEG/core/types import sameInterval
 from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
 from processing import changesSamples, ownShownWords, reverseShownWords
@@ -109,7 +110,8 @@ from editmarks import shiftNote
 import signatures, sweeppairs
 from sigvib import gfPoundForcePerPoundCount
 from units import NPerLbf, sensible
-import analysis, analysisreader, closer, compare, comparejobs, components, diskio, edits, filejobs,
+import analysis, analysisreader, closer, compare, comparejobs, components, correlatejobs, diskio,
+  edits, filejobs,
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
       join, layouts, log,
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, reader,
@@ -290,6 +292,8 @@ type
       ## what the compare window draws, and how B is aligned
     ckCompareWindow = "compare window"
       ## open or close the compare window
+    ckCorrelate = "correlate"
+      ## show the correlated record of the file the Seismic window shows, or the raw one
     ckSubfolders = "subfolders"
       ## the file list includes the subfolders' files, or not; the folder is listed again
 
@@ -315,7 +319,7 @@ type
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
         ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckExportEdits, ckImportEdits,
         ckFilter, ckRetry, ckStopReading, ckPrepare, ckProcessing, ckDisplayPreset, ckOwnFilter,
-        ckTimeShift, ckOpenPair:
+        ckTimeShift, ckOpenPair, ckCorrelate:
       panel*: PanelId ## the panel's id (1: the Seismic window; 0 retries the folder)
       gather*: int ## ckGather: index into the file's gathers
       path*: string
@@ -361,6 +365,9 @@ type
         ## so named), rename the preset, or delete it
       presetName*: string ## ckDisplayPreset: the preset's name, in any case
       presetNewName*: string ## ckDisplayPreset: the new name, to rename
+      correlate*: bool
+        ## ckCorrelate: true shows the correlated record of the file the Seismic
+        ## window shows; false shows the raw record and closes the derived view
     of ckHover: trace*: int ## survey-wide trace id; -1 for none
     of ckSelect:
       traces*: seq[int] ## survey-wide trace ids
@@ -638,6 +645,8 @@ type
       ## the file was let go of to be shown again (it changed on disk) while
       ## this reopen was still reading: the new session is shown all the same
     swapped: bool ## a reopen: its file took the place of the open one (its job ends quietly)
+    hold: bool
+      ## an open made so a correlation can run again: not shown; the derived view stays
 
   Carry = object
     ## What a file that is opened again keeps, taken from the open file when
@@ -655,6 +664,16 @@ type
     path: string
     panel: PanelId
     gather: int
+    held: bool ## the derived view stays; the file is opened and correlated, not shown raw
+
+  CorrelateHold = ref object
+    ## One correlation, kept until its job has ended. A ref, not shared memory:
+    ## `result.opened` is a `Session`, and a `Session` in shared memory is not traced.
+    job: JobId
+    result: CorrelateResult
+    origin: string ## the file on disk
+    refId: string ## the reference it was made from
+    gen: uint64 ## `correlateGen` when it was submitted; a newer one drops this result
 
   Loading = object
     ## A survey file being loaded, or an open file's positions being read.
@@ -1079,6 +1098,15 @@ type
     refsLoaded: bool
     mainRefsLoaded: bool
     refsRev: int ## bumps when the archive or the choice changes, so a plot asks again
+    correlateOn: bool ## the Seismic window shows the correlated record
+    correlateNote: string ## a status sentence (no reference, a failure); not the hover
+    correlateSaid: string ## the sentence logged last, so the same one is not said again
+    picksSaid: bool ## the picks sentence was said this run
+    correlateRef: string ## the reference the derived view was made from
+    correlateGen: uint64 ## bumps when a new correlation replaces one running
+    correlate: CorrelateHold ## the correlation running; nil for none
+    correlateRetired: seq[CorrelateHold]
+      ## cancelled correlations kept until their jobs end, so the result is freed here
     refViews: seq[RefView] ## windows showing a reference, until closed
     pilotShown: PilotPreview ## the dialog's pilot of the record on show
     compareA, compareB: CompareSlot
@@ -1404,6 +1432,18 @@ func mainReferences*(state: AppState): lent ReferenceIndex {.inline.} =
 func chosenReference*(state: AppState): string {.inline.} =
   ## The reference the plots use; "" is none.
   state.chosenRef
+
+func correlateOn*(state: AppState): bool {.inline.} =
+  ## Whether the Seismic window is set to show the correlated record.
+  state.correlateOn
+
+func correlateNote*(state: AppState): string {.inline.} =
+  ## A sentence for the status line while correlating; "" for none. Not the hover.
+  state.correlateNote
+
+func correlating*(state: AppState): bool {.inline.} =
+  ## Whether a correlation is running.
+  not state.correlate.isNil and state.correlate.job != NoJob
 
 func referencesHome*(state: AppState): string {.inline.} =
   ## The folder of the archive in force; "" when none was set.
@@ -3078,7 +3118,11 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
       if keepLayers:
         for o in state.opening:
           if o.job == job.id and o.reopened and not o.unwanted: kept = true
-      if not kept: discard state.jobs.cancel(job.id)
+      if not kept:
+        if not state.correlate.isNil and state.correlate.job == job.id:
+          state.correlateRetired.add state.correlate
+          state.correlate = nil
+        discard state.jobs.cancel(job.id)
   state.selection.forget(s.id, s.traceIds)
   if not state.inspector.isNil: state.inspector.dropSession(int(s.id))
   # the pilots taken from this file's records: the dialog's preview, and the windows of
@@ -5237,6 +5281,184 @@ proc reopenFailed(state: var AppState; o: Pending; s: Session; why: string) =
       if p.job == o.job: p.unwanted = true
     state.openAsItWas(o)
 
+proc ended(text: string): string =
+  ## `text` as a sentence: a full stop when it has none.
+  if text.len == 0: return
+  if text[^1] in {'.', '!', '?'}: text else: text & "."
+
+proc sayCorrelate(state: var AppState; text: string; failure = false) =
+  ## Shows `text` on the status line, and logs it once until the reason changes.
+  let text = ended(text)
+  state.correlateNote = text
+  if text.len == 0 or text == state.correlateSaid: return
+  state.correlateSaid = text
+  state.log.add(if failure: sevWarning else: sevInfo, "correlate", text)
+
+proc derivedShown(state: AppState; path: string): bool =
+  ## Whether the Seismic window shows a derived view of the file at `path`.
+  let k = state.findPanel(MainPanel)
+  if k < 0: return false
+  let i = state.shownFile(k)
+  i >= 0 and state.sessions[i].derived and state.sessions[i].diskPath == diskOf(path)
+
+proc originIndex(state: AppState; path: string): int =
+  ## The open raw session of the file at `path`; -1 when it is not open.
+  result = -1
+  let path = diskOf(path)
+  for j, s in state.sessions:
+    if not s.derived and s.diskPath == path: return j
+
+proc showRawOf(state: var AppState; path: string) =
+  ## Shows the raw session of `path` in the Seismic window, keeping its gather.
+  let path = diskOf(path)
+  let k = state.findPanel(MainPanel)
+  if k < 0: return
+  let i = state.originIndex(path)
+  if i < 0 or state.shownFile(k) == i: return
+  var gather = 0
+  if state.panels[k].layers.len > 0: gather = state.panels[k].layers[0].source.gather
+  state.showReplacing(k, state.sessions[i].id, gather)
+
+proc dropHold(state: var AppState) =
+  ## Cancels the correlation running and keeps its hold until the job ends.
+  if state.correlate.isNil: return
+  if state.correlate.job != NoJob: discard state.jobs.cancel(state.correlate.job)
+  state.correlateRetired.add state.correlate
+  state.correlate = nil
+
+proc discardHold(state: var AppState; hold: CorrelateHold) =
+  ## Lets go of a result that will not be shown. The file is closed on the closer's thread.
+  if hold.isNil: return
+  if not hold.result.opened.isNil:
+    var opened = hold.result.opened
+    hold.result.opened = nil
+    state.release(opened)
+
+type
+  RefPlan = object
+    why: string
+    refId: string
+    load: CorrelateLoad
+    traces: seq[int]
+
+proc planReference(state: AppState; i: int): RefPlan =
+  ## The chosen reference as a correlation takes it, or why it cannot. Reads no file.
+  let s = state.sessions[i]
+  result.traces = referenceTraces(s.filePtr)
+  result.load.pilotTrace = -1
+  if state.chosenRef.len == 0:
+    result.why = NoReferenceChosen
+    return
+  if not state.refsLoaded:
+    result.why = "The reference archive has not been read"
+    return
+  let e = state.refs.findId(state.chosenRef)
+  if e < 0:
+    result.why = referenceGone(state.chosenRef)
+    return
+  let entry = state.refs.entries[e]
+  result.refId = entry.id
+  if entry.missing or entry.blocked:
+    result.why = referenceGone(entry.name)
+    return
+  if entry.isPilot:
+    let k = state.findPanel(MainPanel)
+    var gather = 0
+    if k >= 0 and state.panels[k].layers.len > 0:
+      gather = state.panels[k].layers[0].source.gather
+    let rule = entry.pilotRuleOf
+    let edits = state.editsAt(s.path)
+    let picked = s.pilotOfRecord(gather, rule, edits)
+    if picked.trace < 0:
+      result.why = if picked.problem.len > 0: picked.problem else: "the record has no pilot"
+      return
+    result.load = CorrelateLoad(pilotTrace: picked.trace, pilot: rule,
+      flip: edits.has(teReversed, picked.trace), shiftMs: edits.shiftOf(picked.trace),
+      record: picked.record)
+    return
+  let dt = seismicDtMs(s.filePtr)
+  let refMs = if entry.intervalUs > 0 and entry.intervalUs < Inf: entry.intervalUs / 1000.0
+              else: NaN
+  if refMs > 0 and dt > 0 and not sameInterval(refMs, dt):
+    result.why = intervalRefusal(refMs, dt)
+    return
+  if entry.file.len == 0 or state.refsHome.len == 0:
+    result.why = referenceGone(entry.name)
+    return
+  result.load = CorrelateLoad(refPath: state.refsHome / entry.file, pilotTrace: -1)
+
+proc startCorrelate(state: var AppState; originIndex: int; keepView: bool) =
+  ## Correlates open raw session `originIndex` with the chosen reference.
+  ## `keepView`: leave a derived view of that file shown until the new one is ready.
+  if not state.correlateOn: return
+  if originIndex notin 0 ..< state.sessions.len: return
+  let s = state.sessions[originIndex]
+  if s.derived: return
+  let plan = state.planReference(originIndex)
+  if plan.why.len > 0:
+    if not keepView or not state.derivedShown(s.diskPath): state.showRawOf(s.diskPath)
+    state.sayCorrelate(plan.why)
+    return
+  if not state.correlate.isNil and state.correlate.origin == s.diskPath and
+      state.correlate.refId == plan.refId:
+    return
+  if state.correlateRef == plan.refId:
+    var derived = -1
+    for j, x in state.sessions:
+      if x.derived and x.diskPath == s.diskPath: derived = j
+    if derived >= 0:
+      let k = state.findPanel(MainPanel)
+      if k >= 0 and not (keepView and state.shownFile(k) == derived):
+        var gather = 0
+        if state.panels[k].layers.len > 0: gather = state.panels[k].layers[0].source.gather
+        state.showReplacing(k, state.sessions[derived].id, gather)
+      state.correlateNote = ""
+      return
+  state.dropHold()
+  inc state.correlateGen
+  let hold = CorrelateHold(origin: s.diskPath, refId: plan.refId, gen: state.correlateGen,
+    job: NoJob)
+  var ask = CorrelateAsk(file: s.filePtr, path: s.diskPath, referenceTraces: plan.traces)
+  let load = plan.load
+  let slot = addr hold.result
+  let job = state.jobs.submit(JobSpec(title: "Correlate " & s.diskPath.extractFilename,
+    lane: jlBackground, reads: @[s.diskPath], auto: true), correlateLoaded(ask, load, slot))
+  hold.job = job
+  state.correlate = hold
+  state.correlateNote = ""
+
+proc openHeld(state: var AppState; path: string) =
+  ## Opens `path` again without showing it, then correlates it. The derived view stays
+  ## until the new one is ready. An origin already open is correlated at once.
+  let i = state.originIndex(path)
+  if i >= 0:
+    state.startCorrelate(i, keepView = true)
+    return
+  for o in state.opening.mitems:
+    if o.path == path and not o.unwanted:
+      o.hold = true
+      o.panel = NoPanel
+      return
+  let job = state.jobs.submit(JobSpec(title: "Open " & path.extractFilename,
+    lane: jlInteractive, reads: @[path]), openFileWork(path, state.inbox.poster,
+    indexCacheFile(state.indexCache, path), lines = state.settings.join,
+    choice = state.openChoiceOf(path), pair = state.pairArgOf(path)))
+  state.opening.add Pending(job: job, path: path, panel: NoPanel, hold: true,
+    by: state.openedBy.getOrDefault(path))
+
+proc stopCorrelate(state: var AppState) =
+  ## Turns correlation off: the raw record is shown and the derived view is closed.
+  state.correlateOn = false
+  state.correlateNote = ""
+  state.dropHold()
+  let k = state.findPanel(MainPanel)
+  if k < 0: return
+  let i = state.shownFile(k)
+  if i < 0 or not state.sessions[i].derived: return
+  let id = state.sessions[i].id
+  state.showRawOf(state.sessions[i].diskPath)
+  state.closeIfUnused(id)
+
 proc adopt(state: var AppState; s: sink Session; job: JobId) =
   ## Takes in a file an open job opened, and shows its first gather (or the
   ## gather the open asks for) in the panel the open was for (the main panel
@@ -5247,6 +5469,7 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   var gather = 0
   var follow = false
   var by = coWindow
+  var holdOpen = false # opened so a correlation can run again: not shown raw
   var reopened = -1 # `opening[reopened]`: a reopen with options
   for j, p in state.opening:
     if p.job == job:
@@ -5254,7 +5477,7 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
         state.release(s)
         return
       if p.panel != NoPanel: (panel, replacing) = (p.panel, true)
-      (gather, follow, by) = (p.gather, p.follow, p.by)
+      (gather, follow, by, holdOpen) = (p.gather, p.follow, p.by, p.hold)
       if p.reopened: reopened = j
   var carry = Carry()
   var swap = false
@@ -5350,8 +5573,18 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   if state.relationLayer >= 0: state.checkRecords(state.sessions[^1])
   state.watchOpen()
   let k = state.findPanel(panel)
-  if replacing and k >= 0: state.showReplacing(k, id, gather)
+  if holdOpen and state.correlateOn:
+    state.startCorrelate(state.sessions.high, keepView = true)
+  elif holdOpen:
+    # The toggle was turned off before this open finished: show the raw file.
+    state.show(MainPanel, id, gather)
+    state.choose(path)
+    state.mark(path, short, seen = true)
+  elif replacing and k >= 0: state.showReplacing(k, id, gather)
   else: state.show(MainPanel, id, gather)
+  if not holdOpen and panel == MainPanel and state.correlateOn and
+      not state.sessions[^1].isSignature:
+    state.startCorrelate(state.sessions.high, keepView = false)
   if panel == MainPanel:
     state.choose(path)
     state.mark(path, short, seen = true)
@@ -5388,6 +5621,60 @@ proc adoptDerived*(state: var AppState; s: sink Session) =
   if k >= 0: state.showReplacing(k, id, gather)
   state.choose(origin)
   if previous != NoSession: state.closeIfUnused(previous)
+
+proc notePicks(state: var AppState; origin: string) =
+  ## Once, that first-break picks of this file are not drawn on the correlated record.
+  if state.picksSaid: return
+  var ids: seq[SessionId] = @[]
+  for s in state.sessions:
+    if s.diskPath == origin: ids.add s.id
+  for b in state.breaks:
+    if b.key.file in ids and b.picked > 0:
+      state.picksSaid = true
+      state.sayCorrelate(
+        "First-break picks were made on the raw record and are not drawn on the correlated record")
+      return
+
+proc takeCorrelate(state: var AppState; job: JobInfo): bool =
+  ## A correlation job ended. True when `job` was one: a stale or cancelled result is
+  ## dropped, a failure turns the toggle off, and a result is shown.
+  var hold: CorrelateHold = nil
+  var current = false
+  if not state.correlate.isNil and state.correlate.job == job.id:
+    hold = state.correlate
+    state.correlate = nil
+    current = true
+  else:
+    var kept: seq[CorrelateHold] = @[]
+    for h in state.correlateRetired:
+      if h.job == job.id: hold = h
+      else: kept.add h
+    if not hold.isNil: state.correlateRetired = kept
+  if hold.isNil: return false
+  result = true
+  let stale = not current or not state.correlateOn or hold.gen != state.correlateGen or
+    job.state == jsCancelled or hold.result.cancelled
+  if stale:
+    state.discardHold(hold)
+    return
+  if job.state != jsDone or not hold.result.ok or hold.result.opened.isNil:
+    let why = if hold.result.failure.len > 0: hold.result.failure
+              elif job.error.len > 0: job.error
+              else: "the correlation failed"
+    state.correlateOn = false
+    state.sayCorrelate(why, failure = true)
+    state.showRawOf(hold.origin)
+    state.discardHold(hold)
+    return
+  var opened = hold.result.opened
+  hold.result.opened = nil
+  opened.asDerived()
+  state.correlateRef = hold.refId
+  for line in hold.result.lines:
+    state.log.add(sevInfo, "correlate", ended(line))
+  state.adoptDerived(opened)
+  state.notePicks(hold.origin)
+  state.discardHold(hold)
 
 proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
   ## Says how open job `opening[i]` ended, and forgets it. An open no longer
@@ -7311,6 +7598,7 @@ proc refreshCompare(state: var AppState)
 
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
+  if state.takeCorrelate(job): return
   if job.id == state.comparePicJob and job.state == jsFailed:
     state.comparePicJob = NoJob
     if job.error.len > 0:
@@ -7478,11 +7766,18 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
       discard state.jobs.cancel(o.job) # queued: never runs; running: asked to stop
   state.reopens.keepItIf(it.panel != panel or it.path == path)
   if panel == MainPanel: state.choose(path)
+  if panel == MainPanel and state.correlateOn and state.derivedShown(path):
+    let oi = state.originIndex(path)
+    if oi >= 0: state.startCorrelate(oi, keepView = true)
+    else: state.openHeld(path)
+    return
   var i = -1
   for j, s in state.sessions:
     if not s.derived and s.diskPath == path: i = j
   if i >= 0:
     if state.shownFile(k) != i: state.showReplacing(k, state.sessions[i].id, gather)
+    if panel == MainPanel and state.correlateOn:
+      state.startCorrelate(i, keepView = false)
   else:
     var o = -1
     for j, p in state.opening:
@@ -7742,9 +8037,14 @@ proc showAgain(state: var AppState; path: string) =
   for r in state.reopens:
     if r.path == path: waiting.add r
   state.reopens.keepItIf(it.path != path)
+  var held = false
   for r in waiting:
+    if r.held:
+      held = true
+      continue
     let k = state.findPanel(r.panel)
     if k >= 0: state.showPath(k, path, r.gather, by = state.openedBy.getOrDefault(path))
+  if held: state.openHeld(path)
 
 proc reopen(state: var AppState; i: int; now: bool) =
   ## Open file `sessions[i]` changed on disk: its panels let it go at once
@@ -7760,10 +8060,14 @@ proc reopen(state: var AppState; i: int; now: bool) =
     return
   let s = state.sessions[i]
   let path = s.diskPath
+  let held = state.correlateOn and state.derivedShown(path)
   for k in 0 ..< state.panels.len:
     template p: untyped = state.panels[k]
     if p.layers.len > 0 and p.layers[0].shows(s.id):
+      if held and p.id == MainPanel: continue
       state.reopens.add Reopen(path: path, panel: p.id, gather: p.layers[0].source.gather)
+  if held:
+    state.reopens.add Reopen(path: path, panel: MainPanel, held: true)
   state.closeSession(i, quiet = true, keepLayers = true)
   if now: state.showAgain(path)
 
@@ -8579,6 +8883,14 @@ proc selectReference(state: var AppState; cmd: Command) =
     let i = state.refs.findId(id)
     let name = if i >= 0: state.refs.entries[i].name else: id
     state.log.add(sevInfo, "references", "The plots use the reference \"" & name & "\".")
+  if state.correlateOn:
+    let k = state.findPanel(MainPanel)
+    if k >= 0:
+      let shown = state.shownFile(k)
+      if shown >= 0:
+        let path = state.sessions[shown].diskPath
+        let oi = state.originIndex(path)
+        if oi >= 0: state.startCorrelate(oi, keepView = state.derivedShown(path))
 
 proc deleteReference(state: var AppState; cmd: Command) =
   let why = state.refsWritable
@@ -9026,8 +9338,29 @@ proc takeCompare(state: var AppState; m: sink Msg) =
   if n.failure.len > 0:
     state.log.add(sevWarning, "compare", n.failure & ".")
 
+proc setCorrelate(state: var AppState; cmd: Command) =
+  ## Shows the correlated record of the file the Seismic window shows, or the raw one.
+  if not cmd.correlate:
+    if state.correlateOn: state.stopCorrelate()
+    return
+  state.correlateOn = true
+  let k = state.findPanel(MainPanel)
+  if k < 0:
+    state.sayCorrelate("Open a file to correlate")
+    return
+  let shown = state.shownFile(k)
+  if shown < 0:
+    state.sayCorrelate("Open a file to correlate")
+    return
+  let path = state.sessions[shown].diskPath
+  let oi = state.originIndex(path)
+  if oi < 0:
+    state.sayCorrelate("Open a file to correlate")
+    return
+  state.startCorrelate(oi, keepView = state.derivedShown(path))
+
 const AuxRefused = {ckGather, ckShowFile, ckShowTrace, ckSort, ckFilter, ckProcessing,
-  ckDisplayPreset, ckOwnFilter, ckTimeShift, ckPrepare, ckOpenPair}
+  ckDisplayPreset, ckOwnFilter, ckTimeShift, ckPrepare, ckOpenPair, ckCorrelate}
   ## what the Aux window's panel does not take: it follows the Seismic window's record and
   ## shows the auxiliary traces as recorded, with no filter, sort or preset
 
@@ -9681,6 +10014,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckSwapCompare: state.swapCompare()
   of ckCompareDisplay: state.showCompare(cmd)
   of ckCompareWindow: state.setCompareWindow(cmd)
+  of ckCorrelate: state.setCorrelate(cmd)
   of ckSubfolders: state.setSubfolders(cmd)
 
 proc takeLayout(state: var AppState; m: Msg) =

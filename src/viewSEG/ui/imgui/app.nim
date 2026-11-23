@@ -1504,7 +1504,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
       on: ui.agent.running, clients: ui.agent.clients, names: ui.agent.clientNames,
       socket: ui.agent.path, lastCall: ui.agent.lastCall,
       lingering: ui.agent.clients == 0 and ui.agent.lingers(getMonoTime()))), job,
-    ui.core.settings.readout, ui.pick, ui.marks, ui.mapCursor, ui.core.hoverNote)
+    ui.core.settings.readout, ui.pick, ui.marks, ui.mapCursor,
+    if ui.core.hoverNote.len > 0: ui.core.hoverNote else: ui.core.correlateNote)
   if status.cancel != NoJob:
     ui.core.apply Command(kind: ckCancelJob, job: status.cancel)
   if status.showJobs: ui.windows.bringForward(awJobs)
