@@ -50,7 +50,8 @@ const
   MaxMessages = 1000
   DefaultWaitSeconds* = 30
   PanelKinds = {ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack,
-    ckShowFile, ckShowTrace, ckEdit, ckOwnFilter, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFilter,
+    ckShowFile, ckShowTrace, ckEdit, ckOwnFilter, ckTimeShift, ckUndoEdit, ckRedoEdit,
+    ckClearEdits, ckFilter,
     ckProcessing,
     ckDisplayPreset}
     ## the kinds of `Command`'s branch with `panel`, a display, a view, a filter
@@ -257,7 +258,7 @@ proc prefill(state: AppState; given: Command; c: var Command) =
         c.reverse = p.layers[0].reversed
         c.processing = p.layers[0].processing
   case c.kind
-  of ckEdit, ckOwnFilter: c.on = true
+  of ckEdit, ckOwnFilter, ckTimeShift: c.on = true
   of ckMapView: c.mapView = state.map.view
   of ckMapLayer: c.shown = true
   of ckSpectrum:
@@ -334,7 +335,7 @@ proc runCommand*(state: var AppState; fe: Frontend; arguments: string;
   state.prefill(first, c)
   decodeFields(n, c, problems)
   if problems.len > 0: return refused(problems)
-  if kind in {ckEdit, ckOwnFilter} and not n.hasKey("edited"):
+  if kind in {ckEdit, ckOwnFilter, ckTimeShift} and not n.hasKey("edited"):
     c.edited = state.selectedIn(c.panel)
   if kind == ckOwnFilter and not n.hasKey("processing"):
     c.processing = Processing()

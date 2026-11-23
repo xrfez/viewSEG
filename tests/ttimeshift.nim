@@ -34,7 +34,7 @@
 ##
 ## Runs on samples/land/shots.sgy and a synthetic file with an auxiliary trace.
 
-import std/[os, strutils, times]
+import std/[math, os, strutils, times]
 import parseSEG
 import processSEG/core/timeshift
 import processSEG/pipeline
@@ -214,8 +214,13 @@ proc main*() =
     st.show land
     let base = st.sessions[0].base
     st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 1], on: true,
-      shiftMs: 1e30)
+      ms: 1e30)
     var note = ""
+    for e in st.log: note = e.text
+    doAssert "not kept" in note, note
+    st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 1], on: true,
+      ms: NaN)
+    note = ""
     for e in st.log: note = e.text
     doAssert "not kept" in note, note
     st.apply Command(kind: ckUndoEdit, panel: MainPanel)
@@ -234,7 +239,7 @@ proc main*() =
     let asked = dt * 1.5 # ties away from zero: two samples
     doAssert wholeSamples(asked, dt) == 2
     st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 1], on: true,
-      shiftMs: asked)
+      ms: asked)
     doAssert st.settle(st.answered)
     let snapped = st.tiles(0)[^1]
     doAssert snapped.rowOf(1) == moved(raw.rowOf(1), asked, dt),
@@ -242,7 +247,7 @@ proc main*() =
     doAssert snapped.rowOf(0) == raw.rowOf(0), "trace 1 changed"
     doAssert snapped.rowOf(1) != raw.rowOf(1), "a snap of two samples left the trace"
     st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 1], on: true,
-      shiftMs: -dt)
+      ms: -dt)
     doAssert st.settle(st.answered)
     doAssert st.tiles(0)[^1].rowOf(1) == moved(raw.rowOf(1), -dt, dt),
       "trace 2 moved the wrong way"
@@ -251,7 +256,7 @@ proc main*() =
     doAssert st.tiles(0)[^1].rowOf(1) == raw.rowOf(1), "clearing the shift left it on"
     let huge = dt * float64(raw.rowOf(1).len + 5)
     st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 1], on: true,
-      shiftMs: huge)
+      ms: huge)
     doAssert st.settle(st.answered)
     let wiped = st.tiles(0)[^1].rowOf(1)
     for v in wiped: doAssert v == 0, "a shift longer than the trace left a sample"
@@ -268,7 +273,7 @@ proc main*() =
     let plotted = st.tiles(0)[^1]
     let own = band(12, 40)
     st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 1], on: true,
-      shiftMs: 4 * dt)
+      ms: 4 * dt)
     st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 1], on: true,
       processing: own.spec, filterPlace: fpAfter)
     doAssert st.settle(st.answered)
@@ -294,7 +299,7 @@ proc main*() =
     let k = 4
     for sign in [1.0, -1.0]:
       st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 1], on: true,
-        shiftMs: sign * float64(k) * dt)
+        ms: sign * float64(k) * dt)
       let full = moved(raw.rowOf(1), sign * float64(k) * dt, dt)
       for (name, at) in [("start", 0), ("middle", n div 2), ("end", n - 40)]:
         var view = fitAll(lay, 200, 80)
@@ -345,7 +350,7 @@ proc main*() =
     let dt = st.panel(MainPanel).layout.dtMs
     let base = st.sessions[0].base
     st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 1], on: true,
-      shiftMs: 4 * dt)
+      ms: 4 * dt)
     doAssert st.settle(st.answered)
     st.apply Command(kind: ckEdit, panel: MainPanel, edited: @[base + 1], edit: teKilled,
       on: true)
@@ -376,7 +381,7 @@ proc main*() =
       let dt = st.panel(MainPanel).layout.dtMs
       let base = st.sessions[0].base
       st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 0, base + 4],
-        on: true, shiftMs: 4 * dt)
+        on: true, ms: 4 * dt)
       doAssert st.settle(st.answered)
       let t = st.tiles(0)[^1]
       doAssert t.rowOf(0) == moved(raw.rowOf(0), 4 * dt, dt), "the seismic trace was not shifted"

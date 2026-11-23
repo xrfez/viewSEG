@@ -442,6 +442,14 @@ proc main*() =
       doAssert not st.ownAt(st.sessions[0].path, trace).has, "undo did not take the filter away"
       st.agent(%*{"kind": "redo edit"})
       doAssert st.ownAt(st.sessions[0].path, trace).has, "redo did not put the filter back"
+      st.agent(%*{"kind": "time shift", "edited": [st.firstTrace], "ms": 7.0})
+      doAssert st.editsOf(0).shiftOf(trace) == 8.0, "7 ms was not snapped to 8"
+      var shifted = ""
+      for e in st.log:
+        if "Shifted" in e.text: shifted = e.text
+      doAssert "Shifted 1 trace by 8 ms." in shifted, shifted
+      st.agent(%*{"kind": "time shift", "edited": [st.firstTrace]})
+      doAssert st.editsOf(0).shiftOf(trace) == 0.0, "an absent shift did not clear"
       st.agent(%*{"kind": "list file memory"})
       st.flushFiles()
       doAssert remembered(dir).len == 0, "the agent's edits are remembered: " & $remembered(dir)

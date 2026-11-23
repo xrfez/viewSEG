@@ -188,6 +188,7 @@ proc main*() =
       doAssert "Used by" in s["properties"][f.name]["description"].getStr
     # each kind names only the fields it uses (one branch is shared by thirteen)
     doAssert takes(ckSort) == @["panel", "order"], $takes(ckSort)
+    doAssert takes(ckTimeShift) == @["panel", "edited", "on", "ms"], $takes(ckTimeShift)
     doAssert takes(ckShowFile) == @["panel", "path", "listFolder"], $takes(ckShowFile)
     doAssert takes(ckClearSelection).len == 0
     # the map's commands are a user's in a window: offered, each with its own fields

@@ -351,9 +351,9 @@ type
         ## ckOwnFilter: the trace's own frequency filters (raw and aux are not used)
       filterPlace*: FilterPlace
         ## ckOwnFilter: after the plot's filters, or instead of them
-      shiftMs*: float64
+      ms*: float64
         ## ckTimeShift: the shift in milliseconds, positive later; snapped to the
-        ## sample interval. 0, or `on` false, takes the shift away
+        ## sample interval. 0, or absent, or `on` false, takes the shift away
       presetAction*: PresetAction
         ## ckDisplayPreset: draw the panel as the preset says (its orientation
         ## kept), save the panel's display under the name (replacing a preset
@@ -7938,16 +7938,19 @@ proc editTraces(state: var AppState; cmd: Command) =
           if us > 0 and us < Inf:
             dt = us / 1000.0
             break
-    if traces.len > 0 and cmd.on and not shiftStorable(cmd.shiftMs):
-      state.ignore(cmd, "a shift of " & $cmd.shiftMs & " ms is not kept")
+    if traces.len > 0 and cmd.on and not shiftStorable(cmd.ms):
+      state.ignore(cmd, "a shift of " & $cmd.ms & " ms is not kept")
     elif traces.len > 0 and cmd.on and not (dt > 0):
       state.ignore(cmd, "the sample interval is not known")
     elif traces.len > 0:
-      let n = if cmd.on: e.setTimeShifts(traces, cmd.shiftMs, dt, keep)
+      let n = if cmd.on: e.setTimeShifts(traces, cmd.ms, dt, keep)
               else: e.clearTimeShifts(traces, keep)
+      let snapped = if cmd.on: e.shiftOf(traces[0]) else: 0.0
+      let text = if snapped == trunc(snapped) and abs(snapped) < 1e15: $int64(snapped)
+                 else: formatFloat(snapped, ffDecimal, 3)
+      said = "Shifted " & plural(traces.len, "trace") & " by " & text & " ms."
       if n > 0:
         changed = e.nextUndo
-        said = describe(changed).capitalizeAscii & "."
         state.editStamps[s.path] = (s.size, s.modified)
   of ckReverseAll:
     if e.setAllReversed(cmd.reverse, keep):
