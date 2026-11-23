@@ -337,6 +337,8 @@ type
         ## ckEdit: other edits taken away with `edit` in the same step, when `on` is false
       alsoFilter*: bool
         ## ckEdit: the trace's own filter taken away in the same step, when `on` is false
+      alsoShift*: bool
+        ## ckEdit: the trace's own time shift taken away in the same step, when `on` is false
       filter*: TraceFilter ## ckFilter: layer 0's traces (seismic, auxiliary, components)
       listPath*: string
         ## ckExportEdits, ckImportEdits: the list's file (`.nif`, or `.csv`)
@@ -7891,10 +7893,11 @@ proc editTraces(state: var AppState; cmd: Command) =
       state.ignore(cmd, plural(cmd.edited.len - traces.len, "trace") & " of " &
         $cmd.edited.len & " are not in " & s.name)
     var n = 0
-    if traces.len > 0 and not cmd.on and (cmd.alsoDrop != {} or cmd.alsoFilter):
+    if traces.len > 0 and not cmd.on and (cmd.alsoDrop != {} or cmd.alsoFilter or
+        cmd.alsoShift):
       var kinds = cmd.alsoDrop
       kinds.incl cmd.edit
-      n = e.dropEdits(traces, kinds, cmd.alsoFilter, keep)
+      n = e.dropEdits(traces, kinds, cmd.alsoFilter, keep, shifts = cmd.alsoShift)
     elif traces.len > 0:
       n = e.change(cmd.edit, traces, cmd.on, keep)
     if n > 0:

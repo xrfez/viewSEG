@@ -29,7 +29,8 @@
 ## `setTimeShifts` keeping a huge value, "a shift of 1e30 ms was stored". With
 ## the command not reporting a refused shift, "not kept" was absent from the log.
 ## With the inspector shifting the kept prefix only, "the last kept sample is
-## not in the file: 0.0".
+## not in the file: 0.0". With the drop command leaving the shift on, "the
+## shift was left on".
 ##
 ## Runs on samples/land/shots.sgy and a synthetic file with an auxiliary trace.
 
@@ -333,6 +334,34 @@ proc main*() =
         doAssert d.samples[i] == longSample(i + k),
           "sample " & $i & " is " & $d.samples[i] & ", not " & $longSample(i + k)
       f.close()
+
+  block dropShift:
+    # Dropping a kill and a shift together is one step: one undo brings both
+    # back. Seen to fail with the drop command leaving the shift on.
+    var st = initAppState()
+    st.show land
+    st.fit(800, 2 * st.panel(MainPanel).layout.samples)
+    let raw = st.tiles(0)[^1]
+    let dt = st.panel(MainPanel).layout.dtMs
+    let base = st.sessions[0].base
+    st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 1], on: true,
+      shiftMs: 4 * dt)
+    doAssert st.settle(st.answered)
+    st.apply Command(kind: ckEdit, panel: MainPanel, edited: @[base + 1], edit: teKilled,
+      on: true)
+    doAssert st.settle(st.answered)
+    st.apply Command(kind: ckEdit, panel: MainPanel, edited: @[base + 1], edit: teKilled,
+      on: false, alsoShift: true)
+    doAssert st.settle(st.answered)
+    doAssert st.tiles(0)[^1].rowOf(1) == raw.rowOf(1), "the shift was left on"
+    st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+    doAssert st.settle(st.answered)
+    st.apply Command(kind: ckEdit, panel: MainPanel, edited: @[base + 1], edit: teKilled,
+      on: false)
+    doAssert st.settle(st.answered)
+    doAssert st.tiles(0)[^1].rowOf(1) == moved(raw.rowOf(1), 4 * dt, dt),
+      "one undo did not bring the shift back"
+    st.shutdown()
 
   block auxiliary:
     withFixtures fx:
