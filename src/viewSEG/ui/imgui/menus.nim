@@ -2,8 +2,8 @@
 ## ways, and its shortcut is shown in the menu and in the toolbar's tooltips.
 ## Drawing returns what the user asked for; the caller acts on it.
 ##
-## The bar, left to right: File, Project, Edit, View, Analysis, Tools, Window,
-## Help (Reports, after Analysis, and Process, after Reports, are planned).
+## The bar, left to right: File, Project, Edit, View, Analysis, Reports, Tools,
+## Window, Help (Process, after Reports, is not here yet).
 ## File opens, opens again with other options, follows and closes files;
 ## Project holds the job's folder (New project, Open project, Recent projects,
 ## the Project window, the vendor map, Import survey and Clear survey, Close
@@ -25,7 +25,7 @@ import std/os
 import imguin/cimgui
 import ../../core/[analysis, layouts]
 import ../../core/shortcuts as shortcutTable
-import ../../view/theme
+import ../../view/[missingwords, theme]
 import clearsurvey, icons, marks, plotviews, thememenu, windows
 
 type
@@ -62,7 +62,8 @@ type
     maReferenceArchive = "Reference archive...",
     maCompare = "Compare two traces",
     maFirstBreaks = "First-break overlay",
-    maTemplateOnly = "Only traces in the template"
+    maTemplateOnly = "Only traces in the template",
+    maMissingTraces = "Missing traces..."
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
@@ -111,6 +112,8 @@ type
     firstBreaksOn*: bool ## the Seismic window's first-break overlay is on
     templateOnlyOn*: bool ## the Seismic window shows only the traces its record's template lists
     templateAvailable*: bool ## a relation file is there for that (the item is enabled)
+    missingReady*: bool ## Reports > Missing traces can run
+    missingWhy*: string ## why it cannot; "" when it can
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -157,7 +160,8 @@ const
     maShowFiles: 0, maShowRecords: 0, maShowMap: 0, maShowHeaders: 0, maShowJobs: 0,
     maShowMessages: 0,
     maShortcuts: ImGui_Key_F1.cint, maAbout: 0, maGenerateReference: 0,
-    maReferenceArchive: 0, maCompare: 0, maFirstBreaks: 0, maTemplateOnly: 0]
+    maReferenceArchive: 0, maCompare: 0, maFirstBreaks: 0, maTemplateOnly: 0,
+    maMissingTraces: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
@@ -177,10 +181,10 @@ const
     maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog,
     maShortcuts: IconList, maAbout: IconInfo, maGenerateReference: IconVibrator,
     maReferenceArchive: IconReference, maCompare: IconPulse, maFirstBreaks: IconTarget,
-    maTemplateOnly: IconTable]
+    maTemplateOnly: IconTable, maMissingTraces: IconTable]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
-    awMessages: IconLog, awSpectrum: IconPulse, awAux: IconPlot]
+    awMessages: IconLog, awSpectrum: IconPulse, awAux: IconPlot, awMissing: IconTable]
 
 const
   FollowWords* = "Follow the latest file"
@@ -527,6 +531,16 @@ proc drawToolsMenu(input: MenuInput; res: var MenuResult) =
     "program (viewSEG --paths says where)") & ". Every call it makes is written in " &
     "Messages; it cannot write files. For this run only.")
 
+proc drawReportsMenu(input: MenuInput; res: var MenuResult) =
+  ## Reports: the missing-trace scan. The item stays inactive until a folder
+  ## is open and a relation file is loaded.
+  igBeginDisabled(not input.missingReady)
+  item(maMissingTraces, res)
+  igEndDisabled()
+  tip(if input.missingReady: MenuTip else: input.missingWhy)
+  if not input.missingReady and marked != nil:
+    marked[].mark("menu.Missing traces.disabled")
+
 proc drawAnalysisMenu(input: MenuInput; res: var MenuResult) =
   ## Analysis: new plots, the comparison, the references.
   drawNewPlot(input, res)
@@ -552,7 +566,8 @@ proc drawAnalysisMenu(input: MenuInput; res: var MenuResult) =
 proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
   ## The menu bar over the main window, plus the shortcuts, which work whether
   ## or not a menu is open. Its menus are marked "menu.File", "menu.Project",
-  ## "menu.Edit", "menu.View", "menu.Analysis", "menu.Tools", "menu.Window" and
+  ## "menu.Edit", "menu.View", "menu.Analysis", "menu.Reports", "menu.Tools",
+  ## "menu.Window" and
   ## "menu.Help", its items "menu." and their
   ## names, the windows' entries "menu.window." and their IDs, the presets
   ## "menu.layout." and their names.
@@ -648,7 +663,11 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
     if analysis:
       drawAnalysisMenu(input, result)
       igEndMenu()
-    # Future menus: Reports goes here, after Analysis, then Process after Reports.
+    let reports = igBeginMenu("Reports", true)
+    marks.mark("menu.Reports")
+    if reports:
+      drawReportsMenu(input, result)
+      igEndMenu()
     let tools = igBeginMenu("Tools", true)
     marks.mark("menu.Tools")
     if tools:

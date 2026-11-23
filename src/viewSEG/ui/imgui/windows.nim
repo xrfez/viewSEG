@@ -39,7 +39,7 @@ type
     ## the IDs their titles end with (`"###plot"`): what layouts store.
     awSeismic = "plot", awFiles = "files", awRecords = "records", awMap = "map",
     awHeaders = "headers", awJobs = "jobs", awMessages = "Messages", awSpectrum = "spectrum",
-    awAux = "aux"
+    awAux = "aux", awMissing = "missing"
 
   WindowsUi* = object
     ## The windows' state between frames.
@@ -54,7 +54,7 @@ type
 
 const
   WindowNames*: array[AppWindow, string] = ["Seismic", "Files", "Records", "Map", "Headers",
-    "Jobs", "Messages", "Spectrum", "Aux"]
+    "Jobs", "Messages", "Spectrum", "Aux", "Missing traces"]
     ## what the Window menu calls them (the Seismic window's title follows
     ## what it shows: `windowTitle`)
   AlwaysShown* = {awSeismic} ## the plot: brought forward, never hidden
@@ -67,7 +67,8 @@ const
   SectionHeader = "[viewSEG][Windows]"
   neighbours: array[AppWindow, seq[AppWindow]] = [awSeismic: @[], awFiles: @[awRecords],
     awRecords: @[awFiles], awMap: @[awHeaders], awHeaders: @[awMap], awJobs: @[awMessages],
-    awMessages: @[awJobs], awSpectrum: @[awMap, awHeaders], awAux: @[awSeismic]]
+    awMessages: @[awJobs], awSpectrum: @[awMap, awHeaders], awAux: @[awSeismic],
+    awMissing: @[awRecords, awFiles]]
     ## where a window a layout does not know is docked (as a tab): beside
     ## the first of these that is docked, as in the default layout; else
     ## beside the plot
@@ -147,6 +148,11 @@ proc behind(w: AppWindow): bool =
 proc shows*(ws: WindowsUi; w: AppWindow): bool {.inline.} =
   ## Whether `w` is drawn.
   w notin ws.hidden
+
+proc willShow*(ws: WindowsUi; w: AppWindow): bool =
+  ## Whether a Window-menu click on `w` shows it (hidden, always shown, or a
+  ## tab behind another) rather than hiding it.
+  w in ws.hidden or w in AlwaysShown or behind(w)
 
 proc bringForward*(ws: var WindowsUi; w: AppWindow) =
   ## Shows `w` (when it was hidden) in front, with the focus, next frame.

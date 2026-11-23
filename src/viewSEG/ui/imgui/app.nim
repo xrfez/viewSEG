@@ -45,10 +45,11 @@ from ../../core/editmarks import shiftWords
 import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
 import curveplot as curveplotui
-import ../../view/jobstatus
+import ../../view/[jobstatus, missingwords]
 import aboutbox, agentshot, chrome, clearsurvey, dpi, filelist, fonts, frames, genpreview,
   headerswindow, icons, settingswindow, shortcutswindow,
-  jobswindow, joindialog, mapwindow, memorywindow, menus, messages, plotwindows, projectwindow,
+  jobswindow, joindialog, mapwindow, memorywindow, menus, messages, plotwindows,
+  projectwindow,
   placement, references,
   recordlist, reopendialog, shell, spectrumwindow, style, tracepanel, windows, comparewindow
 
@@ -1113,6 +1114,8 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
         ui.core.apply Command(kind: ckFilter, panel: MainPanel, filter: f)
     of maCompare:
       ui.core.apply Command(kind: ckCompareWindow, compareOpen: not ui.core.compareOpen)
+    of maMissingTraces:
+      ui.windows.bringForward(awMissing)
     of maNewProject:
       ui.project.startNew(projectsHome(), ui.core.fileList.folder)
     of maOpenProject:
@@ -1416,7 +1419,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     projectShown: ui.project.shown, archiveShown: ui.refs.shown,
     compareShown: ui.core.compareOpen, firstBreaksOn: ui.core.breaksOn(MainPanel),
     templateOnlyOn: ui.core.templateView(ui.core.findPanel(MainPanel)).on,
-    templateAvailable: ui.core.templateView(ui.core.findPanel(MainPanel)).available)
+    templateAvailable: ui.core.templateView(ui.core.findPanel(MainPanel)).available,
+    missingReady: missingReady(ui.core.fileList.folder.len > 0, ui.core.relationLayer >= 0),
+    missingWhy: missingWhy(ui.core.fileList.folder.len > 0, ui.core.relationLayer >= 0))
   let menu = drawMainMenu(menuInput, ui.marks)
   if menu.newPlot:
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: menu.newPlotView)

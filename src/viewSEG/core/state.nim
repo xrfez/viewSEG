@@ -4875,7 +4875,7 @@ proc readPositions(state: var AppState; s: Session) =
     fileKind(s.file.kind), s.id, s.base, state.inbox.poster))
   state.loading.add Loading(job: job, path: s.path, session: s.id)
 
-func relationLayer(state: AppState): int =
+func relationLayer*(state: AppState): int =
   ## The first loaded survey file with relations (X records): what the
   ## records of the open files are checked against; -1 for none.
   for i in 0 ..< state.survey.layers.len: # indexed: a loop over the layers copies them
