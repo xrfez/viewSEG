@@ -15,6 +15,8 @@
 ## Omitting the cut-sweep line fails "reference trace 1 holds 600 ms, less
 ## than the 400 ms sweep plus the 500 ms lead: its wavelet is of a cut sweep."
 ## Leaving the correlated flag unset fails "trace 0 correlated 1".
+## The old interval line fails "reference trace 1 is sampled every 4 ms, the
+## record every 2 ms: not correlated, written as zeros."
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -197,9 +199,11 @@ proc writeLengths(path: string; record, auxSamples: int; dtMs: float64;
     put(w, 2, otherSamples, tsAuxiliary, 6, other)
   doAssert w.close().len == 0, "the length file did not close"
 
-proc writeOddInterval(path: string) =
+proc writeOddInterval(path: string; otherDt = 0.0) =
   var w = openSeismicWriter(path, SegyOutputOptions())
-  for i, dt in [DtMs, 4.0]:
+  var dts = @[DtMs, 4.0]
+  if otherDt > 0: dts.add otherDt
+  for i, dt in dts:
     var k = initTraceKeys()
     if i == 0: (k.traceCode, k.status) = (1'i16, tsLive)
     else: (k.traceCode, k.status) = (5'i16, tsAuxiliary)
@@ -563,12 +567,44 @@ proc main*() =
     doAssert slot.lines == @[
       "2 traces, 600 samples (1200 ms of listen time).",
       "sweep 400 ms. 0 reference traces delayed by 500 ms.",
-      "auxiliary trace 1: it cannot be correlated with this reference."]
+      "reference trace 1 is sampled every 4 ms, the record every 2 ms: " &
+        "not correlated, written as zeros."]
     template got: untyped = session.file(slot.opened)
     let row = got.readTraces(1 .. 1)
     doAssert int(got.traceEntry(1).numSamples) == 600
     for j in 0 ..< 600:
       doAssert row[0, j] == 0, "odd-interval sample " & $j & " is " & $row[0, j]
+
+  block oddIntervalOther:
+    ## Trace 2 is not a reference, so it is not described as uncorrelated.
+    let p = dir / "oddother.sgy"
+    writeOddInterval(p, otherDt = 3.0)
+    var odd = openSeismic(p, keys = true)
+    defer: odd.close()
+    doAssert odd.len == 3
+    var jobs = initJobs()
+    var slot: CorrelateResult
+    try:
+      let id = jobs.submit(spec(p), correlateWork(CorrelateAsk(
+        file: addr odd, path: p, reference: sweep, referenceDtMs: DtMs,
+        referenceTraces: @[1]), addr slot))
+      doAssert finish(jobs, id) == jsDone, slot.failure
+    finally:
+      jobs.stop()
+    doAssert slot.ok, slot.failure
+    doAssert slot.lines == @[
+      "3 traces, 600 samples (1200 ms of listen time).",
+      "sweep 400 ms. 0 reference traces delayed by 500 ms.",
+      "reference trace 1 is sampled every 4 ms, the record every 2 ms: " &
+        "not correlated, written as zeros.",
+      "auxiliary trace 2 is sampled every 3 ms, the record every 2 ms: " &
+        "written as zeros."], $slot.lines
+    template got: untyped = session.file(slot.opened)
+    for t in [1, 2]:
+      let row = got.readTraces(t .. t)
+      doAssert int(got.traceEntry(t).numSamples) == 600
+      for j in 0 ..< 600:
+        doAssert row[0, j] == 0, "odd-interval trace " & $t & " sample " & $j
 
   block listenLopsided:
     ## Listen 600 ms, delay 500 ms: both sides are not in the window.

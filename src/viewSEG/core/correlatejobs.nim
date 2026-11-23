@@ -245,8 +245,11 @@ proc cutSweepLine(trace: int; heldMs, sweepMs, leadMs: float64): string =
     " ms, less than the " & msText(sweepMs) & " ms sweep plus the " &
     msText(leadMs) & " ms lead: its wavelet is of a cut sweep."
 
-proc intervalLine(trace: int): string =
-  "auxiliary trace " & $trace & ": it cannot be correlated with this reference."
+proc intervalLine(trace: int; reference: bool; traceMs, recordMs: float64): string =
+  let kind = if reference: "reference" else: "auxiliary"
+  let tail = if reference: "not correlated, written as zeros." else: "written as zeros."
+  kind & " trace " & $trace & " is sampled every " & msText(traceMs) &
+    " ms, the record every " & msText(recordMs) & " ms: " & tail
 
 proc binaryUncorrelatedLine(file: ptr SeismicFile): string =
   ## Empty unless the SEG-Y binary header says the data are not correlated.
@@ -379,7 +382,8 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
       let held = int(file[].traceEntry(t).numSamples)
       if held < sweepLen + leadSamples:
         slot[].lines.add cutSweepLine(t, float64(held) * dtMs, slot[].sweepMs, leadMs)
-  for t in shape.odd: slot[].lines.add intervalLine(t)
+  for t in shape.odd:
+    slot[].lines.add intervalLine(t, t in refs, traceDt(file, t), dtMs)
   let uncorrelated = binaryUncorrelatedLine(file)
   if uncorrelated.len > 0: slot[].lines.add uncorrelated
   slot[].opened = made
