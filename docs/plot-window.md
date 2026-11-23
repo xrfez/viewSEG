@@ -1740,7 +1740,8 @@ docks below the Seismic window, and its open state and place are kept with the l
 - **Drawing.** Wiggles only, with the positive and negative fill buttons; no density and no
   display-mode buttons. The gain is its own: None (0 dB, as in the Seismic window), Fixed
   and Normalized, with the gain amount; it starts Normalized for each trace, as a pilot and
-  a monitor channel differ by orders of magnitude. The gain's list has no "Let viewSEG
+  a monitor channel differ by orders of magnitude, and its trace overlap starts at 1 (a
+  trace spacing of swing, as in the Seismic window). The gain's list has no "Let viewSEG
   choose" and no AGC, Exponential or Float.
 - **View.** The same zoom, fit and back buttons and keys as the Seismic window, over a view
   of its own: the "keep the scales on the next record or file" rule is the Seismic

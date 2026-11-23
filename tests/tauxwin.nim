@@ -20,7 +20,8 @@
 ## - closed again, it reads nothing more, and the Seismic window's steps start no read of
 ##   it.
 ##
-## Seen to fail: with `followAux` not retargeting when the record changed, `follows` found
+## Seen to fail: with the Aux window's overlap left at 0.5, `defaults` found it starts at
+## 0.5; with `followAux` not retargeting when the record changed, `follows` found
 ## the Aux window on the first record; with `AuxRefused` empty, `refused` found its trace
 ## filter changed; with the display not cleaned by `forAux`, `ownDisplay` found Exponential
 ## gain on it; with the Aux window's display written to the plot's remembered defaults,
@@ -47,6 +48,12 @@ proc main*() =
   withFixtures fx:
     let path = twoRecordsSegy(fx.dir)
     let other = fx.twoSetSegd()
+
+    block defaults:
+      # The Aux window starts at one trace spacing of swing, as the Seismic window does.
+      doAssert Settings().aux.display.overlap == 1.0,
+        "the Aux window's overlap starts at " & $Settings().aux.display.overlap
+      doAssert Settings().plot.display.overlap == 1.0
 
     block capabilities:
       let main = capsOf(prSeismic)
