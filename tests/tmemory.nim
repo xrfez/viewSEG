@@ -200,6 +200,7 @@ proc main*() =
       st.edit(teKilled, 7, by = coAgent)
       doAssert st.panel(MainPanel).layers[0].reversed and st.editsOf(0).has(teKilled, 7)
       doAssert st.settle(st.remembering(a).confirmed)
+      st.flushFiles() # written before the quit: the quit's disk limit is a wall clock
       st.shutdown()
       let d = docs(config)
       doAssert d.len == 1, $d
