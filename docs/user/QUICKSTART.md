@@ -445,7 +445,9 @@ Windows > Aux** (ticked while it is open; it is closed at first). It docks to th
 the Seismic window, taking 30 % of its width, and shows the auxiliary traces of the record
 the Seismic window shows, as wiggles
 with a gain of their own, and follows it: the next record, another file, "Follow the latest
-file" and a reload. A record with no auxiliary trace says so in one line. Its strip has the
+file" and a reload. A record with no auxiliary trace says so in one line ("This record has
+no auxiliary traces."). When every auxiliary trace is killed and killed traces are hidden,
+it says "Every auxiliary trace of this record is killed and hidden." Its strip has the
 zoom and fit buttons (the view is its own: the time range is not tied to the Seismic
 window's), the **positive** and **negative fill** buttons, and the gain: **None**, **Fixed**
 or **Normalized** (Normalized for each trace at first: a pilot and a monitor channel can

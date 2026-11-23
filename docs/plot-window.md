@@ -1738,7 +1738,9 @@ place are kept with the layout.
   file, a reload. It has no record of its own (the panel refuses `go to gather` and the
   rest of the commands that would give it one), reads nothing while closed, and starts no
   record-level job of its own (first breaks, the record's check, the template's). A record
-  with no auxiliary traces says "This record has no auxiliary traces."
+  with no auxiliary traces says "This record has no auxiliary traces." A record whose
+  auxiliary traces are all killed, while killed traces are hidden, says "Every auxiliary
+  trace of this record is killed and hidden."
 - **Drawing.** Wiggles only, with the positive and negative fill buttons; no density and no
   display-mode buttons. The gain is its own: None (0 dB, as in the Seismic window), Fixed
   and Normalized, with the gain amount; it starts Normalized for each trace, as a pilot and

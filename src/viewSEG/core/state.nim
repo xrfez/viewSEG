@@ -2743,6 +2743,27 @@ func fileHasAuxiliary(state: AppState; file: SessionId): bool =
       if r.aux > 0: return true
   false
 
+func auxEmptyText*(state: AppState; k: int): string =
+  ## What the Aux window says in place of the plot when that record's auxiliary
+  ## traces are not drawn. "" when this is not the Aux window, the layout is not
+  ## known, or traces are drawn.
+  ## The Aux window keeps only auxiliary traces, and the only other traces it
+  ## leaves out are the killed ones when they are hidden. An empty layout of a
+  ## record that has auxiliary traces, with killed traces hidden, is every
+  ## auxiliary trace killed and hidden. A record with none says it has none.
+  result = ""
+  if k < 0 or k >= state.panels.len: return
+  template p: untyped = state.panels[k]
+  if p.role != prAux or not p.laidOut or p.layers.len == 0 or p.layout.traces > 0:
+    return
+  result = "This record has no auxiliary traces."
+  if p.layers[0].source.kind != lsRecord: return
+  let i = state.findSession(p.layers[0].source.file)
+  let g = p.layers[0].source.gather
+  if i >= 0 and g in 0 ..< state.sessions[i].records.len and
+      state.sessions[i].records[g].aux > 0 and state.settings.hideKilled:
+    result = "Every auxiliary trace of this record is killed and hidden."
+
 proc applyRememberedTraces(state: AppState; file: SessionId; filter: var TraceFilter) =
   ## The Seismic / Aux choice a plot of `file` shows. A file with auxiliary
   ## traces takes the choice a new plot starts with. A file with none shows

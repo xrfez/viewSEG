@@ -14,6 +14,8 @@
 ##   selection; Kill in it is the file's edit: the Seismic window, shown with its Aux traces
 ##   and the killed ones hidden, leaves the trace out too;
 ## - the Seismic window's next record updates it, a record with no auxiliary traces says so;
+##   both auxiliary traces killed and hidden says they are killed and hidden, not that the
+##   record has none; killed and shown, they are drawn and nothing is said;
 ## - with both open and the first-break overlay on, 200 frames start a bounded number of
 ##   jobs and settle;
 ## - closed again from the menu, the panel shows nothing.
@@ -27,7 +29,8 @@
 ## "click +" did not happen; with the Aux strip drawn for the Seismic window's groups, "the
 ## Aux strip has a record stepper"; with `capsOf(prAux).menuMap` true, "the Aux menu has
 ## aux.menu.station"; with `ckAuxWindow` not opening the window, "the Aux entry did not
-## happen".
+## happen"; with the empty Aux window still saying the record has no auxiliary traces when
+## every one is killed and hidden, "kill both, hide killed" found that sentence.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -195,6 +198,13 @@ proc main*() =
     proc seismicOnly(f: FrameInfo) =
       setHideKilled(false)(f)
       f.apply Command(kind: ckFilter, panel: MainPanel, filter: TraceFilter(seismic: true))
+    proc killBothHidden(f: FrameInfo) =
+      f.apply Command(kind: ckEdit, panel: f.aux.id, edit: teKilled, on: true,
+        edited: @[base + 3, base + 4])
+      setHideKilled(true)(f)
+    proc restoreAux(f: FrameInfo) =
+      f.apply Command(kind: ckEdit, panel: f.aux.id, edit: teKilled, on: false,
+        edited: @[base + 3, base + 4])
     proc newestJob(f: FrameInfo): int =
       for j in f.core.jobs.list: result = max(result, int(j.id))
     proc breaksOnAndCount(f: FrameInfo) =
@@ -230,6 +240,8 @@ proc main*() =
         doAssert f.windowName("aux").contains("Aux"), f.windowName("aux")
         doAssert f.aux.role == prAux and f.aux.layout.traces == 2
         doAssert f.aux.shown == @[3, 4], $f.aux.shown
+        doAssert f.auxTracePanel.instead.len == 0,
+          "none killed, the Aux window says: " & f.auxTracePanel.instead
         doAssert f.main.layout.traces == 3
         # nothing but its own tiles was read for it
         doAssert f.core.tilesTaken - jobsBefore <= 3, "reads: " & $(f.core.tilesTaken - jobsBefore)
@@ -406,6 +418,24 @@ proc main*() =
       result = f.auxAnswered and f.aux.layers[0].source.gather == 0 and f.aux.layout.traces == 2 and
         wait > 4
       if result: doAssert f.auxTracePanel.instead.len == 0)
+    # both killed and hidden: the record has auxiliary traces, so it must not say it has none
+    step("kill both, hide killed", killBothHidden, proc (f: FrameInfo): bool =
+      result = f.aux.laidOut and f.aux.layout.traces == 0 and wait > 4
+      if result:
+        doAssert f.auxTracePanel.instead ==
+          "Every auxiliary trace of this record is killed and hidden.",
+          "the Aux window says: " & f.auxTracePanel.instead
+        doAssert f.markOf("aux.data").size.x == 0, "killed and hidden traces were drawn")
+    step("show the killed traces", setHideKilled(false), proc (f: FrameInfo): bool =
+      result = f.auxAnswered and f.aux.layout.traces == 2 and wait > 4
+      if result:
+        doAssert f.aux.shown == @[3, 4], $f.aux.shown
+        doAssert f.auxTracePanel.instead.len == 0,
+          "killed and shown, the Aux window says: " & f.auxTracePanel.instead
+        doAssert f.markOf("aux.data").size.x > 0, "the killed traces were not drawn")
+    step("restore the auxiliary traces", restoreAux, proc (f: FrameInfo): bool =
+      f.auxAnswered and teKilled notin f.core.traceEdits(base + 3) and
+        teKilled notin f.core.traceEdits(base + 4) and wait > 2)
     # ------------------------------------------------------- 200 frames, settled --
     step("first breaks on", breaksOnAndCount, after(200))
     step("jobs settled", noop, proc (f: FrameInfo): bool =

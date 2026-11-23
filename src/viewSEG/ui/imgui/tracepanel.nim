@@ -3103,7 +3103,7 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
       elif s >= 0 and st.sessions[s].gathers.len == 0:
         say(name & " has no traces to show (see Messages).", t.roles[rlTextDim])
       elif p.layout.traces == 0 and aux:
-        say("This record has no auxiliary traces.", t.roles[rlTextDim])
+        say(st.auxEmptyText(k), t.roles[rlTextDim])
       elif p.layout.traces == 0:
         let f = p.layers[0].filter
         let which = if f.seismic and not f.auxiliary: " (it shows seismic traces only)"
