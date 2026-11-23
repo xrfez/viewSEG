@@ -330,6 +330,9 @@ proc main*() =
       doAssert st.references.entries.len >= 1, "the reference was not stored"
       let rid = st.references.entries[0].id
       st.agent(%*{"kind": "select reference", "refId": rid})
+      # The stored sweep is the whole record, so the job cannot finish. The
+      # command is still given: that is what this test counts.
+      st.agent(%*{"kind": "correlate", "correlate": true})
       st.agent(%*{"kind": "view reference", "refId": rid})
       doAssert st.refViews.len >= 1, "view reference opened no window"
       st.agent(%*{"kind": "close reference view", "refWindow": st.refViews[0].id})
