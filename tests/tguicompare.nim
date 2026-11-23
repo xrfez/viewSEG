@@ -5,7 +5,7 @@
 ## offers Compare did not happen".
 
 import std/[math, monotimes, options, os, strutils]
-import viewSEG/core/[geometry, state]
+import viewSEG/core/[geometry, spectra, state]
 import viewSEG/ui/imgui/app
 import utils/[fixtures, waiting]
 
@@ -41,6 +41,7 @@ proc main*() =
     var other = ""
     var shot = false
     var fileBefore = ""
+    var spectraBefore = -1
 
     proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
       steps.add Step(name: name, act: act, done: done)
@@ -62,9 +63,23 @@ proc main*() =
         let shown = f.core.sessions[0].name
         other = if "uncorrelated" in shown: "vib_correlated.sgd" else: "vib_uncorrelated.sgd")
 
-    step("the plot's menu offers Compare", proc (f: FrameInfo) =
+    step("the plot's menu is grouped: headings, no top-level FFT", proc (f: FrameInfo) =
       f.moveMouse(plot.centre), proc (f: FrameInfo): bool =
       if wait == 3: f.click(plot.centre, button = 3)
+      result = f.markOf("plot.menu.compare").size.x > 0 and f.markOf("plot.menu").size.x > 100
+      if result:
+        for h in ["analyse", "find", "record"]:
+          doAssert f.markOf("plot.menu.heading." & h).size.x > 0, "no heading " & h
+        doAssert f.markOf("plot.menu.fft").size.x == 0, "the top-level FFT item is back"
+        doAssert f.markOf("plot.menu.compareA").size.x == 0, "Compare is not a submenu")
+
+    step("the plot's menu offers Compare", proc (f: FrameInfo) =
+      f.moveMouse(plot.centre), proc (f: FrameInfo): bool =
+      if f.markOf("plot.menu.compare").size.x == 0 and wait mod 8 == 2:
+        f.click(plot.centre, button = 3)
+      elif f.markOf("plot.menu.compareA").size.x == 0 and
+          f.markOf("plot.menu.compare").size.x > 0 and wait mod 6 == 3:
+        f.click(f.markOf("plot.menu.compare").centre)
       f.markOf("plot.menu.compareA").size.x > 0 and f.markOf("plot.menu.compareB").size.x > 0)
 
     step("Compare: set as A from the first file", noop, proc (f: FrameInfo): bool =
@@ -81,8 +96,11 @@ proc main*() =
     step("the plot's menu offers Compare on the other file", proc (f: FrameInfo) =
       plot = f.markOf("plot.data")
       f.moveMouse(plot.centre), proc (f: FrameInfo): bool =
-      if f.markOf("plot.menu.compareB").size.x == 0 and wait mod 8 == 2:
+      if f.markOf("plot.menu.compare").size.x == 0 and wait mod 8 == 2:
         f.click(plot.centre, button = 3)
+      elif f.markOf("plot.menu.compareB").size.x == 0 and
+          f.markOf("plot.menu.compare").size.x > 0 and wait mod 6 == 3:
+        f.click(f.markOf("plot.menu.compare").centre)
       f.markOf("plot.menu.compareB").size.x > 0)
 
     step("Compare: set as B from the second file", noop, proc (f: FrameInfo): bool =
@@ -120,13 +138,19 @@ proc main*() =
       if f.core.sessions.len == 0: return false
       let base = f.core.sessions[0].base
       if not f.core.compareA.filled:
-        if f.markOf("plot.menu.compareA").size.x == 0 and wait mod 8 == 2:
+        if f.markOf("plot.menu.compare").size.x == 0 and wait mod 8 == 2:
           f.click(vec2(plot.pos.x + plot.size.x * 0.25, plot.pos.y + plot.size.y * 0.5), 3)
+        elif f.markOf("plot.menu.compareA").size.x == 0 and
+            f.markOf("plot.menu.compare").size.x > 0 and wait mod 6 == 3:
+          f.click(f.markOf("plot.menu.compare").centre)
         elif f.markOf("plot.menu.compareA").size.x > 0 and wait mod 6 == 3:
           f.click(f.markOf("plot.menu.compareA").centre)
       elif not f.core.compareB.filled:
-        if f.markOf("plot.menu.compareB").size.x == 0 and wait mod 8 == 2:
+        if f.markOf("plot.menu.compare").size.x == 0 and wait mod 8 == 2:
           f.click(vec2(plot.pos.x + plot.size.x * 0.72, plot.pos.y + plot.size.y * 0.5), 3)
+        elif f.markOf("plot.menu.compareB").size.x == 0 and
+            f.markOf("plot.menu.compare").size.x > 0 and wait mod 6 == 3:
+          f.click(f.markOf("plot.menu.compare").centre)
         elif f.markOf("plot.menu.compareB").size.x > 0 and wait mod 6 == 3:
           f.click(f.markOf("plot.menu.compareB").centre)
       result = f.core.compareA.filled and f.core.compareB.filled and
@@ -134,6 +158,17 @@ proc main*() =
         f.core.compareA.trace != f.core.compareB.trace and
         f.core.compareA.trace >= 1 and f.core.compareB.trace >= 1 and
         f.core.sessions[0].base == base)
+
+    step("FFT is reachable through New plot", proc (f: FrameInfo) =
+      plot = f.markOf("plot.data")
+      spectraBefore = f.core.spectra.len
+      f.moveMouse(plot.centre), proc (f: FrameInfo): bool =
+      if f.markOf("plot.menu.newplot").size.x == 0:
+        if wait mod 8 == 2: f.click(plot.centre, button = 3)
+      elif f.markOf("plot.menu.newplot.fft").size.x == 0:
+        if wait mod 6 == 3: f.click(f.markOf("plot.menu.newplot").centre)
+      elif wait mod 6 == 3: f.click(f.markOf("plot.menu.newplot.fft").centre)
+      f.core.spectra.len > spectraBefore)
 
     proc onFrame(f: FrameInfo) =
       inc wait

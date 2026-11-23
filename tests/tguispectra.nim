@@ -171,8 +171,12 @@ proc main*() =
       pointAt = f.traceX(3)
       f.pressMouse(pointAt, true, 3)
       f.pressMouse(pointAt, false, 3),
-      proc (f: FrameInfo): bool = f.markOf("plot.menu.fft").size.x > 0)
-    click("plot.menu.fft")
+      proc (f: FrameInfo): bool = f.markOf("plot.menu.newplot").size.x > 0)
+    click("plot.menu.newplot")
+    step("New plot lists the FFT", noop, proc (f: FrameInfo): bool =
+      result = f.markOf("plot.menu.newplot.fft").size.x > 0
+      if result: doAssert f.markOf("plot.menu.fft").size.x == 0)
+    click("plot.menu.newplot.fft")
     step("the selection's FFT", noop, proc (f: FrameInfo): bool =
       result = f.core.spectra.len == 3 and not f.core.spectra[2].waiting and
         f.core.spectra[2].spectrum.averaged == 3

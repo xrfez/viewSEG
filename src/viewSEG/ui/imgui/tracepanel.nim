@@ -86,7 +86,7 @@
 ## for the traces that share its pixel); a right click elsewhere is the
 ## plot's menu or the header's, as before. Killed
 ## traces are drawn blank, or left out of the plot (the gear popover's
-## "Hide killed traces", a setting). "FFT in a new window" (`F`) opens the
+## "Hide killed traces", a setting). New plot > FFT (`F`) opens the
 ## amplitude spectrum of the same traces (`ckSpectrum`, `spectrumwindow`).
 
 import std/[algorithm, math, os, strutils, tables]
@@ -94,8 +94,8 @@ import imguin/cimgui
 import ../../core/[components, editmarks, explain, geometry, openchoice, state, wiggle]
 import ../../gpu/[plotimage, textures]
 import ../../view/[areabands, breakbars, displayheader, maplayers, plotink, strip, theme, timeaxis]
-import breakdraw, chrome, dpi, explainmenu, focus, fonts, icons, menus, plotbars, plotfilters,
-    plotgain, plotsort,
+import breakdraw, chrome, dpi, explainmenu, fittext, focus, fonts, icons, menus, plotbars,
+    plotfilters, plotgain, plotsort,
   shortcutkeys,
   plotviews, references, style,
   symbols
@@ -1703,12 +1703,22 @@ func fftCommand(st: AppState; p: Panel; under: int): Command =
   Command(kind: ckSpectrum, spectrumOf: p.id, spectrumTraces: st.selection.targets(under),
     spectrumShow: st.settings.spectrum.window)
 
+proc menuHeading(marks: var Marks; text, mark: string) =
+  ## A group's heading in the right-click menu: its name in muted text on a
+  ## separator line, not clickable.
+  let a = igGetCursorScreenPos()
+  igSeparatorText(text.cstring)
+  let b = igGetCursorScreenPos()
+  let right = igGetWindowPos().x + igGetWindowWidth()
+  marks.markRect(mark, a, ImVec2_c(x: right - igGetStyle().WindowPadding.x, y: max(b.y, a.y + 1)))
+
 proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
     res: var PanelOutput) =
   ## The plot's right-click menu: functions on the data only. Its first
-  ## line says what the trace operations act on; then the operations on
-  ## that trace or the selection (its FFT in a new window), those on every
-  ## trace, and the undo and clearing of the file's edits.
+  ## line says what the trace operations act on, then three or four short
+  ## groups: that trace's edits; Analyse (New plot, with the FFT first,
+  ## Compare, Store as reference); Find (its own filter, its station on the
+  ## map); Whole record (every trace, clearing the edits); last, Undo and Redo.
   template p: untyped = st.panels[k]
   if not igBeginPopup(menuId, 0): return
   marks.markWindow("plot.menu")
@@ -1735,33 +1745,34 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   tip("Never filter this trace with the plot's filters (E), the Aux traces too option " &
     "included. A tick means it is excluded; a click puts it back. A filter of its own " &
     "(Filter this trace...) still runs.")
-  let targets = if under >= 0: st.selection.targets(under) else: @[]
-  let filterMany = targets.len > 1
-  let filterItem = if filterMany: "Filter " & $targets.len & " selected traces..."
-                   else: "Filter this trace..."
-  if igMenuItem_Bool(filterItem.cstring, nil, false, under >= 0):
-    tp.ownAsk = true
-    tp.ownTraces = targets
-    tp.ownPos = igGetIO_Nil().MousePos
-    let start = st.startingFilter(targets)
-    tp.ownDraft = start.filter
-    tp.ownMixed = start.mixed
-  marks.mark("plot.menu.filter")
-  marks.mark("plot.menu.filter.item " & filterItem)
-  tip("Give this trace its own frequency filter, after the plot's filters or instead of them")
-  var anyFilter = false
-  for id in targets:
-    let file = st.findTrace(id)
-    if file >= 0 and st.ownAt(st.sessions[file].path, id - st.sessions[file].base).has:
-      anyFilter = true
-  if anyFilter:
-    let removeItem = if filterMany: "Remove the filters of " & $targets.len & " traces"
-                     else: "Remove the trace's filter"
-    if igMenuItem_Bool(removeItem.cstring, nil, false, true):
-      res.commands.add Command(kind: ckOwnFilter, panel: p.id, edited: targets, on: false)
-    marks.mark("plot.menu.removefilter")
-    marks.mark("plot.menu.removefilter.item " & removeItem)
-    tip("Take this trace's own filter away (the plot's filters stay)")
+  menuHeading(marks, "Analyse", "plot.menu.heading.analyse")
+  let newPlot = igBeginMenu((IconPulse & "  New plot").cstring, under >= 0)
+  marks.mark("plot.menu.newplot")
+  tip("Open a plot of the selected traces")
+  if newPlot:
+    for e in PlotEntries:
+      if igMenuItem_Bool((e.icon & "  " & e.name).cstring,
+          (if e.fft: e.shortcut.cstring else: nil), false, true):
+        res.commands.add(if e.fft: fftCommand(st, p, under)
+          else: Command(kind: ckOpenPlot, plotOf: p.id, plotView: e.view,
+            plotTraces: st.selection.targets(under)))
+      tip(e.sentence)
+      marks.mark(if e.fft: "plot.menu.newplot.fft" else: "plot.menu.newplot." & $e.view)
+    igEndMenu()
+  let compare = igBeginMenu((IconPulse & "  Compare").cstring, under >= 0)
+  marks.mark("plot.menu.compare")
+  tip("Copy this trace into one of the two compare slots")
+  if compare:
+    # The trace under the pointer, not the selection: a comparison is one trace a slot.
+    if igMenuItem_Bool("Set as A", nil, false, under >= 0):
+      res.commands.add Command(kind: ckSetCompare, compareSlot: cwA, compareTrace: under)
+    marks.mark("plot.menu.compareA")
+    tip("Copy this trace into compare slot A. The copy stays when the plot moves on.")
+    if igMenuItem_Bool("Set as B", nil, false, under >= 0):
+      res.commands.add Command(kind: ckSetCompare, compareSlot: cwB, compareTrace: under)
+    marks.mark("plot.menu.compareB")
+    tip("Copy this trace into compare slot B. Filling the second slot opens the compare window.")
+    igEndMenu()
   if igMenuItem_Bool((IconReference & "  Store as reference...").cstring, nil, false, under >= 0):
     let i = st.findTrace(under)
     if i >= 0:
@@ -1782,33 +1793,34 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.store")
   tip("Keep this trace as a reference: as recorded, reversed when the trace is reversed; " &
     "never the plot's filters, reverse-all or gain, and no filter")
-  # The trace under the pointer, not the selection: a comparison is one trace a slot.
-  if igMenuItem_Bool("Compare: set as A", nil, false, under >= 0):
-    res.commands.add Command(kind: ckSetCompare, compareSlot: cwA, compareTrace: under)
-  marks.mark("plot.menu.compareA")
-  tip("Copy this trace into compare slot A. The copy stays when the plot moves on.")
-  if igMenuItem_Bool("Compare: set as B", nil, false, under >= 0):
-    res.commands.add Command(kind: ckSetCompare, compareSlot: cwB, compareTrace: under)
-  marks.mark("plot.menu.compareB")
-  tip("Copy this trace into compare slot B. Filling the second slot opens the compare window.")
-  let fft = fftEntry()
-  if igMenuItem_Bool((fft.icon & "  " & fft.name & " in a new window").cstring,
-      fft.shortcut.cstring, false, under >= 0):
-    res.commands.add fftCommand(st, p, under)
-  marks.mark("plot.menu.fft")
-  tip(fft.sentence)
-  let newPlot = igBeginMenu("New plot", under >= 0)
-  marks.mark("plot.menu.newplot")
-  tip("Open a plot of the selected traces")
-  if newPlot:
-    for e in PlotEntries:
-      if not e.fft:
-        if igMenuItem_Bool((e.icon & "  " & e.name).cstring, nil, false, true):
-          res.commands.add Command(kind: ckOpenPlot, plotOf: p.id, plotView: e.view,
-            plotTraces: st.selection.targets(under))
-        tip(e.sentence)
-        marks.mark("plot.menu.newplot." & $e.view)
-    igEndMenu()
+  menuHeading(marks, "Find", "plot.menu.heading.find")
+  let targets = if under >= 0: st.selection.targets(under) else: @[]
+  let filterMany = targets.len > 1
+  let filterItem = if filterMany: "Filter " & $targets.len & " selected traces..."
+                   else: "Filter this trace..."
+  if igMenuItem_Bool((IconFilter & "  " & filterItem).cstring, nil, false, under >= 0):
+    tp.ownAsk = true
+    tp.ownTraces = targets
+    tp.ownPos = igGetIO_Nil().MousePos
+    let start = st.startingFilter(targets)
+    tp.ownDraft = start.filter
+    tp.ownMixed = start.mixed
+  marks.mark("plot.menu.filter")
+  marks.mark("plot.menu.filter.item " & filterItem)
+  tip("Give this trace its own frequency filter, after the plot's filters or instead of them")
+  var anyFilter = false
+  for id in targets:
+    let file = st.findTrace(id)
+    if file >= 0 and st.ownAt(st.sessions[file].path, id - st.sessions[file].base).has:
+      anyFilter = true
+  if anyFilter:
+    let removeItem = if filterMany: "Remove the filters of " & $targets.len & " traces"
+                     else: "Remove the trace's filter"
+    if igMenuItem_Bool((IconFilter & "  " & removeItem).cstring, nil, false, true):
+      res.commands.add Command(kind: ckOwnFilter, panel: p.id, edited: targets, on: false)
+    marks.mark("plot.menu.removefilter")
+    marks.mark("plot.menu.removefilter.item " & removeItem)
+    tip("Take this trace's own filter away (the plot's filters stay)")
   # Its station on the map: the receiver (in a receiver gather, the source).
   let role = $st.stationRole(k)
   let many = under >= 0 and under in st.selection.selected and st.selection.selectedCount > 1
@@ -1818,31 +1830,36 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
     res.commands.add tp.menuStations
   marks.mark("plot.menu.station")
   tip("Select this trace's station on the map (M)")
-  igSeparator()
+  menuHeading(marks, "Whole record", "plot.menu.heading.record")
   # An operation on the samples (processSEG's polarityOp), not a colour.
   let reversed = p.layers[0].reversed
   if igMenuItem_Bool("Reverse polarity of all traces", nil, reversed, true):
     res.commands.add Command(kind: ckReverseAll, panel: p.id, reverse: not reversed)
   marks.mark("plot.menu.reverse all")
   tip("Reverse the polarity of every trace in the plot")
-  igSeparator()
   template e: untyped = st.editsOf(k) # not copied
-  let undo = if e.canUndo: "Undo " & e.undoText else: "Undo"
-  if igMenuItem_Bool(undo.cstring, "Ctrl+Z", false, e.canUndo):
-    res.commands.add Command(kind: ckUndoEdit, panel: p.id)
-  marks.mark("plot.menu.undo")
-  tip("Take back the last edit of this file (Ctrl+Z)")
-  let redo = if e.canRedo: "Redo " & e.redoText else: "Redo"
-  if igMenuItem_Bool(redo.cstring, "Ctrl+Shift+Z", false, e.canRedo):
-    res.commands.add Command(kind: ckRedoEdit, panel: p.id)
-  marks.mark("plot.menu.redo")
-  tip("Make the last undone edit again (Ctrl+Shift+Z)")
-  if igMenuItem_Bool("Clear all edits for this file", nil, false, not e.isEmpty):
+  if igMenuItem_Bool((IconClearAll & "  Clear all edits for this file").cstring, nil, false,
+      not e.isEmpty):
     res.commands.add Command(kind: ckClearEdits, panel: p.id)
   marks.mark("plot.menu.clear")
   tipAlways("Kills, polarity reversals and a trace's own filter are remembered beside the " &
     "file, never written into it;\nclearing them shows the traces as the file has them " &
     "(Ctrl+Z brings them back).")
+  igSeparator()
+  # What it was, cut to a steady width; the whole text is in the tooltip.
+  let wide = igGetFontSize() * 14
+  let undo = if e.canUndo: shortenEnd("Undo " & e.undoText, wide) else: "Undo"
+  if igMenuItem_Bool((IconUndo & "  " & undo).cstring, "Ctrl+Z", false, e.canUndo):
+    res.commands.add Command(kind: ckUndoEdit, panel: p.id)
+  marks.mark("plot.menu.undo")
+  tip((if e.canUndo: "Undo " & e.undoText & "\n" else: "") &
+    "Take back the last edit of this file (Ctrl+Z)")
+  let redo = if e.canRedo: shortenEnd("Redo " & e.redoText, wide) else: "Redo"
+  if igMenuItem_Bool((IconRedo & "  " & redo).cstring, "Ctrl+Shift+Z", false, e.canRedo):
+    res.commands.add Command(kind: ckRedoEdit, panel: p.id)
+  marks.mark("plot.menu.redo")
+  tip((if e.canRedo: "Redo " & e.redoText & "\n" else: "") &
+    "Make the last undone edit again (Ctrl+Shift+Z)")
   explainEntry("plot.explain", marks)
   igEndPopup()
 

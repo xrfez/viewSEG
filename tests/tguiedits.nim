@@ -345,9 +345,9 @@ proc main*() =
         result = f.markOf("plot.menu").size.x > 0 and wait > 3
         if result:
           var marks: seq[string]
-          for n in ["target", "reverse", "kill", "fft", "reverse all", "undo", "clear"]:
+          for n in ["target", "reverse", "kill", "reverse all", "undo", "clear"]:
             if f.markOf("plot.menu." & n).size.x > 0: marks.add n
-          doAssert marks.len == 7, "the menu holds " & $marks
+          doAssert marks.len == 6, "the menu holds " & $marks
           doAssert f.tracePanel.menuTarget == target, "the menu acts on " &
             f.tracePanel.menuTarget & ", not " & target)
       var item0: Vec2

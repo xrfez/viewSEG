@@ -66,6 +66,12 @@ proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): boo
 
 proc noop(f: FrameInfo) = discard
 
+proc outside(f: FrameInfo): Vec2 =
+  ## A point on the status bar at its left end: the popup, opened at the menu,
+  ## can reach over the bar's middle.
+  let r = f.markOf("statusbar")
+  vec2(r.pos.x + 40, r.pos.y + r.size.y / 2)
+
 proc hasFilter(f: FrameInfo; trace: int): bool =
   f.core.ownAt(f.core.sessions[0].path, trace).has
 var q: Vec2
@@ -306,9 +312,9 @@ proc main*() =
     f.click(f.markOf("plot.menu.filter").centre), proc (f: FrameInfo): bool =
     f.markOf("plot.ownfilter popup").size.x > 0 and wait > 2)
   step("point outside", proc (f: FrameInfo) =
-    f.moveMouse(f.markOf("statusbar").centre), proc (f: FrameInfo): bool = wait > 1)
+    f.moveMouse(outside(f)), proc (f: FrameInfo): bool = wait > 1)
   step("click outside", proc (f: FrameInfo) =
-    f.click(f.markOf("statusbar").centre), proc (f: FrameInfo): bool =
+    f.click(outside(f)), proc (f: FrameInfo): bool =
       result = f.markOf("plot.ownfilter popup").size.x == 0 and f.hasFilter(0) and wait > 2
       if not result and wait > 40: failed = "a click outside applied the filter")
   # Clear then Apply takes the filter away

@@ -316,8 +316,8 @@ code in words). A type parseSEG has no name for is shown as its code.
 | Cancel a drag, else clear the selection | | Esc |
 | Kill or restore the trace under the pointer (the selection, if it is in it) | right-click: Kill / Restore | `K` |
 | Reverse its polarity, or put it back | right-click: Reverse polarity | `R` |
-| Its amplitude spectrum (the selection's, averaged, if it is in it) in a window of its own | right-click: FFT in a new window | `F` |
-| Copy the trace under the pointer into a compare slot (one trace, even if several are selected) | right-click: Compare: set as A / Compare: set as B | |
+| Its amplitude spectrum (the selection's, averaged, if it is in it) in a window of its own | right-click: New plot > FFT | `F` |
+| Copy the trace under the pointer into a compare slot (one trace, even if several are selected) | right-click: Compare > Set as A / Set as B | |
 | Undo the last kill, restore or polarity change | Edit > Undo (or right-click: Undo) | Ctrl+Z, in any window |
 | Redo what was undone | Edit > Redo (or right-click: Redo) | Ctrl+Shift+Z or Ctrl+Y, in any window |
 | See the traces without the filters, or filtered again | the strip's Raw toggle | `P` |
@@ -433,7 +433,7 @@ selection when that trace is selected. Then:
   the same menu, and only when one of the traces has a filter. Gain, AGC, sort and the
   display are still the plot's, not a trace's. A killed trace keeps its filter; the kill
   wins on screen (the trace stays blank).
-- **FFT in a new window** (`F`): the trace's amplitude spectrum (of the selection: their
+- **New plot > FFT** (`F`): the trace's amplitude spectrum (of the selection: their
   average) from 0 Hz to Nyquist, the trace with its own filter and, when the strip has a
   filter on, through that filter too, in a window of its own (see "Spectra" below).
   Killed traces are left out.
@@ -881,7 +881,7 @@ South Central, US survey feet, factor 0.3048006096. The file itself is never cha
 
 ## Spectra
 
-**FFT in a new window** (right-click a trace, or `F` over it) opens its amplitude
+**FFT** (right-click a trace > New plot > FFT, or `F` over it) opens its amplitude
 spectrum in a window named for what it shows ("FFT: trace 12 · FFID 1 · shots.sgy");
 over a selected trace, the selection's, averaged ("FFT 2: 12 traces ..."). Open as many
 as you like and dock them anywhere. Unless **Freeze** is on, a window follows the Seismic
@@ -1067,8 +1067,8 @@ hand (double click shows it all again), so records can be flipped through.
 ## Compare two traces
 
 Analysis > Compare two traces opens a window with two slots, A and B. Each holds one
-trace: right-click that trace (seismic or auxiliary) and choose Compare: set as A or
-Compare: set as B. With several traces selected, the entries still copy the trace under
+trace: right-click that trace (seismic or auxiliary) and choose Compare, then Set as A or
+Set as B. With several traces selected, the entries still copy the trace under
 the pointer. A stored reference goes into a slot from Compare as A or Compare as B on
 its row in the reference archive. The two traces may come from different files or from
 the same file. Filling the second slot opens the window.

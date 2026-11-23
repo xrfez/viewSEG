@@ -42,7 +42,7 @@ type
 
 func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
 
-const menuItems = ["plot.menu.target", "plot.menu.reverse", "plot.menu.kill", "plot.menu.fft",
+const menuItems = ["plot.menu.target", "plot.menu.reverse", "plot.menu.kill",
   "plot.menu.reverse all", "plot.menu.undo", "plot.menu.clear", "plot.explain.menu.explain"]
 
 proc menuMarks(f: FrameInfo): seq[string] =
