@@ -180,12 +180,13 @@ proc heldReopenFailed(raw: string) =
   var path = ""
   for s in st.sessions:
     if not s.derived: path = s.diskPath
-  let whole = readFile(path)
-  writeFile(path, whole & "x")
+  # The file is not rewritten: it is still mapped, and Windows refuses to write a
+  # mapped file. The watcher's message alone says it grew and is newer.
   install()
   fault(path, fkFail, {foMapped})
   st.mailbox.post Msg(kind: mkWatched, watched: @[WatchedFile(path: path, exists: true,
-    size: getFileSize(path), modified: getLastModificationTime(path), changing: false)])
+    size: getFileSize(path) + 1,
+    modified: getLastModificationTime(path) + initDuration(seconds = 2), changing: false)])
   doAssert st.settle(st.jobs.active.len == 0), "the reopen did not end"
   releaseAll()
   setFsHook(nil)

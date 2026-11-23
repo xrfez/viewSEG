@@ -349,8 +349,8 @@ proc main*() =
       doAssert toMissing.st == jsDone, toMissing.error & " / " & toMissing.wrote.reason
       let wantMissing = expandFilename(unrelated) / "new-out" / "line1" / "shots.sgy"
       doAssert fileExists(wantMissing), "a root under a symlink was not resolved"
-      doAssert toMissing.wrote.items[0].destination.normalizedPath ==
-        wantMissing.normalizedPath, toMissing.wrote.items[0].destination
+      doAssert sameFile(toMissing.wrote.items[0].destination, wantMissing),
+        toMissing.wrote.items[0].destination
       doAssert readFile(plain) == plainBytes and readFile(edited) == editedBytes
     dropDirLink(linkSrc)
     dropDirLink(linkSub)
