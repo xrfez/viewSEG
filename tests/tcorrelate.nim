@@ -15,11 +15,12 @@
 ## sweep is not the raw trace". With a file whose header already says
 ## correlated, "the raw record was not shown". With the derived view left
 ## up when the held reopen fails, "the correlated view stayed after the
-## reopen failed".
+## reopen failed". With a reversal, an own filter or a time shift made
+## while correlated, "the edit is not on the raw trace".
 
 import std/[os, sequtils, strutils, times]
 import parseSEG
-import viewSEG/core/[jobs, references]
+import viewSEG/core/[jobs, processing, references]
 import viewSEG/core/state {.all.}
 import utils/[faultyfs, fixtures, steps, waiting]
 
@@ -199,6 +200,70 @@ proc heldReopenFailed(raw: string) =
     "the close was not said"
   discard st.shutdown()
 
+proc correlated(st: var AppState; raw: string) =
+  ## Shows `raw`, stores a short sweep and turns Correlate on. The derived
+  ## view is shown when it returns.
+  var settings = st.settings
+  settings.files.prepareNext = false
+  st.apply Command(kind: ckSettings, settings: settings)
+  st.rememberFilesIn(raw.parentDir / "edit-config")
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: raw)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  doAssert st.settle(st.referencesLoaded), "the archive was not read"
+  let trace = st.sessions[0].base
+  st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "edits",
+    trace: trace, fromMs: 0, toMs: 100))
+  doAssert st.settle(st.references.entries.anyIt(it.name == "edits")),
+    "the sweep was not stored"
+  var id = ""
+  for e in st.references.entries:
+    if e.name == "edits": id = e.id
+  st.apply Command(kind: ckSelectReference, refId: id)
+  st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: true)
+  doAssert st.settle(st.correlateOn and st.sessions.anyIt(it.derived) and
+    st.shownFile(st.findPanel(MainPanel)) >= 0 and
+    st.sessions[st.shownFile(st.findPanel(MainPanel))].derived),
+    "the correlated record was not shown"
+
+proc rawShown(st: AppState): bool =
+  let i = st.shownFile(st.findPanel(MainPanel))
+  i >= 0 and not st.sessions[i].derived
+
+proc editsAcrossToggle(raw: string) =
+  ## A reversal, an own filter and a time shift made while correlated are on
+  ## the raw trace after the toggle, and undo and redo cross the toggle.
+  var st = initAppState(watchEvery = initDuration(hours = 1))
+  st.correlated(raw)
+  let shown = st.shownFile(st.findPanel(MainPanel))
+  let trace = st.sessions[shown].base
+  let band = Processing(band: pbHighCut, f3: 40, f4: 50)
+  st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[trace],
+    on: true)
+  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[trace], on: true,
+    processing: band, filterPlace: fpAfter)
+  st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[trace], on: true, ms: 8.0)
+  let k = st.findPanel(MainPanel)
+  doAssert st.editsOf(k).has(teReversed, 0), "the reversal was not taken"
+  doAssert st.editsOf(k).hasFilter(0), "the own filter was not taken"
+  doAssert st.editsOf(k).hasShift(0), "the time shift was not taken"
+  st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: false)
+  doAssert st.settle(not st.correlateOn and st.rawShown), "the raw record was not shown"
+  doAssert st.editsOf(k).has(teReversed, 0) and st.editsOf(k).hasFilter(0) and
+    st.editsOf(k).hasShift(0), "the edit is not on the raw trace"
+  st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+  doAssert not st.editsOf(k).hasShift(0), "the shift was not undone"
+  st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: true)
+  doAssert st.settle(st.correlateOn and not st.rawShown), "the correlated record was not shown"
+  doAssert st.editsOf(k).has(teReversed, 0) and st.editsOf(k).hasFilter(0) and
+    not st.editsOf(k).hasShift(0), "the undo did not cross the toggle"
+  st.apply Command(kind: ckRedoEdit, panel: MainPanel)
+  doAssert st.editsOf(k).hasShift(0), "the shift was not redone"
+  st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: false)
+  doAssert st.settle(not st.correlateOn and st.rawShown), "the raw record was not shown"
+  doAssert st.editsOf(k).has(teReversed, 0) and st.editsOf(k).hasFilter(0) and
+    st.editsOf(k).hasShift(0), "the redo did not cross the toggle"
+  discard st.shutdown()
+
 proc quitWhileCorrelating(raw: string): JobId =
   ## Quits while a correlation is held in its phase; the caller lets it go
   ## on after this state is gone.
@@ -294,6 +359,7 @@ proc main*() =
     storeWhileCorrelated(raw)
     refuseAlreadyCorrelated(alreadyCorrelatedFile(fx, raw))
     heldReopenFailed(raw)
+    editsAcrossToggle(raw)
     installSteps()
     let list = fx.dir / "kills.csv"
     writeFile(list, CsvHeader & "\n1,,,killed," & raw.extractFilename & "\n")
