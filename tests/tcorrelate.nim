@@ -13,12 +13,15 @@
 ## With an import aimed at the derived key, "the imported kill is not on
 ## the raw file". With a sweep stored from the correlated view, "the stored
 ## sweep is not the raw trace". With a file whose header already says
-## correlated, "the raw record was not shown".
+## correlated, "the raw record was not shown". With the derived view left
+## up when the held reopen fails, "the correlated view stayed after the
+## reopen failed".
 
 import std/[os, sequtils, strutils, times]
 import parseSEG
-import viewSEG/core/[jobs, references, state]
-import utils/[fixtures, steps, waiting]
+import viewSEG/core/[jobs, references]
+import viewSEG/core/state {.all.}
+import utils/[faultyfs, fixtures, steps, waiting]
 
 proc said(st: AppState; text: string): bool =
   for e in st.log:
@@ -147,6 +150,55 @@ proc refuseAlreadyCorrelated(path: string) =
   doAssert st.said("is already correlated (its header says so)"), "the header was not said"
   discard st.shutdown()
 
+proc heldReopenFailed(raw: string) =
+  ## The file changes while the derived view is shown, and the reopen of the
+  ## raw file fails: the correlated picture must go, as a failed reopen of a
+  ## shown file does, and the log must say why.
+  var st = initAppState(watchEvery = initDuration(hours = 1))
+  var settings = st.settings
+  settings.files.prepareNext = false
+  st.apply Command(kind: ckSettings, settings: settings)
+  st.rememberFilesIn(raw.parentDir / "held-config")
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: raw)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  doAssert st.settle(st.referencesLoaded), "the archive was not read"
+  let trace = st.sessions[0].base
+  st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "heldopen",
+    trace: trace, fromMs: 0, toMs: 100))
+  doAssert st.settle(st.references.entries.anyIt(it.name == "heldopen")),
+    "the sweep was not stored"
+  var id = ""
+  for e in st.references.entries:
+    if e.name == "heldopen": id = e.id
+  st.apply Command(kind: ckSelectReference, refId: id)
+  st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: true)
+  doAssert st.settle(st.sessions.anyIt(it.derived) and
+    st.shownFile(st.findPanel(MainPanel)) >= 0 and
+    st.sessions[st.shownFile(st.findPanel(MainPanel))].derived and
+    st.sessions.anyIt(not it.derived)), "the correlated record was not shown"
+  var path = ""
+  for s in st.sessions:
+    if not s.derived: path = s.diskPath
+  let whole = readFile(path)
+  writeFile(path, whole & "x")
+  install()
+  fault(path, fkFail, {foMapped})
+  st.mailbox.post Msg(kind: mkWatched, watched: @[WatchedFile(path: path, exists: true,
+    size: getFileSize(path), modified: getLastModificationTime(path), changing: false)])
+  doAssert st.settle(st.jobs.active.len == 0), "the reopen did not end"
+  releaseAll()
+  setFsHook(nil)
+  setIoHook(nil)
+  doAssert not st.sessions.anyIt(it.derived) and
+    st.shownFile(st.findPanel(MainPanel)) < 0,
+    "the correlated view stayed after the reopen failed"
+  doAssert path in st.fileList.failed, "the failed reopen was not marked"
+  doAssert st.fileList.chosen == "", "a failed reopen leaves the choice on what is shown"
+  doAssert st.said("Cannot open"), "the failure was not logged"
+  doAssert st.said("correlated view was closed because the file changed"),
+    "the close was not said"
+  discard st.shutdown()
+
 proc quitWhileCorrelating(raw: string): JobId =
   ## Quits while a correlation is held in its phase; the caller lets it go
   ## on after this state is gone.
@@ -241,6 +293,7 @@ proc main*() =
 
     storeWhileCorrelated(raw)
     refuseAlreadyCorrelated(alreadyCorrelatedFile(fx, raw))
+    heldReopenFailed(raw)
     installSteps()
     let list = fx.dir / "kills.csv"
     writeFile(list, CsvHeader & "\n1,,,killed," & raw.extractFilename & "\n")

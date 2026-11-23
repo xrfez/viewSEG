@@ -5693,9 +5693,22 @@ proc takeCorrelate(state: var AppState; job: JobInfo): bool =
   state.notePicks(hold.origin)
   state.discardHold(hold)
 
+proc closeDerivedOf(state: var AppState; path: string) =
+  ## The held reopen of `path` failed or was cancelled: the correlated picture
+  ## has no raw session under it, so it is closed.
+  var i = -1
+  for j, s in state.sessions:
+    if s.derived and s.diskPath == path: i = j
+  if i < 0: return
+  state.closeSession(i, quiet = true)
+  let name = path.extractFilename
+  state.log.add(sevWarning, name, name & ": the correlated view was closed because " &
+    "the file changed.")
+
 proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
   ## Says how open job `opening[i]` ended, and forgets it. An open no longer
-  ## wanted ends quietly.
+  ## wanted ends quietly. A held reopen (no panel) that fails or is cancelled
+  ## closes the derived view and shows the same failure a shown file would.
   let o = state.opening[i]
   let p = o.path
   let name = p.extractFilename
@@ -5712,7 +5725,8 @@ proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
       state.log.add(sevError, name, said)
   of jsCancelled: state.log.add(sevInfo, name, "Opening " & name & " was cancelled.")
   else: discard # done: `adopt` took the file
-  if how in {jsFailed, jsCancelled} and o.panel == MainPanel:
+  if how in {jsFailed, jsCancelled} and (o.panel == MainPanel or o.hold):
+    if o.hold: state.closeDerivedOf(p)
     if how == jsFailed: state.failed(p)
     state.chooseShown()
 
