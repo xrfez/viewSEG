@@ -8,7 +8,9 @@
 ## with a duplicate count stored as 0, `duplicates_are_a_count` rejected the
 ## count; with equal rows reversed instead of kept, `sort_ties_and_descending`
 ## rejected the earlier row; with CSV fields written raw, `csv_quotes`
-## rejected the path that holds a comma.
+## rejected the path that holds a comma; with `never` left as
+## `missingIn == expectedIn` and `expectedUnknown` left false when a record
+## has no spread, `expected_unknown_without_spread` rejected the station.
 
 import std/strutils
 when defined(release):
@@ -139,6 +141,7 @@ proc main*() =
     let half = pointAt(r.points, spread[1].line, spread[1].point)
     doAssert gone.expectedIn == 2 and gone.missingIn == 2 and gone.never,
       "station missing in every record that expected it"
+    doAssert not gone.expectedUnknown and not half.expectedUnknown
     doAssert half.expectedIn == 2 and half.missingIn == 1 and not half.never,
       "station missing in one record"
     doAssert gone.firstFile == "a.sgy" and gone.lastFile == "b.sgy"
@@ -208,7 +211,81 @@ proc main*() =
       "\"line 1, \"\"east\"\".sgy\",1,1,2,1"
     let quoted = pointsCsv(r.points)
     doAssert "\"line 1, \"\"east\"\".sgy\"" in quoted
-    doAssert "true" in quoted
+    doAssert quoted.startsWith("line,point,index,expectedIn,missingIn,never,expectedUnknown,")
+
+  block expected_unknown_without_spread:
+    let bare = rec(1, -1, 1, 0, 1, 0, 0, @[stationKey(10, 20, 1)])
+    let again = rec(2, -1, 1, 0, 1, 0, 0, @[stationKey(10, 20, 1)])
+    let otherIdx = rec(2, -1, 1, 0, 1, 0, 0, @[stationKey(10, 20, 2)])
+    let bareReport = missingReport([
+      FileRecords(path: "a.sgy", records: @[bare]),
+      FileRecords(path: "b.sgy", records: @[again, otherIdx])], none)
+    doAssert bareReport.points.len == 2 and bareReport.totals.never == 0
+    var seen1 = false
+    var seen2 = false
+    for p in bareReport.points:
+      doAssert p.line == 10 and p.point == 20
+      doAssert p.expectedIn == 0 and not p.never and p.expectedUnknown
+      if p.index == 1:
+        doAssert p.missingIn == 2
+        seen1 = true
+      elif p.index == 2:
+        doAssert p.missingIn == 1
+        seen2 = true
+    doAssert seen1 and seen2
+    let csv = pointsCsv(bareReport.points)
+    doAssert csv.startsWith("line,point,index,expectedIn,missingIn,never,expectedUnknown,")
+    doAssert "false,true" in csv
+    let g = surveyOf(xRec(1, 1, 1, 100, 101, 101))
+    let st = stationsOf(g, 1)[0]
+    let unmatched = rec(9, 9, 1, 0, 1, 0, 0, @[st])
+    let noSpread = missingReport([FileRecords(path: "a.sgy", records: @[unmatched])], g)
+    let u = pointAt(noSpread.points, st.line, st.point)
+    doAssert u.expectedIn == 0 and u.missingIn == 1 and not u.never and u.expectedUnknown
+    doAssert noSpread.totals.never == 0
+    let present = rec(1, 1, 1, 1, 0, 0, 0)
+    let listed = rec(2, -1, 1, 0, 1, 0, 0, @[st])
+    let mixed = missingReport([
+      FileRecords(path: "shot.sgy", records: @[present]),
+      FileRecords(path: "loose.sgy", records: @[listed])], g)
+    let m = pointAt(mixed.points, st.line, st.point)
+    doAssert m.expectedIn == 1 and m.missingIn == 1 and not m.never and m.expectedUnknown
+    doAssert mixed.totals.never == 0
+    let goneOnly = rec(1, 1, 1, 0, 1, 0, 0, @[st])
+    let quiet = rec(2, -1, 0, 0, 0, 0, 0)
+    let still = missingReport([
+      FileRecords(path: "a.sgy", records: @[goneOnly]),
+      FileRecords(path: "b.sgy", records: @[quiet])], g)
+    let s = pointAt(still.points, st.line, st.point)
+    doAssert s.expectedIn == 1 and s.missingIn == 1 and s.never and not s.expectedUnknown
+    doAssert still.totals.never == 1
+    let frac = stationKey(100.5, 10.25, 1)
+    let fracReport = missingReport([FileRecords(path: "f.sgy", records: @[
+      rec(3, -1, 1, 0, 1, 0, 0, @[frac]),
+      rec(4, -1, 1, 0, 1, 0, 0, @[frac])])], none)
+    doAssert fracReport.points.len == 1 and fracReport.points[0].missingIn == 2
+    doAssert fracReport.points[0].line == frac.line and fracReport.points[0].point == frac.point
+    doAssert fracReport.points[0].index == 1 and fracReport.points[0].expectedUnknown
+    doAssert not fracReport.points[0].never
+    let late = stationKey(5, 200, 1)
+    let early = stationKey(5, 100, 1)
+    let otherLine = stationKey(6, 100, 1)
+    let ordered = missingReport([FileRecords(path: "a.sgy", records: @[
+      rec(1, -1, 3, 0, 3, 0, 0, @[late, early, otherLine])])], none)
+    doAssert ordered.points.len == 3
+    doAssert pointAt(ordered.points, 5, 200).missingIn == 1
+    doAssert pointAt(ordered.points, 5, 100).missingIn == 1
+    doAssert pointAt(ordered.points, 6, 100).index == 1 and
+      pointAt(ordered.points, 6, 100).expectedUnknown
+    let far = stationKey(1, 200_000, 1)
+    let near = stationKey(1, 1, 1)
+    let wide = missingReport([FileRecords(path: "w.sgy", records: @[
+      rec(1, -1, 2, 0, 2, 0, 0, @[far, near]),
+      rec(2, -1, 2, 0, 2, 0, 0, @[near, far])])], none)
+    doAssert wide.points.len == 2
+    doAssert pointAt(wide.points, 1, 1).missingIn == 2 and
+      pointAt(wide.points, 1, 200_000).missingIn == 2
+    doAssert pointAt(wide.points, 1, 1).expectedUnknown
 
   when defined(release):
     block scale:
