@@ -296,6 +296,20 @@ proc main*() =
     src.close()
     removeFile(marker)
 
+  block symlinkedFolder:
+    ## Seen to fail: a destination under a symlinked folder was not resolved,
+    ## so it was not refused as inside an open file's folder.
+    let real = dir / "real-folder"
+    createDir(real)
+    let link = dir / "linked-folder"
+    createSymlink(real, link)
+    let why = refuseDestination(link / "out.sgy", @[real / "open.sgy"])
+    doAssert "folder" in why, "a symlinked folder was not resolved: " & why
+    doAssert refuseDestination(dir / "elsewhere.sgy", @[real / "open.sgy"]).len == 0,
+      "a path outside the folder was refused"
+    removeFile(link)
+    removeDir(real)
+
   block cancelRemovesTheFile:
     var src = openSeismic(segy, keys = true)
     let dest = dir / "cancelled.sgy"

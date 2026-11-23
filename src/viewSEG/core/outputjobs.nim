@@ -62,8 +62,19 @@ proc outputSpec*(source, dest: string): JobSpec =
     exclusive: @[dest])
 
 proc canon(path: string): string =
-  try: absolutePath(path).normalizedPath
-  except OSError, ValueError: path.normalizedPath
+  ## Absolute path, with the parent folder's links resolved. `absolutePath`
+  ## does not resolve a missing file, so a destination under a symlinked
+  ## folder would not be seen as inside an open file's folder.
+  let parent = path.parentDir
+  let name = path.extractFilename
+  let folder = if parent.len == 0: "." else: parent
+  try:
+    let expanded = fs.expandFilename(folder)
+    if name.len == 0: expanded.normalizedPath
+    else: (expanded / name).normalizedPath
+  except OSError, ValueError:
+    try: absolutePath(path).normalizedPath
+    except OSError, ValueError: path.normalizedPath
 
 proc samePath(a, b: string): bool =
   when defined(windows): cmpIgnoreCase(a, b) == 0
