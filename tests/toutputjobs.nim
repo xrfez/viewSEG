@@ -369,7 +369,10 @@ proc main*() =
 
   block symlinkedFolder:
     ## Seen to fail: a destination under a symlinked folder was not resolved,
-    ## so it was not refused as inside an open file's folder.
+    ## so it was not refused as inside an open file's folder. Also, removing
+    ## that directory link with `removeFile` (DeleteFile) raises "Access is
+    ## denied" on Windows; nothing has the link open. `removeDir` removes the
+    ## link and not its target when DeleteFile will not.
     let real = dir / "real-folder"
     createDir(real)
     let link = dir / "linked-folder"
@@ -378,7 +381,7 @@ proc main*() =
     doAssert "folder" in why, "a symlinked folder was not resolved: " & why
     doAssert refuseDestination(dir / "elsewhere.sgy", @[real / "open.sgy"]).len == 0,
       "a path outside the folder was refused"
-    removeFile(link)
+    if not tryRemoveFile(link): removeDir(link)
     removeDir(real)
 
   block cancelRemovesTheFile:
