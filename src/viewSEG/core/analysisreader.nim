@@ -31,25 +31,25 @@ import std/[algorithm, locks, math, monotimes, options, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
-import analysis, cutfile, filesystem, fkanalysis, inbox, jobs, join, log,
+import analysis, cutfile, edits, filesystem, fkanalysis, inbox, jobs, join, log,
     processing, references,
   threads, vibalign, vibanalysis
 
 type
   AnalysisAsk* = object
     ## What an analysis window asks the reader for.
-    id*: int                ## the window's
+    id*: int                 ## the window's
     gen*: uint64
     view*: AnalysisView
     params*: AnalysisParams
-    file*: ptr SeismicFile  ## held by the caller
+    file*: ptr SeismicFile   ## held by the caller
     path*: string
-    size*: int64            ## its size when it was opened; -1 when not known
-    traces*: seq[int]       ## indices in the file, in the order drawn
-    unit*: SurveyUnit       ## the unit of the file's distances (coordinates)
-    offsetUnit*: SurveyUnit ## the unit of the file's trace offsets
-    names*: seq[string]     ## per trace, what the curves call it: "trace 12"
-    sig*: SignatureAsk      ## a signature file's vibrator window: its force scale and QC record
+    size*: int64             ## its size when it was opened; -1 when not known
+    traces*: seq[int]        ## indices in the file, in the order drawn
+    unit*: SurveyUnit        ## the unit of the file's distances (coordinates)
+    offsetUnit*: SurveyUnit  ## the unit of the file's trace offsets
+    names*: seq[string]      ## per trace, what the curves call it: "trace 12"
+    sig*: SignatureAsk       ## a signature file's vibrator window: its force scale and QC record
     forceNote*: string
       ## a signature file's vibrator window: the ground force is a trace of the file, so no
       ## typed mass is applied; the words for the note ("" for any other file)
@@ -57,6 +57,7 @@ type
     reversed*: seq[int] ## those of `traces` effectively reversed, ascending: samples times -1 first
     allReversed*: bool ## reverse-all was on for this file
     own*: seq[FilterEntry] ## traces that carry a filter of their own, ascending
+    shifts*: seq[ShiftEntry] ## traces that carry a time shift, ascending
     processing*: Processing ## the plot's filters and its Aux toggle
     refName*: string
     archivePath*: string ## a reference from the archive, instead of a trace
@@ -213,11 +214,23 @@ proc applyRowsOwn(b: RowBlock[float32]; live: TraceRows; dtMs: float64;
         ws.reserve(plan)
         plan.apply(b, initChunkMeta(live, dtMs, 0, skip), ws)
 
+proc applyRowShifts(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: openArray[int];
+    shifts: openArray[ShiftEntry]; dtMs: float64) =
+  ## Each seismic trace of `list` moved by its stored shift, after polarity
+  ## and before the plot's filters. An auxiliary trace is left as recorded.
+  if shifts.len == 0 or f == nil: return
+  for i, t in list:
+    if i >= rows.len: break
+    let ms = shiftAt(shifts, t)
+    if ms != 0.0 and t in 0 ..< f[].len and f[].traceKeys(t).isSeismic:
+      applyStoredShift(rows[i], ms, dtMs)
+
 proc filtered*(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
     pr: Processing; own: openArray[FilterEntry]; reversed: openArray[int];
-    dtMs: float64; passed: var int; plotOn = true): string =
+    shifts: openArray[ShiftEntry]; dtMs: float64; passed: var int; plotOn = true): string =
   ## `rows` (traces `list` of `f`) with each reversed trace multiplied by -1
-  ## first (`reversed`), then through the plot's filters `pr` at `dtMs` when
+  ## first (`reversed`), then each seismic trace moved by its time shift
+  ## (`shifts`), then through the plot's filters `pr` at `dtMs` when
   ## `plotOn` (an f-k asked raw leaves them out), then through each trace's
   ## own filter (`own`), always. An own filter that runs instead leaves the
   ## plot's filters off that trace. An auxiliary trace goes through the
@@ -225,6 +238,7 @@ proc filtered*(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
   ## passed by); its own filter runs either way. What the plot's filters
   ## are, in words, or why they did not run; "" when they were not applied.
   negateListed(rows, list, reversed)
+  applyRowShifts(rows, f, list, shifts, dtMs)
   passed = 0
   var q = pr
   q.raw = false
@@ -465,13 +479,14 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
         var through = ""
         if kept.len > 0:
           if raw:
-            discard filtered(kept, f, keptList, Processing(), [], a.reversed, dtMs, passed)
+            discard filtered(kept, f, keptList, Processing(), [], a.reversed, a.shifts, dtMs,
+              passed)
             passed = 0
             if a.processing.hasFilters or a.own.len > 0:
               through = RawAgainstReference
           else:
-            through = filtered(kept, f, keptList, a.processing, a.own, a.reversed, dtMs,
-              passed, plotOn)
+            through = filtered(kept, f, keptList, a.processing, a.own, a.reversed, a.shifts,
+              dtMs, passed, plotOn)
         if passed > 0 and through.startsWith("through "):
           # the filters did not touch these: the words must not say they did
           if passed == kept.len:

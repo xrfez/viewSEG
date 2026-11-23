@@ -133,6 +133,8 @@ type
     killed*: seq[int] ## the gather's traces killed, ascending
     own*: seq[FilterEntry]
       ## the gather's traces that carry a filter of their own, ascending
+    shifts*: seq[ShiftEntry]
+      ## the gather's traces that carry a time shift, ascending
     raw*: bool ## the tile carries the samples as the file has them too
     chunkTraces*: int ## traces per read from the file; 0: `ChunkTraces`
     basis*: bool
@@ -478,6 +480,8 @@ type Preparing = object
   ownKeys: seq[OwnFilter]
   ownPlans: seq[PipelinePlan[float32]]
   ownReady: seq[bool]
+  shiftRows: seq[int]        ## rows of the request that carry a shift, ascending
+  shiftMs: seq[float64]      ## their shifts, in milliseconds
   processing: bool
   plan: PipelinePlan[float32]
   firstSample: int           ## the trace sample of column 0
@@ -562,6 +566,15 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
       for k in 0 ..< b.len:
         if teReversed in pr.edits[first + k] and not meta.isFailed(k):
           reversePolarity(b.row(k, meta.liveSamples(k, b.cols)))
+    if pr.shiftRows.len > 0 and b.len > 0:
+      var si = 0
+      for k in 0 ..< b.len:
+        let row = first + k
+        while si < pr.shiftRows.len and pr.shiftRows[si] < row: inc si
+        if si < pr.shiftRows.len and pr.shiftRows[si] == row and not meta.isFailed(k) and
+            rows.keysAt(k).isSeismic:
+          applyStoredShift(b.rowPtr(k).toOpenArray(0, b.cols - 1), pr.shiftMs[si],
+            rd.layout.dtMs)
     if pr.filtering and b.len > 0:
       try:
         var instead: seq[int]
@@ -741,6 +754,12 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
           pr.ownPlans.add plan
           pr.ownReady.add ready
         pr.ownAt[row] = key
+  if req.shifts.len > 0:
+    for row, t in list:
+      let ms = shiftAt(req.shifts, t)
+      if ms != 0.0:
+        pr.shiftRows.add row
+        pr.shiftMs.add ms
 
   template cutRaw(b: RowBlock[float32]; first: int) =
     ## Rows `first ..< first + b.len` of the tile's raw samples, from `b` as

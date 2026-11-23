@@ -106,6 +106,7 @@ type
     edits*: set[TraceEdit] ## as displayed: its edits
     own*: OwnFilter        ## as displayed: its own filter, when `hasOwn`
     hasOwn*: bool
+    shiftMs*: float64      ## as displayed: its time shift, milliseconds; 0 for none
     displayed*: bool       ## its samples as displayed (its file is shown in the plot)
 
   InspectRequest* = object
@@ -269,6 +270,8 @@ proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace;
   for x in d.samples.mitems:
     if blank or not (abs(x) < Inf): x = 0
   if not blank and teReversed in t.edits: reversePolarity(d.samples) # as the reader does
+  if not blank and t.shiftMs != 0.0 and d.keys.isSeismic:
+    applyStoredShift(d.samples, t.shiftMs, d.dtMs)
   let list = [t.trace]
   let plotIt = not blank and req.filters.len > 0 and teExcluded notin t.edits and
     not (t.hasOwn and t.own.place == fpInstead)

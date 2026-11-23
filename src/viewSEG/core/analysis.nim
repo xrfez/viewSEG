@@ -29,7 +29,7 @@ import std/[math, strutils]
 import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
 import processSEG/vibroseis/[crosscorrelate, sweeptrack, vibqc]
 import processSEG/core/workspace
-import colourmaps, matchpeak, panels, phasepicture, phaseshow, plotcursor,
+import colourmaps, edits, matchpeak, panels, phasepicture, phaseshow, plotcursor,
     processing, sigjudge, signalend, sigtypes,
   traceids, vibjudge
 
@@ -1178,6 +1178,7 @@ type
     editsSeen*: int ## its file's edits' revision then
     ownKey*: string ## the own filters of its traces when it asked last
     own*: seq[FilterEntry] ## those filters, kept while the window is frozen
+    shifts*: seq[ShiftEntry] ## time shifts, kept while the window is frozen
     reversed*: seq[int]
       ## file indices effectively reversed when it asked last, ascending, kept
       ## while frozen

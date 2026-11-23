@@ -49,7 +49,7 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
 import processSEG/filter/design
-import cutfile, filesystem, inbox, jobs, log, processing, spectra, threads
+import cutfile, edits, filesystem, inbox, jobs, log, processing, spectra, threads
 
 const
   ReadTraces = 64   ## traces per prefetch chunk
@@ -58,17 +58,18 @@ const
 type
   SpectrumAsk* = object
     ## What a spectrum window asks the reader for.
-    id*: int               ## the window's
+    id*: int                 ## the window's
     gen*: uint64
-    session*: int          ## the open file's id: what the samples at hand are of
-    file*: ptr SeismicFile ## held by the caller
+    session*: int            ## the open file's id: what the samples at hand are of
+    file*: ptr SeismicFile   ## held by the caller
     path*: string
-    size*: int64           ## its size when it was opened; -1 when not known
-    traces*: seq[int]      ## indices in the file
-    killed*: seq[int]      ## those of them killed, ascending: left out
-    reversed*: seq[int]    ## those effectively reversed, ascending: samples times -1 first
-    allReversed*: bool     ## reverse-all was on: the note says so once, not per trace
-    own*: seq[FilterEntry] ## those that carry a filter of their own, ascending
+    size*: int64             ## its size when it was opened; -1 when not known
+    traces*: seq[int]        ## indices in the file
+    killed*: seq[int]        ## those of them killed, ascending: left out
+    reversed*: seq[int]      ## those effectively reversed, ascending: samples times -1 first
+    allReversed*: bool       ## reverse-all was on: the note says so once, not per trace
+    own*: seq[FilterEntry]   ## those that carry a filter of their own, ascending
+    shifts*: seq[ShiftEntry] ## those that carry a time shift, ascending
     fromMs*, toMs*: float64 = NaN
       ## the time window; NaN: the whole trace
     axisT0Ms*: float64 = NaN
@@ -337,16 +338,24 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
       except ValueError as e:
         answer.filterProblem = e.msg
         filtering = false
-    # A reversed trace times -1 first, then its own filter: the raw curve.
-    # Processed, when the plot has a filter on, is that sign, the plot's
-    # filters, then the own filter, as the Seismic plot runs them (instead:
-    # the plot's left out, so the two curves are the same).
+    # A reversed trace times -1 first, then its time shift, then its own
+    # filter: the raw curve. Processed, when the plot has a filter on, is
+    # that sign and shift, the plot's filters, then the own filter, as the
+    # Seismic plot runs them (instead: the plot's left out, so the two
+    # curves are the same). The copy for the processed curve is taken after
+    # the shift, so both curves see the shifted samples.
     if a.reversed.len > 0:
       for k, t in part:
         if failed.binarySearch(k) < 0 and a.reversed.binarySearch(t) >= 0:
           let row = k * cols
           let n = cache.traces[t].samples.len
           for j in 0 ..< n: work[row + j] = -work[row + j]
+    if a.shifts.len > 0:
+      for k, t in part:
+        if failed.binarySearch(k) < 0:
+          let ms = shiftAt(a.shifts, t)
+          if ms != 0.0 and rows.keysAt(k).isSeismic:
+            applyStoredShift(b.rowPtr(k).toOpenArray(0, b.cols - 1), ms, dtMs)
     var filed: seq[float32] = @[]
     if filtering: filed = work
     applyBlockOwn(b, live, dtMs, ownHere, failed, ws)

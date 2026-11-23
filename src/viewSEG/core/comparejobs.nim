@@ -4,7 +4,8 @@
 ## is posted as `mkComparePicture`; a newer ask cancels the older job, and
 ## the window keeps the picture it has until the new one arrives. A trace
 ## is copied as the plot shows it: polarity reversed when it is effectively
-## reversed, then its own filter. A reference stays as stored, with neither.
+## reversed, then its time shift, then its own filter. A reference stays as
+## stored, with none of them.
 
 import std/[math, strutils]
 import parseSEG
@@ -64,10 +65,11 @@ proc applyOwn(samples: var seq[float32]; dtMs: float64; f: OwnFilter) =
   plan.apply(view, meta, ws)
 
 proc compareTraceWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
-    own: OwnFilter; reversed: bool; gen: uint64; to: Poster): JobWork =
+    own: OwnFilter; reversed: bool; shiftMs: float64; gen: uint64; to: Poster): JobWork =
   ## Reads trace `trace` of the open file. When `reversed` (the trace is
   ## effectively reversed: own reversal or reverse-all, not both), flips
-  ## polarity before its own filter, and posts the copy. The file is not
+  ## polarity, then applies `shiftMs` (positive later; 0 for none) on a
+  ## seismic trace, then its own filter, and posts the copy. The file is not
   ## changed.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading the trace"
@@ -89,6 +91,8 @@ proc compareTraceWork*(file: ptr SeismicFile; path: string; size: int64; trace: 
       if reversed:
         reversePolarity(samples)
         news.reversed = true
+      if shiftMs != 0.0 and keys.isSeismic:
+        applyStoredShift(samples, shiftMs, dt)
       if own.spec.hasFilters:
         applyOwn(samples, dt, own)
         news.filtered = true

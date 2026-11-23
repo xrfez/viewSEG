@@ -428,10 +428,12 @@ proc askPlot(state: var AppState; w: int): bool =
   a.killed = killed
   if not pw.frozen:
     pw.own = ownOfTraces(edits, traces)
+    pw.shifts = shiftsOfTraces(edits, traces)
     pw.reversed = reversedOf(edits, traces)
     pw.allReversed = edits.allReversed
     pw.ownKey = ownKeyOf(edits, traces)
   a.own = pw.own
+  a.shifts = pw.shifts
   a.reversed = pw.reversed
   a.allReversed = pw.allReversed
   inc state.plotGen

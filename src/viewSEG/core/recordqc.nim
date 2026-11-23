@@ -7,7 +7,8 @@
 ##   thresholds (`AmplitudeParams()`): each seismic trace's statistics
 ##   (`traceAmplitudeInto`, a chunk of traces at a time, so a record of any
 ##   size is read in bounded memory) after a reversed trace is multiplied by
-##   -1 and that trace's own filter, then the record's noisy-trace test
+##   -1, shifted by its stored time shift, then that trace's own filter, then
+##   the record's noisy-trace test
 ##   (processSEG's `qc/exclusion`, `noiseQc`, with the area the user chose,
 ##   `core/noisearea`): the traces near the source (or, in a receiver
 ##   gather, the shots near the receiver) are left out of the judgement, the
@@ -47,7 +48,7 @@ import parseSEG
 import processSEG/core/[rows, types, workspace]
 import processSEG/pipeline
 import processSEG/qc/[amplitude, exclusion, record]
-import components, filesystem, firstbreakjobs, firstbreaks, inbox, jobs, mapkinds, noisearea,
+import components, edits, filesystem, firstbreakjobs, firstbreaks, inbox, jobs, mapkinds, noisearea,
   processing, session, threads
 
 export mapkinds
@@ -288,6 +289,22 @@ proc negateQc(samples: var Tensor[float32]; part: Slice[int]; reversed: openArra
       let row = b.rowPtr(i)
       for j in 0 ..< b.cols: row[j] = -row[j]
 
+proc applyShiftsQc(samples: var Tensor[float32]; f: SeismicFile; part: Slice[int];
+    shifts: openArray[ShiftEntry]) =
+  ## Each seismic trace of `part` moved by its stored shift, after polarity
+  ## and before its own filter. An auxiliary trace is left as recorded.
+  if shifts.len == 0: return
+  let b = rowBlock(samples)
+  for i in 0 ..< part.len:
+    let ms = shiftAt(shifts, part.a + i)
+    if ms == 0.0: continue
+    let keys = f.traceKeys(part.a + i)
+    if not keys.isSeismic: continue
+    let us = if keys.intervalUs > 0 and keys.intervalUs < Inf: keys.intervalUs
+             else: f.sampleIntervalUs(part.a + i)
+    if us > 0 and us < Inf:
+      applyStoredShift(b.rowPtr(i).toOpenArray(0, b.cols - 1), ms, us / 1000.0)
+
 proc applyOwnQc(samples: var Tensor[float32]; f: SeismicFile; part: Slice[int];
     own: openArray[FilterEntry]; ws: var Workspace) =
   ## Each trace of `part`'s own frequency filter, on `samples`, before the
@@ -406,7 +423,8 @@ proc noiseOfRecord(f: SeismicFile; traces: Slice[int]; amps: var seq[TraceAmplit
 proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base, gather: int;
     traces: Slice[int]; domain: RelationDomain; relations: ptr SurveyGeometry;
     against: string; recordMatch: RecordMatch; traceMatch: TraceMatch; placed: Placed;
-    samples: bool; own: seq[FilterEntry]; reversed: seq[int]; noise: NoiseWork;
+    samples: bool; own: seq[FilterEntry]; reversed: seq[int]; shifts: seq[ShiftEntry];
+    noise: NoiseWork;
     to: Poster): JobWork =
   ## The work of a job that reads gather `gather` (`traces`) of open file
   ## `session` (`file`, at `path`; its trace 0 is survey-wide `base`) and
@@ -468,6 +486,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
         var log: DiagLog
         var samples = f.readTraces(part, 0 ..< cols, log)
         if reversed.len > 0: negateQc(samples, part, reversed)
+        if shifts.len > 0: applyShiftsQc(samples, f, part, shifts)
         if own.len > 0: applyOwnQc(samples, f, part, own, ws)
         var failed: seq[int]
         for d in log:
