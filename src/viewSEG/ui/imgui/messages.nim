@@ -234,6 +234,7 @@ proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
               view.focus.acts:
             (result.showPath, result.showTrace, result.showRecord) = (e.loc.file, e.loc.trace,
               e.loc.record)
+          marks.mark("messages.line " & text.replace("\n", " | "))
           if r == view.rows.high: marks.mark("messages.last")
           if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
             details(e, jumps)

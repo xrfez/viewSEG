@@ -53,7 +53,7 @@ proc tooltip(text, shortcut: string; t: Theme; marks: ptr Marks = nil; markName 
   ## The last item's tooltip: `text` (one line a `\n`), then the shortcut in
   ## dim text as "Shortcut: …". A line of `text` that already starts that way
   ## is dim too. Shown on a disabled item too. `markName`, when given, is
-  ## marked while the tooltip is open.
+  ## marked while the tooltip is open, with the tip's text after " tip ".
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
       ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
     proc line(s: string; same = false) =
@@ -119,8 +119,10 @@ proc iconButton*(icon, text, shortcut: string; size: float32; t: Theme;
     ImDrawList_AddText_FontPtr(igGetWindowDrawList(), font, bpx, at,
       u32(t.roles[rlWarning]), IconWarning.cstring, nil, 0, nil)
     marks.markRect(mark & " warning", at, ImVec2_c(x: at.x + bs.x, y: at.y + bs.y))
-  tooltip((if tipText.len > 0: tipText else: text), shortcut, t, addr marks,
-    (if markName.len > 0: markName & " tip" else: ""))
+  let tip = if tipText.len > 0: tipText else: text
+  let tipMark = if markName.len == 0: ""
+                else: markName & " tip" & (if tip.len > 0: " " & tip.replace("\n", " | ") else: "")
+  tooltip(tip, shortcut, t, addr marks, tipMark)
   clicked
 
 type

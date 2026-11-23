@@ -3633,6 +3633,12 @@ proc spectrumReaderFor(state: var AppState; path: string): lent SpectrumReader =
     state.spectrumReader = newSpectrumReader(state.inbox.poster, state.jobs.holdRelease)
   state.spectrumReader
 
+proc spectrumAsked*(state: AppState): tuple[path: string; session: int] =
+  ## The path and session of the newest spectrum request; ("", -1) when none
+  ## was asked, or the reader was never started.
+  if state.spectrumReader.isNil: return ("", -1)
+  state.spectrumReader.asked
+
 func spectrumFilters(p: Panel): Processing =
   ## The filters a spectrum of `p`'s traces is processed with: its layer
   ## 0's, shown raw or not (the two curves compare), with whether its

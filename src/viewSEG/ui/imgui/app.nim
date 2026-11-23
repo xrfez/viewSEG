@@ -661,6 +661,11 @@ proc apply*(frame: FrameInfo; cmd: Command) =
   ## Applies `cmd` as a control of the window would (for tests).
   frame.ui.core.apply cmd
 
+proc flush*(frame: FrameInfo) =
+  ## Saves the project and what is remembered now, without waiting for
+  ## `SaveDelay` (for tests).
+  frame.ui.core.flushFiles()
+
 proc agentControl*(frame: FrameInfo): lent AgentControl =
   ## Agent control as this frame left it: `running`, `clients`, `path`.
   frame.ui.agent

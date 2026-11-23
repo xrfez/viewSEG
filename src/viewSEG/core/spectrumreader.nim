@@ -99,6 +99,8 @@ type
     started, busy, ended, abandoned: bool
     beat: MonoTime
     reading: string
+    askedPath: string     ## the newest request's file, kept after it is taken
+    askedSession: int     ## its session; -1 until a request is asked
     held: int             ## samples kept at hand
     forget: bool          ## no window needs them: let them go once the queue is empty
     thread: Thread[ptr ReaderObj]
@@ -539,6 +541,7 @@ proc newSpectrumReader*(poster: sink Poster; holds: HoldRelease): SpectrumReader
   p.poster = poster
   p.holds = holds
   p.serving = -1
+  p.askedSession = -1
   result = SpectrumReader(p: p)
   createThread(p.thread, run, p)
   p.started = true
@@ -556,6 +559,8 @@ proc ask*(x: SpectrumReader; a: sink SpectrumAsk) =
         dropped.add x.p.queue[i].path
         x.p.queue.delete i
       else: inc i
+    x.p.askedPath = a.path
+    x.p.askedSession = a.session
     x.p.queue.add a
     signal(x.p.changed)
   for path in dropped: discard x.p.holds.release(path)
@@ -640,3 +645,10 @@ proc readingPath*(x: SpectrumReader): string =
   if x.p != nil:
     withLock x.p.lock:
       if x.p.busy: result = x.p.reading
+
+proc asked*(x: SpectrumReader): tuple[path: string; session: int] =
+  ## The path and session of the newest request, including one already taken;
+  ## ("", -1) when none was asked, or `x` was never started.
+  if x.p == nil: return ("", -1)
+  withLock x.p.lock:
+    result = (x.p.askedPath, x.p.askedSession)
