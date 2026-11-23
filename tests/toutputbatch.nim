@@ -12,6 +12,8 @@
 ## Runs on copies of samples/land/shots.sgy and samples/land/shots.sgd.
 
 import std/[os, strutils, times]
+when defined(windows):
+  from std/winlean import nil
 import parseSEG
 import processSEG/core/basic
 import viewSEG/core/[edits, filememory, identity, jobs, outputbatch, outputjobs]
@@ -20,6 +22,18 @@ import utils/[faultyfs, waiting]
 const root = currentSourcePath().parentDir.parentDir
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
+
+proc dropDirLink(link: string) =
+  ## Removes a directory symlink, not its target. Failure is ignored: cleanup
+  ## of a temp link must not fail the test. `removeDir` walks into the target.
+  try:
+    when defined(windows):
+      if winlean.removeDirectoryW(newWideCString(link)) == 0:
+        raiseOSError(osLastError(), link)
+    else:
+      removeFile(link)
+  except OSError:
+    discard
 
 proc samplesOf(f: SeismicFile; trace: int): seq[float32] =
   let x = f.readTraces(trace .. trace)
@@ -240,6 +254,69 @@ proc main*() =
     doAssert src.len > 0, "the passed file was closed"
     src.close()
     doAssert readFile(edited) == editedBytes
+
+  block symlinkedRoot:
+    ## Seen to fail: the destination root was resolved only through its parent,
+    ## so a root that is itself a symlink to the source was not refused, a root
+    ## linked to a sub folder or to the source's parent was not refused, and a
+    ## root linked to an unrelated folder failed mirror mode ("No such file or
+    ## directory" while creating the mirrored folder).
+    let linkSrc = dir / "link-src"
+    let linkSub = dir / "link-sub"
+    let linkParent = dir / "link-parent"
+    let unrelated = dir / "unrelated"
+    let linkOk = dir / "link-ok"
+    createDir(unrelated)
+    var made = false
+    try:
+      createSymlink(srcRoot, linkSrc)
+      createSymlink(srcRoot / "line1", linkSub)
+      createSymlink(srcRoot.parentDir, linkParent)
+      createSymlink(unrelated, linkOk)
+      made = true
+    except OSError:
+      echo "symlinkedRoot: skipped, a directory symlink could not be created"
+    if made:
+      let one = @[BatchItem(source: plain, relative: "line1" / "shots.sgy")]
+      let mirror = OutputOptions(format: ofSegy)
+      proc runOne(dest: string): tuple[st: JobState; wrote: BatchResult; error: string] =
+        runBatch(BatchAsk(root: srcRoot, items: one, destRoot: dest, options: mirror,
+          mirrorFolders: true), Store(), @[])
+      let toSource = runOne(linkSrc)
+      doAssert toSource.st == jsFailed, "a root linked to the source was written: " &
+        toSource.error
+      doAssert "source folder" in toSource.wrote.reason, toSource.wrote.reason
+      doAssert "inside" notin toSource.wrote.reason, toSource.wrote.reason
+      doAssert toSource.wrote.written == 0 and toSource.wrote.items.len == 0
+      let toSub = runOne(linkSub)
+      doAssert toSub.st == jsFailed, "a root linked to a sub folder was written: " &
+        toSub.error
+      doAssert "inside the source" in toSub.wrote.reason, toSub.wrote.reason
+      doAssert toSub.wrote.written == 0
+      let toParent = runOne(linkParent)
+      doAssert toParent.st == jsFailed, "a root linked to the source's parent was written: " &
+        toParent.error
+      doAssert "source folder is inside" in toParent.wrote.reason, toParent.wrote.reason
+      doAssert toParent.wrote.written == 0
+      let toOther = runOne(linkOk)
+      doAssert toOther.st == jsDone, toOther.error & " / " & toOther.wrote.reason
+      doAssert toOther.wrote.written == 1 and toOther.wrote.failed == 0
+      let want = expandFilename(unrelated) / "line1" / "shots.sgy"
+      doAssert fileExists(want), "mirror mode did not write into the linked folder"
+      doAssert toOther.wrote.items[0].destination.normalizedPath == want.normalizedPath,
+        toOther.wrote.items[0].destination
+      let missing = linkOk / "new-out"
+      let toMissing = runOne(missing)
+      doAssert toMissing.st == jsDone, toMissing.error & " / " & toMissing.wrote.reason
+      let wantMissing = expandFilename(unrelated) / "new-out" / "line1" / "shots.sgy"
+      doAssert fileExists(wantMissing), "a root under a symlink was not resolved"
+      doAssert toMissing.wrote.items[0].destination.normalizedPath ==
+        wantMissing.normalizedPath, toMissing.wrote.items[0].destination
+      doAssert readFile(plain) == plainBytes and readFile(edited) == editedBytes
+    dropDirLink(linkSrc)
+    dropDirLink(linkSub)
+    dropDirLink(linkParent)
+    dropDirLink(linkOk)
 
   doAssert readFile(segy) == sampleSegy and readFile(segd) == sampleSegd
   doAssert readFile(plain) == plainBytes and readFile(edited) == editedBytes and

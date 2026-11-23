@@ -9,8 +9,9 @@
 ## Submit it with `outputBatchSpec`. That spec does not touch the file
 ## system, so the UI thread may build it: the paths it lists are the
 ## strings given here, not resolved. `refuseOutputRoot` does read the file
-## system (parent links), so a window calls it on a job, and this job calls
-## it before the first write.
+## system (the destination's own links, and the nearest existing ancestor
+## when it is not there yet), so a window calls it on a job, and this job
+## calls it before the first write.
 
 import std/[os, sets, strutils, tables, times]
 import parseSEG
@@ -156,15 +157,53 @@ proc outputBatchSpec*(ask: BatchAsk): JobSpec =
   JobSpec(title: if name.len == 0: "Write files" else: "Write files to " & name,
     lane: jlBackground, reads: reads, exclusive: exclusive)
 
+proc resolvedRoot(path: string): string =
+  ## Absolute path, with this path's own links resolved. An existing path is
+  ## the seam's `expandFilename`. A path that is not there yet is its nearest
+  ## existing ancestor resolved, with the missing parts joined. Reads the
+  ## file system: not for the UI thread.
+  if path.len == 0: return ""
+  try:
+    return fs.expandFilename(path).normalizedPath
+  except OSError, ValueError:
+    discard
+  var abs = path
+  try:
+    abs = absolutePath(path)
+  except OSError, ValueError:
+    discard
+  abs = abs.normalizedPath
+  var missing: seq[string] = @[]
+  var cur = abs
+  var guard = 0
+  while cur.len > 0 and guard < 64:
+    inc guard
+    let name = cur.extractFilename
+    let parent = cur.parentDir
+    if parent == cur or parent.len == 0 or name.len == 0: break
+    missing.add name
+    if fs.dirExists(parent) or fs.fileExists(parent):
+      var base = parent
+      try:
+        base = fs.expandFilename(parent)
+      except OSError, ValueError:
+        discard
+      base = base.normalizedPath
+      for i in countdown(missing.high, 0):
+        base = base / missing[i]
+      return base.normalizedPath
+    cur = parent
+  abs
+
 proc refuseOutputRoot*(sourceRoot, destRoot: string): string =
-  ## "" when `destRoot` may receive files from `sourceRoot`. Equal to the
-  ## source folder, inside it, or holding it: one sentence, and nothing
-  ## should be written. Reads the file system (parent links): not for the
-  ## UI thread.
+  ## "" when `destRoot` may receive files from `sourceRoot`. The destination
+  ## is resolved first (its own links, not only its parent's): equal to the
+  ## source folder, inside it, or holding it, one sentence, and nothing
+  ## should be written. Reads the file system: not for the UI thread.
   if destRoot.len == 0: return "No destination folder was given."
   if sourceRoot.len == 0: return "No source folder was given."
-  let src = canonPath(sourceRoot)
-  let dest = canonPath(destRoot)
+  let src = resolvedRoot(sourceRoot)
+  let dest = resolvedRoot(destRoot)
   if pathsEqual(src, dest): return "The destination folder is the source folder."
   if pathInside(dest, src):
     return "The destination folder is inside the source folder."
@@ -304,27 +343,30 @@ proc cancelWhy(outSink: OutputSink): string =
 proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenFile];
     sink: BatchSink) =
   if sink != nil: sink.result = BatchResult(items: @[])
-  let refused = refuseOutputRoot(ask.root, ask.destRoot)
+  let destRoot = resolvedRoot(ask.destRoot)
+  var writing = ask
+  writing.destRoot = destRoot
+  let refused = refuseOutputRoot(writing.root, writing.destRoot)
   if refused.len > 0: failBatch(sink, refused)
-  let count = ask.items.len
+  let count = writing.items.len
   if count == 0: return
   if ctx.cancelled:
     if sink != nil: sink.result.cancelled = true
     raise newException(JobCancelledError, "Cancelled.")
-  let plans = planned(ask)
+  let plans = planned(writing)
   var willWrite = false
   for p in plans:
     if p.why.len == 0: willWrite = true
-  if willWrite: ensureRoot(sink, ask.destRoot)
+  if willWrite: ensureRoot(sink, writing.destRoot)
   var guard: seq[string] = @[]
   for o in openFiles:
     if o.path.len > 0: guard.add o.path
-  for item in ask.items:
+  for item in writing.items:
     if item.source.len > 0: guard.add item.source
   var doneFiles = 0
-  for i, item in ask.items:
+  for i, item in writing.items:
     ctx.setPhase(filePhase(i, count, item.relative))
-    if ctx.cancelled: stopBatch(sink, ask, plans, i)
+    if ctx.cancelled: stopBatch(sink, writing, plans, i)
     discard ctx.progress(int64(doneFiles) * BatchScale, int64(count) * BatchScale)
     if plans[i].why.len > 0:
       note(sink, item.relative, plans[i].dest, boFailed, 0, 0, @[], plans[i].why)
@@ -336,7 +378,7 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
     var outSink: OutputSink = nil
     var itemLines: seq[string] = @[]
     try:
-      for d in newDirs(plans[i].dest, ask.destRoot):
+      for d in newDirs(plans[i].dest, writing.destRoot):
         fs.createDir(d)
         made.add d
       var file: ptr SeismicFile = nil
@@ -358,7 +400,7 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
         ctx.progress(int64(doneFiles) * BatchScale + shareOf(int64(done), int64(total)),
           int64(count) * BatchScale)
       {.cast(gcsafe).}:
-        writeOutput(ctx, file, item.source, plans[i].dest, ask.options, edits, guard,
+        writeOutput(ctx, file, item.source, plans[i].dest, writing.options, edits, guard,
           outSink, report)
       var lines = itemLines
       for x in outSink.result.lines: lines.add x
@@ -367,17 +409,17 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
     except JobCancelledError:
       dropEmpty(made)
       note(sink, item.relative, plans[i].dest, boSkipped, 0, 0, itemLines, cancelWhy(outSink))
-      stopBatch(sink, ask, plans, i + 1)
+      stopBatch(sink, writing, plans, i + 1)
     except SegCancelledError:
       dropEmpty(made)
       note(sink, item.relative, plans[i].dest, boSkipped, 0, 0, itemLines, "Cancelled.")
-      stopBatch(sink, ask, plans, i + 1)
+      stopBatch(sink, writing, plans, i + 1)
     except CatchableError as e:
       if ctx.cancelled:
         dropEmpty(made)
         note(sink, item.relative, plans[i].dest, boSkipped, 0, 0, itemLines,
           cancelWhy(outSink))
-        stopBatch(sink, ask, plans, i + 1)
+        stopBatch(sink, writing, plans, i + 1)
       dropEmpty(made)
       var lines = itemLines
       var why = if e.msg.len > 0: e.msg else: $e.name
