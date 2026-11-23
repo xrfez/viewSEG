@@ -1745,6 +1745,33 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   tip("Never filter this trace with the plot's filters (E), the Aux traces too option " &
     "included. A tick means it is excluded; a click puts it back. A filter of its own " &
     "(Filter this trace...) still runs.")
+  let targets = if under >= 0: st.selection.targets(under) else: @[]
+  let filterMany = targets.len > 1
+  let filterItem = if filterMany: "Filter " & $targets.len & " selected traces..."
+                   else: "Filter this trace..."
+  if igMenuItem_Bool((IconFilter & "  " & filterItem).cstring, nil, false, under >= 0):
+    tp.ownAsk = true
+    tp.ownTraces = targets
+    tp.ownPos = igGetIO_Nil().MousePos
+    let start = st.startingFilter(targets)
+    tp.ownDraft = start.filter
+    tp.ownMixed = start.mixed
+  marks.mark("plot.menu.filter")
+  marks.mark("plot.menu.filter.item " & filterItem)
+  tip("Give this trace its own frequency filter, after the plot's filters or instead of them")
+  var anyFilter = false
+  for id in targets:
+    let file = st.findTrace(id)
+    if file >= 0 and st.ownAt(st.sessions[file].path, id - st.sessions[file].base).has:
+      anyFilter = true
+  if anyFilter:
+    let removeItem = if filterMany: "Remove the filters of " & $targets.len & " traces"
+                     else: "Remove the trace's filter"
+    if igMenuItem_Bool((IconFilter & "  " & removeItem).cstring, nil, false, true):
+      res.commands.add Command(kind: ckOwnFilter, panel: p.id, edited: targets, on: false)
+    marks.mark("plot.menu.removefilter")
+    marks.mark("plot.menu.removefilter.item " & removeItem)
+    tip("Take this trace's own filter away (the plot's filters stay)")
   menuHeading(marks, "Analyse", "plot.menu.heading.analyse")
   let newPlot = igBeginMenu((IconPulse & "  New plot").cstring, under >= 0)
   marks.mark("plot.menu.newplot")
@@ -1793,34 +1820,7 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.store")
   tip("Keep this trace as a reference: as recorded, reversed when the trace is reversed; " &
     "never the plot's filters, reverse-all or gain, and no filter")
-  menuHeading(marks, "Find", "plot.menu.heading.find")
-  let targets = if under >= 0: st.selection.targets(under) else: @[]
-  let filterMany = targets.len > 1
-  let filterItem = if filterMany: "Filter " & $targets.len & " selected traces..."
-                   else: "Filter this trace..."
-  if igMenuItem_Bool((IconFilter & "  " & filterItem).cstring, nil, false, under >= 0):
-    tp.ownAsk = true
-    tp.ownTraces = targets
-    tp.ownPos = igGetIO_Nil().MousePos
-    let start = st.startingFilter(targets)
-    tp.ownDraft = start.filter
-    tp.ownMixed = start.mixed
-  marks.mark("plot.menu.filter")
-  marks.mark("plot.menu.filter.item " & filterItem)
-  tip("Give this trace its own frequency filter, after the plot's filters or instead of them")
-  var anyFilter = false
-  for id in targets:
-    let file = st.findTrace(id)
-    if file >= 0 and st.ownAt(st.sessions[file].path, id - st.sessions[file].base).has:
-      anyFilter = true
-  if anyFilter:
-    let removeItem = if filterMany: "Remove the filters of " & $targets.len & " traces"
-                     else: "Remove the trace's filter"
-    if igMenuItem_Bool((IconFilter & "  " & removeItem).cstring, nil, false, true):
-      res.commands.add Command(kind: ckOwnFilter, panel: p.id, edited: targets, on: false)
-    marks.mark("plot.menu.removefilter")
-    marks.mark("plot.menu.removefilter.item " & removeItem)
-    tip("Take this trace's own filter away (the plot's filters stay)")
+  menuHeading(marks, "Map", "plot.menu.heading.find")
   # Its station on the map: the receiver (in a receiver gather, the source).
   let role = $st.stationRole(k)
   let many = under >= 0 and under in st.selection.selected and st.selection.selectedCount > 1

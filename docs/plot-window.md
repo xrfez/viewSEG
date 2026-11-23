@@ -1583,12 +1583,12 @@ traces"); the selection stays as it was. Over no trace it says "No trace here".
 | Reverse polarity | `R` | that trace or the selection, 180 degrees out of phase; ticked while the trace under the pointer is reversed, and then it puts the polarity back |
 | Kill / Restore | `K` | drawn blank (or left out of the plot: the gear popover's "Hide killed traces"), left out of the processing, of the levels the gain computes over the record and of spectra; "Restore" over a killed trace |
 | Exclude from plot filters | `E` | the plot's filters (the Filters menu's, the Aux traces too when that is on) never touch that trace or the selection; ticked while the trace under the pointer is excluded, and then it puts the filters back. A filter of the trace's own (Filter this trace...) still runs; marked **E** |
+| Filter this trace... | | gives the trace (or the selection) a frequency filter of its own; "Remove the trace's filter" appears when one has it |
 | **Analyse** | | |
 | New plot > FFT | `F` | that trace's amplitude spectrum, or the selection's averaged, raw and through the plot's filters, in a window of its own ([Spectra](#spectra)); several can be open. The same submenu lists the other views of the selected traces |
 | Compare > Set as A / Set as B | | copies the trace under the pointer into that slot, even when it is one of a selection. The copy does not follow the plot. Filling the second slot opens Compare two traces (the user guide) |
 | Store as reference... | | keeps the trace under the pointer as a reference |
-| **Find** | | |
-| Filter this trace... | | gives the trace (or the selection) a frequency filter of its own; "Remove the trace's filter" appears when one has it |
+| **Map** | | |
 | Select its receiver on the map | `M` | the receiver the trace was recorded at (in a receiver gather, its source), or those of the selection, with their traces; greyed out where the trace has no place on the map |
 | **Whole record** | | |
 | Reverse polarity of all traces | | every trace of the file, in the picture and every graph, ticked while on ([Polarity](#polarity)) |
