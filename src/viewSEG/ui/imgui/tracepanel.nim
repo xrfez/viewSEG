@@ -1446,7 +1446,8 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
               res.commands.add Command(kind: ckDisplay, panel: p.id, display: chosen.display)
     of sgGain:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
-        drawGainControls(p, tp.gainBox, t, marks, res.commands, res.notes)
+        drawGainControls(p, tp.gainBox, t, marks, res.commands, res.notes,
+          if onFirst: firstEdge else: fullRight)
     of sgFilters:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         var named = st.ownLine(p)

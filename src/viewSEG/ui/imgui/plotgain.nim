@@ -1,6 +1,7 @@
 ## The plot window's gain controls, in its strip: the gain type, with its
 ## own settings in the same drop-down, and the gain amount in dB, which
-## every type has (a box, - and + buttons, and keys).
+## every type has (a box, - and + buttons, and keys). When the amount would
+## pass the strip line's right, it starts on the next line, under the type.
 ##
 ## The amount only scales the drawing (`displayScale`), so it acts at once
 ## and reads nothing again; so does a change between the types that are a
@@ -244,9 +245,10 @@ proc dimText(text: string; t: Theme) =
   igPopStyleColor(1)
 
 proc drawGainControls*(p: Panel; box: var GainBox; t: Theme; marks: var Marks;
-    cmds: var seq[Command]; notes: var seq[string]) =
+    cmds: var seq[Command]; notes: var seq[string]; edge: float32) =
   ## The gain drop-down (a checkbox for letting viewSEG choose, then the six
   ## types, then the type's settings), then the gain amount: -, a box in dB, +.
+  ## When that amount would pass `edge`, it starts under the drop-down.
   let caps = p.caps
   let d = p.layers[0].display
   let text = gainBarLabel(d, p.kind)
@@ -301,13 +303,19 @@ proc drawGainControls*(p: Panel; box: var GainBox; t: Theme; marks: var Marks;
       else: "Gain: how amplitudes are scaled for display, none, fixed or normalized; " &
         "the type's settings are in this list. The Aux window's gain is its own.")
   # the amount: the buttons repeat while held, 12 dB a step with Shift.
-  # The unit is in the box ("+0.0 dB"); a bare number still applies.
+  # The unit is in the box ("+0.0 dB"); a bare number still applies. On a narrow
+  # strip the amount starts under the drop-down instead of running past `edge`.
   let step = if igGetIO_Nil().KeyShift: GainShiftStepDb else: GainStepDb
   # the type none applies no gain: the amount is kept for the other types, shown as 0 and
   # greyed
   let none = d.effectiveGain(p.kind) == dgNone
+  let pad = 2 * style.FramePadding.x
+  let lessW = igCalcTextSize("-".cstring, nil, false, -1).x + pad
+  let moreW = igCalcTextSize("+".cstring, nil, false, -1).x + pad
+  let dbW = round(igCalcTextSize("+000.0 dB".cstring, nil, false, -1).x + pad)
+  let amountW = lessW + dbW + moreW + 4 # two 2px gaps, not ItemSpacing
   igBeginDisabled(none)
-  igSameLine(0, 2)
+  if igGetItemRectMax().x + amountW <= edge: igSameLine(0, 2)
   igPushItemFlag(ImGui_ItemFlags_ButtonRepeat.cint, true)
   if igButton("-##gainless", ImVec2_c(x: 0, y: 0)):
     p.send(d.withGainDb(d.gainDb - step), cmds)

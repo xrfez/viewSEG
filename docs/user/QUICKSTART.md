@@ -531,8 +531,9 @@ says **Gain: AGC 500 ms** when you chose it, and **Gain: auto (AGC 500 ms)** or
 ... th percentile** sets which amplitude is drawn at full scale (the colour map's ends:
 black and white in grey; a wiggle's full swing): 99 % of |x| at first; 98 clips harder
 (more of the record at full scale), 100 is the peak. Beside it stands the amplitude
-that gives now. It never reads the file again. Beside the drop-down, the
-gain amount in dB works with every type, from -300 to +300 dB: the box shows the unit
+that gives now. It never reads the file again. Beside the drop-down, or under it when the
+strip is too narrow, the gain amount in dB works with every type, from -300 to +300 dB: the
+box shows the unit
 ("+0.0 dB"; typing a bare number still works). Type a value, click - or
 +, or press `]` and `[` (keypad `*` and `/`), 3 dB a step or 12 dB with Shift; the
 buttons and keys repeat while held, and the picture brightens or darkens at once. A trace the file

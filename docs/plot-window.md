@@ -189,7 +189,8 @@
     pixels);
   - the **display gain**: a gain type, with its own settings in the same drop-down,
     and a **gain amount in dB** that every type has: a box, - and + buttons (3 dB a
-    step, 12 dB with Shift; held, they repeat) and keys (`]` or keypad `*` for more, `[`
+    step, 12 dB with Shift; held, they repeat), beside the drop-down or under it when the
+    strip is too narrow, and keys (`]` or keypad `*` for more, `[`
     or keypad `/` for less; the same steps, repeating while held), from -300 to +300 dB
     (a factor of 10^15 either way: raw records span far more than 60 dB between the
     first breaks and the late times). The amount rescales the drawing at once and never
