@@ -135,7 +135,44 @@ const
     "isSeismic": "parseSEG's is called (`f.index.isSeismic(t)`, core/shots, core/state); " &
       "the viewer's own is `FileKind.isSeismic` (core/filekinds)",
     "reserveRelations": "the viewer's `SurveyFileBuilder.reserveRelations` (core/survey), " &
-      "which calls parseSEG's where it compiles (core/surveyjobs)"}
+      "which calls parseSEG's where it compiles (core/surveyjobs)",
+    "StopCheck": "the viewer's own abandon check (core/analysis, core/fkanalysis), " &
+      "not processSEG's",
+    "ConfidentPick": "the viewer's own constant (core/breakrule), not processSEG's",
+    "MadToSigma": "the viewer's own constant (core/breakrule), not processSEG's",
+    "MinSecondPicks": "the viewer's own constant (core/breakrule), not processSEG's",
+    "MinTrimmedPicks": "the viewer's own constant (core/breakrule), not processSEG's",
+    "RestartSigmaFloorMs": "the viewer's own constant (core/breakrule), not processSEG's",
+    "RestartSigmaShare": "the viewer's own constant (core/breakrule), not processSEG's",
+    "SecondGain": "the viewer's own constant (core/breakrule), not processSEG's",
+    "SecondGainMs": "the viewer's own constant (core/breakrule), not processSEG's",
+    "StartLines": "the viewer's own constant (core/breakrule), not processSEG's",
+    "TrimFloorMs": "the viewer's own constant (core/breakrule), not processSEG's",
+    "TrimRounds": "the viewer's own constant (core/breakrule), not processSEG's",
+    "TrimSigmas": "the viewer's own constant (core/breakrule), not processSEG's",
+    "keepSecond": "the viewer's own proc (core/breakrule), not processSEG's",
+    "medianIfCloser": "the viewer's own proc (core/breakrule), not processSEG's",
+    "medianLineStart": "the viewer's own proc (core/breakrule), not processSEG's",
+    "robustSigma": "the viewer's own proc (core/breakrule), not processSEG's",
+    "trimmedModel": "the viewer's own proc (core/breakrule), not processSEG's",
+    "RippleFraction": "the viewer's own constant (core/signalend), not processSEG's",
+    "blockLevels": "the viewer's own proc (core/signalend), not processSEG's",
+    "lastLoudMs": "the viewer's own proc (core/signalend), not processSEG's",
+    "signalEndMs": "the viewer's own proc (core/signalend), not processSEG's",
+    "ClearPeakToSidelobe": "the viewer's own constant (core/matchpeak), not processSEG's",
+    "MatchVerdict": "the viewer's own type (core/matchpeak), not processSEG's",
+    "MinSidelobeSpanMs": "the viewer's own constant (core/matchpeak), not processSEG's",
+    "NoClearMatch": "the viewer's own constant (core/matchpeak), not processSEG's",
+    "PreciseShiftMatch": "the viewer's own constant (core/matchpeak), not processSEG's",
+    "PreciseShiftPeakToSidelobe": "the viewer's own constant (core/matchpeak), not processSEG's",
+    "SidelobeGapMs": "the viewer's own constant (core/matchpeak), not processSEG's",
+    "mvNoPeak": "the viewer's own enum value (core/matchpeak), not processSEG's",
+    "mvNothing": "the viewer's own enum value (core/matchpeak), not processSEG's",
+    "rotationOf": "the viewer's own proc (core/matchpeak), not processSEG's",
+    "TopReading": "the viewer's own type (core/sweepedge), not processSEG's",
+    "UncertainFraction": "the viewer's own constant (core/sweepedge), not processSEG's",
+    "notBefore": "the viewer's own proc (core/sweepedge), not processSEG's",
+    "weighShapes": "the viewer's own proc (core/sweepedge), not processSEG's"}
     ## Library names `src/` names for something of its own too (a field, its
     ## own proc), each checked by hand, with what src/ does with them: a text
     ## search cannot tell them from the library's (`check`)
