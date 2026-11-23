@@ -532,10 +532,11 @@ proc tableHeight(ui: HeadersUi; id: string): float32 =
   if ui.hex.id == id: -min(hexHeight(), 0.5 * igGetContentRegionAvail().y) else: 0
 
 proc drawHex(ui: var HeadersUi; id: string; blocks: openArray[RawBlock]; fonts: Fonts;
-    t: Theme; marks: var Marks) =
+    t: Theme; marks: var Marks; raw = false) =
   ## Below table `id`, when a field of it is picked: its block's bytes (a
   ## line each 16: offset, hexadecimal, text), the field's highlighted, and
-  ## its bytes read every way a header could hold them.
+  ## its bytes read every way a header could hold them. `raw`: the bytes are
+  ## the file on disk, not a correlated record's in-memory copy.
   if ui.hex.id != id: return
   template h: untyped = ui.hex
   if id in ui.tables and ui.tables[id].key != h.tableKey:
@@ -555,11 +556,15 @@ proc drawHex(ui: var HeadersUi; id: string; blocks: openArray[RawBlock]; fonts: 
         h.base = b.offset
         h.found = true
   if not h.found:
-    igTextDisabled("The bytes of this field were not read.")
-    marks.mark("headers.hex none")
+    igTextDisabled(if raw: "The raw file's bytes of this field were not read."
+                   else: "The bytes of this field were not read.")
+    marks.mark(if raw: "headers.hex refused" else: "headers.hex none")
     return
   let first = int(h.at - h.base)
   igSeparator()
+  if raw:
+    dim(t, "These bytes are the file on disk, not the correlated record.")
+    marks.mark("headers.hex raw")
   dim(t, h.description & " (" & h.name & "): " & $h.size & (if h.size == 1: " byte" else:
     " bytes") & " at " & $h.at & ". Click its value again to hide its bytes.")
   let readingsWidth = min(igGetFontSize() * 22, 0.45 * igGetContentRegionAvail().x)
@@ -811,7 +816,17 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
           proc (r: FieldRow): bool = r.blockName == "binary")], ["Value"], standard))
       ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output,
         ui.tableHeight(id))
-      ui.drawHex(id, facts.blocks, fonts, t, marks)
+      if not ses.derived:
+        ui.drawHex(id, facts.blocks, fonts, t, marks)
+      else:
+        var oi = -1
+        for i, s in st.sessions:
+          if not s.derived and s.path == ses.origin: oi = i
+        if oi < 0:
+          igTextDisabled("The raw file is not open, so its bytes are not shown.")
+          marks.mark("headers.hex refused")
+        else:
+          ui.drawHex(id, st.sessions[oi].facts.blocks, fonts, t, marks, raw = true)
       igEndTabItem()
     if facts.extendedText.len > 0 and subTab("Extended", marks):
       ui.drawText("##extended", fileKey, proc (): string =

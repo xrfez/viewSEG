@@ -6,14 +6,13 @@
 ## A sweep as long as the record is refused: the raw file is shown and the
 ## button goes off. A kill made while correlated is kept under the raw path.
 ## Saving a project while correlated does not write the virtual key.
+## The Binary tab's hex pane shows the open raw file's bytes.
 ##
 ## Seen to fail: a stored window of the whole trace (toMs below 0) is refused
 ## ("the reference sweep is as long as the record"). A project saved before
 ## the next file clears the chosen reference, so the next file stays raw.
 ## A press and a release in one frame never lands. A point taken while a
 ## tooltip is the window under the pointer misses the button.
-##
-## The hex pane is not asserted here: that check lands with its fix.
 ##
 ## Needs a display: run under the tester (it gives each test its own).
 
@@ -326,6 +325,20 @@ proc main*() =
 
     proc aCorrelated(f: FrameInfo): bool {.closure.} = f.correlated("a-raw.sgy")
     clickStep("correlate a-raw", "plot.correlate", "plot", aCorrelated)
+
+    proc fileTab(f: FrameInfo): bool {.closure.} =
+      f.markOf("headers.file tab Binary").size.x > 0 and f.correlated("a-raw.sgy")
+    clickStep("file headers", "headers.tab file", "headers", fileTab)
+
+    proc binaryTab(f: FrameInfo): bool {.closure.} =
+      f.markOf("headers.binary binary.sampleInterval 0").size.x > 0
+    clickStep("binary header", "headers.file tab Binary", "headers", binaryTab)
+
+    proc hexRaw(f: FrameInfo): bool {.closure.} =
+      f.markOf("headers.hex raw").size.x > 0 and f.markOf("headers.hex refused").size.x == 0 and
+        f.correlated("a-raw.sgy")
+    clickStep("raw bytes of the field", "headers.binary binary.sampleInterval 0", "headers",
+      hexRaw)
 
     proc openAux(f: FrameInfo) {.closure.} =
       f.apply Command(kind: ckAuxWindow, onScreen: true)
