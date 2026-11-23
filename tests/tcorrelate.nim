@@ -7,16 +7,45 @@
 ##
 ## Seen to fail: with the toggle cleared on that failure, "the toggle stayed
 ## on after the sweep had no listen time". With the derived view closed on
-## the way to the next file, "the raw record was not shown".
+## the way to the next file, "the raw record was not shown". With the
+## correlation's hold not kept at the quit, AddressSanitizer reports a
+## heap-use-after-free in the job's write of the result after shutdown.
 
 import std/[os, sequtils, strutils, times]
-import viewSEG/core/[references, state]
-import utils/[fixtures, waiting]
+import viewSEG/core/[jobs, references, state]
+import utils/[fixtures, steps, waiting]
 
 proc said(st: AppState; text: string): bool =
   for e in st.log:
     if text in e.text: return true
   false
+
+proc quitWhileCorrelating(raw: string): JobId =
+  ## Quits while a correlation is held in its phase; the caller lets it go
+  ## on after this state is gone.
+  var st = initAppState(watchEvery = initDuration(hours = 1))
+  var settings = st.settings
+  settings.files.prepareNext = false
+  st.apply Command(kind: ckSettings, settings: settings)
+  st.rememberFilesIn(raw.parentDir / "quit-config")
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: raw)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  doAssert st.settle(st.referencesLoaded), "the archive was not read"
+  let trace = st.sessions[0].base
+  st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "held",
+    trace: trace, fromMs: 0, toMs: 100))
+  doAssert st.settle(st.references.entries.anyIt(it.name == "held")),
+    "the sweep was not stored"
+  var id = ""
+  for e in st.references.entries:
+    if e.name == "held": id = e.id
+  st.apply Command(kind: ckSelectReference, refId: id)
+  holdStep("correlating")
+  st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: true)
+  doAssert st.settle(inStep("correlating").len == 1), "the correlation was not held"
+  result = inStep("correlating")[0]
+  doAssert not st.shutdown(wait = initDuration(milliseconds = 50),
+    diskLimit = initDuration(milliseconds = 50)), "the quit waited for the correlation"
 
 proc main*() =
   withFixtures fx:
@@ -82,6 +111,12 @@ proc main*() =
     let rawShown = st.shownFile(st.findPanel(MainPanel))
     doAssert rawShown >= 0 and not st.sessions[rawShown].derived, "the raw record was not shown"
     discard st.shutdown()
+
+    installSteps()
+    let held = quitWhileCorrelating(raw)
+    releaseStep("correlating")
+    doAssert waitUntil(cameBack(held)), "the correlation did not come back"
+    setJobHook(nil)
   echo "tcorrelate: ok"
 
 when isMainModule: main()

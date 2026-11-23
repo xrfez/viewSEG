@@ -1718,6 +1718,12 @@ proc keepForStragglers(state: var AppState) =
   if not state.joining.relations.isNil: GC_ref(state.joining.relations)
   for r in state.joining.reused: GC_ref(r) # `joinReadWork` reads them
   if not state.project.geometry.isNil: GC_ref(state.project.geometry) # `planWork` reads it
+  # A correlation writes through `addr hold.result` until its job returns.
+  # Toggle off, a close and a second correlate retire the hold (`dropHold`);
+  # only the quit frees `AppState` under a job that has not returned.
+  if not state.correlate.isNil: GC_ref(state.correlate)
+  for h in state.correlateRetired:
+    if not h.isNil: GC_ref(h)
 
 proc shutdown*(state: var AppState; wait = QuitWait; diskLimit = DiskQuitLimit;
     tick: proc () {.closure, raises: [].} = nil): bool {.discardable.} =
