@@ -1,7 +1,9 @@
 ## The Output window: the seismic files of one folder, ticked in a tree, written
-## as SEG-Y or SEG-D. Listing the folder and checking the destination run on
-## background jobs. The write is the batch writer (`outputBatchWork`). A file
-## already open is written as it stands, with its live edits.
+## as SEG-Y or SEG-D. Wide enough, the source is the left pane and the write is
+## the right; a narrow main window stacks them. Listing the folder and checking
+## the destination run on background jobs. The write is the batch writer
+## (`outputBatchWork`). A file already open is written as it stands, with its
+## live edits.
 ##
 ## Ticks are not saved. All and None cover every listed file, including ones
 ## the name filter hides. A folder tick counts every file under it.
@@ -570,19 +572,141 @@ proc drawResults(ui: OutputUi; marks: var Marks) =
   marks.mark("output.open")
   tip(OpenTip)
 
+proc buttonWidth(label: string): float32 =
+  textWidth(label) + igGetStyle().FramePadding.x * 2 + 8
+
+proc sameLineIfFits(right, need: float32) =
+  if igGetItemRectMax().x + igGetStyle().ItemSpacing.x + need <= right + 1:
+    igSameLine(0, -1)
+
+proc lineRight(): float32 =
+  igGetCursorScreenPos().x + igGetContentRegionAvail().x
+
+proc flagMark(marks: var Marks; name: string) =
+  let p = igGetCursorScreenPos()
+  marks.markRect(name, p, ImVec2_c(x: p.x + 1, y: p.y + 1))
+
+proc pathLine(label, path, button, textMark, extra, buttonMark: string;
+    marks: var Marks): bool =
+  ## "Label: path" with `button` at the row's end. The path keeps its last
+  ## name and is cut from the left when the row is short.
+  let gap = igGetStyle().ItemSpacing.x
+  let btn = buttonWidth(button)
+  let prefix = label & ": "
+  let room = igGetContentRegionAvail().x
+  let beside = room >= textWidth(prefix) + igGetFontSize() * 4 + gap + btn
+  let textRoom = if beside: room - gap - btn - textWidth(prefix)
+                 else: room - textWidth(prefix)
+  let body = if path.len == 0: "—" else: shortenPath(path, max(0'f32, textRoom))
+  igTextUnformatted((prefix & body).cstring, nil)
+  if path.len > 0: tip(path)
+  marks.mark(textMark)
+  if extra.len > 0: marks.mark(extra)
+  if beside: igSameLine(0, -1)
+  result = igButton(button.cstring, ImVec2_c(x: 0, y: 0))
+  marks.mark(buttonMark)
+
+proc drawLeft(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
+  if pathLine(SourceLabel, ui.source, ChangeSource, "output.source", "",
+      "output.changeSource", marks):
+    ui.askSource = true
+    outp.askAt = ui.source
+  let right = lineRight()
+  if igButton(AllButton.cstring, ImVec2_c(x: 0, y: 0)): ui.setAll(true)
+  marks.mark("output.all")
+  sameLineIfFits(right, buttonWidth(NoneButton))
+  if igButton(NoneButton.cstring, ImVec2_c(x: 0, y: 0)): ui.setAll(false)
+  marks.mark("output.none")
+  sameLineIfFits(right, buttonWidth(ShownButton))
+  if igButton(ShownButton.cstring, ImVec2_c(x: 0, y: 0)): ui.retickShown(st)
+  marks.mark("output.shown")
+  tip(ShownTip)
+  igSetNextItemWidth(-1)
+  discard igInputTextWithHint("##filter", (IconFilter & "  " & FilterHint).cstring,
+    cast[cstring](addr ui.filterBuf[0]), csize_t(ui.filterBuf.len), 0, nil, nil)
+  marks.mark("output.filter")
+  tip(FilterTip)
+  let treeH = max(igGetTextLineHeightWithSpacing() * 3, igGetContentRegionAvail().y)
+  if igBeginChild_Str("##tree", ImVec2_c(x: 0, y: treeH), 0, 0):
+    ui.drawTree(marks)
+  igEndChild()
+
+proc optBox(label: cstring; on: var bool; help: string) =
+  discard igTableNextColumn()
+  discard igCheckbox(label, addr on)
+  if help.len > 0: tip(help)
+
+proc drawOptions(ui: var OutputUi; st: AppState) =
+  var keys = ""
+  let pk = st.findPanel(MainPanel)
+  if pk >= 0 and st.panels[pk].layers.len > 0:
+    keys = sortWords(st.panels[pk].layers[0].order)
+  let flags = ImGui_TableFlags_SizingStretchSame.cint
+  if not igBeginTable("##apply", 2, flags, ImVec2_c(x: 0, y: 0), 0): return
+  igTableSetupColumn("##l", ImGui_TableColumnFlags_WidthStretch.cint, 1, ImGuiID(0))
+  igTableSetupColumn("##r", ImGui_TableColumnFlags_WidthStretch.cint, 1, ImGuiID(1))
+  igTableNextRow(0, 0)
+  optBox(OptReversals.cstring, ui.reversals, "")
+  optBox(OptKilled.cstring, ui.dropKilled, "")
+  igTableNextRow(0, 0)
+  optBox(OptFilters.cstring, ui.ownFilters, "")
+  optBox(OptProcessing.cstring, ui.processingOn, ProcessingTip)
+  igTableNextRow(0, 0)
+  optBox(OptShifts.cstring, ui.shifts, "")
+  optBox(OptSort.cstring, ui.sortOn, sortTip(keys))
+  igEndTable()
+
+proc drawRun(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
+  if ui.running:
+    if igButton(StopButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.runJob != NoJob:
+      outp.commands.add Command(kind: ckCancelJob, job: ui.runJob)
+    marks.mark("output.stop")
+  else:
+    igBeginDisabled(not ui.canRun)
+    if igButton(RunButton.cstring, ImVec2_c(x: 0, y: 0)): ui.submitRun(st)
+    igEndDisabled()
+    if ui.canRun: marks.mark("output.run")
+    else: marks.mark("output.run.disabled")
+    tip(RunTip)
+
+proc drawRight(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
+  let extra = if ui.dest.len > 0: "output.destination " & ui.dest else: ""
+  if pathLine(DestLabel, ui.dest, ChangeDest, "output.dest", extra, "output.changeDest",
+      marks):
+    ui.askDest = true
+    outp.askAt = if ui.dest.len > 0: ui.dest else: ui.source
+  if ui.refusal.len > 0:
+    igPushTextWrapPos(0)
+    igTextUnformatted(ui.refusal.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("output.refusal " & ui.refusal)
+  let right = lineRight()
+  igTextUnformatted(FormatLabel.cstring, nil)
+  sameLineIfFits(right, buttonWidth($ofSegy))
+  if igRadioButton_Bool(($ofSegy).cstring, ui.format == ofSegy): ui.format = ofSegy
+  sameLineIfFits(right, buttonWidth($ofSegd))
+  if igRadioButton_Bool(($ofSegd).cstring, ui.format == ofSegd): ui.format = ofSegd
+  ui.drawOptions(st)
+  discard igCheckbox(KeepFolders.cstring, addr ui.mirror)
+  marks.mark("output.mirror")
+  tip(MirrorTip)
+  ui.drawRun(st, marks, outp)
+  ui.drawResults(marks)
+
 proc drawOutput*(ui: var OutputUi; title: string; st: AppState; marks: var Marks): OutputOutput =
   ## The window titled `title`. A list or a destination check asked for since
-  ## the last draw starts here.
+  ## the last draw starts here. Wide: two panes sharing the height, a
+  ## draggable split. Narrow: the source above the write.
   ui.consider(st)
   if igBegin(title.cstring, nil, 0):
     ui.focus.watch()
     marks.markWindow("output")
-    if ui.listing: marks.mark("output.listing")
-    if ui.haveList and not ui.listing: marks.mark("output.ready")
+    if ui.listing: flagMark(marks, "output.listing")
+    if ui.haveList and not ui.listing: flagMark(marks, "output.ready")
     if ui.running:
       let info = st.jobs.info(ui.runJob)
       if info.isSome and info.get.progress.phase.len > 0:
-        marks.mark("output.progress " & info.get.progress.phase)
+        flagMark(marks, "output.progress " & info.get.progress.phase)
     var status = ui.status
     if status.len == 0:
       status = if ui.source.len == 0: NeedFolder elif ui.haveList: Ready else: Listing
@@ -592,84 +716,35 @@ proc drawOutput*(ui: var OutputUi; title: string; st: AppState; marks: var Marks
     igPushTextWrapPos(0)
     igTextUnformatted(status.cstring, nil)
     igPopTextWrapPos()
-    igTextUnformatted((SourceLabel & ": " & (if ui.source.len == 0: "—" else: ui.source)).cstring,
-      nil)
-    marks.mark("output.source")
-    tip(ui.source)
-    igSameLine(0, -1)
-    if igButton(ChangeSource.cstring, ImVec2_c(x: 0, y: 0)):
-      ui.askSource = true
-      result.askAt = ui.source
-    marks.mark("output.changeSource")
-    igTextUnformatted((DestLabel & ": " & (if ui.dest.len == 0: "—" else: ui.dest)).cstring, nil)
-    marks.mark("output.dest")
-    if ui.dest.len > 0: marks.mark("output.destination " & ui.dest)
-    tip(ui.dest)
-    igSameLine(0, -1)
-    if igButton(ChangeDest.cstring, ImVec2_c(x: 0, y: 0)):
-      ui.askDest = true
-      result.askAt = if ui.dest.len > 0: ui.dest else: ui.source
-    marks.mark("output.changeDest")
-    if ui.refusal.len > 0:
-      igPushTextWrapPos(0)
-      igTextUnformatted(ui.refusal.cstring, nil)
-      igPopTextWrapPos()
-      marks.mark("output.refusal " & ui.refusal)
-    igTextUnformatted(FormatLabel.cstring, nil)
-    igSameLine(0, -1)
-    if igRadioButton_Bool(($ofSegy).cstring, ui.format == ofSegy): ui.format = ofSegy
-    igSameLine(0, -1)
-    if igRadioButton_Bool(($ofSegd).cstring, ui.format == ofSegd): ui.format = ofSegd
-    discard igCheckbox(OptReversals.cstring, addr ui.reversals)
-    igSameLine(0, -1)
-    discard igCheckbox(OptKilled.cstring, addr ui.dropKilled)
-    igSameLine(0, -1)
-    discard igCheckbox(OptFilters.cstring, addr ui.ownFilters)
-    discard igCheckbox(OptProcessing.cstring, addr ui.processingOn)
-    tip(ProcessingTip)
-    igSameLine(0, -1)
-    discard igCheckbox(OptShifts.cstring, addr ui.shifts)
-    igSameLine(0, -1)
-    discard igCheckbox(OptSort.cstring, addr ui.sortOn)
-    var keys = ""
-    let pk = st.findPanel(MainPanel)
-    if pk >= 0 and st.panels[pk].layers.len > 0:
-      keys = sortWords(st.panels[pk].layers[0].order)
-    tip(sortTip(keys))
-    discard igCheckbox(KeepFolders.cstring, addr ui.mirror)
-    marks.mark("output.mirror")
-    tip(MirrorTip)
-    if igButton(AllButton.cstring, ImVec2_c(x: 0, y: 0)): ui.setAll(true)
-    marks.mark("output.all")
-    igSameLine(0, -1)
-    if igButton(NoneButton.cstring, ImVec2_c(x: 0, y: 0)): ui.setAll(false)
-    marks.mark("output.none")
-    igSameLine(0, -1)
-    if igButton(ShownButton.cstring, ImVec2_c(x: 0, y: 0)): ui.retickShown(st)
-    marks.mark("output.shown")
-    tip(ShownTip)
-    igSetNextItemWidth(-1)
-    discard igInputTextWithHint("##filter", (IconFilter & "  " & FilterHint).cstring,
-      cast[cstring](addr ui.filterBuf[0]), csize_t(ui.filterBuf.len), 0, nil, nil)
-    marks.mark("output.filter")
-    tip(FilterTip)
+    let wide = igGetMainViewport().Size.x >= 900
     let avail = igGetContentRegionAvail()
-    let treeH = max(igGetTextLineHeightWithSpacing() * 6, avail.y * 0.42)
-    if igBeginChild_Str("##tree", ImVec2_c(x: 0, y: treeH), 0, 0):
-      ui.drawTree(marks)
-    igEndChild()
-    if ui.running:
-      if igButton(StopButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.runJob != NoJob:
-        result.commands.add Command(kind: ckCancelJob, job: ui.runJob)
-      marks.mark("output.stop")
+    if wide:
+      let leftW = max(igGetFontSize() * 14, avail.x * 0.45)
+      let split = ImGui_ChildFlags_Borders.cint or ImGui_ChildFlags_ResizeX.cint
+      if igBeginChild_Str("##out.left", ImVec2_c(x: leftW, y: 0), split, 0):
+        marks.markWindow("output.pane.left")
+        ui.drawLeft(st, marks, result)
+      igEndChild()
+      igSameLine(0, -1)
+      if igBeginChild_Str("##out.right", ImVec2_c(x: 0, y: 0),
+          ImGui_ChildFlags_Borders.cint, 0):
+        marks.markWindow("output.pane.right")
+        ui.drawRight(st, marks, result)
+      igEndChild()
+      flagMark(marks, "output.beside")
     else:
-      igBeginDisabled(not ui.canRun)
-      if igButton(RunButton.cstring, ImVec2_c(x: 0, y: 0)): ui.submitRun(st)
-      igEndDisabled()
-      if ui.canRun: marks.mark("output.run")
-      else: marks.mark("output.run.disabled")
-      tip(RunTip)
-    ui.drawResults(marks)
+      let leftH = max(igGetFontSize() * 10, avail.y * 0.45)
+      let split = ImGui_ChildFlags_Borders.cint or ImGui_ChildFlags_ResizeY.cint
+      if igBeginChild_Str("##out.left.stack", ImVec2_c(x: 0, y: leftH), split, 0):
+        marks.markWindow("output.pane.left")
+        ui.drawLeft(st, marks, result)
+      igEndChild()
+      if igBeginChild_Str("##out.right.stack", ImVec2_c(x: 0, y: 0),
+          ImGui_ChildFlags_Borders.cint, 0):
+        marks.markWindow("output.pane.right")
+        ui.drawRight(st, marks, result)
+      igEndChild()
+      flagMark(marks, "output.stacked")
     marks.markOverflow("output")
   ui.focus.settle()
   igEnd()

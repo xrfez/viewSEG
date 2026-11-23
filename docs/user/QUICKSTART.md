@@ -296,19 +296,27 @@ a folder is open.
 
 The **Output** window stays closed until you ask for it. It opens as a tab beside the
 **Seismic** window, and that tab is the one in front. Closing it and opening it again keeps
-the place you last gave it. **Change source...** picks another folder. The tree lists that
-folder's seismic files. Tick the ones to write. **All** and **None** cover every listed
-file, including ones the name filter hides. **Only the shown file** ticks the file the
-Seismic window shows, and no other. A folder's box is mixed when only some of the files
-under it are ticked; a click then ticks them all. Ticks are not kept.
+the place you last gave it. When the main window is wide, the source is the left pane and
+the write is the right, sharing the height; drag the splitter between them. Below about
+900 px of the main window's width the panes stack, the source above the write.
 
-**Format** is SEG-Y or SEG-D. The boxes under it are on: polarity reversals, dropping
-killed traces, each trace's own filter, the Seismic window's processing, time shifts, and
-the plot's sort. Display-only gain is not written. A SEG-D file is sorted within each
-record. A file already open is written as it stands, including edits not yet saved.
+The left pane is the source. **Change source...** picks another folder. **All**, **None**
+and **Only the shown file** set the ticks. The filter box narrows the tree by file name.
+The tree lists that folder's seismic files and fills the pane. Tick the ones to write.
+**All** and **None** cover every listed file, including ones the name filter hides.
+**Only the shown file** ticks the file the Seismic window shows, and no other. A folder's
+box is mixed when only some of the files under it are ticked; a click then ticks them
+all. Ticks are not kept.
 
-**Change destination...** picks the folder to write into. **Keep the sub folders** is on:
-a file in a sub folder is written in that sub folder. **Run** stays inactive when the
+The right pane is the destination and the write. **Change destination...** picks the
+folder to write into. **Format** is SEG-Y or SEG-D. The boxes under it, in two columns,
+are on: polarity reversals, dropping killed traces, each trace's own filter, the Seismic
+window's processing, time shifts, and the plot's sort. Display-only gain is not written.
+A SEG-D file is sorted within each record. A file already open is written as it stands,
+including edits not yet saved. **Keep the sub folders** is on: a file in a sub folder is
+written in that sub folder.
+
+**Run** stays inactive when the
 destination is the source folder, inside it, or holding it. While the write runs, the
 button is **Stop**: the file in progress finishes, and the rest are skipped. The table
 under it is one row per file: the relative path, the outcome (and the reason when it

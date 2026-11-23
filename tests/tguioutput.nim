@@ -6,7 +6,9 @@
 ##
 ## Seen to fail: File column showing only the leaf, "the File column does not
 ## show sub/c.sgy: @[output.cell.file a.sgy, output.cell.file b.sgy,
-## output.cell.file c.sgy]".
+## output.cell.file c.sgy]". Panes forced to stack: "panes are not side by
+## side: @[] @[output.stacked]". Panes forced to stay beside: "panes did not
+## stack in a narrow window".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -51,6 +53,19 @@ proc rowOf(f: FrameInfo; rel: string): tuple[ok: bool; outcome: string; written,
 proc refused(f: FrameInfo): bool =
   for name in f.markNames("output.refusal "):
     if "inside" in name: return f.markOf("output.run.disabled").size.x > 0
+
+proc beside(f: FrameInfo): bool =
+  let l = f.markOf("output.pane.left")
+  let r = f.markOf("output.pane.right")
+  f.markOf("output.beside").size.x > 0 and l.size.x > 0 and r.size.x > 0 and
+    abs(l.pos.y - r.pos.y) <= 4 and abs(l.size.y - r.size.y) <= 4 and
+    l.pos.x + l.size.x <= r.pos.x + 8
+
+proc stacked(f: FrameInfo): bool =
+  let l = f.markOf("output.pane.left")
+  let r = f.markOf("output.pane.right")
+  f.markOf("output.stacked").size.x > 0 and l.size.y > 0 and r.size.y > 0 and
+    l.pos.y + l.size.y <= r.pos.y + 8 and abs(l.pos.x - r.pos.x) <= 4
 
 proc main*() =
   var wait = 0
@@ -128,10 +143,14 @@ proc main*() =
           if it.size.x > 0 and f.markOf("menu.Output.disabled").size.x == 0:
             f.click(it.centre)
             opened = true
+        if f.markOf("output.ready").size.x > 0 and
+            f.markOf("output.file a.sgy on").size.x > 0 and not beside(f):
+          doAssert false, "panes are not side by side: " & $f.markNames("output.beside") &
+            " " & $f.markNames("output.stacked")
         result = f.markOf("output.ready").size.x > 0 and
           f.markOf("output.file a.sgy on").size.x > 0 and
           f.markOf("output.file sub/c.sgy off").size.x > 0 and
-          f.markOf("output.folder sub off").size.x > 0
+          f.markOf("output.folder sub off").size.x > 0 and beside(f)
         if result:
           let (o, p) = (f.windowPlace("output"), f.windowPlace("plot"))
           doAssert o.inSight and o.docked and not o.apart, "not in the centre dock: " & $o
@@ -192,6 +211,16 @@ proc main*() =
         if result:
           doAssert f.savePng(shots / "output-after-run.png"), "after-run shot was not written"
       step("Run writes the three files", run, wrote)
+
+      proc narrow(f: FrameInfo) = f.resizeWindow(800, 1080)
+      proc stackedDone(f: FrameInfo): bool =
+        if f.mainWindowRect().size.x < 900 and f.markOf("output.beside").size.x > 0:
+          doAssert false, "panes did not stack in a narrow window"
+        stacked(f)
+      step("a narrow window stacks the panes", narrow, stackedDone)
+
+      proc wide(f: FrameInfo) = f.resizeWindow(1920, 1080)
+      step("a wide window puts the panes side by side", wide, beside)
 
       proc armStop(f: FrameInfo) =
         holdFile2.open()
