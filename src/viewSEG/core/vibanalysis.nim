@@ -273,6 +273,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   var band = NaN
   var fitted = NaN # the top frequency read from the reference's samples
   var reading = TopReading(hz: NaN) # ... and how far to trust it
+  var readWhy = "" # the sentence shown when that reading is not sure, or unusable
   try:
     if pair and masses:
       unit.reactionMass = mass(p.reactionMassKg, muKilogram)
@@ -303,12 +304,17 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
           results[0].reference.extent)
         let (chord0, nyquist) = (largestChordHz(results[0].reference), 500.0 / dtMs)
         var edge = reading.hz
-        let why = if reading.hz.isNaN: reading.why else: unusable(reading, chord0, nyquist)
-        if why.len > 0 or reading.uncertaintyHz > 0.03 * reading.hz:
+        let unfit = if reading.hz.isNaN: why(reading.why)
+          else: unusable(reading, chord0, nyquist)
+        if unfit.len > 0 or reading.uncertaintyHz > 0.03 * reading.hz:
           # a reading uncertain by more than 3 %, or unusable: the median of the plausible estimates
           edge = markedTopHz(reading.hz, lineTopHz(results[0].tracks[vsReference],
             results[0].reference.extent), topFrequencyHz(results[0].reference), chord0, nyquist)
-        if why.len > 0: reading = TopReading(hz: NaN, why: why)
+        if unfit.len > 0:
+          reading = TopReading(hz: NaN)
+          readWhy = unfit
+        else:
+          readWhy = why(reading.why)
         if not edge.isNaN:
           let est = roundedTop(edge)
           (band, fitted) = (est, est)
@@ -642,7 +648,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     # the top frequency was read from the reference's samples: say when it is not sure
     var said = ""
     if reading.hz.isNaN:
-      said = "the reference's top frequency could not be read reliably (" & reading.why &
+      said = "the reference's top frequency could not be read reliably (" & readWhy &
         "): the band follows the median of the estimates that fit; type the top frequency to be " &
         "sure"
     elif reading.uncertain:
@@ -650,7 +656,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       result.band.uncertaintyHz = reading.uncertaintyHz
       said = "the top frequency " & number(usedHz, 1) & " Hz, read from the reference, is " &
         "uncertain (about " & number(reading.uncertaintyHz, 1) & " Hz either way; " &
-        reading.why & "): check it, or type it"
+        readWhy & "): check it, or type it"
     if said.len > 0:
       result.band.warning.add (if result.band.warning.len > 0: "; " else: "") & said
   # the tapers, dimmed on the plots that run along the sweep

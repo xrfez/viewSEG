@@ -154,11 +154,7 @@ const
     "medianIfCloser": "the viewer's own proc (core/breakrule), not processSEG's",
     "medianLineStart": "the viewer's own proc (core/breakrule), not processSEG's",
     "robustSigma": "the viewer's own proc (core/breakrule), not processSEG's",
-    "trimmedModel": "the viewer's own proc (core/breakrule), not processSEG's",
-    "TopReading": "the viewer's own type (core/sweepedge), not processSEG's",
-    "UncertainFraction": "the viewer's own constant (core/sweepedge), not processSEG's",
-    "notBefore": "the viewer's own proc (core/sweepedge), not processSEG's",
-    "weighShapes": "the viewer's own proc (core/sweepedge), not processSEG's"}
+    "trimmedModel": "the viewer's own proc (core/breakrule), not processSEG's"}
     ## Library names `src/` names for something of its own too (a field, its
     ## own proc), each checked by hand, with what src/ does with them: a text
     ## search cannot tell them from the library's (`check`)

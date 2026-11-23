@@ -10,7 +10,8 @@
 ## assertions; with the shapes weighted by the best one alone, "kaiser tnRing -20.0: 120.73"
 ## moving the reading; with the law always a line in f, the exponential sweep read 138 for 150;
 ## with the knee rule off, a Gaussian ramp with a ring-down at -20 dB read 125.8 for 120.4;
-## with the noise never estimated, a power 4 ramp at 40 dB read 118.4 as sure.
+## with the noise never estimated, a power 4 ramp at 40 dB read 118.4 as sure;
+## with `why` returning "" for every reason, silence's sentence was empty.
 
 import std/math
 import processSEG/core/[rows, types, units, workspace]
@@ -77,7 +78,7 @@ proc main*() =
     var c = base(tpCos2)
     doAssert not readingOf(c).uncertain
     c.snrDb = 6
-    doAssert readingOf(c).uncertain and readingOf(c).why.len > 0
+    doAssert readingOf(c).uncertain and why(readingOf(c).why).len > 0
 
   block tailsDoNotMoveTheEnd:
     for (shape, param, name, bound, moves) in Shapes:
@@ -103,7 +104,15 @@ proc main*() =
     tp.referenceInto(silence, reference, ws)
     tp.trackInto(silence, reference, track, ws)
     doAssert readTop(silence, 2.0, track, reference.extent).hz.isNaN
+    doAssert why(readTop(silence, 2.0, track, reference.extent).why) ==
+      "the reference has no sweep to read"
     doAssert readTop(silence[0 ..< 10], 2.0, track, reference.extent).hz.isNaN
+    doAssert why(tpNone) == ""
+    doAssert why(tpNoSweep) == "the reference has no sweep to read"
+    doAssert why(tpTaperShort) ==
+      "the end taper of the sweep is too short or too noisy to be fitted"
+    doAssert why(tpNoTop) == "the sweep's frequency law gives no top"
+    doAssert why(tpNotSure) == "the end of the sweep is not sure enough"
 
   block conditionsAnotherReviewFound:
     # each is right (within 1 %) or says it is not: a sure reading is never more than 1 % off
@@ -136,7 +145,7 @@ proc main*() =
       doAssert not r.hz.isNaN, name & ": no reading"
       doAssert r.uncertain or abs(r.hz - truth) <= 0.01 * truth, name & ": " & $r.hz & " for " &
         $truth & " as sure"
-      doAssert not r.uncertain or r.why.len > 0, name & ": marked without words"
+      doAssert not r.uncertain or why(r.why).len > 0, name & ": marked without words"
     # the plain ones are right to within half a percent, and not marked
     for (name, c, truth) in cases:
       if name in ["4 ms", "no ramps", "3.0 dB per octave",
