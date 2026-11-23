@@ -2,12 +2,14 @@
 ## colour schemes (`PlotColours`): the background, the wiggle line and its
 ## fills, and the colours of a hovered and of a selected trace.
 ##
-## - **Paper** (the default): white, black line and positive fill, the
-##   theme's red for the negative fill, whatever the theme.
+## - **Paper** (the Seismic window's default): white, black line and positive
+##   fill, the theme's red for the negative fill, whatever the theme.
 ## - **Follow the theme:** the theme's plot background, its trace and fill
 ##   roles.
 ## - **Custom:** the colours the user chose (`CustomColours`); one not
 ##   chosen yet is paper's.
+## - **Red on paper** (the Aux window's default): paper, with the wiggle line
+##   and the positive fill in that same red, and the negative fill black.
 ##
 ## A hovered trace takes the theme's highlight colour (orange, the colour
 ## of the linked selection) and a selected one its `selected` role (its
@@ -122,6 +124,12 @@ func inkOf(t: Theme; d: DisplaySettings): PlotInk =
       negative: pick(c.negative, paper.wiggle.negative),
       hover: pick(c.hover, paper.wiggle.hover), selected: pick(c.selected, paper.wiggle.selected)))
     (result.breakModel, result.breakPick) = breakInk(t, result.background)
+  of pcRedPaper:
+    result = paper
+    result.wiggle.line = paper.wiggle.negative
+    result.wiggle.positive = paper.wiggle.negative
+    result.wiggle.negative = paper.wiggle.line
+    (result.breakModel, result.breakPick) = breakInk(t, paper.background)
 
 func plotInk*(t: Theme; d: DisplaySettings): PlotInk =
   ## The colours of a layer drawn with `d` in theme `t`; the overlay's bars in the

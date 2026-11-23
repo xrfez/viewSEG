@@ -21,7 +21,9 @@
 ##   it.
 ##
 ## Seen to fail: with the Aux window's overlap left at 0.5, `defaults` found it starts at
-## 0.5; with `followAux` not retargeting when the record changed, `follows` found
+## 0.5; with the Aux window still on paper colours, `defaults` found its wiggle line was
+## not the negative-fill red; with `followAux` not retargeting when the record changed,
+## `follows` found
 ## the Aux window on the first record; with `AuxRefused` empty, `refused` found its trace
 ## filter changed; with the display not cleaned by `forAux`, `ownDisplay` found Exponential
 ## gain on it; with the Aux window's display written to the plot's remembered defaults,
@@ -32,6 +34,7 @@
 import std/[os, sequtils]
 import parseSEG
 import viewSEG/core/[settingsnif, state]
+import viewSEG/view/[plotink, theme]
 import utils/[auxfiles, fixtures, waiting]
 
 proc aux(st: AppState): Panel = st.panels[st.auxIndex]
@@ -54,6 +57,26 @@ proc main*() =
       doAssert Settings().aux.display.overlap == 1.0,
         "the Aux window's overlap starts at " & $Settings().aux.display.overlap
       doAssert Settings().plot.display.overlap == 1.0
+      # Colours are the Aux window's own copy of the display, not one setting shared
+      # with the Seismic window. The line and the positive fill start as the paper
+      # scheme's negative-fill red; the negative fill stays that scheme's black.
+      let paper = plotInk(EverforestDark, DisplaySettings())
+      let auxInk = plotInk(EverforestDark, Settings().aux.display)
+      doAssert Settings().plot.display.colours == pcPaper
+      doAssert plotInk(EverforestDark, Settings().plot.display).wiggle.line == paper.wiggle.line
+      doAssert auxInk.wiggle.line == paper.wiggle.negative,
+        "the Aux window's wiggle line is not the negative-fill red"
+      doAssert auxInk.wiggle.positive == paper.wiggle.negative
+      doAssert auxInk.wiggle.negative == paper.wiggle.line
+      doAssert auxInk.wiggle.line != auxInk.wiggle.negative
+      doAssert auxInk.background == paper.background
+      var problems: seq[string] = @[]
+      let kept = readSettings("(settings (version 1) (aux (colours paper)))", "s.nif",
+        Settings(), problems)
+      doAssert problems.len == 0, $problems
+      doAssert kept.aux.display.colours == pcPaper,
+        "a saved paper choice became " & $kept.aux.display.colours
+      doAssert plotInk(EverforestDark, kept.aux.display).wiggle.line == paper.wiggle.line
 
     block capabilities:
       let main = capsOf(prSeismic)

@@ -377,7 +377,9 @@ file" and a reload. A record with no auxiliary trace says so in one line. Its st
 zoom and fit buttons (the view is its own: the time range is not tied to the Seismic
 window's), the **positive** and **negative fill** buttons, and the gain: **None**, **Fixed**
 or **Normalized** (Normalized for each trace at first: a pilot and a monitor channel can
-differ by orders of magnitude) and the gain amount. The gear holds the **Look** (colours,
+differ by orders of magnitude) and the gain amount. It starts with a red wiggle line and
+positive fill and a black negative fill; the Seismic window stays black on white, and a
+choice you already saved is kept. The gear holds the **Look** (colours,
 the cursor time line, time across) and **Traces** (trace overlap, killed traces, the display
 header's rows) tabs. It has no record buttons, filters, sort, template or first-break
 buttons and no Seismic / Aux toggles: those belong to the Seismic window, which keeps its

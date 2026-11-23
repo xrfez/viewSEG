@@ -58,9 +58,11 @@ type
 
   AuxDefaults* = object
     ## What the Aux window starts with and keeps: its display (wiggles; the gain types
-    ## it offers, Normalized at first; a trace spacing of swing) and its display
-    ## header. Not the main plot's: its gain, fills and look are its own.
-    display*: DisplaySettings = DisplaySettings(gain: dgNormalized, overlap: 1.0)
+    ## it offers, Normalized at first; a trace spacing of swing; a red wiggle line and
+    ## positive fill, black negative fill) and its display header. Not the main plot's:
+    ## its gain, fills and look are its own.
+    display*: DisplaySettings = DisplaySettings(gain: dgNormalized, overlap: 1.0,
+      colours: pcRedPaper)
     header*: HeaderChoice
 
   MessagesView* = object

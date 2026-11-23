@@ -121,6 +121,9 @@ type
     pcPaper = "paper" ## white background, black traces, whatever the theme
     pcTheme = "follow theme"
     pcCustom = "custom"
+    pcRedPaper = "red on paper"
+      ## white paper, the theme's negative-fill red for the wiggle line and the
+      ## positive fill, black negative fill (the Aux window's start)
 
   CustomColours* = object
     ## The plot's colours when the user picks them (`pcCustom`).

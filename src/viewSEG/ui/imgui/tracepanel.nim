@@ -693,11 +693,13 @@ proc drawColours(tp: var TracePanelUi; p: Panel; t: Theme; marks: var Marks;
   let d = p.layers[0].display
   let ink = plotInk(t, d)
   for c in PlotColours:
+    if c == pcRedPaper: continue # the Aux window's start, not a scheme to pick
     let (text, help) = case c
       of pcPaper: ("Paper", "White paper, black wiggles and fill, red negative fill, " &
         "whatever the theme")
       of pcTheme: ("Follow the theme", "The theme's plot colours")
       of pcCustom: ("My own", "The colours you chose below")
+      of pcRedPaper: ("", "")
     if c != pcPaper: igSameLine(0, -1)
     if igRadioButton_Bool(text.cstring, d.colours == c) and d.colours != c:
       var nd = d

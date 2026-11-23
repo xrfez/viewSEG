@@ -96,7 +96,7 @@ const
   BandNames: array[PassBand, string] = ["none", "lowCut", "highCut", "bandPass"]
   DcNames: array[DcRemoval, string] = ["none", "mean", "trend"]
   FillNames: array[WiggleFill, string] = ["positive", "negative"]
-  ColourNames: array[PlotColours, string] = ["paper", "theme", "custom"]
+  ColourNames: array[PlotColours, string] = ["paper", "theme", "custom", "redPaper"]
   ColourMapNames: array[ColourMap, string] = ["grey", "redWhiteBlue", "viridis", "redBlack"]
   GainNames: array[DisplayGain, string] = ["auto", "none", "fixed", "normalized",
     "exponential", "float", "agc"]
