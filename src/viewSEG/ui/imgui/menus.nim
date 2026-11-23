@@ -476,9 +476,9 @@ proc drawWindowTicks(input: MenuInput; res: var MenuResult) =
 proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
   ## Window: putting the windows right, the layouts, then the tray.
   item(maResetWindows, res)
-  tip("Every window shown and docked in the main window, as at a first start (the " &
-    "default layout); the main window is brought onto a screen when it is off every one. " &
-    "When the menus cannot be reached, start viewSEG with --reset-windows")
+  tip("The windows as at a first start, docked in the main window (one closed until " &
+    "asked stays closed). The main window is brought onto a screen when it is off every " &
+    "one. When the menus cannot be reached, start viewSEG with --reset-windows")
   item(maBringWindows, res)
   tip("The windows dragged out of the main window, wherever they are (on another screen, " &
     "on one that is gone, or past a screen's edge), and the main window itself, brought " &

@@ -54,6 +54,22 @@ const
   ColExtras* = "Extras"
   ColAlsoIn* = "Also in"
   ColMissingPoints* = "Missing points"
+  FigFiles* = "files"
+  FigRecords* = "records"
+  FigExpected* = "expected"
+  FigPresent* = "present"
+  FigMissing* = "missing"
+  FigNever* = "never recorded"
+  FigDuplicates* = "duplicates"
+  FigExtras* = "extras"
+  FigNoData* = "survey records with no data"
+  NeverTip* = "Missing from every record the relation file expected this station in."
+  UnknownTip* = "Missing, and those records have no spread, so this is not evidence " &
+    "the station was expected."
+  FilterFolder* = "Filter by line or point"
+  FilterRecords* = "Filter by file name"
+  FilterFolderTip* = "Show only the stations whose line or point holds every word typed here."
+  FilterRecordsTip* = "Show only the records whose file name holds every word typed here."
 
 func missingReady*(hasFolder, hasSurvey: bool): bool =
   ## Whether Reports > Missing traces can start a scan.

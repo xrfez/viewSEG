@@ -22,11 +22,12 @@
 ##
 ## A layout without it (a preset, one written by an earlier build) shows
 ## every window, and so does one that does not name a window (one a later
-## build added): a window is hidden only when a layout says so. The one
-## exception is the live spectrum panel (`OffUnlessNamed`): it works while
-## it is on screen, so a layout from before it came keeps it hidden until
-## the Window menu shows it. The Aux window (`ClosedAtStart`) is closed unless a layout
-## shows it, also at a first start and after Reset the windows.
+## build added): a window is hidden only when a layout says so. The live
+## spectrum panel (`OffUnlessNamed`) works while it is on screen, so a layout
+## from before it came keeps it hidden until the Window menu shows it. The Aux
+## window and Missing traces (`ClosedAtStart`) are closed unless a layout shows
+## them, also at a first start and after Reset the windows. Missing traces, the
+## first time it is opened, docks as a tab beside the Seismic window.
 
 import std/strutils
 import sdl3_nim
@@ -43,12 +44,16 @@ type
 
   WindowsUi* = object
     ## The windows' state between frames.
-    hidden*: set[AppWindow] = {awAux} ## not drawn: unticked in the Window menu (`ClosedAtStart`)
-    front: set[AppWindow]             ## brought forward when next drawn
-    unknown: set[AppWindow]           ## the layout arranged last does not name them
+    hidden*: set[AppWindow] = {awAux, awMissing}
+      ## not drawn: unticked in the Window menu (the same set as `ClosedAtStart`)
+    front: set[AppWindow]   ## brought forward when next drawn
+    unknown: set[AppWindow] ## the layout arranged last does not name them
     placeAux: bool = true
       # dock the Aux window to the right the next time it is shown with no dock
       # node (a first open, and after Reset the windows)
+    placeMissing: bool = true
+      # dock Missing traces beside the Seismic window the next time it is shown
+      # with no dock node (a first open, and after Reset the windows)
     shortcutsOpen*: bool ## Help > Keyboard shortcuts is open
     dockspace*: ImGuiID ## the main window's dockspace
 
@@ -58,17 +63,18 @@ const
     ## what the Window menu calls them (the Seismic window's title follows
     ## what it shows: `windowTitle`)
   AlwaysShown* = {awSeismic} ## the plot: brought forward, never hidden
-  OffUnlessNamed* = {awSpectrum, awAux}
-    ## hidden when a layout does not name them (it was written before they came)
-  ClosedAtStart* = {awAux}
-    ## hidden until opened: a first start, a layout that does not say (the Aux window
-    ## shows a second plot of the record, which most work does not want), and Reset the
-    ## windows
+  OffUnlessNamed* = {awSpectrum, awAux, awMissing}
+    ## hidden when a layout does not name them (it was written before they came,
+    ## or it never opened a window that stays closed until asked)
+  ClosedAtStart* = {awAux, awMissing}
+    ## hidden until opened: a first start, a layout that does not say, and Reset the
+    ## windows. The Aux window shows a second plot, which most work does not want;
+    ## Missing traces is a report, opened from the Reports menu.
   SectionHeader = "[viewSEG][Windows]"
   neighbours: array[AppWindow, seq[AppWindow]] = [awSeismic: @[], awFiles: @[awRecords],
     awRecords: @[awFiles], awMap: @[awHeaders], awHeaders: @[awMap], awJobs: @[awMessages],
     awMessages: @[awJobs], awSpectrum: @[awMap, awHeaders], awAux: @[awSeismic],
-    awMissing: @[awRecords, awFiles]]
+    awMissing: @[awSeismic]]
     ## where a window a layout does not know is docked (as a tab): beside
     ## the first of these that is docked, as in the default layout; else
     ## beside the plot
@@ -183,6 +189,7 @@ proc showAll*(ws: var WindowsUi) =
   ws.hidden = ClosedAtStart
   ws.unknown = {}
   ws.placeAux = true
+  ws.placeMissing = true
 
 proc arranged*(ws: var WindowsUi; text: string; docked: bool) =
   ## The layout `text` was applied (and `hidden` read from it): the windows
@@ -194,8 +201,9 @@ proc arranged*(ws: var WindowsUi; text: string; docked: bool) =
       if not text.named(w):
         if w in OffUnlessNamed: ws.hidden.incl w
         ws.unknown.incl w
-    # a layout that names the Aux window keeps its place, floated or docked
+    # a layout that names the Aux window, or Missing traces, keeps its place
     ws.placeAux = not text.named(awAux)
+    ws.placeMissing = not text.named(awMissing)
 
 proc dockIdOf(w: AppWindow): ImGuiID =
   ## The dock node `w` is in, or was put in by the layout; 0 for none.
@@ -211,7 +219,23 @@ proc dockIdOf(w: AppWindow): ImGuiID =
 proc beforeDrawing*(ws: var WindowsUi; w: AppWindow) =
   ## Just before `w` is drawn (its `igBegin`): brings it forward when asked;
   ## a window the layout did not know is docked beside its neighbours (or
-  ## the plot), as a tab.
+  ## the plot), as a tab. Missing traces, the first time, is a tab of the
+  ## Seismic window and is selected.
+  if w == awMissing and ws.placeMissing and dockIdOf(w) == 0:
+    # first opened, and after Reset the windows: a tab beside the Seismic
+    # window. A window that already has a dock node, or that the user undocked,
+    # keeps that place.
+    ws.unknown.excl w
+    var id = dockIdOf(awSeismic)
+    if id == 0:
+      let centre = igDockBuilderGetCentralNode(ws.dockspace)
+      if centre != nil: id = centre.ID
+    if id != 0:
+      igSetNextWindowDockID(id, ImGui_Cond_Always.cint)
+      igSetNextWindowFocus()
+      changed()
+  elif w == awMissing and dockIdOf(w) != 0:
+    ws.placeMissing = false
   if w == awAux and dockIdOf(w) == 0 and (windowOf(w) == nil or ws.placeAux):
     # first opened, and after Reset the windows: a strip to the right of the
     # Seismic window, 30 % of its width (a window of its own, or a layout that
@@ -238,9 +262,12 @@ proc beforeDrawing*(ws: var WindowsUi; w: AppWindow) =
       igSetNextWindowDockID(id, ImGui_Cond_Always.cint)
       changed()
   if w in ws.front:
-    ws.front.excl w
     let win = windowOf(w)
-    if win != nil:
+    if win == nil:
+      # not drawn yet: ask for the focus now, and select its tab next frame
+      igSetNextWindowFocus()
+    else:
+      ws.front.excl w
       # A tab gets its tab selected, as a click on it does: focus alone
       # shows it for one frame, then an older pending tab choice wins.
       if win.DockNode != nil and win.DockNode.TabBar != nil:

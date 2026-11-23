@@ -989,10 +989,10 @@ proc placeMain(ui: var Ui; wholly: bool): Rect =
       ui.placed = true
 
 proc resetWindows(ui: var Ui) =
-  ## Window > Reset the windows: the default layout next frame (every
-  ## window shown and docked in the main window), the "Import survey" window
-  ## at its first place, and the main window brought onto a screen when it
-  ## is off every one.
+  ## Window > Reset the windows: the default layout next frame (the windows
+  ## docked as at a first start; one closed until asked stays closed), the
+  ## "Import survey" window at its first place, and the main window brought
+  ## onto a screen when it is off every one.
   ui.windows.showAll()
   ui.layoutDone = false
   ui.join.placeAgain()
@@ -1208,7 +1208,6 @@ proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
   discard igDockBuilderSplitNode(left, ImGui_Dir_Down, 0.3, addr bottom, addr top)
   discard igDockBuilderSplitNode(right, ImGui_Dir_Down, 0.35, addr table, addr map)
   igDockBuilderDockWindow(filesTitle, files)
-  igDockBuilderDockWindow(missingTitle, records)
   igDockBuilderDockWindow(recordsTitle, records)
   igDockBuilderDockWindow("###" & plotId, top)
   igDockBuilderDockWindow(SpectrumWindowTitle, map) # a tab behind the map

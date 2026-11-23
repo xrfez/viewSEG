@@ -1,5 +1,6 @@
 ## The Missing traces window: a scan of the open folder (subfolders included)
-## against the loaded relation file, two tables, and a CSV export.
+## against the loaded relation file, two tables, and a CSV export. Totals wrap.
+## The table fills the rest of the window; a box above it narrows the rows.
 ##
 ## The scan is a background job. The window reads its sink only after the job
 ## is no longer running. A cancel leaves the tables already shown. Listing uses
@@ -9,10 +10,10 @@
 import std/[os, strutils]
 import parseSEG
 import imguin/cimgui
-import ../../core/[filejobs, filesystem, jobs, missingjobs, missingreport, state]
+import ../../core/[filejobs, filelist, filesystem, jobs, missingjobs, missingreport, state]
 import ../../core/records as filerecs
 import ../../view/missingwords
-import focus, icons, marks
+import focus, icons, marks, overflow
 
 type
   MissingTab* = enum
@@ -53,6 +54,9 @@ type
     sortsReady, pointDirty, recordDirty: bool
     focus: FocusClicks
     pending: PendingOpen
+    folderFilter, recordFilter: array[128, char]
+    folderShown, recordShown: seq[int]
+    folderKey, recordKey: string
 
   MissingOutput* = object
     commands*: seq[Command]
@@ -142,6 +146,8 @@ proc finishScan(ui: var MissingUi; state: JobState; error: string) =
   ui.have = true
   ui.pointDirty = true
   ui.recordDirty = true
+  ui.folderKey = ""
+  ui.recordKey = ""
   ui.status = Ready
 
 proc poll(ui: var MissingUi; st: AppState) =
@@ -310,74 +316,199 @@ func totalsMark(t: Totals): string =
 proc tip(text: string) =
   if text.len == 0: return
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igPushTextWrapPos(igGetFontSize() * 30)
     igTextUnformatted(text.cstring, nil)
+    igPopTextWrapPos()
     igEndTooltip()
 
-proc headerCell(name: string; place: int; marks: var Marks): bool =
-  let label = if place == 0: name else: name & " " & $place
-  result = igSelectable_Bool((label & "##h").cstring, false, 0, ImVec2_c(x: 0, y: 0))
+proc headerCell(name: string; place: int; marks: var Marks; sentence = ""): bool =
+  result = igSelectable_Bool((name & "##h").cstring, false, 0, ImVec2_c(x: 0, y: 0))
   marks.mark("missing.header " & name)
+  if sentence.len > 0: tip(sentence)
+  if place > 0:
+    igSameLine(0, igGetStyle().ItemInnerSpacing.x)
+    igPushFont(igGetFont(), igGetStyle().FontSizeBase * 0.72)
+    igTextDisabled("%d", cint(place))
+    igPopFont()
 
 const
   tableFlags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_ScrollY.cint or
     ImGui_TableFlags_ScrollX.cint or ImGui_TableFlags_Resizable.cint or
-    ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_SizingFixedFit.cint or
-    ImGui_TableFlags_Hideable.cint
+    ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_SizingStretchProp.cint
 
 proc setupColumns(names: openArray[string]) =
   for i, name in names:
-    igTableSetupColumn(name.cstring, ImGui_TableColumnFlags_WidthFixed.cint,
-      if i == 0: 140 else: 72, ImGuiID(i + 1))
-  igTableSetupScrollFreeze(0, 1)
+    igTableSetupColumn(name.cstring, ImGui_TableColumnFlags_WidthStretch.cint,
+      if i == 0: 3 else: 1, ImGuiID(i + 1))
+  igTableSetupScrollFreeze(1, 1)
   igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
+
+func filterText(buf: openArray[char]): string =
+  result = ""
+  for c in buf:
+    if c == '\0': break
+    result.add c
+
+func hasWord(text, word: string): bool =
+  if word.len == 0: return true
+  if text.len < word.len: return false
+  for i in 0 .. text.len - word.len:
+    var j = 0
+    while j < word.len and text[i + j].toLowerAscii == word[j]: inc j
+    if j == word.len: return true
+
+func matchesWords(text: string; words: openArray[string]): bool =
+  for w in words:
+    if not hasWord(text, w): return false
+  true
+
+proc refreshFolder(ui: var MissingUi; words: seq[string]) =
+  if words.len == 0:
+    ui.folderKey = ""
+    return
+  let next = filterText(ui.folderFilter) & "|" & pointSortText(ui.pointSort) & "|" &
+    $ui.report.points.len
+  if next == ui.folderKey: return
+  ui.folderShown.setLen 0
+  for i, p in ui.report.points:
+    let text = filerecs.stationNumber(p.line) & " " & filerecs.stationNumber(p.point)
+    if matchesWords(text, words): ui.folderShown.add i
+  ui.folderKey = next
+
+proc refreshRecords(ui: var MissingUi; words: seq[string]) =
+  if words.len == 0:
+    ui.recordKey = ""
+    return
+  let next = filterText(ui.recordFilter) & "|" & recordSortText(ui.recordSort) & "|" &
+    $ui.report.records.len
+  if next == ui.recordKey: return
+  ui.recordShown.setLen 0
+  for i, r in ui.report.records:
+    if matchesWords(r.file, words): ui.recordShown.add i
+  ui.recordKey = next
+
+proc rightText(text: string) =
+  let w = igCalcTextSize(text.cstring, nil, false, -1).x
+  let avail = igGetContentRegionAvail().x
+  if avail > w: igSetCursorPosX(igGetCursorPosX() + avail - w)
+  igTextUnformatted(text.cstring, nil)
+
+proc numberCell(text: string) =
+  if igTableNextColumn(): rightText(text)
+
+proc flagCell(on: bool; sentence: string) =
+  if not igTableNextColumn(): return
+  if on: igTextUnformatted(IconCheck.cstring, nil)
+  else: igDummy(ImVec2_c(x: igGetFontSize(), y: igGetTextLineHeight()))
+  tip(sentence)
+
+proc textWidth(label: string): float32 =
+  igCalcTextSize(label.cstring, nil, false, -1).x
+
+proc buttonWidth(label: string): float32 =
+  textWidth(label) + igGetStyle().FramePadding.x * 2 + 8
+
+proc checkWidth(label: string): float32 =
+  igGetFrameHeight() + igGetStyle().ItemInnerSpacing.x + textWidth(label) + 8
+
+proc fitsBeside(need: float32): bool =
+  let edge = igGetCursorScreenPos().x + igGetContentRegionAvail().x
+  edge - igGetItemRectMax().x >= need + igGetStyle().ItemSpacing.x
+
+proc sameLineIfFits(need: float32) =
+  if fitsBeside(need): igSameLine(0, -1)
+
+proc pushRight(width: float32): bool =
+  let spacing = igGetStyle().ItemSpacing.x
+  let edge = igGetCursorScreenPos().x + igGetContentRegionAvail().x
+  if edge - igGetItemRectMax().x >= width + spacing:
+    igSameLine(0, 0)
+    igSetCursorScreenPos(ImVec2_c(x: edge - width, y: igGetItemRectMin().y))
+    return true
+  if igGetContentRegionAvail().x >= width:
+    igSetCursorPosX(igGetCursorPosX() + igGetContentRegionAvail().x - width)
+    return true
+  false
+
+proc figureWidth(label, value: string; cap: float32): float32 =
+  igPushFont(igGetFont(), igGetStyle().FontSizeBase * 0.72)
+  let labelW = igCalcTextSize(label.cstring, nil, false, cap).x
+  igPopFont()
+  min(cap, max(labelW, igCalcTextSize(value.cstring, nil, false, -1).x) + 1)
+
+proc drawFigure(label, value, mark, tipText: string; width: float32; marks: var Marks) =
+  igBeginGroup()
+  igPushFont(igGetFont(), igGetStyle().FontSizeBase * 0.72)
+  igPushTextWrapPos(igGetCursorPos().x + width)
+  igTextDisabled("%s", label.cstring)
+  igPopTextWrapPos()
+  igPopFont()
+  igTextUnformatted(value.cstring, nil)
+  igEndGroup()
+  marks.mark("missing.figure " & mark)
+  if tipText.len > 0: tip(tipText)
+
+proc drawFigures(figs: openArray[tuple[label, value, mark, tip: string]]; marks: var Marks) =
+  let spacing = igGetStyle().ItemSpacing.x
+  let avail = max(igGetFontSize() * 6, igGetContentRegionAvail().x)
+  for i, fig in figs:
+    let cap = min(avail, igGetFontSize() * 14)
+    let w = figureWidth(fig.label, fig.value, cap)
+    if i > 0 and fitsBeside(w): igSameLine(0, spacing)
+    drawFigure(fig.label, fig.value, fig.mark, fig.tip, min(w, cap), marks)
 
 proc drawPoints(ui: var MissingUi; marks: var Marks) =
   if ui.pointDirty:
     sortPoints(ui.report.points, ui.pointSort)
     ui.pointDirty = false
+    ui.folderKey = ""
   const names = [ColLine, ColPoint, ColIndex, ColExpectedIn, ColMissingIn, ColNever,
     ColUnknown, ColFirstRecord, ColLastRecord]
   const keys = [psLine, psPoint, psIndex, psExpectedIn, psMissingIn, psNever,
     psLine, psFirstRecord, psLastRecord]
   const on = [true, true, true, true, true, true, false, true, true]
+  let words = filterWords(filterText(ui.folderFilter))
+  ui.refreshFolder(words)
   let rows = ui.report.points
-  if rows.len == 0:
+  let n = if words.len == 0: rows.len else: ui.folderShown.len
+  if n == 0:
     igTextDisabled(NoRows)
     return
-  let height = max(igGetContentRegionAvail().y, igGetTextLineHeightWithSpacing())
-  if not igBeginTable("##points", names.len.cint, tableFlags, ImVec2_c(x: 0, y: height), 0):
+  if not igBeginTable("##points", names.len.cint, tableFlags, ImVec2_c(x: 0, y: 0), 0):
     return
   setupColumns(names)
   for c, name in names:
     if igTableSetColumnIndex(cint(c)):
       let place = if on[c]: placeOf(ui.pointSort, keys[c]) else: 0
-      let clicked = headerCell(name, place, marks)
-      if not on[c]:
-        tip(NotSortable)
-      elif clicked:
+      let sentence = if name == ColNever: NeverTip
+        elif name == ColUnknown: UnknownTip
+        elif not on[c]: NotSortable
+        else: ""
+      let clicked = headerCell(name, place, marks, sentence)
+      if on[c] and clicked:
         clickSort(ui.pointSort, keys[c], igGetIO_Nil().KeyShift)
         ui.pointDirty = true
+        ui.folderKey = ""
   let clipper = ImGuiListClipper_ImGuiListClipper()
-  ImGuiListClipper_Begin(clipper, cint(rows.len), -1)
+  ImGuiListClipper_Begin(clipper, cint(n), -1)
   while ImGuiListClipper_Step(clipper):
     for i in clipper.DisplayStart ..< clipper.DisplayEnd:
-      let p = rows[i]
+      let at = if words.len == 0: int(i) else: ui.folderShown[int(i)]
+      let p = rows[at]
       igTableNextRow(0, 0)
       igPushID_Int(cint(i))
-      template cell(text: string) =
-        if igTableNextColumn(): igTextUnformatted(text.cstring, nil)
-      cell(filerecs.stationNumber(p.line))
-      cell(filerecs.stationNumber(p.point))
-      cell($p.index)
-      cell($p.expectedIn)
-      cell($p.missingIn)
-      if igTableNextColumn() and p.never: igTextUnformatted(IconCheck.cstring, nil)
-      if igTableNextColumn() and p.expectedUnknown: igTextUnformatted(IconCheck.cstring, nil)
+      numberCell(filerecs.stationNumber(p.line))
+      numberCell(filerecs.stationNumber(p.point))
+      numberCell($p.index)
+      numberCell($p.expectedIn)
+      numberCell($p.missingIn)
+      flagCell(p.never, NeverTip)
+      flagCell(p.expectedUnknown, UnknownTip)
       if igTableNextColumn():
-        igTextUnformatted(filerecs.stationNumber(p.firstRecord).cstring, nil)
+        rightText(filerecs.stationNumber(p.firstRecord))
         tip(p.firstFile)
       if igTableNextColumn():
-        igTextUnformatted(filerecs.stationNumber(p.lastRecord).cstring, nil)
+        rightText(filerecs.stationNumber(p.lastRecord))
         tip(p.lastFile)
       igPopID()
   ImGuiListClipper_End(clipper)
@@ -388,31 +519,36 @@ proc drawRecords(ui: var MissingUi; st: AppState; marks: var Marks; commands: va
   if ui.recordDirty:
     sortRecords(ui.report.records, ui.recordSort)
     ui.recordDirty = false
+    ui.recordKey = ""
   const names = [ColFile, ColRecord, ColExpected, ColPresent, ColMissing, ColDuplicates,
     ColExtras, ColAlsoIn, ColMissingPoints]
   const keys = [rsFile, rsRecord, rsExpected, rsPresent, rsMissing, rsDuplicates, rsUnlisted,
     rsFile, rsFile]
   const on = [true, true, true, true, true, true, true, false, false]
+  let words = filterWords(filterText(ui.recordFilter))
+  ui.refreshRecords(words)
   let rows = ui.report.records
-  if rows.len == 0:
+  let n = if words.len == 0: rows.len else: ui.recordShown.len
+  if n == 0:
     igTextDisabled(NoRows)
     return
-  let height = max(igGetContentRegionAvail().y, igGetTextLineHeightWithSpacing())
-  if not igBeginTable("##records", names.len.cint, tableFlags, ImVec2_c(x: 0, y: height), 0):
+  if not igBeginTable("##records", names.len.cint, tableFlags, ImVec2_c(x: 0, y: 0), 0):
     return
   setupColumns(names)
   for c, name in names:
     if igTableSetColumnIndex(cint(c)):
-      let clicked = headerCell(name, if on[c]: placeOf(ui.recordSort, keys[c]) else: 0, marks)
-      if not on[c]: tip(NotSortable)
-      elif clicked:
+      let place = if on[c]: placeOf(ui.recordSort, keys[c]) else: 0
+      let clicked = headerCell(name, place, marks, if on[c]: "" else: NotSortable)
+      if on[c] and clicked:
         clickSort(ui.recordSort, keys[c], igGetIO_Nil().KeyShift)
         ui.recordDirty = true
+        ui.recordKey = ""
   let clipper = ImGuiListClipper_ImGuiListClipper()
-  ImGuiListClipper_Begin(clipper, cint(rows.len), -1)
+  ImGuiListClipper_Begin(clipper, cint(n), -1)
   while ImGuiListClipper_Step(clipper):
     for i in clipper.DisplayStart ..< clipper.DisplayEnd:
-      let r = rows[i]
+      let at = if words.len == 0: int(i) else: ui.recordShown[int(i)]
+      let r = rows[at]
       igTableNextRow(0, 0)
       igPushID_Int(cint(i))
       discard igTableNextColumn()
@@ -423,16 +559,14 @@ proc drawRecords(ui: var MissingUi; st: AppState; marks: var Marks; commands: va
           igIsMouseDoubleClicked_Nil(ImGui_MouseButton_Left.cint):
         for c in ui.openRecord(st, r.file, r.record): commands.add c
       marks.mark("missing.file " & r.file)
-      if i < 8: marks.mark("missing.record " & $i)
-      template cell(text: string) =
-        if igTableNextColumn(): igTextUnformatted(text.cstring, nil)
-      cell(filerecs.stationNumber(r.record))
-      cell($r.expected)
-      cell($r.present)
-      cell($r.missing)
-      cell($r.duplicates)
-      cell($r.unlisted)
-      cell($r.alsoIn)
+      if int(i) < 8: marks.mark("missing.record " & $int(i))
+      numberCell(filerecs.stationNumber(r.record))
+      numberCell($r.expected)
+      numberCell($r.present)
+      numberCell($r.missing)
+      numberCell($r.duplicates)
+      numberCell($r.unlisted)
+      numberCell($r.alsoIn)
       if igTableNextColumn():
         igTextUnformatted(firstLine(r.missingPoints).cstring, nil)
         tip(r.missingPoints)
@@ -462,7 +596,13 @@ proc drawMissing*(ui: var MissingUi; title: string; st: AppState; marks: var Mar
     ui.focus.watch()
     marks.markWindow("missing")
     if ui.status.len == 0: ui.status = if canScan(st): Ready else: whyNot(st)
-    igTextUnformatted(ui.status.cstring, nil)
+    var status = ui.status
+    if ui.capped:
+      if status.len > 0: status.add " "
+      status.add CappedNote
+    igPushTextWrapPos(0)
+    igTextUnformatted(status.cstring, nil)
+    igPopTextWrapPos()
     if ui.scanning: marks.mark("missing.scanning")
     if ui.have and not ui.scanning:
       marks.mark("missing.ready")
@@ -470,26 +610,78 @@ proc drawMissing*(ui: var MissingUi; title: string; st: AppState; marks: var Mar
         else: recordSortText(ui.recordSort)
       marks.mark("missing.sort " & spec)
       let t = ui.report.totals
-      let lineH = igGetTextLineHeightWithSpacing()
-      if igBeginChild_Str("##totals", ImVec2_c(x: 0, y: lineH), 0,
-          ImGui_WindowFlags_HorizontalScrollbar.cint):
-        igTextUnformatted(totalsLine(t.files, t.records, t.expected, t.present, t.missing,
-          t.never, t.duplicates, t.extras, t.xpsWithoutData.len,
-          t.percentMissing).cstring, nil)
-        marks.mark(totalsMark(t))
-      igEndChild()
-      if ui.report.duplicatesNote.len > 0 and t.duplicates > 0:
-        igTextDisabled("%s", ui.report.duplicatesNote.cstring)
-    if ui.capped:
-      igTextUnformatted(CappedNote.cstring, nil)
-    if igButton(countLabel(SkippedFiles, ui.skipped.len).cstring, ImVec2_c(x: 0, y: 0)):
+      let dupTip = if t.duplicates > 0: ui.report.duplicatesNote else: ""
+      let missingValue = $t.missing & " (" & percentText(t.percentMissing) & "%)"
+      igBeginGroup()
+      drawFigures([
+        (FigFiles, $t.files, "files", ""),
+        (FigRecords, $t.records, "records", ""),
+        (FigExpected, $t.expected, "expected", ""),
+        (FigPresent, $t.present, "present", ""),
+        (FigMissing, missingValue, "missing", ""),
+        (FigNever, $t.never, "never", ""),
+        (FigDuplicates, $t.duplicates, "duplicates", dupTip),
+        (FigExtras, $t.extras, "extras", ""),
+        (FigNoData, $t.xpsWithoutData.len, "nodata", "")], marks)
+      igEndGroup()
+      marks.mark(totalsMark(t))
+      let here = igGetCursorScreenPos()
+      marks.markRect("missing.totals.scroll", here, ImVec2_c(x: here.x, y: here.y + 1))
+    template pointsBox() =
+      discard igCheckbox((WithPoints & "##points").cstring, addr ui.withPoints)
+      marks.mark("missing.points")
+      tip(PointsTip)
+    template totalsBox() =
+      discard igCheckbox((WithTotals & "##totals").cstring, addr ui.withTotals)
+      marks.mark("missing.totalsbox")
+      tip(TotalsTip)
+    template exportBox() =
+      igBeginDisabled(not ui.have)
+      if igButton(ExportButton.cstring, ImVec2_c(x: 0, y: 0)):
+        ui.ask = ExportAsk(tab: ui.tab, withPoints: ui.withPoints,
+          withTotals: ui.withTotals, live: true)
+        result.exportAsked = true
+        let base = if ui.folder.len > 0: ui.folder else: st.fileList.folder
+        result.exportPath = base / SuggestedName
+      igEndDisabled()
+      marks.mark("missing.export")
+    let skippedLabel = countLabel(SkippedFiles, ui.skipped.len)
+    let unmatchedLabel = countLabel(UnmatchedRecords, ui.unmatched.len)
+    if ui.scanning:
+      if igButton(StopButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.scanJob != NoJob:
+        result.commands.add Command(kind: ckCancelJob, job: ui.scanJob)
+      marks.mark("missing.stop")
+    else:
+      igBeginDisabled(not canScan(st))
+      if igButton(RescanButton.cstring, ImVec2_c(x: 0, y: 0)): ui.requestScan()
+      igEndDisabled()
+      marks.mark("missing.rescan")
+    sameLineIfFits(buttonWidth(skippedLabel))
+    if igButton(skippedLabel.cstring, ImVec2_c(x: 0, y: 0)):
       igOpenPopup_Str("##skipped", 0)
     marks.mark("missing.skipped")
-    igSameLine(0, -1)
-    if igButton(countLabel(UnmatchedRecords, ui.unmatched.len).cstring,
-        ImVec2_c(x: 0, y: 0)):
+    sameLineIfFits(buttonWidth(unmatchedLabel))
+    if igButton(unmatchedLabel.cstring, ImVec2_c(x: 0, y: 0)):
       igOpenPopup_Str("##unmatched", 0)
     marks.mark("missing.unmatched")
+    var rightW = checkWidth(WithTotals) + igGetStyle().ItemSpacing.x + buttonWidth(ExportButton)
+    if ui.tab == mtRecords:
+      rightW += checkWidth(WithPoints) + igGetStyle().ItemSpacing.x
+    if pushRight(rightW):
+      if ui.tab == mtRecords:
+        pointsBox()
+        igSameLine(0, -1)
+      totalsBox()
+      igSameLine(0, -1)
+      exportBox()
+    else:
+      if ui.tab == mtRecords:
+        sameLineIfFits(checkWidth(WithPoints))
+        pointsBox()
+      sameLineIfFits(checkWidth(WithTotals))
+      totalsBox()
+      sameLineIfFits(buttonWidth(ExportButton))
+      exportBox()
     var skippedLines: seq[string] = @[]
     for row in ui.skipped: skippedLines.add row.path & " — " & row.why
     var unmatchedLines: seq[string] = @[]
@@ -510,33 +702,19 @@ proc drawMissing*(ui: var MissingUi; title: string; st: AppState; marks: var Mar
         ui.tab = mtRecords
         igEndTabItem()
       igEndTabBar()
-    if igCheckbox((WithPoints & "##points").cstring, addr ui.withPoints): discard
-    marks.mark("missing.points")
-    tip(PointsTip)
-    if igCheckbox((WithTotals & "##totals").cstring, addr ui.withTotals): discard
-    marks.mark("missing.totalsbox")
-    tip(TotalsTip)
-    if ui.scanning:
-      if igButton(StopButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.scanJob != NoJob:
-        result.commands.add Command(kind: ckCancelJob, job: ui.scanJob)
-      marks.mark("missing.stop")
-    else:
-      igBeginDisabled(not canScan(st))
-      if igButton(RescanButton.cstring, ImVec2_c(x: 0, y: 0)): ui.requestScan()
-      igEndDisabled()
-      marks.mark("missing.rescan")
-    igSameLine(0, -1)
-    igBeginDisabled(not ui.have)
-    if igButton(ExportButton.cstring, ImVec2_c(x: 0, y: 0)):
-      ui.ask = ExportAsk(tab: ui.tab, withPoints: ui.withPoints,
-        withTotals: ui.withTotals, live: true)
-      result.exportAsked = true
-      let base = if ui.folder.len > 0: ui.folder else: st.fileList.folder
-      result.exportPath = base / SuggestedName
-    igEndDisabled()
-    marks.mark("missing.export")
-    if ui.have and ui.tab == mtFolder: ui.drawPoints(marks)
-    elif ui.have: ui.drawRecords(st, marks, result.commands)
+    if ui.have:
+      let recordsTab = ui.tab == mtRecords
+      let hint = IconFilter & "  " & (if recordsTab: FilterRecords else: FilterFolder)
+      let id = if recordsTab: "##filterrecords" else: "##filterfolder"
+      let buf = if recordsTab: addr ui.recordFilter[0] else: addr ui.folderFilter[0]
+      igSetNextItemWidth(-1)
+      discard igInputTextWithHint(id.cstring, hint.cstring, cast[cstring](buf),
+        csize_t(ui.folderFilter.len), 0, nil, nil)
+      marks.mark("missing.filter")
+      tip(if recordsTab: FilterRecordsTip else: FilterFolderTip)
+      if ui.tab == mtFolder: ui.drawPoints(marks)
+      else: ui.drawRecords(st, marks, result.commands)
+    marks.markOverflow("missing")
   ui.focus.settle()
   igEnd()
   ui.consider(st)

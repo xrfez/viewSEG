@@ -1,8 +1,10 @@
 ## Reports > Missing traces... in the running frontend, headless: the item is
-## inactive until a folder is open and a relation file is loaded; the scan of
-## that folder (subfolders included) matches an independent scan of the same
-## files; the totals, the skipped file, a header sort, a CSV export and a
-## double-click are what the window shows.
+## inactive until a folder is open and a relation file is loaded; the window is
+## closed at the start, then a tab beside the Seismic window; the scan of that
+## folder (subfolders included) matches an independent scan of the same files;
+## the totals, the skipped file, a header sort, a CSV export, a filter and a
+## double-click are what the window shows. Hiding it and showing it again keeps
+## its place. The totals do not scroll sideways at 1600 px or at 500 px.
 ##
 ## Seen to fail: with the Reports item left enabled when no folder is open
 ## (no disabled mark), "Reports is inactive without a folder did not happen".
@@ -101,6 +103,12 @@ proc main*() =
       steps.add Step(name: name, act: act, done: done)
     proc noop(f: FrameInfo) = discard
 
+    step("closed at the start", noop, proc (f: FrameInfo): bool =
+      result = wait > 4
+      if result:
+        doAssert awMissing in f.hiddenWindows, $f.hiddenWindows
+        doAssert not f.windowPlace("missing").inSight)
+
     proc inactive(f: FrameInfo) = f.click(f.markOf("menu.Reports").centre)
     proc inactiveDone(f: FrameInfo): bool =
       f.markOf("menu.Missing traces...").size.x > 0 and
@@ -135,7 +143,14 @@ proc main*() =
         if it.size.x > 0 and f.markOf("menu.Missing traces.disabled").size.x == 0:
           f.click(it.centre)
           opened = true
-      f.markOf("missing.ready").size.x > 0 and f.markOf("missing.tab Folder").size.x > 0
+      result = f.markOf("missing.ready").size.x > 0 and f.markOf("missing.tab Folder").size.x > 0
+      if result:
+        let (m, p) = (f.windowPlace("missing"), f.windowPlace("plot"))
+        doAssert m.inSight and m.docked and not m.apart, "not in the centre dock: " & $m
+        doAssert abs(m.rect.pos.x - p.rect.pos.x) <= 2 and abs(m.rect.pos.y - p.rect.pos.y) <= 2 and
+          abs(m.rect.size.x - p.rect.size.x) <= 2 and abs(m.rect.size.y - p.rect.size.y) <= 2,
+          "not a tab beside the Seismic window: " & $m.rect & " plot " & $p.rect
+        doAssert f.markOf("missing.points").size.x == 0, "with missing points is on the Folder tab"
     step("Reports > Missing traces...", openReport, reportReady)
 
     proc totalsMatch(f: FrameInfo): bool =
@@ -190,7 +205,7 @@ proc main*() =
     proc recordsShown(f: FrameInfo): bool =
       if f.markOf("missing.record 0").size.x == 0 and wait mod 8 == 0:
         f.click(f.markOf("missing.tab Records").centre)
-      result = f.markOf("missing.record 0").size.x > 0
+      result = f.markOf("missing.record 0").size.x > 0 and f.markOf("missing.points").size.x > 0
       if result:
         doAssert f.savePng(shots / "missing-records.png"), "records shot was not written"
       elif wait > 20:
@@ -200,8 +215,27 @@ proc main*() =
         doAssert false, "tab " & $t.pos & " " & $t.size & " marks [" & seen & "]"
     step("the Records tab", recordsTab, recordsShown)
 
+    var filterAt = vec2(0, 0)
+    proc startFilter(f: FrameInfo) =
+      filterAt = f.markOf("missing.filter").centre
+      f.moveMouse(filterAt)
+    proc filtered(f: FrameInfo): bool =
+      if wait == 3: f.pressMouse(filterAt, true)
+      if wait == 5: f.pressMouse(filterAt, false)
+      if wait == 7: f.typeText("two")
+      if wait < 14: return false
+      var files = 0
+      for name in f.markNames("missing.file "):
+        inc files
+        if "two" notin name.toLowerAscii: return false
+      files > 0 and f.markOf("missing.record 0").size.x > 0
+    step("the filter keeps two.sgd", startFilter, filtered)
+
     proc openedFile(f: FrameInfo): bool =
-      if f.core.sessions.len == 0:
+      var sawTwo = false
+      for s in f.core.sessions:
+        if "two" in s.path: sawTwo = true
+      if not sawTwo:
         let row = f.markOf("missing.record 0")
         let q = vec2(row.pos.x + 12, round(row.pos.y + row.size.y / 2))
         case wait mod 12
@@ -211,7 +245,7 @@ proc main*() =
         of 6: f.pressMouse(q, true)
         of 7: f.pressMouse(q, false)
         else: discard
-      f.core.sessions.len > 0
+      sawTwo
     step("a double click opens the file", noop, openedFile)
 
     proc rescan(f: FrameInfo) =
@@ -220,6 +254,86 @@ proc main*() =
     proc rescanned(f: FrameInfo): bool =
       f.markOf("missing.ready").size.x > 0 and filesOf(f) == 2
     step("Rescan after a file is removed", rescan, rescanned)
+
+    var saved = Rect()
+    var hid = false
+    proc hideMissing(f: FrameInfo) =
+      saved = f.windowPlace("missing").rect
+      if f.markOf("menu.window.missing").size.x == 0:
+        f.click(f.markOf("menu.View").centre)
+    proc hiddenMissing(f: FrameInfo): bool =
+      let item = f.markOf("menu.window.missing")
+      if not hid:
+        if item.size.x > 0:
+          f.click(item.centre)
+          hid = true
+        elif wait mod 12 == 0:
+          f.click(f.markOf("menu.View").centre)
+      hid and not f.windowPlace("missing").inSight and awMissing in f.hiddenWindows
+    step("hide Missing traces", hideMissing, hiddenMissing)
+
+    var shown = false
+    proc showMissing(f: FrameInfo) =
+      if f.markOf("menu.window.missing").size.x == 0:
+        f.click(f.markOf("menu.View").centre)
+    proc shownAgain(f: FrameInfo): bool =
+      let item = f.markOf("menu.window.missing")
+      if not shown:
+        if item.size.x > 0:
+          f.click(item.centre)
+          shown = true
+        elif wait mod 12 == 0:
+          f.click(f.markOf("menu.View").centre)
+      let m = f.windowPlace("missing")
+      result = shown and m.inSight and m.docked and wait > 4
+      if result:
+        doAssert abs(m.rect.pos.x - saved.pos.x) <= 2 and abs(m.rect.pos.y - saved.pos.y) <= 2 and
+          abs(m.rect.size.x - saved.size.x) <= 2 and abs(m.rect.size.y - saved.size.y) <= 2,
+          "place changed: " & $m.rect & " was " & $saved
+    step("show Missing traces in the same place", showMissing, shownAgain)
+
+    proc fits(f: FrameInfo) =
+      let over = f.markOf("missing.overflow")
+      doAssert over.size.x <= 0.5, "overflow " & $over & " window " & $f.windowPlace("missing").rect
+      let scroll = f.markOf("missing.totals.scroll")
+      doAssert scroll.size.y > 0 and scroll.size.x <= 0.5, $scroll
+    var askedOpen = false
+    proc reopen(f: FrameInfo) =
+      if f.windowPlace("missing").inSight or askedOpen: return
+      let item = f.markOf("menu.Missing traces...")
+      if item.size.x == 0:
+        if wait mod 10 == 0: f.click(f.markOf("menu.Reports").centre)
+      elif f.markOf("menu.Missing traces.disabled").size.x == 0:
+        f.click(item.centre)
+        askedOpen = true
+    step("1600 px: totals do not scroll", proc (f: FrameInfo) =
+      askedOpen = false
+      f.resizeWindow(1600, 900)
+      f.resetLayout(),
+      proc (f: FrameInfo): bool =
+        let (w, _) = f.windowSize
+        if w != 1600 or f.windowPlace("plot").rect.size.x < 400: return false
+        f.reopen()
+        result = f.windowPlace("missing").inSight and f.markOf("missing.ready").size.x > 0 and
+          f.markOf("missing.figure files").size.x > 0 and
+          f.windowPlace("missing").rect.size.x > 200
+        if result: f.fits())
+    step("500 px: totals wrap", proc (f: FrameInfo) =
+      askedOpen = false
+      f.resizeWindow(500, 700)
+      f.resetLayout(),
+      proc (f: FrameInfo): bool =
+        let (w, _) = f.windowSize
+        if w != 500 or f.windowPlace("plot").rect.size.x < 80: return false
+        f.reopen()
+        let files = f.markOf("missing.figure files")
+        let nodata = f.markOf("missing.figure nodata")
+        result = f.windowPlace("missing").inSight and files.size.x > 0 and nodata.size.y > 0 and
+          f.windowPlace("missing").rect.size.x > 80
+        if result:
+          doAssert nodata.pos.y >= files.pos.y + files.size.y - 1,
+            "nodata " & $nodata & " files " & $files
+          f.fits())
 
     var at = 0
     var started = false
@@ -242,7 +356,7 @@ proc main*() =
         elif overdue(wait, 400, since):
           failed = steps[at].name & " did not happen"
           f.stop()
-    let code = run(RunOptions(windowSize: (1600, 1000), theme: forceDark, persist: true,
+    let code = run(RunOptions(windowSize: (1920, 1080), theme: forceDark, persist: true,
       configDir: some(fx.dir / "config"), logDir: some(fx.dir / "logs"),
       indexCacheDir: some(fx.dir / "cache"),
       userThemeDir: some(fx.dir / "no-user-themes"),

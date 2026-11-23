@@ -264,14 +264,24 @@ folders under it, against the loaded relation file. The item stays in the menu. 
 inactive until a folder is open and a relation file is loaded, and it names whichever
 of those is missing.
 
-The **Missing traces** window opens as a tab beside **Records**. The **Folder** tab is
-one row per station the relation file expected: how many records should have recorded
-it, and how many did not. The **Records** tab is one row per record that was read, and
-how that record compares with the spread planned for it. Click a column header to sort
-by it (again for the other way; Shift-click adds a column). **Skipped** lists files
-that were not seismic or could not be read. **Unmatched** lists records that could not
-be checked against the relation file. **Rescan** runs the scan again; while one is
-running, that button is **Stop**.
+The **Missing traces** window stays closed until you ask for it. It opens as a tab
+beside the **Seismic** window, and that tab is the one in front. Closing it and opening
+it again keeps the place you last gave it. The totals are small labelled figures
+(files, records, expected, present, missing and its percent, never recorded, duplicates,
+extras, survey records with no data) and wrap onto the next line when the window is
+narrow. **Rescan** runs the scan again; while one is running, that button is **Stop**.
+**Skipped** lists files that were not seismic or could not be read. **Unmatched** lists
+records that could not be checked against the relation file. Those three sit on the
+left; **with missing points** (Records tab only) and **totals in a second file** sit
+next to **Export CSV...**.
+
+The **Folder** tab is one row per station the relation file expected: how many records
+should have recorded it, and how many did not. The **Records** tab is one row per
+record that was read, and how that record compares with the spread planned for it.
+A box above the table narrows the rows: by line or point on the Folder tab, by file
+name on the Records tab. Click a column header to sort by it (again for the other way;
+Shift-click adds a column). The sort's place is a small number after the header name.
+**Never** and **Unknown** are a mark, not the words true and false.
 
 **Export CSV...** writes the table on screen. On the Records tab, **with missing
 points** writes one row per missing station instead of one row per record. **totals in
