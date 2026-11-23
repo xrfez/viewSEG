@@ -7,7 +7,8 @@
 ## failed rows of a block read let a SEG-Y cut inside trace 1's samples fail
 ## with the library's words ("was cut short while it was open (15760 bytes
 ## mapped, 13760 left); open it again") instead of the file's own reason, and
-## those zeros would otherwise be adopted.
+## those zeros would otherwise be adopted. Writing every auxiliary trace as
+## time-break made the uphole trace read back as 32, not 48.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -72,6 +73,25 @@ proc writePair(path: string; samples: int) =
     k.time = 1_700_000_000.0
     w.writeTrace(k, buf)
   doAssert w.close().len == 0, "the pair did not close"
+
+proc writeChannels(path: string; samples: int) =
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: DtMs * 1000.0,
+    numSamples: samples, time: 1_700_000_000.0))
+  let types = [sctSeismic, sctSeismic, sctUpHole, sctWaterBreak, sctSourceRefSweep,
+    sctTimeBreak]
+  var buf = newSeq[float32](samples)
+  for j in 0 ..< samples: buf[j] = 1
+  for i, ct in types:
+    var k = initTraceKeys()
+    k.record = 1
+    k.channel = float64(i + 1)
+    k.intervalUs = DtMs * 1000.0
+    k.t0Ms = 0
+    k.time = 1_700_000_000.0
+    k.status = if ct == sctSeismic: tsLive else: tsAuxiliary
+    k.traceCode = if ct == sctSeismic: 1'i16 else: 5'i16
+    w.writeTrace(k, buf, channelType = ct)
+  doAssert w.close().len == 0, "the channel file did not close"
 
 proc writeRaw(path: string; sweep: openArray[float32]) =
   var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
@@ -285,7 +305,8 @@ proc main*() =
     let e1 = cutFile.traceEntry(1)
     let data0 = e0.offset + int64(e0.headerBytes)
     let span0 = e1.offset - data0
-    doAssert span0 mod int64(e0.numSamples) == 0, "trace 0's samples are not a whole number of bytes"
+    doAssert span0 mod int64(e0.numSamples) == 0,
+      "trace 0's samples are not a whole number of bytes"
     let sampleBytes = span0 div int64(e0.numSamples)
     let data1 = e1.offset + int64(e1.headerBytes)
     let cutAt = data1 + (int64(e1.numSamples) div 2) * sampleBytes
@@ -306,6 +327,31 @@ proc main*() =
     doAssert slot.opened.isNil
     doAssert not slot.cancelled
     doAssert slot.failure == why, slot.failure
+
+  block channelTypes:
+    ## Up hole, water break, reference sweep, time break, and two seismic traces.
+    let chPath = dir / "channels.sgd"
+    writeChannels(chPath, Record)
+    var chFile = openSeismic(chPath, keys = true)
+    defer: chFile.close()
+    doAssert chFile.len == 6
+    var jobs = initJobs()
+    var slot: CorrelateResult
+    try:
+      let id = jobs.submit(spec(chPath), correlateWork(CorrelateAsk(
+        file: addr chFile, path: chPath, reference: sweep, referenceDtMs: DtMs,
+        referenceTraces: @[4]), addr slot))
+      doAssert finish(jobs, id) == jsDone, slot.failure
+    finally:
+      jobs.stop()
+    doAssert slot.ok, slot.failure
+    doAssert not slot.opened.isNil
+    template got: untyped = session.file(slot.opened)
+    doAssert got.len == chFile.len
+    for i in 0 ..< chFile.len:
+      doAssert got.traceEntry(i).channelType == chFile.traceEntry(i).channelType,
+        "trace " & $i & " channel type " & $got.traceEntry(i).channelType &
+        " is not " & $chFile.traceEntry(i).channelType
 
   block cancelled:
     holdCorr.close()

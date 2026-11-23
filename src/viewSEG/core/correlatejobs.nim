@@ -11,10 +11,11 @@
 ##
 ## SEG-Y is written like the source, so a different sample count is kept and
 ## the trace headers are the source's. SEG-D cannot change a trace's sample
-## count, so it is written from keys: the channel type is seismic or
-## time-break, and channel-set descriptors, external headers, general-header
-## blocks and trace-header extensions are not copied. A start time the headers
-## cannot give may read back as 0. SEG-2 cannot be written in memory.
+## count, so it is written from keys: the channel type is the source trace's
+## (0 means seismic), and channel-set descriptors, external headers,
+## general-header blocks and trace-header extensions are not copied. A start
+## time the headers cannot give may read back as 0. SEG-2 cannot be written
+## in memory.
 
 import std/[algorithm, cpuinfo, formatfloat, math, sets, strutils]
 import parseSEG
@@ -128,6 +129,56 @@ proc openOut(file: ptr SeismicFile; name: string; listen: int; dtMs, time: float
   of skSeg2, skUnknown:
     refuse("the file cannot be written in memory.")
 
+proc writtenChannelType(code: uint8): SegdChannelType =
+  ## 0 is seismic: a SEG-Y trace, and an unknown set, has no channel type.
+  ## The enum has holes, so it cannot be walked.
+  if code == 0: return sctSeismic
+  case code
+  of 0x10: sctSeismic
+  of 0x11: sctEm
+  of 0x20: sctTimeBreak
+  of 0x21: sctClockTimeBreak
+  of 0x22: sctFieldTimeBreak
+  of 0x30: sctUpHole
+  of 0x40: sctWaterBreak
+  of 0x50: sctTimeCounter
+  of 0x60: sctExternalData
+  of 0x61: sctAcousticRange
+  of 0x62: sctAcousticRefMeasured
+  of 0x63: sctAcousticRefNominal
+  of 0x70: sctOther
+  of 0x80: sctSignatureUnfiltered
+  of 0x90: sctSignatureFiltered
+  of 0x91: sctSourceSigUnfiltered
+  of 0x92: sctSourceSigFiltered
+  of 0x93: sctSourceSigEstimated
+  of 0x94: sctSourceSigMeasured
+  of 0x95: sctSourceBasePlate
+  of 0x96: sctSourceRefSweep
+  of 0x97: sctSourceOther
+  of 0x98: sctSourceRefPilot
+  of 0x99: sctSourceMass
+  of 0x9A: sctSourceExcitation
+  of 0x9B: sctSourceValve
+  of 0x9C: sctSourceOverload
+  of 0xA0: sctAuxDataTrailer
+  of 0xB0: sctTrueRefSweep
+  of 0xB1: sctRadioRefSweep
+  of 0xB2: sctRadioSimilarity
+  of 0xB3: sctWirelineRefSweep
+  of 0xC0: sctDepth
+  of 0xC1: sctWind
+  of 0xC2: sctCurrent
+  of 0xC3: sctVoltage
+  of 0xC4: sctVelocity
+  of 0xC5: sctAcceleration
+  of 0xC6: sctPressure
+  of 0xC7: sctTension
+  of 0xC8: sctTilt
+  of 0xC9: sctAngle
+  of 0xF0: sctCalibration
+  else: refuse("channel type 0x" & toHex(int(code), 2) & " cannot be written.")
+
 proc sweepLine(sweepMs: float64; delayed: int): string =
   let n = if delayed == 1: "1 reference trace" else: $delayed & " reference traces"
   "sweep " & msText(sweepMs) & " ms. " & n & " delayed by " & msText(AuxLeadMs) & " ms."
@@ -137,7 +188,7 @@ proc writeRow(w: var SeismicWriter; file: ptr SeismicFile; trace, row, listen: i
   if segd:
     var k = keys
     k.intervalUs = intervalUs
-    let ct = if k.status == tsAuxiliary: sctTimeBreak else: sctSeismic
+    let ct = writtenChannelType(file[].traceEntry(trace).channelType)
     let rows = if fromSrc: rowBlock(src) else: rowBlock(dst)
     w.writeTrace(k, rows.row(row, listen), channelType = ct)
   elif fromSrc:
