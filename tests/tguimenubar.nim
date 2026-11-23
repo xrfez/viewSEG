@@ -1,6 +1,6 @@
 ## The structure of the main menu bar in the running frontend, headless, driven
-## by real clicks: the bar reads File, Project, Edit, View, Analysis, Tools,
-## Window, Help, and each menu, opened, shows its items in one order. A menu's
+## by real clicks: the bar reads File, Project, Edit, View, Analysis, Reports,
+## Tools, Window, Help, and each menu, opened, shows its items in one order. A menu's
 ## items are told by their marks ("menu." and the item's name; the submenus
 ## and the window ticks by their own marks), in the order they are drawn, so
 ## an item moved to another menu, or within its menu, fails here. Every
@@ -8,7 +8,10 @@
 ## make on purpose.
 ##
 ## Seen to fail: with "Reload vendor maps" drawn in File too, "File shows
-## @[..., "Prepare the next file", "Reload vendor maps", "Quit"]".
+## @[..., "Prepare the next file", "Reload vendor maps", "Quit"]"; with Reports
+## left out of the bar's names, "File shows @[..., "Quit", "Reports"]"; with the
+## Missing traces window left out of View, "View shows @[..., "window.aux",
+## "window.missing", "window.join", ...]".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -31,7 +34,8 @@ proc click(f: FrameInfo; at: Vec2) =
   f.pressMouse(at, false)
 
 const
-  Bar = ["File", "Project", "Edit", "View", "Analysis", "Tools", "Window", "Help"]
+  Bar = ["File", "Project", "Edit", "View", "Analysis", "Reports", "Tools", "Window",
+    "Help"]
   Items = [
     ("File", @["Open file...", "Open files...", "Open folder...", "Open recent", "Close",
       "Reopen with options...", "Follow the latest file", "Prepare the next file", "Quit"]),
@@ -40,12 +44,14 @@ const
     ("Edit", @["Undo", "Redo", "Select all traces", "Import trace edits...",
       "Export trace edits...", "Clear all edits for this file", "File memory..."]),
     ("View", @["window.plot", "window.files", "window.records", "window.map", "window.headers",
-      "window.jobs", "window.Messages", "window.spectrum", "window.aux", "window.join",
+      "window.jobs", "window.Messages", "window.spectrum", "window.aux", "window.missing",
+      "window.join",
       "Only traces in the template", "Theme",
       "Light / dark"]),
     ("Analysis", @["window.newplot", "Compare two traces", "First-break overlay",
       "Generate a reference...",
       "Reference archive..."]),
+    ("Reports", @["Missing traces...", "Missing traces.disabled"]),
     ("Tools", @["Settings...", "Import settings...", "Export settings...",
       "Reset the settings", "Reload vendor maps", "Export messages...", "Agent control"]),
     ("Window", @["Reset the windows", "Bring all windows onto this screen", "Load",
