@@ -34,11 +34,12 @@ proc listWork*(folder: string; main: bool; to: Poster): JobWork =
 
 proc storeWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
     fromMs, toMs, intervalUs, record: float64; fileName, name, folder: string;
-    traceShown: int; flip: bool; phaseDeg: float64; to: Poster): JobWork =
+    traceShown: int; flip: bool; shiftMs, phaseDeg: float64; to: Poster): JobWork =
   ## Reads trace `trace` of the open file as recorded, turns it over when `flip` (the
-  ## trace's own reversal): no filter of any kind, nothing of the plot's. Cuts it to `fromMs` .. `toMs` (`toMs` below 0: the
-  ## trace's end), turns the cut over when `phaseDeg` is 180, and stores it in the
-  ## archive `folder`.
+  ## trace's own reversal), then moves it by `shiftMs` (`applyStoredShift`, positive
+  ## later): no filter of any kind, nothing of the plot's. Cuts it to `fromMs` .. `toMs`
+  ## (`toMs` below 0: the trace's end), turns the cut over when `phaseDeg` is 180, and
+  ## stores it in the archive `folder`.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading the trace"
     try:
@@ -56,10 +57,11 @@ proc storeWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
         raise newException(ValueError, "the trace has no sample interval")
       if flip:
         for v in samples.mitems: v = -v
+      let dt = us / 1000.0
+      applyStoredShift(samples, shiftMs, dt)
       let cut = turnedOver(cutSamples(samples, us, fromMs, toMs), PilotRule(phaseDeg: phaseDeg))
       if cut.len == 0:
         raise newException(ValueError, "the window holds no sample")
-      let dt = us / 1000
       let usedFrom = max(fromMs, 0.0)
       let usedTo = if toMs < 0: float64(samples.len - 1) * dt
                    else: min(toMs, float64(samples.len - 1) * dt)
@@ -172,15 +174,15 @@ proc pilotRuleWork*(rule: PilotRule; folder: string; to: Poster): JobWork =
       failed(to, ctx.id, folder, e.msg)
 
 proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
-    rule: PilotRule; flip: bool; record: string; surveyTrace, window: int;
+    rule: PilotRule; flip: bool; shiftMs: float64; record: string; surveyTrace, window: int;
     key, name, folder: string; to: Poster): JobWork =
   ## Reads trace `trace` of the open file as recorded, turns it over when `flip` (the
-  ## trace's own reversal): no filter, nothing of the plot's (no plot filter, no
-  ## reverse-all, no gain). Cuts the window `rule` names and applies the rule's phase
-  ## (180 turns the cut over). For a reference window (`window` above
-  ## 0) it posts `raViewed`; else `raPilotShown` for the Generate dialog's
-  ## preview, with the amplitude spectrum in dB in `amps`. A trace or window that
-  ## is not there is said in `failure`.
+  ## trace's own reversal), then moves it by `shiftMs` (`applyStoredShift`, positive
+  ## later): no filter, nothing of the plot's (no plot filter, no reverse-all, no gain).
+  ## Cuts the window `rule` names and applies the rule's phase (180 turns the cut over).
+  ## For a reference window (`window` above 0) it posts `raViewed`; else `raPilotShown`
+  ## for the Generate dialog's preview, with the amplitude spectrum in dB in `amps`. A
+  ## trace or window that is not there is said in `failure`.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading the pilot"
     let preview = window <= 0
@@ -200,6 +202,7 @@ proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
       if flip:
         for v in samples.mitems: v = -v
         news.note = "the recorded trace, reversed (its own reversal)"
+      applyStoredShift(samples, shiftMs, dt)
       let (cut0, problem) = cutPilot(samples, dt, rule, record)
       let cut = turnedOver(cut0, rule)
       if rule.phaseDeg == 180:

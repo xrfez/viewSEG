@@ -3565,9 +3565,11 @@ func ownKeyOf(e: FileEdits; traces: openArray[int]): string =
     if ms != 0.0: result.add $t & ":s:" & $ms & ";"
 
 func pilotKeyOf(e: FileEdits; trace: int): string =
-  ## What a pilot taken by a rule depends on in its trace's edits: the trace's own
-  ## reversal, nothing else (no filter, nothing the plot decides).
+  ## What a pilot taken by a rule depends on in its trace's edits: its own reversal
+  ## and its time shift, nothing the plot decides.
   if e.has(teReversed, trace): result.add "r;"
+  let ms = e.shiftOf(trace)
+  if ms != 0.0: result.add "s:" & $ms & ";"
 
 proc reversedOf(e: FileEdits; traces: openArray[int]): seq[int] =
   ## Those of `traces` effectively reversed (`effectivelyReversed`: own
@@ -8310,7 +8312,8 @@ proc storeReference(state: var AppState; cmd: Command) =
   discard state.jobs.submit(JobSpec(title: "Store a reference", lane: jlInteractive,
     reads: @[s.path]), storeWork(s.filePtr, s.path, s.size, local, cmd.refStore.fromMs,
     cmd.refStore.toMs, span.intervalUs, record, s.name, name, state.refsHome, local + 1,
-    edits.has(teReversed, local), cmd.refStore.phaseDeg, state.inbox.poster))
+    edits.has(teReversed, local), edits.shiftOf(local), cmd.refStore.phaseDeg,
+    state.inbox.poster))
 
 proc generateReference(state: var AppState; cmd: Command) =
   let why = state.refsWritable
@@ -8389,8 +8392,9 @@ proc pilotPreviewAsk(state: var AppState; cmd: Command) =
   shown.record = record
   shown.problem = ""
   discard state.jobs.submit(JobSpec(title: "Read the pilot of the record", lane: jlInteractive,
-    reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace, rule, flip, record,
-    s.base + trace, 0, key, rule.name, state.refsHome, state.inbox.poster))
+    reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace, rule, flip,
+    (if trace >= 0: edits.shiftOf(trace) else: 0.0), record, s.base + trace, 0, key,
+    rule.name, state.refsHome, state.inbox.poster))
 
 proc pilotReference(state: var AppState; cmd: Command) =
   let why = state.refsWritable
@@ -8461,21 +8465,22 @@ proc nextRefView(state: AppState): int =
 
 proc readPilotView(state: var AppState; wi: int; s: Session; trace: int; edits: FileEdits) =
   ## Reads the pilot of trace `trace` of `s` for the window `refViews[wi]`, with the trace's
-  ## own reversal as it is now.
+  ## own reversal and time shift as they are now.
   template w: untyped = state.refViews[wi]
   w.waiting = true
   w.noFile = false
   w.pilotTrace = s.base + trace
   w.pilotFlip = edits.has(teReversed, trace)
+  w.pilotShiftMs = edits.shiftOf(trace)
   discard state.jobs.submit(JobSpec(title: "Read the reference " & w.name,
     lane: jlInteractive, reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace,
-    w.pilot, w.pilotFlip, w.record, s.base + trace, w.id, "", w.name, state.refsHome,
-    state.inbox.poster))
+    w.pilot, w.pilotFlip, w.pilotShiftMs, w.record, s.base + trace, w.id, "", w.name,
+    state.refsHome, state.inbox.poster))
 
 proc refreshPilotViews(state: var AppState) =
-  ## The View windows of pilot rules follow the pilot trace's own reversal (the correlation
-  ## does), so that a window, the preview and a fixed copy always agree; one whose file was
-  ## closed takes the next file shown.
+  ## The View windows of pilot rules follow the pilot trace's own reversal and time shift
+  ## (the correlation does), so that a window, the preview and a fixed copy always agree;
+  ## one whose file was closed takes the next file shown.
   for wi in 0 ..< state.refViews.len:
     template w: untyped = state.refViews[wi]
     if w.pilot.trace <= 0 or w.waiting: continue
@@ -8484,7 +8489,8 @@ proc refreshPilotViews(state: var AppState) =
       if i >= 0:
         let s = state.sessions[i]
         let edits = state.editsAt(s.path)
-        if edits.has(teReversed, w.pilotTrace - s.base) != w.pilotFlip:
+        if edits.has(teReversed, w.pilotTrace - s.base) != w.pilotFlip or
+            edits.shiftOf(w.pilotTrace - s.base) != w.pilotShiftMs:
           state.readPilotView(wi, s, w.pilotTrace - s.base, edits)
     elif w.noFile:
       let (si, g) = state.shownRecord

@@ -30,7 +30,8 @@
 ## the command not reporting a refused shift, "not kept" was absent from the log.
 ## With the inspector shifting the kept prefix only, "the last kept sample is
 ## not in the file: 0.0". With the drop command leaving the shift on, "the
-## shift was left on".
+## shift was left on". With the stored, previewed or correlated pilot left
+## unshifted, "spike is not at sample 104".
 ##
 ## Runs on samples/land/shots.sgy and a synthetic file with an auxiliary trace.
 
@@ -41,7 +42,7 @@ import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
 import viewSEG/core/[analysisreader, editmarks, edits, filememory, nif, processing, state]
 import viewSEG/core/inspector {.all.}
-import utils/[fixtures, waiting]
+import utils/[chosenref, fixtures, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
 
@@ -386,6 +387,66 @@ proc main*() =
       let t = st.tiles(0)[^1]
       doAssert t.rowOf(0) == moved(raw.rowOf(0), 4 * dt, dt), "the seismic trace was not shifted"
       doAssert t.rowOf(4) == raw.rowOf(4), "an auxiliary trace was shifted"
+      st.shutdown()
+
+  block spikeAt104:
+    # A spike at sample 100, shifted +8 ms at 2 ms, lands at 104 where a main
+    # trace is stored, previewed, or used as the record's pilot. Seen to fail
+    # with the shift left off those three paths.
+    proc spikePair(dir: string): string =
+      result = dir / "spike.sgy"
+      var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+        text: @["C01 viewSEG test: a spike at sample 100"]))
+      var buf = newSeq[float32](200)
+      buf[100] = 1
+      for c in 1 .. 2:
+        var k = initTraceKeys()
+        (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(c), 0.0,
+          2000.0, tsLive)
+        w.writeTrace(k, buf)
+      doAssert w.close().len == 0
+    proc readStored(st: AppState; name: string): seq[float32] =
+      for e in st.references.entries:
+        if e.name == name:
+          var f = openSeismic(st.referencesHome / e.file, keys = true)
+          let rows = f.readTraces(0 .. 0)
+          result = newSeq[float32](rows.shape[1])
+          for i in 0 ..< result.len: result[i] = rows[0, i]
+          f.close()
+      doAssert result.len > 104, "stored spike was not read"
+    withFixtures fx:
+      var st = initAppState()
+      st.show spikePair(fx.dir)
+      let base = st.sessions[0].base
+      st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base], on: true, ms: 8.0)
+      doAssert st.editsOf(0).shiftOf(0) == 8.0
+      st.readyArchive(fx.dir / "refs")
+      let before = st.references.entries.len
+      st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "spike",
+        trace: base, fromMs: 0, toMs: -1))
+      doAssert st.settle(st.references.entries.len > before), "not stored"
+      let stored = st.readStored("spike")
+      doAssert stored[104] == 1'f32 and stored[100] == 0'f32, "stored spike is not at sample 104"
+      st.apply Command(kind: ckPilotPreview, refPilot: PilotRule(aux: false, trace: 1,
+        startMs: 0, spanMs: 1000))
+      doAssert st.settle(not st.pilotPreview.waiting and st.pilotPreview.samples.len > 104),
+        st.pilotPreview.problem
+      doAssert st.pilotPreview.samples[104] == 1'f32 and st.pilotPreview.samples[100] == 0'f32,
+        "preview spike is not at sample 104"
+      st.apply Command(kind: ckPilotReference, refPilot: PilotRule(name: "spike pilot",
+        aux: false, trace: 1, startMs: 0, spanMs: 1000))
+      doAssert st.settle(st.references.entries.len > before + 1), "the rule was not stored"
+      var id = ""
+      for e in st.references.entries:
+        if e.name == "spike pilot": id = e.id
+      st.apply Command(kind: ckSelectReference, refId: id)
+      st.apply Command(kind: ckOpenPlot, plotView: avCorrelation, plotTraces: @[base + 1])
+      let w = st.plots.high
+      doAssert st.settle(st.plots[w].result.gen > 0 and not st.plots[w].waiting),
+        st.plots[w].result.problem
+      doAssert st.plots[w].result.problem == "", st.plots[w].result.problem
+      let lag = st.plots[w].result.peakLagMs(0)
+      doAssert abs(lag + 8.0) < 0.5, "pilot spike is not at sample 104: peak lag " & $lag
       st.shutdown()
 
   echo "ttimeshift: ok"

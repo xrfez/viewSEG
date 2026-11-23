@@ -175,6 +175,7 @@ type
     pilot*: PilotRule ## a pilot of the record: the rule (`pilot.trace` 0: not one)
     pilotTrace*: int ## a pilot of the record: the survey-wide trace id; -1 for none
     pilotFlip*: bool ## ... read with the trace's own reversal (R) on
+    pilotShiftMs*: float64 ## ... and its stored time shift, in ms
     noFile*: bool ## a pilot's window waiting for a file: the one it showed was closed
     pilotTraceMs*: float64 ## ... the length of that whole trace, in ms
     pilotNote*: string ## ... what the plot's filters did to it, in words

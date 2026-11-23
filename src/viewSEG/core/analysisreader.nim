@@ -76,6 +76,7 @@ type
     pilotRule*: PilotRule
     pilotRecord*: string ## which record that is, for the sentences
     pilotReversed*: bool ## that trace is reversed on its own (R): turned over first
+    pilotShiftMs*: float64 ## its stored time shift, applied after that reversal
     vibWhy*: string
       ## a vibrator signature measured against its recorded Ref trace: why not the project
       ## reference ("no project reference is chosen", "the project reference is not used")
@@ -383,10 +384,12 @@ proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: f
     elif not sameDt(rdt, dtMs):
       result.problem = intervalRefusal(rdt, dtMs)
     else:
-      # the recorded samples, turned over when the trace is reversed on its own (R):
-      # nothing of the plot's, no filter; then the cut, then the rule's phase
+      # the recorded samples, turned over when the trace is reversed on its own (R),
+      # then moved by its stored shift: nothing of the plot's, no filter; then the
+      # cut, then the rule's phase
       if a.pilotReversed:
         for v in refRows[0].mitems: v = -v
+      applyStoredShift(refRows[0], a.pilotShiftMs, dtMs)
       let (cut0, why) = cutPilot(refRows[0], dtMs, a.pilotRule, a.pilotRecord)
       let cut = turnedOver(cut0, a.pilotRule)
       if why.len > 0:

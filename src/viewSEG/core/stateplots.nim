@@ -224,6 +224,7 @@ proc chosenReferenceFor(state: var AppState; w: int; s: Session; dtMs: float64;
     a.pilotRule = rule
     a.pilotRecord = record
     a.pilotReversed = edits.has(teReversed, rt)
+    a.pilotShiftMs = edits.shiftOf(rt)
     a.archiveName = FileReferenceName
     pw.reference = FileReferenceName
     return ("", FileReferenceName)
@@ -249,6 +250,7 @@ proc chosenReferenceFor(state: var AppState; w: int; s: Session; dtMs: float64;
     a.pilotRule = rule
     a.pilotRecord = record
     a.pilotReversed = edits.has(teReversed, rt)
+    a.pilotShiftMs = edits.shiftOf(rt)
     a.archiveName = e.name
   else:
     a.archivePath = state.refsHome / e.file
