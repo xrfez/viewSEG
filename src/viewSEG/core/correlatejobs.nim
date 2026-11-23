@@ -237,6 +237,11 @@ proc fitLine(padded, cut: int): string =
   elif cut > 1: parts.add $cut & " auxiliary traces were cut"
   if parts.len > 0: result = parts.join(". ") & "."
 
+proc cutSweepLine(trace: int; heldMs, sweepMs, leadMs: float64): string =
+  "reference trace " & $trace & " holds " & msText(heldMs) &
+    " ms, less than the " & msText(sweepMs) & " ms sweep plus the " &
+    msText(leadMs) & " ms lead: its wavelet is of a cut sweep."
+
 proc intervalLine(trace: int): string =
   "auxiliary trace " & $trace & ": it cannot be correlated with this reference."
 
@@ -349,11 +354,17 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
     $nTraces & " traces, " & $listen & " samples (" & msText(slot[].listenMs) &
       " ms of listen time).",
     sweepLine(slot[].sweepMs, delayed)]
-  let leadMs = float64(abs(lag)) * dtMs
+  let leadSamples = abs(lag)
+  let leadMs = float64(leadSamples) * dtMs
   if delayed > 0 and slot[].listenMs < 2.0 * leadMs:
     slot[].lines.add waveletLine(slot[].listenMs, leadMs)
   let fitted = fitLine(shape.padded, shape.cut)
   if fitted.len > 0: slot[].lines.add fitted
+  for t in 0 ..< nTraces:
+    if t in refs and file[].traceKeys(t).status == tsAuxiliary and t notin odd:
+      let held = int(file[].traceEntry(t).numSamples)
+      if held < sweepLen + leadSamples:
+        slot[].lines.add cutSweepLine(t, float64(held) * dtMs, slot[].sweepMs, leadMs)
   for t in shape.odd: slot[].lines.add intervalLine(t)
   slot[].opened = made
   slot[].ok = true

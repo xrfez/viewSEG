@@ -12,6 +12,8 @@
 ## 400 and 800 samples were accepted (the job finished) instead of being refused.
 ## Skipping the listen-window line fails "listen time 600 ms: the reference
 ## wavelet shows only 100 ms after its peak." and the peak-outside sentence.
+## Omitting the cut-sweep line fails "reference trace 1 holds 600 ms, less
+## than the 400 ms sweep plus the 500 ms lead: its wavelet is of a cut sweep."
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -166,9 +168,10 @@ proc writeMixed(path: string; sweep: openArray[float32]) =
   doAssert w.close().len == 0, "the mixed file did not close"
 
 proc writeLengths(path: string; record, auxSamples: int; dtMs: float64;
-    sweep: openArray[float32]) =
+    sweep: openArray[float32]; otherSamples = -1) =
   ## Trace 0 is seismic of `record` samples; trace 1 is a reference auxiliary
-  ## of `auxSamples`, holding the start of `sweep`.
+  ## of `auxSamples`, holding the start of `sweep`. `otherSamples` >= 0 adds
+  ## trace 2, an auxiliary trace that is not a reference.
   var w = openSeismicWriter(path, SegyOutputOptions())
   proc put(w: var SeismicWriter; i, n: int; status: TraceStatus; code: int16;
       fill: openArray[float32]) =
@@ -187,6 +190,10 @@ proc writeLengths(path: string; record, auxSamples: int; dtMs: float64;
   for j in 0 ..< record: seis[j] = 1
   put(w, 0, record, tsLive, 1, seis)
   put(w, 1, auxSamples, tsAuxiliary, 5, sweep)
+  if otherSamples >= 0:
+    var other = newSeq[float32](otherSamples)
+    for j in 0 ..< otherSamples: other[j] = float32(j + 1)
+    put(w, 2, otherSamples, tsAuxiliary, 6, other)
   doAssert w.close().len == 0, "the length file did not close"
 
 proc writeOddInterval(path: string) =
@@ -513,7 +520,9 @@ proc main*() =
     doAssert slot.lines == @[
       "3 traces, " & $ListenMixed & " samples (" & $(ListenMixed * 2) & " ms of listen time).",
       "sweep 400 ms. 1 reference trace delayed by 500 ms.",
-      "1 auxiliary trace was padded. 1 auxiliary trace was cut."]
+      "1 auxiliary trace was padded. 1 auxiliary trace was cut.",
+      "reference trace 1 holds 600 ms, less than the 400 ms sweep plus the " &
+        "500 ms lead: its wavelet is of a cut sweep."]
     template got: untyped = session.file(slot.opened)
     doAssert got.len == 3
     let short = mixed.readTraces(1 .. 1)
@@ -575,7 +584,9 @@ proc main*() =
     doAssert slot.lines == @[
       "2 traces, 200 samples (400 ms of listen time).",
       "sweep 400 ms. 1 reference trace delayed by 500 ms.",
-      "listen time 400 ms: the reference wavelet's peak (at 500 ms) is outside the record."],
+      "listen time 400 ms: the reference wavelet's peak (at 500 ms) is outside the record.",
+      "reference trace 1 holds 800 ms, less than the 400 ms sweep plus the " &
+        "500 ms lead: its wavelet is of a cut sweep."],
       $slot.lines
 
   block listenEqualsDelay:
@@ -601,6 +612,24 @@ proc main*() =
     doAssert slot.lines == @[
       "2 traces, 200 samples (400 ms of listen time).",
       "sweep 400 ms. 0 reference traces delayed by 500 ms."],
+      $slot.lines
+
+  block cutSweep:
+    ## Reference trace 1 holds less than the sweep plus the lead. Trace 2 is
+    ## short too, and is not a reference, so it is only padded.
+    let longSweep = linearSweep(8.0, 80.0, 12000.0, DtMs).sweepSamples(float32)
+    doAssert longSweep.len == 6000, $longSweep.len
+    let p = dir / "cutsweep.sgy"
+    writeLengths(p, 6500, 4000, DtMs, longSweep, otherSamples = 1000)
+    var f = openSeismic(p, keys = true)
+    defer: f.close()
+    let slot = correlated(f, p, longSweep, DtMs, [1])
+    doAssert slot.lines == @[
+      "3 traces, 500 samples (1000 ms of listen time).",
+      "sweep 12000 ms. 1 reference trace delayed by 500 ms.",
+      "2 auxiliary traces were padded.",
+      "reference trace 1 holds 8000 ms, less than the 12000 ms sweep plus the " &
+        "500 ms lead: its wavelet is of a cut sweep."],
       $slot.lines
 
   block cancelled:
