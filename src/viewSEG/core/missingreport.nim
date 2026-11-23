@@ -7,13 +7,17 @@
 ## `RecordCompleteness` stores how many stations were duplicated, not which
 ## ones, so a duplicate row is the file, the record and that count
 ## (`DuplicatesNote`). Stations the survey did not list (`unlisted`) are a
-## count on the record row, never a point. `expectedIn` is the records whose
-## relation runs list the station, plus a missing station those runs left
-## out. A record with no spread is not evidence the station was expected:
-## `expectedUnknown` is set and `never` stays false. `never` means a known
-## expected set and no trace in any record that expected it.
+## count on the record row, never a point. Totals and the folder point table
+## count per survey record (`xpsRecord`), not per file: expected is counted
+## once, and a station is missing only when every file's copy of that record
+## lists it. A record no file matched (`xpsRecord` below 0) stays one row.
+## `expectedIn` is the survey records whose relation runs list the station,
+## plus a missing station those runs left out. A record with no spread is not
+## evidence the station was expected: `expectedUnknown` is set and `never`
+## stays false. `never` means a known expected set and no trace in any survey
+## record that expected it.
 
-import std/[algorithm, strutils, tables]
+import std/[algorithm, sets, strutils, tables]
 import parseSEG
 import processSEG/qc/record
 from records import stationNumber
@@ -28,7 +32,9 @@ type
     ## One field record of one file.
     file*: string
     record*: float64       ## Header field-record number; NaN when the file has none.
-    expected*, present*, missing*, duplicates*, unlisted*: int
+    expected*, present*, missing*: int
+    alsoIn*: int           ## Other files that carry this survey record.
+    duplicates*, unlisted*: int
     missingPoints*: string ## Compact ranges, one line of text per receiver line.
 
   RecordPointRow* = object
@@ -42,8 +48,8 @@ type
     ## A station missing in at least one record of the folder.
     line*, point*: float64
     index*: int16
-    expectedIn*: int              ## Records whose spread expected it.
-    missingIn*: int               ## Records where it produced no trace.
+    expectedIn*: int              ## Survey records whose spread expected it.
+    missingIn*: int               ## Survey records where every file's copy lacks it.
     never*: bool                  ## Known expected set, and missing in every one of those records.
     expectedUnknown*: bool        ## Missing with no spread: not evidence it was expected.
     firstFile*, lastFile*: string ## Files of the first and last record it is missing in.
@@ -57,10 +63,12 @@ type
     count*: int
 
   Totals* = object
-    ## Folder totals. Counts other than `files`, `never` and `percentMissing`
-    ## are `summarize`'s; they are not added up again here.
+    ## Folder totals. `records`, `duplicates`, `extras` and `xpsWithoutData`
+    ## are `summarize`'s. `expected`, `present` and `missing` count each
+    ## survey record once. `alsoIn` is the survey records another file also
+    ## carries. `never` is the point rows with `never` set.
     files*, records*: int
-    expected*, present*, missing*, never*: int
+    expected*, present*, missing*, alsoIn*, never*: int
     duplicates*, extras*: int
     xpsWithoutData*: seq[int64] ## Survey records no file matched, as `summarize` lists them.
     percentMissing*: float64 ## `100 * missing / expected`, or 0 when nothing was expected.
@@ -259,13 +267,14 @@ template bump(e: var Acc; ordinal, file: int; record: float64;
   if expect and e.expectedAt != ordinal:
     e.expectedAt = ordinal
     inc e.expectedIn
-  if missing and e.missingAt != ordinal:
-    e.missingAt = ordinal
-    inc e.missingIn
-    if not e.haveMissing:
-      e.haveMissing = true
-      e.firstFile = file
-      e.firstRecord = record
+  if missing:
+    if e.missingAt != ordinal:
+      e.missingAt = ordinal
+      inc e.missingIn
+      if not e.haveMissing:
+        e.haveMissing = true
+        e.firstFile = file
+        e.firstRecord = record
     e.lastFile = file
     e.lastRecord = record
   if unknown: e.expectedUnknown = true
@@ -459,6 +468,35 @@ proc emitPoints(points: var seq[PointRow]; paths: openArray[string]; store: Stor
   for st, e in store.odd:
     addPoint(points, paths, st.line, st.point, st.index, e)
 
+type
+  GroupPrep = object
+    missing: HashSet[StationKey]
+    expected, files, lastFile: int
+
+proc stationSet(stations: openArray[StationKey]): HashSet[StationKey] =
+  result = initHashSet[StationKey](stations.len * 2 + 1)
+  for st in stations: result.incl st
+
+proc prepareGroups(files: openArray[FileRecords]): Table[int64, GroupPrep] =
+  ## One entry per survey record (`xpsRecord` at least 0): the stations every
+  ## file's copy lists as missing, expected counted once, and how many files
+  ## carry it.
+  for fi, f in files:
+    for c in f.records:
+      if c.xpsRecord >= 0:
+        result.withValue(c.xpsRecord, g):
+          if c.expected > g.expected: g.expected = c.expected
+          if fi != g.lastFile:
+            inc g.files
+            g.lastFile = fi
+          var next = initHashSet[StationKey]()
+          for st in c.missingStations:
+            if st in g.missing: next.incl st
+          g.missing = next
+        do:
+          result[c.xpsRecord] = GroupPrep(missing: stationSet(c.missingStations),
+            expected: c.expected, files: 1, lastFile: fi)
+
 proc lightOf(c: RecordCompleteness): RecordCompleteness =
   ## The fields `summarize` reads, without the station lists.
   RecordCompleteness(fieldRecord: c.fieldRecord, xpsRecord: c.xpsRecord,
@@ -491,10 +529,17 @@ proc missingReport*(files: openArray[FileRecords]; survey: SurveyGeometry): Miss
   var reserved = false
   var light = newSeqOfCap[RecordCompleteness](nRecords)
   var ordinal = 0
+  let groups = prepareGroups(files)
+  var groupOrdinal = initTable[int64, int]()
+  var spreadOf = initTable[int64, bool]()
+  var looseExpected = 0
+  var loosePresent = 0
+  var looseMissing = 0
   for fi, f in files:
     for c in f.records:
+      let shared = if c.xpsRecord >= 0: groups[c.xpsRecord].files - 1 else: 0
       result.records[ri] = RecordRow(file: f.path, record: c.fieldRecord,
-        expected: c.expected, present: c.present, missing: c.missing,
+        expected: c.expected, present: c.present, missing: c.missing, alsoIn: shared,
         duplicates: c.duplicates, unlisted: c.unlisted,
         missingPoints: rangesText(c.missingRanges))
       inc ri
@@ -504,42 +549,73 @@ proc missingReport*(files: openArray[FileRecords]; survey: SurveyGeometry): Miss
       if not reserved and c.missingStations.len > 0:
         reserved = true
         store.reserve(c.missingStations)
-      var spread = false
       if c.xpsRecord >= 0:
-        for run in survey.relationRuns(c.xpsRecord):
-          spread = true
-          for i in 0 ..< run.stations:
-            note(store, run.station(i), ordinal, fi, c.fieldRecord, true, false, false)
-      for st in c.missingStations:
-        note(store, st, ordinal, fi, c.fieldRecord, false, true, not spread)
-        if spread:
-          note(store, st, ordinal, fi, c.fieldRecord, true, false, false)
-        result.recordPoints[pi] = RecordPointRow(file: f.path, record: c.fieldRecord,
-          line: st.line, point: st.point, index: st.index)
-        inc pi
-      light.add lightOf(c)
-      inc ordinal
+        let xps = c.xpsRecord
+        var ord = groupOrdinal.getOrDefault(xps, -1)
+        let firstTime = ord < 0
+        if firstTime:
+          ord = ordinal
+          groupOrdinal[xps] = ord
+          inc ordinal
+          var spread = false
+          for run in survey.relationRuns(xps):
+            spread = true
+            for i in 0 ..< run.stations:
+              note(store, run.station(i), ord, fi, c.fieldRecord, true, false, false)
+          spreadOf[xps] = spread
+        let unknown = not spreadOf[xps]
+        for st in groups[xps].missing:
+          note(store, st, ord, fi, c.fieldRecord, false, true, unknown)
+          if firstTime and not unknown:
+            note(store, st, ord, fi, c.fieldRecord, true, false, false)
+      else:
+        for st in c.missingStations:
+          note(store, st, ordinal, fi, c.fieldRecord, false, true, true)
+          result.recordPoints[pi] = RecordPointRow(file: f.path, record: c.fieldRecord,
+            line: st.line, point: st.point, index: st.index)
+          inc pi
+        looseExpected += c.expected
+        loosePresent += c.present
+        looseMissing += c.missing
+        light.add lightOf(c)
+        inc ordinal
+      if c.xpsRecord >= 0:
+        for st in c.missingStations:
+          result.recordPoints[pi] = RecordPointRow(file: f.path, record: c.fieldRecord,
+            line: st.line, point: st.point, index: st.index)
+          inc pi
+        light.add lightOf(c)
   emitPoints(result.points, paths, store)
   sortRecords(result.records, DefaultRecordSort)
   sortPoints(result.points, DefaultPointSort)
   let summary = summarize(survey, light)
-  let percent = if summary.expected == 0: 0.0
-    else: 100.0 * float64(summary.missing) / float64(summary.expected)
+  var expected = looseExpected
+  var present = loosePresent
+  var missing = looseMissing
+  var splitRecords = 0
+  for _, g in groups:
+    expected += g.expected
+    let miss = g.missing.len
+    missing += miss
+    present += max(g.expected - miss, 0)
+    if g.files > 1: inc splitRecords
+  let percent = if expected == 0: 0.0 else: 100.0 * float64(missing) / float64(expected)
   var never = 0
   for p in result.points:
     if p.never: inc never
   result.totals = Totals(files: files.len, records: summary.records,
-    expected: summary.expected, present: summary.present, missing: summary.missing,
+    expected: expected, present: present, missing: missing, alsoIn: splitRecords,
     never: never, duplicates: summary.duplicates, extras: summary.unlisted,
     xpsWithoutData: summary.xpsWithoutData, percentMissing: percent)
 
 proc recordsCsv*(rows: openArray[RecordRow]): string =
   ## A header and one line per row. Fields are quoted per RFC 4180.
-  result = csvLine("file", "record", "expected", "present", "missing", "duplicates",
-    "unlisted", "missingPoints")
+  ## `alsoIn` is the other files that carry the row's survey record.
+  result = csvLine("file", "record", "expected", "present", "missing", "alsoIn",
+    "duplicates", "unlisted", "missingPoints")
   for r in rows:
     result.add csvLine(r.file, stationNumber(r.record), $r.expected, $r.present,
-      $r.missing, $r.duplicates, $r.unlisted, r.missingPoints)
+      $r.missing, $r.alsoIn, $r.duplicates, $r.unlisted, r.missingPoints)
 
 proc recordPointsCsv*(rows: openArray[RecordPointRow]): string =
   ## A header and one line per missing station of a record.
@@ -560,13 +636,14 @@ proc pointsCsv*(rows: openArray[PointRow]): string =
 proc totalsCsv*(t: Totals; duplicatesNote = DuplicatesNote): string =
   ## One header and one totals line. `xpsWithoutData` is the survey record
   ## numbers, separated by spaces. `duplicatesNote` says why duplicates are
-  ## a count only.
-  result = csvLine("files", "records", "expected", "present", "missing", "never",
-    "duplicates", "extras", "xpsWithoutData", "percentMissing", "duplicatesNote")
+  ## a count only. `alsoIn` is the survey records another file also carries.
+  result = csvLine("files", "records", "expected", "present", "missing", "alsoIn",
+    "never", "duplicates", "extras", "xpsWithoutData", "percentMissing",
+    "duplicatesNote")
   var ids = ""
   for i, id in t.xpsWithoutData:
     if i > 0: ids.add ' '
     ids.add $id
   result.add csvLine($t.files, $t.records, $t.expected, $t.present, $t.missing,
-    $t.never, $t.duplicates, $t.extras, ids, percentText(t.percentMissing),
+    $t.alsoIn, $t.never, $t.duplicates, $t.extras, ids, percentText(t.percentMissing),
     duplicatesNote)

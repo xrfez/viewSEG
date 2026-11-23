@@ -170,10 +170,10 @@ proc main*() =
     doAssert got.sink.result.ok
     let t = got.sink.result.report.totals
     doAssert t.files == 2 and t.records == 3, $t
-    doAssert t.expected == 12 and t.present == 8 and t.missing == 4, $t
-    doAssert t.never == 1 and t.duplicates == 0 and t.extras == 0, $t
+    doAssert t.expected == 8 and t.present == 6 and t.missing == 2, $t
+    doAssert t.alsoIn == 1 and t.never == 1 and t.duplicates == 0 and t.extras == 0, $t
     doAssert t.xpsWithoutData.len == 0, $t.xpsWithoutData
-    doAssert abs(t.percentMissing - 100.0 * 4.0 / 12.0) < 1e-9, $t.percentMissing
+    doAssert abs(t.percentMissing - 100.0 * 2.0 / 8.0) < 1e-9, $t.percentMissing
     let rows = got.sink.result.report.records
     doAssert rows.len == 3
     doAssert rows[0].file == "sub/one.sgd" or rows[1].file == "sub/one.sgd" or
@@ -183,12 +183,12 @@ proc main*() =
       doAssert r.file in ["sub/one.sgd", "two.sgd"], r.file
       if r.file == "sub/one.sgd":
         sawOne = true
-        doAssert r.record == 1 and r.missing == 2 and r.present == 2, $r
+        doAssert r.record == 1 and r.missing == 2 and r.present == 2 and r.alsoIn == 1, $r
     doAssert sawOne
     let never = pointAt(got.sink.result.report.points, 10, 4)
-    doAssert never.never and never.missingIn == 3 and never.expectedIn == 3, $never
-    let once = pointAt(got.sink.result.report.points, 10, 3)
-    doAssert not once.never and once.missingIn == 1, $once
+    doAssert never.never and never.missingIn == 2 and never.expectedIn == 2, $never
+    for p in got.sink.result.report.points:
+      doAssert not (p.line == 10 and p.point == 3), "recorded in one file: " & $p
     doAssert skippedWhy(got.sink.result.skipped, "notes.txt") ==
       "not a SEG-Y, SEG-D or SEG-2 file"
     doAssert skippedWhy(got.sink.result.skipped, "gone.sgd") == "Input/output error"

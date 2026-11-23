@@ -1,7 +1,9 @@
 ## The missing-trace report: rows, folder points, totals from `summarize`,
 ## duplicate counts, a stable multi-column sort, and RFC 4180 CSV.
 ##
-## Seen to fail: with a record's missing text left empty, `ranges_text`
+## Seen to fail: with a split survey record counted once per file,
+## `split_survey_record` rejected totals of expected 20, missing 10; with a
+## record's missing text left empty, `ranges_text`
 ## rejected the blank ranges; with `never` forced false, `never_vs_in_one`
 ## rejected the station missing in every record; with `expected` taken from
 ## 0 instead of `summarize`, `totals_match_summarize` rejected the totals;
@@ -106,6 +108,43 @@ proc main*() =
     doAssert r.records[1].file == "west/b.sgy" and r.records[1].record == 12
     doAssert r.points.len == 1 and r.points[0].missingIn == 1
     doAssert r.points[0].firstFile == "east/a.sgy"
+    doAssert r.records[0].alsoIn == 0 and r.totals.alsoIn == 0
+
+  block split_survey_record:
+    ## Traces 1-5 in one file and 6-10 in another are one survey record, not two.
+    let g = surveyOf(xRec(1, 1, 10, 10, 1, 10))
+    let spread = stationsOf(g, 1)
+    doAssert spread.len == 10, "the X record did not parse: " & $spread.len
+    var early, late: seq[StationKey] = @[]
+    for i, st in spread:
+      if i < 5: late.add st
+      else: early.add st
+    let a = rec(1, 1, 10, 5, 5, 0, 0, early)
+    let b = rec(1, 1, 10, 5, 5, 0, 0, late)
+    let r = missingReport([
+      FileRecords(path: "a.sgy", records: @[a]),
+      FileRecords(path: "b.sgy", records: @[b])], g)
+    doAssert r.records.len == 2
+    doAssert r.records[0].missing == 5 and r.records[0].alsoIn == 1, $r.records[0]
+    doAssert r.records[1].missing == 5 and r.records[1].alsoIn == 1, $r.records[1]
+    doAssert r.totals.records == 2 and r.totals.expected == 10, $r.totals
+    doAssert r.totals.present == 10 and r.totals.missing == 0, $r.totals
+    doAssert r.totals.alsoIn == 1 and r.totals.percentMissing == 0, $r.totals
+    doAssert r.points.len == 0, "a station recorded in either file is not missing"
+    doAssert recordsCsv(r.records).startsWith(
+      "file,record,expected,present,missing,alsoIn,duplicates,unlisted,missingPoints\n")
+    doAssert totalsCsv(r.totals).startsWith(
+      "files,records,expected,present,missing,alsoIn,never,")
+    let overlap = missingReport([
+      FileRecords(path: "a.sgy", records: @[rec(1, 1, 10, 8, 2, 0, 0, spread[8 .. 9])]),
+      FileRecords(path: "b.sgy", records: @[rec(7, 1, 10, 9, 1, 0, 0, @[spread[9]])])], g)
+    let still = pointAt(overlap.points, spread[9].line, spread[9].point)
+    doAssert still.never and still.missingIn == 1 and still.expectedIn == 1, $still
+    doAssert still.firstFile == "a.sgy" and still.lastFile == "b.sgy", $still
+    doAssert still.firstRecord == 1 and still.lastRecord == 7, $still
+    doAssert overlap.points.len == 1, "a station one file recorded is not missing"
+    doAssert overlap.totals.expected == 10 and overlap.totals.missing == 1, $overlap.totals
+    doAssert overlap.totals.present == 9 and overlap.totals.alsoIn == 1, $overlap.totals
 
   block extras_are_a_count:
     let c = rec(3, -1, 2, 2, 0, 4, 0)
