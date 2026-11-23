@@ -8,6 +8,8 @@
 ## first file leaves that file and no part file.
 ##
 ## Seen to fail: with the store's edits not applied, "a killed trace was written".
+## Seen to fail: with `plain` a byte-identical copy of `edited` at the same
+## time, `back.len == src.len` (that kill is this file's too).
 ##
 ## Runs on copies of samples/land/shots.sgy and samples/land/shots.sgd.
 
@@ -57,6 +59,38 @@ proc partLeft(dir: string): bool =
     if kind == pcDir and partLeft(path): return true
     elif kind == pcFile and ".part-" in path.extractFilename: return true
 
+proc differ(path: string) =
+  ## Changes one sample of `path` inside the ends the quick identity hashes,
+  ## so a copy of the same bytes is a different file and not merely a
+  ## different time. The changed byte is a sample's least significant byte.
+  var before: Time
+  let old = quickIdentity(path, before)
+  var f = openSeismic(path)
+  let n = f.len
+  doAssert n > 0, path
+  let size = getFileSize(path)
+  var at = -1
+  for i in 0 ..< n:
+    let e = f.traceEntry(i)
+    if e.numSamples < 1: continue
+    let lsb = e.offset + int64(e.headerBytes) + 3
+    if lsb < 0 or lsb >= size: continue
+    if lsb < QuickSpan or lsb >= size - QuickSpan:
+      at = int(lsb)
+      break
+  f.close()
+  doAssert at >= 0, "no sample in the ends of " & path
+  var raw = readFile(path)
+  raw[at] = char(ord(raw[at]) xor 0x01)
+  writeFile(path, raw)
+  var g = openSeismic(path)
+  doAssert g.len == n, "changing a sample broke " & path
+  g.close()
+  var after: Time
+  let now = quickIdentity(path, after)
+  doAssert now.size != old.size or now.quick != old.quick,
+    "the changed sample did not change the file's identity"
+
 proc runBatch(ask: BatchAsk; store: Store; openFiles: seq[OpenFile]):
     tuple[st: JobState; wrote: BatchResult; error: string] =
   let jobs = initJobs()
@@ -98,11 +132,16 @@ proc main*() =
   copyFile(segy, plain)
   copyFile(segy, edited)
   copyFile(segd, segdCopy)
+  differ(plain)
   let plainBytes = readFile(plain)
   let editedBytes = readFile(edited)
   let segdBytes = readFile(segdCopy)
   var modified: Time
   let id = quickIdentity(edited, modified)
+  var plainTime: Time
+  let plainId = quickIdentity(plain, plainTime)
+  doAssert plainId.size != id.size or plainId.quick != id.quick,
+    "plain and edited are one file: the same size and ends"
   var lists: EditLists
   lists.lists[teKilled] = @[0]
   lists.lists[teReversed] = @[1]
@@ -337,8 +376,11 @@ proc main*() =
     doAssert "no saved edits were found for this file" in none.lines, $none.lines
     let held = srcRoot / "held.sgy"
     copyFile(segy, held)
+    differ(held)
     var heldTime: Time
     let heldId = quickIdentity(held, heldTime)
+    doAssert heldId.size != id.size or heldId.quick != id.quick,
+      "held and edited are one file: the same size and ends"
     var heldLists: EditLists
     heldLists.lists[teKilled] = @[0]
     let heldRec = FileRecord(identity: heldId, name: "held.sgy", path: held,
@@ -347,6 +389,11 @@ proc main*() =
     writeFile(store.docPath(heldRec.doc), memoryDocument(heldRec))
     let pend = srcRoot / "pend.sgy"
     copyFile(segy, pend)
+    differ(pend)
+    var pendTime: Time
+    let pendId = quickIdentity(pend, pendTime)
+    doAssert pendId.size != id.size or pendId.quick != id.quick,
+      "pend and edited are one file: the same size and ends"
     writeFile(store.docPath(pendingName(pend)), "not a document")
     let ask2 = BatchAsk(root: srcRoot, items: @[
       BatchItem(source: held, relative: "held.sgy"),
@@ -445,6 +492,50 @@ proc main*() =
       doAssert it.outcome == boSkipped, $it.relative & " " & $it.outcome
     doAssert not dirExists(dest), "a destination was created after the cancel"
     doAssert readFile(plain) == plainBytes and readFile(edited) == editedBytes
+
+  block sameFileTwoPaths:
+    ## Two byte-identical copies with the same modification time are one file
+    ## known under two paths: the saved edits are applied to both, and the
+    ## item says so. Seen to fail: with the copies given different times,
+    ## "applied this file's saved edits: 1 killed" was not in the second
+    ## item's lines.
+    let twinA = srcRoot / "twin-a.sgy"
+    let twinB = srcRoot / "twin-b.sgy"
+    copyFile(segy, twinA)
+    copyFile(segy, twinB)
+    let stamp = initTime(getTime().toUnix, 0)
+    setLastModificationTime(twinA, stamp)
+    setLastModificationTime(twinB, stamp)
+    var timeA, timeB: Time
+    let idA = quickIdentity(twinA, timeA)
+    let idB = quickIdentity(twinB, timeB)
+    doAssert timeA == stamp and timeB == stamp, "the copies' times were not the one stored"
+    doAssert idA.size == idB.size and idA.quick == idB.quick, "the copies are not the same file"
+    var kill: EditLists
+    kill.lists[teKilled] = @[0]
+    let shareHome = dir / "sharemem"
+    createDir(shareHome)
+    let shareStore = Store(home: shareHome)
+    let shareRec = FileRecord(identity: idA, name: "twin-a.sgy", path: twinA,
+      opened: getTime(), modified: timeA, edits: kill, doc: docName(idA, 1))
+    writeFile(shareStore.docPath(shareRec.doc), memoryDocument(shareRec))
+    let dest = dir / "share-out"
+    let ask = BatchAsk(root: srcRoot, items: @[
+      BatchItem(source: twinA, relative: "twin-a.sgy"),
+      BatchItem(source: twinB, relative: "twin-b.sgy")],
+      destRoot: dest, options: opts, mirrorFolders: false)
+    let got = runBatch(ask, shareStore, @[])
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    for rel in ["twin-a.sgy", "twin-b.sgy"]:
+      let it = itemOf(got.wrote, rel)
+      doAssert "applied this file's saved edits: 1 killed" in it.lines, $it.lines
+      doAssert it.droppedTraces == 1, rel & " did not share the kill"
+    var src = openSeismic(twinA, keys = true)
+    var back = openSeismic(dest / "twin-b.sgy", keys = true)
+    doAssert back.len == src.len - 1, "the shared kill was not applied to the other path"
+    back.close()
+    src.close()
+    doAssert readFile(twinA) == readFile(segy) and readFile(twinB) == readFile(segy)
 
   doAssert readFile(segy) == sampleSegy and readFile(segd) == sampleSegd
   doAssert readFile(plain) == plainBytes and readFile(edited) == editedBytes and
