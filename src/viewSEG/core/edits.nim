@@ -1007,6 +1007,14 @@ proc remembered*(e: var FileEdits; l: EditLists) =
   e.kept.unionShifts(l)
   if e.shown != was: inc e.revision
 
+proc setInSession*(e: FileEdits): tuple[shown, kept: EditLists] =
+  ## What the steps of this session in effect set, as shown and as kept: the
+  ## steps made again from nothing, so a value set and taken back since is
+  ## not in it, and a step undone does not count (one redone does).
+  for s in e.undos:
+    result.shown.turnShown(s, back = false)
+    result.kept.turnKept(s, back = false)
+
 proc dropBrought*(e: var FileEdits; baseline: EditLists) =
   ## Takes `baseline` out of what is shown and kept, except a value an undo
   ## step of this session set: that is the user's edit and must join, also
@@ -1014,12 +1022,9 @@ proc dropBrought*(e: var FileEdits; baseline: EditLists) =
   ## back must not put the rest onto the other path: that one may have taken
   ## them back while this one was checked. After this the lists and the
   ## steps agree (undo removes a value set again, redo restores it).
-  var shownSet, keptSet = EditLists()
-  for s in e.undos:
-    shownSet.turnShown(s, back = false)
-    keptSet.turnKept(s, back = false)
-  e.shown = e.shown.minus(baseline.minus(shownSet))
-  e.kept = e.kept.minus(baseline.minus(keptSet))
+  let own = e.setInSession
+  e.shown = e.shown.minus(baseline.minus(own.shown))
+  e.kept = e.kept.minus(baseline.minus(own.kept))
 
 proc keepIncoming*(e: var FileEdits; incomingShown, incomingKept, baseline: EditLists) =
   ## A filter or shift the incoming path holds that differs from `baseline`
@@ -1041,15 +1046,104 @@ proc keepIncoming*(e: var FileEdits; incomingShown, incomingKept, baseline: Edit
   if e.shown != wasShown: inc e.revision
   if e.kept != wasKept: inc e.keptRevision
 
-proc takeOff*(e: var FileEdits; gone: EditLists) =
-  ## Takes every edit of `gone` off what is shown and kept. After two paths
-  ## of one file are joined, `gone` is the snapshot edits the incoming path
-  ## no longer has: a kill it took back must not return on the other path.
+func both(a, b: EditLists): EditLists {.inline.} = a.minus(a.minus(b))
+  ## The edits `a` and `b` both hold (a filter or a shift the same in both).
+
+func shownChange(s: EditStep): ListsChange =
+  ## What `s` does to what is shown.
+  ListsChange(added: s.added, removed: s.removed, allChanged: s.allChanged,
+    allBefore: s.allBefore, allAfter: s.allAfter, filterOn: s.filterOn,
+    filterOff: s.filterOff, shiftOn: s.shiftOn, shiftOff: s.shiftOff)
+
+func names(x: EditStep | ListsChange; trace: int): bool =
+  ## Whether `x` (a step, or its change of what is kept) changes `trace`.
+  for edit in TraceEdit:
+    if x.added[edit].binarySearch(trace) >= 0 or x.removed[edit].binarySearch(trace) >= 0:
+      return true
+  for s in x.filterOn:
+    if s.trace == trace: return true
+  for s in x.filterOff:
+    if s.trace == trace: return true
+  for s in x.shiftOn:
+    if s.trace == trace: return true
+  for s in x.shiftOff:
+    if s.trace == trace: return true
+  false
+
+proc leaveOut(x: var (EditStep | ListsChange); l: EditLists) =
+  ## Takes the values of `l` out of what `x` (a step, or its change of what
+  ## is kept) gives and takes away: a trace's filter or shift wholly.
+  for edit in TraceEdit:
+    x.added[edit] = difference(x.added[edit], l.lists[edit])
+    x.removed[edit] = difference(x.removed[edit], l.lists[edit])
+  if l.allReversed: x.allChanged = false
+  var filterOn, filterOff: seq[FilterSnap]
+  for s in x.filterOn:
+    if not l.hasFilter(s.trace): filterOn.add s
+  for s in x.filterOff:
+    if not l.hasFilter(s.trace): filterOff.add s
+  var shiftOn, shiftOff: seq[ShiftSnap]
+  for s in x.shiftOn:
+    if not l.hasShift(s.trace): shiftOn.add s
+  for s in x.shiftOff:
+    if not l.hasShift(s.trace): shiftOff.add s
+  (x.filterOn, x.filterOff, x.shiftOn, x.shiftOff) = (filterOn, filterOff, shiftOn, shiftOff)
+
+func tracesOf(l: EditLists): seq[int] =
+  ## Every trace `l` names, ascending.
+  for edit in TraceEdit: result = union(result, l.lists[edit])
+  var others = newSeqOfCap[int](l.filters.len + l.shifts.len)
+  for f in l.filters: others.add f.trace
+  for s in l.shifts: others.add s.trace
+  result = union(result, sortedTraces(others))
+
+proc leaveOut(s: var EditStep; shown, kept: EditLists) =
+  ## Takes the values of `shown` out of what `s` does to what is shown and
+  ## those of `kept` out of what it does to what is kept; a trace it no
+  ## longer changes leaves its `traces`.
+  var c = if s.keptOwn: s.keptChange else: s.shownChange
+  s.leaveOut(shown)
+  c.leaveOut(kept)
+  (s.keptOwn, s.keptChange) = (false, ListsChange())
+  s.keptChanges(c)
+  var unnamed: seq[int]
+  for t in union(shown.tracesOf, kept.tracesOf):
+    if s.traces.binarySearch(t) >= 0 and not (s.names(t) or s.keptChange.names(t)):
+      unnamed.add t
+  if unnamed.len > 0: s.traces = difference(s.traces, unnamed)
+
+func isEmpty(s: EditStep): bool {.inline.} =
+  ## Whether `s` changes nothing, shown or kept.
+  s.size == 0 and not s.allChanged and not s.keptChange.allChanged
+
+proc takeOff*(e: var FileEdits; gone: EditLists; spared: tuple[shown, kept: EditLists];
+    incoming: int) =
+  ## Takes every edit of `gone` off what is shown and kept, except one
+  ## `spared` holds. After two paths of one file are joined, `gone` is the
+  ## snapshot edits the incoming path no longer has: a kill it took back must
+  ## not return on the other path. `spared` is what the other path's steps
+  ## set in this session (`setInSession`, before the join): the user set it
+  ## again there, which wins over the take-back. The newest `incoming` steps
+  ## are the incoming path's: what of `gone` stays is taken out of them, so
+  ## the lists and the steps agree (undo of the step that set it again takes
+  ## it off; no step of the incoming path takes it off or puts it back).
   if gone.isEmpty: return
   let wasShown = e.shown
   let wasKept = e.kept
-  e.shown = e.shown.minus(gone)
-  e.kept = e.kept.minus(gone)
+  e.shown = e.shown.minus(gone.minus(spared.shown))
+  e.kept = e.kept.minus(gone.minus(spared.kept))
+  let stayShown = both(gone, e.shown)
+  let stayKept = both(gone, e.kept)
+  if not (stayShown.isEmpty and stayKept.isEmpty):
+    var n = max(0, e.undos.len - incoming)
+    for i in n ..< e.undos.len:
+      e.held -= e.undos[i].size
+      e.undos[i].leaveOut(stayShown, stayKept)
+      if not e.undos[i].isEmpty:
+        e.held += e.undos[i].size
+        if n != i: e.undos[n] = move e.undos[i]
+        inc n
+    e.undos.setLen n
   if e.shown != wasShown: inc e.revision
   if e.kept != wasKept: inc e.keptRevision
 

@@ -62,6 +62,8 @@
 ## - a path that is not the taker confirms first (a copy, and a copy then a
 ##   link), then the file takes a kill back while its hash is held: the kill
 ##   stays taken back on every path, and a kill made during the check joins;
+##   a kill the copy's user took off and set again before the file took it
+##   back stays, and Undo on the copy takes it off;
 ## - a filter or shift changed on a copy while its hash is held wins over the
 ##   snapshot the file already confirmed;
 ## - the data file's bytes and modification time are as they were through
@@ -115,7 +117,11 @@
 ## snapshot edits the incoming path no longer has, "a kill taken back came
 ## back after the copy confirmed first"; with the already-linked filter and
 ## shift kept when the incoming value differs from the snapshot, "a filter
-## changed during the check was lost to the snapshot".
+## changed during the check was lost to the snapshot"; with that take-off
+## sparing nothing the other path set again, "a kill set again on the copy
+## was taken off by the file's take-back"; with the file's take-back left a
+## step of the joined history, "Undo on the copy did not take the kill set
+## again off".
 
 import std/[atomics, monotimes, os, sequtils, strutils, times]
 import viewSEG/core/[diskio, filesystem, jobs, processing, state]
@@ -974,6 +980,52 @@ proc main*() =
           "a kill taken back came back after the copy and the link confirmed"
         st.shutdown()
         removeFile(link)
+      block setAgainOnTheCopy:
+        # the copy confirms first and its user takes the kill off and sets it
+        # again; the file takes it back while its hash is held: the kill set
+        # again stays, and Undo on the copy takes it off
+        let cfg = fx.dir / "config-order-again"
+        createDir(cfg)
+        let f = fx.dir / "order-again.sgy"
+        writeFile(f, readFile(b))
+        setLastModificationTime(f, initTime(getLastModificationTime(f).toUnix - 60, 0))
+        let copy = sameTimeCopy(fx.dir, "order-again-copy.sgy", f)
+        var st = start(cfg)
+        st.showFile(f)
+        doAssert st.settle(st.remembering(f).known)
+        st.edit(teKilled, 4)
+        doAssert st.settle(st.remembering(f).confirmed and not st.remembering(f).looking)
+        st.flushFiles()
+        st.shutdown()
+        st = start(cfg)
+        st.showFile(copy)
+        doAssert st.settle(st.remembering(copy).confirmed and not st.remembering(copy).looking and
+          st.editsOf(0).has(teKilled, 4))
+        st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[st.base + 4],
+          on: false)
+        st.edit(teKilled, 4)
+        st.flushFiles()
+        holdStep("reading every byte")
+        st.showFile(f)
+        doAssert waitUntil(inStep("reading every byte").len >= 1), "the file's hash did not start"
+        doAssert st.settle(st.remembering(f).known and st.editsOf(0).has(teKilled, 4)),
+          "the kill was not brought back while the hash was held"
+        st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[st.base + 4],
+          on: false)
+        doAssert not st.editsOf(0).has(teKilled, 4)
+        releaseStep("reading every byte")
+        doAssert st.settle(st.remembering(f).confirmed and not st.remembering(f).looking)
+        doAssert st.remembering(f).doc.len > 0 and st.remembering(f).doc == st.remembering(
+            copy).doc,
+          "the paths did not share one document"
+        doAssert st.editsOf(0).has(teKilled, 4) and teKilled in st.editsOf(0).keptOf(4),
+          "a kill set again on the copy was taken off by the file's take-back"
+        st.showFile(copy)
+        doAssert st.editsOf(0).has(teKilled, 4), "the kill set again is gone on the copy"
+        st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+        doAssert not st.editsOf(0).has(teKilled, 4) and teKilled notin st.editsOf(0).keptOf(4),
+          "Undo on the copy did not take the kill set again off"
+        st.shutdown()
     block changedDuringTheCheck:
       # a filter or shift changed while the copy's hash is held wins over the
       # snapshot the file already confirmed

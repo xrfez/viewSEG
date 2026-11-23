@@ -59,7 +59,12 @@
 ## lists and the history), "a step to another record allocates 4158 times
 ## more with a history of a thousand steps (24 with none)"; with
 ## `dropBrought` taking off every snapshot value, a kill set again included,
-## "a kill set again during the check was dropped".
+## "a kill set again during the check was dropped"; with `takeOff` taking
+## off every value of `gone` (none spared), "a kill set again on the target
+## was taken off by the other path's take-back" (and so for an exclusion, all
+## reversed, a filter and a shift); with the incoming path's steps left as
+## they were, "the other path's take-back of 4 is still a step" and "undo did
+## not take the exclusion set again off" (all reversed, filter, shift alike).
 ##
 ## Runs alone: it bounds the time a frame's questions to the lists take (50 µs).
 
@@ -684,6 +689,105 @@ proc main*() =
       doAssert e.shiftOf(16) == 0.0, "undo did not remove the shift set again"
       discard e.redo()
       doAssert e.shiftOf(16) == 4.0, "redo did not restore the shift set again"
+
+  block setAgainOnTheTarget:
+    # Two paths of one file joined as `link` joins them: the path already
+    # linked took a snapshot value off and set it again, the incoming path
+    # took it back. The value set again stays, shown and kept; the incoming
+    # path's take-back is no step any more, so the next undo is the target's
+    # setting again and takes the value off. A snapshot value the target
+    # never set again is still taken off.
+    proc linked(target: var FileEdits; mine: sink FileEdits; baseline: EditLists) =
+      let gone = baseline.minus(mine.kept)
+      mine.dropBrought(baseline)
+      let incomingShown = mine.shown
+      let incomingKept = mine.kept
+      let incoming = mine.steps.undos
+      let spared = target.setInSession
+      target.merge(move mine)
+      target.keepIncoming(incomingShown, incomingKept, baseline)
+      target.takeOff(gone, spared, incoming)
+    block kill:
+      var baseline: EditLists
+      baseline.lists[teKilled] = @[4, 6]
+      var target, mine: FileEdits
+      target.remembered(baseline)
+      discard target.change(teKilled, [4], on = false)
+      discard target.change(teKilled, [4], on = true)
+      mine.remembered(baseline)
+      discard mine.change(teKilled, [6], on = false)
+      discard mine.change(teKilled, [4], on = false)
+      target.linked(mine, baseline)
+      doAssert target.has(teKilled, 4) and teKilled in target.keptOf(4),
+        "a kill set again on the target was taken off by the other path's take-back"
+      doAssert not target.has(teKilled, 6), "a snapshot kill the target kept came back"
+      doAssert target.steps == (3, 0), "the other path's take-back of 4 is still a step: " &
+        $target.steps
+      discard target.undo() # the incoming path's take-back of 6
+      doAssert target.has(teKilled, 6) and target.has(teKilled, 4),
+        "undo of the other path's take-back did not put 6 back"
+      discard target.undo()
+      doAssert not target.has(teKilled, 4) and teKilled notin target.keptOf(4),
+        "undo did not take the kill set again off"
+      discard target.undo()
+      doAssert target.has(teKilled, 4), "undo did not put the kill taken off back"
+    block exclusion:
+      var baseline: EditLists
+      baseline.lists[teExcluded] = @[3]
+      var target, mine: FileEdits
+      target.remembered(baseline)
+      discard target.change(teExcluded, [3], on = false)
+      discard target.change(teExcluded, [3], on = true)
+      mine.remembered(baseline)
+      discard mine.change(teExcluded, [3], on = false)
+      target.linked(mine, baseline)
+      doAssert target.has(teExcluded, 3) and teExcluded in target.keptOf(3),
+        "an exclusion set again on the target was taken off"
+      discard target.undo()
+      doAssert not target.has(teExcluded, 3), "undo did not take the exclusion set again off"
+    block allReversed:
+      var baseline: EditLists
+      baseline.allReversed = true
+      var target, mine: FileEdits
+      target.remembered(baseline)
+      discard target.setAllReversed(false)
+      discard target.setAllReversed(true)
+      mine.remembered(baseline)
+      discard mine.setAllReversed(false)
+      target.linked(mine, baseline)
+      doAssert target.shown.allReversed and target.kept.allReversed,
+        "all reversed set again on the target was taken off"
+      discard target.undo()
+      doAssert not target.shown.allReversed, "undo did not take all reversed set again off"
+    block filter:
+      var baseline: EditLists
+      let own = bounded(OwnFilter(spec: Processing(band: pbLowCut, f1: 8, f2: 16), place: fpAfter))
+      baseline.filters = @[FilterEntry(trace: 15, filter: own)]
+      var target, mine: FileEdits
+      target.remembered(baseline)
+      discard target.clearOwnFilters([15])
+      discard target.setOwnFilters([15], own)
+      mine.remembered(baseline)
+      discard mine.clearOwnFilters([15])
+      target.linked(mine, baseline)
+      doAssert target.ownOf(15).filter == own and target.keptFilter(15).filter == own,
+        "a filter set again on the target was taken off"
+      discard target.undo()
+      doAssert not target.hasFilter(15), "undo did not take the filter set again off"
+    block shift:
+      var baseline: EditLists
+      baseline.shifts = @[ShiftEntry(trace: 16, ms: 4.0)]
+      var target, mine: FileEdits
+      target.remembered(baseline)
+      discard target.clearTimeShifts([16])
+      discard target.setTimeShifts([16], 4.0, 2.0)
+      mine.remembered(baseline)
+      discard mine.clearTimeShifts([16])
+      target.linked(mine, baseline)
+      doAssert target.shiftOf(16) == 4.0 and target.keptShift(16) == 4.0,
+        "a shift set again on the target was taken off"
+      discard target.undo()
+      doAssert target.shiftOf(16) == 0.0, "undo did not take the shift set again off"
 
   block historyNotCopied:
     # Stepping to another record of a file with a long history does not copy
