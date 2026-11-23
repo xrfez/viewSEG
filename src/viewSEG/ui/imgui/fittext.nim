@@ -28,6 +28,33 @@ proc shortenEnd*(text: string; maxWidth: float32): string =
     else:
       hi = keep - 1
 
+proc shortenPath*(path: string; maxWidth: float32): string =
+  ## A relative path that fits `maxWidth`. The file name is kept; folders are
+  ## cut from the left with an ellipsis. The name is cut from the end only when
+  ## it alone does not fit.
+  if path.len == 0 or maxWidth <= 0: return ""
+  if textWidth(path) <= maxWidth: return path
+  var slashAt = -1
+  for i, c in path:
+    if c == '/' or c == '\\': slashAt = i
+  let name = if slashAt < 0: path else: path.substr(slashAt + 1)
+  if textWidth(name) > maxWidth: return shortenEnd(name, maxWidth)
+  if textWidth(Ellipsis) > maxWidth: return name
+  let rs = path.toRunes
+  let least = name.toRunes.len
+  var lo = least
+  var hi = rs.len
+  result = if textWidth(Ellipsis & name) <= maxWidth: Ellipsis & name else: name
+  while lo <= hi:
+    let keep = (lo + hi) div 2
+    let suffix = $rs[rs.len - keep .. ^1]
+    let candidate = if keep == rs.len: path else: Ellipsis & suffix
+    if textWidth(candidate) <= maxWidth:
+      result = candidate
+      lo = keep + 1
+    else:
+      hi = keep - 1
+
 proc fittedText*(text: string; maxWidth: float32) =
   ## Draws `text` in `maxWidth`, shortened with an ellipsis, and the whole text in a
   ## tooltip when it was shortened.

@@ -12,7 +12,7 @@ import imguin/cimgui
 import ../../core/[edits, filejobs, filekinds, filesystem, jobs, outputbatch, outputjobs,
   panels, state]
 import ../../view/[filetable, outputwords]
-import focus, icons, marks, overflow
+import fittext, focus, icons, marks, overflow
 
 type
   ListedFile = object
@@ -463,43 +463,112 @@ proc drawTree(ui: var OutputUi; marks: var Marks) =
   for i in ui.tree.files:
     if nameMatches(ui.listed[i].relative, filt): ui.drawFile(i, marks)
 
+func outcomeText(r: BatchItemResult): string =
+  result = $r.outcome
+  if r.outcome == boFailed and r.why.len > 0:
+    result.add ": "
+    result.add r.why
+
+func joinedNotes(lines: openArray[string]): string =
+  if lines.len == 0: return
+  result = lines[0]
+  for i in 1 ..< lines.len:
+    result.add "; "
+    result.add lines[i]
+
 proc copyText(ui: OutputUi): string =
   var lines: seq[string] = @[]
   for r in ui.result.items:
-    lines.add slash(r.relative) & "\t" & $r.outcome & "\t" & $r.writtenTraces & "\t" &
-      $r.droppedTraces
+    lines.add slash(r.relative) & "\t" & outcomeText(r) & "\t" & $r.writtenTraces & "\t" &
+      $r.droppedTraces & "\t" & joinedNotes(r.lines)
   resultsText(lines, ui.result.written, ui.result.failed, ui.result.skipped)
+
+proc rightText(text: string) =
+  let w = igCalcTextSize(text.cstring, nil, false, -1).x
+  let avail = igGetContentRegionAvail().x
+  if avail > w: igSetCursorPosX(igGetCursorPosX() + avail - w)
+  igTextUnformatted(text.cstring, nil)
+
+proc hoverFull(text: string) =
+  if text.len == 0: return
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igPushTextWrapPos(igGetFontSize() * 36)
+    igTextUnformatted(text.cstring, nil)
+    igPopTextWrapPos()
+    igEndTooltip()
+
+proc drawFileCell(rel: string; marks: var Marks) =
+  let shown = shortenPath(rel, max(0'f32, igGetContentRegionAvail().x))
+  igTextUnformatted(shown.cstring, nil)
+  if shown != rel: hoverFull(rel)
+  marks.mark("output.cell.file " & shown)
 
 proc drawResults(ui: OutputUi; marks: var Marks) =
   if not ui.haveResult: return
-  igTextUnformatted(summaryLine(ui.result.written, ui.result.failed,
-    ui.result.skipped).cstring, nil)
+  let summary = summaryLine(ui.result.written, ui.result.failed, ui.result.skipped)
+  igTextUnformatted(summary.cstring, nil)
   marks.mark("output.summary " & $ui.result.written & " " & $ui.result.failed & " " &
     $ui.result.skipped)
   if ui.result.reason.len > 0:
+    igPushTextWrapPos(0)
     igTextUnformatted(ui.result.reason.cstring, nil)
-  let flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_Borders.cint or
-    ImGui_TableFlags_SizingStretchProp.cint
-  if ui.result.items.len == 0 or not igBeginTable("##results", 4, flags,
-      ImVec2_c(x: 0, y: 0), 0): return
-  igTableSetupColumn(ColFile.cstring, 0, 0, 0)
-  igTableSetupColumn(ColOutcome.cstring, 0, 0, 0)
-  igTableSetupColumn(ColWritten.cstring, 0, 0, 0)
-  igTableSetupColumn(ColDropped.cstring, 0, 0, 0)
-  igTableHeadersRow()
-  for r in ui.result.items:
-    let rel = slash(r.relative)
-    discard igTableNextColumn()
-    igTextUnformatted(rel.cstring, nil)
-    marks.mark("output.row " & rel & " " & $r.outcome & " " & $r.writtenTraces & " " &
-      $r.droppedTraces)
-    discard igTableNextColumn()
-    igTextUnformatted(($r.outcome).cstring, nil)
-    discard igTableNextColumn()
-    igTextUnformatted(($r.writtenTraces).cstring, nil)
-    discard igTableNextColumn()
-    igTextUnformatted(($r.droppedTraces).cstring, nil)
-  igEndTable()
+    igPopTextWrapPos()
+  if ui.result.items.len > 0:
+    let flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_Borders.cint or
+      ImGui_TableFlags_Resizable.cint or ImGui_TableFlags_SizingStretchProp.cint or
+      ImGui_TableFlags_ScrollY.cint
+    let footer = igGetFrameHeightWithSpacing()
+    let room = igGetContentRegionAvail().y
+    let minH = igGetTextLineHeightWithSpacing() * 5
+    let tableH = if room > footer + minH: room - footer else: minH
+    if igBeginTable("##results", 5, flags, ImVec2_c(x: 0, y: tableH), 0):
+      let pad = igGetStyle().CellPadding.x * 2 + 16
+      let numW = max(textWidth(ColWritten), textWidth(ColDropped)) + pad
+      igTableSetupColumn(ColFile.cstring, ImGui_TableColumnFlags_WidthStretch.cint, 3,
+        ImGuiID(0))
+      igTableSetupColumn(ColOutcome.cstring, ImGui_TableColumnFlags_WidthStretch.cint,
+        1.6, ImGuiID(1))
+      igTableSetupColumn(ColWritten.cstring, ImGui_TableColumnFlags_WidthFixed.cint,
+        numW, ImGuiID(2))
+      igTableSetupColumn(ColDropped.cstring, ImGui_TableColumnFlags_WidthFixed.cint,
+        numW, ImGuiID(3))
+      igTableSetupColumn(ColNotes.cstring, ImGui_TableColumnFlags_WidthStretch.cint, 2,
+        ImGuiID(4))
+      igTableSetupScrollFreeze(0, 1)
+      igTableHeadersRow()
+      for r in ui.result.items:
+        let rel = slash(r.relative)
+        igTableNextRow(0, 0)
+        discard igTableNextColumn()
+        drawFileCell(rel, marks)
+        marks.mark("output.row " & rel & " " & $r.outcome & " " & $r.writtenTraces & " " &
+          $r.droppedTraces)
+        discard igTableNextColumn()
+        let outcome = outcomeText(r)
+        let outcomeShown = shortenEnd(outcome, max(0'f32, igGetContentRegionAvail().x))
+        igTextUnformatted(outcomeShown.cstring, nil)
+        if outcomeShown != outcome or r.why.len > 0: hoverFull(outcome)
+        discard igTableNextColumn()
+        rightText($r.writtenTraces)
+        discard igTableNextColumn()
+        rightText($r.droppedTraces)
+        discard igTableNextColumn()
+        let notes = joinedNotes(r.lines)
+        let notesShown = shortenEnd(notes, max(0'f32, igGetContentRegionAvail().x))
+        igTextUnformatted(notesShown.cstring, nil)
+        hoverFull(notes)
+      igEndTable()
+  if igButton(CopyButton.cstring, ImVec2_c(x: 0, y: 0)):
+    igSetClipboardText(ui.copyText.cstring)
+  marks.mark("output.copy")
+  tip(CopyTip)
+  igSameLine(0, -1)
+  igBeginDisabled(ui.dest.len == 0)
+  if igButton(OpenButton.cstring, ImVec2_c(x: 0, y: 0)):
+    discard SDL_OpenURL(fileUrl(ui.dest).cstring)
+  igEndDisabled()
+  marks.mark("output.open")
+  tip(OpenTip)
 
 proc drawOutput*(ui: var OutputUi; title: string; st: AppState; marks: var Marks): OutputOutput =
   ## The window titled `title`. A list or a destination check asked for since
@@ -600,19 +669,6 @@ proc drawOutput*(ui: var OutputUi; title: string; st: AppState; marks: var Marks
       if ui.canRun: marks.mark("output.run")
       else: marks.mark("output.run.disabled")
       tip(RunTip)
-    if ui.haveResult:
-      igSameLine(0, -1)
-      if igButton(CopyButton.cstring, ImVec2_c(x: 0, y: 0)):
-        igSetClipboardText(ui.copyText.cstring)
-      marks.mark("output.copy")
-      tip(CopyTip)
-      igSameLine(0, -1)
-      igBeginDisabled(ui.dest.len == 0)
-      if igButton(OpenButton.cstring, ImVec2_c(x: 0, y: 0)):
-        discard SDL_OpenURL(fileUrl(ui.dest).cstring)
-      igEndDisabled()
-      marks.mark("output.open")
-      tip(OpenTip)
     ui.drawResults(marks)
     marks.markOverflow("output")
   ui.focus.settle()

@@ -311,8 +311,10 @@ record. A file already open is written as it stands, including edits not yet sav
 a file in a sub folder is written in that sub folder. **Run** stays inactive when the
 destination is the source folder, inside it, or holding it. While the write runs, the
 button is **Stop**: the file in progress finishes, and the rest are skipped. The table
-under it is one row per file (written, skipped or failed), then a total. **Copy results**
-puts that table on the clipboard. **Open destination** opens the folder.
+under it is one row per file: the relative path, the outcome (and the reason when it
+failed), how many traces were written and dropped, and the notes. Columns can be
+resized. **Copy results** puts that table on the clipboard. **Open destination** opens
+the folder.
 
 ## Jobs
 

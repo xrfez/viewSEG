@@ -4,9 +4,9 @@
 ## refused; a run writes the ticked files, the open file with a live kill
 ## dropped; Stop leaves the file in progress unfinished and skips the rest.
 ##
-## Seen to fail: with File > Output... left enabled when no folder is open
-## (no disabled mark), "File > Output... is inactive without a folder did not
-## happen".
+## Seen to fail: File column showing only the leaf, "the File column does not
+## show sub/c.sgy: @[output.cell.file a.sgy, output.cell.file b.sgy,
+## output.cell.file c.sgy]".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -181,10 +181,14 @@ proc main*() =
         let a = rowOf(f, "a.sgy")
         let b = rowOf(f, "b.sgy")
         let c = rowOf(f, "sub/c.sgy")
+        if a.ok and c.ok and f.markOf("output.cell.file sub/c.sgy").size.x == 0:
+          doAssert false, "the File column does not show sub/c.sgy: " &
+            $f.markNames("output.cell.file")
         result = a.ok and b.ok and c.ok and a.outcome == "written" and b.outcome == "written" and
           c.outcome == "written" and a.dropped >= 1 and
           fileExists(written / "a.sgy") and fileExists(written / "b.sgy") and
-          fileExists(written / "sub" / "c.sgy")
+          fileExists(written / "sub" / "c.sgy") and
+          f.markOf("output.cell.file sub/c.sgy").size.x > 0
         if result:
           doAssert f.savePng(shots / "output-after-run.png"), "after-run shot was not written"
       step("Run writes the three files", run, wrote)

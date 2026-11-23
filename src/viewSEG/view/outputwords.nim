@@ -41,6 +41,7 @@ const
   ColOutcome* = "Outcome"
   ColWritten* = "Written"
   ColDropped* = "Dropped"
+  ColNotes* = "Notes"
   GainTip* = "Display-only gain is not written."
   ProcessingTip* = "The Seismic window's filters. Display-only gain is not written."
   SortTip* = "Write traces in the plot's sort. A SEG-D file is sorted within each record."
@@ -68,7 +69,8 @@ func sortTip*(keys: string): string =
 
 func resultsText*(lines: openArray[string]; written, failed, skipped: int): string =
   ## The results table, as text, for the clipboard.
-  result = ColFile & "\t" & ColOutcome & "\t" & ColWritten & "\t" & ColDropped & "\n"
+  result = ColFile & "\t" & ColOutcome & "\t" & ColWritten & "\t" & ColDropped &
+    "\t" & ColNotes & "\n"
   for line in lines:
     result.add line
     result.add '\n'
