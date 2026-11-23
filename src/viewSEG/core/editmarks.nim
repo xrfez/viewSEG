@@ -27,6 +27,7 @@ type
     hasFilter*: bool
     outline*: bool
     filterNote*: string ## the filter in words, when `hasFilter`
+    shiftNote*: string ## the shift in words, when the trace is shifted
 
   MarkHit* = object
     ## The traces a position in the edits row is about. Empty: not a mark.
@@ -126,6 +127,15 @@ func markTitle*(hit: MarkHit): string =
   elif hit.shared: $hit.traces.len & " traces here"
   else: "Trace " & $(hit.traces[0] + 1)
 
+func shiftWords*(ms: float64): string =
+  ## A stored shift in the words a mark shows: "shifted +500 ms",
+  ## "shifted -4 ms". A whole number of milliseconds is an integer; a
+  ## fraction is 3 decimals. Positive is later.
+  let body = if ms == trunc(ms) and abs(ms) < 1e15: $int64(ms)
+             else: formatFloat(ms, ffDecimal, 3)
+  let shown = if ms > 0: "+" & body else: body
+  "shifted " & shown & " ms"
+
 func markTip*(hit: MarkHit; marks: openArray[EditMark]): string =
   ## The tooltip of the marks `hit` names: what they show, then
   ## "Right-click to remove". "" for none.
@@ -140,6 +150,7 @@ func markTip*(hit: MarkHit; marks: openArray[EditMark]): string =
         if m.hasFilter:
           filtered = true
           if m.filterNote.len > 0 and m.filterNote notin notes: notes.add m.filterNote
+        if m.shiftNote.len > 0 and m.shiftNote notin notes: notes.add m.shiftNote
   var parts: seq[string]
   if hit.shared: parts.add $hit.traces.len & " traces here"
   if teKilled in edits: parts.add "Killed"
