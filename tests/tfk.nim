@@ -22,7 +22,8 @@
 ## want 15.0"; with the box's mean left in, "a direct-current offset
 ## changed the f-k: peak at -7.105427357601002e-15 cycles/km, 0.0 Hz";
 ## with a trace that ends before the box left out, "the window has 47
-## live rows, the plan was built for 48".
+## live rows, the plan was built for 48"; with the stop check not passed
+## to the library, "uncancelled polls 0".
 
 import std/[math, monotimes, strutils, times]
 import viewSEG/core/[analysis, fkanalysis, join]
@@ -184,33 +185,48 @@ proc main*() =
 
   block cancelling:
     # a long f-k (96 traces of 8 s at 1 ms) given up from outside: stops between
-    # steps, each short, and says so (no numbers)
+    # steps, each short, and says so (no numbers). The stop is the Nth poll,
+    # about a third of an uncancelled run's polls: a clock threshold can pass
+    # before it fires. Seen to fail: with that check not passed to the
+    # library, "uncancelled polls 0".
     var big: seq[seq[float32]] = @[]
     for i in 0 ..< 96:
       var r = newSeq[float32](8192)
       for j in 0 ..< r.len: r[j] = float32(sin(float64(j + i) / 9))
       big.add r
+    var counted = 0
+    let countStop = proc (): bool =
+      inc counted
+      false
+    let full = fkOf(big, 10, "offsets", suMetres, 1.0, 0, AnalysisParams(), countStop)
+    doAssert not full.cancelled and full.problem == "", full.problem
+    doAssert counted > 30, "uncancelled polls " & $counted
+    let stopOn = counted div 3
     var polls = 0
     var last = getMonoTime()
     var worst = 0.0
     let begun = getMonoTime()
-    var stopAt = 0.0
+    var askedAt = begun
+    var asked = false
     let stop = proc (): bool =
       let now = getMonoTime()
       worst = max(worst, float64((now - last).inNanoseconds) / 1e6)
       last = now
       inc polls
-      let ms = float64((now - begun).inNanoseconds) / 1e6
-      if ms > 100 and stopAt == 0: stopAt = ms
-      stopAt > 0
+      if polls >= stopOn:
+        if not asked:
+          askedAt = now
+          asked = true
+        return true
+      false
     let r = fkOf(big, 10, "offsets", suMetres, 1.0, 0, AnalysisParams(), stop)
-    let took = float64((getMonoTime() - begun).inNanoseconds) / 1e6
+    let after = float64((getMonoTime() - askedAt).inNanoseconds) / 1e6
     doAssert r.cancelled and r.image.isEmpty, "not given up"
     doAssert polls > 10 and worst < 250, $polls & " polls, the longest step " & $worst & " ms"
-    doAssert took - stopAt < 250, "stopped " & $(took - stopAt) & " ms after it was asked"
+    doAssert asked and after < 250, "stopped " & $after & " ms after it was asked"
     # never asked to stop: it finishes
     doAssert not fkOf(big[0 .. 7], 10, "offsets", suMetres, 1.0, 0, AnalysisParams()).cancelled
-    # the same for the spectrogram and the correlation
+    # asked to stop at once, the spectrogram and the correlation do
     doAssert spectrogramOf(big[0 .. 3], 1.0, 0, AnalysisParams(windowMs: 128, overlap: 75),
       proc (): bool = true).cancelled
     doAssert correlationOf([("a", big[0])], big[1], "b", 1.0, AnalysisParams(maxLagMs: 100),
