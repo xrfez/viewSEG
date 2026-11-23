@@ -39,14 +39,15 @@
 ## **Threads.** The job's own thread reads each chunk, and a `ProcessPool` of its own (half the
 ## cores, at most `MaxBreakWorkers`, made for the run and ended with it) filters and picks the
 ## chunk's rows (`pool.apply`, `pool.pickInto`): the picks are the single thread's, bit for bit,
-## whatever the number of workers. The fits and the trimmed model run on the job's thread.
-## Progress and cancellation are as before: the job's thread reports after each chunk, and a
-## stop asked for ends the run there, the pool's threads joined.
+## whatever the number of workers. The fits and the trimmed model run on the job's thread; a
+## set of picks the trimmed model has fitted is not fitted again (`trimOf`). Progress and
+## cancellation are as before: the job's thread reports after each chunk, and a stop asked for
+## ends the run there, the pool's threads joined.
 ##
 ## The job is posted as `mkFirstBreaks`; the state drops an answer whose job
 ## it no longer waits for.
 
-import std/[algorithm, cpuinfo, math, sequtils]
+import std/[algorithm, cpuinfo, math, sequtils, tables]
 import parseSEG
 import processSEG/core/[pool, rows, types, workspace]
 import processSEG/pipeline
@@ -293,7 +294,14 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
       pm[i] = src[i].timeMs
       cf[i] = if mask[i]: src[i].confidence else: 0.0
     var last: ShotFit
+    # What `fn` gave for each set of picks: a trim asks again for a set it has fitted (the end of
+    # `trimmedModel` fits the first trim's set again), and a fit is the job's slowest step.
+    var fitted = initTable[seq[bool], tuple[model: seq[float64]; fit: ShotFit; ok: bool]]()
     let fn = proc (use: openArray[bool]): seq[float64] =
+      if @use in fitted:
+        let e = fitted[@use]
+        if e.ok: last = e.fit
+        return e.model
       var fp = src
       for i in 0 ..< n:
         if not use[i]: fp[i].confidence = 0
@@ -301,8 +309,11 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
       try:
         fitShot(meta, fp, ShotFitParams(), fit)
       except ValueError:
+        fitted[@use] = (@[], fit, false)
         return @[]
-      if fit.used < 3 or not (fit.v1 > 0 and fit.v1 < Inf): return @[]
+      if fit.used < 3 or not (fit.v1 > 0 and fit.v1 < Inf):
+        fitted[@use] = (@[], fit, false)
+        return @[]
       let one = lineFit(offs, pm, use)
       if one.ok:
         let two = fit.v2 > 0 and fit.v2 < Inf and fit.crossover > 0 and fit.crossover < Inf
@@ -340,6 +351,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
             if not fit.modelMs[i].isNaN:
               fit.modelMs[i] = one.interceptMs + one.msPerUnit * offs[i]
       last = fit
+      fitted[@use] = (fit.modelMs, fit, true)
       fit.modelMs
     result.tr = trimmedModel(offs, pm, cf, fn)
     result.fit = last
