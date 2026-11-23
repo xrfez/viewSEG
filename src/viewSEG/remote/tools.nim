@@ -469,6 +469,13 @@ proc breaksJson(b: FirstBreaks; unit: SurveyUnit; fromSurvey: bool): JsonNode =
       of gdFailed: "by another model: this one's could not be made")
     if b.guided != gdOwn: result["guideNote"] = %b.guideNote
 
+proc noteSession(node: JsonNode; s: Session) =
+  ## `path` is the file on disk. A derived session says so, and names its origin.
+  node["path"] = %s.diskPath
+  if s.derived:
+    node["derived"] = %true
+    node["origin"] = %s.origin
+
 proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
   template p: untyped = state.panels[k]
   result = %*{"id": int(p.id), "title": state.windowTitle(p.id), "role": $p.role,
@@ -480,8 +487,8 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
   let i = state.shownFile(k)
   if i >= 0:
     let s = state.sessions[i]
-    var file = %*{"id": int(s.id), "path": s.path, "firstTrace": s.base}
-    if s.derived: file["origin"] = %s.diskPath
+    var file = %*{"id": int(s.id), "firstTrace": s.base}
+    file.noteSession(s)
     result["file"] = file
   if p.layers.len > 0:
     let layer = p.layers[0]
@@ -946,11 +953,12 @@ proc headersJson(state: AppState; limit: int): JsonNode =
   else:
     let s = state.sessions[i]
     template facts: untyped = s.facts
-    var f = %*{"id": int(s.id), "path": s.path, "summary": toJson(facts.summary),
+    var f = %*{"id": int(s.id), "summary": toJson(facts.summary),
       "coordinateUnits": $unitOf(s.crs.units), "crs": s.crs.text.substr(0, 4095),
       "textualHeader": facts.textEncoding, "extendedTextualHeaders": facts.extendedText.len,
       "fileHeaderFields": facts.rows.len, "channelSets": facts.channelSets.len,
       "problems": toJson(facts.problems)}
+    f.noteSession(s)
     let j = state.joinedOf(s.id)
     if j >= 0:
       let joined = state.joins[j]
@@ -1069,8 +1077,9 @@ proc propertiesJson(state: AppState): JsonNode =
       sections.add section
     elif section != nil:
       section["lines"].add %*{"label": l.label, "value": l.value}
-  result = %*{"file": int(s.id), "path": s.path, "sections": sections,
-    "openChoice": toJson(state.openChoiceOf(s.path)), "opened": toJson(s.facts.opened)}
+  result = %*{"file": int(s.id), "sections": sections,
+    "openChoice": toJson(state.openChoiceOf(s.diskPath)), "opened": toJson(s.facts.opened)}
+  result.noteSession(s)
 
 proc slotJson(slot: CompareSlot): JsonNode =
   ## One compare slot: what it holds, not every sample.
@@ -1125,9 +1134,9 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
   if "files" in wanted:
     var files = newJArray()
     for s in state.sessions:
-      var f = %*{"id": int(s.id), "path": s.path, "name": s.name, "traces": s.len,
+      var f = %*{"id": int(s.id), "name": s.name, "traces": s.len,
         "firstTrace": s.base, "gathers": s.gathers.len}
-      if s.derived: f["origin"] = %s.diskPath
+      f.noteSession(s)
       if s.isSignature: f["signature"] = signatureJson(s.signature)
       files.add f
     r["files"] = files
@@ -1276,8 +1285,9 @@ proc askTraceHeaders*(state: var AppState; arguments: string): HeaderCall =
     result.answer = refused(problems)
     return
   let s = state.sessions[session]
-  var r = %*{"trace": s.base + index, "file": int(s.id), "path": s.path, "index": index,
+  var r = %*{"trace": s.base + index, "file": int(s.id), "index": index,
     "edits": toJson(state.traceEdits(s.base + index))}
+  r.noteSession(s)
   for g, gather in s.gathers:
     if index in gather.traces: r["gather"] = %g
   result.head = r

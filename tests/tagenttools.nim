@@ -48,10 +48,11 @@
 ## decided on". With `headersJson` listing none of the traces read, "the
 ## trace's header fields were not read: []". With the survey import's files
 ## not loaded onto the map, the map part's check after `join geometry` (no S
-## file's sources).
+## file's sources). With a derived session's virtual key left in `path`,
+## the correlate check finds `correlated\u0000` in a tool reply.
 
-import std/[base64, json, math, os, sequtils, sets, strutils, tables]
-import viewSEG/core/[geometry, settingsnif, state]
+import std/[base64, json, math, monotimes, os, sequtils, sets, strutils, tables, times]
+import viewSEG/core/[geometry, session, settingsnif, state]
 import viewSEG/remote/[protocol, schema, tools]
 import utils/[fixtures, waiting]
 
@@ -568,6 +569,54 @@ proc main*() =
         doAssert waitArgs(bad, seconds).len > 0, bad
 
     doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
+
+  block correlatedRepliesNameTheFile:
+    withFixtures fx:
+      let raw = fx.oneTraceSegy()
+      var st = initAppState(watchEvery = initDuration(hours = 1))
+      let fe = Frontend()
+      var applied = false
+      st.rememberFilesIn(fx.dir / "agent-config")
+      doAssert not st.runCommand(fe, $(%*{"kind": "show file", "path": raw}), applied).isError
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      doAssert st.settle(st.referencesLoaded), "the archive was not read"
+      let trace = st.sessions[0].base
+      st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "agent",
+        trace: trace, fromMs: 0, toMs: 100))
+      doAssert st.settle(st.references.entries.anyIt(it.name == "agent")),
+        "the sweep was not stored"
+      var id = ""
+      for e in st.references.entries:
+        if e.name == "agent": id = e.id
+      st.apply Command(kind: ckSelectReference, refId: id)
+      let toggled = st.runCommand(fe, $(%*{"kind": "correlate", "correlate": true}), applied)
+      doAssert not toggled.isError, toggled
+      doAssert st.settle(st.sessions.anyIt(it.derived) and st.jobs.active.len == 0),
+        "the correlated record was not shown"
+      var picture: Picture
+      var seconds = 0.0
+      let since = getMonoTime()
+      var replies = @[
+        toggled,
+        st.stateReport(fe, "{}"),
+        headers(st, """{"trace":""" & $trace & "}"),
+        screenshot(fe, """{"window":"plot"}""", picture),
+        waited(busy(st, fe).len == 0, since, getMonoTime(), busy(st, fe)),
+      ]
+      let refused = waitArgs("{}", seconds)
+      if refused.len > 0: replies.add refused
+      let key = correlatedPath(raw)
+      let once = "correlated\\u0000"
+      let twice = "correlated\\\\u0000"
+      for reply in replies:
+        doAssert key notin reply and once notin reply and twice notin reply, reply
+      let files = st.stateReport(fe, """{"parts":["files"]}""").body["files"]
+      var derived = false
+      for f in files:
+        if f.hasKey("derived") and f["derived"].getBool:
+          derived = true
+          doAssert f["path"].getStr == raw and f["origin"].getStr == raw
+      doAssert derived, "no derived session was described"
     echo "tagenttools: ok"
 
 when isMainModule:
