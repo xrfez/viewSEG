@@ -91,6 +91,13 @@ type
       ## when the second pass was not made, why, in words (the first-pass picks stand)
     revision*: int ## bumped when the lists change
 
+func sameRecord*(a, b: BreakKey): bool =
+  ## Whether `a` and `b` are of the same record as it is now: everything but the guide (the
+  ## given model the second pass was guided by). A result stays the record's when the given
+  ## model changes; only its guided picks are made again.
+  a.file == b.file and a.gather == b.gather and a.keys == b.keys and a.killed == b.killed and
+    a.off == b.off
+
 const
   OffModelMs* = LimitFloorMs
     ## the smallest limit (ms) beyond which a trace is off: the record's limit is this or three
@@ -140,8 +147,13 @@ func place*(b: FirstBreaks; trace: int): int {.inline.} =
 
 func pickOf*(b: FirstBreaks; trace: int): float64 =
   ## The pick of file trace `trace` (ms); NaN for none.
+  ## For a trace far off the model (`rule.farOff`) it is the first pass's pick, which is where
+  ## the break was found; the guided pass found none in its window.
   let i = b.place(trace)
-  if i >= 0: b.pickMs[i] else: NaN
+  if i < 0: NaN
+  elif i < b.rule.farOff.len and b.rule.farOff[i] and i < b.geometry.firstMs.len:
+    b.geometry.firstMs[i]
+  else: b.pickMs[i]
 
 func modelOf*(b: FirstBreaks; trace: int): float64 =
   ## The model's time for file trace `trace` (ms); NaN for none.
@@ -151,7 +163,10 @@ func modelOf*(b: FirstBreaks; trace: int): float64 =
 func confidenceOf*(b: FirstBreaks; trace: int): float64 =
   ## The confidence of the pick of file trace `trace`; 0 for none.
   let i = b.place(trace)
-  if i >= 0 and i < b.confidence.len: b.confidence[i] else: 0.0
+  if i >= 0 and i < b.rule.farOff.len and b.rule.farOff[i] and i < b.geometry.firstConf.len:
+    b.geometry.firstConf[i]
+  elif i >= 0 and i < b.confidence.len: b.confidence[i]
+  else: 0.0
 
 func differenceMs*(b: FirstBreaks; trace: int): float64 =
   ## Pick less model for file trace `trace`; NaN unless it has both.
@@ -172,18 +187,22 @@ func comparableOf*(b: FirstBreaks; trace: int): bool =
 
 func faintOf*(b: FirstBreaks; trace: int): bool =
   ## Whether the pick of file trace `trace` is drawn faint: of low confidence, or (with a model)
-  ## no break found at it.
+  ## no break found at it, or the trace lies beyond the offsets where breaks are seen. A trace
+  ## far off the model is not: its pick is a confident one.
   let i = b.place(trace)
   if i < 0 or i >= b.confidence.len: false
+  elif i < b.rule.farOff.len and b.rule.farOff[i]: false
   elif b.confidence[i] < ConfidentPick: true
-  else: i < b.rule.noBreak.len and b.rule.noBreak[i]
+  else:
+    (i < b.rule.noBreak.len and b.rule.noBreak[i]) or
+      (i < b.rule.beyond.len and b.rule.beyond[i])
 
 func setRule*(b: var FirstBreaks) =
   ## Applies the rule (`applyRule`) to the picks and the model times of `b`, and sets
   ## `flagged`, `thresholdMs`, `compared`, `offModel` and `medianDiffMs` from it, so the
   ## flags, the counts and the words are one finding.
   let n = b.pickMs.len
-  b.rule = applyRule(b.pickMs, b.confidence, b.modelMs, b.geometry)
+  b.rule = applyRule(b.pickMs, b.confidence, b.modelMs, b.geometry, b.isGiven)
   b.flagged = b.rule.flagged
   b.flagged.setLen n
   b.thresholdMs = b.rule.limitMs
@@ -220,35 +239,13 @@ func hasModel*(b: FirstBreaks): bool =
 func signedMs(x: float64): string =
   (if x >= 0: "+" else: "") & formatFloat(x, ffDecimal, 1) & " ms"
 
-func ruleWords*(b: FirstBreaks): string =
-  ## What the rule found in the record, in plain words, with the limits and the statement about
-  ## the source; "" without a model or any trace compared.
-  if not b.hasModel: return ""
-  let r = b.rule
-  result = $r.nComparable & " traces compared with the model, " & $r.nNoBreak &
-    " with no break found (no confident pick, or one more than " & $int(GrossBandMs) &
-    " ms from the model: not flagged), " & $r.nOffModel & " off the model, " &
-    $r.nOffNeighbours & " off their neighbours"
-  if r.nComparable > 0:
-    result.add "\nOff the model: more than " & formatFloat(r.limitMs, ffDecimal, 1) &
-      " ms away (3 sigmas of the record's scatter, " & formatFloat(r.sigmaMs, ffDecimal, 1) &
-      " ms, not less than " & $int(LimitFloorMs) & " ms)"
-    if not r.stationLimitMs.isNaN:
-      result.add "\nOff its neighbours: more than " & formatFloat(r.stationLimitMs, ffDecimal, 1) &
-        " ms from what the stations beside it say"
-  if r.nNoBreak > r.nComparable:
-    result.add "\nFewer than half of the traces have a pick within " & $int(GrossBandMs) &
-      " ms of the model: the model, or the source's place, does not fit this record"
-  let s = r.statementWords
-  if s.len > 0: result.add "\nThe record: " & s
-  if b.passNote.len > 0: result.add "\n" & b.passNote
-
 func givenWords*(b: FirstBreaks): string =
   ## What the given model finds in the record, in a line: the median of pick less model and
   ## the traces flagged; "" when the model is not the given one.
   if not b.isGiven: return ""
   if b.compared == 0:
-    return if b.rule.nNoBreak > 0: "Given model: no pick lies within " & $int(GrossBandMs) &
+    return if b.rule.nNoBreak + b.rule.nFarOff > 0: "Given model: no pick lies within " & $int(
+        GrossBandMs) &
       " ms of it: it does not fit this record"
     else: "Given model: no confident pick to compare it with"
   "Given model: median pick less model " & b.medianDiffMs.signedMs & ", " & $b.offModel &
@@ -258,7 +255,7 @@ func givenWords*(b: FirstBreaks): string =
 func givenShort(b: FirstBreaks): string =
   ## `givenWords` for the strip's note, which is short.
   if b.compared == 0:
-    if b.rule.nNoBreak > 0: "no pick within " & $int(GrossBandMs) & " ms of it"
+    if b.rule.nNoBreak + b.rule.nFarOff > 0: "no pick within " & $int(GrossBandMs) & " ms of it"
     else: "no pick to compare"
   else: "median " & b.medianDiffMs.signedMs & ", " & $b.offModel & " of " & $b.compared & " off"
 
@@ -371,6 +368,32 @@ func number(x: float64): string =
 const UnitFromSurvey* =
   "The unit is taken from the project's survey: the file names none."
 
+func ruleWords*(b: FirstBreaks; unit: SurveyUnit): string =
+  ## What the rule found in the record, in plain words, with the limits and the statements about
+  ## the model and the source; "" without a model.
+  if not b.hasModel: return ""
+  let r = b.rule
+  result = $r.nComparable & " traces compared with the model, " & $r.nNoBreak &
+    " with no break found within the offsets where breaks are seen, " & $r.nBeyond &
+    " beyond those offsets (never a finding), " & $r.nFarOff & " far off the model (a break " &
+    "more than " & $int(GrossBandMs) & " ms from it), " & $r.nOffModel & " off the model, " &
+    $r.nOffNeighbours & " off their neighbours"
+  if not r.limitMs.isNaN:
+    result.add "\nOff the model: more than " & formatFloat(r.limitMs, ffDecimal, 1) &
+      " ms away (3 sigmas of the picks' own scatter, " & formatFloat(r.sigmaMs, ffDecimal, 1) &
+      " ms, not less than " & $int(LimitFloorMs) & " ms)"
+    if not r.stationLimitMs.isNaN:
+      result.add "\nOff its neighbours: more than " & formatFloat(r.stationLimitMs, ffDecimal, 1) &
+        " ms from what the stations beside it say"
+  if b.isGiven and r.mismatch:
+    result.add "\nThe given model does not match this record's breaks"
+    if b.hasFit:
+      result.add ": the record's own fit is " & number(b.fit.v1) & " " & unit.velocityUnit &
+        " with an intercept of " & formatFloat(b.fit.interceptMs, ffDecimal, 1) & " ms"
+  let s = r.statementWords
+  if s.len > 0: result.add "\nThe record: " & s
+  if b.passNote.len > 0: result.add "\n" & b.passNote
+
 func modelWordsOf(b: FirstBreaks; unit: SurveyUnit): string =
   ## What the model is, for the key's tooltip: a straight-line refraction fit to this
   ## record's own picks against offset, with no velocity typed in, the fitted velocity or
@@ -393,7 +416,7 @@ func modelWordsOf(b: FirstBreaks; unit: SurveyUnit): string =
     result.add "\nIntercept: " & formatFloat(m.interceptMs, ffDecimal, 1) & " ms"
     result.add "\n" & b.givenWords
     result.add "\nOffsets from " & b.offsetsFrom & "."
-    let w = b.ruleWords
+    let w = b.ruleWords(unit)
     if w.len > 0: result.add "\n" & w
     return
   let n = b.segments
@@ -411,7 +434,7 @@ func modelWordsOf(b: FirstBreaks; unit: SurveyUnit): string =
     "the line are left out, so noise at long offsets does not set it)"
   if b.fittedFrom.len > 0: result.add " (" & b.fittedFrom & ")"
   result.add "\nOffsets from " & b.offsetsFrom & "."
-  let w = b.ruleWords
+  let w = b.ruleWords(unit)
   if w.len > 0: result.add "\n" & w
 
 func modelWords*(b: FirstBreaks; unit: SurveyUnit; fromSurvey = false): string =

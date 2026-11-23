@@ -53,7 +53,14 @@ const
   LimitSigmas* = 3.0 ## the record's limit: this many sigmas of the comparable residuals
   StationSigmas* = 4.0 ## the neighbours' limit: this many sigmas of the local differences
   NeighbourCount* = 3 ## comparable neighbours on each side that set a station's expectation
-  MinNeighbours* = 2 ## the fewest it needs (in all) to be judged
+  MinNeighbours* = 3 ## the fewest usable neighbours (in all) a trace needs to be judged by them
+  RangePercentile* = 0.98 ## the share of the trimmed picks' offsets that is the expected range
+  MinLeanEigen* = 0.15
+    ## the smaller eigenvalue of the azimuths' (cos, sin) scatter matrix, per trace, below which
+    ## no lean is fitted (a full ring gives 0.5; a line through the source, 0)
+  MismatchSigmas* = 2.0
+    ## a given model whose misfit scatter is more than this many times the pick scatter does not
+    ## match the record
   StatementFloorMs* = 10.0 ## the smallest lean or constant that is said (ms)
   StatementSigmas* = 2.0 ## ... or this many sigmas
   LeanMinSpanDeg* = 180.0 ## the azimuths must cover this much of the circle
@@ -80,26 +87,41 @@ type
     above*, upTo*: float64
 
   RuleGeometry* = object
-    ## Where each trace of a record is, as far as the rule needs.
-    eligible*: seq[bool]   ## the traces the model is about (the fitted sensor's)
-    lines*: seq[seq[int]]  ## per receiver line, its traces in station order
+    ## Where each trace of a record is, and what the record's own fit says, as far as the rule
+    ## needs.
+    eligible*: seq[bool] ## the traces the model is about (the fitted sensor's)
+    lines*: seq[seq[int]] ## per receiver line, its traces in station order
     azimuth*: seq[float64] ## source to receiver, radians counter-clockwise from +x; NaN unknown
+    offsetAbs*: seq[float64] ## |offset| per trace; NaN unknown (empty: every trace is in range)
+    rangeMax*: float64 = NaN
+      ## the largest offset at which a break is expected: that of the trimmed picks
+      ## (`RangePercentile`); beyond it a trace is never judged. NaN: no limit
+    firstMs*, firstConf*: seq[float64]
+      ## the first (unguided) pass's pick and confidence per trace; empty: none
+    ownSigmaMs*: float64 = NaN
+      ## the pick scatter about the record's OWN fit (robust sigma, ms): the limits come from it
+      ## whatever model is shown, so a model that does not fit cannot widen them. NaN: the
+      ## scatter about the model shown
 
   LeanKind* = enum
     lkNone, lkConstant, lkSide
 
   BreakRule* = object
     ## What the rule found; per-trace seqs are indexed as the record's traces.
-    comparable*, noBreak*, offModel*, offNeighbours*, flagged*: seq[bool]
-    nComparable*, nNoBreak*, nOffModel*, nOffNeighbours*, nFlagged*: int
-    limitMs*: float64         ## the record limit (ms); NaN when nothing was comparable
-    sigmaMs*: float64         ## robust sigma of the comparable residuals
+    comparable*, noBreak*, beyond*, farOff*, offModel*, offNeighbours*, flagged*: seq[bool]
+    nComparable*, nNoBreak*, nBeyond*, nFarOff*, nOffModel*, nOffNeighbours*, nFlagged*: int
+    nInRange*: int            ## traces with a model time within the expected offsets
+    limitMs*: float64         ## the record limit (ms); NaN when there is no scatter to go by
+    sigmaMs*: float64         ## the pick scatter the limits come from (`ownSigmaMs`, else the
+                              ## comparable residuals')
+    misfitSigmaMs*: float64   ## robust sigma of the comparable residuals about the model shown
     stationLimitMs*, stationSigmaMs*: float64
     medianMs*: float64        ## median of the comparable residuals; NaN for none
-    constantMs*: float64      ## fitted c0 (NaN when not fitted)
+    constantMs*: float64      ## c0 (NaN when not found)
     leanMs*: float64          ## fitted sqrt(a² + b²) (NaN when not fitted)
-    earlyTowardDeg*: float64  ## the azimuth (degrees from +x towards +y) the picks are earliest at
+    earlyTowardDeg*: float64  ## the angle (degrees from +x towards +y) the picks are earliest at
     statement*: set[LeanKind] ## what is said of the source
+    mismatch*: bool           ## a given model that does not match the record's breaks
 
 func median*(xs: openArray[float64]): float64 =
   ## The median; NaN for none.
@@ -322,40 +344,87 @@ func coverageDeg(az: openArray[float64]): float64 =
   for i in 1 ..< s.len: gap = max(gap, s[i] - s[i - 1])
   360.0 - gap * 180.0 / PI
 
-func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry): BreakRule =
+func eigenMin(az: openArray[float64]): float64 =
+  ## The smaller eigenvalue of the azimuths' scatter matrix [cos², cos sin; cos sin, sin²] per
+  ## trace: 0.5 for a ring, 0 for traces all on one line through the source.
+  var (cc, ss, cs) = (0.0, 0.0, 0.0)
+  for a in az:
+    cc += cos(a) * cos(a)
+    ss += sin(a) * sin(a)
+    cs += cos(a) * sin(a)
+  let n = float64(az.len)
+  (cc, ss, cs) = (cc / n, ss / n, cs / n)
+  let tr = cc + ss
+  let det = cc * ss - cs * cs
+  (tr - sqrt(max(tr * tr - 4 * det, 0.0))) / 2
+
+func sideMedian(ids: openArray[int]; k, dir: int; usable, res: openArray[float64]):
+    tuple[med: float64; count: int] =
+  ## The median residual of up to `NeighbourCount` usable traces from `ids[k]` in direction
+  ## `dir` (`usable[i]` is 1 for a trace to use).
+  var near: seq[float64]
+  var j = k + dir
+  while j >= 0 and j < ids.len and near.len < NeighbourCount:
+    if usable[ids[j]] > 0: near.add res[ids[j]]
+    j += dir
+  (median(near), near.len)
+
+func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry;
+    given = false): BreakRule =
   ## The rule over one record: per trace, its pick, the pick's confidence and the model's time
-  ## (NaN where it has none). The traces `g.eligible` says are not part of it are not
-  ## counted.
+  ## (NaN where it has none). The traces `g.eligible` says are not part of it are not counted;
+  ## those beyond `g.rangeMax` are counted apart and never judged. `given`: the model is one the
+  ## user gave, which may not match the record (`mismatch`).
   let n = pickMs.len
   result = BreakRule(comparable: newSeq[bool](n), noBreak: newSeq[bool](n),
-    offModel: newSeq[bool](n), offNeighbours: newSeq[bool](n), flagged: newSeq[bool](n),
-    limitMs: NaN, sigmaMs: NaN, stationLimitMs: NaN, stationSigmaMs: NaN, medianMs: NaN,
+    beyond: newSeq[bool](n), farOff: newSeq[bool](n), offModel: newSeq[bool](n),
+    offNeighbours: newSeq[bool](n), flagged: newSeq[bool](n), limitMs: NaN, sigmaMs: NaN,
+    misfitSigmaMs: NaN, stationLimitMs: NaN, stationSigmaMs: NaN, medianMs: NaN,
     constantMs: NaN, leanMs: NaN, earlyTowardDeg: NaN)
   var res = newSeq[float64](n)
   var all: seq[float64]
+  let haveFirst = g.firstMs.len == n and g.firstConf.len == n
   for i in 0 ..< n:
     res[i] = NaN
     let live = (g.eligible.len != n or g.eligible[i]) and not modelMs[i].isNaN
     if live:
-      let d = pickMs[i] - modelMs[i]
-      if not d.isNaN and confidence[i] >= ConfidentPick and abs(d) <= GrossBandMs:
-        res[i] = d
-        result.comparable[i] = true
-        all.add d
-        inc result.nComparable
+      let inRange = g.offsetAbs.len != n or g.rangeMax.isNaN or g.offsetAbs[i].isNaN or
+        g.offsetAbs[i] <= g.rangeMax
+      if not inRange:
+        result.beyond[i] = true
+        inc result.nBeyond
       else:
-        result.noBreak[i] = true
-        inc result.nNoBreak
-  if all.len == 0: return
-  result.medianMs = median(all)
-  result.sigmaMs = robustSigma(all)
-  result.limitMs = max(LimitFloorMs, LimitSigmas * result.sigmaMs)
-  for i in 0 ..< n:
-    if result.comparable[i] and abs(res[i]) > result.limitMs:
-      result.offModel[i] = true
-  # the station rule, along each receiver line
+        inc result.nInRange
+        let d = pickMs[i] - modelMs[i]
+        if not d.isNaN and confidence[i] >= ConfidentPick and abs(d) <= GrossBandMs:
+          res[i] = d
+          result.comparable[i] = true
+          all.add d
+          inc result.nComparable
+        elif haveFirst and g.firstConf[i] >= ConfidentPick and
+            abs(g.firstMs[i] - modelMs[i]) > GrossBandMs:
+          # the guided window holds no break, but the first pass found one far from the model
+          result.farOff[i] = true
+          inc result.nFarOff
+        else:
+          result.noBreak[i] = true
+          inc result.nNoBreak
+  result.misfitSigmaMs = robustSigma(all)
+  result.sigmaMs = if g.ownSigmaMs.isNaN: result.misfitSigmaMs else: g.ownSigmaMs
+  if all.len > 0: result.medianMs = median(all)
+  if not result.sigmaMs.isNaN:
+    result.limitMs = max(LimitFloorMs, LimitSigmas * result.sigmaMs)
+    for i in 0 ..< n:
+      if result.comparable[i] and abs(res[i]) > result.limitMs:
+        result.offModel[i] = true
+  # the station rule, along each receiver line: against the median of up to NeighbourCount
+  # usable neighbours (comparable, not off the model) on each side, the side nearer the trace's
+  # own residual when there are both; a trace with fewer than MinNeighbours is not judged
   var local = newSeq[float64](n)
-  for i in 0 ..< n: local[i] = NaN
+  var usable = newSeq[float64](n)
+  for i in 0 ..< n:
+    local[i] = NaN
+    if result.comparable[i] and not result.offModel[i]: usable[i] = 1
   var lines = g.lines
   if lines.len == 0:
     lines = @[newSeq[int]()]
@@ -366,13 +435,15 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
     for i in line:
       if i in 0 ..< n and result.comparable[i]: ids.add i
     for k in 0 ..< ids.len:
-      var near: seq[float64]
-      for dir in [-1, 1]:
-        for step in 1 .. NeighbourCount:
-          let j = k + dir * step
-          if j >= 0 and j < ids.len: near.add res[ids[j]]
-      if near.len >= MinNeighbours:
-        local[ids[k]] = res[ids[k]] - median(near)
+      let (ml, nl) = sideMedian(ids, k, -1, usable, res)
+      let (mr, nr) = sideMedian(ids, k, 1, usable, res)
+      if nl + nr >= MinNeighbours:
+        let r = res[ids[k]]
+        let near = if nl == 0: mr
+                   elif nr == 0: ml
+                   elif abs(r - ml) <= abs(r - mr): ml
+                   else: mr
+        local[ids[k]] = r - near
         diffs.add local[ids[k]]
   if diffs.len > 0:
     result.stationSigmaMs = robustSigma(diffs)
@@ -381,40 +452,58 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
       if not local[i].isNaN and abs(local[i]) > result.stationLimitMs:
         result.offNeighbours[i] = true
   for i in 0 ..< n:
-    result.flagged[i] = result.offModel[i] or result.offNeighbours[i]
+    result.flagged[i] = result.offModel[i] or result.offNeighbours[i] or result.farOff[i]
     if result.offModel[i]: inc result.nOffModel
     if result.offNeighbours[i]: inc result.nOffNeighbours
     if result.flagged[i]: inc result.nFlagged
+  # a given model that does not match the record
+  if given and result.nInRange > 0:
+    result.mismatch = result.nComparable * 2 < result.nInRange or
+      (not result.limitMs.isNaN and abs(result.medianMs) > result.limitMs) or
+      (not g.ownSigmaMs.isNaN and not result.misfitSigmaMs.isNaN and
+        result.misfitSigmaMs > MismatchSigmas * g.ownSigmaMs)
   # the source
+  if all.len == 0: return
   var rs, az: seq[float64]
   if g.azimuth.len == n:
     for i in 0 ..< n:
       if result.comparable[i] and not g.azimuth[i].isNaN:
         rs.add res[i]
         az.add g.azimuth[i]
-  if rs.len >= LeanMinTraces and coverageDeg(az) >= LeanMinSpanDeg:
+  var bar = max(StatementFloorMs, StatementSigmas * result.sigmaMs)
+  var c0 = median(all) # the one-parameter fit, when the azimuths cannot give a lean
+  if rs.len >= LeanMinTraces and coverageDeg(az) >= LeanMinSpanDeg and
+      eigenMin(az) >= MinLeanEigen:
     let f = azimuthFit(rs, az)
     if f.ok:
-      result.constantMs = f.c0
+      c0 = f.c0
       result.leanMs = sqrt(f.a * f.a + f.b * f.b)
       # the picks are earliest where the lean is most negative
       result.earlyTowardDeg = arctan2(-f.b, -f.a) * 180.0 / PI
-      # the scatter left after the lean and the constant, not before: the lean itself would
-      # otherwise widen the sigma it is measured against
-      var left = newSeq[float64](rs.len)
-      for i in 0 ..< rs.len:
-        left[i] = rs[i] - (f.c0 + f.a * cos(az[i]) + f.b * sin(az[i]))
-      let bar = max(StatementFloorMs, StatementSigmas * robustSigma(left))
-      if abs(f.c0) > bar: result.statement.incl lkConstant
+      if g.ownSigmaMs.isNaN:
+        # the scatter left after the lean and the constant, not before: the lean itself would
+        # otherwise widen the sigma it is measured against
+        var left = newSeq[float64](rs.len)
+        for i in 0 ..< rs.len:
+          left[i] = rs[i] - (f.c0 + f.a * cos(az[i]) + f.b * sin(az[i]))
+        bar = max(StatementFloorMs, StatementSigmas * robustSigma(left))
       if result.leanMs > bar: result.statement.incl lkSide
+  result.constantMs = c0
+  if abs(c0) > bar: result.statement.incl lkConstant
+
+func earlyBearingDeg*(r: BreakRule): float64 =
+  ## The direction the picks are earliest in as a compass bearing, clockwise from north, taking
+  ## x as east and y as north; NaN without a lean.
+  if r.earlyTowardDeg.isNaN: NaN else: (450.0 - r.earlyTowardDeg) mod 360.0
 
 func statementWords*(r: BreakRule): string =
   ## The record's words about the source; "" when the rule finds nothing.
   func ms(x: float64): string = $int(round(x)) & " ms"
   if lkSide in r.statement:
     result = "the picks lean to one side of the source by " & ms(r.leanMs) &
-      " (earliest towards azimuth " & $int(round((r.earlyTowardDeg + 360) mod 360)) &
-      " degrees from the x axis): the source may be placed or named wrongly"
+      " (earliest towards bearing " & $int(round(r.earlyBearingDeg)) &
+      " degrees, clockwise from north if x is east and y north): the source may be placed or " &
+      "named wrongly"
   if lkConstant in r.statement:
     if result.len > 0: result.add "; "
     result.add "every pick is " & (if r.constantMs < 0: "early" else: "late") & " by " &

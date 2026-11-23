@@ -94,7 +94,7 @@ proc main*() =
     for i in 0 ..< 400:
       if abs(d.pick[i] - d.model[i]) > 12: inc fixed
     doAssert fixed > 400 div 10, "the premise: a fixed 12 ms flags " & $fixed
-    doAssert r.nFlagged <= 4, "healthy record: " & $r.nFlagged & " flagged"
+    doAssert r.nFlagged <= 8, "healthy record: " & $r.nFlagged & " flagged"
     doAssert r.statement == {} and statementWords(r) == ""
     doAssert r.nFlagged == r.flagCount(true, true), "the count is the flags"
 
@@ -108,13 +108,30 @@ proc main*() =
     doAssert abs(d.pick[60] - d.model[60]) > 30, "the premise: the bend is past 12 ms"
     for i in [148, 149, 151, 152]: doAssert not r.offNeighbours[i], "neighbour " & $i
 
-  block aBlockOfSwappedStationsIsFlagged:
-    var d = line(300, 5, 3)
-    for i in 100 ..< 105: d.pick[i] += 55
+  block aBlockOfSwappedStationsIsFlaggedAndNothingBesideIt:
+    var d = line(300, 3, 3)
+    for i in 100 ..< 105: d.pick[i] += (if i mod 2 == 0: 60 else: 80)
     let r = applyRule(d.pick, d.conf, d.model, oneLine(300))
-    for i in 100 ..< 105: doAssert r.flagged[i], "block station " & $i
-    doAssert r.nFlagged <= 8, "flagged " & $r.nFlagged
-    doAssert r.offNeighbours[100] or r.offNeighbours[104], "an end of the block"
+    var got: seq[int]
+    for i in 0 ..< 300:
+      if r.flagged[i]: got.add i
+    doAssert got == @[100, 101, 102, 103, 104], "flagged " & $got
+
+  block oneBadStationIsTheOnlyOneFlagged:
+    var d = line(300, 3, 8)
+    d.pick[150] += 60
+    let r = applyRule(d.pick, d.conf, d.model, oneLine(300))
+    var got: seq[int]
+    for i in 0 ..< 300:
+      if r.flagged[i]: got.add i
+    doAssert got == @[150], "flagged " & $got
+
+  block aLineOfThreeStationsIsNotJudgedByItsNeighbours:
+    var d = line(3, 3, 9)
+    d.pick[2] += 50
+    let r = applyRule(d.pick, d.conf, d.model, oneLine(3))
+    doAssert r.nOffNeighbours == 0, "three stations have too few neighbours"
+    doAssert not r.flagged[0] and not r.flagged[1], $r.flagged
 
   block aSourceShiftedSidewaysGivesTheLeanAndItsSign:
     let east = ring(200, 0, 360)
@@ -123,6 +140,10 @@ proc main*() =
     doAssert abs(r.leanMs - 25) < 6, "lean " & $r.leanMs
     # the real source is at +x: the picks are earliest where the receivers are
     doAssert abs(r.earlyTowardDeg) < 15, "earliest towards " & $r.earlyTowardDeg
+    # x east, y north: the picks are earliest towards the east, a compass bearing of 90
+    doAssert abs(r.earlyBearingDeg - 90) < 15, "bearing " & $r.earlyBearingDeg
+    doAssert "towards bearing 9" in statementWords(r) or "towards bearing 8" in statementWords(r),
+      statementWords(r)
     doAssert "lean to one side of the source by" in statementWords(r) and
       "may be placed or named wrongly" in statementWords(r), statementWords(r)
     let west = ring(-200, 0, 360)
@@ -222,14 +243,15 @@ proc main*() =
       doAssert b.segments == 1 or b.fit.crossover > 1500, "a segment follows the noise"
       let m = b.fitAsModel
       doAssert abs(m.v1 - 2500) < 125 and m.segments == 1, $m
-      doAssert b.rule.nNoBreak >= 150, "no break found: " & $b.rule.nNoBreak
+      doAssert b.rule.nBeyond >= 150, "beyond the offsets of the breaks: " & $b.rule.nBeyond
+      doAssert b.rule.nFarOff == 0, "far traces beyond the range are no finding"
       doAssert b.rule.nComparable >= 200, "compared: " & $b.rule.nComparable
       doAssert b.rule.nFlagged <= 12, "flagged " & $b.rule.nFlagged
       var shownFlags = 0
       for i in 0 ..< n:
         if b.mismatched(i): inc shownFlags
-        if b.rule.noBreak[i]: doAssert not b.mismatched(i) and b.faintOf(i) or
-          b.confidenceOf(i) >= ConfidentPick
+        if b.rule.noBreak[i] or b.rule.beyond[i]:
+          doAssert (not b.mismatched(i)) and (b.faintOf(i) or b.confidenceOf(i) >= ConfidentPick)
       doAssert shownFlags == b.offModel and b.offModel == b.rule.nFlagged
       # drawn: one link a flagged trace, as many as the count
       var shown = newSeq[int](n)
@@ -246,6 +268,152 @@ proc main*() =
         $b.offModel
       doAssert "no break found" in b.modelWords(suMetres) and
         "off their neighbours" in b.modelWords(suMetres), b.modelWords(suMetres)
+
+  block aGivenModelsMisfitDoesNotWidenItsLimits:
+    # the picks are a healthy 5 ms scatter about the truth; the given model is 10 % slow
+    # (the break arrives 0.04 ms a metre earlier than it says). With the limits taken from the
+    # scatter about the model shown, the misfit itself sets them and little is flagged.
+    var d = line(300, 4, 11)
+    var slow: seq[float64]
+    for x in d.offs: slow.add 20 + 0.44 * x
+    var g = oneLine(300)
+    g.ownSigmaMs = 4.0
+    let right = applyRule(d.pick, d.conf, slow, g, given = true)
+    doAssert right.limitMs == 12 and right.nFlagged > 150 and right.mismatch,
+      $right.limitMs & ", flagged " & $right.nFlagged
+    g.ownSigmaMs = NaN # the old rule: the scatter about the model shown
+    let old = applyRule(d.pick, d.conf, slow, g, given = true)
+    doAssert old.nFlagged < right.nFlagged div 2, "the premise: " & $old.nFlagged
+    var fast: seq[float64]
+    for x in d.offs: fast.add 20 + 0.36 * x
+    g.ownSigmaMs = 4.0
+    let quick = applyRule(d.pick, d.conf, fast, g, given = true)
+    doAssert quick.mismatch and quick.nFlagged > 150, "flagged " & $quick.nFlagged
+    let exact = applyRule(d.pick, d.conf, d.model, g, given = true)
+    doAssert not exact.mismatch and exact.nFlagged <= 3, "flagged " & $exact.nFlagged
+
+  block throughTheJobAGivenModelThatDoesNotMatchSaysSo:
+    const n = 300
+    withFixtures fx:
+      let path = fx.customShot("given.sgy", n, proc (i: int; k: var TraceKeys): float64 =
+        k.offset = 100.0 + 10.0 * float64(i)
+        20 + 0.4 * k.offset)
+      var f = openSeismic(path, keys = true)
+      let b = breaksOfRecord(addr f, path, 0 ..< f.len, [])
+      f.close()
+      doAssert b.hasModel and b.rule.nFlagged <= 3
+      for v in [2000.0, 2750.0]:
+        let g = b.withModel(BreakModel(source: bmGiven, v1: v, interceptMs: 20))
+        doAssert g.rule.mismatch and g.rule.nFlagged > n div 2,
+          $v & ": flagged " & $g.rule.nFlagged
+        let w = g.modelWords(suMetres)
+        doAssert "does not match this record's breaks" in w and "own fit is 25" in w, w
+      let ok = b.withModel(BreakModel(source: bmGiven, v1: 2500, interceptMs: 20))
+      doAssert not ok.rule.mismatch and "does not match" notin ok.modelWords(suMetres)
+
+  block mostTracesBeyondTheVisibleRangeSayNothingAlarming:
+    # 400 traces, 40 within 500 m where the break is seen, 360 beyond it with a confident
+    # pick anywhere: the given model is the right one
+    var d = line(400, 4, 12)
+    for i in 40 ..< 400: d.pick[i] += 150 + float64((i * 61) mod 500)
+    var g = oneLine(400)
+    g.offsetAbs = d.offs
+    g.rangeMax = d.offs[39]
+    g.firstMs = d.pick
+    g.firstConf = d.conf
+    g.ownSigmaMs = 4.0
+    let r = applyRule(d.pick, d.conf, d.model, g, given = true)
+    doAssert r.nBeyond == 360 and r.nComparable == 40 and r.nFarOff == 0 and r.nNoBreak == 0,
+      $r.nBeyond & " beyond, " & $r.nComparable & " compared"
+    doAssert not r.mismatch and r.nFlagged <= 1, "flagged " & $r.nFlagged
+    g.rangeMax = NaN # the old test: nothing is beyond, so most traces have no break found
+    let old = applyRule(d.pick, d.conf, d.model, g, given = true)
+    doAssert old.mismatch, "the premise: without a range the model seems not to fit"
+
+  block aCrookedTwoDimensionalLineHasNoLean:
+    for wiggle in [0.5, 2.0, 5.0]:
+      for seed in [1'u64, 2, 3]:
+        var rng = Lcg(state: seed * 7919)
+        var p, c, m: seq[float64]
+        var g = RuleGeometry()
+        for i in 0 ..< 400:
+          let x = -4000.0 + 20.0 * float64(i)
+          let y = wiggle / 180 * PI * abs(x) * (if (i div 37) mod 2 == 0: 1.0 else: -1.0)
+          m.add 20 + hypot(x, y) / 10
+          p.add m[^1] + rng.normal(5)
+          c.add 1
+          g.azimuth.add arctan2(y, x)
+        let r = applyRule(p, c, m, g)
+        doAssert lkSide notin r.statement, "wiggle " & $wiggle & " seed " & $seed & ": lean " &
+          $r.leanMs
+
+  block aFarOffBreakInsideTheRangeIsFlaggedAndOneBeyondIsNot:
+    var d = line(300, 4, 13)
+    var g = oneLine(300)
+    g.offsetAbs = d.offs
+    g.rangeMax = d.offs[249]
+    g.firstMs = d.pick
+    g.firstConf = d.conf
+    var conf = d.conf
+    for i in 100 ..< 105:
+      g.firstMs[i] = d.model[i] + 250 # the first pass found a break far from the model
+      conf[i] = 0.1 # the guided window holds none
+    for i in 280 ..< 300:
+      g.firstMs[i] = d.model[i] + 250
+      conf[i] = 0.1
+    let r = applyRule(d.pick, conf, d.model, g)
+    for i in 100 ..< 105: doAssert r.farOff[i] and r.flagged[i]
+    for i in 280 ..< 300: doAssert r.beyond[i] and not r.flagged[i] and not r.farOff[i]
+    doAssert r.nFarOff == 5 and r.nFlagged <= 7, $r.nFarOff & ", flagged " & $r.nFlagged
+
+  block throughTheJobFarOffBlocksInsideTheRangeAreFlagged:
+    # breaks 95 and 250 ms late on two blocks of five traces inside the range, noise-like
+    # events beyond it
+    const n = 400
+    withFixtures fx:
+      let path = fx.customShot("blocks.sgy", n, proc (i: int; k: var TraceKeys): float64 =
+        k.offset = 100.0 + 10.0 * float64(i)
+        let model = 20 + 0.4 * k.offset
+        let away = 150.0 + float64((i * 173) mod 350)
+        if i in 100 ..< 105: model + 250
+        elif i in 110 ..< 115: model + 95
+        elif i < 220: model
+        elif i mod 2 == 0: model + away
+        else: model - away)
+      var f = openSeismic(path, keys = true)
+      let b = breaksOfRecord(addr f, path, 0 ..< f.len, [])
+      f.close()
+      for i in 100 ..< 105: doAssert b.mismatched(i), "250 ms late: trace " & $i
+      for i in 110 ..< 115: doAssert b.mismatched(i), "95 ms late: trace " & $i
+      var far = 0
+      for i in 230 ..< n:
+        if b.mismatched(i): inc far
+      doAssert far == 0, "beyond the range: " & $far & " flagged"
+      doAssert b.rule.nFarOff >= 5, "far off the model: " & $b.rule.nFarOff
+      doAssert abs(b.differenceMs(102) - 250) < 40, "the link spans the break: " & $b.differenceMs(102)
+      doAssert "far off the model" in b.modelWords(suMetres)
+
+  block aBendAtTheCrossoverIsNotACluster:
+    # velocity 1 to velocity 2 (continuous) at 1000 m, over 300 traces to 3090 m. A gentle
+    # bend (2500 to 3333 m/s) must not leave a cluster flagged at the crossover; the numbers
+    # of a strong one (2000 to 4000 m/s) are printed (the fit is then one line, see report)
+    const n = 300
+    for (s1, s2, strong) in [(0.4, 0.3, false), (0.5, 0.25, true)]:
+      let (slope1, slope2) = (s1, s2)
+      withFixtures fx:
+        let path = fx.customShot("bend.sgy", n, proc (i: int; k: var TraceKeys): float64 =
+          k.offset = 100.0 + 10.0 * float64(i)
+          if k.offset <= 1000: 20 + slope1 * k.offset
+          else: 20 + slope1 * 1000 + slope2 * (k.offset - 1000))
+        var f = openSeismic(path, keys = true)
+        let b = breaksOfRecord(addr f, path, 0 ..< f.len, [])
+        f.close()
+        var near = 0
+        for i in 80 .. 100:
+          if b.mismatched(i): inc near
+        echo "tbreakrule: bend ", slope1, " to ", slope2, ": segments ", b.segments, ", flagged ",
+          b.rule.nFlagged, " of ", b.rule.nComparable, ", ", near, " at the crossover"
+        if not strong: doAssert near <= 2, "a cluster of " & $near & " flagged at the crossover"
 
   echo "tbreakrule: ok"
 

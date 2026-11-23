@@ -6,7 +6,7 @@
 ## The bars are marked ("plot.first break model N", "plot.first break pick N",
 ## "plot.first break link N" for the first few in view) for tests.
 
-import std/[algorithm, math, strutils]
+import std/[algorithm, math, strutils, tables]
 import imguin/cimgui
 import ../../core/[breakmodel, firstbreaks, geometry, join, orientation, panels, viewport]
 import ../../view/[areabands, breakbars, plotink, theme]
@@ -66,13 +66,20 @@ proc drawBreakMarks*(g: BreakGeometry; ink: PlotInk; d: DisplaySettings; marks: 
 
 const BreakPopup = "##breakModel"
 
+var typedBoxes: Table[string, float64] ## what a box being edited holds, until it is applied
+
 proc numberBox(id: string; value: float64; format: string; typed: var float64): bool =
-  ## A box for a number that acts as it is typed: true on each change, the value in `typed`.
+  ## A box for a number that is applied when Enter is pressed or the box loses focus, not as
+  ## each key is typed (a given model starts a new picking when it changes): true then, the
+  ## value in `typed`.
   var v = cdouble(value)
   igSetNextItemWidth(round(igCalcTextSize("00000000.0", nil, false, -1).x +
     2 * igGetStyle().FramePadding.x))
-  result = igInputDouble(id.cstring, addr v, 0, 0, format.cstring, 0)
-  typed = float64(v)
+  if igInputDouble(id.cstring, addr v, 0, 0, format.cstring, 0): typedBoxes[id] = float64(v)
+  if igIsItemDeactivatedAfterEdit() and id in typedBoxes:
+    typed = typedBoxes[id]
+    typedBoxes.del id
+    result = true
 
 func medianOffset(b: FirstBreaks): float64 =
   ## The median of the record's offsets: where a second layer is first put; 1000 without any.

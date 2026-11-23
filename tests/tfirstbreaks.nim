@@ -21,7 +21,7 @@ import std/[math, os, strutils]
 import parseSEG
 import processSEG/core/[types, workspace]
 import processSEG/qc/firstbreak
-import viewSEG/core/[displaypresets, firstbreakjobs, firstbreaks]
+import viewSEG/core/[breakmodel, displaypresets, firstbreakjobs, firstbreaks]
 import viewSEG/core/state {.all.}
 import utils/[breakfiles, fixtures, waiting]
 
@@ -146,6 +146,42 @@ proc main*() =
       doAssert st.settle(st.jobs.active.len == 0)
       st.shutdown()
 
+  block aGivenModelIsShownAtOnceAndTheGuidedPickingFollowsInTheBackground:
+    # applying a given model: the rule runs on the picks there at once and the old result stays
+    # (it is not blanked, no new job is the record's key), the picks guided by the model follow
+    # on a job; the record's check keeps its key (no guide), so it does not start again
+    withFixtures fx:
+      let path = fx.shotSegy("guide.sgy", gHeaderOffset)
+      var st = initAppState()
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut and
+        st.jobs.active.len == 0)
+      var d = st.panel(MainPanel).layers[0].display
+      d.firstBreaks = true
+      st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+      doAssert st.settle(st.firstBreaks.len == 1 and st.firstBreaks[0].state == bkDone and
+        st.jobs.active.len == 0)
+      let keyBefore = st.breakKeyFor(0, 0)
+      holdBreaks.close()
+      breaksHeld.close()
+      setJobHook(breaksHook)
+      d.breakModel = BreakModel(source: bmGiven, v1: 2000, interceptMs: 20)
+      st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+      doAssert waitUntil(breaksHeld.isOpen), "the guided picking was not asked for"
+      # held: the old result is still there, done, and shown with the given model already
+      doAssert st.firstBreaks.len == 1 and st.firstBreaks[0].state == bkDone and
+        st.firstBreaks[0].job != NoJob, "the result was blanked, or no job is making new picks"
+      let shown = st.shownBreaks(0)
+      doAssert shown.state == bkDone and shown.isGiven and shown.rule.nFlagged > 0,
+        "the given model was not applied to the picks there"
+      doAssert st.breakKeyFor(0, 0) == keyBefore, "the record's check would start again"
+      doAssert st.firstBreaks[0].key.guide.v1 == 2000
+      holdBreaks.open()
+      setJobHook(nil)
+      doAssert st.settle(st.firstBreaks[0].job == NoJob and st.jobs.active.len == 0)
+      doAssert st.firstBreaks[0].state == bkDone and st.firstBreaks[0].twoPass
+      st.shutdown()
+
   block aNewKeyCancelsTheRunningJobAndItsLateAnswerIsDropped:
     withFixtures fx:
       let path = fx.shotSegy("late.sgy", gHeaderOffset)
@@ -242,12 +278,13 @@ proc main*() =
   block aSmoothDriftIsNotOffItsNeighbours:
     # the residual from the model drifts past 12 ms along the spread (the record's limit may
     # flag its largest), the residual against the neighbours' does not: no trace is off its
-    # neighbours. (Before the rule had two parts, the fit's `suspect` alone was the test and
+    # neighbours (a gentle drift: the neighbours' medians are within the 12 ms floor of it).
+    # (Before the rule had two parts, the fit's `suspect` alone was the test and
     # nothing was flagged.)
     withFixtures fx:
       let path = fx.customShot("drift.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
-        let u = (float64(i) - 24) / 14
-        arrivalMs(k.offset) + (if abs(u) < 1: 80 * (0.5 + 0.5 * cos(PI * u)) else: 0.0))
+        let u = (float64(i) - 24) / 22
+        arrivalMs(k.offset) + (if abs(u) < 1: 40 * (0.5 + 0.5 * cos(PI * u)) else: 0.0))
       let b = breaksOf(path)
       var worst = 0.0
       for t in 0 ..< Traces:

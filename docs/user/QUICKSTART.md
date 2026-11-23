@@ -608,9 +608,9 @@ than the record's own scatter allows (three times the scatter of the picks that 
 model, and never less than 12 ms), and **off its neighbours** when it differs by more than that
 from the traces beside it on its receiver line (this finds one wrong station, even where the
 real first breaks bend away from a straight model). A trace where the picker found no break
-(a faint pick, or one more than 100 ms from the model, as at offsets beyond where any break is
-visible) is **no break found**: it is drawn faint with no line, counted apart and never
-flagged. The record's words add when the picks lean to one side of the source, or are all
+(a faint pick) is **no break found**, and one beyond the offsets where breaks are seen at all
+is never judged: both are drawn faint with no line, counted apart and never flagged. A trace
+whose break was found more than 100 ms from the model is **far off the model** and flagged. The record's words add when the picks lean to one side of the source, or are all
 early or late by the same amount: the source may be placed or named wrongly. The model needs source-receiver offsets: the imported survey's,
 or the file's own coordinates; without them only the picks are drawn and the key at the plot's
 corner says so. Point at the key ("model", "pick") and it says what the model is: a

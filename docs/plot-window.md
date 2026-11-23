@@ -618,24 +618,38 @@ so. With a given model the shown picks come from a pass guided by it instead.
 **Which traces are flagged** (one rule decides, so the key, the marks, the words and the agent
 state agree):
 
-- *Comparable*: a confident pick (0.5 or more) within 100 ms of the model. Any other trace that
-  has a model time is *no break found*: never flagged.
+- *Where a break is expected*: up to the 98th percentile of the offsets of the picks the fit
+  kept. A trace with a model time beyond that is *beyond the offsets where breaks are seen*:
+  counted apart, never judged, never a finding.
+- *Comparable*: within that range, a confident pick (0.5 or more) within 100 ms of the model.
+  Any other trace in range is *no break found* and not flagged, unless the first (unguided) pass
+  found a confident break more than 100 ms from the model while the guided window found none:
+  that is *far off the model*, and flagged, drawn with its link to where the break was found.
 - *Off the model*: the residual (pick less model) of a comparable trace is larger than the
   record's limit, the larger of 12 ms and three times 1.4826 times the median absolute deviation
-  of the comparable residuals.
-- *Off its neighbours*: the residual less the median residual of up to three comparable
-  neighbours on each side along the same receiver line (in receiver point order; file order
-  where lines or points are unknown) is larger than the larger of 12 ms and four times the
-  robust sigma of these differences.
+  of the picks' scatter about the record's own fit, whichever model is shown (a given model that
+  fits badly cannot widen its own limit).
+- *Off its neighbours*: the residual less the median residual of up to three usable neighbours
+  (comparable, not off the model) on each side along the same receiver line (in receiver point
+  order; file order where lines or points are unknown), against the side's median nearer the
+  trace's own residual, is larger than the larger of 12 ms and four times the robust sigma of
+  these differences. A trace with fewer than three usable neighbours is not judged this way.
 - *The record's words*: when the traces' azimuths from the source cover at least 180 degrees,
-  the residuals are fitted as a constant plus a cosine and sine of the azimuth. A lean or a
-  constant beyond the larger of 10 ms and two times the scatter left says "the picks lean to one
-  side of the source by N ms: the source may be placed or named wrongly" or "every pick is
-  early (late) by N ms".
+  and the azimuths are spread well enough round the source (a line through it is not enough),
+  the residuals are fitted as a constant plus a cosine and sine of the azimuth; otherwise only
+  a constant (their median) is looked for. A lean or a constant beyond the larger of 10 ms and
+  two times the scatter says "the picks lean to one side of the source by N ms (earliest
+  towards bearing B degrees, clockwise from north if x is east and y north): the source may be
+  placed or named wrongly" or "every pick is early (late) by N ms".
+- *A given model that does not match*: when its median residual is beyond the limit, the picks'
+  scatter about it is more than twice the picks' own scatter, or fewer than half of the traces
+  in range are comparable, the words say the given model does not match this record's breaks and
+  give the record's own fit (velocity, intercept) beside it.
 
-The key counts the traces flagged (off the model or off its neighbours). A source placed more
-than about 100 ms of travel time wrong leaves no pick comparable with a given model: the words
-then say the model does not fit the record.
+The key counts the traces flagged (off the model, off its neighbours or far off the model).
+The given model's numbers apply at once to the picks already there; the picks guided by it are
+made again in the background and replace them when done. Its boxes take a number when Enter is
+pressed or the box loses focus.
 
 The offsets are the trace keys': the imported survey's when one is joined to the file, else
 the header's, else derived from the file's own coordinates. With neither the picks are drawn

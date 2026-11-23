@@ -82,17 +82,21 @@ proc main*() =
       doAssert "median pick less model -4" in g.givenWords and "flagged (limit 12.0 ms)" in
         g.givenWords, g.givenWords
 
-  block aSourceFarOffIsNoBreakFoundNotEveryTraceOff:
+  block aSourceFarOffIsFarOffTheModelAndTheModelDoesNotMatch:
+    # 400 m too long is 160 ms: beyond the 100 ms band no pick is comparable, but the first pass
+    # found every break, far from the model: each trace is flagged (far off the model)
     withFixtures fx:
       let b = breaksOf(fx.customShot("far.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
         k.offset = offsetOf(i) + 400
         arrivalMs(offsetOf(i))))
       let g = b.withModel(Truth)
-      doAssert g.compared == 0 and g.offModel == 0 and g.rule.nNoBreak == Traces,
-        $g.compared & " compared, " & $g.rule.nNoBreak & " no break found"
-      for i in 0 ..< Traces: doAssert not g.mismatched(i) and g.faintOf(i)
-      doAssert "does not fit this record" in g.givenWords, g.givenWords
-      doAssert "does not fit this record" in g.modelWords(suMetres), g.modelWords(suMetres)
+      doAssert g.compared == 0 and g.rule.nFarOff == Traces and g.offModel == Traces,
+        $g.compared & " compared, " & $g.rule.nFarOff & " far off"
+      for i in 0 ..< Traces: doAssert g.mismatched(i) and not g.faintOf(i)
+      doAssert g.rule.mismatch
+      doAssert "does not match this record's breaks" in g.modelWords(suMetres),
+        g.modelWords(suMetres)
+      doAssert "far off the model" in g.modelWords(suMetres)
 
   block useThisRecordsFit:
     withFixtures fx:

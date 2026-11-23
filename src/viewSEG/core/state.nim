@@ -6529,7 +6529,11 @@ proc breakKeyFor(state: AppState; i, gather: int): BreakKey =
   ## and no component switched off.
   for k in 0 ..< state.panels.len:
     let (on, key, j) = state.breakKeyOf(k)
-    if on and j == i and key.gather == gather: return key
+    if on and j == i and key.gather == gather:
+      # the record's check is not of the given model: it must not start again when that changes
+      result = key
+      result.guide = BreakModel()
+      return
   let s = state.sessions[i]
   (s.id, gather, s.keysRevision, state.editsAt(s.path).listIn(teKilled, s.gathers[gather].traces),
     newSeq[uint8](), BreakModel())
@@ -6577,7 +6581,7 @@ proc followRecordQc(state: var AppState) =
     work.settings = state.settings.noise.bounded
     work.key = state.breakKeyFor(i, g.gather)
     for b in state.breaks:
-      if b.key == work.key:
+      if b.key.sameRecord(work.key):
         if b.state == bkDone: (work.shared, share) = (b, 2)
         elif b.state == bkComputing: share = 1
         else: share = 2 # failed or stopped: a result too, the job does not ask again
@@ -6609,7 +6613,7 @@ proc keepBreaks(state: var AppState; found: sink FirstBreaks) =
   ## for the overlay, which then does not look for them. A result of the same key
   ## that is not done (a job started at the same time) is given up for it.
   for b in state.breaks.mitems:
-    if b.key == found.key:
+    if b.key.sameRecord(found.key):
       if b.state == bkDone: return
       if b.job != NoJob:
         discard state.jobs.cancel(b.job)
@@ -6702,7 +6706,7 @@ proc followFirstBreaks(state: var AppState) =
     var superseded = state.findSession(b.key.file) < 0
     var wantedNow = false
     for (key, _) in wanted:
-      if key == b.key: wantedNow = true
+      if key.sameRecord(b.key): wantedNow = true
       elif key.file == b.key.file and key.gather == b.key.gather: superseded = true
     if superseded or (not wantedNow and b.state == bkComputing):
       if b.job != NoJob:
@@ -6714,30 +6718,44 @@ proc followFirstBreaks(state: var AppState) =
     for j, b in kept: # the oldest that no panel wants
       if drop < 0 and b.state != bkComputing:
         var w = false
-        for (key, _) in wanted: w = w or key == b.key
+        for (key, _) in wanted: w = w or key.sameRecord(b.key)
         if not w: drop = j
     if drop < 0: break
     kept.delete drop
   state.breaks = kept
   for (key, i) in wanted:
     var have = false
-    for b in state.breaks: have = have or b.key == key
+    let s = state.sessions[i]
+    let traces = s.gathers[key.gather].traces
+    for b in state.breaks.mitems:
+      if b.key.sameRecord(key):
+        have = true
+        if b.key.guide != key.guide:
+          # the given model changed: what is there stays drawn (the rule runs on its picks at
+          # once, `shownBreaks`) while the picks guided by the new one are made again
+          if b.job != NoJob:
+            discard state.jobs.cancel(b.job)
+            state.breaksReplaced.add b.job
+          b.key = key
+          if b.state == bkFailed: b.state = bkComputing
+          b.job = state.jobs.submit(JobSpec(title: "Find the first breaks of the record shown",
+            lane: jlBackground, auto: true, reads: @[s.path]), firstBreaksWork(s.filePtr, s.path,
+            key, traces, state.inbox.poster))
     # the record's check is finding them itself (`RecordQc.picks`): its answer is kept
     have = have or (state.recordQc.job != NoJob and state.recordQc.picks and
-      state.recordQc.pickKey == key)
+      state.recordQc.pickKey.sameRecord(key))
     if not have:
-      let s = state.sessions[i]
-      var b = FirstBreaks(key: key, state: bkComputing, first: s.gathers[key.gather].traces.a)
+      var b = FirstBreaks(key: key, state: bkComputing, first: traces.a)
       b.job = state.jobs.submit(JobSpec(title: "Find the first breaks of the record shown",
         lane: jlBackground, auto: true, reads: @[s.path]), firstBreaksWork(s.filePtr, s.path,
-        key, s.gathers[key.gather].traces, state.inbox.poster))
+        key, traces, state.inbox.poster))
       state.breaks.add b
 
 proc takeFirstBreaks(state: var AppState; m: sink Msg) =
   ## A record's first breaks, while its key is still wanted; the answer of a
   ## job given up for a newer key is dropped.
   for b in state.breaks.mitems:
-    if b.job == m.job and b.state == bkComputing:
+    if b.job == m.job and b.job != NoJob:
       let (job, key, rev) = (b.job, b.key, b.revision + 1)
       b = move m.breaks
       (b.job, b.key, b.revision) = (job, key, rev)

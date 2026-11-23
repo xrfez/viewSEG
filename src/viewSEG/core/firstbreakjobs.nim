@@ -288,6 +288,27 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     for i in 0 ..< n:
       result.modelMs[i] = final.fit.modelMs[i]
       if not result.modelMs[i].isNaN: inc result.modelled
+    # where a break is expected (the offsets of the picks that held), and the picks' own
+    # scatter about the record's fit: the rule's limits come from these, whatever model is shown
+    var seen: seq[float64]
+    for i in 0 ..< n:
+      if final.tr.kept[i] and not offs[i].isNaN: seen.add offs[i]
+    seen.sort()
+    if seen.len > 0:
+      result.geometry.rangeMax = seen[min(seen.high, int(ceil(RangePercentile * float64(
+          seen.len))) - 1)]
+    result.geometry.offsetAbs = offs
+    result.geometry.firstMs = newSeq[float64](n)
+    result.geometry.firstConf = newSeq[float64](n)
+    var scatter: seq[float64]
+    for i in 0 ..< n:
+      result.geometry.firstMs[i] = picks[i].timeMs
+      result.geometry.firstConf[i] = picks[i].confidence
+      let d = fitted[i].timeMs - final.fit.modelMs[i]
+      if eligible[i] and not d.isNaN and fitted[i].confidence >= ConfidentPick and
+          abs(d) <= GrossBandMs and offs[i] <= result.geometry.rangeMax:
+        scatter.add d
+    result.geometry.ownSigmaMs = robustSigma(scatter)
     result.setRule()
 
 proc firstBreaksWork*(file: ptr SeismicFile; path: string; key: BreakKey;
