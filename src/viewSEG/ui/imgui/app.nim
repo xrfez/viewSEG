@@ -46,10 +46,11 @@ from ../../core/editmarks import shiftWords
 import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
 import curveplot as curveplotui
-import ../../view/[jobstatus, missingwords]
+import ../../view/[jobstatus, missingwords, outputwords]
 import aboutbox, agentshot, chrome, clearsurvey, dpi, filelist, fonts, frames, genpreview,
   headerswindow, icons, settingswindow, shortcutswindow,
-  jobswindow, joindialog, mapwindow, memorywindow, menus, messages, missingwindow, plotwindows,
+  jobswindow, joindialog, mapwindow, memorywindow, menus, messages, missingwindow, outputwindow,
+  plotwindows,
   projectwindow,
   placement, references,
   recordlist, reopendialog, shell, spectrumwindow, style, tracepanel, windows, comparewindow
@@ -68,6 +69,7 @@ const
   jobsTitle = IconTasks & "  Jobs###jobs"
   recordsTitle = IconRecords & "  Records###records"
   missingTitle = IconTable & "  Missing traces###missing"
+  outputTitle = IconLog & "  Output###output"
   joinTitle = IconSurvey & "  Import survey###join"
   memoryTitle = IconMemory & "  File memory###memory"
   projectTitle = IconProject & "  Project###project"
@@ -107,6 +109,7 @@ type
     files: FileListUi                          ## the file list's window
     records: RecordListUi                      ## the record list's window
     missing: MissingUi                         ## the Missing traces window
+    output: OutputUi                           ## the Output window
     join: JoinUi                               ## the "Import survey" window
     clearSurvey: ClearSurveyUi                 ## Clear survey's confirmation
     memory: MemoryUi                           ## the "File memory" window
@@ -926,6 +929,8 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
       ui.core.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: ev.paths[0])
     of dkExportMissing:
       ui.missing.startExport(ui.core, ev.paths[0])
+    of dkOutputSource: ui.output.setSource(ev.paths[0])
+    of dkOutputDest: ui.output.setDest(ev.paths[0])
   of seCancelled:
     discard # the user closed the dialog: nothing to say
   of seDialogFailed:
@@ -1122,6 +1127,9 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maMissingTraces:
       ui.windows.bringForward(awMissing)
       ui.missing.requestScan()
+    of maOutput:
+      ui.output.open($(ui.core.fileList.folder))
+      ui.windows.bringForward(awOutput)
     of maNewProject:
       ui.project.startNew(projectsHome(), ui.core.fileList.folder)
     of maOpenProject:
@@ -1427,7 +1435,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     templateOnlyOn: ui.core.templateView(ui.core.findPanel(MainPanel)).on,
     templateAvailable: ui.core.templateView(ui.core.findPanel(MainPanel)).available,
     missingReady: missingReady(ui.core.fileList.folder.len > 0, ui.core.relationLayer >= 0),
-    missingWhy: missingWhy(ui.core.fileList.folder.len > 0, ui.core.relationLayer >= 0))
+    missingWhy: missingWhy(ui.core.fileList.folder.len > 0, ui.core.relationLayer >= 0),
+    outputReady: ui.core.fileList.folder.len > 0,
+    outputWhy: if ui.core.fileList.folder.len > 0: "" else: OutputNeedFolder)
   let menu = drawMainMenu(menuInput, ui.marks)
   if menu.newPlot:
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: menu.newPlotView)
@@ -1559,6 +1569,13 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     for c in missing.commands.mitems:
       ui.core.apply move c
     if missing.exportAsked: ui.ask(dkExportMissing, missing.exportPath)
+  if ui.windows.shows(awOutput):
+    ui.windows.beforeDrawing(awOutput)
+    var written = ui.output.drawOutput(outputTitle, ui.core, ui.marks)
+    for c in written.commands.mitems:
+      ui.core.apply move c
+    if written.askSource: ui.ask(dkOutputSource, written.askAt)
+    if written.askDest: ui.ask(dkOutputDest, written.askAt)
   if ui.windows.shows(awHeaders):
     ui.windows.beforeDrawing(awHeaders)
     # The pick is this frame's: the plot is drawn first.

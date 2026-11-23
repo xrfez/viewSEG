@@ -41,22 +41,24 @@ type
     stUnknown = "unknown", stLight = "light", stDark = "dark"
 
   DialogKind* = enum
-    dkOpenFile = "Open file",                 ## one seismic file
-    dkOpenFiles = "Open files",               ## several seismic files
-    dkOpenFolder = "Open folder",             ## one folder
-    dkExportSettings = "Export settings",     ## a NIF file to write (a save dialog)
-    dkImportSettings = "Import settings",     ## a NIF file to read
-    dkExportLayout = "Export layout",         ## a NIF file to write (a save dialog)
-    dkImportLayout = "Import layout",         ## a NIF file to read
-    dkExportLog = "Export messages"           ## a text file to write (a save dialog)
-    dkJoinFiles = "Add survey files"          ## survey files to import: SPS, SEG P1, CSV tables
-    dkExportEdits = "Export trace edits"      ## a NIF or CSV file to write (a save dialog)
-    dkImportEdits = "Import trace edits"      ## a NIF or CSV file of trace edits to read
-    dkOpenProject = "Open project"            ## a project's folder
-    dkProjectPlace = "Place of the project"   ## the folder a new project is made in
-    dkProjectData = "Add a data folder"       ## a data folder of a project
-    dkLocateFolder = "Locate a data folder",  ## where a project's missing data folder is now
-    dkExportMissing = "Export missing traces" ## a CSV file to write (a save dialog)
+    dkOpenFile = "Open file",                  ## one seismic file
+    dkOpenFiles = "Open files",                ## several seismic files
+    dkOpenFolder = "Open folder",              ## one folder
+    dkExportSettings = "Export settings",      ## a NIF file to write (a save dialog)
+    dkImportSettings = "Import settings",      ## a NIF file to read
+    dkExportLayout = "Export layout",          ## a NIF file to write (a save dialog)
+    dkImportLayout = "Import layout",          ## a NIF file to read
+    dkExportLog = "Export messages"            ## a text file to write (a save dialog)
+    dkJoinFiles = "Add survey files"           ## survey files to import: SPS, SEG P1, CSV tables
+    dkExportEdits = "Export trace edits"       ## a NIF or CSV file to write (a save dialog)
+    dkImportEdits = "Import trace edits"       ## a NIF or CSV file of trace edits to read
+    dkOpenProject = "Open project"             ## a project's folder
+    dkProjectPlace = "Place of the project"    ## the folder a new project is made in
+    dkProjectData = "Add a data folder"        ## a data folder of a project
+    dkLocateFolder = "Locate a data folder",   ## where a project's missing data folder is now
+    dkExportMissing = "Export missing traces", ## a CSV file to write (a save dialog)
+    dkOutputSource = "Output source",          ## the folder whose seismic files are written
+    dkOutputDest = "Output destination"        ## the folder those files are written into
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
@@ -289,7 +291,8 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
   of dkOpenFile, dkOpenFiles:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr seismicFilters[0],
       seismicFilters.len.cint, at, kind == dkOpenFiles)
-  of dkOpenFolder, dkOpenProject, dkProjectPlace, dkProjectData, dkLocateFolder:
+  of dkOpenFolder, dkOpenProject, dkProjectPlace, dkProjectData, dkLocateFolder,
+      dkOutputSource, dkOutputDest:
     SDL_ShowOpenFolderDialog(onDialogResult, userdata, parent, at, false)
   of dkImportSettings, dkImportLayout:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr nifFilters[0],

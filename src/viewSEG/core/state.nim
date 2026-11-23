@@ -2280,7 +2280,7 @@ func traceEdits*(state: AppState; trace: int): set[TraceEdit] =
   if i >= 0 and state.keyOf(state.sessions[i].path) in state.edits:
     result = state.edits[state.keyOf(state.sessions[i].path)].editsOf(trace - state.sessions[i].base)
 
-func editsAt(state: AppState; path: string): lent FileEdits =
+func editsAt*(state: AppState; path: string): lent FileEdits =
   ## The edits of the file at `path`; none when it has none. Not a copy
   ## (`getOrDefault` copies the lists and the whole history).
   if state.keyOf(path) in state.edits:

@@ -25,7 +25,7 @@ import std/os
 import imguin/cimgui
 import ../../core/[analysis, layouts]
 import ../../core/shortcuts as shortcutTable
-import ../../view/[missingwords, theme]
+import ../../view/[missingwords, outputwords, theme]
 import clearsurvey, icons, marks, plotviews, thememenu, windows
 
 type
@@ -63,7 +63,8 @@ type
     maCompare = "Compare two traces",
     maFirstBreaks = "First-break overlay",
     maTemplateOnly = "Only traces in the template",
-    maMissingTraces = "Missing traces..."
+    maMissingTraces = "Missing traces...",
+    maOutput = "Output..."
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
@@ -114,6 +115,8 @@ type
     templateAvailable*: bool ## a relation file is there for that (the item is enabled)
     missingReady*: bool ## Reports > Missing traces can run
     missingWhy*: string ## why it cannot; "" when it can
+    outputReady*: bool ## File > Output... can run
+    outputWhy*: string ## why it cannot; "" when it can
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -161,7 +164,7 @@ const
     maShowMessages: 0,
     maShortcuts: ImGui_Key_F1.cint, maAbout: 0, maGenerateReference: 0,
     maReferenceArchive: 0, maCompare: 0, maFirstBreaks: 0, maTemplateOnly: 0,
-    maMissingTraces: 0]
+    maMissingTraces: 0, maOutput: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
@@ -181,10 +184,11 @@ const
     maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog,
     maShortcuts: IconList, maAbout: IconInfo, maGenerateReference: IconVibrator,
     maReferenceArchive: IconReference, maCompare: IconPulse, maFirstBreaks: IconTarget,
-    maTemplateOnly: IconTable, maMissingTraces: IconTable]
+    maTemplateOnly: IconTable, maMissingTraces: IconTable, maOutput: IconExport]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
-    awMessages: IconLog, awSpectrum: IconPulse, awAux: IconPlot, awMissing: IconTable]
+    awMessages: IconLog, awSpectrum: IconPulse, awAux: IconPlot, awMissing: IconTable,
+    awOutput: IconLog]
 
 const
   FollowWords* = "Follow the latest file"
@@ -476,8 +480,8 @@ proc drawWindowTicks(input: MenuInput; res: var MenuResult) =
 proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
   ## Window: putting the windows right, the layouts, then the tray.
   item(maResetWindows, res)
-  tip("The windows as at a first start, docked in the main window (one closed until " &
-    "asked stays closed). The main window is brought onto a screen when it is off every " &
+  tip("The windows as at a first start, docked in the main window (windows closed until " &
+    "asked stay closed). The main window is brought onto a screen when it is off every " &
     "one. When the menus cannot be reached, start viewSEG with --reset-windows")
   item(maBringWindows, res)
   tip("The windows dragged out of the main window, wherever they are (on another screen, " &
@@ -621,7 +625,13 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       tip("While a file is shown, open the next file of the list in the background " &
         "(its index and its first view), so that the next step does not wait for a slow " &
         "or network drive")
-      # Future: "Save as SEG-Y / SEG-D..." and a "Tape" submenu go here, before Quit.
+      igBeginDisabled(not input.outputReady)
+      item(maOutput, result)
+      igEndDisabled()
+      tip(if input.outputReady: OutputTip else: input.outputWhy)
+      if not input.outputReady and marked != nil:
+        marked[].mark("menu.Output.disabled")
+      # A Tape submenu goes here, before Quit.
       igSeparator()
       item(maQuit, result)
       igEndMenu()
