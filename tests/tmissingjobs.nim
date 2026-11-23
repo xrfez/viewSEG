@@ -188,12 +188,12 @@ proc main*() =
     doAssert abs(t.percentMissing - 100.0 * 2.0 / 8.0) < 1e-9, $t.percentMissing
     let rows = got.sink.result.report.records
     doAssert rows.len == 3
-    doAssert rows[0].file == "sub/one.sgd" or rows[1].file == "sub/one.sgd" or
-      rows[2].file == "sub/one.sgd"
+    doAssert rows[0].file == ("sub" / "one.sgd") or rows[1].file == ("sub" / "one.sgd") or
+      rows[2].file == ("sub" / "one.sgd")
     var sawOne = false
     for r in rows:
-      doAssert r.file in ["sub/one.sgd", "two.sgd"], r.file
-      if r.file == "sub/one.sgd":
+      doAssert r.file in [("sub" / "one.sgd"), "two.sgd"], r.file
+      if r.file == ("sub" / "one.sgd"):
         sawOne = true
         doAssert r.record == 1 and r.missing == 2 and r.present == 2 and r.alsoIn == 1, $r
     doAssert sawOne
