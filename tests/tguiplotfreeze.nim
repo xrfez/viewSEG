@@ -15,11 +15,11 @@
 ##
 ## Needs a display: run under the tester (it gives each test its own).
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/headerviews
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
 
@@ -65,10 +65,13 @@ proc main*() =
         pointAt = r.centre
         f.moveMouse(pointAt), after(3))
     proc click(mark: string) =
+      ## Press on one frame, release on a later one: both in one frame can
+      ## cancel, and the click never lands.
       to(mark)
       step("click " & mark, proc (f: FrameInfo) =
-        f.pressMouse(pointAt, true, 1)
-        f.pressMouse(pointAt, false, 1), after(3))
+        f.pressMouse(pointAt, true, 1), proc (f: FrameInfo): bool =
+        f.pressMouse(pointAt, false, 1)
+        true)
 
     step("shots.sgy", noop, proc (f: FrameInfo): bool =
       f.answered and f.core.sessions.len == 1 and f.core.sessions[0].name == "shots.sgy")
@@ -214,6 +217,7 @@ proc main*() =
     var at = 0
     var started = false
     var wait = 0
+    var since = getMonoTime()
     var failed = ""
     proc onFrame(f: FrameInfo) =
       if at >= steps.len or failed.len > 0:
@@ -222,13 +226,13 @@ proc main*() =
       if not started:
         steps[at].act(f)
         started = true
-        wait = 0
+        (wait, since) = (0, getMonoTime())
       else:
         inc wait
         if wait >= 2 and steps[at].done(f):
           inc at
           started = false
-        elif wait > 900:
+        elif overdue(wait, 900, since):
           failed = steps[at].name & " did not happen"
           f.stop()
     let code = run(RunOptions(openPaths: @[land], windowSize: (1600, 1000), theme: forceDark,
