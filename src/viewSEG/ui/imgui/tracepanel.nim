@@ -1449,6 +1449,17 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
               plotInk(t, d), t, icon, marks)
             if chosen.changed:
               res.commands.add Command(kind: ckDisplay, panel: p.id, display: chosen.display)
+        if caps.filters:
+          gap()
+          let hasRef = st.chosenReference.len > 0
+          let corrTip = if not hasRef: NoReferenceChosen
+                        elif st.correlateOn: "Correlate with the selected reference (on)"
+                        else: "Correlate with the selected reference"
+          if iconButton(IconCorrelation, "Correlate", "C", icon, t, marks,
+              selected = st.correlateOn, tipText = corrTip, enabled = hasRef,
+              markName = "plot.correlate"):
+            res.commands.add Command(kind: ckCorrelate, panel: p.id,
+              correlate: not st.correlateOn)
     of sgGain:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         drawGainControls(p, tp.gainBox, t, marks, res.commands, res.notes,
@@ -1466,16 +1477,6 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
           named.add shifted
         drawFilterControls(p, hasAux(st, p), st.filterReach(p), t, marks, res.commands,
           named)
-        igSameLine(0, 2)
-        let hasRef = st.chosenReference.len > 0
-        let corrTip = if not hasRef: NoReferenceChosen
-                      elif st.correlateOn: "Correlate with the selected reference (on)"
-                      else: "Correlate with the selected reference"
-        if iconButton(IconCorrelation, "Correlate", "C", icon, t, marks,
-            selected = st.correlateOn, tipText = corrTip, enabled = hasRef,
-            markName = "plot.correlate"):
-          res.commands.add Command(kind: ckCorrelate, panel: p.id,
-            correlate: not st.correlateOn)
     of sgSort:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         tp.sortShown = sortLabel(p.layers[0].order, st.settings.sortPresets)
