@@ -201,8 +201,10 @@ proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
     view.strip(log, t, marks, result)
     let before = view.made
     view.update(log, result.view.hidden)
-    # The end is shown when the button was just switched on, or a toggle or Clear
-    # changed which lines there are; new lines follow only a view at the end.
+    # The end is shown when auto-scroll was just switched on, or a toggle or Clear
+    # changed which lines there are; new lines follow only a view already at the
+    # end. A line the clipper skips is not drawn, so it cannot be marked or
+    # scrolled to: the last line is included before the clipper steps.
     let jump = result.view.autoScroll and (not view.followed or
       view.made.hidden != before.hidden or view.made.cleared != before.cleared)
     if igBeginChild_Str("##lines", ImVec2_c(x: 0, y: 0), 0,
@@ -213,8 +215,12 @@ proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
         igTextDisabled("%s", note.cstring)
       let following = igGetScrollY() >= igGetScrollMaxY() - 1
       let first = log.nextSerial - log.len
+      let follow = result.view.autoScroll and (jump or
+        (log.nextSerial != view.seen and following))
       let clipper = ImGuiListClipper_ImGuiListClipper()
       ImGuiListClipper_Begin(clipper, view.rows.len.cint, -1)
+      if follow and view.rows.len > 0:
+        ImGuiListClipper_IncludeItemByIndex(clipper, cint(view.rows.high))
       while ImGuiListClipper_Step(clipper):
         for r in clipper.DisplayStart ..< clipper.DisplayEnd:
           let e = log[view.rows[r] - first]
@@ -248,7 +254,7 @@ proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
           igPopID()
       ImGuiListClipper_End(clipper)
       ImGuiListClipper_destroy(clipper)
-      if result.view.autoScroll and (jump or (log.nextSerial != view.seen and following)):
+      if follow:
         igSetScrollHereY(1)
       view.followed = result.view.autoScroll
       view.seen = log.nextSerial
