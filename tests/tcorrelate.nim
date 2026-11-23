@@ -11,9 +11,11 @@
 ## correlation's hold not kept at the quit, AddressSanitizer reports a
 ## heap-use-after-free in the job's write of the result after shutdown.
 ## With an import aimed at the derived key, "the imported kill is not on
-## the raw file".
+## the raw file". With a sweep stored from the correlated view, "the stored
+## sweep is not the raw trace".
 
 import std/[os, sequtils, strutils, times]
+import parseSEG
 import viewSEG/core/[jobs, references, state]
 import utils/[fixtures, steps, waiting]
 
@@ -57,6 +59,54 @@ proc importWhileCorrelated(raw, list: string) =
   let k = st.findPanel(MainPanel)
   doAssert st.settle(st.editsOf(k).has(teKilled, 0)),
     "the imported kill is not on the raw file"
+  discard st.shutdown()
+
+proc traceSamples(path: string; trace: int): seq[float32] =
+  var f = openSeismic(path, keys = true)
+  let x = f.readTraces(trace .. trace)
+  f.close()
+  result.setLen x.shape[1]
+  for j in 0 ..< result.len: result[j] = x[0, j]
+
+proc storeWhileCorrelated(raw: string) =
+  ## Stores a sweep from the trace the correlated view shows. It must be the
+  ## raw recorded samples, not the correlated ones.
+  var st = initAppState(watchEvery = initDuration(hours = 1))
+  var settings = st.settings
+  settings.files.prepareNext = false
+  st.apply Command(kind: ckSettings, settings: settings)
+  st.rememberFilesIn(raw.parentDir / "store-config")
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: raw)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  doAssert st.settle(st.referencesLoaded), "the archive was not read"
+  let trace = st.sessions[0].base
+  st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "short",
+    trace: trace, fromMs: 0, toMs: 100))
+  doAssert st.settle(st.references.entries.anyIt(it.name == "short")),
+    "the sweep was not stored"
+  var id = ""
+  for e in st.references.entries:
+    if e.name == "short": id = e.id
+  st.apply Command(kind: ckSelectReference, refId: id)
+  st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: true)
+  doAssert st.settle(st.sessions.anyIt(it.derived) and
+    st.shownFile(st.findPanel(MainPanel)) >= 0 and
+    st.sessions[st.shownFile(st.findPanel(MainPanel))].derived and
+    st.jobs.active.len == 0), "the correlated record was not shown"
+  let shown = st.shownFile(st.findPanel(MainPanel))
+  let shownTrace = st.sessions[shown].base
+  st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "fromview",
+    trace: shownTrace, fromMs: 0, toMs: -1))
+  doAssert st.settle(st.references.entries.anyIt(it.name == "fromview")),
+    "the sweep from the correlated view was not stored: " &
+    (if st.log.len > 0: st.log[st.log.len - 1].text else: "")
+  var file = ""
+  for e in st.references.entries:
+    if e.name == "fromview": file = e.file
+  let got = traceSamples(st.referencesHome / file, 0)
+  let rawSamples = traceSamples(raw, 0)
+  doAssert got == rawSamples, "the stored sweep is not the raw trace (" & $got.len &
+    " samples, the raw trace has " & $rawSamples.len & ")"
   discard st.shutdown()
 
 proc quitWhileCorrelating(raw: string): JobId =
@@ -151,6 +201,7 @@ proc main*() =
     doAssert rawShown >= 0 and not st.sessions[rawShown].derived, "the raw record was not shown"
     discard st.shutdown()
 
+    storeWhileCorrelated(raw)
     installSteps()
     let list = fx.dir / "kills.csv"
     writeFile(list, CsvHeader & "\n1,,,killed," & raw.extractFilename & "\n")

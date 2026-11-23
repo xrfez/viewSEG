@@ -8762,8 +8762,14 @@ proc storeReference(state: var AppState; cmd: Command) =
   if i < 0:
     state.ignore(cmd, "the trace is in no open file")
     return
-  let s = state.sessions[i]
+  var s = state.sessions[i]
   let local = cmd.refStore.trace - s.base
+  if s.derived:
+    let oi = state.originIndex(s.diskPath)
+    if oi < 0 or local notin 0 ..< state.sessions[oi].len:
+      state.ignore(cmd, "the raw record is not open")
+      return
+    s = state.sessions[oi]
   let edits = state.editsAt(s.path)
   if cmd.refStore.phaseDeg != 0 and cmd.refStore.phaseDeg != 180:
     state.ignore(cmd, "the phase of a recorded trace is 0 or 180 degrees")
