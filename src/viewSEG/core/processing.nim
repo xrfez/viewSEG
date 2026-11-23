@@ -33,6 +33,7 @@
 import std/[math, strutils]
 import parseSEG
 import processSEG/pipeline
+import processSEG/core/timeshift
 import processSEG/filter/design
 import ./viewport
 
@@ -313,6 +314,23 @@ func changesSamples*(f: OwnFilter): bool =
   ## Whether `f` changes a trace's samples: a frequency filter, or "instead",
   ## which leaves the plot's filters off that trace even with none of its own.
   f.spec.hasFilters or f.place == fpInstead
+
+func snappedShiftMs*(ms, dtMs: float64): float64 =
+  ## The milliseconds a shift of `ms` applies at interval `dtMs`: a whole
+  ## number of samples (`wholeSamples`, ties away from zero). 0 when `dtMs`
+  ## is not a usable interval, or when `ms` snaps to no sample.
+  if not (dtMs > 0): return 0.0
+  float64(wholeSamples(ms, dtMs)) * dtMs
+
+proc applyStoredShift*(samples: var openArray[float32]; shiftMs, dtMs: float64) =
+  ## Moves `samples` by the stored shift. Positive `shiftMs` is later (the
+  ## library's positive shift is earlier, so the count is negated). Nothing
+  ## when there is no whole sample to move, or no interval. Allocates nothing
+  ## and does not copy the row.
+  if samples.len == 0 or shiftMs == 0.0 or not (dtMs > 0.0): return
+  let n = wholeSamples(shiftMs, dtMs)
+  if n == 0: return
+  timeShift(samples, -n)
 
 proc ownPipeline*(f: OwnFilter; dtMs: float64): Pipeline =
   ## The operations `f` runs on a trace sampled every `dtMs` ms: `spec`'s

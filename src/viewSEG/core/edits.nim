@@ -19,6 +19,12 @@
 ## - **Own filter:** a trace's frequency filters (`OwnFilter`), run after
 ##   the plot's or instead of them. A killed trace keeps its filter; the
 ##   kill wins on screen (the row stays blank).
+## - **Time shift:** a whole number of samples (`ShiftEntry`), given in
+##   milliseconds and snapped to the sample interval. Positive is later.
+##   The trace keeps its length; samples past an end are lost and that end
+##   is zeros. Applied before the plot's filters and the own filter, on
+##   seismic traces only (a stored shift on an auxiliary trace is not
+##   applied). A killed trace keeps its shift; the kill wins on screen.
 ##
 ## **History.** Every change is a step (`EditStep`): what it gave and what it
 ## took away, per list. `undo` takes the newest step back and keeps it for
@@ -76,6 +82,7 @@ type
     skImport = "import"      ## edits taken in from a file
     skSetAside = "set aside" ## every edit taken away: the file changed on disk
     skFilter = "filter"      ## a trace's own filter set or removed
+    skTimeShift = "shift"    ## a trace's time shift set or removed
     skDrop = "drop"          ## edits taken off the traces named, as one step
 
   ListsChange = object
@@ -84,6 +91,7 @@ type
     added, removed: array[TraceEdit, seq[int]]
     allChanged, allBefore, allAfter: bool
     filterOn, filterOff: seq[FilterSnap]
+    shiftOn, shiftOff: seq[ShiftSnap]
 
   EditStep* = object
     ## One change of a file's edits: what it gave and took away.
@@ -99,6 +107,9 @@ type
     filterOn*, filterOff*: seq[FilterSnap]
       ## skFilter, and a clear or an import that moved filters: each changed
       ## trace's filter after the step, and before it
+    shiftOn*, shiftOff*: seq[ShiftSnap]
+      ## skTimeShift, and a clear or an import that moved shifts: each changed
+      ## trace's shift after the step, and before it
     keptOwn: bool ## what is kept changes by `keptChange`
     keptChange: ListsChange ## what it does to what is kept, with `keptOwn`
 
@@ -108,12 +119,25 @@ type
     had*: bool         ## it had a filter
     filter*: OwnFilter ## that filter, when `had`
 
+  ShiftEntry* = object
+    ## A trace's time shift: the milliseconds actually applied (a whole
+    ## number of samples at the interval it was snapped to). Positive is later.
+    trace*: int
+    ms*: float64
+
+  ShiftSnap* = object
+    ## A trace's time shift at one side of a step.
+    trace*: int
+    had*: bool   ## it had a shift
+    ms*: float64 ## that shift, when `had`
+
   EditLists* = object
-    ## A file's edits: each list ascending, each trace once. `filters` is
-    ## ascending by trace, each trace once.
+    ## A file's edits: each list ascending, each trace once. `filters` and
+    ## `shifts` are ascending by trace, each trace once.
     lists*: array[TraceEdit, seq[int]]
     allReversed*: bool
     filters*: seq[FilterEntry]
+    shifts*: seq[ShiftEntry]
 
   FileEdits* = object
     ## The edits of one file's traces, by their index in the file: those
@@ -150,13 +174,13 @@ func span(list: openArray[int]; traces: Slice[int]): Slice[int] =
 func isEmpty*(l: EditLists): bool =
   ## Whether `l` holds no edit.
   not l.allReversed and l.lists[teReversed].len == 0 and l.lists[teKilled].len == 0 and
-    l.lists[teExcluded].len == 0 and l.filters.len == 0
+    l.lists[teExcluded].len == 0 and l.filters.len == 0 and l.shifts.len == 0
 
 func count*(l: EditLists): int =
-  ## How many edits `l` holds: traces per list, a filter as one, and all
-  ## reversed as one.
+  ## How many edits `l` holds: traces per list, a filter as one, a shift as
+  ## one, and all reversed as one.
   l.lists[teReversed].len + l.lists[teKilled].len + l.lists[teExcluded].len + l.filters.len +
-    ord(l.allReversed)
+    l.shifts.len + ord(l.allReversed)
 
 func placeOf(filters: openArray[FilterEntry]; trace: int): tuple[at: int; found: bool] =
   ## Where `trace` sits in `filters` (ascending), and whether it is there.
@@ -214,6 +238,68 @@ func anyFilter*(l: EditLists; traces: Slice[int]): bool =
   let (a, _) = placeOf(l.filters, traces.a)
   a < l.filters.len and l.filters[a].trace <= traces.b
 
+func placeShift(shifts: openArray[ShiftEntry]; trace: int): tuple[at: int; found: bool] =
+  ## Where `trace` sits in `shifts` (ascending), and whether it is there.
+  var lo = 0
+  var hi = shifts.len
+  while lo < hi:
+    let mid = (lo + hi) shr 1
+    if shifts[mid].trace < trace: lo = mid + 1
+    else: hi = mid
+  (lo, lo < shifts.len and shifts[lo].trace == trace)
+
+func shiftAt*(shifts: openArray[ShiftEntry]; trace: int): float64 =
+  ## The stored shift of `trace`, in milliseconds; 0 when it has none.
+  let (at, found) = placeShift(shifts, trace)
+  if found: shifts[at].ms else: 0.0
+
+func hasShift*(l: EditLists; trace: int): bool {.inline.} =
+  ## Whether trace `trace` carries a time shift.
+  placeShift(l.shifts, trace).found
+
+func shiftOf*(l: EditLists; trace: int): float64 =
+  ## The shift trace `trace` carries, in milliseconds; 0 when it has none.
+  shiftAt(l.shifts, trace)
+
+func snapShift(l: EditLists; trace: int): ShiftSnap =
+  ## Trace `trace`'s shift as a step would put it back.
+  let (at, found) = placeShift(l.shifts, trace)
+  if found: ShiftSnap(trace: trace, had: true, ms: l.shifts[at].ms)
+  else: ShiftSnap(trace: trace, had: false)
+
+func snapsAllShifts(l: EditLists; had: bool): seq[ShiftSnap] =
+  ## Every shift of `l`, as snaps with `had` (false: each removed).
+  result = newSeqOfCap[ShiftSnap](l.shifts.len)
+  for e in l.shifts:
+    result.add ShiftSnap(trace: e.trace, had: had, ms: e.ms)
+
+proc assignShift(l: var EditLists; trace: int; had: bool; ms: float64) =
+  ## Puts a shift of `ms` on trace `trace` (`had`), or takes its shift away.
+  let (at, found) = placeShift(l.shifts, trace)
+  if had:
+    if found: l.shifts[at].ms = ms
+    else: l.shifts.insert(ShiftEntry(trace: trace, ms: ms), at)
+  elif found:
+    l.shifts.delete(at)
+
+proc applyShiftSnaps(l: var EditLists; snaps: openArray[ShiftSnap]) =
+  for s in snaps: l.assignShift(s.trace, s.had, s.ms)
+
+func shiftsIn*(l: EditLists; traces: Slice[int]): seq[ShiftEntry] =
+  ## The shifts of traces in `traces`, ascending. Empty, and no allocation,
+  ## when none of them is shifted.
+  let (a, _) = placeShift(l.shifts, traces.a)
+  if a >= l.shifts.len or l.shifts[a].trace > traces.b: return
+  result = newSeqOfCap[ShiftEntry](l.shifts.len - a)
+  for i in a ..< l.shifts.len:
+    if l.shifts[i].trace > traces.b: break
+    result.add l.shifts[i]
+
+func anyShift*(l: EditLists; traces: Slice[int]): bool =
+  ## Whether a trace in `traces` carries a time shift.
+  let (a, _) = placeShift(l.shifts, traces.a)
+  a < l.shifts.len and l.shifts[a].trace <= traces.b
+
 func sortedTraces*(traces: openArray[int]): seq[int] =
   ## `traces` ascending, each once. Raises `ValueError` for a negative one.
   var ascending = traces.len == 0 or traces[0] >= 0
@@ -270,12 +356,16 @@ func keptOf*(e: FileEdits; trace: int): set[TraceEdit] =
 
 func minus*(a, b: EditLists): EditLists =
   ## The edits of `a` that `b` does not have (all reversed included). A
-  ## filter `b` holds with a different spec is one `b` does not have.
+  ## filter `b` holds with a different spec is one `b` does not have. A
+  ## shift `b` holds of another size is one `b` does not have.
   for edit in TraceEdit: result.lists[edit] = difference(a.lists[edit], b.lists[edit])
   result.allReversed = a.allReversed and not b.allReversed
   for e in a.filters:
     let (at, found) = placeOf(b.filters, e.trace)
     if not found or b.filters[at].filter != e.filter: result.filters.add e
+  for e in a.shifts:
+    let (at, found) = placeShift(b.shifts, e.trace)
+    if not found or b.shifts[at].ms != e.ms: result.shifts.add e
 
 func shown*(e: FileEdits): lent EditLists {.inline.} = e.shown
   ## The edits as shown.
@@ -315,13 +405,13 @@ func anyIn*(e: FileEdits; traces: Slice[int]): bool =
   ## Whether a trace in `traces` has an edit (as shown).
   for edit in TraceEdit:
     if span(e.shown.lists[edit], traces).len > 0: return true
-  e.shown.anyFilter(traces)
+  e.shown.anyFilter(traces) or e.shown.anyShift(traces)
 
 func anyKeptIn*(e: FileEdits; traces: Slice[int]): bool =
   ## Whether a trace in `traces` has an edit as kept.
   for edit in TraceEdit:
     if span(e.kept.lists[edit], traces).len > 0: return true
-  e.kept.anyFilter(traces)
+  e.kept.anyFilter(traces) or e.kept.anyShift(traces)
 
 func hasFilter*(e: FileEdits; trace: int): bool {.inline.} =
   ## Whether trace `trace` carries a filter (as shown).
@@ -340,6 +430,22 @@ func keptFilter*(e: FileEdits; trace: int): tuple[has: bool; filter: OwnFilter] 
 func filtersIn*(e: FileEdits; traces: Slice[int]): seq[FilterEntry] {.inline.} =
   ## The filters of traces in `traces` (as shown), ascending.
   e.shown.filtersIn(traces)
+
+func hasShift*(e: FileEdits; trace: int): bool {.inline.} =
+  ## Whether trace `trace` carries a time shift (as shown).
+  e.shown.hasShift(trace)
+
+func shiftOf*(e: FileEdits; trace: int): float64 {.inline.} =
+  ## The shift trace `trace` carries (as shown), in milliseconds; 0 for none.
+  e.shown.shiftOf(trace)
+
+func keptShift*(e: FileEdits; trace: int): float64 {.inline.} =
+  ## The shift trace `trace` carries as kept, in milliseconds; 0 for none.
+  e.kept.shiftOf(trace)
+
+func shiftsIn*(e: FileEdits; traces: Slice[int]): seq[ShiftEntry] {.inline.} =
+  ## The shifts of traces in `traces` (as shown), ascending.
+  e.shown.shiftsIn(traces)
 
 func plotFiltersIn*(e: FileEdits; traces: Slice[int]): seq[FilterEntry] =
   ## The own filters of traces in `traces` (as shown) as the readers of the
@@ -371,6 +477,11 @@ func ownNeedsWhole*(e: FileEdits; traces: Slice[int]): bool =
     if f.filter.spec.hasFilters: return true
   false
 
+func shiftNeedsWhole*(e: FileEdits; traces: Slice[int]): bool =
+  ## Whether a trace in `traces` carries a time shift: the reader then keeps
+  ## whole traces, so samples outside the window are not lost before the move.
+  e.shown.anyShift(traces)
+
 proc turn(l: var EditLists; added, removed: array[TraceEdit, seq[int]];
     allChanged, allTo: bool) =
   ## Takes `removed` away from `l` and gives it `added`, and all reversed
@@ -384,9 +495,11 @@ proc turnShown(l: var EditLists; s: EditStep; back: bool) =
   if back:
     l.turn(s.removed, s.added, s.allChanged, s.allBefore)
     l.applySnaps(s.filterOff)
+    l.applyShiftSnaps(s.shiftOff)
   else:
     l.turn(s.added, s.removed, s.allChanged, s.allAfter)
     l.applySnaps(s.filterOn)
+    l.applyShiftSnaps(s.shiftOn)
 
 proc turnKept(l: var EditLists; s: EditStep; back: bool) =
   if not s.keptOwn: l.turnShown(s, back)
@@ -395,24 +508,28 @@ proc turnKept(l: var EditLists; s: EditStep; back: bool) =
     if back:
       l.turn(c.removed, c.added, c.allChanged, c.allBefore)
       l.applySnaps(c.filterOff)
+      l.applyShiftSnaps(c.shiftOff)
     else:
       l.turn(c.added, c.removed, c.allChanged, c.allAfter)
       l.applySnaps(c.filterOn)
+      l.applyShiftSnaps(c.shiftOn)
 
 func size(s: EditStep): int =
   ## The traces `s` names, all told.
-  result = s.traces.len + s.filterOn.len + s.filterOff.len
+  result = s.traces.len + s.filterOn.len + s.filterOff.len + s.shiftOn.len + s.shiftOff.len
   for edit in TraceEdit:
     result += s.added[edit].len + s.removed[edit].len +
       s.keptChange.added[edit].len + s.keptChange.removed[edit].len
   result += s.keptChange.filterOn.len + s.keptChange.filterOff.len
+  result += s.keptChange.shiftOn.len + s.keptChange.shiftOff.len
 
 proc keptChanges(s: var EditStep; c: sink ListsChange) =
   ## `c` is what `s` does to what is kept; noted apart only where it is not
   ## what `s` does to what is shown.
   if c.added != s.added or c.removed != s.removed or c.allChanged != s.allChanged or
       (c.allChanged and (c.allBefore, c.allAfter) != (s.allBefore, s.allAfter)) or
-      c.filterOn != s.filterOn or c.filterOff != s.filterOff:
+      c.filterOn != s.filterOn or c.filterOff != s.filterOff or
+      c.shiftOn != s.shiftOn or c.shiftOff != s.shiftOff:
     s.keptOwn = true
     s.keptChange = c
 
@@ -471,8 +588,11 @@ proc clearAll*(e: var FileEdits; keep = true; kind = skClear): bool =
     s.removed = e.shown.lists
     s.filterOff = e.shown.snapsAll(true)
     s.filterOn = e.shown.snapsAll(false)
+    s.shiftOff = e.shown.snapsAllShifts(true)
+    s.shiftOn = e.shown.snapsAllShifts(false)
     s.keptChanges(ListsChange(removed: e.kept.lists, allChanged: e.kept.allReversed,
-      allBefore: true, filterOff: e.kept.snapsAll(true), filterOn: e.kept.snapsAll(false)))
+      allBefore: true, filterOff: e.kept.snapsAll(true), filterOn: e.kept.snapsAll(false),
+      shiftOff: e.kept.snapsAllShifts(true), shiftOn: e.kept.snapsAllShifts(false)))
     e.make(s, keep)
 
 proc setAllReversed*(e: var FileEdits; on: bool; keep = true): bool =
@@ -526,6 +646,60 @@ proc unionFilters(l: var EditLists; extra: EditLists) =
   for e in extra.filters:
     if not l.hasFilter(e.trace): l.assignFilter(e.trace, true, e.filter)
 
+proc shiftDelta(before, after: EditLists): tuple[off, on: seq[ShiftSnap]; n: int] =
+  ## The traces whose shift differs, as snaps before (`off`) and after (`on`).
+  var i, j = 0
+  while i < before.shifts.len or j < after.shifts.len:
+    let ti = if i < before.shifts.len: before.shifts[i].trace else: high(int)
+    let tj = if j < after.shifts.len: after.shifts[j].trace else: high(int)
+    if ti == tj:
+      if before.shifts[i].ms != after.shifts[j].ms:
+        result.off.add ShiftSnap(trace: ti, had: true, ms: before.shifts[i].ms)
+        result.on.add ShiftSnap(trace: ti, had: true, ms: after.shifts[j].ms)
+        inc result.n
+      inc i
+      inc j
+    elif ti < tj:
+      result.off.add ShiftSnap(trace: ti, had: true, ms: before.shifts[i].ms)
+      result.on.add ShiftSnap(trace: ti, had: false)
+      inc result.n
+      inc i
+    else:
+      result.off.add ShiftSnap(trace: tj, had: false)
+      result.on.add ShiftSnap(trace: tj, had: true, ms: after.shifts[j].ms)
+      inc result.n
+      inc j
+
+proc shiftAdded(have, incoming: EditLists): tuple[off, on: seq[ShiftSnap]; n: int] =
+  ## Shifts of `incoming` that `have` does not, as snaps (an existing shift
+  ## is left as it is).
+  for e in incoming.shifts:
+    if not have.hasShift(e.trace):
+      result.off.add ShiftSnap(trace: e.trace, had: false)
+      result.on.add ShiftSnap(trace: e.trace, had: true, ms: e.ms)
+      inc result.n
+
+proc unionShifts(l: var EditLists; extra: EditLists) =
+  ## Adds the shifts of `extra` that `l` does not have. One `l` already has
+  ## stays: a shift set this session is not overwritten by one remembered.
+  for e in extra.shifts:
+    if not l.hasShift(e.trace): l.assignShift(e.trace, true, e.ms)
+
+proc preferShifts(a, b: EditLists): seq[ShiftEntry] =
+  ## The shifts of `a` and of `b`, ascending; where both name a trace, `a`'s.
+  result = newSeqOfCap[ShiftEntry](a.shifts.len + b.shifts.len)
+  var i, j = 0
+  while i < a.shifts.len or j < b.shifts.len:
+    let ti = if i < a.shifts.len: a.shifts[i].trace else: high(int)
+    let tj = if j < b.shifts.len: b.shifts[j].trace else: high(int)
+    if ti <= tj:
+      result.add a.shifts[i]
+      if ti == tj: inc j
+      inc i
+    else:
+      result.add b.shifts[j]
+      inc j
+
 proc preferFilters(a, b: EditLists): seq[FilterEntry] =
   ## The filters of `a` and of `b`, ascending; where both name a trace, `a`'s.
   result = newSeqOfCap[FilterEntry](a.filters.len + b.filters.len)
@@ -569,15 +743,78 @@ proc setOwnFilters*(e: var FileEdits; traces: openArray[int]; f: OwnFilter; keep
     step.keptChanges(ListsChange(filterOff: kOff, filterOn: kOn))
     e.make(step, keep)
 
-proc dropEdits*(e: var FileEdits; traces: openArray[int]; kinds: set[TraceEdit];
-    filters: bool; keep = true): int =
-  ## Takes `kinds` and, with `filters`, the own filter off every trace of
-  ## `traces`, as one step (in what is kept too with `keep`). Returns how
-  ## many traces changed; a change of none makes no step. Raises
+proc setTimeShifts*(e: var FileEdits; traces: openArray[int]; ms, dtMs: float64;
+    keep = true): int =
+  ## Gives every trace of `traces` a time shift of `ms` milliseconds, snapped
+  ## to a whole sample at `dtMs` (the stored value is the one applied), as
+  ## one step (in what is kept too with `keep`). A snap of no sample takes
+  ## the shift away. Returns how many changed; a change of none makes no
+  ## step. A `dtMs` that is not a usable interval changes nothing. Raises
   ## `ValueError` for a negative index.
+  if not (dtMs > 0): return 0
+  let snapped = snappedShiftMs(ms, dtMs)
+  let had = snapped != 0.0
+  var shownChanged, keptChanged: seq[int]
+  var off, on, kOff, kOn: seq[ShiftSnap]
+  for t in sortedTraces(traces):
+    let want = ShiftSnap(trace: t, had: had, ms: if had: snapped else: 0.0)
+    let s = e.shown.snapShift(t)
+    if s.had != want.had or (s.had and s.ms != want.ms):
+      shownChanged.add t
+      off.add s
+      on.add want
+    if keep:
+      let k = e.kept.snapShift(t)
+      if k.had != want.had or (k.had and k.ms != want.ms):
+        keptChanged.add t
+        kOff.add k
+        kOn.add want
+  result = shownChanged.len
+  if keep and result == 0: result = keptChanged.len
+  if result > 0:
+    var step = EditStep(kind: skTimeShift, on: had,
+      traces: if shownChanged.len > 0: shownChanged else: keptChanged,
+      shiftOff: off, shiftOn: on)
+    step.keptChanges(ListsChange(shiftOff: kOff, shiftOn: kOn))
+    e.make(step, keep)
+
+proc clearTimeShifts*(e: var FileEdits; traces: openArray[int]; keep = true): int =
+  ## Takes the time shift off every trace of `traces`, as one step (in what
+  ## is kept too with `keep`). Returns how many had one taken away, or caught
+  ## up in what is kept. Raises `ValueError` for a negative index.
+  var shownChanged, keptChanged: seq[int]
+  var off, on, kOff, kOn: seq[ShiftSnap]
+  for t in sortedTraces(traces):
+    let s = e.shown.snapShift(t)
+    if s.had:
+      shownChanged.add t
+      off.add s
+      on.add ShiftSnap(trace: t, had: false)
+    if keep:
+      let k = e.kept.snapShift(t)
+      if k.had:
+        keptChanged.add t
+        kOff.add k
+        kOn.add ShiftSnap(trace: t, had: false)
+  result = shownChanged.len
+  if keep and result == 0: result = keptChanged.len
+  if result > 0:
+    var step = EditStep(kind: skTimeShift, on: false,
+      traces: if shownChanged.len > 0: shownChanged else: keptChanged,
+      shiftOff: off, shiftOn: on)
+    step.keptChanges(ListsChange(shiftOff: kOff, shiftOn: kOn))
+    e.make(step, keep)
+
+proc dropEdits*(e: var FileEdits; traces: openArray[int]; kinds: set[TraceEdit];
+    filters: bool; keep = true; shifts = false): int =
+  ## Takes `kinds` and, with `filters`, the own filter, and with `shifts`
+  ## the time shift, off every trace of `traces`, as one step (in what is
+  ## kept too with `keep`). Returns how many traces changed; a change of
+  ## none makes no step. Raises `ValueError` for a negative index.
   var shownChanged, keptChanged: seq[int]
   var removed, kRemoved: array[TraceEdit, seq[int]]
   var off, on, kOff, kOn: seq[FilterSnap]
+  var sOff, sOn, ksOff, ksOn: seq[ShiftSnap]
   for t in sortedTraces(traces):
     var shown, kept = false
     for edit in kinds:
@@ -599,6 +836,18 @@ proc dropEdits*(e: var FileEdits; traces: openArray[int]; kinds: set[TraceEdit];
           kOff.add k
           kOn.add FilterSnap(trace: t, had: false)
           kept = true
+    if shifts:
+      let s = e.shown.snapShift(t)
+      if s.had:
+        sOff.add s
+        sOn.add ShiftSnap(trace: t, had: false)
+        shown = true
+      if keep:
+        let k = e.kept.snapShift(t)
+        if k.had:
+          ksOff.add k
+          ksOn.add ShiftSnap(trace: t, had: false)
+          kept = true
     if shown: shownChanged.add t
     elif kept: keptChanged.add t
   result = shownChanged.len
@@ -606,8 +855,9 @@ proc dropEdits*(e: var FileEdits; traces: openArray[int]; kinds: set[TraceEdit];
   if result > 0:
     var step = EditStep(kind: skDrop, on: false,
       traces: if shownChanged.len > 0: shownChanged else: keptChanged,
-      removed: removed, filterOff: off, filterOn: on)
-    step.keptChanges(ListsChange(removed: kRemoved, filterOff: kOff, filterOn: kOn))
+      removed: removed, filterOff: off, filterOn: on, shiftOff: sOff, shiftOn: sOn)
+    step.keptChanges(ListsChange(removed: kRemoved, filterOff: kOff, filterOn: kOn,
+      shiftOff: ksOff, shiftOn: ksOn))
     e.make(step, keep)
 
 proc clearOwnFilters*(e: var FileEdits; traces: openArray[int]; keep = true): int =
@@ -667,6 +917,14 @@ proc setTo*(e: var FileEdits; l: EditLists; source: string; keep = true): int =
   c.filterOn = keptF.on
   result += shownF.n
   kept += keptF.n
+  let shownS = shiftDelta(e.shown, l)
+  let keptS = shiftDelta(e.kept, l)
+  s.shiftOff = shownS.off
+  s.shiftOn = shownS.on
+  c.shiftOff = keptS.off
+  c.shiftOn = keptS.on
+  result += shownS.n
+  kept += keptS.n
   if keep and result == 0: result = kept
   if result > 0:
     s.keptChanges(c)
@@ -699,6 +957,14 @@ proc takeIn*(e: var FileEdits; l: EditLists; source: string; keep = true): int =
   c.filterOn = keptF.on
   result += shownF.n
   kept += keptF.n
+  let shownS = shiftAdded(e.shown, l)
+  let keptS = shiftAdded(e.kept, l)
+  s.shiftOff = shownS.off
+  s.shiftOn = shownS.on
+  c.shiftOff = keptS.off
+  c.shiftOn = keptS.on
+  result += shownS.n
+  kept += keptS.n
   if keep and result == 0: result = kept
   if result > 0:
     s.keptChanges(c)
@@ -716,6 +982,8 @@ proc remembered*(e: var FileEdits; l: EditLists) =
   e.kept.allReversed = e.kept.allReversed or l.allReversed
   e.shown.unionFilters(l)
   e.kept.unionFilters(l)
+  e.shown.unionShifts(l)
+  e.kept.unionShifts(l)
   if e.shown != was: inc e.revision
 
 proc merge*(e: var FileEdits; other: sink FileEdits) =
@@ -732,6 +1000,8 @@ proc merge*(e: var FileEdits; other: sink FileEdits) =
   e.kept.allReversed = e.kept.allReversed or other.kept.allReversed
   e.shown.filters = preferFilters(e.shown, other.shown)
   e.kept.filters = preferFilters(e.kept, other.kept)
+  e.shown.shifts = preferShifts(e.shown, other.shown)
+  e.kept.shifts = preferShifts(e.kept, other.kept)
   if e.shown != wasShown: inc e.revision
   if e.kept != wasKept: inc e.keptRevision
   for r in e.redos: e.held -= r.size
@@ -766,6 +1036,21 @@ proc adopt*(e: var FileEdits; l: EditLists) =
                 else: FilterSnap(trace: t, had: false)
     if before != after and e.shown.snapOf(t) == before:
       e.shown.assignFilter(t, after.had, after.filter)
+    if ti == t: inc i
+    if tj == t: inc j
+  i = 0
+  j = 0
+  while i < e.kept.shifts.len or j < l.shifts.len:
+    let ti = if i < e.kept.shifts.len: e.kept.shifts[i].trace else: high(int)
+    let tj = if j < l.shifts.len: l.shifts[j].trace else: high(int)
+    let t = min(ti, tj)
+    let before = if ti == t: ShiftSnap(trace: t, had: true, ms: e.kept.shifts[i].ms)
+                 else: ShiftSnap(trace: t, had: false)
+    let after = if tj == t: ShiftSnap(trace: t, had: true, ms: l.shifts[j].ms)
+                else: ShiftSnap(trace: t, had: false)
+    if (before.had != after.had or (before.had and before.ms != after.ms)) and
+        e.shown.snapShift(t) == before:
+      e.shown.assignShift(t, after.had, after.ms)
     if ti == t: inc i
     if tj == t: inc j
   if l != e.kept:
@@ -828,6 +1113,10 @@ func changedIn*(s: EditStep; traces: Slice[int]): bool =
     if snap.trace in traces: return true
   for snap in s.filterOff:
     if snap.trace in traces: return true
+  for snap in s.shiftOn:
+    if snap.trace in traces: return true
+  for snap in s.shiftOff:
+    if snap.trace in traces: return true
   false
 
 func tracesText(traces: openArray[int]): string =
@@ -846,11 +1135,11 @@ func describe*(s: EditStep): string =
   of skImport:
     var n = ord(s.allChanged)
     for edit in TraceEdit: n += s.added[edit].len
-    n += s.filterOn.len
+    n += s.filterOn.len + s.shiftOn.len
     if n == 0 and s.keptOwn: # shown already (an agent's), kept by the import
       n = ord(s.keptChange.allChanged)
       for edit in TraceEdit: n += s.keptChange.added[edit].len
-      n += s.keptChange.filterOn.len
+      n += s.keptChange.filterOn.len + s.keptChange.shiftOn.len
     $n & (if n == 1: " edit" else: " edits") & " imported from " & s.source
   of skChange:
     let what = tracesText(s.traces)
@@ -864,6 +1153,11 @@ func describe*(s: EditStep): string =
     if s.on: what & " filtered"
     elif s.traces.len == 1: "filter of " & what & " removed"
     else: "filters of " & what & " removed"
+  of skTimeShift:
+    let what = tracesText(s.traces)
+    if s.on: what & " shifted"
+    elif s.traces.len == 1: "shift of " & what & " removed"
+    else: "shifts of " & what & " removed"
   of skDrop: "edits of " & tracesText(s.traces) & " removed"
 
 func undoText*(e: FileEdits): string =
@@ -890,6 +1184,27 @@ func mergedFilters*(base, ours, theirs: EditLists): seq[FilterEntry] =
   for t in traces:
     let use = if base.snapOf(t) != ours.snapOf(t): ours.snapOf(t) else: theirs.snapOf(t)
     if use.had: result.add FilterEntry(trace: t, filter: use.filter)
+
+func mergedShifts*(base, ours, theirs: EditLists): seq[ShiftEntry] =
+  ## The shifts of a document two programs changed from `base`: a trace
+  ## this program (`ours`) changed keeps `ours` (a removal included); a
+  ## trace it left keeps `theirs`.
+  var traces = newSeqOfCap[int](base.shifts.len + ours.shifts.len + theirs.shifts.len)
+  for e in base.shifts: traces.add e.trace
+  for e in ours.shifts: traces.add e.trace
+  for e in theirs.shifts: traces.add e.trace
+  traces.sort()
+  var n = 0
+  for t in traces:
+    if n == 0 or traces[n - 1] != t:
+      traces[n] = t
+      inc n
+  traces.setLen n
+  result = newSeqOfCap[ShiftEntry](n)
+  for t in traces:
+    let use = if base.snapShift(t) != ours.snapShift(t): ours.snapShift(t)
+              else: theirs.snapShift(t)
+    if use.had: result.add ShiftEntry(trace: t, ms: use.ms)
 
 func redoText*(e: FileEdits): string =
   ## `describe` of the step `redo` makes again, without a copy of it; ""
