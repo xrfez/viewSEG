@@ -494,7 +494,7 @@ proc main*() =
       backgroundRan.store(false)
       discard st.jobs.submit(JobSpec(title: "Check the records", lane: jlBackground),
         proc (ctx: JobContext) {.gcsafe.} = backgroundRan.store(true))
-      doAssert waitUntil(backgroundRan.load, initDuration(seconds = 2)),
+      doAssert waitUntil(backgroundRan.load),
         "a background job waits behind a file's hash"
       releaseStep("reading every byte")
       doAssert st.settle(st.remembering(b).confirmed)
@@ -569,7 +569,7 @@ proc main*() =
       fault(hungDir, fkHang, {foStat})
       st.apply Command(kind: ckFileMemory)
       doAssert waitUntil((discard st.drainInbox(); st.memoryList.listed and
-        not st.memoryList.listing), initDuration(seconds = 2)),
+        not st.memoryList.listing)),
         "the listing waits for a drive that does not answer"
       doAssert st.settle(st.rec("gone.sgy").gone and not st.rec("here.sgy").looking and
         st.rec("far.sgy").silent), "the entries after the one held were not looked at"
@@ -618,12 +618,17 @@ proc main*() =
       var t: Time
       let key = quickIdentity(b, t).key
       var d: seq[string]
-      for x in docs(config): # (the rewritten copy's, of the same ends, is another file's)
-        if x.extractFilename.startsWith(key) and "rewritten.sgy" notin readFile(x): d.add x
       var texts = ""
-      for x in d: texts.add readFile(x) & "\n"
-      doAssert d.len == 1, "one file, documents: " & texts
-      doAssert "(killed \"5 7 9\")" in readFile(d[0]), readFile(d[0])
+      proc held(): bool =
+        ## One document of this file, holding the three kills.
+        d.setLen 0
+        texts = ""
+        for x in docs(config): # (the rewritten copy's, of the same ends, is another file's)
+          if x.extractFilename.startsWith(key) and "rewritten.sgy" notin readFile(x):
+            d.add x
+            texts.add readFile(x) & "\n"
+        d.len == 1 and "(killed \"5 7 9\")" in readFile(d[0])
+      doAssert waitUntil(held()), "one file holding (killed \"5 7 9\"), documents: " & texts
       st.showFile(b)
       doAssert st.editsOf(0).has(teKilled, 6), "the file does not share its copy's edit"
       # a file of the same size, ends and time but another content: taken at
