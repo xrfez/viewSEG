@@ -10,13 +10,21 @@
 ## Also `trimmedModel` against the reference's on random picks (noise picks, repeated
 ## distances, odd and even counts, a second line).
 ##
+## The pool's smoothing of one chunk equals `smoothedCopy` sample for sample when the traces
+## of the chunk have different live lengths: mixed lengths, two sets of lengths, and rows
+## skipped, at one, two and eight workers.
+##
 ## Seen to fail: with the middle distance of an even count taken from the upper of the two
 ## middle ones only, "trial 80 of 127 picks: used 37 and 37"; with the smoothing filter's corner
 ## one Hz higher than the reference's, "two-layer 1 ms: 1 workers: 281CAF21DB86C439 is not the
-## reference's C4E6D07679752455".
+## reference's C4E6D07679752455"; with the pool's high cut one Hz above `smoothedCopy`'s,
+## "mixed lengths: 1 workers: 886170 samples differ, worst |d| 0.009104490280151367".
 
 import std/[math, strutils]
 import parseSEG
+import processSEG/core/[pool, types, workspace]
+import processSEG/filter/[design, iir]
+import processSEG/pipeline
 import viewSEG/core/[breakmodel, breakrule, firstbreakjobs, firstbreaks, jobs]
 import utils/[fbprint, fbreference, fbscenes, fixtures]
 
@@ -91,8 +99,61 @@ proc trimsAgree() =
       (got.sigmaMs == want.sigmaMs or (got.sigmaMs.isNaN and want.sigmaMs.isNaN)),
       "trial " & $trial & " of " & $n & " picks: used " & $got.used & " and " & $want.used
 
+proc smoothingAgrees(name: string; rows, cols: int; dt: float64; lenOf: proc (r: int): int;
+    skip: seq[int]; workers: int) =
+  ## The pool's filter of this chunk equals `smoothedCopy`, every sample, skipped rows included.
+  var samples = newTensor[float32](rows, cols)
+  var st = 7'u64
+  var keys = newSeq[TraceKeys](rows)
+  var counts = newSeq[int](rows)
+  for r in 0 ..< rows:
+    counts[r] = lenOf(r)
+    for c in 0 ..< counts[r]:
+      samples[r, c] = float32(noise(st) + 0.3 * sin(float64(c) * 0.05))
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(r + 1), 0.0,
+      dt * 1000, tsLive)
+    keys[r] = k
+  let cut = pickCutHz(dt)
+  doAssert cut > 0, name & ": no high cut at " & $dt & " ms"
+  let plan = initIirPlan(float32, butterHighCut(cut, PickHighCutSlope), dt, cols, ipZero)
+  let flow = initPipeline([iirOp(butterHighCut(cut, PickHighCutSlope))]).compile(float32, dt,
+    cols)
+  let meta = initChunkMeta(rowsOf(keys, counts), dt, 0, skip)
+  var ws = initWorkspace()
+  ws.reserve(plan.workspaceSize)
+  let want = smoothedCopy(samples, meta, plan, ws)
+  var p = newProcessPool(workers)
+  var got = newTensorUninit[float32](rows, cols)
+  p.apply(flow, samples, got, meta)
+  var diffSamples = 0
+  var worst = 0.0
+  for r in 0 ..< rows:
+    for c in 0 ..< cols:
+      if cast[uint32](want[r, c]) != cast[uint32](got[r, c]):
+        inc diffSamples
+        worst = max(worst, abs(float64(want[r, c]) - float64(got[r, c])))
+  doAssert diffSamples == 0, name & ": " & $workers & " workers: " & $diffSamples &
+    " samples differ, worst |d| " & $worst
+
+proc mixedLengthsAgree() =
+  ## One chunk, traces of different live lengths: the pool and `smoothedCopy` agree.
+  let mixed = proc (r: int): int = (if r mod 3 == 0: 2001 else: 1200 + (r * 37) mod 800)
+  let twoSets = proc (r: int): int = (if r < 200: 2001 else: 1001)
+  let mixed500 = proc (r: int): int = (if r mod 5 == 0: 500 else: 250 + (r * 13) mod 250)
+  let mixed4001 = proc (r: int): int = (if r mod 4 == 0: 4001 else: 900 + (r * 131) mod 3100)
+  for w in [1, 2, 8]:
+    smoothingAgrees("mixed lengths", 512, 2001, 1.0, mixed, @[], w)
+    smoothingAgrees("mixed lengths, rows skipped", 512, 2001, 1.0, mixed,
+      @[3, 50, 51, 77, 300], w)
+    smoothingAgrees("two lengths", 512, 2001, 1.0, twoSets, @[], w)
+    smoothingAgrees("two lengths, a row skipped", 512, 2001, 1.0, twoSets, @[5], w)
+    smoothingAgrees("mixed 500 at 2 ms", 512, 500, 2.0, mixed500, @[1, 2, 3, 4, 200], w)
+    smoothingAgrees("mixed 4001 at 1 ms", 333, 4001, 1.0, mixed4001, @[0, 17, 18], w)
+
 proc main*() =
   trimsAgree()
+  mixedLengthsAgree()
   withFixtures fx:
     for i, c in Cases:
       let path = fx.scene("s" & $i & ".sgy", c.scene, c.traces, c.samples, c.dtMs)
