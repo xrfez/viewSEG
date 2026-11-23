@@ -38,14 +38,15 @@ const
     "Help"]
   Items = [
     ("File", @["Open file...", "Open files...", "Open folder...", "Open recent", "Close",
-      "Reopen with options...", "Follow the latest file", "Prepare the next file", "Quit"]),
+      "Reopen with options...", "Follow the latest file", "Prepare the next file", "Output...",
+      "Quit"]),
     ("Project", @["New project...", "Open project...", "Recent projects", "Project...",
       "Import survey...", "Clear survey", "Close project"]),
     ("Edit", @["Undo", "Redo", "Select all traces", "Import trace edits...",
       "Export trace edits...", "Clear all edits for this file", "File memory..."]),
     ("View", @["window.plot", "window.files", "window.records", "window.map", "window.headers",
       "window.jobs", "window.Messages", "window.spectrum", "window.aux", "window.missing",
-      "window.join",
+      "window.output", "window.join",
       "Only traces in the template", "Theme",
       "Light / dark"]),
     ("Analysis", @["window.newplot", "Compare two traces", "First-break overlay",
