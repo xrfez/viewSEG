@@ -13,7 +13,9 @@
 ## watch the path as if the correlated bytes had been written there.
 ##
 ## SEG-Y is written like the source, so a different sample count is kept and
-## the trace headers are the source's. SEG-D cannot change a trace's sample
+## the trace headers are the source's, except the correlated flag (byte 125,
+## `trace.correlated`), which is set to yes (2). The binary header's copy
+## (byte 3249) is left as it was. SEG-D cannot change a trace's sample
 ## count, so it is written from keys: the channel type is the source trace's
 ## (0 means seismic), and channel-set descriptors, external headers,
 ## general-header blocks and trace-header extensions are not copied. A start
@@ -32,6 +34,7 @@ const
     ## length kept, then the same reference and the same listen length, so
     ## both sides of the wavelet show.
   BlockTraces = 64
+  CorrelatedYes = 2 ## SEG-Y trace header byte 125: 2 = yes.
 
 type
   CorrelateAsk* = object
@@ -245,6 +248,15 @@ proc cutSweepLine(trace: int; heldMs, sweepMs, leadMs: float64): string =
 proc intervalLine(trace: int): string =
   "auxiliary trace " & $trace & ": it cannot be correlated with this reference."
 
+proc binaryUncorrelatedLine(file: ptr SeismicFile): string =
+  ## Empty unless the SEG-Y binary header says the data are not correlated.
+  ## That copy (byte 3249) has no override in this writer.
+  if file[].kind != skSegy: return
+  let v = file[].fileField("binary.correlated")
+  if v.kind == fvInt and v.intVal == 1:
+    result = "the binary header still says the data are not correlated " &
+      "(byte 3249 is 1); this writer cannot change it."
+
 proc writeRow(w: var SeismicWriter; file: ptr SeismicFile; trace, row, listen: int;
     src, dst: Tensor[float32]; keys: TraceKeys; fromSrc, segd: bool; intervalUs: float64) =
   if segd:
@@ -254,9 +266,11 @@ proc writeRow(w: var SeismicWriter; file: ptr SeismicFile; trace, row, listen: i
     let rows = if fromSrc: rowBlock(src) else: rowBlock(dst)
     w.writeTrace(k, rows.row(row, listen), channelType = ct)
   elif fromSrc:
-    w.writeTrace(file[], trace, src, row, count = listen)
+    w.writeTrace(file[], trace, src, row, count = listen,
+      overrides = [headerOverride("trace.correlated", CorrelatedYes)])
   else:
-    w.writeTrace(file[], trace, dst, row, count = listen)
+    w.writeTrace(file[], trace, dst, row, count = listen,
+      overrides = [headerOverride("trace.correlated", CorrelatedYes)])
 
 proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   if ask.path.len == 0: refuse("the file has no path.")
@@ -366,6 +380,8 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
       if held < sweepLen + leadSamples:
         slot[].lines.add cutSweepLine(t, float64(held) * dtMs, slot[].sweepMs, leadMs)
   for t in shape.odd: slot[].lines.add intervalLine(t)
+  let uncorrelated = binaryUncorrelatedLine(file)
+  if uncorrelated.len > 0: slot[].lines.add uncorrelated
   slot[].opened = made
   slot[].ok = true
 

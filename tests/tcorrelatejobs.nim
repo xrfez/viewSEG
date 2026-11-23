@@ -14,6 +14,7 @@
 ## wavelet shows only 100 ms after its peak." and the peak-outside sentence.
 ## Omitting the cut-sweep line fails "reference trace 1 holds 600 ms, less
 ## than the 400 ms sweep plus the 500 ms lead: its wavelet is of a cut sweep."
+## Leaving the correlated flag unset fails "trace 0 correlated 1".
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -238,6 +239,14 @@ proc spec(path: string): JobSpec =
 proc finish(jobs: Jobs; id: JobId): JobState =
   doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}), "the job did not finish"
   jobs.state(id)
+
+proc setCorrelated(path: string; n, traceFlag, binaryFlag: int) =
+  var ed = openEditor(path)
+  doAssert ed.setFileField("binary.correlated", binaryFlag), "binary.correlated was refused"
+  for i in 0 ..< n:
+    doAssert ed.setTraceField(i, "trace.correlated", traceFlag),
+      "trace.correlated was refused on trace " & $i
+  ed.close()
 
 proc correlated(file: var SeismicFile; path: string; sweep: openArray[float32];
     dtMs: float64; refs: openArray[int]): CorrelateResult =
@@ -631,6 +640,62 @@ proc main*() =
       "reference trace 1 holds 8000 ms, less than the 12000 ms sweep plus the " &
         "500 ms lead: its wavelet is of a cut sweep."],
       $slot.lines
+
+  block correlatedFlag:
+    ## Every written trace's correlated flag (byte 125) reads back as 2.
+    ## The binary header's copy stays 1, and the job says so.
+    let p = dir / "flag.sgy"
+    writeLengths(p, Record, Record, DtMs, sweep, otherSamples = Record)
+    setCorrelated(p, 3, 1, 1)
+    var f = openSeismic(p, keys = true)
+    defer: f.close()
+    doAssert f.fileField("binary.correlated") == toFieldValue(1)
+    for i in 0 ..< f.len:
+      doAssert f.traceField(i, "trace.correlated") == toFieldValue(1), $i
+    let slot = correlated(f, p, sweep, DtMs, [1])
+    doAssert slot.lines == @[
+      "3 traces, 800 samples (1600 ms of listen time).",
+      "sweep 400 ms. 1 reference trace delayed by 500 ms.",
+      "the binary header still says the data are not correlated (byte 3249 is 1); " &
+        "this writer cannot change it."], $slot.lines
+    template got: untyped = session.file(slot.opened)
+    doAssert got.len == 3
+    for i in 0 ..< got.len:
+      doAssert got.traceField(i, "trace.correlated") == toFieldValue(2),
+        "trace " & $i & " correlated " & $got.traceField(i, "trace.correlated")
+    doAssert got.fileField("binary.correlated") == toFieldValue(1)
+    for i in 0 ..< f.len:
+      doAssert f.traceField(i, "trace.correlated") == toFieldValue(1), "source trace " & $i
+
+  block correlatedFlagAlreadyYes:
+    ## A binary flag that does not say "no" adds no line. Traces are still 2.
+    let p = dir / "flagyes.sgy"
+    writeLengths(p, Record, Record, DtMs, sweep, otherSamples = Record)
+    setCorrelated(p, 3, 1, 2)
+    var f = openSeismic(p, keys = true)
+    defer: f.close()
+    let slot = correlated(f, p, sweep, DtMs, [1])
+    doAssert slot.lines == @[
+      "3 traces, 800 samples (1600 ms of listen time).",
+      "sweep 400 ms. 1 reference trace delayed by 500 ms."], $slot.lines
+    template got: untyped = session.file(slot.opened)
+    for i in 0 ..< got.len:
+      doAssert got.traceField(i, "trace.correlated") == toFieldValue(2), $i
+    doAssert got.fileField("binary.correlated") == toFieldValue(2)
+
+  block correlatedFlagUnset:
+    let p = dir / "flagzero.sgy"
+    writeLengths(p, Record, Record, DtMs, sweep, otherSamples = Record)
+    var f = openSeismic(p, keys = true)
+    defer: f.close()
+    doAssert f.fileField("binary.correlated") == toFieldValue(0)
+    let slot = correlated(f, p, sweep, DtMs, [1])
+    doAssert slot.lines == @[
+      "3 traces, 800 samples (1600 ms of listen time).",
+      "sweep 400 ms. 1 reference trace delayed by 500 ms."], $slot.lines
+    template got: untyped = session.file(slot.opened)
+    for i in 0 ..< got.len:
+      doAssert got.traceField(i, "trace.correlated") == toFieldValue(2), $i
 
   block cancelled:
     holdCorr.close()
