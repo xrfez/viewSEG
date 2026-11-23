@@ -456,12 +456,23 @@ selection when that trace is selected. Then:
   the same menu, and only when one of the traces has a filter. Gain, AGC, sort and the
   display are still the plot's, not a trace's. A killed trace keeps its filter; the kill
   wins on screen (the trace stays blank).
+- **Time shift...** (or **Time shift of N selected traces...** when several seismic traces
+  are selected): one field, in milliseconds, positive later. It is offered on a seismic
+  trace only, not on an auxiliary trace and not in the Aux window; a selection is cut
+  down to its seismic traces. Under the field, the value that will be stored after
+  snapping to a whole sample ("applies +8 ms: 4 samples"). **+500 ms** and **0** fill
+  the field; they do not apply. **Apply** (or Enter) stores it as one step. A value
+  past the limit is refused in the same words as the command, and Apply stays disabled.
+  **Clear** takes the shift away and closes. **Cancel**, Escape, and a click outside
+  close it without applying. **Remove the time shift** is in the same menu when one of
+  the traces is shifted. A shift of 0, or one that snaps to no sample, takes it away.
 - **New plot > FFT** (`F`): the trace's amplitude spectrum (of the selection: their
   average) from 0 Hz to Nyquist, the trace with its own filter and, when the strip has a
   filter on, through that filter too, in a window of its own (see "Spectra" below).
   Killed traces are left out.
 - **Reverse polarity of all traces** (below).
-- **Undo** (Ctrl+Z) takes back the last kill, restore, polarity change, trace filter or
+- **Undo** (Ctrl+Z) takes back the last kill, restore, polarity change, trace filter,
+  time shift or
   clearing (it names it), and **Redo** (Ctrl+Shift+Z, Ctrl+Y) makes it again, as far back
   as you have worked in this run; a new change drops what was undone. The same items are
   in the **Edit** menu, which works whichever window has the focus. **Clear all edits for
@@ -471,25 +482,27 @@ Edited traces are marked in a row of the display header, **edits**, that is ther
 while the record has an edit: a red **K** over a killed trace, an **R** in the accent
 colour over a reversed one, an **E** over a trace excluded from the plot's filters (right-click
 the trace, **Exclude from plot filters**, or press `E`: the Filters menu's filters, the Aux
-traces too option included, never touch it; its own filter still runs), and the filter icon in that same accent colour over a trace
-that has its own filter (red, with the **K**, when the trace is also killed). Hovering a
-mark highlights it. The tooltip names the edit ("Killed", "Polarity reversed", or the
-filter in words, "Band-pass 10-60 Hz, after the plot's filters") and ends with
+traces too option included, never touch it; its own filter still runs), the filter icon in that same accent colour over a trace
+that has its own filter (red, with the **K**, when the trace is also killed), and a
+clock over a trace that is shifted in time. Hovering a
+mark highlights it. The tooltip names the edit ("Killed", "Polarity reversed", the
+filter in words, "Band-pass 10-60 Hz, after the plot's filters", or "shifted +8 ms") and ends with
 "Right-click to remove". A right-click on the mark opens a small menu for that trace:
-**Remove kill**, **Remove reversal**, **Remove the trace's filter**, and **Edit the
-trace's filter...** when it has a filter. Each removal is one step (Edit > Undo brings
+**Remove kill**, **Remove reversal**, **Remove the trace's filter**, **Edit the
+trace's filter...** when it has a filter, **Remove the time shift**, and **Edit the
+time shift...** when it is shifted. Each removal is one step (Edit > Undo brings
 the mark back at once). When the trace has more than one edit, **Remove all edits of
 this trace** takes them all away as that one step. If the trace is selected and other
 selected traces have the same edit, the menu also offers **Remove kill from N selected
-traces** (and the same for a reversal or a filter). Zoomed out, where the marks are thin
+traces** (and the same for a reversal, a filter or a time shift). Zoomed out, where the marks are thin
 bars or share a pixel, a right-click on the row picks the nearest edited trace within a
 few pixels; when several traces share the pixel the menu says **N traces here** and the
 removals apply to all of them as one step. A right-click elsewhere is unchanged: the
 plot's menu on the traces, the header's menu on its other rows.
 The Headers window's trace table shows the same letters beside the trace number, and the
-filter's words in its tooltip. A filter changed for this run only, different from the one remembered with
+filter's words and the shift in its tooltip. A filter or a shift changed for this run only, different from the one remembered with
 the file, has a star, as a kill an agent made does. The status bar says
-"killed", "polarity reversed" or the filter's words for the trace under the pointer, and
+"killed", "polarity reversed", the filter's words or "shifted +8 ms" for the trace under the pointer, and
 Messages lists each change. Edits are lists kept beside the file, never
 written into it: they hold through another record, a sort, a gain change, stepping to
 another file and back, and the next run (see "What viewSEG remembers"). An edit shows at
@@ -980,7 +993,8 @@ own filter is always in the raw curve: there is no box that leaves it out. The w
 names it where it names the trace ("Trace 12: own filter, band-pass 10-60 Hz"; of
 several, "N traces have their own filter"). A reversed trace is multiplied by -1 first,
 the same way, and named in that same line ("Trace 12: reversed"; of several, "N traces
-are reversed"). Reverse-all is that same sign flip, said once ("All traces are
+are reversed"). A time shift is named in that same line ("Trace 12: shifted +8 ms";
+of several, "N traces are shifted"). Reverse-all is that same sign flip, said once ("All traces are
 reversed"). The live panel asks again when a trace it shows is reversed, or reverse-all
 is set, put back or undone, as it does for that trace's filter. Where that filter runs instead of the
 strip's, the processed curve equals the raw one, and the line says "this trace uses
@@ -1136,8 +1150,9 @@ line and point where the headers name them, the sample interval, the start time 
 the time window. It does not follow the plot, a selection, a file change or a file
 close. It is replaced only when you set that slot again. The copy is what the plot
 shows of that trace: reversed when the trace is effectively reversed (reversed on its
-own, or every trace of the file is, but not both), then its own filter. The chip names
-each. A reference from the archive stays as stored, with neither. The slots are for
+own, or every trace of the file is, but not both), then its time shift (positive later,
+a seismic trace only), then its own filter. The chip names
+each, and a shift is named under the chips ("A, shifted +8 ms"). A reference from the archive stays as stored, with neither. The slots are for
 this run only: they are not saved in the settings or in a project.
 
 The top of the window names the two traces, each in its own colour, "A: file, trace N,

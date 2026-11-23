@@ -8,7 +8,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** One wiggle per trace: its amplitude swings sideways from its baseline, with the positive lobes filled. Traces run across the plot in the order shown (the display header names each one), and time runs down it, in ms.
 
-**Computed from.** The samples of the Seismic traces of the record on show. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set. Traces in the file's order. The display gain sets which amplitude is drawn at full strength; the file is never changed.
+**Computed from.** The samples of the Seismic traces of the record on show. Through the filters set in the Seismic window, if any are on. A trace's own filter, a reversed polarity and a time shift are applied as set. Traces in the file's order. The display gain sets which amplitude is drawn at full strength; the file is never changed.
 
 **Reading it.** Events that run smoothly across neighbouring traces are signal (first arrivals, reflections). A trace that stays flat is dead or silent. A trace far stronger than its neighbours, or a spike over all times, is noise. A trace whose swings mirror its neighbours' may have its polarity reversed.
 
@@ -18,7 +18,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Frequency (Hz) across, from 0 Hz to Nyquist, and amplitude in dB, 0 dB at the larger peak of the raw and processed curves up. Curves: raw is the traces as recorded, with their own filters; processed is the same through the plot's filters.
 
-**Computed from.** One trace, or the power average of several. Over the whole trace, demeaned, tapered 10 % at each end and zero padded. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** One trace, or the power average of several. Over the whole trace, demeaned, tapered 10 % at each end and zero padded. Through the filters set in the Seismic window, if any are on. A trace's own filter, a reversed polarity and a time shift are applied as set.
 
 **Reading it.** Energy should sit in the band the source makes. A hole or a sharp drop shows a missing band; a narrow spike (50 or 60 Hz and its multiples) is power-line noise; a processed curve under the raw one shows what your filters remove.
 
@@ -28,7 +28,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Phase in degrees up, against frequency in Hz across, for one trace. The phase followed along frequency without jumps: a delay is a straight slope, a sweep a curve.
 
-**Computed from.** The same window, filters and trace as the amplitude above it; phase is measured from the window's first sample, and drawn only where the amplitude is within 60 dB of that curve's peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The same window, filters and trace as the amplitude above it; phase is measured from the window's first sample, and drawn only where the amplitude is within 60 dB of that curve's peak. Through the filters set in the Seismic window, if any are on. A trace's own filter, a reversed polarity and a time shift are applied as set.
 
 **Reading it.** A straight slope means a pure time delay; a flat line means none. A sweep's phase climbs steeply because its delay grows with frequency (a linear sweep is a parabola); for vibrator QC, read the phase against the pilot in the vibrator signature plot.
 
@@ -38,7 +38,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Time in ms across, frequency in Hz up; the colour is the amplitude in dB below the largest amplitude in the picture (0 dB is the brightest cell). One cell is one frame and one frequency bin.
 
-**Computed from.** The traces chosen. Each trace's mean is removed first. Hann frames of the length set above (Hann), overlapping by the overlap set above. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The traces chosen. Each trace's mean is removed first. Hann frames of the length set above (Hann), overlapping by the overlap set above. Through the filters set in the Seismic window, if any are on. A trace's own filter, a reversed polarity and a time shift are applied as set.
 
 **Reading it.** A sweep is a line climbing (or falling) across the picture; a vertical streak is a short broadband burst such as a spike; a horizontal band is a steady tone such as power-line noise; a band that fades shows lost energy at those frequencies.
 
@@ -48,7 +48,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Amplitude against time in ms: the trace as a line, and its envelope (the trace's strength whatever its sign) over it.
 
-**Computed from.** The first trace chosen. The envelope is the size of the trace's analytic signal (the trace and its Hilbert transform). Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The first trace chosen. The envelope is the size of the trace's analytic signal (the trace and its Hilbert transform). Through the filters set in the Seismic window, if any are on. A trace's own filter, a reversed polarity and a time shift are applied as set.
 
 **Reading it.** The envelope should follow the peaks of the trace smoothly. A sweep has a flat envelope between its tapers; a sudden drop or a spike in it shows a dropout or a burst.
 
@@ -58,7 +58,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** The trace's own instantaneous phase in degrees (-180 to 180) against time in ms.
 
-**Computed from.** The first trace chosen. The angle of the trace's analytic signal; no value where the envelope is zero. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The first trace chosen. The angle of the trace's analytic signal; no value where the envelope is zero. Through the filters set in the Seismic window, if any are on. A trace's own filter, a reversed polarity and a time shift are applied as set.
 
 **Reading it.** A steady signal makes a sawtooth that wraps at ±180°; its steepness is the frequency. Where the sawtooth steepens or flattens the frequency changes, as through a sweep; irregular jumps mean noise or no signal. It turns once per cycle: choose a reference to compare.
 
@@ -68,7 +68,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Instantaneous frequency in Hz against time in ms.
 
-**Computed from.** The first trace chosen. The step of the instantaneous phase per sample; left out where the envelope is more than 60 dB below its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The first trace chosen. The step of the instantaneous phase per sample; left out where the envelope is more than 60 dB below its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter, a reversed polarity and a time shift are applied as set.
 
 **Reading it.** A linear sweep is a straight line from its start frequency to its end frequency. A line that wanders or jumps means the signal is not the sweep, or carries noise.
 
@@ -78,7 +78,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Amplitude in dB below its peak (0 dB at the top) against frequency in Hz.
 
-**Computed from.** The first trace chosen. The whole trace, its mean removed, with no taper, zero padded to four times its length; phase is drawn only where this curve is within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The first trace chosen. The whole trace, its mean removed, with no taper, zero padded to four times its length; phase is drawn only where this curve is within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter, a reversed polarity and a time shift are applied as set.
 
 **Reading it.** It tells where the phase below can be trusted: the phase means something only where the amplitude is high.
 
@@ -88,7 +88,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Phase in degrees up, against frequency in Hz across, for one trace. The phase followed along frequency without jumps: a delay is a straight slope, a sweep a curve.
 
-**Computed from.** The first trace chosen. Phase from the trace's first sample, the trace's mean removed and zero padded to four times its length, drawn where the amplitude is within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The first trace chosen. Phase from the trace's first sample, the trace's mean removed and zero padded to four times its length, drawn where the amplitude is within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter, a reversed polarity and a time shift are applied as set.
 
 **Reading it.** A straight slope means a pure time delay; a flat line none. A sweep's phase climbs steeply because its delay grows with frequency (a linear sweep is a parabola); for vibrator QC, read the phase against the pilot in the vibrator signature plot.
 
@@ -98,7 +98,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** How well each trace matches the reference, up (1 is the reference's own shape whatever its amplitude, -1 its mirror image), against the time shift in ms across, one line per trace and its envelope over it.
 
-**Computed from.** The traces chosen (the first eight at most). Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot), or, when you pick it in the window, the record's own vibrator reference trace (code 21). Lags within ±the span set above of zero. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set. A trace that is the reference delayed by T peaks at +T.
+**Computed from.** The traces chosen (the first eight at most). Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot), or, when you pick it in the window, the record's own vibrator reference trace (code 21). Lags within ±the span set above of zero. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity and a time shift are applied as set. A trace that is the reference delayed by T peaks at +T.
 
 **Reading it.** One sharp peak at 0 ms near +1 means the trace has the reference's shape and timing. A lower peak means a different shape; a peak away from 0 is a time shift of that many ms (a positive shift: the trace arrives after the reference). A peak near -1 means reversed polarity. The words under the plot give each trace's best match (the envelope's peak: the shape's match whatever the phase turn), its shift between samples and its phase turn ("rotated 90°", "reversed polarity"); under 0.3 there is no clear match, and a peak at an end of the lags means the shift is past them. The reference's own trace, among others, is said so and not drawn.
 
@@ -108,7 +108,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Amplitude ratio in dB up, against frequency in Hz across: each trace's amplitude over the reference's; 0 dB is the same amplitude.
 
-**Computed from.** The traces chosen. Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot), or, when you pick it in the window, the record's own vibrator reference trace (code 21). Drawn only where the reference has energy, within the dB set above dB of its peak. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set.
+**Computed from.** The traces chosen. Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot), or, when you pick it in the window, the record's own vibrator reference trace (code 21). Drawn only where the reference has energy, within the dB set above dB of its peak. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity and a time shift are applied as set.
 
 **Reading it.** A flat line near 0 dB means the trace has the reference's spectrum. A line that falls with frequency means high frequencies are lost; a step shows a band that is weaker or stronger.
 
@@ -118,7 +118,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Phase difference in degrees up, against frequency in Hz across: each trace's phase minus the reference's. Shown absolute (0 to 180 degrees; the bracketed value is the signed one); the Phase drop-down above the plot changes it.
 
-**Computed from.** The traces chosen. Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot), or, when you pick it in the window, the record's own vibrator reference trace (code 21). Drawn where the reference has energy, within the dB set above dB of its peak. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set.
+**Computed from.** The traces chosen. Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot), or, when you pick it in the window, the record's own vibrator reference trace (code 21). Drawn where the reference has energy, within the dB set above dB of its peak. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity and a time shift are applied as set.
 
 **Reading it.** A flat line at 0° means no phase difference. A straight slope means a time delay (a delay T reads -360° × frequency × T). A flat line at 180° means reversed polarity.
 
@@ -128,7 +128,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Phase in degrees up, against sweep time in ms across (a point every 10 ms): the signal judged (GF, or GF (M, B)) measured against the pilot, Ref. Shown absolute (0 to 180 degrees; the bracketed value is the signed one); the Phase drop-down above the plot changes it.
 
-**Computed from.** The traces of the window's roles. Each signal's phase to the reference where the pilot's envelope is within 40 dB of its peak. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set. A stretch in the error colour is a window past a limit of the verdict.
+**Computed from.** The traces of the window's roles. Each signal's phase to the reference where the pilot's envelope is within 40 dB of its peak. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity and a time shift are applied as set. A stretch in the error colour is a window past a limit of the verdict.
 
 **Reading it.** A ground force within a few degrees of 0° along the sweep means the vibrator follows the pilot. A drift means poor control; a steady 180° means the polarity is reversed (see Polarity).
 
@@ -138,7 +138,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Force against sweep time in ms: the ground force's fundamental amplitude and its peak.
 
-**Computed from.** The traces of the window's roles. The fundamental is tracked along the pilot's frequency. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set. A stretch in the error colour is a window past a limit of the verdict.
+**Computed from.** The traces of the window's roles. The fundamental is tracked along the pilot's frequency. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity and a time shift are applied as set. A stretch in the error colour is a window past a limit of the verdict.
 
 **Reading it.** A steady fundamental through the sweep is a vibrator putting out constant force. Dips mean lost output or hold-down; a peak far above the fundamental means distortion or bouncing.
 
@@ -148,7 +148,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** GF (M, B), the ground force generated from the masses' accelerations, against sweep time in ms: its fundamental amplitude and its peak.
 
-**Computed from.** The traces of the window's roles. GF (M, B) = Mr·a(M) + Mb·a(B). Needs the reaction mass and the baseplate mass, both entered in the settings wheel (Masses). Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set.
+**Computed from.** The traces of the window's roles. GF (M, B) = Mr·a(M) + Mb·a(B). Needs the reaction mass and the baseplate mass, both entered in the settings wheel (Masses). Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity and a time shift are applied as set.
 
 **Reading it.** It should follow the recorded ground force's shape. A large difference between the two means a wrong mass or a bad accelerometer channel.
 
@@ -158,7 +158,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Instantaneous frequency in Hz up, against sweep time in ms across: the pilot's (Ref) and the ground forces'.
 
-**Computed from.** The traces of the window's roles. Each signal's frequency is tracked along the sweep. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set.
+**Computed from.** The traces of the window's roles. Each signal's frequency is tracked along the sweep. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity and a time shift are applied as set.
 
 **Reading it.** The ground force's line should lie on the pilot's. A gap between them means the vibrator does not follow the sweep.
 
@@ -168,7 +168,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Distortion in % up, against sweep time in ms across: the total harmonic distortion (THD) of each ground force, and each harmonic (H2 up to the highest harmonic set) of the ground force as a % of its fundamental.
 
-**Computed from.** The traces of the window's roles. THD is the in-band distortion a vibrator controller reports: it sums the harmonics, from the 2nd, whose frequency stays within the top frequency box (the sweep's top, Hz); where none is in band it is 0. A harmonic above 80 % of Nyquist is never measured. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity is applied as set. A stretch in the error colour is a window past a limit of the verdict.
+**Computed from.** The traces of the window's roles. THD is the in-band distortion a vibrator controller reports: it sums the harmonics, from the 2nd, whose frequency stays within the top frequency box (the sweep's top, Hz); where none is in band it is 0. A harmonic above 80 % of Nyquist is never measured. Raw: the plot's filters and a trace's own filter are not applied against a reference, on either side (the raw trace against the raw reference). A reversed polarity and a time shift are applied as set. A stretch in the error colour is a window past a limit of the verdict.
 
 **Reading it.** Lower is better. A smooth low THD is a clean sweep; a rise at one point is a resonance or a stroke limit; one harmonic standing out is a specific fault.
 
@@ -178,7 +178,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Wavenumber (cycles per km or per kft with a regular spacing and a length unit, else per trace) across, frequency in Hz up; the colour is the amplitude in dB below the largest value.
 
-**Computed from.** The traces chosen (4 at least). A box of the whole time of the traces and every trace, each trace's mean removed, tapered 10 % at each end in both directions. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The traces chosen (4 at least). A box of the whole time of the traces and every trace, each trace's mean removed, tapered 10 % at each end in both directions. Through the filters set in the Seismic window, if any are on. A trace's own filter, a reversed polarity and a time shift are applied as set.
 
 **Reading it.** An event of constant speed lies on a straight line through the origin, steeper for a faster one: its slope is the apparent velocity. Slow events such as ground roll lie at high wavenumber, reflections near the frequency axis.
 
