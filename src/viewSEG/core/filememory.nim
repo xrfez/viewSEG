@@ -872,6 +872,9 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]; upTo: int;
           if s.len == 0 or s.parseFloat(ms) != s.len:
             if problems.len < WordedProblems:
               problems.add at & ": \"" & s & "\" is not a shift in milliseconds"
+          elif not (ms == ms and ms != Inf and ms != -Inf):
+            if problems.len < WordedProblems:
+              problems.add at & ": \"" & s & "\" is not a shift in milliseconds"
           elif ms != 0.0:
             result.shifts.add ShiftEntry(trace: v - 1, ms: ms)
         elif v - 1 >= upTo and csvTrace(t, v): inc outside

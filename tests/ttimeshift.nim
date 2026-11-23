@@ -25,7 +25,8 @@
 ## is not the snapped shift". With the seismic guard off, "an auxiliary trace
 ## was shifted". With `shiftNeedsWhole` false, "a shift did not read the whole
 ## trace: (gen: 5, first: 0, count: 20, stride: 1, firstSample: 138, samples: 165,
-## decimation: 1, margin: 0, envelope: false)".
+## decimation: 1, margin: 0, envelope: false)". With a non-finite CSV `ms`
+## stored, "a non-finite shift was stored: @[(trace: 2, ms: nan), ...]".
 ##
 ## Runs on samples/land/shots.sgy and a synthetic file with an auxiliary trace.
 
@@ -156,6 +157,22 @@ proc main*() =
     doAssert fromCsv.shifts == rec.edits.shifts, $fromCsv.shifts
     doAssert fromCsv.lists[teKilled] == @[2]
     doAssert "2 shifted" in keptWords(rec.edits)
+
+  block csvNotFinite:
+    # A non-finite ms is a problem line, as a bad cell is, and is not stored.
+    # Seen to fail with the value stored (the next file-memory write then
+    # aborts at nifFloat: NIF has no literal for nan).
+    let csv = "trace,edit,ms\n3,shifted,nan\n4,shifted,inf\n5,shifted,-inf\n6,shifted,4\n"
+    var problems: seq[string]
+    let got = readEditsCsv(csv, "bad.csv", problems)
+    doAssert got.shifts == @[ShiftEntry(trace: 5, ms: 4.0)],
+      "a non-finite shift was stored: " & $got.shifts
+    doAssert problems.len == 3, $problems
+    for p in problems:
+      doAssert "is not a shift in milliseconds" in p, p
+    var rec = FileRecord(name: "x", path: "x")
+    rec.edits = got
+    discard memoryDocument(rec)
 
   let land = root / "samples" / "land" / "shots.sgy"
   doAssert fileExists(land), "samples/land/shots.sgy is not here"
