@@ -26,7 +26,9 @@
 ## was shifted". With `shiftNeedsWhole` false, "a shift did not read the whole
 ## trace: (gen: 5, first: 0, count: 20, stride: 1, firstSample: 138, samples: 165,
 ## decimation: 1, margin: 0, envelope: false)". With a non-finite CSV `ms`
-## stored, "a non-finite shift was stored: @[(trace: 2, ms: nan), ...]".
+## stored, "a non-finite shift was stored: @[(trace: 2, ms: nan), ...]". With
+## `setTimeShifts` keeping a huge value, "a shift of 1e30 ms was stored". With
+## the command not reporting a refused shift, "not kept" was absent from the log.
 ##
 ## Runs on samples/land/shots.sgy and a synthetic file with an auxiliary trace.
 
@@ -174,8 +176,51 @@ proc main*() =
     rec.edits = got
     discard memoryDocument(rec)
 
+  block shiftLimit:
+    # A shift past ten minutes is not stored. Seen to fail with 1e30 stored
+    # (CSV and NIF) and with setTimeShifts keeping the snapped huge value.
+    doAssert MaxShiftMs == 600_000.0
+    var e: FileEdits
+    doAssert e.setTimeShifts([4], 1e30, 2.0) == 0, "a shift of 1e30 ms was stored"
+    doAssert not e.hasShift(4)
+    doAssert e.setTimeShifts([4], -1e30, 2.0) == 0
+    doAssert e.setTimeShifts([4], 600_000.0, 2.0) == 1
+    doAssert e.shiftOf(4) == 600_000.0
+    let csv = "trace,edit,ms\n3,shifted,1e30\n6,shifted,4\n"
+    var problems: seq[string]
+    let got = readEditsCsv(csv, "huge.csv", problems)
+    doAssert got.shifts == @[ShiftEntry(trace: 5, ms: 4.0)],
+      "a shift of 1e30 ms was stored: " & $got.shifts
+    doAssert problems.len == 1 and "is not a shift in milliseconds" in problems[0], $problems
+    var rec = FileRecord(name: "shots.sgy", path: "shots.sgy")
+    rec.edits.shifts = @[ShiftEntry(trace: 4, ms: 12.5)]
+    let doc = memoryDocument(rec)
+    doAssert "(ms 12.5)" in doc, doc
+    problems.setLen 0
+    let back = readMemory(parseNif(doc.replace("(ms 12.5)", "(ms 1e30)"), "t.nif"), "t.nif",
+      problems)
+    doAssert back.edits.shifts.len == 0, "a NIF shift of 1e30 ms was stored"
+    doAssert problems.len > 0 and "not kept" in problems[0], $problems
+
   let land = root / "samples" / "land" / "shots.sgy"
   doAssert fileExists(land), "samples/land/shots.sgy is not here"
+  block refusedCommand:
+    # The command reports a shift past the limit the way a bad interval is
+    # reported, and stores nothing. Seen to fail with the huge shift applied.
+    var st = initAppState()
+    st.show land
+    let base = st.sessions[0].base
+    st.apply Command(kind: ckTimeShift, panel: MainPanel, edited: @[base + 1], on: true,
+      shiftMs: 1e30)
+    var note = ""
+    for e in st.log: note = e.text
+    doAssert "not kept" in note, note
+    st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+    note = ""
+    for e in st.log: note = e.text
+    doAssert "Nothing to undo" in note, note
+    st.shutdown()
+
   block reader:
     var st = initAppState()
     st.show land

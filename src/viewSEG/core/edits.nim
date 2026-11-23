@@ -55,7 +55,7 @@
 ## `Command`; the reader of a panel gets a copy of those of its gather with
 ## each request.
 
-import std/algorithm
+import std/[algorithm, math]
 import processing
 
 export OwnFilter, FilterPlace, FilterEntry, NotchFilter, filterWords, bounded, ownPerTrace
@@ -66,6 +66,9 @@ const
     ## the traces the steps of one file's history name at most, all told
     ## (about 160 MB), the oldest steps dropped first; the newest is kept
     ## whatever its size
+  MaxShiftMs* = 600_000.0
+    ## Ten minutes. No record is longer, and the sample count stays far
+    ## from overflow.
 
 type
   TraceEdit* = enum
@@ -743,15 +746,21 @@ proc setOwnFilters*(e: var FileEdits; traces: openArray[int]; f: OwnFilter; keep
     step.keptChanges(ListsChange(filterOff: kOff, filterOn: kOn))
     e.make(step, keep)
 
+func shiftStorable*(ms: float64): bool =
+  ## Whether `ms` may be stored as a time shift: finite, and not past
+  ## `MaxShiftMs` either way.
+  ms == ms and ms != Inf and ms != -Inf and abs(ms) <= MaxShiftMs
+
 proc setTimeShifts*(e: var FileEdits; traces: openArray[int]; ms, dtMs: float64;
     keep = true): int =
   ## Gives every trace of `traces` a time shift of `ms` milliseconds, snapped
   ## to a whole sample at `dtMs` (the stored value is the one applied), as
   ## one step (in what is kept too with `keep`). A snap of no sample takes
   ## the shift away. Returns how many changed; a change of none makes no
-  ## step. A `dtMs` that is not a usable interval changes nothing. Raises
-  ## `ValueError` for a negative index.
-  if not (dtMs > 0): return 0
+  ## step. A `dtMs` that is not a usable interval, or an `ms` that
+  ## `shiftStorable` refuses, changes nothing. Raises `ValueError` for a
+  ## negative index.
+  if not (dtMs > 0) or not shiftStorable(ms): return 0
   let snapped = snappedShiftMs(ms, dtMs)
   let had = snapped != 0.0
   var shownChanged, keptChanged: seq[int]

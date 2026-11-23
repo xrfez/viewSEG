@@ -7927,7 +7927,9 @@ proc editTraces(state: var AppState; cmd: Command) =
           if us > 0 and us < Inf:
             dt = us / 1000.0
             break
-    if traces.len > 0 and cmd.on and not (dt > 0):
+    if traces.len > 0 and cmd.on and not shiftStorable(cmd.shiftMs):
+      state.ignore(cmd, "a shift of " & $cmd.shiftMs & " ms is not kept")
+    elif traces.len > 0 and cmd.on and not (dt > 0):
       state.ignore(cmd, "the sample interval is not known")
     elif traces.len > 0:
       let n = if cmd.on: e.setTimeShifts(traces, cmd.shiftMs, dt, keep)

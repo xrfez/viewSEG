@@ -541,6 +541,9 @@ proc readShifts(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo: 
     if not k.floatChild("ms", ms):
       problems.add "shifted: ms is not a number"
       continue
+    if not shiftStorable(ms):
+      problems.add "shifted: a shift of " & $ms & " ms is not kept"
+      continue
     if ms == 0.0: continue
     r.edits.shifts.add ShiftEntry(trace: number - 1, ms: ms)
   r.edits.shifts.sort(proc (a, b: ShiftEntry): int = cmp(a.trace, b.trace))
@@ -872,7 +875,7 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]; upTo: int;
           if s.len == 0 or s.parseFloat(ms) != s.len:
             if problems.len < WordedProblems:
               problems.add at & ": \"" & s & "\" is not a shift in milliseconds"
-          elif not (ms == ms and ms != Inf and ms != -Inf):
+          elif not shiftStorable(ms):
             if problems.len < WordedProblems:
               problems.add at & ": \"" & s & "\" is not a shift in milliseconds"
           elif ms != 0.0:
