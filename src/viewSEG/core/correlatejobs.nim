@@ -218,9 +218,9 @@ proc writtenChannelType(code: uint8): SegdChannelType =
   of 0xF0: sctCalibration
   else: refuse("channel type 0x" & toHex(int(code), 2) & " cannot be written.")
 
-proc sweepLine(sweepMs: float64; delayed: int): string =
+proc sweepLine(sweepMs: float64; delayed: int; delayMs: float64): string =
   let n = if delayed == 1: "1 reference trace" else: $delayed & " reference traces"
-  "sweep " & msText(sweepMs) & " ms. " & n & " delayed by " & msText(AuxLeadMs) & " ms."
+  "sweep " & msText(sweepMs) & " ms. " & n & " delayed by " & msText(delayMs) & " ms."
 
 proc waveletLine(listenMs, delayMs: float64): string =
   if listenMs <= delayMs:
@@ -367,12 +367,12 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   slot[].samples = listen
   slot[].listenMs = float64(listen) * dtMs
   slot[].sweepMs = float64(sweepLen) * dtMs
+  let leadSamples = abs(lag)
+  let leadMs = float64(leadSamples) * dtMs
   slot[].lines = @[
     $nTraces & " traces, " & $listen & " samples (" & msText(slot[].listenMs) &
       " ms of listen time).",
-    sweepLine(slot[].sweepMs, delayed)]
-  let leadSamples = abs(lag)
-  let leadMs = float64(leadSamples) * dtMs
+    sweepLine(slot[].sweepMs, delayed, leadMs)]
   if delayed > 0 and slot[].listenMs < 2.0 * leadMs:
     slot[].lines.add waveletLine(slot[].listenMs, leadMs)
   let fitted = fitLine(shape.padded, shape.cut)

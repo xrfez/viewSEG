@@ -17,6 +17,7 @@
 ## Leaving the correlated flag unset fails "trace 0 correlated 1".
 ## The old interval line fails "reference trace 1 is sampled every 4 ms, the
 ## record every 2 ms: not correlated, written as zeros."
+## Reporting the nominal 500 ms lead fails "delayed by 501 ms".
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -732,6 +733,17 @@ proc main*() =
     template got: untyped = session.file(slot.opened)
     for i in 0 ..< got.len:
       doAssert got.traceField(i, "trace.correlated") == toFieldValue(2), $i
+
+  block actualDelay:
+    ## At 3 ms the 500 ms lead is 167 samples, which is 501 ms.
+    let p = dir / "delay3.sgy"
+    writeLengths(p, 600, 600, 3.0, sweep)
+    var f = openSeismic(p, keys = true)
+    defer: f.close()
+    let slot = correlated(f, p, sweep, 3.0, [1])
+    doAssert slot.lines == @[
+      "2 traces, 400 samples (1200 ms of listen time).",
+      "sweep 600 ms. 1 reference trace delayed by 501 ms."], $slot.lines
 
   block cancelled:
     holdCorr.close()
