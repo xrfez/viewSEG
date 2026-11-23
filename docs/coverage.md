@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.19.2: capabilities | names | processSEG 0.12.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 56 (22 in part) | 189 | 45 (28 in part) | 249 |
-| `internal` | 17 | 47 | 5 | 39 |
-| `planned` | 31 | 214 | 42 | 389 |
+| `built` | 55 (21 in part) | 183 | 45 (28 in part) | 249 |
+| `internal` | 19 | 56 | 6 | 43 |
+| `planned` | 30 | 212 | 41 | 385 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 21 | 362 | 6 | 63 |
 | all | 127 | 822 | 99 | 745 |
@@ -114,7 +114,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Any field by name | `traceField`, `recordField`, `fileField`, `findTraceField`, `findRecordField`, `findFileField`, `FieldValue` | Status-bar fields, header table cells | planned |
+| Any field by name | `traceField`, `recordField`, `fileField`, `findTraceField`, `findRecordField`, `findFileField`, `FieldValue` | Status-bar fields, header table cells; the correlated flag of a record's file header | built (`fileField`: the correlated flag); planned (the rest) |
 | One field for many traces | `traceFieldColumn`, `traceFieldColumnInto` | Headers window, Trace table: a column per header field chosen, the rows on screen read (a column sorted, found or graphed by read whole) | built |
 | A header field plotted against the trace axis | `traceFieldColumn` | Headers window, Trace table: Graph draws a column along the rows (each bucket's least and most), the rows on screen shaded | built |
 | Field catalogue | `fieldNames`, `blockKind`, `fieldByName`, `HeaderBlock` | Every field of every block described in plain words in the header tables (`fieldNames` checked against the descriptions in a test); column chooser, status-bar field picker to come | built (descriptions); planned (choosers) |
