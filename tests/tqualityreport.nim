@@ -7,6 +7,7 @@
 import std/[assertions, math, strutils]
 import processSEG/qc/amplitude
 import viewSEG/core/qualityreport
+import viewSEG/view/qualitywords
 
 proc add(b: var QualityBuild; file: string; record, line, point: float64;
     component: uint8; findings: set[Finding]; killed = false; index: int16 = 1) =
@@ -160,33 +161,44 @@ proc main*() =
 
   block noisy_and_weak_counts_and_empty_cells:
     var b = initQualityBuild()
-    proc noted(b: var QualityBuild; file: string; record: float64; tested, noisy, weak: bool;
-        killed = false) =
+    proc noted(b: var QualityBuild; file: string; record: float64;
+        noisyTested, weakTested, noisy, weak: bool; killed = false) =
       b.addTrace(TraceNote(file: file, record: record, line: 10, point: record, index: 1,
-        component: 1, killed: killed, findings: {}, tested: tested, noisy: noisy, weak: weak))
-    b.noted("a.sgd", 1, true, true, false)
-    b.noted("a.sgd", 1, true, false, true)
-    b.noted("a.sgd", 1, true, false, false)
-    b.noted("a.sgd", 1, true, true, true, killed = true) # killed: never counted
-    b.noted("b.sgd", 2, false, false, false) # not tested: empty cells
+        component: 1, killed: killed, findings: {}, noisyTested: noisyTested,
+        weakTested: weakTested, noisy: noisy, weak: weak))
+    b.noted("a.sgd", 1, true, true, true, false)
+    b.noted("a.sgd", 1, true, true, false, true)
+    b.noted("a.sgd", 1, true, true, false, false)
+    b.noted("a.sgd", 1, true, true, true, true, killed = true) # killed: never counted
+    b.noted("a.sgd", 1, false, true, false, true) # inside the area: tested for weak only
+    b.noted("b.sgd", 2, false, false, false, false) # not tested: empty cells
+    b.noted("d.sgd", 4, false, true, false, true) # only its noisy cell is empty
     let report = qualityReport(b)
     let a = recordAt(report.records, "a.sgd", 1)
-    doAssert a.tested == 3 and a.noisy == 1 and a.weak == 1 and a.bad == 0, $a
+    doAssert a.noisyTested == 3 and a.noisy == 1 and a.weakTested == 4 and a.weak == 2 and
+      a.bad == 0, $a
     let c = recordAt(report.records, "b.sgd", 2)
-    doAssert c.tested == 0 and c.noisy == 0 and c.weak == 0, $c
+    doAssert c.noisyTested == 0 and c.weakTested == 0 and c.noisy == 0 and c.weak == 0, $c
     let t = report.totals
-    doAssert t.tested == 3 and t.noisy == 1 and t.weak == 1 and t.bad == 0, $t
+    doAssert t.noisyTested == 3 and t.noisy == 1 and t.weakTested == 5 and t.weak == 3 and
+      t.bad == 0, $t
     let lines = recordsCsv(report.records).splitLines
-    doAssert lines[0].endsWith(",noisy,weak"), lines[0]
-    doAssert lines[1].endsWith(",1,1") and lines[2].endsWith(",,"), $lines
-    doAssert totalsCsv(report.totals).splitLines[1].endsWith(",1,1")
-    doAssert stationsCsv(report.stations).splitLines[0].endsWith(",noisy,weak,badRecords")
+    doAssert lines[0].endsWith(",tested (noisy),noisy,tested (weak),weak"), lines[0]
+    doAssert lines[1].endsWith(",3,1,4,2") and lines[2].endsWith(",0,,0,") and
+      lines[3].endsWith(",0,,1,1"), $lines
+    doAssert totalsCsv(report.totals).splitLines[1].endsWith(",3,1,5,3")
+    doAssert stationsCsv(report.stations).splitLines[0].endsWith(
+      ",tested (noisy),noisy,tested (weak),weak,badRecords")
+    doAssert totalsLine(t).endsWith(", 1 noisy of 3 tested, 3 weak of 5 tested"), totalsLine(t)
     var rows = report.records
     sortRecords(rows, @[(column: rsNoisy, descending: true)])
     doAssert rows[0].file == "a.sgd", "an untested record sorts before every count"
+    sortRecords(rows, @[(column: rsWeakTested, descending: false)])
+    doAssert rows[0].file == "b.sgd" and rows[1].file == "d.sgd", $rows
     var empty = initQualityBuild()
-    empty.noted("c.sgd", 3, false, false, false)
-    doAssert totalsCsv(qualityReport(empty).totals).splitLines[1].endsWith(",,")
+    empty.noted("c.sgd", 3, false, false, false, false)
+    doAssert totalsCsv(qualityReport(empty).totals).splitLines[1].endsWith(",0,,0,")
+    doAssert "noisy" notin totalsLine(qualityReport(empty).totals)
 
   block absorbing_a_part_is_adding_its_notes_one_by_one:
     proc notes(b: var QualityBuild; file: string) =

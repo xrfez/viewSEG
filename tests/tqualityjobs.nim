@@ -403,14 +403,19 @@ proc main*() =
       let report = got.sink.result.report
       let a = recordAt(report.records, shot, 1)
       # the loud traces near the source are inside the area: not judged, so not tested
-      doAssert a.tested in NoisyTraces div 2 ..< NoisyTraces and a.noisy == 2 and a.weak == 1, $a
+      # (they are tested for weak)
+      doAssert a.noisyTested in NoisyTraces div 2 ..< NoisyTraces and a.noisy == 2 and
+        a.weakTested > a.noisyTested and a.weak == 1, $a
       let b = recordAt(report.records, plain, 1)
-      doAssert b.tested == a.tested and b.noisy == 2 and b.weak == 0, $b
-      doAssert report.totals.tested == 2 * a.tested and report.totals.noisy == 4 and
-        report.totals.weak == 1, $report.totals
+      doAssert b.noisyTested == a.noisyTested and b.weakTested == a.weakTested and
+        b.noisy == 2 and b.weak == 0, $b
+      doAssert report.totals.noisyTested == 2 * a.noisyTested and report.totals.noisy == 4 and
+        report.totals.weakTested == 2 * a.weakTested and report.totals.weak == 1,
+        $report.totals
       doAssert report.totals.bad == 0, "noisy and weak are not findings: " & $report.totals.bad
-      doAssert recordsCsv(report.records).splitLines[0].endsWith(",noisy,weak")
-      doAssert totalsCsv(report.totals).splitLines[1].endsWith(",4,1")
+      doAssert recordsCsv(report.records).splitLines[0].endsWith(",noisy,tested (weak),weak")
+      doAssert totalsCsv(report.totals).splitLines[1].endsWith(",4," &
+        $report.totals.weakTested & ",1")
 
   block a_trace_not_tested_leaves_its_cells_empty:
     withFixtures fx:
@@ -422,9 +427,10 @@ proc main*() =
       let got = run(@[shot], edits)
       doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
       let report = got.sink.result.report
-      doAssert report.totals.killed == NoisyTraces and report.totals.tested == 0, $report.totals
-      doAssert totalsCsv(report.totals).splitLines[1].endsWith(",,"), "cells not empty"
-      doAssert recordsCsv(report.records).splitLines[1].endsWith(",,"), "cells not empty"
+      doAssert report.totals.killed == NoisyTraces and report.totals.noisyTested == 0 and
+        report.totals.weakTested == 0, $report.totals
+      doAssert totalsCsv(report.totals).splitLines[1].endsWith(",0,,0,"), "cells not empty"
+      doAssert recordsCsv(report.records).splitLines[1].endsWith(",0,,0,"), "cells not empty"
 
 when isMainModule:
   main()

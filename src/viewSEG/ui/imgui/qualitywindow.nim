@@ -302,7 +302,9 @@ func stationName(c: StationSortColumn): string =
   of ssSpiky: ColSpiky
   of ssDcOffset: ColDcOffset
   of ssNonFinite: ColNonFinite
+  of ssNoisyTested: ColNoisyTested
   of ssNoisy: ColNoisy
+  of ssWeakTested: ColWeakTested
   of ssWeak: ColWeak
   of ssBadRecords: ColBadRecords
 
@@ -320,7 +322,9 @@ func recordName(c: RecordSortColumn): string =
   of rsSpiky: ColSpiky
   of rsDcOffset: ColDcOffset
   of rsNonFinite: ColNonFinite
+  of rsNoisyTested: ColNoisyTested
   of rsNoisy: ColNoisy
+  of rsWeakTested: ColWeakTested
   of rsWeak: ColWeak
 
 func stationSortText(spec: SortSpec[StationSortColumn]): string =
@@ -433,10 +437,10 @@ proc drawStations(ui: var QualityUi; marks: var Marks) =
     ui.stationKey = ""
   const names = [ColLine, ColPoint, ColIndex, ColComponent, ColSeen, ColKilled, ColBad,
     ColHeaderDead, ColAllZero, ColConstant, ColClipped, ColSpiky, ColDcOffset,
-    ColNonFinite, ColNoisy, ColWeak, ColBadRecords]
+    ColNonFinite, ColNoisyTested, ColNoisy, ColWeakTested, ColWeak, ColBadRecords]
   const keys = [ssLine, ssPoint, ssIndex, ssComponent, ssSeen, ssKilled, ssBad,
     ssHeaderDead, ssAllZero, ssConstant, ssClipped, ssSpiky, ssDcOffset, ssNonFinite,
-    ssNoisy, ssWeak, ssBadRecords]
+    ssNoisyTested, ssNoisy, ssWeakTested, ssWeak, ssBadRecords]
   ui.refreshStations()
   let rows = ui.report.stations
   let n = ui.stationShown.len
@@ -478,9 +482,13 @@ proc drawStations(ui: var QualityUi; marks: var Marks) =
       numberCell($r.counts[qfSpiky])
       numberCell($r.counts[qfDcOffset])
       numberCell($r.counts[qfNonFinite])
-      numberCell(noiseCell(r.tested, r.noisy))
+      numberCell($r.noisyTested)
+      tip(NoisyTestedTip)
+      numberCell(noiseCell(r.noisyTested, r.noisy))
       tip(NoisyTip)
-      numberCell(noiseCell(r.tested, r.weak))
+      numberCell($r.weakTested)
+      tip(WeakTestedTip)
+      numberCell(noiseCell(r.weakTested, r.weak))
       tip(WeakTip)
       if igTableNextColumn():
         igTextUnformatted(firstLine(r.badRecords).cstring, nil)
@@ -496,9 +504,11 @@ proc drawRecords(ui: var QualityUi; st: AppState; marks: var Marks; commands: va
     ui.recordDirty = false
     ui.recordKey = ""
   const names = [ColFile, ColRecord, ColSeen, ColKilled, ColBad, ColHeaderDead, ColAllZero,
-    ColConstant, ColClipped, ColSpiky, ColDcOffset, ColNonFinite, ColNoisy, ColWeak]
+    ColConstant, ColClipped, ColSpiky, ColDcOffset, ColNonFinite, ColNoisyTested, ColNoisy,
+    ColWeakTested, ColWeak]
   const keys = [rsFile, rsRecord, rsSeen, rsKilled, rsBad, rsHeaderDead, rsAllZero,
-    rsConstant, rsClipped, rsSpiky, rsDcOffset, rsNonFinite, rsNoisy, rsWeak]
+    rsConstant, rsClipped, rsSpiky, rsDcOffset, rsNonFinite, rsNoisyTested, rsNoisy,
+    rsWeakTested, rsWeak]
   ui.refreshRecords()
   let rows = ui.report.records
   let n = ui.recordShown.len
@@ -544,9 +554,13 @@ proc drawRecords(ui: var QualityUi; st: AppState; marks: var Marks; commands: va
       numberCell($r.counts[qfSpiky])
       numberCell($r.counts[qfDcOffset])
       numberCell($r.counts[qfNonFinite])
-      numberCell(noiseCell(r.tested, r.noisy))
+      numberCell($r.noisyTested)
+      tip(NoisyTestedTip)
+      numberCell(noiseCell(r.noisyTested, r.noisy))
       tip(NoisyTip)
-      numberCell(noiseCell(r.tested, r.weak))
+      numberCell($r.weakTested)
+      tip(WeakTestedTip)
+      numberCell(noiseCell(r.weakTested, r.weak))
       tip(WeakTip)
       igPopID()
   ImGuiListClipper_End(clipper)

@@ -21,9 +21,10 @@
 ## the record's first breaks found as the map's job finds them, the user's
 ## exclusion area), one field record (a gather of the session) at a time: a
 ## record holds only its own traces' statistics until it is judged. Traces
-## that were not sample-read, traces the test did not judge (inside the exclusion
-## area, ungrouped, of an incomplete node, unusable) and records whose test the
-## library refuses are not tested: their cells stay empty.
+## that were not sample-read, traces the test did not judge (ungrouped, of an
+## incomplete node, unusable) and records whose test the library refuses are not
+## tested: their cells stay empty. A trace inside the exclusion area is tested
+## for weak, not for noisy, as the map marks it.
 ##
 ## The report keeps each path as the caller named it. Unread files are not
 ## a total of the report: a file that fails to read part-way adds nothing to it and is
@@ -111,14 +112,15 @@ proc liveSpans(f: ptr SeismicFile; part: Slice[int]; killed: HashSet[int]): seq[
   if start >= 0: result.add start .. part.b
 
 proc noteTrace(b: var QualityBuild; path: string; k: TraceKeys; killed: bool;
-    flags: set[AmplitudeFlag]; tested: bool) =
+    flags: set[AmplitudeFlag]; noisyTested, weakTested: bool) =
   if not k.isSeismic: return
   var findings: set[Finding] = {}
   if not killed:
     findings = findingsOf(flags, k.status == tsDead)
   b.addTrace(TraceNote(file: path, record: k.record, line: k.rcvLine, point: k.rcvPoint,
     index: k.rcvIndex, component: componentOf(k), killed: killed, findings: findings,
-    tested: tested, noisy: tested and afNoisy in flags, weak: tested and afWeak in flags))
+    noisyTested: noisyTested, weakTested: weakTested,
+    noisy: noisyTested and afNoisy in flags, weak: weakTested and afWeak in flags))
 
 func msOfUs(us: float64): float64 =
   if us > 0 and us < Inf: us / 1000.0 else: 1.0
@@ -151,12 +153,14 @@ func cutShortWhy(f: SeismicFile): string =
 
 proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
     amps: var seq[TraceAmplitude]; unread: openArray[int]; killed: HashSet[int];
-    noise: NoiseSettings; ctx: JobContext; judged: var HashSet[int];
+    noise: NoiseSettings; ctx: JobContext; noisyJudged, weakJudged: var HashSet[int];
     workers: ptr ProcessPool; tick: BreakProgress): bool =
   ## The map's noisy and weak test on the record `traces`, whose statistics are `amps`
-  ## (`unread`: rows left out). Sets the flags in `amps`, and puts in `judged` the traces
-  ## the test judged (not those in the exclusion area, ungrouped, of an incomplete node or
-  ## unusable). False when there is nothing to judge or the library refuses.
+  ## (`unread`: rows left out). Sets the flags in `amps`, and puts in `noisyJudged` the
+  ## traces the test judged for noisy (not those in the exclusion area, ungrouped, of an
+  ## incomplete node or unusable) and in `weakJudged` those it judged for weak (the same and
+  ## those in the exclusion area). False when there is nothing to judge or the library
+  ## refuses.
   if unread.len >= traces.len: return false
   var off: seq[int] = @[]
   for t in traces:
@@ -168,7 +172,8 @@ proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
       result = true
       let summary = noiseOfRecord(f[], traces, amps, unread, [], br, noise)
       for i in 0 ..< traces.len:
-        if summary.state[i] == nsJudged: judged.incl traces.a + i
+        if summary.state[i] == nsJudged: noisyJudged.incl traces.a + i
+        if summary.state[i] in {nsJudged, nsInArea}: weakJudged.incl traces.a + i
   except ValueError:
     result = false
 
@@ -181,7 +186,9 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
   var held: seq[TraceAmplitude] = @[] # statistics of the traces from `heldFrom` on
   var heldFrom = 0
   var missedAll = initHashSet[int]()
-  var judgedAt = initHashSet[int]() # traces of the records judged so far that the test judged
+  # traces of the records judged so far that the test judged for noisy, for weak
+  var noisyAt = initHashSet[int]()
+  var weakAt = initHashSet[int]()
   var nextGather = 0
   var noted = 0 # traces before it are in `b`
   template note(upTo: int) =
@@ -191,8 +198,10 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
       let k = f[].index.keys[t]
       let sampled = wantsSamples(k, t in killed)
       let flags = if sampled: held[t - heldFrom].flags else: {}
-      noteTrace(b, path, k, t in killed, flags, sampled and t in judgedAt)
-      judgedAt.excl t
+      noteTrace(b, path, k, t in killed, flags, sampled and t in noisyAt,
+        sampled and t in weakAt)
+      noisyAt.excl t
+      weakAt.excl t
     held = held[(upTo + 1 - heldFrom) .. ^1]
     heldFrom = upTo + 1
     noted = upTo + 1
@@ -247,7 +256,8 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
       let tick = proc (done, total: int): bool {.closure, gcsafe.} =
         ctx.fileProgress(at, count, (last + 1 + g.a + g.len * done div max(total, 1)) div 2, n)
         true
-      if judgeRecord(f, path, g, rec, skip, killed, noise, ctx, judgedAt, workers, tick):
+      if judgeRecord(f, path, g, rec, skip, killed, noise, ctx, noisyAt, weakAt, workers,
+          tick):
         for i in 0 ..< rec.len: held[g.a - heldFrom + i] = rec[i]
       note(g.b)
       ctx.fileProgress(at, count, (last + 1 + noted) div 2, n)

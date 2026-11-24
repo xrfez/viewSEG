@@ -42,7 +42,9 @@ const
   ColSpiky* = "Spiky"
   ColDcOffset* = "DC"
   ColNonFinite* = "Not finite"
+  ColNoisyTested* = "Tested (noisy)"
   ColNoisy* = "Noisy"
+  ColWeakTested* = "Tested (weak)"
   ColWeak* = "Weak"
   ColBadRecords* = "Bad records"
   DeadTip* = "A trace the header marks dead. It is not also counted as all-zero."
@@ -53,11 +55,14 @@ const
   ScanJudgesTip = "The scan judges the samples as recorded, with your kills and noise " &
     "settings, but without the per-trace filters, reversals, shifts or template-only " &
     "restriction the map applies to the record shown."
-  NoisyTip* = "Traces much louder than the others of their record, outside the area around " &
-    "the source. Not counted as bad. Empty when the record could not be judged. " &
-    ScanJudgesTip
-  WeakTip* = "Traces much quieter than the others of their record. Not counted as bad. " &
-    "Empty when the record could not be judged. " & ScanJudgesTip
+  NoisyTestedTip* = "Traces the noisy test judged: those outside the area around the " &
+    "source, in a record that could be judged. Killed, dead and auxiliary traces are not."
+  NoisyTip* = "Of the traces tested for noisy, those much louder than the others of their " &
+    "record. Not counted as bad. Empty when no trace was tested for noisy. " & ScanJudgesTip
+  WeakTestedTip* = "Traces the weak test judged: as for noisy, and those inside the area " &
+    "around the source too."
+  WeakTip* = "Of the traces tested for weak, those much quieter than the others of their " &
+    "record. Not counted as bad. Empty when no trace was tested for weak. " & ScanJudgesTip
   ColFile* = "File"
   ColRecord* = "Record"
   KilledTip* = "A trace an edit killed. It is counted as killed, not as bad, and it is not " &
@@ -82,15 +87,17 @@ func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
 
 func totalsLine*(t: Totals): string =
-  ## The totals strip: counts, then each finding, then the noisy and weak traces when any
-  ## trace was tested. Killed is not bad.
+  ## The totals strip: counts, then each finding, then the noisy traces of those tested for
+  ## noisy and the weak of those tested for weak, each when any trace was. Killed is not bad.
   plural(t.files, "file", "files") & ", " & plural(t.records, "record", "records") & ", " &
     plural(t.traces, "trace", "traces") & ", " & $t.killed & " killed, " & $t.bad & " bad, " &
     $t.stations & " stations, " & $t.counts[qfHeaderDead] & " header-dead, " &
     $t.counts[qfAllZero] & " all-zero, " & $t.counts[qfConstant] & " constant, " &
     $t.counts[qfClipped] & " clipped, " & $t.counts[qfSpiky] & " spiky, " &
     $t.counts[qfDcOffset] & " dc offset, " & $t.counts[qfNonFinite] & " non-finite" &
-    (if t.tested > 0: ", " & $t.noisy & " noisy, " & $t.weak & " weak" else: "")
+    (if t.noisyTested > 0: ", " & $t.noisy & " noisy of " & $t.noisyTested & " tested"
+    else: "") &
+    (if t.weakTested > 0: ", " & $t.weak & " weak of " & $t.weakTested & " tested" else: "")
 
 func headerTip*(name: string): string =
   ## The tooltip of column title `name`, or "" when the title says enough.
@@ -102,7 +109,9 @@ func headerTip*(name: string): string =
   of ColConstant: FlatTip
   of ColDcOffset: DcTip
   of ColNonFinite: NonFiniteTip
+  of ColNoisyTested: NoisyTestedTip
   of ColNoisy: NoisyTip
+  of ColWeakTested: WeakTestedTip
   of ColWeak: WeakTip
   else: ""
 

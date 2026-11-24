@@ -298,8 +298,8 @@ The **Trace quality** window stays closed until you ask for it. It opens as a ta
 beside the **Seismic** window, and that tab is the one in front. Closing it and opening
 it again keeps the place you last gave it. A line of totals wraps onto the next line
 when the window is narrow: files, records, traces, killed, bad, stations, each
-finding, and the noisy and weak traces. A killed trace is counted as killed, not as bad,
-and it is not measured.
+finding, and the noisy and weak traces of those tested for each ("3 noisy of 120 tested").
+A killed trace is counted as killed, not as bad, and it is not measured.
 
 **Rescan** runs the scan again. While one is running, that button is **Cancel** and a
 progress bar shows how far the scan is. When a file or a trace could not be read, a line
@@ -308,12 +308,14 @@ under the totals says how many. **Unread** opens that list, each with the reason
 
 The **Stations** tab is one row per receiver station and component: how many traces
 were seen, how many were killed, how many were bad, and the count of each finding. The
-last two counts, **Noisy** and **Weak**, are the traces the map's noisy and weak filters
+last counts, **Noisy** and **Weak**, are the traces the map's noisy and weak filters
 show for each field record, found the same way (the exclusion area you chose in Tools >
 Settings applies, and a record's first breaks are found for it, so a scan takes longer).
-They are not counted as bad. A cell is empty where no trace could be judged: killed,
-dead and auxiliary traces, traces inside the exclusion area, a record that could not be
-read, or one the test cannot judge.
+They are not counted as bad. Each comes after the traces tested for it,
+**Tested (noisy)** and **Tested (weak)**: a trace inside the exclusion area is tested for
+weak but not for noisy, as on the map. Killed, dead and auxiliary traces, a record that
+could not be read and one the test cannot judge are tested for neither. A Noisy or Weak
+cell is empty where no trace was tested for it. The CSV has the same columns.
 The scan judges the samples as recorded, with your kills and noise settings, but without
 the per-trace filters, reversals, shifts or template-only restriction the map applies to
 the record shown.
