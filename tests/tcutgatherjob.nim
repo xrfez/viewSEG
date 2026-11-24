@@ -293,6 +293,41 @@ proc main*() =
     doAssert got[0] == ramp(0, 2950) + 1, "the later trace did not win: " & $got[0]
     doAssert got[49] == ramp(0, 2999) + 1 and got[50] == ramp(0, 3000)
 
+  block start_zero_with_both_kinds_of_overlap:
+    # The window starts at the shot (start 0). (i) Records overlap each other: the
+    # shots 2.12 s and 2.6 s apart by less than the 2 s length, each read on its own, so
+    # both records hold the shared samples. (ii) Source segments overlap: the third
+    # shot's window (5 s to 7 s) reaches the 50 repeated samples at 5.9 s. Fails when a
+    # shared sample is dropped from the later record, when the later trace does not win,
+    # or when the overlap is not compared.
+    let zeroOpts = initCutOptions(LengthMs, 0.0)
+    let early = shotsInTime(logOf([301, 302, 303], [2_123_456'i64, 2_600_000, 5_000_000]).rows)
+    for (rec, src, name) in [(same, addr srcSame, "same"), (diff, addr srcDiff, "diff")]:
+      let dest = outDir / ("zero-" & name & ".sgd")
+      let got = runCut(jobs, src[], rec.path, dest, early, zeroOpts)
+      doAssert got.st == jsDone, got.error & " / " & got.res.reason
+      if name == "same":
+        doAssert got.res.overlapsCompared > 0 and got.res.overlapsMismatched == 0
+      else:
+        doAssert got.res.overlapsMismatched > 0
+      var f = openSeismic(dest, keys = true)
+      defer: f.close()
+      for s in 0 ..< 3:
+        let shotUs = BaseUs + [2_123_456'i64, 2_600_000, 5_000_000][s]
+        let k0 = int((shotUs - BaseUs + DtUs div 2) div DtUs)
+        for c in 0 .. 1:
+          let data = samplesOf(f, s * 2 + c)
+          for j in 0 ..< Window:
+            doAssert cast[uint32](data[j]) == cast[uint32](rec.model(c, k0 + j)),
+              name & " record " & $s & " component " & $c & " sample " & $j
+    # the first two records share samples: the 2 s windows 476 ms apart
+    var z = openSeismic(outDir / "zero-same.sgd", keys = true)
+    defer: z.close()
+    let a = samplesOf(z, 0)
+    let b = samplesOf(z, 2)
+    let shift = int((2_600_000 - 2_123_456) div DtUs) # 238 samples
+    for j in shift ..< Window: doAssert a[j] == b[j - shift], "shared sample " & $j
+
   block numbering_by_sequence:
     # Fails when file numbers are used although they do not increase.
     let bad = logOf([105, 101, 103, 104, 102, 106, 107], Offsets)

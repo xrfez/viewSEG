@@ -1276,8 +1276,8 @@ recording's components, written to a new file. The item is dim, with a tooltip s
 missing, until a file is shown and a log is loaded.
 
 The window asks for the shot log (the one the Shot log window shows to begin with), the record
-length and where it starts relative to the shot, in milliseconds (the length must be a whole
-number of samples; the window says when it is not), how a start between two samples is dealt
+length in milliseconds (a record begins at the shot's time; the length must be a whole
+number of samples, and the window says when it is not), how a start between two samples is dealt
 with (**Nearest sample**, **Linear**, **Cubic**, **Sinc**: Sinc is the most exact and the
 slowest), the format (SEG-D or SEG-Y), a folder and a file name (the recording's name with
 `_slice`). Under them it sums up what will be written: the shots, how many rows of the log have
