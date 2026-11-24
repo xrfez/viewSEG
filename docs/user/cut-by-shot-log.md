@@ -17,29 +17,50 @@ seismic file and load a shot log first."). Only one cut runs at a time.
 
 ## What the cut accepts
 
-Only a continuous receiver gather. viewSEG asks two questions of the file:
+Only a continuous receiver gather. viewSEG asks two questions of the file, comparing only
+components of the same type and never re-sorting anything:
 
-1. **Is it a shot gather?** The receiver line and point change from trace to trace: there is
-   more than one receiver point and no receiver has more than one segment. If so, it is a shot
-   gather ("This file is a shot gather (the receiver changes from trace to trace), not a
-   continuous receiver gather."). If not, it is a receiver gather.
+1. **Is it a shot gather?** The receiver line and point change from trace to trace. One
+   segment per receiver is never proof of continuity, so when every receiver has exactly one
+   trace and the file has more than one live trace: if all the traces carry one receiver
+   point (several channels of one station that start together) the file is a receiver gather
+   that is not continuous, because every trace carries the same start time; otherwise (the
+   points differ, or no trace carries a line and point) it is a shot gather ("This file is a
+   shot gather (the receiver changes from trace to trace), not a continuous receiver
+   gather."). A file with exactly one live trace is a receiver gather of one segment and is
+   continuous. Anything else is a receiver gather.
 2. **Is the receiver gather continuous?** Each trace starts a whole number of trace lengths
-   after the one before it. For one receiver (one channel at one point), the step is the
-   commonest difference between consecutive start times; the next start is the previous start
-   plus k steps, k a whole number, to within one sample. The traces may be a little longer than
-   the step (a little repeated data at their ends, at most a tenth of their length), but not
-   shorter (dead time between traces) and not much longer (traces that mostly cover each
-   other). At least half of the boundaries must follow the step. If so, it is a continuous
-   receiver gather. If not, it is a **time-sliced receiver gather**, and the sentence says why:
-   the starts are not on a common step, the traces are shorter than the step, they mostly cover
-   each other, or every trace carries the same start time (so their own start times are not in
-   the headers viewSEG reads; a vendor header map may have to describe them).
+   after the one before it, with no variance. For one receiver (one channel at one point) the
+   traces are taken in time order and those sharing one start time count as one segment (they
+   are its components). The step is the commonest difference between consecutive start times
+   from 0.9 to 1 times the trace length; when none lies there, the step is the trace length.
+   Every start must then be the previous start plus k steps, k a whole number, to within one
+   sample, and every trace must cover the step: not shorter (dead time between traces), and at
+   most a tenth of its length longer (a little repeated data at the ends). If so, it is a
+   continuous receiver gather. If not, it is a **time-sliced receiver gather**, and the sentence
+   says why: the first trace that starts off the step and how far off, the traces leave dead
+   time between them, they overlap by some seconds, or every trace carries the same start time
+   (so their own start times are not in the headers viewSEG reads; a vendor header map may have
+   to describe them).
+
+The kind is asked of any file you open, so the window decides it from the first 8 distinct start
+times of each receiver. The cut itself places every segment and checks every start: a trace off
+the step anywhere later in the file refuses the cut with the sentence above.
 
 If the recorder was off for a while, the next trace starts after more than one step (k greater
-than 1): the missing segments count as continuous, the times are written as zeros, and the
-window and Messages say "The recorder did not record for 67 segments (in 1 place); those times
-are written as zeros." A file with no receiver line and point in its headers, or with some
-points of one segment and others of several, goes through the two questions as they stand.
+than 1): the box pads with zeros, so a long silence is still a whole number of steps. The missing
+segments count as continuous, the times are written as zeros, and the window and Messages say
+"The recorder did not record for 67 segments (in 1 place); those times are written as zeros."
+
+When the start times are read from the trace headers, the traces of one component type at a
+station that share a start time are its channels, told apart by their order. If one channel
+misses a segment the later channel would take its place, so the cut is refused: "The channels
+of one component type at a station cannot be told apart and one of them misses a segment, so
+the records cannot be assembled safely."
+
+Each record holds the receivers in the order the file shows them: stations by their first
+trace, and within a station its components by theirs. Nothing is sorted by station number or
+component code.
 
 The window reads the file and refuses the other kinds in a sentence above the buttons (the
 tooltip of the dim **Cut** says the same), and the command and the job refuse them the same way
