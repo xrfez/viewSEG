@@ -204,29 +204,29 @@ type
     r: ptr ReaderObj
     src: ReaderSource
     name: string
-    shown: Positions                 ## the traces the filter keeps, in the file's order
-    positions: Positions             ## the same, in the order shown
-    sorted: bool                     ## `positions` follow the newest order taken
-    orderGen: uint64                 ## requests from before the newest order are not served
+    shown: Positions          ## the traces the filter keeps, in the file's order
+    positions: Positions      ## the same, in the order shown
+    sorted: bool              ## `positions` follow the newest order taken
+    orderGen: uint64          ## requests from before the newest order are not served
     layout: PanelLayout
     raw: RawCache
-    owed: ReaderRequest              ## the record's level to work out when nothing else waits
+    owed: ReaderRequest       ## the record's level to work out when nothing else waits
     hasOwed: bool
-    basisRaw: RawCache               ## the samples of the traces `owed` reads, as decoded
+    basisRaw: RawCache        ## the samples of the traces `owed` reads, as decoded
     ws: Workspace
-    pool: ProcessPool                ## the processing's workers; none until first needed
-    toldCut: bool                    ## the file was found cut short while it was open: said once
-    toldFile: ptr SeismicFile        ## the file `toldCut` and `toldIo` are about
+    pool: ProcessPool         ## the processing's workers; none until first needed
+    toldCut: bool             ## the file was found cut short while it was open: said once
+    toldFile: ptr SeismicFile ## the file `toldCut` and `toldIo` are about
     toldFilePath: string
-    toldIo: bool                     ## a read of the file failed (its drive): said once until one succeeds
-    lastIo: bool                     ## the tile just made had rows its drive failed (`serve` says so)
-    toldNotNumbers: bool             ## samples that are not numbers were found in the file: said once
-    toldFilters: string              ## what was said last of the filters of `toldPath`: said once
+    toldIo: bool              ## a read of the file failed (its drive): said once until one succeeds
+    lastIo: bool              ## the tile just made had rows its drive failed (`serve` says so)
+    toldNotNumbers: bool      ## samples that are not numbers were found in the file: said once
+    toldFilters: string       ## what was said last of the filters of `toldPath`: said once
     toldPath: string
-    viewOf: ref CorrelateView        ## the view `viewWs` was made for; nil when none
-    heldView: CorrelateView          ## that view, copied once, so a read does not copy it
+    viewOf: ref CorrelateView ## the view `viewWs` was made for; nil when none
+    heldView: CorrelateView   ## that view, copied once, so a read does not copy it
     viewWs: CorrelateWorkspace
-    viewRow, viewChunk: seq[float32] ## one trace, and a chunk, reused
+    viewChunk: seq[float32]   ## a chunk, reused
     spare: ViewSpare
 
 proc `=destroy`*(x: PanelReader)
@@ -356,7 +356,6 @@ proc dropViewWork(rd: var Reader) =
   rd.viewWs = CorrelateWorkspace()
   rd.heldView = CorrelateView()
   rd.viewOf = nil
-  rd.viewRow.setLen 0
   rd.viewChunk.setLen 0
   rd.spare = ViewSpare()
 
@@ -1223,12 +1222,11 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
       # kernel rejects a windowed record. The virtual path is not mapped;
       # `correlateRead` advises the raw file (`view.path`). One workspace for
       # this view, kept until another view or file is shown. Stop between
-      # traces, not only between chunks.
+      # chunks of rows, each correlated across the reader's pool.
       if rd.viewOf != rd.src.view:
         rd.heldView = rd.src.view[]
         rd.viewWs = newWorkspace(rd.heldView)
         rd.viewOf = rd.src.view
-      if cols > 0: rd.viewRow.setLen cols
       var rowAt = 0
       while rowAt < q.count and not given:
         if (if level: rd.r.levelSuperseded else: rd.r.interrupted):
@@ -1237,22 +1235,16 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
         let n = min(HeldTraces, q.count - rowAt)
         rd.viewChunk.setLen n * cols # empty when the window is past the row
         var chunkFailed: seq[int]
-        for k in 0 ..< n:
-          if (if level: rd.r.levelSuperseded else: rd.r.interrupted):
-            given = true
-            break
-          var one: array[1, int]
-          one[0] = list[rowAt + k]
-          if cols > 0:
-            correlateRead(rd.heldView, f, one, window.a, cols, rd.viewRow, rd.viewWs)
-            copyMem(addr rd.viewChunk[k * cols], addr rd.viewRow[0], cols * sizeof(float32))
-            if keep:
-              copyMem(addr into[].samples[(rowAt + k) * cols], addr rd.viewRow[0],
-                cols * sizeof(float32))
-            if rd.viewWs.failed.len > 0:
-              chunkFailed.add k
-              failed.add rowAt + k
-              inc tile.failed
+        if cols > 0:
+          correlateBlock(rd.heldView, f, list.toOpenArray(rowAt, rowAt + n - 1), window.a, cols,
+            rd.viewChunk, rd.viewWs, rd.poolOf)
+          if keep:
+            copyMem(addr into[].samples[rowAt * cols], addr rd.viewChunk[0],
+              n * cols * sizeof(float32))
+          for k in rd.viewWs.failed:
+            chunkFailed.add k
+            failed.add rowAt + k
+            inc tile.failed
         if given: break
         tile.readTime += fs.now() - waitFrom
         inc tile.chunks
