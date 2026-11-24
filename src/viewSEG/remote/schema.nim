@@ -42,7 +42,7 @@ const
     ckEdit, ckOwnFilter, ckTimeShift, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFileMemory,
     ckHover, ckSelect,
     ckClearSelection, ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer,
-    ckSelectPoints, ckHoverPoints,
+    ckSelectPoints, ckHoverPoints, ckSelectShotRows,
     ckShowPoints, ckJoin, ckClearSurvey, ckSelectUnmatched, ckSurveyUnits, ckChooseUnit,
     ckRetry, ckStopReading,
     ckPrepare, ckOpenPair, ckInspect, ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum,

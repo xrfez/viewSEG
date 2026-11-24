@@ -118,14 +118,14 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
     outputbinary, outputnames, outputtext, reader,
   recordingkind, recordqc, referencejobs, references, selection, session, settings,
       shotfollowtarget, shotlog,
-  shotlogjobs, shotlogsps, shotspsjobs,
+  shotlogjobs, shotlogsps, shotselect, shotspsjobs,
   shots, spectra,
   spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids,
       vendorfieldjobs,
   traceorder, treatas, vendorfieldlist, vendorjobs, vendormaps, vibprofile, watch, zoom
 
 export analysis, compare, edits, filelist, filememory, firstbreaks, identity, inbox, jobs, join,
-    shotfollowtarget,
+    shotfollowtarget, shotselect,
     layouts, log,
   mapstate, panels, persist, pick, project, outputnames, recordqc, references, selection, session,
     settings,
@@ -232,16 +232,19 @@ type
     ckSelectPoints = "select points"     ## change the points selected on the map, and their traces
     ckHoverPoints = "hover points"       ## the points under the map's pointer, and their traces
     ckShowPoints = "show points' record" ## show the record of the traces recorded at map points
-    ckJoin = "join geometry"             ## import a survey: on the map, matched to a file's traces
+    ckSelectShotRows = "select shot log rows"
+      ## choose rows of a loaded shot log: their points on the map are selected, and with
+      ## `shotTraces` the traces of the file shown that belong to those shots, the first shown
+    ckJoin = "join geometry" ## import a survey: on the map, matched to a file's traces
     ckSelectUnmatched = "select unmatched"
       ## select the traces a join left unmatched
     ckSurveyUnits = "read survey units"
       ## read what survey files' headers say of their unit, for the import's window
     ckChooseUnit = "choose unit"
       ## the unit of a survey's or a seismic file's coordinates, chosen by hand or taken back
-    ckRetry = "retry"                    ## open, read or list again what does not answer
-    ckStopReading = "stop reading"       ## leave a panel's read that does not answer
-    ckPrepare = "prepare"                ## the file the user is likely to step to next
+    ckRetry = "retry" ## open, read or list again what does not answer
+    ckStopReading = "stop reading" ## leave a panel's read that does not answer
+    ckPrepare = "prepare" ## the file the user is likely to step to next
     ckOpenPair = "open pair"
       ## show the other file of a vibrator signature file's sweep (a `.dat`'s `.vib`, a
       ## `.vib`'s `.dat`) in the panel, in place of the one it shows; searched for when the list
@@ -498,6 +501,15 @@ type
       shotPath*: string
         ## ckShowPoints: of the listed files that hold a source's shot, the
         ## one to show it from; "" the first (the latest, `ShotIndex.points`)
+      jump*: bool
+        ## ckSelectPoints: the main panel also shows the record of the traces selected,
+        ## as ckShowPoints does (a click on a source of a receiver gather)
+    of ckSelectShotRows:
+      shotLogId*: int ## the loaded log's id
+      shotRows*: seq[int] ## its data rows; none: nothing chosen
+      shotTraces*: bool
+        ## also select the traces of the file shown that belong to those shots (the
+        ## rule of the Shot log window's follow), and show the first
     of ckJoin:
       joinFile*: SessionId
         ## the open file the survey is matched to; none: the map only
@@ -1458,6 +1470,7 @@ type
     shotLogs: seq[LoadedShotLog]
       ## shot logs read this run, in the order they were imported or loaded
     follow: ShotFollow ## per loaded log, its index and its own last answer
+    shotRows: ShotRows ## the rows chosen in a loaded shot log (`ckSelectShotRows`)
     followTrace: int = -1
       ## last seismic trace hovered while this file is on show; -1 until one is
     followShown: int
@@ -5007,6 +5020,83 @@ proc showPoints(state: var AppState; cmd: Command) =
   if g < 0: return
   if state.shownFile(k) != i: state.showReplacing(k, s.id, g)
   else: state.show(MainPanel, s.id, g)
+
+func shotRowsChosen*(state: AppState): lent ShotRows {.inline.} =
+  ## The rows chosen in a loaded shot log, from the map or the grid; `log` is -1 for none.
+  state.shotRows
+
+func hoveredShotRows*(state: AppState; log: int): seq[int] =
+  ## The rows of loaded shot log `log` at the map points under the pointer, each once.
+  for p in state.selection.hoverPoints:
+    let i = state.survey.find(p.layer)
+    if i >= 0 and state.survey.layers[i].origin == loShotLog and
+        state.survey.layers[i].shotLog == log:
+      for row in state.survey.layers[i].rowsAtPoint(p.point):
+        if row notin result: result.add row
+
+proc shotTracesWhy(state: AppState; k: int; logId: int; rows: seq[int];
+    found: var seq[int]): string =
+  ## The traces (survey-wide) of the file panel `k` shows that belong to `rows` of log
+  ## `logId`, in `found`; else why there are none, as a sentence.
+  let i = state.shownFile(k)
+  if i < 0: return "No file is shown, so no trace was chosen."
+  let s = state.sessions[i]
+  if s.isSignature: return s.name & " is a signature file: it has no shots to choose."
+  let e = state.files.find(s.diskPath)
+  if e >= 0 and state.files.entries[e].recordingOf == some(rkReceiverContinuous):
+    return s.name & " is a continuous receiver gather: its traces are not shots; " &
+      "slice it by the shot log first."
+  let m = shotTraces(s.file, state.follow.indexOf(logId), rows)
+  if m.unreadable:
+    return s.name & " was opened without trace keys, so its traces cannot be told to " &
+      "shots; no trace was chosen."
+  for t in m.traces: found.add s.base + t
+  if found.len == 0:
+    result = "No trace of " & s.name & " belongs to " &
+      (if rows.len == 1: "that shot." else: "those shots.")
+
+proc selectShotRows(state: var AppState; logId: int; wanted: seq[int]; traces: bool) =
+  ## `ckSelectShotRows`: `wanted` rows of loaded log `logId` become the rows chosen, their
+  ## points on the map the selected points, and, with `traces`, the traces of the file shown
+  ## that belong to those shots the selected traces; the main panel shows the record of the
+  ## first (the one on show stays when it holds one). A sentence says why, once, when no
+  ## trace was chosen.
+  let at = state.findShotLog(logId)
+  var rows: seq[int]
+  if at >= 0:
+    let n = state.shotLogs[at].view.rows.len
+    for r in wanted.sorted:
+      if r in 0 ..< n and (rows.len == 0 or rows[^1] != r): rows.add r
+  let was = state.shotRows
+  state.shotRows = ShotRows(log: (if rows.len > 0: logId else: -1), rows: rows,
+    revision: was.revision + 1)
+  var found: seq[int]
+  var why = ""
+  let k = state.findPanel(MainPanel)
+  if traces and rows.len > 0:
+    why = state.shotTracesWhy(k, logId, rows, found)
+    state.selection.select(found, smReplace)
+  var points: seq[PointRef]
+  let layer = state.survey.findShotLog(logId)
+  if layer >= 0:
+    template l: untyped = state.survey.layers[layer]
+    for p in l.pointsOfRows(rows): points.add PointRef(layer: l.id, role: prSource, point: p)
+  state.selection.selectPoints(points, smReplace)
+  if found.len > 0:
+    let (shown, gather) = state.shownTraces(k)
+    var onShow = false
+    for t in found:
+      if shown >= 0 and t in state.sessions[shown] and t - state.sessions[shown].base in gather:
+        onShow = true
+    if not onShow:
+      let pick = found[0] # (ascending: the file's own order)
+      let i = state.findTrace(pick)
+      let g = if i >= 0: state.sessions[i].gatherOf(pick - state.sessions[i].base) else: -1
+      if g >= 0:
+        if state.shownFile(k) != i: state.showReplacing(k, state.sessions[i].id, g)
+        else: state.show(MainPanel, state.sessions[i].id, g)
+  elif why.len > 0:
+    state.log.add(sevInfo, "Shot log", why)
 
 proc mark(state: var AppState; path: string; short, seen: bool) =
   ## Marks the file list's entry of `path`: with `short`, as ending before
@@ -12351,29 +12441,44 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckMapLayer:
     state.map.show(cmd.mapLayer, cmd.shown)
   of ckSelectPoints:
-    # A range: the points along the line from the one clicked last.
-    let anchor = state.selection.pointAnchor
-    let points = if cmd.pointMode != smRange or cmd.points.len == 0: cmd.points
-                 elif state.survey.find(anchor.layer) < 0: @[cmd.points[0]]
-                 else: state.survey.lineRange(anchor, cmd.points[0])
-    let traces = state.survey.tracesAt(points)
-    case cmd.pointMode
-    of smReplace, smRange: # the points' own traces replace those selected
-      # (the traces first: a replace of them takes the points out too; the
-      # points once, not kept and selected again: half a million of them
-      # took a frame each time)
-      state.selection.select(traces, smReplace)
-      state.selection.selectPoints(points, smReplace)
-      # a range starts where the one before did
-      if cmd.pointMode == smRange and state.survey.find(anchor.layer) >= 0:
-        state.selection.pointAnchor = anchor
-    of smAdd, smRemove:
-      state.selection.selectPoints(points, cmd.pointMode)
-      state.selection.select(traces, cmd.pointMode)
-    of smToggle:
-      state.selection.selectPoints(points, cmd.pointMode)
-      let added = points.len > 0 and points[0].key in state.selection.pointKeys
-      state.selection.select(traces, if added: smAdd else: smRemove)
+    # A point of a shot log chooses the rows of its shot, all of them (a shot taken
+    # twice has two), and the traces of the file shown that belong to them.
+    var shotLogId = -1
+    var shotRows: seq[int]
+    for p in cmd.points:
+      let li = state.survey.find(p.layer)
+      if shotLogId < 0 and li >= 0 and state.survey.layers[li].origin == loShotLog:
+        shotLogId = state.survey.layers[li].shotLog
+        shotRows = state.survey.layers[li].rowsAtPoint(p.point)
+    if shotLogId >= 0:
+      state.selectShotRows(shotLogId, shotRows, traces = true)
+    else:
+      # A range: the points along the line from the one clicked last.
+      let anchor = state.selection.pointAnchor
+      let points = if cmd.pointMode != smRange or cmd.points.len == 0: cmd.points
+                   elif state.survey.find(anchor.layer) < 0: @[cmd.points[0]]
+                   else: state.survey.lineRange(anchor, cmd.points[0])
+      let traces = state.survey.tracesAt(points)
+      case cmd.pointMode
+      of smReplace, smRange: # the points' own traces replace those selected
+        # (the traces first: a replace of them takes the points out too; the
+        # points once, not kept and selected again: half a million of them
+        # took a frame each time)
+        state.selection.select(traces, smReplace)
+        state.selection.selectPoints(points, smReplace)
+        # a range starts where the one before did
+        if cmd.pointMode == smRange and state.survey.find(anchor.layer) >= 0:
+          state.selection.pointAnchor = anchor
+      of smAdd, smRemove:
+        state.selection.selectPoints(points, cmd.pointMode)
+        state.selection.select(traces, cmd.pointMode)
+      of smToggle:
+        state.selection.selectPoints(points, cmd.pointMode)
+        let added = points.len > 0 and points[0].key in state.selection.pointKeys
+        state.selection.select(traces, if added: smAdd else: smRemove)
+      if cmd.jump and traces.len > 0: state.showPoints(cmd)
+  of ckSelectShotRows:
+    state.selectShotRows(cmd.shotLogId, cmd.shotRows, cmd.shotTraces)
   of ckHoverPoints:
     # Every move over the map: the plot draws their traces as it draws its
     # own hover. A point of a layer gone in the same frame is passed by.

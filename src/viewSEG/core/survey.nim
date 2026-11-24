@@ -564,6 +564,12 @@ iterator shotRows*(l: SurveyLayer; point: int): int =
     let p = addr l.points[prSource]
     for i in p.traceStart[point] ..< p.traceStart[point + 1]: yield int(p.traceList[i])
 
+func shotPoint*(l: SurveyLayer; row: int): int =
+  ## Shot log layer `l`: the source point of its log's row `row`; -1 for a row
+  ## without a position, one out of range, and another kind of layer.
+  if l.origin == loShotLog and row in 0 ..< l.pointOf[prSource].len: int(l.pointOf[prSource][row])
+  else: -1
+
 proc withLevels*(l: var SurveyLayer) =
   ## Makes the map's levels of detail of each role's points (on the worker
   ## that made the layer: a million points take a few tens of ms).

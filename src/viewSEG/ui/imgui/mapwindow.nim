@@ -1510,7 +1510,9 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
         mu.info[0].lines.add markedHereText(near)
     mu.sendHover(res)
     # A click on a source shows its record (on a receiver in a file of
-    # receiver gathers, its gather); on any other point it selects the
+    # receiver gathers, its gather; on a source of a receiver gather, the
+    # gather of its first trace, its traces selected); on a shot log's point it
+    # chooses the rows of the shot and their traces; on any other point it selects the
     # point and its traces. Ctrl + click adds or takes out; Shift + click
     # selects the stations along the line from the point clicked last.
     if click > 0 and under.len > 0:
@@ -1518,7 +1520,8 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
                 pointMode: smRange)
               elif click == 2: Command(kind: ckSelectPoints, points: under, pointMode: smToggle)
               elif st.opensRecord(under[0]): Command(kind: ckShowPoints, points: under)
-              else: Command(kind: ckSelectPoints, points: under, pointMode: smReplace)
+              else: Command(kind: ckSelectPoints, points: under, pointMode: smReplace,
+                jump: under[0].role == prSource)
       res.commands.add c
     if menu:
       mu.menuPoints = under

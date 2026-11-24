@@ -26,8 +26,8 @@
 
 import std/[algorithm, hashes, intsets, math, os, sets, strutils]
 from parseSEG import GatherKind, gkReceiver, gkUnknown, known, recordsAt, stationKey
-import ../core/[geometry, shotlog, state]
-import plotink, theme
+import ../core/[geometry, shotlog, shotselect, state]
+import plotink, shotlogwords, theme
 
 type
   MapShape* = enum
@@ -475,6 +475,18 @@ func shotLogRows(st: AppState; l: SurveyLayer; point: int): seq[string] =
               result.add (if name.len > 0: name else: $role) & ": " & cell
         return
 
+proc shotTakes(st: AppState; l: SurveyLayer; point: int): seq[string] =
+  ## For a shot taken more than once ("Taken 2 times"), when each was: the log's times.
+  let rows = l.rowsAtPoint(point)
+  let i = st.findShotLog(l.shotLog)
+  if rows.len < 2 or i < 0: return
+  result.add "Taken " & $rows.len & " times"
+  var times: seq[string]
+  for row in rows:
+    let us = st.shotView(i).rows[row].timeUtcUs
+    if us.isSome: times.add utcMicrosText(us.get)
+  if times.len > 0: result.add "At " & times.join(", ")
+
 proc pointInfo*(st: AppState; p: PointRef; units: string): PointInfo =
   ## What the map says of point `p`: its role, station and file; its
   ## coordinates and elevation; the traces of the open files recorded there
@@ -495,6 +507,7 @@ proc pointInfo*(st: AppState; p: PointRef; units: string): PointInfo =
     result.title = "Shot, " & stationText(station)
     result.lines.add "In the shot log " & elided(l.name)
     result.lines.add st.shotLogRows(l, p.point)
+    result.lines.add st.shotTakes(l, p.point)
     return
   result.lines.add (if l.origin == loTraces: "In the traces of " else: "In ") & elided(l.name)
   let traces = st.survey.tracesAt(p)

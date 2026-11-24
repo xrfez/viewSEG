@@ -199,7 +199,9 @@ proc main*() =
       doAssert k in Offered and $k in kinds and Docs.kinds.getOrDefault($k).len > 0, $k
     doAssert takes(ckMapView) == @["mapView", "mapRemember"], $takes(ckMapView)
     doAssert takes(ckMapLayer) == @["mapLayer", "shown"], $takes(ckMapLayer)
-    doAssert takes(ckSelectPoints) == @["points", "pointMode"], $takes(ckSelectPoints)
+    doAssert takes(ckSelectPoints) == @["points", "pointMode", "jump"], $takes(ckSelectPoints)
+    doAssert ckSelectShotRows in Offered and takes(ckSelectShotRows) ==
+      @["shotLogId", "shotRows", "shotTraces"], $takes(ckSelectShotRows)
     doAssert takes(ckHoverPoints) == @["points"] and
       takes(ckShowPoints) == @["points", "shotPath"], $takes(ckShowPoints)
     # the geometry join: a user's in a window, in memory, no file written
