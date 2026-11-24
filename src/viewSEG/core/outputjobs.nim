@@ -100,7 +100,8 @@ type
       ## path. Off: the file's own positions are written, and the result says so.
     correlation*: Option[OutputCorrelation]
       ## None: the samples written today. Set: correlate each trace with this
-      ## reference, into the listen time, as the correlation job does.
+      ## reference, into the listen time. Positions are written by the same
+      ## rule as any other Output, not as the correlation job's in-memory file.
 
   OutputResult* = object
     ## What the write did. `ok` false: `reason` is a sentence for the user.

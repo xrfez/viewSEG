@@ -15,15 +15,19 @@
 ## (e) a dead seismic trace is written dead, as zeros, equal to the button.
 ## (f) a time shift, an own filter and a polarity reversal, each applied with
 ## the option, match the button then Output.
+## (g) a joined source X is written when session positions are on, and the
+## file's own when they are off. The button's file keeps its own.
 ##
 ## Seen to fail: trace 1 was marked live and correlated, so sample 0 was 1.0
 ## against the button's 0.0. A +8 ms shift before correlation left trace 0
 ## sample 0 at -0.2962032 against the button's 0.0. An own filter on the raw
 ## trace left sample 0 at 0.43718278 against the button's 0.2898751. Polarity
-## left off left sample 0 at 1.0 against the button's -1.0.
+## left off left sample 0 at 1.0 against the button's -1.0. With the session
+## keys left out of a correlated write, joined source X stayed 10.0, not 111.
 
 import std/[math, options, os, strutils]
 import parseSEG
+import parseSEG/model/traceindex
 import processSEG
 import viewSEG/core/[correlatejobs, edits, jobs, outputjobs, processing, session]
 import utils/waiting
@@ -41,6 +45,9 @@ const
   ShortSweep = 32
   ShortRecord = 400
   ShortListen = ShortRecord - ShortSweep
+  OwnSrcX = 10.0
+  JoinedSrcX = 111.0
+  OwnSrcY = 20.0
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
@@ -134,6 +141,32 @@ proc writeShort(path: string; sweep: openArray[float32]) =
     k.time = 1_700_000_000.0
     w.writeTrace(k, buf)
   doAssert w.close().len == 0, "the short-sweep file did not close"
+
+proc writePlaced(path: string; sweep: openArray[float32]) =
+  ## SEG-Y whose headers hold source X 10. A later join can replace that.
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
+    measurementSystem: 1, text: @["C01 positions stay the output rule"]))
+  for i in 0 .. 4:
+    var buf: seq[float32]
+    var k = initTraceKeys()
+    if i < Delays.len:
+      buf = delayedSweep(sweep, Record, Delays[i])
+      (k.traceCode, k.status) = (1'i16, tsLive)
+    elif i == RefAux:
+      buf = delayedSweep(sweep, Record, 0)
+      (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+    else:
+      buf = newSeq[float32](Record)
+      for j in 0 ..< Record: buf[j] = float32(j + 1)
+      (k.traceCode, k.status) = (6'i16, tsAuxiliary)
+    k.record = 7.0
+    k.channel = float64(i + 1)
+    k.intervalUs = DtMs * 1000.0
+    k.t0Ms = 0.0
+    k.time = 1_700_000_000.0
+    (k.srcX, k.srcY) = (OwnSrcX, OwnSrcY)
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the placed file did not close"
 
 proc writeSegd(path: string; sweep: openArray[float32]) =
   var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: DtMs * 1000.0,
@@ -472,6 +505,42 @@ proc main*() =
       got.wrote.reason
     noPart(outDir, "short-out.sgy")
     sf.close()
+
+  block positions:
+    ## A joined source X is written when session positions are on, and the
+    ## file's own when they are off. Seen to fail: the session keys were left
+    ## out, so source X stayed 10.0, not 111.
+    let placed = srcDir / "placed.sgy"
+    writePlaced(placed, sweep)
+    var raw = openSeismic(placed, keys = true)
+    doAssert raw.traceKeys(0).srcX == OwnSrcX, "the file did not store source X 10"
+    for t in 0 ..< raw.len:
+      raw.mindex.keys[t].srcX = JoinedSrcX
+      raw.mindex.markJoined(t, {jgSourceXy})
+    let made = correlate(raw, placed, sweep)
+    var opened = made.opened.filePtr
+    let fromButton = outDir / "pos-button.sgy"
+    let fromOption = outDir / "pos-option.sgy"
+    let fromOwn = outDir / "pos-own.sgy"
+    let button = runWrite(opened[], placed, fromButton, OutputOptions(format: ofSegy))
+    doAssert button.st == jsDone, button.error & " / " & button.wrote.reason
+    let opted = runWrite(raw, placed, fromOption, option(sweep, ofSegy))
+    doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+    var kept = option(sweep, ofSegy)
+    kept.writeSessionPositions = false
+    let own = runWrite(raw, placed, fromOwn, kept)
+    doAssert own.st == jsDone, own.error & " / " & own.wrote.reason
+    var a = openSeismic(fromOption, keys = true)
+    var b = openSeismic(fromButton, keys = true)
+    var c = openSeismic(fromOwn, keys = true)
+    doAssert a.traceKeys(0).srcX == JoinedSrcX, "joined source X was " & $a.traceKeys(0).srcX
+    doAssert b.traceKeys(0).srcX == OwnSrcX, "the button wrote source X " & $b.traceKeys(0).srcX
+    doAssert c.traceKeys(0).srcX == OwnSrcX, "own positions wrote source X " & $c.traceKeys(0).srcX
+    a.close()
+    b.close()
+    c.close()
+    opened[].close()
+    raw.close()
 
 when isMainModule:
   main()
