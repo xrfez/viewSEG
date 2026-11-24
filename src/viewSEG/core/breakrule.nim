@@ -20,13 +20,16 @@
 ##   and not before the model's intercept less the limit (no break comes before the first
 ##   possible arrival). Everything else with a model time is "no break found", never flagged.
 ## - **Off its neighbours**: a comparable trace whose residual, less the median residual of up
-##   to `NeighbourCount` neighbours on one side along its receiver line (at most
-##   `NeighbourReach` places away: a comparable trace's guided residual, or a far-off trace's
-##   first-pass residual; the left side's, the right side's or their mean, whichever is
+##   to `NeighbourCount` comparable neighbours on one side along its receiver line (at most
+##   `NeighbourReach` places away; the left side's, the right side's or their mean, whichever is
 ##   nearer its own residual), is larger than
 ##   `max(LimitFloorMs, StationSigmas * sigma')`, `sigma'` being the same measure of the
 ##   differences from the mean of both sides over the record. This finds a wrong station and
-##   tolerates a model that bends.
+##   tolerates a model that bends. A far-off trace is no neighbour (its first-pass pick may be
+##   noise), with one exception: a trace is not off its neighbours when, on one side, the
+##   traces next to it begin with a run of at least `DriftMinTraces` far-off traces whose
+##   first-pass picks all depart from the model on the side the trace departs from its
+##   neighbours (the shoulder of a drift wider than the window, not a wrong station).
 ## - **A given model that does not match**: its median residual is past the limit, its
 ##   misfit's scatter is more than `MismatchSigmas` times the picks' own, or it finds fewer
 ##   than half the comparable traces the record's own fit finds.
@@ -71,6 +74,8 @@ const
   NeighbourReach* = 2 * NeighbourCount
     ## the farthest (in places along the line) a neighbour is looked for on each side
   MinNeighbours* = 3       ## the fewest usable neighbours (in all) a trace needs to be judged by them
+  DriftMinTraces* = 2
+    ## the fewest far-off traces next to a trace that make the drift it may be the shoulder of
   FarOffMaxMs* = 400.0
     ## the farthest a first-pass pick may be from the model to be "far off" it; farther is noise
   RangeBins* = 20          ## the offset bins `expectedRange` cuts the record into
@@ -310,14 +315,31 @@ func eigenMin(az: openArray[float64]): float64 =
 func sideMedian(ids: openArray[int]; k, dir: int; res: openArray[float64]):
     tuple[med: float64; count: int] =
   ## The median residual of up to `NeighbourCount` traces next to `ids[k]` in direction `dir`,
-  ## looked for at most `NeighbourReach` places away (`ids` are the line's comparable traces
-  ## and its far-off traces, whose residual is the first pass's).
+  ## looked for at most `NeighbourReach` places away (`ids` are the line's comparable traces).
   var near: seq[float64]
   var j = k + dir
   while j >= 0 and j < ids.len and near.len < NeighbourCount and abs(j - k) <= NeighbourReach:
     near.add res[ids[j]]
     j += dir
   (median(near), near.len)
+
+func driftSide(line: openArray[int]; p, dir: int; side: float64; comparable, farOff: seq[bool];
+    firstMs, modelMs: openArray[float64]): bool =
+  ## Whether the traces next to `line[p]` in direction `dir` (at most `NeighbourReach` places
+  ## away, a trace with no break found passed over) begin with a run of at least
+  ## `DriftMinTraces` far-off traces, up to `NeighbourCount` looked at, whose first-pass picks
+  ## all depart from the model on the side `side` (its sign) says.
+  var run = 0
+  var q = p + dir
+  while q >= 0 and q < line.len and abs(q - p) <= NeighbourReach and run < NeighbourCount:
+    let j = line[q]
+    if j in 0 ..< comparable.len:
+      if comparable[j]: break
+      if farOff[j]:
+        if (firstMs[j] - modelMs[j]) * side <= 0: return false
+        inc run
+    q += dir
+  run >= DriftMinTraces
 
 func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry;
     given = false; interceptMs = NaN): BreakRule =
@@ -376,12 +398,12 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
           inc result.nFarOff
       if result.noBreak[i]: inc result.nNoBreak
   # the station rule, along each receiver line: against the median of up to NeighbourCount
-  # neighbours on each side (comparable, or far off: a stretch the model misses is still the
-  # line's). A far-off trace's residual is its first-pass pick; only a comparable trace is
-  # judged. A trace with fewer than MinNeighbours is not judged
-  for i in 0 ..< n:
-    if result.farOff[i]: res[i] = g.firstMs[i] - modelMs[i]
+  # comparable neighbours on each side (off the model or not: a stretch the model misses is
+  # still the line's); a trace with fewer than MinNeighbours is not judged. A far-off trace is
+  # no neighbour: its first-pass pick may be noise. A trace on the shoulder of a far-off run
+  # that departs the same way (`driftSide`) is not flagged
   var local = newSeq[float64](n)
+  var shoulder = newSeq[bool](n)
   for i in 0 ..< n: local[i] = NaN
   var lines = g.lines
   if lines.len == 0:
@@ -392,11 +414,12 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
   # a limit from them flags healthy stations
   var diffs, ends: seq[float64]
   for line in lines:
-    var ids: seq[int]
-    for i in line:
-      if i in 0 ..< n and (result.comparable[i] or result.farOff[i]): ids.add i
+    var ids, places: seq[int] # the line's comparable traces, and where they are in it
+    for p, i in line:
+      if i in 0 ..< n and result.comparable[i]:
+        ids.add i
+        places.add p
     for k in 0 ..< ids.len:
-      if not result.comparable[ids[k]]: continue
       let (ml, nl) = sideMedian(ids, k, -1, res)
       let (mr, nr) = sideMedian(ids, k, 1, res)
       if nl + nr >= MinNeighbours:
@@ -411,12 +434,16 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
         local[ids[k]] = r - near
         if nl > 0 and nr > 0: diffs.add r - (ml + mr) / 2
         else: ends.add local[ids[k]]
+        if haveFirst and local[ids[k]] != 0:
+          shoulder[ids[k]] = driftSide(line, places[k], -1, local[ids[k]], result.comparable,
+            result.farOff, g.firstMs, modelMs) or driftSide(line, places[k], 1, local[ids[k]],
+            result.comparable, result.farOff, g.firstMs, modelMs)
   if diffs.len == 0: diffs = ends
   if diffs.len > 0:
     result.stationSigmaMs = robustSigma(diffs)
     result.stationLimitMs = max(LimitFloorMs, StationSigmas * result.stationSigmaMs)
     for i in 0 ..< n:
-      if not local[i].isNaN and abs(local[i]) > result.stationLimitMs:
+      if not local[i].isNaN and abs(local[i]) > result.stationLimitMs and not shoulder[i]:
         result.offNeighbours[i] = true
   for i in 0 ..< n:
     result.flagged[i] = result.offModel[i] or result.offNeighbours[i] or result.farOff[i]

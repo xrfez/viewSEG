@@ -6,7 +6,11 @@
 ## - one displaced station is off its neighbours, also against a model that bends (the record
 ##   limit flags the bend, the station rule only the station), and one trace 15 ms off flat
 ##   neighbours is still flagged; inside a stretch the model misses
-##   and at a bend it misses; a block of 5 is flagged and nothing beside it;
+##   and at a bend it misses; a block of 5 is flagged and nothing beside it; far-off traces are
+##   no neighbours (two noise picks next to a record's end do not flag the end trace; a good
+##   trace among far-off noise with too few comparable neighbours is not judged), but the
+##   shoulder of a far-off drift that departs the same way is not off its neighbours (15 ms the
+##   other way is; one far-off trace is no drift);
 ## - a source placed 200 ft sideways gives the record's words about the lean and the sign (the
 ##   side the picks are earliest at), also against the scatter about the record's own fit; a
 ##   constant offset gives "every pick is late"; azimuths covering less than a half circle give
@@ -50,7 +54,8 @@
 ## burst 60 ms before the break was picked" and "60 ms off is no break, not far off"; with the
 ## edge pick kept on the record-fit pass, "1 ms: trace 20 compared at -14.0 ms" (-14.1 at 2 ms,
 ## -16.0 at 4 ms); with far off taken only beyond the band, "a first-pass pick on the edge is no
-## break".
+## break"; with far-off traces' first-pass picks among the neighbours, "end trace 0 off its
+## neighbours" (and 11); without the shoulder's excuse, "the shoulder is off its neighbours".
 
 import std/[math, os, strutils]
 import parseSEG
@@ -595,6 +600,66 @@ proc main*() =
     g.firstMs[8] = p[8]
     let r = applyRule(p, d.conf, d.model, g)
     doAssert not r.comparable[8] and r.farOff[8], "a first-pass pick on the edge is no break"
+
+  block twoFarOffNoisePicksAtARecordEndDoNotFlagTheEndTrace:
+    # 12 flat traces, window 20 ms: two traces next to an end have no guided break and a
+    # confident first-pass pick 300 ms late (noise). The end trace is judged against its
+    # comparable neighbours only. Seen to fail with far-off traces' first-pass picks among the
+    # neighbours: "end trace 0 off its neighbours" (and 11, at the other end).
+    for (last, noise) in [(0, [1, 2]), (11, [9, 10])]:
+      var d = line(12, 0, 1)
+      var g = oneLine(12)
+      g.guideWindowMs = 20
+      g.firstMs = d.pick
+      g.firstConf = d.conf
+      var conf = d.conf
+      for i in noise:
+        conf[i] = 0.1
+        g.firstMs[i] = d.model[i] + 300
+      let r = applyRule(d.pick, conf, d.model, g)
+      for i in noise: doAssert r.farOff[i], "trace " & $i & " not far off"
+      doAssert not r.offNeighbours[last] and not r.flagged[last],
+        "end trace " & $last & " off its neighbours"
+    # a good trace beside far-off noise with too few comparable neighbours is not judged
+    var d = line(6, 0, 1)
+    var g = oneLine(6)
+    g.guideWindowMs = 20
+    g.firstMs = d.pick
+    g.firstConf = d.conf
+    var conf = d.conf
+    for i in 1 .. 4:
+      conf[i] = 0.1
+      g.firstMs[i] = d.model[i] + 300
+    let r = applyRule(d.pick, conf, d.model, g)
+    doAssert r.nFarOff == 4 and r.nOffNeighbours == 0 and r.nFlagged == 4,
+      $r.nOffNeighbours & " off their neighbours, " & $r.nFlagged & " flagged"
+
+  block theShoulderOfADriftIsNotOffItsNeighbours:
+    # 40 flat traces, window 20 ms; 21 to 27 have no guided break and a first-pass break 30 to
+    # 60 ms late (a drift wider than the window); trace 20, 15 ms late, is its shoulder. Seen
+    # to fail without the shoulder's excuse: "the shoulder is off its neighbours".
+    var d = line(40, 0, 1)
+    var g = oneLine(40)
+    g.guideWindowMs = 20
+    g.firstMs = d.pick
+    g.firstConf = d.conf
+    var conf = d.conf
+    for i in 21 .. 27:
+      conf[i] = 0.1
+      g.firstMs[i] = d.model[i] + 30 + 5 * float64(i - 21)
+    var p = d.pick
+    p[20] += 15
+    let r = applyRule(p, conf, d.model, g)
+    doAssert r.comparable[20] and r.nFarOff == 7
+    doAssert not r.offNeighbours[20], "the shoulder is off its neighbours"
+    # 15 ms early beside a drift that is late is a wrong station
+    p[20] = d.pick[20] - 15
+    doAssert applyRule(p, conf, d.model, g).offNeighbours[20], "15 ms early beside a late drift"
+    # one far-off trace is no drift
+    p[20] = d.pick[20] + 15
+    for i in 22 .. 27: conf[i] = 1.0
+    let one = applyRule(p, conf, d.model, g)
+    doAssert one.nFarOff == 1 and one.offNeighbours[20], "beside one far-off trace"
 
   block farOffIsANearMissNotNoise:
     # the first pass's pick is far off the model only 100 to 400 ms from it, and never before

@@ -21,8 +21,6 @@
 ## picking for a given model leaving the fit's picks shown without a word, the stop's check;
 ## with the views not kept, "the views are made again on every frame"; with the neighbour rule
 ## leaving the traces off the model out, "trace 19 off its neighbours" on the drift;
-## with the far-off traces left out of the neighbours, "trace 14 off its neighbours" on the
-## 80 ms drift;
 ## with the pick choice left out of the key, "0 jobs in 200 frames" for the choice (the picks
 ## were not made again on the samples as recorded).
 
@@ -477,8 +475,6 @@ proc main*() =
   block aSmoothDriftIsNotOffItsNeighbours:
     # an 80 ms bump over `(i - 24) / 14`. The top is outside this record's 20 ms window, so
     # those traces are far off; the shoulder (10-14 and 34-38) is not off its neighbours.
-    # Seen to fail with the far-off traces left out of the neighbours: trace 14, 15 ms up,
-    # was judged against the flat side alone and flagged off its neighbours.
     withFixtures fx:
       let path = fx.customShot("drift.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
         let u = (float64(i) - 24) / 14

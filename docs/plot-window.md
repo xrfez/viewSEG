@@ -678,17 +678,19 @@ state agree):
   record's limit, the larger of 12 ms and three times 1.4826 times the median absolute deviation
   of the picks' scatter about the record's own fit, whichever model is shown (a given model that
   fits badly cannot widen its own limit).
-- *Off its neighbours*: the residual less the median residual of up to three neighbours on
-  one side along the same receiver line (a comparable trace's guided pick, or a far-off
-  trace's first-pass pick; in receiver point order; file order where lines or points are
-  unknown; at most six stations away), taking the left side's, the right side's or the mean of
-  the two, whichever is nearest the trace's own residual, is larger than the larger of 12 ms
-  and four times the robust sigma of the differences from the mean of both sides. Only a
-  comparable trace is judged. Traces off the model count as neighbours too, and so does a
-  far-off trace, so a stretch the model misses (a bend, a static, a drift wider than the
-  window) is followed, a block of wrong stations flags only itself, and one wrong station
-  inside the stretch is still found. A trace with fewer than three neighbours is not judged
-  this way.
+- *Off its neighbours*: the residual less the median residual of up to three comparable
+  neighbours on one side along the same receiver line (in receiver point order; file order
+  where lines or points are unknown; at most six stations away), taking the left side's, the
+  right side's or the mean of the two, whichever is nearest the trace's own residual, is larger
+  than the larger of 12 ms and four times the robust sigma of the differences from the mean of
+  both sides. Traces off the model count as neighbours too, so a stretch the model misses (a
+  bend, a static) is followed, a block of wrong stations flags only itself, and one wrong
+  station inside the stretch is still found. A far-off trace is no neighbour (its first-pass
+  pick may be noise), so a good trace beside far-off noise is judged by its comparable side
+  alone. One exception: a trace whose next traces on one side are at least two far-off traces
+  departing from the model the way the trace departs from its neighbours is the shoulder of a
+  drift wider than the window, not a wrong station, and is not flagged off its neighbours. A
+  trace with fewer than three comparable neighbours is not judged this way.
 - *The record's words*: when the traces' azimuths from the source cover at least 180 degrees,
   and the azimuths are spread well enough round the source (a line through it is not enough),
   the residuals are fitted as a constant plus a cosine and sine of the azimuth; otherwise only
