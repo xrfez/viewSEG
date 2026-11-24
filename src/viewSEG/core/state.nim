@@ -100,7 +100,7 @@
 ## history of commands.
 
 import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, times]
-from std/unicode import runeSubStr
+from std/unicode import runeSubStr, cmpRunesIgnoreCase
 import parseSEG
 from processSEG/core/types import sameInterval
 from processSEG/core/workspace import Workspace, initWorkspace
@@ -113,7 +113,8 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
   edits, filejobs,
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
       join, layouts, leapfile, log,
-  mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, reader,
+  mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif,
+    outputnames, reader,
   recordqc, referencejobs, references, selection, session, settings, shotfollowtarget, shotlog,
   shotlogjobs,
   shots, spectra,
@@ -123,7 +124,8 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
 export analysis, compare, edits, filelist, filememory, firstbreaks, identity, inbox, jobs, join,
     shotfollowtarget,
     layouts, log,
-  mapstate, panels, persist, pick, project, recordqc, references, selection, session, settings,
+  mapstate, panels, persist, pick, project, outputnames, recordqc, references, selection, session,
+    settings,
   shots, spectra, spread, survey, threads, tiles, traceids, vendormaps, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues, MaxTableRows
 export tracetable
@@ -147,6 +149,16 @@ const
   MaxPrepareBytes* = 2'i64 * 1024 * 1024 * 1024
     ## a file larger than this (2 GiB) is not prepared: its index and keys
     ## would hold too much memory beside the file shown
+
+type
+  NamePatternAction* = enum
+    ## What a name-pattern command does.
+    npaSave = "save"
+      ## add the pattern, or replace the one with the same label, case ignored
+    npaDelete = "delete"
+      ## forget the pattern named
+    npaChoose = "choose"
+      ## use the pattern named; an empty name is today's naming
 
 type
   CommandKind* = enum
@@ -231,6 +243,9 @@ type
     ckClosePlot = "close plot" ## close an analysis window
     ckDisplayPreset = "display preset"
       ## draw a panel as a named display says; keep, rename or forget one
+    ckNamePattern = "name pattern"
+      ## save a file-name pattern into the project, delete one by its label,
+      ## or choose one (an empty label is today's naming)
     ckTheme = "theme" ## the theme the program is drawn in, as View > Theme picks it
     ckNewProject = "new project"
       ## make a project folder (Project > New project) and open it: the session's files stay open
@@ -630,6 +645,13 @@ type
       leapYear*: int ## ckAddLeap: the year
       leapMonth*: int ## ckAddLeap: the month
       leapStep*: int ## ckAddLeap: +1 or -1
+    of ckNamePattern:
+      patternAction*: NamePatternAction
+        ## ckNamePattern: save (add, or replace the one with the same label,
+        ## case ignored), delete by label, or choose by label
+      namePattern*: OutputPattern
+        ## ckNamePattern: the pattern to save; for delete and choose, `name`
+        ## is the label (empty chooses today's naming)
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -9779,6 +9801,96 @@ proc apply*(state: var AppState; cmd: Command) =
   state.followProject()
   state.followMoves()
 
+const
+  NeedProjectPatterns* = "Open or make a project to keep name patterns."
+    ## said when a name pattern is saved, deleted or chosen with no project open
+  ReadOnlyPatterns* = "The project is open read-only."
+    ## said when the project open cannot be written
+
+func namePatternCap*(): string =
+  ## Why one more name pattern cannot be kept.
+  "at most " & $MaxOutputPatterns & " name patterns are kept; delete one first"
+
+func noNamePattern*(name: string): string =
+  ## Why a label that names nothing cannot be deleted or chosen.
+  "no name pattern is named \"" & name & "\""
+
+func findPattern(patterns: openArray[OutputPattern]; name: string): int =
+  # The pattern whose label matches `name`, spaces stripped, case ignored.
+  # -1 when `name` is empty or names nothing.
+  let want = strip(name)
+  if want.len == 0: return -1
+  for i, p in patterns:
+    if cmpRunesIgnoreCase(p.name, want) == 0: return i
+  -1
+
+proc namePattern(state: var AppState; cmd: Command) =
+  ## Save, delete or choose a file-name pattern in the project open. Kept
+  ## whoever asks: the project is the only copy. What cannot be done is said,
+  ## and the project is not marked changed.
+  if not state.inProject:
+    state.log.add(sevWarning, "commands", NeedProjectPatterns)
+    return
+  if state.project.readOnly:
+    state.log.add(sevWarning, "commands", ReadOnlyPatterns)
+    return
+  template say(sentence: string) =
+    state.log.add(sevWarning, "commands", sentence)
+  case cmd.patternAction
+  of npaSave:
+    var p = cmd.namePattern
+    p.name = strip(p.name)
+    let why = patternProblem(p)
+    if why.len > 0:
+      say(why)
+      return
+    let i = findPattern(state.project.doc.outputPatterns, p.name)
+    if i < 0 and state.project.doc.outputPatterns.len >= MaxOutputPatterns:
+      say(namePatternCap())
+      return
+    if i >= 0:
+      let was = state.project.doc.outputPatterns[i].name
+      state.project.doc.outputPatterns[i] = p
+      if cmpRunesIgnoreCase(state.project.doc.outputPattern, was) == 0:
+        state.project.doc.outputPattern = p.name
+    else:
+      state.project.doc.outputPatterns.add p
+      state.project.doc.outputPatternLater.setLen(state.project.doc.outputPatterns.len)
+    state.project.doc.hasOutputPatterns = true
+    state.projectChanged()
+  of npaDelete:
+    let label = strip(cmd.namePattern.name)
+    if label.len == 0:
+      say(patternProblem(cmd.namePattern))
+      return
+    let i = findPattern(state.project.doc.outputPatterns, label)
+    if i < 0:
+      say(noNamePattern(label))
+      return
+    let was = state.project.doc.outputPatterns[i].name
+    state.project.doc.outputPatterns.delete(i)
+    if i < state.project.doc.outputPatternLater.len:
+      state.project.doc.outputPatternLater.delete(i)
+    if cmpRunesIgnoreCase(state.project.doc.outputPattern, was) == 0:
+      state.project.doc.outputPattern = ""
+    state.project.doc.hasOutputPatterns = true
+    state.projectChanged()
+  of npaChoose:
+    let label = strip(cmd.namePattern.name)
+    if label.len == 0:
+      if state.project.doc.outputPattern.len > 0:
+        state.project.doc.outputPattern = ""
+        state.projectChanged()
+      return
+    let i = findPattern(state.project.doc.outputPatterns, label)
+    if i < 0:
+      say(noNamePattern(label))
+      return
+    let stored = state.project.doc.outputPatterns[i].name
+    if state.project.doc.outputPattern != stored:
+      state.project.doc.outputPattern = stored
+      state.projectChanged()
+
 proc displayPreset(state: var AppState; cmd: Command) =
   ## A named display preset (`core/displaypresets`) applied to a panel, or
   ## saved, renamed or deleted: in the settings in effect, and in those kept
@@ -10879,6 +10991,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
         state.requestView(k) # a new view, or the extremes wiggles need
       state.settleGain(k, cmd.origin)
   of ckDisplayPreset: state.displayPreset(cmd)
+  of ckNamePattern: state.namePattern(cmd)
   of ckReopen:
     if cmd.reopenPath.len == 0: state.ignore(cmd, "no file was named")
     elif cmd.origin == coAgent and cmd.openChoice.demuxDir.len > 0:

@@ -45,7 +45,8 @@ const
     ckRetry, ckStopReading,
     ckPrepare, ckOpenPair, ckInspect, ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum,
     ckSpectrumPanel, ckAuxWindow,
-    ckSpectrumCursor, ckStepTrace, ckDisplayPreset, ckTheme, ckOpenPlot, ckPlotDisplay,
+    ckSpectrumCursor, ckStepTrace, ckDisplayPreset, ckNamePattern, ckTheme,
+    ckOpenPlot, ckPlotDisplay,
     ckPlotCursor, ckClosePlot, ckNewProject, ckOpenProject,
     ckCloseProject, ckReopen, ckListReferences, ckReloadVendors, ckVendorMap, ckStoreReference,
     ckGenerateReference,
@@ -72,8 +73,10 @@ const
     ## and write nothing; how an agent shows them is for the session only. So
     ## are the display presets an agent saves, renames or deletes, and the
     ## theme it picks (`ckTheme`: the theme it draws in, not the user's
-    ## preferences as a whole). An agent may make, open and close a
-    ## project (`ckNewProject` writes a new folder only, never data); its
+    ## preferences as a whole). A file-name pattern (`ckNamePattern`) is kept
+    ## in the project open, which must be writable. An agent may make, open
+    ## and close a project (`ckNewProject` writes a new folder only, never
+    ## data); its
     ## trace edits and survey imports are not written into it. A file opened
     ## again with other options (`ckReopen`) is read as before, read-only, for
     ## the session; a folder for a demultiplexed copy, which would be written
