@@ -1,11 +1,15 @@
 ## The folder scan and the map judge the same traces: for one file the noisy and the weak traces
-## the scan counts are those the map's record check (`recordQcWork`) marks.
+## the scan counts are those the map's record check (`recordQcWork`) marks, and a station is
+## tested in a record only where the map judged it.
 ##
 ## - a killed trace is not judged and not in the statistics the live traces are judged against,
-##   in the map as in the scan (64 traces, every other trace of 20 .. 59 killed and loud).
+##   in the map as in the scan (64 traces, every other trace of 20 .. 59 killed and loud);
+## - a station inside the exclusion area of every record has empty cells (not tested), not 0.
 ##
 ## Seen to fail: with the map reading the killed traces into its statistics, `killed_traces_*`
-## saw the map's noisy set empty and its weak set hold traces the scan did not name.
+## saw the map's noisy set empty and its weak set hold traces the scan did not name; with the
+## scan's `tested` set for every sample-read trace, `a_station_in_the_area_*` saw 2 tested where
+## the map judged the station in neither record.
 
 import std/[algorithm, os, sets, strutils, tables]
 import parseSEG
@@ -141,6 +145,24 @@ proc main*() =
       doAssert scanNoisy == @[25, 27] and scanWeak == @[21, 23], $scanNoisy & $scanWeak
       for t in kill:
         doAssert t notin m.noisy and t notin m.weak, "a killed trace was judged: " & $t
+
+  block a_station_in_the_area_of_every_record_has_empty_cells:
+    withFixtures fx:
+      let path = fx.dir / "areas.sgd"
+      build(path, Spec(recs: @[64, 64], sameStations: true))
+      let m = mapSets(path, @[])
+      let r = scan(path, initTable[string, FileEdits]())
+      doAssert m.notJudged.len > 0, "the map judged every trace: no area to test"
+      var empty = 0
+      for row in r.stations:
+        let p = int(row.point) - 1
+        var judged = 0
+        for rec in 0 ..< 2:
+          if p + 64 * rec notin m.notJudged: inc judged
+        doAssert row.tested == judged, "station " & $(p + 1) & ": " & $row.tested &
+          " tested, the map judged it in " & $judged
+        if row.tested == 0: inc empty
+      doAssert empty > 0, "no station had an empty cell"
 
 when isMainModule:
   main()

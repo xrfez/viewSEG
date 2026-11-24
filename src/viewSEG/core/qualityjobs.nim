@@ -20,8 +20,9 @@
 ## the record's first breaks found as the map's job finds them, the user's
 ## exclusion area), one field record (a gather of the session) at a time: a
 ## record holds only its own traces' statistics until it is judged. Traces
-## that were not sample-read, and records whose test the library refuses,
-## are not tested: their cells stay empty.
+## that were not sample-read, traces the test did not judge (inside the exclusion
+## area, ungrouped, of an incomplete node, unusable) and records whose test the
+## library refuses are not tested: their cells stay empty.
 ##
 ## The report keeps each path as the caller named it. Unread files are not
 ## a total of the report.
@@ -136,10 +137,11 @@ func cutShortWhy(f: SeismicFile): string =
 
 proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
     amps: var seq[TraceAmplitude]; unread: openArray[int]; killed: HashSet[int];
-    noise: NoiseSettings; ctx: JobContext): bool =
+    noise: NoiseSettings; ctx: JobContext; judged: var HashSet[int]): bool =
   ## The map's noisy and weak test on the record `traces`, whose statistics are `amps`
-  ## (`unread`: rows left out). Sets the flags in `amps`. False when there is nothing to
-  ## judge or the library refuses.
+  ## (`unread`: rows left out). Sets the flags in `amps`, and puts in `judged` the traces
+  ## the test judged (not those in the exclusion area, ungrouped, of an incomplete node or
+  ## unusable). False when there is nothing to judge or the library refuses.
   if unread.len >= traces.len: return false
   var off: seq[int] = @[]
   for t in traces:
@@ -151,7 +153,9 @@ proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
         ctx.checkCancelled()
         true)
       result = true
-      discard noiseOfRecord(f[], traces, amps, unread, [], br, noise)
+      let summary = noiseOfRecord(f[], traces, amps, unread, [], br, noise)
+      for i in 0 ..< traces.len:
+        if summary.state[i] == nsJudged: judged.incl traces.a + i
   except ValueError:
     result = false
 
@@ -164,16 +168,18 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
   var held: seq[TraceAmplitude] = @[] # statistics of the traces from `heldFrom` on
   var heldFrom = 0
   var missedAll = initHashSet[int]()
+  var judgedAt = initHashSet[int]() # traces of the records judged so far that the test judged
   var nextGather = 0
   var noted = 0 # traces before it are in `b`
-  template note(upTo: int; judged: bool) =
-    # Counts the traces `noted` .. `upTo` from `held`, tested when the record was judged.
+  template note(upTo: int) =
+    # Counts the traces `noted` .. `upTo` from `held`, tested where the test judged them.
     for t in noted .. upTo:
       if t in missedAll: continue
       let k = f[].index.keys[t]
       let sampled = wantsSamples(k, t in killed)
       let flags = if sampled: held[t - heldFrom].flags else: {}
-      noteTrace(b, path, k, t in killed, flags, judged and sampled)
+      noteTrace(b, path, k, t in killed, flags, sampled and t in judgedAt)
+      judgedAt.excl t
     held = held[(upTo + 1 - heldFrom) .. ^1]
     heldFrom = upTo + 1
     noted = upTo + 1
@@ -217,19 +223,18 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
       let g = gathers[nextGather].traces
       inc nextGather
       if g.a < noted or g.b < g.a: continue
-      if g.a > noted: note(g.a - 1, false)
+      if g.a > noted: note(g.a - 1)
       var rec = held[g.a - heldFrom .. g.b - heldFrom]
       var skip: seq[int] = @[]
       for t in g:
         if t in missedAll or not wantsSamples(f[].index.keys[t], t in killed):
           skip.add t - g.a
-      let judged = judgeRecord(f, path, g, rec, skip, killed, noise, ctx)
-      if judged:
+      if judgeRecord(f, path, g, rec, skip, killed, noise, ctx, judgedAt):
         for i in 0 ..< rec.len: held[g.a - heldFrom + i] = rec[i]
-      note(g.b, judged)
+      note(g.b)
     first = last + 1
     inc chunk
-  if noted < n: note(n - 1, false)
+  if noted < n: note(n - 1)
 
 proc fail(sink: QualitySink; why: string; unread: seq[tuple[path, why: string]]) =
   if sink != nil:
