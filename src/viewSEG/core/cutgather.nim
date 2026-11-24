@@ -332,6 +332,7 @@ proc compareOverlap(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
   if o.samples == 0:
     if o.earlier in buf.failedRows or o.later in buf.failedRows:
       buf.failedOverlaps.incl i
+      settled.add i
     else:
       checkSliceOverlap(plan, i, nothing, nothing, report)
       settled.add i
@@ -346,13 +347,15 @@ proc compareOverlap(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
       result = 1
     else:
       buf.failedOverlaps.incl i
+      settled.add i
 
 proc checkOverlaps*(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
     report: var SliceReport, settled: var seq[int], final = false): int =
   ## Compares the overlaps that are due, not yet compared, whose two rows the
   ## plan reads and whose two runs can be had (through the buffer, so nothing
-  ## is read twice), and returns how many it compared; their indices are
-  ## added to `settled`. An overlap is due when no window still to be cut
+  ## is read twice), and returns how many it compared. The indices of those
+  ## it compared and of those it gave up on are added to `settled`: neither
+  ## holds a row any more. An overlap is due when no window still to be cut
   ## reads the earlier row below the overlap (the `sample` of the last
   ## `evictBefore` of that row is at or after `overlap.first`, or the row is
   ## finished): then its tail is an append to the held run or a fresh run, and

@@ -464,6 +464,35 @@ proc main*() =
       if report.overlapCheck(i).status == osMatch: inc compared
     doAssert compared >= 3990, "compared " & $compared
 
+  block failed_overlap_releases_its_rows:
+    # Row 5 cannot be read, so the overlaps it is in are given up. The tail of
+    # row 4 (held for the overlap) must go with them, not stay to the end.
+    # Fails with "held 10 after the last shot".
+    var spans: seq[(int, int)] = @[]
+    for k in 0 ..< 20: spans.add (k * 990, 1000)
+    let src = makeSrc(spans)
+    src.failRow = 5
+    let meta = metaOf(src)
+    var shots: seq[SliceShot]
+    var t = 0
+    while t + 200 <= 19 * 990:
+      shots.add initSliceShot(timeOf(float64(t)), float64(shots.len + 1))
+      t += 50
+    let plan = planSlices(meta, shots, window(200), soShotRecords, saNearest)
+    var report = initSliceReport(plan)
+    prepareSliceReport(plan, report)
+    var ws = initWorkspace()
+    var buf = initSourceBuffer()
+    let fetch = fetcher(src)
+    var dst = newSeq[float32](plan.samples)
+    for s in 0 ..< plan.shotCount:
+      var touched: seq[int] = @[]
+      for pc in plan.pieces(s):
+        if pc.row >= 0 and pc.row notin touched: touched.add pc.row
+      discard cutOne(plan, s, buf, fetch, dst, report, ws)
+      discard settleShot(plan, buf, fetch, report, touched, s)
+    doAssert buf.heldSamples == 0, "held " & $buf.heldSamples & " after the last shot"
+
   echo "tcutgather ok"
 
 when isMainModule:
