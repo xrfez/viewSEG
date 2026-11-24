@@ -166,8 +166,22 @@ proc stopOnSecond(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raise
 proc stopOnReport(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
   if not back and phase == "reporting": discard lane.cancel(id)
 
-proc stopOnMeasure(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
-  if not back and phase == "measuring": discard lane.cancel(id)
+var measuringId: JobId
+var wideReads: int
+
+proc noteMeasuring(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
+  # the scan's id, and the reads of its file counted from its measuring phase on
+  if not back and phase == "measuring":
+    {.cast(gcsafe).}:
+      measuringId = id
+      wideReads = 0
+
+proc cancelOnSecondRead(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
+  # the first chunk's mapped read is the first; the cancel lands on the second, chunk 2
+  {.cast(gcsafe).}:
+    if op == foMapped and path.endsWith("wide.sgd"):
+      inc wideReads
+      if wideReads == 2: discard lane.cancel(measuringId)
 
 var measurings: int
 
@@ -298,8 +312,11 @@ proc main*() =
         samples: oneSample)
     seismicFile(wide, 1, traces)
     lane = initJobs()
-    setJobHook(stopOnMeasure)
-    defer: setJobHook(nil)
+    setJobHook(noteMeasuring)
+    setFsHook(cancelOnSecondRead)
+    defer:
+      setJobHook(nil)
+      setFsHook(nil)
     let sink = QualitySink()
     let id = lane.submit(qualitySpec(@[wide]), scanQuality(@[wide], none, sink))
     doAssert waitUntil(lane.state(id) in {jsDone, jsFailed, jsCancelled})
