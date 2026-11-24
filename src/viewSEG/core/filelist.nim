@@ -65,6 +65,7 @@ type
     modified*: Time
     state*: KindState    ## `ksNone`, `ksNotKnown`, `ksMultiplexed` or `ksKnown`
     kind*: RecordingKind ## when `state` is `ksKnown`
+    order*: TraceOrder   ## how its traces are written, when `state` is `ksKnown`
 
   FileEntry* = object
     ## One file of the list: a seismic file, or a survey file.
@@ -83,6 +84,7 @@ type
       ## `fkVib`); empty for every other file
     kindState*: KindState
     recording*: RecordingKind ## the kind read from the file, when `kindState` is `ksKnown`
+    traceOrder*: TraceOrder ## the order of its traces, read with the kind
     steadySince*: MonoTime
       ## when the watch first saw the file as it is now (`fs.now`): a stopped `.dat` is followed
       ## once it has stayed so for `StoppedShowAfter`; unset for a file not being watched

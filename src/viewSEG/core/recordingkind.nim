@@ -64,7 +64,9 @@ import std/[algorithm, math, sequtils]
 import parseSEG
 import processSEG
 import processSEG/continuous/slice
-import ./[filesystem, jobs, segmentclock, vendormaps]
+import ./[filesystem, jobs, segmentclock, traceorder, vendormaps]
+
+export traceorder
 
 const
   KindStarts* = 8
@@ -128,6 +130,7 @@ type
     slicedWhy*: SlicedWhy
       ## for `rkReceiverSliced`, and for a `rkShotGather` told by the order of the file: why
       ## the continuous test failed (`swNone` for a shot gather of one segment per receiver)
+    order*: TraceOrder ## how the traces of the file are written (`traceOrder`)
 
   RecordingSink* = ref object
     ## Filled by `recordingFactsWork`; read it once the job has ended.
@@ -163,9 +166,7 @@ type Seg = object
   n: int ## samples
   row: int
 
-type Place = tuple[how: int8; a, b: float64; index: int16]
-  ## a receiver point as the file names it: by its station (`how` 0: `a` the line, `b` the
-  ## point), else by its group coordinates (1: x and y), else by its channel (2: `a`)
+type Place = StationPlace
 
 func placeOf(k: TraceKeys): Place =
   ## Where the trace `k` was recorded, as `Place` names it.
@@ -309,6 +310,10 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
         segs.add Seg(recv: plan.receivers[row], start: start, finish: start + n.float64 * dtS,
           n: n, row: row)
   if segs.len == 0: return
+  var inFile = newSeq[OrderTrace](segs.len) # the live traces in file order
+  for x, sg in segs:
+    inFile[x] = OrderTrace(component: meta.keys(sg.row).component,
+      place: placeOf(meta.keys(sg.row)), start: sg.start)
   segs.sort do (a, b: Seg) -> int:
     result = cmp(a.recv, b.recv)
     if result == 0: result = cmp(a.start, b.start)
@@ -375,6 +380,7 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     # own segments. `slicedWhy` keeps what the continuous test measured.
     if result.kind == rkReceiverSliced and receiverChanges(meta, segs, dtS):
       result.kind = rkShotGather
+  result.order = traceOrder(inFile, dtS, result.kind == rkShotGather)
 
 func isContinuousGather*(f: RecordingFacts): bool =
   ## True for a continuous receiver gather: the one kind the cut accepts.

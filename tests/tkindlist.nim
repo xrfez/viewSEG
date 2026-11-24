@@ -28,7 +28,7 @@ import parseSEG
 import parseSEG/model/traceindex
 import viewSEG/core/state {.all.}
 import viewSEG/core/[filejobs, filelist, filekinds, inbox, jobs, recordingkind, session,
-  vendormaps]
+  traceorder, vendormaps]
 import utils/[faultyfs, fixtures, kindfiles, waiting]
 
 privateAccess(AppState)
@@ -42,6 +42,9 @@ proc kindOf(st: AppState; path: string): Option[RecordingKind] =
   let i = st.fileList.find(canonical(path))
   doAssert i >= 0, path & " is not listed"
   st.fileList.entries[i].recordingOf
+
+proc orderOf(st: AppState; path: string): TraceOrder =
+  st.fileList.entries[st.fileList.find(canonical(path))].traceOrder
 
 proc listed(st: AppState; n: int): bool =
   not st.fileList.scanning and st.fileList.entries.len == n
@@ -79,6 +82,9 @@ proc main*() =
       doAssert st.kindOf(cont) == some(rkReceiverContinuous)
       doAssert st.kindOf(sliced) == some(rkReceiverSliced)
       doAssert st.kindOf(shot) == some(rkShotGather)
+      doAssert st.orderOf(cont) == TraceOrder(grouping: tgNone, subSort: tsByTime),
+        "the row did not take the order"
+      doAssert st.orderOf(shot) == TraceOrder(grouping: tgNone, subSort: tsByStation)
       doAssert st.sessions.len == 0, "reading the kinds opened a file"
       let reading = st.jobs.list.filterIt(it.spec.title == "Read what the files are")
       doAssert reading.len > 0 and reading.allIt(it.spec.lane == jlPeeks),
@@ -107,6 +113,8 @@ proc main*() =
         kind: rkReceiverContinuous)])
       discard st.drainInbox()
       doAssert st.kindOf(shot) == some(rkShotGather), "an answer for a changed file was kept"
+      doAssert st.orderOf(shot) == TraceOrder(grouping: tgNone, subSort: tsByStation),
+        "the order of an answer for a changed file was kept"
 
     block anAnswerForAnotherListingIsNotKept:
       let i = st.fileList.find(canonical(shot))
@@ -158,6 +166,8 @@ proc main*() =
           state: ksKnown, kind: kind)])
         discard st.drainInbox()
         doAssert st.kindOf(sliced) == some(kind)
+      proc orderIsTheOpens(st: AppState) =
+        doAssert st.orderOf(sliced) == st.recordingFacts.order, "the open's order did not win"
       proc readAgain(st: var AppState) =
         st.recHave = false # the shown file is read as a recording once more
         doAssert st.settle((st.watchRecording(true); st.recHave and st.recJob == NoJob))
@@ -165,6 +175,7 @@ proc main*() =
       st.probeSays(rkShotGather)
       st.readAgain()
       doAssert st.kindOf(sliced) == some(rkReceiverSliced), "the open's answer did not win"
+      st.orderIsTheOpens()
       # the file was opened at another time than the one listed
       st.probeSays(rkShotGather)
       let k = st.sessions.len - 1

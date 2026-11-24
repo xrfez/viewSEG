@@ -62,7 +62,7 @@ proc main*() =
     let path = dir / "clock.sgd"
     writeClockRecording(path, raw)
     let got = kindOfFile(path, reg)
-    doAssert got == KindProbe(outcome: poKnown, kind: rkReceiverContinuous), $got
+    doAssert got.outcome == poKnown and got.kind == rkReceiverContinuous, $got
     doAssert got.kind == whole(path, reg).kind
     # without the map the six traces are six receivers of one station that start together
     let bare = kindOfFile(path, VendorRegistry())
@@ -97,7 +97,7 @@ proc main*() =
     let t0 = cpuTime()
     let whole = kindOfFile(path, VendorRegistry())
     echo "kindOfFile of ", getFileSize(path) div (1024 * 1024), " MB: ", cpuTime() - t0, " s"
-    doAssert whole == KindProbe(outcome: poKnown, kind: rkReceiverContinuous), $whole
+    doAssert whole.outcome == poKnown and whole.kind == rkReceiverContinuous, $whole
     removeFile(path)
 
   block a_file_above_the_limit_is_not_known:
@@ -108,8 +108,8 @@ proc main*() =
       for i in 0 ..< 150: specs.add spec(0, i * 1000 + (if c == 2 and i == 1: 300 else: 0), c)
     let path = writeSpecs(dir, "late", specs)
     let size = getFileSize(path)
-    doAssert kindOfFile(path, VendorRegistry()) ==
-      KindProbe(outcome: poKnown, kind: rkReceiverSliced)
+    let sliced = kindOfFile(path, VendorRegistry())
+    doAssert sliced.outcome == poKnown and sliced.kind == rkReceiverSliced
     for limit in [0'i64, size div 2, size - 1]:
       let got = kindOfFile(path, VendorRegistry(), wholeBytes = limit)
       doAssert got == KindProbe(outcome: poNotKnown), "late: " & $got

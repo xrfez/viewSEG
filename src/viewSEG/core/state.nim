@@ -9117,12 +9117,14 @@ proc kindFromOpen(state: var AppState) =
   template e: untyped = state.files.entries[i]
   let sz = state.sessions[s].size
   if sz < 0 or sz != e.size or state.sessions[s].modified != e.modified: return
-  if e.kindState != ksKnown or e.recording != state.recFacts.kind:
+  if e.kindState != ksKnown or e.recording != state.recFacts.kind or
+      e.traceOrder != state.recFacts.order:
     e.kindState = ksKnown
     e.recording = state.recFacts.kind
+    e.traceOrder = state.recFacts.order
     state.files.changedAt(i)
   state.kindCache.remember(KindAnswer(path: e.path, size: e.size, modified: e.modified,
-    state: ksKnown, kind: e.recording), state.vendor.gen, state.files)
+    state: ksKnown, kind: e.recording, order: e.traceOrder), state.vendor.gen, state.files)
 
 proc startKinds(state: var AppState) =
   ## Starts a job on the peeks lane (the file headers read for what they say, a lane of its own
@@ -9145,6 +9147,7 @@ proc startKinds(state: var AppState) =
       if had.isSome:
         e.kindState = had.get.state
         e.recording = had.get.kind
+        e.traceOrder = had.get.order
         state.files.changedAt(i)
       elif asks.len < KindBatch:
         asks.add WatchedFile(path: e.path, size: e.size, modified: e.modified)
@@ -9558,7 +9561,9 @@ proc takeKinds(state: var AppState; m: sink Msg) =
     if i >= 0 and f.entries[i].size == a.size and f.entries[i].modified == a.modified:
       template e: untyped = f.entries[i]
       e.kindState = a.state
-      if a.state == ksKnown: e.recording = a.kind
+      if a.state == ksKnown:
+        e.recording = a.kind
+        e.traceOrder = a.order
       f.changedAt(i)
       state.kindCache.remember(a, m.kindsVendors, f)
 

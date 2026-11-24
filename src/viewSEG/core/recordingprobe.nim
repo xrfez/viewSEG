@@ -29,8 +29,10 @@ type
   KindProbe* = object
     outcome*: ProbeOutcome
     kind*: RecordingKind ## when `outcome` is `poKnown`
+    order*: TraceOrder   ## when `outcome` is `poKnown`: how the traces are written
 
-func known(kind: RecordingKind): KindProbe = KindProbe(outcome: poKnown, kind: kind)
+func known(facts: RecordingFacts): KindProbe =
+  KindProbe(outcome: poKnown, kind: facts.kind, order: facts.order)
 
 proc readHead(f: File; path: string; count: int): seq[byte] {.raises: [IOError].} =
   ## The first `count` bytes of `f` (fewer when the file ends sooner).
@@ -77,7 +79,7 @@ proc wholeKind(path: string; vendors: VendorRegistry; check: proc () {.gcsafe.})
     let dtMs = seismicDtMs(addr f)
     if f.len > 0 and not dtMs.isNaN and dtMs > 0:
       let facts = describeRecording(planRecording(addr f, path, dtMs, vendors, check))
-      if facts.ready: result = known(facts.kind)
+      if facts.ready: result = known(facts)
   finally:
     f.close()
 

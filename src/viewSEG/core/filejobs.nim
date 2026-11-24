@@ -476,5 +476,5 @@ proc kindsWork*(gen: uint64; vendorGen: int; asks: seq[WatchedFile]; vendors: Ve
         of poMultiplexed: ksMultiplexed
         of poKnown: ksKnown
       batch.kinds.add KindAnswer(path: a.path, size: a.size, modified: a.modified, state: state,
-        kind: probe.kind)
+        kind: probe.kind, order: probe.order)
     if batch.kinds.len > 0: to.post move batch
