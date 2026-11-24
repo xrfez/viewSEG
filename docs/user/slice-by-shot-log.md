@@ -71,7 +71,10 @@ a shot gather (the receiver changes from trace to trace), not a continuous recei
 11 starts 2.666 s after the one before it; the traces are 2 s long, so it is not a whole number
 of trace lengths later." Shot records a whole number of trace lengths apart, none following on
 another, are a shot gather the same way, and their sentence says so ("No trace follows directly
-on the one before it: ...").
+on the one before it: ..."). A file that passes the test above is a shot gather too when its
+receiver changes between most consecutive segments and no more of its traces follow directly on
+the one before than skip: shot records, a few of them one record length apart. A single
+receiver, or one whose traces mostly follow on each other, keeps the answer of the test.
 
 The kind is asked of any file you open, so the window decides it from the first 8 distinct start
 times of each receiver. The slice itself places every segment and checks every start: a trace off

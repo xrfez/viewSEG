@@ -32,6 +32,11 @@
 ## share one start time are one segment (its components, coded or not), and a receiver is
 ## named by its line and point, else by its group coordinates, else by its channel.
 ##
+## A file the continuous test passes is still a shot gather when its receiver changes between
+## most consecutive segments and no more of its boundaries follow on directly (k = 1) than
+## skip (k > 1): shot records, a few of them one record length apart. A receiver that stays
+## put keeps the test's answer: one pair that follows on is enough.
+##
 ## The continuous test: each trace starts a whole number of trace lengths
 ## after the one before it, and there is no variance. All times are compared in
 ## samples. Per sub-receiver, in time order, let L be its segment length (the
@@ -451,8 +456,12 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     result.kind = if result.slicedWhy == swNone: rkReceiverContinuous else: rkReceiverSliced
     # not continuous: the receiver changing from trace to trace, in the order of the file, is
     # a shot gather (the receivers repeat from record to record); staying put, a receiver's
-    # own segments. `slicedWhy` keeps what the continuous test measured.
-    if result.kind == rkReceiverSliced and receiverChanges(meta, plan.places, segs, dtS):
+    # own segments. `slicedWhy` keeps what the continuous test measured. So is a file whose
+    # traces follow on each other at no more boundaries than they skip: shot records, a few
+    # of them one record length apart
+    let fewFollow = result.boundaries > 0 and result.abutting <= result.skips
+    if (result.kind == rkReceiverSliced or fewFollow) and
+        receiverChanges(meta, plan.places, segs, dtS):
       result.kind = rkShotGather
   result.order = traceOrder(inFile, dtS, result.kind == rkShotGather)
 

@@ -201,6 +201,16 @@ proc main*() =
         "before it: each of a receiver's traces starts 15 trace lengths or more after the " &
         "last, as records sliced at shot times do.", cutRefusal(f)
 
+  block shot_records_of_which_two_follow_on_each_other_are_a_shot_gather:
+    # ten stations, shots at 0, 15, 30, 31 and 46 record lengths: one boundary of each
+    # station follows on the one before it, three skip, and the receiver changes at every
+    # trace; one station recorded so stays continuous
+    let starts = [0, 15000, 30000, 31000, 46000]
+    let f = whole(writeSpecs(dir, "fewFollow", shots(10, starts)), VendorRegistry())
+    doAssert f.kind == rkShotGather and f.abutting == 10 and f.skips == 30, $f
+    same(dir, "fewFollow", shots(10, starts), rkShotGather)
+    same(dir, "fewFollow1", shots(1, starts), rkReceiverContinuous)
+
   block a_receiver_sliced_at_whole_trace_lengths_is_time_sliced:
     # one station, a 2 s trace every 20 s: on the step, nothing follows on the one before
     var specs: seq[Spec] = @[]
