@@ -40,7 +40,8 @@
 ## Fixed amplitude whatever the kept gain, "the agent's \"display\" reached
 ## plot.display.fixedClip"; with a field `gadget` added to `Settings`, "a
 ## setting nobody has decided on: gadget"; with `editTraces` keeping an
-## agent's edits (`keep = true`), "the agent's edits are remembered".
+## agent's edits (`keep = true`), "the agent's edits are remembered"; without `treated` in the
+## file list's entries, the agent's kind could not be read back (a key error).
 
 import std/[json, math, options, os, sequtils, strutils, tables]
 import parseSEG
@@ -522,8 +523,18 @@ proc main*() =
       st.agent(%*{"kind": "subfolders", "subfolders": true}) # for the session only
       st.agent(%*{"kind": "treat as", "treatPath": third, "treatKind": "shot"})
       doAssert st.treatOf(third).kind == some(rkShotGather), "the agent's kind was not taken"
+      # read back from the state in the command's words, and that it is set
+      proc treated(st: AppState): JsonNode =
+        result = newJNull()
+        let answer = st.stateReport(fe, """{"parts": ["fileList"]}""")
+        for e in parseJson(parseJson(answer)["content"][0]["text"].getStr)["fileList"]["entries"]:
+          if e["path"].getStr == third: result = e["treated"]
+      let back = st.treated
+      doAssert back["recording"].getStr == "shot" and back["forced"]["recording"].getBool and
+        not back["forced"]["grouping"].getBool and back.hasKey("sort"), $back
       st.agent(%*{"kind": "treat as", "treatPath": third, "treatKind": "automatic"})
       doAssert not st.treatOf(third).isSet
+      doAssert not st.treated["forced"]["recording"].getBool, $st.treated
       st.agent(%*{"kind": "clear survey"}) # in memory only (ignored here: none is imported)
       st.agent(%*{"kind": "new project", "projectPath": fx.dir / "the agent's job",
         "dataFolders": [agentDir]})

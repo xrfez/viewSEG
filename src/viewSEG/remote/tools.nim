@@ -24,8 +24,8 @@
 
 import std/[algorithm, base64, json, math, monotimes, os, sets, strutils, tables, times]
 import parseSEG
-import ../core/[explain, firstbreaks, geometry, join, log, properties, shortcuts, state, units,
-  versions]
+import ../core/[explain, firstbreaks, geometry, join, log, properties, shortcuts, state,
+  traceorder, treatas, units, versions]
 import protocol, schema
 
 const
@@ -582,6 +582,22 @@ proc sweepJson(state: AppState; e: FileEntry): JsonNode =
   result["qc"] = if info.qc.valid: %*{"forceAvgPct": int(info.qc.forceAvgPct),
     "thdMaxPct": int(info.qc.thdMaxPct), "limits": limits} else: newJNull()
 
+func treatedJson(e: FileEntry): JsonNode =
+  ## What a seismic file of the list is treated as, in the words of the `treat as` command: its
+  ## kind (`recording`) and the order of its traces (`grouping`, `sort`), each null while it is
+  ## not read or for a file without one ("unknown" when it is known only once the file is opened),
+  ## and which of them the user or an agent set (`forced`).
+  let unknown = e.kindState in {ksNotKnown, ksMultiplexed}
+  proc word(known: bool; words: string): JsonNode =
+    if known: %words elif unknown: %"unknown" else: newJNull()
+  let k = e.recordingOf
+  let o = e.traceOrderOf.get(TraceOrder())
+  result = %*{"recording": word(k.isSome, k.map(kindName).get("")),
+    "grouping": word(e.traceOrderOf.isSome, groupingName(o.grouping)),
+    "sort": word(e.traceOrderOf.isSome, subSortName(o.subSort)),
+    "forced": {"recording": e.treat.kind.isSome, "grouping": e.treat.grouping.isSome,
+      "sort": e.treat.subSort.isSome}}
+
 proc fileListJson(state: AppState; limit: int): JsonNode =
   let l = state.fileList
   result = %*{"title": l.title, "folder": l.folder, "scanning": l.scanning,
@@ -594,6 +610,7 @@ proc fileListJson(state: AppState; limit: int): JsonNode =
     var row = %*{"name": e.name, "path": e.path, "kind": $e.kind, "size": e.size,
       "status": $e.status, "new": e.isNew, "folder": e.folder}
     if e.kind in SignatureFileKinds: row["sweep"] = sweepJson(state, e)
+    if e.kind.isSeismic: row["treated"] = treatedJson(e)
     entries.add row
   result["entries"] = entries
   result["signatureFiles"] = %state.settings.files.listSignatureFiles
