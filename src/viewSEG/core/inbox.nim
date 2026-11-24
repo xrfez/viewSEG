@@ -13,7 +13,7 @@ import std/[locks, times]
 import parseSEG
 import analysis, compare, edits, filelist, filememory, firstbreaks, identity, join, jobs, layouts,
   log, mapkinds, nif, noisearea, panels, project, references, session, shotfiles, sigtypes,
-  spectra, survey, tiles, vendormaps
+  spectra, stationmoves, survey, tiles, vendormaps
 
 type
   MsgKind* = enum
@@ -30,6 +30,7 @@ type
     mkChecked        ## an open file's records checked against a relation file
     mkJoining        ## survey files read for a join, and what joining them does
     mkJoined         ## a join done
+    mkMoves          ## station moves applied to an open file's keys
     mkUnread         ## a panel's file cannot be read now (its drive went away, or fails), from its reader
     mkInspected
       ## what the Headers window shows of a record and of traces, from its reader
@@ -185,6 +186,19 @@ type
         ## the file's `keysRevision` after the join
       heldAtJoin*: int
         ## holds on the file when the join ran: none, as no reader may run
+      joinedBases*: seq[ReceiverBase]
+        ## receiver fields the join's moves replaced, for a later restore
+      joinedMoves*: int
+        ## traces whose receiver fields the moves changed
+    of mkMoves:
+      movedSession*: SessionId
+        ## the open file the moves were applied to
+      movedCount*: int
+        ## traces whose receiver fields changed
+      movedRevision*: int
+        ## the file's `keysRevision` after the moves
+      movedBases*: seq[ReceiverBase]
+        ## receiver fields the moves replaced, for a later restore
     of mkUnread:
       unreadPanel*: PanelId
       unreadGen*: uint64 ## the panel's `sourceGen` it is about

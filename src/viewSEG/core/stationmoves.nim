@@ -21,9 +21,16 @@
 ## Adding a move with the same station and the same `fromTime` replaces it.
 ## The list stays sorted by station (line, point, index) and then by time,
 ## an undated move before a dated one.
+##
+## `applyFileMoves` puts the list onto an open file's keys, after the header
+## or survey position already there, and recomputes offset and midpoint
+## (`deriveGeometry`). It remembers the receiver fields it replaced, so a
+## later call with those and an empty list puts them back. It never writes
+## the file.
 
-import std/[math, options]
+import std/[algorithm, math, options]
 import parseSEG
+import parseSEG/model/traceindex
 import stationindex
 
 type
@@ -182,3 +189,96 @@ proc applyMoves*(moves: StationMoves; keys: var TraceKeys): bool =
   keys.rcvY = pos.get.y
   if pos.get.elev.isSome: keys.rcvZ = pos.get.elev.get
   true
+
+type
+  ReceiverBase* = object
+    ## A trace's receiver fields, and the join marks on them, before a move
+    ## replaced them. Putting them back restores the header or survey position.
+    index*: int
+    rcvX*, rcvY*, rcvZ*, offset*, cmpX*, cmpY*: float64
+    joined*: set[JoinGroup]
+
+func sameNum(x, y: float64): bool {.inline.} =
+  x == y or (x.isNaN and y.isNaN)
+
+func snap(file: SeismicFile; t: int): ReceiverBase =
+  let k = file.traceKeys(t)
+  ReceiverBase(index: t, rcvX: k.rcvX, rcvY: k.rcvY, rcvZ: k.rcvZ, offset: k.offset,
+    cmpX: k.cmpX, cmpY: k.cmpY, joined: file.index.joinedGroups(t))
+
+proc putBack(file: var SeismicFile; b: ReceiverBase) =
+  let t = b.index
+  if t < 0 or t >= file.len: return
+  template k: untyped = file.mindex.keys[t]
+  k.rcvX = b.rcvX
+  k.rcvY = b.rcvY
+  k.rcvZ = b.rcvZ
+  k.offset = b.offset
+  k.cmpX = b.cmpX
+  k.cmpY = b.cmpY
+  if file.mindex.joinedTraces.len != file.mindex.keys.len:
+    file.mindex.joinedTraces.setLen file.mindex.keys.len
+  if t < file.mindex.joinedTraces.len: file.mindex.joinedTraces[t] = b.joined
+
+func receiverDiffers(file: SeismicFile; b: ReceiverBase): bool =
+  if b.index < 0 or b.index >= file.len: return false
+  let k = file.traceKeys(b.index)
+  not sameNum(k.rcvX, b.rcvX) or not sameNum(k.rcvY, b.rcvY) or not sameNum(k.rcvZ, b.rcvZ) or
+    not sameNum(k.offset, b.offset) or not sameNum(k.cmpX, b.cmpX) or not sameNum(k.cmpY, b.cmpY)
+
+proc findBase(bases: seq[ReceiverBase]; index: int): int =
+  ## Index of the base for trace `index` in `bases`, sorted by trace; -1 if none.
+  result = -1
+  var lo = 0
+  var hi = bases.high
+  while lo <= hi:
+    let mid = (lo + hi) div 2
+    if bases[mid].index == index: return mid
+    elif bases[mid].index < index: lo = mid + 1
+    else: hi = mid - 1
+
+func marksRemain(file: SeismicFile): bool =
+  for groups in file.index.joinedTraces:
+    if groups.card > 0: return true
+
+proc applyFileMoves*(file: var SeismicFile; moves: StationMoves; bases: var seq[
+    ReceiverBase]): int =
+  ## Puts `bases` back into `file`'s keys, then applies `moves` over the
+  ## receiver positions now there. A trace a move touches is left in `bases`
+  ## as it was before that move, so a later call with those bases and an
+  ## empty list restores it. Bumps `keysRevision` only when a receiver field
+  ## changes, and marks the file joined when a move changed keys, so the
+  ## cache is not written as the file's own. Never writes the file. Returns
+  ## how many traces changed. A file without keys is left alone, `bases` included.
+  if not file.hasKeys: return 0
+  var entry: seq[ReceiverBase] = @[]
+  for b in bases:
+    if b.index >= 0 and b.index < file.len: entry.add snap(file, b.index)
+    putBack(file, b)
+  entry.sort(proc (a, b: ReceiverBase): int = cmp(a.index, b.index))
+  var next: seq[ReceiverBase] = @[]
+  var touched: seq[int] = @[]
+  for t in 0 ..< file.len:
+    let pre = snap(file, t)
+    let before = file.traceKeys(t)
+    if applyMoves(moves, file.mindex.keys[t]):
+      file.mindex.keys[t].deriveGeometry(overwrite = true)
+      file.mindex.markJoined(t, changedGroups(before, file.traceKeys(t)))
+      next.add pre
+      touched.add t
+  var changed = 0
+  for i, t in touched:
+    let at = findBase(entry, t)
+    let start = if at >= 0: entry[at] else: next[i]
+    if receiverDiffers(file, start): inc changed
+  var ti = 0
+  for e in entry:
+    while ti < touched.len and touched[ti] < e.index: inc ti
+    if ti < touched.len and touched[ti] == e.index: continue
+    if receiverDiffers(file, e): inc changed
+  if changed > 0:
+    inc file.mindex.keysRevision
+    if moves.len > 0: file.mindex.joined = true
+    elif not marksRemain(file): file.mindex.joined = false
+  bases = next
+  changed

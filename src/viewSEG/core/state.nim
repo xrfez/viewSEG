@@ -114,7 +114,8 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
       join, layouts, log,
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, reader,
   recordqc, referencejobs, references, selection, session, settings, shots, spectra,
-  spectrumreader, spread, survey, surveyjobs, threads, tiles, traceids, vendorjobs, vendormaps,
+  spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids, vendorjobs,
+  vendormaps,
   watch, zoom
 
 export analysis, compare, edits, filelist, filememory, firstbreaks, identity, inbox, jobs, join,
@@ -724,6 +725,8 @@ type
     survey: JoinSurvey
     joined: bool ## the join's job said it was done (`mkJoined`)
     revision: int ## the file's keys' revision after the join (`mkJoined`)
+    movesTouched: bool ## the join's moves changed a receiver field
+    movesCount: int ## traces whose receiver fields those moves changed
     held: int = -1 ## the holds on the file its job found: none (-1: it never ran)
     paused: seq[PanelId] ## the panels whose readers let go of the file for it
     auto: bool ## a file opened in a project, matched to its survey without the window
@@ -972,6 +975,18 @@ type
       ## until the work is back (`Jobs.workingOn`)
     joining: Joining
       ## the join under way (its geometry, too, destroyed after `jobs`)
+    moveBases: seq[tuple[session: SessionId; bases: seq[ReceiverBase]]]
+      ## per open file, the receiver fields a station move replaced
+    moveQueue: seq[SessionId]
+      ## open files waiting for a station-move job
+    movesJob: JobId = NoJob
+      ## the station-move job under way; `NoJob` for none
+    movesPaused: seq[PanelId]
+      ## the panels whose readers let go of the file for that job
+    movesSession: SessionId
+    movesRevision: int
+    movesChanged: int
+    movesDone: bool ## the job posted what it did (`mkMoves`)
     joins: seq[Joined]
       ## the open files joined with survey files
     project: ProjectState
@@ -2507,6 +2522,10 @@ proc report*(state: var AppState; severity: Severity; source, text: string) =
 func plural(n: int; word: string): string =
   $n & " " & word & (if n == 1: "" else: "s")
 
+proc enqueueMoves(state: var AppState; id: SessionId)
+proc dropMoveBases(state: var AppState; id: SessionId)
+proc queueOpenMoves(state: var AppState)
+
 proc canonical*(path: string): string =
   ## `path` made absolute and normalized ("./a.sgy", "data/../a.sgy" and the
   ## full path name one file), without touching the disk: jobs compare files
@@ -3146,6 +3165,8 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
   ## to be shown again, opened anew; they show nothing meanwhile.
   var s = move state.sessions[i]
   state.sessions.delete(i)
+  state.dropMoveBases(s.id)
+  state.moveQueue.keepItIf(it != s.id)
   for job in state.jobs.list:
     if job.state in {jsQueued, jsRunning} and
         (s.path in job.spec.reads or s.path in job.spec.exclusive):
@@ -5636,6 +5657,8 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   state.sessions.add s
   if state.project.dir.len > 0 and state.project.doc.hasSurvey:
     state.project.queue.add id # matched to the project's survey (`followProject`)
+  elif not s.isSignature and not s.noSeismic and state.project.doc.stationMoves.len > 0:
+    state.enqueueMoves(id)
   if not state.sessions[^1].isSignature: # (a signature file has no place on the map)
     state.readPositions(state.sessions[^1])
   if state.relationLayer >= 0: state.checkRecords(state.sessions[^1])
@@ -5896,6 +5919,45 @@ proc resumeReaders(state: var AppState) =
         state.newSource(k)
   state.joining.paused.setLen 0
 
+proc pauseMoveReaders(state: var AppState; path: string) =
+  ## Has the readers of the panels that show `path` let go of it, for the
+  ## station-move job that needs it to itself; their tiles stay drawn meanwhile.
+  for k in 0 ..< state.panels.len:
+    let i = state.shownFile(k)
+    if i >= 0 and state.sessions[i].path == path:
+      if state.panels[k].id notin state.movesPaused:
+        state.movesPaused.add state.panels[k].id
+      if not state.readers[k].isNil:
+        state.readers[k].show(ReaderSource(gen: state.panels[k].sourceGen))
+
+proc resumeMoveReaders(state: var AppState) =
+  ## The panels the station-move job paused show their file again: the same
+  ## gather at the same scales, the tiles from before drawn until the first
+  ## new one (made from the moved keys) comes.
+  for id in state.movesPaused:
+    let k = state.findPanel(id)
+    let i = if k >= 0: state.shownFile(k) else: -1
+    if i >= 0:
+      template p: untyped = state.panels[k]
+      let s = state.sessions[i]
+      let g = p.layers[0].source.gather
+      if p.laidOut and p.layout.traces > 0 and not state.readers[k].isNil and
+          g in 0 ..< s.gathers.len and state.jobs.hold(s.path):
+        if p.view.traces.width > 0:
+          p.carry = p.view
+          p.carryLayout = p.layout
+        inc p.requestGen
+        p.sourceGen = p.requestGen
+        p.samplesGen = p.requestGen # the first new tile replaces those from before
+        p.pending = ReadRequest()
+        inc p.revision
+        state.readers[k].show(ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path,
+          size: s.size, traces: s.gathers[g].traces, filter: p.layers[0].filter,
+          order: p.layers[0].order))
+      else:
+        state.newSource(k)
+  state.movesPaused.setLen 0
+
 proc onTheMap(state: AppState; files: openArray[JoinFile]): string =
   ## What of the survey files `files` is on the map now, in a sentence.
   var counts: array[PointRole, int]
@@ -5997,7 +6059,11 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
         state.joins.add Joined(session: s.id, files: j.files, options: j.options,
           units: j.units, plan: j.plan, survey: j.survey, words: words, geometry: j.geometry,
           relations: j.relations)
-        if j.plan.changes > 0: state.readPositions(s) # the map's, from the joined keys
+        if j.plan.changes > 0 or j.movesTouched: state.readPositions(s) # the map's, from the keys
+        if j.movesCount > 0:
+          state.log.add(sevInfo, s.name, "Station moves applied to " & plural(j.movesCount,
+              "trace") &
+            " of " & s.name & ".")
         state.checkRecords(s)
       if j.survey.notes.len > 0:
         state.log.add(sevInfo, s.name, "The survey files' headers say: " &
@@ -6053,6 +6119,30 @@ proc loaded(state: var AppState; job: JobId; layer: SurveyLayerId) =
   elif job != NoJob and job == j.job and layer != NoSurveyLayer:
     j.added.add layer # a layer the import's read made (taken out again at a cancel)
 
+proc moveBasesOf(state: AppState; id: SessionId): seq[ReceiverBase] =
+  ## The receiver fields a station move replaced in open file `id`; empty when none.
+  for b in state.moveBases:
+    if b.session == id: return b.bases
+
+proc putMoveBases(state: var AppState; id: SessionId; bases: seq[ReceiverBase]) =
+  ## Remembers `bases` for open file `id`. Empty forgets them.
+  var i = 0
+  while i < state.moveBases.len:
+    if state.moveBases[i].session == id:
+      if bases.len == 0: state.moveBases.delete(i)
+      else: state.moveBases[i].bases = bases
+      return
+    inc i
+  if bases.len > 0: state.moveBases.add (session: id, bases: bases)
+
+proc dropMoveBases(state: var AppState; id: SessionId) =
+  ## Forgets the receiver fields remembered for open file `id`.
+  state.moveBases.keepItIf(it.session != id)
+
+proc enqueueMoves(state: var AppState; id: SessionId) =
+  ## Has open file `id` take the project's station moves, once no join runs.
+  if id notin state.moveQueue: state.moveQueue.add id
+
 proc takeJoinPlan(state: var AppState; m: sink Msg) =
   ## The survey files read and what joining them does: when it changes some
   ## trace's keys, the readers of the file let go of it and the join's second
@@ -6076,19 +6166,28 @@ proc takeJoinPlan(state: var AppState; m: sink Msg) =
   # filling stations the headers lack still counts as a key change, so
   # `changes` alone would keep a join that matched nothing.
   let noTrace = j.carried and j.plan.matched == 0
-  if j.plan.changes == 0 or noTrace:
-    # Nothing to change (or nothing matched): the readers need not stop.
-    let nothing = j.plan.found[prSource] + j.plan.found[prReceiver] == 0 or noTrace
+  let moves = state.project.doc.stationMoves
+  let bases = state.moveBasesOf(j.session)
+  let needMoves = moves.len > 0 or bases.len > 0
+  if noTrace:
+    # A carried rematch that matches no trace is dropped. Moves still waiting
+    # are applied on their own once the join has ended.
+    state.endJoin(joNothing)
+    if needMoves: state.enqueueMoves(j.session)
+  elif j.plan.changes == 0 and not needMoves:
+    # Nothing to change: the readers need not stop.
+    let nothing = j.plan.found[prSource] + j.plan.found[prReceiver] == 0
     state.endJoin(if nothing: joNothing else: joJoined)
   else:
     let s = state.sessions[i]
+    state.moveQueue.keepItIf(it != j.session)
     state.pauseReaders(s.path)
     let tableOnly = j.files.allIt(it.kind == jkCsv)
     let relations = if j.relations.isNil: nil else: addr j.relations[]
     j.job = state.jobs.submit(JobSpec(title: "Import the survey for " & s.name,
       lane: jlInteractive, exclusive: @[s.path]), joinApplyWork(s.filePtr, s.path, s.id,
       addr j.geometry[], j.plan.replace, tableOnly, state.jobs.holdRelease, state.inbox.poster,
-      relations))
+      relations, moves, bases))
     j.step = jpJoining
 
 proc takeJoined(state: var AppState; m: Msg) =
@@ -6098,9 +6197,22 @@ proc takeJoined(state: var AppState; m: Msg) =
     j.joined = true
     j.held = m.heldAtJoin
     j.revision = m.joinedRevision
+    j.movesTouched = m.joinedMoves > 0
+    j.movesCount = m.joinedMoves
+    if state.findSession(m.joinedSession) >= 0:
+      state.putMoveBases(m.joinedSession, m.joinedBases)
     if m.changed != j.plan.changes:
       state.log.add(sevWarning, j.name, "The import changed " & plural(m.changed, "trace") &
         " where " & $j.plan.changes & " were expected (parseSEG: " & $m.stats & ").")
+
+proc takeMoves(state: var AppState; m: Msg) =
+  ## A station-move job did it (its end, `finishMoves`, refreshes the map).
+  if m.job != state.movesJob or m.movedSession != state.movesSession: return
+  state.movesDone = true
+  state.movesChanged = m.movedCount
+  state.movesRevision = m.movedRevision
+  if state.findSession(m.movedSession) >= 0:
+    state.putMoveBases(m.movedSession, m.movedBases)
 
 proc selectUnmatched(state: var AppState; cmd: Command) =
   ## `ckSelectUnmatched`: the traces of a joined file the survey has no
@@ -6177,6 +6289,9 @@ proc clearSession(state: var AppState) =
   ## Every open file closed, the survey files taken off the map, an import
   ## under way cancelled: a project begins, or ends, with nothing of before.
   if state.joining.job != NoJob: discard state.jobs.cancel(state.joining.job)
+  if state.movesJob != NoJob: discard state.jobs.cancel(state.movesJob)
+  state.moveQueue.setLen 0
+  state.moveBases.setLen 0
   for x in state.loading:
     if x.session == NoSession:
       discard state.jobs.cancel(x.job)
@@ -6588,6 +6703,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   if news.created:
     for s in state.sessions:
       if p.doc.hasSurvey and state.joinedOf(s.id) < 0: p.queue.add s.id
+    state.queueOpenMoves()
 
 proc takeKept(state: var AppState; m: sink Msg) =
   ## The survey copied into the project and `survey.bin` written.
@@ -6747,11 +6863,69 @@ proc startAutoJoin(state: var AppState; i: int) =
     files: files, options: p.doc.options, units: p.doc.units, geometry: p.geometry,
     survey: p.joinSurvey, auto: true, by: coWindow)
 
+proc queueOpenMoves(state: var AppState) =
+  ## Has every open file take the project's station moves. A project with a
+  ## survey is joined again, so the survey is applied and the moves win after
+  ## it; a file with no survey gets a job of its own. A file whose join is
+  ## still reading is left: that join reads the list when it applies.
+  let moves = state.project.doc.stationMoves
+  let surveyed = state.project.dir.len > 0 and state.project.doc.hasSurvey
+  for s in state.sessions:
+    if s.isSignature or s.noSeismic: continue
+    if moves.len == 0 and state.moveBasesOf(s.id).len == 0: continue
+    if surveyed:
+      if state.joining.job != NoJob and state.joining.session == s.id and
+          state.joining.step == jpReading: continue
+      state.moveQueue.keepItIf(it != s.id)
+      if s.id notin state.project.queue: state.project.queue.add s.id
+    else:
+      state.enqueueMoves(s.id)
+
+proc setStationMoves*(state: var AppState; moves: StationMoves) =
+  ## Replaces the project's station moves and has every open file take them.
+  ## A project with a folder records the change; without one the list is kept
+  ## for this run. Never reads a file on this thread.
+  assertUiThread()
+  state.project.doc.stationMoves = moves
+  if state.project.dir.len > 0 and not state.project.readOnly: state.projectChanged()
+  elif state.project.dir.len > 0:
+    state.log.add(sevWarning, "project", "The project is read-only: the station moves are for " &
+      "this run only.")
+  state.queueOpenMoves()
+
+proc followMoves(state: var AppState) =
+  ## The next open file with no survey join takes the project's station moves,
+  ## once no import and no other move job runs. A file a project survey still
+  ## has to match is left on that queue instead.
+  if state.movesJob != NoJob or state.importing: return
+  while state.moveQueue.len > 0:
+    let id = state.moveQueue[0]
+    state.moveQueue.delete(0)
+    let i = state.findSession(id)
+    if i < 0: continue
+    let s = state.sessions[i]
+    if s.isSignature or s.noSeismic: continue
+    if state.project.dir.len > 0 and state.project.doc.hasSurvey:
+      if id notin state.project.queue: state.project.queue.add id
+      continue
+    let moves = state.project.doc.stationMoves
+    let bases = state.moveBasesOf(id)
+    if moves.len == 0 and bases.len == 0: continue
+    state.pauseMoveReaders(s.path)
+    state.movesSession = id
+    state.movesDone = false
+    state.movesChanged = 0
+    state.movesJob = state.jobs.submit(JobSpec(title: "Apply station moves for " & s.name,
+      lane: jlInteractive, exclusive: @[s.path]), movesApplyWork(s.filePtr, s.path, s.id, moves,
+      bases, state.jobs.holdRelease, state.inbox.poster))
+    return
+
 proc followProject(state: var AppState) =
   ## After every command and drained inbox: the next file opened in the
-  ## project is matched to its survey, once no import runs.
+  ## project is matched to its survey, once no import runs and no station-move
+  ## job holds a file.
   template p: untyped = state.project
-  if p.dir.len == 0 or p.geometry.isNil or state.importing: return
+  if p.dir.len == 0 or p.geometry.isNil or state.importing or state.movesJob != NoJob: return
   while p.queue.len > 0:
     let id = p.queue[0]
     p.queue.delete(0)
@@ -7678,8 +7852,33 @@ proc showHeldBack(state: var AppState; path: string) =
 
 proc refreshCompare(state: var AppState)
 
+proc finishMoves(state: var AppState; job: JobInfo) =
+  ## The station-move job ended: the panels it paused read their file again,
+  ## and a file whose keys changed has its positions read again.
+  state.resumeMoveReaders()
+  let session = state.movesSession
+  let changed = state.movesChanged
+  let revision = state.movesRevision
+  let done = state.movesDone
+  state.movesJob = NoJob
+  state.movesDone = false
+  state.movesChanged = 0
+  if job.state == jsDone and done:
+    let i = state.findSession(session)
+    if i >= 0 and changed > 0:
+      let s = state.sessions[i]
+      s.setKeysRevision(revision)
+      state.readPositions(s)
+      state.log.add(sevInfo, s.name, "Station moves applied to " & plural(changed, "trace") &
+        " of " & s.name & ".")
+  elif job.state == jsFailed:
+    state.log.add(sevError, "station moves", "Station moves were not applied: " & job.error & ".")
+
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
+  if job.id == state.movesJob:
+    state.finishMoves(job)
+    return
   if state.takeCorrelate(job): return
   if job.id == state.comparePicJob and job.state == jsFailed:
     state.comparePicJob = NoJob
@@ -8638,6 +8837,7 @@ proc apply*(state: var AppState; cmd: Command) =
   state.releaseFollowed(followed)
   state.followMapWork()
   state.followProject()
+  state.followMoves()
 
 proc displayPreset(state: var AppState; cmd: Command) =
   ## A named display preset (`core/displaypresets`) applied to a panel, or
@@ -10202,6 +10402,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkChecked: state.takeChecked(move m)
     of mkJoining: state.takeJoinPlan(move m)
     of mkJoined: state.takeJoined(m)
+    of mkMoves: state.takeMoves(m)
     of mkInspected: state.takeInspected(move m)
     of mkSpectrum: state.takeSpectrum(move m)
     of mkAnalysis: state.takeAnalysis(move m)
@@ -10330,3 +10531,4 @@ proc drainInbox*(state: var AppState): bool =
   state.followMapWork()
   state.followMemoryLook()
   state.followProject()
+  state.followMoves()

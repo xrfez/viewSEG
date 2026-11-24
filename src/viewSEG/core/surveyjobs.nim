@@ -33,7 +33,8 @@
 import std/[cpuinfo, locks, options, os, strutils, times]
 import parseSEG
 import processSEG/qc/record
-import filejobs, filekinds, filesystem, inbox, jobs, join, log, session, signatures, survey, threads
+import filejobs, filekinds, filesystem, inbox, jobs, join, log, session, signatures, stationmoves,
+  survey, threads
 
 const
   SurveyChunk* = 4 * 1024 * 1024 ## bytes of an SPS file parsed at a time
@@ -848,18 +849,23 @@ proc joinReadWork*(file: ptr SeismicFile; session: SessionId; files: seq[JoinFil
 
 proc joinApplyWork*(file: ptr SeismicFile; path: string; session: SessionId;
     g: ptr SurveyGeometry; replace, tableOnly: bool; holds: HoldRelease; to: Poster;
-    relations: ptr SurveyGeometry = nil): JobWork =
+    relations: ptr SurveyGeometry = nil; moves: StationMoves = StationMoves();
+    bases: seq[ReceiverBase] = @[]): JobWork =
   ## The work of the second job of a join: joins `g` (its relation records
   ## those of `relations` when given: `SharedRelations`) to open file
   ## `session` (`file`, at `path`) in memory (parseSEG's `applySurvey`, or
   ## `applyGeometry` of `g`'s table alone when no SPS or P1 file is in it),
-  ## replacing the headers' coordinates when `replace`, and posts what it
-  ## did (`mkJoined`). Submitted with the file in `exclusive`, so it starts
-  ## only once no job reads the file and no reader holds it; it says how many
-  ## holds it found (none), and refuses to join when there are any. A cancel
-  ## that comes before it joins stops it; the join itself is one step, which
-  ## no cancel stops (`commit`): it reads no file, and a join abandoned
-  ## halfway would be said cancelled while it still changed the keys.
+  ## replacing the headers' coordinates when `replace`, then applies `moves`
+  ## over that (`applyFileMoves`), and posts what it did (`mkJoined`).
+  ## `bases` are receiver fields a previous move replaced; they are put back
+  ## before the survey is applied, so the survey writes over the header
+  ## position and the moves win after it. Submitted with the file in
+  ## `exclusive`, so it starts only once no job reads the file and no reader
+  ## holds it; it says how many holds it found (none), and refuses to join
+  ## when there are any. A cancel that comes before it joins stops it; the
+  ## join itself is one step, which no cancel stops (`commit`): it reads no
+  ## file, and a join abandoned halfway would be said cancelled while it
+  ## still changed the keys.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     let held = holds.held(path)
@@ -870,17 +876,55 @@ proc joinApplyWork*(file: ptr SeismicFile; path: string; session: SessionId;
     ctx.setPhase "matching" # the step: `g` and the file's keys are read and changed from here
     var stats: JoinStats
     var (changed, revision) = (0, 0)
+    var moveChanged = 0
+    var postedBases: seq[ReceiverBase] = @[]
     {.cast(gcsafe).}:
+      if bases.len > 0:
+        var scratch: seq[ReceiverBase] = bases
+        moveChanged = file[].applyFileMoves(StationMoves(), scratch)
       changed = if tableOnly: file[].applyGeometry(g[].table, replace)
-                elif relations.isNil: file[].applySurvey(g[], stats, replace)
-                else:
-                  when SharedRelations: file[].applySurvey(g[], relations[], stats, replace)
-                  else: file[].applySurvey(g[], stats, replace)
+                 elif relations.isNil: file[].applySurvey(g[], stats, replace)
+                 else:
+                   when SharedRelations: file[].applySurvey(g[], relations[], stats, replace)
+                   else: file[].applySurvey(g[], stats, replace)
+      if moves.len > 0:
+        var next: seq[ReceiverBase] = @[]
+        moveChanged = file[].applyFileMoves(moves, next)
+        postedBases = next
       revision = file[].keysRevision
     discard ctx.progress(1, 1)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkJoined, joinedSession: session, stats: stats,
-      changed: changed, joinedRevision: revision, heldAtJoin: held)
+      changed: changed, joinedRevision: revision, heldAtJoin: held, joinedBases: postedBases,
+      joinedMoves: moveChanged)
+
+proc movesApplyWork*(file: ptr SeismicFile; path: string; session: SessionId;
+    moves: StationMoves; bases: seq[ReceiverBase]; holds: HoldRelease; to: Poster): JobWork =
+  ## Applies `moves` to open file `session` (`file`, at `path`) in memory and
+  ## posts what changed (`mkMoves`). `bases` are the receiver fields a
+  ## previous apply replaced; they are put back first, so a move taken out of
+  ## the list restores the header position. Submitted with the file in
+  ## `exclusive`. Never writes the file. A cancel before it applies stops it;
+  ## once committed, the apply is one step.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.checkCancelled()
+    let held = holds.held(path)
+    if held > 0:
+      raise newException(IOError, "a reader still reads the file, so its station moves were not " &
+        "applied")
+    if not ctx.commit(): raise newException(JobCancelledError, "cancelled")
+    ctx.setPhase "applying station moves"
+    var changed = 0
+    var revision = 0
+    var posted: seq[ReceiverBase] = @[]
+    {.cast(gcsafe).}:
+      var kept: seq[ReceiverBase] = bases
+      changed = file[].applyFileMoves(moves, kept)
+      revision = file[].keysRevision
+      posted = kept
+    discard ctx.progress(1, 1)
+    to.post Msg(job: ctx.id, kind: mkMoves, movedSession: session, movedCount: changed,
+      movedRevision: revision, movedBases: posted)
 
 proc readGeometry*(paths: openArray[string]; ctx: JobContext; to: Poster): SurveyGeometry =
   ## The survey files `paths` read again into one parseSEG geometry, on a

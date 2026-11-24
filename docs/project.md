@@ -44,9 +44,12 @@ Land 2026/                  the project folder: this is what is opened
   with their originals, the import's options and units, what `survey.bin` holds, the
   project's filters and display presets (`core/projectnif`). A station moved during a
   deployment is a `stationMoves` entry there: a new receiver position from a time on,
-  not written into the seismic file or the survey file. It matches a trace as the join
-  matches a station: the same index, else index 0 for any index, else a trace with
-  index 0 takes index 1. A document without the tag has none.
+  not written into the seismic file or the survey file. While a file is open that
+  position replaces the header's and the survey's for a trace recorded at or after
+  `fromTime`, and the offset and midpoint are computed again. Removing the move puts
+  the header or survey position back. It matches a trace as the join matches a
+  station: the same index, else index 0 for any index, else a trace with index 0
+  takes index 1. A document without the tag has none.
 - **`files/`** is the store of what is remembered about files (`core/filememory`), in the
   same documents as `<config>/files/`. While a project is open it is the store's home, so
   every edit made goes there and nothing changes in the program's own store.
