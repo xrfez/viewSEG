@@ -111,7 +111,7 @@ import signatures, sweeppairs
 import analysis, analysisreader, closer, compare, comparejobs, components, correlatejobs, diskio,
   edits, filejobs,
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
-      join, layouts, log,
+      join, layouts, leapfile, log,
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, reader,
   recordqc, referencejobs, references, selection, session, settings, shotlog, shotlogjobs,
   shots, spectra,
@@ -307,6 +307,16 @@ type
       ## parse a loaded shot log again with another map, on a job
     ckEditShotCell = "edit shot log cell"
       ## overlay one cell of a loaded shot log; a writable project writes the copy
+    ckAddLeap = "add leap second"
+      ## add a leap second at the first of a month, after the last entry
+    ckSetLeapChecked = "set leap checked to"
+      ## the leap-second table is known complete through this date
+    ckRemoveLeap = "remove leap second"
+      ## remove the last leap second, when it was added here
+    ckReloadLeaps = "reload leap seconds"
+      ## read the leap-second file again
+    ckResetLeaps = "reset leap seconds"
+      ## the leap-second table shipped with the program
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -610,6 +620,11 @@ type
       logRow*: int ## ckEditShotCell: the data row
       logCol*: int ## ckEditShotCell: the column
       logCell*: string ## ckEditShotCell: the new cell text
+    of ckAddLeap, ckSetLeapChecked, ckRemoveLeap, ckReloadLeaps, ckResetLeaps:
+      leapYear*: int ## ckAddLeap, ckSetLeapChecked: the year
+      leapMonth*: int ## ckAddLeap, ckSetLeapChecked: the month
+      leapDay*: int ## ckSetLeapChecked: the day
+      leapStep*: int ## ckAddLeap: +1 or -1
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -1043,6 +1058,16 @@ type
     movesRevision: int
     movesChanged: int
     movesDone: bool ## the job posted what it did (`mkMoves`)
+    leapQueue: seq[SessionId]
+      ## open files waiting for their times to be read again
+    leapJob: JobId = NoJob
+      ## the leap-second re-read under way; `NoJob` for none
+    leapPaused: seq[PanelId]
+      ## the panels whose readers let go of the file for that job
+    leapSession: SessionId
+    leapRevision: int
+    leapChanged: bool
+    leapDone: bool ## the job posted what it did (`mkLeap`)
     joins: seq[Joined]
       ## the open files joined with survey files
     project: ProjectState
@@ -1373,6 +1398,11 @@ proc settingsFile*(state: AppState): string =
   ## Where the settings are saved; "" when they are not.
   if state.configDir.len == 0 or not state.keepsSettings: ""
   else: state.configDir / SettingsFileName
+
+proc leapFilePath*(state: AppState): string =
+  ## Where the leap-second table is saved; "" when settings are not kept.
+  if state.configDir.len == 0 or not state.keepsSettings: ""
+  else: leapPath(state.configDir)
 
 proc keepSettingsIn*(state: var AppState; dir: string; loaded: LoadedSettings) =
   ## Takes the settings `loadSettings` read from `dir` and logs what it
@@ -2354,6 +2384,15 @@ func findPanel*(state: AppState; id: PanelId): int =
     if p.id == id: return i
   -1
 
+proc shownLeapNote*(state: AppState): string =
+  ## The warning when the file the Seismic window shows is after the leap
+  ## table was last checked; "" otherwise, or while a re-read is writing keys.
+  if state.leapJob != NoJob: return ""
+  let k = state.findPanel(MainPanel)
+  let i = if k >= 0: state.shownFile(k) else: -1
+  if i < 0 or state.sessions[i].len == 0: return ""
+  uncheckedNote(state.sessions[i].file.traceKeys(0).time)
+
 func windowTitle*(state: AppState; id: PanelId): string =
   ## The title of panel `id`'s window: what it shows, numbered from the
   ## second of a kind on ("Seismic", "Seismic 2", "Aux"; `panels`).
@@ -3312,6 +3351,7 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
   state.sessions.delete(i)
   state.dropMoveBases(s.id)
   state.moveQueue.keepItIf(it != s.id)
+  state.leapQueue.keepItIf(it != s.id)
   for job in state.jobs.list:
     if job.state in {jsQueued, jsRunning} and
         (s.path in job.spec.reads or s.path in job.spec.exclusive):
@@ -6379,6 +6419,13 @@ proc takeMoves(state: var AppState; m: Msg) =
   if state.findSession(m.movedSession) >= 0:
     state.putMoveBases(m.movedSession, m.movedBases)
 
+proc takeLeap(state: var AppState; m: Msg) =
+  ## A leap-second re-read did it (its end, `finishLeap`, publishes the revision).
+  if m.job != state.leapJob or m.leapSession != state.leapSession: return
+  state.leapDone = true
+  state.leapChanged = m.leapChanged
+  state.leapRevision = m.leapRevision
+
 proc selectUnmatched(state: var AppState; cmd: Command) =
   ## `ckSelectUnmatched`: the traces of a joined file the survey has no
   ## source or receiver for become the selection; the main panel shows the
@@ -6726,7 +6773,9 @@ proc clearSession(state: var AppState) =
   state.dropShotLogs()
   if state.joining.job != NoJob: discard state.jobs.cancel(state.joining.job)
   if state.movesJob != NoJob: discard state.jobs.cancel(state.movesJob)
+  if state.leapJob != NoJob: discard state.jobs.cancel(state.leapJob)
   state.moveQueue.setLen 0
+  state.leapQueue.setLen 0
   state.moveBases.setLen 0
   for x in state.loading:
     if x.session == NoSession:
@@ -7382,7 +7431,7 @@ proc followMoves(state: var AppState) =
   ## The next open file takes the project's station moves, once no import and
   ## no other move job runs. A file a project survey can still match is left
   ## on that queue instead.
-  if state.movesJob != NoJob or state.importing: return
+  if state.movesJob != NoJob or state.importing or state.leapJob != NoJob: return
   while state.moveQueue.len > 0:
     let id = state.moveQueue[0]
     state.moveQueue.delete(0)
@@ -7410,7 +7459,8 @@ proc followProject(state: var AppState) =
   ## project is matched to its survey, once no import runs and no station-move
   ## job holds a file.
   template p: untyped = state.project
-  if p.dir.len == 0 or p.geometry.isNil or state.importing or state.movesJob != NoJob: return
+  if p.dir.len == 0 or p.geometry.isNil or state.importing or state.movesJob != NoJob or
+      state.leapJob != NoJob: return
   while p.queue.len > 0:
     let id = p.queue[0]
     p.queue.delete(0)
@@ -8337,6 +8387,93 @@ proc showHeldBack(state: var AppState; path: string) =
 
 proc refreshCompare(state: var AppState)
 
+proc pauseLeapReaders(state: var AppState; path: string) =
+  ## Has the readers of the panels that show `path` let go of it, for the
+  ## leap-second re-read that needs it to itself; their tiles stay drawn.
+  for k in 0 ..< state.panels.len:
+    let i = state.shownFile(k)
+    if i >= 0 and state.sessions[i].path == path:
+      if state.panels[k].id notin state.leapPaused:
+        state.leapPaused.add state.panels[k].id
+      if not state.readers[k].isNil:
+        state.readers[k].show(ReaderSource(gen: state.panels[k].sourceGen))
+
+proc resumeLeapReaders(state: var AppState) =
+  ## The panels the leap-second re-read paused show their file again.
+  for id in state.leapPaused:
+    let k = state.findPanel(id)
+    let i = if k >= 0: state.shownFile(k) else: -1
+    if i >= 0:
+      template p: untyped = state.panels[k]
+      let s = state.sessions[i]
+      let g = p.layers[0].source.gather
+      if p.laidOut and p.layout.traces > 0 and not state.readers[k].isNil and
+          g in 0 ..< s.gathers.len and state.jobs.hold(s.path):
+        if p.view.traces.width > 0:
+          p.carry = p.view
+          p.carryLayout = p.layout
+        inc p.requestGen
+        p.sourceGen = p.requestGen
+        p.samplesGen = p.requestGen
+        p.pending = ReadRequest()
+        inc p.revision
+        state.readers[k].show(ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path,
+          size: s.size, traces: s.gathers[g].traces, filter: p.layers[0].filter,
+          order: p.layers[0].order))
+      else:
+        state.newSource(k)
+  state.leapPaused.setLen 0
+
+proc followLeap(state: var AppState) =
+  ## The next open file has its times read again, once no import, station-move
+  ## job or other leap job holds a file.
+  if state.leapJob != NoJob or state.movesJob != NoJob or state.importing: return
+  while state.leapQueue.len > 0:
+    let id = state.leapQueue[0]
+    state.leapQueue.delete(0)
+    let i = state.findSession(id)
+    if i >= 0:
+      let s = state.sessions[i]
+      if not s.isSignature and not s.noSeismic and not s.derived:
+        state.pauseLeapReaders(s.path)
+        state.leapSession = id
+        state.leapDone = false
+        state.leapChanged = false
+        state.leapJob = state.jobs.submit(JobSpec(title: "Read times again for " & s.name,
+          lane: jlInteractive, exclusive: @[s.path]), leapRereadWork(s.filePtr, s.path, s.id,
+          state.jobs.holdRelease, state.inbox.poster))
+        return
+
+proc queueLeapReads(state: var AppState) =
+  ## Every open seismic file waits to have its times read again.
+  for s in state.sessions:
+    if not s.isSignature and not s.noSeismic and not s.derived and s.id notin state.leapQueue:
+      state.leapQueue.add s.id
+
+proc adoptLeap(state: var AppState; table: LeapTable; said: string) =
+  ## Makes `table` the one in use, writes it when a settings folder is kept,
+  ## says `said`, and reads open files' times again.
+  useLeapTable(table)
+  let path = state.leapFilePath()
+  if path.len == 0:
+    state.log.add(sevWarning, "leap seconds",
+      "There is no settings folder, so the leap-second table was not saved.")
+  else:
+    state.diskIo.replace(path, leapTableNif(table), "the leap-second table")
+  if said.len > 0: state.log.add(sevInfo, "leap seconds", said)
+  state.queueLeapReads()
+  state.followLeap()
+
+proc reloadLeaps(state: var AppState) =
+  ## Reads the leap-second file again, off this thread. A missing settings
+  ## folder is said and changes nothing.
+  let path = state.leapFilePath()
+  if path.len == 0:
+    state.log.add(sevWarning, "leap seconds",
+      "There is no settings folder, so there is no leap-second file to read.")
+    return
+  state.diskIo.read(path, rpLeapFile, 1 shl 20)
+
 proc finishMoves(state: var AppState; job: JobInfo) =
   ## The station-move job ended: the panels it paused read their file again,
   ## and a file whose keys changed has its positions read again.
@@ -8359,8 +8496,30 @@ proc finishMoves(state: var AppState; job: JobInfo) =
   elif job.state == jsFailed:
     state.log.add(sevError, "station moves", "Station moves were not applied: " & job.error & ".")
 
+proc finishLeap(state: var AppState; job: JobInfo) =
+  ## The leap-second re-read ended: the panels it paused show their file again,
+  ## and a file whose keys changed publishes the new revision. Quiet unless it
+  ## failed. A file gone meanwhile is left.
+  state.resumeLeapReaders()
+  let session = state.leapSession
+  let changed = state.leapChanged
+  let revision = state.leapRevision
+  let done = state.leapDone
+  state.leapJob = NoJob
+  state.leapDone = false
+  state.leapChanged = false
+  if job.state == jsDone and done:
+    let i = state.findSession(session)
+    if i >= 0 and changed:
+      state.sessions[i].setKeysRevision(revision)
+  elif job.state == jsFailed:
+    state.log.add(sevError, "leap seconds", "Times were not read again: " & job.error & ".")
+
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
+  if job.id == state.leapJob:
+    state.finishLeap(job)
+    return
   if job.id == state.movesJob:
     state.finishMoves(job)
     return
@@ -10796,6 +10955,33 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckRemoveShotLog: state.removeShotLogCmd(cmd)
   of ckRemapShotLog: state.remapShotLogCmd(cmd)
   of ckEditShotCell: state.editShotCellCmd(cmd)
+  of ckAddLeap:
+    let date = LeapDate(year: cmd.leapYear, month: cmd.leapMonth, day: 1)
+    try:
+      let next = currentLeapTable().withLeap(date, cmd.leapStep)
+      state.adoptLeap(next, addedSentence(date, next.entries[^1].gpsMinusUtc))
+    except ValueError as e:
+      state.ignore(cmd, e.msg)
+  of ckSetLeapChecked:
+    let why = checkedProblem(cmd.leapYear, cmd.leapMonth, cmd.leapDay)
+    if why.len > 0: state.ignore(cmd, why)
+    else:
+      var next = currentLeapTable()
+      next.checkedTo = LeapDate(year: cmd.leapYear, month: cmd.leapMonth, day: cmd.leapDay)
+      state.adoptLeap(next, checkedSentence(next.checkedTo))
+  of ckRemoveLeap:
+    let why = removeLeapProblem()
+    if why.len > 0: state.ignore(cmd, why)
+    else:
+      var next = currentLeapTable()
+      let last = next.entries[^1]
+      let date = LeapDate(year: last.year, month: last.month, day: last.day)
+      next.entries.setLen(next.entries.len - 1)
+      state.adoptLeap(next, removedSentence(date))
+  of ckReloadLeaps: state.reloadLeaps()
+  of ckResetLeaps:
+    let shipped = defaultLeapTable()
+    state.adoptLeap(shipped, resetSentence(shipped.checkedTo))
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept
@@ -10858,6 +11044,23 @@ proc takeIn(state: var AppState; m: Msg) =
       except NifError as e:
         state.log.add(sevError, "settings", "Cannot import the settings: " & e.msg &
           ". Nothing was changed.")
+  of rpLeapFile:
+    if m.readError.len > 0:
+      state.log.add(sevWarning, "leap seconds", "Cannot read " & m.readPath & ": " &
+        m.readError & ". The table in use is unchanged.")
+    else:
+      let parsed = parseLeapTable(m.content)
+      if parsed.problems.len > 0:
+        for p in parsed.problems:
+          state.log.add(sevWarning, "leap seconds", m.readPath & ": " & p)
+        state.log.add(sevWarning, "leap seconds",
+          "The leap-second file was not used. The table in use is unchanged.")
+      else:
+        let chosen = chooseLeap(parsed.table, @[], m.readPath)
+        for n in chosen.notes: state.log.add(n.severity, "leap seconds", n.text)
+        state.adoptLeap(chosen.table, "Read " & m.readPath.extractFilename & " again: " &
+          $chosen.table.entries.len & " leap seconds, known complete through " &
+          dateText(chosen.table.checkedTo) & ".")
 
 proc drainInbox*(state: var AppState): bool =
   ## Takes in what the workers posted and how the jobs ended, in that order
@@ -10895,6 +11098,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkJoining: state.takeJoinPlan(move m)
     of mkJoined: state.takeJoined(m)
     of mkMoves: state.takeMoves(m)
+    of mkLeap: state.takeLeap(m)
     of mkInspected: state.takeInspected(move m)
     of mkSpectrum: state.takeSpectrum(move m)
     of mkAnalysis: state.takeAnalysis(move m)
@@ -11024,3 +11228,4 @@ proc drainInbox*(state: var AppState): bool =
   state.followMemoryLook()
   state.followProject()
   state.followMoves()
+  state.followLeap()

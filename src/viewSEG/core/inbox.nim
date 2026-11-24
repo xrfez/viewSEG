@@ -31,6 +31,7 @@ type
     mkJoining        ## survey files read for a join, and what joining them does
     mkJoined         ## a join done
     mkMoves          ## station moves applied to an open file's keys
+    mkLeap           ## an open file's keys read again after the leap-second table changed
     mkUnread         ## a panel's file cannot be read now (its drive went away, or fails), from its reader
     mkInspected
       ## what the Headers window shows of a record and of traces, from its reader
@@ -76,6 +77,7 @@ type
     rpLoadLayout     ## a layout to show (Window: a preset, Load)
     rpImportLayout   ## a layout to show and keep among the user's (Window > Import layout)
     rpLayouts        ## the layouts there are: the user's and the presets, listed (`layouts`)
+    rpLeapFile       ## the leap-second table, read again (Tools > Leap seconds)
 
   Msg* = object
     ## One message for the UI thread.
@@ -199,6 +201,13 @@ type
         ## the file's `keysRevision` after the moves
       movedBases*: seq[ReceiverBase]
         ## receiver fields the moves replaced, for a later restore
+    of mkLeap:
+      leapSession*: SessionId
+        ## the open file whose times were read again
+      leapChanged*: bool
+        ## a stored key changed
+      leapRevision*: int
+        ## the file's `keysRevision` after the read
     of mkUnread:
       unreadPanel*: PanelId
       unreadGen*: uint64 ## the panel's `sourceGen` it is about
