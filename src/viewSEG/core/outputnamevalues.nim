@@ -51,6 +51,10 @@ type
     set, miss, mixed: bool
     value: int64
     whole: bool
+  PartAcc = object
+    rec, srcLine, srcPoint, rcvLine, rcvPoint: FloatAcc
+    srcIndex, rcvIndex: IntAcc
+    time: TimeAcc
 
 proc considerFloat(a: var FloatAcc; x: float64; zeroMissing: bool) =
   let missing = x.isNaN or abs(x) >= 1e15 or (zeroMissing and x == 0.0)
@@ -110,6 +114,29 @@ func asTime(a: TimeAcc): NameValue =
   elif a.mixed: NameValue(state: nvMixed)
   else: NameValue(state: nvTimeUs, timeUs: a.value, wholeSeconds: a.whole)
 
+proc considerParts(a: var PartAcc; keys: TraceKeys; us: Option[int64];
+    origin: TimeOrigin; segd: bool) =
+  considerFloat(a.rec, keys.record, true)
+  considerFloat(a.srcLine, keys.srcLine, false)
+  considerFloat(a.srcPoint, keys.srcPoint, false)
+  considerFloat(a.rcvLine, keys.rcvLine, false)
+  considerFloat(a.rcvPoint, keys.rcvPoint, false)
+  if segd:
+    considerInt(a.srcIndex, int64(keys.srcIndex), false)
+    considerInt(a.rcvIndex, int64(keys.rcvIndex), false)
+  considerTime(a.time, us, origin)
+
+proc writeParts(v: var NameValues; a: PartAcc; segd: bool) =
+  v[npRecord] = asNumber(a.rec)
+  v[npSrcLine] = asNumber(a.srcLine)
+  v[npSrcPoint] = asNumber(a.srcPoint)
+  v[npRcvLine] = asNumber(a.rcvLine)
+  v[npRcvPoint] = asNumber(a.rcvPoint)
+  if segd:
+    v[npSrcIndex] = asInt(a.srcIndex)
+    v[npRcvIndex] = asInt(a.rcvIndex)
+  v[npTime] = asTime(a.time)
+
 proc putInt(v: var NameValues; kind: NamePartKind; n: int64; missing: bool) =
   if not missing: v[kind] = NameValue(state: nvInt, intValue: n)
 
@@ -136,18 +163,20 @@ proc fillSignature(v: var NameValues; facts: SignatureFacts) =
 
 proc fillSeismic(v: var NameValues; file: SeismicFile; edits: FileEdits;
     dropKilled: bool; own: ptr SeismicFile) =
-  ## One value when every kept trace shares it. The time is whole seconds
-  ## only when every kept trace's origin is a whole-second clock
-  ## (`toHeaderSeconds`: a SEG-Y header with no fraction, or a SEG-D Rev 0-2
-  ## general-header clock). SEG-D system serial is one value when every
-  ## record that still has a kept trace agrees. Record 0 is missing; an
-  ## index of 0 is a real value; SEG-Y has no index parts.
+  ## One value when every compared trace shares it. An auxiliary trace is
+  ## not compared when a kept trace is not auxiliary; a file of auxiliary
+  ## traces only uses them all. The time is whole seconds only when every
+  ## compared trace's origin is a whole-second clock (`toHeaderSeconds`: a
+  ## SEG-Y header with no fraction, or a SEG-D Rev 0-2 general-header clock).
+  ## SEG-D system serial is one value when every record that still has a kept
+  ## trace agrees, auxiliary traces included. Record 0 is missing; an index
+  ## of 0 is a real value; SEG-Y has no index parts.
   let segd = file.kind == skSegd
   let useOwn = own != nil and own[].isOpen and own[].len == file.len
   var
-    rec, srcLine, srcPoint, rcvLine, rcvPoint: FloatAcc
-    srcIndex, rcvIndex, serial: IntAcc
-    time: TimeAcc
+    seismic, auxiliary: PartAcc
+    serial: IntAcc
+    sawNonAux = false
     seenRec = initHashSet[int]()
     buf, ownBuf: array[KeyChunk, TraceKeys]
   var t = 0
@@ -161,14 +190,13 @@ proc fillSeismic(v: var NameValues; file: SeismicFile; edits: FileEdits;
       if dropKilled and edits.has(teKilled, i): continue
       var keys = buf[k]
       if useOwn: keys = ownGeometry(keys, ownBuf[k])
-      considerFloat(rec, keys.record, true)
-      considerFloat(srcLine, keys.srcLine, false)
-      considerFloat(srcPoint, keys.srcPoint, false)
-      considerFloat(rcvLine, keys.rcvLine, false)
-      considerFloat(rcvPoint, keys.rcvPoint, false)
+      let us = file.recordTimeZeroUs(i)
+      if keys.status == tsAuxiliary:
+        considerParts(auxiliary, keys, us, buf[k].timeOrigin, segd)
+      else:
+        sawNonAux = true
+        considerParts(seismic, keys, us, buf[k].timeOrigin, segd)
       if segd:
-        considerInt(srcIndex, int64(keys.srcIndex), false)
-        considerInt(rcvIndex, int64(keys.rcvIndex), false)
         let ri = int(file.traceEntry(i).record)
         if ri notin seenRec:
           seenRec.incl ri
@@ -176,18 +204,10 @@ proc fillSeismic(v: var NameValues; file: SeismicFile; edits: FileEdits;
             considerInt(serial, int64(file.index.segdRecords[ri].gh1.manufacturerSerial), false)
           else:
             considerInt(serial, 0, true)
-      considerTime(time, file.recordTimeZeroUs(i), buf[k].timeOrigin)
     t += count
-  v[npRecord] = asNumber(rec)
-  v[npSrcLine] = asNumber(srcLine)
-  v[npSrcPoint] = asNumber(srcPoint)
-  v[npRcvLine] = asNumber(rcvLine)
-  v[npRcvPoint] = asNumber(rcvPoint)
-  if segd:
-    v[npSrcIndex] = asInt(srcIndex)
-    v[npRcvIndex] = asInt(rcvIndex)
-    v[npSystemSerial] = asInt(serial)
-  v[npTime] = asTime(time)
+  if sawNonAux: writeParts(v, seismic, segd)
+  else: writeParts(v, auxiliary, segd)
+  if segd: v[npSystemSerial] = asInt(serial)
 
 proc nameValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
     edits: FileEdits; dropKilled: bool; own: ptr SeismicFile = nil): NameValues =
@@ -197,7 +217,9 @@ proc nameValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
   ## and source index 0 missing, file number -1 missing, and the time the
   ## pair's trigger when a pair was given, otherwise a start second with no
   ## fraction. Any other file is named from the trace keys, skipping a killed
-  ## trace when `dropKilled`. `own`, when open and the same length, supplies
+  ## trace when `dropKilled`. An auxiliary trace does not take part when a
+  ## kept trace is not auxiliary; a file of auxiliary traces only uses them
+  ## all. `own`, when open and the same length, supplies
   ## the position fields (line, point, index); record and time stay the
   ## session's. The name keeps the value from the keys; a file name may
   ## carry what a header cannot. Does not open a file.

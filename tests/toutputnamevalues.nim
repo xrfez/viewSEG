@@ -7,11 +7,12 @@
 ## Source point was the session station (`the session station was used`);
 ## with the sweep ignored, Controller was not an int 4321. With the clock
 ## ignored, shots.sgy record 1 was `20260301T000000000000Z` (`a whole-second
-## clock kept a fraction`).
+## clock kept a fraction`). With an auxiliary trace compared, source line NaN
+## beside 2001 was mixed (`an auxiliary trace decided the source line`).
 ##
 ## Runs on samples/vib/vib_uncorrelated.sgd and samples/land/shots.sgy.
 
-import std/[os, strutils]
+import std/[math, os, strutils]
 import parseSEG
 import parseSEG/model/traceindex
 import viewSEG/core/[edits, outputnames, outputnamevalues, sigtypes]
@@ -103,6 +104,32 @@ proc main*() =
       "a killed trace was compared"
     let all = nameValuesOf(f, vib, SignatureFacts(), edits, false, nil)
     doAssert all[npRcvPoint].state == nvMixed, "a kept kill was skipped"
+    f.close()
+
+  block auxiliarySkipped:
+    var f = openSeismic(vib, keys = true)
+    f.mindex.keys[48].srcLine = NaN
+    f.mindex.keys[49].srcLine = 9999.0
+    f.mindex.keys[48].record = 9.0
+    f.mindex.keys[48].srcIndex = 9
+    for t in 0 ..< f.len:
+      if f.mindex.keys[t].status != tsAuxiliary:
+        f.mindex.keys[t].noteRecordedTime(toHeaderSeconds, 1_772_366_400_000_000)
+    let v = nameValuesOf(f, vib, SignatureFacts(), FileEdits(), false, nil)
+    doAssert v[npSrcLine].state == nvNumber and v[npSrcLine].number == 2001.0,
+      "an auxiliary trace decided the source line"
+    let named = render(OutputPattern(name: "Line", separator: nsDot,
+      parts: @[part(npSrcLine, 4)]), v, ".sgd")
+    doAssert named.problem.len == 0, named.problem
+    doAssert named.name == "2001.sgd", named.name
+    doAssert v[npRecord].state == nvNumber and v[npRecord].number == 1.0,
+      "an auxiliary trace decided the record"
+    doAssert v[npSrcIndex].state == nvInt and v[npSrcIndex].intValue == 1,
+      "an auxiliary trace decided the source index"
+    doAssert v[npTime].wholeSeconds, "an auxiliary clock decided the time"
+    for t in 0 ..< f.len: f.mindex.keys[t].status = tsAuxiliary
+    let only = nameValuesOf(f, vib, SignatureFacts(), FileEdits(), false, nil)
+    doAssert only[npSrcLine].state == nvMixed, "an auxiliary-only file skipped a trace"
     f.close()
 
   block ownPositions:
