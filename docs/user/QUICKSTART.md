@@ -331,6 +331,10 @@ signature file, set the Vibrator window, and choose **Use as profile**. **Run** 
 inactive until a profile is stored and at least one file is ticked, and the tooltip says
 why.
 
+Three boxes above the tabs hold the job's weights in kilograms: hold-down, baseplate and
+reaction mass. Empty means not set. They are compared with each file's header weights and
+never applied. With no project open the boxes are inactive.
+
 The **Files** tab lists the signature files found, each ticked. Untick a file to leave it
 out of the run. The **Results** tab is one row per file that was run: the verdict, the
 sentence, the measures, the polarity and any problem. A box above the table narrows the

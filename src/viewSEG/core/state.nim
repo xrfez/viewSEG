@@ -296,6 +296,8 @@ type
       ## the file list includes the subfolders' files, or not; the folder is listed again
     ckVibProfile = "vibrator profile"
       ## keep these settings as the project's vibrator QC profile
+    ckVibWeights = "vibrator weights"
+      ## keep these as the project's vibrator QC job weights
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -588,6 +590,9 @@ type
     of ckVibProfile:
       vibProfile*: VibQcProfile
         ## the settings to keep as the project's vibrator QC profile
+    of ckVibWeights:
+      vibWeights*: VibJobWeights
+        ## the hold-down, baseplate and reaction-mass weights, kilograms; NaN is not set
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -6582,6 +6587,26 @@ proc storeVibProfile(state: var AppState; origin: CommandOrigin; p: VibQcProfile
     state.projectChanged()
   state.profileNoted = true
 
+proc storeVibWeights(state: var AppState; origin: CommandOrigin; w: VibJobWeights) =
+  ## Keeps `w` in the project's document when the user asked and the project
+  ## can be written. A NaN weight is not set. The core compares these with a
+  ## file's header and never applies them.
+  if not state.inProject:
+    state.log.add(sevWarning, "vibrator QC",
+      "No project is open: the vibrator QC weights were not stored.")
+    return
+  if not keeps(origin):
+    state.log.add(sevWarning, "vibrator QC",
+      "This change is for this run only: the vibrator QC weights were not stored.")
+    return
+  if state.project.readOnly:
+    state.log.add(sevWarning, "vibrator QC",
+      "The project is read-only: the vibrator QC weights were not stored.")
+    return
+  if state.project.doc.vibJobWeights != w:
+    state.project.doc.vibJobWeights = w
+    state.projectChanged()
+
 proc setVendorChoice(state: var AppState; origin: CommandOrigin; c: VendorChoice) =
   ## The project's rule for the vendor maps: kept in its document when the user
   ## chose it (an agent's is for the session), used from now on by every file.
@@ -10372,6 +10397,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckCorrelate: state.setCorrelate(cmd)
   of ckSubfolders: state.setSubfolders(cmd)
   of ckVibProfile: state.storeVibProfile(cmd.origin, cmd.vibProfile)
+  of ckVibWeights: state.storeVibWeights(cmd.origin, cmd.vibWeights)
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept

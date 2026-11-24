@@ -9,7 +9,8 @@
 ## (no disabled mark), "Reports is inactive without a folder did not happen".
 ## With the mass left as recorded, good.dat and reversed.dat do not split
 ## into one pass and one fail. With the button left out, "Use as profile
-## stores the window did not happen".
+## stores the window did not happen". With the weight boxes left out,
+## "the job weights start unset did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24"`.
 
@@ -332,6 +333,30 @@ proc main*() =
           f.markOf("vibfolder.run").size.x > 0 and
           f.markOf("vibfolder.run.disabled").size.x == 0
     step("unticking one file leaves Run enabled", untick, unticked)
+
+    step("the job weights start unset", noop, proc (f: FrameInfo): bool =
+      let w = f.core.project.doc.vibJobWeights
+      result = f.markOf("vibfolder.weight Hold-down").size.x > 0 and
+        f.markOf("vibfolder.weight Baseplate").size.x > 0 and
+        f.markOf("vibfolder.weight Reaction mass").size.x > 0 and
+        f.markOf("vibfolder.weight Hold-down.disabled").size.x == 0
+      if result:
+        doAssert w.holdDownKg.isNaN and w.baseplateMassKg.isNaN and w.reactionMassKg.isNaN,
+          "a weight was set before it was typed")
+
+    step("click the hold-down box", proc (f: FrameInfo) =
+      f.click(f.markOf("vibfolder.weight Hold-down").centre), proc (f: FrameInfo): bool =
+      wait > 5)
+
+    step("a typed hold-down weight is stored", proc (f: FrameInfo) =
+      f.typeText("18000")
+      f.pressKey(skEnter, true)
+      f.pressKey(skEnter, false), proc (f: FrameInfo): bool =
+      let w = f.core.project.doc.vibJobWeights
+      result = w.holdDownKg == 18000.0
+      if result:
+        doAssert w.baseplateMassKg.isNaN and w.reactionMassKg.isNaN,
+          "another weight changed: " & $w)
 
     var at = 0
     var started = false

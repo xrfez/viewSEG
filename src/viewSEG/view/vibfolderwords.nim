@@ -166,6 +166,12 @@ const
   FilterHint* = "Filter the rows"
   CappedNote* = "The list stopped at the file limit; later files were not listed."
   SuggestedName* = "vibrator-qc.csv"
+  HoldDownLabel* = "Hold-down"
+  BaseplateLabel* = "Baseplate"
+  ReactionLabel* = "Reaction mass"
+  WeightsHint* = "Job weights, kilograms. Compared with each file's header and never " &
+    "applied. Empty: not set."
+  NeedProjectWeights* = "A project is needed to store the job weights."
 
 func rowCells*(row: FolderRow): seq[string] =
   ## The cells of one row, in `headers` order.

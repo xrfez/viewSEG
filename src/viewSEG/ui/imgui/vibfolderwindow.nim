@@ -6,9 +6,9 @@
 ## that job is no longer running. The worker must not read `AppState`: the
 ## profile, the weights and the reference are copied before the job starts.
 
-import std/[os, strutils, tables]
+import std/[math, os, strutils, tables]
 import imguin/cimgui
-import ../../core/[filejobs, filekinds, filesystem, jobs, sigtypes, state, sweepinfo,
+import ../../core/[filejobs, filekinds, filesystem, jobs, sigtypes, state, sweepinfo, units,
   vibfolderjobs, vibfolderqc, vibprofile]
 import ../../view/vibfolderwords
 import focus, icons, marks, overflow
@@ -288,6 +288,69 @@ proc tip(text: string; allowDisabled = false) =
     igPopTextWrapPos()
     igEndTooltip()
 
+type HeldWeight = object
+  text: array[64, char]
+  active: bool
+
+var weightBoxes: Table[string, HeldWeight]
+
+proc weightBox(id: string; value: float64; typed: var float64): bool =
+  ## A kilograms box, empty when unset (NaN). True once the user has finished
+  ## typing; nothing typed, or not a number, is none.
+  if id notin weightBoxes: weightBoxes[id] = HeldWeight()
+  if not weightBoxes[id].active:
+    zeroMem(addr weightBoxes[id].text[0], weightBoxes[id].text.len)
+    let text = if value.isNaN: "" else: sensible(value)
+    for i, c in text:
+      if i < weightBoxes[id].text.high: weightBoxes[id].text[i] = c
+  let width = round(igCalcTextSize("00000.0", nil, false, -1).x +
+    2 * igGetStyle().FramePadding.x)
+  igSetNextItemWidth(width)
+  discard igInputText(id.cstring, cast[cstring](addr weightBoxes[id].text[0]),
+    csize_t(weightBoxes[id].text.len), ImGui_InputTextFlags_CharsScientific.cint, nil, nil)
+  weightBoxes[id].active = igIsItemActive()
+  let got = $cast[cstring](addr weightBoxes[id].text[0])
+  typed = try: parseFloat(got.strip) except ValueError: NaN
+  igIsItemDeactivatedAfterEdit()
+
+proc changedWeight(a, b: float64): bool {.inline.} =
+  a != b and not (a.isNaN and b.isNaN)
+
+proc drawWeights(ui: var VibFolderUi; st: AppState; marks: var Marks;
+    commands: var seq[Command]) =
+  ## The job's three weights, above the tabs. Empty is not set. A finished edit
+  ## is a `ckVibWeights` of all three. Inactive without a project.
+  let can = st.inProject
+  if not can: igBeginDisabled(true)
+  let now = if st.inProject: st.project.doc.vibJobWeights else: VibJobWeights()
+  var next = now
+  var changed = false
+  template one(label, id: string; current: float64; field: untyped) =
+    igAlignTextToFramePadding()
+    igTextUnformatted(label, nil)
+    igSameLine(0, -1)
+    var typed = 0.0
+    if weightBox(id, current, typed) and can:
+      if typed.isNaN or MassKgRange.allows(typed):
+        if changedWeight(typed, current):
+          field = typed
+          changed = true
+      else:
+        ui.status = "The weight must be " & MassKgRange.words & ", not " &
+          sensible(typed) & "."
+    marks.mark("vibfolder.weight " & label)
+    if not can: marks.mark("vibfolder.weight " & label & ".disabled")
+    tip(if can: WeightsHint else: NeedProjectWeights, allowDisabled = true)
+    igSameLine(0, -1)
+    igTextUnformatted("kg", nil)
+    igSameLine(0, 8)
+  one(HoldDownLabel, "##holddown", now.holdDownKg, next.holdDownKg)
+  one(BaseplateLabel, "##baseplate", now.baseplateMassKg, next.baseplateMassKg)
+  one(ReactionLabel, "##reaction", now.reactionMassKg, next.reactionMassKg)
+  if changed and can: commands.add Command(kind: ckVibWeights, vibWeights: next)
+  if not can: igEndDisabled()
+  igNewLine()
+
 proc bufText(buf: openArray[char]): string =
   result = ""
   for c in buf:
@@ -471,6 +534,7 @@ proc drawVibFolder*(ui: var VibFolderUi; title: string; st: AppState;
       for p in ui.table.problems:
         igTextUnformatted(p.cstring, nil)
         marks.mark("vibfolder.problem " & p)
+    ui.drawWeights(st, marks, result.commands)
     if igBeginTabBar("##vibfoldertabs", tabFlags):
       var filesFlags = 0.cint
       var resultsFlags = 0.cint

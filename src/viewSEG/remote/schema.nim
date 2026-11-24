@@ -25,7 +25,7 @@ const
     ## edits imported are remembered with the file; forgetting files removes
     ## what is remembered about them)
   Preferences* = {ckSettings, ckImportSettings, ckLayout, ckLoadLayout, ckProjectFolder,
-    ckUpdateSurvey, ckVibProfile}
+    ckUpdateSurvey, ckVibProfile, ckVibWeights}
     ## refused: the user's preferences and the windows' arrangement; a
     ## project's data folders and its survey's update, which are written
     ## into the project
