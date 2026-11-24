@@ -1,6 +1,6 @@
 ## A file name built from parts: a separator between them, a least width on a
 ## number so a folder sorts, free text as one part, a time written so it
-## sorts and holds no colon.
+## sorts and holds no colon: six microsecond digits, or whole seconds.
 ##
 ## `render` takes the values a caller already gathered for one file. It
 ## reads nothing, and it never writes a placeholder for a value that is
@@ -78,7 +78,7 @@ type
       intValue*: int64
     of nvTimeUs:
       timeUs*: int64 ## microseconds since 1970-01-01 00:00:00 UTC
-      wholeSeconds*: bool ## write no fraction, even when `timeUs` has one
+      wholeSeconds*: bool ## no fraction; otherwise six microsecond digits
     of nvText:
       text*: string
 
@@ -244,8 +244,8 @@ func formatTime(us: int64; wholeSeconds: bool): NameResult =
   let ss = sod mod 60
   var name = zeroPad(date.y, 4) & zeroPad(date.m, 2) & zeroPad(date.d, 2) & "T" &
     zeroPad(hh, 2) & zeroPad(mm, 2) & zeroPad(ss, 2)
-  if not wholeSeconds and remUs != 0:
-    name.add zeroPad(remUs div 1000, 3)
+  if not wholeSeconds:
+    name.add zeroPad(remUs, 6)
   name.add "Z"
   accepted(name)
 

@@ -19,7 +19,9 @@
 ## with the pattern's separator left in text, `named "a--1.sgy" instead of
 ## refusing` (stem `a-` and record 1 is the same leaf as stem `a` and -1);
 ## with the sign kept on a zero, `got "-0.sgy" wanted "0.sgy"`; with the
-## old whole-within-1e-3 window, `got "-0042.sgy" wanted "-0042p0001.sgy"`.
+## old whole-within-1e-3 window, `got "-0042.sgy" wanted "-0042p0001.sgy"`;
+## with zero microseconds omitted, `got "19700101T000000Z.sgy" wanted
+## "19700101T000000000000Z.sgy"`.
 
 import std/[math, strutils, unicode]
 import viewSEG/core/outputnames
@@ -133,24 +135,55 @@ proc main*() =
 
   block timeUtc:
     let p = pat(nsDot, part(npTime, pad = 6)) # pad does not apply
-    expectName(p, vals((npTime, tm(0))), ".sgy", "19700101T000000Z.sgy")
-    expectName(p, vals((npTime, tm(-1_000_000))), ".sgy", "19691231T235959Z.sgy")
-    expectName(p, vals((npTime, tm(68_169_600_000_000))), ".sgy", "19720229T000000Z.sgy")
-    expectName(p, vals((npTime, tm(-58_060_800_000_000))), ".sgy", "19680229T000000Z.sgy")
-    expectName(p, vals((npTime, tm(-58_015_504_000_000))), ".sgy", "19680229T123456Z.sgy")
-    expectName(p, vals((npTime, tm(1_709_251_199_123_000))), ".sgy", "20240229T235959123Z.sgy")
-    expectName(p, vals((npTime, tm(-877_000))), ".sgy", "19691231T235959123Z.sgy")
+    expectName(p, vals((npTime, tm(0))), ".sgy", "19700101T000000000000Z.sgy")
+    expectName(p, vals((npTime, tm(-1_000_000))), ".sgy", "19691231T235959000000Z.sgy")
+    expectName(p, vals((npTime, tm(68_169_600_000_000))), ".sgy", "19720229T000000000000Z.sgy")
+    expectName(p, vals((npTime, tm(-58_060_800_000_000))), ".sgy", "19680229T000000000000Z.sgy")
+    expectName(p, vals((npTime, tm(-58_015_504_000_000))), ".sgy", "19680229T123456000000Z.sgy")
+    expectName(p, vals((npTime, tm(1_709_251_199_123_000))), ".sgy", "20240229T235959123000Z.sgy")
+    expectName(p, vals((npTime, tm(-877_000))), ".sgy", "19691231T235959123000Z.sgy")
     # whole seconds: the fraction is dropped
     expectName(p, vals((npTime, tm(1_709_251_199_123_000, whole = true))), ".sgy",
       "20240229T235959Z.sgy")
     expectName(p, vals((npTime, tm(0, whole = true))), ".sgy", "19700101T000000Z.sgy")
-    # 5 ms is three digits; a leap-century day too
-    expectName(p, vals((npTime, tm(5_000))), ".sgy", "19700101T000000005Z.sgy")
-    expectName(p, vals((npTime, tm(951_782_400_000_000))), ".sgy", "20000229T000000Z.sgy")
-    expectName(p, vals((npTime, tm(-2_203_891_200_000_000))), ".sgy", "19000301T000000Z.sgy")
+    # 5000 us is six digits, zeros included; a leap-century day too
+    expectName(p, vals((npTime, tm(5_000))), ".sgy", "19700101T000000005000Z.sgy")
+    expectName(p, vals((npTime, tm(951_782_400_000_000))), ".sgy", "20000229T000000000000Z.sgy")
+    expectName(p, vals((npTime, tm(-2_203_891_200_000_000))), ".sgy", "19000301T000000000000Z.sgy")
     for us in [0'i64, -1_000_000, 68_169_600_000_000, -877_000, 1_709_251_199_123_000]:
       let r = render(p, vals((npTime, tm(us))), ".sgy")
       doAssert r.problem.len == 0 and ':' notin r.name, r.name
+
+  block timeMicros:
+    let p = pat(nsDot, part(npTime))
+    var names: seq[string] = @[]
+    for us in [0'i64, 1, 400, 500, 999]:
+      let r = render(p, vals((npTime, tm(us))), "")
+      doAssert r.problem.len == 0, r.problem
+      names.add r.name
+    doAssert names == @[
+      "19700101T000000000000Z",
+      "19700101T000000000001Z",
+      "19700101T000000000400Z",
+      "19700101T000000000500Z",
+      "19700101T000000000999Z"]
+    for i in 0 ..< names.len - 1:
+      doAssert names[i] < names[i + 1], names[i] & " then " & names[i + 1]
+    var before: seq[string] = @[]
+    for us in [-999'i64, -500, -400, -1, 0]:
+      let r = render(p, vals((npTime, tm(us))), "")
+      doAssert r.problem.len == 0, r.problem
+      before.add r.name
+    doAssert before == @[
+      "19691231T235959999001Z",
+      "19691231T235959999500Z",
+      "19691231T235959999600Z",
+      "19691231T235959999999Z",
+      "19700101T000000000000Z"]
+    for i in 0 ..< before.len - 1:
+      doAssert before[i] < before[i + 1], before[i] & " then " & before[i + 1]
+    expectName(p, vals((npTime, tm(999, whole = true))), "", "19700101T000000Z")
+    expectName(p, vals((npTime, tm(-1, whole = true))), "", "19691231T235959Z")
 
   block missingAndMixed:
     expectProblem(pat(nsDot, part(npSigStation)), vals(), ".sgy", "Station is not in this file.")
