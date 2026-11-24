@@ -53,7 +53,7 @@ proc blk(t: uint8): seq[byte] =
   result = newSeq[byte](32)
   result[31] = t
 
-proc makeRecording(path: string; raw: openArray[int64]) =
+proc makeRecording(path: string; raw: openArray[int64]; noStation = false) =
   ## One record, a trace per entry of `raw`: its vendor start-time count
   ## (0: the absent sentinel).
   let fmt = sd8058
@@ -78,8 +78,9 @@ proc makeRecording(path: string; raw: openArray[int64]) =
     var t = SegdTrace(layout: slRev3, index: traces.len, numSamples: SegLen)
     t.header = SegdTraceHeader(fileNumber: 7, scanTypeNumber: 1, channelSetNumber: 1,
       traceNumber: tn, traceHeaderExtensions: 2)
-    t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(receiverLineNumber: 100,
-      receiverPointNumber: 101, receiverPointIndex: 1, numSamples: SegLen,
+    t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(
+      receiverLineNumber: (if noStation: 0 else: 100),
+      receiverPointNumber: (if noStation: 0 else: 101), receiverPointIndex: 1, numSamples: SegLen,
       sensorType: 2, blockType: 0x40)
     var vendor = blk(0xB0)
     for i in 0 .. 7: vendor[i] = byte((raw[tn - 1] shr (8 * (7 - i))) and 255)
@@ -146,7 +147,7 @@ proc main*() =
 
     block six_segments_are_one_receiver:
       let c = segmentClock(f, gps)
-      doAssert c.fromHeaders and c.fallbacks == 0
+      doAssert c.fromHeaders and c.leftOut == 0
       for i in 0 ..< Segments:
         doAssert c.times[i] == toPosixSeconds(segStart(i)), "start of " & $i & ": " & $c.times[i]
         doAssert c.receivers[i] == 0, "receivers " & $c.receivers
@@ -161,16 +162,16 @@ proc main*() =
     block the_dialog_facts_follow_the_clock:
       # what the dialog shows: one component, one recording, not six receivers
       let with = describeRecording(planRecording(addr f, good, 2.0, gps))
-      doAssert with.ready and with.kind == rkContinuous, $with
+      doAssert with.ready and with.kind == rkReceiverContinuous, $with
       doAssert with.components == 1 and with.segments == Segments and with.boundaries == 5 and
         with.abutting == 5, $with
       doAssert abs(with.lastTime - with.firstTime - 6 * 40 * 0.002) < 1e-6, $with
       let without = describeRecording(planRecording(addr f, good, 2.0, VendorRegistry()))
-      doAssert without.kind == rkShotRecord and without.components == Segments, $without
+      doAssert without.components == Segments and without.segments == Segments, $without
 
     block without_the_map_the_keys_are_used:
       let c = segmentClock(f, VendorRegistry())
-      doAssert not c.fromHeaders and c.fallbacks == 0 and c.times.len == 0
+      doAssert not c.fromHeaders and c.leftOut == 0 and c.times.len == 0
       doAssert planOf(f, c).receiverCount == Segments, "N receivers of one trace each"
 
     block gps_and_utc_differ_by_the_leap_seconds:
@@ -185,7 +186,7 @@ proc main*() =
       doAssert abs(u.times[0] - float64(raw) / 1e6) < 1e-6, "UTC is used as is"
       doAssert gpsMicrosToUtcMicros(raw) == BaseUs, "the leap seconds are 18"
 
-    block a_trace_without_the_field_falls_back:
+    block a_trace_without_the_field_is_left_out:
       var raw = gpsStarts()
       raw[2] = 0
       let path = rec / "one-missing.sgd"
@@ -193,9 +194,11 @@ proc main*() =
       var g = openSeismic(path, keys = true)
       defer: g.close()
       let c = segmentClock(g, gps)
-      doAssert c.fromHeaders and c.fallbacks == 1, "fallbacks " & $c.fallbacks
-      doAssert c.times[2] == g.traceKeys(2).time, "the keys' time is kept"
+      doAssert c.fromHeaders and c.leftOut == 1, "left out " & $c.leftOut
+      doAssert c.times[2].isNaN, "the time is NaN, not the keys' time"
       doAssert c.times[3] == toPosixSeconds(segStart(3))
+      let streams = planOf(g, c)
+      doAssert streams.untimed == @[2], "untimed " & $streams.untimed
       var none = gpsStarts()
       for v in none.mitems: v = 0
       let path2 = rec / "none.sgd"
@@ -203,7 +206,7 @@ proc main*() =
       var h = openSeismic(path2, keys = true)
       defer: h.close()
       let d = segmentClock(h, gps)
-      doAssert not d.fromHeaders and d.fallbacks == 0, "no trace had the field"
+      doAssert not d.fromHeaders and d.leftOut == 0, "no trace had the field"
 
     block another_unit_or_a_wild_value_falls_back:
       let other = registryOf(fx.dir / "feet", "ft")
@@ -217,11 +220,12 @@ proc main*() =
       var g = openSeismic(path, keys = true)
       defer: g.close()
       let d = segmentClock(g, gps)
-      doAssert d.fromHeaders and d.fallbacks == 2, "fallbacks " & $d.fallbacks
+      doAssert d.fromHeaders and d.leftOut == 2, "left out " & $d.leftOut
 
-    block equal_start_times_are_an_overlap:
+    block starts_closer_than_a_trace_are_an_overlap:
+      # (equal starts are two channels now, not an overlap)
       var raw = gpsStarts()
-      raw[3] = raw[2]
+      raw[3] = raw[2] + 20_000
       let path = rec / "overlap.sgd"
       makeRecording(path, raw)
       var g = openSeismic(path, keys = true)
@@ -251,7 +255,7 @@ proc main*() =
       defer: o.close()
       doAssert o.len == 2
       for s in 0 .. 1:
-        let shotUs = BaseUs + shots.shots[s].timeUs - BaseUs
+        let shotUs = shots.shots[s].timeUs
         let zero = o.recordTimeZeroUs(s)
         doAssert zero.isSome and zero.get == shotUs, "time zero of record " & $s
         let g0 = int((shotUs - 20_000 - BaseUs + DtUs div 2) div DtUs)
@@ -274,19 +278,109 @@ proc main*() =
         shotsAt([90_000'i64]), initCutOptions(40.0, -20.0))
       doAssert got.st == jsDone, got.error & " / " & got.res.reason
       doAssert got.res.segmentsWithoutTime == 1
-      var found = false
-      for l in got.res.lines:
-        if "1 trace has no start time" in l: found = true
-      doAssert found, $got.res.lines
+      doAssert "1 trace has no start time in its headers and was left out." in got.res.lines,
+        $got.res.lines
+      # the trace left out does not replace the data of segment 1 (record 0 at 90 ms)
+      var o = openSeismic(fx.dir / "out" / "cut2.sgd", keys = true)
+      defer: o.close()
+      let s0 = samplesOf(o, 0)
+      for j in 0 ..< s0.len:
+        doAssert s0[j] == float32(35 + j), "sample " & $j & ": " & $s0[j]
 
-    block without_the_map_the_file_is_six_one_trace_receivers:
-      # six receivers of one short trace each: a shot record, which the cut refuses
+    block three_like_typed_components_keep_their_channels:
+      # 3 channels x 2 segments at one station, all of one component code
+      var raw: seq[int64]
+      for seg in 0 .. 1:
+        for c in 0 .. 2: raw.add gpsOf(segStart(seg))
+      let path = rec / "comp.sgd"
+      makeRecording(path, raw)
+      var g = openSeismic(path, keys = true)
+      defer: g.close()
+      let c = segmentClock(g, gps)
+      doAssert c.receivers[0] == c.receivers[3] and c.receivers[1] == c.receivers[4] and
+        c.receivers[2] == c.receivers[5], $c.receivers
+      doAssert c.receivers[0] != c.receivers[1] and c.receivers[1] != c.receivers[2], $c.receivers
+      doAssert c.unevenChannels == 0 and not c.untimed
+      doAssert planOf(g, c).receiverCount == 3
+      publishVendors(gps)
+      defer: publishVendors(VendorRegistry())
+      let got = runCut(initJobs(), g, path, fx.dir / "out" / "comp.sgd",
+        shotsAt([60_000'i64]), initCutOptions(40.0, -20.0))
+      doAssert got.st == jsDone, got.error & " / " & got.res.reason
+      doAssert got.res.components == 3, "components " & $got.res.components
+      var o = openSeismic(fx.dir / "out" / "comp.sgd", keys = true)
+      defer: o.close()
+      doAssert o.len == 3, "traces " & $o.len
+      for t in 0 .. 2:
+        let v = samplesOf(o, t)
+        doAssert v.len == 20 and v[0] == float32(t * 40 + 20) and v[19] == float32(t * 40 + 39),
+          "trace " & $t & ": " & $v
+
+    block uneven_channels_are_counted:
+      # three traces at the first start time, two at the second
+      let raw = @[gpsOf(segStart(0)), gpsOf(segStart(0)), gpsOf(segStart(0)),
+        gpsOf(segStart(1)), gpsOf(segStart(1))]
+      let path = rec / "uneven.sgd"
+      makeRecording(path, raw)
+      var g = openSeismic(path, keys = true)
+      defer: g.close()
+      doAssert segmentClock(g, gps).unevenChannels == 1
+
+    block traces_without_a_station_are_not_merged:
+      var raw: seq[int64]
+      for c in 0 ..< 6: raw.add gpsOf(segStart(0))
+      let path = rec / "nostation.sgd"
+      makeRecording(path, raw, noStation = true)
+      var g = openSeismic(path, keys = true)
+      defer: g.close()
+      let c = segmentClock(g, gps)
+      doAssert c.fromHeaders
+      doAssert planOf(g, c).receiverCount == 6, "receivers " & $planOf(g, c).receiverCount
+      publishVendors(gps)
+      defer: publishVendors(VendorRegistry())
+      let got = runCut(initJobs(), g, path, fx.dir / "out" / "nostation.sgd",
+        shotsAt([30_000'i64]), initCutOptions(40.0, -20.0))
+      # no receiver line and point: not a shot gather, one segment each, so it passes
+      # the two questions; what matters is that six traces are written, not one
+      doAssert got.st == jsDone, got.error & " / " & got.res.reason
+      doAssert got.res.components == 6, "components " & $got.res.components
+
+    block no_declaring_map_means_no_header_pass:
+      # a map that applies but names no start time field, and one that names it
+      # for another format, are not read for the clock
+      let other = registryOf(fx.dir / "feet2", "ft")
+      doAssert startFieldDeclared(f, gps)
+      doAssert not startFieldDeclared(f, VendorRegistry())
+      var bare = VendorRegistry()
+      let text = "(.nif27)\n(vendormap \"bare\" (version 1) (match (format segd))\n" &
+        "  (target (kind block) (type 0xB0) (where traceHeader) (name other)\n" &
+        "    (field somethingElse (at 1) (enc i64))))\n"
+      createDir(fx.dir / "bare")
+      writeFile(fx.dir / "bare" / "bare.nif", text)
+      let load = loadVendorFolders(@[VendorFolder(dir: fx.dir / "bare", origin: voProject)])
+      doAssert load.registry.maps.len == 1, $load.problems
+      doAssert not startFieldDeclared(f, load.registry)
+      doAssert not segmentClock(f, load.registry).fromHeaders
+      doAssert other.maps.len == 1
+
+    block twelve_traces_with_and_without_their_map:
+      var raw: seq[int64]
+      for i in 0 ..< 12: raw.add gpsOf(segStart(i))
+      let path = rec / "twelve.sgd"
+      makeRecording(path, raw)
+      var g = openSeismic(path, keys = true)
+      defer: g.close()
+      let with = describeRecording(planRecording(addr g, path, 2.0, gps))
+      doAssert with.kind == rkReceiverContinuous and with.components == 1, $with
+      let without = describeRecording(planRecording(addr g, path, 2.0, VendorRegistry()))
+      doAssert without.kind == rkReceiverSliced and without.slicedWhy == swSameStart, $without
       publishVendors(VendorRegistry())
       let dest = fx.dir / "out" / "cut3.sgd"
-      let got = runCut(initJobs(), f, good, dest, shotsAt([90_000'i64]),
+      let got = runCut(initJobs(), g, path, dest, shotsAt([90_000'i64]),
         initCutOptions(40.0, -20.0))
       doAssert got.st == jsFailed, "the cut was not refused"
-      doAssert "shot record" in got.res.reason, got.res.reason
+      doAssert "time-sliced receiver gather" in got.res.reason, got.res.reason
+      doAssert "vendor header map" in got.res.reason, got.res.reason
       doAssert not fileExists(dest)
 
   echo "tsegmentclock ok"

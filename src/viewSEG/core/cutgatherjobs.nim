@@ -75,7 +75,9 @@ type
     mismatches*: seq[string]
       ## the first few mismatching overlaps, named by source trace (from 1)
     segmentsFromHeaders*: bool ## the segments' start times were read from the trace headers
-    segmentsWithoutTime*: int ## traces whose header had none (they keep the keys' time)
+    segmentsWithoutTime*: int ## traces whose header had none (they are left out)
+    unevenChannels*: int ## stations and components with an uneven number of traces per start
+    skips*, missingSegments*: int ## places where whole segments were not recorded, and how many
     timingIssues*: int ## segments off the previous segment's sample grid
     timingNames*: seq[string] ## the first few, named by source trace (from 1)
     gapSamples*: int ## output samples no segment covers, over every trace
@@ -226,19 +228,25 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
     result.add plural(res.overlapsNotRead, "overlap was", "overlaps were") & " not compared."
   if res.overlapsOutside > 0:
     result.add plural(res.overlapsOutside, "overlap", "overlaps") &
-      " between traces lie outside every record and " &
+      " between traces " & (if res.overlapsOutside == 1: "lies" else: "lie") &
+      " outside every record and " &
       (if res.overlapsOutside == 1: "was" else: "were") & " not needed."
   if res.segmentsFromHeaders:
     result.add "Segment times were read from the trace headers."
     if res.segmentsWithoutTime > 0:
       result.add(if res.segmentsWithoutTime == 1:
-          "1 trace has no start time in its header and keeps the time of the file's keys."
+          "1 trace has no start time in its headers and was left out."
         else:
           $res.segmentsWithoutTime & " traces have no start time in their headers and " &
-            "keep the time of the file's keys.")
+            "were left out.")
+    if res.unevenChannels > 0:
+      result.add plural(res.unevenChannels, "station and component has",
+        "stations and components have") & " a different number of traces at some start " &
+        "times than at others."
   if res.timingIssues > 0:
     result.add plural(res.timingIssues, "segment starts", "segments start") &
       " off the sample grid of the one before: " & res.timingNames.join("; ") & "."
+  if res.skips > 0: result.add skipWords(res.skips, res.missingSegments)
   if res.gapSamples > 0:
     result.add plural(res.gapSamples, "sample", "samples") &
       " of the output fall in gaps between segments and are zeros."
@@ -290,7 +298,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let clock = recording.clock
       let streams = recording.streams
       let facts = describeRecording(recording)
-      if facts.kind != rkContinuous: abort(sink, dest, part, false, cutRefusal(facts), false)
+      if not facts.isContinuousGather: abort(sink, dest, part, false, cutRefusal(facts), false)
       let window = SliceWindow(startMs: opts.startMs, lengthMs: opts.recordMs)
       let plan = planSlices(streams, shots.shots, window, soShotRecords, opts.align)
       let comps = plan.receiverCount
@@ -309,7 +317,9 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         anySourceXY, anyReceiverXY)
       var res = CutResult(path: dest, shotsDropped: shots.dropped,
         duplicateTimes: shots.duplicateTimes,
-        segmentsFromHeaders: clock.fromHeaders, segmentsWithoutTime: clock.fallbacks,
+        segmentsFromHeaders: clock.fromHeaders, segmentsWithoutTime: clock.leftOut,
+        unevenChannels: clock.unevenChannels, skips: facts.skips,
+        missingSegments: facts.missingSegments,
         recordsFromFileNumbers: numbered.fromFileNumber,
         pointIndexOutOfRange: shots.pointIndexOutOfRange, components: comps,
         samples: plan.samples, expectedBytes: expected,

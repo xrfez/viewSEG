@@ -41,9 +41,14 @@ A recorder may keep the start time of every trace in a vendor block of the trace
 while the record's general header holds one time for all of them. When a map names such a
 field `firstSampleTime`, a count of microseconds with the unit `"us GPS"` (since 1980-01-06,
 converted with the leap seconds) or `"us UTC"` (since 1970), the cut by shot log reads it for
-every trace and treats the traces of one station and component as the segments of one
-receiver. A trace whose field is missing, in another unit, zero or not a time of 1970 to 2200
-keeps the time of the file's keys, and the cut says how many did.
+every trace. At one station and component, traces that share a start time are different
+channels; traces with different start times are the segments of one channel, one after the
+other. A trace whose field is missing, in another unit, zero or not a time of 1970 to 2200 is
+left out, and the cut says how many were. A recording that crosses a leap second shows a
+one-second overlap between the segments either side of it, because each segment's GPS time is
+converted to UTC at its own instant. A file whose traces of one station and component all
+carry one start time is not taken for a recording: its own start times are in a header no
+loaded map describes.
 
 ## Where viewSEG looks
 
