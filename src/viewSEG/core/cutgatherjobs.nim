@@ -41,7 +41,8 @@ import parseSEG/model/traceindex
 import processSEG
 import processSEG/continuous/slice
 import processSEG/core/[rows, workspace]
-import cutfile, cutgather, filesystem, jobs, outputjobs, recordingkind, segmentclock, shotlog, vendormaps
+import cutcarry, cutfile, cutgather, filesystem, jobs, outputjobs, recordingkind, segmentclock,
+    shotlog, vendormaps
 
 const
   NamedMax* = 5 ## how many overlaps and timing issues the result names
@@ -64,6 +65,16 @@ type
     sourceKeysDropped*: bool
       ## SEG-Y output of shots that have a source line or a point index, which
       ## SEG-Y has no place for
+    carried*: bool
+      ## SEG-D from SEG-D: the output is in the source's revision, made of the
+      ## source's own headers (`cutcarry`)
+    revision*: string ## the revision of a carried output, "Rev 2.1"
+    startRewritten*: bool ## a carried trace's vendor start time was set to the slice's
+    sourceXyDropped*: bool
+      ## a carried Rev 2 output of shots that have source coordinates, which its
+      ## headers have no place for
+    shotsRefused*: int ## shots the writer refused (carried output); they are left out
+    refusals*: seq[string] ## the first few reasons, with the shot's record number
     components*: int ## traces per record
     samples*: int ## samples per trace
     samplesRead*: int ## source samples decoded, each once (not shots x window)
@@ -201,10 +212,22 @@ func overlapName(o: SliceOverlap): string =
 
 func cutLines(res: CutResult; opts: CutOptions): seq[string] =
   ## The plain sentences of the log for a finished cut.
-  let standard = if opts.standard == csSegy: "SEG-Y" else: "SEG-D Rev 3"
+  let standard =
+    if opts.standard == csSegy: "SEG-Y"
+    elif res.carried: "SEG-D"
+    else: "SEG-D Rev 3"
   result.add "Sliced " & plural(res.shotsWritten, "shot", "shots") & " into " & standard &
     " records of " & plural(res.components, "trace", "traces") & ", " &
     plural(res.samples, "sample", "samples") & " each."
+  if res.carried:
+    result.add "The output was written in the source's revision (" & res.revision &
+      ") with its headers carried: the extended header, the channel sets and each trace's " &
+      "header blocks are the source's, from the segment that holds the shot's first sample."
+    if res.startRewritten:
+      result.add "The start time in each trace's vendor header was rewritten to the slice's."
+    if res.sourceXyDropped:
+      result.add "A SEG-D Rev 2 record has no place for the source's coordinates; they are " &
+        "left out."
   if res.recordsFromFileNumbers:
     result.add "The records are numbered by the shots' file numbers."
   else:
@@ -228,6 +251,9 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
     if res.mismatches.len > 0:
       line.add " Differing: " & res.mismatches.join("; ") & "."
     result.add line
+  if res.shotsRefused > 0:
+    result.add plural(res.shotsRefused, "shot was", "shots were") &
+      " refused by the writer and left out: " & res.refusals.join("; ") & "."
   if res.overlapsNotRead > 0:
     result.add plural(res.overlapsNotRead, "overlap was", "overlaps were") & " not compared."
   if res.overlapsOutside > 0:
@@ -333,12 +359,26 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       claimed = true
       var w: SeismicWriter
       let intervalUs = round(dtMs * 1000)
-      case opts.standard
-      of csSegdRev3:
-        w = openSeismicWriter(part, SegdOutputOptions(sampleIntervalUs: intervalUs,
-          numSamples: plan.samples))
-      of csSegy:
-        w = openSeismicWriter(part, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+      let vendors = currentVendors()
+      let rows = carryRows(plan)
+      # The one place the way of writing is chosen. A SEG-D source cut into SEG-D is
+      # written like the source, so its extended header, channel sets and trace
+      # header blocks (a vendor's own among them) are kept and the revision is its
+      # own; everything else, and a source the writer cannot copy (multiplexed,
+      # several records, extended recording mode), builds its headers from keys.
+      let carry = opts.standard == csSegdRev3 and
+        openCarry(part, file[], plan, rows, vendors, w)
+      if carry:
+        res.carried = true
+        res.revision = revisionWords(file[], plan)
+        res.sourceXyDropped = anySourceXY and not isRev3(file[], plan.tracesNeeded[0])
+      else:
+        case opts.standard
+        of csSegdRev3:
+          w = openSeismicWriter(part, SegdOutputOptions(sampleIntervalUs: intervalUs,
+            numSamples: plan.samples))
+        of csSegy:
+          w = openSeismicWriter(part, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
 
       var ws = initWorkspace()
       ws.reserve(sliceWorkspace(float32, plan))
@@ -360,28 +400,68 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         let firstUs = shots.shots[s].timeUs + int64(round(opts.startMs * 1000))
         touched.setLen 0
         var shotFailed = false
-        for r in 0 ..< comps:
+        var refusal = ""
+        var started = false
+        var want = CarryShot()
+        if carry:
+          if not file[].inMemory: fs.mappedRead(source, headers = true)
+          want = carryShot(file[], plan, rows, s)
+          let sh = shots.shots[s]
+          var patch = SubsetPatch(fileNumber: numbered.numbers[s],
+            time: toPosixSeconds(sh.timeUs))
+          if not isRev3(file[], want.traces[0]):
+            patch.headers = sourceHeaders(file[], want.traces[0], sh.srcLine, sh.srcPoint,
+              sh.srcIndex)
+          try:
+            w.startSubset(file[], want.traces, patch)
+            started = true
+          except ValueError as e:
+            refusal = e.msg
+        for i in 0 ..< comps:
+          let r = if carry: want.comps[i] else: i
           let trace = s * comps + r
           for pc in plan.pieces(trace):
             if pc.row >= 0 and pc.row notin touched: touched.add pc.row
           if cutOne(plan, trace, buf, fetch, dst, sliceReport, ws): shotFailed = true
-          var k = plan.sliceKeys(trace)
-          k.record = float64(numbered.numbers[s])
-          k.channel = float64(r + 1)
-          case opts.standard
-          of csSegdRev3:
-            k.time = toPosixSeconds(firstUs)
-            k.noteRecordedTime(toFirstSample, firstUs)
-          of csSegy:
-            # The SEG-Y writer takes `time` as time zero.
-            k.time = toPosixSeconds(shots.shots[s].timeUs)
-            k.noteRecordedTime(toRecordTimeZero, shots.shots[s].timeUs)
           res.gapSamples += sliceReport.gapSamples(trace)
           res.failedSamples += sliceReport.failedSamples(trace)
-          w.writeTrace(k, dst, channelType = sctSeismic)
+          if carry:
+            if refusal.len == 0:
+              let source = want.traces[i]
+              var k = plan.sliceKeys(trace)
+              k.record = float64(numbered.numbers[s])
+              k.channel = float64(r + 1)
+              var over = traceOverrides(file[], source, want.ordinals[i], firstUs, vendors,
+                clock.fromHeaders, res.startRewritten)
+              try:
+                if isRev3(file[], source) and hasSourcePlace(k):
+                  w.writeTrace(file[], source, dst, k, over, SourceFields)
+                else:
+                  w.writeTrace(file[], source, dst, over)
+              except ValueError as e:
+                refusal = e.msg
+                if started: w.abandonRecord()
+          else:
+            var k = plan.sliceKeys(trace)
+            k.record = float64(numbered.numbers[s])
+            k.channel = float64(r + 1)
+            case opts.standard
+            of csSegdRev3:
+              k.time = toPosixSeconds(firstUs)
+              k.noteRecordedTime(toFirstSample, firstUs)
+            of csSegy:
+              # The SEG-Y writer takes `time` as time zero.
+              k.time = toPosixSeconds(shots.shots[s].timeUs)
+              k.noteRecordedTime(toRecordTimeZero, shots.shots[s].timeUs)
+            w.writeTrace(k, dst, channelType = sctSeismic)
         if shotFailed: inc res.shotsWithFailures
         discard settleShot(plan, buf, fetch, sliceReport, touched, s)
-        inc res.shotsWritten
+        if refusal.len > 0:
+          inc res.shotsRefused
+          if res.refusals.len < NamedMax:
+            res.refusals.add "record " & $numbered.numbers[s] & ": " & refusal
+        else:
+          inc res.shotsWritten
         done = perShot * int64(s + 1)
         if not tell(done, expected): abort(sink, dest, part, claimed, "Cancelled.", true)
         let now = fs.now()
@@ -389,6 +469,9 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           lastDetail = now
           ctx.setDetail $(s + 1) & " of " & $total & " shots"
       ctx.setDetail ""
+      if carry and res.shotsWritten == 0:
+        abort(sink, dest, part, claimed, "The writer refused every shot: " &
+          res.refusals.join("; ") & ".", false)
       discard checkOverlaps(plan, buf, fetch, sliceReport, final = true)
       res.samplesRead = st.fetched
       let log = w.close()
