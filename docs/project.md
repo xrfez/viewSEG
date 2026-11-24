@@ -162,7 +162,10 @@ Land 2026/                  the project folder: this is what is opened
   written; the other is `"ascii"`. A word in braces is filled in from each file when it is
   written (`{stem}`, `{file}`, `{date}`, `{clock}`, `{record}`, `{srcLine}`, `{time}` and the
   other parts a name pattern has; `{record:5}` pads a number; `{{` and `}}` are braces). At most
-  32 templates are kept. Absent, the writer's own text is used, and a document without the
+  32 templates are kept. The one in use is the text header of each SEG-Y file Output writes,
+  filled in for that file (a copy of a SEG-Y file keeps the source's character set); a file the
+  template cannot be filled in for keeps the header it would have had, and the result says why.
+  Absent, the writer's own text is used, and a document without the
   nodes reads with no problem. An encoding that is not one of the two, an unknown word in
   braces, more than 38 lines, a line past 80 characters, a character the character set cannot
   hold, a name given twice (without regard to case) or a template that cannot be used is said

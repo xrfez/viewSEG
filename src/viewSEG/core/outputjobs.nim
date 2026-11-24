@@ -55,8 +55,9 @@ import std/[math, options, os, random, sets, strutils, tables, times]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
-import correlatejobs, edits, filekinds, filesystem, jobs, outputrevision, panels, processing, reader,
-  references, signatures, sorting, vendormaps
+import correlatejobs, edits, filekinds, filesystem, jobs, outputnames, outputnamevalues,
+    outputrevision,
+  outputtext, panels, processing, reader, references, signatures, sorting, vendormaps
 
 export outputrevision
 
@@ -98,6 +99,21 @@ const
     "The file's own positions were written from its header keys."
     ## The keys path, with the tick on: geometry came from the file's own headers.
 
+func textUsed(name: string): string = "Text header: template '" & name & "'."
+
+func textNotUsed(name, why: string): string =
+  ## The header a file keeps when its template cannot be written.
+  "Text header: template '" & name & "' was not used for this file: " &
+    (if why.endsWith('.'): why else: why & ".") & " The header it would have had was written."
+
+func textKeptSet(name: string; encoding: TextEncoding): string =
+  "Text header: template '" & name & "' is written in this file's own character set (" &
+    (if encoding == teAscii: "ASCII" else: "EBCDIC") & ")."
+
+proc nowUs(): int64 =
+  let t = getTime()
+  t.toUnix * 1_000_000 + int64(t.nanosecond div 1000)
+
 type
   OutputFormat* = enum
     ## The standard of the file to write.
@@ -137,6 +153,10 @@ type
     writeSessionPositions*: bool = true
       ## A survey join or a station move is written into the headers, on every
       ## path. Off: the file's own positions are written, and the result says so.
+    textHeader*: Option[OutputText]
+      ## Set: a SEG-Y file's text header is this template rendered for the file
+      ## (the project's chosen one). None: the header written today. SEG-D is
+      ## not touched.
     correlation*: Option[OutputCorrelation]
       ## None: the samples written today. Set: correlate each trace with this
       ## reference, into the listen time. Correlated samples are IEEE float32
@@ -822,38 +842,72 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var correlatedOver: seq[HeaderOverride] = @[]
       if correlating and not segdOut:
         correlatedOver = @[headerOverride("trace.correlated", CorrelatedYes)]
+      var cards: seq[string] = @[] ## the rendered text header; empty: the writer's own
+      var cardsEncoding = teEbcdic
+      var textName = ""
+      if opts.textHeader.isSome and not segdOut:
+        var t = opts.textHeader.get
+        textName = t.name
+        var recoded = false
+        if like and file[].index.segy.text.encoding != t.encoding:
+          t.encoding = file[].index.segy.text.encoding
+          recoded = true
+        if not file[].hasKeys:
+          if not file[].inMemory: fs.mappedRead(source, headers = true)
+          file[].ensureKeys()
+        var wanted: set[NamePartKind] = {}
+        for line in t.lines:
+          if "{sensorSerial" in line: wanted.incl npSensorSerial
+        let values = textValuesOf(file[], source, signature, edits, opts.dropKilled,
+          nowUs(), if openedHeader: addr headerKeys else: nil, wanted, currentVendors())
+        let why = renderProblem(t, values)
+        if why.len > 0: lines.add textNotUsed(textName, why)
+        else:
+          cards = cardsOf(t, values)
+          cardsEncoding = t.encoding
+          if recoded: lines.add textKeptSet(textName, t.encoding)
       block writing:
         var w: SeismicWriter
-        if like:
-          if correlating and segdOut:
-            w = openSeismicWriter(part, file[], segdFormat = tf8058)
-          elif correlating:
-            w = openSeismicWriter(part, file[], segyFormat = st5, segyRevision = segyRev)
+        template openWriter() =
+          if like:
+            if correlating and segdOut:
+              w = openSeismicWriter(part, file[], segdFormat = tf8058)
+            elif correlating:
+              w = openSeismicWriter(part, file[], segyFormat = st5, segyRevision = segyRev,
+                fullText = cards)
+            else:
+              w = openSeismicWriter(part, like = file[], segyRevision = segyRev, fullText = cards)
+          elif segdOut:
+            var count = int(file[].traceEntry(head).numSamples)
+            if correlating: count = listen
+            else:
+              for i in 0 ..< n:
+                if opts.dropKilled and edits.has(teKilled, i): continue
+                let c = int(file[].traceEntry(i).numSamples)
+                if c != count:
+                  abort(sink, dest, part, claimed,
+                    "SEG-D output needs one sample count; this file has more than one.", false)
+            var o = SegdOutputOptions(sampleIntervalUs: file[].sampleIntervalUs(head),
+              numSamples: count)
+            if opts.revision.isSegd:
+              o.revision = SegdRevision(major: opts.revision.major, minor: opts.revision.minor)
+            if correlating: o.sampleIntervalUs = outUs
+            let t0 = file[].traceKeys(head).time
+            if not t0.isNaN: o.time = t0
+            w = openSeismicWriter(part, o)
           else:
-            w = openSeismicWriter(part, like = file[], segyRevision = segyRev)
-        elif segdOut:
-          var count = int(file[].traceEntry(head).numSamples)
-          if correlating: count = listen
-          else:
-            for i in 0 ..< n:
-              if opts.dropKilled and edits.has(teKilled, i): continue
-              let c = int(file[].traceEntry(i).numSamples)
-              if c != count:
-                abort(sink, dest, part, claimed,
-                  "SEG-D output needs one sample count; this file has more than one.", false)
-          var o = SegdOutputOptions(sampleIntervalUs: file[].sampleIntervalUs(head),
-            numSamples: count)
-          if opts.revision.isSegd:
-            o.revision = SegdRevision(major: opts.revision.major, minor: opts.revision.minor)
-          if correlating: o.sampleIntervalUs = outUs
-          let t0 = file[].traceKeys(head).time
-          if not t0.isNaN: o.time = t0
-          w = openSeismicWriter(part, o)
-        else:
-          var o = SegyOutputOptions(traceSorting: 1, measurementSystem: 1)
-          if opts.revision.isSegy:
-            o.revision = SegyRevision(major: opts.revision.major, minor: opts.revision.minor)
-          w = openSeismicWriter(part, o)
+            var o = SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
+              fullText: cards, textEncoding: cardsEncoding)
+            if opts.revision.isSegy:
+              o.revision = SegyRevision(major: opts.revision.major, minor: opts.revision.minor)
+            w = openSeismicWriter(part, o)
+        try: openWriter()
+        except ValueError as e:
+          if cards.len == 0: raise
+          cards.setLen 0
+          lines.add textNotUsed(textName, e.msg)
+          openWriter()
+        if cards.len > 0: lines.add textUsed(textName)
         var readLog: DiagLog
         template writeOne(t: int) =
           readLog = DiagLog()
