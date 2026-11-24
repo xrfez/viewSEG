@@ -477,7 +477,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
           ctx.setPhase "picking the first breaks"
           br = breaksOfRecord(file, path, traces, noise.key.killed,
             proc (done, total: int): bool = ctx.progress(done, 2 * total), noise.key.off,
-              noise.key.guide, noise.key.pick)
+              noise.key.guide, noise.key.pick, view = view)
           br.key = noise.key
           found = br
           picked = true
@@ -509,13 +509,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
           failed.sort()
         else:
           let rows = part.len
-          var idx = newSeq[int](rows)
-          for i in 0 ..< rows: idx[i] = part.a + i
-          var buf = newSeq[float32](rows * cols)
-          readListenTraces(held, file, idx, buf, viewWs)
-          samples = zeros[float32](rows, cols)
-          if buf.len > 0:
-            copyMem(rowBlock(samples).rowPtr(0), addr buf[0], buf.len * sizeof(float32))
+          samples = readListenChunk(held, file, part, viewWs)
           failed = viewWs.failed
           notDecoded = failed
           listenKeys.setLen(rows)

@@ -58,7 +58,7 @@ import processSEG/pipeline
 import processSEG/filter/[design, iir]
 import processSEG/qc/[firstbreak, shotfit]
 import processSEG/stack/stack
-import breakmodel, filesystem, firstbreaks, inbox, jobs, session, threads
+import breakmodel, correlateread, filesystem, firstbreaks, inbox, jobs, session, threads
 
 const
   BreakChunk* = 512    ## traces read and picked at a time
@@ -122,7 +122,7 @@ proc smoothedCopy*(samples: Tensor[float32]; meta: ChunkMeta; plan: IirPlan[floa
 proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     killed: openArray[int]; progress: BreakProgress = nil;
     off: openArray[uint8] = []; guide: BreakModel = BreakModel();
-    pick: PickBasis = pbSmoothed; workers = 0): FirstBreaks =
+    pick: PickBasis = pbSmoothed; workers = 0; view: ref CorrelateView = nil): FirstBreaks =
   ## The first breaks of the record `traces` of `file` (at `path`), the
   ## traces in `killed` (file trace numbers, ascending) left out. Reads
   ## the record in place; raises `JobCancelledError` when `progress` says stop.
@@ -139,6 +139,9 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   ##   result say what they did): smoothing is skipped, and said, when the interval leaves
   ##   the cut under `PickMinCutHz` or the longest trace is no longer than twice the filter's
   ##   margin. The filter runs on whole traces (each to its live length) of a copy of each chunk.
+  ## - With `view`, the samples are that view's listen time, each trace read whole through
+  ##   `readListenTraces` (so the picks are those of the correlated file), and `path` is not
+  ##   mapped; the traces keep the keys of the raw file, each its own `t0Ms`.
   ## - `workers` is the number of threads the filtering and picking of a chunk are shared among
   ##   (0: `defaultBreakWorkers`); the result does not depend on it.
   template f: untyped = file[]
@@ -178,7 +181,9 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
       keys[i].t0Ms = layoutT0
       fixT0 = true
     result.shiftMs[i] = layoutT0 - keys[i].t0Ms
-  let cols = max(1, f.maxSamples(traces))
+  let cols = if view == nil: max(1, f.maxSamples(traces)) else: max(1, view.listenSamples)
+  var viewWs: CorrelateWorkspace
+  if view != nil: viewWs = newWorkspace(view[])
   # the smoothing of the guided passes: a plan, or why there is none
   var smoothing: IirPlan[float32]
   var smoothingFlow: PipelinePlan[float32] # the same filter, for the pool
@@ -218,22 +223,29 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     var first = traces.a
     while first <= traces.b:
       let part = first .. min(traces.b, first + BreakChunk - 1)
-      if not f.inMemory: fs.mappedRead(path)
-      var log: DiagLog
-      let samples = f.readTraces(part, 0 ..< cols, log)
+      var samples: Tensor[float32]
       var failed: seq[int] # rows of this chunk (0-based in it): undecodable, then the others
-      for d in log:
-        if d.loc.trace in part:
-          failed.add d.loc.trace - part.a
-          dead.add d.loc.trace - traces.a
+      if view == nil:
+        if not f.inMemory: fs.mappedRead(path)
+        var log: DiagLog
+        samples = f.readTraces(part, 0 ..< cols, log)
+        for d in log:
+          if d.loc.trace in part:
+            failed.add d.loc.trace - part.a
+            dead.add d.loc.trace - traces.a
+      else:
+        samples = readListenChunk(view[], file, part, viewWs)
+        for r in viewWs.failed:
+          failed.add r
+          dead.add part.a + r - traces.a
       for r in dead:
         if r + traces.a in part: failed.add r + traces.a - part.a
-      let own = f.rowsOf(part)
+      let own = if view == nil: f.rowsOf(part) else: default(typeof(f.rowsOf(part)))
       var chunkKeys: seq[TraceKeys] = @[]
       var counts: seq[int] = @[]
       for r in 0 ..< part.len:
         chunkKeys.add keys[part.a - traces.a + r]
-        counts.add own.numSamples(r)
+        counts.add (if view == nil: own.numSamples(r) else: cols)
       var picked = samples # what the picker reads: the chunk, or a smoothed copy of it
       if smooth:
         var skipSmooth = failed

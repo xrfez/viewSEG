@@ -231,3 +231,20 @@ proc readListenTraces*(view: CorrelateView; file: ptr SeismicFile; traces: openA
   ## listed in `ws.failed`, ascending. `correlateRead` advises `view.path`, the
   ## raw file, not the view's virtual path.
   correlateRead(view, file, traces, 0, view.listenSamples, dst, ws)
+
+proc readListenChunk*(view: CorrelateView; file: ptr SeismicFile; part: Slice[int];
+    ws: var CorrelateWorkspace): Tensor[float32] {.raises: [].} =
+  ## The whole listen-time traces `part` as a tensor of `part.len` rows of
+  ## `view.listenSamples`. A row that could not be read is zero and is in
+  ## `ws.failed` (0-based in `part`), as for `readListenTraces`.
+  let rows = part.len
+  var idx = newSeq[int](rows)
+  for i in 0 ..< rows: idx[i] = part.a + i
+  var buf = newSeq[float32](rows * view.listenSamples)
+  readListenTraces(view, file, idx, buf, ws)
+  result = zeros[float32](rows, view.listenSamples)
+  if buf.len > 0:
+    try:
+      copyMem(rowBlock(result).rowPtr(0), addr buf[0], buf.len * sizeof(float32))
+    except ValueError as e:
+      raiseAssert e.msg # a tensor of rows

@@ -1,19 +1,20 @@
 ## Spectrum, analysis, record QC and the Headers window read a correlated view
 ## in listen time, through `readListenTraces`, matching the in-memory file
 ## `correlateWork` writes. Returning the raw samples fails. The virtual path
-## is not mapped. A view is derived, so first breaks are not picked on it.
+## is not mapped. Noise QC on a view picks first breaks on the correlated samples.
 ##
 ## Seen to fail, then restored: the spectrum of the raw chirp (`window 1000
 ## are the raw record, not the listen time`); analysis rows of length 1000;
 ## the constant trace flagged `constant` after correlation; inspector samples
-## of length 1000 and time zero 0.
+## of length 1000 and time zero 0; noise QC picking on the raw record (`view
+## picks @[106.0, ...] vs @[80.0, ...]`).
 
 import std/[atomics, locks, math, monotimes, os]
 import parseSEG
 import processSEG
 import processSEG/qc/record
 import viewSEG/core/[correlatejobs, correlateread, edits, filesystem, headers, inbox, jobs,
-  processing, recordqc, session, spectra, spectrumreader]
+  noisearea, processing, recordqc, session, spectra, spectrumreader]
 import viewSEG/core/analysisreader {.all.}
 import viewSEG/core/inspector
 import utils/waiting
@@ -25,6 +26,7 @@ const
   SweepLen = 200
   Listen = 800
   RefAux = 3
+  Extra = 6 ## live traces after the reference auxiliary
   Constant = 2
 
 var
@@ -59,7 +61,7 @@ proc delayedSweep(sweep: openArray[float32]; samples, delay: int): seq[float32] 
 proc writeRaw(path: string; sweep: openArray[float32]) =
   var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
     format: st5, text: @["C01 correlated view readers"]))
-  for i in 0 .. RefAux:
+  for i in 0 .. RefAux + Extra:
     var buf: seq[float32]
     var k = initTraceKeys()
     if i == Constant:
@@ -74,6 +76,7 @@ proc writeRaw(path: string; sweep: openArray[float32]) =
       (k.traceCode, k.status) = (1'i16, tsLive)
     k.record = 7.0
     k.channel = float64(i + 1)
+    k.offset = 100.0 * float64(i + 1)
     k.t0Ms = T0Ms
     k.intervalUs = DtMs * 1000.0
     k.time = 1_700_000_000.0
@@ -136,8 +139,8 @@ proc awaitInspected(box: Inbox): TraceDetail =
   doAssert found.problem.len == 0, found.problem
   found
 
-proc awaitQc(box: Inbox; session: SessionId): array[MapFilter, FilterHits] =
-  var found: array[MapFilter, FilterHits]
+proc awaitQc(box: Inbox; session: SessionId): Msg =
+  var found: Msg
   var got = false
   var why = ""
   doAssert waitUntil(block:
@@ -147,7 +150,7 @@ proc awaitQc(box: Inbox; session: SessionId): array[MapFilter, FilterHits] =
       let text = noteOf(m)
       if text.len > 0: why.add text & "\n"
       if m.kind == mkRecordQc and m.qcSession == session:
-        found = m.qcHits
+        found = m
         got = true
     got
   ), "a record check did not arrive: " & why
@@ -174,6 +177,13 @@ proc rowsOfFile(f: ptr SeismicFile; path: string; list: seq[int];
     "the analysis read was given up"
   for i, bad in failed:
     doAssert not bad, "trace " & $list[i] & " could not be read"
+
+proc samePicks(a, b: seq[float64]): bool =
+  ## Equal, a NaN (no pick) matching a NaN.
+  if a.len != b.len: return false
+  for i in 0 ..< a.len:
+    if not (a[i] == b[i] or (a[i].isNaN and b[i].isNaN)): return false
+  true
 
 proc sampleHits(h: array[MapFilter, FilterHits]): seq[seq[int]] =
   for m in SampleFilters: result.add h[m].traces
@@ -264,24 +274,38 @@ proc main*() =
     $viewTrace.dtMs & " from " & $viewTrace.t0Ms
   doAssert memTrace.dtMs == DtMs and memTrace.t0Ms == T0Ms
 
-  proc askQc(s: Session; session: SessionId; correlated: ref CorrelateView):
-      array[MapFilter, FilterHits] =
+  proc askQc(s: Session; session: SessionId; correlated: ref CorrelateView;
+      noise = NoiseWork()): Msg =
     var placed: Placed
     let id = jobs.submit(JobSpec(title: "Check " & $session, lane: jlBackground, auto: true,
       reads: @[s.path]), recordQcWork(s.filePtr, s.path, session, 0, 0, 0 ..< s.len,
       rdSource, nil, "", rmAuto, tmAuto, placed, true, newSeq[FilterEntry](), newSeq[int](),
-      newSeq[ShiftEntry](), NoiseWork(), box.poster, correlated))
+      newSeq[ShiftEntry](), noise, box.poster, correlated))
     let hits = awaitQc(box, session)
     doAssert finish(jobs, id) == jsDone, "the record check failed"
     hits
 
-  let viewHits = askQc(view, SessionId(1), view.correlatedView)
-  let memHits = askQc(mem, SessionId(2), nil)
-  let rawHits = askQc(raw, SessionId(3), nil)
+  let viewHits = askQc(view, SessionId(1), view.correlatedView).qcHits
+  let memHits = askQc(mem, SessionId(2), nil).qcHits
+  let rawHits = askQc(raw, SessionId(3), nil).qcHits
   doAssert sampleHits(viewHits) == sampleHits(memHits), "record QC flags are not the correlation"
   doAssert sampleHits(viewHits) != sampleHits(rawHits), "record QC returned the raw samples"
   doAssert Constant in rawHits[mfConstant].traces, "the raw constant trace was not flagged"
   doAssert Constant notin viewHits[mfConstant].traces, "the correlated constant trace was flagged"
+
+  # Noise QC picks the first breaks on the correlated samples, as the in-memory file does.
+  let noiseOn = NoiseWork(on: true, settings: NoiseSettings())
+  let viewNoise = askQc(view, SessionId(4), view.correlatedView, noiseOn)
+  let memNoise = askQc(mem, SessionId(5), nil, noiseOn)
+  let rawNoise = askQc(raw, SessionId(6), nil, noiseOn)
+  doAssert memNoise.qcPicked and viewNoise.qcPicked, "the first breaks were not picked"
+  doAssert samePicks(viewNoise.qcBreaks.pickMs, memNoise.qcBreaks.pickMs),
+    "view picks " & $viewNoise.qcBreaks.pickMs & " vs " & $memNoise.qcBreaks.pickMs
+  doAssert not samePicks(viewNoise.qcBreaks.pickMs, rawNoise.qcBreaks.pickMs),
+    "view picks are the raw record's"
+  doAssert viewNoise.qcNoise.state == memNoise.qcNoise.state, "noise windows differ"
+  doAssert sampleHits(viewNoise.qcHits) == sampleHits(memNoise.qcHits),
+    "noise QC flags differ"
 
   doAssert virtMaps.load == 0, "the virtual path was mapped " & $virtMaps.load & " times"
   echo "tcorrviewreaders: ok"
