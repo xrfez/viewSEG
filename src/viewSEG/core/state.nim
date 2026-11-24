@@ -110,7 +110,7 @@ from editmarks import shiftNote
 from shotfollow import ShotQuery, ShotMatch
 import signatures, sweeppairs
 import analysis, analysisreader, closer, compare, comparejobs, components, correlatejobs,
-  correlateread, diskio,
+  correlateread, cutgather, cutgatherjobs, diskio,
   edits, filejobs,
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
       join, layouts, leapfile, log,
@@ -128,6 +128,7 @@ export analysis, compare, edits, filelist, filememory, firstbreaks, identity, in
   mapstate, panels, persist, pick, project, outputnames, recordqc, references, selection, session,
     settings,
   shots, spectra, spread, survey, threads, tiles, traceids, vendormaps, zoom
+export CutOptions, CutStandard, initCutOptions
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues, MaxTableRows
 export tracetable
 export WatchInterval
@@ -338,6 +339,9 @@ type
       ## read the leap-second file again
     ckResetLeaps = "reset leap seconds"
       ## the leap-second table shipped with the program
+    ckCutGather = "cut by shot log"
+      ## cut the continuous recording the Seismic window shows into one record per shot of a
+      ## loaded shot log, and write them to a new file, on a job
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -646,6 +650,10 @@ type
       leapYear*: int ## ckAddLeap: the year
       leapMonth*: int ## ckAddLeap: the month
       leapStep*: int ## ckAddLeap: +1 or -1
+    of ckCutGather:
+      cutLog*: int ## the loaded shot log whose shots are cut (its index)
+      cutOptions*: CutOptions ## the record's length and start, the alignment, the format
+      cutDest*: string ## the file to write: a new name, in a folder that exists
     of ckNamePattern:
       patternAction*: NamePatternAction
         ## ckNamePattern: save (add, or replace the one with the same label,
@@ -1107,6 +1115,14 @@ type
     leapRevision: int
     leapChanged: bool
     leapDone: bool ## the job posted what it did (`mkLeap`)
+    cutJob: JobId = NoJob
+      ## the cut by shot log under way; `NoJob` for none
+    cutSink: CutSink
+      ## what that job found, read once the job has ended
+    cutOutcome: string
+      ## the last cut's outcome line, for the dialog; "" before any
+    cutPath: string
+      ## the file the last cut wrote; "" when it wrote none
     joins: seq[Joined]
       ## the open files joined with survey files
     project: ProjectState
@@ -2121,6 +2137,15 @@ func shownFile*(state: AppState; panelIndex: int): int =
     for i, s in state.sessions:
       if s.id == p.layers[0].source.file: return i
 
+const
+  CutNeedFile* = "Show a seismic file first: it is the recording that is cut."
+  CutNeedLog* = "Load a shot log first (Project > Import shot log): its times are where " &
+    "the recording is cut."
+  CutNeedBoth* = "Show a seismic file and load a shot log first."
+  CutRunning* = "A cut is already running."
+  CutDerived* = "The window shows a correlated view: show the file itself to cut it."
+  CutSignature* = "A signature file is not a recording that can be cut."
+
 func notices*(state: AppState): lent seq[Notice] {.inline.} =
   ## The newest notices, oldest first: what background jobs had to say
   ## when they ended. Each has its own `serial`.
@@ -2604,6 +2629,31 @@ func findPanel*(state: AppState; id: PanelId): int =
   for i, p in state.panels:
     if p.id == id: return i
   -1
+
+func cutProblem*(state: AppState): string =
+  ## Why Project > Cut by shot log cannot start, in a sentence; "" when it can.
+  let shown = state.shownFile(state.findPanel(MainPanel))
+  let haveFile = shown >= 0
+  let haveLog = state.shotLogs.len > 0
+  if not haveFile and not haveLog: CutNeedBoth
+  elif not haveFile: CutNeedFile
+  elif not haveLog: CutNeedLog
+  elif state.sessions[shown].derived: CutDerived
+  elif state.sessions[shown].isSignature: CutSignature
+  elif state.cutJob != NoJob: CutRunning
+  else: ""
+
+func cutRunning*(state: AppState): bool {.inline.} =
+  ## Whether a cut by shot log is under way.
+  state.cutJob != NoJob
+
+func cutOutcome*(state: AppState): string {.inline.} =
+  ## The last cut's outcome in a sentence; "" before any.
+  state.cutOutcome
+
+func cutWritten*(state: AppState): string {.inline.} =
+  ## The file the last cut wrote; "" when it wrote none.
+  state.cutPath
 
 func windowTitle*(state: AppState; id: PanelId): string =
   ## The title of panel `id`'s window: what it shows, numbered from the
@@ -7105,6 +7155,7 @@ proc clearSession(state: var AppState) =
   if state.joining.job != NoJob: discard state.jobs.cancel(state.joining.job)
   if state.movesJob != NoJob: discard state.jobs.cancel(state.movesJob)
   if state.leapJob != NoJob: discard state.jobs.cancel(state.leapJob)
+  if state.cutJob != NoJob: discard state.jobs.cancel(state.cutJob)
   state.moveQueue.setLen 0
   state.leapQueue.setLen 0
   state.moveBases.setLen 0
@@ -8854,8 +8905,35 @@ proc finishLeap(state: var AppState; job: JobInfo) =
     state.log.add(sevWarning, "leap seconds", "Times of " & state.leapName &
       " were not read again; they use the earlier leap-second table until it is reopened.")
 
+proc finishCut(state: var AppState; job: JobInfo) =
+  ## The cut by shot log ended: its sentences go to the log, and the dialog
+  ## has its outcome line and, when a file was written, the file's path.
+  let res = if state.cutSink.isNil: CutResult() else: state.cutSink.result
+  state.cutJob = NoJob
+  state.cutSink = nil
+  state.cutPath = ""
+  let name = res.path.extractFilename
+  if job.state == jsDone and res.ok:
+    for line in res.lines: state.log.add(sevInfo, "cut by shot log", line)
+    state.cutPath = res.path
+    state.cutOutcome = (if res.lines.len > 0: res.lines[0] else: "Cut.") & " Written to " &
+      name & "."
+  elif job.state == jsCancelled:
+    state.cutOutcome = "The cut was cancelled" &
+      (if res.removed: "; the partial file was removed." else: ".")
+    state.log.add(sevWarning, "cut by shot log", state.cutOutcome)
+  else:
+    let why = if res.reason.len > 0: res.reason
+              elif job.error.len > 0: job.error
+              else: "the cut did not finish"
+    state.cutOutcome = "The cut failed: " & why
+    state.log.add(sevError, "cut by shot log", state.cutOutcome)
+
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
+  if job.id == state.cutJob:
+    state.finishCut(job)
+    return
   if job.id == state.leapJob:
     state.finishLeap(job)
     return
@@ -10726,6 +10804,32 @@ const AuxRefused = {ckGather, ckShowFile, ckShowTrace, ckSort, ckFilter, ckProce
   ## what the Aux window's panel does not take: it follows the Seismic window's record and
   ## shows the auxiliary traces as recorded, with no filter, sort or preset
 
+proc cutGatherCmd(state: var AppState; cmd: Command) =
+  ## Starts the cut of the shown recording at the shots of a loaded log.
+  let why = state.cutProblem()
+  if why.len > 0:
+    state.ignore(cmd, why)
+    return
+  if cmd.cutLog notin 0 ..< state.shotLogs.len:
+    state.ignore(cmd, "there is no such shot log")
+    return
+  if cmd.cutDest.len == 0:
+    state.ignore(cmd, "no file name was given")
+    return
+  let shots = shotsInTime(state.shotLogs[cmd.cutLog].view.rows)
+  if shots.shots.len == 0:
+    state.ignore(cmd, "the shot log has no shot with a time")
+    return
+  let s = state.sessions[state.shownFile(state.findPanel(MainPanel))]
+  let dest = canonical(cmd.cutDest)
+  var others: seq[string] = @[]
+  for x in state.sessions: others.add x.diskPath
+  state.cutSink = CutSink()
+  state.cutOutcome = ""
+  state.cutPath = ""
+  state.cutJob = state.jobs.submit(cutGatherSpec(s.diskPath, dest),
+    cutGatherWork(s.filePtr, s.diskPath, dest, shots, cmd.cutOptions, state.cutSink, others))
+
 proc applyCommand(state: var AppState; cmd: Command) =
   if cmd.kind in AuxRefused:
     let a = state.findPanel(cmd.panel)
@@ -11410,6 +11514,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckResetLeaps:
     let shipped = defaultLeapTable()
     state.adoptLeap(shipped, resetSentence(shipped.checkedTo))
+  of ckCutGather: state.cutGatherCmd(cmd)
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept

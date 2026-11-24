@@ -23,12 +23,12 @@ const
     ckImportLayout, ckResetSettings, ckExportEdits, ckImportEdits, ckForgetFiles,
     ckImportShotLog, ckRemoveShotLog, ckRemapShotLog, ckEditShotCell,
     ckUndoShotEdit, ckRedoShotEdit,
-    ckAddLeap, ckRemoveLeap, ckReloadLeaps, ckResetLeaps}
+    ckAddLeap, ckRemoveLeap, ckReloadLeaps, ckResetLeaps, ckCutGather}
     ## refused: each writes a file (a reset keeps a backup of the settings;
     ## edits imported are remembered with the file; forgetting files removes
     ## what is remembered about them; a shot log is copied into the project
     ## and its copy rewritten or removed; a leap-second change is written
-    ## beside the settings)
+    ## beside the settings; a cut by shot log writes a new file)
   Preferences* = {ckSettings, ckImportSettings, ckLayout, ckLoadLayout, ckProjectFolder,
     ckUpdateSurvey, ckVibProfile, ckVibWeights}
     ## refused: the user's preferences and the windows' arrangement; a
