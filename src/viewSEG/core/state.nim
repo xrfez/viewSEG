@@ -6421,6 +6421,7 @@ const
   ReadOnlyShotLog* = "The project is open read-only: the shot log is not saved."
   ShotLogNotStored* = "The shot log is not stored: no project is open."
   ShotLogEditsDropped* = "The column count changed: the edited cells were dropped."
+  ShotLogLineBreak* = "The cell was not changed: it cannot hold a line break."
 
 proc findShot(state: AppState; id: int): int =
   result = -1
@@ -6553,7 +6554,9 @@ proc editShotCellCmd(state: var AppState; cmd: Command) =
   if loaded.log == nil:
     state.ignore(cmd, "the shot log is not loaded")
     return
-  loaded.log.setCell(cmd.logRow, cmd.logCol, cmd.logCell)
+  if not loaded.log.setCell(cmd.logRow, cmd.logCol, cmd.logCell):
+    state.log.add(sevWarning, "shot log", ShotLogLineBreak)
+    return
   inc loaded.revision
   inc state.shotLogsRev
   if loaded.stored.len > 0 and state.inProject and state.readOnlyProject:

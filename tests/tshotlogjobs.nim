@@ -8,10 +8,13 @@
 ## edited cell back. The file it was imported from is not modified. A
 ## read-only project says so and does not write. A re-map keeps edits when
 ## the column count is unchanged, and says they were dropped when it changes.
+## A cell edit that holds a line break is refused, said, and left unchanged.
 ##
 ## Seen to fail: with the cap refusal shortened, `over_the_cap` rejected
 ## "big.csv is too large."; with the read-only edit saving anyway,
-## `read_only_refuses_the_save` rejected a log that did not say the refusal.
+## `read_only_refuses_the_save` rejected a log that did not say the refusal;
+## with a newline stored anyway, `line_break_is_refused` rejected a cell
+## that changed.
 
 import std/[options, os, strutils]
 import viewSEG/core/[filesystem, jobs, project, shotlog, shotlogjobs, state]
@@ -102,7 +105,7 @@ proc main*() =
     createDir(dir)
     let got = runImport(Sample)
     doAssert got.st == jsDone, got.error
-    got.sink.result.log.setCell(0, 0, "EDITED")
+    doAssert got.sink.result.log.setCell(0, 0, "EDITED")
     let jobs = initJobs()
     let sink = ShotLogSink()
     let dest = dir.partOf("shotlog.csv".shotLogCopy)
@@ -160,6 +163,22 @@ proc main*() =
     doAssert got.error == "bad.csv could not be read.", got.error
     doAssert got.sink.result.reason == got.error
     doAssert '\n' notin got.error and "stack" notin got.error.toLowerAscii
+
+  block line_break_is_refused:
+    var st = start(root / "config-break")
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not kept for the session"
+    let before = st.shotCell(0, 0, 0)
+    let rev = st.shotRevision(0)
+    let logs = st.shotLogsRevision
+    st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 0, logCell: "a\nb")
+    doAssert st.shotCell(0, 0, 0) == before, "a line break was stored"
+    doAssert st.shotRevision(0) == rev and st.shotLogsRevision == logs
+    doAssert st.jobs.active.len == 0, "a refused edit started a job"
+    doAssert st.said(ShotLogLineBreak), "the refusal is not said"
+    doAssert not st.said("Ignored"), "the refusal is not a plain sentence"
+    discard st.shutdown()
 
   block no_project:
     var st = start(root / "config")
