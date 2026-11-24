@@ -17,7 +17,8 @@
 ## with an empty pattern accepted, `got "" wanted "The name pattern has no
 ## parts."`; with `patternProblem` returning "", every bad pattern was kept;
 ## with the pattern's separator left in text, `named "a--1.sgy" instead of
-## refusing` (stem `a-` and record 1 is the same leaf as stem `a` and -1).
+## refusing` (stem `a-` and record 1 is the same leaf as stem `a` and -1);
+## with the sign kept on a zero, `got "-0.sgy" wanted "0.sgy"`.
 
 import std/[math, strutils, unicode]
 import viewSEG/core/outputnames
@@ -83,6 +84,16 @@ proc main*() =
     expectName(p, vals((npSrcPoint, iv(-123456))), ".sgy", "-123456.sgy")
     expectName(pat(nsDot, part(npRecord, pad = 4)), vals((npRecord, num(-42.0001))),
       ".sgy", "-0042.sgy")
+
+  block noNegativeZero:
+    expectName(pat(nsDot, part(npSrcPoint)), vals((npSrcPoint, num(-0.00004))),
+      ".sgy", "0.sgy")
+    expectName(pat(nsDot, part(npSrcPoint, pad = 3)), vals((npSrcPoint, num(-0.00004))),
+      ".sgy", "000.sgy")
+    expectName(pat(nsDot, part(npSrcPoint)), vals((npSrcPoint, num(0.0))), ".sgy", "0.sgy")
+    expectName(pat(nsDot, part(npSrcPoint, pad = 4)), vals((npSrcPoint, num(-0.0))),
+      ".sgy", "0000.sgy")
+    expectName(pat(nsDot, part(npSrcPoint)), vals((npSrcPoint, num(-0.5))), ".sgy", "-0p5.sgy")
 
   block fractionP:
     expectName(pat(nsDot, part(npSrcLine)), vals((npSrcLine, num(1234.5))), ".sgy", "1234p5.sgy")

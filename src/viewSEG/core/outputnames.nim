@@ -175,12 +175,15 @@ func formatInt(n: int64; pad: int): string =
 
 func formatNumber(x: float64; pad: int): string =
   ## Whole when within 0.001 of an integer; otherwise at most 6 decimal
-  ## digits, trailing zeros dropped, the point written as `p`.
-  let neg = x < 0.0
+  ## digits, trailing zeros dropped, the point written as `p`. A value
+  ## that renders as zero has no sign, padded or not.
   let ax = abs(x)
   var body: string
+  var zero = false
   if abs(ax - round(ax)) < 1e-3:
-    body = formatInt(int64(round(ax)), pad)
+    let whole = int64(round(ax))
+    zero = whole == 0
+    body = formatInt(whole, pad)
   else:
     var whole = int64(trunc(ax))
     var micro = int64(round((ax - float64(whole)) * 1_000_000.0))
@@ -188,6 +191,7 @@ func formatNumber(x: float64; pad: int): string =
       inc whole
       micro = 0
     if micro < 0: micro = 0
+    zero = whole == 0 and micro == 0
     let head = formatInt(whole, pad)
     if micro == 0: body = head
     else:
@@ -195,7 +199,7 @@ func formatNumber(x: float64; pad: int): string =
       if frac.len < 6: frac = repeat('0', 6 - frac.len) & frac
       while frac.len > 0 and frac[^1] == '0': frac.setLen(frac.len - 1)
       body = head & "p" & frac
-  if neg: "-" & body else: body
+  if x < 0.0 and not zero: "-" & body else: body
 
 func floorDiv(a, b: int64): int64 =
   ## `b` > 0. Toward -infinity, so a time before 1970 stays on its day.
