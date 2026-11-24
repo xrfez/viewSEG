@@ -115,7 +115,7 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
       join, layouts, leapfile, log,
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif,
-    outputnames, reader,
+    outputnames, outputtext, reader,
   recordingkind, recordqc, referencejobs, references, selection, session, settings,
       shotfollowtarget, shotlog,
   shotlogjobs, shotlogsps, shotspsjobs,
@@ -162,6 +162,15 @@ type
       ## forget the pattern named
     npaChoose = "choose"
       ## use the pattern named; an empty name is today's naming
+
+  OutputTextAction* = enum
+    ## What an output-text command does.
+    otaSave = "save"
+      ## add the template, or replace the one with the same name, case ignored
+    otaDelete = "delete"
+      ## forget the template named
+    otaChoose = "choose"
+      ## use the template named; an empty name is the writer's own text
 
 type
   CommandKind* = enum
@@ -249,6 +258,9 @@ type
     ckNamePattern = "name pattern"
       ## save a file-name pattern into the project, delete one by its label,
       ## or choose one (an empty label is today's naming)
+    ckOutputText = "output text"
+      ## save a SEG-Y text header template into the project, delete one by its
+      ## name, or choose one (an empty name is the writer's own text)
     ckTheme = "theme" ## the theme the program is drawn in, as View > Theme picks it
     ckNewProject = "new project"
       ## make a project folder (Project > New project) and open it: the session's files stay open
@@ -669,6 +681,13 @@ type
       namePattern*: OutputPattern
         ## ckNamePattern: the pattern to save; for delete and choose, `name`
         ## is the label (empty chooses today's naming)
+    of ckOutputText:
+      textAction*: OutputTextAction
+        ## ckOutputText: save (add, or replace the one with the same name,
+        ## case ignored), delete by name, or choose by name
+      textTemplate*: OutputText
+        ## ckOutputText: the template to save; for delete and choose, `name`
+        ## is the name (empty chooses the writer's own text)
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -10156,6 +10175,94 @@ proc namePattern(state: var AppState; cmd: Command) =
       state.project.doc.outputPattern = stored
       state.projectChanged()
 
+const
+  NeedProjectTexts* = "Open or make a project to keep text header templates."
+    ## said when an output text is saved, deleted or chosen with no project open
+
+func outputTextCap*(): string =
+  ## Why one more text header template cannot be kept.
+  "at most " & $MaxOutputTexts & " text header templates are kept; delete one first"
+
+func noOutputText*(name: string): string =
+  ## Why a name that names no template cannot be deleted or chosen.
+  "no text header template is named \"" & name & "\""
+
+func findText(texts: openArray[OutputText]; name: string): int =
+  # The template whose name matches `name`, spaces stripped, case ignored.
+  # -1 when `name` is empty or names nothing.
+  let want = strip(name)
+  if want.len == 0: return -1
+  for i, t in texts:
+    if cmpRunesIgnoreCase(t.name, want) == 0: return i
+  -1
+
+proc outputText(state: var AppState; cmd: Command) =
+  ## Save, delete or choose a text header template in the project open, as
+  ## `namePattern` does for a name pattern: the project is the only copy;
+  ## what cannot be done is said and the project is not marked changed.
+  if not state.inProject:
+    state.log.add(sevWarning, "commands", NeedProjectTexts)
+    return
+  if state.project.readOnly:
+    state.log.add(sevWarning, "commands", ReadOnlyPatterns)
+    return
+  template say(sentence: string) =
+    state.log.add(sevWarning, "commands", sentence)
+  case cmd.textAction
+  of otaSave:
+    var t = cmd.textTemplate
+    t.name = strip(t.name)
+    let why = textProblem(t)
+    if why.len > 0:
+      say(why)
+      return
+    let i = findText(state.project.doc.outputTexts, t.name)
+    if i < 0 and state.project.doc.outputTexts.len >= MaxOutputTexts:
+      say(outputTextCap())
+      return
+    if i >= 0:
+      let was = state.project.doc.outputTexts[i].name
+      state.project.doc.outputTexts[i] = t
+      if cmpRunesIgnoreCase(state.project.doc.outputText, was) == 0:
+        state.project.doc.outputText = t.name
+    else:
+      state.project.doc.outputTexts.add t
+      state.project.doc.outputTextLater.setLen(state.project.doc.outputTexts.len)
+    state.project.doc.hasOutputTexts = true
+    state.projectChanged()
+  of otaDelete:
+    let label = strip(cmd.textTemplate.name)
+    if label.len == 0:
+      say(textProblem(cmd.textTemplate))
+      return
+    let i = findText(state.project.doc.outputTexts, label)
+    if i < 0:
+      say(noOutputText(label))
+      return
+    let was = state.project.doc.outputTexts[i].name
+    state.project.doc.outputTexts.delete(i)
+    if i < state.project.doc.outputTextLater.len:
+      state.project.doc.outputTextLater.delete(i)
+    if cmpRunesIgnoreCase(state.project.doc.outputText, was) == 0:
+      state.project.doc.outputText = ""
+    state.project.doc.hasOutputTexts = true
+    state.projectChanged()
+  of otaChoose:
+    let label = strip(cmd.textTemplate.name)
+    if label.len == 0:
+      if state.project.doc.outputText.len > 0:
+        state.project.doc.outputText = ""
+        state.projectChanged()
+      return
+    let i = findText(state.project.doc.outputTexts, label)
+    if i < 0:
+      say(noOutputText(label))
+      return
+    let stored = state.project.doc.outputTexts[i].name
+    if state.project.doc.outputText != stored:
+      state.project.doc.outputText = stored
+      state.projectChanged()
+
 proc displayPreset(state: var AppState; cmd: Command) =
   ## A named display preset (`core/displaypresets`) applied to a panel, or
   ## saved, renamed or deleted: in the settings in effect, and in those kept
@@ -11340,6 +11447,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
       state.settleGain(k, cmd.origin)
   of ckDisplayPreset: state.displayPreset(cmd)
   of ckNamePattern: state.namePattern(cmd)
+  of ckOutputText: state.outputText(cmd)
   of ckReopen:
     if cmd.reopenPath.len == 0: state.ignore(cmd, "no file was named")
     elif cmd.origin == coAgent and cmd.openChoice.demuxDir.len > 0:
