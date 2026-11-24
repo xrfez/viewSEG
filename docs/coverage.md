@@ -41,12 +41,12 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.21.3: capabilities | names | processSEG 0.14.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 60 (25 in part) | 207 | 46 (29 in part) | 256 |
-| `internal` | 21 | 65 | 10 | 88 |
-| `planned` | 31 | 222 | 40 | 360 |
+| `built` | 61 (25 in part) | 208 | 46 (29 in part) | 256 |
+| `internal` | 22 | 66 | 10 | 88 |
+| `planned` | 31 | 220 | 40 | 360 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 22 | 352 | 7 | 68 |
-| all | 136 | 855 | 104 | 777 |
+| all | 138 | 855 | 104 | 777 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -164,7 +164,8 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Station tables | `table`, `sourceCount`, `receiverCount`, `relationCount`, `records` | The survey's own layers (stations found by key as `lookup` finds them); `relationCount` and `records` give a relation file's counts; the map's layers, a point's station in what the map says of it | built; not applicable (`sourceCount`, `receiverCount`: the survey counts its own layers) |
 | Room for a large file's relation runs | `reserveRelations` | internal: the survey import's builder makes room for a large X file's relation runs before its join (`SurveyFileBuilder.reserveRelations`, core/survey); nothing calls that wrapper yet, so the lists grow by copies | internal |
 | Join by station, with statistics | `applySurvey(f, g, stats, overwrite)`, `joinStations`, `JoinStats`, `JoinMatch`, `stationKey` | Project → Import survey: worked out on copies of the keys first (`joinStations` and `applySurvey` per trace), then joined with the readers stopped; matched and unmatched traces, how they matched, why none did, the headers' coordinates kept or replaced, in plain words and in Messages; linked highlighting fills the stations a hovered trace's headers lack from the loaded relation file | built |
-| Receiver point codes and the sensor a trace is | `SensorClass` (`scUnknown`, `scHydrophone`, `scGeophone`, `scOther`), `sensorClass`, `receiverPointCode`, `pointCodeWarnings` | Project → Import survey: a station with a hydrophone row and a geophone row gives each trace its own row; the stations whose codes leave a choice are listed | planned |
+| Receiver point codes and the sensor a trace is | `SensorClass` (`scUnknown`, `scHydrophone`, `scGeophone`, `scOther`), `sensorClass`, `receiverPointCode` | Project → Import survey: a station with a hydrophone row and a geophone row gives each trace its own row; the stations whose codes leave a choice are listed | planned |
+| A survey's receiver stations listed under several point codes, said once per join | `pointCodeWarnings` | Project → Import survey and the join: Messages names each such station and the row each sensor class takes (`core/surveyjobs`) | built |
 | GPS time turned into UTC | `GpsEpochUnix`, `gpsMinusUtc` | internal: a shot log's time break given in microseconds since the GPS epoch becomes the UTC instant of its row | internal |
 | The leap-second table | `LeapTable`, `LeapSecond`, `LeapDate`, `LeapStartOffset`, `currentLeapTable`, `defaultLeapTable`, `leapKnownAt`, `leapTableNif`, `parseLeapTable`, `useLeapTable`, `withLeap`, `gpsUsToUtcUs`, `utcUsToGpsUs`, `utcMinusGps` | Tools > Leap seconds: see the table and add a leap second | built in part (Tools > Leap seconds...: the Leap seconds window shows the table, adds or removes a leap second, reloads or resets it, and open files read their times again); planned: `LeapSecond`, `LeapStartOffset`, `leapKnownAt`, `gpsUsToUtcUs`, `utcUsToGpsUs`, `utcMinusGps` |
 | The instant of a sample | `TimeOrigin` (`toNone`, `toHeaderSeconds`, `toHeaderSubsec`, `toFirstSample`, `toRecordTimeZero`), `timeOrigin`, `firstSampleUs`, `sampleTimeUs`, `sampleAtUs`, `noteRecordedTime`, `recordTimeZeroUs` | Output: a chosen name pattern writes the record's time zero, and the Shot log follows a trace by it. Cutting a continuous record at the shot times of a shot log | built in part (Output: a name pattern's time; the Shot log follow target reads `firstSampleUs`, `timeOrigin`, `toHeaderSeconds`, `toHeaderSubsec`, `toRecordTimeZero`); planned: `toNone`, `toFirstSample`, `sampleTimeUs`, `sampleAtUs`, `noteRecordedTime`; not applicable: `recordTimeZeroUs` (the viewer works a record's time zero out from the trace's keys) |
@@ -227,7 +228,8 @@ Capabilities are the rows below, each counted by the first part of its status ("
 |---|---|---|---|
 | Any standard to SEG-Y, with a loss report | `convertFile`, `ConvertOptions`, `convertSegdToSegy`, `convertSeg2ToSegy` | Convert… (file or folder, progress, cancel, losses listed) | planned |
 | SEG-Y revision, byte order, sample format | `convertSegy`, `ConvertOptions(revision, byteOrder, format)`, `targetFormat`, `SegyTargetFormat` | Convert… | planned |
-| A client's SEG-Y textual header checked, written whole, or replaced later | `checkTextHeader`, `TextHeaderProblem`, `TextHeaderFault` (`thfTooManyLines`, `thfLineTooLong`, `thfBadCharacter`, `thfRevisionCard`, `thfEndMarker`, `thfReadBack`), `replaceTextHeader` | Output: a client text header typed or pasted, its faults shown before writing; a header stamped into a finished file | planned |
+| A text header template's characters checked for its character set | `checkTextHeader`, `thfBadCharacter` | The project's text header templates (`core/outputtext`); no window yet | internal |
+| A client's SEG-Y textual header checked, written whole, or replaced later | `TextHeaderProblem`, `TextHeaderFault` (`thfTooManyLines`, `thfLineTooLong`, `thfRevisionCard`, `thfEndMarker`, `thfReadBack`), `replaceTextHeader` | Output: a client text header typed or pasted, its faults shown before writing; a header stamped into a finished file | planned |
 | What a revision rewrite dropped | `revisionNotes`, `openSeismicWriter(path, like, segyRevision)`, `SegyOutputOptions.revision`, `SegdOutputOptions.revision` | Output: the Revision choice writes SEG-Y Rev 0, 1, 2.0, 2.1 or SEG-D Rev 3.0, 3.1 (or the source's own) and the notes list what the target revision cannot hold | built |
 | A header patched after the traces are written | `patch` | Inside the writers | not applicable (the writers call it) |
 | SEG-D between revisions | `convertSegdRevision`, `SegdConvertOptions`, `SegdTargetFormat`, `scanSegdRecords`, `SegdRecordScan` | Convert… | planned |
