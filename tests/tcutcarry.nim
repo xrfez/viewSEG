@@ -53,22 +53,26 @@ func value(comp, k: int): float32 =
   float32(1000 * comp + k)
 
 proc makeRecording(path: string; comps: int; fmt = sd8058;
-    missing: seq[(int, int)] = @[]; split = 0; trigger = false; csUs = 0'i64) =
+    missing: seq[(int, int)] = @[]; split = 0; trigger = false; csUs = 0'i64; source = 9) =
   ## Rev 2.1, one record (two with `split`: the segments from it on are the second): an
   ## extended header, a source header, one channel set with filter and gain fields set, a
   ## trace per segment and component (segment by segment), each with two vendor blocks.
   ## With `trigger`, bytes 9-16 of the second vendor block repeat the first's start time.
-  ## The channel set starts `csUs` (a multiple of 2 ms) after the record's time.
+  ## The channel set starts `csUs` (a multiple of 2 ms) after the record's time. The source
+  ## header names line and point `source`; -1: the record has no source header.
   var r = SegdRecord(layout: slRev2, format: some(fmt),
     revision: SegdRevision(major: 2, minor: 1))
   r.gh1 = SegdGeneralHeader1(fileNumber: 5, formatCode: ord(fmt), year: 26,
-    additionalGhBlocks: 2, julianDay: 60, manufacturerCode: 77, baseScanInterval16: 32,
+    additionalGhBlocks: (if source < 0: 1 else: 2), julianDay: 60, manufacturerCode: 77,
+    baseScanInterval16: 32,
     recordType: 8, recordLength: BcdAllF, scanTypesPerRecord: 1, channelSetsPerScanType: 1,
     extendedHeaderBlocks: 1)
   r.gh2 = some SegdGeneralHeader2(extFileNumber: 5, revisionMajor: 2, revisionMinor: 1,
     extRecordLength: uint32(2 * SegLen * Segments), blockNumber: 2)
-  r.sourceHeaders = @[SegdGeneralHeaderN(extFileNumber: 5, sourceLineNumber: 9,
-    sourcePointNumber: 9, sourcePointIndex: 1, blockNumber: 3, sourceSetNumber: 1)]
+  if source >= 0:
+    r.sourceHeaders = @[SegdGeneralHeaderN(extFileNumber: 5, sourceLineNumber: float64(source),
+      sourcePointNumber: float64(source), sourcePointIndex: 1, blockNumber: 3,
+      sourceSetNumber: 1)]
   r.extended = newSeq[byte](32)
   for i in 0 ..< 32: r.extended[i] = byte(90 + i)
   r.scanTypes = @[SegdScanType(layout: slRev2, descriptors: @[
@@ -487,6 +491,51 @@ proc publishMaps(dir: string; texts: openArray[string]): VendorRegistry =
   publishVendors(load.registry)
   load.registry
 
+proc checkRev2SourcePlace(dir: string; jobs: Jobs) =
+  ## Rev 2: a record without a source header has no place for the log's source line and
+  ## point, and says so; a log without them keeps the record's own and says so, unless the
+  ## record's own are 0. Seen failing with either sentence never made ("nogh3: ..."), and
+  ## with the record's own line and point not looked at ("zero: ...").
+  base = BaseUs
+  discard publishMaps(dir, [rev2Map("")])
+  var timesOnly = ""
+  for i in 0 ..< 3: timesOnly.add $Files[i] & "," & $shotUs(i) & "\n"
+  var m = initShotLogMap()
+  m.hasHeader = false
+  m.roles = @[crFileNumber, crUtcMicros]
+  let bare = shotsInTime(shots(parseShotLog(timesOnly, m), m).rows)
+  const
+    NoPlace = "The recording has no source header block: the shot log's source line and " &
+      "point have no place in the output."
+    Keeps = "The shot log has no source line or point: the records keep the recording's own."
+  for (name, source, sh, noPlace, keeps) in [("nogh3", -1, shotsOf(true), true, false),
+      ("own", 9, bare, false, true), ("zero", 0, bare, false, false)]:
+    let path = dir / "rec" / ("src2-" & name & ".sgd")
+    makeRecording(path, 1, source = source)
+    var src = openSeismic(path, keys = true)
+    defer: src.close()
+    let got = runCut(jobs, src, path, dir / "out" / ("src2-" & name & ".sgd"), sh,
+      initCutOptions(LengthMs, StartMs))
+    doAssert got.st == jsDone and got.res.carried and got.res.shotsWritten == 3,
+      name & ": " & got.error & got.res.reason
+    let said = got.res.lines.join("|")
+    doAssert (NoPlace in said) == noPlace and (Keeps in said) == keeps, name & ": " & said
+
+proc checkRoundedFormat(dir: string; jobs: Jobs) =
+  ## A source in a format whose values a 32-bit float may not hold exactly (32-bit IBM
+  ## floating point, 8048): the result says values may be rounded. Seen failing with 8048
+  ## among the exact formats.
+  let path = dir / "rec" / "ibm.sgd"
+  makeRecording(path, 1, sd8048)
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  let got = runCut(jobs, src, path, dir / "out" / "ibm.sgd", shotsOf(true),
+    initCutOptions(LengthMs, StartMs))
+  doAssert got.st == jsDone and got.res.carried and got.res.sourceFormat == 8048, $got.res
+  let said = got.res.lines.join("|")
+  doAssert "format 8048" in said and "values beyond 24 bits of precision are rounded" in said,
+    said
+
 proc checkRev2Time(dir: string; jobs: Jobs; csUs = 0'i64) =
   ## The first sample on a whole second: a Rev 2 record holds whole seconds, and the
   ## reader gives the first sample's time exactly. Fails with the record time left at
@@ -852,6 +901,8 @@ proc main*() =
   publishVendors(load.registry)
   checkGapsAndRefusals(dir, jobs)
   checkSourceFormat(dir, jobs)
+  checkRoundedFormat(dir, jobs)
+  checkRev2SourcePlace(dir, jobs)
   # the window's Format entry: the source's revision for a SEG-D source, Rev 3 otherwise
   doAssert standardWords(csSegdRev3, true) == "SEG-D (the source's revision)"
   doAssert standardWords(csSegdRev3) == "SEG-D Rev 3" and standardWords(csSegy, true) == "SEG-Y"
