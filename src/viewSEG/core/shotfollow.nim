@@ -355,14 +355,14 @@ proc match*(ix: ShotIndex; q: ShotQuery; toleranceUs = 1000'i64): ShotMatch {.ra
   let byNum = byNumbers(ix, q)
   if byNum.row >= 0 and not ix.bits[byNum.row].hasTime: return byNum
 
-proc queryOfKeys*(recordTimeZeroUs: Option[int64]; exact: bool; record, srcLine,
+proc queryOfKeys*(timeZeroUs: Option[int64]; exact: bool; record, srcLine,
     srcPoint: float64; srcIndex: int): ShotQuery {.raises: [].} =
-  ## A trace's query. `recordTimeZeroUs` is time zero, not sample 0; `exact`
+  ## A trace's query. `timeZeroUs` is time zero, not sample 0; `exact`
   ## is false when only the whole second is known. `record` is the file
   ## number, NaN when unknown, and otherwise the nearest integer that fits.
   ## `srcLine` and `srcPoint` stay as given, NaN when unknown. `srcIndex` 0
   ## is unknown.
-  result.timeUs = recordTimeZeroUs
+  result.timeUs = timeZeroUs
   result.timeExact = exact
   result.windowUs = 0'i64 .. 0'i64
   result.line = srcLine
