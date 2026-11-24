@@ -18,7 +18,7 @@ import parseSEG
 import parseSEG/model/traceindex
 import parseSEG/segd/[reader, writer, headers, samples, rev3]
 import parseSEG/io/diskio
-import viewSEG/core/[cutgather, cutgatherjobs, jobs, segmentclock, shotlog, vendormaps]
+import viewSEG/core/[cutcarry, cutgather, cutgatherjobs, jobs, segmentclock, shotlog, vendormaps]
 import viewSEG/view/cutwords
 import utils/waiting
 
@@ -383,9 +383,11 @@ proc put64(b: var seq[byte]; at: int; v: int64) =
 proc get64(b: openArray[byte]; at: int): int64 =
   for i in 0 .. 7: result = (result shl 8) or int64(b[at + i])
 
-proc makeRev3(path: string; comps: int) =
+proc makeRev3(path: string; comps: int; csUs = 0'i64; place = false) =
   ## Rev 3.0, one record, a trace per segment and component with a Timestamp block (0x42) and
-  ## a vendor block (0xB0) holding the segment's start in GPS microseconds.
+  ## a vendor block (0xB0) holding the segment's start in GPS microseconds; the channel set
+  ## starts `csUs` after the record's time zero. With `place`, each trace has a vibrator
+  ## Source Description block (0x15) and a Position block (0x50-0x52) before those two.
   let fmt = sd8058
   var r = SegdRecord(layout: slRev3, format: some(fmt), revision: SegdRevision(major: 3, minor: 0))
   r.generalBlocks.add blockOf(0x11)
@@ -396,21 +398,22 @@ proc makeRev3(path: string; comps: int) =
   let endUs = int32(DtUs * (SegLen - 1))
   r.gh2Rev3 = SegdGeneralHeader2Rev3(extFileNumber: 7, revisionMajor: 3,
     extRecordLength: uint32(endUs), blockType: 2)
-  r.gh3 = SegdGeneralHeader3(timeZero: utcUsToGpsUs(sampleUs(0)), blockType: 3)
+  r.gh3 = SegdGeneralHeader3(timeZero: utcUsToGpsUs(sampleUs(0)) - csUs, blockType: 3)
   r.extended = newSeq[byte](32)
   for i in 0 ..< 32: r.extended[i] = byte(90 + i)
   r.scanTypes = @[SegdScanType(layout: slRev3, descriptorsRev3: @[
     SegdChannelSetDescriptorRev3(scanTypeNumber: 1, channelSetNumber: 1, channelType: 0x10,
-      endTime: endUs, numSamples: SegLen, descaleMultiplier: 1.0,
-      channelsInSet: uint32(Segments * comps), samplingInterval: uint32(DtUs),
-      traceHeaderExtensions: 3, verticalStack: 1, blockType1: 0x30, blockType2: 0x31,
+      startTime: int32(csUs), endTime: endUs + int32(csUs), numSamples: SegLen,
+      descaleMultiplier: 1.0, channelsInSet: uint32(Segments * comps),
+      samplingInterval: uint32(DtUs), traceHeaderExtensions: (if place: 7 else: 3),
+      verticalStack: 1, blockType1: 0x30, blockType2: 0x31,
       blockType3: 0x32)])]
   var all: seq[SegdTrace]
   for seg in 0 ..< Segments:
     for c in 0 ..< comps:
       var t = SegdTrace(layout: slRev3, index: all.len, numSamples: SegLen)
       t.header = SegdTraceHeader(fileNumber: 7, scanTypeNumber: 1, channelSetNumber: 1,
-        traceNumber: all.len + 1, traceHeaderExtensions: 3)
+        traceNumber: all.len + 1, traceHeaderExtensions: (if place: 7'u8 else: 3'u8))
       t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(receiverLineNumber: 100,
         receiverPointNumber: 101, receiverPointIndex: 1, numSamples: SegLen,
         sensorType: uint8(2 + c), blockType: 0x40)
@@ -421,6 +424,9 @@ proc makeRev3(path: string; comps: int) =
       vendor.put64(0, start)
       for i in 8 .. 30: vendor[i] = byte(31 * all.len + 3 * i + 1)
       t.extensions = ts & vendor
+      if place:
+        t.extensions = blockOf(0x15) & blockOf(0x50) & blockOf(0x51) & blockOf(0x52) &
+          t.extensions
       var v = newSeq[float64](SegLen)
       for j in 0 ..< SegLen: v[j] = float64(value(c, seg * SegLen + j))
       t.samples = newSeq[byte](dataBytes(fmt, SegLen))
@@ -489,17 +495,24 @@ proc checkRev2Time(dir: string; jobs: Jobs) =
     "record time of trace 0 is " & $(g.traceKeys(0).time - toPosixSeconds(sampleUs(10))) &
     " s late"
 
-proc checkRev3(dir: string; jobs: Jobs; comps: int; startMs: float64; origin: int64) =
+proc checkRev3(dir: string; jobs: Jobs; comps: int; startMs: float64; origin: int64;
+    csUs = 0'i64) =
   ## Rev 3: the Timestamp block, the vendor start and General Header #3's time zero equal
   ## the slice's first sample to the microsecond, for a start before, at and after the
   ## shot, also across a GPS leap second (origin 2016-12-31 23:59:59.8 UTC). Fails with the
-  ## Timestamp left at the shot's instant ("timestamp of trace 0 is 20000 us off").
+  ## Timestamp left at the shot's instant ("timestamp of trace 0 is 20000 us off"). With a
+  ## channel set that starts `csUs` after time zero, the Timestamp is still the first
+  ## sample's: seen failing 4000 us off with the Timestamp override never sent (the
+  ## writer's own patch adds the set's start to the record's time), and the samples are the
+  ## first sample's: seen failing two samples early ("sample 0 of trace 0 is 8.0") with the
+  ## headers' first-sample times taken as the traces' time zero.
   base = origin
   defer: base = BaseUs
   let reg = publishMaps(dir, [rev2Map(""), Rev3Map])
-  let tag = "r3c" & $comps & "s" & $int(startMs) & "o" & $(origin div 100_000_000_000_000)
+  let tag = "r3c" & $comps & "s" & $int(startMs) & "o" & $(origin div 100_000_000_000_000) &
+    "cs" & $csUs
   let path = dir / "rec" / (tag & ".sgd")
-  makeRev3(path, comps)
+  makeRev3(path, comps, csUs)
   var src = openSeismic(path, keys = true)
   defer: src.close()
   var text = ""
@@ -521,8 +534,9 @@ proc checkRev3(dir: string; jobs: Jobs; comps: int; startMs: float64; origin: in
   doAssert g.len == 3 * comps
   for s in 0 ..< 3:
     let firstUs = sampleUs(FirstSamples[s]) + 123 * int64(s)
-    doAssert g.index.segdRecords[s].gh3.timeZero == utcUsToGpsUs(firstUs),
-      "time zero of record " & $s
+    if csUs == 0:
+      doAssert g.index.segdRecords[s].gh3.timeZero == utcUsToGpsUs(firstUs),
+        "time zero of record " & $s
     for c in 0 ..< comps:
       let o = s * comps + c
       let a = g.headerBytes(o)
@@ -532,7 +546,8 @@ proc checkRev3(dir: string; jobs: Jobs; comps: int; startMs: float64; origin: in
       doAssert a.get64(a.len - 32) == utcUsToGpsUs(firstUs), "vendor start of trace " & $o
       doAssert g.traceKeys(o).time == toPosixSeconds(firstUs), "keys time of trace " & $o
       for j in 0 ..< Window:
-        doAssert samplesOf(g, o)[j] == value(c, FirstSamples[s] + j)
+        doAssert samplesOf(g, o)[j] == value(c, FirstSamples[s] + j),
+          "sample " & $j & " of trace " & $o & " is " & $samplesOf(g, o)[j]
   let clock = segmentClock(g, reg)
   doAssert clock.fromHeaders and clock.leftOut == 0
   for o in 0 ..< g.len:
@@ -561,6 +576,42 @@ proc checkNoSourcePlace(dir: string; jobs: Jobs) =
   for o in 0 ..< g.len:
     doAssert g.traceField(o, "ext1.receiverPointNumber").intVal == 101 and
       g.traceField(o, "ext1.receiverLineNumber").intVal == 100, "receiver station of trace " & $o
+
+proc checkSourcePlace(dir: string; jobs: Jobs) =
+  ## A Rev 3 recording whose traces have a Source Description block: the shot's source line
+  ## and point are written there and read back, and the result does not say they have no
+  ## place. Seen failing with the blocks looked for by field name, which the reader does not
+  ## know for them ("no place in the output" said, the values written all the same).
+  base = BaseUs
+  discard publishMaps(dir, [rev2Map(""), Rev3Map])
+  let path = dir / "rec" / "place.sgd"
+  makeRev3(path, 1, place = true)
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  let got = runCut(jobs, src, path, dir / "out" / "place.sgd", shotsOf(true),
+    initCutOptions(LengthMs, StartMs))
+  doAssert got.st == jsDone and got.res.carried, got.error & got.res.reason
+  let said = got.res.lines.join("|")
+  doAssert "no place in the output" notin said and "source description" notin said, said
+  var g = openSeismic(dir / "out" / "place.sgd", keys = true)
+  defer: g.close()
+  doAssert g.len == 3
+  for o in 0 ..< g.len:
+    var line, point = NaN
+    for row in g.traceHeaders(o):
+      if row.field == "sourceLineNumber": line = row.value.toFloat
+      if row.field == "sourcePointNumber": point = row.value.toFloat
+    doAssert line == float64(20 + o) and point == float64(30 + o),
+      "source of trace " & $o & ": " & $line & " " & $point
+    doAssert g.traceKeys(o).srcLine == float64(20 + o)
+  # the trace's own Timestamp is set by name, whatever the record's time gives it
+  var counts = StartCount()
+  let over = traceOverrides(src, 0, 1, sampleUs(10), currentVendors(), true, false, counts)
+  var stamp = -1'i64
+  for o in over:
+    if o.name == "timestamp.timeZeroOfData": stamp = int64(o.value.toFloat)
+  doAssert stamp == utcUsToGpsUs(sampleUs(10)), "the Timestamp override is " & $stamp
+  doAssert sourceBlocks(src, 0) == (true, true)
 
 proc checkTrigger(dir: string; jobs: Jobs) =
   ## A map that declares `triggerTime` beside the start: both are set to the slice's first
@@ -670,7 +721,10 @@ proc main*() =
   # a shot before a GPS leap second whose first sample comes after it
   checkRev3(dir, jobs, 3, 10.0, 1_483_228_799_800_000'i64)
   checkRev3(dir, jobs, 1, 100.0, 1_483_228_799_800_000'i64)
+  for comps in [1, 3]:
+    checkRev3(dir, jobs, comps, 0.0, BaseUs, csUs = 4000)
   checkNoSourcePlace(dir, jobs)
+  checkSourcePlace(dir, jobs)
   checkTrigger(dir, jobs)
   checkOrder(dir, jobs)
   checkFallback(dir, jobs)

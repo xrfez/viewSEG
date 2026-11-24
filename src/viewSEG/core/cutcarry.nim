@@ -201,11 +201,22 @@ proc instantIn(unit: string; firstUs: int64): int64 =
   of UnitUtc: firstUs
   else: 0'i64
 
-proc hasExtField(file: SeismicFile; trace: int; field: string): bool =
-  ## Whether one of the trace's header extension blocks has `field` (the reader names
-  ## them by position: `ext2`, `ext3`, ...).
-  for n in 2 .. 9:
-    if file.findTraceField(trace, "ext" & $n & "." & field).isSome: return true
+const
+  TimestampBlock = 0x42'u8 ## a Rev 3 trace's Timestamp block: the instant of its first sample
+  SourceDescriptionBlocks = {0x15'u8 .. 0x19'u8, 0x1F'u8}
+    ## the Rev 3 Source Description blocks: vibrator, explosive, airgun, water gun,
+    ## electromagnetic and other sources
+
+proc extensionTypes(file: SeismicFile; trace: int): set[uint8] =
+  ## The block types (byte 32) of a Rev 3 trace's header blocks after Trace Header
+  ## Extension #1, as the writer finds the blocks it patches; empty for Rev 2, whose
+  ## blocks have no type.
+  if isRev3(file, trace):
+    let e = file.traceEntry(trace)
+    let extra = int(e.headerBytes) - SegdTraceHeaderSize - SegdBlockSize
+    if extra >= SegdBlockSize:
+      let bytes = file.copyBytes(e.offset + SegdTraceHeaderSize + SegdBlockSize, extra)
+      for (_, kind) in blocks(bytes): result.incl kind
 
 proc hasSourceHeader*(file: SeismicFile; trace: int): bool =
   ## A Rev 2 record's source header (General Header #3).
@@ -221,7 +232,8 @@ proc ownSource*(file: SeismicFile; trace: int): bool =
 proc sourceBlocks*(file: SeismicFile; trace: int): tuple[description, position: bool] =
   ## Whether a Rev 3 trace has a Source Description block and a Position block, the
   ## places the shot's source line, point and coordinates are written to.
-  (hasExtField(file, trace, "sourceLineNumber"), hasExtField(file, trace, "tuple1Coord1"))
+  let kinds = extensionTypes(file, trace)
+  (kinds * SourceDescriptionBlocks != {}, BlockTypePosition1 in kinds)
 
 proc sessionPositions*(file: SeismicFile): bool =
   ## The session's keys hold receiver positions that did not come from the file's own
@@ -254,7 +266,7 @@ proc traceOverrides*(file: SeismicFile; trace, ordinal: int; firstUs: int64;
   # A trace no segment reaches is zeros: the trace edit code 1 is how the keys path marks
   # a dead trace (`tsDead`). A trace partly covered stays as the source has it.
   if dead: result.add headerOverride("trace.traceEdit", 1)
-  if hasExtField(file, trace, "timeZeroOfData"):
+  if TimestampBlock in extensionTypes(file, trace):
     result.add headerOverride("timestamp.timeZeroOfData", utcUsToGpsUs(firstUs))
   if startField:
     let value = instantIn(file.fieldUnit(trace, reg, FirstSampleTimeField), firstUs)

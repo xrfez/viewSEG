@@ -155,7 +155,10 @@ proc planRecording*(file: ptr SeismicFile; source: string; dtMs: float64;
     if not file[].inMemory: fs.mappedRead(source, headers = true)
     result.clock = segmentClock(file[], reg, check)
   if result.clock.fromHeaders:
+    # The headers give each trace's first sample; the streams take its time zero, which is
+    # that less the start of its channel set (sample 0 lies at time zero + `t0Ms`).
     result.times = result.clock.times
+    for i in 0 ..< result.times.len: result.times[i] -= result.meta.t0Ms(i) / 1000
     result.receivers = result.clock.receivers
   else:
     result.times = newSeq[float64](file[].len)
