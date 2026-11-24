@@ -17,8 +17,9 @@ import std/[math, os, strutils]
 import parseSEG
 import parseSEG/common/diagnostics
 import parseSSDAT
-import viewSEG/core/[analysis, jobs, project, references, session, settings, signatures, sigtypes,
-  sweepinfo, threads, units, vibanalysis, vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
+import viewSEG/core/[analysis, jobs, project, references, session, settings, signatures, sigjudge,
+  sigtypes, sweepinfo, threads, units, vibanalysis, vibfolderjobs, vibfolderqc, vibjudge,
+  vibprofile]
 import utils/[sigfiles, waiting]
 
 const Samples = 6000
@@ -76,7 +77,12 @@ proc rowOf(table: FolderTable; path: string): FolderRow =
   doAssert false, "no row for " & path
 
 proc alone(path: string; ask: VibQcAsk): AnalysisResult =
-  ## The same file, judged here, not by the job.
+  ## The same file, judged here, not by the job. Calls `applyFileScale` and
+  ## `vibratorOf`, the core procs the Vibrator window calls. It cannot call
+  ## `analysisreader.vibratorOf`: that name is not a proc (`vibratorOf` lives
+  ## in `vibanalysis`, which the reader thread calls), and `serve` needs an
+  ## `AppState` and that thread. `signatureAsk` is private and needs
+  ## `AppState` too, so the scale is applied here.
   markWorkerThread()
   var head: seq[byte] = @[]
   let size = readHead(path, head)
@@ -105,21 +111,30 @@ proc alone(path: string; ask: VibQcAsk): AnalysisResult =
   roles.groundForcePolarity = poAsRecorded
   roles.massPolarity = poAsRecorded
   roles.judge = joRecorded
-  var params = AnalysisParams(roles: roles, harmonics: ask.options.harmonics,
+  let setA = facts.kind == sgVib and ask.accelSet == asA
+  let params = AnalysisParams(roles: roles, harmonics: ask.options.harmonics,
     accelSet: ask.accelSet, qcWindowMs: ask.options.qcWindowMs, qc: ask.options.qc,
-    forceHundredPct: ask.options.forceHundredPct, targetPct: ask.options.targetPct,
-    reactionMassKg: NaN, baseplateMassKg: NaN)
-  if not (ask.options.forceHundredPct > 0 and ask.options.forceHundredPct < Inf):
-    params.forceHundredPct = NaN
-  else:
-    params.forceHundredUnit = "counts"
-  var sig = SignatureAsk(given: true, isDat: facts.kind == sgDat)
-  if facts.qc.valid:
-    sig.ctlFrom = "this file"
-    sig.ctl = facts.qc.brief
-    sig.ctl.valid = true
-    sig.correlationStored = facts.qc.correlationStored
-    sig.correlationLagZero = facts.qc.correlationLagZero
+    forceHundredPct: ask.options.forceHundredPct,
+    forceHundredUnit: ask.forceHundredUnit, forceHundredSet: ask.forceHundredSet,
+    forceHundredSetKnown: ask.forceHundredSetKnown, targetPct: ask.options.targetPct,
+    reactionMassKg: NaN, baseplateMassKg: NaN, projectReference: false)
+  var sig = SignatureAsk(given: true, isDat: facts.kind == sgDat, setA: setA)
+  sig.applyFileScale(facts.kind, ask.forceScale.datCountsPerLbf,
+    ask.forceScale.vibAccMvPerCount, facts.info.weights, setA, facts.qc.valid,
+    facts.qc.targetForceLbf, ask.options.targetPct)
+  case facts.kind
+  of sgDat:
+    if facts.qc.valid:
+      sig.ctlFrom = "this file"
+      sig.ctl = facts.qc.brief
+      sig.ctl.valid = true
+      sig.correlationStored = facts.qc.correlationStored
+      sig.correlationLagZero = facts.qc.correlationLagZero
+  of sgVib:
+    if facts.pair.len > 0 and facts.pairQc.valid:
+      sig.ctlFrom = "the .dat of this sweep"
+      sig.ctl = facts.pairQc
+  of sgNone: discard
   var at: array[VibRole, int]
   at[vsReference] = roles.reference
   at[vsGroundForce] = roles.groundForce
