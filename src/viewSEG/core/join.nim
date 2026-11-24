@@ -40,7 +40,7 @@
 import std/[algorithm, math, os, strutils, tables]
 import parseSEG
 import processSEG/qc/record
-import session, survey
+import session, stationindex, survey
 
 export RecordMatch, TraceMatch
 
@@ -790,8 +790,8 @@ func lookup(t: Table[StationKey, Coordinates]; line, point: float64; index: int1
   ## for any index (0), else, for a trace without an index (0), the first
   ## position (1).
   if line.isNaN or point.isNaN: return false
-  for i in 0 .. (if index == 0: 2 else: 1):
-    let key = stationKey(line, point, [index, 0'i16, 1'i16][i])
+  for indexTry in stationIndexTries(index):
+    let key = stationKey(line, point, indexTry)
     if key in t:
       c = t[key]
       return true

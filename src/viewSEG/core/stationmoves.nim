@@ -4,8 +4,10 @@
 ## A station moved during a deployment has one receiver row, and the headers
 ## are not updated. A `StationMove` names that station and the position that
 ## holds from a time on. The station is the join's key (line, point, index:
-## `StationKey`, rounded by `stationKey` to 1/100). The move does not name a
-## sensor class or a component.
+## `StationKey`, rounded by `stationKey` to 1/100). A move is found as the
+## join finds a station: the same index, else one stored with index 0 (any
+## index), else a trace with index 0 takes a move stored with index 1. The
+## move does not name a sensor class or a component.
 ##
 ## `fromTime` is the same absolute time as `TraceKeys.time` (UTC POSIX
 ## seconds). A move with no `fromTime` holds for every trace of the station.
@@ -22,6 +24,7 @@
 
 import std/[math, options]
 import parseSEG
+import stationindex
 
 type
   StationMove* = object
@@ -132,28 +135,39 @@ func movedPosition*(moves: StationMoves; station: StationKey; traceTime: float64
   ## The position that applies to `station` at `traceTime`: `(x, y, elev)`.
   ## `elev` is none when that move gives no elevation.
   ##
-  ## The latest `fromTime` that is not after `traceTime` wins. An undated
-  ## move applies when no dated move does, and is the only move a trace with
-  ## no time (not a finite `traceTime`) can take. None when no move applies:
-  ## the trace keeps the position it has.
-  let key = stationKey(station.line, station.point, station.index)
-  if not finite(key.line) or not finite(key.point): return none(MovedPosition)
+  ## The station is the one the join would find (`stationIndexTries`): the
+  ## same index, else a move stored with index 0 (any index of this line and
+  ## point), else, for a trace with index 0, a move stored with index 1. The
+  ## first of those that has a move is the station; a later try is not used.
+  ## Within it, the latest `fromTime` that is not after `traceTime` wins. An
+  ## undated move applies when no dated move does, and is the only move a
+  ## trace with no time (not a finite `traceTime`) can take. None when no
+  ## move applies: the trace keeps the position it has.
+  let probe = stationKey(station.line, station.point, station.index)
+  if not finite(probe.line) or not finite(probe.point): return none(MovedPosition)
   let timed = finite(traceTime)
-  var chosen = -1
-  var i = slot(moves, key, none(float64))
-  while i < moves.list.len and moves.list[i].station == key:
-    let fromTime = moves.list[i].fromTime
-    if fromTime.isNone: chosen = i
-    elif timed and fromTime.get <= traceTime: chosen = i
-    inc i
-  if chosen < 0: return none(MovedPosition)
-  let move = moves.list[chosen]
-  some((x: move.x, y: move.y, elev: move.elev))
+  for indexTry in stationIndexTries(station.index):
+    let key = stationKey(station.line, station.point, indexTry)
+    var chosen = -1
+    var found = false
+    var i = slot(moves, key, none(float64))
+    while i < moves.list.len and moves.list[i].station == key:
+      found = true
+      let fromTime = moves.list[i].fromTime
+      if fromTime.isNone: chosen = i
+      elif timed and fromTime.get <= traceTime: chosen = i
+      inc i
+    if found:
+      if chosen < 0: return none(MovedPosition)
+      let move = moves.list[chosen]
+      return some((x: move.x, y: move.y, elev: move.elev))
+  none(MovedPosition)
 
 proc applyMoves*(moves: StationMoves; keys: var TraceKeys): bool =
   ## Sets `keys.rcvX` and `keys.rcvY` from the move that applies to the
   ## trace's receiver station (`rcvLine`, `rcvPoint`, `rcvIndex`) at
-  ## `keys.time`, and sets `keys.rcvZ` when that move gives an elevation.
+  ## `keys.time`, matched as the join matches that station, and sets
+  ## `keys.rcvZ` when that move gives an elevation.
   ## No other key field changes. Returns whether a move applied.
   ##
   ## Offsets derived from positions are not recomputed here. The caller must

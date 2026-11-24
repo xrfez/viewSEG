@@ -1,7 +1,8 @@
 ## Station position overrides (`core/stationmoves`): which move applies before,
 ## at and after each `fromTime`; two moves of one station; an undated move;
 ## replace; remove; a trace with no time; `applyMoves` changing only the
-## receiver position; station-key rounding equal to the join's; the project
+## receiver position; a move found as the join finds a station; station-key
+## rounding equal to the join's; the project
 ## document written and read back, and an old project reading as no moves.
 ##
 ## Seen to fail: with the dated move taken only when `fromTime` is strictly
@@ -12,7 +13,9 @@
 ## adding a finite line that `stationKey` turns non-finite and not calling
 ## `r.problem`, "and a problem is reported" (problems stayed empty); with `add`
 ## storing a non-finite x, "a non-finite x, y or elevation is not stored"
-## (`projectDocument` then died in `nifFloat`'s assert).
+## (`projectDocument` then died in `nifFloat`'s assert); with lookup by exact
+## index only, "a trace with index 0 takes the move stored at index 1" (the
+## move at index 1 was not applied).
 
 import std/[math, options, strutils]
 import parseSEG
@@ -152,7 +155,7 @@ proc main*() =
       "elevation is left when the move gives none"
     doAssert plain.offset == 3 and plain.cmpX == 13 and plain.cmpY == 14
     var other = filled(10, 20, 2, 1000.0)
-    doAssert not applyMoves(moves, other), "a different index is a different station"
+    doAssert not applyMoves(moves, other), "index 2 does not take a move stored at index 1"
     doAssert other.rcvX == 8 and other.rcvY == 9
     var early = filled(10, 20, 1, 999.0)
     doAssert not applyMoves(moves, early)
@@ -276,6 +279,42 @@ proc main*() =
     d.stationMoves = moves
     let text = projectDocument(d)
     doAssert "(x 3.0)" in text and "(y 4.0)" in text and "(elev 5.0)" in text
+
+  block index_as_the_join:
+    var exact = StationMoves()
+    exact.add moveAt(10, 20, 1, some(1000.0), 30, 40)
+    var at2 = filled(10, 20, 2, 1000.0)
+    doAssert not applyMoves(exact, at2), "index 2 is not the move stored at index 1"
+    doAssert at2.rcvX == 8
+    var at0 = filled(10, 20, 0, 1000.0)
+    doAssert applyMoves(exact, at0), "a trace with index 0 takes the move stored at index 1"
+    doAssert at0.rcvX == 30 and at0.rcvY == 40
+    let at0pos = movedPosition(exact, StationKey(line: 10, point: 20, index: 0), 1000.0)
+    doAssert at0pos.isSome and xy(at0pos.get) == (30.0, 40.0)
+
+    var anyIndex = StationMoves()
+    anyIndex.add moveAt(10, 20, 0, some(1000.0), 7, 8)
+    var at5 = filled(10, 20, 5, 1000.0)
+    doAssert applyMoves(anyIndex, at5), "a move stored with index 0 applies to any index"
+    doAssert at5.rcvX == 7 and at5.rcvY == 8
+    var at0any = filled(10, 20, 0, 1000.0)
+    doAssert applyMoves(anyIndex, at0any) and at0any.rcvX == 7
+
+    var both = StationMoves()
+    both.add moveAt(10, 20, 0, some(1000.0), 1, 1)
+    both.add moveAt(10, 20, 3, some(1000.0), 9, 9)
+    var at3 = filled(10, 20, 3, 1000.0)
+    doAssert applyMoves(both, at3) and at3.rcvX == 9 and at3.rcvY == 9,
+      "the exact index wins over index 0"
+    var at4 = filled(10, 20, 4, 1000.0)
+    doAssert applyMoves(both, at4) and at4.rcvX == 1 and at4.rcvY == 1
+
+    var later = StationMoves()
+    later.add moveAt(10, 20, 0, none(float64), 1, 1)
+    later.add moveAt(10, 20, 3, some(2000.0), 9, 9)
+    var early = filled(10, 20, 3, 1000.0)
+    doAssert not applyMoves(later, early),
+      "an exact move that does not apply yet is not replaced by index 0"
 
   echo "tstationmoves: done"
 

@@ -43,7 +43,7 @@
 
 import std/[algorithm, intsets, math, options, os, strutils, tables, times]
 import parseSEG
-import filekinds, maplod, session, spatial
+import filekinds, maplod, session, spatial, stationindex
 
 export maplod, spatial
 
@@ -524,9 +524,8 @@ func stationPoint*(l: SurveyLayer; r: PointRole; s: Station): int =
   ## none, for a station not known, and in a traces layer.
   result = -1
   if l.origin != loSurveyFile or not s.known: return
-  let tries = [s.index, 0'i16, 1'i16]
-  for i in 0 .. (if s.index == 0: 2 else: 1):
-    let key = stationKey(s.line, s.point, tries[i])
+  for indexTry in stationIndexTries(s.index):
+    let key = stationKey(s.line, s.point, indexTry)
     let at = l.points[r].ids.find(stationHash(key), same(l.points[r].station[id], key))
     if at >= 0: return at
 
