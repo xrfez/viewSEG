@@ -31,11 +31,15 @@ func headers*(): seq[string] =
   result.add ColWarnings
   result.add ColProblem
 
+func plural(n: int; one, many: string): string =
+  $n & " " & (if n == 1: one else: many)
+
 func summaryLine*(t: FolderTotals): string =
-  ## One line for the counts under the table.
-  result = $t.files & " files, " & $t.passed & " pass, " & $t.failed &
-    " fail, " & $t.notJudged & " not judged, " & $t.problems & " problems, " &
-    $t.skipped & " skipped."
+  ## One line for the counts under the table. One of a kind is singular.
+  plural(t.files, "file", "files") & ", " & plural(t.passed, "pass", "passes") & ", " &
+    plural(t.failed, "fail", "fails") & ", " & $t.notJudged & " not judged, " &
+    plural(t.problems, "problem", "problems") & ", " &
+    plural(t.skipped, "skipped", "skipped") & "."
 
 func verdictCell(row: FolderRow): string =
   case row.outcome

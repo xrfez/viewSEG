@@ -4,8 +4,9 @@
 ## partner. Header weights that differ from the job's are words; nothing
 ## is rescaled.
 ##
-## Seen to fail: with the measure columns untitled, `textAndCsv` does not
-## find "Average phase (°)".
+  ## Seen to fail: with the measure columns untitled, `textAndCsv` does not
+  ## find "Average phase (°)". With the totals always saying "files" and
+  ## "problems", `plurals` still finds "1 problems".
 
 import std/[math, strutils]
 import viewSEG/core/[sigtypes, units, vibfolderqc, vibjudge]
@@ -112,6 +113,21 @@ proc main*() =
     doAssert rows[3].outcome == foJudged and rows[3].verdict == qvFail
     doAssert rows[3].sentence == "FAIL"
 
+  block plurals:
+    let one = summaryLine(FolderTotals(files: 1, passed: 1, failed: 1,
+      notJudged: 1, problems: 1, skipped: 1))
+    doAssert "1 file," in one, one
+    doAssert "1 pass," in one, one
+    doAssert "1 fail," in one, one
+    doAssert "1 problem," in one, one
+    doAssert "1 skipped" in one, one
+    doAssert "1 files" notin one and "1 problems" notin one, one
+    let many = summaryLine(FolderTotals(files: 2, passed: 0, failed: 2,
+      problems: 2, skipped: 2))
+    doAssert "2 files," in many and "0 passes," in many, many
+    doAssert "2 fails," in many and "2 problems," in many, many
+    doAssert "2 skipped" in many, many
+
   block textAndCsv:
     var measured = FolderRow(path: "/tmp/one.dat", kind: sgDat, outcome: foJudged,
       verdict: qvFail, sentence: "FAIL: peak phase", problem: "a, \"quote\"")
@@ -128,7 +144,7 @@ proc main*() =
     doAssert "Peak distortion (%)" in text and "Average force (%)" in text
     doAssert "Peak force (%)" in text
     doAssert "Average phase (°)" in resultsCsv(table)
-    doAssert "1 files, 0 pass, 1 fail" in text
+    doAssert "1 file, 0 passes, 1 fail" in text
     doAssert "two sets" in text
     let csv = resultsCsv(table)
     doAssert "\"a, \"\"quote\"\"\"" in csv, csv
