@@ -513,6 +513,19 @@ on until you tick them: **channel set** (SEG-D: the trace's channel set and its 
 to tell the traces of a record of auxiliary signals apart) and **trace ID code** (SEG-Y: the
 code in words). A type parseSEG has no name for is shown as its code.
 
+Under the fields, **Vendor fields** lists the fields of the vendor header maps that the
+shown file has (see `vendor-maps.md`; Tools > Reload vendor maps loads the maps again). Tick a
+numeric field to show it as a row of the display header, over the traces, untick it to take
+it off: a trace that has no value for it shows a blank, never 0, and a record-level field shows
+its record's value on each of its traces. Fields that hold text are listed but cannot be ticked
+(a row shows numbers), and so is a field of a repeat; the tooltips say why. A field is named by
+its own name, or `block.name` when two blocks have a field of that name, or when its name is also
+a built-in row's. A field you have ticked that the shown file does not have stays listed with
+"(not in this file)", so you can untick it. A list of more than 25 fields has a filter box. The
+header has at most 32 rows: at the most, the fields not ticked are dimmed. The fields are listed
+in the background: the submenu says "Reading…" until they are known, and "No vendor fields"
+when no map applies to the file.
+
 | To | Mouse | Keys |
 |---|---|---|
 | Zoom in or out about the pointer | wheel | `+` / `-` |

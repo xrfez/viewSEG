@@ -80,6 +80,10 @@ each under the map's name, fields by name with value, unit and label. A field wh
 map's "absent" sentinel is not listed; when no map applies there is no group. Only the traces
 the tab is about are read, once, in the background; the trace table does not show vendor fields.
 
+A numeric vendor field can be shown over the traces as a row of the display header: in the plot's
+right-click header menu or the gear's Traces tab, **Vendor fields** lists the fields the maps
+give the shown file, and a tick shows one (QUICKSTART.md, the display header).
+
 ## A project's vendor map
 
 A job is usually recorded with one vendor's system, but a map can only say which files it is for
