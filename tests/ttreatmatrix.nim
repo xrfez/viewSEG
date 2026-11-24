@@ -31,7 +31,8 @@
 ## Cells found otherwise and kept as they were before choices existed: a document of edits
 ## whose hash is the file's, that saw another time, with an edit and a quit before the hash: the
 ## next run takes the document of the quit's edit (its time is the file's) and the other stays:
-## two documents of one content ("twoOfOne").
+## two documents of one content ("twoOfOne"); the choice of the one that stays goes to the one
+## taken.
 ##
 ## Seen to fail, 14 of 95 cells, with the other documents of an open's time not waiting for the
 ## hash, a document of only a choice that knows a hash written into before it, a document of
@@ -79,7 +80,6 @@ func expected(k: DocKind; t: DocTime; h: DocHash; a: Action): Expected =
     else: none(RecordingKind)
   result.twoOfOne = a == acQuit and k in {dkEdits, dkBoth} and h == hhSame and t == tmOther
   result.stored = own and k in {dkEdits, dkBoth} and not result.twoOfOne
-  if result.twoOfOne and a != acForce: result.shown = none(RecordingKind)
   if a == acListOpen: result.inRun = result.shown
   result.ours =
     case a

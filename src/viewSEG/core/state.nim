@@ -5464,13 +5464,14 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     r.savedRev = -1 # edits made before it was known: a document of its own
   for c in move(r.heldEarlier): state.sayEarlierNew(r.path, c, state.editsAt(r.path).kept)
   if r.doc.len > 0 and not r.ownDoc:
-    # A second document of this content with no edits (only what the file is treated as, seen
-    # at another time): what it says joins the one taken, and it goes.
+    # A second document of this content: what it says the file is treated as joins the one
+    # taken (that one's own choice stands); with no edits it goes, else it stays as it was.
     for c in move(r.waiting):
       if c.doc != r.doc and c.identity.fullKnown and c.identity.full == r.identity.full and
-          c.edits.isEmpty and not c.damaged and not state.readOnlyProject:
+          not c.damaged and not state.readOnlyProject:
         state.carryTreat(c.treat, r.doc)
-        state.diskIo.remove(state.store.docPath(c.doc), "what is remembered about " & name)
+        if c.edits.isEmpty:
+          state.diskIo.remove(state.store.docPath(c.doc), "what is remembered about " & name)
   # confirmed: what its document says it is treated as; none when no document is the file's
   state.loadTreat(r.path, if r.doc.len > 0: state.knownDocs.getOrDefault(r.doc).treat
     else: TreatAs())
