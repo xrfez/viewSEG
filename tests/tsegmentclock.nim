@@ -300,7 +300,7 @@ proc main*() =
       doAssert c.receivers[0] == c.receivers[3] and c.receivers[1] == c.receivers[4] and
         c.receivers[2] == c.receivers[5], $c.receivers
       doAssert c.receivers[0] != c.receivers[1] and c.receivers[1] != c.receivers[2], $c.receivers
-      doAssert c.unevenChannels == 0 and not c.untimed
+      doAssert c.unevenChannels == 0
       doAssert planOf(g, c).receiverCount == 3
       publishVendors(gps)
       defer: publishVendors(VendorRegistry())
@@ -340,10 +340,11 @@ proc main*() =
       defer: publishVendors(VendorRegistry())
       let got = runCut(initJobs(), g, path, fx.dir / "out" / "nostation.sgd",
         shotsAt([30_000'i64]), initCutOptions(40.0, -20.0))
-      # no receiver line and point: not a shot gather, one segment each, so it passes
-      # the two questions; what matters is that six traces are written, not one
-      doAssert got.st == jsDone, got.error & " / " & got.res.reason
-      doAssert got.res.components == 6, "components " & $got.res.components
+      # no receiver line and point and one segment each: a shot gather, refused before
+      # any output
+      doAssert got.st == jsFailed, "the cut was not refused"
+      doAssert "shot gather" in got.res.reason, got.res.reason
+      doAssert not fileExists(fx.dir / "out" / "nostation.sgd")
 
     block no_declaring_map_means_no_header_pass:
       # a map that applies but names no start time field, and one that names it

@@ -452,7 +452,7 @@ func cutRefusal*(f: RecordingFacts): string =
       result.add " Its traces are " & secs(f.segmentSeconds) & " long but start every " &
         secs(f.stepSeconds) & ", so they mostly cover each other."
     of swSameStart:
-      result.add " Its traces carry the same start time, so their own start times are not " &
+      result.add " Every trace carries the same start time, so their own start times are not " &
         "in the headers viewSEG reads: they may be in a header that a vendor header map " &
         "has to describe."
     of swNone: discard

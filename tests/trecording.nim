@@ -18,10 +18,10 @@ const
   BaseS = 1_772_323_200.0 # 2026-03-01T00:00:00 UTC
   DtMs = 2.0
 
-type Spec = tuple[rcv, first, comp: int]
+type Spec = tuple[rcv, first, comp: int, stationed: bool]
 
-func spec(rcv, first: int; comp = 0): Spec =
-  (rcv, first, comp)
+func spec(rcv, first: int; comp = 0; stationed = true): Spec =
+  (rcv, first, comp, stationed)
 
 proc factsOf(dir, name: string; specs: openArray[Spec]; n = 1000): RecordingFacts =
   createDir(dir)
@@ -36,8 +36,9 @@ proc factsOf(dir, name: string; specs: openArray[Spec]; n = 1000): RecordingFact
     k.intervalUs = 2000
     k.t0Ms = 0
     k.time = BaseS + float64(s.first) * DtMs / 1000
-    k.rcvLine = 1
-    k.rcvPoint = float64(s.rcv + 1)
+    if s.stationed:
+      k.rcvLine = 1
+      k.rcvPoint = float64(s.rcv + 1)
     var samples = newSeq[float32](n)
     for j in 0 ..< n: samples[j] = float32(s.first + j)
     w.writeTrace(k, samples)
@@ -162,13 +163,39 @@ proc main*() =
     let f = factsOf(dir, "same", specs)
     doAssert f.kind == rkReceiverSliced and f.slicedWhy == swSameStart, $f
     doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a " &
-      "continuous one. Its traces carry the same start time, so their own start times are " &
+      "continuous one. Every trace carries the same start time, so their own start times are " &
       "not in the headers viewSEG reads: they may be in a header that a vendor header map " &
       "has to describe.", cutRefusal(f)
 
-  block three_channels_at_one_start_are_not_untimed:
-    let f = factsOf(dir, "three", [spec(0, 0, 0), spec(0, 0, 1), spec(0, 0, 2)])
-    doAssert f.kind == rkReceiverContinuous, $f
+  block one_segment_per_receiver_is_no_proof_of_continuity:
+    # three channels of one station starting together: a receiver gather, not continuous,
+    # whatever the channel count
+    for n in [2, 3, 6]:
+      var specs: seq[Spec]
+      for c in 0 ..< n: specs.add spec(0, 0, c)
+      let f = factsOf(dir, "channels" & $n, specs)
+      doAssert f.kind == rkReceiverSliced and f.slicedWhy == swSameStart, $f
+      doAssert f.segments == n and f.components == n, $f
+      doAssert "Every trace carries the same start time" in cutRefusal(f), cutRefusal(f)
+      doAssert "vendor header map" in cutRefusal(f), cutRefusal(f)
+
+  block station_less_shot_record_is_a_shot_gather:
+    var specs: seq[Spec]
+    for c in 0 ..< 6: specs.add spec(c, 0, 0, stationed = false)
+    let f = factsOf(dir, "noStation", specs)
+    doAssert f.kind == rkShotGather and f.slicedWhy == swNone, $f
+    doAssert not f.isContinuousGather and cutRefusal(f).startsWith("This file is a shot gather")
+
+  block one_station_six_channel_record_is_a_receiver_gather:
+    var specs: seq[Spec]
+    for c in 0 ..< 6: specs.add spec(0, 0, c)
+    let f = factsOf(dir, "sixChannels", specs)
+    doAssert f.kind == rkReceiverSliced and f.slicedWhy == swSameStart, $f
+    doAssert cutRefusal(f).startsWith("This file is a time-sliced receiver gather")
+
+  block one_live_trace_is_continuous:
+    let f = factsOf(dir, "single", [spec(0, 0, 0, stationed = false)])
+    doAssert f.kind == rkReceiverContinuous and f.segments == 1, $f
 
   echo "trecording ok"
   removeDir(dir)

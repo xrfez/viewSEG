@@ -9,13 +9,18 @@
 ## sub-receiver whose segments chain by their start times):
 ##
 ## 1. Is it a shot gather? The receiver line and point change from trace to
-##    trace: there is more than one station and no sub-receiver has more than
-##    one segment (`rkShotGather`). No: it is a receiver gather.
+##    trace. One segment per sub-receiver is never proof of continuity: when
+##    every sub-receiver has exactly one segment and the file has more than one
+##    live trace, the traces either all carry one station (the channels of one
+##    station that start together: a receiver gather, not continuous,
+##    `swSameStart`) or they do not (stations differ, or no trace carries a
+##    line and point: `rkShotGather`). Otherwise it is a receiver gather. A
+##    file with exactly one live trace is a receiver gather of one segment.
 ## 2. Only for a receiver gather: is it continuous? Yes: `rkReceiverContinuous`.
 ##    No: `rkReceiverSliced`, and `slicedWhy` says why.
 ##
-## A file with no receiver line and point, or with stations of one segment and
-## others of several, goes through the two questions as they stand.
+## A file with stations of one segment and others of several goes through the
+## second question as it stands.
 ##
 ## The continuous test: each trace starts a whole number of trace lengths
 ## after the one before it. Per sub-receiver, in time order, the `step` is the
@@ -28,12 +33,9 @@
 ## continuous when at least `ContinuousShare` of its boundaries are continuous
 ## and every segment covers the step: no shorter (regular dead time between
 ## traces) and no more than `EndRepeatShare` longer (traces mostly covering
-## each other). A receiver with one segment is continuous. More than
-## `MaxChannelsPerStation` traces of one station and component with one start
-## time are not channels: the file carries no start times of its own, and it is
-## not continuous (`swSameStart`).
+## each other). A receiver with one segment is continuous.
 
-import std/[algorithm, math]
+import std/[algorithm, math, sequtils]
 import parseSEG
 import processSEG
 import processSEG/continuous/slice
@@ -58,7 +60,7 @@ type
     swIrregular ## the starts are not on a common step
     swShort     ## the traces are shorter than the step: dead time between them
     swOverlap   ## the traces are longer than the step: they mostly cover each other
-    swSameStart ## the traces of a station and component all carry one start time
+    swSameStart ## every trace carries the same start time
 
   RecordingPlan* = object
     ## The segments of a file as the cut plans them.
@@ -151,27 +153,6 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; r: var RecordingFacts) =
       inc r.uncovered
       break
 
-proc sharedStart(segs: seq[Seg]; meta: ChunkMeta): bool =
-  ## True when more than `MaxChannelsPerStation` traces of one station and
-  ## component start together: they are not channels, the file has no start
-  ## times of its own (also when the keys give them).
-  var rows: seq[tuple[line, point: float64; index: int16; comp: uint8; start: float64]]
-  for g in segs:
-    let k = meta.keys(g.row)
-    if not (k.rcvLine.isNaN or k.rcvPoint.isNaN):
-      let st = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
-      rows.add (st.line, st.point, st.index, k.component, g.start)
-  rows.sort do (a, b: tuple[line, point: float64; index: int16; comp: uint8; start: float64]) -> int:
-    result = cmp(a.line, b.line)
-    if result == 0: result = cmp(a.point, b.point)
-    if result == 0: result = cmp(a.index, b.index)
-    if result == 0: result = cmp(a.comp, b.comp)
-    if result == 0: result = cmp(a.start, b.start)
-  var run = 0
-  for n in 0 ..< rows.len:
-    if n > 0 and rows[n] == rows[n - 1]: inc run else: run = 1
-    if run > MaxChannelsPerStation: return true
-
 proc describeRecording*(plan: RecordingPlan): RecordingFacts =
   ## The facts and the verdict of `plan`.
   let meta = plan.meta
@@ -219,14 +200,21 @@ proc describeRecording*(plan: RecordingPlan): RecordingFacts =
   for n in 0 ..< placed.len:
     if n == 0 or placed[n].st != placed[n - 1].st: inc stations
   result.stations = stations
-  # question 1: a shot gather has several stations and one segment everywhere
-  if stations > 1 and result.segments == result.components:
-    result.kind = rkShotGather
-    result.slicedWhy = swNone
+  # question 1: one segment per receiver is no proof of continuity. With more than one
+  # live trace, every receiver having one segment means the traces all start together
+  # (several channels of one station: a receiver gather that is not continuous) or the
+  # receiver changes from trace to trace (a shot gather).
+  if result.segments == result.components and result.segments > 1:
+    if placed.len == result.components and stations == 1:
+      result.kind = rkReceiverSliced
+      result.slicedWhy = swSameStart
+    else:
+      result.kind = rkShotGather
+      result.slicedWhy = swNone
   else:
     # question 2: is the receiver gather continuous?
     let continuous = result.abutting + result.skips
-    if plan.clock.untimed or sharedStart(segs, meta): result.slicedWhy = swSameStart
+    if segs.len > 1 and segs.allIt(it.start == segs[0].start): result.slicedWhy = swSameStart
     elif result.uncovered > 0: discard # tally named the reason
     elif float64(continuous) < ContinuousShare * float64(result.boundaries):
       result.slicedWhy = swIrregular

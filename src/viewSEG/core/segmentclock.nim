@@ -33,9 +33,6 @@ const
   UnitUtc* = "us UTC"                  ## microseconds since 1970 in UTC
   MaxUtcUs = 7_258_118_400_000_000'i64 ## 2200-01-01: later is not a start time
   CheckEvery = 256
-  MaxChannelsPerStation* = 8
-    ## more traces than this of one station and component with one start time
-    ## are not channels: the file holds no start times of their own
 
 type SegmentClock* = object
   ## What `segmentClock` made. `times` and `receivers` are as
@@ -46,9 +43,6 @@ type SegmentClock* = object
   leftOut*: int ## traces without a usable field: their time is NaN, the planner leaves them out
   unevenChannels*: int
     ## stations and components whose start times do not all have the same number of traces
-  untimed*: bool
-    ## more than `MaxChannelsPerStation` traces of one station and component share one
-    ## start time: the file's traces have no start times of their own in these headers
 
 proc startUs(unit: string; value: int64): int64 =
   ## UTC microseconds of a start time in `unit`; -1 when the unit is another
@@ -192,7 +186,6 @@ proc segmentClock*(f: SeismicFile; reg: VendorRegistry;
       var e = r
       while e < m and us[grouped[e]] == us[grouped[r]]: inc e
       for k in r ..< e: places[grouped[k]].sub = k - r
-      if e - r > MaxChannelsPerStation: result.untimed = true
       if shared >= 0 and shared != e - r: uneven = true
       shared = e - r
       r = e
