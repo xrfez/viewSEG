@@ -93,6 +93,29 @@ proc main*() =
     let padded = read("sp\n00100.50\n", [crShotPoint])
     doAssert padded.rows[0].shotPoint == 100.5
 
+  block numberPrefixedHeader:
+    let g = guessMap("07_shot_point,07-file number,Shot_Point\n1,2,3\n")
+    doAssert g.hasHeader and g.skipLines == 0 and g.delimiter == dlComma
+    doAssert g.roles[0] == crShotPoint and g.roles[1] == crFileNumber
+    doAssert g.roles[2] == crShotPoint
+    let feet = guessMap("source depth (ft),X\n6,10\n")
+    doAssert feet.lengthUnit == luFeet and feet.roles[0] == crSourceDepth
+    doAssert feet.roles[1] == crX
+    var forced = initShotLogMap()
+    forced.roles = @[crX, crY]
+    let manual = shots(parseShotLog("a,b\n3,4\n", forced), forced)
+    doAssert manual.rows[0].x == 3.0 and manual.rows[0].y == 4.0
+
+  block noHeaderAndGuess:
+    let text = $GpsMarch & ",2024,1.5\n" & $(GpsMarch + 10_000_000) & ",2024,2.5\n"
+    let g = guessMap(text)
+    doAssert not g.hasHeader and g.delimiter == dlComma
+    doAssert g.roles[0] == crGpsMicros and g.roles[1] == crYear
+    doAssert g.roles[2] == crText
+    let v = shots(parseShotLog(text, g), g)
+    doAssert v.rows[0].timeUtcUs.get == UtcMarch
+    doAssert v.rows[0].year.get == 2024
+
   block problemCap:
     var text = "n\n"
     for i in 0 ..< 150: text.add "x\n"
