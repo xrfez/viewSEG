@@ -1297,6 +1297,9 @@ type
     treatsKept: Table[string, TreatAs]
       ## the part of `treats` that is the user's own, which the store keeps: an agent's choice is
       ## for the session only and never reaches a document the edits are written to
+    treatsPending: HashSet[string]
+      ## the paths whose choice in `treats` is of a document the file's hash has not confirmed
+      ## (it may be another content's): shown, but no job uses it (`treatInForce`)
     treatsTouched: HashSet[string]
       ## the paths a command changed this session: a late answer of the kinds job does not
       ## put back what it read before
@@ -1798,11 +1801,18 @@ func recordOf(state: AppState; i: int): FileRecord =
     # (as the document was read: the disk thread keeps it as it is on disk, `DiskIo.treat`)
     result.treat = state.knownDocs[r.doc].treat
 
-proc loadTreat(state: var AppState; path: string; t: TreatAs) =
+func treatInForce(state: AppState; path: string): TreatAs =
+  ## What jobs use as the file's forced treatment: nothing while the choice listed is of a
+  ## document the file's hash has not confirmed (`treatsPending`).
+  if path in state.treatsPending: TreatAs() else: state.treats.getOrDefault(path)
+
+proc loadTreat(state: var AppState; path: string; t: TreatAs; pending = false) =
   ## What the store keeps of what the user forced for the file at `path`, as its document was
   ## read: by the kinds of a listing (`takeKinds`), or with the document an open takes
   ## (`applyRecord`). A choice made by a command this session stays.
   if path in state.treatsTouched: return
+  if t.isSet and pending: state.treatsPending.incl path
+  else: state.treatsPending.excl path
   if t.isSet:
     state.treats[path] = t
     state.treatsKept[path] = t
@@ -2914,7 +2924,7 @@ func spsWritten*(state: AppState): string {.inline.} =
 func recordingFacts*(state: AppState): RecordingFacts {.inline.} =
   ## What the shown file is as a recording, once `watchRecording` has had it
   ## read; not `ready` before that.
-  if state.recHave: state.recFacts.applied(state.treats.getOrDefault(state.recPath))
+  if state.recHave: state.recFacts.applied(state.treatInForce(state.recPath))
   else: RecordingFacts()
 
 func recordingWhy*(state: AppState): string {.inline.} =
@@ -9818,7 +9828,7 @@ proc takeKinds(state: var AppState; m: sink Msg) =
       # (and once its hash says no document is its own, none is: `takeHashed`)
       if r < 0 or not state.remembered[r].known or
           (state.remembered[r].doc.len == 0 and not state.remembered[r].hashed):
-        state.loadTreat(a.path, a.treat)
+        state.loadTreat(a.path, a.treat, a.treatUnconfirmed)
       e.treat = state.treats.getOrDefault(a.path)
       f.changedAt(i)
       state.kindCache.remember(a, m.kindsVendors, f)
@@ -11524,6 +11534,7 @@ proc treatAs(state: var AppState; cmd: Command) =
   # written whatever this run knew: another viewSEG may have set the part since)
   if t == before and state.treats.getOrDefault(path) == t and not kept: return
   state.treatsTouched.incl path
+  state.treatsPending.excl path
   if t.isSet: state.treats[path] = t else: state.treats.del path
   if kept:
     if t.isSet: state.treatsKept[path] = t else: state.treatsKept.del path
@@ -11655,7 +11666,7 @@ proc cutGatherCmd(state: var AppState; cmd: Command) =
   state.cutOutcome = ""
   state.cutPath = ""
   var opts = cmd.cutOptions
-  opts.treatKind = state.treats.getOrDefault(s.path).kind # what the user forced for the file
+  opts.treatKind = state.treatInForce(s.path).kind # what the user forced for the file
   opts.logName = extractFilename(state.shotLogs[cmd.cutLog].source)
   if opts.logName.len == 0: opts.logName = state.shotLogs[cmd.cutLog].name
   state.cutJob = state.jobs.submit(cutGatherSpec(s.diskPath, dest),

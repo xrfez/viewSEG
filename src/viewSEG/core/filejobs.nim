@@ -498,6 +498,9 @@ proc kindsWork*(gen: uint64; vendorGen: int; asks: seq[WatchedFile]; vendors: Ve
         times.add modified
       ctx.checkCancelled()
       {.cast(gcsafe).}:
-        let treats = store.treatsOf(ids, times)
-        for i in 0 ..< batch.kinds.len: batch.kinds[i].treat = treats[i]
+        var unsure: seq[bool]
+        let treats = store.treatsOf(ids, times, unsure)
+        for i in 0 ..< batch.kinds.len:
+          batch.kinds[i].treat = treats[i]
+          batch.kinds[i].treatUnconfirmed = unsure[i]
       to.post move batch

@@ -67,6 +67,8 @@ type
     kind*: RecordingKind ## when `state` is `ksKnown`
     order*: TraceOrder   ## how its traces are written, when `state` is `ksKnown`
     treat*: TreatAs      ## what the user forced for the file (`core/filememory`), whatever `state`
+    treatUnconfirmed*: bool
+      ## `treat` is of a document that may be another content's: the file's hash settles it
 
   FileEntry* = object
     ## One file of the list: a seismic file, or a survey file.

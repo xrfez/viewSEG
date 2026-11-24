@@ -1153,16 +1153,19 @@ func fileDoc*(docs: openArray[FileRecord]; id: FileIdentity): tuple[at: int; sev
     if may.len == 1: result.at = may[0]
     elif may.len > 1: result.several = true
 
-proc treatsOf*(s: Store; ids: openArray[FileIdentity]; modified: openArray[Time]):
-    seq[TreatAs] =
+proc treatsOf*(s: Store; ids: openArray[FileIdentity]; modified: openArray[Time];
+    unconfirmed: var seq[bool]): seq[TreatAs] =
   ## What the store holds of each file of identity `ids[i]`, modified at `modified[i]`, that the
   ## user forced (`result[i]`), from the file's document (`fileDoc`; the hash of every byte, when
   ## `ids[i]` has it, tells the documents of one quick identity apart). A document the hash does
   ## not say is the file's gives its choice only when it saw the file at that modification time
   ## (one touched or copied since is automatic until it is identified). Nothing forced for a
   ## file with no document, for one whose document cannot be told, or that cannot be read. One
-  ## look at the store's folder serves them all. Reads the documents: worker-only.
+  ## look at the store's folder serves them all. `unconfirmed[i]` says that the choice is of a
+  ## document that knows a hash of every byte the file has not been given: it may be another
+  ## content's. Reads the documents: worker-only.
   result = newSeq[TreatAs](ids.len)
+  unconfirmed = newSeq[bool](ids.len)
   if s.isNowhere or ids.len == 0 or not fs.dirExists(s.home): return
   var names: seq[string] = @[]
   try:
@@ -1188,3 +1191,4 @@ proc treatsOf*(s: Store; ids: openArray[FileIdentity]; modified: openArray[Time]
       let d = docs[at].identity
       if (id.fullKnown and d.fullKnown and d.full == id.full) or docs[at].modified == modified[i]:
         result[i] = docs[at].treat
+        unconfirmed[i] = d.fullKnown and not (id.fullKnown and d.full == id.full)

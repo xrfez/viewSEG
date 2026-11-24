@@ -161,6 +161,12 @@ proc main*() =
               one.apply Command(kind: ckBrowse, paths: @[at / "data"])
               doAssert one.settled(one.listed), name & ": not listed"
               got.listed = one.fileList.entries[0].treat.isSet
+              # a listing does not hash: a choice of a document that knows a hash is shown,
+              # but no job uses it until the file's hash confirms the document
+              if a == acList and one.treatOf(f).isSet and
+                  one.treatInForce(f).isSet != (h == hhUnknown):
+                wrong.add name & ": the listed choice is in force for jobs: " &
+                  $one.treatInForce(f).isSet
               if a == acForce:
                 one.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "sliced")
                 doAssert one.settled(one.idle), name & ": the choice's look-up did not end"
