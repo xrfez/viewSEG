@@ -117,6 +117,16 @@ Opening a folder lists it and shows its first file; opening a file shows it and 
 folder beside it. Listing reads only the first few kilobytes of each file, in the
 background, so a folder of thousands of files lists without opening any of them.
 
+The **Kind** column, after Type, says what each seismic file is as a recording: **Shot
+gather**, **Continuous receiver gather** or **Time-sliced receiver gather** (the same words
+the cut uses: see `cut-by-shot-log.md`). It is worked out in the background, a file at a time,
+after the listing, from the first traces of the file alone (at most 4096 traces and 16 MB of
+it, never a sample), so it fills in while you look and never holds up opening or showing a
+file. A file whose kind is not worked out yet, a file that is not seismic and one without a
+live trace have an empty cell; the row's tooltip says the same words. Click the header to
+sort by it. A file that changes on disk is read again once it is steady. For a large file
+the kind rests on the first 8 start times of each receiver, as in the cut's dialog.
+
 - **Click a file** to show it in the Seismic window, in place of the one shown. The display
   (mode, gain, filters, sort order, display header) and the scales stay as they were, so records
   compare one after the other. **Click a survey file** to load it into the survey: a pin

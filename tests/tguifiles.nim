@@ -10,7 +10,9 @@
 ## folder dropped on the window is listed and its first file shown, a file
 ## dropped is shown with its folder listed; Ctrl + W closes the file shown;
 ## the filter box hides the rows that do not match; each file stepped away
-## from is closed; the files are never changed.
+## from is closed; the files are never changed. A folder with a file of each kind of
+## recording shows the three kinds in the Kind column, read in the background from the first
+## traces; a drive that holds those reads leaves the window drawing and the cells empty.
 ##
 ## Seen to fail: with the window's keys handled only while the window
 ## itself (not its table) has the focus, it "stopped before up"; with the
@@ -29,7 +31,9 @@ import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/app
 import privatefiles
-import utils/[fixtures, waiting]
+import viewSEG/core/[filelist, jobs, recordingkind]
+import viewSEG/view/filetable
+import utils/[faultyfs, fixtures, kindfiles, waiting]
 
 type Snapshot = tuple[bytes: string; time: Time]
 
@@ -245,6 +249,81 @@ proc main*() =
     for name in ["shot10.sgy", "shot2.sgd", "Shot1.sgd"]: after.add snapshot(dir / name)
     doAssert after == before, "stepping through the files changed one"
     echo "tguifiles: ", reached.len, " steps: ", reached.join(", ")
+
+  # The Kind column: a folder with a file of each kind says so from the first traces, off the UI
+  # thread; a drive that does not answer for them leaves the window drawing, the cells empty,
+  # and the words come once it answers.
+  block theKindOfEachFile:
+    install()
+    withFixtures fx:
+      proc make(folder: string): string =
+        result = fx.dir / folder
+        discard writeSpecs(result, "a continuous", [spec(0, 0), spec(0, 1000), spec(0, 2000)])
+        discard writeSpecs(result, "b sliced", [spec(0, 0), spec(0, 1000), spec(0, 2150),
+          spec(0, 3150)])
+        discard writeSpecs(result, "c shot", [spec(0, 0), spec(1, 0), spec(2, 0)])
+      const words = ["Continuous receiver gather", "Time-sliced receiver gather", "Shot gather"]
+      proc kinds(f: FrameInfo): seq[string] =
+        for e in f.core.fileList.entries: result.add kindText(e)
+      proc unread(f: FrameInfo): int =
+        for e in f.core.fileList.entries:
+          if e.kindState == ksUnread: inc result
+      let near = make("kinds")
+      var seen: seq[string]
+      var wait = 0
+      var since = getMonoTime()
+      proc onNear(f: FrameInfo) =
+        inc wait
+        if f.index == 0: f.moveMouse(vec2(4, 4))
+        if not f.core.fileList.scanning and f.core.fileList.entries.len == 3 and f.unread == 0:
+          seen = f.kinds
+          f.stop()
+        if overdue(f.index, 3000, since):
+          seen = f.kinds
+          f.stop()
+      var code = run(RunOptions(openPaths: @[near], windowSize: (1600, 1000),
+        indexCacheDir: some(fx.dir / "cache"), theme: forceDark,
+        userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onNear))
+      doAssert code == 0, "run() exit code " & $code
+      doAssert seen == @words, "the Kind column read " & $seen
+
+      let far = make("far")
+      resetCounts()
+      fault(far, fkHang, {foHeaders})
+      var worst = initDuration()
+      var last = getMonoTime()
+      var held = false
+      var emptyWhileHeld = false
+      var answered: seq[string]
+      var frames = 0
+      var since2 = getMonoTime()
+      proc onFar(f: FrameInfo) =
+        let now = getMonoTime()
+        if f.index > 0: worst = max(worst, now - last)
+        last = now
+        if f.index == 0: f.moveMouse(vec2(4, 4))
+        if not held:
+          if hung() >= 1 and not f.core.fileList.scanning and f.core.fileList.entries.len == 3:
+            held = true
+            frames = f.index
+        elif f.index - frames == 30:
+          emptyWhileHeld = f.kinds == @["", "", ""] and f.unread == 3
+          release(far)
+        elif f.index - frames > 30 and f.unread == 0:
+          answered = f.kinds
+          f.stop()
+        if overdue(f.index, 3000, since2):
+          answered = f.kinds
+          f.stop()
+      code = run(RunOptions(openPaths: @[far], windowSize: (1600, 1000),
+        indexCacheDir: some(fx.dir / "cache"), theme: forceDark,
+        userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onFar))
+      releaseAll()
+      doAssert code == 0, "run() exit code " & $code
+      doAssert held and emptyWhileHeld, "the window did not draw on while the drive held"
+      doAssert worst < initDuration(seconds = 5), "a frame waited " & $worst & " for the drive"
+      doAssert answered == @words, "after the drive answered: " & $answered
+      doAssert uiCalls().len == 0, "the UI thread called the file system: " & $uiCalls()
 
   let landSegd = privateFile("landSegd")
   if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and landSegd.len > 0:
