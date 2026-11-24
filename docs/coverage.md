@@ -42,10 +42,10 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Status | parseSEG 0.21.1: capabilities | names | processSEG 0.14.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 57 (23 in part) | 198 | 46 (29 in part) | 256 |
-| `internal` | 21 | 64 | 7 | 46 |
+| `internal` | 21 | 65 | 7 | 46 |
 | `planned` | 33 | 226 | 43 | 399 |
 | `to plan` | 2 | 9 | 1 | 5 |
-| `not applicable` | 22 | 356 | 7 | 71 |
+| `not applicable` | 22 | 355 | 7 | 71 |
 | all | 135 | 853 | 104 | 777 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
