@@ -881,7 +881,7 @@ type OwnJoin* = object
   moved*: int   ## traces the station moves changed
 
 proc joinOwnFile*(file: ptr SeismicFile; g: ptr SurveyGeometry; opts: JoinOptions;
-    moves: StationMoves; progress: proc (done, total: int): bool): OwnJoin =
+    moves: StationMoves; tableOnly: bool; progress: proc (done, total: int): bool): OwnJoin =
   ## Joins the project's survey `g` (nil: none) to `file`, which this thread
   ## holds alone, as the project's own join does for an open file (`planJoin`
   ## for what to replace, then `applyJoin`), and applies `moves`; the join is
@@ -899,7 +899,7 @@ proc joinOwnFile*(file: ptr SeismicFile; g: ptr SurveyGeometry; opts: JoinOption
   elif moves.len == 0: return
   var stats: JoinStats
   var posted: seq[ReceiverBase] = @[]
-  (result.changed, result.moved) = file.applyJoin(g, nil, replace, false, moves, @[], stats,
+  (result.changed, result.moved) = file.applyJoin(g, nil, replace, tableOnly, moves, @[], stats,
     posted)
 
 proc joinApplyWork*(file: ptr SeismicFile; path: string; session: SessionId;

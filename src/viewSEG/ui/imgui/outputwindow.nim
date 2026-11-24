@@ -409,7 +409,10 @@ proc projectJoin(st: AppState): BatchProject =
   if not st.inProject: return
   result.moves = st.project.doc.stationMoves
   result.survey = st.projectSurvey
-  if not result.survey.isNil: result.options = st.project.doc.options
+  if not result.survey.isNil:
+    result.options = st.project.doc.options
+    result.tableOnly = st.projectTableOnly
+  result.loading = st.projectSurveyLoading
 
 proc chosenPattern(st: AppState): OutputPattern =
   ## The saved pattern whose label matches the project's choice, spaces
@@ -476,6 +479,7 @@ proc submitRun(ui: var OutputUi; st: AppState) =
   let opened = liveFiles(st, items)
   ui.runJob = st.jobs.submit(outputBatchSpec(ask),
     outputBatchWork(ask, st.store, opened, ui.sink))
+  if not ask.project.survey.isNil: st.holdSurvey(ui.runJob) # the job joins from it until it ends
 
 proc tip(text: string) =
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or

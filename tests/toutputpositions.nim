@@ -467,7 +467,7 @@ proc runBatchCases(fx: Fixtures; outDir: string) =
     alone(inDir / n, outDir / ("alone-" & n))
     sameBytes(dest, outDir / ("alone-" & n))
     let r = got.items[if n == "a.sgy": 0 else: 1]
-    doAssert says(r.lines, BatchJoinedPositions), "no joined line: " & $r.lines
+    doAssert says(r.lines, BatchJoinedBoth), "no joined line: " & $r.lines
     doAssert not says(r.lines, BatchOwnPositions), $r.lines
   # The file the survey does not cover keeps its own positions, even with the move
   # (the move names a station its traces do not have), and says so.
@@ -475,6 +475,80 @@ proc runBatchCases(fx: Fixtures; outDir: string) =
   doAssert near(cover.traceKeys(0).rcvX, 1), "an uncovered file was changed"
   cover.close()
   doAssert says(got.items[2].lines, BatchSurveyNotCovered), $got.items[2].lines
+  # Which sentence: by what applied.
+  proc linesOf(project: BatchProject; name: string): seq[string] =
+    var one = ask
+    one.project = project
+    one.destRoot = outDir / ("batch-" & name)
+    one.items = items("a.sgy")
+    runIt(one).items[0].lines
+  block sentences:
+    let surveyOnly = linesOf(BatchProject(survey: addr survey,
+      options: JoinOptions(coordinates: hcReplace)), "survey")
+    doAssert says(surveyOnly, BatchJoinedSurvey) and not says(surveyOnly, BatchJoinedBoth),
+      $surveyOnly
+    # Moves alone: a record whose headers name their stations (the twoTimes
+    # files name none, so a move finds nothing there before a join).
+    createDir(outDir / "mv-in")
+    copyFile(fx.stationsSegd(), outDir / "mv-in" / "rec.sgd")
+    var mv = ask
+    mv.project = BatchProject(moves: moves)
+    mv.root = outDir / "mv-in"
+    mv.items = @[BatchItem(source: outDir / "mv-in" / "rec.sgd", relative: "rec.sgd")]
+    mv.destRoot = outDir / "mv-out"
+    let movesOnly = runIt(mv).items[0].lines
+    doAssert says(movesOnly, BatchJoinedMoves), $movesOnly
+    var m = openSeismic(outDir / "mv-out" / "rec.sgy", keys = true)
+    doAssert near(m.traceKeys(1).rcvX, 7000) and not near(m.traceKeys(2).rcvX, 7000),
+      "a move alone changed more than its station: " & $m.traceKeys(1).rcvX
+    m.close()
+    # A survey that places only the sources: the survey changed the file, so it is
+    # not "not covered".
+    var sourcesOnly = initSurveyGeometry()
+    let sps = fx.surveySps()
+    sourcesOnly.addSps(sps.s)
+    sourcesOnly.addSps(sps.x)
+    let placed = linesOf(BatchProject(survey: addr sourcesOnly,
+      options: JoinOptions(coordinates: hcReplace)), "sources")
+    doAssert says(placed, BatchJoinedSurvey) and not says(placed, BatchSurveyNotCovered),
+      $placed
+    let loading = linesOf(BatchProject(loading: true), "loading")
+    doAssert says(loading, BatchSurveyLoading) and not says(loading, BatchOwnPositions),
+      $loading
+  # A survey of CSV tables only joins by the table, as the open file does,
+  # the auxiliary trace's source position included.
+  block csvOnly:
+    let record = fx.stationsSegd()
+    var csv = "kind,line,point,x,y,z\nS," & $SrcLine & "," & $FirstSrcPoint & "," & $srcX(0) &
+      "," & $OriginY & ",100\n"
+    for ch in 1 .. SegdChannels:
+      csv.add "R," & $RcvLine & "," & $(FirstRcvPoint + float64(ch - 1)) & "," & $rcvX(ch) &
+        "," & $OriginY & ",100\n"
+    var table = initSurveyGeometry()
+    var problems: seq[string] = @[]
+    var skipped = 0
+    doAssert table.addCsv(csv, "stations.csv", crColumn, problems, skipped) > 0, $problems
+    createDir(outDir / "csv-in")
+    copyFile(record, outDir / "csv-in" / "rec.sgd")
+    var f = openSeismic(record, keys = true)
+    doAssert f.applyGeometry(table.table, true) > 0, "the table changed nothing"
+    let reference = outDir / "csv-alone.sgy"
+    let wrote = runWrite(f, record, reference, OutputOptions(format: ofSegy))
+    doAssert wrote.st == jsDone, wrote.error
+    f.close()
+    var one = ask
+    one.root = outDir / "csv-in"
+    one.items = @[BatchItem(source: outDir / "csv-in" / "rec.sgd", relative: "rec.sgd")]
+    one.destRoot = outDir / "csv-out"
+    one.project = BatchProject(survey: addr table, options: JoinOptions(coordinates: hcReplace),
+      tableOnly: true)
+    let r = runIt(one)
+    doAssert r.written == 1, $r
+    sameBytes(outDir / "csv-out" / "rec.sgy", reference)
+    var aux = openSeismic(outDir / "csv-out" / "rec.sgy", keys = true)
+    doAssert near(aux.traceKeys(0).srcX, srcX(0)), "the auxiliary trace has no source position: " &
+      $aux.traceKeys(0).srcX
+    aux.close()
   # Nothing set: the old line, and the file's own positions.
   var bare = ask
   bare.project = BatchProject()

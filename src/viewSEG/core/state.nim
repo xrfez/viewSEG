@@ -750,6 +750,14 @@ type
     gather: int
     held: bool ## the derived view stays; the file is opened and correlated, not shown raw
 
+  SurveyHolds = ref object
+    ## The project's survey a batch write joins from, kept alive for its job.
+    ## A ref so the window, which holds the state read-only, can add to it.
+    held: seq[tuple[job: JobId; geometry: ref SurveyGeometry]]
+      ## per running job
+    left: seq[tuple[job: JobId; geometry: ref SurveyGeometry]]
+      ## those of jobs abandoned while their work still ran, until it is back
+
   CorrelateHold = ref object
     ## One correlation, kept until its job has ended. A ref, not shared memory:
     ## `result.opened` is a `Session`, and a `Session` in shared memory is not traced.
@@ -1185,6 +1193,8 @@ type
     breakViews: seq[BreakView]
       ## each record panel's overlay as it shows it (`shownBreaks`), made when its result or
       ## its model changes rather than on every frame
+    batchSurvey: SurveyHolds
+      ## the survey each batch write's job joins from (`holdSurvey`), until it ends
     qcHeld: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
       ## the relation records each filters' job reads in place, kept until it ends
     unitsWarned: string
@@ -1414,6 +1424,7 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
   ## the open files are looked at every `watchEvery` (`core/watch`).
   markUiThread()
   result = AppState(log: initMessageLog(logCapacity), inbox: initInbox(),
+    batchSurvey: SurveyHolds(),
     jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
     nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace(),
     files: FileList(job: NoJob), watchEvery: watchEvery, quietScan: NoJob,
@@ -1917,6 +1928,8 @@ proc keepForStragglers(state: var AppState) =
   for c in state.checking: GC_ref(c.relations)
   for c in state.leftChecks: GC_ref(c.relations)
   for c in state.qcHeld: GC_ref(c.relations)
+  for c in state.batchSurvey.held: GC_ref(c.geometry) # a batch write joins from it
+  for c in state.batchSurvey.left: GC_ref(c.geometry)
   if not state.joining.geometry.isNil: GC_ref(state.joining.geometry) # `joinApplyWork` reads it
   if not state.joining.relations.isNil: GC_ref(state.joining.relations)
   for r in state.joining.reused: GC_ref(r) # `joinReadWork` reads them
@@ -2190,6 +2203,26 @@ func projectSurvey*(state: AppState): ptr SurveyGeometry =
       state.project.survey != srFailed and not state.project.geometry.isNil:
     cast[ptr SurveyGeometry](state.project.geometry)
   else: nil
+
+func projectSurveyLoading*(state: AppState): bool =
+  ## Whether the project has a survey that is not ready to be joined yet.
+  state.project.dir.len > 0 and state.project.doc.hasSurvey and
+    state.project.survey != srFailed and state.project.geometry.isNil
+
+func projectTableOnly*(state: AppState): bool =
+  ## Whether the project's survey is CSV tables only, which a file joins with
+  ## the table alone (`applyGeometry`), as the session decides it.
+  state.project.doc.survey.len > 0 and state.project.doc.survey.allIt(it.kind == jkCsv)
+
+proc holdSurvey*(state: AppState; job: JobId) =
+  ## Keeps the project's survey (the one `projectSurvey` gave when `job` was
+  ## submitted, in the same frame) alive until `job` has ended, whatever the
+  ## project does meanwhile: a close, a clear, an update or a new import
+  ## frees the state's own copy. Released when the job is seen finished or
+  ## cancelled, and, for one abandoned, when its work is back.
+  assertUiThread()
+  if job != NoJob and not state.project.geometry.isNil:
+    state.batchSurvey.held.add (job, state.project.geometry)
 
 func inProject*(state: AppState): bool {.inline.} =
   ## Whether a project is open.
@@ -9038,6 +9071,12 @@ proc finishSps(state: var AppState; job: JobInfo) =
     state.spsOutcome = "The SPS export failed: " & why
     state.log.add(sevError, "export SPS", state.spsOutcome)
 
+proc releaseSurvey(state: AppState; job: JobInfo) =
+  ## Lets go of the survey a batch write's job joined from.
+  for c in state.batchSurvey.held:
+    if c.job == job.id and job.abandoned: state.batchSurvey.left.add c # its work still runs
+  state.batchSurvey.held.keepItIf(it.job != job.id)
+
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
   if job.id == state.cutJob:
@@ -11926,6 +11965,9 @@ proc drainInbox*(state: var AppState): bool =
   state.mail.setLen 0
   for job in finished:
     state.onFinished(job)
+    state.releaseSurvey(job)
+  if state.batchSurvey.left.len > 0:
+    state.batchSurvey.left.keepItIf(state.jobs.workingOn(it.job))
   if state.leftChecks.len > 0: state.leftChecks.keepItIf(state.jobs.workingOn(it.job))
   state.prepareNext() # (once the main panel has its tile; or a prepare ended)
   if state.stoppedWaiting: state.followNewest() # (a stopped .dat's time may be up)
