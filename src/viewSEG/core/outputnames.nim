@@ -174,7 +174,7 @@ func formatInt(n: int64; pad: int): string =
                else: repeat('0', width - digits.len) & digits
   if n < 0: "-" & padded else: padded
 
-func formatNumber(x: float64; pad: int): string =
+func numberPiece(x: float64; pad: int): string =
   ## Rounded to 4 decimal places, half away from zero, by scaling into an
   ## integer. The integer digits are padded; a fraction that is not zero
   ## follows `p`, trailing zeros dropped. A value that rounds to zero has
@@ -270,7 +270,7 @@ func renderPiece(part: NamePart; v: NameValue; sep: char): NameResult =
     if v.number.isNaN or abs(v.number) >= 1e15:
       refused(word & " is not in this file.")
     else:
-      let piece = formatNumber(v.number, part.pad)
+      let piece = numberPiece(v.number, part.pad)
       if isDeviceName(piece): refused(deviceSentence(piece))
       else: accepted(piece)
   of nvText:

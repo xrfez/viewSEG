@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.21.1: capabilities | names | processSEG 0.14.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 55 (21 in part) | 187 | 45 (28 in part) | 249 |
-| `internal` | 21 | 63 | 7 | 44 |
-| `planned` | 35 | 238 | 44 | 408 |
+| `built` | 56 (22 in part) | 195 | 46 (29 in part) | 256 |
+| `internal` | 21 | 64 | 7 | 46 |
+| `planned` | 34 | 229 | 43 | 399 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 22 | 356 | 7 | 71 |
 | all | 135 | 853 | 104 | 777 |
@@ -166,7 +166,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Join by station, with statistics | `applySurvey(f, g, stats, overwrite)`, `joinStations`, `JoinStats`, `JoinMatch`, `stationKey` | Project → Import survey: worked out on copies of the keys first (`joinStations` and `applySurvey` per trace), then joined with the readers stopped; matched and unmatched traces, how they matched, why none did, the headers' coordinates kept or replaced, in plain words and in Messages; linked highlighting fills the stations a hovered trace's headers lack from the loaded relation file | built |
 | Receiver point codes and the sensor a trace is | `SensorClass` (`scUnknown`, `scHydrophone`, `scGeophone`, `scOther`), `sensorClass`, `receiverPointCode`, `pointCodeWarnings` | Project → Import survey: a station with a hydrophone row and a geophone row gives each trace its own row; the stations whose codes leave a choice are listed | planned |
 | GPS time turned into UTC | `GpsEpochUnix`, `gpsMinusUtc` | internal: a shot log's time break given in microseconds since the GPS epoch becomes the UTC instant of its row | internal |
-| The leap-second table | `LeapTable`, `LeapSecond`, `LeapDate`, `LeapStartOffset`, `currentLeapTable`, `defaultLeapTable`, `leapKnownAt`, `leapTableNif`, `parseLeapTable`, `useLeapTable`, `withLeap`, `gpsUsToUtcUs`, `utcUsToGpsUs`, `utcMinusGps` | Tools > Leap seconds: see the table and add a leap second | planned |
+| The leap-second table | `LeapTable`, `LeapSecond`, `LeapDate`, `LeapStartOffset`, `currentLeapTable`, `defaultLeapTable`, `leapKnownAt`, `leapTableNif`, `parseLeapTable`, `useLeapTable`, `withLeap`, `gpsUsToUtcUs`, `utcUsToGpsUs`, `utcMinusGps` | Tools > Leap seconds: see the table and add a leap second | built in part (Tools > Leap seconds...: the Leap seconds window shows the table, adds or removes a leap second, reloads or resets it, and open files read their times again); planned: `LeapSecond`, `LeapStartOffset`, `leapKnownAt`, `gpsUsToUtcUs`, `utcUsToGpsUs`, `utcMinusGps` |
 | The instant of a sample | `TimeOrigin` (`toNone`, `toHeaderSeconds`, `toHeaderSubsec`, `toFirstSample`, `toRecordTimeZero`), `timeOrigin`, `firstSampleUs`, `sampleTimeUs`, `sampleAtUs`, `noteRecordedTime`, `recordTimeZeroUs` | Cutting a continuous record at the shot times of a shot log | planned |
 | Traces by join outcome (conflict, ambiguous, unmatched) | `joinStations` per trace | Import survey: "Select unmatched traces" (the survey lacks the source or receiver); conflicting and ambiguous traces counted in the words; a selection per outcome, to come | built (unmatched); to plan (priority 1: a selection per outcome) |
 | Join options: line names, trailing digits, multi-component, one tape | `mapLine`, `trailingDigits`, `multiComponent`, `tape` | Import survey window, Options (remembered): line names as numbers, trailing digits, several channels per station; one tape, to come | built (but `tape`); to plan (priority 2: one tape as an option) |
@@ -406,7 +406,7 @@ name, so these are building blocks for code that works on raw headers.
 |---|---|---|---|
 | Cut continuous node data into records at shot times | `initSliceStreams`, `planSlices`, `extractInto`, `sliceKeys`, `SliceShot`, `SliceWindow`, `SliceStreams` (`rowCount`, `receiverKeys`), `SlicePlan` (`margin`, `order`, `align`, `window`, `shotCount`, `receiverCount`, `shotOf`, `receiverOf`, `rowsNeeded`, `tracesNeeded`, `maxColumn`, `fraction`), `initSliceShot`, `SliceOrder`, `SliceAlign`, `SlicePiece`, `pieces`, `sliceWorkspace` | "Cut at shot times…" (shots from SPS / P1 or a list), result as a virtual file | planned |
 | Cut one trace from the pieces a plan names, without holding the whole row | `addPiece`, `beginSliceTrace`, `finishSliceTrace`, `pieceSource`, `checkSliceOverlap`, `prepareSliceReport`, `failedSamples`, `failedPieces`, `initSliceShotGps` | Cutting a continuous receiver gather larger than memory into records at shot-log times: each piece is read, added and dropped. | planned |
-| The leap-second table, as processSEG shares it | `LeapDate`, `LeapSecond`, `LeapTable`, `currentLeapTable`, `defaultLeapTable`, `leapKnownAt`, `parseLeapTable`, `useLeapTable`, `withLeap`, `useLeapTableNif`, `gpsUsToUtcSeconds`, `utcUsOfGps` | Shot times given in GPS microseconds for the cut, converted with the same table the viewer's Tools > Leap seconds will edit. | planned |
+| The leap-second table, as processSEG shares it | `LeapDate`, `LeapSecond`, `LeapTable`, `currentLeapTable`, `defaultLeapTable`, `leapKnownAt`, `parseLeapTable`, `useLeapTable`, `withLeap`, `useLeapTableNif`, `gpsUsToUtcSeconds`, `utcUsOfGps` | Shot times given in GPS microseconds for the cut, converted with the same table the viewer's Tools > Leap seconds will edit. | built in part (Tools > Leap seconds...: the table the Leap seconds window shows and changes is the one processSEG shares); planned: shot times in GPS microseconds for the cut |
 | A sub-sample shift by windowed sinc | `SincHalf`, `sincInto` | The most exact alignment of a cut window whose shot time falls between samples. | planned |
 | Gaps, overlaps and timing errors | `SliceReport`, `gaps`, `overlapCheck`, `timingIssues`, `untimed`, `otherInterval`, `initSliceReport`, `gapSamples`, `gapCount`, `SliceGap`, `SliceOverlap`, `SliceTimingIssue`, `OverlapStatus`, `SliceOverlapCheck`, `mismatches`, `overlaps` | Continuous data QC per receiver | planned |
 | Clock drift correction | `driftCorrectTimes`, `driftCorrectedTimes` | Node clock drift correction | planned |
