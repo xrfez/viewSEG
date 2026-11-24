@@ -9,18 +9,20 @@
 ## (no disabled mark), "Reports is inactive without a folder did not happen".
 ## With the mass left as recorded, good.dat and reversed.dat do not split
 ## into one pass and one fail. With the button left out, "Use as profile
-## stores the window did not happen". With the weight boxes left out,
-  ## "the job weights start unset did not happen". With the File column sized
-  ## to the header, `the rows match an independent run` does not find a File
-  ## column wide enough for `reversed.dat`, and the corrupt row's sentence
-  ## mark does not hold its reason.
+## stores the window did not happen". With the view rebuilt every frame,
+## "the view was rebuilt: 146 from 38". With the weight boxes left out,
+## "the job weights start unset did not happen". With the File column sized
+## to the header, `the rows match an independent run` does not find a File
+## column wide enough for `reversed.dat`, and the corrupt row's sentence
+## mark does not hold its reason.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24"`.
 
 import std/[math, monotimes, options, os, strutils]
 import parseSSDAT
 import viewSEG/core/[filejobs, filekinds, filesystem, geometry, jobs, project, settings, sigdat,
-  sigjudge, sigtypes, state, sweepinfo, vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
+  sigjudge, sigtypes, state, sweepinfo, vibfolderjobs, vibfolderqc, vibjudge, vibprofile,
+  watchdog]
 import viewSEG/ui/imgui/app
 import viewSEG/view/vibfolderwords
 import utils/[fixtures, sigfiles, waiting]
@@ -32,6 +34,41 @@ type
     name: string
     act: proc (f: FrameInfo)
     done: proc (f: FrameInfo): bool
+
+proc frameTooks(text: string): seq[tuple[n, ms: int]] =
+  ## Each "Frame N took M ms" in `text`. "< 1 ms" is left out.
+  var i = 0
+  while i < text.len:
+    let at = text.find("Frame ", i)
+    if at < 0: break
+    var j = at + "Frame ".len
+    if j >= text.len or text[j] notin {'0'..'9'}:
+      i = at + "Frame ".len
+      continue
+    var n = 0
+    while j < text.len and text[j] in {'0'..'9'}:
+      n = n * 10 + (ord(text[j]) - ord('0'))
+      inc j
+    if not text.continuesWith(" took ", j):
+      i = j
+      continue
+    j += " took ".len
+    if j >= text.len or text[j] notin {'0'..'9'}:
+      i = j
+      continue
+    var ms = 0
+    while j < text.len and text[j] in {'0'..'9'}:
+      ms = ms * 10 + (ord(text[j]) - ord('0'))
+      inc j
+    result.add (n, ms)
+    i = j
+
+proc syntheticRows(n: int): seq[FolderRow] =
+  result = newSeq[FolderRow](n)
+  let sentence = "PASS: average 12 deg, peak 20 deg, the rest judged"
+  for i in 0 ..< n:
+    result[i] = FolderRow(path: "row" & $i & ".dat", kind: sgDat, outcome: foJudged,
+      verdict: qvPass, sentence: sentence)
 
 func centre(r: Rect): Vec2 =
   vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
@@ -421,6 +458,35 @@ proc main*() =
       if result:
         doAssert w.baseplateMassKg.isNaN and w.reactionMassKg.isNaN,
           "another weight changed: " & $w)
+
+    var budgetAt = -1
+    var builtAt = 0
+    var sinceTable = getMonoTime()
+    proc showMany(f: FrameInfo) =
+      f.showVibFolderTable(syntheticRows(500))
+    proc manyOk(f: FrameInfo): bool =
+      if f.markNames("vibfolder.row ").len == 0: return false
+      if f.markNames("vibfolder.totals 500 files").len == 0: return false
+      if budgetAt < 0:
+        budgetAt = f.index
+        builtAt = f.vibFolderViewBuilds
+        sinceTable = getMonoTime()
+        return false
+      if getMonoTime() - sinceTable < initDuration(milliseconds = 1200): return false
+      doAssert f.vibFolderViewBuilds == builtAt, "the view was rebuilt: " &
+        $f.vibFolderViewBuilds & " from " & $builtAt
+      let budget = int(DefaultFrameBudget.inMilliseconds)
+      var worst = 0
+      var bad = ""
+      for m in f.messages:
+        for hit in frameTooks(m.text):
+          if hit.n <= budgetAt: continue
+          if hit.ms > worst: worst = hit.ms
+          if hit.ms > budget: bad = m.text
+      echo "tguivibfolder: 500 rows, later frames worst ", worst, " ms (budget ", budget, ")"
+      doAssert bad.len == 0, "over budget after the first table frame: " & bad
+      true
+    step("500 rows stay within the frame budget", showMany, manyOk)
 
     var at = 0
     var started = false

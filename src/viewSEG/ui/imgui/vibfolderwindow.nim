@@ -47,6 +47,12 @@ type
     filterBuf: array[128, char]
     selected: string
     focus: FocusClicks
+    shownGen: int
+    viewKey: string
+    viewRows: seq[FolderRow]
+    viewCells: seq[seq[string]]
+    viewWidths: seq[float32]
+    viewBuilds: int
 
   VibFolderOutput* = object
     commands*: seq[Command]
@@ -128,6 +134,8 @@ proc finishQc(ui: var VibFolderUi; state: JobState; error: string) =
   ui.running = false
   if ui.sink != nil:
     ui.table = ui.sink.result
+    inc ui.shownGen
+    ui.viewKey = ""
     ui.have = true
     ui.selectResults = true
   if state == jsCancelled: ui.status = Stopped
@@ -190,6 +198,8 @@ proc clearRun(ui: var VibFolderUi) =
   ui.haveList = false
   ui.have = false
   ui.table = FolderTable()
+  inc ui.shownGen
+  ui.viewKey = ""
   ui.selected = ""
   ui.unticked = initTable[string, bool]()
   ui.selectResults = false
@@ -369,6 +379,19 @@ proc viewOf(ui: VibFolderUi): FolderTable =
   if ui.sortDown: result.rows = reversedRows(result.rows)
   result = filtered(result, bufText(ui.filterBuf))
 
+proc showRows*(ui: var VibFolderUi; rows: seq[FolderRow]) =
+  ## Shows `rows` as the results, without a run. For tests.
+  ui.table = FolderTable(rows: rows, totals: totalsOf(rows))
+  ui.have = true
+  ui.selectResults = true
+  ui.filterBuf[0] = '\0'
+  inc ui.shownGen
+  ui.viewKey = ""
+
+proc viewBuilds*(ui: VibFolderUi): int =
+  ## How many times the shown rows were built. For tests.
+  ui.viewBuilds
+
 proc verdictWord(row: FolderRow): string =
   case row.outcome
   of foJudged: $row.verdict
@@ -405,6 +428,21 @@ proc columnWidths(rows: seq[FolderRow]; names: seq[string]): seq[float32] =
   for i, name in names:
     if name == ColFile: result[i] = fileW
     elif name == ColKind: result[i] = max(result[i], kindW)
+
+proc ensureView(ui: var VibFolderUi) =
+  ## Sort, filter, cell text and column widths for the current result. Rebuilt
+  ## when the result, the sort or the filter changes, not on every frame.
+  let key = $ui.shownGen & "|" & $ord(ui.sortCol) & "|" & $ui.sortDown & "|" &
+    bufText(ui.filterBuf)
+  if key == ui.viewKey: return
+  let shown = ui.viewOf
+  ui.viewRows = shown.rows
+  ui.viewCells.setLen(shown.rows.len)
+  for i, row in shown.rows:
+    ui.viewCells[i] = rowCells(row)
+  ui.viewWidths = columnWidths(shown.rows, headers())
+  ui.viewKey = key
+  inc ui.viewBuilds
 
 proc markColumn(name: string; width: float32; marks: var Marks) =
   let p = igGetCursorScreenPos()
@@ -491,10 +529,10 @@ proc drawResults(ui: var VibFolderUi; marks: var Marks; commands: var seq[Comman
   if not ui.have:
     igTextDisabled(NoRows.cstring)
     return
+  ui.ensureView()
   let names = headers()
-  let shown = ui.viewOf
-  let rows = shown.rows
-  let widths = columnWidths(rows, names)
+  let rows = ui.viewRows
+  let widths = ui.viewWidths
   var fixed = 0'f32
   var sentenceAt = -1
   for i, name in names:
@@ -533,7 +571,7 @@ proc drawResults(ui: var VibFolderUi; marks: var Marks; commands: var seq[Comman
   while ImGuiListClipper_Step(clipper):
     for i in clipper.DisplayStart ..< clipper.DisplayEnd:
       let row = rows[int(i)]
-      let cells = rowCells(row)
+      let cells = ui.viewCells[int(i)]
       let name = if cells.len > 0: cells[0] else: row.path.extractFilename
       igTableNextRow(0, 0)
       igPushID_Int(cint(i))

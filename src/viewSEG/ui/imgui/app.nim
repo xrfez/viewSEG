@@ -43,6 +43,7 @@ import sdl3_nim
 import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
 import ../../core/[filesystem, geometry, screens, state, watchdog]
+from ../../core/vibfolderqc import FolderRow
 from ../../core/editmarks import shiftWords
 import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
@@ -372,6 +373,14 @@ proc chooseTheme*(frame: FrameInfo; name: string) =
   var s = frame.ui.core.settings
   s.theme = name
   frame.ui.core.apply Command(kind: ckSettings, settings: s)
+
+proc showVibFolderTable*(frame: FrameInfo; rows: seq[FolderRow]) =
+  ## Shows `rows` in the Vibrator QC results table, without a run. For tests.
+  frame.ui.vibfolder.showRows(rows)
+
+proc vibFolderViewBuilds*(frame: FrameInfo): int =
+  ## How many times that window has built its shown rows. For tests.
+  frame.ui.vibfolder.viewBuilds
 
 proc messages*(frame: FrameInfo): seq[Message] =
   ## What the Messages window holds: the log's entries, oldest first, each
