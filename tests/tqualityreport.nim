@@ -188,5 +188,23 @@ proc main*() =
     empty.noted("c.sgd", 3, false, false, false)
     doAssert totalsCsv(qualityReport(empty).totals).splitLines[1].endsWith(",,")
 
+  block absorbing_a_part_is_adding_its_notes_one_by_one:
+    proc notes(b: var QualityBuild; file: string) =
+      b.add file, 1, 10, 1, 1, {qfClipped}
+      b.add file, 2, 10, 1, 1, {}
+      b.add file, 2, 10, 2, 1, {qfAllZero, qfSpiky}
+      b.add file, 1, 10, 3, 1, {}, killed = true
+    var whole = initQualityBuild()
+    var joined = initQualityBuild()
+    whole.notes "a.sgd"
+    whole.notes "b.sgd"
+    joined.notes "a.sgd"
+    var part = initQualityBuild()
+    part.notes "b.sgd"
+    joined.absorb part
+    doAssert qualityReport(joined) == qualityReport(whole), $qualityReport(joined)
+    let st = stationAt(qualityReport(joined).stations, 10, 1, 1)
+    doAssert st.badRecords == "a.sgd 1\nb.sgd 1", st.badRecords
+
 when isMainModule:
   main()

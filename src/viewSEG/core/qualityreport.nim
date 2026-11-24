@@ -473,6 +473,40 @@ func badRecordsText(b: QualityBuild; acc: StAcc): string =
       result.add ' '
       result.add text
 
+proc addCounts[T: StAcc | RecAcc](dst: var T; src: T) =
+  dst.seen += src.seen
+  dst.killed += src.killed
+  dst.bad += src.bad
+  for f in Finding: dst.counts[f] += src.counts[f]
+  dst.tested += src.tested
+  dst.noisy += src.noisy
+  dst.weak += src.weak
+
+proc absorb*(b: var QualityBuild; part: QualityBuild) =
+  ## Adds everything `part` counted to `b`, its stations and records after those `b` has
+  ## (a row both have is summed), as if `part`'s notes had been added to `b` one by one.
+  var ids = newSeq[int](part.files.len)
+  for i, name in part.files: ids[i] = b.fileId(name)
+  for key in part.stOrder:
+    let src = part.stations[key]
+    if key notin b.stations:
+      b.stOrder.add key
+      b.stations[key] = StAcc()
+    b.stations.withValue(key, dst):
+      addCounts(dst[], src)
+      for file in src.fileOrder:
+        let bad = src.badFiles[file]
+        for id in sortedWholes(bad.wholes): noteBad(dst[], ids[file], float64(id))
+        for record in bad.others: noteBad(dst[], ids[file], record)
+  for key in part.recOrder:
+    let src = part.records[key]
+    let at = RecKey(file: ids[key.file], finite: key.finite, record: key.record)
+    if at notin b.records:
+      b.recOrder.add at
+      b.records[at] = RecAcc()
+    b.records.withValue(at, dst):
+      addCounts(dst[], src)
+
 proc initQualityBuild*(): QualityBuild =
   ## An empty set of notes.
   QualityBuild()

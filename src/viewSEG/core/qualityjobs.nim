@@ -26,7 +26,8 @@
 ## library refuses are not tested: their cells stay empty.
 ##
 ## The report keeps each path as the caller named it. Unread files are not
-## a total of the report.
+## a total of the report: a file that fails to read part-way adds nothing to it and is
+## listed unread once.
 
 import std/[algorithm, os, sets, tables]
 import parseSEG
@@ -270,8 +271,13 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
             if s.file.kind == skUnknown: why = "not a SEG-Y, SEG-D or SEG-2 file"
             elif s.file.len == 0: why = "has no trace keys"
             else:
-              let f = s.filePtr
-              measure(f, path, killedSet(edits, path), build, unread, s.gathers, noise, ctx)
+              # (a file that fails part-way counts nothing: it is listed unread, once)
+              var part = initQualityBuild()
+              var partUnread: seq[tuple[path, why: string]] = @[]
+              measure(s.filePtr, path, killedSet(edits, path), part, partUnread, s.gathers,
+                noise, ctx)
+              build.absorb part
+              unread.add partUnread
               shortWhy = cutShortWhy(s.file)
           except SegCancelledError:
             raise newException(JobCancelledError, "cancelled")

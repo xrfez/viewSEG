@@ -11,12 +11,12 @@
 ## scan's `tested` set for every sample-read trace, `a_station_in_the_area_*` saw 2 tested where
 ## the map judged the station in neither record.
 
-import std/[algorithm, os, sets, strutils, tables]
+import std/[algorithm, atomics, os, sets, strutils, tables]
 import parseSEG
 import processSEG
 import processSEG/synth
-import viewSEG/core/[breakmodel, edits, filejobs, firstbreaks, inbox, jobs, mapkinds,
-  noisearea, qualityjobs, qualityreport, recordqc, session]
+import viewSEG/core/[breakmodel, edits, filejobs, filesystem, firstbreaks, inbox, jobs,
+  mapkinds, noisearea, qualityjobs, qualityreport, recordqc, session]
 import utils/[fixtures, waiting]
 
 const
@@ -106,14 +106,26 @@ proc mapSets(path: string; killed: seq[int]): MapSets =
     for t in m.qcHits[mfWeak].traces: result.weak.incl t
     for t in m.qcHits[mfNotJudged].traces: result.notJudged.incl t
 
-proc scan(path: string; edits: Table[string, FileEdits]): QualityReport =
+proc scanAll(paths: seq[string]; edits: Table[string, FileEdits]): QualityJobResult =
   let jobs = initJobs()
   let sink = QualitySink()
-  let id = jobs.submit(qualitySpec(@[path]), scanQuality(@[path], edits, sink, ""))
+  let id = jobs.submit(qualitySpec(paths), scanQuality(paths, edits, sink, ""))
   doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}),
     "the scan did not finish"
   doAssert sink.result.ok, sink.result.reason
-  sink.result.report
+  sink.result
+
+proc scan(path: string; edits: Table[string, FileEdits]): QualityReport =
+  scanAll(@[path], edits).report
+
+var mappedCalls, failAt: Atomic[int]
+var failing: string
+
+proc countingHook(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
+  ## Counts the mapped reads of `failing`; the `failAt`th is an I/O error.
+  {.cast(gcsafe).}:
+    if op == foMapped and path == failing and mappedCalls.fetchAdd(1) + 1 == failAt.load:
+      raise newException(OSError, "Input/output error (planted)")
 
 func sorted(s: HashSet[int]): seq[int] =
   for x in s: result.add x
@@ -163,6 +175,34 @@ proc main*() =
           " tested, the map judged it in " & $judged
         if row.tested == 0: inc empty
       doAssert empty > 0, "no station had an empty cell"
+
+  block a_file_that_fails_part_way_counts_nothing_and_is_unread_once:
+    withFixtures fx:
+      let whole = fx.dir / "whole.sgd"
+      let broken = fx.dir / "broken.sgd"
+      build(whole, Spec(recs: @[64]))
+      build(broken, Spec(recs: @[64, 64]))
+      failing = broken
+      setFsHook(countingHook)
+      defer: setFsHook(nil)
+      # a run that fails nowhere counts the file's mapped reads; the last one is in the
+      # second record, after the first was judged and counted
+      mappedCalls.store(0)
+      failAt.store(0)
+      let clean = scanAll(@[whole, broken], initTable[string, FileEdits]())
+      doAssert clean.unread.len == 0 and clean.report.totals.traces == 64 + 128, $clean.unread
+      let last = mappedCalls.load
+      mappedCalls.store(0)
+      failAt.store(last)
+      let got = scanAll(@[whole, broken], initTable[string, FileEdits]())
+      var named = 0
+      for u in got.unread:
+        if u.path == broken: inc named
+      doAssert named == 1 and got.unread.len == 1, $got.unread
+      doAssert got.report.totals.traces == 64 and got.report.totals.files == 1,
+        "the unread file is counted: " & $got.report.totals
+      for r in got.report.records:
+        doAssert r.file == whole, "a row of the unread file: " & r.file
 
 when isMainModule:
   main()
