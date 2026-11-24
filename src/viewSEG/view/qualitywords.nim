@@ -1,6 +1,7 @@
 ## Words for the Trace quality window and the Reports menu. Drawing lives in
 ## the frontend; this module holds the sentences.
 
+import std/strutils
 import ../core/qualityreport
 
 const
@@ -34,14 +35,19 @@ const
   ColSeen* = "Seen"
   ColKilled* = "Killed"
   ColBad* = "Bad"
-  ColHeaderDead* = "Header-dead"
-  ColAllZero* = "All-zero"
-  ColConstant* = "Constant"
+  ColHeaderDead* = "Dead"
+  ColAllZero* = "Zero"
+  ColConstant* = "Flat"
   ColClipped* = "Clipped"
   ColSpiky* = "Spiky"
-  ColDcOffset* = "DC offset"
-  ColNonFinite* = "Non-finite"
+  ColDcOffset* = "DC"
+  ColNonFinite* = "Not finite"
   ColBadRecords* = "Bad records"
+  DeadTip* = "A trace the header marks dead. It is not also counted as all-zero."
+  ZeroTip* = "Every finite sample is zero."
+  FlatTip* = "The samples are constant."
+  DcTip* = "The samples have a DC offset."
+  NonFiniteTip* = "A sample is not a finite number."
   ColFile* = "File"
   ColRecord* = "Record"
   KilledTip* = "A trace an edit killed. It is counted as killed, not as bad, and it is not " &
@@ -62,14 +68,44 @@ func qualityWhy*(hasFolder: bool): string =
   ## One sentence naming what is missing, or "" when a scan can start.
   if not hasFolder: NeedFolder else: ""
 
+func plural(n: int; one, many: string): string =
+  $n & " " & (if n == 1: one else: many)
+
 func totalsLine*(t: Totals): string =
   ## The totals strip: counts, then each finding. Killed is not bad.
-  $t.files & " files, " & $t.records & " records, " & $t.traces & " traces, " &
-    $t.killed & " killed, " & $t.bad & " bad, " & $t.stations & " stations, " &
-    $t.counts[qfHeaderDead] & " header-dead, " & $t.counts[qfAllZero] & " all-zero, " &
-    $t.counts[qfConstant] & " constant, " & $t.counts[qfClipped] & " clipped, " &
-    $t.counts[qfSpiky] & " spiky, " & $t.counts[qfDcOffset] & " dc offset, " &
-    $t.counts[qfNonFinite] & " non-finite"
+  plural(t.files, "file", "files") & ", " & plural(t.records, "record", "records") & ", " &
+    plural(t.traces, "trace", "traces") & ", " & $t.killed & " killed, " & $t.bad & " bad, " &
+    $t.stations & " stations, " & $t.counts[qfHeaderDead] & " header-dead, " &
+    $t.counts[qfAllZero] & " all-zero, " & $t.counts[qfConstant] & " constant, " &
+    $t.counts[qfClipped] & " clipped, " & $t.counts[qfSpiky] & " spiky, " &
+    $t.counts[qfDcOffset] & " dc offset, " & $t.counts[qfNonFinite] & " non-finite"
+
+func headerTip*(name: string): string =
+  ## The tooltip of column title `name`, or "" when the title says enough.
+  case name
+  of ColKilled: KilledTip
+  of ColBad: BadTip
+  of ColHeaderDead: DeadTip
+  of ColAllZero: ZeroTip
+  of ColConstant: FlatTip
+  of ColDcOffset: DcTip
+  of ColNonFinite: NonFiniteTip
+  else: ""
+
+func unreadNote*(rows: openArray[tuple[path, why: string]]): string =
+  ## One line under the totals when a file or a trace could not be read, or ""
+  ## when none could not. A reason that starts with "trace " is one trace; any
+  ## other reason is one file.
+  if rows.len == 0: return ""
+  var files, traces = 0
+  for row in rows:
+    if row.why.startsWith("trace "): inc traces
+    else: inc files
+  let filePart = if files > 0: plural(files, "file", "files") else: ""
+  let tracePart = if traces > 0: plural(traces, "trace", "traces") else: ""
+  if files > 0 and traces > 0: filePart & " and " & tracePart & " could not be read."
+  elif files > 0: filePart & " could not be read."
+  else: tracePart & " could not be read."
 
 func countLabel*(what: string; n: int): string =
   ## A button label with its count.

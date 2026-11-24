@@ -7,6 +7,10 @@
 ## Seen to fail: with the Reports item left enabled when no folder is open
 ## (no disabled mark), "Reports is inactive without a folder did not happen".
 ##
+## Seen to fail: titles clipped in the stations table; totals said "1 files,
+## 1 records, 2 traces"; the Records tab looked selected while that table showed
+## Line, Point, Index; unread files were only in the Unread list.
+##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
 import std/[math, monotimes, options, os, strutils, tables]
@@ -84,8 +88,11 @@ proc main*() =
     createDir(fx.dir / "cache")
     createDir(fx.dir / "config")
     createDir(fx.dir / "logs")
-    let shot = currentSourcePath().parentDir.parentDir / ".scratch" / "quality-window.png"
-    createDir(shot.parentDir)
+    let scratch = currentSourcePath().parentDir.parentDir / ".scratch"
+    let shot = scratch / "quality-window.png"
+    let stationsShot = scratch / "quality-stations.png"
+    let recordsShot = scratch / "quality-records.png"
+    createDir(scratch)
 
     var asked: seq[DialogKind]
     var answer: seq[string]
@@ -173,7 +180,19 @@ proc main*() =
 
     proc totalsMatch(f: FrameInfo): bool =
       scanOnce(f)
-      f.markOf(expectedTotals).size.x > 0
+      if f.markOf(expectedTotals).size.x == 0: return false
+      var plural = false
+      for name in f.markNames("quality.totalsline "):
+        if "1 file, 1 record, 2 traces" in name: plural = true
+      var note = false
+      for name in f.markNames("quality.unreadnote "):
+        if "1 file could not be read" in name: note = true
+      doAssert plural, "totals were not singular: " & $f.markNames("quality.totalsline ")
+      doAssert note, "no unread line: " & $f.markNames("quality.unreadnote ")
+      doAssert f.markOf("quality.header Line").size.x > 0, "stations table has no Line column"
+      doAssert f.markOf("quality.header Dead").size.x > 0, "Dead header missing"
+      doAssert f.savePng(stationsShot), "stations shot was not written"
+      true
     step("the totals match an independent scan", noop, totalsMatch)
 
     var exportClicked = false
@@ -211,6 +230,29 @@ proc main*() =
       if result:
         doAssert f.savePng(shot), "the screenshot was not written"
     step("the filter shows the all-zero station", startFilter, filtered)
+
+    var tabPhase = 0
+    proc checkTabs(f: FrameInfo) = tabPhase = 0
+    proc tabsShown(f: FrameInfo): bool =
+      case tabPhase
+      of 0:
+        f.click(f.markOf("quality.tab Stations").centre)
+        inc tabPhase
+      of 1:
+        if f.markOf("quality.header Line").size.x > 0 and
+            f.markOf("quality.header File").size.x == 0:
+          f.click(f.markOf("quality.tab Records").centre)
+          inc tabPhase
+      of 2:
+        if f.markOf("quality.header File").size.x == 0 and wait mod 8 == 0:
+          f.click(f.markOf("quality.tab Records").centre)
+        if f.markOf("quality.header File").size.x > 0 and
+            f.markOf("quality.header Line").size.x == 0:
+          doAssert f.savePng(recordsShot), "records shot was not written"
+          return true
+      else: discard
+      false
+    step("each tab shows its table", checkTabs, tabsShown)
 
     proc recordsTab(f: FrameInfo) = f.click(f.markOf("quality.tab Records").centre)
     proc recordsShown(f: FrameInfo): bool =

@@ -1,6 +1,7 @@
 ## The Trace quality window: a scan of the open folder (subfolders included),
-## two tables, and a CSV export. The totals wrap. The table fills the rest of
-## the window; a box above it narrows the rows.
+## two tables, and a CSV export. The totals wrap. A line under them names files
+## or traces that could not be read, when any could not. The table fills the
+## rest of the window; a box above it narrows the rows.
 ##
 ## The scan is a background job. The window reads its sink only after the job
 ## is no longer running. A cancel leaves the tables already shown. Listing uses
@@ -363,12 +364,15 @@ proc headerCell(name: string; place: int; marks: var Marks; sentence = ""): bool
 const
   tableFlags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_ScrollY.cint or
     ImGui_TableFlags_ScrollX.cint or ImGui_TableFlags_Resizable.cint or
-    ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_SizingStretchProp.cint
+    ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_SizingFixedFit.cint
+  tabFlags = ImGui_TabBarFlags_DrawSelectedOverline.cint
 
 proc setupColumns(names: openArray[string]) =
+  let extra = igGetFontSize() * 1.5
   for i, name in names:
-    igTableSetupColumn(name.cstring, ImGui_TableColumnFlags_WidthStretch.cint,
-      if i == 0: 3 else: 1, ImGuiID(i + 1))
+    let w = igCalcTextSize(name.cstring, nil, false, -1).x + extra
+    igTableSetupColumn(name.cstring, ImGui_TableColumnFlags_WidthFixed.cint, w,
+      ImGuiID(i + 1))
   igTableSetupScrollFreeze(1, 1)
   igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
 
@@ -439,8 +443,7 @@ proc drawStations(ui: var QualityUi; marks: var Marks) =
   setupColumns(names)
   for c, name in names:
     if igTableSetColumnIndex(cint(c)):
-      let sentence = if keys[c] == ssKilled: KilledTip elif keys[c] == ssBad: BadTip else: ""
-      if headerCell(name, placeOf(ui.stationSort, keys[c]), marks, sentence):
+      if headerCell(name, placeOf(ui.stationSort, keys[c]), marks, headerTip(name)):
         clickSort(ui.stationSort, keys[c], igGetIO_Nil().KeyShift)
         ui.stationDirty = true
         ui.stationKey = ""
@@ -498,8 +501,7 @@ proc drawRecords(ui: var QualityUi; st: AppState; marks: var Marks; commands: va
   setupColumns(names)
   for c, name in names:
     if igTableSetColumnIndex(cint(c)):
-      let sentence = if keys[c] == rsKilled: KilledTip elif keys[c] == rsBad: BadTip else: ""
-      if headerCell(name, placeOf(ui.recordSort, keys[c]), marks, sentence):
+      if headerCell(name, placeOf(ui.recordSort, keys[c]), marks, headerTip(name)):
         clickSort(ui.recordSort, keys[c], igGetIO_Nil().KeyShift)
         ui.recordDirty = true
         ui.recordKey = ""
@@ -566,6 +568,21 @@ proc drawProgress(ui: QualityUi; commands: var seq[Command]; marks: var Marks) =
     commands.add Command(kind: ckCancelJob, job: ui.scanJob)
   marks.mark("quality.cancel")
 
+proc drawFiltered(ui: var QualityUi; st: AppState; marks: var Marks;
+    commands: var seq[Command]) =
+  if not ui.have: return
+  let recordsTab = ui.tab == qtRecords
+  let hint = IconFilter & "  " & (if recordsTab: FilterRecords else: FilterStations)
+  let id = if recordsTab: "##filterrecords" else: "##filterstations"
+  let buf = if recordsTab: addr ui.recordFilter[0] else: addr ui.stationFilter[0]
+  igSetNextItemWidth(-1)
+  discard igInputTextWithHint(id.cstring, hint.cstring, cast[cstring](buf),
+    csize_t(ui.stationFilter.len), 0, nil, nil)
+  marks.mark("quality.filter")
+  tip(if recordsTab: FilterRecordsTip else: FilterStationsTip)
+  if ui.tab == qtStations: ui.drawStations(marks)
+  else: ui.drawRecords(st, marks, commands)
+
 proc drawQuality*(ui: var QualityUi; title: string; st: AppState; marks: var Marks): QualityOutput =
   ## The window titled `title`. A scan asked for since the last draw starts here.
   ui.consider(st)
@@ -592,6 +609,13 @@ proc drawQuality*(ui: var QualityUi; title: string; st: AppState; marks: var Mar
       igTextUnformatted(totalsLine(ui.report.totals).cstring, nil)
       igPopTextWrapPos()
       marks.mark(totalsMark(ui.report.totals))
+      marks.mark("quality.totalsline " & totalsLine(ui.report.totals))
+      if ui.unread.len > 0:
+        let note = unreadNote(ui.unread)
+        igPushTextWrapPos(0)
+        igTextUnformatted(note.cstring, nil)
+        igPopTextWrapPos()
+        marks.mark("quality.unreadnote " & note)
     let unreadLabel = countLabel(UnreadFiles, ui.unread.len)
     if ui.scanning: drawProgress(ui, result.commands, marks)
     else:
@@ -619,31 +643,21 @@ proc drawQuality*(ui: var QualityUi; title: string; st: AppState; marks: var Mar
     var unreadLines: seq[string] = @[]
     for row in ui.unread: unreadLines.add row.path & " — " & row.why
     drawPopup("##unread", NoneUnread, "quality.unreadline ", unreadLines, marks)
-    if igBeginTabBar("##qualitytabs", 0):
+    if igBeginTabBar("##qualitytabs", tabFlags):
       marks.mark("quality.tab")
       let stationsOn = igBeginTabItem(StationsTab.cstring, nil, 0)
       marks.mark("quality.tab Stations")
       if stationsOn:
         ui.tab = qtStations
+        ui.drawFiltered(st, marks, result.commands)
         igEndTabItem()
       let recordsOn = igBeginTabItem(RecordsTab.cstring, nil, 0)
       marks.mark("quality.tab Records")
       if recordsOn:
         ui.tab = qtRecords
+        ui.drawFiltered(st, marks, result.commands)
         igEndTabItem()
       igEndTabBar()
-    if ui.have:
-      let recordsTab = ui.tab == qtRecords
-      let hint = IconFilter & "  " & (if recordsTab: FilterRecords else: FilterStations)
-      let id = if recordsTab: "##filterrecords" else: "##filterstations"
-      let buf = if recordsTab: addr ui.recordFilter[0] else: addr ui.stationFilter[0]
-      igSetNextItemWidth(-1)
-      discard igInputTextWithHint(id.cstring, hint.cstring, cast[cstring](buf),
-        csize_t(ui.stationFilter.len), 0, nil, nil)
-      marks.mark("quality.filter")
-      tip(if recordsTab: FilterRecordsTip else: FilterStationsTip)
-      if ui.tab == qtStations: ui.drawStations(marks)
-      else: ui.drawRecords(st, marks, result.commands)
     marks.markOverflow("quality")
   ui.focus.settle()
   igEnd()

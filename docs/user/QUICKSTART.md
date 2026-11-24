@@ -301,9 +301,9 @@ when the window is narrow: files, records, traces, killed, bad, stations, and ea
 finding. A killed trace is counted as killed, not as bad, and it is not measured.
 
 **Rescan** runs the scan again. While one is running, that button is **Cancel** and a
-progress bar shows how far the scan is. **Unread** lists files that were not seismic or
-could not be read, each with the reason. **totals in a second file** sits next to
-**Export CSV...**.
+progress bar shows how far the scan is. When a file or a trace could not be read, a line
+under the totals says how many. **Unread** opens that list, each with the reason.
+**totals in a second file** sits next to **Export CSV...**.
 
 The **Stations** tab is one row per receiver station and component: how many traces
 were seen, how many were killed, how many were bad, and the count of each finding.
