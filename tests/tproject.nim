@@ -39,7 +39,11 @@
 ## dropped, `(futurePart 1)` was not written back inside the part; with an
 ## extra child of pad, text or the chosen label taken as a missing value, the
 ## pattern or the choice was left out; with an extra child of a separator
-## taken as a bad separator, the pattern was left out.
+## taken as a bad separator, the pattern was left out. With a refusal that
+## did not name the pattern, a bad separator on "Line" said nothing of "Line";
+## with the control-character sentence left as "holds no", a tab in a label
+## said the opposite; with "32th", the limit sentence was wrong; with a long
+## choice said missing, its first 20 characters were not quoted.
 
 import std/[options, os, strutils, times]
 import parseSEG
@@ -460,6 +464,43 @@ proc main*() =
     doAssert problems.len == 0 and ch.outputPattern == "Line" and ch.outputPatterns.len == 1, $problems
     let chText = projectDocument(ch)
     doAssert "(outputPattern \"Line\")" in chText and "futureChoice" notin chText, chText
+
+  block refusalSentences:
+    var problems: seq[string] = @[]
+    proc readDoc(body: string): ProjectDoc =
+      problems.setLen 0
+      readProject("(project (version 1) (name \"h\") " & body & ")", "project.nif", problems)
+    proc said(text: string) =
+      doAssert problems.len == 1 and problems[0] == "project.nif line 1: " & text, $problems
+    let sep = readDoc("(outputPatterns (pattern \"Line\" (separator \"x\") (part \"srcLine\")))")
+    doAssert sep.outputPatterns.len == 0
+    said("the name pattern \"Line\": a name pattern's separator is \".\", \"_\" or \"-\"; " &
+      "it is left out")
+    let wide = readDoc("(outputPatterns (pattern \"Line\" (part \"srcLine\" (pad 13))))")
+    doAssert wide.outputPatterns.len == 0
+    said("the name pattern \"Line\": Source line's width is from 0 to 12; it is left out")
+    let tabbed = readDoc("(outputPatterns (pattern \"Li\\tne\" (part \"srcLine\")))")
+    doAssert tabbed.outputPatterns.len == 0
+    said("the name pattern \"Li\tne\": the label has a control character; it is left out")
+    let unnamed = readDoc("(outputPatterns (pattern (part \"srcLine\")))")
+    doAssert unnamed.outputPatterns.len == 0
+    said("a name pattern needs a name; it is left out")
+    var many = "(outputPatterns"
+    for i in 1 .. MaxOutputPatterns + 1:
+      many.add " (pattern \"p" & $i & "\" (part \"record\"))"
+    many.add ")"
+    let got33 = readDoc(many)
+    doAssert got33.outputPatterns.len == MaxOutputPatterns
+    said("At most " & $MaxOutputPatterns & " name patterns are kept; the 1 after the first " &
+      $MaxOutputPatterns & " are left out.")
+    let head = repeat('A', 20)
+    let longChoice = readDoc("(outputPattern \"" & repeat('A', 65) & "\") " &
+      "(outputPatterns (pattern \"Line\" (part \"srcLine\")))")
+    doAssert longChoice.outputPattern.len == 0 and longChoice.outputPatterns.len == 1
+    said("the chosen name pattern \"" & head & "\" is too long; today's naming is used")
+    let huge = readDoc("(outputPattern \"" & repeat('B', MaxPatternName * 4 + 65) & "\")")
+    doAssert huge.outputPattern.len == 0
+    said("the chosen name pattern \"" & repeat('B', 20) & "\" is too long; today's naming is used")
 
   echo "tproject: done"
 

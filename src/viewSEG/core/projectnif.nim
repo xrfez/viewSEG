@@ -58,11 +58,12 @@
 ## `MaxOutputPatterns` patterns, `MaxPatternParts` parts each; a label is at
 ## most `MaxPatternName` characters and a text part at most `MaxPatternText`
 ## bytes. An unknown part word, a label given twice (without regard to case),
-## or a pattern `patternProblem` refuses is said and left out. A child of a
-## pattern, or of a part, that this version does not know is kept and written
-## back. An extra child of a width, a text, a separator or the chosen label
-## is not written back, and does not drop the value that is there. A chosen
-## label that names no pattern reads as none, and is said.
+## or a pattern `patternProblem` refuses is said and left out, naming the
+## pattern when it has a label. A child of a pattern, or of a part, that this
+## version does not know is kept and written back. An extra child of a width,
+## a text, a separator or the chosen label is not written back, and does not
+## drop the value that is there. A chosen label that names no pattern, or one
+## that is too long, reads as none, and is said.
 ##
 ## A station moved during a deployment is
 ## `(stationMoves (move (line ...) (point ...) (index ...) (x ...) (y ...)))`.
@@ -826,11 +827,25 @@ func separatorOf(word: string): Option[NameSeparator] =
 
 func sameLabel(a, b: string): bool = cmpRunesIgnoreCase(a, b) == 0
 
-func leftOut(why: string): string =
-  if why.len == 0: "a name pattern cannot be used; it is left out"
-  elif why[^1] == '.' and why.len > 1: why[0 .. ^2] & "; it is left out."
-  elif why[^1] == '.': "it is left out."
-  else: why & "; it is left out"
+func leftOut(why, label: string): string =
+  ## `why`, naming `label` when there is one. `patternProblem` states the rule
+  ## for a control character ("holds no"); said here as the label having one.
+  var body = why
+  if body == "a name pattern's name holds no control characters":
+    body = "the label has a control character"
+  if label.len > 0:
+    if body.len == 0: body = "a name pattern cannot be used"
+    body = "the name pattern \"" & label & "\": " & body
+  if body.len == 0: "a name pattern cannot be used; it is left out"
+  elif body[^1] == '.' and body.len > 1: body[0 .. ^2] & "; it is left out."
+  elif body[^1] == '.': "it is left out."
+  else: body & "; it is left out"
+
+func chosenTooLong(label: string): string =
+  ## `label` is too long to choose. Quotes its first 20 characters.
+  let head = if validateUtf8(label) < 0: label.runeSubStr(0, 20)
+             else: label[0 ..< min(20, label.len)]
+  "the chosen name pattern \"" & head & "\" is too long; today's naming is used"
 
 proc takeSeparator(k: NifNode; read: var PatternRead): bool =
   if k.kids.len >= 1 and k.kids[0].kind in {nkString, nkIdent}:
@@ -903,10 +918,10 @@ proc readPattern(n: NifNode): PatternRead =
   if name.len == 0:
     result.why = "a name pattern needs a name"
     return
+  result.pattern.name = name
   if name.runeLen > MaxPatternName:
     result.why = "a name pattern's name is at most " & $MaxPatternName & " characters long"
     return
-  result.pattern.name = name
   var nparts = 0
   for i in 1 ..< n.kids.len:
     let k = n.kids[i]
@@ -944,7 +959,7 @@ proc outputPatterns(r: var Reading; n: NifNode; d: var ProjectDoc) =
       if got.len >= MaxOutputPatterns: inc over
       else:
         let read = readPattern(c)
-        if not read.ok: r.problem(c, leftOut(read.why))
+        if not read.ok: r.problem(c, leftOut(read.why, read.pattern.name))
         elif labelTaken(got, read.pattern.name):
           r.problem(c, "the name pattern \"" & read.pattern.name &
             "\" is given twice; the first counts.")
@@ -954,20 +969,21 @@ proc outputPatterns(r: var Reading; n: NifNode; d: var ProjectDoc) =
     elif c.kind == nkTree: rest.add c
     else: r.problem(c, "(outputPatterns) holds patterns")
   if over > 0:
-    r.problem(n, "at most " & $MaxOutputPatterns & " name patterns are kept; the " &
-      $over & " after the " & $MaxOutputPatterns & "th are left out.")
+    r.problem(n, "At most " & $MaxOutputPatterns & " name patterns are kept; the " &
+      $over & " after the first " & $MaxOutputPatterns & " are left out.")
   d.outputPatterns = got
   d.outputPatternLater = later
   d.outputPatternsLater = rest
 
 proc settleChoice(r: var Reading; d: var ProjectDoc; choice: NifNode; saw: bool) =
   ## A chosen label that names no kept pattern reads as none, with a sentence.
+  ## One that is too long is said, quoting its first 20 characters.
   if not saw: return
   let label = strip(d.outputPattern)
   d.outputPattern = ""
   if label.len == 0: return
   if label.runeLen > MaxPatternName:
-    r.problem(choice, "the chosen name pattern is not in this project; today's naming is used")
+    r.problem(choice, chosenTooLong(label))
     return
   for p in d.outputPatterns:
     if sameLabel(p.name, label):
@@ -1020,7 +1036,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
           choiceNode = c
           sawChoice = true
         elif c.kids.len >= 1 and c.kids[0].kind == nkString:
-          r.problem(c, "the chosen name pattern is not in this project; today's naming is used")
+          r.problem(c, chosenTooLong(c.kids[0].text))
         else:
           r.problem(c, "(outputPattern) needs a string")
       of "breakModel":
