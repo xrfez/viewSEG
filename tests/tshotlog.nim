@@ -15,7 +15,8 @@
 ## With no decimal-comma reading, `decimalComma` leaves `1,5` unparsed.
 ## With no leap-second problem, `leapSecond` keeps the rolled instant and
 ## reports nothing. A per-cell copy in `shots` took 1232 ms and
-## 30000005 allocations on 100000 rows of 30 numbers.
+## 30000005 allocations on 100000 rows of 30 numbers. With `setCell`
+## returning void, `oneLine` cannot refuse a newline.
 
 import std/[math, options, os, strutils]
 import viewSEG/core/shotlog
@@ -229,10 +230,10 @@ proc main*() =
     let raw = "a,b\n1,2\n3,4\n"
     let log = parseShotLog(raw, dlComma)
     doAssert log.toText == raw and not log.changed
-    log.setCell(0, 1, "9")
+    doAssert log.setCell(0, 1, "9")
     doAssert log.cell(0, 1) == "9" and log.cell(1, 1) == "4" and log.changed
     doAssert log.toText == "a,b\n1,9\n3,4\n"
-    log.setCell(0, 1, "a,b")
+    doAssert log.setCell(0, 1, "a,b")
     doAssert log.toText == "a,b\n1,\"a,b\"\n3,4\n"
     log.revert(0, 1)
     doAssert log.cell(0, 1) == "2" and log.toText == raw and not log.changed
@@ -428,8 +429,16 @@ proc main*() =
     doAssert quoted.rows[0].sequence.get == 2
     var m = mapOf([crShotPoint], header = false)
     let log = parseShotLog("1\n", m)
-    log.setCell(0, 0, "4.5")
+    doAssert log.setCell(0, 0, "4.5")
     doAssert shots(log, m).rows[0].shotPoint == 4.5
+
+  block oneLine:
+    let log = parseShotLog("a,b\n1,2\n", dlComma)
+    doAssert not log.setCell(0, 1, "x\ny")
+    doAssert not log.setCell(0, 1, "x\ry")
+    doAssert log.cell(0, 1) == "2"
+    doAssert log.toText == "a,b\n1,2\n"
+    doAssert not log.changed
 
   echo "tshotlog ok"
 

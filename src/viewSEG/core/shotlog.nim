@@ -12,9 +12,9 @@
 ## fault is a `ShotProblem`, not an exception. The first 100 are kept and
 ## `count` is the rest as well.
 ##
-## `setCell` overlays a changed cell. `toText` writes the log back with the
-## same delimiter and the same header; an unedited log is the text that was
-## parsed, byte for byte.
+## `setCell` overlays one line on a cell and refuses a newline. `toText`
+## writes the log back with the same delimiter and the same header; an
+## unedited log is the text that was parsed, byte for byte.
 
 import std/[hashes, math, options, parseutils, strutils, tables]
 import parseSEG
@@ -518,10 +518,13 @@ proc cell*(log: ShotLog; row, col: int): string {.raises: [].} =
   if col < 0 or col >= count: return ""
   unquoteRange(log.text, log.fieldStart[base + col].int, log.fieldStop[base + col].int)
 
-proc setCell*(log: ShotLog; row, col: int; text: sink string) {.raises: [].} =
+proc setCell*(log: ShotLog; row, col: int; text: sink string): bool {.raises: [].} =
   ## Remembers `text` as the cell a later `cell` and `toText` use, without
-  ## rewriting the stored file text.
+  ## rewriting the stored file text. One line: a newline is refused, the
+  ## cell is left unchanged, and the result is false.
+  if '\n' in text or '\r' in text: return false
   log.edits[cellKey(row, col)] = text
+  true
 
 proc revert*(log: ShotLog; row, col: int) {.raises: [].} =
   ## Drops the overlay on one cell. A cell that was not changed is left as it is.
