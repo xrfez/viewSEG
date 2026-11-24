@@ -9,7 +9,7 @@
     "processSEG": {
       "dir": "$deps/processSEG",
       "url": "https://github.com/xrfez/processSEG",
-      "commit": "8c907fdd592a0fe710a444e3412bafcb7d333877",
+      "commit": "9695240742485625daf4099d7e8fdfbf18e83d22",
       "version": ""
     },
     "Arraymancer": {
