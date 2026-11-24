@@ -5,7 +5,9 @@
 ##
 ## - the survey files named on the command line are drawn at fit, every
 ##   source in the sources' colour and every receiver in the receivers' at
-##   the pixel equal aspect puts it on, the background between them;
+##   a pixel inside the disc equal aspect puts it on (not under the scale
+##   bar or the north arrow; a disc those cover wholly still shows through
+##   them), the background between them;
 ## - the axes show no values: the margins beside and below the plot are a
 ##   few pixels of one or two colours, and the plot area holds still;
 ## - the click that brings the window forward selects nothing;
@@ -31,19 +33,22 @@
 ##   receiver on the map.
 ##
 ## Seen to fail: with the sources' draw left out of the frame, "colours at
-## fit" found the background at the first source; with the wheel zooming
-## about the view's centre, "wheel zooms about the pointer" found the source
-## 112 pixels from where it was; with the box select's points not sent, "a
-## Shift drag selects" found no point selected; with the axes' values back,
-## "no values on the axes" found a left margin of 94 px; with a Ctrl press
-## always starting the ruler (as it did), "Ctrl + click adds the point"
-## found 1 point selected; with a plain drag not measuring under the Ruler
-## button, "a plain drag measures" found no reading; with a Ctrl drag not
-## turning the Ruler on, "a Ctrl drag measures" found the button off; with
-## the second Ruler click aimed off the button, "the Ruler button turns it
-## on did not happen" names the button rectangle when it was marked, when it
-## was clicked, and on the last frame, whether that rectangle lies inside the
-## window, the pointer, the frames waited, rulerOn and the window size.
+## fit" found the background at the first source; with the colour check
+## reading the centre pixel while the scale bar covers it, "colours at fit"
+## found 249,231,232 there (the bar's white over the source) on a short map;
+## with the wheel zooming about the view's centre, "wheel zooms about the
+## pointer" found the source 112 pixels from where it was; with the box
+## select's points not sent, "a Shift drag selects" found no point selected;
+## with the axes' values back, "no values on the axes" found a left margin of
+## 94 px; with a Ctrl press always starting the ruler (as it did), "Ctrl +
+## click adds the point" found 1 point selected; with a plain drag not
+## measuring under the Ruler button, "a plain drag measures" found no reading;
+## with a Ctrl drag not turning the Ruler on, "a Ctrl drag measures" found
+## the button off; with the second Ruler click aimed off the button, "the
+## Ruler button turns it on did not happen" names the button rectangle when
+## it was marked, when it was clicked, and on the last frame, whether that
+## rectangle lies inside the window, the pointer, the frames waited, rulerOn
+## and the window size.
 ## `hovered` there is the last mark whose rectangle contains the pointer (a
 ## mark drawn over the whole work area wins over the button), and `id` is
 ## ImGui's hovered item id, not a window id. The same line names the hovered
@@ -91,6 +96,52 @@ proc screen(f: FrameInfo; x, y: float64): Vec2 =
 proc pixel(f: FrameInfo; at: Vec2): Rgba = f.readPixel(int(floor(at.x)), int(floor(at.y)))
 
 func same(a, b: Rgba): bool = a.r == b.r and a.g == b.g and a.b == b.b
+
+proc panelCovers(f: FrameInfo; p: Vec2): bool =
+  ## The scale bar or the north arrow is drawn over framebuffer pixel `p`.
+  f.markOf("map.scale bar").contains(p) or f.markOf("map.north").contains(p)
+
+proc checkStation(f: FrameInfo; x, y, spacing: float64; want, background: Rgba;
+    what: string) =
+  ## Survey point (`x`, `y`), whose points lie about `spacing` apart, is on
+  ## the plot and drawn in `want`. The pixel checked is inside the disc (in
+  ## from the edge smoothed over a pixel) and not under a panel. When a
+  ## panel covers the whole disc, the centre is not the bare `background`:
+  ## the disc was drawn under the panel.
+  let at = f.screen(x, y)
+  doAssert f.mapWindow.mapPlot.contains(at), what & " is off the map at " & $at
+  let fb = igGetIO_Nil().DisplayFramebufferScale.x
+  let radius = markerSize(spacing, f.mapWindow.mapShown.perPixel * float64(fb)) * fb / 2
+  let solid = max(radius - 0.5'f32, 0'f32)
+  let reach = int(ceil(solid))
+  let (cx, cy) = (int(floor(at.x)), int(floor(at.y)))
+  var nearD = high(float32)
+  var uncovered = false
+  var matched = false
+  var nearest = Rgba()
+  for dy in -reach .. reach:
+    for dx in -reach .. reach:
+      let (px, py) = (cx + dx, cy + dy)
+      if px in 0 ..< f.width and py in 0 ..< f.height:
+        let mid = vec2(float32(px) + 0.5'f32, float32(py) + 0.5'f32)
+        let d = hypot(mid.x - at.x, mid.y - at.y)
+        let p = vec2(float32(px), float32(py))
+        if d <= solid and not f.panelCovers(p):
+          let c = f.readPixel(px, py)
+          if d < nearD:
+            nearD = d
+            nearest = c
+          uncovered = true
+          if same(c, want): matched = true
+  if uncovered:
+    doAssert matched, what & ": " & $nearest & ", wanted " & $want
+  else:
+    let p = vec2(float32(cx), float32(cy))
+    doAssert f.panelCovers(p), what & " has no pixel inside its marker at " & $at &
+      " (radius " & $radius & ")"
+    doAssert cx in 0 ..< f.width and cy in 0 ..< f.height, what & " is off the frame"
+    doAssert not same(f.readPixel(cx, cy), background),
+      what & " is not drawn under the panel at " & $p
 
 func rectInWindow(r: Rect; w, h: int): bool =
   ## The whole of `r` lies in a window `w` by `h` framebuffer pixels. Empty,
@@ -213,14 +264,13 @@ proc runMain() =
       for line in 0 ..< MapSrcLines.len:
         for k in 0 ..< MapSrcPoints:
           let (x, y) = mapSrc(line, k)
-          let c = f.pixel(f.screen(x, y))
-          doAssert same(c, ink.roles[prSource]), "source " & $line & "/" & $k & ": " & $c &
-            ", wanted " & $ink.roles[prSource]
+          f.checkStation(x, y, MapSrcSpacing, ink.roles[prSource], ink.background,
+            "source " & $line & "/" & $k)
       for line in 0 ..< MapRcvLines.len:
         for k in 0 ..< MapRcvPoints:
           let (x, y) = mapRcv(line, k)
-          let c = f.pixel(f.screen(x, y))
-          doAssert same(c, ink.roles[prReceiver]), "receiver " & $line & "/" & $k & ": " & $c
+          f.checkStation(x, y, MapRcvSpacing, ink.roles[prReceiver], ink.background,
+            "receiver " & $line & "/" & $k)
       # between the lines: the background
       let empty = f.pixel(f.screen(OriginX + MapRcvSpacing * 2, OriginY + MapLineGap / 2))
       doAssert same(empty, ink.background), $empty
