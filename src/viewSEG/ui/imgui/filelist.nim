@@ -26,8 +26,8 @@
 
 import std/[algorithm, os, strutils, tables, times]
 import imguin/cimgui
-import ../../core/[geometry, state]
-import ../../view/[filetable, theme]
+import ../../core/[geometry, recordingkind, state, traceorder]
+import ../../view/[filetable, recordingwords, theme]
 import chrome, focus, icons, listkeys, menus, style
 
 const NameChars = 16 ## the Name column is never narrower than this many characters
@@ -247,7 +247,7 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   let only = sweeps and ui.seismic == 0
   var heads = @["Name"]
   if tree: heads.add "Folder"
-  heads.add ["Type", "Kind", "Size", "Modified"]
+  heads.add ["Type", "Kind", "Order", "Size", "Modified"]
   if sweeps:
     for c in SweepColumns: heads.add $c
   let id = "##files" & (if tree: "tree" else: "") & (if only: "only" elif sweeps: "sweep" else: "")
@@ -257,15 +257,22 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   let em = igGetFontSize()
   let arrow = 1.2 * em # the sort arrow beside a header
   proc textWidth(s: string): float32 = igCalcTextSize(s.cstring, nil, false, -1).x
-  let kindWidth = textWidth("Time-sliced") + arrow
+  # (the widest word the column can show, "?" and its title included, and the sort arrow)
+  var kindWidth = max(textWidth("?"), textWidth("Kind")) + arrow
+  for k in RecordingKind: kindWidth = max(kindWidth, textWidth(kindShort(k)) + arrow)
+  var orderWidth = max(textWidth("?"), textWidth("Order")) + arrow
+  for g in TraceGrouping:
+    for o in TraceSubSort: orderWidth = max(orderWidth,
+      textWidth(orderShort(TraceOrder(grouping: g, subSort: o))) + arrow)
   let cell = 2 * igGetStyle().CellPadding.x + 1 # its padding and the border between columns
   var needed = textWidth("0".repeat(NameChars)) + cell
   if tree: needed += textWidth("0".repeat(NameChars div 2)) + cell
   if not sweeps:
     let typeWidth = max(textWidth(if ui.signatures > 0: $fkDat else: $fkSegd),
       textWidth("Type") + arrow)
-    needed += typeWidth + kindWidth + max(textWidth("999.9 MB"), textWidth("Size") + arrow) +
-      max(textWidth("2026-10-20"), textWidth("Modified") + arrow) + 4 * cell
+    needed += typeWidth + kindWidth + orderWidth + max(textWidth("999.9 MB"), textWidth("Size") +
+        arrow) +
+      max(textWidth("2026-10-20"), textWidth("Modified") + arrow) + 5 * cell
   let room = igGetContentRegionAvail().x
   let scroll = sweeps or room < needed
   let tableFlags = if scroll: flags or ImGui_TableFlags_ScrollX.cint else: flags
@@ -284,6 +291,8 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   # (the room the longest word of the column needs, and the sort arrow's)
   igTableSetupColumn("Kind", hide or ImGui_TableColumnFlags_WidthFixed.cint, kindWidth,
     uint32(ord(fcKind)))
+  igTableSetupColumn("Order", hide or ImGui_TableColumnFlags_WidthFixed.cint, orderWidth,
+    uint32(ord(fcOrder)))
   igTableSetupColumn("Size", ImGui_TableColumnFlags_PreferSortDescending.cint or hide, 0, 2)
   igTableSetupColumn("Modified", ImGui_TableColumnFlags_PreferSortDescending.cint or hide, 0, 3)
   if sweeps:
@@ -351,7 +360,8 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
         if not igIsItemVisible(): igSetScrollHereY(0.5)
         ui.follow = false
       tip(e.path & "\n" & sizeText(e.size) & ", modified " & dateText(e.modified) &
-        (if kindTip(e).len > 0: "\n" & kindTip(e) else: "") & markText(e) &
+        (if kindTip(e).len > 0: "\n" & kindTip(e) else: "") &
+        (if orderTip(e).len > 0: "\n" & orderTip(e) else: "") & markText(e) &
         (if survey: surveyText(e, st) else: openedText(e, st)) &
         (if failed: "\nIt could not be " & (if survey: "loaded" else: "opened") &
           ": Messages says why." else: ""))
@@ -397,6 +407,8 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
       igTextUnformatted(typeText(e).cstring, nil)
       discard igTableNextColumn()
       igTextUnformatted(kindText(e).cstring, nil)
+      discard igTableNextColumn()
+      igTextUnformatted(orderText(e).cstring, nil)
       discard igTableNextColumn()
       let size = sizeText(e.size)
       let w = igCalcTextSize(size.cstring, nil, false, -1).x

@@ -220,7 +220,7 @@ proc main*() =
     mux.kindState = ksMultiplexed
     list.merge([shot, sliced, cont, none, entry("e.sgd", fkSegd, 1), far, mux])
     doAssert kindText(list.entries[0]) == "Shot" and kindTip(list.entries[0]) == "Shot gather"
-    doAssert kindText(list.entries[1]) == "Time-sliced" and
+    doAssert kindText(list.entries[1]) == "Sliced" and
       kindTip(list.entries[1]) == "Time-sliced receiver gather"
     doAssert kindText(list.entries[2]) == "Continuous" and
       kindTip(list.entries[2]) == "Continuous receiver gather"

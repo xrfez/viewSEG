@@ -262,8 +262,10 @@ proc main*() =
         discard writeSpecs(result, "b sliced", [spec(0, 0), spec(0, 1000), spec(0, 2150),
           spec(0, 3150)])
         discard writeSpecs(result, "c shot", [spec(0, 0), spec(1, 0), spec(2, 0)])
-      const words = ["Continuous", "Time-sliced", "Shot"]
+      const words = ["Continuous", "Sliced", "Shot"]
       let shots = getEnv("VIEWSEG_SCREENSHOTS")
+      let shotWidth = if getEnv("VIEWSEG_SHOT_WIDTH").len > 0: parseInt(getEnv(
+        "VIEWSEG_SHOT_WIDTH")) else: 1280 # the window of the picture of the Files panel
       proc kinds(f: FrameInfo): seq[string] =
         for e in f.core.fileList.entries: result.add kindText(e)
       proc unread(f: FrameInfo): int =
@@ -284,12 +286,13 @@ proc main*() =
           if shots.len == 0: f.stop()
           elif wait > 5:
             createDir(shots)
-            doAssert f.savePng(shots / "files-kind-c.png"), "cannot save the Files panel"
+            doAssert f.savePng(shots / ("files-kind-" & $shotWidth & ".png")),
+              "cannot save the Files panel"
             f.stop()
         if overdue(f.index, 3000, since):
           seen = f.kinds
           f.stop()
-      var code = run(RunOptions(openPaths: @[near], windowSize: (1280, 800),
+      var code = run(RunOptions(openPaths: @[near], windowSize: (shotWidth, 800),
         indexCacheDir: some(fx.dir / "cache"), theme: forceDark,
         userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onNear))
       doAssert code == 0, "run() exit code " & $code

@@ -1,6 +1,6 @@
 ## The short names of the kinds of recording a file can be.
 
-import ../core/recordingkind
+import ../core/[recordingkind, traceorder]
 
 func kindWords*(k: RecordingKind): string =
   ## The name of what a file is, as a noun phrase.
@@ -21,7 +21,7 @@ func kindShort*(k: RecordingKind): string =
   case k
   of rkShotGather: "Shot"
   of rkReceiverContinuous: "Continuous"
-  of rkReceiverSliced: "Time-sliced"
+  of rkReceiverSliced: "Sliced"
 
 func kindTitle*(k: RecordingKind): string =
   ## `kindWords` as a title, for a table cell: "Shot gather".
@@ -29,3 +29,34 @@ func kindTitle*(k: RecordingKind): string =
   of rkShotGather: "Shot gather"
   of rkReceiverContinuous: "Continuous receiver gather"
   of rkReceiverSliced: "Time-sliced receiver gather"
+
+const
+  OrderNotKnownWords* = "The traces are in no order by station or time that holds from " &
+    "one trace to the next, or there are too few to tell."
+    ## what the Order column says of a file whose traces are in no order that can be told
+
+func orderShort*(o: TraceOrder): string =
+  ## The order of the traces in a word or two, for a table cell: "Station", "Flag · station";
+  ## "?" when it is not known.
+  let sub = case o.subSort
+    of tsByStation: "station"
+    of tsByTime: "time"
+    of tsNotKnown: ""
+  if sub.len == 0 or o.grouping == tgNotKnown: "?"
+  else:
+    case o.grouping
+    of tgNone: (if o.subSort == tsByStation: "Station" else: "Time")
+    of tgByFlag: "Flag · " & sub
+    else: "Component · " & sub
+
+func orderTitle*(o: TraceOrder): string =
+  ## The order as a sentence, for a tooltip.
+  if o.subSort == tsNotKnown or o.grouping == tgNotKnown: OrderNotKnownWords
+  else:
+    let sub = if o.subSort == tsByStation: "by station" else: "by time"
+    case o.grouping
+    of tgNone: "Traces are sorted " & sub & "."
+    of tgByFlag:
+      "Traces are grouped by flag (the components of a " &
+        (if o.subSort == tsByStation: "station" else: "time") & " together), sorted " & sub & "."
+    else: "Traces are grouped by component, and inside each component sorted " & sub & "."

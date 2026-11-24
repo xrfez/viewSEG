@@ -33,6 +33,8 @@ type
     fcKind = "Kind"
       ## shot, continuous or time-sliced receiver gather; shown after Type (ImGui matches a
       ## saved column by the hash of its label, not by its number: the place here is free)
+    fcOrder = "Order"
+      ## how the traces are written: by station or time, grouped by flag or component
 
   SweepFilter* = object
     ## What the Files window's tick and drop-downs ask of the signature files.
@@ -101,12 +103,20 @@ func kindRankOf(e: FileEntry): int =
     of rkShotGather: 3
     of rkReceiverSliced: 4
 
+func orderRankOf(e: FileEntry): int =
+  ## The place of a row's order when sorted by the words shown: a file with none first, then
+  ## "?", then the order's grouping and sub-sort.
+  if e.recordingOf.isNone: (if e.kindState in {ksNotKnown, ksMultiplexed}: 1 else: 0)
+  elif not e.traceOrder.isKnown: 1
+  else: 2 + 3 * ord(e.traceOrder.grouping) + ord(e.traceOrder.subSort)
+
 func cmpEntries(a, b: FileEntry; column: FileColumn): int =
   ## By `column` alone: 0 when equal there.
   case column
   of fcName: 0
   of fcType: cmp(kindRank[a.kind], kindRank[b.kind])
   of fcKind: cmp(kindRankOf(a), kindRankOf(b))
+  of fcOrder: cmp(orderRankOf(a), orderRankOf(b))
   of fcSize: cmp(a.size, b.size)
   of fcModified: cmp(a.modified, b.modified)
   of fcFolder: naturalCmp(a.folder, b.folder)
@@ -181,7 +191,7 @@ proc follow(t: var FileTable; list: FileList; changes: openArray[EntryChange]) =
   ## keep their order (only their indices move), and the entries added or
   ## changed are sorted alone and merged in. A row moves only when its entry
   ## changed in what the table sorts by.
-  let moves = t.order.column in {fcType, fcKind, fcSize, fcModified, fcFolder}
+  let moves = t.order.column in {fcType, fcKind, fcOrder, fcSize, fcModified, fcFolder}
   t.touched.setLen 0
   for c in changes:
     case c.kind
@@ -462,6 +472,22 @@ func kindTip*(e: FileEntry): string =
   ## not known; "" while it is not read and for a file with none.
   let k = e.recordingOf
   if k.isSome: kindTitle(k.get)
+  elif e.kindState == ksNotKnown: NotKnownWords
+  elif e.kindState == ksMultiplexed: MultiplexedWords
+  else: ""
+
+func orderText*(e: FileEntry): string =
+  ## What the Order column shows: how the traces are written ("Station", "Flag · time"); "?"
+  ## for a file whose order is not known (or only once it is opened); "" while it is not read
+  ## and for a file with none.
+  if e.recordingOf.isSome: orderShort(e.traceOrder)
+  elif e.kindState in {ksNotKnown, ksMultiplexed}: "?"
+  else: ""
+
+func orderTip*(e: FileEntry): string =
+  ## What the tooltip of a row says of its order, or why it is not known; "" while it is not
+  ## read and for a file with none.
+  if e.recordingOf.isSome: orderTitle(e.traceOrder)
   elif e.kindState == ksNotKnown: NotKnownWords
   elif e.kindState == ksMultiplexed: MultiplexedWords
   else: ""
