@@ -21,7 +21,8 @@
 ## with the sign kept on a zero, `got "-0.sgy" wanted "0.sgy"`; with the
 ## old whole-within-1e-3 window, `got "-0042.sgy" wanted "-0042p0001.sgy"`;
 ## with zero microseconds omitted, `got "19700101T000000Z.sgy" wanted
-## "19700101T000000000000Z.sgy"`.
+## "19700101T000000000000Z.sgy"`; with a dotless extension appended,
+## `named "7sgy" instead of refusing`.
 
 import std/[math, strutils, unicode]
 import viewSEG/core/outputnames
@@ -286,13 +287,34 @@ proc main*() =
     expectProblem(OutputPattern(name: "Shot", separator: nsDot), vals(), ".sgy",
       "The name pattern has no parts.")
 
+  block extension:
+    let p = pat(nsDot, part(npRecord))
+    let v = vals((npRecord, iv(7)))
+    expectProblem(p, v, "sgy", "The extension sgy cannot be used.")
+    expectProblem(p, v, ".", "The extension . cannot be used.")
+    expectProblem(p, v, " ", "The extension " & " " & " cannot be used.")
+    expectProblem(p, v, ".sgy/x", "The extension .sgy/x cannot be used.")
+    expectProblem(p, v, "." & repeat('b', 17),
+      "The extension ." & repeat('b', 17) & " cannot be used.")
+    expectProblem(p, v, "..sgy", "The extension ..sgy cannot be used.")
+    expectProblem(p, v, ".sg_y", "The extension .sg_y cannot be used.")
+    expectProblem(p, v, ".sgy.txt", "The extension .sgy.txt cannot be used.")
+    expectName(p, v, "", "7")
+    expectName(p, v, ".sgy", "7.sgy")
+    expectName(p, v, ".SGY", "7.SGY")
+    expectName(p, v, ".sgy2", "7.sgy2")
+    expectName(p, v, ".a", "7.a")
+    let sixteen = "." & repeat('a', 16)
+    doAssert sixteen.len == 17
+    expectName(p, v, sixteen, "7" & sixteen)
+
   block endsAndLeaf:
     expectProblem(pat(nsDot, part(npRecord)), vals((npRecord, iv(1))), ".",
-      "The file name ends with a dot or a space.")
+      "The extension . cannot be used.")
     expectProblem(pat(nsDot, part(npRecord)), vals((npRecord, iv(1))), " ",
-      "The file name ends with a dot or a space.")
+      "The extension " & " " & " cannot be used.")
     expectProblem(pat(nsDot, part(npRecord)), vals((npRecord, iv(1))), ".sgy/x",
-      "The file name is not a single name.")
+      "The extension .sgy/x cannot be used.")
 
   block patternProblems:
     doAssert patternProblem(pat(nsDot, part(npRecord), name = "  Shot  ")) == ""

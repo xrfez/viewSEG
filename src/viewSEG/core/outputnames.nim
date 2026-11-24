@@ -5,7 +5,8 @@
 ## `render` takes the values a caller already gathered for one file. It
 ## reads nothing, and it never writes a placeholder for a value that is
 ## missing or not the same on every trace. The name it returns is the leaf
-## only, with the extension the caller passed (the dot included, as `.sgy`).
+## only, with the extension the caller passed: empty, or a dot and 1 to 16
+## letters or digits (as `.sgy`). A missing dot is not added.
 
 import std/[math, strutils, unicode]
 
@@ -277,10 +278,22 @@ func renderPiece(part: NamePart; v: NameValue; sep: char): NameResult =
     if why.len > 0: refused(why)
     else: accepted(v.text)
 
+func extensionProblem(ext: string): string =
+  ## "" when `ext` may end a file name: empty, or one dot and 1 to 16
+  ## letters or digits. A missing dot is not added.
+  if ext.len == 0: return ""
+  if ext[0] != '.' or ext.len < 2 or ext.len > 17:
+    return "The extension " & ext & " cannot be used."
+  for i in 1 ..< ext.len:
+    if ext[i] notin Letters + Digits:
+      return "The extension " & ext & " cannot be used."
+  ""
+
 func render*(p: OutputPattern; v: NameValues; extension: string): NameResult {.raises: [].} =
   ## The leaf `p` makes from `v`, with `extension` on the end. `problem` is
   ## one sentence when that file cannot be named, and `name` is then "".
-  ## A width does not cut a wider number. Never raises.
+  ## A width does not cut a wider number. `extension` is empty, or one dot
+  ## and 1 to 16 letters or digits; anything else is refused. Never raises.
   if p.parts.len == 0:
     return refused("The name pattern has no parts.")
   var pieces = newSeq[string]()
@@ -291,6 +304,8 @@ func render*(p: OutputPattern; v: NameValues; extension: string): NameResult {.r
     pieces.add one.name
   let stem = pieces.join($p.separator)
   if isDeviceName(stem): return refused(deviceSentence(stem))
+  let extWhy = extensionProblem(extension)
+  if extWhy.len > 0: return refused(extWhy)
   let leaf = stem & extension
   if leaf.len == 0 or leaf[^1] in {'.', ' '}:
     return refused("The file name ends with a dot or a space.")
