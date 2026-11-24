@@ -1,6 +1,6 @@
 ## Synthetic recordings of known kinds, written as SEG-D, for the tests of what a file is as
-## a recording: `writeSpecs` (a trace per `Spec`, SEG-D Rev 3, 2 ms, one record per trace)
-## and `writeClockRecording` (six traces of one receiver whose vendor block holds each start
+## a recording: `writeSpecs` (a trace per `Spec`, SEG-D Rev 3, 2 ms, one record per trace),
+## `writeSegySpecs` (the same in SEG-Y) and `writeClockRecording` (six traces of one receiver whose vendor block holds each start
 ## time, read through `clockRegistry`); `writeMultiplexed`, a multiplexed SEG-D record.
 
 import std/[options, os]
@@ -19,26 +19,49 @@ func spec*(rcv, first: int; comp = 0; stationed = true; extra = 0): Spec =
   ## `extra` moves the channel number alone: another channel of the same component type.
   (rcv, first, comp, stationed, extra)
 
-proc writeSpecs*(dir, name: string; specs: openArray[Spec]; n = 1000): string =
+func specKeys(i: int; s: Spec; channelPerTrace, coded: bool): TraceKeys =
+  result = initTraceKeys()
+  result.status = tsLive
+  result.record = float64(i + 1)
+  result.channel =
+    if channelPerTrace: float64(i + 1)
+    else: float64(s.rcv * 4 + s.comp + 1 + s.extra * 100)
+  result.component = if coded: uint8(s.comp + 1) else: 0'u8
+  result.intervalUs = 2000
+  result.t0Ms = 0
+  result.time = BaseS + float64(s.first) * SpecDtMs / 1000
+  if s.stationed:
+    result.rcvLine = 1
+    result.rcvPoint = float64(s.rcv + 1)
+
+proc writeSpecs*(dir, name: string; specs: openArray[Spec]; n = 1000;
+    channelPerTrace = false; coded = true): string =
   ## A file of one trace per spec: its receiver, first sample (its start), component.
+  ## `channelPerTrace`: the channel number is the trace number, as some recorders write it;
+  ## `coded` false: every component is 0 (not coded).
   createDir(dir)
   result = dir / (name & ".sgd")
   var w = openSeismicWriter(result, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: n))
   for i, s in specs:
-    var k = initTraceKeys()
-    k.status = tsLive
-    k.record = float64(i + 1)
-    k.channel = float64(s.rcv * 4 + s.comp + 1 + s.extra * 100)
-    k.component = uint8(s.comp + 1)
-    k.intervalUs = 2000
-    k.t0Ms = 0
-    k.time = BaseS + float64(s.first) * SpecDtMs / 1000
-    if s.stationed:
-      k.rcvLine = 1
-      k.rcvPoint = float64(s.rcv + 1)
     var samples = newSeq[float32](n)
     for j in 0 ..< n: samples[j] = float32(s.first + j)
-    w.writeTrace(k, samples)
+    w.writeTrace(specKeys(i, s, channelPerTrace, coded), samples)
+  discard w.close()
+
+proc writeSegySpecs*(dir, name: string; specs: openArray[Spec]; n = 1000;
+    channelPerTrace = false): string =
+  ## `writeSpecs` as a SEG-Y file, one record. SEG-Y keeps no receiver line, so a station
+  ## is placed by its group coordinates.
+  createDir(dir)
+  result = dir / (name & ".sgy")
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+  for i, s in specs:
+    var k = specKeys(i, s, channelPerTrace, coded = true)
+    k.record = 1
+    if s.stationed:
+      k.rcvX = 512_300 + 50 * float64(s.rcv)
+      k.rcvY = 6_401_200
+    w.writeTrace(k, newSeq[float32](n))
   discard w.close()
 
 const

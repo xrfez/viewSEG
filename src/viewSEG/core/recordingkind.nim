@@ -168,7 +168,7 @@ proc planRecording*(file: ptr SeismicFile; source: string; dtMs: float64;
     for i in 0 ..< file[].len:
       let k = result.meta.keys(i)
       result.times[i] = if k.timeOrigin == toFirstSample: k.time - k.t0Ms / 1000 else: k.time
-    result.receivers = receiverIds(file[], withChannel = true)
+    result.receivers = receiverIds(file[], result.times, dtMs / 1000)
   result.streams = initSliceStreams(result.meta, result.times, result.receivers)
 
 proc endToEndTimes*(plan: RecordingPlan): seq[float64] =
@@ -206,15 +206,7 @@ type Seg = object
 
 type Place = StationPlace
 
-func placeOf(k: TraceKeys): Place =
-  ## Where the trace `k` was recorded, as `Place` names it.
-  if not (k.rcvLine.isNaN or k.rcvPoint.isNaN):
-    let s = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
-    (0'i8, s.line, s.point, s.index)
-  elif not (k.rcvX.isNaN or k.rcvY.isNaN) and (k.rcvX != 0 or k.rcvY != 0):
-    (1'i8, k.rcvX, k.rcvY, 0'i16)
-  else:
-    (2'i8, (if k.channel.isNaN: -1.0 else: k.channel), 0.0, 0'i16)
+func placeOf(k: TraceKeys): Place {.inline.} = stationPlace(k)
 
 func stepOf(diffs: seq[int]; len: int): int =
   ## The commonest start difference d, in samples, with 0.9 len <= d <= len (one

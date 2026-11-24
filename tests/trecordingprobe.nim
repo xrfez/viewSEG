@@ -6,7 +6,10 @@
 ## ("abut: some(rkShotGather)"); with the start-of-file probe put back for a file above the
 ## limit, the receiver written last is never seen ("late: (outcome: poKnown, kind:
 ## rkReceiverContinuous)"); with the multiplexed record not looked for in the first read,
-## "mux: (outcome: poKnown, kind: rkShotGather)" (it was opened, a copy demultiplexed).
+## "mux: (outcome: poKnown, kind: rkShotGather)" (it was opened, a copy demultiplexed); with
+## the channel number always part of a receiver, "rising.sgd: (ready: true, ... kind:
+## rkReceiverSliced" (six receivers of one segment); with it never part, "uncoded" reads one
+## receiver ("components: 1").
 
 import std/[assertions, os, strutils, times]
 import parseSEG
@@ -68,6 +71,29 @@ proc main*() =
     let bare = kindOfFile(path, VendorRegistry())
     doAssert bare.outcome == poKnown and bare.kind == whole(path, VendorRegistry()).kind and
       bare != got, $bare
+
+  block a_receiver_whose_channel_rises_per_trace_stays_one:
+    # one station recorded continuously, its channel number the trace number, in SEG-D and
+    # SEG-Y: one receiver, not six of one segment each
+    var specs: seq[Spec] = @[]
+    for i in 0 ..< 6: specs.add spec(0, i * 1000)
+    for path in [writeSpecs(dir, "rising", specs, channelPerTrace = true),
+        writeSegySpecs(dir, "risingy", specs, channelPerTrace = true)]:
+      let f = whole(path, VendorRegistry())
+      doAssert f.kind == rkReceiverContinuous and f.components == 1, path & ": " & $f
+      doAssert f.abutting == 5, path & ": " & $f
+      doAssert kindOfFile(path, VendorRegistry()).kind == f.kind, path
+
+  block uncoded_channels_that_start_together_keep_their_channels:
+    # three channels of one station, every component 0, at each of four starts: the channel
+    # tells them apart, three receivers
+    var specs: seq[Spec] = @[]
+    for i in 0 ..< 4:
+      for c in 0 ..< 3: specs.add spec(0, i * 1000, c)
+    let path = writeSpecs(dir, "uncoded", specs, coded = false)
+    let f = whole(path, VendorRegistry())
+    doAssert f.kind == rkReceiverContinuous and f.components == 3, $f
+    doAssert f.abutting == 9 and f.stations == 1, $f
 
   block not_seismic_unreadable_or_empty:
     createDir(dir)

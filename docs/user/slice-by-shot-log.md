@@ -32,9 +32,12 @@ components of the same type and never re-sorting anything:
    gather."). A file with exactly one live trace is a receiver gather of one segment and is
    continuous. Anything else is a receiver gather.
 2. **Is the receiver gather continuous?** Each trace starts a whole number of trace lengths
-   after the one before it, with no variance. For one receiver (one channel at one point) the
-   traces are taken in time order and those sharing one start time count as one segment (they
-   are its components). The step is the commonest difference between consecutive start times
+   after the one before it, with no variance. For one receiver (one component at one point:
+   its line and point, else its group coordinates) the traces are taken in time order and
+   those sharing one start time count as one segment (they are its components). The channel
+   number tells receivers apart only where two traces of one component at one point start
+   together (uncoded components of one station); otherwise it is left out, so a receiver whose
+   channel number changes from record to record, or rises from trace to trace, is still one. The step is the commonest difference between consecutive start times
    from 0.9 to 1 times the trace length; when none lies there, the commonest difference divided
    by a whole number from 2 to 8 that lies there (every other trace was not recorded); when
    still none, the step is the trace length.
