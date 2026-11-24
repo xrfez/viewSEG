@@ -3,7 +3,8 @@
 ## and none for what is not seismic, cannot be read or has no live trace.
 ##
 ## Seen to fail with a deliberate fault: the probe's answer made always a shot gather
-## ("abut: some(rkShotGather)").
+## ("abut: some(rkShotGather)"); the stop test made the total of segments (8 per receiver
+## seen in all) in place of the fewest starts of one receiver ("perreceiver": continuous).
 
 import std/[assertions, options, os, times]
 import parseSEG
@@ -43,6 +44,14 @@ proc main*() =
     same(dir, "dense", dense, rkReceiverSliced)
     same(dir, "skips", [spec(0, 0), spec(0, 4000), spec(0, 5000), spec(0, 6000),
       spec(0, 47000), spec(0, 48000)], rkReceiverContinuous)
+
+  block every_receiver_needs_its_own_starts:
+    # receiver 0 has 57 segments before receiver 1 shows its first; receiver 1 leaves the
+    # step at its fifth: 16 segments in all must not decide the kind
+    var specs: seq[Spec] = @[]
+    for i in 0 ..< 57: specs.add spec(0, i * 1000)
+    for i in 0 ..< 40: specs.add spec(1, i * 1000 + (if i >= 4: 333 else: 0))
+    same(dir, "perreceiver", specs, rkReceiverSliced)
 
   block the_same_answer_through_a_vendor_clock:
     let reg = clockRegistry(dir / "reg")

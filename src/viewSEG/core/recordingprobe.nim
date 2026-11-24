@@ -37,8 +37,8 @@ proc readPrefix(path: string; count: int64): seq[byte] {.raises: [IOError].} =
     close(f)
 
 func enough(facts: RecordingFacts): bool =
-  ## Every receiver seen has `KindStarts` segments: more traces cannot change the answer.
-  facts.ready and facts.segments >= KindStarts * facts.components
+  ## Every receiver seen has `KindStarts` start times: more traces cannot change the answer.
+  facts.ready and facts.fewestStarts >= KindStarts
 
 proc kindOfFile*(path: string; vendors: VendorRegistry;
     check: proc () {.gcsafe.} = nil): Option[RecordingKind] =
