@@ -259,7 +259,8 @@ proc main*() =
       for s in 0 .. 1:
         let shotUs = shots.shots[s].timeUs
         let zero = o.recordTimeZeroUs(s)
-        doAssert zero.isSome and zero.get == shotUs, "time zero of record " & $s
+        # a carried record's time is its first sample's (start -20 ms)
+        doAssert zero.isSome and zero.get == shotUs - 20_000, "time zero of record " & $s
         let g0 = int((shotUs - 20_000 - BaseUs + DtUs div 2) div DtUs)
         let got = samplesOf(o, s)
         doAssert got.len == 20

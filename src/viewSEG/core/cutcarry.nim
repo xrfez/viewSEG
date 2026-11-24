@@ -14,11 +14,19 @@
 ##
 ## The choice between this and the keys path lives in `openCarry`.
 
-import std/[algorithm, math, options, tables]
+import std/[algorithm, math, options, strutils, tables]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG/continuous/slice
 import ./[segmentclock, vendormaps]
+
+const TriggerTimeField* = "triggerTime"
+  ## The vendor map field, beside `FirstSampleTimeField`, that says when a trace's data
+  ## begin. Both state it, so a trace carried with either unchanged would contradict the
+  ## sliced data: the start time is the instant of the slice's first sample, and the
+  ## trigger time, the instant the recorder was triggered for the data the trace holds, is
+  ## that same instant for a slice, whose data begin at its first sample. Only these two
+  ## are rewritten; any other time field of a vendor block stays as carried.
 
 type
   CarryRows* = object
@@ -26,6 +34,14 @@ type
     ## when the window of a shot has no sample of it in any segment: the
     ## first segment the plan reads of it.
     fallback*: seq[int]
+    rank*: seq[int]
+      ## each receiver's place among the receivers by first appearance in the source:
+      ## the order its trace number keeps in every record
+
+  StartCount* = object
+    ## Traces whose vendor start-time field was rewritten, and those with none to rewrite.
+    rewritten*, missing*: int
+    trigger*, triggerLeft*: int ## the trigger time field: rewritten, and left as carried
 
   CarryShot* = object
     ## The traces of one shot's output record.
@@ -50,6 +66,12 @@ func carryRows*(plan: SlicePlan): CarryRows =
     if result.fallback[r] < 0:
       for pc in plan.pieces(trace):
         if pc.row >= 0 and result.fallback[r] < 0: result.fallback[r] = pc.row
+  var order = newSeq[int](result.fallback.len)
+  for r in 0 ..< order.len: order[r] = r
+  let first = result.fallback
+  order.sort do (a, b: int) -> int: cmp(first[a], first[b])
+  result.rank = newSeq[int](order.len)
+  for n, r in order: result.rank[r] = n
 
 func firstRow(plan: SlicePlan; trace, fallback: int): int =
   ## The source trace that holds the first sample of the window of output
@@ -64,49 +86,58 @@ func firstRow(plan: SlicePlan; trace, fallback: int): int =
 
 proc carryShot*(file: SeismicFile; plan: SlicePlan; rows: CarryRows; shot: int): CarryShot =
   ## The traces of shot `shot` in the order `startSubset` needs (ascending
-  ## source trace), with the trace number each takes in its channel set.
+  ## source trace; a fixed order of the components is not possible, as each
+  ## takes the segment that holds its own first sample). Each component keeps
+  ## one trace number in every record instead: its place among the components
+  ## of its channel set, in the order they first appear in the source.
   let comps = plan.receiverCount
   var pairs: seq[tuple[trace, comp: int]] = @[]
   for r in 0 ..< comps:
     pairs.add (firstRow(plan, shot * comps + r, rows.fallback[r]), r)
   pairs.sort do (a, b: tuple[trace, comp: int]) -> int: cmp(a.trace, b.trace)
-  var inSet = initTable[int, int]()
+  var sets: seq[int] = @[]
   for p in pairs:
     let set = file.findTraceField(p.trace, "trace.channelSetNumber")
-    let key = if set.isSome: int(set.get.toFloat) else: 0
-    inSet[key] = inSet.getOrDefault(key, 0) + 1
+    sets.add(if set.isSome: int(set.get.toFloat) else: 0)
+  for i, p in pairs:
+    var ordinal = 1
+    for j, q in pairs:
+      if sets[j] == sets[i] and rows.rank[q.comp] < rows.rank[p.comp]: inc ordinal
     result.traces.add p.trace
     result.comps.add p.comp
-    result.ordinals.add inSet[key]
+    result.ordinals.add ordinal
 
-proc carryable*(file: SeismicFile; plan: SlicePlan; rows: CarryRows): bool =
-  ## True when the cut can carry the source's headers: a SEG-D source whose
+proc carryRefusal*(file: SeismicFile; plan: SlicePlan; rows: CarryRows): string =
+  ## "" when the cut can carry the source's headers: a SEG-D source whose
   ## slices all come from one record (a subset is made of the traces of one)
   ## that is not in Rev 3 extended recording mode, and every receiver has a
-  ## segment to take its headers from.
-  if file.kind != skSegd or plan.len == 0: return false
+  ## segment to take its headers from. Else the reason, as a clause.
+  if file.kind != skSegd: return "the recording is not SEG-D"
+  if plan.len == 0: return "no trace is read"
   for r in rows.fallback:
-    if r < 0: return false
+    if r < 0: return "a component has no trace that any shot reads"
   let rec = file.traceEntry(plan.tracesNeeded[0]).record
   for t in plan.tracesNeeded:
-    if file.traceEntry(t).record != rec: return false
+    if file.traceEntry(t).record != rec:
+      return "the traces the shots read lie in more than one record of the recording"
   let head = file.index.segdRecords[int(rec)]
-  result = not (head.layout == slRev3 and head.gh3.extendedRecordingMode == 1)
+  if head.layout == slRev3 and head.gh3.extendedRecordingMode == 1:
+    return "the record is in Rev 3 extended recording mode"
 
 proc openCarry*(part: string; file: SeismicFile; plan: SlicePlan; rows: CarryRows;
-    reg: VendorRegistry; w: var SeismicWriter): bool =
-  ## True, with `w` opened like `file`, when the cut is `carryable` and the
-  ## writer accepts the source as a template (it refuses multiplexed data).
-  ## False leaves `w` alone and the cut builds its headers from keys. The
-  ## samples are written as IEEE float32, as the keys path does, whatever the
-  ## source's sample format.
-  if not carryable(file, plan, rows): return false
-  try:
-    w = openSeismicWriter(part, like = file, segdFormat = tf8058)
-    if reg.maps.len > 0: w.useVendorMaps(reg)
-    result = true
-  except ValueError:
-    result = false
+    reg: VendorRegistry; w: var SeismicWriter): string =
+  ## "", with `w` opened like `file`, when the cut has no `carryRefusal` and the
+  ## writer accepts the source as a template (it refuses multiplexed data);
+  ## else the reason, and `w` is left alone: the cut builds its headers from
+  ## keys. The samples are written as IEEE float32, as the keys path does,
+  ## whatever the source's sample format.
+  result = carryRefusal(file, plan, rows)
+  if result.len == 0:
+    try:
+      w = openSeismicWriter(part, like = file, segdFormat = tf8058)
+      if reg.maps.len > 0: w.useVendorMaps(reg)
+    except ValueError as e:
+      result = e.msg.replace(file.path, "the recording")
 
 proc carryBytes*(file: SeismicFile; plan: SlicePlan; rows: CarryRows; shots: int): int64 =
   ## The size of the carried output: per record the source record's header
@@ -146,20 +177,66 @@ func revisionWords*(file: SeismicFile; plan: SlicePlan): string =
 proc isRev3*(file: SeismicFile; trace: int): bool =
   file.index.segdRecords[int(file.traceEntry(trace).record)].layout == slRev3
 
-proc startUnit(file: SeismicFile; trace: int; reg: VendorRegistry): string =
-  ## The unit the vendor map gives the start-time field of `trace`, "" when
-  ## the trace shows none.
+proc fieldUnit(file: SeismicFile; trace: int; reg: VendorRegistry; name: string): string =
+  ## The unit the vendor map gives field `name` of `trace`, "" when the trace shows none.
   for b in vendorTrace(file, trace, reg).blocks:
     for f in b.fields:
-      if f.name == FirstSampleTimeField: return f.unit
+      if f.name == name: return f.unit
+
+func declares*(reg: VendorRegistry; name: string): bool =
+  ## Whether a map of `reg` has a field called `name`.
+  for m in reg.maps:
+    for t in m.targets:
+      for fld in t.fields:
+        if fld.name == name: return true
+      for r in t.repeats:
+        for fld in r.fields:
+          if fld.name == name: return true
+
+proc instantIn(unit: string; firstUs: int64): int64 =
+  ## `firstUs` (UTC microseconds) in the unit and epoch of a time field; 0 for a unit the
+  ## viewer does not convert.
+  case unit
+  of UnitGps: utcUsToGpsUs(firstUs)
+  of UnitUtc: firstUs
+  else: 0'i64
+
+proc hasExtField(file: SeismicFile; trace: int; field: string): bool =
+  ## Whether one of the trace's header extension blocks has `field` (the reader names
+  ## them by position: `ext2`, `ext3`, ...).
+  for n in 2 .. 9:
+    if file.findTraceField(trace, "ext" & $n & "." & field).isSome: return true
+
+proc hasSourceHeader*(file: SeismicFile; trace: int): bool =
+  ## A Rev 2 record's source header (General Header #3).
+  file.findRecordField(int(file.traceEntry(trace).record), "gh3.sourceLineNumber").isSome
+
+proc ownSource*(file: SeismicFile; trace: int): bool =
+  ## The record's own source header names a line or a point other than 0.
+  let rec = int(file.traceEntry(trace).record)
+  for name in ["gh3.sourceLineNumber", "gh3.sourcePointNumber"]:
+    let v = file.findRecordField(rec, name)
+    if v.isSome and v.get.toFloat != 0: return true
+
+proc sourceBlocks*(file: SeismicFile; trace: int): tuple[description, position: bool] =
+  ## Whether a Rev 3 trace has a Source Description block and a Position block, the
+  ## places the shot's source line, point and coordinates are written to.
+  (hasExtField(file, trace, "sourceLineNumber"), hasExtField(file, trace, "tuple1Coord1"))
+
+proc sessionPositions*(file: SeismicFile): bool =
+  ## The session's keys hold receiver positions that did not come from the file's own
+  ## headers (a survey join or a move).
+  if not file.hasKeys: return false
+  for groups in file.index.joinedTraces:
+    if groups.card > 0: return true
+  file.index.joined
 
 proc sourceHeaders*(file: SeismicFile; trace: int; line, point: float64;
     index: int16): seq[HeaderOverride] =
   ## A Rev 2 record's source header (General Header #3) fields for the shot:
   ## the line and point when both are known, the point index when 1 to 255.
   ## Nothing when the record has no source header.
-  let rec = int(file.traceEntry(trace).record)
-  if file.findRecordField(rec, "gh3.sourceLineNumber").isSome:
+  if hasSourceHeader(file, trace):
     if not (line.isNaN or point.isNaN):
       result.add headerOverride("gh3.sourceLineNumber", line)
       result.add headerOverride("gh3.sourcePointNumber", point)
@@ -167,23 +244,27 @@ proc sourceHeaders*(file: SeismicFile; trace: int; line, point: float64;
       result.add headerOverride("gh3.sourcePointIndex", int64(index))
 
 proc traceOverrides*(file: SeismicFile; trace, ordinal: int; firstUs: int64;
-    reg: VendorRegistry; startField, dead: bool; startWritten: var bool): seq[HeaderOverride] =
+    reg: VendorRegistry; startField, dead: bool; counts: var StartCount): seq[HeaderOverride] =
   ## What a written trace changes of its source trace's headers: its number in
   ## its channel set, the instant of its first sample in a Rev 3 timestamp
-  ## block, and, when `startField`, the start time of the vendor block in the
-  ## unit and epoch the map gives it (`startWritten` says it was set); `dead` marks the
-  ## trace dead.
+  ## block (`firstUs`, UTC microseconds), and, when `startField`, the start time of
+  ## the vendor block in the unit and epoch the map gives it (`counts` says how many
+  ## were set and how many traces had none); `dead` marks the trace dead.
   result.add headerOverride("trace.traceNumber", ordinal)
   # A trace no segment reaches is zeros: the trace edit code 1 is how the keys path marks
   # a dead trace (`tsDead`). A trace partly covered stays as the source has it.
   if dead: result.add headerOverride("trace.traceEdit", 1)
-  if file.findTraceField(trace, "timestamp.timeZeroOfData").isSome:
+  if hasExtField(file, trace, "timeZeroOfData"):
     result.add headerOverride("timestamp.timeZeroOfData", utcUsToGpsUs(firstUs))
   if startField:
-    let value = case file.startUnit(trace, reg)
-      of UnitGps: utcUsToGpsUs(firstUs)
-      of UnitUtc: firstUs
-      else: 0'i64
+    let value = instantIn(file.fieldUnit(trace, reg, FirstSampleTimeField), firstUs)
     if value > 0:
       result.add headerOverride("vendor." & FirstSampleTimeField, value)
-      startWritten = true
+      inc counts.rewritten
+    else: inc counts.missing
+  if reg.declares(TriggerTimeField):
+    let value = instantIn(file.fieldUnit(trace, reg, TriggerTimeField), firstUs)
+    if value > 0:
+      result.add headerOverride("vendor." & TriggerTimeField, value)
+      inc counts.trigger
+    else: inc counts.triggerLeft

@@ -19,7 +19,6 @@ type
     bringUp: bool
     logId: int
     recordMs: cdouble
-    startMs: cdouble
     align: SliceAlign
     standard: CutStandard
     folder: string
@@ -81,7 +80,7 @@ proc coloured(text: string; colour: Rgba; width: float32) =
   igPopStyleColor(1)
 
 proc options(ui: CutUi): CutOptions =
-  initCutOptions(ui.recordMs, ui.startMs, ui.align, ui.standard)
+  initCutOptions(ui.recordMs, 0.0, ui.align, ui.standard) # a record begins at the shot
 
 proc sources(ui: var CutUi; st: AppState) =
   ## The shots of the chosen log, worked out again only when it changed.
@@ -136,7 +135,9 @@ proc drawAlign(ui: var CutUi; marks: var Marks) =
   marks.mark("cut.align")
   tip(alignTip(ui.align))
 
-proc drawFormat(ui: var CutUi; marks: var Marks; sourceSegd: bool) =
+proc drawFormat(ui: var CutUi; marks: var Marks; sourceSegd, builtFromOptions: bool) =
+  ## `sourceSegd`: the output SEG-D keeps the source's revision. `builtFromOptions`: the
+  ## source is SEG-D but its headers cannot be carried (the window knows it already).
   if igBeginCombo("Format##cut".cstring, standardWords(ui.standard, sourceSegd).cstring, 0):
     for s in CutStandard:
       if igSelectable_Bool(standardWords(s, sourceSegd).cstring, s == ui.standard, 0,
@@ -145,6 +146,7 @@ proc drawFormat(ui: var CutUi; marks: var Marks; sourceSegd: bool) =
       marks.mark("cut.format " & standardWords(s, sourceSegd))
     igEndCombo()
   marks.mark("cut.format")
+  if builtFromOptions: tip(NoCarry)
   marks.mark("cut.format " & standardWords(ui.standard, sourceSegd) & ".on")
 
 proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw =
@@ -184,8 +186,6 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     marks.mark("cut.length")
     marks.mark("cut.recordMs " & $ui.recordMs)
     igSetNextItemWidth(igGetFontSize() * 10)
-    discard igInputDouble("Start (ms)##cut".cstring, addr ui.startMs, 0, 0, "%.3f".cstring, 0)
-    marks.mark("cut.start")
     let opts = ui.options()
     var problem = ""
     if shown >= 0 and facts.ready:
@@ -202,7 +202,9 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
       coloured(problem, t.roles[rlWarning], wide)
       marks.mark("cut.why " & problem)
     ui.drawAlign(marks)
-    ui.drawFormat(marks, shown >= 0 and st.sessions[shown].facts.summary.standard == skSegd)
+    let segd = shown >= 0 and st.sessions[shown].facts.summary.standard == skSegd
+    let uncarried = segd and facts.ready and facts.carryHeaderBytes == 0
+    ui.drawFormat(marks, segd and not uncarried, uncarried)
     igSeparator()
     wrapped("Folder: " & (if ui.folder.len > 0: ui.folder else: "not chosen"), wide)
     marks.mark("cut.folder " & ui.folder)

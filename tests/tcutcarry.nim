@@ -16,7 +16,7 @@
 import std/[assertions, os, strutils, times]
 import parseSEG
 import parseSEG/model/traceindex
-import parseSEG/segd/[reader, writer, headers, samples]
+import parseSEG/segd/[reader, writer, headers, samples, rev3]
 import parseSEG/io/diskio
 import viewSEG/core/[cutgather, cutgatherjobs, jobs, segmentclock, shotlog, vendormaps]
 import viewSEG/view/cutwords
@@ -41,19 +41,22 @@ const
     "  (target (kind traceExt) (extension 3) (name vendorTag)\n" &
     "    (field tag (at 1) (enc u16))))\n"
 
+var base = BaseUs ## the instant of the recording's first sample
+
 func gpsOf(utcUs: int64): int64 =
   utcUs - GpsEpochUs + Leap * 1_000_000
 
-func sampleUs(k: int): int64 =
-  BaseUs + int64(k) * DtUs
+proc sampleUs(k: int): int64 =
+  base + int64(k) * DtUs
 
 func value(comp, k: int): float32 =
   float32(1000 * comp + k)
 
-proc makeRecording(path: string; comps: int; fmt = sd8058) =
-  ## Rev 2.1, one record: an extended header, a source header, one channel set
-  ## with filter and gain fields set, a trace per segment and component (segment
-  ## by segment), each with two vendor blocks.
+proc makeRecording(path: string; comps: int; fmt = sd8058;
+    missing: seq[(int, int)] = @[]; split = 0) =
+  ## Rev 2.1, one record (two with `split`: the segments from it on are the second): an
+  ## extended header, a source header, one channel set with filter and gain fields set, a
+  ## trace per segment and component (segment by segment), each with two vendor blocks.
   var r = SegdRecord(layout: slRev2, format: some(fmt),
     revision: SegdRevision(major: 2, minor: 1))
   r.gh1 = SegdGeneralHeader1(fileNumber: 5, formatCode: ord(fmt), year: 26,
@@ -68,30 +71,44 @@ proc makeRecording(path: string; comps: int; fmt = sd8058) =
   for i in 0 ..< 32: r.extended[i] = byte(90 + i)
   r.scanTypes = @[SegdScanType(layout: slRev2, descriptors: @[
     SegdChannelSetDescriptor(scanTypeNumber: 1, channelSetNumber: 1, endTime: uint16(SegLen),
-      channelCount: Segments * comps, channelType: 1, traceHeaderExtensions: 3,
+      channelCount: Segments * comps - missing.len, channelType: 1, traceHeaderExtensions: 3,
       aliasFilterFreq: 200, aliasFilterSlope: 72, lowCutFreq: 3, lowCutSlope: 18,
       notch1Freq: 500, gainControl: 3, verticalStack: 1)])]
-  r.traceCount = Segments * comps
-  var all: seq[SegdTrace]
+  r.traceCount = Segments * comps - missing.len
+  var all, all2: seq[SegdTrace]
+  var order: seq[(int, int)] = @[]
   for seg in 0 ..< Segments:
     for c in 0 ..< comps:
-      var t = SegdTrace(layout: slRev2, index: all.len, numSamples: SegLen)
-      t.header = SegdTraceHeader(fileNumber: 5, scanTypeNumber: 1, channelSetNumber: 1,
-        traceNumber: all.len + 1, traceHeaderExtensions: 3'u8)
-      t.ext1 = some SegdTraceHeaderExt1(receiverLineNumber: 2000, receiverPointNumber: 100,
-        receiverPointIndex: 1, samplesPerTrace: uint32(SegLen), sensorType: uint8(2 + c))
-      t.extensions = newSeq[byte](64)
-      for i in 0 ..< 64: t.extensions[i] = byte(31 * all.len + 3 * i + 1)
-      let start = gpsOf(sampleUs(seg * SegLen))
-      for i in 0 .. 7: t.extensions[i] = byte((start shr (8 * (7 - i))) and 255)
-      var v = newSeq[float64](SegLen)
-      for j in 0 ..< SegLen: v[j] = float64(value(c, seg * SegLen + j))
-      t.samples = newSeq[byte](dataBytes(fmt, SegLen))
-      encodeSamples(fmt, v, t.samples)
-      all.add t
+      if (seg, c) notin missing: order.add (seg, c)
+  for (seg, c) in order:
+    let second = split > 0 and seg >= split
+    template list: untyped = (if second: all2 else: all)
+    var t = SegdTrace(layout: slRev2, index: list.len, numSamples: SegLen)
+    t.header = SegdTraceHeader(fileNumber: 5, scanTypeNumber: 1, channelSetNumber: 1,
+      traceNumber: list.len + 1, traceHeaderExtensions: 3'u8)
+    t.ext1 = some SegdTraceHeaderExt1(receiverLineNumber: 2000, receiverPointNumber: 100,
+      receiverPointIndex: 1, samplesPerTrace: uint32(SegLen), sensorType: uint8(2 + c))
+    t.extensions = newSeq[byte](64)
+    for i in 0 ..< 64: t.extensions[i] = byte(31 * list.len + 3 * i + 1)
+    let start = gpsOf(sampleUs(seg * SegLen))
+    for i in 0 .. 7: t.extensions[i] = byte((start shr (8 * (7 - i))) and 255)
+    var v = newSeq[float64](SegLen)
+    for j in 0 ..< SegLen: v[j] = float64(value(c, seg * SegLen + j))
+    t.samples = newSeq[byte](dataBytes(fmt, SegLen))
+    encodeSamples(fmt, v, t.samples)
+    if second: all2.add t else: all.add t
+  var records = @[SegdRecordData(record: r, traces: all)]
+  if split > 0:
+    var r2 = r
+    r2.scanTypes[0].descriptors[0].channelCount = all2.len
+    r2.traceCount = all2.len
+    r2.gh1.fileNumber = 6
+    records[0].record.scanTypes[0].descriptors[0].channelCount = all.len
+    records[0].record.traceCount = all.len
+    records.add SegdRecordData(record: r2, traces: all2)
   let sink = openDiskSink(path)
   try:
-    let log = writeSegd(sink, SegdData(records: @[SegdRecordData(record: r, traces: all)]))
+    let log = writeSegd(sink, SegdData(records: records))
     doAssert log.len == 0, $log
   finally:
     sink.close()
@@ -117,7 +134,7 @@ proc makeSegy(path: string; comps: int) =
       w.writeTrace(k, samples)
   discard w.close()
 
-func shotUs(i: int): int64 =
+proc shotUs(i: int): int64 =
   sampleUs(FirstSamples[i]) - int64(StartMs * 1000) + 123 * int64(i)
 
 proc shotsOf(withFiles: bool): CutShots =
@@ -181,7 +198,8 @@ proc check(dir: string; jobs: Jobs; comps: int; reg: VendorRegistry) =
   doAssert got.st == jsDone, got.error & " / " & got.res.reason
   doAssert got.res.ok and got.res.carried and got.res.shotsWritten == 3 and
     got.res.shotsRefused == 0, $got.res
-  doAssert got.res.revision == "Rev 2.1" and got.res.startRewritten, $got.res
+  doAssert got.res.revision == "Rev 2.1" and got.res.startRewritten == 3 * comps and
+    got.res.startMissing == 0, $got.res
   doAssert "Rev 2.1" in got.res.lines[1] and "headers carried" in got.res.lines[1],
     got.res.lines.join("|")
   doAssert got.res.recordsFromFileNumbers
@@ -209,7 +227,9 @@ proc check(dir: string; jobs: Jobs; comps: int; reg: VendorRegistry) =
       d.channelType == d0.channelType
     # the file number and the time of the shot log
     doAssert rec.gh1.fileNumber == Files[s], "file number of record " & $s
-    let t = fromUnix(shotUs(s) div 1_000_000).utc
+    # the record's time is its first sample's (Rev 2 holds whole seconds)
+    let firstUs = shotUs(s) + int64(StartMs * 1000)
+    let t = fromUnix(firstUs div 1_000_000).utc
     doAssert rec.gh1.year == t.year mod 100 and rec.gh1.julianDay == t.yearday + 1 and
       rec.gh1.hour == t.hour and rec.gh1.minute == t.minute and rec.gh1.second == t.second,
       "time of record " & $s
@@ -217,7 +237,6 @@ proc check(dir: string; jobs: Jobs; comps: int; reg: VendorRegistry) =
       g.recordField(s, "gh3.sourcePointNumber").toFloat == float64(30 + s),
       "source line and point of record " & $s
 
-    let firstUs = shotUs(s) + int64(StartMs * 1000)
     let seg = FirstSamples[s] div SegLen # the segment that holds the first sample
     for c in 0 ..< comps:
       let o = s * comps + c
@@ -234,6 +253,8 @@ proc check(dir: string; jobs: Jobs; comps: int; reg: VendorRegistry) =
       doAssert int(g.traceField(o, "trace.traceNumber").intVal) == c + 1,
         "trace number of trace " & $o
       doAssert int(g.traceField(o, "ext1.receiverPointNumber").intVal) == 100
+      # Rev 2 holds the record time in whole seconds, and the reader gives that as the time
+      doAssert g.traceKeys(o).time == float64(firstUs div 1_000_000), "keys time of trace " & $o
       # the samples are the keys path's, bit for bit
       let mine = samplesOf(g, o)
       let theirs = samplesOf(keys, o)
@@ -352,6 +373,280 @@ proc checkSourceFormat(dir: string; jobs: Jobs) =
     let x = samplesOf(g, s)
     for j in 0 ..< Window: doAssert x[j] == value(0, FirstSamples[s] + j)
 
+proc blockOf(t: uint8): seq[byte] =
+  result = newSeq[byte](32)
+  result[31] = t
+
+proc put64(b: var seq[byte]; at: int; v: int64) =
+  for i in 0 .. 7: b[at + i] = byte((v shr (8 * (7 - i))) and 255)
+
+proc get64(b: openArray[byte]; at: int): int64 =
+  for i in 0 .. 7: result = (result shl 8) or int64(b[at + i])
+
+proc makeRev3(path: string; comps: int) =
+  ## Rev 3.0, one record, a trace per segment and component with a Timestamp block (0x42) and
+  ## a vendor block (0xB0) holding the segment's start in GPS microseconds.
+  let fmt = sd8058
+  var r = SegdRecord(layout: slRev3, format: some(fmt), revision: SegdRevision(major: 3, minor: 0))
+  r.generalBlocks.add blockOf(0x11)
+  r.gh1 = SegdGeneralHeader1(fileNumber: 7, formatCode: ord(fmt), year: 16,
+    additionalGhBlocks: 3, julianDay: 366, manufacturerCode: 77, baseScanInterval16: 32,
+    recordType: 8, recordLength: BcdAllF, scanTypesPerRecord: 1, channelSetsPerScanType: 1,
+    extendedHeaderBlocks: 1)
+  let endUs = int32(DtUs * (SegLen - 1))
+  r.gh2Rev3 = SegdGeneralHeader2Rev3(extFileNumber: 7, revisionMajor: 3,
+    extRecordLength: uint32(endUs), blockType: 2)
+  r.gh3 = SegdGeneralHeader3(timeZero: utcUsToGpsUs(sampleUs(0)), blockType: 3)
+  r.extended = newSeq[byte](32)
+  for i in 0 ..< 32: r.extended[i] = byte(90 + i)
+  r.scanTypes = @[SegdScanType(layout: slRev3, descriptorsRev3: @[
+    SegdChannelSetDescriptorRev3(scanTypeNumber: 1, channelSetNumber: 1, channelType: 0x10,
+      endTime: endUs, numSamples: SegLen, descaleMultiplier: 1.0,
+      channelsInSet: uint32(Segments * comps), samplingInterval: uint32(DtUs),
+      traceHeaderExtensions: 3, verticalStack: 1, blockType1: 0x30, blockType2: 0x31,
+      blockType3: 0x32)])]
+  var all: seq[SegdTrace]
+  for seg in 0 ..< Segments:
+    for c in 0 ..< comps:
+      var t = SegdTrace(layout: slRev3, index: all.len, numSamples: SegLen)
+      t.header = SegdTraceHeader(fileNumber: 7, scanTypeNumber: 1, channelSetNumber: 1,
+        traceNumber: all.len + 1, traceHeaderExtensions: 3)
+      t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(receiverLineNumber: 100,
+        receiverPointNumber: 101, receiverPointIndex: 1, numSamples: SegLen,
+        sensorType: uint8(2 + c), blockType: 0x40)
+      let start = utcUsToGpsUs(sampleUs(seg * SegLen))
+      var ts = blockOf(0x42)
+      ts.put64(0, start)
+      var vendor = blockOf(0xB0)
+      vendor.put64(0, start)
+      for i in 8 .. 30: vendor[i] = byte(31 * all.len + 3 * i + 1)
+      t.extensions = ts & vendor
+      var v = newSeq[float64](SegLen)
+      for j in 0 ..< SegLen: v[j] = float64(value(c, seg * SegLen + j))
+      t.samples = newSeq[byte](dataBytes(fmt, SegLen))
+      encodeSamples(fmt, v, t.samples)
+      all.add t
+  computeRev3Sizes(r, all)
+  r.traceCount = all.len
+  let sink = openDiskSink(path)
+  try:
+    let log = writeSegd(sink, SegdData(records: @[SegdRecordData(record: r, traces: all)]))
+    doAssert log.len == 0, $log
+  finally:
+    sink.close()
+
+const
+  Rev3Map = "(.nif27)\n(vendormap \"carry-test3\" (version 1) (match (format segd) " &
+    "(rev 3.0 3.1) (manufacturer 77))\n  (target (kind block) (type 0xB0) " &
+    "(where traceHeader) (name vendorClock)\n    (field firstSampleTime (at 1) (enc i64) " &
+    "(sentinel 0) (unit \"us GPS\"))))\n"
+
+func rev2Map(trigger: string): string =
+  ## The Rev 2 map with a `triggerTime` field in the second block, in unit `trigger`.
+  result = "(.nif27)\n(vendormap \"carry-test\" (version 1) (match (format segd) " &
+    "(rev 2.0 2.1) (manufacturer 77))\n  (target (kind traceExt) (extension 2) " &
+    "(name vendorClock)\n    (field firstSampleTime (at 1) (enc i64) (sentinel 0) " &
+    "(unit \"us GPS\")))\n  (target (kind traceExt) (extension 3) (name vendorTag)\n" &
+    "    (field tag (at 1) (enc u16))"
+  if trigger.len > 0:
+    result.add "\n    (field triggerTime (at 9) (enc i64) (sentinel 0) (unit \"" & trigger & "\"))"
+  result.add "))\n"
+
+proc publishMaps(dir: string; texts: openArray[string]): VendorRegistry =
+  let folder = dir / ("maps" & $texts.len & $texts[0].len & $texts[^1].len)
+  removeDir(folder)
+  createDir(folder)
+  for i, t in texts: writeFile(folder / ("m" & $i & ".nif"), t)
+  let load = loadVendorFolders(@[VendorFolder(dir: folder, origin: voProject)])
+  doAssert load.registry.maps.len == texts.len, $load.problems
+  publishVendors(load.registry)
+  load.registry
+
+proc checkRev2Time(dir: string; jobs: Jobs) =
+  ## The first sample on a whole second: a Rev 2 record holds whole seconds, and the
+  ## reader gives the first sample's time exactly. Fails with the record time left at
+  ## the shot's ("record time of trace 0 is 0.02 s late").
+  base = BaseUs - 20_000
+  defer: base = BaseUs
+  let reg = publishMaps(dir, [rev2Map("")])
+  let path = dir / "rec" / "t2.sgd"
+  makeRecording(path, 1)
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  let shotUs = BaseUs + 20_000 # first sample 10: start -20 ms, so the sample is at BaseUs
+  var text = "101," & $shotUs & "\n"
+  var m = initShotLogMap()
+  m.hasHeader = false
+  m.roles = @[crFileNumber, crUtcMicros]
+  let sh = shotsInTime(shots(parseShotLog(text, m), m).rows)
+  let got = runCut(jobs, src, path, dir / "out" / "t2.sgd", sh, initCutOptions(LengthMs, StartMs))
+  doAssert got.st == jsDone and got.res.carried, got.error & got.res.reason
+  doAssert "start of -20.0 ms" in got.res.lines.join("|"), got.res.lines.join("|")
+  var g = openSeismic(dir / "out" / "t2.sgd", keys = true)
+  defer: g.close()
+  doAssert g.traceKeys(0).time == float64(BaseUs div 1_000_000) and
+    g.traceKeys(0).time == toPosixSeconds(sampleUs(10)),
+    "record time of trace 0 is " & $(g.traceKeys(0).time - toPosixSeconds(sampleUs(10))) &
+    " s late"
+
+proc checkRev3(dir: string; jobs: Jobs; comps: int; startMs: float64; origin: int64) =
+  ## Rev 3: the Timestamp block, the vendor start and General Header #3's time zero equal
+  ## the slice's first sample to the microsecond, for a start before, at and after the
+  ## shot, also across a GPS leap second (origin 2016-12-31 23:59:59.8 UTC). Fails with the
+  ## Timestamp left at the shot's instant ("timestamp of trace 0 is 20000 us off").
+  base = origin
+  defer: base = BaseUs
+  let reg = publishMaps(dir, [rev2Map(""), Rev3Map])
+  let tag = "r3c" & $comps & "s" & $int(startMs) & "o" & $(origin div 100_000_000_000_000)
+  let path = dir / "rec" / (tag & ".sgd")
+  makeRev3(path, comps)
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  var text = ""
+  for i in 0 ..< 3:
+    text.add $(100 + i) & "," & $(sampleUs(FirstSamples[i]) - int64(startMs * 1000) +
+      123 * int64(i)) & "\n"
+  var m = initShotLogMap()
+  m.hasHeader = false
+  m.roles = @[crFileNumber, crUtcMicros]
+  let sh = shotsInTime(shots(parseShotLog(text, m), m).rows)
+  let dest = dir / "out" / (tag & ".sgd")
+  let got = runCut(jobs, src, path, dest, sh, initCutOptions(LengthMs, startMs))
+  doAssert got.st == jsDone and got.res.carried, got.error & got.res.reason
+  doAssert got.res.startRewritten == 3 * comps and got.res.startMissing == 0, $got.res
+  doAssert (startMs != 0) == ("Each record's time is its first sample's" in
+    got.res.lines.join("|")), got.res.lines.join("|")
+  var g = openSeismic(dest, keys = true)
+  defer: g.close()
+  doAssert g.len == 3 * comps
+  for s in 0 ..< 3:
+    let firstUs = sampleUs(FirstSamples[s]) + 123 * int64(s)
+    doAssert g.index.segdRecords[s].gh3.timeZero == utcUsToGpsUs(firstUs),
+      "time zero of record " & $s
+    for c in 0 ..< comps:
+      let o = s * comps + c
+      let a = g.headerBytes(o)
+      doAssert a.get64(a.len - 64) == utcUsToGpsUs(firstUs),
+        "timestamp of trace " & $o & " is " & $(a.get64(a.len - 64) - utcUsToGpsUs(firstUs)) &
+        " us off"
+      doAssert a.get64(a.len - 32) == utcUsToGpsUs(firstUs), "vendor start of trace " & $o
+      doAssert g.traceKeys(o).time == toPosixSeconds(firstUs), "keys time of trace " & $o
+      for j in 0 ..< Window:
+        doAssert samplesOf(g, o)[j] == value(c, FirstSamples[s] + j)
+  let clock = segmentClock(g, reg)
+  doAssert clock.fromHeaders and clock.leftOut == 0
+  for o in 0 ..< g.len:
+    doAssert clock.times[o] == toPosixSeconds(sampleUs(FirstSamples[o div comps]) +
+      123 * int64(o div comps))
+
+proc checkNoSourcePlace(dir: string; jobs: Jobs) =
+  ## A Rev 3 recording without Source Description or Position blocks: the shot's source place
+  ## has none, the result says so in its own words, naming the output, and the library's
+  ## warning about the recording's file does not stand alone.
+  base = BaseUs
+  discard publishMaps(dir, [rev2Map(""), Rev3Map])
+  let path = dir / "rec" / "noplace.sgd"
+  makeRev3(path, 1)
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  let got = runCut(jobs, src, path, dir / "out" / "noplace.sgd", shotsOf(true),
+    initCutOptions(LengthMs, StartMs))
+  doAssert got.st == jsDone and got.res.carried, got.error & got.res.reason
+  let said = got.res.lines.join("|")
+  doAssert "no place in the output" in said and "source line and point" in said, said
+  doAssert "noplace.sgd" notin said.replace("noplace.sgd.part", ""), said
+  # the receiver station is the recording's own, with source columns in the log too
+  var g = openSeismic(dir / "out" / "noplace.sgd", keys = true)
+  defer: g.close()
+  for o in 0 ..< g.len:
+    doAssert g.traceField(o, "ext1.receiverPointNumber").intVal == 101 and
+      g.traceField(o, "ext1.receiverLineNumber").intVal == 100, "receiver station of trace " & $o
+
+proc checkTrigger(dir: string; jobs: Jobs) =
+  ## A map that declares `triggerTime` beside the start: both are set to the slice's first
+  ## sample, exactly; a map with the start only leaves the second block as carried; a
+  ## trigger in a unit the viewer does not convert is left and counted.
+  base = BaseUs
+  let path = dir / "rec" / "trig.sgd"
+  makeRecording(path, 1)
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  for (unit, name) in [("us GPS", "both"), ("", "startonly"), ("ms of day", "other")]:
+    discard publishMaps(dir, [rev2Map(unit)])
+    let got = runCut(jobs, src, path, dir / "out" / ("trig-" & name & ".sgd"), shotsOf(true),
+      initCutOptions(LengthMs, StartMs))
+    doAssert got.st == jsDone and got.res.carried, got.error & got.res.reason
+    var g = openSeismic(dir / "out" / ("trig-" & name & ".sgd"), keys = true)
+    defer: g.close()
+    for s in 0 ..< 3:
+      let firstUs = shotUs(s) + int64(StartMs * 1000)
+      let a = g.headerBytes(s)
+      let b = src.headerBytes(FirstSamples[s] div SegLen)
+      doAssert a.get64(52) == gpsOf(firstUs), name & ": start of trace " & $s
+      if unit == "us GPS":
+        doAssert a.get64(52 + 32 + 8) == gpsOf(firstUs), "trigger time of trace " & $s
+      else:
+        doAssert a.get64(52 + 32 + 8) == b.get64(52 + 32 + 8),
+          name & ": trigger time of trace " & $s & " changed"
+    let said = got.res.lines.join("|")
+    case name
+    of "both":
+      doAssert got.res.triggerRewritten == 3 and got.res.triggerLeft == 0 and
+        "start time was rewritten to the slice's in 3 traces and its trigger time in 3 traces" in
+        said, said
+    of "startonly":
+      doAssert got.res.triggerRewritten == 0 and got.res.triggerLeft == 0 and
+        "trigger" notin said, said
+    else:
+      doAssert got.res.triggerRewritten == 0 and got.res.triggerLeft == 3 and
+        "3 traces keep the trigger time of the recording" in said, said
+
+proc checkFallback(dir: string; jobs: Jobs) =
+  ## A recording of two records cannot be carried (a subset is made of one record's traces):
+  ## the headers are built from the options, and the result says why. Fails with the line
+  ## missing; the window's Format entry says the same, in `facts.carryHeaderBytes`.
+  base = BaseUs
+  discard publishMaps(dir, [rev2Map("")])
+  let path = dir / "rec" / "two.sgd"
+  makeRecording(path, 1, split = 3)
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  let got = runCut(jobs, src, path, dir / "out" / "two.sgd", shotsOf(true),
+    initCutOptions(LengthMs, StartMs))
+  doAssert got.st == jsDone and not got.res.carried, got.error & got.res.reason
+  let said = got.res.lines.join("|")
+  doAssert "The headers were built from the options, not carried from the source: " &
+    "the traces the shots read lie in more than one record" in said, said
+  var g = openSeismic(dir / "out" / "two.sgd", keys = true)
+  defer: g.close()
+  doAssert g.index.segdRecords[0].revision.major == 3
+
+proc checkOrder(dir: string; jobs: Jobs) =
+  ## A gap in one component only: its trace comes from a later segment, so the source order
+  ## puts it last, and the trace numbers still follow the components in every record.
+  ## Fails with the trace numbers left in output order ("trace number of component 1").
+  base = BaseUs
+  discard publishMaps(dir, [rev2Map("")])
+  let path = dir / "rec" / "order.sgd"
+  makeRecording(path, 3, missing = @[(2, 1)])
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  let got = runCut(jobs, src, path, dir / "out" / "order.sgd", shotsOf(true),
+    initCutOptions(LengthMs, StartMs))
+  doAssert got.st == jsDone and got.res.carried and got.res.shotsRefused == 0, $got.res
+  var g = openSeismic(dir / "out" / "order.sgd", keys = true)
+  defer: g.close()
+  var orders: seq[seq[int]] = @[]
+  for s in 0 ..< 3:
+    var comps: seq[int] = @[]
+    for o in s * 3 ..< s * 3 + 3:
+      let c = int(g.traceField(o, "ext1.sensorType").intVal) - 2
+      comps.add c
+      doAssert int(g.traceField(o, "trace.traceNumber").intVal) == c + 1,
+        "trace number of component " & $c & " in record " & $s
+    orders.add comps
+  doAssert orders[1] == @[0, 2, 1], "the middle record is in source order: " & $orders
+
 proc main*() =
   let dir = getTempDir() / ("viewseg-cutcarry-" & $getCurrentProcessId())
   removeDir(dir)
@@ -368,6 +663,18 @@ proc main*() =
   let jobs = initJobs()
   for comps in [1, 3]:
     check(dir, jobs, comps, load.registry)
+  checkRev2Time(dir, jobs)
+  for comps in [1, 3]:
+    for startMs in [-20.0, 0.0, 10.0]:
+      checkRev3(dir, jobs, comps, startMs, BaseUs)
+  # a shot before a GPS leap second whose first sample comes after it
+  checkRev3(dir, jobs, 3, 10.0, 1_483_228_799_800_000'i64)
+  checkRev3(dir, jobs, 1, 100.0, 1_483_228_799_800_000'i64)
+  checkNoSourcePlace(dir, jobs)
+  checkTrigger(dir, jobs)
+  checkOrder(dir, jobs)
+  checkFallback(dir, jobs)
+  publishVendors(load.registry)
   checkGapsAndRefusals(dir, jobs)
   checkSourceFormat(dir, jobs)
   # the window's Format entry: the source's revision for a SEG-D source, Rev 3 otherwise

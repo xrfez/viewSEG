@@ -35,7 +35,7 @@
 ## counted from the size estimate as the shot is written, and the result has
 ## the file's size at the end.
 
-import std/[math, options, os, random, strutils, times]
+import std/[math, options, os, random, sequtils, strutils, times]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
@@ -71,7 +71,13 @@ type
     sourceFormat*: int
       ## a carried output whose source samples are not IEEE float32: the source's format code
     revision*: string ## the revision of a carried output, "Rev 2.1"
-    startRewritten*: bool ## a carried trace's vendor start time was set to the slice's
+    startRewritten*: int ## carried traces whose vendor start time was set to the slice's
+    startMissing*: int ## carried traces with no vendor start time to set
+    triggerRewritten*: int ## carried traces whose vendor trigger time was set to the slice's
+    triggerLeft*: int ## traces whose trigger time (declared by a map) was left as carried
+    fallbackWhy*: string
+      ## a SEG-D source cut into SEG-D whose headers were built from the options: why
+    carryNotes*: seq[string] ## what a carried output keeps or has no place for, as sentences
     sourceXyDropped*: bool
       ## a carried Rev 2 output of shots that have source coordinates, which its
       ## headers have no place for
@@ -224,15 +230,41 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
   if res.carried:
     result.add "The output was written in the source's revision (" & res.revision &
       ") with its headers carried: the extended header, the channel sets and each trace's " &
-      "header blocks are the source's, from the segment that holds the shot's first sample."
+      "header blocks are the source's, taken from the segment that holds the first sample " &
+      "of the shot's window (from the first segment the window reads when it starts in a " &
+      "gap or before the recording)."
+    if opts.startMs != 0:
+      result.add "Each record's time is its first sample's: the shot time plus the start of " &
+        $opts.startMs & " ms."
     if res.sourceFormat != 0:
+      const exact = [8015, 8022, 8024, 8036, 8042, 8044]
       result.add "The source's samples are in format " & $res.sourceFormat &
-        "; the output's are written as 32-bit floats (no value changes)."
-    if res.startRewritten:
-      result.add "The start time in each trace's vendor header was rewritten to the slice's."
+        "; the output's are written as 32-bit floats (" &
+        (if res.sourceFormat in exact: "no value changes" else:
+          "values beyond 24 bits of precision are rounded") & ")."
+    if res.startRewritten > 0 or res.triggerRewritten > 0:
+      var line = "The vendor header's "
+      if res.startRewritten > 0:
+        line.add "start time was rewritten to the slice's in " &
+          plural(res.startRewritten, "trace", "traces")
+        if res.triggerRewritten > 0: line.add " and its "
+      if res.triggerRewritten > 0:
+        line.add "trigger time in " & plural(res.triggerRewritten, "trace", "traces")
+      result.add line & "."
+    if res.startMissing > 0:
+      result.add plural(res.startMissing, "trace has", "traces have") &
+        " no start time in its vendor header to rewrite."
+    if res.triggerLeft > 0:
+      result.add plural(res.triggerLeft, "trace keeps", "traces keep") &
+        " the trigger time of the recording: its field is in a unit this program does not " &
+        "convert, or does not apply to the trace."
+    for n in res.carryNotes: result.add n
     if res.sourceXyDropped:
       result.add "A SEG-D Rev 2 record has no place for the source's coordinates; they are " &
         "left out."
+  elif res.fallbackWhy.len > 0:
+    result.add "The headers were built from the options, not carried from the source: " &
+      res.fallbackWhy & "."
   if res.recordsFromFileNumbers:
     result.add "The records are numbered by the shots' file numbers."
   else:
@@ -346,7 +378,8 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         let k = plan.receiverKeys(r)
         if not (k.rcvX.isNaN or k.rcvY.isNaN): anyReceiverXY = true
       let rows = carryRows(plan)
-      let candidate = opts.standard == csSegdRev3 and carryable(file[], plan, rows)
+      let candidate = opts.standard == csSegdRev3 and
+        carryRefusal(file[], plan, rows).len == 0
       let keysBytes = estimateBytes(opts, shots.shots.len, comps, plan.samples, anyStation,
         anySourceXY, anyReceiverXY)
       var expected = if candidate: carryBytes(file[], plan, rows, shots.shots.len)
@@ -374,14 +407,38 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       # header blocks (a vendor's own among them) are kept and the revision is its
       # own; everything else, and a source the writer cannot copy (multiplexed,
       # several records, extended recording mode), builds its headers from keys.
-      let carry = opts.standard == csSegdRev3 and
-        openCarry(part, file[], plan, rows, vendors, w)
+      let why = if opts.standard == csSegdRev3: openCarry(part, file[], plan, rows, vendors, w)
+        else: "the output is SEG-Y"
+      let carry = why.len == 0
       if carry:
         res.carried = true
         res.revision = revisionWords(file[], plan)
-        res.sourceXyDropped = anySourceXY and not isRev3(file[], plan.tracesNeeded[0])
         res.sourceFormat = sourceFormat(file[], plan)
+        let first = plan.tracesNeeded[0]
+        if sessionPositions(file[]):
+          res.carryNotes.add "Survey and moved receiver positions are not written: the " &
+            "output keeps the source's own headers."
+        if not isRev3(file[], first):
+          res.sourceXyDropped = anySourceXY
+          if hasSourceHeader(file[], first):
+            if not anyStation and ownSource(file[], first):
+              res.carryNotes.add "The shot log has no source line or point: the records " &
+                "keep the recording's own."
+          elif anyStation or anySourceKey:
+            res.carryNotes.add "The recording has no source header block: the shot log's " &
+              "source line and point have no place in the output."
+        else:
+          let blocks = sourceBlocks(file[], first)
+          var missing: seq[string] = @[]
+          if (anyStation or anySourceKey) and not blocks.description:
+            missing.add "source line and point"
+          if anySourceXY and not blocks.position: missing.add "source position"
+          if missing.len > 0:
+            res.carryNotes.add "The recording's traces have no source description or " &
+              "position block to write to: the shot's " & missing.join(" and ") &
+              " have no place in the output."
       else:
+        if opts.standard == csSegdRev3 and file[].kind == skSegd: res.fallbackWhy = why
         if candidate: # the writer refused the source as a template
           expected = keysBytes
           res.expectedBytes = expected
@@ -403,6 +460,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let fetch = makeFetch(st)
       var dst = newSeq[float32](plan.samples)
       var touched: seq[int] = @[]
+      var startCount = StartCount()
       var lastDetail = fs.now() - DetailEvery
       let total = shots.shots.len
       let perShot = expected div total
@@ -419,8 +477,10 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           if not file[].inMemory: fs.mappedRead(source, headers = true)
           want = carryShot(file[], plan, rows, s)
           let sh = shots.shots[s]
+          # The record's time is its first sample's: the carried channel set keeps its
+          # start, so a reader finds the first sample at the record's time.
           var patch = SubsetPatch(fileNumber: numbered.numbers[s],
-            time: toPosixSeconds(sh.timeUs))
+            time: toPosixSeconds(firstUs))
           if not isRev3(file[], want.traces[0]):
             patch.headers = sourceHeaders(file[], want.traces[0], sh.srcLine, sh.srcPoint,
               sh.srcIndex)
@@ -430,8 +490,8 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           try:
             w.startSubset(file[], want.traces, patch)
             started = true
-          except ValueError as e:
-            refusal = e.msg
+          except ValueError, SegFormatError:
+            refusal = getCurrentExceptionMsg()
         for i in 0 ..< comps:
           let r = if carry: want.comps[i] else: i
           let trace = s * comps + r
@@ -448,14 +508,22 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               k.channel = float64(r + 1)
               var over = traceOverrides(file[], source, want.ordinals[i], firstUs, vendors,
                 clock.fromHeaders, plan.gapSamples(trace) >= plan.samples,
-                res.startRewritten)
+                startCount)
               try:
                 if isRev3(file[], source) and hasSourcePlace(k):
+                  # the receiver stays the source's own, whatever the session holds
+                  k.rcvLine = NaN
+                  k.rcvPoint = NaN
+                  k.rcvIndex = 0
+                  k.rcvX = NaN
+                  k.rcvY = NaN
+                  k.rcvZ = NaN
                   w.writeTrace(file[], source, dst, k, over, SourceFields)
                 else:
                   w.writeTrace(file[], source, dst, over)
-              except ValueError as e:
-                refusal = e.msg
+              except ValueError, SegFormatError:
+                # a format refusal is the shot's, like a caller error; an IOError is not
+                refusal = getCurrentExceptionMsg()
                 if started: w.abandonRecord()
           else:
             var k = plan.sliceKeys(trace)
@@ -490,6 +558,10 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           res.refusals.join("; ") & ".", false)
       discard checkOverlaps(plan, buf, fetch, sliceReport, final = true)
       res.samplesRead = st.fetched
+      res.startRewritten = startCount.rewritten
+      res.startMissing = startCount.missing
+      res.triggerRewritten = startCount.trigger
+      res.triggerLeft = startCount.triggerLeft
       let log = w.close()
       res.bytesWritten = try: fs.getFileSize(part) except OSError: expected
       for i, o in plan.overlaps:
@@ -510,9 +582,16 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           res.timingNames.add named(issue.later) & " starts " & $(round(issue.residual * 100) /
             100) & " samples off the grid of " & named(issue.earlier)
       res.lines = cutLines(res, opts)
+      let ownWords = res.carryNotes.anyIt("no place in the output" in it)
       for d in log:
         # The writer names the part file, which is gone by now.
-        res.lines.add ($d).replace(part, extractFilename(dest))
+        var line = ($d).replace(part, extractFilename(dest))
+        if carry:
+          # a carried output's geometry report names the source recording; the sentence
+          # about the output's own headers says it already
+          if not (ownWords and "not written in" in line):
+            res.lines.add line.replace(file[].path, "the recording")
+        else: res.lines.add line
       if not fs.moveNoReplace(part, dest):
         let kept = "The file appeared while writing; the output is kept as " & part & "."
         if sink != nil:

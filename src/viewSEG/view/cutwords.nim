@@ -21,6 +21,9 @@ const
   FormatSegd* = "SEG-D Rev 3"
   FormatSegdKeep* = "SEG-D (the source's revision)"
   FormatSegy* = "SEG-Y"
+  NoCarry* = "This recording's headers cannot be carried into the output (it has more than " &
+    "one record, or is in Rev 3 extended recording mode): they are built from the options, " &
+    "as Rev 3."
   NeedFolder* = "Choose the folder the file is written to."
   NeedName* = "Give the file a name."
   DestChecking* = "Checking the destination..."

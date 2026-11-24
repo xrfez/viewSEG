@@ -93,9 +93,8 @@ opening keeps what you typed. From the top:
   window shows.
 - **Record length (ms):** how long each record is. It starts at 10000. It must be a whole
   number of samples; the window says when it is not, and what the interval is.
-- **Start (ms):** where each record starts, relative to the shot. 0 starts at the shot. A
-  negative number starts before it. The end of the record, start plus length, must be under
-  2147 s.
+- Every record **begins at the shot's time**, so there is no start to set. The length must be
+  under 2147 s.
 - **Alignment:** what is done when a record starts between two samples of the recording.
   **Nearest sample** starts at the nearest one and interpolates nothing. **Linear**, **Cubic**
   and **Sinc** shift the part of the start between two samples out by that interpolation; Sinc is the
@@ -138,17 +137,24 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
   format is SEG-D, the file is written in the recording's own revision (Rev 2.1, say, not
   Rev 3) and its headers are the recording's: the general and extended headers, the channel
   sets with their filter and gain fields, and each trace's header blocks, a manufacturer's own
-  among them, taken from the segment that holds the first sample of the shot's window. What
+  among them, taken from the segment that holds the first sample of the shot's window (the
+  first segment the window reads, when it starts in a gap or before the recording). What
   changes is what belongs to the slice: the file number (the log's, else 1 to the number of
-  shots), the record time, the trace number (1 to the number of components), the time of the
-  first sample in a Rev 3 trace's timestamp block, the start time in a vendor block that a
-  vendor header map names, and the source line and point where the revision has a place for
-  them (Rev 2: the source header; its coordinates have none, and Messages says so). The
-  samples are written as 32-bit floats whatever the recording's sample format. A recording
-  the writer cannot copy (multiplexed data, several records) and any SEG-Y recording or SEG-Y
-  output build their headers from the options and the log instead, as Rev 3 for SEG-D.
-  A trace no segment reaches is written as zeros and marked dead. When the recording's
-  samples are not 32-bit floats, Messages names their format and says the output's are floats.
+  shots), the record time, the trace number (one per component, the same in every record),
+  the time of the first sample in a Rev 3 trace's timestamp block, the start time and the
+  trigger time in a vendor block, when a vendor header map names them (`firstSampleTime` and
+  `triggerTime`, in "us GPS" or "us UTC"), and the source line and point where the revision
+  has a place for them (Rev 2: the source header; its coordinates have none). Messages says
+  what was rewritten, in how many traces, and what has no place. A record begins at the
+  shot's time, so its time is the first sample's; a Rev 2 record holds whole seconds only, so
+  its reader shows the second the first sample falls in, and the vendor start time carries the
+  exact instant. A trace no segment reaches is written as zeros and marked dead. Survey
+  positions and moved receivers are not written: the headers are the recording's. The samples
+  are written as 32-bit floats whatever the recording's sample format, and Messages names a
+  format that is not 32-bit float. A recording the writer cannot copy (several records,
+  multiplexed data, Rev 3 extended recording mode) and any SEG-Y recording or SEG-Y output
+  build their headers from the options and the log instead, as Rev 3 for SEG-D; for a SEG-D
+  recording, Messages gives the reason and the Format entry reads "SEG-D Rev 3".
   A shot the writer refuses is left out and named in Messages; the others are written.
 
 When a vendor header map names each trace's start time (see `vendormaps/README.md`), the slice
