@@ -8,6 +8,7 @@ import parseSEG
 import processSEG/core/[rows, types, workspace]
 import processSEG/filter/[design, iir]
 import processSEG/qc/[firstbreak, shotfit]
+import processSEG/stack/stack
 import viewSEG/core/[breakmodel, breakrule, filesystem, firstbreakjobs, firstbreaks, jobs]
 
 const
@@ -20,6 +21,26 @@ func trustNoteReference(what: string; used: int; then: string): string =
     what & " left too few confident picks that hold together (" & $used & ", at least " &
       $MinTrimmedPicks & " are needed): " & then
   else: what & " gave picks no model could be fitted to (they share one offset): " & then
+
+func onSearchEdge(col: int; offset, t0Ms, dt: float64; n, firstSample, liveA, liveB: int;
+    pr: FirstBreakParams): bool =
+  ## Whether `col` is the first or last sample of the picker's guided search window, as
+  ## `stretchOf` cuts it (`qc/firstbreak`). An unguided window, or none, is not an edge.
+  if col < 0 or pr.guideVelocity.isNaN or offset.isNaN or not (dt > 0) or n < 2:
+    return false
+  var tLo = if pr.searchStartMs.isNaN: -Inf else: pr.searchStartMs
+  var tHi = if pr.searchEndMs.isNaN: Inf else: pr.searchEndMs
+  let tl = pr.guideT0Ms + 1000 * abs(offset) / pr.guideVelocity
+  tLo = max(tLo, tl - pr.beforeMs)
+  tHi = min(tHi, tl + pr.afterMs)
+  let origin = t0Ms + float64(firstSample) * dt
+  if origin.classify in {fcInf, fcNegInf, fcNan}: return false
+  let cLo = (tLo - origin) / dt
+  let cHi = (tHi - origin) / dt
+  let lo = max(liveA, if cLo <= 0: 0 elif cLo >= float64(n): n else: int(ceil(cLo)))
+  let hi = min(liveB + 1, if cHi < 0: 0 elif cHi >= float64(n - 1): n
+    else: int(floor(cHi)) + 1)
+  lo < hi and (col == lo or col == hi - 1)
 
 proc hasNonFiniteReference(samples: Tensor[float32]; row, count: int): bool =
   ## Whether one of the first `count` samples of `row` is NaN or infinite.
@@ -116,7 +137,7 @@ proc breaksOfRecordReference*(file: ptr SeismicFile; path: string; traces: Slice
   let total = n * passes
   type Guided = tuple[params: FirstBreakParams; rows: seq[bool]]
   proc runPass(guides: seq[Guided]; dst: var seq[FirstBreakPick]; doneBefore: int;
-      smooth: bool) =
+      smooth, dropEdges: bool) =
     ## Picks the rows each guide names with its parameters into `dst` (the others stay), the
     ## record read a chunk at a time; with `smooth`, on a zero-phase high-cut copy of the chunk.
     var plans: seq[FirstBreakPlan[float32]] = @[]
@@ -167,8 +188,22 @@ proc breaksOfRecordReference*(file: ptr SeismicFile; path: string; traces: Slice
         let meta = initChunkMeta(rowsOf(chunkKeys, counts), dt, 0, skip)
         var got = newSeq[FirstBreakPick](part.len)
         plans[gi].pickInto(picked, meta, got, ws)
+        let pickedRows = rowBlock(picked)
+        let guided = dropEdges and not guides[gi].params.guideVelocity.isNaN
         for r in 0 ..< part.len:
-          if guides[gi].rows[part.a - traces.a + r]: dst[part.a - traces.a + r] = got[r]
+          let row = part.a - traces.a + r
+          if guides[gi].rows[row]:
+            var pick = got[r]
+            if guided and pick.col >= 0:
+              let nSamp = meta.liveSamples(r, pickedRows.cols)
+              if nSamp >= 2:
+                let src = pickedRows.rowPtr(r)
+                let live = liveSpan(src.toOpenArray(0, nSamp - 1))
+                if live.len >= 2 and onSearchEdge(pick.col, chunkKeys[r].offset,
+                    chunkKeys[r].t0Ms, dt, nSamp, meta.firstSample, live.a, live.b,
+                    guides[gi].params):
+                  pick = noPick()
+            dst[row] = pick
       first = part.b + 1
       if progress != nil and not progress(doneBefore + part.b - traces.a + 1, total):
         raise newException(JobCancelledError, "cancelled")
@@ -176,7 +211,8 @@ proc breaksOfRecordReference*(file: ptr SeismicFile; path: string; traces: Slice
   var picks = newSeq[FirstBreakPick](n)
   var everyRow = newSeq[bool](n)
   for i in 0 ..< n: everyRow[i] = true
-  runPass(@[(FirstBreakParams(windowMs: FirstPassWindowMs), everyRow)], picks, 0, false)
+  runPass(@[(FirstBreakParams(windowMs: FirstPassWindowMs), everyRow)], picks, 0, false,
+    false)
   dead.sort()
   dead = deduplicate(dead, isSorted = true)
   for i in 0 ..< n:
@@ -280,8 +316,9 @@ proc breaksOfRecordReference*(file: ptr SeismicFile; path: string; traces: Slice
     result.fit = last
 
   proc guidedBy(m: BreakModel; src: seq[FirstBreakPick]; doneBefore: int;
-      halfMs: float64): seq[FirstBreakPick] =
+      halfMs: float64; dropEdges: bool): seq[FirstBreakPick] =
     ## `src` with each eligible trace picked again within `halfMs` of the model's time.
+    ## With `dropEdges`, a pick on the first or last sample of that window is not a pick.
     var guides: seq[Guided] = @[]
     for gl in guideLines(m):
       var rows = newSeq[bool](n)
@@ -290,7 +327,7 @@ proc breaksOfRecordReference*(file: ptr SeismicFile; path: string; traces: Slice
       guides.add (FirstBreakParams(guideVelocity: gl.velocity, guideT0Ms: gl.t0Ms,
         windowMs: GuidedWindowMs, beforeMs: halfMs, afterMs: halfMs), rows)
     result = src
-    runPass(guides, result, doneBefore, smoothed)
+    runPass(guides, result, doneBefore, smoothed, dropEdges)
 
   # The second pass: a model from the first pass's picks (without the noise ones), then every
   # trace picked again near it. The half-window follows that fit's scatter.
@@ -299,7 +336,7 @@ proc breaksOfRecordReference*(file: ptr SeismicFile; path: string; traces: Slice
   var fitted = picks
   var final = firstTrim
   if firstTrim.tr.trusted:
-    let again = guidedBy(firstTrim.fit.fitModel, picks, n, firstW)
+    let again = guidedBy(firstTrim.fit.fitModel, picks, n, firstW, false)
     let secondTrim = trimOf(again)
     if secondTrim.tr.trusted:
       (fitted, final) = (again, secondTrim)
@@ -315,7 +352,7 @@ proc breaksOfRecordReference*(file: ptr SeismicFile; path: string; traces: Slice
   var shownW = firstW
   if guide.given:
     shownW = guideWindowMs(final.tr.sigmaMs)
-    shown = guidedBy(guide, picks, 2 * n, shownW)
+    shown = guidedBy(guide, picks, 2 * n, shownW, true)
     result.twoPass = true
   if result.twoPass: # the picks shown are the guided passes'
     result.pickWindowMs = GuidedWindowMs

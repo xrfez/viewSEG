@@ -8,8 +8,8 @@
 ## - **Where a break is expected** (`expectedRange`): out to the offset where fewer than
 ##   `RangeShare` of the traces have a confident pick near the model, and never past most of the
 ##   picks both passes agree on. A trace beyond it is "beyond", counted apart and never judged.
-## - **Comparable**: a pick of confidence from `ConfidentPick` within the guided window
-##   (`guideWindowMs` of the fit's scatter) of the model.
+## - **Comparable**: a pick of confidence from `ConfidentPick` strictly inside the guided
+##   window (`guideWindowMs` of the fit's scatter) of the model. On the boundary is not inside.
 ## - **Off the model**: a comparable trace whose residual (pick less model) is larger than
 ##   the record's limit, `max(LimitFloorMs, LimitSigmas * sigma)`, `sigma` being 1.4826 times
 ##   the median absolute deviation (MAD) of the picks' own scatter about the record's fit.
@@ -122,9 +122,9 @@ type
       ## the traces comparable with the record's OWN fit within the expected range: a given
       ## model that finds fewer than half as many does not match. -1: not known
     guideWindowMs*: float64 = GuideMaxMs
-      ## the guided search half-window (ms) of the picks being judged: a confident pick farther
-      ## than this from the model is not comparable, and a first-pass pick just beyond it (at
-      ## most `FarOffMaxMs`) is far off. `GuideMaxMs` when the scatter is not known
+      ## the guided search half-window (ms) of the picks being judged: a confident pick this far
+      ## from the model, or farther, is not comparable, and a first-pass pick just beyond it
+      ## (at most `FarOffMaxMs`) is far off. `GuideMaxMs` when the scatter is not known
 
   LeanKind* = enum
     lkNone, lkConstant, lkSide
@@ -337,7 +337,7 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
       else:
         inc result.nInRange
         let d = pickMs[i] - modelMs[i]
-        if not d.isNaN and confidence[i] >= ConfidentPick and abs(d) <= band:
+        if not d.isNaN and confidence[i] >= ConfidentPick and abs(d) < band:
           res[i] = d
           result.comparable[i] = true
           all.add d

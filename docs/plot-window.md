@@ -662,13 +662,14 @@ state agree):
   a stretch of real breaks the fit misses does not end it. A trace with a model time beyond
   that is *beyond the offsets where breaks are seen*: counted apart, never judged, never a
   finding.
-- *Comparable*: within that range, a confident pick (0.5 or more) within that same window of
-  the model. Any other trace in range is *no break found* and not flagged, unless the first
-  (unguided) pass found a confident break outside that window and at most 400 ms from the model,
-  not before the model's intercept less
-  the limit, while the guided window found none: that is *far off the model* (a station placed
-  a few hundred metres wrong), and flagged, drawn with its link to where the break was found.
-  A first-pass pick farther off, or before any break can arrive, is noise.
+- *Comparable*: within that range, a confident pick (0.5 or more) strictly inside that same
+  window of the model (on the boundary is not inside). A pick the given model's pass returned
+  on the first or last sample of its search window is not a guided pick at all. Any other trace
+  in range is *no break found* and not flagged, unless the first (unguided) pass found a confident
+  break outside that window and at most 400 ms from the model, not before the model's intercept
+  less the limit, while the guided window found none: that is *far off the model* (a station
+  placed a few hundred metres wrong), and flagged, drawn with its link to where the break was
+  found. A first-pass pick farther off, or before any break can arrive, is noise.
 - *Off the model*: the residual (pick less model) of a comparable trace is larger than the
   record's limit, the larger of 12 ms and three times 1.4826 times the median absolute deviation
   of the picks' scatter about the record's own fit, whichever model is shown (a given model that

@@ -18,6 +18,10 @@
 ##
 ## - the counts say what the flagged are: "N flagged (M of K compared off the model, P off their
 ##   neighbours, F far off)", never "N of K" with N above K.
+## - a pick on the edge of the guided search window is not a break. The same 100 m error, with
+##   the given model guiding the picks (the overlay's path: the job's third pass, then
+##   `withModel`), searches [given − 20, given + 20] ms and the picker returns the window
+##   start. That is not a pick within 20 ms.
 ##
 ## Seen to fail: with the counts' words as they were ("N of K compared traces flagged"), the
 ## counts' check; with the given model's times left as the fit's, "the given model is off by";
@@ -26,7 +30,9 @@
 ## not copied"; with the second segment not continuous (no `crossover / v1` term), "not
 ## continuous"; with a missing offset given 0, "a trace without an offset has a model time";
 ## with the key's word left "model", "key word"; with the project document not writing the
-## model, "project document".
+##   model, "project document". With a window-edge pick kept and compared when
+##   `abs(pick - model) <= band`, the guided 100 m error said "median -20.0 ms" and compared
+##   46 traces instead of "no pick within 20 ms".
 
 import std/[math, strutils]
 import parseSEG
@@ -88,6 +94,43 @@ proc main*() =
       doAssert "no pick lies within 20 ms" in g.givenWords and "does not fit this record" in
         g.givenWords, g.givenWords
       doAssert "far off the model" in g.modelWords(suMetres), g.modelWords(suMetres)
+
+  block aGuidedPickOnTheWindowEdgeIsNotABreak:
+    # The overlay path: the given model guides the third pass, then `withModel` judges those
+    # picks. Offsets 100 m too long, window 20 ms, so the search is [given-20, given+20] and
+    # the break (40 ms early) is not in it. A pick at the window start is not a break.
+    # Seen to fail: with that pick kept and `abs(pick - model) <= band`, "median -20.0 ms"
+    # and compared == 46.
+    withFixtures fx:
+      let path = fx.customShot("edge.sgy", Traces, moved)
+      var f = openSeismic(path, keys = true)
+      let b = breaksOfRecord(addr f, path, 0 ..< f.len, [], guide = Truth)
+      f.close()
+      let g = b.withModel(Truth)
+      doAssert g.geometry.guideWindowMs == GuideMinMs, "window " & $g.geometry.guideWindowMs
+      doAssert g.compared == 0, g.statusWords & " (" & $g.compared & " compared)"
+      doAssert "no pick within 20 ms" in g.statusWords, g.statusWords
+      let inRange = Traces - g.rule.nBeyond
+      doAssert g.rule.nBeyond <= 3 and g.rule.nFarOff == inRange and g.offModel == inRange,
+        $g.compared & " compared, " & $g.rule.nFarOff & " far off, " & $g.rule.nBeyond &
+        " beyond, " & g.givenWords
+
+  block aWindowEdgeBetweenSamplesIsNotABreak:
+    # The same 40 ms miss, with the window start between samples: the first sample of the
+    # search is 19.2 ms from the model, inside the band. It is still the window's edge, not
+    # a guided pick. Seen to fail with only `abs(pick - model) < band`: "median -19.2 ms"
+    # and compared == 46.
+    withFixtures fx:
+      let path = fx.customShot("edgegrid.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
+        k.offset = 103.0 + 50.0 * float64(i)
+        arrivalMs(3.0 + 50.0 * float64(i)))
+      var f = openSeismic(path, keys = true)
+      let b = breaksOfRecord(addr f, path, 0 ..< f.len, [], guide = Truth)
+      f.close()
+      let g = b.withModel(Truth)
+      doAssert g.geometry.guideWindowMs == GuideMinMs, "window " & $g.geometry.guideWindowMs
+      doAssert g.compared == 0, g.statusWords & " (" & $g.compared & " compared)"
+      doAssert "no pick within 20 ms" in g.statusWords, g.statusWords
 
   block aSourceFarOffIsFarOffTheModelAndTheModelDoesNotMatch:
     # 400 m too long is 160 ms: beyond the guided window no pick is comparable, but the first pass
