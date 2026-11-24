@@ -6,8 +6,10 @@
 ## notes live in a `QualityBuild` the caller owns. An auxiliary trace is
 ## not a note. A killed trace counts as killed, not as bad, and its
 ## findings are ignored. Header-dead is its own finding (`findingsOf`);
-## it is not also all-zero. Weak and noisy flags are not findings: they
-## need the exclusion area, and `recordAmplitude` is not used.
+## it is not also all-zero. Weak and noisy are not findings: the scan
+## judges them a field record at a time (the map's test) and hands in what it
+## found per trace (`tested`, `noisy`, `weak`); they are counted apart from
+## `bad`, and a count is shown only where some trace was tested.
 ##
 ## A station is the receiver (line, point, index) and its component.
 ## Components are never compared across stations: each row counts only
@@ -42,6 +44,8 @@ type
     component*: uint8
     killed*: bool          ## A per-file edit killed it: counted as killed, not bad.
     findings*: set[Finding]
+    tested*: bool          ## The noisy and weak test ran on its record and judged this trace.
+    noisy*, weak*: bool    ## Only meaningful when `tested`.
 
   StationRow* = object
     ## One receiver station and component, over every file of the scan.
@@ -50,6 +54,7 @@ type
     component*: uint8
     seen*, killed*, bad*: int ## `seen` includes killed. `bad` does not.
     counts*: array[Finding, int]
+    tested*, noisy*, weak*: int ## `tested` traces; the cells show nothing when it is 0.
     badRecords*: string       ## Compact ranges, one line per file the station was bad in.
 
   RecordRow* = object
@@ -58,11 +63,13 @@ type
     record*: float64
     seen*, killed*, bad*: int
     counts*: array[Finding, int]
+    tested*, noisy*, weak*: int ## As in `StationRow`.
 
   Totals* = object
     ## Scan totals over the notes. Unread files are not counted.
     files*, records*, traces*, killed*, bad*, stations*: int
     counts*: array[Finding, int]
+    tested*, noisy*, weak*: int ## As in `StationRow`.
 
   QualityReport* = object
     stations*: seq[StationRow]
@@ -73,12 +80,12 @@ type
     ## A column of `StationRow`.
     ssLine, ssPoint, ssIndex, ssComponent, ssSeen, ssKilled, ssBad,
     ssHeaderDead, ssAllZero, ssConstant, ssClipped, ssSpiky, ssDcOffset,
-    ssNonFinite, ssBadRecords
+    ssNonFinite, ssNoisy, ssWeak, ssBadRecords
 
   RecordSortColumn* = enum
     ## A column of `RecordRow`.
     rsFile, rsRecord, rsSeen, rsKilled, rsBad, rsHeaderDead, rsAllZero,
-    rsConstant, rsClipped, rsSpiky, rsDcOffset, rsNonFinite
+    rsConstant, rsClipped, rsSpiky, rsDcOffset, rsNonFinite, rsNoisy, rsWeak
 
   SortSpec*[C] = seq[tuple[column: C, descending: bool]]
     ## Sort keys, first one most significant. A tie keeps the rows' order.
@@ -115,6 +122,10 @@ func csvField(s: string): string =
     if c == '"': result.add '"'
     result.add c
   result.add '"'
+
+func noiseCell*(tested, n: int): string =
+  ## A count, or "" when no trace was tested.
+  if tested > 0: $n else: ""
 
 func csvLine(fields: varargs[string]): string =
   for i, f in fields:
@@ -153,6 +164,10 @@ func recordKind(column: RecordSortColumn): Finding =
   of rsNonFinite: qfNonFinite
   else: qfHeaderDead
 
+func known(tested, n: int): int =
+  ## The count to sort by: rows with nothing tested come before every count.
+  if tested > 0: n else: -1
+
 func cmpStation(a, b: StationRow; column: StationSortColumn): int =
   case column
   of ssLine: cmpNum(a.line, b.line)
@@ -163,6 +178,8 @@ func cmpStation(a, b: StationRow; column: StationSortColumn): int =
   of ssKilled: cmp(a.killed, b.killed)
   of ssBad: cmp(a.bad, b.bad)
   of ssBadRecords: cmp(a.badRecords, b.badRecords)
+  of ssNoisy: cmp(known(a.tested, a.noisy), known(b.tested, b.noisy))
+  of ssWeak: cmp(known(a.tested, a.weak), known(b.tested, b.weak))
   of ssHeaderDead, ssAllZero, ssConstant, ssClipped, ssSpiky, ssDcOffset, ssNonFinite:
     cmp(a.counts[kindColumn(column)], b.counts[kindColumn(column)])
 
@@ -173,6 +190,8 @@ func cmpRecord(a, b: RecordRow; column: RecordSortColumn): int =
   of rsSeen: cmp(a.seen, b.seen)
   of rsKilled: cmp(a.killed, b.killed)
   of rsBad: cmp(a.bad, b.bad)
+  of rsNoisy: cmp(known(a.tested, a.noisy), known(b.tested, b.noisy))
+  of rsWeak: cmp(known(a.tested, a.weak), known(b.tested, b.weak))
   of rsHeaderDead, rsAllZero, rsConstant, rsClipped, rsSpiky, rsDcOffset, rsNonFinite:
     cmp(a.counts[recordKind(column)], b.counts[recordKind(column)])
 
@@ -257,12 +276,14 @@ type
   StAcc = object
     seen, killed, bad: int
     counts: array[Finding, int]
+    tested, noisy, weak: int
     fileOrder: seq[int]
     badFiles: Table[int, FileBad]
 
   RecAcc = object
     seen, killed, bad: int
     counts: array[Finding, int]
+    tested, noisy, weak: int
 
   QualityBuild* = object
     ## Notes gathered for `qualityReport`. Fields are private: add with
@@ -356,34 +377,43 @@ proc fileId(b: var QualityBuild; file: string): int =
   b.fileIds[file] = result
 
 proc bump(seen, killed, bad: var int; counts: var array[Finding, int];
-    note: TraceNote) =
+    tested, noisy, weak: var int; note: TraceNote) =
   inc seen
   if note.killed:
     inc killed
-  elif note.findings != {}:
-    inc bad
-    for f in note.findings: inc counts[f]
+  else:
+    if note.findings != {}:
+      inc bad
+      for f in note.findings: inc counts[f]
+    if note.tested:
+      inc tested
+      if note.noisy: inc noisy
+      if note.weak: inc weak
 
 proc noteStation(b: var QualityBuild; note: TraceNote; fid: int) =
   let sk = stKey(note.line, note.point, note.index, note.component)
   b.stations.withValue(sk, acc):
-    bump(acc[].seen, acc[].killed, acc[].bad, acc[].counts, note)
+    bump(acc[].seen, acc[].killed, acc[].bad, acc[].counts, acc[].tested,
+      acc[].noisy, acc[].weak, note)
     if not note.killed and note.findings != {}: noteBad(acc[], fid, note.record)
     return
   b.stOrder.add sk
   var acc = StAcc()
-  bump(acc.seen, acc.killed, acc.bad, acc.counts, note)
+  bump(acc.seen, acc.killed, acc.bad, acc.counts, acc.tested, acc.noisy, acc.weak,
+    note)
   if not note.killed and note.findings != {}: noteBad(acc, fid, note.record)
   b.stations[sk] = acc
 
 proc noteRecord(b: var QualityBuild; note: TraceNote; fid: int) =
   let rk = recKey(fid, note.record)
   b.records.withValue(rk, acc):
-    bump(acc[].seen, acc[].killed, acc[].bad, acc[].counts, note)
+    bump(acc[].seen, acc[].killed, acc[].bad, acc[].counts, acc[].tested,
+      acc[].noisy, acc[].weak, note)
     return
   b.recOrder.add rk
   var acc = RecAcc()
-  bump(acc.seen, acc.killed, acc.bad, acc.counts, note)
+  bump(acc.seen, acc.killed, acc.bad, acc.counts, acc.tested, acc.noisy, acc.weak,
+    note)
   b.records[rk] = acc
 
 proc addTrace*(b: var QualityBuild; note: TraceNote) =
@@ -451,24 +481,29 @@ proc qualityReport*(b: QualityBuild): QualityReport =
   ## The tables of `b`, in the default sort. A station row is emitted for
   ## every station and component that was seen, and a record row for every
   ## file and record that had a seismic trace.
-  var traces, killed, bad = 0
+  var traces, killed, bad, tested, noisy, weak = 0
   var counts: array[Finding, int]
   for key in b.stOrder:
     let acc = b.stations[key]
     result.stations.add StationRow(line: lineOf(key), point: pointOf(key),
       index: key.index, component: key.component, seen: acc.seen, killed: acc.killed,
-      bad: acc.bad, counts: acc.counts, badRecords: badRecordsText(b, acc))
+      bad: acc.bad, counts: acc.counts, tested: acc.tested, noisy: acc.noisy,
+      weak: acc.weak, badRecords: badRecordsText(b, acc))
     traces += acc.seen
     killed += acc.killed
     bad += acc.bad
+    tested += acc.tested
+    noisy += acc.noisy
+    weak += acc.weak
     for f in Finding: counts[f] += acc.counts[f]
   for key in b.recOrder:
     let acc = b.records[key]
     result.records.add RecordRow(file: b.files[key.file], record: recordOf(key),
-      seen: acc.seen, killed: acc.killed, bad: acc.bad, counts: acc.counts)
+      seen: acc.seen, killed: acc.killed, bad: acc.bad, counts: acc.counts,
+      tested: acc.tested, noisy: acc.noisy, weak: acc.weak)
   result.totals = Totals(files: b.files.len, records: result.records.len,
     traces: traces, killed: killed, bad: bad, stations: result.stations.len,
-    counts: counts)
+    counts: counts, tested: tested, noisy: noisy, weak: weak)
   sortStations(result.stations, DefaultStationSort)
   sortRecords(result.records, DefaultRecordSort)
 
@@ -476,29 +511,31 @@ proc stationsCsv*(rows: openArray[StationRow]): string =
   ## A header and one line per station. Fields are quoted per RFC 4180.
   result = csvLine("line", "point", "index", "component", "seen", "killed", "bad",
     $qfHeaderDead, $qfAllZero, $qfConstant, $qfClipped, $qfSpiky, $qfDcOffset,
-    $qfNonFinite, "badRecords")
+    $qfNonFinite, "noisy", "weak", "badRecords")
   for r in rows:
     result.add csvLine(stationNumber(r.line), stationNumber(r.point), $r.index,
       $r.component, $r.seen, $r.killed, $r.bad, $r.counts[qfHeaderDead],
       $r.counts[qfAllZero], $r.counts[qfConstant], $r.counts[qfClipped],
-      $r.counts[qfSpiky], $r.counts[qfDcOffset], $r.counts[qfNonFinite], r.badRecords)
+      $r.counts[qfSpiky], $r.counts[qfDcOffset], $r.counts[qfNonFinite],
+      noiseCell(r.tested, r.noisy), noiseCell(r.tested, r.weak), r.badRecords)
 
 proc recordsCsv*(rows: openArray[RecordRow]): string =
   ## A header and one line per record. Fields are quoted per RFC 4180.
   result = csvLine("file", "record", "seen", "killed", "bad", $qfHeaderDead,
-    $qfAllZero, $qfConstant, $qfClipped, $qfSpiky, $qfDcOffset, $qfNonFinite)
+    $qfAllZero, $qfConstant, $qfClipped, $qfSpiky, $qfDcOffset, $qfNonFinite,
+    "noisy", "weak")
   for r in rows:
     result.add csvLine(r.file, stationNumber(r.record), $r.seen, $r.killed, $r.bad,
       $r.counts[qfHeaderDead], $r.counts[qfAllZero], $r.counts[qfConstant],
       $r.counts[qfClipped], $r.counts[qfSpiky], $r.counts[qfDcOffset],
-      $r.counts[qfNonFinite])
+      $r.counts[qfNonFinite], noiseCell(r.tested, r.noisy), noiseCell(r.tested, r.weak))
 
 proc totalsCsv*(t: Totals): string =
   ## One header and one totals line.
   result = csvLine("files", "records", "traces", "killed", "bad", "stations",
     $qfHeaderDead, $qfAllZero, $qfConstant, $qfClipped, $qfSpiky, $qfDcOffset,
-    $qfNonFinite)
+    $qfNonFinite, "noisy", "weak")
   result.add csvLine($t.files, $t.records, $t.traces, $t.killed, $t.bad, $t.stations,
     $t.counts[qfHeaderDead], $t.counts[qfAllZero], $t.counts[qfConstant],
     $t.counts[qfClipped], $t.counts[qfSpiky], $t.counts[qfDcOffset],
-    $t.counts[qfNonFinite])
+    $t.counts[qfNonFinite], noiseCell(t.tested, t.noisy), noiseCell(t.tested, t.weak))
