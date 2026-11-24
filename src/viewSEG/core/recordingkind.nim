@@ -23,17 +23,22 @@
 ## second question as it stands.
 ##
 ## The continuous test: each trace starts a whole number of trace lengths
-## after the one before it. Per sub-receiver, in time order, the `step` is the
-## commonest difference between consecutive start times. A boundary is
-## continuous when the next start minus the previous one is k * step, k a
-## whole number from 1, within one sample; k > 1 means k - 1 segments were not
-## recorded (the box was off and the system pads with zeros). The starts are
-## exact; only the length may exceed the step, by a little repeated data at
-## the ends (at most `EndRepeatShare` of the length). So the gather is
-## continuous when at least `ContinuousShare` of its boundaries are continuous
-## and every segment covers the step: no shorter (regular dead time between
-## traces) and no more than `EndRepeatShare` longer (traces mostly covering
-## each other). A receiver with one segment is continuous.
+## after the one before it, and there is no variance. All times are compared in
+## samples. Per sub-receiver, in time order, let L be its segment length (the
+## middle one). The `step` is the commonest difference between consecutive
+## start times that lies from 0.9 L to L (one sample more at the top); when
+## none does, the step is L. A boundary is on the step when the next start
+## minus the previous one is k * step, k a whole number from 1, within one
+## sample; k > 1 means k - 1 segments were not recorded (the box was off and
+## the system pads with zeros). The segments cover the step when each is at
+## least the step long (within one sample) and repeats no more than
+## `EndRepeatShare` of its length beyond the step (a little data at the ends).
+## A receiver gather is continuous only when every boundary of every
+## sub-receiver is on the step and every segment covers it. Otherwise it is
+## time sliced, and `slicedWhy` names the first trace off the step, or says
+## the traces leave dead time between them or overlap. A receiver with one
+## segment has no step to keep. When every trace carries one start time the
+## reason is `swSameStart`.
 
 import std/[algorithm, math, sequtils]
 import parseSEG
@@ -42,9 +47,6 @@ import processSEG/continuous/slice
 import ./[filesystem, jobs, segmentclock, vendormaps]
 
 const
-  ContinuousShare* = 0.5
-    ## the share of a receiver gather's segment boundaries that must be
-    ## continuous for it to count as a continuous recording
   EndRepeatShare* = 0.1
     ## a segment may be this share of its length longer than the step between
     ## starts: it repeats a little of the data at its ends and still continues
@@ -60,9 +62,9 @@ type
 
   SlicedWhy* = enum
     swNone
-    swIrregular ## the starts are not on a common step
+    swIrregular ## a trace starts off the step: `offTrace`, `offSeconds`
     swShort     ## the traces are shorter than the step: dead time between them
-    swOverlap   ## the traces are longer than the step: they mostly cover each other
+    swOverlap   ## traces overlap by more than a little repeated data: `overlapSeconds`
     swSameStart ## every trace carries the same start time
 
   RecordingPlan* = object
@@ -85,9 +87,13 @@ type
     skips*: int                    ## boundaries after whole missing segments (k > 1)
     missingSegments*: int          ## whole segments absent, summed over `skips`
     irregular*: int                ## starts that are not a whole number of steps apart
-    uncovered*: int                ## receivers whose segments are not the length of the step
+    uncovered*: int                ## receivers with a segment that does not cover the step
     stepSeconds*, segmentSeconds*: float64
-      ## of the first receiver whose segments do not cover its step
+      ## for `swShort`: the traces' length and the spacing of their starts (or the step)
+    offTrace*: int
+      ## the trace (from 1) that starts off the step (`swIrregular`) or overlaps (`swOverlap`)
+    offSeconds*: float64           ## how far off the step it starts
+    overlapSeconds*: float64       ## how far it overlaps
     unevenChannels*: int           ## from the segment clock
     kind*: RecordingKind
     slicedWhy*: SlicedWhy          ## for `rkReceiverSliced`
@@ -120,39 +126,71 @@ proc planRecording*(file: ptr SeismicFile; source: string; dtMs: float64;
 type Seg = object
   recv: int
   start, finish: float64
+  n: int ## samples
   row: int
 
 type Station = tuple[line, point: float64; index: int16]
 
+func stepOf(diffs: seq[int]; len: int): int =
+  ## The commonest start difference d, in samples, with 0.9 len <= d <= len (one
+  ## sample more at the top); `len` when none lies there. A tie goes to the longer.
+  result = len
+  var sorted = diffs
+  sorted.sort()
+  var best, run = 0
+  for x in 0 ..< sorted.len:
+    run = if x > 0 and sorted[x] == sorted[x - 1]: run + 1 else: 1
+    if 10 * sorted[x] >= 9 * len and sorted[x] <= len + 1 and run >= best:
+      best = run
+      result = sorted[x]
+
 proc tally(segs: seq[Seg]; i, j: int; dtS: float64; r: var RecordingFacts) =
   ## Counts the boundaries of the receiver `segs[i ..< j]` (two or more
   ## segments, in time order) against its step and checks the segments cover it.
-  var diffs = newSeq[float64](j - i - 1)
-  for x in i + 1 ..< j: diffs[x - i - 1] = segs[x].start - segs[x - 1].start
-  var sorted = diffs
-  sorted.sort()
-  var best, hi, at = 0
-  for first in 0 ..< sorted.len:
-    hi = max(hi, first)
-    while hi + 1 < sorted.len and sorted[hi + 1] - sorted[first] <= dtS: inc hi
-    if hi - first + 1 > best:
-      best = hi - first + 1
-      at = first + (hi - first) div 2
-  let step = sorted[at]
-  for d in diffs:
-    let k = if step > dtS: round(d / step) else: 0.0
-    if k >= 1 and abs(d - k * step) <= dtS:
+  ## The first trace that breaks the rule names the reason, unless one is named.
+  let count = j - i
+  var diffs = newSeq[int](count - 1)
+  for x in 1 ..< count:
+    diffs[x - 1] = int(round((segs[i + x].start - segs[i + x - 1].start) / dtS))
+  var lens = newSeq[int](count)
+  for x in 0 ..< count: lens[x] = segs[i + x].n
+  lens.sort()
+  let step = stepOf(diffs, lens[count div 2])
+  for x in 1 ..< count:
+    let d = diffs[x - 1]
+    let k = max(1, (2 * d + step) div (2 * step))
+    let off = d - k * step
+    if abs(off) <= 1:
       if k == 1: inc r.abutting
       else:
         inc r.skips
-        r.missingSegments += int(k) - 1
-    else: inc r.irregular
+        r.missingSegments += k - 1
+    else:
+      inc r.irregular
+      if r.slicedWhy == swNone:
+        r.offTrace = segs[i + x].row + 1
+        if k > 1:
+          r.slicedWhy = swIrregular
+          r.offSeconds = float64(abs(off)) * dtS
+          r.stepSeconds = float64(step) * dtS
+        elif off > 0:
+          r.slicedWhy = swShort
+          (r.segmentSeconds, r.stepSeconds) = (float64(lens[count div 2]) * dtS,
+            float64(d) * dtS)
+        else:
+          r.slicedWhy = swOverlap
+          r.overlapSeconds = float64(-off) * dtS
   for x in i ..< j:
-    let len = segs[x].finish - segs[x].start
-    if len < step - dtS or len - step > EndRepeatShare * len:
-      if r.uncovered == 0:
-        (r.stepSeconds, r.segmentSeconds) = (step, len)
-        r.slicedWhy = if len < step: swShort else: swOverlap
+    let n = segs[x].n
+    if n + 1 < step or 10 * (n - step) > n:
+      if r.slicedWhy == swNone:
+        r.offTrace = segs[x].row + 1
+        if n < step:
+          r.slicedWhy = swShort
+          (r.segmentSeconds, r.stepSeconds) = (float64(n) * dtS, float64(step) * dtS)
+        else:
+          r.slicedWhy = swOverlap
+          r.overlapSeconds = float64(n - step) * dtS
       inc r.uncovered
       break
 
@@ -169,7 +207,7 @@ proc describeRecording*(plan: RecordingPlan): RecordingFacts =
       let start = plan.times[row] + meta.sampleTimeMs(row, 0) / 1000
       if start.classify in {fcNormal, fcZero, fcNegZero, fcSubnormal} and abs(start) <= 1e11:
         segs.add Seg(recv: plan.receivers[row], start: start, finish: start + n.float64 * dtS,
-          row: row)
+          n: n, row: row)
   if segs.len == 0: return
   segs.sort do (a, b: Seg) -> int:
     result = cmp(a.recv, b.recv)
@@ -215,13 +253,9 @@ proc describeRecording*(plan: RecordingPlan): RecordingFacts =
       result.kind = rkShotGather
       result.slicedWhy = swNone
   else:
-    # question 2: is the receiver gather continuous?
-    let continuous = result.abutting + result.skips
+    # question 2: is the receiver gather continuous? `tally` named the first trace off
+    # the step; traces that all start together are named first
     if segs.len > 1 and segs.allIt(it.start == segs[0].start): result.slicedWhy = swSameStart
-    elif result.uncovered > 0: discard # tally named the reason
-    elif float64(continuous) < ContinuousShare * float64(result.boundaries):
-      result.slicedWhy = swIrregular
-    else: result.slicedWhy = swNone
     result.kind = if result.slicedWhy == swNone: rkReceiverContinuous else: rkReceiverSliced
 
 func isContinuousGather*(f: RecordingFacts): bool =

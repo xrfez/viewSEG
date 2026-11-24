@@ -173,7 +173,7 @@ proc main*() =
     let sliced = dir / "in" / "sliced.sgd"
     makeGather(sliced, [(0, 0), (0, 250), (0, 500), (0, 750)])
     for (path, words) in [(shotRecord, "This file is a shot gather"),
-        (sliced, "This file is a time-sliced receiver gather, not a continuous one. Its traces")]:
+        (sliced, "This file is a time-sliced receiver gather, not a continuous one. Trace 2")]:
       var st = start(dir)
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
       doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut),

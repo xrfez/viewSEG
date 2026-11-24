@@ -1,9 +1,10 @@
 ## The job that cuts a continuous recording into one record per shot and
 ## writes it to a real file. The recording is built here: two components, three
 ## source traces each of 3000 samples at 2 ms whose values are a ramp (a sample
-## names its instant), with one overlap of 50 samples between the first two
-## (the files agree in one recording and differ in another) and one gap of 150
-## samples after the second.
+## names its instant): they start every 2950 samples, so each repeats 50 samples
+## of the one before (the files agree in one recording and differ in another),
+## and the box was off for one segment after the second, so 2900 samples are
+## missing there.
 ##
 ## Each was seen to fail with a deliberate fault: the window read from one
 ## column off ("trace 0 sample 0: 1013.0 vs 1012.0"); the record number
@@ -29,7 +30,7 @@ const
   BaseUs = 1_772_323_200_000_000'i64 # 2026-03-01T00:00:00 UTC
   DtUs = 2000'i64
   SegLen = 3000
-  Starts = [0, 2950, 6100, 9050]     ## first sample of each source trace
+  Starts = [0, 2950, 8850, 11800]    ## first sample of each source trace: step 2950, one missed
   StartMs = -100.0
   LengthMs = 2000.0
   Window = 1000                      ## LengthMs / 2 ms
@@ -97,9 +98,10 @@ proc logOf(files: openArray[int]; offsetsUs: openArray[int64]): ShotView =
 
 const
   # Windows overlap (2.0 s and 2.6 s; 6.0 s and 6.4 s), the third reaches the
-  # overlap of the source traces, the fifth the gap; microseconds are kept.
-  Offsets = [2_123_456'i64, 2_600_000, 6_000_000, 6_400_000, 11_900_000, 12_300_000,
-    18_200_000]
+  # overlap of the source traces, the fifth the first 150 samples of the gap, the
+  # seventh the second overlap; microseconds are kept.
+  Offsets = [2_123_456'i64, 2_600_000, 6_000_000, 6_400_000, 10_300_000, 17_800_000,
+    23_700_000]
   Files = [101, 102, 103, 104, 105, 106, 107]
 
 type Ran = tuple[st: JobState; res: CutResult; error: string]
