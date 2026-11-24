@@ -23,9 +23,10 @@
 ## An open vibrator signature file written as SEG-D, with no option that
 ## changes samples or which traces are written, is written by the library's
 ## SEG-D writer instead: the file is read again through `fs` and the shot
-## block and channel types are the library's. Any such option keeps the keys
-## writer, and the note says the signature file's own header block is not
-## carried.
+## block and channel types are the library's. Positions a survey join filled
+## into the keys are not in those bytes, and the result says so. Any such
+## option keeps the keys writer, and the note says the signature file's own
+## header block is not carried.
 
 import std/[math, os, random, strutils, times]
 import parseSEG
@@ -35,6 +36,9 @@ const
   TraceBlock = 64 ## traces read, then written, between two cancel checks
   HeaderNotCarried* =
     "The signature file's own header block is not carried when traces are changed."
+  SurveyJoinedNotWritten* =
+    "Survey positions joined to this file are not written: the file's own header block is kept."
+    ## A survey join filled positions into the keys; the file's own header block is what is written.
 
 type
   OutputFormat* = enum
@@ -254,6 +258,9 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let srcKind = file[].kind
       let segdOut = outKind == skSegd
       if signature.isSignature and segdOut and not changesTraces(opts):
+        # `index.joined` is set only when a join changed the keys, the same
+        # fact a finished join keeps once positions were filled in.
+        if file[].index.joined: lines.add SurveyJoinedNotWritten
         if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
         let carried = signatureSegdBytes(source, signature)
         if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)

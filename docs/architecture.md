@@ -111,8 +111,9 @@ SEG kind (`core/filekinds`: `fkDat`, `fkVib`), never by their extension. Both go
   is not already open, writes the in-memory session, and drops it. A file that cannot be
   decoded is a failed row and does not stop the rest. Writing that open file as SEG-D, with
   no option that changes samples or which traces are written, reads the file again through
-  `fs` and writes the library's SEG-D bytes. Any such option keeps the keys writer, and the
-  result says the file's own header block is not carried.
+  `fs` and writes the library's SEG-D bytes. Positions a survey join filled into the keys
+  are not in those bytes, and the result says so. Any such option keeps the keys writer,
+  and the result says the file's own header block is not carried.
 - A `.dat` is four traces (reference 21, reaction-mass force 18, baseplate force 19, the
   controller's ground force 20, the sum of the two); a `.vib` is 13 in the order
   `voForces` writes (the same four roles of set B first, then set A's 258, 257 and 267, then

@@ -31,10 +31,12 @@
 ## taken from the name instead of the first bytes, `a.vib.sgy` was written.
 ## With the library path forced off (`if false and signature.isSignature`),
 ## the SEG-D write said "Headers were built from the trace keys." and the new
-## check failed.
+## check failed. With the joined-positions note left off the library path, a
+## `.vib` whose keys a survey join had filled still wrote with no such line.
 
 import std/[os, strutils, tables]
 import parseSEG
+import parseSEG/model/traceindex
 import viewSEG/core/[edits, filememory, headers, jobs, outputbatch, outputjobs, sigtypes,
   state, vendormaps]
 import utils/[fixtures, sigfiles, waiting]
@@ -53,6 +55,16 @@ proc samplesOf(f: SeismicFile; trace: int): seq[float32] =
   let x = f.readTraces(trace .. trace)
   result.setLen x.shape[1]
   for j in 0 ..< result.len: result[j] = x[0, j]
+
+proc joinSource(file: var SeismicFile): int =
+  ## Puts one source station on every trace and joins a table to it, so the
+  ## keys hold survey positions (`index.joined`).
+  for k in file.mindex.keys.mitems:
+    k.srcLine = 1.0
+    k.srcPoint = 100.0
+  var table = GeometryTable()
+  table.addSource(1.0, 100.0, 0, 111.0, 222.0)
+  file.applyGeometry(table)
 
 proc runWrite(file: ptr SeismicFile; source, dest: string; format: OutputFormat;
     opts = OutputOptions(); edits = FileEdits(); signature = SignatureFacts()):
@@ -237,6 +249,34 @@ proc main*() =
           path.extractFilename & " " & fileNumber & " " & day & " " & hour
         back.close()
         st.shutdown()
+
+  block joinedPositions:
+    ## Seen to fail: the library path said nothing when a survey join had
+    ## filled positions into the keys, so this check found no note.
+    withFixtures fx:
+      let src = fx.dir / "src"
+      let written = fx.dir / "out"
+      createDir(written)
+      let vib = vibFile(src, "0007.VIB", vibSynth)
+      var st = initAppState()
+      doAssert st.openIt(vib), "did not open " & vib.extractFilename
+      let s = st.sessions[st.shown]
+      let fp = s.filePtr
+      let plain = written / "plain.segd"
+      let unjoined = runWrite(fp, vib, plain, ofSegd, signature = s.signature)
+      doAssert unjoined.st == jsDone, unjoined.wrote.reason & " " & unjoined.error
+      doAssert SurveyJoinedNotWritten notin unjoined.wrote.lines, $unjoined.wrote.lines
+      doAssert joinSource(fp[]) > 0, "the survey join changed no trace"
+      doAssert fp[].index.joined
+      let dest = written / "joined.segd"
+      let got = runWrite(fp, vib, dest, ofSegd, signature = s.signature)
+      doAssert got.st == jsDone, got.wrote.reason & " " & got.error
+      doAssert SurveyJoinedNotWritten in got.wrote.lines, $got.wrote.lines
+      doAssert HeaderNotCarried notin got.wrote.lines, $got.wrote.lines
+      var back = openSeismic(dest, keys = true)
+      doAssert vendorBlocks(back, 0, reg).blocks.len > 0, "the shot block was not written"
+      back.close()
+      st.shutdown()
 
   block reversed:
     withFixtures fx:

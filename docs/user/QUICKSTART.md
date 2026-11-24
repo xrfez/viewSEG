@@ -322,8 +322,9 @@ are still written. Two signature files whose names differ only by `.dat` and
 `.vib` keep that extension in the output name, so they are not written as one
 file. An open vibrator signature file written as SEG-D, with none of those boxes
 on, keeps its own header block and channel types; with one on, the notes say that
-header block is not carried. **Keep the sub folders** is on: a file in a sub folder is
-written in that sub folder.
+header block is not carried. Positions a survey join filled into that file's keys
+are not written either, and the notes say so. **Keep the sub folders** is on:
+a file in a sub folder is written in that sub folder.
 
 **Run** writes every ticked file. It stays inactive, and says why, when nothing is
 ticked or no destination is chosen, and when the destination is the source folder,

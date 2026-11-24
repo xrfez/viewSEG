@@ -111,6 +111,9 @@ of the boxes that change samples or which traces are written turned on, that hea
 the channel types are kept too. With one of those boxes on (a polarity reversal, a dropped
 trace, a filter, processing, a time shift, or a sort), the header block is not carried, and the
 result says so: "The signature file's own header block is not carried when traces are changed."
+When a survey join has filled positions into the open file's keys, the notes also say those
+positions are not written: "Survey positions joined to this file are not written: the file's own
+header block is kept."
 
 ## What it says
 
