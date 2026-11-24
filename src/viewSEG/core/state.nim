@@ -8570,7 +8570,7 @@ proc followFirstBreaks(state: var AppState) =
     # its answer is kept
     have = have or (not key.guide.given and state.recordQc.job != NoJob and
       state.recordQc.picks and state.recordQc.pickKey == key)
-    if not have and not (s.derived or s.isCorrelatedView):
+    if not have and not s.derived:
       var b = FirstBreaks(key: key, state: bkComputing, first: traces.a)
       b.job = state.jobs.submit(JobSpec(title: "Find the first breaks of the record shown",
         lane: jlBackground, auto: true, reads: @[s.path]), firstBreaksWork(s.filePtr, s.path,

@@ -9,14 +9,16 @@
 ## of length 1000 and time zero 0; noise QC picking on the raw record (`view
 ## picks @[106.0, ...] vs @[80.0, ...]`); rows of a file cut short
 ## reported undecodable (`a cut view reports undecodable @[6, 7, 8, 9]`); the view's one time zero
-## for every trace (`view spectrum time zero 12.0`).
+## for every trace (`view spectrum time zero 12.0`); a first-break job asked for on a view
+## (with the view left out of the state's skip: `first breaks were asked for on a view`).
 
-import std/[atomics, locks, math, monotimes, os]
+import std/[atomics, locks, math, monotimes, os, times]
 import parseSEG
 import processSEG
 import processSEG/qc/record
 import viewSEG/core/[correlatejobs, correlateread, edits, filesystem, headers, inbox, jobs,
   noisearea, processing, recordqc, session, spectra, spectrumreader]
+import viewSEG/core/state {.all.}
 import viewSEG/core/analysisreader {.all.}
 import viewSEG/core/inspector
 import utils/waiting
@@ -54,6 +56,9 @@ proc countMap(op: FsOp; path: string) {.gcsafe.} =
   if op != foMapped: return
   if samePath(path, watchVirt): discard virtMaps.fetchAdd(1)
   elif samePath(path, watchRaw): discard rawMaps.fetchAdd(1)
+
+template settle(st: var AppState; cond: untyped): bool =
+  waitUntil((discard st.drainInbox(); cond))
 
 proc delayedSweep(sweep: openArray[float32]; samples, delay: int): seq[float32] =
   result = newSeq[float32](samples)
@@ -212,7 +217,6 @@ proc main*() =
     discard view.close()
     discard mem.close()
     discard raw.close()
-  doAssert view.derived and view.isCorrelatedView, "a view is not skipped for first breaks"
   doAssert view.correlatedView.t0Ms == T0Ms
 
   watchVirt = keep(view.path)
@@ -355,6 +359,27 @@ proc main*() =
       "a cut view reports undecodable " & $cutViewHits[mfUndecodable].traces
 
   doAssert virtMaps.load == 0, "the virtual path was mapped " & $virtMaps.load & " times"
+  # A view is derived: the first-break overlay asks for no job for it.
+  block noFirstBreaksOnAView:
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut and
+      st.jobs.active.len == 0), "the raw file was not shown"
+    let base = st.sessions[0]
+    let made = initCorrelateView(base.filePtr, sweep, DtMs, [RefAux])
+    doAssert made.refusal.len == 0, made.refusal
+    st.adoptDerived(asCorrelatedView(base, made.view))
+    let shown = st.shownFile(st.findPanel(MainPanel))
+    doAssert shown >= 0 and st.sessions[shown].isCorrelatedView, "the view was not shown"
+    var d = st.panel(MainPanel).layers[0].display
+    d.firstBreaks = true
+    st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+    let since = getMonoTime()
+    doAssert st.settle(st.panel(MainPanel).laidOut and st.jobs.active.len == 0 and
+      getMonoTime() - since > initDuration(milliseconds = 150)), "the view was not laid out"
+    doAssert st.firstBreaks.len == 0, "first breaks were asked for on a view"
+    st.shutdown()
+
   echo "tcorrviewreaders: ok"
 
 when isMainModule:
