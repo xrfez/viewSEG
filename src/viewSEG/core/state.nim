@@ -107,18 +107,21 @@ from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
 from processing import changesSamples, ownShownWords, reverseShownWords
 from editmarks import shiftNote
+from shotfollow import ShotQuery, ShotMatch
 import signatures, sweeppairs
 import analysis, analysisreader, closer, compare, comparejobs, components, correlatejobs, diskio,
   edits, filejobs,
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
       join, layouts, leapfile, log,
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, reader,
-  recordqc, referencejobs, references, selection, session, settings, shotlog, shotlogjobs,
+  recordqc, referencejobs, references, selection, session, settings, shotfollowtarget, shotlog,
+  shotlogjobs,
   shots, spectra,
   spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids, vendorjobs,
   vendormaps, vibprofile, watch, zoom
 
 export analysis, compare, edits, filelist, filememory, firstbreaks, identity, inbox, jobs, join,
+    shotfollowtarget,
     layouts, log,
   mapstate, panels, persist, pick, project, recordqc, references, selection, session, settings,
   shots, spectra, spread, survey, threads, tiles, traceids, vendormaps, zoom
@@ -1287,6 +1290,7 @@ type
     loads: int ## bumped each time a layout is loaded
     shotLogs: seq[LoadedShotLog]
       ## shot logs read this run, in the order they were imported or loaded
+    follow: ShotFollow ## per loaded log, its index, and the last follow answer
     shotLogsRev: int ## bumps when that list, or a log's view, changes
     nextShotId: int
     shotWork: seq[ShotLogWork]
@@ -2104,6 +2108,108 @@ func shotLogsRevision*(state: AppState): int {.inline.} =
   ## Bumps when a shot log is added, removed, or its view changes.
   state.shotLogsRev
 
+func findTrace*(state: AppState; trace: int): int {.raises: [].}
+
+proc sameDisk(s: Session; path: string): bool {.inline.} =
+  ## Whether `s` is the file at `path`. Does not build a new path string.
+  if s.origin.len > 0: s.origin == path else: s.path == path
+
+proc followStamp(state: AppState): tuple[hover, hoverSession, hoverKeys, chosenSession,
+    chosenKeys, filesRev, sessions, logId, logRev: int] {.raises: [].} =
+  result.hover = state.selection.hover
+  result.hoverSession = -1
+  result.chosenSession = -1
+  if result.hover >= 0:
+    let i = state.findTrace(result.hover)
+    if i >= 0:
+      result.hoverSession = int(state.sessions[i].id)
+      result.hoverKeys = state.sessions[i].keysRevision
+  if state.files.chosen.len > 0:
+    for s in state.sessions:
+      let hit =
+        if s.origin.len > 0: s.origin == state.files.chosen
+        else: s.path == state.files.chosen
+      if hit:
+        result.chosenSession = int(s.id)
+        result.chosenKeys = s.keysRevision
+        break
+  result.filesRev = state.fileList.revision
+  result.sessions = state.sessions.len
+  if state.shotLogs.len == 0: result.logId = -1
+  else:
+    let n = state.shotLogs.len - 1
+    result.logId = state.shotLogs[n].id
+    result.logRev = state.shotLogs[n].revision
+
+proc pointerQuery(state: AppState; q: var ShotQuery): bool =
+  ## The pointer's trace, when it is a trace of an open seismic file.
+  let hover = state.selection.hover
+  if hover < 0: return false
+  let i = state.findTrace(hover)
+  if i < 0: return false
+  let s = state.sessions[i]
+  if s.isSignature: return false
+  q = traceQuery(s.file, hover - s.base)
+  true
+
+proc signatureQueryOf(state: AppState; q: var ShotQuery): bool =
+  ## The selected signature, from the open session when it has one, else the list.
+  let chosen = state.files.chosen
+  if chosen.len == 0: return false
+  for s in state.sessions:
+    if s.isSignature and sameDisk(s, chosen):
+      let facts = s.signature
+      q = signatureQuery(facts.info, facts.pairTriggerNs, facts.pairFileNumber)
+      return true
+  let at = state.files.find(chosen)
+  if at < 0: return false
+  let e = state.files.entries[at]
+  if e.kind notin SignatureFileKinds: return false
+  if e.sweep.triggerNs == 0 and e.sweep.problem.len > 0: return false
+  var pairNs = 0'i64
+  var pairFile = -1'i64
+  if e.kind == fkVib:
+    let partner = state.files.pairs.getOrDefault(chosen)
+    let p = if partner.len == 0: -1 else: state.files.find(partner)
+    if p >= 0:
+      pairNs = state.files.entries[p].sweep.triggerNs
+      pairFile = state.files.entries[p].sweep.fileNumber
+  q = signatureQuery(e.sweep, pairNs, pairFile)
+  true
+
+proc fileQueryOf(state: AppState; q: var ShotQuery): bool =
+  ## The selected file's first trace, when that file is open and not a signature.
+  let chosen = state.files.chosen
+  if chosen.len == 0: return false
+  for s in state.sessions:
+    if not s.isSignature and s.len > 0 and sameDisk(s, chosen):
+      q = traceQuery(s.file, 0)
+      return true
+  false
+
+proc followAnswer*(state: var AppState): ShotFollowAnswer {.raises: [].} =
+  ## The shot the newest loaded log follows: the pointer, then the selected
+  ## signature, then the selected open file. Nothing is moved or scrolled.
+  ## No allocation when the pointer, the chosen file and the log are unchanged.
+  let stamp = followStamp(state)
+  if state.follow.unchanged(stamp.hover, stamp.hoverSession, stamp.hoverKeys,
+      stamp.chosenSession, stamp.chosenKeys, stamp.filesRev, stamp.sessions, stamp.logId,
+      stamp.logRev):
+    return state.follow.answer
+  let none = noMatch()
+  template put(source: ShotFollowSource; matched: ShotMatch): ShotFollowAnswer =
+    state.follow.publish(source, matched, stamp.hover, stamp.hoverSession, stamp.hoverKeys,
+      stamp.chosenSession, stamp.chosenKeys, stamp.filesRev, stamp.sessions, stamp.logId,
+      stamp.logRev)
+  if stamp.logId < 0: return put(sfNone, none)
+  let index = state.follow.indexOf(stamp.logId)
+  if index == nil: return put(sfNone, none)
+  var q = ShotQuery()
+  if pointerQuery(state, q): return put(sfPointer, matched(index, q))
+  if signatureQueryOf(state, q): return put(sfSignature, matched(index, q))
+  if fileQueryOf(state, q): return put(sfFile, matched(index, q))
+  put(sfNone, none)
+
 func shotView*(state: AppState; i: int): lent ShotView =
   ## The typed rows of loaded shot log `i`, without copying them.
   state.shotLogs[i].view
@@ -2511,7 +2617,7 @@ func findSession*(state: AppState; id: SessionId): int =
     if s.id == id: return i
   -1
 
-func findTrace*(state: AppState; trace: int): int =
+func findTrace*(state: AppState; trace: int): int {.raises: [].} =
   ## The index in `sessions` of the file that holds survey-wide trace id
   ## `trace`; -1 when no open file does.
   for i, s in state.sessions:
@@ -6548,6 +6654,7 @@ proc dropShotLogs(state: var AppState) =
     if w.kind == sjDelete: kept.add w
     elif w.job != NoJob: discard state.jobs.cancel(w.job)
   state.shotWork = kept
+  state.follow.dropAll()
   state.shotLogs.setLen 0
   inc state.shotLogsRev
 
@@ -6655,6 +6762,7 @@ proc removeShotLogCmd(state: var AppState; cmd: Command) =
     if w.id == id and state.jobs.cancel(w.job): discard
     else: kept.add w
   state.shotWork = kept
+  state.follow.drop(id)
   state.shotLogs.delete(cmd.logIndex)
   inc state.shotLogsRev
   if stored.len == 0 or not state.inProject: return
@@ -6793,6 +6901,7 @@ proc tookShotImport(state: var AppState; w: ShotLogWork) =
     map: r.map, log: r.log, view: r.view, revision: 1)
   inc state.nextShotId
   state.shotLogs.add loaded
+  state.follow.keep(loaded.id, r.index)
   inc state.shotLogsRev
   state.settleShotMap(r.log, r.map)
   if r.usedLast: state.log.add(sevInfo, "shot log", ColumnsAsLast)
@@ -6805,6 +6914,7 @@ proc tookShotLoad(state: var AppState; w: ShotLogWork) =
     stored: w.stored, map: r.map, log: r.log, view: r.view, revision: 1)
   inc state.nextShotId
   state.shotLogs.add loaded
+  state.follow.keep(loaded.id, r.index)
   inc state.shotLogsRev
 
 proc tookShotSave(state: var AppState; w: ShotLogWork) =
@@ -6815,6 +6925,7 @@ proc tookShotSave(state: var AppState; w: ShotLogWork) =
   let loaded = state.shotLogs[i]
   loaded.busy = false
   if w.sink.result.ok:
+    state.follow.keep(loaded.id, w.sink.result.index)
     loaded.view = w.sink.result.view
     inc loaded.revision
     inc state.shotLogsRev
@@ -6835,6 +6946,7 @@ proc tookShotRemap(state: var AppState; w: ShotLogWork) =
   let loaded = state.shotLogs[i]
   loaded.busy = false
   let r = w.sink.result
+  state.follow.keep(loaded.id, r.index)
   loaded.log = r.log
   loaded.view = r.view
   loaded.map = r.map
@@ -6854,6 +6966,7 @@ proc tookShotRebuild(state: var AppState; w: ShotLogWork) =
   let loaded = state.shotLogs[i]
   loaded.busy = false
   if w.sink.result.ok:
+    state.follow.keep(loaded.id, w.sink.result.index)
     loaded.view = w.sink.result.view
     inc loaded.revision
     inc state.shotLogsRev
