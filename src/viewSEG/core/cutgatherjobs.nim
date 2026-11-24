@@ -40,7 +40,7 @@ import parseSEG
 import parseSEG/model/traceindex
 import processSEG
 import processSEG/continuous/slice
-import processSEG/core/workspace
+import processSEG/core/[rows, workspace]
 import cutfile, cutgather, filesystem, jobs, outputjobs, recordingkind, segmentclock, shotlog, vendormaps
 
 const
@@ -184,7 +184,12 @@ proc makeFetch(st: ref FetchState): FetchProc =
       if file[].cutShort: raise newException(IOError, cutWhy(file[]))
       result = false
     else:
-      for j in 0 ..< count: dst[j] = st.tensor[0, j]
+      # One block copy of the row; the check keeps the raw copy inside both buffers.
+      let rowsOf = rowBlock(st.tensor)
+      if count > 0:
+        if count > rowsOf.cols or count > dst.len:
+          raise newException(IndexDefect, "a fetch of " & $count & " samples does not fit")
+        copyMem(addr dst[0], rowsOf.rowPtr(0), count * sizeof(float32))
       st.fetched += count
       result = true
 

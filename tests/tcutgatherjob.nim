@@ -506,6 +506,59 @@ proc main*() =
       if extractFilename(path).startsWith("nosink.sgd.part-"): stray.add path
     doAssert stray.len == 0, $stray
 
+  block windows_past_both_ends_of_the_recording:
+    # One shot's window starts before the first sample, another ends after the
+    # last (a file whose traces differ in length is not continuous: refused). Every sample is
+    # compared with a model built one sample at a time: what the recording lacks
+    # is 0. Fails when the fetch copies a different span than it was asked for
+    # (a sample off, the part the source lacks not 0).
+    const Lens = [3000, 3000, 3000]
+    let path = dir / "rec" / "short.sgy"
+    var data: seq[float32] = @[]
+    var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+    var at = 0
+    for seg in 0 .. 2:
+      var samples = newSeq[float32](Lens[seg])
+      for j in 0 ..< Lens[seg]:
+        samples[j] = ramp(0, at + j)
+        data.add samples[j]
+      var k = initTraceKeys()
+      k.status = tsLive
+      k.record = float64(seg + 1)
+      k.channel = 11
+      k.intervalUs = 2000
+      k.t0Ms = 0
+      k.time = float64(BaseUs div 1_000_000) + float64(at) * 0.002
+      k.rcvLine = 1
+      k.rcvPoint = 7
+      w.writeTrace(k, samples)
+      at += Lens[seg]
+    discard w.close()
+    var src = openSeismic(path, keys = true)
+    defer: src.close()
+    let offs = [50_000'i64, 5_000_000, 17_500_000]
+    let sh = shotsInTime(logOf([301, 302, 303], offs).rows)
+    let dest = outDir / "cut-short.sgd"
+    let got = runCut(jobs, src, path, dest, sh, opts)
+    doAssert got.st == jsDone, got.error & " / " & got.res.reason
+    doAssert got.res.ok and got.res.shotsWritten == 3, $got.res
+    var f = openSeismic(dest, keys = true)
+    defer: f.close()
+    doAssert f.len == 3
+    for s in 0 ..< 3:
+      # floor division: the first window starts before sample 0
+      let k0 = int(floorDiv(BaseUs + offs[s] + int64(StartMs * 1000) - BaseUs + DtUs div 2,
+        DtUs))
+      let samples = samplesOf(f, s)
+      doAssert samples.len == Window
+      for j in 0 ..< Window:
+        let k = k0 + j
+        let want = if k >= 0 and k < data.len: data[k] else: 0'f32
+        doAssert cast[uint32](samples[j]) == cast[uint32](want),
+          "shot " & $s & " sample " & $j & ": " & $samples[j] & " vs " & $want
+    doAssert BaseUs + offs[0] + int64(StartMs * 1000) < BaseUs
+    doAssert firstSample(BaseUs + offs[2]) + Window > data.len
+
   echo "tcutgatherjob ok"
 
 when isMainModule:
