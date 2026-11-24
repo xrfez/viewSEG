@@ -185,7 +185,7 @@ func absDigits(n: int64): string =
   elif n == low(int64): "9223372036854775808"
   else: $(-n)
 
-func formatInt(n: int64; pad: int): string =
+func formatInt*(n: int64; pad: int): string =
   ## Sign outside the zeros: `-00042`. A value wider than `pad` is whole.
   let digits = absDigits(n)
   let width = appliedPad(pad)
@@ -193,7 +193,7 @@ func formatInt(n: int64; pad: int): string =
                else: repeat('0', width - digits.len) & digits
   if n < 0: "-" & padded else: padded
 
-func numberPiece(x: float64; pad: int): string =
+func numberPiece*(x: float64; pad: int): string =
   ## Rounded to 4 decimal places, half away from zero, by scaling into an
   ## integer. The integer digits are padded; a fraction that is not zero
   ## follows `p`, trailing zeros dropped. A value that rounds to zero has
@@ -248,7 +248,7 @@ func civilFromDays(z0: int64): tuple[y: int64; m, d: int] =
   if m <= 2: inc y
   (y, m, d)
 
-func formatTime(us: int64; wholeSeconds: bool): NameResult =
+func formatTime*(us: int64; wholeSeconds: bool): NameResult =
   const
     UsPerSec = 1_000_000'i64
     SecPerDay = 86_400'i64
