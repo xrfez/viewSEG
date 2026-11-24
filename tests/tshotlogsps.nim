@@ -6,6 +6,8 @@
 ## was written, an existing file is replaced and `error` stays empty.
 ## Seen to fail: with `nameFits` accepting a non-finite value, revision 1.0
 ## writes a line or point of Inf as "inf" and counts it written.
+## Seen to fail: with only the length checked, a point code of a newline
+## is written into the record and splits it.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -459,6 +461,44 @@ proc main*() =
     doAssert big.written == 1 and big.count == 0, $big.problems
     let fixed = toSps(one("10", "inf"), options(sps21))
     doAssert fixed.written == 0 and hasProblem(fixed, 0, "line", "inf")
+
+  block pointCodeBytes:
+    let roles = [crShotPoint, crSourceLine, crX, crY]
+    let view = viewOf("point,line,x,y\n1,10,1,2\n", roles)
+    proc refused(code: string) =
+      let made = toSps(view, options(code = code))
+      doAssert made.written == 0 and made.skipped == 1 and made.text.len == 0
+      doAssert made.problems.len == 1
+      doAssert hasProblem(made, -1, "pointCode", code), $made.problems
+      doAssert made.file.points.len == 0
+    refused("\n")
+    refused("\r")
+    refused("A\n")
+    refused("\x7f")
+    refused("é")
+    refused("\x80")
+    refused("ABC\n")
+    proc accepted(code: string) =
+      let made = toSps(view, options(code = code))
+      doAssert made.written == 1 and made.count == 0, $made.problems
+      doAssert readBack(made.text, sps21).points[0].code == code
+    accepted("V1")
+    accepted("~")
+    let space = toSps(view, options(code = " "))
+    doAssert space.written == 1 and space.count == 0, $space.problems
+    doAssert readBack(space.text, sps21).points[0].raw[24] == ' '
+    let dir = getTempDir() / ("shotlogsps-code-" & $getCurrentProcessId())
+    createDir(dir)
+    let path = dir / "keep.sps"
+    writeFile(path, "previous\n")
+    let bad = writeShotSps(view, options(code = "\n"), path)
+    doAssert bad.written == 0
+    doAssert bad.error.startsWith("No row could be written.")
+    doAssert hasProblem(bad, -1, "pointCode", "\n")
+    doAssert readFile(path) == "previous\n"
+    discard tryRemoveFile(path)
+    try: removeDir(dir)
+    except OSError: discard
 
   echo "tshotlogsps ok"
 

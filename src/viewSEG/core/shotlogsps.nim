@@ -34,7 +34,8 @@ type
     defaultIndex*: int
       ## Used where `pointIndex` is `none`. One digit, 0 to 9.
     pointCode*: string
-      ## Two characters at most. A longer code is one problem and no records.
+      ## Two bytes at most, each in ' '..'~'. A longer code, or a byte
+      ## outside that range, is one problem and no records.
     withTime*: bool
       ## Write the day of year and the time from `timeUtcUs`.
 
@@ -132,6 +133,13 @@ proc waterFits(v: float64; rev: SpsRevision): bool =
   if v.isNaN: return true
   if rev == sps10: fixedFits(v, 4, 1) or intTextFits(v, 4)
   else: fixedFits(v, 6, 1)
+
+proc pointCodeFits(code: string): bool =
+  ## Two bytes at most, each a printable ASCII character.
+  if code.len > 2: return false
+  for c in code:
+    if c < ' ' or c > '~': return false
+  true
 
 proc ident(rev: SpsRevision; line, point: float64; index: int): string =
   if rev == sps21:
@@ -245,7 +253,7 @@ proc toSps*(view: ShotView; opts: ShotSpsOptions): ShotSpsResult {.raises: [].} 
   if opts.revision notin {sps10, sps21}:
     addProblem(result, -1, "revision", $opts.revision)
     optsOk = false
-  if opts.pointCode.len > 2:
+  if not pointCodeFits(opts.pointCode):
     addProblem(result, -1, "pointCode", opts.pointCode)
     optsOk = false
   if optsOk:
