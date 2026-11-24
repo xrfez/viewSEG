@@ -109,7 +109,8 @@ from processing import changesSamples, ownShownWords, reverseShownWords
 from editmarks import shiftNote
 from shotfollow import ShotQuery, ShotMatch
 import signatures, sweeppairs
-import analysis, analysisreader, closer, compare, comparejobs, components, correlatejobs, diskio,
+import analysis, analysisreader, closer, compare, comparejobs, components, correlatejobs,
+  correlateread, diskio,
   edits, filejobs,
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
       join, layouts, leapfile, log,
@@ -1235,6 +1236,8 @@ type
     profileNoted: bool ## the status line says the vibrator QC profile was stored
     correlateSaid: string ## the sentence logged last, so the same one is not said again
     picksSaid: bool ## the picks sentence was said this run
+    correlateLimit: int64
+      ## a correlated copy larger than this many bytes is shown as a view, not held
     correlateRef: string ## the reference the derived view was made from
     correlateGen: uint64 ## bumps when a new correlation replaces one running
     correlate: CorrelateHold ## the correlation running; nil for none
@@ -1375,7 +1378,7 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
     pairSearch: (NoJob, "", NoPanel, coWindow),
     preparing: (NoJob, ""), prepared: (NoJob, nil), memoryJob: NoJob,
     compareJobA: NoJob, compareJobB: NoJob, comparePicJob: NoJob,
-    vendor: VendorState(job: NoJob))
+    vendor: VendorState(job: NoJob), correlateLimit: MaxPrepareBytes)
   result.panels.add Panel(id: MainPanel)
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
@@ -1581,6 +1584,11 @@ func mainReferences*(state: AppState): lent ReferenceIndex {.inline.} =
 func chosenReference*(state: AppState): string {.inline.} =
   ## The reference the plots use; "" is none.
   state.chosenRef
+
+proc setCorrelateLimit*(state: var AppState; bytes: int64) =
+  ## A correlated copy of more than `bytes` bytes is not held in memory: Correlate then
+  ## shows a view that correlates what is read. Starts at `MaxPrepareBytes`.
+  state.correlateLimit = bytes
 
 func correlateOn*(state: AppState): bool {.inline.} =
   ## Whether the Seismic window is set to show the correlated record.
@@ -5916,7 +5924,8 @@ proc startCorrelate(state: var AppState; originIndex: int; keepView: bool) =
   let load = plan.load
   let slot = addr hold.result
   let job = state.jobs.submit(JobSpec(title: "Correlate " & s.diskPath.extractFilename,
-    lane: jlBackground, reads: @[s.diskPath], auto: true), correlateLoaded(ask, load, slot))
+    lane: jlBackground, reads: @[s.diskPath], auto: true),
+    correlateOrView(ask, load, state.correlateLimit, slot))
   hold.job = job
   state.correlate = hold
   state.correlateNote = ""
@@ -6160,7 +6169,8 @@ proc takeCorrelate(state: var AppState; job: JobInfo): bool =
   if stale:
     state.discardHold(hold)
     return
-  if job.state != jsDone or not hold.result.ok or hold.result.opened.isNil:
+  if job.state != jsDone or not hold.result.ok or
+      (hold.result.opened.isNil and not hold.result.onDemand):
     let why = if hold.result.failure.len > 0: hold.result.failure
               elif job.error.len > 0: job.error
               else: "the correlation failed"
@@ -6171,7 +6181,17 @@ proc takeCorrelate(state: var AppState; job: JobInfo): bool =
     return
   var opened = hold.result.opened
   hold.result.opened = nil
-  opened.asDerived()
+  if hold.result.onDemand:
+    let raw = state.originIndex(hold.origin)
+    if raw < 0:
+      state.discardHold(hold)
+      return
+    state.sayCorrelate("Correlated on demand: the correlated copy would be " &
+      formatSize(hold.result.estimate, includeSpace = true) &
+      ", more than fits in memory at once")
+    opened = asCorrelatedView(state.sessions[raw], hold.result.view)
+  else:
+    opened.asDerived()
   state.correlateRef = hold.refId
   for line in hold.result.lines:
     state.log.add(sevInfo, "correlate", ended(line))

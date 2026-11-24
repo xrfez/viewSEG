@@ -38,7 +38,8 @@ import std/[algorithm, cpuinfo, formatfloat, math, sets, strutils]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
-import cutfile, filesystem, jobs, processing, references, session, threads, traceids
+import cutfile, correlateview, filesystem, jobs, processing, references, session, threads,
+  traceids
 
 const
   AuxLeadMs* = 500.0
@@ -74,6 +75,11 @@ type
     listenMs*: float64
     sweepMs*: float64
     lines*: seq[string]
+    onDemand*: bool
+      ## The correlated copy was too large to hold: `view` is set and `opened` is nil.
+      ## Show it with `asCorrelatedView` on the raw session.
+    view*: CorrelateView
+    estimate*: int64 ## `onDemand`: the bytes the correlated copy would have had
 
 proc workerCount(): int =
   clamp(countProcessors() div 2, 1, 4)
@@ -533,6 +539,18 @@ proc writeRow(w: var SeismicWriter; file: ptr SeismicFile; trace, row, listen: i
     w.writeTrace(file[], trace, dst, row, count = listen,
       overrides = [headerOverride("trace.correlated", CorrelatedYes)])
 
+proc jobLines*(ask: CorrelateAsk; ready: ListenShape; delayed, leadSamples: int;
+    refs: HashSet[int]): seq[string] =
+  ## The report of a correlation of `ask.file`: the notes of `correlationLines`, then
+  ## the binary header's.
+  let file = ask.file
+  let listenMs = float64(ready.listen) * ready.dtMs
+  let sweepMs = float64(ask.reference.len) * ready.dtMs
+  result = correlationLines(file, file[].len, ready.listen, ask.reference.len, listenMs,
+    sweepMs, ready.dtMs, delayed, leadSamples, ready.padded, ready.cut, refs, ready.odd)
+  let uncorrelated = binaryUncorrelatedLine(file)
+  if uncorrelated.len > 0: result.add uncorrelated
+
 proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   if ask.path.len == 0: refuse("the file has no path.")
   let file = ask.file
@@ -614,11 +632,7 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   slot[].samples = listen
   slot[].listenMs = float64(listen) * dtMs
   slot[].sweepMs = float64(sweepLen) * dtMs
-  let leadSamples = abs(lag)
-  slot[].lines = correlationLines(file, nTraces, listen, sweepLen, slot[].listenMs,
-    slot[].sweepMs, dtMs, delayed, leadSamples, ready.padded, ready.cut, refs, ready.odd)
-  let uncorrelated = binaryUncorrelatedLine(file)
-  if uncorrelated.len > 0: slot[].lines.add uncorrelated
+  slot[].lines = jobLines(ask, ready, delayed, abs(lag), refs)
   slot[].opened = made
   slot[].ok = true
 
@@ -664,7 +678,7 @@ type
     shiftMs*: float64
     record*: string
 
-proc loadSweep(file: ptr SeismicFile; path: string; load: CorrelateLoad):
+proc loadSweep*(file: ptr SeismicFile; path: string; load: CorrelateLoad):
     tuple[samples: seq[float32]; dtMs: float64] =
   ## The sweep `load` names, and its sample interval in ms. Raises when it
   ## cannot be read. On the worker: `readReferenceFile` and `readRawTrace` assert that.

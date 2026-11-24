@@ -17,7 +17,7 @@
 import std/[math, sets]
 import parseSEG
 import processSEG
-import correlatejobs, correlateview, filesystem, threads
+import correlatejobs, correlateview, filesystem, jobs, threads
 
 export correlateview
 
@@ -272,3 +272,61 @@ proc readListenChunk*(view: CorrelateView; file: ptr SeismicFile; part: Slice[in
       copyMem(rowBlock(result).rowPtr(0), addr buf[0], buf.len * sizeof(float32))
     except ValueError as e:
       raiseAssert e.msg # a tensor of rows
+
+proc correlateOrView*(ask: sink CorrelateAsk; load: CorrelateLoad; limit: int64;
+    slot: ptr CorrelateResult): JobWork =
+  ## `correlateLoaded`, unless the correlated copy would be more than `limit` bytes
+  ## (`fitsInMemory`): then no copy is made and `slot` gets the prepared `view`
+  ## (`onDemand`, `opened` nil) with the same report lines, or the refusal the job gives.
+  ## `slot` is the caller's and must stay alive until the job has finished.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    var ready = ask
+    var estimate = -1'i64
+    try:
+      {.cast(gcsafe).}:
+        assertWorkerThread()
+        let got = loadSweep(ready.file, ready.path, load)
+        ready.reference = got.samples
+        ready.referenceDtMs = got.dtMs
+        try:
+          estimate = correlatedBytesEstimate(ready.file, ready.reference.len)
+        except ValueError:
+          estimate = -1 # the copy's own job gives the refusal
+    except CatchableError as e:
+      slot[].ok = false
+      slot[].cancelled = false
+      slot[].opened = nil
+      slot[].failure = if e.msg.len == 0: "the reference could not be read." else: e.msg
+      raise
+    if estimate < 0 or fitsInMemory(estimate, limit):
+      correlateWork(ready, slot)(ctx)
+      return
+    {.cast(gcsafe).}:
+      slot[].sourcePath = ready.path
+      slot[].ok = false
+      slot[].cancelled = false
+      slot[].failure = ""
+      slot[].opened = nil
+      slot[].lines = @[]
+      slot[].onDemand = false
+      ctx.checkCancelled()
+      let made = initCorrelateView(ready.file, ready.reference, ready.referenceDtMs,
+        ready.referenceTraces)
+      if made.refusal.len > 0:
+        slot[].failure = made.refusal
+        raise newException(ValueError, made.refusal)
+      let shape = listenShape(ready.file, ready.reference, ready.referenceDtMs)
+      let refs = referenceSet(ready.file[].len, ready.referenceTraces)
+      var delayed = 0
+      for t in ready.referenceTraces:
+        if ready.file[].traceKeys(t).status == tsAuxiliary and t notin made.view.odd:
+          inc delayed
+      slot[].traces = ready.file[].len
+      slot[].samples = shape.listen
+      slot[].listenMs = float64(shape.listen) * shape.dtMs
+      slot[].sweepMs = float64(ready.reference.len) * shape.dtMs
+      slot[].lines = jobLines(ready, shape, delayed, abs(made.view.lag), refs)
+      slot[].view = made.view
+      slot[].estimate = estimate
+      slot[].onDemand = true
+      slot[].ok = true
