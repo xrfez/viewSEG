@@ -68,6 +68,8 @@ type
     carried*: bool
       ## SEG-D from SEG-D: the output is in the source's revision, made of the
       ## source's own headers (`cutcarry`)
+    sourceFormat*: int
+      ## a carried output whose source samples are not IEEE float32: the source's format code
     revision*: string ## the revision of a carried output, "Rev 2.1"
     startRewritten*: bool ## a carried trace's vendor start time was set to the slice's
     sourceXyDropped*: bool
@@ -223,6 +225,9 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
     result.add "The output was written in the source's revision (" & res.revision &
       ") with its headers carried: the extended header, the channel sets and each trace's " &
       "header blocks are the source's, from the segment that holds the shot's first sample."
+    if res.sourceFormat != 0:
+      result.add "The source's samples are in format " & $res.sourceFormat &
+        "; the output's are written as 32-bit floats (no value changes)."
     if res.startRewritten:
       result.add "The start time in each trace's vendor header was rewritten to the slice's."
     if res.sourceXyDropped:
@@ -340,8 +345,12 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       for r in 0 ..< comps:
         let k = plan.receiverKeys(r)
         if not (k.rcvX.isNaN or k.rcvY.isNaN): anyReceiverXY = true
-      let expected = estimateBytes(opts, shots.shots.len, comps, plan.samples, anyStation,
+      let rows = carryRows(plan)
+      let candidate = opts.standard == csSegdRev3 and carryable(file[], plan, rows)
+      let keysBytes = estimateBytes(opts, shots.shots.len, comps, plan.samples, anyStation,
         anySourceXY, anyReceiverXY)
+      var expected = if candidate: carryBytes(file[], plan, rows, shots.shots.len)
+        else: keysBytes
       var res = CutResult(path: dest, shotsDropped: shots.dropped,
         duplicateTimes: shots.duplicateTimes,
         segmentsFromHeaders: clock.fromHeaders, segmentsWithoutTime: clock.leftOut,
@@ -360,7 +369,6 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var w: SeismicWriter
       let intervalUs = round(dtMs * 1000)
       let vendors = currentVendors()
-      let rows = carryRows(plan)
       # The one place the way of writing is chosen. A SEG-D source cut into SEG-D is
       # written like the source, so its extended header, channel sets and trace
       # header blocks (a vendor's own among them) are kept and the revision is its
@@ -372,7 +380,11 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         res.carried = true
         res.revision = revisionWords(file[], plan)
         res.sourceXyDropped = anySourceXY and not isRev3(file[], plan.tracesNeeded[0])
+        res.sourceFormat = sourceFormat(file[], plan)
       else:
+        if candidate: # the writer refused the source as a template
+          expected = keysBytes
+          res.expectedBytes = expected
         case opts.standard
         of csSegdRev3:
           w = openSeismicWriter(part, SegdOutputOptions(sampleIntervalUs: intervalUs,
@@ -412,6 +424,9 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           if not isRev3(file[], want.traces[0]):
             patch.headers = sourceHeaders(file[], want.traces[0], sh.srcLine, sh.srcPoint,
               sh.srcIndex)
+          # `startSubset` also ends the record before it. A record whose traces were all
+          # written cannot fail there: each trace's count and end time are checked when it is
+          # written, so a refusal here is this shot's own (its patch).
           try:
             w.startSubset(file[], want.traces, patch)
             started = true
@@ -432,7 +447,8 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               k.record = float64(numbered.numbers[s])
               k.channel = float64(r + 1)
               var over = traceOverrides(file[], source, want.ordinals[i], firstUs, vendors,
-                clock.fromHeaders, res.startRewritten)
+                clock.fromHeaders, plan.gapSamples(trace) >= plan.samples,
+                res.startRewritten)
               try:
                 if isRev3(file[], source) and hasSourcePlace(k):
                   w.writeTrace(file[], source, dst, k, over, SourceFields)

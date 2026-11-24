@@ -5,6 +5,7 @@
 
 import std/[math, os]
 import imguin/cimgui
+from parseSEG import skSegd
 import processSEG/continuous/slice
 import ../../core/[cutgather, destwatch, geometry, panels, recordingkind, shotlog, state]
 import ../../view/[cutwords, theme]
@@ -135,16 +136,16 @@ proc drawAlign(ui: var CutUi; marks: var Marks) =
   marks.mark("cut.align")
   tip(alignTip(ui.align))
 
-proc drawFormat(ui: var CutUi; marks: var Marks) =
-  if igBeginCombo("Format##cut".cstring, standardWords(ui.standard).cstring, 0):
+proc drawFormat(ui: var CutUi; marks: var Marks; sourceSegd: bool) =
+  if igBeginCombo("Format##cut".cstring, standardWords(ui.standard, sourceSegd).cstring, 0):
     for s in CutStandard:
-      if igSelectable_Bool(standardWords(s).cstring, s == ui.standard, 0,
+      if igSelectable_Bool(standardWords(s, sourceSegd).cstring, s == ui.standard, 0,
           ImVec2_c(x: 0, y: 0)):
         ui.standard = s
-      marks.mark("cut.format " & standardWords(s))
+      marks.mark("cut.format " & standardWords(s, sourceSegd))
     igEndCombo()
   marks.mark("cut.format")
-  marks.mark("cut.format " & standardWords(ui.standard) & ".on")
+  marks.mark("cut.format " & standardWords(ui.standard, sourceSegd) & ".on")
 
 proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw =
   ## The window, while it is open. Cut posts the command when the options can
@@ -201,7 +202,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
       coloured(problem, t.roles[rlWarning], wide)
       marks.mark("cut.why " & problem)
     ui.drawAlign(marks)
-    ui.drawFormat(marks)
+    ui.drawFormat(marks, shown >= 0 and st.sessions[shown].facts.summary.standard == skSegd)
     igSeparator()
     wrapped("Folder: " & (if ui.folder.len > 0: ui.folder else: "not chosen"), wide)
     marks.mark("cut.folder " & ui.folder)
@@ -225,7 +226,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     var summary = ""
     if shown >= 0 and ui.haveShots and facts.ready and problem.len == 0:
       let samples = int(round(opts.recordMs / facts.dtMs))
-      summary = summaryWords(ui.shots, facts.components, samples, opts)
+      summary = summaryWords(ui.shots, facts.components, samples, opts, facts.carryHeaderBytes)
     if summary.len > 0:
       wrapped(summary, wide)
       marks.mark("cut.summary " & summary)

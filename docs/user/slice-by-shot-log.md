@@ -100,7 +100,8 @@ opening keeps what you typed. From the top:
   **Nearest sample** starts at the nearest one and interpolates nothing. **Linear**, **Cubic**
   and **Sinc** shift the part of the start between two samples out by that interpolation; Sinc is the
   most exact and the slowest. Hover an entry for the same in a sentence.
-- **Format:** **SEG-D Rev 3** or **SEG-Y**. The default is SEG-D Rev 3.
+- **Format:** **SEG-D** or **SEG-Y**. SEG-D reads "SEG-D (the source's revision)" when the
+  recording is SEG-D (its headers are kept, see below) and "SEG-D Rev 3" otherwise.
 - **Folder:** where the file goes, chosen with **Change folder...**. It is "not chosen" until
   you choose one.
 - **File name:** a name without a folder. It starts as the recording's name, then `_slice`, then
@@ -146,6 +147,8 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
   samples are written as 32-bit floats whatever the recording's sample format. A recording
   the writer cannot copy (multiplexed data, several records) and any SEG-Y recording or SEG-Y
   output build their headers from the options and the log instead, as Rev 3 for SEG-D.
+  A trace no segment reaches is written as zeros and marked dead. When the recording's
+  samples are not 32-bit floats, Messages names their format and says the output's are floats.
   A shot the writer refuses is left out and named in Messages; the others are written.
 
 When a vendor header map names each trace's start time (see `vendormaps/README.md`), the slice

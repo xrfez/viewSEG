@@ -64,7 +64,7 @@ import std/[algorithm, math, sequtils]
 import parseSEG
 import processSEG
 import processSEG/continuous/slice
-import ./[filesystem, jobs, segmentclock, traceorder, vendormaps]
+import ./[cutcarry, filesystem, jobs, segmentclock, traceorder, vendormaps]
 
 export traceorder
 
@@ -131,6 +131,9 @@ type
       ## for `rkReceiverSliced`, and for a `rkShotGather` told by the order of the file: why
       ## the continuous test failed (`swNone` for a shot gather of one segment per receiver)
     order*: TraceOrder ## how the traces of the file are written (`traceOrder`)
+    carryHeaderBytes*: int64
+      ## a SEG-D file's cut record keeps its source's headers: their bytes per record
+      ## (`cutcarry.carryHeaderBytes`); 0 when the cut builds its headers from keys
 
   RecordingSink* = ref object
     ## Filled by `recordingFactsWork`; read it once the job has ended.
@@ -403,3 +406,4 @@ proc recordingFactsWork*(file: ptr SeismicFile; source: string; dtMs: float64;
       ctx.checkCancelled()
       sink.facts = describeRecording(plan)
       sink.ownKeys = not keysJoined(file[])
+      sink.facts.carryHeaderBytes = carryHeaderBytes(file[], sink.facts.components)

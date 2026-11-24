@@ -19,6 +19,7 @@ import parseSEG/model/traceindex
 import parseSEG/segd/[reader, writer, headers, samples]
 import parseSEG/io/diskio
 import viewSEG/core/[cutgather, cutgatherjobs, jobs, segmentclock, shotlog, vendormaps]
+import viewSEG/view/cutwords
 import utils/waiting
 
 const
@@ -49,11 +50,10 @@ func sampleUs(k: int): int64 =
 func value(comp, k: int): float32 =
   float32(1000 * comp + k)
 
-proc makeRecording(path: string; comps: int) =
+proc makeRecording(path: string; comps: int; fmt = sd8058) =
   ## Rev 2.1, one record: an extended header, a source header, one channel set
   ## with filter and gain fields set, a trace per segment and component (segment
   ## by segment), each with two vendor blocks.
-  let fmt = sd8058
   var r = SegdRecord(layout: slRev2, format: some(fmt),
     revision: SegdRevision(major: 2, minor: 1))
   r.gh1 = SegdGeneralHeader1(fileNumber: 5, formatCode: ord(fmt), year: 26,
@@ -185,6 +185,9 @@ proc check(dir: string; jobs: Jobs; comps: int; reg: VendorRegistry) =
   doAssert "Rev 2.1" in got.res.lines[1] and "headers carried" in got.res.lines[1],
     got.res.lines.join("|")
   doAssert got.res.recordsFromFileNumbers
+  doAssert abs(got.res.expectedBytes - got.res.bytesWritten) * 100 <= 5 * got.res.bytesWritten,
+    "estimate " & $got.res.expectedBytes & ", written " & $got.res.bytesWritten
+  doAssert got.res.sourceFormat == 0 and "format" notin got.res.lines.join("|")
   var g = openSeismic(dest, keys = true)
   defer: g.close()
   doAssert g.kind == skSegd and g.len == 3 * comps, "traces " & $g.len
@@ -262,6 +265,93 @@ proc check(dir: string; jobs: Jobs; comps: int; reg: VendorRegistry) =
   defer: y.close()
   doAssert y.kind == skSegy and y.len == 3 * comps
 
+proc gapShots(): CutShots =
+  ## Time order: a shot of 1949 (a year the writer cannot hold), a shot three days before
+  ## the recording (no segment reaches it), the three good shots, a shot of 2060.
+  var text = ""
+  var us = @[-631_152_000_000_000'i64 - 864_000_000_000'i64, BaseUs - 3 * 86_400_000_000'i64]
+  for i in 0 ..< 3: us.add shotUs(i)
+  us.add 2_840_140_800_000_000'i64
+  for i, u in us: text.add $(200 + i) & "," & $u & "\n"
+  var m = initShotLogMap()
+  m.hasHeader = false
+  m.roles = @[crFileNumber, crUtcMicros]
+  shotsInTime(shots(parseShotLog(text, m), m).rows)
+
+proc checkGapsAndRefusals(dir: string; jobs: Jobs) =
+  ## A shot in a gap is a dead trace, as the keys path writes it; a shot the writer refuses
+  ## is named with the library's message, the shots around it are written and the file is
+  ## valid. Seen failing: the gap trace left live ("trace edit of trace 0 is 0").
+  let comps = 3
+  let path = dir / "rec" / "gaps.sgd"
+  let sgy = dir / "rec" / "gaps.sgy"
+  makeRecording(path, comps)
+  makeSegy(sgy, comps)
+  var src = openSeismic(path, keys = true)
+  var ref0 = openSeismic(sgy, keys = true)
+  defer:
+    src.close()
+    ref0.close()
+  let opts = initCutOptions(LengthMs, StartMs)
+  let all = gapShots()
+  doAssert all.shots.len == 6, "the log kept " & $all.shots.len & " shots"
+  let dest = dir / "out" / "gaps.sgd"
+  let got = runCut(jobs, src, path, dest, all, opts)
+  doAssert got.st == jsDone, got.error & " / " & got.res.reason
+  doAssert got.res.carried and got.res.shotsWritten == 4 and got.res.shotsRefused == 2,
+    $got.res
+  let said = got.res.lines.join("|")
+  doAssert "2 shots were refused" in said and "record 200" in said and "record 205" in said and
+    "1950-2049" in said, said
+  var g = openSeismic(dest, keys = true)
+  defer: g.close()
+  doAssert g.len == 4 * comps and g.index.segdRecords.len == 4, "records " &
+    $g.index.segdRecords.len
+  for s in 0 ..< 4:
+    doAssert g.index.segdRecords[s].gh1.fileNumber == 201 + s
+  # the same gap shot through the keys path
+  let two = block:
+    var text = $201 & "," & $(BaseUs - 3 * 86_400_000_000'i64) & "\n"
+    var m = initShotLogMap()
+    m.hasHeader = false
+    m.roles = @[crFileNumber, crUtcMicros]
+    shotsInTime(shots(parseShotLog(text, m), m).rows)
+  let viaKeys = runCut(jobs, ref0, sgy, dir / "out" / "gapkeys.sgd", two, opts)
+  doAssert viaKeys.st == jsDone and not viaKeys.res.carried, viaKeys.error & viaKeys.res.reason
+  var k = openSeismic(dir / "out" / "gapkeys.sgd", keys = true)
+  defer: k.close()
+  for c in 0 ..< comps:
+    let dead = g.traceField(c, "trace.traceEdit").intVal
+    doAssert dead == 1 and dead == k.traceField(c, "trace.traceEdit").intVal,
+      "trace edit of gap trace " & $c & " is " & $dead
+    doAssert g.traceKeys(c).status == tsDead
+    for v in samplesOf(g, c): doAssert v == 0'f32
+  # the good shots follow, live, and the one before the refused 2060 shot is whole
+  for s in 1 ..< 4:
+    for c in 0 ..< comps:
+      let o = s * comps + c
+      doAssert g.traceField(o, "trace.traceEdit").intVal == 0, "trace " & $o & " is dead"
+      let got = samplesOf(g, o)
+      for j in 0 ..< Window:
+        doAssert got[j] == value(c, FirstSamples[s - 1] + j), "sample " & $j & " of trace " & $o
+
+proc checkSourceFormat(dir: string; jobs: Jobs) =
+  ## A source in 24-bit integers: the output's samples are 32-bit floats, and it says so.
+  let path = dir / "rec" / "int.sgd"
+  makeRecording(path, 1, sd8036)
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  let got = runCut(jobs, src, path, dir / "out" / "int.sgd", shotsOf(true),
+    initCutOptions(LengthMs, StartMs))
+  doAssert got.st == jsDone and got.res.carried and got.res.sourceFormat == 8036, $got.res
+  doAssert "format 8036" in got.res.lines.join("|") and
+    "32-bit floats" in got.res.lines.join("|"), got.res.lines.join("|")
+  var g = openSeismic(dir / "out" / "int.sgd", keys = true)
+  defer: g.close()
+  for s in 0 ..< 3:
+    let x = samplesOf(g, s)
+    for j in 0 ..< Window: doAssert x[j] == value(0, FirstSamples[s] + j)
+
 proc main*() =
   let dir = getTempDir() / ("viewseg-cutcarry-" & $getCurrentProcessId())
   removeDir(dir)
@@ -278,6 +368,11 @@ proc main*() =
   let jobs = initJobs()
   for comps in [1, 3]:
     check(dir, jobs, comps, load.registry)
+  checkGapsAndRefusals(dir, jobs)
+  checkSourceFormat(dir, jobs)
+  # the window's Format entry: the source's revision for a SEG-D source, Rev 3 otherwise
+  doAssert standardWords(csSegdRev3, true) == "SEG-D (the source's revision)"
+  doAssert standardWords(csSegdRev3) == "SEG-D Rev 3" and standardWords(csSegy, true) == "SEG-Y"
 
 when isMainModule:
   main()

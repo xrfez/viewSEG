@@ -19,6 +19,7 @@ const
   AlignCubic* = "Cubic"
   AlignSinc* = "Sinc"
   FormatSegd* = "SEG-D Rev 3"
+  FormatSegdKeep* = "SEG-D (the source's revision)"
   FormatSegy* = "SEG-Y"
   NeedFolder* = "Choose the folder the file is written to."
   NeedName* = "Give the file a name."
@@ -46,9 +47,12 @@ func alignTip*(a: SliceAlign): string =
   of saCubic: "The sub-sample part of the start is shifted out by cubic interpolation."
   of saSinc: "Sinc is the most exact and the slowest."
 
-func standardWords*(s: CutStandard): string =
-  ## The words for a file format.
-  if s == csSegy: FormatSegy else: FormatSegd
+func standardWords*(s: CutStandard; sourceSegd = false): string =
+  ## The words for a file format. A SEG-D source cut into SEG-D keeps its own
+  ## revision (the headers are its own); any other source gives Rev 3.
+  if s == csSegy: FormatSegy
+  elif sourceSegd: FormatSegdKeep
+  else: FormatSegd
 
 func standardExt*(s: CutStandard): string =
   ## The extension of a file of that format.
@@ -71,14 +75,19 @@ func sizeWords*(bytes: int64): string =
 func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
 
-func summaryWords*(shots: CutShots; components, samples: int; opts: CutOptions): string =
+func summaryWords*(shots: CutShots; components, samples: int; opts: CutOptions;
+    carryHeaderBytes: int64 = 0): string =
   ## "N shots (M rows have no time and are left out), C components, about X GB to write."
   var anyStation, anySourceXY = false
   for s in shots.shots:
     if not (s.srcLine.isNaN or s.srcPoint.isNaN): anyStation = true
     if not (s.srcX.isNaN or s.srcY.isNaN): anySourceXY = true
-  let bytes = estimateBytes(opts, shots.shots.len, components, samples, anyStation,
-    anySourceXY, false)
+  let bytes =
+    if opts.standard == csSegdRev3 and carryHeaderBytes > 0:
+      # headers carried from the source: its own bytes, then float32 samples
+      int64(shots.shots.len) * (carryHeaderBytes + int64(components) * int64(samples) * 4)
+    else:
+      estimateBytes(opts, shots.shots.len, components, samples, anyStation, anySourceXY, false)
   result = plural(shots.shots.len, "shot", "shots")
   if shots.dropped > 0:
     result.add " (" & plural(shots.dropped, "row has", "rows have") &

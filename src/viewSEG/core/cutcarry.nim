@@ -79,15 +79,11 @@ proc carryShot*(file: SeismicFile; plan: SlicePlan; rows: CarryRows; shot: int):
     result.comps.add p.comp
     result.ordinals.add inSet[key]
 
-proc openCarry*(part: string; file: SeismicFile; plan: SlicePlan; rows: CarryRows;
-    reg: VendorRegistry; w: var SeismicWriter): bool =
-  ## True, with `w` opened like `file`, when the cut can carry the source's
-  ## headers: a SEG-D source whose slices all come from one record (a subset
-  ## is made of the traces of one) that is not in Rev 3 extended recording
-  ## mode and that the writer accepts as a template (it refuses multiplexed
-  ## data). False leaves `w` alone and the cut builds its headers from keys.
-  ## The samples are written as IEEE float32, as the keys path does, whatever
-  ## the source's sample format.
+proc carryable*(file: SeismicFile; plan: SlicePlan; rows: CarryRows): bool =
+  ## True when the cut can carry the source's headers: a SEG-D source whose
+  ## slices all come from one record (a subset is made of the traces of one)
+  ## that is not in Rev 3 extended recording mode, and every receiver has a
+  ## segment to take its headers from.
   if file.kind != skSegd or plan.len == 0: return false
   for r in rows.fallback:
     if r < 0: return false
@@ -95,13 +91,51 @@ proc openCarry*(part: string; file: SeismicFile; plan: SlicePlan; rows: CarryRow
   for t in plan.tracesNeeded:
     if file.traceEntry(t).record != rec: return false
   let head = file.index.segdRecords[int(rec)]
-  if head.layout == slRev3 and head.gh3.extendedRecordingMode == 1: return false
+  result = not (head.layout == slRev3 and head.gh3.extendedRecordingMode == 1)
+
+proc openCarry*(part: string; file: SeismicFile; plan: SlicePlan; rows: CarryRows;
+    reg: VendorRegistry; w: var SeismicWriter): bool =
+  ## True, with `w` opened like `file`, when the cut is `carryable` and the
+  ## writer accepts the source as a template (it refuses multiplexed data).
+  ## False leaves `w` alone and the cut builds its headers from keys. The
+  ## samples are written as IEEE float32, as the keys path does, whatever the
+  ## source's sample format.
+  if not carryable(file, plan, rows): return false
   try:
     w = openSeismicWriter(part, like = file, segdFormat = tf8058)
     if reg.maps.len > 0: w.useVendorMaps(reg)
     result = true
   except ValueError:
     result = false
+
+proc carryBytes*(file: SeismicFile; plan: SlicePlan; rows: CarryRows; shots: int): int64 =
+  ## The size of the carried output: per record the source record's header
+  ## blocks, per trace its header and extension bytes and its samples as float32.
+  let rec = int(file.traceEntry(plan.tracesNeeded[0]).record)
+  var perRecord = file.index.segdRecords[rec].headerBytes
+  for r in 0 ..< plan.receiverCount:
+    perRecord += int64(file.traceEntry(rows.fallback[r]).headerBytes) +
+      int64(plan.samples) * 4
+  result = int64(shots) * perRecord
+
+func sourceFormat*(file: SeismicFile; plan: SlicePlan): int =
+  ## The sample format code of the source record when it is not IEEE float32
+  ## (8058), else 0.
+  let rec = file.traceEntry(plan.tracesNeeded[0]).record
+  let code = file.index.segdRecords[int(rec)].gh1.formatCode
+  if code == 8058: 0 else: code
+
+proc carryHeaderBytes*(file: SeismicFile; components: int): int64 =
+  ## What one carried record of `components` traces holds besides its samples, worked out
+  ## from the whole file before any shot is planned (the summary's size): the first record's
+  ## header blocks and, per component, the header bytes of the first trace. 0 when the file
+  ## would not be carried (not SEG-D, several records, Rev 3 extended recording mode).
+  if file.kind != skSegd or file.len == 0: return 0
+  let rec = file.traceEntry(0).record
+  if file.traceEntry(file.len - 1).record != rec: return 0
+  let head = file.index.segdRecords[int(rec)]
+  if head.layout == slRev3 and head.gh3.extendedRecordingMode == 1: return 0
+  head.headerBytes + int64(components) * int64(file.traceEntry(0).headerBytes)
 
 func revisionWords*(file: SeismicFile; plan: SlicePlan): string =
   ## "Rev 2.1": the revision of the record the cut copies.
@@ -133,12 +167,16 @@ proc sourceHeaders*(file: SeismicFile; trace: int; line, point: float64;
       result.add headerOverride("gh3.sourcePointIndex", int64(index))
 
 proc traceOverrides*(file: SeismicFile; trace, ordinal: int; firstUs: int64;
-    reg: VendorRegistry; startField: bool; startWritten: var bool): seq[HeaderOverride] =
+    reg: VendorRegistry; startField, dead: bool; startWritten: var bool): seq[HeaderOverride] =
   ## What a written trace changes of its source trace's headers: its number in
   ## its channel set, the instant of its first sample in a Rev 3 timestamp
   ## block, and, when `startField`, the start time of the vendor block in the
-  ## unit and epoch the map gives it (`startWritten` says it was set).
+  ## unit and epoch the map gives it (`startWritten` says it was set); `dead` marks the
+  ## trace dead.
   result.add headerOverride("trace.traceNumber", ordinal)
+  # A trace no segment reaches is zeros: the trace edit code 1 is how the keys path marks
+  # a dead trace (`tsDead`). A trace partly covered stays as the source has it.
+  if dead: result.add headerOverride("trace.traceEdit", 1)
   if file.findTraceField(trace, "timestamp.timeZeroOfData").isSome:
     result.add headerOverride("timestamp.timeZeroOfData", utcUsToGpsUs(firstUs))
   if startField:
