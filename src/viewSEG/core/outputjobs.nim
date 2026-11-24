@@ -38,7 +38,8 @@
 ##
 ## `correlation` set: each written trace is correlated with that loaded
 ## reference into the listen time, and the writer is opened with that sample
-## count. A reference auxiliary is shifted by its lag first. Time shift,
+## count. SEG-Y samples are IEEE float32, whatever the source format. A
+## reference auxiliary is shifted by its lag first. Time shift,
 ## polarity, an own filter and the plot's filters are applied after that, on
 ## the listen-length trace, in the order a plain write applies them. The
 ## reference and its spectrum are prepared once. None leaves every sample as
@@ -628,7 +629,10 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       block writing:
         var w: SeismicWriter
         if like:
-          w = openSeismicWriter(part, like = file[])
+          if correlating and not segdOut:
+            w = openSeismicWriter(part, file[], segyFormat = st5)
+          else:
+            w = openSeismicWriter(part, like = file[])
         elif segdOut:
           var count = int(file[].traceEntry(head).numSamples)
           if correlating: count = listen

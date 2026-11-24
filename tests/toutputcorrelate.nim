@@ -24,6 +24,7 @@
 ## trace left sample 0 at 0.43718278 against the button's 0.2898751. Polarity
 ## left off left sample 0 at 1.0 against the button's -1.0. With the session
 ## keys left out of a correlated write, joined source X stayed 10.0, not 111.
+## An int16 source with the option on kept format code 3 (`option format 3`).
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -62,9 +63,9 @@ proc delayedSweep(sweep: openArray[float32]; samples, delay: int): seq[float32] 
     let j = i - delay
     if j >= 0 and j < sweep.len: result[i] = sweep[j]
 
-proc writeRaw(path: string; sweep: openArray[float32]) =
+proc writeRaw(path: string; sweep: openArray[float32]; fmt = st5) =
   var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
-    measurementSystem: 1, text: @["C01 output correlation"]))
+    measurementSystem: 1, format: fmt, text: @["C01 output correlation"]))
   for i in 0 .. 4:
     var buf: seq[float32]
     var k = initTraceKeys()
@@ -541,6 +542,35 @@ proc main*() =
     c.close()
     opened[].close()
     raw.close()
+
+  block integerSource:
+    var scaled = newSeq[float32](sweep.len)
+    for i, v in sweep: scaled[i] = v * 1000
+    let intPath = srcDir / "int16.sgy"
+    writeRaw(intPath, scaled, st3)
+    var src = openSeismic(intPath, keys = true)
+    defer: src.close()
+    let plain = outDir / "int16-plain.sgy"
+    let twin = outDir / "int16-like.sgy"
+    let off = runWrite(src, intPath, plain, OutputOptions(format: ofSegy))
+    doAssert off.st == jsDone, off.error
+    likeCopy(src, twin)
+    doAssert readFile(plain) == readFile(twin), "option off did not keep the int16 bytes"
+    let made = correlate(src, intPath, scaled)
+    var opened = made.opened.filePtr
+    let fromButton = outDir / "int16-button.sgy"
+    let fromOption = outDir / "int16-option.sgy"
+    let button = runWrite(opened[], intPath, fromButton, OutputOptions(format: ofSegy))
+    doAssert button.st == jsDone, button.error & " / " & button.wrote.reason
+    let opted = runWrite(src, intPath, fromOption, option(scaled, ofSegy))
+    doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+    var a = openSeismic(fromOption, keys = true)
+    var b = openSeismic(fromButton, keys = true)
+    doAssert a.summary.formatCode == 5, "option format " & $a.summary.formatCode
+    sameWritten(a, b, true)
+    a.close()
+    b.close()
+    opened[].close()
 
 when isMainModule:
   main()
