@@ -1,0 +1,243 @@
+(stmts#Hypothesis: in the threaded cut by shot log, some interleaving of W cut workers,
+ the ordered writer (the job thread), a cancel and one failure (a worker's read or overlap check, or
+ the writer's write) makes the run hang (a worker or the writer waits for ever: a lost wakeup, a
+ full ring), write a record twice or out of order, move the part file into place after a failure,
+ or end the job (remove the part file, free the pipe) while a worker still runs.
+ Source: src/viewSEG/core/cutpipe.nim (the pipe) and the cut job that uses it. Worker loop: take a chunk of C shots (one lock region); per shot
+ cut the record (unlocked; reads stop atomically and ctx.cancelled), place it in slot s mod Q (lock:
+ wait on slotFree while s >= nextWrite + Q, else store, signal recordReady); after the chunk's last
+ shot its own overlaps (unlocked); a CatchableError or a cancel seen: lock, stop if none yet,
+ broadcast both conditions, exit. Writer: lock, wait on recordReady while no stop and slot nextWrite
+ is empty; take it; unlock; write it (may raise); lock, nextWrite+1, broadcast slotFree; tell() false
+ is a cancel (stop, broadcast). Then join every worker, read stop, move or remove the part file.
+ Variables: pc per worker 0 take, 1 cut a record, 2 waits on slotFree, 3 exited, 4 place, 5 report
+ a failure, 6 report a cancel, 8 took a chunk number but not yet advanced it (Mut 7), 9 chunk's own
+ overlaps; cur, last: the record in hand and the chunk's last; wk: a worker woken; nextRec: the first
+ record of the next chunk; full: records in the ring; placed: records ever placed; nw: nextWrite;
+ wpc writer 0 check, 1 waits on recordReady, 2 writes record nw, 3 joins, 4 job ended, 7 decided to
+ wait, lock released (Mut 2); wwk: writer woken; stop 0 none, 1 cancel, 2 worker failed, 3 writer
+ failed; cx: a cancel asked for; fails: failures left (1); part 1 ours, 2 removed, 3 moved into
+ place; okSnap: success as seen before the join (Mut 9); waited, stopWoke: witness history;
+ err 1 a record placed twice.
+ Switches: Fix (true: a worker places record s only while s < nextWrite + Q, an indexed reorder
+ ring; false: the naive bounded queue, room while fewer than Q records are queued);
+ Mut 0 none; 2 the writer tests and waits in two lock regions (lost wakeup); 3 slotFree is signalled
+ to one waiter, not broadcast; 4 a worker's stop does not wake the writer; 5 the writer's failure
+ does not wake the waiting workers; 6 the writer's failure path ends the job without the join;
+ 7 taking a chunk is a read and a separate increment; 8 the writer's wait ignores stop;
+ 9 the writer decides success before the join; 10 workers do not look at ctx.cancelled (only the
+ writer's tell() sees a cancel).
+ Witness 1: a worker waited for a slot and the run still succeeded; 2: a stop woke a waiting
+ worker and the run ended with the part file removed.
+ Expected: base passes safety and --live:Done; Witness 1 and 2 fail; Fix=(false) fails liveness;
+ Mut 2 4 5 8 fail liveness, Mut 3 with three workers (two workers: at most one waits);
+ Mut 6 7 9 fail safety; Mut 10 passes (redundant for safety and liveness: the workers' own look
+ only makes a cancel seen sooner while the writer waits).#
+  (variables :pc.0. :cur.0. :last.0. :wk.0. :nextRec.0. :full.0. :placed.0. :nw.0. :wpc.0.
+    :wwk.0. :stop.0. :cx.0. :fails.0. :part.0. :okSnap.0. :waited.0. :stopWoke.0. :err.0.)
+  (assign Fix.0. (true))
+  (assign Mut.0. 0)
+  (assign Witness.0. 0)
+  (assign N.0. 4)
+  (assign C.0. 2)
+  (assign Q.0. 2)
+  (assign Workers.0. (set 1 2))
+
+  (def :Init.0.
+    (and (prime pc.0. (funof :v.0 Workers.0. 0)) (prime cur.0. (funof :v.0 Workers.0. 0))
+      (prime last.0. (funof :v.0 Workers.0. 0)) (prime wk.0. (funof :v.0 Workers.0. (false)))
+      (prime nextRec.0. 0) (prime full.0. (set)) (prime placed.0. (set)) (prime nw.0. 0)
+      (prime wpc.0. 0) (prime wwk.0. (false)) (prime stop.0. 0) (prime cx.0. (false))
+      (prime fails.0. 1) (prime part.0. 1) (prime okSnap.0. (false)) (prime waited.0. (false))
+      (prime stopWoke.0. (false)) (prime err.0. 0)))
+
+  (def :Pc.0. (apply pc.0. Me.0.))
+  (def :Cur.0. (apply cur.0. Me.0.))
+  (def :Blocked.0. (setcomp :v.0 Workers.0. (eq (apply pc.0. v.0) 2)))
+  (def :WakeAllWorkers.0.#broadcast: every waiter on slotFree is woken#
+    (funof :v.0 Workers.0. (or (apply wk.0. v.0) (eq (apply pc.0. v.0) 2))))
+  (def :Running.0. (and (eq err.0. 0) (not (eq wpc.0. 4))))
+
+  (def :WTake.0.#take a chunk: one lock region (Fix) or a read and a later increment (Mut 7)#
+    (and Running.0. (eq Pc.0. 0)
+      (if (or (not (eq stop.0. 0)) (ge nextRec.0. N.0.))
+        (and (prime pc.0. (except pc.0. (mapsto Me.0. 3)))
+          (unchanged cur.0. last.0. nextRec.0.))
+        (if (eq Mut.0. 7)
+          (and (prime pc.0. (except pc.0. (mapsto Me.0. 8)))
+            (prime cur.0. (except cur.0. (mapsto Me.0. nextRec.0.)))
+            (unchanged last.0. nextRec.0.))
+          (and (prime pc.0. (except pc.0. (mapsto Me.0. 1)))
+            (prime cur.0. (except cur.0. (mapsto Me.0. nextRec.0.)))
+            (prime last.0. (except last.0. (mapsto Me.0. (minus (plus nextRec.0. C.0.) 1))))
+            (prime nextRec.0. (plus nextRec.0. C.0.)))))
+      (unchanged wk.0. full.0. placed.0. nw.0. wpc.0. wwk.0. stop.0. cx.0. fails.0. part.0.
+        okSnap.0. waited.0. stopWoke.0. err.0.)))
+
+  (def :WTakeB.0.#Mut 7 only: the increment, from the number read before#
+    (and Running.0. (eq Pc.0. 8)
+      (prime nextRec.0. (plus Cur.0. C.0.))
+      (prime last.0. (except last.0. (mapsto Me.0. (minus (plus Cur.0. C.0.) 1))))
+      (prime pc.0. (except pc.0. (mapsto Me.0. (if (ge Cur.0. N.0.) 3 1))))
+      (unchanged cur.0. wk.0. full.0. placed.0. nw.0. wpc.0. wwk.0. stop.0. cx.0. fails.0.
+        part.0. okSnap.0. waited.0. stopWoke.0. err.0.)))
+
+  (def :WCut.0.#cut one record, unlocked: stop is an atomic load, then ctx.cancelled; may fail#
+    (and Running.0. (eq Pc.0. 1)
+      (or
+        (and (not (eq stop.0. 0)) (prime pc.0. (except pc.0. (mapsto Me.0. 3)))
+          (unchanged fails.0.))
+        (and (eq stop.0. 0) cx.0. (not (eq Mut.0. 10))
+          (prime pc.0. (except pc.0. (mapsto Me.0. 6))) (unchanged fails.0.))
+        (and (eq stop.0. 0) (or (not cx.0.) (eq Mut.0. 10))
+          (prime pc.0. (except pc.0. (mapsto Me.0. 4)))
+          (unchanged fails.0.))
+        (and (eq stop.0. 0) (gt fails.0. 0) (prime fails.0. (minus fails.0. 1))
+          (prime pc.0. (except pc.0. (mapsto Me.0. 5)))))
+      (unchanged cur.0. last.0. wk.0. nextRec.0. full.0. placed.0. nw.0. wpc.0. wwk.0. stop.0.
+        cx.0. part.0. okSnap.0. waited.0. stopWoke.0. err.0.)))
+
+  (def :CanPlace.0. (if Fix.0. (lt Cur.0. (plus nw.0. Q.0.)) (lt (card full.0.) Q.0.)))
+
+  (def :WPlace.0.#lock: stop -> exit; room -> store, signal recordReady; else wait (atomic release)#
+    (and Running.0. (eq Pc.0. 4)
+      (if (not (eq stop.0. 0))
+        (and (prime pc.0. (except pc.0. (mapsto Me.0. 3)))
+          (unchanged cur.0. wk.0. full.0. placed.0. wwk.0. waited.0. err.0.))
+        (if CanPlace.0.
+          (and (prime full.0. (union full.0. (set Cur.0.)))
+            (prime placed.0. (union placed.0. (set Cur.0.)))
+            (prime err.0. (if (in Cur.0. placed.0.) 1 0))
+            (prime wwk.0. (or wwk.0. (eq wpc.0. 1)))
+            (if (lt Cur.0. (apply last.0. Me.0.))
+              (and (prime cur.0. (except cur.0. (mapsto Me.0. (plus Cur.0. 1))))
+                (prime pc.0. (except pc.0. (mapsto Me.0. 1))))
+              (and (unchanged cur.0.) (prime pc.0. (except pc.0. (mapsto Me.0. 9)))))
+            (unchanged wk.0. waited.0.))
+          (and (prime pc.0. (except pc.0. (mapsto Me.0. 2)))
+            (prime wk.0. (except wk.0. (mapsto Me.0. (false))))
+            (prime waited.0. (true))
+            (unchanged cur.0. full.0. placed.0. wwk.0. err.0.))))
+      (unchanged last.0. nextRec.0. nw.0. wpc.0. stop.0. cx.0. fails.0. part.0. okSnap.0.
+        stopWoke.0.)))
+
+  (def :WWake.0.#woken from slotFree: back to place, which tests again under the lock#
+    (and Running.0. (eq Pc.0. 2) (apply wk.0. Me.0.)
+      (prime pc.0. (except pc.0. (mapsto Me.0. 4)))
+      (prime wk.0. (except wk.0. (mapsto Me.0. (false))))
+      (unchanged cur.0. last.0. nextRec.0. full.0. placed.0. nw.0. wpc.0. wwk.0. stop.0. cx.0.
+        fails.0. part.0. okSnap.0. waited.0. stopWoke.0. err.0.)))
+
+  (def :WFinal.0.#the chunk's own overlaps, unlocked, after its last record; may fail#
+    (and Running.0. (eq Pc.0. 9)
+      (or (and (prime pc.0. (except pc.0. (mapsto Me.0. 0))) (unchanged fails.0.))
+        (and (gt fails.0. 0) (prime fails.0. (minus fails.0. 1))
+          (prime pc.0. (except pc.0. (mapsto Me.0. 5)))))
+      (unchanged cur.0. last.0. wk.0. nextRec.0. full.0. placed.0. nw.0. wpc.0. wwk.0. stop.0.
+        cx.0. part.0. okSnap.0. waited.0. stopWoke.0. err.0.)))
+
+  (def :WReport.0.#lock: the first stop wins; broadcast slotFree and recordReady; exit#
+    (and Running.0. (or (eq Pc.0. 5) (eq Pc.0. 6))
+      (prime stop.0. (if (eq stop.0. 0) (if (eq Pc.0. 5) 2 1) stop.0.))
+      (prime wk.0. WakeAllWorkers.0.)
+      (prime stopWoke.0. (or stopWoke.0. (gt (card Blocked.0.) 0)))
+      (prime wwk.0. (if (eq Mut.0. 4) wwk.0. (or wwk.0. (eq wpc.0. 1))))
+      (prime pc.0. (except pc.0. (mapsto Me.0. 3)))
+      (unchanged cur.0. last.0. nextRec.0. full.0. placed.0. nw.0. wpc.0. cx.0. fails.0.
+        part.0. okSnap.0. waited.0. err.0.)))
+
+  (def :WorkerActs.0. (or WTake.0. WTakeB.0. WCut.0. WPlace.0. WWake.0. WFinal.0. WReport.0.))
+  (def :Worker1.0. (let (bind :Me.0. 1) WorkerActs.0.))
+  (def :Worker2.0. (let (bind :Me.0. 2) WorkerActs.0.))
+  (def :Worker3.0. (and (in 3 Workers.0.) (let (bind :Me.0. 3) WorkerActs.0.)))
+
+  (def :ToJoin.0.#the writer leaves its loop; okSnap is what it saw then (used by Mut 9 only)#
+    (and (prime wpc.0. 3) (prime okSnap.0. (and (eq stop.0. 0) (ge nw.0. N.0.)))))
+
+  (def :RCheck.0.#lock: stop -> join; all written -> join; slot nw full -> take it; else wait#
+    (and Running.0. (eq wpc.0. 0)
+      (if (and (not (eq stop.0. 0)) (not (eq Mut.0. 8)))
+        (and ToJoin.0. (unchanged full.0. wwk.0.))
+        (if (ge nw.0. N.0.)
+          (and ToJoin.0. (unchanged full.0. wwk.0.))
+          (if (in nw.0. full.0.)
+            (and (prime full.0. (setminus full.0. (set nw.0.))) (prime wpc.0. 2)
+              (unchanged wwk.0. okSnap.0.))
+            (and (prime wpc.0. (if (eq Mut.0. 2) 7 1)) (prime wwk.0. (false))
+              (unchanged full.0. okSnap.0.)))))
+      (unchanged pc.0. cur.0. last.0. wk.0. nextRec.0. placed.0. nw.0. stop.0. cx.0. fails.0.
+        part.0. waited.0. stopWoke.0. err.0.)))
+
+  (def :RBlock.0.#Mut 2 only: the wait, in a second lock region after the test#
+    (and Running.0. (eq wpc.0. 7) (prime wpc.0. 1)
+      (unchanged pc.0. cur.0. last.0. wk.0. nextRec.0. full.0. placed.0. nw.0. wwk.0. stop.0.
+        cx.0. fails.0. part.0. okSnap.0. waited.0. stopWoke.0. err.0.)))
+
+  (def :RWake.0.#woken from recordReady: test again#
+    (and Running.0. (eq wpc.0. 1) wwk.0. (prime wpc.0. 0) (prime wwk.0. (false))
+      (unchanged pc.0. cur.0. last.0. wk.0. nextRec.0. full.0. placed.0. nw.0. stop.0. cx.0.
+        fails.0. part.0. okSnap.0. waited.0. stopWoke.0. err.0.)))
+
+  (def :SlotFreeWake.0.#broadcast slotFree (Fix), or a signal to one waiter (Mut 3)#
+    (if (eq Mut.0. 3)
+      (or (and (eq (card Blocked.0.) 0) (unchanged wk.0.))
+        (exists :v.0 Blocked.0. (prime wk.0. (except wk.0. (mapsto v.0 (true))))))
+      (prime wk.0. WakeAllWorkers.0.)))
+
+  (def :RWrite.0.#write record nw unlocked (may fail); lock: nw+1, wake slotFree; tell() false: cancel#
+    (and Running.0. (eq wpc.0. 2)
+      (or
+        (and (gt fails.0. 0) (prime fails.0. (minus fails.0. 1))
+          (prime stop.0. (if (eq stop.0. 0) 3 stop.0.))
+          (prime wk.0. (if (eq Mut.0. 5) wk.0. WakeAllWorkers.0.))
+          (prime stopWoke.0. (or stopWoke.0. (and (not (eq Mut.0. 5)) (gt (card Blocked.0.) 0))))
+          (if (eq Mut.0. 6)
+            (and (prime wpc.0. 4) (prime part.0. 2) (unchanged okSnap.0.))
+            (and (prime wpc.0. 3) (prime okSnap.0. (false)) (unchanged part.0.)))
+          (unchanged nw.0.))
+        (and (prime nw.0. (plus nw.0. 1)) (unchanged fails.0. part.0.)
+          (if cx.0.
+            (and (prime stop.0. (if (eq stop.0. 0) 1 stop.0.))
+              (prime wk.0. WakeAllWorkers.0.)
+              (prime stopWoke.0. (or stopWoke.0. (gt (card Blocked.0.) 0)))
+              (prime wpc.0. 3) (prime okSnap.0. (false)))
+            (and SlotFreeWake.0. (prime wpc.0. 0) (unchanged stop.0. stopWoke.0. okSnap.0.)))))
+      (unchanged pc.0. cur.0. last.0. nextRec.0. full.0. placed.0. wwk.0. cx.0. waited.0. err.0.)))
+
+  (def :RJoin.0.#join every worker, then read stop: move the part file into place, or remove it#
+    (and Running.0. (eq wpc.0. 3) (forall :v.0 Workers.0. (eq (apply pc.0. v.0) 3))
+      (prime part.0. (if (if (eq Mut.0. 9) okSnap.0. (and (eq stop.0. 0) (ge nw.0. N.0.))) 3 2))
+      (prime wpc.0. 4)
+      (unchanged pc.0. cur.0. last.0. wk.0. nextRec.0. full.0. placed.0. nw.0. wwk.0. stop.0.
+        cx.0. fails.0. okSnap.0. waited.0. stopWoke.0. err.0.)))
+
+  (def :Writer.0. (or RCheck.0. RBlock.0. RWake.0. RWrite.0. RJoin.0.))
+
+  (def :Cancel.0.#the user cancels, at any time before the job ends (no fairness)#
+    (and Running.0. (not cx.0.) (prime cx.0. (true))
+      (unchanged pc.0. cur.0. last.0. wk.0. nextRec.0. full.0. placed.0. nw.0. wpc.0. wwk.0.
+        stop.0. fails.0. part.0. okSnap.0. waited.0. stopWoke.0. err.0.)))
+
+  (def :Next.0. (or Worker1.0. Worker2.0. Worker3.0. Writer.0. Cancel.0.))
+
+  (def :AllExited.0. (forall :v.0 Workers.0. (eq (apply pc.0. v.0) 3)))
+  (def :Safe.0.#placed once; the ring holds at most Q, in the window nw..nw+Q-1 (indexed ring);
+ the job ends only after every worker; moved into place only when all N were written and no
+ stop; removed on every other end#
+    (and (eq err.0. 0)
+      (le (card full.0.) Q.0.)
+      (implies Fix.0. (subset full.0. (range nw.0. (minus (plus nw.0. Q.0.) 1))))
+      (implies (eq wpc.0. 4) AllExited.0.)
+      (implies (eq part.0. 3) (and (eq stop.0. 0) (eq nw.0. N.0.) (eq (card placed.0.) N.0.)))
+      (implies (and (eq wpc.0. 4) (not (eq stop.0. 0))) (eq part.0. 2))
+      (implies (eq wpc.0. 4) (not (eq part.0. 1)))))
+
+  (def :Done.0. (or (eq wpc.0. 4) (not (eq err.0. 0))))
+  (def :Reached1.0. (and (eq wpc.0. 4) (eq part.0. 3) waited.0.))
+  (def :Reached2.0. (and (eq wpc.0. 4) (eq part.0. 2) stopWoke.0.))
+
+  (spec (always-stutter Init.0. Next.0. (tuple pc.0. cur.0. last.0. wk.0. nextRec.0. full.0.
+    placed.0. nw.0. wpc.0. wwk.0. stop.0. cx.0. fails.0. part.0. okSnap.0. waited.0.
+    stopWoke.0. err.0.)))
+  (check (if (eq Witness.0. 1) (not Reached1.0.)
+    (if (eq Witness.0. 2) (not Reached2.0.) Safe.0.))))
