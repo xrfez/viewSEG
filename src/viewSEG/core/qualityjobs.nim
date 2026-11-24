@@ -31,13 +31,16 @@
 
 import std/[algorithm, os, sets, tables]
 import parseSEG
-import processSEG/core/[rows, types, workspace]
+import processSEG/core/[pool, rows, types, workspace]
 import processSEG/qc/amplitude
 import components, edits, filejobs, filesystem, firstbreakjobs, firstbreaks, jobs, noisearea,
     qualityreport,
   recordqc, session, threads
 
-const QcChunk = 512 ## traces read and measured at a time
+const
+  QcChunk = 512            ## traces read and measured at a time
+  PerFile = 1000'i64       ## the job's progress is this many units for each file
+  Opening = PerFile div 10 ## of which the open takes the first
 
 type
   QualityJobResult* = object
@@ -57,7 +60,15 @@ proc qualitySpec*(paths: openArray[string]): JobSpec =
   ## The job that scans `paths`: background, reading each path.
   JobSpec(title: "Trace quality", lane: jlBackground, reads: @paths)
 
-proc openKeys(path, cacheDir: string; ctx: JobContext): Session =
+proc fileProgress(ctx: JobContext; at, count: int; done, total: int64) =
+  ## The job's progress when file `at` of `count` is `done` of `total` traces through (the
+  ## open is over). A cancel raises `JobCancelledError`.
+  let inside = Opening + (if total > 0: (PerFile - Opening) * min(done, total) div total
+    else: 0'i64)
+  if not ctx.progress(PerFile * int64(at) + inside, PerFile * int64(count)):
+    raise newException(JobCancelledError, "cancelled")
+
+proc openKeys(path, cacheDir: string; ctx: JobContext; at, count: int): Session =
   # The file at `path`, keys included, closed by the caller. A cancel during
   # the open is `SegCancelledError`. An unmapped read that fails raises
   # here, before the file is opened. A current index cache in `cacheDir` is
@@ -69,7 +80,8 @@ proc openKeys(path, cacheDir: string; ctx: JobContext): Session =
   let progress: Progress = proc (done, total: int64): bool {.gcsafe, raises: [].} =
     try: fs.mappedRead(path)
     except CatchableError: discard
-    ctx.progress(done, total)
+    ctx.progress(PerFile * int64(at) + (if total > 0: Opening * done div total else: 0'i64),
+      PerFile * int64(count))
   result = openSession(path, progress, if cached: index else: "")
   if index.len == 0 or result.file.kind == skUnknown or result.file.fromCache or
       result.file.demuxPath.len > 0: return
@@ -139,7 +151,8 @@ func cutShortWhy(f: SeismicFile): string =
 
 proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
     amps: var seq[TraceAmplitude]; unread: openArray[int]; killed: HashSet[int];
-    noise: NoiseSettings; ctx: JobContext; judged: var HashSet[int]): bool =
+    noise: NoiseSettings; ctx: JobContext; judged: var HashSet[int];
+    workers: ptr ProcessPool; tick: BreakProgress): bool =
   ## The map's noisy and weak test on the record `traces`, whose statistics are `amps`
   ## (`unread`: rows left out). Sets the flags in `amps`, and puts in `judged` the traces
   ## the test judged (not those in the exclusion area, ungrouped, of an incomplete node or
@@ -151,9 +164,7 @@ proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
   var br = FirstBreaks()
   try:
     {.cast(gcsafe).}:
-      br = breaksOfRecord(f, path, traces, off, proc (done, total: int): bool =
-        ctx.checkCancelled()
-        true)
+      br = breaksOfRecord(f, path, traces, off, tick, shared = workers)
       result = true
       let summary = noiseOfRecord(f[], traces, amps, unread, [], br, noise)
       for i in 0 ..< traces.len:
@@ -163,7 +174,7 @@ proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
 
 proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var QualityBuild;
     unread: var seq[tuple[path, why: string]]; gathers: seq[Gather];
-    noise: NoiseSettings; ctx: JobContext) =
+    noise: NoiseSettings; ctx: JobContext; workers: ptr ProcessPool; at, count: int) =
   let n = f[].len
   var first = 0
   var chunk = 0
@@ -221,6 +232,8 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
       for t in unreadFailed(log, span, path, unread): missed.incl t
     for t in missed: missedAll.incl t
     held.add amps
+    # (half of a file's share is for the reads, half for the tests)
+    ctx.fileProgress(at, count, (last + 1 + noted) div 2, n)
     while nextGather < gathers.len and gathers[nextGather].traces.b <= last:
       let g = gathers[nextGather].traces
       inc nextGather
@@ -231,9 +244,13 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
       for t in g:
         if t in missedAll or not wantsSamples(f[].index.keys[t], t in killed):
           skip.add t - g.a
-      if judgeRecord(f, path, g, rec, skip, killed, noise, ctx, judgedAt):
+      let tick = proc (done, total: int): bool {.closure, gcsafe.} =
+        ctx.fileProgress(at, count, (last + 1 + g.a + g.len * done div max(total, 1)) div 2, n)
+        true
+      if judgeRecord(f, path, g, rec, skip, killed, noise, ctx, judgedAt, workers, tick):
         for i in 0 ..< rec.len: held[g.a - heldFrom + i] = rec[i]
       note(g.b)
+      ctx.fileProgress(at, count, (last + 1 + noted) div 2, n)
     first = last + 1
     inc chunk
   if noted < n: note(n - 1)
@@ -256,6 +273,8 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
     var unread: seq[tuple[path, why: string]] = @[]
     var build = initQualityBuild()
     var seen = initHashSet[string]()
+    # one set of threads for every record
+    var workers = newProcessPool(defaultBreakWorkers())
     try:
       for i, path in paths:
         ctx.setPhase "reading " & path.extractFilename
@@ -267,7 +286,7 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
           var why = ""
           var shortWhy = ""
           try:
-            s = openKeys(path, cacheDir, ctx)
+            s = openKeys(path, cacheDir, ctx, i, paths.len)
             if s.file.kind == skUnknown: why = "not a SEG-Y, SEG-D or SEG-2 file"
             elif s.file.len == 0: why = "has no trace keys"
             else:
@@ -275,7 +294,7 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
               var part = initQualityBuild()
               var partUnread: seq[tuple[path, why: string]] = @[]
               measure(s.filePtr, path, killedSet(edits, path), part, partUnread, s.gathers,
-                noise, ctx)
+                noise, ctx, addr workers, i, paths.len)
               build.absorb part
               unread.add partUnread
               shortWhy = cutShortWhy(s.file)
@@ -290,7 +309,7 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
             clearCycleRoots()
           if why.len > 0: unread.add (path: path, why: why)
           if shortWhy.len > 0: unread.add (path: path, why: shortWhy)
-        if not ctx.progress(i + 1, paths.len):
+        if not ctx.progress(PerFile * int64(i + 1), PerFile * int64(paths.len)):
           raise newException(JobCancelledError, "cancelled")
       ctx.setPhase "reporting"
       ctx.checkCancelled()

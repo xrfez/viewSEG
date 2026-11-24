@@ -4,18 +4,24 @@
 ##
 ## - a killed trace is not judged and not in the statistics the live traces are judged against,
 ##   in the map as in the scan (64 traces, every other trace of 20 .. 59 killed and loud);
-## - a station inside the exclusion area of every record has empty cells (not tested), not 0.
+## - a station inside the exclusion area of every record has empty cells (not tested), not 0;
+## - a file that fails to read part-way adds nothing to the totals and is listed unread once;
+## - one big file moves the job's progress while it is measured; threads given to the first-break
+##   picker do not change its answer.
 ##
 ## Seen to fail: with the map reading the killed traces into its statistics, `killed_traces_*`
 ## saw the map's noisy set empty and its weak set hold traces the scan did not name; with the
 ## scan's `tested` set for every sample-read trace, `a_station_in_the_area_*` saw 2 tested where
-## the map judged the station in neither record.
+## the map judged the station in neither record; with the failed file's rows kept, `a_file_that_
+## fails_*` saw 128 traces counted for the unread file; with the progress reported once a file,
+## `one_big_file_*` saw the bar never between its ends while measuring.
 
-import std/[algorithm, atomics, os, sets, strutils, tables]
+import std/[algorithm, atomics, math, monotimes, os, sets, tables, times]
 import parseSEG
 import processSEG
 import processSEG/synth
-import viewSEG/core/[breakmodel, edits, filejobs, filesystem, firstbreaks, inbox, jobs,
+import processSEG/core/pool
+import viewSEG/core/[breakmodel, edits, filejobs, filesystem, firstbreakjobs, firstbreaks, inbox, jobs,
   mapkinds, noisearea, qualityjobs, qualityreport, recordqc, session]
 import utils/[fixtures, waiting]
 
@@ -24,10 +30,10 @@ const
   Step = 2.0
 
 type Spec = object
-  recs: seq[int] ## traces per record, in file order
+  recs: seq[int]        ## traces per record, in file order
   weak, noisy: seq[int] ## file trace numbers
   extraGain: seq[(int, float64)]
-  sameStations: bool ## the stations of every record are 1 .. n
+  sameStations: bool    ## the stations of every record are 1 .. n
 
 proc build(path: string; sp: Spec) =
   var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: Step * 1000,
@@ -203,6 +209,42 @@ proc main*() =
         "the unread file is counted: " & $got.report.totals
       for r in got.report.records:
         doAssert r.file == whole, "a row of the unread file: " & r.file
+
+  block one_big_file_moves_the_progress_before_it_ends:
+    withFixtures fx:
+      let path = fx.dir / "big.sgd"
+      build(path, Spec(recs: @[1500]))
+      let jobs = initJobs()
+      let sink = QualitySink()
+      let id = jobs.submit(qualitySpec(@[path]), scanQuality(@[path], initTable[string,
+        FileEdits](), sink, ""))
+      # the one file is the whole job: while its traces are measured the bar is neither at 0 nor
+      # at its end
+      var inside = 0
+      let deadline = getMonoTime() + initDuration(seconds = 120)
+      while jobs.info(id).get.state notin {jsDone, jsFailed, jsCancelled}:
+        doAssert getMonoTime() < deadline, "the scan did not finish"
+        let p = jobs.info(id).get.progress
+        if p.phase == "measuring" and p.total > 0 and p.done > 0 and p.done < p.total:
+          inc inside
+        sleep 1
+      doAssert jobs.info(id).get.state == jsDone
+      doAssert inside > 0, "the bar did not move inside the file"
+
+  block threads_given_to_the_picker_do_not_change_its_answer:
+    withFixtures fx:
+      let path = fx.dir / "pool.sgd"
+      build(path, Spec(recs: @[64, 64]))
+      let s = openSession(path)
+      var shared = newProcessPool(2)
+      for g in s.gathers:
+        let own = breaksOfRecord(s.filePtr, path, g.traces, [])
+        # one pool serves the records one after the other
+        let given = breaksOfRecord(s.filePtr, path, g.traces, [], shared = addr shared)
+        doAssert own.state == bkDone and given.state == bkDone
+        for i in 0 ..< g.traces.len:
+          doAssert own.pickMs[i].classify == given.pickMs[i].classify and
+            (own.pickMs[i].isNaN or own.pickMs[i] == given.pickMs[i]), "pick " & $i
 
 when isMainModule:
   main()

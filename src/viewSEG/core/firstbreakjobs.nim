@@ -122,7 +122,8 @@ proc smoothedCopy*(samples: Tensor[float32]; meta: ChunkMeta; plan: IirPlan[floa
 proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     killed: openArray[int]; progress: BreakProgress = nil;
     off: openArray[uint8] = []; guide: BreakModel = BreakModel();
-    pick: PickBasis = pbSmoothed; workers = 0; view: ref CorrelateView = nil): FirstBreaks =
+    pick: PickBasis = pbSmoothed; workers = 0; view: ref CorrelateView = nil;
+    shared: ptr ProcessPool = nil): FirstBreaks =
   ## The first breaks of the record `traces` of `file` (at `path`), the
   ## traces in `killed` (file trace numbers, ascending) left out. Reads
   ## the record in place; raises `JobCancelledError` when `progress` says stop.
@@ -144,6 +145,9 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   ##   mapped; the traces keep the keys of the raw file, each its own `t0Ms`.
   ## - `workers` is the number of threads the filtering and picking of a chunk are shared among
   ##   (0: `defaultBreakWorkers`); the result does not depend on it.
+  ## - With `shared`, those threads are that pool's (a caller that judges many records makes
+  ##   one pool and passes it to each call; `workers` is then not used). The pool is not
+  ##   used by another thread meanwhile.
   template f: untyped = file[]
   let n = traces.len
   result = FirstBreaks(state: bkDone, first: traces.a, pickMs: newSeq[float64](n),
@@ -207,7 +211,9 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
             $smoothing.requiredMargin & " samples on each side)."
       except ValueError as e:
         result.pickNote = "The picks are made on the samples as recorded: " & e.msg
-  var pool = newProcessPool(if workers > 0: workers else: defaultBreakWorkers())
+  var own: ProcessPool # (made only when the caller gave none: the threads start here)
+  if shared == nil: own = newProcessPool(if workers > 0: workers else: defaultBreakWorkers())
+  let pool = if shared == nil: addr own else: shared
   let passes = if guide.given: 3 else: 2
   let total = n * passes
   type Guided = tuple[params: FirstBreakParams; rows: seq[bool]]
@@ -261,7 +267,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
         if skipSmooth.len < part.len:
           # (the rows not filtered are copied as loaded)
           picked = newTensorUninit[float32](samples.shape[0], samples.shape[1])
-          pool.apply(smoothingFlow, samples, picked, initChunkMeta(rowsOf(chunkKeys, counts),
+          pool[].apply(smoothingFlow, samples, picked, initChunkMeta(rowsOf(chunkKeys, counts),
             dt, 0, skipSmooth))
       for gi in 0 ..< plans.len:
         var skip = failed
@@ -271,7 +277,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
         skip = deduplicate(skip, isSorted = true)
         let meta = initChunkMeta(rowsOf(chunkKeys, counts), dt, 0, skip)
         var got = newSeq[FirstBreakPick](part.len)
-        pool.pickInto(plans[gi], picked, meta, got)
+        pool[].pickInto(plans[gi], picked, meta, got)
         let pickedRows = rowBlock(picked)
         let guided = not guides[gi].params.guideVelocity.isNaN
         for r in 0 ..< part.len:
