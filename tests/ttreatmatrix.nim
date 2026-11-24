@@ -7,8 +7,9 @@
 ##   time:  the modification time it saw is the file's | another (the file touched or copied)
 ##   hash:  the hash of every byte not known | known, the file's | known, another content's
 ##          (whose document names another path)
-## What this run does: list the folder | open the file | open, kill trace 0 | open, kill trace 0
-## and quit before the hash of every byte | list, set the file to time sliced.
+## What this run does: list the folder | list it, then open the file | open the file | open,
+## kill trace 0 | open, kill trace 0 and quit before the hash of every byte | list, set the file
+## to time sliced.
 ## The next run opens the file and waits for what is remembered; then:
 ##   - the document is the file's ("own") when its hash is the file's, or when it has none and
 ##     either saw the file at this time or holds no edits (a document of only a choice is the
@@ -24,7 +25,9 @@
 ##     as it was written; an unconfirmed one only for edits offered.
 ## In the list of the first run, a choice shows when the document saw the file at its time (a
 ## document that may be another content's is shown until the file is identified: the hash of
-## the list's files is not taken).
+## the list's files is not taken). Listed, then opened in the same run, the file shows once it is
+## identified what the next run shows of it (a choice the list showed of another content's
+## document goes).
 ## Cells found otherwise and kept as they were before choices existed: a document of edits
 ## whose hash is the file's, that saw another time, with an edit and a quit before the hash: the
 ## next run takes the document of the quit's edit (its time is the file's) and the other stays:
@@ -34,7 +37,9 @@
 ## hash, a document of only a choice that knows a hash written into before it, a document of
 ## only a choice that waits for the hash not taking the edits, a document of edits without a
 ## hash and of another time taken for a choice, and a second document of only a choice of this
-## content left beside the one taken.
+## content left beside the one taken. With the hash that finds no document of the file's own
+## leaving the choice the list showed, 2 cells of a list and an open (another content's
+## document at the file's time).
 
 import std/[importutils, options, os, sequtils, strutils, tables, times]
 import parseSEG
@@ -50,12 +55,15 @@ type
   DocTime = enum tmSame = "time same", tmOther = "time other"
   DocHash = enum hhUnknown = "hash unknown", hhSame = "hash same", hhOther = "hash other"
   Action = enum
-    acList = "list", acOpen = "open", acEdit = "open+edit", acQuit = "open+edit+quit",
+    acList = "list", acListOpen = "list+open", acOpen = "open", acEdit = "open+edit"
+    acQuit = "open+edit+quit"
     acForce = "force"
   Ours = enum oAbsent = "absent", oApplied = "applied", oOffered = "offered"
 
   Expected = object
-    listed: bool ## the choice shows in the first run's list (`acList`)
+    listed: bool ## the choice shows in the first run's list (`acList`, or before the open)
+    inRun: Option[RecordingKind]
+      ## `acListOpen`: the choice once the file is identified
     shown: Option[RecordingKind]
     stored: bool ## the document's edits (trace 1) are applied
     ours: Ours   ## trace 0
@@ -72,6 +80,7 @@ func expected(k: DocKind; t: DocTime; h: DocHash; a: Action): Expected =
   result.twoOfOne = a == acQuit and k in {dkEdits, dkBoth} and h == hhSame and t == tmOther
   result.stored = own and k in {dkEdits, dkBoth} and not result.twoOfOne
   if result.twoOfOne and a != acForce: result.shown = none(RecordingKind)
+  if a == acListOpen: result.inRun = result.shown
   result.ours =
     case a
     of acEdit: oApplied
@@ -155,6 +164,15 @@ proc main*() =
               if a == acForce:
                 one.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "sliced")
                 doAssert one.settled(one.idle), name & ": the choice's look-up did not end"
+            of acListOpen:
+              one.apply Command(kind: ckBrowse, paths: @[at / "data"])
+              doAssert one.settled(one.listed), name & ": not listed"
+              got.listed = one.fileList.entries[0].treat.isSet
+              one.open(f)
+              doAssert one.settled(one.idle), name & ": what is remembered was not read"
+              got.inRun = one.treatOf(f).kind
+              if one.fileList.entries[0].treat.kind != got.inRun:
+                got.inRun = some rkShotGather # (the row and the file disagree: never wanted)
             of acOpen, acEdit:
               one.open(f)
               doAssert one.settled(one.idle), name & ": what is remembered was not read"
@@ -182,7 +200,8 @@ proc main*() =
             let mine = onDisk.filterIt(not it.unconfirmed and it.identity.fullKnown and
               it.identity.full == real)
             got.twoOfOne = mine.len > 1
-            if a != acList: got.listed = want.listed # (looked at in the list only)
+            if a notin {acList, acListOpen}: got.listed = want.listed # (looked at in the list only)
+            if a != acListOpen: got.inRun = want.inRun
             var said: seq[string] = @[]
             if got != want: said.add "got " & $got & ", wanted " & $want
             if h == hhOther: # another content's document stands as it was written

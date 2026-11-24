@@ -5384,8 +5384,7 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     if r.brought.doc == r.doc: state.knownDocs[r.doc] = r.brought
     else: state.knownDocs.del r.doc
     r.brought = FileRecord()
-    r.doc = ""
-    state.loadTreat(r.path, TreatAs()) # what that file is treated as is not this one's
+    r.doc = "" # (what that file is treated as goes below: no document is this one's)
     state.edits.mgetOrPut(key, FileEdits()).forget()
     if own.isEmpty:
       r.savedRev = state.edits[key].keptRevision
@@ -9790,7 +9789,9 @@ proc takeKinds(state: var AppState; m: sink Msg) =
         e.traceOrder = a.order
       # (an open file's own document, once it took one, says what it is treated as)
       let r = state.rememberedAt(a.path)
-      if r < 0 or not state.remembered[r].known or state.remembered[r].doc.len == 0:
+      # (and once its hash says no document is its own, none is: `takeHashed`)
+      if r < 0 or not state.remembered[r].known or
+          (state.remembered[r].doc.len == 0 and not state.remembered[r].hashed):
         state.loadTreat(a.path, a.treat)
       e.treat = state.treats.getOrDefault(a.path)
       f.changedAt(i)
