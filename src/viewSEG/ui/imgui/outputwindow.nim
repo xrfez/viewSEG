@@ -74,6 +74,11 @@ type
     status: string
     wantList, wantRefuse: bool
     askSource, askDest: bool
+    editing: bool
+    draft: OutputPattern
+    labelBuf: array[257, char]
+    widthBuf: array[16, array[8, char]]
+    textBuf: array[16, array[96, char]]
     focus: FocusClicks
 
   OutputOutput* = object
@@ -721,6 +726,210 @@ proc drawRun(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
     igTextUnformatted(line.cstring, nil)
     marks.mark("output.state " & line)
 
+func takesWidth(kind: NamePartKind): bool =
+  kind notin {npStem, npText, npTime}
+
+proc bufText(buf: openArray[char]): string =
+  if buf.len == 0 or buf[0] == '\0': return ""
+  $cast[cstring](unsafeAddr buf[0])
+
+proc setBuf(buf: var openArray[char]; text: string) =
+  let n = min(text.len, buf.high)
+  if n > 0: copyMem(addr buf[0], unsafeAddr text[0], n)
+  for i in n ..< buf.len: buf[i] = '\0'
+
+proc padOf(buf: openArray[char]): int =
+  let text = bufText(buf).strip
+  if text.len == 0: return 0
+  try: parseInt(text)
+  except ValueError: -1
+
+proc loadEditor(ui: var OutputUi) =
+  ui.draft = OutputPattern(separator: nsDot, parts: @[NamePart(kind: npStem)])
+  setBuf(ui.labelBuf, "")
+  for i in 0 ..< ui.widthBuf.len:
+    setBuf(ui.widthBuf[i], "")
+    setBuf(ui.textBuf[i], "")
+
+proc swapPart(ui: var OutputUi; a, b: int) =
+  swap(ui.draft.parts[a], ui.draft.parts[b])
+  swap(ui.widthBuf[a], ui.widthBuf[b])
+  swap(ui.textBuf[a], ui.textBuf[b])
+
+proc dropPart(ui: var OutputUi; i: int) =
+  ui.draft.parts.delete(i)
+  for j in i ..< ui.widthBuf.high:
+    ui.widthBuf[j] = ui.widthBuf[j + 1]
+    ui.textBuf[j] = ui.textBuf[j + 1]
+  setBuf(ui.widthBuf[^1], "0")
+  setBuf(ui.textBuf[^1], "")
+
+func nameExt(format: OutputFormat): string =
+  if format == ofSegy: ".sgy" else: ".sgd"
+
+func previewValues(): NameValues =
+  ## Placeholders that show a pattern's shape. Not read from a file.
+  result[npStem] = NameValue(state: nvText, text: "file")
+  result[npSrcLine] = NameValue(state: nvNumber, number: 12)
+  result[npRcvLine] = NameValue(state: nvNumber, number: 12)
+  result[npSigLine] = NameValue(state: nvNumber, number: 12)
+  result[npSrcPoint] = NameValue(state: nvNumber, number: 1034.5)
+  result[npRcvPoint] = NameValue(state: nvNumber, number: 1034.5)
+  result[npSigStation] = NameValue(state: nvNumber, number: 1034.5)
+  result[npRecord] = NameValue(state: nvNumber, number: 7)
+  result[npFileNumber] = NameValue(state: nvInt, intValue: 7)
+  result[npShotId] = NameValue(state: nvInt, intValue: 7)
+  result[npSrcIndex] = NameValue(state: nvInt, intValue: 1)
+  result[npRcvIndex] = NameValue(state: nvInt, intValue: 1)
+  result[npSystemSerial] = NameValue(state: nvInt, intValue: 4521)
+  result[npController] = NameValue(state: nvInt, intValue: 1)
+  result[npVibrator] = NameValue(state: nvInt, intValue: 1)
+  result[npSweepId] = NameValue(state: nvInt, intValue: 1)
+  result[npTime] = NameValue(state: nvTimeUs, timeUs: 1_718_454_645_000_000'i64,
+    wholeSeconds: true)
+
+proc editorWhy(ui: OutputUi; st: AppState): string =
+  if not st.inProject: return NeedProjectPatterns
+  if st.project.readOnly: return ReadOnlyPatterns
+  patternProblem(ui.draft)
+
+proc drawPartRow(ui: var OutputUi; i: int; marks: var Marks): int =
+  ## 1 up, 2 down, 3 remove, else 0. The part is changed in place.
+  igPushID_Int(cint(i))
+  let kind = ui.draft.parts[i].kind
+  let avail = igGetContentRegionAvail().x
+  igSetNextItemWidth(min(textWidth("Receiver index") + igGetFrameHeight(), avail))
+  if igBeginCombo("##kind", partWord(kind).cstring, ImGui_ComboFlags_HeightLargest.cint):
+    for k in NamePartKind:
+      let word = partWord(k)
+      if igSelectable_Bool((word & "##k").cstring, k == kind, 0, ImVec2_c(x: 0, y: 0)):
+        ui.draft.parts[i].kind = k
+      marks.mark("output.part " & $i & ".item " & word)
+    igEndCombo()
+  marks.mark("output.part " & $i & ".kind")
+  let right = lineRight()
+  if takesWidth(ui.draft.parts[i].kind):
+    let need = igGetFontSize() * 3 + textWidth(LeastDigits) + igGetStyle().ItemSpacing.x
+    sameLineIfFits(right, need)
+    igSetNextItemWidth(igGetFontSize() * 3)
+    discard igInputText("##width", cast[cstring](addr ui.widthBuf[i][0]),
+      csize_t(ui.widthBuf[i].len), 0, nil, nil)
+    marks.mark("output.part " & $i & ".width")
+    tip(WidthTip)
+    ui.draft.parts[i].pad = padOf(ui.widthBuf[i])
+    igSameLine(0, -1)
+    igTextUnformatted(LeastDigits.cstring, nil)
+  elif ui.draft.parts[i].kind == npText:
+    sameLineIfFits(right, igGetFontSize() * 8)
+    igSetNextItemWidth(igGetFontSize() * 8)
+    discard igInputText("##text", cast[cstring](addr ui.textBuf[i][0]),
+      csize_t(ui.textBuf[i].len), 0, nil, nil)
+    marks.mark("output.part " & $i & ".text")
+    ui.draft.parts[i].text = bufText(ui.textBuf[i])
+  igBeginDisabled(i == 0)
+  if igButton(UpPart.cstring, ImVec2_c(x: 0, y: 0)): result = 1
+  igEndDisabled()
+  marks.mark("output.part " & $i & ".up")
+  sameLineIfFits(right, buttonWidth(DownPart))
+  igBeginDisabled(i == ui.draft.parts.high)
+  if igButton(DownPart.cstring, ImVec2_c(x: 0, y: 0)): result = 2
+  igEndDisabled()
+  marks.mark("output.part " & $i & ".down")
+  sameLineIfFits(right, buttonWidth(RemovePart))
+  if igButton(RemovePart.cstring, ImVec2_c(x: 0, y: 0)): result = 3
+  marks.mark("output.part " & $i & ".remove")
+  igPopID()
+
+proc drawEditor(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
+  igSeparator()
+  igTextUnformatted("File name pattern", nil)
+  marks.mark("output.editor")
+  igSetNextItemWidth(min(igGetFontSize() * 12, igGetContentRegionAvail().x))
+  discard igInputText("##label", cast[cstring](addr ui.labelBuf[0]),
+    csize_t(ui.labelBuf.len), 0, nil, nil)
+  ui.draft.name = bufText(ui.labelBuf)
+  marks.mark("output.pattern.label")
+  if ui.draft.name.len > 0: marks.mark("output.pattern.label " & ui.draft.name)
+  for sep in NameSeparator:
+    let on = ui.draft.separator == sep
+    if igRadioButton_Bool(($sep).cstring, on): ui.draft.separator = sep
+    let mark = "output.pattern.sep " & $sep
+    marks.mark(mark)
+    if on: marks.mark(mark & ".on")
+    igSameLine(0, -1)
+  igNewLine()
+  var act = 0
+  var at = 0
+  for i in 0 ..< ui.draft.parts.len:
+    let one = ui.drawPartRow(i, marks)
+    if one != 0:
+      act = one
+      at = i
+  if act == 1 and at > 0: ui.swapPart(at, at - 1)
+  elif act == 2 and at < ui.draft.parts.high: ui.swapPart(at, at + 1)
+  elif act == 3: ui.dropPart(at)
+  igBeginDisabled(ui.draft.parts.len >= MaxPatternParts)
+  if igButton(AddPart.cstring, ImVec2_c(x: 0, y: 0)):
+    ui.draft.parts.add NamePart(kind: npStem)
+    let i = ui.draft.parts.high
+    setBuf(ui.widthBuf[i], "")
+    setBuf(ui.textBuf[i], "")
+  igEndDisabled()
+  marks.mark("output.pattern.add")
+  if igButton(SavePattern.cstring, ImVec2_c(x: 0, y: 0)):
+    outp.commands.add Command(kind: ckNamePattern, patternAction: npaSave,
+      namePattern: ui.draft)
+  marks.mark("output.pattern.save")
+  igSameLine(0, -1)
+  if igButton(DeletePattern.cstring, ImVec2_c(x: 0, y: 0)):
+    outp.commands.add Command(kind: ckNamePattern, patternAction: npaDelete,
+      namePattern: OutputPattern(name: ui.draft.name))
+  marks.mark("output.pattern.delete")
+  let why = ui.editorWhy(st)
+  if why.len > 0:
+    igPushTextWrapPos(0)
+    igTextUnformatted(why.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("output.pattern.problem " & why)
+  let shown = render(ui.draft, previewValues(), nameExt(ui.format))
+  if shown.problem.len > 0:
+    igTextUnformatted(shown.problem.cstring, nil)
+    marks.mark("output.preview.problem " & shown.problem)
+  else:
+    igTextUnformatted(shown.name.cstring, nil)
+    marks.mark("output.pattern.preview " & shown.name)
+
+proc drawNames(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
+  igSeparator()
+  igTextUnformatted(FileNamesLabel.cstring, nil)
+  let chosen = if st.inProject: st.project.doc.outputPattern else: ""
+  let shown = if chosen.len == 0: AsSourceFile else: chosen
+  igSetNextItemWidth(-1)
+  let open = igBeginCombo("##output.names", shown.cstring, 0)
+  if not open:
+    marks.mark("output.names")
+    marks.mark("output.names " & shown)
+  else:
+    marks.mark("output.names.open")
+    if st.inProject:
+      for p in st.project.doc.outputPatterns:
+        if igSelectable_Bool((p.name & "##pat").cstring, p.name == chosen, 0,
+            ImVec2_c(x: 0, y: 0)):
+          outp.commands.add Command(kind: ckNamePattern, patternAction: npaChoose,
+            namePattern: OutputPattern(name: p.name))
+        marks.mark("output.names.item " & p.name)
+    if igSelectable_Bool((AsSourceFile & "##src").cstring, chosen.len == 0, 0,
+        ImVec2_c(x: 0, y: 0)):
+      outp.commands.add Command(kind: ckNamePattern, patternAction: npaChoose,
+        namePattern: OutputPattern())
+    marks.mark("output.names.item " & AsSourceFile)
+    igEndCombo()
+  if igButton(EditNames.cstring, ImVec2_c(x: 0, y: 0)):
+    if not ui.editing: ui.loadEditor()
+    ui.editing = not ui.editing
+  marks.mark("output.names.edit")
+  if ui.editing: ui.drawEditor(st, marks, outp)
+
 proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
     outp: var OutputOutput) =
   let extra = if ui.dest.len > 0: "output.destination " & ui.dest else: ""
@@ -733,12 +942,17 @@ proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
     igTextUnformatted(ui.refusal.cstring, nil)
     igPopTextWrapPos()
     marks.mark("output.refusal " & ui.refusal)
+  ui.drawNames(st, marks, outp)
   let right = lineRight()
   igTextUnformatted(FormatLabel.cstring, nil)
   sameLineIfFits(right, buttonWidth($ofSegy))
   if igRadioButton_Bool(($ofSegy).cstring, ui.format == ofSegy): ui.format = ofSegy
+  marks.mark("output.format " & $ofSegy)
+  if ui.format == ofSegy: marks.mark("output.format " & $ofSegy & ".on")
   sameLineIfFits(right, buttonWidth($ofSegd))
   if igRadioButton_Bool(($ofSegd).cstring, ui.format == ofSegd): ui.format = ofSegd
+  marks.mark("output.format " & $ofSegd)
+  if ui.format == ofSegd: marks.mark("output.format " & $ofSegd & ".on")
   ui.drawOptions(st)
   discard igCheckbox(KeepFolders.cstring, addr ui.mirror)
   marks.mark("output.mirror")

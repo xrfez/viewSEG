@@ -13,6 +13,10 @@
 ## "no tally: @[]". Run with no sentence: "Run says nothing: @[]".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
+##
+## A second run builds a three-part file-name pattern in the editor, saves it,
+## chooses it from the drop-down and deletes it. Seen to fail: with the source
+## line placeholder 11, "the preview is not 00012.1034p5.file.sgd".
 
 import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[edits, geometry, jobs, state]
@@ -50,6 +54,19 @@ proc clickWhen(f: FrameInfo; name: string): bool =
   f.click(r.centre)
   true
 
+proc inRightPane(f: FrameInfo; r: Rect): bool =
+  let pane = f.markOf("output.pane.right")
+  r.size.x > 0 and pane.size.y > 0 and r.pos.y >= pane.pos.y + 2 and
+    r.pos.y + r.size.y <= pane.pos.y + pane.size.y - 2
+
+proc reveal(f: FrameInfo; name: string): bool =
+  ## Scrolls the write pane until `name` is inside it. True once it is.
+  let r = f.markOf(name)
+  if r.size.x <= 0 or f.inRightPane(r): return r.size.x > 0
+  let pane = f.markOf("output.pane.right")
+  f.scrollWheel(pane.centre, if r.pos.y > pane.pos.y: -2 else: 2)
+  false
+
 proc rowOf(f: FrameInfo; rel: string): tuple[ok: bool; outcome: string; written, dropped: int] =
   let prefix = "output.row " & rel & " "
   for name in f.markNames("output.row "):
@@ -78,6 +95,8 @@ proc stacked(f: FrameInfo): bool =
   let r = f.markOf("output.pane.right")
   f.markOf("output.stacked").size.x > 0 and l.size.y > 0 and r.size.y > 0 and
     l.pos.y + l.size.y <= r.pos.y + 8 and abs(l.pos.x - r.pos.x) <= 4
+
+proc namePatterns()
 
 proc main*() =
   var wait = 0
@@ -345,6 +364,234 @@ proc main*() =
     holdFile2.close()
     sleep(50)
     setJobHook(nil)
+  namePatterns()
+
+proc namePatterns() =
+  ## The editor, on its own project: three parts, a padded preview, save,
+  ## choose, delete. No write job.
+  setJobHook(nil)
+  withFixtures fx:
+    let field = fx.dir / "data"
+    let job = fx.dir / "job"
+    createDir(field)
+    writeFile(field / "note.txt", "x")
+    createDir(fx.dir / "config")
+    createDir(fx.dir / "logs")
+    createDir(fx.dir / "cache")
+    let shot = currentSourcePath().parentDir.parentDir / ".scratch" / "output-names.png"
+    createDir(shot.parentDir)
+    var answer: seq[string] = @[]
+    let hook = proc (kind: DialogKind; location: string): seq[string] = answer
+    var steps: seq[Step]
+    var wait = 0
+    var since = getMonoTime()
+    proc step(name: string; act: proc (f: FrameInfo): bool; done: proc (f: FrameInfo): bool) =
+      steps.add Step(name: name, act: act, done: done)
+    proc noop(f: FrameInfo): bool = true
+
+    proc browse(f: FrameInfo): bool =
+      f.apply Command(kind: ckBrowse, paths: @[field], showFirst: false)
+      true
+    proc listed(f: FrameInfo): bool =
+      not f.core.fileList.scanning and f.core.fileList.folder.len > 0
+    step("the folder is listed", browse, listed)
+
+    var opened = false
+    proc openOutput(f: FrameInfo): bool =
+      if opened: return true
+      let it = f.markOf("menu.Output...")
+      if it.size.x == 0 or f.markOf("menu.Output.disabled").size.x > 0:
+        discard clickWhen(f, "menu.File")
+        return false
+      f.click(it.centre)
+      opened = true
+      true
+    proc outputUp(f: FrameInfo): bool =
+      f.markOf("output.names.edit").size.x > 0
+    step("Output is open", openOutput, outputUp)
+
+    proc makeProject(f: FrameInfo): bool =
+      f.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+      true
+    proc made(f: FrameInfo): bool =
+      f.core.inProject and f.core.projectOpening.len == 0 and not f.core.project.readOnly
+    step("a project is open", makeProject, made)
+
+    proc edit(f: FrameInfo): bool = clickWhen(f, "output.names.edit")
+    proc editing(f: FrameInfo): bool = f.markOf("output.editor").size.x > 0
+    step("the editor is open", edit, editing)
+
+    proc focusLabel(f: FrameInfo): bool = clickWhen(f, "output.pattern.label")
+    proc labelReady(f: FrameInfo): bool = f.typing
+    step("the label box has the keyboard", focusLabel, labelReady)
+
+    proc typeLabel(f: FrameInfo): bool =
+      doAssert f.typing, "the label box does not take the keys"
+      f.pressKey(skCtrl, true, {smCtrl})
+      f.typeText("a")
+      f.pressKey(skCtrl, false)
+      f.typeText("Line")
+      f.pressKey(skEnter, true)
+      f.pressKey(skEnter, false)
+      true
+    proc labeled(f: FrameInfo): bool =
+      f.markOf("output.pattern.label Line").size.x > 0
+    step("the label is Line", typeLabel, labeled)
+
+    proc openKind(f: FrameInfo): bool =
+      if f.markOf("output.part 0.item Source line").size.x > 0: return true
+      discard clickWhen(f, "output.part 0.kind")
+      false
+    proc kindOpen(f: FrameInfo): bool =
+      f.markOf("output.part 0.item Source line").size.x > 0
+    step("the first part's kinds are open", openKind, kindOpen)
+
+    proc pickLine(f: FrameInfo): bool = clickWhen(f, "output.part 0.item Source line")
+    proc linePicked(f: FrameInfo): bool =
+      f.markOf("output.part 0.width").size.x > 0
+    step("the first part is a source line", pickLine, linePicked)
+
+    proc focusWidth(f: FrameInfo): bool = clickWhen(f, "output.part 0.width")
+    proc widthReady(f: FrameInfo): bool = f.typing
+    step("the width box has the keyboard", focusWidth, widthReady)
+
+    proc typeWidth(f: FrameInfo): bool =
+      doAssert f.typing, "the width box does not take the keys"
+      f.pressKey(skCtrl, true, {smCtrl})
+      f.typeText("a")
+      f.pressKey(skCtrl, false)
+      f.typeText("5")
+      f.pressKey(skEnter, true)
+      f.pressKey(skEnter, false)
+      true
+    step("the width is 5", typeWidth, noop)
+
+    proc addSecond(f: FrameInfo): bool =
+      if f.markOf("output.part 1.kind").size.x > 0: return true
+      discard clickWhen(f, "output.pattern.add")
+      false
+    proc secondAdded(f: FrameInfo): bool = f.markOf("output.part 1.kind").size.x > 0
+    step("a second part is added", addSecond, secondAdded)
+
+    proc openPoint(f: FrameInfo): bool =
+      if f.markOf("output.part 1.item Source point").size.x > 0: return true
+      discard clickWhen(f, "output.part 1.kind")
+      false
+    proc pointOpen(f: FrameInfo): bool =
+      f.markOf("output.part 1.item Source point").size.x > 0
+    step("the second part's kinds are open", openPoint, pointOpen)
+
+    proc pickPoint(f: FrameInfo): bool = clickWhen(f, "output.part 1.item Source point")
+    proc pointPicked(f: FrameInfo): bool =
+      f.markOf("output.part 1.item Source point").size.x == 0 and
+        f.markOf("output.part 1.kind").size.x > 0
+    step("the second part is a source point", pickPoint, pointPicked)
+
+    proc addThird(f: FrameInfo): bool =
+      if f.markOf("output.part 2.kind").size.x > 0: return true
+      discard clickWhen(f, "output.pattern.add")
+      false
+    proc thirdAdded(f: FrameInfo): bool = f.markOf("output.part 2.kind").size.x > 0
+    step("a third part is added", addThird, thirdAdded)
+
+    proc segd(f: FrameInfo): bool =
+      if not reveal(f, "output.format SEG-D"): return false
+      clickWhen(f, "output.format SEG-D")
+    proc segdOn(f: FrameInfo): bool = f.markOf("output.format SEG-D.on").size.x > 0
+    step("SEG-D is selected", segd, segdOn)
+
+    proc shotPreview(f: FrameInfo): bool =
+      let want = "output.pattern.preview 00012.1034p5.file.sgd"
+      if f.markOf(want).size.x == 0:
+        doAssert false, "the preview is not 00012.1034p5.file.sgd: " &
+          $f.markNames("output.pattern.preview") & " " & $f.markNames("output.preview.problem")
+      if not reveal(f, want): return false
+      doAssert f.savePng(shot), "the name-pattern shot was not written"
+      true
+    step("the preview is the three-part name", noop, shotPreview)
+
+    proc save(f: FrameInfo): bool =
+      if not reveal(f, "output.pattern.save"): return false
+      clickWhen(f, "output.pattern.save")
+    proc saved(f: FrameInfo): bool =
+      for p in f.core.project.doc.outputPatterns:
+        if p.name == "Line" and p.parts.len == 3 and p.parts[0].kind == npSrcLine and
+            p.parts[0].pad == 5 and p.parts[1].kind == npSrcPoint and
+            p.parts[2].kind == npStem:
+          return true
+    step("Line is saved", save, saved)
+
+    var arm = 0
+    var cool = 0
+    proc choose(f: FrameInfo): bool =
+      ## The drop-down opens on the click's release. Give the list a frame to
+      ## take its place, then click the row.
+      if f.markOf("output.names.item Line").size.x > 0:
+        inc arm
+        if arm < 2: return false
+        return clickWhen(f, "output.names.item Line")
+      arm = 0
+      if f.markOf("output.names.open").size.x > 0: return false
+      if not reveal(f, "output.names"): return false
+      inc cool
+      if cool == 1 or cool mod 12 == 0:
+        discard clickWhen(f, "output.names")
+      false
+    proc chosen(f: FrameInfo): bool =
+      f.markOf("output.names Line").size.x > 0 and f.core.project.doc.outputPattern == "Line"
+    step("Line is chosen", choose, chosen)
+
+    proc remove(f: FrameInfo): bool =
+      if not reveal(f, "output.pattern.delete"): return false
+      clickWhen(f, "output.pattern.delete")
+    proc gone(f: FrameInfo): bool =
+      var has = false
+      for p in f.core.project.doc.outputPatterns:
+        if p.name == "Line": has = true
+      not has and f.markOf("output.names As the source file").size.x > 0
+    step("Line is deleted", remove, gone)
+
+    var at = 0
+    var started = false
+    var failed = ""
+    proc onFrame(f: FrameInfo) =
+      if f.index == 0:
+        f.keepInMainWindow()
+        f.moveMouse(vec2(4, 4))
+      if at >= steps.len or failed.len > 0:
+        f.stop()
+        return
+      if not started:
+        if steps[at].act(f):
+          started = true
+          wait = 0
+          since = getMonoTime()
+        elif overdue(wait, 800, since):
+          failed = steps[at].name & " did not happen"
+          f.stop()
+        else:
+          inc wait
+      else:
+        inc wait
+        if wait >= 3 and steps[at].done(f):
+          inc at
+          started = false
+          wait = 0
+          since = getMonoTime()
+        elif overdue(wait, 800, since):
+          failed = steps[at].name & " did not happen"
+          f.stop()
+    let code = run(RunOptions(windowSize: (1920, 1080), theme: forceDark, persist: true,
+      configDir: some(fx.dir / "config"), logDir: some(fx.dir / "logs"),
+      indexCacheDir: some(fx.dir / "cache"),
+      userThemeDir: some(fx.dir / "no-user-themes"),
+      assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]),
+      dialogs: hook, onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert failed.len == 0, failed
+    doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
+    doAssert fileExists(shot), "no name-pattern shot"
+    echo "tguioutput names: ", steps.len, " steps"
 
 when isMainModule:
   main()

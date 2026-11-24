@@ -60,6 +60,17 @@ const
     "stands, including edits not yet saved."
   CopyTip* = "Copy the results table to the clipboard."
   OpenTip* = "Open the destination folder."
+  FileNamesLabel* = "File names"
+  AsSourceFile* = "As the source file"
+  EditNames* = "Edit..."
+  LeastDigits* = "Least digits"
+  WidthTip* = "Shorter numbers get leading zeros. Longer numbers are never cut."
+  AddPart* = "Add part"
+  SavePattern* = "Save"
+  DeletePattern* = "Delete"
+  UpPart* = "Up"
+  DownPart* = "Down"
+  RemovePart* = "Remove"
 
 func summaryLine*(written, failed, skipped: int): string =
   ## One sentence for the totals under the results.
