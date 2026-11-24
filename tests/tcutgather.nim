@@ -4,9 +4,15 @@
 ## from the wrong field, the NaN replaced by 0, untimed rows kept, an
 ## unstable sort, `increasing` always true, a size term left out, and the
 ## checks removed.
+##
+## The sliding buffer and `cutOne` were seen to fail with: a piece's samples
+## taken from the wrong buffer index (the equality test), an eviction that
+## drops every held column ahead of the next window (the reuse test), the
+## overlap rule ignoring unchecked overlaps (the overlap test), a failed
+## fetch treated as success (the failed-read test).
 
 import std/[assertions, math, options]
-import processSEG/continuous/slice
+import parseSEG, processSEG
 import viewSEG/core/[cutgather, shotlog]
 
 func shotAt(us: int64, file = -1'i64): Shot =
@@ -18,6 +24,58 @@ func untimed(file: int64): Shot =
   Shot(fileNumber: some(file), sourceLine: NaN, shotPoint: NaN, x: NaN, y: NaN, z: NaN)
 
 const T0 = 1_772_323_200_000_000'i64 # 2026-03-01T00:00:00 UTC
+
+type
+  Src = ref object
+    ## Rows held in memory, counting what the buffer asks for.
+    data: seq[seq[float32]]
+    keys: seq[TraceKeys] # kept here: the meta's rows view these, they are not copied
+    counts: seq[int]
+    calls, fetched: int
+    failRow: int
+
+const
+  Dt = 2.0 # ms
+  StreamT0 = 1.7e9 + 0.123
+
+func stream(k: int): float32 = float32(sin(0.05 * float64(k)) + 0.001 * float64(k))
+
+func timeOf(k: float64): float64 = StreamT0 + k * Dt / 1000
+
+proc fetcher(src: Src): FetchProc =
+  result = proc (row, first, count: int, dst: var openArray[float32]): bool =
+    inc src.calls
+    src.fetched += count
+    if row == src.failRow:
+      false
+    else:
+      for j in 0 ..< count: dst[j] = src.data[row][first + j]
+      true
+
+proc makeSrc(spans: openArray[(int, int)]): Src =
+  ## One row per `(first, count)` span of the stream.
+  result = Src(failRow: -1)
+  for (first, n) in spans:
+    var r = newSeq[float32](n)
+    for j in 0 ..< n: r[j] = stream(first + j)
+    result.data.add r
+    var k = initTraceKeys()
+    k.status = tsLive
+    k.time = timeOf(float64(first))
+    k.t0Ms = 0
+    k.intervalUs = Dt * 1000
+    k.rcvLine = 1
+    k.rcvPoint = 1
+    k.rcvX = 10
+    k.rcvY = 0
+    result.keys.add k
+    result.counts.add n
+
+proc metaOf(src: Src): ChunkMeta =
+  initChunkMeta(rowsOf(src.keys, src.counts), dtMs = Dt)
+
+func window(samples: int): SliceWindow =
+  SliceWindow(startMs: 0, lengthMs: float64(samples) * Dt)
 
 proc main*() =
   block utc_not_shifted:
@@ -96,6 +154,126 @@ proc main*() =
     doAssert checkOptions(initCutOptions(3_000_000.0), 2.0).len > 0, "too long"
     doAssert checkOptions(initCutOptions(1000.0, startMs = 2_147_000.0), 2.0).len > 0
     doAssert checkOptions(initCutOptions(1000.0), 0.0).len > 0
+
+  block piecewise_equals_whole_block:
+    # A gap (197 ..< 210), an overlap (97 ..< 100) where the later row differs,
+    # and every alignment.
+    let spans = [(0, 100), (97, 100), (210, 100)]
+    let src = makeSrc(spans)
+    for j in 0 ..< 3: src.data[1][j] = float32(10 + j)
+    let meta = metaOf(src)
+    let shots = [initSliceShot(timeOf(90.4), 1), initSliceShot(timeOf(190), 2),
+      initSliceShot(timeOf(20.25), 3), initSliceShot(timeOf(250.6), 4),
+      initSliceShot(timeOf(5), 5)]
+    for align in [saNearest, saLinear, saCubic, saSinc]:
+      let plan = planSlices(meta, shots, window(40), soShotRecords, align)
+      doAssert plan.overlaps.len == 1
+      var block0 = zeros[float32](3, 100)
+      for i in 0 ..< 3:
+        for j in 0 ..< spans[i][1]: block0[i, j] = src.data[i][j]
+      var whole = zeros[float32](plan.len, plan.samples)
+      var wholeReport = initSliceReport(plan)
+      var ws = initWorkspace()
+      ws.reserve(sliceWorkspace(float32, plan))
+      extractInto(plan, block0, whole, meta, wholeReport, ws)
+      var report = initSliceReport(plan)
+      prepareSliceReport(plan, report)
+      var buf = initSourceBuffer()
+      let fetch = fetcher(src)
+      var dst = newSeq[float32](plan.samples)
+      for t in 0 ..< plan.len:
+        doAssert not cutOne(plan, t, buf, fetch, dst, report, ws)
+        for j in 0 ..< plan.samples:
+          doAssert cast[uint32](dst[j]) == cast[uint32](whole[t, j]),
+            $align & " trace " & $t & " column " & $j
+        doAssert report.gapSamples(t) == wholeReport.gapSamples(t)
+      doAssert checkOverlaps(plan, buf, fetch, report) == 1
+      doAssert report.overlapCheck(0) == wholeReport.overlapCheck(0)
+      doAssert report.overlapCheck(0).status == osMismatch
+      doAssert report.gapSamples(1) > 0
+
+  block reuse_and_bounded_memory:
+    # 60 windows of 1000 samples, 250 apart: each sample is in four windows.
+    let spans = [(0, 17000)]
+    let src = makeSrc(spans)
+    let meta = metaOf(src)
+    var shots: seq[SliceShot]
+    for i in 0 ..< 60: shots.add initSliceShot(timeOf(float64(i * 250)), float64(i + 1))
+    let plan = planSlices(meta, shots, window(1000), soShotRecords, saNearest)
+    var report = initSliceReport(plan)
+    prepareSliceReport(plan, report)
+    var ws = initWorkspace()
+    var buf = initSourceBuffer()
+    let fetch = fetcher(src)
+    var dst = newSeq[float32](plan.samples)
+    var peak = 0
+    for t in 0 ..< plan.len:
+      doAssert not cutOne(plan, t, buf, fetch, dst, report, ws)
+      for j in 0 ..< plan.samples: doAssert dst[j] == stream(t * 250 + j)
+      peak = max(peak, buf.heldSamples)
+      if t + 1 < plan.len:
+        var next = 0
+        for pc in plan.pieces(t + 1): next = pc.first
+        buf.evictBefore(0, evictable(plan, report, 0, next))
+    doAssert src.fetched <= 17000, "fetched " & $src.fetched & " samples"
+    doAssert src.fetched == 59 * 250 + 1000
+    doAssert peak <= 1000 + 250, "held " & $peak
+
+  block overlap_check_and_eviction_rule:
+    let spans = [(0, 100), (97, 100)]
+    let src = makeSrc(spans)
+    let meta = metaOf(src)
+    let plan = planSlices(meta, [initSliceShot(timeOf(90), 1)], window(20),
+      soShotRecords, saNearest)
+    var report = initSliceReport(plan)
+    prepareSliceReport(plan, report)
+    var ws = initWorkspace()
+    var buf = initSourceBuffer()
+    let fetch = fetcher(src)
+    var dst = newSeq[float32](20)
+    doAssert not cutOne(plan, 0, buf, fetch, dst, report, ws)
+    # Nothing pending, yet the unchecked tail of row 0 is still needed, and
+    # row 1 from its start.
+    doAssert evictable(plan, report, 0, 5000) == 97
+    doAssert evictable(plan, report, 1, 5000) == 0
+    doAssert evictable(plan, report, 0, 50) == 50
+    let before = src.fetched
+    doAssert checkOverlaps(plan, buf, fetch, report) == 1
+    doAssert report.overlapCheck(0).status == osMatch
+    doAssert src.fetched == before + 3, "only the tail of row 0 is read again"
+    doAssert checkOverlaps(plan, buf, fetch, report) == 0, "checked once"
+    doAssert evictable(plan, report, 0, 5000) == 5000
+    # A differing later row is reported with its count.
+    src.data[1][1] = 99
+    src.data[1][2] = 98
+    var buf2 = initSourceBuffer()
+    var report2 = initSliceReport(plan)
+    prepareSliceReport(plan, report2)
+    doAssert not cutOne(plan, 0, buf2, fetch, dst, report2, ws)
+    doAssert checkOverlaps(plan, buf2, fetch, report2) == 1
+    let c = report2.overlapCheck(0)
+    doAssert c.status == osMismatch and c.differing == 2 and report2.mismatches == 1
+
+  block failed_fetch_is_zeros:
+    let spans = [(0, 100), (97, 100)]
+    let src = makeSrc(spans)
+    src.failRow = 1
+    let meta = metaOf(src)
+    let plan = planSlices(meta, [initSliceShot(timeOf(90), 1)], window(20),
+      soShotRecords, saNearest)
+    var report = initSliceReport(plan)
+    prepareSliceReport(plan, report)
+    var ws = initWorkspace()
+    var buf = initSourceBuffer()
+    let fetch = fetcher(src)
+    var dst = newSeq[float32](20)
+    doAssert cutOne(plan, 0, buf, fetch, dst, report, ws), "the failed read is returned"
+    doAssert report.failedSamples(0) == 13
+    for j in 0 ..< 7: doAssert dst[j] == stream(90 + j)
+    for j in 7 ..< 20: doAssert dst[j] == 0'f32
+    doAssert buf.heldSamples == 7 and 1 notin [buf.heldRange(1).a]
+    doAssert checkOverlaps(plan, buf, fetch, report) == 0
+    doAssert report.overlapCheck(0).status == osNotRead
 
   echo "tcutgather ok"
 

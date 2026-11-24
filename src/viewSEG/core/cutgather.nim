@@ -4,9 +4,15 @@
 ##
 ## The output has one record per shot, holding the node's components as
 ## channels 1..C.
+##
+## Cutting reads each source sample once. A `SourceBuffer` holds the decoded
+## samples of the rows the windows in flight overlap, filled by a callback the
+## caller supplies (so no file is touched here); `cutOne` builds one output
+## trace from it with the library's piecewise calls.
 
-import std/[algorithm, math, options]
+import std/[algorithm, math, options, tables]
 import processSEG/continuous/slice
+import processSEG/core/workspace
 import ./shotlog
 
 type
@@ -132,3 +138,167 @@ func checkOptions*(opts: CutOptions, dtMs: float64): string =
         " ms each)."
     elif (opts.startMs + opts.recordMs) * 1000 > MaxEndUs:
       result = "The window ends too late for the file: its end must be under 2147 s."
+
+type
+  FetchProc* = proc (row, first, count: int, dst: var openArray[float32]): bool {.closure.}
+    ## Reads and decodes samples `first ..< first + count` of planning row
+    ## `row` into `dst` (`count` long). False: the read failed; `dst` is
+    ## then ignored.
+
+  HeldRow = object
+    first: int
+    data: seq[float32]
+
+  SourceBuffer* = object
+    ## Decoded samples of source rows. Per row one contiguous run, so a
+    ## request that leaves a gap fetches the gap too. Nothing grows with the
+    ## number of shots: the caller drops what no pending window reads.
+    rows: Table[int, HeldRow]
+    zeros: seq[float32] # the samples handed for a piece that failed to read
+
+func initSourceBuffer*(): SourceBuffer =
+  ## An empty buffer.
+  SourceBuffer(rows: initTable[int, HeldRow]())
+
+func heldSamples*(buf: SourceBuffer): int =
+  ## The samples held, over every row.
+  for h in buf.rows.values: result += h.data.len
+
+func heldRange*(buf: SourceBuffer, row: int): Slice[int] =
+  ## The columns of `row` held, empty (`a > b`) when none.
+  if row in buf.rows:
+    let h = buf.rows[row]
+    result = h.first .. h.first + h.data.len - 1
+  else:
+    result = 0 .. -1
+
+func held*(buf: SourceBuffer, row: int): lent seq[float32] =
+  ## The samples held of `row`, from column `heldRange(row).a`. Raises
+  ## `KeyError` when the row holds none: `need` it first. Valid until the
+  ## next `need`, `evictBefore` or `evictRow` on this row.
+  buf.rows[row].data
+
+proc grow(h: var HeldRow, row, first, count: int, fetch: FetchProc): bool =
+  ## Extends `h` to cover `first ..< first + count`; unchanged on failure.
+  let newEnd = first + count
+  let oldEnd = h.first + h.data.len
+  if h.data.len == 0:
+    var d = newSeq[float32](count)
+    result = fetch(row, first, count, d)
+    if result:
+      h.first = first
+      h.data = move d
+  elif first >= h.first and newEnd <= oldEnd:
+    result = true
+  elif first >= h.first:
+    # Only the end moves: append in place.
+    h.data.setLen(newEnd - h.first)
+    result = fetch(row, oldEnd, newEnd - oldEnd,
+      h.data.toOpenArray(oldEnd - h.first, newEnd - h.first - 1))
+    if not result: h.data.setLen(oldEnd - h.first)
+  else:
+    let b = max(newEnd, oldEnd)
+    var d = newSeq[float32](b - first)
+    copyMem(addr d[h.first - first], addr h.data[0], h.data.len * sizeof(float32))
+    result = fetch(row, first, h.first - first, d.toOpenArray(0, h.first - first - 1))
+    if result and b > oldEnd:
+      result = fetch(row, oldEnd, b - oldEnd, d.toOpenArray(oldEnd - first, b - first - 1))
+    if result:
+      h.first = first
+      h.data = move d
+
+proc need*(buf: var SourceBuffer, row, first, count: int, fetch: FetchProc): int =
+  ## Makes `first ..< first + count` of `row` held, calling `fetch` only for
+  ## the part not held (a gap between the held run and the request is
+  ## fetched too). Returns the index in `buf.held(row)` of column `first`, so
+  ## the samples are `toOpenArray(buf.held(row), i, i + count - 1)`; -1 when a
+  ## fetch failed (nothing is changed) or the request is empty or negative.
+  if count <= 0 or first < 0:
+    result = -1
+  else:
+    let ok = grow(buf.rows.mgetOrPut(row, HeldRow(first: first)), row, first, count,
+      fetch)
+    result = if ok: first - buf.rows[row].first else: -1
+
+proc evictBefore*(buf: var SourceBuffer, row, sample: int) =
+  ## Drops the columns of `row` before `sample`.
+  if row in buf.rows:
+    let first = buf.rows[row].first
+    if sample >= first + buf.rows[row].data.len:
+      buf.rows.del row
+    elif sample > first:
+      buf.rows.withValue(row, h):
+        let keep = h.data.len - (sample - first)
+        moveMem(addr h.data[0], addr h.data[sample - first], keep * sizeof(float32))
+        h.data.setLen(keep)
+        h.first = sample
+
+proc evictRow*(buf: var SourceBuffer, row: int) =
+  ## Drops everything held of `row`.
+  buf.rows.del row
+
+func readsRow(plan: SlicePlan, row: int): bool =
+  plan.rowsNeeded.binarySearch(row) >= 0
+
+func evictable*(plan: SlicePlan, report: SliceReport, row, earliestPendingStart: int): int =
+  ## The first column of `row` that must still be held: every column before
+  ## it may go (`evictBefore`). `earliestPendingStart` is the first column of
+  ## the row that a window not yet cut reads (a piece's `first`, margin
+  ## included). It is lowered for an overlap on the row that is not yet
+  ## checked: the earlier row's trimmed tail is in no piece, and the later
+  ## row is needed from column 0.
+  result = max(earliestPendingStart, 0)
+  for i, o in plan.overlaps:
+    if report.overlapCheck(i).status == osNotRead and o.samples > 0 and
+        plan.readsRow(o.earlier) and plan.readsRow(o.later):
+      if o.earlier == row: result = min(result, o.first)
+      elif o.later == row: result = 0
+
+proc cutOne*(plan: SlicePlan, trace: int, buf: var SourceBuffer, fetch: FetchProc,
+    dst: var openArray[float32], report: var SliceReport, ws: var Workspace): bool =
+  ## Cuts output trace `trace` into `dst` (`plan.samples` long) from the
+  ## buffer, fetching what it does not hold. Returns true when a piece could
+  ## not be read: it is zero-filled and counted in `report.failedSamples`;
+  ## a failed read never raises. Raises `ValueError` as the library does for
+  ## a bad trace, `dst`, `report` or workspace.
+  beginSliceTrace(plan, trace, report)
+  let nothing = default(seq[float32])
+  for pc in plan.pieces(trace):
+    if pc.row < 0 or pc.count <= 0:
+      addPiece(plan, trace, pc, nothing, dst, report, ws)
+    else:
+      # The planner keeps every piece inside its row, so the piece's own end
+      # is a row length that gives `pc.count` samples.
+      let (first, count) = pieceSource(plan, pc, pc.first + pc.count)
+      let i = buf.need(pc.row, first, count, fetch)
+      if i >= 0:
+        addPiece(plan, trace, pc, buf.held(pc.row).toOpenArray(i, i + count - 1), dst,
+          report, ws)
+      else:
+        # The library wants `pc.count` samples even for a failed piece.
+        if buf.zeros.len < pc.count: buf.zeros.setLen(pc.count)
+        addPiece(plan, trace, pc, buf.zeros.toOpenArray(0, pc.count - 1), dst, report,
+          ws, failed = true)
+        result = true
+  finishSliceTrace(plan, trace, dst, report, ws)
+
+proc checkOverlaps*(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
+    report: var SliceReport): int =
+  ## Compares every overlap not yet compared whose two rows the plan reads
+  ## and whose two runs can be had (through the buffer, so nothing is read
+  ## twice), and returns how many it compared. One whose run cannot be read
+  ## stays `osNotRead`; call again to retry.
+  let nothing = default(seq[float32])
+  for i, o in plan.overlaps:
+    if report.overlapCheck(i).status == osNotRead and plan.readsRow(o.earlier) and
+        plan.readsRow(o.later):
+      if o.samples == 0:
+        checkSliceOverlap(plan, i, nothing, nothing, report)
+        inc result
+      else:
+        let a = buf.need(o.earlier, o.first, o.samples, fetch)
+        let b = if a >= 0: buf.need(o.later, 0, o.samples, fetch) else: -1
+        if b >= 0:
+          checkSliceOverlap(plan, i, buf.held(o.earlier).toOpenArray(a, a + o.samples - 1),
+            buf.held(o.later).toOpenArray(b, b + o.samples - 1), report)
+          inc result

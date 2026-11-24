@@ -42,8 +42,8 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Status | parseSEG 0.21.2: capabilities | names | processSEG 0.14.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 58 (24 in part) | 199 | 46 (29 in part) | 256 |
-| `internal` | 21 | 65 | 8 | 54 |
-| `planned` | 33 | 227 | 42 | 391 |
+| `internal` | 21 | 65 | 10 | 66 |
+| `planned` | 33 | 227 | 40 | 379 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 22 | 355 | 7 | 71 |
 | all | 136 | 855 | 104 | 777 |
@@ -406,10 +406,10 @@ name, so these are building blocks for code that works on raw headers.
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Cut continuous node data into records at shot times | `initSliceStreams`, `planSlices`, `extractInto`, `sliceKeys`, `SliceShot`, `SliceWindow`, `SliceStreams` (`rowCount`, `receiverKeys`), `SlicePlan` (`margin`, `order`, `align`, `window`, `shotCount`, `receiverCount`, `shotOf`, `receiverOf`, `rowsNeeded`, `tracesNeeded`, `maxColumn`, `fraction`), `initSliceShot`, `SliceOrder`, `SliceAlign`, `SlicePiece`, `pieces`, `sliceWorkspace` | "Cut at shot times…" (shots from SPS / P1 or a list), result as a virtual file | internal (`SliceShot`, `initSliceShot`, `SliceAlign`: `core/cutgather.nim` builds the shots and takes the alignment); planned (the rest) |
-| Cut one trace from the pieces a plan names, without holding the whole row | `addPiece`, `beginSliceTrace`, `finishSliceTrace`, `pieceSource`, `checkSliceOverlap`, `prepareSliceReport`, `failedSamples`, `failedPieces`, `initSliceShotGps` | Cutting a continuous receiver gather larger than memory into records at shot-log times: each piece is read, added and dropped. | planned |
+| Cut one trace from the pieces a plan names, without holding the whole row | `addPiece`, `beginSliceTrace`, `finishSliceTrace`, `pieceSource`, `checkSliceOverlap`, `prepareSliceReport`, `failedSamples`, `failedPieces`, `initSliceShotGps` | Cutting a continuous receiver gather larger than memory into records at shot-log times: each piece is read, added and dropped. | internal (`addPiece`, `beginSliceTrace`, `finishSliceTrace`, `pieceSource`, `checkSliceOverlap`: `core/cutgather.nim` cuts one trace from a sliding sample buffer and compares the overlaps); planned (the rest) |
 | The leap-second table, as processSEG shares it | `LeapDate`, `LeapSecond`, `LeapTable`, `currentLeapTable`, `defaultLeapTable`, `leapKnownAt`, `parseLeapTable`, `useLeapTable`, `withLeap`, `useLeapTableNif`, `gpsUsToUtcSeconds`, `utcUsOfGps` | Shot times given in GPS microseconds for the cut, converted with the same table the viewer's Tools > Leap seconds will edit. | built in part (Tools > Leap seconds...: the table the Leap seconds window shows and changes is the one processSEG shares); planned: shot times in GPS microseconds for the cut |
 | A sub-sample shift by windowed sinc | `SincHalf`, `sincInto` | The most exact alignment of a cut window whose shot time falls between samples. | planned |
-| Gaps, overlaps and timing errors | `SliceReport`, `gaps`, `overlapCheck`, `timingIssues`, `untimed`, `otherInterval`, `initSliceReport`, `gapSamples`, `gapCount`, `SliceGap`, `SliceOverlap`, `SliceTimingIssue`, `OverlapStatus`, `SliceOverlapCheck`, `mismatches`, `overlaps` | Continuous data QC per receiver | planned |
+| Gaps, overlaps and timing errors | `SliceReport`, `gaps`, `overlapCheck`, `timingIssues`, `untimed`, `otherInterval`, `initSliceReport`, `gapSamples`, `gapCount`, `SliceGap`, `SliceOverlap`, `SliceTimingIssue`, `OverlapStatus`, `SliceOverlapCheck`, `mismatches`, `overlaps` | Continuous data QC per receiver | internal (`SliceReport`, `overlapCheck`: `core/cutgather.nim` reads the failed pieces and overlap comparisons it makes); planned (the rest) |
 | Clock drift correction | `driftCorrectTimes`, `driftCorrectedTimes` | Node clock drift correction | planned |
 
 ### Survey design
