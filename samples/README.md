@@ -55,6 +55,12 @@ Record 3, for QC:
 | 28 | line 1001, station 128 | Polarity reversed |
 | 64 | line 1002, station 116 | Strong 60 Hz added |
 
+`shotlog.csv` is 200 invented shots on line 10, points 1000..1199, comma
+separated, with a plain header. Times start at 2024-03-01 00:00:00 UTC and
+step 10 s. X and Y are small invented metres near (1000, 2000), not a
+survey. Row 4 (point 1003) has sentinel source depth -999.9; row 6 (point
+1005) leaves water depth blank.
+
 ## Vibroseis (`samples/vib/`)
 
 The same foot grid. One source, land point 2001/103, and receiver line

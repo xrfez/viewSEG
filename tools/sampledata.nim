@@ -716,6 +716,49 @@ proc checkObn(dir: string) =
   let sps = parseSps(readFile(dir / "obn.r"))
   doAssert sps.gridUnit.name == "Metres" and abs(sps.gridUnit.metres - 1) < 1e-9
 
+proc writeShotLog(dir: string) =
+  ## 200 invented shots, comma separated, plain header names. Line 10, points
+  ## 1000..1199, 10 s apart from 2024-03-01 00:00:00 UTC. Coordinates are small
+  ## invented metres, not a survey. Row 3 has a sentinel source depth; row 5
+  ## has a blank water depth.
+  const
+    rows = 200
+    gps0 = 1_393_286_418_000_000'i64
+    stepUs = 10_000_000'i64
+  proc two(n: int): string =
+    if n < 10: "0" & $n else: $n
+  var b = newStringOfCap(rows * 160)
+  b.add "sequence,file number,source line,shot point,index,GPS microseconds,"
+  b.add "year,day of year,hour,minute,second,date-time text,source depth,"
+  b.add "water depth,X,Y,Z,source type,volume,pressure,heading,speed\n"
+  for i in 0 ..< rows:
+    let sec = i * 10
+    let minute = sec div 60
+    let second = sec mod 60
+    b.add $(i + 1)
+    b.add ','
+    b.add $(5000 + i)
+    b.add ",10,"
+    b.add $(1000 + i)
+    b.add ",1,"
+    b.add $(gps0 + int64(i) * stepUs)
+    b.add ",2024,61,0,"
+    b.add $minute
+    b.add ','
+    b.add $second
+    b.add ",2024-03-01 00:"
+    b.add two(minute)
+    b.add ':'
+    b.add two(second)
+    b.add ".000000,"
+    b.add(if i == 3: "-999.9" else: "6")
+    b.add ','
+    b.add(if i == 5: "" else: "40")
+    b.add ','
+    b.add $(1000 + i * 5)
+    b.add ",2000,12,air,100,100,90,4.5\n"
+  writeFile(dir / "shotlog.csv", b)
+
 proc report(root: string) =
   var total = 0'i64
   for kind, path in walkDir(root / "samples"):
@@ -736,6 +779,10 @@ proc main() =
   createDir(root / "samples" / "land")
   createDir(root / "samples" / "vib")
   createDir(root / "samples" / "obn")
+  when defined(shotlogOnly):
+    writeShotLog(root / "samples" / "land")
+    echo "wrote samples/land/shotlog.csv"
+    return
   let landT = unixUtc(2026, mMar, 1, 0)
   let vibT = unixUtc(2026, mMar, 1, 12)
   let obnT = unixUtc(2026, mMar, 2, 0)
@@ -750,6 +797,7 @@ proc main() =
   writeObn(root / "samples" / "obn", obnT)
   writeObnReceivers(root / "samples" / "obn", obnT + 3600.0)
   checkObn(root / "samples" / "obn")
+  writeShotLog(root / "samples" / "land")
   report(root)
   echo "wrote samples/"
 

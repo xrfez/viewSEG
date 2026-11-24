@@ -114,7 +114,8 @@ proc main*() =
 
   block files_are_present:
     for path in [land / "land.s", land / "land.r", land / "land.x",
-        land / "shots.sgy", land / "shots.sgd", vib / "vib_uncorrelated.sgd",
+        land / "shots.sgy", land / "shots.sgd", land / "shotlog.csv",
+        vib / "vib_uncorrelated.sgd",
         vib / "vib_correlated.sgd", vib / "vib_signature.sgd", obn / "obn_receiver.sgd", obn /
         "obn.s", obn / "obn.r", obn /
         "obn.x",

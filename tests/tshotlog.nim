@@ -241,6 +241,25 @@ proc main*() =
     doAssert log.cell(0, 0) == "0" and log.cell(99_999, 0) == "99999"
     doAssert log.cell(50_000, 29) == "29" and log.problems.count == 0
 
+  block sampleFile:
+    let path = currentSourcePath().parentDir.parentDir / "samples" / "land" / "shotlog.csv"
+    let text = readFile(path)
+    let g = guessMap(text)
+    doAssert g.delimiter == dlComma and g.hasHeader
+    doAssert g.roles[0] == crSequence and g.roles[1] == crFileNumber
+    doAssert g.roles[5] == crGpsMicros and g.roles[11] == crDateTime
+    let log = parseShotLog(text, g)
+    doAssert log.len == 200 and log.width == 22
+    let v = shots(log, g)
+    doAssert v.rows[0].shotPoint == 1000.0 and v.rows[0].sourceLine == 10.0
+    doAssert v.rows[0].timeUtcUs.get == UtcMarch
+    doAssert v.rows[199].timeUtcUs.get == UtcMarch + 199 * 10_000_000
+    doAssert v.rows[199].shotPoint == 1199.0
+    doAssert v.rows[3].sourceDepth.isNaN and v.rows[5].waterDepth.isNaN
+    doAssert v.rows[0].x == 1000.0 and v.rows[0].y == 2000.0
+    doAssert not hasKind(v.problems, pkTimeDisagree)
+    doAssert not hasKind(v.problems, pkDuplicateShot)
+
   echo "tshotlog ok"
 
 when isMainModule:
