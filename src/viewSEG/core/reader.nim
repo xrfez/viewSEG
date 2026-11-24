@@ -1184,7 +1184,8 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
     # Asks parseSEG's guard first: a mapped file's read past a cut finds it
     # by itself, but an unmapped one's cache keeps the bytes it holds until
     # something asks (`cutShort`: one `fstat`), and it must not draw them.
-    discard f[].cutShort
+    # A view has no prefetch log, so this bool is what says the file was cut.
+    let fileCut = f[].cutShort
     if rd.src.view != nil:
       # Listen time, on this thread: the prefetcher reads raw windows, and the
       # kernel rejects a windowed record. The virtual path is not mapped;
@@ -1262,6 +1263,9 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
     if keep and not given:
       into[].failed = failed
       into[].valid = not ioSeen # rows a drive failed are read again, not kept blank
+    if rd.src.view != nil and not given and tile.failed > 0 and not (cutSeen or ioSeen):
+      if f[].readFailed: ioSeen = true
+      elif fileCut: cutSeen = true
     rd.lastIo = false
     if not given and tile.failed > 0:
       if cutSeen or ioSeen: rd.tellUnread(tile.failed, q.count, cutSeen, ioSeen)

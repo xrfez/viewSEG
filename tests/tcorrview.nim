@@ -15,8 +15,11 @@
 ## decoded row, `window overhanging the listen time sample 10` disagreed.
 ## A field-less request of a dead trace, asked again from the spare, had
 ## `isDead` false the second time (`a tile from the spare does not mark the dead trace`).
+## A file cut short while a view of it was open posted only the generic
+## count (`1 of the 5 traces shown could not be read`), not that it was
+## cut short.
 
-import std/[atomics, math, monotimes, os, times]
+import std/[atomics, math, monotimes, os, strutils, times]
 import parseSEG
 import processSEG
 import viewSEG/core/[correlatejobs, correlateread, filesystem, inbox, jobs, log, panels, reader,
@@ -357,6 +360,65 @@ proc main*() =
     let second = oneTile()
     doAssert second.isDead(1), "a tile from the spare does not mark the dead trace"
     doAssert not second.isDead(0), "the spare marked a live trace dead"
+
+  block cutShortOnAView:
+    let cutPath = dir / "cut.sgy"
+    writeRaw(cutPath, sweep)
+    var cutFile = openSeismic(cutPath, keys = true)
+    let cutRawS = newSession(cutPath, cutFile)
+    let built = initCorrelateView(cutRawS.filePtr, sweep, DtMs, [RefAux])
+    doAssert built.refusal.len == 0, built.refusal
+    let cutView = asCorrelatedView(cutRawS, built.view)
+    defer:
+      discard cutView.close()
+      discard cutRawS.close()
+    doAssert jobs.hold(cutView.path), "the cut view could not be held"
+    var rd = newPanelReader(PanelId(4), box.poster, jobs.holdRelease)
+    defer: rd.stop()
+    rd.show(sourceOf(cutView, cutView.correlatedView))
+    var laid = false
+    doAssert waitUntil(block:
+      var msgs: seq[Msg] = @[]
+      box.drainInto(msgs)
+      for m in msgs:
+        if m.kind == mkLayout and m.panel == PanelId(4): laid = true
+      laid
+    ), "the cut view was not laid out"
+    let last = cutRawS.len - 1
+    var indexed = openSeismic(cutPath)
+    let start = indexed.index.entries[last].offset
+    let size = getFileSize(cutPath)
+    indexed.close()
+    let mid = start + (size - start) div 2
+    doAssert mid > start and mid < size, "the cut is not inside the last trace"
+    writeFile(cutPath, readFile(cutPath)[0 ..< int(mid)])
+    rd.request(ask(0, cutRawS.len, 1, 0, 64))
+    var tile: Tile
+    var notes: seq[string] = @[]
+    var got = false
+    doAssert waitUntil(block:
+      var msgs: seq[Msg] = @[]
+      box.drainInto(msgs)
+      for m in msgs:
+        if m.kind == mkLog: notes.add m.entry.text
+        elif m.kind == mkTile and m.tile.panel == PanelId(4):
+          tile = m.tile
+          got = true
+      got
+    ), "the cut tile did not arrive"
+    doAssert tile.failed == 1, "a cut file failed " & $tile.failed & " traces"
+    for j in 0 ..< tile.columns:
+      doAssert tile.data[last * tile.columns + j] == 0'f32, "the cut trace is not blank"
+    var live = false
+    for j in 0 ..< tile.columns:
+      if tile.data[j] != 0'f32: live = true
+    doAssert live, "an earlier trace was blanked"
+    var said = false
+    var shown = ""
+    for n in notes:
+      shown.add n & " | "
+      if n.find("was cut short while it was open") >= 0: said = true
+    doAssert said, "the cut was not reported: " & shown
 
   echo "tcorrview: ok"
 
