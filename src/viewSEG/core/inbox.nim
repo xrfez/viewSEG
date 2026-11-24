@@ -25,7 +25,7 @@ type
     mkRead           ## a document the disk thread read
     mkListed         ## files a folder scan found
     mkWatched        ## what a look at the listed folder found changed
-    mkKinds          ## the kinds of recording a job read from the first traces of listed files
+    mkKinds          ## the kinds of recording a job read from the trace headers of listed files
     mkPaired         ## the partner a search found for a signature file (`core/sweeppairs`)
     mkSurvey         ## a survey layer: a survey file read, or an open file's positions
     mkChecked        ## an open file's records checked against a relation file

@@ -108,17 +108,14 @@ type
     stations*: int                 ## receiver points
     components*: int               ## receivers: what each cut record holds as traces
     segments*: int
-    fewestStarts*: int
-      ## the fewest distinct start times any receiver has: a prefix of a file shows the
-      ## kind only when this reaches `KindStarts`
     firstTime*, lastTime*: float64 ## UTC POSIX seconds; the span of every segment
-    boundaries*: int ## between consecutive segments of one receiver
-    abutting*: int ## the next starts one step after the last
-    skips*: int ## boundaries after whole missing segments (k > 1)
-    missingSegments*: int ## whole segments absent, summed over `skips`
-    irregular*: int ## starts that are not a whole number of steps apart
-    uncovered*: int ## receivers with a segment that does not cover the step
-    offTrace*: int ## for `swOffStep`: the trace (from 1) that breaks the rule
+    boundaries*: int               ## between consecutive segments of one receiver
+    abutting*: int                 ## the next starts one step after the last
+    skips*: int                    ## boundaries after whole missing segments (k > 1)
+    missingSegments*: int          ## whole segments absent, summed over `skips`
+    irregular*: int                ## starts that are not a whole number of steps apart
+    uncovered*: int                ## receivers with a segment that does not cover the step
+    offTrace*: int                 ## for `swOffStep`: the trace (from 1) that breaks the rule
     offSeconds*: float64
       ## for `swOffStep`: how long after the segment before it that trace starts, or its
       ## length when `offLength`
@@ -278,7 +275,7 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
   let meta = plan.meta
   let dtS = meta.dtMs / 1000
   result = RecordingFacts(dtMs: meta.dtMs, firstTime: Inf, lastTime: -Inf,
-    fewestStarts: high(int), unevenChannels: plan.clock.unevenChannels)
+    unevenChannels: plan.clock.unevenChannels)
   var segs: seq[Seg]
   for row in 0 ..< meta.len:
     let n = meta.liveSamples(row, high(int))
@@ -304,12 +301,9 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     if not (k.rcvLine.isNaN or k.rcvPoint.isNaN):
       let st = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
       placed.add (st: (st.line, st.point, st.index), segs: j - i)
-    var seen = 1
     for x in i ..< j:
       result.firstTime = min(result.firstTime, segs[x].start)
       result.lastTime = max(result.lastTime, segs[x].finish)
-      if x > i and int(round((segs[x].start - segs[x - 1].start) / dtS)) != 0: inc seen
-    result.fewestStarts = min(result.fewestStarts, seen)
     if j - i > 1: tally(segs, i, j, dtS, starts, result)
     i = j
   result.ready = true

@@ -10,7 +10,7 @@ func kindWords*(k: RecordingKind): string =
   of rkReceiverSliced: "time-sliced receiver gather"
 
 const NotKnownWords* = "Open the file to see its kind."
-  ## what the Files panel says of a file too large for its start to tell the kind
+  ## what the Files panel says of a file too large to be opened for its kind
 
 func kindShort*(k: RecordingKind): string =
   ## `kindWords` in a word or two, for a table cell: "Shot".

@@ -122,11 +122,10 @@ The **Kind** column, after Type, says what each seismic file is as a recording: 
 receiver gather, time-sliced receiver gather: the words the cut uses, see
 `cut-by-shot-log.md`). It is worked out in the background, a file at a time, after the listing,
 and never holds up opening or showing a file. A file up to 256 MB is read through its trace
-headers only, never a sample, and the answer is the one the file gets when you open it. For a
-larger file the first traces are read (at most 4096 traces and 16 MB); when they do not show 8
-start times for every receiver the file has, the kind is not guessed: the cell shows **?** and
-the tooltip says "Open the file to see its kind". Once you open the file the row takes its
-kind. A file whose kind is not worked out yet, a file that is not seismic and one without a
+headers only, never a sample, and the answer is the one the file gets when you open it. A
+larger file is not opened for it, since a receiver that first appears late in the file can
+change the kind and its start alone cannot tell: the cell shows **?** and the tooltip says
+"Open the file to see its kind". Once you open the file the row takes its kind. A file whose kind is not worked out yet, a file that is not seismic and one without a
 live trace have an empty cell. Click the header to sort by it. A file that changes on disk is
 read again once it is steady, and every kind is read again when the vendor header maps change,
 since a start time may come from a vendor block.

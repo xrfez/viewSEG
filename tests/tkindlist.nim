@@ -86,7 +86,7 @@ proc main*() =
       doAssert st.kindOf(shot) == some(rkShotGather), "an answer for another listing was kept"
 
     block aFileNotKnownTakesItsKindWhenItIsShown:
-      # a file whose start did not tell its kind (posted so: the probe's cap is 16 MiB): once the
+      # a file too large to be opened for its kind (posted so: the limit is 256 MiB): once the
       # file is open and shown, its row takes the kind of the facts of the whole file
       let i = st.fileList.find(canonical(sliced))
       st.mailbox.post Msg(kind: mkKinds, kindsGen: st.fileList.gen,

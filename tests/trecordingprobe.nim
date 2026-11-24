@@ -1,13 +1,13 @@
 ## The kind of a file on disk (`kindOfFile`): a file up to `ProbeWholeBytes` is opened whole
-## (headers only) and gets the answer of `describeRecording`; a larger one is read by its start
-## and has an answer only when every receiver seen has its starts, else it is not known; none
+## (headers only) and gets the answer of `describeRecording`; a larger one is not known; none
 ## for what is not seismic, cannot be read or has no live trace.
 ##
 ## Seen to fail with a deliberate fault: the probe's answer made always a shot gather
-## ("abut: some(rkShotGather)"); the stop test made the total of segments (8 per receiver
-## seen in all) in place of the fewest starts of one receiver ("perreceiver": continuous).
+## ("abut: some(rkShotGather)"); with the start-of-file probe put back for a file above the
+## limit, the receiver written last is never seen ("late: (outcome: poKnown, kind:
+## rkReceiverContinuous)").
 
-import std/[assertions, options, os, times]
+import std/[assertions, os, times]
 import parseSEG
 import viewSEG/core/[recordingkind, recordingprobe, vendormaps]
 import utils/[fixtures, kindfiles]
@@ -21,11 +21,9 @@ proc whole(path: string; reg: VendorRegistry): RecordingFacts =
 
 proc same(dir, name: string; specs: openArray[Spec]; want: RecordingKind) =
   let path = writeSpecs(dir, name, specs)
-  for wholeBytes in [ProbeWholeBytes, 0'i64]:
-    # opened whole, and read by its start only (a file this small is then read to its end)
-    let got = kindOfFile(path, VendorRegistry(), wholeBytes = wholeBytes)
-    doAssert got.outcome == poKnown and got.kind == want, name & ": " & $got
-    doAssert got.kind == whole(path, VendorRegistry()).kind, name & " differs from the whole"
+  let got = kindOfFile(path, VendorRegistry())
+  doAssert got.outcome == poKnown and got.kind == want, name & ": " & $got
+  doAssert got.kind == whole(path, VendorRegistry()).kind, name & " differs from the whole"
 
 proc main*() =
   let dir = getTempDir() / "trecordingprobe"
@@ -90,34 +88,35 @@ proc main*() =
     writeFile(cut, readFile(path)[0 ..< size.int - 1500])
     doAssert kindOfFile(cut, VendorRegistry()).outcome != poNone
 
-  block a_large_file_is_opened_whole_or_decided_from_its_first_traces:
-    # 20000 traces of 1000 samples, ~85 MB: past the bytes the prefix probe may read
+  block a_large_file_is_opened_whole:
+    # 20000 traces of 1000 samples, ~85 MB: opened whole, headers only
     var specs: seq[Spec] = @[]
     for i in 0 ..< 20000: specs.add spec(0, i * 1000)
     let path = writeSpecs(dir, "large", specs)
-    doAssert getFileSize(path) > 4 * ProbeMaxBytes
     let t0 = cpuTime()
     let whole = kindOfFile(path, VendorRegistry())
     echo "kindOfFile of ", getFileSize(path) div (1024 * 1024), " MB: ", cpuTime() - t0, " s"
     doAssert whole == KindProbe(outcome: poKnown, kind: rkReceiverContinuous), $whole
-    # one receiver with its eight starts in the first prefix: the start alone is enough
-    let prefix = kindOfFile(path, VendorRegistry(), wholeBytes = 0)
-    doAssert prefix == whole, $prefix
     removeFile(path)
 
-  block a_start_that_does_not_tell_the_kind_is_not_known:
-    # one shot of 5000 receivers (~20 MB): every receiver has one start in the first 16 MiB,
-    # so the start cannot tell a shot gather from the first record of many; opened whole it is
-    # a shot gather
+  block a_file_above_the_limit_is_not_known:
+    # three components of one station, each in a run of its own; the last one leaves the step
+    # at its second start: only the whole file tells, so above the limit there is no kind
     var specs: seq[Spec] = @[]
-    for r in 0 ..< 5000: specs.add spec(r, 0)
-    let path = writeSpecs(dir, "onebig", specs)
-    doAssert getFileSize(path) > ProbeMaxBytes
-    let start = kindOfFile(path, VendorRegistry(), wholeBytes = 0)
-    doAssert start.outcome == poNotKnown, $start
-    let whole = kindOfFile(path, VendorRegistry())
-    doAssert whole == KindProbe(outcome: poKnown, kind: rkShotGather), $whole
-    removeFile(path)
+    for c in 0 ..< 3:
+      for i in 0 ..< 150: specs.add spec(0, i * 1000 + (if c == 2 and i == 1: 300 else: 0), c)
+    let path = writeSpecs(dir, "late", specs)
+    let size = getFileSize(path)
+    doAssert kindOfFile(path, VendorRegistry()) ==
+      KindProbe(outcome: poKnown, kind: rkReceiverSliced)
+    for limit in [0'i64, size div 2, size - 1]:
+      let got = kindOfFile(path, VendorRegistry(), wholeBytes = limit)
+      doAssert got == KindProbe(outcome: poNotKnown), "late: " & $got
+    doAssert kindOfFile(path, VendorRegistry(), wholeBytes = size).outcome == poKnown
+    # what is not seismic stays without a kind, whatever its size
+    let text = dir / "big.txt"
+    writeFile(text, "not a seismic file\n")
+    doAssert kindOfFile(text, VendorRegistry(), wholeBytes = 0).outcome == poNone
 
   removeDir(dir)
 

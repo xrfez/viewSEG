@@ -9876,7 +9876,7 @@ proc takeWatched(state: var AppState; m: sink Msg) =
       else:
         template e: untyped = f.entries[i]
         let same = e.size == w.size and e.modified == w.modified
-        if not same: e.kindState = ksUnread # its first traces may have changed: read again
+        if not same: e.kindState = ksUnread # its traces may have changed: read again
         e.size = w.size
         e.modified = w.modified
         if w.kind in SignatureFileKinds: e.sweep = w.sweep
@@ -11198,7 +11198,7 @@ proc exportShotSpsCmd(state: var AppState; cmd: Command) =
 proc watchRecording*(state: var AppState; wanted: bool) =
   ## Keeps a job reading the shown file as a recording (`describeRecording`)
   ## while `wanted` (the cut dialog is open) or while the Files panel does not know the
-  ## file's kind (it was too large for its start to tell, `ksNotKnown`; the facts give the
+  ## file's kind (it was too large to be opened for it, `ksNotKnown`; the facts give the
   ## row its kind): started once its keys are read
   ## and again when the shown file or its keys change, cancelled when no longer
   ## wanted or the file changes. Call it every frame; it does nothing when

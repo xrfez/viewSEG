@@ -250,7 +250,7 @@ proc main*() =
     doAssert after == before, "stepping through the files changed one"
     echo "tguifiles: ", reached.len, " steps: ", reached.join(", ")
 
-  # The Kind column: a folder with a file of each kind says so from the first traces, off the UI
+  # The Kind column: a folder with a file of each kind says so from its trace headers, off the UI
   # thread; a drive that does not answer for them leaves the window drawing, the cells empty,
   # and the words come once it answers.
   block theKindOfEachFile:

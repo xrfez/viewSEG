@@ -52,7 +52,7 @@ type
     ksUnread ## not read yet (a job reads it after the listing)
     ksNone   ## read: not a file with a kind (no live trace, or it cannot be read)
     ksNotKnown
-      ## read: a seismic file too large for its start to tell the kind; opening it does
+      ## read: a seismic file too large to be opened for its kind; opening it tells
     ksKnown  ## read: `FileEntry.recording` is its kind
 
   KindAnswer* = object
