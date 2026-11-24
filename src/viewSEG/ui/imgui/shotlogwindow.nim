@@ -8,7 +8,7 @@ import std/[algorithm, math, options, os, strutils, tables]
 import imguin/cimgui
 import parseSEG/survey/sps
 import ../../core/[destwatch, geometry, shotlog, shotlogsps, state]
-import ../../view/[shotlogwords, theme]
+import ../../view/[shotlogrows, shotlogwords, theme]
 import chrome, focus, icons, marks, style
 
 const
@@ -41,6 +41,10 @@ type
     matches: seq[int]
     filterDone: bool
     problemsOnly: bool
+    onlySelected: bool                ## list only the selected rows
+    onlyRows: seq[int]                ## the rows listed while `onlySelected`
+    chosenRows: ChosenRows            ## the rows marked this frame
+    scrolledFor: ScrollKey            ## what the grid last scrolled to, or would have
     allowEditing: bool                ## cell edits, undo and revert; off until ticked
     tab: int                          ## 0 grid, 1 problems
     forceGrid: bool                   ## the grid tab is selected next frame
@@ -413,20 +417,55 @@ proc noteFollow(ui: var ShotLogUi; st: var AppState; i, width, n: int): string =
     ui.scrollTo = a.match.row
   followStatus(a, hidden)
 
+proc markChosen(ui: var ShotLogUi; st: var AppState; i, width, n: int) =
+  ## The rows marked and listed with Only selected, and the scroll to them. As the Headers
+  ## window's Trace tab follows the pointer: the selection first; with none, and Follow the
+  ## pointer on, the rows of the shot under the map's pointer; with it off the grid never
+  ## scrolls by itself.
+  let follow = st.settings.headers.followPointer
+  let chosen = st.shotRowsChosen
+  let selected = if chosen.log == ui.currentId: chosen.rows else: @[]
+  var pointed: seq[int]
+  # (the trace under the plot's pointer is Follow the plot's: it has its own tick)
+  if follow and selected.len == 0: pointed = st.hoveredShotRows(ui.currentId)
+  ui.chosenRows = chosenRows(selected, pointed, follow)
+  let key = ui.chosenRows.scrollKey(if chosen.log == ui.currentId: chosen.revision else: 0)
+  if ui.chosenRows.by == rbSelection and key != ui.scrolledFor and
+      ui.selected != ui.chosenRows.rows[0]:
+    ui.selected = ui.chosenRows.rows[0]
+    ui.selectedCol = -1
+  if scrollsTo(ui.scrolledFor, key, follow): ui.scrollTo = ui.chosenRows.rows[0]
+  ui.scrolledFor = key
+  ui.onlyRows.setLen 0
+  if ui.onlySelected:
+    let me = addr ui
+    let state = addr st
+    ui.onlyRows = onlySelected(selected, n,
+      proc (row: int): bool = me[].rowFiltered(state[], i, row, width, n))
+
+proc chooseRow(ui: ShotLogUi; row: int): Command =
+  ## A click on a row of the grid chooses it: the map selects its point (not its traces).
+  Command(kind: ckSelectShotRows, shotLogId: ui.currentId, shotRows: @[row], shotTraces: false)
+
 proc listedCount(ui: ShotLogUi; n: int): int =
-  if ui.needle.len > 0: ui.matches.len
+  if ui.onlySelected: ui.onlyRows.len
+  elif ui.needle.len > 0: ui.matches.len
   elif ui.problemsOnly: ui.faultRows.len
   else: n
 
 proc listedRow(ui: ShotLogUi; i: int): int =
-  if ui.needle.len > 0: ui.matches[i]
+  if ui.onlySelected: ui.onlyRows[i]
+  elif ui.needle.len > 0: ui.matches[i]
   elif ui.problemsOnly: ui.faultRows[i]
   else: i
 
 proc listedIndex(ui: ShotLogUi; row, n: int): int =
   ## Where data row `row` sits in the list on show, or -1.
   result = -1
-  if ui.needle.len > 0:
+  if ui.onlySelected:
+    for i, r in ui.onlyRows:
+      if r == row: return i
+  elif ui.needle.len > 0:
     for i, r in ui.matches:
       if r == row: return i
   elif ui.problemsOnly:
@@ -641,7 +680,12 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
   elif ui.needle.len > 0:
     marks.mark("shotlog.filtered " & $listed)
   if ui.problemsOnly: marks.mark("shotlog.problemsonly")
+  if ui.onlySelected:
+    let line = if listed == 0: NoRowsSelected else: countText(listed, n)
+    dim(line, t)
+    marks.mark("shotlog.only " & line)
   marks.mark("shotlog.listed " & $listed)
+  marks.mark("shotlog.marked " & $ui.chosenRows.by & " " & $ui.chosenRows.rows.len)
   let font = igGetFontSize()
   let flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_ScrollY.cint or
     ImGui_TableFlags_ScrollX.cint or ImGui_TableFlags_Resizable.cint or
@@ -672,6 +716,7 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
       if c >= 2: marks.mark("shotlog.role " & $(c - 2) & " " & role)
   igPopStyleColor(1)
   let highlight = u32(withAlpha(t.roles[rlHighlight], 70))
+  let hoverMark = u32(withAlpha(t.roles[rlHighlight], 40))
   let clipper = ImGuiListClipper_ImGuiListClipper()
   ImGuiListClipper_Begin(clipper, cint(listed), -1)
   let jump = ui.listedIndex(ui.scrollTo, n)
@@ -687,8 +732,9 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
       edge = row
       igTableNextRow(0, 0)
       igPushID_Int(cint(row))
-      if row == ui.selected:
-        igTableSetBgColor(ImGui_TableBgTarget_RowBg1.cint, highlight, -1)
+      if row == ui.selected or ui.chosenRows.isChosen(row):
+        igTableSetBgColor(ImGui_TableBgTarget_RowBg1.cint,
+          if ui.chosenRows.by == rbPointer: hoverMark else: highlight, -1)
       let us = st.shotView(i).rows[row].timeUtcUs
       let time = if us.isNone: "" else: utcMicrosText(us.get)
       discard igTableNextColumn()
@@ -698,7 +744,9 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
       if timeHit.clicked:
         ui.selected = row
         ui.selectedCol = -1
+        result.add ui.chooseRow(row)
       if row == 0: marks.mark("shotlog.time 0 " & time)
+      marks.mark("shotlog.row " & $row)
       discard igTableNextColumn()
       let fault = if ui.faultText.hasKey(row): ui.faultText[row] else: ""
       igPushID_Int(-2)
@@ -707,6 +755,7 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
       if statusHit.clicked:
         ui.selected = row
         ui.selectedCol = -1
+        result.add ui.chooseRow(row)
       if fault.len > 0: tip(fault)
       for c in 0 ..< width:
         if igTableNextColumn():
@@ -723,6 +772,7 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
             if hit.clicked:
               ui.selected = row
               ui.selectedCol = c
+              result.add ui.chooseRow(row)
             let dbl = ui.allowEditing and igIsItemHovered(0) and
               igIsMouseDoubleClicked_Nil(ImGui_MouseButton_Left.cint) and ui.focus.acts
             if dbl: ui.beginEdit(row, c, text)
@@ -740,6 +790,7 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
           igPopID()
           if row == 0: marks.mark("shotlog.cell 0 " & $c & " " & text)
       if row == ui.selected: marks.mark("shotlog.at " & $row)
+      if ui.chosenRows.isChosen(row): marks.mark("shotlog.chosen " & $ui.chosenRows.by & " " & $row)
       if row == ui.scrollTo:
         if not igIsItemVisible(): igSetScrollHereY(0.5)
         ui.scrollTo = -1
@@ -814,6 +865,7 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
       let width = st.shotLogWidth(i)
       let n = st.shotView(i).rows.len
       let followLine = ui.noteFollow(st, i, width, n)
+      ui.markChosen(st, i, width, n)
       let problems = st.shotView(i).problems.count
       let file = st.shotLogSource(i).extractFilename
       let name = if file.len > 0: file else: st.shotLogName(i)
@@ -875,6 +927,13 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
         ui.resetScan()
       marks.mark("shotlog.problemsbox")
       igSameLine(0, -1)
+      var onlyChosen = ui.onlySelected
+      if igCheckbox(OnlySelected.cstring, addr onlyChosen) and ui.focus.acts:
+        ui.onlySelected = onlyChosen
+      marks.mark("shotlog.onlybox")
+      if ui.onlySelected: marks.mark("shotlog.onlyon")
+      tip(OnlySelectedTip)
+      igSameLine(0, -1)
       var allow = ui.allowEditing
       if igCheckbox(AllowEditing.cstring, addr allow) and ui.focus.acts:
         ui.allowEditing = allow
@@ -891,6 +950,15 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
       marks.mark("shotlog.followbox")
       if st.settings.shotLog.followPlot: marks.mark("shotlog.followon")
       tip(FollowPlotTip)
+      igSameLine(0, -1)
+      var pointer = st.settings.headers.followPointer
+      if igCheckbox(FollowPointer.cstring, addr pointer) and ui.focus.acts:
+        var s = st.settings
+        s.headers.followPointer = pointer
+        result.add Command(kind: ckSettings, settings: s)
+      marks.mark("shotlog.pointerbox")
+      if st.settings.headers.followPointer: marks.mark("shotlog.pointeron")
+      tip(FollowPointerTip)
       igSameLine(0, -1)
       igBeginDisabled(reading)
       if igButton(ColumnsButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts and

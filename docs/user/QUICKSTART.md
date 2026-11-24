@@ -1007,6 +1007,8 @@ The gestures are the plot's:
 | Backspace, Alt+Left, or the back button | The view before |
 | Point at a dot | What it is: source or receiver, line and point, coordinates and elevation, its file, the traces of the open file recorded there and their records, and for a source, the field records the relation (X) file gives it; **its traces light up in the plot** |
 | Click a source | Show its record in the plot; a ringed source (its record is in a file of the folder listed) shows that file |
+| Click a source of a receiver gather | Select its traces and show the record that holds the first of them (the record on show stays when it holds one) |
+| Click a shot of a shot log | Choose every row of the log taken there (a shot taken twice has two) in the Shot log window, and select the traces of the file shown that belong to those shots; see [Import a shot log](#import-a-shot-log) |
 | Click a receiver (Ctrl+click: any dot) | Select it and its traces (Ctrl: add it, or take it out) |
 | Shift+click a dot | Select the stations of its line from the dot you clicked last to this one |
 | Shift+drag | Select every dot in the box, and their traces (Ctrl+Shift+drag adds) |
@@ -1267,6 +1269,28 @@ with no X, or at (0, 0), are left off; every other row is drawn, as the window l
 row. Hover a shot to see its line, point and the row's identifying columns. Edit an X or Y
 cell and the shot moves; remove the log and the layer goes. A log without X and Y columns
 has no layer and no entry in the list.
+
+**Choosing shots on the map.** A click on a shot chooses the rows of the log taken there:
+all of them, because a shot can be taken twice (the shots with the same source line and
+shot point, or, when the log has none, at the same place). The Shot log window marks them,
+and the map draws their points as it draws any selected point. When the file the Seismic
+window shows is a receiver gather whose traces can be told to shots (a time-sliced file,
+as **Slice by shot log** makes), every trace of those shots is selected, as the follow of
+the grid matches a trace to a row (by time, then by numbers), and the Seismic window shows the
+record that holds the first one; a record on show that holds one stays. When no trace can
+be matched, the rows are still chosen and Messages says why once (a continuous receiver
+gather is not made of shots: slice it by the shot log first; no file is shown; the file was
+opened without trace keys; no trace of the file belongs to those shots). Hover a shot taken
+more than once and the text says "Taken 2 times" and gives their times. A click on a row of
+the grid chooses that row and selects its point on the map (its traces are not selected).
+**Only selected**, beside **Problems only**, lists only the chosen rows ("2 of 120 rows";
+"No rows are selected." when none is); it works with **Filter** and **Problems only**, and
+neither changes what is chosen. **Follow the pointer** is the Headers window's option, the
+same setting: with it on, the grid scrolls to the chosen rows when the choice changes, and,
+with no row chosen, marks and scrolls to the rows of the shot under the pointer on the map,
+as the Headers window's Trace tab shows what is under the pointer when none is selected (the
+trace under the pointer in the plot is **Follow the plot**'s); with it off the grid never scrolls by itself, and marks
+only the chosen rows.
 
 The grid has one row per shot. The first column is the time in UTC, to the microsecond,
 worked out from the time columns. A narrow column marks a row that has a problem; the
