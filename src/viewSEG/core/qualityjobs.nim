@@ -5,7 +5,10 @@
 ## counted as killed, not as bad, and is not measured. An auxiliary trace
 ## is not a note. Header-dead is that finding only. Samples are read in
 ## chunks of 512 traces, through the file-system layer, and each run of
-## one sample interval is measured at that interval. Each file is closed
+## one sample interval is measured at that interval. A trace whose samples
+## could not be read is not a note: it is an unread row naming the file,
+## the trace and the reader's reason. A file whose walk stopped short is
+## unread as cut short; its other traces still count. Each file is closed
 ## before the next opens. A path already scanned (compared
 ## normalised) is not scanned again and is not unread. A file that cannot
 ## be opened, or that is not seismic, is one unread row and the scan goes
@@ -89,13 +92,32 @@ func intervalMs(us: float64): float64 =
 
 proc failedRows(log: DiagLog; part: Slice[int]): seq[int] =
   for d in log:
-    if d.loc.trace in part:
+    if d.severity >= sevError and d.loc.trace in part:
       let row = d.loc.trace - part.a
       if row notin result: result.add row
   result.sort(system.cmp[int])
 
+proc readWhy(trace: int; msg: string): string =
+  result = "trace " & $(trace + 1) & " could not be read"
+  if msg.len > 0: result.add ": " & msg
+
+proc unreadFailed(log: DiagLog; part: Slice[int]; path: string;
+    unread: var seq[tuple[path, why: string]]): HashSet[int] =
+  for d in log:
+    if d.severity >= sevError and d.loc.trace in part and d.loc.trace notin result:
+      result.incl d.loc.trace
+      unread.add (path: path, why: readWhy(d.loc.trace, d.msg))
+
+func cutShortWhy(f: SeismicFile): string =
+  for d in f.log:
+    if d.code == dcTruncated and d.severity == sevFatal:
+      result = "it is cut short"
+      if d.loc.trace >= 0: result.add " at trace " & $(d.loc.trace + 1)
+      if d.msg.len > 0: result.add ": " & d.msg
+      return
+
 proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var QualityBuild;
-    ctx: JobContext) =
+    unread: var seq[tuple[path, why: string]]; ctx: JobContext) =
   let n = f[].len
   var first = 0
   var chunk = 0
@@ -136,8 +158,10 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
             runAmps.setLen piece.len
             traceAmplitudeInto(piece, meta, AmplitudeParams(), runAmps, ws)
             for row, a in runAmps: amps[rows.a + row] = a
+        let missed = unreadFailed(log, part, path, unread)
         for row in 0 ..< amps.len:
           let t = part.a + row
+          if t in missed: continue
           let flags = if t in killed or f[].index.keys[t].status == tsDead: {} else: amps[row].flags
           noteTrace(b, path, f[].index.keys[t], t in killed, flags)
     first = last + 1
@@ -169,13 +193,15 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
           seen.incl key
           var s: Session = nil
           var why = ""
+          var shortWhy = ""
           try:
             s = openKeys(path, cacheDir, ctx)
             if s.file.kind == skUnknown: why = "not a SEG-Y, SEG-D or SEG-2 file"
             elif s.file.len == 0: why = "has no trace keys"
             else:
               let f = s.filePtr
-              measure(f, path, killedSet(edits, path), build, ctx)
+              measure(f, path, killedSet(edits, path), build, unread, ctx)
+              shortWhy = cutShortWhy(s.file)
           except SegCancelledError:
             raise newException(JobCancelledError, "cancelled")
           except JobCancelledError:
@@ -186,6 +212,7 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
             s = nil
             clearCycleRoots()
           if why.len > 0: unread.add (path: path, why: why)
+          if shortWhy.len > 0: unread.add (path: path, why: shortWhy)
         if not ctx.progress(i + 1, paths.len):
           raise newException(JobCancelledError, "cancelled")
       ctx.setPhase "reporting"

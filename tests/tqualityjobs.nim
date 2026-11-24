@@ -5,7 +5,9 @@
 ## Seen to fail: with header-dead not recorded, `findings_from_samples`
 ## rejected a dead station whose bad count was 0. With a chunk measured at
 ## the first trace's interval, `each_interval_measured_alone` rejected a
-## 2000 us trace that was spiky only at 4000 us.
+## 2000 us trace that was spiky only at 4000 us. With a short last trace
+## omitted and not unread, `cut_in_the_last_trace_is_unread` saw a fully
+## read file.
 
 import std/[os, strutils, tables]
 import parseSEG
@@ -293,6 +295,36 @@ proc main*() =
     let second = recordAt(report.records, path, 2)
     matchesAlone(first.seen, first.killed, first.bad, first.counts, slow, 4.0)
     matchesAlone(second.seen, second.killed, second.bad, second.counts, fast, 2.0)
+
+  block cut_in_the_last_trace_is_unread:
+    let path = dir / "cut.sgy"
+    var w = openSeismicWriter(path, SegyOutputOptions())
+    var samples = newSeq[float32](32)
+    for i in 0 ..< samples.len: samples[i] = float32(i + 1)
+    for n in 1 .. 2:
+      var k = initTraceKeys()
+      k.record = float64(n)
+      k.channel = float64(n)
+      k.srcLine = 1
+      k.srcPoint = 1
+      k.srcIndex = 1
+      k.rcvIndex = 1
+      k.intervalUs = 2000
+      k.component = 1
+      k.status = tsLive
+      w.writeTrace(k, samples)
+    doAssert w.close().len == 0, "file was not written: " & path
+    let full = readFile(path)
+    writeFile(path, full[0 ..< full.len - 10])
+    let got = run(@[path], none)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    doAssert got.sink.result.ok
+    doAssert got.sink.result.report.totals.traces == 1, $got.sink.result.report.totals
+    doAssert got.sink.result.report.totals.files == 1
+    doAssert "cut short" in unreadWhy(got.sink.result.unread, path),
+      unreadWhy(got.sink.result.unread, path)
+    let kept = recordAt(got.sink.result.report.records, path, 1)
+    doAssert kept.seen == 1, $kept
 
 when isMainModule:
   main()
