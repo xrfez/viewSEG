@@ -81,6 +81,10 @@ type
     widthBuf: array[16, array[8, char]]
     textBuf: array[16, array[96, char]]
     focus: FocusClicks
+    kindOpen: bool
+    kindRow, kindTries: int
+    kindAnchor: ImVec2_c
+    kindWidth: float32
 
   OutputOutput* = object
     commands*: seq[Command]
@@ -761,19 +765,24 @@ proc padOf(buf: openArray[char]): int =
   try: parseInt(text)
   except ValueError: -1
 
+proc closeKind(ui: var OutputUi)
+
 proc loadEditor(ui: var OutputUi) =
+  ui.closeKind()
   ui.draft = OutputPattern(separator: nsDot, parts: @[NamePart(kind: npStem)])
   setBuf(ui.labelBuf, "")
   for i in 0 ..< ui.widthBuf.len:
-    setBuf(ui.widthBuf[i], "")
+    setBuf(ui.widthBuf[i], "0")
     setBuf(ui.textBuf[i], "")
 
 proc swapPart(ui: var OutputUi; a, b: int) =
   swap(ui.draft.parts[a], ui.draft.parts[b])
   swap(ui.widthBuf[a], ui.widthBuf[b])
   swap(ui.textBuf[a], ui.textBuf[b])
+  ui.closeKind()
 
 proc dropPart(ui: var OutputUi; i: int) =
+  ui.closeKind()
   ui.draft.parts.delete(i)
   for j in i ..< ui.widthBuf.high:
     ui.widthBuf[j] = ui.widthBuf[j + 1]
@@ -810,50 +819,156 @@ proc editorWhy(ui: OutputUi; st: AppState): string =
   if st.project.readOnly: return ReadOnlyPatterns
   patternProblem(ui.draft)
 
+proc closeKind(ui: var OutputUi) =
+  ui.kindOpen = false
+  ui.kindTries = 0
+
+proc kindBox(word: string; width: float32; open: bool): bool =
+  ## A combo frame. The list itself is not opened here: a table cell would clip it.
+  let style = igGetStyle()
+  let pos = igGetCursorScreenPos()
+  let h = igGetFrameHeight()
+  result = igInvisibleButton("##kind", ImVec2_c(x: width, y: h), 0)
+  let hot = open or igIsItemHovered(0)
+  let frame = igGetColorU32_Col((if hot: ImGui_Col_FrameBgHovered else: ImGui_Col_FrameBg).cint, 1)
+  let btn = igGetColorU32_Col((if hot: ImGui_Col_ButtonHovered else: ImGui_Col_Button).cint, 1)
+  let ink = igGetColorU32_Col(ImGui_Col_Text.cint, 1)
+  let dl = igGetWindowDrawList()
+  let split = pos.x + max(0'f32, width - h)
+  let far = ImVec2_c(x: pos.x + width, y: pos.y + h)
+  ImDrawList_AddRectFilled(dl, pos, ImVec2_c(x: split, y: far.y), frame, style.FrameRounding,
+    ImDrawFlags_RoundCornersLeft.cint)
+  ImDrawList_AddRectFilled(dl, ImVec2_c(x: split, y: pos.y), far, btn, style.FrameRounding,
+    ImDrawFlags_RoundCornersRight.cint)
+  if style.FrameBorderSize > 0:
+    ImDrawList_AddRect(dl, pos, far, igGetColorU32_Col(ImGui_Col_Border.cint, 1),
+      style.FrameRounding, style.FrameBorderSize, 0)
+  igRenderArrow(dl, ImVec2_c(x: split + style.FramePadding.y, y: pos.y + style.FramePadding.y),
+    ink, ImGui_Dir_Down, 1)
+  let pad = style.FramePadding
+  igRenderTextClipped(ImVec2_c(x: pos.x + pad.x, y: pos.y + pad.y), ImVec2_c(x: split, y: far.y),
+    word.cstring, nil, nil, ImVec2_c(x: 0, y: 0), nil)
+
+proc placeKindList(ui: OutputUi) =
+  ## Explicit size so the first frame is already hittable, on the main window.
+  let vp = igGetMainViewport()
+  let style = igGetStyle()
+  let n = float32(ord(NamePartKind.high) + 1)
+  let h = n * igGetFrameHeight() + style.WindowPadding.y * 2
+  let w = max(ui.kindWidth, textWidth("Receiver index") + style.WindowPadding.x * 2)
+  let x = max(vp.WorkPos.x, min(ui.kindAnchor.x, vp.WorkPos.x + vp.WorkSize.x - w))
+  let y = max(vp.WorkPos.y, min(ui.kindAnchor.y, vp.WorkPos.y + vp.WorkSize.y - h))
+  igSetNextWindowPos(ImVec2_c(x: x, y: y), ImGui_Cond_Always.cint, ImVec2_c(x: 0, y: 0))
+  igSetNextWindowSize(ImVec2_c(x: w, y: h), ImGui_Cond_Always.cint)
+  igSetNextWindowViewport(vp.ID)
+
+proc drawKindList(ui: var OutputUi; marks: var Marks) =
+  ## The kind list, after the parts table so a cell clip cannot hide it.
+  const id = "##output.kindlist"
+  if not ui.kindOpen: return
+  if ui.kindRow < 0 or ui.kindRow >= ui.draft.parts.len:
+    ui.closeKind()
+    return
+  if not igIsPopupOpen_Str(id, 0):
+    if ui.kindTries <= 0:
+      ui.closeKind()
+      return
+    igOpenPopup_Str(id, 0)
+  ui.placeKindList()
+  if not igBeginPopup(id, 0):
+    if ui.kindTries > 0: dec ui.kindTries
+    else: ui.closeKind()
+    return
+  ui.kindTries = 0
+  let kind = ui.draft.parts[ui.kindRow].kind
+  let pop = igGetCurrentWindow()
+  for k in NamePartKind:
+    let word = partWord(k)
+    if igSelectable_Bool((word & "##k").cstring, k == kind, 0, ImVec2_c(x: 0, y: 0)):
+      ui.draft.parts[ui.kindRow].kind = k
+      ui.closeKind()
+      igCloseCurrentPopup()
+    marks.mark("output.part " & $ui.kindRow & ".item " & word)
+  igEndPopup()
+  # A popup that hangs out of its pane is marked hidden every other frame, so a
+  # click on a visible row misses. Leave it hittable for the next frame.
+  if pop != nil:
+    pop.Hidden = false
+    pop.HiddenFramesCanSkipItems = 0
+    pop.HiddenFramesCannotSkipItems = 0
+    pop.HiddenFramesForRenderOnly = 0
+
+proc beginParts(marks: var Marks): bool =
+  ## Fixed columns so every part's kind, value and buttons share a row.
+  let flags = ImGui_TableFlags_SizingFixedFit.cint or ImGui_TableFlags_NoHostExtendX.cint or
+    ImGui_TableFlags_PadOuterX.cint
+  if not igBeginTable("##parts", 5, flags, ImVec2_c(x: 0, y: 0), 0): return false
+  igTableSetupColumn("##kind", ImGui_TableColumnFlags_WidthFixed.cint, 0, ImGuiID(0))
+  igTableSetupColumn(LeastDigits.cstring, ImGui_TableColumnFlags_WidthFixed.cint, 0, ImGuiID(0))
+  igTableSetupColumn("##up", ImGui_TableColumnFlags_WidthFixed.cint, 0, ImGuiID(0))
+  igTableSetupColumn("##down", ImGui_TableColumnFlags_WidthFixed.cint, 0, ImGuiID(0))
+  igTableSetupColumn("##remove", ImGui_TableColumnFlags_WidthFixed.cint, 0, ImGuiID(0))
+  igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
+  if igTableSetColumnIndex(1):
+    igTableHeader(LeastDigits.cstring)
+    marks.mark("output.pattern.leastdigits")
+  true
+
+proc partButton(label: cstring): bool =
+  ## A small button whose top lines up with the kind box. ImGui's own small
+  ## button sits on the text baseline, a few pixels below that row.
+  let style = igGetStyle()
+  let pad = style.FramePadding.y
+  style.FramePadding.y = 0
+  result = igButtonEx(label, ImVec2_c(x: 0, y: 0), 0)
+  style.FramePadding.y = pad
+
 proc drawPartRow(ui: var OutputUi; i: int; marks: var Marks): int =
-  ## 1 up, 2 down, 3 remove, else 0. The part is changed in place.
+  ## 1 up, 2 down, 3 remove, else 0. One table row: kind, value, buttons.
   igPushID_Int(cint(i))
+  igTableNextRow(0, 0)
+  discard igTableNextColumn()
   let kind = ui.draft.parts[i].kind
-  let avail = igGetContentRegionAvail().x
-  igSetNextItemWidth(min(textWidth("Receiver index") + igGetFrameHeight(), avail))
-  if igBeginCombo("##kind", partWord(kind).cstring, ImGui_ComboFlags_HeightLargest.cint):
-    for k in NamePartKind:
-      let word = partWord(k)
-      if igSelectable_Bool((word & "##k").cstring, k == kind, 0, ImVec2_c(x: 0, y: 0)):
-        ui.draft.parts[i].kind = k
-      marks.mark("output.part " & $i & ".item " & word)
-    igEndCombo()
+  let width = textWidth("Receiver index") + igGetFrameHeight()
+  let open = ui.kindOpen and ui.kindRow == i
+  if kindBox(partWord(kind), width, open):
+    if open: ui.closeKind()
+    else:
+      ui.kindOpen = true
+      ui.kindRow = i
+      ui.kindTries = 2
+  if ui.kindOpen and ui.kindRow == i:
+    ui.kindAnchor = ImVec2_c(x: igGetItemRectMin().x, y: igGetItemRectMax().y)
+    ui.kindWidth = width
   marks.mark("output.part " & $i & ".kind")
-  let right = lineRight()
-  if takesWidth(ui.draft.parts[i].kind):
-    let need = igGetFontSize() * 3 + textWidth(LeastDigits) + igGetStyle().ItemSpacing.x
-    sameLineIfFits(right, need)
+  discard igTableNextColumn()
+  if takesWidth(kind):
+    if bufText(ui.widthBuf[i]).len == 0: setBuf(ui.widthBuf[i], "0")
     igSetNextItemWidth(igGetFontSize() * 3)
     discard igInputText("##width", cast[cstring](addr ui.widthBuf[i][0]),
       csize_t(ui.widthBuf[i].len), 0, nil, nil)
     marks.mark("output.part " & $i & ".width")
+    marks.mark("output.part " & $i & ".width " & bufText(ui.widthBuf[i]))
     tip(WidthTip)
     ui.draft.parts[i].pad = padOf(ui.widthBuf[i])
-    igSameLine(0, -1)
-    igTextUnformatted(LeastDigits.cstring, nil)
-  elif ui.draft.parts[i].kind == npText:
-    sameLineIfFits(right, igGetFontSize() * 8)
+  elif kind == npText:
     igSetNextItemWidth(igGetFontSize() * 8)
     discard igInputText("##text", cast[cstring](addr ui.textBuf[i][0]),
       csize_t(ui.textBuf[i].len), 0, nil, nil)
     marks.mark("output.part " & $i & ".text")
     ui.draft.parts[i].text = bufText(ui.textBuf[i])
+  discard igTableNextColumn()
   igBeginDisabled(i == 0)
-  if igButton(UpPart.cstring, ImVec2_c(x: 0, y: 0)): result = 1
+  if partButton(UpPart.cstring): result = 1
   igEndDisabled()
   marks.mark("output.part " & $i & ".up")
-  sameLineIfFits(right, buttonWidth(DownPart))
+  discard igTableNextColumn()
   igBeginDisabled(i == ui.draft.parts.high)
-  if igButton(DownPart.cstring, ImVec2_c(x: 0, y: 0)): result = 2
+  if partButton(DownPart.cstring): result = 2
   igEndDisabled()
   marks.mark("output.part " & $i & ".down")
-  sameLineIfFits(right, buttonWidth(RemovePart))
-  if igButton(RemovePart.cstring, ImVec2_c(x: 0, y: 0)): result = 3
+  discard igTableNextColumn()
+  if partButton(RemovePart.cstring): result = 3
   marks.mark("output.part " & $i & ".remove")
   igPopID()
 
@@ -861,35 +976,54 @@ proc drawEditor(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Outp
   igSeparator()
   igTextUnformatted("File name pattern", nil)
   marks.mark("output.editor")
-  igSetNextItemWidth(min(igGetFontSize() * 12, igGetContentRegionAvail().x))
-  discard igInputText("##label", cast[cstring](addr ui.labelBuf[0]),
-    csize_t(ui.labelBuf.len), 0, nil, nil)
+  let hintW = textWidth(PatternNameHint) + igGetStyle().FramePadding.x * 2 + 8
+  igSetNextItemWidth(min(max(igGetFontSize() * 12, hintW), igGetContentRegionAvail().x))
+  discard igInputTextWithHint("##label", PatternNameHint.cstring,
+    cast[cstring](addr ui.labelBuf[0]), csize_t(ui.labelBuf.len), 0, nil, nil)
   ui.draft.name = bufText(ui.labelBuf)
   marks.mark("output.pattern.label")
+  marks.mark("output.pattern.hint")
   if ui.draft.name.len > 0: marks.mark("output.pattern.label " & ui.draft.name)
+  igTextUnformatted(SeparatorLabel.cstring, nil)
+  marks.mark("output.pattern.separator")
   for sep in NameSeparator:
+    igSameLine(0, -1)
+    let choice = separatorChoice($sep)
     let on = ui.draft.separator == sep
-    if igRadioButton_Bool(($sep).cstring, on): ui.draft.separator = sep
+    if igRadioButton_Bool(choice.cstring, on): ui.draft.separator = sep
     let mark = "output.pattern.sep " & $sep
     marks.mark(mark)
     if on: marks.mark(mark & ".on")
-    igSameLine(0, -1)
+    marks.mark("output.pattern.sepchoice " & choice)
   igNewLine()
   var act = 0
   var at = 0
-  for i in 0 ..< ui.draft.parts.len:
-    let one = ui.drawPartRow(i, marks)
-    if one != 0:
-      act = one
-      at = i
+  if beginParts(marks):
+    for i in 0 ..< ui.draft.parts.len:
+      let one = ui.drawPartRow(i, marks)
+      if one != 0:
+        act = one
+        at = i
+    igEndTable()
   if act == 1 and at > 0: ui.swapPart(at, at - 1)
   elif act == 2 and at < ui.draft.parts.high: ui.swapPart(at, at + 1)
   elif act == 3: ui.dropPart(at)
+  ui.drawKindList(marks)
+  let shown = render(ui.draft, previewValues(), nameExt(ui.format))
+  igTextUnformatted(ExampleLabel.cstring, nil)
+  marks.mark("output.pattern.example")
+  igSameLine(0, -1)
+  if shown.problem.len > 0:
+    igTextUnformatted(shown.problem.cstring, nil)
+    marks.mark("output.preview.problem " & shown.problem)
+  else:
+    igTextUnformatted(shown.name.cstring, nil)
+    marks.mark("output.pattern.preview " & shown.name)
   igBeginDisabled(ui.draft.parts.len >= MaxPatternParts)
   if igButton(AddPart.cstring, ImVec2_c(x: 0, y: 0)):
     ui.draft.parts.add NamePart(kind: npStem)
     let i = ui.draft.parts.high
-    setBuf(ui.widthBuf[i], "")
+    setBuf(ui.widthBuf[i], "0")
     setBuf(ui.textBuf[i], "")
   igEndDisabled()
   marks.mark("output.pattern.add")
@@ -908,13 +1042,6 @@ proc drawEditor(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Outp
     igTextUnformatted(why.cstring, nil)
     igPopTextWrapPos()
     marks.mark("output.pattern.problem " & why)
-  let shown = render(ui.draft, previewValues(), nameExt(ui.format))
-  if shown.problem.len > 0:
-    igTextUnformatted(shown.problem.cstring, nil)
-    marks.mark("output.preview.problem " & shown.problem)
-  else:
-    igTextUnformatted(shown.name.cstring, nil)
-    marks.mark("output.pattern.preview " & shown.name)
 
 proc drawNames(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
   igSeparator()
@@ -944,8 +1071,10 @@ proc drawNames(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Outpu
   if igButton(EditNames.cstring, ImVec2_c(x: 0, y: 0)):
     if not ui.editing: ui.loadEditor()
     ui.editing = not ui.editing
+    if not ui.editing: ui.closeKind()
   marks.mark("output.names.edit")
   if ui.editing: ui.drawEditor(st, marks, outp)
+  elif ui.kindOpen: ui.closeKind()
 
 proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
     outp: var OutputOutput) =

@@ -21,7 +21,8 @@
 ## 00012.1034p5.file.sgd". With the chosen pattern left off the batch, the
 ## write step said the file was still vib_uncorrelated.sgd, not
 ## 02001.103.vib_uncorrelated.sgd. With the tally suffix removed, "the tally
-## does not name the pattern".
+## does not name the pattern". With the old two-row editor, "output.pattern.separator
+## is not in view".
 
 import std/[math, monotimes, options, os, strutils]
 import parseSEG
@@ -64,6 +65,13 @@ proc inRightPane(f: FrameInfo; r: Rect): bool =
   let pane = f.markOf("output.pane.right")
   r.size.x > 0 and pane.size.y > 0 and r.pos.y >= pane.pos.y + 2 and
     r.pos.y + r.size.y <= pane.pos.y + pane.size.y - 2
+
+proc fullyIn(f: FrameInfo; r: Rect): bool =
+  ## The mark is drawn and inside the write pane, both ways.
+  let pane = f.markOf("output.pane.right")
+  r.size.x > 0 and pane.size.x > 0 and
+    r.pos.x >= pane.pos.x + 1 and r.pos.x + r.size.x <= pane.pos.x + pane.size.x - 1 and
+    r.pos.y >= pane.pos.y + 1 and r.pos.y + r.size.y <= pane.pos.y + pane.size.y - 1
 
 proc reveal(f: FrameInfo; name: string): bool =
   ## Scrolls the write pane until `name` is inside it. True once it is.
@@ -518,7 +526,7 @@ proc namePatterns() =
     proc pickPoint(f: FrameInfo): bool = clickWhen(f, "output.part 1.item Source point")
     proc pointPicked(f: FrameInfo): bool =
       f.markOf("output.part 1.item Source point").size.x == 0 and
-        f.markOf("output.part 1.kind").size.x > 0
+        f.markOf("output.part 1.width").size.x > 0
     step("the second part is a source point", pickPoint, pointPicked)
 
     proc addThird(f: FrameInfo): bool =
@@ -535,11 +543,46 @@ proc namePatterns() =
     step("SEG-D is selected", segd, segdOn)
 
     proc shotPreview(f: FrameInfo): bool =
+      ## The editor is open with three parts, and nothing in it needs a scroll.
       let want = "output.pattern.preview 00012.1034p5.file.sgd"
       if f.markOf(want).size.x == 0:
         doAssert false, "the preview is not 00012.1034p5.file.sgd: " &
           $f.markNames("output.pattern.preview") & " " & $f.markNames("output.preview.problem")
-      if not reveal(f, want): return false
+      let place = f.mainWindowRect()
+      doAssert place.size.x >= 1728 and place.size.y >= 972, "window is " & $place.size
+      const names = [
+        "output.editor", "output.pattern.label", "output.pattern.separator",
+        "output.pattern.sep .", "output.pattern.sep _", "output.pattern.sep -",
+        "output.pattern.sepchoice \".\" dot",
+        "output.pattern.sepchoice \"_\" underscore",
+        "output.pattern.sepchoice \"-\" hyphen",
+        "output.part 0.kind", "output.part 1.kind", "output.part 2.kind",
+        "output.part 0.width", "output.part 1.width", "output.part 1.width 0",
+        "output.part 0.up", "output.part 1.up", "output.part 2.up",
+        "output.part 0.down", "output.part 2.down",
+        "output.part 0.remove", "output.part 2.remove",
+        "output.pattern.leastdigits", "output.pattern.example", "output.pattern.hint",
+        "output.pattern.add", "output.pattern.save", "output.pattern.delete",
+      ]
+      for name in names:
+        if not fullyIn(f, f.markOf(name)):
+          doAssert false, name & " is not in view: " & $f.markOf(name)
+      if not fullyIn(f, f.markOf(want)):
+        doAssert false, want & " is not in view"
+      let kind = f.markOf("output.part 0.kind")
+      let up = f.markOf("output.part 0.up")
+      let width = f.markOf("output.part 0.width")
+      doAssert abs(kind.pos.y - up.pos.y) <= 4, "part 0 is not one row"
+      doAssert abs(kind.pos.y - width.pos.y) <= 4, "the width box is not on the row"
+      doAssert abs(up.pos.x - f.markOf("output.part 2.up").pos.x) <= 2,
+        "Up buttons do not line up"
+      let header = f.markOf("output.pattern.leastdigits")
+      doAssert header.pos.y + header.size.y <= width.pos.y + 2,
+        "Least digits is not the column header"
+      let example = f.markOf("output.pattern.example")
+      doAssert f.markOf("output.part 2.kind").pos.y < example.pos.y and
+        example.pos.y < f.markOf("output.pattern.add").pos.y,
+        "Example is not under the parts"
       doAssert f.savePng(shot), "the name-pattern shot was not written"
       true
     step("the preview is the three-part name", noop, shotPreview)

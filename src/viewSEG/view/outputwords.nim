@@ -71,6 +71,18 @@ const
   UpPart* = "Up"
   DownPart* = "Down"
   RemovePart* = "Remove"
+  SeparatorLabel* = "Separator"
+  ExampleLabel* = "Example:"
+  PatternNameHint* = "Name of this pattern"
+
+func separatorChoice*(ch: string): string =
+  ## `"." dot`: the separator character in quotes, then its word.
+  let word = case ch
+    of ".": "dot"
+    of "_": "underscore"
+    of "-": "hyphen"
+    else: ch
+  "\"" & ch & "\" " & word
 
 func summaryLine*(written, failed, skipped: int): string =
   ## One sentence for the totals under the results.
