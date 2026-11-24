@@ -22,7 +22,9 @@
 ##   close or a join of the file waits for that.
 ## - **What it reads.** Through the prefetcher only, plus the in-memory index
 ##   (the gather's trace keys, for the trace filter and the display header),
-##   which nothing changes while the file is held.
+##   which nothing changes while the file is held. A correlated view is not a
+##   window of the raw file: its samples are listen time, from `correlateRead`,
+##   and the virtual path is not mapped.
 ## - **Layout.** When it is shown a gather, the reader applies the layer's
 ##   trace filter (seismic or auxiliary traces, and the components switched off;
 ##   the killed ones left out when they are hidden, `ReaderSource.hidden`)
@@ -83,13 +85,13 @@
 ##   empties its list of cycle roots after closing a prefetcher, before it
 ##   ends a hold, and before it exits. A tile holds no `ref`.
 
-import std/[algorithm, cpuinfo, locks, math, monotimes, os, strutils, times]
+import std/[algorithm, atomics, cpuinfo, locks, math, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, pool, rows, types, workspace]
 import processSEG/gain/stats
-import channelsets, components, cutfile, edits, filesystem, inbox, jobs, log, panels, processing, readout,
-  sorting, threads, tiles, viewport, wiggle
+import channelsets, components, correlateread, cutfile, edits, filesystem, inbox, jobs, log, panels,
+  processing, readout, sorting, threads, tiles, viewport, wiggle
 
 const
   ChunkTraces = 64    ## traces per prefetch chunk
@@ -115,6 +117,11 @@ type
     traceNames*: seq[string]
       ## a signature file's name of each trace, by its index in the file (empty for any other
       ## file): the tile's `sets` carry them, so the readout and the display header say them
+    view*: ref CorrelateView
+      ## Set when `file` is this view of a raw file: the request's window is
+      ## listen time, and the samples come from `correlateRead`. Nil: `file`
+      ## is read as stored. Threads share the view; each reader keeps its own
+      ## workspace.
 
   ReaderRequest* = object
     ## What a panel asks its reader for.
@@ -152,6 +159,7 @@ type
     request: ReaderRequest
     hasLevel: bool                              ## a level asked for, not taken yet
     level: ReaderRequest
+    served: Atomic[int]                         ## tiles posted; a test waits on it without draining
     poster: Poster
     holds: HoldRelease
     started: bool
@@ -181,30 +189,45 @@ type
     samples: seq[float32] ## `list.len` rows of `window.len` samples
     failed: seq[int] ## the rows that could not be decoded (left zero), ascending
 
+  ViewSpare = object
+    ## Buffers for one more identical view request, filled when a view tile is
+    ## made, so the next one does not allocate. Consumed by that request.
+    ready: bool
+    count, cols, columns: int
+    list, at: seq[int]
+    heldFailed: seq[bool]
+    work, data: seq[float32]
+    keys: seq[TraceKeys]
+
   Reader = object
     ## The reader thread's own state.
     r: ptr ReaderObj
     src: ReaderSource
     name: string
-    shown: Positions          ## the traces the filter keeps, in the file's order
-    positions: Positions      ## the same, in the order shown
-    sorted: bool              ## `positions` follow the newest order taken
-    orderGen: uint64          ## requests from before the newest order are not served
+    shown: Positions                 ## the traces the filter keeps, in the file's order
+    positions: Positions             ## the same, in the order shown
+    sorted: bool                     ## `positions` follow the newest order taken
+    orderGen: uint64                 ## requests from before the newest order are not served
     layout: PanelLayout
     raw: RawCache
-    owed: ReaderRequest       ## the record's level to work out when nothing else waits
+    owed: ReaderRequest              ## the record's level to work out when nothing else waits
     hasOwed: bool
-    basisRaw: RawCache        ## the samples of the traces `owed` reads, as decoded
+    basisRaw: RawCache               ## the samples of the traces `owed` reads, as decoded
     ws: Workspace
-    pool: ProcessPool         ## the processing's workers; none until first needed
-    toldCut: bool             ## the file was found cut short while it was open: said once
-    toldFile: ptr SeismicFile ## the file `toldCut` and `toldIo` are about
+    pool: ProcessPool                ## the processing's workers; none until first needed
+    toldCut: bool                    ## the file was found cut short while it was open: said once
+    toldFile: ptr SeismicFile        ## the file `toldCut` and `toldIo` are about
     toldFilePath: string
-    toldIo: bool              ## a read of the file failed (its drive): said once until one succeeds
-    lastIo: bool              ## the tile just made had rows its drive failed (`serve` says so)
-    toldNotNumbers: bool      ## samples that are not numbers were found in the file: said once
-    toldFilters: string       ## what was said last of the filters of `toldPath`: said once
+    toldIo: bool                     ## a read of the file failed (its drive): said once until one succeeds
+    lastIo: bool                     ## the tile just made had rows its drive failed (`serve` says so)
+    toldNotNumbers: bool             ## samples that are not numbers were found in the file: said once
+    toldFilters: string              ## what was said last of the filters of `toldPath`: said once
     toldPath: string
+    viewOf: ref CorrelateView        ## the view `viewWs` was made for; nil when none
+    heldView: CorrelateView          ## that view, copied once, so a read does not copy it
+    viewWs: CorrelateWorkspace
+    viewRow, viewChunk: seq[float32] ## one trace, and a chunk, reused
+    spare: ViewSpare
 
 proc `=destroy`*(x: PanelReader)
 proc `=wasMoved`*(x: var PanelReader) = x.p = nil
@@ -295,9 +318,21 @@ proc arrange(rd: var Reader; order: seq[SortKey]) =
     rd.r.poster.post Msg(job: NoJob, kind: mkOrder, orderPanel: rd.r.panel,
       orderGen: max(rd.src.gen, rd.orderGen), positions: shown)
 
+proc dropViewWork(rd: var Reader) =
+  ## Drops the correlated workspace and the spare tile buffers. Another view
+  ## or a file that is not a view does this; the same view keeps them.
+  rd.viewWs = CorrelateWorkspace()
+  rd.heldView = CorrelateView()
+  rd.viewOf = nil
+  rd.viewRow.setLen 0
+  rd.viewChunk.setLen 0
+  rd.spare = ViewSpare()
+
 proc adopt(rd: var Reader; src: sink ReaderSource) =
   ## Starts showing `src`: its positions, its layout, posted; then the
-  ## positions are sorted in its order.
+  ## positions are sorted in its order. A different view, or a file that is
+  ## not a view, drops the workspace the one before kept.
+  if src.view != rd.viewOf: rd.dropViewWork()
   rd.src = src
   rd.name = rd.src.path.extractFilename
   if rd.src.file == nil: return
@@ -368,29 +403,40 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   var widest: array[HeaderField, int]
   var layout = PanelLayout(traces: n, dtMs: 1, t0Ms: 0)
   if n > 0:
-    layout.samples = if all: f[].maxSamples(g) else: f[].maxSamples(list)
     # The time axis is the first seismic trace's (auxiliary traces shown
     # among them are drawn at its interval: said when theirs differs).
     var first = 0
     while first < n - 1 and not f[].traceKeys(rd.positions.traceAt(first)).isSeismic:
       inc first
     let k0 = f[].traceKeys(rd.positions.traceAt(first))
-    if k0.intervalUs > 0 and k0.intervalUs < Inf:
-      layout.dtMs = k0.intervalUs / 1000
-      if rd.src.filter.auxiliary and rd.src.filter.seismic:
-        var other = 0
-        for k in 0 ..< n:
-          let keys = f[].traceKeys(rd.positions.traceAt(k))
-          if not keys.isSeismic and keys.intervalUs != k0.intervalUs: inc other
-        if other > 0:
-          rd.note(sevWarning, $other & " auxiliary traces of " & rd.name & " have another " &
-            "sample interval than the seismic traces, and are drawn at theirs (" &
-            $(k0.intervalUs / 1000) & " ms): their times are not to scale.")
+    if rd.src.view != nil:
+      # Listen time, never the raw record's sample count or interval.
+      layout.samples = rd.src.view.listenSamples
+      if rd.src.view.dtMs > 0 and rd.src.view.dtMs < Inf:
+        layout.dtMs = rd.src.view.dtMs
+      else:
+        layout.noInterval = true
+        rd.note(sevWarning, "The sample interval of " & rd.name & " is not known: the time " &
+          "axis counts samples (1 ms each), and the filters' pass band and notches, set in " &
+          "Hz, are not applied to it.")
     else:
-      layout.noInterval = true
-      rd.note(sevWarning, "The sample interval of " & rd.name & " is not known: the time " &
-        "axis counts samples (1 ms each), and the filters' pass band and notches, set in " &
-        "Hz, are not applied to it.")
+      layout.samples = if all: f[].maxSamples(g) else: f[].maxSamples(list)
+      if k0.intervalUs > 0 and k0.intervalUs < Inf:
+        layout.dtMs = k0.intervalUs / 1000
+        if rd.src.filter.auxiliary and rd.src.filter.seismic:
+          var other = 0
+          for k in 0 ..< n:
+            let keys = f[].traceKeys(rd.positions.traceAt(k))
+            if not keys.isSeismic and keys.intervalUs != k0.intervalUs: inc other
+          if other > 0:
+            rd.note(sevWarning, $other & " auxiliary traces of " & rd.name & " have another " &
+              "sample interval than the seismic traces, and are drawn at theirs (" &
+              $(k0.intervalUs / 1000) & " ms): their times are not to scale.")
+      else:
+        layout.noInterval = true
+        rd.note(sevWarning, "The sample interval of " & rd.name & " is not known: the time " &
+          "axis counts samples (1 ms each), and the filters' pass band and notches, set in " &
+          "Hz, are not applied to it.")
     if k0.t0Ms.classify notin {fcNan, fcInf, fcNegInf}: layout.t0Ms = k0.t0Ms
     let step = max(1, n div HeaderScan)
     var k = 0
@@ -427,7 +473,7 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   let order = rd.src.order
   rd.arrange(order)
 
-proc levelOf(rd: var Reader; tile: Tile; list: seq[int]; excluded: seq[int];
+proc levelOf(rd: var Reader; tile: Tile; list: openArray[int]; excluded: openArray[int];
     percentile: float64): Level =
   ## The RMS, the peak and the `percentile` of |x| over the tile's live
   ## traces, the rows `excluded` (not decoded, or killed) left out; over its
@@ -806,11 +852,115 @@ proc levelSuperseded(r: ptr ReaderObj): bool =
     withLock r.lock:
       result = r.hasLevel
 
+func cacheHolds(raw: RawCache; q: ReadRequest; list: openArray[int]; window: Slice[int]): bool =
+  ## Whether `raw` holds every trace of `q` (`list`) and the samples `window`.
+  if not raw.valid or raw.stride <= 0 or list.len != q.count or
+      window.a < raw.window.a or window.b > raw.window.b:
+    return false
+  for row in 0 ..< q.count:
+    let d = q.position(row) - raw.first
+    let i = d div raw.stride
+    if d < 0 or d mod raw.stride != 0 or i >= raw.list.len or raw.list[i] != list[row]:
+      return false
+  true
+
+func spareReady(spare: ViewSpare; raw: RawCache; view: ref CorrelateView; req: ReaderRequest;
+    q: ReadRequest; window: Slice[int]; cols: int): bool =
+  ## A plain view request whose samples are at hand, and whose spare buffers
+  ## are this request's size: filling it allocates nothing. The caches are
+  ## taken by value so the reader (and its workspace) is not copied.
+  spare.ready and view != nil and not req.basis and not q.envelope and not req.raw and
+    req.fields.len == 0 and req.flow.len == 0 and req.filters.len == 0 and
+    req.killed.len == 0 and req.reversed.len == 0 and req.excluded.len == 0 and
+    req.own.len == 0 and req.shifts.len == 0 and spare.count == q.count and
+    spare.cols == cols and spare.columns == q.columns and spare.list.len == raw.list.len and
+    cacheHolds(raw, q, spare.list, window)
+
+proc stockSpare(rd: var Reader; list: sink seq[int]; count, cols, columns: int) =
+  ## Keeps buffers for one more request of this size. `list` is moved in.
+  rd.spare.list = list
+  rd.spare.at = newSeq[int](count)
+  for i in 0 ..< count: rd.spare.at[i] = i
+  rd.spare.heldFailed = newSeq[bool](count)
+  rd.spare.work = newSeq[float32](min(HeldTraces, count) * cols)
+  rd.spare.data = newSeq[float32](count * columns)
+  rd.spare.keys = newSeq[TraceKeys](count)
+  rd.spare.count = count
+  rd.spare.cols = cols
+  rd.spare.columns = columns
+  rd.spare.ready = true
+
+proc fillFromSpare(rd: var Reader; req: ReaderRequest; q: ReadRequest; window: Slice[int];
+    skip, cols: int; tile: var Tile; given: var bool): bool =
+  ## The tile of a plain view request, from the samples at hand and buffers
+  ## kept for it. Allocates nothing. False when a newer source, order or a
+  ## stop came first (`given`).
+  let f = rd.src.file
+  var list = move rd.spare.list
+  var at = move rd.spare.at
+  var heldFailed = move rd.spare.heldFailed
+  var work = move rd.spare.work
+  rd.spare.ready = false
+  var pr = Preparing(firstSample: window.a)
+  tile = Tile(panel: rd.r.panel, request: q, dtMs: rd.layout.dtMs, t0Ms: rd.layout.t0Ms,
+    columns: q.columns, cached: true)
+  tile.data = move rd.spare.data
+  tile.keys = move rd.spare.keys
+  let held = rd.raw.window.len
+  let offset = window.a - rd.raw.window.a
+  if heldFailed.len > 0: zeroMem(addr heldFailed[0], heldFailed.len * sizeof(bool))
+  for r in rd.raw.failed:
+    if r < heldFailed.len: heldFailed[r] = true
+  var failed: seq[int]
+  for row in 0 ..< q.count:
+    if heldFailed[at[row]]: failed.add row
+  tile.failed = failed.len
+  var a = 0
+  while a < q.count:
+    let n = min(HeldTraces, q.count - a)
+    work.setLen n * cols
+    if cols > 0:
+      for k in 0 ..< n:
+        copyMem(addr work[k * cols], addr rd.raw.samples[at[a + k] * held + offset],
+          cols * sizeof(float32))
+    let rows = f[].rowsOf(list.toOpenArray(a, a + n - 1))
+    let b = rowBlock(work, n, cols)
+    if failed.len == 0: rd.prepare(pr, b, rows, a, [])
+    else:
+      var partFailed: seq[int]
+      for fr in failed:
+        if fr in a ..< a + n: partFailed.add fr - a
+      rd.prepare(pr, b, rows, a, partFailed)
+    for k in 0 ..< n:
+      let row = a + k
+      let srcp = b.rowPtr(k)
+      let atCol = row * tile.columns
+      decimatePeakInto(srcp.toOpenArray(skip, skip + q.samples - 1), q.decimation,
+        tile.data.toOpenArray(atCol, atCol + tile.columns - 1))
+      tile.keys[row] = rows.keysAt(k)
+    a += n
+    if rd.r.interrupted and rd.r.superseded:
+      given = true
+      return
+  tile.filtered = pr.filtered
+  if failed.len > 0:
+    var excluded = failed
+    excluded.sort()
+    var unique: seq[int]
+    for row in excluded:
+      if unique.len == 0 or unique[^1] != row: unique.add row
+    tile.level = rd.levelOf(tile, list, unique, req.clipPercentile)
+  else:
+    tile.level = rd.levelOf(tile, list, [], req.clipPercentile)
+  tile.traces = move list
+  result = true
+
 proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
     given: var bool): bool =
   ## Reads and processes the tile `req` asks for into `tile`; false when
   ## there is none (`given`: a newer note came first). The samples come from
-  ## the file through a prefetcher, or, when the last request read from the
+  ## the file through a prefetcher, or, for a correlated view, from
+  ## `correlateRead` on this thread, or, when the last request read from the
   ## file had the same traces and these samples among its own, from what it
   ## read (`RawCache`). For the record's `level` (`askLevel`), from those of
   ## the level asked for before when they hold them (`basisRaw`, else what
@@ -820,11 +970,14 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
   let q = req.read
   let f = rd.src.file
   if q.isEmpty or q.first < 0 or q.last >= rd.positions.len: return
-  var list = newSeq[int](q.count)
-  for row in 0 ..< q.count: list[row] = rd.positions.traceAt(q.position(row))
   let window = q.decodeSpan(rd.layout.samples)
   let skip = q.firstSample - window.a # decoded columns before the kept ones
   let cols = window.len
+  if not level and spareReady(rd.spare, rd.raw, rd.src.view, req, q, window, cols):
+    if rd.fillFromSpare(req, q, window, skip, cols, tile, given): result = true
+    return
+  var list = newSeq[int](q.count)
+  for row in 0 ..< q.count: list[row] = rd.positions.traceAt(q.position(row))
   var pr = Preparing(processing: req.flow.len > 0, filtering: req.filters.len > 0,
     filterAux: req.filterAux, flowAux: req.flowAux, firstSample: window.a)
   if pr.filtering:
@@ -999,33 +1152,80 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
     # by itself, but an unmapped one's cache keeps the bytes it holds until
     # something asks (`cutShort`: one `fstat`), and it must not draw them.
     discard f[].cutShort
-    var pf = newPrefetcher[float32](f[], list, chunkTraces = chunk, cols = cols,
-      firstSample = window.a, workers = DecodeWorkers, quickFirst = true, uniform = true)
-    var c: PrefetchChunk[float32]
-    while pf.nextInto(c):
-      if not f[].inMemory: fs.mappedRead(rd.src.path) # (tests: the chunk's pages come late)
-      tile.readTime += fs.now() - waitFrom
-      inc tile.chunks
-      let b = rowBlock(c.samples)
-      if keep and c.count * cols > 0: # as read, before anything changes them
-        copyMem(addr into[].samples[c.first * cols], b.rowPtr(0), c.count * cols *
-          sizeof(float32))
-      cutRaw(b, c.first)
-      rd.prepare(pr, b, c.rows, c.first, c.failedRows)
-      cut(b, c.rows, c.first)
-      for fr in c.failedRows: failed.add c.first + fr
-      tile.failed += c.failed
-      if c.failed > 0 and firstError.len == 0 and c.log.len > 0:
-        firstError = c.log[0].msg
-      for d in c.log:
-        if d.code == dcTruncated: cutSeen = true
-        elif d.code == dcIo: ioSeen = true
-      if (if level: rd.r.levelSuperseded else: rd.r.interrupted):
-        given = true
-        break
-      waitFrom = fs.now()
-    discard pf.close() # false when a worker stuck in a read is left to finish
-    clearCycleRoots()
+    if rd.src.view != nil:
+      # Listen time, on this thread: the prefetcher reads raw windows, and the
+      # kernel rejects a windowed record. The virtual path is not mapped;
+      # `correlateRead` advises the raw file (`view.path`). One workspace for
+      # this view, kept until another view or file is shown. Stop between
+      # traces, not only between chunks.
+      if rd.viewOf != rd.src.view:
+        rd.heldView = rd.src.view[]
+        rd.viewWs = newWorkspace(rd.heldView)
+        rd.viewOf = rd.src.view
+      if cols > 0: rd.viewRow.setLen cols
+      var rowAt = 0
+      while rowAt < q.count and not given:
+        if (if level: rd.r.levelSuperseded else: rd.r.interrupted):
+          given = true
+          break
+        let n = min(HeldTraces, q.count - rowAt)
+        if n * cols > 0: rd.viewChunk.setLen n * cols
+        var chunkFailed: seq[int]
+        for k in 0 ..< n:
+          if (if level: rd.r.levelSuperseded else: rd.r.interrupted):
+            given = true
+            break
+          var one: array[1, int]
+          one[0] = list[rowAt + k]
+          if cols > 0:
+            correlateRead(rd.heldView, f, one, window.a, cols, rd.viewRow, rd.viewWs)
+            copyMem(addr rd.viewChunk[k * cols], addr rd.viewRow[0], cols * sizeof(float32))
+            if keep:
+              copyMem(addr into[].samples[(rowAt + k) * cols], addr rd.viewRow[0],
+                cols * sizeof(float32))
+            if rd.viewWs.failed.len > 0:
+              chunkFailed.add k
+              failed.add rowAt + k
+              inc tile.failed
+        if given: break
+        tile.readTime += fs.now() - waitFrom
+        inc tile.chunks
+        let rows = f[].rowsOf(list.toOpenArray(rowAt, rowAt + n - 1))
+        let b = rowBlock(rd.viewChunk, n, cols)
+        cutRaw(b, rowAt)
+        rd.prepare(pr, b, rows, rowAt, chunkFailed)
+        cut(b, rows, rowAt)
+        rowAt += n
+        waitFrom = fs.now()
+      clearCycleRoots()
+    else:
+      var pf = newPrefetcher[float32](f[], list, chunkTraces = chunk, cols = cols,
+        firstSample = window.a, workers = DecodeWorkers, quickFirst = true, uniform = true)
+      var c: PrefetchChunk[float32]
+      while pf.nextInto(c):
+        if not f[].inMemory: fs.mappedRead(rd.src.path) # (tests: the chunk's pages come late)
+        tile.readTime += fs.now() - waitFrom
+        inc tile.chunks
+        let b = rowBlock(c.samples)
+        if keep and c.count * cols > 0: # as read, before anything changes them
+          copyMem(addr into[].samples[c.first * cols], b.rowPtr(0), c.count * cols *
+            sizeof(float32))
+        cutRaw(b, c.first)
+        rd.prepare(pr, b, c.rows, c.first, c.failedRows)
+        cut(b, c.rows, c.first)
+        for fr in c.failedRows: failed.add c.first + fr
+        tile.failed += c.failed
+        if c.failed > 0 and firstError.len == 0 and c.log.len > 0:
+          firstError = c.log[0].msg
+        for d in c.log:
+          if d.code == dcTruncated: cutSeen = true
+          elif d.code == dcIo: ioSeen = true
+        if (if level: rd.r.levelSuperseded else: rd.r.interrupted):
+          given = true
+          break
+        waitFrom = fs.now()
+      discard pf.close() # false when a worker stuck in a read is left to finish
+      clearCycleRoots()
     if keep and not given:
       into[].failed = failed
       into[].valid = not ioSeen # rows a drive failed are read again, not kept blank
@@ -1041,6 +1241,10 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
   if given: return
   tile.filtered = pr.filtered
   tile.traces = list
+  if rd.src.view != nil and not level and rd.raw.valid and
+      spareReady(ViewSpare(ready: true, count: q.count, cols: cols, columns: tile.columns,
+        list: list), rd.raw, rd.src.view, req, q, window, cols):
+    rd.stockSpare(list, q.count, cols, tile.columns)
   var excluded = failed # rows left out of the level: not decoded, killed or dead
   for row in 0 ..< q.count:
     if tile.isBlank(row): excluded.add row
@@ -1067,6 +1271,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
   rd.lastIo = false
   if rd.make(req, level = false, tile, given):
     rd.r.poster.post Msg(job: NoJob, kind: mkTile, tile: move tile)
+    discard rd.r.served.fetchAdd(1, moRelease)
     if rd.lastIo: # after the tile, which clears it: the plot says its drive is not answering
       rd.r.poster.post Msg(job: NoJob, kind: mkUnread, unreadPanel: rd.r.panel,
         unreadGen: rd.src.gen, cause: ucFailed, why: "Reading " & rd.name & ": its drive is " &
@@ -1126,6 +1331,7 @@ proc run(r: ptr ReaderObj) {.thread.} =
       rd.letGo()
     if quit:
       if gotSource and src.file != nil: discard r.holds.release(src.path) # never taken
+      rd.dropViewWork()
       break
     try:
       if gotSource: rd.adopt(src)
@@ -1160,6 +1366,7 @@ proc run(r: ptr ReaderObj) {.thread.} =
     withLock r.lock:
       r.busy = false
   rd.letGo()
+  rd.dropViewWork()
   clearCycleRoots()
   withLock r.lock:
     r.busy = false
@@ -1183,6 +1390,11 @@ proc `=destroy`*(x: PanelReader) =
       deinitLock(x.p.lock)
       `=destroy`(x.p[])
       deallocShared(x.p)
+
+proc tilesPosted*(x: PanelReader): int =
+  ## Tiles this reader has posted. A test waits on it without draining the
+  ## inbox, so the inbox keeps the capacity the next post needs.
+  if x.p == nil: 0 else: x.p.served.load(moAcquire)
 
 proc newPanelReader*(panel: PanelId; poster: sink Poster; holds: HoldRelease): PanelReader =
   ## Starts the reader of `panel`, which posts through `poster` and ends its
