@@ -6,7 +6,9 @@
 ## Seen to fail: with `installLeap` returning before it reads, a saved file
 ## left `gpsMinusUtc` at 18 (`currentLeapTable().entries[^1].gpsMinusUtc == 19`);
 ## with `refreshKeys` left out of the re-read, `settle` never saw
-## `keysRevision` move ("the keys were not read again").
+## `keysRevision` move ("the keys were not read again"). With the earlier-date
+## warning put back, an earlier file said "checked-to". With Apply leaving
+## `checkedTo` as `withLeap` does, adding 2027-01-01 left it at 2026-06-30.
 
 import std/[math, os, strutils]
 import parseSEG
@@ -101,23 +103,53 @@ proc main*() =
       doAssert currentLeapTable().entries[^1].gpsMinusUtc == 19
       var told = false
       for n in notes:
-        if "more" in n.text: told = true
+        if "more" in n.text:
+          told = true
+          doAssert n.severity == sevInfo, "a longer older file warned: " & n.text
       doAssert told, "a longer older file was not said to be used: " & $notes
+      useLeapTable(shipped)
+
+    block earlierDate:
+      var earlier = shipped
+      earlier.checkedTo = LeapDate(year: 2020, month: 1, day: 1)
+      writeFile(path, leapTableNif(earlier))
+      let notes = installLeap(dir)
+      doAssert currentLeapTable().checkedTo == shipped.checkedTo
+      doAssert currentLeapTable().entries.len == shipped.entries.len
+      for n in notes:
+        doAssert "checked" notin n.text, "an earlier date was announced: " & n.text
+        doAssert n.severity != sevWarning, "an earlier date warned: " & n.text
+      var fewer = shipped
+      fewer.entries.setLen(fewer.entries.len - 1)
+      fewer.checkedTo = LeapDate(year: 2020, month: 1, day: 1)
+      writeFile(path, leapTableNif(fewer))
+      let fewerNotes = installLeap(dir)
+      var toldFewer = false
+      for n in fewerNotes:
+        doAssert "checked" notin n.text, "an earlier date was announced: " & n.text
+        if "fewer" in n.text and n.severity == sevWarning: toldFewer = true
+      doAssert toldFewer, "fewer entries were not said: " & $fewerNotes
       useLeapTable(shipped)
 
     block commands:
       removeFile(path)
       var st = initAppState()
       st.keepSettingsIn(dir, LoadedSettings(saveable: true))
+      st.apply Command(kind: ckAddLeap, leapYear: 2018, leapMonth: 1, leapStep: 1)
+      doAssert currentLeapTable().entries[^1].year == 2018
+      doAssert currentLeapTable().checkedTo == shipped.checkedTo,
+        "a leap before the checked-to date moved it"
+      st.apply Command(kind: ckResetLeaps)
       st.apply Command(kind: ckAddLeap, leapYear: 2027, leapMonth: 1, leapStep: 1)
       doAssert said(st, "2027") and said(st, "19"), "the add was not logged"
       doAssert currentLeapTable().entries[^1].gpsMinusUtc == 19
-      doAssert currentLeapTable().checkedTo == shipped.checkedTo
+      doAssert currentLeapTable().checkedTo == LeapDate(year: 2027, month: 1, day: 1),
+        "Apply left the checked-to date at " & dateText(currentLeapTable().checkedTo)
       st.flushFiles()
       let parsed = parseLeapTable(readFile(path))
       doAssert parsed.problems.len == 0, $parsed.problems
       doAssert parsed.table.entries[^1].gpsMinusUtc == 19
-      doAssert parsed.table.checkedTo == shipped.checkedTo
+      doAssert parsed.table.checkedTo == LeapDate(year: 2027, month: 1, day: 1)
       st.apply Command(kind: ckRemoveLeap)
       doAssert currentLeapTable().entries.len == shipped.entries.len
       doAssert said(st, "Removed")

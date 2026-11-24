@@ -4,7 +4,7 @@
 
 import ../core/leapfile
 
-export dateText, uncheckedNote, addedSentence
+export dateText, addedSentence
 
 const
   WindowTitle* = "Leap seconds###leap"

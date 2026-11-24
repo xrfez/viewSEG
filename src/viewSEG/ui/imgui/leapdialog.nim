@@ -15,9 +15,6 @@ type
     year: int32
     month: int32
     step: int32
-    checkedYear: int32
-    checkedMonth: int32
-    checkedDay: int32
 
 proc open*(ui: var LeapUi) =
   ## Shows the window. The add fields start at 2027-01-01, step +1, so Apply
@@ -63,22 +60,10 @@ proc drawLeap*(ui: var LeapUi; st: AppState; t: Theme; marks: var Marks): seq[Co
     igPopTextWrapPos()
     igPopStyleColor(1)
     marks.mark("leap.path")
-    let note = st.shownLeapNote()
-    if note.len > 0:
-      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
-      igPushTextWrapPos(igGetCursorPos().x + igGetFontSize() * 28)
-      igTextUnformatted(note.cstring, nil)
-      igPopTextWrapPos()
-      igPopStyleColor(1)
-      marks.mark("leap.unchecked")
     igSpacing()
     let table = currentLeapTable()
     igTextUnformatted(("Known complete through " & dateText(table.checkedTo)).cstring, nil)
     marks.mark("leap.checked")
-    if ui.checkedYear == 0:
-      ui.checkedYear = int32(table.checkedTo.year)
-      ui.checkedMonth = int32(table.checkedTo.month)
-      ui.checkedDay = int32(table.checkedTo.day)
     const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_Borders.cint or
       ImGui_TableFlags_SizingStretchProp.cint or ImGui_TableFlags_ScrollY.cint
     if igBeginTable("##leaps", 2, flags, ImVec2_c(x: 0, y: igGetFontSize() * 8), 0):
@@ -122,23 +107,6 @@ proc drawLeap*(ui: var LeapUi; st: AppState; t: Theme; marks: var Marks): seq[Co
     if button("Apply", addWhy.len == 0, marks, "leap.apply"):
       result.add Command(kind: ckAddLeap, leapYear: ui.year, leapMonth: ui.month,
         leapStep: ui.step)
-    igSeparator()
-    igTextUnformatted("Known complete through", nil)
-    igSetNextItemWidth(igGetFontSize() * 6)
-    if igInputInt("Year##checked".cstring, addr ui.checkedYear, 1, 10, 0):
-      ui.checkedYear = clamp(ui.checkedYear, 1972, 2099)
-    igSameLine(0, -1)
-    igSetNextItemWidth(igGetFontSize() * 4)
-    if igInputInt("Month##checked".cstring, addr ui.checkedMonth, 1, 1, 0):
-      ui.checkedMonth = clamp(ui.checkedMonth, 1, 12)
-    igSameLine(0, -1)
-    igSetNextItemWidth(igGetFontSize() * 4)
-    if igInputInt("Day##checked".cstring, addr ui.checkedDay, 1, 1, 0):
-      ui.checkedDay = clamp(ui.checkedDay, 1, 31)
-    let checkedWhy = checkedProblem(ui.checkedYear, ui.checkedMonth, ui.checkedDay)
-    if button("Set checked-to", checkedWhy.len == 0, marks, "leap.setchecked"):
-      result.add Command(kind: ckSetLeapChecked, leapYear: ui.checkedYear,
-        leapMonth: ui.checkedMonth, leapDay: ui.checkedDay)
     igSeparator()
     let removeWhy = removeLeapProblem()
     if button("Remove last", removeWhy.len == 0, marks, "leap.remove"):

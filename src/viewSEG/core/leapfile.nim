@@ -6,7 +6,7 @@
 ## shipped with the program. A change is written by the disk thread and the
 ## open files' keys are read again on a job (`leapRereadWork`).
 
-import std/[math, os]
+import std/os
 import parseSEG
 import parseSEG/model/traceindex
 import filesystem, inbox, jobs, log, persist, session
@@ -37,7 +37,8 @@ proc leapPath*(configDir: string): string =
 proc chooseLeap*(user: LeapTable; problems: openArray[string]; path: string): ChosenLeap =
   ## One table: `user` when it parses and is not older than the shipped table,
   ## or when it is older and has more entries. Otherwise the shipped table.
-  ## `problems` (each named with `path`) keep the shipped table.
+  ## `problems` (each named with `path`) keep the shipped table. Fewer leap
+  ## seconds are said. An earlier date alone is not.
   if problems.len > 0:
     for p in problems:
       result.notes.add (sevWarning, path & ": " & p)
@@ -53,15 +54,12 @@ proc chooseLeap*(user: LeapTable; problems: openArray[string]; path: string): Ch
     result.table = user
     result.notes.add (sevInfo, path & " is older than the shipped table and has more " &
       "leap seconds, so it is used.")
-  elif fewer or earlier:
+  elif fewer:
     result.table = shipped
-    var why = ""
-    if fewer: why.add "fewer leap seconds"
-    if earlier:
-      if why.len > 0: why.add " and "
-      why.add "an earlier checked-to date"
-    result.notes.add (sevWarning, path & " has " & why &
+    result.notes.add (sevWarning, path & " has fewer leap seconds" &
       " than the shipped table, so the shipped table is used.")
+  elif earlier:
+    result.table = shipped
   else:
     result.table = user
 
@@ -99,14 +97,6 @@ proc addLeapProblem*(year, month, step: int): string =
   except ValueError as e:
     result = e.msg
 
-proc checkedProblem*(year, month, day: int): string =
-  ## Why the table cannot be known complete through `year`-`month`-`day`;
-  ## "" when it can.
-  var next = currentLeapTable()
-  next.checkedTo = LeapDate(year: year, month: month, day: day)
-  let parsed = parseLeapTable(leapTableNif(next))
-  if parsed.problems.len > 0: result = parsed.problems[0]
-
 proc removeLeapProblem*(): string =
   ## Why the last entry cannot be removed: only one added here, strictly
   ## after the shipped table's last, and not when either table is empty.
@@ -129,21 +119,9 @@ func addedSentence*(date: LeapDate; offset: int): string =
 func removedSentence*(date: LeapDate): string =
   "Removed the leap second of " & dateText(date) & "."
 
-func checkedSentence*(date: LeapDate): string =
-  "The leap-second table is known complete through " & dateText(date) & "."
-
 func resetSentence*(date: LeapDate): string =
   "The leap-second table is the one shipped with the program (known complete through " &
     dateText(date) & ")."
-
-proc uncheckedNote*(utcSec: float64): string =
-  ## The warning when `utcSec` (UTC POSIX seconds) is after the table was
-  ## last checked; "" when the table covers it, or the time is not a number.
-  if utcSec.isNaN: return ""
-  let us = int64(round(utcSec * 1_000_000.0))
-  if leapKnownAt(us): return ""
-  "The leap-second table was last checked through " & dateText(currentLeapTable().checkedTo) &
-    ", before this file's time."
 
 proc leapRereadWork*(file: ptr SeismicFile; path: string; session: SessionId;
     holds: HoldRelease; to: Poster): JobWork =

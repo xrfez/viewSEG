@@ -22,7 +22,7 @@ const
   WritesAFile* = {ckExportSettings, ckExportLayout, ckExportLog, ckSaveLayout,
     ckImportLayout, ckResetSettings, ckExportEdits, ckImportEdits, ckForgetFiles,
     ckImportShotLog, ckRemoveShotLog, ckRemapShotLog, ckEditShotCell,
-    ckAddLeap, ckSetLeapChecked, ckRemoveLeap, ckReloadLeaps, ckResetLeaps}
+    ckAddLeap, ckRemoveLeap, ckReloadLeaps, ckResetLeaps}
     ## refused: each writes a file (a reset keeps a backup of the settings;
     ## edits imported are remembered with the file; forgetting files removes
     ## what is remembered about them; a shot log is copied into the project

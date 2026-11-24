@@ -3,6 +3,8 @@
 ## until a leap was added here.
 ##
 ## Seen to fail: with Tools > Leap seconds... opening nothing, "open did not finish".
+## With the Set checked-to button still marked `leap.setchecked`, "no checked-to
+## control" did not finish.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24"`.
 
@@ -61,6 +63,9 @@ proc main*() =
         day: last.day))
       f.hasMark("leap") and f.hasMark("leap.apply") and f.hasMark("leap.why") and
         f.hasMark("leap.checked") and rows.len > 0 and rows[0].startsWith(newest))
+    step("no checked-to control", proc (f: FrameInfo) = discard,
+      proc (f: FrameInfo): bool =
+      not f.hasMark("leap.setchecked") and not f.hasMark("leap.unchecked"))
     var clicked = false
     step("apply", proc (f: FrameInfo) =
       if not shot:

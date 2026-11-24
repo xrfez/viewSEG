@@ -309,8 +309,6 @@ type
       ## overlay one cell of a loaded shot log; a writable project writes the copy
     ckAddLeap = "add leap second"
       ## add a leap second at the first of a month, after the last entry
-    ckSetLeapChecked = "set leap checked to"
-      ## the leap-second table is known complete through this date
     ckRemoveLeap = "remove leap second"
       ## remove the last leap second, when it was added here
     ckReloadLeaps = "reload leap seconds"
@@ -620,10 +618,9 @@ type
       logRow*: int ## ckEditShotCell: the data row
       logCol*: int ## ckEditShotCell: the column
       logCell*: string ## ckEditShotCell: the new cell text
-    of ckAddLeap, ckSetLeapChecked, ckRemoveLeap, ckReloadLeaps, ckResetLeaps:
-      leapYear*: int ## ckAddLeap, ckSetLeapChecked: the year
-      leapMonth*: int ## ckAddLeap, ckSetLeapChecked: the month
-      leapDay*: int ## ckSetLeapChecked: the day
+    of ckAddLeap, ckRemoveLeap, ckReloadLeaps, ckResetLeaps:
+      leapYear*: int ## ckAddLeap: the year
+      leapMonth*: int ## ckAddLeap: the month
       leapStep*: int ## ckAddLeap: +1 or -1
 
   CommandOrigin* = enum
@@ -2383,15 +2380,6 @@ func findPanel*(state: AppState; id: PanelId): int =
   for i, p in state.panels:
     if p.id == id: return i
   -1
-
-proc shownLeapNote*(state: AppState): string =
-  ## The warning when the file the Seismic window shows is after the leap
-  ## table was last checked; "" otherwise, or while a re-read is writing keys.
-  if state.leapJob != NoJob: return ""
-  let k = state.findPanel(MainPanel)
-  let i = if k >= 0: state.shownFile(k) else: -1
-  if i < 0 or state.sessions[i].len == 0: return ""
-  uncheckedNote(state.sessions[i].file.traceKeys(0).time)
 
 func windowTitle*(state: AppState; id: PanelId): string =
   ## The title of panel `id`'s window: what it shows, numbered from the
@@ -10958,17 +10946,13 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckAddLeap:
     let date = LeapDate(year: cmd.leapYear, month: cmd.leapMonth, day: 1)
     try:
-      let next = currentLeapTable().withLeap(date, cmd.leapStep)
+      var next = currentLeapTable().withLeap(date, cmd.leapStep)
+      if (date.year, date.month, date.day) >
+          (next.checkedTo.year, next.checkedTo.month, next.checkedTo.day):
+        next.checkedTo = date
       state.adoptLeap(next, addedSentence(date, next.entries[^1].gpsMinusUtc))
     except ValueError as e:
       state.ignore(cmd, e.msg)
-  of ckSetLeapChecked:
-    let why = checkedProblem(cmd.leapYear, cmd.leapMonth, cmd.leapDay)
-    if why.len > 0: state.ignore(cmd, why)
-    else:
-      var next = currentLeapTable()
-      next.checkedTo = LeapDate(year: cmd.leapYear, month: cmd.leapMonth, day: cmd.leapDay)
-      state.adoptLeap(next, checkedSentence(next.checkedTo))
   of ckRemoveLeap:
     let why = removeLeapProblem()
     if why.len > 0: state.ignore(cmd, why)
