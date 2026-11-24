@@ -1138,6 +1138,8 @@ type
       ## the last export's outcome line, for the shot log window; "" before any
     spsPath: string
       ## the file the last export wrote; "" when it wrote none
+    spsLogId: int = -1
+      ## the id of the shot log the last export was of; -1 before any
     joins: seq[Joined]
       ## the open files joined with survey files
     project: ProjectState
@@ -2665,6 +2667,10 @@ func spsRunning*(state: AppState): bool {.inline.} =
 func spsOutcome*(state: AppState): string {.inline.} =
   ## The last SPS export's outcome in a few sentences; "" before any.
   state.spsOutcome
+
+func spsOutcomeLog*(state: AppState): int {.inline.} =
+  ## The id of the shot log the last export (or the one under way) was of; -1 before any.
+  state.spsLogId
 
 func spsWritten*(state: AppState): string {.inline.} =
   ## The file the last SPS export wrote; "" when it wrote none.
@@ -10888,6 +10894,7 @@ proc exportShotSpsCmd(state: var AppState; cmd: Command) =
     state.ignore(cmd, extractFilename(dest) & " already exists; choose a new name")
     return
   state.spsSink = SpsSink(dest: dest)
+  state.spsLogId = state.shotLogs[cmd.spsLog].id
   state.spsOutcome = ""
   state.spsPath = ""
   state.spsJob = state.jobs.submit(spsExportSpec(dest),

@@ -72,6 +72,9 @@ type
     spsCode: array[4, char]
     spsTime: bool
     spsDest: string                   ## the file chosen; "" before one is
+    spsExists: bool                   ## it existed when chosen, or when an export ended
+    spsLogId: int                     ## the log the file was chosen for
+    spsSeen: string                   ## the outcome last looked at
     spsAsk: bool                      ## the Choose file button was pressed: ask for a file
     spsAskAt: string
     spsRows: int                      ## rows with a shot point, of the log keyed below
@@ -109,6 +112,8 @@ proc spsAsked*(ui: var ShotLogUi): tuple[ask: bool, at: string] =
 proc setSpsDest*(ui: var ShotLogUi; path: string) =
   ## The save dialog's answer; `.sps` is added when the name has no extension.
   ui.spsDest = if path.splitFile.ext.len == 0: path & ".sps" else: path
+  ui.spsExists = fileExists(ui.spsDest) or dirExists(ui.spsDest)
+  ui.spsLogId = ui.currentId
 
 proc setText(buf: var openArray[char]; text: string) =
   let n = min(text.len, buf.len - 1)
@@ -160,7 +165,16 @@ proc spsOptions(ui: ShotLogUi): tuple[ok: bool, opts: ShotSpsOptions] =
   (ok, o)
 
 proc countSpsRows(ui: var ShotLogUi; st: AppState; i, rev: int) =
-  ## The rows that have a shot point, worked out again only when the log changed.
+  ## The rows that have a shot point, worked out again only when the log changed. A file
+  ## chosen for another log is let go, and the file's existence is looked at again when
+  ## an export ends.
+  if ui.spsLogId != ui.currentId:
+    ui.spsDest = ""
+    ui.spsExists = false
+    ui.spsLogId = ui.currentId
+  if st.spsOutcome != ui.spsSeen:
+    ui.spsSeen = st.spsOutcome
+    if ui.spsDest.len > 0: ui.spsExists = fileExists(ui.spsDest) or dirExists(ui.spsDest)
   let key = (ui.currentId, rev)
   if not ui.spsHaveRows or ui.spsKey != key:
     ui.spsRows = 0
@@ -187,16 +201,19 @@ proc drawSps(ui: var ShotLogUi; st: AppState; i: int; t: Theme;
   discard igInputText((SpsDefaultLine & "##sps").cstring, cast[cstring](addr ui.spsLine[0]),
     csize_t(ui.spsLine.len), 0, nil, nil)
   marks.mark("shotlog.sps.line")
+  marks.mark("shotlog.sps.linetext " & bufText(ui.spsLine))
   tip(SpsDefaultLineTip)
   igSetNextItemWidth(igGetFontSize() * 8)
   var index = ui.spsIndex
   if igInputInt((SpsDefaultIndex & "##sps").cstring, addr index, 1, 1, 0):
     ui.spsIndex = clamp(index, 0, 9)
   marks.mark("shotlog.sps.index")
+  marks.mark("shotlog.sps.indextext " & $ui.spsIndex)
   igSetNextItemWidth(igGetFontSize() * 4)
   discard igInputText((SpsPointCode & "##sps").cstring, cast[cstring](addr ui.spsCode[0]),
     csize_t(3), 0, nil, nil)
   marks.mark("shotlog.sps.code")
+  marks.mark("shotlog.sps.codetext " & bufText(ui.spsCode))
   tip(SpsPointCodeTip)
   var time = ui.spsTime
   if igCheckbox((SpsWithTime & "##sps").cstring, addr time) and ui.focus.acts:
@@ -216,11 +233,10 @@ proc drawSps(ui: var ShotLogUi; st: AppState; i: int; t: Theme;
     ui.spsAskAt = if ui.spsDest.len > 0: ui.spsDest
       else: st.shotLogSource(i).parentDir / (st.shotLogSource(i).splitFile.name & ".sps")
   marks.mark("shotlog.sps.choose")
-  let exists = ui.spsDest.len > 0 and (fileExists(ui.spsDest) or dirExists(ui.spsDest))
   let why = if st.spsRunning: SpsRunning
             elif st.shotLogBusy(i): SpsReading
             elif ui.spsDest.len == 0: SpsNeedFile
-            elif exists: SpsExistsTip
+            elif ui.spsExists: SpsExistsTip
             elif not optsOk: SpsBadLine
             else: ""
   if why.len > 0: marks.mark("shotlog.sps.why " & why)
@@ -239,7 +255,7 @@ proc drawSps(ui: var ShotLogUi; st: AppState; i: int; t: Theme;
   if st.spsRunning:
     dim(SpsRunningNote, t)
     marks.mark("shotlog.sps.running")
-  elif st.spsOutcome.len > 0:
+  elif st.spsOutcome.len > 0 and st.spsOutcomeLog == ui.currentId:
     wrapped(st.spsOutcome, if st.spsWritten.len > 0: t.roles[rlText] else: t.roles[rlWarning])
     marks.mark("shotlog.sps.outcome " & st.spsOutcome)
   igSeparator()

@@ -412,11 +412,12 @@ proc main*() =
     let bad = writeShotSps(skipped, options(), path)
     doAssert bad.written == 0 and bad.skipped == 1
     doAssert hasProblem(bad, 0, "easting", "10.25")
-    doAssert bad.error == "No row could be written. row 0 easting 10.25", bad.error
+    doAssert bad.error == "No row could be written. row 1 easting 10.25 does not fit", bad.error
     doAssert readFile(path) == previous
     let both = viewOf("point,line,x,y\n1,10,10.25,10.25\n", roles)
     let two = writeShotSps(both, options(), path)
-    doAssert two.error == "No row could be written. row 0 easting 10.25; row 0 northing 10.25",
+    doAssert two.error == "No row could be written. row 1 easting 10.25 does not fit; " &
+      "row 1 northing 10.25 does not fit",
       two.error
     doAssert readFile(path) == previous
     let noPoint = viewOf("point,line,x,y\n,10,1,2\n", roles)
@@ -426,7 +427,7 @@ proc main*() =
     doAssert readFile(path) == previous
     let auto = writeShotSps(headerOnly, ShotSpsOptions(), path)
     doAssert hasProblem(auto, -1, "revision", "auto")
-    doAssert auto.error == "No row could be written. row -1 revision auto", auto.error
+    doAssert auto.error == "No row could be written. revision auto does not fit", auto.error
     doAssert readFile(path) == previous
     let absent = dir / "missing" / "out.sps"
     let gone = writeShotSps(headerOnly, options(), absent)
@@ -438,8 +439,8 @@ proc main*() =
     let many = writeShotSps(viewOf(text, roles), options(), path)
     doAssert many.written == 0 and many.count == ProblemCap + 1
     doAssert many.problems.len == ProblemCap
-    doAssert many.error.startsWith("No row could be written. row 0 easting 10.25")
-    doAssert many.error.endsWith("; 1 more"), many.error
+    doAssert many.error.startsWith("No row could be written. row 1 easting 10.25 does not fit")
+    doAssert many.error.endsWith("; 98 more rows"), many.error
     doAssert readFile(path) == previous
     let kept = writeShotSps(viewOf("point,line,x,y\n8,4,1,2\n", roles), options(), path)
     doAssert kept.error.len == 0, kept.error

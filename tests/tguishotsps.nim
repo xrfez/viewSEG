@@ -5,6 +5,9 @@
 ## writes for the log, and the outcome line says how many rows were written and
 ## left out; a log with no shot point leaves the button dim, with its reason.
 ##
+## Seen to fail: with the options left out of the command, "the file is not what the
+## core writes for the panel's options". With a file kept when the log changes, "the first
+## log's file or outcome is shown for the second".
 ## Seen to fail: with the button's dim state left off, "the button was not dim for
 ## a log with no shot point". With the name in use not refused, "Export was not
 ## refused for a file that exists". With the chosen name never reaching the
@@ -27,6 +30,11 @@ proc click(f: FrameInfo; at: Vec2) =
   f.pressMouse(at, true)
   f.pressMouse(at, false)
 
+proc boxOf(f: FrameInfo; mark: string): Vec2 =
+  ## A point inside the box of a labelled input: its mark spans the label too.
+  let r = f.markOf(mark)
+  vec2(r.pos.x + 20, round(r.pos.y + r.size.y / 2))
+
 proc hasMark(f: FrameInfo; prefix: string): bool =
   f.markNames(prefix).len > 0
 
@@ -44,9 +52,15 @@ proc main*() =
     let root = currentSourcePath().parentDir.parentDir
     let good = fx.dir / "good.csv"
     let blank = fx.dir / "blank.csv"
-    # The third row has no easting: it is left out and said so.
-    writeFile(good, "source line,shot point,X,Y\n10,1000,500.5,2000.5\n10,1001,501.5,2001.5\n" &
-      "10,1002,,2002.5\n")
+    # The third row has no easting; the fourth has no line, which the panel's
+    # default line fills.
+    writeFile(good, "source line,shot point,X,Y,date-time text\n" &
+      "10,1000,500.5,2000.5,2024-03-01 00:00:00.000000\n" &
+      "10,1001,501.5,2001.5,2024-03-01 00:00:10.000000\n" &
+      "10,1002,,2002.5,2024-03-01 00:00:20.000000\n" &
+      ",1003,503.5,2003.5,2024-03-01 00:00:30.000000\n")
+    let second = fx.dir / "second.csv"
+    writeFile(second, "source line,shot point,X,Y\n11,2000,600.5,3000.5\n")
     writeFile(blank, "shot point,X,Y\n,1,2\n,3,4\n")
     let taken = fx.dir / "taken.sps"
     writeFile(taken, "keep me\n")
@@ -105,25 +119,62 @@ proc main*() =
       f.click(f.markOf("shotlog.sps.choose").centre),
       proc (f: FrameInfo): bool =
         f.hasMark("shotlog.sps.file " & fresh) and not f.hasMark("shotlog.sps.why"))
+    proc typeInto(name, mark, text: string; seen: string) =
+      ## Clicks the box, types, and waits for the window to show `seen`.
+      step(name, proc (f: FrameInfo) = f.click(boxOf(f, mark)),
+        proc (f: FrameInfo): bool =
+        why = $f.markNames("shotlog.sps.")
+        if wait == 5: f.typeText(text)
+        f.hasMark(seen) and wait >= 8)
+    step("revision 1.0", proc (f: FrameInfo) = f.click(boxOf(f, "shotlog.sps.revision")),
+      proc (f: FrameInfo): bool =
+      let item = f.markOf("shotlog.sps.revision 1.0")
+      if item.size.x > 0 and wait == 4: f.click(item.centre)
+      wait >= 10 and item.size.x == 0)
+    typeInto("a default line", "shotlog.sps.line", "20", "shotlog.sps.linetext 20")
+    typeInto("a point index", "shotlog.sps.index", "3", "shotlog.sps.indextext 3")
+    typeInto("a point code", "shotlog.sps.code", "V1", "shotlog.sps.codetext V1")
+    step("Write the time", proc (f: FrameInfo) = f.click(f.markOf("shotlog.sps.time").centre),
+      proc (f: FrameInfo): bool = wait >= 6)
     step("Export", proc (f: FrameInfo) = f.click(f.markOf("shotlog.sps.run").centre),
       proc (f: FrameInfo): bool =
       why = f.core.spsOutcome
-      if f.hasMark("shotlog.sps.outcome Wrote 2 rows to fresh.sps"):
+      if f.hasMark("shotlog.sps.outcome Wrote 3 rows to fresh.sps"):
         doAssert fileExists(fresh), "the SPS file was not written"
         var opts = initShotSpsOptions()
-        doAssert readFile(fresh) == toSps(f.core.shotView(0), opts).text,
-          "the file is not what the core writes"
-        doAssert "1 row was left out" in f.core.spsOutcome, f.core.spsOutcome
+        opts.revision = sps10
+        opts.defaultLine = 20
+        opts.defaultIndex = 3
+        opts.pointCode = "V1"
+        opts.withTime = true
+        let want = toSps(f.core.shotView(0), opts)
+        doAssert want.written == 3 and want.text.len > 0
+        doAssert readFile(fresh) == want.text,
+          "the file is not what the core writes for the panel's options"
+        doAssert "1 row was left out: row 3 easting is missing" in f.core.spsOutcome,
+          f.core.spsOutcome
         doAssert f.savePng(shot), "the screenshot was not written"
         return true
       false, 2000)
-    step("another log, no shot point", proc (f: FrameInfo) =
-      nextLog = blank
+    step("another log, with a shot point", proc (f: FrameInfo) =
+      nextLog = second
       f.click(f.markOf("menu.Project").centre),
       proc (f: FrameInfo): bool =
         if f.markOf("menu.Import shot log...").size.x > 0 and f.core.shotLogCount == 1:
           f.click(f.markOf("menu.Import shot log...").centre)
-        f.core.shotLogCount == 2 and f.hasMark("shotlog.exportsps.dim"), 2000)
+        if f.core.shotLogCount == 2:
+          doAssert not f.hasMark("shotlog.sps.file " & fresh) and
+            not f.hasMark("shotlog.sps.outcome"),
+            "the first log's file or outcome is shown for the second"
+          return f.hasMark("shotlog.sps.why Choose the file")
+        false, 2000)
+    step("another log, no shot point", proc (f: FrameInfo) =
+      nextLog = blank
+      f.click(f.markOf("menu.Project").centre),
+      proc (f: FrameInfo): bool =
+        if f.markOf("menu.Import shot log...").size.x > 0 and f.core.shotLogCount == 2:
+          f.click(f.markOf("menu.Import shot log...").centre)
+        f.core.shotLogCount == 3 and f.hasMark("shotlog.exportsps.dim"), 2000)
 
     var at = 0
     var started = false

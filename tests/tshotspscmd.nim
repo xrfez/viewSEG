@@ -5,6 +5,7 @@
 ## the outcome line and the file's path. A row the columns cannot hold is
 ## counted and named, not written.
 ##
+## Seen to fail: with the failure text numbering rows from 0, "row 0" is in it.
 ## Seen to fail: with the command doing nothing, "the export wrote no file". With
 ## the name in use not refused, "the name in use was not refused". With the rows
 ## taken from the file instead of the edited log, "the edit is not in the file".
@@ -84,16 +85,21 @@ proc main*() =
   block nothing_to_write:
     var st = start()
     let only = dir / "blank.csv"
-    writeFile(only, "point,x,y\n,1,2\n")
+    # Five rows with a shot point and no easting: none can be written. The
+    # failure names rows from 1 and a missing value as missing.
+    writeFile(only, "line,point,x,y\n9,1,,2\n9,2,,3\n9,3,,4\n9,4,,5\n9,5,,6\n")
     var m = initShotLogMap()
     m.hasHeader = true
-    m.roles = @[crShotPoint, crX, crY]
+    m.roles = @[crSourceLine, crShotPoint, crX, crY]
     st.apply Command(kind: ckImportShotLog, logPath: only, logMap: m, logMapped: true)
     doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
     let dest = dir / "blank.sps"
     st.apply Command(kind: ckExportShotSps, spsLog: 0, spsOptions: opts, spsDest: dest)
     doAssert st.settle(not st.spsRunning and st.spsOutcome.len > 0)
     doAssert st.spsOutcome.startsWith("The SPS export failed"), st.spsOutcome
+    doAssert "row 1 easting is missing" in st.spsOutcome and "row 0" notin st.spsOutcome and
+      "nan" notin st.spsOutcome, "the failure's wording: " & st.spsOutcome
+    doAssert "; 2 more rows" in st.spsOutcome, "more must count rows: " & st.spsOutcome
     doAssert not fileExists(dest) and st.spsWritten.len == 0
     discard st.shutdown()
 

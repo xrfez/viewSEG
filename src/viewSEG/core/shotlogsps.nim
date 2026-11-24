@@ -21,6 +21,7 @@ const
   SecPerDay = 86_400'i64
   UsPerDay = SecPerDay * UsPerSec
   FitTol = 1e-12
+  NamedMax* = 3 ## how many problems a sentence names; the rest are counted
 
 type
   ShotSpsOptions* = object
@@ -333,17 +334,39 @@ proc toSps*(view: ShotView; opts: ShotSpsOptions): ShotSpsResult {.raises: [].} 
   except CatchableError as e:
     addProblem(result, -1, "record", e.msg)
 
+func spsFieldWords*(field: string): string =
+  ## A problem's field in plain words ("pointDepth" is "point depth").
+  case field
+  of "pointDepth": "point depth"
+  of "waterDepth": "water depth"
+  of "pointCode": "point code"
+  of "index": "point index"
+  else: field
+
+func problemWords*(r: ShotSpsResult; named = NamedMax): string =
+  ## The first `named` problems, one phrase each ("row 3 easting is missing",
+  ## "row 4 line 12.345 does not fit"), rows counted from 1, then how many
+  ## more rows had a problem. Empty when there are no problems.
+  var namedRows = initHashSet[int]()
+  var rowProblems = false
+  for p in r.problems:
+    if p.row >= 0: rowProblems = true
+  for i, p in r.problems:
+    if i < named:
+      if i > 0: result.add "; "
+      if p.row >= 0:
+        namedRows.incl p.row
+        result.add "row " & $(p.row + 1) & " "
+      result.add spsFieldWords(p.field)
+      result.add (if p.value == "nan": " is missing" else: " " & p.value & " does not fit")
+  let more = if rowProblems: r.skipped - namedRows.len else: 0
+  if more > 0 and r.problems.len > 0:
+    result.add "; " & $more & " more " & (if more == 1: "row" else: "rows")
+
 proc nothingError(r: ShotSpsResult): string {.raises: [].} =
   ## "No row could be written." plus the problems `toSps` listed.
   result = "No row could be written."
-  if r.problems.len == 0: return
-  result.add " "
-  for i, p in r.problems:
-    if i > 0: result.add "; "
-    result.add "row " & $p.row & " " & p.field & " " & p.value
-  if r.count > r.problems.len:
-    result.add "; "
-    result.add $(r.count - r.problems.len) & " more"
+  if r.problems.len > 0: result.add " " & problemWords(r)
 
 proc writeBeside(path, text: string; replace: bool): string {.raises: [].} =
   ## `text` to a temporary file beside `path`, flushed, then renamed onto
@@ -377,9 +400,14 @@ proc writeShotSps*(view: ShotView; opts: ShotSpsOptions; path: string;
   ## `toSps`, then that text written to `path` through a temporary file beside
   ## it and a rename. `error` is empty when `path` was replaced. When no row
   ## was written, `path` is left untouched and `error` is "No row could be
-  ## written." plus the problems listed. A failure leaves `path` as it was
-  ## and does not raise. With `replace` false an existing `path` is a failure
-  ## ("... already exists"), decided atomically at the rename.
+  ## written." plus the problems named by `problemWords`. A failure leaves
+  ## `path` as it was and does not raise.
+  ##
+  ## With `replace` true (the default) a written `path` replaces an existing
+  ## file and `error` is empty. With `replace` false an existing `path` is a
+  ## failure, decided atomically at the rename: nothing is changed and `error`
+  ## is "<path> already exists". `error` is also set when the text could not be
+  ## built or the disk did not take it, with the reason.
   result = toSps(view, opts)
   if result.written == 0:
     result.error = nothingError(result)

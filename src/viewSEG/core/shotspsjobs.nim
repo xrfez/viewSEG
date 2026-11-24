@@ -5,8 +5,6 @@
 import std/[os, strutils]
 import jobs, shotlog, shotlogsps
 
-const NamedMax* = 3 ## how many problems the outcome names; the rest are counted
-
 type
   SpsSink* = ref object
     ## Filled when the job ends. Read it after the job is no longer running.
@@ -35,20 +33,12 @@ func plural(n: int; one, many: string): string =
 
 func spsSentences*(r: ShotSpsResult; name: string): string =
   ## What an export wrote, in sentences: the rows written to `name`, the rows
-  ## left out and why (the first `NamedMax` named, the rest counted), the rows
+  ## left out and why (the first `NamedMax` named, the rest counted as rows), the rows
   ## with no shot point, repeated points and dropped fractions of a second.
   result = "Wrote " & plural(r.written, "row", "rows") & " to " & name & "."
   if r.skipped > 0:
     result.add " " & plural(r.skipped, "row was", "rows were") & " left out"
-    if r.problems.len > 0:
-      result.add ": "
-      for i, p in r.problems:
-        if i == NamedMax: break
-        if i > 0: result.add "; "
-        result.add (if p.row >= 0: "row " & $(p.row + 1) & " " else: "") & p.field &
-          (if p.value == "nan": " is missing" else: " " & p.value & " does not fit")
-      if r.count > min(r.problems.len, NamedMax):
-        result.add "; " & $(r.count - min(r.problems.len, NamedMax)) & " more"
+    if r.problems.len > 0: result.add ": " & problemWords(r)
     result.add "."
   if r.noShotPoint > 0:
     result.add " " & plural(r.noShotPoint, "row has", "rows have") & " no shot point."
