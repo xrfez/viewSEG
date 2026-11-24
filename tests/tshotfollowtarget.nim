@@ -3,15 +3,19 @@
 ##
 ## Seen to fail: with followAnswer always returning sfNone, pointer_matches_row
 ## got source none. With the query built from keys.time instead of
-## recordTimeZeroUs, delay_matches_time_zero matched row 0.
+## recordTimeZeroUs, delay_matches_time_zero matched row 0. With exact still
+## t.isSome, whole_second_matches_within_the_second got row -1 rule mrNone.
+## With exact forced false, rev3_matches_exactly got row 0 rule
+## mrTimeAndNumbers, and delay_matches_time_zero matched row -1.
 
 import std/[math, options, os, strutils, times]
 import parseSEG
 import parseSEG/io/memsink
-import viewSEG/core/[shotlog, state]
+import viewSEG/core/[shotfollow, shotlog, state]
 import utils/[fixtures, sigfiles, waiting]
 
 const Land = currentSourcePath().parentDir.parentDir / "samples" / "land" / "shots.sgd"
+const LandSgy = currentSourcePath().parentDir.parentDir / "samples" / "land" / "shots.sgy"
 
 proc allocations(): int =
   cast[tuple[allocs, deallocs: int]](getAllocStats()).allocs
@@ -188,6 +192,46 @@ proc main*() =
       let a = st.followAnswer()
       doAssert a.source == sfPointer
       doAssert a.match.row == 1, "matched row " & $a.match.row & " (0 is keys.time)"
+      st.shutdown()
+
+    block whole_second_matches_within_the_second:
+      var st = initAppState()
+      doAssert fileExists(LandSgy), "samples/land/shots.sgy is not there"
+      st.apply Command(kind: ckOpen, paths: @[LandSgy])
+      doAssert st.settle(st.sessions.len >= 1 and st.jobs.active.len == 0),
+        "the SEG-Y did not open"
+      doAssert st.sessions[0].file.kind == skSegy and st.sessions[0].file.hasKeys
+      let k = st.sessions[0].file.traceKeys(0)
+      doAssert k.timeOrigin == toHeaderSeconds, $k.timeOrigin
+      let us = timeZeroOf(st, 0)
+      doAssert us == 1_772_323_200_000_000, $us
+      let path = writeLog(fx.dir, "second.csv", [
+        row(us + 400_000, int(round(k.record)), k.srcLine, k.srcPoint)])
+      st.importLog(path, 1)
+      st.apply Command(kind: ckHover, trace: st.sessions[0].base)
+      let a = st.followAnswer()
+      doAssert a.source == sfPointer, $a.source
+      doAssert a.match.row == 0, "row " & $a.match.row & " rule " & $a.match.rule
+      doAssert a.match.rule in {mrSecond, mrTimeAndNumbers, mrNumbers}, $a.match.rule
+      st.shutdown()
+
+    block rev3_matches_exactly:
+      var st = initAppState()
+      let path = fx.dir / "exact.sgd"
+      writeBytes(path, delaySegd())
+      st.apply Command(kind: ckOpen, paths: @[path])
+      doAssert st.settle(st.sessions.len == 1 and st.jobs.active.len == 0),
+        "the Rev 3 file did not open"
+      let zero = timeZeroOf(st, 0)
+      let log = writeLog(fx.dir, "exact.csv", [
+        row(zero + 400_000, 1, 0, 0),
+        row(zero, 9, 9, 9)])
+      st.importLog(log, 1)
+      st.apply Command(kind: ckHover, trace: st.sessions[0].base)
+      let a = st.followAnswer()
+      doAssert a.source == sfPointer, $a.source
+      doAssert a.match.row == 1, "row " & $a.match.row & " rule " & $a.match.rule
+      doAssert a.match.rule == mrTime, $a.match.rule
       st.shutdown()
 
     block selected_file:

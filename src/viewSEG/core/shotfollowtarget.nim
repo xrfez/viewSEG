@@ -130,17 +130,38 @@ proc noMatch*(): ShotMatch {.inline.} =
   ShotMatch(rule: mrNone, row: -1, count: 0)
 
 proc matched*(index: ref ShotIndex; q: ShotQuery): ShotMatch {.raises: [].} =
-  ## `match` of `index`, or no row when `index` is nil. `match` takes the
-  ## index by value, so this copies it; the unchanged follow path does not call it.
+  ## `match` of `index`, or no row when `index` is nil.
   if index == nil: return noMatch()
   match(index[], q)
 
+proc microsecondClock(f: SeismicFile; local: int): bool {.raises: [].} =
+  ## Whether trace `local`'s clock is good to a microsecond. A SEG-Y is when
+  ## its stored keys say `toHeaderSubsec`. A SEG-D is when the record is
+  ## revision 3. A whole-second clock, or a file opened without keys, is not.
+  ## Reads no file.
+  if local < 0 or local >= f.len: return false
+  case f.kind
+  of skSegy:
+    if not f.hasKeys: return false
+    try:
+      f.traceKeys(local).timeOrigin == toHeaderSubsec
+    except ValueError:
+      false
+  of skSegd:
+    if local >= f.index.entries.len: return false
+    let rec = int(f.index.entries[local].record)
+    if rec < 0 or rec >= f.index.segdRecords.len: return false
+    f.index.segdRecords[rec].isRev3
+  else:
+    false
+
 proc traceQuery*(f: SeismicFile; local: int): ShotQuery {.raises: [].} =
-  ## A trace's query: time zero, exact when it is known, plus the trace's
-  ## record number, source line, source point and source index.
+  ## A trace's query: time zero, exact when the file's clock is good to a
+  ## microsecond, plus the trace's record number, source line, source point
+  ## and source index. A whole-second clock is not exact.
   let t = timeZero(f, local)
   let n = numbersOf(f, local)
-  queryOfKeys(t, t.isSome, n.record, n.line, n.point, n.index)
+  queryOfKeys(t, microsecondClock(f, local), n.record, n.line, n.point, n.index)
 
 proc fitsInt(n: int64): bool {.inline.} =
   n > 0 and n <= int64(high(int))
