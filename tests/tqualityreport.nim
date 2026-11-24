@@ -189,7 +189,8 @@ proc main*() =
     doAssert totalsCsv(report.totals).splitLines[1].endsWith(",3,1,5,3")
     doAssert stationsCsv(report.stations).splitLines[0].endsWith(
       ",tested (noisy),noisy,tested (weak),weak,badRecords")
-    doAssert totalsLine(t).endsWith(", 1 noisy of 3 tested, 3 weak of 5 tested"), totalsLine(t)
+    doAssert totalsLine(t).endsWith(", 3 tested (noisy), 1 noisy, 5 tested (weak), 3 weak"),
+        totalsLine(t)
     var rows = report.records
     sortRecords(rows, @[(column: rsNoisy, descending: true)])
     doAssert rows[0].file == "a.sgd", "an untested record sorts before every count"
@@ -199,6 +200,25 @@ proc main*() =
     empty.noted("c.sgd", 3, false, false, false, false)
     doAssert totalsCsv(qualityReport(empty).totals).splitLines[1].endsWith(",0,,0,")
     doAssert "noisy" notin totalsLine(qualityReport(empty).totals)
+
+  block one_word_per_quantity_in_headers_and_totals:
+    # Seen to fail: with ColSeen back at "Seen", ColConstant at "Flat" (the totals say
+    # "constant"), or one header's tip left empty, this block failed.
+    var b = initQualityBuild()
+    b.add "a.sgd", 1, 10, 1, 1, {qfAllZero, qfConstant}
+    b.addTrace(TraceNote(file: "a.sgd", record: 1, line: 10, point: 2, index: 1,
+      component: 1, findings: {}, noisyTested: true, weakTested: true, noisy: true,
+      weak: true))
+    let line = totalsLine(qualityReport(b).totals).toLowerAscii
+    for name in [ColSeen, ColKilled, ColBad, ColHeaderDead, ColAllZero, ColConstant,
+        ColClipped, ColSpiky, ColDcOffset, ColNonFinite, ColNoisyTested, ColNoisy,
+        ColWeakTested, ColWeak, ColLine, ColPoint, ColIndex, ColComponent, ColFile,
+        ColRecord, ColBadRecords]:
+      doAssert headerTip(name).len > 0, name & " has no tooltip"
+    for name in [ColKilled, ColBad, ColHeaderDead, ColAllZero, ColConstant, ColClipped,
+        ColSpiky, ColDcOffset, ColNonFinite, ColNoisyTested, ColNoisy, ColWeakTested,
+        ColWeak]:
+      doAssert (" " & name.toLowerAscii) in line, name & " is not in: " & line
 
   block absorbing_a_part_is_adding_its_notes_one_by_one:
     proc notes(b: var QualityBuild; file: string) =

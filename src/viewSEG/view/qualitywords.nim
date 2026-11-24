@@ -32,26 +32,36 @@ const
   ColPoint* = "Point"
   ColIndex* = "Index"
   ColComponent* = "Component"
-  ColSeen* = "Seen"
+  ColSeen* = "Traces"
   ColKilled* = "Killed"
   ColBad* = "Bad"
   ColHeaderDead* = "Dead"
-  ColAllZero* = "Zero"
-  ColConstant* = "Flat"
+  ColAllZero* = "All zero"
+  ColConstant* = "Constant"
   ColClipped* = "Clipped"
   ColSpiky* = "Spiky"
-  ColDcOffset* = "DC"
+  ColDcOffset* = "DC offset"
   ColNonFinite* = "Not finite"
   ColNoisyTested* = "Tested (noisy)"
   ColNoisy* = "Noisy"
   ColWeakTested* = "Tested (weak)"
   ColWeak* = "Weak"
   ColBadRecords* = "Bad records"
-  DeadTip* = "A trace the header marks dead. It is not also counted as all-zero."
-  ZeroTip* = "Every finite sample is zero."
-  FlatTip* = "The samples are constant."
-  DcTip* = "The samples have a DC offset."
-  NonFiniteTip* = "A sample is not a finite number."
+  LineTip* = "The receiver line of the station."
+  PointTip* = "The receiver point of the station."
+  IndexTip* = "The receiver index of the station."
+  ComponentTip* = "The component number of the trace in its receiver station."
+  SeenTip* = "Traces read, killed ones included."
+  DeadTip* = "Traces the header marks dead. A dead trace is not also counted as all zero."
+  ZeroTip* = "Traces whose every finite sample is zero."
+  ConstantTip* = "Traces whose samples are all the same value."
+  ClippedTip* = "Traces with runs of samples stuck at their maximum."
+  SpikyTip* = "Traces with samples far above their neighbours."
+  DcTip* = "Traces whose mean is large against their spread, so they sit away from zero."
+  NonFiniteTip* = "Traces with a sample that is not a finite number."
+  BadRecordsTip* = "The records in which the station had a bad trace, one line for each file."
+  FileTip* = "The file the record is in."
+  RecordTip* = "The record number from the trace headers."
   ScanJudgesTip = "The scan judges the samples as recorded, with your kills and noise " &
     "settings, but without the per-trace filters, reversals, shifts or template-only " &
     "restriction the map applies to the record shown."
@@ -65,7 +75,7 @@ const
     "record. Not counted as bad. Empty when no trace was tested for weak. " & ScanJudgesTip
   ColFile* = "File"
   ColRecord* = "Record"
-  KilledTip* = "A trace an edit killed. It is counted as killed, not as bad, and it is not " &
+  KilledTip* = "Traces an edit killed. They are counted as killed, not as bad, and are not " &
     "measured."
   BadTip* = "Traces with a finding. A killed trace is not among them."
   FilterStations* = "Filter by line, point, index or component"
@@ -87,26 +97,39 @@ func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
 
 func totalsLine*(t: Totals): string =
-  ## The totals strip: counts, then each finding, then the noisy traces of those tested for
-  ## noisy and the weak of those tested for weak, each when any trace was. Killed is not bad.
+  ## The totals strip, in the words of the column headers: counts, then each finding, then
+  ## the traces tested for noisy and the noisy among them, and the same for weak, each when
+  ## any trace was tested. Counts are traces, except files, records and stations. Killed is
+  ## not bad.
   plural(t.files, "file", "files") & ", " & plural(t.records, "record", "records") & ", " &
     plural(t.traces, "trace", "traces") & ", " & $t.killed & " killed, " & $t.bad & " bad, " &
-    $t.stations & " stations, " & $t.counts[qfHeaderDead] & " header-dead, " &
-    $t.counts[qfAllZero] & " all-zero, " & $t.counts[qfConstant] & " constant, " &
+    $t.stations & " stations, " & $t.counts[qfHeaderDead] & " dead, " &
+    $t.counts[qfAllZero] & " all zero, " & $t.counts[qfConstant] & " constant, " &
     $t.counts[qfClipped] & " clipped, " & $t.counts[qfSpiky] & " spiky, " &
-    $t.counts[qfDcOffset] & " dc offset, " & $t.counts[qfNonFinite] & " non-finite" &
-    (if t.noisyTested > 0: ", " & $t.noisy & " noisy of " & $t.noisyTested & " tested"
+    $t.counts[qfDcOffset] & " DC offset, " & $t.counts[qfNonFinite] & " not finite" &
+    (if t.noisyTested > 0: ", " & $t.noisyTested & " tested (noisy), " & $t.noisy & " noisy"
     else: "") &
-    (if t.weakTested > 0: ", " & $t.weak & " weak of " & $t.weakTested & " tested" else: "")
+    (if t.weakTested > 0: ", " & $t.weakTested & " tested (weak), " & $t.weak & " weak"
+    else: "")
 
 func headerTip*(name: string): string =
   ## The tooltip of column title `name`, or "" when the title says enough.
   case name
+  of ColLine: LineTip
+  of ColPoint: PointTip
+  of ColIndex: IndexTip
+  of ColComponent: ComponentTip
+  of ColSeen: SeenTip
+  of ColFile: FileTip
+  of ColRecord: RecordTip
+  of ColClipped: ClippedTip
+  of ColSpiky: SpikyTip
+  of ColBadRecords: BadRecordsTip
   of ColKilled: KilledTip
   of ColBad: BadTip
   of ColHeaderDead: DeadTip
   of ColAllZero: ZeroTip
-  of ColConstant: FlatTip
+  of ColConstant: ConstantTip
   of ColDcOffset: DcTip
   of ColNonFinite: NonFiniteTip
   of ColNoisyTested: NoisyTestedTip

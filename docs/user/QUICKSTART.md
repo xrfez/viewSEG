@@ -298,7 +298,8 @@ The **Trace quality** window stays closed until you ask for it. It opens as a ta
 beside the **Seismic** window, and that tab is the one in front. Closing it and opening
 it again keeps the place you last gave it. A line of totals wraps onto the next line
 when the window is narrow: files, records, traces, killed, bad, stations, each
-finding, and the noisy and weak traces of those tested for each ("3 noisy of 120 tested").
+finding, and the traces tested for noisy and the noisy among them, then the same for weak
+("120 tested (noisy), 3 noisy"). The totals use the words of the column headers.
 A killed trace is counted as killed, not as bad, and it is not measured.
 
 **Rescan** runs the scan again. While one is running, that button is **Cancel** and a
@@ -307,7 +308,9 @@ under the totals says how many. **Unread** opens that list, each with the reason
 **totals in a second file** sits next to **Export CSV...**.
 
 The **Stations** tab is one row per receiver station and component: how many traces
-were seen, how many were killed, how many were bad, and the count of each finding. The
+there are (**Traces**, killed ones included), how many were killed, how many were bad, and the
+count of each finding (**Dead**, **All zero**, **Constant**, **Clipped**, **Spiky**,
+**DC offset**, **Not finite**). Every column header has a tooltip that says what it counts. The
 last counts, **Noisy** and **Weak**, are the traces the map's noisy and weak filters
 show for each field record, found the same way (the exclusion area you chose in Tools >
 Settings applies, and a record's first breaks are found for it, so a scan takes longer).
