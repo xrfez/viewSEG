@@ -65,6 +65,7 @@ type
     mkComparePicture ## the compare window's picture, computed on a job
     mkVendor ## the vendor header maps a load read (`core/vendorjobs`)
     mkVendorFields ## the vendor fields an open file has (`core/vendorfieldjobs`)
+    mkTreated ## a file's document of what the user forced for it, read and changed (`treatWork`)
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -318,6 +319,11 @@ type
       vendorGen*: int ## the load's number: a newer load makes it stale
     of mkVendorFields:
       vendorFields*: VendorFieldList ## moved, never shared
+    of mkTreated:
+      treatPath*: string ## the file
+      treatRecord*: FileRecord ## its document with the new choice; `treatNone` when there is none
+      treatNone*: bool ## nothing forced and no document: nothing to write
+      treatFailure*: string ## why the choice could not be kept for the file; "" when it could
     of mkEarlier:
       earlierPath*: string ## the file
       earlierOf*: FileIdentity ## its identity, which none of them is

@@ -21,7 +21,7 @@
 
 import std/[os, strutils, times]
 import parseSEG
-import filememory, filesystem, identity, inbox, jobs, nif, threads
+import filememory, filesystem, identity, inbox, jobs, nif, threads, treatas
 
 proc identifyWork*(path: string; store: Store; to: Poster): JobWork =
   ## Posts `mkIdentified`: the quick identity of the file at `path` and the
@@ -184,5 +184,56 @@ proc importEditsWork*(path: string; traces: int; to: Poster): JobWork =
     except IOError, OSError:
       msg.importFailure = getCurrentExceptionMsg()
       if msg.importFailure.len == 0: msg.importFailure = "it cannot be read"
+    clearCycleRoots()
+    to.post move msg
+
+proc treatWork*(path: string; store: Store; treat: TreatAs; to: Poster): JobWork =
+  ## Posts `mkTreated`: the document of the store about the file at `path` (found by its quick
+  ## identity: it is identified on demand, however the file was never opened) with `treat` as
+  ## what the user forces for it, or a new document when it has none and something is
+  ## forced. The UI thread hands it to the disk thread, which merges with a change another
+  ## program made meanwhile.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "looking up what is remembered"
+    var msg = Msg(job: ctx.id, kind: mkTreated, treatPath: path)
+    try:
+      var modified: Time
+      var id = quickIdentity(path, modified)
+      var taken, problems: seq[string]
+      var found: seq[FileRecord] = @[]
+      for r in store.recordsOf(id, taken, problems):
+        if not r.unconfirmed: found.add r
+      if found.len > 1:
+        # several documents of one quick identity: the hash of every byte says which is the
+        # file's (a document whose own hash was never taken may be any; if more than one
+        # fits, nothing is written)
+        ctx.setPhase "reading every byte"
+        id.full = fullHash(path, proc (done, total: int64): bool = ctx.progress(done, total))
+        id.fullKnown = true
+        var fits: seq[FileRecord] = @[]
+        for r in found:
+          if not r.identity.fullKnown or r.identity.full == id.full: fits.add r
+        if fits.len > 1:
+          msg.treatFailure = "several documents of what is remembered fit it, so the file " &
+            "must be opened once first"
+        found = fits
+      var best = -1
+      for i, r in found:
+        if best < 0 or r.opened > found[best].opened: best = i
+      if msg.treatFailure.len > 0: discard
+      elif best >= 0:
+        msg.treatRecord = found[best]
+        if msg.treatRecord.damaged:
+          msg.treatFailure = "its document has parts this version cannot read, so it is " &
+            "left as it is"
+        msg.treatRecord.treat = treat
+      elif treat.isSet:
+        msg.treatRecord = FileRecord(identity: id, name: path.extractFilename, path: path,
+          opened: getTime(), modified: modified, doc: freeDocName(id, taken), treat: treat,
+          stamp: (-1'i64, Time(), 0'i64))
+      else:
+        msg.treatNone = true
+    except IOError, OSError:
+      msg.treatFailure = getCurrentExceptionMsg()
     clearCycleRoots()
     to.post move msg

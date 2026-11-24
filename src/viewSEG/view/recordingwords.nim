@@ -37,6 +37,10 @@ const
   UncodedWords = " Some traces share a station and start time without a component code, " &
     "so the grouping cannot be told."
 
+const
+  ForcedMark* = " *" ## after the word of a cell whose value the user set
+  ForcedWords* = "Set by you: right-click to return to automatic. Automatic says: "
+
 func orderShort*(o: TraceOrder): string =
   ## The order of the traces in a word or two, for a table cell: "Station", "Flag · station";
   ## "?" when it is not known.

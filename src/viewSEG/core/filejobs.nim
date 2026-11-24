@@ -19,8 +19,8 @@
 
 import std/[algorithm, monotimes, os, strutils, times]
 import parseSEG
-import cutfile, filelist, filesystem, inbox, jobs, leapfile, log, recordingprobe,
-  session, sweepinfo, threads, vendormaps
+import cutfile, filelist, filememory, filesystem, identity, inbox, jobs, leapfile, log,
+  recordingprobe, session, sweepinfo, threads, vendormaps
 from project import ProjectFileName
 
 const
@@ -452,14 +452,15 @@ const
     ## a kinds job starts no other file after this long: it gives way on its lane
 
 proc kindsWork*(gen: uint64; vendorGen: int; asks: seq[WatchedFile]; vendors: VendorRegistry;
-    to: Poster): JobWork =
+    store: Store; to: Poster): JobWork =
   ## The work of a job that reads the kind of recording of the files of `asks` (path, size and
   ## time as listed) from the file (`kindOfFile`), a file at a time, and posts the answers as
   ## one `mkKinds` message for listing `gen` and the vendor maps' load `vendorGen`. It reads
   ## at most `KindBatch` files and starts none after `KindTurn` (it reads one at least): the
   ## files it leaves are for a job submitted after it, so other work queued on its lane meanwhile
-  ## runs between the two. A file that cannot be read has no kind; stops at a cancel (between
-  ## files, and inside a file between its steps).
+  ## runs between the two. Each answer carries what the store holds of the kind and the order
+  ## the user forced for the file (`treatsOf`). A file that cannot be read has no kind; stops at
+  ## a cancel (between files, and inside a file between its steps).
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading what the files are"
     var batch = Msg(job: ctx.id, kind: mkKinds, kindsGen: gen, kindsVendors: vendorGen)
@@ -477,4 +478,17 @@ proc kindsWork*(gen: uint64; vendorGen: int; asks: seq[WatchedFile]; vendors: Ve
         of poKnown: ksKnown
       batch.kinds.add KindAnswer(path: a.path, size: a.size, modified: a.modified, state: state,
         kind: probe.kind, order: probe.order)
-    if batch.kinds.len > 0: to.post move batch
+    if batch.kinds.len > 0:
+      var ids: seq[FileIdentity] = @[]
+      for a in batch.kinds:
+        var modified: Time
+        try:
+          {.cast(gcsafe).}:
+            ids.add quickIdentity(a.path, modified)
+        except IOError, OSError:
+          ids.add FileIdentity(size: -1)
+      ctx.checkCancelled()
+      {.cast(gcsafe).}:
+        let treats = store.treatsOf(ids)
+        for i in 0 ..< batch.kinds.len: batch.kinds[i].treat = treats[i]
+      to.post move batch

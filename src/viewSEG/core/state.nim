@@ -122,7 +122,7 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
   shots, spectra,
   spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids,
       vendorfieldjobs,
-  vendorfieldlist, vendorjobs, vendormaps, vibprofile, watch, zoom
+  traceorder, treatas, vendorfieldlist, vendorjobs, vendormaps, vibprofile, watch, zoom
 
 export analysis, compare, edits, filelist, filememory, firstbreaks, identity, inbox, jobs, join,
     shotfollowtarget,
@@ -327,6 +327,9 @@ type
       ## open or close the compare window
     ckCorrelate = "correlate"
       ## show the correlated record of the file the Seismic window shows, or the raw one
+    ckTreatAs = "treat as"
+      ## force the kind of recording and the order of the traces a file is treated as, or give
+      ## them back to what is told from the file; remembered for the file
     ckSubfolders = "subfolders"
       ## the file list includes the subfolders' files, or not; the folder is listed again
     ckVibProfile = "vibrator profile"
@@ -648,6 +651,14 @@ type
         ## ckCompareWindow: true opens the window, false closes it
     of ckSubfolders:
       subfolders*: bool ## true: the subfolders' files are listed too
+    of ckTreatAs:
+      treatPath*: string ## the file
+      treatKind*: string
+        ## "shot", "continuous" or "sliced" forces the kind of recording; "automatic" takes the
+        ## force off; "" leaves it as it is
+      treatGrouping*: string
+        ## "none", "flag" or "component" forces the grouping of the traces; "automatic"; ""
+      treatSubSort*: string ## "station" or "time" forces the sort inside it; "automatic"; ""
     of ckVibProfile:
       vibProfile*: VibQcProfile
         ## the settings to keep as the project's vibrator QC profile
@@ -1259,6 +1270,14 @@ type
       ## the job reading the kinds of the listed files (`startKinds`); one at a time
     kindCache: KindCache
       ## the kinds read this session: a folder listed again reads only the files without one
+    treats: Table[string, TreatAs]
+      ## what the user forced for a file (by its path) as the listing and the commands know it
+    treatsKept: Table[string, TreatAs]
+      ## the part of `treats` that is the user's own, which the store keeps: an agent's choice is
+      ## for the session only and never reaches a document the edits are written to
+    treatsTouched: HashSet[string]
+      ## the paths a command changed this session: a late answer of the kinds job does not
+      ## put back what it read before
     unread: seq[tuple[panel: PanelId; cause: UnreadCause; why: string]]
       ## the panels whose file cannot be read now, and why (`mkUnread`)
     speeds: seq[tuple[panel: PanelId; ms: float64]]
@@ -1744,6 +1763,7 @@ func recordOf(state: AppState; i: int): FileRecord =
     if s.path == r.path: result.traces = s.len
   if state.keyOf(r.path) in state.edits: result.edits = state.edits[state.keyOf(r.path)].kept
   if r.doc in state.knownDocs: result.later = state.knownDocs[r.doc].later # a later version's
+  result.treat = state.treatsKept.getOrDefault(r.path)
 
 proc hashFile(state: var AppState; i: int) =
   ## Hashes every byte of `remembered[i]`'s file, on the lane of hashes (a
@@ -1858,7 +1878,7 @@ proc writeMemoryDoc(state: var AppState; i: int) =
   let (base, expect) = block:
     let was = state.knownDocs.getOrDefault(r.doc)
     (was.edits, if was.stamp.modified == Time(): NoDoc else: was.stamp)
-  if rec.edits.isEmpty:
+  if rec.edits.isEmpty and not rec.treat.isSet:
     if r.doc.len > 0:
       state.diskIo.removeMerging(state.store.docPath(r.doc), move rec, "what is remembered about " &
         name, base, expect)
@@ -2762,7 +2782,8 @@ func spsWritten*(state: AppState): string {.inline.} =
 func recordingFacts*(state: AppState): RecordingFacts {.inline.} =
   ## What the shown file is as a recording, once `watchRecording` has had it
   ## read; not `ready` before that.
-  if state.recHave: state.recFacts else: RecordingFacts()
+  if state.recHave: state.recFacts.applied(state.treats.getOrDefault(state.recPath))
+  else: RecordingFacts()
 
 func recordingWhy*(state: AppState): string {.inline.} =
   ## Why the shown file has no ready facts once the job has ended: no live trace
@@ -3121,6 +3142,11 @@ proc canonical*(path: string): string =
     absolutePath(path).normalizedPath
   except OSError, ValueError:
     path.normalizedPath
+
+proc treatOf*(state: AppState; path: string): TreatAs =
+  ## What the user forced for the file at `path` (kind and order); nothing is forced for a
+  ## file that has no choice.
+  state.treats.getOrDefault(canonical(path))
 
 proc ignore(state: var AppState; cmd: Command; why: string) =
   state.log.add(sevWarning, "commands", "Ignored \"" & $cmd.kind & "\": " & why & ".")
@@ -5178,7 +5204,8 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
     state.sayUnconfirmed(i, c, if c.doc == fromPending and fromPending.len > 0:
       "were made when its drive did not give its first and last bytes, so nothing says " &
       "they were made on this file" else: "")
-  if cands.len > 0 or not state.editsAt(r.path).kept.isEmpty: state.hashFile(i)
+  if cands.anyIt(not it.edits.isEmpty) or not state.editsAt(r.path).kept.isEmpty:
+    state.hashFile(i) # (a document of only a forced kind or order has nothing to confirm)
   state.linkSame(i)
   # Other files once at this path (output again under the same name): their
   # edits are not this file's; listed and said.
@@ -9177,13 +9204,14 @@ proc startKinds(state: var AppState) =
         e.kindState = had.get.state
         e.recording = had.get.kind
         e.traceOrder = had.get.order
+        e.treat = state.treats.getOrDefault(e.path)
         state.files.changedAt(i)
       elif asks.len < KindBatch:
         asks.add WatchedFile(path: e.path, size: e.size, modified: e.modified)
   if asks.len > 0:
     state.kindJob = state.jobs.submit(JobSpec(title: "Read what the files are",
       lane: jlPeeks), kindsWork(state.files.gen, state.vendor.gen, asks, currentVendors(),
-      state.inbox.poster))
+      state.store, state.inbox.poster))
 
 proc rereadKinds(state: var AppState) =
   ## The vendor maps in force changed: a start time may now come from a vendor block, so every
@@ -9600,6 +9628,14 @@ proc takeKinds(state: var AppState; m: sink Msg) =
       if a.state == ksKnown:
         e.recording = a.kind
         e.traceOrder = a.order
+      if a.path notin state.treatsTouched:
+        e.treat = a.treat
+        if a.treat.isSet:
+          state.treats[a.path] = a.treat
+          state.treatsKept[a.path] = a.treat
+        else:
+          state.treats.del a.path
+          state.treatsKept.del a.path
       f.changedAt(i)
       state.kindCache.remember(a, m.kindsVendors, f)
 
@@ -11151,6 +11187,67 @@ proc setSubfolders(state: var AppState; cmd: Command) =
     let paths = if f.folder.len > 0: @[f.folder] else: f.asked
     if paths.len > 0: state.startListing(paths, f.title, f.folder, state.listedBy)
 
+proc treatAs(state: var AppState; cmd: Command) =
+  ## `ckTreatAs`: forces, or gives back to the file, the kind and the order a file is treated as,
+  ## and has the choice remembered for the file (its document in the store, found by its
+  ## identity, made on demand: `treatWork`).
+  let path = canonical(cmd.treatPath)
+  let kept = keeps(cmd.origin)
+  var t = (if kept: state.treatsKept else: state.treats).getOrDefault(path)
+  let before = t
+  var bad = ""
+  if cmd.treatKind == "automatic": t.kind = none(RecordingKind)
+  elif cmd.treatKind.len > 0:
+    var k: RecordingKind
+    if parseKindName(cmd.treatKind, k): t.kind = some k
+    else: bad = cmd.treatKind & " is not a kind (shot, continuous, sliced or automatic)"
+  if cmd.treatGrouping == "automatic": t.grouping = none(TraceGrouping)
+  elif cmd.treatGrouping.len > 0:
+    var g: TraceGrouping
+    if parseGroupingName(cmd.treatGrouping, g): t.grouping = some g
+    else: bad = cmd.treatGrouping & " is not a grouping (none, flag, component or automatic)"
+  if cmd.treatSubSort == "automatic": t.subSort = none(TraceSubSort)
+  elif cmd.treatSubSort.len > 0:
+    var s: TraceSubSort
+    if parseSubSortName(cmd.treatSubSort, s): t.subSort = some s
+    else: bad = cmd.treatSubSort & " is not a sort (station, time or automatic)"
+  if bad.len > 0:
+    state.ignore(cmd, bad)
+    return
+  if cmd.treatKind.len == 0 and cmd.treatGrouping.len == 0 and cmd.treatSubSort.len == 0:
+    state.ignore(cmd, "nothing was given to treat the file as")
+    return
+  if t == before: return
+  state.treatsTouched.incl path
+  if t.isSet: state.treats[path] = t else: state.treats.del path
+  if kept:
+    if t.isSet: state.treatsKept[path] = t else: state.treatsKept.del path
+  let i = state.files.find(path)
+  if i >= 0:
+    state.files.entries[i].treat = t
+    state.files.changedAt(i)
+  if keeps(cmd.origin) and not state.store.isNowhere and not state.readOnlyProject and
+      fs.fileExists(path):
+    state.memoryWork.add state.jobs.submit(JobSpec(title: "Remember what " &
+      path.extractFilename & " is treated as", lane: jlPeeks, auto: true),
+      treatWork(path, state.store, t, state.inbox.poster))
+
+proc takeTreated(state: var AppState; m: sink Msg) =
+  ## The document of a file with the choice made for it (`treatWork`): handed to the disk thread,
+  ## which merges it with what another program wrote since it was read.
+  let name = m.treatPath.extractFilename
+  if m.treatFailure.len > 0:
+    state.log.add(sevWarning, name, "What " & name & " is treated as is kept for this session " &
+      "only: " & m.treatFailure & ".")
+  elif not m.treatNone:
+    let r = m.treatRecord
+    let place = state.store.docPath(r.doc)
+    if r.edits.isEmpty and not r.treat.isSet and r.later.len == 0:
+      state.diskIo.removeMerging(place, r, "what is remembered about " & name, r.edits, r.stamp)
+    else:
+      state.diskIo.replace(place, r, "what is remembered about " & name, r.edits, r.stamp)
+    state.knownDocs.del r.doc
+
 proc setCompareWindow(state: var AppState; cmd: Command) =
   state.compareOpen = cmd.compareOpen
 
@@ -11252,8 +11349,10 @@ proc cutGatherCmd(state: var AppState; cmd: Command) =
   state.cutSink = CutSink()
   state.cutOutcome = ""
   state.cutPath = ""
+  var opts = cmd.cutOptions
+  opts.treatKind = state.treats.getOrDefault(s.path).kind # what the user forced for the file
   state.cutJob = state.jobs.submit(cutGatherSpec(s.diskPath, dest),
-    cutGatherWork(s.filePtr, s.diskPath, dest, shots, cmd.cutOptions, state.cutSink, others))
+    cutGatherWork(s.filePtr, s.diskPath, dest, shots, opts, state.cutSink, others))
 
 proc exportShotSpsCmd(state: var AppState; cmd: Command) =
   ## Starts the write of a loaded shot log's source points as an SPS file.
@@ -12006,6 +12105,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckCompareWindow: state.setCompareWindow(cmd)
   of ckCorrelate: state.setCorrelate(cmd)
   of ckSubfolders: state.setSubfolders(cmd)
+  of ckTreatAs: state.treatAs(cmd)
   of ckVibProfile: state.storeVibProfile(cmd.origin, cmd.vibProfile)
   of ckVibWeights: state.storeVibWeights(cmd.origin, cmd.vibWeights)
   of ckImportShotLog: state.importShotLogCmd(cmd)
@@ -12164,6 +12264,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkProject: state.takeProject(move m)
     of mkVendor: state.takeVendor(move m)
     of mkEarlier: state.takeEarlier(move m)
+    of mkTreated: state.takeTreated(move m)
     of mkReferences: state.takeReferences(move m)
     of mkCompare: state.takeCompare(move m)
     of mkComparePicture: state.takeComparePicture(move m)

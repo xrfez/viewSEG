@@ -60,7 +60,7 @@
 ## next trace of a different start). The cut places every segment, so its job asks
 ## for `AllStarts`: a trace off the step anywhere refuses the cut with a sentence.
 
-import std/[algorithm, math, sequtils]
+import std/[algorithm, math, sequtils, tables]
 import parseSEG
 import processSEG
 import processSEG/continuous/slice
@@ -134,6 +134,7 @@ type
     carryHeaderBytes*: int64
       ## a SEG-D file's cut record keeps its source's headers: their bytes per record
       ## (`cutcarry.carryHeaderBytes`); 0 when the cut builds its headers from keys
+    forced*: bool ## `kind` was set by the user, not told from the file (`treatas.applied`)
 
   RecordingSink* = ref object
     ## Filled by `recordingFactsWork`; read it once the job has ended.
@@ -169,6 +170,23 @@ proc planRecording*(file: ptr SeismicFile; source: string; dtMs: float64;
       result.times[i] = if k.timeOrigin == toFirstSample: k.time - k.t0Ms / 1000 else: k.time
     result.receivers = receiverIds(file[], withChannel = true)
   result.streams = initSliceStreams(result.meta, result.times, result.receivers)
+
+proc endToEndTimes*(plan: RecordingPlan): seq[float64] =
+  ## The times of the traces of `plan` if each receiver's traces followed one another end to end
+  ## from the start of its first trace, in file order: what a file whose start times cannot be
+  ## read is taken to be when the user says it is continuous.
+  let meta = plan.meta
+  let dtS = meta.dtMs / 1000
+  result = plan.times
+  var next = initTable[int, float64]()
+  for row in 0 ..< meta.len:
+    let n = meta.liveSamples(row, high(int))
+    if meta.isLive(row) and n > 0:
+      let r = plan.receivers[row]
+      let offset = meta.sampleTimeMs(row, 0) / 1000
+      let start = next.getOrDefault(r, plan.times[row] + offset)
+      result[row] = start - offset
+      next[r] = start + n.float64 * dtS
 
 type Seg = object
   recv: int

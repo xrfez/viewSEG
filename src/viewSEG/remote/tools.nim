@@ -356,6 +356,7 @@ proc runCommand*(state: var AppState; fe: Frontend; arguments: string;
   of ckOpen, ckBrowse, ckLoadSurvey:
     for p in c.paths.mitems: p = fromProgram(p)
   of ckShowFile, ckShowTrace: c.path = fromProgram(c.path)
+  of ckTreatAs: c.treatPath = fromProgram(c.treatPath)
   of ckJoin:
     for f in c.joinFiles.mitems: f.path = fromProgram(f.path)
     # Not given: what the headers say, worked out by the import as it reads

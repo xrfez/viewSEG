@@ -140,7 +140,21 @@ the next); the tooltip says it in a sentence. An order holds only when every tra
 one before it of its component (a tie is fine), and components are never compared with each other; when no order
 holds, the key never changes or the file has one trace, the cell shows **?**. A file that has
 both orders (stations and times rising together) shows Station for a shot gather and Time for
-a receiver gather. A trace placed by its channel alone has no station order. The columns after Name are as wide as their words and Name takes the rest; when the panel is
+a receiver gather. A trace placed by its channel alone has no station order.
+
+Right-click a seismic file's row to tell viewSEG what to treat it as. **Treat as** offers
+Automatic, Shot gather, Continuous receiver gather and Time-sliced receiver gather; **Trace
+order** offers Automatic, the grouping (None, By flag, By component) and the sort (By station,
+By time). A tick shows what you forced. A forced value shows in its cell with a **\*** after the
+word, and the tooltip says "Set by you" and what the file says on its own. It is remembered for
+the file, by its content, so it follows the file when it is renamed or moved, and every part of
+viewSEG that asks what the file is (the Files columns, the Headers summary, the slice by shot
+log) goes by it. A file whose traces carry no start time and that you set to continuous is
+sliced taking each receiver's traces to follow one another end to end from the time of its
+first trace; the slice says so, and a vendor header map that names the start time gives the
+real times. The order you force is only shown for now. A choice an agent makes through the
+command interface is for the session only. If several remembered documents could be the file's,
+the choice is kept for the session and Messages says to open the file once first. The columns after Name are as wide as their words and Name takes the rest; when the panel is
 too narrow for 16 characters of a name beside them, the list scrolls sideways. A folder listed
 again in the same session takes the kinds already read and reads only the files that changed. A
 file that changes on disk is read again once it is steady, and every kind is read again when the

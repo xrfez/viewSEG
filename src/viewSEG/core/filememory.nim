@@ -23,7 +23,11 @@
 ##  (filtered
 ##   (trace 5 (place "after") (band "band-pass") (dc "none")
 ##    (f1 10.0) (f2 12.0) (f3 55.0) (f4 60.0))))
+##  (treat (kind "shot") (grouping "flag") (sub "station")))
 ## ```
+##
+## `treat` is what the user forced for the file's kind and order (a part that is not forced is
+## left out); a file with nothing but that has a document of its own, without edits.
 ##
 ## **Pending documents.** Edits made on a file whose identity cannot be
 ## read yet (a drive that does not give its first and last 64 KiB) are
@@ -54,8 +58,8 @@
 ## store may be on a drive that does not answer. Every call goes through
 ## `fs`.
 
-import std/[algorithm, math, os, parseutils, strutils, times]
-import edits, filesystem, identity, nif
+import std/[algorithm, math, options, os, parseutils, strutils, times]
+import edits, filesystem, identity, nif, recordingkind, traceorder, treatas
 
 const
   StoreFolder* = "files" ## the store's folder in the configuration folder
@@ -83,6 +87,7 @@ type
     opened*: Time     ## when it was last opened
     modified*: Time   ## its modification time then: a file moved keeps it
     edits*: EditLists ## what is kept, by trace index from 0
+    treat*: TreatAs   ## what the user told viewSEG to treat the file as (kind, order)
     traces*: int      ## the file's traces when its edits were made; 0 when not known
     doc*: string      ## the document's file name in the store; "" until it has one
     bytes*: int64     ## the document's size (a listing)
@@ -342,6 +347,21 @@ proc memoryDocument*(r: FileRecord): string =
     w.open "allReversed"
     w.add true
     w.close
+  if r.treat.isSet:
+    w.open "treat"
+    if r.treat.kind.isSome:
+      w.open "kind"
+      w.add kindName(r.treat.kind.get)
+      w.close
+    if r.treat.grouping.isSome:
+      w.open "grouping"
+      w.add groupingName(r.treat.grouping.get)
+      w.close
+    if r.treat.subSort.isSome:
+      w.open "sub"
+      w.add subSortName(r.treat.subSort.get)
+      w.close
+    w.close
   if r.edits.filters.len > 0:
     w.open "filtered"
     for e in r.edits.filters: w.writeFilter e
@@ -420,6 +440,25 @@ proc readSeen(n: NifNode; r: var FileRecord; problems: var seq[string]) =
             k.kids[1].intVal in 0 ..< 1_000_000_000:
           r.modified = initTime(v.intVal, int(k.kids[1].intVal))
         else: problems.add "seen: the modification time is not a time"
+      else: discard
+
+proc readTreat(n: NifNode; r: var FileRecord; problems: var seq[string]) =
+  for k in n.kids:
+    if k.kind == nkTree and k.kids.len >= 1 and k.kids[0].kind in {nkString, nkIdent}:
+      let v = k.kids[0].text
+      case k.tag
+      of "kind":
+        var x: RecordingKind
+        if parseKindName(v, x): r.treat.kind = some x
+        else: problems.add "treat: " & v & " is not a kind"
+      of "grouping":
+        var x: TraceGrouping
+        if parseGroupingName(v, x): r.treat.grouping = some x
+        else: problems.add "treat: " & v & " is not a grouping"
+      of "sub":
+        var x: TraceSubSort
+        if parseSubSortName(v, x): r.treat.subSort = some x
+        else: problems.add "treat: " & v & " is not a sub-sort"
       else: discard
 
 func enumText(n: NifNode): string =
@@ -620,6 +659,7 @@ proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string
           of "unconfirmed":
             result.unconfirmed = k.kids.len == 1 and k.kids[0].kind == nkIdent and
               k.kids[0].text == "true"
+          of "treat": readTreat(k, result, problems)
           of "killed", "reversed", "excluded", "allReversed", "filtered", "shifted":
             discard # readEditsIn
           else: result.later.add k # a later version's: kept as it is
@@ -1020,7 +1060,8 @@ proc earlierOutputs*(s: Store; path: string; id: FileIdentity;
       try:
         var p: seq[string] = @[]
         let r = readMemoryFile(doc, p)
-        if r.path == path and not sameData(r.identity, id): result.add r
+        if r.path == path and not sameData(r.identity, id) and not r.edits.isEmpty:
+          result.add r
       except NifError, IOError, OSError:
         problems.add name & ": " & getCurrentExceptionMsg()
 
@@ -1094,3 +1135,29 @@ func keptWords*(l: EditLists): string =
   if l.shifts.len > 0: parts.add $l.shifts.len & " shifted"
   if l.allReversed: parts.add "all reversed"
   if parts.len == 0: "nothing" else: parts.join(", ")
+
+proc treatsOf*(s: Store; ids: openArray[FileIdentity]): seq[TreatAs] =
+  ## What the store holds of each file of quick identity `ids[i]` that the user forced
+  ## (`result[i]`; nothing forced for a file with no document, or one that cannot be read). One
+  ## look at the store's folder serves them all. Reads the documents: worker-only.
+  result = newSeq[TreatAs](ids.len)
+  if s.isNowhere or ids.len == 0 or not fs.dirExists(s.home): return
+  var names: seq[string] = @[]
+  try:
+    for kind, path in fs.walkDir(s.home):
+      let name = path.extractFilename
+      if kind == pcFile and name.isDocName: names.add name
+  except OSError:
+    return
+  for i, id in ids:
+    let start = id.key & "-"
+    for name in names:
+      if name.startsWith(start):
+        try:
+          var p: seq[string]
+          let r = readMemoryFile(s.docPath(name), p)
+          if not r.unconfirmed and r.identity.size == id.size and r.identity.quick == id.quick and
+              r.treat.isSet:
+            result[i] = r.treat
+        except NifError, IOError, OSError:
+          discard # said where the document is used

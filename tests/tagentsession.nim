@@ -42,10 +42,10 @@
 ## setting nobody has decided on: gadget"; with `editTraces` keeping an
 ## agent's edits (`keep = true`), "the agent's edits are remembered".
 
-import std/[json, math, os, sequtils, strutils, tables]
+import std/[json, math, options, os, sequtils, strutils, tables]
 import parseSEG
 import viewSEG/core/[analysis, breakmodel, colourmaps, geometry, nif, outputtext, phasepicture,
-  plotoptions, project, state]
+  plotoptions, project, recordingkind, state, treatas]
 import viewSEG/remote/[schema, tools]
 import utils/[fixtures, waiting]
 
@@ -520,6 +520,10 @@ proc main*() =
         "templateOnly": true}})
       st.agent(%*{"kind": "close", "file": int(st.sessions[0].id)})
       st.agent(%*{"kind": "subfolders", "subfolders": true}) # for the session only
+      st.agent(%*{"kind": "treat as", "treatPath": third, "treatKind": "shot"})
+      doAssert st.treatOf(third).kind == some(rkShotGather), "the agent's kind was not taken"
+      st.agent(%*{"kind": "treat as", "treatPath": third, "treatKind": "automatic"})
+      doAssert not st.treatOf(third).isSet
       st.agent(%*{"kind": "clear survey"}) # in memory only (ignored here: none is imported)
       st.agent(%*{"kind": "new project", "projectPath": fx.dir / "the agent's job",
         "dataFolders": [agentDir]})

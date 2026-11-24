@@ -7,7 +7,7 @@
 ## goes while the folder is watched, is merged into the rows there are.
 
 import std/[algorithm, math, options, os, strutils, tables, times]
-import ../core/[filelist, recordingkind, sigtypes]
+import ../core/[filelist, recordingkind, sigtypes, treatas]
 import ./recordingwords
 
 type
@@ -106,9 +106,10 @@ func kindRankOf(e: FileEntry): int =
 func orderRankOf(e: FileEntry): int =
   ## The place of a row's order when sorted by the words shown: a file with none first, then
   ## "?", then the order's grouping and sub-sort.
-  if e.recordingOf.isNone: (if e.kindState in {ksNotKnown, ksMultiplexed}: 1 else: 0)
-  elif not e.traceOrder.isKnown: 1
-  else: 2 + 3 * ord(e.traceOrder.grouping) + ord(e.traceOrder.subSort)
+  let o = e.traceOrderOf
+  if o.isNone: (if e.kindState in {ksNotKnown, ksMultiplexed}: 1 else: 0)
+  elif not o.get.isKnown: 1
+  else: 2 + 3 * ord(o.get.grouping) + ord(o.get.subSort)
 
 func cmpEntries(a, b: FileEntry; column: FileColumn): int =
   ## By `column` alone: 0 when equal there.
@@ -459,35 +460,49 @@ proc shortDateText*(t, now: Time): string =
 func typeText*(e: FileEntry): string = $e.kind
 
 func kindText*(e: FileEntry): string =
-  ## What the Kind column shows: the kind read from the file ("Shot"); "?" for a file whose kind
-  ## is not known until it is opened (too large, or multiplexed); "" while it is not read and
-  ## for a file with none.
+  ## What the Kind column shows: the kind the file is treated as ("Shot"), with `ForcedMark`
+  ## after it when the user set it; "?" for a file whose kind is not known until it is opened
+  ## (too large, or multiplexed); "" while it is not read and for a file with none.
   let k = e.recordingOf
-  if k.isSome: kindShort(k.get)
+  if k.isSome: kindShort(k.get) & (if e.treat.kind.isSome: ForcedMark else: "")
   elif e.kindState in {ksNotKnown, ksMultiplexed}: "?"
   else: ""
 
+func autoKindWords(e: FileEntry): string =
+  ## What the file says of its kind, for the tooltip of one the user set.
+  let k = e.autoRecordingOf
+  if k.isSome: kindTitle(k.get)
+  elif e.kindState == ksUnread: "not read yet"
+  else: "not known"
+
 func kindTip*(e: FileEntry): string =
   ## What the tooltip of a row says of its kind: the full words ("Shot gather"), or why it is
-  ## not known; "" while it is not read and for a file with none.
+  ## not known; for a kind the user set, that and what the file says; "" while it is not read
+  ## and for a file with none.
   let k = e.recordingOf
-  if k.isSome: kindTitle(k.get)
+  if e.treat.kind.isSome: kindTitle(k.get) & ". " & ForcedWords & autoKindWords(e) & "."
+  elif k.isSome: kindTitle(k.get)
   elif e.kindState == ksNotKnown: NotKnownWords
   elif e.kindState == ksMultiplexed: MultiplexedWords
   else: ""
 
 func orderText*(e: FileEntry): string =
-  ## What the Order column shows: how the traces are written ("Station", "Flag · time"); "?"
-  ## for a file whose order is not known (or only once it is opened); "" while it is not read
-  ## and for a file with none.
-  if e.recordingOf.isSome: orderShort(e.traceOrder)
+  ## What the Order column shows: how the traces are written ("Station", "Flag · time"), with
+  ## `ForcedMark` after it when the user set a part of it; "?" for a file whose order is not
+  ## known (or only once it is opened); "" while it is not read and for a file with none.
+  let o = e.traceOrderOf
+  if o.isSome: orderShort(o.get) & (if e.treat.orderSet: ForcedMark else: "")
   elif e.kindState in {ksNotKnown, ksMultiplexed}: "?"
   else: ""
 
 func orderTip*(e: FileEntry): string =
-  ## What the tooltip of a row says of its order, or why it is not known; "" while it is not
-  ## read and for a file with none.
-  if e.recordingOf.isSome: orderTitle(e.traceOrder)
+  ## What the tooltip of a row says of its order, or why it is not known; for an order the
+  ## user set, that and what the file says; "" while it is not read and for a file with none.
+  let o = e.traceOrderOf
+  if e.treat.orderSet:
+    let auto = if e.kindState == ksKnown: orderTitle(e.traceOrder) else: "not known"
+    orderTitle(o.get) & " " & ForcedWords & auto
+  elif o.isSome: orderTitle(o.get)
   elif e.kindState == ksNotKnown: NotKnownWords
   elif e.kindState == ksMultiplexed: MultiplexedWords
   else: ""

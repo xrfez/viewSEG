@@ -24,9 +24,9 @@
 ## incomplete. "Follow the latest", at the foot, shows each new file once it
 ## is whole; off, the plot stays on the file the user chose.
 
-import std/[algorithm, os, strutils, tables, times]
+import std/[algorithm, options, os, strutils, tables, times]
 import imguin/cimgui
-import ../../core/[geometry, recordingkind, state, traceorder]
+import ../../core/[geometry, recordingkind, state, traceorder, treatas]
 import ../../view/[filetable, recordingwords, theme]
 import chrome, focus, icons, listkeys, menus, style
 
@@ -237,6 +237,35 @@ proc drawSweepFilters(ui: var FileListUi; t: Theme; marks: var Marks) =
   tip("Show only this vibrator's sweeps (the vibrator ID in the .dat's QC record; a .vib " &
     "takes it from the .dat of its sweep)")
 
+proc treatMenu(e: FileEntry; commands: var seq[Command]; marks: var Marks) =
+  ## The menu of a seismic file's row: what to treat it as (its kind of recording, the grouping
+  ## and the sort of its traces), remembered for the file. A tick shows what the user forced;
+  ## "Automatic" gives it back to what is told from the file.
+  proc say(commands: var seq[Command]; kind, grouping, sub: string) =
+    commands.add Command(kind: ckTreatAs, treatPath: e.path, treatKind: kind,
+      treatGrouping: grouping, treatSubSort: sub)
+  proc item(marks: var Marks; words: string; ticked: bool): bool =
+    result = igMenuItem_Bool(words.cstring, nil, ticked, true)
+    marks.mark("files.menu.item " & words)
+  let kinds = igBeginMenu("Treat as", true)
+  marks.mark("files.menu.treat")
+  if kinds:
+    if marks.item("Automatic", e.treat.kind.isNone): commands.say("automatic", "", "")
+    for k in RecordingKind:
+      if marks.item(kindTitle(k), e.treat.kind == some(k)): commands.say(kindName(k), "", "")
+    igEndMenu()
+  let order = igBeginMenu("Trace order", true)
+  marks.mark("files.menu.order")
+  if order:
+    if marks.item("Automatic", not e.treat.orderSet): commands.say("", "automatic", "automatic")
+    igSeparatorText("Grouping")
+    for (g, words) in [(tgNone, "None"), (tgByFlag, "By flag"), (tgByComponent, "By component")]:
+      if marks.item(words, e.treat.grouping == some(g)): commands.say("", groupingName(g), "")
+    igSeparatorText("Sorted")
+    for (v, words) in [(tsByStation, "By station"), (tsByTime, "By time")]:
+      if marks.item(words, e.treat.subSort == some(v)): commands.say("", "", subSortName(v))
+    igEndMenu()
+
 proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: var Marks;
     res: var FileListOutput) =
   ## The table, sorted as its headers say, with only the rows in view drawn.
@@ -270,11 +299,11 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   proc textWidth(s: string): float32 = igCalcTextSize(s.cstring, nil, false, -1).x
   # (the widest word the column can show, "?" and its title included, and the sort arrow)
   var kindWidth = max(textWidth("?"), textWidth("Kind")) + arrow
-  for k in RecordingKind: kindWidth = max(kindWidth, textWidth(kindShort(k)) + arrow)
+  for k in RecordingKind: kindWidth = max(kindWidth, textWidth(kindShort(k) & ForcedMark) + arrow)
   var orderWidth = max(textWidth("?"), textWidth("Order")) + arrow
   for g in TraceGrouping:
     for o in TraceSubSort: orderWidth = max(orderWidth,
-      textWidth(orderShort(TraceOrder(grouping: g, subSort: o))) + arrow)
+      textWidth(orderShort(TraceOrder(grouping: g, subSort: o)) & ForcedMark) + arrow)
   let cell = 2 * igGetStyle().CellPadding.x + 1 # its padding and the border between columns
   var needed = textWidth("0".repeat(NameChars)) + cell
   if tree: needed += textWidth("0".repeat(NameChars div 2)) + cell
@@ -363,6 +392,11 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
         res.commands.add(if survey: Command(kind: ckLoadSurvey, paths: @[e.path])
           else: Command(kind: ckShowFile, panel: MainPanel, path: e.path))
       popRowTabStop()
+      if e.kind.isSeismic and igBeginPopupContextItem("##filemenu",
+          ImGui_PopupFlags_MouseButtonRight.cint):
+        marks.mark("files.menu " & e.name)
+        treatMenu(e, res.commands, marks)
+        igEndPopup()
       ui.keys.afterRow()
       igPopID()
       marks.markRow("files.row " & e.name)

@@ -26,6 +26,8 @@ type
     startMs*: float64  ## Start relative to the shot time, ms; may be negative.
     align*: SliceAlign
     standard*: CutStandard
+    treatKind*: Option[RecordingKind]
+      ## the kind the user forced for the file, filled by the command from what the state holds
 
   CutShots* = object
     ## The timed shots of a log, in time order.
@@ -446,6 +448,8 @@ func cutRefusal*(f: RecordingFacts): string =
   ## channels of a station cannot be told apart safely, that; for facts that are not
   ## `ready` that there is no live trace with a start time; "" when the cut may go on.
   if not f.ready: return NoLiveTraceWords
+  let forced = if f.forced: " You set this kind: right-click the file in Files to change it."
+               else: ""
   case f.kind
   of rkReceiverContinuous:
     if f.unevenChannels > 0:
@@ -455,8 +459,9 @@ func cutRefusal*(f: RecordingFacts): string =
     result = "This file is a shot gather (the receiver changes from trace to trace), not a " &
       "continuous receiver gather."
     if f.slicedWhy == swOffStep: result.add " " & offStepWords(f)
+    result.add forced
   of rkReceiverSliced:
-    result = "This file is a time-sliced receiver gather, not a continuous one."
+    result = "This file is a time-sliced receiver gather, not a continuous one." & forced
     case f.slicedWhy
     of swOffStep: result.add " " & offStepWords(f)
     of swNoStep:

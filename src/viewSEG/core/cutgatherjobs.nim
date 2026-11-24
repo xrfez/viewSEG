@@ -94,6 +94,9 @@ type
     mismatches*: seq[string]
       ## the first few mismatching overlaps, named by source trace (from 1)
     segmentsFromHeaders*: bool ## the segments' start times were read from the trace headers
+    endToEnd*: bool
+      ## the file's start times could not be read, so each receiver's traces were taken to follow
+      ## one another end to end from the time of its first (the user said the file is continuous)
     segmentsWithoutTime*: int ## traces whose header had none (they are left out)
     skips*, missingSegments*: int ## places where whole segments were not recorded, and how many
     timingIssues*: int ## segments off the previous segment's sample grid
@@ -298,6 +301,13 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
       " between traces " & (if res.overlapsOutside == 1: "lies" else: "lie") &
       " outside every record and " &
       (if res.overlapsOutside == 1: "was" else: "were") & " not needed."
+  if res.endToEnd:
+    result.add "The start times of the traces could not be read, so each receiver's traces " &
+      "were taken to follow one another end to end from the time of its first trace, as you " &
+      "set the file to be continuous. If the recorder paused or lost traces, the times are " &
+      "wrong: a vendor header map that names the start time would give the real ones."
+  if res.segmentsFromHeaders:
+    result.add "Segment times were read from the trace headers."
   if res.segmentsFromHeaders:
     result.add "Segment times were read from the trace headers."
     if res.segmentsWithoutTime > 0:
@@ -362,8 +372,19 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       # without a start time, so the cut is looked for here, before the plan is judged.
       if file[].cutShort: abort(sink, dest, part, false, cutWhy(file[]), false)
       let clock = recording.clock
-      let streams = recording.streams
-      let facts = describeRecording(recording, AllStarts)
+      let auto = describeRecording(recording, AllStarts)
+      var facts = auto
+      if opts.treatKind.isSome:
+        facts.kind = opts.treatKind.get
+        facts.forced = true
+        if facts.kind == rkReceiverContinuous: facts.slicedWhy = swNone
+      # forced continuous where the start times could not be read: the traces follow one
+      # another end to end from the first one's time
+      let endToEnd = facts.forced and facts.kind == rkReceiverContinuous and
+        auto.kind != rkReceiverContinuous and auto.slicedWhy == swSameStart
+      let streams =
+        if endToEnd: initSliceStreams(recording.meta, endToEndTimes(recording), recording.receivers)
+        else: recording.streams
       let refusal = cutRefusal(facts)
       if refusal.len > 0: abort(sink, dest, part, false, refusal, false)
       let window = SliceWindow(startMs: opts.startMs, lengthMs: opts.recordMs)
@@ -389,7 +410,8 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         else: keysBytes
       var res = CutResult(path: dest, shotsDropped: shots.dropped,
         duplicateTimes: shots.duplicateTimes,
-        segmentsFromHeaders: clock.fromHeaders, segmentsWithoutTime: clock.leftOut,
+        segmentsFromHeaders: clock.fromHeaders and not endToEnd, endToEnd: endToEnd,
+        segmentsWithoutTime: clock.leftOut,
         skips: facts.skips, missingSegments: facts.missingSegments,
         recordsFromFileNumbers: numbered.fromFileNumber,
         pointIndexOutOfRange: shots.pointIndexOutOfRange, components: comps,

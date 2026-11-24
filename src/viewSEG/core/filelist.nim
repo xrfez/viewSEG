@@ -22,7 +22,7 @@
 ## are one pass over the entries, and the table makes its rows again.
 
 import std/[algorithm, monotimes, options, os, strutils, tables, times]
-import filekinds, jobs, recordingkind, sigtypes
+import filekinds, jobs, recordingkind, sigtypes, traceorder, treatas
 
 export filekinds
 
@@ -66,6 +66,7 @@ type
     state*: KindState    ## `ksNone`, `ksNotKnown`, `ksMultiplexed` or `ksKnown`
     kind*: RecordingKind ## when `state` is `ksKnown`
     order*: TraceOrder   ## how its traces are written, when `state` is `ksKnown`
+    treat*: TreatAs      ## what the user forced for the file (`core/filememory`), whatever `state`
 
   FileEntry* = object
     ## One file of the list: a seismic file, or a survey file.
@@ -85,6 +86,7 @@ type
     kindState*: KindState
     recording*: RecordingKind ## the kind read from the file, when `kindState` is `ksKnown`
     traceOrder*: TraceOrder ## the order of its traces, read with the kind
+    treat*: TreatAs ## what the user forced for the file: kind and order shown instead
     steadySince*: MonoTime
       ## when the watch first saw the file as it is now (`fs.now`): a stopped `.dat` is followed
       ## once it has stayed so for `StoppedShowAfter`; unset for a file not being watched
@@ -148,11 +150,24 @@ type
       ## the newest changes of `entries`, oldest first, at most `MaxChanges`:
       ## the last one made `entriesRev`
 
-func recordingOf*(e: FileEntry): Option[RecordingKind] =
-  ## The kind of recording `e` is, as the Files panel shows it: none while it is not read, for a
-  ## file that is not seismic and for one without a kind. Every reader of the kind goes
-  ## through here.
+func autoRecordingOf*(e: FileEntry): Option[RecordingKind] =
+  ## The kind of recording told from the file itself: none while it is not read, for a file
+  ## that is not seismic and for one without a kind.
   if e.kindState == ksKnown: some(e.recording) else: none(RecordingKind)
+
+func recordingOf*(e: FileEntry): Option[RecordingKind] =
+  ## The kind of recording `e` is treated as, as the Files panel shows it: the one the user
+  ## forced, else the one told from the file (`autoRecordingOf`); none while it is not read,
+  ## for a file that is not seismic and for one without a kind. Every reader of the kind goes
+  ## through here.
+  if e.treat.kind.isSome: e.treat.kind else: e.autoRecordingOf
+
+func traceOrderOf*(e: FileEntry): Option[TraceOrder] =
+  ## The order of the traces `e` is treated as: what the file says with the parts the user
+  ## forced put over it; none while it is not read and for a file without one.
+  if e.kindState == ksKnown: some(applied(e.traceOrder, e.treat))
+  elif e.treat.orderSet: some(applied(TraceOrder(), e.treat))
+  else: none(TraceOrder)
 
 func subfoldersNote*(f: FileList): string =
   ## What an empty listing of a folder that has only subfolders says, so the empty
