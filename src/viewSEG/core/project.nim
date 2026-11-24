@@ -20,7 +20,8 @@
 
 import std/[options, os, strutils, times]
 import parseSEG
-import breakmodel, displaypresets, filesystem, join, nif, outputnames, outputtext, processing, shotlog,
+import breakmodel, displaypresets, filesystem, join, nif, outputbinary, outputnames, outputtext,
+    processing, shotlog,
   stationmoves, vendormaps, vibprofile
 
 const
@@ -42,6 +43,7 @@ const
   MaxShotLogName* = 120                  ## a shot log's name, at most, in characters
   MaxShotLogSkip* = 1_000_000            ## lines a stored map skips, at most
   MaxOutputTexts* = 32                   ## text header templates a project keeps, at most
+  MaxOutputBinaries* = 32                ## binary header sets a project keeps, at most
   MaxOutputPatterns* = 32                ## name patterns a project keeps, at most
 
 type
@@ -154,6 +156,16 @@ type
       ## children of each template this version does not know, written back
     outputTextsLater*: seq[NifNode]
       ## children of `(outputTexts)` this version does not know, written back
+    outputBinaries*: seq[OutputBinary]
+      ## the SEG-Y binary header sets of this project
+    hasOutputBinaries*: bool
+      ## `outputBinaries` were set in the project
+    outputBinary*: string
+      ## the set used, by its name; "" writes no binary header values
+    outputBinaryLater*: seq[seq[NifNode]]
+      ## children of each set this version does not know, written back
+    outputBinariesLater*: seq[NifNode]
+      ## children of `(outputBinaries)` this version does not know, written back
     breakModel*: BreakModel        ## the first-break overlay's model in the project
     hasBreakModel*: bool           ## `breakModel` was set in the project (else the user's)
     referenceId*: string

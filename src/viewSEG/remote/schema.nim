@@ -48,7 +48,7 @@ const
     ckPrepare, ckOpenPair, ckInspect, ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum,
     ckSpectrumPanel, ckAuxWindow,
     ckSpectrumCursor, ckStepTrace, ckDisplayPreset, ckNamePattern, ckOutputText,
-    ckTheme,
+    ckOutputBinary, ckTheme,
     ckOpenPlot, ckPlotDisplay,
     ckPlotCursor, ckClosePlot, ckNewProject, ckOpenProject,
     ckCloseProject, ckReopen, ckListReferences, ckReloadVendors, ckVendorMap, ckStoreReference,
@@ -76,9 +76,9 @@ const
     ## and write nothing; how an agent shows them is for the session only. So
     ## are the display presets an agent saves, renames or deletes, and the
     ## theme it picks (`ckTheme`: the theme it draws in, not the user's
-    ## preferences as a whole). A file-name pattern (`ckNamePattern`) and a text
-    ## header template (`ckOutputText`) are kept in the project open, which
-    ## must be writable. An agent may make, open
+    ## preferences as a whole). A file-name pattern (`ckNamePattern`), a text
+    ## header template (`ckOutputText`) and a binary header set (`ckOutputBinary`)
+    ## are kept in the project open, which must be writable. An agent may make, open
     ## and close a project (`ckNewProject` writes a new folder only, never
     ## data); its
     ## trace edits and survey imports are not written into it. A file opened

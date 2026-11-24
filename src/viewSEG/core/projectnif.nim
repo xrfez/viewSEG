@@ -77,6 +77,16 @@
 ## `(outputTexts)`. A chosen name that names no template reads as none, and
 ## is said.
 ##
+## A SEG-Y binary file header set is `(outputBinaries (binary "Survey" (field
+## "jobId" "7") (field "sweepLength" "10000")))` and `(outputBinary "Survey")`,
+## the name in use; absent means no binary header value is set. A `(field
+## "name" "value")` is one field of the library's binary header, its value
+## a number as typed (`core/outputbinary`). At most `MaxOutputBinaries` sets.
+## A set given twice (without regard to case) or one `binaryProblem` refuses
+## is said and left out, the rest kept. A child this version does not know is
+## kept and written back; so is one of `(outputBinaries)`. A chosen name that
+## names no set reads as none, and is said.
+##
 ## A station moved during a deployment is
 ## `(stationMoves (move (line ...) (point ...) (index ...) (x ...) (y ...)))`.
 ## `fromTime` (the same absolute time as `TraceKeys.time`) and `elev` are
@@ -86,7 +96,8 @@
 
 import std/[math, options, sequtils, strutils, times, unicode]
 import parseSEG
-import analysis, breakmodel, identity, join, nif, outputnames, outputtext, processing, project, settings,
+import analysis, breakmodel, identity, join, nif, outputbinary, outputnames, outputtext, processing,
+    project, settings,
   settingsnif, shotlog, stationmoves, vendormaps, vibprofile
 
 const
@@ -289,6 +300,28 @@ proc writeOutputText(w: var NifWriter; t: OutputText; later: openArray[NifNode])
   for n in later: w.add n
   w.close
 
+proc writeOutputBinary(w: var NifWriter; b: OutputBinary; later: openArray[NifNode]) =
+  w.open "binary"
+  w.add b.name
+  for e in b.entries:
+    w.open "field"
+    w.add e.field
+    w.add e.value
+    w.close
+  for n in later: w.add n
+  w.close
+
+proc writeOutputBinaries(w: var NifWriter; d: ProjectDoc) =
+  ## Binary header sets in an `(outputBinaries ...)` tree. A child this
+  ## version does not know is written back.
+  w.open "outputBinaries"
+  var none: seq[NifNode] = @[]
+  for i, b in d.outputBinaries:
+    if i < d.outputBinaryLater.len: w.writeOutputBinary(b, d.outputBinaryLater[i])
+    else: w.writeOutputBinary(b, none)
+  for n in d.outputBinariesLater: w.add n
+  w.close
+
 proc writeOutputTexts(w: var NifWriter; d: ProjectDoc) =
   ## Text header templates in an `(outputTexts ...)` tree; an encoding only
   ## when it is not EBCDIC. A child this version does not know is written back.
@@ -383,6 +416,8 @@ proc projectDocument*(d: ProjectDoc): string =
   if d.outputPattern.len > 0: w.value("outputPattern", d.outputPattern)
   if d.hasOutputTexts: w.writeOutputTexts(d)
   if d.outputText.len > 0: w.value("outputText", d.outputText)
+  if d.hasOutputBinaries: w.writeOutputBinaries(d)
+  if d.outputBinary.len > 0: w.value("outputBinary", d.outputBinary)
   if d.hasBreakModel: w.writeBreakModel(d.breakModel)
   if d.shotLogs.len > 0 or d.shotLogsLater.len > 0:
     w.open "shotLogs"
@@ -1094,6 +1129,95 @@ proc outputTexts(r: var Reading; n: NifNode; d: var ProjectDoc) =
   d.outputTextLater = later
   d.outputTextsLater = rest
 
+type BinaryRead = object
+  ok: bool
+  set: OutputBinary
+  later: seq[NifNode]
+  why: string
+
+func binaryLeftOut(why, name: string): string =
+  ## `why`, naming the set `name` when there is one, and saying it is left out.
+  var body = why
+  if name.len > 0:
+    body = "the binary header set \"" & name & "\": " & body
+  if body.endsWith('.'): body.setLen(body.len - 1)
+  body & "; it is left out."
+
+proc readBinary(n: NifNode): BinaryRead =
+  ## One `(binary "name" (field "name" "value") ...)`. `ok` is false, and
+  ## `why` says why, when it cannot be kept.
+  result.later = @[]
+  result.set = OutputBinary(entries: @[])
+  if n.kids.len == 0 or n.kids[0].kind != nkString:
+    result.why = "A binary header set needs a name."
+    return
+  let raw = n.kids[0].text
+  if raw.len > MaxBinaryName * 4 + 64:
+    result.why = "A binary header set's name is at most " & $MaxBinaryName &
+      " characters long."
+    return
+  result.set.name = strip(raw)
+  for i in 1 ..< n.kids.len:
+    let k = n.kids[i]
+    if k.isTree("field"):
+      if k.kids.len < 2 or k.kids[0].kind != nkString or k.kids[1].kind != nkString:
+        result.why = "A (field) of a binary header set needs a name and a value, both strings."
+        return
+      if result.set.entries.len >= BinaryFields.len:
+        result.why = "A binary header set has at most " & $BinaryFields.len & " fields."
+        return
+      result.set.entries.add BinaryEntry(field: k.kids[0].text, value: k.kids[1].text)
+    else:
+      result.later.add k
+  let why = binaryProblem(result.set)
+  if why.len > 0:
+    result.why = why
+    return
+  result.ok = true
+
+proc outputBinaries(r: var Reading; n: NifNode; d: var ProjectDoc) =
+  ## `(outputBinaries (binary "name" (field "name" "value") ...) ...)`. A set
+  ## that is not one, or whose name is taken, is left out and said, as are
+  ## those past `MaxOutputBinaries`. A child this version does not know is kept.
+  d.hasOutputBinaries = true
+  var got: seq[OutputBinary] = @[]
+  var later: seq[seq[NifNode]] = @[]
+  var rest: seq[NifNode] = @[]
+  var over = 0
+  for c in n.kids:
+    if c.isTree("binary"):
+      if got.len >= MaxOutputBinaries: inc over
+      else:
+        let read = readBinary(c)
+        if not read.ok: r.problem(c, binaryLeftOut(read.why, read.set.name))
+        elif got.anyIt(sameLabel(it.name, read.set.name)):
+          r.problem(c, "the binary header set \"" & read.set.name &
+            "\" is given twice; the first counts.")
+        else:
+          got.add read.set
+          later.add read.later
+    elif c.kind == nkTree: rest.add c
+    else: r.problem(c, "(outputBinaries) holds sets")
+  if over > 0:
+    r.problem(n, "At most " & $MaxOutputBinaries & " binary header sets are kept; the " &
+      $over & " after the first " & $MaxOutputBinaries & " are left out.")
+  d.outputBinaries = got
+  d.outputBinaryLater = later
+  d.outputBinariesLater = rest
+
+proc settleBinaryChoice(r: var Reading; d: var ProjectDoc; choice: NifNode; saw: bool) =
+  ## A chosen name that names no kept set reads as none, with a sentence.
+  if not saw: return
+  let label = strip(d.outputBinary)
+  d.outputBinary = ""
+  if label.len == 0: return
+  for b in d.outputBinaries:
+    if sameLabel(b.name, label):
+      d.outputBinary = b.name
+      return
+  r.problem(choice, "the binary header set \"" & label &
+    "\" is not in this project; no binary header value is set")
+
 proc settleTextChoice(r: var Reading; d: var ProjectDoc; choice: NifNode; saw: bool) =
   ## A chosen name that names no kept template reads as none, with a sentence.
   if not saw: return
@@ -1133,6 +1257,8 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
   var sawChoice = false
   var textChoiceNode = NifNode(kind: nkTree, tag: "outputText")
   var sawTextChoice = false
+  var binaryChoiceNode = NifNode(kind: nkTree, tag: "outputBinary")
+  var sawBinaryChoice = false
   var root = -1
   for i, n in doc:
     if n.kind == nkTree and n.tag.startsWith("."): discard
@@ -1182,6 +1308,15 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
           sawTextChoice = true
         else:
           r.problem(c, "(outputText) needs a name that is not too long")
+      of "outputBinaries": r.outputBinaries(c, result)
+      of "outputBinary":
+        if c.kids.len >= 1 and c.kids[0].kind == nkString and
+            c.kids[0].text.len <= MaxBinaryName * 4 + 64:
+          result.outputBinary = c.kids[0].text
+          binaryChoiceNode = c
+          sawBinaryChoice = true
+        else:
+          r.problem(c, "(outputBinary) needs a name that is not too long")
       of "breakModel":
         result.breakModel = readBreakModel(c, name, BreakModel(), r.problems)
         result.hasBreakModel = true
@@ -1209,6 +1344,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
       else: result.later.add c
   r.settleChoice(result, choiceNode, sawChoice)
   r.settleTextChoice(result, textChoiceNode, sawTextChoice)
+  r.settleBinaryChoice(result, binaryChoiceNode, sawBinaryChoice)
   if result.version == 0:
     r.problem(doc[root], "(project) gives no (version); read as version " & $ProjectVersion)
     result.version = ProjectVersion

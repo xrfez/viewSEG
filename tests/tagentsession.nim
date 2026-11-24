@@ -562,6 +562,21 @@ proc main*() =
       doAssert st.project.doc.outputTexts.len == 1
       st.agent(%*{"kind": "output text", "textAction": "delete", "textTemplate": {"name": "AGENT"}})
       doAssert st.project.doc.outputTexts.len == 0 and st.project.doc.outputText == ""
+      st.agent(%*{"kind": "output binary", "binaryAction": "save", "binarySet":
+        {"name": "Agent", "entries": [{"field": "jobId", "value": "7"},
+          {"field": "sweepLength", "value": "10000"}]}})
+      doAssert st.project.doc.outputBinaries.len == 1 and
+        st.project.doc.outputBinaries[0].entries.len == 2 and
+        st.project.doc.outputBinaries[0].entries[0].field == "jobId"
+      st.agent(%*{"kind": "output binary", "binaryAction": "choose", "binarySet":
+        {"name": "agent"}})
+      doAssert st.project.doc.outputBinary == "Agent"
+      st.agent(%*{"kind": "output binary", "binaryAction": "save", "binarySet":
+        {"name": "Bad", "entries": [{"field": "sampleInterval", "value": "1"}]}})
+      doAssert st.project.doc.outputBinaries.len == 1 # refused as the window's command is
+      st.agent(%*{"kind": "output binary", "binaryAction": "delete", "binarySet":
+        {"name": "AGENT"}})
+      doAssert st.project.doc.outputBinaries.len == 0 and st.project.doc.outputBinary == ""
       st.agent(%*{"kind": "close project"})
       st.agent(%*{"kind": "reload vendor maps"})
       st.agent(%*{"kind": "open pair"}) # (the panel shows no signature file: ignored, in words)

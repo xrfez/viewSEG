@@ -115,7 +115,7 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
       join, layouts, leapfile, log,
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif,
-    outputnames, outputtext, reader,
+    outputbinary, outputnames, outputtext, reader,
   recordingkind, recordqc, referencejobs, references, selection, session, settings,
       shotfollowtarget, shotlog,
   shotlogjobs, shotlogsps, shotspsjobs,
@@ -172,6 +172,15 @@ type
       ## forget the template named
     otaChoose = "choose"
       ## use the template named; an empty name is the writer's own text
+
+  OutputBinaryAction* = enum
+    ## What an output-binary command does.
+    obaSave = "save"
+      ## add the set, or replace the one with the same name, case ignored
+    obaDelete = "delete"
+      ## forget the set named
+    obaChoose = "choose"
+      ## use the set named; an empty name sets no binary header value
 
 type
   CommandKind* = enum
@@ -262,6 +271,9 @@ type
     ckOutputText = "output text"
       ## save a SEG-Y text header template into the project, delete one by its
       ## name, or choose one (an empty name is the writer's own text)
+    ckOutputBinary = "output binary"
+      ## save a SEG-Y binary header set into the project, delete one by its
+      ## name, or choose one (an empty name sets no binary header value)
     ckTheme = "theme" ## the theme the program is drawn in, as View > Theme picks it
     ckNewProject = "new project"
       ## make a project folder (Project > New project) and open it: the session's files stay open
@@ -700,6 +712,13 @@ type
       textTemplate*: OutputText
         ## ckOutputText: the template to save; for delete and choose, `name`
         ## is the name (empty chooses the writer's own text)
+    of ckOutputBinary:
+      binaryAction*: OutputBinaryAction
+        ## ckOutputBinary: save (add, or replace the one with the same name,
+        ## case ignored), delete by name, or choose by name
+      binarySet*: OutputBinary
+        ## ckOutputBinary: the set to save; for delete and choose, `name` is
+        ## the name (empty chooses no binary header value)
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -10610,6 +10629,94 @@ proc outputText(state: var AppState; cmd: Command) =
       state.project.doc.outputText = stored
       state.projectChanged()
 
+const
+  NeedProjectBinaries* = "Open or make a project to keep binary header sets."
+    ## said when a binary header set is saved, deleted or chosen with no project open
+
+func outputBinaryCap*(): string =
+  ## Why one more binary header set cannot be kept.
+  "at most " & $MaxOutputBinaries & " binary header sets are kept; delete one first"
+
+func noOutputBinary*(name: string): string =
+  ## Why a name that names no set cannot be deleted or chosen.
+  "no binary header set is named \"" & name & "\""
+
+func findBinary(sets: openArray[OutputBinary]; name: string): int =
+  # The set whose name matches `name`, spaces stripped, case ignored.
+  # -1 when `name` is empty or names nothing.
+  let want = strip(name)
+  if want.len == 0: return -1
+  for i, b in sets:
+    if cmpRunesIgnoreCase(b.name, want) == 0: return i
+  -1
+
+proc outputBinary(state: var AppState; cmd: Command) =
+  ## Save, delete or choose a binary header set in the project open, as
+  ## `outputText` does for a text header template: the project is the only
+  ## copy; what cannot be done is said and the project is not marked changed.
+  if not state.inProject:
+    state.log.add(sevWarning, "commands", NeedProjectBinaries)
+    return
+  if state.project.readOnly:
+    state.log.add(sevWarning, "commands", ReadOnlyPatterns)
+    return
+  template say(sentence: string) =
+    state.log.add(sevWarning, "commands", sentence)
+  case cmd.binaryAction
+  of obaSave:
+    var b = cmd.binarySet
+    b.name = strip(b.name)
+    let why = binaryProblem(b)
+    if why.len > 0:
+      say(why)
+      return
+    let i = findBinary(state.project.doc.outputBinaries, b.name)
+    if i < 0 and state.project.doc.outputBinaries.len >= MaxOutputBinaries:
+      say(outputBinaryCap())
+      return
+    if i >= 0:
+      let was = state.project.doc.outputBinaries[i].name
+      state.project.doc.outputBinaries[i] = b
+      if cmpRunesIgnoreCase(state.project.doc.outputBinary, was) == 0:
+        state.project.doc.outputBinary = b.name
+    else:
+      state.project.doc.outputBinaries.add b
+      state.project.doc.outputBinaryLater.setLen(state.project.doc.outputBinaries.len)
+    state.project.doc.hasOutputBinaries = true
+    state.projectChanged()
+  of obaDelete:
+    let label = strip(cmd.binarySet.name)
+    if label.len == 0:
+      say(binaryProblem(cmd.binarySet))
+      return
+    let i = findBinary(state.project.doc.outputBinaries, label)
+    if i < 0:
+      say(noOutputBinary(label))
+      return
+    let was = state.project.doc.outputBinaries[i].name
+    state.project.doc.outputBinaries.delete(i)
+    if i < state.project.doc.outputBinaryLater.len:
+      state.project.doc.outputBinaryLater.delete(i)
+    if cmpRunesIgnoreCase(state.project.doc.outputBinary, was) == 0:
+      state.project.doc.outputBinary = ""
+    state.project.doc.hasOutputBinaries = true
+    state.projectChanged()
+  of obaChoose:
+    let label = strip(cmd.binarySet.name)
+    if label.len == 0:
+      if state.project.doc.outputBinary.len > 0:
+        state.project.doc.outputBinary = ""
+        state.projectChanged()
+      return
+    let i = findBinary(state.project.doc.outputBinaries, label)
+    if i < 0:
+      say(noOutputBinary(label))
+      return
+    let stored = state.project.doc.outputBinaries[i].name
+    if state.project.doc.outputBinary != stored:
+      state.project.doc.outputBinary = stored
+      state.projectChanged()
+
 proc displayPreset(state: var AppState; cmd: Command) =
   ## A named display preset (`core/displaypresets`) applied to a panel, or
   ## saved, renamed or deleted: in the settings in effect, and in those kept
@@ -11926,6 +12033,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckDisplayPreset: state.displayPreset(cmd)
   of ckNamePattern: state.namePattern(cmd)
   of ckOutputText: state.outputText(cmd)
+  of ckOutputBinary: state.outputBinary(cmd)
   of ckReopen:
     if cmd.reopenPath.len == 0: state.ignore(cmd, "no file was named")
     elif cmd.origin == coAgent and cmd.openChoice.demuxDir.len > 0:
