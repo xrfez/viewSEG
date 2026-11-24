@@ -79,14 +79,20 @@ proc main*() =
     # Latin-1 as UTF-8 is one character a column; EBCDIC holds all of Latin-1.
     doAssert textProblem(tx("caf\xc3\xa9 {stem}")) == ""
     let greek = textProblem(tx("C 1 \xce\xb1"))
-    doAssert greek == "Textual header line 1 column 5 holds a character the header cannot hold.",
+    doAssert greek == "Line 1 column 5 holds a character the header cannot hold.",
       greek
-    doAssert textProblem(tx("\xff")) == "Textual header line 1 is not text (not UTF-8)."
+    doAssert textProblem(tx("\xff")) == "Line 1 is not text (not UTF-8)."
     # ASCII: the library's reason, with its column.
     let acc = textProblem(ascii("caf\xc3\xa9"))
-    doAssert acc == "Textual header line 1 column 4 holds a byte ascii cannot encode.", acc
+    doAssert acc == "Line 1 column 4 holds a character ASCII cannot hold.", acc
     let tab = textProblem(ascii("a\tb"))
-    doAssert tab == "Textual header line 1 column 2 holds a byte ascii cannot encode.", tab
+    doAssert tab == "Line 1 column 2 holds a character the header cannot hold.", tab
+    # A control character is refused in either character set.
+    for bad in ["a\tb", "a\0b", "a\x7fb", "a\xc2\x85b", "a\xc2\x9fb"]:
+      let col = textProblem(tx(bad))
+      doAssert col == "Line 1 column 2 holds a character the header cannot hold.", col
+      doAssert textProblem(ascii(bad)) == col, "ASCII: " & textProblem(ascii(bad))
+    doAssert textProblem(tx("a\xc2\xa0b")) == "", "U+00A0 is not a control character"
     doAssert textProblem(ascii("a {{ b ~")) == ""
     doAssert textProblem(tx("{{ and }}", "a~b")) == ""
     # 80 characters of two bytes each fit.
@@ -136,9 +142,9 @@ proc main*() =
     var w = values()
     w.values[npStem] = NameValue(state: nvText, text: "\xce\xb1")
     doAssert renderProblem(tx("ab {stem}"), w) ==
-      "Textual header line 1 column 4 holds a character the header cannot hold."
+      "Line 1 column 4 holds a character the header cannot hold."
     doAssert renderProblem(OutputText(name: "a", encoding: teAscii, lines: @["{stem}"]), v) ==
-      "Textual header line 1 column 4 holds a byte ascii cannot encode."
+      "Line 1 column 4 holds a character ASCII cannot hold."
 
   echo "toutputtext: ok"
 

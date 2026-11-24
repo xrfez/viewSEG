@@ -46,7 +46,7 @@ type
   TextValues* = object
     ## What one file gives the tokens. `values` is what `nameValuesOf` makes;
     ## a value the file's traces do not share is left out unless `firstLast`
-    ## gives the first and the last, and the token is then `first-last`.
+    ## gives the lowest and the highest, and the token is then `lowest-highest`.
     values*: NameValues
     firstLast*: array[NamePartKind, tuple[first, last: NameValue]]
     source*: string ## the source file's name or path
@@ -65,7 +65,7 @@ const TextTokens*: seq[TextTokenInfo] = @[
     kind: ttDate),
   TextTokenInfo(word: "clock", about: "the time of writing, UTC, as 10:15:00",
     kind: ttClock),
-  part("record", "record number (FFID, or the SEG-D file number); first-last when it differs",
+  part("record", "record number (FFID, or the SEG-D file number); lowest-highest when it differs",
     npRecord),
   part("srcLine", "source line", npSrcLine),
   part("srcPoint", "source point", npSrcPoint),
@@ -162,27 +162,40 @@ func nameProblem(name: string): string =
     if c in {'\0' .. '\31', '\127'}: return "An output text's name holds no control characters."
   ""
 
+func columnOf(message: string): string =
+  ## The number after "column" in the library's sentence.
+  let at = message.find("column ")
+  if at < 0: return "1"
+  var i = at + 7
+  while i < message.len and message[i] in Digits:
+    result.add message[i]
+    inc i
+
 func charProblem(lines: openArray[string]; encoding: TextEncoding): string =
   ## Why a character of `lines` cannot be written; "" when all can. The
   ## lines are UTF-8 and the header takes one Latin-1 byte a character: a
-  ## character past U+00FF, or bytes that are not UTF-8, are refused here;
-  ## the library's own check (`checkTextHeader`) then gives the reason for
-  ## the first character `encoding` cannot hold.
+  ## character past U+00FF, a control character (U+0000 to U+001F, U+007F to
+  ## U+009F), or bytes that are not UTF-8, are refused here; the library's own
+  ## check (`checkTextHeader`) then gives the reason for the first character
+  ## `encoding` cannot hold, in the words used here: "Line N column M".
   var latin: seq[string] = @[]
   for i, line in lines:
     var one = ""
     var col = 0
     if validateUtf8(line) >= 0:
-      return "Textual header line " & $(i + 1) & " is not text (not UTF-8)."
+      return "Line " & $(i + 1) & " is not text (not UTF-8)."
     for r in line.runes:
       inc col
-      if int32(r) > 0xFF:
-        return "Textual header line " & $(i + 1) & " column " & $col &
+      let c = int32(r)
+      if c > 0xFF or c < 0x20 or (c >= 0x7F and c < 0xA0):
+        return "Line " & $(i + 1) & " column " & $col &
           " holds a character the header cannot hold."
-      one.add char(int32(r))
+      one.add char(c)
     latin.add one
   for p in checkTextHeader(latin, SegyRevision(), encoding):
-    if p.kind == thfBadCharacter: return sentence(p.message)
+    if p.kind == thfBadCharacter:
+      return "Line " & $p.line & " column " & columnOf(p.message) & " holds a character " &
+        (if encoding == teAscii: "ASCII" else: "EBCDIC") & " cannot hold."
 
 func textProblem*(t: OutputText): string =
   ## Why `t` cannot be kept; "" when it can. The name follows a name

@@ -106,9 +106,15 @@ func textNotUsed(name, why: string): string =
   "Text header: template '" & name & "' was not used for this file: " &
     (if why.endsWith('.'): why else: why & ".") & " The header it would have had was written."
 
+func charsetName(encoding: TextEncoding): string =
+  if encoding == teAscii: "ASCII" else: "EBCDIC"
+
+func lowerFirst(s: string): string =
+  if s.len > 0: s[0].toLowerAscii & s.substr(1) else: s
+
 func textKeptSet(name: string; encoding: TextEncoding): string =
   "Text header: template '" & name & "' is written in this file's own character set (" &
-    (if encoding == teAscii: "ASCII" else: "EBCDIC") & ")."
+    charsetName(encoding) & ")."
 
 proc nowUs(): int64 =
   let t = getTime()
@@ -583,6 +589,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
   var lines: seq[string] = @[]
   var headerKeys: SeismicFile
   var openedHeader = false
+  var ownForText = false ## `headerKeys` was opened for the template's values
   try:
     {.cast(gcsafe).}:
       var opens = openPaths
@@ -845,10 +852,11 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var cards: seq[string] = @[] ## the rendered text header; empty: the writer's own
       var cardsEncoding = teEbcdic
       var textName = ""
+      var recoded = false ## the template is written in the source's own character set
       if opts.textHeader.isSome and not segdOut:
         var t = opts.textHeader.get
         textName = t.name
-        var recoded = false
+        let asChosen = t
         if like and file[].index.segy.text.encoding != t.encoding:
           t.encoding = file[].index.segy.text.encoding
           recoded = true
@@ -858,14 +866,22 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         var wanted: set[NamePartKind] = {}
         for line in t.lines:
           if "{sensorSerial" in line: wanted.incl npSensorSerial
+        if like and not opts.writeSessionPositions and positions.any and not openedHeader:
+          # The headers keep the file's own positions: so do the values.
+          headerKeys = openHeaderKeys(file[], source)
+          ownForText = true
         let values = textValuesOf(file[], source, signature, edits, opts.dropKilled,
-          nowUs(), if openedHeader: addr headerKeys else: nil, wanted, currentVendors())
+          nowUs(), if openedHeader or ownForText: addr headerKeys else: nil, wanted,
+          currentVendors())
         let why = renderProblem(t, values)
-        if why.len > 0: lines.add textNotUsed(textName, why)
+        if why.len > 0:
+          if recoded and renderProblem(asChosen, values).len == 0:
+            lines.add textNotUsed(textName, "this file keeps its own character set (" &
+              charsetName(t.encoding) & "), and " & lowerFirst(why))
+          else: lines.add textNotUsed(textName, why)
         else:
           cards = cardsOf(t, values)
           cardsEncoding = t.encoding
-          if recoded: lines.add textKeptSet(textName, t.encoding)
       block writing:
         var w: SeismicWriter
         template openWriter() =
@@ -905,9 +921,13 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         except ValueError as e:
           if cards.len == 0: raise
           cards.setLen 0
+          cardsEncoding = teEbcdic
+          recoded = false
           lines.add textNotUsed(textName, e.msg)
           openWriter()
-        if cards.len > 0: lines.add textUsed(textName)
+        if cards.len > 0:
+          lines.add textUsed(textName)
+          if recoded: lines.add textKeptSet(textName, cardsEncoding)
         var readLog: DiagLog
         template writeOne(t: int) =
           readLog = DiagLog()
@@ -1104,7 +1124,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       abort(sink, dest, part, claimed, e.msg, false)
     raise
   finally:
-    if openedHeader: headerKeys.close()
+    if openedHeader or ownForText: headerKeys.close()
 
 proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOptions;
     edits: FileEdits; openPaths: seq[string]; sink: OutputSink;

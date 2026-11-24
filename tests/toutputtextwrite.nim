@@ -19,6 +19,7 @@
 
 import std/[options, os, strutils]
 import parseSEG
+import parseSEG/model/traceindex
 import viewSEG/core/[edits, jobs, outputbatch, outputjobs, outputtext, state]
 import utils/waiting
 
@@ -59,6 +60,7 @@ proc writeSmall(path: string; encoding: TextEncoding; records: openArray[float64
   for i, r in records:
     var k = initTraceKeys()
     k.record = r
+    k.srcPoint = 103.0
     k.channel = float64(i + 1)
     k.intervalUs = 2000.0
     k.traceCode = 1
@@ -218,6 +220,66 @@ proc main*() =
     doAssert said.len == 3, $said
     doAssert "one.sgy: Text header: template 'Survey'." in said, $said
     doAssert said[1].startsWith("zero.sgy: Text header: template 'Survey' was not used"), said[1]
+
+  block lowestHighest:
+    let small = inDir / "unordered.sgy"
+    writeSmall(small, teEbcdic, [5.0, 9.0, 3.0])
+    let dest = dir / "unordered-out.sgy"
+    let r = runOne(small, dest, OutputOptions(format: ofSegy,
+      textHeader: tpl(teEbcdic, "C 1 RECORD {record}")))
+    doAssert r.ok, r.reason
+    doAssert cardsOf(dest)[0] == padded("C 1 RECORD 3-9"), cardsOf(dest)[0]
+
+  block refusedAtOpenKeepsCharset:
+    # The library refuses an ASCII header that reads as a tape label; the
+    # file is then the one a write with no template makes, EBCDIC bytes too.
+    let t = tpl(teAscii, "0001SYTEST", repeat(' ', 48) & "CX")
+    let plain = dir / "label-plain.sgy"
+    doAssert runOne(segd, plain, OutputOptions(format: ofSegy)).ok
+    let dest = dir / "label.sgy"
+    let r = runOne(segd, dest, OutputOptions(format: ofSegy, textHeader: t))
+    doAssert r.ok, r.reason
+    var said = false
+    for l in r.lines:
+      if l.startsWith("Text header: template 'Survey' was not used for this file:"): said = true
+      doAssert l != "Text header: template 'Survey'.", "said it was used"
+    doAssert said, $r.lines
+    doAssert readFile(dest) == readFile(plain), "the header is not the one with no template"
+
+  block ownPositionsKept:
+    # A join changed the keys; with the session's positions off the headers
+    # keep the file's own, and so does the template.
+    let small = inDir / "joined.sgy"
+    writeSmall(small, teEbcdic, [5.0, 5.0])
+    let dest = dir / "joined-out.sgy"
+    var open = openSeismic(small, keys = true)
+    for t in 0 ..< open.len: open.mindex.keys[t].srcPoint = 999.0
+    open.mindex.joined = true
+    let jobs = initJobs()
+    let sink = OutputSink()
+    let opts = OutputOptions(format: ofSegy, writeSessionPositions: false,
+      textHeader: tpl(teEbcdic, "C 1 POINT {srcPoint}"))
+    let id = jobs.submit(outputSpec(small, dest),
+      outputWork(addr open, small, dest, opts, FileEdits(), @[small], sink))
+    doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}), "no end"
+    doAssert jobs.state(id) == jsDone, jobs.info(id).get.error & sink.result.reason
+    open.close()
+    doAssert cardsOf(dest)[0] == padded("C 1 POINT 103"), cardsOf(dest)[0]
+
+  block charsetWords:
+    let small = inDir / "ascii-words.sgy"
+    writeSmall(small, teAscii, [5.0])
+    let dest = dir / "ascii-words-out.sgy"
+    let plain = dir / "ascii-words-plain.sgy"
+    doAssert runOne(small, plain, OutputOptions(format: ofSegy)).ok
+    let r = runOne(small, dest, OutputOptions(format: ofSegy,
+      textHeader: tpl(teEbcdic, "C 1 \xc3\xa9t\xc3\xa9")))
+    doAssert r.ok, r.reason
+    doAssert "Text header: template 'Survey' was not used for this file: this file keeps " &
+      "its own character set (ASCII), and line 1 column 5 holds a character ASCII cannot " &
+      "hold. The header it would have had was written." in r.lines, $r.lines
+    for l in r.lines: doAssert "own character set (ASCII)." notin l, l
+    doAssert readFile(dest) == readFile(plain)
 
   removeDir(base)
   echo "toutputtextwrite: ok"

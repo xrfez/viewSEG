@@ -263,34 +263,39 @@ proc nameValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
   else: fillSeismic(result, file, edits, dropKilled, own, wanted, vendors)
 
 const EndParts = [npRecord, npSrcLine, npSrcPoint, npRcvLine, npRcvPoint, npSrcIndex, npRcvIndex]
-  ## the parts a text header token can show as first-last
+  ## the parts a text header token can show as lowest-highest
 
-type EndKeys = object
-  ## The keys of the first and the last trace of one group, in the file's order.
+type Range = object
+  ## The lowest and the highest value one part takes in one group of traces.
   seen: bool
-  first, last: TraceKeys
+  lo, hi: float64
 
-func keyValue(keys: TraceKeys; kind: NamePartKind): NameValue =
-  ## One part of one trace's keys; missing when the trace gives none.
-  func number(x: float64; zeroMissing: bool): NameValue =
-    if x.isNaN or abs(x) >= 1e15 or (zeroMissing and x == 0.0): NameValue(state: nvMissing)
-    else: NameValue(state: nvNumber, number: x)
+func keyNumber(keys: TraceKeys; kind: NamePartKind): Option[float64] =
+  ## One part of one trace's keys; none when the trace gives none.
+  func number(x: float64; zeroMissing: bool): Option[float64] =
+    if x.isNaN or abs(x) >= 1e15 or (zeroMissing and x == 0.0): none(float64)
+    else: some(x)
   case kind
   of npRecord: number(keys.record, true)
   of npSrcLine: number(keys.srcLine, false)
   of npSrcPoint: number(keys.srcPoint, false)
   of npRcvLine: number(keys.rcvLine, false)
   of npRcvPoint: number(keys.rcvPoint, false)
-  of npSrcIndex: NameValue(state: nvInt, intValue: int64(keys.srcIndex))
-  of npRcvIndex: NameValue(state: nvInt, intValue: int64(keys.rcvIndex))
-  else: NameValue(state: nvMissing)
+  of npSrcIndex: some(float64(keys.srcIndex))
+  of npRcvIndex: some(float64(keys.rcvIndex))
+  else: none(float64)
+
+func endValue(kind: NamePartKind; x: float64): NameValue =
+  if kind in {npSrcIndex, npRcvIndex}: NameValue(state: nvInt, intValue: int64(x))
+  else: NameValue(state: nvNumber, number: x)
 
 proc fillFirstLast(v: var TextValues; file: SeismicFile; edits: FileEdits; dropKilled: bool;
     own: ptr SeismicFile) =
-  ## The first and the last value, in the file's order, of each part that is
-  ## not one value in the file (the trace group `fillSeismic` compares).
+  ## The lowest and the highest value, whatever the trace order, of each part
+  ## that is not one value in the file (the trace group `fillSeismic` compares).
   let useOwn = own != nil and own[].isOpen and own[].len == file.len
-  var seismic, auxiliary: EndKeys
+  var seismic, auxiliary: array[NamePartKind, Range]
+  var sawNonAux, sawAux = false
   var buf, ownBuf: array[KeyChunk, TraceKeys]
   var t = 0
   while t < file.len:
@@ -302,17 +307,25 @@ proc fillFirstLast(v: var TextValues; file: SeismicFile; edits: FileEdits; dropK
       if not (dropKilled and edits.has(teKilled, t + k)):
         var keys = buf[k]
         if useOwn: keys = ownGeometry(keys, ownBuf[k])
-        let group = if keys.status == tsAuxiliary: addr auxiliary else: addr seismic
-        if not group[].seen:
-          group[].seen = true
-          group[].first = keys
-        group[].last = keys
+        let aux = keys.status == tsAuxiliary
+        if aux: sawAux = true
+        else: sawNonAux = true
+        for kind in EndParts:
+          let x = keyNumber(keys, kind)
+          if x.isSome:
+            let r = if aux: addr auxiliary[kind] else: addr seismic[kind]
+            if not r[].seen:
+              r[] = Range(seen: true, lo: x.get, hi: x.get)
+            else:
+              r[].lo = min(r[].lo, x.get)
+              r[].hi = max(r[].hi, x.get)
     t += count
-  let ends = if seismic.seen: seismic else: auxiliary
-  if ends.seen:
+  if sawNonAux or sawAux:
+    let ranges = if sawNonAux: seismic else: auxiliary
     for kind in EndParts:
-      if v.values[kind].state == nvMixed:
-        v.firstLast[kind] = (first: keyValue(ends.first, kind), last: keyValue(ends.last, kind))
+      if v.values[kind].state == nvMixed and ranges[kind].seen:
+        v.firstLast[kind] = (first: endValue(kind, ranges[kind].lo),
+          last: endValue(kind, ranges[kind].hi))
 
 proc textValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
     edits: FileEdits; dropKilled: bool; writtenUs: int64; own: ptr SeismicFile = nil;
@@ -320,7 +333,7 @@ proc textValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
   ## What one file gives the tokens of a text header template: its name
   ## values (`nameValuesOf`), `source`, the time of writing, and, for a
   ## record, line, point or index that is not one value in the file, its
-  ## first and last value in the file's order. A signature file has no
+  ## lowest and highest value (`firstLast`), whatever the trace order. A signature file has no
   ## trace keys to compare, so has none.
   result.source = source
   result.writtenUs = writtenUs
