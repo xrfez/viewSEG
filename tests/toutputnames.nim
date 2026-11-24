@@ -15,7 +15,9 @@
 ## every separator forced to `.`, `got "101.205.007.sgd" wanted
 ## "101_205_007.sgd"`; with a long name cut, the 181-rune name was written;
 ## with an empty pattern accepted, `got "" wanted "The name pattern has no
-## parts."`; with `patternProblem` returning "", every bad pattern was kept.
+## parts."`; with `patternProblem` returning "", every bad pattern was kept;
+## with the pattern's separator left in text, `named "a--1.sgy" instead of
+## refusing` (stem `a-` and record 1 is the same leaf as stem `a` and -1).
 
 import std/[math, strutils, unicode]
 import viewSEG/core/outputnames
@@ -179,6 +181,31 @@ proc main*() =
     # a space in the middle is a name; so is a letter outside ASCII
     expectName(pat(nsDot, part(npText, text = "line 12")), vals(), ".sgy", "line 12.sgy")
     expectName(pat(nsUnderscore, part(npText, text = "линия")), vals(), ".sgy", "линия.sgy")
+
+  block separatorInText:
+    # "a-" & "-" & "1" is the same leaf as "a" & "-" & "-1"; the first is refused.
+    let hyphen = pat(nsHyphen, [part(npStem), part(npRecord)])
+    let withSep = render(hyphen, vals((npStem, tv("a-")), (npRecord, iv(1))), ".sgy")
+    let withSign = render(hyphen, vals((npStem, tv("a")), (npRecord, iv(-1))), ".sgy")
+    doAssert withSep.name.len == 0, "named \"" & withSep.name & "\" instead of refusing"
+    doAssert withSep.problem == "File name has the separator - in it.", withSep.problem
+    doAssert withSign.problem.len == 0, withSign.problem
+    doAssert withSign.name == "a--1.sgy", withSign.name
+    doAssert withSep.name != withSign.name
+    expectProblem(pat(nsUnderscore, part(npText, text = "a_b")), vals(), ".sgy",
+      "Text has the separator _ in it.")
+    expectProblem(pat(nsUnderscore, part(npStem)), vals((npStem, tv("a_b"))), ".sgy",
+      "File name has the separator _ in it.")
+    doAssert patternProblem(pat(nsUnderscore, part(npText, text = "a_b"))) ==
+      "Text has the separator _ in it."
+    doAssert patternProblem(pat(nsHyphen, part(npText, text = "shot-a"))) ==
+      "Text has the separator - in it."
+    # the other separators, and a dot pattern, still keep a hyphen or underscore
+    expectName(pat(nsDot, part(npStem)), vals((npStem, tv("line-12"))), ".sgy", "line-12.sgy")
+    expectName(pat(nsDot, part(npStem)), vals((npStem, tv("line_12"))), ".sgy", "line_12.sgy")
+    expectName(pat(nsHyphen, part(npStem)), vals((npStem, tv("line_12"))), ".sgy", "line_12.sgy")
+    expectName(pat(nsUnderscore, part(npText, text = "line-12")), vals(), ".sgy", "line-12.sgy")
+    doAssert patternProblem(pat(nsDot, part(npText, text = "line_12"))) == ""
 
   block separators:
     let parts = [part(npSigLine), part(npSigStation), part(npController, pad = 3)]

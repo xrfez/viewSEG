@@ -135,14 +135,18 @@ func isDeviceName(s: string): bool =
   else:
     u.len == 4 and u[0 .. 2] in ["COM", "LPT"] and u[3] in {'0' .. '9'}
 
-func textProblem(word, s: string): string =
-  ## Why `s` cannot be a piece of a file name; "" when it can.
+func textProblem(word, s: string; sep: char): string =
+  ## Why `s` cannot be a piece of a file name; "" when it can. `sep` is this
+  ## pattern's separator: text that holds it is refused, so two values cannot
+  ## make one name. A dot is refused whatever `sep` is.
   if s.len == 0: return word & " is empty."
   if validateUtf8(s) >= 0: return word & " is not text."
   if s[0] == ' ' or s[^1] == ' ': return word & " starts or ends with a space."
   for c in s:
     if c in Controls or c in Forbidden:
       return word & " holds a character a file name cannot."
+  if sep in s:
+    return word & " has the separator " & sep & " in it."
   if isDeviceName(s): return deviceSentence(s)
   ""
 
@@ -238,10 +242,10 @@ func formatTime(us: int64; wholeSeconds: bool): NameResult =
   name.add "Z"
   accepted(name)
 
-func renderPiece(part: NamePart; v: NameValue): NameResult =
+func renderPiece(part: NamePart; v: NameValue; sep: char): NameResult =
   let word = partWord(part.kind)
   if part.kind == npText:
-    let why = textProblem(word, part.text)
+    let why = textProblem(word, part.text, sep)
     if why.len > 0: return refused(why)
     return accepted(part.text)
   case v.state
@@ -262,7 +266,7 @@ func renderPiece(part: NamePart; v: NameValue): NameResult =
       if isDeviceName(piece): refused(deviceSentence(piece))
       else: accepted(piece)
   of nvText:
-    let why = textProblem(word, v.text)
+    let why = textProblem(word, v.text, sep)
     if why.len > 0: refused(why)
     else: accepted(v.text)
 
@@ -273,8 +277,9 @@ func render*(p: OutputPattern; v: NameValues; extension: string): NameResult {.r
   if p.parts.len == 0:
     return refused("The name pattern has no parts.")
   var pieces = newSeq[string]()
+  let sep = ($p.separator)[0]
   for part in p.parts:
-    let one = renderPiece(part, v[part.kind])
+    let one = renderPiece(part, v[part.kind], sep)
     if one.problem.len > 0: return one
     pieces.add one.name
   let stem = pieces.join($p.separator)
@@ -293,7 +298,8 @@ func render*(p: OutputPattern; v: NameValues; extension: string): NameResult {.r
 func patternProblem*(p: OutputPattern): string =
   ## Why `p` cannot be kept; "" when it can. The label follows the same
   ## rules as a display preset's name. At most 16 parts; a width is 0 to
-  ## 12; a text part is a piece of a file name.
+  ## 12; a text part is a piece of a file name and holds no separator of
+  ## the pattern.
   let n = strip(p.name)
   if n.len == 0: return "a name pattern needs a name"
   if validateUtf8(n) >= 0: return "a name pattern's name is not text (not UTF-8)"
@@ -307,6 +313,6 @@ func patternProblem*(p: OutputPattern): string =
     if part.pad < 0 or part.pad > MaxPad:
       return partWord(part.kind) & "'s width is from 0 to " & $MaxPad
     if part.kind == npText:
-      let why = textProblem(partWord(npText), part.text)
+      let why = textProblem(partWord(npText), part.text, ($p.separator)[0])
       if why.len > 0: return why
   ""
