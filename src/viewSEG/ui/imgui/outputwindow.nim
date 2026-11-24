@@ -1074,16 +1074,21 @@ proc drawEditor(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Outp
     setBuf(ui.textBuf[i], "")
   igEndDisabled()
   marks.mark("output.pattern.add")
+  let why = ui.editorWhy(st)
+  igBeginDisabled(why.len > 0)
   if igButton(SavePattern.cstring, ImVec2_c(x: 0, y: 0)):
     outp.commands.add Command(kind: ckNamePattern, patternAction: npaSave,
       namePattern: ui.draft)
+  igEndDisabled()
   marks.mark("output.pattern.save")
+  if why.len > 0:
+    tip(why)
+    marks.mark("output.pattern.save.dim " & why)
   igSameLine(0, -1)
   if igButton(DeletePattern.cstring, ImVec2_c(x: 0, y: 0)):
     outp.commands.add Command(kind: ckNamePattern, patternAction: npaDelete,
       namePattern: OutputPattern(name: ui.draft.name))
   marks.mark("output.pattern.delete")
-  let why = ui.editorWhy(st)
   if why.len > 0:
     igPushTextWrapPos(0)
     igTextUnformatted(why.cstring, nil)

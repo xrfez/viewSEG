@@ -476,7 +476,18 @@ proc namePatterns() =
     step("a project is open", makeProject, made)
 
     proc edit(f: FrameInfo): bool = clickWhen(f, "output.names.edit")
-    proc editing(f: FrameInfo): bool = f.markOf("output.editor").size.x > 0
+    var refusedShot = false
+    proc editing(f: FrameInfo): bool =
+      if f.markOf("output.editor").size.x == 0: return false
+      # No label yet: the pattern is refused, so Save is dim and says why.
+      doAssert f.markOf("output.pattern.save.dim a name pattern needs a name").size.x > 0,
+        "Save is not dim with the reason: " & $f.markNames("output.pattern.save")
+      let dir = getEnv("VIEWSEG_SCREENSHOTS")
+      if dir.len > 0 and not refusedShot:
+        createDir(dir)
+        doAssert f.savePng(dir / "pattern-editor-refused.png"), "cannot save the editor"
+      refusedShot = true
+      true
     step("the editor is open", edit, editing)
 
     proc focusLabel(f: FrameInfo): bool = clickWhen(f, "output.pattern.label")
@@ -493,7 +504,10 @@ proc namePatterns() =
       f.pressKey(skEnter, false)
       true
     proc labeled(f: FrameInfo): bool =
-      f.markOf("output.pattern.label Line").size.x > 0
+      if f.markOf("output.pattern.label Line").size.x == 0: return false
+      doAssert f.markNames("output.pattern.save.dim").len == 0,
+        "Save is dim for a pattern that can be kept: " & $f.markNames("output.pattern.save.dim")
+      true
     step("the label is Line", typeLabel, labeled)
 
     proc openKind(f: FrameInfo): bool =

@@ -35,7 +35,8 @@ project is open read-only."). You can still pick the pattern the project already
 - **Example:** shows the name the pattern makes with made-up values and the extension of
   the chosen format, or the reason it cannot make one. Nothing is read from a file for it.
 - **Save** keeps the pattern in the project. **Delete** removes the saved pattern of that
-  name. When Save cannot keep the pattern, the reason is under the buttons.
+  name. While Save cannot keep the pattern (the name is empty, or a part is refused) it is
+  dim, its tooltip gives the reason, and the reason is also under the buttons.
 
 ### The parts
 
