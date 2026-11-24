@@ -1142,7 +1142,10 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
   ## called out as GPS and UTC mixed. Times that go backwards, a repeated
   ## (source line, shot point, index) and a repeated file number are problems
   ## too. An instant outside years 1900..2200 is a bad number and is not the
-  ## row's time. Missing cells and sentinels are empty, not faults.
+  ## row's time. A microsecond column replaces a fraction in the seconds
+  ## cell; a non-zero fraction that differs from it by more than one
+  ## microsecond is a disagreement naming both values. Missing cells and
+  ## sentinels are empty, not faults.
   result.problems = log.problems
   result.rows = newSeq[Shot](log.len)
   var seenFile = initTable[int64, int]()
@@ -1158,6 +1161,9 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
     var secPart = 0
     var secUs = 0
     var haveSecond = false
+    var secRaw = ""
+    var microsRaw = ""
+    var microsCol = -1
     var dateText = ""
     var haveDate = false
     var cols = [0, 0, 0, 0, 0]
@@ -1219,7 +1225,10 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
               of crDayOfMonth: day = some(whole.value)
               of crHour: hour = some(whole.value)
               of crMinute: minute = some(whole.value)
-              of crMicrosecond: micros = some(whole.value)
+              of crMicrosecond:
+                micros = some(whole.value)
+                microsRaw = raw.strip
+                microsCol = col
               else: discard
         of crSailLine, crSourceLine, crShotPoint, crUtcSeconds, crSecond,
             crSourceDepth, crWaterDepth, crX, crY, crZ, crVolume, crPressure,
@@ -1243,6 +1252,7 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
                 haveSecond = true
                 secPart = sec.sec
                 secUs = sec.us
+                secRaw = raw.strip
                 shot.second = float64(sec.sec) + float64(sec.us) / 1e6
             else:
               let num = parseNum(raw)
@@ -1290,8 +1300,10 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
       var us = secUs
       var ss = secPart
       if micros.isSome:
+        if secUs != 0 and abs(int64(secUs) - micros.get) > 1:
+          addProblem(result.problems, pkTimeDisagree, row, microsCol,
+            "second " & secRaw & " and microsecond " & microsRaw)
         us = int(micros.get)
-        ss = secPart
       var y = int(year.get)
       var m = 0
       var d = 0

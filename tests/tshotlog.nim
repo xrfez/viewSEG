@@ -9,7 +9,8 @@
 ## `overflowAndYearRange` raises OverflowDefect on 9223372036854775808.
 ## With the length guard in `parseShotLog` lowered to 8 bytes and then
 ## taken out, a 20-byte text was indexed instead of refused with
-## `pkTooLong`.
+## `pkTooLong`. With the fraction left replaced by the microsecond
+## column, `fractionAndMicros` keeps 59.000000 and reports no problem.
 
 import std/[math, options, os, strutils]
 import viewSEG/core/shotlog
@@ -315,6 +316,32 @@ proc main*() =
     doAssert log.problems.items[0].kind == pkTooLong
     doAssert log.problems.items[0].row == -1
     doAssert "2147483647" in log.problems.items[0].text
+
+  block fractionAndMicros:
+    let clash = read("2024,3,1,0,0,59.5,0\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond, crMicrosecond],
+      header = false)
+    doAssert clash.rows[0].timeUtcUs.get == UtcMarch + 59_000000
+    doAssert clash.rows[0].microsecond.get == 0
+    doAssert clash.rows[0].second == 59.5
+    doAssert hasKind(clash.problems, pkTimeDisagree)
+    let named = kindText(clash.problems, pkTimeDisagree)
+    doAssert "59.5" in named and "0" in named
+    let same = read("2024,3,1,0,0,59.5,500000\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond, crMicrosecond],
+      header = false)
+    doAssert same.rows[0].timeUtcUs.get == UtcMarch + 59_500000
+    doAssert not hasKind(same.problems, pkTimeDisagree)
+    let supplied = read("2024,3,1,0,0,59,500000\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond, crMicrosecond],
+      header = false)
+    doAssert supplied.rows[0].timeUtcUs.get == UtcMarch + 59_500000
+    doAssert not hasKind(supplied.problems, pkTimeDisagree)
+    let close = read("2024,3,1,0,0,59.000001,0\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond, crMicrosecond],
+      header = false)
+    doAssert close.rows[0].timeUtcUs.get == UtcMarch + 59_000000
+    doAssert not hasKind(close.problems, pkTimeDisagree)
 
   echo "tshotlog ok"
 
