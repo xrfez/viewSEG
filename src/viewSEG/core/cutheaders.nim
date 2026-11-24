@@ -26,12 +26,12 @@ type Spread = object
   value, first, last: NameValue
 
 func partSpread(xs: openArray[float64]; zeroMissing: bool): Spread =
-  ## One value when every number is the same, the lowest and highest when they differ or
-  ## some are missing (NaN, huge, or 0 for a record), missing when all are.
-  var seen, missing = false
+  ## One value when the numbers that are given all agree, the lowest and highest when they
+  ## differ, none when none is given. A missing one (NaN, huge, or 0 for a record) is ignored.
+  var seen = false
   var lo, hi = 0.0
   for x in xs:
-    if x.isNaN or abs(x) >= 1e15 or (zeroMissing and x == 0.0): missing = true
+    if x.isNaN or abs(x) >= 1e15 or (zeroMissing and x == 0.0): discard
     elif not seen:
       seen = true
       lo = x
@@ -40,7 +40,7 @@ func partSpread(xs: openArray[float64]; zeroMissing: bool): Spread =
       lo = min(lo, x)
       hi = max(hi, x)
   if not seen: result.value = NameValue(state: nvMissing)
-  elif missing or lo != hi:
+  elif lo != hi:
     result.value = NameValue(state: nvMixed)
     result.first = NameValue(state: nvNumber, number: lo)
     result.last = NameValue(state: nvNumber, number: hi)
@@ -69,12 +69,18 @@ func sliceTextValues*(dest: string; numbers: openArray[int]; shots: openArray[Sl
     let s = partSpread(xs, zero)
     result.values[kind] = s.value
     result.firstLast[kind] = (first: s.first, last: s.last)
-  var times: seq[int64] = @[]
+  var first = 0'i64
+  var seen, differ = false
   for s in shots:
-    if s.timeUsKnown and s.timeUs notin times: times.add s.timeUs
-  if times.len == 1:
-    result.values[npTime] = NameValue(state: nvTimeUs, timeUs: times[0], wholeSeconds: false)
-  elif times.len > 1: result.values[npTime] = NameValue(state: nvMixed)
+    if s.timeUsKnown:
+      if not seen:
+        seen = true
+        first = s.timeUs
+      elif s.timeUs != first:
+        differ = true
+        break
+  if differ: result.values[npTime] = NameValue(state: nvMixed)
+  elif seen: result.values[npTime] = NameValue(state: nvTimeUs, timeUs: first, wholeSeconds: false)
 
 type Noted* = object
   ## The template's cards, with the slice's notes after them when there is room.

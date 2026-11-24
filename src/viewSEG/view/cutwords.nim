@@ -75,7 +75,8 @@ const
     "it leaves free. Clear the box for the header a slice writes without one."
   UseBinaryTip* = "The fields of the project's set are written into the SEG-Y binary file " &
     "header; the rest of it is the slice's own. Clear the box to write none of them."
-  OrderOneComponent* = "The recording has one coded component, so there is nothing to group."
+  OrderOneComponent* = "The recording's headers code fewer than two components, so there " &
+    "is nothing to group."
   OrderKeepsHeaders* = "A SEG-D slice that keeps the recording's headers cannot reorder " &
     "its traces: it is written in the recording's order."
 

@@ -17,37 +17,40 @@
 import std/[assertions, options, os, sequtils, strutils]
 import parseSEG
 import parseSEG/model/traceindex
-import viewSEG/core/[cutgather, cutgatherjobs, jobs, outputbinary, outputtext, recordingkind,
-  shotlog]
+import processSEG/continuous/slice
+import viewSEG/core/[cutgather, cutgatherjobs, cutheaders, jobs, outputbinary, outputnames,
+  outputtext, recordingkind, shotlog]
 import utils/waiting
 
 const BaseUs = 1_772_323_200_000_000'i64 # 2026-03-01T00:00:00 UTC
 
-proc makeRecording(path: string) =
-  ## SEG-D, stations 7 and 8 on line 1, two traces each.
+proc makeRecording(path: string; records = 1) =
+  ## SEG-D, stations 7 and 8 on line 1, two traces each, in `records` records a second apart.
   var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: 100))
-  for pi in 0 .. 1:
-    for ci in 0 .. 1:
-      var k = initTraceKeys()
-      k.status = tsLive
-      k.record = 1
-      k.channel = float64(pi * 2 + ci + 1)
-      k.component = uint8(ci + 11)
-      k.intervalUs = 2000
-      k.time = float64(BaseUs div 1_000_000)
-      k.rcvLine = 1
-      k.rcvPoint = 7.0 + float64(pi)
-      var samples = newSeq[float32](100)
-      for j in 0 ..< 100: samples[j] = float32(j)
-      w.writeTrace(k, samples)
+  for rec in 1 .. records:
+    for pi in 0 .. 1:
+      for ci in 0 .. 1:
+        var k = initTraceKeys()
+        k.status = tsLive
+        k.record = float64(rec)
+        k.channel = float64(pi * 2 + ci + 1)
+        k.component = uint8(ci + 11)
+        k.intervalUs = 2000
+        k.time = float64(BaseUs div 1_000_000 + rec - 1)
+        k.rcvLine = 1
+        k.rcvPoint = 7.0 + float64(pi)
+        var samples = newSeq[float32](100)
+        for j in 0 ..< 100: samples[j] = float32(j)
+        w.writeTrace(k, samples)
   discard w.close()
 
-proc runCut(jobs: Jobs; f: var SeismicFile; source, dest: string; opts: CutOptions):
-    tuple[ok: bool; res: CutResult] =
+proc runCut(jobs: Jobs; f: var SeismicFile; source, dest: string; opts: CutOptions;
+    two = false): tuple[ok: bool; res: CutResult] =
   var m = initShotLogMap()
   m.hasHeader = false
   m.roles = @[crFileNumber, crUtcMicros]
-  let view = shots(parseShotLog("101," & $(BaseUs + 20_000) & "\n", m), m)
+  let view = shots(parseShotLog("101," & $(BaseUs + 20_000) & "\n" &
+    (if two: "102," & $(BaseUs + 1_020_000) & "\n" else: ""), m), m)
   let sink = CutSink()
   let id = jobs.submit(cutGatherSpec(source, dest),
     cutGatherWork(addr f, source, dest, shotsInTime(view.rows), opts, sink))
@@ -168,14 +171,35 @@ proc main*() =
       "the header is not the one with the set alone"
 
   block segd_output_is_not_touched:
+    # a two-record source, so the SEG-D output is built from keys, not carried
+    let twoSrc = dir / "rec" / "two.sgd"
+    makeRecording(twoSrc, records = 2)
+    var g = openSeismic(twoSrc, keys = true)
+    defer: g.close()
     var o = initCutOptions(100.0)
     o.treatKind = some rkReceiverContinuous
-    let a = runCut(jobs, f, src, dir / "a.sgd", o)
+    let a = runCut(jobs, g, twoSrc, dir / "a.sgd", o, two = true)
+    doAssert a.ok and not a.res.carried, a.res.reason
     o.headerText = some(OutputText(name: "T", encoding: teAscii, lines: @["X"]))
     o.headerBinary = some(one("Job", ("jobId", "12")))
-    let b = runCut(jobs, f, src, dir / "b.sgd", o)
-    doAssert a.ok and b.ok and b.res.headerNotes.len == 0, $b.res.lines
+    let b = runCut(jobs, g, twoSrc, dir / "b.sgd", o, two = true)
+    doAssert b.ok and not b.res.carried and b.res.headerNotes.len == 0, $b.res.lines
     doAssert readFile(dir / "a.sgd") == readFile(dir / "b.sgd"), "bytes differ"
+
+  block missing_values_are_ignored:
+    # a receiver with no point does not make the points "mixed": the others agree, one value
+    var rk: seq[TraceKeys] = @[]
+    for p in [7.0, NaN]:
+      var k = initTraceKeys()
+      k.rcvPoint = p
+      rk.add k
+    let v = sliceTextValues("o.sgy", [101], [initSliceShot(1.0, 101.0)], rk, 0)
+    doAssert v.values[npRcvPoint].state == nvNumber and v.values[npRcvPoint].number == 7.0,
+      "one station with aux traces is not one value"
+    doAssert v.values[npSrcLine].state == nvMissing
+    rk[1].rcvPoint = 9.0
+    let w = sliceTextValues("o.sgy", [101], [initSliceShot(1.0, 101.0)], rk, 0)
+    doAssert w.values[npRcvPoint].state == nvMixed and w.firstLast[npRcvPoint].last.number == 9.0
 
 when isMainModule:
   main()
