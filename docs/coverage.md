@@ -39,14 +39,14 @@ next part's.
 
 Capabilities are the rows below, each counted by the first part of its status ("in part": built, with a part still planned or to plan). Names are the names each library exports, enum values not counted, each at the most advanced status of the rows that name it.
 
-| Status | parseSEG 0.21.1: capabilities | names | processSEG 0.14.0: capabilities | names |
+| Status | parseSEG 0.21.2: capabilities | names | processSEG 0.14.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 57 (23 in part) | 198 | 46 (29 in part) | 256 |
 | `internal` | 21 | 65 | 8 | 54 |
-| `planned` | 33 | 226 | 42 | 391 |
+| `planned` | 34 | 228 | 42 | 391 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 22 | 355 | 7 | 71 |
-| all | 135 | 853 | 104 | 777 |
+| all | 136 | 855 | 104 | 777 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -168,6 +168,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | GPS time turned into UTC | `GpsEpochUnix`, `gpsMinusUtc` | internal: a shot log's time break given in microseconds since the GPS epoch becomes the UTC instant of its row | internal |
 | The leap-second table | `LeapTable`, `LeapSecond`, `LeapDate`, `LeapStartOffset`, `currentLeapTable`, `defaultLeapTable`, `leapKnownAt`, `leapTableNif`, `parseLeapTable`, `useLeapTable`, `withLeap`, `gpsUsToUtcUs`, `utcUsToGpsUs`, `utcMinusGps` | Tools > Leap seconds: see the table and add a leap second | built in part (Tools > Leap seconds...: the Leap seconds window shows the table, adds or removes a leap second, reloads or resets it, and open files read their times again); planned: `LeapSecond`, `LeapStartOffset`, `leapKnownAt`, `gpsUsToUtcUs`, `utcUsToGpsUs`, `utcMinusGps` |
 | The instant of a sample | `TimeOrigin` (`toNone`, `toHeaderSeconds`, `toHeaderSubsec`, `toFirstSample`, `toRecordTimeZero`), `timeOrigin`, `firstSampleUs`, `sampleTimeUs`, `sampleAtUs`, `noteRecordedTime`, `recordTimeZeroUs` | Output: a chosen name pattern writes the record's time zero, and the Shot log follows a trace by it. Cutting a continuous record at the shot times of a shot log | built in part (Output: a name pattern's time; the Shot log follow target reads `recordTimeZeroUs`, `timeOrigin`, `toHeaderSeconds`, `toHeaderSubsec`); planned: `toNone`, `toFirstSample`, `toRecordTimeZero`, `firstSampleUs`, `sampleTimeUs`, `sampleAtUs`, `noteRecordedTime` |
+| The serial number of the recording unit | `unitSerial`, `recordSensorSerial` | Output: a file name pattern's "Sensor serial" part, from the first trace of the file | planned |
 | Traces by join outcome (conflict, ambiguous, unmatched) | `joinStations` per trace | Import survey: "Select unmatched traces" (the survey lacks the source or receiver); conflicting and ambiguous traces counted in the words; a selection per outcome, to come | built (unmatched); to plan (priority 1: a selection per outcome) |
 | Join options: line names, trailing digits, multi-component, one tape | `mapLine`, `trailingDigits`, `multiComponent`, `tape` | Import survey window, Options (remembered): line names as numbers, trailing digits, several channels per station; one tape, to come | built (but `tape`); to plan (priority 2: one tape as an option) |
 | Relation lookups (the spread of a shot, the shots of a receiver) | `relation`, `relations`, `records`, `expectedChannels`, `recordsAt`, `channelOf`, `relationRuns`, `relationsDisjoint` | Map: the point under the pointer names a source's field records (`recordsAt`); the record on show is marked by the stations its relation runs plan (`relationRuns`) when its headers name none; the template box round the spread planned for the record on show and the shot under the pointer (X), or a receiver's planned shots (O); a hovered survey receiver's traces through `channelOf` (headers without stations), to come | built (a source's records, the record on show's planned spread, the template box, a receiver's planned shots); planned (a receiver's traces before the join) |
