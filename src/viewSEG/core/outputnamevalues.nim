@@ -258,7 +258,7 @@ proc nameValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
   ## carry what a header cannot. The sensor serial (one value, or none, as a
   ## file's traces say; a signature file has none) is read only when `wanted`
   ## holds `npSensorSerial`, from the standard Sensor Info block or, with
-  ## `vendors`, the field a map names `unitSerial` (`core/unitserial`). Does not open a file.
+  ## `vendors`, the field a map names `sensorSerial` (`core/unitserial`). Does not open a file.
   result[npStem] = NameValue(state: nvText, text: stemOf(source))
   if facts.isSignature: fillSignature(result, facts)
   else: fillSeismic(result, file, edits, dropKilled, own, wanted, vendors)

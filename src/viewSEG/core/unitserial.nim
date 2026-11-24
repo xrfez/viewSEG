@@ -9,7 +9,7 @@ import std/[options, tables]
 import parseSEG
 import vendormaps
 
-const UnitSerialField* = "unitSerial"
+const SensorSerialField* = "sensorSerial"
   ## the name by which a vendor map marks the field that holds the unit serial
 
 type SerialReader* = object
@@ -43,7 +43,7 @@ proc sensorInfoSerial(file: SeismicFile; trace: int): Option[string] =
 proc vendorSerial(shown: VendorShown): Option[string] =
   for b in shown.blocks:
     for f in b.fields:
-      if f.name == UnitSerialField: return printable(f.value)
+      if f.name == SensorSerialField: return printable(f.value)
 
 proc unitSerialOf*(r: var SerialReader; file: SeismicFile; trace: int): Option[string] =
   ## The unit serial of trace `trace` of `file`, as text; none when no source has one (a
