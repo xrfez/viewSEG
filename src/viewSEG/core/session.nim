@@ -66,6 +66,9 @@ type
     facts: FileFacts ## its summary and file headers, for the Headers window
     keysRevision: int
       ## its keys' revision (parseSEG's `keysRevision`) as the UI thread knows it
+    leapRead: int
+      ## the leap-table generation the keys were read under; -1 when it changed
+      ## during the read, so the post queues a re-read
     zeroKept: int
       ## traces with field record number 0 kept with the record before them
     signature: SignatureFacts
@@ -249,6 +252,14 @@ func facts*(s: Session): lent FileFacts {.inline.} = s.facts
   ## What the Headers window shows of the file: its summary and file headers.
 func checkedAgainst*(s: Session): lent string {.inline.} = s.checkedAgainst
   ## The relation file the records' planned stations come from; "" for none.
+func leapRead*(s: Session): int {.inline.} = s.leapRead
+  ## The leap-table generation the keys were read under; -1 when it changed
+  ## during the read.
+
+proc noteLeapRead*(s: Session; gen: int) =
+  ## Records the generation `openSession` saw while it read the keys.
+  s.leapRead = gen
+
 func keysRevision*(s: Session): int {.inline.} = s.keysRevision
   ## The revision of the file's keys (parseSEG's `keysRevision`) when it was
   ## opened, or after the join that changed them last: what a layer or a

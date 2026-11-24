@@ -39,6 +39,7 @@ type
     maReopen = "Reopen with options...",
     maOpenVib = "Open the .vib of this sweep", maOpenDat = "Open the .dat of this sweep",
     maReloadVendors = "Reload vendor maps",
+    maLeapSeconds = "Leap seconds...",
     maImportSurvey = "Import survey...", maImportShotLog = "Import shot log...",
     maClearSurvey = "Clear survey",
     maImportSettings = "Import settings...",
@@ -158,7 +159,7 @@ const
     maOpenFiles: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_O.cint,
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
     maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
-    maReopen: 0, maOpenVib: 0, maOpenDat: 0, maReloadVendors: 0,
+    maReopen: 0, maOpenVib: 0, maOpenDat: 0, maReloadVendors: 0, maLeapSeconds: 0,
     maImportSurvey: 0, maImportShotLog: 0, maClearSurvey: 0, maImportSettings: 0,
     maImportLayout: 0,
     maImportEdits: 0,
@@ -182,7 +183,7 @@ const
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
     maReopen: IconRefresh, maOpenVib: IconStep, maOpenDat: IconStep,
-    maReloadVendors: IconRefresh,
+    maReloadVendors: IconRefresh, maLeapSeconds: IconInfo,
     maImportSurvey: IconSurvey, maImportShotLog: IconTable, maClearSurvey: IconTrash,
     maImportSettings: IconSliders,
     maImportLayout: IconLayout,
@@ -544,6 +545,9 @@ proc drawToolsMenu(input: MenuInput; res: var MenuResult) =
     "settings folder, beside the program: a map dropped in while viewSEG runs is used " &
     "without a restart, and the files open show the new decode (Messages says what was " &
     "loaded)")
+  item(maLeapSeconds, res)
+  tip("GPS minus UTC leap seconds: the table the open files' times are read with, and a " &
+    "leap second to add. Kept in leapseconds.nif beside the settings")
   igSeparator()
   item(maExportLog, res)
   tip("Write every message of this session to a text file of your choice")
