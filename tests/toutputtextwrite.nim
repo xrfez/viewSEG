@@ -96,7 +96,7 @@ proc main*() =
 
   block likeEbcdic:
     let dest = dir / "like-ebcdic.sgy"
-    let r = runOne(segy, dest, OutputOptions(format: ofSegy, textHeader: ebcdic))
+    let r = runOne(segy, dest, OutputOptions(format: ofSegy, headerText: ebcdic))
     doAssert r.ok
     doAssert "Text header: template 'Survey'." in r.lines, $r.lines
     check(cardsOf(dest), "shots", "shots.sgy")
@@ -104,7 +104,7 @@ proc main*() =
 
   block keysEbcdic:
     let dest = dir / "keys-ebcdic.sgy"
-    let r = runOne(segd, dest, OutputOptions(format: ofSegy, textHeader: ebcdic))
+    let r = runOne(segd, dest, OutputOptions(format: ofSegy, headerText: ebcdic))
     doAssert r.ok
     doAssert "Text header: template 'Survey'." in r.lines, $r.lines
     let cards = cardsOf(dest)
@@ -116,7 +116,7 @@ proc main*() =
   block keysAscii:
     let dest = dir / "keys-ascii.sgy"
     let t = tpl(teAscii, "C 1 {stem}", "C 2 ABC {record:2}")
-    let r = runOne(segd, dest, OutputOptions(format: ofSegy, textHeader: t))
+    let r = runOne(segd, dest, OutputOptions(format: ofSegy, headerText: t))
     doAssert r.ok and "Text header: template 'Survey'." in r.lines, $r.lines
     doAssert encodingOf(dest) == teAscii, "the ASCII template was written as EBCDIC"
     let cards = cardsOf(dest)
@@ -127,14 +127,14 @@ proc main*() =
     writeSmall(small, teAscii, [5.0, 5.0])
     let t = tpl(teAscii, "C 1 {stem} R{record:3}")
     let dest = dir / "like-ascii.sgy"
-    let r = runOne(small, dest, OutputOptions(format: ofSegy, textHeader: t))
+    let r = runOne(small, dest, OutputOptions(format: ofSegy, headerText: t))
     doAssert r.ok and "Text header: template 'Survey'." in r.lines, $r.lines
     doAssert encodingOf(dest) == teAscii
     doAssert cardsOf(dest)[0] == padded("C 1 small-ascii R005"), cardsOf(dest)[0]
     # An EBCDIC template on an ASCII source takes the source's character set.
     let dest2 = dir / "like-recoded.sgy"
     let r2 = runOne(small, dest2, OutputOptions(format: ofSegy,
-      textHeader: tpl(teEbcdic, "C 1 {stem}")))
+      headerText: tpl(teEbcdic, "C 1 {stem}")))
     doAssert r2.ok
     doAssert encodingOf(dest2) == teAscii
     doAssert cardsOf(dest2)[0] == padded("C 1 small-ascii")
@@ -151,7 +151,7 @@ proc main*() =
       doAssert a.ok
       for l in a.lines: doAssert not l.startsWith("Text header"), l
       let b = runOne(source, templated, OutputOptions(format: ofSegy,
-        textHeader: tpl(teEbcdic, "C 1 CHANGED")))
+        headerText: tpl(teEbcdic, "C 1 CHANGED")))
       doAssert b.ok
       let x = readFile(plain)
       let y = readFile(templated)
@@ -167,7 +167,7 @@ proc main*() =
     for (name, source) in [("like", small)]:
       let dest = dir / "firstlast-" & name & ".sgy"
       let r = runOne(source, dest, OutputOptions(format: ofSegy,
-        textHeader: tpl(teEbcdic, "C 1 RECORD {record}")))
+        headerText: tpl(teEbcdic, "C 1 RECORD {record}")))
       doAssert r.ok, r.reason
       doAssert cardsOf(dest)[0] == padded("C 1 RECORD 5-9"), cardsOf(dest)[0]
 
@@ -176,7 +176,7 @@ proc main*() =
     let plain = dir / "failed-plain.sgy"
     doAssert runOne(segy, plain, OutputOptions(format: ofSegy)).ok
     let r = runOne(segy, dest, OutputOptions(format: ofSegy,
-      textHeader: tpl(teEbcdic, "C 1 {vibrator}")))
+      headerText: tpl(teEbcdic, "C 1 {vibrator}")))
     doAssert r.ok, r.reason
     doAssert r.written > 0
     var said = ""
@@ -200,7 +200,7 @@ proc main*() =
       BatchItem(source: src / "three.sgy", relative: "three.sgy")]
     let ask = BatchAsk(root: src, items: items, destRoot: outDir,
       options: OutputOptions(format: ofSegy,
-        textHeader: tpl(teEbcdic, "C 1 {stem} REC {record}")))
+        headerText: tpl(teEbcdic, "C 1 {stem} REC {record}")))
     let jobs = initJobs()
     let sink = BatchSink()
     let id = jobs.submit(outputBatchSpec(ask),
@@ -226,7 +226,7 @@ proc main*() =
     writeSmall(small, teEbcdic, [5.0, 9.0, 3.0])
     let dest = dir / "unordered-out.sgy"
     let r = runOne(small, dest, OutputOptions(format: ofSegy,
-      textHeader: tpl(teEbcdic, "C 1 RECORD {record}")))
+      headerText: tpl(teEbcdic, "C 1 RECORD {record}")))
     doAssert r.ok, r.reason
     doAssert cardsOf(dest)[0] == padded("C 1 RECORD 3-9"), cardsOf(dest)[0]
 
@@ -237,7 +237,7 @@ proc main*() =
     let plain = dir / "label-plain.sgy"
     doAssert runOne(segd, plain, OutputOptions(format: ofSegy)).ok
     let dest = dir / "label.sgy"
-    let r = runOne(segd, dest, OutputOptions(format: ofSegy, textHeader: t))
+    let r = runOne(segd, dest, OutputOptions(format: ofSegy, headerText: t))
     doAssert r.ok, r.reason
     var said = false
     for l in r.lines:
@@ -258,7 +258,7 @@ proc main*() =
     let jobs = initJobs()
     let sink = OutputSink()
     let opts = OutputOptions(format: ofSegy, writeSessionPositions: false,
-      textHeader: tpl(teEbcdic, "C 1 POINT {srcPoint}"))
+      headerText: tpl(teEbcdic, "C 1 POINT {srcPoint}"))
     let id = jobs.submit(outputSpec(small, dest),
       outputWork(addr open, small, dest, opts, FileEdits(), @[small], sink))
     doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}), "no end"
@@ -273,7 +273,7 @@ proc main*() =
     let plain = dir / "ascii-words-plain.sgy"
     doAssert runOne(small, plain, OutputOptions(format: ofSegy)).ok
     let r = runOne(small, dest, OutputOptions(format: ofSegy,
-      textHeader: tpl(teEbcdic, "C 1 \xc3\xa9t\xc3\xa9")))
+      headerText: tpl(teEbcdic, "C 1 \xc3\xa9t\xc3\xa9")))
     doAssert r.ok, r.reason
     doAssert "Text header: template 'Survey' was not used for this file: this file keeps " &
       "its own character set (ASCII), and line 1 column 5 holds a character ASCII cannot " &

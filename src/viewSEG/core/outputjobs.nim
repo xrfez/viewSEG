@@ -159,7 +159,7 @@ type
     writeSessionPositions*: bool = true
       ## A survey join or a station move is written into the headers, on every
       ## path. Off: the file's own positions are written, and the result says so.
-    textHeader*: Option[OutputText]
+    headerText*: Option[OutputText]
       ## Set: a SEG-Y file's text header is this template rendered for the file
       ## (the project's chosen one). None: the header written today. SEG-D is
       ## not touched.
@@ -853,8 +853,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var cardsEncoding = teEbcdic
       var textName = ""
       var recoded = false ## the template is written in the source's own character set
-      if opts.textHeader.isSome and not segdOut:
-        var t = opts.textHeader.get
+      if opts.headerText.isSome and not segdOut:
+        var t = opts.headerText.get
         textName = t.name
         let asChosen = t
         if like and file[].index.segy.text.encoding != t.encoding:

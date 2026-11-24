@@ -31,6 +31,8 @@ const
     "cursor was not in them."
   PreviewLabel* = "Preview"
   PreviewSample* = "No file is shown: sample values are filled in."
+  PreviewReading* = "The file's values are being read: sample values are filled in."
+  PreviewTitle* = "Read the shown file's values for a text header"
   PreviewTooBig* = "The file has too many traces to read here: sample values are filled in."
   SaveButton* = "Save"
   SaveNewButton* = "Save as new"

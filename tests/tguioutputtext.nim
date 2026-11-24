@@ -6,7 +6,7 @@
 ## in the project and chooses it, and a write then holds that template as the
 ## first card of the file written.
 ##
-## Seen to fail: with `textHeader` left out of the run's options the written file
+## Seen to fail: with `headerText` left out of the run's options the written file
 ## kept the source's first card ("the first card is ..."). The cursor position of
 ## a token is tested in toutputtextedit; here the cursor is at the end.
 ##

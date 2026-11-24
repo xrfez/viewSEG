@@ -11,7 +11,7 @@
 
 import std/[algorithm, options, os, strutils, tables]
 from std/unicode import cmpRunesIgnoreCase
-from parseSEG import TextEncoding, teEbcdic, teAscii
+from parseSEG import SeismicFile, TextEncoding, teEbcdic, teAscii
 import sdl3_nim
 import imguin/cimgui
 import ../../core/[edits, filejobs, filekinds, filesystem, geometry, jobs, outputbatch, outputjobs,
@@ -33,6 +33,13 @@ type
 
   RefuseNote = ref object
     sentence: string
+    gen: int
+
+  ValuesNote = ref object
+    ## What the job that reads the shown file's values for the preview left.
+    ok: bool
+    values: TextValues
+    why: string
     gen: int
 
   Node = ref object
@@ -91,6 +98,10 @@ type
     textNameBuf: array[257, char]
     textCursor: cint = -1                      ## the lines box's cursor when it was last active
     textArm: bool                              ## the editor was just opened: take it to the front
+    textKey: string
+    valuesJob: JobId = NoJob
+    valuesNote: ValuesNote
+    valuesGen: int
     textFile: string                           ## the file the preview values are read from
     textFilled: bool                           ## `textValues` are that file's, not sample values
     textValues: TextValues
@@ -491,7 +502,7 @@ proc submitRun(ui: var OutputUi; st: AppState) =
     applyShifts: ui.shifts, dropKilled: ui.dropKilled, applyOwnFilters: ui.ownFilters,
     applyProcessing: ui.processingOn, writeSessionPositions: not ui.keepOwn)
   if st.inProject and ui.format == ofSegy:
-    opts.textHeader = chosenText(st.project.doc.outputTexts, st.project.doc.outputText)
+    opts.headerText = chosenText(st.project.doc.outputTexts, st.project.doc.outputText)
   let pk = st.findPanel(MainPanel)
   if pk >= 0 and st.panels[pk].layers.len > 0:
     if ui.processingOn: opts.processing = st.panels[pk].layers[0].processing
@@ -1226,6 +1237,7 @@ proc loadText(ui: var OutputUi; e: TextEdit) =
   ui.textCursor = -1
   ui.textOpen = true
   ui.textArm = true
+  ui.textKey = ""
   ui.textFile = ""
   ui.textFilled = false
 
@@ -1275,24 +1287,46 @@ proc drawTextRow(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Out
   tip(if why.len > 0: why else: TextEditTip)
   if why.len > 0: marks.mark("output.text.dim " & why)
 
+proc valuesWork(fp: ptr SeismicFile; path: string; facts: SignatureFacts; edits: FileEdits;
+    e: TextEdit; note: ValuesNote; gen: int): JobWork =
+  ## Reads the shown file's keys on a job, never on the UI thread.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    {.cast(gcsafe).}:
+      let got = valuesOfFile(fp[], path, facts, edits, e)
+      note.ok = got.ok
+      note.values = got.values
+      note.why = got.why
+      note.gen = gen
+
 proc refreshPreview(ui: var OutputUi; st: AppState) =
-  ## The values the preview is filled in from: the shown file's when its keys
-  ## are in memory, else sample values. Read again when another file is shown.
+  ## The values the preview is filled in from: sample values until a job has
+  ## read the shown file's keys (already in memory), then that file's. Asked
+  ## again when another file is shown or the template asks for more.
+  if ui.valuesJob != NoJob:
+    let info = st.jobs.info(ui.valuesJob)
+    if info.isSome and info.get.state in {jsQueued, jsRunning}: return
+    if info.isSome and info.get.state == jsDone and ui.valuesNote.gen == ui.valuesGen:
+      ui.textFilled = ui.valuesNote.ok
+      if ui.textFilled: ui.textValues = ui.valuesNote.values
+      ui.textWhy = ui.valuesNote.why
+    ui.valuesJob = NoJob
   let i = st.shownFile(st.findPanel(MainPanel))
   let path = if i >= 0: $(st.sessions[i].path) else: ""
-  if path == ui.textFile and (ui.textFilled or path.len == 0): return
+  let key = path & (if npSensorSerial in ui.textEdit.wantedParts: "\0sensor" else: "")
+  if key == ui.textKey: return
+  ui.textKey = key
   ui.textFile = path
   ui.textFilled = false
   ui.textWhy = PreviewSample
   if i < 0: return
   let fp = st.sessions[i].filePtr
   if fp == nil: return
-  let got = valuesOfFile(fp[], path, st.sessions[i].signature, st.editsAt(path),
-    ui.textEdit)
-  ui.textWhy = got.why
-  if got.ok:
-    ui.textValues = got.values
-    ui.textFilled = true
+  inc ui.valuesGen
+  ui.valuesNote = ValuesNote(gen: -1)
+  ui.textWhy = PreviewReading
+  ui.valuesJob = st.jobs.submit(JobSpec(title: PreviewTitle, lane: jlBackground,
+    reads: @[path]), valuesWork(fp, path, st.sessions[i].signature, st.editsAt(path),
+    ui.textEdit, ui.valuesNote, ui.valuesGen))
 
 proc watchCursor(data: ptr ImGuiInputTextCallbackData): cint {.cdecl, raises: [].} =
   ## Keeps where the cursor of the lines box is, for the token that is put in.
