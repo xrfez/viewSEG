@@ -279,9 +279,14 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
   let sig = folderSignature(facts, ask.forceScale, ask.accelSet, pair,
     ask.options.targetPct)
   var answer = vibratorOf(rows, names, at, dtMs, params, recorded, ask.topHz, NaN, note, sig)
-  if held.samples.len > 0 and answer.problem.len == 0:
-    let label = if held.name.len > 0: held.name else: "reference"
-    answer.against = "Measured against the project reference " & label
+  if answer.problem.len == 0:
+    if held.samples.len > 0:
+      let label = if held.name.len > 0: held.name else: "reference"
+      answer.against = "Measured against the project reference " & label
+    elif at[vsReference] >= 0 and at[vsReference] < names.len:
+      # the window's sentence when no project reference is chosen
+      answer.against = "Measured against the recorded reference, " &
+        names[at[vsReference]] & " (no project reference is chosen)"
   var warnings: seq[string] = @[]
   for w in facts.warnings: addLine(warnings, w)
   for w in fitLines(facts): addLine(warnings, w)

@@ -415,6 +415,21 @@ proc main*() =
     doAssert datNamed, $datRow.warnings
     doAssert got.table.totals.failed >= 1, $got.table.totals
 
+  block recordedReference:
+    ## With no archive reference the row names the recorded pilot, as the
+    ## window does. Seen to fail when that sentence was set only for an
+    ## archive reference.
+    let got = runJob(@[listed(plain)], ask)
+    doAssert got.st == jsDone, got.error
+    let row = rowOf(got.table, plain)
+    doAssert row.outcome == foJudged, row.problem
+    let sentence = "Measured against the recorded reference, reference " &
+      "(no project reference is chosen)"
+    var said = false
+    for w in row.warnings:
+      if w == sentence: said = true
+    doAssert said, $row.warnings
+
   block cancel:
     lane = initJobs()
     setJobHook(stopAtSecond)
