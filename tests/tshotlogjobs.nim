@@ -34,7 +34,8 @@
 ## re-map parsing a passed string, `remap_reads_the_log_not_a_stale_copy`
 ## lost the edit; with the remembered map not applied, `remembered_map_on_the_job`
 ## rejected `usedLast`; with a read-only project remembering a new map anyway,
-## `read_only_uses_the_map` kept the guess.
+## `read_only_uses_the_map` kept the guess; with `decimalComma` left out of the
+## map writer, `decimal_comma_survives_reopen` read `1,5` as not a number.
 
 import std/[options, os, strutils]
 import viewSEG/core/[filesystem, jobs, project, shotlog, shotlogjobs, state]
@@ -697,6 +698,45 @@ proc main*() =
       "the cased import did not finish"
     doAssert st.shotLogMap(1).roles[1] == crSequence, "capitals and end spaces did not fit"
     doAssert st.timesSaid(ColumnsAsLast) == saidOnce + 1, "the cased import said nothing"
+    discard st.shutdown()
+
+  block decimal_comma_survives_reopen:
+    # Import a semicolon log whose numbers use a comma, write the project
+    # document and read it back, then import the same text with no map: the
+    # remembered map is used and the depths are numbers.
+    const Table = "shot;depth\n1;1,5\n2;2,25\n"
+    let job = root / "JobDecimal"
+    let table = root / "decimal.csv"
+    writeFile(table, Table)
+    var st = start(root / "config-decimal")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0), "the project did not open"
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not stored"
+    doAssert st.shotLogMap(0).decimalComma, "the first import did not see a decimal comma"
+    doAssert st.shotView(0).rows[0].sourceDepth == 1.5 and
+      st.shotView(0).rows[1].sourceDepth == 2.25
+    doAssert st.shotView(0).problems.count == 0
+    st.flushFiles()
+    let doc = readFile(job.projectDirOf.documentOf)
+    doAssert "(decimalComma true)" in doc, "decimalComma was not written"
+    st.apply Command(kind: ckCloseProject)
+    doAssert st.settle(not st.inProject and st.jobs.active.len == 0)
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the project did not reopen"
+    doAssert st.project.doc.lastShotMap.isSome and
+      st.project.doc.lastShotMap.get.map.decimalComma, "decimalComma did not come back"
+    doAssert st.project.doc.shotLogs[0].map.decimalComma, "a stored log lost decimalComma"
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 2 and st.jobs.active.len == 0),
+      "the second import did not finish"
+    doAssert st.said(ColumnsAsLast), "the remembered map was not used"
+    doAssert st.shotLogMap(1).decimalComma, "the remembered map lost decimalComma"
+    doAssert st.shotView(1).rows[0].sourceDepth == 1.5, "depth 1,5 was not 1.5"
+    doAssert st.shotView(1).rows[1].sourceDepth == 2.25, "depth 2,25 was not 2.25"
+    doAssert st.shotView(1).problems.count == 0, "the remembered map reported problems"
     discard st.shutdown()
 
   block remembered_map_survives_reopen:

@@ -33,7 +33,9 @@
 ## `(shotLogs (log (name ...) (file ...) (map (delimiter comma) (header true)
 ## (clock UTC) (unit metres) (role "file number") ...)))`. `file` is a plain
 ## file name; the text is the copy under `shotlogs/`, not a node here. Absent
-## means none. A field this version does not know is kept and written back.
+## means none. `(decimalComma true)` is written when a comma is the decimal
+## point; absent reads as false. A field this version does not know is kept
+## and written back.
 ## A role that is not one, a map with more than `MaxShotLogColumns` columns,
 ## or a file that is not a plain name is said and left out.
 ##
@@ -159,11 +161,13 @@ proc writeVibProfile(w: var NifWriter; p: VibQcProfile) =
   w.close
 
 proc writeShotMap(w: var NifWriter; s: StoredShotLog) =
-  ## How to read the log. A field this version does not know is written back.
+  ## How to read the log. `decimalComma` is written only when true; absent
+  ## reads as false. A field this version does not know is written back.
   w.open "map"
   w.choice("delimiter", $s.map.delimiter)
   if s.map.skipLines != 0: w.value("skipLines", int64(s.map.skipLines))
   w.value("header", s.map.hasHeader)
+  if s.map.decimalComma: w.value("decimalComma", true)
   w.choice("clock", $s.map.clock)
   w.choice("unit", $s.map.lengthUnit)
   if s.map.dateTimePattern.len > 0: w.value("pattern", s.map.dateTimePattern)
@@ -623,6 +627,7 @@ proc readShotMap(r: var Reading; n: NifNode; s: var StoredShotLog; bad, tooMany:
         r.problem(c, "(skipLines) is too large; it is left out")
       else: s.map.skipLines = v
     of "header": r.flag(c, s.map.hasHeader)
+    of "decimalComma": r.flag(c, s.map.decimalComma)
     of "clock": r.choice(c, ClockNames, s.map.clock)
     of "unit": r.choice(c, LengthNames, s.map.lengthUnit)
     of "pattern": r.text(c, s.map.dateTimePattern)

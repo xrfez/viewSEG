@@ -64,9 +64,11 @@ Land 2026/                  the project folder: this is what is opened
   carries its survey. Each copy keeps its original's path and identity (below).
 - **`shotlogs/`** holds copies of shot logs imported into the project. The document
   names each one (`shotLogs`: a short name, the copy's file name, and the column map).
-  The text is the copy, never a node of `project.nif`, and the file it was imported
-  from is not changed. A document without the node has none. A field inside a log
-  that this version does not know is kept and written back. A role that is not one,
+  The map writes `decimalComma` when a comma is the decimal point; a document
+  without it reads as not. The text is the copy, never a node of `project.nif`,
+  and the file it was imported from is not changed. A document without the node
+  has none. A field inside a log that this version does not know is kept and
+  written back. A role that is not one,
   a map with more columns than this version keeps, or a file name that is not a
   plain name in `shotlogs/` is said and left out. A name Windows keeps for a device
   (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`, any extension)

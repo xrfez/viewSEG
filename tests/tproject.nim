@@ -21,7 +21,8 @@
 ## changed byte is refused" (the points came back with a wrong easting);
 ## with `later` not written back, "a later version's part is kept"; with a
 ## device name accepted, a hostile `(file "CON")` was stored; with a hostile
-## `(lastShotMap)` stored anyway, `lastShotMap` kept `(role "not a role")`.
+## `(lastShotMap)` stored anyway, `lastShotMap` kept `(role "not a role")`; with
+## `decimalComma` left out of the map writer, "decimalComma did not come back".
 
 import std/[options, os, strutils, times]
 import parseSEG
@@ -93,8 +94,10 @@ proc main*() =
     m.dateTimePattern = "yyyy-mm-dd hh:mm:ss"
     m.sentinels = @["-999.25"]
     m.lengthUnit = luFeet
+    m.decimalComma = true
     d.shotLogs = @[StoredShotLog(name: "morning", file: "morning.csv", map: m)]
     let text = projectDocument(d)
+    doAssert "(decimalComma true)" in text, "decimalComma was not written: " & text
     doAssert "(shotLogs" in text and "(file \"morning.csv\")" in text, text
     doAssert "shotlogs/" notin text, "the copy's folder is not written into the document: " & text
     var problems: seq[string]
@@ -103,6 +106,7 @@ proc main*() =
     doAssert back.shotLogs.len == 1, $back.shotLogs.len
     doAssert back.shotLogs[0].name == "morning" and back.shotLogs[0].file == "morning.csv"
     doAssert back.shotLogs[0].map == m, "the map did not come back"
+    doAssert back.shotLogs[0].map.decimalComma, "decimalComma did not come back"
     # An older document has no node: none, and writing it does not add one.
     let old = projectDocument(ProjectDoc(name: "old"))
     doAssert "(shotLogs" notin old, old
@@ -155,9 +159,11 @@ proc main*() =
     m.dateTimePattern = "yyyy-mm-dd hh:mm:ss"
     m.sentinels = @["-999.25"]
     m.lengthUnit = luFeet
+    m.decimalComma = true
     d.shotLogs = @[StoredShotLog(name: "morning", file: "morning.csv", map: m)]
     d.lastShotMap = some(LastShotMap(map: m, headers: @["File", "Shot", "Note"]))
     let text = projectDocument(d)
+    doAssert "(decimalComma true)" in text, "decimalComma was not written: " & text
     doAssert "(lastShotMap" in text and "(headerName \"File\")" in text, text
     doAssert "(shotLogs" in text, "a stored log was dropped beside the remembered map"
     var problems: seq[string]
@@ -166,7 +172,15 @@ proc main*() =
     doAssert back.shotLogs.len == 1 and back.shotLogs[0].map == m
     doAssert back.lastShotMap.isSome, "the remembered map did not come back"
     doAssert back.lastShotMap.get.map == m, "the remembered map did not come back"
+    doAssert back.lastShotMap.get.map.decimalComma, "decimalComma did not come back"
+    doAssert back.shotLogs[0].map.decimalComma, "a stored log lost decimalComma"
     doAssert back.lastShotMap.get.headers == @["File", "Shot", "Note"]
+    var plain = m
+    plain.decimalComma = false
+    let quiet = projectDocument(ProjectDoc(name: "plain",
+      shotLogs: @[StoredShotLog(name: "morning", file: "morning.csv", map: plain)],
+      lastShotMap: some(LastShotMap(map: plain, headers: @["File"]))))
+    doAssert "decimalComma" notin quiet, "a false decimalComma was written: " & quiet
     let old = projectDocument(ProjectDoc(name: "old"))
     doAssert "(lastShotMap" notin old, old
     problems.setLen 0
