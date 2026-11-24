@@ -403,14 +403,20 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
   except JobCancelledError as e:
     if sink != nil and sink.result.reason.len == 0:
       abort(sink, dest, part, claimed, e.msg, true)
+    elif sink == nil and claimed:
+      discard dropOurs(part)
     raise
   except OSError as e:
     if sink != nil and sink.result.reason.len == 0:
       abort(sink, dest, part, claimed, writeFailure(e.msg), false)
+    elif sink == nil and claimed:
+      discard dropOurs(part)
     raise
   except CatchableError as e:
     if sink != nil and sink.result.reason.len == 0:
       abort(sink, dest, part, claimed, e.msg, false)
+    elif sink == nil and claimed:
+      discard dropOurs(part)
     raise
 
 proc cutGatherWork*(file: ptr SeismicFile; source, dest: string; shots: CutShots;

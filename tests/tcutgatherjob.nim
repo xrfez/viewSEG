@@ -442,6 +442,30 @@ proc main*() =
     doAssert partFiles(outDir).len == 0, $partFiles(outDir)
     doAssert not walkDir(outDir).toSeq.anyIt(".tmp" in it.path)
 
+  block failure_without_sink_leaves_no_part:
+    # Fails when a cut with no result sink leaves its part file after a failure
+    # that is not a cancel: the report raises on its second call, which is after
+    # the part file was claimed and before any abort.
+    let dest = outDir / "nosink.sgd"
+    var calls = 0
+    let f = addr srcSame
+    let id = jobs.submit(cutGatherSpec(same.path, dest), proc (ctx: JobContext) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        cutGather(ctx, f, same.path, dest, shots, opts, nil, report =
+          proc (done, total: int64): bool {.gcsafe.} =
+            {.cast(gcsafe).}:
+              inc calls
+              if calls == 2: raise newException(ValueError, "injected failure")
+              true))
+    doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
+    doAssert jobs.info(id).get.state == jsFailed, $jobs.info(id).get.state
+    doAssert calls == 2, "failed at call " & $calls
+    doAssert not fileExists(dest)
+    var stray: seq[string] = @[]
+    for kind, path in walkDir(outDir):
+      if extractFilename(path).startsWith("nosink.sgd.part-"): stray.add path
+    doAssert stray.len == 0, $stray
+
   echo "tcutgatherjob ok"
 
 when isMainModule:
