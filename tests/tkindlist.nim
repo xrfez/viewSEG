@@ -17,7 +17,8 @@
 ## `kindCache` in `startKinds`, "a file listed again was read for its kind"; with the size and
 ## time of the session not compared in `kindFromOpen`, "a session of another time of the file
 ## gave the row its kind"; with `ownKeys` not asked, "the facts of joined keys gave the row its
-## kind".
+## kind"; with the vendor maps' load not compared in `takeKinds`, "an answer of older vendor
+## maps was kept".
 
 import std/[importutils, options, os, sequtils, times]
 import parseSEG
@@ -111,6 +112,19 @@ proc main*() =
         kind: rkReceiverContinuous)])
       discard st.drainInbox()
       doAssert st.kindOf(shot) == some(rkShotGather), "an answer for another listing was kept"
+
+    block anAnswerReadWithOlderVendorMapsIsNotKept:
+      # a job that read with the maps in force before the last load ends late: its answers go
+      let i = st.fileList.find(canonical(shot))
+      let before = st.fileList.entries.mapIt((it.kindState, it.recording))
+      st.mailbox.post Msg(kind: mkKinds, kindsGen: st.fileList.gen,
+        kindsVendors: st.vendorGen - 1, kinds: @[KindAnswer(
+        path: canonical(shot), size: st.fileList.entries[i].size,
+        modified: st.fileList.entries[i].modified, state: ksKnown,
+        kind: rkReceiverContinuous)])
+      discard st.drainInbox()
+      doAssert st.fileList.entries.mapIt((it.kindState, it.recording)) == before,
+        "an answer of older vendor maps was kept"
 
     block aFileNotKnownTakesItsKindWhenItIsShown:
       # a file too large to be opened for its kind (posted so: the limit is 256 MiB): once the
