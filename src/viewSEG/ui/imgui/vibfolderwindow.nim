@@ -446,7 +446,25 @@ proc drawProgress(ui: VibFolderUi; marks: var Marks) =
   igProgressBar(fraction, ImVec2_c(x: -1, y: 0), overlay.cstring)
   marks.mark("vibfolder.progress")
 
+proc setAll(ui: var VibFolderUi; on: bool) =
+  if on: ui.unticked.clear()
+  else:
+    for item in ui.listed: ui.unticked[item.path] = true
+
 proc drawFiles(ui: var VibFolderUi; marks: var Marks) =
+  var on = 0
+  for item in ui.listed:
+    if item.path notin ui.unticked: inc on
+  if ui.listed.len > 0:
+    if igButton(AllButton.cstring, ImVec2_c(x: 0, y: 0)): ui.setAll(true)
+    marks.mark("vibfolder.all")
+    igSameLine(0, 8)
+    if igButton(NoneButton.cstring, ImVec2_c(x: 0, y: 0)): ui.setAll(false)
+    marks.mark("vibfolder.none")
+    igSameLine(0, 8)
+    let count = tickedCount(on, ui.listed.len)
+    igTextUnformatted(count.cstring, nil)
+    marks.mark("vibfolder.ticked " & count)
   if igBeginChild_Str("##files", ImVec2_c(x: 0, y: 0), 0, 0):
     if ui.listed.len == 0:
       igTextDisabled((if ui.listing: Listing else: NoFiles).cstring)

@@ -85,6 +85,10 @@ func polarityCell(row: FolderRow): string =
     result.add "From the pair: "
     result.add row.extraPolarity
 
+func tickedCount*(on, total: int): string =
+  ## "3 of 3": how many of the listed files are ticked.
+  $on & " of " & $total
+
 func warningsCell*(row: FolderRow): string =
   ## Warnings for the row, including a pair's and the weight comparison.
   result = joinWords(row.warnings)
@@ -185,6 +189,8 @@ const
   NoTicked* = "Tick at least one file."
   NoRows* = "No results yet. Tick the files and choose Run."
   RunButton* = "Run"
+  AllButton* = "All"
+  NoneButton* = "None"
   CancelButton* = "Cancel"
   CopyButton* = "Copy"
   ExportButton* = "Export CSV..."

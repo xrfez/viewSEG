@@ -335,7 +335,8 @@ Three boxes above the tabs hold the job's weights in kilograms: hold-down, basep
 reaction mass. Empty means not set. They are compared with each file's header weights and
 never applied. With no project open the boxes are inactive.
 
-The **Files** tab lists the signature files found, each ticked. Untick a file to leave it
+The **Files** tab lists the signature files found, each ticked, with how many are ticked
+("3 of 3"). **All** ticks every file; **None** clears the ticks. Untick a file to leave it
 out of the run. The **Results** tab is one row per file that was run: the verdict, the
 sentence, the measures, the polarity and any problem. The File column fits the names
 shown. The sentence column takes the width left in the window; a cell that is still cut

@@ -349,6 +349,34 @@ proc main*() =
       true
     step("Export CSV... writes the full table", exportCsv, exported)
 
+    var tickPhase = 0
+    proc openFiles(f: FrameInfo) = tickPhase = 0
+    proc ticks(f: FrameInfo): bool =
+      case tickPhase
+      of 0:
+        f.click(f.markOf("vibfolder.tab Files").centre)
+        inc tickPhase
+      of 1:
+        if f.markOf("vibfolder.file good.dat").size.x == 0:
+          if wait mod 8 == 0: f.click(f.markOf("vibfolder.tab Files").centre)
+          return false
+        doAssert f.markOf("vibfolder.all").size.x > 0, "All is missing"
+        doAssert f.markOf("vibfolder.none").size.x > 0, "None is missing"
+        doAssert f.markOf("vibfolder.ticked 3 of 3").size.x > 0,
+          "count: " & $f.markNames("vibfolder.ticked ")
+        f.click(f.markOf("vibfolder.none").centre)
+        inc tickPhase
+      of 2:
+        if f.markOf("vibfolder.ticked 0 of 3").size.x == 0: return false
+        doAssert f.markOf("vibfolder.run.disabled").size.x > 0, "None left Run enabled"
+        f.click(f.markOf("vibfolder.all").centre)
+        inc tickPhase
+      else:
+        result = f.markOf("vibfolder.ticked 3 of 3").size.x > 0 and
+          f.markOf("vibfolder.tick good.dat").size.x > 0 and
+          f.markOf("vibfolder.run.disabled").size.x == 0
+    step("All and None tick the list", openFiles, ticks)
+
     var phase = 0
     proc untick(f: FrameInfo) = phase = 0
     proc unticked(f: FrameInfo): bool =
