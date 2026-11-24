@@ -142,6 +142,7 @@ proc drawFormat(ui: var CutUi; marks: var Marks) =
       marks.mark("cut.format " & standardWords(s))
     igEndCombo()
   marks.mark("cut.format")
+  marks.mark("cut.format " & standardWords(ui.standard) & ".on")
 
 proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw =
   ## The window, while it is open. Cut posts the command when the options can

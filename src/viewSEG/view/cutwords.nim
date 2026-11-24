@@ -15,7 +15,7 @@ const
   AlignLinear* = "Linear"
   AlignCubic* = "Cubic"
   AlignSinc* = "Sinc"
-  FormatSegd* = "SEG-D"
+  FormatSegd* = "SEG-D Rev 3"
   FormatSegy* = "SEG-Y"
   NeedFolder* = "Choose the folder the file is written to."
   NeedName* = "Give the file a name."

@@ -131,6 +131,7 @@ proc main*() =
     proc summed(f: FrameInfo): bool =
       let s = f.summary
       if s.len == 0: return false
+      doAssert f.hasMark("cut.format SEG-D Rev 3.on"), "the Format entry is not SEG-D Rev 3"
       doAssert s.startsWith("3 shots (1 row has no time and is left out), 2 components, " &
         "about "), "the summary names the wrong shots: " & s
       true

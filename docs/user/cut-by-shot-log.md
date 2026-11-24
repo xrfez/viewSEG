@@ -32,7 +32,7 @@ opening keeps what you typed. From the top:
   **Nearest sample** starts at the nearest one and interpolates nothing. **Linear**, **Cubic**
   and **Sinc** shift the part of the start between two samples out by that interpolation; Sinc is the
   most exact and the slowest. Hover an entry for the same in a sentence.
-- **Format:** **SEG-D** (Rev 3) or **SEG-Y**. The default is SEG-D.
+- **Format:** **SEG-D Rev 3** or **SEG-Y**. The default is SEG-D Rev 3.
 - **Folder:** where the file goes, chosen with **Change folder...**. It is "not chosen" until
   you choose one.
 - **File name:** a name without a folder. It starts as the recording's name, then `_cut`, then
