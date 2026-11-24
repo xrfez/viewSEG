@@ -411,6 +411,10 @@ the reason when it failed), how many traces were written and dropped, and the no
 Columns can be resized. **Copy results** puts that table on the clipboard. **Open
 destination** opens the folder.
 
+**File names** (above **Format**) names each file from its own values instead of its
+source name: see [Output file names](output-file-names.md). **Correlated** writes the
+files correlated with the project's reference: see [Correlate](correlate.md).
+
 ## Jobs
 
 Anything that takes a while (opening a large file, listing a folder) runs while you go
@@ -588,7 +592,8 @@ disk, runs the correlation again and keeps the picture until the new one is read
 The next file in the folder is correlated too when it has a reference. First-break
 picks made on the raw record are kept but not drawn, and the status line says so
 once. The window title says "correlating" while the job runs and "correlated" when
-the result is shown.
+the result is shown. A file whose correlated copy would be too large to hold is
+correlated on demand; see [Correlate](correlate.md).
 
 **The plot's menu** (right-click the plot) holds what acts on the data, and nothing about
 how it looks. Its first line names what it acts on: the trace under the pointer, or the
@@ -1199,6 +1204,8 @@ reports what it found: gaps in the recording, overlaps between its segments that
 how the records are numbered (by the log's file numbers when they rise in time order, else 1
 to the number of shots). When it ends the window offers **Open the cut file**. The recording
 is never changed, and a file that exists is never overwritten.
+The details (each field, the size estimate, gaps and overlaps, the part file) are in
+[Cut by shot log](cut-by-shot-log.md).
 
 ## Spectra
 
@@ -1658,7 +1665,7 @@ not hold stays as it is), and **Tools > Reset the settings** puts them back to t
 (the recent files and the window's place stay; the settings before are kept in a copy).
 **Tools > Leap seconds...** shows the GPS minus UTC table the open files' times are read
 with, and adds a leap second (the first of a month, after the last entry). The table is
-kept in `leapseconds.nif` beside the settings.
+kept in `leapseconds.nif` beside the settings (see [Leap seconds](leap-seconds.md)).
 
 Every import and export is in the menu of what it is about: **Project** (the survey),
 **Edit** (the trace edits), **Tools** (the settings, the messages) and **Window** (the
