@@ -334,12 +334,19 @@ proc headerCell(name: string; place: int; marks: var Marks; sentence = ""): bool
 const
   tableFlags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_ScrollY.cint or
     ImGui_TableFlags_ScrollX.cint or ImGui_TableFlags_Resizable.cint or
-    ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_SizingStretchProp.cint
+    ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_SizingFixedFit.cint
+  tabFlags = ImGui_TabBarFlags_DrawSelectedOverline.cint
 
-proc setupColumns(names: openArray[string]) =
+proc setupColumns(names: openArray[string]; wide: openArray[float32]) =
+  ## Each column is as wide as its title and the sort number after it, or `wide[i]` font
+  ## sizes when that is more (file names, point lists). A table wider than the window scrolls
+  ## sideways; a title is never cut.
+  let extra = igGetFontSize() * 1.5
   for i, name in names:
-    igTableSetupColumn(name.cstring, ImGui_TableColumnFlags_WidthStretch.cint,
-      if i == 0: 3 else: 1, ImGuiID(i + 1))
+    let w = max(igCalcTextSize(name.cstring, nil, false, -1).x + extra,
+      wide[i] * igGetFontSize())
+    igTableSetupColumn(name.cstring, ImGui_TableColumnFlags_WidthFixed.cint, w,
+      ImGuiID(i + 1))
   igTableSetupScrollFreeze(1, 1)
   igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
 
@@ -476,7 +483,7 @@ proc drawPoints(ui: var MissingUi; marks: var Marks) =
     return
   if not igBeginTable("##points", names.len.cint, tableFlags, ImVec2_c(x: 0, y: 0), 0):
     return
-  setupColumns(names)
+  setupColumns(names, [0'f32, 0, 0, 0, 0, 0, 0, 0, 0])
   for c, name in names:
     if igTableSetColumnIndex(cint(c)):
       let place = if on[c]: placeOf(ui.pointSort, keys[c]) else: 0
@@ -534,7 +541,7 @@ proc drawRecords(ui: var MissingUi; st: AppState; marks: var Marks; commands: va
     return
   if not igBeginTable("##records", names.len.cint, tableFlags, ImVec2_c(x: 0, y: 0), 0):
     return
-  setupColumns(names)
+  setupColumns(names, [14'f32, 0, 0, 0, 0, 0, 0, 0, 24])
   for c, name in names:
     if igTableSetColumnIndex(cint(c)):
       let place = if on[c]: placeOf(ui.recordSort, keys[c]) else: 0
@@ -689,7 +696,7 @@ proc drawMissing*(ui: var MissingUi; title: string; st: AppState; marks: var Mar
       unmatchedLines.add row.path & " " & $row.record & ": " & row.why
     drawPopup("##skipped", NoneSkipped, "missing.skippedline ", skippedLines, marks)
     drawPopup("##unmatched", NoneUnmatched, "", unmatchedLines, marks)
-    if igBeginTabBar("##missingtabs", 0):
+    if igBeginTabBar("##missingtabs", tabFlags):
       marks.mark("missing.tab")
       let folderOn = igBeginTabItem(FolderTab.cstring, nil, 0)
       marks.mark("missing.tab Folder")
