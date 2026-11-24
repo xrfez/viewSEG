@@ -13,9 +13,17 @@ proc sensorBlock(serial: string): seq[byte] =
   for i in serial.len ..< 18: result[13 + i] = byte(' ')
   result[31] = 0x41
 
-proc writeOneRecord(path, serial: string) =
-  ## One record of one trace; an empty `serial` writes no block.
-  let ext = if serial.len > 0: sensorBlock(serial) else: newSeq[byte]()
+proc vendorBlock(serial: int64): seq[byte] =
+  ## A vendor block of type 0xB0 holding `serial` (u32 big-endian) from byte 3.
+  result = newSeq[byte](32)
+  for i in 0 .. 3: result[2 + i] = byte((serial shr (8 * (3 - i))) and 255)
+  result[31] = 0xB0
+
+proc writeOneRecord(path, serial: string; vendor: int64) =
+  ## One record of one trace; an empty `serial` writes no Sensor Info block, a negative
+  ## `vendor` no vendor block.
+  var ext = if serial.len > 0: sensorBlock(serial) else: newSeq[byte]()
+  if vendor >= 0: ext.add vendorBlock(vendor)
   var r = SegdRecord(layout: slRev3, format: some(sd8058),
     revision: SegdRevision(major: 3, minor: 0))
   r.gh1 = SegdGeneralHeader1(fileNumber: 1, formatCode: 8058, year: 24,
@@ -52,13 +60,14 @@ proc writeOneRecord(path, serial: string) =
   w.close()
   sink.close()
 
-proc writeSensorFile*(path: string; serials: openArray[string]) =
+proc writeSensorFile*(path: string; serials: openArray[string]; vendor = -1'i64) =
   ## A SEG-D Rev 3 file of one record per entry, each of one trace whose Sensor Info
-  ## block holds that serial (no block when the entry is empty).
+  ## block holds that serial (no block when the entry is empty). A `vendor` of 0 or more
+  ## adds to every trace a vendor block (type 0xB0) holding it as a u32 from byte 3.
   var all = ""
   for i, s in serials:
     let part = path & ".part" & $i
-    writeOneRecord(part, s)
+    writeOneRecord(part, s, vendor)
     all.add readFile(part)
     removeFile(part)
   writeFile(path, all)

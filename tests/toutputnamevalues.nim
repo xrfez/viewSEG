@@ -13,7 +13,11 @@
 ## The sensor serial: with two serials compared as equal, `two serials were
 ## one value`; with the part not asked for still read, `the headers were read
 ## for no part`. A vendor map's `sensorSerial` field is read: without it, `the vendor field was not
-## read`; with the record-level lookup removed, `the record's vendor block was not read`.
+## read`. A trace with a Sensor Info serial and a vendor `sensorSerial` took the vendor one
+## (`the vendor field beat the Sensor Info block`, made by trying the vendor field first); a
+## record-level `sensorSerial` was used (`a record-level vendor field was used`, made by
+## restoring the record fall-back); a field named `unitSerial` was used (`unitSerial was
+## used`, made by looking for that name).
 ##
 ## Runs on samples/vib/vib_uncorrelated.sgd and samples/land/shots.sgy.
 
@@ -244,6 +248,11 @@ proc main*() =
   (target (kind block) (type 0x11) (where generalHeader) (name recordInfo)
     (field sensorSerial (at 32) (enc u8))))
 """)
+      writeFile(dir / "unit.nif", """(.nif27)
+(vendormap "vendor-u" (version 1) (match (format segd) (rev 3.0 3.1) (manufacturer 77))
+  (target (kind block) (type 0xB0) (where traceHeader) (name vendorStatus)
+    (field unitSerial (at 32) (enc u8))))
+""")
       proc serialWith(path, map: string): NameValue =
         let load = loadVendorFolders([VendorFolder(dir: dir, origin: voProgram)])
         var reg: VendorRegistry
@@ -259,10 +268,39 @@ proc main*() =
         "traces with different vendor serials were one value"
       doAssert serialWith(other, "vendor-s").state == nvMissing,
         "another manufacturer's file had a serial"
-      # a serial of the record's own vendor blocks serves every trace of the record
-      let wide = serialWith(mine, "vendor-g")
-      doAssert wide.state == nvText and wide.text == "17", "the record's vendor block was not read"
+      # a serial of the record's own vendor blocks is not a trace's serial
+      doAssert serialWith(mine, "vendor-g").state == nvMissing,
+        "a record-level vendor field was used"
+      doAssert serialWith(mine, "vendor-u").state == nvMissing, "unitSerial was used"
       doAssert serialWith(mine, "no-such-map").state == nvMissing, "no map, a serial"
+
+  block sensorInfoBeatsVendor:
+    # a trace with a Sensor Info serial N0042 and a vendor block holding 9: the standard
+    # block is the one used; the same file without the Sensor Info block gives the vendor one
+    let dir = getTempDir() / "viewseg_tnamevalues_sensorvendor"
+    createDir(dir)
+    let both = dir / "both.sgd"
+    let vendorOnly = dir / "vendoronly.sgd"
+    writeSensorFile(both, ["N0042"], 9)
+    writeSensorFile(vendorOnly, [""], 9)
+    writeFile(dir / "v.nif", """(.nif27)
+(vendormap "vendor-b" (version 1) (match (format segd) (rev 3.0 3.1))
+  (target (kind block) (type 0xB0) (where traceHeader) (name vendorStatus)
+    (field sensorSerial (at 3) (enc u32))))
+""")
+    let load = loadVendorFolders([VendorFolder(dir: dir, origin: voProgram)])
+    doAssert load.registry.maps.len == 1, load.foldersText
+    proc valueOf(path: string): NameValue =
+      var f = openSeismic(path, keys = true)
+      result = nameValuesOf(f, path, SignatureFacts(), FileEdits(), false, nil,
+        {npSensorSerial}, load.registry)[npSensorSerial]
+      f.close()
+    let first = valueOf(both)
+    doAssert first.state == nvText and first.text == "N0042",
+      "the vendor field beat the Sensor Info block"
+    let second = valueOf(vendorOnly)
+    doAssert second.state == nvText and second.text == "9", "the vendor serial was not read"
+    removeDir(dir)
 
   echo "toutputnamevalues: ok"
 

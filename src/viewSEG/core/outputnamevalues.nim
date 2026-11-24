@@ -203,7 +203,6 @@ proc fillSeismic(v: var NameValues; file: SeismicFile; edits: FileEdits;
     sensor, sensorAux: TextAcc
     wantSensor = npSensorSerial in wanted
     sawNonAux = false
-    serials = initSerialReader(vendors)
     seenRec = initHashSet[int]()
     buf, ownBuf: array[KeyChunk, TraceKeys]
   var t = 0
@@ -221,12 +220,12 @@ proc fillSeismic(v: var NameValues; file: SeismicFile; edits: FileEdits;
       if keys.status == tsAuxiliary:
         considerParts(auxiliary, keys, us, buf[k].timeOrigin, segd)
         if wantSensor and not sensorAux.mixed:
-          considerText(sensorAux, serials.unitSerialOf(file, i))
+          considerText(sensorAux, unitSerialOf(file, i, vendors))
       else:
         sawNonAux = true
         considerParts(seismic, keys, us, buf[k].timeOrigin, segd)
         if wantSensor and not sensor.mixed:
-          considerText(sensor, serials.unitSerialOf(file, i))
+          considerText(sensor, unitSerialOf(file, i, vendors))
       if segd:
         let ri = int(file.traceEntry(i).record)
         if ri notin seenRec:
