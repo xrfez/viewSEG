@@ -14,14 +14,16 @@
 ## - `importEditsWork`: a file's list the user imports, read and taken
 ##   apart here (a CSV of a million rows is half a second's work), so the UI
 ##   thread only adds its edits.
+## - `treatWork` (interactive lane; the lane of hashes when the hash of every
+##   byte is needed): which document keeps what the user forced for a file.
 ##
 ## None of them is given the file in `reads`: they open it themselves (or
 ## read only the keys in memory), so a close or a step to another file
 ## never waits for a hash of a large file.
 
-import std/[os, strutils, times]
+import std/[os, sequtils, strutils, times]
 import parseSEG
-import filememory, filesystem, identity, inbox, jobs, nif, threads, treatas
+import filememory, filesystem, identity, inbox, jobs, nif, threads
 
 proc identifyWork*(path: string; store: Store; to: Poster): JobWork =
   ## Posts `mkIdentified`: the quick identity of the file at `path` and the
@@ -187,52 +189,48 @@ proc importEditsWork*(path: string; traces: int; to: Poster): JobWork =
     clearCycleRoots()
     to.post move msg
 
-proc treatWork*(path: string; store: Store; treat: TreatAs; to: Poster): JobWork =
-  ## Posts `mkTreated`: the document of the store about the file at `path` (found by its quick
-  ## identity: it is identified on demand, however the file was never opened) with `treat` as
-  ## what the user forces for it, or a new document when it has none and something is
-  ## forced. The UI thread hands it to the disk thread, which merges with a change another
-  ## program made meanwhile.
+proc treatWork*(path: string; store: Store; hint: FileRecord; taken: seq[string]; hashing: bool;
+    to: Poster): JobWork =
+  ## Posts `mkTreated`: the document of `store` that keeps what the user forces for the file at
+  ## `path` (`fileDoc`, among the documents of its quick identity), or the name of a new one
+  ## (none of `taken`, the names the UI thread has given, nor of the store). `hint` is what the
+  ## UI thread knows of the file: its document (`doc`, taken while the file is of that quick
+  ## identity) or the hash of every byte. The hash is taken only with `hashing` (the lane of
+  ## hashes), and only when the documents need it to be told apart, or the only one knows its
+  ## file's; without `hashing` the message then asks for it (`treatHash`). The document itself is
+  ## changed by the disk thread (`DiskIo.treat`), with what is forced then.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "looking up what is remembered"
     var msg = Msg(job: ctx.id, kind: mkTreated, treatPath: path)
     try:
       var modified: Time
       var id = quickIdentity(path, modified)
-      var taken, problems: seq[string]
-      var found: seq[FileRecord] = @[]
-      for r in store.recordsOf(id, taken, problems):
-        if not r.unconfirmed: found.add r
-      if found.len > 1:
-        # several documents of one quick identity: the hash of every byte says which is the
-        # file's (a document whose own hash was never taken may be any; if more than one
-        # fits, nothing is written)
-        ctx.setPhase "reading every byte"
-        id.full = fullHash(path, proc (done, total: int64): bool = ctx.progress(done, total))
-        id.fullKnown = true
-        var fits: seq[FileRecord] = @[]
-        for r in found:
-          if not r.identity.fullKnown or r.identity.full == id.full: fits.add r
-        if fits.len > 1:
-          msg.treatFailure = "several documents of what is remembered fit it, so the file " &
-            "must be opened once first"
-        found = fits
-      var best = -1
-      for i, r in found:
-        if best < 0 or r.opened > found[best].opened: best = i
-      if msg.treatFailure.len > 0: discard
-      elif best >= 0:
-        msg.treatRecord = found[best]
-        if msg.treatRecord.damaged:
-          msg.treatFailure = "its document has parts this version cannot read, so it is " &
-            "left as it is"
-        msg.treatRecord.treat = treat
-      elif treat.isSet:
-        msg.treatRecord = FileRecord(identity: id, name: path.extractFilename, path: path,
-          opened: getTime(), modified: modified, doc: freeDocName(id, taken), treat: treat,
-          stamp: (-1'i64, Time(), 0'i64))
+      msg.treatModified = modified
+      let same = hint.identity.size == id.size and hint.identity.quick == id.quick
+      if same and hint.identity.fullKnown: id = hint.identity
+      if same and hint.doc.len > 0:
+        msg.treatDoc = hint.doc
       else:
-        msg.treatNone = true
+        var names = taken
+        var problems: seq[string]
+        var found: seq[FileRecord] = @[]
+        for r in store.recordsOf(id, names, problems):
+          if not r.unconfirmed: found.add r
+        if not id.fullKnown and (found.len > 1 or found.anyIt(it.identity.fullKnown)):
+          if not hashing:
+            msg.treatHash = true
+          else:
+            ctx.setPhase "reading every byte"
+            id.full = fullHash(path, proc (done, total: int64): bool = ctx.progress(done, total))
+            id.fullKnown = true
+        if not msg.treatHash:
+          let pick = fileDoc(found, id)
+          if pick.at >= 0: msg.treatDoc = found[pick.at].doc
+          elif pick.several:
+            msg.treatFailure = "several documents of what is remembered may be its own, so " &
+              "the file must be opened once first"
+          else: msg.treatDoc = freeDocName(id, names)
+      msg.treatIdentity = id
     except IOError, OSError:
       msg.treatFailure = getCurrentExceptionMsg()
     clearCycleRoots()

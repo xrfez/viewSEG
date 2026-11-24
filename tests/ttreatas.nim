@@ -13,7 +13,13 @@
 ## "could not be read", the words were not those of a file whose starts are the same; without the
 ## check of the first start time, a file of starts at the epoch was sliced from 1970; returning
 ## early when the user's choice did not change, the user's pick after an agent's did nothing;
-## without the check of the path, a missing, unlisted or non-seismic file took a choice.
+## without the check of the path, a missing, unlisted or non-seismic file took a choice. On the
+## code before the choice had a writer of its own in the disk thread: the edit written while the
+## look-up was under way was lost ("@[0]"), and the later version's node was dropped by the edit
+## after a choice; a file opened by its path did not have its choice, and its first edit made a
+## second document; a document that may be another file's gave the row its choice; the look-up
+## ran on the peeks lane ("peeks"). With the choice taken when the look-up was asked for, not when
+## its answer came, the read-back of the newest choice failed.
 
 import std/[importutils, options, os, sequtils, strutils, tables, times]
 import parseSEG
@@ -25,6 +31,7 @@ import viewSEG/view/[filetable, recordingwords]
 import utils/[fixtures, kindfiles, waiting]
 
 privateAccess(AppState)
+privateAccess(Remembered)
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); cond))
@@ -46,6 +53,25 @@ proc appIn(dir: string): AppState =
 proc listed(st: AppState; n: int): bool =
   not st.fileList.scanning and st.fileList.entries.len == n and
     st.fileList.entries.allIt(it.kindState != ksUnread) and st.kindJob == NoJob
+
+template settled(st: var AppState; cond: untyped): bool =
+  ## `cond`, with the inbox drained and what is due handed to the disk thread meanwhile
+  waitUntil((discard st.drainInbox(); st.persist(); cond) and
+    (discard st.drainInbox(); st.persist(); cond))
+
+proc showFile(st: var AppState; path: string) =
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+  doAssert st.settled(st.sessions.len >= 1 and st.sessions[^1].path == canonical(path) and
+    st.panel(MainPanel).laidOut), "not shown: " & path
+
+proc kill(st: var AppState; trace: int) =
+  st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled,
+    edited: @[st.sessions[^1].base + trace], on: true, origin: coWindow)
+
+proc idle(st: var AppState): bool =
+  ## no job of what is remembered left (identifications, hashes, look-ups), the disk written
+  st.flushFiles()
+  st.memoryWork.len == 0 and st.remembered.allIt(it.job == NoJob and it.hashJob == NoJob)
 
 proc main*() =
   block theWordsAndTheMark:
@@ -229,7 +255,7 @@ proc main*() =
       agent.treatKind = "continuous"
       g.apply agent
       doAssert g.treatOf(cont).kind == some(rkReceiverContinuous)
-      doAssert g.recordOf(g.rememberedAt(canonical(cont))).treat.kind == some(rkReceiverSliced),
+      doAssert g.treatsKept.getOrDefault(canonical(cont)).kind == some(rkReceiverSliced),
         "the user's choice was replaced by the agent's"
       # the user picks their own choice again: the agent's goes
       g.apply Command(kind: ckTreatAs, treatPath: cont, treatKind: "sliced")
@@ -292,6 +318,154 @@ proc main*() =
       doAssert u.fileList.entries[u.fileList.find(canonical(target))].treat.kind ==
         some(rkShotGather), "the choice was not kept for the session"
       for name in taken: doAssert "(treat" notin readFile(store2.docPath(name))
+
+    block aChoiceChangesOnlyWhatTheFileIsTreatedAs:
+      # an edit written while the look-up of the document is under way stays: the choice is set
+      # in the document as it is when it is written
+      let cfg = fx.dir / "race-config"
+      let f = writeSpecs(fx.dir / "race", "r", [spec(0, 0), spec(0, 1000), spec(0, 2000)])
+      var a = appIn(cfg)
+      a.showFile(f)
+      a.kill(0)
+      doAssert a.settled(a.idle and docs(cfg).len == 1)
+      let doc = docs(cfg)[0]
+      a.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "shot")
+      let look = a.memoryWork[^1]
+      doAssert waitUntil(a.jobs.info(look).get.state == jsDone), "the look-up did not end"
+      a.kill(1) # written before the look-up's answer is taken
+      a.flushFiles()
+      var p: seq[string]
+      doAssert readMemoryFile(doc, p).edits.lists[teKilled] == @[0, 1]
+      doAssert a.settled(a.idle and readMemoryFile(doc, p).treat.isSet), "the choice was not kept"
+      doAssert readMemoryFile(doc, p).edits.lists[teKilled] == @[0, 1],
+        "the edit written meanwhile was lost: " & $readMemoryFile(doc, p).edits.lists[teKilled]
+      a.shutdown()
+      # a later version's node, read by this run, survives a choice and the edit after it
+      var text = readFile(doc)
+      text = text[0 ..< text.rfind(')')] & " (futureNote \"kept\")\n)\n"
+      writeFile(doc, text)
+      var b = appIn(cfg)
+      b.showFile(f)
+      doAssert b.settled(b.idle and b.editsAt(canonical(f)).kept.lists[teKilled] == @[0, 1])
+      b.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "sliced")
+      doAssert b.settled(b.idle and "sliced" in readFile(doc))
+      b.kill(2)
+      doAssert b.settled(b.idle and readMemoryFile(doc, p).edits.lists[teKilled] == @[0, 1, 2])
+      doAssert "futureNote" in readFile(doc), "the later version's node was dropped"
+      doAssert "sliced" in readFile(doc) and docs(cfg).len == 1
+      b.shutdown()
+
+    block theLastChoiceIsTheOneKept:
+      let cfg = fx.dir / "quick-config"
+      var q = appIn(cfg)
+      q.apply Command(kind: ckBrowse, paths: @[dir])
+      doAssert q.settle(q.listed(2))
+      for k in ["shot", "continuous", "sliced", "automatic", "continuous"]:
+        q.apply Command(kind: ckTreatAs, treatPath: shot, treatKind: k)
+      doAssert q.settled(q.idle and docs(cfg).len == 1)
+      var p: seq[string]
+      doAssert readMemoryFile(docs(cfg)[0], p).treat.kind == some(rkReceiverContinuous),
+        $readMemoryFile(docs(cfg)[0], p).treat
+      for k in ["shot", "automatic"]:
+        q.apply Command(kind: ckTreatAs, treatPath: shot, treatKind: k)
+      doAssert q.settled(q.idle and docs(cfg).len == 0), "the last choice, automatic, was not kept"
+      q.shutdown()
+
+    block aFileOpenedWithoutItsFolderHasItsChoice:
+      # the choice was made in the list; opened by its path in another run, the file has it, and
+      # its edits go to the same document
+      let cfg = fx.dir / "open-config"
+      let f = writeSpecs(fx.dir / "open", "o", [spec(0, 0), spec(0, 1000), spec(0, 2000)])
+      var a = appIn(cfg)
+      a.apply Command(kind: ckBrowse, paths: @[fx.dir / "open"])
+      doAssert a.settle(a.listed(1))
+      a.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "shot")
+      doAssert a.settled(a.idle and docs(cfg).len == 1)
+      a.shutdown()
+      var b = appIn(cfg)
+      b.showFile(f) # no listing
+      doAssert b.settled(b.idle and b.treatOf(f).kind == some(rkShotGather)),
+        "the choice did not come with the open"
+      doAssert b.recordingFacts.ready == false or b.recordingFacts.kind == rkShotGather
+      b.kill(0)
+      doAssert b.settled(b.idle and docs(cfg).len == 1 and
+        readFile(docs(cfg)[0]).contains("killed")), "the edit went to a second document: " &
+        $docs(cfg).len
+      var p: seq[string]
+      doAssert readMemoryFile(docs(cfg)[0], p).treat.kind == some(rkShotGather)
+      b.shutdown()
+
+    block anotherFilesChoiceIsNeverShown:
+      let cfg = fx.dir / "other-config"
+      let target = writeSpecs(fx.dir / "other", "t", [spec(0, 0), spec(1, 0), spec(2, 0)])
+      var modified: Time
+      let id = quickIdentity(target, modified)
+      let store = Store(home: cfg / StoreFolder)
+      createDir(store.home)
+      var taken: seq[string] = @[]
+      proc put(full: Option[uint64]; treat: TreatAs) =
+        var rec = FileRecord(identity: id, name: "t.sgd", path: target, opened: getTime(),
+          modified: modified, treat: treat)
+        rec.identity.fullKnown = full.isSome
+        rec.identity.full = full.get(0)
+        let name = freeDocName(id, taken)
+        taken.add name
+        writeFile(store.docPath(name), memoryDocument(rec))
+      # two documents of the file's quick identity, the hash of neither known: no choice shown
+      put(none(uint64), TreatAs(kind: some rkReceiverContinuous))
+      put(none(uint64), TreatAs())
+      var a = appIn(cfg)
+      a.apply Command(kind: ckBrowse, paths: @[fx.dir / "other"])
+      doAssert a.settle(a.listed(1))
+      doAssert not a.fileList.entries[0].treat.isSet, "a choice that may be another file's shown"
+      a.shutdown()
+      # one document whose hash of every byte is not the file's, once the file's is known
+      for name in taken: removeFile(store.docPath(name))
+      taken.setLen 0
+      put(some(fullHash(target) xor 1), TreatAs(kind: some rkReceiverContinuous))
+      var b = appIn(cfg)
+      b.showFile(target)
+      doAssert b.settled(b.idle and b.remembered[0].hashed)
+      doAssert not b.treatOf(target).isSet, "another file's choice taken by the open"
+      b.apply Command(kind: ckBrowse, paths: @[fx.dir / "other"])
+      doAssert b.settle(b.listed(1))
+      doAssert not b.fileList.entries[0].treat.isSet, "another file's choice shown"
+      b.shutdown()
+
+    block theLookUpHoldsNoPeekAndHashesOnlyWhenNeeded:
+      let cfg = fx.dir / "lane-config"
+      let f = writeSpecs(fx.dir / "lane", "l", [spec(0, 0), spec(0, 1000), spec(0, 2000)])
+      var a = appIn(cfg)
+      a.apply Command(kind: ckBrowse, paths: @[fx.dir / "lane"])
+      doAssert a.settle(a.listed(1))
+      a.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "shot")
+      let look = a.jobs.info(a.memoryWork[^1]).get
+      doAssert look.spec.lane == jlInteractive, $look.spec.lane
+      doAssert a.settled(a.idle and docs(cfg).len == 1)
+      # a document whose file's hash is known: the file's is taken, on the lane of hashes
+      var p: seq[string]
+      var rec = readMemoryFile(docs(cfg)[0], p)
+      rec.identity.full = fullHash(f)
+      rec.identity.fullKnown = true
+      writeFile(docs(cfg)[0], memoryDocument(rec))
+      a.shutdown()
+      var b = appIn(cfg)
+      b.apply Command(kind: ckBrowse, paths: @[fx.dir / "lane"])
+      doAssert b.settle(b.listed(1))
+      b.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "sliced")
+      var lanes: seq[JobLane] = @[]
+      proc lookUps(st: AppState; lanes: var seq[JobLane]) =
+        for j in st.jobs.list:
+          if j.spec.title.startsWith("Remember what") and j.spec.lane notin lanes:
+            lanes.add j.spec.lane
+      doAssert b.settled((b.lookUps(lanes); b.idle and "sliced" in readFile(docs(cfg)[0])))
+      doAssert lanes == @[jlInteractive, jlHashes], $lanes
+      # its hash is known to the run now: the next choice reads no byte more
+      b.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "continuous")
+      doAssert b.settled((b.lookUps(lanes); b.idle and "continuous" in readFile(docs(cfg)[0])))
+      doAssert b.jobs.list.countIt(it.spec.lane == jlHashes and
+        it.spec.title.startsWith("Remember what")) <= 1, "hashed again"
+      b.shutdown()
 
     block aForcedKindIsWhatTheDialogGoesBy:
       # the shown file's facts carry the forced kind: the refusal of the slice follows it

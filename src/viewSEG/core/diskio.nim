@@ -35,6 +35,13 @@
 ##   to the stamp taken after the rename it holds the store's lock between
 ##   programs (`StoreLockSuffix`), so that no other viewSEG writes the
 ##   document in between, which would lose one of the two changes.
+## - **What a file is treated as.** The `treat` node of a document of the
+##   store (`core/treatas`) has one writer: a treat (`treat`), which reads the
+##   document as it is then, under the store's lock, sets that node alone and
+##   writes it back (or writes a new document, or removes one left with
+##   nothing). Every other write of a document keeps the node as it is on
+##   disk: as this thread last wrote it, else as the UI thread last read it,
+##   else, when another program changed the document, as that one left it.
 ## - **Read** reads a whole file up to a size, and posts it (or why it could
 ##   not be read) for the UI thread, with its NIF tree (`parseNif`) or why
 ##   it is not NIF, so the UI thread only takes in a tree.
@@ -62,14 +69,14 @@
 ## held the thread before the quit does not keep them from their folder.
 
 import std/[algorithm, locks, monotimes, os, strutils, tables, times]
-import edits, filememory, filesystem, inbox, jobs, layouts, log, nif, threads
+import edits, filememory, filesystem, inbox, jobs, layouts, log, nif, threads, treatas
 
 when not defined(windows):
   import std/posix
 
 type
   TaskKind = enum
-    tkAppend, tkReplace, tkPrune, tkRead, tkList, tkRemove, tkSweep
+    tkAppend, tkReplace, tkPrune, tkRead, tkList, tkRemove, tkSweep, tkTreat
 
   Task = object
     kind: TaskKind
@@ -86,7 +93,7 @@ type
     purpose: ReadPurpose   ## a read: what for
     limit: int             ## a read: the largest file read, in bytes
     dirs: seq[string]      ## a list of the layouts: the folders of the presets
-    memory: FileRecord     ## a replace with `render`: the document's record
+    memory: FileRecord     ## a replace with `render`, a treat: the document's record (`treatFor`)
     render: bool           ## a replace: the text is `memoryDocument(memory)`, made here
     before: times.Time     ## a sweep: the files last written before this are removed
     merging: bool
@@ -126,9 +133,9 @@ type
     log: File      ## the file appended to last; nil for none
     logPath: string
     failed: string ## the file an append failed on last; "" for none
-    written: Table[string, tuple[stamp: DocStamp; edits: EditLists]]
+    written: Table[string, tuple[stamp: DocStamp; edits: EditLists; treat: TreatAs]]
       ## the documents of the store written (or removed) here: their stamp
-      ## after it, and the edits they held
+      ## after it, and the edits and the `treat` they held
 
 proc `=destroy`*(x: DiskIo)
 proc `=wasMoved`*(x: var DiskIo) = x.p = nil
@@ -192,9 +199,11 @@ proc mergeOthers(w: var Writer; t: var Task; removing: bool): bool =
   ## changed it since this run read or wrote it, its edits and those of
   ## `t` merged into `t.memory`, and posted. False when it changed and
   ## cannot be read: nothing is written then.
+  ## The `treat` of `t.memory` becomes the document's as it is on disk (the module
+  ## documentation): only a treat changes it.
   result = true
   var (expect, base) = (t.expect, t.base)
-  if t.path in w.written: (expect, base) = w.written[t.path]
+  if t.path in w.written: (expect, base, t.memory.treat) = w.written[t.path]
   let now = stampOf(t.path)
   if now == expect: return
   var theirs = FileRecord()
@@ -229,6 +238,7 @@ proc mergeOthers(w: var Writer; t: var Task; removing: bool): bool =
         "meanwhile, and it cannot be read (" & getCurrentExceptionMsg() & "); it is left as " &
         "that program wrote it.")
       return false
+  t.memory.treat = theirs.treat # (none when there is no document now)
   let sent = if removing: EditLists() else: t.memory.edits
   let both = merged(base, sent, theirs.edits)
   if both == theirs.edits and now.size >= 0 and not removing and both == sent: return
@@ -282,7 +292,7 @@ proc replaceFile(w: var Writer; t: Task) =
       f.close()
     fs.moveFile(tmp, t.path)
     if t.render: # what this thread wrote last, merged or not: never another program's
-      w.written[t.path] = (stampOf(t.path), t.memory.edits)
+      w.written[t.path] = (stampOf(t.path), t.memory.edits, t.memory.treat)
     if t.done.len > 0: w.say(sevInfo, if t.fresh: t.done & t.path & "." else: t.done)
   except IOError, OSError:
     let why = getCurrentExceptionMsg()
@@ -351,18 +361,65 @@ proc removeFor(w: var Writer; t: Task) =
   if t.merging:
     var t = t
     if not w.mergeOthers(t, removing = true): return
-    if not t.memory.edits.isEmpty: # another program's edits: kept, not removed
+    if not t.memory.edits.isEmpty or t.memory.treat.isSet:
+      # another program's edits, or what the file is treated as: kept, not removed
       (t.render, t.merging) = (true, false) # merged already
       w.replaceFile(t)
-      w.written[t.path] = (stampOf(t.path), t.memory.edits)
       return
-    w.written[t.path] = (NoDoc, EditLists())
+    w.written[t.path] = (NoDoc, EditLists(), TreatAs())
   else: w.written.del t.path # its next write is as the UI thread knows it
   try:
     if fs.fileExists(t.path): fs.removeFile(t.path)
     if t.done.len > 0: w.say(sevInfo, t.done)
   except OSError:
     w.warn("Could not remove " & t.what & " (" & t.path & "): " & getCurrentExceptionMsg())
+
+proc treatFor(w: var Writer; t: Task) =
+  ## Sets the `treat` of the document `t.path` to `t.memory.treat` and nothing else of it (the
+  ## module documentation); a new document when there is none and something is forced, none
+  ## when it is left with nothing.
+  var lock = lockStore(t.path)
+  defer: fs.unlock(lock)
+  let expect = if t.path in w.written: w.written[t.path].stamp else: t.expect
+  let now = stampOf(t.path)
+  let name = t.memory.name
+  var rec = t.memory
+  if now.size >= 0:
+    try:
+      var problems: seq[string]
+      rec = readMemoryFile(t.path, problems)
+      if rec.damaged: raise newException(NifError, "it has parts this version cannot read")
+      template a: untyped = rec.identity
+      template b: untyped = t.memory.identity
+      if a.size != b.size or a.quick != b.quick or
+          (a.fullKnown and b.fullKnown and a.full != b.full):
+        raise newException(NifError, "it is about another file (its bytes differ)")
+      if b.fullKnown and not a.fullKnown: (a.full, a.fullKnown) = (b.full, true)
+    except NifError, IOError, OSError:
+      w.warn("What " & name & " is treated as is kept for this session only: its document " &
+        t.path & " cannot be read (" & getCurrentExceptionMsg() & "), and it is left as it is.")
+      return
+    rec.treat = t.memory.treat
+  elif not rec.treat.isSet:
+    return # nothing forced and no document
+  rec.doc = t.path.extractFilename
+  # the document as this run knew it, until now: what it holds next is known here too; a
+  # document another program changed meanwhile is merged at this run's next write of it
+  let known = now == expect
+  if rec.edits.isEmpty and not rec.treat.isSet and rec.later.len == 0:
+    try:
+      fs.removeFile(t.path)
+      w.written[t.path] = (NoDoc, EditLists(), TreatAs())
+    except OSError:
+      w.warn("Could not remove " & t.what & " (" & t.path & "): " & getCurrentExceptionMsg())
+    return
+  var x = Task(kind: tkReplace, path: t.path, memory: rec, render: true, what: t.what)
+  let before = w.written.getOrDefault(t.path)
+  let had = t.path in w.written
+  w.replaceFile(x)
+  if not known: # not what this run last knew: its next write merges with it
+    if had: w.written[t.path] = before
+    else: w.written.del t.path
 
 func isLeftover*(name: string): bool =
   ## Whether `name` is a temporary file a write of a document of the store
@@ -478,6 +535,7 @@ proc run(d: ptr DiskObj) {.thread.} =
     of tkRead: w.readFor(t)
     of tkRemove: w.removeFor(t)
     of tkSweep: w.sweepDir(t)
+    of tkTreat: w.treatFor(t)
     of tkList:
       w.d.poster.post Msg(job: NoJob, kind: mkRead, purpose: rpLayouts, readPath: t.path,
         layouts: listLayouts(t.path, t.dirs))
@@ -623,6 +681,11 @@ proc leave(x: DiskIo; t: sink Task) =
   withLock x.p.lock:
     if x.p.quit: return
     case t.kind
+    of tkTreat: # the newest choice for a document: it carries every one before it
+      for i in countdown(x.p.tasks.high, 0):
+        if x.p.tasks[i].kind == tkTreat and x.p.tasks[i].path == t.path:
+          t.expect = x.p.tasks[i].expect
+          x.p.tasks.delete(i)
     of tkReplace, tkRemove: # only the newest document of a path is written (or removed)
       # ... but a write under a name no file has (`fresh`: a backup) is a
       # file of its own, whatever name it was asked under: two resets in one
@@ -692,6 +755,14 @@ proc removeMerging*(x: DiskIo; path: string; record: sink FileRecord; what: stri
   if x.p != nil:
     x.leave Task(kind: tkRemove, path: path, memory: record, what: what, merging: true,
       base: base, expect: expect)
+
+proc treat*(x: DiskIo; path: string; record: sink FileRecord; what: string; expect: DocStamp) =
+  ## Sets what the file of `record` is treated as (`record.treat`) in the document of the store
+  ## `path`, as it is when it is written, and nothing else of it (the module documentation):
+  ## `record` is the new document when there is none. `expect` is the document's stamp as this
+  ## run last read it (`replace`'s).
+  if x.p != nil:
+    x.leave Task(kind: tkTreat, path: path, memory: record, what: what, expect: expect)
 
 proc read*(x: DiskIo; path: string; purpose: ReadPurpose; limit: int) =
   ## Reads `path`, soon, and posts it as an `mkRead` message for `purpose`,

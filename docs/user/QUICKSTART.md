@@ -155,7 +155,8 @@ from the time of its first trace; the slice says so, and a vendor header map tha
 trace's start time gives the real times. When the first trace has no start time at all, the
 slice is refused and says to load such a map. The order you force is only shown for now. A choice an agent makes through the
 command interface is for the session only. If several remembered documents could be the file's,
-the choice is kept for the session and Messages says to open the file once first. The columns after Name are as wide as their words and Name takes the rest; when the panel is
+the choice is kept for the session and Messages says to open the file once first; until then the
+list shows what the file says on its own, never a choice that may be another file's. The columns after Name are as wide as their words and Name takes the rest; when the panel is
 too narrow for 16 characters of a name beside them, the list scrolls sideways. A folder listed
 again in the same session takes the kinds already read and reads only the files that changed. A
 file that changes on disk is read again once it is steady, and every kind is read again when the

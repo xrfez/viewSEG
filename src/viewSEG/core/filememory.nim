@@ -1136,10 +1136,29 @@ func keptWords*(l: EditLists): string =
   if l.allReversed: parts.add "all reversed"
   if parts.len == 0: "nothing" else: parts.join(", ")
 
+func fileDoc*(docs: openArray[FileRecord]; id: FileIdentity): tuple[at: int; several: bool] =
+  ## Which of `docs` (documents of the quick identity of the file `id`, none unconfirmed) is the
+  ## file's (`at`, -1 for none): one whose hash of every byte is not the file's never is; of the
+  ## others, the one with the file's hash (the newest when several have it), else the only one.
+  ## `several`: more than one may be, and the file's hash does not say which.
+  var may, exact: seq[int]
+  for i, d in docs:
+    if not (d.identity.fullKnown and id.fullKnown and d.identity.full != id.full):
+      may.add i
+      if d.identity.fullKnown and id.fullKnown: exact.add i
+  result = (-1, false)
+  for i in exact:
+    if result.at < 0 or docs[i].opened > docs[result.at].opened: result.at = i
+  if exact.len == 0:
+    if may.len == 1: result.at = may[0]
+    elif may.len > 1: result.several = true
+
 proc treatsOf*(s: Store; ids: openArray[FileIdentity]): seq[TreatAs] =
-  ## What the store holds of each file of quick identity `ids[i]` that the user forced
-  ## (`result[i]`; nothing forced for a file with no document, or one that cannot be read). One
-  ## look at the store's folder serves them all. Reads the documents: worker-only.
+  ## What the store holds of each file of identity `ids[i]` that the user forced (`result[i]`),
+  ## from the file's document (`fileDoc`; the hash of every byte, when `ids[i]` has it, tells the
+  ## documents of one quick identity apart): nothing forced for a file with no document, for one
+  ## whose document cannot be told, or that cannot be read. One look at the store's folder serves
+  ## them all. Reads the documents: worker-only.
   result = newSeq[TreatAs](ids.len)
   if s.isNowhere or ids.len == 0 or not fs.dirExists(s.home): return
   var names: seq[string] = @[]
@@ -1151,13 +1170,15 @@ proc treatsOf*(s: Store; ids: openArray[FileIdentity]): seq[TreatAs] =
     return
   for i, id in ids:
     let start = id.key & "-"
+    var docs: seq[FileRecord] = @[]
     for name in names:
       if name.startsWith(start):
         try:
           var p: seq[string]
           let r = readMemoryFile(s.docPath(name), p)
-          if not r.unconfirmed and r.identity.size == id.size and r.identity.quick == id.quick and
-              r.treat.isSet:
-            result[i] = r.treat
+          if not r.unconfirmed and r.identity.size == id.size and r.identity.quick == id.quick:
+            docs.add r
         except NifError, IOError, OSError:
           discard # said where the document is used
+    let at = fileDoc(docs, id).at
+    if at >= 0: result[i] = docs[at].treat

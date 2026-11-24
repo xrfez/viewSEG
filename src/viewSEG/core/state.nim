@@ -1278,6 +1278,12 @@ type
     treatsTouched: HashSet[string]
       ## the paths a command changed this session: a late answer of the kinds job does not
       ## put back what it read before
+    treatJobs: Table[string, JobId]
+      ## by path, the job looking up which document keeps the user's choice (`treatWork`): one at
+      ## a time for a file, and what it hands the disk thread is the choice as it is then
+    treatDocs: Table[string, FileRecord]
+      ## by path, the document the user's choice was last handed to the disk thread for (its
+      ## name, the file's identity and time): the next choice goes to it
     unread: seq[tuple[panel: PanelId; cause: UnreadCause; why: string]]
       ## the panels whose file cannot be read now, and why (`mkUnread`)
     speeds: seq[tuple[panel: PanelId; ms: float64]]
@@ -1762,8 +1768,34 @@ func recordOf(state: AppState; i: int): FileRecord =
   for s in state.sessions:
     if s.path == r.path: result.traces = s.len
   if state.keyOf(r.path) in state.edits: result.edits = state.edits[state.keyOf(r.path)].kept
-  if r.doc in state.knownDocs: result.later = state.knownDocs[r.doc].later # a later version's
-  result.treat = state.treatsKept.getOrDefault(r.path)
+  if r.doc in state.knownDocs:
+    result.later = state.knownDocs[r.doc].later # a later version's
+    # (as the document was read: the disk thread keeps it as it is on disk, `DiskIo.treat`)
+    result.treat = state.knownDocs[r.doc].treat
+
+proc loadTreat(state: var AppState; path: string; t: TreatAs) =
+  ## What the store keeps of what the user forced for the file at `path`, as its document was
+  ## read: by the kinds of a listing (`takeKinds`), or with the document an open takes
+  ## (`applyRecord`). A choice made by a command this session stays.
+  if path in state.treatsTouched: return
+  if t.isSet:
+    state.treats[path] = t
+    state.treatsKept[path] = t
+  else:
+    state.treats.del path
+    state.treatsKept.del path
+  let i = state.files.find(path)
+  if i >= 0 and state.files.entries[i].treat != t:
+    state.files.entries[i].treat = t
+    state.files.changedAt(i)
+
+func knownIdentity(state: AppState; path: string): FileIdentity =
+  ## The identity of the file at `path` as this run knows it: an open file's, else that of the
+  ## last choice remembered for it (`treatDocs`); the hash of every byte only when one was taken.
+  let i = state.rememberedAt(path)
+  if i >= 0 and state.remembered[i].known and state.remembered[i].hashed:
+    state.remembered[i].identity
+  else: state.treatDocs.getOrDefault(path).identity
 
 proc hashFile(state: var AppState; i: int) =
   ## Hashes every byte of `remembered[i]`'s file, on the lane of hashes (a
@@ -1864,6 +1896,7 @@ proc writeMemoryDoc(state: var AppState; i: int) =
   ## when it keeps nothing.
   template r: untyped = state.remembered[i]
   if not r.hashed and r.brought.doc.len > 0:
+    state.hashFile(i) # (none was started for a document of only what the file is treated as)
     state.writeProvisional(i)
     return
   let name = r.path.extractFilename
@@ -1878,7 +1911,7 @@ proc writeMemoryDoc(state: var AppState; i: int) =
   let (base, expect) = block:
     let was = state.knownDocs.getOrDefault(r.doc)
     (was.edits, if was.stamp.modified == Time(): NoDoc else: was.stamp)
-  if rec.edits.isEmpty and not rec.treat.isSet:
+  if rec.edits.isEmpty: # (the disk thread keeps a document that says what the file is treated as)
     if r.doc.len > 0:
       state.diskIo.removeMerging(state.store.docPath(r.doc), move rec, "what is remembered about " &
         name, base, expect)
@@ -4920,6 +4953,9 @@ proc applyRecord(state: var AppState; i: int; c: FileRecord) =
     (r.identity.full, r.identity.fullKnown) = (c.identity.full, true)
   r.brought = if r.hashed: FileRecord() else: c
   state.knownDocs[c.doc] = c
+  # (a document that knows its file's hash of every byte says what that file is treated as once
+  # this one's says it is the same: `takeHashed`)
+  if r.hashed or not c.identity.fullKnown: state.loadTreat(r.path, c.treat)
   # Written again (seen now, under this name), unless it had parts that
   # could not be read: those stay on disk until the user changes the edits,
   # and when it was opened is kept beside it, so that File memory never
@@ -5204,8 +5240,12 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
     state.sayUnconfirmed(i, c, if c.doc == fromPending and fromPending.len > 0:
       "were made when its drive did not give its first and last bytes, so nothing says " &
       "they were made on this file" else: "")
-  if cands.anyIt(not it.edits.isEmpty) or not state.editsAt(r.path).kept.isEmpty:
-    state.hashFile(i) # (a document of only a forced kind or order has nothing to confirm)
+  # (the one document of the file, taken at once, that keeps only what it is treated as has no
+  # edits to confirm: it is hashed once the user edits the file, `writeMemoryDoc`)
+  let own = state.editsAt(r.path).kept
+  if not (cands.len == 1 and at == 0 and cands[0].edits.isEmpty and
+      not cands[0].identity.fullKnown and own.isEmpty) and (cands.len > 0 or not own.isEmpty):
+    state.hashFile(i)
   state.linkSame(i)
   # Other files once at this path (output again under the same name): their
   # edits are not this file's; listed and said.
@@ -5268,6 +5308,7 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     else: state.knownDocs.del r.doc
     r.brought = FileRecord()
     r.doc = ""
+    state.loadTreat(r.path, TreatAs()) # what that file is treated as is not this one's
     state.edits.mgetOrPut(key, FileEdits()).forget()
     if own.isEmpty:
       r.savedRev = state.edits[key].keptRevision
@@ -5309,6 +5350,7 @@ proc takeHashed(state: var AppState; m: sink Msg) =
   if r.doc.len == 0 and not state.editsAt(r.path).kept.isEmpty:
     r.savedRev = -1 # edits made before it was known: a document of its own
   for c in move(r.heldEarlier): state.sayEarlierNew(r.path, c, state.editsAt(r.path).kept)
+  if r.doc.len > 0: state.loadTreat(r.path, state.knownDocs.getOrDefault(r.doc).treat) # confirmed
   state.linkSame(i)
   r.brought = FileRecord() # confirmed
 
@@ -5317,6 +5359,14 @@ proc endMemoryWork(state: var AppState; job: JobInfo): bool =
   ## true when `job` was one.
   let w = state.memoryWork.find(job.id)
   if w >= 0: state.memoryWork.delete(w)
+  var ended = ""
+  for path, j in state.treatJobs:
+    if j == job.id: ended = path
+  if ended.len > 0: # (one that ended without its message: the next choice looks again)
+    state.treatJobs.del ended
+    if job.state == jsFailed:
+      state.log.add(sevWarning, ended.extractFilename, "What " & ended.extractFilename &
+        " is treated as is kept for this session only: " & job.error & ".")
   for r in state.remembered.mitems:
     let name = r.path.extractFilename
     if job.id == r.job:
@@ -9209,9 +9259,13 @@ proc startKinds(state: var AppState) =
       elif asks.len < KindBatch:
         asks.add WatchedFile(path: e.path, size: e.size, modified: e.modified)
   if asks.len > 0:
+    var known: seq[tuple[path: string; id: FileIdentity]] = @[]
+    for a in asks:
+      let id = state.knownIdentity(a.path)
+      if id.fullKnown: known.add (a.path, id)
     state.kindJob = state.jobs.submit(JobSpec(title: "Read what the files are",
       lane: jlPeeks), kindsWork(state.files.gen, state.vendor.gen, asks, currentVendors(),
-      state.store, state.inbox.poster))
+      state.store, known, state.inbox.poster))
 
 proc rereadKinds(state: var AppState) =
   ## The vendor maps in force changed: a start time may now come from a vendor block, so every
@@ -9628,14 +9682,11 @@ proc takeKinds(state: var AppState; m: sink Msg) =
       if a.state == ksKnown:
         e.recording = a.kind
         e.traceOrder = a.order
-      if a.path notin state.treatsTouched:
-        e.treat = a.treat
-        if a.treat.isSet:
-          state.treats[a.path] = a.treat
-          state.treatsKept[a.path] = a.treat
-        else:
-          state.treats.del a.path
-          state.treatsKept.del a.path
+      # (an open file's own document, once it took one, says what it is treated as)
+      let r = state.rememberedAt(a.path)
+      if r < 0 or not state.remembered[r].known or state.remembered[r].doc.len == 0:
+        state.loadTreat(a.path, a.treat)
+      e.treat = state.treats.getOrDefault(a.path)
       f.changedAt(i)
       state.kindCache.remember(a, m.kindsVendors, f)
 
@@ -11187,6 +11238,35 @@ proc setSubfolders(state: var AppState; cmd: Command) =
     let paths = if f.folder.len > 0: @[f.folder] else: f.asked
     if paths.len > 0: state.startListing(paths, f.title, f.folder, state.listedBy)
 
+proc submitTreat(state: var AppState; path: string; hashing: bool) =
+  ## Starts the look-up of the document that keeps what the user forced for the file at `path`
+  ## (`treatWork`), with what this run knows of the file: an open file's document (unless its
+  ## edits brought back are being checked), else the one the last choice went to, and the hash
+  ## of every byte when one was taken.
+  var hint = FileRecord(identity: state.knownIdentity(path))
+  let i = state.rememberedAt(path)
+  if i >= 0 and state.remembered[i].known and state.remembered[i].doc.len > 0 and
+      not state.remembered[i].checking:
+    hint = FileRecord(doc: state.remembered[i].doc, identity: state.remembered[i].identity)
+  elif path in state.treatDocs: hint = state.treatDocs[path]
+  var taken: seq[string] = @[]
+  for x in state.remembered:
+    taken.add x.doc
+    taken.add x.provDocs
+  for d in state.knownDocs.keys: taken.add d
+  let job = state.jobs.submit(JobSpec(title: "Remember what " & path.extractFilename &
+    " is treated as", lane: if hashing: jlHashes else: jlInteractive, auto: true),
+    treatWork(path, state.store, hint, taken, hashing, state.inbox.poster))
+  state.treatJobs[path] = job
+  state.memoryWork.add job
+
+proc rememberTreat(state: var AppState; path: string) =
+  ## Has the user's choice for the file at `path` kept in its document of the store: by a
+  ## look-up (`submitTreat`), unless one is under way for the file, whose answer hands the
+  ## choice as it is then.
+  if state.store.isNowhere or state.readOnlyProject or path in state.treatJobs: return
+  state.submitTreat(path, hashing = false)
+
 proc treatAs(state: var AppState; cmd: Command) =
   ## `ckTreatAs`: forces, or gives back to the file, the kind and the order a file is treated as,
   ## and has the choice remembered for the file (its document in the store, found by its
@@ -11233,26 +11313,37 @@ proc treatAs(state: var AppState; cmd: Command) =
   if listed >= 0:
     state.files.entries[listed].treat = t
     state.files.changedAt(listed)
-  if keeps(cmd.origin) and not state.store.isNowhere and not state.readOnlyProject:
-    state.memoryWork.add state.jobs.submit(JobSpec(title: "Remember what " &
-      path.extractFilename & " is treated as", lane: jlPeeks, auto: true),
-      treatWork(path, state.store, t, state.inbox.poster))
+  if kept: state.rememberTreat(path)
 
 proc takeTreated(state: var AppState; m: sink Msg) =
-  ## The document of a file with the choice made for it (`treatWork`): handed to the disk thread,
-  ## which merges it with what another program wrote since it was read.
-  let name = m.treatPath.extractFilename
-  if m.treatFailure.len > 0:
+  ## Which document keeps what the user forced for a file (`treatWork`): the choice as it is now
+  ## is handed to the disk thread, which sets it alone in the document as it is then
+  ## (`DiskIo.treat`). The hash of every byte, when it was needed, is taken on its lane first.
+  let path = m.treatPath
+  let name = path.extractFilename
+  if state.treatJobs.getOrDefault(path) == m.job: state.treatJobs.del path
+  if m.treatHash:
+    if path notin state.treatJobs:
+      state.submitTreat(path, hashing = true)
+  elif m.treatFailure.len > 0:
     state.log.add(sevWarning, name, "What " & name & " is treated as is kept for this session " &
       "only: " & m.treatFailure & ".")
-  elif not m.treatNone:
-    let r = m.treatRecord
-    let place = state.store.docPath(r.doc)
-    if r.edits.isEmpty and not r.treat.isSet and r.later.len == 0:
-      state.diskIo.removeMerging(place, r, "what is remembered about " & name, r.edits, r.stamp)
-    else:
-      state.diskIo.replace(place, r, "what is remembered about " & name, r.edits, r.stamp)
-    state.knownDocs.del r.doc
+  elif not (state.store.isNowhere or state.readOnlyProject):
+    let id = m.treatIdentity
+    let doc = m.treatDoc
+    state.treatDocs[path] = FileRecord(doc: doc, identity: id, modified: m.treatModified)
+    # an open file without a document yet takes this one, so its edits join the choice
+    let i = state.rememberedAt(path)
+    if i >= 0 and state.remembered[i].known and state.remembered[i].doc.len == 0 and
+        state.remembered[i].identity.size == id.size and
+        state.remembered[i].identity.quick == id.quick:
+      (state.remembered[i].doc, state.remembered[i].ownDoc) = (doc, true)
+    let was = state.knownDocs.getOrDefault(doc)
+    state.diskIo.treat(state.store.docPath(doc), FileRecord(identity: id, name: name, path: path,
+      opened: getTime(), modified: m.treatModified, doc: doc,
+      treat: state.treatsKept.getOrDefault(path), stamp: (-1'i64, Time(), 0'i64)),
+      "what is remembered about " & name,
+      if was.stamp.modified == Time(): NoDoc else: was.stamp)
 
 proc setCompareWindow(state: var AppState; cmd: Command) =
   state.compareOpen = cmd.compareOpen

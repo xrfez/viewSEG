@@ -452,15 +452,16 @@ const
     ## a kinds job starts no other file after this long: it gives way on its lane
 
 proc kindsWork*(gen: uint64; vendorGen: int; asks: seq[WatchedFile]; vendors: VendorRegistry;
-    store: Store; to: Poster): JobWork =
+    store: Store; known: seq[tuple[path: string; id: FileIdentity]]; to: Poster): JobWork =
   ## The work of a job that reads the kind of recording of the files of `asks` (path, size and
   ## time as listed) from the file (`kindOfFile`), a file at a time, and posts the answers as
   ## one `mkKinds` message for listing `gen` and the vendor maps' load `vendorGen`. It reads
   ## at most `KindBatch` files and starts none after `KindTurn` (it reads one at least): the
   ## files it leaves are for a job submitted after it, so other work queued on its lane meanwhile
   ## runs between the two. Each answer carries what the store holds of the kind and the order
-  ## the user forced for the file (`treatsOf`). A file that cannot be read has no kind; stops at
-  ## a cancel (between files, and inside a file between its steps).
+  ## the user forced for the file (`treatsOf`), told by the hash of every byte `known` gives for
+  ## its path when the file is still of that quick identity. A file that cannot be read has no kind; stops
+  ## at a cancel (between files, and inside a file between its steps).
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading what the files are"
     var batch = Msg(job: ctx.id, kind: mkKinds, kindsGen: gen, kindsVendors: vendorGen)
@@ -482,11 +483,17 @@ proc kindsWork*(gen: uint64; vendorGen: int; asks: seq[WatchedFile]; vendors: Ve
       var ids: seq[FileIdentity] = @[]
       for a in batch.kinds:
         var modified: Time
+        var id = FileIdentity(size: -1)
         try:
           {.cast(gcsafe).}:
-            ids.add quickIdentity(a.path, modified)
+            id = quickIdentity(a.path, modified)
         except IOError, OSError:
-          ids.add FileIdentity(size: -1)
+          discard
+        for k in known:
+          if k.path == a.path and k.id.fullKnown and k.id.size == id.size and
+              k.id.quick == id.quick:
+            id = k.id
+        ids.add id
       ctx.checkCancelled()
       {.cast(gcsafe).}:
         let treats = store.treatsOf(ids)
