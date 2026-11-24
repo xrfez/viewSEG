@@ -101,8 +101,11 @@ type
       ## path. Off: the file's own positions are written, and the result says so.
     correlation*: Option[OutputCorrelation]
       ## None: the samples written today. Set: correlate each trace with this
-      ## reference, into the listen time. Positions are written by the same
-      ## rule as any other Output, not as the correlation job's in-memory file.
+      ## reference, into the listen time. Correlated samples are IEEE float32
+      ## in the source's amplitude units (an arrival shaped like the sweep
+      ## with amplitude a correlates to a peak of a). Positions are written
+      ## by the same rule as any other Output, not as the correlation job's
+      ## in-memory file.
 
   OutputResult* = object
     ## What the write did. `ok` false: `reason` is a sentence for the user.
@@ -629,7 +632,9 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       block writing:
         var w: SeismicWriter
         if like:
-          if correlating and not segdOut:
+          if correlating and segdOut:
+            w = openSeismicWriter(part, file[], segdFormat = tf8058)
+          elif correlating:
             w = openSeismicWriter(part, file[], segyFormat = st5)
           else:
             w = openSeismicWriter(part, like = file[])

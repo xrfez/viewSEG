@@ -25,6 +25,9 @@
 ## left off left sample 0 at 1.0 against the button's -1.0. With the session
 ## keys left out of a correlated write, joined source X stayed 10.0, not 111.
 ## An int16 source with the option on kept format code 3 (`option format 3`).
+## An 8036 SEG-D source kept format 8036 (`option format 8036`). An 8015
+## source whose listen length was 94 refused: "SEG-D format 8015 holds
+## samples in groups of 4".
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -169,21 +172,22 @@ proc writePlaced(path: string; sweep: openArray[float32]) =
     w.writeTrace(k, buf)
   doAssert w.close().len == 0, "the placed file did not close"
 
-proc writeSegd(path: string; sweep: openArray[float32]) =
+proc writeSegd(path: string; sweep: openArray[float32]; fmt = sd8058; n = Record) =
   var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: DtMs * 1000.0,
-    numSamples: Record, time: 1_700_000_000.0))
+    numSamples: n, time: 1_700_000_000.0, format: fmt))
   for i in 0 .. 4:
     var buf: seq[float32]
     var k = initTraceKeys()
     if i < Delays.len:
-      buf = delayedSweep(sweep, Record, Delays[i])
+      let delay = if n > Delays[i]: Delays[i] else: 0
+      buf = delayedSweep(sweep, n, delay)
       (k.traceCode, k.status) = (1'i16, tsLive)
     elif i == RefAux:
-      buf = delayedSweep(sweep, Record, 0)
+      buf = delayedSweep(sweep, n, 0)
       (k.traceCode, k.status) = (5'i16, tsAuxiliary)
     else:
-      buf = newSeq[float32](Record)
-      for j in 0 ..< Record: buf[j] = float32(j + 1)
+      buf = newSeq[float32](n)
+      for j in 0 ..< n: buf[j] = float32(j + 1)
       (k.traceCode, k.status) = (6'i16, tsAuxiliary)
     k.record = 7.0
     k.channel = float64(i + 1)
@@ -571,6 +575,56 @@ proc main*() =
     a.close()
     b.close()
     opened[].close()
+
+  block segdFloat:
+    ## An 8036 source written as SEG-D with correlation is IEEE float32, the
+    ## same samples as the button, not the source's whole counts.
+    let coded = srcDir / "fmt8036.sgd"
+    writeSegd(coded, sweep, sd8036)
+    var src = openSeismic(coded, keys = true)
+    defer: src.close()
+    doAssert src.summary.formatCode == 8036, "source format " & $src.summary.formatCode
+    let made = correlate(src, coded, sweep)
+    var opened = made.opened.filePtr
+    defer: opened[].close()
+    let fromButton = outDir / "fmt8036-button.sgd"
+    let fromOption = outDir / "fmt8036-option.sgd"
+    let button = runWrite(opened[], coded, fromButton, OutputOptions(format: ofSegd))
+    doAssert button.st == jsDone, button.error & " / " & button.wrote.reason
+    let opted = runWrite(src, coded, fromOption, option(sweep, ofSegd))
+    doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+    var a = openSeismic(fromOption, keys = true)
+    var b = openSeismic(fromButton, keys = true)
+    defer:
+      a.close()
+      b.close()
+    doAssert a.summary.formatCode == 8058, "option format " & $a.summary.formatCode
+    sameTraces(a, b, Listen)
+
+  block segd8015Listen:
+    ## An 8015 source whose listen length is not a multiple of 4 still writes.
+    const
+      N8015 = 104
+      Sweep8015 = 10
+    let spec8015 = linearSweep(8.0, 80.0, float64(Sweep8015) * DtMs, DtMs)
+    let short = spec8015.sweepSamples(float32)
+    doAssert short.len == Sweep8015, "sweep " & $short.len
+    doAssert (N8015 - short.len) mod 4 != 0, "listen length is a multiple of 4"
+    let coded = srcDir / "fmt8015.sgd"
+    writeSegd(coded, short, sd8015, N8015)
+    var src = openSeismic(coded, keys = true)
+    defer: src.close()
+    doAssert src.summary.formatCode == 8015, "source format " & $src.summary.formatCode
+    let made = correlate(src, coded, short)
+    var opened = made.opened.filePtr
+    defer: opened[].close()
+    let fromOption = outDir / "fmt8015-option.sgd"
+    let opted = runWrite(src, coded, fromOption, option(short, ofSegd))
+    doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+    var a = openSeismic(fromOption, keys = true)
+    defer: a.close()
+    doAssert a.summary.formatCode == 8058, "option format " & $a.summary.formatCode
+    doAssert int(a.traceEntry(0).numSamples) == N8015 - Sweep8015
 
 when isMainModule:
   main()
