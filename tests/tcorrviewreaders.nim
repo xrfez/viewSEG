@@ -8,7 +8,8 @@
 ## the constant trace flagged `constant` after correlation; inspector samples
 ## of length 1000 and time zero 0; noise QC picking on the raw record (`view
 ## picks @[106.0, ...] vs @[80.0, ...]`); rows of a file cut short
-## reported undecodable (`a cut view reports undecodable @[6, 7, 8, 9]`).
+## reported undecodable (`a cut view reports undecodable @[6, 7, 8, 9]`); the view's one time zero
+## for every trace (`view spectrum time zero 12.0`).
 
 import std/[atomics, locks, math, monotimes, os]
 import parseSEG
@@ -23,11 +24,12 @@ import utils/waiting
 const
   DtMs = 2.0
   T0Ms = 12.0
+  OtherT0Ms = 16.0 ## trace 1's own time zero; the auxiliary traces start at 0
   Record = 1000
   SweepLen = 200
   Listen = 800
   RefAux = 3
-  Extra = 6 ## live traces after the reference auxiliary
+  Extra = 6        ## live traces after the reference auxiliary
   Constant = 2
 
 var
@@ -78,7 +80,7 @@ proc writeRaw(path: string; sweep: openArray[float32]) =
     k.record = 7.0
     k.channel = float64(i + 1)
     k.offset = 100.0 * float64(i + 1)
-    k.t0Ms = T0Ms
+    k.t0Ms = if i == 1: OtherT0Ms elif i == RefAux: 0.0 else: T0Ms
     k.intervalUs = DtMs * 1000.0
     k.time = 1_700_000_000.0
     w.writeTrace(k, buf)
@@ -241,10 +243,11 @@ proc main*() =
     spectra.stop()
     headersWin.stop()
 
-  proc askSpectrum(s: Session; id, session: int; correlated: ref CorrelateView): Spectrum =
+  proc askSpectrum(s: Session; id, session: int; correlated: ref CorrelateView;
+      list = traces): Spectrum =
     doAssert jobs.hold(s.path), "could not hold " & s.path
     spectra.ask SpectrumAsk(id: id, gen: uint64(id), session: session, file: s.filePtr,
-      view: correlated, path: s.path, size: s.size, traces: traces)
+      view: correlated, path: s.path, size: s.size, traces: list)
     awaitSpectrum(box, id)
 
   let viewSpec = askSpectrum(view, 1, 1, view.correlatedView)
@@ -257,12 +260,18 @@ proc main*() =
   doAssert viewSpec.raw != rawSpec.raw, "spectrum returned the raw chirp"
   doAssert viewSpec.windowLen != rawSpec.windowLen, "spectrum window is the raw record"
 
-  proc askInspect(s: Session; correlated: ref CorrelateView): TraceDetail =
+  # Each trace keeps its own time zero, not the first seismic trace's.
+  let viewOther = askSpectrum(view, 11, 11, view.correlatedView, @[1, 0])
+  let memOther = askSpectrum(mem, 12, 12, nil, @[1, 0])
+  doAssert memOther.fromMs == OtherT0Ms, "the file's spectrum time zero " & $memOther.fromMs
+  doAssert viewOther.fromMs == OtherT0Ms, "view spectrum time zero " & $viewOther.fromMs
+
+  proc askInspect(s: Session; correlated: ref CorrelateView; trace = 0): TraceDetail =
     doAssert jobs.hold(s.path), "could not hold " & s.path
     headersWin.ask InspectRequest(gen: 1, samples: true,
       files: @[InspectFile(file: s.filePtr, path: s.path, session: s.id, size: s.size,
         view: correlated)],
-      traces: @[InspectTrace(id: 0, trace: 0)])
+      traces: @[InspectTrace(id: 0, trace: trace)])
     awaitInspected(box)
 
   let viewTrace = askInspect(view, view.correlatedView)
@@ -274,6 +283,12 @@ proc main*() =
   doAssert viewTrace.dtMs == DtMs and viewTrace.t0Ms == T0Ms, "inspector time " &
     $viewTrace.dtMs & " from " & $viewTrace.t0Ms
   doAssert memTrace.dtMs == DtMs and memTrace.t0Ms == T0Ms
+
+  for t in [1, RefAux]:
+    let viewAt = askInspect(view, view.correlatedView, t)
+    let memAt = askInspect(mem, nil, t)
+    doAssert viewAt.t0Ms == memAt.t0Ms and memAt.t0Ms == (if t == 1: OtherT0Ms else: 0.0),
+      "trace " & $t & " time zero " & $viewAt.t0Ms & ", in memory " & $memAt.t0Ms
 
   proc askQc(s: Session; session: SessionId; correlated: ref CorrelateView;
       noise = NoiseWork()): Msg =

@@ -470,7 +470,9 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk; viewOf: var ref CorrelateView;
           else:
             if dtMs.isNaN:
               dtMs = dt
-              t0Ms = a.correlated.t0Ms
+              # (the first trace's own time zero, as the correlated file keeps it)
+              let t0 = f[].traceKeys(t).t0Ms
+              if abs(t0) < Inf: t0Ms = t0
             if not sameDt(dt, dtMs): inc answer.atOtherInterval
             elif a.view == avCorrelation and list.len >= MaxAnalysisCurves:
               inc notDrawn

@@ -279,8 +279,8 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   var longest = 0
   for t in list: longest = max(longest, cache.traces[t].samples.len)
   var t0Ms = 0.0
-  if a.view != nil: t0Ms = a.view.t0Ms
-  else:
+  block:
+    # (a view keeps each trace's own time zero, as the correlated file does)
     let t0 = f[].traceKeys(list[0]).t0Ms
     if t0.classify notin {fcNan, fcInf, fcNegInf}: t0Ms = t0
   # A time window is the plot's: its time axis starts at one time for every trace

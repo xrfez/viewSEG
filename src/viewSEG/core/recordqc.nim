@@ -514,7 +514,6 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
           listenKeys.setLen(rows)
           for i in 0 ..< rows:
             listenKeys[i] = f.traceKeys(part.a + i)
-            listenKeys[i].t0Ms = view.t0Ms
         if reversed.len > 0: negateQc(samples, part, reversed)
         let dtOverride = if view == nil: NaN else: view.dtMs
         if shifts.len > 0: applyShiftsQc(samples, f, part, shifts, dtOverride)

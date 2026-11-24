@@ -556,7 +556,6 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace;
             if usable(f.view.dtMs):
               d.dtMs = f.view.dtMs
               d.intervalKnown = true
-            d.t0Ms = f.view.t0Ms
             if viewOf != f.view:
               held = f.view[]
               viewWs = newWorkspace(held)
@@ -569,7 +568,7 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace;
             if usable(us):
               d.dtMs = us / 1000
               d.intervalKnown = true
-          if f.view == nil and (usable(abs(d.keys.t0Ms)) or d.keys.t0Ms == 0):
+          if usable(abs(d.keys.t0Ms)) or d.keys.t0Ms == 0: # (a view's too: each its own)
             d.t0Ms = d.keys.t0Ms
           if req.headers:
             p.beat(f.path)
