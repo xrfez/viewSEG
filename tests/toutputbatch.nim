@@ -19,7 +19,9 @@
 ## `2001.0103.0001.sgy is already the output of one.sgd.`; with the session
 ## station used, the name was `0999.sgy`; with signature facts left empty,
 ## the write failed `Controller is not in this file.`; with no pattern still
-## locking the folder, exclusive was not the planned file names.
+## locking the folder, exclusive was not the planned file names. With the
+## folder left as given, `/tmp/out/` did not lock `/tmp/out` (`/tmp/out`,
+## `/tmp/out/` and `/tmp/out/.` are one lock).
 ##
 ## Runs on copies of samples/land/shots.sgy, samples/land/shots.sgd and
 ## samples/vib/vib_uncorrelated.sgd.
@@ -126,6 +128,22 @@ proc itemOf(wrote: BatchResult; relative: string): BatchItemResult =
   doAssert false, "no result for " & relative
 
 proc main*() =
+  block sameFolderLock:
+    let shot = OutputPattern(name: "Shot", separator: nsDot,
+      parts: @[NamePart(kind: npSrcLine, pad: 4)])
+    proc locked(root: string): string =
+      let ask = BatchAsk(destRoot: root, pattern: shot,
+        items: @[BatchItem(source: "/tmp/in.sgy", relative: "in.sgy")])
+      let spec = outputBatchSpec(ask)
+      doAssert spec.exclusive.len == 1, $spec.exclusive
+      spec.exclusive[0]
+    let want = absolutePath("/tmp/out").normalizedPath
+    let plain = locked("/tmp/out")
+    let slashed = locked("/tmp/out/")
+    let dotted = locked("/tmp/out/.")
+    doAssert plain == slashed and slashed == dotted, plain & " / " & slashed & " / " & dotted
+    doAssert plain == want, plain
+
   let
     land = root / "samples" / "land"
     segy = land / "shots.sgy"
@@ -573,7 +591,8 @@ proc main*() =
       let dest = dir / "named-one"
       let ask = BatchAsk(root: src, items: @[BatchItem(source: one, relative: "one.sgd")],
         destRoot: dest, options: segyOpts, pattern: shot)
-      doAssert outputBatchSpec(ask).exclusive == @[dest], "the folder was not the lock"
+      doAssert outputBatchSpec(ask).exclusive == @[absolutePath(dest).normalizedPath],
+        "the folder was not the lock"
       let got = runBatch(ask, Store(), @[])
       doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
       let it = itemOf(got.wrote, "one.sgd")

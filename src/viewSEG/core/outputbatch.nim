@@ -12,14 +12,16 @@
 ## own positions. A file already open is written as the session holds it.
 ##
 ## Submit it with `outputBatchSpec`. That spec does not touch the file
-## system, so the UI thread may build it: the paths it lists are the
-## strings given here, not resolved. `refuseOutputRoot` does read the file
-## system (the destination's own links, and the nearest existing ancestor
-## when it is not there yet), so a window calls it on a job, and this job
-## calls it before the first write. When `pattern` has parts, each file's
-## leaf is that pattern rendered after the open; the destination folder is
-## then the job's exclusive resource, because the leaf is not known before
-## the open. No parts: the names are as before.
+## system, so the UI thread may build it. With no pattern the paths it
+## lists are the strings given here. With a pattern the exclusive resource
+## is the destination folder made absolute and normalised, without resolving
+## links. `refuseOutputRoot` does read the file system (the destination's
+## own links, and the nearest existing ancestor when it is not there yet),
+## so a window calls it on a job, and this job calls it before the first
+## write. When `pattern` has parts, each file's leaf is that pattern
+## rendered after the open; the destination folder is then the job's
+## exclusive resource, because the leaf is not known before the open. No
+## parts: the names are as before.
 
 import std/[os, sets, strutils, tables, times]
 import parseSEG
@@ -198,6 +200,16 @@ proc planned(ask: BatchAsk; kinds: openArray[FileKind]): seq[Plan] =
         else:
           owner[key] = item.relative
 
+proc exclusiveFolder(path: string): string =
+  ## The folder a patterned job locks: `absolutePath` then `normalizedPath`,
+  ## so a trailing separator and `.` are not a second lock. Does not resolve
+  ## links and does not touch the disk.
+  if path.len == 0: return ""
+  try:
+    absolutePath(path).normalizedPath
+  except OSError, ValueError:
+    path.normalizedPath
+
 proc outputBatchSpec*(ask: BatchAsk): JobSpec =
   ## The job that writes `ask`: background, reading each source, needing
   ## each planned destination to itself. Does not touch the file system,
@@ -206,14 +218,16 @@ proc outputBatchSpec*(ask: BatchAsk): JobSpec =
   ## the job must use that item's `source` as its path, so `reads` keeps a
   ## close from taking it. When a pattern is set, the rendered leaf is not
   ## known until the file is opened, so the exclusive resource is the
-  ## destination folder (`destRoot`, the string given, not resolved). A
-  ## taken or existing leaf is still refused before that file is written.
+  ## destination folder as an absolute, normalised path (no link resolution,
+  ## no disk read). A taken or existing leaf is still refused before that
+  ## file is written.
   var reads: seq[string] = @[]
   var exclusive: seq[string] = @[]
   for item in ask.items:
     if item.source.len > 0: reads.add item.source
   if patternOn(ask):
-    if ask.destRoot.len > 0: exclusive.add ask.destRoot
+    let folder = exclusiveFolder(ask.destRoot)
+    if folder.len > 0: exclusive.add folder
   else:
     var seen = initHashSet[string]()
     let plans = planned(ask, [])
