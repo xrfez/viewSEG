@@ -354,7 +354,9 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           res.timingNames.add named(issue.later) & " starts " & $(round(issue.residual * 100) /
             100) & " samples off the grid of " & named(issue.earlier)
       res.lines = cutLines(res, opts)
-      for d in log: res.lines.add $d
+      for d in log:
+        # The writer names the part file, which is gone by now.
+        res.lines.add ($d).replace(part, extractFilename(dest))
       if not fs.moveNoReplace(part, dest):
         let kept = "The file appeared while writing; the output is kept as " & part & "."
         if sink != nil:

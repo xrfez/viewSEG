@@ -41,7 +41,7 @@ type Recording = object
 func ramp(comp, k: int): float32 =
   float32(100_000 * comp + k)
 
-proc makeRecording(path: string; differ: bool; xy = false): Recording =
+proc makeRecording(path: string; differ: bool; xy = false; z = false): Recording =
   ## The continuous file. With `differ`, the later trace of each component
   ## disagrees with the earlier one over the 50 overlapping samples.
   result.path = path
@@ -62,6 +62,7 @@ proc makeRecording(path: string; differ: bool; xy = false): Recording =
       k.time = float64(BaseUs div 1_000_000) + float64(Starts[seg]) * 0.002
       k.rcvLine = 1
       k.rcvPoint = 7
+      if z: k.rcvZ = 5
       if xy:
         k.rcvX = 1000 + float64(comp)
         k.rcvY = 2000
@@ -346,6 +347,20 @@ proc main*() =
       doAssert got.res.bytesWritten == getFileSize(dest)
       doAssert got.res.bytesWritten == got.res.expectedBytes,
         "written " & $got.res.bytesWritten & ", estimated " & $got.res.expectedBytes
+
+  block writer_notes_name_the_destination:
+    # A receiver elevation without X/Y makes the writer note what it left out.
+    # Fails when the note carries the part file's path ("... .sgd.part-3e39...").
+    let withZ = makeRecording(dir / "rec" / "z.sgy", differ = false, z = true)
+    var srcZ = openSeismic(withZ.path, keys = true)
+    defer: srcZ.close()
+    let dest = outDir / "note.sgd"
+    let got = runCut(jobs, srcZ, withZ.path, dest, shots, opts)
+    doAssert got.st == jsDone, got.error & " / " & got.res.reason
+    let notes = got.res.lines.filterIt("not written" in it)
+    doAssert notes.len == 1, $got.res.lines
+    doAssert not (".part-" in notes[0]) and "note.sgd" in notes[0] and
+      not (outDir in notes[0]), notes[0]
 
   block existing_destination_refused:
     # Fails when the part file is claimed (and the check made) after work.
