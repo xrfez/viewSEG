@@ -47,8 +47,9 @@
 ## refused before any byte is written, in that job's words. The result's
 ## lines then include that job's notes for this file. A SEG-D record with an
 ## auxiliary trace at another interval is written from the keys, that trace
-## as zeros at the output's interval, and the result says so. A trace that could
-## not be read is written as zeros, and the result says how many.
+## as zeros at the output's interval, and the result says so. A trace that
+## cannot be read (a file cut short while it is open, a drive that fails)
+## fails the write in that job's words, and the part file is removed.
 
 import std/[math, options, os, random, sets, strutils, times]
 import parseSEG
@@ -549,7 +550,6 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         file[].ensureKeys()
       var dropped = 0
       var written = 0
-      var unread = 0
       var records = 0
       var rec = int64(-1)
       var firstKept = -1
@@ -673,7 +673,10 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           readLog = DiagLog()
           let x = if correlating: file[].readTraces(t .. t, readLog)
                   else: file[].readTraces(t .. t)
-          if correlating and readLog.len > 0: inc unread
+          if correlating and readLog.len > 0:
+            # The correlation job refuses the whole file, in these words.
+            let why = unreadWhy(file[])
+            raise newException(ValueError, if why.endsWith('.'): why else: why & ".")
           let cols = x.shape[1]
           samples.setLen cols
           for j in 0 ..< cols: samples[j] = x[0, j]
@@ -717,26 +720,12 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               opts.processing, opts.applyProcessing, own, opts.applyOwnFilters)
           if like:
             if correlating:
-              # A file cut while it is open refuses a template header read.
-              # The samples are already in hand (zeros when the read failed):
-              # write those from the keys, which do not touch the map.
-              var stored = false
-              try:
-                if carryPositions:
-                  w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
-                    keys = file[].traceKeys(t), overrides = correlatedOver)
-                else:
-                  w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
-                    overrides = correlatedOver)
-                stored = true
-              except SegTruncatedError:
-                discard
-              if not stored:
-                var keys = file[].traceKeys(t)
-                let channel = if keys.status == tsAuxiliary: sctOther else: sctSeismic
-                if segdOut: keys.intervalUs = outUs
-                w.writeTrace(keys, toOpenArray(samples, 0, listen - 1),
-                  overrides = correlatedOver, channelType = channel)
+              if carryPositions:
+                w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
+                  keys = file[].traceKeys(t), overrides = correlatedOver)
+              else:
+                w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
+                  overrides = correlatedOver)
             elif carryPositions:
               w.writeTrace(file[], t, samples, keys = file[].traceKeys(t))
             else:
@@ -809,9 +798,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             if file[].traceKeys(t).status == tsAuxiliary and t notin ready.odd:
               inc delayed
           let leadSamples = abs(wholeSamples(-AuxLeadMs, ready.dtMs))
-          # A cut found while writing refuses a later header read. The notes
-          # that can still be built are kept; the unread count does not depend
-          # on that read.
+          # A cut found while writing refuses a later header read.
           try:
             for line in correlationLines(file, file[].len, ready.listen, loaded.reference.len,
                 float64(ready.listen) * ready.dtMs,
@@ -828,10 +815,6 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               " ms, the output's interval."
             if zeroed == 1: lines.add("1 trace at another interval is" & every)
             elif zeroed > 1: lines.add($zeroed & " traces at another interval are" & every)
-          if unread == 1:
-            lines.add "1 trace could not be read and is written as zeros."
-          elif unread > 1:
-            lines.add($unread & " traces could not be read and are written as zeros.")
         if not fs.moveNoReplace(part, dest):
           let kept = "The file appeared while writing; the output is kept as " & part & "."
           if sink != nil:

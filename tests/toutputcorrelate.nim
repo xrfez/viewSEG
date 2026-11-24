@@ -32,9 +32,9 @@
 ## With the filter designed at trace 0's interval, an own filter on a seismic
 ## trace left sample 0 at -0.015427755 against the button's -0.01319716.
 ## With no correlation notes, the result's lines were empty, so "5 traces,
-## 800 samples (1600 ms of listen time)." was missing. A file cut while it
-## was open failed the write ("was cut short while it was open") instead of
-## writing the unreadable trace as zeros. SEG-D to SEG-D with trace 0 an
+## 800 samples (1600 ms of listen time)." was missing. With the unread trace
+## written as zeros, a file cut while it was open was renamed into place: "a
+## cut file was written correlated". SEG-D to SEG-D with trace 0 an
 ## auxiliary at 4 ms kept that interval in the template: "trace 0 interval
 ## 4000.0".
 
@@ -42,7 +42,7 @@ import std/[math, options, os, strutils]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
-import viewSEG/core/[correlatejobs, edits, jobs, outputjobs, processing, session]
+import viewSEG/core/[correlatejobs, cutfile, edits, jobs, outputjobs, processing, session]
 import utils/waiting
 
 const
@@ -826,8 +826,9 @@ proc main*() =
     doAssert oddNote, $made.lines
 
   block unreadTrace:
-    ## Trace 4's samples are cut after the file is open. That trace is written
-    ## as zeros, and the result says so. Windows will not shrink a mapped file.
+    ## Trace 4's samples are cut after the file is open. The correlated write
+    ## fails in the correlation job's words and leaves no file; so does a
+    ## plain write. Windows will not shrink a mapped file.
     when not defined(windows):
       let cutPath = srcDir / "unread.sgy"
       writeMixed(cutPath, sweep)
@@ -843,17 +844,15 @@ proc main*() =
       let cutAt = data + (int64(last.numSamples) div 2) * sampleBytes
       doAssert cutAt > data and cutAt < getFileSize(cutPath), "the cut is not inside the last trace"
       writeFile(cutPath, readFile(cutPath)[0 ..< int(cutAt)])
-      let fromOption = outDir / "unread-option.sgy"
-      let opted = runWrite(src, cutPath, fromOption, option(sweep, ofSegy))
-      doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
-      var said = false
-      for line in opted.wrote.lines:
-        if "could not be read and" in line and "written as zeros." in line: said = true
-      doAssert said, $opted.wrote.lines
-      var written = openSeismic(fromOption, keys = true)
-      defer: written.close()
-      for v in samplesOf(written, 4):
-        doAssert v == 0.0, $v
+      let opted = runWrite(src, cutPath, outDir / "unread-option.sgy", option(sweep, ofSegy))
+      doAssert opted.st == jsFailed, "a cut file was written correlated"
+      doAssert opted.wrote.reason.startsWith(cutWords(false) & "."), opted.wrote.reason
+      doAssert opted.wrote.removed, opted.wrote.reason
+      noPart(outDir, "unread-option.sgy")
+      let plain = runWrite(src, cutPath, outDir / "unread-plain.sgy", OutputOptions())
+      doAssert plain.st == jsFailed, "a cut file was written"
+      doAssert plain.wrote.removed, plain.wrote.reason
+      noPart(outDir, "unread-plain.sgy")
 
 when isMainModule:
   main()

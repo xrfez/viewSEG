@@ -353,6 +353,13 @@ proc correlationLines*(file: ptr SeismicFile; nTraces, listen, sweepLen: int;
   let uncorrelated = binaryUncorrelatedLine(file)
   if uncorrelated.len > 0: result.add uncorrelated
 
+proc unreadWhy*(file: SeismicFile): string =
+  ## Why a trace of `file` could not be read, in the words `correlateWork`
+  ## fails with: the file was cut short or its drive failed (`cutWhy`), or
+  ## "a trace could not be read."
+  let why = cutWhy(file)
+  if why.len > 0: why else: "a trace could not be read."
+
 proc writeRow(w: var SeismicWriter; file: ptr SeismicFile; trace, row, listen: int;
     src, dst: Tensor[float32]; keys: TraceKeys; fromSrc, segd: bool; intervalUs: float64) =
   if segd:
@@ -413,9 +420,7 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
     let n = min(BlockTraces, nTraces - start)
     let span = start ..< start + n
     discard file[].readTracesInto(span, src, failed)
-    if failed.len > 0:
-      let why = cutWhy(file[])
-      refuse(if why.len > 0: why else: "a trace could not be read.")
+    if failed.len > 0: refuse(unreadWhy(file[]))
     file[].traceKeysInto(span, keys.toOpenArray(0, n - 1))
     if lag != 0:
       let rows = rowBlock(src)
