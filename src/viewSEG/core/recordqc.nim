@@ -48,8 +48,8 @@ import parseSEG
 import processSEG/core/[rows, types, workspace]
 import processSEG/pipeline
 import processSEG/qc/[amplitude, exclusion, record]
-import components, edits, filesystem, firstbreakjobs, firstbreaks, inbox, jobs, mapkinds, noisearea,
-  processing, session, threads
+import components, correlateread, edits, filesystem, firstbreakjobs, firstbreaks, inbox, jobs,
+  mapkinds, noisearea, processing, session, threads
 
 export mapkinds
 
@@ -290,7 +290,7 @@ proc negateQc(samples: var Tensor[float32]; part: Slice[int]; reversed: openArra
       for j in 0 ..< b.cols: row[j] = -row[j]
 
 proc applyShiftsQc(samples: var Tensor[float32]; f: SeismicFile; part: Slice[int];
-    shifts: openArray[ShiftEntry]) =
+    shifts: openArray[ShiftEntry]; dtMs = NaN) =
   ## Each seismic trace of `part` moved by its stored shift, after polarity
   ## and before its own filter. An auxiliary trace is left as recorded.
   if shifts.len == 0: return
@@ -300,13 +300,14 @@ proc applyShiftsQc(samples: var Tensor[float32]; f: SeismicFile; part: Slice[int
     if ms == 0.0: continue
     let keys = f.traceKeys(part.a + i)
     if not keys.isSeismic: continue
-    let us = if keys.intervalUs > 0 and keys.intervalUs < Inf: keys.intervalUs
+    let us = if dtMs > 0 and dtMs < Inf: dtMs * 1000.0
+             elif keys.intervalUs > 0 and keys.intervalUs < Inf: keys.intervalUs
              else: f.sampleIntervalUs(part.a + i)
     if us > 0 and us < Inf:
       applyStoredShift(b.rowPtr(i).toOpenArray(0, b.cols - 1), ms, us / 1000.0)
 
 proc applyOwnQc(samples: var Tensor[float32]; f: SeismicFile; part: Slice[int];
-    own: openArray[FilterEntry]; ws: var Workspace) =
+    own: openArray[FilterEntry]; ws: var Workspace; dtMs = NaN) =
   ## Each trace of `part`'s own frequency filter, on `samples`, before the
   ## amplitude flags. A filter that only runs instead of the plot's, with no
   ## frequency filter of its own, changes nothing here: the check has no
@@ -340,7 +341,7 @@ proc applyOwnQc(samples: var Tensor[float32]; f: SeismicFile; part: Slice[int];
       for row in 0 ..< b.len:
         if g < group.len and group[g] == row: inc g
         else: skip.add row
-      let dt = f.index.keys[t].intervalUs / 1000
+      let dt = if dtMs > 0 and dtMs < Inf: dtMs else: f.index.keys[t].intervalUs / 1000
       let pipe = filt.ownPipeline(if dt > 0: dt else: 1.0)
       if pipe.len > 0:
         let plan = pipe.compile(float32, (if dt > 0: dt else: 1.0), b.cols, recordSamples = b.cols)
@@ -424,8 +425,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
     traces: Slice[int]; domain: RelationDomain; relations: ptr SurveyGeometry;
     against: string; recordMatch: RecordMatch; traceMatch: TraceMatch; placed: Placed;
     samples: bool; own: seq[FilterEntry]; reversed: seq[int]; shifts: seq[ShiftEntry];
-    noise: NoiseWork;
-    to: Poster): JobWork =
+    noise: NoiseWork; to: Poster; view: ref CorrelateView = nil): JobWork =
   ## The work of a job that reads gather `gather` (`traces`) of open file
   ## `session` (`file`, at `path`; its trace 0 is survey-wide `base`) and
   ## posts what the filters in `TraceFilters` find in it (`mkRecordQc`):
@@ -442,6 +442,8 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
   ## (`noise.settings`), on the first breaks `noise.shared` holds or, when it
   ## holds none, on those it finds itself and posts with the result. Submitted
   ## with the file in `reads`; `relations` is read in place, never copied.
+  ## When `view` is set, the samples are that view's listen time, not the raw
+  ## record, and `path` (the virtual path) is not mapped.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var hits: array[MapFilter, FilterHits]
     for m in TraceFilters: hits[m].state = fsDone
@@ -460,8 +462,13 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       let n = traces.len
       var amps = newSeq[TraceAmplitude](n)
       var ws = initWorkspace()
-      let cols = max(1, f.maxSamples(traces))
-      ws.reserve(traceAmplitudeWorkspace(cols))
+      let cols = if view == nil: max(1, f.maxSamples(traces)) else: view.listenSamples
+      if cols > 0: ws.reserve(traceAmplitudeWorkspace(cols))
+      var held: CorrelateView
+      var viewWs: CorrelateWorkspace
+      if view != nil:
+        held = view[]
+        viewWs = newWorkspace(held)
       let wantNoise = samples and noise.on
       var br = FirstBreaks()
       if wantNoise:
@@ -479,32 +486,55 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       var unreadRows: seq[int] # rows of the record whose samples could not be read
       ctx.setPhase "reading the record"
       discard f.cutShort # parseSEG's guard: stale cached bytes are not read past a cut
-      var first = if samples: traces.a else: traces.b + 1
+      var first = if samples and cols > 0: traces.a else: traces.b + 1
       while first <= traces.b:
         let part = first .. min(traces.b, first + QcChunk - 1)
-        if not f.inMemory: fs.mappedRead(path) # (tests: the drive's next pages come late)
-        var log: DiagLog
-        var samples = f.readTraces(part, 0 ..< cols, log)
-        if reversed.len > 0: negateQc(samples, part, reversed)
-        if shifts.len > 0: applyShiftsQc(samples, f, part, shifts)
-        if own.len > 0: applyOwnQc(samples, f, part, own, ws)
-        var failed: seq[int]
-        for d in log:
-          # (a trace the file's cut or its drive made unreadable is not an
-          # undecodable one: it is left out of that count)
-          if d.loc.trace in part and (d.loc.trace - part.a) notin failed:
-            failed.add d.loc.trace - part.a
-        var notDecoded: seq[int]
-        for r in failed:
-          var unread = false
+        var samples: Tensor[float32]
+        var failed, notDecoded: seq[int]
+        var listenKeys: seq[TraceKeys]
+        if view == nil:
+          if not f.inMemory: fs.mappedRead(path) # (tests: the drive's next pages come late)
+          var log: DiagLog
+          samples = f.readTraces(part, 0 ..< cols, log)
           for d in log:
-            if d.loc.trace == part.a + r and d.code in {dcTruncated, dcIo}: unread = true
-          if not unread: notDecoded.add r
-        failed.sort()
+            # (a trace the file's cut or its drive made unreadable is not an
+            # undecodable one: it is left out of that count)
+            if d.loc.trace in part and (d.loc.trace - part.a) notin failed:
+              failed.add d.loc.trace - part.a
+          for r in failed:
+            var unread = false
+            for d in log:
+              if d.loc.trace == part.a + r and d.code in {dcTruncated, dcIo}: unread = true
+            if not unread: notDecoded.add r
+          failed.sort()
+        else:
+          let rows = part.len
+          var idx = newSeq[int](rows)
+          for i in 0 ..< rows: idx[i] = part.a + i
+          var buf = newSeq[float32](rows * cols)
+          readListenTraces(held, file, idx, buf, viewWs)
+          samples = zeros[float32](rows, cols)
+          if buf.len > 0:
+            copyMem(rowBlock(samples).rowPtr(0), addr buf[0], buf.len * sizeof(float32))
+          failed = viewWs.failed
+          notDecoded = failed
+          listenKeys.setLen(rows)
+          for i in 0 ..< rows:
+            listenKeys[i] = f.traceKeys(part.a + i)
+            listenKeys[i].t0Ms = view.t0Ms
+        if reversed.len > 0: negateQc(samples, part, reversed)
+        let dtOverride = if view == nil: NaN else: view.dtMs
+        if shifts.len > 0: applyShiftsQc(samples, f, part, shifts, dtOverride)
+        if own.len > 0: applyOwnQc(samples, f, part, own, ws, dtOverride)
         for r in failed: unreadRows.add part.a - traces.a + r
         for r in notDecoded: hits[mfUndecodable].traces.add base + part.a + r
-        let dt = f.index.keys[part.a].intervalUs / 1000
-        let meta = initChunkMeta(f.rowsOf(part), (if dt > 0: dt else: 1.0), 0, failed)
+        let dt = if view != nil: view.dtMs else: f.index.keys[part.a].intervalUs / 1000
+        let meta = if view == nil:
+            initChunkMeta(f.rowsOf(part), (if dt > 0: dt else: 1.0), 0, failed)
+          else:
+            var counts = newSeq[int](listenKeys.len)
+            for i in 0 ..< counts.len: counts[i] = cols
+            initChunkMeta(rowsOf(listenKeys, counts), (if dt > 0: dt else: 1.0), 0, failed)
         traceAmplitudeInto(samples, meta, AmplitudeParams(), amps.toOpenArray(part.a - traces.a,
           part.b - traces.a), ws)
         if not ctx.progress(spent + part.b - traces.a + 1, span):

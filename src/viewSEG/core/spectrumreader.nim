@@ -42,14 +42,15 @@
 ##   (`fs.mappedRead`), after a beat that names the file; a reader that is
 ##   busy and has not beaten for a while is stuck (`silentFor`). The UI
 ##   thread then leaves it (`leave`) for a new one, as it does the Headers
-##   window's reader.
+##   window's reader. A correlated view is read through `readListenTraces`;
+##   its virtual path is not mapped.
 
 import std/[algorithm, locks, monotimes, os, strutils, tables, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
 import processSEG/filter/design
-import cutfile, edits, filesystem, inbox, jobs, log, processing, spectra, threads
+import correlateread, cutfile, edits, filesystem, inbox, jobs, log, processing, spectra, threads
 from editmarks import shiftNote
 
 const
@@ -63,6 +64,7 @@ type
     gen*: uint64
     session*: int            ## the open file's id: what the samples at hand are of
     file*: ptr SeismicFile   ## held by the caller
+    view*: ref CorrelateView ## a correlated view: listen-time samples, not the raw record
     path*: string
     size*: int64             ## its size when it was opened; -1 when not known
     traces*: seq[int]        ## indices in the file
@@ -156,9 +158,49 @@ proc beat(p: ptr ReaderObj; reading: string) =
     p.beat = now
     p.reading = reading
 
-proc readMissing(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; cache: var Cache): int =
+proc readViewMissing(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; cache: var Cache;
+    viewOf: var ref CorrelateView; held: var CorrelateView;
+    viewWs: var CorrelateWorkspace): int =
+  ## The traces of `list` not at hand, correlated to listen time. A failed row
+  ## is zeros of that length and `Held.failed`. -1 when a newer request came first.
+  var missing: seq[int]
+  for t in list:
+    if t notin cache.traces or cache.traces[t].failed: missing.add t
+  if missing.len == 0: return 0
+  if viewOf != a.view:
+    held = a.view[]
+    viewWs = newWorkspace(held)
+    viewOf = a.view
+  let cols = held.listenSamples
+  p.beat(a.path)
+  var at = 0
+  while at < missing.len:
+    let n = min(ReadTraces, missing.len - at)
+    var chunk = newSeq[int](n)
+    for k in 0 ..< n: chunk[k] = missing[at + k]
+    var buf = newSeq[float32](n * cols)
+    readListenTraces(held, a.file, chunk, buf, viewWs)
+    var bad = newSeq[bool](n)
+    for r in viewWs.failed: bad[r] = true
+    for k in 0 ..< n:
+      var h = Held(samples: newSeq[float32](cols), failed: bad[k])
+      if cols > 0: copyMem(addr h.samples[0], addr buf[k * cols], cols * sizeof(float32))
+      let t = missing[at + k]
+      if t in cache.traces: cache.values -= cache.traces[t].samples.len
+      cache.values += h.samples.len
+      cache.traces[t] = move h
+    inc result, n
+    if result < missing.len and p.interrupted(a.id): return -1
+    at += n
+    p.beat(a.path)
+
+proc readMissing(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; cache: var Cache;
+    viewOf: var ref CorrelateView; held: var CorrelateView;
+    viewWs: var CorrelateWorkspace): int =
   ## Reads the traces of `list` that are not at hand into `cache`; how many
-  ## it read, or -1 when a newer request came first.
+  ## it read, or -1 when a newer request came first. A correlated view is
+  ## listen time (`readViewMissing`); the virtual path is not mapped.
+  if a.view != nil: return p.readViewMissing(a, list, cache, viewOf, held, viewWs)
   var missing: seq[int]
   for t in list:
     # (a row that failed is read again: a drive may answer, a cut is found at once)
@@ -236,8 +278,11 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   let f = a.file
   var longest = 0
   for t in list: longest = max(longest, cache.traces[t].samples.len)
-  let t0 = f[].traceKeys(list[0]).t0Ms
-  let t0Ms = if t0.classify in {fcNan, fcInf, fcNegInf}: 0.0 else: t0
+  var t0Ms = 0.0
+  if a.view != nil: t0Ms = a.view.t0Ms
+  else:
+    let t0 = f[].traceKeys(list[0]).t0Ms
+    if t0.classify notin {fcNan, fcInf, fcNegInf}: t0Ms = t0
   # A time window is the plot's: its time axis starts at one time for every trace
   let windowed = not (a.fromMs.isNaN or a.toMs.isNaN)
   let origin = if windowed and abs(a.axisT0Ms) < Inf: a.axisT0Ms else: t0Ms
@@ -412,7 +457,8 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
     answer.processedFine = FinePhase()
   true
 
-proc serve(p: ptr ReaderObj; a: SpectrumAsk; cache: var Cache): bool =
+proc serve(p: ptr ReaderObj; a: SpectrumAsk; cache: var Cache; viewOf: var ref CorrelateView;
+    held: var CorrelateView; viewWs: var CorrelateWorkspace): bool =
   ## Reads what `a` needs, computes and posts its answer; false when it was
   ## given up first (then nothing is posted).
   var answer = Spectrum(gen: a.gen, id: a.id, asked: a.traces.len, fromMs: NaN, toMs: NaN)
@@ -430,21 +476,28 @@ proc serve(p: ptr ReaderObj; a: SpectrumAsk; cache: var Cache): bool =
       elif a.killed.binarySearch(t) >= 0: inc answer.killed
       else:
         let k = f[].traceKeys(t)
-        let us = if k.intervalUs > 0 and k.intervalUs < Inf: k.intervalUs
-                 else: f[].sampleIntervalUs(t)
         if k.status == tsDead: inc answer.dead
-        elif not (us > 0 and us < Inf): inc answer.atOtherInterval
-        elif dtMs.isNaN or sameInterval(us / 1000, dtMs):
-          if dtMs.isNaN: dtMs = us / 1000
-          list.add t
-        else: inc answer.atOtherInterval
+        elif a.view != nil:
+          if not (a.view.dtMs > 0 and a.view.dtMs < Inf): inc answer.atOtherInterval
+          elif dtMs.isNaN or sameInterval(a.view.dtMs, dtMs):
+            if dtMs.isNaN: dtMs = a.view.dtMs
+            list.add t
+          else: inc answer.atOtherInterval
+        else:
+          let us = if k.intervalUs > 0 and k.intervalUs < Inf: k.intervalUs
+                   else: f[].sampleIntervalUs(t)
+          if not (us > 0 and us < Inf): inc answer.atOtherInterval
+          elif dtMs.isNaN or sameInterval(us / 1000, dtMs):
+            if dtMs.isNaN: dtMs = us / 1000
+            list.add t
+          else: inc answer.atOtherInterval
     answer.dtMs = dtMs
     if list.len == 0:
       answer.problem = "no trace to take the spectrum of (" &
         (if a.traces.len == 0: "none asked about" else: "every one left out") & ")"
     else:
       try:
-        let read = p.readMissing(a, list, cache)
+        let read = p.readMissing(a, list, cache, viewOf, held, viewWs)
         if read < 0: return false
         answer.read = read
         if not p.compute(a, list, dtMs, cache, answer): return false
@@ -468,6 +521,9 @@ proc serve(p: ptr ReaderObj; a: SpectrumAsk; cache: var Cache): bool =
 proc run(p: ptr ReaderObj) {.thread.} =
   markWorkerThread()
   var cache = Cache()
+  var viewOf: ref CorrelateView
+  var held: CorrelateView
+  var viewWs: CorrelateWorkspace
   while true:
     var a: SpectrumAsk
     var got, quit, forget = false
@@ -488,7 +544,7 @@ proc run(p: ptr ReaderObj) {.thread.} =
       p.beat = fs.now()
     if got:
       try:
-        discard p.serve(a, cache)
+        discard p.serve(a, cache, viewOf, held, viewWs)
       except CatchableError as e:
         p.poster.post Msg(job: NoJob, kind: mkLog, entry: LogEntry(time: getTime(),
           severity: sevWarning, source: "spectrum", text: "A spectrum could not be " &

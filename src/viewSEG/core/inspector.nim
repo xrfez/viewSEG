@@ -45,8 +45,8 @@ import std/[heapqueue, intsets, locks, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
-import channelsets, cutfile, edits, filesystem, headers, inbox, jobs, log, processing, selection, session,
-  threads, tracetable, vendormaps
+import channelsets, correlateread, cutfile, edits, filesystem, headers, inbox, jobs, log,
+  processing, selection, session, threads, tracetable, vendormaps
 
 export tracetable
 
@@ -95,8 +95,9 @@ type
     ## A file a request reads, held by the caller.
     file*: ptr SeismicFile
     path*: string
-    session*: SessionId ## the open it is read for: a reopen is another one
-    size*: int64        ## its size when it was opened; -1 when not known
+    session*: SessionId      ## the open it is read for: a reopen is another one
+    size*: int64             ## its size when it was opened; -1 when not known
+    view*: ref CorrelateView ## a correlated view of `file`; nil when read as recorded
 
   InspectTrace* = object
     ## A trace a request asks about.
@@ -247,26 +248,41 @@ proc unreadable(f: InspectFile): string =
 func usable(x: float64): bool {.inline.} = x > 0 and x < Inf
 
 proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace;
-    req: InspectRequest; room: int; ws: var Workspace) =
+    req: InspectRequest; room: int; ws: var Workspace; view: ref CorrelateView = nil;
+    viewWs: ptr CorrelateWorkspace = nil) =
   ## Trace `t`'s samples into `d`: at most `room`, as recorded or as
   ## displayed. As displayed, a trace with more samples than that is
   ## filtered and processed whole (up to `MaxProcessedValues`), as the
   ## plot's reader does, and then cut: the samples kept are the plot's.
   ## A time shift asks for the same read: it runs before the cut, so a
-  ## move does not pad with zeros the file holds.
-  let n = f[].maxSamples([t.trace])
+  ## move does not pad with zeros the file holds. A correlated `view` is
+  ## listen time (`readListenTraces`); a row that could not be read is zeros
+  ## and `d.problem` says so.
+  let n = if view == nil: f[].maxSamples([t.trace]) else: view.listenSamples
   let kept = min(n, max(room, 0))
   d.cut = n - kept
   if kept == 0: return
   let processed = t.displayed and (req.filters.len > 0 or req.flow.len > 0 or
     t.shiftMs != 0.0)
   let whole = if processed and kept < n: min(n, max(kept, MaxProcessedValues)) else: kept
-  var log: DiagLog
-  let block1 = f[].readTraces([t.trace], 0 ..< whole, log)
-  d.samples = newSeq[float32](whole)
-  copyMem(addr d.samples[0], rowBlock(block1).rowPtr(0), whole * sizeof(float32))
-  let failed = log.hasErrors # the trace could not be decoded: it reads as zeros
-  if log.len > 0: d.problem = log[0].msg
+  var failed = false
+  if view != nil:
+    doAssert viewWs != nil, "a correlated view needs a workspace"
+    var one = [t.trace]
+    var full = newSeq[float32](view.listenSamples)
+    readListenTraces(view[], f, one, full, viewWs[])
+    failed = viewWs[].failed.len > 0
+    d.samples = newSeq[float32](whole)
+    if whole > 0 and not failed:
+      copyMem(addr d.samples[0], addr full[0], whole * sizeof(float32))
+    if failed: d.problem = "a trace could not be read."
+  else:
+    var log: DiagLog
+    let block1 = f[].readTraces([t.trace], 0 ..< whole, log)
+    d.samples = newSeq[float32](whole)
+    copyMem(addr d.samples[0], rowBlock(block1).rowPtr(0), whole * sizeof(float32))
+    failed = log.hasErrors # the trace could not be decoded: it reads as zeros
+    if log.len > 0: d.problem = log[0].msg
   if not t.displayed: return
   d.displayed = true
   let blank = teKilled in t.edits or d.keys.status == tsDead or failed
@@ -488,7 +504,9 @@ proc wasDropped(p: ptr InspectorObj; session: int): bool =
   withLock p.lock:
     result = session in p.dropped
 
-proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
+proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace;
+    viewOf: var ref CorrelateView; held: var CorrelateView;
+    viewWs: var CorrelateWorkspace): bool =
   ## Reads and posts what `req` asks for; false when a newer request came
   ## first (then nothing is posted). Each call to the file system goes
   ## through the seam, after a beat that names the file.
@@ -534,7 +552,16 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
         try:
           d.keys = f.file[].traceKeys(t.trace) # (the index, in memory)
           d.joined = f.file[].index.joinedGroups(t.trace)
-          if usable(d.keys.intervalUs):
+          if f.view != nil:
+            if usable(f.view.dtMs):
+              d.dtMs = f.view.dtMs
+              d.intervalKnown = true
+            d.t0Ms = f.view.t0Ms
+            if viewOf != f.view:
+              held = f.view[]
+              viewWs = newWorkspace(held)
+              viewOf = f.view
+          elif usable(d.keys.intervalUs):
             d.dtMs = d.keys.intervalUs / 1000
             d.intervalKnown = true
           else:
@@ -542,20 +569,24 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
             if usable(us):
               d.dtMs = us / 1000
               d.intervalKnown = true
-          if usable(abs(d.keys.t0Ms)) or d.keys.t0Ms == 0: d.t0Ms = d.keys.t0Ms
+          if f.view == nil and (usable(abs(d.keys.t0Ms)) or d.keys.t0Ms == 0):
+            d.t0Ms = d.keys.t0Ms
           if req.headers:
             p.beat(f.path)
-            if not f.file[].inMemory: fs.mappedRead(f.path, headers = true)
-            if not f.file[].inMemory: fs.unmappedFail(f.path)
+            if f.view == nil and not f.file[].inMemory:
+              fs.mappedRead(f.path, headers = true)
+              fs.unmappedFail(f.path)
             d.rows = traceRows(f.file[], t.trace)
             d.blocks = namedBlocks(f.file[], d.rows)
             let (reg, choice) = currentVendorSet()
             d.vendor = vendorTrace(f.file[], t.trace, reg, req.vendorGen, choice)
           if req.samples:
             p.beat(f.path)
-            if not f.file[].inMemory: fs.mappedRead(f.path)
-            if not f.file[].inMemory: fs.unmappedFail(f.path)
-            d.readSamples(f.file, t, req, room, ws)
+            if f.view == nil and not f.file[].inMemory:
+              fs.mappedRead(f.path)
+              fs.unmappedFail(f.path)
+            d.readSamples(f.file, t, req, room, ws, f.view,
+              if f.view == nil: nil else: addr viewWs)
             room -= d.samples.len
         except CatchableError as e:
           d.problem = readProblem(e)
@@ -591,6 +622,9 @@ proc applyDrops(p: ptr InspectorObj) =
 proc run(p: ptr InspectorObj) {.thread.} =
   markWorkerThread()
   var ws = initWorkspace()
+  var viewOf: ref CorrelateView
+  var held: CorrelateView
+  var viewWs: CorrelateWorkspace
   while true:
     var req: InspectRequest
     var got, quit = false
@@ -605,7 +639,7 @@ proc run(p: ptr InspectorObj) {.thread.} =
       p.beat = fs.now()
     if got and not quit:
       try:
-        discard p.serve(req, ws)
+        discard p.serve(req, ws, viewOf, held, viewWs)
       except CatchableError as e:
         p.poster.post Msg(job: NoJob, kind: mkLog, entry: LogEntry(time: getTime(),
           severity: sevWarning, source: "headers", text: "The Headers window could not " &

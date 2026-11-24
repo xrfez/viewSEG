@@ -26,14 +26,15 @@
 ##   given it up, and `ask` and `cancel` end those of the requests they drop.
 ## - **A file cut short, or that cannot be looked at,** is not read: the
 ##   answer says why. Each read is marked through the seam (`fs.mappedRead`).
+##   A correlated view is read through `readListenTraces`; its virtual path
+##   is not mapped.
 
 import std/[algorithm, locks, math, monotimes, options, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, shift, types, workspace]
-import analysis, cutfile, edits, filesystem, fkanalysis, inbox, jobs, join, log,
-    processing, references,
-  threads, vibalign, vibanalysis
+import analysis, correlateread, cutfile, edits, filesystem, fkanalysis, inbox, jobs, join, log,
+  processing, references, threads, vibalign, vibanalysis
 
 type
   AnalysisAsk* = object
@@ -43,6 +44,8 @@ type
     view*: AnalysisView
     params*: AnalysisParams
     file*: ptr SeismicFile   ## held by the caller
+    correlated*: ref CorrelateView
+      ## a correlated view; not `view` (that is the analysis kind)
     path*: string
     size*: int64             ## its size when it was opened; -1 when not known
     traces*: seq[int]        ## indices in the file, in the order drawn
@@ -139,16 +142,49 @@ func recordSentenceOf(a: AnalysisAsk): string =
 
 proc readRows(p: ptr ReaderObj; f: ptr SeismicFile; path: string; list: seq[int];
     id: int; rows: var seq[seq[float32]]; failed: var seq[bool];
-    notNumber: var seq[bool]): bool =
+    notNumber: var seq[bool]; view: ref CorrelateView = nil;
+    ws: ptr CorrelateWorkspace = nil): bool =
   ## Traces `list` of `f`, whole, into `rows` (in its order; a trace that
   ## cannot be decoded is empty and `failed`; one with a sample that is not a
   ## number has it as 0 and is `notNumber`); false when a newer request came
-  ## first.
+  ## first. A correlated `view` is listen time (`readListenTraces`); its
+  ## virtual path is not mapped. `ws` is that view's workspace.
   result = true
   rows = newSeq[seq[float32]](list.len)
   failed = newSeq[bool](list.len)
   notNumber = newSeq[bool](list.len)
   if list.len == 0: return
+  if view != nil:
+    doAssert ws != nil, "a correlated view needs a workspace"
+    let heldView = view[]
+    let cols = heldView.listenSamples
+    p.beat(path)
+    var at = 0
+    while at < list.len:
+      let n = min(16, list.len - at)
+      var chunk = newSeq[int](n)
+      for k in 0 ..< n: chunk[k] = list[at + k]
+      var buf = newSeq[float32](n * cols)
+      readListenTraces(heldView, f, chunk, buf, ws[])
+      var bad = newSeq[bool](n)
+      for r in ws[].failed: bad[r] = true
+      for k in 0 ..< n:
+        failed[at + k] = bad[k]
+        var s = newSeq[float32](cols)
+        if cols > 0 and not bad[k]:
+          copyMem(addr s[0], addr buf[k * cols], cols * sizeof(float32))
+        if not bad[k]:
+          for v in s.mitems:
+            if not (abs(v) < Inf):
+              v = 0
+              notNumber[at + k] = true
+        rows[at + k] = move s
+      if at + n < list.len and p.interrupted(id):
+        result = false
+        break
+      at += n
+      p.beat(path)
+    return
   p.beat(path)
   var pf = newPrefetcher[float32](f[], list, chunkTraces = 16, workers = 2, uniform = true)
   var c: PrefetchChunk[float32]
@@ -302,7 +338,7 @@ proc orientationAnswer(p: ptr ReaderObj; a: AnalysisAsk): AnalysisResult =
     for t in a.traces:
       var row = [NaN, NaN, NaN]
       if t in 0 ..< f[].len:
-        if not f[].inMemory: fs.mappedRead(a.path)
+        if a.correlated == nil and not f[].inMemory: fs.mappedRead(a.path)
         let o = f[].traceOrientation(t)
         if o.isSome:
           let v = o.get
@@ -332,7 +368,7 @@ func hasReference(a: AnalysisAsk): bool {.inline.} =
   a.archiveGone.len > 0 or a.archivePath.len > 0 or a.pilotTrace >= 0
 
 proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: float64;
-    ): ReferenceRead =
+    ws: ptr CorrelateWorkspace = nil): ReferenceRead =
   ## The chosen reference of window `a`, as a correlation and an envelope take
   ## it, raw: an archive file, else the record's trace by the rule (reversed when
   ## the window reverses it; no filter of the plot's or its own) cut to the rule's
@@ -370,11 +406,12 @@ proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: f
       return
     var refRows: seq[seq[float32]] = @[]
     var refFailed, refNan: seq[bool] = @[]
-    if not p.readRows(f, a.path, @[rt], a.id, refRows, refFailed, refNan):
+    if not p.readRows(f, a.path, @[rt], a.id, refRows, refFailed, refNan, a.correlated, ws):
       result.cancelled = true
       return
     let rk = f[].traceKeys(rt)
-    let rus = if rk.intervalUs > 0 and rk.intervalUs < Inf: rk.intervalUs
+    let rus = if a.correlated != nil: a.correlated.dtMs * 1000.0
+              elif rk.intervalUs > 0 and rk.intervalUs < Inf: rk.intervalUs
               else: f[].sampleIntervalUs(rt)
     let rdt = rus / 1000
     if refFailed[0] or refRows[0].len == 0:
@@ -400,9 +437,14 @@ proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: f
         # the cut keeps its place in time: from its start, not from the trace's first sample
         result.samples = placedPilot(cut, a.pilotRule.startMs, dtMs)
 
-proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
+proc serve(p: ptr ReaderObj; a: AnalysisAsk; viewOf: var ref CorrelateView;
+    held: var CorrelateView; viewWs: var CorrelateWorkspace): bool =
   ## Reads, works out and posts what `a` asks for; false when a newer
   ## request came first (nothing is posted).
+  if a.correlated != nil and viewOf != a.correlated:
+    held = a.correlated[]
+    viewWs = newWorkspace(held)
+    viewOf = a.correlated
   var answer = AnalysisResult(gen: a.gen, id: a.id, view: a.view)
   let f = a.file
   var why = cutWhy(f[])
@@ -422,23 +464,38 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
           f[].traceKeys(t).status == tsDead:
         inc answer.leftOut
       else:
-        let k = f[].traceKeys(t)
-        # the interval as the spectrum reader resolves it: the trace's, else the file's
-        let us = if k.intervalUs > 0 and k.intervalUs < Inf: k.intervalUs
-                 else: f[].sampleIntervalUs(t)
-        if not (us > 0 and us < Inf):
-          inc answer.atOtherInterval
-        else:
-          let dt = us / 1000
-          if dtMs.isNaN:
-            dtMs = dt
-            if abs(k.t0Ms) < Inf: t0Ms = k.t0Ms
-          if not sameDt(dt, dtMs): inc answer.atOtherInterval
-          elif a.view == avCorrelation and list.len >= MaxAnalysisCurves:
-            inc notDrawn # drawn no more than that many: the rest are not even read
+        if a.correlated != nil:
+          let dt = a.correlated.dtMs
+          if not (dt > 0 and dt < Inf):
+            inc answer.atOtherInterval
           else:
-            list.add t
-            names.add (if i < a.names.len: a.names[i] else: "trace " & $(t + 1))
+            if dtMs.isNaN:
+              dtMs = dt
+              t0Ms = a.correlated.t0Ms
+            if not sameDt(dt, dtMs): inc answer.atOtherInterval
+            elif a.view == avCorrelation and list.len >= MaxAnalysisCurves:
+              inc notDrawn
+            else:
+              list.add t
+              names.add (if i < a.names.len: a.names[i] else: "trace " & $(t + 1))
+        else:
+          let k = f[].traceKeys(t)
+          # the interval as the spectrum reader resolves it: the trace's, else the file's
+          let us = if k.intervalUs > 0 and k.intervalUs < Inf: k.intervalUs
+                   else: f[].sampleIntervalUs(t)
+          if not (us > 0 and us < Inf):
+            inc answer.atOtherInterval
+          else:
+            let dt = us / 1000
+            if dtMs.isNaN:
+              dtMs = dt
+              if abs(k.t0Ms) < Inf: t0Ms = k.t0Ms
+            if not sameDt(dt, dtMs): inc answer.atOtherInterval
+            elif a.view == avCorrelation and list.len >= MaxAnalysisCurves:
+              inc notDrawn # drawn no more than that many: the rest are not even read
+            else:
+              list.add t
+              names.add (if i < a.names.len: a.names[i] else: "trace " & $(t + 1))
     answer.dtMs = dtMs
     if list.len == 0:
       answer.problem = "no trace to work it out on (" &
@@ -448,7 +505,9 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
       try:
         var rows: seq[seq[float32]] = @[]
         var failed, notNumber: seq[bool] = @[]
-        if not p.readRows(f, a.path, list, a.id, rows, failed, notNumber): return false
+        let viewWsPtr = if a.correlated == nil: nil else: addr viewWs
+        if not p.readRows(f, a.path, list, a.id, rows, failed, notNumber, a.correlated,
+            viewWsPtr): return false
         # A Spectrogram and a Phase spectrum leave out a trace with a sample that is not a
         # number, and count it, as an FFT window does. An f-k keeps its row (as zeros: its
         # spacing and units stay) and counts it; the others draw it as 0.
@@ -475,7 +534,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
         var haveEarly = false
         if a.view == avEnvelope and a.hasReference and a.params.phaseAgainst == paReference and
             kept.len > 0:
-          early = p.readReference(a, f, dtMs)
+          early = p.readReference(a, f, dtMs, if a.correlated == nil: nil else: addr viewWs)
           haveEarly = true
           if early.cancelled: return false
         let raw = a.view in {avCorrelation, avVibrator} or (haveEarly and early.problem.len == 0)
@@ -538,7 +597,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             if not a.hasReference:
               answer.problem = NoReferenceChosen
             else:
-              let got = p.readReference(a, f, dtMs)
+              let got = p.readReference(a, f, dtMs, if a.correlated == nil: nil else: addr viewWs)
               if got.cancelled: return false
               if got.problem.len > 0: answer.problem = got.problem
               else:
@@ -701,6 +760,9 @@ proc release(p: ptr ReaderObj; a: AnalysisAsk) =
 
 proc run(p: ptr ReaderObj) {.thread.} =
   markWorkerThread()
+  var viewOf: ref CorrelateView
+  var held: CorrelateView
+  var viewWs: CorrelateWorkspace
   while true:
     var a: AnalysisAsk
     var got, quit = false
@@ -718,7 +780,7 @@ proc run(p: ptr ReaderObj) {.thread.} =
       p.beat = fs.now()
     if got:
       try:
-        discard p.serve(a)
+        discard p.serve(a, viewOf, held, viewWs)
       except CatchableError as e:
         p.poster.post Msg(job: NoJob, kind: mkLog, entry: LogEntry(time: getTime(),
           severity: sevWarning, source: "New plot", text: "A plot could not be worked " &

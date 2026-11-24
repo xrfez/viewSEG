@@ -337,7 +337,7 @@ proc askPlot(state: var AppState; w: int): bool =
   if pw.view in {avCorrelation, avEnvelope}:
     pw.fileRef = fileReferencePlace(s, s.gatherOf(pw.traces[0] - s.base)) > 0
   var a = AnalysisAsk(id: pw.id, view: pw.view, params: pw.params, file: s.filePtr,
-    path: s.path, size: s.size, traces: traces, names: labels,
+    correlated: s.correlatedView, path: s.path, size: s.size, traces: traces, names: labels,
     processing: pw.processing)
   pw.sweep = identityOf(s.signature)
   if s.isSignature:

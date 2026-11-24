@@ -4016,7 +4016,8 @@ proc followInspect(state: var AppState) =
     let s = state.sessions[i]
     result = held.find(s.id)
     if result < 0 and state.jobs.hold(s.path):
-      req.files.add InspectFile(file: s.filePtr, path: s.path, session: s.id, size: s.size)
+      req.files.add InspectFile(file: s.filePtr, path: s.path, session: s.id, size: s.size,
+        view: s.correlatedView)
       held.add s.id
       result = held.high
   if want.record[0] != NoSession:
@@ -4259,7 +4260,8 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   inc sw.asks
   inc sw.revision
   state.spectrumReaderFor(s.path).ask SpectrumAsk(id: sw.id, gen: state.spectrumGen,
-    session: int(s.id), file: s.filePtr, path: s.path, size: s.size, traces: traces,
+    session: int(s.id), file: s.filePtr, view: s.correlatedView, path: s.path, size: s.size,
+    traces: traces,
     killed: killed, reversed: reversed, allReversed: e.allReversed, own: own,
     shifts: shifts,
     fromMs: window[0], toMs: window[1], axisT0Ms: axisT0, processing: processing)
@@ -8421,7 +8423,7 @@ proc followRecordQc(state: var AppState) =
     lane: jlBackground, auto: true, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
     g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
     state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
-    own, reversed, shifts, work, state.inbox.poster))
+    own, reversed, shifts, work, state.inbox.poster, s.correlatedView))
   if not rel.isNil: state.qcHeld.add (q.job, rel)
 
 proc nextBreakRevision(state: var AppState): int =
@@ -8568,7 +8570,7 @@ proc followFirstBreaks(state: var AppState) =
     # its answer is kept
     have = have or (not key.guide.given and state.recordQc.job != NoJob and
       state.recordQc.picks and state.recordQc.pickKey == key)
-    if not have and not s.derived:
+    if not have and not (s.derived or s.isCorrelatedView):
       var b = FirstBreaks(key: key, state: bkComputing, first: traces.a)
       b.job = state.jobs.submit(JobSpec(title: "Find the first breaks of the record shown",
         lane: jlBackground, auto: true, reads: @[s.path]), firstBreaksWork(s.filePtr, s.path,

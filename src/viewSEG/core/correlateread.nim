@@ -3,7 +3,8 @@
 ## `correlateWork` correlates every trace into an in-memory file. A gather of
 ## tens of GB cannot do that. `initCorrelateView` prepares, once, what that job
 ## uses for one raw file; `correlateRead` then correlates the traces it is
-## asked for and copies a listen-time window into the caller's buffer. The
+## asked for and copies a listen-time window into the caller's buffer.
+## `readListenTraces` is that read for a whole listen trace. The
 ## result of a window matches that file, including the auxiliary-trace policy
 ## (a reference auxiliary shifted by `-AuxLeadMs`, any other auxiliary not
 ## correlated). Correlated samples are IEEE float32.
@@ -40,6 +41,17 @@ proc copyPath(file: ptr SeismicFile): string =
   let lent = file[].path
   result = newString(lent.len)
   for i, c in lent: result[i] = c
+
+proc listenOrigin(file: ptr SeismicFile): float64 =
+  ## Correlation does not move the origin. Listen sample 0 is the first seismic
+  ## trace's finite time zero, or 0 when that trace has none.
+  for t in 0 ..< file[].len:
+    let k = file[].traceKeys(t)
+    if k.status == tsAuxiliary: continue
+    let t0 = k.t0Ms
+    if t0.classify notin {fcNan, fcInf, fcNegInf}: return t0
+    break
+  0.0
 
 proc initCorrelateView*(file: ptr SeismicFile; reference: openArray[float32];
     referenceDtMs: float64; referenceTraces: openArray[int]):
@@ -95,6 +107,7 @@ proc initCorrelateView*(file: ptr SeismicFile; reference: openArray[float32];
   result.view.recordSamples = recordSamples
   result.view.listenSamples = recordSamples - reference.len
   result.view.dtMs = dtMs
+  result.view.t0Ms = listenOrigin(file)
   result.view.lag = wholeSamples(-AuxLeadMs, dtMs)
 
 proc newWorkspace*(view: CorrelateView): CorrelateWorkspace =
@@ -210,3 +223,11 @@ proc correlateRead*(view: CorrelateView; file: ptr SeismicFile; traces: openArra
       except CatchableError:
         bad = true
     if bad: ws.failed.add r
+
+proc readListenTraces*(view: CorrelateView; file: ptr SeismicFile; traces: openArray[int];
+    dst: var openArray[float32]; ws: var CorrelateWorkspace) {.raises: [].} =
+  ## Whole listen-time traces into `dst`: `traces.len` rows of
+  ## `view.listenSamples`, row-major. A row that could not be read is zero and
+  ## listed in `ws.failed`, ascending. `correlateRead` advises `view.path`, the
+  ## raw file, not the view's virtual path.
+  correlateRead(view, file, traces, 0, view.listenSamples, dst, ws)

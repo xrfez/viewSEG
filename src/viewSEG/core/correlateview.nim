@@ -20,4 +20,5 @@ type
     recordSamples*: int
     listenSamples*: int ## samples of listen time: the record minus the sweep
     dtMs*: float64
+    t0Ms*: float64 ## time of listen sample 0: the first seismic trace's finite t0, else 0
     lag*: int ## `wholeSamples(-AuxLeadMs, dtMs)`; 0 when the lead is not a shift
