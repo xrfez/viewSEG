@@ -503,6 +503,9 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           try:
             w.startSubset(file[], want.traces, patch)
             started = true
+          except SegTruncatedError as e:
+            # the recording was cut short while the job runs: the job fails, not the shot
+            raise newException(IOError, readProblem(e))
           except ValueError, SegFormatError:
             refusal = getCurrentExceptionMsg()
         for i in 0 ..< comps:
@@ -534,6 +537,8 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
                   w.writeTrace(file[], source, dst, k, over, SourceFields)
                 else:
                   w.writeTrace(file[], source, dst, over)
+              except SegTruncatedError as e:
+                raise newException(IOError, readProblem(e))
               except ValueError, SegFormatError:
                 # a format refusal is the shot's, like a caller error; an IOError is not
                 refusal = getCurrentExceptionMsg()
