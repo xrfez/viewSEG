@@ -448,15 +448,15 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster; recursive = false): 
 
 const KindBatch = 16 ## a kinds job posts at least this often (files)
 
-proc kindsWork*(gen: uint64; asks: seq[WatchedFile]; vendors: VendorRegistry;
+proc kindsWork*(gen: uint64; vendorGen: int; asks: seq[WatchedFile]; vendors: VendorRegistry;
     to: Poster): JobWork =
   ## The work of a job that reads the kind of recording of each file of `asks` (path, size and
   ## time as listed) from the file (`kindOfFile`), a file at a time, and posts the
-  ## answers as `mkKinds` messages for listing `gen`. A file that cannot be read has no kind;
+  ## answers as `mkKinds` messages for listing `gen` and the vendor maps' load `vendorGen`. A file that cannot be read has no kind;
   ## stops at a cancel (between files, and inside a file between its steps).
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading what the files are"
-    var batch = Msg(job: ctx.id, kind: mkKinds, kindsGen: gen)
+    var batch = Msg(job: ctx.id, kind: mkKinds, kindsGen: gen, kindsVendors: vendorGen)
     var last = getMonoTime()
     for i, a in asks:
       if not ctx.progress(i, asks.len): raise newException(JobCancelledError, "cancelled")
@@ -471,6 +471,6 @@ proc kindsWork*(gen: uint64; asks: seq[WatchedFile]; vendors: VendorRegistry;
         kind: probe.kind)
       if batch.kinds.len >= KindBatch or getMonoTime() - last >= ListPause:
         to.post move batch
-        batch = Msg(job: ctx.id, kind: mkKinds, kindsGen: gen)
+        batch = Msg(job: ctx.id, kind: mkKinds, kindsGen: gen, kindsVendors: vendorGen)
         last = getMonoTime()
     if batch.kinds.len > 0: to.post move batch

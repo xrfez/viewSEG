@@ -147,6 +147,7 @@ type
       problemChanged*: bool ## `watchProblem` is news (it began, or ended)
     of mkKinds:
       kindsGen*: uint64 ## the file list's `gen` it is for
+      kindsVendors*: int ## the vendor maps' load (`vendorGen`) it was read with
       kinds*: seq[KindAnswer]
     of mkSurvey:
       layer*: SurveyLayer ## moved, never shared

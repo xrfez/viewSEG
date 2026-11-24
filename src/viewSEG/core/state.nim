@@ -7498,6 +7498,8 @@ func missingWords(state: AppState): string =
     "header maps loaded: no vendor block is decoded in this project, and the choice is " &
     "kept (it is used again when the map is there)."
 
+proc rereadKinds(state: var AppState)
+
 proc takeVendor(state: var AppState; m: sink Msg) =
   ## A load of the vendor maps: made the registry in force under the project's
   ## rule, and said in a line of Messages each (what it loaded, what it left
@@ -7508,6 +7510,7 @@ proc takeVendor(state: var AppState; m: sink Msg) =
   inc state.vendor.gen
   template load: untyped = state.vendor.load
   publishVendors(load.registry, state.vendor.choice)
+  state.rereadKinds()
   state.vendor.mismatched.setLen 0
   var said: seq[(Severity, string, string)] = @[]
   if load.maps.len > 0:
@@ -7584,6 +7587,7 @@ proc setVendorChoice(state: var AppState; origin: CommandOrigin; c: VendorChoice
   publishVendors(state.vendor.load.registry, c)
   state.vendor.mismatched.setLen 0
   inc state.vendor.gen
+  state.rereadKinds()
   state.log.add(sevInfo, "vendor maps", (case c.mode
     of vmAutomatic: "The project's vendor map is automatic: every map loaded is offered, the " &
       "most specific that matches a file decodes it."
@@ -9113,8 +9117,22 @@ proc startKinds(state: var AppState) =
       asks.add WatchedFile(path: e.path, size: e.size, modified: e.modified)
   if asks.len > 0:
     state.kindJob = state.jobs.submit(JobSpec(title: "Read what the files are",
-      lane: jlPeeks), kindsWork(state.files.gen, asks, currentVendors(),
+      lane: jlPeeks), kindsWork(state.files.gen, state.vendor.gen, asks, currentVendors(),
       state.inbox.poster))
+
+proc rereadKinds(state: var AppState) =
+  ## The vendor maps in force changed: a start time may now come from a vendor block, so every
+  ## kind read is stale. The job reading them stops, every row is unread again, and the kinds
+  ## are read anew.
+  if state.kindJob != NoJob:
+    discard state.jobs.cancel(state.kindJob)
+    state.oldScans.add state.kindJob # it ends quietly
+    state.kindJob = NoJob
+  for i in 0 ..< state.files.entries.len:
+    if state.files.entries[i].kindState != ksUnread:
+      state.files.entries[i].kindState = ksUnread
+      state.files.changedAt(i)
+  state.startKinds()
 
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
@@ -9501,7 +9519,8 @@ proc refreshPairs(state: var AppState) =
 proc takeKinds(state: var AppState; m: sink Msg) =
   ## The kinds a job read: each is kept for the entry it was read for, unless that file changed
   ## meanwhile (the watch asks for it again).
-  if m.kindsGen != state.files.gen: return # a listing replaced since
+  if m.kindsGen != state.files.gen or m.kindsVendors != state.vendor.gen:
+    return # a listing, or the vendor maps, replaced since
   template f: untyped = state.files
   for a in m.kinds:
     let i = f.find(a.path)
