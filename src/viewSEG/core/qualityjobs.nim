@@ -95,7 +95,7 @@ proc noteTrace(b: var QualityBuild; path: string; k: TraceKeys; killed: bool;
   b.addTrace(TraceNote(file: path, record: k.record, line: k.rcvLine, point: k.rcvPoint,
     index: k.rcvIndex, component: componentOf(k), killed: killed, findings: findings))
 
-func intervalMs(us: float64): float64 =
+func msOfUs(us: float64): float64 =
   if us > 0 and us < Inf: us / 1000.0 else: 1.0
 
 proc failedRows(log: DiagLog; part: Slice[int]): seq[int] =
@@ -156,7 +156,7 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
           for row in failed:
             if row >= rows.a and row <= rows.b: runFailed.add row - rows.a
           let meta = initChunkMeta(f[].rowsOf(run),
-            intervalMs(f[].index.keys[run.a].intervalUs), 0, runFailed)
+            msOfUs(f[].index.keys[run.a].intervalUs), 0, runFailed)
           let piece = read.sub(rows)
           runAmps.setLen piece.len
           traceAmplitudeInto(piece, meta, AmplitudeParams(), runAmps, ws)
