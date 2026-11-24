@@ -215,6 +215,7 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
     noted = upTo + 1
   # one phase for the file: a phase restarts the bar and its time estimate
   ctx.setPhase "measuring"
+  ctx.fileProgress(at, count, 0, n)
   while first < n:
     ctx.checkCancelled()
     let last = min(n - 1, first + QcChunk - 1)
