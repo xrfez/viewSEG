@@ -1,6 +1,7 @@
 ## Words for the Shot log window. Drawing lives in the frontend.
 
 import std/[strutils, times]
+import parseSEG
 import ../core/[shotfollow, shotfollowtarget, shotlog]
 
 const
@@ -42,6 +43,37 @@ const
   RevertCell* = "Revert to the file's value"
   UndoCellTip* = "Undo the last cell edit"
   RedoCellTip* = "Redo the cell edit undone last"
+  ExportSpsButton* = "Export SPS..."
+  ExportSpsTip* = "Write the shots of this log, with the edits made here, as an SPS file of " &
+    "source points."
+  NoSpsRows* = "No row of this log has a shot point, so there is nothing to write as SPS."
+  SpsReading* = "The log is still being read."
+  SpsRunning* = "An SPS export is already running."
+  SpsRevisionLabel* = "Revision"
+  SpsDefaultLine* = "Line where a row has none"
+  SpsDefaultLineTip* = "Source line used for rows with no line. Leave empty for none: such " &
+    "rows are left out and listed."
+  SpsDefaultIndex* = "Point index where a row has none"
+  SpsPointCode* = "Point code"
+  SpsPointCodeTip* = "At most two printable ASCII characters. Empty writes none."
+  SpsWithTime* = "Write the time"
+  SpsWithTimeTip* = "Day of year and time of day in UTC, from each row's time. SPS has no " &
+    "year, and the fraction of a second is dropped."
+  SpsChooseFile* = "Choose file..."
+  SpsNoFile* = "not chosen"
+  SpsNeedFile* = "Choose the file to write first."
+  SpsBadLine* = "The default line is not a number."
+  SpsExistsTip* = "That file exists: the export never replaces a file. Choose a new name."
+  SpsRun* = "Export"
+  SpsRunTip* = "Write the file; the Jobs window shows the job and Messages the result."
+  SpsClose* = "Close"
+  SpsRunningNote* = "Writing the SPS file: the Jobs window shows the job."
+
+func spsRevisionWords*(rev: SpsRevision): string =
+  case rev
+  of sps10: "1.0"
+  of sps21: "2.1"
+  of spsAuto: "automatic"
 
 proc utcMicrosText*(us: int64): string =
   ## UTC microseconds since 1970 as a date and time, to the microsecond.

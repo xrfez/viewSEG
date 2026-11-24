@@ -4,9 +4,10 @@
 ## only while Allow editing is ticked. Follow the plot, off until ticked,
 ## shows the row the plot is on.
 
-import std/[algorithm, options, os, strutils, tables]
+import std/[algorithm, math, options, os, strutils, tables]
 import imguin/cimgui
-import ../../core/[geometry, shotlog, state]
+import parseSEG/survey/sps
+import ../../core/[geometry, shotlog, shotlogsps, state]
 import ../../view/[shotlogwords, theme]
 import chrome, focus, icons, marks, style
 
@@ -15,6 +16,7 @@ const
   PatternRoom = 256
   SentinelRoom = 1024
   FilterRoom = 64
+  SpsLineRoom = 32
 
 type
   ShotLogUi* = object
@@ -23,9 +25,9 @@ type
     bringUp: bool
     placeAgain: bool
     focus: FocusClicks
-    haveSeen: bool     ## a loaded log has been followed
-    seenMax: int       ## the highest id followed
-    currentId: int     ## the log on show
+    haveSeen: bool                    ## a loaded log has been followed
+    seenMax: int                      ## the highest id followed
+    currentId: int                    ## the log on show
     columnsOpen: bool
     draft: ShotLogMap
     draftWidth: int
@@ -39,29 +41,42 @@ type
     matches: seq[int]
     filterDone: bool
     problemsOnly: bool
-    allowEditing: bool ## cell edits, undo and revert; off until ticked
-    tab: int           ## 0 grid, 1 problems
-    forceGrid: bool    ## the grid tab is selected next frame
+    allowEditing: bool                ## cell edits, undo and revert; off until ticked
+    tab: int                          ## 0 grid, 1 problems
+    forceGrid: bool                   ## the grid tab is selected next frame
     selected: int
-    selectedCol: int   ## a data column; -1 when the time or status column is selected
+    selectedCol: int                  ## a data column; -1 when the time or status column is selected
     scrollTo: int
     editing: bool
     editRow: int
     editCol: int
     editBuf: seq[char]
     editReason: string
-    armEdit: bool      ## the text box takes the keyboard when it is drawn
-    pending: bool      ## Tab committed: open the next cell next frame
+    armEdit: bool                     ## the text box takes the keyboard when it is drawn
+    pending: bool                     ## Tab committed: open the next cell next frame
     pendingRow: int
     pendingCol: int
     bound: bool
     boundId: int
     boundRev: int
-    followSeen: bool   ## an answer has been applied for the log on show
+    followSeen: bool                  ## an answer has been applied for the log on show
     followRev: int
     followId: int
     faultRows: seq[int]
     faultText: Table[int, string]
+    spsOpen: bool                     ## the Export SPS panel is showing
+    spsReady: bool                    ## the panel's options have their first values
+    spsRevision: SpsRevision
+    spsLine: array[SpsLineRoom, char] ## the default line, empty for none
+    spsIndex: int32
+    spsCode: array[4, char]
+    spsTime: bool
+    spsDest: string                   ## the file chosen; "" before one is
+    spsAsk: bool                      ## the Choose file button was pressed: ask for a file
+    spsAskAt: string
+    spsRows: int                      ## rows with a shot point, of the log keyed below
+    spsKey: tuple[id, rev: int]
+    spsHaveRows: bool
 
 func shownId*(ui: ShotLogUi): int {.inline.} =
   ## The id of the log the window shows; -1 when there is none.
@@ -84,6 +99,16 @@ func takesUndo*(ui: ShotLogUi): bool {.inline.} =
   ## Whether this window takes Ctrl+Z and Ctrl+Y: it had the focus and
   ## Allow editing is ticked.
   ui.focus.focused and ui.allowEditing
+
+proc spsAsked*(ui: var ShotLogUi): tuple[ask: bool, at: string] =
+  ## Whether the window wants a destination file chosen, and where the dialog
+  ## starts. Asked once per press.
+  result = (ui.spsAsk, ui.spsAskAt)
+  ui.spsAsk = false
+
+proc setSpsDest*(ui: var ShotLogUi; path: string) =
+  ## The save dialog's answer; `.sps` is added when the name has no extension.
+  ui.spsDest = if path.splitFile.ext.len == 0: path & ".sps" else: path
 
 proc setText(buf: var openArray[char]; text: string) =
   let n = min(text.len, buf.len - 1)
@@ -117,6 +142,107 @@ proc wrapped(text: string; colour: Rgba) =
 
 proc whereOf(st: AppState): string =
   if st.inProject: st.project.doc.name else: SessionOnly
+
+proc spsOptions(ui: ShotLogUi): tuple[ok: bool, opts: ShotSpsOptions] =
+  ## The panel's options; `ok` is false when the default line is not a number.
+  var o = initShotSpsOptions()
+  o.revision = ui.spsRevision
+  o.defaultIndex = int(ui.spsIndex)
+  o.pointCode = bufText(ui.spsCode)
+  o.withTime = ui.spsTime
+  let typed = bufText(ui.spsLine).strip
+  var ok = true
+  if typed.len > 0:
+    try:
+      o.defaultLine = parseFloat(typed)
+    except ValueError:
+      ok = false
+  (ok, o)
+
+proc countSpsRows(ui: var ShotLogUi; st: AppState; i, rev: int) =
+  ## The rows that have a shot point, worked out again only when the log changed.
+  let key = (ui.currentId, rev)
+  if not ui.spsHaveRows or ui.spsKey != key:
+    ui.spsRows = 0
+    for row in st.shotView(i).rows:
+      if not row.shotPoint.isNaN: inc ui.spsRows
+    ui.spsKey = key
+    ui.spsHaveRows = true
+
+proc drawSps(ui: var ShotLogUi; st: AppState; i: int; t: Theme;
+    marks: var Marks): seq[Command] =
+  ## The Export SPS panel: the options, the file, and the button that posts the command.
+  igSeparator()
+  igSetNextItemWidth(igGetFontSize() * 6)
+  if igBeginCombo((SpsRevisionLabel & "##sps").cstring,
+      spsRevisionWords(ui.spsRevision).cstring, 0):
+    for r in [sps21, sps10]:
+      if igSelectable_Bool(spsRevisionWords(r).cstring, r == ui.spsRevision, 0,
+          ImVec2_c(x: 0, y: 0)) and ui.focus.acts:
+        ui.spsRevision = r
+      marks.mark("shotlog.sps.revision " & spsRevisionWords(r))
+    igEndCombo()
+  marks.mark("shotlog.sps.revision")
+  igSetNextItemWidth(igGetFontSize() * 8)
+  discard igInputText((SpsDefaultLine & "##sps").cstring, cast[cstring](addr ui.spsLine[0]),
+    csize_t(ui.spsLine.len), 0, nil, nil)
+  marks.mark("shotlog.sps.line")
+  tip(SpsDefaultLineTip)
+  igSetNextItemWidth(igGetFontSize() * 8)
+  var index = ui.spsIndex
+  if igInputInt((SpsDefaultIndex & "##sps").cstring, addr index, 1, 1, 0):
+    ui.spsIndex = clamp(index, 0, 9)
+  marks.mark("shotlog.sps.index")
+  igSetNextItemWidth(igGetFontSize() * 4)
+  discard igInputText((SpsPointCode & "##sps").cstring, cast[cstring](addr ui.spsCode[0]),
+    csize_t(3), 0, nil, nil)
+  marks.mark("shotlog.sps.code")
+  tip(SpsPointCodeTip)
+  var time = ui.spsTime
+  if igCheckbox((SpsWithTime & "##sps").cstring, addr time) and ui.focus.acts:
+    ui.spsTime = time
+  marks.mark("shotlog.sps.time")
+  tip(SpsWithTimeTip)
+  let (optsOk, opts) = ui.spsOptions()
+  if not optsOk:
+    wrapped(SpsBadLine, t.roles[rlWarning])
+    marks.mark("shotlog.sps.why " & SpsBadLine)
+  let chosen = if ui.spsDest.len > 0: ui.spsDest else: SpsNoFile
+  igTextUnformatted(("File: " & chosen).cstring, nil)
+  marks.mark("shotlog.sps.file " & ui.spsDest)
+  igSameLine(0, -1)
+  if igButton((SpsChooseFile & "##sps").cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts:
+    ui.spsAsk = true
+    ui.spsAskAt = if ui.spsDest.len > 0: ui.spsDest
+      else: st.shotLogSource(i).parentDir / (st.shotLogSource(i).splitFile.name & ".sps")
+  marks.mark("shotlog.sps.choose")
+  let exists = ui.spsDest.len > 0 and (fileExists(ui.spsDest) or dirExists(ui.spsDest))
+  let why = if st.spsRunning: SpsRunning
+            elif st.shotLogBusy(i): SpsReading
+            elif ui.spsDest.len == 0: SpsNeedFile
+            elif exists: SpsExistsTip
+            elif not optsOk: SpsBadLine
+            else: ""
+  if why.len > 0: marks.mark("shotlog.sps.why " & why)
+  igBeginDisabled(why.len > 0)
+  if igButton((SpsRun & "##sps").cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts and
+      why.len == 0:
+    result.add Command(kind: ckExportShotSps, spsLog: i, spsOptions: opts,
+      spsDest: ui.spsDest)
+  igEndDisabled()
+  marks.mark("shotlog.sps.run")
+  tip(if why.len > 0: why else: SpsRunTip)
+  igSameLine(0, -1)
+  if igButton((SpsClose & "##sps").cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts:
+    ui.spsOpen = false
+  marks.mark("shotlog.sps.close")
+  if st.spsRunning:
+    dim(SpsRunningNote, t)
+    marks.mark("shotlog.sps.running")
+  elif st.spsOutcome.len > 0:
+    wrapped(st.spsOutcome, if st.spsWritten.len > 0: t.roles[rlText] else: t.roles[rlWarning])
+    marks.mark("shotlog.sps.outcome " & st.spsOutcome)
+  igSeparator()
 
 proc follow(ui: var ShotLogUi; st: AppState) =
   ## The newest import, or the newest log when the one on show is gone.
@@ -758,12 +884,31 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
       igEndDisabled()
       marks.mark("shotlog.columns")
       tip("How the table was read, and what each column means")
+      igSameLine(0, -1)
+      ui.countSpsRows(st, i, rev)
+      let spsWhy = if reading: SpsReading
+                   elif ui.spsRows == 0: NoSpsRows
+                   else: ""
+      igBeginDisabled(spsWhy.len > 0)
+      if igButton(ExportSpsButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts and
+          spsWhy.len == 0:
+        if not ui.spsReady:
+          let o = initShotSpsOptions()
+          ui.spsRevision = o.revision
+          ui.spsIndex = int32(o.defaultIndex)
+          ui.spsReady = true
+        ui.spsOpen = not ui.spsOpen
+      igEndDisabled()
+      marks.mark("shotlog.exportsps")
+      if spsWhy.len > 0: marks.mark("shotlog.exportsps.dim")
+      tip(if spsWhy.len > 0: spsWhy else: ExportSpsTip)
       if followLine.len > 0:
         igSameLine(0, -1)
         igAlignTextToFramePadding()
         rightAlign(followLine)
         igTextUnformatted(followLine.cstring, nil)
         marks.mark("shotlog.followline " & followLine)
+      if ui.spsOpen and not ui.columnsOpen: result.add ui.drawSps(st, i, t, marks)
       if ui.columnsOpen:
         result.add ui.drawColumns(st, i, t, marks, reading)
       else:

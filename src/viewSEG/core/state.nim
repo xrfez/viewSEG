@@ -117,7 +117,7 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif,
     outputnames, reader,
   recordqc, referencejobs, references, selection, session, settings, shotfollowtarget, shotlog,
-  shotlogjobs,
+  shotlogjobs, shotlogsps, shotspsjobs,
   shots, spectra,
   spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids, vendorjobs,
   vendormaps, vibprofile, watch, zoom
@@ -342,6 +342,9 @@ type
     ckCutGather = "cut by shot log"
       ## cut the continuous recording the Seismic window shows into one record per shot of a
       ## loaded shot log, and write them to a new file, on a job
+    ckExportShotSps = "export SPS"
+      ## write the shots of a loaded shot log, with its edits, as an SPS file of source points,
+      ## on a job; an existing file is never replaced
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -654,6 +657,10 @@ type
       cutLog*: int ## the loaded shot log whose shots are cut (its index)
       cutOptions*: CutOptions ## the record's length and start, the alignment, the format
       cutDest*: string ## the file to write: a new name, in a folder that exists
+    of ckExportShotSps:
+      spsLog*: int ## the loaded shot log to write (its index)
+      spsOptions*: ShotSpsOptions ## the revision, defaults, point code and time
+      spsDest*: string ## the file to write: a new name, in a folder that exists
     of ckNamePattern:
       patternAction*: NamePatternAction
         ## ckNamePattern: save (add, or replace the one with the same label,
@@ -1123,6 +1130,14 @@ type
       ## the last cut's outcome line, for the dialog; "" before any
     cutPath: string
       ## the file the last cut wrote; "" when it wrote none
+    spsJob: JobId = NoJob
+      ## the SPS export under way; `NoJob` for none
+    spsSink: SpsSink
+      ## what that job found, read once the job has ended
+    spsOutcome: string
+      ## the last export's outcome line, for the shot log window; "" before any
+    spsPath: string
+      ## the file the last export wrote; "" when it wrote none
     joins: seq[Joined]
       ## the open files joined with survey files
     project: ProjectState
@@ -2642,6 +2657,18 @@ func cutProblem*(state: AppState): string =
   elif state.sessions[shown].isSignature: CutSignature
   elif state.cutJob != NoJob: CutRunning
   else: ""
+
+func spsRunning*(state: AppState): bool {.inline.} =
+  ## Whether an SPS export of a shot log is under way.
+  state.spsJob != NoJob
+
+func spsOutcome*(state: AppState): string {.inline.} =
+  ## The last SPS export's outcome in a few sentences; "" before any.
+  state.spsOutcome
+
+func spsWritten*(state: AppState): string {.inline.} =
+  ## The file the last SPS export wrote; "" when it wrote none.
+  state.spsPath
 
 func cutRunning*(state: AppState): bool {.inline.} =
   ## Whether a cut by shot log is under way.
@@ -7144,6 +7171,7 @@ proc clearSession(state: var AppState) =
   if state.movesJob != NoJob: discard state.jobs.cancel(state.movesJob)
   if state.leapJob != NoJob: discard state.jobs.cancel(state.leapJob)
   if state.cutJob != NoJob: discard state.jobs.cancel(state.cutJob)
+  if state.spsJob != NoJob: discard state.jobs.cancel(state.spsJob)
   state.moveQueue.setLen 0
   state.leapQueue.setLen 0
   state.moveBases.setLen 0
@@ -8917,10 +8945,36 @@ proc finishCut(state: var AppState; job: JobInfo) =
     state.cutOutcome = "The cut failed: " & why
     state.log.add(sevError, "cut by shot log", state.cutOutcome)
 
+proc finishSps(state: var AppState; job: JobInfo) =
+  ## The SPS export ended: the Messages say what was written and what was left
+  ## out, and the shot log window has the outcome and the file's path.
+  let res = if state.spsSink.isNil: ShotSpsResult() else: state.spsSink.result
+  let dest = if state.spsSink.isNil: "" else: state.spsSink.dest
+  state.spsJob = NoJob
+  state.spsSink = nil
+  state.spsPath = ""
+  let name = dest.extractFilename
+  if job.state == jsDone and res.error.len == 0:
+    state.spsPath = dest
+    state.spsOutcome = spsSentences(res, name)
+    state.log.add(sevInfo, "export SPS", state.spsOutcome)
+  elif job.state == jsCancelled:
+    state.spsOutcome = "The SPS export was cancelled."
+    state.log.add(sevWarning, "export SPS", state.spsOutcome)
+  else:
+    let why = if res.error.len > 0: res.error
+              elif job.error.len > 0: job.error
+              else: "the export did not finish"
+    state.spsOutcome = "The SPS export failed: " & why
+    state.log.add(sevError, "export SPS", state.spsOutcome)
+
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
   if job.id == state.cutJob:
     state.finishCut(job)
+    return
+  if job.id == state.spsJob:
+    state.finishSps(job)
     return
   if job.id == state.leapJob:
     state.finishLeap(job)
@@ -10818,6 +10872,27 @@ proc cutGatherCmd(state: var AppState; cmd: Command) =
   state.cutJob = state.jobs.submit(cutGatherSpec(s.diskPath, dest),
     cutGatherWork(s.filePtr, s.diskPath, dest, shots, cmd.cutOptions, state.cutSink, others))
 
+proc exportShotSpsCmd(state: var AppState; cmd: Command) =
+  ## Starts the write of a loaded shot log's source points as an SPS file.
+  if state.spsJob != NoJob:
+    state.ignore(cmd, "an SPS export is already running")
+    return
+  if cmd.spsLog notin 0 ..< state.shotLogs.len:
+    state.ignore(cmd, "there is no such shot log")
+    return
+  if cmd.spsDest.len == 0:
+    state.ignore(cmd, "no file name was given")
+    return
+  let dest = canonical(cmd.spsDest)
+  if fs.fileExists(dest) or fs.dirExists(dest):
+    state.ignore(cmd, extractFilename(dest) & " already exists; choose a new name")
+    return
+  state.spsSink = SpsSink(dest: dest)
+  state.spsOutcome = ""
+  state.spsPath = ""
+  state.spsJob = state.jobs.submit(spsExportSpec(dest),
+    spsExportWork(state.shotLogs[cmd.spsLog].view, cmd.spsOptions, dest, state.spsSink))
+
 proc applyCommand(state: var AppState; cmd: Command) =
   if cmd.kind in AuxRefused:
     let a = state.findPanel(cmd.panel)
@@ -11503,6 +11578,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
     let shipped = defaultLeapTable()
     state.adoptLeap(shipped, resetSentence(shipped.checkedTo))
   of ckCutGather: state.cutGatherCmd(cmd)
+  of ckExportShotSps: state.exportShotSpsCmd(cmd)
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept

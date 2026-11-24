@@ -8,6 +8,8 @@
 ## writes a line or point of Inf as "inf" and counts it written.
 ## Seen to fail: with only the length checked, a point code of a newline
 ## is written into the record and splits it.
+## Seen to fail: with the rename ignoring `replace`, a write with replace false
+## replaces the file.
 ## Seen to fail: with the spsText coverage row still marked built, the page
 ## says a user can reach a write that has no menu.
 ## Seen to fail: with a blank shot point counted in `skipped`, a row that
@@ -372,6 +374,11 @@ proc main*() =
     let again = writeShotSps(view, options(), path)
     doAssert again.error.len == 0
     doAssert readSps(path).points[0].code.len == 0
+    let kept = readFile(path)
+    let refused = writeShotSps(view, options(code = "ZZ"), path, replace = false)
+    doAssert refused.error.endsWith("already exists"), refused.error
+    doAssert readFile(path) == kept, "replace = false replaced the file"
+    doAssert not fileExists(path & "." & $getCurrentProcessId() & ".tmp")
     let blocked = dir / "blocked"
     writeFile(blocked, "keep")
     let failed = writeShotSps(view, options(), blocked / "out.sps")

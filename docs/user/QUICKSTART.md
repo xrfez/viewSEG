@@ -1182,6 +1182,17 @@ hidden by **Filter** or **Problems only** stays hidden; the line says it is
 hidden by the filter. A click in the grid still selects that row until what is
 followed changes. The tick does not turn on editing.
 
+**Export SPS...**, beside **Columns...**, writes the log as an SPS file of source points,
+with the edits made here. It is dim, with a tooltip saying why, while the log is read or
+when no row has a shot point. It opens a panel: the revision (2.1 or 1.0), the line to use
+where a row has none (empty for none), the point index to use where a row has none, a point
+code of up to two characters, and **Write the time** (day of year and time of day, in UTC;
+SPS has no year, and the fraction of a second is dropped). **Choose file...** asks for the
+file; **Export** stays dim until one is chosen, and an existing file is never replaced:
+choose a new name. The file is written on a job. Messages and the panel say how many rows
+were written, and which were left out and why (the first few are named, the rest counted):
+a value that does not fit its columns, such as a missing easting, is not rounded or guessed.
+
 The window stays open if the log is read again, if a project is opened or closed, or if
 the log is removed. `samples/land/shotlog.csv` is a small table of this kind.
 

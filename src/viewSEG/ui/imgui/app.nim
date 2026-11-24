@@ -963,6 +963,7 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     of dkOutputSource: ui.output.setSource(ev.paths[0])
     of dkOutputDest: ui.output.setDest(ev.paths[0])
     of dkCutDest: ui.cut.setFolder(ev.paths[0])
+    of dkExportShotSps: ui.shotLog.setSpsDest(ev.paths[0])
     of dkShotLog:
       ui.core.apply Command(kind: ckImportShotLog, logPath: ev.paths[0])
       ui.shotLog.open()
@@ -1686,6 +1687,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   var shotLog = ui.shotLog.drawShotLog(shotLogTitle, ui.core, ui.theme, ui.marks)
   for c in shotLog.mitems:
     ui.core.apply move c
+  let spsAsk = ui.shotLog.spsAsked()
+  if spsAsk.ask: ui.ask(dkExportShotSps, spsAsk.at)
   var memory = ui.memory.drawMemory(memoryTitle, ui.core, ui.theme, ui.marks)
   for c in memory.commands.mitems:
     ui.core.apply move c

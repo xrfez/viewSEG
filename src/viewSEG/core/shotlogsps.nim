@@ -345,9 +345,10 @@ proc nothingError(r: ShotSpsResult): string {.raises: [].} =
     result.add "; "
     result.add $(r.count - r.problems.len) & " more"
 
-proc writeBeside(path, text: string): string {.raises: [].} =
-  ## `text` to a temporary file beside `path`, flushed, then renamed over
-  ## `path`. Empty when `path` was replaced.
+proc writeBeside(path, text: string; replace: bool): string {.raises: [].} =
+  ## `text` to a temporary file beside `path`, flushed, then renamed onto
+  ## `path`. Empty when `path` was written. When `replace` is false and `path`
+  ## exists, nothing is changed and the answer says so.
   let parent = path.parentDir
   let tmp = path & "." & $getCurrentProcessId() & ".tmp"
   var f: File = nil
@@ -362,22 +363,27 @@ proc writeBeside(path, text: string): string {.raises: [].} =
       flushFile(f)
     finally:
       close(f)
-    fs.moveFile(tmp, path)
+    if replace:
+      fs.moveFile(tmp, path)
+    elif not fs.moveNoReplace(tmp, path):
+      discard fs.tryRemoveFile(tmp)
+      return path & " already exists"
   except Exception as e:
     discard fs.tryRemoveFile(tmp)
     result = if e.msg.len > 0: e.msg else: "cannot write " & path
 
-proc writeShotSps*(view: ShotView; opts: ShotSpsOptions; path: string): ShotSpsResult {.
-    raises: [].} =
+proc writeShotSps*(view: ShotView; opts: ShotSpsOptions; path: string;
+    replace = true): ShotSpsResult {.raises: [].} =
   ## `toSps`, then that text written to `path` through a temporary file beside
   ## it and a rename. `error` is empty when `path` was replaced. When no row
   ## was written, `path` is left untouched and `error` is "No row could be
   ## written." plus the problems listed. A failure leaves `path` as it was
-  ## and does not raise.
+  ## and does not raise. With `replace` false an existing `path` is a failure
+  ## ("... already exists"), decided atomically at the rename.
   result = toSps(view, opts)
   if result.written == 0:
     result.error = nothingError(result)
   elif result.text.len == 0:
     result.error = "the SPS text could not be built"
   else:
-    result.error = writeBeside(path, result.text)
+    result.error = writeBeside(path, result.text, replace)
