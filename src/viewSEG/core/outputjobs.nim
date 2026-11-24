@@ -45,7 +45,9 @@
 ## reference and its spectrum are prepared once. None leaves every sample as
 ## it is written today. A reference the correlation job would refuse is
 ## refused before any byte is written, in that job's words. The result's
-## lines then include that job's notes for this file. A trace that could
+## lines then include that job's notes for this file. A SEG-D record with an
+## auxiliary trace at another interval is written from the keys, that trace
+## as zeros at the output's interval, and the result says so. A trace that could
 ## not be read is written as zeros, and the result says how many.
 
 import std/[math, options, os, random, sets, strutils, times]
@@ -612,8 +614,13 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           lines.add "The sort crosses records, so it was applied within each record. " &
             "SEG-D records stay in input order."
       # SEG-Y's template writer allows any order and a missing trace. SEG-D's
-      # does not: a record must be written whole, in input order.
-      let like = srcKind == outKind and (srcKind == skSegy or (sameOrder and dropped == 0))
+      # does not: a record must be written whole, in input order. It also
+      # keeps each channel set's interval, so a correlated SEG-D record with
+      # a trace at another interval is written from the keys, that trace as
+      # zeros at the output's interval, as the correlation job writes it.
+      let oddSegd = correlating and segdOut and odd.len > 0
+      let like = srcKind == outKind and not oddSegd and
+        (srcKind == skSegy or (sameOrder and dropped == 0))
       if not file[].hasKeys and (opts.sortKeys.len > 0 or not like or opts.applyReversals or
           opts.applyShifts or opts.applyOwnFilters or opts.applyProcessing):
         if not file[].inMemory: fs.mappedRead(source, headers = true)
@@ -813,6 +820,14 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               lines.add line
           except SegTruncatedError:
             discard
+          if segdOut:
+            var zeroed = 0
+            for t in ready.odd:
+              if not (opts.dropKilled and edits.has(teKilled, t)): inc zeroed
+            let every = " written as zeros every " & msText(ready.dtMs) &
+              " ms, the output's interval."
+            if zeroed == 1: lines.add("1 trace at another interval is" & every)
+            elif zeroed > 1: lines.add($zeroed & " traces at another interval are" & every)
           if unread == 1:
             lines.add "1 trace could not be read and is written as zeros."
           elif unread > 1:

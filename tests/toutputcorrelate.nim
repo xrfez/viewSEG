@@ -34,7 +34,9 @@
 ## With no correlation notes, the result's lines were empty, so "5 traces,
 ## 800 samples (1600 ms of listen time)." was missing. A file cut while it
 ## was open failed the write ("was cut short while it was open") instead of
-## writing the unreadable trace as zeros.
+## writing the unreadable trace as zeros. SEG-D to SEG-D with trace 0 an
+## auxiliary at 4 ms kept that interval in the template: "trace 0 interval
+## 4000.0".
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -768,6 +770,32 @@ proc main*() =
       b.close()
     sameTraces(a, b, Listen)
     doAssert samplesOf(a, 1) != samplesOf(opened[], 1), "the own filter changed nothing"
+
+  block oddIntervalSegdToSegd:
+    ## SEG-D to SEG-D: trace 0 is an auxiliary at 4 ms, the record at 2 ms.
+    ## It is written as zeros at 2 ms, so the record length is the listen
+    ## time, and the notes say so.
+    let auxFirst = srcDir / "oddlike.sgd"
+    writeAuxFirst(auxFirst, sweep)
+    patchChannelInterval(auxFirst, uint8(ord(sctOther)), 4000)
+    var src = openSeismic(auxFirst, keys = true)
+    defer: src.close()
+    doAssert src.sampleIntervalUs(0) == 4000.0, $src.sampleIntervalUs(0)
+    let fromOption = outDir / "oddlike-option.sgd"
+    let opted = runWrite(src, auxFirst, fromOption, option(sweep, ofSegd))
+    doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+    var a = openSeismic(fromOption, keys = true)
+    defer: a.close()
+    doAssert a.sampleIntervalUs(0) == DtMs * 1000.0, "trace 0 interval " &
+      $a.sampleIntervalUs(0)
+    doAssert int(a.traceEntry(0).numSamples) == Listen, $a.traceEntry(0).numSamples
+    for v in samplesOf(a, 0): doAssert v == 0.0, $v
+    doAssert a.summary.recordLengthMs == float64(Listen) * DtMs, "record length " &
+      $a.summary.recordLengthMs
+    var said = false
+    for line in opted.wrote.lines:
+      if "written as zeros every 2 ms, the output's interval." in line: said = true
+    doAssert said, $opted.wrote.lines
 
   block correlationNotes:
     ## A reference auxiliary and an auxiliary at another interval: the lines
