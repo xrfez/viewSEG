@@ -21,7 +21,9 @@
 ## A fault applies to the calls named in its `ops` (every call by default).
 ## The hook also **asserts that it is never called on the UI thread**: every
 ## such call is kept (`uiCalls`) and said on stderr at once, and a test
-## checks the list is empty. Calls are counted per kind (`calls`).
+## checks the list is empty. Calls are counted per kind (`calls`). Each call
+## keeps the thread that made it (`caller`, `callsExcept`), so a test can
+## leave out the folder watch's own reads.
 ##
 ## Hung calls wait at most `HangLimit` (a forgotten `release` fails a test
 ## rather than hanging the suite), then fail.
@@ -42,6 +44,11 @@ type
     delay: Duration
     serial: int ## bumped by `release`: the calls hung before it go on
 
+  FsCall = object
+    op: FsOp
+    path: string
+    thread: int ## `getThreadId` of the thread that made the call
+
 const HangLimit* = initDuration(seconds = 60) ## a hung call fails after this, at the latest
 
 var
@@ -50,7 +57,7 @@ var
   faults: seq[Fault]
   uiSeen: seq[string]
   counts: array[FsOp, int]
-  pathCounts: seq[(FsOp, string)]
+  pathCounts: seq[FsCall]
   hanging: int
   permits: int
 
@@ -67,7 +74,7 @@ proc hookCall(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
     var hold = initDuration()
     withLock lock:
       inc counts[op]
-      pathCounts.add (op, path)
+      pathCounts.add FsCall(op: op, path: path, thread: getThreadId())
       if threadRole() == trUi:
         ui = true
         uiSeen.add $op & " " & path
@@ -192,8 +199,23 @@ proc calls*(op: FsOp; prefix = ""): int =
   ## How many calls of `op` were made, on paths starting with `prefix`.
   withLock lock:
     if prefix.len == 0: return counts[op]
-    for (o, p) in pathCounts:
-      if o == op and p.startsWith(prefix): inc result
+    for c in pathCounts:
+      if c.op == op and c.path.startsWith(prefix): inc result
+
+proc caller*(op: FsOp; prefix: string): int =
+  ## The thread of the newest call of `op` on a path starting with `prefix`;
+  ## -1 when there was none.
+  result = -1
+  withLock lock:
+    for c in pathCounts:
+      if c.op == op and c.path.startsWith(prefix): result = c.thread
+
+proc callsExcept*(op: FsOp; prefix: string; thread: int): int =
+  ## How many calls of `op` on paths starting with `prefix` were made by a
+  ## thread other than `thread`.
+  withLock lock:
+    for c in pathCounts:
+      if c.op == op and c.path.startsWith(prefix) and c.thread != thread: inc result
 
 proc resetCounts*() =
   ## Counts from 0 again.

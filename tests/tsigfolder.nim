@@ -34,12 +34,12 @@
 ## stopped `.dat` at once); `openChoiceOf` ignoring the listing's choice (`reopenEvery` found the
 ## interval 1000); `findPairWork` looking only in the file's own folder (`searching` found no
 ## `.vib` in the other date folder); the signature tick ignored in `FileTable.update` (`tickOff`
-## found 74 rows).
+## found 74 rows); the switch reading the prepared file (`preparedSwitch` found an open of it:
+## one read of the prepared file in `showPath`).
 ## Not mutated: the 5000-file stop and the 10 ms drive (they bound a loop and a thread, and
-## fail only on a hang or a UI-thread call); the prepared switch reading no disk (`preparedSwitch`
-## asserts the prepare ran first); "moved on" in `movedOn` (it asserts only that a stopped sweep
-## and its successor are followed); the swap, first-frame and refusal lines of `reopen` (the
-## refusal is mutated in `tdatopen`).
+## fail only on a hang or a UI-thread call); "moved on" in `movedOn` (it asserts only that a
+## stopped sweep and its successor are followed); the swap, first-frame and refusal lines of
+## `reopen` (the refusal is mutated in `tdatopen`).
 
 import std/[json, monotimes, os, sequtils, strutils, tables, times]
 import parseSEG
@@ -446,22 +446,29 @@ proc main*() =
       st.shutdown()
 
   block preparedSwitch:
+    # The switch itself reads no disk. The folder watch reads an opened file's header on its
+    # own thread; that look may land inside `settle` and is not the switch's, so it is left
+    # out (the thread that listed the folder after the file was shown).
     withFixtures fx:
       let f = build(fx, "day")
       let (dat, vib) = f.pairs[5]
       var st = listed(f.root, fx)
+      let lists = calls(foList, f.root)
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
-      doAssert st.settle(st.shownPath == vib and st.laidOut)
+      doAssert st.settle(st.shownPath == vib and st.laidOut and calls(foList, f.root) > lists),
+        "the watch did not list the folder after the file was shown"
       st.apply Command(kind: ckView, panel: MainPanel,
         view: fitAll(st.panel(MainPanel).layout, 800, 600)) # the plot's size, so a tile comes
       doAssert st.settle(st.tiles(st.findPanel(MainPanel)).len > 0)
       st.apply Command(kind: ckPrepare, panel: MainPanel, path: dat)
       doAssert st.settle(st.jobs.active.len == 0 and st.hasPrepared(dat)), "it was not prepared"
+      let watch = caller(foList, f.root)
+      doAssert watch >= 0, "the watch has not listed the folder"
       resetCounts()
       st.apply Command(kind: ckOpenPair, panel: MainPanel)
       doAssert st.settle(st.shownPath == dat and st.laidOut)
-      doAssert calls(foOpen, dat) == 0 and calls(foRead, dat) == 0 and
-        calls(foMapped, dat) == 0, "the switch read the drive"
+      doAssert callsExcept(foOpen, dat, watch) == 0 and callsExcept(foRead, dat, watch) == 0 and
+        callsExcept(foMapped, dat, watch) == 0, "the switch read the drive"
       doAssert st.log.has("Opened " & dat.extractFilename)
       st.shutdown()
 
