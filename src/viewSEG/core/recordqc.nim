@@ -464,11 +464,8 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       var ws = initWorkspace()
       let cols = if view == nil: max(1, f.maxSamples(traces)) else: view.listenSamples
       if cols > 0: ws.reserve(traceAmplitudeWorkspace(cols))
-      var held: CorrelateView
       var viewWs: CorrelateWorkspace
-      if view != nil:
-        held = view[]
-        viewWs = newWorkspace(held)
+      if view != nil: viewWs = newWorkspace(view[])
       let wantNoise = samples and noise.on
       var br = FirstBreaks()
       if wantNoise:
@@ -509,7 +506,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
           failed.sort()
         else:
           let rows = part.len
-          samples = readListenChunk(held, file, part, viewWs)
+          samples = readListenChunk(view[], file, part, viewWs)
           failed = viewWs.failed
           # (as a plain file's: a cut or a failed drive is unread, not undecodable)
           for k, r in failed:

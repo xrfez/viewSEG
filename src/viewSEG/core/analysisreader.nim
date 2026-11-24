@@ -156,8 +156,7 @@ proc readRows(p: ptr ReaderObj; f: ptr SeismicFile; path: string; list: seq[int]
   if list.len == 0: return
   if view != nil:
     doAssert ws != nil, "a correlated view needs a workspace"
-    let heldView = view[]
-    let cols = heldView.listenSamples
+    let cols = view.listenSamples
     p.beat(path)
     var at = 0
     while at < list.len:
@@ -165,7 +164,7 @@ proc readRows(p: ptr ReaderObj; f: ptr SeismicFile; path: string; list: seq[int]
       var chunk = newSeq[int](n)
       for k in 0 ..< n: chunk[k] = list[at + k]
       var buf = newSeq[float32](n * cols)
-      readListenTraces(heldView, f, chunk, buf, ws[])
+      readListenTraces(view[], f, chunk, buf, ws[])
       var bad = newSeq[bool](n)
       for r in ws[].failed: bad[r] = true
       for k in 0 ..< n:
