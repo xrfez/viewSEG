@@ -85,7 +85,8 @@ func polarityCell(row: FolderRow): string =
     result.add "From the pair: "
     result.add row.extraPolarity
 
-func warningsCell(row: FolderRow): string =
+func warningsCell*(row: FolderRow): string =
+  ## Warnings for the row, including a pair's and the weight comparison.
   result = joinWords(row.warnings)
   if row.extraWarnings.len > 0:
     if result.len > 0: result.add "; "

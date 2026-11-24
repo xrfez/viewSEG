@@ -1,6 +1,6 @@
 ## The Vibrator QC of a folder window: a list of the signature files in the
 ## open folder (subfolders included), a run against the project's profile, and
-## a CSV export. The table fills the rest of the window.
+## a CSV export. The results table leaves room under it for the selected row.
 ##
 ## Listing and judging are background jobs. The window reads a sink only after
 ## that job is no longer running. The worker must not read `AppState`: the
@@ -11,7 +11,7 @@ import imguin/cimgui
 import ../../core/[filejobs, filekinds, filesystem, jobs, sigtypes, state, sweepinfo, units,
   vibfolderjobs, vibfolderqc, vibprofile]
 import ../../view/vibfolderwords
-import focus, icons, marks, overflow
+import fittext, focus, icons, marks, overflow
 
 type
   VibTab = enum
@@ -45,6 +45,7 @@ type
     progressTotal: int64
     status: string
     filterBuf: array[128, char]
+    selected: string
     focus: FocusClicks
 
   VibFolderOutput* = object
@@ -189,6 +190,7 @@ proc clearRun(ui: var VibFolderUi) =
   ui.haveList = false
   ui.have = false
   ui.table = FolderTable()
+  ui.selected = ""
   ui.unticked = initTable[string, bool]()
   ui.selectResults = false
   ui.tab = vtFiles
@@ -379,9 +381,58 @@ const
     ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_SizingFixedFit.cint
   tabFlags = ImGui_TabBarFlags_DrawSelectedOverline.cint
 
-proc textCell(text: string) =
-  if igTableNextColumn():
-    igTextUnformatted(text.cstring, nil)
+proc textCell(text, markName: string; marks: var Marks) =
+  if not igTableNextColumn(): return
+  let room = igGetContentRegionAvail().x
+  igTextUnformatted(text.cstring, nil)
+  if markName.len > 0: marks.mark(markName)
+  if text.len == 0 or not igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint): return
+  if textWidth(text) > room: tip(text)
+
+proc columnWidths(rows: seq[FolderRow]; names: seq[string]): seq[float32] =
+  ## Fixed column widths for the rows in sight. File fits the longest name,
+  ## up to a cap; Sentence is filled in by the caller from the room left.
+  let font = igGetFontSize()
+  let extra = font * 1.5
+  let cap = font * 28
+  result = newSeq[float32](names.len)
+  for i, name in names:
+    result[i] = textWidth(name) + extra
+  var fileW = if names.len > 0: result[0] else: cap
+  let kindW = max(textWidth(DatKindLabel), textWidth(VibKindLabel)) + extra
+  for row in rows:
+    fileW = max(fileW, min(cap, textWidth(row.path.extractFilename) + extra))
+  for i, name in names:
+    if name == ColFile: result[i] = fileW
+    elif name == ColKind: result[i] = max(result[i], kindW)
+
+proc markColumn(name: string; width: float32; marks: var Marks) =
+  let p = igGetCursorScreenPos()
+  marks.markRect("vibfolder.col " & name, p, ImVec2_c(x: p.x + width, y: p.y + 1))
+
+proc drawDetail(ui: VibFolderUi; rows: seq[FolderRow]; marks: var Marks) =
+  var row = FolderRow()
+  var found = false
+  if ui.selected.len > 0:
+    for r in rows:
+      if r.path == ui.selected:
+        row = r
+        found = true
+        break
+  igPushTextWrapPos(0)
+  if not found:
+    igTextDisabled("Select a row to read its sentence.")
+    marks.mark("vibfolder.detail none")
+  else:
+    let sentence = sentenceOf(row)
+    let warnings = warningsCell(row)
+    igTextUnformatted(("Sentence: " & sentence).cstring, nil)
+    marks.mark("vibfolder.detail sentence " & sentence)
+    igTextUnformatted(("Warnings: " & warnings).cstring, nil)
+    marks.mark("vibfolder.detail warnings " & warnings)
+    igTextUnformatted(("Problem: " & row.problem).cstring, nil)
+    marks.mark("vibfolder.detail problem " & row.problem)
+  igPopTextWrapPos()
 
 proc drawProgress(ui: VibFolderUi; marks: var Marks) =
   let scale = int64(FolderScale)
@@ -423,17 +474,29 @@ proc drawResults(ui: var VibFolderUi; marks: var Marks; commands: var seq[Comman
     igTextDisabled(NoRows.cstring)
     return
   let names = headers()
-  if not igBeginTable("##rows", names.len.cint, tableFlags, ImVec2_c(x: 0, y: 0), 0):
-    return
-  let extra = igGetFontSize() * 1.5
+  let shown = ui.viewOf
+  let rows = shown.rows
+  let widths = columnWidths(rows, names)
+  var fixed = 0'f32
+  var sentenceAt = -1
   for i, name in names:
-    let w = igCalcTextSize(name.cstring, nil, false, -1).x + extra
+    if name == ColSentence: sentenceAt = i
+    else: fixed += widths[i]
+  let sentenceW = max(igGetFontSize() * 24, igGetContentRegionAvail().x - fixed)
+  let lineH = igGetTextLineHeightWithSpacing()
+  let tableH = max(lineH * 4, igGetContentRegionAvail().y - lineH * 4)
+  if not igBeginTable("##rows", names.len.cint, tableFlags, ImVec2_c(x: 0, y: tableH), 0):
+    return
+  for i, name in names:
+    let w = if i == sentenceAt: sentenceW else: widths[i]
     igTableSetupColumn(name.cstring, ImGui_TableColumnFlags_WidthFixed.cint, w,
       ImGuiID(i + 1))
   igTableSetupScrollFreeze(1, 1)
   igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
   for c, name in names:
     if igTableSetColumnIndex(cint(c)):
+      if name in [ColFile, ColKind, ColSentence]:
+        markColumn(name, igGetContentRegionAvail().x, marks)
       var col = fcPath
       let sorts = sortColumn(name, col)
       let mark = name & (if sorts and col == ui.sortCol:
@@ -447,8 +510,6 @@ proc drawResults(ui: var VibFolderUi; marks: var Marks; commands: var seq[Comman
       marks.mark("vibfolder.header " & name)
       if sorts and col == ui.sortCol:
         marks.mark("vibfolder.sort " & mark)
-  let shown = ui.viewOf
-  let rows = shown.rows
   let clipper = ImGuiListClipper_ImGuiListClipper()
   ImGuiListClipper_Begin(clipper, cint(rows.len), -1)
   while ImGuiListClipper_Step(clipper):
@@ -459,19 +520,31 @@ proc drawResults(ui: var VibFolderUi; marks: var Marks; commands: var seq[Comman
       igTableNextRow(0, 0)
       igPushID_Int(cint(i))
       discard igTableNextColumn()
+      let fileRoom = igGetContentRegionAvail().x
       let flags = ImGui_SelectableFlags_SpanAllColumns.cint or
         ImGui_SelectableFlags_AllowDoubleClick.cint
-      if igSelectable_Bool((name & "##row").cstring, false, flags,
-          ImVec2_c(x: 0, y: 0)) and ui.focus.acts and
-          igIsMouseDoubleClicked_Nil(ImGui_MouseButton_Left.cint):
-        commands.add Command(kind: ckShowFile, panel: MainPanel, path: row.path,
-          listFolder: false)
+      let on = row.path == ui.selected
+      if igSelectable_Bool((name & "##row").cstring, on, flags,
+          ImVec2_c(x: 0, y: 0)) and ui.focus.acts:
+        ui.selected = row.path
+        if igIsMouseDoubleClicked_Nil(ImGui_MouseButton_Left.cint):
+          commands.add Command(kind: ckShowFile, panel: MainPanel, path: row.path,
+            listFolder: false)
       marks.mark("vibfolder.row " & name & " " & verdictWord(row))
-      for c in 1 ..< cells.len: textCell(cells[c])
+      if name.len > 0 and igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
+        if textWidth(name) > fileRoom: tip(name)
+      for c in 1 ..< cells.len:
+        var cellMark = ""
+        if c < names.len and names[c] == ColSentence:
+          cellMark = "vibfolder.sentence " & name & " " & cells[c]
+        elif c < names.len and names[c] == ColKind:
+          cellMark = "vibfolder.kind " & name & " " & cells[c]
+        textCell(cells[c], cellMark, marks)
       igPopID()
   ImGuiListClipper_End(clipper)
   ImGuiListClipper_destroy(clipper)
   igEndTable()
+  ui.drawDetail(rows, marks)
 
 proc runWhy(ui: VibFolderUi; st: AppState; n: int): string =
   if not hasProfile(st): NoProfile

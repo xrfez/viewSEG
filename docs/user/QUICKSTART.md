@@ -337,10 +337,16 @@ never applied. With no project open the boxes are inactive.
 
 The **Files** tab lists the signature files found, each ticked. Untick a file to leave it
 out of the run. The **Results** tab is one row per file that was run: the verdict, the
-sentence, the measures, the polarity and any problem. A box above the table narrows the
-rows. Click a column header to sort by it (again for the other way). Warnings does not
-sort. The totals under the tabs count the whole run, not only the rows the filter leaves
-in sight.
+sentence, the measures, the polarity and any problem. The File column fits the names
+shown. The sentence column takes the width left in the window; a cell that is still cut
+off shows its full text when the pointer rests on it. Click a row to read its sentence,
+warnings and problem on the lines under the table. A file that could not be judged puts
+its reason in the sentence column. Kind names a `.dat` signature file and a `.vib` file
+apart. A box above the table narrows the rows. Click a column header to sort by it
+(again for the other way). Warnings does not sort. The totals under the tabs count the
+whole run, not only the rows the filter leaves in sight, and one of a kind is singular.
+When the profile uses each file's recorded reference, the window says so; it names a
+missing archive reference only when a project reference was chosen and is not there.
 
 **Run** judges the ticked files with the stored profile. While it runs, that button is
 **Cancel** and a progress bar shows how many files are done. When it finishes, the

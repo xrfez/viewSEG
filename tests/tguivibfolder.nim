@@ -10,7 +10,10 @@
 ## With the mass left as recorded, good.dat and reversed.dat do not split
 ## into one pass and one fail. With the button left out, "Use as profile
 ## stores the window did not happen". With the weight boxes left out,
-## "the job weights start unset did not happen".
+  ## "the job weights start unset did not happen". With the File column sized
+  ## to the header, `the rows match an independent run` does not find a File
+  ## column wide enough for `reversed.dat`, and the corrupt row's sentence
+  ## mark does not hold its reason.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24"`.
 
@@ -123,6 +126,7 @@ proc main*() =
     var expectedTotals = ""
     var corruptWord = ""
     var judged = false
+    var shownTable = FolderTable()
     let hook = proc (kind: DialogKind; location: string): seq[string] =
       asked.add kind
       answer
@@ -146,6 +150,7 @@ proc main*() =
       let info = jobs.info(id).get
       doAssert info.state == jsDone, info.error
       let table = sink.result
+      shownTable = table
       var passes, fails = 0
       for row in table.rows:
         if row.outcome == foJudged and row.verdict == qvPass: inc passes
@@ -261,6 +266,8 @@ proc main*() =
     step("Reports > Vibrator QC of a folder", openReport, reportReady)
 
     var clicked = false
+    var picked = false
+    var pickWait = 0
     proc runQc(f: FrameInfo) =
       f.click(f.markOf("vibfolder.run").centre)
       clicked = true
@@ -275,7 +282,36 @@ proc main*() =
         "corrupt row (" & corruptWord & "): " & $f.markNames("vibfolder.row ")
       doAssert f.markOf(expectedTotals).size.x > 0,
         "totals: " & $f.markNames("vibfolder.totals ")
+      doAssert "1 problem" in expectedTotals and "1 problems" notin expectedTotals,
+        expectedTotals
       doAssert f.markOf("vibfolder.tab Results").size.x > 0, "Results tab is missing"
+      let reason = rowOf(shownTable, "corrupt.dat").problem
+      doAssert reason.len > 0, "the corrupt row has no reason"
+      doAssert f.markOf("vibfolder.sentence corrupt.dat " & reason).size.x > 0,
+        "sentence: " & $f.markNames("vibfolder.sentence ")
+      doAssert f.markOf("vibfolder.kind good.dat " & DatKindLabel).size.x > 0,
+        "kind: " & $f.markNames("vibfolder.kind ")
+      let fileCol = f.markOf("vibfolder.col File").size.x
+      let sentenceCol = f.markOf("vibfolder.col Sentence").size.x
+      doAssert fileCol > 90, "File column is " & $fileCol
+      doAssert sentenceCol > 200, "Sentence column is " & $sentenceCol
+      doAssert f.markOf("vibfolder.problem " & RecordedReference).size.x > 0,
+        "reference: " & $f.markNames("vibfolder.problem ")
+      doAssert f.markNames("vibfolder.problem The reference is not in the archive.").len == 0
+      if not picked:
+        let row = f.markOf("vibfolder.row reversed.dat fail")
+        let col = f.markOf("vibfolder.col File")
+        let x = if col.size.x > 0: col.pos.x + min(24'f32, col.size.x / 2) else: row.pos.x + 24
+        f.click(vec2(round(x), round(row.pos.y + row.size.y / 2)))
+        picked = true
+        return false
+      inc pickWait
+      if pickWait < 4 and f.markNames("vibfolder.detail sentence ").len == 0: return false
+      let sentence = rowOf(shownTable, "reversed.dat").sentence
+      var shown = false
+      for name in f.markNames("vibfolder.detail sentence "):
+        if sentence in name: shown = true
+      doAssert shown, "detail: " & $f.markNames("vibfolder.detail ")
       doAssert f.savePng(resultsShot), "results shot was not written"
       true
     step("the rows match an independent run", runQc, ran)
