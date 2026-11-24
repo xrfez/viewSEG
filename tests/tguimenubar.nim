@@ -11,7 +11,7 @@
 ## @[..., "Prepare the next file", "Reload vendor maps", "Quit"]"; with Reports
 ## left out of the bar's names, "File shows @[..., "Quit", "Reports"]"; with the
 ## Missing traces window left out of View, "View shows @[..., "window.aux",
-## "window.missing", "window.quality", "window.join", ...]".
+## "window.missing", "window.quality", "window.vibfolder", "window.join", ...]".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -46,13 +46,14 @@ const
       "Export trace edits...", "Clear all edits for this file", "File memory..."]),
     ("View", @["window.plot", "window.files", "window.records", "window.map", "window.headers",
       "window.jobs", "window.Messages", "window.spectrum", "window.aux", "window.missing",
-      "window.quality", "window.output", "window.join",
+      "window.quality", "window.vibfolder", "window.output", "window.join",
       "Only traces in the template", "Theme",
       "Light / dark"]),
     ("Analysis", @["window.newplot", "Compare two traces", "First-break overlay",
       "Generate a reference...",
       "Reference archive..."]),
-    ("Reports", @["Missing traces...", "Missing traces.disabled", "Trace quality"]),
+    ("Reports", @["Missing traces...", "Missing traces.disabled", "Trace quality",
+      "Vibrator QC of a folder"]),
     ("Tools", @["Settings...", "Import settings...", "Export settings...",
       "Reset the settings", "Reload vendor maps", "Export messages...", "Agent control"]),
     ("Window", @["Reset the windows", "Bring all windows onto this screen", "Load",

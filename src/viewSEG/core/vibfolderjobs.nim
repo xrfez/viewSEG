@@ -17,7 +17,8 @@ import analysis, filesystem, jobs, project, references, session, settings, signa
   vibfolderqc, vibjudge, vibprofile
 import sigtypes except QcLimit
 
-const FolderScale = 1000
+const FolderScale* = 1000
+  ## Files of progress in one file. A job's `done div FolderScale` is files finished.
 
 type
   FolderQcSink* = ref object

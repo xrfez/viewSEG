@@ -25,10 +25,10 @@
 ## build added): a window is hidden only when a layout says so. The live
 ## spectrum panel (`OffUnlessNamed`) works while it is on screen, so a layout
 ## from before it came keeps it hidden until the Window menu shows it. The Aux
-## window, Missing traces and Trace quality (`ClosedAtStart`) are closed unless a
-## layout shows them, also at a first start and after Reset the windows. Missing
-## traces, Trace quality and Output, the first time each is opened, dock as a tab
-## beside the Seismic window.
+## window, Missing traces, Trace quality and Vibrator QC (`ClosedAtStart`) are
+## closed unless a layout shows them, also at a first start and after Reset the
+## windows. Missing traces, Trace quality, Vibrator QC and Output, the first time
+## each is opened, dock as a tab beside the Seismic window.
 
 import std/strutils
 import sdl3_nim
@@ -41,11 +41,12 @@ type
     ## the IDs their titles end with (`"###plot"`): what layouts store.
     awSeismic = "plot", awFiles = "files", awRecords = "records", awMap = "map",
     awHeaders = "headers", awJobs = "jobs", awMessages = "Messages", awSpectrum = "spectrum",
-    awAux = "aux", awMissing = "missing", awQuality = "quality", awOutput = "output"
+    awAux = "aux", awMissing = "missing", awQuality = "quality",
+    awVibFolder = "vibfolder", awOutput = "output"
 
   WindowsUi* = object
     ## The windows' state between frames.
-    hidden*: set[AppWindow] = {awAux, awMissing, awQuality, awOutput}
+    hidden*: set[AppWindow] = {awAux, awMissing, awQuality, awVibFolder, awOutput}
       ## not drawn: unticked in the Window menu (the same set as `ClosedAtStart`)
     front: set[AppWindow]   ## brought forward when next drawn
     unknown: set[AppWindow] ## the layout arranged last does not name them
@@ -58,6 +59,9 @@ type
     placeQuality: bool = true
       # dock Trace quality beside the Seismic window the next time it is shown
       # with no dock node (a first open, and after Reset the windows)
+    placeVibFolder: bool = true
+      # dock Vibrator QC beside the Seismic window the next time it is shown
+      # with no dock node (a first open, and after Reset the windows)
     placeOutput: bool = true
       # dock Output beside the Seismic window the next time it is shown with no
       # dock node (a first open, and after Reset the windows)
@@ -66,23 +70,25 @@ type
 
 const
   WindowNames*: array[AppWindow, string] = ["Seismic", "Files", "Records", "Map", "Headers",
-    "Jobs", "Messages", "Spectrum", "Aux", "Missing traces", "Trace quality", "Output"]
+    "Jobs", "Messages", "Spectrum", "Aux", "Missing traces", "Trace quality",
+    "Vibrator QC", "Output"]
     ## what the Window menu calls them (the Seismic window's title follows
     ## what it shows: `windowTitle`)
   AlwaysShown* = {awSeismic} ## the plot: brought forward, never hidden
-  OffUnlessNamed* = {awSpectrum, awAux, awMissing, awQuality, awOutput}
+  OffUnlessNamed* = {awSpectrum, awAux, awMissing, awQuality, awVibFolder, awOutput}
     ## hidden when a layout does not name them (it was written before they came,
     ## or it never opened a window that stays closed until asked)
-  ClosedAtStart* = {awAux, awMissing, awQuality, awOutput}
+  ClosedAtStart* = {awAux, awMissing, awQuality, awVibFolder, awOutput}
     ## hidden until opened: a first start, a layout that does not say, and Reset the
     ## windows. The Aux window shows a second plot, which most work does not want;
-    ## Missing traces and Trace quality are reports, opened from the Reports menu;
-    ## Output is opened from the File menu.
+    ## Missing traces, Trace quality and Vibrator QC are reports, opened from the
+    ## Reports menu; Output is opened from the File menu.
   SectionHeader = "[viewSEG][Windows]"
   neighbours: array[AppWindow, seq[AppWindow]] = [awSeismic: @[], awFiles: @[awRecords],
     awRecords: @[awFiles], awMap: @[awHeaders], awHeaders: @[awMap], awJobs: @[awMessages],
     awMessages: @[awJobs], awSpectrum: @[awMap, awHeaders], awAux: @[awSeismic],
-    awMissing: @[awSeismic], awQuality: @[awSeismic], awOutput: @[awSeismic]]
+    awMissing: @[awSeismic], awQuality: @[awSeismic], awVibFolder: @[awSeismic],
+    awOutput: @[awSeismic]]
     ## where a window a layout does not know is docked (as a tab): beside
     ## the first of these that is docked, as in the default layout; else
     ## beside the plot
@@ -199,6 +205,7 @@ proc showAll*(ws: var WindowsUi) =
   ws.placeAux = true
   ws.placeMissing = true
   ws.placeQuality = true
+  ws.placeVibFolder = true
   ws.placeOutput = true
 
 proc arranged*(ws: var WindowsUi; text: string; docked: bool) =
@@ -211,10 +218,12 @@ proc arranged*(ws: var WindowsUi; text: string; docked: bool) =
       if not text.named(w):
         if w in OffUnlessNamed: ws.hidden.incl w
         ws.unknown.incl w
-    # a layout that names the Aux window, Missing traces or Trace quality keeps its place
+    # a layout that names the Aux window, Missing traces, Trace quality or
+    # Vibrator QC keeps its place
     ws.placeAux = not text.named(awAux)
     ws.placeMissing = not text.named(awMissing)
     ws.placeQuality = not text.named(awQuality)
+    ws.placeVibFolder = not text.named(awVibFolder)
     ws.placeOutput = not text.named(awOutput)
 
 proc dockIdOf(w: AppWindow): ImGuiID =
@@ -231,8 +240,8 @@ proc dockIdOf(w: AppWindow): ImGuiID =
 proc beforeDrawing*(ws: var WindowsUi; w: AppWindow) =
   ## Just before `w` is drawn (its `igBegin`): brings it forward when asked;
   ## a window the layout did not know is docked beside its neighbours (or
-  ## the plot), as a tab. Missing traces, Trace quality and Output, the first
-  ## time, are a tab of the Seismic window and are selected.
+  ## the plot), as a tab. Missing traces, Trace quality, Vibrator QC and Output,
+  ## the first time, are a tab of the Seismic window and are selected.
   if w == awMissing and ws.placeMissing and dockIdOf(w) == 0:
     # first opened, and after Reset the windows: a tab beside the Seismic
     # window. A window that already has a dock node, or that the user undocked,
@@ -260,6 +269,18 @@ proc beforeDrawing*(ws: var WindowsUi; w: AppWindow) =
       changed()
   elif w == awQuality and dockIdOf(w) != 0:
     ws.placeQuality = false
+  if w == awVibFolder and ws.placeVibFolder and dockIdOf(w) == 0:
+    ws.unknown.excl w
+    var id = dockIdOf(awSeismic)
+    if id == 0:
+      let centre = igDockBuilderGetCentralNode(ws.dockspace)
+      if centre != nil: id = centre.ID
+    if id != 0:
+      igSetNextWindowDockID(id, ImGui_Cond_Always.cint)
+      igSetNextWindowFocus()
+      changed()
+  elif w == awVibFolder and dockIdOf(w) != 0:
+    ws.placeVibFolder = false
   if w == awOutput and ws.placeOutput and dockIdOf(w) == 0:
     ws.unknown.excl w
     var id = dockIdOf(awSeismic)

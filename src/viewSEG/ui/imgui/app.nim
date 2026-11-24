@@ -6,7 +6,8 @@
 ## list (`filelist`), the record list (`recordlist`), the trace panel
 ## (`tracepanel`), the map (`mapwindow`), the Headers window (`headerswindow`), the Jobs
 ## window (`jobswindow`), the Messages window, the Missing traces window
-## (`missingwindow`) and the Trace quality window (`qualitywindow`), and a status bar with the
+## (`missingwindow`), the Trace quality window (`qualitywindow`) and the Vibrator
+## QC window (`vibfolderwindow`), and a status bar with the
 ## running job's progress and its Cancel button, and the readout of what
 ## lies under the mouse in the plot (or its coordinates on the map); files
 ## and folders dropped on the window are opened;
@@ -46,11 +47,11 @@ from ../../core/editmarks import shiftWords
 import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
 import curveplot as curveplotui
-import ../../view/[jobstatus, missingwords, outputwords, qualitywords]
+import ../../view/[jobstatus, missingwords, outputwords, qualitywords, vibfolderwords]
 import aboutbox, agentshot, chrome, clearsurvey, dpi, filelist, fonts, frames, genpreview,
   headerswindow, icons, settingswindow, shortcutswindow,
   jobswindow, joindialog, mapwindow, memorywindow, menus, messages, missingwindow, outputwindow,
-  qualitywindow,
+  qualitywindow, vibfolderwindow,
   plotwindows,
   projectwindow,
   placement, references,
@@ -71,6 +72,7 @@ const
   recordsTitle = IconRecords & "  Records###records"
   missingTitle = IconTable & "  Missing traces###missing"
   qualityTitle = IconTable & "  Trace quality###quality"
+  vibfolderTitle = IconTable & "  Vibrator QC###vibfolder"
   outputTitle = IconLog & "  Output###output"
   joinTitle = IconSurvey & "  Import survey###join"
   memoryTitle = IconMemory & "  File memory###memory"
@@ -112,6 +114,7 @@ type
     records: RecordListUi                      ## the record list's window
     missing: MissingUi                         ## the Missing traces window
     quality: QualityUi                         ## the Trace quality window
+    vibfolder: VibFolderUi                     ## the Vibrator QC window
     output: OutputUi                           ## the Output window
     join: JoinUi                               ## the "Import survey" window
     clearSurvey: ClearSurveyUi                 ## Clear survey's confirmation
@@ -939,6 +942,8 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
       ui.missing.startExport(ui.core, ev.paths[0])
     of dkExportQuality:
       ui.quality.startExport(ui.core, ev.paths[0])
+    of dkExportVibFolder:
+      ui.vibfolder.startExport(ui.core, ev.paths[0])
     of dkOutputSource: ui.output.setSource(ev.paths[0])
     of dkOutputDest: ui.output.setDest(ev.paths[0])
   of seCancelled:
@@ -1140,6 +1145,9 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maTraceQuality:
       ui.windows.bringForward(awQuality)
       ui.quality.requestScan()
+    of maVibFolder:
+      ui.windows.bringForward(awVibFolder)
+      ui.vibfolder.requestList()
     of maOutput:
       ui.output.open($(ui.core.fileList.folder))
       ui.windows.bringForward(awOutput)
@@ -1451,6 +1459,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     missingWhy: missingWhy(ui.core.fileList.folder.len > 0, ui.core.relationLayer >= 0),
     qualityReady: qualityReady(ui.core.fileList.folder.len > 0),
     qualityWhy: qualityWhy(ui.core.fileList.folder.len > 0),
+    folderReady: folderReady(ui.core.fileList.folder.len > 0),
+    folderWhy: folderWhy(ui.core.fileList.folder.len > 0),
     outputReady: ui.core.fileList.folder.len > 0,
     outputWhy: if ui.core.fileList.folder.len > 0: "" else: OutputNeedFolder)
   let menu = drawMainMenu(menuInput, ui.marks)
@@ -1469,6 +1479,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   for w in menu.pickedWindows:
     if w == awMissing and ui.windows.willShow(w): ui.missing.requestScan()
     if w == awQuality and ui.windows.willShow(w): ui.quality.requestScan()
+    if w == awVibFolder and ui.windows.willShow(w): ui.vibfolder.requestList()
     ui.windows.picked(w)
   if menu.toggleJoin:
     if ui.join.shown: ui.join.shown = false else: ui.join.open()
@@ -1521,7 +1532,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
       socket: ui.agent.path, lastCall: ui.agent.lastCall,
       lingering: ui.agent.clients == 0 and ui.agent.lingers(getMonoTime()))), job,
     ui.core.settings.readout, ui.pick, ui.marks, ui.mapCursor,
-    if ui.core.hoverNote.len > 0: ui.core.hoverNote else: ui.core.correlateNote)
+    if ui.core.hoverNote.len > 0: ui.core.hoverNote else: ui.core.correlateNote,
+    if ui.core.profileNoted: ProfileStored else: "")
   if status.cancel != NoJob:
     ui.core.apply Command(kind: ckCancelJob, job: status.cancel)
   if status.showJobs: ui.windows.bringForward(awJobs)
@@ -1592,6 +1604,12 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     for c in quality.commands.mitems:
       ui.core.apply move c
     if quality.exportAsked: ui.ask(dkExportQuality, quality.exportPath)
+  if ui.windows.shows(awVibFolder):
+    ui.windows.beforeDrawing(awVibFolder)
+    var folderQc = ui.vibfolder.drawVibFolder(vibfolderTitle, ui.core, ui.marks)
+    for c in folderQc.commands.mitems:
+      ui.core.apply move c
+    if folderQc.exportAsked: ui.ask(dkExportVibFolder, folderQc.exportPath)
   if ui.windows.shows(awOutput):
     ui.windows.beforeDrawing(awOutput)
     var written = ui.output.drawOutput(outputTitle, ui.core, ui.marks)

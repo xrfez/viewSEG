@@ -315,6 +315,35 @@ a column). The sort's place is a small number after the header name.
 **totals in a second file** also writes a file beside the one you save, with `-totals`
 before the extension. Double-click a record to open that file at that record.
 
+## Vibrator QC of a folder
+
+**Reports > Vibrator QC of a folder** lists the vibrator signature files in the folder
+open in the file list, including the folders under it. The item stays in the menu. It is
+inactive until a folder is open, and it says so. A relation file is not needed.
+
+The **Vibrator QC** window stays closed until you ask for it. It opens as a tab beside
+the **Seismic** window, and that tab is the one in front. Closing it and opening it again
+keeps the place you last gave it.
+
+A line at the top names the project's vibrator QC profile: the window, the harmonics, the
+accelerometer set, and the limits. When the project has no profile yet, it says to open a
+signature file, set the Vibrator window, and choose **Use as profile**. **Run** stays
+inactive until a profile is stored and at least one file is ticked, and the tooltip says
+why.
+
+The **Files** tab lists the signature files found, each ticked. Untick a file to leave it
+out of the run. The **Results** tab is one row per file that was run: the verdict, the
+sentence, the measures, the polarity and any problem. A box above the table narrows the
+rows. Click a column header to sort by it (again for the other way). Warnings does not
+sort. The totals under the tabs count the whole run, not only the rows the filter leaves
+in sight.
+
+**Run** judges the ticked files with the stored profile. While it runs, that button is
+**Cancel** and a progress bar shows how many files are done. When it finishes, the
+**Results** tab is the one in front. **Copy** puts the whole table on the clipboard.
+**Export CSV...** writes the whole table, not only the rows the filter leaves in sight.
+Double-click a row to open that file.
+
 ## Output
 
 **File > Output...** writes the seismic files of the folder open in the file list, including
@@ -1484,13 +1513,13 @@ that does not name Units loads as Metric.
 
 | Window menu | What it does |
 |---|---|
-| **Reset the windows** (Ctrl+Shift+R) | every window shown and docked in the main window, as at a first start; Aux, Missing traces, Trace quality and Output stay closed until asked; the main window is brought onto a screen if it is off every one |
+| **Reset the windows** (Ctrl+Shift+R) | every window shown and docked in the main window, as at a first start; Aux, Missing traces, Trace quality, Vibrator QC and Output stay closed until asked; the main window is brought onto a screen if it is off every one |
 | **Bring all windows onto this screen** | every floating window (plots, FFT, the reference archive, About, the dialogs), also those you dragged out of the main window, wherever they are (another screen, a screen that is gone, past a screen's edge): wholly into the main window, made smaller when larger; and the main window itself, wholly onto its screen |
 | **Icon in the tray**, **Minimize to the tray** | whether viewSEG's icon is in the system tray, and whether minimizing hides the main window there |
 | Wide plot, Side by side, Plot and map | the presets that ship with viewSEG |
 | Load, Save layout as..., Import layout..., Export layout... | your own layouts: saved under a name, loaded again, written to a file and read from one |
 
-The **View** menu ticks each window (Seismic, Files, Records, Map, Headers, Jobs, Messages, Spectrum, Aux, Missing traces, Trace quality, Output, Import survey): a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown. It also holds the theme.
+The **View** menu ticks each window (Seismic, Files, Records, Map, Headers, Jobs, Messages, Spectrum, Aux, Missing traces, Trace quality, Vibrator QC, Output, Import survey): a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown. It also holds the theme.
 
 A layout saved before a window existed (before the map came, say) docks that window beside
 its neighbours, and shows it. A window a layout puts off every screen (left on a monitor

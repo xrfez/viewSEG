@@ -25,7 +25,7 @@ import std/os
 import imguin/cimgui
 import ../../core/[analysis, layouts]
 import ../../core/shortcuts as shortcutTable
-import ../../view/[missingwords, outputwords, qualitywords, theme]
+import ../../view/[missingwords, outputwords, qualitywords, vibfolderwords, theme]
 import clearsurvey, icons, marks, plotviews, thememenu, windows
 
 type
@@ -65,6 +65,7 @@ type
     maTemplateOnly = "Only traces in the template",
     maMissingTraces = "Missing traces...",
     maTraceQuality = "Trace quality",
+    maVibFolder = "Vibrator QC of a folder",
     maOutput = "Output..."
 
   MenuInput* = object
@@ -118,6 +119,8 @@ type
     missingWhy*: string ## why it cannot; "" when it can
     qualityReady*: bool ## Reports > Trace quality can run
     qualityWhy*: string ## why it cannot; "" when it can
+    folderReady*: bool ## Reports > Vibrator QC of a folder can open
+    folderWhy*: string ## why it cannot; "" when it can
     outputReady*: bool ## File > Output... can run
     outputWhy*: string ## why it cannot; "" when it can
 
@@ -167,7 +170,7 @@ const
     maShowMessages: 0,
     maShortcuts: ImGui_Key_F1.cint, maAbout: 0, maGenerateReference: 0,
     maReferenceArchive: 0, maCompare: 0, maFirstBreaks: 0, maTemplateOnly: 0,
-    maMissingTraces: 0, maTraceQuality: 0, maOutput: 0]
+    maMissingTraces: 0, maTraceQuality: 0, maVibFolder: 0, maOutput: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
@@ -188,11 +191,11 @@ const
     maShortcuts: IconList, maAbout: IconInfo, maGenerateReference: IconVibrator,
     maReferenceArchive: IconReference, maCompare: IconPulse, maFirstBreaks: IconTarget,
     maTemplateOnly: IconTable, maMissingTraces: IconTable, maTraceQuality: IconTable,
-    maOutput: IconExport]
+    maVibFolder: IconTable, maOutput: IconExport]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
     awMessages: IconLog, awSpectrum: IconPulse, awAux: IconPlot, awMissing: IconTable,
-    awQuality: IconTable, awOutput: IconLog]
+    awQuality: IconTable, awVibFolder: IconTable, awOutput: IconLog]
 
 const
   FollowWords* = "Follow the latest file"
@@ -540,9 +543,10 @@ proc drawToolsMenu(input: MenuInput; res: var MenuResult) =
     "Messages; it cannot write files. For this run only.")
 
 proc drawReportsMenu(input: MenuInput; res: var MenuResult) =
-  ## Reports: the missing-trace scan, then the trace-quality scan. Missing
-  ## traces stays inactive until a folder is open and a relation file is
-  ## loaded. Trace quality needs only the folder.
+  ## Reports: the missing-trace scan, the trace-quality scan, then vibrator
+  ## QC of the open folder. Missing traces stays inactive until a folder is
+  ## open and a relation file is loaded. Trace quality and Vibrator QC need
+  ## only the folder.
   igBeginDisabled(not input.missingReady)
   item(maMissingTraces, res)
   igEndDisabled()
@@ -555,6 +559,12 @@ proc drawReportsMenu(input: MenuInput; res: var MenuResult) =
   tip(if input.qualityReady: QualityTip else: input.qualityWhy)
   if not input.qualityReady and marked != nil:
     marked[].mark("menu.Trace quality.disabled")
+  igBeginDisabled(not input.folderReady)
+  item(maVibFolder, res)
+  igEndDisabled()
+  tip(if input.folderReady: FolderTip else: input.folderWhy)
+  if not input.folderReady and marked != nil:
+    marked[].mark("menu.Vibrator QC of a folder.disabled")
 
 proc drawAnalysisMenu(input: MenuInput; res: var MenuResult) =
   ## Analysis: new plots, the comparison, the references.

@@ -58,6 +58,7 @@ type
     dkLocateFolder = "Locate a data folder",   ## where a project's missing data folder is now
     dkExportMissing = "Export missing traces", ## a CSV file to write (a save dialog)
     dkExportQuality = "Export trace quality",  ## a CSV file to write (a save dialog)
+    dkExportVibFolder = "Export vibrator QC",  ## a CSV file to write (a save dialog)
     dkOutputSource = "Output source",          ## the folder whose seismic files are written
     dkOutputDest = "Output destination"        ## the folder those files are written into
 
@@ -313,7 +314,7 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
   of dkImportEdits:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr editsFilters[0],
       editsFilters.len.cint, at, false)
-  of dkExportMissing, dkExportQuality:
+  of dkExportMissing, dkExportQuality, dkExportVibFolder:
     SDL_ShowSaveFileDialog(onDialogResult, userdata, parent, addr csvFilters[0],
       csvFilters.len.cint, at)
 

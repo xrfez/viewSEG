@@ -115,8 +115,7 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, reader,
   recordqc, referencejobs, references, selection, session, settings, shots, spectra,
   spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids, vendorjobs,
-  vendormaps,
-  watch, zoom
+  vendormaps, vibprofile, watch, zoom
 
 export analysis, compare, edits, filelist, filememory, firstbreaks, identity, inbox, jobs, join,
     layouts, log,
@@ -295,6 +294,8 @@ type
       ## show the correlated record of the file the Seismic window shows, or the raw one
     ckSubfolders = "subfolders"
       ## the file list includes the subfolders' files, or not; the folder is listed again
+    ckVibProfile = "vibrator profile"
+      ## keep these settings as the project's vibrator QC profile
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -584,6 +585,9 @@ type
         ## ckCompareWindow: true opens the window, false closes it
     of ckSubfolders:
       subfolders*: bool ## true: the subfolders' files are listed too
+    of ckVibProfile:
+      vibProfile*: VibQcProfile
+        ## the settings to keep as the project's vibrator QC profile
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -1118,6 +1122,7 @@ type
     refsRev: int ## bumps when the archive or the choice changes, so a plot asks again
     correlateOn: bool ## the Seismic window shows the correlated record
     correlateNote: string ## a status sentence (no reference, a failure); not the hover
+    profileNoted: bool ## the status line says the vibrator QC profile was stored
     correlateSaid: string ## the sentence logged last, so the same one is not said again
     picksSaid: bool ## the picks sentence was said this run
     correlateRef: string ## the reference the derived view was made from
@@ -1458,6 +1463,10 @@ func correlateOn*(state: AppState): bool {.inline.} =
 func correlateNote*(state: AppState): string {.inline.} =
   ## A sentence for the status line while correlating; "" for none. Not the hover.
   state.correlateNote
+
+func profileNoted*(state: AppState): bool {.inline.} =
+  ## Whether the status line should say the vibrator QC profile was stored.
+  state.profileNoted
 
 func correlating*(state: AppState): bool {.inline.} =
   ## Whether a correlation is running.
@@ -6551,6 +6560,28 @@ proc takeVendor(state: var AppState; m: sink Msg) =
   state.vendor.saidNone = load.maps.len == 0
   state.vendor.lastSaid = signature
 
+proc storeVibProfile(state: var AppState; origin: CommandOrigin; p: VibQcProfile) =
+  ## Keeps `p` in the project's document when the user asked and the project
+  ## can be written. `profileNoted` is set when the document accepts it,
+  ## including when the stored profile is already `p`.
+  if not state.inProject:
+    state.log.add(sevWarning, "vibrator QC",
+      "No project is open: the vibrator QC profile was not stored.")
+    return
+  if not keeps(origin):
+    state.log.add(sevWarning, "vibrator QC",
+      "This change is for this run only: the vibrator QC profile was not stored.")
+    return
+  if state.project.readOnly:
+    state.log.add(sevWarning, "vibrator QC",
+      "The project is read-only: the vibrator QC profile was not stored.")
+    return
+  if not state.project.doc.hasVibProfile or state.project.doc.vibProfile != p:
+    state.project.doc.vibProfile = p
+    state.project.doc.hasVibProfile = true
+    state.projectChanged()
+  state.profileNoted = true
+
 proc setVendorChoice(state: var AppState; origin: CommandOrigin; c: VendorChoice) =
   ## The project's rule for the vendor maps: kept in its document when the user
   ## chose it (an agent's is for the session), used from now on by every file.
@@ -10340,6 +10371,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckCompareWindow: state.setCompareWindow(cmd)
   of ckCorrelate: state.setCorrelate(cmd)
   of ckSubfolders: state.setSubfolders(cmd)
+  of ckVibProfile: state.storeVibProfile(cmd.origin, cmd.vibProfile)
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept

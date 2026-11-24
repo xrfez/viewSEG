@@ -606,14 +606,15 @@ proc agentField(a: AgentSign; t: Theme; marks: var Marks) =
 
 proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
     fields: openArray[ReadoutField]; at: Pick; marks: var Marks;
-    mapCursor = ""; linkNote = ""): StatusOutput =
+    mapCursor = ""; linkNote = ""; profileNote = ""): StatusOutput =
   ## The status strip along the bottom of the main window: the sign that
   ## agent control is on (`info.agent`), the running job, then the readout
   ## of `fields` at `at` (blank where a value is not known),
   ## or, with the pointer over the map, its coordinates (`mapCursor`); why
-  ## the hover lights nothing up in the other view (`linkNote`); the theme
-  ## and the scale on the right. A right click on it opens the menu that
-  ## chooses the fields.
+    ## the hover lights nothing up in the other view (`linkNote`); a sentence
+    ## when the vibrator QC profile was stored (`profileNote`); the theme
+    ## and the scale on the right. A right click on it opens the menu that
+    ## chooses the fields.
   result = StatusOutput(cancel: NoJob)
   let style = igGetStyle()
   let height = round(igGetFontSize() + 2 * style.FramePadding.y + 2)
@@ -651,6 +652,12 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
       igTextUnformatted(linkNote.cstring, nil)
       igPopStyleColor(1)
       marks.mark("status.link")
+      igSameLine(0, 16)
+    if profileNote.len > 0:
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+      igTextUnformatted(profileNote.cstring, nil)
+      igPopStyleColor(1)
+      marks.mark("status.profile")
       igSameLine(0, 16)
     let right = info.themeName & "   " & $int(round(info.scale * 100)) & " %"
     let w = igCalcTextSize(right.cstring, nil, false, -1).x

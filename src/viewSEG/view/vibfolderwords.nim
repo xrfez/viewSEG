@@ -1,8 +1,8 @@
 ## Words for a folder vibrator QC table: column labels, one text line per
 ## file, and the same columns as CSV. Drawing lives in the frontend.
 
-import std/[os, strutils]
-import ../core/[vibfolderqc, vibjudge]
+import std/[math, os, strutils]
+import ../core/[settings, units, vibfolderqc, vibjudge, vibprofile]
 
 const
   ColFile* = "File"
@@ -138,3 +138,121 @@ func resultsCsv*(table: FolderTable): string =
   for w in table.weightWords:
     result.add csvField(w)
     result.add '\n'
+
+const
+  NoProfile* = "No profile yet: open a signature file, set the Vibrator " &
+    "window as you want it, and choose Use as profile"
+  ProfileStored* = "Stored as the project's vibrator QC profile."
+  FolderTip* = "Judge each vibrator signature file in the open folder, " &
+    "including the folders under it, with the project's profile."
+  NeedFolder = "Open a folder first."
+  Ready* = "Ready."
+  Listing* = "Listing the folder."
+  Judging* = "Judging the signature files."
+  Stopped* = "The run was stopped."
+  RunFailed* = "The run failed."
+  CannotList* = "The folder could not be listed."
+  NoFiles* = "No signature files in this folder."
+  NoTicked* = "Tick at least one file."
+  NoRows* = "No results yet. Tick the files and choose Run."
+  RunButton* = "Run"
+  CancelButton* = "Cancel"
+  CopyButton* = "Copy"
+  ExportButton* = "Export CSV..."
+  Written* = "The CSV was written."
+  ExportFailed* = "The CSV was not written."
+  FilesTab* = "Files"
+  ResultsTab* = "Results"
+  FilterHint* = "Filter the rows"
+  CappedNote* = "The list stopped at the file limit; later files were not listed."
+  SuggestedName* = "vibrator-qc.csv"
+
+func rowCells*(row: FolderRow): seq[string] =
+  ## The cells of one row, in `headers` order.
+  cells(row)
+
+func folderReady*(hasFolder: bool): bool =
+  ## Whether Reports > Vibrator QC of a folder can open. A profile is not
+  ## needed to open the window.
+  hasFolder
+
+func folderWhy*(hasFolder: bool): string =
+  ## One sentence naming what is missing, or "" when the item can open.
+  if not hasFolder: NeedFolder else: ""
+
+func offOr(x: float64; suffix: string): string =
+  if x.isNaN: "off" else: sensible(x) & suffix
+
+func scaleBit(s: ForceScale): string =
+  if not s.datCountsPerLbf.isNaN:
+    result = ".dat " & sensible(s.datCountsPerLbf) & " counts/lbf"
+  if not s.vibAccMvPerCount.isNaN:
+    if result.len > 0: result.add ", "
+    result.add ".vib " & sensible(s.vibAccMvPerCount) & " mV/count"
+
+func profileLines*(p: VibQcProfile): seq[string] =
+  ## One or two plain lines naming the settings a folder QC run will use.
+  var line = "Window " & sensible(p.qcWindowMs) & " ms, " & $p.harmonics &
+    " harmonics, set " & $p.accelSet & "."
+  let scale = scaleBit(p.forceScale)
+  if scale.len > 0:
+    line.add " Force scale "
+    line.add scale
+    line.add "."
+  if not p.forceHundredPct.isNaN:
+    line.add " 100% force " & sensible(p.forceHundredPct)
+    if p.forceHundredUnit.len > 0:
+      line.add " "
+      line.add p.forceHundredUnit
+    line.add "."
+  if not p.targetPct.isNaN:
+    line.add " Drive " & sensible(p.targetPct) & "%."
+  if not p.topHz.isNaN:
+    line.add " Top " & sensible(p.topHz) & " Hz."
+  if p.referenceId.len > 0:
+    line.add " Reference " & p.referenceId & "."
+  result = @[line]
+  let lim = p.limits
+  result.add "Average phase " & offOr(lim.avgPhaseDeg, "°") &
+    ", peak phase " & offOr(lim.peakPhaseDeg, "°") &
+    ", average distortion " & offOr(lim.avgDistortionPct, "%") &
+    ", peak distortion " & offOr(lim.peakDistortionPct, "%") &
+    ", average force " & offOr(lim.avgForcePct, "%") &
+    ", peak force " & offOr(lim.peakForcePct, "%") & "."
+
+proc sortColumn*(name: string; col: var FolderColumn): bool =
+  ## The sort key `name` is, when that header sorts. False for Warnings.
+  if name == ColFile: col = fcPath
+  elif name == ColKind: col = fcKind
+  elif name == ColPair: col = fcPair
+  elif name == ColVerdict: col = fcVerdict
+  elif name == ColSentence: col = fcSentence
+  elif name == measureHead(qlAvgPhase): col = fcAvgPhase
+  elif name == measureHead(qlPeakPhase): col = fcPeakPhase
+  elif name == measureHead(qlAvgDistortion): col = fcAvgDistortion
+  elif name == measureHead(qlPeakDistortion): col = fcPeakDistortion
+  elif name == measureHead(qlAvgForce): col = fcAvgForce
+  elif name == measureHead(qlPeakForce): col = fcPeakForce
+  elif name == ColPolarity: col = fcPolarity
+  elif name == ColProblem: col = fcProblem
+  else: return false
+  true
+
+func columnLabel*(col: FolderColumn): string =
+  ## The header `col` sorts, in `headers` order. `fcOutcome` is not a column
+  ## the table draws.
+  case col
+  of fcPath: ColFile
+  of fcKind: ColKind
+  of fcPair: ColPair
+  of fcOutcome: "Outcome"
+  of fcVerdict: ColVerdict
+  of fcSentence: ColSentence
+  of fcAvgPhase: measureHead(qlAvgPhase)
+  of fcPeakPhase: measureHead(qlPeakPhase)
+  of fcAvgDistortion: measureHead(qlAvgDistortion)
+  of fcPeakDistortion: measureHead(qlPeakDistortion)
+  of fcAvgForce: measureHead(qlAvgForce)
+  of fcPeakForce: measureHead(qlPeakForce)
+  of fcPolarity: ColPolarity
+  of fcProblem: ColProblem
