@@ -13,7 +13,7 @@
 import std/[algorithm, math, options, sets, tables]
 import processSEG/continuous/slice
 import processSEG/core/workspace
-import ./shotlog
+import ./[recordingkind, shotlog]
 
 type
   CutStandard* = enum
@@ -424,3 +424,24 @@ proc settleShot*(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
       for row in [o.earlier, o.later]:
         let next = if shot + 1 < total: firstUse(plan, shot + 1, row) else: high(int)
         buf.evictBefore(row, evictable(plan, buf, report, row, next))
+
+func cutRefusal*(f: RecordingFacts): string =
+  ## Why the cut refuses a file that is not a continuous recording, in a
+  ## sentence; "" for a continuous one.
+  case f.kind
+  of rkContinuous: ""
+  of rkShotRecord:
+    "This file is a shot record (every receiver has one trace), not a continuous recording."
+  of rkSlicedGather:
+    case f.slicedBy
+    of sbSources:
+      "This file already holds one trace per shot (the traces carry " & $f.sourcePoints &
+        " different source points), so it is not a continuous recording."
+    of sbOverlap:
+      "This file's traces mostly cover the same time as their neighbours (" & $f.heavy &
+        " of " & $f.boundaries & " overlap by more than half), as records cut by shot do, " &
+        "so it is not a continuous recording."
+    else:
+      "This recording is already cut into separate records (gaps at " & $f.gapped & " of " &
+        $f.boundaries & " segment " & (if f.boundaries == 1: "boundary" else: "boundaries") &
+        "), not continuous."

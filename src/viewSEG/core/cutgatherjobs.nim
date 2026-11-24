@@ -41,7 +41,7 @@ import parseSEG/model/traceindex
 import processSEG
 import processSEG/continuous/slice
 import processSEG/core/workspace
-import cutfile, cutgather, filesystem, jobs, outputjobs, segmentclock, shotlog, vendormaps
+import cutfile, cutgather, filesystem, jobs, outputjobs, recordingkind, segmentclock, shotlog, vendormaps
 
 const
   NamedMax* = 5 ## how many overlaps and timing issues the result names
@@ -231,8 +231,11 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
   if res.segmentsFromHeaders:
     result.add "Segment times were read from the trace headers."
     if res.segmentsWithoutTime > 0:
-      result.add plural(res.segmentsWithoutTime, "trace has", "traces have") &
-        " no start time in its header and keeps the time of the file's keys."
+      result.add(if res.segmentsWithoutTime == 1:
+          "1 trace has no start time in its header and keeps the time of the file's keys."
+        else:
+          $res.segmentsWithoutTime & " traces have no start time in their headers and " &
+            "keep the time of the file's keys.")
   if res.timingIssues > 0:
     result.add plural(res.timingIssues, "segment starts", "segments start") &
       " off the sample grid of the one before: " & res.timingNames.join("; ") & "."
@@ -282,15 +285,12 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         file[].ensureKeys()
 
       ctx.setPhase "planning"
-      let meta = chunkMeta(file[], 0 ..< file[].len, dtMs = dtMs)
-      var clock = SegmentClock()
-      let reg = currentVendors()
-      if reg.maps.len > 0:
-        if not file[].inMemory: fs.mappedRead(source, headers = true)
-        clock = segmentClock(file[], reg, proc () {.gcsafe.} = ctx.checkCancelled())
-      let streams =
-        if clock.fromHeaders: initSliceStreams(meta, clock.times, clock.receivers)
-        else: initSliceStreams(meta)
+      let recording = planRecording(file, source, dtMs, currentVendors(),
+        proc () {.gcsafe.} = ctx.checkCancelled())
+      let clock = recording.clock
+      let streams = recording.streams
+      let facts = describeRecording(recording)
+      if facts.kind != rkContinuous: abort(sink, dest, part, false, cutRefusal(facts), false)
       let window = SliceWindow(startMs: opts.startMs, lengthMs: opts.recordMs)
       let plan = planSlices(streams, shots.shots, window, soShotRecords, opts.align)
       let comps = plan.receiverCount

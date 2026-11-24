@@ -54,7 +54,7 @@ proc fieldUs(shown: VendorShown): int64 =
         let used = parseBiggestInt(f.value, v)
         if used > 0 and used == f.value.len: result = startUs(f.unit, v)
 
-type Place = tuple[line, point: float64; index: int16; component: uint8]
+type Place = tuple[line, point, channel: float64; index: int16; component: uint8]
 
 func cmpNaN(x, y: float64): int =
   if x.isNaN: (if y.isNaN: 0 else: 1)
@@ -65,7 +65,28 @@ func cmpPlace(a, b: Place): int =
   result = cmpNaN(a.line, b.line)
   if result == 0: result = cmpNaN(a.point, b.point)
   if result == 0: result = cmp(a.index, b.index)
+  if result == 0: result = cmpNaN(a.channel, b.channel)
   if result == 0: result = cmp(a.component, b.component)
+
+proc receiverIds*(f: SeismicFile; withChannel: bool): seq[int] =
+  ## Per trace: the receiver, numbered ascending by station and component
+  ## (and by channel when `withChannel`, as `initSliceStreams` does from the
+  ## keys). Needs the keys of `f`.
+  var places = newSeq[Place](f.len)
+  var order = newSeq[int](f.len)
+  for i in 0 ..< f.len:
+    let k = f.traceKeys(i)
+    let st = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
+    places[i] = (st.line, st.point, if withChannel: k.channel else: 0.0, st.index,
+      k.component)
+    order[i] = i
+  order.sort do (a, b: int) -> int:
+    cmpPlace(places[a], places[b])
+  result = newSeq[int](f.len)
+  var id = 0
+  for n, row in order:
+    if n > 0 and cmpPlace(places[order[n - 1]], places[row]) != 0: inc id
+    result[row] = id
 
 proc segmentClock*(f: SeismicFile; reg: VendorRegistry;
     check: proc () {.gcsafe.} = nil): SegmentClock =
@@ -87,18 +108,5 @@ proc segmentClock*(f: SeismicFile; reg: VendorRegistry;
       times[i] = f.traceKeys(i).time
       inc fallbacks
   if fallbacks == f.len: return
-  result = SegmentClock(times: times, fromHeaders: true, fallbacks: fallbacks)
-  var places = newSeq[Place](f.len)
-  var order = newSeq[int](f.len)
-  for i in 0 ..< f.len:
-    let k = f.traceKeys(i)
-    let st = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
-    places[i] = (st.line, st.point, st.index, k.component)
-    order[i] = i
-  order.sort do (a, b: int) -> int:
-    cmpPlace(places[a], places[b])
-  result.receivers = newSeq[int](f.len)
-  var id = 0
-  for n, row in order:
-    if n > 0 and cmpPlace(places[order[n - 1]], places[row]) != 0: inc id
-    result.receivers[row] = id
+  result = SegmentClock(times: times, fromHeaders: true, fallbacks: fallbacks,
+    receivers: receiverIds(f, withChannel = false))

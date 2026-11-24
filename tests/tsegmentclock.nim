@@ -268,12 +268,15 @@ proc main*() =
         if "1 trace has no start time" in l: found = true
       doAssert found, $got.res.lines
 
-    block without_the_map_the_cut_sees_six_receivers:
+    block without_the_map_the_file_is_six_one_trace_receivers:
+      # six receivers of one short trace each: a shot record, which the cut refuses
       publishVendors(VendorRegistry())
-      let got = runCut(initJobs(), f, good, fx.dir / "out" / "cut3.sgd",
-        shotsAt([90_000'i64]), initCutOptions(40.0, -20.0))
-      doAssert got.st == jsDone, got.error & " / " & got.res.reason
-      doAssert got.res.components == Segments and not got.res.segmentsFromHeaders
+      let dest = fx.dir / "out" / "cut3.sgd"
+      let got = runCut(initJobs(), f, good, dest, shotsAt([90_000'i64]),
+        initCutOptions(40.0, -20.0))
+      doAssert got.st == jsFailed, "the cut was not refused"
+      doAssert "shot record" in got.res.reason, got.res.reason
+      doAssert not fileExists(dest)
 
   echo "tsegmentclock ok"
 
