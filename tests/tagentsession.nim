@@ -530,6 +530,8 @@ proc main*() =
       doAssert st.inProject
       st.agent(%*{"kind": "vendor map", "vendorMap": "none"})
       st.agent(%*{"kind": "vendor map", "vendorMap": "automatic"})
+      st.agent(%*{"kind": "name pattern", "patternAction": "choose",
+        "namePattern": {"name": ""}}) # (no pattern chosen: files are named as today)
       st.agent(%*{"kind": "close project"})
       st.agent(%*{"kind": "reload vendor maps"})
       st.agent(%*{"kind": "open pair"}) # (the panel shows no signature file: ignored, in words)
