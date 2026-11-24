@@ -484,6 +484,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var corrCounts: seq[int] = @[]
       var corrMeta: ChunkMeta
       var corrDtMs = 0.0
+      var shape: ListenShape
       if opts.correlation.isSome:
         if file == nil or not file[].isOpen:
           raise newException(ValueError, "The source file is not open.")
@@ -508,6 +509,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         corrCounts = @[recordSamples]
         corrMeta = initChunkMeta(rowsOf(corrKeys, corrCounts), ready.dtMs)
         corrDtMs = ready.dtMs
+        shape = ready
         correlating = true
       part = claimPart(dest)
       if part.len == 0:
@@ -791,27 +793,27 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           if sentence.len > 0: lines.add sentence
         for d in log: lines.add($d)
         if correlating:
-          let loaded = opts.correlation.get
-          let ready = listenShape(file, loaded.reference, loaded.referenceDtMs)
+          # The job's notes read only the index and the keys, so a file cut
+          # after its traces were read keeps them. The binary header's note
+          # reads the file, and a cut refuses that read.
+          let sweepLen = opts.correlation.get.reference.len
           var delayed = 0
-          for t in loaded.referenceTraces:
-            if file[].traceKeys(t).status == tsAuxiliary and t notin ready.odd:
-              inc delayed
-          let leadSamples = abs(wholeSamples(-AuxLeadMs, ready.dtMs))
-          # A cut found while writing refuses a later header read.
+          for t in opts.correlation.get.referenceTraces:
+            if file[].traceKeys(t).status == tsAuxiliary and t notin odd: inc delayed
+          let leadSamples = abs(lag)
+          lines.add correlationLines(file, file[].len, shape.listen, sweepLen,
+            float64(shape.listen) * shape.dtMs, float64(sweepLen) * shape.dtMs, shape.dtMs,
+            delayed, leadSamples, shape.padded, shape.cut, refs, shape.odd)
           try:
-            for line in correlationLines(file, file[].len, ready.listen, loaded.reference.len,
-                float64(ready.listen) * ready.dtMs,
-                float64(loaded.reference.len) * ready.dtMs, ready.dtMs, delayed,
-                leadSamples, ready.padded, ready.cut, refs, ready.odd):
-              lines.add line
+            let uncorrelated = binaryUncorrelatedLine(file)
+            if uncorrelated.len > 0: lines.add uncorrelated
           except SegTruncatedError:
             discard
           if segdOut:
             var zeroed = 0
-            for t in ready.odd:
+            for t in shape.odd:
               if not (opts.dropKilled and edits.has(teKilled, t)): inc zeroed
-            let every = " written as zeros every " & msText(ready.dtMs) &
+            let every = " written as zeros every " & msText(shape.dtMs) &
               " ms, the output's interval."
             if zeroed == 1: lines.add("1 trace at another interval is" & every)
             elif zeroed > 1: lines.add($zeroed & " traces at another interval are" & every)

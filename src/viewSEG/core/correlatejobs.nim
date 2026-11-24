@@ -318,9 +318,10 @@ proc alreadyCorrelated*(file: ptr SeismicFile): bool =
       return v.kind == fvInt and v.intVal == CorrelatedYes
   false
 
-proc binaryUncorrelatedLine(file: ptr SeismicFile): string =
+proc binaryUncorrelatedLine*(file: ptr SeismicFile): string =
   ## Empty unless the SEG-Y binary header says the data are not correlated.
-  ## That copy (byte 3249) has no override in this writer.
+  ## That copy (byte 3249) has no override in this writer. It reads the
+  ## file's header: raises `SegTruncatedError` for a file found cut short.
   if file[].kind != skSegy: return
   let v = file[].fileField("binary.correlated")
   if v.kind == fvInt and v.intVal == 1:
@@ -330,8 +331,10 @@ proc binaryUncorrelatedLine(file: ptr SeismicFile): string =
 proc correlationLines*(file: ptr SeismicFile; nTraces, listen, sweepLen: int;
     listenMs, sweepMs, dtMs: float64; delayed, leadSamples, padded, cut: int;
     refs: HashSet[int]; odd: openArray[int]): seq[string] =
-  ## The notes `correlateWork` gives for this file, in its order. `odd` is
-  ## that job's list, so an odd-interval note keeps its place.
+  ## The notes `correlateWork` gives for this file, in its order, but the
+  ## binary header's (`binaryUncorrelatedLine`, which follows them). Only the
+  ## in-memory index and keys are read. `odd` is that job's list, so an
+  ## odd-interval note keeps its place.
   let leadMs = float64(leadSamples) * dtMs
   var oddSet = initHashSet[int]()
   for t in odd: oddSet.incl(t)
@@ -350,8 +353,6 @@ proc correlationLines*(file: ptr SeismicFile; nTraces, listen, sweepLen: int;
         result.add cutSweepLine(t, float64(held) * dtMs, sweepMs, leadMs)
   for t in odd:
     result.add intervalLine(t, t in refs, traceDt(file, t), dtMs)
-  let uncorrelated = binaryUncorrelatedLine(file)
-  if uncorrelated.len > 0: result.add uncorrelated
 
 proc unreadWhy*(file: SeismicFile): string =
   ## Why a trace of `file` could not be read, in the words `correlateWork`
@@ -459,6 +460,8 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   let leadSamples = abs(lag)
   slot[].lines = correlationLines(file, nTraces, listen, sweepLen, slot[].listenMs,
     slot[].sweepMs, dtMs, delayed, leadSamples, ready.padded, ready.cut, refs, ready.odd)
+  let uncorrelated = binaryUncorrelatedLine(file)
+  if uncorrelated.len > 0: slot[].lines.add uncorrelated
   slot[].opened = made
   slot[].ok = true
 

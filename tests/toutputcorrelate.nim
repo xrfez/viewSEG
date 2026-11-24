@@ -36,7 +36,8 @@
 ## written as zeros, a file cut while it was open was renamed into place: "a
 ## cut file was written correlated". SEG-D to SEG-D with trace 0 an
 ## auxiliary at 4 ms kept that interval in the template: "trace 0 interval
-## 4000.0".
+## 4000.0". A file cut after its traces were read lost every note: "missing
+## 5 traces, 800 samples (1600 ms of listen time). in @[]".
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -853,6 +854,40 @@ proc main*() =
       doAssert plain.st == jsFailed, "a cut file was written"
       doAssert plain.wrote.removed, plain.wrote.reason
       noPart(outDir, "unread-plain.sgy")
+
+  block notesAfterLateCut:
+    ## The file is cut after every trace was read: the write is whole, and
+    ## the notes that need only the index are the button's, though the
+    ## binary header can no longer be read.
+    when not defined(windows):
+      let latePath = srcDir / "late.sgy"
+      writeMixed(latePath, sweep)
+      var src = openSeismic(latePath, keys = true)
+      defer: src.close()
+      let made = correlate(src, latePath, sweep)
+      made.opened.filePtr[].close()
+      let half = int(getFileSize(latePath) div 2)
+      let dest = outDir / "late-option.sgy"
+      let at = addr src
+      let opts = option(sweep, ofSegy)
+      let sink = OutputSink()
+      let cutAtEnd = proc (done, total: int): bool {.gcsafe.} =
+        if done == total:
+          {.cast(gcsafe).}:
+            writeFile(latePath, readFile(latePath)[0 ..< half])
+            discard at[].cutShort
+        true
+      let work = proc (ctx: JobContext) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          writeOutput(ctx, at, latePath, dest, opts, FileEdits(), @[latePath], sink, cutAtEnd)
+      let jobs = initJobs()
+      let id = jobs.submit(outputSpec(latePath, dest), work)
+      doAssert waitUntil(state(jobs, id) in {jsDone, jsFailed, jsCancelled})
+      doAssert state(jobs, id) == jsDone, jobs.info(id).get.error & " / " & sink.result.reason
+      doAssert src.cutShort, "the file was not cut"
+      for line in made.lines:
+        if "binary header" notin line:
+          doAssert line in sink.result.lines, "missing " & line & " in " & $sink.result.lines
 
 when isMainModule:
   main()
