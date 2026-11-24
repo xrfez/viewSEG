@@ -9,7 +9,9 @@
 ## taken from the wrong buffer index (the equality test), an eviction that
 ## drops every held column ahead of the next window (the reuse test), the
 ## overlap rule ignoring unchecked overlaps (the overlap test), a failed
-## fetch treated as success (the failed-read test).
+## fetch treated as success (the failed-read test); every overlap checked at
+## once (`several_overlaps_checked_when_due`: "fetched 9970 of 6000"); a failed
+## overlap tried again and pinning its rows ("held 940 at the end").
 
 import std/[assertions, math, options]
 import parseSEG, processSEG
@@ -187,7 +189,7 @@ proc main*() =
           doAssert cast[uint32](dst[j]) == cast[uint32](whole[t, j]),
             $align & " trace " & $t & " column " & $j
         doAssert report.gapSamples(t) == wholeReport.gapSamples(t)
-      doAssert checkOverlaps(plan, buf, fetch, report) == 1
+      doAssert checkOverlaps(plan, buf, fetch, report, final = true) == 1
       doAssert report.overlapCheck(0) == wholeReport.overlapCheck(0)
       doAssert report.overlapCheck(0).status == osMismatch
       doAssert report.gapSamples(1) > 0
@@ -214,7 +216,7 @@ proc main*() =
       if t + 1 < plan.len:
         var next = 0
         for pc in plan.pieces(t + 1): next = pc.first
-        buf.evictBefore(0, evictable(plan, report, 0, next))
+        buf.evictBefore(0, evictable(plan, buf, report, 0, next))
     doAssert src.fetched <= 17000, "fetched " & $src.fetched & " samples"
     doAssert src.fetched == 59 * 250 + 1000
     doAssert peak <= 1000 + 250, "held " & $peak
@@ -234,15 +236,15 @@ proc main*() =
     doAssert not cutOne(plan, 0, buf, fetch, dst, report, ws)
     # Nothing pending, yet the unchecked tail of row 0 is still needed, and
     # row 1 from its start.
-    doAssert evictable(plan, report, 0, 5000) == 97
-    doAssert evictable(plan, report, 1, 5000) == 0
-    doAssert evictable(plan, report, 0, 50) == 50
+    doAssert evictable(plan, buf, report, 0, 5000) == 97
+    doAssert evictable(plan, buf, report, 1, 5000) == 0
+    doAssert evictable(plan, buf, report, 0, 50) == 50
     let before = src.fetched
-    doAssert checkOverlaps(plan, buf, fetch, report) == 1
+    doAssert checkOverlaps(plan, buf, fetch, report, final = true) == 1
     doAssert report.overlapCheck(0).status == osMatch
     doAssert src.fetched == before + 3, "only the tail of row 0 is read again"
-    doAssert checkOverlaps(plan, buf, fetch, report) == 0, "checked once"
-    doAssert evictable(plan, report, 0, 5000) == 5000
+    doAssert checkOverlaps(plan, buf, fetch, report, final = true) == 0, "checked once"
+    doAssert evictable(plan, buf, report, 0, 5000) == 5000
     # A differing later row is reported with its count.
     src.data[1][1] = 99
     src.data[1][2] = 98
@@ -250,7 +252,7 @@ proc main*() =
     var report2 = initSliceReport(plan)
     prepareSliceReport(plan, report2)
     doAssert not cutOne(plan, 0, buf2, fetch, dst, report2, ws)
-    doAssert checkOverlaps(plan, buf2, fetch, report2) == 1
+    doAssert checkOverlaps(plan, buf2, fetch, report2, final = true) == 1
     let c = report2.overlapCheck(0)
     doAssert c.status == osMismatch and c.differing == 2 and report2.mismatches == 1
 
@@ -272,8 +274,91 @@ proc main*() =
     for j in 0 ..< 7: doAssert dst[j] == stream(90 + j)
     for j in 7 ..< 20: doAssert dst[j] == 0'f32
     doAssert buf.heldSamples == 7 and 1 notin [buf.heldRange(1).a]
-    doAssert checkOverlaps(plan, buf, fetch, report) == 0
+    doAssert checkOverlaps(plan, buf, fetch, report, final = true) == 0
     doAssert report.overlapCheck(0).status == osNotRead
+
+  block several_overlaps_checked_when_due:
+    # Six rows of 1000 samples, 10-sample overlaps, a window of 200 every 50
+    # samples, the job's eviction rule (the next shot's smallest first column
+    # per row), checks only for overlaps that are due, then the rest. Each
+    # sample is fetched once, the buffer never holds more than a window and an
+    # overlap, and every overlap is compared.
+    var spans: seq[(int, int)] = @[]
+    for k in 0 ..< 6: spans.add (k * 990, 1000)
+    let src = makeSrc(spans)
+    let meta = metaOf(src)
+    var shots: seq[SliceShot]
+    var t = 0
+    while t + 200 <= 5950:
+      shots.add initSliceShot(timeOf(float64(t)), float64(shots.len + 1))
+      t += 50
+    let plan = planSlices(meta, shots, window(200), soShotRecords, saNearest)
+    doAssert plan.overlaps.len == 5
+    var report = initSliceReport(plan)
+    prepareSliceReport(plan, report)
+    var ws = initWorkspace()
+    var buf = initSourceBuffer()
+    let fetch = fetcher(src)
+    var dst = newSeq[float32](plan.samples)
+    var peak = 0
+    for s in 0 ..< plan.len:
+      doAssert not cutOne(plan, s, buf, fetch, dst, report, ws)
+      for j in 0 ..< plan.samples: doAssert dst[j] == stream(s * 50 + j)
+      discard checkOverlaps(plan, buf, fetch, report)
+      for row in plan.rowsNeeded:
+        var next = high(int)
+        if s + 1 < plan.len:
+          for pc in plan.pieces(s + 1):
+            if pc.row == row and pc.count > 0: next = min(next, pc.first)
+        buf.evictBefore(row, evictable(plan, buf, report, row, next))
+      peak = max(peak, buf.heldSamples)
+    discard checkOverlaps(plan, buf, fetch, report, final = true)
+    for i in 0 ..< 5: doAssert report.overlapCheck(i).status == osMatch, "overlap " & $i
+    doAssert src.fetched <= 6000, "fetched " & $src.fetched & " of 6000"
+    doAssert peak <= 200 + 10 + 10, "held " & $peak
+
+  block failed_overlap_neither_retried_nor_pinned:
+    # Row 2 cannot be read: the overlaps it is in stay osNotRead, are asked
+    # for once, and do not keep the rows pinned.
+    var spans: seq[(int, int)] = @[]
+    for k in 0 ..< 4: spans.add (k * 990, 1000)
+    let src = makeSrc(spans)
+    src.failRow = 2
+    let meta = metaOf(src)
+    var shots: seq[SliceShot]
+    var t = 0
+    while t + 200 <= 3900:
+      shots.add initSliceShot(timeOf(float64(t)), float64(shots.len + 1))
+      t += 50
+    let plan = planSlices(meta, shots, window(200), soShotRecords, saNearest)
+    var report = initSliceReport(plan)
+    prepareSliceReport(plan, report)
+    var ws = initWorkspace()
+    var buf = initSourceBuffer()
+    var failedCalls = 0
+    let inner = fetcher(src)
+    let fetch: FetchProc = proc (row, first, count: int, dst: var openArray[float32]): bool =
+      if row == 2: inc failedCalls
+      inner(row, first, count, dst)
+    var dst = newSeq[float32](plan.samples)
+    var peak = 0
+    for s in 0 ..< plan.len:
+      discard cutOne(plan, s, buf, fetch, dst, report, ws)
+      discard checkOverlaps(plan, buf, fetch, report)
+      for row in plan.rowsNeeded:
+        var next = high(int)
+        if s + 1 < plan.len:
+          for pc in plan.pieces(s + 1):
+            if pc.row == row and pc.count > 0: next = min(next, pc.first)
+        buf.evictBefore(row, evictable(plan, buf, report, row, next))
+      peak = max(peak, buf.heldSamples)
+    discard checkOverlaps(plan, buf, fetch, report, final = true)
+    doAssert report.overlapCheck(0).status == osMatch
+    doAssert report.overlapCheck(1).status == osNotRead and
+      report.overlapCheck(2).status == osNotRead
+    doAssert failedCalls <= plan.len div 2, "row 2 was asked for " & $failedCalls & " times"
+    doAssert buf.heldSamples == 0, "held " & $buf.heldSamples & " at the end"
+    doAssert peak <= 200 + 10 + 10, "held " & $peak
 
   echo "tcutgather ok"
 

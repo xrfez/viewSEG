@@ -10,7 +10,7 @@
 ## caller supplies (so no file is touched here); `cutOne` builds one output
 ## trace from it with the library's piecewise calls.
 
-import std/[algorithm, math, options, tables]
+import std/[algorithm, math, options, sets, tables]
 import processSEG/continuous/slice
 import processSEG/core/workspace
 import ./shotlog
@@ -34,6 +34,8 @@ type
     dropped*: int        ## Rows without a time.
     duplicateTimes*: int ## Shots with the time of the shot before them (kept).
     increasing*: bool    ## The file numbers strictly increase in time order.
+    pointIndexOutOfRange*: int
+      ## Timed shots with a point index the writer cannot hold (not 0..255).
 
 const
   MaxRecordNumber* = 0xFF_FFFF    ## The writer's largest record number.
@@ -77,6 +79,8 @@ func shotsInTime*(rows: openArray[Shot]): CutShots =
   var prevFile = NaN
   for n, i in order:
     let s = sliceShotOf(rows[i])
+    if rows[i].pointIndex.isSome and rows[i].pointIndex.get notin 0'i64 .. 255'i64:
+      inc result.pointIndexOutOfRange
     if n > 0:
       if rows[order[n - 1]].timeUtcUs.get == rows[i].timeUtcUs.get:
         inc result.duplicateTimes
@@ -155,10 +159,16 @@ type
     ## number of shots: the caller drops what no pending window reads.
     rows: Table[int, HeldRow]
     zeros: seq[float32] # the samples handed for a piece that failed to read
+    pending: Table[int, int]
+      # per row, the `sample` of the last `evictBefore`: the earliest column a
+      # window not yet cut reads (`high(int)`: none does)
+    failedRows: HashSet[int] # rows a fetch has failed on
+    failedOverlaps: HashSet[int] # overlaps whose samples could not be had
 
 func initSourceBuffer*(): SourceBuffer =
   ## An empty buffer.
-  SourceBuffer(rows: initTable[int, HeldRow]())
+  SourceBuffer(rows: initTable[int, HeldRow](), pending: initTable[int, int](),
+    failedRows: initHashSet[int](), failedOverlaps: initHashSet[int]())
 
 func heldSamples*(buf: SourceBuffer): int =
   ## The samples held, over every row.
@@ -175,7 +185,8 @@ func heldRange*(buf: SourceBuffer, row: int): Slice[int] =
 func held*(buf: SourceBuffer, row: int): lent seq[float32] =
   ## The samples held of `row`, from column `heldRange(row).a`. Raises
   ## `KeyError` when the row holds none: `need` it first. Valid until the
-  ## next `need`, `evictBefore` or `evictRow` on this row.
+  ## next `need` on any row (one that adds a row can rehash the table),
+  ## `evictBefore` or `evictRow`.
   buf.rows[row].data
 
 proc grow(h: var HeldRow, row, first, count: int, fetch: FetchProc): bool =
@@ -219,9 +230,12 @@ proc need*(buf: var SourceBuffer, row, first, count: int, fetch: FetchProc): int
     let ok = grow(buf.rows.mgetOrPut(row, HeldRow(first: first)), row, first, count,
       fetch)
     result = if ok: first - buf.rows[row].first else: -1
+    if not ok: buf.failedRows.incl row
 
 proc evictBefore*(buf: var SourceBuffer, row, sample: int) =
-  ## Drops the columns of `row` before `sample`.
+  ## Drops the columns of `row` before `sample`, and notes `sample` as the
+  ## earliest column of `row` still wanted (`checkOverlaps` uses it).
+  buf.pending[row] = sample
   if row in buf.rows:
     let first = buf.rows[row].first
     if sample >= first + buf.rows[row].data.len:
@@ -234,23 +248,26 @@ proc evictBefore*(buf: var SourceBuffer, row, sample: int) =
         h.first = sample
 
 proc evictRow*(buf: var SourceBuffer, row: int) =
-  ## Drops everything held of `row`.
+  ## Drops everything held of `row`; nothing of it is wanted any more.
+  buf.pending[row] = high(int)
   buf.rows.del row
 
 func readsRow(plan: SlicePlan, row: int): bool =
   plan.rowsNeeded.binarySearch(row) >= 0
 
-func evictable*(plan: SlicePlan, report: SliceReport, row, earliestPendingStart: int): int =
+func evictable*(plan: SlicePlan, buf: SourceBuffer, report: SliceReport,
+    row, earliestPendingStart: int): int =
   ## The first column of `row` that must still be held: every column before
   ## it may go (`evictBefore`). `earliestPendingStart` is the first column of
   ## the row that a window not yet cut reads (a piece's `first`, margin
   ## included). It is lowered for an overlap on the row that is not yet
-  ## checked: the earlier row's trimmed tail is in no piece, and the later
+  ## checked (and not one whose samples could not be had, which would pin
+  ## the rows to the end): the earlier row's trimmed tail is in no piece, and the later
   ## row is needed from column 0.
   result = max(earliestPendingStart, 0)
   for i, o in plan.overlaps:
     if report.overlapCheck(i).status == osNotRead and o.samples > 0 and
-        plan.readsRow(o.earlier) and plan.readsRow(o.later):
+        i notin buf.failedOverlaps and plan.readsRow(o.earlier) and plan.readsRow(o.later):
       if o.earlier == row: result = min(result, o.first)
       elif o.later == row: result = 0
 
@@ -283,18 +300,29 @@ proc cutOne*(plan: SlicePlan, trace: int, buf: var SourceBuffer, fetch: FetchPro
   finishSliceTrace(plan, trace, dst, report, ws)
 
 proc checkOverlaps*(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
-    report: var SliceReport): int =
-  ## Compares every overlap not yet compared whose two rows the plan reads
-  ## and whose two runs can be had (through the buffer, so nothing is read
-  ## twice), and returns how many it compared. One whose run cannot be read
-  ## stays `osNotRead`; call again to retry.
+    report: var SliceReport, final = false): int =
+  ## Compares the overlaps that are due, not yet compared, whose two rows the
+  ## plan reads and whose two runs can be had (through the buffer, so nothing
+  ## is read twice), and returns how many it compared. An overlap is due when
+  ## no window still to be cut reads the earlier row below the overlap (the
+  ## `sample` of the last `evictBefore` of that row is at or after
+  ## `overlap.first`, or the row is finished): then its tail is an append to
+  ## the held run or a fresh run, and the later row is read from its start
+  ## anyway. `final` makes every overlap due (after the last shot). An overlap
+  ## whose run cannot be read stays `osNotRead`, is not tried again and pins
+  ## nothing; one with no samples is compared only when neither row has failed
+  ## to read.
   let nothing = default(seq[float32])
   for i, o in plan.overlaps:
-    if report.overlapCheck(i).status == osNotRead and plan.readsRow(o.earlier) and
-        plan.readsRow(o.later):
+    if report.overlapCheck(i).status == osNotRead and i notin buf.failedOverlaps and
+        plan.readsRow(o.earlier) and plan.readsRow(o.later) and
+        (final or (o.earlier in buf.pending and buf.pending[o.earlier] >= o.first)):
       if o.samples == 0:
-        checkSliceOverlap(plan, i, nothing, nothing, report)
-        inc result
+        if o.earlier in buf.failedRows or o.later in buf.failedRows:
+          buf.failedOverlaps.incl i
+        else:
+          checkSliceOverlap(plan, i, nothing, nothing, report)
+          inc result
       else:
         let a = buf.need(o.earlier, o.first, o.samples, fetch)
         let b = if a >= 0: buf.need(o.later, 0, o.samples, fetch) else: -1
@@ -302,3 +330,5 @@ proc checkOverlaps*(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
           checkSliceOverlap(plan, i, buf.held(o.earlier).toOpenArray(a, a + o.samples - 1),
             buf.held(o.later).toOpenArray(b, b + o.samples - 1), report)
           inc result
+        else:
+          buf.failedOverlaps.incl i
