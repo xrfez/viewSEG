@@ -169,15 +169,14 @@ proc readRows(p: ptr ReaderObj; f: ptr SeismicFile; path: string; list: seq[int]
       for r in ws[].failed: bad[r] = true
       for k in 0 ..< n:
         failed[at + k] = bad[k]
-        var s = newSeq[float32](cols)
-        if cols > 0 and not bad[k]:
-          copyMem(addr s[0], addr buf[k * cols], cols * sizeof(float32))
-        if not bad[k]:
+        if not bad[k]: # a failed row is left empty, as on the plain path
+          var s = newSeq[float32](cols)
+          if cols > 0: copyMem(addr s[0], addr buf[k * cols], cols * sizeof(float32))
           for v in s.mitems:
             if not (abs(v) < Inf):
               v = 0
               notNumber[at + k] = true
-        rows[at + k] = move s
+          rows[at + k] = move s
       if at + n < list.len and p.interrupted(id):
         result = false
         break

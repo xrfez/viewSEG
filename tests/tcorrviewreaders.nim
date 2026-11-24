@@ -10,7 +10,8 @@
 ## picks @[106.0, ...] vs @[80.0, ...]`); rows of a file cut short
 ## reported undecodable (`a cut view reports undecodable @[6, 7, 8, 9]`); the view's one time zero
 ## for every trace (`view spectrum time zero 12.0`); a first-break job asked for on a view
-## (with the view left out of the state's skip: `first breaks were asked for on a view`).
+## (with the view left out of the state's skip: `first breaks were asked for on a view`);
+## a failed view row with samples in the analysis reader (`a failed view row has 800 samples`).
 
 import std/[atomics, locks, math, monotimes, os, times]
 import parseSEG
@@ -193,6 +194,19 @@ proc samePicks(a, b: seq[float64]): bool =
     if not (a[i] == b[i] or (a[i].isNaN and b[i].isNaN)): return false
   true
 
+proc readAnalysis(f: ptr SeismicFile; path: string; list: seq[int];
+    view: ref CorrelateView): tuple[rows: seq[seq[float32]]; failed: seq[bool]] =
+  ## The analysis reader's rows, as they are, with the rows it marked failed.
+  var obj: ReaderObj
+  let lk = cast[ptr Lock](addr obj)
+  initLock(lk[])
+  defer: deinitLock(lk[])
+  var ws: CorrelateWorkspace
+  if view != nil: ws = newWorkspace(view[])
+  var nan: seq[bool]
+  doAssert readRows(addr obj, f, path, list, 1, result.rows, result.failed, nan, view,
+    addr ws), "the analysis read was given up"
+
 proc sampleHits(h: array[MapFilter, FilterHits]): seq[seq[int]] =
   for m in SampleFilters: result.add h[m].traces
 
@@ -357,6 +371,15 @@ proc main*() =
       $cutPlain[mfUndecodable].traces
     doAssert cutViewHits[mfUndecodable].traces == cutPlain[mfUndecodable].traces,
       "a cut view reports undecodable " & $cutViewHits[mfUndecodable].traces
+    # the analysis reader leaves a failed view row empty, and marks it failed as for a plain file
+    let lost = @[0, 7]
+    let plainRead = readAnalysis(plain.filePtr, plain.path, lost, nil)
+    let viewRead = readAnalysis(cutView.filePtr, cutView.path, lost, cutView.correlatedView)
+    doAssert plainRead.failed == @[false, true], "the plain read failed " & $plainRead.failed
+    doAssert viewRead.failed == plainRead.failed, "the view read failed " & $viewRead.failed
+    doAssert viewRead.rows[1].len == 0, "a failed view row has " & $viewRead.rows[1].len &
+      " samples"
+    doAssert viewRead.rows[0].len == Listen, "the view row before the cut was lost"
 
   doAssert virtMaps.load == 0, "the virtual path was mapped " & $virtMaps.load & " times"
   # A view is derived: the first-break overlay asks for no job for it.
