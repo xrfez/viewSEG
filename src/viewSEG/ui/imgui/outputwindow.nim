@@ -11,12 +11,13 @@
 
 import std/[algorithm, options, os, strutils, tables]
 from std/unicode import cmpRunesIgnoreCase
+from parseSEG import TextEncoding, teEbcdic, teAscii
 import sdl3_nim
 import imguin/cimgui
-import ../../core/[edits, filejobs, filekinds, filesystem, jobs, outputbatch, outputjobs,
-  panels, references, settings, state]
-import ../../view/[filetable, outputwords]
-import fittext, focus, icons, marks, overflow
+import ../../core/[edits, filejobs, filekinds, filesystem, geometry, jobs, outputbatch, outputjobs,
+  outputtext, panels, references, settings, state]
+import ../../view/[filetable, outputtextedit, outputwords, theme]
+import fittext, focus, fonts, icons, marks, overflow, style
 
 type
   ListedFile = object
@@ -84,6 +85,16 @@ type
     labelBuf: array[257, char]
     widthBuf: array[16, array[8, char]]
     textBuf: array[16, array[96, char]]
+    textOpen: bool                             ## the text header template editor is shown
+    textEdit: TextEdit
+    linesBuf: array[TextCapacity, char]
+    textNameBuf: array[257, char]
+    textCursor: cint = -1                      ## the lines box's cursor when it was last active
+    textArm: bool                              ## the editor was just opened: take it to the front
+    textFile: string                           ## the file the preview values are read from
+    textFilled: bool                           ## `textValues` are that file's, not sample values
+    textValues: TextValues
+    textWhy: string                            ## why the preview shows sample values
     focus: FocusClicks
     kindOpen: bool
     kindRow, kindTries: int
@@ -479,6 +490,8 @@ proc submitRun(ui: var OutputUi; st: AppState) =
       revisionChoices(ui.format, ui.sourceKinds)), applyReversals: ui.reversals,
     applyShifts: ui.shifts, dropKilled: ui.dropKilled, applyOwnFilters: ui.ownFilters,
     applyProcessing: ui.processingOn, writeSessionPositions: not ui.keepOwn)
+  if st.inProject and ui.format == ofSegy:
+    opts.textHeader = chosenText(st.project.doc.outputTexts, st.project.doc.outputText)
   let pk = st.findPanel(MainPanel)
   if pk >= 0 and st.panels[pk].layers.len > 0:
     if ui.processingOn: opts.processing = st.panels[pk].layers[0].processing
@@ -1196,6 +1209,239 @@ proc drawRevision(ui: var OutputUi; st: AppState; marks: var Marks;
     igPopTextWrapPos()
     marks.mark("output.revision.mixed")
 
+func textWhy(st: AppState): string =
+  ## Why templates cannot be kept now; "" when they can.
+  if not st.inProject: TextNeedProject
+  elif st.project.readOnly: TextReadOnly
+  else: ""
+
+proc chosenTextOf(st: AppState): Option[OutputText] =
+  if st.inProject: chosenText(st.project.doc.outputTexts, st.project.doc.outputText)
+  else: none(OutputText)
+
+proc loadText(ui: var OutputUi; e: TextEdit) =
+  ui.textEdit = e
+  setBuf(ui.linesBuf, e.text)
+  setBuf(ui.textNameBuf, e.name)
+  ui.textCursor = -1
+  ui.textOpen = true
+  ui.textArm = true
+  ui.textFile = ""
+  ui.textFilled = false
+
+proc drawTextRow(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
+  ## The SEG-Y text header: the project's template in use, and the button
+  ## that opens the editor.
+  let why = textWhy(st)
+  let chosen = chosenTextOf(st)
+  let shown = if chosen.isSome: chosen.get.name else: TextAsSource
+  igTextUnformatted(TextRowLabel.cstring, nil)
+  igSameLine(0, -1)
+  igBeginDisabled(why.len > 0)
+  igSetNextItemWidth(igGetFontSize() * 16)
+  let open = igBeginCombo("##output.text", shown.cstring, 0)
+  if not open:
+    marks.mark("output.text")
+    marks.mark("output.text " & shown)
+  else:
+    marks.mark("output.text.open")
+    if st.inProject:
+      for tp in st.project.doc.outputTexts:
+        if igSelectable_Bool((tp.name & "##txt").cstring, chosen.isSome and
+            tp.name == chosen.get.name, 0, ImVec2_c(x: 0, y: 0)):
+          outp.commands.add Command(kind: ckOutputText, textAction: otaChoose,
+            textTemplate: OutputText(name: tp.name))
+        marks.mark("output.text.item " & tp.name)
+    if igSelectable_Bool((TextAsSource & "##src").cstring, chosen.isNone, 0,
+        ImVec2_c(x: 0, y: 0)):
+      outp.commands.add Command(kind: ckOutputText, textAction: otaChoose,
+        textTemplate: OutputText())
+    marks.mark("output.text.item " & TextAsSource)
+    igEndCombo()
+  igEndDisabled()
+  tip(if why.len > 0: why else: TextRowTip)
+  igSameLine(0, -1)
+  igBeginDisabled(why.len > 0)
+  if igButton((TextEditButton & "##text").cstring, ImVec2_c(x: 0, y: 0)):
+    if ui.textOpen: ui.textOpen = false
+    elif chosen.isSome: ui.loadText(initTextEdit(chosen.get))
+    else: ui.loadText(initTextEdit())
+  igEndDisabled()
+  marks.mark("output.text.edit")
+  tip(if why.len > 0: why else: TextEditTip)
+  if why.len > 0: marks.mark("output.text.dim " & why)
+
+proc refreshPreview(ui: var OutputUi; st: AppState) =
+  ## The values the preview is filled in from: the shown file's when its keys
+  ## are in memory, else sample values. Read again when another file is shown.
+  let i = st.shownFile(st.findPanel(MainPanel))
+  let path = if i >= 0: $(st.sessions[i].path) else: ""
+  if path == ui.textFile and (ui.textFilled or path.len == 0): return
+  ui.textFile = path
+  ui.textFilled = false
+  ui.textWhy = PreviewSample
+  if i < 0: return
+  let fp = st.sessions[i].filePtr
+  if fp == nil: return
+  let got = valuesOfFile(fp[], path, st.sessions[i].signature, st.editsAt(path),
+    ui.textEdit)
+  ui.textWhy = got.why
+  if got.ok:
+    ui.textValues = got.values
+    ui.textFilled = true
+
+proc watchCursor(data: ptr ImGuiInputTextCallbackData): cint {.cdecl, raises: [].} =
+  ## Keeps where the cursor of the lines box is, for the token that is put in.
+  if data != nil and data.UserData != nil:
+    cast[ptr cint](data.UserData)[] = data.CursorPos
+  0
+
+proc wrappedIn(text: string; colour: Rgba) =
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(colour))
+  igPushTextWrapPos(0)
+  igTextUnformatted(text.cstring, nil)
+  igPopTextWrapPos()
+  igPopStyleColor(1)
+
+proc drawTextEditor(ui: var OutputUi; st: AppState; fonts: Fonts; t: Theme;
+    marks: var Marks; outp: var OutputOutput) =
+  ## A window of its own: name, character set, the lines, tokens, a preview
+  ## for the file shown, problems, and Save, Save as new, Delete and Cancel.
+  ## A change is a `ckOutputText` command.
+  if not ui.textOpen: return
+  let vp = igGetMainViewport()
+  igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + igGetFontSize() * 6,
+    y: vp.WorkPos.y + igGetFontSize() * 3), ImGui_Cond_FirstUseEver.cint, ImVec2_c(x: 0, y: 0))
+  igSetNextWindowSize(ImVec2_c(x: igGetFontSize() * 48, y: igGetFontSize() * 44),
+    ImGui_Cond_FirstUseEver.cint)
+  if ui.textArm:
+    igSetNextWindowFocus()
+    ui.textArm = false
+  var open = true
+  var save, saveNew, drop, cancel = false
+  if igBegin(TextWindowTitle.cstring, addr open, ImGui_WindowFlags_NoDocking.cint):
+    marks.markWindow("output.text.window")
+    let focused = igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint)
+    igSetNextItemWidth(min(max(igGetFontSize() * 14, textWidth(TextNameHint) +
+      igGetStyle().FramePadding.x * 2 + 8), igGetContentRegionAvail().x))
+    discard igInputTextWithHint("##text.name", TextNameHint.cstring,
+      cast[cstring](addr ui.textNameBuf[0]), csize_t(ui.textNameBuf.len), 0, nil, nil)
+    ui.textEdit.name = bufText(ui.textNameBuf)
+    marks.mark("output.text.name")
+    if ui.textEdit.name.len > 0: marks.mark("output.text.name " & ui.textEdit.name)
+    tip(TextNameTip)
+    igTextUnformatted(CharsetLabel.cstring, nil)
+    for enc in [teEbcdic, teAscii]:
+      igSameLine(0, -1)
+      let word = charsetWord(enc)
+      if igRadioButton_Bool(word.cstring, ui.textEdit.encoding == enc):
+        ui.textEdit.encoding = enc
+      marks.mark("output.text.charset " & word)
+      if ui.textEdit.encoding == enc: marks.mark("output.text.charset " & word & ".on")
+      tip(CharsetTip)
+    fonts.withFont(frMono, 0):
+      let wide = igCalcTextSize(repeat('0', MaxTextLine).cstring, nil, false, -1).x
+      let pad = igGetStyle().FramePadding.x
+      igSetCursorPosX(igGetCursorPosX() + pad)
+      igTextUnformatted(columnRuler().cstring, nil)
+      marks.mark("output.text.ruler")
+      igSetNextItemWidth(wide + pad * 2 + igGetStyle().ScrollbarSize)
+      let h = igGetTextLineHeight() * 14 + igGetStyle().FramePadding.y * 2
+      let flags = ImGui_InputTextFlags_CallbackAlways.cint
+      discard igInputTextMultiline("##text.lines", cast[cstring](addr ui.linesBuf[0]),
+        csize_t(ui.linesBuf.len), ImVec2_c(x: wide + pad * 2 + igGetStyle().ScrollbarSize,
+        y: h), flags, watchCursor, addr ui.textCursor)
+      marks.mark("output.text.lines")
+    ui.textEdit.text = bufText(ui.linesBuf)
+    tip(LinesTip)
+    igTextUnformatted(ui.textEdit.lengthNote.cstring, nil)
+    marks.mark("output.text.count " & ui.textEdit.lengthNote)
+    igSetNextItemWidth(igGetFontSize() * 14)
+    if igBeginCombo("##text.token", InsertToken.cstring, 0):
+      for info in TextTokens:
+        let label = tokenLabel(info) & "  " & info.about
+        if igSelectable_Bool((label & "##tok").cstring, false, 0, ImVec2_c(x: 0, y: 0)):
+          let at = ui.textEdit.insertToken(info.word, int(ui.textCursor))
+          ui.textCursor = cint(at)
+          setBuf(ui.linesBuf, ui.textEdit.text)
+        marks.mark("output.text.token " & info.word)
+      igEndCombo()
+    marks.mark("output.text.insert")
+    tip(InsertTip)
+    ui.refreshPreview(st)
+    let values = if ui.textFilled: ui.textValues else: sampleValues(nowUs())
+    let shown = previewOf(ui.textEdit, values, not ui.textFilled)
+    igSeparator()
+    igTextUnformatted(PreviewLabel.cstring, nil)
+    igSameLine(0, -1)
+    let sourceName = if ui.textFilled: extractFilename(ui.textFile) else: ui.textWhy
+    igTextUnformatted(("for " & sourceName).cstring, nil)
+    marks.mark("output.text.previewfor " & sourceName)
+    if igBeginChild_Str("##text.preview", ImVec2_c(x: 0, y: igGetTextLineHeight() * 8 +
+        igGetStyle().WindowPadding.y * 2), ImGui_ChildFlags_Borders.cint, 0):
+      fonts.withFont(frMono, 0):
+        for i, line in shown.lines:
+          igTextUnformatted((if line.len == 0: " " else: line).cstring, nil)
+          marks.mark("output.text.preview " & $i & " " & line)
+    igEndChild()
+    let problem = ui.textEdit.problem
+    if problem.len > 0:
+      wrappedIn(problem, t.roles[rlWarning])
+      marks.mark("output.text.problem " & problem)
+    elif shown.problem.len > 0:
+      wrappedIn(shown.problem, t.roles[rlWarning])
+      marks.mark("output.text.problem " & shown.problem)
+    let why = textWhy(st)
+    let names = block:
+      var n: seq[string] = @[]
+      if st.inProject:
+        for tp in st.project.doc.outputTexts: n.add tp.name
+      n
+    let taken = matchingName(names, ui.textEdit.name)
+    let saveWhy = if why.len > 0: why else: problem
+    igBeginDisabled(saveWhy.len > 0)
+    if igButton((SaveButton & "##text").cstring, ImVec2_c(x: 0, y: 0)): save = true
+    igEndDisabled()
+    marks.mark("output.text.save")
+    tip(if saveWhy.len > 0: saveWhy else: SaveTip)
+    if saveWhy.len > 0: marks.mark("output.text.save.dim " & saveWhy)
+    igSameLine(0, -1)
+    let newWhy = if saveWhy.len > 0: saveWhy elif taken: NameTaken else: ""
+    igBeginDisabled(newWhy.len > 0)
+    if igButton((SaveNewButton & "##text").cstring, ImVec2_c(x: 0, y: 0)): saveNew = true
+    igEndDisabled()
+    marks.mark("output.text.savenew")
+    tip(if newWhy.len > 0: newWhy else: SaveNewTip)
+    igSameLine(0, -1)
+    let dropWhy = if why.len > 0: why elif not taken: NothingToDelete else: ""
+    igBeginDisabled(dropWhy.len > 0)
+    if igButton((DeleteButton & "##text").cstring, ImVec2_c(x: 0, y: 0)): drop = true
+    igEndDisabled()
+    marks.mark("output.text.delete")
+    tip(if dropWhy.len > 0: dropWhy else: DeleteTip)
+    igSameLine(0, -1)
+    if igButton((CancelButton & "##text").cstring, ImVec2_c(x: 0, y: 0)): cancel = true
+    marks.mark("output.text.cancel")
+    tip(CancelTip)
+    if focused:
+      if igIsKeyPressed_Bool(ImGui_Key_Escape, false): cancel = true
+      elif igIsKeyPressed_Bool(ImGui_Key_Enter, false) and igGetIO_Nil().KeyCtrl and
+          saveWhy.len == 0:
+        save = true
+  igEnd()
+  let tpl = ui.textEdit.toTemplate
+  if save or saveNew:
+    outp.commands.add Command(kind: ckOutputText, textAction: otaSave, textTemplate: tpl)
+    outp.commands.add Command(kind: ckOutputText, textAction: otaChoose,
+      textTemplate: OutputText(name: tpl.name))
+    ui.textOpen = false
+  elif drop:
+    outp.commands.add Command(kind: ckOutputText, textAction: otaDelete,
+      textTemplate: OutputText(name: tpl.name))
+    ui.textOpen = false
+  elif cancel or not open:
+    ui.textOpen = false
+
 proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
     outp: var OutputOutput) =
   let extra = if ui.dest.len > 0: "output.destination " & ui.dest else: ""
@@ -1220,6 +1466,7 @@ proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
   marks.mark("output.format " & $ofSegd)
   if ui.format == ofSegd: marks.mark("output.format " & $ofSegd & ".on")
   ui.drawRevision(st, marks, outp)
+  if ui.format == ofSegy: ui.drawTextRow(st, marks, outp)
   ui.drawOptions(st, marks)
   discard igCheckbox(KeepFolders.cstring, addr ui.mirror)
   marks.mark("output.mirror")
@@ -1227,7 +1474,8 @@ proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
   ui.drawRun(st, phase, marks, outp)
   ui.drawResults(marks)
 
-proc drawOutput*(ui: var OutputUi; title: string; st: AppState; marks: var Marks): OutputOutput =
+proc drawOutput*(ui: var OutputUi; title: string; st: AppState; fonts: Fonts; t: Theme;
+    marks: var Marks): OutputOutput =
   ## The window titled `title`. A list or a destination check asked for since
   ## the last draw starts here. Wide: two panes sharing the height, a
   ## draggable split. Narrow: the source above the write.
@@ -1274,6 +1522,7 @@ proc drawOutput*(ui: var OutputUi; title: string; st: AppState; marks: var Marks
     marks.markOverflow("output")
   ui.focus.settle()
   igEnd()
+  ui.drawTextEditor(st, fonts, t, marks, result)
   result.askSource = ui.askSource
   result.askDest = ui.askDest
   if ui.askSource: ui.askSource = false

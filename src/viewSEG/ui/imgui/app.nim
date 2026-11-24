@@ -1641,7 +1641,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     if folderQc.exportAsked: ui.ask(dkExportVibFolder, folderQc.exportPath)
   if ui.windows.shows(awOutput):
     ui.windows.beforeDrawing(awOutput)
-    var written = ui.output.drawOutput(outputTitle, ui.core, ui.marks)
+    var written = ui.output.drawOutput(outputTitle, ui.core, ui.fonts, ui.theme, ui.marks)
     for c in written.commands.mitems:
       ui.core.apply move c
     if written.askSource: ui.ask(dkOutputSource, written.askAt)
