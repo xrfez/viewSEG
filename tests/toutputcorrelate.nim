@@ -1247,6 +1247,60 @@ proc main*() =
           doAssert not noted(got.wrote.lines), "notes: " & $got.wrote.lines
           doAssert d == @[10.0, 10.0, 10.0, 100.0 - Lead], "SEG-Y delays " & $d
 
+  block referenceDelayScalar:
+    ## A SEG-Y reference trace's delay is stored in the trace's own time scalar, and
+    ## a Rev 0 file has none: bytes 215-216 hold whatever they held, and the library
+    ## does not read them. Seen to fail: with the scalar read on a Rev 0 file whose
+    ## reference trace had -10 there, the delay was stored as -5000, not -500.
+    proc scalarFile(path: string; rev: SegyRevision; scalar: int16) =
+      var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
+        measurementSystem: 1, revision: rev))
+      for i in 0 .. RefAux:
+        var k = initTraceKeys()
+        var buf: seq[float32]
+        if i < RefAux:
+          buf = delayedSweep(sweep, Record, Delays[i])
+          (k.traceCode, k.status) = (1'i16, tsLive)
+        else:
+          buf = delayedSweep(sweep, Record, 0)
+          (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+        k.record = 7.0
+        k.channel = float64(i + 1)
+        k.intervalUs = DtMs * 1000.0
+        k.t0Ms = 0.0
+        k.time = 1_700_000_000.0
+        w.writeTrace(k, buf)
+      doAssert w.close().len == 0, "the scalar file did not close"
+      if scalar != 0:
+        var f = openSeismic(path)
+        let at = int(f.traceEntry(RefAux).offset) + 214
+        f.close()
+        var bytes = readFile(path)
+        bytes[at] = char((uint16(scalar) shr 8) and 0xFF)
+        bytes[at + 1] = char(uint16(scalar) and 0xFF)
+        writeFile(path, bytes)
+    proc peakTime(f: SeismicFile; t: int): float64 =
+      let x = samplesOf(f, t)
+      var best = 0
+      for j in 0 ..< x.len:
+        if abs(x[j]) > abs(x[best]): best = j
+      f.traceKeys(t).t0Ms + float64(best) * DtMs
+
+    block rev0Junk:
+      let src = srcDir / "scalar-rev0.sgy"
+      scalarFile(src, SegyRevision(major: 0), -10)
+      var f = openSeismic(src, keys = true)
+      let dest = outDir / "scalar-rev0.sgy"
+      let got = runWrite(f, src, dest, option(sweep, ofSegy))
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      f.close()
+      var o = openSeismic(dest, keys = true)
+      defer: o.close()
+      doAssert o.traceKeys(RefAux).t0Ms == -500.0, "t0 " & $o.traceKeys(RefAux).t0Ms
+      let raw = o.findTraceField(RefAux, "trace.delayRecordingTime")
+      doAssert raw.isSome and raw.get.intVal == -500, "stored " & $raw
+      doAssert peakTime(o, RefAux) == 0.0, "peak at " & $peakTime(o, RefAux)
+
   block storedBytesUnchanged:
     ## (d) The stored-sweep Output is as it was before pilots existed.
     let dest = outDir / "stored-hash.sgy"

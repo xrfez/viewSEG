@@ -457,11 +457,13 @@ proc delayOverrides(file: SeismicFile; trace: int; delayMs: float64;
     over: var seq[HeaderOverride]): bool =
   ## Adds the SEG-Y delay override that makes trace `trace` start at `delayMs`,
   ## in the trace's own time scalar (the scalar also scales its other time
-  ## fields, so it is kept). False, nothing added, when that scalar cannot hold
-  ## the value in the 16-bit field.
+  ## fields, so it is kept; a Rev 0 file has none). False, nothing added, when
+  ## that scalar cannot hold the value in the 16-bit field.
   var scalar = 0
-  let held = file.findTraceField(trace, "trace.timeScalar")
-  if held.isSome and held.get.kind == fvInt: scalar = int(held.get.intVal)
+  # Rev 0 left bytes 215-216 unassigned, and the library reads no scalar there.
+  if file.kind == skSegy and file.index.segy.revision.major >= 1:
+    let held = file.findTraceField(trace, "trace.timeScalar")
+    if held.isSome and held.get.kind == fvInt: scalar = int(held.get.intVal)
   let stored = delayMs * (if scalar < 0: float64(-scalar) else: 1.0 / float64(max(scalar, 1)))
   let whole = round(stored)
   if abs(stored - whole) <= 1e-6 and whole >= -32768.0 and whole <= 32767.0:
