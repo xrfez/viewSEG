@@ -63,7 +63,9 @@ Land 2026/                  the project folder: this is what is opened
   from is not changed. A document without the node has none. A field inside a log
   that this version does not know is kept and written back. A role that is not one,
   a map with more columns than this version keeps, or a file name that is not a
-  plain name in `shotlogs/` is said and left out.
+  plain name in `shotlogs/` is said and left out. A name Windows keeps for a device
+  (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`, any extension)
+  or one that ends in a dot or a space is not a plain name.
 - **`survey/survey.bin`** is what parseSEG read from the copies, in a compact binary form
   (below). Opening the project reads it instead of the survey files.
 - **`cache/`** holds only what the program can make again from the data.

@@ -18,7 +18,8 @@
 ## project copied with its data finds its own copy first" (it found the old
 ## folder); with the store's hash left out of `readStore`'s check, "a
 ## changed byte is refused" (the points came back with a wrong easting);
-## with `later` not written back, "a later version's part is kept".
+## with `later` not written back, "a later version's part is kept"; with a
+## device name accepted, a hostile `(file "CON")` was stored.
 
 import std/[options, os, strutils, times]
 import parseSEG
@@ -131,6 +132,13 @@ proc main*() =
     hostile("(log (name \"a\") (file \"a.csv\") (map" & roles & "))", "left out")
     # A copy that is not a plain file name is left out.
     hostile("(log (name \"a\") (file \"shotlogs/../a.csv\"))", "left out")
+    # A Windows device name, or a trailing dot or space, is not a file name.
+    hostile("(log (name \"a\") (file \"CON\"))", "left out")
+    hostile("(log (name \"a\") (file \"nul.txt\"))", "left out")
+    hostile("(log (name \"a\") (file \"COM1.csv\"))", "left out")
+    hostile("(log (name \"a\") (file \"lpt9\"))", "left out")
+    hostile("(log (name \"a\") (file \"end.\"))", "left out")
+    hostile("(log (name \"a\") (file \"end \"))", "left out")
 
   block places:
     let dir = h"/jobs/Land 2026"
@@ -149,6 +157,15 @@ proc main*() =
     doAssert projectNameProblem("").len > 0 and projectNameProblem("a/b").len > 0 and
         projectNameProblem("Job 1") == ""
     doAssert copyName("a.sps", ["a.sps", "a-2.sps"]) == "a-3.sps"
+    doAssert not "CON".isShotLogFile and not "nul.txt".isShotLogFile
+    doAssert not "COM1.csv".isShotLogFile and not "lpt9".isShotLogFile
+    doAssert not "end.".isShotLogFile and not "end ".isShotLogFile
+    doAssert "shotlog.csv".isShotLogFile
+    doAssert copyName("CON", []) == "CON-2"
+    doAssert copyName("nul.txt", []) == "nul-2.txt"
+    doAssert copyName("COM1.csv", []) == "COM1-2.csv"
+    doAssert copyName("lpt9", []) == "lpt9-2"
+    doAssert copyName("end.", []) == "end" and copyName("end ", []) == "end"
 
   block store:
     withFixtures fx:

@@ -331,11 +331,22 @@ func displayName*(p: ProjectPath): string =
   result = s.extractFilename
   if result.len == 0: result = s
 
+func windowsDeviceName(name: string): bool =
+  ## Whether `name` (with or without an extension) is a name Windows keeps
+  ## for a device: `CON`, `NUL`, `COM1`, `LPT3`. Opening one reaches the
+  ## device, not a file.
+  let stem = name.split('.', 1)[0].strip(leading = false, trailing = true,
+    chars = {' ', '.'}).toUpperAscii
+  stem in ["CON", "PRN", "AUX", "NUL"] or
+    (stem.len == 4 and stem[0 .. 2] in ["COM", "LPT"] and stem[3] in {'1' .. '9'})
+
 func isShotLogFile*(name: string): bool =
   ## Whether `name` can be a shot log's copy: a plain file name, not empty,
-  ## not `.` or `..`, and without a separator or a drive colon.
+  ## not `.` or `..`, without a separator or a drive colon, and not a name
+  ## Windows keeps for a device or one that ends in a dot or a space.
   name.len > 0 and name.len <= MaxShotLogName and name notin [".", ".."] and
-    name.find({'/', '\\', ':'}) < 0
+    name.find({'/', '\\', ':'}) < 0 and name[^1] notin {'.', ' '} and
+    not name.windowsDeviceName
 
 func shotLogCopy*(name: string): string {.inline.} =
   ## The copy of a shot log named `name`, relative to the project folder.
@@ -347,17 +358,21 @@ func isShotLogCopy*(copy: string): bool =
   copy.startsWith(Prefix) and copy[Prefix.len .. ^1].isShotLogFile
 
 func copyName*(name: string; taken: openArray[string]): string =
-  ## A name for the copy of a survey file named `name` that none of `taken`
-  ## has: the name itself, else "name-2.ext" and on. Characters a file name
-  ## cannot have on every system (`\ / : * ? " < > |`, controls) are `_`:
-  ## the copy's place is a file name in `survey/files`.
+  ## A name for the copy of a file named `name` that none of `taken` has:
+  ## the name itself, else "name-2.ext" and on. Characters a file name cannot
+  ## have on every system (`\ / : * ? " < > |`, controls) are `_`. A trailing
+  ## dot or space is dropped (Windows drops them). A name Windows keeps for
+  ## a device gets a suffix, as a taken name does. The copy's place is a
+  ## file name in `survey/files` or `shotlogs/`.
   var clean = name
   for c in mitems(clean):
     if c in {'\\', '/', ':', '*', '?', '"', '<', '>', '|'} or c < ' ': c = '_'
+  while clean.len > 0 and clean[^1] in {'.', ' '}: clean.setLen(clean.len - 1)
+  if clean.len == 0: clean = "_"
   result = clean
   var n = 2
   let (stem, ext) = (clean.changeFileExt(""), clean.splitFile.ext)
-  while result in taken:
+  while result in taken or result.windowsDeviceName:
     result = stem & "-" & $n & ext
     inc n
 
