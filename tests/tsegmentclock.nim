@@ -53,7 +53,8 @@ proc blk(t: uint8): seq[byte] =
   result = newSeq[byte](32)
   result[31] = t
 
-proc makeRecording(path: string; raw: openArray[int64]; noStation = false) =
+proc makeRecording(path: string; raw: openArray[int64]; noStation = false;
+    sensor: openArray[uint8] = []) =
   ## One record, a trace per entry of `raw`: its vendor start-time count
   ## (0: the absent sentinel).
   let fmt = sd8058
@@ -81,7 +82,7 @@ proc makeRecording(path: string; raw: openArray[int64]; noStation = false) =
     t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(
       receiverLineNumber: (if noStation: 0 else: 100),
       receiverPointNumber: (if noStation: 0 else: 101), receiverPointIndex: 1, numSamples: SegLen,
-      sensorType: 2, blockType: 0x40)
+      sensorType: (if sensor.len > 0: sensor[tn - 1] else: 2'u8), blockType: 0x40)
     var vendor = blk(0xB0)
     for i in 0 .. 7: vendor[i] = byte((raw[tn - 1] shr (8 * (7 - i))) and 255)
     t.extensions = vendor
@@ -325,6 +326,56 @@ proc main*() =
       var g = openSeismic(path, keys = true)
       defer: g.close()
       doAssert segmentClock(g, gps).unevenChannels == 1
+
+    block a_channel_that_misses_a_segment_refuses_the_cut:
+      # three like-typed channels of one station, the second missing its third segment: the
+      # later channel would take its place, so no record is written
+      var raw: seq[int64]
+      for seg in 0 ..< 5:
+        for c in 0 ..< 3:
+          if not (seg == 2 and c == 1): raw.add gpsOf(segStart(seg))
+      let path = rec / "s7.sgd"
+      makeRecording(path, raw)
+      var g = openSeismic(path, keys = true)
+      defer: g.close()
+      publishVendors(gps)
+      defer: publishVendors(VendorRegistry())
+      let facts = describeRecording(planRecording(addr g, path, 2.0, gps))
+      doAssert facts.kind == rkReceiverContinuous and facts.unevenChannels == 1, $facts
+      doAssert cutRefusal(facts) == "The channels of one component type at a station cannot " &
+        "be told apart and one of them misses a segment, so the records cannot be " &
+        "assembled safely.", cutRefusal(facts)
+      let dest = fx.dir / "out" / "s7.sgd"
+      let got = runCut(initJobs(), g, path, dest, shotsAt([190_000'i64]),
+        initCutOptions(40.0, -20.0))
+      doAssert got.st == jsFailed and "cannot be told apart" in got.res.reason, got.res.reason
+      doAssert not fileExists(dest)
+
+    block like_typed_geophones_with_a_hydrophone_one_missing_a_segment:
+      # a hydrophone and three geophones of one type; the third channel misses segment 1
+      var raw: seq[int64]
+      var sensors: seq[uint8]
+      for seg in 0 ..< 4:
+        for c in 0 ..< 4:
+          if not (seg == 1 and c == 2):
+            raw.add gpsOf(segStart(seg))
+            sensors.add [1'u8, 2, 2, 2][c]
+      let path = rec / "u5b.sgd"
+      makeRecording(path, raw, sensor = sensors)
+      var g = openSeismic(path, keys = true)
+      defer: g.close()
+      let facts = describeRecording(planRecording(addr g, path, 2.0, gps))
+      doAssert facts.unevenChannels == 1 and cutRefusal(facts).len > 0, $facts
+      # all four channels present in every segment: the cut goes on
+      var even: seq[int64]
+      for seg in 0 ..< 4:
+        for c in 0 ..< 4: even.add gpsOf(segStart(seg))
+      makeRecording(rec / "u5.sgd", even, sensor = [1'u8, 2, 2, 2, 1, 2, 2, 2, 1, 2, 2, 2,
+        1, 2, 2, 2])
+      var h = openSeismic(rec / "u5.sgd", keys = true)
+      defer: h.close()
+      let ok = describeRecording(planRecording(addr h, rec / "u5.sgd", 2.0, gps))
+      doAssert ok.unevenChannels == 0 and cutRefusal(ok) == "", $ok
 
     block traces_without_a_station_are_not_merged:
       var raw: seq[int64]

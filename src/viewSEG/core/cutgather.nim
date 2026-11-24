@@ -431,10 +431,14 @@ func secs(x: float64): string =
   result = t.strip(leading = false, chars = {'0'}).strip(leading = false, chars = {'.'}) & " s"
 
 func cutRefusal*(f: RecordingFacts): string =
-  ## Why the cut refuses a file that is not a continuous receiver gather: what
-  ## the file is, then the reason, in sentences; "" for a continuous one.
+  ## Why the cut refuses a file: for one that is not a continuous receiver gather what
+  ## the file is, then the reason, in sentences; for a continuous one whose like-typed
+  ## channels of a station cannot be told apart safely, that; "" when the cut may go on.
   case f.kind
-  of rkReceiverContinuous: discard
+  of rkReceiverContinuous:
+    if f.unevenChannels > 0:
+      result = "The channels of one component type at a station cannot be told apart and " &
+        "one of them misses a segment, so the records cannot be assembled safely."
   of rkShotGather:
     result = "This file is a shot gather (the receiver changes from trace to trace), not a " &
       "continuous receiver gather."
