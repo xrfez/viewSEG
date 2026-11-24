@@ -31,7 +31,7 @@
 
 import std/[algorithm, math, monotimes, options, os, strutils, times]
 import parseSEG
-import viewSEG/core/[geometry, state]
+import viewSEG/core/[geometry, recordtime, state]
 import viewSEG/ui/imgui/app
 import utils/[fixtures, waiting]
 
@@ -100,7 +100,7 @@ proc recordTimes(path: string): array[3, int64] =
   var f = openSeismic(path)
   doAssert f.len == 3, "the follow SEG-D has " & $f.len & " traces"
   for i in 0 .. 2:
-    let t = f.recordTimeZeroUs(i)
+    let t = f.timeZeroOfRecord(i)
     doAssert t.isSome, "trace " & $i & " has no time"
     result[i] = t.get
   f.close()

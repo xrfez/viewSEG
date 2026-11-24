@@ -4,13 +4,13 @@
 ##
 ## Each loaded log's `ShotIndex` is built on the shot-log job and kept here.
 ## Time zero is not on the keys a tile already holds, so a trace query takes
-## it from the open file's index (`recordTimeZeroUs`). That reads no file
-## for SEG-D, nor for a SEG-Y opened with keys. A SEG-Y without stored keys
-## is skipped, so the UI thread does not read one.
+## it from the trace's keys (`timeZeroOfRecord`). A SEG-D file or a SEG-Y
+## opened with keys has them stored or in its indexed headers. A SEG-Y
+## without stored keys is skipped, so the UI thread does not read one.
 
 import std/[math, options]
 import parseSEG
-import shotfollow, sigtypes
+import recordtime, shotfollow, sigtypes
 
 type
   ShotFollowSource* = enum
@@ -132,7 +132,7 @@ proc timeZero(f: SeismicFile; local: int): Option[int64] {.raises: [].} =
   if kind == skSegy and not f.hasKeys: return none(int64)
   if kind notin {skSegd, skSegy}: return none(int64)
   try:
-    f.recordTimeZeroUs(local)
+    f.timeZeroOfRecord(local)
   except ValueError, IOError, SegTruncatedError:
     none(int64)
 

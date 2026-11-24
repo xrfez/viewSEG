@@ -22,7 +22,7 @@ import parseSEG/model/traceindex
 import processSEG
 import processSEG/continuous/slice
 import processSEG/core/[rows, workspace]
-import viewSEG/core/[cutgather, cutgatherjobs, jobs, shotlog]
+import viewSEG/core/[cutgather, cutgatherjobs, jobs, recordtime, shotlog]
 import utils/waiting
 
 const
@@ -163,7 +163,7 @@ proc main*() =
         let keys = f.traceKeys(t)
         doAssert keys.record == float64(Files[s]), "record of trace " & $t & ": " & $keys.record
         doAssert keys.channel == float64(c + 1), "channel of trace " & $t
-        let zero = f.recordTimeZeroUs(t)
+        let zero = f.timeZeroOfRecord(t)
         doAssert zero.isSome and zero.get == shotUs,
           "time zero of record " & $s & ": " & $zero & " vs " & $shotUs
         let got = samplesOf(f, t)
@@ -190,7 +190,7 @@ proc main*() =
         let k0 = int((shotUs + int64(startMs * 1000) - BaseUs + DtUs div 2) div DtUs)
         for c in 0 .. 1:
           let t = s * 2 + c
-          let zero = f.recordTimeZeroUs(t)
+          let zero = f.timeZeroOfRecord(t)
           doAssert zero.isSome and zero.get == shotUs,
             "time zero of record " & $s & " (start " & $startMs & "): " &
             $(zero.get(0) - shotUs) & " us off"

@@ -6,7 +6,7 @@
 
 import std/[math, options, os, sets]
 import parseSEG
-import edits, outputnames, sigtypes, unitserial, vendormaps
+import edits, outputnames, recordtime, sigtypes, unitserial, vendormaps
 
 const KeyChunk = 64 ## traces whose keys are compared together
 
@@ -216,7 +216,7 @@ proc fillSeismic(v: var NameValues; file: SeismicFile; edits: FileEdits;
       if dropKilled and edits.has(teKilled, i): continue
       var keys = buf[k]
       if useOwn: keys = ownGeometry(keys, ownBuf[k])
-      let us = file.recordTimeZeroUs(i)
+      let us = timeZeroOfRecord(buf[k], file.kind)
       if keys.status == tsAuxiliary:
         considerParts(auxiliary, keys, us, buf[k].timeOrigin, segd)
         if wantSensor and not sensorAux.mixed:

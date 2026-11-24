@@ -3,7 +3,7 @@
 ##
 ## Seen to fail: with followAnswer always returning sfNone, pointer_matches_row
 ## got source none. With the query built from keys.time instead of
-## recordTimeZeroUs, delay_matches_time_zero matched row 0. With exact still
+## timeZeroOfRecord, delay_matches_time_zero matched row 0. With exact still
 ## t.isSome, whole_second_matches_within_the_second got row -1 rule mrNone.
 ## With exact forced false, rev3_matches_exactly got row 0 rule
 ## mrTimeAndNumbers, and delay_matches_time_zero matched row -1. With the
@@ -14,7 +14,7 @@
 import std/[math, options, os, strutils, times]
 import parseSEG
 import parseSEG/io/memsink
-import viewSEG/core/[shotfollow, shotlog, state]
+import viewSEG/core/[recordtime, shotfollow, shotlog, state]
 import utils/[fixtures, sigfiles, waiting]
 
 const Land = currentSourcePath().parentDir.parentDir / "samples" / "land" / "shots.sgd"
@@ -46,7 +46,7 @@ proc importLog(st: var AppState; path: string; n: int) =
   doAssert st.settle(st.shotLogCount == n and st.jobs.active.len == 0), "the log did not load"
 
 proc timeZeroOf(st: AppState; local: int): int64 =
-  let t = st.sessions[0].file.recordTimeZeroUs(local)
+  let t = st.sessions[0].file.timeZeroOfRecord(local)
   doAssert t.isSome, "trace " & $local & " has no time zero"
   t.get
 
@@ -54,7 +54,7 @@ proc laterTrace(st: AppState): int =
   ## A trace whose time zero is not the first trace's.
   let first = timeZeroOf(st, 0)
   for local in 1 ..< st.sessions[0].len:
-    let t = st.sessions[0].file.recordTimeZeroUs(local)
+    let t = st.sessions[0].file.timeZeroOfRecord(local)
     if t.isSome and t.get != first: return local
   doAssert false, "every trace has the first time zero"
   0
@@ -66,7 +66,7 @@ proc writeBytes(path: string; b: seq[byte]) =
 
 proc delaySegd(): seq[byte] =
   ## Rev 3: GH#3 is T, the Timestamp block is T + 100 ms, so keys.time is
-  ## sample 0 and recordTimeZeroUs is T.
+  ## sample 0 and timeZeroOfRecord is T.
   const T = 1_700_000_020_125_000'i64
   const Delay = 100_000'i32
   let gh3 = utcUsToGpsUs(T)
@@ -181,7 +181,7 @@ proc main*() =
       writeBytes(path, delaySegd())
       st.apply Command(kind: ckOpen, paths: @[path])
       doAssert st.settle(st.sessions.len == 1 and st.jobs.active.len == 0), "delay file did not open"
-      let zero = st.sessions[0].file.recordTimeZeroUs(0)
+      let zero = st.sessions[0].file.timeZeroOfRecord(0)
       doAssert zero.isSome
       let keys = st.sessions[0].file.traceKeys(0)
       doAssert not keys.time.isNaN
@@ -280,11 +280,11 @@ proc main*() =
       for i, s in st.sessions:
         if not s.isSignature: landAt = i
       doAssert landAt >= 0
-      let first = st.sessions[landAt].file.recordTimeZeroUs(0).get
+      let first = st.sessions[landAt].file.timeZeroOfRecord(0).get
       var other = 0
       var otherUs = first
       for t in 1 ..< st.sessions[landAt].len:
-        let z = st.sessions[landAt].file.recordTimeZeroUs(t)
+        let z = st.sessions[landAt].file.timeZeroOfRecord(t)
         if z.isSome and z.get != first:
           other = t
           otherUs = z.get
