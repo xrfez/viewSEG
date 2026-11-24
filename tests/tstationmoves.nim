@@ -1,15 +1,18 @@
 ## Station position overrides (`core/stationmoves`): which move applies before,
 ## at and after each `fromTime`; two moves of one station; an undated move;
 ## replace; remove; a trace with no time; `applyMoves` changing only the
-## receiver position; station-key rounding equal to the join's.
+## receiver position; station-key rounding equal to the join's; the project
+## document written and read back, and an old project reading as no moves.
 ##
 ## Seen to fail: with the dated move taken only when `fromTime` is strictly
 ## before the trace (the `<=` in `movedPosition` written as `<`), "at the
-## fromTime the move applies" (the trace at 1000 kept its old position).
+## fromTime the move applies" (the trace at 1000 kept its old position); with
+## `stationMoves` left out of `projectDocument`, "the project document writes
+## the moves" (the written document had no `(stationMoves`).
 
-import std/[math, options]
+import std/[math, options, strutils]
 import parseSEG
-import viewSEG/core/stationmoves
+import viewSEG/core/[project, projectnif, stationmoves]
 
 proc moveAt(line, point: float64; index: int16; fromTime: Option[float64]; x, y: float64;
     elev: Option[float64] = none(float64); note = ""): StationMove =
@@ -166,6 +169,71 @@ proc main*() =
     var keys = filled(100.001, 200.004, 1, 10.0)
     doAssert applyMoves(moves, keys)
     doAssert keys.rcvX == 1.5 and keys.rcvY == 2.5
+
+  block project_round_trip:
+    var moves = StationMoves()
+    moves.add moveAt(100.004, 199.996, 1, some(1_000.5), 1.2345678901234567,
+      -2.5, some(3.25), "moved after \"flooding\"")
+    moves.add moveAt(10, 20, 0, none(float64), 8, 9, note = "survey")
+    var d = ProjectDoc(name: "Land 2026")
+    d.stationMoves = moves
+    let text = projectDocument(d)
+    doAssert "(stationMoves" in text and "fromTime" in text, "the project document writes the moves"
+    doAssert "1.2345678901234567" in text, text
+    var problems: seq[string]
+    let back = readProject(text, "project.nif", problems)
+    doAssert problems.len == 0, $problems
+    doAssert back.stationMoves.len == 2
+    doAssert back.stationMoves[0].station == stationKey(10, 20, 0)
+    doAssert back.stationMoves[0].fromTime.isNone
+    doAssert back.stationMoves[0].note == "survey"
+    doAssert back.stationMoves[1].station == stationKey(100.004, 199.996, 1)
+    doAssert back.stationMoves[1].fromTime == some(1000.5)
+    doAssert back.stationMoves[1].x == 1.2345678901234567
+    doAssert back.stationMoves[1].y == -2.5 and back.stationMoves[1].elev == some(3.25)
+    doAssert back.stationMoves[1].note == "moved after \"flooding\""
+    let again = projectDocument(back)
+    doAssert again == text, "written again as read"
+
+  block old_project:
+    var problems: seq[string]
+    let old = readProject("(.nif27)\n(project (version 1) (name \"old\"))\n", "project.nif",
+      problems)
+    doAssert problems.len == 0, $problems
+    doAssert old.stationMoves.len == 0, "an old project reads as no moves"
+    doAssert "stationMoves" notin projectDocument(old)
+
+  block unknown_kept:
+    var moves = StationMoves()
+    moves.add moveAt(1, 2, 1, some(10.0), 3, 4)
+    var d = ProjectDoc(name: "Land 2026")
+    d.stationMoves = moves
+    let withExtra = projectDocument(d).replace("(version 1)", "(version 1)\n (picks (file \"x\"))")
+    var problems: seq[string]
+    let back = readProject(withExtra, "project.nif", problems)
+    doAssert problems.len == 0, $problems
+    doAssert back.later.len == 1 and back.later[0].tag == "picks"
+    doAssert back.stationMoves.len == 1 and back.stationMoves[0].x == 3
+    var again: seq[string]
+    let kept = readProject(projectDocument(back), "project.nif", again)
+    doAssert kept.later.len == 1 and kept.later[0].tag == "picks",
+      "a later version's part is kept"
+
+  block bad_move:
+    let text = """(.nif27)
+(project (version 1) (name "Land")
+ (stationMoves
+  (move (line 1.0) (point 2.0) (index 1) (y 4.0))
+  (move (line 1.0) (point 2.0) (index 1) (fromTime noon) (x 3.0) (y 4.0))
+  (move (line 5.0) (point 6.0) (x 7.0) (y 8.0) (elev "high") (note "kept") (sensor 1))))
+"""
+    var problems: seq[string]
+    let back = readProject(text, "project.nif", problems)
+    doAssert back.stationMoves.len == 1, "a bad move is left out; a bad fromTime is not undated"
+    doAssert back.stationMoves[0].station == stationKey(5, 6, 0), "a missing index is 0"
+    doAssert back.stationMoves[0].elev.isNone and back.stationMoves[0].note == "kept"
+    doAssert back.later.len == 0, "a field inside a move is not a later version's part"
+    doAssert problems.len > 0
 
   echo "tstationmoves: done"
 

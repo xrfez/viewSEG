@@ -28,10 +28,18 @@
 ## version does not know is kept (`ProjectDoc.later`) and written back as it
 ## was. A document of a later version than `ProjectVersion` reads as far as
 ## it can; the program then opens the project read-only.
+##
+## A station moved during a deployment is
+## `(stationMoves (move (line ...) (point ...) (index ...) (x ...) (y ...)))`.
+## `fromTime` (the same absolute time as `TraceKeys.time`) and `elev` are
+## written when given; a move with no `fromTime` holds for every trace of
+## the station. Absent means no moves. The position is not written into the
+## seismic file or the survey file.
 
-import std/[math, strutils, times]
+import std/[math, options, strutils, times]
+import parseSEG
 import analysis, breakmodel, identity, join, nif, processing, project, settings,
-  settingsnif, vendormaps, vibprofile
+  settingsnif, stationmoves, vendormaps, vibprofile
 
 const
   KindNames: array[JoinFileKind, string] = ["sps", "p1", "csv"]
@@ -70,6 +78,18 @@ proc value(w: var NifWriter; tag: string; x: float64) =
 
 proc finite(x: float64): bool {.inline.} =
   x == x and x != Inf and x != -Inf
+
+proc writeMove(w: var NifWriter; m: StationMove) =
+  w.open "move"
+  w.value("line", m.station.line)
+  w.value("point", m.station.point)
+  w.value("index", int64(m.station.index))
+  if m.fromTime.isSome: w.value("fromTime", m.fromTime.get)
+  w.value("x", m.x)
+  w.value("y", m.y)
+  if m.elev.isSome: w.value("elev", m.elev.get)
+  if m.note.len > 0: w.value("note", m.note)
+  w.close
 
 proc choice(w: var NifWriter; tag, name: string) =
   w.open tag
@@ -195,6 +215,10 @@ proc projectDocument*(d: ProjectDoc): string =
   for c in d.vibTops: w.value("vibTop", c)
   if d.hasVibProfile: w.writeVibProfile(d.vibProfile)
   if d.vibJobWeights.weightsSet: w.writeVibWeights(d.vibJobWeights)
+  if d.stationMoves.len > 0:
+    w.open "stationMoves"
+    for m in d.stationMoves: w.writeMove m
+    w.close
   if d.lastFolder.len > 0: w.value("lastFolder", d.lastFolder)
   if d.includeSubfolders: w.value("includeSubfolders", true)
   case d.vendorChoice.mode
@@ -340,6 +364,76 @@ proc units(r: var Reading; n: NifNode; u: var JoinUnits) =
     elif k.isTree("file"): r.choice(k, UnitNames, u.file)
     elif k.isTree("surveyFromHeaders"): r.flag(k, u.surveyFromHeaders)
     elif k.isTree("fileFromHeaders"): r.flag(k, u.fileFromHeaders)
+
+proc finiteNumber(n: NifNode; x: var float64): bool =
+  ## Whether `n` is `(tag v)` with `v` a finite number.
+  if n.kids.len != 1: return false
+  case n.kids[0].kind
+  of nkFloat: x = n.kids[0].floatVal
+  of nkInt: x = float64(n.kids[0].intVal)
+  else: return false
+  x == x and x != Inf and x != -Inf
+
+proc readMove(r: var Reading; n: NifNode; moves: var StationMoves) =
+  ## One `(move ...)`. A move without a line, a point, an x or a y, or with a
+  ## `fromTime` or an index that is not usable, is left out. An elevation that
+  ## is not a number is said and left out; the move is kept. A field this
+  ## version does not know is skipped.
+  var
+    line, point, x, y: float64
+    index: int16
+    fromTime, elev: Option[float64]
+    note = ""
+    hasLine, hasPoint, hasX, hasY, badFrom, badIndex, badElev: bool
+  for k in n.kids:
+    if k.kind != nkTree: r.problem(k, "(move) holds trees")
+    else:
+      case k.tag
+      of "line":
+        if finiteNumber(k, line): hasLine = true
+        else: r.problem(k, "(line) needs a number")
+      of "point":
+        if finiteNumber(k, point): hasPoint = true
+        else: r.problem(k, "(point) needs a number")
+      of "index":
+        if k.kids.len == 1 and k.kids[0].kind == nkInt and
+            k.kids[0].intVal >= low(int16).int64 and k.kids[0].intVal <= high(int16).int64:
+          index = int16(k.kids[0].intVal)
+        else:
+          badIndex = true
+          r.problem(k, "(index) needs a whole number from " & $low(int16) & " to " &
+            $high(int16))
+      of "fromTime":
+        var t = 0.0
+        if finiteNumber(k, t): fromTime = some(t)
+        else:
+          badFrom = true
+          r.problem(k, "(fromTime) needs a time")
+      of "x":
+        if finiteNumber(k, x): hasX = true
+        else: r.problem(k, "(x) needs a number")
+      of "y":
+        if finiteNumber(k, y): hasY = true
+        else: r.problem(k, "(y) needs a number")
+      of "elev":
+        var z = 0.0
+        if finiteNumber(k, z): elev = some(z)
+        else:
+          badElev = true
+          r.problem(k, "(elev) needs a number; the move is kept without an elevation")
+      of "note": r.text(k, note)
+      else: discard
+  if badFrom or badIndex or not hasLine or not hasPoint or not hasX or not hasY:
+    r.problem(n, "a station move is left out")
+  else:
+    if badElev: elev = none(float64)
+    moves.add StationMove(station: StationKey(line: line, point: point, index: index),
+      fromTime: fromTime, x: x, y: y, elev: elev, note: note)
+
+proc readMoves(r: var Reading; n: NifNode; moves: var StationMoves) =
+  for c in n.kids:
+    if c.isTree("move"): r.readMove(c, moves)
+    else: r.problem(c, "(stationMoves) holds moves")
 
 proc store(r: var Reading; n: NifNode; s: var StoreInfo) =
   for k in n.kids:
@@ -495,6 +589,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
         if text.len > 0 and result.vibTops.len < 256: result.vibTops.add text
       of "vibProfile": r.vibProfile(c, result)
       of "vibWeights": r.vibWeights(c, result)
+      of "stationMoves": r.readMoves(c, result.stationMoves)
       of "vendorMap":
         var name = ""
         r.text(c, name)

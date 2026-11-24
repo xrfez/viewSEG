@@ -19,8 +19,8 @@
 
 import std/[os, strutils, times]
 import parseSEG
-import breakmodel, displaypresets, filesystem, join, nif, processing, vendormaps,
-  vibprofile
+import breakmodel, displaypresets, filesystem, join, nif, processing, stationmoves,
+  vendormaps, vibprofile
 
 const
   ProjectFileName* = "project.nif"       ## the project document, in the project folder
@@ -125,6 +125,9 @@ type
       ## `vibProfile` was stored; an older project, or one with none, is false
     vibJobWeights*: VibJobWeights
       ## the job's hold-down, baseplate and reaction mass, in kilograms (`jobWeights`)
+    stationMoves*: StationMoves
+      ## receiver stations moved during a deployment: a new position from a time
+      ## on, not written into the seismic file or the survey file
     vendorChoice*: VendorChoice
       ## the vendor map rule of the project's files (`core/vendormaps`); automatic when
       ## the document says nothing
