@@ -35,11 +35,20 @@
 ## option keeps the keys writer. The note says the signature file's own
 ## header block is not carried, and the position tick is the same as for any
 ## other file.
+##
+## `correlation` set: each written trace is correlated with that loaded
+## reference after the other sample options, into the listen time, and the
+## writer is opened with that sample count. The reference and its spectrum
+## are prepared once. None leaves every sample as it is written today. A
+## reference the correlation job would refuse is refused before any byte is
+## written, in that job's words.
 
-import std/[math, os, random, strutils, times]
+import std/[math, options, os, random, sets, strutils, times]
 import parseSEG
 import parseSEG/model/traceindex
-import edits, filesystem, jobs, panels, processing, reader, signatures, sorting, vendormaps
+import processSEG
+import correlatejobs, edits, filesystem, jobs, panels, processing, reader, signatures, sorting,
+  vendormaps
 
 const
   TraceBlock = 64 ## traces read, then written, between two cancel checks
@@ -63,6 +72,14 @@ type
     ofSegy = "SEG-Y"
     ofSegd = "SEG-D"
 
+  OutputCorrelation* = object
+    ## A loaded reference, the sweep `correlateWork` takes, and the auxiliary
+    ## traces that hold one. None on `OutputOptions` leaves every sample as
+    ## it is written today.
+    reference*: seq[float32]
+    referenceDtMs*: float64
+    referenceTraces*: seq[int]
+
   OutputOptions* = object
     ## What to apply while writing one file. Display-only gain is never applied.
     format*: OutputFormat
@@ -79,6 +96,9 @@ type
     writeSessionPositions*: bool = true
       ## A survey join or a station move is written into the headers, on every
       ## path. Off: the file's own positions are written, and the result says so.
+    correlation*: Option[OutputCorrelation]
+      ## None: the samples written today. Set: correlate each trace with this
+      ## reference, into the listen time, as the correlation job does.
 
   OutputResult* = object
     ## What the write did. `ok` false: `reason` is a sentence for the user.
@@ -344,8 +364,9 @@ proc boundary(file: SeismicFile; trace: int; byEntry, segdOut: bool): int64 =
 func changesTraces(opts: OutputOptions): bool =
   ## Whether an option that changes samples or which traces are written is on.
   ## The flag counts, not whether a trace is actually different.
-  opts.sortKeys.len > 0 or opts.dropKilled or opts.applyReversals or opts.applyShifts or
-    opts.applyOwnFilters or opts.applyProcessing
+  opts.correlation.isSome or opts.sortKeys.len > 0 or opts.dropKilled or
+    opts.applyReversals or opts.applyShifts or opts.applyOwnFilters or
+    opts.applyProcessing
 
 proc writePart(path: string; bytes: openArray[byte]) =
   ## Writes `bytes` into the empty part file `path`, through `fs`.
@@ -437,6 +458,43 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         abort(sink, dest, part, false, "The destination is a folder.", false)
       if fs.fileExists(dest):
         abort(sink, dest, part, false, "The destination already exists.", false)
+      var correlating = false
+      var listen = 0
+      var recordSamples = 0
+      var lag = 0
+      var outUs = 0.0
+      var refs = initHashSet[int]()
+      var odd = initHashSet[int]()
+      var plan: CorrelationPlan[float32]
+      var ws = initWorkspace()
+      var corrDst: seq[float32] = @[]
+      var corrKeys: seq[TraceKeys] = @[]
+      var corrCounts: seq[int] = @[]
+      var corrMeta: ChunkMeta
+      if opts.correlation.isSome:
+        if file == nil or not file[].isOpen:
+          raise newException(ValueError, "The source file is not open.")
+        if file[].len == 0:
+          raise newException(ValueError, "The file has no traces.")
+        if not file[].hasKeys:
+          if not file[].inMemory: fs.mappedRead(source, headers = true)
+          file[].ensureKeys()
+        var loaded = opts.correlation.get
+        let ready = listenShape(file, loaded.reference, loaded.referenceDtMs)
+        refs = referenceSet(file[].len, loaded.referenceTraces)
+        listen = ready.listen
+        recordSamples = ready.samples
+        for t in ready.odd: odd.incl(t)
+        lag = wholeSamples(-AuxLeadMs, ready.dtMs)
+        if opts.format == ofSegd: outUs = wholeMicroseconds(ready.dtMs)
+        let pilot = initPilot(loaded.reference, loaded.referenceDtMs)
+        plan = initCorrelationPlan(float32, pilot, ready.dtMs, recordSamples)
+        ws.reserve(plan.workspaceSize)
+        corrDst = newSeq[float32](listen)
+        corrKeys = @[initTraceKeys()]
+        corrCounts = @[recordSamples]
+        corrMeta = initChunkMeta(rowsOf(corrKeys, corrCounts), ready.dtMs)
+        correlating = true
       part = claimPart(dest)
       if part.len == 0:
         abort(sink, dest, part, false, "The destination's folder has no free name.", false)
@@ -561,20 +619,26 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         openedHeader = true
       var samples = newSeq[float32]()
       let dtMs = file[].sampleIntervalUs(0) / 1000.0
+      var correlatedOver: seq[HeaderOverride] = @[]
+      if correlating and not segdOut:
+        correlatedOver = @[headerOverride("trace.correlated", CorrelatedYes)]
       block writing:
         var w: SeismicWriter
         if like:
           w = openSeismicWriter(part, like = file[])
         elif segdOut:
           var count = int(file[].traceEntry(head).numSamples)
-          for i in 0 ..< n:
-            if opts.dropKilled and edits.has(teKilled, i): continue
-            let c = int(file[].traceEntry(i).numSamples)
-            if c != count:
-              abort(sink, dest, part, claimed,
-                "SEG-D output needs one sample count; this file has more than one.", false)
+          if correlating: count = listen
+          else:
+            for i in 0 ..< n:
+              if opts.dropKilled and edits.has(teKilled, i): continue
+              let c = int(file[].traceEntry(i).numSamples)
+              if c != count:
+                abort(sink, dest, part, claimed,
+                  "SEG-D output needs one sample count; this file has more than one.", false)
           var o = SegdOutputOptions(sampleIntervalUs: file[].sampleIntervalUs(head),
             numSamples: count)
+          if correlating: o.sampleIntervalUs = outUs
           let t0 = file[].traceKeys(head).time
           if not t0.isNaN: o.time = t0
           w = openSeismicWriter(part, o)
@@ -598,8 +662,32 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               if listed.len > 0: own = listed[0].filter
             applyPreparedTrace(samples, file[].traceKeys(t), dtMs, reversed, shiftMs,
               opts.processing, opts.applyProcessing, own, opts.applyOwnFilters)
+          if correlating:
+            let have = samples.len
+            if have < recordSamples:
+              samples.setLen recordSamples
+              for j in have ..< recordSamples: samples[j] = 0
+            elif have > recordSamples:
+              samples.setLen recordSamples
+            let aux = file[].traceKeys(t).status == tsAuxiliary
+            let isOdd = t in odd
+            let isRef = t in refs
+            if aux and isRef and not isOdd and lag != 0: timeShift(samples, lag)
+            if aux and (not isRef or isOdd): corrKeys[0].status = tsDead
+            else: corrKeys[0].status = tsLive
+            plan.correlateInto(rowBlock(samples, 1, recordSamples),
+              rowBlock(corrDst, 1, listen), corrMeta, ws)
+            if not (aux and not isRef and not isOdd):
+              for j in 0 ..< listen: samples[j] = corrDst[j]
           if like:
-            if carryPositions:
+            if correlating:
+              if carryPositions:
+                w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
+                  keys = file[].traceKeys(t), overrides = correlatedOver)
+              else:
+                w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
+                  overrides = correlatedOver)
+            elif carryPositions:
               w.writeTrace(file[], t, samples, keys = file[].traceKeys(t))
             else:
               w.writeTrace(file[], t, samples)
@@ -610,7 +698,11 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               headerKeys.traceKeysInto([t], own)
               keys = withOwnGeometry(keys, own[0])
             let channel = if keys.status == tsAuxiliary: sctOther else: sctSeismic
-            w.writeTrace(keys, samples, channelType = channel)
+            if correlating:
+              w.writeTrace(keys, toOpenArray(samples, 0, listen - 1),
+                overrides = correlatedOver, channelType = channel)
+            else:
+              w.writeTrace(keys, samples, channelType = channel)
           inc written
         template writeList(list: openArray[int]) =
           if list.len > 0:

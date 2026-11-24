@@ -34,7 +34,7 @@ const
     ## length kept, then the same reference and the same listen length, so
     ## both sides of the wavelet show.
   BlockTraces = 64
-  CorrelatedYes = 2 ## SEG-Y trace header byte 125: 2 = yes.
+  CorrelatedYes* = 2 ## SEG-Y trace header byte 125: 2 = yes.
 
 type
   CorrelateAsk* = object
@@ -134,13 +134,57 @@ proc checkReference(samples: openArray[float32]) =
     energy += x * x
   if energy == 0: refuse("the reference sweep is all zeros.")
 
-proc referenceSet(n: int; traces: openArray[int]): HashSet[int] =
+proc referenceSet*(n: int; traces: openArray[int]): HashSet[int] =
+  ## The reference traces, or the refusal a repeated or out-of-range index gets.
   result = initHashSet[int]()
   for t in traces:
     if t < 0 or t >= n:
       refuse("reference trace " & $t & " is outside 0 .. " & $(n - 1) & ".")
     if t in result: refuse("reference trace " & $t & " is listed twice.")
     result.incl(t)
+
+type
+  ListenShape* = object
+    ## The record a correlation writes. `samples` is the seismic length;
+    ## `listen` is that length minus the sweep. `odd` lists auxiliary traces
+    ## at another interval. `padded` and `cut` count auxiliary traces fitted
+    ## to the seismic length.
+    samples*: int
+    dtMs*: float64
+    listen*: int
+    odd*: seq[int]
+    padded*: int
+    cut*: int
+
+proc listenShape*(file: ptr SeismicFile; reference: openArray[float32];
+    referenceDtMs: float64): ListenShape =
+  ## What `correlateWork` needs before it writes, or the same refusal.
+  ## A record that is not longer than the sweep, or a sample interval that
+  ## differs, is refused here. No file is written.
+  checkReference(reference)
+  if referenceDtMs.isNaN or referenceDtMs <= 0 or referenceDtMs == Inf:
+    refuse("the reference sweep has no sample interval.")
+  let shape = recordShape(file)
+  if not sameInterval(referenceDtMs, shape.dtMs):
+    refuse("the reference sweep is sampled every " & msText(referenceDtMs) &
+      " ms and the record every " & msText(shape.dtMs) & " ms.")
+  if reference.len >= shape.samples:
+    refuse("the reference sweep is as long as the record or longer, " &
+      "so there is no listen time.")
+  result.samples = shape.samples
+  result.dtMs = shape.dtMs
+  result.listen = shape.samples - reference.len
+  result.odd = shape.odd
+  result.padded = shape.padded
+  result.cut = shape.cut
+
+proc wholeMicroseconds*(dtMs: float64): float64 =
+  ## The interval in microseconds, or the refusal a SEG-D correlation write
+  ## gives when it is not a whole number the writer can store.
+  result = round(dtMs * 1000.0)
+  if result != dtMs * 1000.0 or result < 1 or result > float64(high(uint32)):
+    refuse("the sample interval is not a whole number of microseconds, " &
+      "so the file cannot be written.")
 
 proc firstTime(file: ptr SeismicFile): float64 =
   result = NaN
@@ -154,10 +198,7 @@ proc openOut(file: ptr SeismicFile; name: string; listen: int; dtMs, time: float
   of skSegy:
     result = openSeismicWriterBytes(file[], name)
   of skSegd:
-    let us = round(dtMs * 1000.0)
-    if us != dtMs * 1000.0 or us < 1 or us > float64(high(uint32)):
-      refuse("the sample interval is not a whole number of microseconds, " &
-        "so the file cannot be written.")
+    let us = wholeMicroseconds(dtMs)
     let sum = file[].summary
     var units = sum.coordinateUnits
     if units notin {cuMeters, cuFeet, cuUnknown}: units = cuUnknown
@@ -168,7 +209,7 @@ proc openOut(file: ptr SeismicFile; name: string; listen: int; dtMs, time: float
   of skSeg2, skUnknown:
     refuse("the file cannot be written in memory.")
 
-proc writtenChannelType(code: uint8): SegdChannelType =
+proc writtenChannelType*(code: uint8): SegdChannelType =
   ## 0 is seismic: a SEG-Y trace, and an unknown set, has no channel type.
   ## The enum has holes, so it cannot be walked.
   if code == 0: return sctSeismic
@@ -298,23 +339,14 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   if not file[].hasKeys: refuse("the file was opened without its keys.")
   fs.mappedRead(ask.path)
   let modified = fs.getFileInfo(ask.path).lastWriteTime
-  checkReference(ask.reference)
-  if ask.referenceDtMs.isNaN or ask.referenceDtMs <= 0 or ask.referenceDtMs == Inf:
-    refuse("the reference sweep has no sample interval.")
-  let shape = recordShape(file)
-  let dtMs = shape.dtMs
-  if not sameInterval(ask.referenceDtMs, dtMs):
-    refuse("the reference sweep is sampled every " & msText(ask.referenceDtMs) &
-      " ms and the record every " & msText(dtMs) & " ms.")
+  let ready = listenShape(file, ask.reference, ask.referenceDtMs)
+  let dtMs = ready.dtMs
   let nTraces = file[].len
-  let recordSamples = shape.samples
+  let recordSamples = ready.samples
   var odd = initHashSet[int]()
-  for t in shape.odd: odd.incl(t)
+  for t in ready.odd: odd.incl(t)
   let sweepLen = ask.reference.len
-  if sweepLen >= recordSamples:
-    refuse("the reference sweep is as long as the record or longer, " &
-      "so there is no listen time.")
-  let listen = recordSamples - sweepLen
+  let listen = ready.listen
   let refs = referenceSet(nTraces, ask.referenceTraces)
   var delayed = 0
   for t in ask.referenceTraces:
@@ -390,14 +422,14 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
     sweepLine(slot[].sweepMs, delayed, leadMs)]
   if delayed > 0 and slot[].listenMs < 2.0 * leadMs:
     slot[].lines.add waveletLine(slot[].listenMs, leadMs)
-  let fitted = fitLine(shape.padded, shape.cut)
+  let fitted = fitLine(ready.padded, ready.cut)
   if fitted.len > 0: slot[].lines.add fitted
   for t in 0 ..< nTraces:
     if t in refs and file[].traceKeys(t).status == tsAuxiliary and t notin odd:
       let held = int(file[].traceEntry(t).numSamples)
       if held < sweepLen + leadSamples:
         slot[].lines.add cutSweepLine(t, float64(held) * dtMs, slot[].sweepMs, leadMs)
-  for t in shape.odd:
+  for t in ready.odd:
     slot[].lines.add intervalLine(t, t in refs, traceDt(file, t), dtMs)
   let uncorrelated = binaryUncorrelatedLine(file)
   if uncorrelated.len > 0: slot[].lines.add uncorrelated
