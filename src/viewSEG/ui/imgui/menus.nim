@@ -25,7 +25,7 @@ import std/os
 import imguin/cimgui
 import ../../core/[analysis, layouts]
 import ../../core/shortcuts as shortcutTable
-import ../../view/[missingwords, outputwords, theme]
+import ../../view/[missingwords, outputwords, qualitywords, theme]
 import clearsurvey, icons, marks, plotviews, thememenu, windows
 
 type
@@ -64,6 +64,7 @@ type
     maFirstBreaks = "First-break overlay",
     maTemplateOnly = "Only traces in the template",
     maMissingTraces = "Missing traces...",
+    maTraceQuality = "Trace quality",
     maOutput = "Output..."
 
   MenuInput* = object
@@ -115,6 +116,8 @@ type
     templateAvailable*: bool ## a relation file is there for that (the item is enabled)
     missingReady*: bool ## Reports > Missing traces can run
     missingWhy*: string ## why it cannot; "" when it can
+    qualityReady*: bool ## Reports > Trace quality can run
+    qualityWhy*: string ## why it cannot; "" when it can
     outputReady*: bool ## File > Output... can run
     outputWhy*: string ## why it cannot; "" when it can
 
@@ -164,7 +167,7 @@ const
     maShowMessages: 0,
     maShortcuts: ImGui_Key_F1.cint, maAbout: 0, maGenerateReference: 0,
     maReferenceArchive: 0, maCompare: 0, maFirstBreaks: 0, maTemplateOnly: 0,
-    maMissingTraces: 0, maOutput: 0]
+    maMissingTraces: 0, maTraceQuality: 0, maOutput: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
@@ -184,11 +187,12 @@ const
     maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog,
     maShortcuts: IconList, maAbout: IconInfo, maGenerateReference: IconVibrator,
     maReferenceArchive: IconReference, maCompare: IconPulse, maFirstBreaks: IconTarget,
-    maTemplateOnly: IconTable, maMissingTraces: IconTable, maOutput: IconExport]
+    maTemplateOnly: IconTable, maMissingTraces: IconTable, maTraceQuality: IconTable,
+    maOutput: IconExport]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
     awMessages: IconLog, awSpectrum: IconPulse, awAux: IconPlot, awMissing: IconTable,
-    awOutput: IconLog]
+    awQuality: IconTable, awOutput: IconLog]
 
 const
   FollowWords* = "Follow the latest file"
@@ -536,14 +540,21 @@ proc drawToolsMenu(input: MenuInput; res: var MenuResult) =
     "Messages; it cannot write files. For this run only.")
 
 proc drawReportsMenu(input: MenuInput; res: var MenuResult) =
-  ## Reports: the missing-trace scan. The item stays inactive until a folder
-  ## is open and a relation file is loaded.
+  ## Reports: the missing-trace scan, then the trace-quality scan. Missing
+  ## traces stays inactive until a folder is open and a relation file is
+  ## loaded. Trace quality needs only the folder.
   igBeginDisabled(not input.missingReady)
   item(maMissingTraces, res)
   igEndDisabled()
   tip(if input.missingReady: MenuTip else: input.missingWhy)
   if not input.missingReady and marked != nil:
     marked[].mark("menu.Missing traces.disabled")
+  igBeginDisabled(not input.qualityReady)
+  item(maTraceQuality, res)
+  igEndDisabled()
+  tip(if input.qualityReady: QualityTip else: input.qualityWhy)
+  if not input.qualityReady and marked != nil:
+    marked[].mark("menu.Trace quality.disabled")
 
 proc drawAnalysisMenu(input: MenuInput; res: var MenuResult) =
   ## Analysis: new plots, the comparison, the references.

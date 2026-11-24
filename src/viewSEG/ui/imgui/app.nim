@@ -5,8 +5,8 @@
 ## The window holds a menu bar, an icon toolbar, a dockspace with the file
 ## list (`filelist`), the record list (`recordlist`), the trace panel
 ## (`tracepanel`), the map (`mapwindow`), the Headers window (`headerswindow`), the Jobs
-## window (`jobswindow`), the Messages window and the Missing traces window
-## (`missingwindow`), and a status bar with the
+## window (`jobswindow`), the Messages window, the Missing traces window
+## (`missingwindow`) and the Trace quality window (`qualitywindow`), and a status bar with the
 ## running job's progress and its Cancel button, and the readout of what
 ## lies under the mouse in the plot (or its coordinates on the map); files
 ## and folders dropped on the window are opened;
@@ -46,10 +46,11 @@ from ../../core/editmarks import shiftWords
 import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
 import curveplot as curveplotui
-import ../../view/[jobstatus, missingwords, outputwords]
+import ../../view/[jobstatus, missingwords, outputwords, qualitywords]
 import aboutbox, agentshot, chrome, clearsurvey, dpi, filelist, fonts, frames, genpreview,
   headerswindow, icons, settingswindow, shortcutswindow,
   jobswindow, joindialog, mapwindow, memorywindow, menus, messages, missingwindow, outputwindow,
+  qualitywindow,
   plotwindows,
   projectwindow,
   placement, references,
@@ -69,6 +70,7 @@ const
   jobsTitle = IconTasks & "  Jobs###jobs"
   recordsTitle = IconRecords & "  Records###records"
   missingTitle = IconTable & "  Missing traces###missing"
+  qualityTitle = IconTable & "  Trace quality###quality"
   outputTitle = IconLog & "  Output###output"
   joinTitle = IconSurvey & "  Import survey###join"
   memoryTitle = IconMemory & "  File memory###memory"
@@ -109,6 +111,7 @@ type
     files: FileListUi                          ## the file list's window
     records: RecordListUi                      ## the record list's window
     missing: MissingUi                         ## the Missing traces window
+    quality: QualityUi                         ## the Trace quality window
     output: OutputUi                           ## the Output window
     join: JoinUi                               ## the "Import survey" window
     clearSurvey: ClearSurveyUi                 ## Clear survey's confirmation
@@ -934,6 +937,8 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
       ui.core.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: ev.paths[0])
     of dkExportMissing:
       ui.missing.startExport(ui.core, ev.paths[0])
+    of dkExportQuality:
+      ui.quality.startExport(ui.core, ev.paths[0])
     of dkOutputSource: ui.output.setSource(ev.paths[0])
     of dkOutputDest: ui.output.setDest(ev.paths[0])
   of seCancelled:
@@ -1132,6 +1137,9 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maMissingTraces:
       ui.windows.bringForward(awMissing)
       ui.missing.requestScan()
+    of maTraceQuality:
+      ui.windows.bringForward(awQuality)
+      ui.quality.requestScan()
     of maOutput:
       ui.output.open($(ui.core.fileList.folder))
       ui.windows.bringForward(awOutput)
@@ -1441,6 +1449,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     templateAvailable: ui.core.templateView(ui.core.findPanel(MainPanel)).available,
     missingReady: missingReady(ui.core.fileList.folder.len > 0, ui.core.relationLayer >= 0),
     missingWhy: missingWhy(ui.core.fileList.folder.len > 0, ui.core.relationLayer >= 0),
+    qualityReady: qualityReady(ui.core.fileList.folder.len > 0),
+    qualityWhy: qualityWhy(ui.core.fileList.folder.len > 0),
     outputReady: ui.core.fileList.folder.len > 0,
     outputWhy: if ui.core.fileList.folder.len > 0: "" else: OutputNeedFolder)
   let menu = drawMainMenu(menuInput, ui.marks)
@@ -1458,6 +1468,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.core.apply Command(kind: ckSettings, settings: s)
   for w in menu.pickedWindows:
     if w == awMissing and ui.windows.willShow(w): ui.missing.requestScan()
+    if w == awQuality and ui.windows.willShow(w): ui.quality.requestScan()
     ui.windows.picked(w)
   if menu.toggleJoin:
     if ui.join.shown: ui.join.shown = false else: ui.join.open()
@@ -1575,6 +1586,12 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     for c in missing.commands.mitems:
       ui.core.apply move c
     if missing.exportAsked: ui.ask(dkExportMissing, missing.exportPath)
+  if ui.windows.shows(awQuality):
+    ui.windows.beforeDrawing(awQuality)
+    var quality = ui.quality.drawQuality(qualityTitle, ui.core, ui.marks)
+    for c in quality.commands.mitems:
+      ui.core.apply move c
+    if quality.exportAsked: ui.ask(dkExportQuality, quality.exportPath)
   if ui.windows.shows(awOutput):
     ui.windows.beforeDrawing(awOutput)
     var written = ui.output.drawOutput(outputTitle, ui.core, ui.marks)

@@ -288,6 +288,33 @@ points** writes one row per missing station instead of one row per record. **tot
 a second file** also writes a file beside the one you save, with `-totals` before the
 extension. Double-click a record to open that file at that record.
 
+## Trace quality
+
+**Reports > Trace quality** scans the folder open in the file list, including the
+folders under it. The item stays in the menu. It is inactive until a folder is open,
+and it says so. A relation file is not needed.
+
+The **Trace quality** window stays closed until you ask for it. It opens as a tab
+beside the **Seismic** window, and that tab is the one in front. Closing it and opening
+it again keeps the place you last gave it. A line of totals wraps onto the next line
+when the window is narrow: files, records, traces, killed, bad, stations, and each
+finding. A killed trace is counted as killed, not as bad, and it is not measured.
+
+**Rescan** runs the scan again. While one is running, that button is **Cancel** and a
+progress bar shows how far the scan is. **Unread** lists files that were not seismic or
+could not be read, each with the reason. **totals in a second file** sits next to
+**Export CSV...**.
+
+The **Stations** tab is one row per receiver station and component: how many traces
+were seen, how many were killed, how many were bad, and the count of each finding.
+The **Records** tab is one row per file and record. A box above the table narrows the
+rows. Click a column header to sort by it (again for the other way; Shift-click adds
+a column). The sort's place is a small number after the header name.
+
+**Export CSV...** writes the table, not only the rows the filter leaves in sight.
+**totals in a second file** also writes a file beside the one you save, with `-totals`
+before the extension. Double-click a record to open that file at that record.
+
 ## Output
 
 **File > Output...** writes the seismic files of the folder open in the file list, including
@@ -1457,13 +1484,13 @@ that does not name Units loads as Metric.
 
 | Window menu | What it does |
 |---|---|
-| **Reset the windows** (Ctrl+Shift+R) | every window shown and docked in the main window, as at a first start; Aux, Missing traces and Output stay closed until asked; the main window is brought onto a screen if it is off every one |
+| **Reset the windows** (Ctrl+Shift+R) | every window shown and docked in the main window, as at a first start; Aux, Missing traces, Trace quality and Output stay closed until asked; the main window is brought onto a screen if it is off every one |
 | **Bring all windows onto this screen** | every floating window (plots, FFT, the reference archive, About, the dialogs), also those you dragged out of the main window, wherever they are (another screen, a screen that is gone, past a screen's edge): wholly into the main window, made smaller when larger; and the main window itself, wholly onto its screen |
 | **Icon in the tray**, **Minimize to the tray** | whether viewSEG's icon is in the system tray, and whether minimizing hides the main window there |
 | Wide plot, Side by side, Plot and map | the presets that ship with viewSEG |
 | Load, Save layout as..., Import layout..., Export layout... | your own layouts: saved under a name, loaded again, written to a file and read from one |
 
-The **View** menu ticks each window (Seismic, Files, Records, Map, Headers, Jobs, Messages, Spectrum, Aux, Missing traces, Output, Import survey): a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown. It also holds the theme.
+The **View** menu ticks each window (Seismic, Files, Records, Map, Headers, Jobs, Messages, Spectrum, Aux, Missing traces, Trace quality, Output, Import survey): a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown. It also holds the theme.
 
 A layout saved before a window existed (before the map came, say) docks that window beside
 its neighbours, and shows it. A window a layout puts off every screen (left on a monitor

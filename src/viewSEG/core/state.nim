@@ -2336,6 +2336,19 @@ func editsAt*(state: AppState; path: string): lent FileEdits =
     return state.edits[state.keyOf(path)]
   state.noEdits
 
+type
+  EditsSnapshot* = object
+    ## A copy of the per-file edits, for a worker. `byKey` is `edits`;
+    ## `alias` is `editKey` (a path opened under another name, to the key).
+    byKey*: Table[string, FileEdits]
+    alias*: Table[string, string]
+
+proc editsSnapshot*(state: AppState): EditsSnapshot =
+  ## Copies the edits and their path aliases. The UI thread takes this
+  ## before a job is submitted; the worker must not read `AppState`.
+  result.byKey = state.edits
+  result.alias = state.editKey
+
 func ownAt*(state: AppState; path: string; trace: int): tuple[has: bool; filter: OwnFilter] =
   ## The own filter of file-index `trace` at `path`; none when the file has none.
   if state.keyOf(path) in state.edits:
