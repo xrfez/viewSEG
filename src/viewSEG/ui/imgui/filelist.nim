@@ -30,6 +30,8 @@ import ../../core/[geometry, state]
 import ../../view/[filetable, theme]
 import chrome, focus, icons, listkeys, menus, style
 
+const NameChars = 16 ## the Name column is never narrower than this many characters
+
 type
   FileListUi* = object
     ## The window's own state between frames.
@@ -249,27 +251,42 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   if sweeps:
     for c in SweepColumns: heads.add $c
   let id = "##files" & (if tree: "tree" else: "") & (if only: "only" elif sweeps: "sweep" else: "")
-  # (a table of the sweeps' columns scrolls sideways: the room a narrow window has is not enough)
-  let tableFlags = if sweeps: flags or ImGui_TableFlags_ScrollX.cint else: flags
-  if not igBeginTable(id.cstring, cint(heads.len), tableFlags, ImVec2_c(x: 0, y: -footer), 0):
+  # The columns after Name are as wide as their words; Name takes the rest, never fewer than
+  # `NameChars` characters: a panel too narrow for that scrolls sideways. (A table of the sweeps'
+  # columns always does: the room a narrow window has is not enough.)
+  let em = igGetFontSize()
+  let arrow = 1.2 * em # the sort arrow beside a header
+  proc textWidth(s: string): float32 = igCalcTextSize(s.cstring, nil, false, -1).x
+  let kindWidth = textWidth("Time-sliced") + arrow
+  let cell = 2 * igGetStyle().CellPadding.x + 1 # its padding and the border between columns
+  var needed = textWidth("0".repeat(NameChars)) + cell
+  if tree: needed += textWidth("0".repeat(NameChars div 2)) + cell
+  if not sweeps:
+    let typeWidth = max(textWidth(if ui.signatures > 0: $fkDat else: $fkSegd),
+      textWidth("Type") + arrow)
+    needed += typeWidth + kindWidth + max(textWidth("999.9 MB"), textWidth("Size") + arrow) +
+      max(textWidth("2026-10-20"), textWidth("Modified") + arrow) + 4 * cell
+  let room = igGetContentRegionAvail().x
+  let scroll = sweeps or room < needed
+  let tableFlags = if scroll: flags or ImGui_TableFlags_ScrollX.cint else: flags
+  let inner = if scroll and not sweeps: needed else: 0'f32
+  if not igBeginTable(id.cstring, cint(heads.len), tableFlags, ImVec2_c(x: 0, y: -footer), inner):
     return
   igTableSetupScrollFreeze(0, 1)
   igTableSetupColumn("Name", (if only: 0 else: ImGui_TableColumnFlags_DefaultSort.cint) or
     (if sweeps: ImGui_TableColumnFlags_WidthFixed.cint else: ImGui_TableColumnFlags_WidthStretch.cint) or
-    ImGui_TableColumnFlags_NoHide.cint, (if sweeps: 11 * igGetFontSize() else: 2'f32), 0)
+    ImGui_TableColumnFlags_NoHide.cint, (if sweeps: 11 * em else: 2'f32), 0)
   if tree: igTableSetupColumn("Folder", ImGui_TableColumnFlags_WidthStretch.cint, 1, 4)
   # With a signature file's columns the name says what a Type column would, and the size and the
   # time of the file are for the column chooser: the room goes to the sweep.
   let hide = if sweeps: ImGui_TableColumnFlags_DefaultHide.cint else: 0.cint
   igTableSetupColumn("Type", hide, 0, 1)
   # (the room the longest word of the column needs, and the sort arrow's)
-  let kindWidth = igCalcTextSize("Time-sliced", nil, false, -1).x + 1.2 * igGetFontSize()
   igTableSetupColumn("Kind", hide or ImGui_TableColumnFlags_WidthFixed.cint, kindWidth,
     uint32(ord(fcKind)))
   igTableSetupColumn("Size", ImGui_TableColumnFlags_PreferSortDescending.cint or hide, 0, 2)
   igTableSetupColumn("Modified", ImGui_TableColumnFlags_PreferSortDescending.cint or hide, 0, 3)
   if sweeps:
-    let em = igGetFontSize()
     for c in SweepColumns:
       # the first three are shown, the rest hidden until the column chooser shows them
       var flags = ImGui_TableColumnFlags_WidthFixed.cint

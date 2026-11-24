@@ -131,10 +131,11 @@ it is multiplexed. Once you open the file the row takes its kind, worked out fro
 headers: the file as it was listed, before a survey join or station moves change its positions
 (a joined file keeps the kind the list read). A file whose kind is not worked out yet, a file
 that is not seismic and one without a live trace have an empty cell. Click the header to sort by
-it. A folder listed again in the same session takes the kinds already read and reads only the
-files that changed. A file that changes on disk is read again once it is steady, and every kind
-is read again when the vendor header maps change, since a start time may come from a vendor
-block.
+it. The columns after Name are as wide as their words and Name takes the rest; when the panel is
+too narrow for 16 characters of a name beside them, the list scrolls sideways. A folder listed
+again in the same session takes the kinds already read and reads only the files that changed. A
+file that changes on disk is read again once it is steady, and every kind is read again when the
+vendor header maps change, since a start time may come from a vendor block.
 
 - **Click a file** to show it in the Seismic window, in place of the one shown. The display
   (mode, gain, filters, sort order, display header) and the scales stay as they were, so records

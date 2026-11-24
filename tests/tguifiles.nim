@@ -263,29 +263,37 @@ proc main*() =
           spec(0, 3150)])
         discard writeSpecs(result, "c shot", [spec(0, 0), spec(1, 0), spec(2, 0)])
       const words = ["Continuous", "Time-sliced", "Shot"]
+      let shots = getEnv("VIEWSEG_SCREENSHOTS")
       proc kinds(f: FrameInfo): seq[string] =
         for e in f.core.fileList.entries: result.add kindText(e)
       proc unread(f: FrameInfo): int =
         for e in f.core.fileList.entries:
           if e.kindState == ksUnread: inc result
       let near = make("kinds")
+      writeMultiplexed(near / "d multiplexed.sgd") # not read for its kind: "?"
       var seen: seq[string]
       var wait = 0
       var since = getMonoTime()
       proc onNear(f: FrameInfo) =
         inc wait
         if f.index == 0: f.moveMouse(vec2(4, 4))
-        if not f.core.fileList.scanning and f.core.fileList.entries.len == 3 and f.unread == 0:
+        if not f.core.fileList.scanning and f.core.fileList.entries.len == 4 and f.unread == 0:
+          if seen.len == 0: wait = 0
           seen = f.kinds
-          f.stop()
+          # (the default layout, a few frames on, for the user guide)
+          if shots.len == 0: f.stop()
+          elif wait > 5:
+            createDir(shots)
+            doAssert f.savePng(shots / "files-kind-c.png"), "cannot save the Files panel"
+            f.stop()
         if overdue(f.index, 3000, since):
           seen = f.kinds
           f.stop()
-      var code = run(RunOptions(openPaths: @[near], windowSize: (1600, 1000),
+      var code = run(RunOptions(openPaths: @[near], windowSize: (1280, 800),
         indexCacheDir: some(fx.dir / "cache"), theme: forceDark,
         userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onNear))
       doAssert code == 0, "run() exit code " & $code
-      doAssert seen == @words, "the Kind column read " & $seen
+      doAssert seen == @words & "?", "the Kind column read " & $seen
 
       let far = make("far")
       resetCounts()
