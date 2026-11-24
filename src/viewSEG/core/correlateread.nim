@@ -6,7 +6,7 @@
 ## asked for and copies a listen-time window into the caller's buffer. The
 ## result of a window matches that file, including the auxiliary-trace policy
 ## (a reference auxiliary shifted by `-AuxLeadMs`, any other auxiliary not
-## correlated).
+## correlated). Correlated samples are IEEE float32.
 ##
 ## The kernel rejects a windowed record (`firstSample != 0`), so each trace is
 ## read whole, correlated from sample 0, and sliced afterwards. One

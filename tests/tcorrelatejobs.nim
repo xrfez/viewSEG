@@ -20,6 +20,8 @@
 ## Reporting the nominal 500 ms lead fails "delayed by 501 ms".
 ## With the mapped-read fault left unset, the cut-short job finished and
 ## adopted a result instead of refusing with the file's reason.
+## An int16 source kept format code 3, so the correlation was stored as
+## whole numbers (`format code 3`).
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -104,9 +106,9 @@ proc writeChannels(path: string; samples: int) =
     w.writeTrace(k, buf, channelType = ct)
   doAssert w.close().len == 0, "the channel file did not close"
 
-proc writeRaw(path: string; sweep: openArray[float32]) =
+proc writeRaw(path: string; sweep: openArray[float32]; fmt = st5) =
   var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
-    measurementSystem: 1, text: @["C01 correlation job test"]))
+    measurementSystem: 1, format: fmt, text: @["C01 correlation job test"]))
   for i in 0 .. 4:
     var buf: seq[float32]
     var k = initTraceKeys()
@@ -774,6 +776,22 @@ proc main*() =
     doAssert slot.lines == @[
       "2 traces, 400 samples (1200 ms of listen time).",
       "sweep 600 ms. 1 reference trace delayed by 501 ms."], $slot.lines
+
+  block integerSource:
+    var scaled = newSeq[float32](sweep.len)
+    for i, v in sweep: scaled[i] = v * 1000
+    let intPath = dir / "int16.sgy"
+    writeRaw(intPath, scaled, st3)
+    var src = openSeismic(intPath, keys = true)
+    defer: src.close()
+    let made = correlated(src, intPath, scaled, DtMs, [RefAux])
+    template got: untyped = session.file(made.opened)
+    doAssert got.summary.formatCode == 5, "format code " & $got.summary.formatCode
+    let row = got.readTraces(0 .. 0)
+    var whole = true
+    for j in 0 ..< Listen:
+      if row[0, j] != float32(round(row[0, j])): whole = false
+    doAssert not whole, "correlated samples are all whole numbers"
 
   block cancelled:
     holdCorr.close()

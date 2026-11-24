@@ -12,10 +12,12 @@
 ## task adopts that file in place of the raw one: register a new id, and do not
 ## watch the path as if the correlated bytes had been written there.
 ##
-## SEG-Y is written like the source, so a different sample count is kept and
-## the trace headers are the source's, except the correlated flag (byte 125,
-## `trace.correlated`), which is set to yes (2). The binary header's copy
-## (byte 3249) is left as it was. SEG-D cannot change a trace's sample
+## Correlated samples are IEEE float32 (SEG-Y format code 5), whatever the
+## source sample format, and the binary header's format code matches each
+## trace. A different sample count is kept and the trace headers are the
+## source's, except the correlated flag (byte 125, `trace.correlated`), which
+## is set to yes (2). The binary header's copy (byte 3249) is left as it was.
+## SEG-D cannot change a trace's sample
 ## count, so it is written from keys: the channel type is the source trace's
 ## (0 means seismic), and channel-set descriptors, external headers,
 ## general-header blocks and trace-header extensions are not copied. A start
@@ -205,7 +207,7 @@ proc openOut(file: ptr SeismicFile; name: string; listen: int; dtMs, time: float
     SeismicWriter =
   case file[].kind
   of skSegy:
-    result = openSeismicWriterBytes(file[], name)
+    result = openSeismicWriterBytes(file[], name, segyFormat = st5)
   of skSegd:
     let us = wholeMicroseconds(dtMs)
     let sum = file[].summary

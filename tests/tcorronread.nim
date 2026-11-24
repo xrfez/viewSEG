@@ -12,6 +12,7 @@
 ##   the record every 2 ms.`
 ## - empty-sweep refusal lost its period: view `the reference sweep is empty`
 ##   job `the reference sweep is empty.`
+## - int16 source rounded on write: `format 3 trace 0 sample 0`
 ## - `newSeq` inside `correlateRead`: `the second call allocated 1`
 ## - an outside window still read: `a window outside the listen time was read`
 ## - `mappedRead` left to raise: `mappedRead can raise an unlisted exception: OSError`,
@@ -38,9 +39,9 @@ proc delayedSweep(sweep: openArray[float32]; samples, delay: int): seq[float32] 
     let j = i - delay
     if j >= 0 and j < sweep.len: result[i] = sweep[j]
 
-proc writeRaw(path: string; sweep: openArray[float32]) =
+proc writeRaw(path: string; sweep: openArray[float32]; fmt = st5) =
   var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
-    measurementSystem: 1, text: @["C01 correlation read test"]))
+    measurementSystem: 1, format: fmt, text: @["C01 correlation read test"]))
   for i in 0 .. 4:
     var buf: seq[float32]
     var k = initTraceKeys()
@@ -384,6 +385,29 @@ proc main*() =
     for j in 0 ..< Listen:
       doAssert dst[j] == want[0, j], "odd aux sample " & $j
       doAssert dst[j] == 0, "odd aux sample " & $j & " is not zero"
+
+  block integerBits:
+    var scaled = newSeq[float32](sweep.len)
+    for i, v in sweep: scaled[i] = v * 1000
+    for fmt in [st3, st2]:
+      let p = dir / ("src" & $ord(fmt) & ".sgy")
+      writeRaw(p, scaled, fmt)
+      var src = openSeismic(p, keys = true)
+      defer: src.close()
+      let built = initCorrelateView(addr src, scaled, DtMs, [RefAux])
+      doAssert built.refusal.len == 0, built.refusal
+      let made = correlate(src, p, scaled, @[RefAux])
+      template opened: untyped = session.file(made.opened)
+      var iws = newWorkspace(built.view)
+      let asked = [0, 1, 2, RefAux, OtherAux]
+      var dst = newSeq[float32](asked.len * Listen)
+      correlateRead(built.view, addr src, asked, 0, Listen, dst, iws)
+      doAssert iws.failed.len == 0, "an integer-source read failed"
+      for r, t in asked:
+        let want = opened.readTraces(t .. t)
+        for j in 0 ..< Listen:
+          doAssert cast[uint32](dst[r * Listen + j]) == cast[uint32](want[0, j]),
+            "format " & $ord(fmt) & " trace " & $t & " sample " & $j
 
   block secondCallAllocatesNothing:
     var dst = newSeq[float32](5 * 64)
