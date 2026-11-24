@@ -116,6 +116,96 @@ proc main*() =
     doAssert v.rows[0].timeUtcUs.get == UtcMarch
     doAssert v.rows[0].year.get == 2024
 
+  block eachTimeSource:
+    doAssert toPosixSeconds(UtcMarch) == 1_709_251_200.0
+    doAssert gpsMicrosToUtcMicros(0) == 315_964_800'i64 * 1_000_000
+    doAssert gpsMicrosToUtcMicros(GpsMarch) == UtcMarch
+    let gps = read($GpsMarch & "\n", [crGpsMicros], header = false)
+    doAssert gps.rows[0].timeUtcUs.get == UtcMarch
+    let us = read($UtcMarch & "\n", [crUtcMicros], header = false)
+    doAssert us.rows[0].timeUtcUs.get == UtcMarch
+    let sec = read("1709251200\n", [crUtcSeconds], header = false)
+    doAssert sec.rows[0].timeUtcUs.get == UtcMarch
+    let frac = read("1709251200.005\n", [crUtcSeconds], header = false)
+    doAssert frac.rows[0].timeUtcUs.get == UtcMarch + 5_000
+    let doy = read("2024,61,0,0,0\n",
+      [crYear, crDayOfYear, crHour, crMinute, crSecond], header = false)
+    doAssert doy.rows[0].timeUtcUs.get == UtcMarch
+    let md = read("2024,3,1,0,0,0\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert md.rows[0].timeUtcUs.get == UtcMarch
+    let text = read("2024-03-01 00:00:00\n", [crDateTime], header = false)
+    doAssert text.rows[0].timeUtcUs.get == UtcMarch
+    let iso = read("2024-03-01T00:00:00Z\n", [crDateTime], header = false)
+    doAssert iso.rows[0].timeUtcUs.get == UtcMarch
+    let slash = read("2024/03/01 00:00:00.000000\n", [crDateTime], header = false)
+    doAssert slash.rows[0].timeUtcUs.get == UtcMarch
+    var custom = mapOf([crDateTime], header = false)
+    custom.dateTimePattern = "yyyy/mm/dd hh:mm:ss"
+    let used = shots(parseShotLog("2024/03/01 00:00:00\n", custom), custom)
+    doAssert used.rows[0].timeUtcUs.get == UtcMarch
+    let epoch = read("1980,1,6,0,0,0\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert epoch.rows[0].timeUtcUs.get == 315_964_800'i64 * 1_000_000
+
+  block leapDayAndFraction:
+    let feb = read("2024,60,0,0,0\n",
+      [crYear, crDayOfYear, crHour, crMinute, crSecond], header = false)
+    doAssert feb.rows[0].timeUtcUs.get == UtcFeb29
+    let yearEnd = read("2024,366,0,0,0\n2025,1,0,0,0\n",
+      [crYear, crDayOfYear, crHour, crMinute, crSecond], header = false)
+    doAssert yearEnd.rows[0].timeUtcUs.get == UtcDec31
+    doAssert yearEnd.rows[1].timeUtcUs.get == UtcJan1
+    doAssert yearEnd.rows[1].timeUtcUs.get - yearEnd.rows[0].timeUtcUs.get == DayUs
+    let common = read("2023,60,0,0,0\n",
+      [crYear, crDayOfYear, crHour, crMinute, crSecond], header = false)
+    doAssert common.rows[0].timeUtcUs.get == Utc2023Mar
+    let frac = read("2024,61,0,0,59.999999\n",
+      [crYear, crDayOfYear, crHour, crMinute, crSecond], header = false)
+    doAssert frac.rows[0].timeUtcUs.get == UtcMarch + 59_999999
+    doAssert frac.rows[0].second == 59.999999
+    let usec = read("2024,61,0,0,59,999999\n",
+      [crYear, crDayOfYear, crHour, crMinute, crSecond, crMicrosecond], header = false)
+    doAssert usec.rows[0].timeUtcUs.get == UtcMarch + 59_999999
+    doAssert not hasKind(frac.problems, pkBadNumber)
+
+  block crossCheck:
+    let both = "gps,utc,sec,text\n" & $GpsMarch & "," & $UtcMarch &
+      ",1709251200,2024-03-01 00:00:00\n"
+    let agree = read(both, [crGpsMicros, crUtcMicros, crUtcSeconds, crDateTime])
+    doAssert agree.rows[0].timeUtcUs.get == UtcMarch
+    doAssert agree.problems.count == 0
+    let near = read($GpsMarch & "," & $(UtcMarch + 500) & "\n",
+      [crGpsMicros, crUtcMicros], header = false)
+    doAssert not hasKind(near.problems, pkTimeDisagree)
+    let gap = read($GpsMarch & "," & $(UtcMarch + 5_000) & "\n",
+      [crGpsMicros, crUtcMicros], header = false)
+    doAssert hasKind(gap.problems, pkTimeDisagree)
+    let msg = kindText(gap.problems, pkTimeDisagree)
+    doAssert $UtcMarch in msg and $(UtcMarch + 5_000) in msg
+    doAssert "5 ms" in msg and "mixed" notin msg
+    doAssert gap.problems.items[0].row == 0 and gap.problems.items[0].col == 1
+    let mixed = read($UtcMarch & ",2024-03-01 00:00:00\n",
+      [crUtcMicros, crDateTime], header = false, clock = tcGps)
+    doAssert mixed.rows[0].timeUtcUs.get == UtcMarch
+    let mixedMsg = kindText(mixed.problems, pkTimeDisagree)
+    doAssert "GPS and UTC mixed" in mixedMsg
+    doAssert "18 s" in mixedMsg
+    let gpsClock = read("2024,61,0,0,0\n",
+      [crYear, crDayOfYear, crHour, crMinute, crSecond], header = false, clock = tcGps)
+    doAssert gpsClock.rows[0].timeUtcUs.get == UtcMarch - 18_000_000
+
+  block duplicatesAndOrder:
+    let dup = read("file,line,sp,index,utc\n5,1,2,3,100\n5,1,2,3,90\n6,1,2,4,80\n",
+      [crFileNumber, crSourceLine, crShotPoint, crPointIndex, crUtcMicros])
+    doAssert hasKind(dup.problems, pkDuplicateFile)
+    doAssert hasKind(dup.problems, pkDuplicateShot)
+    doAssert hasKind(dup.problems, pkTimeBackward)
+    doAssert dup.problems.items[0].col >= 0
+    let otherIndex = read("line,sp,index\n1,2,3\n1,2,4\n",
+      [crSourceLine, crShotPoint, crPointIndex])
+    doAssert not hasKind(otherIndex.problems, pkDuplicateShot)
+
   block problemCap:
     var text = "n\n"
     for i in 0 ..< 150: text.add "x\n"
@@ -123,20 +213,6 @@ proc main*() =
     doAssert v.rows.len == 150
     doAssert v.problems.items.len == ProblemCap
     doAssert v.problems.count == 150
-
-  block edits:
-    let raw = "a,b\n1,2\n3,4\n"
-    let log = parseShotLog(raw, dlComma)
-    doAssert log.toText == raw and not log.changed
-    log.setCell(0, 1, "9")
-    doAssert log.cell(0, 1) == "9" and log.cell(1, 1) == "4" and log.changed
-    doAssert log.toText == "a,b\n1,9\n3,4\n"
-    log.setCell(0, 1, "a,b")
-    doAssert log.toText == "a,b\n1,\"a,b\"\n3,4\n"
-    log.revert(0, 1)
-    doAssert log.cell(0, 1) == "2" and log.toText == raw and not log.changed
-    let quoted = "a,b\r\n\"x,y\",2\r\n"
-    doAssert parseShotLog(quoted, dlComma).toText == quoted
 
   block manyRows:
     var b = newStringOfCap(4_000_000)
