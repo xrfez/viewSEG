@@ -61,8 +61,11 @@ type
     ## What the output traces took, and what they could not.
     written*: set[FactKind]
     noField*: set[FactKind] ## the output has no field for them
-    noFit*: set[FactKind]   ## the output has the field but not for the value
-    rounded*: bool          ## a value was rounded to the whole number the field holds
+    notSet*: set[FactKind]
+      ## the output's channel set has a field for them, which a writer building headers from
+      ## keys does not set
+    noFit*: set[FactKind] ## the output has the field but not for the value
+    rounded*: bool ## a value was rounded to the whole number the field holds
 
   TraceFill* = object
     ## What one output trace takes: header overrides, and the trace identification code
@@ -83,13 +86,17 @@ func initFacts*(): Facts =
 
 func has*(f: Facts; k: FactKind): bool {.inline.} = not f[k].isNaN
 
-func any*(f: Facts): bool =
-  for k in FactKind:
-    if f.has(k): return true
+const ChannelSetFacts = {fkLowCutFreq, fkLowCutSlope, fkAliasFreq, fkAliasSlope,
+  fkNotchFreq, fkExtraNotches, fkFilterPhase, fkFilterDelay, fkGainType, fkGainMethod}
+  ## what a SEG-D channel set descriptor holds of the facts
 
 proc put(f: var Facts; k: FactKind; v: float64) =
-  ## Records `v` when the source states a value (0, negative and invalid mean none).
+  ## Records `v` when a SEG-D source states a value (0, negative and invalid BCD mean none).
   if v.classify in {fcNormal, fcSubnormal} and v > 0: f[k] = v
+
+proc putSigned(f: var Facts; k: FactKind; v: float64) =
+  ## Records `v` when a SEG-Y source states a value: any non-zero one (a 16-bit field).
+  if v.classify in {fcNormal, fcSubnormal}: f[k] = v
 
 func segdSensorCode(sensor: uint8): int16 =
   ## The SEG-Y trace identification code of a SEG-D sensor type; 0 for none.
@@ -138,10 +145,14 @@ proc segdFacts(file: SeismicFile; trace: int; result: var Facts) =
       result.put fkFilterPhase, float64(d.filterPhase)
       result.put fkFilterDelay, float64(d.filterDelay)
       gain = int(d.channelGainControl)
+  # a slope of 0 says the filter is out: its frequency is not a setting then
+  for (freq, slope) in [(fkLowCutFreq, fkLowCutSlope), (fkAliasFreq, fkAliasSlope)]:
+    if not result.has(slope): result[freq] = NaN
   if gain > 0:
     let t = gainTypeOfSegd(gain)
     if t > 0: result[fkGainType] = float64(t) else: result[fkGainMethod] = float64(gain)
-  let sensor = file.traceKeys(trace).sensorType
+  # the sensor type byte exists from Rev 2.0
+  let sensor = if rec.revision.major >= 2: file.traceKeys(trace).sensorType else: 0'u8
   if sensor > 0:
     let code = segdSensorCode(sensor)
     if code > 0: result[fkSensor] = float64(code) else: result[fkSensorOther] = float64(sensor)
@@ -150,7 +161,7 @@ proc segyFacts(file: SeismicFile; trace: int; result: var Facts) =
   for k in FactKind:
     if SegyFields[k].len > 0:
       let v = file.findTraceField(trace, SegyFields[k])
-      if v.isSome: result.put k, v.get.toFloat
+      if v.isSome: result.putSigned k, v.get.toFloat
   let keys = file.traceKeys(trace)
   if keys.traceCodeRev in {tcrRev1, tcrRev2} and keys.traceCode in 11'i16 .. 14'i16:
     result[fkSensor] = float64(keys.traceCode)
@@ -184,9 +195,11 @@ proc segyFill*(facts: Facts; notes: var FillNotes): TraceFill =
 
 proc keysOnly*(facts: Facts; notes: var FillNotes) =
   ## Notes the facts of a source whose output is built from keys alone (SEG-D): the keys
-  ## carry the sensor type, nothing else of these.
+  ## carry the sensor type, nothing else of these. The channel set has fields for most, which
+  ## the writer does not set; the rest have none.
   for k in FactKind:
-    if facts.has(k) and k notin {fkSensor, fkSensorOther}: notes.noField.incl k
+    if facts.has(k) and k notin {fkSensor, fkSensorOther}:
+      if k in ChannelSetFacts: notes.notSet.incl k else: notes.noField.incl k
 
 func names(s: set[FactKind]): string =
   for k in s:
@@ -206,6 +219,10 @@ func fillLines*(notes: FillNotes; output: string): seq[string] =
   if notes.noFit != {}:
     result.add "Not written in the output: " & names(notes.noFit) &
       " (the value does not fit the field of " & output & ")."
+  if notes.notSet != {}:
+    result.add "Not written in the output: " & names(notes.notSet) &
+      " (this SEG-D output's headers are built from the trace keys, which do not carry the " &
+      "channel set's filter and gain settings)."
   if notes.noField != {}:
     result.add "Not written in the output: " & names(notes.noField) &
       " (no field for them in " & output & ")."
@@ -250,9 +267,18 @@ func wrapped(text: string; width: int): seq[string] =
     rest = rest[cut .. ^1].strip(trailing = false)
     first = false
 
-proc sliceProvenance*(source, logName: string; shots: int; encoding: TextEncoding): Provenance =
+func startWords(startMs: float64): string =
+  ## How the records' first samples lie to the shot time, as the shot log card says it.
+  if startMs == 0: return "RECORDS START AT THE SHOT TIME"
+  var n = $abs(startMs)
+  if n.endsWith(".0"): n.setLen n.len - 2
+  "FIRST SAMPLE " & n & " MS " & (if startMs < 0: "BEFORE" else: "AFTER") & " THE SHOT TIME"
+
+proc sliceProvenance*(source, logName: string; shots: int; startMs: float64;
+    encoding: TextEncoding): Provenance =
   ## The lines that say a file was sliced by this program, from `source` (a file name, not
-  ## a path) at the `shots` of the log `logName`. Plain ASCII; a longer line goes on in the
+  ## a path) at the `shots` of the log `logName`, the records' first samples `startMs` after
+  ## the shot time. Plain ASCII; a longer line goes on in the
   ## next card.
   var replaced = 0
   let fromName = plain(source, encoding, replaced)
@@ -261,7 +287,7 @@ proc sliceProvenance*(source, logName: string; shots: int; encoding: TextEncodin
   result.lines.add "WRITTEN BY parseSEG " & PackageVersion
   result.lines.add wrapped("SLICED BY viewSEG " & ViewSEGVersion & " FROM " & fromName, width)
   result.lines.add wrapped("SHOT LOG" & logWords & ", " & $shots & " " &
-    (if shots == 1: "SHOT" else: "SHOTS") & ", RECORDS START AT THE SHOT TIME", width)
+    (if shots == 1: "SHOT" else: "SHOTS") & ", " & startWords(startMs), width)
   result.replaced = replaced
 
 proc externalHeaderOf*(p: Provenance): seq[byte] =

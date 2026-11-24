@@ -51,20 +51,22 @@ func value(comp, k: int): float32 =
 func shotUs(i: int): int64 =
   sampleUs(FirstSamples[i]) - int64(StartMs * 1000) + 123 * int64(i)
 
-proc makeSegd(path: string; facts: bool) =
+proc makeSegd(path: string; facts: bool; zeroSlope = false; rev1 = false) =
   ## Rev 2.1, two records (segments 0 to 2, then 3 to 5), one channel set each. With
   ## `facts`: record one has a 3 Hz low-cut of 18 dB/octave, an alias filter of 200 Hz,
   ## 72 dB/octave, a notch at 50.0 Hz and fixed gain; record two 5 Hz, 12, 300 Hz, 96,
   ## 60.0 Hz, a second notch and binary gain. The sensors are types 2 and 3.
   let fmt = sd8058
   var r = SegdRecord(layout: slRev2, format: some(fmt),
-    revision: SegdRevision(major: 2, minor: 1))
+    revision: SegdRevision(major: (if rev1: 1 else: 2), minor: (if rev1: 0 else: 1)))
   r.gh1 = SegdGeneralHeader1(fileNumber: 5, formatCode: ord(fmt), year: 26,
     additionalGhBlocks: 1, julianDay: 60, manufacturerCode: 77, baseScanInterval16: 32,
     recordType: 8, recordLength: BcdAllF, scanTypesPerRecord: 1, channelSetsPerScanType: 1,
     extendedHeaderBlocks: 0)
   r.gh2 = some SegdGeneralHeader2(extFileNumber: 5, revisionMajor: 2, revisionMinor: 1,
     extRecordLength: uint32(2 * SegLen * Segments), blockNumber: 2)
+  if rev1: r.gh2 = none(SegdGeneralHeader2)
+  if rev1: r.gh1.additionalGhBlocks = 0
   var d = SegdChannelSetDescriptor(scanTypeNumber: 1, channelSetNumber: 1, startTime: 0,
     endTime: uint16(SegLen), channelCount: 0, channelType: 1, traceHeaderExtensions: 3,
     verticalStack: 1)
@@ -80,7 +82,7 @@ proc makeSegd(path: string; facts: bool) =
   for part in 0 .. 1:
     var rec = r
     rec.gh1.fileNumber = 5 + part
-    rec.gh2.get.extFileNumber = uint32(5 + part)
+    if not rev1: rec.gh2.get.extFileNumber = uint32(5 + part)
     if facts and part == 1:
       var d2 = d
       d2.lowCutFreq = 5
@@ -90,6 +92,9 @@ proc makeSegd(path: string; facts: bool) =
       d2.notch1Freq = 600
       d2.notch2Freq = 1200
       d2.gainControl = 8
+      if zeroSlope:
+        d2.aliasFilterSlope = 0
+        d2.lowCutSlope = 0
       rec.scanTypes[0].descriptors[0] = d2
     var all: seq[SegdTrace] = @[]
     for seg in part * 3 ..< part * 3 + 3:
@@ -142,40 +147,45 @@ proc makeSegy(path: string; facts: bool) =
       if facts:
         k.traceCode = (if c == 0: 12 else: 14)
         let late = seg >= 3
-        for (name, early, later) in [("gainType", 1, 2), ("instrumentGainConstant", 24, 36),
+        for (name, early, later) in [("gainType", 1, 2), ("instrumentGainConstant", 24, -6),
             ("instrumentInitialGain", 12, 6), ("lowCutFreq", 8, 10), ("lowCutSlope", 18, 24),
-            ("highCutFreq", 125, 250), ("highCutSlope", 72, 36), ("aliasFilterFreq", 200, 180),
+            ("highCutFreq", 125, 250), ("highCutSlope", 72, -36), ("aliasFilterFreq", 200, 180),
             ("aliasFilterSlope", 48, 96), ("notchFilterFreq", 50, 60),
             ("notchFilterSlope", 12, 6)]:
           over.add headerOverride("trace." & name, if late: later else: early)
       w.writeTrace(k, samples, over)
   discard w.close()
 
-proc shotsOf(): CutShots =
+proc shotsAt(times: openArray[int64]): CutShots =
   var text = ""
-  for i in 0 ..< 2: text.add $Files[i] & "," & $shotUs(i) & "\n"
+  for i, t in times: text.add $(101 + i) & "," & $t & "\n"
   var m = initShotLogMap()
   m.hasHeader = false
   m.roles = @[crFileNumber, crUtcMicros]
   shotsInTime(shots(parseShotLog(text, m), m).rows)
 
+proc shotsOf(): CutShots =
+  shotsAt([shotUs(0), shotUs(1)])
+
 type Ran = tuple[st: JobState; res: CutResult; error: string]
 
-proc runCut(jobs: Jobs; f: var SeismicFile; source, dest: string; opts: CutOptions): Ran =
+proc runCut(jobs: Jobs; f: var SeismicFile; source, dest: string; opts: CutOptions;
+    at: CutShots): Ran =
   let sink = CutSink()
   let id = jobs.submit(cutGatherSpec(source, dest),
-    cutGatherWork(addr f, source, dest, shotsOf(), opts, sink))
+    cutGatherWork(addr f, source, dest, at, opts, sink))
   doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}),
     "the cut did not finish"
   let info = jobs.info(id).get
   (info.state, sink.result, info.error)
 
-proc cut(jobs: Jobs; source, dest: string; standard: CutStandard; logName = "shots.csv"): Ran =
+proc cut(jobs: Jobs; source, dest: string; standard: CutStandard; logName = "shots.csv";
+    startMs = StartMs; at = shotsOf()): Ran =
   var src = openSeismic(source, keys = true)
   defer: src.close()
-  var opts = initCutOptions(LengthMs, StartMs, standard = standard)
+  var opts = initCutOptions(LengthMs, startMs, standard = standard)
   opts.logName = logName
-  result = runCut(jobs, src, source, dest, opts)
+  result = runCut(jobs, src, source, dest, opts, at)
   doAssert result.st == jsDone and result.res.ok, result.error & " / " & result.res.reason
 
 proc intField(f: SeismicFile; trace: int; name: string): int =
@@ -220,7 +230,8 @@ proc check(dir: string; jobs: Jobs) =
   let cards = f.textHeader.split('\n')
   doAssert cards[1].strip == "C 2 SLICED BY viewSEG " & ViewSEGVersion & " FROM a.sgd",
     "card 2: " & cards[1]
-  doAssert cards[2].strip == "C 3 SHOT LOG shots.csv, 2 SHOTS, RECORDS START AT THE SHOT TIME",
+  doAssert cards[2].strip ==
+    "C 3 SHOT LOG shots.csv, 2 SHOTS, FIRST SAMPLE 20 MS BEFORE THE SHOT TIME",
     "card 3: " & cards[2]
   doAssert cards[0].startsWith("C 1 WRITTEN BY parseSEG "), cards[0]
   doAssert cards[1].len == 80 and cards[2].len == 80 and "?" notin f.textHeader
@@ -234,7 +245,7 @@ proc check(dir: string; jobs: Jobs) =
   defer: g.close()
   doAssert g.len == 4
   let early = [8, 18, 200, 48, 125, 72, 50, 12, 1, 24, 12]
-  let late = [10, 24, 180, 96, 250, 36, 60, 6, 2, 36, 6]
+  let late = [10, 24, 180, 96, 250, -36, 60, 6, 2, -6, 6]
   for s in 0 .. 1:
     for c in 0 .. 1:
       let t = s * 2 + c
@@ -253,13 +264,59 @@ proc check(dir: string; jobs: Jobs) =
     doAssert h.index.segdRecords[r].external.len mod 32 == 0
     doAssert text.startsWith("SLICED BY viewSEG " & ViewSEGVersion & " FROM b.sgy"),
       "external header of record " & $r
-    doAssert "SHOT LOG shots.csv, 2 SHOTS, RECORDS START AT THE SHOT TIME" in text, text
+    doAssert "SHOT LOG shots.csv, 2 SHOTS, FIRST SAMPLE 20 MS BEFORE THE SHOT TIME" in text,
+      text
   let said2 = toD.res.lines.join("|")
-  doAssert "Not written in the output: low-cut filter frequency, low-cut filter slope" in said2 and
-    "no field for them in the SEG-D output" in said2, said2
+  doAssert "Not written in the output: low-cut filter frequency, low-cut filter slope, alias " in
+    said2 and "this SEG-D output's headers are built from the trace keys, which do not carry " &
+    "the channel set's filter and gain settings)" in said2, said2
+  doAssert "Not written in the output: high-cut filter frequency, high-cut filter slope, " in
+    said2 and "(no field for them in SEG-D)" in said2, said2
   doAssert "external header says" in said2, said2
   doAssert abs(toD.res.expectedBytes - toD.res.bytesWritten) * 1000 <= toD.res.expectedBytes,
     "estimate " & $toD.res.expectedBytes & ", written " & $toD.res.bytesWritten
+
+  # --- a start of 0: the records start at the shot time; after it, the first sample is after
+  let plain = cut(jobs, sgd, dir / "out" / "p0.sgy", csSegy, startMs = 0.0)
+  var p0 = openSeismic(dir / "out" / "p0.sgy", keys = true)
+  defer: p0.close()
+  doAssert p0.textHeader.split('\n')[2].strip ==
+    "C 3 SHOT LOG shots.csv, 2 SHOTS, RECORDS START AT THE SHOT TIME", p0.textHeader
+  discard cut(jobs, sgd, dir / "out" / "p5.sgy", csSegy, startMs = 5.0)
+  var p5 = openSeismic(dir / "out" / "p5.sgy", keys = true)
+  defer: p5.close()
+  doAssert p5.textHeader.split('\n')[2].strip ==
+    "C 3 SHOT LOG shots.csv, 2 SHOTS, FIRST SAMPLE 5 MS AFTER THE SHOT TIME", p5.textHeader
+
+  # --- a filter whose slope is 0 is out: neither its frequency nor its slope is written
+  let zero = dir / "rec" / "z.sgd"
+  makeSegd(zero, facts = true, zeroSlope = true)
+  discard cut(jobs, zero, dir / "out" / "z.sgy", csSegy)
+  var z = openSeismic(dir / "out" / "z.sgy", keys = true)
+  defer: z.close()
+  doAssert z.intField(0, "aliasFilterFreq") == 200 and z.intField(2, "aliasFilterFreq") == 0,
+    "alias frequency of a filter that is out: " & $z.intField(2, "aliasFilterFreq")
+  doAssert z.intField(2, "lowCutFreq") == 0 and z.intField(2, "notchFilterFreq") == 60
+
+  # --- a trace no segment reaches is dead and says nothing of the recording
+  let gapAt = shotsAt([BaseUs - 3 * 86_400_000_000'i64, shotUs(0)])
+  discard cut(jobs, sgd, dir / "out" / "g.sgy", csSegy, at = gapAt)
+  var gap = openSeismic(dir / "out" / "g.sgy", keys = true)
+  defer: gap.close()
+  doAssert gap.len == 4 and gap.traceKeys(0).status == tsDead
+  for name in Fields:
+    doAssert gap.intField(0, name) == 0, name & " of a dead trace: " & $gap.intField(0, name)
+  doAssert gap.intField(2, "lowCutFreq") == 3, "the live shot after it keeps its own"
+
+  # --- Rev 1 has no sensor type byte: it is not read
+  let one = dir / "rec" / "r1.sgd"
+  makeSegd(one, facts = true, rev1 = true)
+  let r1 = cut(jobs, one, dir / "out" / "r1.sgy", csSegy)
+  var o1 = openSeismic(dir / "out" / "r1.sgy", keys = true)
+  defer: o1.close()
+  doAssert o1.intField(0, "traceIdCode") == 1, "trace id code of a Rev 1 trace: " &
+    $o1.intField(0, "traceIdCode")
+  doAssert o1.intField(0, "lowCutFreq") == 3
 
   # --- a source with none of these facts: only the cards differ from the code before
   let bare = dir / "rec" / "c.sgd"

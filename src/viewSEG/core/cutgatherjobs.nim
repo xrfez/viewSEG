@@ -35,7 +35,7 @@
 ## counted from the size estimate as the shot is written, and the result has
 ## the file's size at the end.
 
-import std/[math, options, os, random, sequtils, strutils, tables, times]
+import std/[math, options, os, random, sequtils, strutils, times]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
@@ -428,8 +428,8 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         carryRefusal(file[], plan, rows).len == 0
       # What the output says about itself (keys path only): text cards in SEG-Y's textual
       # header, which has them anyway; a SEG-D external header, which adds to each record.
-      let provenance = sliceProvenance(source.extractFilename, opts.logName, shots.shots.len,
-        if opts.standard == csSegy: teEbcdic else: teAscii)
+      let provenance = sliceProvenance(source.extractFilename, opts.logName,
+        shots.shots.len, opts.startMs, if opts.standard == csSegy: teEbcdic else: teAscii)
       let external = if opts.standard == csSegdRev3: externalHeaderOf(provenance) else: @[]
       let keysBytes = estimateBytes(opts, shots.shots.len, comps, plan.samples, anyStation,
         anySourceXY, anyReceiverXY) + int64(shots.shots.len) * int64(external.len)
@@ -506,7 +506,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         res.textReplaced = provenance.replaced
         res.fillOutput =
           if opts.standard == csSegy: "SEG-Y revision " & $SegyOutputOptions().revision
-          else: "the SEG-D output, whose headers are built from keys"
+          else: "SEG-D"
 
       var ws = initWorkspace()
       ws.reserve(sliceWorkspace(float32, plan))
@@ -520,7 +520,10 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var dst = newSeq[float32](plan.samples)
       var touched: seq[int] = @[]
       var startCount = StartCount()
-      var sourceFactsOf = initTable[int, Facts]() # by source trace, read once
+      # the facts of the last source trace each receiver was cut from: its segments are
+      # reached in time order, so an earlier one is not asked again
+      var lastFacts = newSeq[tuple[trace: int; facts: Facts]](comps)
+      for r in 0 ..< comps: lastFacts[r] = (-1, initFacts())
       var startsNoted = false
       var lastDetail = fs.now() - DetailEvery
       let total = shots.shots.len
@@ -610,12 +613,14 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             # the facts of the recording's headers come from the segment that holds the
             # trace's first sample, each trace from its own
             var fill = TraceFill()
-            let origin = firstRow(plan, trace, rows.fallback[r])
+            # (a trace no segment reaches is dead and says nothing of a recording)
+            let origin =
+              if k.status == tsDead: -1 else: firstRow(plan, trace, rows.fallback[r])
             if origin >= 0:
-              if origin notin sourceFactsOf:
+              if lastFacts[r].trace != origin:
                 if not file[].inMemory: fs.mappedRead(source, headers = true)
-                sourceFactsOf[origin] = sourceFacts(file[], origin)
-              let facts = sourceFactsOf[origin]
+                lastFacts[r] = (origin, sourceFacts(file[], origin))
+              let facts = lastFacts[r].facts
               case opts.standard
               of csSegdRev3: keysOnly(facts, res.fills)
               of csSegy:

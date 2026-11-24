@@ -170,11 +170,15 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
   type of its trace header; a SEG-Y recording gives its own fields. A value the recording does
   not state stays 0. Fractional values are rounded to the whole Hz or dB the field holds, and
   Messages says so. What has no field is named once ("Not written in the output: second and
-  third notch filters (no field for them in SEG-Y revision 2.1)"); a SEG-D output built from
-  the options has no field for any filter or gain. The receiver's position is written as
+  third notch filters (no field for them in SEG-Y revision 2.1)"). A SEG-D output built from
+  the options writes none of the channel set's filter and gain settings, because it builds its
+  headers from the trace keys, which do not carry them; Messages says so, and for a SEG-D
+  recording whose own headers could not be carried it gives that reason first. A filter whose
+  slope is 0 is out, and is not written. The receiver's position is written as
   before, from the recording or the survey. SEG-Y's textual header gets two lines after the
   writer's own, "SLICED BY viewSEG <version> FROM <recording file name>" and "SHOT LOG <log file
-  name>, <n> SHOTS, RECORDS START AT THE SHOT TIME"; a SEG-D output built from the options holds
+  name>, <n> SHOTS, RECORDS START AT THE SHOT TIME" (with a start other than 0 it reads "FIRST
+  SAMPLE <n> MS BEFORE THE SHOT TIME", or AFTER); a SEG-D output built from the options holds
   them in its external header. They name files, never folders; a name too long for a line goes
   on in the next one, and a character of a name that the text header's character set cannot hold
   is written as "?" and counted in Messages. A SEG-D output that carries the recording's own
