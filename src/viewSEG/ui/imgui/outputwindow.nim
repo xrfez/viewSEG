@@ -431,7 +431,7 @@ proc canRun(ui: OutputUi): bool =
 proc sortWords(keys: seq[SortKey]): string =
   var parts: seq[string] = @[]
   for k in keys:
-    var one = $k.field
+    var one = k.keyName
     if k.descending: one.add " descending"
     parts.add one
   parts.join(", ")

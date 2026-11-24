@@ -193,7 +193,8 @@ proc choice(w: var NifWriter; tag, name: string) =
 proc keys(w: var NifWriter; order: openArray[SortKey]) =
   for k in order:
     w.open("key")
-    w.ident FieldNames[k.field]
+    if k.field == hfVendor: w.value("vendor", k.name)
+    else: w.ident FieldNames[k.field]
     if k.descending: w.ident "descending"
     w.close()
 
@@ -636,17 +637,30 @@ proc unknown(r: var Reading; n: NifNode; within: string) =
     within & ") is not a setting this version knows; skipped.")
 
 proc keys(r: var Reading; n: NifNode; first: int; x: var seq[SortKey]) =
-  ## The `(key field [descending])` nodes of `n` from kid `first` on: a
-  ## field given twice counts once, as its first.
+  ## The `(key field [descending])` nodes of `n` from kid `first` on, a vendor
+  ## field written `(key (vendor "name") [descending])`: a field given twice
+  ## counts once, as its first.
   var got: seq[SortKey]
   for i in first ..< n.kids.len:
     let k = n.kids[i]
     var key = SortKey()
+    var ok = false
     if not k.isTree("key") or k.kids.len notin 1..2:
       r.unusable(k, n.tag, "(key field) or (key field descending)")
+    elif k.kids[0].isTree("vendor"):
+      # a name no vendor map defines is kept: it sorts as all absent
+      var name = ""
+      r.text(k.kids[0], name)
+      if name.len > 0 and not usableLineName(name):
+        r.unusable(k.kids[0], "vendor", "a name of 1 to 200 characters")
+      elif name.len > 0:
+        key = vendorKey(name)
+        ok = true
     elif r.pick(k.kids[0], FieldNames, "key", key.field) and key.field == hfVendor:
-      r.unusable(k.kids[0], "key", "a built-in field (a vendor field is not a sort key)")
+      r.unusable(k.kids[0], "key", "a built-in field, or (vendor \"name\") for a vendor field")
     elif r.pick(k.kids[0], FieldNames, "key", key.field):
+      ok = true
+    if ok:
       if k.kids.len == 2:
         if k.kids[1].kind == nkIdent and k.kids[1].text in ["ascending", "descending"]:
           key.descending = k.kids[1].text == "descending"
@@ -654,7 +668,7 @@ proc keys(r: var Reading; n: NifNode; first: int; x: var seq[SortKey]) =
           r.unusable(k.kids[1], "key", "ascending or descending")
       var seen = false
       for g in got:
-        if g.field == key.field: seen = true
+        if g.sameField(key): seen = true
       if not seen: got.add key
   x = got
 

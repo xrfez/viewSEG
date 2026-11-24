@@ -17,7 +17,7 @@
 
 import std/[atomics, os, strutils, tables]
 import parseSEG
-import filesystem, panels, session, sorting, vendormaps
+import filesystem, panels, session, stopproc, vendormaps
 
 var built, held: Atomic[int]
 
@@ -87,6 +87,12 @@ func vendorNames*(fields: openArray[HeaderRef]): seq[string] =
   ## has at most `MaxHeaderLines`); empty, unallocated, when there is none.
   for f in fields:
     if f.field == hfVendor and f.name notin result: result.add f.name
+
+func vendorNames*(order: openArray[SortKey]): seq[string] =
+  ## The vendor fields among the sort keys `order`, each once, in order; empty,
+  ## unallocated, when there is none.
+  for k in order:
+    if k.field == hfVendor and k.name notin result: result.add k.name
 
 proc takeNotes*(v: var VendorLines): seq[string] =
   ## What was found of the names since the last call, in words (a name the

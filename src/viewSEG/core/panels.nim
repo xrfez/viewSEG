@@ -268,9 +268,11 @@ type
 
   SortKey* = object
     ## One key of a trace order: a header field, smallest first unless
-    ## `descending`.
+    ## `descending`. For `hfVendor` the key is the vendor field called `name`
+    ## (read only then); a name the file has no field of sorts as all absent.
     field*: HeaderField
     descending*: bool
+    name*: string
 
   SortPreset* = object
     ## A named trace order, as the plot window's sort buttons offer it.
@@ -475,6 +477,18 @@ func headerRefOf*(name: string): HeaderRef =
     if f != hfVendor and cmpIgnoreCase($f, name) == 0: return HeaderRef(field: f)
   HeaderRef(field: hfVendor, name: name)
 
+func vendorKey*(name: string; descending = false): SortKey =
+  ## The sort key of the vendor field `name`.
+  SortKey(field: hfVendor, name: name, descending: descending)
+
+func sameField*(a, b: SortKey): bool =
+  ## Whether `a` and `b` sort by the same field (the direction aside).
+  a.field == b.field and (a.field != hfVendor or a.name == b.name)
+
+func keyName*(k: SortKey): string =
+  ## The key's field in words: the built-in field's name, or the vendor field's own.
+  if k.field == hfVendor: k.name else: $k.field
+
 func `==`*(a, b: HeaderRef): bool =
   a.field == b.field and (a.field != hfVendor or a.name == b.name)
 
@@ -622,7 +636,7 @@ func describe*(order: openArray[SortKey]): string =
   if order.len == 0: return "the file's order"
   for i, k in order:
     if i > 0: result.add ", then "
-    result.add $k.field
+    result.add k.keyName
     if k.descending: result.add " (descending)"
 
 func effectiveGain*(d: DisplaySettings; kind: GatherKind): DisplayGain =

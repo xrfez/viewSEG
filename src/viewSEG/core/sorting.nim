@@ -6,7 +6,8 @@
 ## so a SEG-Y and a SEG-D record sort alike), each ascending or descending.
 ## parseSEG's `sortOrder` does the sorting: stable, so traces with equal keys
 ## keep the order they had (the file's order, after the trace filter), with
-## unknown values (NaN) after every number whichever the direction. The
+## unknown values (NaN) after every number whichever the direction (a vendor
+## field's absent values too). The
 ## component orders by kind (vertical, inline, crossline, hydrophone, then
 ## the others by code), not by its code; the start time is the keys' unless
 ## `startOf` gives a recorder's own.
@@ -18,12 +19,10 @@
 ## (`stop`), so a newer request never waits for a large sort to finish.
 
 import parseSEG
-import components, panels
+import components, panels, stopproc, vendorlines
+export stopproc
 
 const StopEvery* = 65_536 ## traces read between two calls of `stop`
-
-type StopProc* = proc (): bool {.gcsafe, raises: [].}
-  ## True when the sort should give up (something newer is waiting).
 
 proc stopped(stop: StopProc): bool {.inline.} = stop != nil and stop()
 
@@ -40,12 +39,15 @@ func sortValue*(k: TraceKeys; field: HeaderField; trace: int; channelSet = 0): f
   if field == hfComponent: componentSortRank(k) else: k.value(field, trace, channelSet)
 
 proc sortRowsInto*(rows: TraceRows; order: openArray[SortKey]; dst: var seq[int];
-    stop: StopProc = nil; setNumber: SetNumberProc = nil; startOf: StartProc = nil): bool =
+    stop: StopProc = nil; setNumber: SetNumberProc = nil; startOf: StartProc = nil;
+    vendor: VendorLines = VendorLines()): bool =
   ## `dst` becomes the rows `0 ..< rows.len` of `rows` in `order` (the first
   ## key first); no keys give the rows as they are. True when done; false
   ## when `stop` said to give up, and `dst` is then not meaningful. Raises
   ## `ValueError` for a view without keys (`rows.hasKeys`). `startOf`, when
-  ## given, is the start time of a trace for the key `hfStartTime`.
+  ## given, is the start time of a trace for the key `hfStartTime`. A vendor key
+  ## reads its column from `vendor` (built beforehand: `VendorLines.build`), once
+  ## a key; a name with no column sorts as all absent.
   if not rows.hasKeys:
     raise newException(ValueError, "the traces have no keys to sort by")
   let n = rows.len
@@ -57,6 +59,7 @@ proc sortRowsInto*(rows: TraceRows; order: openArray[SortKey]; dst: var seq[int]
   var next = newSeq[int](n)
   for j in countdown(order.high, 0):
     let key = order[j]
+    let slot = if key.field == hfVendor: vendor.slot(key.name) else: -1
     var i = 0
     while i < n and result:
       let last = min(n, i + StopEvery)
@@ -64,7 +67,8 @@ proc sortRowsInto*(rows: TraceRows; order: openArray[SortKey]; dst: var seq[int]
         let row = dst[m]
         let trace = rows.traceOf(row)
         let v =
-          if key.field == hfStartTime and startOf != nil: startOf(trace)
+          if key.field == hfVendor: vendor.valueAt(slot, trace)
+          elif key.field == hfStartTime and startOf != nil: startOf(trace)
           else:
             rows.keysAt(row).sortValue(key.field, trace,
               if setNumber != nil: setNumber(trace) else: rows.channelSetIndex(row) + 1)

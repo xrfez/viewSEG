@@ -322,7 +322,7 @@ func uniqueKeys*(order: openArray[SortKey]): seq[SortKey] =
   for k in order:
     var seen = false
     for g in result:
-      if g.field == k.field: seen = true
+      if g.sameField(k): seen = true
     if not seen: result.add k
 
 func uniqueItems(list: openArray[string]): seq[string] =

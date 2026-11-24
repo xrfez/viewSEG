@@ -57,7 +57,8 @@ import parseSEG/model/traceindex
 import processSEG
 import correlatejobs, edits, filekinds, filesystem, jobs, outputnames, outputnamevalues,
     outputrevision,
-  outputbinary, outputtext, panels, processing, reader, references, signatures, sorting, vendormaps
+  outputbinary, outputtext, panels, processing, reader, references, session, signatures, sorting,
+  vendorlines, vendormaps
 
 export outputrevision
 
@@ -752,6 +753,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       if firstKept < 0:
         if sink != nil: sink.result.dropped = dropped
         abort(sink, dest, part, claimed, "Nothing to write: every trace was left out.", false)
+      var sortVendor = VendorLines()
+      var sortVendorRead = false # the vendor columns the sort keys name, read once a file
       template sortInto(traces: var seq[int]): bool =
         var changed = false
         if opts.sortKeys.len > 0 and traces.len > 1:
@@ -765,7 +768,12 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               starts = vendorStartsOf(file, source, stop)
           if starts.len > 0:
             startOf = proc (t: int): float64 {.gcsafe, raises: [].} = starts[t]
-          if not sortRowsInto(rows, opts.sortKeys, perm, stop, nil, startOf):
+          let names = vendorNames(opts.sortKeys)
+          if names.len > 0 and not sortVendorRead:
+            if not sortVendor.build(file, NoSession, source, 0, names, stop):
+              abort(sink, dest, part, claimed, "The sort was stopped.", true)
+            sortVendorRead = true
+          if not sortRowsInto(rows, opts.sortKeys, perm, stop, nil, startOf, sortVendor):
             abort(sink, dest, part, claimed, "The sort was stopped.", true)
           for k, row in perm:
             if row != k: changed = true

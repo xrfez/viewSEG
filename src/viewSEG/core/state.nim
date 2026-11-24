@@ -7729,7 +7729,10 @@ proc refetchVendorLines(state: var AppState) =
   ## The panels with a vendor field on a display line read it again: the maps
   ## it was read with are not the ones in force (the reader drops its columns).
   for k in 0 ..< state.panels.len:
-    if state.panels[k].shownFields.anyIt(it.field == hfVendor):
+    if state.panels[k].layers.len > 0 and
+        state.panels[k].layers[0].order.anyIt(it.field == hfVendor):
+      state.reorder(k) # the sort reads the columns again, then the view is asked for
+    elif state.panels[k].shownFields.anyIt(it.field == hfVendor):
       state.refetch(k, keepTiles = true)
 
 proc takeVendor(state: var AppState; m: sink Msg) =
@@ -12156,8 +12159,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
     elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
-    elif cmd.order.anyIt(it.field == hfVendor):
-      state.ignore(cmd, "a vendor field is not a sort key: the traces cannot be sorted by it")
+    elif cmd.order.anyIt(it.field == hfVendor and not usableLineName(it.name)):
+      state.ignore(cmd, "a vendor field's name is 1 to 200 characters, with no control character")
     elif uniqueKeys(cmd.order) != state.panels[k].layers[0].order:
       let order = uniqueKeys(cmd.order) # each field once, as the sort dialog gives
       state.panels[k].layers[0].order = order

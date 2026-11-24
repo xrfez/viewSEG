@@ -91,6 +91,7 @@ const
 
 # ------------------------------------------------------------ to JSON --
 
+proc toJson*(x: SortKey): JsonNode
 proc toJson*[E](x: seq[E]): JsonNode
 proc toJson*[E](x: set[E]): JsonNode
 proc toJson*[T](x: T): JsonNode
@@ -98,6 +99,10 @@ proc toJson*[T](x: T): JsonNode
 proc toJson*(x: HeaderRef): JsonNode =
   ## A display line is its name: the built-in field's, or the vendor field's.
   newJString($x)
+
+proc toJson*(x: SortKey): JsonNode =
+  ## A sort key: its field's name (a vendor field's own) and its direction.
+  %*{"field": x.keyName, "descending": x.descending}
 
 proc toJson*[E](x: seq[E]): JsonNode =
   result = newJArray()
@@ -141,6 +146,14 @@ proc schemaOf*(t: typedesc[HeaderRef]): JsonNode =
     "file (the bare field name, or block.name when the bare name is not unique; a name the " &
     "file has no such field for shows as unknown and is said in Messages)"}
 
+proc schemaOf*(t: typedesc[SortKey]): JsonNode =
+  %*{"type": "object", "additionalProperties": false, "properties": {
+    "field": {"type": "string", "description": "a built-in header field: one of " &
+      builtInLineNames().join(", ") & "; any other string is the name of a vendor field of " &
+      "the file (the bare field name, or block.name when the bare name is not unique); a name " &
+      "the file has no such field for sorts as all unknown (last), and is said in Messages"},
+    "descending": {"type": "boolean"}}}
+
 proc schemaOf*[E](t: typedesc[seq[E]]): JsonNode =
   %*{"type": "array", "items": schemaOf(E)}
 
@@ -180,6 +193,7 @@ func describe(n: JsonNode): string =
   of JObject: "an object"
 
 proc decode*(n: JsonNode; x: var HeaderRef; path: string; problems: var seq[string])
+proc decode*(n: JsonNode; x: var SortKey; path: string; problems: var seq[string])
 proc decode*(n: JsonNode; x: var HeaderField; path: string; problems: var seq[string])
 proc decode*[E](n: JsonNode; x: var seq[E]; path: string; problems: var seq[string])
 proc decode*[E](n: JsonNode; x: var set[E]; path: string; problems: var seq[string])
@@ -192,6 +206,23 @@ proc decode*(n: JsonNode; x: var HeaderRef; path: string; problems: var seq[stri
     problems.add path & ": a header's name is 1 to 200 characters, with no control character"
   else:
     x = headerRefOf(n.str)
+
+proc decode*(n: JsonNode; x: var SortKey; path: string; problems: var seq[string]) =
+  ## A sort key `{"field": name, "descending": bool}`: a built-in field by name (any
+  ## case, which wins a clash), else the vendor field of that name.
+  if n.kind != JObject:
+    problems.add path & ": an object, not " & describe(n)
+  else:
+    for key, v in n.pairs:
+      if key == "field":
+        var h = HeaderRef()
+        let before = problems.len
+        decode(v, h, path & ".field", problems)
+        if problems.len == before:
+          x.field = h.field
+          x.name = if h.field == hfVendor: h.name else: ""
+      elif key == "descending": decode(v, x.descending, path & ".descending", problems)
+      else: problems.add path & ": no field " & escapeJson(key.substr(0, 79))
 
 proc decode*(n: JsonNode; x: var HeaderField; path: string; problems: var seq[string]) =
   ## A built-in header field by name (any case); never `hfVendor`.

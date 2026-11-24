@@ -322,6 +322,15 @@ proc vendorStarts(rd: Reader): seq[float64] =
   let r = rd.r
   vendorStartsOf(rd.src.file, rd.src.path, proc (): bool {.gcsafe, raises: [].} = r.superseded)
 
+proc buildVendorNames(rd: var Reader; names: openArray[string]): bool =
+  ## Makes sure the columns of the vendor fields `names` are held (read from the
+  ## file on this thread, a newer note giving it up: false), and says what was
+  ## found of them.
+  let r = rd.r
+  result = rd.vendor.build(rd.src.file, rd.src.session, rd.src.path, rd.src.size, names,
+    proc (): bool {.gcsafe, raises: [].} = r.superseded)
+  for note in rd.vendor.takeNotes(): rd.note(sevWarning, note)
+
 proc arrange(rd: var Reader; order: seq[SortKey]) =
   ## Puts the positions in `order` (the traces the filter keeps, sorted),
   ## unless a newer note comes first: then they stay as they were and
@@ -344,7 +353,10 @@ proc arrange(rd: var Reader; order: seq[SortKey]) =
     var startOf: StartProc = nil
     if starts.len > 0:
       startOf = proc (t: int): float64 {.gcsafe, raises: [].} = starts[t]
-    if sortRowsInto(rows, order, perm, proc (): bool = r.superseded, setNumber, startOf):
+    let names = vendorNames(order)
+    if names.len > 0 and not rd.buildVendorNames(names): return # a newer note came first
+    if sortRowsInto(rows, order, perm, proc (): bool = r.superseded, setNumber, startOf,
+        rd.vendor):
       var list = newSeq[int](perm.len)
       for k, row in perm: list[k] = base.traceAt(row)
       rd.positions = Positions(traces: base.traces, listed: true, list: list)
@@ -963,10 +975,7 @@ proc buildVendorLines(rd: var Reader; fields: openArray[HeaderRef]): bool =
   ## (`lineSlots`). False when it was given up.
   let names = vendorNames(fields)
   if names.len == 0 or rd.src.file == nil: return true
-  let r = rd.r
-  result = rd.vendor.build(rd.src.file, rd.src.session, rd.src.path, rd.src.size, names,
-    proc (): bool {.gcsafe, raises: [].} = r.superseded)
-  for note in rd.vendor.takeNotes(): rd.note(sevWarning, note)
+  result = rd.buildVendorNames(names)
   rd.lineSlots.setLen fields.len
   for i, field in fields:
     rd.lineSlots[i] = if field.field == hfVendor: rd.vendor.slot(field.name) else: -1
