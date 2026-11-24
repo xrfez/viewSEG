@@ -9,6 +9,10 @@
 ## Seen to fail, then restored: the layout taken from the raw record
 ## (`layout samples 1000 are the raw record, not the listen time`); zeros
 ## written instead of the correlation (`window 0 ..< 64 sample 0`).
+## With the kept window sliced past a decoded row of length 0, a window
+## wholly past the listen time killed the reader (`window past the end`,
+## SIGSEGV in `decimatePeakInto`). With that slice longer than a short
+## decoded row, `window overhanging the listen time sample 10` disagreed.
 
 import std/[atomics, math, monotimes, os, times]
 import parseSEG
@@ -223,6 +227,37 @@ proc main*() =
   pair(ask(0, 5, 1, Listen - 50, 50), "window " & $(Listen - 50) & " ..< " & $Listen)
   pair(ask(0, 3, 2, 0, 64), "stride 2")
   pair(ask(RefAux, 2, 1, 0, 64), "auxiliary traces")
+
+  block windowPastTheEnd:
+    let req = ask(0, 2, 1, Listen + 10, 20)
+    viewRd.request(req)
+    memRd.request(req)
+    let (gotV, gotM) = awaitTiles(box)
+    sameSamples(gotV, gotM, "window past the end")
+    doAssert gotV.failed == 0, "window past the end marked " & $gotV.failed & " failed"
+    doAssert gotV.data.len == 40, "window past the end length " & $gotV.data.len
+    for v in gotV.data:
+      doAssert v == 0'f32, "a window past the listen time is not zero"
+
+  block windowOverhangs:
+    let req = ask(0, 2, 1, Listen - 10, 40)
+    viewRd.request(req)
+    memRd.request(req)
+    let (gotV, gotM) = awaitTiles(box)
+    sameSamples(gotV, gotM, "window overhanging the listen time")
+    doAssert gotV.failed == 0, "overhang marked " & $gotV.failed & " failed"
+    doAssert gotV.columns == 40, "overhang columns " & $gotV.columns
+    let head = ask(0, 2, 1, Listen - 10, 10)
+    viewRd.request(head)
+    memRd.request(head)
+    let (headV, headM) = awaitTiles(box)
+    sameSamples(headV, headM, "the last 10 listen samples")
+    for row in 0 .. 1:
+      for j in 0 ..< 10:
+        doAssert gotV.data[row * 40 + j] == headV.data[row * 10 + j],
+          "overhang sample " & $row & "," & $j
+      for j in 10 ..< 40:
+        doAssert gotV.data[row * 40 + j] == 0'f32, "overhang tail " & $row & "," & $j
 
   block notRaw:
     let req = ask(0, 1, 1, 0, Listen)

@@ -890,6 +890,32 @@ proc stockSpare(rd: var Reader; list: sink seq[int]; count, cols, columns: int) 
   rd.spare.columns = columns
   rd.spare.ready = true
 
+func keptCount(cols, skip, samples: int): int {.inline.} =
+  ## Decoded samples the kept window still has. None when it starts at or
+  ## past the row; otherwise the row's tail, and never more than asked.
+  if skip < 0 or cols <= skip: 0
+  else: min(samples, cols - skip)
+
+proc zeroFloats(dst: var openArray[float32]) {.inline.} =
+  ## Sets every sample of `dst` to 0.
+  if dst.len > 0: zeroMem(addr dst[0], dst.len * sizeof(float32))
+
+proc decimateKept(src: ptr UncheckedArray[float32]; cols, skip, samples, decimation: int;
+    dst: var openArray[float32]) =
+  ## Peak-decimates `samples` of `src` from `skip` into `dst`. A window at or
+  ## past the decoded row, or running past it, is zeros from there on: the
+  ## slice is never formed past `cols` (an empty row's pointer is nil).
+  let n = keptCount(cols, skip, samples)
+  if n <= 0: zeroFloats(dst)
+  else: decimatePeakInto(src.toOpenArray(skip, skip + n - 1), decimation, dst)
+
+proc extremesKept(src: ptr UncheckedArray[float32]; cols, skip, samples, decimation: int;
+    dst: var openArray[float32]) =
+  ## `decimateKept` for a wiggle's column extremes.
+  let n = keptCount(cols, skip, samples)
+  if n <= 0: zeroFloats(dst)
+  else: minMaxInto(src.toOpenArray(skip, skip + n - 1), decimation, dst)
+
 proc fillFromSpare(rd: var Reader; req: ReaderRequest; q: ReadRequest; window: Slice[int];
     skip, cols: int; tile: var Tile; given: var bool): bool =
   ## The tile of a plain view request, from the samples at hand and buffers
@@ -935,7 +961,7 @@ proc fillFromSpare(rd: var Reader; req: ReaderRequest; q: ReadRequest; window: S
       let row = a + k
       let srcp = b.rowPtr(k)
       let atCol = row * tile.columns
-      decimatePeakInto(srcp.toOpenArray(skip, skip + q.samples - 1), q.decimation,
+      decimateKept(srcp, cols, skip, q.samples, q.decimation,
         tile.data.toOpenArray(atCol, atCol + tile.columns - 1))
       tile.keys[row] = rows.keysAt(k)
     a += n
@@ -1056,7 +1082,7 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
     if req.raw:
       for k in 0 ..< b.len:
         let at = (first + k) * tile.columns
-        decimatePeakInto(b.rowPtr(k).toOpenArray(skip, skip + q.samples - 1), q.decimation,
+        decimateKept(b.rowPtr(k), cols, skip, q.samples, q.decimation,
           tile.raw.toOpenArray(at, at + tile.columns - 1))
 
   template cut(b: RowBlock[float32]; rows: TraceRows; first: int) =
@@ -1065,11 +1091,11 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
       let row = first + k
       let src = b.rowPtr(k)
       let at = row * tile.columns
-      decimatePeakInto(src.toOpenArray(skip, skip + q.samples - 1), q.decimation,
+      decimateKept(src, cols, skip, q.samples, q.decimation,
         tile.data.toOpenArray(at, at + tile.columns - 1))
       if q.envelope: # the wiggles' peaks, zoomed out in time
         let e = 2 * at
-        minMaxInto(src.toOpenArray(skip, skip + q.samples - 1), q.decimation,
+        extremesKept(src, cols, skip, q.samples, q.decimation,
           tile.envelope.toOpenArray(e, e + 2 * tile.columns - 1))
       let keys = rows.keysAt(k)
       tile.keys[row] = keys
@@ -1169,7 +1195,7 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
           given = true
           break
         let n = min(HeldTraces, q.count - rowAt)
-        if n * cols > 0: rd.viewChunk.setLen n * cols
+        rd.viewChunk.setLen n * cols # empty when the window is past the row
         var chunkFailed: seq[int]
         for k in 0 ..< n:
           if (if level: rd.r.levelSuperseded else: rd.r.interrupted):

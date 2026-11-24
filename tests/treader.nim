@@ -25,9 +25,14 @@
 ## With the samples at hand served only for the same traces (`heldRows`
 ## asking `list == rd.raw.list`, as it did), `partOfWhatIsHeld` found
 ## every 4th trace "cached false".
+## With the kept window sliced past a decoded row of length 0,
+## `windowPastTheRecord` killed the reader (SIGSEGV in `decimatePeakInto`).
+## With that slice longer than a short decoded row, `overhang tail 0,24`
+## was not zero.
 
 import std/[algorithm, math, os, sequtils, strutils, times]
 import parseSEG
+import viewSEG/core/reader
 import viewSEG/core/state {.all.}
 import utils/[fixtures, waiting]
 
@@ -41,6 +46,19 @@ func has(log: MessageLog; part: string): bool =
   for e in log:
     if part in e.text: return true
   false
+
+proc awaitKind(box: Inbox; panel: PanelId; kind: MsgKind): Msg =
+  var got = false
+  doAssert waitUntil(block:
+    var msgs: seq[Msg] = @[]
+    box.drainInto(msgs)
+    for m in msgs:
+      if m.kind == kind and (kind != mkTile or m.tile.panel == panel) and
+          (kind != mkLayout or m.panel == panel):
+        result = m
+        got = true
+    got
+  ), "a " & $kind & " did not arrive"
 
 proc main(st: AppState): lent Panel = st.panel(MainPanel)
 
@@ -333,5 +351,42 @@ proc main*() =
       doAssert st.main.layout.traces == 0
       st.shutdown()
 
-when isMainModule:
-  main()
+  block windowPastTheRecord:
+    withFixtures fx:
+      let path = fx.surveySegy()
+      var file = openSeismic(path, keys = true)
+      let s = newSession(path, file)
+      defer: discard s.close()
+      var jobs = initJobs()
+      defer: jobs.stop()
+      let box = initInbox()
+      var rd = newPanelReader(PanelId(1), box.poster, jobs.holdRelease)
+      defer: rd.stop()
+      doAssert jobs.hold(path), "the file could not be held"
+      rd.show(ReaderSource(gen: 1, file: s.filePtr, path: s.path, size: s.size,
+        traces: 0 ..< Channels, filter: TraceFilter(seismic: true, auxiliary: true)))
+      let layout = awaitKind(box, PanelId(1), mkLayout).layout
+      doAssert layout.samples == Samples, "layout samples " & $layout.samples
+
+      rd.request(ReaderRequest(read: ReadRequest(gen: 1, first: 0, count: 2, stride: 1,
+        firstSample: Samples + 10, samples: 20, decimation: 1), clipPercentile: NaN))
+      let past = awaitKind(box, PanelId(1), mkTile).tile
+      doAssert past.failed == 0, "a window past the record failed " & $past.failed
+      doAssert past.data.len == 40, "past length " & $past.data.len
+      for v in past.data:
+        doAssert v == 0'f32, "a window past the record is not zero"
+
+      rd.request(ReaderRequest(read: ReadRequest(gen: 1, first: 0, count: 2, stride: 1,
+        firstSample: Samples - 10, samples: 40, decimation: 1), clipPercentile: NaN))
+      let over = awaitKind(box, PanelId(1), mkTile).tile
+      doAssert over.failed == 0, "an overhanging window failed " & $over.failed
+      doAssert over.columns == 40, "overhang columns " & $over.columns
+      for row in 0 .. 1:
+        for j in 0 ..< 10:
+          doAssert over.data[row * 40 + j] == surveySample(0, row + 1, Samples - 10 + j),
+            "overhang sample " & $row & "," & $j
+        for j in 10 ..< 40:
+          doAssert over.data[row * 40 + j] == 0'f32, "overhang tail " & $row & "," & $j
+
+  when isMainModule:
+    main()
