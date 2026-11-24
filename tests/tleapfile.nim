@@ -87,6 +87,23 @@ proc main*() =
       doAssert currentLeapTable().checkedTo == shipped.checkedTo
       useLeapTable(shipped)
 
+    block tooBig:
+      writeFile(path, newString(2 * (1 shl 20)))
+      install()
+      defer:
+        releaseAll()
+        setFsHook(nil)
+      resetCounts()
+      let notes = installLeap(dir)
+      doAssert calls(foRead, path) == 0, "a file over 1 MB was read"
+      doAssert calls(foOpen, path) == 0, "a file over 1 MB was opened"
+      doAssert currentLeapTable().entries.len == shipped.entries.len
+      var told = false
+      for n in notes:
+        if path in n.text and n.severity == sevWarning: told = true
+      doAssert told, "a file over 1 MB was not named: " & $notes
+      useLeapTable(shipped)
+
     block broken:
       writeFile(path, "not a leap table")
       let notes = installLeap(dir)

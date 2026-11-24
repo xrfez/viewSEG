@@ -15,6 +15,9 @@ import filesystem, inbox, jobs, log, persist, session
 const LeapFileName* = "leapseconds.nif"
   ## The user table, beside `settings.nif`.
 
+const MaxLeapBytes = 1 shl 20
+  ## A user file larger than this is refused without being read.
+
 var leapGenPublished: Atomic[int]
   ## The leap-table generation workers read while they read keys. The state
   ## publishes it on every adopt; it only increases.
@@ -79,10 +82,22 @@ proc chooseLeap*(user: LeapTable; problems: openArray[string]; path: string): Ch
 proc installLeap*(configDir: string): seq[Note] {.raises: [].} =
   ## Reads the user table in `configDir` and makes it the table in use, when
   ## there is one. A missing file changes nothing and writes nothing. A file
-  ## that cannot be read, or that is not used, puts the shipped table back
-  ## (a bad file must not leave an older table installed).
+  ## larger than 1 MB is not read. A file that cannot be read, or that is not
+  ## used, puts the shipped table back (a bad file must not leave an older
+  ## table installed).
   let path = leapPath(configDir)
   if path.len == 0 or not fs.fileExists(path): return
+  try:
+    if fs.getFileSize(path) > MaxLeapBytes:
+      try: useLeapTable(defaultLeapTable())
+      except ValueError: discard
+      return @[(sevWarning, path &
+        " was not used. The shipped leap-second table is in use.")]
+  except OSError as e:
+    try: useLeapTable(defaultLeapTable())
+    except ValueError: discard
+    return @[(sevWarning, "Cannot read " & path & ": " & e.msg &
+      ". The shipped leap-second table is in use.")]
   var text = ""
   try:
     text = fs.readFile(path)
