@@ -256,13 +256,16 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   igTableSetupScrollFreeze(0, 1)
   igTableSetupColumn("Name", (if only: 0 else: ImGui_TableColumnFlags_DefaultSort.cint) or
     (if sweeps: ImGui_TableColumnFlags_WidthFixed.cint else: ImGui_TableColumnFlags_WidthStretch.cint) or
-    ImGui_TableColumnFlags_NoHide.cint, (if sweeps: 11 * igGetFontSize() else: 1'f32), 0)
+    ImGui_TableColumnFlags_NoHide.cint, (if sweeps: 11 * igGetFontSize() else: 2'f32), 0)
   if tree: igTableSetupColumn("Folder", ImGui_TableColumnFlags_WidthStretch.cint, 1, 4)
   # With a signature file's columns the name says what a Type column would, and the size and the
   # time of the file are for the column chooser: the room goes to the sweep.
   let hide = if sweeps: ImGui_TableColumnFlags_DefaultHide.cint else: 0.cint
   igTableSetupColumn("Type", hide, 0, 1)
-  igTableSetupColumn("Kind", hide, 0, uint32(ord(fcKind)))
+  # (the room the longest word of the column needs, and the sort arrow's)
+  let kindWidth = igCalcTextSize("Time-sliced", nil, false, -1).x + 1.2 * igGetFontSize()
+  igTableSetupColumn("Kind", hide or ImGui_TableColumnFlags_WidthFixed.cint, kindWidth,
+    uint32(ord(fcKind)))
   igTableSetupColumn("Size", ImGui_TableColumnFlags_PreferSortDescending.cint or hide, 0, 2)
   igTableSetupColumn("Modified", ImGui_TableColumnFlags_PreferSortDescending.cint or hide, 0, 3)
   if sweeps:

@@ -1256,7 +1256,7 @@ proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
   discard igDockBuilderAddNode(dockId, ImGui_DockNodeFlags_DockSpace.cint)
   igDockBuilderSetNodeSize(dockId, size)
   var side, files, records, rest, left, right, top, bottom, map, table: ImGuiID
-  discard igDockBuilderSplitNode(dockId, ImGuiDir_Left, 0.22, addr side, addr rest)
+  discard igDockBuilderSplitNode(dockId, ImGuiDir_Left, 0.28, addr side, addr rest)
   discard igDockBuilderSplitNode(side, ImGui_Dir_Down, 0.4, addr records, addr files)
   discard igDockBuilderSplitNode(rest, ImGuiDir_Right, 0.34, addr right, addr left)
   discard igDockBuilderSplitNode(left, ImGui_Dir_Down, 0.3, addr bottom, addr top)

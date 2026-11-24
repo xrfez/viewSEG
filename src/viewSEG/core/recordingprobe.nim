@@ -12,7 +12,7 @@
 ## to its end, or whose every receiver has its starts, has its answer.
 
 import parseSEG
-import ./[correlatejobs, filesystem, recordingkind]
+import ./[correlatejobs, filesystem, jobs, recordingkind]
 
 const
   ProbeFirstBytes* = 256 * 1024     ## the first prefix read
@@ -129,7 +129,9 @@ proc kindOfFile*(path: string; vendors: VendorRegistry;
       finally:
         f.close()
       if more: window *= ProbeGrowth
-  except IOError, OSError, ValueError, SegError:
+  except JobCancelledError:
+    raise
+  except CatchableError:
     # unreadable, damaged, or a file memory cannot hold (multiplexed SEG-D): no kind
     result = KindProbe(outcome: poNone)
   finally:
