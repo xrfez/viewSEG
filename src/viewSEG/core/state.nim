@@ -1064,6 +1064,8 @@ type
     leapPaused: seq[PanelId]
       ## the panels whose readers let go of the file for that job
     leapSession: SessionId
+    leapName: string
+      ## the file the re-read is for, so a cancel can name it after it is closed
     leapRevision: int
     leapChanged: bool
     leapDone: bool ## the job posted what it did (`mkLeap`)
@@ -8434,6 +8436,7 @@ proc followLeap(state: var AppState) =
       if not s.isSignature:
         state.pauseLeapReaders(s.path)
         state.leapSession = id
+        state.leapName = s.name
         state.leapDone = false
         state.leapChanged = false
         state.leapJob = state.jobs.submit(JobSpec(title: "Read times again for " & s.name,
@@ -8498,8 +8501,8 @@ proc finishMoves(state: var AppState; job: JobInfo) =
 
 proc finishLeap(state: var AppState; job: JobInfo) =
   ## The leap-second re-read ended: the panels it paused show their file again,
-  ## and a file whose keys changed publishes the new revision. Quiet unless it
-  ## failed. A file gone meanwhile is left.
+  ## and a file whose keys changed publishes the new revision. A failure or a
+  ## cancel is said. A file gone meanwhile is left.
   state.resumeLeapReaders()
   let session = state.leapSession
   let changed = state.leapChanged
@@ -8514,6 +8517,9 @@ proc finishLeap(state: var AppState; job: JobInfo) =
       state.sessions[i].setKeysRevision(revision)
   elif job.state == jsFailed:
     state.log.add(sevError, "leap seconds", "Times were not read again: " & job.error & ".")
+  elif job.state == jsCancelled:
+    state.log.add(sevWarning, "leap seconds", "Times of " & state.leapName &
+      " were not read again; they use the earlier leap-second table until it is reopened.")
 
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.

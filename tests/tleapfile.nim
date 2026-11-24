@@ -286,6 +286,28 @@ proc main*() =
       doAssert abs(before - after - 1.0) < 0.001, "aux time moved by " & $(before - after)
       useLeapTable(shipped)
 
+    block cancelReread:
+      useLeapTable(shipped)
+      let segd = fx.dir / "cancel.sgd"
+      writeSegd(segd, float64(July2027))
+      var st = initAppState()
+      st.apply Command(kind: ckOpen, paths: @[segd])
+      doAssert st.settle(st.sessions.len == 1), "the file to cancel did not open"
+      let before = st.sessions[0].file.traceKeys(0).time
+      doAssert st.jobs.hold(segd), "the open file could not be held"
+      st.apply Command(kind: ckAddLeap, leapYear: 2027, leapMonth: 1, leapStep: 1)
+      var id = NoJob
+      for j in st.jobs.list:
+        if j.spec.title.startsWith("Read times again") and j.state == jsQueued: id = j.id
+      doAssert id != NoJob, "the re-read was not queued"
+      st.apply Command(kind: ckCancelJob, job: id)
+      discard st.jobs.release(segd)
+      doAssert st.settle(said(st, "were not read again")), "a cancelled re-read was not said"
+      doAssert said(st, segd.extractFilename), "the cancelled re-read did not name the file"
+      doAssert abs(st.sessions[0].file.traceKeys(0).time - before) < 0.001,
+        "a cancelled re-read changed the time"
+      useLeapTable(shipped)
+
     block shift:
       useLeapTable(shipped)
       let segd = fx.dir / "july2027.sgd"
