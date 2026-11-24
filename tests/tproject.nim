@@ -45,11 +45,14 @@
 ## said the opposite; with "32th", the limit sentence was wrong; with a long
 ## choice said missing, its first 20 characters were not quoted. With
 ## `patternProblem` not applied, a stored text part holding the pattern's own
-## separator was kept.
+## separator was kept. With the texts node always written, an old document held
+## `(outputTexts`; with an unknown child of a template dropped, `(kept` was not
+## written back; with an encoding other than the two taken as EBCDIC, a template
+## of `utf8` was kept; with the text choice not checked, "Nope" stayed chosen.
 
 import std/[options, os, strutils, times]
 import parseSEG
-import viewSEG/core/[jobs, join, nif, outputnames, processing, project, projectnif, shotlog,
+import viewSEG/core/[jobs, join, nif, outputnames, outputtext, processing, project, projectnif, shotlog,
   surveystore]
 import utils/[fixtures, waiting]
 
@@ -433,6 +436,66 @@ proc main*() =
       OutputPattern(name: "Line", parts: @[NamePart(kind: npSrcLine)])]
     let emptyText = projectDocument(emptyChoice)
     doAssert "(outputPatterns" in emptyText and "(outputPattern " notin emptyText, emptyText
+
+  block outputTexts:
+    # Text header templates: written beside the name patterns, read back as
+    # written, an old document with none, a bad one left out and said, an
+    # unknown child kept.
+    var d = ProjectDoc(name: "Land 2026", hasOutputTexts: true, outputText: "Ascii \"one\"")
+    d.outputTexts = @[
+      OutputText(name: "Ebcdic", encoding: teEbcdic, lines: @["C 1 {stem}", "", "caf\xc3\xa9"]),
+      OutputText(name: "Ascii \"one\"", encoding: teAscii, lines: @["{{x}} {record:5}"])]
+    let text = projectDocument(d)
+    doAssert "(outputTexts" in text and "(text \"Ebcdic\"" in text, text
+    doAssert text.count("(encoding ") == 1 and "(encoding \"ascii\")" in text, text
+    doAssert "(line \"\")" in text and "(outputText \"Ascii \\22one\\22\")" in text, text
+    var problems: seq[string] = @[]
+    let back = readProject(text, "project.nif", problems)
+    doAssert problems.len == 0, $problems
+    doAssert back.hasOutputTexts and back.outputTexts == d.outputTexts, $back.outputTexts
+    doAssert back.outputText == d.outputText
+    let old = projectDocument(ProjectDoc(name: "old"))
+    doAssert "(outputTexts" notin old and "(outputText " notin old, old
+    let oldBack = readProject(old, "project.nif", problems)
+    doAssert not oldBack.hasOutputTexts and oldBack.outputTexts.len == 0 and
+      oldBack.outputText.len == 0 and problems.len == 0, $problems
+    proc readDoc(body: string): ProjectDoc =
+      problems.setLen 0
+      readProject("(project (version 1) (name \"h\") " & body & ")", "project.nif", problems)
+    let bad = readDoc("(outputTexts (text \"Bad\" (line \"{nope}\")) " &
+      "(text \"Enc\" (encoding \"utf8\")) (text \"Good\" (line \"C 1\")))")
+    doAssert bad.outputTexts.len == 1 and bad.outputTexts[0].name == "Good", $bad.outputTexts
+    doAssert problems.len == 2 and "{nope}" in problems[0] and "utf8" in problems[1],
+      $problems
+    let dup = readDoc("(outputTexts (text \"A\" (line \"1\")) (text \"a\" (line \"2\")))")
+    doAssert dup.outputTexts.len == 1 and dup.outputTexts[0].lines == @["1"] and
+      problems.len == 1 and "twice" in problems[0], $problems
+    var thirty9 = "(outputTexts (text \"Long\""
+    for i in 1 .. 39: thirty9.add " (line \"x\")"
+    thirty9.add ")"
+    let long = readDoc(thirty9 & ")")
+    doAssert long.outputTexts.len == 0 and problems.len == 1, $problems
+    let miss = readDoc("(outputText \"Nope\") (outputTexts (text \"A\" (line \"1\")))")
+    doAssert miss.outputText.len == 0 and miss.outputTexts.len == 1 and problems.len == 1 and
+      "Nope" in problems[0], $problems
+    let chosen = readDoc("(outputText \"a\") (outputTexts (text \"A\" (line \"1\")))")
+    doAssert chosen.outputText == "A" and problems.len == 0, $problems
+    var many = "(outputTexts"
+    for i in 1 .. MaxOutputTexts + 1: many.add " (text \"t" & $i & "\" (line \"x\"))"
+    let capped = readDoc(many & ")")
+    doAssert capped.outputTexts.len == MaxOutputTexts and problems.len == 1, $problems
+    # An unknown child of a template and of the node is kept and written back.
+    let extra = readDoc("(outputTexts (text \"A\" (line \"1\") (kept (n 1))) (future 2))")
+    doAssert problems.len == 0 and extra.outputTexts.len == 1, $problems
+    doAssert extra.outputTextLater.len == 1 and extra.outputTextLater[0][0].tag == "kept"
+    doAssert extra.outputTextsLater.len == 1 and extra.outputTextsLater[0].tag == "future"
+    let again = projectDocument(extra)
+    doAssert "(kept (n 1))" in again and "(future 2)" in again, again
+    doAssert again.find("(line \"1\")") < again.find("(kept"), again
+    # The name patterns beside them are not disturbed.
+    let both = readDoc("(outputPatterns (pattern \"Line\" (part \"srcLine\"))) " &
+      "(outputPattern \"Line\") (outputTexts (text \"A\" (line \"1\"))) (outputText \"A\")")
+    doAssert both.outputPattern == "Line" and both.outputText == "A" and problems.len == 0
 
   block unknownChildren:
     # An unknown child of a part is kept and written back inside that part.

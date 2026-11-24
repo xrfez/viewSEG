@@ -65,6 +65,18 @@
 ## drop the value that is there. A chosen label that names no pattern, or one
 ## that is too long, reads as none, and is said.
 ##
+## A SEG-Y text header template is `(outputTexts (text "Survey" (encoding "ascii")
+## (line "C 1 {stem}") (line "")))` and `(outputText "Survey")`, the name in
+## use; absent means the writer's own text. `(encoding "ebcdic")`, the
+## default, is not written. A `(line "...")` is one card, cards 1 to 38 in
+## order, a blank one an empty string; tokens in braces stay as typed
+## (`core/outputtext`). At most `MaxOutputTexts` templates. An encoding that
+## is not `ebcdic` or `ascii`, a name given twice (without regard to case), or
+## a template `textProblem` refuses is said and left out. A child this
+## version does not know is kept and written back; so is one of
+## `(outputTexts)`. A chosen name that names no template reads as none, and
+## is said.
+##
 ## A station moved during a deployment is
 ## `(stationMoves (move (line ...) (point ...) (index ...) (x ...) (y ...)))`.
 ## `fromTime` (the same absolute time as `TraceKeys.time`) and `elev` are
@@ -72,9 +84,9 @@
 ## the station. Absent means no moves. The position is not written into the
 ## seismic file or the survey file.
 
-import std/[math, options, strutils, times, unicode]
+import std/[math, options, sequtils, strutils, times, unicode]
 import parseSEG
-import analysis, breakmodel, identity, join, nif, outputnames, processing, project, settings,
+import analysis, breakmodel, identity, join, nif, outputnames, outputtext, processing, project, settings,
   settingsnif, shotlog, stationmoves, vendormaps, vibprofile
 
 const
@@ -269,6 +281,25 @@ proc writeOutputPatterns(w: var NifWriter; d: ProjectDoc) =
   for n in d.outputPatternsLater: w.add n
   w.close
 
+proc writeOutputText(w: var NifWriter; t: OutputText; later: openArray[NifNode]) =
+  w.open "text"
+  w.add t.name
+  if t.encoding != teEbcdic: w.value("encoding", $t.encoding)
+  for line in t.lines: w.value("line", line)
+  for n in later: w.add n
+  w.close
+
+proc writeOutputTexts(w: var NifWriter; d: ProjectDoc) =
+  ## Text header templates in an `(outputTexts ...)` tree; an encoding only
+  ## when it is not EBCDIC. A child this version does not know is written back.
+  w.open "outputTexts"
+  var none: seq[NifNode] = @[]
+  for i, t in d.outputTexts:
+    if i < d.outputTextLater.len: w.writeOutputText(t, d.outputTextLater[i])
+    else: w.writeOutputText(t, none)
+  for n in d.outputTextsLater: w.add n
+  w.close
+
 proc projectDocument*(d: ProjectDoc): string =
   ## `d` as the project document (the module's documentation).
   var w = initNifWriter(breakDepth = 2)
@@ -350,6 +381,8 @@ proc projectDocument*(d: ProjectDoc): string =
   if d.hasPresets: w.writeDisplayPresets(d.displayPresets)
   if d.hasOutputPatterns: w.writeOutputPatterns(d)
   if d.outputPattern.len > 0: w.value("outputPattern", d.outputPattern)
+  if d.hasOutputTexts: w.writeOutputTexts(d)
+  if d.outputText.len > 0: w.value("outputText", d.outputText)
   if d.hasBreakModel: w.writeBreakModel(d.breakModel)
   if d.shotLogs.len > 0 or d.shotLogsLater.len > 0:
     w.open "shotLogs"
@@ -977,6 +1010,103 @@ proc outputPatterns(r: var Reading; n: NifNode; d: var ProjectDoc) =
   d.outputPatternLater = later
   d.outputPatternsLater = rest
 
+type TextRead = object
+  ok: bool
+  text: OutputText
+  later: seq[NifNode]
+  why: string
+
+func textLeftOut(why, name: string): string =
+  ## `why`, naming the template `name` when there is one, and saying it is left out.
+  var body = why
+  if name.len > 0:
+    body = "the output text \"" & name & "\": " & body
+  if body.endsWith('.'): body.setLen(body.len - 1)
+  body & "; it is left out."
+
+proc readText(n: NifNode): TextRead =
+  ## One `(text "name" (encoding ...) (line "...") ...)`. `ok` is false, and
+  ## `why` says why, when it cannot be kept.
+  result.later = @[]
+  result.text = OutputText(encoding: teEbcdic, lines: @[])
+  if n.kids.len == 0 or n.kids[0].kind != nkString:
+    result.why = "An output text needs a name."
+    return
+  let raw = n.kids[0].text
+  if raw.len > MaxTextName * 4 + 64:
+    result.why = "An output text's name is at most " & $MaxTextName & " characters long."
+    return
+  result.text.name = strip(raw)
+  for i in 1 ..< n.kids.len:
+    let k = n.kids[i]
+    if k.isTree("encoding"):
+      if k.kids.len >= 1 and k.kids[0].kind == nkString and k.kids[0].text == "ascii":
+        result.text.encoding = teAscii
+      elif k.kids.len >= 1 and k.kids[0].kind == nkString and k.kids[0].text == "ebcdic":
+        result.text.encoding = teEbcdic
+      else:
+        let got = if k.kids.len >= 1 and k.kids[0].kind == nkString: k.kids[0].text else: ""
+        result.why = "The encoding \"" & got & "\" of an output text is not \"ebcdic\" or \"ascii\"."
+        return
+    elif k.isTree("line"):
+      if k.kids.len < 1 or k.kids[0].kind != nkString:
+        result.why = "A (line) of an output text needs a string."
+        return
+      if result.text.lines.len >= MaxTextLines:
+        result.why = "An output text has at most " & $MaxTextLines & " lines."
+        return
+      result.text.lines.add k.kids[0].text
+    else:
+      result.later.add k
+  let why = textProblem(result.text)
+  if why.len > 0:
+    result.why = why
+    return
+  result.ok = true
+
+proc outputTexts(r: var Reading; n: NifNode; d: var ProjectDoc) =
+  ## `(outputTexts (text "name" (line "...") ...) ...)`. A template that is
+  ## not one, or whose name is taken, is left out and said, as are those past
+  ## `MaxOutputTexts`. A child this version does not know is kept.
+  d.hasOutputTexts = true
+  var got: seq[OutputText] = @[]
+  var later: seq[seq[NifNode]] = @[]
+  var rest: seq[NifNode] = @[]
+  var over = 0
+  for c in n.kids:
+    if c.isTree("text"):
+      if got.len >= MaxOutputTexts: inc over
+      else:
+        let read = readText(c)
+        if not read.ok: r.problem(c, textLeftOut(read.why, read.text.name))
+        elif got.anyIt(sameLabel(it.name, read.text.name)):
+          r.problem(c, "the output text \"" & read.text.name &
+            "\" is given twice; the first counts.")
+        else:
+          got.add read.text
+          later.add read.later
+    elif c.kind == nkTree: rest.add c
+    else: r.problem(c, "(outputTexts) holds texts")
+  if over > 0:
+    r.problem(n, "At most " & $MaxOutputTexts & " output texts are kept; the " &
+      $over & " after the first " & $MaxOutputTexts & " are left out.")
+  d.outputTexts = got
+  d.outputTextLater = later
+  d.outputTextsLater = rest
+
+proc settleTextChoice(r: var Reading; d: var ProjectDoc; choice: NifNode; saw: bool) =
+  ## A chosen name that names no kept template reads as none, with a sentence.
+  if not saw: return
+  let label = strip(d.outputText)
+  d.outputText = ""
+  if label.len == 0: return
+  for t in d.outputTexts:
+    if sameLabel(t.name, label):
+      d.outputText = t.name
+      return
+  r.problem(choice, "the output text \"" & label &
+    "\" is not in this project; the writer's own text is used")
+
 proc settleChoice(r: var Reading; d: var ProjectDoc; choice: NifNode; saw: bool) =
   ## A chosen label that names no kept pattern reads as none, with a sentence.
   ## One that is too long is said, quoting its first 20 characters.
@@ -1001,6 +1131,8 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
   result = ProjectDoc(version: 0)
   var choiceNode = NifNode(kind: nkTree, tag: "outputPattern")
   var sawChoice = false
+  var textChoiceNode = NifNode(kind: nkTree, tag: "outputText")
+  var sawTextChoice = false
   var root = -1
   for i, n in doc:
     if n.kind == nkTree and n.tag.startsWith("."): discard
@@ -1041,6 +1173,15 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
           r.problem(c, chosenTooLong(c.kids[0].text))
         else:
           r.problem(c, "(outputPattern) needs a string")
+      of "outputTexts": r.outputTexts(c, result)
+      of "outputText":
+        if c.kids.len >= 1 and c.kids[0].kind == nkString and
+            c.kids[0].text.len <= MaxTextName * 4 + 64:
+          result.outputText = c.kids[0].text
+          textChoiceNode = c
+          sawTextChoice = true
+        else:
+          r.problem(c, "(outputText) needs a name that is not too long")
       of "breakModel":
         result.breakModel = readBreakModel(c, name, BreakModel(), r.problems)
         result.hasBreakModel = true
@@ -1067,6 +1208,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
       of "lastShotMap": r.lastShotMap(c, result)
       else: result.later.add c
   r.settleChoice(result, choiceNode, sawChoice)
+  r.settleTextChoice(result, textChoiceNode, sawTextChoice)
   if result.version == 0:
     r.problem(doc[root], "(project) gives no (version); read as version " & $ProjectVersion)
     result.version = ProjectVersion

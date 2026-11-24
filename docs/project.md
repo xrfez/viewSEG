@@ -43,7 +43,7 @@ Land 2026/                  the project folder: this is what is opened
   such as `.viewseg`: a later step.)
 - **`project.nif`** says what the project is: its name, its data folders, its survey files
   with their originals, the import's options and units, what `survey.bin` holds, the
-  project's filters, display presets and output name patterns (`core/projectnif`). A station
+  project's filters, display presets, output name patterns and text header templates (`core/projectnif`). A station
   moved during a deployment is a `stationMoves` entry there: a new receiver position from a time on,
   not written into the seismic file or the survey file. While a file is open that
   position replaces the header's and the survey's for a trace recorded at or after
@@ -153,6 +153,22 @@ Land 2026/                  the project folder: this is what is opened
   is said. An unknown child of a pattern, and of a part, is kept
   and written back. An extra child of a width, a text, a separator or the chosen label is not
   written back.
+- **Text header templates.** Beside the name patterns, the document can keep named templates
+  for the SEG-Y text header of a file written from the project: `(outputTexts (text "Survey"
+  (encoding "ascii") (line "C 1 {stem}") (line "")))` and `(outputText "Survey")`, the name in
+  use. A `(line "...")` is one card, cards 1 to 38 in order, a blank one an empty string
+  (cards 39 and 40 are always written by the library and are not part of a template); a line is
+  at most 80 characters of Latin-1 text. `(encoding "ebcdic")` is the default and is not
+  written; the other is `"ascii"`. A word in braces is filled in from each file when it is
+  written (`{stem}`, `{file}`, `{date}`, `{clock}`, `{record}`, `{srcLine}`, `{time}` and the
+  other parts a name pattern has; `{record:5}` pads a number; `{{` and `}}` are braces). At most
+  32 templates are kept. Absent, the writer's own text is used, and a document without the
+  nodes reads with no problem. An encoding that is not one of the two, an unknown word in
+  braces, more than 38 lines, a line past 80 characters, a character the character set cannot
+  hold, a name given twice (without regard to case) or a template that cannot be used is said
+  and left out; the rest of the document still reads. A chosen name that names no template
+  reads as none, and is said. An unknown child of a template, and of `(outputTexts)`, is kept
+  and written back.
 - **Versioned.** `version` is the document's format. A reader skips what it does not
   know and writes it back as it was, so a later version can add fields beside these. A
   document of a newer version than the program knows is opened read-only, and the
@@ -299,6 +315,7 @@ second.
 | The plot's filters | yes | named filter presets |
 | Display presets | yes | |
 | Output name patterns | yes | |
+| Text header templates | yes | |
 | The windows' arrangement | yes | |
 | Flags, notes (per project, per file, per trace) | | yes |
 | First-break picks, QC and scan results, the folder scan's statistics | | yes |

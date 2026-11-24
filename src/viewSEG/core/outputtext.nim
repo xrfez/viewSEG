@@ -18,8 +18,8 @@ import parseSEG
 import outputnames
 
 const
-  MaxTextLines* = 38 ## template lines, at most (cards 39 and 40 are the writer's)
-  MaxTextLine* = 80 ## characters of one line
+  MaxTextLines* = 38            ## template lines, at most (cards 39 and 40 are the writer's)
+  MaxTextLine* = 80             ## characters of one line
   MaxTextName* = MaxPatternName ## the template's name, in characters
 
 type
@@ -27,21 +27,21 @@ type
     ## One template, by the name a person picks it by.
     name*: string
     encoding*: TextEncoding ## `teEbcdic` (the traditional one) or `teAscii`
-    lines*: seq[string] ## cards 1 to 38; a short list leaves the rest blank
+    lines*: seq[string]     ## cards 1 to 38; a short list leaves the rest blank
 
   TextTokenKind* = enum
-    ttStem ## the source file's name without its extension
-    ttFile ## the source file's name with its extension
-    ttDate ## the day of writing, UTC
+    ttStem  ## the source file's name without its extension
+    ttFile  ## the source file's name with its extension
+    ttDate  ## the day of writing, UTC
     ttClock ## the time of day of writing, UTC
-    ttPart ## a value of the name pattern's kind `TextTokenInfo.part`
+    ttPart  ## a value of the name pattern's kind `TextTokenInfo.part`
 
   TextTokenInfo* = object
-    word*: string ## what is written between the braces
-    about*: string ## one line for a list of tokens
+    word*: string       ## what is written between the braces
+    about*: string      ## one line for a list of tokens
     kind*: TextTokenKind
     part*: NamePartKind ## `ttPart` only
-    width*: bool ## a width may follow, as `{record:5}`
+    width*: bool        ## a width may follow, as `{record:5}`
 
   TextValues* = object
     ## What one file gives the tokens. `values` is what `nameValuesOf` makes;
@@ -88,7 +88,7 @@ const TextTokens*: seq[TextTokenInfo] = @[
 
 type Seg = object
   literal: string ## a run of text, when `token` is -1
-  token: int ## index into `TextTokens`, or -1
+  token: int      ## index into `TextTokens`, or -1
   pad: int
 
 func tokenIndex(word: string): int =
