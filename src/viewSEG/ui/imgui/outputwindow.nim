@@ -14,7 +14,7 @@ from std/unicode import cmpRunesIgnoreCase
 import sdl3_nim
 import imguin/cimgui
 import ../../core/[edits, filejobs, filekinds, filesystem, jobs, outputbatch, outputjobs,
-  panels, references, state]
+  panels, references, settings, state]
 import ../../view/[filetable, outputwords]
 import fittext, focus, icons, marks, overflow
 
@@ -23,6 +23,7 @@ type
     source: string
     relative: string
     size: int64
+    kind: FileKind
 
   ListNote = ref object
     files: seq[ListedFile]
@@ -42,6 +43,8 @@ type
   OutputUi* = object
     source, dest: string
     format: OutputFormat = ofSegy
+    revision: OutputRevision
+    revisionKnown: bool ## `revision` was taken from the settings
     reversals: bool = true
     dropKilled: bool = true
     ownFilters: bool = true
@@ -249,7 +252,8 @@ proc listWork(folder: string; note: ListNote; gen: int): JobWork =
       except OSError: size = 0
       let rel = underRoot(path, folder)
       if rel.len == 0: continue
-      files.add ListedFile(source: path.normalizedPath, relative: rel, size: size)
+      files.add ListedFile(source: path.normalizedPath, relative: rel, size: size,
+        kind: kind)
     files.sort(proc (a, b: ListedFile): int = cmp(a.relative, b.relative))
     note.files = files
     note.capped = capped
@@ -458,7 +462,7 @@ proc submitRun(ui: var OutputUi; st: AppState) =
     if ui.ticks.getOrDefault(f.relative, false):
       items.add BatchItem(source: f.source, relative: nativeRel(f.relative))
   if items.len == 0: return
-  var opts = OutputOptions(format: ui.format, applyReversals: ui.reversals,
+  var opts = OutputOptions(format: ui.format, revision: ui.revision, applyReversals: ui.reversals,
     applyShifts: ui.shifts, dropKilled: ui.dropKilled, applyOwnFilters: ui.ownFilters,
     applyProcessing: ui.processingOn, writeSessionPositions: not ui.keepOwn)
   let pk = st.findPanel(MainPanel)
@@ -1140,6 +1144,44 @@ proc drawNames(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Outpu
   if ui.editing: ui.drawEditor(st, marks, outp)
   elif ui.kindOpen: ui.closeKind()
 
+proc sourceKinds(ui: OutputUi): set[FileKind] =
+  ## The standards of the ticked files; of every listed file when none is ticked.
+  for f in ui.listed:
+    if ui.ticks.getOrDefault(f.relative, false): result.incl f.kind
+  if result == {}:
+    for f in ui.listed: result.incl f.kind
+
+proc drawRevision(ui: var OutputUi; st: AppState; marks: var Marks;
+    outp: var OutputOutput) =
+  if not ui.revisionKnown:
+    ui.revision = st.settings.output.revision
+    ui.revisionKnown = true
+  let kinds = ui.sourceKinds
+  let choices = revisionChoices(ui.format, kinds)
+  if ui.revision notin choices: ui.revision = orSame
+  igTextUnformatted(RevisionLabel.cstring, nil)
+  igSameLine(0, -1)
+  igSetNextItemWidth(igGetFontSize() * 12)
+  if igBeginCombo("##output.revision", ui.revision.revisionLabel.cstring, 0):
+    for v in choices:
+      if igSelectable_Bool(v.revisionLabel.cstring, v == ui.revision, 0,
+          ImVec2_c(x: 0, y: 0)):
+        ui.revision = v
+      marks.mark("output.revision.entry " & v.revisionLabel)
+    igEndCombo()
+  marks.mark("output.revision")
+  marks.mark("output.revision " & ui.revision.revisionLabel)
+  tip(if ui.format == ofSegy: RevisionSegyTip else: RevisionSegdTip)
+  if ui.revision != st.settings.output.revision:
+    var s = st.settings
+    s.output.revision = ui.revision
+    outp.commands.add Command(kind: ckSettings, settings: s)
+  if kinds.len > 1:
+    igPushTextWrapPos(0)
+    igTextUnformatted(RevisionMixedNote.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("output.revision.mixed")
+
 proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
     outp: var OutputOutput) =
   let extra = if ui.dest.len > 0: "output.destination " & ui.dest else: ""
@@ -1163,6 +1205,7 @@ proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
   if igRadioButton_Bool(($ofSegd).cstring, ui.format == ofSegd): ui.format = ofSegd
   marks.mark("output.format " & $ofSegd)
   if ui.format == ofSegd: marks.mark("output.format " & $ofSegd & ".on")
+  ui.drawRevision(st, marks, outp)
   ui.drawOptions(st, marks)
   discard igCheckbox(KeepFolders.cstring, addr ui.mirror)
   marks.mark("output.mirror")

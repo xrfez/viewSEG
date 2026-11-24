@@ -38,7 +38,8 @@
 
 import std/[math, monotimes, options, os, strutils]
 import parseSEG
-import viewSEG/core/[edits, geometry, jobs, outputnamevalues, references, sigtypes, state, threads]
+import viewSEG/core/[edits, geometry, jobs, outputnamevalues, outputrevision, references, settings,
+  sigtypes, state, threads]
 import parseSEG/model/traceindex
 import viewSEG/ui/imgui/app
 import utils/[fixtures, waiting]
@@ -140,6 +141,21 @@ proc stacked(f: FrameInfo): bool =
   let r = f.markOf("output.pane.right")
   f.markOf("output.stacked").size.x > 0 and l.size.y > 0 and r.size.y > 0 and
     l.pos.y + l.size.y <= r.pos.y + 8 and abs(l.pos.x - r.pos.x) <= 4
+
+proc comboAct(f: FrameInfo; combo, entry: string; arm, cool: var int): bool =
+  ## Opens the drop-down `combo` and, when `entry` is not empty, clicks that
+  ## entry once the list has had two frames to take its place.
+  if entry.len > 0 and f.markOf(entry).size.x > 0:
+    inc arm
+    if arm < 2: return false
+    return clickWhen(f, entry)
+  arm = 0
+  if f.markNames(combo & ".entry ").len > 0: return entry.len == 0
+  if not reveal(f, combo): return false
+  inc cool
+  if cool == 1 or cool mod 12 == 0:
+    discard clickWhen(f, combo)
+  false
 
 proc namePatterns()
 proc correlatedRun(pilot: bool)
@@ -282,6 +298,61 @@ proc main*() =
           doAssert f.savePng(shots / "output-before-run.png"), "before-run shot was not written"
       step("All ticks every file", all, allOn)
 
+      var revArm = 0
+      var revCool = 0
+      proc lists(f: FrameInfo; want: openArray[string]): bool =
+        ## The open Revision drop-down holds exactly the entries `want`.
+        let got = f.markNames("output.revision.entry ")
+        if got.len == 0: return false
+        var wanted: seq[string] = @[]
+        for w in want: wanted.add "output.revision.entry " & w
+        doAssert got == wanted, "the Revision choices are " & $got & ", not " & $wanted
+        true
+
+      proc openSegyRevisions(f: FrameInfo): bool = comboAct(f, "output.revision", "", revArm, revCool)
+      proc segyRevisions(f: FrameInfo): bool =
+        result = lists(f, ["Same as the source", "Rev 0", "Rev 1", "Rev 2.0", "Rev 2.1"])
+        if result:
+          doAssert f.markOf("output.revision Same as the source").size.x > 0
+          f.keepInMainWindow()
+          doAssert f.savePng(shots / "output-revision.png"), "the revision shot was not written"
+      step("the SEG-Y Revision choices are listed", openSegyRevisions, segyRevisions)
+
+      proc pickZero(f: FrameInfo): bool =
+        comboAct(f, "output.revision", "output.revision.entry Rev 0", revArm, revCool)
+      proc zeroPicked(f: FrameInfo): bool =
+        f.markOf("output.revision Rev 0").size.x > 0 and
+          f.core.settings.output.revision == orSegy0
+      step("Rev 0 is chosen and remembered", pickZero, zeroPicked)
+
+      proc toSegd(f: FrameInfo): bool =
+        if f.markOf("output.format SEG-D.on").size.x == 0:
+          discard clickWhen(f, "output.format SEG-D")
+          return false
+        comboAct(f, "output.revision", "", revArm, revCool)
+      proc segdListed(f: FrameInfo): bool =
+        if f.markOf("output.format SEG-D.on").size.x == 0: return false
+        # a SEG-Y choice does not carry over to SEG-D
+        doAssert f.markOf("output.revision Rev 0").size.x == 0,
+          "Rev 0 stayed chosen for a SEG-D output"
+        lists(f, ["Same as the source", "Rev 3.0", "Rev 3.1"])
+      step("the SEG-D Revision choices are listed", toSegd, segdListed)
+
+      proc toSegy(f: FrameInfo): bool =
+        if f.markNames("output.revision.entry ").len > 0:
+          f.pressKey(skEscape, true)
+          f.pressKey(skEscape, false)
+        clickWhen(f, "output.format SEG-Y")
+      proc segyAgain(f: FrameInfo): bool =
+        f.markOf("output.format SEG-Y.on").size.x > 0 and
+          f.markOf("output.revision Same as the source").size.x > 0 and
+          f.core.settings.output.revision == orSame
+      step("SEG-Y again offers 'same'", toSegy, segyAgain)
+
+      proc pickZeroAgain(f: FrameInfo): bool =
+        comboAct(f, "output.revision", "output.revision.entry Rev 0", revArm, revCool)
+      step("Rev 0 is chosen for the run", pickZeroAgain, zeroPicked)
+
       proc badDest(f: FrameInfo): bool =
         answer = @[folder / "inside"]
         clickWhen(f, "output.changeDest")
@@ -311,6 +382,11 @@ proc main*() =
           f.markOf("output.summary 3 0 0").size.x > 0 and
           not hasPrefix(f, "output.state ")
         if result:
+          for name in ["a.sgy", "b.sgy"]:
+            var back = openSeismic(written / name, keys = false)
+            doAssert $back.summary.revision == "0.0",
+              name & " was written as Rev " & $back.summary.revision & ", not Rev 0"
+            back.close()
           doAssert f.savePng(shots / "output-after-run.png"), "after-run shot was not written"
       step("Run writes the three files", run, wrote)
 

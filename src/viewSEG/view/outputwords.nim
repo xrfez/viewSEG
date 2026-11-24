@@ -30,6 +30,15 @@ const
   SourceLabel* = "Source"
   DestLabel* = "Destination"
   FormatLabel* = "Format"
+  RevisionLabel* = "Revision"
+  RevisionSegyTip* = "Same as the source: a SEG-Y file keeps its own revision and headers; " &
+    "a SEG-D or SEG-2 file is written as Rev 2.1. A revision named here rewrites the " &
+    "headers as that revision; the notes list what it could not keep."
+  RevisionSegdTip* = "Same as the source: a SEG-D file keeps its own revision, which " &
+    "is the only choice for it; a SEG-Y or SEG-2 file is written as Rev 3.0. Rev 3.1 " &
+    "is offered when no ticked file is SEG-D."
+  RevisionMixedNote* = "A mix of standards: each file of the standard written keeps its " &
+    "own revision, the others are written as Rev 2.1 (SEG-Y) or Rev 3.0 (SEG-D)."
   KeepFolders* = "Keep the sub folders"
   OptReversals* = "Polarity reversals"
   OptKilled* = "Drop killed traces"

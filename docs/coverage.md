@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.21.3: capabilities | names | processSEG 0.14.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 59 (25 in part) | 203 | 46 (29 in part) | 256 |
-| `internal` | 21 | 66 | 10 | 88 |
-| `planned` | 32 | 225 | 40 | 360 |
+| `built` | 60 (25 in part) | 207 | 46 (29 in part) | 256 |
+| `internal` | 21 | 65 | 10 | 88 |
+| `planned` | 31 | 222 | 40 | 360 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 22 | 352 | 7 | 68 |
 | all | 136 | 855 | 104 | 777 |
@@ -228,7 +228,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Any standard to SEG-Y, with a loss report | `convertFile`, `ConvertOptions`, `convertSegdToSegy`, `convertSeg2ToSegy` | Convert… (file or folder, progress, cancel, losses listed) | planned |
 | SEG-Y revision, byte order, sample format | `convertSegy`, `ConvertOptions(revision, byteOrder, format)`, `targetFormat`, `SegyTargetFormat` | Convert… | planned |
 | A client's SEG-Y textual header checked, written whole, or replaced later | `checkTextHeader`, `TextHeaderProblem`, `TextHeaderFault` (`thfTooManyLines`, `thfLineTooLong`, `thfBadCharacter`, `thfRevisionCard`, `thfEndMarker`, `thfReadBack`), `replaceTextHeader` | Output: a client text header typed or pasted, its faults shown before writing; a header stamped into a finished file | planned |
-| What a revision rewrite dropped | `revisionNotes` | Output: the SEG-Y revision choice lists what the target revision cannot hold | planned |
+| What a revision rewrite dropped | `revisionNotes`, `openSeismicWriter(path, like, segyRevision)`, `SegyOutputOptions.revision`, `SegdOutputOptions.revision` | Output: the Revision choice writes SEG-Y Rev 0, 1, 2.0, 2.1 or SEG-D Rev 3.0, 3.1 (or the source's own) and the notes list what the target revision cannot hold | built |
 | A header patched after the traces are written | `patch` | Inside the writers | not applicable (the writers call it) |
 | SEG-D between revisions | `convertSegdRevision`, `SegdConvertOptions`, `SegdTargetFormat`, `scanSegdRecords`, `SegdRecordScan` | Convert… | planned |
 | To SEG-2, SEG-2 to SEG-D | `convertToSeg2`, `convertSeg2ToSegd`, `Seg2ConvertOptions`, `Seg2TargetFormat` | Convert… | planned |

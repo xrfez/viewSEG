@@ -394,7 +394,15 @@ box is mixed when only some of the files under it are ticked; a click then ticks
 all. Ticks are not kept.
 
 The right pane is the destination and the write. **Change destination...** picks the
-folder to write into. **Format** is SEG-Y or SEG-D. The boxes under it, in two columns,
+folder to write into. **Format** is SEG-Y or SEG-D. **Revision** under it is **Same as
+the source** or one revision of the format. Same as the source: a SEG-Y file keeps its own
+revision and headers, a SEG-D file keeps its own revision, and a file of another standard is
+written as SEG-Y Rev 2.1 or SEG-D Rev 3.0. SEG-Y offers Rev 0, 1, 2.0 and 2.1 for every
+source: the headers are rewritten as that revision, and the notes list what it could not
+keep (extended text, trailers, a time that was rounded, and so on). SEG-D offers Rev 3.0
+and 3.1 only when no ticked file is SEG-D, as a SEG-D file keeps its own revision; a
+folder that mixes standards offers the choices that hold for all of them, and a line says
+what each file gets. The choice is remembered. The boxes under it, in two columns,
 are on: polarity reversals, dropping killed traces, each trace's own filter, the Seismic
 window's processing, time shifts, and the plot's sort. **Keep the file's own positions**
 is off: a survey join or a station move in an open file is written into the headers on

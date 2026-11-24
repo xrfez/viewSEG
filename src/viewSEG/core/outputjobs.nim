@@ -115,7 +115,7 @@ type
       ## `orSame`: a file of the standard written keeps its own revision, any
       ## other is written as SEG-Y 2.1 or SEG-D 3.0. Explicit: that revision,
       ## where the way the file is written can honour it (see `refusedRevision`).
-    applyReversals*: bool   ## reversed traces written reversed
+    applyReversals*: bool ## reversed traces written reversed
     applyShifts*: bool
       ## Shifted traces are written shifted, same length, zeros where no sample exists.
     dropKilled*: bool
