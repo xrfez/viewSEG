@@ -423,19 +423,19 @@ when not defined(windows):
     proc renamexNp(src, dst: cstring; flags: cuint): cint
       {.importc: "renamex_np", header: "<stdio.h>".}
 
-  func noHardLinks*(err: int): bool =
+  proc noHardLinks*(err: int): bool =
     ## Whether `err` (an `errno`) from `link` says that the drive has no
     ## hard links or not here (FAT, exFAT, many network shares and FUSE
     ## mounts), so that the step must give way to a copy.
-    err in [int(posix.EPERM), int(posix.EOPNOTSUPP), int(posix.ENOSYS), int(posix.EMLINK),
-      int(posix.EXDEV), int(posix.EINVAL)]
+    err in [int(posix.EPERM), int(posix.EOPNOTSUPP), int(posix.ENOTSUP), int(posix.ENOSYS),
+      int(posix.EMLINK), int(posix.EXDEV), int(posix.EINVAL)]
 
-  func noRenameFlag*(err: int): bool =
+  proc noRenameFlag*(err: int): bool =
     ## Whether `err` from the no-replace rename says that the kernel or the
     ## drive does not know the flag (or the two names are on different
     ## drives), so that the step must give way to a link.
-    err in [int(posix.ENOSYS), int(posix.EINVAL), int(posix.EOPNOTSUPP), int(posix.EXDEV),
-      int(posix.EPERM)]
+    err in [int(posix.ENOSYS), int(posix.EINVAL), int(posix.EOPNOTSUPP), int(posix.ENOTSUP),
+      int(posix.EXDEV), int(posix.EPERM)]
 
   proc failWith(err: int) {.noreturn, raises: [OSError].} =
     raiseOSError(OSErrorCode(err))
@@ -443,8 +443,8 @@ when not defined(windows):
   proc renameStep(src, dst: string): StepResult {.raises: [OSError].} =
     when defined(linux) or defined(macosx):
       when defined(linux):
-        let rc = syscall(sysRenameat2, AtFdcwd, cstring(src), AtFdcwd, cstring(dst),
-          1.cuint) # RENAME_NOREPLACE
+        let rc = syscall(sysRenameat2, clong(AtFdcwd), cstring(src), clong(AtFdcwd),
+          cstring(dst), clong(1)) # RENAME_NOREPLACE
       else:
         let rc = renamexNp(cstring(src), cstring(dst), 4.cuint)             # RENAME_EXCL
       if rc == 0: return srMoved
@@ -457,12 +457,53 @@ when not defined(windows):
       discard dst
       srUnsupported
 
-  proc linkStep(src, dst: string): StepResult {.raises: [OSError].} =
+  type MoveFault* = enum
+    ## What a test makes go wrong in `moveNoReplaceUsing`.
+    mfUnlinkGone  ## removing `src` removes it but reports an error (a retried unlink)
+    mfUnlinkFails ## removing `src` fails and leaves it
+    mfDstSwapped  ## the `dst` this call made is replaced by another file before cleanup
+
+  type FileId = tuple[dev: posix.Dev; ino: posix.Ino]
+
+  proc idOf(st: posix.Stat): FileId =
+    (st.st_dev, st.st_ino)
+
+  proc idOfPath(path: string; id: var FileId): bool =
+    ## False when `path` cannot be examined; its errno is then in `posix.errno`.
+    var st: posix.Stat
+    result = posix.lstat(cstring(path), st) == 0
+    if result: id = idOf(st)
+
+  proc dropOurs(dst: string; ours: FileId; faults: set[MoveFault]) =
+    ## Removes `dst` only while it is still the file this call made.
+    if mfDstSwapped in faults:
+      discard posix.unlink(cstring(dst))
+      let fd = posix.open(cstring(dst), posix.O_WRONLY or posix.O_CREAT or posix.O_EXCL, 0o666)
+      if fd >= 0: discard posix.close(fd)
+    var now: FileId
+    if idOfPath(dst, now) and now == ours: discard posix.unlink(cstring(dst))
+
+  proc removeSrc(src: string; faults: set[MoveFault]): int =
+    ## Removes `src`; the errno of a failure, else 0.
+    if mfUnlinkFails in faults: return int(posix.EIO)
+    let rc = posix.unlink(cstring(src))
+    if mfUnlinkGone in faults: return int(posix.EIO)
+    if rc != 0: int(posix.errno) else: 0
+
+  proc srcIsGone(src: string): bool =
+    ## An unlink that reported an error may still have removed the file (a
+    ## retried unlink on a network drive): then the move is complete.
+    var id: FileId
+    not idOfPath(src, id) and posix.errno == posix.ENOENT
+
+  proc linkStep(src, dst: string; faults: set[MoveFault]): StepResult {.raises: [OSError].} =
+    var ours: FileId # the link shares `src`'s file
+    if not idOfPath(src, ours): failWith(int(posix.errno))
     if posix.link(cstring(src), cstring(dst)) == 0:
-      if posix.unlink(cstring(src)) != 0:
+      let err = removeSrc(src, faults)
+      if err != 0 and not srcIsGone(src):
         # the new name is ours; drop it so a failed move leaves `dst` free
-        let err = int(posix.errno)
-        discard posix.unlink(cstring(dst))
+        dropOurs(dst, ours, faults)
         failWith(err)
       return srMoved
     let err = int(posix.errno)
@@ -470,7 +511,8 @@ when not defined(windows):
     if noHardLinks(err): return srUnsupported
     failWith(err)
 
-  proc copyStep(src, dst: string; failAfter: int): StepResult {.raises: [OSError].} =
+  proc copyStep(src, dst: string; failAfter: int;
+      faults: set[MoveFault]): StepResult {.raises: [OSError].} =
     ## Creates `dst` exclusively, so an existing file is never touched and
     ## the one made here is ours to remove again on any failure.
     let inFd = posix.open(cstring(src), posix.O_RDONLY or posix.O_CLOEXEC)
@@ -481,6 +523,16 @@ when not defined(windows):
       let err = int(posix.errno)
       discard posix.close(inFd)
       if err == int(posix.EEXIST): return srExists
+      failWith(err)
+    var
+      ours: FileId # made by the open above, so ours to remove again
+      st: posix.Stat
+    if posix.fstat(outFd, st) == 0: ours = idOf(st)
+    else:
+      let err = int(posix.errno)
+      discard posix.close(inFd)
+      discard posix.close(outFd)
+      discard posix.unlink(cstring(dst)) # just made by the open above
       failWith(err)
     var
       buf: array[65536, byte]
@@ -500,28 +552,33 @@ when not defined(windows):
             let w = posix.write(outFd, addr buf[at], n - at)
             if w < 0:
               if posix.errno != posix.EINTR: err = int(posix.errno)
+            elif w == 0:
+              err = int(posix.EIO) # no progress: not a reason to spin
             else:
               at += w
           written += n
     if err == 0 and posix.fsync(outFd) != 0: err = int(posix.errno)
     if posix.close(outFd) != 0 and err == 0: err = int(posix.errno)
     discard posix.close(inFd)
-    if err == 0 and posix.unlink(cstring(src)) != 0: err = int(posix.errno)
+    if err == 0:
+      err = removeSrc(src, faults)
+      if err != 0 and srcIsGone(src): err = 0
     if err != 0:
-      discard posix.unlink(cstring(dst))
+      dropOurs(dst, ours, faults)
       failWith(err)
     srMoved
 
   proc moveNoReplaceUsing*(src, dst: string; steps: set[MoveStep] = {msRename, msLink, msCopy};
-      failCopyAfter = -1): bool {.raises: [OSError].} =
+      failCopyAfter = -1; faults: set[MoveFault] = {}): bool {.raises: [OSError].} =
     ## `moveNoReplace` without the hook, limited to `steps`: a step left out
     ## answers as a drive that cannot do it would, so the next one runs.
     ## `failCopyAfter >= 0` makes the copy fail once that many bytes were
-    ## written (for tests). Raises `OSError` when no step can move the file.
+    ## written, and `faults` make the removal of `src` or the cleanup go wrong
+    ## (both for tests). Raises `OSError` when no step can move the file.
     var r = srUnsupported
     if msRename in steps: r = renameStep(src, dst)
-    if r == srUnsupported and msLink in steps: r = linkStep(src, dst)
-    if r == srUnsupported and msCopy in steps: r = copyStep(src, dst, failCopyAfter)
+    if r == srUnsupported and msLink in steps: r = linkStep(src, dst, faults)
+    if r == srUnsupported and msCopy in steps: r = copyStep(src, dst, failCopyAfter, faults)
     case r
     of srMoved: true
     of srExists: false
@@ -545,8 +602,9 @@ proc moveNoReplace*(_: FileSystem; src, dst: string): bool {.raises: [OSError].}
     let fromName = newWideCString(src)
     let toName = newWideCString(dst)
     # no MOVEFILE_REPLACE_EXISTING: fail when `dst` exists. COPY_ALLOWED (2)
-    # lets a move across drives copy, and never replaces either.
-    if winlean.moveFileExW(fromName, toName, 2) != 0: return true
+    # lets a move across drives copy, and never replaces either; WRITE_THROUGH
+    # (8) flushes such a copy before the call returns.
+    if winlean.moveFileExW(fromName, toName, 2 or 8) != 0: return true
     let err = osLastError().int32
     if err == ErrorAlreadyExists or err == ErrorFileExists: return false
     raiseOSError(osLastError())

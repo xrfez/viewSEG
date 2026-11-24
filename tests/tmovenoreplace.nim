@@ -11,7 +11,7 @@ import std/os
 import viewSEG/core/filesystem
 
 when not defined(windows):
-  from std/posix import EPERM, EOPNOTSUPP, EMLINK, EXDEV, ENOENT, EEXIST, EINVAL, ENOSYS
+  from std/posix import EPERM, EOPNOTSUPP, EMLINK, EXDEV, ENOENT, EEXIST, EINVAL, ENOSYS, ENOTSUP
 
 const Movers = 8
 
@@ -81,8 +81,34 @@ proc main*() =
       doAssert not fileExists(dir / "fc-dst"), "the partial copy was removed"
       doAssert readFile(dir / "fc-src") == payload("y"), "the source is kept"
 
+    block unlinkReportsAnError:
+      for steps in [{msLink}, {msCopy}]:
+        # the file is gone although an error was reported: the move is done
+        writeFile(dir / "ug-src", "data")
+        removeFile(dir / "ug-dst")
+        doAssert moveNoReplaceUsing(dir / "ug-src", dir / "ug-dst", steps,
+          faults = {mfUnlinkGone}), $steps
+        doAssert readFile(dir / "ug-dst") == "data" and not fileExists(dir / "ug-src"), $steps
+        # the file is still there: the move failed and left only `src`
+        writeFile(dir / "uf-src", "data")
+        doAssertRaises OSError:
+          discard moveNoReplaceUsing(dir / "uf-src", dir / "uf-dst", steps,
+            faults = {mfUnlinkFails})
+        doAssert readFile(dir / "uf-src") == "data" and not fileExists(dir / "uf-dst"), $steps
+
+    block cleanupKeepsAnotherFile:
+      for steps in [{msLink}, {msCopy}]:
+        writeFile(dir / "sw-src", payload("z"))
+        doAssertRaises OSError:
+          discard moveNoReplaceUsing(dir / "sw-src", dir / "sw-dst", steps,
+            failCopyAfter = 10, faults = {mfDstSwapped, mfUnlinkFails})
+        doAssert fileExists(dir / "sw-dst"), "a file that is not ours was removed: " & $steps
+        doAssert readFile(dir / "sw-src") == payload("z")
+        removeFile(dir / "sw-dst")
+
     block errnoTable:
       doAssert noHardLinks(int(EPERM)) and noHardLinks(int(EOPNOTSUPP))
+      doAssert noHardLinks(int(ENOTSUP)) and noRenameFlag(int(ENOTSUP))
       doAssert noHardLinks(int(EMLINK)) and noHardLinks(int(EXDEV))
       doAssert not noHardLinks(int(ENOENT)) and not noHardLinks(int(EEXIST))
       doAssert noRenameFlag(int(EINVAL)) and noRenameFlag(int(ENOSYS))
