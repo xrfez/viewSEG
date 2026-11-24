@@ -82,7 +82,9 @@ the tab is about are read, once, in the background; the trace table does not sho
 
 A numeric vendor field can be shown over the traces as a row of the display header: in the plot's
 right-click header menu or the gear's Traces tab, **Vendor fields** lists the fields the maps
-give the shown file, and a tick shows one (QUICKSTART.md, the display header).
+give the shown file, and a tick shows one (QUICKSTART.md, the display header). The same fields
+can sort the traces: the plot's sort keys (Sort > Custom...) offer them under **Vendor fields**,
+and traces without a value come last (QUICKSTART.md, sorting).
 
 ## A project's vendor map
 

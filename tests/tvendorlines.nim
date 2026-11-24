@@ -245,11 +245,11 @@ proc main*() =
       problems.setLen 0
       decode(%*{"fields": ["x".repeat(201)]}, c.header, "header", problems)
       doAssert problems.len == 1, $problems
-      # a vendor field is not a sort key: refused, not taken
+      # a vendor field is a sort key by its name (tvendorsort); a key with no name is not taken
       var keys: seq[SortKey]
       problems.setLen 0
-      decode(%*[{"field": "vendor field"}], keys, "order", problems)
-      doAssert problems.len == 1, $problems
+      decode(%*[{"field": "counter"}], keys, "order", problems)
+      doAssert problems.len == 0 and keys == @[vendorKey("counter")], $problems
       st.apply Command(kind: ckSort, panel: MainPanel,
         order: @[SortKey(field: hfVendor)])
       doAssert st.panel(MainPanel).layers[0].order.len == 0

@@ -3013,7 +3013,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
         on: true, processing: tp.ownDraft.spec, filterPlace: tp.ownDraft.place)
   for c in tp.store.drawStore(st, t, marks): res.commands.add c
   drawHeaderMenu(p, st, marks, res)
-  tp.sortKeys.drawSortKeys(p, marks, res.commands)
+  tp.sortKeys.drawSortKeys(p, st, marks, res.commands)
   tp.drawGoTo(st, p, marks, res)
 
 proc drawWaiting(w: Waiting; panel: PanelId; t: Theme; marks: var Marks;

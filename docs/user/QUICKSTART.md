@@ -876,7 +876,12 @@ comes last. A preset
 the file has none of the keys of is greyed, unless it is the order in use; picking the
 one already in use does nothing. For an order of your own, click **Custom...**: pick
 the header fields to sort by (among them Start time), the first first, each ascending or descending, and click
-Sort (the drop-down then says "custom"; *File order* goes back). Sorting never changes the file, and the display header and
+Sort. A numeric field of a vendor header map can be a key too: **Add a key**, or a key's own
+drop-down, has a **Vendor fields** submenu with the fields the shown file has (one a map defines
+but this file lacks reads "not in this file" and sorts as unknown). Traces with no value for a
+key, or no such field, come last in either direction, in the file's order among themselves; a
+field of a record is the same on every trace of the record. The vendor fields are read from the
+file once, on the sort's own thread (the drop-down then says "custom"; *File order* goes back). Sorting never changes the file, and the display header and
 the status bar follow the order shown.
 
 **Time across.** A checkbox under **Plot** in the gear's Look tab

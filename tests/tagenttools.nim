@@ -225,8 +225,11 @@ proc main*() =
     "descending":true},{"field":"FFID"}]}"""), c, problems)
     doAssert problems.len == 0 and int(c.panel) == 2 and c.order == @[SortKey(field: hfChannel,
       descending: true), SortKey(field: hfRecord)], $problems
+    # a name that is no built-in field is a vendor field of the file
+    decodeFields(parseJson("""{"order":[{"field":"nope","descending":true}]}"""), c, problems)
+    doAssert problems.len == 0 and c.order == @[vendorKey("nope", true)], $problems
     for (text, want) in [("""{"panel":"one"}""", "panel: an integer, not a string"),
-        ("""{"order":[{"field":"nope"}]}""", "order[0].field: \"nope\" is not one of"),
+        ("""{"order":[{"field":3}]}""", "order[0].field: a header's name, not a number"),
         ("""{"order":[{"feld":"FFID"}]}""", "order[0]: no field \"feld\""),
         ("""{"gather":1}""", "\"sort\" takes no field \"gather\""),
         ("""{"order":{}}""", "order: an array, not an object")]:
@@ -438,6 +441,14 @@ proc main*() =
         "descending": true}, {"field": "channel"}, {"field": "channel"}]}).isError
       doAssert st.panel(MainPanel).layers[0].order == @[SortKey(field: hfChannel,
         descending: true)], $st.panel(MainPanel).layers[0].order
+      # a vendor field by name, built-in names winning; one with no usable name is refused
+      doAssert not st.run(%*{"kind": "sort", "order": [{"field": "counter", "descending": true},
+        {"field": "CHANNEL"}]}).isError
+      doAssert st.panel(MainPanel).layers[0].order == @[vendorKey("counter", true),
+        SortKey(field: hfChannel)], $st.panel(MainPanel).layers[0].order
+      doAssert st.run(%*{"kind": "sort", "order": [{"field": ""}]}).isError
+      doAssert not st.run(%*{"kind": "sort", "order": [{"field": "channel",
+        "descending": true}]}).isError # as it was
       doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)
 
     block headersAnswer:
