@@ -8438,15 +8438,16 @@ proc queueLeapReads(state: var AppState) =
     if not s.isSignature and not s.noSeismic and not s.derived and s.id notin state.leapQueue:
       state.leapQueue.add s.id
 
-proc adoptLeap(state: var AppState; table: LeapTable; said: string) =
-  ## Makes `table` the one in use, writes it when a settings folder is kept,
-  ## says `said`, and reads open files' times again.
+proc adoptLeap(state: var AppState; table: LeapTable; said: string; save = true) =
+  ## Makes `table` the one in use, writes it when `save` and a settings folder
+  ## is kept, says `said`, and reads open files' times again. A file that was
+  ## read and refused is adopted with `save` false: the file is left as it is.
   useLeapTable(table)
   let path = state.leapFilePath()
-  if path.len == 0:
+  if save and path.len == 0:
     state.log.add(sevWarning, "leap seconds",
       "There is no settings folder, so the leap-second table was not saved.")
-  else:
+  elif save:
     state.diskIo.replace(path, leapTableNif(table), "the leap-second table")
   if said.len > 0: state.log.add(sevInfo, "leap seconds", said)
   state.queueLeapReads()
@@ -11034,17 +11035,14 @@ proc takeIn(state: var AppState; m: Msg) =
         m.readError & ". The table in use is unchanged.")
     else:
       let parsed = parseLeapTable(m.content)
-      if parsed.problems.len > 0:
-        for p in parsed.problems:
-          state.log.add(sevWarning, "leap seconds", m.readPath & ": " & p)
-        state.log.add(sevWarning, "leap seconds",
-          "The leap-second file was not used. The table in use is unchanged.")
-      else:
-        let chosen = chooseLeap(parsed.table, @[], m.readPath)
-        for n in chosen.notes: state.log.add(n.severity, "leap seconds", n.text)
+      let chosen = chooseLeap(parsed.table, parsed.problems, m.readPath)
+      for n in chosen.notes: state.log.add(n.severity, "leap seconds", n.text)
+      if chosen.notes.len == 0:
         state.adoptLeap(chosen.table, "Read " & m.readPath.extractFilename & " again: " &
           $chosen.table.entries.len & " leap seconds, known complete through " &
           dateText(chosen.table.checkedTo) & ".")
+      else:
+        state.adoptLeap(chosen.table, "", save = false)
 
 proc drainInbox*(state: var AppState): bool =
   ## Takes in what the workers posted and how the jobs ended, in that order

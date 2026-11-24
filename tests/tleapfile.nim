@@ -162,6 +162,25 @@ proc main*() =
       doAssert toldFewer, "a shorter file was not refused: " & $fewerNotes
       useLeapTable(shipped)
 
+    block reloadRefused:
+      removeFile(path)
+      var st = initAppState()
+      st.keepSettingsIn(dir, LoadedSettings(saveable: true))
+      st.apply Command(kind: ckAddLeap, leapYear: 2027, leapMonth: 1, leapStep: 1)
+      st.flushFiles()
+      var fewer = shipped
+      fewer.entries.setLen(fewer.entries.len - 1)
+      let body = leapTableNif(fewer)
+      writeFile(path, body)
+      st.apply Command(kind: ckReloadLeaps)
+      doAssert st.settle(said(st, "does not hold every leap second")),
+        "a refused reload was not said"
+      st.flushFiles()
+      doAssert readFile(path) == body, "a refused file was written over"
+      doAssert currentLeapTable().entries.len == shipped.entries.len,
+        "a refused reload did not use the shipped table"
+      useLeapTable(shipped)
+
     block commands:
       removeFile(path)
       var st = initAppState()
