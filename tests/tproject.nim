@@ -43,7 +43,9 @@
 ## did not name the pattern, a bad separator on "Line" said nothing of "Line";
 ## with the control-character sentence left as "holds no", a tab in a label
 ## said the opposite; with "32th", the limit sentence was wrong; with a long
-## choice said missing, its first 20 characters were not quoted.
+## choice said missing, its first 20 characters were not quoted. With
+## `patternProblem` not applied, a stored text part holding the pattern's own
+## separator was kept.
 
 import std/[options, os, strutils, times]
 import parseSEG
@@ -501,6 +503,25 @@ proc main*() =
     let huge = readDoc("(outputPattern \"" & repeat('B', MaxPatternName * 4 + 65) & "\")")
     doAssert huge.outputPattern.len == 0
     said("the chosen name pattern \"" & repeat('B', 20) & "\" is too long; today's naming is used")
+
+  block separatorInText:
+    # Text that holds this pattern's separator cannot be a file-name piece, so
+    # the stored pattern is left out and the sentence names the label. The same
+    # text with another separator is a piece, and is kept.
+    var problems: seq[string] = @[]
+    proc readDoc(body: string): ProjectDoc =
+      problems.setLen 0
+      readProject("(project (version 1) (name \"h\") " & body & ")", "project.nif", problems)
+    let held = readDoc("(outputPatterns (pattern \"Line\" (separator \"_\") " &
+      "(part \"text\" (text \"a_b\"))))")
+    doAssert held.outputPatterns.len == 0 and problems.len == 1, $problems
+    doAssert problems[0] == "project.nif line 1: the name pattern \"Line\": " &
+      "Text has the separator _ in it; it is left out.", $problems
+    let other = readDoc("(outputPatterns (pattern \"Line\" (separator \"-\") " &
+      "(part \"text\" (text \"a_b\"))))")
+    doAssert problems.len == 0 and other.outputPatterns.len == 1, $problems
+    doAssert other.outputPatterns[0].separator == nsHyphen
+    doAssert other.outputPatterns[0].parts[0].text == "a_b"
 
   echo "tproject: done"
 
