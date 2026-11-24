@@ -1,5 +1,5 @@
-## The `.vib` reader: the one module that imports parseSSVIB. Pure: bytes in, SEG-Y bytes
-## and facts out. It makes no file system call, keeps no global state and lets no library
+## The `.vib` reader: the one module that imports parseSSVIB. Pure: bytes in, SEG-Y or
+## SEG-D bytes out. It makes no file system call, keeps no global state and lets no library
 ## type out (`core/sigtypes` holds what the rest of viewSEG may use).
 ##
 ## The 13 traces, in the order parseSSVIB's `voForces` writes them (the roles of the
@@ -182,43 +182,96 @@ func whyNoFit(s: VibSweep): string =
   else:
     "the reference does not fit a linear sweep"
 
-proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice;
-    log: var DiagLog; pair = SignaturePair()): tuple[segy: seq[byte]; facts: SignatureFacts] =
-  ## Decodes the bytes of the `.vib` file `name` at the interval `choice` says (500 us when
-  ## it says none) and writes them as SEG-Y Rev 2.1 into memory, as the file `path`. Raises
-  ## `SignatureError` in the library's words.
-  let interval = if choice.intervalUs > 0: choice.intervalUs else: VibIntervalUs
-  if not (interval > 0 and interval < Inf):
+func vibWriteOptions(choice: SignatureChoice; pair: SignaturePair; paired: bool): VibWriteOptions =
+  ## The options the decode writes with. The SEG-D writer uses the same proc.
+  result = VibWriteOptions(cycleValues: true, groundForce: {vsA, vsB}, primary: vsB,
+    timeAxis: (if choice.fromFirstFrame: vaRecord else: vaTrigger), units: vuCounts,
+    traceOrder: voForces, vendorLayout: true)
+  if paired:
+    result.controllerSerial = pair.controller
+    result.datFileNumber = pair.fileNumber
+
+proc prepareShot(bytes: openArray[byte]; name, path: string; choice: SignatureChoice;
+    pair: SignaturePair): tuple[shot: VibShot; interval: float64; paired: bool] =
+  result.interval = if choice.intervalUs > 0: choice.intervalUs else: VibIntervalUs
+  if not (result.interval > 0 and result.interval < Inf):
     raise newException(SignatureError, "the sample interval must be more than 0 us")
-  var shot = VibShot()
   try:
-    decodeInto(shot, bytes, allowIncomplete = true, sampleIntervalUs = interval,
+    decodeInto(result.shot, bytes, allowIncomplete = true, sampleIntervalUs = result.interval,
       findTrigger = true)
   except VibFormatError as e:
     raise sigError(name, e.msg)
   except ValueError as e:
     raise sigError(name, e.msg)
-  if shot.start.year > MaxYear:
-    raise sigError(name, "its start date (the year " & $shot.start.year & ") is past the year " &
+  if result.shot.start.year > MaxYear:
+    raise sigError(name, "its start date (the year " & $result.shot.start.year &
+      ") is past the year " &
       $MaxYear & ", a time this program cannot hold: the file cannot mean it")
-  shot.nameNumber = nameNumberOf(path)
-  var paired = false
+  result.shot.nameNumber = nameNumberOf(path)
   if pair.path.len > 0:
     # the .dat of this sweep gives the clock time: its trigger, to the nanosecond (the frame
     # stays the estimate)
     let c = civilOf(pair.triggerNs)
     try:
-      shot.setTrigger(VibTime(year: c.year, month: c.month, day: c.day, hour: c.hour,
+      result.shot.setTrigger(VibTime(year: c.year, month: c.month, day: c.day, hour: c.hour,
         minute: c.minute, second: c.second, nanosecond: c.nanosecond))
-      paired = true
+      result.paired = true
     except ValueError:
       discard # a trigger the library does not take: the .vib stands alone
-  var wopts = VibWriteOptions(cycleValues: true, groundForce: {vsA, vsB}, primary: vsB,
-    timeAxis: (if choice.fromFirstFrame: vaRecord else: vaTrigger), units: vuCounts,
-    traceOrder: voForces, vendorLayout: true)
-  if paired:
-    wopts.controllerSerial = pair.controller
-    wopts.datFileNumber = pair.fileNumber
+
+func recordingTime(s: VibShot; opts: VibWriteOptions): float64 =
+  ## The clock time of t = 0, as the library's SEG-D writer uses. That proc is not exported.
+  let hasTrigger = not s.triggerFrame.isNaN
+  let atTrigger = opts.timeAxis == vaTrigger and hasTrigger
+  if s.triggerKnown and (atTrigger or hasTrigger):
+    var seconds = posixSeconds(s.trigger)
+    var nanosecond = int64(s.trigger.nanosecond)
+    if not atTrigger:
+      let back = int64(round(s.triggerFrame * s.sampleIntervalUs * 1000))
+      nanosecond -= back
+      seconds += floorDiv(nanosecond, 1_000_000_000'i64)
+      nanosecond = floorMod(nanosecond, 1_000_000_000'i64)
+    result = float64(seconds) + float64(nanosecond) / 1e9
+  else:
+    result = float64(posixSeconds(s.start))
+
+proc logged(name: string; log: DiagLog) =
+  var problems: seq[string] = @[]
+  for d in log: problems.add d.msg
+  if problems.len > 0:
+    raise sigError(name, "it cannot be written as SEG-D: " & problems.join("; "))
+
+proc segdBytes*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice;
+    log: var DiagLog; pair = SignaturePair()): seq[byte] =
+  ## The `.vib` file `name` written as SEG-D Rev 3, with the options `decode` used,
+  ## including a pair when `decode` took one. Raises `SignatureError`. A writer's
+  ## diagnostic is a failure, as the library's file writer treats one.
+  let prepared = prepareShot(bytes, name, path, choice, pair)
+  let wopts = vibWriteOptions(choice, pair, prepared.paired)
+  try:
+    var w = openSeismicWriterBytes(SegdOutputOptions(
+      sampleIntervalUs: prepared.shot.sampleIntervalUs, numSamples: prepared.shot.len,
+      time: recordingTime(prepared.shot, wopts)), path)
+    w.writeSegdTraces(prepared.shot, wopts)
+    result = w.finishBytes(log)
+  except VibWriteError as e:
+    raise sigError(name, "it cannot be written as SEG-D: " & e.msg)
+  except ValueError as e:
+    raise sigError(name, "it cannot be written as SEG-D: " & e.msg)
+  except SegFormatError as e:
+    raise sigError(name, "it cannot be written as SEG-D: " & e.msg)
+  logged(name, log)
+
+proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice;
+    log: var DiagLog; pair = SignaturePair()): tuple[segy: seq[byte]; facts: SignatureFacts] =
+  ## Decodes the bytes of the `.vib` file `name` at the interval `choice` says (500 us when
+  ## it says none) and writes them as SEG-Y Rev 2.1 into memory, as the file `path`. Raises
+  ## `SignatureError` in the library's words.
+  let prepared = prepareShot(bytes, name, path, choice, pair)
+  var shot = prepared.shot
+  let interval = prepared.interval
+  let paired = prepared.paired
+  let wopts = vibWriteOptions(choice, pair, paired)
   var o = SegyOutputOptions()
   try:
     o.text = textCards(shot, wopts)
@@ -245,6 +298,7 @@ proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice
   if paired:
     f.pair = pair.path
     f.pairTriggerNs = pair.triggerNs
+    f.pairFileNumber = pair.fileNumber
     f.pairQc = pair.qc
     f.info.controller = pair.controller
     f.info.serialFrom = sfPair

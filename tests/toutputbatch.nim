@@ -18,7 +18,7 @@ when defined(windows):
   from std/winlean import nil
 import parseSEG
 import processSEG/core/basic
-import viewSEG/core/[edits, filememory, identity, jobs, outputbatch, outputjobs]
+import viewSEG/core/[edits, filememory, identity, jobs, outputbatch, outputjobs, sigtypes]
 import utils/[faultyfs, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
@@ -281,7 +281,7 @@ proc main*() =
     let ask = BatchAsk(root: srcRoot, items: @[BatchItem(source: edited,
       relative: "line1" / "shots.sgy")], destRoot: dest, options: opts, mirrorFolders: false)
     var opens: seq[OpenFile] = @[]
-    opens.add (path: edited, file: addr src, edits: passed)
+    opens.add (path: edited, file: addr src, edits: passed, signature: SignatureFacts())
     let got = runBatch(ask, store, opens)
     doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
     var back = openSeismic(dest / "shots.sgy", keys = true)

@@ -3,12 +3,12 @@
 ## A `.vib` or `.dat` is a SEG-Y image in memory. Written as SEG-Y and reopened,
 ## it has the same trace count, sample counts, interval and samples, the same
 ## text cards, the same header rows, and the library's shot block (the shipped
-## maps decode the same named values). Written as SEG-D, it opens with the
-## same samples. The record number, channel, interval and auxiliary status
-## survive, and so does the clock in the SEG-D general header (file number,
-## julian day, hour, minute, second). The text cards, the shot block and its
-## named values, and the trace identification codes, do not: headers are
-## built from the trace keys, and an elevation with no X/Y is not written.
+## maps decode the same named values). Written as SEG-D with no option that
+## changes samples or which traces are written, it is written by the library's
+## SEG-D writer: the same samples, the shot block's named values, the library's
+## channel types, and the clock in the general header (file number, julian day,
+## hour, minute, second). With such an option on, headers are built from the
+## trace keys, the shot block is not carried, and the result says so.
 ## The destination name is the one given: a `.sgy` or `.segd` name in another
 ## folder is written, and the source path is refused, never overwritten. A
 ## folder of sweeps is one output file per sweep, not one file of every
@@ -29,11 +29,14 @@
 ## name clash instead of two files. With the kept extension still decided by
 ## the name, both files were written (`2 written, 0 failed`). With the kind
 ## taken from the name instead of the first bytes, `a.vib.sgy` was written.
+## With the library path forced off (`if false and signature.isSignature`),
+## the SEG-D write said "Headers were built from the trace keys." and the new
+## check failed.
 
 import std/[os, strutils, tables]
 import parseSEG
-import viewSEG/core/[edits, filememory, headers, jobs, outputbatch, outputjobs, state,
-  vendormaps]
+import viewSEG/core/[edits, filememory, headers, jobs, outputbatch, outputjobs, sigtypes,
+  state, vendormaps]
 import utils/[fixtures, sigfiles, waiting]
 
 const maps = currentSourcePath().parentDir.parentDir / "vendormaps"
@@ -51,13 +54,15 @@ proc samplesOf(f: SeismicFile; trace: int): seq[float32] =
   result.setLen x.shape[1]
   for j in 0 ..< result.len: result[j] = x[0, j]
 
-proc runWrite(file: ptr SeismicFile; source, dest: string; format: OutputFormat):
+proc runWrite(file: ptr SeismicFile; source, dest: string; format: OutputFormat;
+    opts = OutputOptions(); edits = FileEdits(); signature = SignatureFacts()):
     tuple[st: JobState; wrote: OutputResult; error: string] =
+  var writing = opts
+  writing.format = format
   let jobs = initJobs()
   let sink = OutputSink()
   let id = jobs.submit(outputSpec(source, dest),
-    outputWork(file, source, dest, OutputOptions(format: format), FileEdits(),
-      @[source], sink))
+    outputWork(file, source, dest, writing, edits, @[source], sink, signature))
   doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
     "the write did not finish: " & $jobs.state(id)
   let info = jobs.info(id).get
@@ -72,6 +77,12 @@ proc runBatch(ask: BatchAsk; store: Store; openFiles: seq[OpenFile]):
     "the batch did not finish: " & $jobs.state(id)
   let info = jobs.info(id).get
   (info.state, sink.result, info.error)
+
+proc namedValues(shown: VendorShown): seq[string] =
+  result = @[]
+  for b in shown.blocks:
+    for f in b.fields:
+      result.add f.name & "=" & f.value
 
 proc vendorLines(shown: VendorShown): seq[string] =
   result = @[]
@@ -180,20 +191,32 @@ proc main*() =
         let s = st.sessions[st.shown]
         let before = readFile(path)
         let dest = written / destName
-        let got = runWrite(s.filePtr, path, dest, ofSegd)
+        let got = runWrite(s.filePtr, path, dest, ofSegd, signature = s.signature)
         doAssert got.st == jsDone, path.extractFilename & " " & got.wrote.reason &
           " " & got.error
+        doAssert got.wrote.written == s.len, $got.wrote.written
         doAssert readFile(path) == before, path.extractFilename & " was changed"
-        var fromKeys = false
         for line in got.wrote.lines:
-          if "Headers were built from the trace keys." in line: fromKeys = true
-        doAssert fromKeys, $got.wrote.lines
+          doAssert HeaderNotCarried notin line, $got.wrote.lines
+          doAssert "Headers were built from the trace keys." notin line, $got.wrote.lines
         var back = openSeismic(dest, keys = true)
         let gap = sampleGap(s.file, back)
         doAssert gap.len == 0, path.extractFilename & "\n" & gap
         doAssert fileFacts(back).text.len == 0, "SEG-D kept text cards"
-        doAssert vendorBlocks(back, 0, reg).blocks.len == 0,
-          path.extractFilename & " kept a vendor block"
+        let memBlock = vendorBlocks(s.file, -1, reg)
+        let diskBlock = vendorBlocks(back, 0, reg)
+        doAssert diskBlock.blocks.len > 0, path.extractFilename & " wrote no vendor block"
+        let named = pairDiff("named values", namedValues(memBlock), namedValues(diskBlock))
+        doAssert named.len == 0, path.extractFilename & "\n" & named
+        const datTypes = [0x96'u8, 0x99, 0x95, 0x93]
+        const vibTypes = [0x96'u8, 0x99, 0x95, 0x93, 0x97, 0x97, 0x97, 0x97, 0x9B, 0x97,
+          0x9A, 0x97, 0x97]
+        let expect = if s.signature.kind == sgDat: @datTypes else: @vibTypes
+        doAssert back.len == expect.len, $back.len
+        for t, want in expect:
+          let gotType = back.traceEntry(t).channelType
+          doAssert gotType == want, path.extractFilename & " trace " & $t &
+            " channel type " & $gotType & " is not " & $want
         for t in 0 ..< s.len:
           let a = s.file.traceKeys(t)
           let b = back.traceKeys(t)
@@ -212,6 +235,45 @@ proc main*() =
         doAssert fileNumber.len > 0 and hour == "4" and minute == "5" and
           second == "6" and day == "34",
           path.extractFilename & " " & fileNumber & " " & day & " " & hour
+        back.close()
+        st.shutdown()
+
+  block reversed:
+    withFixtures fx:
+      let src = fx.dir / "src"
+      let written = fx.dir / "out"
+      createDir(written)
+      let vib = vibFile(src, "0007.VIB", vibSynth)
+      let dat = datFile(src, "0042_x.dat", datSynth)
+      for item in [(vib, "0007.segd"), (dat, "0042_x.segd")]:
+        let (path, destName) = item
+        var st = initAppState()
+        doAssert st.openIt(path), "did not open " & path.extractFilename
+        let s = st.sessions[st.shown]
+        var edits: FileEdits
+        doAssert edits.change(teReversed, [0], true) == 1
+        let dest = written / destName
+        let got = runWrite(s.filePtr, path, dest, ofSegd,
+          OutputOptions(applyReversals: true), edits, s.signature)
+        doAssert got.st == jsDone, path.extractFilename & " " & got.wrote.reason &
+          " " & got.error
+        var noted = false
+        for line in got.wrote.lines:
+          if line == HeaderNotCarried: noted = true
+        doAssert noted, $got.wrote.lines
+        var back = openSeismic(dest, keys = true)
+        doAssert vendorBlocks(back, 0, reg).blocks.len == 0,
+          path.extractFilename & " kept a vendor block"
+        let a = samplesOf(s.file, 0)
+        let b = samplesOf(back, 0)
+        var nonzero = false
+        for i, x in a:
+          if x != 0: nonzero = true
+          doAssert b[i] == -x, path.extractFilename & " sample " & $i
+        doAssert nonzero, path.extractFilename & " trace 0 is all zero"
+        for t in 1 ..< s.len:
+          doAssert samplesOf(s.file, t) == samplesOf(back, t),
+            path.extractFilename & " trace " & $t
         back.close()
         st.shutdown()
 
@@ -285,9 +347,12 @@ proc main*() =
       dv = initAppState()
       doAssert da.openIt(a) and db.openIt(b) and dv.openIt(v)
       var opens: seq[OpenFile] = @[]
-      opens.add (path: a, file: da.sessions[da.shown].filePtr, edits: FileEdits())
-      opens.add (path: b, file: db.sessions[db.shown].filePtr, edits: FileEdits())
-      opens.add (path: v, file: dv.sessions[dv.shown].filePtr, edits: FileEdits())
+      opens.add (path: a, file: da.sessions[da.shown].filePtr, edits: FileEdits(),
+        signature: da.sessions[da.shown].signature)
+      opens.add (path: b, file: db.sessions[db.shown].filePtr, edits: FileEdits(),
+        signature: db.sessions[db.shown].signature)
+      opens.add (path: v, file: dv.sessions[dv.shown].filePtr, edits: FileEdits(),
+        signature: dv.sessions[dv.shown].signature)
       let warm = fx.dir / "warm"
       let ask = BatchAsk(root: root, items: items, destRoot: warm,
         options: OutputOptions(format: ofSegy))

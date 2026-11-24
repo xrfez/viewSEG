@@ -387,7 +387,8 @@ proc liveFiles(st: AppState; items: seq[BatchItem]): seq[OpenFile] =
     for item in items:
       if sameString(item.source.normalizedPath, want):
         var copied: FileEdits = st.editsAt(sessionPath)
-        result.add (path: item.source, file: fp, edits: copied)
+        result.add (path: item.source, file: fp, edits: copied,
+          signature: st.sessions[i].signature)
         break
 
 proc submitRun(ui: var OutputUi; st: AppState) =

@@ -320,7 +320,9 @@ including edits not yet saved. A signature file that is not open is decoded and
 written the same way; one that cannot be decoded is a failed row, and the rest
 are still written. Two signature files whose names differ only by `.dat` and
 `.vib` keep that extension in the output name, so they are not written as one
-file. **Keep the sub folders** is on: a file in a sub folder is
+file. An open vibrator signature file written as SEG-D, with none of those boxes
+on, keeps its own header block and channel types; with one on, the notes say that
+header block is not carried. **Keep the sub folders** is on: a file in a sub folder is
 written in that sub folder.
 
 **Run** writes every ticked file. It stays inactive, and says why, when nothing is

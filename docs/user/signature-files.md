@@ -103,6 +103,15 @@ the estimated trigger is wrong). **Use these for every .dat file of this listing
 to every file of that kind shown from the list, for this run only. The SEG-Y and SEG-D options
 are not shown, and an agent's reopen with them is refused.
 
+## Writing one out
+
+**File > Output...** writes an open signature file like any other open file. As SEG-Y, the file
+on disk matches the image in memory, including the file's own header block. As SEG-D, with none
+of the boxes that change samples or which traces are written turned on, that header block and
+the channel types are kept too. With one of those boxes on (a polarity reversal, a dropped
+trace, a filter, processing, a time shift, or a sort), the header block is not carried, and the
+result says so: "The signature file's own header block is not carried when traces are changed."
+
 ## What it says
 
 The Headers window's Summary has a "Signature file" section (and, for a `.dat`, the controller's

@@ -148,6 +148,7 @@ type
     notes*: seq[string] ## information said once at the open (no trigger found)
     pair*: string ## the partner's path when the open was given it (a `.vib`'s `.dat`)
     pairTriggerNs*: int64 ## with `pair`: the `.dat`'s trigger, the clock time of the `.vib`
+    pairFileNumber*: int64 = -1 ## with `pair`: the `.dat`'s file number (-1: none)
     pairQc*: SweepQc ## with `pair`: the `.dat`'s QC numbers (the controller's, for this sweep)
 
   SignatureError* = object of CatchableError
@@ -162,6 +163,12 @@ const
   VibIntervalUs* = 500.0
 
 func isSignature*(f: SignatureFacts): bool {.inline.} = f.kind != sgNone
+
+func pairOf*(f: SignatureFacts): SignaturePair =
+  ## The pair the open was given, for a later write with the same options. Empty when none.
+  if f.pair.len == 0: return
+  SignaturePair(path: f.pair, triggerNs: f.pairTriggerNs, controller: f.info.controller,
+    vibrator: f.info.vibrator, fileNumber: f.pairFileNumber, qc: f.pairQc)
 
 func defaultIntervalUs*(k: SignatureKind): float64 =
   ## What a kind's interval is taken to be when nothing else is said.

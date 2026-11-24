@@ -74,6 +74,33 @@ proc readBytes(path: string; size: int64): seq[byte] =
   finally:
     close(f)
 
+proc signatureSegdBytes*(path: string; facts: SignatureFacts): seq[byte] =
+  ## The signature file at `path` written as SEG-D by the library, with the options
+  ## `facts` was decoded with. Reads through `fs`. Raises `SignatureError`, `IOError`
+  ## or `OSError`.
+  if not fs.fileExists(path):
+    raise newException(IOError, "there is no such file")
+  let size = fs.getFileSize(path)
+  let name = path.extractFilename
+  if size == 0:
+    raise newException(SignatureError, name & " is empty: not opened.")
+  if size > MaxSignatureBytes:
+    raise newException(SignatureError, name & " is larger than any signature file (" &
+      $(MaxSignatureBytes shr 20) & " MiB): not written")
+  let bytes = readBytes(path, size)
+  var log: DiagLog
+  var written: seq[byte] = @[]
+  case facts.kind
+  of sgDat:
+    {.cast(gcsafe).}:
+      written = sigdat.segdBytes(bytes, name, path, facts.choice, log)
+  of sgVib:
+    {.cast(gcsafe).}:
+      written = sigvib.segdBytes(bytes, name, path, facts.choice, log, pairOf(facts))
+  of sgNone:
+    raise newException(SignatureError, name & " is not a vibrator signature file.")
+  result = written
+
 proc decodeToSession*(bytes: openArray[byte]; path: string; modified: Time;
     choice = SignatureChoice(); log: var DiagLog; pair = SignaturePair()): Session =
   ## Decodes `bytes`, the file at `path`, in memory and makes its session. Raises

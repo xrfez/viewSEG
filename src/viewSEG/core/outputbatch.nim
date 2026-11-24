@@ -19,7 +19,7 @@
 import std/[os, sets, strutils, tables, times]
 import parseSEG
 import edits, filejobs, filekinds, filememory, filesystem, identity, jobs, outputjobs,
-  session, signatures, threads
+  session, signatures, sigtypes, threads
 
 const BatchScale = 1_000_000 ## one file's share of the job's progress
 
@@ -75,9 +75,11 @@ type
     ## Filled when the job ends, including when it fails or is cancelled.
     result*: BatchResult
 
-  OpenFile* = tuple[path: string; file: ptr SeismicFile; edits: FileEdits]
-    ## A file already open in the program: its path, the open file, and the
-    ## edits to write. Used only when `path` is that item's `source`.
+  OpenFile* = tuple[path: string; file: ptr SeismicFile; edits: FileEdits;
+    signature: SignatureFacts]
+    ## A file already open in the program: its path, the open file, the edits
+    ## to write, and its signature facts (empty for any other file). Used only
+    ## when `path` is that item's `source`.
 
   Plan = object
     dest: string
@@ -500,10 +502,12 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
         made.add d
       var file: ptr SeismicFile = nil
       var edits: FileEdits
+      var signature = SignatureFacts()
       let at = passed(openFiles, item.source)
       if at >= 0:
         file = openFiles[at].file
         edits = openFiles[at].edits
+        signature = openFiles[at].signature
       else:
         let progress = proc (done, total: int64): bool {.gcsafe, raises: [].} =
           ctx.progress(int64(doneFiles) * BatchScale + shareOf(done, total),
@@ -527,7 +531,7 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
           int64(count) * BatchScale)
       {.cast(gcsafe).}:
         writeOutput(ctx, file, item.source, plans[i].dest, writing.options, edits, guard,
-          outSink, report)
+          outSink, report, signature)
       var lines = itemLines
       for x in outSink.result.lines: lines.add x
       note(sink, item.relative, plans[i].dest, boWritten, outSink.result.written,

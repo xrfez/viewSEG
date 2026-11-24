@@ -1,5 +1,5 @@
 ## The `.dat` reader: the one module that imports parseSSDAT. Pure: bytes in, SEG-Y
-## bytes and facts out. It makes no file system call, keeps no global state and lets
+## or SEG-D bytes out. It makes no file system call, keeps no global state and lets
 ## no library type out (`core/sigtypes` holds what the rest of viewSEG may use).
 ##
 ## The four traces (spec: the controller's channels): 1 the reference (code 21), 2 the
@@ -256,17 +256,18 @@ func cutPrefix(why: string): string =
   let at = why.find(':')
   if at > 0: why[0 ..< at] else: why
 
-proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice;
-    log: var DiagLog): tuple[segy: seq[byte]; facts: SignatureFacts] =
-  ## Decodes the bytes of the `.dat` file `name` at the interval `choice` says (1000 us when
-  ## it says none) and writes them as SEG-Y Rev 2.1 into memory, as the file `path`. Raises
-  ## `SignatureError` in the library's words.
-  let interval = if choice.intervalUs > 0: choice.intervalUs else: DatIntervalUs
-  if not (interval > 0 and interval < Inf):
+func datWriteOptions(choice: SignatureChoice): DatWriteOptions =
+  ## The options the decode writes with: positions from the GGA sentence, and the
+  ## choice's force swap. The SEG-D writer uses the same proc.
+  DatWriteOptions(positions: dpGga, swapForces: choice.swapForces)
+
+proc prepareShot(bytes: openArray[byte]; name: string; choice: SignatureChoice):
+    tuple[shot: DatShot; interval: float64] =
+  result.interval = if choice.intervalUs > 0: choice.intervalUs else: DatIntervalUs
+  if not (result.interval > 0 and result.interval < Inf):
     raise newException(SignatureError, "the sample interval must be more than 0 us")
-  var shot = DatShot()
   try:
-    decodeInto(shot, bytes, allowIncomplete = true, sampleIntervalUs = interval)
+    decodeInto(result.shot, bytes, allowIncomplete = true, sampleIntervalUs = result.interval)
   except DatIncompleteError as e:
     if "no samples were recorded" in e.msg:
       raise newException(SignatureError, name & " holds no samples: the recording stopped " &
@@ -276,11 +277,67 @@ proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice
     raise sigError(name, e.msg)
   except ValueError as e:
     raise sigError(name, e.msg)
-  if shot.trigger.year > MaxYear:
-    raise sigError(name, "its trigger date (the year " & $shot.trigger.year &
+  if result.shot.trigger.year > MaxYear:
+    raise sigError(name, "its trigger date (the year " & $result.shot.trigger.year &
       ") is past the year " &
       $MaxYear & ", a time this program cannot hold: the file cannot mean it")
-  let wopts = DatWriteOptions(positions: dpGga, swapForces: choice.swapForces)
+
+proc restorePositions(segd: var seq[byte]; kept: openArray[byte]) =
+  # The library's SEG-D writer forces the positions byte to none: SEG-D has no
+  # place for the coordinates, and the block says so. The in-memory image used
+  # the decode options, and the vendor map reads this byte, so it is put back.
+  const at = 179
+  if kept.len <= at: return
+  for i in 0 .. segd.len - ShotMagic.len:
+    var found = true
+    for k, c in ShotMagic:
+      if segd[i + k] != byte(c):
+        found = false
+        break
+    if found and i + at < segd.len:
+      segd[i + at] = kept[at]
+      return
+
+proc logged(name: string; log: DiagLog) =
+  var problems: seq[string] = @[]
+  for d in log: problems.add d.msg
+  if problems.len > 0:
+    raise sigError(name, "it cannot be written as SEG-D: " & problems.join("; "))
+
+proc segdBytes*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice;
+    log: var DiagLog): seq[byte] =
+  ## The `.dat` file `name` written as SEG-D Rev 3, with the options `decode` used.
+  ## The library's writer forces the shot block's positions byte to none; that byte
+  ## is restored from the block `decode` writes, so a vendor map reads the same
+  ## named values as the in-memory image. Raises `SignatureError`. A writer's
+  ## diagnostic is a failure, as the library's file writer treats one.
+  let prepared = prepareShot(bytes, name, choice)
+  let wopts = datWriteOptions(choice)
+  try:
+    var w = openSeismicWriterBytes(SegdOutputOptions(
+      sampleIntervalUs: prepared.shot.sampleIntervalUs,
+      numSamples: prepared.shot.len, time: posixTime(prepared.shot.trigger)), path)
+    w.writeSegdTraces(prepared.shot, wopts)
+    result = w.finishBytes(log)
+    let kept = shotBlock(prepared.shot, wopts)
+    restorePositions(result, kept)
+  except DatWriteError as e:
+    raise sigError(name, "it cannot be written as SEG-D: " & e.msg)
+  except ValueError as e:
+    raise sigError(name, "it cannot be written as SEG-D: " & e.msg)
+  except SegFormatError as e:
+    raise sigError(name, "it cannot be written as SEG-D: " & e.msg)
+  logged(name, log)
+
+proc decode*(bytes: openArray[byte]; name, path: string; choice: SignatureChoice;
+    log: var DiagLog): tuple[segy: seq[byte]; facts: SignatureFacts] =
+  ## Decodes the bytes of the `.dat` file `name` at the interval `choice` says (1000 us when
+  ## it says none) and writes them as SEG-Y Rev 2.1 into memory, as the file `path`. Raises
+  ## `SignatureError` in the library's words.
+  let prepared = prepareShot(bytes, name, choice)
+  let shot = prepared.shot
+  let interval = prepared.interval
+  let wopts = datWriteOptions(choice)
   var o = SegyOutputOptions()
   try:
     o.text = textCards(shot, wopts, dpGga)

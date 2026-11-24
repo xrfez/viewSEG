@@ -19,12 +19,22 @@
 ## record whole and in input order, so a sort that would cross records, or a
 ## killed trace left out, is written from the trace keys instead, and the
 ## result says so. Display-only gain is never applied.
+##
+## An open vibrator signature file written as SEG-D, with no option that
+## changes samples or which traces are written, is written by the library's
+## SEG-D writer instead: the file is read again through `fs` and the shot
+## block and channel types are the library's. Any such option keeps the keys
+## writer, and the note says the signature file's own header block is not
+## carried.
 
 import std/[math, os, random, strutils, times]
 import parseSEG
-import edits, filesystem, jobs, panels, processing, reader, sorting
+import edits, filesystem, jobs, panels, processing, reader, signatures, sorting
 
-const TraceBlock = 64 ## traces read, then written, between two cancel checks
+const
+  TraceBlock = 64 ## traces read, then written, between two cancel checks
+  HeaderNotCarried* =
+    "The signature file's own header block is not carried when traces are changed."
 
 type
   OutputFormat* = enum
@@ -141,6 +151,23 @@ proc boundary(file: SeismicFile; trace: int; byEntry, segdOut: bool): int64 =
   elif segdOut: recordKey(file, trace)
   else: 0
 
+func changesTraces(opts: OutputOptions): bool =
+  ## Whether an option that changes samples or which traces are written is on.
+  ## The flag counts, not whether a trace is actually different.
+  opts.sortKeys.len > 0 or opts.dropKilled or opts.applyReversals or opts.applyShifts or
+    opts.applyOwnFilters or opts.applyProcessing
+
+proc writePart(path: string; bytes: openArray[byte]) =
+  ## Writes `bytes` into the empty part file `path`, through `fs`.
+  var f: File
+  if not fs.open(f, path, fmWrite):
+    raise newException(IOError, extractFilename(path) & " cannot be written.")
+  try:
+    if bytes.len > 0 and fs.writeBuffer(f, path, unsafeAddr bytes[0], bytes.len) != bytes.len:
+      raise newException(IOError, extractFilename(path) & " was not written whole.")
+  finally:
+    close(f)
+
 proc claimPart(dest: string): string =
   ## An empty file next to `dest`, `<dest>.part-<random>`, created exclusively
   ## so it is ours. "" when every name tried already exists.
@@ -192,7 +219,7 @@ proc stopAsked(ctx: JobContext): bool {.inline.} = ctx.cancelled
 
 proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
     opts: OutputOptions; edits: FileEdits; openPaths: seq[string]; sink: OutputSink;
-    report: proc (done, total: int): bool {.gcsafe.}) =
+    report: proc (done, total: int): bool {.gcsafe.}; signature = SignatureFacts()) =
   ## Writes `file` to `dest` on `ctx`'s thread, as `outputWork` does.
   ## `report` is told traces handled of the file's traces, the same numbers
   ## `progress` is told, and false from it cancels. This does not name a
@@ -225,6 +252,23 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       if n == 0: abort(sink, dest, part, claimed, "The file has no traces.", false)
       let outKind = kindOf(opts.format)
       let srcKind = file[].kind
+      let segdOut = outKind == skSegd
+      if signature.isSignature and segdOut and not changesTraces(opts):
+        if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
+        let carried = signatureSegdBytes(source, signature)
+        if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
+        writePart(part, carried)
+        if not fs.moveNoReplace(part, dest):
+          let kept = "The file appeared while writing; the output is kept as " & part & "."
+          if sink != nil:
+            sink.result = OutputResult(ok: false, written: n, lines: lines, path: part,
+              reason: kept)
+          claimed = false
+          raise newException(ValueError, kept)
+        claimed = false
+        if sink != nil:
+          sink.result = OutputResult(ok: true, written: n, lines: lines, path: dest)
+        return
       if srcKind notin {skSegy, skSegd, skSeg2}:
         abort(sink, dest, part, claimed, "The file is not SEG-Y, SEG-D or SEG-2.", false)
       let byEntry = srcKind == skSegd
@@ -234,7 +278,6 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         file[].ensureKeys()
       var dropped = 0
       var written = 0
-      let segdOut = outKind == skSegd
       var records = 0
       var rec = int64(-1)
       var firstKept = -1
@@ -307,6 +350,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         file[].ensureKeys()
       if not like:
         lines.add "Headers were built from the trace keys. Template headers were not copied."
+      if signature.isSignature and segdOut and changesTraces(opts):
+        lines.add HeaderNotCarried
       var samples = newSeq[float32]()
       let dtMs = file[].sampleIntervalUs(0) / 1000.0
       block writing:
@@ -413,7 +458,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
     raise
 
 proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOptions;
-    edits: FileEdits; openPaths: seq[string]; sink: OutputSink): JobWork =
+    edits: FileEdits; openPaths: seq[string]; sink: OutputSink;
+    signature = SignatureFacts()): JobWork =
   ## Writes `file` to `dest` on a job thread. `file` stays open until the
   ## job ends (submit it with `outputSpec`). `sink.result` is set before the
   ## job returns, fails or is cancelled. A cancel is looked for at each
@@ -423,4 +469,4 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
     ctx.setPhase "writing"
     {.cast(gcsafe).}:
       writeOutput(ctx, file, source, dest, opts, edits, openPaths, sink,
-        proc (done, total: int): bool {.gcsafe.} = ctx.progress(done, total))
+        proc (done, total: int): bool {.gcsafe.} = ctx.progress(done, total), signature)
