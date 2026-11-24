@@ -448,6 +448,12 @@ func noFollowWords(f: RecordingFacts): string =
     secs(f.nearestSeconds) & " or more after the last; the traces are " &
     secs(f.segmentSeconds) & " long, as in records sliced at shot times."
 
+func fewFollowWords(f: RecordingFacts): string =
+  ## The sentence for shot records that the continuous test passes (`swFewFollow`).
+  "Its receivers' traces mostly start " & secs(f.skipSeconds) & " or more apart (the " &
+    "traces are " & secs(f.segmentSeconds) & " long), and no three follow on one another, " &
+    "as in shot records."
+
 func cutRefusal*(f: RecordingFacts): string =
   ## Why the cut refuses a file: for one that is not a continuous receiver gather what
   ## the file is, then the reason, in sentences; for a continuous one whose like-typed
@@ -467,6 +473,7 @@ func cutRefusal*(f: RecordingFacts): string =
     case f.slicedWhy
     of swOffStep: result.add " " & offStepWords(f)
     of swNoFollow: result.add " " & noFollowWords(f)
+    of swFewFollow: result.add " " & fewFollowWords(f)
     else: discard
     result.add forced
   of rkReceiverSliced:
@@ -474,6 +481,7 @@ func cutRefusal*(f: RecordingFacts): string =
     case f.slicedWhy
     of swOffStep: result.add " " & offStepWords(f)
     of swNoFollow: result.add " " & noFollowWords(f)
+    of swFewFollow: result.add " " & fewFollowWords(f)
     of swNoStep:
       result.add " The traces do not follow one another in time."
     of swSameStart:

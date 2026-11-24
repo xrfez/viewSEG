@@ -32,10 +32,14 @@
 ## share one start time are one segment (its components, coded or not), and a receiver is
 ## named by its line and point, else by its group coordinates, else by its channel.
 ##
-## A file the continuous test passes is still a shot gather when its receiver changes between
-## most consecutive segments and no more of its boundaries follow on directly (k = 1) than
-## skip (k > 1): shot records, a few of them one record length apart. A receiver that stays
-## put keeps the test's answer: one pair that follows on is enough.
+## A file the continuous test passes is still a shot gather (`swFewFollow`) when its receiver
+## changes between most consecutive segments, no more of its boundaries follow on directly
+## (k = 1) than skip (k > 1), and no receiver has three traces following one another (two
+## boundaries of k = 1 in a row): shot records, a few of them one record length apart. Three
+## in a row is a recording that ran, so a recorder off every other trace after a run stays
+## continuous; one off every third trace from the start (k = 0, 1, 3, 4, 6, ...) has no run
+## of three and reads as a shot gather: it cannot be told from shots so laid out. A receiver
+## that stays put keeps the test's answer: one pair that follows on is enough.
 ##
 ## The continuous test: each trace starts a whole number of trace lengths
 ## after the one before it, and there is no variance. All times are compared in
@@ -118,6 +122,9 @@ type
       ## every start is a whole number of steps after the one before it, but none just one
       ## step: no trace follows directly on another (`nearestSeconds`, `segmentSeconds`), as
       ## in records sliced at shot times
+    swFewFollow
+      ## a file the continuous test passes, but its receiver changes from trace to trace, its
+      ## traces mostly skip (`skipSeconds`, `segmentSeconds`) and no three follow on one another
 
   RecordingPlan* = object
     ## The segments of a file as the cut plans them.
@@ -145,6 +152,10 @@ type
     nearestSeconds*: float64
       ## the least time from a start to the next of its receiver, over the boundaries on the
       ## step (0 for none): for `swNoFollow`, with `segmentSeconds` the trace length there
+    skipSeconds*: float64
+      ## the least time from a start to the next of its receiver, over the boundaries that skip
+      ## (0 for none): for `swFewFollow`
+    threeFollow*: bool ## some receiver has three traces following one another
     offSeconds*: float64
       ## for `swOffStep`: how long after the segment before it that trace starts, or its
       ## length when `offLength`
@@ -261,9 +272,9 @@ func stepOf(diffs: seq[int]; len: int): int =
         best = run
         result = quotients[x]
 
-type Unseen = tuple[next, j, step: int; last: float64]
-  ## the segments `next ..< j` of a receiver that `tally` did not reach, its step and the
-  ## last start it used
+type Unseen = tuple[next, j, step: int; last: float64; lastAbut: bool]
+  ## the segments `next ..< j` of a receiver that `tally` did not reach, its step, the last
+  ## start it used and whether that start followed on the one before it
 
 proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int;
     r: var RecordingFacts): Unseen =
@@ -279,7 +290,7 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int;
       used.add segs[x]
     inc x
   let count = used.len
-  result = (j, j, 0, 0.0)
+  result = (j, j, 0, 0.0, false)
   if count < 2: return
   r.boundaries += count - 1
   var diffs = newSeq[int](count - 1)
@@ -290,7 +301,7 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int;
   lens.sort()
   let typical = lens[count div 2]
   let step = stepOf(diffs, typical)
-  result = (x, j, step, used[^1].start)
+  result = (x, j, step, used[^1].start, false)
   var offAt = high(int) # the first used trace off the rule, by its place in the receiver
   var offGap = 0
   for x in 1 ..< count:
@@ -302,12 +313,17 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int;
       if r.nearestSeconds == 0 or gap < r.nearestSeconds:
         r.nearestSeconds = gap
         if r.slicedWhy == swNone: r.segmentSeconds = float64(typical) * dtS
-      if k == 1: inc r.abutting
+      if k == 1:
+        inc r.abutting
+        if result.lastAbut: r.threeFollow = true
       else:
         inc r.skips
         r.missingSegments += k - 1
+        if r.skipSeconds == 0 or gap < r.skipSeconds: r.skipSeconds = gap
+      result.lastAbut = k == 1
     else:
       inc r.irregular
+      result.lastAbut = false
       if x < offAt:
         offAt = x
         offGap = d
@@ -329,22 +345,24 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int;
       r.offTrace = used[offAt].row + 1
       r.offSeconds = float64(offGap) * dtS
 
-iterator laterSteps(segs: seq[Seg]; u: Unseen; dtS: float64): int =
-  ## The boundaries of the receiver's segments `tally` left unseen that are on its step: how
-  ## many steps each is (1: the next trace follows on the one before it).
+iterator laterSteps(segs: seq[Seg]; u: Unseen; dtS: float64): tuple[k, d: int] =
+  ## The boundaries of the receiver's segments `tally` left unseen, with how many steps
+  ## each is (1: the next trace follows on the one before it; 0: off the step) and its
+  ## length in samples.
   var last = u.last
   for x in u.next ..< u.j:
     let d = int(round((segs[x].start - last) / dtS))
     if d != 0:
       let k = max(1, (2 * d + u.step) div (2 * u.step))
-      if abs(d - k * u.step) <= 1: yield k
+      let on = if abs(d - k * u.step) <= 1: k else: 0
+      yield (on, d)
       last = segs[x].start
 
 func abutsLater(segs: seq[Seg]; u: Unseen; dtS: float64): bool =
   ## Whether a start of the receiver's segments `tally` left unseen is one step after the
   ## start before it: the file is then not one in which no trace follows on another.
-  for k in laterSteps(segs, u, dtS):
-    if k == 1: return true
+  for b in laterSteps(segs, u, dtS):
+    if b.k == 1: return true
 
 proc receiverChanges(meta: ChunkMeta; at: seq[StationPlace]; segs: seq[Seg]; dtS: float64):
     bool =
@@ -469,18 +487,33 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     # not continuous: the receiver changing from trace to trace, in the order of the file, is
     # a shot gather (the receivers repeat from record to record); staying put, a receiver's
     # own segments. `slicedWhy` keeps what the continuous test measured. So is a file whose
-    # traces follow on each other at no more boundaries than they skip: shot records, a few
-    # of them one record length apart. Counted over every start (no read: the segments are
-    # in memory), so the window and the slice, which checks every start, agree
-    var (abutting, skips) = (result.abutting, result.skips)
+    # traces follow on each other at no more boundaries than they skip, none three in a row:
+    # shot records, a few of them one record length apart. Counted over every start (no
+    # read: the segments are in memory), so the window and the slice, which checks every
+    # start, agree
+    var all = result
     if result.kind == rkReceiverContinuous:
       for u in unseen:
-        for k in laterSteps(segs, u, dtS):
-          if k == 1: inc abutting else: inc skips
-    let fewFollow = result.boundaries > 0 and abutting <= skips
-    if (result.kind == rkReceiverSliced or fewFollow) and
+        var prev = u.lastAbut
+        for b in laterSteps(segs, u, dtS):
+          if b.k == 1:
+            inc all.abutting
+            if prev: all.threeFollow = true
+          elif b.k > 1:
+            inc all.skips
+            let gap = float64(b.d) * dtS
+            if all.skipSeconds == 0 or gap < all.skipSeconds: all.skipSeconds = gap
+          prev = b.k == 1
+    if result.kind == rkReceiverSliced:
+      if receiverChanges(meta, plan.places, segs, dtS): result.kind = rkShotGather
+    elif result.boundaries > 0 and all.abutting <= all.skips and not all.threeFollow and
         receiverChanges(meta, plan.places, segs, dtS):
       result.kind = rkShotGather
+      result.slicedWhy = swFewFollow
+      result.abutting = all.abutting
+      result.skips = all.skips
+      result.skipSeconds = all.skipSeconds
+      result.threeFollow = all.threeFollow
   result.order = traceOrder(inFile, dtS, result.kind == rkShotGather)
 
 func isContinuousGather*(f: RecordingFacts): bool =

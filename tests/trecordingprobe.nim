@@ -14,7 +14,8 @@
 ## rkReceiverContinuous", "wholeShots: ... rkReceiverContinuous" and "sliced: ...
 ## rkReceiverContinuous"; with group coordinates compared exactly, "jitter" reads two stations;
 ## with `SameSpot` 5, "close" reads one station; with a file that passes the continuous test never asked whether its receiver changes,
-## "fewFollow" reads rkReceiverContinuous.
+## "fewFollow" reads rkReceiverContinuous; with the reason not said, the "fewFollow" sentence
+## stops at the kind; with the counts of the first starts kept, "thirds" says abutting 12.
 
 import std/[algorithm, assertions, os, sets, strutils, times]
 import parseSEG
@@ -215,8 +216,29 @@ proc main*() =
     let starts = [0, 15000, 30000, 31000, 46000]
     let f = whole(writeSpecs(dir, "fewFollow", shots(10, starts)), VendorRegistry())
     doAssert f.kind == rkShotGather and f.abutting == 10 and f.skips == 30, $f
+    doAssert f.slicedWhy == swFewFollow and not f.threeFollow, $f
+    doAssert cutRefusal(f) == "This file is a shot gather (the receiver changes from trace " &
+      "to trace), not a continuous receiver gather. Its receivers' traces mostly start 30 s " &
+      "or more apart (the traces are 2 s long), and no three follow on one another, as in " &
+      "shot records.", cutRefusal(f)
     same(dir, "fewFollow", shots(10, starts), rkShotGather)
     same(dir, "fewFollow1", shots(1, starts), rkReceiverContinuous)
+
+  block a_recorder_off_every_third_trace_reads_as_shots:
+    # three stations in time order at k = 0, 1, 3, 4, ... 15 trace lengths: pairs that follow
+    # on, never three; it cannot be told from shots so laid out. The counts said are those
+    # of every start, not the first few
+    var starts: seq[int] = @[]
+    for k in [0, 1, 3, 4, 6, 7, 9, 10, 12, 13, 15]: starts.add k * 1000
+    let f = whole(writeSpecs(dir, "thirds", shots(3, starts)), VendorRegistry())
+    doAssert f.kind == rkShotGather and f.slicedWhy == swFewFollow, $f
+    doAssert f.abutting == 15 and f.skips == 15 and abs(f.skipSeconds - 4) < 1e-6, $f
+    doAssert cutRefusal(f).endsWith("Its receivers' traces mostly start 4 s or more apart " &
+      "(the traces are 2 s long), and no three follow on one another, as in shot records."),
+      cutRefusal(f)
+    # three in a row once: continuous
+    starts.add 16000
+    same(dir, "thirdsRun", shots(3, starts), rkReceiverContinuous)
 
   block a_receiver_sliced_at_whole_trace_lengths_is_time_sliced:
     # one station, a 2 s trace every 20 s: on the step, nothing follows on the one before

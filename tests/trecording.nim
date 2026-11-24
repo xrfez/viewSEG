@@ -17,7 +17,8 @@
 ## kind alone; the rest of a receiver's starts not looked through for one that follows on
 ## another: "lateFollow" read rkReceiverSliced; the no-follow sentence in steps: "starts 2
 ## trace lengths or more"; the follow-on count over the first starts only: "skipsFirst:
-## rkShotGather" and "abutFirst: rkReceiverContinuous".
+## rkShotGather" and "pairsFirst: rkReceiverContinuous"; with no run of three asked, "runFirst:
+## rkShotGather".
 
 import std/[assertions, math, os, strutils]
 import parseSEG
@@ -470,14 +471,18 @@ proc main*() =
 
   block whether_traces_mostly_follow_on_is_counted_over_every_start:
     # ten stations in time order. Skips for the first KindStarts starts, then traces that
-    # follow on: continuous, in the window as in the slice; the other way round, a shot gather
-    var skipsFirst, abutFirst: seq[int] = @[]
+    # follow on: continuous, in the window as in the slice. Pairs that follow on (more than
+    # the skips among the first starts), then skips: a shot gather in both. A run of
+    # KindStarts traces, then every other one missing: continuous (three follow on)
+    var skipsFirst, pairsFirst, runFirst: seq[int] = @[]
     for i in 0 ..< KindStarts: skipsFirst.add i * 2000
     for i in 0 ..< 26: skipsFirst.add (2 * KindStarts - 1 + i) * 1000
-    for i in 0 ..< KindStarts: abutFirst.add i * 1000
-    for i in 0 ..< 20: abutFirst.add (KindStarts + 1 + 2 * i) * 1000
+    for k in [0, 1, 3, 4, 6, 7, 9, 10]: pairsFirst.add k * 1000
+    for i in 0 ..< 20: pairsFirst.add (12 + 2 * i) * 1000
+    for i in 0 ..< KindStarts: runFirst.add i * 1000
+    for i in 0 ..< 8: runFirst.add (KindStarts + 1 + 2 * i) * 1000
     for (name, firsts, want) in [("skipsFirst", skipsFirst, rkReceiverContinuous),
-        ("abutFirst", abutFirst, rkShotGather)]:
+        ("pairsFirst", pairsFirst, rkShotGather), ("runFirst", runFirst, rkReceiverContinuous)]:
       let window = factsOf(dir, name, shots(10, firsts))
       let slice = factsOf(dir, name, shots(10, firsts), starts = AllStarts)
       doAssert window.kind == want and slice.kind == want, name & ": " & $window.kind &
