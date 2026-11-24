@@ -104,12 +104,6 @@ func stringInside(path, folder: string): bool =
   when defined(windows): path.toLowerAscii.startsWith(prefix.toLowerAscii)
   else: path.startsWith(prefix)
 
-func signatureExt(name: string): string =
-  ## `.dat` or `.vib` when the leaf of `name` has that extension, else "".
-  ## A name only: the kind is told from the file's first bytes.
-  let ext = name.extractFilename.splitFile.ext.toLowerAscii
-  if ext == ".dat" or ext == ".vib": ext else: ""
-
 proc planDest(destRoot, relative: string; mirror: bool; format: OutputFormat;
     keepExt = false): Plan =
   ## The destination of one relative path, or why it cannot be written.
@@ -132,11 +126,19 @@ proc planDest(destRoot, relative: string; mirror: bool; format: OutputFormat;
     return Plan(why: "The relative path leaves the destination folder.")
   Plan(dest: dest)
 
-proc planned(ask: BatchAsk): seq[Plan] =
+func isSignature(kinds: openArray[FileKind]; i: int): bool =
+  ## Whether item `i` is a signature file. A missing kind is not one.
+  i < kinds.len and kinds[i] in SignatureFileKinds
+
+proc planned(ask: BatchAsk; kinds: openArray[FileKind]): seq[Plan] =
   ## Each item's destination. A second item that lands on a name already
-  ## taken fails with a sentence; the first keeps the name. Two signature
-  ## names that differ only by `.dat` and `.vib` keep that extension, so
-  ## they are not written as one file. Strings only.
+  ## taken fails with a sentence; the first keeps the name. When two or more
+  ## signature files would land on one name, those files keep the source
+  ## extension, so they are not written as one file. A file that is not a
+  ## signature file keeps the replaced extension. `kinds[i]` is item i's
+  ## kind, told from its first bytes; a shorter `kinds` means the kind is
+  ## not known yet (no file is read here). The sentence is attached only
+  ## when that item's name actually changed. Strings only.
   result = newSeq[Plan](ask.items.len)
   var byDest = initTable[string, seq[int]]()
   for i, item in ask.items:
@@ -151,40 +153,43 @@ proc planned(ask: BatchAsk): seq[Plan] =
       row.add i
       byDest[key] = row
   for _, idxs in byDest.pairs:
-    var exts = initHashSet[string]()
+    var sigs = 0
     for i in idxs:
-      let ext = signatureExt(ask.items[i].relative)
-      if ext.len > 0: exts.incl ext
-    if exts.len < 2: continue
-    for i in idxs:
-      if signatureExt(ask.items[i].relative).len == 0: continue
-      var plan = planDest(ask.destRoot, ask.items[i].relative, ask.mirrorFolders,
-        ask.options.format, keepExt = true)
-      if plan.why.len == 0 and plan.dest.len > 0:
-        plan.note = "The source extension was kept in the name so two " &
-          "signature files are not written as one file."
-      elif plan.why.len == 0:
-        plan.why = "No destination was given."
-      result[i] = plan
+      if isSignature(kinds, i): inc sigs
+    if sigs >= 2:
+      for i in idxs:
+        if isSignature(kinds, i):
+          let before = result[i].dest
+          var plan = planDest(ask.destRoot, ask.items[i].relative,
+            ask.mirrorFolders, ask.options.format, keepExt = true)
+          if plan.why.len == 0 and plan.dest.len > 0:
+            if plan.dest != before:
+              plan.note = "The source extension was kept in the name so two " &
+                "signature files are not written as one file."
+          elif plan.why.len == 0:
+            plan.why = "No destination was given."
+          result[i] = plan
   var owner = initTable[string, string]()
   for i, item in ask.items:
-    if result[i].why.len > 0 or result[i].dest.len == 0: continue
-    let key = destKey(result[i].dest)
-    if owner.hasKey(key):
-      result[i] = Plan(dest: result[i].dest, why: result[i].dest.extractFilename &
-        " is already the output of " & owner[key] & ".")
-    else:
-      owner[key] = item.relative
+    if result[i].why.len == 0 and result[i].dest.len > 0:
+      let key = destKey(result[i].dest)
+      if owner.hasKey(key):
+        result[i] = Plan(dest: result[i].dest, why: result[i].dest.extractFilename &
+          " is already the output of " & owner[key] & ".")
+      else:
+        owner[key] = item.relative
 
 proc outputBatchSpec*(ask: BatchAsk): JobSpec =
   ## The job that writes `ask`: background, reading each source, needing
-  ## each planned destination to itself. Does not touch the file system.
-  ## An open file passed to the job must use that item's `source` as its
-  ## path, so `reads` keeps a close from taking it.
+  ## each planned destination to itself. Does not touch the file system,
+  ## so no kind is known and a kept extension is not in these names; the
+  ## job plans again from each file's first bytes. An open file passed to
+  ## the job must use that item's `source` as its path, so `reads` keeps a
+  ## close from taking it.
   var reads: seq[string] = @[]
   var exclusive: seq[string] = @[]
   var seen = initHashSet[string]()
-  let plans = planned(ask)
+  let plans = planned(ask, [])
   for i, item in ask.items:
     if item.source.len > 0: reads.add item.source
     if i < plans.len and plans[i].why.len == 0 and plans[i].dest.len > 0:
@@ -460,7 +465,11 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
   if refused.len > 0: failBatch(sink, refused)
   let count = writing.items.len
   if count == 0: return
-  let plans = planned(writing)
+  var kinds = newSeq[FileKind](count)
+  for i, item in writing.items:
+    if item.source.len > 0:
+      kinds[i] = sniff(item.source)
+  let plans = planned(writing, kinds)
   if ctx.cancelled: stopBatch(sink, writing, plans, 0)
   var willWrite = false
   for p in plans:
@@ -499,7 +508,7 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
         let progress = proc (done, total: int64): bool {.gcsafe, raises: [].} =
           ctx.progress(int64(doneFiles) * BatchScale + shareOf(done, total),
             int64(count) * BatchScale)
-        let kind = sniff(item.source)
+        let kind = kinds[i]
         if kind in SignatureFileKinds:
           s = openSignature(item.source)
         elif kind == fkUnknown:

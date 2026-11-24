@@ -16,14 +16,19 @@
 ## way as one that is. A file that cannot be decoded is a failed row with
 ## the opener's sentence, and the others are still written. Two sweeps whose
 ## names differ only by `.vib` and `.dat` keep that extension in the output
-## name, so they are not written as one file.
+## name, so they are not written as one file. A SEG-Y file that is only named
+## `a.dat`, batched with a signature `a.vib`, is written as `a.sgy` with no
+## kept-extension sentence; the signature lands on that same name and fails
+## with the clash sentence. The kind, not the extension, decides.
 ##
 ## Seen to fail: not by a change in the writer (the SEG-Y write already
 ## matched). A dropped shot block fails the named-value check; an overwrite
 ## of the source fails the byte check. With the batch's signature open taken
 ## out (an unopened sweep opened as a seismic file), the folder that is not
 ## open fails every row with "no traces", and `a.vib` beside `a.dat` is a
-## name clash instead of two files.
+## name clash instead of two files. With the kept extension still decided by
+## the name, both files were written (`2 written, 0 failed`). With the kind
+## taken from the name instead of the first bytes, `a.vib.sgy` was written.
 
 import std/[os, strutils, tables]
 import parseSEG
@@ -366,21 +371,64 @@ proc main*() =
       doAssert got.wrote.written == 2 and got.wrote.failed == 0,
         $got.wrote.failed & " failed"
       doAssert not fileExists(dest / "a.sgy"), "the two sweeps were written as one file"
-      var noted = false
       for it in got.wrote.items:
         doAssert it.outcome == boWritten, it.relative & " " & it.why
         doAssert it.destination.endsWith(".vib.sgy") or
           it.destination.endsWith(".dat.sgy"), it.destination
+        var noted = false
         for line in it.lines:
           if "kept in the name" in line: noted = true
+        doAssert noted, it.relative & " did not say the extension was kept"
         var back = openSeismic(it.destination, keys = true)
         if it.destination.endsWith(".vib.sgy"):
           doAssert back.len == 13, $back.len
         else:
           doAssert back.len == 4, $back.len
         back.close()
-      doAssert noted, "the kept extension was not said in the results"
       doAssert readFile(d) == beforeD and readFile(v) == beforeV,
+        "a source was changed"
+
+  block segyNamedDat:
+    # A SEG-Y whose name ends `.dat` is not a signature file. Beside one
+    # signature `a.vib` it keeps the replaced extension; only the signature
+    # would have kept `.vib`, and one signature does not.
+    withFixtures fx:
+      let root = fx.dir / "mixed"
+      createDir(root)
+      let segy = root / "a.dat"
+      copyFile(fx.oneTraceSegy(), segy)
+      let v = vibFile(root, "a.vib", vibSynth)
+      let beforeS = readFile(segy)
+      let beforeV = readFile(v)
+      let items = @[
+        BatchItem(source: segy, relative: "a.dat"),
+        BatchItem(source: v, relative: "a.vib")]
+      let store = Store(home: fx.dir / "mem")
+      createDir(store.home)
+      let dest = fx.dir / "out"
+      let got = runBatch(BatchAsk(root: root, items: items, destRoot: dest,
+        options: OutputOptions(format: ofSegy)), store, @[])
+      doAssert got.st == jsDone, got.error & " " & got.wrote.reason
+      doAssert got.wrote.written == 1 and got.wrote.failed == 1,
+        $got.wrote.written & " written, " & $got.wrote.failed & " failed"
+      doAssert not fileExists(dest / "a.dat.sgy"), "the SEG-Y kept its extension"
+      doAssert not fileExists(dest / "a.vib.sgy"), "the signature kept its extension"
+      doAssert fileExists(dest / "a.sgy"), "a.sgy was not written"
+      for it in got.wrote.items:
+        if it.relative == "a.dat":
+          doAssert it.outcome == boWritten, it.why
+          doAssert it.destination == dest / "a.sgy", it.destination
+          for line in it.lines:
+            doAssert "kept in the name" notin line, line
+          var back = openSeismic(it.destination, keys = true)
+          doAssert back.len == 1, "the written file is not the SEG-Y: " & $back.len
+          back.close()
+        else:
+          doAssert it.outcome == boFailed, it.relative & " " & it.why
+          doAssert "already the output" in it.why, it.why
+          doAssert it.destination == dest / "a.sgy", it.destination
+          doAssert "kept in the name" notin it.why, it.why
+      doAssert readFile(segy) == beforeS and readFile(v) == beforeV,
         "a source was changed"
 
   echo "tsigsave: ok"
