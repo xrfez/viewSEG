@@ -55,8 +55,8 @@ import std/[math, options, os, random, sets, strutils, times]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
-import correlatejobs, edits, filesystem, jobs, panels, processing, reader, signatures, sorting,
-  vendormaps
+import correlatejobs, edits, filesystem, jobs, panels, processing, reader, references, signatures,
+  sorting, vendormaps
 
 const
   TraceBlock = 64 ## traces read, then written, between two cancel checks
@@ -87,6 +87,11 @@ type
     reference*: seq[float32]
     referenceDtMs*: float64
     referenceTraces*: seq[int]
+    pilot*: Option[PilotRule]
+      ## Set: `reference` is not used. Each record of the file being written
+      ## takes its own pilot by this rule, as the Correlate button does, from
+      ## the auxiliary trace in that record. A record without one fails the
+      ## write.
 
   OutputOptions* = object
     ## What to apply while writing one file. Display-only gain is never applied.
@@ -477,7 +482,9 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var outUs = 0.0
       var refs = initHashSet[int]()
       var odd = initHashSet[int]()
-      var plan: CorrelationPlan[float32]
+      var corrPlans: seq[CorrelationPlan[float32]] = @[]
+      var planOf: seq[int] = @[] ## pilot: each trace's plan; stored sweep: none, plan 0
+      var sweepLen = 0
       var ws = initWorkspace()
       var corrDst: seq[float32] = @[]
       var corrKeys: seq[TraceKeys] = @[]
@@ -494,16 +501,35 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           if not file[].inMemory: fs.mappedRead(source, headers = true)
           file[].ensureKeys()
         var loaded = opts.correlation.get
-        let ready = listenShape(file, loaded.reference, loaded.referenceDtMs)
+        var sweeps: seq[seq[float32]] = @[loaded.reference]
+        var sweepDt = loaded.referenceDtMs
+        if loaded.pilot.isSome:
+          # Each record's pilot, read from this file: never another file's.
+          let found = recordPilots(file, loaded.pilot.get, edits)
+          sweeps = @[]
+          planOf = newSeq[int](file[].len)
+          for k, rec in found:
+            let got = loadSweep(file, source, rec.load)
+            if k > 0 and (got.samples.len != sweeps[0].len or got.dtMs != sweepDt):
+              raise newException(ValueError, "The pilots of the records differ in length " &
+                "or interval, so the records cannot be written as one correlated file.")
+            sweeps.add got.samples
+            sweepDt = got.dtMs
+            for t in rec.span: planOf[t] = k
+          if sweeps.len == 0:
+            raise newException(ValueError, "The file has no record to take a pilot from.")
+        let ready = listenShape(file, sweeps[0], sweepDt)
         refs = referenceSet(file[].len, loaded.referenceTraces)
         listen = ready.listen
         recordSamples = ready.samples
+        sweepLen = sweeps[0].len
         for t in ready.odd: odd.incl(t)
         lag = wholeSamples(-AuxLeadMs, ready.dtMs)
         if opts.format == ofSegd: outUs = wholeMicroseconds(ready.dtMs)
-        let pilot = initPilot(loaded.reference, loaded.referenceDtMs)
-        plan = initCorrelationPlan(float32, pilot, ready.dtMs, recordSamples)
-        ws.reserve(plan.workspaceSize)
+        for sweep in sweeps:
+          let pilot = initPilot(sweep, sweepDt)
+          corrPlans.add initCorrelationPlan(float32, pilot, ready.dtMs, recordSamples)
+          ws.reserve(corrPlans[^1].workspaceSize)
         corrDst = newSeq[float32](listen)
         corrKeys = @[initTraceKeys()]
         corrCounts = @[recordSamples]
@@ -703,7 +729,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             if status == tsDead or (aux and (not isRef or isOdd)):
               corrKeys[0].status = tsDead
             else: corrKeys[0].status = tsLive
-            plan.correlateInto(rowBlock(samples, 1, recordSamples),
+            corrPlans[if planOf.len > 0: planOf[t] else: 0].correlateInto(
+              rowBlock(samples, 1, recordSamples),
               rowBlock(corrDst, 1, listen), corrMeta, ws)
             if not (aux and not isRef and not isOdd):
               for j in 0 ..< listen: samples[j] = corrDst[j]
@@ -799,7 +826,6 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           # The job's notes read only the index and the keys, so a file cut
           # after its traces were read keeps them. The binary header's note
           # reads the file, and a cut refuses that read.
-          let sweepLen = opts.correlation.get.reference.len
           var delayed = 0
           for t in opts.correlation.get.referenceTraces:
             if file[].traceKeys(t).status == tsAuxiliary and t notin odd: inc delayed

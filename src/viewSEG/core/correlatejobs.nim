@@ -38,7 +38,7 @@ import std/[algorithm, cpuinfo, formatfloat, math, sets, strutils]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
-import cutfile, correlateview, filesystem, jobs, processing, references, session, threads,
+import cutfile, correlateview, edits, filesystem, jobs, processing, references, session, threads,
   traceids
 
 const
@@ -705,6 +705,48 @@ proc loadSweep*(file: ptr SeismicFile; path: string; load: CorrelateLoad):
   let (cut, problem) = cutPilot(samples, dt, load.pilot, load.record)
   if problem.len > 0: raise newException(ValueError, problem)
   (turnedOver(cut, load.pilot), dt)
+
+proc pilotInSpan*(file: ptr SeismicFile; span: Slice[int]; record: string; rule: PilotRule;
+    e: FileEdits): tuple[trace: int; problem: string] =
+  ## The trace of `file` that `rule` takes from the record whose traces are `span`
+  ## (named `record`): its index in the file, else a `problem` saying what the record
+  ## lacks, or that the trace is killed (`e`) or marked dead. Reads the keys already
+  ## held, never the file.
+  result.trace = -1
+  var isAux = newSeq[bool](max(0, span.b - span.a + 1))
+  for k in 0 ..< isAux.len:
+    let t = span.a + k
+    isAux[k] = t in 0 ..< file[].len and not isSeismic(file[].index, t)
+  let (at, problem) = pickPilotTrace(rule, isAux, record)
+  if at < 0:
+    result.problem = problem
+    return
+  let t = span.a + at
+  let who = recordSentence(record) & "'s " & pilotWords(rule.aux, rule.trace)
+  if e.has(teKilled, t): result.problem = who & " is killed."
+  elif t in 0 ..< file[].index.keys.len and file[].index.keys[t].status == tsDead:
+    result.problem = who & " is marked dead."
+  else: result.trace = t
+
+proc recordPilots*(file: ptr SeismicFile; rule: PilotRule; e: FileEdits):
+    seq[tuple[span: Slice[int]; load: CorrelateLoad]] =
+  ## For each record of `file` (the gathers of a session of it), the span of its
+  ## traces and the load of the pilot `rule` takes from it, the Correlate button's
+  ## way: the trace's own reversal and time shift in `e`, then the cut and the rule's
+  ## phase. Raises ValueError with the sentence naming the record when a record has
+  ## no such pilot. The keys must be held.
+  result = @[]
+  let (gathers, rows) = recordsOf(file[])
+  for g, gather in gathers:
+    let name =
+      if g >= rows.len: ""
+      elif abs(rows[g].record) < 1e15: "FFID " & $int64(rows[g].record)
+      else: "record " & $(g + 1)
+    let picked = pilotInSpan(file, gather.traces, name, rule, e)
+    if picked.trace < 0: raise newException(ValueError, picked.problem)
+    result.add (gather.traces, CorrelateLoad(pilotTrace: picked.trace, pilot: rule,
+      flip: e.has(teReversed, picked.trace), shiftMs: e.shiftOf(picked.trace),
+      record: name))
 
 proc referenceTraces*(file: ptr SeismicFile): seq[int] =
   ## Auxiliary traces that hold a reference: trace code 5, or a vibrator reference (21).

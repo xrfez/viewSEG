@@ -197,6 +197,13 @@ proc keepZeroRecords(f: SeismicFile; gathers: var seq[Gather]): int =
     else: kept.add g
   if result > 0: gathers = kept
 
+proc recordsOf*(f: SeismicFile): tuple[gathers: seq[Gather]; records: seq[RecordRow]] =
+  ## The gathers a session of `f` holds and their record rows, the same as
+  ## `newSession` finds them. Reads the index only, so call it where the file is held.
+  result.gathers = f.gathers
+  discard keepZeroRecords(f, result.gathers)
+  result.records = recordRows(f, result.gathers)
+
 proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
     modified = Time(); choice = OpenChoice(); signature = SignatureFacts()): Session =
   ## A session for `file`, opened from `path`, with its gathers and the

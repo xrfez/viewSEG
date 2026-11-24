@@ -18,6 +18,14 @@
 ## (g) a joined source X is written when session positions are on, and the
 ## file's own when they are off. The button's file keeps its own.
 ##
+## (h) A pilot reference (the auxiliary trace of each record, cut by the project's
+## rule) is read from each file written and equals the button's sample for
+## sample; two files each use their own pilot; the records of one file each
+## use theirs; a file without the auxiliary trace fails with a sentence and
+## leaves no file; a stored sweep's bytes are the same as before pilots.
+## Seen to fail (h): with every record given the first record's plan, record 2's
+## trace 0 differed from its own pilot's output (`record 2 trace 0`).
+##
 ## Seen to fail: trace 1 was marked live and correlated, so sample 0 was 1.0
 ## against the button's 0.0. A +8 ms shift before correlation left trace 0
 ## sample 0 at -0.2962032 against the button's 0.0. An own filter on the raw
@@ -39,11 +47,12 @@
 ## 4000.0". A file cut after its traces were read lost every note: "missing
 ## 5 traces, 800 samples (1600 ms of listen time). in @[]".
 
-import std/[math, options, os, strutils]
+import std/[hashes, math, options, os, strutils]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
-import viewSEG/core/[correlatejobs, cutfile, edits, jobs, outputjobs, processing, session]
+import viewSEG/core/[correlatejobs, cutfile, edits, filememory, jobs, outputbatch, outputjobs,
+  processing, references, session]
 import utils/waiting
 
 const
@@ -62,6 +71,7 @@ const
   OwnSrcX = 10.0
   JoinedSrcX = 111.0
   OwnSrcY = 20.0
+  StoredHash = 6335372010091186906 ## the bytes of the stored-sweep write before pilots
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
@@ -307,14 +317,15 @@ proc spec(path: string): JobSpec =
   JobSpec(title: "Correlate " & path.extractFilename, lane: jlBackground,
     reads: @[path], cancellable: true)
 
-proc correlate(file: var SeismicFile; path: string; sweep: seq[float32]): CorrelateResult =
+proc correlate(file: var SeismicFile; path: string; sweep: seq[float32];
+    refs = @[RefAux]): CorrelateResult =
   var jobs = initJobs()
   result.opened = nil
   result.lines = @[]
   try:
     let id = jobs.submit(spec(path), correlateWork(CorrelateAsk(
       file: addr file, path: path, reference: sweep, referenceDtMs: DtMs,
-      referenceTraces: @[RefAux]), addr result))
+      referenceTraces: refs), addr result))
     doAssert waitUntil(state(jobs, id) in {jsDone, jsFailed, jsCancelled})
     doAssert state(jobs, id) == jsDone, result.failure
   finally:
@@ -365,6 +376,47 @@ proc sameWritten(a, b: SeismicFile; segy: bool) =
         " correlated " & $fa
       doAssert fb.kind == fvInt and fb.intVal == CorrelatedYes, "trace " & $t &
         " button correlated " & $fb
+
+proc writeRecords(path: string; sweeps: seq[seq[float32]]) =
+  ## One record for each of `sweeps`: two live traces that are that record's
+  ## sweep, delayed, then its auxiliary trace (the pilot, in trace code 5).
+  ## Each record is numbered 7, 8, ...
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
+    measurementSystem: 1, text: @["C01 a pilot of its own in each record"]))
+  for r, sweep in sweeps:
+    for i in 0 .. 2:
+      var k = initTraceKeys()
+      let buf = delayedSweep(sweep, Record, if i == 2: 0 else: Delays[i])
+      if i == 2: (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+      else: (k.traceCode, k.status) = (1'i16, tsLive)
+      k.record = float64(7 + r)
+      k.channel = float64(i + 1)
+      k.intervalUs = DtMs * 1000.0
+      k.t0Ms = 0.0
+      k.time = 1_700_000_000.0
+      w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the records file did not close"
+
+proc pilotOutput(sweep: seq[float32]; refs = @[2]): OutputOptions =
+  ## The rule: the first auxiliary trace, from 0 ms, as long as the sweep.
+  OutputOptions(format: ofSegy, correlation: some(OutputCorrelation(
+    referenceDtMs: DtMs, referenceTraces: refs, pilot: some(PilotRule(aux: true,
+    trace: 1, startMs: 0.0, spanMs: float64(sweep.len) * DtMs)))))
+
+proc buttonPilot(file: var SeismicFile; path: string; rule: PilotRule; trace: int):
+    seq[float32] =
+  ## The pilot the Correlate button loads for `trace` of `file`.
+  var got: seq[float32] = @[]
+  let at = addr file
+  let work = proc (ctx: JobContext) {.gcsafe.} =
+    {.cast(gcsafe).}:
+      got = loadSweep(at, path, CorrelateLoad(pilotTrace: trace, pilot: rule,
+        record: "FFID 7")).samples
+  let jobs = initJobs()
+  let id = jobs.submit(JobSpec(title: "Load a pilot", lane: jlBackground, reads: @[path]), work)
+  doAssert waitUntil(state(jobs, id) in {jsDone, jsFailed, jsCancelled})
+  doAssert state(jobs, id) == jsDone, jobs.info(id).get.error
+  got
 
 proc noPart(dir, stem: string) =
   doAssert not fileExists(dir / stem), stem & " was written"
@@ -888,6 +940,155 @@ proc main*() =
       for line in made.lines:
         if "binary header" notin line:
           doAssert line in sink.result.lines, "missing " & line & " in " & $sink.result.lines
+
+  block pilotReference:
+    let other = linearSweep(20.0, 60.0, float64(SweepLen) * DtMs, DtMs).sweepSamples(float32)
+    doAssert other != sweep, "the two sweeps are the same"
+    let aPath = srcDir / "pilot-a.sgy"
+    let bPath = srcDir / "pilot-b.sgy"
+    writeRecords(aPath, @[sweep])
+    writeRecords(bPath, @[other])
+    var a = openSeismic(aPath, keys = true)
+    var b = openSeismic(bPath, keys = true)
+    let opts = pilotOutput(sweep)
+    let rule = opts.correlation.get.pilot.get
+
+    block likeButton:
+      ## (a) the button's pilot, then the stored-sweep Output, equal this Output.
+      let loaded = buttonPilot(a, aPath, rule, 2)
+      doAssert loaded == sweep, "the button's pilot is not the sweep"
+      let made = correlate(a, aPath, loaded, @[2])
+      var opened = made.opened.filePtr
+      let fromButton = outDir / "pilot-button.sgy"
+      let fromPilot = outDir / "pilot-option.sgy"
+      let button = runWrite(opened[], aPath, fromButton, OutputOptions(format: ofSegy))
+      doAssert button.st == jsDone, button.error & " / " & button.wrote.reason
+      let got = runWrite(a, aPath, fromPilot, opts)
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      var x = openSeismic(fromPilot, keys = true)
+      var y = openSeismic(fromButton, keys = true)
+      sameTraces(x, y, Listen)
+      x.close()
+      y.close()
+      opened[].close()
+
+    block eachFileItsOwn:
+      ## (b) the second file takes its own pilot, not the first file's.
+      let outA = outDir / "own-a.sgy"
+      let outB = outDir / "own-b.sgy"
+      doAssert runWrite(a, aPath, outA, opts).st == jsDone
+      doAssert runWrite(b, bPath, outB, opts).st == jsDone
+      var viaA = openSeismic(outA, keys = true)
+      var viaB = openSeismic(outB, keys = true)
+      let storedB = outDir / "own-b-stored.sgy"
+      let gotStored = runWrite(b, bPath, storedB, OutputOptions(format: ofSegy,
+        correlation: some(OutputCorrelation(reference: other, referenceDtMs: DtMs,
+        referenceTraces: @[2]))))
+      doAssert gotStored.st == jsDone, gotStored.error
+      var stored = openSeismic(storedB, keys = true)
+      sameTraces(viaB, stored, Listen)
+      doAssert samplesOf(viaA, 0) != samplesOf(viaB, 0), "both files gave the same trace"
+      viaA.close()
+      viaB.close()
+      stored.close()
+
+    block eachRecordItsOwn:
+      ## The records of one file each take their own pilot.
+      let twoPath = srcDir / "pilot-two.sgy"
+      writeRecords(twoPath, @[sweep, other])
+      var two = openSeismic(twoPath, keys = true)
+      let outTwo = outDir / "own-two.sgy"
+      let got = runWrite(two, twoPath, outTwo, pilotOutput(sweep, @[2, 5]))
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      var made = openSeismic(outTwo, keys = true)
+      var firstOne = openSeismic(outDir / "own-a.sgy", keys = true)
+      var secondOne = openSeismic(outDir / "own-b.sgy", keys = true)
+      doAssert made.len == 6, "trace count " & $made.len
+      for t in 0 .. 2:
+        doAssert samplesOf(made, t) == samplesOf(firstOne, t), "record 1 trace " & $t
+        doAssert samplesOf(made, 3 + t) == samplesOf(secondOne, t), "record 2 trace " & $t
+      made.close()
+      firstOne.close()
+      secondOne.close()
+      two.close()
+
+    block missingTrace:
+      ## (c) a record without the auxiliary trace fails, in words, and writes nothing.
+      let lonePath = srcDir / "pilot-none.sgy"
+      var w = openSeismicWriter(lonePath, SegyOutputOptions(traceSorting: 1,
+        measurementSystem: 1))
+      var k = initTraceKeys()
+      (k.traceCode, k.status, k.record, k.channel) = (1'i16, tsLive, 7.0, 1.0)
+      (k.intervalUs, k.t0Ms, k.time) = (DtMs * 1000.0, 0.0, 1_700_000_000.0)
+      w.writeTrace(k, delayedSweep(sweep, Record, 40))
+      doAssert w.close().len == 0
+      var lone = openSeismic(lonePath, keys = true)
+      let got = runWrite(lone, lonePath, outDir / "pilot-none-out.sgy", opts)
+      doAssert got.st == jsFailed, "a file without the pilot was written"
+      doAssert got.wrote.reason == "FFID 7 has no auxiliary trace, not an auxiliary trace 1.",
+        got.wrote.reason
+      noPart(outDir, "pilot-none-out.sgy")
+      lone.close()
+      # a record of a two-record file without it fails the whole file
+      let halfPath = srcDir / "pilot-half.sgy"
+      writeRecords(halfPath, @[sweep, other])
+      var tail = openSeismic(halfPath, keys = true)
+      var strict = pilotOutput(sweep, @[2, 5])
+      strict.correlation.get.pilot.get.trace = 2
+      let bad = runWrite(tail, halfPath, outDir / "pilot-half-out.sgy", strict)
+      doAssert bad.st == jsFailed and bad.wrote.reason.endsWith("."), bad.wrote.reason
+      noPart(outDir, "pilot-half-out.sgy")
+      tail.close()
+    a.close()
+    b.close()
+
+  block pilotBatch:
+    ## The batch loads no sweep: each file's records take their own pilot, and a
+    ## file without one fails on its own.
+    let from1 = srcDir / "batch"
+    createDir(from1)
+    let other = linearSweep(20.0, 60.0, float64(SweepLen) * DtMs, DtMs).sweepSamples(float32)
+    writeRecords(from1 / "a.sgy", @[sweep])
+    writeRecords(from1 / "b.sgy", @[other])
+    var w = openSeismicWriter(from1 / "c.sgy", SegyOutputOptions(traceSorting: 1))
+    var k = initTraceKeys()
+    (k.traceCode, k.status, k.record, k.channel) = (1'i16, tsLive, 7.0, 1.0)
+    (k.intervalUs, k.t0Ms, k.time) = (DtMs * 1000.0, 0.0, 1_700_000_000.0)
+    w.writeTrace(k, delayedSweep(sweep, Record, 40))
+    doAssert w.close().len == 0
+    let ask = BatchAsk(root: from1, items: @[
+      BatchItem(source: from1 / "a.sgy", relative: "a.sgy"),
+      BatchItem(source: from1 / "b.sgy", relative: "b.sgy"),
+      BatchItem(source: from1 / "c.sgy", relative: "c.sgy")],
+      destRoot: outDir / "batch", options: OutputOptions(format: ofSegy),
+      correlate: BatchCorrelate(on: true, name: "Pilot", pilot: some(PilotRule(aux: true,
+      trace: 1, startMs: 0.0, spanMs: float64(SweepLen) * DtMs))))
+    let jobs = initJobs()
+    let sink = BatchSink()
+    let id = jobs.submit(outputBatchSpec(ask), outputBatchWork(ask, Store(), @[], sink))
+    doAssert waitUntil(state(jobs, id) in {jsDone, jsFailed, jsCancelled})
+    doAssert state(jobs, id) == jsDone, jobs.info(id).get.error
+    let done = sink.result
+    doAssert done.written == 2 and done.failed == 1, $done.written & " " & $done.failed
+    doAssert done.referenceLoads == 0, "a sweep was loaded"
+    for it in done.items:
+      if it.relative == "c.sgy":
+        doAssert it.outcome == boFailed and it.why.endsWith("."), it.why
+    var viaA = openSeismic(outDir / "batch" / "a.sgy", keys = true)
+    var viaB = openSeismic(outDir / "batch" / "b.sgy", keys = true)
+    var ownA = openSeismic(outDir / "own-a.sgy", keys = true)
+    var ownB = openSeismic(outDir / "own-b.sgy", keys = true)
+    sameTraces(viaA, ownA, Listen)
+    sameTraces(viaB, ownB, Listen)
+    for f in [addr viaA, addr viaB, addr ownA, addr ownB]: f[].close()
+
+  block storedBytesUnchanged:
+    ## (d) The stored-sweep Output is as it was before pilots existed.
+    let dest = outDir / "stored-hash.sgy"
+    let got = runWrite(file, path, dest, option(sweep, ofSegy))
+    doAssert got.st == jsDone, got.error
+    doAssert hash(readFile(dest)) == StoredHash, "stored-sweep bytes changed: " &
+      $hash(readFile(dest))
 
 when isMainModule:
   main()

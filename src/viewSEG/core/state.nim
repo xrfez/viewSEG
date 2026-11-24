@@ -4265,22 +4265,10 @@ proc pilotOfRecord(s: Session; g: int; rule: PilotRule; e: FileEdits): tuple[tra
     result.problem = "There is no record on show."
     return
   let span = s.gathers[g].traces
-  let f = s.filePtr
   result.record = s.recordText(span.a)
-  var isAux = newSeq[bool](max(0, span.b - span.a + 1))
-  for k in 0 ..< isAux.len:
-    let t = span.a + k
-    isAux[k] = t in 0 ..< f[].len and not isSeismic(f[].index, t)
-  let (at, problem) = pickPilotTrace(rule, isAux, result.record)
-  if at < 0:
-    result.problem = problem
-    return
-  let t = span.a + at
-  let who = recordSentence(result.record) & "'s " & pilotWords(rule.aux, rule.trace)
-  if e.has(teKilled, t): result.problem = who & " is killed."
-  elif t in 0 ..< f[].index.keys.len and f[].index.keys[t].status == tsDead:
-    result.problem = who & " is marked dead."
-  else: result.trace = t
+  let picked = pilotInSpan(s.filePtr, span, result.record, rule, e)
+  result.trace = picked.trace
+  result.problem = picked.problem
 
 func killedOf(e: FileEdits; traces: openArray[int]): seq[int] =
   ## Those of `traces` killed in `e`, in their order. `e` comes from
