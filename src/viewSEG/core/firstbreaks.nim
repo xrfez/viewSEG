@@ -305,6 +305,10 @@ func hasModel*(b: FirstBreaks): bool =
 func signedMs(x: float64): string =
   (if x >= 0: "+" else: "") & formatFloat(x, ffDecimal, 1) & " ms"
 
+func windowWords(ms: float64): string =
+  ## The guided half-window as a whole number of milliseconds.
+  $int(round(ms))
+
 func flaggedWords*(r: BreakRule): string =
   ## The flagged count and what it is made of: "N flagged (M of K compared off the model, P off
   ## their neighbours, F far off)". The far-off traces are not among the K compared.
@@ -317,8 +321,9 @@ func givenWords*(b: FirstBreaks): string =
   ## the traces flagged (`flaggedWords`); "" when the model is not the given one.
   if not b.isGiven: return ""
   if b.compared == 0:
-    return if b.rule.nNoBreak + b.rule.nFarOff > 0: "Given model: no pick lies within " & $int(
-        GrossBandMs) & " ms of it: it does not fit this record; " & b.rule.flaggedWords
+    return if b.rule.nNoBreak + b.rule.nFarOff > 0: "Given model: no pick lies within " &
+        b.rule.guideWindowMs.windowWords & " ms of it: it does not fit this record; " &
+        b.rule.flaggedWords
     else: "Given model: no confident pick to compare it with"
   "Given model: median pick less model " & b.medianDiffMs.signedMs & ", " &
     b.rule.flaggedWords & ", limit " & formatFloat(b.thresholdMs, ffDecimal, 1) & " ms"
@@ -326,7 +331,8 @@ func givenWords*(b: FirstBreaks): string =
 func givenShort(b: FirstBreaks): string =
   ## `givenWords` for the strip's note, which is short.
   if b.compared == 0:
-    if b.rule.nNoBreak + b.rule.nFarOff > 0: "no pick within " & $int(GrossBandMs) & " ms of it"
+    if b.rule.nNoBreak + b.rule.nFarOff > 0:
+      "no pick within " & b.rule.guideWindowMs.windowWords & " ms of it"
     else: "no pick to compare"
   else: "median " & b.medianDiffMs.signedMs & ", " & $b.offModel & " flagged"
 
@@ -546,7 +552,7 @@ func ruleWords*(b: FirstBreaks; unit: SurveyUnit): string =
   result = $r.nComparable & " traces compared with the model, " & $r.nNoBreak &
     " with no break found within the offsets where breaks are seen, " & $r.nBeyond &
     " beyond those offsets (never a finding), " & $r.nFarOff & " far off the model (a break " &
-    $int(GrossBandMs) & " to " & $int(FarOffMaxMs) & " ms from it), " & $r.nOffModel &
+    r.guideWindowMs.windowWords & " to " & $int(FarOffMaxMs) & " ms from it), " & $r.nOffModel &
     " off the model, " & $r.nOffNeighbours & " off their neighbours; " & $r.nFlagged & " flagged"
   if not r.limitMs.isNaN:
     result.add "\nOff the model: more than " & formatFloat(r.limitMs, ffDecimal, 1) &

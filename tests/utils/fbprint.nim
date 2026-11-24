@@ -43,9 +43,10 @@ proc fingerprint*(b: FirstBreaks): uint64 =
     p.add l.len
     for i in l: p.add i
   for x in [b.dtMs, b.thresholdMs, b.highCutHz, b.pickWindowMs, b.geometry.rangeMax,
-      b.geometry.ownSigmaMs, b.fit.interceptMs, b.fit.v1, b.fit.v2, b.fit.crossover,
-      b.rule.limitMs, b.rule.sigmaMs, b.rule.misfitSigmaMs, b.rule.medianMs,
-      b.rule.constantMs, b.rule.leanMs, b.rule.earlyTowardDeg]:
+      b.geometry.ownSigmaMs, b.geometry.guideWindowMs, b.fit.interceptMs, b.fit.v1,
+      b.fit.v2, b.fit.crossover, b.rule.limitMs, b.rule.sigmaMs, b.rule.misfitSigmaMs,
+      b.rule.medianMs, b.rule.constantMs, b.rule.leanMs, b.rule.earlyTowardDeg,
+      b.rule.guideWindowMs]:
     p.add x
   for n in [int(b.source), b.used, b.modelled, b.picked, b.geometry.ownComparable,
       b.fit.used, int(b.pickedOn), b.compared, b.offModel, b.rule.nComparable,

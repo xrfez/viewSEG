@@ -570,7 +570,7 @@ same setting. For each trace of the record shown the plot draws, in the theme's 
 
 A trace is flagged, with a thin line joining the two bars and a heavier pick bar, when it is
 off the model or off its neighbours (below). A pick that is not compared (confidence below 0.5,
-or more than 100 ms from the model) is a weak pick: it is not drawn unless **Show weak picks**
+or farther from the model than the guided window, 20 to 100 ms from the fit's scatter) is a weak pick: it is not drawn unless **Show weak picks**
 is ticked (below), and then faint with no line; the counts and the flags are the same either way. A trace with no pick shows only the model bar; a trace the model cannot
 place (no offset) only the pick. The bars have a halo in the plot's background colour, so they
 read over the wiggles and over density. They are the traces' own: they follow zoom, pan, the
@@ -638,14 +638,17 @@ record with different choices each keep their own result.
 trace with no visible break gets a pick on noise. A model is fitted to those picks, dropping
 the picks far from it (a start from the closer half, then the picks within three robust
 sigmas, at least 12 ms, of the fit, up to five rounds; at least 10 picks must remain). The
-second pass picks every trace again in a window of 100 ms either side of that model (the
-picker's own guide, with its energy windows 40 ms long, on the smoothed copy by default), and the model is fitted again, trimmed the same way, to those
+second pass picks every trace again in a window either side of that model: four times the
+scatter of the trimmed first-pass fit, at least 20 ms and at most 100 ms (100 ms when that
+scatter is not known). The picker uses its own guide, with energy windows 40 ms long, on the
+smoothed copy by default, and the model is fitted again, trimmed the same way, to those
 picks; it is one straight line unless a second segment has at least 15 trimmed picks beyond
 the crossover and fits clearly better, or the two segments hold at least 15 more of all the
 confident picks than the line does (so a bend whose far segment holds most picks stays two
 segments). That fit is what "Use this record's fit" copies. When fewer than 10 confident picks
 hold together, the first-pass picks stay and the key's note says so. With a given model the
-shown picks come from a pass guided by it instead.
+shown picks come from a pass guided by it instead, in a window of the same width from the
+scatter of the fit then in use.
 
 **Which traces are flagged** (one rule decides, so the key, the marks, the words and the agent
 state agree):
@@ -653,15 +656,16 @@ state agree):
 - *Where a break is expected*: the record's traces are cut into about 20 bins of offset (at
   least 10 traces a bin), and the range runs out from the nearest offsets to the end of the
   last bin before one where fewer than a fifth of the traces have a confident pick within
-  100 ms of the record's fit; it never runs past the 95th percentile of the offsets of the
+  that guided window of the record's fit; it never runs past the 95th percentile of the offsets of the
   picks both passes agree on (kept by the fit, and the first pass's pick confident and as near
   the fit). So noise the guided window happened to hold at long offsets does not widen it, and
   a stretch of real breaks the fit misses does not end it. A trace with a model time beyond
   that is *beyond the offsets where breaks are seen*: counted apart, never judged, never a
   finding.
-- *Comparable*: within that range, a confident pick (0.5 or more) within 100 ms of the model.
-  Any other trace in range is *no break found* and not flagged, unless the first (unguided) pass
-  found a confident break 100 to 400 ms from the model, not before the model's intercept less
+- *Comparable*: within that range, a confident pick (0.5 or more) within that same window of
+  the model. Any other trace in range is *no break found* and not flagged, unless the first
+  (unguided) pass found a confident break outside that window and at most 400 ms from the model,
+  not before the model's intercept less
   the limit, while the guided window found none: that is *far off the model* (a station placed
   a few hundred metres wrong), and flagged, drawn with its link to where the break was found.
   A first-pass pick farther off, or before any break can arrive, is noise.

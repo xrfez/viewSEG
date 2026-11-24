@@ -20,7 +20,7 @@
 ## whatever the guide, "200 jobs in 200 frames" for two panels with two models; with a stopped
 ## picking for a given model leaving the fit's picks shown without a word, the stop's check;
 ## with the views not kept, "the views are made again on every frame"; with the neighbour rule
-## leaving the traces off the model out, "trace 19 off its neighbours" on the 80 ms drift;
+## leaving the traces off the model out, "trace 19 off its neighbours" on the drift;
 ## with the pick choice left out of the key, "0 jobs in 200 frames" for the choice (the picks
 ## were not made again on the samples as recorded).
 
@@ -432,7 +432,8 @@ proc main*() =
     # the second record starts at trace 600 of the file, past a read chunk, and its data
     # start at 100 ms: every killed trace has no pick, and every other trace whose break
     # lies in the data is picked on that record's time axis (the picks are the second,
-    # guided pass's: the record's first-pass model guides them)
+    # guided pass's). A break before the data is not picked: the guided window does not
+    # reach into the record to take noise there.
     withFixtures fx:
       let path = fx.customShot("two.sgy", 1200, proc (i: int; k: var TraceKeys): float64 =
         k.record = float64(1 + i div 600)
@@ -450,7 +451,9 @@ proc main*() =
         elif arrivalMs(offsetOf(t mod Traces)) >= 100 + 30:
           inc checked
           if abs(got - arrivalMs(offsetOf(t mod Traces))) <= 12: inc near
-      doAssert none == @killed, "no pick at " & $none
+      for t in killed: doAssert b.pickOf(t).isNaN, "killed trace " & $t & " has a pick"
+      for t in none:
+        doAssert arrivalMs(offsetOf(t mod Traces)) < 100 or t in killed, "no pick at " & $t
       doAssert b.twoPass and checked > 400 and near * 100 >= checked * 95,
         $near & " of " & $checked & " picks within 12 ms of the arrival"
       doAssert abs(b.pickOf(700) - arrivalMs(offsetOf(700 mod Traces))) <= 12,
@@ -470,15 +473,17 @@ proc main*() =
         abs(b.modelOf(5) - arrivalMs(offsetOf(5))) <= 8
 
   block aSmoothDriftIsNotOffItsNeighbours:
-    # the residual from the model drifts past 12 ms along the spread, an 80 ms bump over 28
-    # traces (the record's limit flags it), the residual against the neighbours' does not: no
-    # trace is off its neighbours. (Before the rule had two parts, the fit's `suspect` alone was
-    # the test and nothing was flagged; with the traces off the model left out of the
-    # neighbours, the whole bump was off them.)
+    # the residual from the model drifts past 12 ms along the spread, a 16 ms bump over a few
+    # traces (inside the guided window, so the picks stay comparable; the record's limit flags
+    # the top of it), the residual against the neighbours' does not: no trace is off its
+    # neighbours. A wider 80 ms bump is outside this record's 20 ms window, so those traces
+    # are not comparable and the edge is judged against the flat side alone. (Before the rule
+    # had two parts, the fit's `suspect` alone was the test and nothing was flagged; with the
+    # traces off the model left out of the neighbours, the whole bump was off them.)
     withFixtures fx:
       let path = fx.customShot("drift.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
-        let u = (float64(i) - 24) / 14
-        arrivalMs(k.offset) + (if abs(u) < 1: 80 * (0.5 + 0.5 * cos(PI * u)) else: 0.0))
+        let u = (float64(i) - 24) / 4
+        arrivalMs(k.offset) + (if abs(u) < 1: 16 * (0.5 + 0.5 * cos(PI * u)) else: 0.0))
       let b = breaksOf(path)
       var worst = 0.0
       for t in 0 ..< Traces:

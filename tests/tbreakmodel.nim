@@ -4,10 +4,10 @@
 ## - the given model at the shot's true velocity (2500 m/s, 20 ms) puts the model bars on the
 ##   picks: few traces off, the median near 0, the picks and the fit untouched;
 ## - the same shot with its offsets wrong by a constant (a source named or placed wrongly:
-##   the traces are 100 m further out than they are) shows with the given model a median of
-##   about -40 ms and most traces off (a 400 m error, 160 ms, is beyond the 100 ms band in
-##   which a pick is compared with the model: no pick is comparable, and the words say the
-##   model does not fit the record), while the fitted model follows the picks and hides it;
+##   the traces are 100 m further out than they are, 40 ms) shows with the given model as far
+##   off: the record's scatter is a few milliseconds, so the guided window is 20 ms and 40 ms
+##   is outside it (a 400 m error, 160 ms, is far off the same way). The fitted model follows
+##   the picks and hides it;
 ## - "Use this record's fit" copies the fitted velocity, intercept, second velocity and
 ##   crossover, and switches to given; a record that has no fit gives no model;
 ## - two segments are continuous at the crossover, a trace with no offset (or killed) has
@@ -75,24 +75,22 @@ proc main*() =
         if b.mismatched(i): inc fittedOff
       doAssert fittedOff <= 3, "the fit follows the record: " & $fittedOff & " flagged"
       let g = b.withModel(Truth)
-      doAssert g.medianDiffMs < -30 and g.medianDiffMs > -50, "median " & $g.medianDiffMs
-      doAssert g.offModel * 10 > g.compared * 9, "most traces off: " & $g.offModel & " of " &
-        $g.compared
-      var flagged = 0
-      for i in 0 ..< Traces:
-        if g.mismatched(i): inc flagged
-      doAssert flagged * 10 > Traces * 9, "most traces off: " & $flagged & " flagged"
-      # (the counts read "N flagged (M of K compared off the model, ...)": the flagged count
-      # holds the far-off traces, which are not among the K compared, so it is never "N of K")
-      doAssert "median -4" in g.statusWords and " flagged" in g.statusWords, g.statusWords
-      let counts = $g.rule.nFlagged & " flagged (" & $g.rule.nOffModel & " of " & $g.compared &
-        " compared off the model, " & $g.rule.nOffNeighbours & " off their neighbours, " &
-        $g.rule.nFarOff & " far off)"
-      doAssert "median pick less model -4" in g.givenWords and counts in g.givenWords and
-        "limit 12.0 ms" in g.givenWords, g.givenWords
+      # 40 ms is outside this record's 20 ms window, so nothing is compared and the first pass
+      # is far off. Seen to fail with the band left at 100 ms: "median nan" was a median of
+      # about -40, and the traces were off the model rather than far off it.
+      doAssert g.geometry.guideWindowMs == GuideMinMs, "window " & $g.geometry.guideWindowMs
+      let inRange = Traces - g.rule.nBeyond
+      doAssert g.rule.nBeyond <= 3 and g.compared == 0 and g.rule.nFarOff == inRange and
+        g.offModel == inRange, $g.compared & " compared, " & $g.rule.nFarOff & " far off, " &
+        $g.rule.nBeyond & " beyond"
+      doAssert g.rule.mismatch
+      doAssert "no pick within 20 ms" in g.statusWords, g.statusWords
+      doAssert "no pick lies within 20 ms" in g.givenWords and "does not fit this record" in
+        g.givenWords, g.givenWords
+      doAssert "far off the model" in g.modelWords(suMetres), g.modelWords(suMetres)
 
   block aSourceFarOffIsFarOffTheModelAndTheModelDoesNotMatch:
-    # 400 m too long is 160 ms: beyond the 100 ms band no pick is comparable, but the first pass
+    # 400 m too long is 160 ms: beyond the guided window no pick is comparable, but the first pass
     # found every break, far from the model: each trace is flagged (far off the model)
     withFixtures fx:
       let b = breaksOf(fx.customShot("far.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =

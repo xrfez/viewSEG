@@ -10,14 +10,16 @@
 ##    segments are one line unless the second has 15 picks and a clearly better fit, or the
 ##    two segments hold at least 15 more of all the confident picks than the line does.
 ## 3. **Second pass**: every trace of the fitted sensor is picked again with the picker's own
-##    guide (`guideVelocity`, `guideT0Ms`; `beforeMs`, `afterMs` = 100 ms), one guide line
-##    per segment of the model, so the search window is the model's time plus or minus 100
-##    ms. The passes read a zero-phase high-cut copy of each chunk (`PickBasis`, `pickCutHz`:
-##    the loaded samples are never changed) and pick with a 40 ms window (`GuidedWindowMs`):
+##    guide (`guideVelocity`, `guideT0Ms`). `beforeMs` and `afterMs` are `guideWindowMs` of
+##    that fit's scatter (four sigmas, at least 20 ms, at most 100 ms; 100 ms when the scatter
+##    is not known), one guide line per segment. A model the user gave is a third pass, with
+##    the same width from the scatter of the fit in use. The passes read a zero-phase high-cut
+##    copy of each chunk (`PickBasis`, `pickCutHz`: the loaded samples are never changed) and
+##    pick with a 40 ms window (`GuidedWindowMs`):
 ##    a wavelet that builds over some 50 ms is picked too late, or not confidently, on the
 ##    samples as loaded. The picker's own band-pass is causal and delays the picks, so it is
-##    not used. When the user gave a model (`BreakKey.guide`) the shown picks come from a third
-##    pass guided by it, and the fit (for "Use this record's fit") from the second.
+##    not used. The fit "Use this record's fit" copies is the second pass's; the picks shown
+##    are the third pass's when the user gave a model (`BreakKey.guide`).
 ## 4. The model is fitted again, trimmed the same way, to the second pass's picks; its
 ##    times are `ShotFit.modelMs` (or the one line's), and `FirstBreaks.setRule` decides
 ##    which traces are off (`core/breakrule`).
@@ -370,26 +372,27 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     result.tr = trimmedModel(offs, pm, cf, fn)
     result.fit = last
 
-  proc guidedBy(m: BreakModel; src: seq[FirstBreakPick]; doneBefore: int):
-      seq[FirstBreakPick] =
-    ## `src` with each eligible trace picked again within `GuideWindowMs` of the model's time.
+  proc guidedBy(m: BreakModel; src: seq[FirstBreakPick]; doneBefore: int;
+      halfMs: float64): seq[FirstBreakPick] =
+    ## `src` with each eligible trace picked again within `halfMs` of the model's time.
     var guides: seq[Guided] = @[]
     for gl in guideLines(m):
       var rows = newSeq[bool](n)
       for i in 0 ..< n:
         rows[i] = eligible[i] and offs[i] > gl.above and offs[i] <= gl.upTo
       guides.add (FirstBreakParams(guideVelocity: gl.velocity, guideT0Ms: gl.t0Ms,
-        windowMs: GuidedWindowMs, beforeMs: GuideWindowMs, afterMs: GuideWindowMs), rows)
+        windowMs: GuidedWindowMs, beforeMs: halfMs, afterMs: halfMs), rows)
     result = src
     runPass(guides, result, doneBefore, smoothed)
 
   # The second pass: a model from the first pass's picks (without the noise ones), then every
-  # trace picked again near it.
+  # trace picked again near it. The half-window follows that fit's scatter.
   let firstTrim = trimOf(picks)
+  let firstW = guideWindowMs(firstTrim.tr.sigmaMs)
   var fitted = picks
   var final = firstTrim
   if firstTrim.tr.trusted:
-    let again = guidedBy(firstTrim.fit.fitModel, picks, n)
+    let again = guidedBy(firstTrim.fit.fitModel, picks, n, firstW)
     let secondTrim = trimOf(again)
     if secondTrim.tr.trusted:
       (fitted, final) = (again, secondTrim)
@@ -401,8 +404,11 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     result.passNote = trustNote("The first pass", firstTrim.tr.used,
       "no second pass was made: the first-pass picks are shown")
   var shown = fitted
+  # a given model guides a third pass; its window is the scatter of the fit in use
+  var shownW = firstW
   if guide.given:
-    shown = guidedBy(guide, picks, 2 * n)
+    shownW = guideWindowMs(final.tr.sigmaMs)
+    shown = guidedBy(guide, picks, 2 * n, shownW)
     result.twoPass = true
   if result.twoPass: # the picks shown are the guided passes'
     result.pickWindowMs = GuidedWindowMs
@@ -424,13 +430,14 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     # and not past most of the picks both passes agree on (the guided pick kept by the trim, the
     # first-pass pick confident and within the trim's cut of the same model): a guided pick
     # alone may be noise the window held
+    result.geometry.guideWindowMs = firstW
     let cut = max(TrimFloorMs, TrimSigmas * (if final.tr.sigmaMs.isNaN: 0.0
       else: final.tr.sigmaMs))
     var seenNear, supported = newSeq[bool](n)
     for i in 0 ..< n:
       let m = final.fit.modelMs[i]
       seenNear[i] = fitted[i].confidence >= ConfidentPick and
-        abs(fitted[i].timeMs - m) <= GrossBandMs
+        abs(fitted[i].timeMs - m) <= firstW
       supported[i] = final.tr.kept[i] and picks[i].confidence >= ConfidentPick and
         abs(picks[i].timeMs - m) <= cut
     result.geometry.rangeMax = expectedRange(offs, eligible, seenNear, supported)
@@ -447,6 +454,7 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     let own = applyRule(fp, fc, final.fit.modelMs, result.geometry)
     result.geometry.ownSigmaMs = own.misfitSigmaMs
     result.geometry.ownComparable = own.nComparable
+    result.geometry.guideWindowMs = shownW
     result.setRule()
 
 proc firstBreaksWork*(file: ptr SeismicFile; path: string; key: BreakKey;

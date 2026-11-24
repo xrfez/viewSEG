@@ -8,13 +8,13 @@
 ## - **Where a break is expected** (`expectedRange`): out to the offset where fewer than
 ##   `RangeShare` of the traces have a confident pick near the model, and never past most of the
 ##   picks both passes agree on. A trace beyond it is "beyond", counted apart and never judged.
-## - **Comparable**: a pick of confidence from `ConfidentPick` within `GrossBandMs` of the
-##   model.
+## - **Comparable**: a pick of confidence from `ConfidentPick` within the guided window
+##   (`guideWindowMs` of the fit's scatter) of the model.
 ## - **Off the model**: a comparable trace whose residual (pick less model) is larger than
 ##   the record's limit, `max(LimitFloorMs, LimitSigmas * sigma)`, `sigma` being 1.4826 times
 ##   the median absolute deviation (MAD) of the picks' own scatter about the record's fit.
 ## - **Far off the model**: a trace whose guided pick is not comparable, but whose first-pass
-##   pick is confident and more than `GrossBandMs`, at most `FarOffMaxMs`, from the model,
+##   pick is confident and more than that window, at most `FarOffMaxMs`, from the model,
 ##   and not before the model's intercept less the limit (no break comes before the first
 ##   possible arrival). Everything else with a model time is "no break found", never flagged.
 ## - **Off its neighbours**: a comparable trace whose residual, less the median residual of up
@@ -54,8 +54,12 @@ export ConfidentPick, MadToSigma, TrimSigmas, TrimFloorMs, TrimRounds, MinTrimme
   keepSecond
 
 const
-  GuideWindowMs* = 100.0   ## the second pass's search window either side of the model (ms)
-  GrossBandMs* = 100.0     ## a confident pick farther than this from the model is no break found
+  GuideSigmas* = 4.0
+    ## the guided search half-window is this many sigmas of the fit that guides the pass
+  GuideMinMs* = 20.0
+    ## the narrowest that half-window may be (ms)
+  GuideMaxMs* = 100.0
+    ## the widest that half-window may be (ms); also used when the scatter is not known
   LimitFloorMs* = 12.0     ## the smallest limit, on the model and on the neighbours (ms)
   LimitSigmas* = 3.0       ## the record's limit: this many sigmas of the comparable residuals
   StationSigmas* = 4.0
@@ -84,6 +88,13 @@ const
   LeanMinSpanDeg* = 180.0 ## the azimuths must cover this much of the circle
   LeanMinTraces* = 20 ## the fewest comparable traces with an azimuth that the lean is fitted to
 
+func guideWindowMs*(sigmaMs: float64): float64 =
+  ## The guided search half-window (ms) for a fit whose robust scatter is `sigmaMs`:
+  ## `GuideSigmas` times that scatter, never under `GuideMinMs` or over `GuideMaxMs`.
+  ## A NaN or non-positive scatter is not a scatter, so the window is `GuideMaxMs`.
+  if sigmaMs.isNaN or sigmaMs <= 0: GuideMaxMs
+  else: clamp(GuideSigmas * sigmaMs, GuideMinMs, GuideMaxMs)
+
 type
   GuideLine* = object
     ## One straight piece of a model as the picker's guide: the break at offset `x` is at
@@ -110,6 +121,10 @@ type
     ownComparable*: int = -1
       ## the traces comparable with the record's OWN fit within the expected range: a given
       ## model that finds fewer than half as many does not match. -1: not known
+    guideWindowMs*: float64 = GuideMaxMs
+      ## the guided search half-window (ms) of the picks being judged: a confident pick farther
+      ## than this from the model is not comparable, and a first-pass pick just beyond it (at
+      ## most `FarOffMaxMs`) is far off. `GuideMaxMs` when the scatter is not known
 
   LeanKind* = enum
     lkNone, lkConstant, lkSide
@@ -130,6 +145,8 @@ type
     earlyTowardDeg*: float64  ## the angle (degrees from +x towards +y) the picks are earliest at
     statement*: set[LeanKind] ## what is said of the source (nothing with `mismatch`)
     mismatch*: bool           ## a given model that does not match the record's breaks
+    guideWindowMs*: float64 = GuideMaxMs
+      ## the guided search half-window (ms) this rule applied
 
 func guideLines*(m: BreakModel): seq[GuideLine] =
   ## The picker's guide for `m` as one line per segment (its own velocity and intercept: the
@@ -299,11 +316,12 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
   ## user gave, which may not match the record (`mismatch`). `interceptMs`: the model's time at
   ## offset 0, before which no first-pass pick is far off it (NaN: no such bound).
   let n = pickMs.len
+  let band = if g.guideWindowMs > 0 and g.guideWindowMs < Inf: g.guideWindowMs else: GuideMaxMs
   result = BreakRule(comparable: newSeq[bool](n), noBreak: newSeq[bool](n),
     beyond: newSeq[bool](n), farOff: newSeq[bool](n), offModel: newSeq[bool](n),
     offNeighbours: newSeq[bool](n), flagged: newSeq[bool](n), limitMs: NaN, sigmaMs: NaN,
     misfitSigmaMs: NaN, stationLimitMs: NaN, stationSigmaMs: NaN, medianMs: NaN,
-    constantMs: NaN, leanMs: NaN, earlyTowardDeg: NaN)
+    constantMs: NaN, leanMs: NaN, earlyTowardDeg: NaN, guideWindowMs: band)
   var res = newSeq[float64](n)
   var all: seq[float64]
   let haveFirst = g.firstMs.len == n and g.firstConf.len == n
@@ -319,7 +337,7 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
       else:
         inc result.nInRange
         let d = pickMs[i] - modelMs[i]
-        if not d.isNaN and confidence[i] >= ConfidentPick and abs(d) <= GrossBandMs:
+        if not d.isNaN and confidence[i] >= ConfidentPick and abs(d) <= band:
           res[i] = d
           result.comparable[i] = true
           all.add d
@@ -340,7 +358,7 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
     if result.noBreak[i]:
       if haveFirst and g.firstConf[i] >= ConfidentPick and not g.firstMs[i].isNaN:
         let d = abs(g.firstMs[i] - modelMs[i])
-        if d > GrossBandMs and d <= FarOffMaxMs and
+        if d > band and d <= FarOffMaxMs and
             (earliest.isNaN or g.firstMs[i] >= earliest):
           (result.farOff[i], result.noBreak[i]) = (true, false)
           inc result.nFarOff

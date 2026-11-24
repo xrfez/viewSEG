@@ -1,9 +1,9 @@
 ## The first-break overlay's model in the running frontend, headless, driven by real clicks:
 ## a click on the key opens where the model comes from; "Use this record's fit" keeps the
 ## record's fitted velocity and intercept as the given model; with a given model held for
-## the record, whose source is named wrongly (offsets 100 m too long), the bars sit off the
-## picks, the key is the same width and marks it "given" with the count off it (the tooltip says
-## how far the record is off), and
+## the record, whose source is named wrongly (offsets 100 m too long, 40 ms), the bars sit off
+## the picks and the key marks it "given": the guided window is 20 ms, so the picks are far off
+## it (the tooltip says no pick lies within 20 ms), and
 ## "Fitted to this record" gives the fit back.
 ##
 ## With `VIEWSEG_SCREENSHOTS=<dir>` the window is saved with the popover open and with the
@@ -208,10 +208,12 @@ proc main*() =
       f.apply(Command(kind: ckDisplay, panel: MainPanel, display: d)),
       proc (f: FrameInfo): bool =
       let synthetic = getEnv("VIEWSEG_SHOT_FILE").len == 0
-      result = f.shown and f.now.isGiven and (f.now.medianDiffMs < -30 or not synthetic)
+      # 40 ms is outside this record's 20 ms window, so nothing is compared. Seen to fail
+      # with the band left at 100 ms: the median was about -40 and the step waited on it.
+      result = f.shown and f.now.isGiven and (f.now.compared == 0 or not synthetic)
       if result and synthetic:
-        doAssert f.now.offModel * 10 > f.now.compared * 9, $f.now.offModel
-        doAssert "median" in f.now.statusWords
+        doAssert f.now.rule.nFarOff > 0 and f.now.offModel == f.now.rule.nFarOff, $f.now.offModel
+        doAssert "no pick within 20 ms" in f.now.statusWords, f.now.statusWords
       if result: f.shoot("moved-source"))
     step("the popover again", reopen, proc (f: FrameInfo): bool =
       f.markOf("plot.first break model fitted").size.x > 0 and waited > 5)

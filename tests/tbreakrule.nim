@@ -13,8 +13,12 @@
 ## - far traces whose picks are not breaks are "no break found" or beyond the range, never
 ##   flagged, and do not move the fitted model (a fit to every confident pick is far off); the
 ##   range ends where few breaks are seen near the model and most picks both passes agree on
-##   end, so noise the guided window held does not widen it; "far off" is a first-pass pick 100
-##   to 400 ms from the model, never one before the first possible arrival;
+##   end, so noise the guided window held does not widen it; "far off" is a first-pass pick
+##   outside the guided window (100 ms when it is not set) and at most 400 ms from the model,
+##   never one before the first possible arrival; the guided window is four sigmas of the fit's
+##   scatter, at least 20 ms and at most 100 ms (100 ms when the scatter is not known): a burst
+##   60 ms before a tight record's break is outside it, a wide scatter keeps 100 ms, and a 60 ms
+##   first-pass miss under a 20 ms window is far off, not no break;
 ## - the record's own fit as a given model matches even where few breaks are seen;
 ## - a second segment stays only with enough trimmed picks beyond the crossover and a better fit,
 ##   or when it holds clearly more of all the confident picks: a bend whose second segment holds
@@ -38,7 +42,8 @@
 ## under a mismatch, "the picks lean to one side ... every pick is early by 59 ms"; with the
 ## neighbour rule leaving off-model traces out (and the nearer side alone), "healthy record: 5
 ## flagged" (and `tfirstbreaks`' 80 ms drift off its neighbours); without the support test for a
-## second segment, "bend 0.4 to 0.3: one segment".
+## second segment, "bend 0.4 to 0.3: one segment"; with the guided window left at 100 ms, "the
+## burst 60 ms before the break was picked" and "60 ms off is no break, not far off".
 
 import std/[math, os, strutils]
 import parseSEG
@@ -99,6 +104,51 @@ proc ring(shiftX, constant: float64; spanDeg: float64): tuple[pick, conf, model:
     result.conf.add 1.0
     result.g.azimuth[i] = az
 
+func scatterShift(i: int; jitter: float64): float64 =
+  ## Alternating `jitter`, and half as much again on every tenth trace.
+  let sign = if i mod 2 == 0: 1.0 else: -1.0
+  let extra = if i mod 10 == 0: 0.5 * jitter elif i mod 10 == 1: -0.5 * jitter else: 0.0
+  sign * jitter + extra
+
+func scatterArrival(i: int; jitter: float64): float64 =
+  ## The break of `scatterShot` trace `i`: `180 + 0.4 x` plus `scatterShift`.
+  180.0 + 0.4 * (200.0 + 25.0 * float64(i)) + scatterShift(i, jitter)
+
+proc scatterShot(fx: Fixtures; name: string; traces: int; jitter: float64; burst: bool): string =
+  ## Offsets `200 + 25 i` m, the break at `scatterArrival`. When `burst`, every eighth trace
+  ## also has a wavelet four times as strong 60 ms before the break.
+  result = fx.dir / name
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 first-break rule test: " & name]))
+  var buf = newSeq[float32](breakfiles.Samples)
+  for i in 0 ..< traces:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(i + 1), 0.0,
+      Dt * 1000, tsLive)
+    k.offset = 200.0 + 25.0 * float64(i)
+    let at = scatterArrival(i, jitter)
+    for j in 0 ..< buf.len: buf[j] = 0
+    buf.addRicker(Dt, at + 15, 30, 1.0)
+    if burst and i mod 8 == 0: buf.addRicker(Dt, at - 60 + 15, 30, 4.0)
+    buf.addNoise(0.03, int64(i + 1))
+    w.writeTrace(k, buf)
+  let log = w.close()
+  doAssert log.len == 0, $log
+
+proc tightBurstStaysOut(b: FirstBreaks; n: int; what: string) =
+  ## The guided pick of a burst trace is the break, not the burst 60 ms before it (`pickMs`,
+  ## not `pickOf`: a far-off trace shows the first pass, which did take the burst).
+  doAssert b.twoPass and b.hasModel, what & b.passNote
+  doAssert b.geometry.guideWindowMs == GuideMinMs, what & "window " & $b.geometry.guideWindowMs
+  doAssert "20 to 400" in b.modelWords(suMetres), b.modelWords(suMetres)
+  for i in countup(0, n - 1, 8):
+    let at = scatterArrival(i, 2.0)
+    let pick = b.pickMs[i]
+    doAssert not pick.isNaN, what & "trace " & $i & " has no pick"
+    doAssert abs(pick - (at - 60)) > 25, what & "the burst 60 ms before the break was picked"
+    doAssert abs(pick - at) < 30, what & "trace " & $i & " pick " & $pick &
+      " not the break at " & $at
+
 proc twoEventShot(fx: Fixtures; name: string; traces: int;
     events: proc (i: int): (float64, float64); second = 1.0): string =
   ## A shot of `traces` traces at `100 + 10 i` m, each with two wavelets at the times `events`
@@ -122,6 +172,18 @@ proc twoEventShot(fx: Fixtures; name: string; traces: int;
   doAssert log.len == 0, $log
 
 proc main*() =
+
+  block guideWindowMsFollowsTheScatter:
+    doAssert guideWindowMs(NaN) == GuideMaxMs
+    doAssert guideWindowMs(0) == GuideMaxMs
+    doAssert guideWindowMs(-4) == GuideMaxMs
+    doAssert guideWindowMs(-Inf) == GuideMaxMs
+    doAssert guideWindowMs(Inf) == GuideMaxMs
+    doAssert guideWindowMs(3) == GuideMinMs
+    doAssert guideWindowMs(GuideMinMs / GuideSigmas) == GuideMinMs
+    doAssert guideWindowMs(12.5) == 50
+    doAssert guideWindowMs(GuideMaxMs / GuideSigmas) == GuideMaxMs
+    doAssert guideWindowMs(40) == GuideMaxMs
 
   block aHealthyRecordFlagsAlmostNothing:
     let d = line(400, 10, 1)
@@ -522,6 +584,23 @@ proc main*() =
     conf[250] = 0.1
     doAssert applyRule(d.pick, conf, d.model, g, interceptMs = 20).farOff[250]
 
+  block aSixtyMsMissIsFarOffInsideANarrowWindow:
+    # Seen to fail: with the band left at 100 ms, "60 ms off is no break, not far off".
+    var d = line(40, 2, 21)
+    var g = oneLine(40)
+    g.guideWindowMs = GuideMinMs
+    g.firstMs = d.pick
+    g.firstConf = d.conf
+    var conf = d.conf
+    conf[8] = 0.1
+    g.firstMs[8] = d.model[8] + 60
+    let r = applyRule(d.pick, conf, d.model, g, interceptMs = 20)
+    doAssert r.farOff[8] and not r.noBreak[8], "60 ms off is no break, not far off"
+    doAssert r.guideWindowMs == GuideMinMs
+    g.guideWindowMs = GuideMaxMs
+    let wide = applyRule(d.pick, conf, d.model, g, interceptMs = 20)
+    doAssert not wide.farOff[8] and wide.noBreak[8], "60 ms is inside the wide window"
+
   block theRecordsOwnFitNeverMismatchesWhereFewBreaksAreSeen:
     # within the range only a third of the traces have a confident pick (a healthy long record):
     # the given model that is the record's own fit matches; one 20 % slow does not
@@ -624,6 +703,31 @@ proc main*() =
             doAssert b.rule.nFlagged == 0, what & $b.rule.nFlagged & " flagged"
           doAssert b.rule.nFlagged <= 6, what & $b.rule.nFlagged & " of " & $b.rule.nComparable &
             " flagged"
+
+  block aTightScatterExcludesABurstTheWideWindowWouldPick:
+    # sigma about 3 ms, so the guided window is 20 ms: a burst 60 ms before the break is
+    # outside it. Seen to fail with the window left at 100 ms: "the burst 60 ms before the
+    # break was picked".
+    const n = 80
+    withFixtures fx:
+      let path = fx.scatterShot("tight.sgy", n, 2.0, burst = true)
+      var f = openSeismic(path, keys = true)
+      tightBurstStaysOut(breaksOfRecord(addr f, path, 0 ..< f.len, []), n, "")
+      let given = BreakModel(source: bmGiven, v1: 2500, interceptMs: 180)
+      tightBurstStaysOut(breaksOfRecord(addr f, path, 0 ..< f.len, [], guide = given), n,
+        "given model: ")
+      f.close()
+
+  block aWideScatterKeepsTheFullGuidedWindow:
+    const n = 80
+    withFixtures fx:
+      let path = fx.scatterShot("wide.sgy", n, 35.0, burst = false)
+      var f = openSeismic(path, keys = true)
+      let b = breaksOfRecord(addr f, path, 0 ..< f.len, [])
+      f.close()
+      doAssert b.twoPass and b.hasModel, b.passNote
+      doAssert b.geometry.guideWindowMs == GuideMaxMs, "window " & $b.geometry.guideWindowMs
+      doAssert "100 to 400" in b.modelWords(suMetres), b.modelWords(suMetres)
 
   echo "tbreakrule: ok"
 
