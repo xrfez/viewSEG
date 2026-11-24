@@ -39,14 +39,14 @@ next part's.
 
 Capabilities are the rows below, each counted by the first part of its status ("in part": built, with a part still planned or to plan). Names are the names each library exports, enum values not counted, each at the most advanced status of the rows that name it.
 
-| Status | parseSEG 0.19.2: capabilities | names | processSEG 0.12.0: capabilities | names |
+| Status | parseSEG 0.19.2: capabilities | names | processSEG 0.13.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 55 (21 in part) | 184 | 45 (28 in part) | 249 |
 | `internal` | 19 | 57 | 6 | 43 |
 | `planned` | 30 | 210 | 41 | 385 |
 | `to plan` | 2 | 9 | 1 | 5 |
-| `not applicable` | 21 | 362 | 6 | 63 |
-| all | 127 | 822 | 99 | 745 |
+| `not applicable` | 21 | 362 | 7 | 72 |
+| all | 127 | 822 | 100 | 754 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -278,6 +278,7 @@ name, so these are building blocks for code that works on raw headers.
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Real FFT, batched | `inverse`, `forwardLanes`, `inverseLanes`, `gatherLanes`, `scatterLanes`, `isFastLen`, `fftLanes` | Inside the spectra and filters | not applicable (the spectrum and filter plans run them) |
+| Pieces the batched and pooled transforms are built from | `lanesFor`, `fkTimeRun`, `fkFreqRun`, `fkPoolScratch`, `fkLeavesRange`, `averagedRow`, `amplitudesFinite`, `addPowerRows`, `sides` | Inside the spectra, the spectrogram and the f-k: the lane width of a long transform, the two passes of the f-k, and the rule for which rows an average takes | not applicable (the spectrum, spectrogram and f-k plans and the pool call them) |
 | One real FFT: the f-k of a box | `initFftPlan`, `forward`, `FftPlan` (`len`, `bins`, `workspaceSize`) | New plot > f-k no longer composes the transform itself: `fkAmplitudeInto` does, and a cancel stops inside that call | not applicable (inside `fkAmplitudeInto`) |
 | f-k amplitude of a gather | `FkPlan`, `FkAxes`, `initFkPlan`, `fkAmplitudeInto`, `fkRows`, `axes`, `nFreq`, `nK`, `dfHz`, `dkPerTrace`, `traces` | New plot > f-k: the amplitude of a box of traces against frequency and wavenumber, each trace's mean removed first, tapered both ways, in dB; a cancel stops between traces and between frequencies | built (New plot > f-k); not applicable (`FkAxes`, `fkRows`, `axes`: the drawn axes are `nK`, `nFreq`, `dfHz` and `dkPerTrace`) |
 | Phase unwrapped along frequency, delay removed | `unwrapPhaseInto`, `removeDelayInto` | New plot > Phase spectrum, New plot > FFT (`F`) and Compare two traces: the phase unwrapped along the drawn bins, and with its best straight line (a pure time delay, in ms) taken off | built |
