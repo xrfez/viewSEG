@@ -43,7 +43,7 @@ Land 2026/                  the project folder: this is what is opened
   such as `.viewseg`: a later step.)
 - **`project.nif`** says what the project is: its name, its data folders, its survey files
   with their originals, the import's options and units, what `survey.bin` holds, the
-  project's filters, display presets, output name patterns and text header templates (`core/projectnif`). A station
+  project's filters, display presets, output name patterns, text header templates and binary header sets (`core/projectnif`). A station
   moved during a deployment is a `stationMoves` entry there: a new receiver position from a time on,
   not written into the seismic file or the survey file. While a file is open that
   position replaces the header's and the survey's for a trace recorded at or after
@@ -172,6 +172,24 @@ Land 2026/                  the project folder: this is what is opened
   and left out; the rest of the document still reads. A chosen name that names no template
   reads as none, and is said. An unknown child of a template, and of `(outputTexts)`, is kept
   and written back.
+- **Binary header sets.** Beside the text templates, the document can keep named sets of values
+  for the SEG-Y binary file header (bytes 3201 to 3600) of a file written from the project:
+  `(outputBinaries (binary "Survey" (field "jobId" "7") (field "sweepLength" "10000")))` and
+  `(outputBinary "Survey")`, the name in use. A `(field "name" "value")` names one field of the
+  binary header as the library does (`jobId`, `lineNumber`, `sweepFreqStart`, `ensembleFold`,
+  `extSampleIntervalOrig`, ...) and gives a number: a whole number the field's width holds, or
+  any number for the one float field. The fields that size the file or name its revision
+  (samples per trace, format code, number of traces, ...) and the sample interval are the
+  writer's own and cannot be set. At most 32 sets are kept. The one in use is written into the
+  binary header of each SEG-Y file Output writes, and nothing else of the file changes; a Rev 2
+  field is left out of a Rev 0 or Rev 1 file, and a 16-bit field whose extended Rev 2 twin is
+  also set is left out of a Rev 2 file, each with a line in the result; a set the writer refuses
+  for a file is not used for it, and the result says why. SEG-D files are not touched.
+  Absent, no value is set, and a document without the nodes reads with no problem. An unknown
+  field, a field given twice, a value that is not a number the field holds, a name given twice
+  (without regard to case) or a set that cannot be used is said and left out; the rest of the
+  document still reads. A chosen name that names no set reads as none, and is said. An unknown
+  child of a set, and of `(outputBinaries)`, is kept and written back.
 - **Versioned.** `version` is the document's format. A reader skips what it does not
   know and writes it back as it was, so a later version can add fields beside these. A
   document of a newer version than the program knows is opened read-only, and the
@@ -319,6 +337,7 @@ second.
 | Display presets | yes | |
 | Output name patterns | yes | |
 | Text header templates | yes | |
+| Binary header sets | yes | |
 | The windows' arrangement | yes | |
 | Flags, notes (per project, per file, per trace) | | yes |
 | First-break picks, QC and scan results, the folder scan's statistics | | yes |
