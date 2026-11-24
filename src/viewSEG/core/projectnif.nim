@@ -109,6 +109,7 @@ const
   ClockNames: array[TimeClock, string] = ["UTC", "GPS"]
   LengthNames: array[shotlog.LengthUnit, string] = ["metres", "feet"]
   MaxPatternText = 120 ## a text part, in bytes
+  MaxVendorName = 200  ## a vendor field part's name, in bytes
   PartLaterTag = " "
     ## Marks unknown children of a part, kept in that pattern's later list
     ## and written back inside the part. Not a tag a document can hold.
@@ -118,7 +119,7 @@ const
     "stem", "text", "record", "srcLine", "srcPoint", "srcIndex", "rcvLine",
     "rcvPoint", "rcvIndex", "time", "systemSerial", "controller", "vibrator",
     "fileNumber", "sigLine", "sigStation", "shotId", "sweepId",
-    "sensorSerial"]
+    "sensorSerial", "vendor"]
 
 proc timeText(t: Time): string = t.utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
 
@@ -263,7 +264,7 @@ proc writeNamePart(w: var NifWriter; part: NamePart; index: int; later: openArra
   w.open "part"
   w.add PartKindWords[part.kind]
   if part.pad != 0: w.value("pad", int64(part.pad))
-  if part.kind == npText: w.value("text", part.text)
+  if part.kind in {npText, npVendor}: w.value("text", part.text)
   for n in later:
     if n.kind == nkTree and n.tag == PartLaterTag and n.kids.len >= 1 and
         n.kids[0].kind == nkInt and n.kids[0].intVal == int64(index):
@@ -955,14 +956,15 @@ proc takePart(k: NifNode; read: var PatternRead): bool =
         read.why = "(pad) needs a whole number"
         return false
     elif c.isTree("text"):
-      if part.kind != npText:
-        read.why = "only a text part has text"
+      if part.kind notin {npText, npVendor}:
+        read.why = "only a text part or a vendor field part has text"
         return false
       if c.kids.len == 0 or c.kids[0].kind != nkString:
         read.why = "(text) needs a string"
         return false
-      if c.kids[0].text.len > MaxPatternText:
-        read.why = "a name pattern's text is at most " & $MaxPatternText & " bytes"
+      if c.kids[0].text.len > (if part.kind == npVendor: MaxVendorName else: MaxPatternText):
+        read.why = "a name pattern's text is at most " &
+          $(if part.kind == npVendor: MaxVendorName else: MaxPatternText) & " bytes"
         return false
       part.text = c.kids[0].text
     else:

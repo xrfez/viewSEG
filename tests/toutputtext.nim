@@ -123,6 +123,65 @@ proc main*() =
     doAssert renderProblem(tx("ok", "{rcvLine}"), v) == "Line 2: {rcvLine} is not in this file."
     doAssert render(tx("{rcvLine}"), v) == @["{rcvLine}"], "a missing value was replaced"
 
+  block vendorToken:
+    ## Seen to fail (broken, then restored): with `{vendor:NAME}` read as a width, `{vendor}`
+    ## and `{vendor:batch}` were refused as "takes no width"; with the value looked up by
+    ## position instead of name, the second field read the first's value.
+    func fv(name: string; v: NameValue; a = NameValue(state: nvMissing);
+        b = NameValue(state: nvMissing)): VendorFieldValue =
+      VendorFieldValue(name: name, value: v, first: a, last: b)
+    var v = values()
+    v.vendor = @[fv("batch", iv(41)), fv("gain", num(12.5)), fv("label", NameValue(
+      state: nvText, text: "AB10")), fv("unit.serial", iv(-7))]
+    doAssert textProblem(tx("{vendor:batch}")) == ""
+    doAssert textProblem(tx("{vendor:a b.c[2]}")) == "", "a name with a dot, a space and []"
+    for bad in ["{vendor}", "{vendor:}"]:
+      doAssert textProblem(tx(bad)) == "Line 1: " & bad & " needs a vendor field name " &
+        "after the colon (1 to 200 characters, no control character).", textProblem(tx(bad))
+    doAssert textProblem(tx("x", "{vendor:" & repeat('a', 201) & "}")) ==
+      "Line 2 is longer than 80 characters.", "the line length is checked first"
+    doAssert textProblem(tx("{vendor:a\tb}")) ==
+      "Line 1: {vendor:a\tb} needs a vendor field name after the colon " &
+      "(1 to 200 characters, no control character)."
+    doAssert render(tx("B {vendor:batch} G {vendor:gain} L {vendor:label}"), v) ==
+      @["B 41 G 12.5 L AB10"]
+    doAssert render(tx("{vendor:unit.serial}|{vendor:gain}"), v) == @["-7|12.5"]
+    doAssert renderProblem(tx("{vendor:batch}"), v) == ""
+    # absent, unknown and not-one-value are each a problem naming the field
+    doAssert renderProblem(tx("{vendor:nope}"), v) == "Line 1: {vendor:nope} is not in this file."
+    doAssert render(tx("{vendor:nope}"), v) == @["{vendor:nope}"], "a missing value was replaced"
+    var m = v
+    m.vendor = @[fv("batch", NameValue(state: nvMixed))]
+    doAssert renderProblem(tx("a", "{vendor:batch}"), m) ==
+      "Line 2: {vendor:batch} is not one value in this file."
+    m.vendor = @[fv("batch", NameValue(state: nvMixed), iv(40), iv(42))]
+    doAssert render(tx("{vendor:batch}"), m) == @["40-42"], "the range of a number that differs"
+    m.vendor = @[fv("gain", NameValue(state: nvMixed), num(1.5), num(2.25))]
+    doAssert render(tx("{vendor:gain}"), m) == @["1.5-2.25"]
+    m.vendor = @[fv("gain", NameValue(state: nvMixed), num(-1.5), num(2.25))]
+    doAssert render(tx("{vendor:gain}"), m) == @["-1.5 to 2.25"]
+    m.vendor = @[fv("label", NameValue(state: nvMixed))]
+    doAssert renderProblem(tx("{vendor:label}"), m) ==
+      "Line 1: {vendor:label} is not one value in this file.", "a text range was made"
+    doAssert vendorFieldsOf(tx("{vendor:b} {vendor:a}", "{stem} {vendor:b}")) == @["b", "a"]
+    doAssert vendorFieldsOf(tx("{vendor:b", "{vendor:a}")) == @["a"], "a bad line has none"
+    doAssert vendorFieldsOf(tx("{stem}")).len == 0
+
+  block negativeRange:
+    ## Seen to fail: with the hyphen kept, `{record}` of -5 to 3 read `-5-3`.
+    var v = values()
+    v.values[npRecord] = NameValue(state: nvMixed)
+    v.firstLast[npRecord] = (first: num(5), last: num(9))
+    doAssert render(tx("{record}"), v) == @["5-9"]
+    v.firstLast[npRecord] = (first: iv(-5), last: iv(3))
+    doAssert render(tx("{record}"), v) == @["-5 to 3"]
+    v.firstLast[npRecord] = (first: iv(-9), last: iv(-5))
+    doAssert render(tx("{record}"), v) == @["-9 to -5"]
+    v.firstLast[npRecord] = (first: num(-0.5), last: num(2))
+    doAssert render(tx("{record}"), v) == @["-0p5 to 2"]
+    v.firstLast[npRecord] = (first: iv(0), last: iv(3))
+    doAssert render(tx("{record:3}"), v) == @["000-003"]
+
   block tooLong:
     var v = values()
     v.values[npStem] = NameValue(state: nvText, text: repeat('s', 70))

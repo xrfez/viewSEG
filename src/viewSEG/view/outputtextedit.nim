@@ -153,10 +153,14 @@ func wantedParts*(e: TextEdit): set[NamePartKind] =
   ## read on request.
   if "{sensorSerial" in e.text: result.incl npSensorSerial
 
-proc previewOf*(e: TextEdit; v: TextValues; sample: bool): TextPreview =
+proc previewOf*(e: TextEdit; values: TextValues; sample: bool): TextPreview =
   ## The lines of `e` filled in from `v`, and why they cannot be written.
   result.sample = sample
   let t = e.toTemplate
+  var v = values
+  if sample: # no file is shown: a made-up number for each vendor field, to show the shape
+    for name in vendorFieldsOf(t):
+      v.vendor.add VendorFieldValue(name: name, value: NameValue(state: nvInt, intValue: 42))
   result.lines = render(t, v)
   while result.lines.len > 0 and strip(result.lines[^1]).len == 0:
     result.lines.setLen(result.lines.len - 1)
@@ -179,4 +183,4 @@ proc valuesOfFile*(file: SeismicFile; source: string; facts: SignatureFacts;
   else:
     result.ok = true
     result.values = textValuesOf(file, source, facts, edits, true, nowUs(), nil,
-      e.wantedParts, currentVendors())
+      e.wantedParts, currentVendors(), e.toTemplate.vendorFieldsOf)

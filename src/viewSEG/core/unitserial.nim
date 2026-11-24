@@ -12,7 +12,7 @@ import vendormaps
 const SensorSerialField* = "sensorSerial"
   ## the name by which a vendor map marks the field that holds the unit serial
 
-func printable(text: string): Option[string] =
+func printable*(text: string): Option[string] =
   ## `text` without the blanks and NULs at its ends; none when nothing is left or a byte is
   ## not printable ASCII (the bytes are not text).
   var first = 0

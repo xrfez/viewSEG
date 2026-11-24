@@ -16,6 +16,7 @@
 import std/[math, options, os, strutils, times, unicode]
 import parseSEG
 import outputnames
+from panels import usableLineName
 
 const
   MaxTextLines* = 38            ## template lines, at most (cards 39 and 40 are the writer's)
@@ -27,14 +28,18 @@ type
     ## One template, by the name a person picks it by.
     name*: string
     encoding*: TextEncoding ## `teEbcdic` (the traditional one) or `teAscii`
-    lines*: seq[string]     ## cards 1 to 38; a short list leaves the rest blank
+    lines*: seq[string]
+      ## cards 1 to 38; a short list leaves the rest blank. A token in braces takes the
+      ## file's value (`{stem}`, `{record:5}`); `{vendor:NAME}` takes a vendor map's field
+      ## by name (the name a display line lists: bare when unique, else `block.name`)
 
   TextTokenKind* = enum
-    ttStem  ## the source file's name without its extension
-    ttFile  ## the source file's name with its extension
-    ttDate  ## the day of writing, UTC
-    ttClock ## the time of day of writing, UTC
-    ttPart  ## a value of the name pattern's kind `TextTokenInfo.part`
+    ttStem   ## the source file's name without its extension
+    ttFile   ## the source file's name with its extension
+    ttDate   ## the day of writing, UTC
+    ttClock  ## the time of day of writing, UTC
+    ttPart   ## a value of the name pattern's kind `TextTokenInfo.part`
+    ttVendor ## a vendor field by name, `{vendor:NAME}`
 
   TextTokenInfo* = object
     word*: string       ## what is written between the braces
@@ -49,12 +54,16 @@ type
     ## gives the lowest and the highest, and the token is then `lowest-highest`.
     values*: NameValues
     firstLast*: array[NamePartKind, tuple[first, last: NameValue]]
+    vendor*: seq[VendorFieldValue] ## the file's value of each `{vendor:NAME}` the template uses
     source*: string ## the source file's name or path
     writtenUs*: int64 ## UTC microseconds since 1970 when the file is written
 
 func part(word, about: string; kind: NamePartKind): TextTokenInfo =
   TextTokenInfo(word: word, about: about, kind: ttPart, part: kind, width: kind != npTime and
     kind != npSensorSerial)
+
+const VendorToken* = "vendor"
+  ## the word of the token that names a vendor field: `{vendor:NAME}`
 
 const TextTokens*: seq[TextTokenInfo] = @[
   TextTokenInfo(word: "stem", about: "the source file's name without its extension",
@@ -82,7 +91,9 @@ const TextTokens*: seq[TextTokenInfo] = @[
   part("sigStation", "signature station", npSigStation),
   part("shotId", "shot id", npShotId),
   part("sweepId", "sweep id", npSweepId),
-  part("sensorSerial", "serial of the unit that recorded the traces", npSensorSerial)]
+  part("sensorSerial", "serial of the unit that recorded the traces", npSensorSerial),
+  TextTokenInfo(word: VendorToken & ":NAME", kind: ttVendor,
+    about: "a vendor field by name; lowest-highest when a number differs")]
   ## every token: the word between braces, a line saying what it is, and what
   ## gives its value. `{word:5}` pads a number to 5 digits (0 to 12).
 
@@ -90,6 +101,7 @@ type Seg = object
   literal: string ## a run of text, when `token` is -1
   token: int      ## index into `TextTokens`, or -1
   pad: int
+  field: string   ## `ttVendor`: the vendor field's name
 
 func tokenIndex(word: string): int =
   for i, t in TextTokens:
@@ -129,23 +141,31 @@ func parseLine(line: string; n: int; segs: var seq[Seg]): string =
       let colon = body.find(':')
       let word = if colon < 0: body else: body.substr(0, colon - 1)
       if word.len == 0: return lineWord(n) & " has an empty token."
-      let t = tokenIndex(word)
-      if t < 0: return lineWord(n) & " has the token {" & word & "}, which is not one."
-      var pad = 0
-      if colon >= 0:
-        let w = body.substr(colon + 1)
-        if not TextTokens[t].width:
-          return lineWord(n) & ": {" & word & "} takes no width."
-        var ok = w.len > 0 and w.len <= 2 and w.allCharsInSet(Digits)
-        if ok:
-          pad = parseInt(w)
-          ok = pad <= MaxPad
-        if not ok:
-          return lineWord(n) & ": the width in {" & body & "} is from 0 to " & $MaxPad & "."
+      var seg = Seg(token: -1)
+      if word == VendorToken:
+        seg = Seg(token: tokenIndex(VendorToken & ":NAME"),
+          field: if colon < 0: "" else: body.substr(colon + 1))
+        if not usableLineName(seg.field):
+          return lineWord(n) & ": {" & body & "} needs a vendor field name after the colon " &
+            "(1 to 200 characters, no control character)."
+      else:
+        let t = tokenIndex(word)
+        if t < 0: return lineWord(n) & " has the token {" & word & "}, which is not one."
+        seg.token = t
+        if colon >= 0:
+          let w = body.substr(colon + 1)
+          if not TextTokens[t].width:
+            return lineWord(n) & ": {" & word & "} takes no width."
+          var ok = w.len > 0 and w.len <= 2 and w.allCharsInSet(Digits)
+          if ok:
+            seg.pad = parseInt(w)
+            ok = seg.pad <= MaxPad
+          if not ok:
+            return lineWord(n) & ": the width in {" & body & "} is from 0 to " & $MaxPad & "."
       if lit.len > 0:
         segs.add Seg(literal: lit, token: -1)
         lit = ""
-      segs.add Seg(token: t, pad: pad)
+      segs.add seg
       i = close + 1
     else:
       lit.add c
@@ -230,7 +250,26 @@ func pieceOf(v: NameValue; pad: int; word: string): tuple[text, problem: string]
     else: result.text = numberPiece(v.number, pad)
   of nvText: result.text = v.text
 
-proc tokenText(info: TextTokenInfo; pad: int; v: TextValues): tuple[text, problem: string] =
+func rangeText(a, b: string): string =
+  ## "lowest-highest"; with a minus sign at either end the hyphen is ambiguous, so " to ".
+  if a.startsWith('-') or b.startsWith('-'): a & " to " & b else: a & "-" & b
+
+func vendorToken(field: string; v: TextValues): tuple[text, problem: string] =
+  ## One vendor field: its one value, the range of a number that differs, or why not.
+  let word = "{" & VendorToken & ":" & field & "}"
+  var one = VendorFieldValue(name: field)
+  for x in v.vendor:
+    if x.name == field: one = x
+  case one.value.state
+  of nvInt, nvNumber, nvText: result.text = vendorText(one.value)
+  of nvMixed:
+    if one.first.state in {nvInt, nvNumber} and one.last.state in {nvInt, nvNumber}:
+      result.text = rangeText(vendorText(one.first), vendorText(one.last))
+    else: result.problem = word & " is not one value in this file."
+  else: result.problem = word & " is not in this file."
+
+proc tokenText(info: TextTokenInfo; pad: int; v: TextValues;
+    field = ""): tuple[text, problem: string] =
   ## The text of one token for one file; `problem` when it has no value.
   case info.kind
   of ttStem:
@@ -241,6 +280,7 @@ proc tokenText(info: TextTokenInfo; pad: int; v: TextValues): tuple[text, proble
   of ttDate, ttClock:
     let t = fromUnix(floorDiv(v.writtenUs, 1_000_000)).utc
     result.text = t.format(if info.kind == ttDate: "yyyy-MM-dd" else: "HH:mm:ss")
+  of ttVendor: result = vendorToken(field, v)
   of ttPart:
     let one = pieceOf(v.values[info.part], pad, info.word)
     if one.problem.len == 0: return one
@@ -250,7 +290,7 @@ proc tokenText(info: TextTokenInfo; pad: int; v: TextValues): tuple[text, proble
       let a = pieceOf(fl.first, pad, info.word)
       let b = pieceOf(fl.last, pad, info.word)
       if a.problem.len == 0 and b.problem.len == 0:
-        return (a.text & "-" & b.text, "")
+        return (rangeText(a.text, b.text), "")
     return one
 
 proc expand(t: OutputText; v: TextValues; lines: var seq[string]): string =
@@ -268,9 +308,10 @@ proc expand(t: OutputText; v: TextValues; lines: var seq[string]): string =
         if s.token < 0: one.add s.literal
         else:
           let info = TextTokens[s.token]
-          let piece = tokenText(info, s.pad, v)
+          let piece = tokenText(info, s.pad, v, s.field)
           if piece.problem.len > 0:
-            one.add "{" & info.word & "}"
+            one.add(if info.kind == ttVendor: "{" & VendorToken & ":" & s.field & "}"
+                    else: "{" & info.word & "}")
             if result.len == 0: result = lineWord(i + 1) & ": " & piece.problem
           else: one.add piece.text
       lines.add one
@@ -305,6 +346,16 @@ proc cardsOf*(t: OutputText; v: TextValues): seq[string] =
     var one = ""
     for r in line.runes: one.add char(int32(r) and 0xFF)
     result.add one
+
+func vendorFieldsOf*(t: OutputText): seq[string] =
+  ## The vendor field names the template's `{vendor:NAME}` tokens use, each once, in order of
+  ## first use. A line that is not well formed gives none.
+  var segs: seq[Seg] = @[]
+  for i, line in t.lines:
+    if parseLine(line, i + 1, segs).len == 0:
+      for s in segs:
+        if s.token >= 0 and TextTokens[s.token].kind == ttVendor and s.field notin result:
+          result.add s.field
 
 func chosenText*(texts: openArray[OutputText]; name: string): Option[OutputText] =
   ## The template called `name`; none when `name` is "" or names none.

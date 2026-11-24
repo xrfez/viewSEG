@@ -48,8 +48,9 @@ SEG-D files and the files of **Slice by shot log** are not affected.
 A word in braces is replaced by the file's own value when it is written. `{{` and `}}` are a
 literal brace. A token that takes a width pads a number with leading zeros: `{record:5}`
 (0 to 12 digits). A value that differs between the traces of a file is not one value: the
-record, line, point and index tokens then write the **lowest-highest** of them (`5-9`);
-any other token with no single value is a problem.
+record, line, point and index tokens then write the **lowest-highest** of them (`5-9`; with
+a minus sign at either end, `-5 to 3`, so the hyphen is not read as a sign); any other token
+with no single value is a problem.
 
 | Token | What it writes |
 |---|---|
@@ -74,5 +75,18 @@ any other token with no single value is a problem.
 | `{shotId}` (takes a width) | shot id |
 | `{sweepId}` (takes a width) | sweep id |
 | `{sensorSerial}` | serial of the unit that recorded the traces |
+| `{vendor:NAME}` | a vendor field by name; lowest-highest when a number differs |
 
 The tokens come from the same values as the parts of a [name pattern](output-file-names.md).
+
+`{vendor:NAME}` writes a field of a vendor header map (see Vendor header maps) over the traces
+that go into the file. `NAME` is the name a display line lists for the field: the bare name
+when only one field has it, else `block.name`. An integer is written without a decimal point,
+a number with a fraction in the shortest form that reads back as the same number (`12.5`),
+and a text as it is, without the blanks at its ends. When the traces differ in a number, the
+token is `lowest-highest` (`40-41`), as for `{record}`; with a minus sign at either end it is
+`lowest to highest` (`-5 to 3`), so the hyphen is never read as a sign. When the traces differ
+in a text, or some have no value, the token has no single value; a field that no trace has,
+or whose name no loaded map knows, has no value at all. Either way the template is not used
+for that file and the result line names the token. A field is read only when a template uses
+it, and the preview reads it off the main thread; with no file shown it writes `42`.

@@ -590,7 +590,9 @@ proc renderedLeaf(ask: BatchAsk; plan: Plan; file: SeismicFile; source: string;
   for part in ask.pattern.parts: wanted.incl part.kind
   let values = nameValuesOf(file, source, facts, edits, ask.options.dropKilled, own, wanted,
     currentVendors())
-  let named = render(ask.pattern, values, extOf(ask.options.format))
+  let named = render(ask.pattern, values, extOf(ask.options.format),
+    vendorValuesOf(file, facts, edits, ask.options.dropKilled, vendorFieldsOf(ask.pattern),
+      currentVendors()))
   if named.problem.len > 0:
     raise newException(ValueError, named.problem)
   if named.name.len == 0:

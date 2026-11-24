@@ -360,6 +360,15 @@ proc main*() =
     let sensorBack = readProject(sensorText, "project.nif", problems)
     doAssert problems.len == 0 and sensorBack.outputPatterns == sensor.outputPatterns,
       $problems
+    # A vendor field part is stored with its name as `(text ...)`.
+    var vendor = ProjectDoc(name: "v", hasOutputPatterns: true)
+    vendor.outputPatterns = @[OutputPattern(name: "Batch", separator: nsUnderscore, parts: @[
+      NamePart(kind: npStem), NamePart(kind: npVendor, text: "unitInfo.serial")])]
+    let vendorText = projectDocument(vendor)
+    doAssert "(part \"vendor\" (text \"unitInfo.serial\")" in vendorText, vendorText
+    problems.setLen 0
+    let vendorBack = readProject(vendorText, "project.nif", problems)
+    doAssert problems.len == 0 and vendorBack.outputPatterns == vendor.outputPatterns, $problems
     # A dot is not written, and a width of 0 is not written.
     var dot = ProjectDoc(name: "d", hasOutputPatterns: true)
     dot.outputPatterns = @[OutputPattern(name: "Dot", separator: nsDot, parts: @[

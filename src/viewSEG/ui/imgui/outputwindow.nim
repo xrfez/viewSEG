@@ -865,7 +865,7 @@ proc drawRun(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
     marks.mark("output.state " & line)
 
 func takesWidth(kind: NamePartKind): bool =
-  kind notin {npStem, npText, npTime, npSensorSerial}
+  kind notin {npStem, npText, npTime, npSensorSerial, npVendor}
 
 proc bufText(buf: openArray[char]): string =
   if buf.len == 0 or buf[0] == '\0': return ""
@@ -1073,11 +1073,12 @@ proc drawPartRow(ui: var OutputUi; i: int; marks: var Marks): int =
     marks.mark("output.part " & $i & ".width " & bufText(ui.widthBuf[i]))
     tip(WidthTip)
     ui.draft.parts[i].pad = padOf(ui.widthBuf[i])
-  elif kind == npText:
+  elif kind in {npText, npVendor}:
     igSetNextItemWidth(igGetFontSize() * 8)
     discard igInputText("##text", cast[cstring](addr ui.textBuf[i][0]),
       csize_t(ui.textBuf[i].len), 0, nil, nil)
-    marks.mark("output.part " & $i & ".text")
+    marks.mark("output.part " & $i & (if kind == npVendor: ".vendor" else: ".text"))
+    if kind == npVendor: tip(VendorPartTip)
     ui.draft.parts[i].text = bufText(ui.textBuf[i])
   discard igTableNextColumn()
   igBeginDisabled(i == 0)
@@ -1131,7 +1132,10 @@ proc drawEditor(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Outp
   elif act == 2 and at < ui.draft.parts.high: ui.swapPart(at, at + 1)
   elif act == 3: ui.dropPart(at)
   ui.drawKindList(marks)
-  let shown = render(ui.draft, previewValues(), nameExt(ui.format))
+  var sample: seq[VendorFieldValue] = @[]
+  for name in vendorFieldsOf(ui.draft):
+    sample.add VendorFieldValue(name: name, value: NameValue(state: nvInt, intValue: 42))
+  let shown = render(ui.draft, previewValues(), nameExt(ui.format), sample)
   igTextUnformatted(ExampleLabel.cstring, nil)
   marks.mark("output.pattern.example")
   igSameLine(0, -1)
@@ -1333,7 +1337,8 @@ proc refreshPreview(ui: var OutputUi; st: AppState) =
     ui.valuesJob = NoJob
   let i = st.shownFile(st.findPanel(MainPanel))
   let path = if i >= 0: $(st.sessions[i].path) else: ""
-  let key = path & (if npSensorSerial in ui.textEdit.wantedParts: "\0sensor" else: "")
+  let key = path & (if npSensorSerial in ui.textEdit.wantedParts: "\0sensor" else: "") &
+    "\0" & ui.textEdit.toTemplate.vendorFieldsOf.join("\0")
   if key == ui.textKey: return
   ui.textKey = key
   ui.textFile = path

@@ -9,6 +9,7 @@
 ## letters or digits (as `.sgy`). A missing dot is not added.
 
 import std/[math, strutils, unicode]
+from panels import usableLineName
 
 const
   MaxPatternName* = 64
@@ -42,12 +43,13 @@ type
     npSweepId      ## sweep id
     npSensorSerial ## serial of the unit that recorded the traces
                    ## (SEG-D Rev 3 Sensor Info, or a vendor map's sensorSerial)
+    npVendor       ## a vendor field by name (`NamePart.text`), as `{vendor:NAME}`
 
   NamePart* = object
     ## One piece of a pattern.
     kind*: NamePartKind
     pad*: int     ## least digits of the integer part; 0 is none; at most 12
-    text*: string ## `npText` only
+    text*: string ## `npText`: the text; `npVendor`: the field's name
 
   NameSeparator* = enum
     nsDot = "."        ## parts joined by `.`
@@ -88,6 +90,14 @@ type
   NameValues* = array[NamePartKind, NameValue]
     ## one value per part kind; a kind left unset is missing
 
+  VendorFieldValue* = object
+    ## One vendor field's value for one file (`npVendor`, `{vendor:NAME}`). A field
+    ## that is not listed is missing. `first` and `last` are the lowest and the highest
+    ## value of a numeric field whose `value` is `nvMixed`; they are `nvMissing` otherwise.
+    name*: string
+    value*: NameValue
+    first*, last*: NameValue
+
   NameResult* = object
     ## A leaf file name, or one sentence saying why it cannot be made.
     ## `problem` empty means `name` is the file name; otherwise `name` is "".
@@ -121,6 +131,7 @@ func partWord*(kind: NamePartKind): string =
   of npShotId: "Shot id"
   of npSweepId: "Sweep id"
   of npSensorSerial: "Sensor serial"
+  of npVendor: "Vendor field"
 
 func partNote*(kind: NamePartKind): string =
   ## Which files give `kind` a value, when only one sort does: "" for a part
@@ -129,7 +140,7 @@ func partNote*(kind: NamePartKind): string =
   of npController, npVibrator, npFileNumber, npSigLine, npSigStation, npShotId, npSweepId:
     "(signature files)"
   of npRecord, npSrcLine, npSrcPoint, npRcvLine, npRcvPoint, npRcvIndex, npSystemSerial,
-      npSensorSerial:
+      npSensorSerial, npVendor:
     "(seismic files)"
   of npStem, npText, npSrcIndex, npTime: ""
 
@@ -269,7 +280,47 @@ func formatTime*(us: int64; wholeSeconds: bool): NameResult =
   name.add "Z"
   accepted(name)
 
-func renderPiece(part: NamePart; v: NameValue; sep: char): NameResult =
+func shortestFloat*(x: float64): string =
+  ## `x` in the shortest form that reads back as the same number; a whole number has no
+  ## ".0" (and zero has no sign).
+  if x == 0.0: return "0"
+  result = $x
+  if result.endsWith(".0"): result.setLen(result.len - 2)
+
+func vendorWord*(name: string): string =
+  "Vendor field " & name
+
+func vendorText*(v: NameValue): string =
+  ## A vendor field's one value as text: an integer without a decimal point, a float in
+  ## its shortest round-trip form, a text as it is. "" for any other state.
+  case v.state
+  of nvInt: $v.intValue
+  of nvNumber: shortestFloat(v.number)
+  of nvText: v.text
+  else: ""
+
+func valueOfVendor(vendor: openArray[VendorFieldValue]; name: string): VendorFieldValue =
+  result = VendorFieldValue(name: name)
+  for one in vendor:
+    if one.name == name: return one
+
+func vendorPiece(part: NamePart; vendor: openArray[VendorFieldValue]; sep: char): NameResult =
+  ## The piece a vendor field makes. A decimal point is written `p`, as for any number.
+  let word = vendorWord(part.text)
+  let v = valueOfVendor(vendor, part.text).value
+  case v.state
+  of nvMissing, nvTimeUs: refused(word & " is not in this file.")
+  of nvMixed: refused(word & " is not one value in this file.")
+  of nvInt, nvNumber:
+    let piece = vendorText(v).replace('.', 'p')
+    if isDeviceName(piece): refused(deviceSentence(piece)) else: accepted(piece)
+  of nvText:
+    let why = textProblem(word, v.text, sep)
+    if why.len > 0: refused(why) else: accepted(v.text)
+
+func renderPiece(part: NamePart; v: NameValue; sep: char;
+    vendor: openArray[VendorFieldValue]): NameResult =
+  if part.kind == npVendor: return vendorPiece(part, vendor, sep)
   let word = partWord(part.kind)
   if part.kind == npText:
     let why = textProblem(word, part.text, sep)
@@ -308,17 +359,19 @@ func extensionProblem(ext: string): string =
       return "The extension " & ext & " cannot be used."
   ""
 
-func render*(p: OutputPattern; v: NameValues; extension: string): NameResult {.raises: [].} =
+func render*(p: OutputPattern; v: NameValues; extension: string;
+    vendor: openArray[VendorFieldValue] = []): NameResult {.raises: [].} =
   ## The leaf `p` makes from `v`, with `extension` on the end. `problem` is
   ## one sentence when that file cannot be named, and `name` is then "".
   ## A width does not cut a wider number. `extension` is empty, or one dot
-  ## and 1 to 16 letters or digits; anything else is refused. Never raises.
+  ## and 1 to 16 letters or digits; anything else is refused. A `npVendor` part takes
+  ## its value from `vendor`, by the part's `text`. Never raises.
   if p.parts.len == 0:
     return refused("The name pattern has no parts.")
   var pieces = newSeq[string]()
   let sep = ($p.separator)[0]
   for part in p.parts:
-    let one = renderPiece(part, v[part.kind], sep)
+    let one = renderPiece(part, v[part.kind], sep, vendor)
     if one.problem.len > 0: return one
     pieces.add one.name
   let stem = pieces.join($p.separator)
@@ -356,4 +409,12 @@ func patternProblem*(p: OutputPattern): string =
     if part.kind == npText:
       let why = textProblem(partWord(npText), part.text, ($p.separator)[0])
       if why.len > 0: return why
+    if part.kind == npVendor and not usableLineName(part.text):
+      return "A vendor field part needs the field's name (1 to 200 characters, no control " &
+        "character)."
   ""
+
+func vendorFieldsOf*(p: OutputPattern): seq[string] =
+  ## The vendor field names `p` uses, each once, in order of first use.
+  for part in p.parts:
+    if part.kind == npVendor and part.text notin result: result.add part.text

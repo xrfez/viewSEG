@@ -36,8 +36,8 @@ import parseSEG
 import parseSEG/model/traceindex
 import processSEG/core/basic
 import viewSEG/core/[edits, filememory, filesystem, identity, jobs, outputbatch,
-  outputjobs, outputnames, sigtypes]
-import utils/[faultyfs, sensorfiles, sigfiles, waiting]
+  outputjobs, outputnames, sigtypes, vendormaps]
+import utils/[faultyfs, sensorfiles, sigfiles, vendorfile, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
 
@@ -815,6 +815,46 @@ proc main*() =
       let plain = itemOf(runBatch(plainAsk, Store(), @[]).wrote, "mixed.sgd")
       doAssert plain.outcome == boWritten, plain.why
       doAssert plain.destination.extractFilename == "mixed.sgd", plain.destination
+
+    block vendorField:
+      ## Seen to fail (broken, then restored): with the pattern's vendor names not passed to
+      ## the renderer, both files failed with `Vendor field batch is not in this file.`.
+      let vdir = dir / "vendorsrc"
+      createDir(vdir)
+      writeRecords(vdir / "a.sgd", [0])
+      writeRecords(vdir / "b.sgd", [1])
+      writeLines(vdir / "mixed.sgd")
+      var reg: VendorRegistry
+      reg.addMap loadVendorMap(MapText)
+      publishVendors(reg)
+      defer: publishVendors(VendorRegistry())
+      let named = OutputPattern(name: "Batch", separator: nsUnderscore, parts: @[
+        NamePart(kind: npStem), NamePart(kind: npVendor, text: "batch")])
+      let dest = dir / "named-vendor"
+      let ask = BatchAsk(root: vdir, destRoot: dest, options: OutputOptions(format: ofSegd),
+        items: @[BatchItem(source: vdir / "a.sgd", relative: "a.sgd"),
+          BatchItem(source: vdir / "b.sgd", relative: "b.sgd"),
+          BatchItem(source: vdir / "mixed.sgd", relative: "mixed.sgd")],
+        pattern: named)
+      let got = runBatch(ask, Store(), @[])
+      let a = itemOf(got.wrote, "a.sgd")
+      doAssert a.outcome == boWritten, a.why
+      doAssert a.destination.extractFilename == "a_40.sgd", a.destination
+      let b = itemOf(got.wrote, "b.sgd")
+      doAssert b.outcome == boWritten, b.why
+      doAssert b.destination.extractFilename == "b_41.sgd", b.destination
+      let mixed = itemOf(got.wrote, "mixed.sgd")
+      doAssert mixed.outcome != boWritten and
+        mixed.why == "Vendor field batch is not one value in this file.", mixed.why
+      # a field the maps do not know fails each file with a sentence naming it
+      let unknown = BatchAsk(root: vdir, destRoot: dir / "named-vendor-unknown",
+        options: OutputOptions(format: ofSegd),
+        items: @[BatchItem(source: vdir / "a.sgd", relative: "a.sgd")],
+        pattern: OutputPattern(name: "U", separator: nsDot,
+          parts: @[NamePart(kind: npVendor, text: "nope")]))
+      let lost = itemOf(runBatch(unknown, Store(), @[]).wrote, "a.sgd")
+      doAssert lost.outcome != boWritten and
+        lost.why == "Vendor field nope is not in this file.", lost.why
 
     block leavesFolder:
       let dest = dir / "named-leave"

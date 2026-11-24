@@ -51,6 +51,7 @@ project is open read-only."). You can still pick the pattern the project already
 | **Time** | the UTC time of the record, or of a vibrator sweep, as below |
 | **System serial** | the system's serial number (SEG-D) |
 | **Sensor serial** | the serial of the unit that recorded the traces: the SEG-D Rev 3 Sensor Info block, or a field a vendor map names `sensorSerial` |
+| **Vendor field** | a field of a vendor header map, by the name a display line lists for it (a bare name, or `block.name` when two fields share it), typed in the row; the same as `{vendor:NAME}` in a [text header template](text-header.md) |
 | **Controller**, **Vibrator**, **File number**, **Line**, **Station**, **Shot id**, **Sweep id** | what a vibrator signature file says of its sweep; they are for signature files only |
 
 A part takes its value from the traces of the file, and a file has one value for it or none.
@@ -70,12 +71,21 @@ looked at first, then the vendor blocks of the same trace; a field in a block of
 or the file is not used. A file whose headers cannot be read to the end (a
 truncated file) is not written, and its row in the results gives the reason.
 
+A **Vendor field** is read from the traces only when a pattern uses it (so a pattern without
+one costs nothing). Its value is the field's value over the traces the name is made from: an
+integer is written without a decimal point, a number with a fraction in the shortest form
+that reads back as the same number with the point written as `p` (`12p5`), and a text as it
+is, without the blanks at its ends, under the rules for text above. A file whose traces do
+not all give the same value, or that has none, or in which the name is unknown (or no vendor
+map is loaded), is not written: its row says "Vendor field NAME is not one value in this
+file." or "Vendor field NAME is not in this file.". The example under the parts shows `42` for it.
+
 ### Numbers
 
 **Least digits** (a column of the parts table) is for the numeric parts: a number shorter
 than that gets leading zeros, so a folder sorts in the order of the numbers (`7` with 4 digits
 is `0007`). A longer number is never cut. The width is 0 to 12; 0 is no padding. **File name**,
-**Text**, **Time** and **Sensor serial** have no width.
+**Text**, **Time**, **Sensor serial** and **Vendor field** have no width.
 
 A number with a fraction is written to at most four decimals, trailing zeros dropped, and the
 decimal point is written as a `p`: a source point 1034.5 is `1034p5`. A negative number has its

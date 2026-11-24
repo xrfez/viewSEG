@@ -20,8 +20,8 @@
 import std/[options, os, strutils]
 import parseSEG
 import parseSEG/model/traceindex
-import viewSEG/core/[edits, jobs, outputbatch, outputjobs, outputtext, state]
-import utils/waiting
+import viewSEG/core/[edits, jobs, outputbatch, outputjobs, outputtext, state, vendormaps]
+import utils/[vendorfile, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
 
@@ -170,6 +170,44 @@ proc main*() =
         headerText: tpl(teEbcdic, "C 1 RECORD {record}")))
       doAssert r.ok, r.reason
       doAssert cardsOf(dest)[0] == padded("C 1 RECORD 5-9"), cardsOf(dest)[0]
+
+  block negativeRange:
+    ## Seen to fail: with the hyphen kept, the card read `C 1 RECORD -5-3`.
+    let small = inDir / "negative-records.sgy"
+    writeSmall(small, teEbcdic, [-5.0, -5.0, 3.0])
+    let dest = dir / "negative.sgy"
+    let r = runOne(small, dest, OutputOptions(format: ofSegy,
+      headerText: tpl(teEbcdic, "C 1 RECORD {record}")))
+    doAssert r.ok, r.reason
+    doAssert cardsOf(dest)[0] == padded("C 1 RECORD -5 to 3"), cardsOf(dest)[0]
+
+  block vendorToken:
+    ## Seen to fail (broken, then restored): with the template's vendor names not passed on,
+    ## the card kept `{vendor:batch}` and the result said it was not in the file.
+    var reg: VendorRegistry
+    reg.addMap loadVendorMap(MapText)
+    publishVendors(reg)
+    defer: publishVendors(VendorRegistry())
+    let source = inDir / "vendor-one.sgd"
+    writeRecords(source, [1])
+    let again = dir / "vendor-one.sgy"
+    let ok = runOne(source, again, OutputOptions(format: ofSegy, headerText: tpl(teEbcdic,
+      "C 1 BATCH {vendor:batch}")))
+    doAssert ok.ok, ok.reason
+    doAssert cardsOf(again)[0] == padded("C 1 BATCH 41"), cardsOf(again)[0]
+    let two = inDir / "vendor-two.sgd"
+    writeLines(two)
+    let ranged = dir / "vendor-two.sgy"
+    doAssert runOne(two, ranged, OutputOptions(format: ofSegy, headerText: tpl(teEbcdic,
+      "C 1 BATCH {vendor:batch}"))).ok
+    doAssert cardsOf(ranged)[0] == padded("C 1 BATCH 40-41"), cardsOf(ranged)[0]
+    let lost = dir / "vendor-nope.sgy"
+    let missing = runOne(two, lost, OutputOptions(format: ofSegy, headerText: tpl(teEbcdic,
+      "C 1 {vendor:nope}")))
+    var why = ""
+    for l in missing.lines:
+      if l.startsWith("Text header:"): why = l
+    doAssert "{vendor:nope} is not in this file." in why, why
 
   block renderFails:
     let dest = dir / "failed.sgy"

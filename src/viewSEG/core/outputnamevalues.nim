@@ -4,7 +4,7 @@
 ## A missing or mixed value is left for `render` to refuse. A signature file
 ## is named from its sweep, not from trace keys a join may have changed.
 
-import std/[math, options, os, sets]
+import std/[atomics, math, options, os, sets]
 import parseSEG
 import edits, outputnames, outputtext, recordtime, sigtypes, unitserial, vendormaps
 
@@ -262,6 +262,162 @@ proc nameValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
   if facts.isSignature: fillSignature(result, facts)
   else: fillSeismic(result, file, edits, dropKilled, own, wanted, vendors)
 
+# --- vendor fields, `{vendor:NAME}` ---
+
+var vendorColumnReads*: Atomic[int]
+  ## The vendor columns `vendorValuesOf` has read since the program began; a test reads it to
+  ## see that a pattern that names no vendor field reads none.
+
+type
+  VendorMode = enum
+    vmFloat, vmInt, vmText
+
+  VendorCol = object
+    ## One field's value for every trace.
+    mode: VendorMode
+    numbers: seq[float64] ## `vmFloat`; NaN where the trace has none
+    ints: seq[int64]      ## `vmInt`
+    present: seq[bool]    ## `vmInt`
+    texts: seq[string]    ## `vmText`; "" where the trace has none
+
+  VendorAcc = object
+    ## What a group of traces says of one field.
+    seen, missing: int
+    differs: bool
+    f, lo, hi: float64
+    n, loN, hiN: int64
+    text: string
+
+proc readVendorColumn(file: SeismicFile; vendors: VendorRegistry; name: string;
+    col: var VendorCol): bool =
+  ## False when the field is not in this file (an unknown or ambiguous name, no map, a
+  ## file the maps do not apply to).
+  {.cast(gcsafe).}:
+    discard vendorColumnReads.fetchAdd(1)
+  try:
+    let c = file.vendorColumn(vendors, name)
+    if c.stopped: return false
+    case c.kind
+    of vvInt, vvFloat:
+      col = VendorCol(mode: vmFloat, numbers: c.numbers)
+      if c.kind == vvInt:
+        try:
+          let exact: VendorColumnInt = file.vendorColumnInt(vendors, name)
+          if not exact.stopped:
+            col = VendorCol(mode: vmInt, ints: exact.values, present: exact.present)
+        except ValueError:
+          discard # a scaled integer is a float: the column read first stays
+    of vvText, vvBytes:
+      col = VendorCol(mode: vmText, texts: c.texts)
+    result = true
+  except CatchableError:
+    result = false
+
+proc consider(a: var VendorAcc; c: VendorCol; i: int) =
+  case c.mode
+  of vmFloat:
+    let x = c.numbers[i]
+    if x.isNaN or x == Inf or x == NegInf:
+      inc a.missing
+    else:
+      if a.seen == 0:
+        a.f = x
+        a.lo = x
+        a.hi = x
+      else:
+        if x != a.f: a.differs = true
+        a.lo = min(a.lo, x)
+        a.hi = max(a.hi, x)
+      inc a.seen
+  of vmInt:
+    if not c.present[i]:
+      inc a.missing
+    else:
+      let x = c.ints[i]
+      if a.seen == 0:
+        a.n = x
+        a.loN = x
+        a.hiN = x
+      else:
+        if x != a.n: a.differs = true
+        a.loN = min(a.loN, x)
+        a.hiN = max(a.hiN, x)
+      inc a.seen
+  of vmText:
+    let s = printable(c.texts[i])
+    if s.isNone:
+      inc a.missing
+    else:
+      if a.seen == 0: a.text = s.get
+      elif s.get != a.text: a.differs = true
+      inc a.seen
+
+func valueOf(a: VendorAcc; mode: VendorMode; name: string): VendorFieldValue =
+  ## One value; `nvMixed` when the traces differ or some have none (with the lowest and
+  ## highest of a number that differs); missing when none has one.
+  result = VendorFieldValue(name: name)
+  if a.seen == 0: return
+  if a.differs or a.missing > 0:
+    result.value = NameValue(state: nvMixed)
+    if a.differs:
+      case mode
+      of vmFloat:
+        result.first = NameValue(state: nvNumber, number: a.lo)
+        result.last = NameValue(state: nvNumber, number: a.hi)
+      of vmInt:
+        result.first = NameValue(state: nvInt, intValue: a.loN)
+        result.last = NameValue(state: nvInt, intValue: a.hiN)
+      of vmText: discard
+  else:
+    result.value = case mode
+      of vmFloat: NameValue(state: nvNumber, number: a.f)
+      of vmInt: NameValue(state: nvInt, intValue: a.n)
+      of vmText: NameValue(state: nvText, text: a.text)
+
+proc vendorValuesOf*(file: SeismicFile; facts: SignatureFacts; edits: FileEdits;
+    dropKilled: bool; fields: openArray[string]; vendors: VendorRegistry): seq[VendorFieldValue] =
+  ## The value each of `fields` (a vendor field's name, as a display line lists it) takes
+  ## over the traces the file's name or header is made from: the same traces the other
+  ## values use (a killed trace is skipped when `dropKilled`; an auxiliary trace only when a
+  ## kept trace is not auxiliary). One value when every such trace has it and they agree;
+  ## `nvMixed` when they differ or some have none (a number that differs also gives its
+  ## lowest and highest); missing when no trace has it, the name is unknown or ambiguous,
+  ## or no map applies. A text is cleaned as the sensor serial is. A column is read only
+  ## for a name in `fields`, so none for an empty list. A signature file has no vendor field.
+  result = @[]
+  if fields.len == 0: return
+  var cols = newSeq[VendorCol](fields.len)
+  var found = newSeq[bool](fields.len)
+  var any = false
+  if not facts.isSignature and file.isOpen and file.hasKeys:
+    for j, name in fields:
+      found[j] = readVendorColumn(file, vendors, name, cols[j])
+      any = any or found[j]
+  var seismic = newSeq[VendorAcc](fields.len)
+  var auxiliary = newSeq[VendorAcc](fields.len)
+  var sawNonAux = false
+  if any:
+    var buf: array[KeyChunk, TraceKeys]
+    var t = 0
+    while t < file.len:
+      let count = min(KeyChunk, file.len - t)
+      file.traceKeysInto(t ..< t + count, buf.toOpenArray(0, count - 1))
+      for k in 0 ..< count:
+        let i = t + k
+        if not (dropKilled and edits.has(teKilled, i)):
+          let aux = buf[k].status == tsAuxiliary
+          if not aux: sawNonAux = true
+          for j in 0 ..< fields.len:
+            if found[j]:
+              if aux: auxiliary[j].consider(cols[j], i)
+              else: seismic[j].consider(cols[j], i)
+      t += count
+  for j, name in fields:
+    if found[j]:
+      result.add valueOf(if sawNonAux: seismic[j] else: auxiliary[j], cols[j].mode, name)
+    else:
+      result.add VendorFieldValue(name: name)
+
 const EndParts = [npRecord, npSrcLine, npSrcPoint, npRcvLine, npRcvPoint, npSrcIndex, npRcvIndex]
   ## the parts a text header token can show as lowest-highest
 
@@ -329,15 +485,18 @@ proc fillFirstLast(v: var TextValues; file: SeismicFile; edits: FileEdits; dropK
 
 proc textValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
     edits: FileEdits; dropKilled: bool; writtenUs: int64; own: ptr SeismicFile = nil;
-    wanted: set[NamePartKind] = {}; vendors = VendorRegistry()): TextValues =
+    wanted: set[NamePartKind] = {}; vendors = VendorRegistry();
+    vendorFields: openArray[string] = []): TextValues =
   ## What one file gives the tokens of a text header template: its name
   ## values (`nameValuesOf`), `source`, the time of writing, and, for a
   ## record, line, point or index that is not one value in the file, its
   ## lowest and highest value (`firstLast`), whatever the trace order. A signature file has no
-  ## trace keys to compare, so has none.
+  ## trace keys to compare, so has none. `vendorFields` are the `{vendor:NAME}` names the
+  ## template uses: each is read (`vendorValuesOf`) only when listed.
   result.source = source
   result.writtenUs = writtenUs
   result.values = nameValuesOf(file, source, facts, edits, dropKilled, own, wanted, vendors)
   var mixed = false
   for kind in EndParts: mixed = mixed or result.values[kind].state == nvMixed
   if mixed and not facts.isSignature: fillFirstLast(result, file, edits, dropKilled, own)
+  result.vendor = vendorValuesOf(file, facts, edits, dropKilled, vendorFields, vendors)

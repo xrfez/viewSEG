@@ -95,6 +95,27 @@ proc main*() =
     late.text = "{sensorSerial}"
     doAssert npSensorSerial in wantedParts(late)
 
+  block vendorToken:
+    ## Seen to fail: with the sample preview not filling a vendor field, the sample showed
+    ## `{vendor:batch}` and the problem `{vendor:batch} is not in this file.`.
+    var e = initTextEdit()
+    e.name = "a"
+    e.text = "B {vendor:batch}\nC {vendor:x y}"
+    doAssert e.toTemplate.vendorFieldsOf == @["batch", "x y"]
+    let sample = sampleValues(1_795_478_400_000_000'i64)
+    let p = previewOf(e, sample, true)
+    doAssert p.problem == "" and p.lines == @["B 42", "C 42"], $p.lines & p.problem
+    var filled = sample
+    filled.vendor = @[VendorFieldValue(name: "batch", value: NameValue(state: nvInt,
+      intValue: 7))]
+    let q = previewOf(e, filled, false)
+    doAssert q.problem == "Line 2: {vendor:x y} is not in this file.", q.problem
+    doAssert q.lines[0] == "B 7"
+    e.text = "{vendor:}"
+    doAssert e.problem.startsWith("Line 1: {vendor:} needs a vendor field name"), e.problem
+    e.text = "{stem}"
+    doAssert e.toTemplate.vendorFieldsOf.len == 0
+
   block tokensDocumented:
     let page = readFile(currentSourcePath().parentDir.parentDir / "docs" / "user" /
       "text-header.md")

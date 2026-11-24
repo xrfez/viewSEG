@@ -704,14 +704,16 @@ type
         ## case ignored), delete by label, or choose by label
       namePattern*: OutputPattern
         ## ckNamePattern: the pattern to save; for delete and choose, `name`
-        ## is the label (empty chooses today's naming)
+        ## is the label (empty chooses today's naming). A part of kind `npVendor` takes
+        ## a vendor map's field by name, written in the part's `text`
     of ckOutputText:
       textAction*: OutputTextAction
         ## ckOutputText: save (add, or replace the one with the same name,
         ## case ignored), delete by name, or choose by name
       textTemplate*: OutputText
         ## ckOutputText: the template to save; for delete and choose, `name`
-        ## is the name (empty chooses the writer's own text)
+        ## is the name (empty chooses the writer's own text). A line may hold
+        ## `{vendor:NAME}`, a vendor map's field by name
     of ckOutputBinary:
       binaryAction*: OutputBinaryAction
         ## ckOutputBinary: save (add, or replace the one with the same name,

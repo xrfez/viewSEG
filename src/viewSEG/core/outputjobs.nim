@@ -884,7 +884,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           ownForText = true
         let values = textValuesOf(file[], source, signature, edits, opts.dropKilled,
           nowUs(), if openedHeader or ownForText: addr headerKeys else: nil, wanted,
-          currentVendors())
+          currentVendors(), vendorFieldsOf(t))
         let why = renderProblem(t, values)
         if why.len > 0:
           if recoded and renderProblem(asChosen, values).len == 0:

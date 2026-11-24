@@ -73,14 +73,19 @@ proc record(r: int): SegdRecordData =
     encodeSamples(sd8058, [1.0'f32], t.samples)
     result.traces.add t
 
-proc writeLines*(path: string) =
+proc writeRecords*(path: string; which: openArray[int]) =
+  ## The file with only the records `which` (each 0 or 1): its record-level batch number is
+  ## that record's, `batch(r)`.
   var d: SegdData
-  for r in 0 ..< Records: d.records.add record(r)
+  for r in which: d.records.add record(r)
   let sink = openDiskSink(path)
   try:
     doAssert writeSegd(sink, d).count(sevError) == 0
   finally:
     sink.close()
+
+proc writeLines*(path: string) =
+  writeRecords(path, [0, 1])
 
 proc registry*(): VendorRegistry =
   result.addMap loadVendorMap(MapText)

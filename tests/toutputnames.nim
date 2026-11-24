@@ -238,7 +238,7 @@ proc main*() =
 
   block sensorSerial:
     doAssert partWord(npSensorSerial) == "Sensor serial"
-    doAssert NamePartKind.high == npSensorSerial, "the new kind is last"
+    doAssert npSensorSerial < npVendor, "the new kind came after the sensor serial"
     let p = pat(nsDot, part(npSensorSerial, pad = 6))
     expectName(p, vals((npSensorSerial, tv("N0042"))), ".sgd", "N0042.sgd")
     expectName(pat(nsUnderscore, [part(npStem), part(npSensorSerial)]),
@@ -250,6 +250,46 @@ proc main*() =
       "Sensor serial holds a character a file name cannot.")
     expectProblem(pat(nsHyphen, part(npSensorSerial)), vals((npSensorSerial, tv("A-B"))),
       ".sgd", "Sensor serial has the separator - in it.")
+
+  block vendorField:
+    ## Seen to fail (broken, then restored): with a float written as `$x`, `got "12.5.sgd"`;
+    ## with a missing value left out of the name, `named "u.sgd" instead of refusing`; with
+    ## `patternProblem` not looking at the field name, an empty name was kept.
+    func fv(name: string; v: NameValue): VendorFieldValue =
+      VendorFieldValue(name: name, value: v)
+    let p = pat(nsDot, [part(npText, text = "u"), part(npVendor, text = "batch")])
+    doAssert partWord(npVendor) == "Vendor field"
+    doAssert partLabel(npVendor) == "Vendor field (seismic files)"
+    doAssert vendorFieldsOf(pat(nsDot, [part(npVendor, text = "a"), part(npStem),
+      part(npVendor, text = "b"), part(npVendor, text = "a")])) == @["a", "b"]
+    proc one(v: NameValue; pattern = p): NameResult =
+      render(pattern, vals(), ".sgd", [fv("batch", v)])
+    doAssert one(iv(41)).name == "u.41.sgd", one(iv(41)).problem
+    doAssert one(iv(-3)).name == "u.-3.sgd"
+    doAssert one(num(12.5)).name == "u.12p5.sgd", one(num(12.5)).problem
+    doAssert one(num(3.0)).name == "u.3.sgd", "a whole float has no decimal point"
+    doAssert one(num(0.1)).name == "u.0p1.sgd"
+    doAssert one(num(1.0 / 3.0)).name == "u.0p3333333333333333.sgd", one(num(1.0 / 3.0)).name
+    doAssert one(tv("AB01")).name == "u.AB01.sgd"
+    doAssert one(tv("A.B")).problem == "Vendor field batch holds a character a file name cannot."
+    doAssert one(NameValue(state: nvMixed)).problem ==
+      "Vendor field batch is not one value in this file."
+    doAssert one(NameValue(state: nvMissing)).problem ==
+      "Vendor field batch is not in this file."
+    let absent = render(p, vals(), ".sgd")
+    doAssert absent.name.len == 0 and absent.problem == "Vendor field batch is not in this file.",
+      "an unlisted field was named"
+    let other = render(p, vals(), ".sgd", [fv("other", iv(5))])
+    doAssert other.problem == "Vendor field batch is not in this file."
+    # two vendor fields in one pattern take their own values
+    let two = pat(nsUnderscore, [part(npVendor, text = "a"), part(npVendor, text = "b")])
+    doAssert render(two, vals(), ".sgd", [fv("a", iv(1)), fv("b", tv("x"))]).name == "1_x.sgd"
+    doAssert patternProblem(p) == ""
+    doAssert patternProblem(pat(nsDot, part(npVendor, text = ""))) ==
+      "A vendor field part needs the field's name (1 to 200 characters, no control character)."
+    doAssert patternProblem(pat(nsDot, part(npVendor, text = "a\nb"))).len > 0
+    doAssert patternProblem(pat(nsDot, part(npVendor, text = repeat('x', 201)))).len > 0
+    doAssert patternProblem(pat(nsDot, part(npVendor, text = repeat('x', 200)))) == ""
 
   block separatorInText:
     # "a-" & "-" & "1" is the same leaf as "a" & "-" & "-1"; the first is refused.

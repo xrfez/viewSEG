@@ -21,11 +21,11 @@
 ##
 ## Runs on samples/vib/vib_uncorrelated.sgd and samples/land/shots.sgy.
 
-import std/[math, os, strutils]
+import std/[atomics, math, os, strutils]
 import parseSEG
 import parseSEG/model/traceindex
 import viewSEG/core/[edits, outputnames, outputnamevalues, sigtypes, vendormaps]
-import utils/[fixtures, sensorfiles]
+import utils/[fixtures, sensorfiles, vendorfile]
 
 const root = currentSourcePath().parentDir.parentDir
 
@@ -300,6 +300,84 @@ proc main*() =
       "the vendor field beat the Sensor Info block"
     let second = valueOf(vendorOnly)
     doAssert second.state == nvText and second.text == "9", "the vendor serial was not read"
+    removeDir(dir)
+
+  block vendorFields:
+    ## Seen to fail (broken, then restored): with a field that differs among traces not
+    ## counted as mixed, `batch` of two records was one value (`records 40 and 41 were one
+    ## value`); with the column counted for an empty list, `a column was read for no field`.
+    const map = """(.nif27)
+(vendormap "names-test" (version 1) (match (format segd) (rev 2.0 2.0) (manufacturer 77))
+  (target (kind traceExt) (extension 2) (name unitInfo)
+    (field counter (at 1) (enc u32))
+    (field status (at 5) (enc u16) (sentinel 0xFFFF))
+    (field label (at 9) (len 4) (enc ascii) (trim right))
+    (field fixed (at 9) (len 2) (enc ascii) (trim right))
+    (field never (at 9) (enc u8) (sentinel 0x41)))
+  (target (kind extendedHeader) (blockIndex 1) (name session)
+    (field batch (at 3) (enc u8))
+    (field half (at 3) (enc u8) (scale 0.5))))"""
+    var reg: VendorRegistry
+    reg.addMap loadVendorMap(map)
+    let dir = getTempDir() / "viewseg_tnamevalues_vendor"
+    createDir(dir)
+    let first = dir / "first.sgd"
+    let second = dir / "second.sgd"
+    let both = dir / "both.sgd"
+    writeRecords(first, [0])
+    writeRecords(second, [1])
+    writeLines(both)
+    proc valuesOf(path: string; fields: openArray[string]; r = reg;
+        facts = SignatureFacts()): seq[VendorFieldValue] =
+      var f = openSeismic(path, keys = true)
+      result = vendorValuesOf(f, facts, FileEdits(), false, fields, r)
+      f.close()
+    let one = valuesOf(first, ["batch", "fixed", "half"])
+    doAssert one.len == 3 and one[0].name == "batch"
+    doAssert one[0].value.state == nvInt and one[0].value.intValue == 40, $one[0].value
+    doAssert one[1].value.state == nvText and one[1].value.text == "AB", $one[1].value
+    doAssert one[2].value.state == nvNumber and one[2].value.number == 20.0, $one[2].value
+    let next = valuesOf(second, ["batch", "half"])
+    doAssert next[0].value.intValue == 41 and next[1].value.number == 20.5
+    doAssert vendorText(next[1].value) == "20.5" and vendorText(next[0].value) == "41"
+    # two records disagree: mixed, with the lowest and the highest of a number
+    let mixed = valuesOf(both, ["batch", "label", "counter"])
+    doAssert mixed[0].value.state == nvMixed, "records 40 and 41 were one value"
+    doAssert mixed[0].first.intValue == 40 and mixed[0].last.intValue == 41
+    doAssert mixed[1].value.state == nvMixed and mixed[1].first.state == nvMissing,
+      "a text has no range"
+    doAssert mixed[2].value.state == nvMixed and mixed[2].first.intValue == 0 and
+      mixed[2].last.intValue == 1002
+    # a trace without the value (the sentinel) among others that have it
+    let partial = valuesOf(first, ["status"])
+    doAssert partial[0].value.state == nvMixed, "an absent trace was ignored"
+    doAssert partial[0].first.intValue == 0 and partial[0].last.intValue == 2
+    # absent from every trace, unknown, ambiguous, no maps
+    doAssert valuesOf(first, ["never"])[0].value.state == nvMissing
+    doAssert valuesOf(first, ["nope"])[0].value.state == nvMissing
+    doAssert valuesOf(first, ["batch"], VendorRegistry())[0].value.state == nvMissing
+    # a name given twice, and a field the file lacks, are each answered by name
+    let pair = valuesOf(first, ["nope", "batch"])
+    doAssert pair[0].name == "nope" and pair[0].value.state == nvMissing
+    doAssert pair[1].name == "batch" and pair[1].value.intValue == 40
+    # no field asked for: no column read, no value
+    let reads = vendorColumnReads.load
+    doAssert valuesOf(first, []).len == 0
+    doAssert vendorColumnReads.load == reads, "a column was read for no field"
+    discard valuesOf(first, ["batch"])
+    doAssert vendorColumnReads.load > reads, "the counter does not count"
+    # a killed trace is skipped when asked
+    var f = openSeismic(first, keys = true)
+    var edits = FileEdits()
+    discard edits.change(teKilled, [0, 2], true)
+    doAssert vendorValuesOf(f, SignatureFacts(), edits, true, ["status"], reg)[0].value.state ==
+      nvMissing, "a killed trace was read"
+    doAssert vendorValuesOf(f, SignatureFacts(), edits, false, ["status"], reg)[0].value.state ==
+      nvMixed
+    f.close()
+    # a signature file has none
+    let sig = SignatureFacts(kind: sgDat, info: SweepInfo(kind: sgDat))
+    doAssert valuesOf(first, ["batch"], reg, sig)[0].value.state == nvMissing
     removeDir(dir)
 
   echo "toutputnamevalues: ok"

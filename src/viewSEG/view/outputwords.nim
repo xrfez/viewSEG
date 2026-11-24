@@ -81,6 +81,9 @@ const
   AsSourceFile* = "As the source file"
   EditNames* = "Edit..."
   LeastDigits* = "Least digits"
+  VendorPartTip* = "The name of a vendor field, as the display lines list it (a bare name, " &
+    "or block.name when two fields share it). Its value over the file's traces is written; " &
+    "a file where the traces differ, or lack it, is not written."
   WidthTip* = "Shorter numbers get leading zeros. Longer numbers are never cut."
   AddPart* = "Add part"
   SavePattern* = "Save"
