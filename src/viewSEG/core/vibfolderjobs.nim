@@ -143,7 +143,7 @@ func sweepsOf(files: seq[FolderListed]; pairs: Table[string, string]): seq[
         vib = files[at[partner]].info.vibrator
       result.add (vib, f.info.weights)
 
-proc readAll(ctx: JobContext; path: string; size: int64; fileIndex, count: int): seq[byte] =
+proc readAll(ctx: JobContext; path: string; size: int64; fileNo, count: int): seq[byte] =
   let name = path.extractFilename
   if size < 0:
     raise newException(IOError, name & " cannot be read.")
@@ -165,7 +165,7 @@ proc readAll(ctx: JobContext; path: string; size: int64; fileIndex, count: int):
     if read <= 0:
       raise newException(IOError, name & " cannot be read.")
     got += read
-    discard ctx.progress(int64(fileIndex) * FolderScale + shareOf(int64(got), size),
+    discard ctx.progress(int64(fileNo) * FolderScale + shareOf(int64(got), size),
       int64(count) * FolderScale)
 
 proc addLine(into: var seq[string]; line: string) =
@@ -208,7 +208,7 @@ proc loadReference(reference: FolderReference): tuple[held: HeldRef; problem: st
     result.problem = e.msg
 
 proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: SweepInfo;
-    ask: VibQcAsk; choice: SignatureChoice; held: HeldRef; fileIndex, count: int): FolderRow =
+    ask: VibQcAsk; choice: SignatureChoice; held: HeldRef; fileNo, count: int): FolderRow =
   let path = item.path
   let name = path.extractFilename
   var size: int64
@@ -217,7 +217,7 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
   except OSError as e:
     raise newException(IOError, name & " cannot be read (" & e.msg & ").")
   let modified = fs.getLastModificationTime(path)
-  let bytes = readAll(ctx, path, size, fileIndex, count)
+  let bytes = readAll(ctx, path, size, fileNo, count)
   if ctx.cancelled: raise newException(JobCancelledError, "Cancelled.")
   var pair = SignaturePair()
   if item.info.kind == sgVib and pairPath.len > 0:

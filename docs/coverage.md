@@ -41,12 +41,12 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.20.0: capabilities | names | processSEG 0.13.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 55 (21 in part) | 184 | 45 (28 in part) | 249 |
-| `internal` | 19 | 58 | 6 | 43 |
+| `built` | 55 (21 in part) | 185 | 45 (28 in part) | 249 |
+| `internal` | 19 | 60 | 7 | 44 |
 | `planned` | 33 | 219 | 41 | 385 |
 | `to plan` | 2 | 9 | 1 | 5 |
-| `not applicable` | 22 | 362 | 7 | 72 |
-| all | 131 | 832 | 100 | 754 |
+| `not applicable` | 22 | 359 | 7 | 71 |
+| all | 131 | 832 | 101 | 754 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -356,6 +356,7 @@ name, so these are building blocks for code that works on raw headers.
 |---|---|---|---|
 | Geometry flags from the keys | `checkGeometry`, `checkGeometryInto`, `flaggedRows`, `GeometryQc`, `badGeometry`, `GeometryCheck`, `GeometryFlag`, `GeometryFlags` | Survey QC issue list, flags in table and map | planned |
 | First-break picking with confidence | `initFirstBreakPlan`, `pickInto` (also on the pool), `FirstBreakParams`, `FirstBreakPick`, `checkPick`, `FirstBreakPlan` (`params`, `pick`), `PickMethod`, `noPick` | Analysis → First-break overlay, and the button on the Seismic window's strip: a bar across each trace where the first break was picked (processSEG's defaults, then a second pass guided by the model, on a job, record by record; a pick not compared with the model is drawn faint), and the pick in the status bar under the pointer; colouring by confidence beyond that is planned | built (`initFirstBreakPlan`, `pickInto`, `FirstBreakParams` (the guided search window of the second pass), `FirstBreakPick`, `FirstBreakPlan`); planned (the picker's other options, `checkPick`, `PickMethod`, `noPick`) |
+| The recorded part of a trace | `liveSpan` | internal: the guided picking tells a pick on the edge of its search from one inside it over the trace's recorded samples only | internal |
 | Refraction fit per shot (swapped receivers, misplaced source) | `fitShot`, `ShotFitParams`, `ShotFit` (`suspect`, `asymmetryMs`, `v1`, `v2`), `RefractionModel` | Analysis → First-break overlay: a bar across each trace at the time the model fitted to the confident picks expects the first break (`ShotFit.modelMs`, at the offsets the survey or the file gives), a line to the pick where they differ, and both times in the status bar; the suspect traces and the survey QC issue list are planned | built (`fitShot`, `ShotFitParams`, `ShotFit`: the model's times); planned (the issue list, `RefractionModel`) |
 | Robust start and trimmed model of first-break picks | `ConfidentPick`, `MadToSigma`, `TrimSigmas`, `TrimFloorMs`, `TrimRounds`, `MinTrimmedPicks`, `StartLines`, `MinSecondPicks`, `SecondGain`, `SecondGainMs`, `RestartSigmaShare`, `RestartSigmaFloorMs`, `ModelFn`, `Trimmed`, `median`, `robustSigma`, `lineFit`, `medianIfCloser`, `medianLineStart`, `trimmedModel`, `keepSecond` | Analysis → First-break overlay: which confident picks the model is fitted to, a second segment kept only when it is the better fit | built |
 | Windowed SNR per trace | `windowSnrInto`, `WindowSnrParams`, `powerSnrDb`, `windowSnrDb`, `meanPower`, `SnrEstimator`, `DefaultSnrFloorDb` | SNR attribute: table column, map colour, flag threshold | planned |
