@@ -1238,7 +1238,11 @@ proc drawTextRow(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Out
   igTextUnformatted(TextRowLabel.cstring, nil)
   igSameLine(0, -1)
   igBeginDisabled(why.len > 0)
-  igSetNextItemWidth(igGetFontSize() * 16)
+  let style = igGetStyle()
+  let room = igGetContentRegionAvail().x - textWidth(TextEditButton) -
+    style.FramePadding.x * 2 - style.ItemSpacing.x
+  igSetNextItemWidth(max(igGetFontSize() * 8, min(room, textWidth(TextAsSource) +
+    style.FramePadding.x * 2 + igGetFrameHeight())))
   let open = igBeginCombo("##output.text", shown.cstring, 0)
   if not open:
     marks.mark("output.text")

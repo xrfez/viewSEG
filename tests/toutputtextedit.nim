@@ -9,7 +9,7 @@
 ## line at the end counted as a line"; with the preview problem left out, a
 ## token the file lacks showed no problem.
 
-import std/strutils
+import std/[os, strutils]
 import parseSEG
 import viewSEG/core/[outputnames, outputtext]
 import viewSEG/view/outputtextedit
@@ -94,6 +94,13 @@ proc main*() =
     doAssert wantedParts(late) == {}
     late.text = "{sensorSerial}"
     doAssert npSensorSerial in wantedParts(late)
+
+  block tokensDocumented:
+    let page = readFile(currentSourcePath().parentDir.parentDir / "docs" / "user" /
+      "text-header.md")
+    for info in TextTokens:
+      doAssert ("| `{" & info.word & "}`") in page, info.word & " is not in text-header.md"
+      doAssert info.about in page, info.word & "'s words are not in text-header.md"
 
   block names:
     doAssert matchingName(["Survey", "Other"], " survey ")

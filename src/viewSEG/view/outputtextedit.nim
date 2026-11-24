@@ -10,7 +10,7 @@ import ../core/[edits, outputnames, outputnamevalues, outputtext, sigtypes, vend
 
 const
   TextRowLabel* = "Text header"
-  TextAsSource* = "From the source (the library's own for a new file)"
+  TextAsSource* = "From the source or library default"
   TextEditButton* = "Edit..."
   TextRowTip* = "The SEG-Y text header of each file written: a template of the project, " &
     "filled in for that file. None: a copy of a SEG-Y file keeps its own text header and " &

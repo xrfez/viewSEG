@@ -466,7 +466,9 @@ Columns can be resized. **Copy results** puts that table on the clipboard. **Ope
 destination** opens the folder.
 
 **File names** (above **Format**) names each file from its own values instead of its
-source name: see [Output file names](output-file-names.md). **Correlated** writes the
+source name: see [Output file names](output-file-names.md). **Text header** (SEG-Y only) writes each
+file's text header from a template of the project: see [Text header](text-header.md).
+**Correlated** writes the
 files correlated with the project's reference: see [Correlate](correlate.md).
 
 ## Jobs

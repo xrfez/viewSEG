@@ -6,12 +6,9 @@
 ## in the project and chooses it, and a write then holds that template as the
 ## first card of the file written.
 ##
-## Seen to fail: with the token put at the end instead of the cursor the
-## preview line was `C 1 FROM shots` plus the token again at the end; with
-## the Save command not followed by a choose the row still read "From the
-## source"; with `textHeader` left out of the run's options the written file
-## kept the source's first card; with the row drawn for SEG-D too, the row was
-## on screen after SEG-D was picked.
+## Seen to fail: with `textHeader` left out of the run's options the written file
+## kept the source's first card ("the first card is ..."). The cursor position of
+## a token is tested in toutputtextedit; here the cursor is at the end.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## With VIEWSEG_SCREENSHOTS set, the row and the editor are saved as PNG files there.
@@ -118,7 +115,7 @@ proc main*() =
     step("a project is open, the row alive", makeProject, made)
 
     proc rowShot(f: FrameInfo): bool =
-      if f.markOf("output.text From the source (the library's own for a new file)").size.x == 0:
+      if f.markOf("output.text From the source or library default").size.x == 0:
         return false
       f.shot "output-text-row.png"
       true
