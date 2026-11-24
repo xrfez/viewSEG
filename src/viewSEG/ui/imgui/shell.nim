@@ -61,7 +61,8 @@ type
     dkExportVibFolder = "Export vibrator QC",  ## a CSV file to write (a save dialog)
     dkOutputSource = "Output source",          ## the folder whose seismic files are written
     dkOutputDest = "Output destination",       ## the folder those files are written into
-    dkShotLog = "Shot log"                     ## one shot log to import: CSV, text or TSV
+    dkShotLog = "Shot log",                    ## one shot log to import: CSV, text or TSV
+    dkCutDest = "Cut destination"              ## the folder a cut by shot log is written into
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
@@ -299,7 +300,7 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr seismicFilters[0],
       seismicFilters.len.cint, at, kind == dkOpenFiles)
   of dkOpenFolder, dkOpenProject, dkProjectPlace, dkProjectData, dkLocateFolder,
-      dkOutputSource, dkOutputDest:
+      dkOutputSource, dkOutputDest, dkCutDest:
     SDL_ShowOpenFolderDialog(onDialogResult, userdata, parent, at, false)
   of dkImportSettings, dkImportLayout:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr nifFilters[0],

@@ -51,7 +51,8 @@ import curveplot as curveplotui
 import ../../view/[jobstatus, missingwords, outputwords, qualitywords, vibfolderwords]
 import aboutbox, agentshot, chrome, clearsurvey, dpi, filelist, fonts, frames, genpreview,
   headerswindow, icons, settingswindow, shortcutswindow,
-  jobswindow, joindialog, leapdialog, mapwindow, memorywindow, menus, messages, missingwindow,
+  jobswindow, joindialog, leapdialog, cutgatherdialog, mapwindow, memorywindow, menus, messages,
+  missingwindow,
   outputwindow,
   qualitywindow, vibfolderwindow,
   plotwindows,
@@ -132,6 +133,7 @@ type
     shortcuts: ShortcutsUi                     ## Help > Keyboard shortcuts
     settingsWin: SettingsUi                    ## Tools > Settings
     leap: LeapUi                               ## Tools > Leap seconds
+    cut: CutUi                                 ## Project > Cut by shot log
     spectra: SpectraUi                         ## the spectrum windows: the live panel, the FFT windows
     compare: CompareUi                         ## the compare window: two traces, A and B
     plotWins: PlotWindowsUi                    ## the analysis windows (New plot)
@@ -960,6 +962,7 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
       ui.vibfolder.startExport(ui.core, ev.paths[0])
     of dkOutputSource: ui.output.setSource(ev.paths[0])
     of dkOutputDest: ui.output.setDest(ev.paths[0])
+    of dkCutDest: ui.cut.setFolder(ev.paths[0])
     of dkShotLog:
       ui.core.apply Command(kind: ckImportShotLog, logPath: ev.paths[0])
       ui.shotLog.open()
@@ -1127,6 +1130,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maOpenVib, maOpenDat: ui.core.apply Command(kind: ckOpenPair, panel: MainPanel)
     of maReloadVendors: ui.core.apply Command(kind: ckReloadVendors)
     of maLeapSeconds: ui.leap.open()
+    of maCutGather: ui.cut.open(ui.shotLog.shownId)
     of maAbout: ui.about.open()
     of maShortcuts:
       ui.shortcuts.open()
@@ -1484,7 +1488,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     folderWhy: folderWhy(ui.core.fileList.folder.len > 0),
     outputReady: ui.core.fileList.folder.len > 0,
     outputWhy: if ui.core.fileList.folder.len > 0: "" else: OutputNeedFolder,
-    shotLogFocused: ui.shotLog.takesUndo)
+    cutWhy: ui.core.cutProblem(), shotLogFocused: ui.shotLog.takesUndo)
   let menu = drawMainMenu(menuInput, ui.marks)
   if menu.newPlot:
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: menu.newPlotView)
@@ -1717,6 +1721,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   ui.about.drawAbout(ui.theme, ui.marks)
   for c in ui.leap.drawLeap(ui.core, ui.theme, ui.marks):
     ui.core.apply c
+  var cut = ui.cut.drawCut(ui.core, ui.theme, ui.marks)
+  for c in cut.commands.mitems:
+    ui.core.apply move c
+  if cut.askFolder: ui.ask(dkCutDest, cut.askAt)
   if ui.windows.shortcutsOpen and not ui.shortcuts.shown:
     ui.shortcuts.shown = true
   ui.shortcuts.drawShortcuts(ui.theme, ui.marks)

@@ -26,7 +26,9 @@ import std/os
 import imguin/cimgui
 import ../../core/[analysis, layouts]
 import ../../core/shortcuts as shortcutTable
-import ../../view/[missingwords, outputwords, qualitywords, shotlogwords, vibfolderwords, theme]
+import ../../view/[missingwords, outputwords, qualitywords, shotlogwords, vibfolderwords,
+  theme]
+from ../../view/cutwords import CutMenuTip
 import clearsurvey, icons, marks, plotviews, thememenu, windows
 
 type
@@ -41,6 +43,7 @@ type
     maReloadVendors = "Reload vendor maps",
     maLeapSeconds = "Leap seconds...",
     maImportSurvey = "Import survey...", maImportShotLog = "Import shot log...",
+    maCutGather = "Cut by shot log...",
     maClearSurvey = "Clear survey",
     maImportSettings = "Import settings...",
     maImportLayout = "Import layout...", maImportEdits = "Import trace edits...",
@@ -127,6 +130,9 @@ type
     folderWhy*: string ## why it cannot; "" when it can
     outputReady*: bool ## File > Output... can run
     outputWhy*: string ## why it cannot; "" when it can
+    cutWhy*: string
+      ## why Project > Cut by shot log cannot start (the file or the log is missing, or a cut
+      ## is under way); "" when it can
     shotLogFocused*: bool
       ## the Shot log window takes Ctrl+Z and Ctrl+Y for its cell edits
 
@@ -160,7 +166,7 @@ const
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
     maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
     maReopen: 0, maOpenVib: 0, maOpenDat: 0, maReloadVendors: 0, maLeapSeconds: 0,
-    maImportSurvey: 0, maImportShotLog: 0, maClearSurvey: 0, maImportSettings: 0,
+    maImportSurvey: 0, maImportShotLog: 0, maCutGather: 0, maClearSurvey: 0, maImportSettings: 0,
     maImportLayout: 0,
     maImportEdits: 0,
     maExportLog: 0, maExportSettings: 0, maExportLayout: 0, maExportEdits: 0,
@@ -184,7 +190,8 @@ const
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
     maReopen: IconRefresh, maOpenVib: IconStep, maOpenDat: IconStep,
     maReloadVendors: IconRefresh, maLeapSeconds: IconInfo,
-    maImportSurvey: IconSurvey, maImportShotLog: IconTable, maClearSurvey: IconTrash,
+    maImportSurvey: IconSurvey, maImportShotLog: IconTable, maCutGather: IconExport,
+    maClearSurvey: IconTrash,
     maImportSettings: IconSliders,
     maImportLayout: IconLayout,
     maImportEdits: IconWriting, maExportLog: IconExport, maExportSettings: IconSliders,
@@ -355,6 +362,10 @@ proc drawProjects(input: MenuInput; res: var MenuResult) =
     "file is not changed")
   item(maImportShotLog, res)
   tip(ImportTip)
+  igBeginDisabled(input.cutWhy.len > 0)
+  item(maCutGather, res)
+  igEndDisabled()
+  tip(if input.cutWhy.len > 0: input.cutWhy else: CutMenuTip)
   igBeginDisabled(not input.surveyImported)
   item(maClearSurvey, res)
   igEndDisabled()

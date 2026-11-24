@@ -63,6 +63,10 @@ type
     faultRows: seq[int]
     faultText: Table[int, string]
 
+func shownId*(ui: ShotLogUi): int {.inline.} =
+  ## The id of the log the window shows; -1 when there is none.
+  ui.currentId
+
 proc open*(ui: var ShotLogUi) =
   ## Shows the window, in front.
   ui.shown = true
