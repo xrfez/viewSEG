@@ -22,6 +22,16 @@ map, viewSEG shows the fields by name, like any standard header.
 3. Choose File > Reload vendor maps. A map dropped in while the program runs is read without
    a restart, and the files already open show the new decode.
 
+## The unit serial
+
+A field a map names `unitSerial` is taken as the serial number of the unit that recorded a
+trace. The **Sensor serial** part of an output file name (Output window, File names) reads
+it: first from the standard SEG-D Rev 3 Sensor Info block of the trace, then from a
+`unitSerial` field of the trace's own vendor blocks, then from one in the vendor blocks of
+its record (or, for SEG-Y, of the file). A map that describes a serial under another name
+needs the field renamed, or a copy of the map with the name added, for the part to find it.
+A value that is blank or a sentinel the map declares is no serial.
+
 ## Where viewSEG looks
 
 In this order, and only in folders that exist. When two maps apply to the same block, the one

@@ -50,7 +50,7 @@ project is open read-only."). You can still pick the pattern the project already
 | **Receiver line**, **Receiver point** | the receiver's line and point |
 | **Time** | the UTC time of the record, or of a vibrator sweep, as below |
 | **System serial** | the system's serial number (SEG-D) |
-| **Sensor serial** | the serial of the unit that recorded the traces (SEG-D Rev 3) |
+| **Sensor serial** | the serial of the unit that recorded the traces: the SEG-D Rev 3 Sensor Info block, or a field a vendor map names `unitSerial` |
 | **Controller**, **Vibrator**, **File number**, **Line**, **Station**, **Shot id**, **Sweep id** | what a vibrator signature file says of its sweep; they are for signature files only |
 
 A part takes its value from the traces of the file, and a file has one value for it or none.
@@ -64,7 +64,9 @@ A name needs every one of its parts. A file that lacks one, or whose traces do n
 the same value for it, is not written, and its row in the results says which part and why
 ("Source line is not in this file." or "Source line is not one value in this file."); the
 other files of the run are written. A **Sensor serial** is read from the traces only when a
-pattern uses it, and a signature file has none.
+pattern uses it, and a signature file has none. A vendor map marks the field that holds the
+serial by naming it `unitSerial` (see Vendor header maps); the standard block is looked at
+first, then the vendor blocks of the trace, then those of its record or file.
 
 ### Numbers
 

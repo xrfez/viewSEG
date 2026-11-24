@@ -558,7 +558,8 @@ proc renderedLeaf(ask: BatchAsk; plan: Plan; file: SeismicFile; source: string;
   ## the destination folder.
   var wanted: set[NamePartKind] = {}
   for part in ask.pattern.parts: wanted.incl part.kind
-  let values = nameValuesOf(file, source, facts, edits, ask.options.dropKilled, own, wanted)
+  let values = nameValuesOf(file, source, facts, edits, ask.options.dropKilled, own, wanted,
+    currentVendors())
   let named = render(ask.pattern, values, extOf(ask.options.format))
   if named.problem.len > 0:
     raise newException(ValueError, named.problem)
