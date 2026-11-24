@@ -12,7 +12,10 @@
 ## actual 25200, headers 9200). With raw close ignoring open views, `not
 ## close(raw)` failed: the raw file closed while a view existed. With the
 ## view's destructor not dropping its count, `close(raw2)` failed after the
-## view was dropped.
+## view was dropped. With the hold not lowering the count, `close(raw)` failed
+## after the view was closed: the raw file stayed open. Copying a view hold is
+## a compile error (`=copy` and `=dup` are `{.error.}`). The hold is private,
+## so this file cannot name it in `compiles`.
 
 import std/[locks, math, monotimes, os, sequtils, strutils, times]
 import parseSEG

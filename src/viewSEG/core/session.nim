@@ -27,7 +27,7 @@
 ## close the raw file. `close` of the raw file is refused while a view of it
 ## exists: close the view first, as a derived view is closed before its origin.
 
-import std/[math, os, strutils, times]
+import std/[atomics, math, os, strutils, times]
 import parseSEG
 import correlateview, filesystem, headers, records, sigtypes
 
@@ -96,22 +96,42 @@ type
       ## listen-time sample interval, ms; 0 when this session is not one
     originSession: Session
       ## the raw session a correlated view reads; nil otherwise
-    openViews: int
-      ## correlated views that still read this raw file
+    openViews: Atomic[int]
+      ## correlated views that still read this raw file; raised when a view
+      ## is opened and lowered when that view is closed or destroyed, which
+      ## may be another thread
     hold: ViewHold
       ## this view's count in the raw session's `openViews`
 
-template releaseHold(h: var ViewHold) =
-  if not h.released:
-    if not h.raw.isNil and h.raw.openViews > 0: dec h.raw.openViews
-    h.released = true
-    h.raw = nil
+proc `=destroy`(h: ViewHold)
+proc `=wasMoved`(h: var ViewHold)
+proc `=copy`(dest: var ViewHold; src: ViewHold) {.error.}
+proc `=dup`(src: ViewHold): ViewHold {.error.}
+
+proc `=wasMoved`(h: var ViewHold) =
+  ## The count stays with the hold that was moved to. The source must not
+  ## drop it when it is destroyed.
+  h.released = true
+  h.raw = nil
+
+proc dropOpenView(raw: Session) =
+  ## One view stopped reading `raw`. A count already at zero is put back,
+  ## so a second drop cannot drive it negative.
+  if raw.isNil: return
+  let prev = raw.openViews.fetchSub(1, moAcquireRelease)
+  if prev <= 0:
+    discard raw.openViews.fetchAdd(1, moRelease)
 
 proc `=destroy`(h: ViewHold) =
   ## Drops the count when the view is discarded without `close`.
-  if not h.released and not h.raw.isNil and h.raw.openViews > 0:
-    dec h.raw.openViews
+  if not h.released: dropOpenView(h.raw)
   `=destroy`(h.raw)
+
+template releaseHold(h: var ViewHold) =
+  if not h.released:
+    dropOpenView(h.raw)
+    h.released = true
+    h.raw = nil
 
 const NoSession* = SessionId(0)
 
@@ -279,8 +299,8 @@ proc asCorrelatedView*(raw: Session; view: CorrelateView): Session =
     listenSamples: view.listenSamples, listenDtMs: view.dtMs, originSession: raw)
   result.view = new CorrelateView
   result.view[] = view
-  inc raw.openViews
-  result.hold = ViewHold(raw: raw)
+  discard raw.openViews.fetchAdd(1, moRelease)
+  result.hold.raw = raw
   applyListenFacts(result.facts, view.listenSamples, view.dtMs)
 
 proc dropView(s: Session) =
@@ -298,7 +318,7 @@ proc close*(s: Session): bool =
   if not s.view.isNil:
     dropView(s)
     return true
-  if s.openViews > 0: return false
+  if s.openViews.load(moAcquire) > 0: return false
   if s.file.isOpen: s.file.close()
   true
 
