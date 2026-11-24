@@ -137,7 +137,9 @@ const
     "reserveRelations": "the viewer's `SurveyFileBuilder.reserveRelations` (core/survey), " &
       "which calls parseSEG's where it compiles (core/surveyjobs)",
     "StopCheck": "the viewer's own abandon check (core/analysis, core/fkanalysis), " &
-      "not processSEG's"}
+      "not processSEG's",
+    "formatNumber": "the viewer's own number for a name pattern (core/outputnames), " &
+      "not SEG-2's string formatter"}
     ## Library names `src/` names for something of its own too (a field, its
     ## own proc), each checked by hand, with what src/ does with them: a text
     ## search cannot tell them from the library's (`check`)

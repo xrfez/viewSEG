@@ -11,15 +11,28 @@
 ## Seen to fail: with `plain` a byte-identical copy of `edited` at the same
 ## time, `back.len == src.len` (that kill is this file's too).
 ##
-## Runs on copies of samples/land/shots.sgy and samples/land/shots.sgd.
+## A chosen pattern replaces the leaf after the open. Seen to fail: with the
+## rendered leaf ignored, the one-record file was `one.sgy` not
+## `2001.0103.0001.sgy`; with only the first traces compared, shots.sgy was
+## written (`a file of two shots was written`); with the clash check left
+## off, the second file failed `The destination already exists.` not
+## `2001.0103.0001.sgy is already the output of one.sgd.`; with the session
+## station used, the name was `0999.sgy`; with signature facts left empty,
+## the write failed `Controller is not in this file.`; with no pattern still
+## locking the folder, exclusive was not the planned file names.
+##
+## Runs on copies of samples/land/shots.sgy, samples/land/shots.sgd and
+## samples/vib/vib_uncorrelated.sgd.
 
 import std/[os, strutils, times]
 when defined(windows):
   from std/winlean import nil
 import parseSEG
+import parseSEG/model/traceindex
 import processSEG/core/basic
-import viewSEG/core/[edits, filememory, identity, jobs, outputbatch, outputjobs, sigtypes]
-import utils/[faultyfs, waiting]
+import viewSEG/core/[edits, filememory, identity, jobs, outputbatch, outputjobs,
+  outputnames, sigtypes]
+import utils/[faultyfs, sigfiles, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
 
@@ -537,6 +550,150 @@ proc main*() =
     back.close()
     src.close()
     doAssert readFile(twinA) == readFile(segy) and readFile(twinB) == readFile(segy)
+
+  block patternNames:
+    let vib = root / "samples" / "vib" / "vib_uncorrelated.sgd"
+    doAssert fileExists(vib), "samples/vib/vib_uncorrelated.sgd is not here"
+    let shot = OutputPattern(name: "Shot", separator: nsDot, parts: @[
+      NamePart(kind: npSrcLine, pad: 4), NamePart(kind: npSrcPoint, pad: 4),
+      NamePart(kind: npRecord, pad: 4)])
+    let recOnly = OutputPattern(name: "Rec", separator: nsDot,
+      parts: @[NamePart(kind: npRecord, pad: 4)])
+    let src = dir / "namesrc"
+    createDir(src)
+    let one = src / "one.sgd"
+    let two = src / "two.sgd"
+    let plain = src / "plain.sgd"
+    copyFile(vib, one)
+    copyFile(vib, two)
+    copyFile(vib, plain)
+    let segyOpts = OutputOptions(format: ofSegy)
+
+    block renders:
+      let dest = dir / "named-one"
+      let ask = BatchAsk(root: src, items: @[BatchItem(source: one, relative: "one.sgd")],
+        destRoot: dest, options: segyOpts, pattern: shot)
+      doAssert outputBatchSpec(ask).exclusive == @[dest], "the folder was not the lock"
+      let got = runBatch(ask, Store(), @[])
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      let it = itemOf(got.wrote, "one.sgd")
+      doAssert it.outcome == boWritten, it.why
+      doAssert it.destination.extractFilename == "2001.0103.0001.sgy", it.destination
+      doAssert fileExists(dest / "2001.0103.0001.sgy")
+      doAssert not fileExists(dest / "one.sgy"), "the pattern was ignored"
+
+    block refusesRecord:
+      let dest = dir / "named-shots"
+      let ask = BatchAsk(root: src, items: @[
+        BatchItem(source: segy, relative: "shots.sgy"),
+        BatchItem(source: one, relative: "one.sgd")],
+        destRoot: dest, options: segyOpts, pattern: recOnly)
+      let got = runBatch(ask, Store(), @[])
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      let shots = itemOf(got.wrote, "shots.sgy")
+      doAssert shots.outcome == boFailed, "a file of two shots was written"
+      doAssert shots.why == "Record is not one value in this file.", shots.why
+      doAssert not fileExists(dest / "shots.sgy")
+      let kept = itemOf(got.wrote, "one.sgd")
+      doAssert kept.outcome == boWritten, kept.why
+      doAssert kept.destination.extractFilename == "0001.sgy", kept.destination
+
+    block sameRenderedName:
+      let dest = dir / "named-clash"
+      let ask = BatchAsk(root: src, items: @[
+        BatchItem(source: one, relative: "one.sgd"),
+        BatchItem(source: two, relative: "two.sgd")],
+        destRoot: dest, options: segyOpts, mirrorFolders: false, pattern: shot)
+      let got = runBatch(ask, Store(), @[])
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      let first = itemOf(got.wrote, "one.sgd")
+      let second = itemOf(got.wrote, "two.sgd")
+      doAssert first.outcome == boWritten, first.why
+      doAssert second.outcome == boFailed, "the second file was written"
+      doAssert second.why == "2001.0103.0001.sgy is already the output of one.sgd.", second.why
+      doAssert fileExists(dest / "2001.0103.0001.sgy")
+
+    block alreadyThere:
+      let dest = dir / "named-exists"
+      createDir(dest)
+      writeFile(dest / "2001.0103.0001.sgy", "taken")
+      let ask = BatchAsk(root: src, items: @[BatchItem(source: one, relative: "one.sgd")],
+        destRoot: dest, options: segyOpts, pattern: shot)
+      let got = runBatch(ask, Store(), @[])
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      let it = itemOf(got.wrote, "one.sgd")
+      doAssert it.outcome == boFailed, "an existing destination was written"
+      doAssert it.why == "The destination already exists.", it.why
+      doAssert readFile(dest / "2001.0103.0001.sgy") == "taken"
+
+    block keepOwn:
+      let held = src / "joined.sgd"
+      copyFile(vib, held)
+      var open = openSeismic(held, keys = true)
+      for t in 0 ..< open.len: open.mindex.keys[t].srcPoint = 999.0
+      open.mindex.joined = true
+      let dest = dir / "named-own"
+      let ask = BatchAsk(root: src, items: @[BatchItem(source: held, relative: "joined.sgd")],
+        destRoot: dest, options: OutputOptions(format: ofSegy, writeSessionPositions: false),
+        pattern: OutputPattern(name: "Point", separator: nsDot,
+          parts: @[NamePart(kind: npSrcPoint, pad: 4)]))
+      let got = runBatch(ask, Store(), @[(path: held, file: addr open,
+        edits: FileEdits(), signature: SignatureFacts())])
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      let it = itemOf(got.wrote, "joined.sgd")
+      doAssert it.outcome == boWritten, it.why
+      doAssert it.destination.extractFilename == "0103.sgy", it.destination
+      doAssert not fileExists(dest / "0999.sgy"), "the joined station was used"
+      var back = openSeismic(dest / "0103.sgy", keys = true)
+      doAssert back.traceKeys(0).srcPoint == 103.0, "the name does not match the bytes"
+      back.close()
+      open.close()
+
+    block signatureFile:
+      let dat = datFile(src, "ctrl.dat")
+      let dest = dir / "named-dat"
+      let ask = BatchAsk(root: src, items: @[BatchItem(source: dat, relative: "ctrl.dat")],
+        destRoot: dest, options: segyOpts, pattern: OutputPattern(name: "Sig",
+          separator: nsDot, parts: @[NamePart(kind: npController),
+          NamePart(kind: npFileNumber)]))
+      let got = runBatch(ask, Store(), @[])
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      let it = itemOf(got.wrote, "ctrl.dat")
+      doAssert it.outcome == boWritten, it.why
+      doAssert it.destination.extractFilename == "4321.7001.sgy", it.destination
+
+    block noPattern:
+      let dest = dir / "named-plain"
+      let ask = BatchAsk(root: src, items: @[BatchItem(source: plain, relative: "plain.sgd")],
+        destRoot: dest, options: segyOpts)
+      doAssert outputBatchSpec(ask).exclusive == @[dest / "plain.sgy"]
+      let got = runBatch(ask, Store(), @[])
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      let it = itemOf(got.wrote, "plain.sgd")
+      doAssert it.outcome == boWritten, it.why
+      doAssert it.destination.extractFilename == "plain.sgy", it.destination
+      let sigDest = dir / "named-sigext"
+      let dat = datFile(src, "same.dat")
+      let vibSig = vibFile(src, "same.vib")
+      let both = BatchAsk(root: src, items: @[
+        BatchItem(source: dat, relative: "same.dat"),
+        BatchItem(source: vibSig, relative: "same.vib")],
+        destRoot: sigDest, options: segyOpts, mirrorFolders: false)
+      let wrote = runBatch(both, Store(), @[])
+      doAssert wrote.st == jsDone, wrote.error & " / " & wrote.wrote.reason
+      doAssert itemOf(wrote.wrote, "same.dat").destination.extractFilename == "same.dat.sgy"
+      doAssert itemOf(wrote.wrote, "same.vib").destination.extractFilename == "same.vib.sgy"
+      doAssert fileExists(sigDest / "same.dat.sgy") and fileExists(sigDest / "same.vib.sgy")
+
+    block leavesFolder:
+      let dest = dir / "named-leave"
+      let ask = BatchAsk(root: src, items: @[BatchItem(source: one, relative: ".." / "one.sgd")],
+        destRoot: dest, options: segyOpts, pattern: shot)
+      let got = runBatch(ask, Store(), @[])
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      let it = itemOf(got.wrote, ".." / "one.sgd")
+      doAssert it.outcome == boFailed, "a path that leaves the folder was written"
+      doAssert "leaves the destination folder" in it.why, it.why
 
   doAssert readFile(segy) == sampleSegy and readFile(segd) == sampleSegd
   doAssert readFile(plain) == plainBytes and readFile(edited) == editedBytes and

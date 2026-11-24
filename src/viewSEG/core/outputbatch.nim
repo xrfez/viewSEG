@@ -16,12 +16,16 @@
 ## strings given here, not resolved. `refuseOutputRoot` does read the file
 ## system (the destination's own links, and the nearest existing ancestor
 ## when it is not there yet), so a window calls it on a job, and this job
-## calls it before the first write.
+## calls it before the first write. When `pattern` has parts, each file's
+## leaf is that pattern rendered after the open; the destination folder is
+## then the job's exclusive resource, because the leaf is not known before
+## the open. No parts: the names are as before.
 
 import std/[os, sets, strutils, tables, times]
 import parseSEG
+import parseSEG/model/traceindex
 import edits, filejobs, filekinds, filememory, filesystem, identity, jobs, outputjobs,
-  session, signatures, sigtypes, threads
+  outputnames, outputnamevalues, session, signatures, sigtypes, threads, vendormaps
 
 const
   BatchScale = 1_000_000 ## one file's share of the job's progress
@@ -63,6 +67,9 @@ type
       ## true: `destRoot / relative` with the new extension, creating sub
       ## folders. false: every file in `destRoot`; a second file that would
       ## take a name already used is a failure of that file, not an overwrite.
+    pattern*: OutputPattern
+      ## How each file is named. No parts: today's names, including a kept
+      ## source extension when signature files would share one name.
 
   BatchResult* = object
     ## What the batch did. `reason` is set when the batch itself was refused,
@@ -137,6 +144,10 @@ func isSignature(kinds: openArray[FileKind]; i: int): bool =
   ## Whether item `i` is a signature file. A missing kind is not one.
   i < kinds.len and kinds[i] in SignatureFileKinds
 
+func patternOn(ask: BatchAsk): bool {.inline.} =
+  ## A chosen pattern. No parts keeps today's names.
+  ask.pattern.parts.len > 0
+
 proc planned(ask: BatchAsk; kinds: openArray[FileKind]): seq[Plan] =
   ## Each item's destination. A second item that lands on a name already
   ## taken fails with a sentence; the first keeps the name. When two or more
@@ -159,32 +170,33 @@ proc planned(ask: BatchAsk; kinds: openArray[FileKind]): seq[Plan] =
       var row = byDest.getOrDefault(key)
       row.add i
       byDest[key] = row
-  for _, idxs in byDest.pairs:
-    var sigs = 0
-    for i in idxs:
-      if isSignature(kinds, i): inc sigs
-    if sigs >= 2:
+  if not patternOn(ask):
+    for _, idxs in byDest.pairs:
+      var sigs = 0
       for i in idxs:
-        if isSignature(kinds, i):
-          let before = result[i].dest
-          var plan = planDest(ask.destRoot, ask.items[i].relative,
-            ask.mirrorFolders, ask.options.format, keepExt = true)
-          if plan.why.len == 0 and plan.dest.len > 0:
-            if plan.dest != before:
-              plan.note = "The source extension was kept in the name so two " &
-                "signature files are not written as one file."
-          elif plan.why.len == 0:
-            plan.why = "No destination was given."
-          result[i] = plan
-  var owner = initTable[string, string]()
-  for i, item in ask.items:
-    if result[i].why.len == 0 and result[i].dest.len > 0:
-      let key = destKey(result[i].dest)
-      if owner.hasKey(key):
-        result[i] = Plan(dest: result[i].dest, why: result[i].dest.extractFilename &
-          " is already the output of " & owner[key] & ".")
-      else:
-        owner[key] = item.relative
+        if isSignature(kinds, i): inc sigs
+      if sigs >= 2:
+        for i in idxs:
+          if isSignature(kinds, i):
+            let before = result[i].dest
+            var plan = planDest(ask.destRoot, ask.items[i].relative,
+              ask.mirrorFolders, ask.options.format, keepExt = true)
+            if plan.why.len == 0 and plan.dest.len > 0:
+              if plan.dest != before:
+                plan.note = "The source extension was kept in the name so two " &
+                  "signature files are not written as one file."
+            elif plan.why.len == 0:
+              plan.why = "No destination was given."
+            result[i] = plan
+    var owner = initTable[string, string]()
+    for i, item in ask.items:
+      if result[i].why.len == 0 and result[i].dest.len > 0:
+        let key = destKey(result[i].dest)
+        if owner.hasKey(key):
+          result[i] = Plan(dest: result[i].dest, why: result[i].dest.extractFilename &
+            " is already the output of " & owner[key] & ".")
+        else:
+          owner[key] = item.relative
 
 proc outputBatchSpec*(ask: BatchAsk): JobSpec =
   ## The job that writes `ask`: background, reading each source, needing
@@ -192,18 +204,25 @@ proc outputBatchSpec*(ask: BatchAsk): JobSpec =
   ## so no kind is known and a kept extension is not in these names; the
   ## job plans again from each file's first bytes. An open file passed to
   ## the job must use that item's `source` as its path, so `reads` keeps a
-  ## close from taking it.
+  ## close from taking it. When a pattern is set, the rendered leaf is not
+  ## known until the file is opened, so the exclusive resource is the
+  ## destination folder (`destRoot`, the string given, not resolved). A
+  ## taken or existing leaf is still refused before that file is written.
   var reads: seq[string] = @[]
   var exclusive: seq[string] = @[]
-  var seen = initHashSet[string]()
-  let plans = planned(ask, [])
-  for i, item in ask.items:
+  for item in ask.items:
     if item.source.len > 0: reads.add item.source
-    if i < plans.len and plans[i].why.len == 0 and plans[i].dest.len > 0:
-      let key = destKey(plans[i].dest)
-      if key notin seen:
-        seen.incl key
-        exclusive.add plans[i].dest
+  if patternOn(ask):
+    if ask.destRoot.len > 0: exclusive.add ask.destRoot
+  else:
+    var seen = initHashSet[string]()
+    let plans = planned(ask, [])
+    for i in 0 ..< ask.items.len:
+      if i < plans.len and plans[i].why.len == 0 and plans[i].dest.len > 0:
+        let key = destKey(plans[i].dest)
+        if key notin seen:
+          seen.incl key
+          exclusive.add plans[i].dest
   let name = ask.destRoot.extractFilename
   JobSpec(title: if name.len == 0: "Write files" else: "Write files to " & name,
     lane: jlBackground, reads: reads, exclusive: exclusive)
@@ -462,6 +481,46 @@ proc cancelWhy(outSink: OutputSink): string =
   if outSink != nil and outSink.result.reason.len > 0: outSink.result.reason
   else: "Cancelled."
 
+proc positionsJoined(file: SeismicFile): bool =
+  ## Whether a join or a move changed this file's keys.
+  if not file.hasKeys: return false
+  if file.index.joined: return true
+  for groups in file.index.joinedTraces:
+    if groups.card > 0: return true
+  false
+
+proc openOwnKeys(file: SeismicFile; source: string): SeismicFile =
+  ## The file's own header keys. A join has replaced the keys the session
+  ## holds, and the writer is not exported, so a name that keeps those
+  ## positions reads them again the same way: a file in memory is copied,
+  ## a disk file is read through `fs` first.
+  let opts = OpenOptions(vendors: currentVendors())
+  if file.inMemory:
+    let n = file.mappedSize
+    if n < 0 or n > int64(high(int)):
+      raise newException(ValueError, "The file is too large to read its own positions.")
+    var bytes = file.copyBytes(0, int(n))
+    result = openSeismicBytes(bytes, source, keys = false, opts = opts)
+  else:
+    fs.mappedRead(source)
+    result = openSeismic(source, keys = false, opts = opts)
+
+proc renderedLeaf(ask: BatchAsk; plan: Plan; file: SeismicFile; source: string;
+    facts: SignatureFacts; edits: FileEdits; own: ptr SeismicFile): string =
+  ## The planned parent with the pattern's leaf. Raises `ValueError` with
+  ## the sentence when the file cannot be named, or the path would leave
+  ## the destination folder.
+  let values = nameValuesOf(file, source, facts, edits, ask.options.dropKilled, own)
+  let named = render(ask.pattern, values, extOf(ask.options.format))
+  if named.problem.len > 0:
+    raise newException(ValueError, named.problem)
+  if named.name.len == 0:
+    raise newException(ValueError, "The name pattern has no parts.")
+  let dest = plan.dest.parentDir / named.name
+  if not stringInside(normalizedPath(dest), normalizedPath(ask.destRoot)):
+    raise newException(ValueError, "The relative path leaves the destination folder.")
+  dest
+
 proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenFile];
     sink: BatchSink) =
   if sink != nil: sink.result = BatchResult(items: @[])
@@ -488,6 +547,7 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
   for item in writing.items:
     if item.source.len > 0: guard.add item.source
   var doneFiles = 0
+  var taken = initTable[string, string]()
   for i, item in writing.items:
     ctx.setPhase(filePhase(i, count, item.relative))
     if ctx.cancelled: stopBatch(sink, writing, plans, i)
@@ -497,10 +557,13 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
       inc doneFiles
       discard ctx.progress(int64(doneFiles) * BatchScale, int64(count) * BatchScale)
       continue
+    var dest = plans[i].dest
     var made: seq[string] = @[]
     var s: Session = nil
     var outSink: OutputSink = nil
     var itemLines: seq[string] = @[]
+    var ownFile: SeismicFile
+    var openedOwn = false
     try:
       for d in newDirs(plans[i].dest, writing.destRoot):
         fs.createDir(d)
@@ -529,31 +592,48 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
         file = s.filePtr
         edits = savedEdits(ctx, store, item.source, s.modified, itemLines, doneFiles, count)
         itemLines.add BatchOwnPositions
+        if s != nil: signature = s.signature
       if plans[i].note.len > 0: itemLines.add plans[i].note
       if ctx.cancelled: raise newException(JobCancelledError, "Cancelled.")
+      if patternOn(writing):
+        if file == nil or not file[].isOpen:
+          raise newException(ValueError, "The source file is not open.")
+        if not signature.isSignature and not writing.options.writeSessionPositions and
+            positionsJoined(file[]):
+          ownFile = openOwnKeys(file[], item.source)
+          openedOwn = true
+          if ownFile.len != file[].len:
+            raise newException(ValueError, "The file's own positions could not be read.")
+        let own = if openedOwn: addr ownFile else: nil
+        dest = renderedLeaf(writing, plans[i], file[], item.source, signature, edits, own)
+        let key = destKey(dest)
+        if taken.hasKey(key):
+          raise newException(ValueError, dest.extractFilename &
+            " is already the output of " & taken[key] & ".")
+        taken[key] = item.relative
       outSink = OutputSink()
       let report = proc (done, total: int): bool {.gcsafe.} =
         ctx.progress(int64(doneFiles) * BatchScale + shareOf(int64(done), int64(total)),
           int64(count) * BatchScale)
       {.cast(gcsafe).}:
-        writeOutput(ctx, file, item.source, plans[i].dest, writing.options, edits, guard,
+        writeOutput(ctx, file, item.source, dest, writing.options, edits, guard,
           outSink, report, signature)
       var lines = itemLines
       for x in outSink.result.lines: lines.add x
-      note(sink, item.relative, plans[i].dest, boWritten, outSink.result.written,
+      note(sink, item.relative, dest, boWritten, outSink.result.written,
         outSink.result.dropped, lines, "")
     except JobCancelledError:
       dropEmpty(made)
-      note(sink, item.relative, plans[i].dest, boSkipped, 0, 0, itemLines, cancelWhy(outSink))
+      note(sink, item.relative, dest, boSkipped, 0, 0, itemLines, cancelWhy(outSink))
       stopBatch(sink, writing, plans, i + 1)
     except SegCancelledError:
       dropEmpty(made)
-      note(sink, item.relative, plans[i].dest, boSkipped, 0, 0, itemLines, "Cancelled.")
+      note(sink, item.relative, dest, boSkipped, 0, 0, itemLines, "Cancelled.")
       stopBatch(sink, writing, plans, i + 1)
     except CatchableError as e:
       if ctx.cancelled:
         dropEmpty(made)
-        note(sink, item.relative, plans[i].dest, boSkipped, 0, 0, itemLines,
+        note(sink, item.relative, dest, boSkipped, 0, 0, itemLines,
           cancelWhy(outSink))
         stopBatch(sink, writing, plans, i + 1)
       dropEmpty(made)
@@ -562,8 +642,9 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
       if outSink != nil and outSink.result.reason.len > 0:
         why = outSink.result.reason
         for x in outSink.result.lines: lines.add x
-      note(sink, item.relative, plans[i].dest, boFailed, 0, 0, lines, why)
+      note(sink, item.relative, dest, boFailed, 0, 0, lines, why)
     finally:
+      if openedOwn: ownFile.close()
       s = nil
       clearCycleRoots()
     inc doneFiles
