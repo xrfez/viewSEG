@@ -8,8 +8,9 @@
 ## Project holds the job's folder (New project, Open project, Recent projects,
 ## the Project window, the vendor map, Import survey, Import shot log and Clear survey, Close
 ## project); Edit undoes, redoes and clears the trace edits of the file the
-## Seismic window shows, whichever window has the focus (Ctrl+Z, Ctrl+Shift+Z
-## and Ctrl+Y everywhere but in a text field, which keeps its own undo), imports
+## Seismic window shows (Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y everywhere but in a
+## text field, which keeps its own undo, and in the Shot log window, which
+## undoes its own cell edits), imports
 ## and exports them, and opens the File memory window (what is remembered about
 ## files: it is about files on disk); View shows, hides and brings forward each
 ## window and holds the theme; Analysis makes new plots, compares two traces and
@@ -125,6 +126,8 @@ type
     folderWhy*: string ## why it cannot; "" when it can
     outputReady*: bool ## File > Output... can run
     outputWhy*: string ## why it cannot; "" when it can
+    shotLogFocused*: bool
+      ## the Shot log window had the focus: Ctrl+Z and Ctrl+Y undo its cell edits
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -610,11 +613,13 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
   result = MenuResult()
   marked = addr marks
   let typing = igGetIO_Nil().WantTextInput # a text field keeps its own Ctrl+Z
+  let shotKeys = input.shotLogFocused and not typing
   for a in MenuAction:
     if shortcuts[a] != 0 and not (typing and a in {maUndo, maRedo, maSelectAll}) and
+        not (shotKeys and a in {maUndo, maRedo}) and
         igShortcut_Nil(shortcuts[a], ImGui_InputFlags_RouteGlobal.cint):
       result.actions.incl a
-  if not typing and igShortcut_Nil(ImGui_Mod_Ctrl.cint or ImGui_Key_Y.cint,
+  if not typing and not shotKeys and igShortcut_Nil(ImGui_Mod_Ctrl.cint or ImGui_Key_Y.cint,
       ImGui_InputFlags_RouteGlobal.cint):
     result.actions.incl maRedo
   igPushStyleVar_Float(ImGui_StyleVar_WindowBorderSize.cint, 0) # one block with the toolbar

@@ -1480,7 +1480,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     folderReady: folderReady(ui.core.fileList.folder.len > 0),
     folderWhy: folderWhy(ui.core.fileList.folder.len > 0),
     outputReady: ui.core.fileList.folder.len > 0,
-    outputWhy: if ui.core.fileList.folder.len > 0: "" else: OutputNeedFolder)
+    outputWhy: if ui.core.fileList.folder.len > 0: "" else: OutputNeedFolder,
+    shotLogFocused: ui.shotLog.focused)
   let menu = drawMainMenu(menuInput, ui.marks)
   if menu.newPlot:
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: menu.newPlotView)

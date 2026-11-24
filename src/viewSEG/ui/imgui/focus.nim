@@ -27,6 +27,9 @@ proc watch*(fc: var FocusClicks) =
     for b in [ImGui_MouseButton_Left, ImGui_MouseButton_Right, ImGui_MouseButton_Middle]:
       if igIsMouseClicked_Bool(b.cint, false): fc.pressed = fc.before
 
+func focused*(fc: FocusClicks): bool {.inline.} = fc.before
+  ## Whether the window had the focus at the end of the last frame.
+
 func acts*(fc: FocusClicks): bool {.inline.} = fc.pressed
   ## Whether the click going on (pressed this frame, or released this frame
   ## after a press over the window) started in a window that had the focus.
@@ -34,6 +37,11 @@ func acts*(fc: FocusClicks): bool {.inline.} = fc.pressed
 proc settle*(fc: var FocusClicks) =
   ## Notes whether the window has the focus now. Call just before `igEnd`.
   fc.before = igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint)
+
+proc blur*(fc: var FocusClicks) =
+  ## Forgets a focus the window no longer has. Call when it is not drawn.
+  fc.before = false
+  fc.pressed = false
 
 proc handBack*(wasOpen: var bool; open: bool; title: string) =
   ## A modal opened from the window titled `title` was drawn this frame
