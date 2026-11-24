@@ -151,6 +151,9 @@ type
       ## a `.vib`'s window: the accelerometer set a 100 % force in pound-counts was typed on
       ## (each set has its own sensitivity: on the other set it is another force); set when
       ## the value is typed
+    forceHundredSetKnown*: bool = true
+      ## `forceHundredSet` was stored with the typed force. False: an older project
+      ## did not record it, so pound-counts are not judged against a guessed set.
     accelSet*: AccelSet = asB
       ## a `.vib`'s vibrator signature: the accelerometer set judged (B, the set the .dat
       ## records, by default); of this window only, never remembered

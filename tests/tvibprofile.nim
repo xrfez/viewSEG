@@ -140,6 +140,35 @@ proc main*() =
     doAssert read.vibProfile.forceHundredUnit.len == 0
     doAssert read.hasVibProfile
 
+  block forceSet:
+    ## A pound-counts 100 % force keeps the accelerometer set it was typed on.
+    ## An older document that does not store the set leaves it unknown.
+    let limits = QcLimits()
+    let p = profileOf(limits, 500.0, 5, asA, ForceScale(), 1000.0, NaN, "", NaN,
+      "pound-counts", asB)
+    doAssert p.forceHundredSet == asB and p.forceHundredSetKnown
+    doAssert p.accelSet == asA
+    let ask = applied(p, [])
+    doAssert ask.forceHundredSet == asB and ask.forceHundredSetKnown
+    doAssert ask.accelSet == asA
+    let back = profileOf(ask.options.qc, ask.options.qcWindowMs, ask.options.harmonics,
+      ask.accelSet, ask.forceScale, ask.options.forceHundredPct, ask.options.targetPct,
+      ask.referenceId, ask.topHz, ask.forceHundredUnit, ask.forceHundredSet)
+    doAssert back == p
+    var d = ProjectDoc(name: "Land 2026", hasVibProfile: true, vibProfile: p)
+    let text = projectDocument(d)
+    doAssert "(forceHundredSet B)" in text, text
+    doAssert "(forceHundredUnit \"pound-counts\")" in text
+    let stored = roundTrip(d)
+    doAssert stored.vibProfile.forceHundredSet == asB and stored.vibProfile.forceHundredSetKnown
+    doAssert stored.vibProfile == p
+    let older = text.replace(" (forceHundredSet B)", "")
+    var problems: seq[string]
+    let read = readProject(older, "project.nif", problems)
+    doAssert problems.len == 0, $problems
+    doAssert not read.vibProfile.forceHundredSetKnown
+    doAssert read.vibProfile.forceHundredUnit == "pound-counts"
+
   block weights:
     var d = ProjectDoc(name: "Land 2026")
     d.jobWeights = VibJobWeights(holdDownKg: 1200.0, baseplateMassKg: 1800.0,

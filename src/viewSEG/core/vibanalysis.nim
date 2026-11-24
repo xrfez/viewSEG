@@ -370,11 +370,17 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     let now = gfUnit(u.units[vsGroundForce], sig, scaled)
     let raw = if sig.isDat: "counts" else: "pound-counts"
     let typedIn = p.forceHundredUnit
-    if typedIn == "pound-counts" and not sig.isDat and p.forceHundredSet != p.accelSet:
+    if typedIn == "pound-counts" and not sig.isDat and
+        (not p.forceHundredSetKnown or p.forceHundredSet != p.accelSet):
       hundredFor = NaN
-      result.hundredProblem = "typed in pound-counts of accelerometer set " &
-        $p.forceHundredSet & "; the window now judges set " & $p.accelSet &
-        " (another sensitivity): type it again"
+      if p.forceHundredSetKnown:
+        result.hundredProblem = "typed in pound-counts of accelerometer set " &
+          $p.forceHundredSet & "; the window now judges set " & $p.accelSet &
+          " (another sensitivity): type it again"
+      else:
+        result.hundredProblem = "typed in pound-counts of an accelerometer set " &
+          "this project does not record; the window now judges set " &
+          $p.accelSet & " (another sensitivity): type it again"
     elif typedIn != now:
       if typedIn == raw and now == "N" and scaled: hundredFor *= sig.gfToN
       else:

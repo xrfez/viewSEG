@@ -133,6 +133,7 @@ proc writeVibProfile(w: var NifWriter; p: VibQcProfile) =
     w.close
   if finite(p.forceHundredPct): w.value("forceHundredPct", p.forceHundredPct)
   if p.forceHundredUnit.len > 0: w.value("forceHundredUnit", p.forceHundredUnit)
+  if p.forceHundredSetKnown: w.choice("forceHundredSet", $p.forceHundredSet)
   if finite(p.targetPct): w.value("targetPct", p.targetPct)
   if p.referenceId.len > 0: w.value("referenceId", p.referenceId)
   if finite(p.topHz): w.value("topHz", p.topHz)
@@ -487,13 +488,14 @@ proc whole(r: var Reading; n: NifNode; lo, hi: int; x: var int) =
   else:
     r.problem(n, "(" & n.tag & ") needs a whole number from " & $lo & " to " & $hi)
 
-proc accel(r: var Reading; n: NifNode; x: var AccelSet) =
+proc accel(r: var Reading; n: NifNode; x: var AccelSet): bool =
+  ## Sets `x` when `n` names A or B. A bad value is a problem and `x` is left.
   if n.kids.len == 1 and n.kids[0].kind == nkIdent:
     for v in AccelSet:
       if $v == n.kids[0].text:
         x = v
-        return
-  r.problem(n, "(accelSet) needs A or B")
+        return true
+  r.problem(n, "(" & n.tag & ") needs A or B")
 
 proc limits(r: var Reading; n: NifNode; p: var VibQcProfile) =
   ## A limit written is on; one left out is off. A field not known is kept.
@@ -530,11 +532,14 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "qcWindowMs": r.number(c, WindowMsRange, d.vibProfile.qcWindowMs)
       of "harmonics": r.whole(c, int(HarmonicRange.lo), int(HarmonicRange.hi),
           d.vibProfile.harmonics)
-      of "accelSet": r.accel(c, d.vibProfile.accelSet)
+      of "accelSet": discard r.accel(c, d.vibProfile.accelSet)
       of "limits": r.limits(c, d.vibProfile)
       of "forceScale": r.forceScale(c, d.vibProfile)
       of "forceHundredPct": r.number(c, MassKgRange, d.vibProfile.forceHundredPct)
       of "forceHundredUnit": r.text(c, d.vibProfile.forceHundredUnit)
+      of "forceHundredSet":
+        if r.accel(c, d.vibProfile.forceHundredSet):
+          d.vibProfile.forceHundredSetKnown = true
       of "targetPct": r.number(c, TargetPctRange, d.vibProfile.targetPct)
       of "referenceId": r.text(c, d.vibProfile.referenceId)
       of "topHz": r.number(c, TopHzRange, d.vibProfile.topHz)

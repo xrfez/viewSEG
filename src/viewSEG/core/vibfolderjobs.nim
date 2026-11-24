@@ -74,12 +74,15 @@ proc folderRoles*(codes: openArray[int16]; kind: SignatureKind;
 
 proc folderParams*(ask: VibQcAsk; roles: VibRoles; kind: SignatureKind): AnalysisParams =
   ## The ask a Vibrator window would use, with no typed masses. A 100 % force
-  ## the profile did not type stays unset. Its unit is the one the profile
-  ## stored, never guessed from the scale.
+  ## the profile did not type stays unset. Its unit, and the accelerometer set
+  ## a pound-counts force was typed on, are the ones the profile stored, never
+  ## the set now judged and never guessed from the scale. A set an older
+  ## project did not store stays unknown.
   AnalysisParams(roles: roles, harmonics: ask.options.harmonics,
     accelSet: ask.accelSet, qcWindowMs: ask.options.qcWindowMs, qc: ask.options.qc,
     forceHundredPct: ask.options.forceHundredPct,
-    forceHundredUnit: ask.forceHundredUnit, forceHundredSet: ask.accelSet,
+    forceHundredUnit: ask.forceHundredUnit, forceHundredSet: ask.forceHundredSet,
+    forceHundredSetKnown: ask.forceHundredSetKnown,
     targetPct: ask.options.targetPct, phaseShow: ask.options.phaseShow,
     reactionMassKg: NaN, baseplateMassKg: NaN, projectReference: false)
 

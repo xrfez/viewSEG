@@ -343,6 +343,50 @@ proc main*() =
       if w == "Measured against the project reference sweep-a": said = true
     doAssert said, $row.warnings
 
+  block poundCountsSet:
+    ## Pound-counts belong to the set they were typed on. Seen to fail when the
+    ## job assumed the set now judged and failed the file against it.
+    let vib = vibFile(dir, "setforce.vib")
+    var limits = QcLimits(peakForcePct: 0.01)
+    let mismatched = applied(profileOf(limits, 500.0, 5, asB, ForceScale(), 1000.0,
+      NaN, "", NaN, "pound-counts", asA), [])
+    let roles = folderRoles(@[21'i16, 1, 11, 2], sgVib, asB)
+    let params = folderParams(mismatched, roles, sgVib)
+    doAssert params.forceHundredSet == asA, $params.forceHundredSet
+    doAssert params.accelSet == asB
+    let sentence = "typed in pound-counts of accelerometer set A; the window now " &
+      "judges set B (another sensitivity): type it again"
+    let got = runJob(@[listed(vib)], mismatched)
+    doAssert got.st == jsDone, got.error
+    let row = rowOf(got.table, vib)
+    doAssert row.outcome == foJudged, $row.outcome & " " & row.problem
+    var said = false
+    for w in row.warnings:
+      if w == sentence: said = true
+    doAssert said, $row.warnings
+    for m in row.measures:
+      if m.limit in {qlAvgForce, qlPeakForce}:
+        doAssert m.status == qsNotJudged, $m.status
+    var old = profileOf(limits, 500.0, 5, asB, ForceScale(), 1000.0, NaN, "", NaN,
+      "pound-counts", asB)
+    old.forceHundredSetKnown = false
+    let unknown = applied(old, [])
+    doAssert not unknown.forceHundredSetKnown
+    let unread = runJob(@[listed(vib)], unknown)
+    doAssert unread.st == jsDone, unread.error
+    let oldRow = rowOf(unread.table, vib)
+    doAssert oldRow.outcome == foJudged, $oldRow.outcome & " " & oldRow.problem
+    let unknownSentence = "typed in pound-counts of an accelerometer set this " &
+      "project does not record; the window now judges set B (another sensitivity): " &
+      "type it again"
+    var unknownSaid = false
+    for w in oldRow.warnings:
+      if w == unknownSentence: unknownSaid = true
+    doAssert unknownSaid, $oldRow.warnings
+    for m in oldRow.measures:
+      if m.limit in {qlAvgForce, qlPeakForce}:
+        doAssert m.status == qsNotJudged, $m.status & " " & $oldRow.warnings
+
   block pairedVibKeepsFail:
     ## A paired `.vib` that fails peak force keeps that verdict and is counted.
     ## Seen to fail when pairing wiped it and the totals said 0 failed.

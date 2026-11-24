@@ -2,8 +2,9 @@
 ## QC run can apply them to other files. One profile per project (the job).
 ##
 ## It holds the six limits and the statistics window, the harmonics, the
-## accelerometer set, the force scale, a 100 % force and the unit it was typed
-## in, a drive level when the user typed them, the reference's archive id
+## accelerometer set, the force scale, a 100 % force, the unit it was typed
+## in and, for pound-counts, the accelerometer set that force was typed on,
+## a drive level when the user typed them, the reference's archive id
 ## (never its samples) and the top frequency typed for that reference.
 ##
 ## It does not hold anything read from a file: a controller or vibrator id, a
@@ -26,6 +27,12 @@ type
     forceScale*: ForceScale
     forceHundredPct*: float64 = NaN ## NaN: the user did not type a 100 % force
     forceHundredUnit*: string ## the unit that force was typed in; "": not said
+    forceHundredSet*: AccelSet = asB
+      ## the accelerometer set a 100 % force in pound-counts was typed on.
+      ## Meaningful only when `forceHundredSetKnown`.
+    forceHundredSetKnown*: bool
+      ## the document stored `forceHundredSet`. An older project that leaves
+      ## the field out is unknown: not the default set, and not the set judged.
     targetPct*: float64 = NaN ## NaN: the user did not type a drive level
     referenceId*: string ## the reference's archive id; "" is none; never samples
     topHz*: float64 = NaN ## the top typed for `referenceId`; NaN: none
@@ -41,6 +48,10 @@ type
     referenceId*: string
     topHz*: float64
     forceHundredUnit*: string ## the unit of the typed 100 % force; "": not said
+    forceHundredSet*: AccelSet = asB
+      ## the set a pound-counts 100 % force was typed on, when known
+    forceHundredSetKnown*: bool
+      ## `forceHundredSet` was stored. False: an older project, the set unknown.
     problems*: seq[string]
 
 const ForceNotJudged* = "No 100 % force: the force limits are not judged."
@@ -66,6 +77,8 @@ func `==`*(a, b: VibQcProfile): bool =
     a.forceScale == b.forceScale and
     sameFloat(a.forceHundredPct, b.forceHundredPct) and
     a.forceHundredUnit == b.forceHundredUnit and
+    a.forceHundredSet == b.forceHundredSet and
+    a.forceHundredSetKnown == b.forceHundredSetKnown and
     sameFloat(a.targetPct, b.targetPct) and a.referenceId == b.referenceId and
     sameFloat(a.topHz, b.topHz)
 
@@ -76,16 +89,19 @@ func referenceProblem*(id: string): string =
 
 func profileOf*(limits: QcLimits; qcWindowMs: float64; harmonics: int;
     accelSet: AccelSet; scale: ForceScale; forceHundredPct, targetPct: float64;
-    referenceId: string; topHz: float64; forceHundredUnit = ""): VibQcProfile =
+    referenceId: string; topHz: float64; forceHundredUnit = "";
+    forceHundredSet = asB): VibQcProfile =
   ## The profile a Vibrator window is using. Pass that window's values, not a
   ## signature file's built-in reset (which clears a typed 100 % force and drive
   ## level). `referenceId` is the archive id, never samples. `topHz` is the top
   ## typed for that reference; NaN when none is. A 100 % force or drive level
   ## left NaN was not typed. `forceHundredUnit` is the unit that force was typed
-  ## in; empty when none was said.
+  ## in; empty when none was said. `forceHundredSet` is the accelerometer set a
+  ## pound-counts force was typed on; the window's, so it is known.
   VibQcProfile(limits: limits, qcWindowMs: qcWindowMs, harmonics: harmonics,
     accelSet: accelSet, forceScale: scale, forceHundredPct: forceHundredPct,
-    forceHundredUnit: forceHundredUnit, targetPct: targetPct,
+    forceHundredUnit: forceHundredUnit, forceHundredSet: forceHundredSet,
+    forceHundredSetKnown: true, targetPct: targetPct,
     referenceId: referenceId, topHz: topHz)
 
 func typedForce(x: float64): bool {.inline.} =
@@ -100,7 +116,8 @@ func applied*(p: VibQcProfile; archiveIds: openArray[string]): VibQcAsk =
     qcWindowMs: p.qcWindowMs, qc: p.limits, forceHundredPct: p.forceHundredPct,
     targetPct: p.targetPct), accelSet: p.accelSet, forceScale: p.forceScale,
     referenceId: p.referenceId, topHz: p.topHz,
-    forceHundredUnit: p.forceHundredUnit)
+    forceHundredUnit: p.forceHundredUnit, forceHundredSet: p.forceHundredSet,
+    forceHundredSetKnown: p.forceHundredSetKnown)
   if p.referenceId.len == 0 or p.referenceId notin archiveIds:
     result.problems.add referenceProblem(p.referenceId)
   if not typedForce(p.forceHundredPct):
