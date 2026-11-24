@@ -48,6 +48,14 @@ components of the same type and never re-sorting anything:
    could not be read (a recorder that keeps each trace's start time in its own trace header
    extension needs a vendor header map that names that field).
 
+A receiver gather that is not continuous is a **shot gather** when, in the order of the file, the
+receiver point changes between most consecutive segments of one component: the receivers repeat
+from record to record, as shots at uneven times do. Consecutive traces of one point that share a
+start time are one segment, whatever their component codes (the channels of one station are never
+compared with each other). A receiver point is its line and point, else its group coordinates,
+else its channel number: a file with neither of the first two whose single receiver changes its
+channel number from trace to trace reads as a shot gather. Otherwise it is time sliced.
+
 The kind is asked of any file you open, so the window decides it from the first 8 distinct start
 times of each receiver. The slice itself places every segment and checks every start: a trace off
 the step anywhere later in the file refuses the slice with the sentence above.

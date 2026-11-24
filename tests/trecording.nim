@@ -9,7 +9,10 @@
 ## instead of every boundary); a step taken as the commonest start difference,
 ## so dropouts at most boundaries made the dead time the step; a trace one
 ## sample short refused (floats instead of samples); a repeat of 5% refused; the receiver
-## change in file order never asked ("and false"): the shots read as time sliced.
+## change in file order never asked ("and false"): the shots read as time sliced; the traces
+## of one station and start not taken as one segment (the uncoded channels compared with each
+## other): "uncoded shots, Rev 3: rkReceiverSliced"; the group coordinates not asked before the
+## channel: "coordinates: rkShotGather".
 
 import std/[assertions, math, os, strutils]
 import parseSEG
@@ -103,6 +106,65 @@ proc segyFacts(dir, name: string; specs: openArray[Spec]; n = 1000): RecordingFa
     k.rcvLine = 1
     k.rcvPoint = float64(s.rcv + 1)
     w.writeTrace(k, newSeq[float32](n))
+  discard w.close()
+  var f = openSeismic(path, keys = true)
+  try:
+    result = describeRecording(planRecording(addr f, path, DtMs, VendorRegistry()))
+  finally:
+    f.close()
+
+proc uncodedShots(dir, name: string; rev2: bool): RecordingFacts =
+  ## Six shots, uneven in time, of 60 stations of three channels each whose component is not
+  ## coded (0), in SEG-D Rev 3 or, converted, Rev 2.1 (whose records keep their time to the
+  ## second).
+  createDir(dir)
+  let rev3 = dir / (name & (if rev2: ".r3" else: ".sgd"))
+  var w = openSeismicWriter(rev3, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: 1000))
+  const firsts = [0, 1650, 4050, 5750, 8950, 10600] # no step between them, also by the second
+  for shot, first in firsts:
+    for r in 0 ..< 60:
+      for c in 0 ..< 3:
+        var k = initTraceKeys()
+        k.status = tsLive
+        k.record = float64(shot + 1)
+        k.channel = float64(r * 3 + c + 1)
+        k.component = 0
+        k.intervalUs = 2000
+        k.t0Ms = 0
+        k.time = BaseS + float64(first) * DtMs / 1000
+        k.rcvLine = 1
+        k.rcvPoint = float64(r + 1)
+        w.writeTrace(k, newSeq[float32](1000))
+  discard w.close()
+  var path = rev3
+  if rev2:
+    path = dir / (name & ".sgd")
+    for d in convertSegdRevision(rev3, path, SegdConvertOptions(revision: SegdRevision(
+        major: 2, minor: 1))):
+      doAssert d.severity != sevFatal, $d
+  var f = openSeismic(path)
+  try:
+    result = describeRecording(planRecording(addr f, path, DtMs, VendorRegistry()))
+  finally:
+    f.close()
+
+proc placedByCoordinates(dir, name: string; starts: openArray[int]): RecordingFacts =
+  ## One receiver of a SEG-Y file with group coordinates and no line or point, whose channel
+  ## number goes up from trace to trace.
+  createDir(dir)
+  let path = dir / (name & ".sgy")
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+  for i, first in starts:
+    var k = initTraceKeys()
+    k.status = tsLive
+    k.record = float64(i + 1)
+    k.channel = float64(i + 1)
+    k.intervalUs = 2000
+    k.t0Ms = 0
+    k.time = BaseS + float64(first) * DtMs / 1000
+    k.rcvX = 512_300
+    k.rcvY = 6_401_200
+    w.writeTrace(k, newSeq[float32](1000))
   discard w.close()
   var f = openSeismic(path, keys = true)
   try:
@@ -409,6 +471,19 @@ proc main*() =
     let specs = shots(5, [0, 1000, 2000, 3000])
     for f in [factsOf(dir, "ordered", specs), segyFacts(dir, "orderedy", specs)]:
       doAssert f.kind == rkReceiverContinuous, $f
+
+  block uncoded_channels_of_a_station_are_one_segment:
+    for rev2 in [false, true]:
+      let f = uncodedShots(dir, "uncoded" & $rev2, rev2)
+      doAssert f.ready and f.kind == rkShotGather,
+        "uncoded shots, Rev " & (if rev2: "2.1" else: "3") & ": " & $f.kind
+
+  block a_receiver_is_placed_by_its_coordinates_before_its_channel:
+    var starts: seq[int] = @[]
+    for i in 0 ..< 40: starts.add i * 3000 + (i * i) mod 70
+    let f = placedByCoordinates(dir, "coords", starts)
+    doAssert f.ready and f.kind == rkReceiverSliced, "coordinates: " & $f.kind
+    doAssert f.stations == 1, $f
 
   echo "trecording ok"
   removeDir(dir)

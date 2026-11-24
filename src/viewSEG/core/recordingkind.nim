@@ -13,7 +13,8 @@
 ##    every sub-receiver has exactly one segment and the file has more than one
 ##    live trace, the traces either all carry one station (the channels of one
 ##    station that start together) or they do not (stations differ, or no trace
-##    carries a line and point: `rkShotGather`). Traces of one station that
+##    carries a line and point or group coordinates: `rkShotGather`; a trace
+##    without a line and point is placed by its coordinates). Traces of one station that
 ##    start together are one segment, continuous, when each component type
 ##    appears once; two of one component (type codes of 0 count as one) cannot
 ##    be told from segments without times: not continuous, `swSameStart`.
@@ -24,11 +25,12 @@
 ##
 ## A file with stations of one segment and others of several goes through the
 ## second question as it stands. A receiver gather that is not continuous is told apart
-## from a shot gather by the order of the file: when, between most consecutive live traces
-## of one component, the receiver line and point (a trace without a station: its channel)
-## change, the receivers repeat from record to
-## record (several shots, uneven in time): a shot gather; when they stay, the traces of a
-## receiver follow each other: time sliced.
+## from a shot gather by the order of the file (`receiverChanges`): when the receiver changes
+## between most consecutive segments of one component, the receivers repeat from record to
+## record (several shots, uneven in time): a shot gather; when they stay, the segments of a
+## receiver follow each other: time sliced. Consecutive traces of one receiver point that
+## share one start time are one segment (its components, coded or not), and a receiver is
+## named by its line and point, else by its group coordinates, else by its channel.
 ##
 ## The continuous test: each trace starts a whole number of trace lengths
 ## after the one before it, and there is no variance. All times are compared in
@@ -105,7 +107,7 @@ type
   RecordingFacts* = object
     ready*: bool                   ## the file has a live trace and a sample interval
     dtMs*: float64
-    stations*: int                 ## receiver points
+    stations*: int                 ## receiver points (line and point, else group coordinates)
     components*: int               ## receivers: what each cut record holds as traces
     segments*: int
     firstTime*, lastTime*: float64 ## UTC POSIX seconds; the span of every segment
@@ -156,7 +158,19 @@ type Seg = object
   n: int ## samples
   row: int
 
-type Station = tuple[line, point: float64; index: int16]
+type Place = tuple[how: int8; a, b: float64; index: int16]
+  ## a receiver point as the file names it: by its station (`how` 0: `a` the line, `b` the
+  ## point), else by its group coordinates (1: x and y), else by its channel (2: `a`)
+
+func placeOf(k: TraceKeys): Place =
+  ## Where the trace `k` was recorded, as `Place` names it.
+  if not (k.rcvLine.isNaN or k.rcvPoint.isNaN):
+    let s = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
+    (0'i8, s.line, s.point, s.index)
+  elif not (k.rcvX.isNaN or k.rcvY.isNaN) and (k.rcvX != 0 or k.rcvY != 0):
+    (1'i8, k.rcvX, k.rcvY, 0'i16)
+  else:
+    (2'i8, (if k.channel.isNaN: -1.0 else: k.channel), 0.0, 0'i16)
 
 func stepOf(diffs: seq[int]; len: int): int =
   ## The commonest start difference d, in samples, with 0.9 len <= d <= len (one
@@ -243,30 +257,35 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int; r: var Recordin
       r.offTrace = used[offAt].row + 1
       r.offSeconds = float64(offGap) * dtS
 
-proc receiverChanges(meta: ChunkMeta; segs: seq[Seg]): bool =
-  ## Whether, between most consecutive live traces of one component in file order, the
-  ## receiver changes: its line and point, or, for a trace without a station (a SEG-Y file),
-  ## its channel.
-  var rows = segs.mapIt(it.row)
-  rows.sort()
-  type Place = tuple[have, stationed: bool; st: Station; channel: float64]
-  var last: array[256, Place]
+proc receiverChanges(meta: ChunkMeta; segs: seq[Seg]; dtS: float64): bool =
+  ## Whether, between most consecutive segments of one component in file order, the receiver
+  ## point changes (`placeOf`: its line and point, else its group coordinates, else its
+  ## channel). Consecutive traces of one point that share one start time are one segment:
+  ## they are its components, coded or not, so the channels of one station are never
+  ## compared with each other. With coded components each component is followed on its own;
+  ## uncoded (0), the segments are followed as one. A trace with neither a station nor group
+  ## coordinates has only its channel: a single receiver whose channel number changes from
+  ## trace to trace reads as one whose receiver changes.
+  var order = segs
+  order.sort do (a, b: Seg) -> int: cmp(a.row, b.row)
+  var places = newSeq[Place](order.len)
+  for x in 0 ..< order.len: places[x] = placeOf(meta.keys(order[x].row))
+  var last: array[uint8, tuple[have: bool; place: Place]]
   var pairs, changed = 0
-  for row in rows:
-    let k = meta.keys(row)
-    let c = int(k.component)
-    var here: Place = (true, not (k.rcvLine.isNaN or k.rcvPoint.isNaN), (0.0, 0.0, 0'i16),
-      k.channel)
-    if here.stationed:
-      let s = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
-      here.st = (s.line, s.point, s.index)
-    let before = last[c]
-    if before.have:
-      inc pairs
-      if before.stationed != here.stationed or
-          (if here.stationed: before.st != here.st else: before.channel != here.channel):
-        inc changed
-    last[c] = here
+  var x = 0
+  while x < order.len:
+    var components: set[uint8] = {}
+    var y = x
+    while y < order.len and places[y] == places[x] and
+        int(round((order[y].start - order[x].start) / dtS)) == 0:
+      components.incl meta.keys(order[y].row).component
+      inc y
+    for c in components:
+      if last[c].have:
+        inc pairs
+        if last[c].place != places[x]: inc changed
+      last[c] = (true, places[x])
+    x = y
   result = 2 * changed > pairs
 
 proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFacts =
@@ -291,25 +310,24 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     if result == 0: result = cmp(a.row, b.row)
   result.segments = segs.len
   # per receiver with a station: how many segments it has
-  var placed: seq[tuple[st: Station; segs: int]]
+  var placed: seq[tuple[st: Place; segs: int]]
   var i = 0
   while i < segs.len:
     var j = i + 1
     while j < segs.len and segs[j].recv == segs[i].recv: inc j
-    let k = meta.keys(segs[i].row)
     inc result.components
-    if not (k.rcvLine.isNaN or k.rcvPoint.isNaN):
-      let st = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
-      placed.add (st: (st.line, st.point, st.index), segs: j - i)
+    let place = placeOf(meta.keys(segs[i].row))
+    if place.how < 2: placed.add (st: place, segs: j - i)
     for x in i ..< j:
       result.firstTime = min(result.firstTime, segs[x].start)
       result.lastTime = max(result.lastTime, segs[x].finish)
     if j - i > 1: tally(segs, i, j, dtS, starts, result)
     i = j
   result.ready = true
-  placed.sort do (a, b: tuple[st: Station; segs: int]) -> int:
-    result = cmp(a.st.line, b.st.line)
-    if result == 0: result = cmp(a.st.point, b.st.point)
+  placed.sort do (a, b: tuple[st: Place; segs: int]) -> int:
+    result = cmp(a.st.how, b.st.how)
+    if result == 0: result = cmp(a.st.a, b.st.a)
+    if result == 0: result = cmp(a.st.b, b.st.b)
     if result == 0: result = cmp(a.st.index, b.st.index)
   var stations = 0
   for n in 0 ..< placed.len:
@@ -350,7 +368,7 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     # not continuous: the receiver changing from trace to trace, in the order of the file, is
     # a shot gather (the receivers repeat from record to record); staying put, a receiver's
     # own segments
-    if result.kind == rkReceiverSliced and receiverChanges(meta, segs):
+    if result.kind == rkReceiverSliced and receiverChanges(meta, segs, dtS):
       result.kind = rkShotGather
       result.slicedWhy = swNone
 
