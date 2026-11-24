@@ -14,7 +14,7 @@ import std/[algorithm, math, options, sets, strutils, tables]
 import parseSEG
 import processSEG/continuous/slice
 import processSEG/core/workspace
-import ./[components, recordingkind, shotlog]
+import ./[components, outputbinary, outputtext, recordingkind, shotlog]
 
 type
   CutStandard* = enum
@@ -37,6 +37,13 @@ type
     logName*: string
       ## the shot log's file name (not its path), for the note a slice writes about itself;
       ## "" when it has none
+    headerText*: Option[OutputText]
+      ## Set: the SEG-Y output's text header is this template rendered for the slice, with the
+      ## notes the slice writes about itself after it. None: the header written today. SEG-D
+      ## output is not touched.
+    headerBinary*: Option[OutputBinary]
+      ## Set: the fields of this set are written into a SEG-Y output's binary file header.
+      ## None: the header written today. SEG-D output is not touched.
     order*: CutOrder
       ## the order of the traces of a record; a grouped order needs the headers built from
       ## keys (a SEG-D slice that carries the recording's headers keeps the recording's order)

@@ -100,17 +100,17 @@ const
     "The file's own positions were written from its header keys."
     ## The keys path, with the tick on: geometry came from the file's own headers.
 
-func textUsed(name: string): string = "Text header: template '" & name & "'."
+func textUsed*(name: string): string = "Text header: template '" & name & "'."
 
-func textNotUsed(name, why: string): string =
+func textNotUsed*(name, why: string): string =
   ## The header a file keeps when its template cannot be written.
   "Text header: template '" & name & "' was not used for this file: " &
     (if why.endsWith('.'): why else: why & ".") & " The header it would have had was written."
 
-func binaryUsed(name: string; count: int): string =
+func binaryUsed*(name: string; count: int): string =
   "Binary header: set '" & name & "' (" & $count & (if count == 1: " field)." else: " fields).")
 
-func binaryNotUsed(name, why: string): string =
+func binaryNotUsed*(name, why: string): string =
   ## The header a file keeps when its set cannot be written.
   "Binary header: set '" & name & "' was not used for this file: " &
     (if why.endsWith('.'): why else: why & ".") & " The header it would have had was written."

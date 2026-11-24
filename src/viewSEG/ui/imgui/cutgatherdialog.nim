@@ -3,11 +3,12 @@
 ## file. A floating window. It posts the command that starts the cut; it reads
 ## no file, and what it sums up comes from the session and the log.
 
-import std/[math, os]
+import std/[math, options, os]
 import imguin/cimgui
 from parseSEG import skSegd
 import processSEG/continuous/slice
-import ../../core/[cutgather, destwatch, geometry, panels, recordingkind, shotlog, state]
+import ../../core/[cutgather, destwatch, geometry, outputbinary, outputtext, panels, recordingkind,
+  shotlog, state]
 import ../../view/[cutwords, theme]
 import marks, style
 
@@ -22,13 +23,14 @@ type
     align: SliceAlign
     standard: CutStandard
     order: CutOrder
+    skipText, skipBinary: bool ## the project's text template or binary set is not used
     folder: string
     nameBuf: array[NameRoom, char]
     nameTouched: bool
     shots: CutShots
     shotsKey: tuple[id, revision: int]
     haveShots: bool
-    dest: DestWatch ## whether a file or folder of the chosen name is already there
+    dest: DestWatch            ## whether a file or folder of the chosen name is already there
 
   CutDraw* = object
     commands*: seq[Command]
@@ -80,9 +82,22 @@ proc coloured(text: string; colour: Rgba; width: float32) =
   wrapped(text, width)
   igPopStyleColor(1)
 
-proc options(ui: CutUi; groupable: bool): CutOptions =
+proc chosenText(st: AppState): Option[OutputText] =
+  ## The project's chosen text header template; none outside a project or with none chosen.
+  if st.inProject: chosenText(st.project.doc.outputTexts, st.project.doc.outputText)
+  else: none(OutputText)
+
+proc chosenBinary(st: AppState): Option[OutputBinary] =
+  ## The project's chosen binary header set; none outside a project or with none chosen.
+  if st.inProject: chosenBinary(st.project.doc.outputBinaries, st.project.doc.outputBinary)
+  else: none(OutputBinary)
+
+proc options(ui: CutUi; st: AppState; groupable: bool): CutOptions =
   result = initCutOptions(ui.recordMs, 0.0, ui.align, ui.standard) # a record begins at the shot
   if groupable: result.order = ui.order
+  if ui.standard == csSegy:
+    if not ui.skipText: result.headerText = chosenText(st)
+    if not ui.skipBinary: result.headerBinary = chosenBinary(st)
 
 proc sources(ui: var CutUi; st: AppState) =
   ## The shots of the chosen log, worked out again only when it changed.
@@ -154,6 +169,27 @@ proc drawOrder(ui: var CutUi; marks: var Marks; groupable, carried: bool) =
   marks.mark("cut.order")
   tip(if shownOrder != coAsSource and carried: OrderKeepsHeaders else: orderTip(shownOrder))
 
+proc drawHeaders(ui: var CutUi; st: AppState; marks: var Marks) =
+  ## For a SEG-Y output, the project's text header template and binary header set, when it
+  ## has chosen them: each is used unless its box is cleared.
+  if ui.standard != csSegy: return
+  let text = chosenText(st)
+  if text.isSome:
+    var use = not ui.skipText
+    if igCheckbox(("Use the project's text header template '" & text.get.name &
+        "'##cut.text").cstring, addr use):
+      ui.skipText = not use
+    marks.mark("cut.useText")
+    tip(UseTextTip)
+  let binary = chosenBinary(st)
+  if binary.isSome:
+    var use = not ui.skipBinary
+    if igCheckbox(("Use the project's binary header set '" & binary.get.name &
+        "'##cut.binary").cstring, addr use):
+      ui.skipBinary = not use
+    marks.mark("cut.useBinary")
+    tip(UseBinaryTip)
+
 proc drawFormat(ui: var CutUi; marks: var Marks; sourceSegd, builtFromOptions: bool) =
   ## `sourceSegd`: the output SEG-D keeps the source's revision. `builtFromOptions`: the
   ## source is SEG-D but its headers cannot be carried (the window knows it already).
@@ -206,7 +242,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     marks.mark("cut.recordMs " & $ui.recordMs)
     igSetNextItemWidth(igGetFontSize() * 10)
     let groupable = facts.ready and facts.componentCodes >= 2
-    let opts = ui.options(groupable)
+    let opts = ui.options(st, groupable)
     var problem = ""
     if shown >= 0 and facts.ready:
       problem = checkOptions(opts, facts.dtMs)
@@ -226,6 +262,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     let uncarried = segd and facts.ready and facts.carryHeaderBytes == 0
     ui.drawFormat(marks, segd and not uncarried, uncarried)
     ui.drawOrder(marks, groupable, segd and not uncarried and ui.standard == csSegdRev3)
+    ui.drawHeaders(st, marks)
     igSeparator()
     wrapped("Folder: " & (if ui.folder.len > 0: ui.folder else: "not chosen"), wide)
     marks.mark("cut.folder " & ui.folder)

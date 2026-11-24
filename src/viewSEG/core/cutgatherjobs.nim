@@ -41,8 +41,8 @@ import parseSEG/model/traceindex
 import processSEG
 import processSEG/continuous/slice
 import processSEG/core/[rows, workspace]
-import cutcarry, cutfile, cutfills, cutgather, filesystem, jobs, outputjobs, recordingkind,
-    segmentclock, shotlog, vendormaps
+import cutcarry, cutfile, cutfills, cutgather, cutheaders, filesystem, jobs, outputbinary,
+    outputjobs, outputtext, recordingkind, segmentclock, shotlog, vendormaps
 
 const
   NamedMax* = 5 ## how many overlaps and timing issues the result names
@@ -69,6 +69,8 @@ type
     provenanceIn*: string
       ## where the output says it was sliced, by which program, from which files ("the
       ## textual header"); "" when it does not
+    headerNotes*: seq[string]
+      ## what the project's text template and binary set did in the SEG-Y output, as sentences
     textReplaced*: int
       ## characters of the file names that the output's character set cannot hold ("?")
     sourceKeysDropped*: bool
@@ -286,6 +288,7 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
       result.add "The headers were built from the options, not carried from the source: " &
         res.fallbackWhy & "."
     result.add fillLines(res.fills, res.fillOutput)
+    result.add res.headerNotes
     if res.provenanceIn.len > 0:
       result.add "The " & res.provenanceIn.replace("the ", "") & " says the file was sliced by " &
         "viewSEG, from the recording and the shot log named there."
@@ -452,6 +455,40 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let provenance = sliceProvenance(source.extractFilename, opts.logName,
         shots.shots.len, opts.startMs, if opts.standard == csSegy: teEbcdic else: teAscii)
       let external = if opts.standard == csSegdRev3: externalHeaderOf(provenance) else: @[]
+      # The project's text template and binary set, for a SEG-Y output (SEG-D has no use of
+      # either): the template rendered for this file, else why not; the set's fields.
+      var cards: seq[string] = @[]
+      var cardsEncoding = teEbcdic
+      var cardsProvenance = Provenance()
+      var noted = Noted()
+      var textName, binName = ""
+      var binUsable = false ## the set holds no problem
+      var binOver: seq[HeaderOverride] = @[]
+      var binNotes, headerNotes: seq[string] = @[]
+      if opts.standard == csSegy and opts.headerText.isSome:
+        let t = opts.headerText.get
+        textName = t.name
+        var rcvKeys: seq[TraceKeys] = @[]
+        for r in 0 ..< comps: rcvKeys.add plan.receiverKeys(r)
+        let values = sliceTextValues(dest, numbered.numbers, shots.shots, rcvKeys, nowUs())
+        let why = renderProblem(t, values)
+        if why.len > 0: headerNotes.add textNotUsed(textName, why)
+        else:
+          cardsProvenance = sliceProvenance(source.extractFilename, opts.logName,
+            shots.shots.len, opts.startMs, t.encoding)
+          noted = withNotes(cardsOf(t, values), cardsProvenance)
+          cards = noted.cards
+          cardsEncoding = t.encoding
+      if opts.standard == csSegy and opts.headerBinary.isSome:
+        let b = opts.headerBinary.get
+        binName = b.name
+        let why = binaryProblem(b)
+        if why.len > 0: headerNotes.add binaryNotUsed(binName, why)
+        else:
+          let made = overridesOf(b, SegyOutputOptions().revision)
+          binUsable = true
+          binOver = made.overrides
+          binNotes = made.notes
       let keysBytes = estimateBytes(opts, shots.shots.len, comps, plan.samples, anyStation,
         anySourceXY, anyReceiverXY) + int64(shots.shots.len) * int64(external.len)
       var expected = if candidate: carryBytes(file[], plan, rows, shots.shots.len)
@@ -529,11 +566,26 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           w = openSeismicWriter(part, SegdOutputOptions(sampleIntervalUs: intervalUs,
             numSamples: plan.samples))
         of csSegy:
-          w = openSeismicWriter(part, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
-            text: provenance.lines))
+          let opened = openKeysSegy(part, cards, cardsEncoding, provenance.lines, binOver)
+          w = opened.w
+          if opened.textWhy.len > 0: headerNotes.add textNotUsed(textName, opened.textWhy)
+          if opened.binWhy.len > 0: headerNotes.add binaryNotUsed(binName, opened.binWhy)
+          elif binUsable:
+            headerNotes.add binaryUsed(binName, opened.over.len)
+            headerNotes.add binNotes
+          cards = opened.cards
         res.provenanceIn =
           if opts.standard == csSegy: "the textual header" else: "the external header"
         res.textReplaced = provenance.replaced
+        if cards.len > 0:
+          headerNotes.add textUsed(textName)
+          if noted.written: res.textReplaced = cardsProvenance.replaced
+          else:
+            res.provenanceIn = ""
+            headerNotes.add "Text header: the note that the file was sliced by viewSEG is not " &
+              "written: template '" & textName & "' leaves " & $noted.free & " of its " &
+              $MaxTextLines & " cards free and the note takes " & $noted.need & "."
+        res.headerNotes = headerNotes
         res.fillOutput =
           if opts.standard == csSegy: "SEG-Y revision " & $SegyOutputOptions().revision
           else: "SEG-D"

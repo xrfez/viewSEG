@@ -20,7 +20,7 @@
 
 import std/[monotimes, options, os, strutils]
 import parseSEG
-import viewSEG/core/[geometry, shotlog, state]
+import viewSEG/core/[geometry, outputbinary, outputtext, shotlog, state]
 import viewSEG/ui/imgui/[app, cutgatherdialog]
 import utils/[faultyfs, fixtures, waiting]
 
@@ -239,6 +239,36 @@ proc main*() =
       clicks >= 8)
     step("the drive answers", proc (f: FrameInfo) = release(fx.dir / "out"),
       proc (f: FrameInfo): bool = not f.hasMark("cut.checking") and not f.hasMark("cut.exists"))
+    # The project's text header template and binary header set: offered for SEG-Y only, and
+    # only when the project has chosen them.
+    step("the Format entry opens", proc (f: FrameInfo) = f.click(f.markOf("cut.format").centre),
+      proc (f: FrameInfo): bool = f.hasMark("cut.format SEG-Y"))
+    step("SEG-Y", proc (f: FrameInfo) = f.click(f.markOf("cut.format SEG-Y").centre),
+      proc (f: FrameInfo): bool = not f.hasMark("cut.format SEG-Y") and f.hasMark("cut.order"))
+    step("no project, no boxes", proc (f: FrameInfo) =
+      f.apply(Command(kind: ckNewProject, projectPath: fx.dir / "job",
+        dataFolders: @[fx.dir / "in"])),
+      proc (f: FrameInfo): bool =
+      doAssert not f.hasMark("cut.useText") or f.core.inProject, "a box with no project"
+      f.core.inProject and f.core.projectOpening.len == 0 and not f.core.project.readOnly)
+    step("a template and a set chosen", proc (f: FrameInfo) =
+      f.apply Command(kind: ckOutputText, textAction: otaSave, textTemplate: OutputText(
+        name: "Survey", encoding: teAscii, lines: @["SLICE {stem}", "RECORD {record}"]))
+      f.apply Command(kind: ckOutputText, textAction: otaChoose,
+        textTemplate: OutputText(name: "Survey"))
+      f.apply Command(kind: ckOutputBinary, binaryAction: obaSave, binarySet: OutputBinary(
+        name: "Job", entries: @[BinaryEntry(field: "jobId", value: "12")]))
+      f.apply(Command(kind: ckOutputBinary, binaryAction: obaChoose,
+        binarySet: OutputBinary(name: "Job"))),
+      proc (f: FrameInfo): bool = f.hasMark("cut.useText") and f.hasMark("cut.useBinary"))
+    var boxesShot = false
+    proc boxesPicture(f: FrameInfo) =
+      let dir = getEnv("VIEWSEG_SCREENSHOTS")
+      if dir.len > 0 and not boxesShot:
+        createDir(dir)
+        doAssert f.savePng(dir / "cut-dialog-headers.png"), "cannot save the dialog"
+      boxesShot = true
+    step("the picture of the boxes", boxesPicture, proc (f: FrameInfo): bool = true)
     var at = 0
     var started = false
     var failed = ""

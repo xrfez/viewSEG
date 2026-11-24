@@ -195,7 +195,25 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
   them in its external header. They name files, never folders; a name too long for a line goes
   on in the next one, and a character of a name that the text header's character set cannot hold
   is written as "?" and counted in Messages. A SEG-D output that carries the recording's own
-  headers is not changed by this. The text header chosen for ordinary output is not used by a slice.
+  headers is not changed by this.
+- **The project's text header and binary header.** For a SEG-Y output, when the project has
+  chosen a text header template and a binary header set (the Output window's), the window
+  offers two boxes, "Use the project's text header template '...'" and "Use the project's
+  binary header set '...'", both ticked. Clear one to write the header a slice writes without
+  it. The template is filled in for the sliced file: `{stem}` and `{file}` are the new file's
+  name, `{record}` the record numbers of the shots (the one number, or lowest-highest), `{srcLine}`
+  and `{srcPoint}` the shots' source line and point, `{rcvLine}` and `{rcvPoint}` the receivers'
+  line and point (each one value, or lowest-highest), `{time}` the shot time when there is one
+  shot, and `{date}` and `{clock}` the time of writing. A token with no value (the shot log has
+  no source line, the file has no index or serial) means the template is not used for the file:
+  the header is the one without it and Messages says why, as the Output window does. The two
+  lines about the slice are still written, on the cards after the template's last non-empty
+  line; when they do not both fit in the cards the template leaves free (it may use 38), they are
+  left out and Messages says so: no line of the template is ever overwritten. The set's fields
+  are written into the binary file header and nothing else of it changes; a field the SEG-Y
+  revision (2.1) cannot hold is left out with a note, and a template or set the library refuses
+  to write is dropped with its reason, the file being written without it. A SEG-D output uses
+  neither, and the boxes are not shown for it.
 - **What the output keeps of a SEG-D recording's headers.** When the recording is SEG-D and the
   format is SEG-D, the file is written in the recording's own revision (Rev 2.1, say, not
   Rev 3) and its headers are the recording's: the general and extended headers, the channel sets
