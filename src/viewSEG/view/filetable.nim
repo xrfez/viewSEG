@@ -6,8 +6,9 @@
 ## (`FileList.changes`): a scan's batch, or a file that appears, grows or
 ## goes while the folder is watched, is merged into the rows there are.
 
-import std/[algorithm, math, os, strutils, tables, times]
-import ../core/[filelist, sigtypes]
+import std/[algorithm, math, options, os, strutils, tables, times]
+import ../core/[filelist, recordingkind, sigtypes]
+import ./recordingwords
 
 type
   FileColumn* = enum
@@ -29,6 +30,9 @@ type
     fcForce = "Force avg %"
     fcThd = "THD max %"
     fcLimits = "Limits"
+    fcKind = "Kind"             ## shot, continuous or time-sliced receiver gather; shown after Type (last
+                                ## here so that the numbers of the columns before it, which a saved table
+                                ## layout names them by, stay)
 
   SweepFilter* = object
     ## What the Files window's tick and drop-downs ask of the signature files.
@@ -86,11 +90,22 @@ const kindRank = block:
   for i, (_, k) in names: rank[k] = i
   rank
 
+func kindRankOf(e: FileEntry): int =
+  ## Each kind's place when the kinds are sorted by the words shown; a file with none first.
+  let k = e.recordingOf
+  if k.isNone: 0
+  else:
+    case k.get
+    of rkReceiverContinuous: 1
+    of rkShotGather: 2
+    of rkReceiverSliced: 3
+
 func cmpEntries(a, b: FileEntry; column: FileColumn): int =
   ## By `column` alone: 0 when equal there.
   case column
   of fcName: 0
   of fcType: cmp(kindRank[a.kind], kindRank[b.kind])
+  of fcKind: cmp(kindRankOf(a), kindRankOf(b))
   of fcSize: cmp(a.size, b.size)
   of fcModified: cmp(a.modified, b.modified)
   of fcFolder: naturalCmp(a.folder, b.folder)
@@ -165,7 +180,7 @@ proc follow(t: var FileTable; list: FileList; changes: openArray[EntryChange]) =
   ## keep their order (only their indices move), and the entries added or
   ## changed are sorted alone and merged in. A row moves only when its entry
   ## changed in what the table sorts by.
-  let moves = t.order.column in {fcType, fcSize, fcModified, fcFolder}
+  let moves = t.order.column in {fcType, fcKind, fcSize, fcModified, fcFolder}
   t.touched.setLen 0
   for c in changes:
     case c.kind
@@ -431,3 +446,9 @@ proc shortDateText*(t, now: Time): string =
   else: d.format("yyyy-MM-dd")
 
 func typeText*(e: FileEntry): string = $e.kind
+
+func kindText*(e: FileEntry): string =
+  ## What the Kind column shows: the kind read from the file's first traces ("Shot gather"); ""
+  ## while it is not read and for a file with none. The one place a row's kind is asked.
+  let k = e.recordingOf
+  if k.isSome: kindTitle(k.get) else: ""

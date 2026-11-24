@@ -245,7 +245,7 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   let only = sweeps and ui.seismic == 0
   var heads = @["Name"]
   if tree: heads.add "Folder"
-  heads.add ["Type", "Size", "Modified"]
+  heads.add ["Type", "Kind", "Size", "Modified"]
   if sweeps:
     for c in SweepColumns: heads.add $c
   let id = "##files" & (if tree: "tree" else: "") & (if only: "only" elif sweeps: "sweep" else: "")
@@ -262,6 +262,7 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   # time of the file are for the column chooser: the room goes to the sweep.
   let hide = if sweeps: ImGui_TableColumnFlags_DefaultHide.cint else: 0.cint
   igTableSetupColumn("Type", hide, 0, 1)
+  igTableSetupColumn("Kind", hide, 0, uint32(ord(fcKind)))
   igTableSetupColumn("Size", ImGui_TableColumnFlags_PreferSortDescending.cint or hide, 0, 2)
   igTableSetupColumn("Modified", ImGui_TableColumnFlags_PreferSortDescending.cint or hide, 0, 3)
   if sweeps:
@@ -330,7 +331,8 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
         if not igIsItemVisible(): igSetScrollHereY(0.5)
         ui.follow = false
       tip(e.path & "\n" & sizeText(e.size) & ", modified " & dateText(e.modified) &
-        markText(e) & (if survey: surveyText(e, st) else: openedText(e, st)) &
+        (if kindText(e).len > 0: "\n" & kindText(e) else: "") & markText(e) &
+        (if survey: surveyText(e, st) else: openedText(e, st)) &
         (if failed: "\nIt could not be " & (if survey: "loaded" else: "opened") &
           ": Messages says why." else: ""))
       # The mark and the name, over the row's selectable.
@@ -373,6 +375,8 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
         igTextUnformatted(e.folder.cstring, nil)
       discard igTableNextColumn()
       igTextUnformatted(typeText(e).cstring, nil)
+      discard igTableNextColumn()
+      igTextUnformatted(kindText(e).cstring, nil)
       discard igTableNextColumn()
       let size = sizeText(e.size)
       let w = igCalcTextSize(size.cstring, nil, false, -1).x

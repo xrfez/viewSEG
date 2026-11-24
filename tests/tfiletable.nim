@@ -11,7 +11,8 @@
 ## rows so followed are those made from scratch, whatever the changes; and
 ## the chosen file's row is found once, not every frame.
 ##
-## Seen to fail: with the sort's closure naming `list` (it held a copy of
+## Seen to fail: with the shot gather ranked before the continuous one in the Kind sort
+## (`kindColumn` found the rows differing); with the sort's closure naming `list` (it held a copy of
 ## every entry), `noAllocationPerFile` counted 40 013 allocations for 20 000
 ## files sorted by size; with the filter lower-casing each name, 20 012; with
 ## `update` making every row again after a change, `aScanIsMerged` found "the
@@ -24,7 +25,7 @@
 ## Runs alone: it compares the time of a merge with that of a sort.
 
 import std/[algorithm, monotimes, random, times]
-import viewSEG/core/filelist
+import viewSEG/core/[filelist, recordingkind]
 import viewSEG/view/filetable
 
 func entry(name: string; kind: FileKind; size: int64; modified = 0): FileEntry =
@@ -195,6 +196,38 @@ proc main*() =
     doAssert t.chosenRow(list, "/data/b.sgy") == 2
     doAssert t.chosenRow(list, "/data/none.sgy") == -1
     doAssert list.find("/data/a0.sgy") == 1 and list.find("/data/none.sgy") == -1
+
+  block kindColumn:
+    # the Kind cell says the kind read from the first traces; empty while unread and for a file
+    # with none; sorted by the words shown, the empty first; a kind that arrives moves its row
+    var list = FileList(gen: 1, revision: 1)
+    var shot = entry("a.sgd", fkSegd, 1)
+    shot.kindState = ksKnown
+    shot.recording = rkShotGather
+    var sliced = entry("b.sgd", fkSegd, 1)
+    sliced.kindState = ksKnown
+    sliced.recording = rkReceiverSliced
+    var cont = entry("c.sgd", fkSegd, 1)
+    cont.kindState = ksKnown
+    cont.recording = rkReceiverContinuous
+    var none = entry("d.sgd", fkSegd, 1)
+    none.kindState = ksNone
+    list.merge([shot, sliced, cont, none, entry("e.sgd", fkSegd, 1)])
+    doAssert kindText(list.entries[0]) == "Shot gather"
+    doAssert kindText(list.entries[1]) == "Time-sliced receiver gather"
+    doAssert kindText(list.entries[2]) == "Continuous receiver gather"
+    doAssert kindText(list.entries[3]) == "" and kindText(list.entries[4]) == ""
+    var t: FileTable
+    t.update(list, "", FileOrder(column: fcKind))
+    doAssert t.names(list) == @["d.sgd", "e.sgd", "c.sgd", "a.sgd", "b.sgd"], $t.names(list)
+    t.update(list, "", FileOrder(column: fcKind, descending: true))
+    doAssert t.names(list) == @["b.sgd", "a.sgd", "c.sgd", "e.sgd", "d.sgd"], $t.names(list)
+    t.update(list, "", FileOrder(column: fcKind))
+    list.entries[4].kindState = ksKnown # e.sgd is read: a shot gather
+    list.entries[4].recording = rkShotGather
+    list.changedAt(4)
+    t.update(list, "", FileOrder(column: fcKind))
+    doAssert t.names(list) == @["d.sgd", "c.sgd", "a.sgd", "e.sgd", "b.sgd"], $t.names(list)
 
 when isMainModule:
   main()
