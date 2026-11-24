@@ -1,5 +1,6 @@
-## The Output window: the seismic files of one folder, ticked in a tree, written
-## as SEG-Y or SEG-D. Wide enough, the source is the left pane and the write is
+## The Output window: the seismic files of one folder, including a vibrator
+## signature file, ticked in a tree, written as SEG-Y or SEG-D. Wide enough,
+## the source is the left pane and the write is
 ## the right; a narrow main window stacks them. Listing the folder and checking
 ## the destination run on background jobs. The write is the batch writer
 ## (`outputBatchWork`). A file already open is written as it stands, with its
@@ -230,7 +231,7 @@ proc listWork(folder: string; note: ListNote; gen: int): JobWork =
       ctx.checkCancelled()
       var opened = false
       let kind = sniff(path, opened)
-      if not isSeismic(kind): continue
+      if not isOutputFile(kind): continue
       var size: int64 = 0
       try: size = fs.getFileSize(path)
       except OSError: size = 0

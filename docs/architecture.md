@@ -106,6 +106,9 @@ SEG kind (`core/filekinds`: `fkDat`, `fkVib`), never by their extension. Both go
   opens the SEG-Y Rev 2.1 it wrote into memory with parseSEG's `openSeismicBytes`, and posts the
   session. **No file is written**: no index cache, no temporary file. `Session.path` is the
   signature file's own; `Session.signature` holds the facts; the parseSEG file is `inMemory`.
+  `openSignature` is that path as a session. A batch write uses it for a signature file that
+  is not already open, writes the in-memory session, and drops it. A file that cannot be
+  decoded is a failed row and does not stop the rest.
 - A `.dat` is four traces (reference 21, reaction-mass force 18, baseplate force 19, the
   controller's ground force 20, the sum of the two); a `.vib` is 13 in the order
   `voForces` writes (the same four roles of set B first, then set A's 258, 257 and 267, then

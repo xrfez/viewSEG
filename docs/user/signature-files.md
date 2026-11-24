@@ -188,3 +188,13 @@ pickers are read-only; the polarity can be chosen.
   ("type it again"): another unit, the other set, or a window that followed from a `.vib` to a
   `.dat` or back. The file's own 100 % does not take its place until you clear the box. Reset
   options clears it, with its unit.
+
+## Writing a folder
+
+**File > Output...** lists signature files with the other seismic files. A file that is
+not already open is decoded and written as SEG-Y or SEG-D, one file at a time, and then
+dropped. The source is not changed. A file that cannot be decoded is a failed row with
+the opener's sentence; the rest of the folder is still written. The output name replaces
+`.dat` or `.vib` with the output extension. When `a.vib` and `a.dat` would otherwise be
+written as one file, each keeps its own extension in the name (`a.vib.sgy`, `a.dat.sgy`),
+and the results say so.

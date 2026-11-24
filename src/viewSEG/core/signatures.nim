@@ -110,6 +110,36 @@ proc decodeToSession*(bytes: openArray[byte]; path: string; modified: Time;
     for k in opened.mindex.keys.mitems: k.status = tsAuxiliary
   result = newSession(path, move opened, int64(bytes.len), modified, OpenChoice(), facts)
 
+proc openSignature*(path: string; choice = SignatureChoice();
+    pair = SignaturePair()): Session =
+  ## The signature file at `path` as a session, decoded in memory. The default
+  ## `choice` is used when none is given. Worker-only. Raises `SignatureError`,
+  ## `IOError` or `OSError`. Nothing is written. The one place a signature path
+  ## becomes a session.
+  assertWorkerThread()
+  let name = path.extractFilename
+  if not fs.fileExists(path):
+    raise newException(IOError, "there is no such file")
+  let size = fs.getFileSize(path)
+  if size == 0:
+    raise newException(SignatureError, name & " is empty: not opened.")
+  if size > MaxSignatureBytes:
+    var head: seq[byte] = @[]
+    discard readHead(path, head)
+    let kind = signatureKindOf(head)
+    raise newException(SignatureError, name & " is larger than any " &
+      (if kind == sgVib: ".vib" else: ".dat") & " signature file (" &
+      $(MaxSignatureBytes shr 20) & " MiB): not opened")
+  # The time before the read: a file that changes while it is read keeps the older stamp, so
+  # the watch sees the change and opens it again (one retry when it moved meanwhile).
+  var modified = fs.getLastModificationTime(path)
+  var bytes = readBytes(path, size)
+  if fs.getLastModificationTime(path) != modified:
+    modified = fs.getLastModificationTime(path)
+    bytes = readBytes(path, fs.getFileSize(path))
+  var log: DiagLog
+  result = decodeToSession(bytes, path, modified, choice, log, pair)
+
 proc openSignatureWork*(path: string; to: Poster; choice = SignatureChoice();
     pair = SignaturePair()): JobWork =
   ## The work of a job that opens the signature file at `path` and posts its session
@@ -117,29 +147,10 @@ proc openSignatureWork*(path: string; to: Poster; choice = SignatureChoice();
   ## `JobCancelledError`. The file is read once and nothing is written.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "decoding"
-    let name = path.extractFilename
-    if not fs.fileExists(path):
-      raise newException(IOError, "there is no such file")
-    let size = fs.getFileSize(path)
-    if size == 0:
-      raise newException(SignatureError, name & " is empty: not opened.")
-    if size > MaxSignatureBytes:
-      var head: seq[byte] = @[]
-      discard readHead(path, head)
-      let kind = signatureKindOf(head)
-      raise newException(SignatureError, name & " is larger than any " &
-        (if kind == sgVib: ".vib" else: ".dat") & " signature file (" &
-        $(MaxSignatureBytes shr 20) & " MiB): not opened")
-    # The time before the read: a file that changes while it is read keeps the older stamp, so
-    # the watch sees the change and opens it again (one retry when it moved meanwhile).
-    var modified = fs.getLastModificationTime(path)
-    var bytes = readBytes(path, size)
-    if fs.getLastModificationTime(path) != modified:
-      modified = fs.getLastModificationTime(path)
-      bytes = readBytes(path, fs.getFileSize(path))
     ctx.checkCancelled()
-    var log: DiagLog
-    var s = decodeToSession(bytes, path, modified, choice, log, pair)
+    var s: Session = nil
+    {.cast(gcsafe).}:
+      s = openSignature(path, choice, pair)
     ctx.checkCancelled() # the file closes here, on the thread that made it
     clearCycleRoots() # the UI thread may release the file's objects at once
     to.post Msg(job: ctx.id, kind: mkOpened, session: move s)

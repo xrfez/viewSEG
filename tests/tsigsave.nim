@@ -12,12 +12,18 @@
 ## The destination name is the one given: a `.sgy` or `.segd` name in another
 ## folder is written, and the source path is refused, never overwritten. A
 ## folder of sweeps is one output file per sweep, not one file of every
-## record. A sweep that is not already open is not written: opened as a
-## seismic file it has no traces.
+## record. A sweep that is not already open is decoded and written the same
+## way as one that is. A file that cannot be decoded is a failed row with
+## the opener's sentence, and the others are still written. Two sweeps whose
+## names differ only by `.vib` and `.dat` keep that extension in the output
+## name, so they are not written as one file.
 ##
 ## Seen to fail: not by a change in the writer (the SEG-Y write already
 ## matched). A dropped shot block fails the named-value check; an overwrite
-## of the source fails the byte check.
+## of the source fails the byte check. With the batch's signature open taken
+## out (an unopened sweep opened as a seismic file), the folder that is not
+## open fails every row with "no traces", and `a.vib` beside `a.dat` is a
+## name clash instead of two files.
 
 import std/[os, strutils, tables]
 import parseSEG
@@ -114,6 +120,13 @@ proc segyGap(mem, disk: SeismicFile; memFacts: FileFacts; reg: VendorRegistry): 
   result.add pairDiff("stanzas", memStanza, diskStanza)
   result.add pairDiff("shot block", vendorLines(vendorBlocks(mem, -1, reg)),
     vendorLines(vendorBlocks(disk, -1, reg)))
+
+proc diskGap(left, right: string; reg: VendorRegistry): string =
+  var a = openSeismic(left, keys = true)
+  var b = openSeismic(right, keys = true)
+  result = segyGap(a, b, fileFacts(a), reg)
+  a.close()
+  b.close()
 
 proc main*() =
   let load = loadVendorFolders([VendorFolder(dir: maps, origin: voProgram)])
@@ -241,6 +254,9 @@ proc main*() =
         BatchItem(source: a, relative: "0042_a.dat"),
         BatchItem(source: b, relative: "0043_b.dat"),
         BatchItem(source: v, relative: "0007.VIB")]
+      let beforeA = readFile(a)
+      let beforeB = readFile(b)
+      let beforeV = readFile(v)
       let store = Store(home: fx.dir / "mem")
       createDir(store.home)
       let cold = fx.dir / "cold"
@@ -248,13 +264,16 @@ proc main*() =
         options: OutputOptions(format: ofSegy))
       let closed = runBatch(coldAsk, store, @[])
       doAssert closed.st == jsDone, closed.error & " " & closed.wrote.reason
-      doAssert closed.wrote.written == 0 and closed.wrote.failed == 3,
+      doAssert closed.wrote.written == 3 and closed.wrote.failed == 0,
         "unopened sweeps written " & $closed.wrote.written & " failed " &
           $closed.wrote.failed
       for it in closed.wrote.items:
-        doAssert it.outcome == boFailed, it.relative & " " & $it.outcome & " " & it.why
-        doAssert "no traces" in it.why, it.why
+        doAssert it.outcome == boWritten, it.relative & " " & it.why
         doAssert it.destination.endsWith(".sgy"), it.destination
+        doAssert not it.destination.endsWith(".dat.sgy") and
+          not it.destination.endsWith(".VIB.sgy"), it.destination
+      doAssert readFile(a) == beforeA and readFile(b) == beforeB and
+        readFile(v) == beforeV, "an unopened sweep was changed"
       var da, db, dv: AppState
       da = initAppState()
       db = initAppState()
@@ -280,9 +299,89 @@ proc main*() =
         traces += back.len
         back.close()
       doAssert traces == 4 + 4 + 13, "sweeps were combined: " & $traces
+      for it in closed.wrote.items:
+        let twin = warm / it.destination.extractFilename
+        let gap = diskGap(it.destination, twin, reg)
+        doAssert gap.len == 0, it.relative & "\n" & gap
+      doAssert readFile(a) == beforeA and readFile(b) == beforeB and
+        readFile(v) == beforeV, "a sweep was changed"
       da.shutdown()
       db.shutdown()
       dv.shutdown()
+
+  block corrupt:
+    withFixtures fx:
+      let root = fx.dir / "sweeps"
+      createDir(root)
+      let good = datFile(root, "0042_a.dat", datSynth)
+      let bad = datFile(root, "bad.dat", datSynth)
+      let v = vibFile(root, "0007.VIB", vibSynth)
+      var raw = readFile(bad)
+      doAssert raw.len > 512 * 3, "the synthetic .dat is shorter than three blocks"
+      raw[512 * 2 + 40] = char(byte(raw[512 * 2 + 40]) xor 0xFF)
+      writeFile(bad, raw)
+      let beforeGood = readFile(good)
+      let beforeBad = readFile(bad)
+      let beforeV = readFile(v)
+      let items = @[
+        BatchItem(source: good, relative: "0042_a.dat"),
+        BatchItem(source: bad, relative: "bad.dat"),
+        BatchItem(source: v, relative: "0007.VIB")]
+      let store = Store(home: fx.dir / "mem")
+      createDir(store.home)
+      let dest = fx.dir / "out"
+      let got = runBatch(BatchAsk(root: root, items: items, destRoot: dest,
+        options: OutputOptions(format: ofSegy)), store, @[])
+      doAssert got.st == jsDone, got.error & " " & got.wrote.reason
+      doAssert got.wrote.written == 2 and got.wrote.failed == 1,
+        $got.wrote.written & " written, " & $got.wrote.failed & " failed"
+      for it in got.wrote.items:
+        if it.relative == "bad.dat":
+          doAssert it.outcome == boFailed, it.why
+          doAssert "could not be opened" in it.why, it.why
+          doAssert "no traces" notin it.why, it.why
+        else:
+          doAssert it.outcome == boWritten, it.relative & " " & it.why
+          doAssert fileExists(it.destination), it.destination
+      doAssert readFile(good) == beforeGood and readFile(bad) == beforeBad and
+        readFile(v) == beforeV, "a source was changed"
+
+  block names:
+    withFixtures fx:
+      let root = fx.dir / "pair"
+      createDir(root)
+      let d = datFile(root, "a.dat", datSynth)
+      let v = vibFile(root, "a.vib", vibSynth)
+      let beforeD = readFile(d)
+      let beforeV = readFile(v)
+      let items = @[
+        BatchItem(source: v, relative: "a.vib"),
+        BatchItem(source: d, relative: "a.dat")]
+      let store = Store(home: fx.dir / "mem")
+      createDir(store.home)
+      let dest = fx.dir / "out"
+      let got = runBatch(BatchAsk(root: root, items: items, destRoot: dest,
+        options: OutputOptions(format: ofSegy)), store, @[])
+      doAssert got.st == jsDone, got.error & " " & got.wrote.reason
+      doAssert got.wrote.written == 2 and got.wrote.failed == 0,
+        $got.wrote.failed & " failed"
+      doAssert not fileExists(dest / "a.sgy"), "the two sweeps were written as one file"
+      var noted = false
+      for it in got.wrote.items:
+        doAssert it.outcome == boWritten, it.relative & " " & it.why
+        doAssert it.destination.endsWith(".vib.sgy") or
+          it.destination.endsWith(".dat.sgy"), it.destination
+        for line in it.lines:
+          if "kept in the name" in line: noted = true
+        var back = openSeismic(it.destination, keys = true)
+        if it.destination.endsWith(".vib.sgy"):
+          doAssert back.len == 13, $back.len
+        else:
+          doAssert back.len == 4, $back.len
+        back.close()
+      doAssert noted, "the kept extension was not said in the results"
+      doAssert readFile(d) == beforeD and readFile(v) == beforeV,
+        "a source was changed"
 
   echo "tsigsave: ok"
 

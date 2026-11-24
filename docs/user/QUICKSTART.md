@@ -302,7 +302,8 @@ the write is the right, sharing the height; drag the splitter between them. Belo
 
 The left pane is the source. **Change source...** picks another folder. **All**, **None**
 and **Only the shown file** set the ticks. The filter box narrows the tree by file name.
-The tree lists that folder's seismic files and fills the pane. A folder shows how
+The tree lists that folder's seismic files, including a vibrator signature file,
+and fills the pane. A folder shows how
 many of its files are ticked, and the line under the tree is the total and its
 size. Tick the ones to write.
 **All** and **None** cover every listed file, including ones the name filter hides.
@@ -315,7 +316,11 @@ folder to write into. **Format** is SEG-Y or SEG-D. The boxes under it, in two c
 are on: polarity reversals, dropping killed traces, each trace's own filter, the Seismic
 window's processing, time shifts, and the plot's sort. Display-only gain is not written.
 A SEG-D file is sorted within each record. A file already open is written as it stands,
-including edits not yet saved. **Keep the sub folders** is on: a file in a sub folder is
+including edits not yet saved. A signature file that is not open is decoded and
+written the same way; one that cannot be decoded is a failed row, and the rest
+are still written. Two signature files whose names differ only by `.dat` and
+`.vib` keep that extension in the output name, so they are not written as one
+file. **Keep the sub folders** is on: a file in a sub folder is
 written in that sub folder.
 
 **Run** writes every ticked file. It stays inactive, and says why, when nothing is

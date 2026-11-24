@@ -1,10 +1,13 @@
 ## Writes many files of one folder as SEG-Y or SEG-D, one file at a time.
-## A background job (`outputBatchWork`): each source is opened the way a
-## session is, or taken from the caller when that file is already open, and
-## written by the same writer as one file (`writeOutput`). The source is
-## never modified. A file that cannot be written is recorded and the batch
-## goes on. A destination folder that is the source folder, inside it, or
-## holding it, is refused before anything is written.
+## A background job (`outputBatchWork`): each source is opened the way the
+## application opens it by kind, or taken from the caller when that file is
+## already open, and written by the same writer as one file (`writeOutput`).
+## A vibrator signature file that is not already open is decoded in memory
+## (`openSignature`) and dropped after the write. The source is never
+## modified. A file that cannot be written, or a signature file that cannot
+## be decoded, is recorded and the batch goes on. A destination folder that
+## is the source folder, inside it, or holding it, is refused before anything
+## is written.
 ##
 ## Submit it with `outputBatchSpec`. That spec does not touch the file
 ## system, so the UI thread may build it: the paths it lists are the
@@ -15,7 +18,8 @@
 
 import std/[os, sets, strutils, tables, times]
 import parseSEG
-import edits, filejobs, filememory, filesystem, identity, jobs, outputjobs, session, threads
+import edits, filejobs, filekinds, filememory, filesystem, identity, jobs, outputjobs,
+  session, signatures, threads
 
 const BatchScale = 1_000_000 ## one file's share of the job's progress
 
@@ -78,6 +82,7 @@ type
   Plan = object
     dest: string
     why: string
+    note: string
 
 func extOf(format: OutputFormat): string =
   if format == ofSegy: ".sgy" else: ".sgd"
@@ -99,9 +104,17 @@ func stringInside(path, folder: string): bool =
   when defined(windows): path.toLowerAscii.startsWith(prefix.toLowerAscii)
   else: path.startsWith(prefix)
 
-proc planDest(destRoot, relative: string; mirror: bool; format: OutputFormat): Plan =
+func signatureExt(name: string): string =
+  ## `.dat` or `.vib` when the leaf of `name` has that extension, else "".
+  ## A name only: the kind is told from the file's first bytes.
+  let ext = name.extractFilename.splitFile.ext.toLowerAscii
+  if ext == ".dat" or ext == ".vib": ext else: ""
+
+proc planDest(destRoot, relative: string; mirror: bool; format: OutputFormat;
+    keepExt = false): Plan =
   ## The destination of one relative path, or why it cannot be written.
-  ## Strings only: no file system.
+  ## Strings only: no file system. `keepExt` appends the output extension
+  ## and leaves the source extension in the name.
   if relative.len == 0: return Plan(why: "No relative path was given.")
   if isAbsolute(relative): return Plan(why: "The relative path is absolute.")
   let rel = withSep(relative)
@@ -113,29 +126,55 @@ proc planDest(destRoot, relative: string; mirror: bool; format: OutputFormat): P
   if name.len == 0 or name == "." or name == "..":
     return Plan(why: "The relative path leaves the destination folder.")
   if destRoot.len == 0: return Plan(why: "No destination folder was given.")
-  let dest = changeFileExt(destRoot / leaf, extOf(format))
+  let dest = if keepExt: destRoot / (leaf & extOf(format))
+             else: changeFileExt(destRoot / leaf, extOf(format))
   if not stringInside(normalizedPath(dest), normalizedPath(destRoot)):
     return Plan(why: "The relative path leaves the destination folder.")
   Plan(dest: dest)
 
 proc planned(ask: BatchAsk): seq[Plan] =
   ## Each item's destination. A second item that lands on a name already
-  ## taken fails with a sentence; the first keeps the name. Strings only.
+  ## taken fails with a sentence; the first keeps the name. Two signature
+  ## names that differ only by `.dat` and `.vib` keep that extension, so
+  ## they are not written as one file. Strings only.
   result = newSeq[Plan](ask.items.len)
-  var owner = initTable[string, string]()
+  var byDest = initTable[string, seq[int]]()
   for i, item in ask.items:
-    let plan = planDest(ask.destRoot, item.relative, ask.mirrorFolders, ask.options.format)
+    let plan = planDest(ask.destRoot, item.relative, ask.mirrorFolders,
+      ask.options.format)
+    result[i] = plan
     if plan.why.len > 0 or plan.dest.len == 0:
-      result[i] = plan
       if result[i].why.len == 0: result[i].why = "No destination was given."
     else:
       let key = destKey(plan.dest)
-      if owner.hasKey(key):
-        result[i] = Plan(dest: plan.dest, why: plan.dest.extractFilename &
-          " is already the output of " & owner[key] & ".")
-      else:
-        owner[key] = item.relative
-        result[i] = plan
+      var row = byDest.getOrDefault(key)
+      row.add i
+      byDest[key] = row
+  for _, idxs in byDest.pairs:
+    var exts = initHashSet[string]()
+    for i in idxs:
+      let ext = signatureExt(ask.items[i].relative)
+      if ext.len > 0: exts.incl ext
+    if exts.len < 2: continue
+    for i in idxs:
+      if signatureExt(ask.items[i].relative).len == 0: continue
+      var plan = planDest(ask.destRoot, ask.items[i].relative, ask.mirrorFolders,
+        ask.options.format, keepExt = true)
+      if plan.why.len == 0 and plan.dest.len > 0:
+        plan.note = "The source extension was kept in the name so two " &
+          "signature files are not written as one file."
+      elif plan.why.len == 0:
+        plan.why = "No destination was given."
+      result[i] = plan
+  var owner = initTable[string, string]()
+  for i, item in ask.items:
+    if result[i].why.len > 0 or result[i].dest.len == 0: continue
+    let key = destKey(result[i].dest)
+    if owner.hasKey(key):
+      result[i] = Plan(dest: result[i].dest, why: result[i].dest.extractFilename &
+        " is already the output of " & owner[key] & ".")
+    else:
+      owner[key] = item.relative
 
 proc outputBatchSpec*(ask: BatchAsk): JobSpec =
   ## The job that writes `ask`: background, reading each source, needing
@@ -460,9 +499,18 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
         let progress = proc (done, total: int64): bool {.gcsafe, raises: [].} =
           ctx.progress(int64(doneFiles) * BatchScale + shareOf(done, total),
             int64(count) * BatchScale)
-        s = openSession(item.source, progress)
+        let kind = sniff(item.source)
+        if kind in SignatureFileKinds:
+          s = openSignature(item.source)
+        elif kind == fkUnknown:
+          let why = refusalOf(item.source)
+          if why.len > 0: raise newException(SignatureError, why)
+          s = openSession(item.source, progress)
+        else:
+          s = openSession(item.source, progress)
         file = s.filePtr
         edits = savedEdits(ctx, store, item.source, s.modified, itemLines, doneFiles, count)
+      if plans[i].note.len > 0: itemLines.add plans[i].note
       if ctx.cancelled: raise newException(JobCancelledError, "Cancelled.")
       outSink = OutputSink()
       let report = proc (done, total: int): bool {.gcsafe.} =
@@ -507,10 +555,12 @@ proc outputBatchWork*(ask: BatchAsk; store: Store; openFiles: seq[OpenFile];
   ## Writes each of `ask.items` in order, on a job thread (`outputBatchSpec`).
   ## A file in `openFiles` whose path is that item's source is written as it
   ## stands, edits included, and is not closed here; every other file is
-  ## opened and closed here, and its saved edits are the store record a
+  ## opened and closed here (a signature file through `openSignature`, with
+  ## the default choice), and its saved edits are the store record a
   ## session would bring back once the hash of every byte agrees (or, when
   ## that hash was not stored, the same quick identity and modification
-  ## time). One file is open at a time. One file failing does
+  ## time). One file is open at a time. One file failing, including a
+  ## signature file that cannot be decoded, does
   ## not stop the batch. A cancel stops before the first file, between files
   ## and inside a file, and every file not written is listed as skipped. It
   ## removes the current part file, leaves finished files, and says how many

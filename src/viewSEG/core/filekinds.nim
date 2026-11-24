@@ -61,6 +61,11 @@ func sweepKindOf*(k: FileKind): SignatureKind =
 func isSeismic*(k: FileKind): bool {.inline.} = k in SeismicKinds
 func isSurvey*(k: FileKind): bool {.inline.} = k in SurveyKinds
 
+func isOutputFile*(k: FileKind): bool {.inline.} =
+  ## A file the Output window lists and a batch may write: a seismic file,
+  ## including a vibrator signature file.
+  k.isSeismic or k in SignatureFileKinds
+
 func fileKind*(k: SeismicKind): FileKind =
   ## The file kind of a seismic standard.
   case k
