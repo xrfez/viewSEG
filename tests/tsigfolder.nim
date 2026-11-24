@@ -35,7 +35,8 @@
 ## interval 1000); `findPairWork` looking only in the file's own folder (`searching` found no
 ## `.vib` in the other date folder); the signature tick ignored in `FileTable.update` (`tickOff`
 ## found 74 rows); the switch reading the prepared file (`preparedSwitch` found an open of it:
-## one read of the prepared file in `showPath`).
+## one read of the prepared file in `showPath`); a failed header read left as it was
+## (`failedReadRetried` kept "it cannot be read" and no pair).
 ## Not mutated: the 5000-file stop and the 10 ms drive (they bound a loop and a thread, and
 ## fail only on a hang or a UI-thread call); "moved on" in `movedOn` (it asserts only that a
 ## stopped sweep and its successor are followed); the swap, first-frame and refusal lines of
@@ -470,6 +471,40 @@ proc main*() =
       doAssert callsExcept(foOpen, dat, watch) == 0 and callsExcept(foRead, dat, watch) == 0 and
         callsExcept(foMapped, dat, watch) == 0, "the switch read the drive"
       doAssert st.log.has("Opened " & dat.extractFilename)
+      st.shutdown()
+
+  block failedReadRetried:
+    # A header read that failed is tried again once the file can be read, with no further
+    # change of its size or time. The file is listed first, so its kind is known: failing the
+    # open is a failed header read, not a sniff that the watch already retries.
+    withFixtures fx:
+      let dir = fx.dir / "retry" / "4321" / Date
+      let dat = datAt(dir, "a.dat", 4321, 100)
+      let vib = vibAt(dir, "0001.VIB", 100)
+      var st = initAppState(indexCache = fx.dir / "cache", watchEvery = Look)
+      st.apply Command(kind: ckBrowse, paths: @[dir])
+      doAssert st.settle(not st.fileList.scanning and st.fileList.pairs.getOrDefault(dat) == vib),
+        "the pair was not listed"
+      let before = getFileSize(dat)
+      fault(dat, fkFail, {foOpen})
+      discard datAt(dir, "a.dat", 4321, 100, more = SynthDat(samples: 2400))
+      doAssert getFileSize(dat) > before, "the file did not grow"
+      doAssert st.settle(st.steady(dat) and st.entry(dat).sweep.problem == "it cannot be read" and
+        dat notin st.fileList.pairs), "the failed read was not listed"
+      let size = getFileSize(dat)
+      let modified = getLastModificationTime(dat)
+      release(dat)
+      doAssert st.settle(st.entry(dat).sweep.problem.len == 0 and
+        st.entry(dat).sweep.triggerNs == trigNs(100) and
+        st.fileList.pairs.getOrDefault(dat) == vib), "a readable file was not read again"
+      doAssert getFileSize(dat) == size and getLastModificationTime(dat) == modified,
+        "the file changed while it was being read again"
+      let opens = calls(foOpen, dat)
+      let quiet = getMonoTime() + Look * 8
+      while getMonoTime() < quiet:
+        discard st.drainInbox()
+        sleep 5
+      doAssert calls(foOpen, dat) == opens, "the header was read again after it had succeeded"
       st.shutdown()
 
   block newestByTrigger:

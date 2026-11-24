@@ -286,8 +286,10 @@ network share) it reads the folder's names and `stat`s each file, and posts what
 (`mkWatched`): a seismic file that appeared (a file being written is too short to tell at
 first, so a file not known to be seismic is sniffed again when it changes), one whose size
 or time changed since the look before (`changing`), one that stopped changing, one that
-went. No operating system notification is used, so it works the same on every system and
-on shares. A folder that cannot be read is said once and keeps its list. It is its own
+went. A signature file whose header could not be read is read again on a later look, not
+more often than the interval, until that read succeeds. No operating system notification
+is used, so it works the same on every system and on shares. A folder that cannot be read
+is said once and keeps its list. It is its own
 thread, not a job on the background lane, so a long background job (a QC pass) never
 holds it up and the Jobs window is not filled with looks; its `stop` waits until a
 deadline only, so a share that hangs a look cannot hold the quit. `AppState.takeWatched` updates

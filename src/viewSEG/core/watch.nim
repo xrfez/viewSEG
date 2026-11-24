@@ -21,6 +21,11 @@
 ## - **Open files.** `watchOpen` names the open files; each is reported at
 ##   the first look after it is named, then whenever it changes, so the UI
 ##   can compare it with the file it opened (`Session.size`).
+## - **A header that could not be read.** A signature file whose header read
+##   failed (`"it cannot be read"`) is read again on a later look, not more
+##   often than `interval`, until that read succeeds. A file that is not a
+##   signature file is not retried for this, and a header that was read is
+##   not read again just because the library refused it.
 ## - **Steady.** A file is `changing` at the look that finds it changed (or
 ##   new) and steady at the next look that finds it the same: what "its size
 ##   has stopped changing" means here.
@@ -83,8 +88,10 @@ type
     kind: FileKind
     changing: bool
     listed: bool
-    unopened: bool ## it could not be opened to tell what it is: tried again each look
-    turn: int      ## the look that saw it last
+    unopened: bool   ## it could not be opened to tell what it is: tried again each look
+    unread: bool     ## its header could not be read: tried again, not more often than the interval
+    readAt: MonoTime ## when that read was last tried
+    turn: int        ## the look that saw it last
 
   Watcher = object
     ## The thread's own state.
@@ -120,7 +127,21 @@ proc report(s: Seen; path: string): WatchedFile =
   if s.kind in SignatureFileKinds: # (its header says what a list shows of it)
     result.sweep = readSweepInfo(path, s.kind.sweepKindOf, s.size)
 
-proc see(w: var Watcher; path: string; listed: bool; news: var seq[WatchedFile]) =
+proc addReport(w: var Watcher; path: string; news: var seq[WatchedFile]) =
+  ## Reports `path` and, when its header could not be read, remembers to try
+  ## again. A read that succeeded is not tried again, even if the library
+  ## then refuses the file.
+  let file = w.seen[path].report(path)
+  template s: untyped = w.seen[path]
+  if s.kind in SignatureFileKinds and file.sweep.problem == "it cannot be read":
+    s.unread = true
+    s.readAt = getMonoTime()
+  else:
+    s.unread = false
+  news.add file
+
+proc see(w: var Watcher; path: string; listed: bool; news: var seq[WatchedFile];
+    pause: Duration) =
   ## Looks at `path` once this turn and adds what is news about it to `news`.
   var info: FileInfo
   try:
@@ -151,33 +172,37 @@ proc see(w: var Watcher; path: string; listed: bool; news: var seq[WatchedFile])
       if s.kind == fkUnknown: s.kind = sniff(path, opened) # long enough to tell now?
       s.unopened = not opened
       s.changing = true
-      if s.kind != fkUnknown or wasKnown or announced: news.add s.report(path)
+      if s.kind != fkUnknown or wasKnown or announced: w.addReport(path, news)
     elif s.unopened:
       # Not readable when last looked at; its permissions may have changed.
       s.kind = sniff(path, opened)
       s.unopened = not opened
-      if s.kind != fkUnknown or announced: news.add s.report(path)
+      if s.kind != fkUnknown or announced: w.addReport(path, news)
     elif s.changing:
       s.changing = false
-      if s.kind != fkUnknown or announced: news.add s.report(path)
+      if s.kind != fkUnknown or announced: w.addReport(path, news)
     elif announced:
-      news.add s.report(path)
+      w.addReport(path, news)
+    elif s.unread and getMonoTime() - s.readAt >= pause:
+      w.addReport(path, news)
   else:
     let kind = sniff(path, opened)
-    let s = Seen(size: info.size, modified: info.lastWriteTime, kind: kind,
+    w.seen[path] = Seen(size: info.size, modified: info.lastWriteTime, kind: kind,
       changing: true, listed: listed, unopened: not opened, turn: w.turn)
-    w.seen[path] = s
-    if s.kind != fkUnknown or announced: news.add s.report(path)
+    if kind != fkUnknown or announced: w.addReport(path, news)
 
 proc look(w: var Watcher): seq[WatchedFile] =
   ## One look at the listed files and the open ones: what changed.
   inc w.turn
+  var pause: Duration
+  withLock w.p.lock:
+    pause = w.p.interval
   var problem = ""
   var incomplete = false # a tree cut at the cap: what is not seen is not gone
   if w.gen != 0:
     for i, p in w.paths:
       if not w.isDir[i]:
-        w.see(p, true, result) # a file chosen
+        w.see(p, true, result, pause) # a file chosen
       else:
         try:
           var n = 0
@@ -187,19 +212,19 @@ proc look(w: var Watcher): seq[WatchedFile] =
             let quit = w.p
             for path in treeNames(p, MaxTreeFiles, capped,
                 proc (found: int): bool {.gcsafe, raises: [].} = not quit.quitting):
-              w.see(path, true, result)
+              w.see(path, true, result, pause)
             if w.p.quitting: return
             if capped: incomplete = true
             continue
           for kind, name in fs.walkDir(p, relative = true, checkDir = true):
             # `p` is normalized, so `p / name` is the path the scan listed.
             if kind in {pcFile, pcLinkToFile} and not name.startsWith("."):
-              w.see(p / name, true, result)
+              w.see(p / name, true, result, pause)
             inc n
             if n mod 256 == 0 and w.p.quitting: return
         except OSError as e:
           problem = p & " cannot be read" & (if e.msg.len > 0: " (" & e.msg & ")" else: "")
-  for p in w.open: w.see(p, false, result)
+  for p in w.open: w.see(p, false, result, pause)
   # What no look saw this turn is gone, unless the folder could not be read.
   if problem.len == 0 and not incomplete:
     var gone: seq[string]
@@ -242,8 +267,9 @@ proc take(w: var Watcher) =
     w.seen.clear()
     w.problem = ""
     for f in looked:
+      let failed = f.kind in SignatureFileKinds and f.sweep.problem == "it cannot be read"
       w.seen[f.path] = Seen(size: f.size, modified: f.modified, kind: f.kind, listed: true,
-        unopened: f.unopened)
+        unopened: f.unopened, unread: failed, readAt: if failed: getMonoTime() else: MonoTime())
 
 proc run(p: ptr WatchObj) {.thread.} =
   markWorkerThread()
