@@ -6465,6 +6465,8 @@ proc submitShotRebuild(state: var AppState; i: int) =
 
 proc storeOrSay(state: var AppState; i: int) =
   ## Copies a loaded log into the project, or says why it is not stored.
+  ## A file that already sits where the copy would be written is not that
+  ## copy: its name is taken, so the copy is written beside it.
   let loaded = state.shotLogs[i]
   if not state.inProject:
     state.log.add(sevInfo, "shot log", ShotLogNotStored)
@@ -6472,7 +6474,11 @@ proc storeOrSay(state: var AppState; i: int) =
   if state.readOnlyProject:
     state.log.add(sevWarning, "shot log", ReadOnlyShotLog)
     return
-  let file = copyName(loaded.source.extractFilename, state.takenShotFiles)
+  var taken = state.takenShotFiles()
+  var file = copyName(loaded.source.extractFilename, taken)
+  if samePath(canonical(loaded.source), canonical(state.project.dir.partOf(file.shotLogCopy))):
+    taken.add file
+    file = copyName(loaded.source.extractFilename, taken)
   if not file.isShotLogFile:
     state.log.add(sevWarning, "shot log", file & " could not be saved.")
     return

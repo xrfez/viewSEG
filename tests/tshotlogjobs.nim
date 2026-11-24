@@ -14,7 +14,8 @@
 ## "big.csv is too large."; with the read-only edit saving anyway,
 ## `read_only_refuses_the_save` rejected a log that did not say the refusal;
 ## with a newline stored anyway, `line_break_is_refused` rejected a cell
-## that changed.
+## that changed; with the copy written onto its own source,
+## `import_does_not_write_onto_its_source` stored `shotlog.csv`.
 
 import std/[options, os, strutils]
 import viewSEG/core/[filesystem, jobs, project, shotlog, shotlogjobs, state]
@@ -222,6 +223,25 @@ proc main*() =
     doAssert st.shotLogMap(0) == map, "the map did not come back"
     doAssert st.shotView(0).rows[0].fileNumber.get == 5000
     doAssert st.shotLogsRevision > 0 and st.shotRevision(0) > 0
+    discard st.shutdown()
+
+  block import_does_not_write_onto_its_source:
+    let job = root / "JobOwn"
+    var st = start(root / "config-own")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0), "the project did not open"
+    let parked = job.partOf("shotlog.csv".shotLogCopy)
+    createDir(parked.parentDir)
+    writeFile(parked, original)
+    st.apply Command(kind: ckImportShotLog, logPath: parked)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not stored"
+    doAssert st.shotLogStored(0) != "shotlog.csv",
+      "the copy was written onto its own source (" & st.shotLogStored(0) & ")"
+    doAssert readFile(parked) == original, "the file already at the copy path was changed"
+    let copy = job.partOf(st.shotLogStored(0).shotLogCopy)
+    doAssert fileExists(copy) and copy != parked
+    doAssert readFile(Sample) == original
     discard st.shutdown()
 
   block remove_drops_the_copy:
