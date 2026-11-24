@@ -491,7 +491,8 @@ destination** opens the folder.
 
 **File names** (above **Format**) names each file from its own values instead of its
 source name: see [Output file names](output-file-names.md). **Text header** (SEG-Y only) writes each
-file's text header from a template of the project: see [Text header](text-header.md).
+file's text header from a template of the project: see [Text header](text-header.md). **Binary header** (SEG-Y only) sets chosen fields of each file's
+binary header from a set of the project: see [Binary header](binary-header.md).
 **Correlated** writes the
 files correlated with the project's reference: see [Correlate](correlate.md).
 
