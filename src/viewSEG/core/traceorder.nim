@@ -12,6 +12,11 @@
 ## file has fewer than two traces, the answer is `tgNotKnown` and `tsNotKnown`.
 ## When both sub-sorts hold (station and time rise together), a shot gather says its stations
 ## (`byStation`) and a receiver gather its times (`byTime`).
+## A shot gather is usually sorted by station only inside each record: the station restarts
+## at every record, so only the time holds for the whole file. When the station does not hold
+## for the file, the shot gather is judged record by record (the traces whose start is within
+## a sample of the record's first): every component's stations non-decreasing inside every
+## record, rising in at least one, and the components laid out alike in each record.
 
 import std/math
 
@@ -30,6 +35,9 @@ type
   TraceOrder* = object
     grouping*: TraceGrouping
     subSort*: TraceSubSort
+    inRecords*: bool
+      ## a shot gather whose stations are in order only inside each record (the station
+      ## restarts at every record): the grouping and the sub-sort hold per record
 
   StationPlace* = tuple[how: int8; a, b: float64; index: int16]
     ## a receiver point as the file names it: by its station (`how` 0: `a` the line, `b` the
@@ -51,17 +59,16 @@ func placeCmp(a, b: StationPlace): int =
   if result == 0: result = cmp(a.b, b.b)
   if result == 0: result = cmp(a.index, b.index)
 
-func holds(traces: openArray[OrderTrace]; dtS: float64; byTime: bool): bool =
-  ## Whether the traces of every component are non-decreasing in the key (station, or time in
-  ## samples) and the key rises somewhere. A time is compared with the latest of its component,
+func keyState(traces: openArray[OrderTrace]; dtS: float64; byTime: bool): int =
+  ## -1 when a component's traces fall in the key (station, or time in samples) or it cannot
+  ## be told, 1 when every component is non-decreasing and the key rises somewhere, else 0. A time is compared with the latest of its component,
   ## not with the trace before it, so small steps back cannot add up unseen. A trace placed by
   ## its channel alone has no station: the station order is then not told.
   var top: array[uint8, int] # per component: 1 + the index of its latest trace, 0 for none
   var rose = false
-  result = true
   for i in 0 ..< traces.len:
     let c = traces[i].component
-    if not byTime and traces[i].place.how == 2: return false
+    if not byTime and traces[i].place.how == 2: return -1
     if top[c] > 0:
       let p = traces[top[c] - 1]
       let d =
@@ -69,11 +76,15 @@ func holds(traces: openArray[OrderTrace]; dtS: float64; byTime: bool): bool =
           if dtS > 0: cmp(int(round((traces[i].start - p.start) / dtS)), 0)
           else: cmp(traces[i].start, p.start)
         else: placeCmp(traces[i].place, p.place)
-      if d < 0: return false
+      if d < 0: return -1
       if d > 0: rose = true
       if (byTime and traces[i].start > p.start) or (not byTime and d > 0): top[c] = i + 1
     else: top[c] = i + 1
-  result = rose
+  result = int(rose)
+
+func holds(traces: openArray[OrderTrace]; dtS: float64; byTime: bool): bool =
+  ## Whether the key is non-decreasing for every component and rises somewhere.
+  keyState(traces, dtS, byTime) > 0
 
 func contiguousComponents(traces: openArray[OrderTrace]): bool =
   ## Whether each component is one run of traces.
@@ -109,6 +120,40 @@ func uncodedGroups(traces: openArray[OrderTrace]; dtS: float64): bool =
       let d = traces[i].start - traces[i - 1].start
       if (if dtS > 0: int(round(d / dtS)) == 0 else: d == 0): return true
 
+func recordEnd(traces: openArray[OrderTrace]; a: int; dtS: float64): int =
+  ## The index after the record that starts at `a`: the traces whose start is within a sample
+  ## of the first one's (exactly equal when the sample interval is not known).
+  result = a + 1
+  while result < traces.len and
+      abs(traces[result].start - traces[a].start) <= (if dtS > 0: dtS else: 0.0):
+    inc result
+
+func stationInRecords(traces: openArray[OrderTrace]; dtS: float64; count: int;
+    grouping: var TraceGrouping): bool =
+  ## Whether inside every record each component's stations are non-decreasing (the station
+  ## restarts at each record) and rise in at least one record. `grouping` is then how the
+  ## components lie in the records: one component, each a run, or each station's together;
+  ## `tgNotKnown` when the records differ or lie in neither way.
+  var rose = false
+  var allBlocks, allFlags = true
+  var a = 0
+  while a < traces.len:
+    let b = recordEnd(traces, a, dtS)
+    case keyState(traces.toOpenArray(a, b - 1), dtS, false)
+    of -1: return false
+    of 1: rose = true
+    else: discard
+    if count > 1:
+      allBlocks = allBlocks and contiguousComponents(traces.toOpenArray(a, b - 1))
+      allFlags = allFlags and cycles(traces.toOpenArray(a, b - 1), count)
+    a = b
+  grouping =
+    if count == 1: tgNone
+    elif allBlocks: tgByComponent
+    elif allFlags: tgByFlag
+    else: tgNotKnown
+  result = rose
+
 func traceOrder*(traces: openArray[OrderTrace]; dtS: float64; shot: bool): TraceOrder =
   ## The order of `traces` (live traces, in file order), times compared in samples of `dtS`
   ## seconds. `shot`: the file is a shot gather, which prefers the station when both
@@ -135,3 +180,9 @@ func traceOrder*(traces: openArray[OrderTrace]; dtS: float64; shot: bool): Trace
         elif cycles(traces, count): tgByFlag
         else: tgNotKnown
       if g != tgNotKnown or uncoded: return TraceOrder(grouping: g, subSort: key)
+    if shot and not byTime:
+      var g = tgNotKnown
+      if stationInRecords(traces, dtS, count, g):
+        if uncoded: g = tgNotKnown
+        if g != tgNotKnown or uncoded:
+          return TraceOrder(grouping: g, subSort: key, inRecords: true)

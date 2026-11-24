@@ -140,7 +140,12 @@ the next); the tooltip says it in a sentence. An order holds only when every tra
 one before it of its component (a tie is fine), and components are never compared with each other; when no order
 holds, the key never changes or the file has one trace, the cell shows **?**. A file that has
 both orders (stations and times rising together) shows Station for a shot gather and Time for
-a receiver gather. A trace placed by its channel alone has no station order.
+a receiver gather. A shot gather is usually sorted by station only inside each record (the
+station restarts at every record, so over the whole file only the time rises): when every
+record is in order, with its components grouped alike in each, the cell says Station or
+Flag · station and the tooltip says "Inside each record, traces are sorted by station."; a
+record out of order, or stations that fall inside a record, leave it at Time. A trace placed by
+its channel alone has no station order.
 
 Right-click a seismic file's row to tell viewSEG what to treat it as. **Treat as** offers
 Automatic, Shot gather, Continuous receiver gather and Time-sliced receiver gather; **Trace

@@ -84,6 +84,64 @@ proc main*() =
     split[1].place = (0'i8, 1.0, 99.0, 0'i16)
     doAssert traceOrder(split, Dt, true) == none
 
+  block shotRecordsSortedByStationInside:
+    # a shot gather: the station restarts at every record, only the time holds over the file
+    # (seen to fail with `stationInRecords` never called: these read as time)
+    let inRec = TraceOrder(grouping: tgNone, subSort: tsByStation, inRecords: true)
+    var recs: seq[OrderTrace] = @[]
+    for r in 0 ..< 3:
+      for p in 1 .. 4: recs.add tr(1, 1, float64(p), r * 1000)
+    doAssert traceOrder(recs, Dt, true) == inRec, "records each sorted by station"
+    doAssert traceOrder(recs, Dt, false) == order(tgNone, tsByTime), "a receiver gather: time"
+    # one record out of order: the whole-file time is what holds
+    var bad = recs
+    swap(bad[4], bad[5])
+    doAssert traceOrder(bad, Dt, true) == order(tgNone, tsByTime), "one record out of order"
+    # also out of time: not known
+    for i in 0 ..< bad.len: bad[i].start = float64((i * 7) mod 5 * 1000) * Dt
+    doAssert traceOrder(bad, Dt, true) == none
+    # descending stations inside every record: not a station order
+    var down: seq[OrderTrace] = @[]
+    for r in 0 ..< 3:
+      for p in countdown(4, 1): down.add tr(1, 1, float64(p), r * 1000)
+    doAssert traceOrder(down, Dt, true) == order(tgNone, tsByTime), "descending in records"
+    # a record with a missing station is still sorted
+    var gap = recs
+    gap.delete(5)
+    doAssert traceOrder(gap, Dt, true) == inRec, "a station missing in one record"
+    # one trace per record: no station rise inside a record
+    var single: seq[OrderTrace] = @[]
+    for r in 0 ..< 4: single.add tr(1, 1, float64(4 - r), r * 1000)
+    doAssert traceOrder(single, Dt, true) == order(tgNone, tsByTime)
+    # several components by flag inside each record
+    var flag, comp, mixed: seq[OrderTrace] = @[]
+    for r in 0 ..< 3:
+      for p in 1 .. 4:
+        for c in 1 .. 3: flag.add tr(c, 1, float64(p), r * 1000)
+      for c in 1 .. 3:
+        for p in 1 .. 4: comp.add tr(c, 1, float64(p), r * 1000)
+    doAssert traceOrder(flag, Dt, true) ==
+      TraceOrder(grouping: tgByFlag, subSort: tsByStation, inRecords: true), "flag in records"
+    doAssert traceOrder(comp, Dt, true) ==
+      TraceOrder(grouping: tgByComponent, subSort: tsByStation, inRecords: true),
+      "component in records"
+    # records laid out differently from one another: no grouping, so time is told
+    mixed = flag[0 ..< 12] & comp[12 ..< 24] & flag[24 ..< 36]
+    doAssert traceOrder(mixed, Dt, true).inRecords == false
+    doAssert orderShort(traceOrder(flag, Dt, true)) == "Flag · station"
+    doAssert orderTitle(traceOrder(recs, Dt, true)) ==
+      "Inside each record, traces are sorted by station."
+    doAssert orderTitle(traceOrder(flag, Dt, true)) ==
+      "Traces are grouped by flag (the components of a station together) inside each " &
+      "record, and sorted by station."
+    doAssert orderTitle(traceOrder(comp, Dt, true)) ==
+      "Inside each record, traces are grouped by component, and inside each component " &
+      "sorted by station."
+    # a station order over the whole file keeps today's words
+    var whole: seq[OrderTrace] = @[]
+    for i in 0 ..< 5: whole.add tr(1, 1, float64(i + 1), i * 1000)
+    doAssert orderTitle(traceOrder(whole, Dt, true)) == "Traces are sorted by station."
+
   block theFlagIsOneStationWhateverTheSubSort:
     # (the review's cases) components of one time at different stations are no flag
     var crossed: seq[OrderTrace] = @[]

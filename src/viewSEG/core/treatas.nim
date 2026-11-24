@@ -76,6 +76,7 @@ func applied*(auto: TraceOrder; t: TreatAs): TraceOrder =
   result = auto
   if t.grouping.isSome: result.grouping = t.grouping.get
   if t.subSort.isSome: result.subSort = t.subSort.get
+  if t.grouping.isSome or t.subSort.isSome: result.inRecords = false
 
 func applied*(auto: RecordingFacts; t: TreatAs): RecordingFacts =
   ## `auto` with the kind and the order forced (`forced` says the kind is).

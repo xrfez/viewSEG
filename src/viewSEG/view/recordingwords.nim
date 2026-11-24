@@ -60,6 +60,14 @@ func orderTitle*(o: TraceOrder): string =
   if o.subSort == tsNotKnown: OrderNotKnownWords
   else:
     let sub = if o.subSort == tsByStation: "by station" else: "by time"
+    if o.inRecords:
+      return case o.grouping
+        of tgNone: "Inside each record, traces are sorted by station."
+        of tgNotKnown: "Inside each record, traces are sorted by station." & UncodedWords
+        of tgByFlag: "Traces are grouped by flag (the components of a station together) " &
+          "inside each record, and sorted by station."
+        else: "Inside each record, traces are grouped by component, and inside each " &
+          "component sorted by station."
     case o.grouping
     of tgNone: "Traces are sorted " & sub & "."
     of tgNotKnown: "Traces are sorted " & sub & "." & UncodedWords

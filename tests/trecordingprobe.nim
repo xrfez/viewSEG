@@ -148,15 +148,16 @@ proc main*() =
     type Want = tuple[name: string; outcome: ProbeOutcome; kind: RecordingKind;
       order: TraceOrder]
     const
-      byTime = TraceOrder(grouping: tgNone, subSort: tsByTime)
       byStation = TraceOrder(grouping: tgNone, subSort: tsByStation)
-      flagTime = TraceOrder(grouping: tgByFlag, subSort: tsByTime)
       flagStation = TraceOrder(grouping: tgByFlag, subSort: tsByStation)
       notKnown = TraceOrder(grouping: tgNotKnown, subSort: tsNotKnown)
+      stationInRecords = TraceOrder(grouping: tgNone, subSort: tsByStation, inRecords: true)
+      flagStationInRecords = TraceOrder(grouping: tgByFlag, subSort: tsByStation,
+        inRecords: true)
       wants: seq[Want] = @[
-        ("land/shots.sgd", poKnown, rkShotGather, byTime),
-        ("land/shots.sgy", poKnown, rkShotGather, byTime),
-        ("obn/obn.sgd", poKnown, rkShotGather, flagTime),
+        ("land/shots.sgd", poKnown, rkShotGather, stationInRecords),
+        ("land/shots.sgy", poKnown, rkShotGather, stationInRecords),
+        ("obn/obn.sgd", poKnown, rkShotGather, flagStationInRecords),
         ("obn/obn_receiver.sgd", poKnown, rkReceiverSliced, flagStation),
         ("vib/field/signature_13trace_a.sgy", poKnown, rkShotGather, notKnown),
         ("vib/field/signature_13trace_b.sgy", poKnown, rkShotGather, notKnown),
