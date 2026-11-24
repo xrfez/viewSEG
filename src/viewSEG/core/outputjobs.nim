@@ -669,11 +669,15 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               for j in have ..< recordSamples: samples[j] = 0
             elif have > recordSamples:
               samples.setLen recordSamples
-            let aux = file[].traceKeys(t).status == tsAuxiliary
+            let status = file[].traceKeys(t).status
+            let aux = status == tsAuxiliary
             let isOdd = t in odd
             let isRef = t in refs
             if aux and isRef and not isOdd and lag != 0: timeShift(samples, lag)
-            if aux and (not isRef or isOdd): corrKeys[0].status = tsDead
+            # A dead seismic trace stays dead. correlateInto then writes zeros,
+            # as the correlation job does; marking it live would correlate it.
+            if status == tsDead or (aux and (not isRef or isOdd)):
+              corrKeys[0].status = tsDead
             else: corrKeys[0].status = tsLive
             plan.correlateInto(rowBlock(samples, 1, recordSamples),
               rowBlock(corrDst, 1, listen), corrMeta, ws)

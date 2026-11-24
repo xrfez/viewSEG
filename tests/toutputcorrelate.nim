@@ -12,6 +12,10 @@
 ## (b) with no option, the bytes match the template writer.
 ## (c) an interval that differs refuses and leaves no file.
 ## (d) a record that is not longer than the sweep refuses the same way.
+## (e) a dead seismic trace is written dead, as zeros, equal to the button.
+##
+## Seen to fail: trace 1 was marked live and correlated, so sample 0 was 1.0
+## against the button's 0.0.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -26,6 +30,9 @@ const
   Listen = 800
   Delays = [40, 100, 200]
   RefAux = 3
+  DeadRecord = 400
+  DeadTrace = 1
+  DeadListen = DeadRecord - SweepLen
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
@@ -63,6 +70,36 @@ proc writeRaw(path: string; sweep: openArray[float32]) =
     k.time = 1_700_000_000.0
     w.writeTrace(k, buf)
   doAssert w.close().len == 0, "the raw file did not close"
+
+proc writeDead(path: string; sweep: openArray[float32]) =
+  ## SEG-Y, 2 ms, 400 samples. Trace 1 is dead and holds the sweep, so a
+  ## live correlation of it is not zeros. The reference auxiliary is trace 3.
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
+    measurementSystem: 1, text: @["C01 a dead trace stays dead"]))
+  for i in 0 .. 4:
+    var buf: seq[float32]
+    var k = initTraceKeys()
+    if i == DeadTrace:
+      buf = delayedSweep(sweep, DeadRecord, 0)
+      buf[0] = 1
+      (k.traceCode, k.status) = (2'i16, tsDead)
+    elif i < Delays.len:
+      buf = delayedSweep(sweep, DeadRecord, Delays[i])
+      (k.traceCode, k.status) = (1'i16, tsLive)
+    elif i == RefAux:
+      buf = delayedSweep(sweep, DeadRecord, 0)
+      (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+    else:
+      buf = newSeq[float32](DeadRecord)
+      for j in 0 ..< DeadRecord: buf[j] = float32(j + 1)
+      (k.traceCode, k.status) = (6'i16, tsAuxiliary)
+    k.record = 7.0
+    k.channel = float64(i + 1)
+    k.intervalUs = DtMs * 1000.0
+    k.t0Ms = 0.0
+    k.time = 1_700_000_000.0
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the dead-trace file did not close"
 
 proc writeSegd(path: string; sweep: openArray[float32]) =
   var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: DtMs * 1000.0,
@@ -208,6 +245,46 @@ proc main*() =
       a.close()
       b.close()
     opened[].close()
+
+  block deadStaysDead:
+    ## SEG-Y, 2 ms, 400 samples, trace 1 dead with a nonzero sample.
+    ## Seen to fail: the option correlated it, so sample 0 was not the button's 0.
+    let deadPath = srcDir / "dead.sgy"
+    writeDead(deadPath, sweep)
+    var dead = openSeismic(deadPath, keys = true)
+    doAssert dead.traceKeys(DeadTrace).status == tsDead, "trace 1 was not stored dead"
+    doAssert samplesOf(dead, DeadTrace)[0] != 0, "trace 1 had no nonzero sample"
+    let made = correlate(dead, deadPath, sweep)
+    var opened = made.opened.filePtr
+    let fromButton = outDir / "dead-button.sgy"
+    let fromOption = outDir / "dead-option.sgy"
+    let button = runWrite(opened[], deadPath, fromButton, OutputOptions(format: ofSegy))
+    doAssert button.st == jsDone, button.error & " / " & button.wrote.reason
+    let opted = runWrite(dead, deadPath, fromOption, option(sweep, ofSegy))
+    doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+    var a = openSeismic(fromOption, keys = true)
+    var b = openSeismic(fromButton, keys = true)
+    doAssert a.len == b.len, "trace count " & $a.len & " vs " & $b.len
+    doAssert a.traceKeys(DeadTrace).status == tsDead, "the option wrote trace 1 live"
+    doAssert b.traceKeys(DeadTrace).status == tsDead, "the button wrote trace 1 live"
+    var live = false
+    for t in 0 ..< a.len:
+      let x = samplesOf(a, t)
+      let y = samplesOf(b, t)
+      doAssert x.len == y.len and x.len == DeadListen, "trace " & $t & " count " & $x.len &
+        " vs " & $y.len
+      for j in 0 ..< x.len:
+        doAssert x[j] == y[j], "trace " & $t & " sample " & $j & " " & $x[j] & " vs " & $y[j]
+      if t != DeadTrace:
+        for v in x:
+          if v != 0: live = true
+    for j, v in samplesOf(a, DeadTrace):
+      doAssert v == 0, "dead trace sample " & $j & " is " & $v & ", not 0"
+    doAssert live, "a live trace was written as zeros"
+    a.close()
+    b.close()
+    opened[].close()
+    dead.close()
 
   block segdSource:
     let segd = srcDir / "src.sgd"
