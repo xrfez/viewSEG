@@ -389,6 +389,28 @@ proc main*() =
     doAssert writeFailure("No space left on device") ==
       "Writing the file failed: No space left on device."
 
+  block segy_cannot_store_source_line:
+    # Fails when the line is silently dropped from SEG-Y output (no line says
+    # so) or the line is said for SEG-D, which keeps it.
+    var m = initShotLogMap()
+    m.hasHeader = false
+    m.roles = @[crFileNumber, crUtcMicros, crSourceLine, crShotPoint, crPointIndex]
+    var raw = ""
+    for i in 0 ..< 7:
+      raw.add $Files[i] & "," & $(BaseUs + Offsets[i]) & ",5," & $(100 + i) & "," & $i & "\n"
+    let placed = shotsInTime(shots(parseShotLog(raw, m), m).rows)
+    let segy = initCutOptions(LengthMs, StartMs, standard = csSegy)
+    let withLine = runCut(jobs, srcSame, same.path, outDir / "line.sgy", placed, segy)
+    doAssert withLine.st == jsDone, withLine.error
+    doAssert withLine.res.lines.countIt("not store the source line" in it) == 1,
+      $withLine.res.lines
+    let without = runCut(jobs, srcSame, same.path, outDir / "noline.sgy", shots, segy)
+    doAssert without.st == jsDone, without.error
+    doAssert not without.res.lines.anyIt("source line" in it), $without.res.lines
+    let segd = runCut(jobs, srcSame, same.path, outDir / "line.sgd", placed, opts)
+    doAssert segd.st == jsDone, segd.error
+    doAssert not segd.res.lines.anyIt("source line" in it), $segd.res.lines
+
   block existing_destination_refused:
     # Fails when the part file is claimed (and the check made) after work.
     let dest = outDir / "keep.sgd"

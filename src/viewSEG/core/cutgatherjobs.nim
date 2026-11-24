@@ -61,6 +61,9 @@ type
       ## true: the record numbers are the shots' file numbers; false: 1 to N
     pointIndexOutOfRange*: int
       ## shots whose point index does not fit the writer (written as 0)
+    sourceKeysDropped*: bool
+      ## SEG-Y output of shots that have a source line or a point index, which
+      ## SEG-Y has no place for
     components*: int ## traces per record
     samples*: int ## samples per trace
     samplesRead*: int ## source samples decoded, each once (not shots x window)
@@ -208,6 +211,8 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
   if res.pointIndexOutOfRange > 0:
     result.add plural(res.pointIndexOutOfRange, "shot has", "shots have") &
       " a point index the file cannot hold (written as 0)."
+  if res.sourceKeysDropped:
+    result.add "SEG-Y does not store the source line or the point index; they are left out."
   if res.overlapsCompared > 0:
     var line = "Compared " & plural(res.overlapsCompared, "overlap", "overlaps") &
       " between recording segments: " & $res.overlapsMatched & " match, " &
@@ -278,8 +283,9 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       if plan.len == 0:
         abort(sink, dest, part, false, "The recording has no live trace to cut.", false)
       let numbered = recordNumbers(shots)
-      var anyStation, anySourceXY, anyReceiverXY = false
+      var anyStation, anySourceXY, anyReceiverXY, anySourceKey = false
       for s in shots.shots:
+        if not s.srcLine.isNaN or s.srcIndex != 0: anySourceKey = true
         if not (s.srcLine.isNaN or s.srcPoint.isNaN): anyStation = true
         if not (s.srcX.isNaN or s.srcY.isNaN): anySourceXY = true
       for r in 0 ..< comps:
@@ -290,7 +296,8 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var res = CutResult(path: dest, shotsDropped: shots.dropped,
         duplicateTimes: shots.duplicateTimes, recordsFromFileNumbers: numbered.fromFileNumber,
         pointIndexOutOfRange: shots.pointIndexOutOfRange, components: comps,
-        samples: plan.samples, expectedBytes: expected)
+        samples: plan.samples, expectedBytes: expected,
+        sourceKeysDropped: opts.standard == csSegy and anySourceKey)
       ctx.setPhase "cutting"
       if not tell(0, expected): abort(sink, dest, part, false, "Cancelled.", true)
 
