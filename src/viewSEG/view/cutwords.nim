@@ -1,8 +1,11 @@
 ## Words for Project > Cut by shot log. The sentences a finished cut logs
-## live in `core/cutgatherjobs`; the refusals in `core/state`.
+## live in `core/cutgatherjobs`; the refusals in `core/state`. The sentences
+## that refuse a file that is not a continuous recording are `cutRefusal` in
+## `core/cutgather` (the cut job says them too), exported here.
 
 import std/[math, strutils]
 import ../core/[cutgather, shotlog]
+export cutRefusal
 import processSEG/continuous/slice
 
 const
@@ -24,6 +27,7 @@ const
     "name or folder."
   NameHasFolder* = "The name is a file name: choose the folder with the button."
   HeadersNotRead* = "The recording's headers are still being read."
+  RecordingBeingRead* = "The recording is being read to see whether the cut can use it."
   OpenCut* = "Open the cut file"
 
 func alignWords*(a: SliceAlign): string =

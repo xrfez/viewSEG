@@ -1724,6 +1724,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   ui.about.drawAbout(ui.theme, ui.marks)
   for c in ui.leap.drawLeap(ui.core, ui.theme, ui.marks):
     ui.core.apply c
+  ui.core.watchRecording(ui.cut.shown)
   var cut = ui.cut.drawCut(ui.core, ui.theme, ui.marks)
   for c in cut.commands.mitems:
     ui.core.apply move c

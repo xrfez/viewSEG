@@ -18,7 +18,8 @@ import parseSEG/io/diskio
 import parseSEG/segd/blocks
 import processSEG
 import processSEG/continuous/slice
-import viewSEG/core/[cutgather, cutgatherjobs, jobs, segmentclock, shotlog, vendormaps]
+import viewSEG/core/[cutgather, cutgatherjobs, jobs, recordingkind, segmentclock, shotlog,
+  vendormaps]
 import utils/[fixtures, waiting]
 
 const
@@ -156,6 +157,16 @@ proc main*() =
       let shot = initSliceShot(toPosixSeconds(BaseUs + 90_000), 1.0)
       let plan = planSlices(streams, [shot], window, soShotRecords, saNearest)
       doAssert plan.receiverCount == 1 and plan.timingIssues.len == 0
+
+    block the_dialog_facts_follow_the_clock:
+      # what the dialog shows: one component, one recording, not six receivers
+      let with = describeRecording(planRecording(addr f, good, 2.0, gps))
+      doAssert with.ready and with.kind == rkContinuous, $with
+      doAssert with.components == 1 and with.segments == Segments and with.boundaries == 5 and
+        with.abutting == 5, $with
+      doAssert abs(with.lastTime - with.firstTime - 6 * 40 * 0.002) < 1e-6, $with
+      let without = describeRecording(planRecording(addr f, good, 2.0, VendorRegistry()))
+      doAssert without.kind == rkShotRecord and without.components == Segments, $without
 
     block without_the_map_the_keys_are_used:
       let c = segmentClock(f, VendorRegistry())

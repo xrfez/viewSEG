@@ -116,7 +116,7 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
       join, layouts, leapfile, log,
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif,
     outputnames, reader,
-  recordqc, referencejobs, references, selection, session, settings, shotfollowtarget, shotlog,
+  recordingkind, recordqc, referencejobs, references, selection, session, settings, shotfollowtarget, shotlog,
   shotlogjobs, shotlogsps, shotspsjobs,
   shots, spectra,
   spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids, vendorjobs,
@@ -1140,6 +1140,13 @@ type
       ## the file the last export wrote; "" when it wrote none
     spsLogId: int = -1
       ## the id of the shot log the last export was of; -1 before any
+    recJob: JobId = NoJob
+      ## the job that describes the shown file as a recording for the cut dialog
+    recSink: RecordingSink
+    recKey: tuple[session, revision: int]
+      ## the file and keys revision `recFacts` (or the job) is for
+    recFacts: RecordingFacts
+    recHave: bool ## `recFacts` is the answer for `recKey`
     joins: seq[Joined]
       ## the open files joined with survey files
     project: ProjectState
@@ -2675,6 +2682,15 @@ func spsOutcomeLog*(state: AppState): int {.inline.} =
 func spsWritten*(state: AppState): string {.inline.} =
   ## The file the last SPS export wrote; "" when it wrote none.
   state.spsPath
+
+func recordingFacts*(state: AppState): RecordingFacts {.inline.} =
+  ## What the shown file is as a recording, once `watchRecording` has had it
+  ## read; not `ready` before that.
+  if state.recHave: state.recFacts else: RecordingFacts()
+
+func recordingBusy*(state: AppState): bool {.inline.} =
+  ## The shown file is being read as a recording.
+  state.recJob != NoJob
 
 func cutRunning*(state: AppState): bool {.inline.} =
   ## Whether a cut by shot log is under way.
@@ -7178,6 +7194,9 @@ proc clearSession(state: var AppState) =
   if state.leapJob != NoJob: discard state.jobs.cancel(state.leapJob)
   if state.cutJob != NoJob: discard state.jobs.cancel(state.cutJob)
   if state.spsJob != NoJob: discard state.jobs.cancel(state.spsJob)
+  if state.recJob != NoJob: discard state.jobs.cancel(state.recJob)
+  state.recJob = NoJob
+  state.recHave = false
   state.moveQueue.setLen 0
   state.leapQueue.setLen 0
   state.moveBases.setLen 0
@@ -8981,6 +9000,13 @@ proc onFinished(state: var AppState; job: JobInfo) =
     return
   if job.id == state.spsJob:
     state.finishSps(job)
+    return
+  if job.id == state.recJob:
+    state.recJob = NoJob
+    if job.state == jsDone and state.recSink != nil:
+      state.recFacts = state.recSink.facts
+      state.recHave = state.recFacts.ready
+    state.recSink = nil
     return
   if job.id == state.leapJob:
     state.finishLeap(job)
@@ -10899,6 +10925,35 @@ proc exportShotSpsCmd(state: var AppState; cmd: Command) =
   state.spsPath = ""
   state.spsJob = state.jobs.submit(spsExportSpec(dest),
     spsExportWork(state.shotLogs[cmd.spsLog].view, cmd.spsOptions, dest, state.spsSink))
+
+proc watchRecording*(state: var AppState; wanted: bool) =
+  ## Keeps a job reading the shown file as a recording (`describeRecording`)
+  ## while `wanted` (the cut dialog is open): started once its keys are read
+  ## and again when the shown file or its keys change, cancelled when no longer
+  ## wanted or the file changes. Call it every frame; it does nothing when
+  ## nothing changed.
+  let shown = state.shownFile(state.findPanel(MainPanel))
+  let usable = wanted and shown >= 0 and not state.sessions[shown].derived and
+    not state.sessions[shown].isSignature and state.sessions[shown].filePtr[].hasKeys
+  let key = if usable: (int(state.sessions[shown].id), state.sessions[shown].keysRevision)
+            else: (-1, 0)
+  if state.recJob != NoJob and (not usable or key != state.recKey):
+    discard state.jobs.cancel(state.recJob)
+    state.recJob = NoJob
+    state.recSink = nil
+  if not usable:
+    state.recHave = false
+    state.recKey = key
+  elif state.recJob == NoJob and (key != state.recKey or not state.recHave):
+    let s = state.sessions[shown]
+    let dtMs = seismicDtMs(s.filePtr)
+    state.recKey = key
+    state.recHave = false
+    if not dtMs.isNaN and dtMs > 0:
+      state.recSink = RecordingSink()
+      state.recJob = state.jobs.submit(JobSpec(title: "Read " & s.name & " as a recording",
+        lane: jlBackground, reads: @[s.diskPath]),
+        recordingFactsWork(s.filePtr, s.diskPath, dtMs, currentVendors(), state.recSink))
 
 proc applyCommand(state: var AppState; cmd: Command) =
   if cmd.kind in AuxRefused:

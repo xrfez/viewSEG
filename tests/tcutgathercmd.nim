@@ -10,7 +10,7 @@
 
 import std/[os, strutils]
 import parseSEG
-import viewSEG/core/[jobs, shotlog]
+import viewSEG/core/[cutgather, jobs, recordingkind, shotlog]
 import viewSEG/core/state {.all.}
 import utils/waiting
 
@@ -41,6 +41,25 @@ proc makeRecording(path: string) =
       k.rcvLine = 1
       k.rcvPoint = 7
       w.writeTrace(k, samples)
+  discard w.close()
+
+proc makeFile(path: string; rows: openArray[tuple[rcv, first, n: int; source: float64]]) =
+  ## A trace per row: its receiver, first sample, length and source point (NaN: none).
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+  for r in rows:
+    var k = initTraceKeys()
+    k.status = tsLive
+    k.record = 1
+    k.channel = float64(r.rcv + 1)
+    k.intervalUs = 2000
+    k.t0Ms = 0
+    k.time = float64(BaseUs div 1_000_000) + float64(r.first) * 0.002
+    k.rcvLine = 1
+    k.rcvPoint = float64(r.rcv + 1)
+    k.srcPoint = r.source
+    var samples = newSeq[float32](r.n)
+    for j in 0 ..< r.n: samples[j] = float32(r.first + j)
+    w.writeTrace(k, samples)
   discard w.close()
 
 proc writeLog(path: string): ShotLogMap =
@@ -126,6 +145,49 @@ proc main*() =
     doAssert st.settle(not st.cutRunning and st.cutOutcome.startsWith("The cut failed")),
       "the refusal of a name in use was not said: " & st.cutOutcome
     doAssert st.cutWritten.len == 0
+    discard st.shutdown()
+
+  block refused_when_not_continuous:
+    # a shot record (four receivers, one trace each) and a gather already cut
+    # by shot (traces every 0.5 s with different source points)
+    let shotRecord = dir / "in" / "record.sgy"
+    makeFile(shotRecord, [(0, 0, 2000, NaN), (1, 0, 2000, NaN), (2, 0, 2000, NaN),
+      (3, 0, 2000, NaN)])
+    let sliced = dir / "in" / "sliced.sgy"
+    makeFile(sliced, [(0, 0, 2000, 101.0), (0, 250, 2000, 102.0), (0, 500, 2000, 103.0),
+      (0, 750, 2000, 104.0)])
+    for (path, words) in [(shotRecord, "This file is a shot record"),
+        (sliced, "This file already holds one trace per shot (the traces carry 4 different")]:
+      var st = start(dir)
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut),
+        "the file was not shown"
+      st.apply Command(kind: ckImportShotLog, logPath: logPath, logMap: map, logMapped: true)
+      doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+        "the log was not read"
+      # what the dialog is told: the file is read as a recording by a job
+      st.watchRecording(true)
+      doAssert st.settle(st.recordingFacts.ready), "the recording was not described"
+      doAssert cutRefusal(st.recordingFacts).startsWith(words), cutRefusal(st.recordingFacts)
+      let dest = dir / "out" / (extractFilename(path) & ".sgd")
+      st.apply Command(kind: ckCutGather, cutLog: 0, cutOptions: opts, cutDest: dest)
+      doAssert st.settle(not st.cutRunning and st.cutOutcome.len > 0),
+        "the cut did not end"
+      doAssert st.cutOutcome.startsWith("The cut failed: " & words), st.cutOutcome
+      doAssert not fileExists(dest) and st.cutWritten.len == 0
+      discard st.shutdown()
+
+  block facts_of_a_continuous_recording:
+    var st = start(dir)
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: rec)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut),
+      "the recording was not shown"
+    doAssert not st.recordingFacts.ready
+    st.watchRecording(true)
+    doAssert st.settle(st.recordingFacts.ready), "the recording was not described"
+    doAssert st.recordingFacts.kind == rkContinuous and st.recordingFacts.components == 2
+    st.watchRecording(false)
+    doAssert not st.recordingFacts.ready and not st.recordingBusy
     discard st.shutdown()
 
 when isMainModule:

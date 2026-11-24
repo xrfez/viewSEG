@@ -6,7 +6,7 @@
 import std/[math, os]
 import imguin/cimgui
 import processSEG/continuous/slice
-import ../../core/[cutfacts, cutgather, destwatch, geometry, panels, shotlog, state]
+import ../../core/[cutgather, destwatch, geometry, panels, recordingkind, shotlog, state]
 import ../../view/[cutwords, theme]
 import marks, style
 
@@ -27,9 +27,6 @@ type
     shots: CutShots
     shotsKey: tuple[id, revision: int]
     haveShots: bool
-    facts: CutFacts
-    factsKey: tuple[session: int, keys: int]
-    haveFacts: bool
     dest: DestWatch ## whether a file or folder of the chosen name is already there
 
   CutDraw* = object
@@ -80,9 +77,8 @@ proc coloured(text: string; colour: Rgba; width: float32) =
 proc options(ui: CutUi): CutOptions =
   initCutOptions(ui.recordMs, ui.startMs, ui.align, ui.standard)
 
-proc sources(ui: var CutUi; st: AppState; shown: int) =
-  ## The shots of the chosen log and the facts of the shown file, each worked
-  ## out again only when what it comes from changed.
+proc sources(ui: var CutUi; st: AppState) =
+  ## The shots of the chosen log, worked out again only when it changed.
   if st.findShotLog(ui.logId) < 0 and st.shotLogCount > 0:
     ui.logId = st.shotLogId(st.shotLogCount - 1) # the newest, when the window shows none
   let li = st.findShotLog(ui.logId)
@@ -94,15 +90,6 @@ proc sources(ui: var CutUi; st: AppState; shown: int) =
       ui.haveShots = true
   else:
     ui.haveShots = false
-  if shown >= 0:
-    let s = st.sessions[shown]
-    let key = (int(s.id), s.keysRevision)
-    if not ui.haveFacts or ui.factsKey != key or not ui.facts.ready:
-      ui.facts = cutFacts(s.filePtr)
-      ui.factsKey = key
-      ui.haveFacts = true
-  else:
-    ui.haveFacts = false
 
 proc nameProblem(name: string): string =
   if name.len == 0: NeedName
@@ -178,7 +165,8 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
         0: sourceName else: "no file shown")).cstring,
       nil)
     marks.mark("cut.source")
-    ui.sources(st, shown)
+    ui.sources(st)
+    let facts = st.recordingFacts
     ui.drawLog(st, marks)
     igSetNextItemWidth(igGetFontSize() * 10)
     discard igInputDouble("Record length (ms)##cut".cstring, addr ui.recordMs, 0, 0,
@@ -189,10 +177,14 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     marks.mark("cut.start")
     let opts = ui.options()
     var problem = ""
-    if shown >= 0 and ui.haveFacts and ui.facts.ready:
-      problem = checkOptions(opts, ui.facts.dtMs)
+    if shown >= 0 and facts.ready:
+      problem = checkOptions(opts, facts.dtMs)
+    elif shown >= 0 and st.recordingBusy:
+      problem = RecordingBeingRead
     elif shown >= 0:
       problem = HeadersNotRead
+    let refusal = cutRefusal(facts)
+    if problem.len == 0 and refusal.len > 0: problem = refusal
     if problem.len == 0 and ui.haveShots and ui.shots.shots.len == 0:
       problem = "The shot log has no shot with a time."
     if problem.len > 0:
@@ -221,9 +213,9 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
       marks.mark("cut.exists")
     igSeparator()
     var summary = ""
-    if shown >= 0 and ui.haveShots and ui.haveFacts and ui.facts.ready and problem.len == 0:
-      let samples = int(round(opts.recordMs / ui.facts.dtMs))
-      summary = summaryWords(ui.shots, ui.facts.components, samples, opts)
+    if shown >= 0 and ui.haveShots and facts.ready and problem.len == 0:
+      let samples = int(round(opts.recordMs / facts.dtMs))
+      summary = summaryWords(ui.shots, facts.components, samples, opts)
     if summary.len > 0:
       wrapped(summary, wide)
       marks.mark("cut.summary " & summary)
