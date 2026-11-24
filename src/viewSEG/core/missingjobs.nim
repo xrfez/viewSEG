@@ -237,6 +237,12 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
                       why: $checked.candidates.len &
                       " survey records share this source and the record number matches neither")
                     for id in checked.candidates: drop.incl id
+                  elif not receiverGather and checked.recordMatch == rmFieldRecord and
+                      checked.hasSource and checked.sourceMismatch:
+                    listed = true
+                    unmatched.add (path: rel, record: fieldId(checked),
+                      why: "the record's source station has no X record; X record " &
+                      $checked.xpsRecord & ", matched by file number alone, belongs to another source")
                   elif receiverGather and checked.xpsRecord < 0:
                     listed = true
                     unmatched.add (path: rel, record: fieldId(checked),

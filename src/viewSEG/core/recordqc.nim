@@ -226,6 +226,11 @@ proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: 
         (if c.candidates.len > 1: "its source has " & $c.candidates.len & " and the FFID " &
           "chooses none" else: "by its source station or its FFID") & ")")
       return
+    if c.recordMatch == rmFieldRecord and c.hasSource and c.sourceMismatch:
+      # The FFID's X record is another source's: nothing to judge the record by.
+      notChecked("the record's source station has no X record in " & against & "; X record " &
+        $c.xpsRecord & ", matched by file number alone, belongs to another source")
+      return
     record = c.xpsRecord
     result = record
     byStation = c.traceMatch == tmStation
