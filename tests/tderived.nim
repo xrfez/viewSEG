@@ -15,7 +15,9 @@
 ## view was dropped. With the hold not lowering the count, `close(raw)` failed
 ## after the view was closed: the raw file stayed open. Copying a view hold is
 ## a compile error (`=copy` and `=dup` are `{.error.}`). The hold is private,
-## so this file cannot name it in `compiles`.
+## so this file cannot name it in `compiles`. With a SEG-D estimate taken from
+## the source map, `estimate - actual <= oneHeaderSet` failed: estimate 20772,
+## actual 16676, header set 192 (the 4096-byte external header).
 
 import std/[locks, math, monotimes, os, sequtils, strutils, times]
 import parseSEG
@@ -107,6 +109,59 @@ proc correlated(file: ptr SeismicFile; path: string; sweep: openArray[float32]):
 proc rawSampleLeft(rows: openArray[FieldRow]): bool =
   for row in rows:
     if row.field == "samplesPerTrace" and row.number == float64(Record): return true
+
+proc writeSegdExternal(path: string) =
+  ## Five traces, 1000 samples, and a 4096-byte external header the correlated
+  ## write does not copy.
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: DtMs * 1000.0,
+    numSamples: Record, time: 1_700_000_000.0))
+  var ext = newSeq[byte](4096)
+  for i in 0 ..< ext.len: ext[i] = byte(i and 0xff)
+  var buf = newSeq[float32](Record)
+  for j in 0 ..< Record: buf[j] = 1
+  for i in 0 .. 4:
+    var k = initTraceKeys()
+    k.record = 1.0
+    k.channel = float64(i + 1)
+    k.intervalUs = DtMs * 1000.0
+    k.time = 1_700_000_000.0
+    k.status = tsLive
+    k.traceCode = 1
+    w.writeTrace(k, buf, channelType = sctSeismic, externalHeader = ext)
+  doAssert w.close().len == 0, "the SEG-D file did not close"
+
+proc segdEstimate() =
+  ## A SEG-D estimate is the file the job writes, not the source's external header.
+  ## One header set is the general headers of one record and one channel-set
+  ## descriptor, as `correlatedBytesEstimate` states.
+  let dir = getTempDir() / ("tderived-segd-" & $getCurrentProcessId())
+  createDir(dir)
+  defer: removeDir(dir)
+  let path = dir / "raw.sgd"
+  writeSegdExternal(path)
+  var opened = openSeismic(path, keys = true)
+  let raw = newSession(path, opened)
+  let sweep = linearSweep(8.0, 80.0, float64(SweepLen) * DtMs, DtMs).sweepSamples(float32)
+  var jobs = initJobs()
+  var slot = CorrelateResult(opened: nil, lines: @[])
+  try:
+    let id = jobs.submit(jobSpec(path), correlateWork(CorrelateAsk(
+      file: raw.filePtr, path: path, reference: @sweep, referenceDtMs: DtMs,
+      referenceTraces: @[]), addr slot))
+    doAssert finish(jobs, id) == jsDone, slot.failure
+  finally:
+    jobs.stop()
+  doAssert slot.ok, slot.failure
+  let written = slot.opened
+  let estimate = correlatedBytesEstimate(raw.filePtr, SweepLen)
+  let actual = written.size
+  const oneHeaderSet = 2 * 3 * SegdBlockSize
+  doAssert estimate >= actual, "estimate " & $estimate & " below actual " & $actual
+  doAssert estimate - actual <= int64(oneHeaderSet), "estimate " & $estimate &
+    " actual " & $actual & " header set " & $oneHeaderSet
+  doAssert estimate < actual + 4096, "estimate includes the source external header: estimate " &
+    $estimate & " actual " & $actual
+  doAssert close(raw)
 
 proc viewOfSweep() =
   ## Listen facts of a view, the copy's size, and closing the raw file under a view.
@@ -224,6 +279,7 @@ proc main*() =
   setFsHook(nil)
   armed = false
   viewOfSweep()
+  segdEstimate()
   echo "tderived: ok"
 
 when isMainModule: main()

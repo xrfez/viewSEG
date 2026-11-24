@@ -25,8 +25,14 @@
 ## in memory.
 ##
 ## `correlatedBytesEstimate` is the byte length that in-memory copy would have.
-## The job still writes the copy; `fitsInMemory` is how a caller decides whether
-## it fits.
+## A SEG-Y writer keeps the source headers and replaces the sample bytes. A
+## SEG-D writer builds a new file from keys (its own general, channel-set and
+## trace headers). The source's external header, extra general-header blocks
+## and trace-header extensions are not in that length. The SEG-D figure can be
+## high by at most one header set (the general headers of one record and one
+## channel-set descriptor, six blocks) and does not include the source's
+## external header. The job still writes the copy; `fitsInMemory` is how a
+## caller decides whether it fits.
 
 import std/[algorithm, cpuinfo, formatfloat, math, sets, strutils]
 import parseSEG
@@ -200,12 +206,104 @@ proc addSat(a, b: int64): int64 {.inline.} =
 proc mulSat(a, b: int64): int64 {.inline.} =
   if a > 0 and b > high(int64) div a: high(int64) else: a * b
 
+const
+  SegdCrsMetre = "((OGP:P1/11 CRS))\nHC,1,6,1,metre\n"
+    ## The writer's P1/11 fragment when units are metres and no CRS text is given.
+  SegdCrsFeet = "((OGP:P1/11 CRS))\nHC,1,6,1,feet\n"
+    ## The writer's P1/11 fragment when units are feet and no CRS text is given.
+
+type
+  SegdSetSize = object
+    code: int
+    traces: int
+    receiverXy: bool
+
+func knownStation(line, point: float64): bool {.inline.} =
+  not line.isNaN and not point.isNaN and not (line == 0.0 and point == 0.0)
+
+func writtenSet(code: uint8): int {.inline.} =
+  ## 0 and seismic are one channel set, as the writer maps them.
+  if code == 0 or code == uint8(sctSeismic): int(sctSeismic) else: int(code)
+
+proc indexOfSet(sets: var seq[SegdSetSize]; code: int): int =
+  for i, s in sets:
+    if s.code == code: return i
+  sets.add SegdSetSize(code: code)
+  sets.high
+
+proc crsBlockCount(file: ptr SeismicFile): int =
+  ## CRS blocks `openOut` asks the writer for: the file's text, or the
+  ## P1/11 fragment for metres or feet. 31 payload bytes per 32-byte block.
+  let sum = file[].summary
+  var units = sum.coordinateUnits
+  if units notin {cuMeters, cuFeet, cuUnknown}: units = cuUnknown
+  var text = ""
+  if sum.crsFormat != ctNone: text = file[].crsText
+  if text.len == 0:
+    if units == cuMeters: text = SegdCrsMetre
+    elif units == cuFeet: text = SegdCrsFeet
+  if text.len == 0: return 0
+  (text.len + 30) div 31
+
+proc recordHeaderBytes(sets: openArray[SegdSetSize]; crsBlocks: int;
+    srcStation, srcXy: bool): int64 =
+  ## One record a from-keys shot gather writes: three general headers, CRS,
+  ## a source description and source position when any trace has them, one
+  ## channel-set descriptor per distinct type, and per trace a demux header,
+  ## extension #1, a timestamp, and a receiver position when that set has
+  ## coordinates. No external header and no extension copied from the source.
+  if sets.len == 0: return 0
+  result = int64(3 * SegdBlockSize + crsBlocks * SegdBlockSize)
+  if srcStation: result += SegdBlockSize
+  if srcXy: result += 3 * SegdBlockSize
+  result += int64(sets.len) * int64(3 * SegdBlockSize)
+  for s in sets:
+    let ext = 2 * SegdBlockSize + (if s.receiverXy: 3 * SegdBlockSize else: 0)
+    let per = SegdTraceHeaderSize + ext
+    result = addSat(result, mulSat(int64(s.traces), int64(per)))
+
+proc segdWrittenHeaders(file: ptr SeismicFile): int64 =
+  ## Headers the SEG-D job writes. High by at most one header set (general
+  ## headers of one record and one channel-set descriptor) if a channel type
+  ## the writer would merge is counted apart. It does not include the source
+  ## external header. For keys the writer accepts, this is that file's headers.
+  if not file[].hasKeys: refuse("the file was opened without its keys.")
+  let crsBlocks = crsBlockCount(file)
+  var
+    sets: seq[SegdSetSize] = @[]
+    have = false
+    cur = NaN
+    srcStation = false
+    srcXy = false
+  for i in 0 ..< file[].len:
+    let k = file[].traceKeys(i)
+    if not have or k.record != cur:
+      if have:
+        result = addSat(result, recordHeaderBytes(sets, crsBlocks, srcStation, srcXy))
+      sets.setLen 0
+      srcStation = false
+      srcXy = false
+      cur = k.record
+      have = true
+    let at = indexOfSet(sets, writtenSet(file[].traceEntry(i).channelType))
+    inc sets[at].traces
+    if k.hasReceiverXY: sets[at].receiverXy = true
+    if knownStation(k.srcLine, k.srcPoint): srcStation = true
+    if k.hasSourceXY: srcXy = true
+  if have:
+    result = addSat(result, recordHeaderBytes(sets, crsBlocks, srcStation, srcXy))
+
 proc bytesOfListen(file: ptr SeismicFile; listen: int): int64 =
-  ## Headers the open file is not using for samples, plus `listen` IEEE
-  ## float32 samples on every trace. A SEG-Y writer keeps those headers and
-  ## replaces the sample bytes, so this is that file's length. A count that
-  ## would overflow is `high(int64)`, which does not fit in memory.
+  ## Headers the correlated copy keeps, plus `listen` IEEE float32 samples
+  ## on every trace. A SEG-Y writer keeps the source headers and replaces
+  ## the sample bytes. A SEG-D writer builds its own headers (`segdWrittenHeaders`),
+  ## not `mappedSize - payload`, which still holds the source external header.
+  ## A count that would overflow is `high(int64)`, which does not fit in memory.
   let n = file[].len
+  let samples = mulSat(int64(n), int64(listen))
+  let sampleBytes = mulSat(samples, 4)
+  if file[].kind == skSegd:
+    return addSat(segdWrittenHeaders(file), sampleBytes)
   var payload = 0'i64
   let ix = file[].index
   for i in 0 ..< n:
@@ -213,8 +311,7 @@ proc bytesOfListen(file: ptr SeismicFile; listen: int): int64 =
   var headers = 0'i64
   let mapped = file[].mappedSize
   if mapped > payload: headers = mapped - payload
-  let samples = mulSat(int64(n), int64(listen))
-  addSat(headers, mulSat(samples, 4))
+  addSat(headers, sampleBytes)
 
 type
   ListenCount = concept v
@@ -223,8 +320,11 @@ type
 proc correlatedBytesEstimate*(file: ptr SeismicFile; sweepLen: int): int64 =
   ## Bytes the in-memory correlated copy of `file` would have for a sweep of
   ## `sweepLen` samples. Listen time is the record length minus the sweep, as
-  ## `correlateWork` writes it. Raises `ValueError` for a closed file, a file
-  ## the job would refuse, or a sweep that leaves no listen time.
+  ## `correlateWork` writes it. A SEG-D copy is a new file from keys, so this
+  ## is that writer's headers plus the listen samples, not the source map.
+  ## It can be high by at most one header set (six blocks) and does not
+  ## include the source external header. Raises `ValueError` for a closed
+  ## file, a file the job would refuse, or a sweep that leaves no listen time.
   if file == nil or not file[].isOpen: refuse("the file is not open.")
   let shape = recordShape(file)
   if sweepLen < 0 or sweepLen >= shape.samples:
