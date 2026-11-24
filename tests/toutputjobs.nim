@@ -15,11 +15,16 @@
 ## not looked for after the write, so the part was renamed and the job said
 ## done.
 ## Removing a directory link with `removeDir` deleted the marker in its target.
+## With every filter designed at trace 0's interval, a SEG-D file whose trace
+## 0 is an auxiliary at 4 ms filtered seismic trace 1 at 4 ms: "own: sample 0
+## -0.15360254 vs -0.08667881", and shifted it by 2 samples, not 4: "shift:
+## sample 3 0.46603155 vs 0.0".
 
 import std/[math, os, sequtils, strutils]
 when defined(windows):
   from std/winlean import nil
 import parseSEG
+import parseSEG/model/traceindex
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
 import viewSEG/core/[edits, jobs, outputjobs, panels, processing, sorting, state]
@@ -110,6 +115,39 @@ proc recordsOf(file: SeismicFile): seq[seq[int]] =
       result.add @[]
       rec = r
     result[^1].add i
+
+proc writeAuxFirstSegd(path: string; auxUs: int) =
+  ## SEG-D, 2 ms, 400 samples: trace 0 an auxiliary, traces 1 and 2 seismic,
+  ## a spike at sample 100 on a slow wave. The keys writer stores one
+  ## interval, so the auxiliary's set is given `auxUs` by editing that field.
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000.0,
+    numSamples: 400, time: 1_700_000_000.0))
+  for i in 0 .. 2:
+    var buf = newSeq[float32](400)
+    for j in 0 ..< buf.len: buf[j] = float32(sin(float64(j) * 0.2) + 0.3 * sin(float64(j) * 1.1))
+    buf[100] = 4
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs) = (7.0, float64(i + 1), 0.0, 2000.0)
+    k.time = 1_700_000_000.0
+    k.status = if i == 0: tsAuxiliary else: tsLive
+    w.writeTrace(k, buf, channelType = if i == 0: sctOther else: sctSeismic)
+  doAssert w.close().len == 0, "the auxiliary-first file did not close"
+  if auxUs == 2000: return
+  var f = openSeismic(path, keys = true)
+  let rec = f.index.segdRecords[0]
+  var which = -1
+  for i, d in rec.scanTypes[0].descriptorsRev3:
+    if d.channelType == uint8(ord(sctOther)): which = i
+  doAssert which >= 0, "the auxiliary channel set was not written"
+  let at = int(rec.offset) + 3 * SegdBlockSize + rec.generalBlocks.len + which * 96 + 23
+  f.close()
+  var bytes = readFile(path)
+  doAssert ord(bytes[at]) == 0 and ord(bytes[at + 1]) == 0x07 and ord(bytes[at + 2]) == 0xD0,
+    "interval bytes at " & $at & " are not 2000"
+  bytes[at] = chr((auxUs shr 16) and 0xFF)
+  bytes[at + 1] = chr((auxUs shr 8) and 0xFF)
+  bytes[at + 2] = chr(auxUs and 0xFF)
+  writeFile(path, bytes)
 
 proc main*() =
   install()
@@ -600,6 +638,51 @@ proc main*() =
     back.close()
     src.close()
     removeFile(dest)
+
+  block ownIntervalPerTrace:
+    ## Two SEG-D files with the same seismic samples, trace 0 an auxiliary at
+    ## 4 ms in one and 2 ms in the other. An own filter, or a time shift, on
+    ## seismic trace 1 is designed at its own 2 ms in both, so the written
+    ## trace 1 is the same.
+    let srcDir = dir / "auxfirst-src"
+    let outDir = dir / "auxfirst-out"
+    createDir(srcDir)
+    createDir(outDir)
+    let odd = srcDir / "aux4.sgd"
+    let even = srcDir / "aux2.sgd"
+    writeAuxFirstSegd(odd, 4000)
+    writeAuxFirstSegd(even, 2000)
+    var a = openSeismic(odd, keys = true)
+    var b = openSeismic(even, keys = true)
+    doAssert a.sampleIntervalUs(0) == 4000.0, $a.sampleIntervalUs(0)
+    doAssert a.sampleIntervalUs(1) == 2000.0 and b.sampleIntervalUs(0) == 2000.0
+    doAssert samplesOf(a, 1) == samplesOf(b, 1), "the seismic samples differ"
+    var filtered: FileEdits
+    doAssert filtered.setOwnFilters([1], bounded(OwnFilter(spec: Processing(band: pbBandPass,
+      f1: 8, f2: 12, f3: 40, f4: 50)))) == 1
+    var shifted: FileEdits
+    doAssert shifted.setTimeShifts([1], 8.0, 2.0) == 1
+    for (name, opts, edits) in [
+        ("own", OutputOptions(format: ofSegd, applyOwnFilters: true), filtered),
+        ("shift", OutputOptions(format: ofSegd, applyShifts: true), shifted)]:
+      let toA = outDir / (name & "-aux4.sgd")
+      let toB = outDir / (name & "-aux2.sgd")
+      let gotA = runJob(a, odd, toA, opts, edits, @[odd, even])
+      doAssert gotA.st == jsDone, gotA.error & " / " & gotA.wrote.reason
+      let gotB = runJob(b, even, toB, opts, edits, @[odd, even])
+      doAssert gotB.st == jsDone, gotB.error & " / " & gotB.wrote.reason
+      var wa = openSeismic(toA, keys = true)
+      var wb = openSeismic(toB, keys = true)
+      let x = samplesOf(wa, 1)
+      let y = samplesOf(wb, 1)
+      doAssert x.len == y.len, name & ": count " & $x.len & " vs " & $y.len
+      for j in 0 ..< x.len:
+        doAssert x[j] == y[j], name & ": sample " & $j & " " & $x[j] & " vs " & $y[j]
+      doAssert x != samplesOf(a, 1), name & ": trace 1 was not changed"
+      wa.close()
+      wb.close()
+    a.close()
+    b.close()
 
   block cancelDuringSignatureWrite:
     ## Seen to fail: the cancel asked as the signature bytes were written was

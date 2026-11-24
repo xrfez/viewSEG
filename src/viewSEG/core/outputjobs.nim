@@ -639,7 +639,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         headerKeys = openHeaderKeys(file[], source)
         openedHeader = true
       var samples = newSeq[float32]()
-      let dtMs = if correlating: corrDtMs else: file[].sampleIntervalUs(0) / 1000.0
+      var plans: TracePlans # one compiled filter per interval, not per trace
       var correlatedOver: seq[HeaderOverride] = @[]
       if correlating and not segdOut:
         correlatedOver = @[headerOverride("trace.correlated", CorrelatedYes)]
@@ -718,8 +718,11 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             if opts.applyOwnFilters or opts.applyProcessing:
               let listed = edits.plotFiltersIn(t .. t)
               if listed.len > 0: own = listed[0].filter
+            # Designed at this trace's interval: an auxiliary trace at another
+            # interval does not set the seismic traces' filters.
+            let dtMs = if correlating: corrDtMs else: traceDt(file, t)
             applyPreparedTrace(samples, file[].traceKeys(t), dtMs, reversed, shiftMs,
-              opts.processing, opts.applyProcessing, own, opts.applyOwnFilters)
+              opts.processing, opts.applyProcessing, own, opts.applyOwnFilters, plans)
           if like:
             if correlating:
               if carryPositions:

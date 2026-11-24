@@ -605,11 +605,61 @@ func ownIndex(own: openArray[FilterEntry]; trace: int): int =
     else: hi = mid
   if lo < own.len and own[lo].trace == trace: lo else: -1
 
+const PlanSlots = 8 ## compiled plans a `TracePlans` keeps of each kind
+
+type
+  TracePlans* = object
+    ## The compiled filter plans `applyPreparedTrace` reuses from one trace
+    ## to the next: the plot's filters per sample interval and length, a
+    ## trace's own per filter, interval and length. At most `PlanSlots` of
+    ## each are kept, the oldest dropped first, so a long write holds no
+    ## more. One value serves one `plot`.
+    plot: seq[CachedPlan]
+    own: seq[CachedPlan]
+  CachedPlan = object
+    filter: OwnFilter ## the own filter; unused for the plot's
+    dtMs: float64
+    samples: int
+    plan: PipelinePlan[float32]
+
+proc keep(slots: var seq[CachedPlan]; slot: sink CachedPlan): int =
+  ## Adds `slot`, dropping the oldest when full; its index.
+  if slots.len >= PlanSlots: slots.delete(0)
+  slots.add slot
+  slots.high
+
+proc plotPlan(plans: var TracePlans; plot: Processing; dtMs: float64;
+    samples: int): lent PipelinePlan[float32] =
+  var at = -1
+  for i, c in plans.plot:
+    if c.dtMs == dtMs and c.samples == samples: at = i
+  if at < 0:
+    at = plans.plot.keep(CachedPlan(dtMs: dtMs, samples: samples,
+      plan: plot.filterPipeline(dtMs).compile(float32, dtMs, samples, recordSamples = samples)))
+  plans.plot[at].plan
+
+proc ownPlan(plans: var TracePlans; own: OwnFilter; dtMs: float64; samples: int;
+    plan: var PipelinePlan[float32]): bool =
+  ## The trace's own filter compiled at `dtMs`, into `plan`; false when it
+  ## has no stage there.
+  for c in plans.own:
+    if c.dtMs == dtMs and c.samples == samples and c.filter == own:
+      plan = c.plan
+      return true
+  let pipe = own.ownPipeline(dtMs)
+  if pipe.len == 0: return false
+  let at = plans.own.keep(CachedPlan(filter: own, dtMs: dtMs, samples: samples,
+    plan: pipe.compile(float32, dtMs, samples, recordSamples = samples)))
+  plan = plans.own[at].plan
+  true
+
 proc applyPreparedTrace*(samples: var openArray[float32]; keys: TraceKeys; dtMs: float64;
     reversed: bool; shiftMs: float64; plot: Processing; applyPlot: bool; own: OwnFilter;
-    applyOwn: bool) =
+    applyOwn: bool; plans: var TracePlans) =
   ## One whole trace through `applyPreparedRows`, the proc `prepare` calls,
-  ## without the display gain. A dead trace is blanked, a sample that is not
+  ## without the display gain. `dtMs` is this trace's sample interval: the
+  ## filters and the shift are designed at it. `plans` keeps the compiled
+  ## filters for the next trace. A dead trace is blanked, a sample that is not
   ## a number is set to 0, polarity reversed, a stored time shift applied
   ## (seismic traces, positive later, same length, zeros where no sample
   ## exists), then the plot's filters and the trace's own. Nothing is done
@@ -632,22 +682,18 @@ proc applyPreparedTrace*(samples: var openArray[float32]; keys: TraceKeys; dtMs:
   if reversed: edits[0].incl teReversed
   var filtering = plotOn
   var filterPlan: PipelinePlan[float32]
-  if plotOn:
-    filterPlan = plot.filterPipeline(dtMs).compile(float32, dtMs, samples.len,
-      recordSamples = samples.len)
+  if plotOn: filterPlan = plans.plotPlan(plot, dtMs, samples.len)
   var ownAt: array[1, int] = [-1]
   var ownKeys: seq[OwnFilter]
   var ownPlans: seq[PipelinePlan[float32]]
   var ownReady: seq[bool]
   if ownOn:
-    ownAt[0] = 0
-    let pipe = own.ownPipeline(dtMs)
-    if pipe.len > 0:
+    var plan: PipelinePlan[float32]
+    if plans.ownPlan(own, dtMs, samples.len, plan):
+      ownAt[0] = 0
       ownKeys.add own
-      ownPlans.add pipe.compile(float32, dtMs, samples.len, recordSamples = samples.len)
+      ownPlans.add plan
       ownReady.add true
-    else:
-      ownAt[0] = -1
   var passed: seq[int]
   var noted: seq[string]
   var shiftRows: seq[int] = @[]
