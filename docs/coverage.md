@@ -42,11 +42,11 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Status | parseSEG 0.21.1: capabilities | names | processSEG 0.14.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 55 (21 in part) | 187 | 45 (28 in part) | 249 |
-| `internal` | 20 | 61 | 7 | 44 |
-| `planned` | 35 | 240 | 44 | 408 |
+| `internal` | 21 | 63 | 7 | 44 |
+| `planned` | 35 | 238 | 44 | 408 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 22 | 356 | 7 | 71 |
-| all | 134 | 853 | 104 | 777 |
+| all | 135 | 853 | 104 | 777 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -174,6 +174,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Grid unit from the SPS header | `gridUnit`, `GridUnit`, `measurementSystem` | The map's units: the status bar's coordinates, the scale bar, the ruler, a point's coordinates (`m`, `ft`, `ftUS`, named exactly; "units" when nothing says; lengths in another of them on request, converted exactly); Import survey: the units the SPS headers give, read as soon as a file is chosen (its header records, `parseSps` and `gridUnit`), confirmed or corrected (and then the map's), the seismic file's unit following them where its headers say nothing or only feet; File properties | built (map, join); planned (File properties) |
 | Coordinates from the user's own table | `GeometryTable`, `addSource`, `addReceiver`, `applyGeometry` | Import survey from a CSV table of stations (`core/join.addCsv`: a header row naming the columns, or line, point, x, y, z; S / R per row or one role for the table), joined with `applyGeometry` | built; not applicable (`GeometryTable`: the survey's `table`, never named) |
 | Write SPS and P1 (1.0 ↔ 2.1, byte-exact) | `writeSps`, `spsText`, `encodeSps`, `writeP1`, `p1Text`, `encodeP1`, `SurveyText`, `SpsWriteOptions`, `P1WriteOptions` | Export survey files (corrected, or in another SPS revision) | planned |
+| Shot log source points as an SPS file | `spsText` | internal: a shot log's source points written as SPS S records by `core/shotlogsps.nim`, until a menu exists | internal |
 | Receiver-domain relations | `receiverRelations` | The map's template box for a file of receiver gathers when only X records are loaded (made on a job); export .ops (receiver gathers) | built (the map); planned (the export) |
 | Preview what a geometry write would change | `geometryChanges`, `GeometryChanges`, `$` | "Write geometry…" preview step | planned |
 | Write joined geometry in place, journaled | `writeGeometry`, `GeometryFields` | Write geometry into the file (undoable) | planned |
