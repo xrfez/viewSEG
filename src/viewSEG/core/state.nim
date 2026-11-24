@@ -989,7 +989,7 @@ type
     busy: bool ## a job is reading it: a cell edit waits
 
   ShotLogJobKind = enum
-    sjImport, sjLoad, sjSave, sjRemap, sjRebuild
+    sjImport, sjLoad, sjSave, sjRemap, sjRebuild, sjDelete
 
   ShotLogWork = object
     job: JobId
@@ -6430,17 +6430,23 @@ proc findShot(state: AppState; id: int): int =
 
 proc dropShotLogs(state: var AppState) =
   ## Cancels a shot log's jobs and drops the loaded logs. A close, or a
-  ## project opening, starts from none.
+  ## project opening, starts from none. A delete already asked for is left
+  ## running: the document no longer names the copy, and cancelling it would
+  ## leave the file.
+  var kept: seq[ShotLogWork] = @[]
   for w in state.shotWork:
-    if w.job != NoJob: discard state.jobs.cancel(w.job)
-  state.shotWork.setLen 0
+    if w.kind == sjDelete: kept.add w
+    elif w.job != NoJob: discard state.jobs.cancel(w.job)
+  state.shotWork = kept
   state.shotLogs.setLen 0
   inc state.shotLogsRev
 
 proc takenShotFiles(state: AppState): seq[string] =
   for s in state.project.doc.shotLogs: result.add s.file
   for w in state.shotWork:
-    if w.stored.len > 0: result.add w.stored
+    if w.stored.len == 0: continue
+    if w.kind == sjDelete and w.source != state.project.dir: continue
+    result.add w.stored
   for s in state.shotLogs:
     if s.stored.len > 0: result.add s.stored
 
@@ -6453,6 +6459,16 @@ proc submitShotSave(state: var AppState; i: int) =
     saveShotLog(state.project.dir, loaded.stored, loaded.log, loaded.map, sink))
   state.shotWork.add ShotLogWork(job: job, kind: sjSave, id: loaded.id, sink: sink,
     name: loaded.name, source: loaded.source, stored: loaded.stored, map: loaded.map)
+
+proc submitShotDelete(state: var AppState; stored: string) =
+  ## Removes the project copy `stored` on a job. The name stays taken until
+  ## that job ends, so a new copy is not written there first.
+  if stored.len == 0 or not state.inProject or state.readOnlyProject: return
+  let path = state.project.dir.partOf(stored.shotLogCopy)
+  let sink = ShotLogSink()
+  let job = state.jobs.submit(removeSpec(path), removeShotLogCopy(path, sink))
+  state.shotWork.add ShotLogWork(job: job, kind: sjDelete, id: -1, sink: sink,
+    name: stored, source: state.project.dir, stored: stored)
 
 proc submitShotRebuild(state: var AppState; i: int) =
   let loaded = state.shotLogs[i]
@@ -6518,7 +6534,7 @@ proc removeShotLogCmd(state: var AppState; cmd: Command) =
   let id = loaded.id
   var kept: seq[ShotLogWork] = @[]
   for w in state.shotWork:
-    if w.id == id: discard state.jobs.cancel(w.job)
+    if w.id == id and state.jobs.cancel(w.job): discard
     else: kept.add w
   state.shotWork = kept
   state.shotLogs.delete(cmd.logIndex)
@@ -6532,7 +6548,7 @@ proc removeShotLogCmd(state: var AppState; cmd: Command) =
     if s.file != stored: left.add s
   state.project.doc.shotLogs = left
   state.projectChanged()
-  discard fs.tryRemoveFile(state.project.dir.partOf(stored.shotLogCopy))
+  state.submitShotDelete(stored)
 
 proc remapShotLogCmd(state: var AppState; cmd: Command) =
   if cmd.logIndex < 0 or cmd.logIndex >= state.shotLogs.len:
@@ -6592,8 +6608,7 @@ proc tookShotLoad(state: var AppState; w: ShotLogWork) =
 proc tookShotSave(state: var AppState; w: ShotLogWork) =
   let i = state.findShot(w.id)
   if i < 0:
-    if state.inProject and not state.readOnlyProject and w.stored.len > 0:
-      discard fs.tryRemoveFile(state.project.dir.partOf(w.stored.shotLogCopy))
+    state.submitShotDelete(w.stored)
     return
   let loaded = state.shotLogs[i]
   loaded.busy = false
@@ -6668,6 +6683,7 @@ proc takeShotLog(state: var AppState; job: JobInfo): bool =
   of sjSave: state.tookShotSave(w)
   of sjRemap: state.tookShotRemap(w)
   of sjRebuild: state.tookShotRebuild(w)
+  of sjDelete: discard
 
 proc clearSession(state: var AppState) =
   ## Every open file closed, the survey files taken off the map, an import

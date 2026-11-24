@@ -20,7 +20,9 @@
 ## with the revision bumped in the edit command, `edit_waits_to_bump_revision`
 ## saw it move before the save assigned the view; with the copy set aside,
 ## `save_does_not_set_the_copy_aside` saw a `.old` file, and with no sweep,
-## `reopen_sweeps_shot_log_temps` kept `shotlog.csv.7.tmp`.
+## `reopen_sweeps_shot_log_temps` kept `shotlog.csv.7.tmp`; with the copy
+## removed on the UI thread, `remove_does_not_touch_the_copy_on_the_ui_thread`
+## and `finished_save_removes_off_the_ui_thread` saw that write.
 
 import std/[options, os, strutils]
 import viewSEG/core/[filesystem, jobs, project, shotlog, shotlogjobs, state]
@@ -305,6 +307,56 @@ proc main*() =
     doAssert readFile(Sample) == original
     discard st.shutdown()
 
+  block remove_does_not_touch_the_copy_on_the_ui_thread:
+    let job = root / "JobUiRemove"
+    var st = start(root / "config-uiremove")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0), "the project did not open"
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not stored"
+    let copy = job.partOf(st.shotLogStored(0).shotLogCopy)
+    doAssert fileExists(copy)
+    install()
+    defer:
+      releaseAll()
+      setFsHook(nil)
+    st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
+    doAssert st.shotLogCount == 0
+    doAssert st.settle(not fileExists(copy) and st.jobs.active.len == 0), "the copy was kept"
+    for call in uiCalls():
+      doAssert copy notin call, "the copy was touched on the UI thread: " & call
+    doAssert calls(foWrite, copy) > 0, "the copy was not removed"
+    discard st.shutdown()
+
+  block finished_save_removes_off_the_ui_thread:
+    let job = root / "JobSaveRemove"
+    var st = start(root / "config-saveremove")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0), "the project did not open"
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not stored"
+    let copy = job.partOf(st.shotLogStored(0).shotLogCopy)
+    install()
+    defer:
+      releaseAll()
+      setFsHook(nil)
+    var earlier: seq[JobId]
+    for info in st.jobs.list: earlier.add info.id
+    st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 0, logCell: "LATER")
+    proc saveDone(st: AppState): bool =
+      for info in st.jobs.list:
+        if info.id notin earlier and info.spec.title.startsWith("Save ") and
+            info.state == jsDone: return true
+    doAssert waitUntil(st.saveDone()), "the save did not finish"
+    st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
+    doAssert st.shotLogCount == 0
+    doAssert st.settle(not fileExists(copy) and st.jobs.active.len == 0), "the copy was kept"
+    for call in uiCalls():
+      doAssert copy notin call, "the copy was touched on the UI thread: " & call
+    discard st.shutdown()
+
   block remove_drops_the_copy:
     let job = root / "JobRemove"
     var st = start(root / "config3")
@@ -316,7 +368,7 @@ proc main*() =
     doAssert fileExists(copy)
     st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
     doAssert st.shotLogCount == 0
-    doAssert not fileExists(copy), "the copy was kept"
+    doAssert st.settle(not fileExists(copy) and st.jobs.active.len == 0), "the copy was kept"
     doAssert readFile(Sample) == original
     st.flushFiles()
     st.apply Command(kind: ckCloseProject)

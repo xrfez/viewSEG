@@ -46,6 +46,9 @@ proc cannotRead(name: string): string =
 proc cannotSave(name: string): string =
   name & " could not be saved."
 
+proc cannotRemove(name: string): string =
+  name & " could not be removed."
+
 func isJobTemporary(name: string): bool =
   ## Whether `name` ends as a shot-log copy's temporary file does:
   ## `.<digits of a job>.tmp`.
@@ -87,6 +90,14 @@ proc saveSpec*(path: string): JobSpec =
   let name = path.fileName
   JobSpec(title: if name.len == 0: "Save shot log" else: "Save " & name,
     lane: jlBackground, exclusive: @[path])
+
+proc removeSpec*(path: string): JobSpec =
+  ## The job that removes a project copy at `path`. It needs the path to
+  ## itself, so it waits for a save of that copy. Its end is not announced
+  ## when it went well.
+  let name = path.fileName
+  JobSpec(title: if name.len == 0: "Remove shot log" else: "Remove " & name,
+    lane: jlBackground, exclusive: @[path], auto: true)
 
 proc remapSpec*(path: string): JobSpec =
   ## The job that parses a shot log again with another map.
@@ -197,6 +208,19 @@ proc writeCopy(ctx: JobContext; dest, text: string; sink: ShotLogSink) =
   except CatchableError:
     discard fs.tryRemoveFile(tmp)
     fail(sink, cannotSave(name))
+
+proc removeShotLogCopy*(path: string; sink: ShotLogSink): JobWork =
+  ## The work of a job that removes the project copy at `path` (`removeSpec`
+  ## is the spec). A file that is already gone is success. Worker-only. A
+  ## cancel leaves the file as it was.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.checkCancelled()
+    ctx.setPhase("removing")
+    ctx.checkCancelled()
+    if fs.fileExists(path) and (not fs.tryRemoveFile(path) or fs.fileExists(path)):
+      fail(sink, cannotRemove(path.fileName))
+    ctx.checkCancelled()
+    fill(sink, nil, ShotView(), ShotLogMap(), "")
 
 proc saveShotLog*(dir, name: string; log: ShotLog; map: ShotLogMap; sink: ShotLogSink):
     JobWork =
