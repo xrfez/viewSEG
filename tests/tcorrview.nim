@@ -13,6 +13,8 @@
 ## wholly past the listen time killed the reader (`window past the end`,
 ## SIGSEGV in `decimatePeakInto`). With that slice longer than a short
 ## decoded row, `window overhanging the listen time sample 10` disagreed.
+## A field-less request of a dead trace, asked again from the spare, had
+## `isDead` false the second time (`a tile from the spare does not mark the dead trace`).
 
 import std/[atomics, math, monotimes, os, times]
 import parseSEG
@@ -59,13 +61,16 @@ proc delayedSweep(sweep: openArray[float32]; samples, delay: int): seq[float32] 
     let j = i - delay
     if j >= 0 and j < sweep.len: result[i] = sweep[j]
 
-proc writeRaw(path: string; sweep: openArray[float32]) =
+proc writeRaw(path: string; sweep: openArray[float32]; dead = -1) =
   var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
     format: st5, text: @["C01 correlated view reader"]))
   for i in 0 .. 4:
     var buf: seq[float32]
     var k = initTraceKeys()
-    if i < Delays.len:
+    if i == dead:
+      buf = delayedSweep(sweep, Record, Delays[i])
+      (k.traceCode, k.status) = (1'i16, tsDead)
+    elif i < Delays.len:
       buf = delayedSweep(sweep, Record, Delays[i])
       (k.traceCode, k.status) = (1'i16, tsLive)
     elif i == RefAux:
@@ -304,6 +309,54 @@ proc main*() =
         doAssert m.tile.data == saved, "the second tile's samples differ"
         matched = true
     doAssert matched, "the second tile was not posted"
+
+  block deadTraceFromSpare:
+    let deadPath = dir / "dead.sgy"
+    writeRaw(deadPath, sweep, dead = 1)
+    var deadFile = openSeismic(deadPath, keys = true)
+    let deadRaw = newSession(deadPath, deadFile)
+    let built = initCorrelateView(deadRaw.filePtr, sweep, DtMs, [RefAux])
+    doAssert built.refusal.len == 0, built.refusal
+    let deadView = asCorrelatedView(deadRaw, built.view)
+    defer:
+      discard deadView.close()
+      discard deadRaw.close()
+    doAssert jobs.hold(deadView.path), "the dead view could not be held"
+    var rd = newPanelReader(PanelId(3), box.poster, jobs.holdRelease)
+    defer: rd.stop()
+    rd.show(sourceOf(deadView, deadView.correlatedView))
+    var laid = false
+    doAssert waitUntil(block:
+      var msgs: seq[Msg] = @[]
+      box.drainInto(msgs)
+      for m in msgs:
+        if m.kind == mkLayout and m.panel == PanelId(3): laid = true
+      laid
+    ), "the dead view was not laid out"
+    proc oneTile(): Tile =
+      var tile: Tile
+      var got = false
+      var why = ""
+      doAssert waitUntil(block:
+        var msgs: seq[Msg] = @[]
+        box.drainInto(msgs)
+        for m in msgs:
+          if m.kind == mkLog: why.add m.entry.text & "\n"
+          if m.kind == mkTile and m.tile.panel == PanelId(3):
+            tile = m.tile
+            got = true
+        got
+      ), "a dead-trace tile did not arrive: " & why
+      tile
+    let req = ask(0, 2, 1, 0, 64)
+    rd.request(req)
+    let first = oneTile()
+    doAssert first.isDead(1), "the first tile does not mark the dead trace"
+    doAssert not first.isDead(0), "a live trace was marked dead"
+    rd.request(req)
+    let second = oneTile()
+    doAssert second.isDead(1), "a tile from the spare does not mark the dead trace"
+    doAssert not second.isDead(0), "the spare marked a live trace dead"
 
   echo "tcorrview: ok"
 

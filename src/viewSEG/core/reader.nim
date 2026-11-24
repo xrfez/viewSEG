@@ -916,6 +916,29 @@ proc extremesKept(src: ptr UncheckedArray[float32]; cols, skip, samples, decimat
   if n <= 0: zeroFloats(dst)
   else: minMaxInto(src.toOpenArray(skip, skip + n - 1), decimation, dst)
 
+proc markRow(rd: Reader; tile: var Tile; row, trace, count: int; keys: TraceKeys;
+    fields: openArray[HeaderField]) =
+  ## Dead, joined and the channel-set name of row `row` (trace `trace`), and
+  ## its display-header values. `cut` and a tile filled from the spare both
+  ## use it, so a dead trace stays blank when the samples were already read.
+  tile.keys[row] = keys
+  let f = rd.src.file
+  if keys.status == tsDead:
+    if tile.dead.len == 0: tile.dead = newSeq[bool](count)
+    tile.dead[row] = true
+  let joined = f[].index.joinedGroups(trace)
+  if joined != {}:
+    if tile.joined.len == 0: tile.joined = newSeq[set[JoinGroup]](count)
+    tile.joined[row] = joined
+  for i, field in fields:
+    tile.header[i][row] = keys.value(field, trace, f[].channelSetNumberOf(trace))
+  if f[].kind == skSegd:
+    if tile.sets.len == 0: tile.sets = newSeq[string](count)
+    tile.sets[row] = f[].channelSetText(trace)
+  elif rd.src.traceNames.len > 0:
+    if tile.sets.len == 0: tile.sets = newSeq[string](count)
+    if trace in 0 ..< rd.src.traceNames.len: tile.sets[row] = rd.src.traceNames[trace]
+
 proc fillFromSpare(rd: var Reader; req: ReaderRequest; q: ReadRequest; window: Slice[int];
     skip, cols: int; tile: var Tile; given: var bool): bool =
   ## The tile of a plain view request, from the samples at hand and buffers
@@ -963,7 +986,7 @@ proc fillFromSpare(rd: var Reader; req: ReaderRequest; q: ReadRequest; window: S
       let atCol = row * tile.columns
       decimateKept(srcp, cols, skip, q.samples, q.decimation,
         tile.data.toOpenArray(atCol, atCol + tile.columns - 1))
-      tile.keys[row] = rows.keysAt(k)
+      rd.markRow(tile, row, list[row], q.count, rows.keysAt(k), req.fields)
     a += n
     if rd.r.interrupted and rd.r.superseded:
       given = true
@@ -1097,23 +1120,7 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
         let e = 2 * at
         extremesKept(src, cols, skip, q.samples, q.decimation,
           tile.envelope.toOpenArray(e, e + 2 * tile.columns - 1))
-      let keys = rows.keysAt(k)
-      tile.keys[row] = keys
-      if keys.status == tsDead:
-        if tile.dead.len == 0: tile.dead = newSeq[bool](q.count)
-        tile.dead[row] = true
-      let joined = rd.src.file[].index.joinedGroups(list[row])
-      if joined != {}:
-        if tile.joined.len == 0: tile.joined = newSeq[set[JoinGroup]](q.count)
-        tile.joined[row] = joined
-      for i, field in req.fields:
-        tile.header[i][row] = keys.value(field, list[row], f[].channelSetNumberOf(list[row]))
-      if f[].kind == skSegd:
-        if tile.sets.len == 0: tile.sets = newSeq[string](q.count)
-        tile.sets[row] = f[].channelSetText(list[row])
-      elif rd.src.traceNames.len > 0:
-        if tile.sets.len == 0: tile.sets = newSeq[string](q.count)
-        if list[row] in 0 ..< rd.src.traceNames.len: tile.sets[row] = rd.src.traceNames[list[row]]
+      rd.markRow(tile, row, list[row], q.count, rows.keysAt(k), req.fields)
 
   var failed: seq[int]
   var atHand = addr rd.raw # the samples at hand that hold the request's, if any
