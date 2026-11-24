@@ -164,15 +164,6 @@ proc makeFetch(st: ref FetchState): FetchProc =
       st.fetched += count
       result = true
 
-func firstUse(plan: SlicePlan; shot, row: int): int =
-  ## The first column of `row` that any trace of `shot` reads, `high(int)`
-  ## when none does.
-  result = high(int)
-  let c = plan.receiverCount
-  for r in 0 ..< c:
-    for pc in plan.pieces(shot * c + r):
-      if pc.row == row and pc.count > 0: result = min(result, pc.first)
-
 func named(row: int): string =
   "source trace " & $(row + 1)
 
@@ -304,7 +295,6 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       st.source = source
       let fetch = makeFetch(st)
       var dst = newSeq[float32](plan.samples)
-      var released = newSeq[bool](plan.overlaps.len)
       var touched: seq[int] = @[]
       var lastDetail = fs.now() - DetailEvery
       let total = shots.shots.len
@@ -335,19 +325,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           res.failedSamples += sliceReport.failedSamples(trace)
           w.writeTrace(k, dst, channelType = sctSeismic)
         if shotFailed: inc res.shotsWithFailures
-        # Between shots: drop what the next shot does not read (its smallest
-        # first column per row; none: the row is finished), compare the
-        # overlaps now due, and drop again the rows of those.
-        for row in touched:
-          let next = if s + 1 < total: firstUse(plan, s + 1, row) else: high(int)
-          buf.evictBefore(row, evictable(plan, buf, sliceReport, row, next))
-        if checkOverlaps(plan, buf, fetch, sliceReport) > 0:
-          for i, o in plan.overlaps:
-            if not released[i] and sliceReport.overlapCheck(i).status != osNotRead:
-              released[i] = true
-              for row in [o.earlier, o.later]:
-                let next = if s + 1 < total: firstUse(plan, s + 1, row) else: high(int)
-                buf.evictBefore(row, evictable(plan, buf, sliceReport, row, next))
+        discard settleShot(plan, buf, fetch, sliceReport, touched, s)
         inc res.shotsWritten
         done = perShot * int64(s + 1)
         if not tell(done, expected): abort(sink, dest, part, claimed, "Cancelled.", true)

@@ -11,7 +11,9 @@
 ## overlap rule ignoring unchecked overlaps (the overlap test), a failed
 ## fetch treated as success (the failed-read test); every overlap checked at
 ## once (`several_overlaps_checked_when_due`: "fetched 9970 of 6000"); a failed
-## overlap tried again and pinning its rows ("held 940 at the end").
+## overlap tried again and pinning its rows ("held 940 at the end"); one
+## overlap compared per shot (`buffer_stays_bounded_over_a_long_run`: "held 9930
+## of at most 480").
 
 import std/[assertions, math, options]
 import parseSEG, processSEG
@@ -54,24 +56,26 @@ proc fetcher(src: Src): FetchProc =
       for j in 0 ..< count: dst[j] = src.data[row][first + j]
       true
 
-proc makeSrc(spans: openArray[(int, int)]): Src =
-  ## One row per `(first, count)` span of the stream.
+proc makeSrc(spans: openArray[(int, int)], comps = 1): Src =
+  ## `comps` rows per `(first, count)` span of the stream (row = span * comps +
+  ## component).
   result = Src(failRow: -1)
   for (first, n) in spans:
-    var r = newSeq[float32](n)
-    for j in 0 ..< n: r[j] = stream(first + j)
-    result.data.add r
-    var k = initTraceKeys()
-    k.status = tsLive
-    k.time = timeOf(float64(first))
-    k.t0Ms = 0
-    k.intervalUs = Dt * 1000
-    k.rcvLine = 1
-    k.rcvPoint = 1
-    k.rcvX = 10
-    k.rcvY = 0
-    result.keys.add k
-    result.counts.add n
+    for c in 0 ..< comps:
+      var r = newSeq[float32](n)
+      for j in 0 ..< n: r[j] = stream(first + j)
+      result.data.add r
+      var k = initTraceKeys()
+      k.status = tsLive
+      k.time = timeOf(float64(first))
+      k.t0Ms = 0
+      k.intervalUs = Dt * 1000
+      k.rcvLine = 1
+      k.rcvPoint = float64(c + 1)
+      k.rcvX = 10
+      k.rcvY = 0
+      result.keys.add k
+      result.counts.add n
 
 proc metaOf(src: Src): ChunkMeta =
   initChunkMeta(rowsOf(src.keys, src.counts), dtMs = Dt)
@@ -369,6 +373,55 @@ proc main*() =
     doAssert failedCalls <= plan.len div 2, "row 2 was asked for " & $failedCalls & " times"
     doAssert buf.heldSamples == 0, "held " & $buf.heldSamples & " at the end"
     doAssert peak <= 200 + 10 + 10, "held " & $peak
+
+  block buffer_stays_bounded_over_a_long_run:
+    # 200 rows of 100 samples a component, 10 samples of overlap, the job's
+    # bookkeeping after every shot. Fails when an overlap behind another is
+    # compared only one per shot, so a window that crosses several source
+    # traces holds each later trace whole to the end ("held 9840 of at most 480").
+    for (w, step, comps) in [(450, 200, 1), (450, 500, 1), (300, 300, 4)]:
+      var spans: seq[(int, int)] = @[]
+      for k in 0 ..< 200: spans.add (k * 90, 100)
+      let src = makeSrc(spans, comps)
+      let meta = metaOf(src)
+      var shots: seq[SliceShot]
+      var t = 0
+      while t + w <= 200 * 90:
+        shots.add initSliceShot(timeOf(float64(t)), float64(shots.len + 1))
+        t += step
+      let plan = planSlices(meta, shots, window(w), soShotRecords, saNearest)
+      var report = initSliceReport(plan)
+      prepareSliceReport(plan, report)
+      var ws = initWorkspace()
+      var buf = initSourceBuffer()
+      let inner = fetcher(src)
+      var seen = newSeq[seq[bool]](src.data.len)
+      var again = 0
+      let fetch: FetchProc = proc (row, first, count: int, dst: var openArray[float32]): bool =
+        if seen[row].len == 0: seen[row] = newSeq[bool](100)
+        for j in first ..< first + count:
+          if seen[row][j]: inc again
+          seen[row][j] = true
+        inner(row, first, count, dst)
+      var dst = newSeq[float32](plan.samples)
+      var peak = 0
+      let bound = comps * (w + 10 + 20)
+      for s in 0 ..< plan.shotCount:
+        var touched: seq[int] = @[]
+        for r in 0 ..< comps:
+          for pc in plan.pieces(s * comps + r):
+            if pc.row >= 0 and pc.row notin touched: touched.add pc.row
+          doAssert not cutOne(plan, s * comps + r, buf, fetch, dst, report, ws)
+        peak = max(peak, buf.heldSamples)
+        discard settleShot(plan, buf, fetch, report, touched, s)
+        peak = max(peak, buf.heldSamples)
+      doAssert peak <= bound, "held " & $peak & " of at most " & $bound
+      doAssert buf.heldSamples == 0, "held " & $buf.heldSamples & " after the last shot"
+      discard checkOverlaps(plan, buf, fetch, report, final = true)
+      doAssert again == 0, $again & " samples fetched again"
+      for i, o in plan.overlaps:
+        if o.earlier in plan.rowsNeeded and o.later in plan.rowsNeeded:
+          doAssert report.overlapCheck(i).status != osNotRead, "overlap " & $i
 
   echo "tcutgather ok"
 

@@ -164,6 +164,7 @@ type
       # window not yet cut reads (`high(int)`: none does)
     failedRows: HashSet[int] # rows a fetch has failed on
     failedOverlaps: HashSet[int] # overlaps whose samples could not be had
+    released: seq[bool] # per overlap: its rows were let go after it was settled
 
 func initSourceBuffer*(): SourceBuffer =
   ## An empty buffer.
@@ -332,3 +333,35 @@ proc checkOverlaps*(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
           inc result
         else:
           buf.failedOverlaps.incl i
+
+func firstUse*(plan: SlicePlan, shot, row: int): int =
+  ## The first column of `row` that any trace of `shot` reads, `high(int)`
+  ## when none does.
+  result = high(int)
+  let c = plan.receiverCount
+  for r in 0 ..< c:
+    for pc in plan.pieces(shot * c + r):
+      if pc.row == row and pc.count > 0: result = min(result, pc.first)
+
+proc settleShot*(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
+    report: var SliceReport, touched: openArray[int], shot: int): int =
+  ## The bookkeeping between shot `shot` and the next. `touched` are the rows
+  ## the shot read. Drops what the next shot does not read, then compares the
+  ## overlaps now due and drops the rows of those, again and again until no
+  ## more overlap is due (a comparison frees rows, which can make the overlap
+  ## behind them due). Returns the overlaps compared.
+  let total = plan.shotCount
+  if buf.released.len != plan.overlaps.len: buf.released.setLen plan.overlaps.len
+  for row in touched:
+    let next = if shot + 1 < total: firstUse(plan, shot + 1, row) else: high(int)
+    buf.evictBefore(row, evictable(plan, buf, report, row, next))
+  while true:
+    let compared = checkOverlaps(plan, buf, fetch, report)
+    if compared == 0: break
+    result += compared
+    for i, o in plan.overlaps:
+      if not buf.released[i] and report.overlapCheck(i).status != osNotRead:
+        buf.released[i] = true
+        for row in [o.earlier, o.later]:
+          let next = if shot + 1 < total: firstUse(plan, shot + 1, row) else: high(int)
+          buf.evictBefore(row, evictable(plan, buf, report, row, next))
