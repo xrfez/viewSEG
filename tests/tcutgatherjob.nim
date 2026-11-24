@@ -41,7 +41,7 @@ type Recording = object
 func ramp(comp, k: int): float32 =
   float32(100_000 * comp + k)
 
-proc makeRecording(path: string; differ: bool): Recording =
+proc makeRecording(path: string; differ: bool; xy = false): Recording =
   ## The continuous file. With `differ`, the later trace of each component
   ## disagrees with the earlier one over the 50 overlapping samples.
   result.path = path
@@ -62,6 +62,9 @@ proc makeRecording(path: string; differ: bool): Recording =
       k.time = float64(BaseUs div 1_000_000) + float64(Starts[seg]) * 0.002
       k.rcvLine = 1
       k.rcvPoint = 7
+      if xy:
+        k.rcvX = 1000 + float64(comp)
+        k.rcvY = 2000
       w.writeTrace(k, samples)
   discard w.close()
 
@@ -316,6 +319,33 @@ proc main*() =
     let off = abs(got.res.bytesWritten - got.res.expectedBytes)
     doAssert off * 1000 <= got.res.expectedBytes, # within 0.1%
       "written " & $got.res.bytesWritten & ", estimated " & $got.res.expectedBytes
+
+  block segy_size_equals_estimate:
+    # SEG-Y output with and without source and receiver positions. Fails when
+    # the estimate leaves out the extended text block and the 240-byte header
+    # extension of every trace ("written 69520, estimated 62960").
+    let withXy = makeRecording(dir / "rec" / "xy.sgy", differ = false, xy = true)
+    var srcXy = openSeismic(withXy.path, keys = true)
+    defer: srcXy.close()
+    var m = initShotLogMap()
+    m.hasHeader = false
+    m.roles = @[crFileNumber, crUtcMicros, crSourceLine, crShotPoint, crX, crY]
+    var raw = ""
+    for i in 0 ..< 7:
+      raw.add $Files[i] & "," & $(BaseUs + Offsets[i]) & ",5," & $(100 + i) & "," &
+        $(500 + i) & ",600\n"
+    let placed = shotsInTime(shots(parseShotLog(raw, m), m).rows)
+    let o = initCutOptions(LengthMs, StartMs, standard = csSegy)
+    var n = 0
+    for (src, path, sh) in [(addr srcSame, same.path, shots), (addr srcSame, same.path, placed),
+        (addr srcXy, withXy.path, shots), (addr srcXy, withXy.path, placed)]:
+      inc n
+      let dest = outDir / ("est" & $n & ".sgy")
+      let got = runCut(jobs, src[], path, dest, sh, o)
+      doAssert got.st == jsDone, got.error & " / " & got.res.reason
+      doAssert got.res.bytesWritten == getFileSize(dest)
+      doAssert got.res.bytesWritten == got.res.expectedBytes,
+        "written " & $got.res.bytesWritten & ", estimated " & $got.res.expectedBytes
 
   block existing_destination_refused:
     # Fails when the part file is claimed (and the check made) after work.

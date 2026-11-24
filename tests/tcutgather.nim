@@ -149,7 +149,7 @@ proc main*() =
     doAssert estimateBytes(o, 2, 3, 250, true, true, true) ==
       2 * (256 + 32 + 96) + 6 * (20 + 160 + 1000)
     o.standard = csSegy
-    doAssert estimateBytes(o, 2, 3, 250, true, true, true) == 3600 + 6 * (240 + 1000)
+    doAssert estimateBytes(o, 2, 3, 250, true, true, true) == 3600 + 3200 + 6 * (480 + 1000)
     doAssert estimateBytes(o, 3_000_000, 4, 500_000, false, false, false) >
       int64(high(int32)), "int64 throughout"
 
