@@ -26,6 +26,11 @@ type
 
 const SwatchLines = 2.4'f32 ## the swatch's width, in text lines
 
+var listedMenuHeight = 0'f32
+  ## Height of the open list, once measured. The next frame asks for it:
+  ## otherwise Dear ImGui clamps a menu to the work area and the last themes
+  ## scroll off a short window.
+
 proc swatchRoom(): string =
   ## Spaces as wide as the swatch, for the item's icon column.
   let want = igGetTextLineHeight() * SwatchLines
@@ -68,8 +73,17 @@ proc drawThemeMenu*(themes: openArray[ThemeFile]; current, follows: string; labe
     marks: var Marks): ThemeMenu =
   ## The submenu, labelled `label`. `current` is the file of the theme chosen
   ## ("" for following the system), `follows` the file "Follow system" uses
-  ## now.
+  ## now. The submenu stays in the main window, as tall as its entries and
+  ## shifted up so the last theme is inside that window. Left to Dear ImGui it
+  ## is placed against the monitor and clamped to the work area, so on a short
+  ## window the last themes are drawn outside this one.
   result = ThemeMenu()
+  let vp = igGetMainViewport()
+  igSetNextWindowViewport(vp.ID)
+  if listedMenuHeight > 0:
+    let room = max(1'f32, vp.Size.y - 4)
+    igSetNextWindowSize(ImVec2_c(x: 0, y: min(listedMenuHeight, room)),
+      ImGui_Cond_Always.cint)
   result.open = igBeginMenu(label.cstring, true)
   marks.mark("menu.Theme")
   if result.open:
@@ -89,4 +103,9 @@ proc drawThemeMenu*(themes: openArray[ThemeFile]; current, follows: string; labe
         let f = themes[i]
         entry(f.title & "##" & f.name, f.name, f.theme, f.name == current, room, result,
           marks)
+    let pad = igGetStyle().WindowPadding.y
+    let byCursor = igGetCursorPosY() + pad
+    let byItem = igGetItemRectMax().y - igGetWindowPos().y + pad
+    let need = max(byCursor, byItem)
+    if need > listedMenuHeight: listedMenuHeight = need
     igEndMenu()
