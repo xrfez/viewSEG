@@ -37,6 +37,9 @@
 ##
 ## Arithmetic is in int64 microseconds and saturates at `low(int64)` and
 ## `high(int64)`. A bound that does not fit is cut to the end, not wrapped.
+## `timeUs + windowUs ± toleranceUs` is one sum. When the true lower bound is
+## above `high(int64)`, or the true upper bound is below `low(int64)`, the
+## span is empty: that bound is not cut onto the endpoint and then tested.
 
 import std/[algorithm, math, options, tables]
 import shotlog
@@ -105,23 +108,50 @@ type
 func noneMatch(): ShotMatch {.inline.} =
   ShotMatch(rule: mrNone, row: -1, count: 0)
 
-func satAdd(a, b: int64): int64 {.inline.} =
-  ## `a + b`, or the nearer end of int64 when the sum does not fit.
-  if b == low(int64):
-    if a < 0: low(int64) else: a + b
-  elif b < 0:
-    if a < low(int64) - b: low(int64) else: a + b
-  elif a > high(int64) - b:
-    high(int64)
-  else:
-    a + b
+func bitsOf(a: int64): uint64 =
+  ## Two's-complement bits of `a`. `low(int64)` cannot be negated.
+  if a >= 0: uint64(a)
+  elif a == low(int64): 0x8000_0000_0000_0000'u64
+  else: 0'u64 - uint64(-a)
 
-func satSub(a, b: int64): int64 {.inline.} =
-  ## `a - b`, or the nearer end of int64 when the difference does not fit.
-  if b == low(int64):
-    if a >= 0: high(int64) else: a - b
+func wideOf(a: int64): tuple[hi: int, lo: uint64] =
+  ## `a` as a two's-complement value wider than int64.
+  if a >= 0: (0, uint64(a)) else: (-1, bitsOf(a))
+
+func addWide(w: tuple[hi: int, lo: uint64]; a: int64): tuple[hi: int, lo: uint64] =
+  let b = wideOf(a)
+  let lo = w.lo + b.lo
+  let carry = ord(lo < w.lo)
+  (w.hi + b.hi + carry, lo)
+
+func satSum(a, b, c: int64): tuple[v: int64, below, above: bool] =
+  ## `a + b + c`, or the nearer end of int64 when the sum does not fit.
+  ## `below` / `above` are set only when the true sum is past that end.
+  const
+    HighBits = 0x7FFF_FFFF_FFFF_FFFF'u64
+    LowBits = 0x8000_0000_0000_0000'u64
+  let w = addWide(addWide(wideOf(a), b), c)
+  if w.hi > 0 or (w.hi == 0 and w.lo > HighBits):
+    (high(int64), false, true)
+  elif w.hi < -1 or (w.hi == -1 and w.lo < LowBits):
+    (low(int64), true, false)
+  elif w.hi == 0:
+    (int64(w.lo), false, false)
+  elif w.lo == LowBits:
+    (low(int64), false, false)
   else:
-    satAdd(a, -b)
+    let mag = 0'u64 - w.lo
+    (-int64(mag), false, false)
+
+func spanBetween(lo, hi: tuple[v: int64, below, above: bool]): Span =
+  ## Instants from `lo` through `hi`. Empty when that range holds none.
+  result.hiIn = true
+  if lo.above or hi.below:
+    result.empty = true
+  else:
+    result.lo = lo.v
+    result.hi = hi.v
+    result.empty = result.lo > result.hi
 
 func nsToUs(ns: int64): int64 {.inline.} =
   ## Floor of nanoseconds to microseconds. The quotient always fits.
@@ -171,10 +201,7 @@ func spanOf(q: ShotQuery; toleranceUs: int64): Span =
   let t = q.timeUs.get
   if q.timeExact:
     let tol = if toleranceUs < 0: 0'i64 else: toleranceUs
-    result.lo = satSub(satAdd(t, q.windowUs.a), tol)
-    result.hi = satAdd(satAdd(t, q.windowUs.b), tol)
-    result.hiIn = true
-    result.empty = result.lo > result.hi
+    result = spanBetween(satSum(t, q.windowUs.a, -tol), satSum(t, q.windowUs.b, tol))
   elif q.windowUs.a == 0 and q.windowUs.b == 0:
     let sec = posixSecond(t)
     result.lo = sec.start
@@ -185,10 +212,7 @@ func spanOf(q: ShotQuery; toleranceUs: int64): Span =
       result.hi = sec.endEx
       result.hiIn = false
   else:
-    result.lo = satAdd(t, q.windowUs.a)
-    result.hi = satAdd(t, q.windowUs.b)
-    result.hiIn = true
-    result.empty = result.lo > result.hi
+    result = spanBetween(satSum(t, q.windowUs.a, 0), satSum(t, q.windowUs.b, 0))
 
 func lowerBound(a: openArray[Timed]; us: int64): int =
   var lo = 0

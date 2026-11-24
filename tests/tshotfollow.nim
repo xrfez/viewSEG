@@ -5,6 +5,12 @@
 ## row whose time equals the span's high bound. First failure was "two rows at
 ## one instant", which came back `mrNone` row -1 count 0.
 ##
+## Seen to fail: with `spanOf` saturating `t + window` and the tolerance as
+## two adds, "window 1 past high is empty" came back `mrTime` row 0 count 1.
+## A window before `low` did the same, a tolerance after that clamp widened
+## the span (`mrTime` row 0 count 1), and a non-exact window past `high`
+## came back `mrSecond` row 0 count 1.
+##
 ## Runs alone: it times 100000 matches.
 
 import std/[math, monotimes, options, times]
@@ -251,6 +257,19 @@ proc main*() =
       "nanoseconds at low do not wrap onto low")
     expect(match(buildShotIndex(viewOf()), qTime(low(int64), window = low(int64) .. high(int64),
       fileNo = some(low(int64)))), mrNone, -1, 0, "full-range window on an empty log")
+
+  block windowPastEnds:
+    let atHigh = buildShotIndex(viewOf(row(some(high(int64)))))
+    expect(match(atHigh, qTime(high(int64), window = 1'i64 .. 1'i64), 0), mrNone, -1, 0,
+      "window 1 past high is empty")
+    let atLow = buildShotIndex(viewOf(row(some(low(int64)))))
+    expect(match(atLow, qTime(low(int64), window = -1'i64 .. -1'i64), 0), mrNone, -1, 0,
+      "window 1 before low is empty")
+    let nearHigh = buildShotIndex(viewOf(row(some(high(int64) - 2))))
+    expect(match(nearHigh, qTime(high(int64) - 1, window = 2'i64 .. 2'i64), 2), mrNone, -1, 0,
+      "tolerance after a clamped add must not widen")
+    expect(match(atHigh, qTime(high(int64), exact = false, window = 1'i64 .. 5'i64)),
+      mrNone, -1, 0, "non-exact window past high is not the endpoint")
 
   block manyRows:
     const N = 100_000
