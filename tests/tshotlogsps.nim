@@ -8,6 +8,8 @@
 ## writes a line or point of Inf as "inf" and counts it written.
 ## Seen to fail: with only the length checked, a point code of a newline
 ## is written into the record and splits it.
+## Seen to fail: with the spsText coverage row still marked built, the page
+## says a user can reach a write that has no menu.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -499,6 +501,17 @@ proc main*() =
     discard tryRemoveFile(path)
     try: removeDir(dir)
     except OSError: discard
+
+  block coverageRow:
+    let page = readFile(currentSourcePath().parentDir.parentDir / "docs" / "coverage.md")
+    var found = false
+    for line in page.splitLines:
+      if "Shot log source points as an SPS file" in line:
+        found = true
+        doAssert "| internal |" in line, line
+        doAssert "core/shotlogsps.nim" in line, line
+        doAssert "| built |" notin line, line
+    doAssert found
 
   echo "tshotlogsps ok"
 
