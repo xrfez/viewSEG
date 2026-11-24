@@ -134,10 +134,6 @@ func cmpNaN(x, y: float64): int =
   elif y.isNaN: -1
   else: cmp(x, y)
 
-func sameStation(x, y: Place): bool =
-  ## Whether `x` and `y` are one station: never so for a place named by its channel alone.
-  x.how < 2 and x.how == y.how and x.a == y.a and x.b == y.b and x.index == y.index
-
 func cmpPlace(x, y: Place): int =
   result = cmp(x.how, y.how)
   if result == 0: result = cmpNaN(x.a, y.a)
