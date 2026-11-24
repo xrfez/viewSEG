@@ -161,8 +161,12 @@ proc planRecording*(file: ptr SeismicFile; source: string; dtMs: float64;
     for i in 0 ..< result.times.len: result.times[i] -= result.meta.t0Ms(i) / 1000
     result.receivers = result.clock.receivers
   else:
+    # The keys' time is time zero, but a Rev 3 Timestamp gives the first sample: less the
+    # channel set's start then, as for the headers' times above.
     result.times = newSeq[float64](file[].len)
-    for i in 0 ..< file[].len: result.times[i] = result.meta.keys(i).time
+    for i in 0 ..< file[].len:
+      let k = result.meta.keys(i)
+      result.times[i] = if k.timeOrigin == toFirstSample: k.time - k.t0Ms / 1000 else: k.time
     result.receivers = receiverIds(file[], withChannel = true)
   result.streams = initSliceStreams(result.meta, result.times, result.receivers)
 

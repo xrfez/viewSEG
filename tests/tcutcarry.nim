@@ -18,7 +18,8 @@ import parseSEG
 import parseSEG/model/traceindex
 import parseSEG/segd/[reader, writer, headers, samples, rev3]
 import parseSEG/io/diskio
-import viewSEG/core/[cutcarry, cutgather, cutgatherjobs, jobs, segmentclock, shotlog, vendormaps]
+import viewSEG/core/[cutcarry, cutfile, cutgather, cutgatherjobs, jobs, segmentclock, shotlog,
+  vendormaps]
 import viewSEG/view/cutwords
 import utils/waiting
 
@@ -392,13 +393,15 @@ proc put64(b: var seq[byte]; at: int; v: int64) =
 proc get64(b: openArray[byte]; at: int): int64 =
   for i in 0 .. 7: result = (result shl 8) or int64(b[at + i])
 
-proc makeRev3(path: string; comps: int; csUs = 0'i64; place = false; secondSetUs = -1'i64) =
+proc makeRev3(path: string; comps: int; csUs = 0'i64; place = false; secondSetUs = -1'i64;
+    componentNumbers = false) =
   ## Rev 3.0, one record, a trace per segment and component with a Timestamp block (0x42) and
   ## a vendor block (0xB0) holding the segment's start in GPS microseconds; the channel set
   ## starts `csUs` after the record's time zero. With `place`, each trace has a vibrator
   ## Source Description block (0x15) and a Position block (0x50-0x52) before those two.
   ## With `secondSetUs`, two components, the second in a channel set of its own that starts
-  ## `secondSetUs` after time zero (the traces set by set).
+  ## `secondSetUs` after time zero (the traces set by set). With `componentNumbers`, a
+  ## trace's number is its component's, so the keys alone tell the receivers apart.
   let sets = if secondSetUs >= 0: 2 else: 1
   let fmt = sd8058
   var r = SegdRecord(layout: slRev3, format: some(fmt), revision: SegdRevision(major: 3, minor: 0))
@@ -432,7 +435,8 @@ proc makeRev3(path: string; comps: int; csUs = 0'i64; place = false; secondSetUs
       var t = SegdTrace(layout: slRev3, index: all.len, numSamples: SegLen)
       t.header = SegdTraceHeader(fileNumber: 7, scanTypeNumber: 1,
         channelSetNumber: (if sets == 2: c + 1 else: 1),
-        traceNumber: all.len + 1, traceHeaderExtensions: (if place: 7'u8 else: 3'u8))
+        traceNumber: (if componentNumbers: c + 1 else: all.len + 1),
+        traceHeaderExtensions: (if place: 7'u8 else: 3'u8))
       t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(receiverLineNumber: 100,
         receiverPointNumber: 101, receiverPointIndex: 1, numSamples: SegLen,
         sensorType: uint8(2 + c), blockType: 0x40)
@@ -662,6 +666,50 @@ proc checkMixedStarts(dir: string; jobs: Jobs) =
       for j in 0 ..< Window:
         doAssert x[j] == value(c, FirstSamples[s] + j), "sample " & $j & " of trace " & $o &
           " is " & $x[j]
+
+proc checkTimestampKeys(dir: string; jobs: Jobs) =
+  ## A Rev 3 recording timed by its Timestamp blocks alone (no map names a start time), its
+  ## channel set starting 4 ms after time zero: the slices begin at the shots' first samples,
+  ## carried into SEG-D and built from keys into SEG-Y alike. Seen failing two samples early
+  ## ("sample 0 of trace 0 is 8.0") with the Timestamp's first sample taken as time zero.
+  base = BaseUs
+  publishVendors(VendorRegistry())
+  let path = dir / "rec" / "tskeys.sgd"
+  makeRev3(path, 1, csUs = 4000, componentNumbers = true)
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  for (name, standard) in [("tskeys.sgd", csSegdRev3), ("tskeys.sgy", csSegy)]:
+    var opts = initCutOptions(LengthMs, StartMs)
+    opts.standard = standard
+    let dest = dir / "out" / name
+    let got = runCut(jobs, src, path, dest, shotsOf(true), opts)
+    doAssert got.st == jsDone and got.res.shotsWritten == 3, name & ": " & got.error &
+      got.res.reason
+    doAssert got.res.carried == (standard == csSegdRev3) and not got.res.segmentsFromHeaders
+    var g = openSeismic(dest, keys = true)
+    defer: g.close()
+    for o in 0 ..< 3:
+      let x = samplesOf(g, o)
+      for j in 0 ..< Window:
+        doAssert x[j] == value(0, FirstSamples[o] + j), name & ": sample " & $j & " of trace " &
+          $o & " is " & $x[j]
+
+proc checkCutBeforeJob(dir: string; jobs: Jobs; reg: VendorRegistry) =
+  ## A recording cut short after it was opened, before the slice starts: the job fails with
+  ## the words for a cut file and leaves no output. Seen failing with the job done ("done"):
+  ## the traces past the cut were read as traces without a start time.
+  base = BaseUs
+  publishVendors(reg)
+  let path = dir / "rec" / "cut.sgd"
+  makeRecording(path, 1)
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  writeFile(path, readFile(path)[0 ..< int(src.traceEntry(2).offset + 10)])
+  let dest = dir / "out" / "cut.sgd"
+  let got = runCut(jobs, src, path, dest, shotsOf(true), initCutOptions(LengthMs, StartMs))
+  doAssert got.st == jsFailed, $got.st
+  doAssert cutWords(false) in got.res.reason, got.res.reason
+  doAssert not fileExists(dest) and not fileExists(dest & ".part")
 
 proc checkNoSourcePlace(dir: string; jobs: Jobs) =
   ## A Rev 3 recording without Source Description or Position blocks: the shot's source place
@@ -898,6 +946,8 @@ proc main*() =
   checkTriggerOtherMap(dir, jobs)
   checkOrder(dir, jobs)
   checkFallback(dir, jobs)
+  checkTimestampKeys(dir, jobs)
+  checkCutBeforeJob(dir, jobs, load.registry)
   publishVendors(load.registry)
   checkGapsAndRefusals(dir, jobs)
   checkSourceFormat(dir, jobs)

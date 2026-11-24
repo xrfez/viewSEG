@@ -358,6 +358,9 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       ctx.setPhase "planning"
       let recording = planRecording(file, source, dtMs, currentVendors(),
         proc () {.gcsafe.} = ctx.checkCancelled())
+      # The vendor blocks are read without raising: a recording cut short reads as traces
+      # without a start time, so the cut is looked for here, before the plan is judged.
+      if file[].cutShort: abort(sink, dest, part, false, cutWhy(file[]), false)
       let clock = recording.clock
       let streams = recording.streams
       let facts = describeRecording(recording, AllStarts)
@@ -625,6 +628,13 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
   except JobCancelledError as e:
     if sink != nil and sink.result.reason.len == 0:
       abort(sink, dest, part, claimed, e.msg, true)
+    elif sink == nil and claimed:
+      discard dropOurs(part)
+    raise
+  except SegTruncatedError as e:
+    # a header read of the recording found it cut short (the carried headers among them)
+    if sink != nil and sink.result.reason.len == 0:
+      abort(sink, dest, part, claimed, readProblem(e), false)
     elif sink == nil and claimed:
       discard dropOurs(part)
     raise
