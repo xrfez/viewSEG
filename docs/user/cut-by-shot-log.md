@@ -15,6 +15,33 @@ SEG-D or SEG-Y. The recording is never changed.
 Until both are there the menu item is dim, and its tooltip says which is missing ("Show a
 seismic file and load a shot log first."). Only one cut runs at a time.
 
+## What the cut accepts
+
+Only a continuous recording of receivers: each receiver has its segments one after another,
+perhaps with a gap now and then. The window reads the file and refuses two kinds, in a
+sentence above the buttons (the tooltip of the dim **Cut** says the same), and the command
+and the job refuse them the same way before any file is written:
+
+- **A shot record.** No receiver has more than one segment, and the longest trace is no
+  longer than 60 seconds: every receiver has one trace, as in a file cut by shot. ("This file
+  is a shot record (every receiver has one trace), not a continuous recording.") A file with
+  one trace per receiver that is longer than 60 seconds is taken as one long recording.
+- **A receiver gather already cut by shot.** Any one of these three is enough, checked in this
+  order:
+  - the segments of one receiver carry different sources in the headers (the source line,
+    point, index or position; the record and file numbers are not used, since a continuous
+    recording may keep each segment as its own record): "This file already holds one trace per
+    shot (the traces carry 4 different source points), so it is not a continuous recording."
+  - more than half of the boundaries between one receiver's segments start before the middle
+    of the segment before, so the traces cover each other as dense shooting makes them: "This
+    file's traces mostly cover the same time as their neighbours (5 of 5 overlap by more than
+    half), as records cut by shot do, so it is not a continuous recording."
+  - fewer than half of the boundaries between a receiver's segments abut (the next one starts
+    within one sample of the end of this one) or overlap: "This recording is already cut into
+    separate records (gaps at 412 of 517 segment boundaries), not continuous."
+
+One isolated gap is accepted; Messages reports it as below.
+
 ## The window
 
 The **Cut by shot log** window floats; close it with **Close** or its own close button. A later
@@ -67,9 +94,9 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
 - **The samples** are written as 32-bit floats.
 
 When a vendor header map names each trace's start time (see `vendormaps/README.md`), the cut
-reads the segments' start times from the trace headers and says so in Messages. The number of
-components the window shows before the cut is counted from the file's keys and can be higher
-than the cut's; Messages gives the number written.
+reads the segments' start times from the trace headers and says so in Messages. The window
+reads the file the same way, in a job, before it sums up: while it does, it says the recording
+is being read and **Cut** is dim.
 
 ## Where the recording does not fit the shots
 
