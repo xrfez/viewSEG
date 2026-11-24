@@ -1,4 +1,4 @@
-## Project > Cut by shot log: the recording the Seismic window shows, cut at
+## Project > Slice by shot log: the recording the Seismic window shows, sliced at
 ## the times of a loaded shot log into one record per shot and written to a new
 ## file. A floating window. It posts the command that starts the cut; it reads
 ## no file, and what it sums up comes from the session and the log.
@@ -232,7 +232,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
       nameWhy.len == 0 and not ui.dest.exists and not ui.dest.pending and
       summary.len > 0
     igBeginDisabled(not canCut)
-    if igButton("Cut##cut".cstring, ImVec2_c(x: 0, y: 0)):
+    if igButton("Slice##cut".cstring, ImVec2_c(x: 0, y: 0)):
       result.commands.add Command(kind: ckCutGather, cutLog: st.findShotLog(ui.logId),
         cutOptions: opts, cutDest: ui.folder / ui.nameText)
     igEndDisabled()
@@ -244,12 +244,12 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
         elif ui.dest.pending: DestChecking
         elif ui.dest.exists: DestExists
         elif problem.len > 0: problem
-        else: "Cut the recording and write the file; the Jobs window shows its progress")
+        else: "Slice the recording and write the file; the Jobs window shows its progress")
     igSameLine(0, -1)
     if igButton("Close##cut".cstring, ImVec2_c(x: 0, y: 0)): ui.shown = false
     marks.mark("cut.close")
     if st.cutRunning:
-      wrapped("Cutting: the Jobs window shows how far it has come.", wide)
+      wrapped("Slicing: the Jobs window shows how far it has come.", wide)
       marks.mark("cut.running")
     elif st.cutOutcome.len > 0:
       coloured(st.cutOutcome,

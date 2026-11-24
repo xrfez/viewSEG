@@ -133,7 +133,7 @@ type
     shortcuts: ShortcutsUi                     ## Help > Keyboard shortcuts
     settingsWin: SettingsUi                    ## Tools > Settings
     leap: LeapUi                               ## Tools > Leap seconds
-    cut: CutUi                                 ## Project > Cut by shot log
+    cut: CutUi                                 ## Project > Slice by shot log
     spectra: SpectraUi                         ## the spectrum windows: the live panel, the FFT windows
     compare: CompareUi                         ## the compare window: two traces, A and B
     plotWins: PlotWindowsUi                    ## the analysis windows (New plot)

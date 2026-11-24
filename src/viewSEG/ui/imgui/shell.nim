@@ -62,7 +62,7 @@ type
     dkOutputSource = "Output source",          ## the folder whose seismic files are written
     dkOutputDest = "Output destination",       ## the folder those files are written into
     dkShotLog = "Shot log",                    ## one shot log to import: CSV, text or TSV
-    dkCutDest = "Cut destination"              ## the folder a cut by shot log is written into
+    dkCutDest = "Slice destination"            ## the folder a slice by shot log is written into
     dkExportShotSps = "Export SPS"             ## an SPS file to write (a save dialog)
 
   ShellEventKind* = enum

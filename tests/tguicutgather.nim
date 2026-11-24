@@ -1,4 +1,4 @@
-## Project > Cut by shot log, headless, driven by real clicks: the menu item does
+## Project > Slice by shot log, headless, driven by real clicks: the menu item does
 ## nothing while no file is shown and no log is loaded and opens the dialog once
 ## both are there; the dialog sums up the shots, the components and the size; a
 ## record length that is not a whole number of samples shows the sentence of
@@ -24,7 +24,7 @@ import utils/[faultyfs, fixtures, waiting]
 const
   BaseUs = 1_772_323_200_000_000'i64 # 2026-03-01T00:00:00 UTC
   SegLen = 3000
-  ItemName = "menu.Cut by shot log..."
+  ItemName = "menu.Slice by shot log..."
 
 type
   Step = object
@@ -83,7 +83,7 @@ proc main*() =
     makeRecording(rec)
     let logPath = fx.dir / "shots.csv"
     let map = writeLog(logPath)
-    let dest = fx.dir / "out" / "rec_cut.sgd"
+    let dest = fx.dir / "out" / "rec_slice.sgd"
     install()
     let hook = proc (kind: DialogKind; location: string): seq[string] =
       if kind == dkCutDest: @[fx.dir / "out"] else: @[]
@@ -192,7 +192,7 @@ proc main*() =
     step("open the cut file", proc (f: FrameInfo) = f.click(f.markOf("cut.open").centre),
       proc (f: FrameInfo): bool =
       let i = f.core.shownFile(f.core.findPanel(MainPanel))
-      i >= 0 and f.core.sessions[i].path.endsWith("rec_cut.sgd"))
+      i >= 0 and f.core.sessions[i].path.endsWith("rec_slice.sgd"))
     # A destination on a drive that does not answer: the window goes on
     # drawing, Cut is dim and says it is checking, and the answer comes when the
     # drive does.

@@ -145,22 +145,22 @@ proc main*() =
     doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
       "the log was not read"
     doAssert st.cutProblem == "", st.cutProblem
-    let dest = dir / "out" / "rec_cut.sgd"
+    let dest = dir / "out" / "rec_slice.sgd"
     st.apply Command(kind: ckCutGather, cutLog: 0, cutOptions: opts, cutDest: dest)
     doAssert st.cutRunning, "the cut did not start"
     doAssert st.cutProblem == CutRunning
     doAssert st.settle(not st.cutRunning and st.cutOutcome.len > 0), "the cut did not finish"
     doAssert fileExists(dest), "the cut wrote no file: " & st.cutOutcome
     doAssert st.cutWritten == dest.canonical, st.cutWritten
-    doAssert st.said("Cut 3 shots"), "the result is not in the log"
-    doAssert "Written to rec_cut.sgd" in st.cutOutcome, "the outcome line was not kept: " &
+    doAssert st.said("Sliced 3 shots"), "the result is not in the log"
+    doAssert "Written to rec_slice.sgd" in st.cutOutcome, "the outcome line was not kept: " &
       st.cutOutcome
     var f = openSeismic(dest, keys = true)
     doAssert f.len == 6, "records of two components for three shots: " & $f.len
     f.close()
     # A second cut to the same name is refused by the job, and said.
     st.apply Command(kind: ckCutGather, cutLog: 0, cutOptions: opts, cutDest: dest)
-    doAssert st.settle(not st.cutRunning and st.cutOutcome.startsWith("The cut failed")),
+    doAssert st.settle(not st.cutRunning and st.cutOutcome.startsWith("The slice failed")),
       "the refusal of a name in use was not said: " & st.cutOutcome
     doAssert st.cutWritten.len == 0
     discard st.shutdown()
@@ -189,7 +189,7 @@ proc main*() =
       st.apply Command(kind: ckCutGather, cutLog: 0, cutOptions: opts, cutDest: dest)
       doAssert st.settle(not st.cutRunning and st.cutOutcome.len > 0),
         "the cut did not end"
-      doAssert st.cutOutcome.startsWith("The cut failed: " & words), st.cutOutcome
+      doAssert st.cutOutcome.startsWith("The slice failed: " & words), st.cutOutcome
       doAssert not fileExists(dest) and st.cutWritten.len == 0
       discard st.shutdown()
 

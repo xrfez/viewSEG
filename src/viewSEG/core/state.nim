@@ -340,8 +340,8 @@ type
       ## read the leap-second file again
     ckResetLeaps = "reset leap seconds"
       ## the leap-second table shipped with the program
-    ckCutGather = "cut by shot log"
-      ## cut the continuous recording the Seismic window shows into one record per shot of a
+    ckCutGather = "slice by shot log"
+      ## slice the continuous recording the Seismic window shows into one record per shot of a
       ## loaded shot log, and write them to a new file, on a job
     ckExportShotSps = "export SPS"
       ## write the shots of a loaded shot log, with its edits, as an SPS file of source points,
@@ -1124,13 +1124,13 @@ type
     leapChanged: bool
     leapDone: bool ## the job posted what it did (`mkLeap`)
     cutJob: JobId = NoJob
-      ## the cut by shot log under way; `NoJob` for none
+      ## the slice by shot log under way; `NoJob` for none
     cutSink: CutSink
       ## what that job found, read once the job has ended
     cutOutcome: string
       ## the last cut's outcome line, for the dialog; "" before any
     cutPath: string
-      ## the file the last cut wrote; "" when it wrote none
+      ## the file the last slice wrote; "" when it wrote none
     spsJob: JobId = NoJob
       ## the SPS export under way; `NoJob` for none
     spsSink: SpsSink
@@ -2164,13 +2164,13 @@ func shownFile*(state: AppState; panelIndex: int): int =
       if s.id == p.layers[0].source.file: return i
 
 const
-  CutNeedFile* = "Show a seismic file first: it is the recording that is cut."
+  CutNeedFile* = "Show a seismic file first: it is the recording that is sliced."
   CutNeedLog* = "Load a shot log first (Project > Import shot log): its times are where " &
-    "the recording is cut."
+    "the recording is sliced."
   CutNeedBoth* = "Show a seismic file and load a shot log first."
-  CutRunning* = "A cut is already running."
-  CutDerived* = "The window shows a correlated view: show the file itself to cut it."
-  CutSignature* = "A signature file is not a recording that can be cut."
+  CutRunning* = "A slice is already running."
+  CutDerived* = "The window shows a correlated view: show the file itself to slice it."
+  CutSignature* = "A signature file is not a recording that can be sliced."
 
 func notices*(state: AppState): lent seq[Notice] {.inline.} =
   ## The newest notices, oldest first: what background jobs had to say
@@ -2657,7 +2657,7 @@ func findPanel*(state: AppState; id: PanelId): int =
   -1
 
 func cutProblem*(state: AppState): string =
-  ## Why Project > Cut by shot log cannot start, in a sentence; "" when it can.
+  ## Why Project > Slice by shot log cannot start, in a sentence; "" when it can.
   let shown = state.shownFile(state.findPanel(MainPanel))
   let haveFile = shown >= 0
   let haveLog = state.shotLogs.len > 0
@@ -2700,15 +2700,15 @@ func recordingBusy*(state: AppState): bool {.inline.} =
   state.recJob != NoJob
 
 func cutRunning*(state: AppState): bool {.inline.} =
-  ## Whether a cut by shot log is under way.
+  ## Whether a slice by shot log is under way.
   state.cutJob != NoJob
 
 func cutOutcome*(state: AppState): string {.inline.} =
-  ## The last cut's outcome in a sentence; "" before any.
+  ## The last slice's outcome in a sentence; "" before any.
   state.cutOutcome
 
 func cutWritten*(state: AppState): string {.inline.} =
-  ## The file the last cut wrote; "" when it wrote none.
+  ## The file the last slice wrote; "" when it wrote none.
   state.cutPath
 
 func windowTitle*(state: AppState; id: PanelId): string =
@@ -8955,7 +8955,7 @@ proc finishLeap(state: var AppState; job: JobInfo) =
       " were not read again; they use the earlier leap-second table until it is reopened.")
 
 proc finishCut(state: var AppState; job: JobInfo) =
-  ## The cut by shot log ended: its sentences go to the log, and the dialog
+  ## The slice by shot log ended: its sentences go to the log, and the dialog
   ## has its outcome line and, when a file was written, the file's path.
   let res = if state.cutSink.isNil: CutResult() else: state.cutSink.result
   state.cutJob = NoJob
@@ -8963,20 +8963,20 @@ proc finishCut(state: var AppState; job: JobInfo) =
   state.cutPath = ""
   let name = res.path.extractFilename
   if job.state == jsDone and res.ok:
-    for line in res.lines: state.log.add(sevInfo, "cut by shot log", line)
+    for line in res.lines: state.log.add(sevInfo, "slice by shot log", line)
     state.cutPath = res.path
-    state.cutOutcome = (if res.lines.len > 0: res.lines[0] else: "Cut.") & " Written to " &
+    state.cutOutcome = (if res.lines.len > 0: res.lines[0] else: "Sliced.") & " Written to " &
       name & "."
   elif job.state == jsCancelled:
-    state.cutOutcome = "The cut was cancelled" &
+    state.cutOutcome = "The slice was cancelled" &
       (if res.removed: "; the partial file was removed." else: ".")
-    state.log.add(sevWarning, "cut by shot log", state.cutOutcome)
+    state.log.add(sevWarning, "slice by shot log", state.cutOutcome)
   else:
     let why = if res.reason.len > 0: res.reason
               elif job.error.len > 0: job.error
-              else: "the cut did not finish"
-    state.cutOutcome = "The cut failed: " & why
-    state.log.add(sevError, "cut by shot log", state.cutOutcome)
+              else: "the slice did not finish"
+    state.cutOutcome = "The slice failed: " & why
+    state.log.add(sevError, "slice by shot log", state.cutOutcome)
 
 proc finishSps(state: var AppState; job: JobInfo) =
   ## The SPS export ended: the Messages say what was written and what was left

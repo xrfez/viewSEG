@@ -1,4 +1,4 @@
-## Project > Cut by shot log on a file that is not a continuous recording,
+## Project > Slice by shot log on a file that is not a continuous recording,
 ## headless, driven by real clicks: a shot gather (four receivers, one trace
 ## each) is read by a job, the dialog says why it is refused above the buttons
 ## and Cut stays dim, whatever is clicked.
@@ -18,7 +18,7 @@ import utils/[fixtures, waiting]
 const
   BaseUs = 1_772_323_200_000_000'i64 # 2026-03-01T00:00:00 UTC
   SegLen = 3000
-  ItemName = "menu.Cut by shot log..."
+  ItemName = "menu.Slice by shot log..."
 
 type
   Step = object

@@ -1,7 +1,7 @@
-## Words for Project > Cut by shot log. The sentences a finished cut logs
+## Words for Project > Slice by shot log (internal names keep "cut"). The sentences a finished slice logs
 ## live in `core/cutgatherjobs`; the refusals in `core/state`. The sentences
 ## that refuse a file that is not a continuous recording are `cutRefusal` in
-## `core/cutgather` (the cut job says them too), exported here.
+## `core/cutgather` (the slice job says them too), exported here.
 
 import std/[math, strutils]
 import ../core/[cutgather, shotlog]
@@ -9,10 +9,10 @@ export cutRefusal
 import processSEG/continuous/slice
 
 const
-  CutWindowTitle* = "Cut by shot log###cutgather"
-  CutMenuTip* = "Cut the recording the Seismic window shows into one record per shot of a " &
+  CutWindowTitle* = "Slice by shot log###cutgather"
+  CutMenuTip* = "Slice the recording the Seismic window shows into one record per shot of a " &
     "loaded shot log, and write them to a new file"
-  Intro* = "Cuts a continuous recording at the times of a shot log: one record per shot, " &
+  Intro* = "Slices a continuous recording at the times of a shot log: one record per shot, " &
     "holding the recording's components, written to a new file. The recording is not changed."
   AlignNearest* = "Nearest sample"
   AlignLinear* = "Linear"
@@ -27,8 +27,8 @@ const
     "name or folder."
   NameHasFolder* = "The name is a file name: choose the folder with the button."
   HeadersNotRead* = "The recording's headers are still being read."
-  RecordingBeingRead* = "The recording is being read to see whether the cut can use it."
-  OpenCut* = "Open the cut file"
+  RecordingBeingRead* = "The recording is being read to see whether the slice can use it."
+  OpenCut* = "Open the sliced file"
 
 func alignWords*(a: SliceAlign): string =
   ## The drop-down's words for an alignment.
@@ -55,11 +55,11 @@ func standardExt*(s: CutStandard): string =
   if s == csSegy: ".sgy" else: ".sgd"
 
 func defaultName*(source: string; s: CutStandard): string =
-  ## The source's stem, "_cut", and the format's extension.
+  ## The source's stem, "_slice", and the format's extension.
   var stem = source
   let dot = stem.rfind('.')
   if dot > 0: stem.setLen dot
-  stem & "_cut" & standardExt(s)
+  stem & "_slice" & standardExt(s)
 
 func sizeWords*(bytes: int64): string =
   ## "about 1.5 GB" style, decimal units.

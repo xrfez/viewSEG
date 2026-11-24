@@ -43,7 +43,7 @@ type
     maReloadVendors = "Reload vendor maps",
     maLeapSeconds = "Leap seconds...",
     maImportSurvey = "Import survey...", maImportShotLog = "Import shot log...",
-    maCutGather = "Cut by shot log...",
+    maCutGather = "Slice by shot log...",
     maClearSurvey = "Clear survey",
     maImportSettings = "Import settings...",
     maImportLayout = "Import layout...", maImportEdits = "Import trace edits...",
@@ -131,7 +131,7 @@ type
     outputReady*: bool ## File > Output... can run
     outputWhy*: string ## why it cannot; "" when it can
     cutWhy*: string
-      ## why Project > Cut by shot log cannot start (the file or the log is missing, or a cut
+      ## why Project > Slice by shot log cannot start (the file or the log is missing, or a cut
       ## is under way); "" when it can
     shotLogFocused*: bool
       ## the Shot log window takes Ctrl+Z and Ctrl+Y for its cell edits

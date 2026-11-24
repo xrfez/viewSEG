@@ -41,7 +41,7 @@ const
       "Reopen with options...", "Follow the latest file", "Prepare the next file", "Output...",
       "Quit"]),
     ("Project", @["New project...", "Open project...", "Recent projects", "Project...",
-      "Import survey...", "Import shot log...", "Cut by shot log...",
+      "Import survey...", "Import shot log...", "Slice by shot log...",
       "Clear survey", "Close project"]),
     ("Edit", @["Undo", "Redo", "Select all traces", "Import trace edits...",
       "Export trace edits...", "Clear all edits for this file", "File memory..."]),

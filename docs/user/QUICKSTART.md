@@ -1204,9 +1204,9 @@ a value that does not fit its columns, such as a missing easting, is not rounded
 The window stays open if the log is read again, if a project is opened or closed, or if
 the log is removed. `samples/land/shotlog.csv` is a small table of this kind.
 
-### Cut by shot log
+### Slice by shot log
 
-A node records for days without stopping. **Project > Cut by shot log...** cuts the recording
+A node records for days without stopping. **Project > Slice by shot log...** slices the recording
 the Seismic window shows at the times of a loaded shot log: one record per shot, holding the
 recording's components, written to a new file. The item is dim, with a tooltip saying what is
 missing, until a file is shown and a log is loaded.
@@ -1216,15 +1216,15 @@ length and where it starts relative to the shot, in milliseconds (the length mus
 number of samples; the window says when it is not), how a start between two samples is dealt
 with (**Nearest sample**, **Linear**, **Cubic**, **Sinc**: Sinc is the most exact and the
 slowest), the format (SEG-D or SEG-Y), a folder and a file name (the recording's name with
-`_cut`). Under them it sums up what will be written: the shots, how many rows of the log have
-no time and are left out, the components and about how much disk. **Cut** starts a job in the
+`_slice`). Under them it sums up what will be written: the shots, how many rows of the log have
+no time and are left out, the components and about how much disk. **Slice** starts a job in the
 Jobs window ("n of m shots"; Cancel stops it and removes the partial file), and Messages
 reports what it found: gaps in the recording, overlaps between its segments that differ, and
 how the records are numbered (by the log's file numbers when they rise in time order, else 1
-to the number of shots). When it ends the window offers **Open the cut file**. The recording
+to the number of shots). When it ends the window offers **Open the sliced file**. The recording
 is never changed, and a file that exists is never overwritten.
 The details (each field, the size estimate, gaps and overlaps, the part file) are in
-[Cut by shot log](cut-by-shot-log.md).
+[Slice by shot log](slice-by-shot-log.md).
 
 ## Spectra
 

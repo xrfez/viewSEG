@@ -29,7 +29,7 @@ const
     ## edits imported are remembered with the file; forgetting files removes
     ## what is remembered about them; a shot log is copied into the project
     ## and its copy rewritten or removed; a leap-second change is written
-    ## beside the settings; a cut by shot log writes a new file; an SPS export of a
+    ## beside the settings; a slice by shot log writes a new file; an SPS export of a
     ## shot log does)
   Preferences* = {ckSettings, ckImportSettings, ckLayout, ckLoadLayout, ckProjectFolder,
     ckUpdateSurvey, ckVibProfile, ckVibWeights}

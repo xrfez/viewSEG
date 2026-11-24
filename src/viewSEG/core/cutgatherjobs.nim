@@ -100,7 +100,7 @@ type
 proc cutGatherSpec*(source, dest: string): JobSpec =
   ## The job that cuts `source` into `dest`: background, reading `source`,
   ## needing `dest` to itself. The file must stay open until the job ends.
-  JobSpec(title: "Cut " & extractFilename(source), lane: jlBackground, reads: @[source],
+  JobSpec(title: "Slice " & extractFilename(source), lane: jlBackground, reads: @[source],
     exclusive: @[dest])
 
 proc claimPart(dest: string): string =
@@ -197,7 +197,7 @@ func overlapName(o: SliceOverlap): string =
 func cutLines(res: CutResult; opts: CutOptions): seq[string] =
   ## The plain sentences of the log for a finished cut.
   let standard = if opts.standard == csSegy: "SEG-Y" else: "SEG-D Rev 3"
-  result.add "Cut " & plural(res.shotsWritten, "shot", "shots") & " into " & standard &
+  result.add "Sliced " & plural(res.shotsWritten, "shot", "shots") & " into " & standard &
     " records of " & plural(res.components, "trace", "traces") & ", " &
     plural(res.samples, "sample", "samples") & " each."
   if res.recordsFromFileNumbers:
@@ -299,7 +299,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let plan = planSlices(streams, shots.shots, window, soShotRecords, opts.align)
       let comps = plan.receiverCount
       if plan.len == 0:
-        abort(sink, dest, part, false, "The recording has no live trace to cut.", false)
+        abort(sink, dest, part, false, "The recording has no live trace to slice.", false)
       let numbered = recordNumbers(shots)
       var anyStation, anySourceXY, anyReceiverXY, anySourceKey = false
       for s in shots.shots:
@@ -319,7 +319,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         pointIndexOutOfRange: shots.pointIndexOutOfRange, components: comps,
         samples: plan.samples, expectedBytes: expected,
         sourceKeysDropped: opts.standard == csSegy and anySourceKey)
-      ctx.setPhase "cutting"
+      ctx.setPhase "slicing"
       if not tell(0, expected): abort(sink, dest, part, false, "Cancelled.", true)
 
       part = claimPart(dest)

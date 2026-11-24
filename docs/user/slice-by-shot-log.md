@@ -1,6 +1,6 @@
-# Cut by shot log
+# Slice by shot log
 
-A node records without stopping, for days, in segments. **Project > Cut by shot log...** cuts
+A node records without stopping, for days, in segments. **Project > Slice by shot log...** slices
 that recording at the times of a shot log: one record per shot, written to a new file, as
 SEG-D or SEG-Y. The recording is never changed.
 
@@ -10,12 +10,12 @@ SEG-D or SEG-Y. The recording is never changed.
   segment of each component. Not a correlated view (show the file itself) and not a vibrator
   signature file.
 - A shot log loaded: **Project > Import shot log...** (see the shot log section of the
-  [quick start](QUICKSTART.md)). Only rows with a time are cut.
+  [quick start](QUICKSTART.md)). Only rows with a time are sliced.
 
 Until both are there the menu item is dim, and its tooltip says which is missing ("Show a
-seismic file and load a shot log first."). Only one cut runs at a time.
+seismic file and load a shot log first."). Only one slice runs at a time.
 
-## What the cut accepts
+## What the slice accepts
 
 Only a continuous receiver gather. viewSEG asks two questions of the file, comparing only
 components of the same type and never re-sorting anything:
@@ -49,8 +49,8 @@ components of the same type and never re-sorting anything:
    extension needs a vendor header map that names that field).
 
 The kind is asked of any file you open, so the window decides it from the first 8 distinct start
-times of each receiver. The cut itself places every segment and checks every start: a trace off
-the step anywhere later in the file refuses the cut with the sentence above.
+times of each receiver. The slice itself places every segment and checks every start: a trace off
+the step anywhere later in the file refuses the slice with the sentence above.
 
 If the recorder was off for a while, the next trace starts after more than one step (k greater
 than 1): the box pads with zeros, so a long silence is still a whole number of steps. The missing
@@ -59,7 +59,7 @@ segments count as continuous, the times are written as zeros, and the window and
 
 When the start times are read from the trace headers, the traces of one component type at a
 station that share a start time are its channels, told apart by their order. If one channel
-misses a segment the later channel would take its place, so the cut is refused: "The channels
+misses a segment the later channel would take its place, so the slice is refused: "The channels
 of one component type at a station cannot be told apart and one of them misses a segment, so
 the records cannot be assembled safely."
 
@@ -68,16 +68,16 @@ trace, and within a station its components by theirs. Nothing is sorted by stati
 component code.
 
 The window reads the file and refuses the other kinds in a sentence above the buttons (the
-tooltip of the dim **Cut** says the same), and the command and the job refuse them the same way
+tooltip of the dim **Slice** says the same), and the command and the job refuse them the same way
 before any file is written.
 
 ## The window
 
-The **Cut by shot log** window floats; close it with **Close** or its own close button. A later
+The **Slice by shot log** window floats; close it with **Close** or its own close button. A later
 opening keeps what you typed. From the top:
 
-- **Source:** the recording that is cut, the file the Seismic window shows.
-- **Shot log:** the log to cut by, from the logs loaded. It starts as the one the Shot log
+- **Source:** the recording that is sliced, the file the Seismic window shows.
+- **Shot log:** the log to slice by, from the logs loaded. It starts as the one the Shot log
   window shows.
 - **Record length (ms):** how long each record is. It starts at 10000. It must be a whole
   number of samples; the window says when it is not, and what the interval is.
@@ -91,9 +91,9 @@ opening keeps what you typed. From the top:
 - **Format:** **SEG-D Rev 3** or **SEG-Y**. The default is SEG-D Rev 3.
 - **Folder:** where the file goes, chosen with **Change folder...**. It is "not chosen" until
   you choose one.
-- **File name:** a name without a folder. It starts as the recording's name, then `_cut`, then
+- **File name:** a name without a folder. It starts as the recording's name, then `_slice`, then
   the extension of the format (`.sgd` or `.sgy`), and follows the format until you type
-  another. When a file of that name is already in the folder, the window says so and **Cut**
+  another. When a file of that name is already in the folder, the window says so and **Slice**
   stays dim; nothing is overwritten.
 
 Under the fields, one line sums up what will be written once the options are right: the
@@ -102,11 +102,11 @@ components, and about how much disk the file will take ("5 shots (2 rows have no
 left out), 3 components, about 1.2 MB to write."). The size is an estimate, in decimal units.
 A second line says how the records will be numbered when it is not by the log's file numbers.
 
-**Cut** starts the job. It is dim, and its tooltip says why, while the folder or the name is
+**Slice** starts the job. It is dim, and its tooltip says why, while the folder or the name is
 missing, the options are wrong, or the headers of the recording are still being read.
 The Jobs window shows the job ("n of m shots"); Cancel stops it and removes what was written.
 While it runs, the window says so. When it ends, the window gives the outcome, and
-**Open the cut file** shows the new file in the Seismic window and lists its folder.
+**Open the sliced file** shows the new file in the Seismic window and lists its folder.
 
 ## What the file holds
 
@@ -122,17 +122,17 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
   they are left out. A point index outside 0 to 255 is written as 0, and counted.
 - **The samples** are written as 32-bit floats.
 
-When a vendor header map names each trace's start time (see `vendormaps/README.md`), the cut
+When a vendor header map names each trace's start time (see `vendormaps/README.md`), the slice
 reads the segments' start times from the trace headers and says so in Messages. A trace
 without the field is left out and counted; a recording that crosses a leap second shows a
 one-second overlap between the segments either side, because each segment's GPS time is
 converted to UTC at its own instant. The window
 reads the file the same way, in a job, before it sums up: while it does, it says the recording
-is being read and **Cut** is dim.
+is being read and **Slice** is dim.
 
 ## Where the recording does not fit the shots
 
-Messages reports what the cut found, after the file is written.
+Messages reports what the slice found, after the file is written.
 
 - **Segments that overlap.** Where two segments of one component cover the same time, the
   data are written once. The later segment, by start time, wins. When both are read, their
@@ -146,14 +146,14 @@ Messages reports what the cut found, after the file is written.
 - **Gaps.** Time no segment covers is written as zeros, and Messages gives how many output
   samples fall in gaps.
 - **Samples that cannot be read** are written as zeros too, and Messages counts them and
-  the shots they are in. A file that is cut short, or a drive that fails, stops the cut
+  the shots they are in. A file that is cut short, or a drive that fails, stops the slice
   instead.
 
 ## The file, and what is never replaced
 
 The file is first written next to its destination as `<name>.part-` and twelve letters or
-digits. When the cut is whole, it is renamed to the name you gave. A cancelled or failed cut
+digits. When the slice is whole, it is renamed to the name you gave. A cancelled or failed slice
 removes the part file, and says whether that worked. A file that already exists is never
-replaced: the cut ends at once with "The destination already exists." If the name is
-taken while the cut is running, the output is left under the part file's name and the window
+replaced: the slice ends at once with "The destination already exists." If the name is
+taken while the slice is running, the output is left under the part file's name and the window
 tells you so. The recording, and every other file, is left as it was.
