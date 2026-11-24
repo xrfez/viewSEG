@@ -42,8 +42,8 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Status | parseSEG 0.21.1: capabilities | names | processSEG 0.14.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 57 (23 in part) | 198 | 46 (29 in part) | 256 |
-| `internal` | 21 | 65 | 7 | 46 |
-| `planned` | 33 | 226 | 43 | 399 |
+| `internal` | 21 | 65 | 8 | 54 |
+| `planned` | 33 | 226 | 42 | 391 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 22 | 355 | 7 | 71 |
 | all | 135 | 853 | 104 | 777 |
@@ -404,7 +404,7 @@ name, so these are building blocks for code that works on raw headers.
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Cut continuous node data into records at shot times | `initSliceStreams`, `planSlices`, `extractInto`, `sliceKeys`, `SliceShot`, `SliceWindow`, `SliceStreams` (`rowCount`, `receiverKeys`), `SlicePlan` (`margin`, `order`, `align`, `window`, `shotCount`, `receiverCount`, `shotOf`, `receiverOf`, `rowsNeeded`, `tracesNeeded`, `maxColumn`, `fraction`), `initSliceShot`, `SliceOrder`, `SliceAlign`, `SlicePiece`, `pieces`, `sliceWorkspace` | "Cut at shot times…" (shots from SPS / P1 or a list), result as a virtual file | planned |
+| Cut continuous node data into records at shot times | `initSliceStreams`, `planSlices`, `extractInto`, `sliceKeys`, `SliceShot`, `SliceWindow`, `SliceStreams` (`rowCount`, `receiverKeys`), `SlicePlan` (`margin`, `order`, `align`, `window`, `shotCount`, `receiverCount`, `shotOf`, `receiverOf`, `rowsNeeded`, `tracesNeeded`, `maxColumn`, `fraction`), `initSliceShot`, `SliceOrder`, `SliceAlign`, `SlicePiece`, `pieces`, `sliceWorkspace` | "Cut at shot times…" (shots from SPS / P1 or a list), result as a virtual file | internal (`SliceShot`, `initSliceShot`, `SliceAlign`: `core/cutgather.nim` builds the shots and takes the alignment); planned (the rest) |
 | Cut one trace from the pieces a plan names, without holding the whole row | `addPiece`, `beginSliceTrace`, `finishSliceTrace`, `pieceSource`, `checkSliceOverlap`, `prepareSliceReport`, `failedSamples`, `failedPieces`, `initSliceShotGps` | Cutting a continuous receiver gather larger than memory into records at shot-log times: each piece is read, added and dropped. | planned |
 | The leap-second table, as processSEG shares it | `LeapDate`, `LeapSecond`, `LeapTable`, `currentLeapTable`, `defaultLeapTable`, `leapKnownAt`, `parseLeapTable`, `useLeapTable`, `withLeap`, `useLeapTableNif`, `gpsUsToUtcSeconds`, `utcUsOfGps` | Shot times given in GPS microseconds for the cut, converted with the same table the viewer's Tools > Leap seconds will edit. | built in part (Tools > Leap seconds...: the table the Leap seconds window shows and changes is the one processSEG shares); planned: shot times in GPS microseconds for the cut |
 | A sub-sample shift by windowed sinc | `SincHalf`, `sincInto` | The most exact alignment of a cut window whose shot time falls between samples. | planned |
