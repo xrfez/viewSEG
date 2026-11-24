@@ -3,16 +3,18 @@
 ## and its tooltip, the samples moved, undo, Remove from the mark menu, a
 ## selection of seismic traces, and the entry absent on an auxiliary trace.
 ##
-## Seen to fail: with the menu item not opening the popover, "the popover did
-## not open"; with the snap line wrong, "the snap line was not applies +8 ms";
-## with Apply not posting the shift, "Apply did not shift the trace"; with the
-## header row leaving the clock out, "no shift mark over trace 1"; with the
-## tooltip not naming the shift, "the mark tooltip did not say shifted"; with
-## the samples unmoved, "the spike did not move by 4 samples"; with undo not
-## restoring them, "undo did not take the shift away"; with Remove posting
-## nothing, "Remove did not take the shift away"; with the selection menu
-## naming one trace, "the selection was not Time shift of 2"; with the entry
-## drawn on an auxiliary trace, "Time shift was offered on an auxiliary trace".
+## Seen to fail: with the shown 0 left in place when the field is clicked,
+## "typing 7 kept 07" (Enter still applies the snap of 7, not 0 or 70); with
+## the menu item not opening the popover, "the popover did not open"; with the
+## snap line wrong, "the snap line was not applies +8 ms"; with Apply not
+## posting the shift, "Apply did not shift the trace"; with the header row
+## leaving the clock out, "no shift mark over trace 1"; with the tooltip not
+## naming the shift, "the mark tooltip did not say shifted"; with the samples
+## unmoved, "the spike did not move by 4 samples"; with undo not restoring
+## them, "undo did not take the shift away"; with Remove posting nothing,
+## "Remove did not take the shift away"; with the selection menu naming one
+## trace, "the selection was not Time shift of 2"; with the entry drawn on an
+## auxiliary trace, "Time shift was offered on an auxiliary trace".
 ##
 ## Needs a display: run under xvfb-run.
 
@@ -57,6 +59,11 @@ proc chord(f: FrameInfo; key: SimKey; mods: set[SimMod] = {}) =
 proc named(f: FrameInfo; prefix, needle: string): bool =
   for n in f.markNames(prefix):
     if needle in n: return true
+
+proc fieldText(f: FrameInfo): string =
+  const prefix = "plot.timeshift typed "
+  for n in f.markNames("plot.timeshift"):
+    if n.startsWith(prefix): return n[prefix.len .. ^1]
 
 proc rowOf(f: FrameInfo; trace: int): seq[float32] =
   let tiles = f.core.tiles(f.core.findPanel(MainPanel))
@@ -132,6 +139,38 @@ proc main*() =
     v.traces = Span(lo: -0.5, hi: 15.5)
     v.timeMs = Span(lo: 100, hi: 500)
     f.showView(v), proc (f: FrameInfo): bool = f.answered)
+  var kept = ""
+  step("point to replace", proc (f: FrameInfo) =
+    q = f.pointAt(0)
+    f.moveMouse(q), proc (f: FrameInfo): bool = f.markOf("plot.data").size.x > 0)
+  step("menu to replace", proc (f: FrameInfo) = f.click(q, button = 3), proc (f: FrameInfo): bool =
+    f.markOf("plot.menu.shift.item Time shift...").size.x > 0)
+  step("point at Time shift to replace", proc (f: FrameInfo) =
+    f.moveMouse(f.markOf("plot.menu.shift").centre), proc (f: FrameInfo): bool =
+    f.markOf("plot.menu.shift").size.x > 0 and wait > 2)
+  step("open to replace", proc (f: FrameInfo) =
+    f.click(f.markOf("plot.menu.shift").centre), proc (f: FrameInfo): bool =
+    f.markOf("plot.timeshift popup").size.x > 0 and wait > 6)
+  step("click the field to replace", proc (f: FrameInfo) =
+    let q = f.markOf("plot.timeshift field").centre
+    f.moveMouse(q)
+    f.pressMouse(q, true)
+    f.pressMouse(q, false), proc (f: FrameInfo): bool = f.typing and wait > 4)
+  step("type 7 over the shown 0", proc (f: FrameInfo) = f.typeText("7"), proc (f: FrameInfo): bool =
+    result = wait > 6
+    if result: kept = f.fieldText)
+  step("Enter applies the typed 7", proc (f: FrameInfo) = f.chord(skEnter), proc (
+      f: FrameInfo): bool =
+    # 7 ms on this file (2 ms samples) is stored as +8 ms. The bug leaves "07"
+    # in the field; that still snaps to 8, so the text is what fails.
+    result = kept == "7" and f.shiftOf(0) == 8.0 and f.answered and
+      f.markOf("plot.timeshift popup").size.x == 0
+    if not result and wait > 80:
+      failed = "typing 7 kept " & kept & ", shift " & $f.shiftOf(0))
+  step("undo the replaced shift", proc (f: FrameInfo) = f.chord(skZ, {smCtrl}),
+    proc (f: FrameInfo): bool =
+    result = f.shiftOf(0) == 0.0 and f.answered
+    if not result and wait > 80: failed = "undo did not take the replaced shift away")
   step("point", proc (f: FrameInfo) =
     q = f.pointAt(0)
     f.moveMouse(q), proc (f: FrameInfo): bool = f.markOf("plot.data").size.x > 0)

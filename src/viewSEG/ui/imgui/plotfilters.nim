@@ -410,6 +410,22 @@ proc openOwnFilter*() =
 
 const shiftId = "##timeshift"
 
+var shiftFieldAt: array[2, ImVec2_c]
+var shiftFieldLive = false
+
+proc mouseOnShiftField(): bool =
+  ## The pointer is inside the field as it was drawn last frame.
+  if not shiftFieldLive: return false
+  let p = igGetMousePos()
+  let a = shiftFieldAt[0]
+  let b = shiftFieldAt[1]
+  p.x >= a.x and p.x < b.x and p.y >= a.y and p.y < b.y
+
+proc rememberShiftField() =
+  shiftFieldAt[0] = igGetItemRectMin()
+  shiftFieldAt[1] = igGetItemRectMax()
+  shiftFieldLive = true
+
 type
   ShiftChoice* = enum
     scNone, scApply, scClear
@@ -429,7 +445,9 @@ proc drawTimeShift*(text: var array[32, char]; mixed: bool; n: int; dtMs: float6
   ## `scApply` when Apply or Enter takes a value the command will keep;
   ## `scClear` when Clear takes the shift away. Escape and Cancel close it
   ## and return `scNone`.
-  if not igBeginPopup(shiftId, 0): return scNone
+  if not igBeginPopup(shiftId, 0):
+    shiftFieldLive = false
+    return scNone
   marks.markWindow("plot.timeshift popup")
   let title = if n == 1: "Time shift" else: "Time shift of " & $n & " traces"
   igTextUnformatted(title.cstring, nil)
@@ -438,14 +456,21 @@ proc drawTimeShift*(text: var array[32, char]; mixed: bool; n: int; dtMs: float6
     marks.mark("plot.timeshift mixed")
     marks.mark("plot.timeshift mixed the selected traces have different shifts")
   if igIsWindowAppearing(): igSetKeyboardFocusHere(0)
+  # The popover already focused the field. A click then only moves the caret,
+  # so typing appends to the shown 0. Dropping the focus makes this click the
+  # one that focuses it, and AutoSelectAll selects the text.
+  if igIsMouseClicked_Bool(ImGui_MouseButton_Left.cint, false) and mouseOnShiftField():
+    igClearActiveID()
   let w = round(igGetFontSize() * 8)
   igSetNextItemWidth(w)
   const flags = ImGui_InputTextFlags_EnterReturnsTrue.cint or
     ImGui_InputTextFlags_AutoSelectAll.cint
   let entered = igInputText("ms", cast[cstring](addr text[0]), csize_t(text.len), flags, nil, nil)
+  rememberShiftField()
   marks.mark("plot.timeshift field")
   tip("The shift in milliseconds, positive later. It is snapped to a whole sample.")
   let typed = ($cast[cstring](addr text[0])).strip
+  marks.mark("plot.timeshift typed " & typed)
   let parsed = parseShift(typed)
   var refused = ""
   if parsed.ok and not shiftStorable(parsed.ms): refused = shiftRefusal(parsed.ms)
