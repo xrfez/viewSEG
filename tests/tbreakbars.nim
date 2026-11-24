@@ -9,7 +9,9 @@
 ## "trace 1 at 100.3 ms has no mark in its column"; with the shift left out,
 ## "trace 5's pick bar is at 24.0 px, the plot draws its sample at 14.0";
 ## with the edit shift left out of the pick bar, "trace 5's pick bar is at
-## 20.3 px, the shifted trace is drawn at 21.9".
+## 20.3 px, the shifted trace is drawn at 21.9"; with the first-pass pick gated
+## on a confidence (`firstConf`) the stimulus does not set, "the far-off marker
+## did not move" and "the first-pass marker did not move".
 
 import std/[math, strutils]
 import viewSEG/core/[breakmodel, edits, firstbreaks, geometry, orientation, panels, session,
@@ -167,13 +169,20 @@ proc main*() =
     # A +8 ms edit (4 samples at 2 ms) draws the pick 8 ms later. The stored
     # pick, the model, a zero shift, a reversal and a killed trace stay put.
     # Undo puts the bar back; the job key, which stores killed traces only, does not change.
+    # Trace 4 is far off (first pass 80 ms, guided 200). Trace 9 is compared on its
+    # first-pass pick (60 ms, guided 180). Neither sets `firstConf`: the shown pick
+    # is `firstMs`, and the marker is that time plus the edit.
     var b = made(60)
     b.rule.farOff = newSeq[bool](60)
     b.rule.farOff[4] = true
+    b.rule.firstPick = newSeq[bool](60)
+    b.rule.firstPick[9] = true
     b.geometry.firstMs = newSeq[float64](60)
     for i in 0 ..< 60: b.geometry.firstMs[i] = b.pickMs[i]
     b.geometry.firstMs[4] = 80.0
     b.pickMs[4] = 200.0
+    b.geometry.firstMs[9] = 60.0
+    b.pickMs[9] = 180.0
     let stored = b.pickMs[5]
     var shown = newSeq[int](60)
     for i in 0 ..< 60: shown[i] = i
@@ -207,6 +216,7 @@ proc main*() =
     discard e.change(teKilled, [8], true)
     discard e.setTimeShifts([8], 8.0, 2.0)
     discard e.setTimeShifts([4], 8.0, 2.0)
+    discard e.setTimeShifts([9], 8.0, 2.0)
     let later = breakGeometry(b, shown, layout, view, TimeDown, plot, edits = e)
     doAssert abs(markY(later, bmPick, 6) - markY(today, bmPick, 6)) < 0.5, "shift 0 moved"
     doAssert abs(markY(later, bmPick, 7) - markY(today, bmPick, 7)) < 0.5, "a reversal moved"
@@ -217,6 +227,10 @@ proc main*() =
     doAssert b.pickOf(4) == 80.0 and b.pickMs[4] == 200.0, "the stored far-off pick changed"
     doAssert abs(b.differenceMs(4) - (b.pickOf(4) - b.modelOf(4))) < 1e-9
     doAssert "pick 88.0 ms" in b.readoutText(4, e), b.readoutText(4, e)
+    let passed = float32((60.0 + 8.0) * 400 / 2000)
+    doAssert abs(markY(later, bmPick, 9) - passed) < 0.5, "the first-pass marker did not move"
+    doAssert b.pickOf(9) == 60.0 and b.pickMs[9] == 180.0, "the stored first-pass pick changed"
+    doAssert "pick 68.0 ms" in b.readoutText(9, e), b.readoutText(9, e)
     doAssert overlayKey(e, traces).killed == @[8], "the key stored more than the kill"
 
   echo "tbreakbars: ok"

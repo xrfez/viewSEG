@@ -208,8 +208,9 @@ func place*(b: FirstBreaks; trace: int): int {.inline.} =
 
 func onFirstPick(b: FirstBreaks; i: int): bool {.inline.} =
   ## Whether trace `i` (of the record) is shown with its first pass's pick: far off the model,
-  ## or compared on that pick (the guided one was not comparable).
-  i < b.geometry.firstMs.len and i < b.geometry.firstConf.len and
+  ## or compared on that pick (the guided one was not comparable). The time is `firstMs`.
+  ## A confidence (`firstConf`) is not required here: `confidenceOf` reads it when it is there.
+  i < b.geometry.firstMs.len and
     ((i < b.rule.farOff.len and b.rule.farOff[i]) or
     (i < b.rule.firstPick.len and b.rule.firstPick[i]))
 
@@ -233,7 +234,7 @@ func modelOf*(b: FirstBreaks; trace: int): float64 =
 func confidenceOf*(b: FirstBreaks; trace: int): float64 =
   ## The confidence of the pick of file trace `trace`; 0 for none.
   let i = b.place(trace)
-  if i >= 0 and b.onFirstPick(i): b.geometry.firstConf[i]
+  if i >= 0 and b.onFirstPick(i) and i < b.geometry.firstConf.len: b.geometry.firstConf[i]
   elif i >= 0 and i < b.confidence.len: b.confidence[i]
   else: 0.0
 
