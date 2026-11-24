@@ -12,7 +12,8 @@
 ## times written twice, it was counted twice; with the end-to-end sentence saying the start times
 ## "could not be read", the words were not those of a file whose starts are the same; without the
 ## check of the first start time, a file of starts at the epoch was sliced from 1970; returning
-## early when the user's choice did not change, the user's pick after an agent's did nothing.
+## early when the user's choice did not change, the user's pick after an agent's did nothing;
+## without the check of the path, a missing, unlisted or non-seismic file took a choice.
 
 import std/[importutils, options, os, sequtils, strutils, tables, times]
 import parseSEG
@@ -143,6 +144,23 @@ proc main*() =
       doAssert not st.treatOf(shot).isSet
       doAssert st.log.anyIt("is not a kind" in it.text)
       doAssert docs(config).len == 0 or true
+
+    block onlyASeismicFileListedOrOpenIsTreated:
+      let cfg = fx.dir / "refuse-config"
+      var r = appIn(cfg)
+      let notes = fx.dir / "notes.txt"
+      writeFile(notes, "x")
+      for p in [fx.dir / "nope.sgd", notes, shot]: # (`shot`: not listed in this one)
+        r.apply Command(kind: ckTreatAs, treatPath: p, treatKind: "shot")
+        doAssert not r.treatOf(p).isSet, "taken for " & p
+        doAssert r.log.anyIt(canonical(p) & " is not a seismic file listed in Files or open" in
+          it.text), "not said for " & p
+        var agent = Command(kind: ckTreatAs, treatPath: p, treatKind: "shot")
+        agent.origin = coAgent
+        r.apply agent
+        doAssert not r.treatOf(p).isSet, "an agent's taken for " & p
+      doAssert r.settle((r.flushFiles(); r.jobs.list.allIt(it.state notin {jsQueued, jsRunning})))
+      doAssert docs(cfg).len == 0, "a document was written for a file that is not treated"
 
     block theChoiceIsKeptForTheFileAndReadBack:
       st.apply Command(kind: ckTreatAs, treatPath: shot, treatKind: "continuous",

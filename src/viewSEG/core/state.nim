@@ -11192,6 +11192,13 @@ proc treatAs(state: var AppState; cmd: Command) =
   ## and has the choice remembered for the file (its document in the store, found by its
   ## identity, made on demand: `treatWork`).
   let path = canonical(cmd.treatPath)
+  # a seismic file of the list, or one open: known to be there and to be seismic without a look
+  # at the disk here
+  let listed = state.files.find(path)
+  if not (listed >= 0 and state.files.entries[listed].kind.isSeismic or
+      state.sessions.anyIt(it.path == path and not it.derived)):
+    state.ignore(cmd, path & " is not a seismic file listed in Files or open")
+    return
   let kept = keeps(cmd.origin)
   var t = (if kept: state.treatsKept else: state.treats).getOrDefault(path)
   let before = t
@@ -11223,12 +11230,10 @@ proc treatAs(state: var AppState; cmd: Command) =
   if t.isSet: state.treats[path] = t else: state.treats.del path
   if kept:
     if t.isSet: state.treatsKept[path] = t else: state.treatsKept.del path
-  let i = state.files.find(path)
-  if i >= 0:
-    state.files.entries[i].treat = t
-    state.files.changedAt(i)
-  if keeps(cmd.origin) and not state.store.isNowhere and not state.readOnlyProject and
-      fs.fileExists(path):
+  if listed >= 0:
+    state.files.entries[listed].treat = t
+    state.files.changedAt(listed)
+  if keeps(cmd.origin) and not state.store.isNowhere and not state.readOnlyProject:
     state.memoryWork.add state.jobs.submit(JobSpec(title: "Remember what " &
       path.extractFilename & " is treated as", lane: jlPeeks, auto: true),
       treatWork(path, state.store, t, state.inbox.poster))
