@@ -44,15 +44,22 @@
 ## least the step long (within one sample) and repeats no more than
 ## `EndRepeatShare` of its length beyond the step (a little data at the ends).
 ## A receiver gather is continuous only when every boundary of every
-## sub-receiver is on the step and every segment covers it. Otherwise it is
-## time sliced, and `slicedWhy` names the first trace off the rule with the
-## numbers measured for it. A receiver with one segment has no step to keep.
+## sub-receiver is on the step, every segment covers it, and at least one
+## boundary of the file is one step (k = 1): some trace follows directly on
+## another. When every boundary skips (k > 1) the gaps are whole but nothing
+## follows on anything, as in records sliced at shot times: not continuous
+## (`swNoFollow`). One such pair anywhere in the file is enough; the other gaps
+## are then a box switched off. Otherwise it is time sliced, and `slicedWhy`
+## names the first trace off the rule with the numbers measured for it. A
+## receiver with one segment has no step to keep.
 ## When every trace of the file carries one start time the reason is
 ## `swSameStart`.
 ##
 ## When no start difference lies from 0.9 L to L, the step is taken from the
 ## commonest difference divided by a whole number from 2 to 8 that lies there
-## (every other trace not recorded), and only then is it L.
+## (every other trace not recorded), and only then is it L. With no trace one step after
+## another such a file is not continuous; the step still measures how far apart its traces
+## are.
 ##
 ## The kind is asked of any loaded file, so `describeRecording` looks only at the
 ## first `KindStarts` distinct start times of each sub-receiver (traces that
@@ -97,6 +104,10 @@ type
                 ## `segmentSeconds` (the trace length of the others)
     swNoStep    ## the traces of a station start at different times but no step can be measured
     swSameStart ## every trace carries the same start time
+    swNoFollow
+      ## every start is a whole number of steps after the one before it, but none just one
+      ## step: no trace follows directly on another (`fewestSteps`), as in records sliced at
+      ## shot times
 
   RecordingPlan* = object
     ## The segments of a file as the cut plans them.
@@ -120,6 +131,9 @@ type
     irregular*: int                ## starts that are not a whole number of steps apart
     uncovered*: int                ## receivers with a segment that does not cover the step
     offTrace*: int                 ## for `swOffStep`: the trace (from 1) that breaks the rule
+    fewestSteps*: int
+      ## the fewest steps from a start to the next of its receiver, over the boundaries on the
+      ## step (0 for none): for `swNoFollow`
     offSeconds*: float64
       ## for `swOffStep`: how long after the segment before it that trace starts, or its
       ## length when `offLength`
@@ -266,6 +280,7 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int; r: var Recordin
     let k = max(1, (2 * d + step) div (2 * step))
     let off = d - k * step
     if abs(off) <= 1:
+      r.fewestSteps = if r.fewestSteps == 0: k else: min(r.fewestSteps, k)
       if k == 1: inc r.abutting
       else:
         inc r.skips
@@ -402,8 +417,11 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
       result.slicedWhy = swNone
   else:
     # question 2: is the receiver gather continuous? `tally` named the first trace off
-    # the step; traces that all start together are named first
+    # the step; traces that all start together are named first. Every boundary a whole
+    # number of steps but none of one step is not continuous: no trace follows on another
     if segs.len > 1 and segs.allIt(it.start == segs[0].start): result.slicedWhy = swSameStart
+    elif result.slicedWhy == swNone and result.boundaries > 0 and result.abutting == 0:
+      result.slicedWhy = swNoFollow
     result.kind = if result.slicedWhy == swNone: rkReceiverContinuous else: rkReceiverSliced
     # not continuous: the receiver changing from trace to trace, in the order of the file, is
     # a shot gather (the receivers repeat from record to record); staying put, a receiver's

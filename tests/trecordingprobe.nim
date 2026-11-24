@@ -9,17 +9,33 @@
 ## "mux: (outcome: poKnown, kind: rkShotGather)" (it was opened, a copy demultiplexed); with
 ## the channel number always part of a receiver, "rising.sgd: (ready: true, ... kind:
 ## rkReceiverSliced" (six receivers of one segment); with it never part, "uncoded" reads one
-## receiver ("components: 1").
+## receiver ("components: 1"); with the rule that some trace must follow on another taken out
+## (`abutting == 0` not asked), the samples' shot records read "land/shots.sgd:
+## rkReceiverContinuous", "wholeShots: ... rkReceiverContinuous" and "sliced: ...
+## rkReceiverContinuous".
 
-import std/[assertions, os, strutils, times]
+import std/[algorithm, assertions, os, sets, strutils, times]
 import parseSEG
-import viewSEG/core/[recordingkind, recordingprobe, vendormaps]
+import viewSEG/core/[correlatejobs, cutgather, recordingkind, recordingprobe, vendormaps]
 import utils/[fixtures, kindfiles]
 
 proc whole(path: string; reg: VendorRegistry): RecordingFacts =
   var f = openSeismic(path, keys = true, opts = OpenOptions(vendors: reg))
   try:
     result = describeRecording(planRecording(addr f, path, SpecDtMs, reg))
+  finally:
+    f.close()
+
+proc sampleFacts(path: string): tuple[facts: RecordingFacts; receivers: int] =
+  ## The facts of a file of `samples/` opened whole, as the probe opens it, and how many
+  ## receivers its plan has.
+  var f = openSeismic(path, keys = true, opts = OpenOptions(vendors: VendorRegistry()))
+  try:
+    let dtMs = seismicDtMs(addr f)
+    if f.len > 0 and dtMs > 0:
+      let plan = planRecording(addr f, path, dtMs, VendorRegistry())
+      result.facts = describeRecording(plan)
+      result.receivers = plan.receivers.toHashSet.len
   finally:
     f.close()
 
@@ -94,6 +110,88 @@ proc main*() =
     let f = whole(path, VendorRegistry())
     doAssert f.kind == rkReceiverContinuous and f.components == 3, $f
     doAssert f.abutting == 9 and f.stations == 1, $f
+
+  block the_samples_read_as_what_they_are:
+    # every seismic file of samples/: the probe and the whole file agree, kind and order
+    type Want = tuple[name: string; outcome: ProbeOutcome; kind: RecordingKind;
+      order: TraceOrder]
+    const
+      byTime = TraceOrder(grouping: tgNone, subSort: tsByTime)
+      byStation = TraceOrder(grouping: tgNone, subSort: tsByStation)
+      flagTime = TraceOrder(grouping: tgByFlag, subSort: tsByTime)
+      flagStation = TraceOrder(grouping: tgByFlag, subSort: tsByStation)
+      notKnown = TraceOrder(grouping: tgNotKnown, subSort: tsNotKnown)
+      wants: seq[Want] = @[
+        ("land/shots.sgd", poKnown, rkShotGather, byTime),
+        ("land/shots.sgy", poKnown, rkShotGather, byTime),
+        ("obn/obn.sgd", poKnown, rkShotGather, flagTime),
+        ("obn/obn_receiver.sgd", poKnown, rkReceiverSliced, flagStation),
+        ("vib/field/signature_13trace_a.sgy", poKnown, rkShotGather, notKnown),
+        ("vib/field/signature_13trace_b.sgy", poKnown, rkShotGather, notKnown),
+        ("vib/field/signature_4trace_a.sgy", poNone, rkShotGather, notKnown),
+        ("vib/field/signature_4trace_b.sgy", poNone, rkShotGather, notKnown),
+        ("vib/vib_correlated.sgd", poKnown, rkShotGather, byStation),
+        ("vib/vib_signature.sgd", poNone, rkShotGather, notKnown),
+        ("vib/vib_uncorrelated.sgd", poKnown, rkShotGather, byStation)]
+    let root = currentSourcePath().parentDir.parentDir / "samples"
+    var listed: seq[string] = @[]
+    for path in walkDirRec(root, relative = true):
+      if path.splitFile.ext in [".sgy", ".sgd"]: listed.add path.replace('\\', '/')
+    listed.sort()
+    var named: seq[string] = @[]
+    for w in wants: named.add w.name
+    doAssert listed == named, "samples/ holds " & $listed
+    for w in wants:
+      let path = root / w.name
+      let probe = kindOfFile(path, VendorRegistry())
+      let (facts, receivers) = sampleFacts(path)
+      doAssert probe.outcome == w.outcome, w.name & ": " & $probe
+      doAssert facts.ready == (w.outcome == poKnown), w.name & ": " & $facts
+      if facts.ready:
+        doAssert probe.kind == w.kind and facts.kind == w.kind, w.name & ": " & $facts.kind &
+          ", probe " & $probe.kind
+        doAssert probe.order == w.order and facts.order == w.order, w.name & ": " &
+          $facts.order & ", probe " & $probe.order
+      if w.name == "obn/obn_receiver.sgd":
+        # four nodes of four components, eight shots each: one receiver per node and
+        # component, none of whose traces follows on another
+        doAssert receivers == 16 and facts.slicedWhy == swNoFollow, $facts
+        doAssert facts.fewestSteps == 30, $facts
+
+  block shot_records_a_whole_number_of_trace_lengths_apart_are_a_shot_gather:
+    # six shots 15 trace lengths apart, ten stations each: every boundary of a station is on
+    # the step, but none follows on the one before it
+    let specs = block:
+      var s: seq[Spec] = @[]
+      for shot in 0 ..< 6:
+        for r in 0 ..< 10: s.add spec(r, shot * 15000)
+      s
+    same(dir, "wholeShots", specs, rkShotGather)
+    for path in [writeSpecs(dir, "wholeShots", specs), writeSegySpecs(dir, "wholeShotsy", specs)]:
+      let f = whole(path, VendorRegistry())
+      doAssert f.kind == rkShotGather and f.components == 10 and f.abutting == 0, $f
+      doAssert f.skips == 50 and f.irregular == 0 and f.slicedWhy == swNoFollow, $f
+      doAssert cutRefusal(f) == "This file is a shot gather (the receiver changes from trace " &
+        "to trace), not a continuous receiver gather. No trace follows directly on the one " &
+        "before it: each of a receiver's traces starts 15 trace lengths or more after the " &
+        "last, as records sliced at shot times do.", cutRefusal(f)
+
+  block a_receiver_sliced_at_whole_trace_lengths_is_time_sliced:
+    # one station, a 2 s trace every 20 s: on the step, nothing follows on the one before
+    var specs: seq[Spec] = @[]
+    for i in 0 ..< 6: specs.add spec(0, i * 10000)
+    same(dir, "sliced", specs, rkReceiverSliced)
+    let f = whole(dir / "sliced.sgd", VendorRegistry())
+    doAssert f.slicedWhy == swNoFollow and f.skips == 5 and f.fewestSteps == 10, $f
+    doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a continuous " &
+      "one. No trace follows directly on the one before it: each of a receiver's traces " &
+      "starts 10 trace lengths or more after the last, as records sliced at shot times do.",
+      cutRefusal(f)
+    # one trace that follows on the one before it: a box switched off between the others
+    specs.add spec(0, 51000)
+    same(dir, "slicedOne", specs, rkReceiverContinuous)
+    let one = whole(dir / "slicedOne.sgd", VendorRegistry())
+    doAssert one.abutting == 1 and one.skips == 5 and one.missingSegments == 45, $one
 
   block not_seismic_unreadable_or_empty:
     createDir(dir)

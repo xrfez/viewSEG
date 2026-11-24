@@ -290,13 +290,19 @@ proc main*() =
       "continuous one. Trace 2 is 1 s long; the others are 2 s.", cutRefusal(f)
     doAssert "overlap" notin cutRefusal(f)
 
-  block a_step_of_999_or_950_with_every_other_trace_missing_is_continuous:
+  block a_step_of_999_or_950_with_every_other_trace_missing_is_measured_but_not_continuous:
+    # the step is found (every boundary two steps), but no trace follows on another
     for step in [999, 950, 1000]:
       var specs: seq[Spec]
       for k in [0, 2, 4, 6]: specs.add spec(0, k * step)
       let f = factsOf(dir, "every" & $step, specs)
-      doAssert f.kind == rkReceiverContinuous and f.skips == 3 and f.irregular == 0, $f
-      doAssert f.missingSegments == 3, $f
+      doAssert f.kind == rkReceiverSliced and f.skips == 3 and f.irregular == 0, $f
+      doAssert f.missingSegments == 3 and f.abutting == 0, $f
+      doAssert f.slicedWhy == swNoFollow and f.fewestSteps == 2, $f
+      # one trace that follows on the one before it makes it continuous
+      specs.add spec(0, 7 * step)
+      let one = factsOf(dir, "everyOne" & $step, specs)
+      doAssert one.kind == rkReceiverContinuous and one.abutting == 1 and one.skips == 3, $one
 
   block two_components_of_a_station_at_different_single_starts:
     let f = factsOf(dir, "twoStarts", [spec(0, 0, 0), spec(0, 1300, 1)])

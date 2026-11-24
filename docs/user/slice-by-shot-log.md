@@ -37,14 +37,20 @@ components of the same type and never re-sorting anything:
    those sharing one start time count as one segment (they are its components). The channel
    number tells receivers apart only where two traces of one component at one point start
    together (uncoded components of one station); otherwise it is left out, so a receiver whose
-   channel number changes from record to record, or rises from trace to trace, is still one. The step is the commonest difference between consecutive start times
-   from 0.9 to 1 times the trace length; when none lies there, the commonest difference divided
-   by a whole number from 2 to 8 that lies there (every other trace was not recorded); when
-   still none, the step is the trace length.
+   channel number changes from record to record, or rises from trace to trace, is still one.
+   The step is the commonest difference between consecutive start times from 0.9 to 1 times
+   the trace length; when none lies there, the commonest difference divided by a whole number
+   from 2 to 8 that lies there (every other trace was not recorded); when still none, the step
+   is the trace length.
    Every start must then be the previous start plus k steps, k a whole number, to within one
    sample, and every trace must cover the step: not shorter than it, and at
-   most a tenth of its length longer (a little repeated data at the ends). If so, it is a
-   continuous receiver gather. If not, it is a **time-sliced receiver gather**, and the sentence
+   most a tenth of its length longer (a little repeated data at the ends). A continuous
+   recording also needs traces that follow on each other: somewhere in the file a trace must
+   start just one step after the one before it (k = 1). When every gap is two steps or more,
+   nothing follows on anything, as in records sliced at shot times, and the file is not
+   continuous however whole its gaps: "No trace follows directly on the one before it: each of
+   a receiver's traces starts 15 trace lengths or more after the last, as records sliced at
+   shot times do." If every rule holds, it is a continuous receiver gather. If not, it is a **time-sliced receiver gather**, and the sentence
    says why: the first trace that breaks the rule, with the numbers measured for it (how long
    after the one before it it starts and the trace length, or how long it is and how long the
    others are), or every trace of a component carries the same start time, so the start times
@@ -61,14 +67,17 @@ channel number from trace to trace reads as a shot gather. Otherwise it is time 
 sentence of such a shot gather also says the first trace off the step, as measured: "This file is
 a shot gather (the receiver changes from trace to trace), not a continuous receiver gather. Trace
 11 starts 2.666 s after the one before it; the traces are 2 s long, so it is not a whole number
-of trace lengths later."
+of trace lengths later." Shot records a whole number of trace lengths apart, none following on
+another, are a shot gather the same way, and their sentence says so ("No trace follows directly
+on the one before it: ...").
 
 The kind is asked of any file you open, so the window decides it from the first 8 distinct start
 times of each receiver. The slice itself places every segment and checks every start: a trace off
 the step anywhere later in the file refuses the slice with the sentence above.
 
 If the recorder was off for a while, the next trace starts after more than one step (k greater
-than 1): the box pads with zeros, so a long silence is still a whole number of steps. The missing
+than 1): the box pads with zeros, so a long silence is still a whole number of steps. As long as
+some trace in the file follows directly on another (one pair is enough), the missing
 segments count as continuous, the times are written as zeros, and the window and Messages say
 "The recorder did not record for 67 segments (in 1 place); those times are written as zeros."
 

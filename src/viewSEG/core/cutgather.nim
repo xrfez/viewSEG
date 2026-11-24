@@ -442,6 +442,11 @@ func offStepWords(f: RecordingFacts): string =
       "the traces are " & secs(f.segmentSeconds) & " long, so it is not a whole number of " &
       "trace lengths later."
 
+func noFollowWords(f: RecordingFacts): string =
+  ## The sentence for a file of which no trace follows directly on another (`swNoFollow`).
+  "No trace follows directly on the one before it: each of a receiver's traces starts " &
+    $f.fewestSteps & " trace lengths or more after the last, as records sliced at shot times do."
+
 func cutRefusal*(f: RecordingFacts): string =
   ## Why the cut refuses a file: for one that is not a continuous receiver gather what
   ## the file is, then the reason, in sentences; for a continuous one whose like-typed
@@ -458,12 +463,16 @@ func cutRefusal*(f: RecordingFacts): string =
   of rkShotGather:
     result = "This file is a shot gather (the receiver changes from trace to trace), not a " &
       "continuous receiver gather."
-    if f.slicedWhy == swOffStep: result.add " " & offStepWords(f)
+    case f.slicedWhy
+    of swOffStep: result.add " " & offStepWords(f)
+    of swNoFollow: result.add " " & noFollowWords(f)
+    else: discard
     result.add forced
   of rkReceiverSliced:
     result = "This file is a time-sliced receiver gather, not a continuous one." & forced
     case f.slicedWhy
     of swOffStep: result.add " " & offStepWords(f)
+    of swNoFollow: result.add " " & noFollowWords(f)
     of swNoStep:
       result.add " The traces do not follow one another in time."
     of swSameStart:
