@@ -782,3 +782,14 @@ proc setPhase*(ctx: JobContext; phase: string) {.raises: [].} =
       ctx.q.recs[i].info.beat = fs.now()
       inc ctx.q.revision
   callHook(ctx.id, phase, back = false)
+
+proc setDetail*(ctx: JobContext; text: string) {.raises: [].} =
+  ## Names a detail of the part now running ("412 of 9000 shots") without
+  ## restarting its progress: `done`, `total` and the start of the estimate
+  ## stay as they are. Empty `text` clears the detail. Safe from the job's
+  ## thread at any time.
+  withLock ctx.q.lock:
+    let i = ctx.q.find(ctx.id)
+    if i >= 0:
+      ctx.q.recs[i].info.progress.phase = text
+      inc ctx.q.revision

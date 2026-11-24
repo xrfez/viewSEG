@@ -224,6 +224,34 @@ proc main*() =
     doAssert jobs.cancel(job)
     doAssert waitUntil(jobs.state(job) == jsCancelled)
 
+  block detailKeepsProgress:
+    ## Seen to fail: with `setDetail` also zeroing the progress (as `setPhase`
+    ## does), the check after the detail found `done` 0 where 5 was due.
+    reset()
+    let jobs = initJobs()
+    let job = jobs.submit(spec("Read"), proc (ctx: JobContext) {.gcsafe.} =
+      ctx.setPhase "reading keys"
+      doAssert ctx.progress(5, 10)
+      gates[6].waitAt(ctx)
+      ctx.setDetail "412 of 9000 shots"
+      gates[7].waitAt(ctx)
+      ctx.setPhase "indexing"
+      gates[5].waitAt(ctx))
+    doAssert waitUntil(jobs.info(job).get.progress.done == 5)
+    let before = jobs.info(job).get.progress
+    gates[6].open()
+    doAssert waitUntil(jobs.info(job).get.progress.phase == "412 of 9000 shots")
+    let during = jobs.info(job).get.progress
+    doAssert during.done == 5 and during.total == 10, $during
+    doAssert during.since == before.since, "a detail restarted the estimate"
+    gates[7].open()
+    doAssert waitUntil(jobs.info(job).get.progress.phase == "indexing")
+    let phased = jobs.info(job).get.progress
+    doAssert phased.done == 0 and phased.total == 0, "setPhase kept the progress"
+    doAssert phased.since > before.since, "setPhase did not restart the estimate"
+    doAssert jobs.cancel(job)
+    doAssert waitUntil(jobs.state(job) == jsCancelled)
+
   block takeFinishedOnceEach:
     reset()
     let jobs = initJobs()
