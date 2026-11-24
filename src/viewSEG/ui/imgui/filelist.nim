@@ -147,6 +147,17 @@ proc surveyText(e: FileEntry; st: AppState): string =
   elif st.surveyLoading(e.path): "\nBeing loaded into the survey."
   else: "\nA survey file: click to load it into the survey."
 
+proc markRow(marks: var Marks; name: string) =
+  ## Marks the row just drawn as the part of it a click reaches. The row spans the whole table,
+  ## which may be wider than the panel it scrolls in, and the Name column's right edge is where
+  ## a column is resized: the mark is the Name column's part in view.
+  let (lo, hi) = (igGetItemRectMin(), igGetItemRectMax())
+  let (pos, size) = (igGetWindowPos(), igGetWindowSize())
+  let left = max(lo.x, pos.x)
+  let name0 = igGetCursorScreenPos().x + igGetContentRegionAvail().x       # the cell's right edge
+  let right = max(left, min(min(hi.x, pos.x + size.x), name0 - igGetFontSize()))
+  marks.markRect(name, ImVec2_c(x: left, y: lo.y), ImVec2_c(x: right, y: hi.y))
+
 proc focused(marks: var Marks) =
   ## Marks the item just drawn "files.focused" while the navigation's cursor
   ## is on it (Tab moved it there), for tests.
@@ -354,8 +365,8 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
       popRowTabStop()
       ui.keys.afterRow()
       igPopID()
-      marks.mark("files.row " & e.name)
-      focused(marks)
+      marks.markRow("files.row " & e.name)
+      if igIsItemFocused(): marks.markRow("files.focused")
       if r == chosenRow and ui.follow:
         if not igIsItemVisible(): igSetScrollHereY(0.5)
         ui.follow = false
