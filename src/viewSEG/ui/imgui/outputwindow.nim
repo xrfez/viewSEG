@@ -14,9 +14,9 @@ from std/unicode import cmpRunesIgnoreCase
 from parseSEG import SeismicFile, TextEncoding, teEbcdic, teAscii
 import sdl3_nim
 import imguin/cimgui
-import ../../core/[edits, filejobs, filekinds, filesystem, geometry, jobs, outputbatch, outputjobs,
-  outputtext, panels, references, settings, state]
-import ../../view/[filetable, outputtextedit, outputwords, theme]
+import ../../core/[edits, filejobs, filekinds, filesystem, geometry, jobs, outputbatch,
+  outputbinary, outputjobs, outputtext, panels, references, settings, state]
+import ../../view/[filetable, outputbinaryedit, outputtextedit, outputwords, theme]
 import fittext, focus, fonts, icons, marks, overflow, style
 
 type
@@ -40,6 +40,12 @@ type
     ok: bool
     values: TextValues
     why: string
+    gen: int
+
+  ShownNote = ref object
+    ## What the job that reads the shown file's binary header values left.
+    ok: bool
+    values: seq[string]
     gen: int
 
   Node = ref object
@@ -106,6 +112,20 @@ type
     textFilled: bool                           ## `textValues` are that file's, not sample values
     textValues: TextValues
     textWhy: string                            ## why the preview shows sample values
+    binOpen: bool                              ## the binary header set editor is shown
+    binEdit: BinaryEdit
+    binNameBuf: array[257, char]
+    binFilterBuf: array[65, char]
+    binValueBufs: array[BinaryFields.len, array[ValueCapacity, char]]
+    binArm: bool                               ## the editor was just opened: take it to the front
+    binKey: string
+    binJob: JobId = NoJob
+    binNote: ShownNote
+    binGen: int
+    binFile: string                            ## the file the shown values are read from
+    binFilled: bool                            ## `binValues` are that file's
+    binValues: seq[string]
+    binWhy: string                             ## why the column is empty
     focus: FocusClicks
     kindOpen: bool
     kindRow, kindTries: int
@@ -503,6 +523,7 @@ proc submitRun(ui: var OutputUi; st: AppState) =
     applyProcessing: ui.processingOn, writeSessionPositions: not ui.keepOwn)
   if st.inProject and ui.format == ofSegy:
     opts.headerText = chosenText(st.project.doc.outputTexts, st.project.doc.outputText)
+    opts.headerBinary = chosenBinary(st.project.doc.outputBinaries, st.project.doc.outputBinary)
   let pk = st.findPanel(MainPanel)
   if pk >= 0 and st.panels[pk].layers.len > 0:
     if ui.processingOn: opts.processing = st.panels[pk].layers[0].processing
@@ -745,7 +766,7 @@ proc drawLeft(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Output
   sameLineIfFits(right, buttonWidth(ShownButton))
   if igButton(ShownButton.cstring, ImVec2_c(x: 0, y: 0)): ui.retickShown(st)
   marks.mark("output.shown")
-  tip(ShownTip)
+  tip(BinShownTip)
   igSetNextItemWidth(-1)
   discard igInputTextWithHint("##filter", (IconFilter & "  " & FilterHint).cstring,
     cast[cstring](addr ui.filterBuf[0]), csize_t(ui.filterBuf.len), 0, nil, nil)
@@ -1480,6 +1501,264 @@ proc drawTextEditor(ui: var OutputUi; st: AppState; fonts: Fonts; t: Theme;
   elif cancel or not open:
     ui.textOpen = false
 
+func binaryWhy(st: AppState): string =
+  ## Why binary header sets cannot be kept now; "" when they can.
+  if not st.inProject: BinaryNeedProject
+  elif st.project.readOnly: BinaryReadOnly
+  else: ""
+
+proc chosenBinaryOf(st: AppState): Option[OutputBinary] =
+  if st.inProject: chosenBinary(st.project.doc.outputBinaries, st.project.doc.outputBinary)
+  else: none(OutputBinary)
+
+proc loadBinary(ui: var OutputUi; e: BinaryEdit) =
+  ui.binEdit = e
+  setBuf(ui.binNameBuf, e.name)
+  setBuf(ui.binFilterBuf, e.filter)
+  for i in 0 ..< BinaryFields.len: setBuf(ui.binValueBufs[i], e.values[i])
+  ui.binOpen = true
+  ui.binArm = true
+  ui.binKey = ""
+  ui.binFile = ""
+  ui.binFilled = false
+
+proc drawBinaryRow(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
+  ## The SEG-Y binary header: the project's set in use, and the button that
+  ## opens the editor.
+  let why = binaryWhy(st)
+  let chosen = chosenBinaryOf(st)
+  let shown = if chosen.isSome: chosen.get.name else: BinaryAsSource
+  igTextUnformatted(BinaryRowLabel.cstring, nil)
+  igSameLine(0, -1)
+  igBeginDisabled(why.len > 0)
+  let style = igGetStyle()
+  let room = igGetContentRegionAvail().x - textWidth(BinaryEditButton) -
+    style.FramePadding.x * 2 - style.ItemSpacing.x
+  igSetNextItemWidth(max(igGetFontSize() * 8, min(room, textWidth(BinaryAsSource) +
+    style.FramePadding.x * 2 + igGetFrameHeight())))
+  let open = igBeginCombo("##output.binary", shown.cstring, 0)
+  if not open:
+    marks.mark("output.binary")
+    marks.mark("output.binary " & shown)
+  else:
+    marks.mark("output.binary.open")
+    if st.inProject:
+      for b in st.project.doc.outputBinaries:
+        if igSelectable_Bool((b.name & "##bin").cstring, chosen.isSome and
+            b.name == chosen.get.name, 0, ImVec2_c(x: 0, y: 0)):
+          outp.commands.add Command(kind: ckOutputBinary, binaryAction: obaChoose,
+            binarySet: OutputBinary(name: b.name))
+        marks.mark("output.binary.item " & b.name)
+    if igSelectable_Bool((BinaryAsSource & "##src").cstring, chosen.isNone, 0,
+        ImVec2_c(x: 0, y: 0)):
+      outp.commands.add Command(kind: ckOutputBinary, binaryAction: obaChoose,
+        binarySet: OutputBinary())
+    marks.mark("output.binary.item " & BinaryAsSource)
+    igEndCombo()
+  igEndDisabled()
+  tip(if why.len > 0: why else: BinaryRowTip)
+  igSameLine(0, -1)
+  igBeginDisabled(why.len > 0)
+  if igButton((BinaryEditButton & "##binary").cstring, ImVec2_c(x: 0, y: 0)):
+    if ui.binOpen: ui.binOpen = false
+    elif chosen.isSome: ui.loadBinary(initBinaryEdit(chosen.get))
+    else: ui.loadBinary(initBinaryEdit())
+  igEndDisabled()
+  marks.mark("output.binary.edit")
+  tip(if why.len > 0: why else: BinaryEditTip)
+  if why.len > 0: marks.mark("output.binary.dim " & why)
+
+proc shownWork(fp: ptr SeismicFile; note: ShownNote; gen: int): JobWork =
+  ## Reads the shown file's binary header values on a job, never on the UI thread.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    {.cast(gcsafe).}:
+      let got = shownValues(fp[])
+      note.ok = got.ok
+      note.values = got.values
+      note.gen = gen
+
+proc refreshShown(ui: var OutputUi; st: AppState) =
+  ## The values of the file the Seismic window shows, for the editor's
+  ## "In the shown file" column: asked again when another file is shown.
+  if ui.binJob != NoJob:
+    let info = st.jobs.info(ui.binJob)
+    if info.isSome and info.get.state in {jsQueued, jsRunning}: return
+    if info.isSome and info.get.state == jsDone and ui.binNote.gen == ui.binGen:
+      ui.binFilled = ui.binNote.ok
+      ui.binValues = ui.binNote.values
+      ui.binWhy = if ui.binNote.ok: "" else: BinShownNone
+    ui.binJob = NoJob
+  let i = st.shownFile(st.findPanel(MainPanel))
+  let path = if i >= 0: $(st.sessions[i].path) else: ""
+  if path == ui.binKey: return
+  ui.binKey = path
+  ui.binFile = path
+  ui.binFilled = false
+  ui.binValues = @[]
+  ui.binWhy = BinShownNone
+  if i < 0: return
+  let fp = st.sessions[i].filePtr
+  if fp == nil: return
+  inc ui.binGen
+  ui.binNote = ShownNote(gen: -1)
+  ui.binWhy = BinShownReading
+  ui.binJob = st.jobs.submit(JobSpec(title: "Read the shown file's binary header",
+    lane: jlBackground, reads: @[path]), shownWork(fp, ui.binNote, ui.binGen))
+
+proc drawBinaryEditor(ui: var OutputUi; st: AppState; t: Theme; marks: var Marks;
+    outp: var OutputOutput) =
+  ## A window of its own: name, a table of every field that can be set with
+  ## a value box, the shown file's value and a note, a filter, and Save, Save
+  ## as new, Delete and Cancel. A change is a `ckOutputBinary` command.
+  if not ui.binOpen: return
+  let vp = igGetMainViewport()
+  igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + igGetFontSize() * 6,
+    y: vp.WorkPos.y + igGetFontSize() * 2), ImGui_Cond_FirstUseEver.cint, ImVec2_c(x: 0, y: 0))
+  igSetNextWindowSize(ImVec2_c(x: igGetFontSize() * 62, y: igGetFontSize() * 40),
+    ImGui_Cond_FirstUseEver.cint)
+  if ui.binArm:
+    igSetNextWindowFocus()
+    ui.binArm = false
+  var open = true
+  var save, saveNew, drop, cancel = false
+  if igBegin(BinaryWindowTitle.cstring, addr open, ImGui_WindowFlags_NoDocking.cint):
+    marks.markWindow("output.binary.window")
+    let focused = igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint)
+    igSetNextItemWidth(min(max(igGetFontSize() * 14, textWidth(BinaryNameHint) +
+      igGetStyle().FramePadding.x * 2 + 8), igGetContentRegionAvail().x))
+    discard igInputTextWithHint("##binary.name", BinaryNameHint.cstring,
+      cast[cstring](addr ui.binNameBuf[0]), csize_t(ui.binNameBuf.len), 0, nil, nil)
+    ui.binEdit.name = bufText(ui.binNameBuf)
+    marks.mark("output.binary.name")
+    if ui.binEdit.name.len > 0: marks.mark("output.binary.name " & ui.binEdit.name)
+    tip(BinaryNameTip)
+    ui.refreshShown(st)
+    igSetNextItemWidth(igGetFontSize() * 12)
+    discard igInputTextWithHint("##binary.filter", BinaryFilterHint.cstring,
+      cast[cstring](addr ui.binFilterBuf[0]), csize_t(ui.binFilterBuf.len), 0, nil, nil)
+    ui.binEdit.filter = bufText(ui.binFilterBuf)
+    marks.mark("output.binary.filter")
+    tip(BinaryFilterTip)
+    igSameLine(0, -1)
+    discard igCheckbox((BinaryOnlySetLabel & "##binary").cstring, addr ui.binEdit.onlySet)
+    marks.mark("output.binary.onlyset")
+    if ui.binEdit.onlySet: marks.mark("output.binary.onlyset.on")
+    tip(BinaryOnlySetTip)
+    let problem = ui.binEdit.problem
+    let footer = igGetFrameHeightWithSpacing() * 2 + igGetTextLineHeightWithSpacing() * 2 +
+      igGetStyle().ItemSpacing.y * 2
+    let tableH = max(igGetTextLineHeightWithSpacing() * 6, igGetContentRegionAvail().y - footer)
+    let flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_Borders.cint or
+      ImGui_TableFlags_Resizable.cint or ImGui_TableFlags_SizingStretchProp.cint or
+      ImGui_TableFlags_ScrollY.cint
+    if igBeginTable("##binary.table", 5, flags, ImVec2_c(x: 0, y: tableH), 0):
+      let pad = igGetStyle().CellPadding.x * 2 + 8
+      igTableSetupColumn(BinColField.cstring, ImGui_TableColumnFlags_WidthStretch.cint, 2.4,
+        ImGuiID(0))
+      igTableSetupColumn(BinColBytes.cstring, ImGui_TableColumnFlags_WidthFixed.cint,
+        textWidth("0000-0000") + pad, ImGuiID(1))
+      igTableSetupColumn(BinColValue.cstring, ImGui_TableColumnFlags_WidthFixed.cint,
+        igGetFontSize() * 9, ImGuiID(2))
+      igTableSetupColumn(BinColShown.cstring, ImGui_TableColumnFlags_WidthStretch.cint, 1.4,
+        ImGuiID(3))
+      igTableSetupColumn(BinColNote.cstring, ImGui_TableColumnFlags_WidthStretch.cint, 3.2,
+        ImGuiID(4))
+      igTableSetupScrollFreeze(0, 1)
+      igTableHeadersRow()
+      for i, f in BinaryFields:
+        if ui.binEdit.isShown(i):
+          igTableNextRow(0, 0)
+          discard igTableNextColumn()
+          igTextUnformatted(f.label.cstring, nil)
+          marks.mark("output.binary.field " & f.name)
+          discard igTableNextColumn()
+          igTextUnformatted(bytesLabel(f).cstring, nil)
+          discard igTableNextColumn()
+          igSetNextItemWidth(-1)
+          discard igInputText(("##binary.v" & $i).cstring,
+            cast[cstring](addr ui.binValueBufs[i][0]), csize_t(ui.binValueBufs[i].len), 0, nil,
+            nil)
+          ui.binEdit.values[i] = bufText(ui.binValueBufs[i])
+          marks.mark("output.binary.value " & f.name)
+          tip(BinaryValueTip)
+          discard igTableNextColumn()
+          if ui.binFilled and i < ui.binValues.len and ui.binValues[i].len > 0:
+            igTextDisabled("%s", ui.binValues[i].cstring)
+            marks.mark("output.binary.shown " & f.name & " " & ui.binValues[i])
+          discard igTableNextColumn()
+          let note = ui.binEdit.fieldNote(i)
+          if note.text.len > 0:
+            if note.warn:
+              igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+              igTextUnformatted(note.text.cstring, nil)
+              igPopStyleColor(1)
+              marks.mark("output.binary.note " & f.name & " " & note.text)
+            else:
+              igTextDisabled("%s", note.text.cstring)
+      igEndTable()
+    marks.mark("output.binary.table")
+    if ui.binEdit.shownCount == 0: igTextDisabled("%s", BinNoFieldsShown.cstring)
+    igTextUnformatted(ui.binEdit.setNote.cstring, nil)
+    marks.mark("output.binary.count " & ui.binEdit.setNote)
+    igSameLine(0, -1)
+    let shownFor = if ui.binFilled: "In the shown file: " & extractFilename(ui.binFile)
+                   else: ui.binWhy
+    igTextDisabled("%s", ("  " & shownFor).cstring)
+    marks.mark("output.binary.shownfor " & shownFor)
+    if problem.len > 0:
+      wrappedIn(problem, t.roles[rlWarning])
+      marks.mark("output.binary.problem " & problem)
+    let why = binaryWhy(st)
+    let names = block:
+      var n: seq[string] = @[]
+      if st.inProject:
+        for b in st.project.doc.outputBinaries: n.add b.name
+      n
+    let taken = matchingSet(names, ui.binEdit.name)
+    let saveWhy = if why.len > 0: why else: problem
+    igBeginDisabled(saveWhy.len > 0)
+    if igButton((SaveButton & "##binary").cstring, ImVec2_c(x: 0, y: 0)): save = true
+    igEndDisabled()
+    marks.mark("output.binary.save")
+    tip(if saveWhy.len > 0: saveWhy else: BinSaveTip)
+    if saveWhy.len > 0: marks.mark("output.binary.save.dim " & saveWhy)
+    igSameLine(0, -1)
+    let newWhy = if saveWhy.len > 0: saveWhy elif taken: BinNameTaken else: ""
+    igBeginDisabled(newWhy.len > 0)
+    if igButton((SaveNewButton & "##binary").cstring, ImVec2_c(x: 0, y: 0)): saveNew = true
+    igEndDisabled()
+    marks.mark("output.binary.savenew")
+    tip(if newWhy.len > 0: newWhy else: BinSaveNewTip)
+    igSameLine(0, -1)
+    let dropWhy = if why.len > 0: why elif not taken: BinNothingToDelete else: ""
+    igBeginDisabled(dropWhy.len > 0)
+    if igButton((DeleteButton & "##binary").cstring, ImVec2_c(x: 0, y: 0)): drop = true
+    igEndDisabled()
+    marks.mark("output.binary.delete")
+    tip(if dropWhy.len > 0: dropWhy else: BinDeleteTip)
+    igSameLine(0, -1)
+    if igButton((CancelButton & "##binary").cstring, ImVec2_c(x: 0, y: 0)): cancel = true
+    marks.mark("output.binary.cancel")
+    tip(BinCancelTip)
+    if focused:
+      if igIsKeyPressed_Bool(ImGui_Key_Escape, false): cancel = true
+      elif igIsKeyPressed_Bool(ImGui_Key_Enter, false) and igGetIO_Nil().KeyCtrl and
+          saveWhy.len == 0:
+        save = true
+  igEnd()
+  let made = ui.binEdit.toSet
+  if save or saveNew:
+    outp.commands.add Command(kind: ckOutputBinary, binaryAction: obaSave, binarySet: made)
+    outp.commands.add Command(kind: ckOutputBinary, binaryAction: obaChoose,
+      binarySet: OutputBinary(name: made.name))
+    ui.binOpen = false
+  elif drop:
+    outp.commands.add Command(kind: ckOutputBinary, binaryAction: obaDelete,
+      binarySet: OutputBinary(name: made.name))
+    ui.binOpen = false
+  elif cancel or not open:
+    ui.binOpen = false
+
 proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
     outp: var OutputOutput) =
   let extra = if ui.dest.len > 0: "output.destination " & ui.dest else: ""
@@ -1504,7 +1783,9 @@ proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
   marks.mark("output.format " & $ofSegd)
   if ui.format == ofSegd: marks.mark("output.format " & $ofSegd & ".on")
   ui.drawRevision(st, marks, outp)
-  if ui.format == ofSegy: ui.drawTextRow(st, marks, outp)
+  if ui.format == ofSegy:
+    ui.drawTextRow(st, marks, outp)
+    ui.drawBinaryRow(st, marks, outp)
   ui.drawOptions(st, marks)
   discard igCheckbox(KeepFolders.cstring, addr ui.mirror)
   marks.mark("output.mirror")
@@ -1561,6 +1842,7 @@ proc drawOutput*(ui: var OutputUi; title: string; st: AppState; fonts: Fonts; t:
   ui.focus.settle()
   igEnd()
   ui.drawTextEditor(st, fonts, t, marks, result)
+  ui.drawBinaryEditor(st, t, marks, result)
   result.askSource = ui.askSource
   result.askDest = ui.askDest
   if ui.askSource: ui.askSource = false

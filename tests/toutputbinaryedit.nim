@@ -108,8 +108,8 @@ proc main*() =
     doAssert bytesLabel(BinaryFields[at("extSampleIntervalOrig")]) == "3281-3288"
 
   block names:
-    doAssert matchingName(["Survey", "Other"], " survey ")
-    doAssert not matchingName(["Survey"], "")
+    doAssert matchingSet(["Survey", "Other"], " survey ")
+    doAssert not matchingSet(["Survey"], "")
 
   block pageListsEveryField:
     let page = readFile(currentSourcePath().parentDir.parentDir / "docs" / "user" /

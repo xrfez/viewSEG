@@ -25,14 +25,14 @@ const
   BinaryOnlySetTip* = "Hide the fields with no value."
   BinaryValueTip* = "A number. Empty: the field is not set, and the file keeps the value of " &
     "its source or the library's."
-  ColField* = "Field"
-  ColBytes* = "Bytes"
-  ColValue* = "Value"
-  ColShown* = "In the shown file"
-  ColNote* = "Note"
-  ShownTip* = "The value in the binary header of the file the Seismic window shows."
-  ShownReading* = "The shown file's values are being read."
-  ShownNone* = "No SEG-Y file is shown."
+  BinColField* = "Field"
+  BinColBytes* = "Bytes"
+  BinColValue* = "Value"
+  BinColShown* = "In the shown file"
+  BinColNote* = "Note"
+  BinShownTip* = "The value in the binary header of the file the Seismic window shows."
+  BinShownReading* = "The shown file's values are being read."
+  BinShownNone* = "No SEG-Y file is shown."
   BinSaveTip* = "Keep this set in the project under this name, replacing the one of that " &
     "name, and use it."
   BinSaveNewTip* = "Keep this set as a new one and use it. The name must be new."
@@ -42,7 +42,7 @@ const
   BinaryReadOnly* = "The project is open read-only: binary header sets cannot be kept."
   BinNameTaken* = "A set of this name is kept already; Save replaces it."
   BinNothingToDelete* = "No set of this name is kept."
-  NoFieldsShown* = "No field matches."
+  BinNoFieldsShown* = "No field matches."
   Rev2Note* = "SEG-Y revision 2 only"
   ValueCapacity* = 40 ## characters a value box holds
 
@@ -133,7 +133,7 @@ func fieldNote*(e: BinaryEdit; i: int): FieldNote =
 func clearValues*(e: var BinaryEdit) =
   for v in e.values.mitems: v = ""
 
-func matchingName*(names: openArray[string]; name: string): bool =
+func matchingSet*(names: openArray[string]; name: string): bool =
   ## Whether `names` holds a set called `name` (spaces stripped, case ignored).
   let want = toLower(strip(name))
   for n in names:
