@@ -8,13 +8,15 @@
 ##
 ## Seen to fail with a deliberate fault: with the choice left out of `memoryDocument`, the
 ## choice was not kept ("futureNote" and "(treat" in the document); with `endToEndTimes` giving
-## the file's own times, "the slice did not follow end to end".
+## the file's own times, "the slice did not follow end to end"; with the sentence of the segment
+## times written twice, it was counted twice.
 
 import std/[importutils, options, os, sequtils, strutils, tables, times]
 import parseSEG
 import viewSEG/core/state {.all.}
-import viewSEG/core/[cutgather, cutgatherjobs, edits, filelist, filememory, identity, jobs, nif,
+import viewSEG/core/[cutgather, edits, filelist, filememory, identity, jobs, nif,
   recordingkind, shotlog, traceorder, treatas]
+import viewSEG/core/cutgatherjobs {.all.}
 import viewSEG/view/[filetable, recordingwords]
 import utils/[fixtures, kindfiles, waiting]
 
@@ -95,6 +97,10 @@ proc main*() =
     var bad: seq[string]
     let odd = readMemory(parseNif(text.replace("\"shot\"", "\"wide\""), "odd"), "odd.nif", bad)
     doAssert bad.len == 1 and odd.treat.kind.isNone and odd.treat.subSort == some(tsByTime), $bad
+
+  block theSegmentTimesAreSaidOnce:
+    let lines = cutLines(CutResult(ok: true, segmentsFromHeaders: true), initCutOptions(1000, 0))
+    doAssert lines.countIt(it == "Segment times were read from the trace headers.") == 1, $lines
 
   block aForcedKindChangesTheRefusalAndTheOrderIsShown:
     let auto = RecordingFacts(ready: true, kind: rkShotGather,

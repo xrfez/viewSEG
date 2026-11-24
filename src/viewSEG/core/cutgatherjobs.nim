@@ -308,8 +308,6 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
       "wrong: a vendor header map that names the start time would give the real ones."
   if res.segmentsFromHeaders:
     result.add "Segment times were read from the trace headers."
-  if res.segmentsFromHeaders:
-    result.add "Segment times were read from the trace headers."
     if res.segmentsWithoutTime > 0:
       result.add(if res.segmentsWithoutTime == 1:
           "1 trace has no start time in its headers and was left out."
