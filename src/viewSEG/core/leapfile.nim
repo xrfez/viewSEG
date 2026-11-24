@@ -2,8 +2,9 @@
 ##
 ## A user file `leapseconds.nif` in the settings folder, read at start and
 ## from Tools > Leap seconds. One table is chosen, never a merge of the two.
-## Problems, or a file that is older and does not know more, keep the table
-## shipped with the program. A change is written by the disk thread and the
+## Problems, or a file that does not hold every leap second this program
+## ships, keep the table shipped with the program. A change is written by the
+## disk thread and the
 ## open files' keys are read again on a job (`leapRereadWork`).
 
 import std/os
@@ -27,18 +28,27 @@ func dateText*(d: LeapDate): string =
   ## `d` as `2027-01-01`.
   $d.year & "-" & two(d.month) & "-" & two(d.day)
 
-func before(a, b: LeapDate): bool =
-  (a.year, a.month, a.day) < (b.year, b.month, b.day)
-
 proc leapPath*(configDir: string): string =
   ## The user table in `configDir`; "" when there is no settings folder.
   if configDir.len == 0: "" else: configDir / LeapFileName
 
+func coversShipped(user, shipped: LeapTable): bool =
+  ## Whether `user` holds every shipped leap, in order, with the same date and
+  ## the same offset. Later entries may follow.
+  if user.entries.len < shipped.entries.len: return false
+  for i in 0 ..< shipped.entries.len:
+    let a = user.entries[i]
+    let b = shipped.entries[i]
+    if a.year != b.year or a.month != b.month or a.day != b.day or
+        a.gpsMinusUtc != b.gpsMinusUtc:
+      return false
+  true
+
 proc chooseLeap*(user: LeapTable; problems: openArray[string]; path: string): ChosenLeap =
-  ## One table: `user` when it parses and is not older than the shipped table,
-  ## or when it is older and has more entries. Otherwise the shipped table.
-  ## `problems` (each named with `path`) keep the shipped table. Fewer leap
-  ## seconds are said. An earlier date alone is not.
+  ## One table: `user` when it parses and the shipped table is a prefix of it
+  ## (every shipped leap, in order, same date and offset; later leaps may
+  ## follow). Otherwise the shipped table, said in one sentence. `problems`
+  ## (each named with `path`) keep the shipped table.
   if problems.len > 0:
     for p in problems:
       result.notes.add (sevWarning, path & ": " & p)
@@ -47,21 +57,12 @@ proc chooseLeap*(user: LeapTable; problems: openArray[string]; path: string): Ch
     result.table = defaultLeapTable()
     return
   let shipped = defaultLeapTable()
-  let fewer = user.entries.len < shipped.entries.len
-  let earlier = before(user.checkedTo, shipped.checkedTo)
-  let more = user.entries.len > shipped.entries.len
-  if (fewer or earlier) and more:
+  if coversShipped(user, shipped):
     result.table = user
-    result.notes.add (sevInfo, path & " is older than the shipped table and has more " &
-      "leap seconds, so it is used.")
-  elif fewer:
-    result.table = shipped
-    result.notes.add (sevWarning, path & " has fewer leap seconds" &
-      " than the shipped table, so the shipped table is used.")
-  elif earlier:
-    result.table = shipped
   else:
-    result.table = user
+    result.table = shipped
+    result.notes.add (sevWarning, path &
+      " does not hold every leap second this program ships, so the shipped table is used.")
 
 proc installLeap*(configDir: string): seq[Note] {.raises: [].} =
   ## Reads the user table in `configDir` and makes it the table in use, when

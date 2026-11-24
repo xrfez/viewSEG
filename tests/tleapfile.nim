@@ -1,6 +1,6 @@
 ## The leap-second table: a missing file leaves the shipped table and writes
 ## nothing; a saved file is read back; a broken file is named and not used;
-## an older file yields to the shipped table unless it has more entries; a
+## a file that omits or moves a shipped leap yields to the shipped table; a
 ## leap added to a SEG-D file's time shifts that time by about a second.
 ##
 ## Seen to fail: with `installLeap` returning before it reads, a saved file
@@ -91,8 +91,8 @@ proc main*() =
       doAssert currentLeapTable().entries.len == shipped.entries.len
       var told = false
       for n in notes:
-        if "fewer" in n.text: told = true
-      doAssert told, "an older file was not said to have fewer entries: " & $notes
+        if "does not hold every leap second" in n.text: told = true
+      doAssert told, "a shorter file was not refused: " & $notes
       useLeapTable(shipped)
 
     block moreButEarlier:
@@ -101,12 +101,41 @@ proc main*() =
       writeFile(path, leapTableNif(more))
       let notes = installLeap(dir)
       doAssert currentLeapTable().entries[^1].gpsMinusUtc == 19
+      for n in notes:
+        doAssert "does not hold every leap second" notin n.text,
+          "a file that keeps every shipped leap was refused: " & n.text
+      useLeapTable(shipped)
+
+    block movedLeap:
+      var moved = shipped
+      moved.entries[^1].year = 2018
+      moved.checkedTo = LeapDate(year: 2028, month: 1, day: 1)
+      writeFile(path, leapTableNif(moved))
+      let notes = installLeap(dir)
+      doAssert currentLeapTable().entries[^1].year == 2017,
+        "a file that moves a shipped leap was used"
+      doAssert utcMinusGps(1498867200'i64 * 1_000_000) == -18,
+        "2017-07-01 was not read with the shipped offset"
       var told = false
       for n in notes:
-        if "more" in n.text:
-          told = true
-          doAssert n.severity == sevInfo, "a longer older file warned: " & n.text
-      doAssert told, "a longer older file was not said to be used: " & $notes
+        if "does not hold every leap second" in n.text: told = true
+      doAssert told, "a moved leap was not refused: " & $notes
+      useLeapTable(shipped)
+
+    block droppedLeap:
+      var dropped = shipped
+      dropped.entries.setLen(dropped.entries.len - 1)
+      dropped = dropped.withLeap(LeapDate(year: 2027, month: 1, day: 1), 1)
+      dropped = dropped.withLeap(LeapDate(year: 2028, month: 1, day: 1), 1)
+      dropped.checkedTo = LeapDate(year: 2020, month: 1, day: 1)
+      writeFile(path, leapTableNif(dropped))
+      let notes = installLeap(dir)
+      doAssert currentLeapTable().entries.len == shipped.entries.len,
+        "a file that drops a shipped leap was used"
+      var told = false
+      for n in notes:
+        if "does not hold every leap second" in n.text: told = true
+      doAssert told, "a dropped leap was not refused: " & $notes
       useLeapTable(shipped)
 
     block earlierDate:
@@ -114,7 +143,8 @@ proc main*() =
       earlier.checkedTo = LeapDate(year: 2020, month: 1, day: 1)
       writeFile(path, leapTableNif(earlier))
       let notes = installLeap(dir)
-      doAssert currentLeapTable().checkedTo == shipped.checkedTo
+      doAssert currentLeapTable().checkedTo == earlier.checkedTo,
+        "a file that keeps every shipped leap was not used"
       doAssert currentLeapTable().entries.len == shipped.entries.len
       for n in notes:
         doAssert "checked" notin n.text, "an earlier date was announced: " & n.text
@@ -127,8 +157,9 @@ proc main*() =
       var toldFewer = false
       for n in fewerNotes:
         doAssert "checked" notin n.text, "an earlier date was announced: " & n.text
-        if "fewer" in n.text and n.severity == sevWarning: toldFewer = true
-      doAssert toldFewer, "fewer entries were not said: " & $fewerNotes
+        if "does not hold every leap second" in n.text and n.severity == sevWarning:
+          toldFewer = true
+      doAssert toldFewer, "a shorter file was not refused: " & $fewerNotes
       useLeapTable(shipped)
 
     block commands:
