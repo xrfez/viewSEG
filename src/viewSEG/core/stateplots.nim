@@ -302,20 +302,11 @@ proc signatureAsk(state: AppState; s: Session; p: AnalysisParams): SignatureAsk 
   result = SignatureAsk(given: true, isDat: f.kind == sgDat,
     setA: f.kind == sgVib and p.accelSet == asA)
   let scale = state.settings.forceScale
+  # (a drive level nobody typed is NaN: the default 100 gives no 100 % force)
+  result.applyFileScale(f.kind, scale.datCountsPerLbf, scale.vibAccMvPerCount,
+    f.info.weights, p.accelSet == asA, f.qc.valid, f.qc.targetForceLbf, p.targetPct)
   case f.kind
   of sgDat:
-    if scale.datCountsPerLbf > 0 and scale.datCountsPerLbf < Inf:
-      result.gfToN = NPerLbf / scale.datCountsPerLbf
-      result.scaleWords = sensible(scale.datCountsPerLbf) & " counts per lbf"
-      if f.qc.valid and f.qc.targetForceLbf > 0:
-        # (a drive level nobody typed is NaN: the default 100 gives no 100 % force)
-        if p.targetPct > 0 and p.targetPct < Inf:
-          result.hundredN = float64(f.qc.targetForceLbf) * 100 / p.targetPct * NPerLbf
-          result.hundredWords = "100 % from the controller's target force (" &
-            $f.qc.targetForceLbf & " lbf at " & sensible(p.targetPct) & " % of the full scale)"
-        else:
-          result.hundredHint = "type the drive level the sweep was set to (Target force " &
-            "%): 100 % is then the controller's target force (" & $f.qc.targetForceLbf & " lbf)"
     if f.qc.valid:
       result.ctlFrom = "this file"
       result.ctl = f.qc.brief
@@ -323,17 +314,6 @@ proc signatureAsk(state: AppState; s: Session; p: AnalysisParams): SignatureAsk 
       result.correlationStored = f.qc.correlationStored
       result.correlationLagZero = f.qc.correlationLagZero
   of sgVib:
-    let k = scale.vibAccMvPerCount
-    if k > 0 and k < Inf:
-      let factor = gfPoundForcePerPoundCount(f.info.weights, p.accelSet == asA, k)
-      if factor > 0 and factor < Inf:
-        result.gfToN = factor * NPerLbf
-        result.scaleWords = "accelerometer constant " & sensible(k)
-        let hold = f.info.weights.holdDownLb
-        if hold > 0 and hold < Inf:
-          result.hundredN = hold * NPerLbf
-          result.hundredWords = "100 % from the file's hold-down weight (" &
-            sensible(hold) & " lb)"
     if f.pair.len > 0 and f.pairQc.valid:
       result.ctlFrom = "the .dat of this sweep"
       result.ctl = f.pairQc

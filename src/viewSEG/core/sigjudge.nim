@@ -7,7 +7,7 @@
 ## Pure: numbers in, words out.
 
 import std/[algorithm, math, strutils, tables]
-import sigtypes, vibjudge
+import sigtypes, sigvib, units, vibjudge
 
 type
   AccelSet* = enum
@@ -61,6 +61,40 @@ const
   WeakConsistency = 0.5
   InPhaseWithinDeg = 45.0
   OppositeWithinDeg = 135.0
+
+proc applyFileScale*(into: var SignatureAsk; kind: SignatureKind;
+    datCountsPerLbf, vibAccMvPerCount: float64; weights: VibWeights; setA: bool;
+    qcValid: bool; targetForceLbf: int; targetPct: float64) =
+  ## The force scale and the file's own 100 % force, as the Vibrator window
+  ## sets them. A `.dat` takes 100 % from the controller's target force when a
+  ## drive level was typed. A `.vib` takes 100 % from the header hold-down when
+  ## the accelerometer constant is set.
+  case kind
+  of sgDat:
+    if datCountsPerLbf > 0 and datCountsPerLbf < Inf:
+      into.gfToN = NPerLbf / datCountsPerLbf
+      into.scaleWords = sensible(datCountsPerLbf) & " counts per lbf"
+      if qcValid and targetForceLbf > 0:
+        if targetPct > 0 and targetPct < Inf:
+          into.hundredN = float64(targetForceLbf) * 100 / targetPct * NPerLbf
+          into.hundredWords = "100 % from the controller's target force (" &
+            $targetForceLbf & " lbf at " & sensible(targetPct) &
+            " % of the full scale)"
+        else:
+          into.hundredHint = "type the drive level the sweep was set to (Target force " &
+            "%): 100 % is then the controller's target force (" & $targetForceLbf & " lbf)"
+  of sgVib:
+    if vibAccMvPerCount > 0 and vibAccMvPerCount < Inf:
+      let factor = gfPoundForcePerPoundCount(weights, setA, vibAccMvPerCount)
+      if factor > 0 and factor < Inf:
+        into.gfToN = factor * NPerLbf
+        into.scaleWords = "accelerometer constant " & sensible(vibAccMvPerCount)
+        let hold = weights.holdDownLb
+        if hold > 0 and hold < Inf:
+          into.hundredN = hold * NPerLbf
+          into.hundredWords = "100 % from the file's hold-down weight (" &
+            sensible(hold) & " lb)"
+  of sgNone: discard
 
 func wrapDeg(x: float64): float64 =
   result = x

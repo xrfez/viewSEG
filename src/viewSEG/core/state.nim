@@ -108,8 +108,6 @@ from processSEG/pipeline import Pipeline, items, initPipeline
 from processing import changesSamples, ownShownWords, reverseShownWords
 from editmarks import shiftNote
 import signatures, sweeppairs
-from sigvib import gfPoundForcePerPoundCount
-from units import NPerLbf, sensible
 import analysis, analysisreader, closer, compare, comparejobs, components, correlatejobs, diskio,
   edits, filejobs,
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,

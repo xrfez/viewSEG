@@ -13,7 +13,7 @@ import parseSEG
 import parseSEG/common/diagnostics
 import processSEG/core/shift
 import analysis, filesystem, jobs, project, references, session, settings, signatures,
-  sigjudge, sigvib, sweeppairs, threads, traceids, units, vibalign, vibanalysis,
+  sigjudge, sweeppairs, threads, traceids, vibalign, vibanalysis,
   vibfolderqc, vibjudge, vibprofile
 import sigtypes except QcLimit
 
@@ -96,17 +96,17 @@ proc folderParams*(ask: VibQcAsk; roles: VibRoles; kind: SignatureKind): Analysi
     projectReference: false)
 
 proc folderSignature*(facts: SignatureFacts; scale: ForceScale; accelSet: AccelSet;
-    pair = SignaturePair()): SignatureAsk =
+    pair = SignaturePair(); targetPct = NaN): SignatureAsk =
   ## What the file adds. `given` so polarity is reported and never changed,
-  ## and Automatic is not honoured. `hundredN` is left unset: a profile with
-  ## no typed 100 % force does not take the file's.
+  ## and Automatic is not honoured. The force scale and the file's own 100 %
+  ## force are what the Vibrator window sets (`applyFileScale`).
   result = SignatureAsk(given: true, isDat: facts.kind == sgDat,
     setA: facts.kind == sgVib and accelSet == asA)
+  result.applyFileScale(facts.kind, scale.datCountsPerLbf, scale.vibAccMvPerCount,
+    facts.info.weights, accelSet == asA, facts.qc.valid, facts.qc.targetForceLbf,
+    targetPct)
   case facts.kind
   of sgDat:
-    if scale.datCountsPerLbf > 0 and scale.datCountsPerLbf < Inf:
-      result.gfToN = NPerLbf / scale.datCountsPerLbf
-      result.scaleWords = sensible(scale.datCountsPerLbf) & " counts per lbf"
     if facts.qc.valid:
       result.ctlFrom = "this file"
       result.ctl = facts.qc.brief
@@ -114,12 +114,6 @@ proc folderSignature*(facts: SignatureFacts; scale: ForceScale; accelSet: AccelS
       result.correlationStored = facts.qc.correlationStored
       result.correlationLagZero = facts.qc.correlationLagZero
   of sgVib:
-    let k = scale.vibAccMvPerCount
-    if k > 0 and k < Inf:
-      let factor = gfPoundForcePerPoundCount(facts.info.weights, accelSet == asA, k)
-      if factor > 0 and factor < Inf:
-        result.gfToN = factor * NPerLbf
-        result.scaleWords = "accelerometer constant " & sensible(k)
     if pair.path.len > 0 and pair.qc.valid:
       result.ctlFrom = "the .dat of this sweep"
       result.ctl = pair.qc
@@ -291,7 +285,8 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
     names.add label & " (archive)"
     at[vsReference] = rows.high
   let params = folderParams(ask, roles, facts.kind)
-  let sig = folderSignature(facts, ask.forceScale, ask.accelSet, pair)
+  let sig = folderSignature(facts, ask.forceScale, ask.accelSet, pair,
+    ask.options.targetPct)
   let answer = vibratorOf(rows, names, at, dtMs, params, recorded, ask.topHz, NaN, note, sig)
   var warnings: seq[string] = @[]
   for w in facts.warnings: addLine(warnings, w)

@@ -7,14 +7,15 @@
 ## `rolesStayRecorded` names it. With the ground-force samples negated
 ## before the verdict, `sameAsAlone` names it (fail / pass). With a missing
 ## reference still judged against the recorded pilot, `missingReference`
-## names a judged row.
+## names a judged row. With `applyFileScale` not called, `holdDownWhenScaled`
+## finds no hold-down words.
 
 import std/[math, os, strutils]
 import parseSEG
 import parseSEG/common/diagnostics
 import parseSSDAT
 import viewSEG/core/[analysis, jobs, project, references, session, settings, signatures, sigtypes,
-  sweepinfo, threads, vibanalysis, vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
+  sweepinfo, threads, units, vibanalysis, vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
 import utils/[sigfiles, waiting]
 
 const Samples = 6000
@@ -242,6 +243,31 @@ proc main*() =
     doAssert failed.problem.len > 0
     let rest = rowOf(got.table, other)
     doAssert rest.outcome == foJudged, rest.problem
+
+  block holdDownWhenScaled:
+    ## A `.vib` with a force scale and no typed 100 % force takes the file's
+    ## hold-down, so a force that cannot pass is a failure. Seen to fail when
+    ## `hundredN` stayed unset and the force limit was not judged.
+    var facts = SignatureFacts(kind: sgVib)
+    facts.info.weights = VibWeights(holdDownLb: 40000, sensitivity1: 20,
+      sensitivity2: 20)
+    let sig = folderSignature(facts, ForceScale(vibAccMvPerCount: 10.0), asB)
+    doAssert "hold-down" in sig.hundredWords, sig.hundredWords
+    doAssert sig.hundredN == 40000.0 * NPerLbf, $sig.hundredN
+    doAssert folderSignature(facts, ForceScale(), asB).hundredN.isNaN
+    let vib = vibFile(dir, "scaled.vib")
+    var limits = QcLimits(avgForcePct: 1e6)
+    let scaled = applied(profileOf(limits, 500.0, 5, asB,
+      ForceScale(vibAccMvPerCount: 10.0), NaN, NaN, "", NaN), [])
+    let got = runJob(@[listed(vib)], scaled)
+    doAssert got.st == jsDone, got.error
+    let row = rowOf(got.table, vib)
+    doAssert row.outcome == foJudged, row.problem
+    var force = qsNotJudged
+    for m in row.measures:
+      if m.limit == qlAvgForce: force = m.status
+    doAssert force == qsFail, $force
+    doAssert row.verdict == qvFail, $row.verdict
 
   block weights:
     let vib = vibFile(dir, "one.vib")
