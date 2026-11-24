@@ -4,7 +4,7 @@
 ## point, index, coordinates and depths fit that revision's columns. A value
 ## the columns would round or cut is a problem, not a record. `writeShotSps`
 ## writes the text through a temporary file beside the path, then renames it.
-## Neither proc raises.
+## When no row was written it leaves the path untouched. Neither proc raises.
 ##
 ## A missing elevation is left blank (the writer can). A missing easting or
 ## northing is reported and the row is skipped. SPS has no year: the result
@@ -71,6 +71,7 @@ type
       ## A written time is not in `firstYear`.
     error*: string
       ## Set by `writeShotSps` when the file was not replaced. Empty otherwise.
+      ## When no row was written, it starts with "No row could be written."
 
   UtcParts = object
     ok: bool
@@ -315,6 +316,18 @@ proc toSps*(view: ShotView; opts: ShotSpsOptions): ShotSpsResult {.raises: [].} 
   except CatchableError as e:
     addProblem(result, -1, "record", e.msg)
 
+proc nothingError(r: ShotSpsResult): string {.raises: [].} =
+  ## "No row could be written." plus the problems `toSps` listed.
+  result = "No row could be written."
+  if r.problems.len == 0: return
+  result.add " "
+  for i, p in r.problems:
+    if i > 0: result.add "; "
+    result.add "row " & $p.row & " " & p.field & " " & p.value
+  if r.count > r.problems.len:
+    result.add "; "
+    result.add $(r.count - r.problems.len) & " more"
+
 proc writeBeside(path, text: string): string {.raises: [].} =
   ## `text` to a temporary file beside `path`, flushed, then renamed over
   ## `path`. Empty when `path` was replaced.
@@ -340,10 +353,14 @@ proc writeBeside(path, text: string): string {.raises: [].} =
 proc writeShotSps*(view: ShotView; opts: ShotSpsOptions; path: string): ShotSpsResult {.
     raises: [].} =
   ## `toSps`, then that text written to `path` through a temporary file beside
-  ## it and a rename. `error` is empty when `path` was replaced. A failure
-  ## leaves `path` as it was and does not raise.
+  ## it and a rename. `error` is empty when `path` was replaced. When no row
+  ## was written, `path` is left untouched and `error` is "No row could be
+  ## written." plus the problems listed. A failure leaves `path` as it was
+  ## and does not raise.
   result = toSps(view, opts)
-  if result.text.len == 0 and result.file.points.len > 0:
+  if result.written == 0:
+    result.error = nothingError(result)
+  elif result.text.len == 0:
     result.error = "the SPS text could not be built"
   else:
     result.error = writeBeside(path, result.text)

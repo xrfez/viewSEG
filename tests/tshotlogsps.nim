@@ -2,6 +2,8 @@
 ##
 ## Seen to fail: with the decimal exactness check taken out of `fixedFits`,
 ## an easting of 10.25 is written as 10.2 instead of reported and skipped.
+## Seen to fail: with `writeShotSps` still calling `writeBeside` when no row
+## was written, an existing file is replaced and `error` stays empty.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -372,6 +374,60 @@ proc main*() =
     doAssert not fileExists(path & "." & $getCurrentProcessId() & ".tmp")
     discard tryRemoveFile(path)
     discard tryRemoveFile(blocked)
+    try: removeDir(dir)
+    except OSError: discard
+
+  block nothingToWrite:
+    let dir = getTempDir() / ("shotlogsps-empty-" & $getCurrentProcessId())
+    createDir(dir)
+    let path = dir / "keep.sps"
+    let previous = "previous bytes\n"
+    writeFile(path, previous)
+    let roles = [crShotPoint, crSourceLine, crX, crY]
+    let headerOnly = viewOf("point,line,x,y\n", roles)
+    let empty = writeShotSps(headerOnly, options(), path)
+    doAssert empty.written == 0 and empty.problems.len == 0
+    doAssert empty.error == "No row could be written.", empty.error
+    doAssert readFile(path) == previous
+    doAssert not fileExists(path & "." & $getCurrentProcessId() & ".tmp")
+    let skipped = viewOf("point,line,x,y\n1,10,10.25,2\n", roles)
+    let bad = writeShotSps(skipped, options(), path)
+    doAssert bad.written == 0 and bad.skipped == 1
+    doAssert hasProblem(bad, 0, "easting", "10.25")
+    doAssert bad.error == "No row could be written. row 0 easting 10.25", bad.error
+    doAssert readFile(path) == previous
+    let both = viewOf("point,line,x,y\n1,10,10.25,10.25\n", roles)
+    let two = writeShotSps(both, options(), path)
+    doAssert two.error == "No row could be written. row 0 easting 10.25; row 0 northing 10.25",
+      two.error
+    doAssert readFile(path) == previous
+    let noPoint = viewOf("point,line,x,y\n,10,1,2\n", roles)
+    let blank = writeShotSps(noPoint, options(), path)
+    doAssert blank.written == 0 and blank.problems.len == 0
+    doAssert blank.error == "No row could be written.", blank.error
+    doAssert readFile(path) == previous
+    let auto = writeShotSps(headerOnly, ShotSpsOptions(), path)
+    doAssert hasProblem(auto, -1, "revision", "auto")
+    doAssert auto.error == "No row could be written. row -1 revision auto", auto.error
+    doAssert readFile(path) == previous
+    let absent = dir / "missing" / "out.sps"
+    let gone = writeShotSps(headerOnly, options(), absent)
+    doAssert gone.error == "No row could be written."
+    doAssert not fileExists(absent) and not dirExists(dir / "missing")
+    var text = "point,line,x,y\n"
+    for i in 0 .. ProblemCap:
+      text.add $i & ",10,10.25,2\n"
+    let many = writeShotSps(viewOf(text, roles), options(), path)
+    doAssert many.written == 0 and many.count == ProblemCap + 1
+    doAssert many.problems.len == ProblemCap
+    doAssert many.error.startsWith("No row could be written. row 0 easting 10.25")
+    doAssert many.error.endsWith("; 1 more"), many.error
+    doAssert readFile(path) == previous
+    let kept = writeShotSps(viewOf("point,line,x,y\n8,4,1,2\n", roles), options(), path)
+    doAssert kept.error.len == 0, kept.error
+    doAssert readFile(path) == kept.text
+    doAssert readSps(path).points[0].point == 8
+    discard tryRemoveFile(path)
     try: removeDir(dir)
     except OSError: discard
 
