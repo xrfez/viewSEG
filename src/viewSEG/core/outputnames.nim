@@ -97,6 +97,7 @@ type
     name*: string
     value*: NameValue
     first*, last*: NameValue
+    unreadable*: bool ## a text value holds a byte that is not printable ASCII
 
   NameResult* = object
     ## A leaf file name, or one sentence saying why it cannot be made.
@@ -280,22 +281,19 @@ func formatTime*(us: int64; wholeSeconds: bool): NameResult =
   name.add "Z"
   accepted(name)
 
-func shortestFloat*(x: float64): string =
-  ## `x` in the shortest form that reads back as the same number; a whole number has no
-  ## ".0" (and zero has no sign).
-  if x == 0.0: return "0"
-  result = $x
-  if result.endsWith(".0"): result.setLen(result.len - 2)
+func vendorNumberOk*(x: float64): bool =
+  ## Whether a vendor float can be written: finite and under 1e15 (as any number part).
+  not x.isNaN and abs(x) < 1e15
 
 func vendorWord*(name: string): string =
   "Vendor field " & name
 
 func vendorText*(v: NameValue): string =
-  ## A vendor field's one value as text: an integer without a decimal point, a float in
-  ## its shortest round-trip form, a text as it is. "" for any other state.
+  ## A vendor field's one value as text: an integer without a decimal point, a float as any
+  ## number part is (`numberPiece`: four decimals at most, `p` for the point), a text as it is. "" for any other state.
   case v.state
   of nvInt: $v.intValue
-  of nvNumber: shortestFloat(v.number)
+  of nvNumber: numberPiece(v.number, 0)
   of nvText: v.text
   else: ""
 
@@ -307,12 +305,18 @@ func valueOfVendor(vendor: openArray[VendorFieldValue]; name: string): VendorFie
 func vendorPiece(part: NamePart; vendor: openArray[VendorFieldValue]; sep: char): NameResult =
   ## The piece a vendor field makes. A decimal point is written `p`, as for any number.
   let word = vendorWord(part.text)
-  let v = valueOfVendor(vendor, part.text).value
+  let one = valueOfVendor(vendor, part.text)
+  if one.unreadable: return refused(word & " holds characters a file name cannot hold.")
+  let v = one.value
   case v.state
   of nvMissing, nvTimeUs: refused(word & " is not in this file.")
   of nvMixed: refused(word & " is not one value in this file.")
-  of nvInt, nvNumber:
-    let piece = vendorText(v).replace('.', 'p')
+  of nvNumber:
+    if not vendorNumberOk(v.number): return refused(word & " is not in this file.")
+    let piece = vendorText(v)
+    if isDeviceName(piece): refused(deviceSentence(piece)) else: accepted(piece)
+  of nvInt:
+    let piece = vendorText(v)
     if isDeviceName(piece): refused(deviceSentence(piece)) else: accepted(piece)
   of nvText:
     let why = textProblem(word, v.text, sep)

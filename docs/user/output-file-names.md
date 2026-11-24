@@ -72,13 +72,16 @@ or the file is not used. A file whose headers cannot be read to the end (a
 truncated file) is not written, and its row in the results gives the reason.
 
 A **Vendor field** is read from the traces only when a pattern uses it (so a pattern without
-one costs nothing). Its value is the field's value over the traces the name is made from: an
-integer is written without a decimal point, a number with a fraction in the shortest form
-that reads back as the same number with the point written as `p` (`12p5`), and a text as it
-is, without the blanks at its ends, under the rules for text above. A file whose traces do
-not all give the same value, or that has none, or in which the name is unknown (or no vendor
-map is loaded), is not written: its row says "Vendor field NAME is not one value in this
-file." or "Vendor field NAME is not in this file.". The example under the parts shows `42` for it.
+one costs nothing). Its value is the field's value over the traces the name is made from; a
+trace that has no value for the field is left out, as for **Record**. An integer is written
+without a decimal point, a number with a fraction as any number part is (at most four
+decimals, the point written `p`: `12p5`), and a text as it is, without the blanks at its ends,
+under the rules for text above. A file whose traces that have a value do not all agree is not
+written: its row says "Vendor field NAME is not one value in this file.". A file in which no
+trace has one, in which the name is unknown (or no vendor map is loaded), or whose number is
+not finite or is 1e15 or more, is not written either: "Vendor field NAME is not in this
+file."; and a text with a byte that is not printable ASCII gives "Vendor field NAME holds
+characters a file name cannot hold." The example under the parts shows `42` for it.
 
 ### Numbers
 

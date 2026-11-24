@@ -4,7 +4,7 @@
 ## A missing or mixed value is left for `render` to refuse. A signature file
 ## is named from its sweep, not from trace keys a join may have changed.
 
-import std/[atomics, math, options, os, sets]
+import std/[atomics, math, options, os, sequtils, sets]
 import parseSEG
 import edits, outputnames, outputtext, recordtime, sigtypes, unitserial, vendormaps
 
@@ -282,7 +282,7 @@ type
 
   VendorAcc = object
     ## What a group of traces says of one field.
-    seen, missing: int
+    seen, missing, unreadable: int
     differs: bool
     f, lo, hi: float64
     n, loN, hiN: int64
@@ -291,24 +291,30 @@ type
 proc readVendorColumn(file: SeismicFile; vendors: VendorRegistry; name: string;
     col: var VendorCol): bool =
   ## False when the field is not in this file (an unknown or ambiguous name, no map, a
-  ## file the maps do not apply to).
-  {.cast(gcsafe).}:
-    discard vendorColumnReads.fetchAdd(1)
+  ## file the maps do not apply to). An integer field is read once, exactly; a float, text
+  ## or scaled field once as a column (`vendorColumnInt` refuses those before it reads).
+  template counted() =
+    {.cast(gcsafe).}:
+      discard vendorColumnReads.fetchAdd(1)
   try:
+    var exact: VendorColumnInt
+    var isInt = false
+    try:
+      exact = file.vendorColumnInt(vendors, name)
+      isInt = true
+      counted()
+    except ValueError:
+      discard # not an integer field, or not in this file: the column read decides
+    if isInt:
+      if exact.stopped: return false
+      col = VendorCol(mode: vmInt, ints: exact.values, present: exact.present)
+      return true
     let c = file.vendorColumn(vendors, name)
+    counted()
     if c.stopped: return false
     case c.kind
-    of vvInt, vvFloat:
-      col = VendorCol(mode: vmFloat, numbers: c.numbers)
-      if c.kind == vvInt:
-        try:
-          let exact: VendorColumnInt = file.vendorColumnInt(vendors, name)
-          if not exact.stopped:
-            col = VendorCol(mode: vmInt, ints: exact.values, present: exact.present)
-        except ValueError:
-          discard # a scaled integer is a float: the column read first stays
-    of vvText, vvBytes:
-      col = VendorCol(mode: vmText, texts: c.texts)
+    of vvInt, vvFloat: col = VendorCol(mode: vmFloat, numbers: c.numbers)
+    of vvText, vvBytes: col = VendorCol(mode: vmText, texts: c.texts)
     result = true
   except CatchableError:
     result = false
@@ -317,7 +323,7 @@ proc consider(a: var VendorAcc; c: VendorCol; i: int) =
   case c.mode
   of vmFloat:
     let x = c.numbers[i]
-    if x.isNaN or x == Inf or x == NegInf:
+    if not vendorNumberOk(x):
       inc a.missing
     else:
       if a.seen == 0:
@@ -346,6 +352,7 @@ proc consider(a: var VendorAcc; c: VendorCol; i: int) =
   of vmText:
     let s = printable(c.texts[i])
     if s.isNone:
+      if c.texts[i].anyIt(it notin {' ', '\0'}): inc a.unreadable
       inc a.missing
     else:
       if a.seen == 0: a.text = s.get
@@ -353,21 +360,21 @@ proc consider(a: var VendorAcc; c: VendorCol; i: int) =
       inc a.seen
 
 func valueOf(a: VendorAcc; mode: VendorMode; name: string): VendorFieldValue =
-  ## One value; `nvMixed` when the traces differ or some have none (with the lowest and
-  ## highest of a number that differs); missing when none has one.
-  result = VendorFieldValue(name: name)
+  ## As `{record}`: a trace that has no value is ignored; one value when the others agree,
+  ## `nvMixed` when they differ (with the lowest and highest of a number), missing when none
+  ## has one. `unreadable` when a text holds a byte that is not printable ASCII.
+  result = VendorFieldValue(name: name, unreadable: a.unreadable > 0)
   if a.seen == 0: return
-  if a.differs or a.missing > 0:
+  if a.differs:
     result.value = NameValue(state: nvMixed)
-    if a.differs:
-      case mode
-      of vmFloat:
-        result.first = NameValue(state: nvNumber, number: a.lo)
-        result.last = NameValue(state: nvNumber, number: a.hi)
-      of vmInt:
-        result.first = NameValue(state: nvInt, intValue: a.loN)
-        result.last = NameValue(state: nvInt, intValue: a.hiN)
-      of vmText: discard
+    case mode
+    of vmFloat:
+      result.first = NameValue(state: nvNumber, number: a.lo)
+      result.last = NameValue(state: nvNumber, number: a.hi)
+    of vmInt:
+      result.first = NameValue(state: nvInt, intValue: a.loN)
+      result.last = NameValue(state: nvInt, intValue: a.hiN)
+    of vmText: discard
   else:
     result.value = case mode
       of vmFloat: NameValue(state: nvNumber, number: a.f)
@@ -379,10 +386,10 @@ proc vendorValuesOf*(file: SeismicFile; facts: SignatureFacts; edits: FileEdits;
   ## The value each of `fields` (a vendor field's name, as a display line lists it) takes
   ## over the traces the file's name or header is made from: the same traces the other
   ## values use (a killed trace is skipped when `dropKilled`; an auxiliary trace only when a
-  ## kept trace is not auxiliary). One value when every such trace has it and they agree;
-  ## `nvMixed` when they differ or some have none (a number that differs also gives its
-  ## lowest and highest); missing when no trace has it, the name is unknown or ambiguous,
-  ## or no map applies. A text is cleaned as the sensor serial is. A column is read only
+  ## kept trace is not auxiliary). A trace without the field is ignored, as for `{record}`:
+  ## one value when the traces that have it agree; `nvMixed` when they differ (a number
+  ## also gives its lowest and highest); missing when no trace has it, the name is unknown
+  ## or ambiguous, or no map applies. A text is cleaned as the sensor serial is. A column is read only
   ## for a name in `fields`, so none for an empty list. A signature file has no vendor field.
   result = @[]
   if fields.len == 0: return

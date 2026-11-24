@@ -269,7 +269,15 @@ proc main*() =
     doAssert one(num(12.5)).name == "u.12p5.sgd", one(num(12.5)).problem
     doAssert one(num(3.0)).name == "u.3.sgd", "a whole float has no decimal point"
     doAssert one(num(0.1)).name == "u.0p1.sgd"
-    doAssert one(num(1.0 / 3.0)).name == "u.0p3333333333333333.sgd", one(num(1.0 / 3.0)).name
+    doAssert one(num(1.0 / 3.0)).name == "u.0p3333.sgd", one(num(1.0 / 3.0)).name
+    # a scaled field (41 * 0.1) is rounded as every number part is
+    doAssert one(num(41 * 0.1)).name == "u.4p1.sgd", one(num(41 * 0.1)).name
+    doAssert one(num(-2.5)).name == "u.-2p5.sgd"
+    for bad in [NaN, Inf, -Inf, 1e15, -1e15]:
+      doAssert one(num(bad)).problem == "Vendor field batch is not in this file.", $bad
+    doAssert one(num(999_999_999_999_999.0)).problem.len == 0
+    doAssert render(p, vals(), ".sgd", [VendorFieldValue(name: "batch", unreadable: true,
+      value: tv("x"))]).problem == "Vendor field batch holds characters a file name cannot hold."
     doAssert one(tv("AB01")).name == "u.AB01.sgd"
     doAssert one(tv("A.B")).problem == "Vendor field batch holds a character a file name cannot."
     doAssert one(NameValue(state: nvMixed)).problem ==

@@ -144,8 +144,17 @@ proc main*() =
       "Line 1: {vendor:a\tb} needs a vendor field name after the colon " &
       "(1 to 200 characters, no control character)."
     doAssert render(tx("B {vendor:batch} G {vendor:gain} L {vendor:label}"), v) ==
-      @["B 41 G 12.5 L AB10"]
-    doAssert render(tx("{vendor:unit.serial}|{vendor:gain}"), v) == @["-7|12.5"]
+      @["B 41 G 12p5 L AB10"]
+    doAssert render(tx("{vendor:unit.serial}|{vendor:gain}"), v) == @["-7|12p5"]
+    var f = v
+    f.vendor = @[fv("tenth", num(41 * 0.1)), fv("big", num(1e15)), fv("nan", num(NaN))]
+    doAssert render(tx("{vendor:tenth}"), f) == @["4p1"], "a scaled field was not rounded"
+    doAssert renderProblem(tx("{vendor:big}"), f) == "Line 1: {vendor:big} is not in this file."
+    doAssert renderProblem(tx("{vendor:nan}"), f) == "Line 1: {vendor:nan} is not in this file."
+    f.vendor = @[VendorFieldValue(name: "t", value: NameValue(state: nvText, text: "x"),
+      unreadable: true)]
+    doAssert renderProblem(tx("{vendor:t}"), f) ==
+      "Line 1: {vendor:t} holds characters the text header cannot hold."
     doAssert renderProblem(tx("{vendor:batch}"), v) == ""
     # absent, unknown and not-one-value are each a problem naming the field
     doAssert renderProblem(tx("{vendor:nope}"), v) == "Line 1: {vendor:nope} is not in this file."
@@ -157,9 +166,9 @@ proc main*() =
     m.vendor = @[fv("batch", NameValue(state: nvMixed), iv(40), iv(42))]
     doAssert render(tx("{vendor:batch}"), m) == @["40-42"], "the range of a number that differs"
     m.vendor = @[fv("gain", NameValue(state: nvMixed), num(1.5), num(2.25))]
-    doAssert render(tx("{vendor:gain}"), m) == @["1.5-2.25"]
+    doAssert render(tx("{vendor:gain}"), m) == @["1p5-2p25"]
     m.vendor = @[fv("gain", NameValue(state: nvMixed), num(-1.5), num(2.25))]
-    doAssert render(tx("{vendor:gain}"), m) == @["-1.5 to 2.25"]
+    doAssert render(tx("{vendor:gain}"), m) == @["-1p5 to 2p25"]
     m.vendor = @[fv("label", NameValue(state: nvMixed))]
     doAssert renderProblem(tx("{vendor:label}"), m) ==
       "Line 1: {vendor:label} is not one value in this file.", "a text range was made"

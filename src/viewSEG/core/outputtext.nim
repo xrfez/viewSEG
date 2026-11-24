@@ -260,8 +260,14 @@ func vendorToken(field: string; v: TextValues): tuple[text, problem: string] =
   var one = VendorFieldValue(name: field)
   for x in v.vendor:
     if x.name == field: one = x
+  if one.unreadable:
+    result.problem = word & " holds characters the text header cannot hold."
+    return
   case one.value.state
-  of nvInt, nvNumber, nvText: result.text = vendorText(one.value)
+  of nvNumber:
+    if vendorNumberOk(one.value.number): result.text = vendorText(one.value)
+    else: result.problem = word & " is not in this file."
+  of nvInt, nvText: result.text = vendorText(one.value)
   of nvMixed:
     if one.first.state in {nvInt, nvNumber} and one.last.state in {nvInt, nvNumber}:
       result.text = rangeText(vendorText(one.first), vendorText(one.last))

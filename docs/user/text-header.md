@@ -81,12 +81,14 @@ The tokens come from the same values as the parts of a [name pattern](output-fil
 
 `{vendor:NAME}` writes a field of a vendor header map (see Vendor header maps) over the traces
 that go into the file. `NAME` is the name a display line lists for the field: the bare name
-when only one field has it, else `block.name`. An integer is written without a decimal point,
-a number with a fraction in the shortest form that reads back as the same number (`12.5`),
-and a text as it is, without the blanks at its ends. When the traces differ in a number, the
-token is `lowest-highest` (`40-41`), as for `{record}`; with a minus sign at either end it is
-`lowest to highest` (`-5 to 3`), so the hyphen is never read as a sign. When the traces differ
-in a text, or some have no value, the token has no single value; a field that no trace has,
-or whose name no loaded map knows, has no value at all. Either way the template is not used
-for that file and the result line names the token. A field is read only when a template uses
-it, and the preview reads it off the main thread; with no file shown it writes `42`.
+when only one field has it, else `block.name`. A trace that has no value for the field is
+left out, as for `{record}`. An integer is written without a decimal point, a number with a
+fraction as any number is here (at most four decimals, the point written `p`: `12p5`), and a
+text as it is, without the blanks at its ends. When the traces that have a value agree, that
+is the token. When they differ in a number, the token is `lowest-highest` (`40-41`); with a
+minus sign at either end it is `lowest to highest` (`-5 to 3`), so the hyphen is never read
+as a sign. When they differ in a text, the token has no single value. A field that no trace
+has, a name no loaded map knows, or a number that is not finite or is 1e15 or more, has no
+value at all; a text with a byte that is not printable ASCII is "not a text the header can
+hold". Either way the template is not used for that file and the result line names the
+token. A field is read only when a template uses it, and the preview reads it off the main thread; with no file shown it writes `42`.

@@ -313,10 +313,12 @@ proc main*() =
     (field status (at 5) (enc u16) (sentinel 0xFFFF))
     (field label (at 9) (len 4) (enc ascii) (trim right))
     (field fixed (at 9) (len 2) (enc ascii) (trim right))
-    (field never (at 9) (enc u8) (sentinel 0x41)))
+    (field never (at 9) (enc u8) (sentinel 0x41))
+    (field raw (at 5) (len 2) (enc ascii)))
   (target (kind extendedHeader) (blockIndex 1) (name session)
     (field batch (at 3) (enc u8))
-    (field half (at 3) (enc u8) (scale 0.5))))"""
+    (field half (at 3) (enc u8) (scale 0.5))
+    (field tenth (at 3) (enc u8) (scale 0.1))))"""
     var reg: VendorRegistry
     reg.addMap loadVendorMap(map)
     let dir = getTempDir() / "viewseg_tnamevalues_vendor"
@@ -339,7 +341,7 @@ proc main*() =
     doAssert one[2].value.state == nvNumber and one[2].value.number == 20.0, $one[2].value
     let next = valuesOf(second, ["batch", "half"])
     doAssert next[0].value.intValue == 41 and next[1].value.number == 20.5
-    doAssert vendorText(next[1].value) == "20.5" and vendorText(next[0].value) == "41"
+    doAssert vendorText(next[1].value) == "20p5" and vendorText(next[0].value) == "41"
     # two records disagree: mixed, with the lowest and the highest of a number
     let mixed = valuesOf(both, ["batch", "label", "counter"])
     doAssert mixed[0].value.state == nvMixed, "records 40 and 41 were one value"
@@ -348,10 +350,17 @@ proc main*() =
       "a text has no range"
     doAssert mixed[2].value.state == nvMixed and mixed[2].first.intValue == 0 and
       mixed[2].last.intValue == 1002
-    # a trace without the value (the sentinel) among others that have it
+    # a trace without the value (the sentinel) is ignored, as for {record}: the others
+    # differ here (0 and 2), so it is mixed
     let partial = valuesOf(first, ["status"])
-    doAssert partial[0].value.state == nvMixed, "an absent trace was ignored"
+    doAssert partial[0].value.state == nvMixed
     doAssert partial[0].first.intValue == 0 and partial[0].last.intValue == 2
+    # a scaled field is a float: 41 * 0.1 is rounded when written
+    let scaled = valuesOf(second, ["tenth"])[0].value
+    doAssert scaled.state == nvNumber and vendorText(scaled) == "4p1", vendorText(scaled)
+    # a text with a byte that is not printable ASCII says so, not "absent"
+    doAssert valuesOf(second, ["raw"])[0].unreadable, "a non-ASCII text was called absent"
+    doAssert not valuesOf(second, ["batch"])[0].unreadable
     # absent from every trace, unknown, ambiguous, no maps
     doAssert valuesOf(first, ["never"])[0].value.state == nvMissing
     doAssert valuesOf(first, ["nope"])[0].value.state == nvMissing
@@ -364,11 +373,19 @@ proc main*() =
     let reads = vendorColumnReads.load
     doAssert valuesOf(first, []).len == 0
     doAssert vendorColumnReads.load == reads, "a column was read for no field"
-    discard valuesOf(first, ["batch"])
-    doAssert vendorColumnReads.load > reads, "the counter does not count"
+    # each field is read once: an integer field is not read as a float as well
+    for name in ["batch", "half", "label", "status"]:
+      let before = vendorColumnReads.load
+      discard valuesOf(first, [name])
+      doAssert vendorColumnReads.load == before + 1, name & " was read more than once"
     # a killed trace is skipped when asked
     var f = openSeismic(first, keys = true)
     var edits = FileEdits()
+    discard edits.change(teKilled, [0], true)
+    let ignored = vendorValuesOf(f, SignatureFacts(), edits, true, ["status"], reg)[0].value
+    doAssert ignored.state == nvInt and ignored.intValue == 2,
+      "the trace with no value made it mixed: " & $ignored.state
+    edits = FileEdits()
     discard edits.change(teKilled, [0, 2], true)
     doAssert vendorValuesOf(f, SignatureFacts(), edits, true, ["status"], reg)[0].value.state ==
       nvMissing, "a killed trace was read"
