@@ -458,9 +458,9 @@ func cutRefusal*(f: RecordingFacts): string =
     of swNoStep:
       result.add " The traces do not follow one another in time."
     of swSameStart:
-      result.add " Every trace carries the same start time, so their own start times are not " &
-        "in the headers viewSEG reads: they may be in a header that a vendor header map " &
-        "has to describe."
+      result.add " Every trace of a component carries the same start time, so the start " &
+        "times could not be read. A recorder that keeps each trace's start time in its own " &
+        "trace header extension needs a vendor header map that names that field."
     of swNone: discard
 
 func skipWords*(skips, missing: int): string =

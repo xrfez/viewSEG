@@ -19,10 +19,11 @@ const
   BaseS = 1_772_323_200.0 # 2026-03-01T00:00:00 UTC
   DtMs = 2.0
 
-type Spec = tuple[rcv, first, comp: int, stationed: bool]
+type Spec = tuple[rcv, first, comp: int, stationed: bool, extra: int]
 
-func spec(rcv, first: int; comp = 0; stationed = true): Spec =
-  (rcv, first, comp, stationed)
+func spec(rcv, first: int; comp = 0; stationed = true; extra = 0): Spec =
+  ## `extra` moves the channel number alone: another channel of the same component type.
+  (rcv, first, comp, stationed, extra)
 
 proc writeSpecs(dir, name: string; specs: openArray[Spec]; n: int): string =
   createDir(dir)
@@ -32,7 +33,7 @@ proc writeSpecs(dir, name: string; specs: openArray[Spec]; n: int): string =
     var k = initTraceKeys()
     k.status = tsLive
     k.record = float64(i + 1)
-    k.channel = float64(s.rcv * 4 + s.comp + 1)
+    k.channel = float64(s.rcv * 4 + s.comp + 1 + s.extra * 100)
     k.component = uint8(s.comp + 1)
     k.intervalUs = 2000
     k.t0Ms = 0
@@ -276,21 +277,29 @@ proc main*() =
     let f = factsOf(dir, "same", specs)
     doAssert f.kind == rkReceiverSliced and f.slicedWhy == swSameStart, $f
     doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a " &
-      "continuous one. Every trace carries the same start time, so their own start times are " &
-      "not in the headers viewSEG reads: they may be in a header that a vendor header map " &
-      "has to describe.", cutRefusal(f)
+      "continuous one. Every trace of a component carries the same start time, so the start " &
+      "times could not be read. A recorder that keeps each trace's start time in its own " &
+      "trace header extension needs a vendor header map that names that field.", cutRefusal(f)
 
-  block one_segment_per_receiver_is_no_proof_of_continuity:
-    # three channels of one station starting together: a receiver gather, not continuous,
-    # whatever the channel count
-    for n in [2, 3, 6]:
+  block distinct_components_at_one_start_are_one_continuous_segment:
+    # one Z, one X, one Y and one hydrophone of one station, one start
+    for n in [2, 3, 4]:
       var specs: seq[Spec]
       for c in 0 ..< n: specs.add spec(0, 0, c)
       let f = factsOf(dir, "channels" & $n, specs)
-      doAssert f.kind == rkReceiverSliced and f.slicedWhy == swSameStart, $f
-      doAssert f.segments == n and f.components == n, $f
-      doAssert "Every trace carries the same start time" in cutRefusal(f), cutRefusal(f)
-      doAssert "vendor header map" in cutRefusal(f), cutRefusal(f)
+      doAssert f.kind == rkReceiverContinuous and f.slicedWhy == swNone, $f
+      doAssert f.segments == n and f.components == n and f.isContinuousGather, $f
+      doAssert cutRefusal(f) == "", cutRefusal(f)
+
+  block like_components_at_one_start_are_not_continuous:
+    # two traces of one component type at one station and start: segments or channels?
+    let f = factsOf(dir, "like", [spec(0, 0, 0), spec(0, 0, 1), spec(0, 0, 1, extra = 1)])
+    doAssert f.kind == rkReceiverSliced and f.slicedWhy == swSameStart, $f
+    doAssert f.segments == 3 and f.components == 3, $f
+    doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a " &
+      "continuous one. Every trace of a component carries the same start time, so the start " &
+      "times could not be read. A recorder that keeps each trace's start time in its own " &
+      "trace header extension needs a vendor header map that names that field.", cutRefusal(f)
 
   block station_less_shot_record_is_a_shot_gather:
     var specs: seq[Spec]
@@ -301,10 +310,9 @@ proc main*() =
 
   block one_station_six_channel_record_is_a_receiver_gather:
     var specs: seq[Spec]
-    for c in 0 ..< 6: specs.add spec(0, 0, c)
+    for c in 0 ..< 6: specs.add spec(0, 0, c, extra = c mod 2)
     let f = factsOf(dir, "sixChannels", specs)
-    doAssert f.kind == rkReceiverSliced and f.slicedWhy == swSameStart, $f
-    doAssert cutRefusal(f).startsWith("This file is a time-sliced receiver gather")
+    doAssert f.kind == rkReceiverContinuous, $f
 
   block receivers_come_in_the_order_the_file_shows_them:
     # stations 102 then 101; at each a geophone Z (comp 2), a hydrophone (0), a geophone X (1)

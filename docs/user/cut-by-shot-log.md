@@ -23,8 +23,10 @@ components of the same type and never re-sorting anything:
 1. **Is it a shot gather?** The receiver line and point change from trace to trace. One
    segment per receiver is never proof of continuity, so when every receiver has exactly one
    trace and the file has more than one live trace: if all the traces carry one receiver
-   point (several channels of one station that start together) the file is a receiver gather
-   that is not continuous, because every trace carries the same start time; otherwise (the
+   point and start together (the components of one station), the file is one segment of one
+   station and is continuous when each component type appears once; when two traces of one
+   component share the start time it is not continuous, because the start times could not be
+   read; otherwise (the
    points differ, or no trace carries a line and point) it is a shot gather ("This file is a
    shot gather (the receiver changes from trace to trace), not a continuous receiver
    gather."). A file with exactly one live trace is a receiver gather of one segment and is
@@ -42,9 +44,9 @@ components of the same type and never re-sorting anything:
    continuous receiver gather. If not, it is a **time-sliced receiver gather**, and the sentence
    says why: the first trace that breaks the rule, with the numbers measured for it (how long
    after the one before it it starts and the trace length, or how long it is and how long the
-   others are), or every trace carries the same start time
-   (so their own start times are not in the headers viewSEG reads; a vendor header map may have
-   to describe them).
+   others are), or every trace of a component carries the same start time, so the start times
+   could not be read (a recorder that keeps each trace's start time in its own trace header
+   extension needs a vendor header map that names that field).
 
 The kind is asked of any file you open, so the window decides it from the first 8 distinct start
 times of each receiver. The cut itself places every segment and checks every start: a trace off

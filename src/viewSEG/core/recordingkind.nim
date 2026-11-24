@@ -12,10 +12,13 @@
 ##    trace. One segment per sub-receiver is never proof of continuity: when
 ##    every sub-receiver has exactly one segment and the file has more than one
 ##    live trace, the traces either all carry one station (the channels of one
-##    station that start together: a receiver gather, not continuous,
-##    `swSameStart`) or they do not (stations differ, or no trace carries a
-##    line and point: `rkShotGather`). Otherwise it is a receiver gather. A
-##    file with exactly one live trace is a receiver gather of one segment.
+##    station that start together) or they do not (stations differ, or no trace
+##    carries a line and point: `rkShotGather`). Traces of one station that
+##    start together are one segment, continuous, when each component type
+##    appears once; two of one component (type codes of 0 count as one) cannot
+##    be told from segments without times: not continuous, `swSameStart`.
+##    Otherwise it is a receiver gather. A file with exactly one live trace is a
+##    receiver gather of one segment.
 ## 2. Only for a receiver gather: is it continuous? Yes: `rkReceiverContinuous`.
 ##    No: `rkReceiverSliced`, and `slicedWhy` says why.
 ##
@@ -288,7 +291,15 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
   if result.segments == result.components and result.segments > 1:
     if placed.len == result.components and stations == 1:
       result.kind = rkReceiverSliced
-      if segs.allIt(it.start == segs[0].start): result.slicedWhy = swSameStart
+      if segs.allIt(it.start == segs[0].start):
+        # one segment of one station: continuous when every component appears once;
+        # like components at one start cannot be told from segments without times
+        var seen: seq[int] = @[]
+        for sg in segs:
+          let c = int(meta.keys(sg.row).component)
+          if c in seen: result.slicedWhy = swSameStart
+          seen.add c
+        if result.slicedWhy == swNone: result.kind = rkReceiverContinuous
       else:
         # the channels of the station start at different times: measure them as one run
         var run = segs

@@ -145,6 +145,44 @@ proc main*() =
   let shots = shotsInTime(view.rows)
   doAssert shots.shots.len == 7 and shots.increasing
 
+  block one_segment_of_four_components_is_sliced_right:
+    # a Z, an X, a Y and a hydrophone of one station, one start: one continuous segment
+    # SEG-D: SEG-Y has no slot for the receiver line
+    let path = dir / "rec" / "four.sgd"
+    var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
+      numSamples: SegLen))
+    for comp in 0 .. 3:
+      var samples = newSeq[float32](SegLen)
+      for j in 0 ..< SegLen: samples[j] = ramp(comp, j)
+      var k = initTraceKeys()
+      k.status = tsLive
+      k.record = 1
+      k.channel = float64(comp + 11)
+      k.component = uint8(comp + 1)
+      k.intervalUs = 2000
+      k.t0Ms = 0
+      k.time = float64(BaseUs div 1_000_000)
+      k.rcvLine = 1
+      k.rcvPoint = 7
+      w.writeTrace(k, samples)
+    discard w.close()
+    var src = openSeismic(path, keys = true)
+    defer: src.close()
+    let one = shotsInTime(logOf([201], [1_500_000'i64]).rows)
+    let dest = outDir / "cut-four.sgd"
+    let got = runCut(jobs, src, path, dest, one, opts)
+    doAssert got.st == jsDone, got.error & " / " & got.res.reason
+    doAssert got.res.ok and got.res.shotsWritten == 1 and got.res.components == 4, $got.res
+    var f = openSeismic(dest, keys = true)
+    defer: f.close()
+    doAssert f.len == 4
+    let k0 = firstSample(BaseUs + 1_500_000)
+    for c in 0 .. 3:
+      let samples = samplesOf(f, c)
+      doAssert samples.len == Window
+      for j in 0 ..< Window:
+        doAssert samples[j] == ramp(c, k0 + j), "component " & $c & " sample " & $j
+
   block samples_numbers_and_time_zero:
     # Fails when the window comes from the wrong column, the record number is
     # not the file number, the channel is the source's, or the time origin
