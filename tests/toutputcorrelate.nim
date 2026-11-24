@@ -71,7 +71,9 @@ const
   OwnSrcX = 10.0
   JoinedSrcX = 111.0
   OwnSrcY = 20.0
-  StoredHash = 6335372010091186906 ## the bytes of the stored-sweep write before pilots
+  StoredHash = -8343397523865439994
+    ## The bytes of the stored-sweep write: those of before pilots, except the reference
+    ## trace's delay field (bytes 109-110 of its header), 0 then and -500 ms now.
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
@@ -1140,6 +1142,103 @@ proc main*() =
     sameTraces(viaA, ownA, Listen)
     sameTraces(viaB, ownB, Listen)
     for f in [addr viaA, addr viaB, addr ownA, addr ownB]: f[].close()
+
+  block referenceDelay:
+    ## A correlated file's reference trace is written shifted by the lead, so its
+    ## header delay is the source's own less that lead; seismic delays are kept.
+    ## Checked by writing the file without the delay (the field set back to the
+    ## source's value) and seeing this test fail.
+    const Lead = 500.0
+    proc delayFile(path: string; sweep: openArray[float32]; segd: bool; refMs, seisMs: float64;
+        withOther: bool) =
+      var w =
+        if segd:
+          openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: DtMs * 1000.0,
+            numSamples: Record, time: 1_700_000_000.0, format: sd8058))
+        else:
+          openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+      for i in 0 .. 4:
+        if i == 4 and not withOther: break
+        var buf: seq[float32]
+        var k = initTraceKeys()
+        if i < Delays.len:
+          buf = delayedSweep(sweep, Record, Delays[i])
+          (k.traceCode, k.status) = (1'i16, tsLive)
+          k.t0Ms = seisMs
+        elif i == RefAux:
+          buf = delayedSweep(sweep, Record, 0)
+          (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+          k.t0Ms = refMs
+        else:
+          buf = newSeq[float32](Record)
+          for j in 0 ..< Record: buf[j] = float32(j + 1)
+          (k.traceCode, k.status) = (6'i16, tsAuxiliary)
+          k.t0Ms = refMs
+        k.record = 7.0
+        k.channel = float64(i + 1)
+        k.intervalUs = DtMs * 1000.0
+        k.time = 1_700_000_000.0
+        let ct = if k.status == tsAuxiliary: sctOther else: sctSeismic
+        w.writeTrace(k, buf, channelType = ct)
+      doAssert w.close().len == 0, "the delay file did not close"
+    proc delaysOf(path: string): seq[float64] =
+      var f = openSeismic(path, keys = true)
+      defer: f.close()
+      for t in 0 ..< f.len: result.add f.traceKeys(t).t0Ms
+    proc noted(lines: seq[string]): bool = RefDelayNotWritten in lines
+
+    for (name, segdIn, segdOut) in [("yy", false, false), ("yd", false, true),
+        ("dy", true, false)]:
+      for refMs in [0.0, 100.0]:
+        let src = srcDir / ("delay-" & name & ".src" & (if segdIn: ".sgd" else: ".sgy"))
+        delayFile(src, sweep, segdIn, refMs, 10.0, withOther = not segdIn)
+        var f = openSeismic(src, keys = true)
+        let dest = outDir / ("delay-" & name & $int(refMs) &
+          (if segdOut: ".sgd" else: ".sgy"))
+        let got = runWrite(f, src, dest, option(sweep, if segdOut: ofSegd else: ofSegy))
+        doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+        let d = delaysOf(dest)
+        for t in 0 ..< d.len:
+          let want =
+            if t == RefAux and not (segdOut and not segdIn): refMs - Lead
+            elif t == RefAux: refMs # SEG-Y source, SEG-D out: one set holds trace 4 too
+            elif t < Delays.len: 10.0
+            else: refMs
+          doAssert d[t] == want, name & " ref " & $refMs & " trace " & $t & " delay " &
+            $d[t] & ", not " & $want
+        # The seismic traces' samples and the note.
+        doAssert noted(got.wrote.lines) == (segdOut and not segdIn),
+          name & " notes: " & $got.wrote.lines
+        f.close()
+    block segdSetsFit:
+      ## Only the reference is auxiliary, so SEG-D can hold the delay: read back.
+      let src = srcDir / "delay-sets.sgd"
+      var w = openSeismicWriter(src, SegdOutputOptions(sampleIntervalUs: DtMs * 1000.0,
+        numSamples: Record, time: 1_700_000_000.0, format: sd8058))
+      for i in 0 .. RefAux:
+        var k = initTraceKeys()
+        k.record = 7.0
+        k.channel = float64(i + 1)
+        k.intervalUs = DtMs * 1000.0
+        k.time = 1_700_000_000.0
+        if i < RefAux:
+          (k.traceCode, k.status) = (1'i16, tsLive)
+          k.t0Ms = 10.0
+          w.writeTrace(k, delayedSweep(sweep, Record, Delays[i]))
+        else:
+          (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+          k.t0Ms = 100.0
+          w.writeTrace(k, delayedSweep(sweep, Record, 0), channelType = sctOther)
+      doAssert w.close().len == 0, "the SEG-D delay file did not close"
+      var f = openSeismic(src, keys = true)
+      defer: f.close()
+      for format in [ofSegd, ofSegy]:
+        let dest = outDir / ("delay-sets" & (if format == ofSegd: ".sgd" else: ".sgy"))
+        let got = runWrite(f, src, dest, option(sweep, format))
+        doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+        doAssert not noted(got.wrote.lines), "notes: " & $got.wrote.lines
+        let d = delaysOf(dest)
+        doAssert d == @[10.0, 10.0, 10.0, 100.0 - Lead], $format & " delays " & $d
 
   block storedBytesUnchanged:
     ## (d) The stored-sweep Output is as it was before pilots existed.

@@ -51,7 +51,7 @@
 ## cannot be read (a file cut short while it is open, a drive that fails)
 ## fails the write in that job's words, and the part file is removed.
 
-import std/[math, options, os, random, sets, strutils, times]
+import std/[math, options, os, random, sets, strutils, tables, times]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
@@ -70,6 +70,9 @@ const
   PositionsUnstored* =
     "Survey and moved positions could not be written in this format."
     ## Every joined or moved position of a written trace had no slot, or did not fit.
+  RefDelayNotWritten* =
+    "The reference traces' time zero could not be written in this file, so they keep " &
+    "the delay it had."
   OwnPositionsWritten* =
     "The file's own positions were written from its header keys."
     ## The keys path, with the tick on: geometry came from the file's own headers.
@@ -445,6 +448,25 @@ proc abort(sink: OutputSink; dest, part: string; claimed: bool; why: string; can
 
 proc stopAsked(ctx: JobContext): bool {.inline.} = ctx.cancelled
 
+func sourceDelayMs(keys: TraceKeys): float64 =
+  ## The trace's own delay in ms; a file that holds none reads as 0.
+  if keys.t0Ms.isNaN: 0.0 else: keys.t0Ms
+
+proc delayOverrides(file: SeismicFile; trace: int; delayMs: float64;
+    over: var seq[HeaderOverride]): bool =
+  ## Adds the SEG-Y delay override that makes trace `trace` start at `delayMs`,
+  ## in the trace's own time scalar (the scalar also scales its other time
+  ## fields, so it is kept). False, nothing added, when that scalar cannot hold
+  ## the value in the 16-bit field.
+  var scalar = 0
+  let held = file.findTraceField(trace, "trace.timeScalar")
+  if held.isSome and held.get.kind == fvInt: scalar = int(held.get.intVal)
+  let stored = delayMs * (if scalar < 0: float64(-scalar) else: 1.0 / float64(max(scalar, 1)))
+  let whole = round(stored)
+  if abs(stored - whole) <= 1e-6 and whole >= -32768.0 and whole <= 32767.0:
+    over.add headerOverride("trace.delayRecordingTime", int(whole))
+    result = true
+
 func recordName(load: CorrelateLoad; at: int): string =
   ## The record as a sentence names it mid-way: "FFID 5", else "record 3".
   if load.record.len > 0: load.record else: "record " & $(at + 1)
@@ -662,7 +684,28 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       # a trace at another interval is written from the keys, that trace as
       # zeros at the output's interval, as the correlation job writes it.
       let oddSegd = correlating and segdOut and odd.len > 0
-      let like = srcKind == outKind and not oddSegd and
+      # A reference trace written shifted by the lead says so in its delay: its
+      # own delay less the lead. SEG-D keeps one start time per channel set, so
+      # it is written only when every auxiliary trace of a record is such a
+      # reference with the same delay; the set is then written from the keys.
+      let leadMs = float64(abs(lag)) * corrDtMs
+      var segdDelays = false
+      if correlating and segdOut and lag != 0:
+        var want = initTable[int64, float64]()
+        var fits = true
+        for i in 0 ..< n:
+          if opts.dropKilled and edits.has(teKilled, i): continue
+          let keys = file[].traceKeys(i)
+          if keys.status == tsAuxiliary:
+            if i in refs and i notin odd:
+              let r = boundary(file[], i, byEntry, true)
+              let delay = sourceDelayMs(keys) - leadMs
+              if want.getOrDefault(r, delay) != delay: fits = false
+              want[r] = delay
+            else: fits = false
+        segdDelays = fits and want.len > 0
+      var delayLost = false
+      let like = srcKind == outKind and not oddSegd and not segdDelays and
         (srcKind == skSegy or (sameOrder and dropped == 0))
       if not file[].hasKeys and (opts.sortKeys.len > 0 or not like or opts.applyReversals or
           opts.applyShifts or opts.applyOwnFilters or opts.applyProcessing):
@@ -727,6 +770,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           # that is kept is written like any other, options applied. With
           # no option on, the samples stay as read (no key lookup, so a
           # file opened without keys still writes).
+          var shifted = false
           if correlating:
             let have = samples.len
             if have < recordSamples:
@@ -747,7 +791,9 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             let aux = status == tsAuxiliary
             let isOdd = t in odd
             let isRef = t in refs
-            if aux and isRef and not isOdd and lag != 0: timeShift(samples, lag)
+            if aux and isRef and not isOdd and lag != 0:
+              timeShift(samples, lag)
+              shifted = true
             # A dead seismic trace stays dead. correlateInto then writes zeros,
             # as the correlation job does; marking it live would correlate it.
             if status == tsDead or (aux and (not isRef or isOdd)):
@@ -776,12 +822,16 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               opts.processing, opts.applyProcessing, own, opts.applyOwnFilters, plans)
           if like:
             if correlating:
+              var over = correlatedOver
+              if shifted and not segdOut and not delayOverrides(file[], t,
+                  sourceDelayMs(file[].traceKeys(t)) - leadMs, over):
+                delayLost = true
               if carryPositions:
                 w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
-                  keys = file[].traceKeys(t), overrides = correlatedOver)
+                  keys = file[].traceKeys(t), overrides = over)
               else:
                 w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
-                  overrides = correlatedOver)
+                  overrides = over)
             elif carryPositions:
               w.writeTrace(file[], t, samples, keys = file[].traceKeys(t))
             else:
@@ -795,6 +845,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             let channel = if keys.status == tsAuxiliary: sctOther else: sctSeismic
             if correlating:
               if segdOut: keys.intervalUs = outUs
+              if shifted and (not segdOut or segdDelays):
+                keys.t0Ms = sourceDelayMs(keys) - leadMs
               w.writeTrace(keys, toOpenArray(samples, 0, listen - 1),
                 overrides = correlatedOver, channelType = channel)
             else:
@@ -857,6 +909,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           lines.add correlationLines(file, file[].len, shape.listen, sweepLen,
             float64(shape.listen) * shape.dtMs, float64(sweepLen) * shape.dtMs, shape.dtMs,
             delayed, leadSamples, shape.padded, shape.cut, refs, shape.odd)
+          if delayed > 0 and lag != 0 and (delayLost or (segdOut and not segdDelays)):
+            lines.add RefDelayNotWritten
           try:
             let uncorrelated = binaryUncorrelatedLine(file)
             if uncorrelated.len > 0: lines.add uncorrelated
