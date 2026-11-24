@@ -6,8 +6,9 @@
 ## is not a note. Header-dead is that finding only. Samples are read in
 ## chunks of 512 traces, through the file-system layer, and each run of
 ## one sample interval is measured at that interval. Header-dead, killed
-## and auxiliary traces are not sample-read, even when the chunk also
-## holds a live trace. A trace whose samples
+## and auxiliary traces are not sample-read for their statistics, even when the chunk also
+## holds a live trace (the first-break pass of a record that is judged reads that
+## record whole). A trace whose samples
 ## could not be read is not a note: it is an unread row naming the file,
 ## the trace and the reader's reason. A file whose walk stopped short is
 ## unread as cut short; its other traces still count. Each file is closed

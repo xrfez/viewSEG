@@ -374,7 +374,9 @@ proc main*() =
     doAssert mixScan.sink.result.ok and mixScan.sink.result.unread.len == 0,
       $mixScan.sink.result.unread
     # each of the four live traces (a record of its own) is read once for its samples and
-    # once to find the record's first breaks; the dead, killed and auxiliary ones not at all
+    # once to find its record's first breaks; the dead, killed and auxiliary ones are records
+    # of their own that are not judged, so they are not read at all (the first-break pass reads
+    # a judged record whole, skipped traces inside it included: that is not counted here)
     doAssert mixReads - deadReads == 8, $mixReads & " - " & $deadReads
     let report = mixScan.sink.result.report
     doAssert report.totals.traces == 6 and report.totals.killed == 1, $report.totals
