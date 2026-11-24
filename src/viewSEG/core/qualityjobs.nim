@@ -61,6 +61,15 @@ proc qualitySpec*(paths: openArray[string]): JobSpec =
   ## The job that scans `paths`: background, reading each path.
   JobSpec(title: "Trace quality", lane: jlBackground, reads: @paths)
 
+func scanProgressWords*(done, total: int64): string =
+  ## The progress a scan's job reports (`done` of `total`) in words: the file it is at and
+  ## how much of the scan is done, "file 2 of 3, 48%". "" when `total` is not known.
+  if total <= 0: return ""
+  let count = max(1'i64, total div PerFile)
+  let at = min(count, max(0'i64, done) div PerFile + 1)
+  let percent = min(100'i64, max(0'i64, done) * 100 div total)
+  "file " & $at & " of " & $count & ", " & $percent & "%"
+
 proc fileProgress(ctx: JobContext; at, count: int; done, total: int64) =
   ## The job's progress when file `at` of `count` is `done` of `total` traces through (the
   ## open is over). A cancel raises `JobCancelledError`.

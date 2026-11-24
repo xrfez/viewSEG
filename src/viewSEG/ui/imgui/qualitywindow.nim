@@ -587,9 +587,10 @@ proc drawProgress(ui: QualityUi; commands: var seq[Command]; marks: var Marks) =
   let fraction = if ui.progressTotal > 0:
       min(1'f32, float32(ui.progressDone) / float32(ui.progressTotal))
     else: -float32(igGetTime())
-  let overlay = if ui.progressTotal > 0: $ui.progressDone & " / " & $ui.progressTotal else: ""
+  let overlay = scanProgressWords(ui.progressDone, ui.progressTotal)
   igProgressBar(fraction, ImVec2_c(x: width, y: 0), overlay.cstring)
   marks.mark("quality.progress")
+  if overlay.len > 0: marks.mark("quality.progress " & overlay)
   igSameLine(0, -1)
   if igButton(CancelButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.scanJob != NoJob:
     commands.add Command(kind: ckCancelJob, job: ui.scanJob)

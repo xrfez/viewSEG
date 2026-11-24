@@ -24,7 +24,7 @@
 ## `a_station_in_the_area_*` station 4 with no weak trace, `a_weak_trace_near_*` trace 400 not
 ## weak and `a_station_weak_near_*` station 3 weak in no record.
 
-import std/[algorithm, atomics, math, monotimes, os, sets, tables, times]
+import std/[algorithm, atomics, math, monotimes, os, sets, strutils, tables, times]
 import parseSEG
 import processSEG
 import processSEG/synth
@@ -275,6 +275,8 @@ proc main*() =
         let p = jobs.info(id).get.progress
         if p.phase == "measuring" and p.total > 0 and p.done > 0 and p.done < p.total:
           inc inside
+          let words = scanProgressWords(p.done, p.total)
+          doAssert words.startsWith("file 1 of 1, ") and words.endsWith("%"), words
         sleep 1
       doAssert jobs.info(id).get.state == jsDone
       doAssert inside > 0, "the bar did not move inside the file"

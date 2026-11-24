@@ -9,7 +9,8 @@
 ## omitted and not unread, `cut_in_the_last_trace_is_unread` saw a fully
 ## read file. With dead, killed and auxiliary traces read inside a live
 ## chunk, `skipped_traces_are_not_sample_read` saw one sample read for
-## four live runs.
+## four live runs. With the bar's text the job's own units,
+## `the_progress_reads_*` saw "1450 / 3000".
 
 import std/[os, strutils, tables]
 import parseSEG
@@ -431,6 +432,13 @@ proc main*() =
         report.totals.weakTested == 0, $report.totals
       doAssert totalsCsv(report.totals).splitLines[1].endsWith(",0,,0,"), "cells not empty"
       doAssert recordsCsv(report.records).splitLines[1].endsWith(",0,,0,"), "cells not empty"
+
+  block the_progress_reads_as_files_and_a_share:
+    # the job counts 1000 units a file: 1450 of 3000 is in the second file of three
+    doAssert scanProgressWords(1450, 3000) == "file 2 of 3, 48%", scanProgressWords(1450, 3000)
+    doAssert scanProgressWords(0, 3000) == "file 1 of 3, 0%"
+    doAssert scanProgressWords(3000, 3000) == "file 3 of 3, 100%"
+    doAssert scanProgressWords(12, 0) == "", "a total not known has no words"
 
 when isMainModule:
   main()
