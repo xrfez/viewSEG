@@ -12,7 +12,9 @@
 ## receiver ("components: 1"); with the rule that some trace must follow on another taken out
 ## (`abutting == 0` not asked), the samples' shot records read "land/shots.sgd:
 ## rkReceiverContinuous", "wholeShots: ... rkReceiverContinuous" and "sliced: ...
-## rkReceiverContinuous".
+## rkReceiverContinuous"; with group coordinates compared exactly, "jitter" reads two stations;
+## with a file that passes the continuous test never asked whether its receiver changes,
+## "fewFollow" reads rkReceiverContinuous.
 
 import std/[algorithm, assertions, os, sets, strutils, times]
 import parseSEG
@@ -181,7 +183,8 @@ proc main*() =
         # four nodes of four components, eight shots each: one receiver per node and
         # component, none of whose traces follows on another
         doAssert receivers == 16 and facts.slicedWhy == swNoFollow, $facts
-        doAssert facts.fewestSteps == 30, $facts
+        doAssert abs(facts.nearestSeconds - 60) < 1e-6 and
+          abs(facts.segmentSeconds - 2) < 1e-6, $facts
 
   block shot_records_a_whole_number_of_trace_lengths_apart_are_a_shot_gather:
     # six shots 15 trace lengths apart, ten stations each: every boundary of a station is on
@@ -198,8 +201,8 @@ proc main*() =
       doAssert f.skips == 50 and f.irregular == 0 and f.slicedWhy == swNoFollow, $f
       doAssert cutRefusal(f) == "This file is a shot gather (the receiver changes from trace " &
         "to trace), not a continuous receiver gather. No trace follows directly on the one " &
-        "before it: each of a receiver's traces starts 15 trace lengths or more after the " &
-        "last, as records sliced at shot times do.", cutRefusal(f)
+        "before it: each of a receiver's traces starts 30 s or more after the last; the " &
+        "traces are 2 s long, as in records sliced at shot times.", cutRefusal(f)
 
   block shot_records_of_which_two_follow_on_each_other_are_a_shot_gather:
     # ten stations, shots at 0, 15, 30, 31 and 46 record lengths: one boundary of each
@@ -217,11 +220,11 @@ proc main*() =
     for i in 0 ..< 6: specs.add spec(0, i * 10000)
     same(dir, "sliced", specs, rkReceiverSliced)
     let f = whole(dir / "sliced.sgd", VendorRegistry())
-    doAssert f.slicedWhy == swNoFollow and f.skips == 5 and f.fewestSteps == 10, $f
+    doAssert f.slicedWhy == swNoFollow and f.skips == 5 and abs(f.nearestSeconds - 20) < 1e-6, $f
     doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a continuous " &
       "one. No trace follows directly on the one before it: each of a receiver's traces " &
-      "starts 10 trace lengths or more after the last, as records sliced at shot times do.",
-      cutRefusal(f)
+      "starts 20 s or more after the last; the traces are 2 s long, as in records sliced at " &
+      "shot times.", cutRefusal(f)
     # one trace that follows on the one before it: a box switched off between the others
     specs.add spec(0, 51000)
     same(dir, "slicedOne", specs, rkReceiverContinuous)

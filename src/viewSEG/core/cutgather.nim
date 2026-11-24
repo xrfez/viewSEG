@@ -445,7 +445,8 @@ func offStepWords(f: RecordingFacts): string =
 func noFollowWords(f: RecordingFacts): string =
   ## The sentence for a file of which no trace follows directly on another (`swNoFollow`).
   "No trace follows directly on the one before it: each of a receiver's traces starts " &
-    $f.fewestSteps & " trace lengths or more after the last, as records sliced at shot times do."
+    secs(f.nearestSeconds) & " or more after the last; the traces are " &
+    secs(f.segmentSeconds) & " long, as in records sliced at shot times."
 
 func cutRefusal*(f: RecordingFacts): string =
   ## Why the cut refuses a file: for one that is not a continuous receiver gather what

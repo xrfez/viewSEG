@@ -14,7 +14,9 @@
 ## other): "uncoded shots, Rev 3: rkReceiverSliced"; the group coordinates not asked before the
 ## channel: "coordinates: rkShotGather"; the measured reason dropped from a shot gather told by
 ## the order of the file (`slicedWhy` reset): the uneven shots and "offonce" refused with the
-## kind alone.
+## kind alone; the rest of a receiver's starts not looked through for one that follows on
+## another: "lateFollow" read rkReceiverSliced; the no-follow sentence in steps: "starts 2
+## trace lengths or more".
 
 import std/[assertions, math, os, strutils]
 import parseSEG
@@ -174,6 +176,11 @@ proc placedByCoordinates(dir, name: string; starts: openArray[int]): RecordingFa
   finally:
     f.close()
 
+func secsOf(samples: int): string =
+  ## `samples` of 2 ms as the sentences say them.
+  formatFloat(float64(samples) * DtMs / 1000, ffDecimal, 3).strip(leading = false,
+    chars = {'0'}).strip(leading = false, chars = {'.'}) & " s"
+
 proc shots(stations: int; starts: openArray[int]): seq[Spec] =
   ## A shot after shot, every station each time, in file order.
   for first in starts:
@@ -298,7 +305,11 @@ proc main*() =
       let f = factsOf(dir, "every" & $step, specs)
       doAssert f.kind == rkReceiverSliced and f.skips == 3 and f.irregular == 0, $f
       doAssert f.missingSegments == 3 and f.abutting == 0, $f
-      doAssert f.slicedWhy == swNoFollow and f.fewestSteps == 2, $f
+      doAssert f.slicedWhy == swNoFollow, $f
+      # said in seconds: two steps of 950 samples are 3.8 s, not two trace lengths
+      doAssert cutRefusal(f).endsWith("No trace follows directly on the one before it: each " &
+        "of a receiver's traces starts " & secsOf(2 * step) & " or more after the last; the " &
+        "traces are 2 s long, as in records sliced at shot times."), cutRefusal(f)
       # one trace that follows on the one before it makes it continuous
       specs.add spec(0, 7 * step)
       let one = factsOf(dir, "everyOne" & $step, specs)

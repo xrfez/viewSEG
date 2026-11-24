@@ -114,8 +114,8 @@ type
     swSameStart ## every trace carries the same start time
     swNoFollow
       ## every start is a whole number of steps after the one before it, but none just one
-      ## step: no trace follows directly on another (`fewestSteps`), as in records sliced at
-      ## shot times
+      ## step: no trace follows directly on another (`nearestSeconds`, `segmentSeconds`), as
+      ## in records sliced at shot times
 
   RecordingPlan* = object
     ## The segments of a file as the cut plans them.
@@ -140,9 +140,9 @@ type
     irregular*: int                ## starts that are not a whole number of steps apart
     uncovered*: int                ## receivers with a segment that does not cover the step
     offTrace*: int                 ## for `swOffStep`: the trace (from 1) that breaks the rule
-    fewestSteps*: int
-      ## the fewest steps from a start to the next of its receiver, over the boundaries on the
-      ## step (0 for none): for `swNoFollow`
+    nearestSeconds*: float64
+      ## the least time from a start to the next of its receiver, over the boundaries on the
+      ## step (0 for none): for `swNoFollow`, with `segmentSeconds` the trace length there
     offSeconds*: float64
       ## for `swOffStep`: how long after the segment before it that trace starts, or its
       ## length when `offLength`
@@ -296,7 +296,10 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int;
     let k = max(1, (2 * d + step) div (2 * step))
     let off = d - k * step
     if abs(off) <= 1:
-      r.fewestSteps = if r.fewestSteps == 0: k else: min(r.fewestSteps, k)
+      let gap = float64(d) * dtS
+      if r.nearestSeconds == 0 or gap < r.nearestSeconds:
+        r.nearestSeconds = gap
+        if r.slicedWhy == swNone: r.segmentSeconds = float64(typical) * dtS
       if k == 1: inc r.abutting
       else:
         inc r.skips

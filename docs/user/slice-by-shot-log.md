@@ -51,13 +51,14 @@ components of the same type and never re-sorting anything:
    start just one step after the one before it (k = 1). When every gap is two steps or more,
    nothing follows on anything, as in records sliced at shot times, and the file is not
    continuous however whole its gaps: "No trace follows directly on the one before it: each of
-   a receiver's traces starts 15 trace lengths or more after the last, as records sliced at
-   shot times do." If every rule holds, it is a continuous receiver gather. If not, it is a **time-sliced receiver gather**, and the sentence
-   says why: the first trace that breaks the rule, with the numbers measured for it (how long
-   after the one before it it starts and the trace length, or how long it is and how long the
-   others are), or every trace of a component carries the same start time, so the start times
-   could not be read (a recorder that keeps each trace's start time in its own trace header
-   extension needs a vendor header map that names that field).
+   a receiver's traces starts 30 s or more after the last; the traces are 2 s long, as in
+   records sliced at shot times." If every rule holds, it is a continuous receiver gather. If
+   not, it is a **time-sliced receiver gather**, and the sentence says why: the first trace
+   that breaks the rule, with the numbers measured for it (how long after the one before it it
+   starts and the trace length, or how long it is and how long the others are), that no trace
+   follows on another, or every trace of a component carries the same start time, so the start
+   times could not be read (a recorder that keeps each trace's start time in its own trace
+   header extension needs a vendor header map that names that field).
 
 A receiver gather that is not continuous is a **shot gather** when, in the order of the file, the
 receiver point changes between most consecutive segments of one component: the receivers repeat
