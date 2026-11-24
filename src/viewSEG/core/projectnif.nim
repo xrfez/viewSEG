@@ -612,7 +612,10 @@ proc columnRole(name: string): tuple[ok: bool; role: ColumnRole] =
     if $role == name: return (true, role)
   (false, crText)
 
-proc readShotMap(r: var Reading; n: NifNode; s: var StoredShotLog; bad, tooMany: var bool) =
+proc readShotMap(r: var Reading; n: NifNode; s: var StoredShotLog; bad, tooMany: var bool;
+    leftOut: string) =
+  ## `leftOut` is the clause after a bad role: a stored log is left out, or
+  ## the remembered column map is.
   var roles = 0
   for c in n.kids:
     if c.kind != nkTree:
@@ -644,12 +647,12 @@ proc readShotMap(r: var Reading; n: NifNode; s: var StoredShotLog; bad, tooMany:
       if roles > MaxShotLogColumns:
         tooMany = true
       elif c.kids.len != 1 or c.kids[0].kind notin {nkString, nkIdent}:
-        r.problem(c, "(role) needs a role name; the log is left out")
+        r.problem(c, "(role) needs a role name; " & leftOut)
         bad = true
       else:
         let found = columnRole(c.kids[0].text)
         if not found.ok:
-          r.problem(c, "\"" & c.kids[0].text & "\" is not a column role; the log is left out")
+          r.problem(c, "\"" & c.kids[0].text & "\" is not a column role; " & leftOut)
           bad = true
         elif not bad and not tooMany: s.map.roles.add found.role
     else: s.mapLater.add c
@@ -670,7 +673,7 @@ proc shotLog(r: var Reading; n: NifNode; d: var ProjectDoc) =
     case k.tag
     of "name": r.text(k, s.name)
     of "file": r.text(k, s.file)
-    of "map": r.readShotMap(k, s, bad, tooMany)
+    of "map": r.readShotMap(k, s, bad, tooMany, "the log is left out")
     else: s.later.add k
   if tooMany:
     r.problem(n, "a shot log keeps at most " & $MaxShotLogColumns &
@@ -701,7 +704,7 @@ proc lastShotMap(r: var Reading; n: NifNode; d: var ProjectDoc) =
       if sawMap: later.add k
       else:
         sawMap = true
-        r.readShotMap(k, s, bad, tooMany)
+        r.readShotMap(k, s, bad, tooMany, "the remembered column map is left out")
     of "headerName":
       if headers.len >= MaxShotLogColumns:
         r.problem(k, "a remembered column map keeps at most " & $MaxShotLogColumns &

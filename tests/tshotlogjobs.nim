@@ -978,7 +978,8 @@ proc main*() =
     doAssert st.settle(st.inProject and st.jobs.active.len == 0), "a hostile map stopped the open"
     doAssert st.project.doc.lastShotMap.isNone, "a hostile map was stored"
     doAssert st.project.doc.name.len > 0
-    doAssert st.said("not a column role"), "the bad role was not said"
+    doAssert st.said("the remembered column map is left out"), "the bad role was not said"
+    doAssert not st.said("the log is left out"), "a remembered map said a log was left out"
     st.apply Command(kind: ckImportShotLog, logPath: table)
     doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
     doAssert st.shotLogMap(0).roles[1] == crShotPoint, "a hostile map was used"

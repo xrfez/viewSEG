@@ -22,7 +22,9 @@
 ## with `later` not written back, "a later version's part is kept"; with a
 ## device name accepted, a hostile `(file "CON")` was stored; with a hostile
 ## `(lastShotMap)` stored anyway, `lastShotMap` kept `(role "not a role")`; with
-## `decimalComma` left out of the map writer, "decimalComma did not come back".
+## `decimalComma` left out of the map writer, "decimalComma did not come back";
+## with a bad role in `(lastShotMap)` saying the log is left out,
+## "a remembered map said a log was left out".
 
 import std/[options, os, strutils, times]
 import parseSEG
@@ -205,7 +207,13 @@ proc main*() =
       for p in problems:
         if words in p: said = true
       doAssert said, "not said (" & words & "): " & $problems
-    hostileMap("(map (role \"not a role\"))", "not a column role")
+    hostileMap("(map (role \"not a role\"))", "the remembered column map is left out")
+    hostileMap("(map (role))", "the remembered column map is left out")
+    problems.setLen 0
+    discard readProject("(project (version 1) (name \"h\") (lastShotMap " &
+      "(map (role \"not a role\"))))", "project.nif", problems)
+    for p in problems:
+      doAssert "the log is left out" notin p, "a remembered map said a log was left out: " & p
     hostileMap("(headerName \"file\")", "left out")
     hostileMap("(map (role \"text\")) (headerName 1)", "left out")
     hostileMap("(map (role \"text\")) (headerName \"" & "x".repeat(200) & "\")", "left out")
