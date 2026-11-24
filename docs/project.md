@@ -47,7 +47,8 @@ Land 2026/                  the project folder: this is what is opened
   not written into the seismic file or the survey file. While a file is open that
   position replaces the header's and the survey's for a trace recorded at or after
   `fromTime`, and the offset and midpoint are computed again. Removing the move puts
-  the header or survey position back. It matches a trace as the join matches a
+  the header or survey position back. They are applied even when the project's survey
+  cannot be restored. It matches a trace as the join matches a
   station: the same index, else index 0 for any index, else a trace with index 0
   takes index 1. A document without the tag has none.
 - **`files/`** is the store of what is remembered about files (`core/filememory`), in the

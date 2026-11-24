@@ -2531,6 +2531,12 @@ proc enqueueMoves(state: var AppState; id: SessionId)
 proc dropMoveBases(state: var AppState; id: SessionId)
 proc queueOpenMoves(state: var AppState)
 
+func surveyMatchable(state: AppState): bool =
+  ## Whether a file can still be matched to the project's survey. Station
+  ## moves do not wait for a survey that failed to be restored.
+  state.project.dir.len > 0 and state.project.doc.hasSurvey and
+    state.project.survey != srFailed
+
 proc canonical*(path: string): string =
   ## `path` made absolute and normalized ("./a.sgy", "data/../a.sgy" and the
   ## full path name one file), without touching the disk: jobs compare files
@@ -5674,7 +5680,7 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   let short = filejobs.endsEarly(s.file)
   state.onDiskSaid.del path
   state.sessions.add s
-  if state.project.dir.len > 0 and state.project.doc.hasSurvey:
+  if state.surveyMatchable:
     state.project.queue.add id # matched to the project's survey (`followProject`)
   elif not s.isSignature and not s.noSeismic and state.project.doc.stationMoves.len > 0:
     state.enqueueMoves(id)
@@ -6161,6 +6167,12 @@ proc dropMoveBases(state: var AppState; id: SessionId) =
 proc enqueueMoves(state: var AppState; id: SessionId) =
   ## Has open file `id` take the project's station moves, once no join runs.
   if id notin state.moveQueue: state.moveQueue.add id
+
+proc drainProjectMoves(state: var AppState) =
+  ## The project's survey will not be matched. Every file waiting for that
+  ## join takes the station moves on its own.
+  for id in state.project.queue: state.enqueueMoves(id)
+  state.project.queue.setLen 0
 
 proc takeJoinPlan(state: var AppState; m: sink Msg) =
   ## The survey files read and what joining them does: when it changes some
@@ -6693,6 +6705,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
       if p.readOnly:
         p.survey = srFailed
         p.surveyNote = "survey.bin is not there, and the project is read-only"
+        state.drainProjectMoves()
       else:
         p.layersAfterKeep = true
         state.keepSurvey(files)
@@ -6721,7 +6734,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
         state.keepSurvey(files)
   if news.created:
     for s in state.sessions:
-      if p.doc.hasSurvey and state.joinedOf(s.id) < 0: p.queue.add s.id
+      if state.surveyMatchable and state.joinedOf(s.id) < 0: p.queue.add s.id
     state.queueOpenMoves()
 
 proc takeKept(state: var AppState; m: sink Msg) =
@@ -6743,6 +6756,7 @@ proc takeKept(state: var AppState; m: sink Msg) =
       state.projectChanged()
     state.log.add(sevError, "project", "The survey could not be kept in the project " &
       p.doc.name & ": " & news.keptFailure & ".")
+    if p.survey == srFailed: state.drainProjectMoves()
     return
   p.doc.survey = move news.copies
   p.doc.store = news.store
@@ -6787,6 +6801,7 @@ proc takeRestored(state: var AppState; m: sink Msg) =
     p.surveyNote = news.surveyFailure
     state.log.add(sevError, "project", "The survey kept in the project " & p.doc.name &
       " could not be read: " & news.surveyFailure & ". Import the survey again.")
+    state.drainProjectMoves()
     return
   p.rebuilding = false
   let updated = not p.geometry.isNil
@@ -6859,6 +6874,7 @@ proc endProjectWork(state: var AppState; job: JobInfo): bool =
       inc p.revision
       if job.state == jsFailed:
         state.log.add(sevError, "project", "The project's survey: " & job.error & ".")
+        state.drainProjectMoves()
   elif job.id == p.lookJob: p.lookJob = NoJob
   elif job.id == p.originalsJob:
     p.originalsJob = NoJob
@@ -6883,16 +6899,17 @@ proc startAutoJoin(state: var AppState; i: int) =
     survey: p.joinSurvey, auto: true, by: coWindow)
 
 proc queueOpenMoves(state: var AppState) =
-  ## Has every open file take the project's station moves. A project with a
-  ## survey is joined again, so the survey is applied and the moves win after
-  ## it; a file with no survey gets a job of its own. A file whose join is
+  ## Has every open file take the project's station moves. A project whose
+  ## survey can still be matched is joined again, so the survey is applied
+  ## and the moves win after it; a file with no survey, or one whose survey
+  ## failed to be restored, gets a job of its own. A file whose join is
   ## still reading is left: that join reads the list when it applies.
   let moves = state.project.doc.stationMoves
-  let surveyed = state.project.dir.len > 0 and state.project.doc.hasSurvey
+  let matchable = state.surveyMatchable
   for s in state.sessions:
     if s.isSignature or s.noSeismic: continue
     if moves.len == 0 and state.moveBasesOf(s.id).len == 0: continue
-    if surveyed:
+    if matchable:
       if state.joining.job != NoJob and state.joining.session == s.id and
           state.joining.step == jpReading: continue
       state.moveQueue.keepItIf(it != s.id)
@@ -6913,9 +6930,9 @@ proc setStationMoves*(state: var AppState; moves: StationMoves) =
   state.queueOpenMoves()
 
 proc followMoves(state: var AppState) =
-  ## The next open file with no survey join takes the project's station moves,
-  ## once no import and no other move job runs. A file a project survey still
-  ## has to match is left on that queue instead.
+  ## The next open file takes the project's station moves, once no import and
+  ## no other move job runs. A file a project survey can still match is left
+  ## on that queue instead.
   if state.movesJob != NoJob or state.importing: return
   while state.moveQueue.len > 0:
     let id = state.moveQueue[0]
@@ -6924,7 +6941,7 @@ proc followMoves(state: var AppState) =
     if i < 0: continue
     let s = state.sessions[i]
     if s.isSignature or s.noSeismic: continue
-    if state.project.dir.len > 0 and state.project.doc.hasSurvey:
+    if state.surveyMatchable:
       if id notin state.project.queue: state.project.queue.add id
       continue
     let moves = state.project.doc.stationMoves

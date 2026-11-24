@@ -4,18 +4,22 @@
 ## not name is left alone, and removing the move puts the position back.
 ## The same list applied again does not change `keysRevision`.
 ## The Headers window (Trace tab and a trace table sorted by receiver X) shows
-## the move without the selection changing.
+## the move without the selection changing. A project whose survey cannot be
+## restored still applies its moves to a file opened after that, and to one
+## opened while the restore was still running.
 ##
 ## Seen to fail: with `applyFileMoves` returning 0 before it called `applyMoves`,
 ## `n == 6` (traces changed: 0). With `followInspect` comparing only the join
 ## serial, the Trace tab kept receiver X 0 after the move; with the table's
-## cached column keyed only by the joins, the sorted trace table did too.
+## cached column keyed only by the joins, the sorted trace table did too. With
+## a failed survey restore leaving the file on the join queue, the opened file's
+## receiver X stayed 0.
 
-import std/[math, options]
+import std/[math, options, os, strutils]
 import parseSEG
 import parseSEG/model/traceindex
 import viewSEG/core/[state, stationmoves]
-import utils/[fixtures, waiting]
+import utils/[fixtures, steps, waiting]
 
 func near(a, b: float64; tol = 1e-4): bool =
   abs(a - b) <= tol * max(1.0, abs(b))
@@ -185,6 +189,90 @@ proc main*() =
             near(table.values[i][0], 7000):
           shown = true
       doAssert shown, "the trace table kept the receiver X from before the move"
+      st.shutdown()
+
+  proc made(fx: Fixtures): (string, string) =
+    ## A closed project whose survey is kept, and the stations-only file it
+    ## was joined to. Receiver line 101, point 101 is moved to X 7000.
+    let field = fx.dir / "field"
+    createDir(field)
+    let record = field / "stations-only.sgd"
+    moveFile(fx.stationsSegd(), record)
+    let job = fx.dir / "Job"
+    let survey = fx.surveySps()
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: record)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut), "not shown"
+    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+    doAssert st.settle(st.inProject and st.projectOpening.len == 0), "the project was not made"
+    let before = st.joinReport.serial
+    st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id,
+      joinFiles: sps(survey.s, survey.r, survey.x))
+    doAssert st.settle(st.joinReport.serial > before and not st.importing and
+      st.project.survey == srLoaded and st.project.doc.hasStore),
+      "the survey was not kept: " & $st.project.survey & " " & st.project.surveyNote
+    var moves = StationMoves()
+    moves.add moveAt(RcvLine + 1, FirstRcvPoint, 0, none(float64), 7000, OriginY)
+    st.setStationMoves(moves)
+    doAssert st.settle(near(st.keysOf(13).rcvX, 7000)), "the move was not applied"
+    st.flushFiles()
+    st.shutdown()
+    (job, record)
+
+  proc newer(job: string) =
+    ## A later document version: the project opens read-only, and a damaged
+    ## or missing survey.bin is not made again from the copies.
+    let path = job.documentOf
+    var text = readFile(path)
+    doAssert "(version 1)" in text, "no version to bump"
+    writeFile(path, text.replace("(version 1)", "(version 2)"))
+
+  block movesWhenSurveyMissing:
+    # The survey cannot be restored (its store is gone, and the project is
+    # read-only). A file opened after that still takes the moves.
+    withFixtures fx:
+      let (job, record) = made(fx)
+      removeFile(job.partOf(SurveyStoreName))
+      newer(job)
+      var st = initAppState()
+      st.apply Command(kind: ckOpenProject, projectPath: job)
+      doAssert st.settle(st.inProject and st.project.survey == srFailed),
+        "the missing survey did not fail: " & $st.project.survey & " " & st.project.surveyNote
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: record)
+      doAssert st.settle(st.sessions.len == 1 and near(st.keysOf(13).rcvX, 7000)),
+        "a file opened after the survey failed kept the header position"
+      var again = StationMoves()
+      again.add moveAt(RcvLine + 1, FirstRcvPoint, 0, none(float64), 7100, OriginY)
+      st.setStationMoves(again)
+      doAssert st.settle(near(st.keysOf(13).rcvX, 7100)),
+        "a move set after the survey failed was not applied"
+      st.shutdown()
+
+  block movesWhenRestoreFails:
+    # The file is queued for the join while the restore runs. The store is
+    # then damaged and the project is read-only, so the restore fails and
+    # is not rebuilt. The queued file still takes the moves.
+    withFixtures fx:
+      let (job, record) = made(fx)
+      newer(job)
+      const phase = "making the survey kept in the project"
+      installSteps()
+      defer: setJobHook(nil)
+      holdStep(phase)
+      var st = initAppState()
+      st.apply Command(kind: ckOpenProject, projectPath: job)
+      doAssert st.settle(st.inProject and st.project.survey == srLoading and
+        inStep(phase).len > 0), "the restore did not wait"
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: record)
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut), "not shown"
+      let bin = job.partOf(SurveyStoreName)
+      var bytes = readFile(bin)
+      for i in 0 ..< min(64, bytes.len): bytes[i] = '\0'
+      writeFile(bin, bytes)
+      releaseStep(phase)
+      doAssert st.settle(st.project.survey == srFailed and near(st.keysOf(13).rcvX, 7000)),
+        "a file queued for the join kept the header position: " & $st.project.survey & " " &
+        st.project.surveyNote & " rcvX " & $st.keysOf(13).rcvX
       st.shutdown()
 
 when isMainModule:
