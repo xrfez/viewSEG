@@ -375,6 +375,20 @@ proc main*() =
     doAssert got.res.lines.anyIt("4 overlaps between traces lie outside every record" in it and
       it.endsWith("not needed.")), $got.res.lines
 
+  block failure_reasons_read_as_sentences:
+    # Fails when a reason without a full stop runs into the sentence about the
+    # partial file ("...no space left The partial file was removed.").
+    doAssert failureReason("Cancelled.", true, true) ==
+      "Cancelled. The partial file was removed."
+    doAssert failureReason("The disk is full", true, true) ==
+      "The disk is full. The partial file was removed."
+    doAssert failureReason("The disk is full", true, false) ==
+      "The disk is full. The partial file could not be removed."
+    doAssert failureReason("The disk is full", false, false) == "The disk is full."
+    doAssert failureReason("", true, true) == "The partial file was removed."
+    doAssert writeFailure("No space left on device") ==
+      "Writing the file failed: No space left on device."
+
   block existing_destination_refused:
     # Fails when the part file is claimed (and the check made) after work.
     let dest = outDir / "keep.sgd"

@@ -127,14 +127,29 @@ proc dropOurs(part: string): bool =
   except OSError:
     discard
 
+func failureReason*(why: string; claimed, removed: bool): string =
+  ## `why` as a sentence, then what became of the partial file when there was
+  ## one (`claimed`).
+  result = why
+  if claimed:
+    if result.len > 0:
+      if result[^1] notin {'.', '!', '?'}: result.add '.'
+      result.add ' '
+    result.add (if removed: "The partial file was removed." else:
+      "The partial file could not be removed.")
+  elif result.len > 0 and result[^1] notin {'.', '!', '?'}:
+    result.add '.'
+
+func writeFailure*(msg: string): string =
+  ## An operating-system error from the output, as a sentence.
+  "Writing the file failed: " & msg & (if msg.endsWith('.'): "" else: ".")
+
 proc abort(sink: CutSink; dest, part: string; claimed: bool; why: string; cancel: bool) =
   ## Ends the job. When `claimed`, removes only `part` (ours); `dest` is never
   ## touched.
   var removed = false
   if claimed: removed = dropOurs(part)
-  var reason = why
-  if removed: reason.add " The partial file was removed."
-  elif claimed: reason.add " The partial file could not be removed."
+  let reason = failureReason(why, claimed, removed)
   if sink != nil:
     sink.result = CutResult(ok: false, path: dest, reason: reason, removed: removed)
   if cancel: raise newException(JobCancelledError, reason)
@@ -381,6 +396,10 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
   except JobCancelledError as e:
     if sink != nil and sink.result.reason.len == 0:
       abort(sink, dest, part, claimed, e.msg, true)
+    raise
+  except OSError as e:
+    if sink != nil and sink.result.reason.len == 0:
+      abort(sink, dest, part, claimed, writeFailure(e.msg), false)
     raise
   except CatchableError as e:
     if sink != nil and sink.result.reason.len == 0:
