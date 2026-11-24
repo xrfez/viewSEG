@@ -939,6 +939,9 @@ in another unit instead, converted exactly (1 ft = 0.3048 m, 1 ftUS = 1200/3937 
 - **Recorded**: what the seismic files say of themselves: each open file's own sources and
   receivers, as its trace headers give them, or as a join made them ("(joined)"), as rings.
 
+A shot log whose columns include an X and a Y adds **Shot log** to the list: its shots, as
+diamonds, on their own tick (on when the log is loaded). See [Import a shot log](#import-a-shot-log).
+
 Under the Preplot, **Template box** (off until you tick it) draws the box round the spread
 planned for the record on show (dark, with its X record and how many receivers it plans)
 and for the source under the pointer (orange): the receivers the relation (X) file plans
@@ -1158,6 +1161,13 @@ or a header name is longer than that, the meanings are guessed, as they are when
 is remembered, and Messages says nothing extra. A project open read-only still uses the
 remembered map and does not write a new one.
 With no project open, nothing is remembered.
+
+**Shots on the map.** When the columns include X and Y, the Map shows the log's shots as a
+layer of their own, "Shots of <file>", as diamonds, under **Layers > Shot log**. Rows
+with no X, or at (0, 0), are left off; every other row is drawn, as the window lists every
+row. Hover a shot to see its line, point and the row's identifying columns. Edit an X or Y
+cell and the shot moves; remove the log and the layer goes. A log without X and Y columns
+has no layer and no entry in the list.
 
 The grid has one row per shot. The first column is the time in UTC, to the microsecond,
 worked out from the time columns. A narrow column marks a row that has a problem; the

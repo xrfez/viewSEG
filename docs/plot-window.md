@@ -1425,7 +1425,8 @@ under the pointer then, as desktop programs do.
   loaded it should display as a preplot layer"): the **Preplot**, the survey files' sources
   and receivers, what the survey planned; the **Recorded**, what the seismic files say of
   themselves, their own positions as the headers give them or as a join made them (named
-  "(joined)"); then the highlight. Each group has its tick, which hides all of it (its
+  "(joined)"); then **Shot log**, the shots of a loaded shot log whose column map names an X
+  and a Y column (below), and the highlight. Each group has its tick, which hides all of it (its
   layers keep their own ticks, greyed out meanwhile), and each layer its own; a hidden
   layer is neither drawn, nor found under the pointer or in a box, nor highlighted. The
   groups hidden are kept in the settings (`map.hiddenGroups`); a layer hidden on its own is
@@ -1570,6 +1571,19 @@ under the pointer then, as desktop programs do.
   Lengths shows lengths in another of the three instead, converted exactly.
 - **A scale bar** (1, 2 or 5 times a power of ten, at most 150 pixels long) in the plot's
   bottom-left corner and a **north arrow** (grid north) in its top-right one.
+- **Shot log layer:** a shot log (Project > Import shot log...) whose columns include an X
+  and a Y gives one layer, "Shots of <log>", listed under its own **Shot log** heading
+  (not under a group: it has no tick but its own) and on while the log is loaded. Its shots
+  are filled diamonds, in a colour made from the theme's source and receiver colours
+  halfway, so it differs from the survey's discs and the files' rings. It takes part in fit
+  like any layer, and the log's rows that have no X, or sit at (0, 0), are counted and left
+  off. Every other row is drawn, whatever problem the log lists for it, as the Shot log
+  window lists every row. The layer is made on the job that reads or rebuilds the log, so
+  an edit of an X or Y cell moves the shot, and removing the log takes the layer away. The
+  hover text of a shot names its source line and shot point and the row's identifying cells
+  (line, point, index, file number, sequence, time, status), as the column map names them.
+  A click selects the point; nothing else is linked, since a shot log's rows are no
+  traces. A log with no X and Y column has no layer and no entry in the list.
 - **The strip:** Layers, zoom out, zoom in, fit, back, Ruler (a left drag then measures;
   the button lights, in the same colour as the other on toggles, and stays on until
   clicked again; clicking it while it is on takes the line away. Ctrl + drag measures

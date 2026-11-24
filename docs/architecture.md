@@ -535,6 +535,14 @@ the traces recorded there (`Survey.tracesAt`), or, as a range, the stations alon
 from the point clicked last (`lineRange`, `Selection.pointAnchor`); a trace selection made
 anew takes the points away, `ckClearSelection` takes both.
 
+**A shot log's shots** (`core/shotmap`) are a survey layer of their own (`loShotLog`, sources only,
+one point a row with a position, each row found again from its point: `shotRows`). The layer is
+made on the shot log's job (`shotlogjobs.fill`, with the log's index for follow), put in the
+survey in place of the one before when the job ends (`setShotLayer`) and taken off with the log.
+Its tick is a map layer key of kind `mlShotLog`; it is in no group the user can hide, links to no
+trace, and the map draws it through the same buffers and levels as the others (a filled diamond:
+`skDiamond`).
+
 **The template box** (`core/spread`): the spread planned for the record on show
 (`shownSpread`) and for the shot under the map's pointer (`spreadAt`), from the first
 loaded survey file with relation records of the domain shown (X for shots, O for receiver
