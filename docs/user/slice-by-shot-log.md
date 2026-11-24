@@ -158,6 +158,27 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
 - **SEG-Y** has no place for the source line or the point index, and Messages says once that
   they are left out. A point index outside 0 to 255 is written as 0, and counted.
 - **The samples** are written as 32-bit floats.
+- **Filters, gain and sensor, and a note about the slice.** An output whose headers are built from
+  the options (SEG-Y, or SEG-D from a SEG-Y recording or one the writer cannot copy) takes from
+  the recording's own headers what the output has a field for, for each trace from the segment
+  that holds its first sample, so a recording whose gain or filters change between segments
+  gives each shot its own: the low-cut, alias (high-cut), notch and high-cut filters with their
+  slopes, the gain type and the instrument and initial gain, and the sensor type (hydrophone,
+  vertical, in-line, cross-line) as the trace identification code. A SEG-D recording gives
+  its channel set's filters, its gain control method (fixed, binary or floating gain have a
+  SEG-Y gain type; individual or ganged AGC and programmed gain have none) and the sensor
+  type of its trace header; a SEG-Y recording gives its own fields. A value the recording does
+  not state stays 0. Fractional values are rounded to the whole Hz or dB the field holds, and
+  Messages says so. What has no field is named once ("Not written in the output: second and
+  third notch filters (no field for them in SEG-Y revision 2.1)"); a SEG-D output built from
+  the options has no field for any filter or gain. The receiver's position is written as
+  before, from the recording or the survey. SEG-Y's textual header gets two lines after the
+  writer's own, "SLICED BY viewSEG <version> FROM <recording file name>" and "SHOT LOG <log file
+  name>, <n> SHOTS, RECORDS START AT THE SHOT TIME"; a SEG-D output built from the options holds
+  them in its external header. They name files, never folders; a name too long for a line goes
+  on in the next one, and a character of a name that the text header's character set cannot hold
+  is written as "?" and counted in Messages. A SEG-D output that carries the recording's own
+  headers is not changed by this. The text header chosen for ordinary output is not used by a slice.
 - **What the output keeps of a SEG-D recording's headers.** When the recording is SEG-D and the
   format is SEG-D, the file is written in the recording's own revision (Rev 2.1, say, not
   Rev 3) and its headers are the recording's: the general and extended headers, the channel sets
