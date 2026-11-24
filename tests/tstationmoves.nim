@@ -8,7 +8,9 @@
 ## before the trace (the `<=` in `movedPosition` written as `<`), "at the
 ## fromTime the move applies" (the trace at 1000 kept its old position); with
 ## `stationMoves` left out of `projectDocument`, "the project document writes
-## the moves" (the written document had no `(stationMoves`).
+## the moves" (the written document had no `(stationMoves`); with `readMove`
+## adding a finite line that `stationKey` turns non-finite and not calling
+## `r.problem`, "and a problem is reported" (problems stayed empty).
 
 import std/[math, options, strutils]
 import parseSEG
@@ -234,6 +236,21 @@ proc main*() =
     doAssert back.stationMoves[0].elev.isNone and back.stationMoves[0].note == "kept"
     doAssert back.later.len == 0, "a field inside a move is not a later version's part"
     doAssert problems.len > 0
+
+  block key_not_storable:
+    let text = """(.nif27)
+(project (version 1) (name "Land")
+ (stationMoves
+  (move (line 1e308) (point 2.0) (x 3.0) (y 4.0))
+  (move (line 2.0) (point 1e308) (x 5.0) (y 6.0))
+  (move (line 1.0) (point 2.0) (x 3.0) (y 4.0))))
+"""
+    var problems: seq[string]
+    let back = readProject(text, "project.nif", problems)
+    doAssert back.stationMoves.len == 1, "a line or point stationKey cannot store is left out"
+    doAssert back.stationMoves[0].station == stationKey(1.0, 2.0, 0)
+    doAssert back.stationMoves[0].x == 3.0 and back.stationMoves[0].y == 4.0
+    doAssert problems.len > 0, "and a problem is reported"
 
   echo "tstationmoves: done"
 

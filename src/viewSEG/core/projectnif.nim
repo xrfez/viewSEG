@@ -365,6 +365,9 @@ proc units(r: var Reading; n: NifNode; u: var JoinUnits) =
     elif k.isTree("surveyFromHeaders"): r.flag(k, u.surveyFromHeaders)
     elif k.isTree("fileFromHeaders"): r.flag(k, u.fileFromHeaders)
 
+func finiteValue(x: float64): bool {.inline.} =
+  x == x and x != Inf and x != -Inf
+
 proc finiteNumber(n: NifNode; x: var float64): bool =
   ## Whether `n` is `(tag v)` with `v` a finite number.
   if n.kids.len != 1: return false
@@ -372,13 +375,14 @@ proc finiteNumber(n: NifNode; x: var float64): bool =
   of nkFloat: x = n.kids[0].floatVal
   of nkInt: x = float64(n.kids[0].intVal)
   else: return false
-  x == x and x != Inf and x != -Inf
+  finiteValue(x)
 
 proc readMove(r: var Reading; n: NifNode; moves: var StationMoves) =
   ## One `(move ...)`. A move without a line, a point, an x or a y, or with a
-  ## `fromTime` or an index that is not usable, is left out. An elevation that
-  ## is not a number is said and left out; the move is kept. A field this
-  ## version does not know is skipped.
+  ## `fromTime` or an index that is not usable, or whose line or point
+  ## `stationKey` cannot store, is left out. An elevation that is not a
+  ## number is said and left out; the move is kept. A field this version
+  ## does not know is skipped.
   var
     line, point, x, y: float64
     index: int16
@@ -427,8 +431,12 @@ proc readMove(r: var Reading; n: NifNode; moves: var StationMoves) =
     r.problem(n, "a station move is left out")
   else:
     if badElev: elev = none(float64)
-    moves.add StationMove(station: StationKey(line: line, point: point, index: index),
-      fromTime: fromTime, x: x, y: y, elev: elev, note: note)
+    let key = stationKey(line, point, index)
+    if not finiteValue(key.line) or not finiteValue(key.point):
+      r.problem(n, "a station's line or point cannot be stored; the move is left out")
+    else:
+      moves.add StationMove(station: StationKey(line: line, point: point, index: index),
+        fromTime: fromTime, x: x, y: y, elev: elev, note: note)
 
 proc readMoves(r: var Reading; n: NifNode; moves: var StationMoves) =
   for c in n.kids:
