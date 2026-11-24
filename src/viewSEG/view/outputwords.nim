@@ -48,8 +48,9 @@ const
   GainTip* = "Display-only gain is not written."
   ProcessingTip* = "The Seismic window's filters. Display-only gain is not written."
   SortTip* = "Write traces in the plot's sort. A SEG-D file is sorted within each record."
-  KeepOwnTip* = "Off: a survey join or a station move is written into the headers. On: the " &
-    "file's own positions are kept."
+  KeepOwnTip* = "Off: a survey join or a station move is written into the headers, " &
+    "including when they are built from the trace keys. On: the file's own positions " &
+    "are written from its header keys. The notes say what was stored."
   MirrorTip* = "On: a file in a sub folder is written in that sub folder. Off: every " &
     "file is written in the destination folder."
   FilterTip* = "Show only the files whose names hold this text. A folder stays when a " &

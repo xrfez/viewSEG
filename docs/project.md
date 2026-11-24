@@ -52,9 +52,11 @@ Land 2026/                  the project folder: this is what is opened
   cannot be restored. A move matches a trace as the join matches a station: the
   same index, else index 0 for any index, else a trace with index 0 takes index 1.
   A document without the tag has none. File > Output writes that position, and a
-  survey join's, into the output headers unless **Keep the file's own positions**
-  is ticked. A file the batch opens itself is not joined or moved, and the result
-  says the batch wrote the file's own positions.
+  survey join's, into the output headers on every path, unless **Keep the file's
+  own positions** is ticked: then the file's own header positions are written.
+  The result counts only traces whose positions were stored. A file the batch
+  opens itself is not joined or moved, and the result says the batch wrote the
+  file's own positions.
 - **`files/`** is the store of what is remembered about files (`core/filememory`), in the
   same documents as `<config>/files/`. While a project is open it is the store's home, so
   every edit made goes there and nothing changes in the program's own store.

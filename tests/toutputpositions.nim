@@ -2,18 +2,23 @@
 ## headers, and says so. The option off keeps the source headers and says the
 ## session's positions were not written. Nothing joined or moved stays the
 ## template writer, byte for byte, for SEG-Y and SEG-D. A value with no slot
-## is counted in the result lines.
+## is counted in the result lines, and the sentence is what was stored, after
+## the writer closed. The keys path (another format, or a dropped trace) honours
+## the same tick: off writes the session's positions and says so; on writes the
+## file's own header positions and says which source.
 ##
 ## Seen to fail: the like path copied the source headers, so a joined receiver
 ## stayed at 1 (`rcvX` 1, not the survey easting) and the result had no
-## "traces changed" line.
+## "traces changed" line. The keys path wrote the session's 500000 with the
+## tick on and no line saying so. A Rev 2.1 file with no coordinate slot said
+## "1 traces changed" while the bytes matched a write that stored nothing.
 ##
 ## Synthetic files only, from the join fixtures' survey.
 
 import std/[math, options, os, strutils, tempfiles]
 import parseSEG
 import parseSEG/model/traceindex
-import viewSEG/core/[edits, jobs, outputjobs, stationmoves]
+import viewSEG/core/[edits, jobs, outputjobs, sigtypes, stationmoves]
 import utils/[fixtures, waiting]
 
 func near(a, b: float64; tol = 0.05): bool =
@@ -22,12 +27,13 @@ func near(a, b: float64; tol = 0.05): bool =
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
-proc runWrite(file: var SeismicFile; source, dest: string; opts: OutputOptions):
+proc runWrite(file: var SeismicFile; source, dest: string; opts: OutputOptions;
+    edits = FileEdits(); signature = SignatureFacts()):
     tuple[st: JobState; wrote: OutputResult; error: string] =
   let jobs = initJobs()
   let sink = OutputSink()
   let id = jobs.submit(outputSpec(source, dest),
-    outputWork(addr file, source, dest, opts, FileEdits(), @[source], sink))
+    outputWork(addr file, source, dest, opts, edits, @[source], sink, signature))
   doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
     "the write did not finish: " & $jobs.state(id)
   let info = jobs.info(id).get
@@ -86,6 +92,69 @@ proc tinySegd(dir: string): string =
   doAssert log.len == 0, $log
 
 func holds(line, text: string): bool = line.find(text) >= 0
+
+func says(lines: seq[string]; text: string): bool =
+  for line in lines:
+    if holds(line, text): return true
+
+proc segdAt(dir, name: string; x: float64; traces: int): string =
+  ## SEG-D Rev 3 traces whose headers hold receiver X `x`.
+  result = dir / name
+  var w = openSeismicWriter(result, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: 4))
+  var buf = @[1.0'f32, 2, 3, 4]
+  for i in 0 ..< traces:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.time, k.rcvX, k.rcvY, k.srcX, k.srcY) =
+      (1.0, float64(i + 1), 1_700_000_000.0, x, 2.0, 3.0, 4.0)
+    (k.t0Ms, k.intervalUs, k.status) = (0.0, 2000.0, tsLive)
+    w.writeTrace(k, buf, channelType = sctSeismic)
+  let log = w.close()
+  doAssert log.len == 0, $log
+
+proc markReceiver(f: var SeismicFile; x: float64) =
+  ## Puts receiver X `x` on every trace and marks it as a join, so the writer
+  ## treats it as a session position. A missing Y is filled too: both
+  ## coordinates have to be known before a writer tries to store them.
+  for t in 0 ..< f.len:
+    f.mindex.keys[t].rcvX = x
+    if f.mindex.keys[t].rcvY.isNaN: f.mindex.keys[t].rcvY = 2.0
+    f.mindex.markJoined(t, {jgReceiverXy})
+
+proc rev21(dir: string): string =
+  ## One Rev 2.1 trace, no trace-header extension: no coordinate slot.
+  result = dir / "rev21.sgd"
+  let ns = 4
+  let fmt = sd8058
+  var r = SegdRecord(layout: slRev2, format: some(fmt),
+    revision: SegdRevision(major: 2, minor: 1))
+  r.gh1 = SegdGeneralHeader1(fileNumber: 1, formatCode: ord(fmt), year: 26,
+    additionalGhBlocks: 2, julianDay: 311, hour: 12, minute: 30, second: 5,
+    manufacturerCode: 9, baseScanInterval16: 32, recordType: 8, recordLength: BcdAllF,
+    scanTypesPerRecord: 1, channelSetsPerScanType: 1, skewBlocks: 0,
+    extendedHeaderBlocks: 0, externalHeaderBlocks: 0)
+  r.gh2 = some SegdGeneralHeader2(extFileNumber: 1, revisionMajor: 2, revisionMinor: 1,
+    generalTrailerBlocks: 0, extRecordLength: uint32(2 * ns), blockNumber: 2)
+  r.sourceHeaders = @[SegdGeneralHeaderN(sourceLineNumber: 1, sourcePointNumber: 1,
+    sourcePointIndex: 1, blockNumber: 3, sourceSetNumber: 1)]
+  let seis = SegdChannelSetDescriptor(scanTypeNumber: 1, channelSetNumber: 1,
+    endTime: uint16(ns), channelCount: 1, channelType: 1, gainControl: 3,
+    traceHeaderExtensions: 0, verticalStack: 1, arrayForming: 1)
+  r.scanTypes = @[SegdScanType(layout: slRev2, descriptors: @[seis])]
+  r.traceCount = 1
+  var t = SegdTrace(layout: slRev2, index: 0, numSamples: ns)
+  t.header = SegdTraceHeader(fileNumber: 1, scanTypeNumber: 1, channelSetNumber: 1,
+    traceNumber: 1, traceHeaderExtensions: 0)
+  var vals = newSeq[float64](ns)
+  for i in 0 ..< ns: vals[i] = float64(i + 1)
+  t.samples = newSeq[byte](dataBytes(fmt, ns))
+  encodeSamples(fmt, vals, t.samples)
+  var d = SegdData(records: @[SegdRecordData(record: r, traces: @[t])])
+  var sink = openDiskSink(result)
+  try:
+    let log = writeSegd(sink, d)
+    doAssert log.count(sevError) + log.count(sevFatal) == 0, $log
+  finally:
+    sink.close()
 
 proc hasCount(lines: seq[string]): bool =
   for line in lines:
@@ -187,7 +256,139 @@ proc runCases(fx: Fixtures; outDir: string) =
     doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
     doAssert hasCount(got.wrote.lines),
       "a value with no slot was not counted: " & $got.wrote.lines
+    doAssert says(got.wrote.lines, "where the format has a place for them"),
+      "a partial write still claimed every trace changed: " & $got.wrote.lines
     g.close()
+
+  block droppedNotCounted:
+    var edits: FileEdits
+    doAssert edits.change(teKilled, [0], true) == 1
+    let dest = outDir / "dropped.sgy"
+    var opts = OutputOptions(format: ofSegy, dropKilled: true)
+    let got = runWrite(f, path, dest, opts, edits)
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    doAssert says(got.wrote.lines, "(3 traces changed)"),
+      "a dropped joined trace was counted: " & $got.wrote.lines
+    doAssert says(got.wrote.lines, "where the format has a place for them"),
+      "stations with no slot were claimed stored: " & $got.wrote.lines
+    doAssert not says(got.wrote.lines, "(4 traces changed)"), $got.wrote.lines
+
+  block keysOwn:
+    let src = segdAt(fx.dir, "own-x.sgd", 1.0, 1)
+    var g = openSeismic(src, keys = true)
+    doAssert near(g.traceKeys(0).rcvX, 1), "the file's own X was not 1"
+    markReceiver(g, 500_000)
+    let dest = outDir / "own-x.sgy"
+    var opts = OutputOptions(format: ofSegy)
+    opts.writeSessionPositions = false
+    let got = runWrite(g, src, dest, opts)
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    doAssert says(got.wrote.lines, "file's own positions were written"),
+      "the keys path did not say the file's own positions were written: " & $got.wrote.lines
+    doAssert says(got.wrote.lines, "header keys"),
+      "the result did not say which source: " & $got.wrote.lines
+    var back = openSeismic(dest, keys = true)
+    doAssert near(back.traceKeys(0).rcvX, 1),
+      "the tick on wrote the session X " & $back.traceKeys(0).rcvX
+    back.close()
+    g.close()
+
+  block keysSession:
+    let src = segdAt(fx.dir, "session-x.sgd", 1.0, 2)
+    var g = openSeismic(src, keys = true)
+    markReceiver(g, 500_000)
+    var edits: FileEdits
+    doAssert edits.change(teKilled, [1], true) == 1
+    let dest = outDir / "session-x.sgy"
+    let got = runWrite(g, src, dest, OutputOptions(format: ofSegy, dropKilled: true), edits)
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    doAssert says(got.wrote.lines, "(1 traces changed)"),
+      "the keys path did not say the session positions were written: " & $got.wrote.lines
+    doAssert not says(got.wrote.lines, "(2 traces changed)"), $got.wrote.lines
+    var back = openSeismic(dest, keys = true)
+    doAssert back.len == 1
+    doAssert near(back.traceKeys(0).rcvX, 500_000),
+      "the tick off did not write the session X " & $back.traceKeys(0).rcvX
+    back.close()
+    g.close()
+
+  block noSlotRev21:
+    let src = rev21(fx.dir)
+    var g = openSeismic(src, keys = true)
+    doAssert g.len == 1, "the Rev 2.1 file did not open"
+    markReceiver(g, 500_000)
+    let dest = outDir / "rev21-out.sgd"
+    let twin = outDir / "rev21-like.sgd"
+    let got = runWrite(g, src, dest, OutputOptions(format: ofSegd))
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    likeCopy(g, twin)
+    doAssert readFile(dest) == readFile(twin), "a no-slot write changed the header bytes"
+    doAssert says(got.wrote.lines, "could not be written in this format"),
+      "a no-slot write claimed positions were written: " & $got.wrote.lines
+    doAssert not says(got.wrote.lines, "traces changed"), $got.wrote.lines
+    g.close()
+
+  block tooLarge:
+    let src = fx.dir / "huge.sgy"
+    var w = openSeismicWriter(src, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
+      revision: SegyRevision(major: 1, minor: 0)))
+    var buf = @[1.0'f32, 2, 3, 4]
+    var k = initTraceKeys()
+    (k.record, k.channel, k.rcvX, k.rcvY) = (1.0, 1.0, 10.0, 20.0)
+    (k.t0Ms, k.intervalUs, k.status) = (0.0, 2000.0, tsLive)
+    w.writeTrace(k, buf)
+    doAssert w.close().len == 0
+    var g = openSeismic(src, keys = true)
+    markReceiver(g, 1e16)
+    let dest = outDir / "huge-out.sgy"
+    let got = runWrite(g, src, dest, OutputOptions(format: ofSegy))
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    doAssert says(got.wrote.lines, "could not be written in this format"),
+      "a value too large was counted as written: " & $got.wrote.lines
+    doAssert not says(got.wrote.lines, "traces changed"), $got.wrote.lines
+    var back = openSeismic(dest, keys = true)
+    doAssert near(back.traceKeys(0).rcvX, 10),
+      "a value too large was stored: " & $back.traceKeys(0).rcvX
+    back.close()
+    g.close()
+
+  block signatureKeys:
+    let src = fx.dir / "sig-image.sgy"
+    var w = openSeismicWriter(src, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+    var buf = @[1.0'f32, 2, 3, 4]
+    var k = initTraceKeys()
+    (k.record, k.channel, k.time, k.rcvX, k.rcvY) = (1.0, 1.0, 1_700_000_000.0, 1.0, 2.0)
+    (k.t0Ms, k.intervalUs, k.status) = (0.0, 2000.0, tsLive)
+    w.writeTrace(k, buf)
+    doAssert w.close().len == 0
+    let raw = readFile(src)
+    var bytes = newSeq[byte](raw.len)
+    if raw.len > 0: copyMem(addr bytes[0], unsafeAddr raw[0], raw.len)
+    # A different file at the path, so a second open of the path is not the image.
+    writeFile(src, "not a seismic file")
+    var mem = openSeismicBytes(bytes, src, keys = true)
+    markReceiver(mem, 500_000)
+    let sig = SignatureFacts(kind: sgVib)
+    block noted:
+      let dest = outDir / "sig-session.sgd"
+      var opts = OutputOptions(format: ofSegd, applyReversals: true)
+      let got = runWrite(mem, src, dest, opts, signature = sig)
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      doAssert says(got.wrote.lines, "(1 traces changed)"),
+        "a signature on the keys path stored positions with no note: " & $got.wrote.lines
+    block kept:
+      let dest = outDir / "sig-own.sgd"
+      var opts = OutputOptions(format: ofSegd, applyReversals: true)
+      opts.writeSessionPositions = false
+      let got = runWrite(mem, src, dest, opts, signature = sig)
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      doAssert says(got.wrote.lines, "file's own positions were written"),
+        "a signature kept no note of its own positions: " & $got.wrote.lines
+      var back = openSeismic(dest, keys = true)
+      doAssert near(back.traceKeys(0).rcvX, 1),
+        "the signature wrote the session X " & $back.traceKeys(0).rcvX
+      back.close()
+    mem.close()
 
   f.close()
 

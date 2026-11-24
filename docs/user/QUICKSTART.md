@@ -375,9 +375,11 @@ The right pane is the destination and the write. **Change destination...** picks
 folder to write into. **Format** is SEG-Y or SEG-D. The boxes under it, in two columns,
 are on: polarity reversals, dropping killed traces, each trace's own filter, the Seismic
 window's processing, time shifts, and the plot's sort. **Keep the file's own positions**
-is off: a survey join or a station move in an open file is written into the headers, and
-the notes say how many traces changed. Tick it to keep the file's own positions; the
-notes then say the session's positions were not written. A file the batch opens itself
+is off: a survey join or a station move in an open file is written into the headers on
+every path, including when headers are built from the trace keys. The notes say how many
+traces changed, or that the positions were written where the format has a place for them,
+or that they could not be written. Tick it to write the file's own positions from its
+header keys; the notes say so. A file the batch opens itself
 is not joined or moved, and the notes say the batch wrote the file's own positions.
 Display-only gain is not written.
 A SEG-D file is sorted within each record. A file already open is written as it stands,
@@ -386,9 +388,10 @@ written the same way; one that cannot be decoded is a failed row, and the rest
 are still written. Two signature files whose names differ only by `.dat` and
 `.vib` keep that extension in the output name, so they are not written as one
 file. An open vibrator signature file written as SEG-D, with none of those boxes
-on, keeps its own header block and channel types; with one on, the notes say that
-header block is not carried. Positions a survey join filled into that file's keys
-are not written either, and the notes say so. **Keep the sub folders** is on:
+on, keeps its own header block and channel types; a survey join's positions are
+not in those bytes, and the notes say so. With one of those boxes on, the notes
+say that header block is not carried, and the position tick is the same as for
+any other file. **Keep the sub folders** is on:
 a file in a sub folder is written in that sub folder.
 
 **Run** writes every ticked file. It stays inactive, and says why, when nothing is

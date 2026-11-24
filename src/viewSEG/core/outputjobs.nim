@@ -16,24 +16,30 @@
 ##
 ## With no option on, samples are the source's decoded samples and headers
 ## are the writer's template (`like:`). When a survey join or a station move
-## changed those keys, the template path writes the session's positions into
-## the headers (`writeSessionPositions`, on unless the caller keeps the
-## file's own). SEG-D's template writer keeps each
-## record whole and in input order, so a sort that would cross records, or a
-## killed trace left out, is written from the trace keys instead, and the
-## result says so. Display-only gain is never applied.
+## changed those keys, every path writes the session's positions
+## (`writeSessionPositions`, on unless the caller keeps the file's own).
+## The note is written after the writer closes, and counts only traces that
+## were written: all of them when every position was stored, the ones the
+## format has a place for when some were not, and none when nothing was
+## stored. SEG-D's template writer keeps each record whole and in input
+## order, so a sort that would cross records, or a killed trace left out, is
+## written from the trace keys instead, and the result says so. With the
+## tick on, that path writes the file's own header positions, not the
+## session's. Display-only gain is never applied.
 ##
 ## An open vibrator signature file written as SEG-D, with no option that
 ## changes samples or which traces are written, is written by the library's
 ## SEG-D writer instead: the file is read again through `fs` and the shot
 ## block and channel types are the library's. Positions a survey join filled
 ## into the keys are not in those bytes, and the result says so. Any such
-## option keeps the keys writer, and the note says the signature file's own
-## header block is not carried.
+## option keeps the keys writer. The note says the signature file's own
+## header block is not carried, and the position tick is the same as for any
+## other file.
 
 import std/[math, os, random, strutils, times]
 import parseSEG
-import edits, filesystem, jobs, panels, processing, reader, signatures, sorting
+import parseSEG/model/traceindex
+import edits, filesystem, jobs, panels, processing, reader, signatures, sorting, vendormaps
 
 const
   TraceBlock = 64 ## traces read, then written, between two cancel checks
@@ -44,6 +50,12 @@ const
     ## A survey join filled positions into the keys; the file's own header block is what is written.
   PositionsNotWritten* =
     "The session's positions were not written: the file's own headers were kept."
+  PositionsUnstored* =
+    "Survey and moved positions could not be written in this format."
+    ## Every joined or moved position of a written trace had no slot, or did not fit.
+  OwnPositionsWritten* =
+    "The file's own positions were written from its header keys."
+    ## The keys path, with the tick on: geometry came from the file's own headers.
 
 type
   OutputFormat* = enum
@@ -65,8 +77,8 @@ type
     processing*: Processing ## the plot's filters, when `applyProcessing`
     sortKeys*: seq[SortKey] ## empty: the file's order
     writeSessionPositions*: bool = true
-      ## A survey join or a station move is written into the template headers.
-      ## Off: the file's own positions are kept, and the result says so.
+      ## A survey join or a station move is written into the headers, on every
+      ## path. Off: the file's own positions are written, and the result says so.
 
   OutputResult* = object
     ## What the write did. `ok` false: `reason` is a sentence for the user.
@@ -148,8 +160,13 @@ proc refuseDestination*(dest: string; openPaths: openArray[string]): string =
         extractFilename(open) & ")."
 
 func positionsWritten*(n: int): string =
-  ## The note when the template path wrote the session's positions.
+  ## The note when every joined or moved position of a written trace was stored.
   "Survey and moved positions were written into the headers (" & $n & " traces changed)."
+
+func positionsWherePlace*(n: int): string =
+  ## The note when some of those positions were stored and some were not.
+  "Survey and moved positions were written where the format has a place for them (" &
+    $n & " traces changed)."
 
 func sessionPositions(file: SeismicFile): tuple[any: bool; changed: int] =
   ## Whether the session's keys hold positions that did not come from the
@@ -159,6 +176,154 @@ func sessionPositions(file: SeismicFile): tuple[any: bool; changed: int] =
   for groups in file.index.joinedTraces:
     if groups.card > 0: inc changed
   (file.index.joined or changed > 0, changed)
+
+type
+  WrittenPositions = object
+    n: int
+    sourceXy, receiverXy, sourceZ, receiverZ, derived: int
+    sourceStation, receiverStation: int
+  GapCounts = object
+    n: array[8, int]
+    unnamed: bool
+
+const GapKind = [
+  "source X/Y", "receiver X/Y", "source elevation", "receiver elevation",
+  "midpoint", "offset", "source station", "receiver station"]
+
+func writtenPositions(file: SeismicFile; edits: FileEdits; dropKilled: bool): WrittenPositions =
+  ## Position groups on traces that are written, not on a killed trace left out.
+  if not file.hasKeys: return
+  let marks = file.index.joinedTraces
+  for t in 0 ..< file.len:
+    if dropKilled and edits.has(teKilled, t): continue
+    if t >= marks.len: continue
+    let g = marks[t]
+    var any = false
+    if jgSourceXy in g:
+      inc result.sourceXy
+      any = true
+    if jgReceiverXy in g:
+      inc result.receiverXy
+      any = true
+    if jgSourceZ in g:
+      inc result.sourceZ
+      any = true
+    if jgReceiverZ in g:
+      inc result.receiverZ
+      any = true
+    if jgDerived in g:
+      inc result.derived
+      any = true
+    if jgSourceStation in g:
+      inc result.sourceStation
+      any = true
+    if jgReceiverStation in g:
+      inc result.receiverStation
+      any = true
+    if any: inc result.n
+
+func messageOf(line: string): string =
+  let at = line.find("]:")
+  if at >= 0: line[at + 2 .. ^1].strip()
+  else:
+    let colon = line.find(": ")
+    if colon >= 0: line[colon + 2 .. ^1] else: line
+
+func intAfter(line: string; at: int): int =
+  var i = at
+  while i < line.len and line[i] == ' ': inc i
+  var n = 0
+  var any = false
+  while i < line.len and line[i] in {'0'..'9'}:
+    any = true
+    n = n * 10 + (ord(line[i]) - ord('0'))
+    inc i
+  if any and n > 0: n else: 1
+
+func gapCount(line, msg: string): int =
+  const inMark = "; not written in "
+  let inAt = line.find(inMark)
+  if inAt >= 0: return intAfter(line, inAt + inMark.len)
+  if line.find("not written:") >= 0:
+    const comma = ", in "
+    let at = line.find(comma)
+    if at >= 0: return intAfter(line, at + comma.len)
+  if line.find("do not fit") >= 0: return intAfter(msg, 0)
+  1
+
+func addGap(g: var GapCounts; line: string) =
+  if line.find("; not written") < 0 and line.find("not written:") < 0 and
+      line.find("do not fit") < 0:
+    return
+  let msg = messageOf(line)
+  let n = gapCount(line, msg)
+  let colon = msg.find(": ")
+  if colon > 0 and not msg.startsWith("not written"):
+    let kind = msg[0 ..< colon].strip()
+    for i, name in GapKind:
+      if kind == name:
+        g.n[i] += n
+        return
+  g.unnamed = true
+
+func positionSentence(w: WrittenPositions; gaps: GapCounts): string =
+  ## What to say after close. "" when no written trace carried a position.
+  if w.n == 0: return ""
+  var groups = 0
+  var full = 0
+  template cover(need: int; ok: bool) =
+    if need > 0:
+      inc groups
+      if ok: inc full
+  cover(w.sourceXy, gaps.n[0] >= w.sourceXy)
+  cover(w.receiverXy, gaps.n[1] >= w.receiverXy)
+  cover(w.sourceZ, gaps.n[2] >= w.sourceZ)
+  cover(w.receiverZ, gaps.n[3] >= w.receiverZ)
+  cover(w.derived, gaps.n[4] >= w.derived and gaps.n[5] >= w.derived)
+  cover(w.sourceStation, gaps.n[6] >= w.sourceStation)
+  cover(w.receiverStation, gaps.n[7] >= w.receiverStation)
+  if groups == 0: return ""
+  if full == groups: return PositionsUnstored
+  var anyGap = gaps.unnamed
+  if not anyGap:
+    for c in gaps.n:
+      if c > 0: anyGap = true
+  if anyGap: return positionsWherePlace(w.n)
+  positionsWritten(w.n)
+
+func withOwnGeometry(session, own: TraceKeys): TraceKeys =
+  ## `session` with the position fields of the file's own header keys.
+  result = session
+  result.srcX = own.srcX
+  result.srcY = own.srcY
+  result.srcZ = own.srcZ
+  result.rcvX = own.rcvX
+  result.rcvY = own.rcvY
+  result.rcvZ = own.rcvZ
+  result.offset = own.offset
+  result.cmpX = own.cmpX
+  result.cmpY = own.cmpY
+  result.srcLine = own.srcLine
+  result.srcPoint = own.srcPoint
+  result.srcIndex = own.srcIndex
+  result.rcvLine = own.rcvLine
+  result.rcvPoint = own.rcvPoint
+  result.rcvIndex = own.rcvIndex
+  result.component = own.component
+
+proc openHeaderKeys(file: SeismicFile; source: string): SeismicFile =
+  ## The file's own header keys. A file in memory is copied; its path is not
+  ## opened. A disk file is read through `fs` first.
+  let opts = OpenOptions(vendors: currentVendors())
+  if file.inMemory:
+    let n = file.mappedSize
+    if n < 0 or n > int64(high(int)):
+      raise newException(ValueError, "The file is too large to read its own positions.")
+    var bytes = file.copyBytes(0, int(n))
+    result = openSeismicBytes(bytes, source, keys = false, opts = opts)
+  else:
+    fs.mappedRead(source)
+    result = openSeismic(source, keys = false, opts = opts)
 
 proc kindOf(format: OutputFormat): SeismicKind =
   if format == ofSegy: skSegy else: skSegd
@@ -259,6 +424,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
   var claimed = false
   var part = ""
   var lines: seq[string] = @[]
+  var headerKeys: SeismicFile
+  var openedHeader = false
   try:
     {.cast(gcsafe).}:
       var opens = openPaths
@@ -386,13 +553,12 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       if signature.isSignature and segdOut and changesTraces(opts):
         lines.add HeaderNotCarried
       let positions = sessionPositions(file[])
-      let carryPositions = like and opts.writeSessionPositions and
-        not signature.isSignature and positions.any
-      if carryPositions:
-        lines.add positionsWritten(positions.changed)
-      elif like and not opts.writeSessionPositions and not signature.isSignature and
-          positions.any:
+      let carryPositions = like and opts.writeSessionPositions and positions.any
+      if like and not opts.writeSessionPositions and positions.any:
         lines.add PositionsNotWritten
+      if not like and not opts.writeSessionPositions and positions.any:
+        headerKeys = openHeaderKeys(file[], source)
+        openedHeader = true
       var samples = newSeq[float32]()
       let dtMs = file[].sampleIntervalUs(0) / 1000.0
       block writing:
@@ -438,7 +604,11 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             else:
               w.writeTrace(file[], t, samples)
           else:
-            let keys = file[].traceKeys(t)
+            var keys = file[].traceKeys(t)
+            if openedHeader:
+              var own: array[1, TraceKeys]
+              headerKeys.traceKeysInto([t], own)
+              keys = withOwnGeometry(keys, own[0])
             let channel = if keys.status == tsAuxiliary: sctOther else: sctSeismic
             w.writeTrace(keys, samples, channelType = channel)
           inc written
@@ -480,6 +650,13 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           if batch.len > 0: flush(batch)
         if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
         let log = w.close()
+        if openedHeader:
+          lines.add OwnPositionsWritten
+        elif opts.writeSessionPositions and positions.any:
+          var gaps: GapCounts
+          for d in log: addGap(gaps, $d)
+          let sentence = positionSentence(writtenPositions(file[], edits, opts.dropKilled), gaps)
+          if sentence.len > 0: lines.add sentence
         for d in log: lines.add($d)
         if not fs.moveNoReplace(part, dest):
           let kept = "The file appeared while writing; the output is kept as " & part & "."
@@ -500,6 +677,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
     if sink != nil and sink.result.reason.len == 0:
       abort(sink, dest, part, claimed, e.msg, false)
     raise
+  finally:
+    if openedHeader: headerKeys.close()
 
 proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOptions;
     edits: FileEdits; openPaths: seq[string]; sink: OutputSink;
