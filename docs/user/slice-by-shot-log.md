@@ -145,7 +145,11 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
   trigger time in a vendor block, when a vendor header map names them (`firstSampleTime` and
   `triggerTime`, in "us GPS" or "us UTC"), and the source line and point where the revision
   has a place for them (Rev 2: the source header; its coordinates have none). Messages says
-  what was rewritten, in how many traces, and what has no place. A record begins at the
+  what was rewritten, in how many traces, and what has no place. The trigger time becomes the
+  time of the slice's first sample, like the start time: if the recording's trigger was some
+  time before or after its first sample, that gap is not kept. A trigger field the map gives
+  no unit is set only when, in the recording, it held the same value as the start time in the
+  same form; otherwise it keeps the recording's value, and Messages counts those traces. A record begins at the
   shot's time, so its time is the first sample's; a Rev 2 record holds whole seconds only, so
   its reader shows the second the first sample falls in, and the vendor start time carries the
   exact instant. A trace no segment reaches is written as zeros and marked dead. Survey

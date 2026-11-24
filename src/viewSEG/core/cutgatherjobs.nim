@@ -74,7 +74,7 @@ type
     startRewritten*: int ## carried traces whose vendor start time was set to the slice's
     startMissing*: int ## carried traces with no vendor start time to set
     triggerRewritten*: int ## carried traces whose vendor trigger time was set to the slice's
-    triggerLeft*: int ## traces whose trigger time (declared by a map) was left as carried
+    triggerLeft*: int ## carried traces with a vendor trigger time that was left as carried
     fallbackWhy*: string
       ## a SEG-D source cut into SEG-D whose headers were built from the options: why
     carryNotes*: seq[string] ## what a carried output keeps or has no place for, as sentences
@@ -257,7 +257,7 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
     if res.triggerLeft > 0:
       result.add plural(res.triggerLeft, "trace keeps", "traces keep") &
         " the trigger time of the recording: its field is in a unit this program does not " &
-        "convert, or does not apply to the trace."
+        "convert, or has no unit and did not hold the start time's value."
     for n in res.carryNotes: result.add n
     if res.sourceXyDropped:
       result.add "A SEG-D Rev 2 record has no place for the source's coordinates; they are " &

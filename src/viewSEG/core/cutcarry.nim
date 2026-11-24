@@ -25,8 +25,13 @@ const TriggerTimeField* = "triggerTime"
   ## begin. Both state it, so a trace carried with either unchanged would contradict the
   ## sliced data: the start time is the instant of the slice's first sample, and the
   ## trigger time, the instant the recorder was triggered for the data the trace holds, is
-  ## that same instant for a slice, whose data begin at its first sample. Only these two
-  ## are rewritten; any other time field of a vendor block stays as carried.
+  ## that same instant for a slice, whose data begin at its first sample. A trigger that
+  ## lay before or after the first sample in the recording does not keep that offset: it
+  ## becomes the first sample's instant too. A trigger field in "us GPS" or "us UTC" is
+  ## written in its own unit; one with no unit takes the start time's new value when, in
+  ## the segment carried, it held the same value as the start time in the same encoding;
+  ## else it stays as carried, and is counted. Only these two are rewritten; any other time
+  ## field of a vendor block stays as carried.
 
 type
   CarryRows* = object
@@ -177,11 +182,34 @@ func revisionWords*(file: SeismicFile; plan: SlicePlan): string =
 proc isRev3*(file: SeismicFile; trace: int): bool =
   file.index.segdRecords[int(file.traceEntry(trace).record)].layout == slRev3
 
-proc fieldUnit(file: SeismicFile; trace: int; reg: VendorRegistry; name: string): string =
-  ## The unit the vendor map gives field `name` of `trace`, "" when the trace shows none.
-  for b in vendorTrace(file, trace, reg).blocks:
+type FoundField = tuple[map, target: string; field: VendorFieldFact]
+
+func findField(shown: VendorShown; name: string): Option[FoundField] =
+  ## The first decoded field called `name`, with the map and target that decoded it (the
+  ## writer's vendor override also takes the first block that has the field).
+  for b in shown.blocks:
     for f in b.fields:
-      if f.name == name: return f.unit
+      if f.name == name: return some((b.map, b.name, f))
+
+func fieldPlan(reg: VendorRegistry; found: FoundField): Option[VendorFieldPlan] =
+  ## How the map that decoded `found` lays the field out.
+  for m in reg.maps:
+    if m.name == found.map:
+      for t in m.targets:
+        if t.name == found.target:
+          for p in t.fields:
+            if p.name == found.field.name: return some(p)
+
+func sameEncoding(reg: VendorRegistry; a, b: FoundField): bool =
+  ## Whether two decoded fields store a value in the same bytes: the same encoding, width,
+  ## byte order and scale, so equal shown values are equal raw values, and one value
+  ## written to both gives both the same bytes.
+  let (x, y) = (fieldPlan(reg, a), fieldPlan(reg, b))
+  if x.isSome and y.isSome:
+    let (p, q) = (x.get, y.get)
+    result = p.enc == q.enc and p.len == q.len and p.nibbles == q.nibbles and
+      p.lowNibble == q.lowNibble and p.order == q.order and p.scaled == q.scaled and
+      p.scale == q.scale and p.offset == q.offset
 
 func declares*(reg: VendorRegistry; name: string): bool =
   ## Whether a map of `reg` has a field called `name`.
@@ -261,22 +289,33 @@ proc traceOverrides*(file: SeismicFile; trace, ordinal: int; firstUs: int64;
   ## its channel set, the instant of its first sample in a Rev 3 timestamp
   ## block (`firstUs`, UTC microseconds), and, when `startField`, the start time of
   ## the vendor block in the unit and epoch the map gives it (`counts` says how many
-  ## were set and how many traces had none); `dead` marks the trace dead.
+  ## were set and how many traces had none), the trigger time of the vendor block as
+  ## `TriggerTimeField` says; `dead` marks the trace dead.
   result.add headerOverride("trace.traceNumber", ordinal)
   # A trace no segment reaches is zeros: the trace edit code 1 is how the keys path marks
   # a dead trace (`tsDead`). A trace partly covered stays as the source has it.
   if dead: result.add headerOverride("trace.traceEdit", 1)
   if TimestampBlock in extensionTypes(file, trace):
     result.add headerOverride("timestamp.timeZeroOfData", utcUsToGpsUs(firstUs))
-  if startField:
-    let value = instantIn(file.fieldUnit(trace, reg, FirstSampleTimeField), firstUs)
-    if value > 0:
-      result.add headerOverride("vendor." & FirstSampleTimeField, value)
-      inc counts.rewritten
-    else: inc counts.missing
-  if reg.declares(TriggerTimeField):
-    let value = instantIn(file.fieldUnit(trace, reg, TriggerTimeField), firstUs)
-    if value > 0:
-      result.add headerOverride("vendor." & TriggerTimeField, value)
-      inc counts.trigger
-    else: inc counts.triggerLeft
+  if startField or reg.declares(TriggerTimeField):
+    let shown = vendorTrace(file, trace, reg)
+    let start = shown.findField(FirstSampleTimeField)
+    var startValue = 0'i64
+    if startField:
+      if start.isSome: startValue = instantIn(start.get.field.unit, firstUs)
+      if startValue > 0:
+        result.add headerOverride("vendor." & FirstSampleTimeField, startValue)
+        inc counts.rewritten
+      else: inc counts.missing
+    # only a trace whose own blocks have the trigger field counts it
+    let trigger = shown.findField(TriggerTimeField)
+    if trigger.isSome:
+      var value = instantIn(trigger.get.field.unit, firstUs)
+      if value <= 0 and trigger.get.field.unit.len == 0 and startValue > 0 and
+          trigger.get.field.value == start.get.field.value and
+          reg.sameEncoding(start.get, trigger.get):
+        value = startValue
+      if value > 0:
+        result.add headerOverride("vendor." & TriggerTimeField, value)
+        inc counts.trigger
+      else: inc counts.triggerLeft

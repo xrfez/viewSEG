@@ -53,10 +53,11 @@ func value(comp, k: int): float32 =
   float32(1000 * comp + k)
 
 proc makeRecording(path: string; comps: int; fmt = sd8058;
-    missing: seq[(int, int)] = @[]; split = 0) =
+    missing: seq[(int, int)] = @[]; split = 0; trigger = false) =
   ## Rev 2.1, one record (two with `split`: the segments from it on are the second): an
   ## extended header, a source header, one channel set with filter and gain fields set, a
   ## trace per segment and component (segment by segment), each with two vendor blocks.
+  ## With `trigger`, bytes 9-16 of the second vendor block repeat the first's start time.
   var r = SegdRecord(layout: slRev2, format: some(fmt),
     revision: SegdRevision(major: 2, minor: 1))
   r.gh1 = SegdGeneralHeader1(fileNumber: 5, formatCode: ord(fmt), year: 26,
@@ -92,6 +93,8 @@ proc makeRecording(path: string; comps: int; fmt = sd8058;
     for i in 0 ..< 64: t.extensions[i] = byte(31 * list.len + 3 * i + 1)
     let start = gpsOf(sampleUs(seg * SegLen))
     for i in 0 .. 7: t.extensions[i] = byte((start shr (8 * (7 - i))) and 255)
+    if trigger:
+      for i in 0 .. 7: t.extensions[40 + i] = t.extensions[i]
     var v = newSeq[float64](SegLen)
     for j in 0 ..< SegLen: v[j] = float64(value(c, seg * SegLen + j))
     t.samples = newSeq[byte](dataBytes(fmt, SegLen))
@@ -447,15 +450,19 @@ const
     "(where traceHeader) (name vendorClock)\n    (field firstSampleTime (at 1) (enc i64) " &
     "(sentinel 0) (unit \"us GPS\"))))\n"
 
-func rev2Map(trigger: string): string =
-  ## The Rev 2 map with a `triggerTime` field in the second block, in unit `trigger`.
-  result = "(.nif27)\n(vendormap \"carry-test\" (version 1) (match (format segd) " &
-    "(rev 2.0 2.1) (manufacturer 77))\n  (target (kind traceExt) (extension 2) " &
+func rev2Map(trigger: string; enc = "i64"; maker = 77): string =
+  ## The Rev 2 map of manufacturer `maker` with a `triggerTime` field (encoding `enc`) in
+  ## the second block, in unit `trigger` ("none": a field without a unit; "": no field).
+  result = "(.nif27)\n(vendormap \"carry-test" & $maker & "\" (version 1) (match (format segd) " &
+    "(rev 2.0 2.1) (manufacturer " & $maker & "))\n  (target (kind traceExt) (extension 2) " &
     "(name vendorClock)\n    (field firstSampleTime (at 1) (enc i64) (sentinel 0) " &
     "(unit \"us GPS\")))\n  (target (kind traceExt) (extension 3) (name vendorTag)\n" &
     "    (field tag (at 1) (enc u16))"
-  if trigger.len > 0:
-    result.add "\n    (field triggerTime (at 9) (enc i64) (sentinel 0) (unit \"" & trigger & "\"))"
+  if trigger == "none":
+    result.add "\n    (field triggerTime (at 9) (enc " & enc & ") (sentinel 0))"
+  elif trigger.len > 0:
+    result.add "\n    (field triggerTime (at 9) (enc " & enc & ") (sentinel 0) (unit \"" & trigger &
+      "\"))"
   result.add "))\n"
 
 proc publishMaps(dir: string; texts: openArray[string]): VendorRegistry =
@@ -652,6 +659,63 @@ proc checkTrigger(dir: string; jobs: Jobs) =
       doAssert got.res.triggerRewritten == 0 and got.res.triggerLeft == 3 and
         "3 traces keep the trigger time of the recording" in said, said
 
+proc checkTriggerNoUnit(dir: string; jobs: Jobs) =
+  ## A trigger field with no unit (a shipped map has one): in a recording whose trigger is
+  ## its start time, in the same encoding, it takes the start's new value and is counted
+  ## as rewritten; a trigger that differs from the start, or one in another encoding, is
+  ## left and counted, with the sentence. Seen failing with the trigger left whatever it
+  ## held ("same: trigger time of trace 0 is -20000 us off the first sample").
+  base = BaseUs
+  let same = dir / "rec" / "trig-same.sgd"
+  let differs = dir / "rec" / "trig-differs.sgd"
+  makeRecording(same, 1, trigger = true)
+  makeRecording(differs, 1)
+  for (name, path, enc) in [("same", same, "i64"), ("differs", differs, "i64"),
+      ("encoding", same, "u64")]:
+    discard publishMaps(dir, [rev2Map("none", enc)])
+    var src = openSeismic(path, keys = true)
+    defer: src.close()
+    let dest = dir / "out" / ("trig-" & name & ".sgd")
+    let got = runCut(jobs, src, path, dest, shotsOf(true), initCutOptions(LengthMs, StartMs))
+    doAssert got.st == jsDone and got.res.carried, got.error & got.res.reason
+    var g = openSeismic(dest, keys = true)
+    defer: g.close()
+    let said = got.res.lines.join("|")
+    for s in 0 ..< 3:
+      let firstUs = shotUs(s) + int64(StartMs * 1000)
+      let a = g.headerBytes(s)
+      let b = src.headerBytes(FirstSamples[s] div SegLen)
+      doAssert a.get64(52) == gpsOf(firstUs), name & ": start of trace " & $s
+      if name == "same":
+        doAssert a.get64(52 + 32 + 8) == gpsOf(firstUs), name & ": trigger time of trace " & $s &
+          " is " & $(a.get64(52 + 32 + 8) - gpsOf(firstUs)) & " us off the first sample"
+      else:
+        doAssert a.get64(52 + 32 + 8) == b.get64(52 + 32 + 8),
+          name & ": trigger time of trace " & $s & " changed"
+    if name == "same":
+      doAssert got.res.triggerRewritten == 3 and got.res.triggerLeft == 0 and
+        "its trigger time in 3 traces" in said, said
+    else:
+      doAssert got.res.triggerRewritten == 0 and got.res.triggerLeft == 3 and
+        "3 traces keep the trigger time of the recording" in said, name & ": " & said
+
+proc checkTriggerOtherMap(dir: string; jobs: Jobs) =
+  ## A recording whose own map has no trigger field, with another manufacturer's map that
+  ## has one loaded too: no trace is counted and nothing is said of a trigger. Seen failing
+  ## with the count taken from every map loaded ("3 traces keep the trigger time").
+  base = BaseUs
+  discard publishMaps(dir, [rev2Map(""), rev2Map("ms of day", maker = 78)])
+  let path = dir / "rec" / "trig-own.sgd"
+  makeRecording(path, 1)
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  let got = runCut(jobs, src, path, dir / "out" / "trig-own.sgd", shotsOf(true),
+    initCutOptions(LengthMs, StartMs))
+  doAssert got.st == jsDone and got.res.carried, got.error & got.res.reason
+  let said = got.res.lines.join("|")
+  doAssert got.res.startRewritten == 3 and got.res.triggerRewritten == 0 and
+    got.res.triggerLeft == 0 and "trigger" notin said, said
+
 proc checkFallback(dir: string; jobs: Jobs) =
   ## A recording of two records cannot be carried (a subset is made of one record's traces):
   ## the headers are built from the options, and the result says why. Fails with the line
@@ -726,6 +790,8 @@ proc main*() =
   checkNoSourcePlace(dir, jobs)
   checkSourcePlace(dir, jobs)
   checkTrigger(dir, jobs)
+  checkTriggerNoUnit(dir, jobs)
+  checkTriggerOtherMap(dir, jobs)
   checkOrder(dir, jobs)
   checkFallback(dir, jobs)
   publishVendors(load.registry)
