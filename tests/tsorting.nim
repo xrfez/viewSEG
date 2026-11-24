@@ -112,6 +112,31 @@ proc main*() =
     doAssert describe([key(hfOffset, true)]) == "offset (descending)"
     doAssert describe([]) == "the file's order"
 
+  block componentsOrderByKind:
+    # vertical, inline (X), crossline (Y), hydrophone, any other by its code,
+    # no component last; SEG-D by sensor type, SEG-Y by identification code.
+    # Components of one kind order by code, so By Component still groups; equal
+    # components keep the file's order.
+    func segd(sensor, comp: uint8): TraceKeys =
+      result = initTraceKeys()
+      (result.sensorType, result.component) = (sensor, comp)
+    func segy(code: int16): TraceKeys =
+      result = initTraceKeys()
+      (result.traceCode, result.component, result.status) = (code, uint8(code), tsLive)
+    proc order(keys: seq[TraceKeys]; descending = false): seq[int] =
+      let rows = rowsOf(keys, newSeq[int](keys.len))
+      doAssert sortRowsInto(rows, [key(hfComponent, descending)], result)
+    # SEG-D: H, Z, X, Y in the file; a component of no named sensor (9, 4), the
+    # group indices 6 and 5 of two vertical sensors, and one without a component
+    let d = @[segd(1, 1), segd(2, 2), segd(3, 3), segd(4, 4), segd(0, 9), segd(0, 4),
+      segd(2, 6), segd(2, 5), segd(0, 0)]
+    doAssert d.order == @[1, 7, 6, 2, 3, 0, 5, 4, 8], $d.order # Z Z Z X Y H, 4, 9, none
+    doAssert d.order(true) == @[4, 5, 0, 3, 2, 6, 7, 1, 8], $d.order(true) # none stays last
+    # SEG-Y: 11 hydrophone, 12 vertical, 13 crossline, 14 inline, 15 vertical (geophone Z)
+    let y = @[segy(11), segy(12), segy(13), segy(14), segy(15)]
+    doAssert y.order == @[1, 4, 3, 2, 0], $y.order # Z, Z, X, Y, H
+    doAssert y.order(true) == @[0, 2, 3, 4, 1], $y.order(true)
+
   block unknownTimeLast:
     var keys: seq[TraceKeys]
     for t in [30.0, NaN, 10.0, NaN, 20.0]:

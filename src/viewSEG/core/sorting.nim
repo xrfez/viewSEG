@@ -7,7 +7,9 @@
 ## parseSEG's `sortOrder` does the sorting: stable, so traces with equal keys
 ## keep the order they had (the file's order, after the trace filter), with
 ## unknown values (NaN) after every number whichever the direction. The
-## start time is the keys' unless `startOf` gives a recorder's own.
+## component orders by kind (vertical, inline, crossline, hydrophone, then
+## the others by code), not by its code; the start time is the keys' unless
+## `startOf` gives a recorder's own.
 ##
 ## The keys are taken one at a time, the last first, each a stable sort of
 ## the order the keys after it gave: memory stays at one column of the
@@ -16,7 +18,7 @@
 ## (`stop`), so a newer request never waits for a large sort to finish.
 
 import parseSEG
-import panels
+import components, panels
 
 const StopEvery* = 65_536 ## traces read between two calls of `stop`
 
@@ -31,6 +33,11 @@ type SetNumberProc* = proc (trace: int): int {.gcsafe, raises: [].}
 type StartProc* = proc (trace: int): float64 {.gcsafe, raises: [].}
   ## The start time of a trace in UTC microseconds, as a recorder's own header
   ## gives it (`core/segmentclock`); NaN for none.
+
+func sortValue*(k: TraceKeys; field: HeaderField; trace: int; channelSet = 0): float64 =
+  ## What a sort by `field` compares: `value`, except for the component, which
+  ## orders by kind (`componentSortRank`).
+  if field == hfComponent: componentSortRank(k) else: k.value(field, trace, channelSet)
 
 proc sortRowsInto*(rows: TraceRows; order: openArray[SortKey]; dst: var seq[int];
     stop: StopProc = nil; setNumber: SetNumberProc = nil; startOf: StartProc = nil): bool =
@@ -59,7 +66,7 @@ proc sortRowsInto*(rows: TraceRows; order: openArray[SortKey]; dst: var seq[int]
         let v =
           if key.field == hfStartTime and startOf != nil: startOf(trace)
           else:
-            rows.keysAt(row).value(key.field, trace,
+            rows.keysAt(row).sortValue(key.field, trace,
               if setNumber != nil: setNumber(trace) else: rows.channelSetIndex(row) + 1)
         cols[0][m] = if key.descending: -v else: v # NaN stays last either way
       i = last

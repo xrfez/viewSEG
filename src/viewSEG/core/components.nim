@@ -167,6 +167,25 @@ func identityOf(sensor, code: uint8): tuple[kind: ComponentKind, words: string] 
   elif kindOf(code) != ckOther and code in 11'u8 .. 17'u8: (kindOf(code), nameOf(code))
   else: (ckOther, "")
 
+func componentSortRank*(k: TraceKeys): float64 =
+  ## What a sort by component compares: the kind first, vertical, inline,
+  ## crossline, hydrophone, then any other component by its code; within a kind
+  ## by code too, so a record whose components all name one sensor (group
+  ## indices 1, 2, 3 of vertical geophones) still groups by component. NaN
+  ## (last) when the keys have no component. Equal components rank equal, so a
+  ## stable sort keeps their file order.
+  let code = componentOf(k)
+  if code == 0: return NaN
+  let id = identityOf(k.sensorType, code)
+  let kind =
+    case id.kind
+    of ckVertical: 0
+    of ckInline: 1
+    of ckCrossline: 2
+    of ckHydrophone: 3
+    of ckOther: 4
+  float64(kind * 256 + int(code))
+
 const numberedSlots = [2, 3, 4, 1]
   ## Colour slots for components that share a sensor, or have none: green,
   ## yellow, teal, blue. Further ones keep the normal ink.
