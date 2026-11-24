@@ -14,11 +14,11 @@
 ## (`byStation`) and a receiver gather its times (`byTime`).
 ## A shot gather is usually sorted by station only inside each record: the station restarts
 ## at every record, so only the time holds for the whole file. When the station does not hold
-## for the file, the shot gather is judged record by record (the traces whose start is within
-## a sample of the record's first): every component's stations non-decreasing inside every
+## for the file, the shot gather is judged record by record (by the record number the file
+## gives each trace; a file without one, or with one record, is not judged so): every component's stations non-decreasing inside every
 ## record, rising in at least one, and the components laid out alike in each record.
 
-import std/math
+import std/[math, sets]
 
 type
   TraceGrouping* = enum
@@ -35,9 +35,11 @@ type
   TraceOrder* = object
     grouping*: TraceGrouping
     subSort*: TraceSubSort
-    inRecords*: bool
+    sortInRecords*: bool
       ## a shot gather whose stations are in order only inside each record (the station
-      ## restarts at every record): the grouping and the sub-sort hold per record
+      ## restarts at every record): the sub-sort holds per record
+    groupInRecords*: bool
+      ## the same for the grouping: the components lie so inside each record
 
   StationPlace* = tuple[how: int8; a, b: float64; index: int16]
     ## a receiver point as the file names it: by its station (`how` 0: `a` the line, `b` the
@@ -48,6 +50,10 @@ type
     component*: uint8
     place*: StationPlace
     start*: float64 ## UTC POSIX seconds of its first sample
+    record*: int64  ## the file's own record (field record, SEG-D file number); `NoRecord`
+                    ## when the headers do not say
+
+const NoRecord* = -1'i64 ## `OrderTrace.record` of a trace whose record is not told
 
 func isKnown*(o: TraceOrder): bool =
   ## Whether the order of the traces could be told.
@@ -120,13 +126,10 @@ func uncodedGroups(traces: openArray[OrderTrace]; dtS: float64): bool =
       let d = traces[i].start - traces[i - 1].start
       if (if dtS > 0: int(round(d / dtS)) == 0 else: d == 0): return true
 
-func recordEnd(traces: openArray[OrderTrace]; a: int; dtS: float64): int =
-  ## The index after the record that starts at `a`: the traces whose start is within a sample
-  ## of the first one's (exactly equal when the sample interval is not known).
+func recordEnd(traces: openArray[OrderTrace]; a: int): int =
+  ## The index after the record that starts at `a`: the run of traces of one record number.
   result = a + 1
-  while result < traces.len and
-      abs(traces[result].start - traces[a].start) <= (if dtS > 0: dtS else: 0.0):
-    inc result
+  while result < traces.len and traces[result].record == traces[a].record: inc result
 
 func stationInRecords(traces: openArray[OrderTrace]; dtS: float64; count: int;
     grouping: var TraceGrouping): bool =
@@ -136,9 +139,14 @@ func stationInRecords(traces: openArray[OrderTrace]; dtS: float64; count: int;
   ## `tgNotKnown` when the records differ or lie in neither way.
   var rose = false
   var allBlocks, allFlags = true
+  var seen = initHashSet[int64]()
   var a = 0
+  for t in traces:
+    if t.record == NoRecord: return false
   while a < traces.len:
-    let b = recordEnd(traces, a, dtS)
+    let b = recordEnd(traces, a)
+    if traces[a].record in seen: return false # a record in two separate runs
+    seen.incl traces[a].record
     case keyState(traces.toOpenArray(a, b - 1), dtS, false)
     of -1: return false
     of 1: rose = true
@@ -152,7 +160,7 @@ func stationInRecords(traces: openArray[OrderTrace]; dtS: float64; count: int;
     elif allBlocks: tgByComponent
     elif allFlags: tgByFlag
     else: tgNotKnown
-  result = rose
+  result = rose and seen.len > 1
 
 func traceOrder*(traces: openArray[OrderTrace]; dtS: float64; shot: bool): TraceOrder =
   ## The order of `traces` (live traces, in file order), times compared in samples of `dtS`
@@ -185,4 +193,5 @@ func traceOrder*(traces: openArray[OrderTrace]; dtS: float64; shot: bool): Trace
       if stationInRecords(traces, dtS, count, g):
         if uncoded: g = tgNotKnown
         if g != tgNotKnown or uncoded:
-          return TraceOrder(grouping: g, subSort: key, inRecords: true)
+          return TraceOrder(grouping: g, subSort: key, sortInRecords: true,
+            groupInRecords: true)

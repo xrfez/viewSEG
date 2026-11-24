@@ -149,6 +149,13 @@ proc main*() =
     doAssert auto.applied(TreatAs(grouping: some tgByFlag)).order ==
       TraceOrder(grouping: tgByFlag, subSort: tsByStation)
     doAssert not auto.applied(TreatAs()).forced
+    # a part forced leaves the other part's "inside each record" as it was
+    let inRec = TraceOrder(grouping: tgByFlag, subSort: tsByStation, sortInRecords: true,
+      groupInRecords: true)
+    doAssert applied(inRec, TreatAs(grouping: some tgByComponent)) == TraceOrder(
+      grouping: tgByComponent, subSort: tsByStation, sortInRecords: true)
+    doAssert applied(inRec, TreatAs(subSort: some tsByTime)) == TraceOrder(
+      grouping: tgByFlag, subSort: tsByTime, groupInRecords: true)
 
   withFixtures fx:
     let config = fx.dir / "config"

@@ -151,9 +151,10 @@ proc main*() =
       byStation = TraceOrder(grouping: tgNone, subSort: tsByStation)
       flagStation = TraceOrder(grouping: tgByFlag, subSort: tsByStation)
       notKnown = TraceOrder(grouping: tgNotKnown, subSort: tsNotKnown)
-      stationInRecords = TraceOrder(grouping: tgNone, subSort: tsByStation, inRecords: true)
+      stationInRecords = TraceOrder(grouping: tgNone, subSort: tsByStation, sortInRecords: true,
+        groupInRecords: true)
       flagStationInRecords = TraceOrder(grouping: tgByFlag, subSort: tsByStation,
-        inRecords: true)
+        sortInRecords: true, groupInRecords: true)
       wants: seq[Want] = @[
         ("land/shots.sgd", poKnown, rkShotGather, stationInRecords),
         ("land/shots.sgy", poKnown, rkShotGather, stationInRecords),

@@ -60,18 +60,28 @@ func orderTitle*(o: TraceOrder): string =
   if o.subSort == tsNotKnown: OrderNotKnownWords
   else:
     let sub = if o.subSort == tsByStation: "by station" else: "by time"
-    if o.inRecords:
-      return case o.grouping
-        of tgNone: "Inside each record, traces are sorted by station."
-        of tgNotKnown: "Inside each record, traces are sorted by station." & UncodedWords
-        of tgByFlag: "Traces are grouped by flag (the components of a station together) " &
-          "inside each record, and sorted by station."
-        else: "Inside each record, traces are grouped by component, and inside each " &
-          "component sorted by station."
+    let sIn = o.sortInRecords and o.subSort == tsByStation
+    let gIn = o.groupInRecords
     case o.grouping
-    of tgNone: "Traces are sorted " & sub & "."
-    of tgNotKnown: "Traces are sorted " & sub & "." & UncodedWords
+    of tgNone, tgNotKnown:
+      (if sIn: "Inside each record, traces are sorted by station."
+        else: "Traces are sorted " & sub & ".") & (if o.grouping == tgNotKnown: UncodedWords
+        else: "")
     of tgByFlag:
-      "Traces are grouped by flag (the components of a " &
-        (if o.subSort == tsByStation: "station" else: "time") & " together), sorted " & sub & "."
-    else: "Traces are grouped by component, and inside each component sorted " & sub & "."
+      let head = "Traces are grouped by flag (the components of a " &
+        (if o.subSort == tsByStation: "station" else: "time") & " together)"
+      if gIn and sIn: head & " inside each record, and sorted by station."
+      elif gIn: head & " inside each record, sorted " & sub & "."
+      elif sIn: head & ", sorted by station inside each record."
+      else: head & ", sorted " & sub & "."
+    else:
+      if gIn and sIn:
+        "Inside each record, traces are grouped by component, and inside each component " &
+          "sorted by station."
+      elif gIn:
+        "Traces are grouped by component inside each record, and inside each component " &
+          "sorted " & sub & "."
+      elif sIn:
+        "Traces are grouped by component, and inside each component sorted by station " &
+          "inside each record."
+      else: "Traces are grouped by component, and inside each component sorted " & sub & "."

@@ -20,7 +20,8 @@ proc names(t: FileTable; f: FileList): seq[string] =
   for r in t.rows: result.add f.entries[r].name
 
 func tr(comp: int; line, point: float64; start: int): OrderTrace =
-  OrderTrace(component: uint8(comp), place: (0'i8, line, point, 0'i16), start: float64(start) * Dt)
+  OrderTrace(component: uint8(comp), place: (0'i8, line, point, 0'i16),
+    start: float64(start) * Dt, record: int64(start div 500))
 
 func order(g: TraceGrouping; s: TraceSubSort): TraceOrder = TraceOrder(grouping: g, subSort: s)
 
@@ -87,7 +88,8 @@ proc main*() =
   block shotRecordsSortedByStationInside:
     # a shot gather: the station restarts at every record, only the time holds over the file
     # (seen to fail with `stationInRecords` never called: these read as time)
-    let inRec = TraceOrder(grouping: tgNone, subSort: tsByStation, inRecords: true)
+    let inRec = TraceOrder(grouping: tgNone, subSort: tsByStation, sortInRecords: true,
+        groupInRecords: true)
     var recs: seq[OrderTrace] = @[]
     for r in 0 ..< 3:
       for p in 1 .. 4: recs.add tr(1, 1, float64(p), r * 1000)
@@ -121,13 +123,15 @@ proc main*() =
       for c in 1 .. 3:
         for p in 1 .. 4: comp.add tr(c, 1, float64(p), r * 1000)
     doAssert traceOrder(flag, Dt, true) ==
-      TraceOrder(grouping: tgByFlag, subSort: tsByStation, inRecords: true), "flag in records"
+      TraceOrder(grouping: tgByFlag, subSort: tsByStation, sortInRecords: true,
+        groupInRecords: true), "flag in records"
     doAssert traceOrder(comp, Dt, true) ==
-      TraceOrder(grouping: tgByComponent, subSort: tsByStation, inRecords: true),
+      TraceOrder(grouping: tgByComponent, subSort: tsByStation, sortInRecords: true,
+        groupInRecords: true),
       "component in records"
     # records laid out differently from one another: no grouping, so time is told
     mixed = flag[0 ..< 12] & comp[12 ..< 24] & flag[24 ..< 36]
-    doAssert traceOrder(mixed, Dt, true).inRecords == false
+    doAssert traceOrder(mixed, Dt, true).sortInRecords == false
     doAssert orderShort(traceOrder(flag, Dt, true)) == "Flag · station"
     doAssert orderTitle(traceOrder(recs, Dt, true)) ==
       "Inside each record, traces are sorted by station."
@@ -137,6 +141,46 @@ proc main*() =
     doAssert orderTitle(traceOrder(comp, Dt, true)) ==
       "Inside each record, traces are grouped by component, and inside each component " &
       "sorted by station."
+    # the record is the file's own, not the start time: starts that spread inside one record
+    # (s1 s5 at b, s2 s6 at b + 2 samples) leave the record one record, unsorted: not station
+    # (seen to fail with records cut by start within a sample)
+    var drift: seq[OrderTrace] = @[]
+    for r in 0 ..< 3:
+      let b = r * 1000
+      for (p, dt) in [(1, 0), (5, 0), (2, 2), (6, 2)]:
+        drift.add tr(1, 1, float64(p), b + dt)
+        drift[^1].record = int64(r)
+    doAssert traceOrder(drift, Dt, true) == order(tgNone, tsByTime), "starts spread in a record"
+    # two records one sample apart in start stay two records
+    var close: seq[OrderTrace] = @[]
+    for r in 0 ..< 3:
+      for p in 1 .. 4:
+        close.add tr(1, 1, float64(p), 0)
+        close[^1].start = float64(r) * Dt
+        close[^1].record = int64(r)
+    doAssert traceOrder(close, Dt, true) == inRec, "records one sample apart"
+    # a record in two separate runs: no within-record answer
+    var inter = @[tr(1, 1, 3, 0), tr(1, 1, 4, 0), tr(1, 1, 1, 1000), tr(1, 1, 2, 1000),
+      tr(1, 1, 5, 0), tr(1, 1, 6, 0)]
+    doAssert traceOrder(inter, Dt, true) == none, "interleaved records"
+    # no record structure: one record, or the record not told
+    var oneRec = recs
+    for t in oneRec.mitems: t.record = 0
+    doAssert not traceOrder(oneRec, Dt, true).sortInRecords, "one record"
+    var unknown = recs
+    for t in unknown.mitems: t.record = NoRecord
+    doAssert not traceOrder(unknown, Dt, true).sortInRecords, "no record number"
+    # forcing one part keeps what is still true of the other
+    var forced = traceOrder(flag, Dt, true)
+    forced.grouping = tgByComponent
+    forced.groupInRecords = false
+    doAssert orderTitle(forced) == "Traces are grouped by component, and inside each " &
+      "component sorted by station inside each record."
+    forced = traceOrder(flag, Dt, true)
+    forced.subSort = tsByTime
+    forced.sortInRecords = false
+    doAssert orderTitle(forced) == "Traces are grouped by flag (the components of a time " &
+      "together) inside each record, sorted by time."
     # a station order over the whole file keeps today's words
     var whole: seq[OrderTrace] = @[]
     for i in 0 ..< 5: whole.add tr(1, 1, float64(i + 1), i * 1000)

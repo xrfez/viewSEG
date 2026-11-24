@@ -414,8 +414,9 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
   if segs.len == 0: return
   var inFile = newSeq[OrderTrace](segs.len) # the live traces in file order
   for x, sg in segs:
-    inFile[x] = OrderTrace(component: meta.keys(sg.row).component,
-      place: plan.places[sg.row], start: sg.start)
+    let k = meta.keys(sg.row)
+    inFile[x] = OrderTrace(component: k.component, place: plan.places[sg.row], start: sg.start,
+      record: if k.record.isNaN: NoRecord else: int64(round(k.record)))
   segs.sort do (a, b: Seg) -> int:
     result = cmp(a.recv, b.recv)
     if result == 0: result = cmp(a.start, b.start)
