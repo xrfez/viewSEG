@@ -9130,7 +9130,10 @@ proc startKinds(state: var AppState) =
   ## not answer holds nothing but this and the survey units) that reads the kind of recording
   ## of the listed seismic
   ## files not read yet (`kindsWork`), unless one runs: it ends, and this runs again, so files
-  ## listed or changed meanwhile are read too. A file being written waits until it is steady.
+  ## listed or changed meanwhile are read too. A job reads at most `KindBatch` files (and gives
+  ## way after `KindTurn`): the next job is submitted when it ends, behind what was queued on the
+  ## lane meanwhile (a survey file's units), so that waits for one batch, not for the folder. A
+  ## file being written waits until it is steady.
   ## A file whose kind was read before, as it is now and under the vendor maps in force
   ## (`kindCache`), takes that answer and is not read again.
   if state.kindJob != NoJob: return
@@ -9143,7 +9146,7 @@ proc startKinds(state: var AppState) =
         e.kindState = had.get.state
         e.recording = had.get.kind
         state.files.changedAt(i)
-      else:
+      elif asks.len < KindBatch:
         asks.add WatchedFile(path: e.path, size: e.size, modified: e.modified)
   if asks.len > 0:
     state.kindJob = state.jobs.submit(JobSpec(title: "Read what the files are",
@@ -9293,7 +9296,10 @@ proc onFinished(state: var AppState; job: JobInfo) =
     return
   if job.id == state.kindJob:
     state.kindJob = NoJob
-    if job.state == jsDone: state.startKinds() # files listed or changed meanwhile
+    if job.state == jsDone:
+      state.startKinds() # the files it left, and those listed or changed meanwhile
+      # the next one goes on with the folder: the Jobs window keeps a row for the newest only
+      if state.kindJob != NoJob: discard state.jobs.remove(job.id)
     return
   if job.id == state.files.job:
     state.files.scanning = false

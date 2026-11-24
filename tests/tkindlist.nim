@@ -18,17 +18,22 @@
 ## time of the session not compared in `kindFromOpen`, "a session of another time of the file
 ## gave the row its kind"; with `ownKeys` not asked, "the facts of joined keys gave the row its
 ## kind"; with the vendor maps' load not compared in `takeKinds`, "an answer of older vendor
-## maps was kept".
+## maps was kept"; with one kinds job for the whole folder (no `KindBatch` in `startKinds` and
+## `kindsWork`), "one job read the folder" and, past that, "the peek waited for every kind of
+## the folder"; with the finished kinds job not removed, "the Jobs window keeps every kinds
+## job".
 
 import std/[importutils, options, os, sequtils, times]
 import parseSEG
 import parseSEG/model/traceindex
 import viewSEG/core/state {.all.}
-import viewSEG/core/[filelist, filekinds, inbox, jobs, recordingkind, session, vendormaps]
+import viewSEG/core/[filejobs, filelist, filekinds, inbox, jobs, recordingkind, session,
+  vendormaps]
 import utils/[faultyfs, fixtures, kindfiles, waiting]
 
 privateAccess(AppState)
 privateAccess(Session)
+privateAccess(VendorState)
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); cond))
@@ -244,6 +249,37 @@ proc main*() =
       doAssert v.settle(v.vendorGen == 3 and v.kindOf(path).isSome and
         v.kindOf(path) != some(rkReceiverContinuous)), "the kind kept the map taken away"
       v.shutdown()
+
+    block theKindsGiveWayOnTheirLane:
+      # a folder of 40 files is read 16 at a time, a job each; work queued on the peeks lane
+      # while one runs (a survey file's units) runs before the next, not after the folder
+      let folder = fx.dir / "many"
+      for n in 0 ..< 40: discard writeSpecs(folder, "m" & $n, [spec(0, 0), spec(0, 1000)])
+      var h = initAppState()
+      var kindJobs: seq[JobId] = @[]
+      template noted(h: AppState): bool =
+        (if h.kindJob != NoJob and h.kindJob notin kindJobs: kindJobs.add h.kindJob); true
+      h.apply Command(kind: ckBrowse, paths: @[folder])
+      doAssert h.settle(h.noted and h.listed(40) and h.jobs.active.len == 0 and
+        h.fileList.entries.allIt(it.kindState == ksKnown)), "the kinds were not read"
+      proc reading(h: AppState): seq[JobInfo] =
+        h.jobs.list.filterIt(it.spec.title == "Read what the files are")
+      doAssert kindJobs.len >= 3, "one job read the folder: " & $kindJobs.len
+      doAssert h.reading.len == 1 and h.reading[0].progress.total <= KindBatch,
+        "the Jobs window keeps every kinds job: " & $h.reading.mapIt(it.progress.total)
+      # every kind read again (as a change of the maps does), and at once another peek queued
+      inc h.vendor.gen
+      h.rereadKinds()
+      doAssert h.kindJob != NoJob
+      let peek = h.jobs.submit(JobSpec(title: "Read a survey file's units", lane: jlPeeks),
+        proc (ctx: JobContext) {.gcsafe.} = discard)
+      doAssert h.settle(h.jobs.active.len == 0 and
+        h.fileList.entries.allIt(it.kindState == ksKnown)), "the kinds were not read again"
+      let mine = h.jobs.list.filterIt(it.id == peek)[0]
+      doAssert mine.state == jsDone
+      doAssert h.reading[^1].startedAt > mine.finishedAt,
+        "the peek waited for every kind of the folder"
+      h.shutdown()
 
     block theProjectsVendorChoiceChangesWhatTheKindsAre:
       let folder = fx.dir / "clocked"
