@@ -11,6 +11,9 @@
 ## sample path, "the written trace is not the panel reader's whole trace".
 ##
 ## Runs on samples/land/shots.sgy and samples/land/shots.sgd.
+## Seen to fail: a cancel asked as a signature file's bytes were written was
+## not looked for after the write, so the part was renamed and the job said
+## done.
 ## Removing a directory link with `removeDir` deleted the marker in its target.
 
 import std/[math, os, sequtils, strutils]
@@ -20,7 +23,7 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
 import viewSEG/core/[edits, jobs, outputjobs, panels, processing, sorting, state]
-import utils/[faultyfs, waiting]
+import utils/[faultyfs, sigfiles, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
 
@@ -39,10 +42,15 @@ proc dropDirLink(link: string) =
     discard
 
 var sortLane: Jobs
+var sigLane: Jobs
 
 proc sortStopHook(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
   if back or phase != "writing": return
   discard sortLane.cancel(id)
+
+proc sigWriteHook(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
+  if back or phase != "writing the signature file": return
+  discard sigLane.cancel(id)
 
 proc runJob(file: var SeismicFile; source, dest: string; opts: OutputOptions;
     edits: FileEdits; opens: seq[string]): tuple[st: JobState; wrote: OutputResult; error: string] =
@@ -592,6 +600,35 @@ proc main*() =
     back.close()
     src.close()
     removeFile(dest)
+
+  block cancelDuringSignatureWrite:
+    ## Seen to fail: the cancel asked as the signature bytes were written was
+    ## not seen after the write, so the part was renamed into place.
+    let path = vibFile(dir / "sig", "0007.VIB", SynthVib(afterTrigger: 40, taperFrames: 4))
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len >= 1), "did not open " & path.extractFilename
+    let s = st.sessions[0]
+    let dest = dir / "cancelled-sig.segd"
+    sigLane = initJobs()
+    let sink = OutputSink()
+    setJobHook(sigWriteHook)
+    defer: setJobHook(nil)
+    let id = sigLane.submit(outputSpec(path, dest),
+      outputWork(s.filePtr, path, dest, OutputOptions(format: ofSegd), FileEdits(),
+        @[path], sink, s.signature))
+    doAssert waitUntil(sigLane.state(id) in {jsDone, jsFailed, jsCancelled}),
+      "the write did not finish: " & $sigLane.state(id)
+    doAssert sigLane.state(id) == jsCancelled, "a cancel during the write was not a cancel: " &
+      $sigLane.state(id) & " " & sink.result.reason
+    doAssert not fileExists(dest), "a cancelled signature write left a file"
+    doAssert "removed" in sink.result.reason, sink.result.reason
+    var left = false
+    for kind, part in walkDir(dir):
+      if kind == pcFile and part.extractFilename.startsWith("cancelled-sig.segd.part-"):
+        left = true
+    doAssert not left, "cancel left the part file"
+    st.shutdown()
 
   doAssert readFile(segy) == srcBytes and readFile(segd) == sgdBytes
   dropDirLink(dir / "linked-folder")

@@ -226,10 +226,13 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
     report: proc (done, total: int): bool {.gcsafe.}; signature = SignatureFacts()) =
   ## Writes `file` to `dest` on `ctx`'s thread, as `outputWork` does.
   ## `report` is told traces handled of the file's traces, the same numbers
-  ## `progress` is told, and false from it cancels. This does not name a
-  ## phase: the caller does. `sink.result` is set before this returns, fails
-  ## or is cancelled. A cancel is looked for at each record and each block
-  ## of traces; either that or a failure removes the part file and says so.
+  ## `progress` is told, and false from it cancels. The caller names the
+  ## phase. The library path names the write of the part file, so a cancel
+  ## asked as those bytes are written is seen before the rename.
+  ## `sink.result` is set before this returns, fails or is cancelled. A
+  ## cancel is looked for at each record and each block of traces, and after
+  ## a signature file's own bytes are written; either that or a failure
+  ## removes the part file and says so.
   ## The destination name is never touched.
   if sink != nil: sink.result = OutputResult(path: dest, lines: @[])
   var claimed = false
@@ -264,7 +267,9 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
         let carried = signatureSegdBytes(source, signature)
         if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
+        ctx.setPhase "writing the signature file"
         writePart(part, carried)
+        if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
         if not fs.moveNoReplace(part, dest):
           let kept = "The file appeared while writing; the output is kept as " & part & "."
           if sink != nil:
@@ -470,8 +475,9 @@ proc outputWork*(file: ptr SeismicFile; source, dest: string; opts: OutputOption
   ## Writes `file` to `dest` on a job thread. `file` stays open until the
   ## job ends (submit it with `outputSpec`). `sink.result` is set before the
   ## job returns, fails or is cancelled. A cancel is looked for at each
-  ## record and each block of traces; either that or a failure removes the
-  ## part file and says so. The destination name is never touched.
+  ## record and each block of traces, and after a signature file's own bytes
+  ## are written; either that or a failure removes the part file and says so.
+  ## The destination name is never touched.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "writing"
     {.cast(gcsafe).}:
