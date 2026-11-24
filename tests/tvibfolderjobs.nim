@@ -1,0 +1,225 @@
+## A folder QC job judges each signature file as one Vibrator window would,
+## reports polarity without changing samples, and does not stop when one
+## file cannot be read. A cancel after the first file lists the rest as
+## skipped. Job weights do not change the verdict.
+##
+## Seen to fail: with ground-force polarity set to reversed,
+## `rolesStayRecorded` names it. With the ground-force samples negated
+## before the verdict, `sameAsAlone` names it (fail / pass).
+
+import std/[math, os, strutils]
+import parseSEG
+import parseSEG/common/diagnostics
+import parseSSDAT
+import viewSEG/core/[analysis, jobs, project, session, settings, signatures, sigtypes, sweepinfo,
+  threads,
+  vibanalysis, vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
+import utils/[sigfiles, waiting]
+
+const Samples = 6000
+
+proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
+
+proc timesOf(words: seq[string]; word: string): int =
+  for w in words:
+    if w == word: inc result
+
+proc bytesOf(path: string): string = readFile(path)
+
+proc listed(path: string): FolderListed =
+  var head: seq[byte] = @[]
+  let size = readHead(path, head)
+  let kind = if size >= 0: signatureKindOf(head) else: sgNone
+  FolderListed(path: path, info: readSweepInfo(path, kind, size))
+
+proc askOf(force = NaN): VibQcAsk =
+  var profile = profileOf(QcLimits(), 500.0, 5, asB, ForceScale(), force, NaN, "", NaN)
+  applied(profile, [])
+
+proc tone(n: int; sign: int32): seq[int32] =
+  result = newSeq[int32](n)
+  for i in 0 ..< n:
+    let t = float64(i) / 1000.0
+    let phase = 2 * PI * (8.0 * t + 12.0 * t * t)
+    result[i] = sign * int32(6000.0 * sin(phase))
+
+proc reversedFile(dir, name: string): string =
+  var s = SynthDat(samples: Samples)
+  let pilot = tone(Samples, 1)
+  s.data[dcReference] = pilot
+  var mass = newSeq[int32](Samples)
+  for i, v in pilot: mass[i] = -v
+  s.data[dcMass] = mass
+  s.data[dcBaseplate] = newSeq[int32](Samples)
+  datFile(dir, name, s)
+
+proc runJob(files: seq[FolderListed]; ask: VibQcAsk; weights = VibJobWeights()):
+    tuple[st: JobState; table: FolderTable; error: string] =
+  let jobs = initJobs()
+  let sink = FolderQcSink()
+  let id = jobs.submit(folderQcSpec(files), folderQcWork(ask, weights, files, sink))
+  doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
+    "the folder job did not finish: " & $jobs.state(id)
+  let info = jobs.info(id).get
+  (info.state, sink.result, info.error)
+
+proc rowOf(table: FolderTable; path: string): FolderRow =
+  for row in table.rows:
+    if row.path == path: return row
+  doAssert false, "no row for " & path
+
+proc alone(path: string; ask: VibQcAsk): AnalysisResult =
+  ## The same file, judged here, not by the job.
+  markWorkerThread()
+  var head: seq[byte] = @[]
+  let size = readHead(path, head)
+  doAssert size > 0
+  var raw = newSeq[byte](bytesOf(path).len)
+  for i, c in bytesOf(path): raw[i] = byte(c)
+  var log: DiagLog
+  var s = decodeToSession(raw, path, getLastModificationTime(path), SignatureChoice(), log)
+  defer:
+    s = nil
+    clearCycleRoots()
+  var rows: seq[seq[float32]] = @[]
+  var names: seq[string] = @[]
+  var codes: seq[int16] = @[]
+  for t in 0 ..< s.len:
+    let samples = s.filePtr[].readTraces(t .. t)
+    var one = newSeq[float32](samples.shape[1])
+    for j in 0 ..< one.len: one[j] = samples[0, j]
+    rows.add one
+    codes.add s.filePtr[].traceKeys(t).traceCode
+    if t < s.signature.traces.len: names.add s.signature.traces[t].name
+    else: names.add "trace " & $(t + 1)
+  let dtMs = s.filePtr[].traceKeys(0).intervalUs / 1000.0
+  let facts = s.signature
+  var roles = VibRoles().withCodeRoles(codes, "")
+  roles.groundForcePolarity = poAsRecorded
+  roles.massPolarity = poAsRecorded
+  roles.judge = joRecorded
+  var params = AnalysisParams(roles: roles, harmonics: ask.options.harmonics,
+    accelSet: ask.accelSet, qcWindowMs: ask.options.qcWindowMs, qc: ask.options.qc,
+    forceHundredPct: ask.options.forceHundredPct, targetPct: ask.options.targetPct,
+    reactionMassKg: NaN, baseplateMassKg: NaN)
+  if not (ask.options.forceHundredPct > 0 and ask.options.forceHundredPct < Inf):
+    params.forceHundredPct = NaN
+  else:
+    params.forceHundredUnit = "counts"
+  var sig = SignatureAsk(given: true, isDat: facts.kind == sgDat)
+  if facts.qc.valid:
+    sig.ctlFrom = "this file"
+    sig.ctl = facts.qc.brief
+    sig.ctl.valid = true
+    sig.correlationStored = facts.qc.correlationStored
+    sig.correlationLagZero = facts.qc.correlationLagZero
+  var at: array[VibRole, int]
+  at[vsReference] = roles.reference
+  at[vsGroundForce] = roles.groundForce
+  at[vsMass] = roles.mass
+  at[vsBaseplate] = roles.baseplate
+  vibratorOf(rows, names, at, dtMs, params, forceNote = signatureForceNote(facts), sig = sig)
+
+proc phaseOf(row: FolderRow): float64 =
+  result = NaN
+  for m in row.measures:
+    if m.limit == qlAvgPhase: return m.measured
+
+var lane: Jobs
+
+proc stopAtSecond(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
+  if back or not phase.startsWith("file 2 of"): return
+  discard lane.cancel(id)
+
+proc main*() =
+  let dir = getTempDir() / ("viewseg-vqc-" & $getCurrentProcessId())
+  createDir(dir)
+  let plain = datFile(dir, "plain.dat", SynthDat(samples: Samples))
+  let other = datFile(dir, "other.dat", SynthDat(samples: Samples, fileNumber: 7002,
+    vibrator: 13))
+  let bad = dir / "bad.dat"
+  writeFile(bad, "not a signature")
+  let rev = reversedFile(dir, "reversed.dat")
+  let before = bytesOf(rev)
+  let ask = askOf()
+
+  block rolesStayRecorded:
+    let roles = folderRoles(@[21'i16, 20, 18, 19], sgDat, asB)
+    doAssert roles.groundForcePolarity == poAsRecorded
+    doAssert roles.massPolarity == poAsRecorded
+    let params = folderParams(ask, roles, sgDat)
+    doAssert params.reactionMassKg.isNaN and params.baseplateMassKg.isNaN
+    doAssert params.forceHundredPct.isNaN
+    doAssert params.roles.groundForcePolarity == poAsRecorded
+
+  block sameAsAlone:
+    let got = runJob(@[listed(plain)], ask, VibJobWeights(holdDownKg: 10000,
+      baseplateMassKg: 2000, reactionMassKg: 1500))
+    doAssert got.st == jsDone, got.error
+    let row = rowOf(got.table, plain)
+    doAssert row.outcome == foJudged, row.problem
+    let one = alone(plain, ask)
+    doAssert one.problem.len == 0, one.problem
+    doAssert row.verdict == one.qc.verdict, $row.verdict & " / " & $one.qc.verdict
+    doAssert row.sentence == one.qc.line, row.sentence & " / " & one.qc.line
+    doAssert ForceNotJudged in got.table.problems
+    var forceJudged = false
+    for m in row.measures:
+      if m.limit in {qlAvgForce, qlPeakForce} and m.status != qsNotJudged:
+        forceJudged = true
+    doAssert not forceJudged, "a profile with no 100 % force judged a force limit"
+    doAssert timesOf(got.table.problems, ForceNotJudged) == 1
+
+  block reversed:
+    let got = runJob(@[listed(rev)], ask)
+    doAssert got.st == jsDone, got.error
+    let row = rowOf(got.table, rev)
+    doAssert row.outcome == foJudged, row.problem
+    doAssert "opposite" in row.polarity, row.polarity
+    doAssert "reversed for the analysis" notin row.polarity, row.polarity
+    doAssert phaseOf(row) > 90, $phaseOf(row)
+    doAssert bytesOf(rev) == before, "the job wrote the signature file"
+
+  block corruptDoesNotStop:
+    let got = runJob(@[listed(bad), listed(other)], ask)
+    doAssert got.st == jsDone, got.error
+    let failed = rowOf(got.table, bad)
+    doAssert failed.outcome == foProblem, $failed.outcome
+    doAssert failed.problem.len > 0
+    let rest = rowOf(got.table, other)
+    doAssert rest.outcome == foJudged, rest.problem
+
+  block weights:
+    let vib = vibFile(dir, "one.vib")
+    let got = runJob(@[listed(vib)], ask, VibJobWeights(holdDownKg: 10000))
+    doAssert got.st == jsDone, got.error
+    let row = rowOf(got.table, vib)
+    doAssert row.outcome == foJudged, row.problem
+    var said = false
+    for w in row.weightWords:
+      if "differ" in w: said = true
+    doAssert said, $row.weightWords
+    let bare = runJob(@[listed(vib)], ask)
+    doAssert rowOf(bare.table, vib).verdict == row.verdict
+
+  block cancel:
+    lane = initJobs()
+    setJobHook(stopAtSecond)
+    let sink = FolderQcSink()
+    let files = @[listed(plain), listed(other), listed(rev)]
+    let id = lane.submit(folderQcSpec(files), folderQcWork(ask, VibJobWeights(), files, sink))
+    doAssert waitUntil(lane.state(id) in {jsDone, jsFailed, jsCancelled}),
+      "the cancelled job did not finish"
+    setJobHook(nil)
+    doAssert lane.state(id) == jsCancelled, $lane.state(id)
+    doAssert sink.result.cancelled
+    doAssert sink.result.rows.len == 3, $sink.result.rows.len
+    doAssert sink.result.rows[0].outcome == foJudged, sink.result.rows[0].problem
+    doAssert sink.result.rows[1].outcome == foSkipped, $sink.result.rows[1].outcome
+    doAssert sink.result.rows[2].outcome == foSkipped
+    doAssert sink.result.totals.skipped == 2
+
+  echo "tvibfolderjobs: ok"
+
+when isMainModule:
+  main()
