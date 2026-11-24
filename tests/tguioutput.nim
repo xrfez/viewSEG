@@ -480,7 +480,7 @@ proc namePatterns() =
     proc editing(f: FrameInfo): bool =
       if f.markOf("output.editor").size.x == 0: return false
       # No label yet: the pattern is refused, so Save is dim and says why.
-      doAssert f.markOf("output.pattern.save.dim a name pattern needs a name").size.x > 0,
+      doAssert f.markOf("output.pattern.save.dim A name pattern needs a name.").size.x > 0,
         "Save is not dim with the reason: " & $f.markNames("output.pattern.save")
       let dir = getEnv("VIEWSEG_SCREENSHOTS")
       if dir.len > 0 and not refusedShot:

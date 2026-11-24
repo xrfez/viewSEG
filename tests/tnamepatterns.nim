@@ -100,11 +100,11 @@ proc main*() =
     let beforeBad = st.project.revision
     let beforeLen = st.project.doc.outputPatterns.len
     st.save OutputPattern(name: "   ")
-    doAssert st.said("a name pattern needs a name") and st.project.revision == beforeBad
+    doAssert st.said("A name pattern needs a name.") and st.project.revision == beforeBad
     st.save OutputPattern(name: "Bare")
-    doAssert st.said("a name pattern needs a part") and st.project.revision == beforeBad
+    doAssert st.said("A name pattern needs a part.") and st.project.revision == beforeBad
     st.save OutputPattern(name: "Wide", parts: @[NamePart(kind: npSrcLine, pad: 13)])
-    doAssert st.said("Source line's width is from 0 to 12") and
+    doAssert st.said("Source line's width is from 0 to 12.") and
       st.project.doc.outputPatterns.len == beforeLen
 
     st.apply Command(kind: ckNamePattern, patternAction: npaDelete,
@@ -115,7 +115,7 @@ proc main*() =
     doAssert st.said(noNamePattern("missing"))
     st.apply Command(kind: ckNamePattern, patternAction: npaDelete,
       namePattern: OutputPattern(name: "  "))
-    doAssert st.said("a name pattern needs a name")
+    doAssert st.said("A name pattern needs a name.")
 
     st.apply Command(kind: ckNamePattern, patternAction: npaDelete,
       namePattern: OutputPattern(name: "LINE"))

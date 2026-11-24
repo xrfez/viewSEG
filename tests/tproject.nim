@@ -490,13 +490,13 @@ proc main*() =
       "it is left out")
     let wide = readDoc("(outputPatterns (pattern \"Line\" (part \"srcLine\" (pad 13))))")
     doAssert wide.outputPatterns.len == 0
-    said("the name pattern \"Line\": Source line's width is from 0 to 12; it is left out")
+    said("the name pattern \"Line\": Source line's width is from 0 to 12; it is left out.")
     let tabbed = readDoc("(outputPatterns (pattern \"Li\\tne\" (part \"srcLine\")))")
     doAssert tabbed.outputPatterns.len == 0
     said("the name pattern \"Li\tne\": the label has a control character; it is left out")
     let unnamed = readDoc("(outputPatterns (pattern (part \"srcLine\")))")
     doAssert unnamed.outputPatterns.len == 0
-    said("a name pattern needs a name; it is left out")
+    said("A name pattern needs a name; it is left out.")
     var many = "(outputPatterns"
     for i in 1 .. MaxOutputPatterns + 1:
       many.add " (pattern \"p" & $i & "\" (part \"record\"))"

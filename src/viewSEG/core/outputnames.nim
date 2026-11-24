@@ -342,17 +342,17 @@ func patternProblem*(p: OutputPattern): string =
   ## 12; a text part is a piece of a file name and holds no separator of
   ## the pattern.
   let n = strip(p.name)
-  if n.len == 0: return "a name pattern needs a name"
-  if validateUtf8(n) >= 0: return "a name pattern's name is not text (not UTF-8)"
+  if n.len == 0: return "A name pattern needs a name."
+  if validateUtf8(n) >= 0: return "A name pattern's name is not text (not UTF-8)."
   if n.runeLen > MaxPatternName:
-    return "a name pattern's name is at most " & $MaxPatternName & " characters long"
-  if n.contains(Controls): return "a name pattern's name holds no control characters"
-  if p.parts.len == 0: return "a name pattern needs a part"
+    return "A name pattern's name is at most " & $MaxPatternName & " characters long."
+  if n.contains(Controls): return "A name pattern's name holds no control characters."
+  if p.parts.len == 0: return "A name pattern needs a part."
   if p.parts.len > MaxPatternParts:
-    return "a name pattern has at most " & $MaxPatternParts & " parts"
+    return "A name pattern has at most " & $MaxPatternParts & " parts."
   for part in p.parts:
     if part.pad < 0 or part.pad > MaxPad:
-      return partWord(part.kind) & "'s width is from 0 to " & $MaxPad
+      return partWord(part.kind) & "'s width is from 0 to " & $MaxPad & "."
     if part.kind == npText:
       let why = textProblem(partWord(npText), part.text, ($p.separator)[0])
       if why.len > 0: return why

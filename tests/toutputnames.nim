@@ -333,33 +333,33 @@ proc main*() =
 
   block patternProblems:
     doAssert patternProblem(pat(nsDot, part(npRecord), name = "  Shot  ")) == ""
-    doAssert patternProblem(pat(nsDot, part(npRecord), name = "")) == "a name pattern needs a name"
+    doAssert patternProblem(pat(nsDot, part(npRecord), name = "")) == "A name pattern needs a name."
     doAssert patternProblem(pat(nsDot, part(npRecord), name = "   ")) ==
-      "a name pattern needs a name"
+      "A name pattern needs a name."
     doAssert patternProblem(pat(nsDot, part(npRecord), name = "CON")) == ""
     doAssert patternProblem(pat(nsDot, part(npRecord), name = "Line.Station")) == ""
     let longName = repeat("ж", 64)
     doAssert longName.runeLen == 64 and longName.len == 128
     doAssert patternProblem(pat(nsDot, part(npRecord), name = longName)) == ""
     doAssert patternProblem(pat(nsDot, part(npRecord), name = repeat("ж", 65))) ==
-      "a name pattern's name is at most 64 characters long"
+      "A name pattern's name is at most 64 characters long."
     doAssert patternProblem(pat(nsDot, part(npRecord), name = "tab\there")) ==
-      "a name pattern's name holds no control characters"
+      "A name pattern's name holds no control characters."
     doAssert patternProblem(pat(nsDot, part(npRecord), name = "bad\xFF")) ==
-      "a name pattern's name is not text (not UTF-8)"
+      "A name pattern's name is not text (not UTF-8)."
     var many: seq[NamePart] = @[]
     for i in 0 ..< 16: many.add part(npText, text = $i)
     doAssert patternProblem(pat(nsDot, many)) == ""
     many.add part(npText, text = "x")
-    doAssert patternProblem(pat(nsDot, many)) == "a name pattern has at most 16 parts"
+    doAssert patternProblem(pat(nsDot, many)) == "A name pattern has at most 16 parts."
     doAssert patternProblem(OutputPattern(name: "Shot", separator: nsDot)) ==
-      "a name pattern needs a part"
+      "A name pattern needs a part."
     doAssert patternProblem(pat(nsDot, part(npRecord, pad = 0))) == ""
     doAssert patternProblem(pat(nsDot, part(npRecord, pad = 12))) == ""
     doAssert patternProblem(pat(nsDot, part(npSrcLine, pad = -1))) ==
-      "Source line's width is from 0 to 12"
+      "Source line's width is from 0 to 12."
     doAssert patternProblem(pat(nsDot, part(npRecord, pad = 13))) ==
-      "Record's width is from 0 to 12"
+      "Record's width is from 0 to 12."
     doAssert patternProblem(pat(nsDot, part(npText, text = ""))) == "Text is empty."
     doAssert patternProblem(pat(nsDot, part(npText, text = "a.b"))) ==
       "Text holds a character a file name cannot."

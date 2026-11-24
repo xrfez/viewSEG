@@ -832,10 +832,11 @@ func leftOut(why, label: string): string =
   ## `why`, naming `label` when there is one. `patternProblem` states the rule
   ## for a control character ("holds no"); said here as the label having one.
   var body = why
-  if body == "a name pattern's name holds no control characters":
+  if body == "A name pattern's name holds no control characters.":
     body = "the label has a control character"
   if label.len > 0:
     if body.len == 0: body = "a name pattern cannot be used"
+    if body.startsWith("A name pattern"): body[0] = 'a'
     body = "the name pattern \"" & label & "\": " & body
   if body.len == 0: "a name pattern cannot be used; it is left out"
   elif body[^1] == '.' and body.len > 1: body[0 .. ^2] & "; it is left out."
@@ -909,19 +910,19 @@ proc readPattern(n: NifNode): PatternRead =
   result.pattern = OutputPattern(separator: nsDot, parts: @[])
   result.later = @[]
   if n.kids.len == 0 or n.kids[0].kind != nkString:
-    result.why = "a name pattern needs a name"
+    result.why = "A name pattern needs a name."
     return
   let raw = n.kids[0].text
   if raw.len > MaxPatternName * 4 + 64:
-    result.why = "a name pattern's name is at most " & $MaxPatternName & " characters long"
+    result.why = "A name pattern's name is at most " & $MaxPatternName & " characters long."
     return
   let name = strip(raw)
   if name.len == 0:
-    result.why = "a name pattern needs a name"
+    result.why = "A name pattern needs a name."
     return
   result.pattern.name = name
   if name.runeLen > MaxPatternName:
-    result.why = "a name pattern's name is at most " & $MaxPatternName & " characters long"
+    result.why = "A name pattern's name is at most " & $MaxPatternName & " characters long."
     return
   var nparts = 0
   for i in 1 ..< n.kids.len:
@@ -931,7 +932,7 @@ proc readPattern(n: NifNode): PatternRead =
     elif k.isTree("part"):
       inc nparts
       if nparts > MaxPatternParts:
-        result.why = "a name pattern has at most " & $MaxPatternParts & " parts"
+        result.why = "A name pattern has at most " & $MaxPatternParts & " parts."
         return
       if not takePart(k, result): return
     else:
