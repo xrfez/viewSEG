@@ -89,11 +89,12 @@
 ## "Hide killed traces", a setting). New plot > FFT (`F`) opens the
 ## amplitude spectrum of the same traces (`ckSpectrum`, `spectrumwindow`).
 
-import std/[algorithm, math, os, strutils, tables]
+import std/[algorithm, math, options, os, strutils, tables]
 import imguin/cimgui
 import ../../core/[components, editmarks, explain, geometry, openchoice, state, wiggle]
 import ../../gpu/[plotimage, textures]
-import ../../view/[areabands, breakbars, displayheader, maplayers, plotink, strip, theme, timeaxis]
+import ../../view/[areabands, breakbars, displayheader, maplayers, plotink, strip, theme, timeaxis,
+  vendorfieldmenu]
 import breakdraw, chrome, dpi, explainmenu, fittext, focus, fonts, icons, menus, plotbars,
     plotfilters, plotgain, plotsort,
   shortcutkeys,
@@ -590,7 +591,79 @@ proc axisLabel(v: cdouble; buf: cstring; size: cint; data: pointer): cint {.cdec
   else:
     snprintf(buf, csize_t(size), "%*g", cint(axisChars), v)
 
-proc drawHeaderChoice(p: Panel; marks: var Marks; prefix: string; res: var PanelOutput) =
+proc tip(text: string; dim = Rgba()) =
+  ## The last item's tooltip. A line that starts "Shortcut: " is drawn in
+  ## `dim` when that colour is set.
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    var rest = text
+    while rest.len > 0:
+      let nl = rest.find('\n')
+      let row = if nl >= 0: rest[0 ..< nl] else: rest
+      rest = if nl >= 0: rest[nl + 1 .. ^1] else: ""
+      let shade = dim.a > 0 and row.startsWith("Shortcut: ")
+      if shade: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(dim))
+      igTextUnformatted(row.cstring, nil)
+      if shade: igPopStyleColor(1)
+    igEndTooltip()
+
+proc tipAlways(text: string) =
+  ## A tooltip that shows on a disabled item too.
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
+    igTextUnformatted(text.cstring, nil)
+    igEndTooltip()
+
+var vendorFilter: array[64, char] # the filter box of the vendor fields submenu
+
+proc drawVendorFields(p: Panel; st: AppState; marks: var Marks; prefix: string;
+    res: var PanelOutput) =
+  ## The "Vendor fields" submenu: the shown file's numeric vendor fields, ticked when a
+  ## line of the display header (`vendorFieldMenu` makes the list).
+  let shown = p.shownFields
+  let at = st.findPanel(p.id)
+  let file = if at >= 0: st.shownFile(at) else: -1
+  let list = if file < 0: some(VendorFieldList())
+             else: st.vendorFields(st.sessions[file].id)
+  igSeparator()
+  let open = igBeginMenu("Vendor fields", true)
+  marks.mark(prefix & "vendor")
+  tip("Fields of the vendor header maps that the shown file has: tick one to show it as a " &
+    "line of the display header, over the traces")
+  if open:
+    let first = vendorFieldMenu(list, shown, "")
+    if first.filtered:
+      igSetNextItemWidth(igGetFontSize() * 16)
+      discard igInputTextWithHint("##vendorfilter", "Filter fields",
+        cast[cstring](addr vendorFilter[0]), csize_t(vendorFilter.len), 0, nil, nil)
+      marks.mark(prefix & "vendor filter")
+      tip("Show only the fields whose name holds this text")
+    let menu = vendorFieldMenu(list, shown,
+      if first.filtered: ($cast[cstring](addr vendorFilter[0])).strip else: "")
+    case menu.kind
+    of vmReading, vmNone, vmNoMatch:
+      let (words, why) = case menu.kind
+        of vmReading: (ReadingWords, ReadingTip)
+        of vmNone: (NoFieldsWords, NoFieldsTip)
+        else: (NoMatchWords, "Change the filter to see more fields")
+      igBeginDisabled(true)
+      discard igMenuItem_Bool(words.cstring, nil, false, false)
+      igEndDisabled()
+      tipAlways(why)
+    of vmItems:
+      for item in menu.items:
+        var on = item.ticked
+        igBeginDisabled(not item.enabled)
+        let clicked = igCheckbox(item.label.cstring, addr on)
+        igEndDisabled()
+        marks.mark(prefix & "vendor " & item.name)
+        tipAlways(item.tip)
+        if clicked:
+          res.commands.add Command(kind: ckHeader, panel: p.id,
+            header: HeaderChoice(auto: false, fields: shown.withVendorLine(item.name, on)))
+    igEndMenu()
+
+proc drawHeaderChoice(p: Panel; st: AppState; marks: var Marks; prefix: string;
+    res: var PanelOutput) =
   ## The display header's fields: automatic, or the ones ticked; each box
   ## marked `prefix` and "auto" or the field's name.
   var auto = p.header.auto
@@ -616,29 +689,8 @@ proc drawHeaderChoice(p: Panel; marks: var Marks; prefix: string; res: var Panel
       if fields.len > 0:
         res.commands.add Command(kind: ckHeader, panel: p.id,
           header: HeaderChoice(auto: false, fields: fields))
+  p.drawVendorFields(st, marks, prefix, res)
   igEndDisabled()
-
-proc tip(text: string; dim = Rgba()) =
-  ## The last item's tooltip. A line that starts "Shortcut: " is drawn in
-  ## `dim` when that colour is set.
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
-    var rest = text
-    while rest.len > 0:
-      let nl = rest.find('\n')
-      let row = if nl >= 0: rest[0 ..< nl] else: rest
-      rest = if nl >= 0: rest[nl + 1 .. ^1] else: ""
-      let shade = dim.a > 0 and row.startsWith("Shortcut: ")
-      if shade: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(dim))
-      igTextUnformatted(row.cstring, nil)
-      if shade: igPopStyleColor(1)
-    igEndTooltip()
-
-proc tipAlways(text: string) =
-  ## A tooltip that shows on a disabled item too.
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
-      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
-    igTextUnformatted(text.cstring, nil)
-    igEndTooltip()
 
 const
   colourKeys = ["background", "line", "positive", "negative", "hover", "selected"]
@@ -1632,7 +1684,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         tip("On: killed traces are left out of the plot, the traces beside them close up. " &
           "Off: they are drawn blank. Either way they are left out of the levels and spectra.")
         igSeparatorText("Display header")
-        drawHeaderChoice(p, marks, "plot.more.header.", res)
+        drawHeaderChoice(p, st, marks, "plot.more.header.", res)
       if stScales in caps.settingsTabs: tab("Scales", "plot.more tab scales"):
         tp.drawScaleSettings(st, marks, res, ppi, mon, ask)
       igEndTabBar()
@@ -2318,13 +2370,13 @@ proc drawMarkMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
     marks.mark("plot.editmenu.item " & choice.text)
   igEndPopup()
 
-proc drawHeaderMenu(p: Panel; marks: var Marks; res: var PanelOutput) =
+proc drawHeaderMenu(p: Panel; st: AppState; marks: var Marks; res: var PanelOutput) =
   ## The display header's own menu (a right click on its rows or their
   ## names): its fields, automatic or the ones ticked.
   if not igBeginPopup(headerMenuId, 0): return
   marks.markWindow("plot.header menu")
   igSeparatorText("Display header")
-  drawHeaderChoice(p, marks, "plot.header menu.", res)
+  drawHeaderChoice(p, st, marks, "plot.header menu.", res)
   igEndPopup()
 
 proc drawCursorLine(tp: var TracePanelUi; at, pos, size: ImVec2_c; m: Turn; tMs, dtMs: float64;
@@ -2960,7 +3012,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       res.commands.add Command(kind: ckOwnFilter, panel: st.panels[k].id, edited: tp.ownTraces,
         on: true, processing: tp.ownDraft.spec, filterPlace: tp.ownDraft.place)
   for c in tp.store.drawStore(st, t, marks): res.commands.add c
-  drawHeaderMenu(p, marks, res)
+  drawHeaderMenu(p, st, marks, res)
   tp.sortKeys.drawSortKeys(p, marks, res.commands)
   tp.drawGoTo(st, p, marks, res)
 
