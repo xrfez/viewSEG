@@ -2101,8 +2101,8 @@ proc shotLogColumn*(state: AppState; i, col: int): string =
 
 proc shotLogGuess*(state: AppState; i: int): ShotLogMap =
   ## A map guessed from loaded shot log `i`'s text. The text is not copied.
-  if i < 0 or i >= state.shotLogs.len: initShotLogMap()
-  else: guessMap(state.shotLogs[i].text)
+  if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: initShotLogMap()
+  else: guessMap(state.shotLogs[i].log.text)
 
 proc findShotLog*(state: AppState; id: int): int =
   ## The index of the loaded shot log with `id`, or -1.
