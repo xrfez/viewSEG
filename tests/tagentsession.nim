@@ -43,7 +43,9 @@
 ## agent's edits (`keep = true`), "the agent's edits are remembered".
 
 import std/[json, math, os, sequtils, strutils, tables]
-import viewSEG/core/[analysis, breakmodel, colourmaps, geometry, nif, phasepicture, plotoptions, state]
+import parseSEG
+import viewSEG/core/[analysis, breakmodel, colourmaps, geometry, nif, outputtext, phasepicture,
+  plotoptions, project, state]
 import viewSEG/remote/[schema, tools]
 import utils/[fixtures, waiting]
 
@@ -533,6 +535,18 @@ proc main*() =
       st.agent(%*{"kind": "vendor map", "vendorMap": "automatic"})
       st.agent(%*{"kind": "name pattern", "patternAction": "choose",
         "namePattern": {"name": ""}}) # (no pattern chosen: files are named as today)
+      st.agent(%*{"kind": "output text", "textAction": "save", "textTemplate":
+        {"name": "Agent", "encoding": "ascii", "lines": ["C 1 {stem}", "C 2"]}})
+      doAssert st.project.doc.outputTexts.len == 1 and
+        st.project.doc.outputTexts[0].encoding == teAscii and
+        st.project.doc.outputTexts[0].lines == @["C 1 {stem}", "C 2"]
+      st.agent(%*{"kind": "output text", "textAction": "choose", "textTemplate": {"name": "agent"}})
+      doAssert st.project.doc.outputText == "Agent"
+      st.agent(%*{"kind": "output text", "textAction": "save", "textTemplate":
+        {"name": "Bad", "lines": ["{nope}"]}}) # refused as the window's command is
+      doAssert st.project.doc.outputTexts.len == 1
+      st.agent(%*{"kind": "output text", "textAction": "delete", "textTemplate": {"name": "AGENT"}})
+      doAssert st.project.doc.outputTexts.len == 0 and st.project.doc.outputText == ""
       st.agent(%*{"kind": "close project"})
       st.agent(%*{"kind": "reload vendor maps"})
       st.agent(%*{"kind": "open pair"}) # (the panel shows no signature file: ignored, in words)
