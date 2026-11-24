@@ -18,7 +18,8 @@
 ## parts."`; with `patternProblem` returning "", every bad pattern was kept;
 ## with the pattern's separator left in text, `named "a--1.sgy" instead of
 ## refusing` (stem `a-` and record 1 is the same leaf as stem `a` and -1);
-## with the sign kept on a zero, `got "-0.sgy" wanted "0.sgy"`.
+## with the sign kept on a zero, `got "-0.sgy" wanted "0.sgy"`; with the
+## old whole-within-1e-3 window, `got "-0042.sgy" wanted "-0042p0001.sgy"`.
 
 import std/[math, strutils, unicode]
 import viewSEG/core/outputnames
@@ -82,8 +83,9 @@ proc main*() =
     let p = pat(nsUnderscore, part(npSrcPoint, pad = 5))
     expectName(p, vals((npSrcPoint, iv(-42))), ".sgy", "-00042.sgy")
     expectName(p, vals((npSrcPoint, iv(-123456))), ".sgy", "-123456.sgy")
+    # assumed the old "whole within 1e-3" window, which wrote -0042
     expectName(pat(nsDot, part(npRecord, pad = 4)), vals((npRecord, num(-42.0001))),
-      ".sgy", "-0042.sgy")
+      ".sgy", "-0042p0001.sgy")
 
   block noNegativeZero:
     expectName(pat(nsDot, part(npSrcPoint)), vals((npSrcPoint, num(-0.00004))),
@@ -103,10 +105,17 @@ proc main*() =
     expectName(pat(nsDot, part(npSrcPoint)), vals((npSrcPoint, num(-0.5))), ".sgy", "-0p5.sgy")
     expectName(pat(nsDot, part(npSrcPoint, pad = 3)), vals((npSrcPoint, num(0.5))),
       ".sgy", "000p5.sgy")
-    # more than 4 decimals kept, trailing zeros dropped, never scientific
-    expectName(pat(nsDot, part(npSrcLine)), vals((npSrcLine, num(0.03125))), ".sgy", "0p03125.sgy")
+    # rounded to 4 decimal places, half away from zero; trailing zeros dropped
+    expectName(pat(nsDot, part(npRecord)), vals((npRecord, num(1000.001))), ".sgy", "1000p001.sgy")
+    expectName(pat(nsDot, part(npRecord)), vals((npRecord, num(1000.0004))), ".sgy",
+      "1000p0004.sgy")
+    expectName(pat(nsDot, part(npRecord)), vals((npRecord, num(1000.00004))), ".sgy", "1000.sgy")
+    expectName(pat(nsDot, part(npRecord)), vals((npRecord, num(10.5))), ".sgy", "10p5.sgy")
+    expectName(pat(nsDot, part(npRecord)), vals((npRecord, num(10.00005))), ".sgy", "10p0001.sgy")
+    # assumed the old "whole within 1e-3" window: 0.03125 was 0p03125, 10.0009 was 10
+    expectName(pat(nsDot, part(npSrcLine)), vals((npSrcLine, num(0.03125))), ".sgy", "0p0313.sgy")
     expectName(pat(nsDot, part(npRecord)), vals((npRecord, num(1.5))), ".sgy", "1p5.sgy")
-    expectName(pat(nsDot, part(npRecord)), vals((npRecord, num(10.0009))), ".sgy", "10.sgy")
+    expectName(pat(nsDot, part(npRecord)), vals((npRecord, num(10.0009))), ".sgy", "10p0009.sgy")
     expectName(pat(nsDot, part(npRecord)), vals((npRecord, num(42.002))), ".sgy", "42p002.sgy")
     let wide = render(pat(nsDot, part(npRecord)), vals((npRecord, num(1e14))), ".sgy")
     doAssert wide.problem.len == 0 and wide.name == "100000000000000.sgy", wide.name

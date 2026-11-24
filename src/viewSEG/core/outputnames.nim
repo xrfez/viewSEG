@@ -174,32 +174,35 @@ func formatInt(n: int64; pad: int): string =
   if n < 0: "-" & padded else: padded
 
 func formatNumber(x: float64; pad: int): string =
-  ## Whole when within 0.001 of an integer; otherwise at most 6 decimal
-  ## digits, trailing zeros dropped, the point written as `p`. A value
-  ## that renders as zero has no sign, padded or not.
+  ## Rounded to 4 decimal places, half away from zero, by scaling into an
+  ## integer. The integer digits are padded; a fraction that is not zero
+  ## follows `p`, trailing zeros dropped. A value that rounds to zero has
+  ## no sign, padded or not.
   let ax = abs(x)
-  var body: string
-  var zero = false
-  if abs(ax - round(ax)) < 1e-3:
-    let whole = int64(round(ax))
-    zero = whole == 0
-    body = formatInt(whole, pad)
+  var whole: int64
+  var digits: int64
+  if ax < 9.2e14:
+    # ax * 10000 fits in int64 here. 1e15 * 10000 does not, so a value
+    # above this (still under the 1e15 refusal) scales its fraction alone.
+    let scaled = int64(floor(ax * 10_000.0 + 0.5))
+    whole = scaled div 10_000
+    digits = scaled mod 10_000
   else:
-    var whole = int64(trunc(ax))
-    var micro = int64(round((ax - float64(whole)) * 1_000_000.0))
-    if micro >= 1_000_000:
+    whole = int64(trunc(ax))
+    let frac = ax - float64(whole)
+    digits = int64(floor(frac * 10_000.0 + 0.5))
+    if digits >= 10_000:
       inc whole
-      micro = 0
-    if micro < 0: micro = 0
-    zero = whole == 0 and micro == 0
-    let head = formatInt(whole, pad)
-    if micro == 0: body = head
-    else:
-      var frac = $micro
-      if frac.len < 6: frac = repeat('0', 6 - frac.len) & frac
-      while frac.len > 0 and frac[^1] == '0': frac.setLen(frac.len - 1)
-      body = head & "p" & frac
-  if x < 0.0 and not zero: "-" & body else: body
+      digits = 0
+  let head = formatInt(whole, pad)
+  if digits == 0:
+    if x < 0.0 and whole != 0: "-" & head else: head
+  else:
+    var tail = $digits
+    if tail.len < 4: tail = repeat('0', 4 - tail.len) & tail
+    while tail.len > 0 and tail[^1] == '0': tail.setLen(tail.len - 1)
+    let body = head & "p" & tail
+    if x < 0.0: "-" & body else: body
 
 func floorDiv(a, b: int64): int64 =
   ## `b` > 0. Toward -infinity, so a time before 1970 stays on its day.
