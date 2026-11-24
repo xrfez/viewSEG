@@ -564,7 +564,11 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       if wantNoise:
         ctx.setPhase "judging the noisy traces"
         try:
-          summary = noiseOfRecord(f, traces, amps, unreadRows, outside, br, noise.settings)
+          # a killed trace is not judged and not in the statistics, as an unread one
+          var left = unreadRows
+          for t in noise.key.killed:
+            if t in traces and (t - traces.a) notin left: left.add t - traces.a
+          summary = noiseOfRecord(f, traces, amps, left, outside, br, noise.settings)
         except ValueError as e:
           noiseError = e.msg
       if samples:
