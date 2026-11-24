@@ -37,7 +37,9 @@ proc vendorSerial(shown: VendorShown): Option[string] =
 
 proc unitSerialOf*(file: SeismicFile; trace: int; vendors: VendorRegistry): Option[string] =
   ## The serial of the unit that recorded trace `trace` of `file`, as text; none when no
-  ## source has one (a blank value, an "absent" sentinel, or no such field).
+  ## source has one (a blank value, an "absent" sentinel, or no such field). Raises
+  ## `ValueError` on the SEG-D path for a trace out of range (or a closed file), as
+  ## `traceHeaders` does; an error from reading a truncated file can pass through.
   result = none(string)
   if file.kind == skSegd:
     result = sensorInfoSerial(file, trace)

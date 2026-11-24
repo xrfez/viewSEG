@@ -40,7 +40,8 @@ type
     npSigStation   ## signature station
     npShotId       ## shot id
     npSweepId      ## sweep id
-    npSensorSerial ## serial of the unit that recorded the traces (SEG-D Rev 3)
+    npSensorSerial ## serial of the unit that recorded the traces
+                   ## (SEG-D Rev 3 Sensor Info, or a vendor map's sensorSerial)
 
   NamePart* = object
     ## One piece of a pattern.

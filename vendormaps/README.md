@@ -31,8 +31,9 @@ header block or a trace header extension); the **Sensor serial** part of an outp
 first, then from a `sensorSerial` field of the trace's own vendor blocks, and from nothing
 else: a field in a record-level or file-level block is not used. A controller or recorder
 serial must not use this name: a file name would then carry the serial of the wrong device.
-A map that describes a unit serial under another name needs a `sensorSerial` field for the
-same bytes. A value that is blank or a sentinel the map declares is no serial.
+A map that describes a unit serial under another name has to name that field `sensorSerial`
+for the part to find it (the fields of a map may not overlap, so the bytes have one name). A value that is blank or a sentinel the map declares is no
+serial.
 
 ## Where viewSEG looks
 

@@ -65,8 +65,10 @@ the same value for it, is not written, and its row in the results says which par
 ("Source line is not in this file." or "Source line is not one value in this file."); the
 other files of the run are written. A **Sensor serial** is read from the traces only when a
 pattern uses it, and a signature file has none. A vendor map marks the field that holds the
-serial by naming it `sensorSerial` (see Vendor header maps); the standard block is looked at
-first, then the vendor blocks of the trace, then those of its record or file.
+serial by naming it `sensorSerial` (see Vendor header maps); the standard block of the trace is
+looked at first, then the vendor blocks of the same trace; a field in a block of the record
+or the file is not used. A file whose headers cannot be read to the end (a
+truncated file) is not written, and its row in the results gives the reason.
 
 ### Numbers
 
