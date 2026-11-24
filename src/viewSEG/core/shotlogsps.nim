@@ -115,7 +115,7 @@ proc numText(v: float64): string =
   if v == round(v) and abs(v) < 1e15: $int64(v) else: $v
 
 proc nameFits(v: float64; width: int): bool =
-  if v.isNaN: return false
+  if classify(v) in {fcNan, fcInf, fcNegInf}: return false
   let t = numText(v)
   t.len in 1 .. width
 
@@ -228,7 +228,8 @@ proc toSps*(view: ShotView; opts: ShotSpsOptions): ShotSpsResult {.raises: [].} 
   ##
   ## Revision 2.1 holds a line and a point in 10 columns and 2 decimals
   ## (-999999.99 to 9999999.99). Revision 1.0 holds them as text, 16 and 8
-  ## columns, an integer without a fraction. An index is one digit. A point
+  ## columns, an integer without a fraction. A non-finite value does not fit.
+  ## An index is one digit. A point
   ## depth is 4 columns and 1 decimal (-9.9 to 99.9). Water depth is 6 columns
   ## and 1 decimal in 2.1, and 4 in 1.0 (an integer whose text fits in 4
   ## columns is kept, so 999 and 9999 fit 1.0). Easting is 9 columns and 1

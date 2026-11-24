@@ -4,6 +4,8 @@
 ## an easting of 10.25 is written as 10.2 instead of reported and skipped.
 ## Seen to fail: with `writeShotSps` still calling `writeBeside` when no row
 ## was written, an existing file is replaced and `error` stays empty.
+## Seen to fail: with `nameFits` accepting a non-finite value, revision 1.0
+## writes a line or point of Inf as "inf" and counts it written.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -430,6 +432,33 @@ proc main*() =
     discard tryRemoveFile(path)
     try: removeDir(dir)
     except OSError: discard
+
+  block nonFiniteName:
+    let roles = [crShotPoint, crSourceLine, crX, crY]
+    proc one(point, line: string): ShotView =
+      viewOf("point,line,x,y\n" & point & "," & line & ",1,2\n", roles)
+    doAssert one("10", "inf").rows[0].sourceLine == Inf
+    doAssert one("inf", "10").rows[0].shotPoint == Inf
+    doAssert one("-inf", "10").rows[0].shotPoint == NegInf
+    let infLine = toSps(one("10", "inf"), options(sps10))
+    doAssert infLine.written == 0 and infLine.skipped == 1 and infLine.text.len == 0
+    doAssert hasProblem(infLine, 0, "line", "inf"), $infLine.problems
+    let negLine = toSps(one("10", "-inf"), options(sps10))
+    doAssert negLine.written == 0 and hasProblem(negLine, 0, "line", "-inf")
+    let infPoint = toSps(one("inf", "10"), options(sps10))
+    doAssert infPoint.written == 0 and infPoint.text.len == 0
+    doAssert hasProblem(infPoint, 0, "point", "inf"), $infPoint.problems
+    let negPoint = toSps(one("-inf", "10"), options(sps10))
+    doAssert negPoint.written == 0 and hasProblem(negPoint, 0, "point", "-inf")
+    let missing = viewOf("point,line,x,y\n10,,1,2\n", roles)
+    let defInf = toSps(missing, options(sps10, line = Inf))
+    doAssert defInf.written == 0 and hasProblem(defInf, 0, "line", "inf")
+    let finite = toSps(one("10.5", "3"), options(sps10))
+    doAssert finite.written == 1 and finite.count == 0
+    let big = toSps(one("1e20", "1e20"), options(sps10))
+    doAssert big.written == 1 and big.count == 0, $big.problems
+    let fixed = toSps(one("10", "inf"), options(sps21))
+    doAssert fixed.written == 0 and hasProblem(fixed, 0, "line", "inf")
 
   echo "tshotlogsps ok"
 
