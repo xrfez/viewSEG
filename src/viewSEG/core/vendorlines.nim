@@ -8,8 +8,11 @@
 ## unknown (never 0). The columns are kept in a `VendorLines`, which a reader
 ## builds on its own thread on the first request that has such a line, and
 ## drops when its file changes or the vendor maps are loaded again
-## (`vendorStamp`). A text field has no number: its column is empty and its
-## line shows unknown.
+## (`vendorStamp`). A text field has no number: its column is
+## empty and its line shows unknown.
+##
+## A tile looks each line's column up once (`slot`) and reads its rows by
+## slot (`valueAt`): no column is copied.
 
 import std/[atomics, sets, tables]
 import parseSEG
@@ -32,23 +35,35 @@ type
     size: int64
     traces: int
     stamp: int ## the vendor maps' load they were read with
-    columns: Table[string, seq[float64]] ## empty: no numbers (unknown name, text, no map)
-    absent: Table[string, int] ## per name, the traces without a value
+    slots: Table[string, int] ## per name, its column in `columns` and `absent`
+    columns: seq[seq[float64]] ## empty: no numbers (unknown name, text, no map)
+    absent: seq[int] ## the traces without a value
     missing: seq[string] ## names the file has no vendor field of, not yet said
+
+func slot*(v: VendorLines; name: string): int =
+  ## Where the column of `name` is held, for `valueAt`; -1 when not built.
+  v.slots.getOrDefault(name, -1)
+
+func valueAt*(v: VendorLines; slot, trace: int): float64 {.inline.} =
+  ## The value at file trace `trace` of the column in `slot` (`slot`); NaN
+  ## when it has none (or when `slot` is -1, or the column does not reach).
+  if slot in 0 ..< v.columns.len and trace in 0 ..< v.columns[slot].len:
+    v.columns[slot][trace]
+  else: NaN
 
 func valueAt*(v: VendorLines; name: string; trace: int): float64 =
   ## Vendor field `name` of file trace `trace`; NaN when it has none (or when
   ## the column was not built, or does not reach).
-  let col = v.columns.getOrDefault(name)
-  if trace in 0 ..< col.len: col[trace] else: NaN
+  v.valueAt(v.slot(name), trace)
 
 func has*(v: VendorLines; name: string): bool =
   ## Whether the column of `name` was built (it may hold no value).
-  name in v.columns
+  name in v.slots
 
 func absentCount*(v: VendorLines; name: string): int =
   ## The traces of the file without a value for `name`; 0 when not built.
-  v.absent.getOrDefault(name)
+  let s = v.slot(name)
+  if s < 0: 0 else: v.absent[s]
 
 func vendorNames*(fields: openArray[HeaderRef]): seq[string] =
   ## The vendor fields among `fields`, each once, in order.
@@ -67,15 +82,19 @@ proc drop*(v: var VendorLines) =
   ## Forgets every column (the file closed or another one is shown).
   v = VendorLines()
 
+proc put(v: var VendorLines; name: string; col: sink seq[float64]; absent: int) =
+  v.slots[name] = v.columns.len
+  v.columns.add col
+  v.absent.add absent
+
 proc build*(v: var VendorLines; f: ptr SeismicFile; path: string; size: int64;
-    names: openArray[string];
-    stop: StopProc = nil): bool =
+    names: openArray[string]; stop: StopProc = nil): bool =
   ## Builds the columns of `names` that are not held, from `f` (read from
-  ## `path`, `size` bytes when it was opened) with the vendor maps in force; columns of another file, or of an older
-  ## load of the maps, are dropped first. A name no map defines for the file, a text
+  ## `path`, `size` bytes when it was opened) with the vendor maps in force; columns of another file, or of an older load of the
+  ## maps, are dropped first. A name no map defines for the file, a text
   ## field, or a file that cannot be read gives an empty column, kept so that
-  ## it is not asked for again. False when `stop` said to give up (nothing
-  ## of the column then in progress is kept).
+  ## it is not asked for again. False when `stop`
+  ## said to give up (nothing of the column then in progress is kept).
   let stamp = vendorStamp()
   if stamp != v.stamp or pointer(f) != v.file or path != v.path or size != v.size or
       f[].len != v.traces:
@@ -83,7 +102,7 @@ proc build*(v: var VendorLines; f: ptr SeismicFile; path: string; size: int64;
   var reg: VendorRegistry
   var haveReg = false
   for name in names:
-    if name in v.columns: continue
+    if name in v.slots: continue
     if not haveReg:
       reg = currentVendors()
       haveReg = true
@@ -102,6 +121,5 @@ proc build*(v: var VendorLines; f: ptr SeismicFile; path: string; size: int64;
       v.missing.add name
     except CatchableError: discard # a cut file, a drive gone
     built.atomicInc
-    v.columns[name] = col
-    v.absent[name] = absent
+    v.put(name, col, absent)
   true

@@ -230,6 +230,9 @@ type
     viewChunk: seq[float32]   ## a chunk, reused
     spare: ViewSpare
     vendor: VendorLines       ## the vendor fields' columns of the display lines, for `src`'s file
+    lineSlots: seq[int]
+      ## per line of the request being made, its column in `vendor` (`slot`; -1 for none),
+      ## set by `buildVendorLines` when the request has a vendor line
 
 proc `=destroy`*(x: PanelReader)
 proc `=wasMoved`*(x: var PanelReader) = x.p = nil
@@ -955,7 +958,8 @@ proc buildVendorLines(rd: var Reader; fields: openArray[HeaderRef]): bool =
   ## Makes sure the columns of the vendor fields among `fields` are held,
   ## reading them from the file on this thread (the first request that has
   ## such a line waits for them: one read of the headers of the file, a
-  ## newer source or order giving it up). False when it was given up.
+  ## newer source or order giving it up), and where each line's is
+  ## (`lineSlots`). False when it was given up.
   let names = vendorNames(fields)
   if names.len == 0 or rd.src.file == nil: return true
   let r = rd.r
@@ -964,11 +968,15 @@ proc buildVendorLines(rd: var Reader; fields: openArray[HeaderRef]): bool =
   for name in rd.vendor.takeMissing():
     rd.note(sevWarning, "'" & name & "' is not a header line or a vendor field of " & rd.name &
       ": it shows as unknown.")
+  rd.lineSlots.setLen fields.len
+  for i, field in fields:
+    rd.lineSlots[i] = if field.field == hfVendor: rd.vendor.slot(field.name) else: -1
 
 proc markRow(rd: Reader; tile: var Tile; row, trace, count: int; keys: TraceKeys;
     fields: openArray[HeaderRef]) =
   ## Dead, joined and the channel-set name of row `row` (trace `trace`), and
-  ## its display-header values. `cut` and a tile filled from the spare both
+  ## its display-header values (a vendor line's from its column, looked up
+  ## once a tile: `lineSlots`). `cut` and a tile filled from the spare both
   ## use it, so a dead trace stays blank when the samples were already read.
   tile.keys[row] = keys
   let f = rd.src.file
@@ -981,7 +989,7 @@ proc markRow(rd: Reader; tile: var Tile; row, trace, count: int; keys: TraceKeys
     tile.joined[row] = joined
   for i, field in fields:
     tile.header[i][row] =
-      if field.field == hfVendor: rd.vendor.valueAt(field.name, trace)
+      if field.field == hfVendor: rd.vendor.valueAt(rd.lineSlots[i], trace)
       else: keys.value(field.field, trace, f[].channelSetNumberOf(trace))
   if f[].kind == skSegd:
     if tile.sets.len == 0: tile.sets = newSeq[string](count)

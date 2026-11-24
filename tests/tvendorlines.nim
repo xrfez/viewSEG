@@ -14,18 +14,21 @@
 ## - the command takes the lines as names (`display header`), a built-in field given twice
 ##   counts once;
 ## - the maps loaded again (here: none offered) drop the column: the line shows unknown, with
-##   no stale values; `VendorLines` builds again after a new load.
+##   no stale values; `VendorLines` builds again after a new load;
+## - a row's value is read in place: 2000 values of a column of a million take under 50 ms;
 ##
 ## Seen to fail: with `valueAt` giving 0 for an absent trace, `absent` found 0; with the spread
 ## left out of the column (record-level read per trace of the first record only), `record`
 ## found the second record's batch wrong; with the stamp not compared in `build`, `reload`
 ## found the old column; with `headerRefOf` not testing the built-in names first, `names`
-## found a vendor line called "channel".
-import std/[json, math, options, os, sequtils, strutils]
+## found a vendor line called "channel"; with `valueAt` copying the column, `noCopy` took 433
+## ms.
+import std/[json, math, monotimes, options, os, sequtils, strutils, times]
 import parseSEG
 import parseSEG/io/diskio
 import parseSEG/segd/blocks
-import viewSEG/core/[log, panels, settingsnif, tiles, vendorlines, vendormaps, viewport]
+import viewSEG/core/[log, panels, settingsnif, tiles, vendormaps, viewport]
+import viewSEG/core/vendorlines {.all.}
 import viewSEG/core/state {.all.}
 import viewSEG/remote/schema
 import utils/[fixtures, waiting]
@@ -318,6 +321,21 @@ proc main*() =
       discard readSettings("(settings (version 1) (plot (header trace vendor)))", "bad",
         Settings(), problems)
       doAssert problems.len > 0
+
+    block noCopy:
+      # a row's value is read where the column is held: a column copied at each call (here
+      # 8 MB, a thousand times) takes seconds
+      var lines = VendorLines()
+      lines.put("big", newSeq[float64](1_000_000), 0)
+      let at = lines.slot("big")
+      var sum = 0.0
+      let t0 = getMonoTime()
+      for i in 0 ..< 1000:
+        sum += lines.valueAt("big", 997 * i) + lines.valueAt(at, 991 * i)
+      let ms = (getMonoTime() - t0).inMilliseconds
+      doAssert ms < 50 and sum == 0, "2000 values of a column took " & $ms & " ms"
+      doAssert lines.valueAt(at, 1_000_000).isNaN and lines.valueAt(-1, 0).isNaN
+      lines.drop()
 
     block reload:
       let t = st.choose(@[vendorRef("counter")])
