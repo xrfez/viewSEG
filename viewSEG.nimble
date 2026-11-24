@@ -11,7 +11,7 @@ bin           = @["viewSEG"]
 # Dependencies
 
 requires "nim >= 2.4.0"
-requires "https://github.com/xrfez/parseSEG >= 0.19.1"
+requires "https://github.com/xrfez/parseSEG >= 0.22.0"
 requires "https://github.com/xrfez/processSEG >= 0.12.0"
 requires "https://github.com/xrfez/parseSSDAT >= 0.1.1"
 requires "https://github.com/xrfez/parseSSVIB >= 0.1.0"
