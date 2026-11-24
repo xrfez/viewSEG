@@ -6,7 +6,7 @@
 ## header is wrong. The offsets are in the headers, or derived from the
 ## coordinates, or not given (`Geometry`).
 
-import std/os
+import std/[math, os]
 import parseSEG
 import processSEG/synth
 import fixtures
@@ -54,21 +54,23 @@ type Tweak* = proc (i: int; k: var TraceKeys): float64
   ## Sets the keys of trace `i` of `customShot` (they start as `shotSegy`'s: record 1, channel
   ## `i + 1`, the interval `Dt`, the offset `offsetOf(i)`) and returns its first break in ms.
 
-proc customShot*(fx: Fixtures; name: string; traces: int; tweak: Tweak): string =
+proc customShot*(fx: Fixtures; name: string; traces: int; tweak: Tweak; dtMs = Dt): string =
   ## A shot of `traces` traces whose keys and first breaks `tweak` chooses; each trace's data
-  ## start at its own `t0Ms`, and carry its wavelet where `tweak` says, in a little noise.
+  ## start at its own `t0Ms`, and carry its wavelet where `tweak` says, in a little noise (a
+  ## NaN break: noise alone). The traces are 2000 ms long at `dtMs`.
   result = fx.dir / name
   var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
     text: @["C01 first-break overlay test: " & name]))
-  var buf = newSeq[float32](Samples)
+  let samples = int(round(float64(Samples) * Dt / dtMs))
+  var buf = newSeq[float32](samples)
   for i in 0 ..< traces:
     var k = initTraceKeys()
     (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(i + 1), 0.0,
-      Dt * 1000, tsLive)
+      dtMs * 1000, tsLive)
     k.offset = offsetOf(i mod Traces)
     let at = tweak(i, k)
-    for j in 0 ..< Samples: buf[j] = 0
-    buf.addRicker(Dt, at + 25, 30, 1.0, t0Ms = k.t0Ms)
+    for j in 0 ..< samples: buf[j] = 0
+    if not at.isNaN: buf.addRicker(dtMs, at + 25, 30, 1.0, t0Ms = k.t0Ms)
     buf.addNoise(0.03, int64(i + 1))
     w.writeTrace(k, buf)
   let log = w.close()

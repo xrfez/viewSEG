@@ -14,7 +14,10 @@
 ## - far traces whose picks are not breaks are "no break found" or beyond the range, never
 ##   flagged, and do not move the fitted model (a fit to every confident pick is far off); the
 ##   range ends where few breaks are seen near the model and most picks both passes agree on
-##   end, so noise the guided window held does not widen it; "far off" is a first-pass pick
+##   end, so noise the guided window held does not widen it; a comparable pick is strictly
+##   inside the band, and a guided pick on its search's first sample (the record-fit pass
+##   searching round a model a few ms off the one it is judged against, at 1, 2 and 4 ms) is no
+##   break: the first pass decides; "far off" is a first-pass pick
 ##   outside the guided window (100 ms when it is not set) and at most 400 ms from the model,
 ##   never one before the first possible arrival; the guided window is four sigmas of the fit's
 ##   scatter, at least 20 ms and at most 100 ms (100 ms when the scatter is not known): a burst
@@ -44,7 +47,10 @@
 ## neighbour rule leaving off-model traces out (and the nearer side alone), "healthy record: 5
 ## flagged" (and `tfirstbreaks`' 80 ms drift off its neighbours); without the support test for a
 ## second segment, "bend 0.4 to 0.3: one segment"; with the guided window left at 100 ms, "the
-## burst 60 ms before the break was picked" and "60 ms off is no break, not far off".
+## burst 60 ms before the break was picked" and "60 ms off is no break, not far off"; with the
+## edge pick kept on the record-fit pass, "1 ms: trace 20 compared at -14.0 ms" (-14.1 at 2 ms,
+## -16.0 at 4 ms); with far off taken only beyond the band, "a first-pass pick on the edge is no
+## break".
 
 import std/[math, os, strutils]
 import parseSEG
@@ -137,18 +143,21 @@ proc scatterShot(fx: Fixtures; name: string; traces: int; jitter: float64; burst
   doAssert log.len == 0, $log
 
 proc tightBurstStaysOut(b: FirstBreaks; n: int; what: string) =
-  ## The guided pick of a burst trace is the break, not the burst 60 ms before it (`pickMs`,
-  ## not `pickOf`: a far-off trace shows the first pass, which did take the burst).
+  ## The guided pass never takes the burst 60 ms before the break (`pickMs`, not `pickOf`: a
+  ## far-off trace shows the first pass, which did take the burst). Its energy fills the
+  ## picker's lead-in, so the guided pick of a burst trace is the window's last sample at no
+  ## confidence (dropped: the window clamping) or, when confident, the break.
   doAssert b.twoPass and b.hasModel, what & b.passNote
   doAssert b.geometry.guideWindowMs == GuideMinMs, what & "window " & $b.geometry.guideWindowMs
   doAssert "20 to 400" in b.modelWords(suMetres), b.modelWords(suMetres)
   for i in countup(0, n - 1, 8):
     let at = scatterArrival(i, 2.0)
     let pick = b.pickMs[i]
-    doAssert not pick.isNaN, what & "trace " & $i & " has no pick"
-    doAssert abs(pick - (at - 60)) > 25, what & "the burst 60 ms before the break was picked"
-    doAssert abs(pick - at) < 30, what & "trace " & $i & " pick " & $pick &
-      " not the break at " & $at
+    doAssert pick.isNaN or abs(pick - (at - 60)) > 25,
+      what & "the burst 60 ms before the break was picked"
+    doAssert pick.isNaN or b.confidence[i] < ConfidentPick or abs(pick - at) < 30,
+      what & "trace " & $i & " pick " & $pick & " not the break at " & $at
+    doAssert not b.rule.comparable[i] or abs(pick - at) < 30, what & "trace " & $i
 
 proc twoEventShot(fx: Fixtures; name: string; traces: int;
     events: proc (i: int): (float64, float64); second = 1.0): string =
@@ -569,6 +578,24 @@ proc main*() =
     for i in 50 ..< 100: missed[i] = false
     doAssert expectedRange(offs, eligible, kept, missed) >= 1900
 
+  block aComparablePickIsStrictlyInsideTheBand:
+    # on the band's edge is outside it, for the guided pick and the first pass's alike. Seen to
+    # fail with far off taken only beyond the band: "a first-pass pick on the edge is no break"
+    doAssert isComparable(219.99, 1, 200, 20) and not isComparable(220, 1, 200, 20)
+    doAssert isComparable(180.01, 1, 200, 20) and not isComparable(180, 1, 200, 20)
+    doAssert not isComparable(205, ConfidentPick - 0.01, 200, 20)
+    doAssert not isComparable(NaN, 1, 200, 20) and not isComparable(205, 1, NaN, 20)
+    var d = line(40, 0, 1)
+    var g = oneLine(40)
+    g.guideWindowMs = 20
+    g.firstMs = d.pick
+    g.firstConf = d.conf
+    var p = d.pick
+    p[8] = d.model[8] + 20
+    g.firstMs[8] = p[8]
+    let r = applyRule(p, d.conf, d.model, g)
+    doAssert not r.comparable[8] and r.farOff[8], "a first-pass pick on the edge is no break"
+
   block farOffIsANearMissNotNoise:
     # the first pass's pick is far off the model only 100 to 400 ms from it, and never before
     # the model's intercept less the limit: farther, or before any arrival, it is noise
@@ -737,6 +764,33 @@ proc main*() =
       doAssert b.twoPass and b.hasModel, b.passNote
       doAssert b.geometry.guideWindowMs == GuideMaxMs, "window " & $b.geometry.guideWindowMs
       doAssert "100 to 400" in b.modelWords(suMetres), b.modelWords(suMetres)
+
+  block aRecordFitSearchEdgeIsNotABreak:
+    # Four traces 18 ms early on a tight record (window 20 ms), at 1, 2 and 4 ms. The second
+    # pass searches around the first-trim model, a few ms later than the model fitted again to
+    # the guided picks: the break is outside the search and the picker returns its first sample,
+    # which is inside the refit model's band. That is the window clamping, not a break: the
+    # first pass decides (far off beyond the band, else no pick). Seen to fail with the edge kept
+    # on the record-fit pass: "1 ms: trace 20 compared at -14.0 ms".
+    for dt in [1.0, 2.0, 4.0]:
+      withFixtures fx:
+        let path = fx.customShot("early.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
+          arrivalMs(k.offset) + (if i in 20 .. 23: -18.0 else: 0.0), dtMs = dt)
+        var f = openSeismic(path, keys = true)
+        let b = breaksOfRecord(addr f, path, 0 ..< f.len, [])
+        f.close()
+        let what = $int(dt) & " ms: "
+        doAssert b.twoPass and b.geometry.guideWindowMs == GuideMinMs,
+          what & "window " & $b.geometry.guideWindowMs
+        doAssert b.rule.nComparable >= Traces - 4 - 3, what & $b.rule.nComparable & " compared"
+        for t in 20 .. 23:
+          doAssert not b.rule.comparable[t], what & "trace " & $t & " compared at " &
+            formatFloat(b.pickMs[t] - b.modelMs[t], ffDecimal, 1) & " ms"
+          let first = abs(b.geometry.firstMs[t] - b.modelMs[t])
+          let outside = b.geometry.firstConf[t] >= ConfidentPick and first >= GuideMinMs and
+            first <= FarOffMaxMs
+          doAssert b.rule.farOff[t] == outside and b.rule.noBreak[t] == not outside,
+            what & "trace " & $t & ": the first pass's " & $first & " ms does not decide"
 
   echo "tbreakrule: ok"
 

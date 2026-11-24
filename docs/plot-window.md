@@ -648,7 +648,11 @@ confident picks than the line does (so a bend whose far segment holds most picks
 segments). That fit is what "Use this record's fit" copies. When fewer than 10 confident picks
 hold together, the first-pass picks stay and the key's note says so. With a given model the
 shown picks come from a pass guided by it instead, in a window of the same width from the
-scatter of the fit then in use.
+scatter of the fit then in use. In every guided pass, a pick on the first or last sample of
+the search window is the window clamping, not an arrival: it is dropped, and the first pass's
+pick decides what the trace is (below). The second pass searches round the model of the first
+pass's picks and is judged against the model fitted again, which can lie a few milliseconds
+away: a pick is compared only when it is inside both.
 
 **Which traces are flagged** (one rule decides, so the key, the marks, the words and the agent
 state agree):
@@ -663,11 +667,10 @@ state agree):
   a stretch of real breaks the fit misses does not end it. A trace with a model time beyond
   that is *beyond the offsets where breaks are seen*: counted apart, never judged, never a
   finding.
-- *Comparable*: within that range, a confident pick (0.5 or more) strictly inside that same
-  window of the model (on the boundary is not inside). A pick the given model's pass returned
-  on the first or last sample of its search window is not a guided pick at all. Any other trace
+- *Comparable*: within that range, a confident guided pick (0.5 or more) strictly inside that
+  same window of the model (on the boundary is not inside). Any other trace
   in range is *no break found* and not flagged, unless the first (unguided) pass found a confident
-  break outside that window and at most 400 ms from the model, not before the model's intercept
+  break not inside that window and at most 400 ms from the model, not before the model's intercept
   less the limit, while the guided window found none: that is *far off the model* (a station
   placed a few hundred metres wrong), and flagged, drawn with its link to where the break was
   found. A first-pass pick farther off, or before any break can arrive, is noise.

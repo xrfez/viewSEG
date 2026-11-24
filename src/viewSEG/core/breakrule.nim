@@ -8,13 +8,15 @@
 ## - **Where a break is expected** (`expectedRange`): out to the offset where fewer than
 ##   `RangeShare` of the traces have a confident pick near the model, and never past most of the
 ##   picks both passes agree on. A trace beyond it is "beyond", counted apart and never judged.
-## - **Comparable**: a pick of confidence from `ConfidentPick` strictly inside the guided
-##   window (`guideWindowMs` of the fit's scatter) of the model. On the boundary is not inside.
+## - **Comparable** (`isComparable`): a guided pick of confidence from `ConfidentPick` strictly
+##   inside the guided window (`guideWindowMs` of the fit's scatter) of the model it is judged
+##   against. On the boundary is not inside. (A pick the picker returned on the first or last
+##   sample of its search window is no guided pick at all: the job drops it.)
 ## - **Off the model**: a comparable trace whose residual (pick less model) is larger than
 ##   the record's limit, `max(LimitFloorMs, LimitSigmas * sigma)`, `sigma` being 1.4826 times
 ##   the median absolute deviation (MAD) of the picks' own scatter about the record's fit.
 ## - **Far off the model**: a trace whose guided pick is not comparable, but whose first-pass
-##   pick is confident and more than that window, at most `FarOffMaxMs`, from the model,
+##   pick is confident and not inside that window, at most `FarOffMaxMs`, from the model,
 ##   and not before the model's intercept less the limit (no break comes before the first
 ##   possible arrival). Everything else with a model time is "no break found", never flagged.
 ## - **Off its neighbours**: a comparable trace whose residual, less the median residual of up
@@ -124,7 +126,7 @@ type
       ## model that finds fewer than half as many does not match. -1: not known
     guideWindowMs*: float64 = GuideMaxMs
       ## the guided search half-window (ms) of the picks being judged: a confident pick this far
-      ## from the model, or farther, is not comparable, and a first-pass pick just beyond it
+      ## from the model, or farther, is not comparable, and a first-pass pick as far or farther
       ## (at most `FarOffMaxMs`) is far off. `GuideMaxMs` when the scatter is not known
 
   LeanKind* = enum
@@ -148,6 +150,13 @@ type
     mismatch*: bool           ## a given model that does not match the record's breaks
     guideWindowMs*: float64 = GuideMaxMs
       ## the guided search half-window (ms) this rule applied
+
+func isComparable*(pickMs, confidence, modelMs, bandMs: float64): bool {.inline.} =
+  ## Whether a guided pick is compared with the model: of confidence from `ConfidentPick` and
+  ## strictly inside `bandMs` (the guided half-window) of the model's time `modelMs`. On the
+  ## band's edge is outside it, as the first or last sample of the search is.
+  let d = pickMs - modelMs
+  not d.isNaN and confidence >= ConfidentPick and abs(d) < bandMs
 
 func guideLines*(m: BreakModel): seq[GuideLine] =
   ## The picker's guide for `m` as one line per segment (its own velocity and intercept: the
@@ -338,8 +347,8 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
         inc result.nBeyond
       else:
         inc result.nInRange
-        let d = pickMs[i] - modelMs[i]
-        if not d.isNaN and confidence[i] >= ConfidentPick and abs(d) < band:
+        if isComparable(pickMs[i], confidence[i], modelMs[i], band):
+          let d = pickMs[i] - modelMs[i]
           res[i] = d
           result.comparable[i] = true
           all.add d
@@ -354,13 +363,14 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
       if result.comparable[i] and abs(res[i]) > result.limitMs:
         result.offModel[i] = true
   # far off: the guided window holds no break, but the first pass found a confident one
-  # beyond it, near enough to be a station placed wrongly, and not before any arrival can be
+  # outside it (on its edge is outside, as for the guided pick), near enough to be a station
+  # placed wrongly, and not before any arrival can be
   let earliest = interceptMs - (if result.limitMs.isNaN: LimitFloorMs else: result.limitMs)
   for i in 0 ..< n:
     if result.noBreak[i]:
       if haveFirst and g.firstConf[i] >= ConfidentPick and not g.firstMs[i].isNaN:
         let d = abs(g.firstMs[i] - modelMs[i])
-        if d > band and d <= FarOffMaxMs and
+        if d >= band and d <= FarOffMaxMs and
             (earliest.isNaN or g.firstMs[i] >= earliest):
           (result.farOff[i], result.noBreak[i]) = (true, false)
           inc result.nFarOff

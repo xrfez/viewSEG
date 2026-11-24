@@ -52,6 +52,12 @@ proc breaksOf(path: string): FirstBreaks =
   result = breaksOfRecord(addr f, path, 0 ..< f.len, [])
   f.close()
 
+func sameMs(a, b: openArray[float64]): bool =
+  ## Whether two lists of times are the same, NaN (no pick) matching NaN.
+  result = a.len == b.len
+  for i in 0 ..< min(a.len, b.len):
+    if not (a[i] == b[i] or (a[i].isNaN and b[i].isNaN)): result = false
+
 proc main*() =
 
   block givenModelAtTheTrueVelocitySitsOnThePicks:
@@ -66,7 +72,8 @@ proc main*() =
       doAssert g.compared > 40 and g.offModel <= 2, $g.compared & " compared, " & $g.offModel &
         " off"
       doAssert abs(g.medianDiffMs) < 6, "median " & $g.medianDiffMs
-      doAssert g.pickMs == b.pickMs and g.fit.v1 == b.fit.v1 and g.fit.modelMs == b.fit.modelMs,
+      doAssert sameMs(g.pickMs, b.pickMs) and g.fit.v1 == b.fit.v1 and
+          sameMs(g.fit.modelMs, b.fit.modelMs),
         "the picks and the fit are unchanged"
       doAssert g.mismatched(PlantedTrace) and not g.mismatched(3), "the 12 ms limit"
       doAssert not b.withModel(BreakModel()).isGiven and
