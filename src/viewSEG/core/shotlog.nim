@@ -223,7 +223,7 @@ func accDigit[T: int | int64](v: var T; digit: int): bool =
   v = v * 10 + T(digit)
   true
 
-func gpsMicrosToUtcMicros*(gpsUs: int64): int64 {.raises: [].} =
+proc gpsMicrosToUtcMicros*(gpsUs: int64): int64 {.raises: [].} =
   ## UTC microseconds since 1970 of `gpsUs` microseconds since the GPS
   ## epoch (1980-01-06). parseSEG exports `gpsMinusUtc` (GPS minus UTC,
   ## whole seconds) and `GpsEpochUnix`; the leap table itself is not

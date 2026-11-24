@@ -716,8 +716,12 @@ proc gitArchive(repo, rev, dest, lib: string): bool =
   ## `dest`; false when git cannot give them.
   when defined(posix):
     createDir(dest)
+    # `data` holds files the sources read while compiling; not every library has one.
+    let hasData = execCmdEx("git -C " & quoteShell(repo) & " cat-file -e " &
+      quoteShell(rev & ":data")).exitCode == 0
     let cmd = "git -C " & quoteShell(repo) & " archive --format=tar " & quoteShell(rev) &
-      " src docs/api.md " & lib & ".nimble | tar -x -C " & quoteShell(dest)
+      " src docs/api.md " & lib & ".nimble" & (if hasData: " data" else: "") &
+      " | tar -x -C " & quoteShell(dest)
     execCmdEx(cmd).exitCode == 0 and fileExists(dest / "src" / lib & ".nim")
   else:
     false
