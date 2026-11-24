@@ -34,7 +34,8 @@ const
   OrderNotKnownWords* = "No order by station or time could be told: the traces are out of " &
     "order, their grouping is irregular, the key never changes, or there are too few."
     ## what the Order column says of a file whose traces are in no order that can be told
-  UncodedWords = " Their components are not coded, so the grouping cannot be told."
+  UncodedWords = " Some traces share a station and start time without a component code, " &
+    "so the grouping cannot be told."
 
 func orderShort*(o: TraceOrder): string =
   ## The order of the traces in a word or two, for a table cell: "Station", "Flag · station";

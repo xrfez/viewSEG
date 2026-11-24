@@ -102,6 +102,12 @@ proc main*() =
         channels.add OrderTrace(component: uint8(c), place: (2'i8, float64(c), 0.0, 0'i16),
           start: float64(k * 1000) * Dt)
     doAssert traceOrder(channels, Dt, false) == none, "channel-only flag by time"
+    var oneChannel: seq[OrderTrace] = @[]
+    for k in 0 ..< 5:
+      for c in 1 .. 3:
+        oneChannel.add OrderTrace(component: uint8(c), place: (2'i8, 7.0, 0.0, 0'i16),
+          start: float64(k * 1000) * Dt)
+    doAssert traceOrder(oneChannel, Dt, false) == none, "components on one channel number"
     var rising: seq[OrderTrace] = @[]
     for c in 1 .. 8:
       rising.add OrderTrace(component: 1, place: (2'i8, float64(c), 0.0, 0'i16), start: 0)
@@ -123,7 +129,8 @@ proc main*() =
     doAssert traceOrder(one, Dt, true) == order(tgNone, tsByStation), "uncoded, one per station"
     doAssert orderShort(order(tgNotKnown, tsByStation)) == "Station"
     doAssert orderTitle(order(tgNotKnown, tsByStation)) == "Traces are sorted by station. " &
-      "Their components are not coded, so the grouping cannot be told."
+      "Some traces share a station and start time without a component code, so the " &
+      "grouping cannot be told."
 
   block backwardCreep:
     # many steps under half a sample, each rounding to a tie, are not sorted
