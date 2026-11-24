@@ -66,6 +66,11 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
   they are left out. A point index outside 0 to 255 is written as 0, and counted.
 - **The samples** are written as 32-bit floats.
 
+When a vendor header map names each trace's start time (see `vendormaps/README.md`), the cut
+reads the segments' start times from the trace headers and says so in Messages. The number of
+components the window shows before the cut is counted from the file's keys and can be higher
+than the cut's; Messages gives the number written.
+
 ## Where the recording does not fit the shots
 
 Messages reports what the cut found, after the file is written.

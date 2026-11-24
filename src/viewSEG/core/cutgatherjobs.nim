@@ -41,7 +41,7 @@ import parseSEG/model/traceindex
 import processSEG
 import processSEG/continuous/slice
 import processSEG/core/workspace
-import cutfile, cutgather, filesystem, jobs, outputjobs, shotlog
+import cutfile, cutgather, filesystem, jobs, outputjobs, segmentclock, shotlog, vendormaps
 
 const
   NamedMax* = 5 ## how many overlaps and timing issues the result names
@@ -74,6 +74,8 @@ type
       ## overlaps with a trace no record reads: not needed, so not compared
     mismatches*: seq[string]
       ## the first few mismatching overlaps, named by source trace (from 1)
+    segmentsFromHeaders*: bool ## the segments' start times were read from the trace headers
+    segmentsWithoutTime*: int ## traces whose header had none (they keep the keys' time)
     timingIssues*: int ## segments off the previous segment's sample grid
     timingNames*: seq[string] ## the first few, named by source trace (from 1)
     gapSamples*: int ## output samples no segment covers, over every trace
@@ -226,6 +228,11 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
     result.add plural(res.overlapsOutside, "overlap", "overlaps") &
       " between traces lie outside every record and " &
       (if res.overlapsOutside == 1: "was" else: "were") & " not needed."
+  if res.segmentsFromHeaders:
+    result.add "Segment times were read from the trace headers."
+    if res.segmentsWithoutTime > 0:
+      result.add plural(res.segmentsWithoutTime, "trace has", "traces have") &
+        " no start time in its header and keeps the time of the file's keys."
   if res.timingIssues > 0:
     result.add plural(res.timingIssues, "segment starts", "segments start") &
       " off the sample grid of the one before: " & res.timingNames.join("; ") & "."
@@ -276,7 +283,14 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
 
       ctx.setPhase "planning"
       let meta = chunkMeta(file[], 0 ..< file[].len, dtMs = dtMs)
-      let streams = initSliceStreams(meta)
+      var clock = SegmentClock()
+      let reg = currentVendors()
+      if reg.maps.len > 0:
+        if not file[].inMemory: fs.mappedRead(source, headers = true)
+        clock = segmentClock(file[], reg, proc () {.gcsafe.} = ctx.checkCancelled())
+      let streams =
+        if clock.fromHeaders: initSliceStreams(meta, clock.times, clock.receivers)
+        else: initSliceStreams(meta)
       let window = SliceWindow(startMs: opts.startMs, lengthMs: opts.recordMs)
       let plan = planSlices(streams, shots.shots, window, soShotRecords, opts.align)
       let comps = plan.receiverCount
@@ -294,7 +308,9 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let expected = estimateBytes(opts, shots.shots.len, comps, plan.samples, anyStation,
         anySourceXY, anyReceiverXY)
       var res = CutResult(path: dest, shotsDropped: shots.dropped,
-        duplicateTimes: shots.duplicateTimes, recordsFromFileNumbers: numbered.fromFileNumber,
+        duplicateTimes: shots.duplicateTimes,
+        segmentsFromHeaders: clock.fromHeaders, segmentsWithoutTime: clock.fallbacks,
+        recordsFromFileNumbers: numbered.fromFileNumber,
         pointIndexOutOfRange: shots.pointIndexOutOfRange, components: comps,
         samples: plan.samples, expectedBytes: expected,
         sourceKeysDropped: opts.standard == csSegy and anySourceKey)
