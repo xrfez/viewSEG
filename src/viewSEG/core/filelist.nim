@@ -250,6 +250,42 @@ func find*(list: FileList; path: string): int =
   let at = list.place(name, path)
   if at < list.entries.len and list.entries[at].path == path: at else: -1
 
+const MaxCachedKinds* = 4096
+  ## the kinds a `KindCache` keeps at least before it drops those of files no longer listed
+
+type
+  KindCache* = object
+    ## The kinds of recording read this session, by file: a listing of a folder read before
+    ## takes them again, and only a file without one is read. An answer holds for the file as
+    ## it was read (its size and time) and for the vendor maps' load it was read with.
+    answers: Table[string, KindAnswer]
+    vendors: int ## the vendor maps' load (`vendorGen`) every answer was read with
+
+func len*(c: KindCache): int {.inline.} = c.answers.len
+
+func cachedKind*(c: KindCache; e: FileEntry; vendors: int): Option[KindAnswer] =
+  ## The answer read for `e` as it is now (its size and time) under the vendor maps' load
+  ## `vendors`; none when there is none.
+  if vendors == c.vendors:
+    let a = c.answers.getOrDefault(e.path)
+    if a.path.len > 0 and a.size == e.size and a.modified == e.modified: return some(a)
+  none(KindAnswer)
+
+proc remember*(c: var KindCache; a: sink KindAnswer; vendors: int; list: FileList) =
+  ## Keeps `a`, read under the vendor maps' load `vendors`: answers of another load are
+  ## dropped. Past `MaxCachedKinds` (or twice the files listed, if more) the answers of files
+  ## `list` does not hold are dropped, so the cache stays the size of what is listed.
+  if a.state == ksUnread: return
+  if vendors != c.vendors:
+    c.answers.clear()
+    c.vendors = vendors
+  c.answers[a.path] = a
+  if c.answers.len > max(MaxCachedKinds, 2 * list.entries.len):
+    var gone: seq[string] = @[]
+    for path in c.answers.keys:
+      if list.find(path) < 0: gone.add path
+    for path in gone: c.answers.del path
+
 proc note(list: var FileList; kind: EntryChangeKind; at: int; count = 1) =
   if list.changes.len >= MaxChanges: list.changes = list.changes[MaxChanges div 2 .. ^1]
   list.changes.add EntryChange(kind: kind, at: at, count: count)

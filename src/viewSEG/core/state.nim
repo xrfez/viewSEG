@@ -1250,6 +1250,8 @@ type
     quietScan: JobId ## a listing of the folder listed last: a missing folder is said quietly
     kindJob: JobId = NoJob
       ## the job reading the kinds of the listed files (`startKinds`); one at a time
+    kindCache: KindCache
+      ## the kinds read this session: a folder listed again reads only the files without one
     unread: seq[tuple[panel: PanelId; cause: UnreadCause; why: string]]
       ## the panels whose file cannot be read now, and why (`mkUnread`)
     speeds: seq[tuple[panel: PanelId; ms: float64]]
@@ -9110,11 +9112,20 @@ proc startKinds(state: var AppState) =
   ## of the listed seismic
   ## files not read yet (`kindsWork`), unless one runs: it ends, and this runs again, so files
   ## listed or changed meanwhile are read too. A file being written waits until it is steady.
+  ## A file whose kind was read before, as it is now and under the vendor maps in force
+  ## (`kindCache`), takes that answer and is not read again.
   if state.kindJob != NoJob: return
   var asks: seq[WatchedFile] = @[]
-  for e in state.files.entries:
+  for i in 0 ..< state.files.entries.len:
+    template e: untyped = state.files.entries[i]
     if e.kind.isSeismic and e.kindState == ksUnread and e.status != fsWriting:
-      asks.add WatchedFile(path: e.path, size: e.size, modified: e.modified)
+      let had = state.kindCache.cachedKind(e, state.vendor.gen)
+      if had.isSome:
+        e.kindState = had.get.state
+        e.recording = had.get.kind
+        state.files.changedAt(i)
+      else:
+        asks.add WatchedFile(path: e.path, size: e.size, modified: e.modified)
   if asks.len > 0:
     state.kindJob = state.jobs.submit(JobSpec(title: "Read what the files are",
       lane: jlPeeks), kindsWork(state.files.gen, state.vendor.gen, asks, currentVendors(),
@@ -9160,9 +9171,12 @@ proc onFinished(state: var AppState; job: JobInfo) =
       let i = state.files.find(state.recPath)
       if i >= 0 and (state.files.entries[i].kindState != ksKnown or
           state.files.entries[i].recording != state.recFacts.kind):
-        state.files.entries[i].kindState = ksKnown
-        state.files.entries[i].recording = state.recFacts.kind
+        template e: untyped = state.files.entries[i]
+        e.kindState = ksKnown
+        e.recording = state.recFacts.kind
         state.files.changedAt(i)
+        state.kindCache.remember(KindAnswer(path: e.path, size: e.size, modified: e.modified,
+          state: ksKnown, kind: e.recording), state.recKey.vendors, state.files)
     return
   if job.id == state.leapJob:
     state.finishLeap(job)
@@ -9529,6 +9543,7 @@ proc takeKinds(state: var AppState; m: sink Msg) =
       e.kindState = a.state
       if a.state == ksKnown: e.recording = a.kind
       f.changedAt(i)
+      state.kindCache.remember(a, m.kindsVendors, f)
 
 proc takeListed(state: var AppState; m: sink Msg) =
   ## What a scan found for the file list; shows the first file found (or the

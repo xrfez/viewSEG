@@ -13,12 +13,13 @@
 ## with `rereadKinds` taken out of `takeVendor`, "the kind did not follow the map"; out of
 ## `setVendorChoice`, "the kind kept the map left off"; with the kinds job on the background
 ## lane, "the kinds are not read on the peeks lane"; with the shown file not asked for its facts
-## (`rowAsks`), "the file shown did not give its row the kind".
+## (`rowAsks`), "the file shown did not give its row the kind"; with no answer taken from
+## `kindCache` in `startKinds`, "a file listed again was read for its kind".
 
 import std/[options, os, sequtils, times]
 import viewSEG/core/state {.all.}
 import viewSEG/core/[filelist, filekinds, inbox, jobs, recordingkind, vendormaps]
-import utils/[fixtures, kindfiles, waiting]
+import utils/[faultyfs, fixtures, kindfiles, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); cond))
@@ -32,6 +33,23 @@ proc listed(st: AppState; n: int): bool =
   not st.fileList.scanning and st.fileList.entries.len == n
 
 proc main*() =
+  block theCacheIsBoundedAndFollowsTheMaps:
+    var c: KindCache
+    let list = FileList(job: NoJob)
+    let t = initTime(1_700_000_000, 0)
+    for i in 0 .. MaxCachedKinds + 10:
+      c.remember(KindAnswer(path: "/f" & $i, size: 10, modified: t, state: ksKnown,
+        kind: rkShotGather), 1, list)
+      doAssert c.len <= MaxCachedKinds, $c.len
+    let e = FileEntry(path: "/f" & $(MaxCachedKinds + 10), size: 10, modified: t)
+    doAssert c.cachedKind(e, 1).isSome
+    doAssert c.cachedKind(e, 2).isNone, "an answer of other vendor maps was taken"
+    doAssert c.cachedKind(FileEntry(path: e.path, size: 11, modified: t), 1).isNone
+    doAssert c.cachedKind(FileEntry(path: e.path, size: 10, modified: t + initDuration(
+      seconds = 1)), 1).isNone
+    c.remember(KindAnswer(path: "/g", size: 1, modified: t, state: ksNone), 2, list)
+    doAssert c.len == 1 and c.cachedKind(e, 1).isNone
+
   withFixtures fx:
     let dir = fx.dir / "folder"
     let cont = writeSpecs(dir, "a", [spec(0, 0), spec(0, 1000), spec(0, 2000)])
@@ -56,10 +74,11 @@ proc main*() =
       # the continuous file is written again with a late start: time sliced
       discard writeSpecs(dir, "a", [spec(0, 0), spec(0, 1000), spec(0, 2150), spec(0, 3150),
         spec(0, 4150)])
+      setLastModificationTime(cont, getLastModificationTime(cont) + initDuration(seconds = 5))
       let info = getFileInfo(cont)
       st.mailbox.post Msg(kind: mkWatched, watchGen: st.fileList.gen, watched: @[WatchedFile(
         path: canonical(cont), exists: true, kind: fkSegd, size: info.size,
-        modified: info.lastWriteTime + initDuration(seconds = 5), listed: true)])
+        modified: info.lastWriteTime, listed: true)])
       discard st.drainInbox()
       doAssert st.kindOf(cont).isNone, "a changed file is not asked again"
       doAssert st.settle(st.kindOf(cont) == some(rkReceiverSliced)),
@@ -108,6 +127,37 @@ proc main*() =
           jsRunning}) and st.kindOf(o).isSome)
       doAssert st.fileList.find(canonical(cont)) < 0
       doAssert st.kindOf(o) == some(rkShotGather)
+
+    block aFolderListedAgainReadsNoFile:
+      # every kind of the first folder was read before (the open gave one): listed again, each
+      # row takes it at once and no file is opened for it
+      install()
+      try:
+        let prefix = canonical(dir)
+        resetCounts()
+        st.apply Command(kind: ckBrowse, paths: @[dir])
+        doAssert st.settle(st.listed(3) and st.fileList.entries.allIt(it.kindState != ksUnread))
+        doAssert st.kindOf(cont) == some(rkReceiverSliced)
+        doAssert st.kindOf(sliced) == some(rkReceiverSliced)
+        doAssert st.kindOf(shot) == some(rkShotGather)
+        doAssert calls(foHeaders, prefix) + calls(foMapped, prefix) == 0,
+          "a file listed again was read for its kind: " & $calls(foHeaders, prefix)
+        doAssert st.jobs.list.filterIt(it.spec.title == "Read what the files are" and
+          it.state in {jsQueued, jsRunning}).len == 0
+        # a file whose time changed is read again; the others still are not
+        setLastModificationTime(shot, getLastModificationTime(shot) + initDuration(seconds = 9))
+        let other = fx.dir / "other"
+        st.apply Command(kind: ckBrowse, paths: @[other])
+        doAssert st.settle(st.listed(1))
+        st.apply Command(kind: ckBrowse, paths: @[dir])
+        doAssert st.settle(st.listed(3) and st.fileList.entries.allIt(it.kindState != ksUnread))
+        doAssert st.kindOf(shot) == some(rkShotGather)
+        doAssert calls(foHeaders, canonical(shot)) > 0, "a changed file was not read again"
+        doAssert calls(foHeaders, canonical(cont)) + calls(foHeaders, canonical(sliced)) == 0
+        doAssert uiCalls().len == 0, $uiCalls()
+      finally:
+        setFsHook(nil)
+        setIoHook(nil)
     st.shutdown()
 
     block aVendorMapChangesWhatTheKindsAre:
