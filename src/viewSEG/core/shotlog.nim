@@ -943,6 +943,24 @@ proc guessMap*(text: string): ShotLogMap {.raises: [].} =
     if commaDec and not dotDec:
       result.decimalComma = true
 
+const White = {' ', '\t', '\v', '\r', '\n', '\f'}
+
+func trimSpan(s: openArray[char]): tuple[a, b: int] {.inline.} =
+  result.a = 0
+  result.b = s.len
+  while result.a < result.b and s[result.a] in White: inc result.a
+  while result.b > result.a and s[result.b - 1] in White: dec result.b
+
+func copySpan(s: openArray[char]; a, b: int): string =
+  result = newString(b - a)
+  for i in a ..< b: result[i - a] = s[i]
+
+func sameText(s: openArray[char]; a, b: int; lower: string): bool =
+  if b - a != lower.len: return false
+  for i in 0 ..< lower.len:
+    if s[a + i].toLowerAscii != lower[i]: return false
+  true
+
 func dotDecimal(s: string; decimalComma: bool): string =
   ## `s`, with a comma written as a dot when `decimalComma`.
   if not decimalComma or ',' notin s: return s
@@ -950,83 +968,130 @@ func dotDecimal(s: string; decimalComma: bool): string =
   for i, c in s:
     result[i] = if c == ',': '.' else: c
 
-func isMissing(cell: string; sentinels: openArray[string];
-    decimalComma = false): bool =
-  let t = cell.strip
-  if t.len == 0: return true
-  let shown = dotDecimal(t, decimalComma)
-  var number = 0.0
-  let parsed = parseutils.parseFloat(shown, number) == shown.len and shown.len > 0
-  for s in sentinels:
-    let u = s.strip
-    if u.len == 0: discard
-    elif cmpIgnoreCase(t, u) == 0: return true
-    elif parsed:
-      var other = 0.0
-      if parseutils.parseFloat(u, other) == u.len and number == other:
-        return true
-  false
-
-proc parseWhole(s: string; decimalComma = false): tuple[ok: bool; value: int64] =
-  let t = s.strip
-  if t.len == 0: return
-  var i = 0
+func parseSimple(s: openArray[char]; a, b: int; decimalComma: bool): tuple[ok: bool;
+    value: float64] =
+  var i = a
+  if i >= b: return
   var neg = false
-  if t[0] == '+': inc i
-  elif t[0] == '-':
+  if s[i] == '+': inc i
+  elif s[i] == '-':
     neg = true
     inc i
-  if i >= t.len or t[i] notin Digits: return
-  var v = 0'i64
-  while i < t.len and t[i] in Digits:
-    if not accDigit(v, ord(t[i]) - ord('0')): return
+  if i >= b or s[i] notin Digits: return
+  var v = 0.0
+  while i < b and s[i] in Digits:
+    v = v * 10 + float64(ord(s[i]) - ord('0'))
     inc i
   let dec = if decimalComma: ',' else: '.'
-  if i < t.len and t[i] == dec:
+  if i < b and s[i] == dec:
     inc i
-    if i >= t.len: return
-    while i < t.len and t[i] == '0': inc i
-  if i != t.len: return
+    if i >= b: return
+    var scale = 0.1
+    while i < b and s[i] in Digits:
+      v += float64(ord(s[i]) - ord('0')) * scale
+      scale *= 0.1
+      inc i
+  if i != b: return
   if neg: v = -v
   (true, v)
 
-proc parseNum(s: string; decimalComma = false): tuple[ok: bool; value: float64] =
-  let t = dotDecimal(s.strip, decimalComma)
-  if t.len == 0: return
+func parseNum(s: openArray[char]; decimalComma = false): tuple[ok: bool; value: float64] =
+  let span = trimSpan(s)
+  if span.a >= span.b: return (false, NaN)
+  let simple = parseSimple(s, span.a, span.b, decimalComma)
+  if simple.ok: return simple
   var n = 0.0
-  let c = parseutils.parseFloat(t, n)
-  if c == t.len and c > 0: (true, n) else: (false, NaN)
+  if not decimalComma:
+    let c = parseutils.parseFloat(s.toOpenArray(span.a, span.b - 1), n)
+    if c == span.b - span.a and c > 0: (true, n) else: (false, NaN)
+  else:
+    var comma = false
+    for i in span.a ..< span.b:
+      if s[i] == ',':
+        comma = true
+        break
+    if not comma:
+      let c = parseutils.parseFloat(s.toOpenArray(span.a, span.b - 1), n)
+      if c == span.b - span.a and c > 0: (true, n) else: (false, NaN)
+    elif span.b - span.a <= 128:
+      var buf: array[128, char]
+      var k = 0
+      for i in span.a ..< span.b:
+        buf[k] = if s[i] == ',': '.' else: s[i]
+        inc k
+      let c = parseutils.parseFloat(toOpenArray(buf, 0, k - 1), n)
+      if c == k and c > 0: (true, n) else: (false, NaN)
+    else:
+      let t = dotDecimal(copySpan(s, span.a, span.b), true)
+      let c = parseutils.parseFloat(t, n)
+      if c == t.len and c > 0: (true, n) else: (false, NaN)
 
-proc parseSecondsUs(s: string; decimalComma = false): tuple[ok: bool; us: int64] =
-  ## Microseconds from a seconds field, digits only, so a fraction is not
-  ## rounded through `float64`. At most six fraction digits, then half-up.
-  let t = s.strip
-  if t.len == 0: return
-  var i = 0
+func isMissing(cell: openArray[char]; sentText: openArray[string];
+    sentVal: openArray[float64]; decimalComma: bool): bool =
+  let span = trimSpan(cell)
+  if span.a >= span.b: return true
+  let num = parseNum(cell, decimalComma)
+  if num.ok:
+    for v in sentVal:
+      if num.value == v: return true
+  for u in sentText:
+    if sameText(cell, span.a, span.b, u): return true
+  false
+
+proc parseWhole(s: openArray[char]; decimalComma = false): tuple[ok: bool; value: int64] =
+  let span = trimSpan(s)
+  var i = span.a
+  let n = span.b
+  if i >= n: return
   var neg = false
-  if t[0] == '+': inc i
-  elif t[0] == '-':
+  if s[i] == '+': inc i
+  elif s[i] == '-':
     neg = true
     inc i
-  if i >= t.len or t[i] notin Digits: return
+  if i >= n or s[i] notin Digits: return
+  var v = 0'i64
+  while i < n and s[i] in Digits:
+    if not accDigit(v, ord(s[i]) - ord('0')): return
+    inc i
+  let dec = if decimalComma: ',' else: '.'
+  if i < n and s[i] == dec:
+    inc i
+    if i >= n: return
+    while i < n and s[i] == '0': inc i
+  if i != n: return
+  if neg: v = -v
+  (true, v)
+
+proc parseSecondsUs(s: openArray[char]; decimalComma = false): tuple[ok: bool; us: int64] =
+  ## Microseconds from a seconds field, digits only, so a fraction is not
+  ## rounded through `float64`. At most six fraction digits, then half-up.
+  let span = trimSpan(s)
+  if span.a >= span.b: return
+  var i = span.a
+  var neg = false
+  if s[i] == '+': inc i
+  elif s[i] == '-':
+    neg = true
+    inc i
+  if i >= span.b or s[i] notin Digits: return
   var whole = 0'i64
-  while i < t.len and t[i] in Digits:
-    if not accDigit(whole, ord(t[i]) - ord('0')): return
+  while i < span.b and s[i] in Digits:
+    if not accDigit(whole, ord(s[i]) - ord('0')): return
     inc i
   var frac = 0'i64
   var digits = 0
   let dec = if decimalComma: ',' else: '.'
-  if i < t.len and t[i] == dec:
+  if i < span.b and s[i] == dec:
     inc i
-    if i >= t.len: return
-    while i < t.len and t[i] in Digits and digits < 6:
-      frac = frac * 10 + int64(ord(t[i]) - ord('0'))
+    if i >= span.b: return
+    while i < span.b and s[i] in Digits and digits < 6:
+      frac = frac * 10 + int64(ord(s[i]) - ord('0'))
       inc digits
       inc i
     var roundUp = false
-    if i < t.len and t[i] in Digits:
-      roundUp = ord(t[i]) - ord('0') >= 5
-      while i < t.len and t[i] in Digits: inc i
+    if i < span.b and s[i] in Digits:
+      roundUp = ord(s[i]) - ord('0') >= 5
+      while i < span.b and s[i] in Digits: inc i
     var scale = 1'i64
     for _ in digits ..< 6: scale *= 10
     frac *= scale
@@ -1036,7 +1101,7 @@ proc parseSecondsUs(s: string; decimalComma = false): tuple[ok: bool; us: int64]
         frac -= UsPerSec
         if whole == high(int64): return
         inc whole
-  if i != t.len: return
+  if i != span.b: return
   let scaled = mulUs(whole)
   if not scaled.ok: return
   let summed = add64(scaled.us, frac)
@@ -1045,34 +1110,34 @@ proc parseSecondsUs(s: string; decimalComma = false): tuple[ok: bool; us: int64]
   if neg: us = -us
   (true, us)
 
-proc parseSecond(s: string; decimalComma = false): tuple[ok: bool; sec, us: int] =
+proc parseSecond(s: openArray[char]; decimalComma = false): tuple[ok: bool; sec, us: int] =
   ## Whole seconds and microseconds from a second field. The fraction is
   ## taken from the digits, so 59.999999 stays 59 s + 999999 us.
-  let t = s.strip
-  if t.len == 0: return
-  var i = 0
-  if t[0] == '+': inc i
-  if i >= t.len or t[i] notin Digits: return
+  let span = trimSpan(s)
+  var i = span.a
+  if i >= span.b: return
+  if s[i] == '+': inc i
+  if i >= span.b or s[i] notin Digits: return
   var sec = 0
-  while i < t.len and t[i] in Digits:
-    if not accDigit(sec, ord(t[i]) - ord('0')): return
+  while i < span.b and s[i] in Digits:
+    if not accDigit(sec, ord(s[i]) - ord('0')): return
     inc i
   var us = 0
   let dec = if decimalComma: ',' else: '.'
-  if i < t.len and t[i] == dec:
+  if i < span.b and s[i] == dec:
     inc i
     var digits = 0
     var frac = 0
-    while i < t.len and t[i] in Digits and digits < 6:
-      frac = frac * 10 + (ord(t[i]) - ord('0'))
+    while i < span.b and s[i] in Digits and digits < 6:
+      frac = frac * 10 + (ord(s[i]) - ord('0'))
       inc digits
       inc i
-    while i < t.len and t[i] in Digits: inc i
+    while i < span.b and s[i] in Digits: inc i
     if digits == 0: return
     var scale = 1
     for _ in digits ..< 6: scale *= 10
     us = frac * scale
-  if i != t.len: return
+  if i != span.b: return
   (true, sec, us)
 
 proc matchPattern(text, pattern: string): tuple[ok: bool; y, m, d, hh, mm, ss, us: int] =
@@ -1207,9 +1272,169 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
   ## two digits uses the same pivot as `yy` in a date-time pattern; a
   ## three-digit year is a bad number and is not stored. A second of 60 is
   ## kept, rolled into the next minute, and reported as `second 60`. Missing
-  ## cells and sentinels are empty, not faults.
+  ## cells and sentinels are empty, not faults. A numeric cell is read from
+  ## the stored text; it is not copied.
   result.problems = log.problems
   result.rows = newSeq[Shot](log.len)
+  var sentText: seq[string] = @[]
+  var sentVal: seq[float64] = @[]
+  for s in map.sentinels:
+    let u = s.strip
+    if u.len == 0: continue
+    sentText.add u.toLowerAscii
+    var n = 0.0
+    if parseutils.parseFloat(u, n) == u.len and u.len > 0:
+      sentVal.add n
+    elif map.decimalComma:
+      let d = dotDecimal(u, true)
+      if parseutils.parseFloat(d, n) == d.len and d.len > 0:
+        sentVal.add n
+  var sentLo = Inf
+  var sentHi = NegInf
+  for v in sentVal:
+    if v < sentLo: sentLo = v
+    if v > sentHi: sentHi = v
+  const FastRoles = {crSequence, crFileNumber, crPointIndex, crGpsMicros,
+    crUtcMicros, crYear, crDayOfYear, crMonth, crDayOfMonth, crHour, crMinute,
+    crMicrosecond, crSailLine, crSourceLine, crShotPoint, crUtcSeconds,
+    crSecond, crSourceDepth, crWaterDepth, crX, crY, crZ, crVolume,
+    crPressure, crHeading, crSpeed}
+  template readFast(chars: openArray[char]) =
+    case role
+    of crSequence, crFileNumber, crPointIndex, crGpsMicros, crUtcMicros, crYear,
+        crDayOfYear, crMonth, crDayOfMonth, crHour, crMinute, crMicrosecond:
+      let missing = isMissing(chars, sentText, sentVal, map.decimalComma)
+      if cols[3] < 0 and role in {crYear, crDayOfYear, crMonth, crDayOfMonth,
+          crHour, crMinute, crMicrosecond}:
+        cols[3] = col
+      if not missing:
+        let whole = parseWhole(chars, map.decimalComma)
+        if not whole.ok:
+          addProblem(result.problems, pkBadNumber, row, col,
+            "not a whole number: " & copySpan(chars, trimSpan(chars).a,
+            trimSpan(chars).b))
+        else:
+          case role
+          of crSequence: shot.sequence = some(whole.value)
+          of crFileNumber: shot.fileNumber = some(whole.value)
+          of crPointIndex: shot.pointIndex = some(whole.value)
+          of crGpsMicros:
+            if gps.isNone:
+              gps = some(whole.value)
+              cols[0] = col
+          of crUtcMicros:
+            if utcUs.isNone:
+              utcUs = some(whole.value)
+              cols[1] = col
+          of crYear:
+            if whole.value >= 0 and whole.value <= 99:
+              year = some(if whole.value >= 50: 1900 + whole.value
+                else: 2000 + whole.value)
+            elif whole.value >= 100 and whole.value <= 999:
+              addProblem(result.problems, pkBadNumber, row, col,
+                "three-digit year " & $whole.value)
+            else:
+              year = some(whole.value)
+          of crDayOfYear: doy = some(whole.value)
+          of crMonth: month = some(whole.value)
+          of crDayOfMonth: day = some(whole.value)
+          of crHour: hour = some(whole.value)
+          of crMinute: minute = some(whole.value)
+          of crMicrosecond:
+            let sp = trimSpan(chars)
+            micros = some(whole.value)
+            microsRaw = copySpan(chars, sp.a, sp.b)
+            microsCol = col
+          else: discard
+    of crSailLine, crSourceLine, crShotPoint, crSourceDepth, crWaterDepth, crX,
+        crY, crZ, crVolume, crPressure, crHeading, crSpeed:
+      let num = parseNum(chars, map.decimalComma)
+      var miss = false
+      if num.ok:
+        if num.value >= sentLo and num.value <= sentHi:
+          for v in sentVal:
+            if num.value == v:
+              miss = true
+              break
+      else:
+        miss = isMissing(chars, sentText, sentVal, map.decimalComma)
+      if not miss and num.ok:
+        case role
+        of crSailLine: shot.sailLine = num.value
+        of crSourceLine: shot.sourceLine = num.value
+        of crShotPoint: shot.shotPoint = num.value
+        of crSourceDepth: shot.sourceDepth = num.value
+        of crWaterDepth: shot.waterDepth = num.value
+        of crX: shot.x = num.value
+        of crY: shot.y = num.value
+        of crZ: shot.z = num.value
+        of crVolume: shot.volume = num.value
+        of crPressure: shot.pressure = num.value
+        of crHeading: shot.heading = num.value
+        of crSpeed: shot.speed = num.value
+        else: discard
+      elif not miss:
+        let sp = trimSpan(chars)
+        addProblem(result.problems, pkBadNumber, row, col,
+          "not a number: " & copySpan(chars, sp.a, sp.b))
+    of crUtcSeconds, crSecond:
+      let missing = isMissing(chars, sentText, sentVal, map.decimalComma)
+      if cols[3] < 0 and role == crSecond: cols[3] = col
+      if not missing:
+        if role == crUtcSeconds:
+          let sec = parseSecondsUs(chars, map.decimalComma)
+          if not sec.ok:
+            let sp = trimSpan(chars)
+            addProblem(result.problems, pkBadNumber, row, col,
+              "not a number: " & copySpan(chars, sp.a, sp.b))
+          elif utcSecUs.isNone:
+            utcSecUs = some(sec.us)
+            cols[2] = col
+        elif role == crSecond:
+          let sec = parseSecond(chars, map.decimalComma)
+          if not sec.ok:
+            let sp = trimSpan(chars)
+            addProblem(result.problems, pkBadNumber, row, col,
+              "not a number: " & copySpan(chars, sp.a, sp.b))
+          else:
+            let sp = trimSpan(chars)
+            haveSecond = true
+            secPart = sec.sec
+            secUs = sec.us
+            secRaw = copySpan(chars, sp.a, sp.b)
+            secCol = col
+            shot.second = float64(sec.sec) + float64(sec.us) / 1e6
+        else:
+          let num = parseNum(chars, map.decimalComma)
+          if not num.ok:
+            let sp = trimSpan(chars)
+            addProblem(result.problems, pkBadNumber, row, col,
+              "not a number: " & copySpan(chars, sp.a, sp.b))
+          else:
+            case role
+            of crSailLine: shot.sailLine = num.value
+            of crSourceLine: shot.sourceLine = num.value
+            of crShotPoint: shot.shotPoint = num.value
+            of crSourceDepth: shot.sourceDepth = num.value
+            of crWaterDepth: shot.waterDepth = num.value
+            of crX: shot.x = num.value
+            of crY: shot.y = num.value
+            of crZ: shot.z = num.value
+            of crVolume: shot.volume = num.value
+            of crPressure: shot.pressure = num.value
+            of crHeading: shot.heading = num.value
+            of crSpeed: shot.speed = num.value
+            else: discard
+    else: discard
+    if role == crYear: shot.year = year
+    elif role == crDayOfYear: shot.dayOfYear = doy
+    elif role == crMonth: shot.month = month
+    elif role == crDayOfMonth: shot.dayOfMonth = day
+    elif role == crHour: shot.hour = hour
+    elif role == crMinute: shot.minute = minute
+    elif role == crMicrosecond: shot.microsecond = micros
+    elif role == crFileNumber: fileCol = col
+    elif role == crShotPoint: pointCol = col
   var seenFile = initTable[int64, int]()
   var seenShot = initTable[(int64, int64, int64), int]()
   var lastTime: Option[int64] = none(int64)
@@ -1239,10 +1464,23 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
     var pointCol = -1
     for col in 0 ..< colsN:
       let role = if col < roleCount: map.roles[col] else: crText
-      if role == crIgnored: discard
+      var tookFast = false
+      if role != crIgnored and log.edits.len == 0 and role in FastRoles:
+        if col >= fieldCount:
+          readFast("")
+          tookFast = true
+        else:
+          let base = log.fieldOf[row].int
+          let fa = log.fieldStart[base + col].int
+          let fb = log.fieldStop[base + col].int
+          if fb <= fa or log.text[fa] != '"':
+            if fb <= fa: readFast("")
+            else: readFast(log.text.toOpenArray(fa, fb - 1))
+            tookFast = true
+      if role == crIgnored or tookFast: discard
       else:
         let raw = cell(log, row, col)
-        let missing = col >= fieldCount or isMissing(raw, map.sentinels,
+        let missing = col >= fieldCount or isMissing(raw, sentText, sentVal,
           map.decimalComma)
         case role
         of crIgnored: discard

@@ -14,7 +14,8 @@
 ## With the year column stored as parsed, `yearColumnPivot` keeps 16.
 ## With no decimal-comma reading, `decimalComma` leaves `1,5` unparsed.
 ## With no leap-second problem, `leapSecond` keeps the rolled instant and
-## reports nothing.
+## reports nothing. A per-cell copy in `shots` took 1232 ms and
+## 30000005 allocations on 100000 rows of 30 numbers.
 
 import std/[math, options, os, strutils]
 import viewSEG/core/shotlog
@@ -420,6 +421,15 @@ proc main*() =
       [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
     doAssert ordinary.rows[0].timeUtcUs.get == UtcMarch + 59_000000
     doAssert "second 60" notin kindText(ordinary.problems, pkBadNumber)
+
+  block sliceRead:
+    let quoted = read("\"1.5\",2\n", [crShotPoint, crSequence], header = false)
+    doAssert quoted.rows[0].shotPoint == 1.5
+    doAssert quoted.rows[0].sequence.get == 2
+    var m = mapOf([crShotPoint], header = false)
+    let log = parseShotLog("1\n", m)
+    log.setCell(0, 0, "4.5")
+    doAssert shots(log, m).rows[0].shotPoint == 4.5
 
   echo "tshotlog ok"
 
