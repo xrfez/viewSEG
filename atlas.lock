@@ -3,7 +3,7 @@
     "parseSEG": {
       "dir": "$deps/parseSEG",
       "url": "https://github.com/xrfez/parseSEG",
-      "commit": "861be597f40948712a6b7983dfb5796f0f6c2723",
+      "commit": "4ae716c6eeb9d542b887494a3f76191c11aec7a2",
       "version": ""
     },
     "processSEG": {
@@ -99,7 +99,7 @@
     "parseSSVIB": {
       "dir": "$deps/parseSSVIB",
       "url": "https://github.com/xrfez/parseSSVIB",
-      "commit": "5330d4bd411430c4b2504e138d3457e5bcf301a0",
+      "commit": "b5c8720bbbdaa4f97dbc0396be6d5e821b4b02da",
       "version": ""
     }
   },
