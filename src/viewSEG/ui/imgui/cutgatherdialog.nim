@@ -34,17 +34,22 @@ type
     askFolder*: bool ## the Change folder button was pressed: ask for one
     askAt*: string
 
-proc open*(ui: var CutUi; logId: int) =
+proc open*(ui: var CutUi; logId: int; recordMs = DefaultRecordMs) =
   ## Shows the window. `logId` is the shot log the Shot log window shows; a
-  ## later open keeps what was typed, and the log chosen.
+  ## later open keeps what was typed, and the log chosen. The first open takes
+  ## the record length from the settings, `recordMs`.
   if ui.recordMs == 0:
-    ui.recordMs = 10_000
+    ui.recordMs = recordMs
     ui.align = saNearest
     ui.standard = csSegdRev3
     ui.logId = -1
   if ui.logId < 0 or not ui.shown: ui.logId = logId
   ui.shown = true
   ui.bringUp = true
+
+func recordLengthMs*(ui: CutUi): float64 {.inline.} =
+  ## The record length the window shows, in ms; 0 before the first open.
+  float64(ui.recordMs)
 
 proc setFolder*(ui: var CutUi; folder: string) =
   ## The folder dialog's answer.
@@ -169,9 +174,14 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     let facts = st.recordingFacts
     ui.drawLog(st, marks)
     igSetNextItemWidth(igGetFontSize() * 10)
-    discard igInputDouble("Record length (ms)##cut".cstring, addr ui.recordMs, 0, 0,
-      "%.3f".cstring, 0)
+    if igInputDouble("Record length (ms)##cut".cstring, addr ui.recordMs, 0, 0,
+        "%.3f".cstring, 0) and usableRecordMs(ui.recordMs) and
+        ui.recordMs != st.settings.cutGather.recordMs:
+      var s = st.settings
+      s.cutGather.recordMs = ui.recordMs
+      result.commands.add Command(kind: ckSettings, settings: s)
     marks.mark("cut.length")
+    marks.mark("cut.recordMs " & $ui.recordMs)
     igSetNextItemWidth(igGetFontSize() * 10)
     discard igInputDouble("Start (ms)##cut".cstring, addr ui.startMs, 0, 0, "%.3f".cstring, 0)
     marks.mark("cut.start")

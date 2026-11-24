@@ -66,7 +66,8 @@ proc everyFieldSet(): Settings =
     headers: HeadersView(tab: htTable, traceTab: ttData, followPointer: false,
       asDisplayed: true, columns: {hcName, hcOffset}, tableFields: @["keys.offset",
       "trace.sourceX"], tableScope: tsFile),
-    shotLog: ShotLogView(followPlot: true), hideKilled: true,
+    shotLog: ShotLogView(followPlot: true), cutGather: CutGatherView(recordMs: 2500.5),
+    hideKilled: true,
     spectrum: SpectrumOptions(window: SpectrumDisplay(scale: ssLinear, logFrequency: true,
       time: stVisible, raw: false, processed: false, response: false, phase: true,
       phasePicture: ppSigned),
@@ -241,6 +242,21 @@ proc main*() =
     doAssert problems.len == 0, $problems
     doAssert s.hideKilled and s.tray.icon and not s.tray.minimize, $s.tray
     doAssert not s.shotLog.followPlot, "an older file turned Follow the plot on"
+
+  block sliceRecordLengthInAnOlderFile:
+    # A file written before the slice window remembered its record length reads with
+    # 10000 ms; a length written is read back; one that is not usable is refused.
+    var problems: seq[string]
+    let old = readSettings("(settings (version 1) (hideKilled true))", "settings.nif",
+      Settings(), problems)
+    doAssert problems.len == 0, $problems
+    doAssert old.cutGather.recordMs == 10_000.0, $old.cutGather
+    var top = Settings()
+    top.cutGather.recordMs = 4000.5
+    doAssert roundTrip(top)[0].cutGather.recordMs == 4000.5
+    let bad = readSettings("(settings (version 1) (cutGather (recordMs -5.0)))",
+      "settings.nif", Settings(), problems)
+    doAssert bad.cutGather.recordMs == 10_000.0 and problems.len == 1, $problems
 
   block everyField:
     let s = everyFieldSet()

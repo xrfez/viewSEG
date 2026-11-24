@@ -5,7 +5,10 @@
 ## `checkOptions` and Cut stays dim; with a good length a run writes the file and
 ## the dialog offers to open it.
 ##
-## Seen to fail: with the menu item always enabled, "the dialog opened with no
+## The record length typed is kept in the settings and offered by the next open (a new
+## session too). Seen to fail: with the window never storing it, "the length is remembered"
+## never comes; with `open` ignoring its argument, "the remembered length was not offered".
+## With the menu item always enabled, "the dialog opened with no
 ## file and no log". With the summary counting the row without a time, "the
 ## summary names the wrong shots". With the length sentence not marked, "the cut
 ## did not finish: a length that is not whole samples". With Cut left enabled on
@@ -18,7 +21,7 @@
 import std/[monotimes, options, os, strutils]
 import parseSEG
 import viewSEG/core/[geometry, shotlog, state]
-import viewSEG/ui/imgui/app
+import viewSEG/ui/imgui/[app, cutgatherdialog]
 import utils/[faultyfs, fixtures, waiting]
 
 const
@@ -41,6 +44,18 @@ proc click(f: FrameInfo; at: Vec2) =
 
 proc hasMark(f: FrameInfo; name: string): bool =
   f.markOf(name).size.x > 0
+
+block the_first_open_takes_the_remembered_length:
+  # A new session: the settings hold the length the last session left, and the window
+  # starts with it; with nothing remembered it is 10000 ms. A later open keeps what is typed.
+  var ui: CutUi
+  ui.open(-1, DefaultRecordMs)
+  doAssert ui.recordLengthMs == 10_000.0, "the default length is not 10000"
+  var again: CutUi
+  again.open(-1, 4000.5)
+  doAssert again.recordLengthMs == 4000.5, "the remembered length was not offered"
+  again.open(-1, 2000.0)
+  doAssert again.recordLengthMs == 4000.5, "a later open dropped the length"
 
 proc makeRecording(path: string) =
   ## Two components, two source traces each of 3000 samples at 2 ms.
@@ -133,6 +148,7 @@ proc main*() =
       let s = f.summary
       if s.len == 0: return false
       doAssert f.hasMark("cut.format SEG-D Rev 3.on"), "the Format entry is not SEG-D Rev 3"
+      doAssert f.core.settings.cutGather.recordMs == 10_000.0, "the default length is not 10000"
       doAssert s.startsWith("3 shots (1 row has no time and is left out), 2 components, " &
         "about "), "the summary names the wrong shots: " & s
       true
@@ -161,6 +177,14 @@ proc main*() =
       if clicks == 4: f.typeText("1000")
       clicks > 8 and f.why.len == 0 and f.summary.len > 0
     step("a good length", clickLength, goodLength)
+    proc remembered(f: FrameInfo): bool =
+      f.core.settings.cutGather.recordMs == 1000.0
+    step("the length is remembered", proc (f: FrameInfo) = discard, remembered)
+    step("Close", proc (f: FrameInfo) = f.click(f.markOf("cut.close").centre),
+      proc (f: FrameInfo): bool = not f.hasMark("cut"))
+    step("the item opens the dialog again", menuItem, openItem)
+    step("the dialog still has the length", proc (f: FrameInfo) = discard,
+      proc (f: FrameInfo): bool = f.hasMark("cut.recordMs 1000.0"))
     var shot = false
     proc picture(f: FrameInfo) =
       let dir = getEnv("VIEWSEG_SCREENSHOTS")

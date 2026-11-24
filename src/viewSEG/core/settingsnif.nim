@@ -46,6 +46,7 @@
 ##   (columns description bytes) (tableFields "keys.record" "keys.channel")
 ##   (tableScope record))
 ##  (shotLog (followPlot false))
+##  (cutGather (recordMs 10000.0))
 ##  (hideKilled false)
 ##  (spectrum
 ##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
@@ -505,6 +506,9 @@ proc settingsDocument*(s: Settings): string =
   w.close()
   w.open("shotLog")
   w.value("followPlot", s.shotLog.followPlot)
+  w.close()
+  w.open("cutGather")
+  w.value("recordMs", s.cutGather.recordMs)
   w.close()
   w.value("hideKilled", s.hideKilled)
   w.open("spectrum")
@@ -1163,6 +1167,11 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
         for k in c.kids:
           if k.isTree("followPlot"): r.flag(k, result.shotLog.followPlot)
           else: r.unknown(k, "shotLog")
+      of "cutGather":
+        for k in c.kids:
+          if k.isTree("recordMs"): r.number(k, MinRecordMs, MaxRecordMs,
+            result.cutGather.recordMs)
+          else: r.unknown(k, "cutGather")
       of "hideKilled": r.flag(c, result.hideKilled)
       of "spectrum":
         for k in c.kids:

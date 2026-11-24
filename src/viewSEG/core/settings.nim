@@ -7,7 +7,7 @@
 ## toggles, the plot's cursor time line, whether the Files window follows
 ## the latest file, where the map shows the point under the pointer, the
 ## survey import's options (Project > Import survey), the Headers window's
-## tabs, toggles and columns, the Shot log window's follow tick, whether
+## tabs, toggles and columns, the Shot log window's follow tick, the Slice by shot log window's record length, whether
 ## killed traces are hidden, how the spectrum windows show their spectra, the
 ## named display presets, the
 ## colours of a multi-component record, and whether a plot shows a physical
@@ -27,6 +27,16 @@ import components, displaypresets, geometry, join, log, mapkinds, noisearea, pan
   readout, scales, spectra, tracetable, units
 
 export displaypresets, join, mapkinds, noisearea, plotoptions, readout, scales, spectra, units
+
+const
+  DefaultRecordMs* = 10_000.0 ## the Slice by shot log window's record length to begin with
+  MinRecordMs* = 0.001        ## the shortest record length kept in the settings, in ms
+  MaxRecordMs* = 86_400_000.0 ## the longest, a day
+
+func usableRecordMs*(ms: float64): bool =
+  ## Whether `ms` is a record length the settings keep: a number from `MinRecordMs` to
+  ## `MaxRecordMs`.
+  ms >= MinRecordMs and ms <= MaxRecordMs
 
 type
   Calibration* = object
@@ -166,6 +176,10 @@ type
       ## the grid shows the row of the trace under the pointer, of a selected
       ## signature, or of the selected file; off until ticked
 
+  CutGatherView* = object
+    ## What the Slice by shot log window offers again.
+    recordMs*: float64 = DefaultRecordMs ## the record length, in ms
+
   SpectrumOptions* = object
     ## How the spectrum windows show their spectra: each new FFT window as
     ## the last one changed, the live panel as it was left.
@@ -215,6 +229,7 @@ type
     join*: JoinOptions ## the geometry join's options, as set last
     headers*: HeadersView ## the Headers window's tabs and toggles
     shotLog*: ShotLogView ## the Shot log window's follow tick
+    cutGather*: CutGatherView ## the Slice by shot log window's record length
     hideKilled*: bool
       ## killed traces are left out of the plot (the traces beside them close
       ## up); off: drawn blank
