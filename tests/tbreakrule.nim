@@ -4,7 +4,8 @@
 ## - a healthy record with 10 ms of scatter flags almost nothing (a fixed 12 ms limit would flag
 ##   about a quarter of it), over many seeds too;
 ## - one displaced station is off its neighbours, also against a model that bends (the record
-##   limit flags the bend, the station rule only the station), inside a stretch the model misses
+##   limit flags the bend, the station rule only the station), and one trace 15 ms off flat
+##   neighbours is still flagged; inside a stretch the model misses
 ##   and at a bend it misses; a block of 5 is flagged and nothing beside it;
 ## - a source placed 200 ft sideways gives the record's words about the lean and the sign (the
 ##   side the picks are earliest at), also against the scatter about the record's own fit; a
@@ -219,6 +220,14 @@ proc main*() =
     doAssert r.flagCount(false, true) <= 2, "off their neighbours: " & $r.flagCount(false, true)
     doAssert abs(d.pick[60] - d.model[60]) > 30, "the premise: the bend is past 12 ms"
     for i in [148, 149, 151, 152]: doAssert not r.offNeighbours[i], "neighbour " & $i
+
+  block aTrace15MsOffFlatNeighboursIsFlagged:
+    # the station rule's own case: one trace 15 ms off a flat line is still flagged
+    var d = line(40, 0, 1)
+    d.pick[20] += 15
+    let r = applyRule(d.pick, d.conf, d.model, oneLine(40))
+    doAssert r.offNeighbours[20], "15 ms off flat neighbours was not flagged"
+    doAssert r.nOffNeighbours == 1, $r.nOffNeighbours
 
   block aBlockOfSwappedStationsIsFlaggedAndNothingBesideIt:
     var d = line(300, 3, 3)

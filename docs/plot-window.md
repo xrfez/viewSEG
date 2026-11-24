@@ -656,7 +656,8 @@ state agree):
 - *Where a break is expected*: the record's traces are cut into about 20 bins of offset (at
   least 10 traces a bin), and the range runs out from the nearest offsets to the end of the
   last bin before one where fewer than a fifth of the traces have a confident pick within
-  that guided window of the record's fit; it never runs past the 95th percentile of the offsets of the
+  that guided window of the record's fit, or a confident first-pass pick outside that window
+  and at most 400 ms from it; it never runs past the 95th percentile of the offsets of the
   picks both passes agree on (kept by the fit, and the first pass's pick confident and as near
   the fit). So noise the guided window happened to hold at long offsets does not widen it, and
   a stretch of real breaks the fit misses does not end it. A trace with a model time beyond
@@ -674,15 +675,17 @@ state agree):
   record's limit, the larger of 12 ms and three times 1.4826 times the median absolute deviation
   of the picks' scatter about the record's own fit, whichever model is shown (a given model that
   fits badly cannot widen its own limit).
-- *Off its neighbours*: the residual less the median residual of up to three comparable
-  neighbours on one side along the same receiver line (in receiver point order; file order
-  where lines or points are unknown; at most six stations away), taking the left side's, the
-  right side's or the mean of the two, whichever is nearest the trace's own residual, is larger
-  than the larger of 12 ms and four times the robust sigma of the differences from the mean of
-  both sides. Traces off the model count as neighbours too, so a stretch the model misses (a
-  bend, a static) is followed, a block of wrong stations flags only itself, and one wrong
-  station inside the stretch is still found. A trace with fewer than three neighbours is not
-  judged this way.
+- *Off its neighbours*: the residual less the median residual of up to three neighbours on
+  one side along the same receiver line (a comparable trace's guided pick, or a far-off
+  trace's first-pass pick; in receiver point order; file order where lines or points are
+  unknown; at most six stations away), taking the left side's, the right side's or the mean of
+  the two, whichever is nearest the trace's own residual, is larger than the larger of 12 ms
+  and four times the robust sigma of the differences from the mean of both sides. Only a
+  comparable trace is judged. Traces off the model count as neighbours too, and so does a
+  far-off trace, so a stretch the model misses (a bend, a static, a drift wider than the
+  window) is followed, a block of wrong stations flags only itself, and one wrong station
+  inside the stretch is still found. A trace with fewer than three neighbours is not judged
+  this way.
 - *The record's words*: when the traces' azimuths from the source cover at least 180 degrees,
   and the azimuths are spread well enough round the source (a line through it is not enough),
   the residuals are fitted as a constant plus a cosine and sine of the azimuth; otherwise only

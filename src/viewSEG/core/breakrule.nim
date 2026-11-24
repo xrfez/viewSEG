@@ -18,8 +18,9 @@
 ##   and not before the model's intercept less the limit (no break comes before the first
 ##   possible arrival). Everything else with a model time is "no break found", never flagged.
 ## - **Off its neighbours**: a comparable trace whose residual, less the median residual of up
-##   to `NeighbourCount` comparable neighbours on one side along its receiver line (at most
-##   `NeighbourReach` places away; the left side's, the right side's or their mean, whichever is
+##   to `NeighbourCount` neighbours on one side along its receiver line (at most
+##   `NeighbourReach` places away: a comparable trace's guided residual, or a far-off trace's
+##   first-pass residual; the left side's, the right side's or their mean, whichever is
 ##   nearer its own residual), is larger than
 ##   `max(LimitFloorMs, StationSigmas * sigma')`, `sigma'` being the same measure of the
 ##   differences from the mean of both sides over the record. This finds a wrong station and
@@ -64,7 +65,7 @@ const
   LimitSigmas* = 3.0       ## the record's limit: this many sigmas of the comparable residuals
   StationSigmas* = 4.0
     ## the neighbours' limit: this many sigmas of the differences from both sides' mean
-  NeighbourCount* = 3      ## comparable neighbours on each side that set a station's expectation
+  NeighbourCount* = 3      ## neighbours on each side that set a station's expectation
   NeighbourReach* = 2 * NeighbourCount
     ## the farthest (in places along the line) a neighbour is looked for on each side
   MinNeighbours* = 3       ## the fewest usable neighbours (in all) a trace needs to be judged by them
@@ -300,7 +301,8 @@ func eigenMin(az: openArray[float64]): float64 =
 func sideMedian(ids: openArray[int]; k, dir: int; res: openArray[float64]):
     tuple[med: float64; count: int] =
   ## The median residual of up to `NeighbourCount` traces next to `ids[k]` in direction `dir`,
-  ## looked for at most `NeighbourReach` places away (`ids` are the line's comparable traces).
+  ## looked for at most `NeighbourReach` places away (`ids` are the line's comparable traces
+  ## and its far-off traces, whose residual is the first pass's).
   var near: seq[float64]
   var j = k + dir
   while j >= 0 and j < ids.len and near.len < NeighbourCount and abs(j - k) <= NeighbourReach:
@@ -364,8 +366,11 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
           inc result.nFarOff
       if result.noBreak[i]: inc result.nNoBreak
   # the station rule, along each receiver line: against the median of up to NeighbourCount
-  # comparable neighbours on each side (off the model or not: a stretch the model misses is
-  # still the line's); a trace with fewer than MinNeighbours is not judged
+  # neighbours on each side (comparable, or far off: a stretch the model misses is still the
+  # line's). A far-off trace's residual is its first-pass pick; only a comparable trace is
+  # judged. A trace with fewer than MinNeighbours is not judged
+  for i in 0 ..< n:
+    if result.farOff[i]: res[i] = g.firstMs[i] - modelMs[i]
   var local = newSeq[float64](n)
   for i in 0 ..< n: local[i] = NaN
   var lines = g.lines
@@ -379,8 +384,9 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
   for line in lines:
     var ids: seq[int]
     for i in line:
-      if i in 0 ..< n and result.comparable[i]: ids.add i
+      if i in 0 ..< n and (result.comparable[i] or result.farOff[i]): ids.add i
     for k in 0 ..< ids.len:
+      if not result.comparable[ids[k]]: continue
       let (ml, nl) = sideMedian(ids, k, -1, res)
       let (mr, nr) = sideMedian(ids, k, 1, res)
       if nl + nr >= MinNeighbours:

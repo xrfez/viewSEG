@@ -464,18 +464,24 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
     for i in 0 ..< n:
       result.modelMs[i] = final.fit.modelMs[i]
       if not result.modelMs[i].isNaN: inc result.modelled
-    # where a break is expected: out to where few traces have a confident pick near the model,
-    # and not past most of the picks both passes agree on (the guided pick kept by the trim, the
-    # first-pass pick confident and within the trim's cut of the same model): a guided pick
+    # where a break is expected: out to where few traces have a confident pick near the model
+    # (or a confident first-pass pick just outside that window: a stretch the fit misses does
+    # not end the range), and not past most of the picks both passes agree on. A guided pick
     # alone may be noise the window held
     result.geometry.guideWindowMs = firstW
     let cut = max(TrimFloorMs, TrimSigmas * (if final.tr.sigmaMs.isNaN: 0.0
       else: final.tr.sigmaMs))
+    let earliest = final.fit.interceptMs - LimitFloorMs
     var seenNear, supported = newSeq[bool](n)
     for i in 0 ..< n:
       let m = final.fit.modelMs[i]
-      seenNear[i] = fitted[i].confidence >= ConfidentPick and
+      let guidedNear = fitted[i].confidence >= ConfidentPick and
         abs(fitted[i].timeMs - m) <= firstW
+      let firstD = abs(picks[i].timeMs - m)
+      let firstFar = picks[i].confidence >= ConfidentPick and not picks[i].timeMs.isNaN and
+        firstD > firstW and firstD <= FarOffMaxMs and
+        (final.fit.interceptMs.isNaN or picks[i].timeMs >= earliest)
+      seenNear[i] = guidedNear or firstFar
       supported[i] = final.tr.kept[i] and picks[i].confidence >= ConfidentPick and
         abs(picks[i].timeMs - m) <= cut
     result.geometry.rangeMax = expectedRange(offs, eligible, seenNear, supported)
