@@ -26,14 +26,14 @@
 ## Runs on copies of samples/land/shots.sgy, samples/land/shots.sgd and
 ## samples/vib/vib_uncorrelated.sgd.
 
-import std/[os, strutils, times]
+import std/[options, os, strutils, times]
 when defined(windows):
   from std/winlean import nil
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG/core/basic
-import viewSEG/core/[edits, filememory, identity, jobs, outputbatch, outputjobs,
-  outputnames, sigtypes]
+import viewSEG/core/[edits, filememory, filesystem, identity, jobs, outputbatch,
+  outputjobs, outputnames, sigtypes]
 import utils/[faultyfs, sigfiles, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
@@ -117,6 +117,12 @@ proc runBatch(ask: BatchAsk; store: Store; openFiles: seq[OpenFile]):
   (info.state, sink.result, info.error)
 
 var lane: Jobs
+var refMaps = 0
+
+proc countRef(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
+  if op == foMapped and path.endsWith("ref.sgy"):
+    {.cast(gcsafe).}:
+      inc refMaps
 
 proc stopAtSecond(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
   if back or not phase.startsWith("file 2 of"): return
@@ -126,6 +132,55 @@ proc itemOf(wrote: BatchResult; relative: string): BatchItemResult =
   for it in wrote.items:
     if it.relative == relative: return it
   doAssert false, "no result for " & relative
+
+proc writeSweep(path: string; samples: openArray[float32]; us: float64) =
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+  var k = initTraceKeys()
+  k.intervalUs = us
+  k.status = tsLive
+  k.traceCode = 1
+  w.writeTrace(k, @samples)
+  doAssert w.close().len == 0, "the reference did not close"
+
+proc writeRecord(path: string; n: int; us: float64) =
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+  for i in 0 .. 3:
+    var buf = newSeq[float32](n)
+    for j in 0 ..< n: buf[j] = float32(j + i + 1)
+    var k = initTraceKeys()
+    k.record = 7.0
+    k.channel = float64(i + 1)
+    k.intervalUs = us
+    k.t0Ms = 0.0
+    if i == 3: (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+    else: (k.traceCode, k.status) = (1'i16, tsLive)
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the record did not close"
+
+proc writeSame(source, dest: string; sweep: seq[float32]; dtMs: float64) =
+  var file = openSeismic(source, keys = true)
+  let opts = OutputOptions(format: ofSegy, correlation: some(OutputCorrelation(
+    reference: sweep, referenceDtMs: dtMs, referenceTraces: @[3])))
+  let jobs = initJobs()
+  let sink = OutputSink()
+  let id = jobs.submit(outputSpec(source, dest),
+    outputWork(addr file, source, dest, opts, FileEdits(), @[source], sink))
+  doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
+    "the compared write did not finish"
+  doAssert jobs.state(id) == jsDone, jobs.info(id).get.error & " / " & sink.result.reason
+  file.close()
+
+proc sameFile(a, b: string; listen: int) =
+  var left = openSeismic(a, keys = true)
+  var right = openSeismic(b, keys = true)
+  doAssert left.len == right.len
+  for t in 0 ..< left.len:
+    let x = samplesOf(left, t)
+    let y = samplesOf(right, t)
+    doAssert x.len == listen and y.len == listen, "trace " & $t & " " & $x.len & " vs " & $y.len
+    doAssert x == y, "trace " & $t & " differs"
+  left.close()
+  right.close()
 
 proc main*() =
   block sameFolderLock:
@@ -713,6 +768,106 @@ proc main*() =
       let it = itemOf(got.wrote, ".." / "one.sgd")
       doAssert it.outcome == boFailed, "a path that leaves the folder was written"
       doAssert "leaves the destination folder" in it.why, it.why
+
+  block correlated:
+    ## Seen to fail: with the correlation left off the write, `x.len == listen`
+    ## was "trace 0 64 vs 48".
+    let src = dir / "corr-src"
+    let dest = dir / "corr-out"
+    let alone = dir / "corr-alone"
+    createDir(src)
+    var sweep = newSeq[float32](16)
+    for i in 0 ..< sweep.len: sweep[i] = float32(i + 1) * 0.25
+    let refPath = src / "ref.sgy"
+    writeSweep(refPath, sweep, 2000.0)
+    let a = src / "a.sgy"
+    let b = src / "b.sgy"
+    writeRecord(a, 64, 2000.0)
+    writeRecord(b, 64, 2000.0)
+    refMaps = 0
+    setFsHook(countRef)
+    let ask = BatchAsk(root: src, items: @[
+      BatchItem(source: a, relative: "a.sgy"),
+      BatchItem(source: b, relative: "b.sgy")],
+      destRoot: dest, options: OutputOptions(format: ofSegy),
+      correlate: BatchCorrelate(on: true, name: "sweep", path: refPath))
+    let got = runBatch(ask, Store(), @[])
+    setFsHook(nil)
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    doAssert got.wrote.written == 2 and got.wrote.failed == 0, $got.wrote.failed
+    doAssert got.wrote.referenceLoads == 1, "loaded " & $got.wrote.referenceLoads
+    doAssert refMaps == 1, "the reference was mapped " & $refMaps & " times"
+    doAssert got.wrote.correlatedWith == "sweep"
+    createDir(alone)
+    writeSame(a, alone / "a.sgy", sweep, 2.0)
+    writeSame(b, alone / "b.sgy", sweep, 2.0)
+    sameFile(dest / "a.sgy", alone / "a.sgy", 48)
+    sameFile(dest / "b.sgy", alone / "b.sgy", 48)
+
+  block intervalMismatch:
+    ## Seen to fail: with the correlation left off the write, the other interval
+    ## was written (`a refused file was written`).
+    let src = dir / "bad-int"
+    let dest = dir / "bad-int-out"
+    createDir(src)
+    var sweep = newSeq[float32](16)
+    for i in 0 ..< sweep.len: sweep[i] = 1.0
+    let refPath = src / "ref.sgy"
+    writeSweep(refPath, sweep, 2000.0)
+    let good = src / "good.sgy"
+    let bad = src / "bad.sgy"
+    writeRecord(good, 64, 2000.0)
+    writeRecord(bad, 64, 4000.0)
+    let ask = BatchAsk(root: src, items: @[
+      BatchItem(source: good, relative: "good.sgy"),
+      BatchItem(source: bad, relative: "bad.sgy")],
+      destRoot: dest, options: OutputOptions(format: ofSegy),
+      correlate: BatchCorrelate(on: true, name: "sweep", path: refPath))
+    let got = runBatch(ask, Store(), @[])
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    doAssert got.wrote.written == 1 and got.wrote.failed == 1
+    doAssert got.wrote.referenceLoads == 1, "loaded " & $got.wrote.referenceLoads
+    let failed = itemOf(got.wrote, "bad.sgy")
+    doAssert failed.outcome == boFailed
+    doAssert "sampled every" in failed.why and "the record every" in failed.why, failed.why
+    doAssert fileExists(dest / "good.sgy")
+    doAssert not fileExists(dest / "bad.sgy"), "a refused file was written"
+    let alone = dir / "bad-int-alone"
+    createDir(alone)
+    writeSame(good, alone / "good.sgy", sweep, 2.0)
+    sameFile(dest / "good.sgy", alone / "good.sgy", 48)
+
+  block signatureUncorrelated:
+    ## Seen to fail: with the uncorrelated line left out, `said == 1` was
+    ## `@["no saved edits were found for this file", "The batch wrote the file's own positions."]`.
+    let src = dir / "sig-corr"
+    let dest = dir / "sig-corr-out"
+    createDir(src)
+    var sweep = newSeq[float32](16)
+    for i in 0 ..< sweep.len: sweep[i] = 0.5
+    let refPath = src / "ref.sgy"
+    writeSweep(refPath, sweep, 2000.0)
+    let seismic = src / "rec.sgy"
+    writeRecord(seismic, 64, 2000.0)
+    let dat = datFile(src, "ctrl.dat")
+    let ask = BatchAsk(root: src, items: @[
+      BatchItem(source: seismic, relative: "rec.sgy"),
+      BatchItem(source: dat, relative: "ctrl.dat")],
+      destRoot: dest, options: OutputOptions(format: ofSegy),
+      correlate: BatchCorrelate(on: true, name: "sweep", path: refPath))
+    let got = runBatch(ask, Store(), @[])
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    doAssert got.wrote.referenceLoads == 1
+    doAssert itemOf(got.wrote, "rec.sgy").outcome == boWritten
+    let sig = itemOf(got.wrote, "ctrl.dat")
+    doAssert sig.outcome == boWritten, sig.why
+    var said = 0
+    for line in sig.lines:
+      if line == SignatureUncorrelated: inc said
+    doAssert said == 1, $sig.lines
+    var back = openSeismic(dest / "rec.sgy", keys = true)
+    doAssert back.traceEntry(0).numSamples == 48
+    back.close()
 
   doAssert readFile(segy) == sampleSegy and readFile(segd) == sampleSegd
   doAssert readFile(plain) == plainBytes and readFile(edited) == editedBytes and

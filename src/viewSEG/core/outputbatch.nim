@@ -11,6 +11,11 @@
 ## does not take station moves; the result says the batch wrote that file's
 ## own positions. A file already open is written as the session holds it.
 ##
+## When `correlate` is on, the reference is loaded once on this job's thread,
+## the same way the Correlate button loads a sweep, and passed to
+## every seismic file. A signature file in that batch is written as today, and
+## the result says so. A file the correlation refuses fails alone; the batch goes on.
+##
 ## Submit it with `outputBatchSpec`. That spec does not touch the file
 ## system, so the UI thread may build it. With no pattern the paths it
 ## lists are the strings given here. With a pattern the exclusive resource
@@ -23,16 +28,19 @@
 ## exclusive resource, because the leaf is not known before the open. No
 ## parts: the names are as before.
 
-import std/[os, sets, strutils, tables, times]
+import std/[math, options, os, sets, strutils, tables, times]
 import parseSEG
 import parseSEG/model/traceindex
-import edits, filejobs, filekinds, filememory, filesystem, identity, jobs, outputjobs,
-  outputnames, outputnamevalues, session, signatures, sigtypes, threads, vendormaps
+import correlatejobs, edits, filejobs, filekinds, filememory, filesystem, identity, jobs,
+  outputjobs, outputnames, outputnamevalues, references, session, signatures,
+  sigtypes, threads, vendormaps
 
 const
   BatchScale = 1_000_000 ## one file's share of the job's progress
   BatchOwnPositions* = "The batch wrote the file's own positions."
     ## A file this job opened itself was not joined and took no station move.
+  SignatureUncorrelated* = "A signature file is written uncorrelated."
+    ## A signature file in a correlated batch is written as it is today.
 
 type
   BatchItem* = object
@@ -72,6 +80,20 @@ type
     pattern*: OutputPattern
       ## How each file is named. No parts: today's names, including a kept
       ## source extension when signature files would share one name.
+    correlate*: BatchCorrelate
+      ## Off unless the window asked to correlate. The job loads that
+      ## reference once and passes it to every seismic file.
+
+  BatchCorrelate* = object
+    ## A reference the job loads once. `on` false: every file is written as today.
+    ## Only an archive sweep: a pilot is a trace of each record, found per file.
+    on*: bool
+    name*: string
+      ## The reference's name, for the run summary. "" when `on` is false.
+    path*: string
+      ## The archive sweep's SEG-Y.
+    why*: string
+      ## Set when the reference is already known to be unusable.
 
   BatchResult* = object
     ## What the batch did. `reason` is set when the batch itself was refused,
@@ -84,6 +106,10 @@ type
     droppedTraces*: int
     cancelled*: bool
     reason*: string
+    correlatedWith*: string
+      ## The reference's name when this batch was asked to correlate; "" otherwise.
+    referenceLoads*: int
+      ## How many times this batch loaded the reference. One when correlating.
 
   BatchSink* = ref object
     ## Filled when the job ends, including when it fails or is cancelled.
@@ -535,9 +561,24 @@ proc renderedLeaf(ask: BatchAsk; plan: Plan; file: SeismicFile; source: string;
     raise newException(ValueError, "The relative path leaves the destination folder.")
   dest
 
+proc takeReference(corr: BatchCorrelate): tuple[samples: seq[float32]; dtMs: float64] =
+  ## The sweep the Correlate button's loader reads. Raises a sentence when it
+  ## cannot. Called once, on the worker: `readReferenceFile` asserts that.
+  assertWorkerThread()
+  if corr.why.len > 0:
+    raise newException(ValueError, corr.why)
+  let read = readReferenceFile(corr.path)
+  if read.samples.len == 0:
+    raise newException(ValueError, "the reference file has no sample.")
+  let dt = if read.intervalUs > 0 and read.intervalUs < Inf: read.intervalUs / 1000.0
+           else: 0.0
+  (read.samples, dt)
+
 proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenFile];
     sink: BatchSink) =
   if sink != nil: sink.result = BatchResult(items: @[])
+  if ask.correlate.on and sink != nil:
+    sink.result.correlatedWith = ask.correlate.name
   let destRoot = resolvedRoot(ask.destRoot)
   var writing = ask
   writing.destRoot = destRoot
@@ -562,6 +603,17 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
     if item.source.len > 0: guard.add item.source
   var doneFiles = 0
   var taken = initTable[string, string]()
+  var refSamples: seq[float32] = @[]
+  var refDt = 0.0
+  if writing.correlate.on:
+    try:
+      let got = takeReference(writing.correlate)
+      refSamples = got.samples
+      refDt = got.dtMs
+      if sink != nil: inc sink.result.referenceLoads
+    except CatchableError as e:
+      let why = if e.msg.len > 0: e.msg else: "the reference could not be read."
+      failBatch(sink, why)
   for i, item in writing.items:
     ctx.setPhase(filePhase(i, count, item.relative))
     if ctx.cancelled: stopBatch(sink, writing, plans, i)
@@ -626,11 +678,21 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
             " is already the output of " & taken[key] & ".")
         taken[key] = item.relative
       outSink = OutputSink()
+      var opts = writing.options
+      if writing.correlate.on:
+        if signature.isSignature or isSignature(kinds, i):
+          itemLines.add SignatureUncorrelated
+        elif file != nil:
+          if not file[].hasKeys:
+            if not file[].inMemory: fs.mappedRead(item.source, headers = true)
+            file[].ensureKeys()
+          opts.correlation = some(OutputCorrelation(reference: refSamples,
+            referenceDtMs: refDt, referenceTraces: referenceTraces(file)))
       let report = proc (done, total: int): bool {.gcsafe.} =
         ctx.progress(int64(doneFiles) * BatchScale + shareOf(int64(done), int64(total)),
           int64(count) * BatchScale)
       {.cast(gcsafe).}:
-        writeOutput(ctx, file, item.source, dest, writing.options, edits, guard,
+        writeOutput(ctx, file, item.source, dest, opts, edits, guard,
           outSink, report, signature)
       var lines = itemLines
       for x in outSink.result.lines: lines.add x
