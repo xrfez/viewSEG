@@ -10,6 +10,8 @@
 ## is written into the record and splits it.
 ## Seen to fail: with the spsText coverage row still marked built, the page
 ## says a user can reach a write that has no menu.
+## Seen to fail: with a blank shot point counted in `skipped`, a row that
+## has no shot point is not told apart from one that was refused.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -140,7 +142,9 @@ proc main*() =
     let view = viewOf(text, [crShotPoint, crSourceLine, crX, crY])
     doAssert view.rows[0].shotPoint.isNaN
     let made = toSps(view, options())
-    doAssert made.written == 1 and made.skipped == 1 and made.count == 0
+    doAssert made.written == 1 and made.skipped == 0 and made.noShotPoint == 1
+    doAssert made.count == 0
+    doAssert made.written + made.skipped == 1
     doAssert readBack(made.text, sps21).points[0].point == 1000
 
   block nanCoordinate:
@@ -300,7 +304,8 @@ proc main*() =
     let text = "point,line,x,y,utc\n,10,1,2," & $(UtcMarch + 1) & "\n"
     let view = viewOf(text, [crShotPoint, crSourceLine, crX, crY, crUtcMicros])
     let made = toSps(view, options(time = true))
-    doAssert made.written == 0 and made.skipped == 1 and made.fractionDropped == 1
+    doAssert made.written == 0 and made.skipped == 0 and made.noShotPoint == 1
+    doAssert made.fractionDropped == 1
     doAssert made.firstYear.isNone
 
   block cap:
@@ -512,6 +517,23 @@ proc main*() =
         doAssert "core/shotlogsps.nim" in line, line
         doAssert "| built |" notin line, line
     doAssert found
+
+  block noShotPoint:
+    let roles = [crShotPoint, crSourceLine, crX, crY]
+    let text = "point,line,x,y\n,10,1,2\n1,10,10.25,2\n2,10,1,2\n"
+    let view = viewOf(text, roles)
+    doAssert view.rows[0].shotPoint.isNaN
+    let made = toSps(view, options())
+    doAssert made.written == 1 and made.skipped == 1 and made.noShotPoint == 1
+    doAssert made.written + made.skipped == 2
+    doAssert made.count == 1 and hasProblem(made, 1, "easting", "10.25")
+    let badOpts = toSps(view, ShotSpsOptions())
+    doAssert badOpts.written == 0 and badOpts.noShotPoint == 1
+    doAssert badOpts.skipped == 2
+    doAssert badOpts.written + badOpts.skipped == 2
+    doAssert hasProblem(badOpts, -1, "revision", "auto")
+    let empty = toSps(viewOf("point,line,x,y\n", roles), options())
+    doAssert empty.written == 0 and empty.skipped == 0 and empty.noShotPoint == 0
 
   echo "tshotlogsps ok"
 

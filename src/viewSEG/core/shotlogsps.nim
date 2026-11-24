@@ -56,7 +56,11 @@ type
     problems*: seq[ShotSpsProblem]
     count*: int
     written*: int
+      ## Rows written as S records.
     skipped*: int
+      ## Rows that have a shot point and were not written.
+    noShotPoint*: int
+      ## Rows with no shot point. Not a problem, and not in `skipped`.
     fractionDropped*: int
       ## Rows whose `timeUtcUs` had a non-zero fraction of a second, when
       ## `withTime` is set, whether or not the row was written.
@@ -231,8 +235,10 @@ proc buildPoint(row: Shot; opts: ShotSpsOptions; line: float64; index: int;
 
 proc toSps*(view: ShotView; opts: ShotSpsOptions): ShotSpsResult {.raises: [].} =
   ## One S record per row that has a shot point and fits. A NaN shot point is
-  ## skipped and counted, and is not a problem. A NaN `x` or `y` is skipped
-  ## and reported. A NaN `z` is written blank. Depths are written when present.
+  ## counted in `noShotPoint`, not in `skipped`, and is not a problem. A NaN
+  ## `x` or `y` is skipped and reported. A NaN `z` is written blank. Depths
+  ## are written when present. `written` plus `skipped` is the rows that have
+  ## a shot point.
   ##
   ## Revision 2.1 holds a line and a point in 10 columns and 2 decimals
   ## (-999999.99 to 9999999.99). Revision 1.0 holds them as text, 16 and 8
@@ -267,7 +273,9 @@ proc toSps*(view: ShotView; opts: ShotSpsOptions): ShotSpsResult {.raises: [].} 
       parts = utcParts(row.timeUtcUs.get)
       if parts.ok and parts.fraction != 0:
         inc result.fractionDropped
-    if not optsOk or row.shotPoint.isNaN:
+    if row.shotPoint.isNaN:
+      inc result.noShotPoint
+    elif not optsOk:
       inc result.skipped
     else:
       var bad = false
