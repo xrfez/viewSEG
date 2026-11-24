@@ -5,7 +5,9 @@
 ## counted as killed, not as bad, and is not measured. An auxiliary trace
 ## is not a note. Header-dead is that finding only. Samples are read in
 ## chunks of 512 traces, through the file-system layer, and each run of
-## one sample interval is measured at that interval. A trace whose samples
+## one sample interval is measured at that interval. Header-dead, killed
+## and auxiliary traces are not sample-read, even when the chunk also
+## holds a live trace. A trace whose samples
 ## could not be read is not a note: it is an unread row naming the file,
 ## the trace and the reader's reason. A file whose walk stopped short is
 ## unread as cut short; its other traces still count. Each file is closed
@@ -71,12 +73,18 @@ proc killedSet(edits: Table[string, FileEdits]; path: string): HashSet[int] =
     for t in edits[path].shown.lists[teKilled]:
       result.incl t
 
-proc skipSamples(f: ptr SeismicFile; part: Slice[int]; killed: HashSet[int]): bool =
+func wantsSamples(k: TraceKeys; killed: bool): bool =
+  k.isSeismic and k.status != tsDead and not killed
+
+proc liveSpans(f: ptr SeismicFile; part: Slice[int]; killed: HashSet[int]): seq[Slice[int]] =
+  var start = -1
   for t in part.a .. part.b:
-    let k = f[].index.keys[t]
-    if k.isSeismic and k.status != tsDead and t notin killed:
-      return false
-  true
+    let on = wantsSamples(f[].index.keys[t], t in killed)
+    if on and start < 0: start = t
+    elif not on and start >= 0:
+      result.add start .. (t - 1)
+      start = -1
+  if start >= 0: result.add start .. part.b
 
 proc noteTrace(b: var QualityBuild; path: string; k: TraceKeys; killed: bool;
     flags: set[AmplitudeFlag]) =
@@ -126,44 +134,40 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
     ctx.checkCancelled()
     let last = min(n - 1, first + QcChunk - 1)
     let part = first .. last
-    if skipSamples(f, part, killed):
-      for t in part.a .. part.b:
-        noteTrace(b, path, f[].index.keys[t], t in killed, {})
-    else:
+    var amps: seq[TraceAmplitude] = @[]
+    amps.setLen(part.b - part.a + 1)
+    var missed = initHashSet[int]()
+    for span in liveSpans(f, part, killed):
       if not f[].inMemory: fs.mappedRead(path)
-      let cols = f[].maxSamples(part)
-      if cols <= 0:
-        for t in part.a .. part.b:
-          noteTrace(b, path, f[].index.keys[t], t in killed, {})
-      else:
-        var log: DiagLog
-        var failed: seq[int] = @[]
-        var amps: seq[TraceAmplitude] = @[]
-        {.cast(gcsafe).}:
-          let samples = f[].readTraces(part, 0 ..< cols, log)
-          failed = failedRows(log, part)
-          var ws = initWorkspace()
-          ws.reserve(traceAmplitudeWorkspace(cols))
-          let read = rowBlock(samples)
-          amps.setLen(part.b - part.a + 1)
-          var runAmps: seq[TraceAmplitude] = @[]
-          for run in f[].uniformRuns(part):
-            let rows = (run.a - part.a) .. (run.b - part.a)
-            var runFailed: seq[int] = @[]
-            for row in failed:
-              if row >= rows.a and row <= rows.b: runFailed.add row - rows.a
-            let meta = initChunkMeta(f[].rowsOf(run),
-              intervalMs(f[].index.keys[run.a].intervalUs), 0, runFailed)
-            let piece = read.sub(rows)
-            runAmps.setLen piece.len
-            traceAmplitudeInto(piece, meta, AmplitudeParams(), runAmps, ws)
-            for row, a in runAmps: amps[rows.a + row] = a
-        let missed = unreadFailed(log, part, path, unread)
-        for row in 0 ..< amps.len:
-          let t = part.a + row
-          if t in missed: continue
-          let flags = if t in killed or f[].index.keys[t].status == tsDead: {} else: amps[row].flags
-          noteTrace(b, path, f[].index.keys[t], t in killed, flags)
+      let cols = f[].maxSamples(span)
+      if cols <= 0: continue
+      var log: DiagLog
+      var failed: seq[int] = @[]
+      {.cast(gcsafe).}:
+        let samples = f[].readTraces(span, 0 ..< cols, log)
+        failed = failedRows(log, span)
+        var ws = initWorkspace()
+        ws.reserve(traceAmplitudeWorkspace(cols))
+        let read = rowBlock(samples)
+        var runAmps: seq[TraceAmplitude] = @[]
+        for run in f[].uniformRuns(span):
+          let rows = (run.a - span.a) .. (run.b - span.a)
+          var runFailed: seq[int] = @[]
+          for row in failed:
+            if row >= rows.a and row <= rows.b: runFailed.add row - rows.a
+          let meta = initChunkMeta(f[].rowsOf(run),
+            intervalMs(f[].index.keys[run.a].intervalUs), 0, runFailed)
+          let piece = read.sub(rows)
+          runAmps.setLen piece.len
+          traceAmplitudeInto(piece, meta, AmplitudeParams(), runAmps, ws)
+          let at = run.a - part.a
+          for row, a in runAmps: amps[at + row] = a
+      for t in unreadFailed(log, span, path, unread): missed.incl t
+    for t in part.a .. part.b:
+      if t in missed: continue
+      let k = f[].index.keys[t]
+      let flags = if wantsSamples(k, t in killed): amps[t - part.a].flags else: {}
+      noteTrace(b, path, k, t in killed, flags)
     first = last + 1
     inc chunk
 

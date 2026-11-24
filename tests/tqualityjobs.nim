@@ -7,13 +7,15 @@
 ## the first trace's interval, `each_interval_measured_alone` rejected a
 ## 2000 us trace that was spiky only at 4000 us. With a short last trace
 ## omitted and not unread, `cut_in_the_last_trace_is_unread` saw a fully
-## read file.
+## read file. With dead, killed and auxiliary traces read inside a live
+## chunk, `skipped_traces_are_not_sample_read` saw one sample read for
+## four live runs.
 
 import std/[os, strutils, tables]
 import parseSEG
 import processSEG/qc/amplitude
 import viewSEG/core/[edits, jobs, qualityjobs, qualityreport]
-import utils/waiting
+import utils/[faultyfs, waiting]
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
@@ -107,6 +109,25 @@ proc seismos(path: string; traces: openArray[tuple[line, point: float64;
     k.component = 1
     k.status = tsLive
     w.writeTrace(k, t.samples)
+  doAssert w.close().len == 0, "file was not written: " & path
+
+proc statusFile(path: string; traces: openArray[TraceStatus]) =
+  var w = openSeismicWriter(path, SegyOutputOptions())
+  var samples = newSeq[float32](32)
+  for i in 0 ..< samples.len: samples[i] = float32(i + 1)
+  for i, st in traces:
+    var k = initTraceKeys()
+    k.record = float64(i + 1)
+    k.channel = float64(i + 1)
+    k.srcLine = 1
+    k.srcPoint = 1
+    k.srcIndex = 1
+    k.rcvIndex = 1
+    k.intervalUs = 2000
+    k.component = 1
+    k.status = st
+    if st == tsAuxiliary: k.traceCode = 4
+    w.writeTrace(k, samples)
   doAssert w.close().len == 0, "file was not written: " & path
 
 proc matchesAlone(seen, killed, bad: int; counts: array[Finding, int];
@@ -325,6 +346,47 @@ proc main*() =
       unreadWhy(got.sink.result.unread, path)
     let kept = recordAt(got.sink.result.report.records, path, 1)
     doAssert kept.seen == 1, $kept
+
+  block skipped_traces_are_not_sample_read:
+    install()
+    defer:
+      setFsHook(nil)
+      setIoHook(nil)
+    let quiet = dir / "dead.sgy"
+    let mixed = dir / "mixed.sgy"
+    let kinds = [tsDead, tsDead, tsDead, tsDead, tsDead, tsDead, tsDead]
+    statusFile(quiet, kinds)
+    statusFile(mixed, [tsLive, tsLive, tsLive, tsDead, tsLive, tsAuxiliary, tsLive])
+    doAssert getFileSize(quiet) == getFileSize(mixed),
+      $getFileSize(quiet) & " " & $getFileSize(mixed)
+    var edits = initTable[string, FileEdits]()
+    var killed = FileEdits()
+    discard killed.change(teKilled, [1], true)
+    edits[mixed] = killed
+    resetCounts()
+    let deadScan = run(@[quiet], none)
+    let deadReads = calls(foMapped, quiet)
+    doAssert deadScan.st == jsDone, deadScan.error & " / " & deadScan.sink.result.reason
+    resetCounts()
+    let mixScan = run(@[mixed], edits)
+    let mixReads = calls(foMapped, mixed)
+    doAssert mixScan.st == jsDone, mixScan.error & " / " & mixScan.sink.result.reason
+    doAssert mixScan.sink.result.ok and mixScan.sink.result.unread.len == 0,
+      $mixScan.sink.result.unread
+    doAssert mixReads - deadReads == 4, $mixReads & " - " & $deadReads
+    let report = mixScan.sink.result.report
+    doAssert report.totals.traces == 6 and report.totals.killed == 1, $report.totals
+    doAssert report.totals.counts[qfHeaderDead] == 1, $report.totals.counts
+    var ramp = newSeq[float32](32)
+    for i in 0 ..< ramp.len: ramp[i] = float32(i + 1)
+    let live = recordAt(report.records, mixed, 1)
+    matchesAlone(live.seen, live.killed, live.bad, live.counts, ramp, 2.0)
+    let gone = recordAt(report.records, mixed, 2)
+    doAssert gone.seen == 1 and gone.killed == 1 and gone.bad == 0, $gone
+    let dead = recordAt(report.records, mixed, 4)
+    doAssert dead.seen == 1 and dead.counts[qfHeaderDead] == 1, $dead
+    for r in report.records:
+      doAssert r.file != mixed or r.record != 6, "an auxiliary trace was noted"
 
 when isMainModule:
   main()
