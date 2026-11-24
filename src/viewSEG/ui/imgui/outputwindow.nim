@@ -14,7 +14,7 @@ from std/unicode import cmpRunesIgnoreCase
 import sdl3_nim
 import imguin/cimgui
 import ../../core/[edits, filejobs, filekinds, filesystem, jobs, outputbatch, outputjobs,
-  panels, state]
+  panels, references, state]
 import ../../view/[filetable, outputwords]
 import fittext, focus, icons, marks, overflow
 
@@ -47,6 +47,7 @@ type
     ownFilters: bool = true
     processingOn: bool = true
     shifts: bool = true
+    correlate: bool
     sortOn: bool = true
     keepOwn: bool = false
     mirror: bool = true
@@ -418,6 +419,26 @@ func chosenLabel(st: AppState): string =
   let p = chosenPattern(st)
   if p.parts.len > 0: p.name else: ""
 
+proc chosenSweep(st: AppState): tuple[name, path, why: string] =
+  ## The project's chosen reference as a sweep the batch can load, or why it
+  ## cannot be used. Reads no file.
+  result = ("", "", CorrelatedNeedRef)
+  if st.chosenReference.len == 0: return
+  if not st.referencesLoaded:
+    result.why = CorrelatedNeedArchive
+    return
+  let at = st.references.findId(st.chosenReference)
+  if at < 0:
+    result.why = referenceGone(st.chosenReference)
+    return
+  let e = st.references.entries[at]
+  if e.missing or e.blocked or e.file.len == 0 or st.referencesHome.len == 0:
+    result.why = referenceGone(e.name)
+  elif e.isPilot:
+    result.why = CorrelatedPilot
+  else:
+    result = (e.name, st.referencesHome / e.file, "")
+
 proc submitRun(ui: var OutputUi; st: AppState) =
   var items: seq[BatchItem] = @[]
   for f in ui.listed:
@@ -431,8 +452,11 @@ proc submitRun(ui: var OutputUi; st: AppState) =
   if pk >= 0 and st.panels[pk].layers.len > 0:
     if ui.processingOn: opts.processing = st.panels[pk].layers[0].processing
     if ui.sortOn: opts.sortKeys = st.panels[pk].layers[0].order
-  let ask = BatchAsk(root: ui.source, items: items, destRoot: ui.dest, options: opts,
+  var ask = BatchAsk(root: ui.source, items: items, destRoot: ui.dest, options: opts,
     mirrorFolders: ui.mirror, pattern: chosenPattern(st))
+  let sweep = chosenSweep(st)
+  if ui.correlate and sweep.why.len == 0:
+    ask.correlate = BatchCorrelate(on: true, name: sweep.name, path: sweep.path)
   ui.sink = BatchSink()
   ui.haveResult = false
   ui.stopped = false
@@ -523,7 +547,8 @@ proc copyText(ui: OutputUi): string =
   for r in ui.result.items:
     lines.add slash(r.relative) & "\t" & outcomeText(r) & "\t" & $r.writtenTraces & "\t" &
       $r.droppedTraces & "\t" & joinedNotes(r.lines)
-  resultsText(lines, ui.result.written, ui.result.failed, ui.result.skipped)
+  resultsText(lines, ui.result.written, ui.result.failed, ui.result.skipped,
+    ui.result.correlatedWith)
 
 proc rightText(text: string) =
   let w = igCalcTextSize(text.cstring, nil, false, -1).x
@@ -547,8 +572,11 @@ proc drawFileCell(rel: string; marks: var Marks) =
 
 proc drawResults(ui: OutputUi; marks: var Marks) =
   if not ui.haveResult: return
-  let summary = summaryLine(ui.result.written, ui.result.failed, ui.result.skipped)
+  let summary = summaryLine(ui.result.written, ui.result.failed, ui.result.skipped,
+    ui.result.correlatedWith)
   igTextUnformatted(summary.cstring, nil)
+  if ui.result.correlatedWith.len > 0:
+    marks.mark("output.correlatedWith " & ui.result.correlatedWith)
   marks.mark("output.summary " & $ui.result.written & " " & $ui.result.failed & " " &
     $ui.result.skipped)
   if ui.result.reason.len > 0:
@@ -686,7 +714,7 @@ proc optBox(label: cstring; on: var bool; help: string) =
   discard igCheckbox(label, addr on)
   if help.len > 0: tip(help)
 
-proc drawOptions(ui: var OutputUi; st: AppState) =
+proc drawOptions(ui: var OutputUi; st: AppState; marks: var Marks) =
   var keys = ""
   let pk = st.findPanel(MainPanel)
   if pk >= 0 and st.panels[pk].layers.len > 0:
@@ -706,6 +734,15 @@ proc drawOptions(ui: var OutputUi; st: AppState) =
   optBox(OptSort.cstring, ui.sortOn, sortTip(keys))
   igTableNextRow(0, 0)
   optBox(KeepOwnPositions.cstring, ui.keepOwn, KeepOwnTip)
+  let sweep = chosenSweep(st)
+  discard igTableNextColumn()
+  igBeginDisabled(sweep.why.len > 0)
+  var corr = ui.correlate and sweep.why.len == 0
+  if igCheckbox(OptCorrelated.cstring, addr corr): ui.correlate = corr
+  igEndDisabled()
+  tip(if sweep.why.len > 0: sweep.why else: CorrelatedTip)
+  marks.mark(if sweep.why.len > 0: "output.correlate.disabled" else: "output.correlate")
+  if corr: flagMark(marks, "output.correlate.on")
   igEndTable()
 
 proc activityLine(ui: OutputUi; phase: string): string =
@@ -1099,7 +1136,7 @@ proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
   if igRadioButton_Bool(($ofSegd).cstring, ui.format == ofSegd): ui.format = ofSegd
   marks.mark("output.format " & $ofSegd)
   if ui.format == ofSegd: marks.mark("output.format " & $ofSegd & ".on")
-  ui.drawOptions(st)
+  ui.drawOptions(st, marks)
   discard igCheckbox(KeepFolders.cstring, addr ui.mirror)
   marks.mark("output.mirror")
   tip(MirrorTip)

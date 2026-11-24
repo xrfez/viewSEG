@@ -36,6 +36,13 @@ const
   OptFilters* = "Own filters"
   OptProcessing* = "Processing"
   OptShifts* = "Time shifts"
+  OptCorrelated* = "Correlated"
+  CorrelatedTip* = "Correlate each trace with the project's reference while writing. " &
+    "Samples are written as 32-bit float."
+  CorrelatedNeedRef* = "Choose a reference sweep in the project to write correlated data."
+  CorrelatedNeedArchive* = "The reference archive is still being read."
+  CorrelatedPilot* = "The chosen reference is a pilot, a trace of each record. " &
+    "Choose a reference sweep in the project to write correlated data."
   OptSort* = "Sort"
   KeepOwnPositions* = "Keep the file's own positions"
   ColFile* = "File"
@@ -84,9 +91,14 @@ func separatorChoice*(ch: string): string =
     else: ch
   "\"" & ch & "\" " & word
 
-func summaryLine*(written, failed, skipped: int): string =
-  ## One sentence for the totals under the results.
-  $written & " written, " & $failed & " failed, " & $skipped & " skipped."
+func summaryLine*(written, failed, skipped: int; correlatedWith = ""): string =
+  ## One sentence for the totals under the results. A correlated run adds
+  ## "correlated with <reference name>".
+  result = $written & " written, " & $failed & " failed, " & $skipped & " skipped"
+  if correlatedWith.len > 0:
+    result.add ", correlated with "
+    result.add correlatedWith
+  result.add "."
 
 func sortTip*(keys: string): string =
   ## The sort checkbox's tooltip, naming the plot's keys when there are any.
@@ -118,12 +130,13 @@ func folderCount*(name: string; on, total: int): string =
   ## "sub (1 of 1)": how many of a folder's files are ticked.
   name & " (" & $on & " of " & $total & ")"
 
-func resultsText*(lines: openArray[string]; written, failed, skipped: int): string =
+func resultsText*(lines: openArray[string]; written, failed, skipped: int;
+    correlatedWith = ""): string =
   ## The results table, as text, for the clipboard.
   result = ColFile & "\t" & ColOutcome & "\t" & ColWritten & "\t" & ColDropped &
     "\t" & ColNotes & "\n"
   for line in lines:
     result.add line
     result.add '\n'
-  result.add summaryLine(written, failed, skipped)
+  result.add summaryLine(written, failed, skipped, correlatedWith)
   result.add '\n'

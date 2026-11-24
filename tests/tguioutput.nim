@@ -23,10 +23,19 @@
 ## 02001.103.vib_uncorrelated.sgd. With the tally suffix removed, "the tally
 ## does not name the pattern". With the old two-row editor, "output.pattern.separator
 ## is not in view".
+##
+## A third run chooses a reference sweep in the archive and ticks Correlated:
+## the tick is drawn disabled while none is chosen, enabled once one is, and a
+## run with it on writes a file of the listen length with the summary naming
+## the reference. Seen to fail: with the tick left disabled for a chosen
+## reference, "the tick is not enabled"; with the batch not given the
+## correlation, the file held 64 samples, not 48; with the summary words left
+## off, "the summary does not name the reference".
 
 import std/[math, monotimes, options, os, strutils]
 import parseSEG
-import viewSEG/core/[edits, geometry, jobs, outputnamevalues, sigtypes, state]
+import viewSEG/core/[edits, geometry, jobs, outputnamevalues, references, sigtypes, state, threads]
+import parseSEG/model/traceindex
 import viewSEG/ui/imgui/app
 import utils/[fixtures, waiting]
 
@@ -129,6 +138,7 @@ proc stacked(f: FrameInfo): bool =
     l.pos.y + l.size.y <= r.pos.y + 8 and abs(l.pos.x - r.pos.x) <= 4
 
 proc namePatterns()
+proc correlatedRun()
 
 proc main*() =
   var wait = 0
@@ -397,6 +407,7 @@ proc main*() =
     sleep(50)
     setJobHook(nil)
   namePatterns()
+  correlatedRun()
 
 proc namePatterns() =
   ## The editor, on its own project: three parts, a padded preview, save,
@@ -749,6 +760,158 @@ proc namePatterns() =
     doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
     doAssert fileExists(shot), "no name-pattern shot"
     echo "tguioutput names: ", steps.len, " steps"
+
+proc writeSweep(path: string; samples: openArray[float32]; us: float64) =
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+  var k = initTraceKeys()
+  k.intervalUs = us
+  k.status = tsLive
+  k.traceCode = 1
+  w.writeTrace(k, @samples)
+  doAssert w.close().len == 0, "the sweep did not close"
+
+proc writeRecord(path: string; n: int; us: float64) =
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+  for i in 0 .. 3:
+    var buf = newSeq[float32](n)
+    for j in 0 ..< n: buf[j] = float32(j + i + 1)
+    var k = initTraceKeys()
+    k.record = 7.0
+    k.channel = float64(i + 1)
+    k.intervalUs = us
+    k.t0Ms = 0.0
+    if i == 3: (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+    else: (k.traceCode, k.status) = (1'i16, tsLive)
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the record did not close"
+
+proc correlatedRun() =
+  ## Record of 64 samples with the auxiliary sweep trace, a 16-sample sweep
+  ## in the archive: the written file holds 64 - 16 = 48 samples per trace.
+  setJobHook(nil)
+  withFixtures fx:
+    let data = fx.dir / "data"
+    let written = fx.dir / "written"
+    createDir(data)
+    createDir(fx.dir / "config")
+    createDir(fx.dir / "logs")
+    createDir(fx.dir / "cache")
+    writeRecord(data / "rec.sgy", 64, 2000.0)
+    var sweep = newSeq[float32](16)
+    for i in 0 ..< sweep.len: sweep[i] = float32(i + 1) * 0.25
+    markWorkerThread() # the archive is written off the UI thread; run() marks it again
+    let id = storeSamples(referencesFolder(fx.dir / "config"), "test sweep", 2000.0, sweep,
+      ReferenceOrigin(generated: true, dtMs: 2.0, durationMs: 32))
+    let shot = currentSourcePath().parentDir.parentDir / ".scratch" / "output-correlated.png"
+    createDir(shot.parentDir)
+    var answer: seq[string] = @[]
+    let hook = proc (kind: DialogKind; location: string): seq[string] = answer
+    var steps: seq[Step]
+    var wait = 0
+    var since = getMonoTime()
+    proc step(name: string; act: proc (f: FrameInfo): bool; done: proc (f: FrameInfo): bool) =
+      steps.add Step(name: name, act: act, done: done)
+
+    proc browse(f: FrameInfo): bool =
+      f.apply Command(kind: ckBrowse, paths: @[data], showFirst: false)
+      true
+    proc listed(f: FrameInfo): bool =
+      not f.core.fileList.scanning and f.core.fileList.folder.len > 0
+    step("the folder is listed", browse, listed)
+
+    var opened = false
+    proc openOutput(f: FrameInfo): bool =
+      if opened: return true
+      let it = f.markOf("menu.Output...")
+      if it.size.x == 0 or f.markOf("menu.Output.disabled").size.x > 0:
+        discard clickWhen(f, "menu.File")
+        return false
+      f.click(it.centre)
+      opened = true
+      true
+    proc noRef(f: FrameInfo): bool =
+      f.markOf("output.ready").size.x > 0 and f.markOf("output.correlate.disabled").size.x > 0
+    step("Correlated is disabled with no reference", openOutput, noRef)
+
+    proc choose(f: FrameInfo): bool =
+      f.apply Command(kind: ckSelectReference, refId: id)
+      true
+    proc enabled(f: FrameInfo): bool =
+      f.markOf("output.correlate").size.x > 0 and
+        f.markOf("output.correlate.disabled").size.x == 0
+    step("Correlated is enabled with a reference", choose, enabled)
+
+    proc tick(f: FrameInfo): bool = clickWhen(f, "output.correlate")
+    proc ticked(f: FrameInfo): bool = f.markOf("output.correlate.on").size.x > 0
+    step("Correlated is ticked", tick, ticked)
+
+    proc all(f: FrameInfo): bool = clickWhen(f, "output.all")
+    proc allOn(f: FrameInfo): bool = f.markOf("output.file rec.sgy on").size.x > 0
+    step("the file is ticked", all, allOn)
+
+    proc dest(f: FrameInfo): bool =
+      answer = @[written]
+      clickWhen(f, "output.changeDest")
+    proc canRun(f: FrameInfo): bool =
+      f.markOf("output.run").size.x > 0 and f.markOf("output.run.disabled").size.x == 0
+    step("a destination is chosen", dest, canRun)
+
+    proc run(f: FrameInfo): bool = clickWhen(f, "output.run")
+    proc wrote(f: FrameInfo): bool =
+      let r = rowOf(f, "rec.sgy")
+      result = r.ok and r.outcome == "written" and fileExists(written / "rec.sgy")
+      if result:
+        doAssert f.markOf("output.summary 1 0 0").size.x > 0, "no summary mark"
+        doAssert f.markOf("output.correlatedWith test sweep").size.x > 0,
+          "the summary does not name the reference"
+        f.keepInMainWindow()
+        doAssert f.savePng(shot), "the shot was not written"
+    step("Run writes the correlated file", run, wrote)
+
+    var at = 0
+    var started = false
+    var failed = ""
+    proc onFrame(f: FrameInfo) =
+      if f.index == 0:
+        f.keepInMainWindow()
+        f.moveMouse(vec2(4, 4))
+      if at >= steps.len or failed.len > 0:
+        f.stop()
+        return
+      if not started:
+        if steps[at].act(f):
+          started = true
+          wait = 0
+          since = getMonoTime()
+        elif overdue(wait, 800, since):
+          failed = steps[at].name & " did not happen"
+          f.stop()
+        else:
+          inc wait
+      else:
+        inc wait
+        if wait >= 3 and steps[at].done(f):
+          inc at
+          started = false
+          wait = 0
+          since = getMonoTime()
+        elif overdue(wait, 800, since):
+          failed = steps[at].name & " did not happen"
+          f.stop()
+    let code = run(RunOptions(windowSize: (1920, 1080), theme: forceDark, persist: true,
+      configDir: some(fx.dir / "config"), logDir: some(fx.dir / "logs"),
+      indexCacheDir: some(fx.dir / "cache"),
+      userThemeDir: some(fx.dir / "no-user-themes"),
+      assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]),
+      dialogs: hook, onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert failed.len == 0, failed
+    doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
+    var back = openSeismic(written / "rec.sgy", keys = true)
+    doAssert back.traceEntry(0).numSamples == 48,
+      "the file holds " & $back.traceEntry(0).numSamples & " samples"
+    back.close()
+    echo "tguioutput correlated: ", steps.len, " steps"
 
 when isMainModule:
   main()
