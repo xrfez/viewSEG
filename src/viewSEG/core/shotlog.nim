@@ -1205,8 +1205,9 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
   ## cell; a non-zero fraction that differs from it by more than one
   ## microsecond is a disagreement naming both values. A year column of
   ## two digits uses the same pivot as `yy` in a date-time pattern; a
-  ## three-digit year is a bad number and is not stored. Missing cells and
-  ## sentinels are empty, not faults.
+  ## three-digit year is a bad number and is not stored. A second of 60 is
+  ## kept, rolled into the next minute, and reported as `second 60`. Missing
+  ## cells and sentinels are empty, not faults.
   result.problems = log.problems
   result.rows = newSeq[Shot](log.len)
   var seenFile = initTable[int64, int]()
@@ -1223,6 +1224,7 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
     var secUs = 0
     var haveSecond = false
     var secRaw = ""
+    var secCol = -1
     var microsRaw = ""
     var microsCol = -1
     var dateText = ""
@@ -1323,6 +1325,7 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
                 secPart = sec.sec
                 secUs = sec.us
                 secRaw = raw.strip
+                secCol = col
                 shot.second = float64(sec.sec) + float64(sec.us) / 1e6
             else:
               let num = parseNum(raw, map.decimalComma)
@@ -1364,6 +1367,8 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
     if utcSecUs.isSome:
       keepInstant(instants, result.problems, row, "UTC seconds", utcSecUs.get,
         utcSecUs.get, cols[2])
+    if haveSecond and secPart == 60:
+      addProblem(result.problems, pkBadNumber, row, secCol, "second 60")
     var splitUs: Option[int64] = none(int64)
     if year.isSome and (doy.isSome or (month.isSome and day.isSome)) and
         hour.isSome and minute.isSome and haveSecond:
@@ -1418,6 +1423,8 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
           "date-time text does not match " &
           (if map.dateTimePattern.len > 0: map.dateTimePattern else: "a known form"))
       else:
+        if parsed.ss == 60:
+          addProblem(result.problems, pkBadNumber, row, cols[4], "second 60")
         let textUs = civilToUtcUs(parsed.y, parsed.m, parsed.d, parsed.hh, parsed.mm,
           parsed.ss, parsed.us, map.clock)
         if textUs.isSome:

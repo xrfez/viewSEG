@@ -13,6 +13,8 @@
 ## column, `fractionAndMicros` keeps 59.000000 and reports no problem.
 ## With the year column stored as parsed, `yearColumnPivot` keeps 16.
 ## With no decimal-comma reading, `decimalComma` leaves `1,5` unparsed.
+## With no leap-second problem, `leapSecond` keeps the rolled instant and
+## reports nothing.
 
 import std/[math, options, os, strutils]
 import viewSEG/core/shotlog
@@ -402,6 +404,22 @@ proc main*() =
     doAssert missing.rows[0].shotPoint == 1.5
     doAssert missing.rows[1].shotPoint.isNaN
     doAssert not hasKind(missing.problems, pkBadNumber)
+
+  block leapSecond:
+    let leap = read("2024,3,1,0,0,60\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    let next = read("2024,3,1,0,1,0\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert leap.rows[0].timeUtcUs.get == UtcMarch + 60_000000
+    doAssert leap.rows[0].timeUtcUs.get == next.rows[0].timeUtcUs.get
+    doAssert kindText(leap.problems, pkBadNumber) == "second 60"
+    let asText = read("2024-03-01 00:00:60\n", [crDateTime], header = false)
+    doAssert asText.rows[0].timeUtcUs.get == UtcMarch + 60_000000
+    doAssert kindText(asText.problems, pkBadNumber) == "second 60"
+    let ordinary = read("2024,3,1,0,0,59\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert ordinary.rows[0].timeUtcUs.get == UtcMarch + 59_000000
+    doAssert "second 60" notin kindText(ordinary.problems, pkBadNumber)
 
   echo "tshotlog ok"
 
