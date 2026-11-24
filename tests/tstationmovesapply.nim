@@ -3,9 +3,13 @@
 ## follow it, a trace with no source keeps its offset, a station the list does
 ## not name is left alone, and removing the move puts the position back.
 ## The same list applied again does not change `keysRevision`.
+## The Headers window (Trace tab and a trace table sorted by receiver X) shows
+## the move without the selection changing.
 ##
 ## Seen to fail: with `applyFileMoves` returning 0 before it called `applyMoves`,
-## `n == 6` (traces changed: 0).
+## `n == 6` (traces changed: 0). With `followInspect` comparing only the join
+## serial, the Trace tab kept receiver X 0 after the move; with the table's
+## cached column keyed only by the joins, the sorted trace table did too.
 
 import std/[math, options]
 import parseSEG
@@ -151,6 +155,37 @@ proc main*() =
       st.setStationMoves(absent)
       doAssert st.settle(st.jobs.active.len == 0 and st.sessions[0].keysRevision == held and
         near(st.keysOf(13).rcvX, 0))
+
+  block headersAfterMove:
+    # No survey, one trace selected, the Headers window open. An undated move
+    # must show in the Trace tab and in a table sorted by receiver X, with
+    # the selection left as it is.
+    withFixtures fx:
+      var st = initAppState()
+      st.opened(fx.stationsSegd())
+      let id = st.sessions[0].base + 13
+      let view = TableView(fields: @["keys.rcvX"], scope: tsFile, sortBy: "keys.rcvX",
+        rows: 0 .. 24)
+      st.apply Command(kind: ckInspect, inspect: {ipTraceHeaders, ipTable}, table: view)
+      st.apply Command(kind: ckSelect, traces: @[id], mode: smReplace)
+      doAssert st.settle(not st.inspection.waiting and st.inspection.answer.traces.len == 1 and
+        near(st.inspection.answer.traces[0].keys.rcvX, 0) and
+        st.inspection.answer.table.rowTraces.len > 0), "the Headers window did not answer"
+      var moves = StationMoves()
+      moves.add moveAt(RcvLine + 1, FirstRcvPoint, 0, none(float64), 7000, OriginY)
+      st.setStationMoves(moves)
+      doAssert st.settle(not st.inspection.waiting and st.inspection.answer.traces.len == 1 and
+        st.inspection.answer.traces[0].id == id and
+        near(st.inspection.answer.traces[0].keys.rcvX, 7000)),
+        "the Trace tab kept the receiver X from before the move"
+      var shown = false
+      let table = st.inspection.answer.table
+      for i, t in table.rowTraces:
+        if t == 13 and i < table.values.len and table.values[i].len > 0 and
+            near(table.values[i][0], 7000):
+          shown = true
+      doAssert shown, "the trace table kept the receiver X from before the move"
+      st.shutdown()
 
 when isMainModule:
   main()

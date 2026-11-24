@@ -338,8 +338,10 @@ proc readRange(f: ptr SeismicFile; name: string; traces: Slice[int];
     f[].traceFieldColumnInto(name, traces, dst)
 
 proc columnKey(f: InspectFile; ask: TableAsk; name: string): string =
-  ## The key of column `name` read whole for the table's scope.
-  f.path & "\t" & $int(f.session) & "\t" & $ask.traces & "\t" & $ask.joins & "\t" & name
+  ## The key of column `name` read whole for the table's scope. The keys'
+  ## revision is in it: a station move must not reuse a column read before it.
+  f.path & "\t" & $int(f.session) & "\t" & $ask.traces & "\t" & $ask.joins & "\t" &
+    $f.file[].keysRevision & "\t" & name
 
 proc indexOf(cache: TableCache; key: string): int =
   ## The index in the cache of the column `key`; -1 for none.
@@ -396,7 +398,8 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
   let n = ask.traces.len
   template cache: untyped = p.table
   # The fields the scope's first trace has, for the column chooser.
-  let catalogueOf = f.path & "\t" & $int(f.session) & "\t" & $ask.traces.a & "\t" & $ask.joins
+  let catalogueOf = f.path & "\t" & $int(f.session) & "\t" & $ask.traces.a & "\t" &
+    $ask.joins & "\t" & $f.file[].keysRevision
   if n > 0 and cache.catalogueOf != catalogueOf:
     cache.catalogue.setLen 0
     for (name, label) in KeyColumns:
@@ -436,7 +439,8 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
   let ordered = findKey.len > 0 or sortKey.len > 0
   if ordered:
     let orderKey = findKey & "|" & $find & "|" & sortKey & "|" & $view.descending & "|" &
-      $ask.traces & "|" & f.path & "|" & $int(f.session) & "|" & $ask.joins
+      $ask.traces & "|" & f.path & "|" & $int(f.session) & "|" & $ask.joins & "|" &
+      $f.file[].keysRevision
     if orderKey != cache.orderKey:
       var keep: seq[bool]
       if findKey.len > 0:

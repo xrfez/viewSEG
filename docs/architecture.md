@@ -788,7 +788,8 @@ are not its headers' bytes: the reader gives each trace's keys and the groups a 
 (parseSEG's `joinedGroups`), and `traceTable` puts a row per key the join gave (its
 stations, coordinates, offset, midpoint) above the header's fields, marked per trace, so
 the window draws them in the join's accent colour; the reader is asked again when a join
-ends (`joinReport.serial`). The Summary's coordinates are the session's (`Session.crs`,
+ends (`joinReport.serial`) or a shown file's keys change (a station move). The Summary's
+coordinates are the session's (`Session.crs`,
 read with the open, as the join window shows them) and, once joined, the units confirmed
 for the join (`AppState.joins`). The Summary's lines are made in `core/properties`
 (`summaryLines`), so that agent control's `properties` gives the same words; they include
@@ -804,9 +805,10 @@ file held as for the other parts). The reader reads only the rows asked for (the
 from the index in memory, a header field through `traceFieldColumnInto`), and a column the
 rows are sorted, narrowed or graphed by for every row of the scope once, in steps of
 `ColumnStep` traces between looks for a newer request, kept in the reader's own cache (8
-columns, by file, scope, joins and name) so that a pointer moving over the plot (a new
-request each frame) never starts it again; the order (`orderOf`) is kept too. The answer
-carries the rows read, the count, the graph as at most 2048 buckets of least and most (never
+columns, by file, scope, joins, keys revision and name) so that a pointer moving over the
+plot (a new request each frame) never starts it again; the order (`orderOf`) is kept too.
+The answer carries the rows read, the count, the graph as at most 2048 buckets of least and
+most (never
 a whole column), and the fields of the scope's first trace for the column chooser. The
 window keeps no copy of any of it.
 

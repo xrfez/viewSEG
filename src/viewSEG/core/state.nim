@@ -846,6 +846,11 @@ type
       ## the geometry joins ended so far (`joinReport.serial`): a join
       ## changes the keys the Trace tab shows (read here, never the file's
       ## `keysRevision`, which a join's job writes)
+    keysRev: seq[int]
+      ## the shown files' keys revisions (`Session.keysRevision`), in the
+      ## order of the traces asked for, then the table's file if it is
+      ## another: a station move changes those keys. Not the file's own
+      ## `keysRevision` (a join's or a move's job writes it)
     table: TableView ## the trace table's, when on screen
     tableOf: (SessionId, Slice[int])
       ## the trace table's file and the traces it has rows for; NoSession for none
@@ -3507,7 +3512,8 @@ proc followInspect(state: var AppState) =
   ## found again when the selection changed, and its reader asked for what
   ## the window has on screen when that is not what it was asked for last
   ## (other traces, another record, their edits or the plot's processing
-  ## when they are shown as displayed, their keys after a geometry join).
+  ## when they are shown as displayed, their keys after a geometry join
+  ## or a station move).
   ## Each file it reads is held first; a
   ## trace of a file that cannot be held (a job needs it to itself) is
   ## answered as busy. With nothing on screen, nothing is read.
@@ -3555,6 +3561,18 @@ proc followInspect(state: var AppState) =
     want.tableOf = (s.id, scope)
     want.table = ins.table
   want.joins = state.joinReport.serial
+  block shownKeys:
+    var seen: seq[SessionId] = @[]
+    for t in want.traces:
+      let i = state.findTrace(t)
+      if i >= 0:
+        let id = state.sessions[i].id
+        if id notin seen:
+          seen.add id
+          want.keysRev.add state.sessions[i].keysRevision
+    if want.tableOf[0] != NoSession and want.tableOf[0] notin seen:
+      let i = state.findSession(want.tableOf[0])
+      if i >= 0: want.keysRev.add state.sessions[i].keysRevision
   want.displayed = view.asDisplayed and ipTraceSamples in ins.parts
   if want.displayed:
     for t in want.traces:
@@ -3584,7 +3602,8 @@ proc followInspect(state: var AppState) =
   template was: untyped = state.asked
   if want.parts == was.parts and want.traces == was.traces and want.edits == was.edits and
       want.own == was.own and want.hasOwn == was.hasOwn and want.shiftMs == was.shiftMs and
-      want.joins == was.joins and want.displayed == was.displayed and
+      want.joins == was.joins and want.keysRev == was.keysRev and
+      want.displayed == was.displayed and
       want.table == was.table and want.tableOf == was.tableOf and
       want.shown == was.shown and want.record == was.record and
       want.vendor == was.vendor and want.vendorGen == was.vendorGen and
