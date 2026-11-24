@@ -91,7 +91,7 @@ import processSEG/pipeline
 import processSEG/core/[basic, pool, rows, types, workspace]
 import processSEG/gain/stats
 import channelsets, components, correlateread, cutfile, edits, filesystem, inbox, jobs, log, panels,
-  processing, readout, sorting, threads, tiles, viewport, wiggle
+  processing, readout, segmentclock, sorting, threads, tiles, vendormaps, viewport, wiggle
 
 const
   ChunkTraces = 64    ## traces per prefetch chunk
@@ -290,6 +290,27 @@ proc letGo(rd: var Reader) =
   rd.lastIo = false
   rd.toldNotNumbers = false
 
+type SortGivenUp = object of CatchableError
+
+proc vendorStarts(rd: Reader): seq[float64] =
+  ## The start time of every trace of the file, in UTC microseconds, from the
+  ## trace headers through the vendor maps in force (`segmentClock`); empty when
+  ## no map gives them, or when a newer note came first (the caller then sees
+  ## `superseded`). Untimed traces are NaN.
+  let f = rd.src.file
+  let r = rd.r
+  if f[].hasKeys:
+    let reg = currentVendors()
+    if startFieldDeclared(f[], reg):
+      if not f[].inMemory: fs.mappedRead(rd.src.path, headers = true)
+      try:
+        let clock = segmentClock(f[], reg, proc () {.gcsafe.} =
+          if r.superseded: raise newException(SortGivenUp, "a newer order is waiting"))
+        if clock.fromHeaders:
+          result = newSeq[float64](clock.times.len)
+          for i, t in clock.times: result[i] = t * 1e6
+      except SortGivenUp: discard
+
 proc arrange(rd: var Reader; order: seq[SortKey]) =
   ## Puts the positions in `order` (the traces the filter keeps, sorted),
   ## unless a newer note comes first: then they stay as they were and
@@ -306,7 +327,13 @@ proc arrange(rd: var Reader; order: seq[SortKey]) =
     var perm: seq[int]
     let r = rd.r
     let setNumber = proc (t: int): int {.gcsafe, raises: [].} = f[].channelSetNumberOf(t)
-    if sortRowsInto(rows, order, perm, proc (): bool = r.superseded, setNumber):
+    var starts: seq[float64] = @[]
+    for key in order:
+      if key.field == hfStartTime and starts.len == 0: starts = rd.vendorStarts()
+    var startOf: StartProc = nil
+    if starts.len > 0:
+      startOf = proc (t: int): float64 {.gcsafe, raises: [].} = starts[t]
+    if sortRowsInto(rows, order, perm, proc (): bool = r.superseded, setNumber, startOf):
       var list = newSeq[int](perm.len)
       for k, row in perm: list[k] = base.traceAt(row)
       rd.positions = Positions(traces: base.traces, listed: true, list: list)

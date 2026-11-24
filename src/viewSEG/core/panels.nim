@@ -57,7 +57,7 @@
 ## ("Seismic 2"). The name follows the panel's trace filter and kind, so
 ## the same window names itself again when it is reused.
 
-import std/math
+import std/[math, options]
 import parseSEG
 import processSEG/pipeline
 import processSEG/gain/[curves, gain]
@@ -246,6 +246,10 @@ type
     hfInline = "inline"
     hfCrossline = "crossline"
     hfTrace = "trace" ## the trace's number in the file, from 1
+    hfStartTime = "Start time"
+      ## when the trace's first sample was recorded, in UTC microseconds since 1970
+      ## (the keys' first-sample instant, else their `time`); the sort by it reads a
+      ## recorder's own per-trace start time from the headers when a vendor map has it
 
   HeaderChoice* = object
     ## The rows of a panel's display header.
@@ -440,6 +444,11 @@ func value*(k: TraceKeys; field: HeaderField; trace: int; channelSet = 0): float
   of hfInline: k.inline
   of hfCrossline: k.crossline
   of hfTrace: float64(trace + 1)
+  of hfStartTime:
+    let us = k.firstSampleUs
+    if us.isSome: float64(us.get)
+    elif k.time.isNaN: NaN
+    else: k.time * 1e6
 
 func joinGroupsOf*(field: HeaderField): set[JoinGroup] =
   ## The groups of a trace's keys `field` shows: what a geometry join may

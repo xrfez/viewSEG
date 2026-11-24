@@ -12,14 +12,14 @@
 ## with the clock unused ("components 6"); "us GPS" read as UTC ("start of 0:
 ## 1456358418.0").
 
-import std/[assertions, math, options, os, strutils]
+import std/[algorithm, assertions, math, options, os, strutils]
 import parseSEG
 import parseSEG/io/diskio
 import parseSEG/segd/blocks
 import processSEG
 import processSEG/continuous/slice
 import viewSEG/core/[cutgather, cutgatherjobs, jobs, recordingkind, segmentclock, shotlog,
-  vendormaps]
+  state, vendormaps]
 import utils/[fixtures, waiting]
 
 const
@@ -509,6 +509,38 @@ proc main*() =
       doAssert "time-sliced receiver gather" in got.res.reason, got.res.reason
       doAssert "vendor header map" in got.res.reason, got.res.reason
       doAssert not fileExists(dest)
+
+    block sorting_by_time_reads_the_recorders_own_starts:
+      # The six segments are in the file latest first, and share the keys' one
+      # time: the Time order (core/sorting) puts them earliest first only by the
+      # start times of the trace headers, which the panel's reader takes from
+      # `segmentClock`. Without the map the traces tie, and stay in the file's
+      # order.
+      # Seen to fail with the reader not passing `startOf`: the tile held 0 ..< 6.
+      var raw = gpsStarts()
+      raw.reverse
+      let path = rec / "backwards.sgd"
+      makeRecording(path, raw)
+      proc tileOrder(withMap: bool): seq[int] =
+        publishVendors(if withMap: gps else: VendorRegistry())
+        var st = initAppState()
+        st.apply Command(kind: ckOpen, paths: @[path])
+        doAssert st.settle(st.panel(MainPanel).layout.traces == Segments)
+        let id = st.findPanel(MainPanel)
+        var v = fitAll(st.panel(MainPanel).layout, 800, 600)
+        v.traces = Span(lo: -0.5, hi: float64(Segments) - 0.5)
+        st.apply Command(kind: ckView, panel: MainPanel, view: v)
+        st.apply Command(kind: ckSort, panel: MainPanel,
+          order: @[SortKey(field: hfStartTime)])
+        let main = st.panel(MainPanel)
+        doAssert st.settle(st.tiles(id).len > 0 and not main.pending.isEmpty and
+          st.tiles(id)[^1].request == main.pending and
+          st.tiles(id)[^1].request.gen >= main.orderGen)
+        result = st.tiles(id)[^1].traces
+        st.shutdown()
+      defer: publishVendors(VendorRegistry())
+      doAssert tileOrder(true) == @[5, 4, 3, 2, 1, 0], "with the map"
+      doAssert tileOrder(false) == @[0, 1, 2, 3, 4, 5], "without the map"
 
   echo "tsegmentclock ok"
 

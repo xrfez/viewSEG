@@ -6,7 +6,8 @@
 ## so a SEG-Y and a SEG-D record sort alike), each ascending or descending.
 ## parseSEG's `sortOrder` does the sorting: stable, so traces with equal keys
 ## keep the order they had (the file's order, after the trace filter), with
-## unknown values (NaN) after every number whichever the direction.
+## unknown values (NaN) after every number whichever the direction. The
+## start time is the keys' unless `startOf` gives a recorder's own.
 ##
 ## The keys are taken one at a time, the last first, each a stable sort of
 ## the order the keys after it gave: memory stays at one column of the
@@ -27,12 +28,17 @@ proc stopped(stop: StopProc): bool {.inline.} = stop != nil and stop()
 type SetNumberProc* = proc (trace: int): int {.gcsafe, raises: [].}
   ## The channel set number of a trace (`core/channelsets`); 0 for none.
 
+type StartProc* = proc (trace: int): float64 {.gcsafe, raises: [].}
+  ## The start time of a trace in UTC microseconds, as a recorder's own header
+  ## gives it (`core/segmentclock`); NaN for none.
+
 proc sortRowsInto*(rows: TraceRows; order: openArray[SortKey]; dst: var seq[int];
-    stop: StopProc = nil; setNumber: SetNumberProc = nil): bool =
+    stop: StopProc = nil; setNumber: SetNumberProc = nil; startOf: StartProc = nil): bool =
   ## `dst` becomes the rows `0 ..< rows.len` of `rows` in `order` (the first
   ## key first); no keys give the rows as they are. True when done; false
   ## when `stop` said to give up, and `dst` is then not meaningful. Raises
-  ## `ValueError` for a view without keys (`rows.hasKeys`).
+  ## `ValueError` for a view without keys (`rows.hasKeys`). `startOf`, when
+  ## given, is the start time of a trace for the key `hfStartTime`.
   if not rows.hasKeys:
     raise newException(ValueError, "the traces have no keys to sort by")
   let n = rows.len
@@ -49,8 +55,12 @@ proc sortRowsInto*(rows: TraceRows; order: openArray[SortKey]; dst: var seq[int]
       let last = min(n, i + StopEvery)
       for m in i ..< last:
         let row = dst[m]
-        let v = rows.keysAt(row).value(key.field, rows.traceOf(row),
-          if setNumber != nil: setNumber(rows.traceOf(row)) else: rows.channelSetIndex(row) + 1)
+        let trace = rows.traceOf(row)
+        let v =
+          if key.field == hfStartTime and startOf != nil: startOf(trace)
+          else:
+            rows.keysAt(row).value(key.field, trace,
+              if setNumber != nil: setNumber(trace) else: rows.channelSetIndex(row) + 1)
         cols[0][m] = if key.descending: -v else: v # NaN stays last either way
       i = last
       if stop.stopped: result = false

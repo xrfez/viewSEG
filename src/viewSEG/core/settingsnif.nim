@@ -118,7 +118,8 @@ const
   TraceMatchNames: array[TraceMatch, string] = ["auto", "station", "channel"]
   MaxLineNames = 1000  ## line names mapped to numbers, kept
   FieldNames: array[HeaderField, string] = ["rcvLine", "rcvPoint", "component", "channel",
-    "channelSet", "traceId", "ffid", "srcLine", "srcPoint", "offset", "cdp", "inline", "crossline", "trace"]
+    "channelSet", "traceId", "ffid", "srcLine", "srcPoint", "offset", "cdp", "inline", "crossline",
+    "trace", "startTime"]
   SeverityNames: array[Severity, string] = ["info", "warning", "error", "fatal"]
   HeadersTabNames: array[HeadersTab, string] = ["summary", "fileHeaders", "trace", "traceTable"]
   TableScopeNames: array[TableScope, string] = ["record", "file"]

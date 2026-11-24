@@ -112,6 +112,22 @@ proc main*() =
     doAssert describe([key(hfOffset, true)]) == "offset (descending)"
     doAssert describe([]) == "the file's order"
 
+  block unknownTimeLast:
+    var keys: seq[TraceKeys]
+    for t in [30.0, NaN, 10.0, NaN, 20.0]:
+      var k = initTraceKeys()
+      k.time = t
+      keys.add k
+    let rows = rowsOf(keys, newSeq[int](keys.len))
+    var got: seq[int]
+    doAssert sortRowsInto(rows, [key(hfStartTime)], got) and got == @[2, 4, 0, 1, 3], $got
+    doAssert sortRowsInto(rows, [key(hfStartTime, true)], got) and got == @[0, 4, 2, 1, 3], $got
+    doAssert keys[0].value(hfStartTime, 0) == 30.0e6 and keys[1].value(hfStartTime, 1).isNaN
+    # a recorder's own times, given by `startOf`, win over the keys'
+    let own = [5.0, 4.0, 3.0, NaN, 1.0]
+    doAssert sortRowsInto(rows, [key(hfStartTime)], got, startOf = proc (t: int): float64 = own[t])
+    doAssert got == @[4, 2, 1, 0, 3], $got
+
   block kernelOnKnownKeys:
     # 8 traces: line, point, component and offset, some unknown (NaN, or
     # component 0); `numSamples` only has to be there.
