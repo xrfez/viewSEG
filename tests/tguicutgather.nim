@@ -170,6 +170,24 @@ proc main*() =
     step("the picture", picture, proc (f: FrameInfo): bool = true)
     step("Cut", proc (f: FrameInfo) = f.click(f.markOf("cut.run").centre),
       proc (f: FrameInfo): bool = f.hasMark("cut.open") and fileExists(dest))
+    # The file now exists: the window says so and Cut stays dim (the check
+    # looked at the disk again because the cut finished).
+    step("the destination exists", proc (f: FrameInfo) = discard,
+      proc (f: FrameInfo): bool = f.hasMark("cut.exists"))
+    var existsShot = false
+    proc existsPicture(f: FrameInfo) =
+      let dir = getEnv("VIEWSEG_SCREENSHOTS")
+      if dir.len > 0 and not existsShot:
+        createDir(dir)
+        doAssert f.savePng(dir / "cut-dialog-exists.png"), "cannot save the dialog"
+      existsShot = true
+      clicks = 0
+      f.click(f.markOf("cut.run").centre)
+    proc stillDimOver(f: FrameInfo): bool =
+      inc clicks
+      doAssert not f.core.cutRunning, "Cut started over an existing file"
+      clicks >= 6
+    step("Cut over the existing file", existsPicture, stillDimOver)
     step("open the cut file", proc (f: FrameInfo) = f.click(f.markOf("cut.open").centre),
       proc (f: FrameInfo): bool =
       let i = f.core.shownFile(f.core.findPanel(MainPanel))

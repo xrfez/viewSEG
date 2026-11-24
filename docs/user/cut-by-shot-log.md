@@ -37,7 +37,8 @@ opening keeps what you typed. From the top:
   you choose one.
 - **File name:** a name without a folder. It starts as the recording's name, then `_cut`, then
   the extension of the format (`.sgd` or `.sgy`), and follows the format until you type
-  another.
+  another. When a file of that name is already in the folder, the window says so and **Cut**
+  stays dim; nothing is overwritten.
 
 Under the fields, one line sums up what will be written once the options are right: the
 number of shots, how many rows of the log have no time and are left out, the number of

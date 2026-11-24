@@ -19,6 +19,8 @@ const
   FormatSegy* = "SEG-Y"
   NeedFolder* = "Choose the folder the file is written to."
   NeedName* = "Give the file a name."
+  DestExists* = "A file or folder of this name is already in the folder: choose another " &
+    "name or folder."
   NameHasFolder* = "The name is a file name: choose the folder with the button."
   HeadersNotRead* = "The recording's headers are still being read."
   OpenCut* = "Open the cut file"
