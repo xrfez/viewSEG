@@ -46,6 +46,11 @@
 ## auxiliary at 4 ms kept that interval in the template: "trace 0 interval
 ## 4000.0". A file cut after its traces were read lost every note: "missing
 ## 5 traces, 800 samples (1600 ms of listen time). in @[]".
+## (h, many records and options) Samples are also compared with a correlation
+## computed by its definition. Seen to fail: the model given the first pilot for
+## every record (`record 1 trace 0 sample 0 0.0265 vs -0.0438`); the model's
+## pilot left unreversed with the reversal option on (`on trace 0 sample 0
+## 0.0438 vs -0.0438`).
 
 import std/[hashes, math, options, os, sequtils, strutils]
 import parseSEG
@@ -81,6 +86,27 @@ proc samplesOf(f: SeismicFile; trace: int): seq[float32] =
   let x = f.readTraces(trace .. trace)
   result.setLen x.shape[1]
   for j in 0 ..< result.len: result[j] = x[0, j]
+
+proc naiveCorrelation(raw, pilot: openArray[float32]; listen: int; before = 0): seq[float32] =
+  ## The normalised cross-correlation by its definition, with no FFT: sample m is
+  ## sum(raw[m - before + j] * pilot[j]) over the pilot, divided by the pilot's
+  ## energy; `before` samples of earlier lags come first.
+  var energy = 0.0
+  for v in pilot: energy += float64(v) * float64(v)
+  result = newSeq[float32](listen)
+  for m in 0 ..< listen:
+    var acc = 0.0
+    for j in 0 ..< pilot.len:
+      let at = m - before + j
+      if at >= 0 and at < raw.len: acc += float64(raw[at]) * float64(pilot[j])
+    result[m] = float32(acc / energy)
+
+proc nearModel(got, model: seq[float32]; what: string) =
+  ## Every sample within 1e-3 of the model, which peaks at 1.
+  doAssert got.len == model.len, what & " has " & $got.len & " samples, not " & $model.len
+  for j in 0 ..< got.len:
+    doAssert abs(got[j] - model[j]) < 1e-3, what & " sample " & $j & " " & $got[j] &
+      " vs " & $model[j]
 
 proc delayedSweep(sweep: openArray[float32]; samples, delay: int): seq[float32] =
   result = newSeq[float32](samples)
@@ -1036,6 +1062,19 @@ proc main*() =
         for t in 0 .. 2:
           doAssert samplesOf(made, 3 * r + t) == samplesOf(made, 3 * (r mod 2) + t),
             "record " & $r & " trace " & $t
+      # records of both pilots against a correlation computed by its definition
+      for r in [0, 1, 2, 3, 150, 297, 298, 299]:
+        let pilot = if r mod 2 == 0: sweep else: other
+        for t in 0 .. 2:
+          let raw = delayedSweep(pilot, Record, if t == 2: 0 else: Delays[t])
+          # the reference trace is written 500 ms (250 samples) later: its delay is -500 ms
+          let model = naiveCorrelation(raw, pilot, Listen, if t == 2: 250 else: 0)
+          nearModel(samplesOf(made, 3 * r + t), model,
+            "record " & $r & " trace " & $t)
+          doAssert int(made.traceEntry(3 * r + t).numSamples) == Listen
+          let fld = made.traceField(3 * r + t, "trace.correlated")
+          doAssert fld.kind == fvInt and fld.intVal == CorrelatedYes,
+            "record " & $r & " trace " & $t & " correlated " & $fld
       made.close()
       big.close()
 
@@ -1070,6 +1109,23 @@ proc main*() =
       var onFile = openSeismic(outDir / "opt-pilot-on.sgy", keys = true)
       var offFile = openSeismic(outDir / "opt-pilot-off.sgy", keys = true)
       doAssert samplesOf(onFile, 0) != samplesOf(offFile, 0), "the option changed nothing"
+      # against the definition: with the option on, trace 2 and the pilot are both
+      # reversed (the product is positive), traces 0 and 1 come out negated
+      for on in [true, false]:
+        var written = openSeismic(outDir / (if on: "opt-pilot-on.sgy" else: "opt-pilot-off.sgy"),
+          keys = true)
+        for t in 0 .. 2:
+          var raw = delayedSweep(sweep, Record, if t == 2: 0 else: Delays[t])
+          var pilot = sweep
+          if on:
+            for v in pilot.mitems: v = -v
+            if t == 2:
+              for v in raw.mitems: v = -v
+          let model = naiveCorrelation(raw, pilot, Listen, if t == 2: 250 else: 0)
+          nearModel(samplesOf(written, t), model,
+            (if on: "on" else: "off") & " trace " & $t)
+          doAssert int(written.traceEntry(t).numSamples) == Listen
+        written.close()
       onFile.close()
       offFile.close()
 
