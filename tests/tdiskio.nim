@@ -295,7 +295,7 @@ proc main*() =
     s.theme = "one slow write"
     st.apply Command(kind: ckSettings, settings: s)
     let began = getMonoTime()
-    let ended = st.shutdown()
+    let ended = st.shutdown(diskLimit = initDuration(seconds = 60)) # (a busy disk's `fsync` takes seconds)
     let took = getMonoTime() - began
     fault(config, fkNone)
     doAssert fileExists(config / SettingsFileName) and

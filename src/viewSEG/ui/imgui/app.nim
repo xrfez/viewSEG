@@ -231,6 +231,10 @@ type
   RunOptions* = object
     maxFrames*: int            ## stop after this many frames; 0 runs until the window closes
     onFrame*: FrameHook        ## called once per frame, nil for none
+    quitDiskLimit*: Duration
+      ## how long the quit waits for the disk to write the settings and the
+      ## rest; zero for `DiskQuitLimit`. A test of a slow disk sets it high:
+      ## a busy machine's `fsync` takes seconds, and the quit gives up on it.
     allowToolkitErrors*: bool
       ## a run with `onFrame` (a test) fails on a Dear ImGui check that fails (a Pop...()
       ## too many times, an unbalanced Begin/End or ID stack): a debug build aborts at it,
@@ -2404,7 +2408,8 @@ proc run*(opts = RunOptions()): int =
   # on drawing (tried against hiding the window at once: then a slow save,
   # or one given up, was not seen at all).
   let quitAt = getMonoTime()
-  ui.core.shutdown(tick = proc () {.raises: [].} =
+  let diskLimit = if opts.quitDiskLimit > initDuration(): opts.quitDiskLimit else: DiskQuitLimit
+  ui.core.shutdown(diskLimit = diskLimit, tick = proc () {.raises: [].} =
     if getMonoTime() - quitAt >= SavingShownAfter:
       inc frame
       try: ui.savingFrame(window, opts, frame)

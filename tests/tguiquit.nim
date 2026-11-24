@@ -5,6 +5,10 @@
 ## that say what it waits for ("saving"), its events taken; once `run`
 ## returns, the setting is in the settings file.
 ##
+## The quit's own limit on the disk (5 s) is lifted here (`quitDiskLimit`):
+## a real `fsync` on a busy machine takes seconds, and a quit that gave up
+## then left no settings file, and this test failed at random.
+##
 ## Seen to fail: with the window left as it was during the wait (no `tick`
 ## given to `shutdown`), "no frame said it was saving".
 ##
@@ -43,7 +47,8 @@ proc main*() =
       logDir: some(config / "logs"), openPaths: @[fx.surveySegy()], windowSize: (1280, 800),
       theme: forceDark, userThemeDir: some(config / "no-user-themes"),
       assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]),
-      indexCacheDir: some(config / "cache"), onFrame: onFrame))
+      indexCacheDir: some(config / "cache"), onFrame: onFrame,
+      quitDiskLimit: initDuration(seconds = 60)))
     let took = getMonoTime() - stoppedAt
     fault(config, fkNone)
     doAssert code == 0, "run() exit code " & $code
