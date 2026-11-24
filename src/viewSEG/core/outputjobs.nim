@@ -70,10 +70,16 @@ const
   PositionsUnstored* =
     "Survey and moved positions could not be written in this format."
     ## Every joined or moved position of a written trace had no slot, or did not fit.
-  RefDelayNotWritten* =
-    "The reference traces' time zero could not be written in this file (a SEG-D channel " &
-    "set has one start time, and the file's own headers are kept), so they keep the " &
-    "delay it had."
+  RefDelayScalar* =
+    "The reference traces' time zero could not be written: the time scalar of their " &
+    "headers cannot hold it, so they keep the delay they had."
+  RefDelaySharedSet* =
+    "The reference traces' time zero could not be written: a SEG-D channel set has one " &
+    "start time, and these traces share a set with other auxiliary traces or with " &
+    "another delay, so they keep the delay they had."
+  RefDelayKeptHeaders* =
+    "The reference traces' time zero could not be written: a SEG-D channel set has one " &
+    "start time and the file's own headers are kept, so they keep the delay they had."
   OwnPositionsWritten* =
     "The file's own positions were written from its header keys."
     ## The keys path, with the tick on: geometry came from the file's own headers.
@@ -915,8 +921,10 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           lines.add correlationLines(file, file[].len, shape.listen, sweepLen,
             float64(shape.listen) * shape.dtMs, float64(sweepLen) * shape.dtMs, shape.dtMs,
             delayed, leadSamples, shape.padded, shape.cut, refs, shape.odd)
-          if delayed > 0 and lag != 0 and (delayLost or (segdOut and not segdDelays)):
-            lines.add RefDelayNotWritten
+          if delayed > 0 and lag != 0:
+            if delayLost: lines.add RefDelayScalar
+            if segdOut and not segdDelays:
+              lines.add(if like: RefDelayKeptHeaders else: RefDelaySharedSet)
           try:
             let uncorrelated = binaryUncorrelatedLine(file)
             if uncorrelated.len > 0: lines.add uncorrelated

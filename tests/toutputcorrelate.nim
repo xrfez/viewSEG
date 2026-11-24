@@ -47,7 +47,7 @@
 ## 4000.0". A file cut after its traces were read lost every note: "missing
 ## 5 traces, 800 samples (1600 ms of listen time). in @[]".
 
-import std/[hashes, math, options, os, strutils]
+import std/[hashes, math, options, os, sequtils, strutils]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
@@ -1185,7 +1185,8 @@ proc main*() =
       var f = openSeismic(path, keys = true)
       defer: f.close()
       for t in 0 ..< f.len: result.add f.traceKeys(t).t0Ms
-    proc noted(lines: seq[string]): bool = RefDelayNotWritten in lines
+    proc noted(lines: seq[string]): bool =
+      RefDelayScalar in lines or RefDelaySharedSet in lines or RefDelayKeptHeaders in lines
 
     for (name, segdIn, segdOut) in [("yy", false, false), ("yd", false, true),
         ("dy", true, false)]:
@@ -1209,6 +1210,11 @@ proc main*() =
         # The seismic traces' samples and the note.
         doAssert noted(got.wrote.lines) == (segdOut and not segdIn),
           name & " notes: " & $got.wrote.lines
+        if segdOut and not segdIn:
+          doAssert got.wrote.lines.count(RefDelaySharedSet) == 1 and
+            RefDelayKeptHeaders notin got.wrote.lines, "sentence: " & $got.wrote.lines
+          doAssert "Headers were built from the trace keys. Template headers were not copied." in
+            got.wrote.lines, "keys-path line missing"
         f.close()
     block segdSetsFit:
       ## Only the reference is auxiliary: SEG-D to SEG-D keeps the template and its delay.
@@ -1239,7 +1245,9 @@ proc main*() =
         let d = delaysOf(dest)
         if format == ofSegd:
           # Same-format SEG-D keeps the source's own headers, so the delay stays.
-          doAssert noted(got.wrote.lines), "no note: " & $got.wrote.lines
+          doAssert got.wrote.lines.count(RefDelayKeptHeaders) == 1 and
+            RefDelayScalar notin got.wrote.lines and RefDelaySharedSet notin got.wrote.lines,
+            "no note: " & $got.wrote.lines
           doAssert "Headers were built from the trace keys. Template headers were not copied." notin
             got.wrote.lines, "the template path was left: " & $got.wrote.lines
           doAssert d == @[10.0, 10.0, 10.0, 100.0], "SEG-D delays " & $d
@@ -1285,6 +1293,22 @@ proc main*() =
       for j in 0 ..< x.len:
         if abs(x[j]) > abs(x[best]): best = j
       f.traceKeys(t).t0Ms + float64(best) * DtMs
+
+    block scalarTooCoarse:
+      ## Scalar -1000 stores a delay in 1/1000 ms: -500 ms would be -500000, past 16 bits.
+      let src = srcDir / "scalar-m1000.sgy"
+      scalarFile(src, SegyRevision(major: 2, minor: 1), -1000)
+      var f = openSeismic(src, keys = true)
+      let dest = outDir / "scalar-m1000.sgy"
+      let got = runWrite(f, src, dest, option(sweep, ofSegy))
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      f.close()
+      doAssert got.wrote.lines.count(RefDelayScalar) == 1 and
+        RefDelaySharedSet notin got.wrote.lines and RefDelayKeptHeaders notin got.wrote.lines,
+        "notes: " & $got.wrote.lines
+      var o = openSeismic(dest, keys = true)
+      defer: o.close()
+      doAssert o.traceKeys(RefAux).t0Ms == 0.0, "t0 " & $o.traceKeys(RefAux).t0Ms
 
     block rev0Junk:
       let src = srcDir / "scalar-rev0.sgy"
