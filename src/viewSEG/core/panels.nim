@@ -57,7 +57,7 @@
 ## ("Seismic 2"). The name follows the panel's trace filter and kind, so
 ## the same window names itself again when it is reused.
 
-import std/[math, options, strutils]
+import std/[math, options, sequtils, sets, strutils]
 import parseSEG
 import processSEG/pipeline
 import processSEG/gain/[curves, gain]
@@ -456,6 +456,18 @@ func vendorRef*(name: string): HeaderRef =
   ## The display line of the vendor field `name`.
   HeaderRef(field: hfVendor, name: name)
 
+const MaxHeaderLines* = 32 ## display lines a header may have
+
+func usableLineName*(name: string): bool =
+  ## Whether `name` can name a vendor line: 1 to 200 characters, no control character
+  ## (what the settings file keeps, so an agent cannot choose one that would be lost).
+  name.len in 1 .. 200 and not name.anyIt(it < ' ' or it == '\127')
+
+func builtInLineNames*(): seq[string] =
+  ## The names of the built-in header lines, in the enum's order.
+  for f in HeaderField:
+    if f != hfVendor: result.add $f
+
 func headerRefOf*(name: string): HeaderRef =
   ## The line called `name`: the built-in field of that name (any case; a
   ## built-in field wins a clash), else the vendor field of that name.
@@ -465,6 +477,13 @@ func headerRefOf*(name: string): HeaderRef =
 
 func `==`*(a, b: HeaderRef): bool =
   a.field == b.field and (a.field != hfVendor or a.name == b.name)
+
+func uniqueLines*(fields: openArray[HeaderRef]): seq[HeaderRef] =
+  ## `fields` with each line once, in order (in a time linear in their number).
+  var seen = initHashSet[string]()
+  for f in fields:
+    if seen.containsOrIncl($ord(f.field) & (if f.field == hfVendor: f.name else: "")): continue
+    result.add f
 
 func `$`*(h: HeaderRef): string =
   ## The line's name: the built-in field's, or the vendor field's own name.

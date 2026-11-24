@@ -21,11 +21,11 @@
 ## found the second record's batch wrong; with the stamp not compared in `build`, `reload`
 ## found the old column; with `headerRefOf` not testing the built-in names first, `names`
 ## found a vendor line called "channel".
-import std/[json, math, options, os, strutils]
+import std/[json, math, options, os, sequtils, strutils]
 import parseSEG
 import parseSEG/io/diskio
 import parseSEG/segd/blocks
-import viewSEG/core/[panels, settingsnif, tiles, vendorlines, vendormaps, viewport]
+import viewSEG/core/[log, panels, settingsnif, tiles, vendorlines, vendormaps, viewport]
 import viewSEG/core/state {.all.}
 import viewSEG/remote/schema
 import utils/[fixtures, waiting]
@@ -104,7 +104,10 @@ proc writeLines(path: string) =
 proc registry(): VendorRegistry =
   result.addMap loadVendorMap(MapText)
 
-proc same(a, b: float64): bool = (a.isNaN and b.isNaN) or a == b
+func said(log: MessageLog; part: string): bool =
+  for e in log:
+    if part in e.text: return true
+  false
 
 proc mainReady(st: AppState): bool =
   let p = st.panel(MainPanel)
@@ -160,6 +163,7 @@ proc main*() =
     doAssert st.settle(st.mainReady)
     doAssert st.panel(MainPanel).layout.traces == PerRecord
 
+    let builtBefore = columnsBuilt()
     block trace:
       let t = st.choose(@[vendorRef("counter"), headerRef(hfTrace)])
       for j in 0 ..< PerRecord:
@@ -171,6 +175,40 @@ proc main*() =
       for j in 0 ..< PerRecord:
         doAssert u.header[0][j] == float64(counter(1, j)), $u.header[0]
       st.gather(0)
+
+    block keptAcrossSteps:
+      # a record step does not read the file's column again
+      for g in [1, 0, 1, 0]:
+        st.gather(g)
+        let t = st.choose(@[vendorRef("counter")])
+        doAssert t.header[0][2] == float64(counter(g, 2)), $t.header[0]
+      doAssert columnsBuilt() - builtBefore == 1, "built " & $(columnsBuilt() - builtBefore)
+
+    block anotherFile:
+      let other = fx.dir / "other.sgd"
+      writeLines(other)
+      let before = columnsBuilt()
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: other)
+      doAssert st.settle(st.mainReady and st.sessions.anyIt(it.path == other))
+      discard st.choose(@[vendorRef("counter")])
+      doAssert columnsBuilt() - before == 1, "another file built " & $(columnsBuilt() - before)
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      doAssert st.settle(st.mainReady)
+      let t = st.choose(@[vendorRef("counter")])
+      doAssert t.header[0][1] == float64(counter(0, 1))
+      doAssert columnsBuilt() - before == 2, "back to the first file: a new column"
+
+    block sorted:
+      # each trace shows its own value in the order shown
+      st.apply Command(kind: ckSort, panel: MainPanel,
+        order: @[SortKey(field: hfTrace, descending: true)])
+      doAssert st.settle(st.panel(MainPanel).layers[0].order.len == 1)
+      let t = st.choose(@[vendorRef("counter"), headerRef(hfTrace)])
+      for row in 0 ..< PerRecord:
+        doAssert t.header[1][row] == float64(PerRecord - row), $t.header[1]
+        doAssert t.header[0][row] == float64(counter(0, PerRecord - 1 - row)), $t.header[0]
+      st.apply Command(kind: ckSort, panel: MainPanel, order: @[])
+      doAssert st.settle(st.panel(MainPanel).layers[0].order.len == 0)
 
     block absent:
       let t = st.choose(@[vendorRef("status")])
@@ -197,6 +235,8 @@ proc main*() =
 
     block unknown:
       let t = st.choose(@[vendorRef("noSuchField"), vendorRef("label"), headerRef(hfTrace)])
+      doAssert st.log.said("'noSuchField' is not a header line or a vendor field"),
+        "the unknown name was not said"
       for j in 0 ..< PerRecord:
         doAssert t.header[0][j].isNaN, "an unknown name shows a value"
         doAssert t.header[1][j].isNaN, "a text field shows a number"
@@ -219,6 +259,44 @@ proc main*() =
       doAssert toJson(c.header.fields) == %*["counter", "channel", "serial"]
       decode(%*{"fields": [3]}, c.header, "header", problems)
       doAssert problems.len == 1, $problems
+
+    block limits:
+      let was = st.panel(MainPanel).header.fields
+      var many: seq[HeaderRef]
+      for i in 0 .. MaxHeaderLines: many.add vendorRef("f" & $i)
+      st.apply Command(kind: ckHeader, panel: MainPanel,
+        header: HeaderChoice(auto: false, fields: many))
+      doAssert st.panel(MainPanel).header.fields == was, "more than the most lines taken"
+      st.apply Command(kind: ckHeader, panel: MainPanel,
+        header: HeaderChoice(auto: false, fields: @[vendorRef("a\nb")]))
+      doAssert st.panel(MainPanel).header.fields == was, "a name with a newline taken"
+      var problems: seq[string]
+      var c = Command(kind: ckHeader)
+      decode(%*{"fields": ["bad\nname"]}, c.header, "header", problems)
+      doAssert problems.len == 1, $problems
+      problems.setLen 0
+      decode(%*{"fields": ["x".repeat(201)]}, c.header, "header", problems)
+      doAssert problems.len == 1, $problems
+      # a vendor field is not a sort key: refused, not taken
+      var keys: seq[SortKey]
+      problems.setLen 0
+      decode(%*[{"field": "vendor field"}], keys, "order", problems)
+      doAssert problems.len == 1, $problems
+      st.apply Command(kind: ckSort, panel: MainPanel,
+        order: @[SortKey(field: hfVendor)])
+      doAssert st.panel(MainPanel).layers[0].order.len == 0
+      doAssert "channel" in $schemaOf(HeaderRef) and "vendor field" notin $schemaOf(HeaderField)
+      # the settings file keeps at most that many
+      var doc = "(settings (version 1) (plot (header"
+      for i in 0 .. MaxHeaderLines: doc.add " (vendor \"f" & $i & "\")"
+      doc.add ")))"
+      problems.setLen 0
+      let got = readSettings(doc, "many", Settings(), problems)
+      doAssert got.plot.header.fields.len == MaxHeaderLines and problems.len > 0, $problems
+      problems.setLen 0
+      discard readSettings("(settings (version 1) (plot (header bogus)))", "bad", Settings(),
+        problems)
+      doAssert problems.len > 0 and not problems.anyIt(", vendor" in it), $problems
 
     block settings:
       discard st.choose(@[vendorRef("counter"), headerRef(hfTrace), vendorRef("noSuchField")])
@@ -255,11 +333,17 @@ proc main*() =
       var lines: VendorLines
       var f = openSeismic(path, keys = true)
       publishVendors(registry())
-      doAssert lines.build(addr f, path, ["counter"])
+      doAssert lines.build(addr f, path, 0, ["counter"])
       doAssert lines.valueAt("counter", 4) == float64(counter(1, 1)) and
         lines.absentCount("counter") == 0
+      let n = columnsBuilt()
+      doAssert lines.build(addr f, path, 0, ["counter"]) and columnsBuilt() == n, "built twice"
+      doAssert lines.build(addr f, path, 99, ["counter"]) and columnsBuilt() == n + 1,
+        "a file of another size kept the column"
+      doAssert lines.build(addr f, path & "x", 99, ["counter"]) and columnsBuilt() == n + 2,
+        "another path kept the column"
       publishVendors(VendorRegistry())
-      doAssert lines.build(addr f, path, ["counter"])
+      doAssert lines.build(addr f, path, 0, ["counter"])
       doAssert lines.valueAt("counter", 4).isNaN, "a column of an older load was kept"
       f.close()
     st.shutdown()

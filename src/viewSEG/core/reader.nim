@@ -281,7 +281,6 @@ proc letGo(rd: var Reader) =
     clearCycleRoots()
     discard rd.r.holds.release(rd.src.path)
   rd.src = ReaderSource()
-  rd.vendor.drop()
   rd.shown = Positions()
   rd.positions = Positions()
   rd.sorted = false
@@ -367,10 +366,11 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   ## positions are sorted in its order. A different view, or a file that is
   ## not a view, drops the workspace the one before kept.
   if src.view != rd.viewOf: rd.dropViewWork()
-  if src.file != rd.src.file or src.path != rd.src.path: rd.vendor.drop()
   rd.src = src
   rd.name = rd.src.path.extractFilename
-  if rd.src.file == nil: return
+  if rd.src.file == nil:
+    rd.vendor.drop() # nothing shown: the columns of the file before are not wanted
+    return
   if rd.src.file != rd.toldFile or rd.src.path != rd.toldFilePath:
     # another file, or the same opened again: what was said of the one before
     # is said again (a gather, a filter or a hidden trace is the same file)
@@ -959,8 +959,11 @@ proc buildVendorLines(rd: var Reader; fields: openArray[HeaderRef]): bool =
   let names = vendorNames(fields)
   if names.len == 0 or rd.src.file == nil: return true
   let r = rd.r
-  rd.vendor.build(rd.src.file, rd.src.path, names, proc (): bool {.gcsafe, raises: [].} =
-    r.superseded)
+  result = rd.vendor.build(rd.src.file, rd.src.path, rd.src.size, names,
+    proc (): bool {.gcsafe, raises: [].} = r.superseded)
+  for name in rd.vendor.takeMissing():
+    rd.note(sevWarning, "'" & name & "' is not a header line or a vendor field of " & rd.name &
+      ": it shows as unknown.")
 
 proc markRow(rd: Reader; tile: var Tile; row, trace, count: int; keys: TraceKeys;
     fields: openArray[HeaderRef]) =
@@ -1446,6 +1449,7 @@ proc run(r: ptr ReaderObj) {.thread.} =
       clearCycleRoots()
     withLock r.lock:
       r.busy = false
+  rd.vendor.drop()
   rd.letGo()
   rd.dropViewWork()
   clearCycleRoots()

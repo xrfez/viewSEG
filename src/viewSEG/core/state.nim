@@ -11672,10 +11672,13 @@ proc applyCommand(state: var AppState; cmd: Command) =
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
     elif not cmd.header.auto and cmd.header.fields.len == 0:
       state.ignore(cmd, "a display header needs at least one field")
+    elif cmd.header.fields.anyIt(it.field == hfVendor and not usableLineName(it.name)):
+      state.ignore(cmd, "a vendor field's name is 1 to 200 characters, with no control character")
+    elif uniqueLines(cmd.header.fields).len > MaxHeaderLines:
+      state.ignore(cmd, "a display header has at most " & $MaxHeaderLines & " lines")
     else:
-      var header = HeaderChoice(auto: cmd.header.auto) # each field once, as its menu gives
-      for f in cmd.header.fields:
-        if f notin header.fields: header.fields.add f
+      # each field once, as its menu gives
+      let header = HeaderChoice(auto: cmd.header.auto, fields: uniqueLines(cmd.header.fields))
       state.panels[k].header = header
       if state.panels[k].role == prAux:
         state.change(cmd.origin, s): s.aux.header = header
@@ -11686,6 +11689,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
     elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
+    elif cmd.order.anyIt(it.field == hfVendor):
+      state.ignore(cmd, "a vendor field is not a sort key: the traces cannot be sorted by it")
     elif uniqueKeys(cmd.order) != state.panels[k].layers[0].order:
       let order = uniqueKeys(cmd.order) # each field once, as the sort dialog gives
       state.panels[k].layers[0].order = order

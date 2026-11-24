@@ -11,16 +11,30 @@
 ## (`vendorStamp`). A text field has no number: its column is empty and its
 ## line shows unknown.
 
-import std/[sets, tables]
+import std/[atomics, sets, tables]
 import parseSEG
 import filesystem, panels, sorting, vendormaps
 
+var built: Atomic[int]
+
+proc columnsBuilt*(): int =
+  ## How many columns have been read from files so far (all readers): a test's
+  ## way to see a column is built once, not at every step.
+  built.load(moRelaxed)
+
 type
   VendorLines* = object
-    ## The columns of the vendor fields shown, by name, for one file.
-    stamp: int                           ## the vendor maps' load they were read with
+    ## The columns of the vendor fields shown, by name, for one file: kept
+    ## while the file (its address, path, size and trace count) and the maps'
+    ## load stay the same, whatever record or order is shown.
+    file: pointer
+    path: string
+    size: int64
+    traces: int
+    stamp: int ## the vendor maps' load they were read with
     columns: Table[string, seq[float64]] ## empty: no numbers (unknown name, text, no map)
-    absent: Table[string, int]           ## per name, the traces without a value
+    absent: Table[string, int] ## per name, the traces without a value
+    missing: seq[string] ## names the file has no vendor field of, not yet said
 
 func valueAt*(v: VendorLines; name: string; trace: int): float64 =
   ## Vendor field `name` of file trace `trace`; NaN when it has none (or when
@@ -44,21 +58,28 @@ func vendorNames*(fields: openArray[HeaderRef]): seq[string] =
       seen.incl f.name
       result.add f.name
 
+proc takeMissing*(v: var VendorLines): seq[string] =
+  ## The names found to be no vendor field of the file since the last call (each is
+  ## said once while the file and the maps stay the same).
+  result = move v.missing
+
 proc drop*(v: var VendorLines) =
   ## Forgets every column (the file closed or another one is shown).
   v = VendorLines()
 
-proc build*(v: var VendorLines; f: ptr SeismicFile; path: string; names: openArray[string];
+proc build*(v: var VendorLines; f: ptr SeismicFile; path: string; size: int64;
+    names: openArray[string];
     stop: StopProc = nil): bool =
   ## Builds the columns of `names` that are not held, from `f` (read from
-  ## `path`) with the vendor maps in force; columns of an older load of the
-  ## maps are dropped first. A name no map defines for the file, a text
+  ## `path`, `size` bytes when it was opened) with the vendor maps in force; columns of another file, or of an older
+  ## load of the maps, are dropped first. A name no map defines for the file, a text
   ## field, or a file that cannot be read gives an empty column, kept so that
   ## it is not asked for again. False when `stop` said to give up (nothing
   ## of the column then in progress is kept).
   let stamp = vendorStamp()
-  if stamp != v.stamp:
-    v = VendorLines(stamp: stamp)
+  if stamp != v.stamp or pointer(f) != v.file or path != v.path or size != v.size or
+      f[].len != v.traces:
+    v = VendorLines(stamp: stamp, file: pointer(f), path: path, size: size, traces: f[].len)
   var reg: VendorRegistry
   var haveReg = false
   for name in names:
@@ -77,7 +98,10 @@ proc build*(v: var VendorLines; f: ptr SeismicFile; path: string; names: openArr
       if c.kind in {vvInt, vvFloat}:
         col = c.numbers
         absent = c.absent
-    except CatchableError: discard # unknown or ambiguous name, a cut file, a drive gone
+    except ValueError: # unknown or ambiguous name
+      v.missing.add name
+    except CatchableError: discard # a cut file, a drive gone
+    built.atomicInc
     v.columns[name] = col
     v.absent[name] = absent
   true

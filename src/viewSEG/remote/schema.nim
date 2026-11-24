@@ -15,7 +15,7 @@
 ##   so a new field, or a new command once it is in `Offered`, needs no glue
 ##   here.
 
-import std/[json, macros, math, strutils, tables, typetraits]
+import std/[json, macros, math, sequtils, strutils, tables, typetraits]
 import ../core/state
 
 const
@@ -131,9 +131,15 @@ proc schemaOf*[E](t: typedesc[seq[E]]): JsonNode
 proc schemaOf*[E](t: typedesc[set[E]]): JsonNode
 proc schemaOf*[T](t: typedesc[T]): JsonNode
 
+proc schemaOf*(t: typedesc[HeaderField]): JsonNode =
+  ## The built-in header fields (a vendor field is not a sort key).
+  %*{"type": "string", "enum": builtInLineNames()}
+
 proc schemaOf*(t: typedesc[HeaderRef]): JsonNode =
-  %*{"type": "string", "description": "a built-in header field's name, else the name " &
-    "of a vendor field (the bare field name, or block.name when the bare name is not unique)"}
+  %*{"type": "string", "description": "a built-in header line: one of " &
+    builtInLineNames().join(", ") & "; any other string is the name of a vendor field of the " &
+    "file (the bare field name, or block.name when the bare name is not unique; a name the " &
+    "file has no such field for shows as unknown and is said in Messages)"}
 
 proc schemaOf*[E](t: typedesc[seq[E]]): JsonNode =
   %*{"type": "array", "items": schemaOf(E)}
@@ -174,13 +180,30 @@ func describe(n: JsonNode): string =
   of JObject: "an object"
 
 proc decode*(n: JsonNode; x: var HeaderRef; path: string; problems: var seq[string])
+proc decode*(n: JsonNode; x: var HeaderField; path: string; problems: var seq[string])
 proc decode*[E](n: JsonNode; x: var seq[E]; path: string; problems: var seq[string])
 proc decode*[E](n: JsonNode; x: var set[E]; path: string; problems: var seq[string])
 proc decode*[T](n: JsonNode; x: var T; path: string; problems: var seq[string])
 
 proc decode*(n: JsonNode; x: var HeaderRef; path: string; problems: var seq[string]) =
-  if n.kind == JString and n.str.len > 0 and n.str.len <= 200: x = headerRefOf(n.str)
-  else: problems.add path & ": a header's name, not " & describe(n)
+  if n.kind != JString:
+    problems.add path & ": a header's name, not " & describe(n)
+  elif not usableLineName(n.str):
+    problems.add path & ": a header's name is 1 to 200 characters, with no control character"
+  else:
+    x = headerRefOf(n.str)
+
+proc decode*(n: JsonNode; x: var HeaderField; path: string; problems: var seq[string]) =
+  ## A built-in header field by name (any case); never `hfVendor`.
+  if n.kind != JString:
+    problems.add path & ": a name, not " & describe(n)
+  else:
+    let h = headerRefOf(n.str)
+    if h.field == hfVendor:
+      problems.add path & ": " & escapeJson(n.str.substr(0, 79)) & " is not one of " &
+        builtInLineNames().mapIt(escapeJson(it)).join(", ")
+    else:
+      x = h.field
 
 proc decode*[E](n: JsonNode; x: var seq[E]; path: string; problems: var seq[string]) =
   if n.kind != JArray:

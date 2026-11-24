@@ -605,7 +605,12 @@ proc pick[T: enum](r: var Reading; v: NifNode; names: array[T, string]; tag: str
       if name == v.text:
         x = e
         return true
-  r.unusable(v, tag, "one of " & names.join(", "))
+  var shown: seq[string]
+  for e, name in names:
+    when T is HeaderField:
+      if e == hfVendor: continue # (a vendor line is written `(vendor "name")`)
+    shown.add name
+  r.unusable(v, tag, "one of " & shown.join(", "))
 
 proc choice[T: enum](r: var Reading; n: NifNode; names: array[T, string]; x: var T) =
   ## `(tag name)`.
@@ -788,12 +793,18 @@ proc header(r: var Reading; c: NifNode; h: var HeaderChoice) =
         # a name no vendor map defines is kept: the line shows it as unknown
         var name = ""
         r.text(v, name)
-        if name.len > 0 and vendorRef(name) notin fields: fields.add vendorRef(name)
+        if name.len > 0 and not usableLineName(name):
+          r.unusable(v, "vendor", "a name of 1 to 200 characters")
+        elif name.len > 0 and vendorRef(name) notin fields:
+          if fields.len >= MaxHeaderLines: r.unusable(v, "header", "at most " & $MaxHeaderLines & " lines")
+          else: fields.add vendorRef(name)
         continue
       var f = hfTrace
       if r.pick(v, FieldNames, "header", f):
         if f == hfVendor: r.unusable(v, "header", "(vendor \"name\") for a vendor field")
-        elif headerRef(f) notin fields: fields.add headerRef(f)
+        elif headerRef(f) notin fields:
+          if fields.len >= MaxHeaderLines: r.unusable(v, "header", "at most " & $MaxHeaderLines & " lines")
+          else: fields.add headerRef(f)
     if fields.len > 0: h = HeaderChoice(auto: false, fields: fields)
     else: r.unusable(c, "header", "auto, or the fields to show")
 
