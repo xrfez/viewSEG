@@ -374,7 +374,12 @@ all. Ticks are not kept.
 The right pane is the destination and the write. **Change destination...** picks the
 folder to write into. **Format** is SEG-Y or SEG-D. The boxes under it, in two columns,
 are on: polarity reversals, dropping killed traces, each trace's own filter, the Seismic
-window's processing, time shifts, and the plot's sort. Display-only gain is not written.
+window's processing, time shifts, and the plot's sort. **Keep the file's own positions**
+is off: a survey join or a station move in an open file is written into the headers, and
+the notes say how many traces changed. Tick it to keep the file's own positions; the
+notes then say the session's positions were not written. A file the batch opens itself
+is not joined or moved, and the notes say the batch wrote the file's own positions.
+Display-only gain is not written.
 A SEG-D file is sorted within each record. A file already open is written as it stands,
 including edits not yet saved. A signature file that is not open is decoded and
 written the same way; one that cannot be decoded is a failed row, and the rest

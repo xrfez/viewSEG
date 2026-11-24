@@ -7,7 +7,9 @@
 ## modified. A file that cannot be written, or a signature file that cannot
 ## be decoded, is recorded and the batch goes on. A destination folder that
 ## is the source folder, inside it, or holding it, is refused before anything
-## is written.
+## is written. A file this job opens is not joined to the project survey and
+## does not take station moves; the result says the batch wrote that file's
+## own positions. A file already open is written as the session holds it.
 ##
 ## Submit it with `outputBatchSpec`. That spec does not touch the file
 ## system, so the UI thread may build it: the paths it lists are the
@@ -21,7 +23,10 @@ import parseSEG
 import edits, filejobs, filekinds, filememory, filesystem, identity, jobs, outputjobs,
   session, signatures, sigtypes, threads
 
-const BatchScale = 1_000_000 ## one file's share of the job's progress
+const
+  BatchScale = 1_000_000 ## one file's share of the job's progress
+  BatchOwnPositions* = "The batch wrote the file's own positions."
+    ## A file this job opened itself was not joined and took no station move.
 
 type
   BatchItem* = object
@@ -523,6 +528,7 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
           s = openSession(item.source, progress)
         file = s.filePtr
         edits = savedEdits(ctx, store, item.source, s.modified, itemLines, doneFiles, count)
+        itemLines.add BatchOwnPositions
       if plans[i].note.len > 0: itemLines.add plans[i].note
       if ctx.cancelled: raise newException(JobCancelledError, "Cancelled.")
       outSink = OutputSink()

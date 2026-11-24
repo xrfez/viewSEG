@@ -368,9 +368,10 @@ proc main*() =
     let got = runBatch(ask, store, @[])
     doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
     let applied = itemOf(got.wrote, "line1" / "shots.sgy")
-    doAssert applied.lines.len == 1, $applied.lines
+    doAssert applied.lines.len == 2, $applied.lines
     doAssert applied.lines[0] == "applied this file's saved edits: " & keptWords(lists),
       applied.lines[0]
+    doAssert applied.lines[1] == BatchOwnPositions, applied.lines[1]
     doAssert "1 killed, 1 reversed" in applied.lines[0]
     let none = itemOf(got.wrote, "other" / "extra.sgd")
     doAssert "no saved edits were found for this file" in none.lines, $none.lines

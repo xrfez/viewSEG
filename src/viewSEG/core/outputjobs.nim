@@ -15,7 +15,10 @@
 ## (and the writer's own temporary file); the destination name is not touched.
 ##
 ## With no option on, samples are the source's decoded samples and headers
-## are the writer's template (`like:`). SEG-D's template writer keeps each
+## are the writer's template (`like:`). When a survey join or a station move
+## changed those keys, the template path writes the session's positions into
+## the headers (`writeSessionPositions`, on unless the caller keeps the
+## file's own). SEG-D's template writer keeps each
 ## record whole and in input order, so a sort that would cross records, or a
 ## killed trace left out, is written from the trace keys instead, and the
 ## result says so. Display-only gain is never applied.
@@ -39,6 +42,8 @@ const
   SurveyJoinedNotWritten* =
     "Survey positions joined to this file are not written: the file's own header block is kept."
     ## A survey join filled positions into the keys; the file's own header block is what is written.
+  PositionsNotWritten* =
+    "The session's positions were not written: the file's own headers were kept."
 
 type
   OutputFormat* = enum
@@ -59,6 +64,9 @@ type
     applyProcessing*: bool
     processing*: Processing ## the plot's filters, when `applyProcessing`
     sortKeys*: seq[SortKey] ## empty: the file's order
+    writeSessionPositions*: bool = true
+      ## A survey join or a station move is written into the template headers.
+      ## Off: the file's own positions are kept, and the result says so.
 
   OutputResult* = object
     ## What the write did. `ok` false: `reason` is a sentence for the user.
@@ -138,6 +146,19 @@ proc refuseDestination*(dest: string; openPaths: openArray[string]): string =
     if insideFolder(to, open.parentDir):
       return "The destination is inside the folder of an open file (" &
         extractFilename(open) & ")."
+
+func positionsWritten*(n: int): string =
+  ## The note when the template path wrote the session's positions.
+  "Survey and moved positions were written into the headers (" & $n & " traces changed)."
+
+func sessionPositions(file: SeismicFile): tuple[any: bool; changed: int] =
+  ## Whether the session's keys hold positions that did not come from the
+  ## file's own headers, and how many traces a join or a move changed.
+  if not file.hasKeys: return
+  var changed = 0
+  for groups in file.index.joinedTraces:
+    if groups.card > 0: inc changed
+  (file.index.joined or changed > 0, changed)
 
 proc kindOf(format: OutputFormat): SeismicKind =
   if format == ofSegy: skSegy else: skSegd
@@ -364,6 +385,14 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         lines.add "Headers were built from the trace keys. Template headers were not copied."
       if signature.isSignature and segdOut and changesTraces(opts):
         lines.add HeaderNotCarried
+      let positions = sessionPositions(file[])
+      let carryPositions = like and opts.writeSessionPositions and
+        not signature.isSignature and positions.any
+      if carryPositions:
+        lines.add positionsWritten(positions.changed)
+      elif like and not opts.writeSessionPositions and not signature.isSignature and
+          positions.any:
+        lines.add PositionsNotWritten
       var samples = newSeq[float32]()
       let dtMs = file[].sampleIntervalUs(0) / 1000.0
       block writing:
@@ -404,7 +433,10 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             applyPreparedTrace(samples, file[].traceKeys(t), dtMs, reversed, shiftMs,
               opts.processing, opts.applyProcessing, own, opts.applyOwnFilters)
           if like:
-            w.writeTrace(file[], t, samples)
+            if carryPositions:
+              w.writeTrace(file[], t, samples, keys = file[].traceKeys(t))
+            else:
+              w.writeTrace(file[], t, samples)
           else:
             let keys = file[].traceKeys(t)
             let channel = if keys.status == tsAuxiliary: sctOther else: sctSeismic

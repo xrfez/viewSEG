@@ -47,6 +47,7 @@ type
     processingOn: bool = true
     shifts: bool = true
     sortOn: bool = true
+    keepOwn: bool = false
     mirror: bool = true
     filterBuf: array[128, char]
     ticks: Table[string, bool]
@@ -399,7 +400,7 @@ proc submitRun(ui: var OutputUi; st: AppState) =
   if items.len == 0: return
   var opts = OutputOptions(format: ui.format, applyReversals: ui.reversals,
     applyShifts: ui.shifts, dropKilled: ui.dropKilled, applyOwnFilters: ui.ownFilters,
-    applyProcessing: ui.processingOn)
+    applyProcessing: ui.processingOn, writeSessionPositions: not ui.keepOwn)
   let pk = st.findPanel(MainPanel)
   if pk >= 0 and st.panels[pk].layers.len > 0:
     if ui.processingOn: opts.processing = st.panels[pk].layers[0].processing
@@ -677,6 +678,8 @@ proc drawOptions(ui: var OutputUi; st: AppState) =
   igTableNextRow(0, 0)
   optBox(OptShifts.cstring, ui.shifts, "")
   optBox(OptSort.cstring, ui.sortOn, sortTip(keys))
+  igTableNextRow(0, 0)
+  optBox(KeepOwnPositions.cstring, ui.keepOwn, KeepOwnTip)
   igEndTable()
 
 proc activityLine(ui: OutputUi; phase: string): string =
