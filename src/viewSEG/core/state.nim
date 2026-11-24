@@ -1055,6 +1055,8 @@ type
     movesRevision: int
     movesChanged: int
     movesDone: bool ## the job posted what it did (`mkMoves`)
+    leapGen: int
+      ## how many times the leap table has been adopted; only increases
     leapQueue: seq[SessionId]
       ## open files waiting for their times to be read again
     leapJob: JobId = NoJob
@@ -5735,6 +5737,8 @@ proc stopCorrelate(state: var AppState) =
   state.showRawOf(state.sessions[i].diskPath)
   state.closeIfUnused(id)
 
+proc followLeap(state: var AppState)
+
 proc adopt(state: var AppState; s: sink Session; job: JobId) =
   ## Takes in a file an open job opened, and shows its first gather (or the
   ## gather the open asks for) in the panel the open was for (the main panel
@@ -5842,6 +5846,11 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   let short = filejobs.endsEarly(s.file)
   state.onDiskSaid.del path
   state.sessions.add s
+  if not state.sessions[^1].isSignature and
+      state.sessions[^1].leapRead != state.leapGen:
+    let id = state.sessions[^1].id
+    if id notin state.leapQueue: state.leapQueue.add id
+    state.followLeap()
   if state.surveyMatchable:
     state.project.queue.add id # matched to the project's survey (`followProject`)
   elif not s.isSignature and not s.noSeismic and state.project.doc.stationMoves.len > 0:
@@ -8443,6 +8452,8 @@ proc adoptLeap(state: var AppState; table: LeapTable; said: string; save = true)
   ## is kept, says `said`, and reads open files' times again. A file that was
   ## read and refused is adopted with `save` false: the file is left as it is.
   useLeapTable(table)
+  inc state.leapGen
+  publishLeapGen(state.leapGen)
   let path = state.leapFilePath()
   if save and path.len == 0:
     state.log.add(sevWarning, "leap seconds",

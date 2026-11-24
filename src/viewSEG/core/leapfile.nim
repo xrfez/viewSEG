@@ -7,13 +7,25 @@
 ## disk thread and the
 ## open files' keys are read again on a job (`leapRereadWork`).
 
-import std/os
+import std/[atomics, os]
 import parseSEG
 import parseSEG/model/traceindex
 import filesystem, inbox, jobs, log, persist, session
 
 const LeapFileName* = "leapseconds.nif"
   ## The user table, beside `settings.nif`.
+
+var leapGenPublished: Atomic[int]
+  ## The leap-table generation workers read while they read keys. The state
+  ## publishes it on every adopt; it only increases.
+
+proc publishLeapGen*(gen: int) {.gcsafe.} =
+  ## Makes `gen` the generation an open job records with the keys it reads.
+  leapGenPublished.store(gen, moRelease)
+
+proc leapGenNow*(): int {.gcsafe.} =
+  ## The generation published last; 0 before any adopt.
+  leapGenPublished.load(moAcquire)
 
 type
   ChosenLeap* = object

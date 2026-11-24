@@ -10,7 +10,7 @@
 ## warning put back, an earlier file said "checked-to". With Apply leaving
 ## `checkedTo` as `withLeap` does, adding 2027-01-01 left it at 2026-06-30.
 
-import std/[math, os, strutils]
+import std/[math, monotimes, os, strutils, times]
 import parseSEG
 import viewSEG/core/[leapfile, state]
 import utils/[fixtures, waiting]
@@ -18,6 +18,19 @@ import utils/[fixtures, waiting]
 const
   July2026 = 1782864000'i64
   July2027 = 1814400000'i64
+
+var holdCache: Gate
+
+proc holdCacheHook(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
+  if phase == "saving the index cache" and not back:
+    let deadline = getMonoTime() + initDuration(seconds = 120)
+    while not isOpen(holdCache):
+      if getMonoTime() > deadline: return
+      sleep 1
+
+proc caching(st: AppState): bool =
+  for j in st.jobs.list:
+    if j.progress.phase == "saving the index cache": return true
 
 proc said(st: AppState; bit: string): bool =
   for e in st.log:
@@ -210,6 +223,33 @@ proc main*() =
       st.apply Command(kind: ckResetLeaps)
       doAssert currentLeapTable().entries.len == shipped.entries.len
       doAssert said(st, "shipped with the program")
+      useLeapTable(shipped)
+
+    block openDuringLeap:
+      useLeapTable(shipped)
+      let segd = fx.dir / "open-during.sgd"
+      writeSegd(segd, float64(July2027))
+      var before = 0.0
+      block:
+        var probe = initAppState()
+        probe.apply Command(kind: ckOpen, paths: @[segd])
+        doAssert probe.settle(probe.sessions.len == 1), "the probe file did not open"
+        before = probe.sessions[0].file.traceKeys(0).time
+      holdCache.close()
+      setJobHook(holdCacheHook)
+      defer:
+        holdCache.open()
+        setJobHook(nil)
+      createDir(fx.dir / "cache-open")
+      var st = initAppState(indexCache = fx.dir / "cache-open")
+      st.apply Command(kind: ckOpen, paths: @[segd])
+      doAssert waitUntil(caching(st)), "the open did not reach the cache save"
+      st.apply Command(kind: ckAddLeap, leapYear: 2027, leapMonth: 1, leapStep: 1)
+      holdCache.open()
+      doAssert st.settle(st.sessions.len == 1), "the file opened during the leap did not post"
+      let after = st.sessions[0].file.traceKeys(0).time
+      doAssert abs(before - after - 1.0) < 0.001, "time moved by " & $(before - after) &
+        " from " & $before & " to " & $after
       useLeapTable(shipped)
 
     block shift:

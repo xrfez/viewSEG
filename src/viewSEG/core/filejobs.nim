@@ -19,7 +19,8 @@
 
 import std/[algorithm, monotimes, os, strutils, times]
 import parseSEG
-import cutfile, filelist, filesystem, inbox, jobs, log, session, sweepinfo, threads, vendormaps
+import cutfile, filelist, filesystem, inbox, jobs, leapfile, log, session, sweepinfo, threads,
+  vendormaps
 from project import ProjectFileName
 
 const
@@ -106,14 +107,17 @@ proc openSession*(path: string; progress: Progress = nil; cache = "";
   # parseSEG's record sources are objects with methods, which Nim cannot
   # prove GC-safe. Opening touches no global GC'd memory: parseSEG's viewer
   # guide opens files on a job thread, as here.
+  let before = leapGenNow()
   var opened: SeismicFile
   {.cast(gcsafe).}:
     opened = openSeismic(path, keys = true, progress = progress,
       opts = openOptions(choice, cache, currentVendors()))
+  let after = leapGenNow()
   let damaged = damagedSegyWhy(opened)
   if damaged.len > 0: raise newException(IOError, damaged)
   let info = fs.getFileInfo(path)
   result = newSession(path, move opened, info.size, info.lastWriteTime, choice)
+  result.noteLeapRead(if before == after: before else: -1)
 
 func endsEarly*(f: SeismicFile): bool =
   ## Whether the file ended before a structure it announces was complete when
