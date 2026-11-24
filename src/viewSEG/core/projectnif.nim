@@ -94,7 +94,8 @@ const
   PartKindWords: array[NamePartKind, string] = [
     "stem", "text", "record", "srcLine", "srcPoint", "srcIndex", "rcvLine",
     "rcvPoint", "rcvIndex", "time", "systemSerial", "controller", "vibrator",
-    "fileNumber", "sigLine", "sigStation", "shotId", "sweepId"]
+    "fileNumber", "sigLine", "sigStation", "shotId", "sweepId",
+    "sensorSerial"]
 
 proc timeText(t: Time): string = t.utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
 

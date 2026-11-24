@@ -40,6 +40,7 @@ type
     npSigStation   ## signature station
     npShotId       ## shot id
     npSweepId      ## sweep id
+    npSensorSerial ## serial of the unit that recorded the traces (SEG-D Rev 3)
 
   NamePart* = object
     ## One piece of a pattern.
@@ -118,6 +119,7 @@ func partWord*(kind: NamePartKind): string =
   of npSigStation: "Station"
   of npShotId: "Shot id"
   of npSweepId: "Sweep id"
+  of npSensorSerial: "Sensor serial"
 
 func refused(sentence: string): NameResult =
   NameResult(problem: sentence)

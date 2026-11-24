@@ -51,6 +51,9 @@ type
     set, miss, mixed: bool
     value: int64
     whole: bool
+  TextAcc = object
+    set, miss, mixed: bool
+    value: string
   PartAcc = object
     rec, srcLine, srcPoint, rcvLine, rcvPoint: FloatAcc
     srcIndex, rcvIndex: IntAcc
@@ -98,6 +101,24 @@ proc considerTime(a: var TimeAcc; us: Option[int64]; origin: TimeOrigin) =
     if not missing: a.mixed = true
     return
   if missing or a.value != us.get: a.mixed = true
+
+proc considerText(a: var TextAcc; s: Option[string]) =
+  let missing = s.isNone
+  if not a.set:
+    a.set = true
+    a.miss = missing
+    if not missing: a.value = s.get
+    return
+  if a.mixed: return
+  if a.miss:
+    if not missing: a.mixed = true
+    return
+  if missing or a.value != s.get: a.mixed = true
+
+func asText(a: TextAcc): NameValue =
+  if not a.set or (a.miss and not a.mixed): NameValue(state: nvMissing)
+  elif a.mixed: NameValue(state: nvMixed)
+  else: NameValue(state: nvText, text: a.value)
 
 func asNumber(a: FloatAcc): NameValue =
   if not a.set or (a.miss and not a.mixed): NameValue(state: nvMissing)
@@ -162,7 +183,7 @@ proc fillSignature(v: var NameValues; facts: SignatureFacts) =
     v[npTime] = NameValue(state: nvTimeUs, timeUs: usOfNs(ns), wholeSeconds: whole)
 
 proc fillSeismic(v: var NameValues; file: SeismicFile; edits: FileEdits;
-    dropKilled: bool; own: ptr SeismicFile) =
+    dropKilled: bool; own: ptr SeismicFile; wanted: set[NamePartKind]) =
   ## One value when every compared trace shares it. An auxiliary trace is
   ## not compared when a kept trace is not auxiliary; a file of auxiliary
   ## traces only uses them all. The time is whole seconds only when every
@@ -170,12 +191,16 @@ proc fillSeismic(v: var NameValues; file: SeismicFile; edits: FileEdits;
   ## SEG-Y header with no fraction, or a SEG-D Rev 0-2 general-header clock).
   ## SEG-D system serial is one value when every record that still has a kept
   ## trace agrees, auxiliary traces included. Record 0 is missing; an index
-  ## of 0 is a real value; SEG-Y has no index parts.
+  ## of 0 is a real value; SEG-Y has no index parts. The sensor serial is
+  ## read from each compared trace's header only when `wanted` holds it, and
+  ## no longer once the traces of its group differ.
   let segd = file.kind == skSegd
   let useOwn = own != nil and own[].isOpen and own[].len == file.len
   var
     seismic, auxiliary: PartAcc
     serial: IntAcc
+    sensor, sensorAux: TextAcc
+    wantSensor = npSensorSerial in wanted
     sawNonAux = false
     seenRec = initHashSet[int]()
     buf, ownBuf: array[KeyChunk, TraceKeys]
@@ -193,9 +218,13 @@ proc fillSeismic(v: var NameValues; file: SeismicFile; edits: FileEdits;
       let us = file.recordTimeZeroUs(i)
       if keys.status == tsAuxiliary:
         considerParts(auxiliary, keys, us, buf[k].timeOrigin, segd)
+        if wantSensor and not sensorAux.mixed:
+          considerText(sensorAux, file.unitSerial(i))
       else:
         sawNonAux = true
         considerParts(seismic, keys, us, buf[k].timeOrigin, segd)
+        if wantSensor and not sensor.mixed:
+          considerText(sensor, file.unitSerial(i))
       if segd:
         let ri = int(file.traceEntry(i).record)
         if ri notin seenRec:
@@ -208,9 +237,11 @@ proc fillSeismic(v: var NameValues; file: SeismicFile; edits: FileEdits;
   if sawNonAux: writeParts(v, seismic, segd)
   else: writeParts(v, auxiliary, segd)
   if segd: v[npSystemSerial] = asInt(serial)
+  if wantSensor: v[npSensorSerial] = asText(if sawNonAux: sensor else: sensorAux)
 
 proc nameValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
-    edits: FileEdits; dropKilled: bool; own: ptr SeismicFile = nil): NameValues =
+    edits: FileEdits; dropKilled: bool; own: ptr SeismicFile = nil;
+    wanted: set[NamePartKind] = {}): NameValues =
   ## The name values of one file. `source` supplies the stem. A signature
   ## file (`facts.isSignature`) is named from the sweep: controller only when
   ## `serialFrom` is known, vibrator 0 and line, station, shot id, sweep id
@@ -222,7 +253,9 @@ proc nameValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
   ## all. `own`, when open and the same length, supplies
   ## the position fields (line, point, index); record and time stay the
   ## session's. The name keeps the value from the keys; a file name may
-  ## carry what a header cannot. Does not open a file.
+  ## carry what a header cannot. The sensor serial (one value, or none, as a
+  ## file's traces say; a signature file has none) is read only when `wanted`
+  ## holds `npSensorSerial`. Does not open a file.
   result[npStem] = NameValue(state: nvText, text: stemOf(source))
   if facts.isSignature: fillSignature(result, facts)
-  else: fillSeismic(result, file, edits, dropKilled, own)
+  else: fillSeismic(result, file, edits, dropKilled, own, wanted)

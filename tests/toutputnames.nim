@@ -236,6 +236,21 @@ proc main*() =
     expectName(pat(nsDot, part(npText, text = "line 12")), vals(), ".sgy", "line 12.sgy")
     expectName(pat(nsUnderscore, part(npText, text = "линия")), vals(), ".sgy", "линия.sgy")
 
+  block sensorSerial:
+    doAssert partWord(npSensorSerial) == "Sensor serial"
+    doAssert NamePartKind.high == npSensorSerial, "the new kind is last"
+    let p = pat(nsDot, part(npSensorSerial, pad = 6))
+    expectName(p, vals((npSensorSerial, tv("N0042"))), ".sgd", "N0042.sgd")
+    expectName(pat(nsUnderscore, [part(npStem), part(npSensorSerial)]),
+      vals((npStem, tv("line")), (npSensorSerial, tv("00123"))), ".sgd", "line_00123.sgd")
+    expectProblem(p, vals(), ".sgd", "Sensor serial is not in this file.")
+    expectProblem(p, vals((npSensorSerial, NameValue(state: nvMixed))), ".sgd",
+      "Sensor serial is not one value in this file.")
+    expectProblem(p, vals((npSensorSerial, tv("A.B"))), ".sgd",
+      "Sensor serial holds a character a file name cannot.")
+    expectProblem(pat(nsHyphen, part(npSensorSerial)), vals((npSensorSerial, tv("A-B"))),
+      ".sgd", "Sensor serial has the separator - in it.")
+
   block separatorInText:
     # "a-" & "-" & "1" is the same leaf as "a" & "-" & "-1"; the first is refused.
     let hyphen = pat(nsHyphen, [part(npStem), part(npRecord)])

@@ -785,7 +785,7 @@ proc drawRun(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
     marks.mark("output.state " & line)
 
 func takesWidth(kind: NamePartKind): bool =
-  kind notin {npStem, npText, npTime}
+  kind notin {npStem, npText, npTime, npSensorSerial}
 
 proc bufText(buf: openArray[char]): string =
   if buf.len == 0 or buf[0] == '\0': return ""
@@ -848,6 +848,7 @@ func previewValues(): NameValues =
   result[npController] = NameValue(state: nvInt, intValue: 1)
   result[npVibrator] = NameValue(state: nvInt, intValue: 1)
   result[npSweepId] = NameValue(state: nvInt, intValue: 1)
+  result[npSensorSerial] = NameValue(state: nvText, text: "S1042")
   result[npTime] = NameValue(state: nvTimeUs, timeUs: 1_718_454_645_000_000'i64,
     wholeSeconds: true)
 

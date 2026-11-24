@@ -550,7 +550,9 @@ proc renderedLeaf(ask: BatchAsk; plan: Plan; file: SeismicFile; source: string;
   ## The planned parent with the pattern's leaf. Raises `ValueError` with
   ## the sentence when the file cannot be named, or the path would leave
   ## the destination folder.
-  let values = nameValuesOf(file, source, facts, edits, ask.options.dropKilled, own)
+  var wanted: set[NamePartKind] = {}
+  for part in ask.pattern.parts: wanted.incl part.kind
+  let values = nameValuesOf(file, source, facts, edits, ask.options.dropKilled, own, wanted)
   let named = render(ask.pattern, values, extOf(ask.options.format))
   if named.problem.len > 0:
     raise newException(ValueError, named.problem)

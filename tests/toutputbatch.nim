@@ -23,6 +23,9 @@
 ## folder left as given, `/tmp/out/` did not lock `/tmp/out` (`/tmp/out`,
 ## `/tmp/out/` and `/tmp/out/.` are one lock).
 ##
+## A "Sensor serial" part: with the pattern's kinds not passed on, the file
+## failed `Sensor serial is not in this file.`.
+##
 ## Runs on copies of samples/land/shots.sgy, samples/land/shots.sgd and
 ## samples/vib/vib_uncorrelated.sgd.
 
@@ -34,7 +37,7 @@ import parseSEG/model/traceindex
 import processSEG/core/basic
 import viewSEG/core/[edits, filememory, filesystem, identity, jobs, outputbatch,
   outputjobs, outputnames, sigtypes]
-import utils/[faultyfs, sigfiles, waiting]
+import utils/[faultyfs, sensorfiles, sigfiles, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
 
@@ -758,6 +761,40 @@ proc main*() =
       doAssert itemOf(wrote.wrote, "same.dat").destination.extractFilename == "same.dat.sgy"
       doAssert itemOf(wrote.wrote, "same.vib").destination.extractFilename == "same.vib.sgy"
       doAssert fileExists(sigDest / "same.dat.sgy") and fileExists(sigDest / "same.vib.sgy")
+
+    block sensorSerial:
+      let unitDir = dir / "unitsrc"
+      createDir(unitDir)
+      writeSensorFile(unitDir / "same.sgd", ["N0042", "N0042"])
+      writeSensorFile(unitDir / "mixed.sgd", ["N0042", "N0043"])
+      writeSensorFile(unitDir / "bare.sgd", ["", ""])
+      let unit = OutputPattern(name: "Unit", separator: nsDot, parts: @[
+        NamePart(kind: npText, text: "u"), NamePart(kind: npSensorSerial)])
+      let dest = dir / "named-unit"
+      let ask = BatchAsk(root: unitDir, destRoot: dest, options: OutputOptions(format: ofSegd),
+        items: @[BatchItem(source: unitDir / "same.sgd", relative: "same.sgd"),
+          BatchItem(source: unitDir / "mixed.sgd", relative: "mixed.sgd"),
+          BatchItem(source: unitDir / "bare.sgd", relative: "bare.sgd")],
+        pattern: unit)
+      let got = runBatch(ask, Store(), @[])
+      let same = itemOf(got.wrote, "same.sgd")
+      doAssert same.outcome == boWritten, same.why
+      doAssert same.destination.extractFilename == "u.N0042.sgd", same.destination
+      let mixed = itemOf(got.wrote, "mixed.sgd")
+      doAssert mixed.outcome != boWritten and
+        mixed.why == "Sensor serial is not one value in this file.", mixed.why
+      let bare = itemOf(got.wrote, "bare.sgd")
+      doAssert bare.outcome != boWritten and
+        bare.why == "Sensor serial is not in this file.", bare.why
+      # A pattern without the part names a file whose serials differ.
+      let plainAsk = BatchAsk(root: unitDir, destRoot: dir / "named-unit-plain",
+        options: OutputOptions(format: ofSegd),
+        items: @[BatchItem(source: unitDir / "mixed.sgd", relative: "mixed.sgd")],
+        pattern: OutputPattern(name: "Stem", separator: nsDot,
+          parts: @[NamePart(kind: npStem)]))
+      let plain = itemOf(runBatch(plainAsk, Store(), @[]).wrote, "mixed.sgd")
+      doAssert plain.outcome == boWritten, plain.why
+      doAssert plain.destination.extractFilename == "mixed.sgd", plain.destination
 
     block leavesFolder:
       let dest = dir / "named-leave"

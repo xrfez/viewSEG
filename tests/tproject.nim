@@ -347,6 +347,16 @@ proc main*() =
     doAssert problems.len == 0, $problems
     doAssert back.hasOutputPatterns and back.outputPattern == "a\"b"
     doAssert back.outputPatterns == d.outputPatterns, $back.outputPatterns
+    # The sensor serial part is stored as its own word; an old file still reads.
+    var sensor = ProjectDoc(name: "s", hasOutputPatterns: true)
+    sensor.outputPatterns = @[OutputPattern(name: "Unit", separator: nsDot, parts: @[
+      NamePart(kind: npStem), NamePart(kind: npSensorSerial)])]
+    let sensorText = projectDocument(sensor)
+    doAssert "(part \"sensorSerial\"" in sensorText, sensorText
+    problems.setLen 0
+    let sensorBack = readProject(sensorText, "project.nif", problems)
+    doAssert problems.len == 0 and sensorBack.outputPatterns == sensor.outputPatterns,
+      $problems
     # A dot is not written, and a width of 0 is not written.
     var dot = ProjectDoc(name: "d", hasOutputPatterns: true)
     dot.outputPatterns = @[OutputPattern(name: "Dot", separator: nsDot, parts: @[

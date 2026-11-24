@@ -10,12 +10,17 @@
 ## clock kept a fraction`). With an auxiliary trace compared, source line NaN
 ## beside 2001 was mixed (`an auxiliary trace decided the source line`).
 ##
+## The sensor serial: with two serials compared as equal, `two serials were
+## one value`; with the part not asked for still read, `the headers were read
+## for no part`.
+##
 ## Runs on samples/vib/vib_uncorrelated.sgd and samples/land/shots.sgy.
 
 import std/[math, os, strutils]
 import parseSEG
 import parseSEG/model/traceindex
 import viewSEG/core/[edits, outputnames, outputnamevalues, sigtypes]
+import utils/sensorfiles
 
 const root = currentSourcePath().parentDir.parentDir
 
@@ -180,6 +185,39 @@ proc main*() =
     doAssert start[npTime].timeUs == 3_000_000 and start[npTime].wholeSeconds,
       "a lone start second kept a fraction"
     doAssert start[npController].state == nvMissing
+
+  block sensorSerial:
+    let dir = getTempDir() / "viewseg_tnamevalues_sensor"
+    createDir(dir)
+    let one = dir / "one.sgd"
+    let two = dir / "two.sgd"
+    let gap = dir / "gap.sgd"
+    let none = dir / "none.sgd"
+    writeSensorFile(one, ["N0042", "N0042"])
+    writeSensorFile(two, ["N0042", "N0043"])
+    writeSensorFile(gap, ["N0042", ""])
+    writeSensorFile(none, ["", ""])
+    let want = {npSensorSerial}
+    proc valueOf(path: string; wanted: set[NamePartKind]): NameValue =
+      var f = openSeismic(path, keys = true)
+      result = nameValuesOf(f, path, SignatureFacts(), FileEdits(), false, nil,
+        wanted)[npSensorSerial]
+      f.close()
+    let same = valueOf(one, want)
+    doAssert same.state == nvText and same.text == "N0042", $same.state
+    doAssert valueOf(two, want).state == nvMixed, "two serials were one value"
+    doAssert valueOf(gap, want).state == nvMixed, "a trace without one was ignored"
+    doAssert valueOf(none, want).state == nvMissing, "no block was a value"
+    doAssert valueOf(one, {}).state == nvMissing, "the headers were read for no part"
+    doAssert valueOf(one, {npRecord}).state == nvMissing
+    # SEG-Y and a signature file have none.
+    doAssert valueOf(segy, want).state == nvMissing
+    var closed: SeismicFile
+    let dat = SignatureFacts(kind: sgDat, info: SweepInfo(kind: sgDat, serialFrom: sfFile,
+      controller: 1))
+    doAssert nameValuesOf(closed, "a.dat", dat, FileEdits(), false, nil,
+      want)[npSensorSerial].state == nvMissing
+    removeDir(dir)
 
   echo "toutputnamevalues: ok"
 
