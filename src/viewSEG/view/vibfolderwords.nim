@@ -16,6 +16,8 @@ const
   ColProblem* = "Problem"
   DatKindLabel* = ".dat signature file"
   VibKindLabel* = ".vib file"
+  ArchiveMissing* = "The reference is not in the archive."
+  RecordedReference* = "Measured against each file's recorded reference."
 
 func measureHead(l: QcLimit): string =
   case l
@@ -117,11 +119,17 @@ func csvField(s: string): string =
     result.add '"'
   else: result = s
 
+func shownProblem*(text: string): string =
+  ## What the window says for a profile problem. An empty reference id is each
+  ## file's recorded reference, not a missing archive entry. A named reference
+  ## that is missing keeps the archive sentence.
+  if text == ArchiveMissing: RecordedReference else: text
+
 func resultsText*(table: FolderTable): string =
   ## The table as text: the profile's problems, a header, one row per line,
   ## the counts, then the fleet's weight words.
   for p in table.problems:
-    result.add p
+    result.add shownProblem(p)
     result.add '\n'
   var head: seq[string] = @[]
   for h in headers(): head.add flat(h)
@@ -142,7 +150,7 @@ func resultsCsv*(table: FolderTable): string =
   ## The same columns as CSV. A field with a comma, a quote or a line break
   ## is quoted, and a quote in it is doubled.
   for p in table.problems:
-    result.add csvField(p)
+    result.add csvField(shownProblem(p))
     result.add '\n'
   var head: seq[string] = @[]
   for h in headers(): head.add csvField(h)

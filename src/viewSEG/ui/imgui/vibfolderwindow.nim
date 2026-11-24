@@ -532,8 +532,9 @@ proc drawVibFolder*(ui: var VibFolderUi; title: string; st: AppState;
       igPopTextWrapPos()
       marks.mark("vibfolder.totals " & line)
       for p in ui.table.problems:
-        igTextUnformatted(p.cstring, nil)
-        marks.mark("vibfolder.problem " & p)
+        let said = shownProblem(p)
+        igTextUnformatted(said.cstring, nil)
+        marks.mark("vibfolder.problem " & said)
     ui.drawWeights(st, marks, result.commands)
     if igBeginTabBar("##vibfoldertabs", tabFlags):
       var filesFlags = 0.cint

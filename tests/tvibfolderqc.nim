@@ -9,7 +9,8 @@
   ## "problems", `plurals` still finds "1 problems". With a problem row's
   ## sentence left empty, `problemSentence` does not find the reason. With
   ## Kind still the shared "vibrator .dat" prefix, `kindLabels` cannot tell
-  ## a `.dat` from a `.vib`.
+  ## a `.dat` from a `.vib`. With the empty-reference problem left as the
+  ## archive sentence, `recordedReference` still finds that fault.
 
 import std/[math, strutils]
 import viewSEG/core/[sigtypes, units, vibfolderqc, vibjudge]
@@ -143,6 +144,20 @@ proc main*() =
     doAssert rowCells(dat)[1] != rowCells(vib)[1], rowCells(dat)[1] & " / " & rowCells(vib)[1]
     doAssert ".dat" in rowCells(dat)[1] and "vibrator" notin rowCells(dat)[1], rowCells(dat)[1]
     doAssert ".vib" in rowCells(vib)[1] and rowCells(vib)[1] != "vibrator", rowCells(vib)[1]
+
+  block recordedReference:
+    var table = FolderTable(problems: @[
+      "The reference is not in the archive.",
+      "The reference \"pilot\" is not in the archive."],
+      rows: @[row("a.dat", foJudged, qvPass, sentence = "PASS")])
+    table.totals = totalsOf(table.rows)
+    let text = resultsText(table)
+    doAssert "Measured against each file's recorded reference." in text, text
+    doAssert "The reference is not in the archive." notin text, text
+    doAssert "The reference \"pilot\" is not in the archive." in text, text
+    let csv = resultsCsv(table)
+    doAssert RecordedReference in csv, csv
+    doAssert "pilot" in csv and ArchiveMissing notin csv, csv
 
   block textAndCsv:
     var measured = FolderRow(path: "/tmp/one.dat", kind: sgDat, outcome: foJudged,
