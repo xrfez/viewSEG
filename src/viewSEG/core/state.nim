@@ -3301,9 +3301,9 @@ proc newSource(state: var AppState; k: int) =
         p.templateWait = true
         busy = true
       elif state.jobs.hold(s.path):
-        src = ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path, size: s.size,
-          traces: s.gathers[g].traces, filter: p.layers[0].filter, order: p.layers[0].order,
-          hidden: p.hidden, traceNames: s.traceNames)
+        src = ReaderSource(gen: p.sourceGen, file: s.filePtr, session: s.id, path: s.path,
+          size: s.size, traces: s.gathers[g].traces, filter: p.layers[0].filter,
+          order: p.layers[0].order, hidden: p.hidden, traceNames: s.traceNames)
         state.heldBack.keepItIf(it != p.id)
       elif s.path == state.joining.path and state.joining.step == jpJoining:
         busy = true # shown once the join is done
@@ -6506,8 +6506,8 @@ proc resumeReaders(state: var AppState) =
         p.samplesGen = p.requestGen # the first new tile replaces those from before
         p.pending = ReadRequest()
         inc p.revision
-        state.readers[k].show(ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path,
-          size: s.size, traces: s.gathers[g].traces, filter: p.layers[0].filter,
+        state.readers[k].show(ReaderSource(gen: p.sourceGen, file: s.filePtr, session: s.id,
+          path: s.path, size: s.size, traces: s.gathers[g].traces, filter: p.layers[0].filter,
           order: p.layers[0].order))
       else:
         state.newSource(k)
@@ -6545,8 +6545,8 @@ proc resumeMoveReaders(state: var AppState) =
         p.samplesGen = p.requestGen # the first new tile replaces those from before
         p.pending = ReadRequest()
         inc p.revision
-        state.readers[k].show(ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path,
-          size: s.size, traces: s.gathers[g].traces, filter: p.layers[0].filter,
+        state.readers[k].show(ReaderSource(gen: p.sourceGen, file: s.filePtr, session: s.id,
+          path: s.path, size: s.size, traces: s.gathers[g].traces, filter: p.layers[0].filter,
           order: p.layers[0].order))
       else:
         state.newSource(k)
@@ -8955,8 +8955,8 @@ proc resumeLeapReaders(state: var AppState) =
         p.samplesGen = p.requestGen
         p.pending = ReadRequest()
         inc p.revision
-        state.readers[k].show(ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path,
-          size: s.size, traces: s.gathers[g].traces, filter: p.layers[0].filter,
+        state.readers[k].show(ReaderSource(gen: p.sourceGen, file: s.filePtr, session: s.id,
+          path: s.path, size: s.size, traces: s.gathers[g].traces, filter: p.layers[0].filter,
           order: p.layers[0].order))
       else:
         state.newSource(k)

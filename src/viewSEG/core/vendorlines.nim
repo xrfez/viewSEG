@@ -7,8 +7,9 @@
 ## its record, and a trace without a value is NaN, which the line shows as
 ## unknown (never 0). The columns are kept in a `VendorLines`, which a reader
 ## builds on its own thread on the first request that has such a line, and
-## drops when its file changes or the vendor maps are loaded again
-## (`vendorStamp`). A text field has no number: its column is
+## drops when it shows another open file (`SessionId`, never reused, so a file
+## closed, rewritten and opened again is read again) or the vendor maps are
+## loaded again (`vendorStamp`). A text field has no number: its column is
 ## empty and its line shows unknown.
 ##
 ## A tile looks each line's column up once (`slot`) and reads its rows by
@@ -16,21 +17,27 @@
 
 import std/[atomics, sets, tables]
 import parseSEG
-import filesystem, panels, sorting, vendormaps
+import filesystem, panels, session, sorting, vendormaps
 
-var built: Atomic[int]
+var built, held: Atomic[int]
 
 proc columnsBuilt*(): int =
   ## How many columns have been read from files so far (all readers): a test's
   ## way to see a column is built once, not at every step.
   built.load(moRelaxed)
 
+proc columnsHeld*(): int =
+  ## How many columns are held now, counted when one is built and when its
+  ## `VendorLines` is dropped (a reader drops its own when it shows another
+  ## file, nothing, or ends): a test's way to see a closed file's are let go.
+  held.load(moRelaxed)
+
 type
   VendorLines* = object
-    ## The columns of the vendor fields shown, by name, for one file: kept
-    ## while the file (its address, path, size and trace count) and the maps'
-    ## load stay the same, whatever record or order is shown.
-    file: pointer
+    ## The columns of the vendor fields shown, by name, for one open file:
+    ## kept while the file (its session, path, size and trace count) and the
+    ## maps' load stay the same, whatever record or order is shown.
+    session: SessionId
     path: string
     size: int64
     traces: int
@@ -39,6 +46,10 @@ type
     columns: seq[seq[float64]] ## empty: no numbers (unknown name, text, no map)
     absent: seq[int] ## the traces without a value
     missing: seq[string] ## names the file has no vendor field of, not yet said
+
+func session*(v: VendorLines): SessionId {.inline.} =
+  ## The open file the columns are of; `NoSession` when none is held.
+  v.session
 
 func slot*(v: VendorLines; name: string): int =
   ## Where the column of `name` is held, for `valueAt`; -1 when not built.
@@ -80,25 +91,29 @@ proc takeMissing*(v: var VendorLines): seq[string] =
 
 proc drop*(v: var VendorLines) =
   ## Forgets every column (the file closed or another one is shown).
+  discard held.fetchSub(v.columns.len, moRelaxed)
   v = VendorLines()
 
 proc put(v: var VendorLines; name: string; col: sink seq[float64]; absent: int) =
   v.slots[name] = v.columns.len
   v.columns.add col
   v.absent.add absent
+  held.atomicInc
 
-proc build*(v: var VendorLines; f: ptr SeismicFile; path: string; size: int64;
-    names: openArray[string]; stop: StopProc = nil): bool =
-  ## Builds the columns of `names` that are not held, from `f` (read from
-  ## `path`, `size` bytes when it was opened) with the vendor maps in force; columns of another file, or of an older load of the
+proc build*(v: var VendorLines; f: ptr SeismicFile; session: SessionId; path: string;
+    size: int64; names: openArray[string]; stop: StopProc = nil): bool =
+  ## Builds the columns of `names` that are not held, from `f` (open file
+  ## `session`, read from `path`, `size` bytes when it was opened) with the
+  ## vendor maps in force; columns of another file, or of an older load of the
   ## maps, are dropped first. A name no map defines for the file, a text
   ## field, or a file that cannot be read gives an empty column, kept so that
   ## it is not asked for again. False when `stop`
   ## said to give up (nothing of the column then in progress is kept).
   let stamp = vendorStamp()
-  if stamp != v.stamp or pointer(f) != v.file or path != v.path or size != v.size or
+  if stamp != v.stamp or session != v.session or path != v.path or size != v.size or
       f[].len != v.traces:
-    v = VendorLines(stamp: stamp, file: pointer(f), path: path, size: size, traces: f[].len)
+    v.drop()
+    v = VendorLines(stamp: stamp, session: session, path: path, size: size, traces: f[].len)
   var reg: VendorRegistry
   var haveReg = false
   for name in names:

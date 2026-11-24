@@ -91,8 +91,8 @@ import processSEG/pipeline
 import processSEG/core/[basic, pool, rows, types, workspace]
 import processSEG/gain/stats
 import channelsets, components, correlateread, cutfile, edits, filesystem, inbox, jobs, log, panels,
-  processing, readout, segmentclock, sorting, threads, tiles, vendorlines, vendormaps, viewport,
-  wiggle
+  processing, readout, segmentclock, session, sorting, threads, tiles, vendorlines, vendormaps,
+  viewport, wiggle
 
 const
   ChunkTraces = 64    ## traces per prefetch chunk
@@ -109,6 +109,7 @@ type
     ## What a panel shows, for its reader.
     gen*: uint64           ## the panel's `sourceGen`: its layout carries it
     file*: ptr SeismicFile ## nil: nothing
+    session*: SessionId    ## the open file `file` is (never reused); `NoSession` with none
     path*: string          ## the file's path, as held
     size*: int64           ## the file's size when it was opened; -1 when not known
     traces*: Slice[int]    ## the gather
@@ -371,9 +372,9 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   if src.view != rd.viewOf: rd.dropViewWork()
   rd.src = src
   rd.name = rd.src.path.extractFilename
-  if rd.src.file == nil:
-    rd.vendor.drop() # nothing shown: the columns of the file before are not wanted
-    return
+  if rd.src.session != rd.vendor.session:
+    rd.vendor.drop() # another file, or nothing, shown: the columns held are not wanted
+  if rd.src.file == nil: return
   if rd.src.file != rd.toldFile or rd.src.path != rd.toldFilePath:
     # another file, or the same opened again: what was said of the one before
     # is said again (a gather, a filter or a hidden trace is the same file)
@@ -963,7 +964,7 @@ proc buildVendorLines(rd: var Reader; fields: openArray[HeaderRef]): bool =
   let names = vendorNames(fields)
   if names.len == 0 or rd.src.file == nil: return true
   let r = rd.r
-  result = rd.vendor.build(rd.src.file, rd.src.path, rd.src.size, names,
+  result = rd.vendor.build(rd.src.file, rd.src.session, rd.src.path, rd.src.size, names,
     proc (): bool {.gcsafe, raises: [].} = r.superseded)
   for name in rd.vendor.takeMissing():
     rd.note(sevWarning, "'" & name & "' is not a header line or a vendor field of " & rd.name &

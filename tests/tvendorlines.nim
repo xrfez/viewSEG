@@ -14,7 +14,10 @@
 ## - the command takes the lines as names (`display header`), a built-in field given twice
 ##   counts once;
 ## - the maps loaded again (here: none offered) drop the column: the line shows unknown, with
-##   no stale values; `VendorLines` builds again after a new load;
+##   no stale values; `VendorLines` builds again after a new load, and for another open file
+##   (`SessionId`) of the same path, size and traces;
+## - a file closed, written again with the same size and opened again shows its new values;
+##   the columns of a file no longer shown are let go (`columnsHeld`);
 ## - a row's value is read in place: 2000 values of a column of a million take under 50 ms;
 ##
 ## Seen to fail: with `valueAt` giving 0 for an absent trace, `absent` found 0; with the spread
@@ -22,12 +25,15 @@
 ## found the second record's batch wrong; with the stamp not compared in `build`, `reload`
 ## found the old column; with `headerRefOf` not testing the built-in names first, `names`
 ## found a vendor line called "channel"; with `valueAt` copying the column, `noCopy` took 433
-## ms.
+## ms; with the session left out of `build`'s key, `reload` kept the column of another open
+## file; with that and the reader dropping its columns only for no file (as before),
+## `reopened` showed the old column, and with the latter alone it found the columns of a
+## file no longer shown held.
 import std/[json, math, monotimes, options, os, sequtils, strutils, times]
 import parseSEG
 import parseSEG/io/diskio
 import parseSEG/segd/blocks
-import viewSEG/core/[log, panels, settingsnif, tiles, vendormaps, viewport]
+import viewSEG/core/[log, panels, session, settingsnif, tiles, vendormaps, viewport]
 import viewSEG/core/vendorlines {.all.}
 import viewSEG/core/state {.all.}
 import viewSEG/remote/schema
@@ -48,7 +54,9 @@ const
   Records = 2
   PerRecord = 3
 
-func counter(r, j: int): int = 1000 * r + j
+var bump = 0 # added to each counter: a file written again with other values
+
+proc counter(r, j: int): int = 1000 * r + j + bump
 func serialOf(r, j: int): int = 500 + 10 * r + j
 func batch(r: int): int = 40 + r
 
@@ -127,6 +135,11 @@ proc choose(st: var AppState; fields: seq[HeaderRef]): Tile =
     header: HeaderChoice(auto: false, fields: fields))
   doAssert st.settle(st.shows(fields)), "no tile with the lines " & $fields
   st.tiles(0)[^1]
+
+proc showing(st: AppState; path: string): bool =
+  ## The main panel shows the open file at `path`.
+  let i = st.sessions.findIt(it.path == path)
+  st.mainReady and i >= 0 and st.panel(MainPanel).layers[0].source.file == st.sessions[i].id
 
 proc gather(st: var AppState; g: int) =
   st.apply Command(kind: ckGather, panel: MainPanel, gather: g)
@@ -322,6 +335,44 @@ proc main*() =
         Settings(), problems)
       doAssert problems.len > 0
 
+    block reopened:
+      # a file closed, written again (the same size and traces) and opened again is read
+      # again, though its file may take the old one's address; the columns of a file that is
+      # no longer shown are let go
+      let c = fx.dir / "c.sgd"
+      writeLines(c)
+      discard st.choose(@[headerRef(hfTrace)]) # (c's first tile has no vendor line)
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: c)
+      doAssert st.settle(st.showing(c))
+      st.gather(0)
+      discard st.choose(@[headerRef(hfTrace)])
+      let held = columnsHeld()
+      var t = st.choose(@[vendorRef("counter")])
+      doAssert t.header[0][1] == float64(counter(0, 1)), $t.header[0]
+      doAssert columnsHeld() == held + 1, "held " & $(columnsHeld() - held)
+      discard st.choose(@[headerRef(hfTrace)])
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      doAssert st.settle(st.showing(path))
+      discard st.choose(@[headerRef(hfTrace)])
+      doAssert columnsHeld() == held, "the columns of a file no longer shown are held: " &
+        $(columnsHeld() - held)
+      let ic = st.sessions.findIt(it.path == c)
+      if ic >= 0: st.apply Command(kind: ckClose, file: st.sessions[ic].id)
+      doAssert st.settle(not st.sessions.anyIt(it.path == c))
+      bump = 7
+      let size = getFileSize(c)
+      writeLines(c)
+      doAssert getFileSize(c) == size
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: c)
+      doAssert st.settle(st.showing(c))
+      st.gather(0)
+      t = st.choose(@[vendorRef("counter")])
+      doAssert t.header[0][1] == float64(counter(0, 1)), "the old column shown: " & $t.header[0]
+      bump = 0
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      doAssert st.settle(st.showing(path))
+      st.gather(0)
+
     block noCopy:
       # a row's value is read where the column is held: a column copied at each call (here
       # 8 MB, a thousand times) takes seconds
@@ -351,18 +402,23 @@ proc main*() =
       var lines: VendorLines
       var f = openSeismic(path, keys = true)
       publishVendors(registry())
-      doAssert lines.build(addr f, path, 0, ["counter"])
+      let one = SessionId(1)
+      doAssert lines.build(addr f, one, path, 0, ["counter"])
       doAssert lines.valueAt("counter", 4) == float64(counter(1, 1)) and
         lines.absentCount("counter") == 0
       let n = columnsBuilt()
-      doAssert lines.build(addr f, path, 0, ["counter"]) and columnsBuilt() == n, "built twice"
-      doAssert lines.build(addr f, path, 99, ["counter"]) and columnsBuilt() == n + 1,
+      doAssert lines.build(addr f, one, path, 0, ["counter"]) and columnsBuilt() == n,
+        "built twice"
+      doAssert lines.build(addr f, one, path, 99, ["counter"]) and columnsBuilt() == n + 1,
         "a file of another size kept the column"
-      doAssert lines.build(addr f, path & "x", 99, ["counter"]) and columnsBuilt() == n + 2,
-        "another path kept the column"
+      doAssert lines.build(addr f, one, path & "x", 99, ["counter"]) and
+        columnsBuilt() == n + 2, "another path kept the column"
+      doAssert lines.build(addr f, SessionId(2), path & "x", 99, ["counter"]) and
+        columnsBuilt() == n + 3, "another open file (the same path, size and traces) kept it"
       publishVendors(VendorRegistry())
-      doAssert lines.build(addr f, path, 0, ["counter"])
+      doAssert lines.build(addr f, one, path, 0, ["counter"])
       doAssert lines.valueAt("counter", 4).isNaN, "a column of an older load was kept"
+      lines.drop()
       f.close()
     st.shutdown()
 
