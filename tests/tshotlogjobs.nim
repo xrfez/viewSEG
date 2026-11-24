@@ -15,7 +15,8 @@
 ## `read_only_refuses_the_save` rejected a log that did not say the refusal;
 ## with a newline stored anyway, `line_break_is_refused` rejected a cell
 ## that changed; with the copy written onto its own source,
-## `import_does_not_write_onto_its_source` stored `shotlog.csv`.
+## `import_does_not_write_onto_its_source` stored `shotlog.csv`; with the
+## pre-edit text carried forward, `second_remap_keeps_edits` lost the cell.
 
 import std/[options, os, strutils]
 import viewSEG/core/[filesystem, jobs, project, shotlog, shotlogjobs, state]
@@ -309,6 +310,33 @@ proc main*() =
     doAssert st.settle(st.jobs.active.len == 0 and st.shotLogMap(0).roles[0] == crText),
       "the re-map did not finish"
     doAssert st.shotCell(0, 0, 0) == "9", "edits were dropped though the width was unchanged"
+    discard st.shutdown()
+
+  block second_remap_keeps_edits:
+    let job = root / "JobRemap2"
+    var st = start(root / "config-remap2")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0), "the project did not open"
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not stored"
+    st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 0, logCell: "9")
+    doAssert st.settle(st.shotCell(0, 0, 0) == "9" and st.jobs.active.len == 0),
+      "the edited cell was not saved"
+    var same = st.shotLogMap(0)
+    same.roles[0] = crText
+    st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: same)
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotCell(0, 0, 0) == "9"),
+      "the first re-map dropped the edit"
+    var again = st.shotLogMap(0)
+    again.roles[1] = crText
+    st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: again)
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotLogMap(0).roles[1] == crText),
+      "the second re-map did not finish"
+    doAssert st.shotCell(0, 0, 0) == "9", "a second re-map dropped the edit"
+    st.flushFiles()
+    doAssert "9" in readFile(job.partOf(st.shotLogStored(0).shotLogCopy)),
+      "the saved copy lost the edit"
     discard st.shutdown()
 
   block remap_drops_edits:

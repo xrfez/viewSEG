@@ -205,21 +205,25 @@ proc remapShotLog*(original: string; log: ShotLog; map: ShotLogMap; sink: ShotLo
     JobWork =
   ## The work of a job that parses `original` with `map`. When `log` has
   ## edits and the column count is unchanged, those edits are kept; when the
-  ## count changes they are dropped and `dropped` is set. Worker-only. A
-  ## cancel leaves `sink` as it was.
+  ## count changes they are dropped and `dropped` is set. The text carried
+  ## forward is the text parsed into the new log, so a later re-map sees the
+  ## edits that were kept. Worker-only. A cancel leaves `sink` as it was.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase("reading")
     ctx.checkCancelled()
     let parsed = parseShotLog(original, map)
     var dropped = false
     var outLog = parsed
+    var carried = original
     if log != nil and log.changed:
-      if parsed.width == log.width: outLog = parseShotLog(log.toText(), map)
+      if parsed.width == log.width:
+        carried = log.toText()
+        outLog = parseShotLog(carried, map)
       else: dropped = true
     ctx.checkCancelled()
     let view = shots(outLog, map)
     ctx.checkCancelled()
-    fill(sink, outLog, view, map, original, dropped)
+    fill(sink, outLog, view, map, carried, dropped)
 
 proc rebuildShotLog*(log: ShotLog; map: ShotLogMap; sink: ShotLogSink): JobWork =
   ## The work of a job that builds `shots` of `log` again. Worker-only.
