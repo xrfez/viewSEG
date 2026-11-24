@@ -86,12 +86,15 @@ type
 
   BatchCorrelate* = object
     ## A reference the job loads once. `on` false: every file is written as today.
-    ## Only an archive sweep: a pilot is a trace of each record, found per file.
+    ## An archive sweep, loaded once, or a pilot rule: a trace of each record,
+    ## found in each file written.
     on*: bool
     name*: string
       ## The reference's name, for the run summary. "" when `on` is false.
     path*: string
       ## The archive sweep's SEG-Y.
+    pilot*: Option[PilotRule]
+      ## Set: no sweep is loaded; each file's records take their own pilot.
     why*: string
       ## Set when the reference is already known to be unusable.
 
@@ -607,7 +610,7 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
   var taken = initTable[string, string]()
   var refSamples: seq[float32] = @[]
   var refDt = 0.0
-  if writing.correlate.on:
+  if writing.correlate.on and writing.correlate.pilot.isNone:
     try:
       let got = takeReference(writing.correlate)
       refSamples = got.samples
@@ -689,7 +692,8 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
             if not file[].inMemory: fs.mappedRead(item.source, headers = true)
             file[].ensureKeys()
           opts.correlation = some(OutputCorrelation(reference: refSamples,
-            referenceDtMs: refDt, referenceTraces: referenceTraces(file)))
+            referenceDtMs: refDt, referenceTraces: referenceTraces(file),
+            pilot: writing.correlate.pilot))
       let report = proc (done, total: int): bool {.gcsafe.} =
         ctx.progress(int64(doneFiles) * BatchScale + shareOf(int64(done), int64(total)),
           int64(count) * BatchScale)

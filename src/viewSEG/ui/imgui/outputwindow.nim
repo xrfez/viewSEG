@@ -419,10 +419,10 @@ func chosenLabel(st: AppState): string =
   let p = chosenPattern(st)
   if p.parts.len > 0: p.name else: ""
 
-proc chosenSweep(st: AppState): tuple[name, path, why: string] =
-  ## The project's chosen reference as a sweep the batch can load, or why it
-  ## cannot be used. Reads no file.
-  result = ("", "", CorrelatedNeedRef)
+proc chosenSweep(st: AppState): tuple[name, path, why: string; pilot: Option[PilotRule]] =
+  ## The project's chosen reference as a sweep the batch can load, or as the pilot
+  ## rule each file's records are read with, or why it cannot be used. Reads no file.
+  result = ("", "", CorrelatedNeedRef, none(PilotRule))
   if st.chosenReference.len == 0: return
   if not st.referencesLoaded:
     result.why = CorrelatedNeedArchive
@@ -435,9 +435,9 @@ proc chosenSweep(st: AppState): tuple[name, path, why: string] =
   if e.missing or e.blocked or e.file.len == 0 or st.referencesHome.len == 0:
     result.why = referenceGone(e.name)
   elif e.isPilot:
-    result.why = CorrelatedPilot
+    result = (e.name, "", "", some(e.pilotRuleOf))
   else:
-    result = (e.name, st.referencesHome / e.file, "")
+    result = (e.name, st.referencesHome / e.file, "", none(PilotRule))
 
 proc submitRun(ui: var OutputUi; st: AppState) =
   var items: seq[BatchItem] = @[]
@@ -456,7 +456,8 @@ proc submitRun(ui: var OutputUi; st: AppState) =
     mirrorFolders: ui.mirror, pattern: chosenPattern(st))
   let sweep = chosenSweep(st)
   if ui.correlate and sweep.why.len == 0:
-    ask.correlate = BatchCorrelate(on: true, name: sweep.name, path: sweep.path)
+    ask.correlate = BatchCorrelate(on: true, name: sweep.name, path: sweep.path,
+      pilot: sweep.pilot)
   ui.sink = BatchSink()
   ui.haveResult = false
   ui.stopped = false
@@ -740,7 +741,9 @@ proc drawOptions(ui: var OutputUi; st: AppState; marks: var Marks) =
   var corr = ui.correlate and sweep.why.len == 0
   if igCheckbox(OptCorrelated.cstring, addr corr): ui.correlate = corr
   igEndDisabled()
-  tip(if sweep.why.len > 0: sweep.why else: CorrelatedTip)
+  tip(if sweep.why.len > 0: sweep.why
+      elif sweep.pilot.isSome: CorrelatedPilotTip
+      else: CorrelatedTip)
   marks.mark(if sweep.why.len > 0: "output.correlate.disabled" else: "output.correlate")
   if corr: flagMark(marks, "output.correlate.on")
   igEndTable()

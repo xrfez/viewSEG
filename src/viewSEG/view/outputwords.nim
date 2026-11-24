@@ -41,8 +41,9 @@ const
     "Samples are written as 32-bit float."
   CorrelatedNeedRef* = "Choose a reference sweep in the project to write correlated data."
   CorrelatedNeedArchive* = "The reference archive is still being read."
-  CorrelatedPilot* = "The chosen reference is a pilot, a trace of each record. " &
-    "Choose a reference sweep in the project to write correlated data."
+  CorrelatedPilotTip* = "Correlate each trace with the pilot, a trace of each record, " &
+    "taken from the record being written. A record without that trace fails. " &
+    "Samples are written as 32-bit float."
   OptSort* = "Sort"
   KeepOwnPositions* = "Keep the file's own positions"
   ColFile* = "File"
