@@ -57,7 +57,7 @@ import parseSEG/model/traceindex
 import processSEG
 import correlatejobs, edits, filekinds, filesystem, jobs, outputnames, outputnamevalues,
     outputrevision,
-  outputtext, panels, processing, reader, references, signatures, sorting, vendormaps
+  outputbinary, outputtext, panels, processing, reader, references, signatures, sorting, vendormaps
 
 export outputrevision
 
@@ -104,6 +104,14 @@ func textUsed(name: string): string = "Text header: template '" & name & "'."
 func textNotUsed(name, why: string): string =
   ## The header a file keeps when its template cannot be written.
   "Text header: template '" & name & "' was not used for this file: " &
+    (if why.endsWith('.'): why else: why & ".") & " The header it would have had was written."
+
+func binaryUsed(name: string; count: int): string =
+  "Binary header: set '" & name & "' (" & $count & (if count == 1: " field)." else: " fields).")
+
+func binaryNotUsed(name, why: string): string =
+  ## The header a file keeps when its set cannot be written.
+  "Binary header: set '" & name & "' was not used for this file: " &
     (if why.endsWith('.'): why else: why & ".") & " The header it would have had was written."
 
 func charsetName(encoding: TextEncoding): string =
@@ -163,6 +171,10 @@ type
       ## Set: a SEG-Y file's text header is this template rendered for the file
       ## (the project's chosen one). None: the header written today. SEG-D is
       ## not touched.
+    headerBinary*: Option[OutputBinary]
+      ## Set: the fields of this set are written into a SEG-Y file's binary
+      ## file header, and nothing else of it changes. None: the header
+      ## written today. SEG-D is not touched.
     correlation*: Option[OutputCorrelation]
       ## None: the samples written today. Set: correlate each trace with this
       ## reference, into the listen time. Correlated samples are IEEE float32
@@ -882,6 +894,26 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         else:
           cards = cardsOf(t, values)
           cardsEncoding = t.encoding
+      var binOver: seq[HeaderOverride] = @[] ## the set's fields as the writer takes them
+      var binNotes: seq[string] = @[]
+      var binName = ""
+      var binUsable = false ## the set holds no problem
+      if opts.headerBinary.isSome and not segdOut:
+        let b = opts.headerBinary.get
+        binName = b.name
+        let why = binaryProblem(b)
+        if why.len > 0: lines.add binaryNotUsed(binName, why)
+        else:
+          let rev =
+            if segyRev.isSome: segyRev.get
+            elif opts.revision.isSegy:
+              SegyRevision(major: opts.revision.major, minor: opts.revision.minor)
+            elif like: file[].index.segy.revision
+            else: SegyRevision(major: 2, minor: 1)
+          let made = overridesOf(b, rev)
+          binUsable = true
+          binOver = made.overrides
+          binNotes = made.notes
       block writing:
         var w: SeismicWriter
         template openWriter() =
@@ -890,9 +922,10 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               w = openSeismicWriter(part, file[], segdFormat = tf8058)
             elif correlating:
               w = openSeismicWriter(part, file[], segyFormat = st5, segyRevision = segyRev,
-                fullText = cards)
+                fullText = cards, binaryOverrides = binOver)
             else:
-              w = openSeismicWriter(part, like = file[], segyRevision = segyRev, fullText = cards)
+              w = openSeismicWriter(part, like = file[], segyRevision = segyRev, fullText = cards,
+                binaryOverrides = binOver)
           elif segdOut:
             var count = int(file[].traceEntry(head).numSamples)
             if correlating: count = listen
@@ -913,18 +946,49 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             w = openSeismicWriter(part, o)
           else:
             var o = SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
-              fullText: cards, textEncoding: cardsEncoding)
+              fullText: cards, textEncoding: cardsEncoding, binaryOverrides: binOver)
             if opts.revision.isSegy:
               o.revision = SegyRevision(major: opts.revision.major, minor: opts.revision.minor)
             w = openSeismicWriter(part, o)
-        try: openWriter()
-        except ValueError as e:
-          if cards.len == 0: raise
+        var textWhy = ""
+        var binWhy = ""
+        template dropCards() =
           cards.setLen 0
           cardsEncoding = teEbcdic
           recoded = false
-          lines.add textNotUsed(textName, e.msg)
-          openWriter()
+        try: openWriter()
+        except ValueError as e:
+          if cards.len == 0 and binOver.len == 0: raise
+          # Which of the two the library refused is told by opening without
+          # one: the set first (a refusal of it is about `binary.` names).
+          let kept = binOver
+          if binOver.len > 0 and cards.len > 0:
+            binOver.setLen 0
+            try:
+              openWriter()
+              binWhy = e.msg
+            except ValueError as second:
+              textWhy = second.msg
+              dropCards()
+              binOver = kept
+              try: openWriter()
+              except ValueError as third:
+                binWhy = third.msg
+                binOver.setLen 0
+                openWriter()
+          elif binOver.len > 0:
+            binWhy = e.msg
+            binOver.setLen 0
+            openWriter()
+          else:
+            textWhy = e.msg
+            dropCards()
+            openWriter()
+        if textWhy.len > 0: lines.add textNotUsed(textName, textWhy)
+        if binWhy.len > 0: lines.add binaryNotUsed(binName, binWhy)
+        elif binUsable:
+          lines.add binaryUsed(binName, binOver.len)
+          lines.add binNotes
         if cards.len > 0:
           lines.add textUsed(textName)
           if recoded: lines.add textKeptSet(textName, cardsEncoding)
