@@ -506,6 +506,10 @@ proc columnName*(log: ShotLog; col: int): string {.raises: [].} =
   let b = log.fieldStop[log.headerField.int + col].int
   unquoteRange(log.text, a, b).strip()
 
+func text*(log: ShotLog): lent string =
+  ## The text that was parsed. An edit is not in it until `toText`.
+  log.text
+
 proc cell*(log: ShotLog; row, col: int): string {.raises: [].} =
   ## The cell a grid shows: the overlay if `setCell` changed it, otherwise
   ## the field with its quotes removed and a doubled quote collapsed to one.

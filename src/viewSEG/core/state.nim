@@ -975,8 +975,7 @@ type
     shown: FirstBreaks
 
   LoadedShotLog = ref object
-    ## A shot log read into this run. The text is the copy under `shotlogs/`
-    ## when `stored` is set; otherwise it is only here.
+    ## A shot log read into this run. Its text is `log`'s, not a second copy.
     id: int
     name: string
     source: string ## the file it was read from
@@ -984,9 +983,8 @@ type
     map: ShotLogMap
     log: ShotLog
     view: ShotView
-    revision: int ## bumps when a job assigns a new view
-    text: string ## the text a re-map parses again
-    busy: bool ## a job is reading it: a cell edit waits
+    revision: int  ## bumps when a job assigns a new view
+    busy: bool     ## a job is reading it: a cell edit waits
 
   ShotLogJobKind = enum
     sjImport, sjLoad, sjSave, sjRemap, sjRebuild, sjDelete
@@ -6558,10 +6556,13 @@ proc remapShotLogCmd(state: var AppState; cmd: Command) =
   if loaded.busy:
     state.ignore(cmd, "the shot log is still being read")
     return
+  if loaded.log == nil:
+    state.ignore(cmd, "the shot log is not loaded")
+    return
   loaded.busy = true
   let sink = ShotLogSink()
   let job = state.jobs.submit(remapSpec(loaded.source),
-    remapShotLog(loaded.text, loaded.log, cmd.logMap, sink))
+    remapShotLog(loaded.log, cmd.logMap, sink))
   state.shotWork.add ShotLogWork(job: job, kind: sjRemap, id: loaded.id, sink: sink,
     name: loaded.name, source: loaded.source, stored: loaded.stored, map: cmd.logMap)
 
@@ -6590,7 +6591,7 @@ proc editShotCellCmd(state: var AppState; cmd: Command) =
 proc tookShotImport(state: var AppState; w: ShotLogWork) =
   let r = w.sink.result
   let loaded = LoadedShotLog(id: state.nextShotId, name: w.name, source: w.source,
-    map: r.map, log: r.log, view: r.view, text: r.text, revision: 1)
+    map: r.map, log: r.log, view: r.view, revision: 1)
   inc state.nextShotId
   state.shotLogs.add loaded
   inc state.shotLogsRev
@@ -6600,7 +6601,7 @@ proc tookShotLoad(state: var AppState; w: ShotLogWork) =
   if not state.inProject: return
   let r = w.sink.result
   let loaded = LoadedShotLog(id: state.nextShotId, name: w.name, source: w.source,
-    stored: w.stored, map: r.map, log: r.log, view: r.view, text: r.text, revision: 1)
+    stored: w.stored, map: r.map, log: r.log, view: r.view, revision: 1)
   inc state.nextShotId
   state.shotLogs.add loaded
   inc state.shotLogsRev
@@ -6636,7 +6637,6 @@ proc tookShotRemap(state: var AppState; w: ShotLogWork) =
   loaded.log = r.log
   loaded.view = r.view
   loaded.map = r.map
-  loaded.text = r.text
   inc loaded.revision
   inc state.shotLogsRev
   if r.dropped: state.log.add(sevWarning, "shot log", ShotLogEditsDropped)

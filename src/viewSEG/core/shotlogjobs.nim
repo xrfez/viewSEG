@@ -25,7 +25,7 @@ type
     log*: ShotLog
     view*: ShotView
     map*: ShotLogMap
-    text*: string ## the text that was parsed, for a later re-map
+    text*: string ## the text parsed into `log`; the state does not keep another copy
     dropped*: bool ## a re-map dropped edited cells
 
   ShotLogSink* = ref object
@@ -240,21 +240,22 @@ proc saveShotLog*(dir, name: string; log: ShotLog; map: ShotLogMap; sink: ShotLo
     ctx.checkCancelled()
     fill(sink, log, view, map, text)
 
-proc remapShotLog*(original: string; log: ShotLog; map: ShotLogMap; sink: ShotLogSink):
-    JobWork =
-  ## The work of a job that parses `original` with `map`. When `log` has
-  ## edits and the column count is unchanged, those edits are kept; when the
-  ## count changes they are dropped and `dropped` is set. The text carried
-  ## forward is the text parsed into the new log, so a later re-map sees the
-  ## edits that were kept. Worker-only. A cancel leaves `sink` as it was.
+proc remapShotLog*(log: ShotLog; map: ShotLogMap; sink: ShotLogSink): JobWork =
+  ## The work of a job that parses `log`'s own text with `map`. When `log`
+  ## has edits and the column count is unchanged, those edits are kept; when
+  ## the count changes they are dropped and `dropped` is set. The new log's
+  ## text is what was parsed, so a later re-map sees the edits that were
+  ## kept. Worker-only. A cancel leaves `sink` as it was.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase("reading")
     ctx.checkCancelled()
+    if log == nil: fail(sink, "The shot log could not be read.")
+    let original = log.text
     let parsed = parseShotLog(original, map)
     var dropped = false
     var outLog = parsed
     var carried = original
-    if log != nil and log.changed:
+    if log.changed:
       if parsed.width == log.width:
         carried = log.toText()
         outLog = parseShotLog(carried, map)

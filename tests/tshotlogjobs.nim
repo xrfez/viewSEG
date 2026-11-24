@@ -22,7 +22,9 @@
 ## `save_does_not_set_the_copy_aside` saw a `.old` file, and with no sweep,
 ## `reopen_sweeps_shot_log_temps` kept `shotlog.csv.7.tmp`; with the copy
 ## removed on the UI thread, `remove_does_not_touch_the_copy_on_the_ui_thread`
-## and `finished_save_removes_off_the_ui_thread` saw that write.
+## and `finished_save_removes_off_the_ui_thread` saw that write; with the
+## re-map parsing a passed string, `remap_reads_the_log_not_a_stale_copy`
+## lost the edit.
 
 import std/[options, os, strutils]
 import viewSEG/core/[filesystem, jobs, project, shotlog, shotlogjobs, state]
@@ -409,6 +411,19 @@ proc main*() =
     doAssert other.said(ReadOnlyShotLog)
     discard other.shutdown()
     discard holder.shutdown()
+
+  block remap_reads_the_log_not_a_stale_copy:
+    let got = runImport(Sample)
+    doAssert got.st == jsDone, got.error
+    doAssert got.sink.result.log.setCell(0, 0, "9")
+    let jobs = initJobs()
+    let sink = ShotLogSink()
+    let id = jobs.submit(remapSpec(Sample),
+      remapShotLog(got.sink.result.log, got.sink.result.map, sink))
+    doAssert waitUntil(jobs.ended(id)), "the re-map did not finish"
+    doAssert jobs.stateOf(id) == jsDone, jobs.info(id).get.error
+    doAssert sink.result.ok
+    doAssert sink.result.log.cell(0, 0) == "9", "the re-map parsed a stale copy of the text"
 
   block remap_keeps_edits:
     var st = start(root / "config6")
