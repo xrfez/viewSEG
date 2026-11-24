@@ -235,6 +235,16 @@ proc main*() =
       doAssert load.maps.len >= 1, "no map ships"
       doAssert load.problems.len == 0, $load.problems
       for m in load.registry.maps: doAssert m.checkVendorMap.len == 0, m.name
+      # the two recorder maps name their unit serial sensorSerial, in a trace-level target
+      for name in ["mfr50-rev3", "mfr09-rev2"]:
+        var named = false
+        for m in load.registry.maps:
+          if m.name == name:
+            for t in m.targets:
+              if t.where == "traceHeader" or t.kind == vtTraceExt:
+                for f in t.fields:
+                  named = named or f.name == "sensorSerial"
+        doAssert named, name & " has no sensorSerial field in a trace-level target"
 
     block shippedMapFindsModulesByTheirBytes:
       # the code-9 map in the repository, on generated Rev 2.0 records: modules found by their bytes, not by
@@ -302,7 +312,7 @@ proc main*() =
             two = b.fields.len > 0
             orient = "sensorOrientationDescription" in b
           if b.name == "geoResTraceExt3":
-            three = "moduleSerialNumber" in b
+            three = "sensorSerial" in b
             first = "firstSampleTime" in b
         (two, three, orient, first)
       doAssert traceBlocks(3, 3) == (true, true, true, true), "version 3"
