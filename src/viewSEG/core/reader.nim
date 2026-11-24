@@ -127,14 +127,14 @@ type
   ReaderRequest* = object
     ## What a panel asks its reader for.
     read*: ReadRequest
-    fields*: seq[HeaderRef]   ## the display header's rows
-    flow*: Pipeline           ## processing for display (`displayPipeline`)
+    fields*: seq[HeaderRef] ## the display header's rows
+    flow*: Pipeline         ## processing for display (`displayPipeline`)
     filters*: Pipeline
       ## the layer's filters (`filterPipeline`), run before `flow`; empty for none
-    filterAux*: bool          ## the auxiliary traces go through `filters` too
-    flowAux*: bool            ## and through `flow` (`flowReachesAux`)
+    filterAux*: bool        ## the auxiliary traces go through `filters` too
+    flowAux*: bool          ## and through `flow` (`flowReachesAux`)
     clipPercentile*: float64
-    reversed*: seq[int]       ## the gather's traces whose polarity is reversed, ascending
+    reversed*: seq[int]     ## the gather's traces whose polarity is reversed, ascending
     excluded*: seq[int]
       ## the gather's traces the plot's filters never touch, ascending (the readers get
       ## them as own filters that run instead: `own`; this is for the tile's marks)

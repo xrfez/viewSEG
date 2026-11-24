@@ -263,8 +263,8 @@ type
 
   HeaderChoice* = object
     ## The rows of a panel's display header.
-    auto*: bool = true        ## from what the file has (`defaultFields`)
-    fields*: seq[HeaderRef]   ## the user's choice, top row first, when not `auto`
+    auto*: bool = true      ## from what the file has (`defaultFields`)
+    fields*: seq[HeaderRef] ## the user's choice, top row first, when not `auto`
 
   SortKey* = object
     ## One key of a trace order: a header field, smallest first unless
@@ -494,6 +494,10 @@ func value*(k: TraceKeys; field: HeaderField; trace: int; channelSet = 0): float
     elif k.time.isNaN: NaN
     else: k.time * 1e6
   of hfVendor: NaN # a vendor field's values are a column of the file, not the keys
+
+func value*(k: TraceKeys; field: HeaderRef; trace: int; channelSet = 0): float64 =
+  ## `value` of a display line's built-in field; NaN for a vendor line.
+  value(k, field.field, trace, channelSet)
 
 func joinGroupsOf*(field: HeaderField): set[JoinGroup] =
   ## The groups of a trace's keys `field` shows: what a geometry join may

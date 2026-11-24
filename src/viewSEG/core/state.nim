@@ -7502,6 +7502,13 @@ func missingWords(state: AppState): string =
 
 proc rereadKinds(state: var AppState)
 
+proc refetchVendorLines(state: var AppState) =
+  ## The panels with a vendor field on a display line read it again: the maps
+  ## it was read with are not the ones in force (the reader drops its columns).
+  for k in 0 ..< state.panels.len:
+    if state.panels[k].shownFields.anyIt(it.field == hfVendor):
+      state.refetch(k, keepTiles = true)
+
 proc takeVendor(state: var AppState; m: sink Msg) =
   ## A load of the vendor maps: made the registry in force under the project's
   ## rule, and said in a line of Messages each (what it loaded, what it left
@@ -7512,6 +7519,7 @@ proc takeVendor(state: var AppState; m: sink Msg) =
   inc state.vendor.gen
   template load: untyped = state.vendor.load
   publishVendors(load.registry, state.vendor.choice)
+  state.refetchVendorLines()
   state.rereadKinds()
   state.vendor.mismatched.setLen 0
   var said: seq[(Severity, string, string)] = @[]
@@ -7587,6 +7595,7 @@ proc setVendorChoice(state: var AppState; origin: CommandOrigin; c: VendorChoice
     state.log.add(sevWarning, "vendor maps", "The project is read-only: this choice is for " &
       "this run only.")
   publishVendors(state.vendor.load.registry, c)
+  state.refetchVendorLines()
   state.vendor.mismatched.setLen 0
   inc state.vendor.gen
   state.rereadKinds()

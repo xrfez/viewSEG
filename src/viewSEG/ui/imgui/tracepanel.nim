@@ -2631,7 +2631,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     for i, f in fields:
       let caption = igCalcTextSize(caption(f).cstring, nil, false, -1).x
       bands.start.add at
-      bands.size.add round(max(caption, float32(max(max(chars[i], p.widest[f.field]), 1)) * charW)) +
+      bands.size.add round(max(caption, float32(max(max(chars[i], p.widest[f.field]), 1)) *
+          charW)) +
         gap
       at += bands.size[^1]
     if edited:

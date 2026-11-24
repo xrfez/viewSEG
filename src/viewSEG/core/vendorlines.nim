@@ -18,9 +18,9 @@ import filesystem, panels, sorting, vendormaps
 type
   VendorLines* = object
     ## The columns of the vendor fields shown, by name, for one file.
-    stamp: int                          ## the vendor maps' load they were read with
+    stamp: int                           ## the vendor maps' load they were read with
     columns: Table[string, seq[float64]] ## empty: no numbers (unknown name, text, no map)
-    absent: Table[string, int]          ## per name, the traces without a value
+    absent: Table[string, int]           ## per name, the traces without a value
 
 func valueAt*(v: VendorLines; name: string; trace: int): float64 =
   ## Vendor field `name` of file trace `trace`; NaN when it has none (or when
