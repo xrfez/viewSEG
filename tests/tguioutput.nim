@@ -31,6 +31,10 @@
 ## reference, "the tick is not enabled"; with the batch not given the
 ## correlation, the file held 64 samples, not 48; with the summary words left
 ## off, "the summary does not name the reference".
+##
+## The same run with the chosen reference a pilot rule (an auxiliary trace read
+## from the record) does the same. Seen to fail: with the pilot treated as a
+## missing file, "the tick is not enabled".
 
 import std/[math, monotimes, options, os, strutils]
 import parseSEG
@@ -138,7 +142,7 @@ proc stacked(f: FrameInfo): bool =
     l.pos.y + l.size.y <= r.pos.y + 8 and abs(l.pos.x - r.pos.x) <= 4
 
 proc namePatterns()
-proc correlatedRun()
+proc correlatedRun(pilot: bool)
 
 proc main*() =
   var wait = 0
@@ -407,7 +411,8 @@ proc main*() =
     sleep(50)
     setJobHook(nil)
   namePatterns()
-  correlatedRun()
+  correlatedRun(false)
+  correlatedRun(true)
 
 proc namePatterns() =
   ## The editor, on its own project: three parts, a padded preview, save,
@@ -785,9 +790,10 @@ proc writeRecord(path: string; n: int; us: float64) =
     w.writeTrace(k, buf)
   doAssert w.close().len == 0, "the record did not close"
 
-proc correlatedRun() =
+proc correlatedRun(pilot: bool) =
   ## Record of 64 samples with the auxiliary sweep trace, a 16-sample sweep
-  ## in the archive: the written file holds 64 - 16 = 48 samples per trace.
+  ## in the archive (or, with `pilot`, a rule naming that auxiliary trace):
+  ## the written file holds 64 - 16 = 48 samples per trace.
   setJobHook(nil)
   withFixtures fx:
     let data = fx.dir / "data"
@@ -800,9 +806,16 @@ proc correlatedRun() =
     var sweep = newSeq[float32](16)
     for i in 0 ..< sweep.len: sweep[i] = float32(i + 1) * 0.25
     markWorkerThread() # the archive is written off the UI thread; run() marks it again
-    let id = storeSamples(referencesFolder(fx.dir / "config"), "test sweep", 2000.0, sweep,
-      ReferenceOrigin(generated: true, dtMs: 2.0, durationMs: 32))
-    let shot = currentSourcePath().parentDir.parentDir / ".scratch" / "output-correlated.png"
+    let folder = referencesFolder(fx.dir / "config")
+    let id =
+      if pilot:
+        storePilotRule(folder, PilotRule(name: "test sweep", aux: true, trace: 1,
+          startMs: 0.0, spanMs: 32.0))
+      else:
+        storeSamples(folder, "test sweep", 2000.0, sweep,
+          ReferenceOrigin(generated: true, dtMs: 2.0, durationMs: 32))
+    let shot = currentSourcePath().parentDir.parentDir / ".scratch" /
+      (if pilot: "output-correlated-pilot.png" else: "output-correlated.png")
     createDir(shot.parentDir)
     var answer: seq[string] = @[]
     let hook = proc (kind: DialogKind; location: string): seq[string] = answer
@@ -911,7 +924,7 @@ proc correlatedRun() =
     doAssert back.traceEntry(0).numSamples == 48,
       "the file holds " & $back.traceEntry(0).numSamples & " samples"
     back.close()
-    echo "tguioutput correlated: ", steps.len, " steps"
+    echo "tguioutput correlated", (if pilot: " pilot: " else: ": "), steps.len, " steps"
 
 when isMainModule:
   main()

@@ -432,10 +432,12 @@ proc chosenSweep(st: AppState): tuple[name, path, why: string; pilot: Option[Pil
     result.why = referenceGone(st.chosenReference)
     return
   let e = st.references.entries[at]
-  if e.missing or e.blocked or e.file.len == 0 or st.referencesHome.len == 0:
+  if e.missing or e.blocked:
     result.why = referenceGone(e.name)
   elif e.isPilot:
     result = (e.name, "", "", some(e.pilotRuleOf))
+  elif e.file.len == 0 or st.referencesHome.len == 0:
+    result.why = referenceGone(e.name)
   else:
     result = (e.name, st.referencesHome / e.file, "", none(PilotRule))
 
