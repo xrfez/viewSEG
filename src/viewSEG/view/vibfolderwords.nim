@@ -2,6 +2,7 @@
 ## file, and the same columns as CSV. Drawing lives in the frontend.
 
 import std/[math, os, strutils]
+from ../core/sigtypes import SignatureKind, sgDat, sgNone, sgVib
 import ../core/[settings, units, vibfolderqc, vibjudge, vibprofile]
 
 const
@@ -13,6 +14,8 @@ const
   ColPolarity* = "Polarity"
   ColWarnings* = "Warnings"
   ColProblem* = "Problem"
+  DatKindLabel* = ".dat signature file"
+  VibKindLabel* = ".vib file"
 
 func measureHead(l: QcLimit): string =
   case l
@@ -40,6 +43,14 @@ func summaryLine*(t: FolderTotals): string =
     plural(t.failed, "fail", "fails") & ", " & $t.notJudged & " not judged, " &
     plural(t.problems, "problem", "problems") & ", " &
     plural(t.skipped, "skipped", "skipped") & "."
+
+func kindLabel*(kind: SignatureKind): string =
+  ## What the Kind column shows. The two signature files do not share a prefix,
+  ## so a narrow column cannot show the same word for both.
+  case kind
+  of sgDat: DatKindLabel
+  of sgVib: VibKindLabel
+  of sgNone: ""
 
 func sentenceOf*(row: FolderRow): string =
   ## The sentence column. A file that was not judged has its reason here, not
@@ -83,7 +94,7 @@ func warningsCell(row: FolderRow): string =
     result.add joinWords(row.weightWords)
 
 func cells(row: FolderRow): seq[string] =
-  result = @[row.path.extractFilename, $row.kind, row.pair.extractFilename,
+  result = @[row.path.extractFilename, kindLabel(row.kind), row.pair.extractFilename,
     verdictCell(row), sentenceOf(row)]
   for l in QcLimit: result.add measureCell(row, l)
   result.add polarityCell(row)

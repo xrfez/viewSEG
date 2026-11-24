@@ -7,7 +7,9 @@
   ## Seen to fail: with the measure columns untitled, `textAndCsv` does not
   ## find "Average phase (°)". With the totals always saying "files" and
   ## "problems", `plurals` still finds "1 problems". With a problem row's
-  ## sentence left empty, `problemSentence` does not find the reason.
+  ## sentence left empty, `problemSentence` does not find the reason. With
+  ## Kind still the shared "vibrator .dat" prefix, `kindLabels` cannot tell
+  ## a `.dat` from a `.vib`.
 
 import std/[math, strutils]
 import viewSEG/core/[sigtypes, units, vibfolderqc, vibjudge]
@@ -134,6 +136,13 @@ proc main*() =
     doAssert rowCells(bad)[4] == "it cannot be read", rowCells(bad)[4]
     let judged = row("good.dat", foJudged, qvPass, sentence = "PASS: within limits")
     doAssert rowCells(judged)[4] == "PASS: within limits", rowCells(judged)[4]
+
+  block kindLabels:
+    let dat = row("a.dat", foJudged, qvPass, kind = sgDat, sentence = "PASS")
+    let vib = row("a.vib", foJudged, qvFail, kind = sgVib, sentence = "FAIL")
+    doAssert rowCells(dat)[1] != rowCells(vib)[1], rowCells(dat)[1] & " / " & rowCells(vib)[1]
+    doAssert ".dat" in rowCells(dat)[1] and "vibrator" notin rowCells(dat)[1], rowCells(dat)[1]
+    doAssert ".vib" in rowCells(vib)[1] and rowCells(vib)[1] != "vibrator", rowCells(vib)[1]
 
   block textAndCsv:
     var measured = FolderRow(path: "/tmp/one.dat", kind: sgDat, outcome: foJudged,
