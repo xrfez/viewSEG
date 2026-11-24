@@ -56,7 +56,10 @@ Land 2026/                  the project folder: this is what is opened
   the accelerometer set, the force scale, a typed 100 % force and drive level, the
   reference's archive id and the top typed for that reference. A document without it has
   no profile, so a project made earlier opens unchanged. A field inside it that this
-  version does not know is kept and written back.
+  version does not know is kept and written back. The job's vibrator weights
+  (`vibWeights`) are stored once, in kilograms: the hold-down, the baseplate mass and
+  the reaction mass. A weight not set is left out; a document without the tree has
+  none. They are the job's, not a file header's.
 - The project document also holds which vendor map decodes the project's files (`vendorMap`:
   a map's name, empty for none; absent for Automatic): Project > Vendor map
   (docs/user/vendor-maps.md). A document without it reads as Automatic, so projects made earlier

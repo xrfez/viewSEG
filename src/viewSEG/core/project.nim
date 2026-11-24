@@ -68,6 +68,15 @@ type
     modified*: Time ## its modification time then
     quick*: uint64 ## its first and last 64 KiB's hash then (`quickIdentity`)
 
+  VibJobWeights* = object
+    ## The job's vibrator weights, once for the project, in kilograms. Not a file
+    ## header's. NaN: that weight was not set.
+    holdDownKg*: float64 = NaN
+    baseplateMassKg*: float64 = NaN
+    reactionMassKg*: float64 = NaN
+    later*: seq[NifNode]
+      ## fields of the weights tree this version does not know, written back
+
   StoreInfo* = object
     ## `survey.bin` as written: none while `bytes` is 0.
     format*: int
@@ -114,6 +123,8 @@ type
       ## one Vibrator window so a QC run can apply them to other files
     hasVibProfile*: bool
       ## `vibProfile` was stored; an older project, or one with none, is false
+    vibJobWeights*: VibJobWeights
+      ## the job's hold-down, baseplate and reaction mass, in kilograms (`jobWeights`)
     vendorChoice*: VendorChoice
       ## the vendor map rule of the project's files (`core/vendormaps`); automatic when
       ## the document says nothing
@@ -202,6 +213,32 @@ type
       identities*: seq[ImportFile]
     of pnLooked, pnOriginals:
       discard
+
+func finiteWeight(x: float64): bool {.inline.} =
+  x == x and x != Inf and x != -Inf
+
+func sameWeight(x, y: float64): bool {.inline.} =
+  x == y or (x != x and y != y)
+
+func weightsSet*(w: VibJobWeights): bool =
+  ## Whether any weight was set, or a newer document left a field to keep.
+  finiteWeight(w.holdDownKg) or finiteWeight(w.baseplateMassKg) or
+    finiteWeight(w.reactionMassKg) or w.later.len > 0
+
+func `==`*(a, b: VibJobWeights): bool =
+  ## Whether two jobs' weights are the same, a NaN (unset) equal to a NaN.
+  ## `later` is what a newer document kept, not a weight, so it is not compared.
+  sameWeight(a.holdDownKg, b.holdDownKg) and
+    sameWeight(a.baseplateMassKg, b.baseplateMassKg) and
+    sameWeight(a.reactionMassKg, b.reactionMassKg)
+
+func jobWeights*(d: ProjectDoc): VibJobWeights =
+  ## The job's vibrator weights (hold-down, baseplate, reaction mass), in kilograms.
+  d.vibJobWeights
+
+proc `jobWeights=`*(d: var ProjectDoc; w: VibJobWeights) =
+  ## Stores the job's vibrator weights. A weight not set is NaN.
+  d.vibJobWeights = w
 
 func hasSurvey*(d: ProjectDoc): bool {.inline.} =
   ## Whether a survey was imported into the project.

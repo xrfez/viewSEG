@@ -6,12 +6,16 @@
 ## - `applied` gives those settings back for a QC run on another file, and names
 ##   a missing reference and a missing 100 % force instead of failing;
 ## - the project document keeps one profile beside the other vibrator fields, an
-##   older document has none, and a field this version does not know is kept.
+##   older document has none, and a field this version does not know is kept;
+## - the job's hold-down, baseplate and reaction mass are stored once, in
+##   kilograms, and are not read from a file header.
 ##
 ## Seen to fail: with `applied` not naming a reference absent from the archive,
-## `gone.problems.len == 1`.
+## `gone.problems.len == 1`; with the job's weights left out of the document,
+## `"(vibWeights" in text`.
 ##
-## What is kept: `vibProfile` on the project (`hasVibProfile` when one was stored).
+## What is kept: `vibProfile` on the project (`hasVibProfile` when one was stored);
+## `vibWeights` for the job's weights (`jobWeights`).
 
 import std/[math, strutils]
 import viewSEG/core/[analysis, nif, project, projectnif, settings, vibprofile]
@@ -110,6 +114,34 @@ proc main*() =
     let refused = readProject(bad, "project.nif", problems)
     doAssert problems.len > 0
     doAssert refused.hasVibProfile and refused.vibProfile.harmonics == 5
+
+  block weights:
+    var d = ProjectDoc(name: "Land 2026")
+    d.jobWeights = VibJobWeights(holdDownKg: 1200.0, baseplateMassKg: 1800.0,
+      reactionMassKg: NaN)
+    doAssert d.jobWeights.weightsSet
+    doAssert not VibJobWeights().weightsSet
+    let text = projectDocument(d)
+    doAssert "(vibWeights" in text and "(holdDownKg 1200.0)" in text, text
+    doAssert "(baseplateMassKg 1800.0)" in text and "reactionMassKg" notin text
+    doAssert "holdDownLb" notin text
+    let back = roundTrip(d)
+    doAssert back.jobWeights == d.jobWeights
+    doAssert back.jobWeights.reactionMassKg.isNaN
+    var problems: seq[string]
+    let none = readProject(projectDocument(ProjectDoc(name: "old")), "project.nif", problems)
+    doAssert problems.len == 0 and not none.jobWeights.weightsSet
+    let injected = text.replace("(vibWeights", "(vibWeights (futureMass 1)")
+    let kept = readProject(injected, "project.nif", problems)
+    doAssert problems.len == 0, $problems
+    doAssert kept.jobWeights.later.len == 1 and kept.jobWeights.later[0].tag == "futureMass"
+    doAssert kept.jobWeights.holdDownKg == 1200
+    doAssert "futureMass" in projectDocument(kept)
+    let bad = text.replace("(holdDownKg 1200.0)", "(holdDownKg 0)")
+    let refused = readProject(bad, "project.nif", problems)
+    doAssert problems.len > 0
+    doAssert refused.jobWeights.holdDownKg.isNaN
+    doAssert refused.jobWeights.baseplateMassKg == 1800
 
   echo "tvibprofile: done"
 

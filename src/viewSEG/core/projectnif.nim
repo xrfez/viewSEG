@@ -118,6 +118,16 @@ proc writeVibProfile(w: var NifWriter; p: VibQcProfile) =
   for n in p.later: w.add n
   w.close
 
+proc writeVibWeights(w: var NifWriter; m: VibJobWeights) =
+  ## The job's vibrator weights, in kilograms. One not set is left out; a field
+  ## this version does not know is written back. Not a file header's weights.
+  w.open "vibWeights"
+  if finite(m.holdDownKg): w.value("holdDownKg", m.holdDownKg)
+  if finite(m.baseplateMassKg): w.value("baseplateMassKg", m.baseplateMassKg)
+  if finite(m.reactionMassKg): w.value("reactionMassKg", m.reactionMassKg)
+  for n in m.later: w.add n
+  w.close
+
 proc projectDocument*(d: ProjectDoc): string =
   ## `d` as the project document (the module's documentation).
   var w = initNifWriter(breakDepth = 2)
@@ -184,6 +194,7 @@ proc projectDocument*(d: ProjectDoc): string =
   for c in d.vibRoles: w.value("vibRole", c)
   for c in d.vibTops: w.value("vibTop", c)
   if d.hasVibProfile: w.writeVibProfile(d.vibProfile)
+  if d.vibJobWeights.weightsSet: w.writeVibWeights(d.vibJobWeights)
   if d.lastFolder.len > 0: w.value("lastFolder", d.lastFolder)
   if d.includeSubfolders: w.value("includeSubfolders", true)
   case d.vendorChoice.mode
@@ -425,6 +436,17 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "topHz": r.number(c, TopHzRange, d.vibProfile.topHz)
       else: d.vibProfile.later.add c
 
+proc vibWeights(r: var Reading; n: NifNode; d: var ProjectDoc) =
+  ## The job's weights. A field this version does not know is kept and written back.
+  for c in n.kids:
+    if c.kind != nkTree: r.problem(c, "(vibWeights) holds trees")
+    else:
+      case c.tag
+      of "holdDownKg": r.number(c, MassKgRange, d.vibJobWeights.holdDownKg)
+      of "baseplateMassKg": r.number(c, MassKgRange, d.vibJobWeights.baseplateMassKg)
+      of "reactionMassKg": r.number(c, MassKgRange, d.vibJobWeights.reactionMassKg)
+      else: d.vibJobWeights.later.add c
+
 proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[string]): ProjectDoc =
   ## The project document `doc` (`parseNif`; `name` names it in problems).
   ## Raises `NifError` when it is not a project document.
@@ -472,6 +494,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
         r.text(c, text)
         if text.len > 0 and result.vibTops.len < 256: result.vibTops.add text
       of "vibProfile": r.vibProfile(c, result)
+      of "vibWeights": r.vibWeights(c, result)
       of "vendorMap":
         var name = ""
         r.text(c, name)
