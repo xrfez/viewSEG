@@ -10,6 +10,8 @@
 ## - a worker wrote zeros: `thread A sample 0`
 ## - interval refusal shortened: `the reference sweep is sampled every 4 ms and
 ##   the record every 2 ms.`
+## - empty-sweep refusal lost its period: view `the reference sweep is empty`
+##   job `the reference sweep is empty.`
 ## - `newSeq` inside `correlateRead`: `the second call allocated 1`
 ## - an outside window still read: `a window outside the listen time was read`
 ## - `mappedRead` left to raise: `mappedRead can raise an unlisted exception: OSError`,
@@ -103,6 +105,50 @@ proc jobFailure(file: var SeismicFile; path: string; reference: seq[float32]; dt
   finally:
     jobs.stop()
   slot.failure
+
+proc sameRefusal(file: var SeismicFile; path: string; reference: seq[float32];
+    dtMs: float64; refs: seq[int]; sentence: string) =
+  let fromJob = jobFailure(file, path, reference, dtMs, refs)
+  let fromView = initCorrelateView(addr file, reference, dtMs, refs).refusal
+  doAssert fromView == fromJob, sentence & ": view `" & fromView & "` job `" & fromJob & "`"
+  doAssert fromJob == sentence, fromJob
+
+proc writeEmpty(path: string) =
+  var w = openSeismicWriter(path, SegyOutputOptions())
+  doAssert w.close().len == 0, "the empty file did not close"
+
+proc clearIntervals(path: string) =
+  var f = openSeismic(path, keys = true)
+  var spots = @[3216]
+  var wide: seq[int] = @[]
+  for i in 0 ..< f.len:
+    let e = f.traceEntry(i)
+    spots.add int(e.offset) + 116
+    if e.headerBytes > 240: wide.add int(e.offset) + 384
+  f.close()
+  var bytes = readFile(path)
+  for at in spots:
+    bytes[at] = '\0'
+    bytes[at + 1] = '\0'
+  for at in wide:
+    for j in 0 .. 7: bytes[at + j] = '\0'
+  writeFile(path, bytes)
+
+proc writePairShape(path: string; a, b: int; dtA, dtB: float64; aux: bool) =
+  var w = openSeismicWriter(path, SegyOutputOptions())
+  for i, n in [a, b]:
+    var k = initTraceKeys()
+    if aux: (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+    else: (k.traceCode, k.status) = (1'i16, tsLive)
+    k.record = 1.0
+    k.channel = float64(i + 1)
+    k.intervalUs = (if i == 0: dtA else: dtB) * 1000.0
+    k.t0Ms = 0.0
+    k.time = 1_700_000_000.0
+    var buf = newSeq[float32](n)
+    buf[0] = 1
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the shaped file did not close"
 
 proc correlate(file: var SeismicFile; path: string; sweep: seq[float32];
     refs: seq[int]): CorrelateResult =
@@ -268,12 +314,59 @@ proc main*() =
 
   block refused:
     let refs = @[RefAux]
-    let interval = jobFailure(file, path, sweep, 4.0, refs)
-    let short = jobFailure(file, path, ones(Record), DtMs, refs)
-    doAssert initCorrelateView(addr file, sweep, 4.0, refs).refusal == interval, interval
-    doAssert initCorrelateView(addr file, ones(Record), DtMs, refs).refusal == short, short
-    doAssert "every" in interval and "ms" in interval, interval
-    doAssert "no listen time" in short, short
+    let interval = "the reference sweep is sampled every 4 ms and the record every 2 ms."
+    let short = "the reference sweep is as long as the record or longer, " &
+      "so there is no listen time."
+    sameRefusal(file, path, sweep, 4.0, refs, interval)
+    sameRefusal(file, path, ones(Record), DtMs, refs, short)
+    sameRefusal(file, path, newSeq[float32](), DtMs, refs, "the reference sweep is empty.")
+    var one = newSeq[float32](1)
+    one[0] = 1
+    sameRefusal(file, path, one, DtMs, refs,
+      "the reference sweep needs at least two samples.")
+    var nanSweep = @[1'f32, 1'f32]
+    nanSweep[1] = NaN
+    sameRefusal(file, path, nanSweep, DtMs, refs,
+      "the reference sweep has a sample that is not a number.")
+    sameRefusal(file, path, newSeq[float32](4), DtMs, refs, "the reference sweep is all zeros.")
+    sameRefusal(file, path, sweep, NaN, refs, "the reference sweep has no sample interval.")
+    sameRefusal(file, path, sweep, DtMs, @[9], "reference trace 9 is outside 0 .. 4.")
+    sameRefusal(file, path, sweep, DtMs, @[RefAux, RefAux],
+      "reference trace 3 is listed twice.")
+    var closed = openSeismic(path, keys = true)
+    closed.close()
+    sameRefusal(closed, path, sweep, DtMs, refs, "the file is not open.")
+    var bare = openSeismic(path)
+    defer: bare.close()
+    sameRefusal(bare, path, sweep, DtMs, refs, "the file was opened without its keys.")
+    let emptyPath = dir / "empty.sgy"
+    writeEmpty(emptyPath)
+    var empty = openSeismic(emptyPath, keys = true)
+    defer: empty.close()
+    sameRefusal(empty, emptyPath, sweep, DtMs, @[], "the file has no traces.")
+    let zeroDtPath = dir / "zerodt.sgy"
+    writePairShape(zeroDtPath, 8, 8, DtMs, DtMs, false)
+    clearIntervals(zeroDtPath)
+    var zeroDt = openSeismic(zeroDtPath, keys = true)
+    defer: zeroDt.close()
+    sameRefusal(zeroDt, zeroDtPath, sweep, DtMs, @[], "the file has no sample interval.")
+    let unequalPath = dir / "unequal.sgy"
+    writePairShape(unequalPath, 400, 800, DtMs, DtMs, false)
+    var unequal = openSeismic(unequalPath, keys = true)
+    defer: unequal.close()
+    sameRefusal(unequal, unequalPath, sweep, DtMs, @[],
+      "the seismic traces do not share one length.")
+    let splitPath = dir / "splitdt.sgy"
+    writePairShape(splitPath, Record, Record, DtMs, 4.0, false)
+    var splitDt = openSeismic(splitPath, keys = true)
+    defer: splitDt.close()
+    sameRefusal(splitDt, splitPath, sweep, DtMs, @[],
+      "the traces do not share one sample interval.")
+    let auxPath = dir / "auxonly.sgy"
+    writePairShape(auxPath, Record, Record, DtMs, DtMs, true)
+    var auxOnly = openSeismic(auxPath, keys = true)
+    defer: auxOnly.close()
+    sameRefusal(auxOnly, auxPath, sweep, DtMs, @[], "the file has no seismic traces.")
 
   block oddTrace:
     let oddPath = dir / "odd.sgy"

@@ -65,7 +65,9 @@ type
 proc workerCount(): int =
   clamp(countProcessors() div 2, 1, 4)
 
-proc msText(ms: float64): string =
+proc msText*(ms: float64): string =
+  ## The interval in ms, trailing zeros dropped, so a refusal reads the same
+  ## wherever it is built.
   var s = formatFloat(ms, ffDecimal, 6)
   if '.' in s:
     while s.len > 0 and s[^1] == '0': s.setLen(s.len - 1)
@@ -75,22 +77,27 @@ proc msText(ms: float64): string =
 proc refuse(msg: string) {.noinline, noreturn.} =
   raise newException(ValueError, msg)
 
-proc traceDt(file: ptr SeismicFile; trace: int): float64 =
+proc traceDt*(file: ptr SeismicFile; trace: int): float64 =
+  ## The trace's sample interval in ms, or NaN when it has none.
   let us = file[].traceKeys(trace).intervalUs
   let got = if us > 0 and us < Inf: us else: file[].sampleIntervalUs(trace)
   if got.isNaN or got <= 0 or got == Inf: NaN else: got / 1000.0
 
 type
-  RecordShape = object
-    samples: int
-    dtMs: float64
-    padded, cut: int
-    odd: seq[int]
+  RecordShape* = object
+    ## The seismic traces' length and interval. `padded` and `cut` count
+    ## auxiliary traces fitted to that length. `odd` lists auxiliary traces
+    ## at another interval.
+    samples*: int
+    dtMs*: float64
+    padded*, cut*: int
+    odd*: seq[int]
 
-proc isSeismic(status: TraceStatus): bool {.inline.} =
+proc isSeismic*(status: TraceStatus): bool {.inline.} =
+  ## A trace that is not auxiliary.
   status != tsAuxiliary
 
-proc recordShape(file: ptr SeismicFile): RecordShape =
+proc recordShape*(file: ptr SeismicFile): RecordShape =
   ## The seismic traces' length and interval. A shorter or longer auxiliary
   ## trace is counted as padded or cut; one at another known interval is
   ## listed in `odd` and not counted.
@@ -123,7 +130,9 @@ proc recordShape(file: ptr SeismicFile): RecordShape =
       if samples < result.samples: inc result.padded
       elif samples > result.samples: inc result.cut
 
-proc checkReference(samples: openArray[float32]) =
+proc checkReference*(samples: openArray[float32]) =
+  ## Refuses an empty sweep, one of a single sample, one with a sample that
+  ## is not a number, or one that is all zeros.
   if samples.len == 0: refuse("the reference sweep is empty.")
   if samples.len < 2: refuse("the reference sweep needs at least two samples.")
   var energy = 0.0

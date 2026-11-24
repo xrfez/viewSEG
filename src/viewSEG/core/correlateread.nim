@@ -13,17 +13,12 @@
 ## `CorrelateWorkspace` per thread; `correlateRead` allocates nothing once it
 ## exists. Threads share the plan and must not share a workspace.
 
-import std/[math, sets, strutils]
+import std/[math, sets]
 import parseSEG
 import processSEG
 import correlatejobs, filesystem, threads
 
 type
-  RecordShape = object
-    samples: int
-    dtMs: float64
-    odd: seq[int]
-
   CorrelateView* = object
     ## What correlating any trace of one raw file needs. The plan is a `ref`
     ## only so threads can share it; everything else is a value. Built by
@@ -49,73 +44,6 @@ type
     counts: array[1, int]
     failed*: seq[int]
 
-proc msText(ms: float64): string =
-  ## `msText` of correlatejobs.nim:68, so a refusal reads the same.
-  var s = formatFloat(ms, ffDecimal, 6)
-  if '.' in s:
-    while s.len > 0 and s[^1] == '0': s.setLen(s.len - 1)
-    if s.len > 0 and s[^1] == '.': s.setLen(s.len - 1)
-  if s.len == 0: "0" else: s
-
-proc traceDt(file: ptr SeismicFile; trace: int): float64 =
-  ## `traceDt` of correlatejobs.nim:78.
-  let us = file[].traceKeys(trace).intervalUs
-  let got = if us > 0 and us < Inf: us else: file[].sampleIntervalUs(trace)
-  if got.isNaN or got <= 0 or got == Inf: NaN else: got / 1000.0
-
-proc isSeismic(status: TraceStatus): bool {.inline.} =
-  ## `isSeismic` of correlatejobs.nim:90.
-  status != tsAuxiliary
-
-proc checkReference(samples: openArray[float32]): string =
-  ## `checkReference` of correlatejobs.nim:126. Empty when the sweep is usable.
-  if samples.len == 0: return "the reference sweep is empty."
-  if samples.len < 2: return "the reference sweep needs at least two samples."
-  var energy = 0.0
-  for i, v in samples:
-    let x = float64(v)
-    if x.isNaN or abs(x) == Inf:
-      return "the reference sweep has a sample that is not a number."
-    energy += x * x
-  if energy == 0: return "the reference sweep is all zeros."
-
-proc referenceSet(n: int; traces: openArray[int]): tuple[refs: HashSet[int]; refusal: string] =
-  ## `referenceSet` of correlatejobs.nim:137.
-  result.refs = initHashSet[int]()
-  for t in traces:
-    if t < 0 or t >= n:
-      return (result.refs, "reference trace " & $t & " is outside 0 .. " & $(n - 1) & ".")
-    if t in result.refs:
-      return (result.refs, "reference trace " & $t & " is listed twice.")
-    result.refs.incl(t)
-
-proc recordShape(file: ptr SeismicFile): tuple[shape: RecordShape; refusal: string] =
-  ## `recordShape` of correlatejobs.nim:93. A refusal is that proc's sentence.
-  let n = file[].len
-  if n == 0: return (result.shape, "the file has no traces.")
-  result.shape.odd = @[]
-  var seismic = 0
-  for i in 0 ..< n:
-    if isSeismic(file[].traceKeys(i).status):
-      let d = traceDt(file, i)
-      let samples = int(file[].traceEntry(i).numSamples)
-      if seismic == 0:
-        if d.isNaN: return (result.shape, "the file has no sample interval.")
-        result.shape.samples = samples
-        result.shape.dtMs = d
-      else:
-        if samples != result.shape.samples:
-          return (result.shape, "the seismic traces do not share one length.")
-        if d.isNaN or not sameInterval(d, result.shape.dtMs):
-          return (result.shape, "the traces do not share one sample interval.")
-      inc seismic
-  if seismic == 0: return (result.shape, "the file has no seismic traces.")
-  for i in 0 ..< n:
-    if not isSeismic(file[].traceKeys(i).status):
-      let d = traceDt(file, i)
-      if not d.isNaN and not sameInterval(d, result.shape.dtMs):
-        result.shape.odd.add i
-
 proc copySamples(samples: openArray[float32]): seq[float32] =
   result = newSeq[float32](samples.len)
   for i, v in samples: result[i] = v
@@ -135,22 +63,32 @@ proc initCorrelateView*(file: ptr SeismicFile; reference: openArray[float32];
   ## repeated: nothing is written.
   if file == nil or not file[].isOpen: return (result.view, "the file is not open.")
   if not file[].hasKeys: return (result.view, "the file was opened without its keys.")
-  let badSweep = checkReference(reference)
-  if badSweep.len > 0: return (result.view, badSweep)
+  try:
+    checkReference(reference)
+  except ValueError as e:
+    return (result.view, e.msg)
   if referenceDtMs.isNaN or referenceDtMs <= 0 or referenceDtMs == Inf:
     return (result.view, "the reference sweep has no sample interval.")
-  let shaped = recordShape(file)
-  if shaped.refusal.len > 0: return (result.view, shaped.refusal)
-  let dtMs = shaped.shape.dtMs
+  var shape = RecordShape(odd: @[])
+  try:
+    shape = recordShape(file)
+  except ValueError as e:
+    return (result.view, e.msg)
+  discard shape.padded
+  discard shape.cut
+  let dtMs = shape.dtMs
   if not sameInterval(referenceDtMs, dtMs):
     return (result.view, "the reference sweep is sampled every " & msText(referenceDtMs) &
       " ms and the record every " & msText(dtMs) & " ms.")
-  let recordSamples = shaped.shape.samples
+  let recordSamples = shape.samples
   if reference.len >= recordSamples:
     return (result.view, "the reference sweep is as long as the record or longer, " &
       "so there is no listen time.")
-  let named = referenceSet(file[].len, referenceTraces)
-  if named.refusal.len > 0: return (result.view, named.refusal)
+  var refs = initHashSet[int]()
+  try:
+    refs = referenceSet(file[].len, referenceTraces)
+  except ValueError as e:
+    return (result.view, e.msg)
   var pilotSamples = copySamples(reference)
   var forPlan = pilotSamples
   var built: CorrelationPlan[float32]
@@ -163,9 +101,9 @@ proc initCorrelateView*(file: ptr SeismicFile; reference: openArray[float32];
   result.view.plan[] = built
   result.view.pilot = pilotSamples
   result.view.path = copyPath(file)
-  result.view.refs = named.refs
+  result.view.refs = refs
   result.view.odd = initHashSet[int]()
-  for t in shaped.shape.odd: result.view.odd.incl(t)
+  for t in shape.odd: result.view.odd.incl(t)
   result.view.recordSamples = recordSamples
   result.view.listenSamples = recordSamples - reference.len
   result.view.dtMs = dtMs
