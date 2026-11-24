@@ -43,8 +43,8 @@ type
   OutputUi* = object
     source, dest: string
     format: OutputFormat = ofSegy
-    revision: OutputRevision
-    revisionKnown: bool ## `revision` was taken from the settings
+    segyRevision, segdRevision: OutputRevision ## each format's remembered choice
+    revisionKnown: bool                        ## the two were taken from the settings
     reversals: bool = true
     dropKilled: bool = true
     ownFilters: bool = true
@@ -456,13 +456,27 @@ proc chosenSweep(st: AppState): tuple[name, path, why: string; pilot: Option[Pil
   else:
     result = (e.name, st.referencesHome / e.file, "", none(PilotRule))
 
+proc sourceKinds(ui: OutputUi): set[FileKind] =
+  ## The standards of the ticked files; of every listed file when none is ticked.
+  for f in ui.listed:
+    if ui.ticks.getOrDefault(f.relative, false): result.incl f.kind
+  if result == {}:
+    for f in ui.listed: result.incl f.kind
+
+func revisionFor(ui: OutputUi; choices: openArray[OutputRevision]): OutputRevision =
+  ## The remembered choice of the current format when the ticked files allow
+  ## it; otherwise "same as the source", for this write only.
+  result = if ui.format == ofSegy: ui.segyRevision else: ui.segdRevision
+  if result notin choices: result = orSame
+
 proc submitRun(ui: var OutputUi; st: AppState) =
   var items: seq[BatchItem] = @[]
   for f in ui.listed:
     if ui.ticks.getOrDefault(f.relative, false):
       items.add BatchItem(source: f.source, relative: nativeRel(f.relative))
   if items.len == 0: return
-  var opts = OutputOptions(format: ui.format, revision: ui.revision, applyReversals: ui.reversals,
+  var opts = OutputOptions(format: ui.format, revision: ui.revisionFor(
+      revisionChoices(ui.format, ui.sourceKinds)), applyReversals: ui.reversals,
     applyShifts: ui.shifts, dropKilled: ui.dropKilled, applyOwnFilters: ui.ownFilters,
     applyProcessing: ui.processingOn, writeSessionPositions: not ui.keepOwn)
   let pk = st.findPanel(MainPanel)
@@ -1144,37 +1158,37 @@ proc drawNames(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Outpu
   if ui.editing: ui.drawEditor(st, marks, outp)
   elif ui.kindOpen: ui.closeKind()
 
-proc sourceKinds(ui: OutputUi): set[FileKind] =
-  ## The standards of the ticked files; of every listed file when none is ticked.
-  for f in ui.listed:
-    if ui.ticks.getOrDefault(f.relative, false): result.incl f.kind
-  if result == {}:
-    for f in ui.listed: result.incl f.kind
-
 proc drawRevision(ui: var OutputUi; st: AppState; marks: var Marks;
     outp: var OutputOutput) =
   if not ui.revisionKnown:
-    ui.revision = st.settings.output.revision
+    ui.segyRevision = st.settings.output.segyRevision
+    ui.segdRevision = st.settings.output.segdRevision
     ui.revisionKnown = true
   let kinds = ui.sourceKinds
   let choices = revisionChoices(ui.format, kinds)
-  if ui.revision notin choices: ui.revision = orSame
+  let shown = ui.revisionFor(choices)
   igTextUnformatted(RevisionLabel.cstring, nil)
   igSameLine(0, -1)
   igSetNextItemWidth(igGetFontSize() * 12)
-  if igBeginCombo("##output.revision", ui.revision.revisionLabel.cstring, 0):
+  var picked = shown
+  if igBeginCombo("##output.revision", shown.revisionLabel.cstring, 0):
     for v in choices:
-      if igSelectable_Bool(v.revisionLabel.cstring, v == ui.revision, 0,
-          ImVec2_c(x: 0, y: 0)):
-        ui.revision = v
+      if igSelectable_Bool(v.revisionLabel.cstring, v == shown, 0, ImVec2_c(x: 0, y: 0)):
+        picked = v
       marks.mark("output.revision.entry " & v.revisionLabel)
     igEndCombo()
   marks.mark("output.revision")
-  marks.mark("output.revision " & ui.revision.revisionLabel)
+  marks.mark("output.revision " & shown.revisionLabel)
   tip(if ui.format == ofSegy: RevisionSegyTip else: RevisionSegdTip)
-  if ui.revision != st.settings.output.revision:
+  if picked != shown:
+    # only a pick is remembered, for the format it was made in
     var s = st.settings
-    s.output.revision = ui.revision
+    if ui.format == ofSegy:
+      ui.segyRevision = picked
+      s.output.segyRevision = picked
+    else:
+      ui.segdRevision = picked
+      s.output.segdRevision = picked
     outp.commands.add Command(kind: ckSettings, settings: s)
   if kinds.len > 1:
     igPushTextWrapPos(0)

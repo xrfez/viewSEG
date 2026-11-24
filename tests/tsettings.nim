@@ -67,7 +67,7 @@ proc everyFieldSet(): Settings =
       asDisplayed: true, columns: {hcName, hcOffset}, tableFields: @["keys.offset",
       "trace.sourceX"], tableScope: tsFile),
     shotLog: ShotLogView(followPlot: true), cutGather: CutGatherView(recordMs: 2500.5),
-    output: OutputView(revision: orSegd31),
+    output: OutputView(segyRevision: orSegy1, segdRevision: orSegd31),
     hideKilled: true,
     spectrum: SpectrumOptions(window: SpectrumDisplay(scale: ssLinear, logFrequency: true,
       time: stVisible, raw: false, processed: false, response: false, phase: true,
@@ -260,18 +260,31 @@ proc main*() =
     doAssert bad.cutGather.recordMs == 10_000.0 and problems.len == 1, $problems
 
   block outputRevisionRemembered:
-    ## Seen to fail: with the revision not written, a Rev 2.0 choice read back
-    ## as "same" (`round trip`).
+    ## Seen to fail: with the SEG-D choice not written, a remembered Rev 3.1
+    ## read back as "same" (`round trip`); with the old `revision` word
+    ## ignored, an old Rev 2.0 was lost.
     var problems: seq[string]
     let old = readSettings("(settings (version 1) (hideKilled true))", "settings.nif",
       Settings(), problems)
-    doAssert problems.len == 0 and old.output.revision == orSame, $problems
+    doAssert problems.len == 0 and old.output.segyRevision == orSame and
+      old.output.segdRevision == orSame, $problems
     var top = Settings()
-    top.output.revision = orSegy20
-    doAssert roundTrip(top)[0].output.revision == orSegy20, "round trip"
-    let bad = readSettings("(settings (version 1) (output (revision segy99)))",
+    top.output.segyRevision = orSegy20
+    top.output.segdRevision = orSegd31
+    let back = roundTrip(top)[0].output
+    doAssert back.segyRevision == orSegy20 and back.segdRevision == orSegd31, "round trip"
+    # the one word an earlier file held goes to the standard it names
+    let before = readSettings("(settings (version 1) (output (revision segy20)))",
       "settings.nif", Settings(), problems)
-    doAssert bad.output.revision == orSame and problems.len == 1, $problems
+    doAssert before.output.segyRevision == orSegy20 and
+      before.output.segdRevision == orSame and problems.len == 0, $problems
+    let beforeD = readSettings("(settings (version 1) (output (revision segd31)))",
+      "settings.nif", Settings(), problems)
+    doAssert beforeD.output.segdRevision == orSegd31 and
+      beforeD.output.segyRevision == orSame, "an old SEG-D word"
+    let bad = readSettings("(settings (version 1) (output (segyRevision segy99)))",
+      "settings.nif", Settings(), problems)
+    doAssert bad.output.segyRevision == orSame and problems.len == 1, $problems
 
   block everyField:
     let s = everyFieldSet()

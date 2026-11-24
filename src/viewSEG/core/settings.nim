@@ -182,7 +182,8 @@ type
 
   OutputView* = object
     ## What the Output window offers again.
-    revision*: OutputRevision ## the revision of the file written
+    segyRevision*: OutputRevision ## the revision chosen for a SEG-Y file written
+    segdRevision*: OutputRevision ## the revision chosen for a SEG-D file written
 
   SpectrumOptions* = object
     ## How the spectrum windows show their spectra: each new FFT window as
@@ -234,7 +235,7 @@ type
     headers*: HeadersView ## the Headers window's tabs and toggles
     shotLog*: ShotLogView ## the Shot log window's follow tick
     cutGather*: CutGatherView ## the Slice by shot log window's record length
-    output*: OutputView ## the Output window's revision
+    output*: OutputView ## the Output window's revisions
     hideKilled*: bool
       ## killed traces are left out of the plot (the traces beside them close
       ## up); off: drawn blank

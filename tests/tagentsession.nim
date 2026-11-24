@@ -109,7 +109,7 @@ const Reached = {
   "headers.tab": "", "headers.traceTab": "", "headers.followPointer": "",
   "headers.asDisplayed": "", "headers.columns": "", "headers.tableFields": "",
   "headers.tableScope": "", "shotLog.followPlot": "", "cutGather.recordMs": "",
-  "output.revision": "", "hideKilled": "",
+  "output.segyRevision": "", "output.segdRevision": "", "hideKilled": "",
   "tray.icon": "", "tray.minimize": "",
   # the Seismic gear's Look tab only: no command sets the four component colours
   "componentColours": "",

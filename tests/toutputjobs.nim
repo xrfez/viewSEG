@@ -27,7 +27,7 @@ import parseSEG
 import parseSEG/model/traceindex
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
-import viewSEG/core/[edits, filekinds, jobs, outputjobs, panels, processing, sorting, state]
+import viewSEG/core/[edits, filekinds, filesystem, jobs, outputjobs, panels, processing, sorting, state]
 import utils/[faultyfs, sigfiles, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
@@ -149,7 +149,7 @@ proc writeAuxFirstSegd(path: string; auxUs: int) =
   bytes[at + 2] = chr(auxUs and 0xFF)
   writeFile(path, bytes)
 
-proc writeSynthetic(path: string; segdOut: bool; rev: SegyRevision) =
+proc writeSynthetic(path: string; segdOut: bool; rev: SegyRevision; t0Ms = 0.0) =
   ## Three live traces of 120 samples, 2 ms: a SEG-Y file of revision `rev`, or
   ## a SEG-D one (3.0) when `segdOut`.
   var w =
@@ -161,7 +161,7 @@ proc writeSynthetic(path: string; segdOut: bool; rev: SegyRevision) =
     var buf = newSeq[float32](120)
     for j in 0 ..< buf.len: buf[j] = float32(sin(float64(j + i) * 0.3))
     var k = initTraceKeys()
-    (k.record, k.channel, k.t0Ms, k.intervalUs) = (7.0, float64(i + 1), 0.0, 2000.0)
+    (k.record, k.channel, k.t0Ms, k.intervalUs) = (7.0, float64(i + 1), t0Ms, 2000.0)
     k.time = 1_700_000_000.0
     k.status = tsLive
     w.writeTrace(k, buf)
@@ -778,6 +778,32 @@ proc main*() =
       let want = if choice == orSegd31: "3.1" else: "3.0"
       doAssert revisionOf(dest) == want, "SEG-D " & $choice & " read back as " & revisionOf(dest)
       src.close()
+    block keysPathLoss:
+      ## Seen to fail: with the sentences left out, "no sentence for Rev 0".
+      let frac = dir / "revsrc" / "frac.sgd"
+      writeSynthetic(frac, true, SegyRevision(), t0Ms = 2.6)
+      var probe = openSeismic(frac, keys = true)
+      let before = probe.traceKeys(0).t0Ms
+      probe.close()
+      doAssert before == 2.6, "the SEG-D source holds a start time of " & $before
+      for (choice, said) in [(orSegy0, RevisionZeroKeysLoss), (orSegy1, RevisionOneKeysLoss),
+          (orSegy20, "")]:
+        var src = openSeismic(frac, keys = true)
+        let dest = dir / ("frac-to-" & $choice & ".sgy")
+        let got = runJob(src, frac, dest, OutputOptions(format: ofSegy, revision: choice),
+          FileEdits(), @[frac])
+        doAssert got.wrote.ok, got.wrote.reason
+        if said.len > 0:
+          doAssert said in got.wrote.lines,
+            "no sentence for " & $choice & ": " & $got.wrote.lines
+        doAssert RevisionZeroKeysLoss notin got.wrote.lines or choice == orSegy0
+        doAssert RevisionOneKeysLoss notin got.wrote.lines or choice == orSegy1
+        var back = openSeismic(dest, keys = true)
+        let t0 = back.traceKeys(0).t0Ms
+        back.close()
+        src.close()
+        if choice == orSegy0: doAssert t0 == 3.0, "Rev 0 holds a start time of " & $t0
+        else: doAssert t0 == 2.6, "Rev " & $choice & " holds a start time of " & $t0
     block explicitSegdForSegd:
       var src = openSeismic(seg, keys = true)
       let dest = dir / "segd-explicit.sgd"
@@ -786,6 +812,9 @@ proc main*() =
       doAssert not got.wrote.ok and "its own revision" in got.wrote.reason,
         "an explicit SEG-D revision for a SEG-D source was written: " & got.wrote.reason
       doAssert not fileExists(dest), "the refused write left a file"
+      doAssert "partial file" notin got.wrote.reason, got.wrote.reason
+      doAssert calls(foOpen, dest) + calls(foWrite, dest) == 0,
+        "the refused write touched the destination's folder"
       src.close()
     block wrongStandard:
       var src = openSeismic(one, keys = true)
@@ -793,6 +822,7 @@ proc main*() =
       let got = runJob(src, one, dest, OutputOptions(format: ofSegy, revision: orSegd30),
         FileEdits(), @[one])
       doAssert not got.wrote.ok and "does not apply" in got.wrote.reason, got.wrote.reason
+      doAssert "partial file" notin got.wrote.reason, got.wrote.reason
       src.close()
     doAssert revisionChoices(ofSegy, {fkSegy}) == @[orSame, orSegy0, orSegy1, orSegy20, orSegy21]
     doAssert revisionChoices(ofSegd, {fkSegy}) == @[orSame, orSegd30, orSegd31]

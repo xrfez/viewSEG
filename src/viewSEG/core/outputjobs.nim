@@ -85,6 +85,15 @@ const
   RefDelayKeptHeaders* =
     "The reference traces' time zero could not be written: a SEG-D channel set has one " &
     "start time and the file's own headers are kept, so they keep the delay they had."
+  RevisionZeroKeysLoss* =
+    "SEG-Y Rev 0 written from the trace keys: the start time is rounded to whole " &
+    "milliseconds, a fractional source point is rounded, and the midpoint, inline and " &
+    "crossline are not written."
+    ## From the library's `writeTrace(keys, ...)`: what Rev 0 has no field for.
+  RevisionOneKeysLoss* =
+    "SEG-Y Rev 1 written from the trace keys: there is no Trace Header Extension 1, so " &
+    "the unscaled coordinates, offset, record and ensemble numbers and the time's " &
+    "nanoseconds (Rev 2 only) are not written."
   OwnPositionsWritten* =
     "The file's own positions were written from its header keys."
     ## The keys path, with the tick on: geometry came from the file's own headers.
@@ -565,6 +574,11 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         abort(sink, dest, part, false, "The destination is a folder.", false)
       if fs.fileExists(dest):
         abort(sink, dest, part, false, "The destination already exists.", false)
+      if file != nil and file[].isOpen:
+        # Before anything is created: a refusal never started a write.
+        let revisionWhy = refusedRevision(opts.format, opts.revision,
+          if signature.isSignature: fkDat else: fileKind(file[].kind))
+        if revisionWhy.len > 0: abort(sink, dest, part, false, revisionWhy, false)
       var correlating = false
       var listen = 0
       var recordSamples = 0
@@ -649,9 +663,6 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let outKind = kindOf(opts.format)
       let srcKind = file[].kind
       let segdOut = outKind == skSegd
-      let revisionWhy = refusedRevision(opts.format, opts.revision,
-        if signature.isSignature: fkDat else: fileKind(srcKind))
-      if revisionWhy.len > 0: abort(sink, dest, part, claimed, revisionWhy, false)
       if signature.isSignature and segdOut and not changesTraces(opts):
         # `index.joined` is set only when a join changed the keys, the same
         # fact a finished join keeps once positions were filled in.
@@ -795,6 +806,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         file[].ensureKeys()
       if not like:
         lines.add "Headers were built from the trace keys. Template headers were not copied."
+        if not segdOut and opts.revision == orSegy0: lines.add RevisionZeroKeysLoss
+        elif not segdOut and opts.revision == orSegy1: lines.add RevisionOneKeysLoss
       if signature.isSignature and segdOut and changesTraces(opts):
         lines.add HeaderNotCarried
       let positions = sessionPositions(file[])

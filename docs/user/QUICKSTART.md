@@ -402,7 +402,7 @@ source: the headers are rewritten as that revision, and the notes list what it c
 keep (extended text, trailers, a time that was rounded, and so on). SEG-D offers Rev 3.0
 and 3.1 only when no ticked file is SEG-D, as a SEG-D file keeps its own revision; a
 folder that mixes standards offers the choices that hold for all of them, and a line says
-what each file gets. The choice is remembered. The boxes under it, in two columns,
+what each file gets. The choice is remembered for each format; one the ticked files cannot take is shown as Same as the source for that write, and is not forgotten. The boxes under it, in two columns,
 are on: polarity reversals, dropping killed traces, each trace's own filter, the Seismic
 window's processing, time shifts, and the plot's sort. **Keep the file's own positions**
 is off: a survey join or a station move in an open file is written into the headers on

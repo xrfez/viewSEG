@@ -322,8 +322,8 @@ proc main*() =
         comboAct(f, "output.revision", "output.revision.entry Rev 0", revArm, revCool)
       proc zeroPicked(f: FrameInfo): bool =
         f.markOf("output.revision Rev 0").size.x > 0 and
-          f.core.settings.output.revision == orSegy0
-      step("Rev 0 is chosen and remembered", pickZero, zeroPicked)
+          f.core.settings.output.segyRevision == orSegy0
+      step("Rev 0 is chosen and remembered for SEG-Y", pickZero, zeroPicked)
 
       proc toSegd(f: FrameInfo): bool =
         if f.markOf("output.format SEG-D.on").size.x == 0:
@@ -345,13 +345,10 @@ proc main*() =
         clickWhen(f, "output.format SEG-Y")
       proc segyAgain(f: FrameInfo): bool =
         f.markOf("output.format SEG-Y.on").size.x > 0 and
-          f.markOf("output.revision Same as the source").size.x > 0 and
-          f.core.settings.output.revision == orSame
-      step("SEG-Y again offers 'same'", toSegy, segyAgain)
-
-      proc pickZeroAgain(f: FrameInfo): bool =
-        comboAct(f, "output.revision", "output.revision.entry Rev 0", revArm, revCool)
-      step("Rev 0 is chosen for the run", pickZeroAgain, zeroPicked)
+          f.markOf("output.revision Rev 0").size.x > 0 and
+          f.core.settings.output.segyRevision == orSegy0 and
+          f.core.settings.output.segdRevision == orSame
+      step("SEG-Y shows its remembered Rev 0 again", toSegy, segyAgain)
 
       proc badDest(f: FrameInfo): bool =
         answer = @[folder / "inside"]

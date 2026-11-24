@@ -47,7 +47,7 @@
 ##   (tableScope record))
 ##  (shotLog (followPlot false))
 ##  (cutGather (recordMs 10000.0))
-##  (output (revision same))
+##  (output (segyRevision same) (segdRevision same))
 ##  (hideKilled false)
 ##  (spectrum
 ##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
@@ -514,7 +514,8 @@ proc settingsDocument*(s: Settings): string =
   w.value("recordMs", s.cutGather.recordMs)
   w.close()
   w.open("output")
-  w.choice("revision", OutputRevisionNames[s.output.revision])
+  w.choice("segyRevision", OutputRevisionNames[s.output.segyRevision])
+  w.choice("segdRevision", OutputRevisionNames[s.output.segdRevision])
   w.close()
   w.value("hideKilled", s.hideKilled)
   w.open("spectrum")
@@ -1180,7 +1181,16 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
           else: r.unknown(k, "cutGather")
       of "output":
         for k in c.kids:
-          if k.isTree("revision"): r.choice(k, OutputRevisionNames, result.output.revision)
+          if k.isTree("segyRevision"):
+            r.choice(k, OutputRevisionNames, result.output.segyRevision)
+          elif k.isTree("segdRevision"):
+            r.choice(k, OutputRevisionNames, result.output.segdRevision)
+          elif k.isTree("revision"):
+            # the one word an earlier file held: it goes to the standard it names
+            var old = orSame
+            r.choice(k, OutputRevisionNames, old)
+            if old.isSegy: result.output.segyRevision = old
+            elif old.isSegd: result.output.segdRevision = old
           else: r.unknown(k, "output")
       of "hideKilled": r.flag(c, result.hideKilled)
       of "spectrum":
