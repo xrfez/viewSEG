@@ -45,11 +45,12 @@ proc writeSpecs(dir, name: string; specs: openArray[Spec]; n: int): string =
     w.writeTrace(k, samples)
   discard w.close()
 
-proc factsOf(dir, name: string; specs: openArray[Spec]; n = 1000): RecordingFacts =
+proc factsOf(dir, name: string; specs: openArray[Spec]; n = 1000;
+    starts = KindStarts): RecordingFacts =
   let path = writeSpecs(dir, name, specs, n)
   var f = openSeismic(path)
   try:
-    result = describeRecording(planRecording(addr f, path, DtMs, VendorRegistry()))
+    result = describeRecording(planRecording(addr f, path, DtMs, VendorRegistry()), starts)
   finally:
     f.close()
 
@@ -282,6 +283,29 @@ proc main*() =
     let receivers = receiversOf(dir, "order", specs)
     for row in 0 ..< specs.len:
       doAssert receivers[row] == row mod 6, "row " & $row & ": " & $receivers
+
+  block the_kind_follows_the_first_few_starts:
+    # twelve traces, the tenth 150 samples late: the kind looks at the first KindStarts
+    # starts and calls it continuous; the check of every start (the cut's) does not
+    var specs: seq[Spec]
+    for i in 0 ..< 12: specs.add spec(0, i * 1000 + (if i == 9: 150 else: 0))
+    let few = factsOf(dir, "late", specs)
+    doAssert KindStarts == 8
+    doAssert few.kind == rkReceiverContinuous and few.boundaries == KindStarts - 1, $few
+    let all = factsOf(dir, "late", specs, starts = AllStarts)
+    doAssert all.kind == rkReceiverSliced and all.boundaries == 11 and all.irregular == 2, $all
+    doAssert all.slicedWhy == swShort and all.offTrace == 10, $all
+    # a late start among the first few is seen at once
+    var early: seq[Spec]
+    for i in 0 ..< 12: early.add spec(0, i * 1000 + (if i == 4: 150 else: 0))
+    doAssert factsOf(dir, "early", early).kind == rkReceiverSliced
+
+  block traces_sharing_a_start_are_the_components_of_one_segment:
+    # the same receiver twice at each start: the step is compared with the next DIFFERENT start
+    let f = factsOf(dir, "pairs", [spec(0, 0), spec(0, 0), spec(0, 1000), spec(0, 1000),
+      spec(0, 2000), spec(0, 2000)])
+    doAssert f.kind == rkReceiverContinuous and f.abutting == 2 and f.irregular == 0, $f
+    doAssert f.boundaries == 2 and f.segments == 6, $f
 
   block facts_that_are_not_ready_are_not_a_shot_gather:
     doAssert cutRefusal(RecordingFacts()) == "No live trace with a start time."

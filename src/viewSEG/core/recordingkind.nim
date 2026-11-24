@@ -39,6 +39,12 @@
 ## the traces leave dead time between them or overlap. A receiver with one
 ## segment has no step to keep. When every trace carries one start time the
 ## reason is `swSameStart`.
+##
+## The kind is asked of any loaded file, so `describeRecording` looks only at the
+## first `KindStarts` distinct start times of each sub-receiver (traces that
+## share a start are the components of one segment: the step is compared with the
+## next trace of a different start). The cut places every segment, so its job asks
+## for `AllStarts`: a trace off the step anywhere refuses the cut with a sentence.
 
 import std/[algorithm, math, sequtils]
 import parseSEG
@@ -47,6 +53,11 @@ import processSEG/continuous/slice
 import ./[filesystem, jobs, segmentclock, vendormaps]
 
 const
+  KindStarts* = 8
+    ## how many distinct start times of a receiver the kind is decided from: cheap enough to
+    ## ask of any loaded file
+  AllStarts* = high(int)
+    ## every start time: what the cut checks, because it places every segment
   EndRepeatShare* = 0.1
     ## a segment may be this share of its length longer than the step between
     ## starts: it repeats a little of the data at its ends and still continues
@@ -147,16 +158,25 @@ func stepOf(diffs: seq[int]; len: int): int =
       best = run
       result = sorted[x]
 
-proc tally(segs: seq[Seg]; i, j: int; dtS: float64; r: var RecordingFacts) =
-  ## Counts the boundaries of the receiver `segs[i ..< j]` (two or more
-  ## segments, in time order) against its step and checks the segments cover it.
+proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int; r: var RecordingFacts) =
+  ## Counts the boundaries of the receiver `segs[i ..< j]` (in time order) against its step
+  ## and checks the segments cover it, for its first `starts` distinct start times: traces
+  ## that share a start are the components of one segment, only the first of them is used.
   ## The first trace that breaks the rule names the reason, unless one is named.
-  let count = j - i
+  var used: seq[Seg] = @[]
+  var x = i
+  while x < j and used.len < starts:
+    if used.len == 0 or int(round((segs[x].start - used[^1].start) / dtS)) != 0:
+      used.add segs[x]
+    inc x
+  let count = used.len
+  if count < 2: return
+  r.boundaries += count - 1
   var diffs = newSeq[int](count - 1)
   for x in 1 ..< count:
-    diffs[x - 1] = int(round((segs[i + x].start - segs[i + x - 1].start) / dtS))
+    diffs[x - 1] = int(round((used[x].start - used[x - 1].start) / dtS))
   var lens = newSeq[int](count)
-  for x in 0 ..< count: lens[x] = segs[i + x].n
+  for x in 0 ..< count: lens[x] = used[x].n
   lens.sort()
   let step = stepOf(diffs, lens[count div 2])
   for x in 1 ..< count:
@@ -171,7 +191,7 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; r: var RecordingFacts) =
     else:
       inc r.irregular
       if r.slicedWhy == swNone:
-        r.offTrace = segs[i + x].row + 1
+        r.offTrace = used[x].row + 1
         if k > 1:
           r.slicedWhy = swIrregular
           r.offSeconds = float64(abs(off)) * dtS
@@ -183,11 +203,11 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; r: var RecordingFacts) =
         else:
           r.slicedWhy = swOverlap
           r.overlapSeconds = float64(-off) * dtS
-  for x in i ..< j:
-    let n = segs[x].n
+  for x in 0 ..< count:
+    let n = used[x].n
     if n + 1 < step or 10 * (n - step) > n:
       if r.slicedWhy == swNone:
-        r.offTrace = segs[x].row + 1
+        r.offTrace = used[x].row + 1
         if n < step:
           r.slicedWhy = swShort
           (r.segmentSeconds, r.stepSeconds) = (float64(n) * dtS, float64(step) * dtS)
@@ -197,8 +217,9 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; r: var RecordingFacts) =
       inc r.uncovered
       break
 
-proc describeRecording*(plan: RecordingPlan): RecordingFacts =
-  ## The facts and the verdict of `plan`.
+proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFacts =
+  ## The facts and the verdict of `plan`, the steps checked over the first `starts` distinct
+  ## start times of each receiver (`AllStarts`: every one).
   let meta = plan.meta
   let dtS = meta.dtMs / 1000
   result = RecordingFacts(dtMs: meta.dtMs, firstTime: Inf, lastTime: -Inf,
@@ -231,9 +252,7 @@ proc describeRecording*(plan: RecordingPlan): RecordingFacts =
     for x in i ..< j:
       result.firstTime = min(result.firstTime, segs[x].start)
       result.lastTime = max(result.lastTime, segs[x].finish)
-      if x > i:
-        inc result.boundaries
-    if j - i > 1: tally(segs, i, j, dtS, result)
+    if j - i > 1: tally(segs, i, j, dtS, starts, result)
     i = j
   result.ready = true
   placed.sort do (a, b: tuple[st: Station; segs: int]) -> int:

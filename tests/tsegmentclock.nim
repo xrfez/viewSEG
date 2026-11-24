@@ -378,6 +378,42 @@ proc main*() =
       let ok = describeRecording(planRecording(addr h, rec / "u5.sgd", 2.0, gps))
       doAssert ok.unevenChannels == 0 and cutRefusal(ok) == "", $ok
 
+    block the_kind_looks_at_the_first_starts_and_the_cut_at_all:
+      # twelve segments of one receiver, the tenth ten samples late: the dialog's facts (the
+      # first KindStarts starts) say continuous, the cut places every segment and refuses
+      var raw: seq[int64]
+      for seg in 0 ..< 12:
+        raw.add gpsOf(segStart(seg) + (if seg == 9: 10 * DtUs else: 0))
+      let path = rec / "late.sgd"
+      makeRecording(path, raw)
+      var g = openSeismic(path, keys = true)
+      defer: g.close()
+      let plan = planRecording(addr g, path, 2.0, gps)
+      doAssert describeRecording(plan).kind == rkReceiverContinuous
+      let all = describeRecording(plan, AllStarts)
+      doAssert all.kind == rkReceiverSliced and all.offTrace == 10, $all
+      publishVendors(gps)
+      defer: publishVendors(VendorRegistry())
+      let dest = fx.dir / "out" / "late.sgd"
+      let got = runCut(initJobs(), g, path, dest, shotsAt([90_000'i64]),
+        initCutOptions(40.0, -20.0))
+      doAssert got.st == jsFailed and "time-sliced receiver gather" in got.res.reason,
+        got.res.reason
+      doAssert not fileExists(dest)
+
+    block type_codes_of_zero_still_tell_the_channels_apart:
+      # three channels of one station, every sensor type 0, four segments
+      var raw: seq[int64]
+      for seg in 0 ..< 4:
+        for c in 0 ..< 3: raw.add gpsOf(segStart(seg))
+      let path = rec / "zeros.sgd"
+      makeRecording(path, raw, sensor = [0'u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+      var g = openSeismic(path, keys = true)
+      defer: g.close()
+      let facts = describeRecording(planRecording(addr g, path, 2.0, gps))
+      doAssert facts.kind == rkReceiverContinuous and facts.components == 3, $facts
+      doAssert facts.abutting == 9 and facts.unevenChannels == 0, $facts
+
     block records_keep_the_order_of_the_file:
       # at stations 102 then 101, a geophone Z (sensor 2), a hydrophone (1), a geophone X (3):
       # every record is 102 Z, 102 H, 102 X, 101 Z, 101 H, 101 X, also after a dropout

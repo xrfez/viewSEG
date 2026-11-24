@@ -292,7 +292,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         proc () {.gcsafe.} = ctx.checkCancelled())
       let clock = recording.clock
       let streams = recording.streams
-      let facts = describeRecording(recording)
+      let facts = describeRecording(recording, AllStarts)
       let refusal = cutRefusal(facts)
       if refusal.len > 0: abort(sink, dest, part, false, refusal, false)
       let window = SliceWindow(startMs: opts.startMs, lengthMs: opts.recordMs)
