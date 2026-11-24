@@ -10,7 +10,8 @@
 ## names a judged row. With `applyFileScale` not called, `holdDownWhenScaled`
 ## finds no hold-down words. With the unit guessed as newtons, `emptyUnitRefused`
 ## names "N". With `controllerNote` left out, `setBWarning` finds no
-## "follows set A (probable)".
+## "follows set A (probable)". With the archive citation left out,
+## `archiveCited` finds no "Measured against the project reference".
 
 import std/[math, os, strutils]
 import parseSEG
@@ -321,6 +322,26 @@ proc main*() =
     for w in row.warnings:
       if "follows set A (probable)" in w: said = true
     doAssert said, $row.outcome & " " & $row.warnings
+
+  block archiveCited:
+    ## A held archive reference is named on the row. Seen to fail when the
+    ## row was judged and never said which reference it used.
+    markWorkerThread()
+    let refPath = dir / "pilot.sgy"
+    var samples = newSeq[float32](2000)
+    for i in 0 ..< samples.len:
+      let t = float64(i) / 1000.0
+      samples[i] = float32(sin(2 * PI * (8.0 * t + 12.0 * t * t)))
+    writeReferenceFile(refPath, "sweep-a", 1000.0, samples, ReferenceOrigin())
+    let got = runJob(@[listed(plain)], ask,
+      reference = FolderReference(path: refPath, name: "sweep-a"))
+    doAssert got.st == jsDone, got.error
+    let row = rowOf(got.table, plain)
+    doAssert row.outcome == foJudged, $row.outcome & " " & row.problem
+    var said = false
+    for w in row.warnings:
+      if w == "Measured against the project reference sweep-a": said = true
+    doAssert said, $row.warnings
 
   block cancel:
     lane = initJobs()
