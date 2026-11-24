@@ -502,6 +502,40 @@ proc main*() =
         "the panel reads the file again"
       echo "tjoin: a cancel in the step refused, the join done"
 
+  block pointCodesSaidOnce:
+    # A receiver station the R file gives with two codes of one letter (G1,
+    # G2: the later is used) is said once in the log, by the station, however
+    # many traces it has; a survey with one code a station says nothing of
+    # codes. Seen to fail: with the join's `pointCodeWarnings` left out, "no
+    # warning of the two stations".
+    withFixtures fx:
+      let path = fx.stationsSegd()
+      let survey = fx.surveySps()
+      proc point(line, pt, x: float64; code: string): SpsPoint =
+        SpsPoint(kind: pkReceiver, line: line, point: pt, index: 1, code: code, easting: x,
+          northing: OriginY, elevation: Elevation, dayOfYear: -1, hour: -1, minute: -1, second: -1)
+      var r = SpsFile(headers: @[SpsHeader(code: "00", description: "SPS format version num.",
+        data: "SPS 2.1;")])
+      for c in 1 .. Channels:
+        r.points.add point(RcvLine, FirstRcvPoint + float64(c - 1), rcvX(c), "G1")
+      for c in 1 .. 2: # the first two stations again, with the same letter's other number
+        r.points.add point(RcvLine, FirstRcvPoint + float64(c - 1), rcvX(c), "G2")
+      doAssert writeSps(r, fx.dir / "coded.r").len == 0
+      func said(st: AppState): seq[string] =
+        for e in st.log:
+          if "has several point codes" in e.text: result.add e.text
+      var st = initAppState()
+      st.opened(path)
+      st.join(sps(survey.s, fx.dir / "coded.r", survey.x))
+      doAssert st.joinReport.outcome == joJoined, st.words
+      let told = st.said
+      doAssert told.len == 2, "no warning of the two stations: " & $told
+      doAssert "receiver 100.0/101.0/1 has several point codes (G1, G2)" in told[0], told[0]
+      var plain = initAppState()
+      plain.opened(path)
+      plain.join(sps(survey.s, survey.r, survey.x))
+      doAssert plain.said.len == 0, $plain.said
+
   echo "tjoin: done"
 
 when isMainModule:

@@ -809,6 +809,10 @@ proc joinReadWork*(file: ptr SeismicFile; session: SessionId; files: seq[JoinFil
         p.sayJoin(g[].log, taken)
         taken = g[].log.len
         p.finish()
+      # The stations given with several point codes, said once for the join.
+      var codes = Problems(to: to, job: ctx.id, name: "point codes")
+      codes.take(g[].pointCodeWarnings)
+      codes.finish()
       # The join's relations: the one file's where they are, or every
       # relation file's read once more into one geometry.
       if sources.len == 1:
