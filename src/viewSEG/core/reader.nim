@@ -372,8 +372,8 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   if src.view != rd.viewOf: rd.dropViewWork()
   rd.src = src
   rd.name = rd.src.path.extractFilename
-  if rd.src.session != rd.vendor.session:
-    rd.vendor.drop() # another file, or nothing, shown: the columns held are not wanted
+  if rd.src.session == NoSession or rd.src.session != rd.vendor.session:
+    rd.vendor.drop() # another file, nothing, or a file not known: the columns are not wanted
   if rd.src.file == nil: return
   if rd.src.file != rd.toldFile or rd.src.path != rd.toldFilePath:
     # another file, or the same opened again: what was said of the one before
@@ -1080,7 +1080,7 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
   let window = q.decodeSpan(rd.layout.samples)
   let skip = q.firstSample - window.a # decoded columns before the kept ones
   let cols = window.len
-  if not rd.buildVendorLines(req.fields):
+  if req.fields.hasVendorLine and not rd.buildVendorLines(req.fields):
     given = true # a newer note came first
     return
   if not level and spareReady(rd.spare, rd.raw, rd.src.view, req, q, window, cols):

@@ -18,7 +18,8 @@
 ##   counts once;
 ## - the maps loaded again (here: none offered) drop the column: the line shows unknown, with
 ##   no stale values; `VendorLines` builds again after a new load, and for another open file
-##   (`SessionId`) of the same path, size and traces;
+##   (`SessionId`) of the same path, size and traces, and every time for a file with no
+##   session;
 ## - a file closed, written again with the same size and opened again shows its new values;
 ##   the columns of a file no longer shown are let go (`columnsHeld`);
 ## - a row's value is read in place: 2000 values of a column of a million take under 50 ms;
@@ -30,7 +31,8 @@
 ## found the old column; with `headerRefOf` not testing the built-in names first, `names`
 ## found a vendor line called "channel"; with `valueAt` copying the column, `noCopy` took 433
 ## ms; with the session left out of `build`'s key, `reload` kept the column of another open
-## file; with that and the reader dropping its columns only for no file (as before),
+## file, and with `NoSession` compared as a session, it kept the column of a file with none;
+## with the session left out and the reader dropping its columns only for no file (as before),
 ## `reopened` showed the old column, and with the latter alone it found the columns of a
 ## file no longer shown held; with `usableLineName` not asked, `limits` kept the long name;
 ## with every library error said as "not a field", `unknown` missed the reason, and with no
@@ -448,6 +450,10 @@ proc main*() =
         columnsBuilt() == n + 2, "another path kept the column"
       doAssert lines.build(addr f, SessionId(2), path & "x", 99, ["counter"]) and
         columnsBuilt() == n + 3, "another open file (the same path, size and traces) kept it"
+      # a file with no session is not known to be the same: read again each time
+      doAssert lines.build(addr f, NoSession, path, 0, ["counter"]) and
+        lines.build(addr f, NoSession, path, 0, ["counter"]) and columnsBuilt() == n + 5,
+        "a file with no session kept its column"
       publishVendors(VendorRegistry())
       doAssert lines.build(addr f, one, path, 0, ["counter"])
       doAssert lines.valueAt("counter", 4).isNaN, "a column of an older load was kept"

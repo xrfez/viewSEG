@@ -15,7 +15,7 @@
 ## A tile looks each line's column up once (`slot`) and reads its rows by
 ## slot (`valueAt`): no column is copied.
 
-import std/[atomics, os, sets, strutils, tables]
+import std/[atomics, os, strutils, tables]
 import parseSEG
 import filesystem, panels, session, sorting, vendormaps
 
@@ -76,13 +76,17 @@ func absentCount*(v: VendorLines; name: string): int =
   let s = v.slot(name)
   if s < 0: 0 else: v.absent[s]
 
-func vendorNames*(fields: openArray[HeaderRef]): seq[string] =
-  ## The vendor fields among `fields`, each once, in order.
-  var seen = initHashSet[string]()
+func hasVendorLine*(fields: openArray[HeaderRef]): bool =
+  ## Whether a vendor field is among `fields` (allocates nothing).
   for f in fields:
-    if f.field == hfVendor and f.name notin seen:
-      seen.incl f.name
-      result.add f.name
+    if f.field == hfVendor: return true
+  false
+
+func vendorNames*(fields: openArray[HeaderRef]): seq[string] =
+  ## The vendor fields among `fields`, each once, in order (a display header
+  ## has at most `MaxHeaderLines`); empty, unallocated, when there is none.
+  for f in fields:
+    if f.field == hfVendor and f.name notin result: result.add f.name
 
 proc takeNotes*(v: var VendorLines): seq[string] =
   ## What was found of the names since the last call, in words (a name the
@@ -113,13 +117,14 @@ proc build*(v: var VendorLines; f: ptr SeismicFile; session: SessionId; path: st
   ## Builds the columns of `names` that are not held, from `f` (open file
   ## `session`, read from `path`, `size` bytes when it was opened) with the
   ## vendor maps in force; columns of another file, or of an older load of the
-  ## maps, are dropped first. A name no map defines for the file, a text
+  ## maps, are dropped first, and so are all when `session` is `NoSession`
+  ## (a file not known to be the same is read again). A name no map defines for the file, a text
   ## field, or a file that cannot be read gives an empty column, kept so that
   ## it is not asked for again, and a note (`takeNotes`). False when `stop`
   ## said to give up (nothing of the column then in progress is kept).
   let stamp = vendorStamp()
-  if stamp != v.stamp or session != v.session or path != v.path or size != v.size or
-      f[].len != v.traces:
+  if session == NoSession or session != v.session or stamp != v.stamp or path != v.path or
+      size != v.size or f[].len != v.traces:
     v.drop()
     v = VendorLines(stamp: stamp, session: session, path: path, size: size, traces: f[].len)
   var reg: VendorRegistry
