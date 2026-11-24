@@ -312,7 +312,11 @@ last two counts, **Noisy** and **Weak**, are the traces the map's noisy and weak
 show for each field record, found the same way (the exclusion area you chose in Tools >
 Settings applies, and a record's first breaks are found for it, so a scan takes longer).
 They are not counted as bad. A cell is empty where no trace could be judged: killed,
-dead and auxiliary traces, a record that could not be read, or one the test cannot judge.
+dead and auxiliary traces, traces inside the exclusion area, a record that could not be
+read, or one the test cannot judge.
+The scan judges the samples as recorded, with your kills and noise settings, but without
+the per-trace filters, reversals, shifts or template-only restriction the map applies to
+the record shown.
 The **Records** tab is one row per file and record. A box above the table narrows the
 rows. Click a column header to sort by it (again for the other way; Shift-click adds
 a column). The sort's place is a small number after the header name.

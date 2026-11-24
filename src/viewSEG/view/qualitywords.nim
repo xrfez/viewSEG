@@ -50,10 +50,14 @@ const
   FlatTip* = "The samples are constant."
   DcTip* = "The samples have a DC offset."
   NonFiniteTip* = "A sample is not a finite number."
+  ScanJudgesTip = "The scan judges the samples as recorded, with your kills and noise " &
+    "settings, but without the per-trace filters, reversals, shifts or template-only " &
+    "restriction the map applies to the record shown."
   NoisyTip* = "Traces much louder than the others of their record, outside the area around " &
-    "the source. Not counted as bad. Empty when the record could not be judged."
+    "the source. Not counted as bad. Empty when the record could not be judged. " &
+    ScanJudgesTip
   WeakTip* = "Traces much quieter than the others of their record. Not counted as bad. " &
-    "Empty when the record could not be judged."
+    "Empty when the record could not be judged. " & ScanJudgesTip
   ColFile* = "File"
   ColRecord* = "Record"
   KilledTip* = "A trace an edit killed. It is counted as killed, not as bad, and it is not " &
