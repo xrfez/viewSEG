@@ -12,6 +12,11 @@
 ## Undo and redo put a cell's text back through the same save path, a new
 ## edit clears redo, the history holds 1000 steps, a re-map clears it, and
 ## undo with nothing changes nothing.
+## The project remembers the last column map. An import with no map given uses
+## it when the file has the same columns and, with a header, the same names;
+## a guess is used otherwise, and the completion sentence is only said when
+## the remembered map was used. Removing a log does not clear it. A read-only
+## project uses it and does not write it. No project remembers nothing.
 ##
 ## Seen to fail: with the cap refusal shortened, `over_the_cap` rejected
 ## "big.csv is too large."; with the read-only edit saving anyway,
@@ -27,7 +32,9 @@
 ## removed on the UI thread, `remove_does_not_touch_the_copy_on_the_ui_thread`
 ## and `finished_save_removes_off_the_ui_thread` saw that write; with the
 ## re-map parsing a passed string, `remap_reads_the_log_not_a_stale_copy`
-## lost the edit.
+## lost the edit; with the remembered map not applied, `remembered_map_on_the_job`
+## rejected `usedLast`; with a read-only project remembering a new map anyway,
+## `read_only_uses_the_map` kept the guess.
 
 import std/[options, os, strutils]
 import viewSEG/core/[filesystem, jobs, project, shotlog, shotlogjobs, state]
@@ -41,11 +48,13 @@ proc ended(jobs: Jobs; id: JobId): bool =
   let info = jobs.info(id)
   info.isSome and info.get.state in {jsDone, jsFailed, jsCancelled}
 
-proc runImport(path: string; map = ShotLogMap(); given = false):
+proc runImport(path: string; map = ShotLogMap(); given = false;
+    remembered = ShotLogMap(); remember = false; headers: seq[string] = @[]):
     tuple[st: JobState; sink: ShotLogSink; error: string] =
   let jobs = initJobs()
   result.sink = ShotLogSink()
-  let id = jobs.submit(importSpec(path), importShotLog(path, map, given, result.sink))
+  let id = jobs.submit(importSpec(path), importShotLog(path, map, given, result.sink,
+    remembered, remember, headers))
   doAssert waitUntil(jobs.ended(id)), "the import did not finish: " & $jobs.stateOf(id)
   let info = jobs.info(id).get
   (info.state, result.sink, info.error)
@@ -53,6 +62,10 @@ proc runImport(path: string; map = ShotLogMap(); given = false):
 proc said(st: AppState; words: string): bool =
   for e in st.log:
     if words in e.text: return true
+
+proc timesSaid(st: AppState; words: string): int =
+  for e in st.log:
+    if words in e.text: inc result
 
 proc start(config: string): AppState =
   result = initAppState()
@@ -593,6 +606,336 @@ proc main*() =
     doAssert st.shotUndoCount(0) == 0
     st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
     doAssert st.shotLogCount == 0
+    discard st.shutdown()
+
+  const
+    Table = "# day\nfile;shot;note\n3;12;c\n"
+    TableCase = "# day\n FILE ;Shot; note \n4;13;d\n"
+    TableWide = "# day\nfile;shot;note;extra\n5;14;e;x\n"
+    TableRenamed = "# day\nreel;shot;note\n5;14;e\n"
+
+  block remembered_map_on_the_job:
+    let path = root / "job-remember.csv"
+    writeFile(path, Table)
+    var remembered = initShotLogMap()
+    remembered.delimiter = dlSemicolon
+    remembered.skipLines = 1
+    remembered.hasHeader = true
+    remembered.roles = @[crText, crSequence, crText]
+    let headers = @["file", "shot", "note"]
+    let got = runImport(path, remember = true, remembered = remembered, headers = headers)
+    doAssert got.st == jsDone, got.error
+    doAssert got.sink.result.usedLast, "the remembered map was not used"
+    doAssert got.sink.result.map.roles == remembered.roles
+    doAssert got.sink.result.map.delimiter == dlSemicolon
+    doAssert got.sink.result.map.skipLines == 1
+    let cased = root / "job-case.csv"
+    writeFile(cased, TableCase)
+    let gotCase = runImport(cased, remember = true, remembered = remembered, headers = headers)
+    doAssert gotCase.st == jsDone, gotCase.error
+    doAssert gotCase.sink.result.usedLast, "capitals and end spaces did not fit"
+    doAssert gotCase.sink.result.map.roles[1] == crSequence
+    let wide = root / "job-wide.csv"
+    writeFile(wide, TableWide)
+    let gotWide = runImport(wide, remember = true, remembered = remembered, headers = headers)
+    doAssert gotWide.st == jsDone, gotWide.error
+    doAssert not gotWide.sink.result.usedLast, "an extra column used the remembered map"
+    doAssert gotWide.sink.result.map.roles[1] == crShotPoint
+    let renamed = root / "job-renamed.csv"
+    writeFile(renamed, TableRenamed)
+    let gotRenamed = runImport(renamed, remember = true, remembered = remembered,
+      headers = headers)
+    doAssert gotRenamed.st == jsDone, gotRenamed.error
+    doAssert not gotRenamed.sink.result.usedLast, "a renamed header used the remembered map"
+    doAssert gotRenamed.sink.result.map.roles[1] == crShotPoint
+    var given = remembered
+    given.roles = @[crText, crText, crText]
+    let gotGiven = runImport(path, given, given = true, remembered = remembered,
+      remember = true, headers = headers)
+    doAssert gotGiven.st == jsDone, gotGiven.error
+    doAssert not gotGiven.sink.result.usedLast, "a given map was treated as remembered"
+    doAssert gotGiven.sink.result.map.roles == @[crText, crText, crText]
+
+  block remembered_map_survives_remove:
+    let job = root / "JobRemember"
+    let table = root / "remember.csv"
+    let cased = root / "remember-case.csv"
+    writeFile(table, Table)
+    writeFile(cased, TableCase)
+    var st = start(root / "config-remember")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0), "the project did not open"
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not stored"
+    doAssert st.shotLogMap(0).roles[0] == crFileNumber and
+      st.shotLogMap(0).roles[1] == crShotPoint, "the first import did not guess"
+    doAssert not st.said(ColumnsAsLast), "a guess said the remembered sentence"
+    var changed = st.shotLogMap(0)
+    changed.roles[0] = crText
+    changed.roles[1] = crSequence
+    st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: changed)
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotLogMap(0).roles[1] == crSequence),
+      "the re-map did not finish"
+    doAssert st.project.doc.lastShotMap.isSome, "the re-map was not remembered"
+    st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
+    doAssert st.settle(st.shotLogCount == 0 and st.jobs.active.len == 0), "the log was kept"
+    doAssert st.project.doc.lastShotMap.isSome, "removing the log cleared the map"
+    st.flushFiles()
+    let doc = readFile(job.projectDirOf.documentOf)
+    doAssert "(lastShotMap" in doc, "the remembered map was not written"
+    doAssert "(headerName \"file\")" in doc, "the header names were not written"
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the second import did not finish"
+    doAssert st.shotLogMap(0).roles == @[crText, crSequence, crText],
+      "the remembered roles were not used"
+    doAssert st.said(ColumnsAsLast), "the completion sentence was not said"
+    let saidOnce = st.timesSaid(ColumnsAsLast)
+    st.apply Command(kind: ckImportShotLog, logPath: cased)
+    doAssert st.settle(st.shotLogCount == 2 and st.jobs.active.len == 0),
+      "the cased import did not finish"
+    doAssert st.shotLogMap(1).roles[1] == crSequence, "capitals and end spaces did not fit"
+    doAssert st.timesSaid(ColumnsAsLast) == saidOnce + 1, "the cased import said nothing"
+    discard st.shutdown()
+
+  block remembered_map_survives_reopen:
+    let job = root / "JobReopenMap"
+    let table = root / "reopen.csv"
+    writeFile(table, Table)
+    var st = start(root / "config-reopen-map")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0), "the project did not open"
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not stored"
+    var changed = st.shotLogMap(0)
+    changed.roles[0] = crText
+    changed.roles[1] = crSequence
+    st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: changed)
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotLogMap(0).roles[1] == crSequence),
+      "the re-map did not finish"
+    st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
+    doAssert st.settle(st.shotLogCount == 0 and st.jobs.active.len == 0)
+    st.flushFiles()
+    st.apply Command(kind: ckCloseProject)
+    doAssert st.settle(not st.inProject and st.jobs.active.len == 0)
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.shotLogCount == 0 and st.jobs.active.len == 0),
+      "the project did not reopen"
+    doAssert st.project.doc.lastShotMap.isSome, "the remembered map did not come back"
+    doAssert st.project.doc.lastShotMap.get.map.roles[1] == crSequence
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the import after reopen did not finish"
+    doAssert st.shotLogMap(0).roles == @[crText, crSequence, crText],
+      "the map was not remembered after reopen"
+    doAssert st.said(ColumnsAsLast)
+    discard st.shutdown()
+
+  block extra_column_is_guessed:
+    let job = root / "JobWide"
+    let table = root / "wide-base.csv"
+    let wide = root / "wide.csv"
+    writeFile(table, Table)
+    writeFile(wide, TableWide)
+    var st = start(root / "config-wide")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0)
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    var changed = st.shotLogMap(0)
+    changed.roles[0] = crText
+    changed.roles[1] = crSequence
+    st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: changed)
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotLogMap(0).roles[1] == crSequence)
+    st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
+    doAssert st.settle(st.shotLogCount == 0 and st.jobs.active.len == 0)
+    st.apply Command(kind: ckImportShotLog, logPath: wide)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the wide import did not finish"
+    doAssert st.shotLogWidth(0) == 4, "the extra column was not read"
+    doAssert st.shotLogMap(0).roles[1] == crShotPoint, "an extra column used the remembered map"
+    doAssert not st.said(ColumnsAsLast), "a guess said the remembered sentence"
+    discard st.shutdown()
+
+  block renamed_header_is_guessed:
+    let job = root / "JobRenamed"
+    let table = root / "renamed-base.csv"
+    let renamed = root / "renamed.csv"
+    writeFile(table, Table)
+    writeFile(renamed, TableRenamed)
+    var st = start(root / "config-renamed")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0)
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    var changed = st.shotLogMap(0)
+    changed.roles[0] = crText
+    changed.roles[1] = crSequence
+    st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: changed)
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotLogMap(0).roles[1] == crSequence)
+    st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
+    doAssert st.settle(st.shotLogCount == 0 and st.jobs.active.len == 0)
+    st.apply Command(kind: ckImportShotLog, logPath: renamed)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the renamed import did not finish"
+    doAssert st.shotLogMap(0).roles[1] == crShotPoint,
+      "a renamed header used the remembered map"
+    doAssert not st.said(ColumnsAsLast), "a guess said the remembered sentence"
+    discard st.shutdown()
+
+  block given_map_wins:
+    let job = root / "JobGiven"
+    let table = root / "given.csv"
+    writeFile(table, Table)
+    var st = start(root / "config-given")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0)
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    var changed = st.shotLogMap(0)
+    changed.roles[0] = crText
+    changed.roles[1] = crSequence
+    st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: changed)
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotLogMap(0).roles[1] == crSequence)
+    var given = changed
+    given.roles = @[crText, crText, crText]
+    st.apply Command(kind: ckImportShotLog, logPath: table, logMap: given, logMapped: true)
+    doAssert st.settle(st.shotLogCount == 2 and st.jobs.active.len == 0),
+      "the given import did not finish"
+    doAssert st.shotLogMap(1).roles == @[crText, crText, crText], "the given map was not used"
+    doAssert not st.said(ColumnsAsLast), "a given map said the remembered sentence"
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 3 and st.jobs.active.len == 0),
+      "the import after a given map did not finish"
+    doAssert st.shotLogMap(2).roles == @[crText, crText, crText],
+      "the given map was not remembered"
+    doAssert st.said(ColumnsAsLast)
+    discard st.shutdown()
+
+  block old_project_has_no_last_map:
+    let job = root / "JobOldMap"
+    let table = root / "old-map.csv"
+    writeFile(table, Table)
+    var st = start(root / "config-old-map")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and fileExists(job.projectDirOf.documentOf) and
+      st.jobs.active.len == 0)
+    st.flushFiles()
+    doAssert "lastShotMap" notin readFile(job.projectDirOf.documentOf)
+    st.apply Command(kind: ckCloseProject)
+    doAssert st.settle(not st.inProject and st.jobs.active.len == 0)
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0), "an old project did not open"
+    doAssert st.project.doc.lastShotMap.isNone
+    doAssert not st.said("left out") and not st.said("could not be read")
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    doAssert st.shotLogMap(0).roles[1] == crShotPoint, "an old project used a remembered map"
+    doAssert not st.said(ColumnsAsLast)
+    discard st.shutdown()
+
+  block hostile_last_map_is_ignored:
+    let job = root / "JobHostile"
+    let table = root / "hostile.csv"
+    writeFile(table, Table)
+    var st = start(root / "config-hostile")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0)
+    st.flushFiles()
+    st.apply Command(kind: ckCloseProject)
+    doAssert st.settle(not st.inProject and st.jobs.active.len == 0)
+    let path = job.projectDirOf.documentOf
+    let fresh = readFile(path)
+    writeFile(path, fresh.replace("(version 1)",
+      "(version 1) (lastShotMap (map (role \"not a role\")))"))
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0), "a hostile map stopped the open"
+    doAssert st.project.doc.lastShotMap.isNone, "a hostile map was stored"
+    doAssert st.project.doc.name.len > 0
+    doAssert st.said("not a column role"), "the bad role was not said"
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    doAssert st.shotLogMap(0).roles[1] == crShotPoint, "a hostile map was used"
+    doAssert not st.said(ColumnsAsLast)
+    st.flushFiles()
+    st.apply Command(kind: ckCloseProject)
+    doAssert st.settle(not st.inProject and st.jobs.active.len == 0)
+    var roles = ""
+    for i in 1 .. 300: roles.add " (role \"text\")"
+    writeFile(path, fresh.replace("(version 1)",
+      "(version 1) (lastShotMap (map" & roles & "))"))
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0),
+      "too many columns stopped the open"
+    doAssert st.project.doc.lastShotMap.isNone, "an oversized map was stored"
+    doAssert st.said("left out"), "too many columns were not said"
+    discard st.shutdown()
+
+  block read_only_uses_the_map:
+    let job = root / "JobRoMap"
+    let table = root / "ro-map.csv"
+    writeFile(table, Table)
+    var holder = start(root / "config-ro-map")
+    holder.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert holder.settle(holder.inProject and holder.jobs.active.len == 0)
+    holder.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert holder.settle(holder.shotLogCount == 1 and holder.jobs.active.len == 0)
+    var changed = holder.shotLogMap(0)
+    changed.roles[0] = crText
+    changed.roles[1] = crSequence
+    holder.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: changed)
+    doAssert holder.settle(holder.jobs.active.len == 0 and
+      holder.shotLogMap(0).roles[1] == crSequence)
+    holder.flushFiles()
+    let doc = job.projectDirOf.documentOf
+    doAssert "(lastShotMap" in readFile(doc)
+    var other = start(root / "config-ro-map-2")
+    other.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert other.settle(other.inProject and other.project.readOnly and
+      other.jobs.active.len == 0), "the second program did not open read-only"
+    let before = readFile(doc)
+    other.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert other.settle(other.shotLogCount == 2 and other.jobs.active.len == 0),
+      "the read-only import did not finish"
+    doAssert other.shotLogMap(1).roles == @[crText, crSequence, crText],
+      "a read-only project did not use the remembered map"
+    doAssert other.said(ColumnsAsLast)
+    doAssert other.shotLogStored(1).len == 0
+    doAssert readFile(doc) == before, "a read-only project wrote project.nif"
+    doAssert other.project.doc.lastShotMap.get.map.roles[1] == crSequence
+    let wide = root / "ro-wide.csv"
+    writeFile(wide, TableWide)
+    other.apply Command(kind: ckImportShotLog, logPath: wide)
+    doAssert other.settle(other.shotLogCount == 3 and other.jobs.active.len == 0),
+      "the wide read-only import did not finish"
+    doAssert other.shotLogMap(2).roles[1] == crShotPoint, "an extra column was not guessed"
+    doAssert other.project.doc.lastShotMap.get.map.roles[1] == crSequence,
+      "a read-only project remembered a new map"
+    doAssert readFile(doc) == before, "a read-only project wrote project.nif"
+    discard other.shutdown()
+    discard holder.shutdown()
+
+  block no_project_does_not_remember:
+    let table = root / "session.csv"
+    writeFile(table, Table)
+    var st = start(root / "config-session")
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not kept for the session"
+    var changed = st.shotLogMap(0)
+    changed.roles[0] = crText
+    changed.roles[1] = crSequence
+    st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: changed)
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotLogMap(0).roles[1] == crSequence)
+    st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
+    doAssert st.shotLogCount == 0
+    st.apply Command(kind: ckImportShotLog, logPath: table)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    doAssert st.shotLogMap(0).roles[1] == crShotPoint, "a session remembered a map"
+    doAssert not st.said(ColumnsAsLast)
+    doAssert st.said(ShotLogNotStored)
     discard st.shutdown()
 
   removeDir(root)

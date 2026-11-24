@@ -1,8 +1,10 @@
 ## Background jobs that read a shot log and write its copy (`core/shotlog`).
 ##
 ## `importShotLog` reads a file through the file-system layer, refuses one
-## larger than 256 MiB without reading it, guesses a map unless one is given,
-## and parses. `loadShotLog` reads a project copy with the map stored for it.
+## larger than 256 MiB without reading it, and parses. A map given is used;
+## otherwise a remembered map is used when `remember` is set and it fits the
+## file, and a guess otherwise. `loadShotLog` reads a project copy with the
+## map stored for it.
 ## `saveShotLog` writes `toText` to the copy, to a temporary file that is then
 ## renamed onto it. The file the log was imported from is never named here.
 ##
@@ -27,6 +29,7 @@ type
     map*: ShotLogMap
     text*: string ## the text parsed into `log`; the state does not keep another copy
     dropped*: bool ## a re-map dropped edited cells
+    usedLast*: bool ## the project's last column map was used; a guess leaves this false
 
   ShotLogSink* = ref object
     ## Filled when the job ends, except when it is cancelled. Read it after
@@ -149,24 +152,71 @@ proc readCapped(ctx: JobContext; path: string; sink: ShotLogSink): string =
   text
 
 proc fill(sink: ShotLogSink; log: ShotLog; view: ShotView; map: ShotLogMap; text: string;
-    dropped = false) =
+    dropped = false; usedLast = false) =
   if sink != nil:
     sink.result = ShotLogJobResult(ok: true, log: log, view: view, map: map, text: text,
-      dropped: dropped)
+      dropped: dropped, usedLast: usedLast)
 
-proc importShotLog*(path: string; map: ShotLogMap; given: bool; sink: ShotLogSink): JobWork =
+proc clippedHeader(name: string): string =
+  ## `name` as a remembered header is compared: ends trimmed, cut to a shot
+  ## log's name, capitals ignored.
+  var t = name.strip()
+  if t.len > MaxShotLogName: t.setLen(MaxShotLogName)
+  t.toLowerAscii
+
+proc sameHeader(a, b: string): bool =
+  clippedHeader(a) == clippedHeader(b)
+
+proc rememberedFits(log: ShotLog; map: ShotLogMap; headers: openArray[string]): bool =
+  ## The remembered map fits when the column count is the same and, when
+  ## there is a header, the header names are the same.
+  if log == nil or log.width != map.roles.len: return false
+  if not map.hasHeader: return true
+  if headers.len != log.width: return false
+  for col in 0 ..< log.width:
+    if not sameHeader(log.columnName(col), headers[col]): return false
+  true
+
+proc importShotLog*(path: string; map: ShotLogMap; given: bool; sink: ShotLogSink;
+    remembered: ShotLogMap; remember: bool; headers: seq[string]): JobWork =
   ## The work of a job that reads `path` (`importSpec` is the spec to submit
-  ## it with). `given`: use `map`; otherwise guess one. Worker-only. A cancel
-  ## raises `JobCancelledError` and leaves `sink` as it was.
+  ## it with). `given`: use `map`. Otherwise, when `remember` is set and
+  ## `remembered` fits the file (same column count, and the same header names
+  ## when there is a header), use that; else guess one. `headers` are the
+  ## names beside `remembered`. Worker-only. A cancel raises
+  ## `JobCancelledError` and leaves `sink` as it was.
   result = proc (ctx: JobContext) {.gcsafe.} =
     let text = readCapped(ctx, path, sink)
     ctx.checkCancelled()
-    let used = if given: map else: guessMap(text)
-    let log = parseShotLog(text, used)
+    var used = map
+    var usedLast = false
+    var log: ShotLog = nil
+    if given:
+      var parsed = text
+      log = parseShotLog(parsed, map)
+    elif remember:
+      var first = text
+      let tried = parseShotLog(first, remembered)
+      if rememberedFits(tried, remembered, headers):
+        log = tried
+        used = remembered
+        usedLast = true
+      else:
+        used = guessMap(text)
+        var again = text
+        log = parseShotLog(again, used)
+    else:
+      used = guessMap(text)
+      var parsed = text
+      log = parseShotLog(parsed, used)
     ctx.checkCancelled()
     let view = shots(log, used)
     ctx.checkCancelled()
-    fill(sink, log, view, used, text)
+    fill(sink, log, view, used, text, usedLast = usedLast)
+
+proc importShotLog*(path: string; map: ShotLogMap; given: bool; sink: ShotLogSink): JobWork =
+  ## `importShotLog` that guesses a map when `given` is false.
+  importShotLog(path, map, given, sink, ShotLogMap(), false, newSeq[string]())
 
 proc loadShotLog*(path: string; map: ShotLogMap; sink: ShotLogSink): JobWork =
   ## The work of a job that reads the project copy at `path` with `map`

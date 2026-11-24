@@ -610,7 +610,7 @@ type
         ckUndoShotEdit, ckRedoShotEdit:
       logPath*: string ## ckImportShotLog: the file to read
       logMap*: ShotLogMap ## ckImportShotLog when logMapped; ckRemapShotLog: the new map
-      logMapped*: bool ## ckImportShotLog: a map was given (else one is guessed)
+      logMapped*: bool ## ckImportShotLog: a map was given (else the last map, or a guess)
       logIndex*: int ## which loaded shot log
       logRow*: int ## ckEditShotCell: the data row
       logCol*: int ## ckEditShotCell: the column
@@ -6485,6 +6485,7 @@ const
   ShotLogNotStored* = "The shot log is not stored: no project is open."
   ShotLogEditsDropped* = "The column count changed: the edited cells were dropped."
   ShotLogLineBreak* = "The cell was not changed: it cannot hold a line break."
+  ColumnsAsLast* = "Columns set as in the last shot log."
 
 proc findShot(state: AppState; id: int): int =
   result = -1
@@ -6582,9 +6583,17 @@ proc importShotLogCmd(state: var AppState; cmd: Command) =
   var name = path.extractFilename.splitFile.name
   if name.len == 0: name = path.extractFilename
   if name.len > MaxShotLogName: name.setLen(MaxShotLogName)
+  var remembered = ShotLogMap()
+  var headers: seq[string] = @[]
+  var remember = false
+  if not cmd.logMapped and state.inProject and state.project.doc.lastShotMap.isSome:
+    let kept = state.project.doc.lastShotMap.get
+    remembered = kept.map
+    headers = kept.headers
+    remember = true
   let sink = ShotLogSink()
   let job = state.jobs.submit(importSpec(path),
-    importShotLog(path, cmd.logMap, cmd.logMapped, sink))
+    importShotLog(path, cmd.logMap, cmd.logMapped, sink, remembered, remember, headers))
   state.shotWork.add ShotLogWork(job: job, kind: sjImport, id: -1, sink: sink,
     name: name, source: path, map: cmd.logMap)
 
@@ -6700,6 +6709,28 @@ proc redoShotEditCmd(state: var AppState; cmd: Command) =
   loaded.undo.add step
   state.finishShotCell(cmd.logIndex)
 
+proc headerNamesOf(log: ShotLog; map: ShotLogMap): seq[string] =
+  ## Header names of `log`, as `columnName` returns them, cut to a shot log's
+  ## name. Empty when `map` has no header.
+  result = @[]
+  if log == nil or not map.hasHeader: return
+  let n = min(log.width, MaxShotLogColumns)
+  for col in 0 ..< n:
+    var name = log.columnName(col)
+    if name.len > MaxShotLogName: name.setLen(MaxShotLogName)
+    result.add name
+
+proc settleShotMap(state: var AppState; log: ShotLog; map: ShotLogMap) =
+  ## Remembers the column map a shot log ended with. A read-only project, or
+  ## none, remembers nothing. Removing a log does not call this.
+  if not state.inProject or state.readOnlyProject: return
+  var kept = LastShotMap()
+  if state.project.doc.lastShotMap.isSome:
+    kept = state.project.doc.lastShotMap.get
+  state.project.doc.lastShotMap = some(LastShotMap(map: map,
+    headers: headerNamesOf(log, map), mapLater: kept.mapLater, later: kept.later))
+  state.projectChanged()
+
 proc tookShotImport(state: var AppState; w: ShotLogWork) =
   let r = w.sink.result
   let loaded = LoadedShotLog(id: state.nextShotId, name: w.name, source: w.source,
@@ -6707,6 +6738,8 @@ proc tookShotImport(state: var AppState; w: ShotLogWork) =
   inc state.nextShotId
   state.shotLogs.add loaded
   inc state.shotLogsRev
+  state.settleShotMap(r.log, r.map)
+  if r.usedLast: state.log.add(sevInfo, "shot log", ColumnsAsLast)
   state.storeOrSay(state.shotLogs.high)
 
 proc tookShotLoad(state: var AppState; w: ShotLogWork) =
@@ -6751,6 +6784,7 @@ proc tookShotRemap(state: var AppState; w: ShotLogWork) =
   loaded.map = r.map
   inc loaded.revision
   inc state.shotLogsRev
+  state.settleShotMap(r.log, r.map)
   if r.dropped: state.log.add(sevWarning, "shot log", ShotLogEditsDropped)
   if loaded.stored.len == 0 or not state.inProject: return
   if state.readOnlyProject:

@@ -12,14 +12,16 @@
 ## - the survey kept in `survey.bin`: an SPS survey's points and relations,
 ##   a P1 file's shotpoints and a CSV table read back as parseSEG read them
 ##   from the files; a byte changed or the file cut short is refused before
-##   anything is handed over.
+##   anything is handed over. The column map used last is written and read
+##   with a stored log's map, and a hostile node is left out.
 ##
 ## Seen to fail: with `candidates` looking at the absolute place first, "a
 ## project copied with its data finds its own copy first" (it found the old
 ## folder); with the store's hash left out of `readStore`'s check, "a
 ## changed byte is refused" (the points came back with a wrong easting);
 ## with `later` not written back, "a later version's part is kept"; with a
-## device name accepted, a hostile `(file "CON")` was stored.
+## device name accepted, a hostile `(file "CON")` was stored; with a hostile
+## `(lastShotMap)` stored anyway, `lastShotMap` kept `(role "not a role")`.
 
 import std/[options, os, strutils, times]
 import parseSEG
@@ -139,6 +141,66 @@ proc main*() =
     hostile("(log (name \"a\") (file \"lpt9\"))", "left out")
     hostile("(log (name \"a\") (file \"end.\"))", "left out")
     hostile("(log (name \"a\") (file \"end \"))", "left out")
+
+  block lastShotMap:
+    # The column map used last is kept beside a stored log, and comes back
+    # with its header names. The text of the log is still not a node.
+    var d = ProjectDoc(name: "Land 2026")
+    var m = initShotLogMap()
+    m.delimiter = dlSemicolon
+    m.skipLines = 1
+    m.hasHeader = true
+    m.roles = @[crText, crSequence, crText]
+    m.clock = tcGps
+    m.dateTimePattern = "yyyy-mm-dd hh:mm:ss"
+    m.sentinels = @["-999.25"]
+    m.lengthUnit = luFeet
+    d.shotLogs = @[StoredShotLog(name: "morning", file: "morning.csv", map: m)]
+    d.lastShotMap = some(LastShotMap(map: m, headers: @["File", "Shot", "Note"]))
+    let text = projectDocument(d)
+    doAssert "(lastShotMap" in text and "(headerName \"File\")" in text, text
+    doAssert "(shotLogs" in text, "a stored log was dropped beside the remembered map"
+    var problems: seq[string]
+    let back = readProject(text, "project.nif", problems)
+    doAssert problems.len == 0, $problems
+    doAssert back.shotLogs.len == 1 and back.shotLogs[0].map == m
+    doAssert back.lastShotMap.isSome, "the remembered map did not come back"
+    doAssert back.lastShotMap.get.map == m, "the remembered map did not come back"
+    doAssert back.lastShotMap.get.headers == @["File", "Shot", "Note"]
+    let old = projectDocument(ProjectDoc(name: "old"))
+    doAssert "(lastShotMap" notin old, old
+    problems.setLen 0
+    doAssert readProject(old, "project.nif", problems).lastShotMap.isNone and problems.len == 0
+    let extra = text.replace("(headerName \"Note\")",
+      "(headerName \"Note\") (kept (n 1))")
+    let kept = readProject(extra, "project.nif", problems)
+    doAssert kept.lastShotMap.isSome and kept.lastShotMap.get.later.len == 1
+    doAssert "(kept" in projectDocument(kept), "a later field beside the map is kept"
+    let extraMap = text.replace("(pattern \"yyyy-mm-dd hh:mm:ss\")",
+      "(pattern \"yyyy-mm-dd hh:mm:ss\") (keptInMap (n 1))")
+    let keptMap = readProject(extraMap, "project.nif", problems)
+    doAssert keptMap.lastShotMap.isSome and keptMap.lastShotMap.get.mapLater.len == 1
+    doAssert "(keptInMap" in projectDocument(keptMap), "a later field of the map is kept"
+    proc hostileMap(body, words: string) =
+      problems.setLen 0
+      let doc = "(project (version 1) (name \"h\") (lastShotMap " & body & "))"
+      let got = readProject(doc, "project.nif", problems)
+      doAssert got.lastShotMap.isNone, "a hostile map was stored: " & body
+      doAssert got.name == "h"
+      var said = false
+      for p in problems:
+        if words in p: said = true
+      doAssert said, "not said (" & words & "): " & $problems
+    hostileMap("(map (role \"not a role\"))", "not a column role")
+    hostileMap("(headerName \"file\")", "left out")
+    hostileMap("(map (role \"text\")) (headerName 1)", "left out")
+    hostileMap("(map (role \"text\")) (headerName \"" & "x".repeat(200) & "\")", "left out")
+    var roles = ""
+    for i in 1 .. 300: roles.add " (role \"text\")"
+    hostileMap("(map" & roles & ")", "left out")
+    var names = ""
+    for i in 1 .. 300: names.add " (headerName \"c\")"
+    hostileMap("(map (role \"text\"))" & names, "left out")
 
   block places:
     let dir = h"/jobs/Land 2026"

@@ -70,7 +70,16 @@ Land 2026/                  the project folder: this is what is opened
   a map with more columns than this version keeps, or a file name that is not a
   plain name in `shotlogs/` is said and left out. A name Windows keeps for a device
   (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`, any extension)
-  or one that ends in a dot or a space is not a plain name.
+  or one that ends in a dot or a space is not a plain name. The document also keeps
+  the column map used last (`lastShotMap`: a `map` written and read as a stored log's
+  map, and `headerName` entries beside it, one per column). An import with no map
+  given uses it when the column count is the same and, when there is a header, the
+  header names are the same after trimming and ignoring capitals. Removing a log does
+  not remove the node. A document without the node has none. A role that is not one,
+  more columns or header names than a stored map keeps, or a header name longer than
+  a shot log's name, is said and the node is left out. A field inside it that this
+  version does not know is kept and written back. A project open read-only uses the
+  map and does not write it.
 - **`survey/survey.bin`** is what parseSEG read from the copies, in a compact binary form
   (below). Opening the project reads it instead of the survey files.
 - **`cache/`** holds only what the program can make again from the data.

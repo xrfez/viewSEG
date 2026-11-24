@@ -1134,6 +1134,16 @@ map. **Cancel** leaves the map as it was. **Guess again** fills the map from the
 names and the first rows. A meaning that should belong to one column only (shot point, X,
 Y, a time part) is flagged when it is chosen twice.
 
+The project remembers the column map of the last shot log imported or re-mapped, and does
+not forget it when that log is removed. The next import, if no map is given, reads the file
+with that delimiter, those lines skipped and that header setting, and uses those column
+meanings when the file has the same number of columns and, if it has a header, the same
+header names (a space at either end, or a capital letter, does not count as a difference).
+Messages then says "Columns set as in the last shot log." When the columns do not match,
+the meanings are guessed, as they are when nothing is remembered, and Messages says nothing
+extra. A project open read-only still uses the remembered map and does not write a new one.
+With no project open, nothing is remembered.
+
 The grid has one row per shot. The first column is the time in UTC, to the microsecond,
 worked out from the time columns. A narrow column marks a row that has a problem; the
 tooltip says what is wrong. The other columns are the table's own, with the header name

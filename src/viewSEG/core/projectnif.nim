@@ -37,6 +37,13 @@
 ## A role that is not one, a map with more than `MaxShotLogColumns` columns,
 ## or a file that is not a plain name is said and left out.
 ##
+## The column map used last is `(lastShotMap (map ...) (headerName "...") ...)`.
+## `map` is written and read as a stored log's map. One `headerName` sits beside
+## it per column. Absent means none. A field this version does not know is kept
+## and written back. A role that is not one, more columns or header names than
+## a stored map keeps, or a header name that cannot be used is said and the
+## node is left out.
+##
 ## A station moved during a deployment is
 ## `(stationMoves (move (line ...) (point ...) (index ...) (x ...) (y ...)))`.
 ## `fromTime` (the same absolute time as `TraceKeys.time`) and `elev` are
@@ -165,6 +172,17 @@ proc writeShotMap(w: var NifWriter; s: StoredShotLog) =
   for n in s.mapLater: w.add n
   w.close
 
+proc writeLastShotMap(w: var NifWriter; remembered: LastShotMap) =
+  ## The column map used last, written as a stored log's map, with one header
+  ## name beside it per column. A field this version does not know is written
+  ## back.
+  w.open "lastShotMap"
+  var stored = StoredShotLog(map: remembered.map, mapLater: remembered.mapLater)
+  w.writeShotMap stored
+  for name in remembered.headers: w.value("headerName", name)
+  for n in remembered.later: w.add n
+  w.close
+
 proc writeShotLog(w: var NifWriter; s: StoredShotLog) =
   ## One stored shot log: its name, the copy's file name, and its map.
   w.open "log"
@@ -269,6 +287,7 @@ proc projectDocument*(d: ProjectDoc): string =
     for s in d.shotLogs: w.writeShotLog s
     for n in d.shotLogsLater: w.add n
     w.close
+  if d.lastShotMap.isSome: w.writeLastShotMap(d.lastShotMap.get)
   for n in d.later: w.add n
   w.close
   w.finish
@@ -661,6 +680,48 @@ proc shotLog(r: var Reading; n: NifNode; d: var ProjectDoc) =
     return
   d.shotLogs.add s
 
+proc lastShotMap(r: var Reading; n: NifNode; d: var ProjectDoc) =
+  ## The column map used last. A role that is not one, too many columns, or a
+  ## header name that cannot be used: said, and the node is left out.
+  var s = StoredShotLog()
+  var bad, tooMany, headerBad, sawMap = false
+  var headers: seq[string] = @[]
+  var later: seq[NifNode] = @[]
+  for k in n.kids:
+    if k.kind != nkTree:
+      r.problem(k, "(lastShotMap) holds trees")
+      continue
+    case k.tag
+    of "map":
+      if sawMap: later.add k
+      else:
+        sawMap = true
+        r.readShotMap(k, s, bad, tooMany)
+    of "headerName":
+      if headers.len >= MaxShotLogColumns:
+        r.problem(k, "a remembered column map keeps at most " & $MaxShotLogColumns &
+          " header names; it is left out")
+        headerBad = true
+      elif k.kids.len != 1 or k.kids[0].kind != nkString:
+        r.problem(k, "(headerName) needs a string; the remembered map is left out")
+        headerBad = true
+      elif k.kids[0].text.len > MaxShotLogName:
+        r.problem(k, "a header name is longer than a shot log's name; " &
+          "the remembered map is left out")
+        headerBad = true
+      else: headers.add k.kids[0].text
+    else: later.add k
+  if not sawMap:
+    r.problem(n, "a remembered column map has no map; it is left out")
+    return
+  if tooMany:
+    r.problem(n, "a remembered column map keeps at most " & $MaxShotLogColumns &
+      " columns; it is left out")
+    return
+  if bad or headerBad: return
+  d.lastShotMap = some(LastShotMap(map: s.map, headers: headers,
+    mapLater: s.mapLater, later: later))
+
 proc shotLogs(r: var Reading; n: NifNode; d: var ProjectDoc) =
   for c in n.kids:
     if c.isTree("log"): r.shotLog(c, d)
@@ -733,6 +794,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
         result.vendorChoice = if name.len == 0: VendorChoice(mode: vmNone)
                               else: VendorChoice(mode: vmNamed, name: name)
       of "shotLogs": r.shotLogs(c, result)
+      of "lastShotMap": r.lastShotMap(c, result)
       else: result.later.add c
   if result.version == 0:
     r.problem(doc[root], "(project) gives no (version); read as version " & $ProjectVersion)

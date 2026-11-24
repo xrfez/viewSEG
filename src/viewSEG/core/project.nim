@@ -18,7 +18,7 @@
 ##   owner.nif, .lock     who has the project open, and the lock between programs
 ## ```
 
-import std/[os, strutils, times]
+import std/[options, os, strutils, times]
 import parseSEG
 import breakmodel, displaypresets, filesystem, join, nif, processing, shotlog, stationmoves,
   vendormaps, vibprofile
@@ -96,6 +96,18 @@ type
     mapLater*: seq[NifNode]
       ## fields of the map this version does not know, written back inside it
 
+  LastShotMap* = object
+    ## The column map used last for a shot log in this project, and the header
+    ## names it was read with. Removing a log does not clear it. Absent
+    ## (`none`) means nothing is remembered. The names are not fields of
+    ## `ShotLogMap`: a stored log's map does not keep them.
+    map*: ShotLogMap
+    headers*: seq[string]
+    mapLater*: seq[NifNode]
+      ## fields of the map this version does not know, written back inside it
+    later*: seq[NifNode]
+      ## fields beside the map this version does not know, written back
+
   StoreInfo* = object
     ## `survey.bin` as written: none while `bytes` is 0.
     format*: int
@@ -154,6 +166,8 @@ type
       ## shot logs imported into the project; absent in an older document is none
     shotLogsLater*: seq[NifNode]
       ## children of `(shotLogs)` this version does not know, written back
+    lastShotMap*: Option[LastShotMap]
+      ## the column map used last; absent in an older document is none
     later*: seq[NifNode]
       ## what the document holds that this version does not know (a later
       ## version's), written back as it was
