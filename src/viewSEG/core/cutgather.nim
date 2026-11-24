@@ -10,7 +10,7 @@
 ## caller supplies (so no file is touched here); `cutOne` builds one output
 ## trace from it with the library's piecewise calls.
 
-import std/[algorithm, math, options, sets, tables]
+import std/[algorithm, math, options, sets, strutils, tables]
 import processSEG/continuous/slice
 import processSEG/core/workspace
 import ./[recordingkind, shotlog]
@@ -425,23 +425,41 @@ proc settleShot*(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
         let next = if shot + 1 < total: firstUse(plan, shot + 1, row) else: high(int)
         buf.evictBefore(row, evictable(plan, buf, report, row, next))
 
+func secs(x: float64): string =
+  ## Seconds to the digit that tells, without a trailing zero.
+  let t = formatFloat(x, ffDecimal, 3)
+  result = t.strip(leading = false, chars = {'0'}).strip(leading = false, chars = {'.'}) & " s"
+
 func cutRefusal*(f: RecordingFacts): string =
-  ## Why the cut refuses a file that is not a continuous recording, in a
-  ## sentence; "" for a continuous one.
+  ## Why the cut refuses a file that is not a continuous receiver gather: what
+  ## the file is, then the reason, in sentences; "" for a continuous one.
   case f.kind
-  of rkContinuous: ""
-  of rkShotRecord:
-    "This file is a shot record (every receiver has one trace), not a continuous recording."
-  of rkSlicedGather:
-    case f.slicedBy
-    of sbSources:
-      "This file already holds one trace per shot (the traces carry " & $f.sourcePoints &
-        " different source points), so it is not a continuous recording."
-    of sbOverlap:
-      "This file's traces mostly cover the same time as their neighbours (" & $f.heavy &
-        " of " & $f.boundaries & " overlap by more than half), as records cut by shot do, " &
-        "so it is not a continuous recording."
-    else:
-      "This recording is already cut into separate records (gaps at " & $f.gapped & " of " &
-        $f.boundaries & " segment " & (if f.boundaries == 1: "boundary" else: "boundaries") &
-        "), not continuous."
+  of rkReceiverContinuous: discard
+  of rkShotGather:
+    result = "This file is a shot gather (the receiver changes from trace to trace), not a " &
+      "continuous receiver gather."
+  of rkReceiverSliced:
+    result = "This file is a time-sliced receiver gather, not a continuous one."
+    case f.slicedWhy
+    of swIrregular:
+      result.add " Only " & $(f.abutting + f.skips) & " of " & $f.boundaries & " trace " &
+        (if f.boundaries == 1: "start is" else: "starts are") &
+        " a whole number of trace lengths after the one before."
+    of swShort:
+      result.add " Its traces are " & secs(f.segmentSeconds) & " long but start every " &
+        secs(f.stepSeconds) & ", so there is dead time between them."
+    of swOverlap:
+      result.add " Its traces are " & secs(f.segmentSeconds) & " long but start every " &
+        secs(f.stepSeconds) & ", so they mostly cover each other."
+    of swSameStart:
+      result.add " Its traces carry the same start time, so their own start times are not " &
+        "in the headers viewSEG reads: they may be in a header that a vendor header map " &
+        "has to describe."
+    of swNone: discard
+
+func skipWords*(skips, missing: int): string =
+  ## The sentence for whole segments the recorder did not record.
+  func plural(n: int; one, many: string): string =
+    $n & " " & (if n == 1: one else: many)
+  "The recorder did not record for " & plural(missing, "segment", "segments") & " (in " &
+    plural(skips, "place", "places") & "); those times are written as zeros."

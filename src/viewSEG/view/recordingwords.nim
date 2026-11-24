@@ -3,8 +3,8 @@
 import ../core/recordingkind
 
 func kindWords*(k: RecordingKind): string =
-  ## The name of a kind, as a noun phrase.
+  ## The name of what a file is, as a noun phrase.
   case k
-  of rkContinuous: "continuous recording"
-  of rkShotRecord: "shot record"
-  of rkSlicedGather: "receiver gather cut by shot"
+  of rkShotGather: "shot gather"
+  of rkReceiverContinuous: "continuous receiver gather"
+  of rkReceiverSliced: "time-sliced receiver gather"

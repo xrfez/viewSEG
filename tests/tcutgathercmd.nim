@@ -62,6 +62,24 @@ proc makeFile(path: string; rows: openArray[tuple[rcv, first, n: int; source: fl
     w.writeTrace(k, samples)
   discard w.close()
 
+proc makeGather(path: string; rows: openArray[tuple[rcv, first: int]]) =
+  ## SEG-D (SEG-Y has no receiver line): a trace per row of 2000 samples, one record each.
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: 2000))
+  for i, r in rows:
+    var k = initTraceKeys()
+    k.status = tsLive
+    k.record = float64(i + 1)
+    k.channel = 1
+    k.intervalUs = 2000
+    k.t0Ms = 0
+    k.time = float64(BaseUs div 1_000_000) + float64(r.first) * 0.002
+    k.rcvLine = 1
+    k.rcvPoint = float64(r.rcv + 1)
+    var samples = newSeq[float32](2000)
+    for j in 0 ..< 2000: samples[j] = float32(r.first + j)
+    w.writeTrace(k, samples)
+  discard w.close()
+
 proc writeLog(path: string): ShotLogMap =
   ## Three timed shots, one row without a time.
   var text = ""
@@ -148,16 +166,14 @@ proc main*() =
     discard st.shutdown()
 
   block refused_when_not_continuous:
-    # a shot record (four receivers, one trace each) and a gather already cut
-    # by shot (traces every 0.5 s with different source points)
-    let shotRecord = dir / "in" / "record.sgy"
-    makeFile(shotRecord, [(0, 0, 2000, NaN), (1, 0, 2000, NaN), (2, 0, 2000, NaN),
-      (3, 0, 2000, NaN)])
-    let sliced = dir / "in" / "sliced.sgy"
-    makeFile(sliced, [(0, 0, 2000, 101.0), (0, 250, 2000, 102.0), (0, 500, 2000, 103.0),
-      (0, 750, 2000, 104.0)])
-    for (path, words) in [(shotRecord, "This file is a shot record"),
-        (sliced, "This file already holds one trace per shot (the traces carry 4 different")]:
+    # a shot gather (four receivers, one trace each) and a time-sliced receiver
+    # gather (one receiver, a trace every 0.5 s of 4 s)
+    let shotRecord = dir / "in" / "record.sgd"
+    makeGather(shotRecord, [(0, 0), (1, 0), (2, 0), (3, 0)])
+    let sliced = dir / "in" / "sliced.sgd"
+    makeGather(sliced, [(0, 0), (0, 250), (0, 500), (0, 750)])
+    for (path, words) in [(shotRecord, "This file is a shot gather"),
+        (sliced, "This file is a time-sliced receiver gather, not a continuous one. Its traces")]:
       var st = start(dir)
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
       doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut),
@@ -185,7 +201,7 @@ proc main*() =
     doAssert not st.recordingFacts.ready
     st.watchRecording(true)
     doAssert st.settle(st.recordingFacts.ready), "the recording was not described"
-    doAssert st.recordingFacts.kind == rkContinuous and st.recordingFacts.components == 2
+    doAssert st.recordingFacts.kind == rkReceiverContinuous and st.recordingFacts.components == 2
     st.watchRecording(false)
     doAssert not st.recordingFacts.ready and not st.recordingBusy
     discard st.shutdown()

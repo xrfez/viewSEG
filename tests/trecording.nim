@@ -1,43 +1,45 @@
-## What a file is as a recording (`describeRecording`): the verdict the cut
-## goes by and the sentences that refuse a file. Files are built here: SEG-Y,
-## 2 ms, a trace per `Spec` (receiver, first sample, length, source point).
+## What a file is as a recording (`describeRecording`): the two levels of its
+## kind and the sentences that refuse a file. Files are built here: SEG-D,
+## 2 ms, a trace per `Spec` (station, first sample, component) of one length, written as
+## SEG-D Rev 3, one record per trace (SEG-Y has no slot for the receiver line).
 ##
-## Seen to fail with a deliberate fault: the sources not compared (the sliced
-## gather with overlapping times was `rkContinuous`); the heavy overlap not counted
-## (the dense file with no source was `rkContinuous`); gaps counted as abutting
-## (the file of five separate records was `rkContinuous`); the single-trace
-## rule reading `<` 60 s as long (a 4 s file was accepted).
+## Seen to fail with a deliberate fault: the shot gather read as a receiver
+## gather when the stations are not compared; a 30% overlap accepted as a
+## small repeat (the sliced file was continuous); gaps of other lengths than
+## whole segments counted as skips (the irregular file was continuous); a
+## repeat of 5% refused (the repeating file was sliced).
 
 import std/[assertions, math, os, strutils]
 import parseSEG
 import viewSEG/core/[cutgather, recordingkind, vendormaps]
+import viewSEG/view/recordingwords
 
 const
   BaseS = 1_772_323_200.0 # 2026-03-01T00:00:00 UTC
   DtMs = 2.0
 
-type Spec = tuple[rcv, first, n: int; source: float64]
+type Spec = tuple[rcv, first, comp: int]
 
-func spec(rcv, first, n: int; source = NaN): Spec =
-  (rcv, first, n, source)
+func spec(rcv, first: int; comp = 0): Spec =
+  (rcv, first, comp)
 
-proc factsOf(dir, name: string; specs: openArray[Spec]): RecordingFacts =
+proc factsOf(dir, name: string; specs: openArray[Spec]; n = 1000): RecordingFacts =
   createDir(dir)
-  let path = dir / (name & ".sgy")
-  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
-  for s in specs:
+  let path = dir / (name & ".sgd")
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: n))
+  for i, s in specs:
     var k = initTraceKeys()
     k.status = tsLive
-    k.record = 1
-    k.channel = float64(s.rcv + 1)
+    k.record = float64(i + 1)
+    k.channel = float64(s.rcv * 4 + s.comp + 1)
+    k.component = uint8(s.comp + 1)
     k.intervalUs = 2000
     k.t0Ms = 0
     k.time = BaseS + float64(s.first) * DtMs / 1000
     k.rcvLine = 1
     k.rcvPoint = float64(s.rcv + 1)
-    k.srcPoint = s.source
-    var samples = newSeq[float32](s.n)
-    for j in 0 ..< s.n: samples[j] = float32(s.first + j)
+    var samples = newSeq[float32](n)
+    for j in 0 ..< n: samples[j] = float32(s.first + j)
     w.writeTrace(k, samples)
   discard w.close()
   var f = openSeismic(path)
@@ -53,71 +55,120 @@ proc main*() =
   removeDir(dir)
 
   block continuous_abutting:
-    let f = factsOf(dir, "abut", [spec(0, 0, 3000), spec(0, 3000, 3000), spec(0, 6000, 3000),
-      spec(1, 0, 3000), spec(1, 3000, 3000), spec(1, 6000, 3000)])
-    doAssert f.ready and f.kind == rkContinuous, $f
+    let f = factsOf(dir, "abut", [spec(0, 0), spec(0, 1000), spec(0, 2000),
+      spec(1, 0), spec(1, 1000), spec(1, 2000)])
+    doAssert f.ready and f.kind == rkReceiverContinuous, $f
     doAssert f.components == 2 and f.stations == 2 and f.segments == 6, $f
-    doAssert f.boundaries == 4 and f.abutting == 4 and f.gapped == 0, $f
-    doAssert abs(f.firstTime - BaseS) < 1e-6 and abs(f.lastTime - (BaseS + 18.0)) < 1e-6, $f
-    doAssert cutRefusal(f) == ""
+    doAssert f.boundaries == 4 and f.abutting == 4 and f.irregular == 0, $f
+    doAssert abs(f.firstTime - BaseS) < 1e-6 and abs(f.lastTime - (BaseS + 6.0)) < 1e-6, $f
+    doAssert f.isContinuousGather and cutRefusal(f) == ""
+    doAssert kindWords(f.kind) == "continuous receiver gather"
 
-  block continuous_one_gap:
-    let f = factsOf(dir, "gap", [spec(0, 0, 3000), spec(0, 3000, 3000), spec(0, 6150, 3000),
-      spec(0, 9150, 3000)])
-    doAssert f.kind == rkContinuous and f.gapped == 1 and f.abutting == 2, $f
+  block continuous_with_one_irregular_start:
+    let f = factsOf(dir, "gap", [spec(0, 0), spec(0, 1000), spec(0, 2150), spec(0, 3150)])
+    doAssert f.kind == rkReceiverContinuous and f.irregular == 1 and f.abutting == 2, $f
 
-  block continuous_same_source:
-    let f = factsOf(dir, "same", [spec(0, 0, 3000, 5), spec(0, 3000, 3000, 5),
-      spec(0, 6000, 3000, 5)])
-    doAssert f.kind == rkContinuous and f.sourcePoints == 1, $f
+  block continuous_after_a_box_off_for_an_hour:
+    # 60 s traces starting at minutes 0, 1, 2 and 70
+    let f = factsOf(dir, "hour", [spec(0, 0), spec(0, 30000), spec(0, 60000),
+      spec(0, 2_100_000)], n = 30000)
+    doAssert f.kind == rkReceiverContinuous and f.skips == 1 and f.missingSegments == 67, $f
+    doAssert f.abutting == 2 and f.irregular == 0, $f
+    doAssert skipWords(f.skips, f.missingSegments) == "The recorder did not record for " &
+      "67 segments (in 1 place); those times are written as zeros."
 
-  block continuous_overlapping_no_source:
-    let f = factsOf(dir, "over", [spec(0, 0, 3000), spec(0, 2950, 3000), spec(0, 5900, 3000)])
-    doAssert f.kind == rkContinuous and f.overlapping == 2, $f
+  block continuous_with_skipped_segments:
+    let f = factsOf(dir, "skips", [spec(0, 0), spec(0, 4000), spec(0, 5000),
+      spec(0, 6000), spec(0, 47000), spec(0, 48000)])
+    doAssert f.kind == rkReceiverContinuous and f.skips == 2 and f.missingSegments == 43, $f
+    doAssert f.irregular == 0 and f.abutting == 3, $f
+    doAssert skipWords(f.skips, f.missingSegments) == "The recorder did not record for " &
+      "43 segments (in 2 places); those times are written as zeros."
 
-  block shot_record:
+  block continuous_repeating_data_at_the_ends:
+    # 60.02 s traces every 60 s
     var specs: seq[Spec]
-    for r in 0 ..< 8: specs.add spec(r, 0, 2000)
+    for i in 0 ..< 5: specs.add spec(0, i * 30000)
+    let f = factsOf(dir, "repeat", specs, n = 30010)
+    doAssert f.kind == rkReceiverContinuous and f.abutting == 4 and f.uncovered == 0, $f
+
+  block continuous_repeating_five_percent:
+    var specs: seq[Spec]
+    for i in 0 ..< 5: specs.add spec(0, i * 950)
+    let f = factsOf(dir, "five", specs)
+    doAssert f.kind == rkReceiverContinuous and f.abutting == 4, $f
+
+  block sliced_overlapping_thirty_percent:
+    var specs: seq[Spec]
+    for i in 0 ..< 5: specs.add spec(0, i * 700)
+    let f = factsOf(dir, "thirty", specs)
+    doAssert f.kind == rkReceiverSliced and f.uncovered == 1, $f
+    doAssert f.slicedWhy == swOverlap, $f
+    doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a " &
+      "continuous one. Its traces are 2 s long but start every 1.4 s, so they mostly cover " &
+      "each other.", cutRefusal(f)
+    doAssert kindWords(f.kind) == "time-sliced receiver gather"
+
+  block sliced_every_half_second_of_thirty:
+    var specs: seq[Spec]
+    for i in 0 ..< 6: specs.add spec(0, i * 250)
+    let f = factsOf(dir, "dense", specs, n = 15000)
+    doAssert f.kind == rkReceiverSliced and f.uncovered == 1 and f.abutting == 5, $f
+
+  block sliced_every_ten_seconds_of_six:
+    var specs: seq[Spec]
+    for i in 0 ..< 5: specs.add spec(0, i * 5000)
+    let f = factsOf(dir, "dead", specs, n = 3000)
+    doAssert f.kind == rkReceiverSliced and f.abutting == 4 and f.uncovered == 1, $f
+    doAssert f.slicedWhy == swShort, $f
+    doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a " &
+      "continuous one. Its traces are 6 s long but start every 10 s, so there is dead time " &
+      "between them.", cutRefusal(f)
+
+  block sliced_with_irregular_starts:
+    let f = factsOf(dir, "irregular", [spec(0, 0), spec(0, 1300), spec(0, 2750),
+      spec(0, 4150), spec(0, 5700)])
+    doAssert f.kind == rkReceiverSliced and f.irregular >= 3, $f
+    doAssert f.slicedWhy in {swIrregular, swShort}, $f
+
+  block shot_gather_of_three_components:
+    var specs: seq[Spec]
+    for r in 0 ..< 8:
+      for c in 0 ..< 3: specs.add spec(r, 0, c)
     let f = factsOf(dir, "shot", specs)
-    doAssert f.kind == rkShotRecord and f.components == 8, $f
-    doAssert cutRefusal(f) ==
-      "This file is a shot record (every receiver has one trace), not a continuous recording."
+    doAssert f.kind == rkShotGather and f.stations == 8 and f.components == 24, $f
+    doAssert not f.isContinuousGather
+    doAssert cutRefusal(f) == "This file is a shot gather (the receiver changes from trace " &
+      "to trace), not a continuous receiver gather."
+    doAssert kindWords(f.kind) == "shot gather"
 
-  block one_long_trace_per_receiver:
-    let f = factsOf(dir, "long", [spec(0, 0, 31000), spec(1, 0, 31000)])
-    doAssert f.kind == rkContinuous and f.longest > LongTraceSeconds, $f
+  block two_stations_of_one_trace_are_a_shot_gather:
+    let f = factsOf(dir, "long", [spec(0, 0), spec(1, 0)])
+    doAssert f.kind == rkShotGather, $f
 
-  block sliced_by_gaps:
-    let f = factsOf(dir, "gaps", [spec(0, 0, 1000), spec(0, 3000, 1000), spec(0, 6000, 1000),
-      spec(0, 9000, 1000), spec(0, 12000, 1000)])
-    doAssert f.kind == rkSlicedGather and f.slicedBy == sbGaps and f.gapped == 4, $f
-    doAssert cutRefusal(f) == "This recording is already cut into separate records " &
-      "(gaps at 4 of 4 segment boundaries), not continuous.", cutRefusal(f)
+  block one_station_one_segment_is_a_receiver_gather:
+    let f = factsOf(dir, "one", [spec(0, 0)])
+    doAssert f.kind == rkReceiverContinuous and f.boundaries == 0, $f
 
-  block sliced_by_sources_with_overlapping_times:
-    # a trace every 0.5 s of 4 s: the times overlap, the shots differ
-    let f = factsOf(dir, "shots", [spec(0, 0, 2000, 101), spec(0, 250, 2000, 102),
-      spec(0, 500, 2000, 103), spec(0, 750, 2000, 104)])
-    doAssert f.kind == rkSlicedGather and f.slicedBy == sbSources, $f
-    doAssert f.overlapping == 3 and f.sourcePoints == 4, $f
-    doAssert cutRefusal(f) == "This file already holds one trace per shot (the traces carry " &
-      "4 different source points), so it is not a continuous recording."
-  block sliced_by_overlap_without_sources:
-    # a trace every 0.5 s of 30 s, the keys carry no source
+  block stations_of_one_and_of_several_segments_fall_through:
+    # not a shot gather (one station has two segments); continuous by the test
+    let f = factsOf(dir, "mixed", [spec(0, 0), spec(0, 1000), spec(1, 0), spec(2, 0)])
+    doAssert f.kind == rkReceiverContinuous and f.stations == 3, $f
+
+  block same_start_time_for_many_traces:
+    # twelve traces of one station and component, all starting together
     var specs: seq[Spec]
-    for i in 0 ..< 6: specs.add spec(0, i * 250, 15000)
-    let f = factsOf(dir, "dense", specs)
-    doAssert f.kind == rkSlicedGather and f.slicedBy == sbOverlap, $f
-    doAssert f.heavy == 5 and f.boundaries == 5, $f
-    doAssert cutRefusal(f) == "This file's traces mostly cover the same time as their " &
-      "neighbours (5 of 5 overlap by more than half), as records cut by shot do, so it is " &
-      "not a continuous recording.", cutRefusal(f)
+    for i in 0 ..< 12: specs.add spec(0, 0)
+    let f = factsOf(dir, "same", specs)
+    doAssert f.kind == rkReceiverSliced and f.slicedWhy == swSameStart, $f
+    doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a " &
+      "continuous one. Its traces carry the same start time, so their own start times are " &
+      "not in the headers viewSEG reads: they may be in a header that a vendor header map " &
+      "has to describe.", cutRefusal(f)
 
-  block continuous_repeating_a_few_samples:
-    var specs: seq[Spec]
-    for i in 0 ..< 5: specs.add spec(0, i * 2990, 3000)
-    let f = factsOf(dir, "repeat", specs)
-    doAssert f.kind == rkContinuous and f.overlapping == 4 and f.heavy == 0, $f
+  block three_channels_at_one_start_are_not_untimed:
+    let f = factsOf(dir, "three", [spec(0, 0, 0), spec(0, 0, 1), spec(0, 0, 2)])
+    doAssert f.kind == rkReceiverContinuous, $f
 
   echo "trecording ok"
   removeDir(dir)

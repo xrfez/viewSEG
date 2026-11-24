@@ -1,10 +1,10 @@
 ## Project > Cut by shot log on a file that is not a continuous recording,
-## headless, driven by real clicks: a shot record (four receivers, one trace
+## headless, driven by real clicks: a shot gather (four receivers, one trace
 ## each) is read by a job, the dialog says why it is refused above the buttons
 ## and Cut stays dim, whatever is clicked.
 ##
 ## Seen to fail: with the refusal left out of the dialog's problem, "the dialog
-## gave no reason"; with Cut enabled on a refusal, "Cut started on a shot record".
+## gave no reason"; with Cut enabled on a refusal, "Cut started on a shot gather".
 ##
 ## Needs a display: run under
 ## `env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1920x1080x24"`.
@@ -37,8 +37,9 @@ proc hasMark(f: FrameInfo; name: string): bool =
   f.markOf(name).size.x > 0
 
 proc makeShotRecord(path: string) =
-  ## Four receivers, one trace of 2000 samples at 2 ms each.
-  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+  ## Four receivers, one trace of 2000 samples at 2 ms each (SEG-D: SEG-Y has no
+  ## receiver line).
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: 2000))
   for rcv in 0 .. 3:
     var samples = newSeq[float32](2000)
     for j in 0 ..< 2000: samples[j] = float32(rcv * 2000 + j)
@@ -72,7 +73,7 @@ proc main*() =
     createDir(fx.dir / "logs")
     createDir(fx.dir / "in")
     createDir(fx.dir / "out")
-    let rec = fx.dir / "in" / "record.sgy"
+    let rec = fx.dir / "in" / "record.sgd"
     makeShotRecord(rec)
     let logPath = fx.dir / "shots.csv"
     let map = writeLog(logPath)
@@ -108,7 +109,7 @@ proc main*() =
       f.hasMark("cut")
     step("the item opens the dialog", proc (f: FrameInfo) = discard, openItem)
     proc refused(f: FrameInfo): bool =
-      f.why.startsWith("This file is a shot record (every receiver has one trace)")
+      f.why.startsWith("This file is a shot gather (the receiver changes from trace to trace)")
     step("the reason", proc (f: FrameInfo) = discard, refused)
     step("a folder", proc (f: FrameInfo) = f.click(f.markOf("cut.changeFolder").centre),
       proc (f: FrameInfo): bool = f.hasMark("cut.folder " & (fx.dir / "out")))
@@ -124,10 +125,10 @@ proc main*() =
     proc stillDim(f: FrameInfo): bool =
       inc clicks
       doAssert not f.core.cutRunning and f.core.cutOutcome.len == 0,
-        "Cut started on a shot record"
+        "Cut started on a shot gather"
       doAssert f.why.len > 0, "the dialog gave no reason"
       clicks >= 6
-    step("Cut on a shot record", picture, stillDim)
+    step("Cut on a shot gather", picture, stillDim)
     var at = 0
     var started = false
     var failed = ""

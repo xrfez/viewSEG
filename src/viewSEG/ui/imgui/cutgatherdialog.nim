@@ -219,6 +219,10 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     if summary.len > 0:
       wrapped(summary, wide)
       marks.mark("cut.summary " & summary)
+      if facts.skips > 0:
+        let skipped = skipWords(facts.skips, facts.missingSegments)
+        wrapped(skipped, wide)
+        marks.mark("cut.skips " & skipped)
       let numbering = numberingWords(ui.shots)
       if numbering.len > 0:
         wrapped(numbering, wide)

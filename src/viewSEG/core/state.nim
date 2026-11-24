@@ -1143,8 +1143,8 @@ type
     recJob: JobId = NoJob
       ## the job that describes the shown file as a recording for the cut dialog
     recSink: RecordingSink
-    recKey: tuple[session, revision: int]
-      ## the file and keys revision `recFacts` (or the job) is for
+    recKey: tuple[session, revision, vendors: int]
+      ## the file, its keys revision and the vendor maps' load `recFacts` (or the job) is for
     recFacts: RecordingFacts
     recHave: bool ## `recFacts` is the answer for `recKey`
     joins: seq[Joined]
@@ -10935,8 +10935,9 @@ proc watchRecording*(state: var AppState; wanted: bool) =
   let shown = state.shownFile(state.findPanel(MainPanel))
   let usable = wanted and shown >= 0 and not state.sessions[shown].derived and
     not state.sessions[shown].isSignature and state.sessions[shown].filePtr[].hasKeys
-  let key = if usable: (int(state.sessions[shown].id), state.sessions[shown].keysRevision)
-            else: (-1, 0)
+  let key = if usable: (int(state.sessions[shown].id), state.sessions[shown].keysRevision,
+                state.vendor.gen)
+            else: (-1, 0, 0)
   if state.recJob != NoJob and (not usable or key != state.recKey):
     discard state.jobs.cancel(state.recJob)
     state.recJob = NoJob

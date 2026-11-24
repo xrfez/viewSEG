@@ -4,25 +4,34 @@
 ## Nothing here knows of cutting or shot logs: the inputs are the file, the
 ## vendor registry and a cancel check.
 ##
-## - `rkShotRecord`: no receiver has more than one segment, and the longest
-##   trace is no longer than `LongTraceSeconds`. The file holds one record,
-##   one trace per receiver.
-## - `rkSlicedGather`: the file was cut by shots already. Any of three
-##   signs is enough, checked in this order. The segments of one receiver carry more than one
-##   source identity (the source line, point, index and X/Y of their keys,
-##   those that are present; the record and file numbers are not read, since
-##   a continuous recording may store each segment as its own record), or
-##   more than `HeavyOverlapShare` of the boundaries between one receiver's
-##   segments start before the middle of the segment before (traces that
-##   cover each other, as dense shooting gives, when the keys do not name
-##   the shot), or
-##   the receivers have several segments and fewer than `ContinuousShare` of
-##   their boundaries abut (the next start within one sample of this end) or
-##   overlap.
-## - `rkContinuous`: anything else, with isolated gaps allowed.
+## The kind is the answer to two yes/no questions, built on the sub-receivers
+## of `segmentclock` (one station may have several channels; each is a
+## sub-receiver whose segments chain by their start times):
 ##
-## A file of one trace per receiver is continuous when that trace is longer
-## than `LongTraceSeconds`: it is one long recording.
+## 1. Is it a shot gather? The receiver line and point change from trace to
+##    trace: there is more than one station and no sub-receiver has more than
+##    one segment (`rkShotGather`). No: it is a receiver gather.
+## 2. Only for a receiver gather: is it continuous? Yes: `rkReceiverContinuous`.
+##    No: `rkReceiverSliced`, and `slicedWhy` says why.
+##
+## A file with no receiver line and point, or with stations of one segment and
+## others of several, goes through the two questions as they stand.
+##
+## The continuous test: each trace starts a whole number of trace lengths
+## after the one before it. Per sub-receiver, in time order, the `step` is the
+## commonest difference between consecutive start times. A boundary is
+## continuous when the next start minus the previous one is k * step, k a
+## whole number from 1, within one sample; k > 1 means k - 1 segments were not
+## recorded (the box was off and the system pads with zeros). The starts are
+## exact; only the length may exceed the step, by a little repeated data at
+## the ends (at most `EndRepeatShare` of the length). So the gather is
+## continuous when at least `ContinuousShare` of its boundaries are continuous
+## and every segment covers the step: no shorter (regular dead time between
+## traces) and no more than `EndRepeatShare` longer (traces mostly covering
+## each other). A receiver with one segment is continuous. More than
+## `MaxChannelsPerStation` traces of one station and component with one start
+## time are not channels: the file carries no start times of its own, and it is
+## not continuous (`swSameStart`).
 
 import std/[algorithm, math]
 import parseSEG
@@ -32,27 +41,24 @@ import ./[filesystem, jobs, segmentclock, vendormaps]
 
 const
   ContinuousShare* = 0.5
-    ## the share of a file's segment boundaries that must abut or overlap for
-    ## it to count as one recording rather than records cut apart
-  HeavyOverlapShare* = 0.5
-    ## more than this share of the boundaries starting inside the first half of
-    ## the segment before mean the traces cover each other, as
-    ## records cut by shot do
-  LongTraceSeconds* = 60.0
-    ## one trace per receiver is a continuous recording only when it is
-    ## longer than this
+    ## the share of a receiver gather's segment boundaries that must be
+    ## continuous for it to count as a continuous recording
+  EndRepeatShare* = 0.1
+    ## a segment may be this share of its length longer than the step between
+    ## starts: it repeats a little of the data at its ends and still continues
 
 type
   RecordingKind* = enum
-    rkContinuous
-    rkShotRecord
-    rkSlicedGather
+    rkShotGather         ## the receiver changes from trace to trace
+    rkReceiverContinuous ## one receiver recorded continuously
+    rkReceiverSliced     ## a receiver gather that is not continuous; see `SlicedWhy`
 
-  SlicedBy* = enum
-    sbNone
-    sbSources ## the segments of a receiver carry different sources
-    sbOverlap ## the segments mostly cover the same time as their neighbours
-    sbGaps    ## most boundaries between segments are gaps
+  SlicedWhy* = enum
+    swNone
+    swIrregular ## the starts are not on a common step
+    swShort     ## the traces are shorter than the step: dead time between them
+    swOverlap   ## the traces are longer than the step: they mostly cover each other
+    swSameStart ## the traces of a station and component all carry one start time
 
   RecordingPlan* = object
     ## The segments of a file as the cut plans them.
@@ -69,13 +75,17 @@ type
     components*: int               ## receivers: what each cut record holds as traces
     segments*: int
     firstTime*, lastTime*: float64 ## UTC POSIX seconds; the span of every segment
-    longest*: float64              ## the longest trace, seconds
     boundaries*: int               ## between consecutive segments of one receiver
-    abutting*, overlapping*, gapped*: int
-    heavy*: int                    ## boundaries where the next segment starts before the middle of the last
-    sourcePoints*: int             ## most distinct sources among one receiver's segments
+    abutting*: int                 ## the next starts one step after the last
+    skips*: int                    ## boundaries after whole missing segments (k > 1)
+    missingSegments*: int          ## whole segments absent, summed over `skips`
+    irregular*: int                ## starts that are not a whole number of steps apart
+    uncovered*: int                ## receivers whose segments are not the length of the step
+    stepSeconds*, segmentSeconds*: float64
+      ## of the first receiver whose segments do not cover its step
+    unevenChannels*: int           ## from the segment clock
     kind*: RecordingKind
-    slicedBy*: SlicedBy
+    slicedWhy*: SlicedWhy          ## for `rkReceiverSliced`
 
   RecordingSink* = ref object
     ## Filled by `recordingFactsWork`; read it once the job has ended.
@@ -90,7 +100,7 @@ proc planRecording*(file: ptr SeismicFile; source: string; dtMs: float64;
     if not file[].inMemory: fs.mappedRead(source, headers = true)
     file[].ensureKeys()
   result.meta = chunkMeta(file[], 0 ..< file[].len, dtMs = dtMs)
-  if reg.maps.len > 0:
+  if startFieldDeclared(file[], reg):
     if not file[].inMemory: fs.mappedRead(source, headers = true)
     result.clock = segmentClock(file[], reg, check)
   if result.clock.fromHeaders:
@@ -107,31 +117,67 @@ type Seg = object
   start, finish: float64
   row: int
 
-type Source = tuple[line, point, x, y: float64; index: int16; present: set[0 .. 4]]
+type Station = tuple[line, point: float64; index: int16]
 
-func sourceOf(k: TraceKeys): Source =
-  func orZero(x: float64): float64 = (if x.isNaN: 0.0 else: x)
-  result = (orZero(k.srcLine), orZero(k.srcPoint), orZero(k.srcX), orZero(k.srcY),
-    k.srcIndex, {})
-  if not k.srcLine.isNaN: result.present.incl 0
-  if not k.srcPoint.isNaN: result.present.incl 1
-  if not k.srcX.isNaN: result.present.incl 2
-  if not k.srcY.isNaN: result.present.incl 3
-  if k.srcIndex != 0: result.present.incl 4
+proc tally(segs: seq[Seg]; i, j: int; dtS: float64; r: var RecordingFacts) =
+  ## Counts the boundaries of the receiver `segs[i ..< j]` (two or more
+  ## segments, in time order) against its step and checks the segments cover it.
+  var diffs = newSeq[float64](j - i - 1)
+  for x in i + 1 ..< j: diffs[x - i - 1] = segs[x].start - segs[x - 1].start
+  var sorted = diffs
+  sorted.sort()
+  var best, hi, at = 0
+  for first in 0 ..< sorted.len:
+    hi = max(hi, first)
+    while hi + 1 < sorted.len and sorted[hi + 1] - sorted[first] <= dtS: inc hi
+    if hi - first + 1 > best:
+      best = hi - first + 1
+      at = first + (hi - first) div 2
+  let step = sorted[at]
+  for d in diffs:
+    let k = if step > dtS: round(d / step) else: 0.0
+    if k >= 1 and abs(d - k * step) <= dtS:
+      if k == 1: inc r.abutting
+      else:
+        inc r.skips
+        r.missingSegments += int(k) - 1
+    else: inc r.irregular
+  for x in i ..< j:
+    let len = segs[x].finish - segs[x].start
+    if len < step - dtS or len - step > EndRepeatShare * len:
+      if r.uncovered == 0:
+        (r.stepSeconds, r.segmentSeconds) = (step, len)
+        r.slicedWhy = if len < step: swShort else: swOverlap
+      inc r.uncovered
+      break
 
-func cmpSource(a, b: Source): int =
-  result = cmp(a.line, b.line)
-  if result == 0: result = cmp(a.point, b.point)
-  if result == 0: result = cmp(a.x, b.x)
-  if result == 0: result = cmp(a.y, b.y)
-  if result == 0: result = cmp(a.index, b.index)
-  if result == 0: result = cmp(a.present.card, b.present.card)
+proc sharedStart(segs: seq[Seg]; meta: ChunkMeta): bool =
+  ## True when more than `MaxChannelsPerStation` traces of one station and
+  ## component start together: they are not channels, the file has no start
+  ## times of its own (also when the keys give them).
+  var rows: seq[tuple[line, point: float64; index: int16; comp: uint8; start: float64]]
+  for g in segs:
+    let k = meta.keys(g.row)
+    if not (k.rcvLine.isNaN or k.rcvPoint.isNaN):
+      let st = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
+      rows.add (st.line, st.point, st.index, k.component, g.start)
+  rows.sort do (a, b: tuple[line, point: float64; index: int16; comp: uint8; start: float64]) -> int:
+    result = cmp(a.line, b.line)
+    if result == 0: result = cmp(a.point, b.point)
+    if result == 0: result = cmp(a.index, b.index)
+    if result == 0: result = cmp(a.comp, b.comp)
+    if result == 0: result = cmp(a.start, b.start)
+  var run = 0
+  for n in 0 ..< rows.len:
+    if n > 0 and rows[n] == rows[n - 1]: inc run else: run = 1
+    if run > MaxChannelsPerStation: return true
 
 proc describeRecording*(plan: RecordingPlan): RecordingFacts =
   ## The facts and the verdict of `plan`.
   let meta = plan.meta
   let dtS = meta.dtMs / 1000
-  result = RecordingFacts(dtMs: meta.dtMs, firstTime: Inf, lastTime: -Inf)
+  result = RecordingFacts(dtMs: meta.dtMs, firstTime: Inf, lastTime: -Inf,
+    unevenChannels: plan.clock.unevenChannels)
   var segs: seq[Seg]
   for row in 0 ..< meta.len:
     let n = meta.liveSamples(row, high(int))
@@ -146,60 +192,50 @@ proc describeRecording*(plan: RecordingPlan): RecordingFacts =
     if result == 0: result = cmp(a.start, b.start)
     if result == 0: result = cmp(a.row, b.row)
   result.segments = segs.len
-  var stations = newSeq[tuple[line, point: float64; index: int16]]()
-  var multi = false
+  # per receiver with a station: how many segments it has
+  var placed: seq[tuple[st: Station; segs: int]]
   var i = 0
   while i < segs.len:
     var j = i + 1
     while j < segs.len and segs[j].recv == segs[i].recv: inc j
     let k = meta.keys(segs[i].row)
-    let st = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
-    stations.add (st.line, st.point, st.index)
     inc result.components
-    var reach = segs[i].finish
-    var sources: seq[Source]
+    if not (k.rcvLine.isNaN or k.rcvPoint.isNaN):
+      let st = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
+      placed.add (st: (st.line, st.point, st.index), segs: j - i)
     for x in i ..< j:
       result.firstTime = min(result.firstTime, segs[x].start)
       result.lastTime = max(result.lastTime, segs[x].finish)
-      result.longest = max(result.longest, segs[x].finish - segs[x].start)
-      let src = sourceOf(meta.keys(segs[x].row))
-      if src.present != {}: sources.add src
       if x > i:
-        multi = true
         inc result.boundaries
-        let delta = segs[x].start - reach
-        if abs(delta) <= dtS: inc result.abutting
-        elif delta < 0:
-          inc result.overlapping
-          if segs[x].start < segs[x - 1].start + (segs[x - 1].finish - segs[x - 1].start) / 2:
-            inc result.heavy
-        else: inc result.gapped
-        reach = max(reach, segs[x].finish)
-    sources.sort(cmpSource)
-    var different = 0
-    for s in 0 ..< sources.len:
-      if s == 0 or cmpSource(sources[s - 1], sources[s]) != 0: inc different
-    result.sourcePoints = max(result.sourcePoints, different)
+    if j - i > 1: tally(segs, i, j, dtS, result)
     i = j
-  stations.sort do (a, b: tuple[line, point: float64; index: int16]) -> int:
-    result = cmp(a.line, b.line)
-    if result == 0: result = cmp(a.point, b.point)
-    if result == 0: result = cmp(a.index, b.index)
-  for s in 0 ..< stations.len:
-    if s == 0 or stations[s - 1] != stations[s]: inc result.stations
   result.ready = true
-  if not multi and result.longest <= LongTraceSeconds:
-    result.kind = rkShotRecord
-  elif result.sourcePoints > 1:
-    result.kind = rkSlicedGather
-    result.slicedBy = sbSources
-  elif float64(result.heavy) > HeavyOverlapShare * float64(result.boundaries):
-    result.kind = rkSlicedGather
-    result.slicedBy = sbOverlap
-  elif result.boundaries > 0 and
-      float64(result.abutting + result.overlapping) < ContinuousShare * float64(result.boundaries):
-    result.kind = rkSlicedGather
-    result.slicedBy = sbGaps
+  placed.sort do (a, b: tuple[st: Station; segs: int]) -> int:
+    result = cmp(a.st.line, b.st.line)
+    if result == 0: result = cmp(a.st.point, b.st.point)
+    if result == 0: result = cmp(a.st.index, b.st.index)
+  var stations = 0
+  for n in 0 ..< placed.len:
+    if n == 0 or placed[n].st != placed[n - 1].st: inc stations
+  result.stations = stations
+  # question 1: a shot gather has several stations and one segment everywhere
+  if stations > 1 and result.segments == result.components:
+    result.kind = rkShotGather
+    result.slicedWhy = swNone
+  else:
+    # question 2: is the receiver gather continuous?
+    let continuous = result.abutting + result.skips
+    if plan.clock.untimed or sharedStart(segs, meta): result.slicedWhy = swSameStart
+    elif result.uncovered > 0: discard # tally named the reason
+    elif float64(continuous) < ContinuousShare * float64(result.boundaries):
+      result.slicedWhy = swIrregular
+    else: result.slicedWhy = swNone
+    result.kind = if result.slicedWhy == swNone: rkReceiverContinuous else: rkReceiverSliced
+
+func isContinuousGather*(f: RecordingFacts): bool =
+  ## True for a continuous receiver gather: the one kind the cut accepts.
+  f.kind == rkReceiverContinuous
 
 proc recordingFactsWork*(file: ptr SeismicFile; source: string; dtMs: float64;
     reg: VendorRegistry; sink: RecordingSink): JobWork =

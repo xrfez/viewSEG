@@ -17,30 +17,33 @@ seismic file and load a shot log first."). Only one cut runs at a time.
 
 ## What the cut accepts
 
-Only a continuous recording of receivers: each receiver has its segments one after another,
-perhaps with a gap now and then. The window reads the file and refuses two kinds, in a
-sentence above the buttons (the tooltip of the dim **Cut** says the same), and the command
-and the job refuse them the same way before any file is written:
+Only a continuous receiver gather. viewSEG asks two questions of the file:
 
-- **A shot record.** No receiver has more than one segment, and the longest trace is no
-  longer than 60 seconds: every receiver has one trace, as in a file cut by shot. ("This file
-  is a shot record (every receiver has one trace), not a continuous recording.") A file with
-  one trace per receiver that is longer than 60 seconds is taken as one long recording.
-- **A receiver gather already cut by shot.** Any one of these three is enough, checked in this
-  order:
-  - the segments of one receiver carry different sources in the headers (the source line,
-    point, index or position; the record and file numbers are not used, since a continuous
-    recording may keep each segment as its own record): "This file already holds one trace per
-    shot (the traces carry 4 different source points), so it is not a continuous recording."
-  - more than half of the boundaries between one receiver's segments start before the middle
-    of the segment before, so the traces cover each other as dense shooting makes them: "This
-    file's traces mostly cover the same time as their neighbours (5 of 5 overlap by more than
-    half), as records cut by shot do, so it is not a continuous recording."
-  - fewer than half of the boundaries between a receiver's segments abut (the next one starts
-    within one sample of the end of this one) or overlap: "This recording is already cut into
-    separate records (gaps at 412 of 517 segment boundaries), not continuous."
+1. **Is it a shot gather?** The receiver line and point change from trace to trace: there is
+   more than one receiver point and no receiver has more than one segment. If so, it is a shot
+   gather ("This file is a shot gather (the receiver changes from trace to trace), not a
+   continuous receiver gather."). If not, it is a receiver gather.
+2. **Is the receiver gather continuous?** Each trace starts a whole number of trace lengths
+   after the one before it. For one receiver (one channel at one point), the step is the
+   commonest difference between consecutive start times; the next start is the previous start
+   plus k steps, k a whole number, to within one sample. The traces may be a little longer than
+   the step (a little repeated data at their ends, at most a tenth of their length), but not
+   shorter (dead time between traces) and not much longer (traces that mostly cover each
+   other). At least half of the boundaries must follow the step. If so, it is a continuous
+   receiver gather. If not, it is a **time-sliced receiver gather**, and the sentence says why:
+   the starts are not on a common step, the traces are shorter than the step, they mostly cover
+   each other, or every trace carries the same start time (so their own start times are not in
+   the headers viewSEG reads; a vendor header map may have to describe them).
 
-One isolated gap is accepted; Messages reports it as below.
+If the recorder was off for a while, the next trace starts after more than one step (k greater
+than 1): the missing segments count as continuous, the times are written as zeros, and the
+window and Messages say "The recorder did not record for 67 segments (in 1 place); those times
+are written as zeros." A file with no receiver line and point in its headers, or with some
+points of one segment and others of several, goes through the two questions as they stand.
+
+The window reads the file and refuses the other kinds in a sentence above the buttons (the
+tooltip of the dim **Cut** says the same), and the command and the job refuse them the same way
+before any file is written.
 
 ## The window
 
@@ -94,7 +97,10 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
 - **The samples** are written as 32-bit floats.
 
 When a vendor header map names each trace's start time (see `vendormaps/README.md`), the cut
-reads the segments' start times from the trace headers and says so in Messages. The window
+reads the segments' start times from the trace headers and says so in Messages. A trace
+without the field is left out and counted; a recording that crosses a leap second shows a
+one-second overlap between the segments either side, because each segment's GPS time is
+converted to UTC at its own instant. The window
 reads the file the same way, in a job, before it sums up: while it does, it says the recording
 is being read and **Cut** is dim.
 
