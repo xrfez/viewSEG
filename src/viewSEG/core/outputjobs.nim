@@ -77,6 +77,9 @@ const
     "The reference traces' time zero could not be written: a SEG-D channel set has one " &
     "start time, and these traces share a set with other auxiliary traces or with " &
     "another delay, so they keep the delay they had."
+  RefDelayUnread* =
+    "The reference traces' delay is not where the standard puts it in this file, so it " &
+    "was left as it is."
   RefDelayKeptHeaders* =
     "The reference traces' time zero could not be written: a SEG-D channel set has one " &
     "start time and the file's own headers are kept, so they keep the delay they had."
@@ -476,6 +479,24 @@ proc delayOverrides(file: SeismicFile; trace: int; delayMs: float64;
     over.add headerOverride("trace.delayRecordingTime", int(whole))
     result = true
 
+type DelayWritten* = enum
+  ## What `referenceDelay` did for a trace.
+  dwAdded
+    ## The override is in `over`.
+  dwScalar
+    ## The trace's time scalar cannot hold the value.
+  dwUnread
+    ## The source's delay was not read, so the header is left alone.
+
+proc referenceDelay*(file: SeismicFile; trace: int; heldMs, leadMs: float64;
+    over: var seq[HeaderOverride]): DelayWritten =
+  ## The delay override for a reference trace whose source delay is `heldMs`
+  ## (NaN: the library could not read it, and bytes 109-110 may hold another
+  ## value, so nothing is written).
+  if heldMs.isNaN: dwUnread
+  elif delayOverrides(file, trace, heldMs - leadMs, over): dwAdded
+  else: dwScalar
+
 func recordName(load: CorrelateLoad; at: int): string =
   ## The record as a sentence names it mid-way: "FFID 5", else "record 3".
   if load.record.len > 0: load.record else: "record " & $(at + 1)
@@ -719,6 +740,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             else: fits = false
         segdDelays = fits and want.len > 0
       var delayLost = false
+      var delayUnread = false
       if not file[].hasKeys and (opts.sortKeys.len > 0 or not like or opts.applyReversals or
           opts.applyShifts or opts.applyOwnFilters or opts.applyProcessing):
         if not file[].inMemory: fs.mappedRead(source, headers = true)
@@ -835,9 +857,11 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           if like:
             if correlating:
               var over = correlatedOver
-              if shifted and not segdOut and not delayOverrides(file[], t,
-                  sourceDelayMs(file[].traceKeys(t)) - leadMs, over):
-                delayLost = true
+              if shifted and not segdOut:
+                case referenceDelay(file[], t, file[].traceKeys(t).t0Ms, leadMs, over)
+                of dwAdded: discard
+                of dwScalar: delayLost = true
+                of dwUnread: delayUnread = true
               if carryPositions:
                 w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
                   keys = file[].traceKeys(t), overrides = over)
@@ -925,6 +949,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             if delayLost: lines.add RefDelayScalar
             if segdOut and not segdDelays:
               lines.add(if like: RefDelayKeptHeaders else: RefDelaySharedSet)
+            if delayUnread: lines.add RefDelayUnread
           try:
             let uncorrelated = binaryUncorrelatedLine(file)
             if uncorrelated.len > 0: lines.add uncorrelated

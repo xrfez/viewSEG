@@ -1332,6 +1332,20 @@ proc main*() =
         "scalar " & $field("trace.timeScalar") & " lag A " & $field("trace.lagTimeA")
       doAssert o.traceKeys(RefAux).t0Ms == -500.0, "t0 " & $o.traceKeys(RefAux).t0Ms
 
+    block delayNotRead:
+      ## No fixture gives a NaN delay (it takes a header layout that moves the field), so
+      ## the helper is tried on its own: a NaN delay adds no override, a read one does.
+      ## Seen to fail: with the NaN branch removed the helper answered dwScalar, not dwUnread.
+      let src = srcDir / "scalar-nan.sgy"
+      scalarFile(src, SegyRevision(major: 2, minor: 1), 0)
+      var f = openSeismic(src, keys = true)
+      defer: f.close()
+      var over: seq[HeaderOverride] = @[]
+      doAssert referenceDelay(f, RefAux, NaN, 500.0, over) == dwUnread and over.len == 0,
+        "an unread delay was written"
+      doAssert referenceDelay(f, RefAux, 0.0, 500.0, over) == dwAdded and over.len == 1
+      doAssert RefDelayUnread.endsWith(".") and RefDelayUnread.count('.') == 1
+
     block scalarTooCoarse:
       ## Scalar -1000 stores a delay in 1/1000 ms: -500 ms would be -500000, past 16 bits.
       let src = srcDir / "scalar-m1000.sgy"
