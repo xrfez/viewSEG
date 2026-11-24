@@ -10,7 +10,8 @@
 ## read file. With dead, killed and auxiliary traces read inside a live
 ## chunk, `skipped_traces_are_not_sample_read` saw one sample read for
 ## four live runs. With the bar's text the job's own units,
-## `the_progress_reads_*` saw "1450 / 3000".
+## `the_progress_reads_*` saw "1450 / 3000". With a measuring phase for each chunk after the
+## first, `one_measuring_phase_a_file` saw 3 for two files.
 
 import std/[os, strutils, tables]
 import parseSEG
@@ -168,6 +169,11 @@ proc stopOnReport(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raise
 proc stopOnMeasure(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
   if not back and phase == "measuring": discard lane.cancel(id)
 
+var measurings: int
+
+proc countMeasuring(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
+  if not back and phase == "measuring": inc measurings
+
 proc main*() =
   let dir = getTempDir() / ("viewseg-quality-" & $getCurrentProcessId())
   createDir(dir)
@@ -300,6 +306,26 @@ proc main*() =
     doAssert lane.state(id) == jsCancelled, $lane.state(id) & " " & lane.info(id).get.error
     doAssert sink.result.report.totals.traces == 0
     doAssert sink.result.unread.len == 0
+
+  block one_measuring_phase_a_file:
+    # two files of 1100 and 600 traces, three and two chunks: a phase restarts the bar and
+    # its time estimate, so each file has one
+    var paths: seq[string] = @[]
+    for (name, n) in [("long1.sgd", 1100), ("long2.sgd", 600)]:
+      var traces: seq[tuple[line, point: float64; component: uint8; status: TraceStatus;
+        samples: seq[float32]]] = @[]
+      for i in 0 ..< n:
+        traces.add (line: 50.0, point: float64(i + 1), component: 1'u8, status: tsLive,
+          samples: @[0'f32, 1'f32])
+      seismicFile(dir / name, 1, traces)
+      paths.add dir / name
+    measurings = 0
+    setJobHook(countMeasuring)
+    defer: setJobHook(nil)
+    let got = run(paths, none)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    doAssert got.sink.result.report.totals.traces == 1700, $got.sink.result.report.totals
+    doAssert measurings == 2, $measurings & " measuring phases for two files"
 
   block each_interval_measured_alone:
     let slow = quiet()

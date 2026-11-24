@@ -191,7 +191,6 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
     noise: NoiseSettings; ctx: JobContext; workers: ptr ProcessPool; at, count: int) =
   let n = f[].len
   var first = 0
-  var chunk = 0
   var held: seq[TraceAmplitude] = @[] # statistics of the traces from `heldFrom` on
   var heldFrom = 0
   var missedAll = initHashSet[int]()
@@ -214,8 +213,9 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
     held = held[(upTo + 1 - heldFrom) .. ^1]
     heldFrom = upTo + 1
     noted = upTo + 1
+  # one phase for the file: a phase restarts the bar and its time estimate
+  ctx.setPhase "measuring"
   while first < n:
-    if chunk > 0: ctx.setPhase "measuring"
     ctx.checkCancelled()
     let last = min(n - 1, first + QcChunk - 1)
     let part = first .. last
@@ -271,7 +271,6 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
       note(g.b)
       ctx.fileProgress(at, count, (last + 1 + noted) div 2, n)
     first = last + 1
-    inc chunk
   if noted < n: note(n - 1)
 
 proc fail(sink: QualitySink; why: string; unread: seq[tuple[path, why: string]]) =
