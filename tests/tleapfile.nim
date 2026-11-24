@@ -104,6 +104,16 @@ proc main*() =
       doAssert told, "a file over 1 MB was not named: " & $notes
       useLeapTable(shipped)
 
+    block oneSentence:
+      writeFile(path, "(leapSeconds (version 1) (checkedTo 2026 13 40) " &
+        "(leap (date 2017 1 1) (gpsMinusUtc 3)))")
+      let notes = installLeap(dir)
+      doAssert notes.len == 1, "a refused file said more than one sentence: " & $notes
+      doAssert notes[0].text == path &
+        " was not used. The shipped leap-second table is in use.", notes[0].text
+      doAssert "leap step" notin notes[0].text and "checkedTo" notin notes[0].text
+      useLeapTable(shipped)
+
     block broken:
       writeFile(path, "not a leap table")
       let notes = installLeap(dir)

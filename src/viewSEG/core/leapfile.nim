@@ -63,10 +63,8 @@ proc chooseLeap*(user: LeapTable; problems: openArray[string]; path: string): Ch
   ## One table: `user` when it parses and the shipped table is a prefix of it
   ## (every shipped leap, in order, same date and offset; later leaps may
   ## follow). Otherwise the shipped table, said in one sentence. `problems`
-  ## (each named with `path`) keep the shipped table.
+  ## keep the shipped table, said in that same sentence, not one per problem.
   if problems.len > 0:
-    for p in problems:
-      result.notes.add (sevWarning, path & ": " & p)
     result.notes.add (sevWarning, path &
       " was not used. The shipped leap-second table is in use.")
     result.table = defaultLeapTable()
