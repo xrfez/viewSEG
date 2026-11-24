@@ -1291,6 +1291,10 @@ type
     shotLogs: seq[LoadedShotLog]
       ## shot logs read this run, in the order they were imported or loaded
     follow: ShotFollow ## per loaded log, its index, and the last follow answer
+    followTrace: int = -1
+      ## last seismic trace hovered while this file is on show; -1 until one is
+    followShown: int
+      ## id of the file on show when `followTrace` was taken; 0 when none is
     shotLogsRev: int ## bumps when that list, or a log's view, changes
     nextShotId: int
     shotWork: seq[ShotLogWork]
@@ -2141,15 +2145,14 @@ proc followStamp(state: AppState): tuple[hover, hoverSession, hoverKeys, chosenS
     result.logId = state.shotLogs[n].id
     result.logRev = state.shotLogs[n].revision
 
-proc pointerQuery(state: AppState; q: var ShotQuery): bool =
-  ## The pointer's trace, when it is a trace of an open seismic file.
-  let hover = state.selection.hover
-  if hover < 0: return false
-  let i = state.findTrace(hover)
+proc pointerQuery(state: AppState; trace: int; q: var ShotQuery): bool =
+  ## Trace `trace`, when it is a trace of an open seismic file.
+  if trace < 0: return false
+  let i = state.findTrace(trace)
   if i < 0: return false
   let s = state.sessions[i]
   if s.isSignature: return false
-  q = traceQuery(s.file, hover - s.base)
+  q = traceQuery(s.file, trace - s.base)
   true
 
 proc signatureQueryOf(state: AppState; q: var ShotQuery): bool =
@@ -2187,11 +2190,67 @@ proc fileQueryOf(state: AppState; q: var ShotQuery): bool =
       return true
   false
 
+proc shownId(state: AppState): int =
+  ## The id of the file the main panel shows, or 0 when it shows none.
+  result = 0
+  var k = -1
+  for i in 0 ..< state.panels.len:
+    if state.panels[i].id == MainPanel:
+      k = i
+      break
+  if k < 0: return
+  let i = state.shownFile(k)
+  if i < 0: return
+  result = int(state.sessions[i].id)
+
+proc seismicTrace(state: AppState; trace: int): bool =
+  ## Whether `trace` is a trace of an open seismic file.
+  if trace < 0: return false
+  let i = state.findTrace(trace)
+  if i < 0: return false
+  not state.sessions[i].isSignature
+
+proc followedTrace(state: var AppState): int =
+  ## The seismic trace under the pointer, or the last one hovered while the
+  ## file on show is unchanged and that trace is still open. -1 when none has
+  ## been hovered since this file was shown.
+  let shown = state.shownId()
+  if shown == 0 or shown != state.followShown:
+    state.followTrace = -1
+    state.followShown = shown
+  let hover = state.selection.hover
+  if hover >= 0:
+    if state.seismicTrace(hover):
+      state.followTrace = hover
+      state.followShown = shown
+      return hover
+    state.followTrace = -1
+    return -1
+  if state.seismicTrace(state.followTrace): return state.followTrace
+  state.followTrace = -1
+  -1
+
 proc followAnswer*(state: var AppState): ShotFollowAnswer {.raises: [].} =
-  ## The shot the newest loaded log follows: the pointer, then the selected
-  ## signature, then the selected open file. Nothing is moved or scrolled.
+  ## The shot the newest loaded log follows: the trace under the pointer, or
+  ## the last one hovered while this file is still on show, then the selected
+  ## signature, then the selected open file. Leaving the plot does not jump
+  ## until the shown file changes, that file is closed, or another trace is
+  ## hovered. Nothing is moved or scrolled.
   ## No allocation when the pointer, the chosen file and the log are unchanged.
-  let stamp = followStamp(state)
+  let trace = state.followedTrace()
+  var stamp = followStamp(state)
+  stamp.hover = trace
+  if trace >= 0:
+    let i = state.findTrace(trace)
+    if i >= 0:
+      stamp.hoverSession = int(state.sessions[i].id)
+      stamp.hoverKeys = state.sessions[i].keysRevision
+    else:
+      stamp.hoverSession = -1
+      stamp.hoverKeys = 0
+  else:
+    stamp.hoverSession = -1
+    stamp.hoverKeys = 0
   if state.follow.unchanged(stamp.hover, stamp.hoverSession, stamp.hoverKeys,
       stamp.chosenSession, stamp.chosenKeys, stamp.filesRev, stamp.sessions, stamp.logId,
       stamp.logRev):
@@ -2205,7 +2264,7 @@ proc followAnswer*(state: var AppState): ShotFollowAnswer {.raises: [].} =
   let index = state.follow.indexOf(stamp.logId)
   if index == nil: return put(sfNone, none)
   var q = ShotQuery()
-  if pointerQuery(state, q): return put(sfPointer, matched(index, q))
+  if pointerQuery(state, trace, q): return put(sfPointer, matched(index, q))
   if signatureQueryOf(state, q): return put(sfSignature, matched(index, q))
   if fileQueryOf(state, q): return put(sfFile, matched(index, q))
   put(sfNone, none)

@@ -6,7 +6,9 @@
 ## recordTimeZeroUs, delay_matches_time_zero matched row 0. With exact still
 ## t.isSome, whole_second_matches_within_the_second got row -1 rule mrNone.
 ## With exact forced false, rev3_matches_exactly got row 0 rule
-## mrTimeAndNumbers, and delay_matches_time_zero matched row -1.
+## mrTimeAndNumbers, and delay_matches_time_zero matched row -1. With the
+## pointer leave falling back at once, pointer_stays_off_the_plot became
+## file row 0 mrTime, and precedence's leave became signature row 2.
 
 import std/[math, options, os, strutils, times]
 import parseSEG
@@ -297,9 +299,10 @@ proc main*() =
       doAssert pointed.source == sfPointer and pointed.match.row == 1, $pointed.source &
         " row " & $pointed.match.row
       st.apply Command(kind: ckHover, trace: -1)
-      let signed = st.followAnswer()
-      doAssert signed.source == sfSignature and signed.match.row == 2, $signed.source &
-        " row " & $signed.match.row
+      let stayed = st.followAnswer()
+      doAssert stayed.source == sfPointer and stayed.match.row == 1, $stayed.source &
+        " row " & $stayed.match.row
+      doAssert stayed.revision == pointed.revision, "leaving the plot bumped the revision"
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: st.sessions[landAt].path)
       doAssert st.settle(st.fileList.chosen == st.sessions[landAt].path)
       let filed = st.followAnswer()
@@ -355,6 +358,56 @@ proc main*() =
       doAssert st.shotLogCount == 0
       let a = st.followAnswer()
       doAssert a.source == sfNone, $a.source
+      st.shutdown()
+
+    block pointer_stays_off_the_plot:
+      var st = initAppState()
+      st.openLand()
+      let later = laterTrace(st)
+      let us = timeZeroOf(st, 0)
+      let path = writeLog(fx.dir, "stay.csv", [row(us, 1, 1, 1)])
+      st.importLog(path, 1)
+      let hover = st.sessions[0].base + later
+      st.apply Command(kind: ckHover, trace: hover)
+      let pointed = st.followAnswer()
+      doAssert pointed.source == sfPointer and pointed.match.rule == mrNone, $pointed.source &
+        " " & $pointed.match.rule
+      st.apply Command(kind: ckHover, trace: -1)
+      let stayed = st.followAnswer()
+      doAssert stayed.source == sfPointer and stayed.match.rule == mrNone, $stayed.source &
+        " row " & $stayed.match.row & " " & $stayed.match.rule
+      doAssert stayed.revision == pointed.revision
+      let other = fx.dir / "away.sgd"
+      writeBytes(other, delaySegd())
+      st.apply Command(kind: ckOpen, paths: @[other])
+      doAssert st.settle(st.sessions.len == 2 and st.jobs.active.len == 0), "the other file did not open"
+      st.apply Command(kind: ckHover, trace: -1)
+      let left = st.followAnswer()
+      doAssert left.source != sfPointer, "the other file still followed " & $left.source
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: Land)
+      doAssert st.settle(st.fileList.chosen == Land)
+      st.apply Command(kind: ckHover, trace: -1)
+      let back = st.followAnswer()
+      doAssert back.source == sfFile and back.match.row == 0, $back.source & " row " &
+          $back.match.row
+      st.shutdown()
+
+    block closed_file_is_not_kept:
+      var st = initAppState()
+      st.openLand()
+      let later = laterTrace(st)
+      let us = timeZeroOf(st, 0)
+      let path = writeLog(fx.dir, "closed.csv", [row(us, 1, 1, 1)])
+      st.importLog(path, 1)
+      let id = st.sessions[0].id
+      st.apply Command(kind: ckHover, trace: st.sessions[0].base + later)
+      doAssert st.followAnswer().source == sfPointer
+      st.apply Command(kind: ckHover, trace: -1)
+      doAssert st.followAnswer().source == sfPointer
+      st.apply Command(kind: ckClose, file: id)
+      doAssert st.sessions.len == 0, "the file stayed open"
+      let a = st.followAnswer()
+      doAssert a.source != sfPointer, $a.source
       st.shutdown()
 
 when isMainModule:
