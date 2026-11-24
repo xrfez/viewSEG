@@ -21,6 +21,7 @@ type
     recordMs: cdouble
     align: SliceAlign
     standard: CutStandard
+    order: CutOrder
     folder: string
     nameBuf: array[NameRoom, char]
     nameTouched: bool
@@ -79,8 +80,9 @@ proc coloured(text: string; colour: Rgba; width: float32) =
   wrapped(text, width)
   igPopStyleColor(1)
 
-proc options(ui: CutUi): CutOptions =
-  initCutOptions(ui.recordMs, 0.0, ui.align, ui.standard) # a record begins at the shot
+proc options(ui: CutUi; groupable: bool): CutOptions =
+  result = initCutOptions(ui.recordMs, 0.0, ui.align, ui.standard) # a record begins at the shot
+  if groupable: result.order = ui.order
 
 proc sources(ui: var CutUi; st: AppState) =
   ## The shots of the chosen log, worked out again only when it changed.
@@ -135,6 +137,23 @@ proc drawAlign(ui: var CutUi; marks: var Marks) =
   marks.mark("cut.align")
   tip(alignTip(ui.align))
 
+proc drawOrder(ui: var CutUi; marks: var Marks; groupable, carried: bool) =
+  ## The order of a record's traces. The grouped orders need a recording with two or more
+  ## coded components; a SEG-D slice that keeps the recording's headers cannot take them.
+  let shownOrder = if groupable: ui.order else: coAsSource
+  if igBeginCombo("Trace order##cut".cstring, orderWords(shownOrder).cstring, 0):
+    for o in CutOrder:
+      let off = o != coAsSource and not groupable
+      igBeginDisabled(off)
+      if igSelectable_Bool(orderWords(o).cstring, o == shownOrder, 0, ImVec2_c(x: 0, y: 0)):
+        ui.order = o
+      igEndDisabled()
+      marks.mark("cut.order " & orderWords(o) & (if off: ".off" else: ""))
+      tip(if off: OrderOneComponent else: orderTip(o))
+    igEndCombo()
+  marks.mark("cut.order")
+  tip(if shownOrder != coAsSource and carried: OrderKeepsHeaders else: orderTip(shownOrder))
+
 proc drawFormat(ui: var CutUi; marks: var Marks; sourceSegd, builtFromOptions: bool) =
   ## `sourceSegd`: the output SEG-D keeps the source's revision. `builtFromOptions`: the
   ## source is SEG-D but its headers cannot be carried (the window knows it already).
@@ -186,7 +205,8 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     marks.mark("cut.length")
     marks.mark("cut.recordMs " & $ui.recordMs)
     igSetNextItemWidth(igGetFontSize() * 10)
-    let opts = ui.options()
+    let groupable = facts.ready and facts.componentCodes >= 2
+    let opts = ui.options(groupable)
     var problem = ""
     if shown >= 0 and facts.ready:
       problem = checkOptions(opts, facts.dtMs)
@@ -205,6 +225,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     let segd = shown >= 0 and st.sessions[shown].facts.summary.standard == skSegd
     let uncarried = segd and facts.ready and facts.carryHeaderBytes == 0
     ui.drawFormat(marks, segd and not uncarried, uncarried)
+    ui.drawOrder(marks, groupable, segd and not uncarried and ui.standard == csSegdRev3)
     igSeparator()
     wrapped("Folder: " & (if ui.folder.len > 0: ui.folder else: "not chosen"), wide)
     marks.mark("cut.folder " & ui.folder)

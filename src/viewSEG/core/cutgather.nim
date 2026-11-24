@@ -11,14 +11,20 @@
 ## trace from it with the library's piecewise calls.
 
 import std/[algorithm, math, options, sets, strutils, tables]
+import parseSEG
 import processSEG/continuous/slice
 import processSEG/core/workspace
-import ./[recordingkind, shotlog]
+import ./[components, recordingkind, shotlog]
 
 type
   CutStandard* = enum
     csSegdRev3 ## SEG-D Rev 3.
     csSegy     ## SEG-Y.
+
+  CutOrder* = enum
+    coAsSource    ## the recording's own order: station, then channel and component
+    coByFlag      ## a station's components together, stations in order
+    coByComponent ## each component's stations together, components in order
 
   CutOptions* = object
     ## What to cut at each shot.
@@ -31,6 +37,9 @@ type
     logName*: string
       ## the shot log's file name (not its path), for the note a slice writes about itself;
       ## "" when it has none
+    order*: CutOrder
+      ## the order of the traces of a record; a grouped order needs the headers built from
+      ## keys (a SEG-D slice that carries the recording's headers keeps the recording's order)
 
   CutShots* = object
     ## The timed shots of a log, in time order.
@@ -130,6 +139,50 @@ func estimateBytes*(opts: CutOptions, shots, components, samplesPerTrace: int,
     if withSourceXY: record += 96
     let exts = if withReceiverXY: 5'i64 else: 2'i64
     result = int64(shots) * record + traces * (20'i64 + exts * 32 + samples * 4)
+
+func orderRank(k: TraceKeys): float64 =
+  ## The rank of a receiver's component, NaN when the headers do not code one.
+  componentSortRank(k)
+
+func cmpLast(a, b: float64): int =
+  ## NaN last.
+  if a.isNaN: (if b.isNaN: 0 else: 1)
+  elif b.isNaN: -1
+  else: cmp(a, b)
+
+func receiverOrder*(plan: SlicePlan, order: CutOrder): tuple[order: seq[int], coded: bool] =
+  ## The receivers of `plan` in the order a record's traces are written. As the recording
+  ## (`coAsSource`: station, then channel and component) or grouped by flag (station
+  ## ascending, then component: vertical, inline, crossline, hydrophone, then others by code)
+  ## or by component (component in that order, then station). Ties keep the recording's
+  ## order. `coded` is false when no receiver has a component code: a grouped order is then
+  ## the recording's own, since stations and channels are all that is left to sort by.
+  let n = plan.receiverCount
+  var ranks = newSeq[float64](n)
+  var stations = newSeq[tuple[line, point: float64, index: int16]](n)
+  for r in 0 ..< n:
+    let k = plan.receiverKeys(r)
+    ranks[r] = orderRank(k)
+    let st = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
+    stations[r] = (st.line, st.point, st.index)
+    if not ranks[r].isNaN: result.coded = true
+  result.order = newSeq[int](n)
+  for r in 0 ..< n: result.order[r] = r
+  if order != coAsSource and result.coded:
+    func atStation(a, b: int): int =
+      result = cmpLast(stations[a].line, stations[b].line)
+      if result == 0: result = cmpLast(stations[a].point, stations[b].point)
+      if result == 0: result = cmp(stations[a].index, stations[b].index)
+    result.order.sort(proc (a, b: int): int =
+      case order
+      of coByFlag:
+        result = atStation(a, b)
+        if result == 0: result = cmpLast(ranks[a], ranks[b])
+      of coByComponent:
+        result = cmpLast(ranks[a], ranks[b])
+        if result == 0: result = atStation(a, b)
+      of coAsSource: discard
+      if result == 0: result = cmp(a, b))
 
 func checkOptions*(opts: CutOptions, dtMs: float64): string =
   ## "" when the options can be cut at sample interval `dtMs`, else a

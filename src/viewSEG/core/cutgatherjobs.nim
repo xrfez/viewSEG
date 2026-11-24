@@ -93,6 +93,12 @@ type
     shotsRefused*: int ## shots the writer refused (carried output); they are left out
     refusals*: seq[string] ## the first few reasons, with the shot's record number
     components*: int ## traces per record
+    order*: CutOrder ## the order the traces of a record were written in
+    orderCarried*: bool
+      ## a grouped order was asked for, but the output keeps the recording's headers and so
+      ## its order
+    orderUncoded*: bool
+      ## a grouped order was asked for, but no component is coded: the recording's order
     samples*: int ## samples per trace
     samplesRead*: int ## source samples decoded, each once (not shots x window)
     overlapsCompared*, overlapsMatched*, overlapsMismatched*: int
@@ -287,6 +293,21 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
         result.add plural(res.textReplaced, "character", "characters") &
           " of those file names cannot be written in " & res.provenanceIn &
           " and " & (if res.textReplaced == 1: "is" else: "are") & " written as \"?\"."
+  if res.orderCarried:
+    result.add "The traces are in the recording's order: a SEG-D slice that keeps the " &
+      "recording's headers cannot reorder them."
+  elif res.orderUncoded:
+    result.add "The components are not coded in the recording's headers, so the traces are " &
+      "in the recording's order: each station's channels together."
+  else:
+    case res.order
+    of coAsSource: discard
+    of coByFlag:
+      result.add "The traces of each record are grouped by flag: each station's components " &
+        "together (vertical, inline, crossline, hydrophone), the stations in order."
+    of coByComponent:
+      result.add "The traces of each record are grouped by component (vertical, inline, " &
+        "crossline, hydrophone), each component's stations in order."
   if res.recordsFromFileNumbers:
     result.add "The records are numbered by the shots' file numbers."
   else:
@@ -462,6 +483,15 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let why = if opts.standard == csSegdRev3: openCarry(part, file[], plan, rows, vendors, w)
         else: "the output is SEG-Y"
       let carry = why.len == 0
+      var written = receiverOrder(plan, coAsSource).order
+      if opts.order != coAsSource:
+        if carry: res.orderCarried = true
+        else:
+          let asked = receiverOrder(plan, opts.order)
+          if asked.coded:
+            written = asked.order
+            res.order = opts.order
+          else: res.orderUncoded = true
       if carry:
         res.carried = true
         res.revision = revisionWords(file[], plan)
@@ -572,7 +602,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           except ValueError, SegFormatError:
             refusal = getCurrentExceptionMsg()
         for i in 0 ..< comps:
-          let r = if carry: want.comps[i] else: i
+          let r = if carry: want.comps[i] else: written[i]
           let trace = s * comps + r
           for pc in plan.pieces(trace):
             if pc.row >= 0 and pc.row notin touched: touched.add pc.row
@@ -609,7 +639,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           else:
             var k = plan.sliceKeys(trace)
             k.record = float64(numbered.numbers[s])
-            k.channel = float64(r + 1)
+            k.channel = float64(i + 1) # the trace's place in the record, as written
             # the facts of the recording's headers come from the segment that holds the
             # trace's first sample, each trace from its own
             var fill = TraceFill()

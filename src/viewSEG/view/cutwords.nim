@@ -50,6 +50,30 @@ func alignTip*(a: SliceAlign): string =
   of saCubic: "The sub-sample part of the start is shifted out by cubic interpolation."
   of saSinc: "Sinc is the most exact and the slowest."
 
+func orderWords*(o: CutOrder): string =
+  ## The drop-down's words for the order of a record's traces.
+  case o
+  of coAsSource: "As in the recording"
+  of coByFlag: "By flag (a station's components together)"
+  of coByComponent: "By component (each component's stations together)"
+
+func orderTip*(o: CutOrder): string =
+  ## One plain sentence for each order.
+  case o
+  of coAsSource:
+    "The traces of a record keep the recording's order: by station, then channel."
+  of coByFlag:
+    "All the components of one station together (vertical, inline, crossline, hydrophone), " &
+      "then the next station."
+  of coByComponent:
+    "All the vertical traces, then all the inline, the crossline and the hydrophone, each " &
+      "in station order."
+
+const
+  OrderOneComponent* = "The recording has one coded component, so there is nothing to group."
+  OrderKeepsHeaders* = "A SEG-D slice that keeps the recording's headers cannot reorder " &
+    "its traces: it is written in the recording's order."
+
 func standardWords*(s: CutStandard; sourceSegd = false): string =
   ## The words for a file format. A SEG-D source cut into SEG-D keeps its own
   ## revision (the headers are its own); any other source gives Rev 3.

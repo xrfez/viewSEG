@@ -148,6 +148,7 @@ proc main*() =
       let s = f.summary
       if s.len == 0: return false
       doAssert f.hasMark("cut.format SEG-D Rev 3.on"), "the Format entry is not SEG-D Rev 3"
+      doAssert f.hasMark("cut.order"), "the Trace order entry is not drawn"
       doAssert f.core.settings.cutGather.recordMs == 10_000.0, "the default length is not 10000"
       doAssert s.startsWith("3 shots (1 row has no time and is left out), 2 components, " &
         "about "), "the summary names the wrong shots: " & s

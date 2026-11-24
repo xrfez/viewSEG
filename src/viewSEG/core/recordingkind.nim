@@ -85,7 +85,7 @@ import std/[algorithm, math, sequtils, tables]
 import parseSEG
 import processSEG
 import processSEG/continuous/slice
-import ./[cutcarry, filesystem, jobs, segmentclock, traceorder, vendormaps]
+import ./[components, cutcarry, filesystem, jobs, segmentclock, traceorder, vendormaps]
 
 export traceorder
 
@@ -140,15 +140,18 @@ type
     dtMs*: float64
     stations*: int                 ## receiver points (line and point, else group coordinates)
     components*: int               ## receivers: what each cut record holds as traces
+    componentCodes*: int
+      ## the distinct components the traces' headers code (0: none does); a record's traces
+      ## can be grouped by component only when this is 2 or more
     segments*: int
     firstTime*, lastTime*: float64 ## UTC POSIX seconds; the span of every segment
-    boundaries*: int               ## between consecutive segments of one receiver
-    abutting*: int                 ## the next starts one step after the last
-    skips*: int                    ## boundaries after whole missing segments (k > 1)
-    missingSegments*: int          ## whole segments absent, summed over `skips`
-    irregular*: int                ## starts that are not a whole number of steps apart
-    uncovered*: int                ## receivers with a segment that does not cover the step
-    offTrace*: int                 ## for `swOffStep`: the trace (from 1) that breaks the rule
+    boundaries*: int ## between consecutive segments of one receiver
+    abutting*: int ## the next starts one step after the last
+    skips*: int ## boundaries after whole missing segments (k > 1)
+    missingSegments*: int ## whole segments absent, summed over `skips`
+    irregular*: int ## starts that are not a whole number of steps apart
+    uncovered*: int ## receivers with a segment that does not cover the step
+    offTrace*: int ## for `swOffStep`: the trace (from 1) that breaks the rule
     nearestSeconds*: float64
       ## the least time from a start to the next of its receiver, over the boundaries on the
       ## step (0 for none): for `swNoFollow`, with `segmentSeconds` the trace length there
@@ -413,8 +416,10 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
           n: n, row: row)
   if segs.len == 0: return
   var inFile = newSeq[OrderTrace](segs.len) # the live traces in file order
+  var coded: set[uint8] = {}
   for x, sg in segs:
     let k = meta.keys(sg.row)
+    if componentOf(k) != 0: coded.incl componentOf(k)
     inFile[x] = OrderTrace(component: k.component, place: plan.places[sg.row], start: sg.start,
       record: if k.record.isNaN: NoRecord else: int64(round(k.record)))
   segs.sort do (a, b: Seg) -> int:
@@ -422,6 +427,7 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     if result == 0: result = cmp(a.start, b.start)
     if result == 0: result = cmp(a.row, b.row)
   result.segments = segs.len
+  result.componentCodes = coded.card
   # per receiver with a station: how many segments it has
   var placed: seq[tuple[st: Place; segs: int]]
   var unseen: seq[Unseen] = @[] # receivers with more starts than were checked

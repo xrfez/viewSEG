@@ -130,7 +130,7 @@ export analysis, compare, edits, filelist, filememory, firstbreaks, identity, in
   mapstate, panels, persist, pick, project, outputnames, recordqc, references, selection, session,
     settings,
   shots, spectra, spread, survey, threads, tiles, traceids, vendorfieldlist, vendormaps, zoom
-export CutOptions, CutStandard, initCutOptions
+export CutOptions, CutOrder, CutStandard, initCutOptions
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues, MaxTableRows
 export tracetable
 export WatchInterval
@@ -692,7 +692,8 @@ type
       leapStep*: int ## ckAddLeap: +1 or -1
     of ckCutGather:
       cutLog*: int ## the loaded shot log whose shots are cut (its index)
-      cutOptions*: CutOptions ## the record's length and start, the alignment, the format
+      cutOptions*: CutOptions
+        ## the record's length and start, the alignment, the format, the order of its traces
       cutDest*: string ## the file to write: a new name, in a folder that exists
     of ckExportShotSps:
       spsLog*: int ## the loaded shot log to write (its index)

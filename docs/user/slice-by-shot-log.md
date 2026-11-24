@@ -126,6 +126,14 @@ opening keeps what you typed. From the top:
   most exact and the slowest. Hover an entry for the same in a sentence.
 - **Format:** **SEG-D** or **SEG-Y**. SEG-D reads "SEG-D (the source's revision)" when the
   recording is SEG-D (its headers are kept, see below) and "SEG-D Rev 3" otherwise.
+- **Trace order:** the order of the traces in each record. **As in the recording** keeps the
+  recording's order (by station, then channel). **By flag** puts all the components of one
+  station together, the stations in order; **By component** puts all the vertical traces
+  first, then the inline, the crossline and the hydrophone, each in station order. Within a
+  component kind, a component with a lower code comes first. The two grouped choices are dim
+  (the tooltip says why) when the recording's headers code fewer than two components. When the
+  headers code none, the traces stay in the recording's order and Messages says the components
+  are not coded.
 - **Folder:** where the file goes, chosen with **Change folder...**. It is "not chosen" until
   you choose one.
 - **File name:** a name without a folder. It starts as the recording's name, then `_slice`, then
@@ -152,6 +160,11 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
 - **The components as channels.** Each record holds one trace per component of the
   recording, numbered 1 to the number of components, and the shot's own values (its line,
   point, position and file number, where the log has them) in the headers.
+- **Trace order and numbers.** The traces of a record are in the order **Trace order** says,
+  and are numbered 1 to the number of components in the order written. A SEG-D slice that
+  keeps the recording's headers (see below) cannot reorder its traces, because the headers it
+  copies are the recording's, in the recording's order: it is written in that order whatever
+  the choice, and Messages says so.
 - **Record numbers.** The shots' file numbers, when they are whole numbers that rise strictly
   in time order. Otherwise the records are numbered 1 to the number of shots, and Messages and
   the window say so.
