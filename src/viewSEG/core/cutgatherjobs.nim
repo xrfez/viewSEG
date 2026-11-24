@@ -323,8 +323,14 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           var k = plan.sliceKeys(trace)
           k.record = float64(numbered.numbers[s])
           k.channel = float64(r + 1)
-          k.time = toPosixSeconds(firstUs)
-          k.noteRecordedTime(toFirstSample, firstUs)
+          case opts.standard
+          of csSegdRev3:
+            k.time = toPosixSeconds(firstUs)
+            k.noteRecordedTime(toFirstSample, firstUs)
+          of csSegy:
+            # The SEG-Y writer takes `time` as time zero.
+            k.time = toPosixSeconds(shots.shots[s].timeUs)
+            k.noteRecordedTime(toRecordTimeZero, shots.shots[s].timeUs)
           res.gapSamples += sliceReport.gapSamples(trace)
           res.failedSamples += sliceReport.failedSamples(trace)
           w.writeTrace(k, dst, channelType = sctSeismic)

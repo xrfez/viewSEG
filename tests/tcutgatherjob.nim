@@ -169,6 +169,36 @@ proc main*() =
           doAssert cast[uint32](got[j]) == cast[uint32](same.model(c, k0 + j)),
             "trace " & $t & " sample " & $j & ": " & $got[j] & " vs " & $same.model(c, k0 + j)
 
+  block segy_output_time_and_samples:
+    # SEG-Y output with a start before and after the shot. Fails when the
+    # writer is given the first sample's instant as time zero ("time zero of
+    # record 0 (start -100): -100000 us off").
+    for startMs in [-100.0, 40.0]:
+      let dest = outDir / ("cut-segy" & $int(startMs) & ".sgy")
+      let o = initCutOptions(LengthMs, startMs, standard = csSegy)
+      let got = runCut(jobs, srcSame, same.path, dest, shots, o)
+      doAssert got.st == jsDone, got.error & " / " & got.res.reason
+      var f = openSeismic(dest, keys = true)
+      defer: f.close()
+      doAssert f.len == 14
+      for s in 0 ..< 7:
+        let shotUs = BaseUs + Offsets[s]
+        let k0 = int((shotUs + int64(startMs * 1000) - BaseUs + DtUs div 2) div DtUs)
+        for c in 0 .. 1:
+          let t = s * 2 + c
+          let zero = f.recordTimeZeroUs(t)
+          doAssert zero.isSome and zero.get == shotUs,
+            "time zero of record " & $s & " (start " & $startMs & "): " &
+            $(zero.get(0) - shotUs) & " us off"
+          let first = f.traceKeys(t).firstSampleUs
+          doAssert first.isSome and first.get == shotUs + int64(startMs * 1000),
+            "first sample of record " & $s & " (start " & $startMs & "): " &
+            $(first.get(0) - shotUs - int64(startMs * 1000)) & " us off"
+          let data = samplesOf(f, t)
+          for j in 0 ..< Window:
+            doAssert cast[uint32](data[j]) == cast[uint32](same.model(c, k0 + j)),
+              "trace " & $t & " sample " & $j
+
   block equals_extract_of_whole_block:
     # The whole source in memory, cut by the library's own `extractInto`.
     var whole = srcSame.readTraces(0 ..< srcSame.len)
