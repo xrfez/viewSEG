@@ -720,7 +720,8 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
         edits = savedEdits(ctx, store, item.source, s.modified, itemLines, doneFiles, count)
         if s != nil: signature = s.signature
         var notes = joinedOwn(ctx, file, signature, writing)
-        if writing.project.loading and not signature.isSignature:
+        if writing.project.loading and writing.options.writeSessionPositions and
+            not signature.isSignature:
           if notes == @[BatchOwnPositions]: notes = @[]
           notes.add BatchSurveyLoading
         itemLines.add notes
