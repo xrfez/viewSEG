@@ -54,7 +54,7 @@ proc blk(t: uint8): seq[byte] =
   result[31] = t
 
 proc makeRecording(path: string; raw: openArray[int64]; noStation = false;
-    sensor: openArray[uint8] = []) =
+    sensor: openArray[uint8] = []; points: openArray[int32] = []) =
   ## One record, a trace per entry of `raw`: its vendor start-time count
   ## (0: the absent sentinel).
   let fmt = sd8058
@@ -81,7 +81,8 @@ proc makeRecording(path: string; raw: openArray[int64]; noStation = false;
       traceNumber: tn, traceHeaderExtensions: 2)
     t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(
       receiverLineNumber: (if noStation: 0 else: 100),
-      receiverPointNumber: (if noStation: 0 else: 101), receiverPointIndex: 1, numSamples: SegLen,
+      receiverPointNumber: (if noStation: 0 elif points.len > 0: points[tn - 1] else: 101),
+      receiverPointIndex: 1, numSamples: SegLen,
       sensorType: (if sensor.len > 0: sensor[tn - 1] else: 2'u8), blockType: 0x40)
     var vendor = blk(0xB0)
     for i in 0 .. 7: vendor[i] = byte((raw[tn - 1] shr (8 * (7 - i))) and 255)
@@ -376,6 +377,44 @@ proc main*() =
       defer: h.close()
       let ok = describeRecording(planRecording(addr h, rec / "u5.sgd", 2.0, gps))
       doAssert ok.unevenChannels == 0 and cutRefusal(ok) == "", $ok
+
+    block records_keep_the_order_of_the_file:
+      # at stations 102 then 101, a geophone Z (sensor 2), a hydrophone (1), a geophone X (3):
+      # every record is 102 Z, 102 H, 102 X, 101 Z, 101 H, 101 X, also after a dropout
+      var raw: seq[int64]
+      var sensors: seq[uint8]
+      var points: seq[int32]
+      let present = [0, 1, 3, 4] # segment 2 was not recorded
+      for seg in present:
+        for point in [102'i32, 101]:
+          for sensor in [2'u8, 1, 3]:
+            raw.add gpsOf(segStart(seg))
+            sensors.add sensor
+            points.add point
+      let path = rec / "order.sgd"
+      makeRecording(path, raw, sensor = sensors, points = points)
+      var g = openSeismic(path, keys = true)
+      defer: g.close()
+      let clock = segmentClock(g, gps)
+      for row in 0 ..< raw.len:
+        doAssert clock.receivers[row] == row mod 6, "row " & $row & ": " & $clock.receivers
+      publishVendors(gps)
+      defer: publishVendors(VendorRegistry())
+      let dest = fx.dir / "out" / "order.sgd"
+      # shots at the start of segments 0, 3 and 4 (the one after the dropout)
+      let got = runCut(initJobs(), g, path,
+        dest, shotsAt([20_000'i64, 20_000 + 3 * 80_000, 20_000 + 4 * 80_000]),
+        initCutOptions(40.0, -20.0))
+      doAssert got.st == jsDone, got.error & " / " & got.res.reason
+      var o = openSeismic(dest, keys = true)
+      defer: o.close()
+      doAssert o.len == 18, "traces " & $o.len
+      let segmentIndex = [0, 2, 3] # the position of the shot's segment among those recorded
+      for shot in 0 ..< 3:
+        for t in 0 ..< 6:
+          let source = segmentIndex[shot] * 6 + t
+          let v = samplesOf(o, shot * 6 + t)
+          doAssert v[0] == float32(source * 40), "shot " & $shot & " trace " & $t & ": " & $v[0]
 
     block traces_without_a_station_are_not_merged:
       var raw: seq[int64]

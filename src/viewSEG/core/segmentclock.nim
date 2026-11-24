@@ -22,7 +22,7 @@
 ## The headers' bytes are read, no sample is decoded. Nothing is read when no
 ## loaded vendor map that applies to the file names the field.
 
-import std/[parseutils, algorithm, math]
+import std/[parseutils, algorithm, math, tables]
 import parseSEG
 import ./[shotlog, vendormaps]
 
@@ -38,7 +38,7 @@ type SegmentClock* = object
   ## What `segmentClock` made. `times` and `receivers` are as
   ## `initSliceStreams` takes them and are filled only when `fromHeaders`.
   times*: seq[float64] ## per trace: UTC POSIX seconds of its first sample
-  receivers*: seq[int] ## per trace: the receiver, ascending by station and component
+  receivers*: seq[int] ## per trace: the receiver, numbered in the order the file shows them
   fromHeaders*: bool ## at least one trace had the field
   leftOut*: int ## traces without a usable field: their time is NaN, the planner leaves them out
   unevenChannels*: int
@@ -84,19 +84,54 @@ func hasStation(line, point: float64): bool =
   not (line.isNaN or point.isNaN)
 
 proc numbered(places: seq[Place]): seq[int] =
-  ## The ids of `places`, ascending by place, equal places sharing one.
+  ## The ids of `places`, equal places sharing one, in the order the file shows
+  ## them: stations by their first trace, within a station the components by
+  ## theirs, then by sub-receiver and first trace. Nothing is sorted by station
+  ## number or component code. A place with no station is a station of its own.
   var order = newSeq[int](places.len)
   for i in 0 ..< places.len: order[i] = i
   order.sort do (a, b: int) -> int:
-    cmpPlace(places[a], places[b])
-  result = newSeq[int](places.len)
-  var id = 0
+    result = cmpPlace(places[a], places[b])
+    if result == 0: result = cmp(a, b)
+  type Group = tuple[first, run, stationFirst, compFirst, sub: int]
+  var groups: seq[Group] = @[]
+  var groupOf = newSeq[int](places.len)
+  var runs = 0 # the stations met: a run of places of one station
   for n, row in order:
-    if n > 0 and cmpPlace(places[order[n - 1]], places[row]) != 0: inc id
-    result[row] = id
+    let pl = places[row]
+    if n == 0 or cmpPlace(places[order[n - 1]], pl) != 0:
+      let prev = if n > 0: places[order[n - 1]] else: pl
+      let sameStation = n > 0 and hasStation(pl.line, pl.point) and
+        cmpNaN(prev.line, pl.line) == 0 and cmpNaN(prev.point, pl.point) == 0 and
+        prev.index == pl.index
+      if not sameStation: inc runs
+      groups.add (row, runs - 1, row, row, pl.sub)
+    groupOf[row] = groups.len - 1
+  var stationFirst = newSeq[int](runs)
+  for r in 0 ..< runs: stationFirst[r] = high(int)
+  var compFirst = initTable[tuple[run: int; comp: uint8], int]()
+  for g in groups:
+    stationFirst[g.run] = min(stationFirst[g.run], g.first)
+    let key = (g.run, places[g.first].component)
+    compFirst[key] = min(compFirst.getOrDefault(key, high(int)), g.first)
+  for g in groups.mitems:
+    g.stationFirst = stationFirst[g.run]
+    g.compFirst = compFirst[(g.run, places[g.first].component)]
+  var ranked = newSeq[int](groups.len)
+  for i in 0 ..< groups.len: ranked[i] = i
+  ranked.sort do (a, b: int) -> int:
+    result = cmp(groups[a].stationFirst, groups[b].stationFirst)
+    if result == 0: result = cmp(groups[a].compFirst, groups[b].compFirst)
+    if result == 0: result = cmp(groups[a].sub, groups[b].sub)
+    if result == 0: result = cmp(groups[a].first, groups[b].first)
+  var idOfGroup = newSeq[int](groups.len)
+  for id, g in ranked: idOfGroup[g] = id
+  result = newSeq[int](places.len)
+  for row in 0 ..< places.len: result[row] = idOfGroup[groupOf[row]]
 
 proc receiverIds*(f: SeismicFile; withChannel: bool): seq[int] =
-  ## Per trace: the receiver, numbered ascending by station and component
+  ## Per trace: the receiver, numbered in the order the file shows them (stations by
+  ## their first trace, components of a station by theirs)
   ## (and by channel when `withChannel`, as `initSliceStreams` does from the
   ## keys). Needs the keys of `f`.
   var places = newSeq[Place](f.len)

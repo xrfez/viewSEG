@@ -24,10 +24,10 @@ type Spec = tuple[rcv, first, comp: int, stationed: bool]
 func spec(rcv, first: int; comp = 0; stationed = true): Spec =
   (rcv, first, comp, stationed)
 
-proc factsOf(dir, name: string; specs: openArray[Spec]; n = 1000): RecordingFacts =
+proc writeSpecs(dir, name: string; specs: openArray[Spec]; n: int): string =
   createDir(dir)
-  let path = dir / (name & ".sgd")
-  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: n))
+  result = dir / (name & ".sgd")
+  var w = openSeismicWriter(result, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: n))
   for i, s in specs:
     var k = initTraceKeys()
     k.status = tsLive
@@ -44,11 +44,20 @@ proc factsOf(dir, name: string; specs: openArray[Spec]; n = 1000): RecordingFact
     for j in 0 ..< n: samples[j] = float32(s.first + j)
     w.writeTrace(k, samples)
   discard w.close()
+
+proc factsOf(dir, name: string; specs: openArray[Spec]; n = 1000): RecordingFacts =
+  let path = writeSpecs(dir, name, specs, n)
   var f = openSeismic(path)
-  var plan: RecordingPlan
   try:
-    plan = planRecording(addr f, path, DtMs, VendorRegistry())
-    result = describeRecording(plan)
+    result = describeRecording(planRecording(addr f, path, DtMs, VendorRegistry()))
+  finally:
+    f.close()
+
+proc receiversOf(dir, name: string; specs: openArray[Spec]): seq[int] =
+  let path = writeSpecs(dir, name, specs, 1000)
+  var f = openSeismic(path)
+  try:
+    result = planRecording(addr f, path, DtMs, VendorRegistry()).receivers
   finally:
     f.close()
 
@@ -263,6 +272,16 @@ proc main*() =
     let f = factsOf(dir, "sixChannels", specs)
     doAssert f.kind == rkReceiverSliced and f.slicedWhy == swSameStart, $f
     doAssert cutRefusal(f).startsWith("This file is a time-sliced receiver gather")
+
+  block receivers_come_in_the_order_the_file_shows_them:
+    # stations 102 then 101; at each a geophone Z (comp 2), a hydrophone (0), a geophone X (1)
+    var specs: seq[Spec]
+    for seg in [0, 1, 3]: # a dropout after the second
+      for rcv in [1, 0]:
+        for comp in [2, 0, 1]: specs.add spec(rcv, seg * 1000, comp)
+    let receivers = receiversOf(dir, "order", specs)
+    for row in 0 ..< specs.len:
+      doAssert receivers[row] == row mod 6, "row " & $row & ": " & $receivers
 
   block one_live_trace_is_continuous:
     let f = factsOf(dir, "single", [spec(0, 0, 0, stationed = false)])
