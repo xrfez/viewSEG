@@ -27,7 +27,8 @@
 ## An int16 source with the option on kept format code 3 (`option format 3`).
 ## An 8036 SEG-D source kept format 8036 (`option format 8036`). An 8015
 ## source whose listen length was 94 refused: "SEG-D format 8015 holds
-## samples in groups of 4".
+## samples in groups of 4". With the interval left on the keys, SEG-D from
+## keys refused "the keys' sample interval is 4000.0 µs, the output's is 2000.0".
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -171,6 +172,31 @@ proc writePlaced(path: string; sweep: openArray[float32]) =
     (k.srcX, k.srcY) = (OwnSrcX, OwnSrcY)
     w.writeTrace(k, buf)
   doAssert w.close().len == 0, "the placed file did not close"
+
+proc writeMixed(path: string; sweep: openArray[float32]) =
+  ## SEG-Y, 2 ms, with the last auxiliary trace at 4 ms.
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
+    measurementSystem: 1, text: @["C01 an auxiliary at another interval"]))
+  for i in 0 .. 4:
+    var buf: seq[float32]
+    var k = initTraceKeys()
+    if i < Delays.len:
+      buf = delayedSweep(sweep, Record, Delays[i])
+      (k.traceCode, k.status) = (1'i16, tsLive)
+    elif i == RefAux:
+      buf = delayedSweep(sweep, Record, 0)
+      (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+    else:
+      buf = newSeq[float32](Record)
+      for j in 0 ..< Record: buf[j] = float32(j + 1)
+      (k.traceCode, k.status) = (6'i16, tsAuxiliary)
+    k.record = 7.0
+    k.channel = float64(i + 1)
+    k.intervalUs = if i == 4: 4000.0 else: DtMs * 1000.0
+    k.t0Ms = 0.0
+    k.time = 1_700_000_000.0
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the mixed-interval file did not close"
 
 proc writeSegd(path: string; sweep: openArray[float32]; fmt = sd8058; n = Record) =
   var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: DtMs * 1000.0,
@@ -625,6 +651,30 @@ proc main*() =
     defer: a.close()
     doAssert a.summary.formatCode == 8058, "option format " & $a.summary.formatCode
     doAssert int(a.traceEntry(0).numSamples) == N8015 - Sweep8015
+
+  block oddIntervalSegd:
+    ## SEG-D from keys, an auxiliary at 4 ms and the record at 2 ms, writes
+    ## and matches the button.
+    let mixed = srcDir / "mixed.sgy"
+    writeMixed(mixed, sweep)
+    var src = openSeismic(mixed, keys = true)
+    defer: src.close()
+    doAssert src.traceKeys(4).intervalUs == 4000.0, $src.traceKeys(4).intervalUs
+    let made = correlate(src, mixed, sweep)
+    var opened = made.opened.filePtr
+    defer: opened[].close()
+    let fromButton = outDir / "mixed-button.sgy"
+    let fromOption = outDir / "mixed-option.sgd"
+    let button = runWrite(opened[], mixed, fromButton, OutputOptions(format: ofSegy))
+    doAssert button.st == jsDone, button.error & " / " & button.wrote.reason
+    let opted = runWrite(src, mixed, fromOption, option(sweep, ofSegd))
+    doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+    var a = openSeismic(fromOption, keys = true)
+    var b = openSeismic(fromButton, keys = true)
+    defer:
+      a.close()
+      b.close()
+    sameTraces(a, b, Listen)
 
 when isMainModule:
   main()

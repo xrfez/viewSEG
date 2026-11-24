@@ -719,6 +719,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               keys = withOwnGeometry(keys, own[0])
             let channel = if keys.status == tsAuxiliary: sctOther else: sctSeismic
             if correlating:
+              if segdOut: keys.intervalUs = outUs
               w.writeTrace(keys, toOpenArray(samples, 0, listen - 1),
                 overrides = correlatedOver, channelType = channel)
             else:
