@@ -42,7 +42,7 @@ import asserts # before imguin: Nim keys its cache of imguin's C++ objects on th
 import sdl3_nim
 import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
-import ../../core/[filesystem, geometry, screens, state, watchdog]
+import ../../core/[filesystem, geometry, leapfile, screens, state, watchdog]
 from ../../core/editmarks import shiftWords
 import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
@@ -50,7 +50,8 @@ import curveplot as curveplotui
 import ../../view/[jobstatus, missingwords, outputwords, qualitywords, vibfolderwords]
 import aboutbox, agentshot, chrome, clearsurvey, dpi, filelist, fonts, frames, genpreview,
   headerswindow, icons, settingswindow, shortcutswindow,
-  jobswindow, joindialog, mapwindow, memorywindow, menus, messages, missingwindow, outputwindow,
+  jobswindow, joindialog, leapdialog, mapwindow, memorywindow, menus, messages, missingwindow,
+  outputwindow,
   qualitywindow, vibfolderwindow,
   plotwindows,
   projectwindow,
@@ -129,6 +130,7 @@ type
     about: AboutUi                             ## Help > About viewSEG
     shortcuts: ShortcutsUi                     ## Help > Keyboard shortcuts
     settingsWin: SettingsUi                    ## Tools > Settings
+    leap: LeapUi                               ## Tools > Leap seconds
     spectra: SpectraUi                         ## the spectrum windows: the live panel, the FFT windows
     compare: CompareUi                         ## the compare window: two traces, A and B
     plotWins: PlotWindowsUi                    ## the analysis windows (New plot)
@@ -1115,6 +1117,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maReopen: ui.openReopen()
     of maOpenVib, maOpenDat: ui.core.apply Command(kind: ckOpenPair, panel: MainPanel)
     of maReloadVendors: ui.core.apply Command(kind: ckReloadVendors)
+    of maLeapSeconds: ui.leap.open()
     of maAbout: ui.about.open()
     of maShortcuts:
       ui.shortcuts.open()
@@ -1702,6 +1705,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   for c in reopen.mitems:
     ui.core.apply move c
   ui.about.drawAbout(ui.theme, ui.marks)
+  for c in ui.leap.drawLeap(ui.core, ui.theme, ui.marks):
+    ui.core.apply c
   if ui.windows.shortcutsOpen and not ui.shortcuts.shown:
     ui.shortcuts.shown = true
   ui.shortcuts.drawShortcuts(ui.theme, ui.marks)
@@ -2137,6 +2142,9 @@ proc run*(opts = RunOptions()): int =
     # A release that is not portable may carry site defaults in its config/.
     let site = if ctx.isPortable: "" else: ctx.appDir / "config" / SettingsFileName
     loaded = loadSettings(configDir / SettingsFileName, site)
+  var leapNotes: seq[Note] = @[]
+  if opts.persist and configDir.len > 0:
+    leapNotes = installLeap(configDir)
   let place = if ssWindow in opts.simulate: MainPlace()
               else: createMainWindow(opts.windowSize, loaded.settings.window, opts.resetWindows)
   let window = place.window
@@ -2189,6 +2197,7 @@ proc run*(opts = RunOptions()): int =
   var ui = initUi(window, opts, loaded, configDir)
   ui.windows.installHandler() # before a layout is read: it says which windows are hidden
   if place.note.len > 0: ui.core.report(place.severity, "window", place.note)
+  for n in leapNotes: ui.core.report(n.severity, "leap seconds", n.text)
   ui.placed = place.moved # its place now is saved after the first frame
   for (severity, text) in last.notes: ui.core.report(severity, "layouts", text)
   if last.found: ui.arrange(last.layout.imgui)
