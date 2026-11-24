@@ -1144,7 +1144,9 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
   ## too. An instant outside years 1900..2200 is a bad number and is not the
   ## row's time. A microsecond column replaces a fraction in the seconds
   ## cell; a non-zero fraction that differs from it by more than one
-  ## microsecond is a disagreement naming both values. Missing cells and
+  ## microsecond is a disagreement naming both values. A year column of
+  ## two digits uses the same pivot as `yy` in a date-time pattern; a
+  ## three-digit year is a bad number and is not stored. Missing cells and
   ## sentinels are empty, not faults.
   result.problems = log.problems
   result.rows = newSeq[Shot](log.len)
@@ -1219,7 +1221,15 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
                 if utcUs.isNone:
                   utcUs = some(whole.value)
                   cols[1] = col
-              of crYear: year = some(whole.value)
+              of crYear:
+                if whole.value >= 0 and whole.value <= 99:
+                  year = some(if whole.value >= 50: 1900 + whole.value
+                    else: 2000 + whole.value)
+                elif whole.value >= 100 and whole.value <= 999:
+                  addProblem(result.problems, pkBadNumber, row, col,
+                    "three-digit year " & $whole.value)
+                else:
+                  year = some(whole.value)
               of crDayOfYear: doy = some(whole.value)
               of crMonth: month = some(whole.value)
               of crDayOfMonth: day = some(whole.value)

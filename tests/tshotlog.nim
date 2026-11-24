@@ -11,6 +11,7 @@
 ## taken out, a 20-byte text was indexed instead of refused with
 ## `pkTooLong`. With the fraction left replaced by the microsecond
 ## column, `fractionAndMicros` keeps 59.000000 and reports no problem.
+## With the year column stored as parsed, `yearColumnPivot` keeps 16.
 
 import std/[math, options, os, strutils]
 import viewSEG/core/shotlog
@@ -342,6 +343,31 @@ proc main*() =
       header = false)
     doAssert close.rows[0].timeUtcUs.get == UtcMarch + 59_000000
     doAssert not hasKind(close.problems, pkTimeDisagree)
+
+  block yearColumnPivot:
+    let full = read("2016,3,1,0,0,0\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    let y16 = read("16,3,1,0,0,0\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert y16.rows[0].year.get == 2016
+    doAssert y16.rows[0].timeUtcUs.get == full.rows[0].timeUtcUs.get
+    doAssert not hasKind(y16.problems, pkBadNumber)
+    let y50 = read("50\n", [crYear], header = false)
+    doAssert y50.rows[0].year.get == 1950
+    let y49 = read("49\n", [crYear], header = false)
+    doAssert y49.rows[0].year.get == 2049
+    let y99 = read("99\n", [crYear], header = false)
+    doAssert y99.rows[0].year.get == 1999
+    let y00 = read("0\n", [crYear], header = false)
+    doAssert y00.rows[0].year.get == 2000
+    let y2024 = read("2024\n", [crYear], header = false)
+    doAssert y2024.rows[0].year.get == 2024
+    let y216 = read("216,3,1,0,0,0\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert y216.rows[0].year.isNone
+    doAssert y216.rows[0].timeUtcUs.isNone
+    doAssert hasKind(y216.problems, pkBadNumber)
+    doAssert "216" in kindText(y216.problems, pkBadNumber)
 
   echo "tshotlog ok"
 
