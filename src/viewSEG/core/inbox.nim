@@ -25,6 +25,7 @@ type
     mkRead           ## a document the disk thread read
     mkListed         ## files a folder scan found
     mkWatched        ## what a look at the listed folder found changed
+    mkKinds          ## the kinds of recording a job read from the first traces of listed files
     mkPaired         ## the partner a search found for a signature file (`core/sweeppairs`)
     mkSurvey         ## a survey layer: a survey file read, or an open file's positions
     mkChecked        ## an open file's records checked against a relation file
@@ -144,6 +145,9 @@ type
       watched*: seq[WatchedFile] ## the files that changed, appeared or went, or stopped changing
       watchProblem*: string ## why the folder cannot be looked at now; "" when it can
       problemChanged*: bool ## `watchProblem` is news (it began, or ended)
+    of mkKinds:
+      kindsGen*: uint64 ## the file list's `gen` it is for
+      kinds*: seq[KindAnswer]
     of mkSurvey:
       layer*: SurveyLayer ## moved, never shared
     of mkChecked:

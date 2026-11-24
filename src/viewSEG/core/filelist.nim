@@ -21,8 +21,8 @@
 ## sorting every row again. Many files gone or new at once (`replaceEntries`)
 ## are one pass over the entries, and the table makes its rows again.
 
-import std/[algorithm, monotimes, os, strutils, tables, times]
-import filekinds, jobs, sigtypes
+import std/[algorithm, monotimes, options, os, strutils, tables, times]
+import filekinds, jobs, recordingkind, sigtypes
 
 export filekinds
 
@@ -48,9 +48,21 @@ type
     fsShort = "incomplete" ## steady, but it ends before its last trace (still being written,
                            ## or cut short)
 
+  KindState* = enum
+    ksUnread ## not read yet (a job reads it after the listing)
+    ksNone   ## read: not a file with a kind (no live trace, or it cannot be read)
+    ksKnown  ## read: `FileEntry.recording` is its kind
+
+  KindAnswer* = object
+    ## What the job that reads kinds found for one file, as the file was then.
+    path*: string
+    size*: int64
+    modified*: Time
+    kind*: Option[RecordingKind]
+
   FileEntry* = object
     ## One file of the list: a seismic file, or a survey file.
-    path*: string ## absolute and normalized, as files are opened
+    path*: string             ## absolute and normalized, as files are opened
     name*: string
     folder*: string
       ## the subfolders between the folder listed and the file, "a/b" (always
@@ -63,6 +75,8 @@ type
     sweep*: SweepInfo
       ## a signature file's facts from its header, never a decoded sample (`kind` is `fkDat` or
       ## `fkVib`); empty for every other file
+    kindState*: KindState
+    recording*: RecordingKind ## the kind read from the first traces, when `kindState` is `ksKnown`
     steadySince*: MonoTime
       ## when the watch first saw the file as it is now (`fs.now`): a stopped `.dat` is followed
       ## once it has stayed so for `StoppedShowAfter`; unset for a file not being watched
@@ -125,6 +139,12 @@ type
     changes*: seq[EntryChange]
       ## the newest changes of `entries`, oldest first, at most `MaxChanges`:
       ## the last one made `entriesRev`
+
+func recordingOf*(e: FileEntry): Option[RecordingKind] =
+  ## The kind of recording `e` is, as the Files panel shows it: none while it is not read, for a
+  ## file that is not seismic and for one without a kind. Every reader of the kind goes
+  ## through here.
+  if e.kindState == ksKnown: some(e.recording) else: none(RecordingKind)
 
 func subfoldersNote*(f: FileList): string =
   ## What an empty listing of a folder that has only subfolders says, so the empty

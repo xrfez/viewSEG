@@ -59,6 +59,7 @@ proc kindOfFile*(path: string; vendors: VendorRegistry;
     let whole = count >= size
     var more = false
     try:
+      fs.mappedRead(path, headers = true) # (the seam: a drive that stops answering holds here)
       var f = openSeismicBytes(readPrefix(path, count), path, keys = true,
         opts = OpenOptions(vendors: vendors))
       try:

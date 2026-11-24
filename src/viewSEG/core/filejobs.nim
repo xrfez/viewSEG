@@ -17,10 +17,10 @@
 ## says, so losing one costs only time; the seismic file itself is never
 ## written.
 
-import std/[algorithm, monotimes, os, strutils, times]
+import std/[algorithm, monotimes, options, os, strutils, times]
 import parseSEG
-import cutfile, filelist, filesystem, inbox, jobs, leapfile, log, session, sweepinfo, threads,
-  vendormaps
+import cutfile, filelist, filesystem, inbox, jobs, leapfile, log, recordingkind, recordingprobe,
+  session, sweepinfo, threads, vendormaps
 from project import ProjectFileName
 
 const
@@ -445,3 +445,27 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster; recursive = false): 
     batch.listCapped = capped
     batch.listLooked = move looked
     to.post move batch
+
+const KindBatch = 16 ## a kinds job posts at least this often (files)
+
+proc kindsWork*(gen: uint64; asks: seq[WatchedFile]; vendors: VendorRegistry;
+    to: Poster): JobWork =
+  ## The work of a job that reads the kind of recording of each file of `asks` (path, size and
+  ## time as listed) from its first traces (`kindOfFile`), a file at a time, and posts the
+  ## answers as `mkKinds` messages for listing `gen`. A file that cannot be read has no kind;
+  ## stops at a cancel (between files, and inside a file between its steps).
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "reading what the files are"
+    var batch = Msg(job: ctx.id, kind: mkKinds, kindsGen: gen)
+    var last = getMonoTime()
+    for i, a in asks:
+      if not ctx.progress(i, asks.len): raise newException(JobCancelledError, "cancelled")
+      var kind: Option[RecordingKind]
+      {.cast(gcsafe).}:
+        kind = kindOfFile(a.path, vendors, proc () {.gcsafe.} = ctx.checkCancelled())
+      batch.kinds.add KindAnswer(path: a.path, size: a.size, modified: a.modified, kind: kind)
+      if batch.kinds.len >= KindBatch or getMonoTime() - last >= ListPause:
+        to.post move batch
+        batch = Msg(job: ctx.id, kind: mkKinds, kindsGen: gen)
+        last = getMonoTime()
+    if batch.kinds.len > 0: to.post move batch

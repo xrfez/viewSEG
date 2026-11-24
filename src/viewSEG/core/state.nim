@@ -99,7 +99,7 @@
 ## by removing an entry; views have "back". None of these needs a general
 ## history of commands.
 
-import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, times]
+import std/[algorithm, math, monotimes, options, os, sequtils, sets, strutils, tables, times]
 from std/unicode import runeSubStr, cmpRunesIgnoreCase
 import parseSEG
 from processSEG/core/types import sameInterval
@@ -1247,6 +1247,8 @@ type
       ## matched to its whole reference (`core/signalend`): said in Messages once each
     oldScans: seq[JobId] ## scans replaced by a newer listing: they end quietly
     quietScan: JobId ## a listing of the folder listed last: a missing folder is said quietly
+    kindJob: JobId = NoJob
+      ## the job reading the kinds of the listed files (`startKinds`); one at a time
     unread: seq[tuple[panel: PanelId; cause: UnreadCause; why: string]]
       ## the panels whose file cannot be read now, and why (`mkUnread`)
     speeds: seq[tuple[panel: PanelId; ms: float64]]
@@ -1446,7 +1448,7 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
     batchSurvey: SurveyHolds(),
     jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
     nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace(),
-    files: FileList(job: NoJob), watchEvery: watchEvery, quietScan: NoJob,
+    files: FileList(job: NoJob), watchEvery: watchEvery, quietScan: NoJob, kindJob: NoJob,
     pairSearch: (NoJob, "", NoPanel, coWindow),
     preparing: (NoJob, ""), prepared: (NoJob, nil), memoryJob: NoJob,
     compareJobA: NoJob, compareJobB: NoJob, comparePicJob: NoJob,
@@ -9096,6 +9098,20 @@ proc releaseSurvey(state: AppState; job: JobInfo) =
     if c.job == job.id and job.abandoned: state.batchSurvey.left.add c # its work still runs
   state.batchSurvey.held.keepItIf(it.job != job.id)
 
+proc startKinds(state: var AppState) =
+  ## Starts a job on the background lane that reads the kind of recording of the listed seismic
+  ## files not read yet (`kindsWork`), unless one runs: it ends, and this runs again, so files
+  ## listed or changed meanwhile are read too. A file being written waits until it is steady.
+  if state.kindJob != NoJob: return
+  var asks: seq[WatchedFile] = @[]
+  for e in state.files.entries:
+    if e.kind.isSeismic and e.kindState == ksUnread and e.status != fsWriting:
+      asks.add WatchedFile(path: e.path, size: e.size, modified: e.modified)
+  if asks.len > 0:
+    state.kindJob = state.jobs.submit(JobSpec(title: "Read what the files are",
+      lane: jlBackground), kindsWork(state.files.gen, asks, currentVendors(),
+      state.inbox.poster))
+
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
   if job.id == state.cutJob:
@@ -9219,6 +9235,10 @@ proc onFinished(state: var AppState; job: JobInfo) =
   let old = state.oldScans.find(job.id)
   if old >= 0: # replaced by a newer listing: nothing to say
     state.oldScans.delete(old)
+    return
+  if job.id == state.kindJob:
+    state.kindJob = NoJob
+    if job.state == jsDone: state.startKinds() # files listed or changed meanwhile
     return
   if job.id == state.files.job:
     state.files.scanning = false
@@ -9381,6 +9401,10 @@ proc startListing(state: var AppState; paths: seq[string]; title, folder: string
   if state.files.job != NoJob:
     discard state.jobs.cancel(state.files.job)
     state.oldScans.add state.files.job # it ends quietly
+  if state.kindJob != NoJob:
+    discard state.jobs.cancel(state.kindJob)
+    state.oldScans.add state.kindJob
+    state.kindJob = NoJob
   state.watch.unwatch() # until the scan is done
   state.listedBy = by
   if folder != state.files.folder:
@@ -9462,6 +9486,19 @@ proc refreshPairs(state: var AppState) =
     inc f.pairsRev
     inc f.revision
 
+proc takeKinds(state: var AppState; m: sink Msg) =
+  ## The kinds a job read: each is kept for the entry it was read for, unless that file changed
+  ## meanwhile (the watch asks for it again).
+  if m.kindsGen != state.files.gen: return # a listing replaced since
+  template f: untyped = state.files
+  for a in m.kinds:
+    let i = f.find(a.path)
+    if i >= 0 and f.entries[i].size == a.size and f.entries[i].modified == a.modified:
+      template e: untyped = f.entries[i]
+      e.kindState = if a.kind.isSome: ksKnown else: ksNone
+      if a.kind.isSome: e.recording = a.kind.get
+      f.changedAt(i)
+
 proc takeListed(state: var AppState; m: sink Msg) =
   ## What a scan found for the file list; shows the first file found (or the
   ## file named) when asked to.
@@ -9496,6 +9533,7 @@ proc takeListed(state: var AppState; m: sink Msg) =
     let paths = if f.folder.len > 0: @[f.folder] else: f.asked
     state.folderWatch.watch(f.gen, paths, move m.listLooked, f.recursive)
   inc f.revision
+  state.startKinds()
   if state.showFound != NoPanel:
     var target = m.listChosen # (an open job finds it a survey file, if it is one)
     for e in f.entries:
@@ -9807,6 +9845,7 @@ proc takeWatched(state: var AppState; m: sink Msg) =
       else:
         template e: untyped = f.entries[i]
         let same = e.size == w.size and e.modified == w.modified
+        if not same: e.kindState = ksUnread # its first traces may have changed: read again
         e.size = w.size
         e.modified = w.modified
         if w.kind in SignatureFileKinds: e.sweep = w.sweep
@@ -9828,6 +9867,7 @@ proc takeWatched(state: var AppState; m: sink Msg) =
     for i in gone: f.removeAt(i)
     for e in fresh.mitems: discard f.insertEntry(move e)
   if sweepsChanged: state.refreshPairs()
+  state.startKinds()
   state.followNewest()
 
 proc goToGather(state: var AppState; cmd: Command) =
@@ -11953,6 +11993,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkRead: state.takeIn(m)
     of mkListed: state.takeListed(move m)
     of mkWatched: state.takeWatched(move m)
+    of mkKinds: state.takeKinds(move m)
     of mkPaired: state.takePaired(move m)
     of mkSurvey: state.takeSurvey(move m.layer, m.job)
     of mkChecked: state.takeChecked(move m)
