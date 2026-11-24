@@ -768,12 +768,20 @@ tab, under **Component colours**, with Reset.
 
 **Sort.** The **Sort** drop-down in the strip puts the traces in another order. It says
 what is in use ("Sort: Line/Station", "Sort: file order", "Sort: custom"). The list is
-**File order**, then each preset: **Line/Station** (receiver line, then station), **By
-Flag** (the same, with each station's components side by side, in order) and **By
-Component** (the traces grouped by component, each group by line, then station). A preset
+**File order**, then each preset. A preset is a grouping, mainly for a record of several
+components, and inside it a sub-sort: **Line/Station** (receiver line, then station) and
+**Time** (the traces' start times) have no grouping; **By Flag** keeps each station's
+components together, the stations by line and then station (**By Flag, Line/Station**), or
+a station's segments in time, each segment's components together (**By Flag, Time**); **By
+Component** puts all the vertical traces first, then the inline, the crossline and the
+hydrophone ones, then any other component by its number, each group by line and station
+(**By Component, Line/Station**) or by time (**By Component, Time**). The start time is the
+time of the trace's first sample; where the recorder keeps each trace's own start time in its
+trace header, and a vendor map names it, that time is used. A trace whose time is not known
+comes last. A preset
 the file has none of the keys of is greyed, unless it is the order in use; picking the
 one already in use does nothing. For an order of your own, click **Custom...**: pick
-the header fields to sort by, the first first, each ascending or descending, and click
+the header fields to sort by (among them Start time), the first first, each ascending or descending, and click
 Sort (the drop-down then says "custom"; *File order* goes back). Sorting never changes the file, and the display header and
 the status bar follow the order shown.
 

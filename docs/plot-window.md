@@ -282,8 +282,16 @@
     | Button | Order |
     |---|---|
     | Line/Station | receiver line, then station (point), as the headers give them; a station's traces stay in the file's order |
-    | By Flag | receiver line, then station, then component: a station's components side by side, in order |
-    | By Component | the traces grouped by component, each group by line, then station |
+    | Time | the traces' start times (the first sample's instant; a recorder's own per-trace start time in the trace header when a vendor map names it); unknown last |
+    | By Flag, Line/Station | receiver line, then station, then component: a station's components side by side, in order |
+    | By Flag, Time | receiver line, then station, then time, then component: a station's segments in time, each segment's components together |
+    | By Component, Line/Station | the traces grouped by component, each group by line, then station |
+    | By Component, Time | the traces grouped by component, each group by time |
+
+    Components order by kind, not by code: vertical, inline (X), crossline (Y), hydrophone,
+    then any other component by its code, a trace with none last; components of one kind
+    order by code. The settings of a build before these names call By Flag and By Component
+    by those names: they load as By Flag, Line/Station and By Component, Line/Station.
 
     Picking the preset already in use does nothing; **File order** goes back. A preset whose
     keys the traces have none of (post-stack data has no receiver line, point or component)
@@ -291,7 +299,7 @@
     **Custom...** in the same list, and the drop-down then says "custom", while
     such an order is in use: a small popover lists the keys, the first first, each a
     display header field (line, point, component, channel, channel set, trace ID code, FFID,
-    source line and point, offset, CDP, inline, crossline, trace number) and each ascending or descending; "Sort"
+    source line and point, offset, CDP, inline, crossline, trace number, start time) and each ascending or descending; "Sort"
     applies them, "File order" goes back. Traces equal in every key keep the file's order,
     and unknown values come last either way. The keys sorted by last are remembered and
     offered again; the presets themselves are data in the settings (`sortPresets` in
@@ -2163,7 +2171,7 @@ the draft had it; otherwise, what the user changed is what this page describes.
     whole view, and the plot reads ahead far enough that such a step shows its data at
     once (a view and a half on each side, kept to at least a view as the view moves).
 16. **Line/Station and By Flag differ only within a station**, By Component groups the
-    components; File order in the sort drop-down goes back to the file's order.
+    components (each with a Time form since: the grouping and a sub-sort); File order in the sort drop-down goes back to the file's order.
     Confirmed ("by flag will sort by line/station then by component").
 17. **A sort keeps the view.** Confirmed.
 18. **Sort keys are the display header's fields**; raw header words come with the gather

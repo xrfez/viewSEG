@@ -1,7 +1,8 @@
 ## The sort drop-down in the running frontend, headless, driven by SDL mouse
 ## events as the user's mouse sends them, on a record whose sets of
 ## components are in a scrambled order (`mixedOrderSegd`): each of the
-## list's three presets (Line/Station, By Flag, By Component) sorts the
+## list's six presets (Line/Station, Time, By Flag and By Component each with
+## Line/Station or Time) sorts the
 ## traces in its known order, and the drop-down then says that preset, and
 ## the trace under the pointer (the pick, which the status bar reads
 ## out) and the display header's values there are the ones of that order,
@@ -34,7 +35,7 @@
 
 import std/[algorithm, math, monotimes, options, os, sequtils, times]
 import parseSEG
-import viewSEG/core/[geometry, state]
+import viewSEG/core/[geometry, sorting, state]
 import viewSEG/view/[plotink, theme]
 import viewSEG/ui/imgui/app
 import privatefiles
@@ -57,7 +58,7 @@ proc expected(keys: seq[TraceKeys]; traces: seq[int]; order: openArray[SortKey])
   let o = @order
   proc cmpKeys(a, b: int): int =
     for k in o:
-      var (x, y) = (keys[a].value(k.field, a), keys[b].value(k.field, b))
+      var (x, y) = (keys[a].sortValue(k.field, a), keys[b].sortValue(k.field, b))
       if k.descending: (x, y) = (-x, -y)
       let c = if x.isNaN and y.isNaN: 0 elif x.isNaN: 1 elif y.isNaN: -1 else: cmp(x, y)
       if c != 0: return c
@@ -250,7 +251,7 @@ proc runMain() =
       result = f.panel.layers[0].order.len == 0 and f.answered
       if result: want = seismic)
     checkPicks("the file's order again", -1)
-    clickPreset(SortPresets.high)
+    clickPreset(4) # By Component, Line/Station: the keys the popover starts from
     # the user's own keys, from the drop-down's Custom... row
     openRow("Custom...", "plot.sort.custom")
     step("point at Custom...", proc (f: FrameInfo) =
@@ -301,7 +302,7 @@ proc runMain() =
     doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
     echo "tguisort: ", steps.len, " steps, ", picked, " picks and ", hovered,
       " hovers checked, the buttons' look ", looked, " times"
-    doAssert picked == 35 and hovered == 35 and looked == 7, $picked & " picks, " & $hovered &
+    doAssert picked == 50 and hovered == 50 and looked == 10, $picked & " picks, " & $hovered &
       " hovers, " & $looked & " looks"
     doAssert snapshot(path) == before, "sorting changed the file"
 
@@ -319,7 +320,7 @@ proc click(f: FrameInfo; at: Vec2) =
   f.pressMouse(at, false)
 
 proc sortShot(path, file: string; order: seq[SortKey]; header: seq[HeaderField];
-    traces: Span; popover: bool) =
+    traces: Span; popover: bool; dropdown = false) =
   ## Opens `path` in a 1600 x 1000 window, sorts it by `order` (with the
   ## display header `header` when not empty), shows `traces` (all when
   ## empty), opens the popover of the user's own keys with the strip's
@@ -357,7 +358,7 @@ proc sortShot(path, file: string; order: seq[SortKey]; header: seq[HeaderField];
           tMs: (p.view.timeMs.lo + p.view.timeMs.hi) / 3))
         q = vec2(round(v.x), round(v.y))
         f.moveMouse(q)
-        next(if popover: 2 else: 5)
+        next(if popover or dropdown: 2 else: 5)
     of 2:
       if wait == 3:
         q = f.markOf("plot.sort").centre
@@ -366,9 +367,13 @@ proc sortShot(path, file: string; order: seq[SortKey]; header: seq[HeaderField];
     of 3:
       if wait == 3: f.click(q)
       if f.markOf("plot.sort.custom").size.x > 0:
-        q = f.markOf("plot.sort.custom").centre
-        f.moveMouse(q)
-        next 4
+        if dropdown:
+          f.moveMouse(vec2(q.x, q.y + 400)) # no tooltip over the list
+          next 5
+        else:
+          q = f.markOf("plot.sort.custom").centre
+          f.moveMouse(q)
+          next 4
     of 4:
       if wait == 3: f.click(q)
       if wait > 6 and f.markOf("plot.sort keys").size.x > 0:
@@ -443,8 +448,11 @@ proc main*() =
   if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
     createDir(getEnv("VIEWSEG_SCREENSHOTS"))
     withFixtures fx:
-      sortShot(fx.mixedOrderSegd(), "sort-components.png", SortPresets[1].keys,
+      sortShot(fx.mixedOrderSegd(), "sort-components.png", SortPresets[2].keys,
         @[hfRcvLine, hfRcvPoint, hfComponent], Span(lo: -0.5, hi: 17.5), popover = false)
+      sortShot(fx.mixedOrderSegd(), "sort-dropdown.png", SortPresets[2].keys,
+        @[hfRcvLine, hfRcvPoint, hfComponent], Span(lo: -0.5, hi: 17.5), popover = false,
+        dropdown = true)
     let landSegd = privateFile("landSegd")
     if landSegd.len > 0:
       sortShot(landSegd, "sort-land.png", @[SortKey(field: hfOffset)], @[], Span(),

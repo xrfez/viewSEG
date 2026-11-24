@@ -28,7 +28,7 @@
 ##
 ## Runs alone: it bounds the time taking in an import holds a frame (25 ms).
 
-import std/[math, monotimes, os, random, strutils, times]
+import std/[math, monotimes, os, random, sequtils, strutils, times]
 import viewSEG/core/[geometry, state]
 import utils/[fixtures, owntime, waiting]
 
@@ -163,6 +163,29 @@ proc main*() =
     doAssert s.plot.seismic and not s.plot.auxiliary,
       "the Seismic / Aux choice takes its default"
     doAssert cleaned(s)[1] == 0
+
+  block sortPresetsWrittenBefore:
+    # The sort drop-down's names "By Flag" and "By Component" are now "By Flag,
+    # Line/Station" and "By Component, Line/Station" (same keys). The settings a
+    # build wrote with the old default list read as the new default list; a list
+    # of the user's own keeps its entries, the two renamed when their keys match.
+    # Seen to fail with `current` not applied in `cleaned`: the old default list
+    # kept its three entries and no "Time".
+    const saved = currentSourcePath().parentDir / "data" / "saved-0.1.0" / "settings.nif"
+    var problems: seq[string]
+    let old = readSettings(readFile(saved), "settings.nif", Settings(), problems)
+    doAssert old.sortPresets.mapIt(it.name) == @["Line/Station", "By Flag", "By Component"]
+    let (now, dropped) = cleaned(old)
+    doAssert dropped == 0 and now.sortPresets == @SortPresets
+    var own = old
+    own.sortPresets = @[SortPreset(name: "Mine", keys: @[SortKey(field: hfOffset)]),
+      SortPresets[0], SortPreset(name: "By Flag", keys: SortPresets[2].keys),
+      SortPreset(name: "By Component", keys: @[SortKey(field: hfComponent)])]
+    let (kept, _) = cleaned(own)
+    doAssert kept.sortPresets.mapIt(it.name) ==
+      @["Mine", "Line/Station", "By Flag, Line/Station", "By Component"],
+      "a preset of other keys keeps its name: " & $kept.sortPresets.mapIt(it.name)
+    doAssert presetOf(SortPresets[2].keys, kept.sortPresets) == 2
 
   block joinOptions:
     # The join's line names: those that cannot be used are said and passed by.

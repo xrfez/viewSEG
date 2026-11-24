@@ -391,15 +391,23 @@ const
   SortPresets* = [
     SortPreset(name: "Line/Station",
       keys: @[SortKey(field: hfRcvLine), SortKey(field: hfRcvPoint)]),
-    SortPreset(name: "By Flag",
+    SortPreset(name: "Time", keys: @[SortKey(field: hfStartTime)]),
+    SortPreset(name: "By Flag, Line/Station",
       keys: @[SortKey(field: hfRcvLine), SortKey(field: hfRcvPoint), SortKey(field: hfComponent)]),
-    SortPreset(name: "By Component",
-      keys: @[SortKey(field: hfComponent), SortKey(field: hfRcvLine), SortKey(field: hfRcvPoint)])]
-    ## The plot window's sort buttons, in order. Line/Station: receiver line,
-    ## then point, a station's traces in the file's order; By Flag: the same,
-    ## then component, so a station's components lie side by side in order;
-    ## By Component: the traces grouped by component, each group by line,
-    ## then point.
+    SortPreset(name: "By Flag, Time",
+      keys: @[SortKey(field: hfRcvLine), SortKey(field: hfRcvPoint), SortKey(field: hfStartTime),
+        SortKey(field: hfComponent)]),
+    SortPreset(name: "By Component, Line/Station",
+      keys: @[SortKey(field: hfComponent), SortKey(field: hfRcvLine), SortKey(field: hfRcvPoint)]),
+    SortPreset(name: "By Component, Time",
+      keys: @[SortKey(field: hfComponent), SortKey(field: hfStartTime)])]
+    ## The plot window's sort drop-down, in order: a grouping and, inside it, a
+    ## sub-sort. Line/Station: receiver line, then point, a station's traces in
+    ## the file's order; Time: by start time. By Flag: a station's components
+    ## together, the stations by line, then point (then, for By Flag, Time, a
+    ## station's segments in time, each segment's components together). By
+    ## Component: the traces grouped by component (vertical, inline, crossline,
+    ## hydrophone), each group by line, then point, or by time.
 
 const
   MinUntilMs* = 10.0

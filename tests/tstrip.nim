@@ -56,7 +56,9 @@ proc main*() =
   block sortLabel:
     doAssert sortLabel(@[], SortPresets) == "Sort: file order"
     doAssert sortLabel(SortPresets[0].keys, SortPresets) == "Sort: Line/Station"
-    doAssert sortLabel(SortPresets[2].keys, SortPresets) == "Sort: By Component"
+    doAssert sortLabel(SortPresets[1].keys, SortPresets) == "Sort: Time"
+    doAssert sortLabel(SortPresets[3].keys, SortPresets) == "Sort: By Flag, Time"
+    doAssert sortLabel(SortPresets[4].keys, SortPresets) == "Sort: By Component, Line/Station"
     let own = @[SortKey(field: hfChannel, descending: true)]
     doAssert sortLabel(own, SortPresets) == "Sort: custom"
     doAssert sortTip(@[]) == "Now: the file's order."
@@ -64,12 +66,18 @@ proc main*() =
 
   block sortRows:
     let known = {hfRcvLine, hfRcvPoint, hfComponent}
-    let rows = sortRows(SortPresets[1].keys, SortPresets, known)
+    let rows = sortRows(SortPresets[2].keys, SortPresets, known)
     doAssert rows[0].kind == srFileOrder and rows[0].label == "File order" and not rows[0].inUse
     doAssert rows[1].kind == srPreset and rows[1].label == "Line/Station" and not rows[1].greyed
-    doAssert rows[2].label == "By Flag" and rows[2].inUse and not rows[2].greyed
-    doAssert rows[3].label == "By Component"
-    doAssert rows[4].kind == srSeparator
+    doAssert rows[2].label == "Time" and not rows[2].inUse
+    doAssert rows[3].label == "By Flag, Line/Station" and rows[3].inUse and not rows[3].greyed
+    doAssert rows[4].label == "By Flag, Time"
+    doAssert rows[5].label == "By Component, Line/Station"
+    doAssert rows[6].label == "By Component, Time"
+    doAssert rows[7].kind == srSeparator
+    # the file has no start time: the orders that need one are greyed, but not
+    # the ones that also have other keys (they sort by what there is)
+    doAssert rows[2].greyed and not rows[4].greyed and not rows[6].greyed
     doAssert rows[^1].kind == srCustom and rows[^1].label == "Custom..." and not rows[^1].inUse
     let none = sortRows(@[], SortPresets, {hfChannel})
     doAssert none[0].inUse
@@ -80,7 +88,7 @@ proc main*() =
     # the order in use stays selectable even when the file has none of its keys
     let held = sortRows(SortPresets[0].keys, SortPresets, {hfChannel})
     doAssert held[1].label == "Line/Station" and held[1].inUse and not held[1].greyed, $held[1]
-    doAssert held[2].greyed and held[3].greyed
+    doAssert held[2].greyed and held[3].greyed and held[6].greyed
     let custom = sortRows(@[SortKey(field: hfOffset)], SortPresets, known)
     doAssert custom[^1].inUse and "Now: offset." in custom[^1].tip
 
@@ -90,11 +98,11 @@ proc main*() =
     doAssert not again.acts and not again.opensCustom
     let fileOrder = sortPick(rows[0], SortPresets)
     doAssert fileOrder.acts and fileOrder.order.len == 0
-    let other = sortPick(rows[2], SortPresets)
-    doAssert other.acts and other.order == SortPresets[1].keys
+    let other = sortPick(rows[3], SortPresets)
+    doAssert other.acts and other.order == SortPresets[2].keys
     let greyed = sortRows(@[], SortPresets, {hfChannel})
     doAssert not sortPick(greyed[1], SortPresets).acts
-    doAssert not sortPick(rows[4], SortPresets).acts # the separator
+    doAssert not sortPick(rows[7], SortPresets).acts # the separator
     doAssert sortPick(rows[^1], SortPresets).opensCustom
     let already = sortPick(sortRows(@[], SortPresets, {})[0], SortPresets)
     doAssert not already.acts # File order, already in use

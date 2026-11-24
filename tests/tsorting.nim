@@ -68,7 +68,7 @@ proc expected(f: SeismicFile; traces: seq[int]; order: openArray[SortKey]): seq[
   let keys = @order
   proc cmpKeys(a, b: tuple[trace: int; keys: TraceKeys]): int =
     for k in keys:
-      var (x, y) = (a.keys.value(k.field, a.trace), b.keys.value(k.field, b.trace))
+      var (x, y) = (a.keys.sortValue(k.field, a.trace), b.keys.sortValue(k.field, b.trace))
       if k.descending: (x, y) = (-x, -y)
       let c = if x.isNaN and y.isNaN: 0 elif x.isNaN: 1 elif y.isNaN: -1 else: cmp(x, y)
       if c != 0: return c
@@ -101,16 +101,72 @@ proc checkShown(st: AppState; f: SeismicFile; want: seq[int]; what: string) =
 proc main*() =
 
   block presetsAreTheUsersOrders:
-    # The three buttons, in the strip's order, as the user named them.
-    doAssert SortPresets.mapIt(it.name) == @["Line/Station", "By Flag", "By Component"]
+    # The drop-down's orders, as the user named them: a grouping (by flag, by
+    # component) and, inside it, a sub-sort (line and station, or time).
+    doAssert SortPresets.mapIt(it.name) == @["Line/Station", "Time", "By Flag, Line/Station",
+      "By Flag, Time", "By Component, Line/Station", "By Component, Time"]
     doAssert preset("Line/Station") == @[key(hfRcvLine), key(hfRcvPoint)]
-    doAssert preset("By Flag") == @[key(hfRcvLine), key(hfRcvPoint), key(hfComponent)]
-    doAssert preset("By Component") == @[key(hfComponent), key(hfRcvLine), key(hfRcvPoint)]
+    doAssert preset("Time") == @[key(hfStartTime)]
+    doAssert preset("By Flag, Line/Station") ==
+      @[key(hfRcvLine), key(hfRcvPoint), key(hfComponent)]
+    doAssert preset("By Flag, Time") ==
+      @[key(hfRcvLine), key(hfRcvPoint), key(hfStartTime), key(hfComponent)]
+    doAssert preset("By Component, Line/Station") ==
+      @[key(hfComponent), key(hfRcvLine), key(hfRcvPoint)]
+    doAssert preset("By Component, Time") == @[key(hfComponent), key(hfStartTime)]
     for i, s in SortPresets: doAssert presetOf(s.keys) == i
     doAssert presetOf([]) == -1 and presetOf([key(hfRcvLine, true), key(hfRcvPoint)]) == -1
-    doAssert describe(preset("By Flag")) == "line, then point, then component"
+    doAssert describe(preset("By Flag, Line/Station")) == "line, then point, then component"
+    doAssert describe(preset("Time")) == "Start time"
     doAssert describe([key(hfOffset, true)]) == "offset (descending)"
     doAssert describe([]) == "the file's order"
+
+  block presetsOnAScrambledRecord:
+    # 2 stations (points 1, 2 of line 100) x 4 components (SEG-D sensor types:
+    # hydrophone H, vertical Z, inline X, crossline Y) x 3 segments, in a file
+    # order that is none of the sorted ones. A segment starts at the same time
+    # at every component of a station; station 2 starts one second after station 1.
+    # A name is point, component, segment: "2X1". Each expected order is written
+    # out (ties keep the file's order).
+    const
+      names = ["1Z0", "1Y1", "2Z2", "1H0", "1X1", "2H2", "2Y0", "1Z1", "1Y2", "2X0", "1H1",
+        "1X2", "2Z0", "2Y1", "1Z2", "2H0", "2X1", "1H2", "1Y0", "2Z1", "2Y2", "1X0", "2H1", "2X2"]
+      sensorOf = [('H', 1'u8), ('Z', 2'u8), ('X', 3'u8), ('Y', 4'u8)]
+    var keys: seq[TraceKeys]
+    for n in names:
+      var k = initTraceKeys()
+      k.rcvLine = 100
+      k.rcvPoint = float64(ord(n[0]) - ord('0'))
+      for (letter, sensor) in sensorOf:
+        if letter == n[1]: (k.sensorType, k.component) = (sensor, sensor)
+      k.time = 1_770_000_000.0 + float64(ord(n[2]) - ord('0')) * 600 + k.rcvPoint
+      keys.add k
+    let rows = rowsOf(keys, newSeq[int](keys.len))
+    proc orderOf(order: openArray[SortKey]): seq[string] =
+      var got: seq[int]
+      doAssert sortRowsInto(rows, order, got)
+      got.mapIt(names[it])
+    doAssert orderOf(preset("Line/Station")) == @["1Z0", "1Y1", "1H0", "1X1", "1Z1", "1Y2",
+      "1H1", "1X2", "1Z2", "1H2", "1Y0", "1X0", "2Z2", "2H2", "2Y0", "2X0", "2Z0", "2Y1", "2H0",
+      "2X1", "2Z1", "2Y2", "2H1", "2X2"]
+    doAssert orderOf(preset("Time")) == @["1Z0", "1H0", "1Y0", "1X0", "2Y0", "2X0", "2Z0", "2H0",
+      "1Y1", "1X1", "1Z1", "1H1", "2Y1", "2X1", "2Z1", "2H1", "1Y2", "1X2", "1Z2", "1H2", "2Z2",
+      "2H2", "2Y2", "2X2"]
+    doAssert orderOf(preset("By Flag, Line/Station")) == @["1Z0", "1Z1", "1Z2", "1X1", "1X2",
+      "1X0", "1Y1", "1Y2", "1Y0", "1H0", "1H1", "1H2", "2Z2", "2Z0", "2Z1", "2X0", "2X1", "2X2",
+      "2Y0", "2Y1", "2Y2", "2H2", "2H0", "2H1"]
+    doAssert orderOf(preset("By Flag, Time")) == @["1Z0", "1X0", "1Y0", "1H0", "1Z1", "1X1",
+      "1Y1", "1H1", "1Z2", "1X2", "1Y2", "1H2", "2Z0", "2X0", "2Y0", "2H0", "2Z1", "2X1", "2Y1",
+      "2H1", "2Z2", "2X2", "2Y2", "2H2"]
+    doAssert orderOf(preset("By Component, Line/Station")) == @["1Z0", "1Z1", "1Z2", "2Z2",
+      "2Z0", "2Z1", "1X1", "1X2", "1X0", "2X0", "2X1", "2X2", "1Y1", "1Y2", "1Y0", "2Y0", "2Y1",
+      "2Y2", "1H0", "1H1", "1H2", "2H2", "2H0", "2H1"]
+    doAssert orderOf(preset("By Component, Time")) == @["1Z0", "2Z0", "1Z1", "2Z1", "1Z2", "2Z2",
+      "1X0", "2X0", "1X1", "2X1", "1X2", "2X2", "1Y0", "2Y0", "1Y1", "2Y1", "1Y2", "2Y2", "1H0",
+      "2H0", "1H1", "2H1", "1H2", "2H2"]
+    # a descending component reverses the kinds: H, Y, X, Z
+    doAssert orderOf([key(hfRcvPoint), key(hfComponent, true)])[0 .. 3] ==
+      @["1H0", "1H1", "1H2", "1Y1"]
 
   block componentsOrderByKind:
     # vertical, inline (X), crossline (Y), hydrophone, any other by its code,
@@ -145,12 +201,12 @@ proc main*() =
       keys.add k
     let rows = rowsOf(keys, newSeq[int](keys.len))
     var got: seq[int]
-    doAssert sortRowsInto(rows, [key(hfStartTime)], got) and got == @[2, 4, 0, 1, 3], $got
+    doAssert sortRowsInto(rows, preset("Time"), got) and got == @[2, 4, 0, 1, 3], $got
     doAssert sortRowsInto(rows, [key(hfStartTime, true)], got) and got == @[0, 4, 2, 1, 3], $got
     doAssert keys[0].value(hfStartTime, 0) == 30.0e6 and keys[1].value(hfStartTime, 1).isNaN
     # a recorder's own times, given by `startOf`, win over the keys'
     let own = [5.0, 4.0, 3.0, NaN, 1.0]
-    doAssert sortRowsInto(rows, [key(hfStartTime)], got, startOf = proc (t: int): float64 = own[t])
+    doAssert sortRowsInto(rows, preset("Time"), got, startOf = proc (t: int): float64 = own[t])
     doAssert got == @[4, 2, 1, 0, 3], $got
 
   block kernelOnKnownKeys:
@@ -171,9 +227,9 @@ proc main*() =
     doAssert sortRowsInto(rows, [], got) and got == toSeq(0 ..< 8), "no keys: as given"
     doAssert sortRowsInto(rows, preset("Line/Station"), got)
     doAssert got == @[3, 7, 1, 4, 6, 0, 2, 5], $got # ties in the order given; NaN line last
-    doAssert sortRowsInto(rows, preset("By Flag"), got)
+    doAssert sortRowsInto(rows, preset("By Flag, Line/Station"), got)
     doAssert got == @[7, 3, 1, 4, 6, 2, 0, 5], $got # component 0 is unknown: last at its station
-    doAssert sortRowsInto(rows, preset("By Component"), got)
+    doAssert sortRowsInto(rows, preset("By Component, Line/Station"), got)
     doAssert got == @[7, 1, 2, 5, 4, 0, 3, 6], $got
     doAssert sortRowsInto(rows, [key(hfOffset, descending = true)], got)
     doAssert got == @[7, 0, 3, 5, 4, 6, 1, 2], $got # -0 equals 0; NaN last also descending
@@ -183,7 +239,8 @@ proc main*() =
     doAssert got == @[7, 6, 5, 4, 3, 2, 1, 0], $got
     # a stop gives up, and says so
     var calls = 0
-    doAssert not sortRowsInto(rows, preset("By Flag"), got, proc (): bool = (inc calls; true))
+    doAssert not sortRowsInto(rows, preset("By Flag, Line/Station"), got,
+      proc (): bool = (inc calls; true))
     doAssert calls == 1
     withFixtures fx:
       var f = openSeismic(fx.surveySegy(), keys = false)
@@ -218,17 +275,23 @@ proc main*() =
         st.checkShown(f, want, s.name)
         doAssert st.main.view == view and st.main.jumps == jumps, s.name & ": the view moved"
         orders.add want
-      # every button gives another order, none the file's
-      doAssert orders.deduplicate.len == 3 and seismic notin orders
+      # the line and station orders and the flag and component groupings differ,
+      # none is the file's (the time orders are not: the fixture's traces share one time)
+      doAssert seismic notin [orders[0], orders[2], orders[4]]
+      doAssert orders[0] != orders[2] and orders[2] != orders[4] and orders[0] != orders[4]
+      doAssert orders[1] == seismic and orders[3] == orders[2]
+      # By Component, Time: with one time everywhere, each component's traces in the file's order
+      doAssert orders[5].mapIt(int(f.traceKeys(it).component)) ==
+        orders[4].mapIt(int(f.traceKeys(it).component)) and orders[5] != orders[4]
       # the user's words: By Flag puts a station's components side by side, in
       # order; By Component groups the traces by component, each by line, then
       # station; Line/Station keeps the file's order within a station
-      for k in 0 ..< orders[1].len:
-        let kk = f.traceKeys(orders[1][k])
-        doAssert int(kk.component) == k mod 3 + 1 and kk.rcvPoint == FirstRcvPoint +
-          float64(k div 3 mod SegdChannels), "By Flag at " & $k
       for k in 0 ..< orders[2].len:
         let kk = f.traceKeys(orders[2][k])
+        doAssert int(kk.component) == k mod 3 + 1 and kk.rcvPoint == FirstRcvPoint +
+          float64(k div 3 mod SegdChannels), "By Flag at " & $k
+      for k in 0 ..< orders[4].len:
+        let kk = f.traceKeys(orders[4][k])
         doAssert int(kk.component) == k div (2 * SegdChannels) + 1 and
           kk.rcvLine == RcvLine + float64(k div SegdChannels mod 2), "By Component at " & $k
       doAssert orders[0][0 .. 2].mapIt(int(f.traceKeys(it).component)) == @[3, 1, 2],
@@ -237,11 +300,11 @@ proc main*() =
       # (the zoom alone reads nothing new: the whole gather's tile covers it)
       st.sortBy(preset("Line/Station"))
       st.look(30, 41)
-      st.sortBy(preset("By Component"))
+      st.sortBy(preset("By Component, Line/Station"))
       doAssert st.settle(st.answered and st.shown[^1].request.gen >= st.main.orderGen)
       let r = st.shown[^1].request
       doAssert r.first > 0 and r.last < seismic.len - 1, "not bounded by the view: " & $r
-      st.checkShown(f, orders[2], "By Component, zoomed")
+      st.checkShown(f, orders[4], "By Component, zoomed")
       # a custom order: component descending, then line, then point
       let custom = @[key(hfComponent, true), key(hfRcvLine), key(hfRcvPoint)]
       st.sortBy(custom)
@@ -261,7 +324,9 @@ proc main*() =
   block threeComponentRecord:
     # Its sets are components 1, 2, 3 of the same stations: Line/Station and
     # By Flag interleave them (101/1, 101/2, 101/3, 102/1, ...), By Component
-    # is the file's order.
+    # is the file's order (its traces name no sensor, so the components order
+    # by code, which is the file's order; the entry carries the new name of the
+    # preset, "By Component" before the drop-down had a sub-sort).
     withFixtures fx:
       let path = fx.threeComponentSegd()
       var f = openSeismic(path, keys = true)
@@ -274,8 +339,8 @@ proc main*() =
       doAssert st.settle(st.main.layout.traces > 0)
       st.look(0, float64(seismic.len - 1))
       doAssert st.settle(st.answered)
-      for (name, want) in [("Line/Station", interleaved), ("By Flag", interleaved),
-          ("By Component", seismic)]:
+      for (name, want) in [("Line/Station", interleaved), ("By Flag, Line/Station", interleaved),
+          ("By Component, Line/Station", seismic)]:
         st.sortBy(preset(name))
         doAssert st.settle(st.answered and st.shown[^1].request.gen >= st.main.orderGen)
         st.checkShown(f, want, name)
@@ -293,7 +358,7 @@ proc main*() =
       doAssert st.settle(st.answered)
       st.look(30, 50)
       doAssert st.settle(st.answered and st.shown.len == 2)
-      st.sortBy(preset("By Flag"))
+      st.sortBy(preset("By Flag, Line/Station"))
       doAssert st.shown.len == 2, "the old order was dropped before the new one came"
       let gen = st.main.orderGen
       doAssert st.settle(st.answered and st.shown[^1].request.gen >= gen)

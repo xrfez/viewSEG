@@ -22,7 +22,7 @@
 ## agent's changes are for the session only; `carried` takes the user's
 ## change from one to the other).
 
-import std/math
+import std/[math, sequtils]
 import components, displaypresets, geometry, join, log, mapkinds, noisearea, panels, plotoptions,
   readout, scales, spectra, tracetable, units
 
@@ -309,6 +309,22 @@ func uniqueItems(list: openArray[string]): seq[string] =
   for x in list:
     if x.len > 0 and x notin result: result.add x
 
+func current(presets: seq[SortPreset]): seq[SortPreset] =
+  ## `presets` as the sort drop-down names them now. A file written before the
+  ## orders were grouping and sub-sort calls the orders of line, point and
+  ## component, and of component, line and point, "By Flag" and "By Component":
+  ## they take their present names, and a list of just those two and
+  ## Line/Station is the old default, replaced by the present one.
+  result = presets
+  for p in result.mitems:
+    for (old, i) in [("By Flag", 2), ("By Component", 4)]:
+      let now = SortPresets[i]
+      if p.name == old and p.keys == now.keys and presets.allIt(it.name != now.name):
+        p.name = now.name
+  if result.len == 3 and result[0] == SortPresets[0] and result[1] == SortPresets[2] and
+      result[2] == SortPresets[4]:
+    result = @SortPresets
+
 func cleaned*(s: Settings): (Settings, int) =
   ## `s` without what cannot be used (a calibration that is not positive
   ## and finite, a monitor calibrated twice: the last one counts, a field
@@ -332,6 +348,8 @@ func cleaned*(s: Settings): (Settings, int) =
       if q.name == p.name: named = true
     if not named and p.keys.len > 0:
       r.sortPresets.add SortPreset(name: p.name, keys: uniqueKeys(p.keys))
+  let dropped = s.sortPresets.len - r.sortPresets.len
+  r.sortPresets = current(r.sortPresets)
   r.customOrder = uniqueKeys(s.customOrder)
   r.plot.order = uniqueKeys(s.plot.order)
   r.plot.display = remembered(s.plot.display)
@@ -346,4 +364,4 @@ func cleaned*(s: Settings): (Settings, int) =
   r.noise = bounded(s.noise)
   r.displayPresets = cleaned(s.displayPresets)
   (r, s.calibrations.len - r.calibrations.len + s.readout.len - r.readout.len +
-    s.sortPresets.len - r.sortPresets.len + s.displayPresets.len - r.displayPresets.len)
+    dropped + s.displayPresets.len - r.displayPresets.len)
