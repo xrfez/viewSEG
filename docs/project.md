@@ -43,8 +43,8 @@ Land 2026/                  the project folder: this is what is opened
   such as `.viewseg`: a later step.)
 - **`project.nif`** says what the project is: its name, its data folders, its survey files
   with their originals, the import's options and units, what `survey.bin` holds, the
-  project's filters and display presets (`core/projectnif`). A station moved during a
-  deployment is a `stationMoves` entry there: a new receiver position from a time on,
+  project's filters, display presets and output name patterns (`core/projectnif`). A station
+  moved during a deployment is a `stationMoves` entry there: a new receiver position from a time on,
   not written into the seismic file or the survey file. While a file is open that
   position replaces the header's and the survey's for a trace recorded at or after
   `fromTime`, and the offset and midpoint are computed again. Removing the move puts
@@ -130,9 +130,26 @@ Land 2026/                  the project folder: this is what is opened
   (store (format 1) (bytes 4096) (hash "51f3a0c4e2d4b6a7") (sources 6)
    (receivers 96) (relations 6)))
  (processing (dc none) (band bandPass) (f1 4.0) (f2 8.0) (f3 60.0) (f4 80.0) (aux false))
- (displayPresets (preset "Section" (mode density) ...)))
+ (displayPresets (preset "Section" (mode density) ...))
+ (outputPatterns (pattern "Line" (separator "_") (part "srcLine" (pad 5))
+  (part "text" (text "abc"))))
+ (outputPattern "Line"))
 ```
 
+- **Output names.** Beside the display presets, the document can say how a file written
+  from the project is named: `(outputPatterns (pattern "Line" (separator "_") (part "srcLine"
+  (pad 5)) (part "text" (text "abc"))))` and `(outputPattern "Line")`, the label in use. The
+  separator is `_`, `-` or a dot; a dot is not written. A width is written only when it is not
+  0, and text only for a text part. A part's kind is a fixed word (`stem`, `text`, `record`,
+  `srcLine`, `srcPoint`, `srcIndex`, `rcvLine`, `rcvPoint`, `rcvIndex`, `time`, `systemSerial`,
+  `controller`, `vibrator`, `fileNumber`, `sigLine`, `sigStation`, `shotId`, `sweepId`), not the
+  program's own name for it, so a rename does not change a file. Absent, the project uses
+  today's naming, and a document without the nodes reads with no problem. At most 32 patterns
+  are kept, 16 parts each; a label is at most 64 characters and a text part at most 120 bytes.
+  An unknown part word, a label given twice (without regard to case), or a pattern that cannot
+  be used is said and left out; the rest of the document still reads. A chosen label that names
+  no pattern reads as none, and is said. A field of a pattern this version does not know is
+  kept and written back.
 - **Versioned.** `version` is the document's format. A reader skips what it does not
   know and writes it back as it was, so a later version can add fields beside these. A
   document of a newer version than the program knows is opened read-only, and the
@@ -278,6 +295,7 @@ second.
 | Kills, reversals, "reverse all" (the store's home) | yes | |
 | The plot's filters | yes | named filter presets |
 | Display presets | yes | |
+| Output name patterns | yes | |
 | The windows' arrangement | yes | |
 | Flags, notes (per project, per file, per trace) | | yes |
 | First-break picks, QC and scan results, the folder scan's statistics | | yes |

@@ -3,7 +3,8 @@
 ##
 ## - the project document read back as written (its data folders, its
 ##   survey's copies with their originals, the import's options and units,
-##   `survey.bin`'s size and hash, the plot's filters, the display presets),
+##   `survey.bin`'s size and hash, the plot's filters, the display presets,
+##   the output name patterns and which one is chosen),
 ##   a later version's parts kept and written back, a newer version said, a
 ##   document that is not one refused;
 ## - paths kept relative to the project folder and absolute, looked for in
@@ -24,11 +25,22 @@
 ## `(lastShotMap)` stored anyway, `lastShotMap` kept `(role "not a role")`; with
 ## `decimalComma` left out of the map writer, "decimalComma did not come back";
 ## with a bad role in `(lastShotMap)` saying the log is left out,
-## "a remembered map said a log was left out".
+## "a remembered map said a log was left out";
+## with a part
+## kind written as `$kind`, `(part "srcLine"` was missing (the file said
+## `npSrcLine`); with the patterns node always written, an old document held
+## `(outputPatterns`; with an unknown part word kept, the bad pattern was
+## stored beside "Good"; with a repeated label kept, both "Line" and "line"
+## were stored; with no cap, 33 patterns were kept; with the part cap and
+## `patternProblem` both skipped, a 17-part pattern was kept; with the chosen
+## label not checked, "Nope" stayed chosen; with a pattern's unknown child
+## dropped, it was not written back; with an empty choice written,
+## `(outputPattern ` was in the document.
 
 import std/[options, os, strutils, times]
 import parseSEG
-import viewSEG/core/[jobs, join, nif, processing, project, projectnif, shotlog, surveystore]
+import viewSEG/core/[jobs, join, nif, outputnames, processing, project, projectnif, shotlog,
+  surveystore]
 import utils/[fixtures, waiting]
 
 func h(path: string): string =
@@ -304,6 +316,104 @@ proc main*() =
       doAssert bad.failure.len > 0 and bad.points.len == 0, "a changed byte is refused"
       writeFile(path & ".short", readFile(path)[0 ..< 100])
       doAssert readBack(path & ".short").failure.len > 0, "a cut file is refused"
+
+  block outputNames:
+    # Two patterns, each separator, a width, a quoted label and non-ASCII text.
+    # A quote cannot sit in a text part: patternProblem refuses it as a file name.
+    var d = ProjectDoc(name: "Land 2026", hasOutputPatterns: true, outputPattern: "a\"b")
+    d.outputPatterns = @[
+      OutputPattern(name: "a\"b", separator: nsUnderscore, parts: @[
+        NamePart(kind: npSrcLine, pad: 5),
+        NamePart(kind: npText, text: "café")]),
+      OutputPattern(name: "Point", separator: nsHyphen, parts: @[
+        NamePart(kind: npSrcPoint), NamePart(kind: npRecord)])]
+    let text = projectDocument(d)
+    doAssert "(separator \"_\")" in text and "(separator \"-\")" in text, text
+    doAssert text.count("(pad ") == 1 and "(pad 5)" in text, text
+    doAssert "(part \"srcLine\"" in text and "npSrcLine" notin text, text
+    doAssert "(outputPattern \"a\\22b\")" in text and "café" in text, text
+    var problems: seq[string] = @[]
+    let back = readProject(text, "project.nif", problems)
+    doAssert problems.len == 0, $problems
+    doAssert back.hasOutputPatterns and back.outputPattern == "a\"b"
+    doAssert back.outputPatterns == d.outputPatterns, $back.outputPatterns
+    # A dot is not written, and a width of 0 is not written.
+    var dot = ProjectDoc(name: "d", hasOutputPatterns: true)
+    dot.outputPatterns = @[OutputPattern(name: "Dot", separator: nsDot, parts: @[
+      NamePart(kind: npStem)])]
+    let dotText = projectDocument(dot)
+    doAssert "(separator" notin dotText and "(pad " notin dotText, dotText
+    problems.setLen 0
+    let dotBack = readProject(dotText, "project.nif", problems)
+    doAssert problems.len == 0 and dotBack.outputPatterns.len == 1
+    doAssert dotBack.outputPatterns[0].separator == nsDot
+    doAssert dotBack.outputPatterns[0].parts[0].pad == 0
+    # An older document has neither node: none, and no problem.
+    let old = projectDocument(ProjectDoc(name: "old"))
+    doAssert "(outputPatterns" notin old and "(outputPattern" notin old, old
+    problems.setLen 0
+    let oldBack = readProject(old, "project.nif", problems)
+    doAssert not oldBack.hasOutputPatterns and oldBack.outputPatterns.len == 0
+    doAssert oldBack.outputPattern.len == 0 and problems.len == 0, $problems
+    # A bad part word is left out; a good pattern beside it is kept.
+    proc readDoc(body: string): ProjectDoc =
+      problems.setLen 0
+      readProject("(project (version 1) (name \"h\") " & body & ")", "project.nif", problems)
+    let bad = readDoc("(outputPatterns (pattern \"Bad\" (part \"notAPart\")) " &
+      "(pattern \"Good\" (part \"srcLine\")))")
+    doAssert bad.name == "h" and bad.outputPatterns.len == 1
+    doAssert bad.outputPatterns[0].name == "Good"
+    doAssert problems.len == 1 and "notAPart" in problems[0], $problems
+    # A label given twice, without regard to case: the first counts.
+    let dup = readDoc("(outputPatterns (pattern \"Line\" (part \"srcLine\")) " &
+      "(pattern \"line\" (part \"srcPoint\")))")
+    doAssert dup.outputPatterns.len == 1 and dup.outputPatterns[0].name == "Line"
+    doAssert problems.len == 1 and "twice" in problems[0], $problems
+    # 33 patterns: the first 32 are kept, the rest said.
+    var many = "(outputPatterns"
+    for i in 1 .. MaxOutputPatterns + 1:
+      many.add " (pattern \"p" & $i & "\" (part \"record\"))"
+    many.add ")"
+    let got33 = readDoc(many)
+    doAssert got33.outputPatterns.len == MaxOutputPatterns, $got33.outputPatterns.len
+    doAssert got33.outputPatterns[0].name == "p1"
+    doAssert got33.outputPatterns[^1].name == "p" & $MaxOutputPatterns
+    doAssert problems.len == 1 and "left out" in problems[0], $problems
+    # 17 parts: that pattern is left out; a sibling is kept.
+    var parts = ""
+    for i in 1 .. MaxPatternParts + 1: parts.add " (part \"record\")"
+    let got17 = readDoc("(outputPatterns (pattern \"TooMany\"" & parts &
+      ") (pattern \"Good\" (part \"srcLine\")))")
+    doAssert got17.outputPatterns.len == 1 and got17.outputPatterns[0].name == "Good"
+    doAssert got17.name == "h" and problems.len == 1 and "left out" in problems[0], $problems
+    # A chosen label that names no pattern reads as none, with a sentence.
+    # The choice is written before the patterns, so order does not matter.
+    let miss = readDoc("(outputPattern \"Nope\") " &
+      "(outputPatterns (pattern \"Line\" (part \"srcLine\")))")
+    doAssert miss.outputPattern.len == 0 and miss.outputPatterns.len == 1 and miss.name == "h"
+    doAssert problems.len == 1 and "Nope" in problems[0], $problems
+    # A text part longer than 120 bytes is left out.
+    let long = readDoc("(outputPatterns (pattern \"T\" (part \"text\" (text \"" &
+      repeat('a', 121) & "\"))))")
+    doAssert long.outputPatterns.len == 0 and long.name == "h" and problems.len == 1, $problems
+    # A child this version does not know is kept and written back inside the pattern.
+    problems.setLen 0
+    let extra = "(project (version 1) (name \"h\") (outputPatterns " &
+      "(pattern \"Line\" (part \"srcLine\") (kept (n 1)))))"
+    let kept = readProject(extra, "project.nif", problems)
+    doAssert problems.len == 0 and kept.outputPatterns.len == 1, $problems
+    doAssert kept.outputPatternLater.len == 1 and kept.outputPatternLater[0].len == 1
+    doAssert kept.outputPatternLater[0][0].tag == "kept"
+    let again = projectDocument(kept)
+    doAssert "(kept" in again and "(n 1)" in again, again
+    doAssert again.find("(pattern ") < again.find("(kept"), again
+    # An empty choice is not written.
+    var emptyChoice = ProjectDoc(name: "e", hasOutputPatterns: true)
+    emptyChoice.outputPatterns = @[
+      OutputPattern(name: "Line", parts: @[NamePart(kind: npSrcLine)])]
+    let emptyText = projectDocument(emptyChoice)
+    doAssert "(outputPatterns" in emptyText and "(outputPattern " notin emptyText, emptyText
+
   echo "tproject: done"
 
 when isMainModule:

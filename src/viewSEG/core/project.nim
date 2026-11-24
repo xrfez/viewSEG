@@ -20,8 +20,8 @@
 
 import std/[options, os, strutils, times]
 import parseSEG
-import breakmodel, displaypresets, filesystem, join, nif, processing, shotlog, stationmoves,
-  vendormaps, vibprofile
+import breakmodel, displaypresets, filesystem, join, nif, outputnames, processing, shotlog,
+  stationmoves, vendormaps, vibprofile
 
 const
   ProjectFileName* = "project.nif"       ## the project document, in the project folder
@@ -41,6 +41,7 @@ const
   MaxShotLogSentinels* = 64              ## sentinels a stored map keeps, at most
   MaxShotLogName* = 120                  ## a shot log's name, at most, in characters
   MaxShotLogSkip* = 1_000_000            ## lines a stored map skips, at most
+  MaxOutputPatterns* = 32                ## name patterns a project keeps, at most
 
 type
   ProjectPath* = object
@@ -132,6 +133,16 @@ type
     processing*: Processing        ## the plot's filters in the project
     hasProcessing*: bool           ## `processing` was set in the project (else the user's stand)
     hasPresets*: bool              ## `displayPresets` were set in the project (else the user's)
+    outputPatterns*: seq[OutputPattern]
+      ## how a file written from this project is named
+    hasOutputPatterns*: bool
+      ## `outputPatterns` were set in the project (else today's naming)
+    outputPattern*: string
+      ## the pattern used, by its label; "" is today's naming
+    outputPatternLater*: seq[seq[NifNode]]
+      ## children of each pattern this version does not know, written back
+    outputPatternsLater*: seq[NifNode]
+      ## children of `(outputPatterns)` this version does not know, written back
     breakModel*: BreakModel        ## the first-break overlay's model in the project
     hasBreakModel*: bool           ## `breakModel` was set in the project (else the user's)
     referenceId*: string

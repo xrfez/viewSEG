@@ -20,7 +20,10 @@
 ##   (store (format 1) (bytes 31457280) (hash "51f3...") (sources 1200) (receivers 3954)
 ##    (relations 1200)))
 ##  (processing (dc none) (band bandPass) (f1 4.0) ...)
-##  (displayPresets (preset "Section" (mode density) ...)))
+##  (displayPresets (preset "Section" (mode density) ...))
+##  (outputPatterns (pattern "Line" (separator "_") (part "srcLine" (pad 5))
+##   (part "text" (text "abc"))))
+##  (outputPattern "Line"))
 ## ```
 ##
 ## Reading is forgiving and says what it did: what is missing keeps its
@@ -46,6 +49,19 @@
 ## a stored map keeps, or a header name that cannot be used is said and the
 ## node is left out.
 ##
+## An output file's name is `(outputPatterns (pattern "Line" (separator "_")
+## (part "srcLine" (pad 5)) (part "text" (text "abc"))))` and
+## `(outputPattern "Line")`, the label in use. A separator is written only
+## when it is not a dot; a width only when it is not 0; text only for a text
+## part. A part's kind is a fixed word (`PartKindWords`), not `$kind`, so a
+## rename does not change a file. Absent means today's naming. At most
+## `MaxOutputPatterns` patterns, `MaxPatternParts` parts each; a label is at
+## most `MaxPatternName` characters and a text part at most `MaxPatternText`
+## bytes. An unknown part word, a label given twice (without regard to case),
+## or a pattern `patternProblem` refuses is said and left out. A child of a
+## pattern this version does not know is kept and written back. A chosen
+## label that names no pattern reads as none, and is said.
+##
 ## A station moved during a deployment is
 ## `(stationMoves (move (line ...) (point ...) (index ...) (x ...) (y ...)))`.
 ## `fromTime` (the same absolute time as `TraceKeys.time`) and `elev` are
@@ -53,9 +69,9 @@
 ## the station. Absent means no moves. The position is not written into the
 ## seismic file or the survey file.
 
-import std/[math, options, strutils, times]
+import std/[math, options, strutils, times, unicode]
 import parseSEG
-import analysis, breakmodel, identity, join, nif, processing, project, settings,
+import analysis, breakmodel, identity, join, nif, outputnames, processing, project, settings,
   settingsnif, shotlog, stationmoves, vendormaps, vibprofile
 
 const
@@ -66,6 +82,13 @@ const
   DelimNames: array[Delimiter, string] = ["comma", "tab", "semicolon", "spaces"]
   ClockNames: array[TimeClock, string] = ["UTC", "GPS"]
   LengthNames: array[shotlog.LengthUnit, string] = ["metres", "feet"]
+  MaxPatternText = 120 ## a text part, in bytes
+  # A part kind's word in a file. Not `$kind`: renaming the enum must not
+  # change a project.
+  PartKindWords: array[NamePartKind, string] = [
+    "stem", "text", "record", "srcLine", "srcPoint", "srcIndex", "rcvLine",
+    "rcvPoint", "rcvIndex", "time", "systemSerial", "controller", "vibrator",
+    "fileNumber", "sigLine", "sigStation", "shotId", "sweepId"]
 
 proc timeText(t: Time): string = t.utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
 
@@ -206,6 +229,33 @@ proc writeVibWeights(w: var NifWriter; m: VibJobWeights) =
   for n in m.later: w.add n
   w.close
 
+proc writeNamePart(w: var NifWriter; part: NamePart) =
+  w.open "part"
+  w.add PartKindWords[part.kind]
+  if part.pad != 0: w.value("pad", int64(part.pad))
+  if part.kind == npText: w.value("text", part.text)
+  w.close
+
+proc writeOutputPattern(w: var NifWriter; p: OutputPattern; later: openArray[NifNode]) =
+  w.open "pattern"
+  w.add p.name
+  if p.separator != nsDot: w.value("separator", $p.separator)
+  for part in p.parts: w.writeNamePart part
+  for n in later: w.add n
+  w.close
+
+proc writeOutputPatterns(w: var NifWriter; d: ProjectDoc) =
+  ## Name patterns in an `(outputPatterns ...)` tree. A separator is written
+  ## only when it is not a dot, a width only when it is not 0, and text only
+  ## for a text part. A child this version does not know is written back.
+  w.open "outputPatterns"
+  var none: seq[NifNode] = @[]
+  for i, p in d.outputPatterns:
+    if i < d.outputPatternLater.len: w.writeOutputPattern(p, d.outputPatternLater[i])
+    else: w.writeOutputPattern(p, none)
+  for n in d.outputPatternsLater: w.add n
+  w.close
+
 proc projectDocument*(d: ProjectDoc): string =
   ## `d` as the project document (the module's documentation).
   var w = initNifWriter(breakDepth = 2)
@@ -285,6 +335,8 @@ proc projectDocument*(d: ProjectDoc): string =
   of vmNone: w.value("vendorMap", "") # (a named map is never empty)
   if d.hasProcessing: w.writeProcessing(d.processing)
   if d.hasPresets: w.writeDisplayPresets(d.displayPresets)
+  if d.hasOutputPatterns: w.writeOutputPatterns(d)
+  if d.outputPattern.len > 0: w.value("outputPattern", d.outputPattern)
   if d.hasBreakModel: w.writeBreakModel(d.breakModel)
   if d.shotLogs.len > 0 or d.shotLogsLater.len > 0:
     w.open "shotLogs"
@@ -747,11 +799,170 @@ proc vibWeights(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "reactionMassKg": r.number(c, MassKgRange, d.vibJobWeights.reactionMassKg)
       else: d.vibJobWeights.later.add c
 
+type PatternRead = object
+  ok: bool
+  pattern: OutputPattern
+  later: seq[NifNode]
+  why: string
+
+func partKindOf(word: string): Option[NamePartKind] =
+  for kind, name in PartKindWords:
+    if name == word: return some(kind)
+
+func separatorOf(word: string): Option[NameSeparator] =
+  for sep in NameSeparator:
+    if $sep == word: return some(sep)
+
+func sameLabel(a, b: string): bool = cmpRunesIgnoreCase(a, b) == 0
+
+func leftOut(why: string): string =
+  if why.len == 0: "a name pattern cannot be used; it is left out"
+  elif why[^1] == '.' and why.len > 1: why[0 .. ^2] & "; it is left out."
+  elif why[^1] == '.': "it is left out."
+  else: why & "; it is left out"
+
+proc takeSeparator(k: NifNode; read: var PatternRead): bool =
+  if k.kids.len >= 1 and k.kids[0].kind in {nkString, nkIdent}:
+    let found = separatorOf(k.kids[0].text)
+    if found.isSome:
+      read.pattern.separator = found.get
+      return true
+  read.why = "a name pattern's separator is \".\", \"_\" or \"-\""
+  false
+
+proc takePart(k: NifNode; read: var PatternRead): bool =
+  if k.kids.len == 0 or k.kids[0].kind notin {nkString, nkIdent}:
+    read.why = "a name part needs a kind"
+    return false
+  let word = k.kids[0].text
+  let found = partKindOf(word)
+  if found.isNone:
+    if word.len > 64: read.why = "a part kind is not one"
+    else: read.why = "\"" & word & "\" is not a name part"
+    return false
+  var part = NamePart(kind: found.get)
+  for j in 1 ..< k.kids.len:
+    let c = k.kids[j]
+    if c.isTree("pad"):
+      if c.kids.len == 1 and c.kids[0].kind == nkInt and
+          c.kids[0].intVal >= int64(low(int)) and c.kids[0].intVal <= int64(high(int)):
+        part.pad = int(c.kids[0].intVal)
+      else:
+        read.why = "(pad) needs a whole number"
+        return false
+    elif c.isTree("text"):
+      if part.kind != npText:
+        read.why = "only a text part has text"
+        return false
+      if c.kids.len != 1 or c.kids[0].kind != nkString:
+        read.why = "(text) needs a string"
+        return false
+      if c.kids[0].text.len > MaxPatternText:
+        read.why = "a name pattern's text is at most " & $MaxPatternText & " bytes"
+        return false
+      part.text = c.kids[0].text
+    elif c.kind != nkTree:
+      read.why = "a name part holds a kind, a width and text"
+      return false
+  read.pattern.parts.add part
+  true
+
+proc readPattern(n: NifNode): PatternRead =
+  ## One `(pattern "label" ...)`. `ok` is false, and `why` says why, when it
+  ## cannot be kept. A child this version does not know is in `later`.
+  result.pattern = OutputPattern(separator: nsDot, parts: @[])
+  result.later = @[]
+  if n.kids.len == 0 or n.kids[0].kind != nkString:
+    result.why = "a name pattern needs a name"
+    return
+  let raw = n.kids[0].text
+  if raw.len > MaxPatternName * 4 + 64:
+    result.why = "a name pattern's name is at most " & $MaxPatternName & " characters long"
+    return
+  let name = strip(raw)
+  if name.len == 0:
+    result.why = "a name pattern needs a name"
+    return
+  if name.runeLen > MaxPatternName:
+    result.why = "a name pattern's name is at most " & $MaxPatternName & " characters long"
+    return
+  result.pattern.name = name
+  var nparts = 0
+  for i in 1 ..< n.kids.len:
+    let k = n.kids[i]
+    if k.isTree("separator"):
+      if not takeSeparator(k, result): return
+    elif k.isTree("part"):
+      inc nparts
+      if nparts > MaxPatternParts:
+        result.why = "a name pattern has at most " & $MaxPatternParts & " parts"
+        return
+      if not takePart(k, result): return
+    else:
+      result.later.add k
+  let why = patternProblem(result.pattern)
+  if why.len > 0:
+    result.why = why
+    return
+  result.ok = true
+
+proc labelTaken(patterns: openArray[OutputPattern]; name: string): bool =
+  for p in patterns:
+    if sameLabel(p.name, name): return true
+
+proc outputPatterns(r: var Reading; n: NifNode; d: var ProjectDoc) =
+  ## `(outputPatterns (pattern "label" (part "srcLine") ...) ...)`. A pattern
+  ## that is not one, or whose label is taken, is left out and said, as are
+  ## those past `MaxOutputPatterns`. A child this version does not know is kept.
+  d.hasOutputPatterns = true
+  var got: seq[OutputPattern] = @[]
+  var later: seq[seq[NifNode]] = @[]
+  var rest: seq[NifNode] = @[]
+  var over = 0
+  for c in n.kids:
+    if c.isTree("pattern"):
+      if got.len >= MaxOutputPatterns: inc over
+      else:
+        let read = readPattern(c)
+        if not read.ok: r.problem(c, leftOut(read.why))
+        elif labelTaken(got, read.pattern.name):
+          r.problem(c, "the name pattern \"" & read.pattern.name &
+            "\" is given twice; the first counts.")
+        else:
+          got.add read.pattern
+          later.add read.later
+    elif c.kind == nkTree: rest.add c
+    else: r.problem(c, "(outputPatterns) holds patterns")
+  if over > 0:
+    r.problem(n, "at most " & $MaxOutputPatterns & " name patterns are kept; the " &
+      $over & " after the " & $MaxOutputPatterns & "th are left out.")
+  d.outputPatterns = got
+  d.outputPatternLater = later
+  d.outputPatternsLater = rest
+
+proc settleChoice(r: var Reading; d: var ProjectDoc; choice: NifNode; saw: bool) =
+  ## A chosen label that names no kept pattern reads as none, with a sentence.
+  if not saw: return
+  let label = strip(d.outputPattern)
+  d.outputPattern = ""
+  if label.len == 0: return
+  if label.runeLen > MaxPatternName:
+    r.problem(choice, "the chosen name pattern is not in this project; today's naming is used")
+    return
+  for p in d.outputPatterns:
+    if sameLabel(p.name, label):
+      d.outputPattern = p.name
+      return
+  r.problem(choice, "the name pattern \"" & label &
+    "\" is not in this project; today's naming is used")
+
 proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[string]): ProjectDoc =
   ## The project document `doc` (`parseNif`; `name` names it in problems).
   ## Raises `NifError` when it is not a project document.
   var r = Reading(name: name)
   result = ProjectDoc(version: 0)
+  var choiceNode = NifNode(kind: nkTree, tag: "outputPattern")
+  var sawChoice = false
   var root = -1
   for i, n in doc:
     if n.kind == nkTree and n.tag.startsWith("."): discard
@@ -779,6 +990,17 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
       of "displayPresets":
         result.displayPresets = readDisplayPresets(c, name, r.problems)
         result.hasPresets = true
+      of "outputPatterns": r.outputPatterns(c, result)
+      of "outputPattern":
+        var text = ""
+        let before = r.problems.len
+        r.text(c, text)
+        if r.problems.len == before and text.len <= MaxPatternName * 4 + 64:
+          result.outputPattern = text
+          choiceNode = c
+          sawChoice = true
+        elif r.problems.len == before:
+          r.problem(c, "the chosen name pattern is not in this project; today's naming is used")
       of "breakModel":
         result.breakModel = readBreakModel(c, name, BreakModel(), r.problems)
         result.hasBreakModel = true
@@ -804,6 +1026,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
       of "shotLogs": r.shotLogs(c, result)
       of "lastShotMap": r.lastShotMap(c, result)
       else: result.later.add c
+  r.settleChoice(result, choiceNode, sawChoice)
   if result.version == 0:
     r.problem(doc[root], "(project) gives no (version); read as version " & $ProjectVersion)
     result.version = ProjectVersion
