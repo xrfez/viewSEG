@@ -11217,7 +11217,8 @@ proc treatAs(state: var AppState; cmd: Command) =
   if cmd.treatKind.len == 0 and cmd.treatGrouping.len == 0 and cmd.treatSubSort.len == 0:
     state.ignore(cmd, "nothing was given to treat the file as")
     return
-  if t == before: return
+  # (the user's own choice picked again after an agent's: the agent's goes)
+  if t == before and state.treats.getOrDefault(path) == t: return
   state.treatsTouched.incl path
   if t.isSet: state.treats[path] = t else: state.treats.del path
   if kept:

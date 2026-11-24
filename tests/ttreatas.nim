@@ -11,7 +11,8 @@
 ## the file's own times, "the slice did not follow end to end"; with the sentence of the segment
 ## times written twice, it was counted twice; with the end-to-end sentence saying the start times
 ## "could not be read", the words were not those of a file whose starts are the same; without the
-## check of the first start time, a file of starts at the epoch was sliced from 1970.
+## check of the first start time, a file of starts at the epoch was sliced from 1970; returning
+## early when the user's choice did not change, the user's pick after an agent's did nothing.
 
 import std/[importutils, options, os, sequtils, strutils, tables, times]
 import parseSEG
@@ -212,6 +213,11 @@ proc main*() =
       doAssert g.treatOf(cont).kind == some(rkReceiverContinuous)
       doAssert g.recordOf(g.rememberedAt(canonical(cont))).treat.kind == some(rkReceiverSliced),
         "the user's choice was replaced by the agent's"
+      # the user picks their own choice again: the agent's goes
+      g.apply Command(kind: ckTreatAs, treatPath: cont, treatKind: "sliced")
+      doAssert g.treatOf(cont).kind == some(rkReceiverSliced), "the user's pick did nothing"
+      doAssert g.fileList.entries[g.fileList.find(canonical(cont))].recordingOf ==
+        some(rkReceiverSliced)
       doAssert g.settle((g.flushFiles(); docs(fx.dir / "agent-config").len == 1))
       var p: seq[string]
       doAssert readMemoryFile(docs(fx.dir / "agent-config")[0], p).treat.kind ==
