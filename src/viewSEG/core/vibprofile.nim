@@ -2,9 +2,9 @@
 ## QC run can apply them to other files. One profile per project (the job).
 ##
 ## It holds the six limits and the statistics window, the harmonics, the
-## accelerometer set, the force scale, a 100 % force and a drive level when
-## the user typed them, the reference's archive id (never its samples) and the
-## top frequency typed for that reference.
+## accelerometer set, the force scale, a 100 % force and the unit it was typed
+## in, a drive level when the user typed them, the reference's archive id
+## (never its samples) and the top frequency typed for that reference.
 ##
 ## It does not hold anything read from a file: a controller or vibrator id, a
 ## serial, header weights and sensitivities, a polarity finding, a fitted top,
@@ -25,6 +25,7 @@ type
     accelSet*: AccelSet = asB
     forceScale*: ForceScale
     forceHundredPct*: float64 = NaN ## NaN: the user did not type a 100 % force
+    forceHundredUnit*: string ## the unit that force was typed in; "": not said
     targetPct*: float64 = NaN ## NaN: the user did not type a drive level
     referenceId*: string ## the reference's archive id; "" is none; never samples
     topHz*: float64 = NaN ## the top typed for `referenceId`; NaN: none
@@ -39,6 +40,7 @@ type
     forceScale*: ForceScale
     referenceId*: string
     topHz*: float64
+    forceHundredUnit*: string ## the unit of the typed 100 % force; "": not said
     problems*: seq[string]
 
 const ForceNotJudged* = "No 100 % force: the force limits are not judged."
@@ -63,6 +65,7 @@ func `==`*(a, b: VibQcProfile): bool =
     a.harmonics == b.harmonics and a.accelSet == b.accelSet and
     a.forceScale == b.forceScale and
     sameFloat(a.forceHundredPct, b.forceHundredPct) and
+    a.forceHundredUnit == b.forceHundredUnit and
     sameFloat(a.targetPct, b.targetPct) and a.referenceId == b.referenceId and
     sameFloat(a.topHz, b.topHz)
 
@@ -73,15 +76,17 @@ func referenceProblem*(id: string): string =
 
 func profileOf*(limits: QcLimits; qcWindowMs: float64; harmonics: int;
     accelSet: AccelSet; scale: ForceScale; forceHundredPct, targetPct: float64;
-    referenceId: string; topHz: float64): VibQcProfile =
+    referenceId: string; topHz: float64; forceHundredUnit = ""): VibQcProfile =
   ## The profile a Vibrator window is using. Pass that window's values, not a
   ## signature file's built-in reset (which clears a typed 100 % force and drive
   ## level). `referenceId` is the archive id, never samples. `topHz` is the top
   ## typed for that reference; NaN when none is. A 100 % force or drive level
-  ## left NaN was not typed.
+  ## left NaN was not typed. `forceHundredUnit` is the unit that force was typed
+  ## in; empty when none was said.
   VibQcProfile(limits: limits, qcWindowMs: qcWindowMs, harmonics: harmonics,
     accelSet: accelSet, forceScale: scale, forceHundredPct: forceHundredPct,
-    targetPct: targetPct, referenceId: referenceId, topHz: topHz)
+    forceHundredUnit: forceHundredUnit, targetPct: targetPct,
+    referenceId: referenceId, topHz: topHz)
 
 func typedForce(x: float64): bool {.inline.} =
   x > 0 and x < Inf
@@ -94,7 +99,8 @@ func applied*(p: VibQcProfile; archiveIds: openArray[string]): VibQcAsk =
   result = VibQcAsk(options: VibratorOptions(harmonics: p.harmonics,
     qcWindowMs: p.qcWindowMs, qc: p.limits, forceHundredPct: p.forceHundredPct,
     targetPct: p.targetPct), accelSet: p.accelSet, forceScale: p.forceScale,
-    referenceId: p.referenceId, topHz: p.topHz)
+    referenceId: p.referenceId, topHz: p.topHz,
+    forceHundredUnit: p.forceHundredUnit)
   if p.referenceId.len == 0 or p.referenceId notin archiveIds:
     result.problems.add referenceProblem(p.referenceId)
   if not typedForce(p.forceHundredPct):

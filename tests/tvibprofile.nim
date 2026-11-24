@@ -12,7 +12,8 @@
 ##
 ## Seen to fail: with `applied` not naming a reference absent from the archive,
 ## `gone.problems.len == 1`; with the job's weights left out of the document,
-## `"(vibWeights" in text`.
+## `"(vibWeights" in text`. With the typed force's unit left out of the
+## document, `unit` does not find `(forceHundredUnit "counts")`.
 ##
 ## What is kept: `vibProfile` on the project (`hasVibProfile` when one was stored);
 ## `vibWeights` for the job's weights (`jobWeights`).
@@ -36,6 +37,7 @@ proc main*() =
     doAssert p.qcWindowMs == 250 and p.harmonics == 7 and p.accelSet == asA
     doAssert p.forceScale.datCountsPerLbf == 12.5 and p.forceScale.vibAccMvPerCount.isNaN
     doAssert p.forceHundredPct == 40000 and p.targetPct == 80
+    doAssert p.forceHundredUnit.len == 0
     doAssert p.referenceId == "r1763200961-2" and p.topHz == 88
     doAssert compiles(VibQcProfile(harmonics: 5))
     doAssert not compiles(VibQcProfile(swapForces: true))
@@ -62,7 +64,7 @@ proc main*() =
     doAssert ask.problems.len == 0, $ask.problems
     let back = profileOf(ask.options.qc, ask.options.qcWindowMs, ask.options.harmonics,
       ask.accelSet, ask.forceScale, ask.options.forceHundredPct, ask.options.targetPct,
-      ask.referenceId, ask.topHz)
+      ask.referenceId, ask.topHz, ask.forceHundredUnit)
     doAssert back == p
     doAssert ask.options.reactionMassKg.isNaN and ask.options.baseplateMassKg.isNaN
     let gone = applied(p, ["r0"])
@@ -91,7 +93,8 @@ proc main*() =
     let text = projectDocument(d)
     doAssert "(vibProfile" in text and "(referenceId \"r1763200961-2\")" in text, text
     doAssert "(topHz 88.0)" in text and "(accelSet A)" in text and "(harmonics 6)" in text
-    doAssert "forceHundredPct" notin text and "peakForcePct" notin text
+    doAssert "forceHundredPct" notin text and "forceHundredUnit" notin text
+    doAssert "peakForcePct" notin text
     doAssert "(avgPhaseDeg 4.0)" in text and "(datCountsPerLbf 9.0)" in text
     doAssert "vibAccMvPerCount" notin text
     let back = roundTrip(d)
@@ -114,6 +117,28 @@ proc main*() =
     let refused = readProject(bad, "project.nif", problems)
     doAssert problems.len > 0
     doAssert refused.hasVibProfile and refused.vibProfile.harmonics == 5
+
+  block unit:
+    let limits = QcLimits()
+    let p = profileOf(limits, 500.0, 5, asB, ForceScale(datCountsPerLbf: 8.0), 1000.0,
+      NaN, "", NaN, "counts")
+    doAssert p.forceHundredUnit == "counts"
+    let ask = applied(p, [])
+    doAssert ask.forceHundredUnit == "counts"
+    doAssert ask.problems.len == 1 and ask.problems[0] == "The reference is not in the archive."
+    var d = ProjectDoc(name: "Land 2026", hasVibProfile: true, vibProfile: p)
+    let text = projectDocument(d)
+    doAssert "(forceHundredUnit \"counts\")" in text, text
+    doAssert "(forceHundredPct 1000.0)" in text
+    let back = roundTrip(d)
+    doAssert back.vibProfile.forceHundredUnit == "counts"
+    doAssert back.vibProfile == p
+    let older = text.replace(" (forceHundredUnit \"counts\")", "")
+    var problems: seq[string]
+    let read = readProject(older, "project.nif", problems)
+    doAssert problems.len == 0, $problems
+    doAssert read.vibProfile.forceHundredUnit.len == 0
+    doAssert read.hasVibProfile
 
   block weights:
     var d = ProjectDoc(name: "Land 2026")

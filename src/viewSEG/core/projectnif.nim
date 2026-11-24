@@ -132,6 +132,7 @@ proc writeVibProfile(w: var NifWriter; p: VibQcProfile) =
       w.value("vibAccMvPerCount", p.forceScale.vibAccMvPerCount)
     w.close
   if finite(p.forceHundredPct): w.value("forceHundredPct", p.forceHundredPct)
+  if p.forceHundredUnit.len > 0: w.value("forceHundredUnit", p.forceHundredUnit)
   if finite(p.targetPct): w.value("targetPct", p.targetPct)
   if p.referenceId.len > 0: w.value("referenceId", p.referenceId)
   if finite(p.topHz): w.value("topHz", p.topHz)
@@ -533,6 +534,7 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "limits": r.limits(c, d.vibProfile)
       of "forceScale": r.forceScale(c, d.vibProfile)
       of "forceHundredPct": r.number(c, MassKgRange, d.vibProfile.forceHundredPct)
+      of "forceHundredUnit": r.text(c, d.vibProfile.forceHundredUnit)
       of "targetPct": r.number(c, TargetPctRange, d.vibProfile.targetPct)
       of "referenceId": r.text(c, d.vibProfile.referenceId)
       of "topHz": r.number(c, TopHzRange, d.vibProfile.topHz)

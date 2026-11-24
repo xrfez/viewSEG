@@ -8,7 +8,8 @@
 ## before the verdict, `sameAsAlone` names it (fail / pass). With a missing
 ## reference still judged against the recorded pilot, `missingReference`
 ## names a judged row. With `applyFileScale` not called, `holdDownWhenScaled`
-## finds no hold-down words.
+## finds no hold-down words. With the unit guessed as newtons, `emptyUnitRefused`
+## names "N".
 
 import std/[math, os, strutils]
 import parseSEG
@@ -268,6 +269,30 @@ proc main*() =
       if m.limit == qlAvgForce: force = m.status
     doAssert force == qsFail, $force
     doAssert row.verdict == qvFail, $row.verdict
+
+  block emptyUnitRefused:
+    ## A typed 100 % force keeps the unit the profile stored. An empty unit
+    ## with a scale set is refused, not taken as newtons. Seen to fail when
+    ## the job guessed "N" whenever a scale was set.
+    let roles = folderRoles(@[21'i16, 20, 18, 19], sgDat, asB)
+    let guessed = applied(profileOf(QcLimits(), 500.0, 5, asB,
+      ForceScale(datCountsPerLbf: 8.0), 1000.0, NaN, "", NaN), [])
+    doAssert folderParams(guessed, roles, sgDat).forceHundredUnit == "",
+      folderParams(guessed, roles, sgDat).forceHundredUnit
+    let got = runJob(@[listed(plain)], guessed)
+    doAssert got.st == jsDone, got.error
+    let row = rowOf(got.table, plain)
+    doAssert row.outcome == foJudged, row.problem
+    var said = false
+    for w in row.warnings:
+      if w == "typed with no unit; the axis is now in newtons: type it again": said = true
+    doAssert said, $row.warnings
+    for m in row.measures:
+      if m.limit in {qlAvgForce, qlPeakForce}:
+        doAssert m.status == qsNotJudged, $m.status
+    let counted = applied(profileOf(QcLimits(), 500.0, 5, asB,
+      ForceScale(datCountsPerLbf: 8.0), 1000.0, NaN, "", NaN, "counts"), [])
+    doAssert folderParams(counted, roles, sgDat).forceHundredUnit == "counts"
 
   block weights:
     let vib = vibFile(dir, "one.vib")

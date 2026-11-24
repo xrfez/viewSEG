@@ -72,28 +72,16 @@ proc folderRoles*(codes: openArray[int16]; kind: SignatureKind;
   result.massPolarity = poAsRecorded
   result.judge = joRecorded
 
-func hundredUnit(ask: VibQcAsk; kind: SignatureKind): string =
-  ## The unit a typed 100 % force was typed in. Empty when none was typed,
-  ## so the file's own 100 % force is not put in its place.
-  if not typedForce(ask.options.forceHundredPct): return ""
-  let scale = ask.forceScale
-  let asked = case kind
-    of sgDat: scale.datCountsPerLbf > 0 and scale.datCountsPerLbf < Inf
-    of sgVib: scale.vibAccMvPerCount > 0 and scale.vibAccMvPerCount < Inf
-    else: false
-  if asked: "N"
-  elif kind == sgVib: "pound-counts"
-  else: "counts"
-
 proc folderParams*(ask: VibQcAsk; roles: VibRoles; kind: SignatureKind): AnalysisParams =
   ## The ask a Vibrator window would use, with no typed masses. A 100 % force
-  ## the profile did not type stays unset.
+  ## the profile did not type stays unset. Its unit is the one the profile
+  ## stored, never guessed from the scale.
   AnalysisParams(roles: roles, harmonics: ask.options.harmonics,
     accelSet: ask.accelSet, qcWindowMs: ask.options.qcWindowMs, qc: ask.options.qc,
-    forceHundredPct: ask.options.forceHundredPct, forceHundredUnit: hundredUnit(ask, kind),
-    forceHundredSet: ask.accelSet, targetPct: ask.options.targetPct,
-    phaseShow: ask.options.phaseShow, reactionMassKg: NaN, baseplateMassKg: NaN,
-    projectReference: false)
+    forceHundredPct: ask.options.forceHundredPct,
+    forceHundredUnit: ask.forceHundredUnit, forceHundredSet: ask.accelSet,
+    targetPct: ask.options.targetPct, phaseShow: ask.options.phaseShow,
+    reactionMassKg: NaN, baseplateMassKg: NaN, projectReference: false)
 
 proc folderSignature*(facts: SignatureFacts; scale: ForceScale; accelSet: AccelSet;
     pair = SignaturePair(); targetPct = NaN): SignatureAsk =
