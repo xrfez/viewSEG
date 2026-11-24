@@ -461,6 +461,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var dst = newSeq[float32](plan.samples)
       var touched: seq[int] = @[]
       var startCount = StartCount()
+      var startsNoted = false
       var lastDetail = fs.now() - DetailEvery
       let total = shots.shots.len
       let perShot = expected div total
@@ -477,10 +478,22 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           if not file[].inMemory: fs.mappedRead(source, headers = true)
           want = carryShot(file[], plan, rows, s)
           let sh = shots.shots[s]
-          # The record's time is its first sample's: the carried channel set keeps its
-          # start, so a reader finds the first sample at the record's time.
-          var patch = SubsetPatch(fileNumber: numbered.numbers[s],
-            time: toPosixSeconds(firstUs))
+          # The record's time zero is its first sample's instant less the start of the
+          # carried channel set, which keeps its start: a reader that adds the start finds
+          # the first sample (Rev 3 counts both on the GPS clock). With sets of different
+          # starts, the earliest; each Rev 3 trace's Timestamp is set to its own first sample.
+          let zeroUs = if isRev3(file[], want.traces[0]):
+              gpsUsToUtcUs(utcUsToGpsUs(firstUs) - want.startUs)
+            else: firstUs - want.startUs
+          if want.startsDiffer and not startsNoted:
+            startsNoted = true
+            res.carryNotes.add "The channel sets' start times differ: each record's time is " &
+              "its first sample's less the earliest of them, and " &
+              (if isRev3(file[], want.traces[0]):
+                "each trace's own time stamp holds its first sample's time."
+              else: "the traces of a set that starts later begin that much before the record's " &
+                "time plus their set's start.")
+          var patch = SubsetPatch(fileNumber: numbered.numbers[s], time: toPosixSeconds(zeroUs))
           if not isRev3(file[], want.traces[0]):
             patch.headers = sourceHeaders(file[], want.traces[0], sh.srcLine, sh.srcPoint,
               sh.srcIndex)

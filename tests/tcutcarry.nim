@@ -13,7 +13,7 @@
 ## trace 3 ..." with a shot spanning two segments; with the trace number left
 ## as the source's: "trace number of trace 4".
 
-import std/[assertions, os, strutils, times]
+import std/[algorithm, assertions, os, strutils, times]
 import parseSEG
 import parseSEG/model/traceindex
 import parseSEG/segd/[reader, writer, headers, samples, rev3]
@@ -53,11 +53,12 @@ func value(comp, k: int): float32 =
   float32(1000 * comp + k)
 
 proc makeRecording(path: string; comps: int; fmt = sd8058;
-    missing: seq[(int, int)] = @[]; split = 0; trigger = false) =
+    missing: seq[(int, int)] = @[]; split = 0; trigger = false; csUs = 0'i64) =
   ## Rev 2.1, one record (two with `split`: the segments from it on are the second): an
   ## extended header, a source header, one channel set with filter and gain fields set, a
   ## trace per segment and component (segment by segment), each with two vendor blocks.
   ## With `trigger`, bytes 9-16 of the second vendor block repeat the first's start time.
+  ## The channel set starts `csUs` (a multiple of 2 ms) after the record's time.
   var r = SegdRecord(layout: slRev2, format: some(fmt),
     revision: SegdRevision(major: 2, minor: 1))
   r.gh1 = SegdGeneralHeader1(fileNumber: 5, formatCode: ord(fmt), year: 26,
@@ -71,7 +72,8 @@ proc makeRecording(path: string; comps: int; fmt = sd8058;
   r.extended = newSeq[byte](32)
   for i in 0 ..< 32: r.extended[i] = byte(90 + i)
   r.scanTypes = @[SegdScanType(layout: slRev2, descriptors: @[
-    SegdChannelSetDescriptor(scanTypeNumber: 1, channelSetNumber: 1, endTime: uint16(SegLen),
+    SegdChannelSetDescriptor(scanTypeNumber: 1, channelSetNumber: 1,
+      startTime: uint16(csUs div 2000), endTime: uint16(SegLen + csUs div 2000),
       channelCount: Segments * comps - missing.len, channelType: 1, traceHeaderExtensions: 3,
       aliasFilterFreq: 200, aliasFilterSlope: 72, lowCutFreq: 3, lowCutSlope: 18,
       notch1Freq: 500, gainControl: 3, verticalStack: 1)])]
@@ -386,17 +388,20 @@ proc put64(b: var seq[byte]; at: int; v: int64) =
 proc get64(b: openArray[byte]; at: int): int64 =
   for i in 0 .. 7: result = (result shl 8) or int64(b[at + i])
 
-proc makeRev3(path: string; comps: int; csUs = 0'i64; place = false) =
+proc makeRev3(path: string; comps: int; csUs = 0'i64; place = false; secondSetUs = -1'i64) =
   ## Rev 3.0, one record, a trace per segment and component with a Timestamp block (0x42) and
   ## a vendor block (0xB0) holding the segment's start in GPS microseconds; the channel set
   ## starts `csUs` after the record's time zero. With `place`, each trace has a vibrator
   ## Source Description block (0x15) and a Position block (0x50-0x52) before those two.
+  ## With `secondSetUs`, two components, the second in a channel set of its own that starts
+  ## `secondSetUs` after time zero (the traces set by set).
+  let sets = if secondSetUs >= 0: 2 else: 1
   let fmt = sd8058
   var r = SegdRecord(layout: slRev3, format: some(fmt), revision: SegdRevision(major: 3, minor: 0))
   r.generalBlocks.add blockOf(0x11)
   r.gh1 = SegdGeneralHeader1(fileNumber: 7, formatCode: ord(fmt), year: 16,
     additionalGhBlocks: 3, julianDay: 366, manufacturerCode: 77, baseScanInterval16: 32,
-    recordType: 8, recordLength: BcdAllF, scanTypesPerRecord: 1, channelSetsPerScanType: 1,
+    recordType: 8, recordLength: BcdAllF, scanTypesPerRecord: 1, channelSetsPerScanType: sets,
     extendedHeaderBlocks: 1)
   let endUs = int32(DtUs * (SegLen - 1))
   r.gh2Rev3 = SegdGeneralHeader2Rev3(extFileNumber: 7, revisionMajor: 3,
@@ -404,18 +409,25 @@ proc makeRev3(path: string; comps: int; csUs = 0'i64; place = false) =
   r.gh3 = SegdGeneralHeader3(timeZero: utcUsToGpsUs(sampleUs(0)) - csUs, blockType: 3)
   r.extended = newSeq[byte](32)
   for i in 0 ..< 32: r.extended[i] = byte(90 + i)
-  r.scanTypes = @[SegdScanType(layout: slRev3, descriptorsRev3: @[
-    SegdChannelSetDescriptorRev3(scanTypeNumber: 1, channelSetNumber: 1, channelType: 0x10,
-      startTime: int32(csUs), endTime: endUs + int32(csUs), numSamples: SegLen,
-      descaleMultiplier: 1.0, channelsInSet: uint32(Segments * comps),
-      samplingInterval: uint32(DtUs), traceHeaderExtensions: (if place: 7 else: 3),
-      verticalStack: 1, blockType1: 0x30, blockType2: 0x31,
-      blockType3: 0x32)])]
-  var all: seq[SegdTrace]
+  r.scanTypes = @[SegdScanType(layout: slRev3)]
+  for n in 1 .. sets:
+    let start = if n == 1: csUs else: secondSetUs
+    r.scanTypes[0].descriptorsRev3.add SegdChannelSetDescriptorRev3(scanTypeNumber: 1,
+      channelSetNumber: uint16(n), channelType: 0x10, startTime: int32(start),
+      endTime: endUs + int32(start), numSamples: SegLen, descaleMultiplier: 1.0,
+      channelsInSet: uint32(Segments * comps div sets), samplingInterval: uint32(DtUs),
+      traceHeaderExtensions: (if place: 7 else: 3), verticalStack: 1, blockType1: 0x30,
+      blockType2: 0x31, blockType3: 0x32)
+  var order: seq[(int, int)] = @[]
   for seg in 0 ..< Segments:
-    for c in 0 ..< comps:
+    for c in 0 ..< comps: order.add (seg, c)
+  if sets == 2: order.sort do (a, b: (int, int)) -> int: cmp(a[1], b[1])
+  var all: seq[SegdTrace]
+  for (seg, c) in order:
+    block:
       var t = SegdTrace(layout: slRev3, index: all.len, numSamples: SegLen)
-      t.header = SegdTraceHeader(fileNumber: 7, scanTypeNumber: 1, channelSetNumber: 1,
+      t.header = SegdTraceHeader(fileNumber: 7, scanTypeNumber: 1,
+        channelSetNumber: (if sets == 2: c + 1 else: 1),
         traceNumber: all.len + 1, traceHeaderExtensions: (if place: 7'u8 else: 3'u8))
       t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(receiverLineNumber: 100,
         receiverPointNumber: 101, receiverPointIndex: 1, numSamples: SegLen,
@@ -475,15 +487,17 @@ proc publishMaps(dir: string; texts: openArray[string]): VendorRegistry =
   publishVendors(load.registry)
   load.registry
 
-proc checkRev2Time(dir: string; jobs: Jobs) =
+proc checkRev2Time(dir: string; jobs: Jobs; csUs = 0'i64) =
   ## The first sample on a whole second: a Rev 2 record holds whole seconds, and the
   ## reader gives the first sample's time exactly. Fails with the record time left at
-  ## the shot's ("record time of trace 0 is 0.02 s late").
+  ## the shot's ("record time of trace 0 is 0.02 s late"). With a channel set that starts
+  ## 4 ms after time zero, the record's time is 4 ms before the first sample, so the
+  ## second before it: seen failing "1.0 s late" with the record's time the first sample's.
   base = BaseUs - 20_000
   defer: base = BaseUs
   let reg = publishMaps(dir, [rev2Map("")])
-  let path = dir / "rec" / "t2.sgd"
-  makeRecording(path, 1)
+  let path = dir / "rec" / ("t2cs" & $csUs & ".sgd")
+  makeRecording(path, 1, csUs = csUs)
   var src = openSeismic(path, keys = true)
   defer: src.close()
   let shotUs = BaseUs + 20_000 # first sample 10: start -20 ms, so the sample is at BaseUs
@@ -492,15 +506,18 @@ proc checkRev2Time(dir: string; jobs: Jobs) =
   m.hasHeader = false
   m.roles = @[crFileNumber, crUtcMicros]
   let sh = shotsInTime(shots(parseShotLog(text, m), m).rows)
-  let got = runCut(jobs, src, path, dir / "out" / "t2.sgd", sh, initCutOptions(LengthMs, StartMs))
+  let dest = dir / "out" / ("t2cs" & $csUs & ".sgd")
+  let got = runCut(jobs, src, path, dest, sh, initCutOptions(LengthMs, StartMs))
   doAssert got.st == jsDone and got.res.carried, got.error & got.res.reason
   doAssert "start of -20.0 ms" in got.res.lines.join("|"), got.res.lines.join("|")
-  var g = openSeismic(dir / "out" / "t2.sgd", keys = true)
+  var g = openSeismic(dest, keys = true)
   defer: g.close()
-  doAssert g.traceKeys(0).time == float64(BaseUs div 1_000_000) and
-    g.traceKeys(0).time == toPosixSeconds(sampleUs(10)),
-    "record time of trace 0 is " & $(g.traceKeys(0).time - toPosixSeconds(sampleUs(10))) &
-    " s late"
+  let want = if csUs == 0: float64(BaseUs div 1_000_000) else: float64(BaseUs div 1_000_000 - 1)
+  doAssert g.traceKeys(0).time == want,
+    "record time of trace 0 is " & $(g.traceKeys(0).time - want) & " s late"
+  doAssert g.traceKeys(0).t0Ms == float64(csUs) / 1000
+  let x = samplesOf(g, 0)
+  for j in 0 ..< Window: doAssert x[j] == value(0, 10 + j), "sample " & $j & " is " & $x[j]
 
 proc checkRev3(dir: string; jobs: Jobs; comps: int; startMs: float64; origin: int64;
     csUs = 0'i64) =
@@ -512,7 +529,9 @@ proc checkRev3(dir: string; jobs: Jobs; comps: int; startMs: float64; origin: in
   ## sample's: seen failing 4000 us off with the Timestamp override never sent (the
   ## writer's own patch adds the set's start to the record's time), and the samples are the
   ## first sample's: seen failing two samples early ("sample 0 of trace 0 is 8.0") with the
-  ## headers' first-sample times taken as the traces' time zero.
+  ## headers' first-sample times taken as the traces' time zero; General Header #3's time
+  ## zero plus the set's start is the first sample: seen failing "4000 us off" with the
+  ## record's time set to the first sample's.
   base = origin
   defer: base = BaseUs
   let reg = publishMaps(dir, [rev2Map(""), Rev3Map])
@@ -541,9 +560,9 @@ proc checkRev3(dir: string; jobs: Jobs; comps: int; startMs: float64; origin: in
   doAssert g.len == 3 * comps
   for s in 0 ..< 3:
     let firstUs = sampleUs(FirstSamples[s]) + 123 * int64(s)
-    if csUs == 0:
-      doAssert g.index.segdRecords[s].gh3.timeZero == utcUsToGpsUs(firstUs),
-        "time zero of record " & $s
+    doAssert g.index.segdRecords[s].gh3.timeZero + csUs == utcUsToGpsUs(firstUs),
+      "time zero of record " & $s & " plus the set's start is " &
+      $(g.index.segdRecords[s].gh3.timeZero + csUs - utcUsToGpsUs(firstUs)) & " us off"
     for c in 0 ..< comps:
       let o = s * comps + c
       let a = g.headerBytes(o)
@@ -560,6 +579,40 @@ proc checkRev3(dir: string; jobs: Jobs; comps: int; startMs: float64; origin: in
   for o in 0 ..< g.len:
     doAssert clock.times[o] == toPosixSeconds(sampleUs(FirstSamples[o div comps]) +
       123 * int64(o div comps))
+
+proc checkMixedStarts(dir: string; jobs: Jobs) =
+  ## Two components in channel sets that start 0 and 4 ms after time zero: the record's
+  ## time is the first sample's less the earlier start, each trace's Timestamp is its own
+  ## first sample's, the samples are the first sample's, and the result says the starts
+  ## differ. Seen failing with the Timestamp override never sent ("timestamp of trace 1 is
+  ## 4000 us off").
+  base = BaseUs
+  discard publishMaps(dir, [rev2Map(""), Rev3Map])
+  let path = dir / "rec" / "mixed.sgd"
+  makeRev3(path, 2, secondSetUs = 4000)
+  var src = openSeismic(path, keys = true)
+  defer: src.close()
+  let got = runCut(jobs, src, path, dir / "out" / "mixed.sgd", shotsOf(true),
+    initCutOptions(LengthMs, StartMs))
+  doAssert got.st == jsDone and got.res.carried and got.res.shotsWritten == 3, $got.res
+  let said = got.res.lines.join("|")
+  doAssert "The channel sets' start times differ" in said and "time stamp" in said, said
+  var g = openSeismic(dir / "out" / "mixed.sgd", keys = true)
+  defer: g.close()
+  doAssert g.len == 6
+  for s in 0 ..< 3:
+    let firstUs = shotUs(s) + int64(StartMs * 1000)
+    doAssert g.index.segdRecords[s].gh3.timeZero == utcUsToGpsUs(firstUs),
+      "time zero of record " & $s
+    for o in 2 * s ..< 2 * s + 2:
+      let c = int(g.traceField(o, "ext1.sensorType").intVal) - 2
+      let a = g.headerBytes(o)
+      doAssert a.get64(a.len - 64) == utcUsToGpsUs(firstUs), "timestamp of trace " & $o &
+        " is " & $(a.get64(a.len - 64) - utcUsToGpsUs(firstUs)) & " us off"
+      let x = samplesOf(g, o)
+      for j in 0 ..< Window:
+        doAssert x[j] == value(c, FirstSamples[s] + j), "sample " & $j & " of trace " & $o &
+          " is " & $x[j]
 
 proc checkNoSourcePlace(dir: string; jobs: Jobs) =
   ## A Rev 3 recording without Source Description or Position blocks: the shot's source place
@@ -779,6 +832,7 @@ proc main*() =
   for comps in [1, 3]:
     check(dir, jobs, comps, load.registry)
   checkRev2Time(dir, jobs)
+  checkRev2Time(dir, jobs, csUs = 4000)
   for comps in [1, 3]:
     for startMs in [-20.0, 0.0, 10.0]:
       checkRev3(dir, jobs, comps, startMs, BaseUs)
@@ -789,6 +843,7 @@ proc main*() =
     checkRev3(dir, jobs, comps, 0.0, BaseUs, csUs = 4000)
   checkNoSourcePlace(dir, jobs)
   checkSourcePlace(dir, jobs)
+  checkMixedStarts(dir, jobs)
   checkTrigger(dir, jobs)
   checkTriggerNoUnit(dir, jobs)
   checkTriggerOtherMap(dir, jobs)

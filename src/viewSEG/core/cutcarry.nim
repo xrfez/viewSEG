@@ -53,6 +53,9 @@ type
     traces*: seq[int]   ## source traces, ascending
     comps*: seq[int]    ## the component (receiver) written at each
     ordinals*: seq[int] ## its trace number in its channel set of the record, from 1
+    startUs*: int64
+      ## the smallest start time of the traces' channel sets, µs after the record's time zero
+    startsDiffer*: bool ## the traces' channel sets do not all start at `startUs`
 
 const SourceFields* = GeometryFields(sourceXy: true, receiverXy: false, elevations: true,
   midpoints: false, offsets: false, stations: true)
@@ -78,6 +81,21 @@ func carryRows*(plan: SlicePlan): CarryRows =
   result.rank = newSeq[int](order.len)
   for n, r in order: result.rank[r] = n
 
+proc setStartUs*(file: SeismicFile; trace: int): int64 =
+  ## The start time of the channel set of SEG-D trace `trace`: microseconds from its
+  ## record's time zero to its first sample (Rev 2 states it in steps of 2 ms); 0 when the
+  ## index does not know the set.
+  let e = file.traceEntry(trace)
+  let (st, cs) = (int(e.scanType), e.channelSetIndex)
+  template rec: untyped = file.index.segdRecords[int(e.record)]
+  if st in 0 ..< rec.scanTypes.len and cs >= 0:
+    template scan: untyped = rec.scanTypes[st]
+    case scan.layout
+    of slRev2:
+      if cs < scan.descriptors.len: result = int64(scan.descriptors[cs].startTime) * 2000
+    of slRev3:
+      if cs < scan.descriptorsRev3.len: result = int64(scan.descriptorsRev3[cs].startTime)
+
 func firstRow(plan: SlicePlan; trace, fallback: int): int =
   ## The source trace that holds the first sample of the window of output
   ## trace `trace`: the piece that covers column 0; when that is a gap, the
@@ -94,7 +112,8 @@ proc carryShot*(file: SeismicFile; plan: SlicePlan; rows: CarryRows; shot: int):
   ## source trace; a fixed order of the components is not possible, as each
   ## takes the segment that holds its own first sample). Each component keeps
   ## one trace number in every record instead: its place among the components
-  ## of its channel set, in the order they first appear in the source.
+  ## of its channel set, in the order they first appear in the source. `startUs` is
+  ## the earliest start of their channel sets.
   let comps = plan.receiverCount
   var pairs: seq[tuple[trace, comp: int]] = @[]
   for r in 0 ..< comps:
@@ -111,6 +130,11 @@ proc carryShot*(file: SeismicFile; plan: SlicePlan; rows: CarryRows; shot: int):
     result.traces.add p.trace
     result.comps.add p.comp
     result.ordinals.add ordinal
+    let start = setStartUs(file, p.trace)
+    if i == 0: result.startUs = start
+    elif start != result.startUs:
+      result.startsDiffer = true
+      result.startUs = min(result.startUs, start)
 
 proc carryRefusal*(file: SeismicFile; plan: SlicePlan; rows: CarryRows): string =
   ## "" when the cut can carry the source's headers: a SEG-D source whose
