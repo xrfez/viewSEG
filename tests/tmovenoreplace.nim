@@ -106,6 +106,25 @@ proc main*() =
         doAssert readFile(dir / "sw-src") == payload("z")
         removeFile(dir / "sw-dst")
 
+    block unknownWhetherSrcIsGone:
+      for steps in [{msLink}, {msCopy}]:
+        writeFile(dir / "us-src", "data")
+        removeFile(dir / "us-dst")
+        doAssertRaises OSError:
+          discard moveNoReplaceUsing(dir / "us-src", dir / "us-dst", steps,
+            faults = {mfUnlinkGone, mfStatFails})
+        doAssert readFile(dir / "us-dst") == "data", "dst is kept: " & $steps
+        removeFile(dir / "us-dst")
+        removeFile(dir / "us-src")
+
+    block aFailedCopyIsNotForgiven:
+      # the copy fails partway while `src` is removed: never "moved"
+      writeFile(dir / "fg-src", payload("w"))
+      doAssertRaises OSError:
+        discard moveNoReplaceUsing(dir / "fg-src", dir / "fg-dst", {msCopy},
+          failCopyAfter = 10, faults = {mfSrcRemoved})
+      doAssert not fileExists(dir / "fg-dst"), "the partial copy was removed"
+
     block errnoTable:
       doAssert noHardLinks(int(EPERM)) and noHardLinks(int(EOPNOTSUPP))
       doAssert noHardLinks(int(ENOTSUP)) and noRenameFlag(int(ENOTSUP))

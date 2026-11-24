@@ -462,6 +462,8 @@ when not defined(windows):
     mfUnlinkGone  ## removing `src` removes it but reports an error (a retried unlink)
     mfUnlinkFails ## removing `src` fails and leaves it
     mfDstSwapped  ## the `dst` this call made is replaced by another file before cleanup
+    mfStatFails   ## looking at `src` after a failed removal answers EIO
+    mfSrcRemoved  ## `src` is removed after the copy loop, as if by another program
 
   type FileId = tuple[dev: posix.Dev; ino: posix.Ino]
 
@@ -490,21 +492,43 @@ when not defined(windows):
     if mfUnlinkGone in faults: return int(posix.EIO)
     if rc != 0: int(posix.errno) else: 0
 
-  proc srcIsGone(src: string): bool =
+  type SrcState = enum
+    ssPresent ## `src` is certainly there
+    ssGone    ## `src` is certainly not there
+    ssUnknown ## the drive could not say
+
+  proc srcState(src: string; faults: set[MoveFault]): SrcState =
     ## An unlink that reported an error may still have removed the file (a
     ## retried unlink on a network drive): then the move is complete.
     var id: FileId
-    not idOfPath(src, id) and posix.errno == posix.ENOENT
+    if mfStatFails in faults: ssUnknown
+    elif idOfPath(src, id): ssPresent
+    elif posix.errno == posix.ENOENT: ssGone
+    else: ssUnknown
+
+  proc failKept(err: int) {.noreturn, raises: [OSError].} =
+    ## The removal of `src` failed and the drive cannot say whether `src` is
+    ## still there: `dst` stays, so that the data is on the drive in any case.
+    raiseOSError(OSErrorCode(err), "the destination was kept, the source may be gone")
+
+  proc finishRemoval(src, dst: string; ours: FileId; err: int;
+      faults: set[MoveFault]) {.raises: [OSError].} =
+    ## After a failed removal of `src`: returns when the move is complete
+    ## (`src` is certainly gone); else raises, and drops `dst` only while
+    ## `src` is certainly present.
+    case srcState(src, faults)
+    of ssGone: discard
+    of ssPresent:
+      dropOurs(dst, ours, faults)
+      failWith(err)
+    of ssUnknown: failKept(err)
 
   proc linkStep(src, dst: string; faults: set[MoveFault]): StepResult {.raises: [OSError].} =
     var ours: FileId # the link shares `src`'s file
     if not idOfPath(src, ours): failWith(int(posix.errno))
     if posix.link(cstring(src), cstring(dst)) == 0:
       let err = removeSrc(src, faults)
-      if err != 0 and not srcIsGone(src):
-        # the new name is ours; drop it so a failed move leaves `dst` free
-        dropOurs(dst, ours, faults)
-        failWith(err)
+      if err != 0: finishRemoval(src, dst, ours, err, faults)
       return srMoved
     let err = int(posix.errno)
     if err == int(posix.EEXIST): return srExists
@@ -560,12 +584,12 @@ when not defined(windows):
     if err == 0 and posix.fsync(outFd) != 0: err = int(posix.errno)
     if posix.close(outFd) != 0 and err == 0: err = int(posix.errno)
     discard posix.close(inFd)
-    if err == 0:
-      err = removeSrc(src, faults)
-      if err != 0 and srcIsGone(src): err = 0
-    if err != 0:
+    if mfSrcRemoved in faults: discard posix.unlink(cstring(src))
+    if err != 0: # the copy itself failed: whatever became of `src`, `dst` is partial
       dropOurs(dst, ours, faults)
       failWith(err)
+    let removed = removeSrc(src, faults)
+    if removed != 0: finishRemoval(src, dst, ours, removed, faults)
     srMoved
 
   proc moveNoReplaceUsing*(src, dst: string; steps: set[MoveStep] = {msRename, msLink, msCopy};
