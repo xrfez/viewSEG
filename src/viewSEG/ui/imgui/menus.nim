@@ -6,7 +6,7 @@
 ## Window, Help (Process, after Reports, is not here yet).
 ## File opens, opens again with other options, follows and closes files;
 ## Project holds the job's folder (New project, Open project, Recent projects,
-## the Project window, the vendor map, Import survey and Clear survey, Close
+## the Project window, the vendor map, Import survey, Import shot log and Clear survey, Close
 ## project); Edit undoes, redoes and clears the trace edits of the file the
 ## Seismic window shows, whichever window has the focus (Ctrl+Z, Ctrl+Shift+Z
 ## and Ctrl+Y everywhere but in a text field, which keeps its own undo), imports
@@ -25,7 +25,7 @@ import std/os
 import imguin/cimgui
 import ../../core/[analysis, layouts]
 import ../../core/shortcuts as shortcutTable
-import ../../view/[missingwords, outputwords, qualitywords, vibfolderwords, theme]
+import ../../view/[missingwords, outputwords, qualitywords, shotlogwords, vibfolderwords, theme]
 import clearsurvey, icons, marks, plotviews, thememenu, windows
 
 type
@@ -38,7 +38,8 @@ type
     maReopen = "Reopen with options...",
     maOpenVib = "Open the .vib of this sweep", maOpenDat = "Open the .dat of this sweep",
     maReloadVendors = "Reload vendor maps",
-    maImportSurvey = "Import survey...", maClearSurvey = "Clear survey",
+    maImportSurvey = "Import survey...", maImportShotLog = "Import shot log...",
+    maClearSurvey = "Clear survey",
     maImportSettings = "Import settings...",
     maImportLayout = "Import layout...", maImportEdits = "Import trace edits...",
     maExportLog = "Export messages...", maExportSettings = "Export settings...",
@@ -87,6 +88,7 @@ type
     shown*: set[AppWindow]       ## the windows ticked under View
     seismicName*: string         ## what the Seismic window is called now (`windowTitle`)
     joinShown*: bool             ## the "Import survey" window is open
+    shotLogShown*: bool          ## the "Shot log" window is open
     surveyImported*: bool        ## a survey is in effect (Project > Clear survey)
     undo*, redo*: string
       ## Edit > Undo and Redo: the step each makes, in words ("trace 21
@@ -138,7 +140,8 @@ type
     togglePrepare*: bool      ## File > Prepare the next file was clicked
     pickedWindows*: set[AppWindow]
       ## their entries under Window were clicked (`picked`)
-    toggleJoin*: bool         ## the "Import survey" window's entry under Window was clicked
+    toggleJoin*: bool         ## the "Import survey" window's entry under View was clicked
+    toggleShotLog*: bool      ## the "Shot log" window's entry under View was clicked
     toggleTrayIcon*: bool     ## Window > Icon in the tray was clicked
     toggleTrayMinimize*: bool ## Window > Minimize to the tray was clicked
     newPlot*: bool            ## Analysis > New plot > a view was clicked: `newPlotView`
@@ -153,7 +156,8 @@ const
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
     maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
     maReopen: 0, maOpenVib: 0, maOpenDat: 0, maReloadVendors: 0,
-    maImportSurvey: 0, maClearSurvey: 0, maImportSettings: 0, maImportLayout: 0,
+    maImportSurvey: 0, maImportShotLog: 0, maClearSurvey: 0, maImportSettings: 0,
+    maImportLayout: 0,
     maImportEdits: 0,
     maExportLog: 0, maExportSettings: 0, maExportLayout: 0, maExportEdits: 0,
     maFileMemory: 0, maNewProject: 0, maOpenProject: 0, maProject: 0, maCloseProject: 0,
@@ -176,7 +180,8 @@ const
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
     maReopen: IconRefresh, maOpenVib: IconStep, maOpenDat: IconStep,
     maReloadVendors: IconRefresh,
-    maImportSurvey: IconSurvey, maClearSurvey: IconTrash, maImportSettings: IconSliders,
+    maImportSurvey: IconSurvey, maImportShotLog: IconTable, maClearSurvey: IconTrash,
+    maImportSettings: IconSliders,
     maImportLayout: IconLayout,
     maImportEdits: IconWriting, maExportLog: IconExport, maExportSettings: IconSliders,
     maExportLayout: IconLayout, maExportEdits: IconWriting, maFileMemory: IconMemory,
@@ -344,6 +349,8 @@ proc drawProjects(input: MenuInput; res: var MenuResult) =
   tip("A survey's files (SPS, SEG P1, a CSV table of stations) matched to an open file's " &
     "traces, so they have their sources' and receivers' coordinates; in memory only, the " &
     "file is not changed")
+  item(maImportShotLog, res)
+  tip(ImportTip)
   igBeginDisabled(not input.surveyImported)
   item(maClearSurvey, res)
   igEndDisabled()
@@ -468,7 +475,7 @@ proc drawNewPlot(input: MenuInput; res: var MenuResult) =
     igEndMenu()
 
 proc drawWindowTicks(input: MenuInput; res: var MenuResult) =
-  ## View's window ticks: each window, then the "Import survey" window.
+  ## View's window ticks: each window, then Import survey and Shot log.
   igSeparatorText("Windows")
   for w in AppWindow:
     let name = if w == awSeismic and input.seismicName.len > 0: input.seismicName
@@ -483,6 +490,10 @@ proc drawWindowTicks(input: MenuInput; res: var MenuResult) =
     res.toggleJoin = true
   if marked != nil: marked[].mark("menu.window.join")
   tip("Ticked while open: a click opens it in front, or closes it")
+  if igMenuItem_Bool((IconTable & "  Shot log").cstring, nil, input.shotLogShown, true):
+    res.toggleShotLog = true
+  if marked != nil: marked[].mark("menu.window.shotlog")
+  tip("Ticked while open: a click opens it in front, or closes it. " & WindowTip)
 
 proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
   ## Window: putting the windows right, the layouts, then the tray.

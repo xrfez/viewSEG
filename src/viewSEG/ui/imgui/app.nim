@@ -55,7 +55,8 @@ import aboutbox, agentshot, chrome, clearsurvey, dpi, filelist, fonts, frames, g
   plotwindows,
   projectwindow,
   placement, references,
-  recordlist, reopendialog, shell, spectrumwindow, style, tracepanel, windows, comparewindow
+  recordlist, reopendialog, shell, shotlogwindow, spectrumwindow, style, tracepanel, windows,
+  comparewindow
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow, AppWindow, DialogKind,
   SpectraUi, readoutOf
@@ -75,6 +76,7 @@ const
   vibfolderTitle = IconTable & "  Vibrator QC###vibfolder"
   outputTitle = IconLog & "  Output###output"
   joinTitle = IconSurvey & "  Import survey###join"
+  shotLogTitle = IconTable & "  Shot log###shotlog"
   memoryTitle = IconMemory & "  File memory###memory"
   projectTitle = IconProject & "  Project###project"
   newProjectTitle = IconProject & "  New project###newproject"
@@ -117,6 +119,7 @@ type
     vibfolder: VibFolderUi                     ## the Vibrator QC window
     output: OutputUi                           ## the Output window
     join: JoinUi                               ## the "Import survey" window
+    shotLog: ShotLogUi                         ## the "Shot log" window
     clearSurvey: ClearSurveyUi                 ## Clear survey's confirmation
     memory: MemoryUi                           ## the "File memory" window
     refs: ReferencesUi                         ## the Reference archive window and Generate
@@ -946,6 +949,9 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
       ui.vibfolder.startExport(ui.core, ev.paths[0])
     of dkOutputSource: ui.output.setSource(ev.paths[0])
     of dkOutputDest: ui.output.setDest(ev.paths[0])
+    of dkShotLog:
+      ui.core.apply Command(kind: ckImportShotLog, logPath: ev.paths[0])
+      ui.shotLog.open()
   of seCancelled:
     discard # the user closed the dialog: nothing to say
   of seDialogFailed:
@@ -1016,6 +1022,7 @@ proc resetWindows(ui: var Ui) =
   ui.windows.showAll()
   ui.layoutDone = false
   ui.join.placeAgain()
+  ui.shotLog.placeAgain()
   ui.memory.placeAgain()
   ui.refs.placeAgain()
   discard ui.placeMain(wholly = false)
@@ -1103,6 +1110,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
       if i >= 0: ui.core.apply Command(kind: ckClose, file: ui.core.sessions[i].id)
     of maImportSurvey: ui.join.open()
+    of maImportShotLog: ui.ask(dkShotLog, folder)
     of maClearSurvey: ui.clearSurvey.ask()
     of maReopen: ui.openReopen()
     of maOpenVib, maOpenDat: ui.core.apply Command(kind: ckOpenPair, panel: MainPanel)
@@ -1443,6 +1451,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     prepareNext: ui.core.settings.files.prepareNext,
     shown: {AppWindow.low .. AppWindow.high} - ui.windows.hidden,
     seismicName: ui.core.windowTitle(MainPanel), joinShown: ui.join.shown,
+    shotLogShown: ui.shotLog.shown,
     surveyImported: ui.core.surveyInEffect,
     trayIcon: ui.core.settings.tray.icon, trayMinimize: ui.core.settings.tray.minimize,
     trayProblem: ui.trayProblem, trayAvailable: trayShown(),
@@ -1483,6 +1492,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.windows.picked(w)
   if menu.toggleJoin:
     if ui.join.shown: ui.join.shown = false else: ui.join.open()
+  if menu.toggleShotLog:
+    if ui.shotLog.shown: ui.shotLog.shown = false else: ui.shotLog.open()
   if menu.loadLayout.len > 0:
     ui.core.apply Command(kind: ckLoadLayout, docPath: menu.loadLayout)
   result = menu.actions
@@ -1654,6 +1665,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.core.apply move c
   var join = ui.join.drawJoin(joinTitle, ui.core, ui.theme, ui.marks)
   for c in join.commands.mitems:
+    ui.core.apply move c
+  var shotLog = ui.shotLog.drawShotLog(shotLogTitle, ui.core, ui.theme, ui.marks)
+  for c in shotLog.mitems:
     ui.core.apply move c
   var memory = ui.memory.drawMemory(memoryTitle, ui.core, ui.theme, ui.marks)
   for c in memory.commands.mitems:

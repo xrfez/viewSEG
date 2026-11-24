@@ -60,7 +60,8 @@ type
     dkExportQuality = "Export trace quality",  ## a CSV file to write (a save dialog)
     dkExportVibFolder = "Export vibrator QC",  ## a CSV file to write (a save dialog)
     dkOutputSource = "Output source",          ## the folder whose seismic files are written
-    dkOutputDest = "Output destination"        ## the folder those files are written into
+    dkOutputDest = "Output destination",       ## the folder those files are written into
+    dkShotLog = "Shot log"                     ## one shot log to import: CSV, text or TSV
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
@@ -257,6 +258,10 @@ let csvFilters = [
   SDL_DialogFileFilter(name: "CSV table (*.csv)", pattern: "csv"),
   SDL_DialogFileFilter(name: "All files", pattern: "*")]
 
+let shotLogFilters = [
+  SDL_DialogFileFilter(name: "Shot log (*.csv, *.txt, *.tsv)", pattern: "csv;txt;tsv"),
+  SDL_DialogFileFilter(name: "All files", pattern: "*")]
+
 var startAt: string
   ## where the last dialog started: SDL may read it until the dialog is shown
 
@@ -317,6 +322,9 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
   of dkExportMissing, dkExportQuality, dkExportVibFolder:
     SDL_ShowSaveFileDialog(onDialogResult, userdata, parent, addr csvFilters[0],
       csvFilters.len.cint, at)
+  of dkShotLog:
+    SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr shotLogFilters[0],
+      shotLogFilters.len.cint, at, false)
 
 # ------------------------------------------------------------------ theme --
 

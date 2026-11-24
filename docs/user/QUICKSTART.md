@@ -1103,6 +1103,33 @@ files with Add files...): 6 source points and 96 receiver points are on the map,
 give are kept: they are the survey's. Messages quotes the SPS headers: NAD83, Texas
 South Central, US survey feet, factor 0.3048006096. The file itself is never changed.
 
+### Import a shot log
+
+**Project > Import shot log...** reads a table of shots (CSV, or a text file with commas, tabs,
+semicolons or spaces). The Shot log window opens once a file is chosen. It works with no
+project open: the window then says the log is for this run only. With a project open, the
+window names the project.
+
+The top line gives the file name, how many rows and columns, and how many problems the
+reader found. **Columns...** shows how the table was read: the delimiter, lines to skip,
+whether the first row is a header, whether split times and date-time text are UTC or GPS,
+the date-time pattern, values that mean missing, and one row per column (its header, the
+first three values, and what that column means). **Apply** reads the table again with that
+map. **Cancel** leaves the map as it was. **Guess again** fills the map from the header
+names and the first rows. A meaning that should belong to one column only (shot point, X,
+Y, a time part) is flagged when it is chosen twice.
+
+The grid has one row per shot. The first column is the time in UTC, to the microsecond,
+worked out from the time columns. A narrow column marks a row that has a problem; the
+tooltip says what is wrong. The other columns are the table's own, with the header name
+and, under it, what the column means. A click selects a row. Ctrl+C copies the row. A
+right-click copies one cell. **Filter** keeps rows whose cells hold the text typed.
+**Problems only** keeps rows that have a problem. The **Problems** list names each
+problem; a click shows that row in the grid.
+
+The window stays open if the log is read again, if a project is opened or closed, or if
+the log is removed. `samples/land/shotlog.csv` is a small table of this kind.
+
 ## Spectra
 
 **FFT** (right-click a trace > New plot > FFT, or `F` over it) opens its amplitude
@@ -1523,7 +1550,7 @@ that does not name Units loads as Metric.
 | Wide plot, Side by side, Plot and map | the presets that ship with viewSEG |
 | Load, Save layout as..., Import layout..., Export layout... | your own layouts: saved under a name, loaded again, written to a file and read from one |
 
-The **View** menu ticks each window (Seismic, Files, Records, Map, Headers, Jobs, Messages, Spectrum, Aux, Missing traces, Trace quality, Vibrator QC, Output, Import survey): a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown. It also holds the theme.
+The **View** menu ticks each window (Seismic, Files, Records, Map, Headers, Jobs, Messages, Spectrum, Aux, Missing traces, Trace quality, Vibrator QC, Output, Import survey, Shot log): a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown. It also holds the theme.
 
 A layout saved before a window existed (before the map came, say) docks that window beside
 its neighbours, and shows it. A window a layout puts off every screen (left on a monitor

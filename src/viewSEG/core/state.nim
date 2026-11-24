@@ -2081,6 +2081,41 @@ func shotLogSource*(state: AppState; i: int): string {.inline.} =
   ## The file loaded shot log `i` was read from.
   state.shotLogs[i].source
 
+func shotLogId*(state: AppState; i: int): int =
+  ## The id of loaded shot log `i`, or -1 when `i` is not a loaded log.
+  if i < 0 or i >= state.shotLogs.len: -1 else: state.shotLogs[i].id
+
+func shotLogBusy*(state: AppState; i: int): bool =
+  ## Whether a job is reading loaded shot log `i`.
+  if i < 0 or i >= state.shotLogs.len: false else: state.shotLogs[i].busy
+
+func shotLogWidth*(state: AppState; i: int): int =
+  ## Columns of loaded shot log `i`, or 0 when it has no text yet.
+  if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: 0
+  else: state.shotLogs[i].log.width
+
+proc shotLogColumn*(state: AppState; i, col: int): string =
+  ## The header name of column `col` of loaded shot log `i`, or "".
+  if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: ""
+  else: state.shotLogs[i].log.columnName(col)
+
+proc shotLogGuess*(state: AppState; i: int): ShotLogMap =
+  ## A map guessed from loaded shot log `i`'s text. The text is not copied.
+  if i < 0 or i >= state.shotLogs.len: initShotLogMap()
+  else: guessMap(state.shotLogs[i].text)
+
+proc findShotLog*(state: AppState; id: int): int =
+  ## The index of the loaded shot log with `id`, or -1.
+  result = -1
+  for i, s in state.shotLogs:
+    if s.id == id: return i
+
+func shotLogReading*(state: AppState): bool =
+  ## An import or a load is under way and has not joined the loaded logs yet.
+  for w in state.shotWork:
+    if w.kind in {sjImport, sjLoad}: return true
+  false
+
 func shotLogMap*(state: AppState; i: int): ShotLogMap {.inline.} =
   ## The map loaded shot log `i` was parsed with.
   state.shotLogs[i].map
