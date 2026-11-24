@@ -966,9 +966,7 @@ proc buildVendorLines(rd: var Reader; fields: openArray[HeaderRef]): bool =
   let r = rd.r
   result = rd.vendor.build(rd.src.file, rd.src.session, rd.src.path, rd.src.size, names,
     proc (): bool {.gcsafe, raises: [].} = r.superseded)
-  for name in rd.vendor.takeMissing():
-    rd.note(sevWarning, "'" & name & "' is not a header line or a vendor field of " & rd.name &
-      ": it shows as unknown.")
+  for note in rd.vendor.takeNotes(): rd.note(sevWarning, note)
   rd.lineSlots.setLen fields.len
   for i, field in fields:
     rd.lineSlots[i] = if field.field == hfVendor: rd.vendor.slot(field.name) else: -1

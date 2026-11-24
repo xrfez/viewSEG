@@ -7,7 +7,10 @@
 ##   (the second record's traces are the file's 3 to 5); a record-level field is spread to each
 ##   trace of its record; a trace that holds the sentinel shows NaN (unknown), never 0;
 ## - an unknown name, and a text field, show unknown; the other lines of the header are as
-##   before and a built-in name wins a clash (`headerRefOf`);
+##   before and a built-in name wins a clash (`headerRefOf`); a name the file has no field of
+##   is said so, a field that cannot be read so (a repeat named without `[i]`, an element of
+##   a field not in a repeat) is said with the library's reason, and a text field is said
+##   to be text, once;
 ## - two fields sharing a bare name are told apart as `block.name`;
 ## - the lines are written to the settings as `(vendor "name")`, read back, an unknown name
 ##   kept, and the header of an older file (idents only) loads as it did;
@@ -29,7 +32,9 @@
 ## ms; with the session left out of `build`'s key, `reload` kept the column of another open
 ## file; with that and the reader dropping its columns only for no file (as before),
 ## `reopened` showed the old column, and with the latter alone it found the columns of a
-## file no longer shown held; with `usableLineName` not asked, `limits` kept the long name.
+## file no longer shown held; with `usableLineName` not asked, `limits` kept the long name;
+## with every library error said as "not a field", `unknown` missed the reason, and with no
+## note for a text field, it found none.
 import std/[json, math, monotimes, options, os, sequtils, strutils, times]
 import parseSEG
 import parseSEG/io/diskio
@@ -49,7 +54,8 @@ const
     (field serial (at 7) (enc u16))
     (field label (at 9) (len 4) (enc ascii) (trim right)))
   (target (kind traceExt) (extension 3) (name aux)
-    (field serial (at 1) (enc u16)))
+    (field serial (at 1) (enc u16))
+    (repeat (count 2) (stride 2) (at 3) (field rep (at 1) (enc u16))))
   (target (kind extendedHeader) (blockIndex 1) (name session)
     (field batch (at 3) (enc u8))))"""
   Records = 2
@@ -251,13 +257,33 @@ proc main*() =
       doAssert t.header[2][0].isNaN, "the bare name of a clashing field is not a field"
 
     block unknown:
-      let t = st.choose(@[vendorRef("noSuchField"), vendorRef("label"), headerRef(hfTrace)])
-      doAssert st.log.said("'noSuchField' is not a header line or a vendor field"),
+      let t = st.choose(@[vendorRef("noSuchField"), vendorRef("label"), headerRef(hfTrace),
+        vendorRef("rep"), vendorRef("counter[1]")])
+      doAssert st.log.said("'noSuchField' is not a header line or a vendor field of lines.sgd"),
         "the unknown name was not said"
       for j in 0 ..< PerRecord:
         doAssert t.header[0][j].isNaN, "an unknown name shows a value"
         doAssert t.header[1][j].isNaN, "a text field shows a number"
+        doAssert t.header[3][j].isNaN and t.header[4][j].isNaN
       doAssert t.header[2][1] == 2
+      # a field the file has, but that cannot be read so, is said with the library's reason
+      doAssert st.log.said("The vendor field 'rep' could not be read from lines.sgd: " &
+        "vendor field rep is in a repeat"), "a repeat named without [i]"
+      doAssert st.log.said("The vendor field 'counter[1]' could not be read from lines.sgd: " &
+        "vendor field counter is not in a repeat"), "an element of a field not in a repeat"
+      doAssert not st.log.said("'rep' is not a header line") and
+        not st.log.said("'counter[1]' is not a header line")
+      # a text field is said as text, once while the file is shown
+      st.gather(1)
+      discard st.choose(@[vendorRef("label"), headerRef(hfTrace)])
+      st.gather(0)
+      discard st.choose(@[vendorRef("label")])
+      var text = 0
+      for e in st.log:
+        if e.text == "The vendor field 'label' is text; a display line shows numbers, " &
+            "so it shows as unknown.":
+          inc text
+      doAssert text == 1, "the text field said " & $text & " times"
 
     block command:
       # the command takes names; a field given twice counts once

@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.22.0: capabilities | names | processSEG 0.14.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 64 (26 in part) | 222 | 46 (29 in part) | 256 |
+| `built` | 65 (27 in part) | 224 | 46 (29 in part) | 256 |
 | `internal` | 22 | 69 | 10 | 90 |
-| `planned` | 34 | 221 | 40 | 358 |
+| `planned` | 33 | 219 | 40 | 358 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 22 | 348 | 7 | 68 |
 | all | 144 | 869 | 104 | 777 |
@@ -140,7 +140,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | A stanza's text and user data | `stanzaText`, `stanzaBytes`, `isBinary`, `isEndText`, `isUserData`, `key`, `userDataBytes`, `isRetained` | Headers window, File headers: Stanzas and User data (above) | built |
 | A decoded vendor block | `VendorRegistry.addMap`, `loadVendorMap`, `VendorMap`, `decode`, `VendorBlock` (`[]`, `contains`), `VendorField`, `VendorValue`, `VendorValueKind`, `applies`, `vendorContext`, `VendorContext`, `VendorArea`, `VendorDecoder`, `decodeTarget`, `usesRecordBlocks`, `VendorBlockMatch`, `VendorBlockSize`, `VendorBytesMatch`, `VendorCondSource`, `VendorCondition`, `csByte`, `csField`, `csHighNibble`, `csLowNibble`, `decodeAll` | Headers window, File headers, Vendor tab: a decoded vendor block's fields and values (with `decodeVendorAreas`, above) | built (the Vendor tab); not applicable (`VendorField`, `applies`, `vendorContext`, `VendorContext`, `VendorArea`, `VendorDecoder`, `decodeTarget`, `usesRecordBlocks`, `VendorBlockMatch`, `VendorBlockSize`, `VendorBytesMatch`, `VendorCondSource`, `VendorCondition`, `csByte`, `csField`, `csHighNibble`, `csLowNibble`, `decodeAll`: `decodeVendorAreas` builds the context and the areas, matches the map's targets and conditions and decodes; the viewer reads the blocks it returns, one per matched target) |
 | A vendor field by name as a column over the traces | `vendorColumn`, `VendorColumn` | A display line chosen from a vendor map by name: the file's column, built on the reader's thread, kept while the file and the maps stay | built |
-| The vendor fields a file's maps define, listed by name | `vendorFieldNames`, `VendorFieldInfo`, `VendorLevel`, `vlRecord`, `vlTrace` | The picker of vendor lines and a warning for a name the file has no field of | planned |
+| The vendor fields a file's maps define, listed by name | `vendorFieldNames`, `VendorFieldInfo`, `VendorLevel`, `vlRecord`, `vlTrace` | A display line's warning: a name the file has no vendor field of, told apart from a field that could not be read; the picker of vendor lines | built (the warning, `vendorFieldNames`, `VendorFieldInfo`); planned (`VendorLevel`, `vlRecord`, `vlTrace`: the picker of vendor lines) |
 | A vendor integer field by name, exact | `vendorColumnInt`, `VendorColumnInt` | A vendor field as a sort key or a file-name token, where a microsecond count must keep every digit | planned |
 | Write a vendor field by name | `setVendorField`, `clearVendorField`, `VendorFieldAbsentError` | Header editor: change or clear a vendor field's value in a file | planned |
 | Extended textual header, parsed record by record | `initExtendedTextHeader`, `add`, `finish`, `isComplete`, `needsMore`, `hasEndText`, `inBinaryStanza`, `continuesUserData`, `ExtTextIssue`, `streamLimit=`, `startsStanza`, `startsStanzaRecord`, `normalizeStanzaName`; writing: `addText`, `addStanza`, `addUserData`, `UserDataItem`, `addEndText`, `inUserDataChain`, `stanzaRecordCount`, `withoutEndText` | The readers parse a file's stanzas into `index.segy.extended`; the writers copy them | not applicable (the readers' and writers' work, and the stanza helpers a writer of an extended text header uses: `inUserDataChain`, `stanzaRecordCount`, `withoutEndText`; the viewer reads the parsed stanzas) |

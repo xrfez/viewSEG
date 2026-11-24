@@ -15,7 +15,7 @@
 ## A tile looks each line's column up once (`slot`) and reads its rows by
 ## slot (`valueAt`): no column is copied.
 
-import std/[atomics, sets, tables]
+import std/[atomics, os, sets, strutils, tables]
 import parseSEG
 import filesystem, panels, session, sorting, vendormaps
 
@@ -45,7 +45,7 @@ type
     slots: Table[string, int] ## per name, its column in `columns` and `absent`
     columns: seq[seq[float64]] ## empty: no numbers (unknown name, text, no map)
     absent: seq[int] ## the traces without a value
-    missing: seq[string] ## names the file has no vendor field of, not yet said
+    notes: seq[string] ## what was found of a name, not yet said
 
 func session*(v: VendorLines): SessionId {.inline.} =
   ## The open file the columns are of; `NoSession` when none is held.
@@ -84,10 +84,11 @@ func vendorNames*(fields: openArray[HeaderRef]): seq[string] =
       seen.incl f.name
       result.add f.name
 
-proc takeMissing*(v: var VendorLines): seq[string] =
-  ## The names found to be no vendor field of the file since the last call (each is
-  ## said once while the file and the maps stay the same).
-  result = move v.missing
+proc takeNotes*(v: var VendorLines): seq[string] =
+  ## What was found of the names since the last call, in words (a name the
+  ## file has no vendor field of, a field that could not be read, a text
+  ## field): each is said once while the file and the maps stay the same.
+  result = move v.notes
 
 proc drop*(v: var VendorLines) =
   ## Forgets every column (the file closed or another one is shown).
@@ -100,6 +101,13 @@ proc put(v: var VendorLines; name: string; col: sink seq[float64]; absent: int) 
   v.absent.add absent
   held.atomicInc
 
+func listed(fields: openArray[VendorFieldInfo]; name: string): bool =
+  # Whether `name` names one of `fields`, also as an element `name[i]`.
+  let cut = if name.endsWith(']'): name.rfind('[') else: -1
+  for f in fields:
+    if f.name == name or (cut > 0 and name.toOpenArray(0, cut - 1) == f.name): return true
+  false
+
 proc build*(v: var VendorLines; f: ptr SeismicFile; session: SessionId; path: string;
     size: int64; names: openArray[string]; stop: StopProc = nil): bool =
   ## Builds the columns of `names` that are not held, from `f` (open file
@@ -107,7 +115,7 @@ proc build*(v: var VendorLines; f: ptr SeismicFile; session: SessionId; path: st
   ## vendor maps in force; columns of another file, or of an older load of the
   ## maps, are dropped first. A name no map defines for the file, a text
   ## field, or a file that cannot be read gives an empty column, kept so that
-  ## it is not asked for again. False when `stop`
+  ## it is not asked for again, and a note (`takeNotes`). False when `stop`
   ## said to give up (nothing of the column then in progress is kept).
   let stamp = vendorStamp()
   if stamp != v.stamp or session != v.session or path != v.path or size != v.size or
@@ -123,6 +131,7 @@ proc build*(v: var VendorLines; f: ptr SeismicFile; session: SessionId; path: st
       haveReg = true
     var col: seq[float64] = @[]
     var absent = 0
+    let file = path.extractFilename
     try:
       if not f[].inMemory: fs.mappedRead(path, headers = true)
       var c: VendorColumn
@@ -132,8 +141,19 @@ proc build*(v: var VendorLines; f: ptr SeismicFile; session: SessionId; path: st
       if c.kind in {vvInt, vvFloat}:
         col = c.numbers
         absent = c.absent
-    except ValueError: # unknown or ambiguous name
-      v.missing.add name
+      else:
+        v.notes.add "The vendor field '" & name & "' is text; a display line shows " &
+          "numbers, so it shows as unknown."
+    except ValueError as e: # an unknown or ambiguous name, or a field that cannot be read
+      var fields: seq[VendorFieldInfo] = @[]
+      try: fields = reg.vendorFieldNames(f[])
+      except ValueError: discard # (no vendor field: a SEG-2 file)
+      if fields.listed(name):
+        v.notes.add "The vendor field '" & name & "' could not be read from " & file & ": " &
+          e.msg & ". It shows as unknown."
+      else:
+        v.notes.add "'" & name & "' is not a header line or a vendor field of " & file &
+          ": it shows as unknown."
     except CatchableError: discard # a cut file, a drive gone
     built.atomicInc
     v.put(name, col, absent)
