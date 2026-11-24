@@ -3,7 +3,7 @@
     "parseSEG": {
       "dir": "$deps/parseSEG",
       "url": "https://github.com/xrfez/parseSEG",
-      "commit": "1ebe8717ad7cb162436ea0ab9985ba5ca2fa69bb",
+      "commit": "477b434eae57fdaa3b655dcbcf099842208664dd",
       "version": ""
     },
     "processSEG": {
