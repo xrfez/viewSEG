@@ -95,6 +95,10 @@ proc toJson*[E](x: seq[E]): JsonNode
 proc toJson*[E](x: set[E]): JsonNode
 proc toJson*[T](x: T): JsonNode
 
+proc toJson*(x: HeaderRef): JsonNode =
+  ## A display line is its name: the built-in field's, or the vendor field's.
+  newJString($x)
+
 proc toJson*[E](x: seq[E]): JsonNode =
   result = newJArray()
   for e in x: result.add toJson(e)
@@ -126,6 +130,10 @@ proc toJson*[T](x: T): JsonNode =
 proc schemaOf*[E](t: typedesc[seq[E]]): JsonNode
 proc schemaOf*[E](t: typedesc[set[E]]): JsonNode
 proc schemaOf*[T](t: typedesc[T]): JsonNode
+
+proc schemaOf*(t: typedesc[HeaderRef]): JsonNode =
+  %*{"type": "string", "description": "a built-in header field's name, else the name " &
+    "of a vendor field (the bare field name, or block.name when the bare name is not unique)"}
 
 proc schemaOf*[E](t: typedesc[seq[E]]): JsonNode =
   %*{"type": "array", "items": schemaOf(E)}
@@ -165,9 +173,14 @@ func describe(n: JsonNode): string =
   of JArray: "an array"
   of JObject: "an object"
 
+proc decode*(n: JsonNode; x: var HeaderRef; path: string; problems: var seq[string])
 proc decode*[E](n: JsonNode; x: var seq[E]; path: string; problems: var seq[string])
 proc decode*[E](n: JsonNode; x: var set[E]; path: string; problems: var seq[string])
 proc decode*[T](n: JsonNode; x: var T; path: string; problems: var seq[string])
+
+proc decode*(n: JsonNode; x: var HeaderRef; path: string; problems: var seq[string]) =
+  if n.kind == JString and n.str.len > 0 and n.str.len <= 200: x = headerRefOf(n.str)
+  else: problems.add path & ": a header's name, not " & describe(n)
 
 proc decode*[E](n: JsonNode; x: var seq[E]; path: string; problems: var seq[string]) =
   if n.kind != JArray:

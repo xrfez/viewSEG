@@ -42,7 +42,7 @@ type
     sets*: seq[string]
       ## per row: the trace's SEG-D channel set in words (`core/channelsets`); empty
       ## when the file has none
-    fields*: seq[HeaderField]
+    fields*: seq[HeaderRef]
     header*: seq[seq[float64]]
       ## per field, one value per trace (NaN when unknown)
     edits*: seq[set[TraceEdit]]

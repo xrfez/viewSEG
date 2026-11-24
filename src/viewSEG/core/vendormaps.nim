@@ -129,6 +129,7 @@ type
 var
   shared: VendorRegistry
   sharedChoice: VendorChoice
+  sharedStamp: int
   sharedLock: Lock
 
 initLock(sharedLock)
@@ -170,6 +171,14 @@ proc publishVendors*(reg: VendorRegistry; choice = VendorChoice()) =
     withLock sharedLock:
       shared = offered
       sharedChoice = choice
+      inc sharedStamp
+
+proc vendorStamp*(): int =
+  ## A number that changes with every `publishVendors`: what was made from
+  ## the registry of an older one is stale.
+  {.cast(gcsafe).}:
+    withLock sharedLock:
+      result = sharedStamp
 
 proc currentVendorSet*(): (VendorRegistry, VendorChoice) =
   ## The registry in force and the rule it is made under, together.

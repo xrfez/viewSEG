@@ -91,7 +91,8 @@ import processSEG/pipeline
 import processSEG/core/[basic, pool, rows, types, workspace]
 import processSEG/gain/stats
 import channelsets, components, correlateread, cutfile, edits, filesystem, inbox, jobs, log, panels,
-  processing, readout, segmentclock, sorting, threads, tiles, vendormaps, viewport, wiggle
+  processing, readout, segmentclock, sorting, threads, tiles, vendorlines, vendormaps, viewport,
+  wiggle
 
 const
   ChunkTraces = 64    ## traces per prefetch chunk
@@ -126,7 +127,7 @@ type
   ReaderRequest* = object
     ## What a panel asks its reader for.
     read*: ReadRequest
-    fields*: seq[HeaderField] ## the display header's rows
+    fields*: seq[HeaderRef]   ## the display header's rows
     flow*: Pipeline           ## processing for display (`displayPipeline`)
     filters*: Pipeline
       ## the layer's filters (`filterPipeline`), run before `flow`; empty for none
@@ -228,6 +229,7 @@ type
     viewWs: CorrelateWorkspace
     viewChunk: seq[float32]   ## a chunk, reused
     spare: ViewSpare
+    vendor: VendorLines       ## the vendor fields' columns of the display lines, for `src`'s file
 
 proc `=destroy`*(x: PanelReader)
 proc `=wasMoved`*(x: var PanelReader) = x.p = nil
@@ -279,6 +281,7 @@ proc letGo(rd: var Reader) =
     clearCycleRoots()
     discard rd.r.holds.release(rd.src.path)
   rd.src = ReaderSource()
+  rd.vendor.drop()
   rd.shown = Positions()
   rd.positions = Positions()
   rd.sorted = false
@@ -364,6 +367,7 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   ## positions are sorted in its order. A different view, or a file that is
   ## not a view, drops the workspace the one before kept.
   if src.view != rd.viewOf: rd.dropViewWork()
+  if src.file != rd.src.file or src.path != rd.src.path: rd.vendor.drop()
   rd.src = src
   rd.name = rd.src.path.extractFilename
   if rd.src.file == nil: return
@@ -947,8 +951,19 @@ proc extremesKept(src: ptr UncheckedArray[float32]; cols, skip, samples, decimat
   if n <= 0: zeroFloats(dst)
   else: minMaxInto(src.toOpenArray(skip, skip + n - 1), decimation, dst)
 
+proc buildVendorLines(rd: var Reader; fields: openArray[HeaderRef]): bool =
+  ## Makes sure the columns of the vendor fields among `fields` are held,
+  ## reading them from the file on this thread (the first request that has
+  ## such a line waits for them: one read of the headers of the file, a
+  ## newer source or order giving it up). False when it was given up.
+  let names = vendorNames(fields)
+  if names.len == 0 or rd.src.file == nil: return true
+  let r = rd.r
+  rd.vendor.build(rd.src.file, rd.src.path, names, proc (): bool {.gcsafe, raises: [].} =
+    r.superseded)
+
 proc markRow(rd: Reader; tile: var Tile; row, trace, count: int; keys: TraceKeys;
-    fields: openArray[HeaderField]) =
+    fields: openArray[HeaderRef]) =
   ## Dead, joined and the channel-set name of row `row` (trace `trace`), and
   ## its display-header values. `cut` and a tile filled from the spare both
   ## use it, so a dead trace stays blank when the samples were already read.
@@ -962,7 +977,9 @@ proc markRow(rd: Reader; tile: var Tile; row, trace, count: int; keys: TraceKeys
     if tile.joined.len == 0: tile.joined = newSeq[set[JoinGroup]](count)
     tile.joined[row] = joined
   for i, field in fields:
-    tile.header[i][row] = keys.value(field, trace, f[].channelSetNumberOf(trace))
+    tile.header[i][row] =
+      if field.field == hfVendor: rd.vendor.valueAt(field.name, trace)
+      else: keys.value(field.field, trace, f[].channelSetNumberOf(trace))
   if f[].kind == skSegd:
     if tile.sets.len == 0: tile.sets = newSeq[string](count)
     tile.sets[row] = f[].channelSetText(trace)
@@ -1053,6 +1070,9 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
   let window = q.decodeSpan(rd.layout.samples)
   let skip = q.firstSample - window.a # decoded columns before the kept ones
   let cols = window.len
+  if not rd.buildVendorLines(req.fields):
+    given = true # a newer note came first
+    return
   if not level and spareReady(rd.spare, rd.raw, rd.src.view, req, q, window, cols):
     if rd.fillFromSpare(req, q, window, skip, cols, tile, given): result = true
     return

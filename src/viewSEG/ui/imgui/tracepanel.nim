@@ -240,7 +240,7 @@ type
       ## time across: each header column's longest label so far, for the
       ## gather and fields `bandKey` names (they only grow, so the columns
       ## do not jump as the view pans)
-    bandKey: (uint64, seq[HeaderField])
+    bandKey: (uint64, seq[HeaderRef])
     picking: int ## the colour whose picker is open (as `colourKeys` lists them)
     hex: array[12, char] ## what the picker's `#rrggbb` box holds
     componentPicking: int ## the component colour whose picker is open (0..3)
@@ -267,10 +267,10 @@ func setOf(t: Tile; row: int): string {.inline.} =
   ## The channel set in words of row `row` of tile `t`; "" for none.
   if row < t.sets.len: t.sets[row] else: ""
 
-func caption(f: HeaderField): string =
+func caption(h: HeaderRef): string =
   ## A header row's name as it stands left of the plot: short, so it fits
-  ## beside the time axis.
-  case f
+  ## beside the time axis; a vendor field's own name.
+  case h.field
   of hfComponent: "comp"
   of hfChannel: "chan"
   of hfChannelSet: "set"
@@ -278,7 +278,7 @@ func caption(f: HeaderField): string =
   of hfSrcLine: "S line"
   of hfSrcPoint: "S point"
   of hfCrossline: "xline"
-  else: $f
+  else: $h
 
 proc startGpu*(tp: var TracePanelUi; getProc: GetProcAddress; maxTexture = 0): string =
   ## Loads the GL functions and makes the density renderer, with the GL
@@ -418,7 +418,7 @@ proc labelChars(tp: var TracePanelUi; t: Tile): int =
     tp.labelChars[t.id] = n
   tp.labelChars[t.id]
 
-proc bandChars(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[HeaderField];
+proc bandChars(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[HeaderRef];
     gen: uint64): seq[int] =
   ## Time across: the longest label of each of `fields` in `tiles`, never
   ## less than before for the same gather (`gen`: the panel's `sourceGen`)
@@ -478,7 +478,7 @@ proc inBand(b: HeaderBands; i: int; extent: float32): float32 =
   if b.axis == saY: b.start[i]
   else: b.start[i] + b.size[i] - extent - round(igGetFontSize() * 0.4)
 
-func headerValue(tiles: openArray[Tile]; fields: openArray[HeaderField]; row,
+func headerValue(tiles: openArray[Tile]; fields: openArray[HeaderRef]; row,
     position: int): (bool, float64, string) =
   ## The value of header row `row` at `position`, from the newest tile that
   ## has it with these fields, and the trace's channel set in words (""
@@ -491,7 +491,7 @@ func headerValue(tiles: openArray[Tile]; fields: openArray[HeaderField]; row,
       return (true, tiles[i].header[row][at], tiles[i].setOf(at))
   (false, NaN, "")
 
-func headerJoined(tiles: openArray[Tile]; fields: openArray[HeaderField]; row,
+func headerJoined(tiles: openArray[Tile]; fields: openArray[HeaderRef]; row,
     position: int): bool =
   ## Whether the value of header row `row` at `position` (as `headerValue`
   ## finds it) was given by a geometry join, not by the trace's header.
@@ -500,7 +500,7 @@ func headerJoined(tiles: openArray[Tile]; fields: openArray[HeaderField]; row,
     if tiles[i].fields == fields and position >= r.first and position <= r.last and
         (position - r.first) mod r.stride == 0:
       return (tiles[i].joinedAt((position - r.first) div r.stride) *
-        joinGroupsOf(fields[row])) != {}
+        joinGroupsOf(fields[row].field)) != {}
   false
 
 const MarkerSize = 6'f32 ## a selection marker's height, in pixels (its bar's thickness)
@@ -601,15 +601,18 @@ proc drawHeaderChoice(p: Panel; marks: var Marks; prefix: string; res: var Panel
   igBeginDisabled(p.header.auto)
   let shown = p.shownFields
   for f in HeaderField:
+    if f == hfVendor: continue # a vendor line is chosen by name, not from this list
     var on = f in shown
     let have = f in p.known
     let label = $f & (if have: "" else: "  (not in this file)")
     let clicked = igCheckbox(label.cstring, addr on)
     marks.mark(prefix & $f)
     if clicked:
-      var fields: seq[HeaderField]
+      var fields: seq[HeaderRef]
       for g in HeaderField:
-        if (g == f and on) or (g != f and g in shown): fields.add g
+        if g != hfVendor and ((g == f and on) or (g != f and g in shown)): fields.add g
+      for g in shown: # the vendor lines already chosen stay, after the built-in ones
+        if g.field == hfVendor: fields.add g
       if fields.len > 0:
         res.commands.add Command(kind: ckHeader, panel: p.id,
           header: HeaderChoice(auto: false, fields: fields))
@@ -1702,7 +1705,7 @@ proc centredText(text: string; colour: Rgba) =
   igTextUnformatted(text.cstring, nil)
   igPopStyleColor(1)
 
-proc drawHeader(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[HeaderField];
+proc drawHeader(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[HeaderRef];
     stride: int; view: Viewport; layout: PanelLayout; m: Turn; bands: HeaderBands;
     top, plotPos, plotSize: ImVec2_c; t: Theme; marks: var Marks) =
   ## The display header between `top` and the plot: a band per field (a row
@@ -2369,7 +2372,7 @@ proc drawCursorLine(tp: var TracePanelUi; at, pos, size: ImVec2_c; m: Turn; tMs,
   marks.markRect("plot.cursor time", lo, hi)
 
 proc drawCursorHeader(tp: var TracePanelUi; tiles: openArray[Tile];
-    fields: openArray[HeaderField]; position: int; view: Viewport; m: Turn;
+    fields: openArray[HeaderRef]; position: int; view: Viewport; m: Turn;
     bands: HeaderBands; plotPos, plotSize: ImVec2_c; ink: PlotInk; t: Theme;
     marks: var Marks) =
   ## With the cursor's time line, the display header's value of each band
@@ -2628,7 +2631,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     for i, f in fields:
       let caption = igCalcTextSize(caption(f).cstring, nil, false, -1).x
       bands.start.add at
-      bands.size.add round(max(caption, float32(max(max(chars[i], p.widest[f]), 1)) * charW)) +
+      bands.size.add round(max(caption, float32(max(max(chars[i], p.widest[f.field]), 1)) * charW)) +
         gap
       at += bands.size[^1]
     if edited:

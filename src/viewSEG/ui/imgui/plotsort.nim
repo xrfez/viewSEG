@@ -106,6 +106,7 @@ proc drawSortKeys*(ks: var SortKeysUi; p: Panel; marks: var Marks; cmds: var seq
     igSetNextItemWidth(width)
     if igBeginCombo("##field", fieldName(key.field, p.known).cstring, 0):
       for f in HeaderField:
+        if f == hfVendor: continue # sorting by a vendor field comes later
         if igSelectable_Bool(fieldName(f, p.known).cstring, f == key.field, 0,
             ImVec2_c(x: 0, y: 0)):
           ks.draft[i].field = f
@@ -133,8 +134,9 @@ proc drawSortKeys*(ks: var SortKeysUi; p: Panel; marks: var Marks; cmds: var seq
   if removed >= 0: ks.draft.delete(removed)
   if ks.draft.len == 0:
     igTextUnformatted("No keys: the file's order.", nil)
-  if igBeginMenu("Add a key", ks.draft.len < HeaderField.high.ord + 1):
+  if igBeginMenu("Add a key", ks.draft.len < HeaderField.high.ord):
     for f in HeaderField:
+      if f == hfVendor: continue
       var used = false
       for k in ks.draft:
         if k.field == f: used = true

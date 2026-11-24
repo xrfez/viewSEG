@@ -120,7 +120,7 @@ const
   MaxLineNames = 1000  ## line names mapped to numbers, kept
   FieldNames: array[HeaderField, string] = ["rcvLine", "rcvPoint", "component", "channel",
     "channelSet", "traceId", "ffid", "srcLine", "srcPoint", "offset", "cdp", "inline", "crossline",
-    "trace", "startTime"]
+    "trace", "startTime", "vendor"]
   SeverityNames: array[Severity, string] = ["info", "warning", "error", "fatal"]
   HeadersTabNames: array[HeadersTab, string] = ["summary", "fileHeaders", "trace", "traceTable"]
   TableScopeNames: array[TableScope, string] = ["record", "file"]
@@ -214,7 +214,9 @@ proc writeHeader(w: var NifWriter; h: HeaderChoice) =
   w.open("header")
   if h.auto: w.ident "auto"
   else:
-    for f in h.fields: w.ident FieldNames[f]
+    for f in h.fields:
+      if f.field == hfVendor: w.value("vendor", f.name)
+      else: w.ident FieldNames[f.field]
   w.close()
 
 proc display(w: var NifWriter; d: DisplaySettings; turned = true) =
@@ -637,6 +639,8 @@ proc keys(r: var Reading; n: NifNode; first: int; x: var seq[SortKey]) =
     var key = SortKey()
     if not k.isTree("key") or k.kids.len notin 1..2:
       r.unusable(k, n.tag, "(key field) or (key field descending)")
+    elif r.pick(k.kids[0], FieldNames, "key", key.field) and key.field == hfVendor:
+      r.unusable(k.kids[0], "key", "a built-in field (a vendor field is not a sort key)")
     elif r.pick(k.kids[0], FieldNames, "key", key.field):
       if k.kids.len == 2:
         if k.kids[1].kind == nkIdent and k.kids[1].text in ["ascending", "descending"]:
@@ -778,10 +782,18 @@ proc header(r: var Reading; c: NifNode; h: var HeaderChoice) =
   if c.kids.len == 1 and c.kids[0].kind == nkIdent and c.kids[0].text == "auto":
     h = HeaderChoice(auto: true)
   else:
-    var fields: seq[HeaderField]
+    var fields: seq[HeaderRef]
     for v in c.kids:
+      if v.isTree("vendor"):
+        # a name no vendor map defines is kept: the line shows it as unknown
+        var name = ""
+        r.text(v, name)
+        if name.len > 0 and vendorRef(name) notin fields: fields.add vendorRef(name)
+        continue
       var f = hfTrace
-      if r.pick(v, FieldNames, "header", f) and f notin fields: fields.add f
+      if r.pick(v, FieldNames, "header", f):
+        if f == hfVendor: r.unusable(v, "header", "(vendor \"name\") for a vendor field")
+        elif headerRef(f) notin fields: fields.add headerRef(f)
     if fields.len > 0: h = HeaderChoice(auto: false, fields: fields)
     else: r.unusable(c, "header", "auto, or the fields to show")
 

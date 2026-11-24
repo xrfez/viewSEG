@@ -57,7 +57,7 @@
 ## ("Seismic 2"). The name follows the panel's trace filter and kind, so
 ## the same window names itself again when it is reused.
 
-import std/[math, options]
+import std/[math, options, strutils]
 import parseSEG
 import processSEG/pipeline
 import processSEG/gain/[curves, gain]
@@ -250,11 +250,21 @@ type
       ## when the trace's first sample was recorded, in UTC microseconds since 1970
       ## (the keys' first-sample instant, else their `time`); the sort by it reads a
       ## recorder's own per-trace start time from the headers when a vendor map has it
+    hfVendor = "vendor field"
+      ## a trace field a vendor map defines, chosen by name (`HeaderRef.name`); only
+      ## a display line shows it (`value` has none: the reader's column cache does)
+
+  HeaderRef* = object
+    ## A header chosen for a display line: a built-in `field`, or, for `hfVendor`, the
+    ## vendor field called `name` (the bare field name when it is unique among the
+    ## file's vendor fields, else `block.name`). `name` is read only for `hfVendor`.
+    field*: HeaderField
+    name*: string
 
   HeaderChoice* = object
     ## The rows of a panel's display header.
     auto*: bool = true        ## from what the file has (`defaultFields`)
-    fields*: seq[HeaderField] ## the user's choice, top row first, when not `auto`
+    fields*: seq[HeaderRef]   ## the user's choice, top row first, when not `auto`
 
   SortKey* = object
     ## One key of a trace order: a header field, smallest first unless
@@ -434,6 +444,32 @@ func shows*(layer: Layer; file: SessionId): bool =
   ## Whether `layer` draws traces of `file`.
   layer.source.kind == lsRecord and layer.source.file == file
 
+converter headerRef*(f: HeaderField): HeaderRef =
+  ## A built-in header as a `HeaderRef`, so every plain `HeaderField` keeps working.
+  HeaderRef(field: f)
+
+converter headerRefs*(fs: seq[HeaderField]): seq[HeaderRef] =
+  ## Built-in headers as `HeaderRef`s.
+  for f in fs: result.add HeaderRef(field: f)
+
+func vendorRef*(name: string): HeaderRef =
+  ## The display line of the vendor field `name`.
+  HeaderRef(field: hfVendor, name: name)
+
+func headerRefOf*(name: string): HeaderRef =
+  ## The line called `name`: the built-in field of that name (any case; a
+  ## built-in field wins a clash), else the vendor field of that name.
+  for f in HeaderField:
+    if f != hfVendor and cmpIgnoreCase($f, name) == 0: return HeaderRef(field: f)
+  HeaderRef(field: hfVendor, name: name)
+
+func `==`*(a, b: HeaderRef): bool =
+  a.field == b.field and (a.field != hfVendor or a.name == b.name)
+
+func `$`*(h: HeaderRef): string =
+  ## The line's name: the built-in field's, or the vendor field's own name.
+  if h.field == hfVendor: h.name else: $h.field
+
 func value*(k: TraceKeys; field: HeaderField; trace: int; channelSet = 0): float64 =
   ## `field` of the trace with keys `k`, index `trace` and channel set number
   ## `channelSet` (`core/channelsets`; 0 for none); NaN when unknown.
@@ -457,6 +493,7 @@ func value*(k: TraceKeys; field: HeaderField; trace: int; channelSet = 0): float
     if us.isSome: float64(us.get)
     elif k.time.isNaN: NaN
     else: k.time * 1e6
+  of hfVendor: NaN # a vendor field's values are a column of the file, not the keys
 
 func joinGroupsOf*(field: HeaderField): set[JoinGroup] =
   ## The groups of a trace's keys `field` shows: what a geometry join may
@@ -468,7 +505,7 @@ func joinGroupsOf*(field: HeaderField): set[JoinGroup] =
   of hfOffset: {jgDerived}
   else: {}
 
-func defaultFields*(known: set[HeaderField]; kind = gkUnknown): seq[HeaderField] =
+func defaultFields*(known: set[HeaderField]; kind = gkUnknown): seq[HeaderRef] =
   ## The display header of a gather of `kind` whose traces have values for
   ## `known`, the first group that has any: for a shot gather receiver line
   ## and point, else field record and channel; for a receiver gather source
@@ -485,11 +522,11 @@ func defaultFields*(known: set[HeaderField]; kind = gkUnknown): seq[HeaderField]
         @[hfRecord, hfChannel]]
   for group in groups:
     for f in group:
-      if f in known: result.add f
+      if f in known: result.add headerRef(f)
     if result.len > 0: return
-  @[hfTrace]
+  @[headerRef(hfTrace)]
 
-func shownFields*(p: Panel): seq[HeaderField] =
+func shownFields*(p: Panel): seq[HeaderRef] =
   ## The rows of `p`'s display header, top first.
   if p.header.auto: defaultFields(p.known, p.kind) else: p.header.fields
 
