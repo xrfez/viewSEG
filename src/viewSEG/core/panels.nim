@@ -477,6 +477,8 @@ func headerRefOf*(name: string): HeaderRef =
     if f != hfVendor and cmpIgnoreCase($f, name) == 0: return HeaderRef(field: f)
   HeaderRef(field: hfVendor, name: name)
 
+const MaxSortKeys* = 24 ## keys a trace order may have
+
 func vendorKey*(name: string; descending = false): SortKey =
   ## The sort key of the vendor field `name`.
   SortKey(field: hfVendor, name: name, descending: descending)

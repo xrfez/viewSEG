@@ -12159,6 +12159,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
     elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
+    elif cmd.order.len > MaxSortKeys:
+      state.ignore(cmd, "a sort has at most " & $MaxSortKeys & " keys")
     elif cmd.order.anyIt(it.field == hfVendor and not usableLineName(it.name)):
       state.ignore(cmd, "a vendor field's name is 1 to 200 characters, with no control character")
     elif uniqueKeys(cmd.order) != state.panels[k].layers[0].order:

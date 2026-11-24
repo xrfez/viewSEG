@@ -19,7 +19,6 @@ import chrome, icons, style
 
 const
   sortKeysId* = "##sortkeys" ## the popover of the user's own keys
-  MaxSortKeys = 24           ## keys the popover holds
 
 type SortKeysUi* = object
   ## The keys being put together in the popover, until "Sort" sends them.

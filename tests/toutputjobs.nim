@@ -4,7 +4,8 @@
 ## sits in an open file's folder, is refused. A cancel and a write that the
 ## drive refuses leave no file.
 ##
-## Seen to fail: with `dropKilled` ignored, the killed-trace counts failed
+## Seen to fail: with the sort's vendor notes not added to the result's lines, `unknownVendorKey`
+## found no note; with `dropKilled` ignored, the killed-trace counts failed
 ## (`written == n - 1`); with a reversal left unapplied, "a reversed trace
 ## was not negated". With `applyPreparedTrace` passing no shift, "a spike at
 ## sample 100 was not written at 104". With that write not using the plot's
@@ -339,6 +340,23 @@ proc main*() =
           "sort place " & $i & " is not trace " & $t
       back.close()
       removeFile(dest)
+    block unknownVendorKey:
+      # a vendor key the file has no field of leaves the order, and says so in the lines
+      let dest = dir / "unknown.sgy"
+      let got = runJob(src, segy, dest, OutputOptions(format: ofSegy,
+        sortKeys: @[vendorKey("noSuchField")]), FileEdits(), @[segy])
+      doAssert got.st == jsDone, got.error
+      doAssert got.wrote.lines.anyIt("'noSuchField'" in it), got.wrote.lines.join("; ")
+      removeFile(dest)
+    src.close()
+
+  block segdUnknownVendorKey:
+    var src = openSeismic(segd, keys = true)
+    let dest = dir / "unknown.sgd"
+    let got = runJob(src, segd, dest, OutputOptions(format: ofSegd,
+      sortKeys: @[vendorKey("noSuchField")]), FileEdits(), @[segd])
+    doAssert got.st == jsDone, got.error
+    doAssert got.wrote.lines.anyIt("'noSuchField'" in it), got.wrote.lines.join("; ")
     src.close()
 
   block segdSortStaysInRecords:

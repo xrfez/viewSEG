@@ -641,6 +641,9 @@ proc keys(r: var Reading; n: NifNode; first: int; x: var seq[SortKey]) =
   ## field written `(key (vendor "name") [descending])`: a field given twice
   ## counts once, as its first.
   var got: seq[SortKey]
+  if n.kids.len - first > MaxSortKeys:
+    r.unusable(n, n.tag, "at most " & $MaxSortKeys & " keys")
+    return
   for i in first ..< n.kids.len:
     let k = n.kids[i]
     var key = SortKey()

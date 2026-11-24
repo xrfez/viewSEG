@@ -163,6 +163,32 @@ proc main*() =
       doAssert st.panel(MainPanel).layers[0].order == @[vendorKey("counter"), vendorKey("serial")],
         "an unusable name was taken"
 
+    block cap:
+      let was = st.panel(MainPanel).layers[0].order
+      let msgs = st.log.len
+      var many: seq[SortKey]
+      for i in 0 ..< MaxSortKeys + 1: many.add vendorKey("f" & $i)
+      st.apply Command(kind: ckSort, panel: MainPanel, order: many)
+      doAssert st.panel(MainPanel).layers[0].order == was, "25 keys were taken"
+      doAssert st.log.len == msgs + 1 and st.log.said("a sort has at most 24 keys"),
+        "one message wanted"
+      var problems: seq[string]
+      var c = Command(kind: ckSort)
+      decode(toJson(many), c.order, "order", problems)
+      doAssert problems.len == 1 and c.order.len == 0, $problems
+      decode(toJson(many[0 ..< MaxSortKeys]), c.order, "order", problems)
+      doAssert problems.len == 1 and c.order.len == MaxSortKeys, $problems
+      var doc = "(settings (version 1) (plot (order"
+      for k in many: doc.add " (key (vendor \"" & k.name & "\"))"
+      let over = readSettings(doc & ")))", "over", Settings(), problems)
+      doAssert problems.len == 2 and over.plot.order.len == 0, $problems
+      let at = doc.rfind(" (key")
+      let fit = readSettings(doc[0 ..< at] & ")))", "fit", Settings(), problems)
+      doAssert problems.len == 2 and fit.plot.order.len == MaxSortKeys, $problems
+      st.apply Command(kind: ckSort, panel: MainPanel, order: many[0 ..< MaxSortKeys])
+      doAssert st.panel(MainPanel).layers[0].order.len == MaxSortKeys
+      st.apply Command(kind: ckSort, panel: MainPanel, order: was)
+
     block settings:
       var problems: seq[string]
       st.apply Command(kind: ckSort, panel: MainPanel,

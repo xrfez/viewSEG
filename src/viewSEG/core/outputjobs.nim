@@ -773,6 +773,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             if not sortVendor.build(file, NoSession, source, 0, names, stop):
               abort(sink, dest, part, claimed, "The sort was stopped.", true)
             sortVendorRead = true
+            for note in sortVendor.takeNotes(): lines.add note
           if not sortRowsInto(rows, opts.sortKeys, perm, stop, nil, startOf, sortVendor):
             abort(sink, dest, part, claimed, "The sort was stopped.", true)
           for k, row in perm:

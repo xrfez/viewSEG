@@ -194,6 +194,7 @@ func describe(n: JsonNode): string =
 
 proc decode*(n: JsonNode; x: var HeaderRef; path: string; problems: var seq[string])
 proc decode*(n: JsonNode; x: var SortKey; path: string; problems: var seq[string])
+proc decode*(n: JsonNode; x: var seq[SortKey]; path: string; problems: var seq[string])
 proc decode*(n: JsonNode; x: var HeaderField; path: string; problems: var seq[string])
 proc decode*[E](n: JsonNode; x: var seq[E]; path: string; problems: var seq[string])
 proc decode*[E](n: JsonNode; x: var set[E]; path: string; problems: var seq[string])
@@ -223,6 +224,18 @@ proc decode*(n: JsonNode; x: var SortKey; path: string; problems: var seq[string
           x.name = if h.field == hfVendor: h.name else: ""
       elif key == "descending": decode(v, x.descending, path & ".descending", problems)
       else: problems.add path & ": no field " & escapeJson(key.substr(0, 79))
+
+proc decode*(n: JsonNode; x: var seq[SortKey]; path: string; problems: var seq[string]) =
+  ## A trace order: at most `MaxSortKeys` keys.
+  if n.kind == JArray and n.len > MaxSortKeys:
+    problems.add path & ": at most " & $MaxSortKeys & " keys"
+  elif n.kind != JArray:
+    problems.add path & ": an array, not " & describe(n)
+  else:
+    var s = newSeq[SortKey](n.len)
+    for i, e in n.elems:
+      decode(e, s[i], path & "[" & $i & "]", problems)
+    x = move s
 
 proc decode*(n: JsonNode; x: var HeaderField; path: string; problems: var seq[string]) =
   ## A built-in header field by name (any case); never `hfVendor`.
