@@ -659,14 +659,14 @@ state agree):
 
 - *Where a break is expected*: the record's traces are cut into about 20 bins of offset (at
   least 10 traces a bin), and the range runs out from the nearest offsets to the end of the
-  last bin before one where fewer than a fifth of the traces have a confident pick within
-  that guided window of the record's fit, or a confident first-pass pick outside that window
-  and at most 400 ms from it; it never runs past the 95th percentile of the offsets of the
-  picks both passes agree on (kept by the fit, and the first pass's pick confident and as near
-  the fit). So noise the guided window happened to hold at long offsets does not widen it, and
-  a stretch of real breaks the fit misses does not end it. A trace with a model time beyond
-  that is *beyond the offsets where breaks are seen*: counted apart, never judged, never a
-  finding.
+  farthest bin where at least a fifth of the traces have a guided pick comparable with the
+  record's fit (below), whatever lies between: a stretch of noise, dead traces or a drift wider
+  than the window does not end it when such bins lie beyond. It never runs past the 95th
+  percentile of the offsets of the picks both passes agree on (kept by the fit, and the first
+  pass's pick confident and as near the fit). So noise the guided window happened to hold at
+  long offsets, or a far half of the record with no breaks, does not widen it. A trace with a
+  model time beyond that is *beyond the offsets where breaks are seen*: counted apart, never
+  judged, never a finding. A trace in a stretch the range spans is judged as any other.
 - *Comparable*: within that range, a confident guided pick (0.5 or more) strictly inside that
   same window of the model (on the boundary is not inside). Any other trace
   in range is *no break found* and not flagged, unless the first (unguided) pass found a confident

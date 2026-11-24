@@ -5,9 +5,11 @@
 ## picker found noise (no break at that offset) has a pick that lies anywhere, so it is
 ## "no break found", never "off the model". The rule:
 ##
-## - **Where a break is expected** (`expectedRange`): out to the offset where fewer than
-##   `RangeShare` of the traces have a confident pick near the model, and never past most of the
-##   picks both passes agree on. A trace beyond it is "beyond", counted apart and never judged.
+## - **Where a break is expected** (`expectedRange`): out to the farthest offsets where at least
+##   `RangeShare` of the traces have a comparable guided pick, across any stretch between where
+##   fewer do (noise, dead traces, a drift the window misses), and never past most of the picks
+##   both passes agree on. A trace beyond it is "beyond", counted apart and never judged; one in
+##   a stretch the range spans is judged as any other.
 ## - **Comparable** (`isComparable`): a guided pick of confidence from `ConfidentPick` strictly
 ##   inside the guided window (`guideWindowMs` of the fit's scatter) of the model it is judged
 ##   against. On the boundary is not inside. (A pick the picker returned on the first or last
@@ -206,12 +208,13 @@ func expectedRange*(offsetAbs: openArray[float64]; eligible, seen, supported: op
     float64 =
   ## The largest offset at which a break is expected: the eligible traces with an offset are cut
   ## into `RangeBins` bins of offset (a bin of fewer than `RangeBinTraces` traces merged with the
-  ## next one out, a short last one with the one before), and walked outward from the first bin
-  ## where at least `RangeShare` of the traces have a `seen` pick (a confident one near the
-  ## model); the range ends at the outer edge of the last such bin before the first that falls
-  ## below it, and never beyond `RangeSupportedPercentile` of the offsets of the `supported`
-  ## picks (those both passes agree on: a guided pick alone may be noise its window held). NaN
-  ## when no trace has a supported pick.
+  ## next one out, a short last one with the one before); the range ends at the outer edge of
+  ## the farthest bin where at least `RangeShare` of the traces have a `seen` pick (a comparable
+  ## guided one), whatever lies between (a stretch of noise, dead traces or a drift the window
+  ## misses does not end it when such bins lie beyond), and never beyond
+  ## `RangeSupportedPercentile` of the offsets of the `supported` picks (those both passes agree
+  ## on: a guided pick alone may be noise its window held). NaN when no trace has a supported
+  ## pick.
   var far = 0.0
   var held: seq[float64]
   for i in 0 ..< offsetAbs.len:
@@ -248,7 +251,6 @@ func expectedRange*(offsetAbs: openArray[float64]; eligible, seen, supported: op
   var edge = NaN
   for (traces, got, outer) in groups:
     if float64(got) >= RangeShare * float64(traces): edge = outer
-    elif not edge.isNaN: break
   if edge.isNaN: top else: min(edge, top)
 
 func solve3(m: var array[3, array[4, float64]]): bool =

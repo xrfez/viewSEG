@@ -21,6 +21,8 @@
 ## picking for a given model leaving the fit's picks shown without a word, the stop's check;
 ## with the views not kept, "the views are made again on every frame"; with the neighbour rule
 ## leaving the traces off the model out, "trace 19 off its neighbours" on the drift;
+## with the range ending at the first bin where few breaks are seen, "the range ends at 1102.5"
+## on the 80 ms drift;
 ## with the pick choice left out of the key, "0 jobs in 200 frames" for the choice (the picks
 ## were not made again on the samples as recorded).
 
@@ -473,20 +475,29 @@ proc main*() =
         abs(b.modelOf(5) - arrivalMs(offsetOf(5))) <= 8
 
   block aSmoothDriftIsNotOffItsNeighbours:
-    # an 80 ms bump over `(i - 24) / 14`. The top is outside this record's 20 ms window, so
-    # those traces are far off; the shoulder (10-14 and 34-38) is not off its neighbours.
+    # the residual from the model drifts past 12 ms along the spread, an 80 ms bump over 28
+    # traces (the record's limit flags it), the residual against the neighbours' does not: no
+    # trace is off its neighbours. The top of the bump is outside this record's 20 ms window, so
+    # traces 15 to 33 are far off, and the range runs across them to the breaks beyond. (Before
+    # the rule had two parts, the fit's `suspect` alone was the test and nothing was flagged;
+    # with the traces off the model left out of the neighbours, the whole bump was off them;
+    # with the range ending at the bump, trace 14 had only its flat side and was off it.)
     withFixtures fx:
       let path = fx.customShot("drift.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
         let u = (float64(i) - 24) / 14
         arrivalMs(k.offset) + (if abs(u) < 1: 80 * (0.5 + 0.5 * cos(PI * u)) else: 0.0))
       let b = breaksOf(path)
-      for t in 10 .. 14:
+      doAssert b.geometry.guideWindowMs == 20, "window " & $b.geometry.guideWindowMs
+      doAssert b.geometry.rangeMax >= offsetOf(44), "the range ends at " & $b.geometry.rangeMax
+      var worst = 0.0
+      for t in 0 ..< Traces:
         doAssert not b.rule.offNeighbours[t], "trace " & $t & " off its neighbours, difference " &
           $b.differenceMs(t)
-        doAssert not b.rule.offNeighbours[48 - t], "trace " & $(48 - t) &
-          " off its neighbours, difference " & $b.differenceMs(48 - t)
+        if not b.differenceMs(t).isNaN: worst = max(worst, abs(b.differenceMs(t)))
       for t in 15 .. 33:
         doAssert b.rule.farOff[t], "trace " & $t & " not far off"
+      doAssert worst > 12, "the drift is only " & $worst & " ms: the test is not one"
+      doAssert b.rule.nOffModel < Traces div 2, $b.rule.nOffModel & " off the model"
 
   block offsetZeroIsUnset:
     withFixtures fx:

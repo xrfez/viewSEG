@@ -17,11 +17,13 @@
 ##   nothing; a given model that does not match says nothing of the source;
 ## - far traces whose picks are not breaks are "no break found" or beyond the range, never
 ##   flagged, and do not move the fitted model (a fit to every confident pick is far off); the
-##   range ends where few breaks are seen near the model and most picks both passes agree on
-##   end, so noise the guided window held does not widen it; a comparable pick is strictly
-##   inside the band, and a guided pick on its search's first sample (the record-fit pass
-##   searching round a model a few ms off the one it is judged against, at 1, 2 and 4 ms) is no
-##   break: the first pass decides; "far off" is a first-pass pick
+##   range ends at the farthest offsets where enough comparable breaks are seen, across a
+##   stretch of noise or dead traces with breaks beyond it (whose traces are judged, never
+##   beyond), and never past most picks both passes agree on, so noise the guided window held,
+##   or a far half of noise alone, does not widen it; a comparable pick is strictly inside the
+##   band, and a guided pick on its search's first sample (the record-fit pass searching round a
+##   model a few ms off the one it is judged against, at 1, 2 and 4 ms) is no break: the first
+##   pass decides; "far off" is a first-pass pick
 ##   outside the guided window (100 ms when it is not set) and at most 400 ms from the model,
 ##   never one before the first possible arrival; the guided window is four sigmas of the fit's
 ##   scatter, at least 20 ms and at most 100 ms (100 ms when the scatter is not known): a burst
@@ -55,7 +57,10 @@
 ## edge pick kept on the record-fit pass, "1 ms: trace 20 compared at -14.0 ms" (-14.1 at 2 ms,
 ## -16.0 at 4 ms); with far off taken only beyond the band, "a first-pass pick on the edge is no
 ## break"; with far-off traces' first-pass picks among the neighbours, "end trace 0 off its
-## neighbours" (and 11); without the shoulder's excuse, "the shoulder is off its neighbours".
+## neighbours" (and 11); without the shoulder's excuse, "the shoulder is off its neighbours";
+## with the range ending at the first bin where few breaks are seen, "the range ends at 1102.5"
+## for the dead stretch (and 613.5 for the unit case); without the cap of the agreed picks,
+## "the range ends at 1715.0" for the far half of noise.
 
 import std/[math, os, strutils]
 import parseSEG
@@ -572,12 +577,14 @@ proc main*() =
       if kept[i]: held.add offs[i]
     doAssert held[int(0.98 * float64(held.len)) - 1] > 3500, "the premise"
     doAssert expectedRange(offs, eligible, kept, kept) > 3500, "guided picks alone: the far end"
-    # a range with no supported pick has no end; a bin where few breaks are seen ends it, while
-    # a stretch the passes do not agree on (breaks the model misses) does not
+    # a range with no supported pick has no end; neither a stretch where few breaks are seen
+    # (noise, dead traces) nor one the passes do not agree on (breaks the model misses) ends it
+    # while supported picks go on beyond it
     doAssert expectedRange(offs, eligible, kept, newSeq[bool](400)).isNaN
     var gap = kept
     for i in 50 ..< 100: gap[i] = false
-    doAssert expectedRange(offs, eligible, gap, agreed) < 800,
+    doAssert expectedRange(offs, eligible, gap, agreed) >= 1900,
+      "a stretch where few breaks are seen, with agreed picks beyond it, ends the range at " &
       $expectedRange(offs, eligible, gap, agreed)
     var missed = agreed
     for i in 50 ..< 100: missed[i] = false
@@ -856,6 +863,40 @@ proc main*() =
             first <= FarOffMaxMs
           doAssert b.rule.farOff[t] == outside and b.rule.noBreak[t] == not outside,
             what & "trace " & $t & ": the first pass's " & $first & " ms does not decide"
+
+  block throughTheJobTheRangeSpansADeadStretch:
+    # Traces 18 to 33 hold noise alone, real breaks lie beyond them: the range reaches the far
+    # breaks, and the dead traces are no break found (judged one by one), never beyond. Seen to
+    # fail with the range ending at the first bin where few breaks are seen: "the range ends at
+    # 1102.5".
+    withFixtures fx:
+      let path = fx.customShot("dead.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
+        if i in 18 .. 33: NaN else: arrivalMs(k.offset))
+      var f = openSeismic(path, keys = true)
+      let b = breaksOfRecord(addr f, path, 0 ..< f.len, [])
+      f.close()
+      doAssert b.twoPass and b.hasModel, b.passNote
+      doAssert b.geometry.rangeMax >= offsetOf(44), "the range ends at " & $b.geometry.rangeMax
+      for t in 18 .. 33:
+        doAssert not b.rule.beyond[t] and not b.rule.comparable[t] and not b.rule.flagged[t],
+          "dead trace " & $t
+      for t in 34 .. 44: doAssert b.rule.comparable[t], "trace " & $t & " beyond the dead stretch"
+      doAssert b.rule.nFlagged == 0, $b.rule.nFlagged & " flagged"
+
+  block throughTheJobANoiseFarHalfIsBeyond:
+    # Traces 24 to 47 hold noise alone: the range ends with the breaks, nothing far is judged.
+    # Seen to fail with the range not capped by the picks both passes agree on: "the range ends
+    # at 1715.0".
+    withFixtures fx:
+      let path = fx.customShot("half.sgy", Traces, proc (i: int; k: var TraceKeys): float64 =
+        if i >= 24: NaN else: arrivalMs(k.offset))
+      var f = openSeismic(path, keys = true)
+      let b = breaksOfRecord(addr f, path, 0 ..< f.len, [])
+      f.close()
+      doAssert b.twoPass and b.hasModel, b.passNote
+      doAssert b.geometry.rangeMax < offsetOf(24), "the range ends at " & $b.geometry.rangeMax
+      for t in 24 ..< Traces: doAssert b.rule.beyond[t], "trace " & $t & " is judged"
+      doAssert b.rule.nFlagged == 0, $b.rule.nFlagged & " flagged"
 
   echo "tbreakrule: ok"
 
