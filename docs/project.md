@@ -148,8 +148,9 @@ Land 2026/                  the project folder: this is what is opened
   are kept, 16 parts each; a label is at most 64 characters and a text part at most 120 bytes.
   An unknown part word, a label given twice (without regard to case), or a pattern that cannot
   be used is said and left out; the rest of the document still reads. A chosen label that names
-  no pattern reads as none, and is said. A field of a pattern this version does not know is
-  kept and written back.
+  no pattern reads as none, and is said. An unknown child of a pattern, and of a part, is kept
+  and written back. An extra child of a width, a text, a separator or the chosen label is not
+  written back.
 - **Versioned.** `version` is the document's format. A reader skips what it does not
   know and writes it back as it was, so a later version can add fields beside these. A
   document of a newer version than the program knows is opened read-only, and the

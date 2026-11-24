@@ -59,7 +59,9 @@
 ## most `MaxPatternName` characters and a text part at most `MaxPatternText`
 ## bytes. An unknown part word, a label given twice (without regard to case),
 ## or a pattern `patternProblem` refuses is said and left out. A child of a
-## pattern this version does not know is kept and written back. A chosen
+## pattern, or of a part, that this version does not know is kept and written
+## back. An extra child of a width, a text, a separator or the chosen label
+## is not written back, and does not drop the value that is there. A chosen
 ## label that names no pattern reads as none, and is said.
 ##
 ## A station moved during a deployment is
@@ -83,6 +85,9 @@ const
   ClockNames: array[TimeClock, string] = ["UTC", "GPS"]
   LengthNames: array[shotlog.LengthUnit, string] = ["metres", "feet"]
   MaxPatternText = 120 ## a text part, in bytes
+  PartLaterTag = " "
+    ## Marks unknown children of a part, kept in that pattern's later list
+    ## and written back inside the part. Not a tag a document can hold.
   # A part kind's word in a file. Not `$kind`: renaming the enum must not
   # change a project.
   PartKindWords: array[NamePartKind, string] = [
@@ -229,25 +234,31 @@ proc writeVibWeights(w: var NifWriter; m: VibJobWeights) =
   for n in m.later: w.add n
   w.close
 
-proc writeNamePart(w: var NifWriter; part: NamePart) =
+proc writeNamePart(w: var NifWriter; part: NamePart; index: int; later: openArray[NifNode]) =
   w.open "part"
   w.add PartKindWords[part.kind]
   if part.pad != 0: w.value("pad", int64(part.pad))
   if part.kind == npText: w.value("text", part.text)
+  for n in later:
+    if n.kind == nkTree and n.tag == PartLaterTag and n.kids.len >= 1 and
+        n.kids[0].kind == nkInt and n.kids[0].intVal == int64(index):
+      for j in 1 ..< n.kids.len: w.add n.kids[j]
   w.close
 
 proc writeOutputPattern(w: var NifWriter; p: OutputPattern; later: openArray[NifNode]) =
   w.open "pattern"
   w.add p.name
   if p.separator != nsDot: w.value("separator", $p.separator)
-  for part in p.parts: w.writeNamePart part
-  for n in later: w.add n
+  for i, part in p.parts: w.writeNamePart(part, i, later)
+  for n in later:
+    if n.kind != nkTree or n.tag != PartLaterTag: w.add n
   w.close
 
 proc writeOutputPatterns(w: var NifWriter; d: ProjectDoc) =
   ## Name patterns in an `(outputPatterns ...)` tree. A separator is written
   ## only when it is not a dot, a width only when it is not 0, and text only
-  ## for a text part. A child this version does not know is written back.
+  ## for a text part. A child of a pattern, or of a part, that this version
+  ## does not know is written back.
   w.open "outputPatterns"
   var none: seq[NifNode] = @[]
   for i, p in d.outputPatterns:
@@ -830,6 +841,13 @@ proc takeSeparator(k: NifNode; read: var PatternRead): bool =
   read.why = "a name pattern's separator is \".\", \"_\" or \"-\""
   false
 
+proc markPartLater(index: int; kids: seq[NifNode]): NifNode =
+  ## Unknown children of part `index`, kept in the pattern's later list and
+  ## written back inside the part.
+  result = NifNode(kind: nkTree, tag: PartLaterTag)
+  result.kids = @[NifNode(kind: nkInt, intVal: int64(index))]
+  result.kids.add kids
+
 proc takePart(k: NifNode; read: var PatternRead): bool =
   if k.kids.len == 0 or k.kids[0].kind notin {nkString, nkIdent}:
     read.why = "a name part needs a kind"
@@ -841,10 +859,11 @@ proc takePart(k: NifNode; read: var PatternRead): bool =
     else: read.why = "\"" & word & "\" is not a name part"
     return false
   var part = NamePart(kind: found.get)
+  var partLater: seq[NifNode] = @[]
   for j in 1 ..< k.kids.len:
     let c = k.kids[j]
     if c.isTree("pad"):
-      if c.kids.len == 1 and c.kids[0].kind == nkInt and
+      if c.kids.len >= 1 and c.kids[0].kind == nkInt and
           c.kids[0].intVal >= int64(low(int)) and c.kids[0].intVal <= int64(high(int)):
         part.pad = int(c.kids[0].intVal)
       else:
@@ -854,22 +873,23 @@ proc takePart(k: NifNode; read: var PatternRead): bool =
       if part.kind != npText:
         read.why = "only a text part has text"
         return false
-      if c.kids.len != 1 or c.kids[0].kind != nkString:
+      if c.kids.len == 0 or c.kids[0].kind != nkString:
         read.why = "(text) needs a string"
         return false
       if c.kids[0].text.len > MaxPatternText:
         read.why = "a name pattern's text is at most " & $MaxPatternText & " bytes"
         return false
       part.text = c.kids[0].text
-    elif c.kind != nkTree:
-      read.why = "a name part holds a kind, a width and text"
-      return false
+    else:
+      partLater.add c
+  if partLater.len > 0: read.later.add markPartLater(read.pattern.parts.len, partLater)
   read.pattern.parts.add part
   true
 
 proc readPattern(n: NifNode): PatternRead =
   ## One `(pattern "label" ...)`. `ok` is false, and `why` says why, when it
-  ## cannot be kept. A child this version does not know is in `later`.
+  ## cannot be kept. A child this version does not know is in `later`, as are
+  ## unknown children of a part, which are written back inside the part.
   result.pattern = OutputPattern(separator: nsDot, parts: @[])
   result.later = @[]
   if n.kids.len == 0 or n.kids[0].kind != nkString:
@@ -992,15 +1012,17 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
         result.hasPresets = true
       of "outputPatterns": r.outputPatterns(c, result)
       of "outputPattern":
-        var text = ""
-        let before = r.problems.len
-        r.text(c, text)
-        if r.problems.len == before and text.len <= MaxPatternName * 4 + 64:
-          result.outputPattern = text
+        # The string is the choice. An extra child does not clear it, and is
+        # not kept. A string past the cap is not copied in.
+        if c.kids.len >= 1 and c.kids[0].kind == nkString and
+            c.kids[0].text.len <= MaxPatternName * 4 + 64:
+          result.outputPattern = c.kids[0].text
           choiceNode = c
           sawChoice = true
-        elif r.problems.len == before:
+        elif c.kids.len >= 1 and c.kids[0].kind == nkString:
           r.problem(c, "the chosen name pattern is not in this project; today's naming is used")
+        else:
+          r.problem(c, "(outputPattern) needs a string")
       of "breakModel":
         result.breakModel = readBreakModel(c, name, BreakModel(), r.problems)
         result.hasBreakModel = true

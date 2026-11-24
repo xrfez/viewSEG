@@ -35,7 +35,11 @@
 ## `patternProblem` both skipped, a 17-part pattern was kept; with the chosen
 ## label not checked, "Nope" stayed chosen; with a pattern's unknown child
 ## dropped, it was not written back; with an empty choice written,
-## `(outputPattern ` was in the document.
+## `(outputPattern ` was in the document. With an unknown child of a part
+## dropped, `(futurePart 1)` was not written back inside the part; with an
+## extra child of pad, text or the chosen label taken as a missing value, the
+## pattern or the choice was left out; with an extra child of a separator
+## taken as a bad separator, the pattern was left out.
 
 import std/[options, os, strutils, times]
 import parseSEG
@@ -413,6 +417,49 @@ proc main*() =
       OutputPattern(name: "Line", parts: @[NamePart(kind: npSrcLine)])]
     let emptyText = projectDocument(emptyChoice)
     doAssert "(outputPatterns" in emptyText and "(outputPattern " notin emptyText, emptyText
+
+  block unknownChildren:
+    # An unknown child of a part is kept and written back inside that part.
+    # An extra child of a scalar (pad, text, separator, the chosen label) does
+    # not drop the value, and is not written back.
+    var problems: seq[string] = @[]
+    proc readDoc(body: string): ProjectDoc =
+      problems.setLen 0
+      readProject("(project (version 1) (name \"h\") " & body & ")", "project.nif", problems)
+    let partUnk = readDoc("(outputPatterns (pattern \"Line\" (part \"srcLine\" (pad 5) " &
+      "(futurePart 1))))")
+    doAssert problems.len == 0 and partUnk.outputPatterns.len == 1, $problems
+    doAssert partUnk.outputPatterns[0].parts[0].pad == 5
+    let partText = projectDocument(partUnk)
+    doAssert "(part \"srcLine\" (pad 5) (futurePart 1))" in partText, partText
+    # A separator's extra child is not written back; the separator is kept.
+    let sep = readDoc("(outputPatterns (pattern \"Line\" (separator \"_\" (futureSep 1)) " &
+      "(part \"srcLine\")))")
+    doAssert problems.len == 0 and sep.outputPatterns.len == 1, $problems
+    doAssert sep.outputPatterns[0].separator == nsUnderscore
+    let sepText = projectDocument(sep)
+    doAssert "(separator \"_\")" in sepText and "futureSep" notin sepText, sepText
+    # An extra child of pad does not drop the width or the choice.
+    let padX = readDoc("(outputPatterns (pattern \"Line\" (part \"srcLine\" " &
+      "(pad 5 (futurePad 1))))) (outputPattern \"Line\")")
+    doAssert problems.len == 0 and padX.outputPatterns.len == 1, $problems
+    doAssert padX.outputPatterns[0].parts[0].pad == 5 and padX.outputPattern == "Line"
+    let padText = projectDocument(padX)
+    doAssert "(pad 5)" in padText and "futurePad" notin padText, padText
+    doAssert "(outputPattern \"Line\")" in padText, padText
+    # An extra child of text does not drop the string.
+    let textX = readDoc("(outputPatterns (pattern \"Line\" (part \"text\" " &
+      "(text \"abc\" (futureText 1)))))")
+    doAssert problems.len == 0 and textX.outputPatterns.len == 1, $problems
+    doAssert textX.outputPatterns[0].parts[0].text == "abc"
+    let textBack = projectDocument(textX)
+    doAssert "(text \"abc\")" in textBack and "futureText" notin textBack, textBack
+    # An extra child of the chosen label does not clear the choice.
+    let ch = readDoc("(outputPatterns (pattern \"Line\" (part \"srcLine\"))) " &
+      "(outputPattern \"Line\" (futureChoice 1))")
+    doAssert problems.len == 0 and ch.outputPattern == "Line" and ch.outputPatterns.len == 1, $problems
+    let chText = projectDocument(ch)
+    doAssert "(outputPattern \"Line\")" in chText and "futureChoice" notin chText, chText
 
   echo "tproject: done"
 
