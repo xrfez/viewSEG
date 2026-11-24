@@ -65,7 +65,10 @@ type
     samples*: int ## samples per trace
     samplesRead*: int ## source samples decoded, each once (not shots x window)
     overlapsCompared*, overlapsMatched*, overlapsMismatched*: int
-    overlapsNotRead*: int ## overlaps whose samples could not be had
+    overlapsNotRead*: int
+      ## overlaps between two traces the records read whose samples could not be had
+    overlapsOutside*: int
+      ## overlaps with a trace no record reads: not needed, so not compared
     mismatches*: seq[string]
       ## the first few mismatching overlaps, named by source trace (from 1)
     timingIssues*: int ## segments off the previous segment's sample grid
@@ -199,6 +202,10 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
     result.add line
   if res.overlapsNotRead > 0:
     result.add plural(res.overlapsNotRead, "overlap was", "overlaps were") & " not compared."
+  if res.overlapsOutside > 0:
+    result.add plural(res.overlapsOutside, "overlap", "overlaps") &
+      " between traces lie outside every record and " &
+      (if res.overlapsOutside == 1: "was" else: "were") & " not needed."
   if res.timingIssues > 0:
     result.add plural(res.timingIssues, "segment starts", "segments start") &
       " off the sample grid of the one before: " & res.timingNames.join("; ") & "."
@@ -340,7 +347,9 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       res.bytesWritten = try: fs.getFileSize(part) except OSError: expected
       for i, o in plan.overlaps:
         case sliceReport.overlapCheck(i).status
-        of osNotRead: inc res.overlapsNotRead
+        of osNotRead:
+          if plan.readsRow(o.earlier) and plan.readsRow(o.later): inc res.overlapsNotRead
+          else: inc res.overlapsOutside
         of osMatch:
           inc res.overlapsCompared
           inc res.overlapsMatched

@@ -362,6 +362,19 @@ proc main*() =
     doAssert not (".part-" in notes[0]) and "note.sgd" in notes[0] and
       not (outDir in notes[0]), notes[0]
 
+  block overlaps_outside_every_record:
+    # Two early shots reach only the first source trace, so no overlap is
+    # needed. Fails when those overlaps are counted as not compared ("4 overlaps
+    # were not compared.").
+    let early = shotsInTime(logOf([101, 102], [Offsets[0], Offsets[1]]).rows)
+    let got = runCut(jobs, srcSame, same.path, outDir / "early.sgd", early, opts)
+    doAssert got.st == jsDone, got.error
+    doAssert got.res.overlapsCompared == 0 and got.res.overlapsNotRead == 0 and
+      got.res.overlapsOutside == 4, $got.res.overlapsOutside
+    doAssert not got.res.lines.anyIt("not compared" in it), $got.res.lines
+    doAssert got.res.lines.anyIt("4 overlaps between traces lie outside every record" in it and
+      it.endsWith("not needed.")), $got.res.lines
+
   block existing_destination_refused:
     # Fails when the part file is claimed (and the check made) after work.
     let dest = outDir / "keep.sgd"

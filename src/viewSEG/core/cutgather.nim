@@ -260,7 +260,8 @@ proc evictRow*(buf: var SourceBuffer, row: int) =
   buf.dirty.add row
   buf.rows.del row
 
-func readsRow(plan: SlicePlan, row: int): bool =
+func readsRow*(plan: SlicePlan, row: int): bool =
+  ## True when some window reads a sample of source row `row`.
   plan.rowsNeeded.binarySearch(row) >= 0
 
 proc indexOverlaps(plan: SlicePlan, buf: var SourceBuffer) =
