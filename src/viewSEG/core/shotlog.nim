@@ -90,6 +90,7 @@ type
     pkTimeBackward = "time going backwards"
     pkDuplicateShot = "duplicate shot"
     pkDuplicateFile = "duplicate file number"
+    pkTooLong = "too long"
 
   ShotProblem* = object
     ## One fault in a log or in the typed view of it.
@@ -290,6 +291,9 @@ func doyToMonthDay(year, doy: int): tuple[ok: bool; month, day: int] =
   while month <= 12 and doy > cum[month]: inc month
   (true, month, doy - cum[month - 1])
 
+func fitsOffset(v: int): bool {.inline.} =
+  v >= 0 and v <= high(int32)
+
 func delimChar(d: Delimiter): char =
   case d
   of dlComma: ','
@@ -325,6 +329,7 @@ proc scanFields(text: string; start, stop: int; d: Delimiter; starts,
         i = closeQuote(text, i, stop)
       else:
         while i < stop and text[i] != ' ': inc i
+      if not fitsOffset(fs) or not fitsOffset(i): return
       starts.add int32(fs)
       stops.add int32(i)
       while i < stop and text[i] == ' ': inc i
@@ -337,6 +342,7 @@ proc scanFields(text: string; start, stop: int; d: Delimiter; starts,
         i = closeQuote(text, i, stop)
       else:
         while i < stop and text[i] != ch: inc i
+      if not fitsOffset(fs) or not fitsOffset(i): return
       starts.add int32(fs)
       stops.add int32(i)
       if i < stop and text[i] == ch: inc i
@@ -378,6 +384,12 @@ proc quoteField(s: string; d: Delimiter): string =
     result.add c
   result.add '"'
 
+proc tooLongLog(delimiter: Delimiter; skip: int; hasHeader: bool): ShotLog =
+  result = ShotLog(delimiter: delimiter, skipLines: skip, hasHeader: hasHeader,
+    headerLine: -1, headerField: -1, edits: initTable[int64, string]())
+  addProblem(result.problems, pkTooLong, -1, -1,
+    "text longer than " & $high(int32) & " bytes")
+
 proc parseShotLog*(text: sink string; delimiter: Delimiter; skipLines = 0;
     hasHeader = true): ShotLog {.raises: [].} =
   ## Indexes `text`. `skipLines` physical lines are ignored, then a header
@@ -385,8 +397,11 @@ proc parseShotLog*(text: sink string; delimiter: Delimiter; skipLines = 0;
   ## A row with fewer or more fields than the header (or than the first
   ## data row, when there is no header) is kept and listed. Line endings
   ## may be LF or CRLF. Quoted fields may contain the delimiter and a
-  ## doubled quote.
+  ## doubled quote. A text longer than `high(int32)` bytes is not indexed:
+  ## the log is empty and one problem names the limit.
   let skip = if skipLines < 0: 0 else: skipLines
+  if text.len > high(int32):
+    return tooLongLog(delimiter, skip, hasHeader)
   result = ShotLog(text: text, delimiter: delimiter, skipLines: skip,
     hasHeader: hasHeader, headerLine: -1, headerField: -1,
     edits: initTable[int64, string]())
@@ -406,6 +421,8 @@ proc parseShotLog*(text: sink string; delimiter: Delimiter; skipLines = 0;
       if j < n and result.text[j] == '\n': inc j
     elif j < n and result.text[j] == '\n':
       inc j
+    if not fitsOffset(start) or not fitsOffset(stop) or not fitsOffset(j):
+      return tooLongLog(delimiter, skip, hasHeader)
     result.lineStart.add int32(start)
     result.lineStop.add int32(stop)
     result.lineNext.add int32(j)
@@ -414,6 +431,8 @@ proc parseShotLog*(text: sink string; delimiter: Delimiter; skipLines = 0;
     result.headerLine = skip
     let hs = result.lineStart[skip].int
     let he = result.lineStop[skip].int
+    if not fitsOffset(result.fieldStart.len):
+      return tooLongLog(delimiter, skip, hasHeader)
     result.headerField = int32(result.fieldStart.len)
     if he > hs:
       scanFields(result.text, hs, he, delimiter, result.fieldStart, result.fieldStop)
@@ -430,6 +449,8 @@ proc parseShotLog*(text: sink string; delimiter: Delimiter; skipLines = 0;
         scanFields(result.text, a, b, delimiter, result.fieldStart, result.fieldStop)
         let count = result.fieldStart.len - before
         if count > 0:
+          if not fitsOffset(before) or not fitsOffset(lineIdx):
+            return tooLongLog(delimiter, skip, hasHeader)
           result.fieldOf.add int32(before)
           result.dataLine.add int32(lineIdx)
           if not hasHeader and result.width == 0:
@@ -441,6 +462,8 @@ proc parseShotLog*(text: sink string; delimiter: Delimiter; skipLines = 0;
             addProblem(result.problems, pkLongRow, row, result.width,
               $count & " fields, expected " & $result.width)
           inc row
+  if not fitsOffset(result.fieldStart.len):
+    return tooLongLog(delimiter, skip, hasHeader)
   result.fieldOf.add int32(result.fieldStart.len)
 
 proc parseShotLog*(text: sink string; map: ShotLogMap): ShotLog {.raises: [].} =
@@ -776,6 +799,7 @@ proc guessMap*(text: string): ShotLogMap {.raises: [].} =
   ## form is date-time text. Anything else is `crText`. The clock stays UTC
   ## and the length unit stays metres unless a header says feet.
   result = initShotLogMap()
+  if text.len > high(int32): return
   var phys = 0
   var keptPhys: seq[int] = @[]
   var keptStart: seq[int] = @[]

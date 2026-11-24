@@ -7,6 +7,9 @@
 ## space when nothing changed, `quotedFields` is no longer byte-identical.
 ## With the digit check in `parseWhole` left as `v > high(int64) div 10`,
 ## `overflowAndYearRange` raises OverflowDefect on 9223372036854775808.
+## With the length guard in `parseShotLog` lowered to 8 bytes and then
+## taken out, a 20-byte text was indexed instead of refused with
+## `pkTooLong`.
 
 import std/[math, options, os, strutils]
 import viewSEG/core/shotlog
@@ -296,6 +299,22 @@ proc main*() =
     let far = read("10000000000\n", [crUtcSeconds], header = false)
     doAssert far.rows[0].timeUtcUs.isNone
     doAssert "1900..2200" in kindText(far.problems, pkBadNumber)
+
+  block textLongerThanInt32:
+    let n = high(int32).int + 1
+    var raw = newStringUninit(n)
+    raw[0] = 'x'
+    raw[n - 1] = '\n'
+    let g = guessMap(raw)
+    doAssert g.roles.len == 0
+    let log = parseShotLog(raw, dlComma)
+    doAssert log.len == 0
+    doAssert log.width == 0
+    doAssert log.toText.len == 0
+    doAssert log.problems.count == 1
+    doAssert log.problems.items[0].kind == pkTooLong
+    doAssert log.problems.items[0].row == -1
+    doAssert "2147483647" in log.problems.items[0].text
 
   echo "tshotlog ok"
 
