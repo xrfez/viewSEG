@@ -4,7 +4,8 @@
 ## tens of GB cannot do that. `initCorrelateView` prepares, once, what that job
 ## uses for one raw file; `correlateRead` then correlates the traces it is
 ## asked for and copies a listen-time window into the caller's buffer.
-## `readListenTraces` is that read for a whole listen trace. The
+## `correlateBlock` is the same for a block of rows at once, across a pool's
+## workers. `readListenTraces` is that read for a whole listen trace. The
 ## result of a window matches that file, including the auxiliary-trace policy
 ## (a reference auxiliary shifted by `-AuxLeadMs`, any other auxiliary not
 ## correlated). Correlated samples are IEEE float32.
@@ -39,6 +40,17 @@ type
     counts: array[1, int]
     failed*: seq[int]
     why*: seq[RowFailure] ## `failed`'s reasons, element for element
+    blockSrc: Tensor[float32] ## `correlateBlock`'s raw rows, grown on demand
+    blockDst: Tensor[float32]
+    blockKeys: seq[TraceKeys]
+    blockCounts: seq[int]
+    blockTraces: seq[int] ## the file trace of each row sent to the pool
+    blockRows: seq[int] ## the request row of each of those
+    blockReadFailed: seq[int] ## rows of those the read could not decode
+    blockOut: seq[int] ## rows of those the pool must not use
+    blockRaw: seq[bool] ## rows of those answered with their raw samples
+    rowBad: seq[bool] ## per request row, and why
+    rowWhy: seq[RowFailure]
 
 proc copySamples(samples: openArray[float32]): seq[float32] =
   result = newSeq[float32](samples.len)
@@ -198,6 +210,54 @@ proc fillRow(view: CorrelateView; file: ptr SeismicFile; trace, firstSample, cou
   paint(done.rowPtr(0), view.listenSamples, firstSample, count, dst, at)
   true
 
+type ReadStart = object
+  go: bool ## false when nothing is left to read (empty or wholly outside)
+  blocked, driveFailed: bool
+  nTraces: int
+
+proc startRead(view: CorrelateView; file: ptr SeismicFile; traces: openArray[int];
+    firstSample, count: int; dst: var openArray[float32];
+    ws: var CorrelateWorkspace): ReadStart =
+  ## What `correlateRead` and `correlateBlock` check and settle before a row:
+  ## the arguments, a window with nothing to read (its rows are zero), and
+  ## whether the file or its drive is already unusable.
+  ws.failed.setLen(0)
+  ws.why.setLen(0)
+  doAssert view.plan != nil, "the view was refused"
+  doAssert count >= 0, "count must be >= 0"
+  if traces.len == 0 or count == 0:
+    doAssert dst.len == 0, "dst must be traces.len * count"
+    return
+  doAssert traces.len <= high(int) div count, "traces.len * count overflows"
+  doAssert dst.len == traces.len * count, "dst must be traces.len * count"
+  if whollyOutside(firstSample, count, view.listenSamples):
+    zeroMem(addr dst[0], dst.len * sizeof(float32))
+    return
+  result.go = true
+  result.blocked = file == nil or not file[].isOpen
+  if not result.blocked and not file[].inMemory:
+    try:
+      fs.mappedRead(view.path)
+    except CatchableError:
+      (result.blocked, result.driveFailed) = (true, true)
+  result.nTraces = if file == nil: 0 else: file[].len
+
+proc tryRow(view: CorrelateView; file: ptr SeismicFile; trace, r, firstSample, count: int;
+    st: ReadStart; dst: var openArray[float32]; ws: var CorrelateWorkspace;
+    why: var RowFailure): bool =
+  ## Request row `r` (trace `trace`) by itself, zeroed first, then filled.
+  ## False, with `why`, when it could not be read.
+  zeroRow(dst, r * count, count)
+  let bad = st.blocked or trace < 0 or trace >= st.nTraces
+  why = if st.driveFailed: rfReadFailed else: rfOther
+  if bad: return false
+  try:
+    result = fillRow(view, file, trace, firstSample, count, dst, r * count, ws, why)
+  except IOError, OSError:
+    (result, why) = (false, rfReadFailed)
+  except CatchableError:
+    result = false
+
 proc correlateRead*(view: CorrelateView; file: ptr SeismicFile; traces: openArray[int];
     firstSample, count: int; dst: var openArray[float32]; ws: var CorrelateWorkspace) {.
     raises: [].} =
@@ -211,42 +271,119 @@ proc correlateRead*(view: CorrelateView; file: ptr SeismicFile; traces: openArra
   ## Allocates nothing once `ws` exists. Threads may call it together on one
   ## view when each has its own workspace.
   assertWorkerThread()
-  ws.failed.setLen(0)
-  ws.why.setLen(0)
-  doAssert view.plan != nil, "the view was refused"
-  doAssert count >= 0, "count must be >= 0"
-  if traces.len == 0 or count == 0:
-    doAssert dst.len == 0, "dst must be traces.len * count"
-    return
-  doAssert traces.len <= high(int) div count, "traces.len * count overflows"
-  doAssert dst.len == traces.len * count, "dst must be traces.len * count"
-  let listen = view.listenSamples
-  if whollyOutside(firstSample, count, listen):
-    zeroMem(addr dst[0], dst.len * sizeof(float32))
-    return
-  var blocked = file == nil or not file[].isOpen
-  var driveFailed = false
-  if not blocked and not file[].inMemory:
-    try:
-      fs.mappedRead(view.path)
-    except CatchableError:
-      (blocked, driveFailed) = (true, true)
-  let nTraces = if file == nil: 0 else: file[].len
+  let st = startRead(view, file, traces, firstSample, count, dst, ws)
+  if st.go:
+    for r, trace in traces:
+      var why = rfOther
+      if not tryRow(view, file, trace, r, firstSample, count, st, dst, ws, why):
+        ws.failed.add r
+        ws.why.add why
+
+proc blockOf(t: Tensor[float32]): RowBlock[float32] =
+  try:
+    result = rowBlock(t)
+  except ValueError as e:
+    raiseAssert e.msg # a tensor of rows
+
+proc keptRaw(view: CorrelateView; keys: TraceKeys; trace: int): bool {.inline.} =
+  ## An auxiliary trace that is not a reference: its raw samples are the answer.
+  keys.status == tsAuxiliary and trace notin view.refs
+
+proc correlateBlock*(view: CorrelateView; file: ptr SeismicFile; traces: openArray[int];
+    firstSample, count: int; dst: var openArray[float32]; ws: var CorrelateWorkspace;
+    pool: ProcessPool) {.raises: [].} =
+  ## `correlateRead` for a block of rows: the raw traces are read together at
+  ## the full record width and correlated across `pool`'s workers, then each
+  ## row's listen window is sliced into `dst`. The samples, the failed rows
+  ## (`ws.failed`, `ws.why`) and the auxiliary-trace policy are those of
+  ## `correlateRead` row by row. Allocates only while `ws` grows to a larger
+  ## block. A block of 64 to 256 rows keeps every worker busy.
+  assertWorkerThread()
+  let st = startRead(view, file, traces, firstSample, count, dst, ws)
+  if not st.go: return
+  let n = traces.len
+  ws.blockTraces.setLen(0)
+  ws.blockRows.setLen(0)
+  ws.rowBad.setLen(n)
+  ws.rowWhy.setLen(n)
   for r, trace in traces:
-    let at = r * count
-    zeroRow(dst, at, count)
-    var bad = blocked or trace < 0 or trace >= nTraces
-    var why = if driveFailed: rfReadFailed else: rfOther
-    if not bad:
+    zeroRow(dst, r * count, count)
+    ws.rowBad[r] = st.blocked or trace < 0 or trace >= st.nTraces
+    ws.rowWhy[r] = if st.driveFailed: rfReadFailed else: rfOther
+    if not ws.rowBad[r]:
+      ws.blockTraces.add trace
+      ws.blockRows.add r
+  let m = ws.blockTraces.len
+  var done = m == 0
+  if not done:
+    if ws.blockSrc.size == 0 or ws.blockSrc.shape[0] < m:
+      ws.blockSrc = zeros[float32](m, view.recordSamples)
+      ws.blockDst = zeros[float32](m, view.listenSamples)
+    ws.blockReadFailed.setLen(0)
+    try:
+      discard file[].readTracesInto(ws.blockTraces, ws.blockSrc, ws.blockReadFailed)
+    except CatchableError:
+      # The read raised: each row goes alone, so only the one that fails is lost.
+      for j in 0 ..< m:
+        ws.rowBad[ws.blockRows[j]] = not tryRow(view, file, ws.blockTraces[j],
+          ws.blockRows[j], firstSample, count, st, dst, ws, ws.rowWhy[ws.blockRows[j]])
+      done = true
+  if not done:
+    ws.blockKeys.setLen(m)
+    ws.blockCounts.setLen(m)
+    ws.blockRaw.setLen(m)
+    ws.blockOut.setLen(0)
+    let src = blockOf(ws.blockSrc)
+    var next = 0 # the cursor in the ascending `blockReadFailed`
+    for j in 0 ..< m:
+      let trace = ws.blockTraces[j]
+      ws.blockCounts[j] = view.recordSamples
+      ws.blockKeys[j] = initTraceKeys()
+      ws.blockRaw[j] = false
+      var unusable = false
+      if next < ws.blockReadFailed.len and ws.blockReadFailed[next] == j:
+        inc next
+        unusable = true
+        # The row goes through the per-row path again, for its reason (a second
+        # read may succeed: then it is painted there and the pool skips it).
+        let r = ws.blockRows[j]
+        ws.rowBad[r] = not tryRow(view, file, trace, r, firstSample, count, st, dst, ws,
+          ws.rowWhy[r])
+      else:
+        try:
+          ws.blockKeys[j] = file[].traceKeys(trace)
+        except CatchableError:
+          unusable = true
+          ws.rowBad[ws.blockRows[j]] = true
+      if unusable:
+        ws.blockOut.add j
+      else:
+        let keys = ws.blockKeys[j]
+        ws.blockRaw[j] = keptRaw(view, keys, trace)
+        if trace in view.odd or ws.blockRaw[j]:
+          ws.blockKeys[j].status = tsDead
+        elif keys.status == tsAuxiliary and view.lag != 0:
+          timeShift(src.row(j), view.lag)
+    if m > ws.blockOut.len:
       try:
-        bad = not fillRow(view, file, trace, firstSample, count, dst, at, ws, why)
-      except IOError, OSError:
-        (bad, why) = (true, rfReadFailed)
-      except CatchableError:
-        bad = true
-    if bad:
+        let meta = initChunkMeta(rowsOf(ws.blockKeys.toOpenArray(0, m - 1),
+          ws.blockCounts.toOpenArray(0, m - 1)), view.dtMs, failed = ws.blockOut)
+        pool.correlateInto(view.plan[], src.sub(0 ..< m), blockOf(ws.blockDst).sub(0 ..< m),
+          meta)
+      except ValueError as e:
+        raiseAssert e.msg
+      let corr = blockOf(ws.blockDst)
+      var skip = 0 # the cursor in the ascending `blockOut`
+      for j in 0 ..< m:
+        if skip < ws.blockOut.len and ws.blockOut[skip] == j: inc skip
+        elif ws.blockTraces[j] notin view.odd: # an odd trace stays zero
+          let at = ws.blockRows[j] * count
+          let source = if ws.blockRaw[j]: src.rowPtr(j) else: corr.rowPtr(j)
+          paint(source, view.listenSamples, firstSample, count, dst, at)
+  for r in 0 ..< n:
+    if ws.rowBad[r]:
       ws.failed.add r
-      ws.why.add why
+      ws.why.add ws.rowWhy[r]
 
 proc readListenTraces*(view: CorrelateView; file: ptr SeismicFile; traces: openArray[int];
     dst: var openArray[float32]; ws: var CorrelateWorkspace) {.raises: [].} =

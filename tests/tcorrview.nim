@@ -15,6 +15,9 @@
 ## decoded row, `window overhanging the listen time sample 10` disagreed.
 ## A field-less request of a dead trace, asked again from the spare, had
 ## `isDead` false the second time (`a tile from the spare does not mark the dead trace`).
+## `correlateBlock` equals `correlateRead` row by row, bit for bit (seen to fail with the
+## reference auxiliary's time shift left out, and with the auxiliary traces' raw rows
+## treated as correlated).
 ## A file cut short while a view of it was open posted only the generic
 ## count (`1 of the 5 traces shown could not be read`), not that it was
 ## cut short.
@@ -171,6 +174,94 @@ proc sameSamples(a, b: Tile; what: string) =
   for i, v in a.data:
     doAssert v == b.data[i], what & " sample " & $i
 
+const
+  BlockTraces = 48
+  BlockRefs = [0, 8, 16, 24, 32, 40, 21]
+  OddAux = [21, 37]
+
+proc blockLength(i: int): int =
+  ## Auxiliary traces of the block file: shorter and longer than the record.
+  if i mod 8 == 0 and i mod 16 == 8: Record - 400
+  elif i mod 8 == 0 and i mod 32 == 16: Record + 300
+  elif i mod 8 == 5 and i mod 16 == 13: Record - 300
+  elif i mod 8 == 5 and i mod 16 == 5 and i > 20: Record + 200
+  else: Record
+
+proc writeBlockFile(path: string; sweep: openArray[float32]) =
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
+    format: st5, text: @["C01 correlated block"]))
+  for i in 0 ..< BlockTraces:
+    var k = initTraceKeys()
+    var len = Record
+    var buf: seq[float32]
+    if i in BlockRefs:
+      (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+      len = blockLength(i)
+      buf = delayedSweep(sweep, len, 2 * (i mod 7))
+    elif i mod 8 == 5:
+      (k.traceCode, k.status) = (6'i16, tsAuxiliary)
+      len = blockLength(i)
+      buf = newSeq[float32](len)
+      for j in 0 ..< len: buf[j] = float32(j + i)
+    elif i mod 8 == 3:
+      (k.traceCode, k.status) = (1'i16, tsDead)
+      buf = delayedSweep(sweep, Record, 30)
+    else:
+      (k.traceCode, k.status) = (1'i16, tsLive)
+      buf = delayedSweep(sweep, Record, 10 + 13 * (i mod 11))
+      for j in 0 ..< Record: buf[j] += 0.01'f32 * sin(float32(j * (i + 1)) * 0.37'f32)
+    if i in OddAux: k.intervalUs = 4.0 * DtMs * 1000.0
+    else: k.intervalUs = DtMs * 1000.0
+    k.record = 7.0
+    k.channel = float64(i + 1)
+    k.t0Ms = 0.0
+    k.time = 1_700_000_000.0
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the block file did not close"
+
+proc checkBlocks(dir: string; sweep: seq[float32]) =
+  ## `correlateBlock` against `correlateRead` row by row, bit for bit.
+  let path = dir / "block.sgy"
+  writeBlockFile(path, sweep)
+  var f = openSeismic(path, keys = true)
+  defer: f.close()
+  let built = initCorrelateView(addr f, sweep, DtMs, BlockRefs)
+  doAssert built.refusal.len == 0, built.refusal
+  let view = built.view
+  doAssert view.odd.len == OddAux.len, "the odd traces were not found"
+  var traces: seq[int]
+  for i in 0 ..< BlockTraces: traces.add i
+  traces.add [-1, 9999, 5, 0, 21, 5] # not traces of the file, then repeats
+  var pool = newProcessPool(3)
+  var one = newWorkspace(view)
+  var ws = newWorkspace(view)
+  for (first, count) in [(0, Listen), (300, 100), (-20, 60), (Listen - 30, 60), (Listen + 5, 10),
+      (0, 1)]:
+    var want = newSeq[float32](traces.len * count)
+    var wantFailed: seq[int]
+    for r, t in traces:
+      var row = newSeq[float32](count)
+      correlateRead(view, addr f, [t], first, count, row, one)
+      if one.failed.len > 0: wantFailed.add r
+      for j in 0 ..< count: want[r * count + j] = row[j]
+    for size in [traces.len, 20, 1]:
+      var got = newSeq[float32](want.len)
+      var gotFailed: seq[int]
+      var at = 0
+      while at < traces.len:
+        let n = min(size, traces.len - at)
+        var part = newSeq[float32](n * count)
+        correlateBlock(view, addr f, traces.toOpenArray(at, at + n - 1), first, count, part,
+          ws, pool)
+        for r in ws.failed: gotFailed.add at + r
+        for j in 0 ..< part.len: got[at * count + j] = part[j]
+        at += n
+      let what = "window " & $first & " +" & $count & " blocks of " & $size
+      doAssert gotFailed == wantFailed, what & " failed " & $gotFailed & " vs " & $wantFailed
+      for i in 0 ..< want.len:
+        doAssert cast[uint32](got[i]) == cast[uint32](want[i]), what & " row " &
+          $(i div count) & " sample " & $(i mod count)
+
 proc main*() =
   let dir = getTempDir() / ("tcorrview-" & $getCurrentProcessId())
   createDir(dir)
@@ -179,6 +270,7 @@ proc main*() =
   let sweep = linearSweep(8.0, 80.0, float64(SweepLen) * DtMs, DtMs).sweepSamples(float32)
   doAssert sweep.len == SweepLen
   writeRaw(path, sweep)
+  checkBlocks(dir, sweep)
   var rawFile = openSeismic(path, keys = true)
   let raw = newSession(path, rawFile)
   let built = initCorrelateView(raw.filePtr, sweep, DtMs, [RefAux])
