@@ -382,6 +382,10 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       # one another end to end from the first one's time
       let endToEnd = facts.forced and facts.kind == rkReceiverContinuous and
         auto.kind != rkReceiverContinuous and auto.slicedWhy == swSameStart
+      if endToEnd and firstStartMissing(recording):
+        abort(sink, dest, part, false, "The first trace of " & source.extractFilename &
+          " has no start time, so its traces cannot be placed in time: load a vendor header " &
+          "map that reads the start time.", false)
       let streams =
         if endToEnd: initSliceStreams(recording.meta, endToEndTimes(recording), recording.receivers)
         else: recording.streams

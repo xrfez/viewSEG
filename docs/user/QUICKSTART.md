@@ -152,7 +152,8 @@ viewSEG that asks what the file is (the Files columns, the Headers summary, the 
 log) goes by it. A file whose traces of a component all carry the same start time and that
 you set to continuous is sliced taking each receiver's traces to follow one another end to end
 from the time of its first trace; the slice says so, and a vendor header map that names each
-trace's start time gives the real times. The order you force is only shown for now. A choice an agent makes through the
+trace's start time gives the real times. When the first trace has no start time at all, the
+slice is refused and says to load such a map. The order you force is only shown for now. A choice an agent makes through the
 command interface is for the session only. If several remembered documents could be the file's,
 the choice is kept for the session and Messages says to open the file once first. The columns after Name are as wide as their words and Name takes the rest; when the panel is
 too narrow for 16 characters of a name beside them, the list scrolls sideways. A folder listed

@@ -188,6 +188,16 @@ proc endToEndTimes*(plan: RecordingPlan): seq[float64] =
       result[row] = start - offset
       next[r] = start + n.float64 * dtS
 
+func firstStartMissing*(plan: RecordingPlan): bool =
+  ## Whether the first live trace of a receiver of `plan` has no start time (none read, or the
+  ## epoch itself): traces taken end to end from it (`endToEndTimes`) would not be placed in
+  ## time.
+  var seen = initTable[int, bool]()
+  for row in 0 ..< plan.meta.len:
+    if plan.meta.isLive(row) and plan.receivers[row] notin seen:
+      seen[plan.receivers[row]] = true
+      if not (plan.times[row] > 0): return true
+
 type Seg = object
   recv: int
   start, finish: float64

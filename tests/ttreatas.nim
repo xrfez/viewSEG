@@ -10,7 +10,8 @@
 ## choice was not kept ("futureNote" and "(treat" in the document); with `endToEndTimes` giving
 ## the file's own times, "the slice did not follow end to end"; with the sentence of the segment
 ## times written twice, it was counted twice; with the end-to-end sentence saying the start times
-## "could not be read", the words were not those of a file whose starts are the same.
+## "could not be read", the words were not those of a file whose starts are the same; without the
+## check of the first start time, a file of starts at the epoch was sliced from 1970.
 
 import std/[importutils, options, os, sequtils, strutils, tables, times]
 import parseSEG
@@ -283,40 +284,43 @@ proc main*() =
       v.apply Command(kind: ckTreatAs, treatPath: sliced, treatKind: "shot")
       doAssert "You set this kind" in cutRefusal(v.recordingFacts)
 
-  block theSliceTakesTracesEndToEndWhenTheStartTimesCannotBeRead:
+  block theSliceTakesTracesEndToEndWhenEveryStartIsTheSame:
     const BaseUs = 1_772_323_200_000_000'i64
     let dir = getTempDir() / ("viewseg-treatas-" & $getCurrentProcessId())
     removeDir(dir)
     createDir(dir / "out")
     createDir(dir / "rec")
     defer: removeDir(dir)
-    # four traces of one receiver that all carry one start time: the file cannot say when each
-    # began; the samples are a ramp over the four, as a recorder that kept going writes them
-    let path = dir / "rec" / "same.sgd"
-    var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: 3000))
-    for seg in 0 .. 3:
-      var samples = newSeq[float32](3000)
-      for j in 0 ..< 3000: samples[j] = float32(seg * 3000 + j)
-      var k = initTraceKeys()
-      k.status = tsLive
-      k.record = float64(seg + 1)
-      k.channel = 11
-      k.component = 1
-      k.intervalUs = 2000
-      k.t0Ms = 0
-      k.time = float64(BaseUs div 1_000_000)
-      k.rcvLine = 1
-      k.rcvPoint = 7
-      w.writeTrace(k, samples)
-    discard w.close()
+    # four traces of one receiver that all carry one start time `time`: the file cannot say when
+    # each began; the samples are a ramp over the four, as a recorder that kept going writes them
+    proc record(name: string; time: float64): string =
+      result = dir / "rec" / name
+      var w = openSeismicWriter(result, SegdOutputOptions(sampleIntervalUs: 2000,
+        numSamples: 3000))
+      for seg in 0 .. 3:
+        var samples = newSeq[float32](3000)
+        for j in 0 ..< 3000: samples[j] = float32(seg * 3000 + j)
+        var k = initTraceKeys()
+        k.status = tsLive
+        k.record = float64(seg + 1)
+        k.channel = 11
+        k.component = 1
+        k.intervalUs = 2000
+        k.t0Ms = 0
+        k.time = time
+        k.rcvLine = 1
+        k.rcvPoint = 7
+        w.writeTrace(k, samples)
+      discard w.close()
+    let path = record("same.sgd", float64(BaseUs div 1_000_000))
     var m = initShotLogMap()
     m.hasHeader = false
     m.roles = @[crFileNumber, crUtcMicros]
     let shots = shotsInTime(shots(parseShotLog("1," & $(BaseUs + 5_000_000) & "\n", m), m).rows)
-    var src = openSeismic(path, keys = true)
-    defer: src.close()
     let jobs = initJobs()
-    proc run(opts: CutOptions; dest: string): tuple[st: JobState; res: CutResult] =
+    proc run(opts: CutOptions; dest: string; path = path): tuple[st: JobState; res: CutResult] =
+      var src = openSeismic(path, keys = true)
+      defer: src.close()
       let sink = CutSink()
       let id = jobs.submit(cutGatherSpec(path, dest), cutGatherWork(addr src, path, dest, shots,
         opts, sink))
@@ -339,6 +343,13 @@ proc main*() =
     # 5.0 s less 100 ms is sample 2450: the window crosses from the first trace to the second
     for j in 0 ..< 1000:
       doAssert x[0, j] == float32(2450 + j), "the slice did not follow end to end at " & $j
+    # a first trace without a start time (the epoch): nothing to place the traces from, refused
+    let zero = record("zero.sgd", 0)
+    let epoch = run(opts, dir / "out" / "zero-out.sgd", zero)
+    doAssert not epoch.res.ok and epoch.res.reason == "The first trace of zero.sgd has no start " &
+      "time, so its traces cannot be placed in time: load a vendor header map that reads the " &
+      "start time.", epoch.res.reason
+    doAssert not fileExists(dir / "out" / "zero-out.sgd")
 
 when isMainModule:
   main()
