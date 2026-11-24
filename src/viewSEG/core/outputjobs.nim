@@ -910,7 +910,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               SegyRevision(major: opts.revision.major, minor: opts.revision.minor)
             elif like: file[].index.segy.revision
             else: SegyRevision(major: 2, minor: 1)
-          let made = overridesOf(b, rev)
+          let made = overridesOf(b, rev,
+            if like: some(file[].index.segy.binary) else: none(SegyBinaryHeader))
           binUsable = true
           binOver = made.overrides
           binNotes = made.notes

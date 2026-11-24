@@ -1160,8 +1160,8 @@ proc readBinary(n: NifNode): BinaryRead =
   for i in 1 ..< n.kids.len:
     let k = n.kids[i]
     if k.isTree("field"):
-      if k.kids.len < 2 or k.kids[0].kind != nkString or k.kids[1].kind != nkString:
-        result.why = "A (field) of a binary header set needs a name and a value, both strings."
+      if k.kids.len != 2 or k.kids[0].kind != nkString or k.kids[1].kind != nkString:
+        result.why = "A (field) of a binary header set is a name and a value, both strings, and nothing else."
         return
       if result.set.entries.len >= BinaryFields.len:
         result.why = "A binary header set has at most " & $BinaryFields.len & " fields."

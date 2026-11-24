@@ -70,6 +70,20 @@ proc main*() =
       "Extended sample interval original: 'nan' is not a number."
     doAssert binaryProblem(set1(("extSampleIntervalOrig", "x"))).contains("not a number")
 
+  block unparsable_numbers:
+    # Seen to fail: with the overflow not caught, the first line raised ValueError.
+    doAssert binaryProblem(set1(("jobId", "99999999999999999999"))) ==
+      "Job ID: '99999999999999999999' is not a whole number from -2147483648 to 2147483647."
+    doAssert binaryProblem(set1(("jobId", "-99999999999999999999"))).contains("from -2147483648")
+    doAssert binaryProblem(set1(("extEnsembleFold", "18446744073709551616"))).contains(
+      "is not a whole number from 0 to 4294967295")
+    for bad in ["1e400", "-1e400", "nan", "inf", "-1", "-0.5", "1e-320", "4_0"]:
+      doAssert binaryProblem(set1(("extSampleIntervalOrig", bad))).contains("not "), bad
+    doAssert binaryProblem(set1(("extSampleIntervalOrig", "1e-300"))) == ""
+    doAssert binaryProblem(set1(("extSampleIntervalOrig", "0"))) == ""
+    doAssert binaryProblem(set1(("extSampleIntervalOrig", "-1"))) ==
+      "Extended sample interval original: '-1' is not 0 or a number of normal size above it."
+
   block fields:
     doAssert fieldInfo("jobId").get.firstByte == 3201 and fieldInfo("jobId").get.bytes == 4
     doAssert fieldInfo("extSampleIntervalOrig").get.kind == bkFloat
@@ -135,6 +149,26 @@ proc main*() =
     let zero = set1(("ensembleFold", "5"), ("extEnsembleFold", "0")).overridesOf(R20)
     doAssert zero.overrides.len == 2 and zero.notes.len == 0
     doAssert opens(R20, zero.overrides)
+
+  block twin_in_the_source:
+    # Seen to fail: with the source's header not looked at, the 16-bit fold was passed and
+    # the library refused the whole set.
+    var h = SegyBinaryHeader()
+    h.extEnsembleFold = 9
+    let s = set1(("ensembleFold", "5"), ("jobId", "3"))
+    let o = s.overridesOf(R21, some(h))
+    doAssert o.overrides.len == 1 and o.overrides[0].name == "binary.jobId", $o.overrides
+    doAssert o.notes == @["Binary header: Ensemble fold is not written in SEG-Y revision 2.1: " &
+      "Extended ensemble fold is set and replaces it."]
+    doAssert opens(R21, o.overrides)
+    doAssert s.overridesOf(R1, some(h)).overrides.len == 2, "Rev 1 has no twin"
+    doAssert s.overridesOf(R21).overrides.len == 2, "no source: the set alone"
+    # The set's own twin of 0 puts the 16-bit field back.
+    let z = set1(("ensembleFold", "5"), ("extEnsembleFold", "0")).overridesOf(R21, some(h))
+    doAssert z.overrides.len == 2 and z.notes.len == 0
+    var o2 = SegyBinaryHeader()
+    o2.extSampleIntervalOrig = 4000.0
+    doAssert set1(("sampleIntervalOrig", "4000")).overridesOf(R20, some(o2)).notes.len == 1
 
   block choice:
     let a = set1(("jobId", "1"))

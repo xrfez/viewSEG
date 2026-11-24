@@ -4,17 +4,18 @@
 ## library's `binaryOverrides`: only the bytes of the fields the set names
 ## change in bytes 3201 to 3600, and nothing past them. With no set (or one
 ## with no fields) the file is the one written without. A Rev 2 field is not
-## written into a Rev 0 or Rev 1 file and says so; a set the library refuses
-## at open leaves the file that a write without it makes, and the result line
-## says why, with the text header template (when there is one) still written.
+## written into a Rev 0 or Rev 1 file and says so; a 16-bit field that an
+## extended one, in the set or in the source, hides is left out with a note and
+## the rest written (a set the library still refuses at open would leave the
+## file a write without it makes, with the line saying why).
 ## SEG-D is not touched and says nothing.
 ##
 ## Seen to fail: with `binaryOverrides` not passed on the like path, then on
 ## the keys path, "no byte changed" (the set was not written); with the
 ## revision of a like write taken as 2.1 whatever the source says, a batch
 ## file of a Rev 1 source got a Rev 2 field written (or the write failed);
-## with the set not dropped after the library's refusal, the reopen was
-## refused again and the write failed.
+## with the source's own binary header not given to `overridesOf`, the library
+## refused the set whose 16-bit field the source's extended one hides.
 ##
 ## Runs on a copy of samples/land/shots.sgy and samples/land/shots.sgd and on
 ## small files written here.
@@ -175,31 +176,32 @@ proc main*() =
       "fold is set and replaces it."], $r.lines
     doAssert fieldOf(dest, "extEnsembleFold") == 70000
 
-  block refusedAtOpen:
-    # The source has its extended fold set: the library refuses the 16-bit one.
+  block twinInTheSource:
+    # The source has its extended fold set, which hides the 16-bit one: that
+    # field is left out with a note, the other fields are written.
     let small = inDir / "twinned.sgy"
     writeSmall(small, SegyRevision(major: 2, minor: 1), extFold = 9)
     let plain = dir / "twinned-plain.sgy"
     doAssert runOne(small, plain, OutputOptions(format: ofSegy)).ok
-    let set = one("Fold", ("ensembleFold", "3"))
+    let set = one("Fold", ("ensembleFold", "3"), ("jobId", "5"))
     let dest = dir / "twinned.sgy"
     let r = runOne(small, dest, OutputOptions(format: ofSegy, headerBinary: some(set)))
     doAssert r.ok, r.reason
-    doAssert r.binaryLines.len == 1 and r.binaryLines[0].startsWith(
-      "Binary header: set 'Fold' was not used for this file: ") and r.binaryLines[0].contains(
-      "binary.ensembleFold") and r.binaryLines[0].endsWith(
-      " The header it would have had was written."), $r.binaryLines
-    doAssert readFile(dest) == readFile(plain), "a refused set changed the file"
-    # With a text template too: the template is still written.
+    doAssert r.binaryLines == @["Binary header: set 'Fold' (1 field).",
+      "Binary header: Ensemble fold is not written in SEG-Y revision 2.1: Extended ensemble " &
+      "fold is set and replaces it."], $r.binaryLines
+    plain.readFile.onlyIn(readFile(dest), ["jobId"])
+    doAssert fieldOf(dest, "jobId") == 5 and fieldOf(dest, "extEnsembleFold") == 9
+    # With a text template too: both are written.
     let tpl = OutputText(name: "T", encoding: teEbcdic, lines: @["C 1 KEPT"])
-    let withText = dir / "twinned-text-plain.sgy"
-    doAssert runOne(small, withText, OutputOptions(format: ofSegy, headerText: some(tpl))).ok
     let both = dir / "twinned-text.sgy"
     let r2 = runOne(small, both, OutputOptions(format: ofSegy, headerText: some(tpl),
       headerBinary: some(set)))
-    doAssert "Text header: template 'T'." in r2.lines and r2.binaryLines.len == 1 and
-      "was not used" in r2.binaryLines[0], $r2.lines
-    doAssert readFile(both) == readFile(withText), "the text header and the refused set mixed"
+    doAssert "Text header: template 'T'." in r2.lines and r2.binaryLines.len == 2, $r2.lines
+    doAssert readFile(both)[3200 ..< 3600] == readFile(dest)[3200 ..< 3600]
+    var back = openSeismic(both, keys = false)
+    doAssert back.textHeader.startsWith("C 1 KEPT")
+    back.close()
     # The template the library refuses at open (an ASCII tape label) with a set it takes.
     let label = OutputText(name: "L", encoding: teAscii,
       lines: @["0001SYTEST", repeat(' ', 48) & "CX"])
@@ -211,17 +213,6 @@ proc main*() =
     doAssert r3.ok and r3.binaryLines == @["Binary header: set 'Job' (1 field)."], $r3.lines
     doAssert "Text header: template 'L' was not used" in r3.lines.join("\n")
     doAssert readFile(dir / "label-set.sgy") == readFile(noText)
-    # Both refused: the file of neither.
-    let smallAscii = inDir / "twinned-ascii.sgy"
-    writeSmall(smallAscii, SegyRevision(major: 2, minor: 1), extFold = 9, ascii = true)
-    let plainAscii = dir / "twinned-ascii-plain.sgy"
-    doAssert runOne(smallAscii, plainAscii, OutputOptions(format: ofSegy)).ok
-    let neither = dir / "neither.sgy"
-    let r4 = runOne(smallAscii, neither, OutputOptions(format: ofSegy, headerText: some(label),
-      headerBinary: some(set)))
-    doAssert r4.ok and r4.binaryLines.len == 1 and "was not used" in r4.binaryLines[0], $r4.lines
-    doAssert "Text header: template 'L' was not used" in r4.lines.join("\n"), $r4.lines
-    doAssert readFile(neither) == readFile(plainAscii), "a file with both refused is not the plain one"
 
   block badSet:
     # A set that holds a problem (the project never keeps one) writes nothing.

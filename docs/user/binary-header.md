@@ -85,7 +85,7 @@ project, or one open read-only, the row is dim and its tooltip says so.
 | Vibratory polarity | `vibratoryPolarity` | 3259-3260 | -32768 to 32767 |
 | Extended data traces per ensemble | `extDataTracesPerEnsemble` | 3261-3264 | 0 to 4294967295 (Rev 2 only) |
 | Extended aux traces per ensemble | `extAuxTracesPerEnsemble` | 3265-3268 | 0 to 4294967295 (Rev 2 only) |
-| Extended sample interval original | `extSampleIntervalOrig` | 3281-3288 | any number (Rev 2 only) |
+| Extended sample interval original | `extSampleIntervalOrig` | 3281-3288 | 0 or a number above it (Rev 2 only) |
 | Extended samples per trace original | `extSamplesPerTraceOrig` | 3289-3292 | 0 to 4294967295 (Rev 2 only) |
 | Extended ensemble fold | `extEnsembleFold` | 3293-3296 | 0 to 4294967295 (Rev 2 only) |
 | Time basis code | `timeBasisCode` | 3511-3512 | -32768 to 32767 (Rev 2 only) |

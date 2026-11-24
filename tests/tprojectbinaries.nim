@@ -13,7 +13,9 @@
 ## two sets: 2"; with the chosen name left after its set was deleted,
 ## "deleting the chosen set left it chosen"; with the refusal not checked, a
 ## set with `sampleInterval` was saved; with the reader not checking
-## `binaryProblem`, the bad set of the file was kept.
+## `binaryProblem`, the bad set of the file was kept; with the overflow of a
+## number not caught, the save raised; with `(field "a" "b" extra)` read as a
+## field, the "Extra" set was kept.
 
 import std/[os, sequtils, strutils]
 import viewSEG/core/[nif, outputbinary, project, projectnif, state]
@@ -64,16 +66,20 @@ proc main*() =
     (binary "Range" (field "ensembleFold" "40000"))
     (binary (field "jobId" "1"))
     (binary "Open" (field "jobId"))
+    (binary "Huge" (field "jobId" "99999999999999999999"))
+    (binary "Extra" (field "jobId" "1" "2"))
     (binary "Second" (field "lineNumber" "3"))
     (somethingNew "stays"))
   (outputBinary "SECOND"))"""
     let d = readProject(text, "p", problems)
     doAssert d.outputBinaries.mapIt(it.name) == @["Good", "Second"], $d.outputBinaries
     doAssert d.outputBinary == "Second"
-    doAssert problems.len == 6, $problems
+    doAssert problems.len == 8, $problems
     doAssert problems.anyIt("the binary header set \"good\" is given twice" in it)
     doAssert problems.anyIt("\"Twice\"" in it and "Job ID is given twice" in it)
     doAssert problems.anyIt("sampleInterval" in it and "Bad" in it)
+    doAssert problems.anyIt("\"Huge\"" in it and "99999999999999999999" in it)
+    doAssert problems.anyIt("\"Extra\"" in it and "nothing else" in it)
     doAssert d.outputBinaries[0].entries[1].value == "4000.5"
     doAssert d.outputBinaryLater[0].len == 1 and d.outputBinariesLater.len == 1
     let back = projectDocument(d)
@@ -122,6 +128,9 @@ proc main*() =
     st.save one("Bad", ("jobId", "x"))
     doAssert st.said("Job ID: 'x' is not a whole number.")
     doAssert st.project.doc.outputBinaries.len == 2 and st.project.revision == beforeBad
+    st.save one("Huge", ("jobId", "99999999999999999999"))
+    doAssert st.said("Job ID: '99999999999999999999' is not a whole number from " &
+      "-2147483648 to 2147483647.") and st.project.doc.outputBinaries.len == 2
     st.act obaDelete, "missing"
     st.act obaChoose, "missing"
     doAssert st.said(noOutputBinary("missing")) and st.project.revision == beforeBad

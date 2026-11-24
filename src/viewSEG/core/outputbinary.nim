@@ -125,7 +125,7 @@ func find*(b: OutputBinary; field: string): int =
   for i, e in b.entries:
     if e.field == field: return i
 
-func nameProblem(name: string): string =
+func nameProblem(name: string): string {.raises: [].} =
   let n = strip(name)
   if n.len == 0: return "A binary header set needs a name."
   if validateUtf8(n) >= 0: return "A binary header set's name is not text (not UTF-8)."
@@ -135,7 +135,8 @@ func nameProblem(name: string): string =
     if c in {'\0' .. '\31', '\127'}: return "A binary header set's name holds no control characters."
   ""
 
-func numberOf(info: BinaryFieldInfo; text: string; whole: var int64; real: var float64): string =
+func numberOf(info: BinaryFieldInfo; text: string; whole: var int64;
+    real: var float64): string {.raises: [].} =
   ## Reads `text` as the field's number; "" when it is one the field holds,
   ## else what is wrong with it (no field name in it).
   let t = strip(text)
@@ -143,15 +144,21 @@ func numberOf(info: BinaryFieldInfo; text: string; whole: var int64; real: var f
     let used = if '_' in t: 0 else: parseFloat(t, real)
     if used != t.len or t.len == 0 or classify(real) in {fcNan, fcInf, fcNegInf}:
       return "'" & t & "' is not a number."
+    if real < 0 or classify(real) == fcSubnormal:
+      return "'" & t & "' is not 0 or a number of normal size above it."
     return ""
-  let used = if '_' in t: 0 else: parseBiggestInt(t, whole)
+  var used = 0
+  try:
+    used = if '_' in t: 0 else: parseBiggestInt(t, whole)
+  except ValueError:
+    return "'" & t & "' is not a whole number from " & $info.lowest & " to " & $info.highest & "."
   if used != t.len or t.len == 0:
     return "'" & t & "' is not a whole number."
   if whole < info.lowest or whole > info.highest:
     return $whole & " is not from " & $info.lowest & " to " & $info.highest & "."
   ""
 
-func valueProblem*(info: BinaryFieldInfo; text: string): string =
+func valueProblem*(info: BinaryFieldInfo; text: string): string {.raises: [].} =
   ## Why `text` is not a value of the field `info`: `'abc' is not a whole number.`,
   ## `40000 is not from -32768 to 32767.`; "" when it is one.
   var whole = 0'i64
@@ -164,7 +171,7 @@ func twinOf*(field: string): string =
   for (small, big) in Twins:
     if small == field: return big
 
-func binaryProblem*(b: OutputBinary): string =
+func binaryProblem*(b: OutputBinary): string {.raises: [].} =
   ## Why `b` cannot be kept; "" when it can: no name, a name that is too long
   ## or holds a control character, a field that cannot be set or given twice,
   ## and a value that is not a number the field holds.
@@ -184,19 +191,28 @@ func revisionWord(rev: SegyRevision): string =
   ## `0`, `1`, `2.0`, `2.1`: the words the revisions go by.
   if rev.major < 2: $rev.major else: $rev
 
-func isSet(b: OutputBinary; field: string): bool =
-  ## `field` is in `b` with a value that is not 0.
-  let i = b.find(field)
-  if i < 0: return false
-  var real = 0.0
-  discard parseFloat(strip(b.entries[i].value), real)
-  result = real != 0.0
+func twinValue(b: OutputBinary; source: Option[SegyBinaryHeader]; big: string): float64 =
+  ## The value the extended field `big` has once `b` is written: the set's own,
+  ## else the source file's; 0 when neither gives one.
+  let i = b.find(big)
+  if i >= 0:
+    discard parseFloat(strip(b.entries[i].value), result)
+  elif source.isSome:
+    let v = fieldByName(source.get, big)
+    if v.isSome: result = v.get.toFloat
 
-func overridesOf*(b: OutputBinary; rev: SegyRevision): BinaryOverrides =
+func isHidden(big: string; value: float64): bool =
+  ## Whether an extended field of this value hides its 16-bit twin: the
+  ## library's rule, a usable interval or a count that is not 0.
+  if big == "extSampleIntervalOrig": usableExtInterval(value) else: value != 0.0
+
+func overridesOf*(b: OutputBinary; rev: SegyRevision;
+    source: Option[SegyBinaryHeader] = none(SegyBinaryHeader)): BinaryOverrides =
   ## The entries of `b` as the writer takes them for a file of revision `rev`
   ## (call it when `binaryProblem` is ""). An entry the revision cannot hold
   ## is left out and `notes` says so: a Rev 2 field in a Rev 0 or Rev 1 file,
-  ## and a 16-bit field in a Rev 2 file whose extended twin is also set (it
+  ## and a 16-bit field in a Rev 2 file whose extended twin is set, in `b` or
+  ## in the binary header of the `source` file the output is a copy of (it
   ## would hide it).
   result = BinaryOverrides()
   for e in b.entries:
@@ -204,8 +220,9 @@ func overridesOf*(b: OutputBinary; rev: SegyRevision): BinaryOverrides =
     if info.isSome:
       var hiddenBy = ""
       if rev.major >= 2:
-        for (small, big) in Twins:
-          if small == e.field and b.isSet(big): hiddenBy = fieldInfo(big).get.label
+        let big = twinOf(e.field)
+        if big.len > 0 and isHidden(big, b.twinValue(source, big)):
+          hiddenBy = fieldInfo(big).get.label
       if info.get.rev2 and rev.major < 2:
         result.notes.add "Binary header: " & info.get.label & " is not written in SEG-Y revision " &
           revisionWord(rev) & "."
