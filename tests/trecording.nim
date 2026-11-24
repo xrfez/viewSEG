@@ -8,7 +8,8 @@
 ## small repeat; one late start accepted as continuous (a share of boundaries
 ## instead of every boundary); a step taken as the commonest start difference,
 ## so dropouts at most boundaries made the dead time the step; a trace one
-## sample short refused (floats instead of samples); a repeat of 5% refused.
+## sample short refused (floats instead of samples); a repeat of 5% refused; the receiver
+## change in file order never asked ("and false"): the shots read as time sliced.
 
 import std/[assertions, math, os, strutils]
 import parseSEG
@@ -85,6 +86,34 @@ proc lengthsOf(dir, name: string; traces: openArray[tuple[first, n: int]]): Reco
     result = describeRecording(planRecording(addr f, path, DtMs, VendorRegistry()))
   finally:
     f.close()
+
+proc segyFacts(dir, name: string; specs: openArray[Spec]; n = 1000): RecordingFacts =
+  ## The same traces as `specs` in a SEG-Y file (one channel per station, a line and point).
+  createDir(dir)
+  let path = dir / (name & ".sgy")
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+  for i, s in specs:
+    var k = initTraceKeys()
+    k.status = tsLive
+    k.record = 1
+    k.channel = float64(s.rcv + 1)
+    k.intervalUs = 2000
+    k.t0Ms = 0
+    k.time = BaseS + float64(s.first) * DtMs / 1000
+    k.rcvLine = 1
+    k.rcvPoint = float64(s.rcv + 1)
+    w.writeTrace(k, newSeq[float32](n))
+  discard w.close()
+  var f = openSeismic(path, keys = true)
+  try:
+    result = describeRecording(planRecording(addr f, path, DtMs, VendorRegistry()))
+  finally:
+    f.close()
+
+proc shots(stations: int; starts: openArray[int]): seq[Spec] =
+  ## A shot after shot, every station each time, in file order.
+  for first in starts:
+    for r in 0 ..< stations: result.add spec(r, first)
 
 proc main*() =
   let dir = getTempDir() / "trecording"
@@ -353,6 +382,33 @@ proc main*() =
   block one_live_trace_is_continuous:
     let f = factsOf(dir, "single", [spec(0, 0, 0, stationed = false)])
     doAssert f.kind == rkReceiverContinuous and f.segments == 1, $f
+
+  block uneven_shots_of_many_stations_are_a_shot_gather:
+    # 3 shots x 50 stations, the shots 1.3 and 2.4 s apart: every station has three segments
+    # that are no step apart, but the receiver changes from trace to trace in the file
+    let specs = shots(50, [0, 1300, 3700])
+    for f in [factsOf(dir, "shots", specs), segyFacts(dir, "shotsy", specs)]:
+      doAssert f.ready and f.kind == rkShotGather and f.slicedWhy == swNone, $f
+      doAssert f.components == 50 and f.segments == 150, $f
+
+  block one_station_of_irregular_segments_is_time_sliced:
+    var specs: seq[Spec]
+    for i in 0 ..< 40: specs.add spec(0, i * 1000 + (i * i) mod 70)
+    for f in [factsOf(dir, "irr1", specs), segyFacts(dir, "irr1y", specs)]:
+      doAssert f.kind == rkReceiverSliced and f.slicedWhy == swOffStep, $f
+
+  block two_stations_grouped_by_station_are_time_sliced:
+    var specs: seq[Spec]
+    for r in 0 ..< 2:
+      for i in 0 ..< 20: specs.add spec(r, i * 1000 + (i * i) mod 70)
+    for f in [factsOf(dir, "irr2", specs), segyFacts(dir, "irr2y", specs)]:
+      doAssert f.kind == rkReceiverSliced, $f
+
+  block continuous_stations_stay_continuous_in_any_file_order:
+    # every station on the step, the file ordered by time: the receiver changes at every trace
+    let specs = shots(5, [0, 1000, 2000, 3000])
+    for f in [factsOf(dir, "ordered", specs), segyFacts(dir, "orderedy", specs)]:
+      doAssert f.kind == rkReceiverContinuous, $f
 
   echo "trecording ok"
   removeDir(dir)

@@ -23,7 +23,12 @@
 ##    No: `rkReceiverSliced`, and `slicedWhy` says why.
 ##
 ## A file with stations of one segment and others of several goes through the
-## second question as it stands.
+## second question as it stands. A receiver gather that is not continuous is told apart
+## from a shot gather by the order of the file: when, between most consecutive live traces
+## of one component, the receiver line and point (a trace without a station: its channel)
+## change, the receivers repeat from record to
+## record (several shots, uneven in time): a shot gather; when they stay, the traces of a
+## receiver follow each other: time sliced.
 ##
 ## The continuous test: each trace starts a whole number of trace lengths
 ## after the one before it, and there is no variance. All times are compared in
@@ -103,14 +108,17 @@ type
     stations*: int                 ## receiver points
     components*: int               ## receivers: what each cut record holds as traces
     segments*: int
+    fewestStarts*: int
+      ## the fewest distinct start times any receiver has: a prefix of a file shows the
+      ## kind only when this reaches `KindStarts`
     firstTime*, lastTime*: float64 ## UTC POSIX seconds; the span of every segment
-    boundaries*: int               ## between consecutive segments of one receiver
-    abutting*: int                 ## the next starts one step after the last
-    skips*: int                    ## boundaries after whole missing segments (k > 1)
-    missingSegments*: int          ## whole segments absent, summed over `skips`
-    irregular*: int                ## starts that are not a whole number of steps apart
-    uncovered*: int                ## receivers with a segment that does not cover the step
-    offTrace*: int                 ## for `swOffStep`: the trace (from 1) that breaks the rule
+    boundaries*: int ## between consecutive segments of one receiver
+    abutting*: int ## the next starts one step after the last
+    skips*: int ## boundaries after whole missing segments (k > 1)
+    missingSegments*: int ## whole segments absent, summed over `skips`
+    irregular*: int ## starts that are not a whole number of steps apart
+    uncovered*: int ## receivers with a segment that does not cover the step
+    offTrace*: int ## for `swOffStep`: the trace (from 1) that breaks the rule
     offSeconds*: float64
       ## for `swOffStep`: how long after the segment before it that trace starts, or its
       ## length when `offLength`
@@ -238,13 +246,39 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int; r: var Recordin
       r.offTrace = used[offAt].row + 1
       r.offSeconds = float64(offGap) * dtS
 
+proc receiverChanges(meta: ChunkMeta; segs: seq[Seg]): bool =
+  ## Whether, between most consecutive live traces of one component in file order, the
+  ## receiver changes: its line and point, or, for a trace without a station (a SEG-Y file),
+  ## its channel.
+  var rows = segs.mapIt(it.row)
+  rows.sort()
+  type Place = tuple[have, stationed: bool; st: Station; channel: float64]
+  var last: array[256, Place]
+  var pairs, changed = 0
+  for row in rows:
+    let k = meta.keys(row)
+    let c = int(k.component)
+    var here: Place = (true, not (k.rcvLine.isNaN or k.rcvPoint.isNaN), (0.0, 0.0, 0'i16),
+      k.channel)
+    if here.stationed:
+      let s = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
+      here.st = (s.line, s.point, s.index)
+    let before = last[c]
+    if before.have:
+      inc pairs
+      if before.stationed != here.stationed or
+          (if here.stationed: before.st != here.st else: before.channel != here.channel):
+        inc changed
+    last[c] = here
+  result = 2 * changed > pairs
+
 proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFacts =
   ## The facts and the verdict of `plan`, the steps checked over the first `starts` distinct
   ## start times of each receiver (`AllStarts`: every one).
   let meta = plan.meta
   let dtS = meta.dtMs / 1000
   result = RecordingFacts(dtMs: meta.dtMs, firstTime: Inf, lastTime: -Inf,
-    unevenChannels: plan.clock.unevenChannels)
+    fewestStarts: high(int), unevenChannels: plan.clock.unevenChannels)
   var segs: seq[Seg]
   for row in 0 ..< meta.len:
     let n = meta.liveSamples(row, high(int))
@@ -270,9 +304,12 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     if not (k.rcvLine.isNaN or k.rcvPoint.isNaN):
       let st = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
       placed.add (st: (st.line, st.point, st.index), segs: j - i)
+    var seen = 1
     for x in i ..< j:
       result.firstTime = min(result.firstTime, segs[x].start)
       result.lastTime = max(result.lastTime, segs[x].finish)
+      if x > i and int(round((segs[x].start - segs[x - 1].start) / dtS)) != 0: inc seen
+    result.fewestStarts = min(result.fewestStarts, seen)
     if j - i > 1: tally(segs, i, j, dtS, starts, result)
     i = j
   result.ready = true
@@ -316,6 +353,12 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     # the step; traces that all start together are named first
     if segs.len > 1 and segs.allIt(it.start == segs[0].start): result.slicedWhy = swSameStart
     result.kind = if result.slicedWhy == swNone: rkReceiverContinuous else: rkReceiverSliced
+    # not continuous: the receiver changing from trace to trace, in the order of the file, is
+    # a shot gather (the receivers repeat from record to record); staying put, a receiver's
+    # own segments
+    if result.kind == rkReceiverSliced and receiverChanges(meta, segs):
+      result.kind = rkShotGather
+      result.slicedWhy = swNone
 
 func isContinuousGather*(f: RecordingFacts): bool =
   ## True for a continuous receiver gather: the one kind the cut accepts.
