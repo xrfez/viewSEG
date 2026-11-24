@@ -9105,6 +9105,25 @@ proc releaseSurvey(state: AppState; job: JobInfo) =
     if c.job == job.id and job.abandoned: state.batchSurvey.left.add c # its work still runs
   state.batchSurvey.held.keepItIf(it.job != job.id)
 
+proc kindFromOpen(state: var AppState) =
+  ## The shown file's facts (`recFacts`, read from its own header keys) give its row of Files
+  ## its kind: the whole file read as the probe reads it, so it wins over the probe's answer.
+  ## Only for the file as listed (its size and time as the session opened it) and the keys and
+  ## vendor maps the facts were made with; a joined or moved file keeps the probe's answer.
+  let s = state.findSession(SessionId(state.recKey.session))
+  let i = state.files.find(state.recPath)
+  if s < 0 or i < 0 or state.recKey.vendors != state.vendor.gen or
+      state.sessions[s].keysRevision != state.recKey.revision: return
+  template e: untyped = state.files.entries[i]
+  let sz = state.sessions[s].size
+  if sz < 0 or sz != e.size or state.sessions[s].modified != e.modified: return
+  if e.kindState != ksKnown or e.recording != state.recFacts.kind:
+    e.kindState = ksKnown
+    e.recording = state.recFacts.kind
+    state.files.changedAt(i)
+  state.kindCache.remember(KindAnswer(path: e.path, size: e.size, modified: e.modified,
+    state: ksKnown, kind: e.recording), state.vendor.gen, state.files)
+
 proc startKinds(state: var AppState) =
   ## Starts a job on the peeks lane (the file headers read for what they say, a lane of its own
   ## so that it holds no record QC, first breaks or next-file preparation, and a drive that does
@@ -9158,25 +9177,17 @@ proc onFinished(state: var AppState; job: JobInfo) =
     # whatever the end, this is the answer for `recKey`: the job is not started again
     state.recFacts = RecordingFacts()
     state.recWhy = ""
+    var ownKeys = false
     if job.state == jsDone and state.recSink != nil:
       state.recFacts = state.recSink.facts
+      ownKeys = state.recSink.ownKeys
       if not state.recFacts.ready: state.recWhy = NoLiveTraceWords
     else:
       state.recWhy = if job.error.len > 0: job.error.splitLines()[0]
                      else: "The recording could not be read."
     state.recHave = true
     state.recSink = nil
-    if state.recFacts.ready:
-      # the file shown has its whole facts: its row of Files takes the kind they give
-      let i = state.files.find(state.recPath)
-      if i >= 0 and (state.files.entries[i].kindState != ksKnown or
-          state.files.entries[i].recording != state.recFacts.kind):
-        template e: untyped = state.files.entries[i]
-        e.kindState = ksKnown
-        e.recording = state.recFacts.kind
-        state.files.changedAt(i)
-        state.kindCache.remember(KindAnswer(path: e.path, size: e.size, modified: e.modified,
-          state: ksKnown, kind: e.recording), state.recKey.vendors, state.files)
+    if state.recFacts.ready and ownKeys: state.kindFromOpen()
     return
   if job.id == state.leapJob:
     state.finishLeap(job)

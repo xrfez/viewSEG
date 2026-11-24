@@ -14,12 +14,20 @@
 ## `setVendorChoice`, "the kind kept the map left off"; with the kinds job on the background
 ## lane, "the kinds are not read on the peeks lane"; with the shown file not asked for its facts
 ## (`rowAsks`), "the file shown did not give its row the kind"; with no answer taken from
-## `kindCache` in `startKinds`, "a file listed again was read for its kind".
+## `kindCache` in `startKinds`, "a file listed again was read for its kind"; with the size and
+## time of the session not compared in `kindFromOpen`, "a session of another time of the file
+## gave the row its kind"; with `ownKeys` not asked, "the facts of joined keys gave the row its
+## kind".
 
-import std/[options, os, sequtils, times]
+import std/[importutils, options, os, sequtils, times]
+import parseSEG
+import parseSEG/model/traceindex
 import viewSEG/core/state {.all.}
-import viewSEG/core/[filelist, filekinds, inbox, jobs, recordingkind, vendormaps]
+import viewSEG/core/[filelist, filekinds, inbox, jobs, recordingkind, session, vendormaps]
 import utils/[faultyfs, fixtures, kindfiles, waiting]
+
+privateAccess(AppState)
+privateAccess(Session)
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); cond))
@@ -117,6 +125,43 @@ proc main*() =
       st.apply Command(kind: ckOpen, paths: @[sliced])
       doAssert st.settle((st.watchRecording(false); st.kindOf(sliced).isSome)),
         "the file shown did not give its row the kind"
+      doAssert st.kindOf(sliced) == some(rkReceiverSliced)
+
+    block theOpenGivesTheKindOnlyForTheFileAsListed:
+      # the file is open and shown; a probe answer that differs (posted so) gives way to the
+      # open's facts for the same size and time, and stays when the listing saw another time or
+      # when a join changed the keys the facts were made from
+      let i = st.fileList.find(canonical(sliced))
+      proc probeSays(st: var AppState; kind: RecordingKind) =
+        st.mailbox.post Msg(kind: mkKinds, kindsGen: st.fileList.gen,
+          kindsVendors: st.vendorGen, kinds: @[KindAnswer(path: canonical(sliced),
+          size: st.fileList.entries[i].size, modified: st.fileList.entries[i].modified,
+          state: ksKnown, kind: kind)])
+        discard st.drainInbox()
+        doAssert st.kindOf(sliced) == some(kind)
+      proc readAgain(st: var AppState) =
+        st.recHave = false # the shown file is read as a recording once more
+        doAssert st.settle((st.watchRecording(true); st.recHave and st.recJob == NoJob))
+        doAssert st.recordingFacts.ready and st.recordingFacts.kind == rkReceiverSliced
+      st.probeSays(rkShotGather)
+      st.readAgain()
+      doAssert st.kindOf(sliced) == some(rkReceiverSliced), "the open's answer did not win"
+      # the file was opened at another time than the one listed
+      st.probeSays(rkShotGather)
+      let k = st.sessions.len - 1
+      let opened = st.sessions[k].modified
+      st.sessions[k].modified = opened - initDuration(seconds = 3)
+      st.readAgain()
+      st.sessions[k].modified = opened
+      doAssert st.kindOf(sliced) == some(rkShotGather),
+        "a session of another time of the file gave the row its kind"
+      # a join changed the keys the facts are made from
+      st.sessions[k].filePtr[].mindex.joined = true
+      st.readAgain()
+      st.sessions[k].filePtr[].mindex.joined = false
+      doAssert st.kindOf(sliced) == some(rkShotGather),
+        "the facts of joined keys gave the row its kind"
+      st.readAgain()
       doAssert st.kindOf(sliced) == some(rkReceiverSliced)
 
     block aNewListingStopsTheReading:

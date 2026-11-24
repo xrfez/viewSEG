@@ -127,12 +127,14 @@ larger file is not opened for it, since a receiver that first appears late in th
 change the kind and its start alone cannot tell: the cell shows **?** and the tooltip says "Open
 the file to see its kind". A multiplexed SEG-D file is not opened for it either, since opening
 it makes a demultiplexed copy of the whole file: its cell shows **?** too, and the tooltip says
-it is multiplexed. Once you open the file the row takes its kind. A file whose kind is not
-worked out yet, a file that is not seismic and one without a live trace have an empty cell.
-Click the header to sort by it. A folder listed again in the same session takes the kinds
-already read and reads only the files that changed. A file that changes on disk is read again
-once it is steady, and every kind is read again when the vendor header maps change, since a
-start time may come from a vendor block.
+it is multiplexed. Once you open the file the row takes its kind, worked out from the file's own
+headers: the file as it was listed, before a survey join or station moves change its positions
+(a joined file keeps the kind the list read). A file whose kind is not worked out yet, a file
+that is not seismic and one without a live trace have an empty cell. Click the header to sort by
+it. A folder listed again in the same session takes the kinds already read and reads only the
+files that changed. A file that changes on disk is read again once it is steady, and every kind
+is read again when the vendor header maps change, since a start time may come from a vendor
+block.
 
 - **Click a file** to show it in the Seismic window, in place of the one shown. The display
   (mode, gain, filters, sort order, display header) and the scales stay as they were, so records

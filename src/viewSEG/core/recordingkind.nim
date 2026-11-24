@@ -132,6 +132,9 @@ type
   RecordingSink* = ref object
     ## Filled by `recordingFactsWork`; read it once the job has ended.
     facts*: RecordingFacts
+    ownKeys*: bool
+      ## the keys the facts were made from are the file's own headers: no survey join or
+      ## station move changed them
 
 proc planRecording*(file: ptr SeismicFile; source: string; dtMs: float64;
     reg: VendorRegistry; check: proc () {.gcsafe.} = nil): RecordingPlan =
@@ -377,13 +380,20 @@ func isContinuousGather*(f: RecordingFacts): bool =
   ## True for a continuous receiver gather: the one kind the cut accepts.
   f.kind == rkReceiverContinuous
 
+func keysJoined(f: SeismicFile): bool =
+  ## Whether a survey join or a station move changed the keys of `f`.
+  if f.index.joined: return true
+  for groups in f.index.joinedTraces:
+    if groups.card > 0: return true
+
 proc recordingFactsWork*(file: ptr SeismicFile; source: string; dtMs: float64;
     reg: VendorRegistry; sink: RecordingSink): JobWork =
   ## Describes `file` on a job thread (`file` stays open until the job ends).
-  ## `sink.facts` is set when it finishes; a cancel leaves it unset.
+  ## `sink.facts` and `sink.ownKeys` are set when it finishes; a cancel leaves them unset.
   result = proc (ctx: JobContext) {.gcsafe.} =
     {.cast(gcsafe).}:
       let plan = planRecording(file, source, dtMs, reg, proc () {.gcsafe.} =
         ctx.checkCancelled())
       ctx.checkCancelled()
       sink.facts = describeRecording(plan)
+      sink.ownKeys = not keysJoined(file[])
