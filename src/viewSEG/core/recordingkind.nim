@@ -49,6 +49,9 @@ const
     ## a segment may be this share of its length longer than the step between
     ## starts: it repeats a little of the data at its ends and still continues
 
+const NoLiveTraceWords* = "No live trace with a start time."
+  ## what a file with no live trace with a start time is told
+
 type
   RecordingKind* = enum
     rkShotGather         ## the receiver changes from trace to trace

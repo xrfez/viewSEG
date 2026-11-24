@@ -8,7 +8,7 @@
 ## missing". With the result's sentences not logged, "the result is not in the
 ## log". With the outcome line not kept, "the outcome line was not kept".
 
-import std/[os, strutils]
+import std/[os, sets, strutils]
 import parseSEG
 import viewSEG/core/[cutgather, jobs, recordingkind, shotlog]
 import viewSEG/core/state {.all.}
@@ -204,6 +204,40 @@ proc main*() =
     doAssert st.recordingFacts.kind == rkReceiverContinuous and st.recordingFacts.components == 2
     st.watchRecording(false)
     doAssert not st.recordingFacts.ready and not st.recordingBusy
+    discard st.shutdown()
+
+  block a_file_with_no_live_trace_is_read_once:
+    # every trace is dead: the facts come back not ready, and the dialog's per-frame call
+    # must not start the job again (it did, every frame, and said "being read" for ever)
+    let deadFile = dir / "in" / "dead.sgy"
+    var w = openSeismicWriter(deadFile, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+    for i in 0 ..< 3:
+      var k = initTraceKeys()
+      k.status = tsDead
+      k.record = 1
+      k.channel = float64(i + 1)
+      k.intervalUs = 2000
+      k.t0Ms = 0
+      k.time = float64(BaseUs div 1_000_000)
+      w.writeTrace(k, newSeq[float32](100))
+    discard w.close()
+    var st = start(dir)
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: deadFile)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut),
+      "the file was not shown"
+    var jobsSeen = initHashSet[int]()
+    var frames = 0
+    doAssert st.settle((st.watchRecording(true); inc frames; st.recordingWhy.len > 0)),
+      "the answer never came"
+    for _ in 0 ..< 60:
+      discard st.drainInbox()
+      st.watchRecording(true)
+      sleep(2)
+    for j in st.jobs.list:
+      if j.spec.title.endsWith("as a recording"): jobsSeen.incl int(j.id)
+    doAssert jobsSeen.len == 1, "the job was started " & $jobsSeen.len & " times"
+    doAssert not st.recordingBusy and not st.recordingFacts.ready
+    doAssert st.recordingWhy == NoLiveTraceWords, st.recordingWhy
     discard st.shutdown()
 
 when isMainModule:

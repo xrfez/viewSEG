@@ -1147,6 +1147,7 @@ type
       ## the file, its keys revision and the vendor maps' load `recFacts` (or the job) is for
     recFacts: RecordingFacts
     recHave: bool ## `recFacts` is the answer for `recKey`
+    recWhy: string ## why `recFacts` is not `ready` when `recHave`: what the job said
     joins: seq[Joined]
       ## the open files joined with survey files
     project: ProjectState
@@ -2687,6 +2688,11 @@ func recordingFacts*(state: AppState): RecordingFacts {.inline.} =
   ## What the shown file is as a recording, once `watchRecording` has had it
   ## read; not `ready` before that.
   if state.recHave: state.recFacts else: RecordingFacts()
+
+func recordingWhy*(state: AppState): string {.inline.} =
+  ## Why the shown file has no ready facts once the job has ended: no live trace
+  ## with a start time, or what failed; "" while it is read or when they are ready.
+  if state.recHave: state.recWhy else: ""
 
 func recordingBusy*(state: AppState): bool {.inline.} =
   ## The shown file is being read as a recording.
@@ -7197,6 +7203,7 @@ proc clearSession(state: var AppState) =
   if state.recJob != NoJob: discard state.jobs.cancel(state.recJob)
   state.recJob = NoJob
   state.recHave = false
+  state.recWhy = ""
   state.moveQueue.setLen 0
   state.leapQueue.setLen 0
   state.moveBases.setLen 0
@@ -9003,9 +9010,16 @@ proc onFinished(state: var AppState; job: JobInfo) =
     return
   if job.id == state.recJob:
     state.recJob = NoJob
+    # whatever the end, this is the answer for `recKey`: the job is not started again
+    state.recFacts = RecordingFacts()
+    state.recWhy = ""
     if job.state == jsDone and state.recSink != nil:
       state.recFacts = state.recSink.facts
-      state.recHave = state.recFacts.ready
+      if not state.recFacts.ready: state.recWhy = NoLiveTraceWords
+    else:
+      state.recWhy = if job.error.len > 0: job.error.splitLines()[0]
+                     else: "The recording could not be read."
+    state.recHave = true
     state.recSink = nil
     return
   if job.id == state.leapJob:
