@@ -16,11 +16,13 @@
 ## with a newline stored anyway, `line_break_is_refused` rejected a cell
 ## that changed; with the copy written onto its own source,
 ## `import_does_not_write_onto_its_source` stored `shotlog.csv`; with the
-## pre-edit text carried forward, `second_remap_keeps_edits` lost the cell.
+## pre-edit text carried forward, `second_remap_keeps_edits` lost the cell;
+## with the revision bumped in the edit command, `edit_waits_to_bump_revision`
+## saw it move before the save assigned the view.
 
 import std/[options, os, strutils]
 import viewSEG/core/[filesystem, jobs, project, shotlog, shotlogjobs, state]
-import utils/[faultyfs, waiting]
+import utils/[faultyfs, steps, waiting]
 
 const Sample = currentSourcePath().parentDir.parentDir / "samples" / "land" / "shotlog.csv"
 
@@ -165,6 +167,33 @@ proc main*() =
     doAssert got.error == "bad.csv could not be read.", got.error
     doAssert got.sink.result.reason == got.error
     doAssert '\n' notin got.error and "stack" notin got.error.toLowerAscii
+
+  block edit_waits_to_bump_revision:
+    let job = root / "JobRev"
+    var st = start(root / "config-rev")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0), "the project did not open"
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not stored"
+    let rev = st.shotRevision(0)
+    let logs = st.shotLogsRevision
+    installSteps()
+    holdStep("writing")
+    defer:
+      releaseStep("writing")
+      setJobHook(nil)
+    st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 0, logCell: "HELD")
+    doAssert waitUntil(inStep("writing").len > 0), "the save did not reach writing"
+    doAssert st.shotCell(0, 0, 0) == "HELD"
+    doAssert st.shotRevision(0) == rev, "the revision bumped before the view was assigned"
+    doAssert st.shotLogsRevision == logs
+    releaseStep("writing")
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotCell(0, 0, 0) == "HELD"),
+      "the save did not finish"
+    doAssert st.shotRevision(0) == rev + 1, "the revision did not bump when the view was assigned"
+    doAssert st.shotLogsRevision == logs + 1
+    discard st.shutdown()
 
   block line_break_is_refused:
     var st = start(root / "config-break")

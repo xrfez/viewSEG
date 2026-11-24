@@ -984,7 +984,7 @@ type
     map: ShotLogMap
     log: ShotLog
     view: ShotView
-    revision: int ## bumps when the view or a cell changes
+    revision: int ## bumps when a job assigns a new view
     text: string ## the text a re-map parses again
     busy: bool ## a job is reading it: a cell edit waits
 
@@ -6563,8 +6563,6 @@ proc editShotCellCmd(state: var AppState; cmd: Command) =
   if not loaded.log.setCell(cmd.logRow, cmd.logCol, cmd.logCell):
     state.log.add(sevWarning, "shot log", ShotLogLineBreak)
     return
-  inc loaded.revision
-  inc state.shotLogsRev
   if loaded.stored.len > 0 and state.inProject and state.readOnlyProject:
     state.log.add(sevWarning, "shot log", ReadOnlyShotLog)
     state.submitShotRebuild(cmd.logIndex)
