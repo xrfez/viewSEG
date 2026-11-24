@@ -42,12 +42,18 @@ const
   ColSpiky* = "Spiky"
   ColDcOffset* = "DC"
   ColNonFinite* = "Not finite"
+  ColNoisy* = "Noisy"
+  ColWeak* = "Weak"
   ColBadRecords* = "Bad records"
   DeadTip* = "A trace the header marks dead. It is not also counted as all-zero."
   ZeroTip* = "Every finite sample is zero."
   FlatTip* = "The samples are constant."
   DcTip* = "The samples have a DC offset."
   NonFiniteTip* = "A sample is not a finite number."
+  NoisyTip* = "Traces much louder than the others of their record, outside the area around " &
+    "the source. Not counted as bad. Empty when the record could not be judged."
+  WeakTip* = "Traces much quieter than the others of their record. Not counted as bad. " &
+    "Empty when the record could not be judged."
   ColFile* = "File"
   ColRecord* = "Record"
   KilledTip* = "A trace an edit killed. It is counted as killed, not as bad, and it is not " &
@@ -72,13 +78,15 @@ func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
 
 func totalsLine*(t: Totals): string =
-  ## The totals strip: counts, then each finding. Killed is not bad.
+  ## The totals strip: counts, then each finding, then the noisy and weak traces when any
+  ## trace was tested. Killed is not bad.
   plural(t.files, "file", "files") & ", " & plural(t.records, "record", "records") & ", " &
     plural(t.traces, "trace", "traces") & ", " & $t.killed & " killed, " & $t.bad & " bad, " &
     $t.stations & " stations, " & $t.counts[qfHeaderDead] & " header-dead, " &
     $t.counts[qfAllZero] & " all-zero, " & $t.counts[qfConstant] & " constant, " &
     $t.counts[qfClipped] & " clipped, " & $t.counts[qfSpiky] & " spiky, " &
-    $t.counts[qfDcOffset] & " dc offset, " & $t.counts[qfNonFinite] & " non-finite"
+    $t.counts[qfDcOffset] & " dc offset, " & $t.counts[qfNonFinite] & " non-finite" &
+    (if t.tested > 0: ", " & $t.noisy & " noisy, " & $t.weak & " weak" else: "")
 
 func headerTip*(name: string): string =
   ## The tooltip of column title `name`, or "" when the title says enough.
@@ -90,6 +98,8 @@ func headerTip*(name: string): string =
   of ColConstant: FlatTip
   of ColDcOffset: DcTip
   of ColNonFinite: NonFiniteTip
+  of ColNoisy: NoisyTip
+  of ColWeak: WeakTip
   else: ""
 
 func unreadNote*(rows: openArray[tuple[path, why: string]]): string =

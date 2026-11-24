@@ -297,8 +297,9 @@ and it says so. A relation file is not needed.
 The **Trace quality** window stays closed until you ask for it. It opens as a tab
 beside the **Seismic** window, and that tab is the one in front. Closing it and opening
 it again keeps the place you last gave it. A line of totals wraps onto the next line
-when the window is narrow: files, records, traces, killed, bad, stations, and each
-finding. A killed trace is counted as killed, not as bad, and it is not measured.
+when the window is narrow: files, records, traces, killed, bad, stations, each
+finding, and the noisy and weak traces. A killed trace is counted as killed, not as bad,
+and it is not measured.
 
 **Rescan** runs the scan again. While one is running, that button is **Cancel** and a
 progress bar shows how far the scan is. When a file or a trace could not be read, a line
@@ -306,7 +307,12 @@ under the totals says how many. **Unread** opens that list, each with the reason
 **totals in a second file** sits next to **Export CSV...**.
 
 The **Stations** tab is one row per receiver station and component: how many traces
-were seen, how many were killed, how many were bad, and the count of each finding.
+were seen, how many were killed, how many were bad, and the count of each finding. The
+last two counts, **Noisy** and **Weak**, are the traces the map's noisy and weak filters
+show for each field record, found the same way (the exclusion area you chose in Tools >
+Settings applies, and a record's first breaks are found for it, so a scan takes longer).
+They are not counted as bad. A cell is empty where no trace could be judged: killed,
+dead and auxiliary traces, a record that could not be read, or one the test cannot judge.
 The **Records** tab is one row per file and record. A box above the table narrows the
 rows. Click a column header to sort by it (again for the other way; Shift-click adds
 a column). The sort's place is a small number after the header name.

@@ -11,7 +11,8 @@
 
 import std/[os, strutils, tables]
 import imguin/cimgui
-import ../../core/[edits, filejobs, filesystem, jobs, qualityjobs, qualityreport, session, state]
+import ../../core/[edits, filejobs, filesystem, jobs, noisearea, qualityjobs, qualityreport,
+  session, state]
 import ../../core/records as filerecs
 import ../../view/qualitywords
 import focus, icons, marks, overflow
@@ -119,7 +120,7 @@ proc editsFor(paths: openArray[string]; snap: EditsSnapshot): Table[string, File
       result[path] = snap.byKey[key]
 
 proc folderScan(folder, cache: string; snap: EditsSnapshot; sink: QualitySink;
-    note: ScanNote): JobWork =
+    note: ScanNote; noise: NoiseSettings): JobWork =
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     ctx.setPhase Listing
@@ -132,7 +133,7 @@ proc folderScan(folder, cache: string; snap: EditsSnapshot; sink: QualitySink;
       raise newException(ValueError, CannotList)
     if note != nil: note.capped = capped
     ctx.checkCancelled()
-    let scan = scanQuality(paths, editsFor(paths, snap), sink, cache)
+    let scan = scanQuality(paths, editsFor(paths, snap), sink, cache, noise)
     scan(ctx)
 
 proc exportWork(path, beside: string; stations: seq[StationRow];
@@ -208,7 +209,7 @@ proc submit(ui: var QualityUi; st: AppState) =
   ui.progressTotal = 0
   ui.status = Scanning
   ui.scanJob = st.jobs.submit(qualitySpec(@[folder]),
-    folderScan(folder, cache, snap, ui.sink, ui.note))
+    folderScan(folder, cache, snap, ui.sink, ui.note, st.settings.noise))
 
 proc consider(ui: var QualityUi; st: AppState) =
   if not ui.sortsReady:
@@ -301,6 +302,8 @@ func stationName(c: StationSortColumn): string =
   of ssSpiky: ColSpiky
   of ssDcOffset: ColDcOffset
   of ssNonFinite: ColNonFinite
+  of ssNoisy: ColNoisy
+  of ssWeak: ColWeak
   of ssBadRecords: ColBadRecords
 
 func recordName(c: RecordSortColumn): string =
@@ -317,6 +320,8 @@ func recordName(c: RecordSortColumn): string =
   of rsSpiky: ColSpiky
   of rsDcOffset: ColDcOffset
   of rsNonFinite: ColNonFinite
+  of rsNoisy: ColNoisy
+  of rsWeak: ColWeak
 
 func stationSortText(spec: SortSpec[StationSortColumn]): string =
   var parts: seq[string] = @[]
@@ -428,10 +433,10 @@ proc drawStations(ui: var QualityUi; marks: var Marks) =
     ui.stationKey = ""
   const names = [ColLine, ColPoint, ColIndex, ColComponent, ColSeen, ColKilled, ColBad,
     ColHeaderDead, ColAllZero, ColConstant, ColClipped, ColSpiky, ColDcOffset,
-    ColNonFinite, ColBadRecords]
+    ColNonFinite, ColNoisy, ColWeak, ColBadRecords]
   const keys = [ssLine, ssPoint, ssIndex, ssComponent, ssSeen, ssKilled, ssBad,
     ssHeaderDead, ssAllZero, ssConstant, ssClipped, ssSpiky, ssDcOffset, ssNonFinite,
-    ssBadRecords]
+    ssNoisy, ssWeak, ssBadRecords]
   ui.refreshStations()
   let rows = ui.report.stations
   let n = ui.stationShown.len
@@ -473,6 +478,10 @@ proc drawStations(ui: var QualityUi; marks: var Marks) =
       numberCell($r.counts[qfSpiky])
       numberCell($r.counts[qfDcOffset])
       numberCell($r.counts[qfNonFinite])
+      numberCell(noiseCell(r.tested, r.noisy))
+      tip(NoisyTip)
+      numberCell(noiseCell(r.tested, r.weak))
+      tip(WeakTip)
       if igTableNextColumn():
         igTextUnformatted(firstLine(r.badRecords).cstring, nil)
         tip(r.badRecords)
@@ -487,9 +496,9 @@ proc drawRecords(ui: var QualityUi; st: AppState; marks: var Marks; commands: va
     ui.recordDirty = false
     ui.recordKey = ""
   const names = [ColFile, ColRecord, ColSeen, ColKilled, ColBad, ColHeaderDead, ColAllZero,
-    ColConstant, ColClipped, ColSpiky, ColDcOffset, ColNonFinite]
+    ColConstant, ColClipped, ColSpiky, ColDcOffset, ColNonFinite, ColNoisy, ColWeak]
   const keys = [rsFile, rsRecord, rsSeen, rsKilled, rsBad, rsHeaderDead, rsAllZero,
-    rsConstant, rsClipped, rsSpiky, rsDcOffset, rsNonFinite]
+    rsConstant, rsClipped, rsSpiky, rsDcOffset, rsNonFinite, rsNoisy, rsWeak]
   ui.refreshRecords()
   let rows = ui.report.records
   let n = ui.recordShown.len
@@ -535,6 +544,10 @@ proc drawRecords(ui: var QualityUi; st: AppState; marks: var Marks; commands: va
       numberCell($r.counts[qfSpiky])
       numberCell($r.counts[qfDcOffset])
       numberCell($r.counts[qfNonFinite])
+      numberCell(noiseCell(r.tested, r.noisy))
+      tip(NoisyTip)
+      numberCell(noiseCell(r.tested, r.weak))
+      tip(WeakTip)
       igPopID()
   ImGuiListClipper_End(clipper)
   ImGuiListClipper_destroy(clipper)
