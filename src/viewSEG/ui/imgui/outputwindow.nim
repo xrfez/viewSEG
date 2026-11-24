@@ -403,6 +403,14 @@ proc liveFiles(st: AppState; items: seq[BatchItem]): seq[OpenFile] =
           signature: st.sessions[i].signature)
         break
 
+proc projectJoin(st: AppState): BatchProject =
+  ## The project's survey join and station moves, for the files the batch
+  ## opens itself (an open file holds them in its keys already).
+  if not st.inProject: return
+  result.moves = st.project.doc.stationMoves
+  result.survey = st.projectSurvey
+  if not result.survey.isNil: result.options = st.project.doc.options
+
 proc chosenPattern(st: AppState): OutputPattern =
   ## The saved pattern whose label matches the project's choice, spaces
   ## stripped and case ignored. Empty when nothing is chosen or the label
@@ -455,7 +463,7 @@ proc submitRun(ui: var OutputUi; st: AppState) =
     if ui.processingOn: opts.processing = st.panels[pk].layers[0].processing
     if ui.sortOn: opts.sortKeys = st.panels[pk].layers[0].order
   var ask = BatchAsk(root: ui.source, items: items, destRoot: ui.dest, options: opts,
-    mirrorFolders: ui.mirror, pattern: chosenPattern(st))
+    mirrorFolders: ui.mirror, pattern: chosenPattern(st), project: projectJoin(st))
   let sweep = chosenSweep(st)
   if ui.correlate and sweep.why.len == 0:
     ask.correlate = BatchCorrelate(on: true, name: sweep.name, path: sweep.path,

@@ -13,12 +13,22 @@
 ## tick on and no line saying so. A Rev 2.1 file with no coordinate slot said
 ## "1 traces changed" while the bytes matched a write that stored nothing.
 ##
+## A batch of files this job opens itself takes the project's survey join and
+## station moves per file, as one open file written alone does: both files of
+## a batch carry the joined and moved positions, equal to writing each alone;
+## a file the survey does not cover keeps its own positions and the result
+## line says so; nothing set keeps the old line.
+##
+## Seen to fail: with `BatchAsk.project` ignored, the batch files kept the
+## header easting 1 (`a batch file kept the header easting 1`) and said the
+## batch wrote the file's own positions.
+##
 ## Synthetic files only, from the join fixtures' survey.
 
 import std/[math, options, os, strutils, tempfiles]
 import parseSEG
 import parseSEG/model/traceindex
-import viewSEG/core/[edits, jobs, outputjobs, sigtypes, stationmoves]
+import viewSEG/core/[edits, filememory, jobs, join, outputbatch, outputjobs, sigtypes, stationmoves]
 import utils/[fixtures, waiting]
 
 func near(a, b: float64; tol = 0.05): bool =
@@ -45,11 +55,11 @@ proc loadSurvey(paths: SpsPaths): SurveyGeometry =
   result.addSps(paths.r)
   result.addSps(paths.x)
 
-proc twoTimes(dir: string): string =
+proc twoTimes(dir: string; name = "two-times.sgy"; first = FirstRecord): string =
   ## Two shots, two channels, header coordinates (1, 1), so a join replaces
   ## them. Times are stamped on the keys after open: the writer does not
   ## store `TraceKeys.time` in these headers.
-  result = dir / "two-times.sgy"
+  result = dir / name
   var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
     measurementSystem: 1))
   var buf = newSeq[float32](8)
@@ -57,7 +67,7 @@ proc twoTimes(dir: string): string =
   for shot in 0 .. 1:
     for channel in 1 .. 2:
       var k = initTraceKeys()
-      k.record = float64(FirstRecord + shot)
+      k.record = float64(first + shot)
       k.channel = float64(channel)
       (k.srcX, k.srcY, k.rcvX, k.rcvY) = (1.0, 1.0, 1.0, 1.0)
       (k.t0Ms, k.intervalUs, k.status) = (0.0, DtMs * 1000, tsLive)
@@ -392,11 +402,96 @@ proc runCases(fx: Fixtures; outDir: string) =
 
   f.close()
 
+proc runBatchCases(fx: Fixtures; outDir: string) =
+  var survey = loadSurvey(fx.surveySps())
+  let inDir = outDir / "batch-in"
+  createDir(inDir)
+  let a = twoTimes(inDir, "a.sgy")
+  let b = twoTimes(inDir, "b.sgy")
+  let c = twoTimes(inDir, "c.sgy", first = 9000)
+  var moves = StationMoves()
+  moves.add StationMove(station: StationKey(line: RcvLine, point: FirstRcvPoint, index: 0),
+    x: 7000, y: OriginY)
+  let withProject = BatchProject(survey: addr survey, options: JoinOptions(coordinates: hcReplace),
+    moves: moves)
+
+  proc runIt(ask: BatchAsk): BatchResult =
+    let jobs = initJobs()
+    let sink = BatchSink()
+    let id = jobs.submit(outputBatchSpec(ask), outputBatchWork(ask, Store(), @[], sink))
+    doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
+      "the batch did not finish"
+    doAssert jobs.state(id) == jsDone, jobs.info(id).get.error & " / " & sink.result.reason
+    sink.result
+
+  proc items(names: varargs[string]): seq[BatchItem] =
+    for n in names: result.add BatchItem(source: inDir / n, relative: n)
+
+  # What writing each file alone gives: the session's join, then the moves.
+  proc alone(path, dest: string; join = true) =
+    var f = openSeismic(path, keys = true)
+    if join:
+      doAssert f.applySurvey(survey, overwrite = true) > 0, "the join changed nothing"
+      var bases: seq[ReceiverBase] = @[]
+      doAssert f.applyFileMoves(moves, bases) > 0, "the move changed nothing"
+    let got = runWrite(f, path, dest, OutputOptions(format: ofSegy))
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    f.close()
+
+  proc sameBytes(x, y: string) =
+    var fx = openSeismic(x, keys = true)
+    var fy = openSeismic(y, keys = true)
+    doAssert fx.len == fy.len
+    for t in 0 ..< fx.len:
+      let (p, q) = (fx.traceKeys(t), fy.traceKeys(t))
+      doAssert near(p.rcvX, q.rcvX) and near(p.rcvY, q.rcvY) and near(p.srcX, q.srcX) and
+        near(p.srcY, q.srcY) and near(p.offset, q.offset, 1.0),
+        "trace " & $t & " differs from writing the file alone: rcvX " & $p.rcvX & " vs " & $q.rcvX
+    fx.close()
+    fy.close()
+
+  let ask = BatchAsk(root: inDir, items: items("a.sgy", "b.sgy", "c.sgy"),
+    destRoot: outDir / "batch-out", options: OutputOptions(format: ofSegy,
+    writeSessionPositions: true), mirrorFolders: true, project: withProject)
+  let got = runIt(ask)
+  doAssert got.written == 3 and got.failed == 0, $got
+  for n in ["a.sgy", "b.sgy"]:
+    let dest = outDir / "batch-out" / n
+    var back = openSeismic(dest, keys = true)
+    doAssert near(back.traceKeys(0).rcvX, 7000) and near(back.traceKeys(0).rcvY, OriginY),
+      "a batch file kept the header easting " & $back.traceKeys(0).rcvX
+    doAssert near(back.traceKeys(1).rcvX, rcvX(2)), "channel 2 was not the survey's: " &
+        $back.traceKeys(1).rcvX & " vs " & $rcvX(2)
+    doAssert near(back.traceKeys(3).rcvX, rcvX(2)), "channel 2 of shot 2 was not the survey's"
+    back.close()
+    alone(inDir / n, outDir / ("alone-" & n))
+    sameBytes(dest, outDir / ("alone-" & n))
+    let r = got.items[if n == "a.sgy": 0 else: 1]
+    doAssert says(r.lines, BatchJoinedPositions), "no joined line: " & $r.lines
+    doAssert not says(r.lines, BatchOwnPositions), $r.lines
+  # The file the survey does not cover keeps its own positions, even with the move
+  # (the move names a station its traces do not have), and says so.
+  var cover = openSeismic(outDir / "batch-out" / "c.sgy", keys = true)
+  doAssert near(cover.traceKeys(0).rcvX, 1), "an uncovered file was changed"
+  cover.close()
+  doAssert says(got.items[2].lines, BatchSurveyNotCovered), $got.items[2].lines
+  # Nothing set: the old line, and the file's own positions.
+  var bare = ask
+  bare.project = BatchProject()
+  bare.destRoot = outDir / "batch-bare"
+  bare.items = items("a.sgy")
+  let plain = runIt(bare)
+  doAssert says(plain.items[0].lines, BatchOwnPositions), $plain.items[0].lines
+  var own = openSeismic(outDir / "batch-bare" / "a.sgy", keys = true)
+  doAssert near(own.traceKeys(0).rcvX, 1), "no project: the file was changed"
+  own.close()
+
 proc main*() =
   let outDir = createTempDir("viewseg-outpos-", "")
   try:
     withFixtures fx:
       runCases(fx, outDir)
+      runBatchCases(fx, outDir)
   finally:
     removeDir(outDir)
 

@@ -2181,6 +2181,16 @@ func project*(state: AppState): lent ProjectState {.inline.} =
   ## The project open; `dir` "" for none.
   state.project
 
+func projectSurvey*(state: AppState): ptr SurveyGeometry =
+  ## The project's survey as its joins read it, or nil when the project has
+  ## none that can be matched (no project, none made yet, or it failed to be
+  ## restored). The state keeps it alive; a job that reads it must end first
+  ## when the project closes.
+  if state.project.dir.len > 0 and state.project.doc.hasSurvey and
+      state.project.survey != srFailed and not state.project.geometry.isNil:
+    cast[ptr SurveyGeometry](state.project.geometry)
+  else: nil
+
 func inProject*(state: AppState): bool {.inline.} =
   ## Whether a project is open.
   state.project.dir.len > 0

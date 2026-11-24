@@ -850,6 +850,58 @@ proc joinReadWork*(file: ptr SeismicFile; session: SessionId; files: seq[JoinFil
     to.post Msg(job: ctx.id, kind: mkJoining, planSession: session, geometry: move g,
       relations: move rel, reusedAt: reusedAt, plan: move plan, joinSurvey: move survey)
 
+proc applyJoin*(file: ptr SeismicFile; g, relations: ptr SurveyGeometry; replace,
+    tableOnly: bool; moves: StationMoves; bases: seq[ReceiverBase]; stats: var JoinStats;
+    posted: var seq[ReceiverBase]): tuple[changed, moved: int] =
+  ## Joins `g` (its relation records those of `relations` when given) to
+  ## `file`'s keys in memory, replacing the headers' coordinates when
+  ## `replace`, then applies `moves` over that. `bases` are put back first. With `g` nil only the moves apply.
+  ## `posted` gets the receiver fields the moves replaced. The one step the
+  ## join's job (`joinApplyWork`) and a batch write (`joinOwnFile`) share;
+  ## it never writes the file.
+  if bases.len > 0:
+    var scratch: seq[ReceiverBase] = bases
+    result.moved = file[].applyFileMoves(StationMoves(), scratch)
+  result.changed = if g.isNil: 0
+                   elif tableOnly: file[].applyGeometry(g[].table, replace)
+                   elif relations.isNil: file[].applySurvey(g[], stats, replace)
+                   else:
+                     when SharedRelations: file[].applySurvey(g[], relations[], stats, replace)
+                     else: file[].applySurvey(g[], stats, replace)
+  if moves.len > 0:
+    var next: seq[ReceiverBase] = @[]
+    result.moved = file[].applyFileMoves(moves, next)
+    posted = next
+
+type OwnJoin* = object
+  ## What `joinOwnFile` did to one file.
+  traces*: int  ## traces in the file
+  matched*: int ## seismic traces the survey placed (source and receiver both)
+  changed*: int ## traces the survey changed
+  moved*: int   ## traces the station moves changed
+
+proc joinOwnFile*(file: ptr SeismicFile; g: ptr SurveyGeometry; opts: JoinOptions;
+    moves: StationMoves; progress: proc (done, total: int): bool): OwnJoin =
+  ## Joins the project's survey `g` (nil: none) to `file`, which this thread
+  ## holds alone, as the project's own join does for an open file (`planJoin`
+  ## for what to replace, then `applyJoin`), and applies `moves`; the join is
+  ## worked out for this file's own traces. A file the survey does not match
+  ## keeps its own positions (`matched` is 0). Keys are read first when the
+  ## file has none. Never writes the file.
+  result.traces = file[].len
+  var replace = false
+  if not g.isNil:
+    let plan = planJoin(file, g[], opts, progress)
+    if plan.traces != result.traces: raise newException(JobCancelledError, "cancelled")
+    result.matched = plan.matched
+    replace = plan.replace
+    if plan.changes == 0 and moves.len == 0: return
+  elif moves.len == 0: return
+  var stats: JoinStats
+  var posted: seq[ReceiverBase] = @[]
+  (result.changed, result.moved) = file.applyJoin(g, nil, replace, false, moves, @[], stats,
+    posted)
+
 proc joinApplyWork*(file: ptr SeismicFile; path: string; session: SessionId;
     g: ptr SurveyGeometry; replace, tableOnly: bool; holds: HoldRelease; to: Poster;
     relations: ptr SurveyGeometry = nil; moves: StationMoves = StationMoves();
@@ -882,18 +934,8 @@ proc joinApplyWork*(file: ptr SeismicFile; path: string; session: SessionId;
     var moveChanged = 0
     var postedBases: seq[ReceiverBase] = @[]
     {.cast(gcsafe).}:
-      if bases.len > 0:
-        var scratch: seq[ReceiverBase] = bases
-        moveChanged = file[].applyFileMoves(StationMoves(), scratch)
-      changed = if tableOnly: file[].applyGeometry(g[].table, replace)
-                 elif relations.isNil: file[].applySurvey(g[], stats, replace)
-                 else:
-                   when SharedRelations: file[].applySurvey(g[], relations[], stats, replace)
-                   else: file[].applySurvey(g[], stats, replace)
-      if moves.len > 0:
-        var next: seq[ReceiverBase] = @[]
-        moveChanged = file[].applyFileMoves(moves, next)
-        postedBases = next
+      (changed, moveChanged) = file.applyJoin(g, relations, replace, tableOnly, moves, bases,
+        stats, postedBases)
       revision = file[].keysRevision
     discard ctx.progress(1, 1)
     clearCycleRoots()

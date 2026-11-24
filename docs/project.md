@@ -55,8 +55,9 @@ Land 2026/                  the project folder: this is what is opened
   survey join's, into the output headers on every path, unless **Keep the file's
   own positions** is ticked: then the file's own header positions are written.
   The result counts only traces whose positions were stored. A file the batch
-  opens itself is not joined or moved, and the result says the batch wrote the
-  file's own positions.
+  opens itself takes the project's survey join and station moves, worked out for
+  its own traces, as an open file does, and the result says so; one the survey does
+  not cover is written with its own positions, and the result says that.
 - **`files/`** is the store of what is remembered about files (`core/filememory`), in the
   same documents as `<config>/files/`. While a project is open it is the store's home, so
   every edit made goes there and nothing changes in the program's own store.

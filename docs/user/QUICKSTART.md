@@ -402,7 +402,9 @@ every path, including when headers are built from the trace keys. The notes say 
 traces changed, or that the positions were written where the format has a place for them,
 or that they could not be written. Tick it to write the file's own positions from its
 header keys; the notes say so. A file the batch opens itself
-is not joined or moved, and the notes say the batch wrote the file's own positions.
+takes the project's survey join and station moves, for its own traces, as an open file
+does, and the notes say so; a file the survey does not cover is written with its own
+positions, and the notes say that.
 Display-only gain is not written.
 A SEG-D file is sorted within each record. A file already open is written as it stands,
 including edits not yet saved. A signature file that is not open is decoded and

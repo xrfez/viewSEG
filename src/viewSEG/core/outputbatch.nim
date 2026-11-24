@@ -7,9 +7,14 @@
 ## modified. A file that cannot be written, or a signature file that cannot
 ## be decoded, is recorded and the batch goes on. A destination folder that
 ## is the source folder, inside it, or holding it, is refused before anything
-## is written. A file this job opens is not joined to the project survey and
-## does not take station moves; the result says the batch wrote that file's
-## own positions. A file already open is written as the session holds it.
+## is written. A file already open is written as the session holds it: its
+## join to the project's survey and the project's station moves are in its
+## keys. A file this job opens takes the same, from `BatchAsk.project`
+## (`joinOwnFile`, shared with the project's join): the join is worked out
+## for that file's own traces, and the result says what was joined or moved.
+## A file the survey does not cover is written with its own positions, and
+## the result says so. With no `project` set, or when the window keeps the
+## file's own positions, the batch wrote the file's own positions and says so.
 ##
 ## When `correlate` is on, a stored sweep is loaded once on this job's thread,
 ## the same way the Correlate button loads a sweep, and passed to every seismic
@@ -34,13 +39,18 @@ import std/[math, options, os, sets, strutils, tables, times]
 import parseSEG
 import parseSEG/model/traceindex
 import correlatejobs, edits, filejobs, filekinds, filememory, filesystem, identity, jobs,
-  outputjobs, outputnames, outputnamevalues, references, session, signatures,
-  sigtypes, threads, vendormaps
+  join, outputjobs, outputnames, outputnamevalues, references, session, signatures,
+  sigtypes, stationmoves, surveyjobs, threads, vendormaps
 
 const
   BatchScale = 1_000_000 ## one file's share of the job's progress
   BatchOwnPositions* = "The batch wrote the file's own positions."
     ## A file this job opened itself was not joined and took no station move.
+  BatchJoinedPositions* = "The batch joined the project's survey and its station moves to the file."
+    ## A file this job opened took the project's join and moves.
+  BatchSurveyNotCovered* = "The project's survey does not cover this file: its own positions " &
+    "were written."
+    ## The survey matched no trace of a file this job opened.
   SignatureUncorrelated* = "A signature file is written uncorrelated."
     ## A signature file in a correlated batch is written as it is today.
 
@@ -68,6 +78,14 @@ type
     lines*: seq[string] ## the writer's diagnostics, and notes about saved edits
     why*: string        ## a sentence when this file was not written; "" when it was
 
+  BatchProject* = object
+    ## What a file this job opens takes, as an open file does. `survey` is the
+    ## project's geometry, kept alive by the caller until the job ends (nil:
+    ## no survey); `moves` the project's station moves.
+    survey*: ptr SurveyGeometry
+    options*: JoinOptions
+    moves*: StationMoves
+
   BatchAsk* = object
     ## What to write. `options` is the one set every file is written with,
     ## the same `OutputOptions` `outputWork` takes, including `processing`.
@@ -79,6 +97,9 @@ type
       ## true: `destRoot / relative` with the new extension, creating sub
       ## folders. false: every file in `destRoot`; a second file that would
       ## take a name already used is a failure of that file, not an overwrite.
+    project*: BatchProject
+      ## The project's survey join and station moves for files opened here.
+      ## Not used with `options.writeSessionPositions` off.
     pattern*: OutputPattern
       ## How each file is named. No parts: today's names, including a kept
       ## source extension when signature files would share one name.
@@ -583,6 +604,25 @@ proc takeReference(corr: BatchCorrelate): tuple[samples: seq[float32]; dtMs: flo
            else: 0.0
   (read.samples, dt)
 
+proc joinedOwn(ctx: JobContext; file: ptr SeismicFile; signature: SignatureFacts;
+    ask: BatchAsk): string =
+  ## Joins the project's survey and moves to a file this job opened, as an open
+  ## file holds them, for its own traces; the note for the result.
+  let pr = ask.project
+  if signature.isSignature or not ask.options.writeSessionPositions or
+      (pr.survey.isNil and pr.moves.len == 0) or file == nil or not file[].isOpen:
+    return BatchOwnPositions
+  if not file[].hasKeys:
+    if not file[].inMemory: fs.mappedRead(file[].path, headers = true)
+    file[].ensureKeys()
+  let progress = proc (done, total: int): bool {.gcsafe, raises: [].} = not ctx.cancelled
+  var did: OwnJoin
+  {.cast(gcsafe).}:
+    did = joinOwnFile(file, pr.survey, pr.options, pr.moves, progress)
+  if not pr.survey.isNil and did.matched == 0 and did.moved == 0: BatchSurveyNotCovered
+  elif did.changed > 0 or did.moved > 0: BatchJoinedPositions
+  else: BatchOwnPositions
+
 proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenFile];
     sink: BatchSink) =
   if sink != nil: sink.result = BatchResult(items: @[])
@@ -666,8 +706,8 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
           s = openSession(item.source, progress)
         file = s.filePtr
         edits = savedEdits(ctx, store, item.source, s.modified, itemLines, doneFiles, count)
-        itemLines.add BatchOwnPositions
         if s != nil: signature = s.signature
+        itemLines.add joinedOwn(ctx, file, signature, writing)
       if plans[i].note.len > 0: itemLines.add plans[i].note
       if ctx.cancelled: raise newException(JobCancelledError, "Cancelled.")
       if patternOn(writing):
