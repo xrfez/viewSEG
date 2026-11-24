@@ -173,7 +173,13 @@ proc main*() =
       doAssert list.entries.len == 74, $list.entries.len
       doAssert list.others == 3 and list.unreadable == 0,
         "the foreign .dat, the kind-6 .vib and the empty file are other files: " & $list.others
-      doAssert st.sessions.len == 0 and st.jobs.active.len == 0, "listing opened a session"
+      # the only job a listing starts is the kinds job, and it reads the seismic file (shots.sgy);
+      # a signature file is no seismic file (`startKinds`), so none is opened for its kind
+      doAssert st.sessions.len == 0, "listing opened a session"
+      doAssert st.jobs.active.allIt(it.spec.title == "Read what the files are"),
+        "listing started a job besides the kinds job: " & $st.jobs.active.mapIt(it.spec.title)
+      doAssert st.settle(st.jobs.active.len == 0), "the kinds job did not end"
+      doAssert st.entry(f.segy).kindState != ksUnread, "the seismic file's kind was not read"
       let (dat, vib) = f.pairs[3]
       let d = st.entry(dat).sweep
       doAssert d.kind == sgDat and d.problem.len == 0 and d.complete, $d
