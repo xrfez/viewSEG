@@ -133,6 +133,20 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
 - **SEG-Y** has no place for the source line or the point index, and Messages says once that
   they are left out. A point index outside 0 to 255 is written as 0, and counted.
 - **The samples** are written as 32-bit floats.
+- **What the output keeps of a SEG-D recording's headers.** When the recording is SEG-D and the
+  format is SEG-D, the file is written in the recording's own revision (Rev 2.1, say, not
+  Rev 3) and its headers are the recording's: the general and extended headers, the channel
+  sets with their filter and gain fields, and each trace's header blocks, a manufacturer's own
+  among them, taken from the segment that holds the first sample of the shot's window. What
+  changes is what belongs to the slice: the file number (the log's, else 1 to the number of
+  shots), the record time, the trace number (1 to the number of components), the time of the
+  first sample in a Rev 3 trace's timestamp block, the start time in a vendor block that a
+  vendor header map names, and the source line and point where the revision has a place for
+  them (Rev 2: the source header; its coordinates have none, and Messages says so). The
+  samples are written as 32-bit floats whatever the recording's sample format. A recording
+  the writer cannot copy (multiplexed data, several records) and any SEG-Y recording or SEG-Y
+  output build their headers from the options and the log instead, as Rev 3 for SEG-D.
+  A shot the writer refuses is left out and named in Messages; the others are written.
 
 When a vendor header map names each trace's start time (see `vendormaps/README.md`), the slice
 reads the segments' start times from the trace headers and says so in Messages. A trace
