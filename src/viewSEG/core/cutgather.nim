@@ -447,16 +447,16 @@ func cutRefusal*(f: RecordingFacts): string =
   of rkReceiverSliced:
     result = "This file is a time-sliced receiver gather, not a continuous one."
     case f.slicedWhy
-    of swIrregular:
-      result.add " Trace " & $f.offTrace & " starts " & secs(f.offSeconds) & " off a whole " &
-        "number of steps after the one before it (the traces start every " &
-        secs(f.stepSeconds) & ")."
-    of swShort:
-      result.add " Its traces are " & secs(f.segmentSeconds) & " long but start every " &
-        secs(f.stepSeconds) & ", so there is dead time between them."
-    of swOverlap:
-      result.add " Trace " & $f.offTrace & " overlaps a neighbouring trace by " &
-        secs(f.overlapSeconds) & "."
+    of swOffStep:
+      if f.offLength:
+        result.add " Trace " & $f.offTrace & " is " & secs(f.offSeconds) & " long; the others " &
+          "are " & secs(f.segmentSeconds) & "."
+      else:
+        result.add " Trace " & $f.offTrace & " starts " & secs(f.offSeconds) & " after the " &
+          "one before it; the traces are " & secs(f.segmentSeconds) & " long, so it is not a " &
+          "whole number of trace lengths later."
+    of swNoStep:
+      result.add " The traces do not follow one another in time."
     of swSameStart:
       result.add " Every trace carries the same start time, so their own start times are not " &
         "in the headers viewSEG reads: they may be in a header that a vendor header map " &

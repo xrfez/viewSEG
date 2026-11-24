@@ -103,10 +103,10 @@ proc main*() =
     # no variance: a start 150 samples (0.3 s) late makes the file time sliced
     let f = factsOf(dir, "gap", [spec(0, 0), spec(0, 1000), spec(0, 2150), spec(0, 3150)])
     doAssert f.kind == rkReceiverSliced and f.irregular == 1 and f.abutting == 2, $f
-    doAssert f.slicedWhy == swShort and f.offTrace == 3, $f
+    doAssert f.slicedWhy == swOffStep and f.offTrace == 3, $f
     doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a " &
-      "continuous one. Its traces are 2 s long but start every 2.3 s, so there is dead " &
-      "time between them.", cutRefusal(f)
+      "continuous one. Trace 3 starts 2.3 s after the one before it; the traces are 2 s " &
+      "long, so it is not a whole number of trace lengths later.", cutRefusal(f)
 
   block continuous_after_a_box_off_for_an_hour:
     # 60 s traces starting at minutes 0, 1, 2 and 70
@@ -143,9 +143,11 @@ proc main*() =
     for i in 0 ..< 5: specs.add spec(0, i * 700)
     let f = factsOf(dir, "thirty", specs)
     doAssert f.kind == rkReceiverSliced and f.irregular == 4 and f.abutting == 0, $f
-    doAssert f.slicedWhy == swOverlap and f.offTrace == 2, $f
+    doAssert f.slicedWhy == swOffStep and f.offTrace == 2, $f
     doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a " &
-      "continuous one. Trace 2 overlaps a neighbouring trace by 0.6 s.", cutRefusal(f)
+      "continuous one. Trace 2 starts 1.4 s after the one before it; the traces are 2 s " &
+      "long, so it is not a whole number of trace lengths later.", cutRefusal(f)
+    doAssert "overlap" notin cutRefusal(f)
     doAssert kindWords(f.kind) == "time-sliced receiver gather"
 
   block sliced_every_half_second_of_thirty:
@@ -153,35 +155,62 @@ proc main*() =
     for i in 0 ..< 6: specs.add spec(0, i * 250)
     let f = factsOf(dir, "dense", specs, n = 15000)
     doAssert f.kind == rkReceiverSliced and f.irregular == 5 and f.abutting == 0, $f
-    doAssert f.slicedWhy == swOverlap, $f
+    doAssert f.slicedWhy == swOffStep, $f
+    doAssert cutRefusal(f).endsWith("Trace 2 starts 0.5 s after the one before it; the " &
+      "traces are 30 s long, so it is not a whole number of trace lengths later."),
+      cutRefusal(f)
 
   block sliced_every_ten_seconds_of_six_names_the_trace:
     var specs: seq[Spec]
     for i in 0 ..< 5: specs.add spec(0, i * 5000)
     let f = factsOf(dir, "dead", specs, n = 3000)
     doAssert f.kind == rkReceiverSliced and f.abutting == 0 and f.irregular == 4, $f
-    doAssert f.slicedWhy == swIrregular and f.offTrace == 2, $f
+    doAssert f.slicedWhy == swOffStep and f.offTrace == 2, $f
     doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a " &
-      "continuous one. Trace 2 starts 2 s off a whole number of steps after the one " &
-      "before it (the traces start every 6 s).", cutRefusal(f)
+      "continuous one. Trace 2 starts 10 s after the one before it; the traces are 6 s " &
+      "long, so it is not a whole number of trace lengths later.", cutRefusal(f)
+    doAssert "every" notin cutRefusal(f)
 
   block a_trace_shorter_than_the_step_leaves_dead_time:
     var traces: seq[tuple[first, n: int]]
     for i in 0 ..< 5: traces.add (i * 1000, (if i == 2: 800 else: 1000))
     let f = lengthsOf(dir, "short", traces)
-    doAssert f.kind == rkReceiverSliced and f.slicedWhy == swShort and f.uncovered == 1, $f
+    doAssert f.kind == rkReceiverSliced and f.slicedWhy == swOffStep and f.uncovered == 1, $f
     doAssert f.abutting == 4 and f.offTrace == 3, $f
     doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a " &
-      "continuous one. Its traces are 1.6 s long but start every 2 s, so there is dead " &
-      "time between them.", cutRefusal(f)
+      "continuous one. Trace 3 is 1.6 s long; the others are 2 s.", cutRefusal(f)
 
   block a_trace_far_longer_than_the_step_overlaps:
     var traces: seq[tuple[first, n: int]]
     for i in 0 ..< 5: traces.add (i * 1000, (if i == 4: 1300 else: 1000))
     let f = lengthsOf(dir, "long", traces)
-    doAssert f.kind == rkReceiverSliced and f.slicedWhy == swOverlap and f.offTrace == 5, $f
-    doAssert cutRefusal(f).endsWith("Trace 5 overlaps a neighbouring trace by 0.6 s."),
+    doAssert f.kind == rkReceiverSliced and f.slicedWhy == swOffStep and f.offTrace == 5, $f
+    doAssert cutRefusal(f).endsWith("Trace 5 is 2.6 s long; the others are 2 s."),
       cutRefusal(f)
+
+  block traces_of_1000_500_500_1000_1000_name_the_short_one_by_its_length:
+    let f = lengthsOf(dir, "halves", [(0, 1000), (1000, 500), (1500, 500), (2000, 1000),
+      (3000, 1000)])
+    doAssert f.kind == rkReceiverSliced and f.slicedWhy == swOffStep and f.offTrace == 2, $f
+    doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a " &
+      "continuous one. Trace 2 is 1 s long; the others are 2 s.", cutRefusal(f)
+    doAssert "overlap" notin cutRefusal(f)
+
+  block a_step_of_999_or_950_with_every_other_trace_missing_is_continuous:
+    for step in [999, 950, 1000]:
+      var specs: seq[Spec]
+      for k in [0, 2, 4, 6]: specs.add spec(0, k * step)
+      let f = factsOf(dir, "every" & $step, specs)
+      doAssert f.kind == rkReceiverContinuous and f.skips == 3 and f.irregular == 0, $f
+      doAssert f.missingSegments == 3, $f
+
+  block two_components_of_a_station_at_different_single_starts:
+    let f = factsOf(dir, "twoStarts", [spec(0, 0, 0), spec(0, 1300, 1)])
+    doAssert f.kind == rkReceiverSliced and f.slicedWhy == swOffStep and f.offTrace == 2, $f
+    doAssert cutRefusal(f) == "This file is a time-sliced receiver gather, not a " &
+      "continuous one. Trace 2 starts 2.6 s after the one before it; the traces are 2 s " &
+      "long, so it is not a whole number of trace lengths later.", cutRefusal(f)
+    doAssert "same start time" notin cutRefusal(f)
 
   block a_trace_one_sample_short_still_covers_the_step:
     var traces: seq[tuple[first, n: int]]
@@ -202,16 +231,19 @@ proc main*() =
     for first in [0, 1000, 2500, 3500, 5000, 6000]: specs.add spec(0, first)
     let f = factsOf(dir, "half", specs)
     doAssert f.kind == rkReceiverSliced and f.irregular == 2 and f.abutting == 3, $f
-    doAssert f.slicedWhy == swIrregular and f.offTrace == 3, $f
-    doAssert abs(f.offSeconds - 1.0) < 1e-9, $f
+    doAssert f.slicedWhy == swOffStep and f.offTrace == 3, $f
+    doAssert abs(f.offSeconds - 3.0) < 1e-9, $f
     doAssert cutRefusal(f).startsWith("This file is a time-sliced receiver gather, not a " &
-      "continuous one. Trace 3 starts 1 s off"), cutRefusal(f)
+      "continuous one. Trace 3 starts 3 s after"), cutRefusal(f)
 
   block sliced_with_irregular_starts:
     let f = factsOf(dir, "irregular", [spec(0, 0), spec(0, 1300), spec(0, 2750),
       spec(0, 4150), spec(0, 5700)])
     doAssert f.kind == rkReceiverSliced and f.irregular == 4, $f
-    doAssert f.slicedWhy == swShort, $f
+    doAssert f.slicedWhy == swOffStep and f.offTrace == 2, $f
+    doAssert cutRefusal(f).endsWith("Trace 2 starts 2.6 s after the one before it; the " &
+      "traces are 2 s long, so it is not a whole number of trace lengths later."),
+      cutRefusal(f)
 
   block shot_gather_of_three_components:
     var specs: seq[Spec]
@@ -294,7 +326,7 @@ proc main*() =
     doAssert few.kind == rkReceiverContinuous and few.boundaries == KindStarts - 1, $few
     let all = factsOf(dir, "late", specs, starts = AllStarts)
     doAssert all.kind == rkReceiverSliced and all.boundaries == 11 and all.irregular == 2, $all
-    doAssert all.slicedWhy == swShort and all.offTrace == 10, $all
+    doAssert all.slicedWhy == swOffStep and all.offTrace == 10, $all
     # a late start among the first few is seen at once
     var early: seq[Spec]
     for i in 0 ..< 12: early.add spec(0, i * 1000 + (if i == 4: 150 else: 0))

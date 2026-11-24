@@ -33,13 +33,16 @@ components of the same type and never re-sorting anything:
    after the one before it, with no variance. For one receiver (one channel at one point) the
    traces are taken in time order and those sharing one start time count as one segment (they
    are its components). The step is the commonest difference between consecutive start times
-   from 0.9 to 1 times the trace length; when none lies there, the step is the trace length.
+   from 0.9 to 1 times the trace length; when none lies there, the commonest difference divided
+   by a whole number from 2 to 8 that lies there (every other trace was not recorded); when
+   still none, the step is the trace length.
    Every start must then be the previous start plus k steps, k a whole number, to within one
-   sample, and every trace must cover the step: not shorter (dead time between traces), and at
+   sample, and every trace must cover the step: not shorter than it, and at
    most a tenth of its length longer (a little repeated data at the ends). If so, it is a
    continuous receiver gather. If not, it is a **time-sliced receiver gather**, and the sentence
-   says why: the first trace that starts off the step and how far off, the traces leave dead
-   time between them, they overlap by some seconds, or every trace carries the same start time
+   says why: the first trace that breaks the rule, with the numbers measured for it (how long
+   after the one before it it starts and the trace length, or how long it is and how long the
+   others are), or every trace carries the same start time
    (so their own start times are not in the headers viewSEG reads; a vendor header map may have
    to describe them).
 
