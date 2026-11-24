@@ -125,7 +125,9 @@ type
     segmentSeconds*: float64 ## for `swOffStep`: the length of the other traces
     unevenChannels*: int ## from the segment clock
     kind*: RecordingKind
-    slicedWhy*: SlicedWhy ## for `rkReceiverSliced`
+    slicedWhy*: SlicedWhy
+      ## for `rkReceiverSliced`, and for a `rkShotGather` told by the order of the file: why
+      ## the continuous test failed (`swNone` for a shot gather of one segment per receiver)
 
   RecordingSink* = ref object
     ## Filled by `recordingFactsWork`; read it once the job has ended.
@@ -367,10 +369,9 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     result.kind = if result.slicedWhy == swNone: rkReceiverContinuous else: rkReceiverSliced
     # not continuous: the receiver changing from trace to trace, in the order of the file, is
     # a shot gather (the receivers repeat from record to record); staying put, a receiver's
-    # own segments
+    # own segments. `slicedWhy` keeps what the continuous test measured.
     if result.kind == rkReceiverSliced and receiverChanges(meta, segs, dtS):
       result.kind = rkShotGather
-      result.slicedWhy = swNone
 
 func isContinuousGather*(f: RecordingFacts): bool =
   ## True for a continuous receiver gather: the one kind the cut accepts.

@@ -430,6 +430,16 @@ func secs(x: float64): string =
   let t = formatFloat(x, ffDecimal, 3)
   result = t.strip(leading = false, chars = {'0'}).strip(leading = false, chars = {'.'}) & " s"
 
+func offStepWords(f: RecordingFacts): string =
+  ## The sentence for the first trace off the step (`swOffStep`), measured.
+  if f.offLength:
+    "Trace " & $f.offTrace & " is " & secs(f.offSeconds) & " long; the others are " &
+      secs(f.segmentSeconds) & "."
+  else:
+    "Trace " & $f.offTrace & " starts " & secs(f.offSeconds) & " after the one before it; " &
+      "the traces are " & secs(f.segmentSeconds) & " long, so it is not a whole number of " &
+      "trace lengths later."
+
 func cutRefusal*(f: RecordingFacts): string =
   ## Why the cut refuses a file: for one that is not a continuous receiver gather what
   ## the file is, then the reason, in sentences; for a continuous one whose like-typed
@@ -444,17 +454,11 @@ func cutRefusal*(f: RecordingFacts): string =
   of rkShotGather:
     result = "This file is a shot gather (the receiver changes from trace to trace), not a " &
       "continuous receiver gather."
+    if f.slicedWhy == swOffStep: result.add " " & offStepWords(f)
   of rkReceiverSliced:
     result = "This file is a time-sliced receiver gather, not a continuous one."
     case f.slicedWhy
-    of swOffStep:
-      if f.offLength:
-        result.add " Trace " & $f.offTrace & " is " & secs(f.offSeconds) & " long; the others " &
-          "are " & secs(f.segmentSeconds) & "."
-      else:
-        result.add " Trace " & $f.offTrace & " starts " & secs(f.offSeconds) & " after the " &
-          "one before it; the traces are " & secs(f.segmentSeconds) & " long, so it is not a " &
-          "whole number of trace lengths later."
+    of swOffStep: result.add " " & offStepWords(f)
     of swNoStep:
       result.add " The traces do not follow one another in time."
     of swSameStart:

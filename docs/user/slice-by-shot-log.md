@@ -54,7 +54,11 @@ from record to record, as shots at uneven times do. Consecutive traces of one po
 start time are one segment, whatever their component codes (the channels of one station are never
 compared with each other). A receiver point is its line and point, else its group coordinates,
 else its channel number: a file with neither of the first two whose single receiver changes its
-channel number from trace to trace reads as a shot gather. Otherwise it is time sliced.
+channel number from trace to trace reads as a shot gather. Otherwise it is time sliced. The
+sentence of such a shot gather also says the first trace off the step, as measured: "This file is
+a shot gather (the receiver changes from trace to trace), not a continuous receiver gather. Trace
+11 starts 2.666 s after the one before it; the traces are 2 s long, so it is not a whole number
+of trace lengths later."
 
 The kind is asked of any file you open, so the window decides it from the first 8 distinct start
 times of each receiver. The slice itself places every segment and checks every start: a trace off

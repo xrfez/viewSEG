@@ -12,7 +12,9 @@
 ## change in file order never asked ("and false"): the shots read as time sliced; the traces
 ## of one station and start not taken as one segment (the uncoded channels compared with each
 ## other): "uncoded shots, Rev 3: rkReceiverSliced"; the group coordinates not asked before the
-## channel: "coordinates: rkShotGather".
+## channel: "coordinates: rkShotGather"; the measured reason dropped from a shot gather told by
+## the order of the file (`slicedWhy` reset): the uneven shots and "offonce" refused with the
+## kind alone.
 
 import std/[assertions, math, os, strutils]
 import parseSEG
@@ -450,8 +452,26 @@ proc main*() =
     # that are no step apart, but the receiver changes from trace to trace in the file
     let specs = shots(50, [0, 1300, 3700])
     for f in [factsOf(dir, "shots", specs), segyFacts(dir, "shotsy", specs)]:
-      doAssert f.ready and f.kind == rkShotGather and f.slicedWhy == swNone, $f
+      doAssert f.ready and f.kind == rkShotGather and f.slicedWhy == swOffStep, $f
       doAssert f.components == 50 and f.segments == 150, $f
+      doAssert cutRefusal(f) == "This file is a shot gather (the receiver changes from trace " &
+        "to trace), not a continuous receiver gather. Trace 51 starts 2.6 s after the one " &
+        "before it; the traces are 2 s long, so it is not a whole number of trace lengths " &
+        "later.", cutRefusal(f)
+
+  block a_shot_gather_by_file_order_says_what_was_measured:
+    # three receivers in time order, the second off the step once (at its fourth start): not
+    # continuous, and the receiver changes at every trace: a shot gather, and the trace that
+    # left the step is said
+    var specs: seq[Spec]
+    for i in 0 ..< 20:
+      for r in 0 ..< 3: specs.add spec(r, i * 1000 + (if r == 1 and i >= 3: 333 else: 0))
+    let f = factsOf(dir, "offonce", specs)
+    doAssert f.kind == rkShotGather and f.slicedWhy == swOffStep and f.offTrace == 11, $f
+    doAssert cutRefusal(f) == "This file is a shot gather (the receiver changes from trace " &
+      "to trace), not a continuous receiver gather. Trace 11 starts 2.666 s after the one " &
+      "before it; the traces are 2 s long, so it is not a whole number of trace lengths " &
+      "later.", cutRefusal(f)
 
   block one_station_of_irregular_segments_is_time_sliced:
     var specs: seq[Spec]
