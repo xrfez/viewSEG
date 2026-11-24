@@ -445,6 +445,10 @@ proc abort(sink: OutputSink; dest, part: string; claimed: bool; why: string; can
 
 proc stopAsked(ctx: JobContext): bool {.inline.} = ctx.cancelled
 
+func recordName(load: CorrelateLoad; at: int): string =
+  ## The record as a sentence names it mid-way: "FFID 5", else "record 3".
+  if load.record.len > 0: load.record else: "record " & $(at + 1)
+
 proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
     opts: OutputOptions; edits: FileEdits; openPaths: seq[string]; sink: OutputSink;
     report: proc (done, total: int): bool {.gcsafe.}; signature = SignatureFacts()) =
@@ -482,7 +486,10 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var outUs = 0.0
       var refs = initHashSet[int]()
       var odd = initHashSet[int]()
-      var corrPlans: seq[CorrelationPlan[float32]] = @[]
+      var corrPlans: seq[CorrelationPlan[float32]] = @[]           ## only the current record's
+      var pilotLoads: seq[tuple[span: Slice[int]; load: CorrelateLoad]] = @[]
+      var planRec = -1 ## the record `corrPlans[0]` is for
+      var planDt = 0.0
       var planOf: seq[int] = @[] ## pilot: each trace's plan; stored sweep: none, plan 0
       var sweepLen = 0
       var ws = initWorkspace()
@@ -501,35 +508,43 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           if not file[].inMemory: fs.mappedRead(source, headers = true)
           file[].ensureKeys()
         var loaded = opts.correlation.get
-        var sweeps: seq[seq[float32]] = @[loaded.reference]
+        var first = loaded.reference
         var sweepDt = loaded.referenceDtMs
         if loaded.pilot.isSome:
-          # Each record's pilot, read from this file: never another file's.
-          let found = recordPilots(file, loaded.pilot.get, edits)
-          sweeps = @[]
+          # Each record's pilot, read from this file: never another file's. Each
+          # is read here to check that the records agree, then dropped; the trace
+          # loop reads it again as its record begins.
+          pilotLoads = recordPilots(file, loaded.pilot.get, edits,
+            opts.applyReversals, opts.applyShifts)
           planOf = newSeq[int](file[].len)
-          for k, rec in found:
+          for k, rec in pilotLoads:
+            if stopAsked(ctx): raise newException(JobCancelledError, "Cancelled.")
             let got = loadSweep(file, source, rec.load)
-            if k > 0 and (got.samples.len != sweeps[0].len or got.dtMs != sweepDt):
-              raise newException(ValueError, "The pilots of the records differ in length " &
-                "or interval, so the records cannot be written as one correlated file.")
-            sweeps.add got.samples
-            sweepDt = got.dtMs
+            if k == 0:
+              first = got.samples
+              sweepDt = got.dtMs
+            elif got.samples.len != first.len or got.dtMs != sweepDt:
+              let names = recordName(pilotLoads[0].load, 0) & " and " &
+                recordName(rec.load, k)
+              raise newException(ValueError, "The pilots of " & names &
+                " differ in length or interval, so the records cannot be written as " &
+                "one correlated file.")
             for t in rec.span: planOf[t] = k
-          if sweeps.len == 0:
+          if pilotLoads.len == 0:
             raise newException(ValueError, "The file has no record to take a pilot from.")
-        let ready = listenShape(file, sweeps[0], sweepDt)
+        let ready = listenShape(file, first, sweepDt)
         refs = referenceSet(file[].len, loaded.referenceTraces)
         listen = ready.listen
         recordSamples = ready.samples
-        sweepLen = sweeps[0].len
+        sweepLen = first.len
         for t in ready.odd: odd.incl(t)
         lag = wholeSamples(-AuxLeadMs, ready.dtMs)
         if opts.format == ofSegd: outUs = wholeMicroseconds(ready.dtMs)
-        for sweep in sweeps:
-          let pilot = initPilot(sweep, sweepDt)
-          corrPlans.add initCorrelationPlan(float32, pilot, ready.dtMs, recordSamples)
-          ws.reserve(corrPlans[^1].workspaceSize)
+        planDt = sweepDt
+        corrPlans.add initCorrelationPlan(float32, initPilot(first, sweepDt), ready.dtMs,
+          recordSamples)
+        planRec = 0
+        ws.reserve(corrPlans[^1].workspaceSize)
         corrDst = newSeq[float32](listen)
         corrKeys = @[initTraceKeys()]
         corrCounts = @[recordSamples]
@@ -719,6 +734,15 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               for j in have ..< recordSamples: samples[j] = 0
             elif have > recordSamples:
               samples.setLen recordSamples
+            let want = if planOf.len > 0: planOf[t] else: 0
+            if want != planRec:
+              # Traces stay inside their record: only this record's plan is kept.
+              corrPlans.setLen 0
+              let got = loadSweep(file, source, pilotLoads[want].load)
+              corrPlans.add initCorrelationPlan(float32, initPilot(got.samples, planDt),
+                corrDtMs, recordSamples)
+              ws.reserve(corrPlans[0].workspaceSize)
+              planRec = want
             let status = file[].traceKeys(t).status
             let aux = status == tsAuxiliary
             let isOdd = t in odd
@@ -729,7 +753,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             if status == tsDead or (aux and (not isRef or isOdd)):
               corrKeys[0].status = tsDead
             else: corrKeys[0].status = tsLive
-            corrPlans[if planOf.len > 0: planOf[t] else: 0].correlateInto(
+            corrPlans[0].correlateInto(
               rowBlock(samples, 1, recordSamples),
               rowBlock(corrDst, 1, listen), corrMeta, ws)
             if not (aux and not isRef and not isOdd):

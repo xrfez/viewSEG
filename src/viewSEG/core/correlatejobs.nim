@@ -728,13 +728,15 @@ proc pilotInSpan*(file: ptr SeismicFile; span: Slice[int]; record: string; rule:
     result.problem = who & " is marked dead."
   else: result.trace = t
 
-proc recordPilots*(file: ptr SeismicFile; rule: PilotRule; e: FileEdits):
-    seq[tuple[span: Slice[int]; load: CorrelateLoad]] =
+proc recordPilots*(file: ptr SeismicFile; rule: PilotRule; e: FileEdits;
+    reversals = true; shifts = true): seq[tuple[span: Slice[int]; load: CorrelateLoad]] =
   ## For each record of `file` (the gathers of a session of it), the span of its
   ## traces and the load of the pilot `rule` takes from it, the Correlate button's
   ## way: the trace's own reversal and time shift in `e`, then the cut and the rule's
   ## phase. Raises ValueError with the sentence naming the record when a record has
-  ## no such pilot. The keys must be held.
+  ## no such pilot. The trace's reversal is taken only when `reversals` is set and its
+  ## time shift only when `shifts` is (Output's options; the button takes both). The
+  ## keys must be held.
   result = @[]
   let (gathers, rows) = recordsOf(file[])
   for g, gather in gathers:
@@ -745,8 +747,8 @@ proc recordPilots*(file: ptr SeismicFile; rule: PilotRule; e: FileEdits):
     let picked = pilotInSpan(file, gather.traces, name, rule, e)
     if picked.trace < 0: raise newException(ValueError, picked.problem)
     result.add (gather.traces, CorrelateLoad(pilotTrace: picked.trace, pilot: rule,
-      flip: e.has(teReversed, picked.trace), shiftMs: e.shiftOf(picked.trace),
-      record: name))
+      flip: reversals and e.has(teReversed, picked.trace),
+      shiftMs: if shifts: e.shiftOf(picked.trace) else: 0.0, record: name))
 
 proc referenceTraces*(file: ptr SeismicFile): seq[int] =
   ## Auxiliary traces that hold a reference: trace code 5, or a vibrator reference (21).

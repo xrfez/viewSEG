@@ -1012,6 +1012,65 @@ proc main*() =
       secondOne.close()
       two.close()
 
+    block manyRecords:
+      ## A file of 300 records, alternating two pilots: every record's traces equal
+      ## those of the first record that had its pilot.
+      ## Seen to fail: the plan of the wrong record used for a trace (the plan kept
+      ## from the first record), so record 2 differed from record 0.
+      let manyPath = srcDir / "pilot-many.sgy"
+      var many: seq[seq[float32]] = @[]
+      for r in 0 ..< 300: many.add (if r mod 2 == 0: sweep else: other)
+      writeRecords(manyPath, many)
+      var big = openSeismic(manyPath, keys = true)
+      let outMany = outDir / "own-many.sgy"
+      var auxes: seq[int] = @[]
+      for r in 0 ..< 300: auxes.add 3 * r + 2
+      let got = runWrite(big, manyPath, outMany, pilotOutput(sweep, auxes))
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      var made = openSeismic(outMany, keys = true)
+      doAssert made.len == 900, "trace count " & $made.len
+      doAssert samplesOf(made, 0) != samplesOf(made, 3), "the two pilots gave one trace"
+      for r in 2 ..< 300:
+        for t in 0 .. 2:
+          doAssert samplesOf(made, 3 * r + t) == samplesOf(made, 3 * (r mod 2) + t),
+            "record " & $r & " trace " & $t
+      made.close()
+      big.close()
+
+    block optionsOfOutput:
+      ## The pilot follows Output's options: its reversal is applied only with
+      ## "apply reversals", so the sweep is the recorded one with the option off and
+      ## the negated one with it on, as the stored-sweep Output of each gives.
+      ## Seen to fail: the reversal taken whatever the option, so the option-off
+      ## file was the negated sweep's.
+      var edits: FileEdits
+      doAssert edits.change(teReversed, [2], true) == 1
+      var negated = sweep
+      for v in negated.mitems: v = -v
+      for on in [true, false]:
+        var viaPilot = pilotOutput(sweep)
+        viaPilot.applyReversals = on
+        var viaSweep = option(if on: negated else: sweep, ofSegy)
+        viaSweep.applyReversals = on
+        viaSweep.correlation.get.referenceTraces = @[2]
+        let name = if on: "on" else: "off"
+        let gotPilot = runWrite(a, aPath, outDir / ("opt-pilot-" & name & ".sgy"), viaPilot,
+          edits)
+        doAssert gotPilot.st == jsDone, gotPilot.error & " / " & gotPilot.wrote.reason
+        let gotSweep = runWrite(a, aPath, outDir / ("opt-sweep-" & name & ".sgy"), viaSweep,
+          edits)
+        doAssert gotSweep.st == jsDone, gotSweep.error & " / " & gotSweep.wrote.reason
+        var x = openSeismic(outDir / ("opt-pilot-" & name & ".sgy"), keys = true)
+        var y = openSeismic(outDir / ("opt-sweep-" & name & ".sgy"), keys = true)
+        sameTraces(x, y, Listen)
+        x.close()
+        y.close()
+      var onFile = openSeismic(outDir / "opt-pilot-on.sgy", keys = true)
+      var offFile = openSeismic(outDir / "opt-pilot-off.sgy", keys = true)
+      doAssert samplesOf(onFile, 0) != samplesOf(offFile, 0), "the option changed nothing"
+      onFile.close()
+      offFile.close()
+
     block missingTrace:
       ## (c) a record without the auxiliary trace fails, in words, and writes nothing.
       let lonePath = srcDir / "pilot-none.sgy"
