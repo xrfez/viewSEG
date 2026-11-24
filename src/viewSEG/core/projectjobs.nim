@@ -2,8 +2,9 @@
 ## folder may be on a drive that does not answer, and its survey is large.
 ##
 ## - `openProjectWork` (interactive lane) reads the project document, takes
-##   the lock between programs, reads the project's window arrangement, and
-##   looks at its data folders and at its survey files' originals; with a
+##   the lock between programs, reads the project's window arrangement,
+##   removes leftover shot-log temporaries, and looks at its data folders
+##   and at its survey files' originals; with a
 ##   `NewProject`, it makes the folder and its document first, and copies in
 ##   what the program remembers about the files of its data folders.
 ## - `keepSurveyWork` (background lane) copies the survey files imported
@@ -26,7 +27,8 @@
 import std/[locks, monotimes, os, strutils, times]
 import parseSEG
 import diskio, displaypresets, filememory, filesystem, identity, inbox, jobs, join, layouts,
-  persist, processing, project, projectnif, session, survey, surveystore, threads, vendormaps
+  persist, processing, project, projectnif, session, shotlogjobs, survey, surveystore, threads,
+  vendormaps
 
 type NewProject* = object
   ## What Project > New project makes.
@@ -255,6 +257,7 @@ proc openProjectWork*(dir: string; to: Poster; make = false; np = NewProject();
               since: getTime())))
           except CatchableError:
             discard # a note only
+          sweepShotLogTemps(dir, news.doc.shotLogs)
         else:
           try: news.owner = readOwner(fs.readFile(dir / OwnerName))
           except CatchableError: discard

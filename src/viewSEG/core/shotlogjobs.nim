@@ -4,12 +4,12 @@
 ## larger than 256 MiB without reading it, guesses a map unless one is given,
 ## and parses. `loadShotLog` reads a project copy with the map stored for it.
 ## `saveShotLog` writes `toText` to the copy, to a temporary file that is then
-## renamed. The file the log was imported from is never named here.
+## renamed onto it. The file the log was imported from is never named here.
 ##
 ## The sink is filled when the job ends, and not when it is cancelled. Read
 ## it after the job is no longer running. A failed read is one sentence.
 
-import std/os
+import std/[os, strutils]
 import filesystem, jobs, project, shotlog
 
 const
@@ -45,6 +45,30 @@ proc cannotRead(name: string): string =
 
 proc cannotSave(name: string): string =
   name & " could not be saved."
+
+func isJobTemporary(name: string): bool =
+  ## Whether `name` ends as a shot-log copy's temporary file does:
+  ## `.<digits of a job>.tmp`.
+  if not name.endsWith(".tmp"): return false
+  let stem = name[0 ..< name.len - 4]
+  var n = 0
+  while n < stem.len and stem[stem.len - 1 - n] in {'0' .. '9'}: inc n
+  n > 0 and n < stem.len and stem[stem.len - 1 - n] == '.'
+
+proc sweepShotLogTemps*(dir: string; recorded: openArray[StoredShotLog]) =
+  ## Removes temporary copies an earlier run left in `shotlogs/` (it was cut
+  ## short). Only a name made as a job makes it, and never one that is a
+  ## recorded copy: a shot log may be named `day1.tmp`.
+  let folder = dir.partOf(ShotLogsFolder)
+  var names: seq[string] = @[]
+  for s in recorded: names.add s.file
+  try:
+    if fs.dirExists(folder):
+      for kind, path in fs.walkDir(folder):
+        if kind == pcFile and path.extractFilename.isJobTemporary and
+            path.extractFilename notin names: discard fs.tryRemoveFile(path)
+  except OSError:
+    discard
 
 proc importSpec*(path: string): JobSpec =
   ## The job that reads `path` as a shot log.
@@ -146,11 +170,12 @@ proc loadShotLog*(path: string; map: ShotLogMap; sink: ShotLogSink): JobWork =
     fill(sink, log, view, map, text)
 
 proc writeCopy(ctx: JobContext; dest, text: string; sink: ShotLogSink) =
-  ## Writes `text` to `dest` through a temporary file, then renames. A cancel
-  ## removes the temporary file and leaves `sink` as it was.
+  ## Writes `text` to a temporary file beside `dest`, then renames it onto
+  ## `dest`. The copy already there is not moved aside: one rename replaces
+  ## it. A cancel removes the temporary file and leaves `dest` and `sink`
+  ## as they were.
   let name = dest.fileName
   let tmp = dest & "." & $int(ctx.id) & ".tmp"
-  var aside = ""
   try:
     fs.createDir(dest.parentDir)
     var f = File(nil)
@@ -162,25 +187,15 @@ proc writeCopy(ctx: JobContext; dest, text: string; sink: ShotLogSink) =
     finally:
       close(f)
     ctx.checkCancelled()
-    if fs.fileExists(dest):
-      aside = dest & "." & $int(ctx.id) & ".old"
-      fs.moveFile(dest, aside)
     fs.moveFile(tmp, dest)
-    if aside.len > 0: discard fs.tryRemoveFile(aside)
   except JobCancelledError:
     discard fs.tryRemoveFile(tmp)
-    if aside.len > 0:
-      try: fs.moveFile(aside, dest)
-      except CatchableError: discard
     raise
   except ValueError:
     discard fs.tryRemoveFile(tmp)
     raise
   except CatchableError:
     discard fs.tryRemoveFile(tmp)
-    if aside.len > 0:
-      try: fs.moveFile(aside, dest)
-      except CatchableError: discard
     fail(sink, cannotSave(name))
 
 proc saveShotLog*(dir, name: string; log: ShotLog; map: ShotLogMap; sink: ShotLogSink):

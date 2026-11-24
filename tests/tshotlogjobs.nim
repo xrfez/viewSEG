@@ -18,7 +18,9 @@
 ## `import_does_not_write_onto_its_source` stored `shotlog.csv`; with the
 ## pre-edit text carried forward, `second_remap_keeps_edits` lost the cell;
 ## with the revision bumped in the edit command, `edit_waits_to_bump_revision`
-## saw it move before the save assigned the view.
+## saw it move before the save assigned the view; with the copy set aside,
+## `save_does_not_set_the_copy_aside` saw a `.old` file, and with no sweep,
+## `reopen_sweeps_shot_log_temps` kept `shotlog.csv.7.tmp`.
 
 import std/[options, os, strutils]
 import viewSEG/core/[filesystem, jobs, project, shotlog, shotlogjobs, state]
@@ -58,6 +60,11 @@ proc sparse(path: string; bytes: int64) =
 
 var lane: Jobs
 var opened: int
+var asideWrites: seq[string]
+
+proc noteWrite(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
+  if op == foWrite:
+    {.cast(gcsafe).}: asideWrites.add path
 
 proc stopReading(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
   if not back and phase == "reading": discard lane.cancel(id)
@@ -126,6 +133,30 @@ proc main*() =
     doAssert jobs.stateOf(lid) == jsDone, jobs.info(lid).get.error
     doAssert loaded.result.ok and loaded.result.log.cell(0, 0) == "EDITED"
     doAssert loaded.result.view.rows.len == 200
+
+  block save_does_not_set_the_copy_aside:
+    let dir = root / "atomic"
+    createDir(dir)
+    let got = runImport(Sample)
+    doAssert got.st == jsDone, got.error
+    let dest = dir.partOf("shotlog.csv".shotLogCopy)
+    createDir(dest.parentDir)
+    writeFile(dest, "previous")
+    asideWrites.setLen 0
+    setFsHook(noteWrite)
+    defer: setFsHook(nil)
+    let jobs = initJobs()
+    let sink = ShotLogSink()
+    let id = jobs.submit(saveSpec(dest),
+      saveShotLog(dir, "shotlog.csv", got.sink.result.log, got.sink.result.map, sink))
+    doAssert waitUntil(jobs.ended(id)), "the save did not finish"
+    doAssert jobs.stateOf(id) == jsDone, jobs.info(id).get.error
+    for path in asideWrites:
+      doAssert ".old" notin path, "the copy was set aside: " & path
+    doAssert not fileExists(dest & ".old")
+    for kind, path in walkDir(dest.parentDir):
+      doAssert not path.endsWith(".old"), path
+    doAssert readFile(dest) == got.sink.result.log.toText()
 
   block over_the_cap:
     let big = root / "big.csv"
@@ -382,6 +413,32 @@ proc main*() =
       "the re-map did not finish"
     doAssert st.said(ShotLogEditsDropped), "the drop was not said"
     doAssert st.shotCell(0, 0, 0) != "9"
+    discard st.shutdown()
+
+  block reopen_sweeps_shot_log_temps:
+    let job = root / "JobSweep"
+    var st = start(root / "config-sweep")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0), "the project did not open"
+    let named = root / "notes.3.tmp"
+    writeFile(named, "n,v\n1,2\n")
+    st.apply Command(kind: ckImportShotLog, logPath: named)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not stored"
+    doAssert st.shotLogStored(0) == "notes.3.tmp", st.shotLogStored(0)
+    st.flushFiles()
+    let folder = job.partOf("shotlogs")
+    let recorded = readFile(folder / "notes.3.tmp")
+    writeFile(folder / "shotlog.csv.7.tmp", "temp")
+    writeFile(folder / "day1.tmp", "keep")
+    st.apply Command(kind: ckCloseProject)
+    doAssert st.settle(not st.inProject and st.jobs.active.len == 0)
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the project did not reopen"
+    doAssert not fileExists(folder / "shotlog.csv.7.tmp"), "a leftover temporary was kept"
+    doAssert readFile(folder / "day1.tmp") == "keep", "a copy named day1.tmp was removed"
+    doAssert readFile(folder / "notes.3.tmp") == recorded, "a recorded copy was removed"
     discard st.shutdown()
 
   block old_project_has_no_log:
