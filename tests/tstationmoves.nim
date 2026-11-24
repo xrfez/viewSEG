@@ -10,7 +10,9 @@
 ## `stationMoves` left out of `projectDocument`, "the project document writes
 ## the moves" (the written document had no `(stationMoves`); with `readMove`
 ## adding a finite line that `stationKey` turns non-finite and not calling
-## `r.problem`, "and a problem is reported" (problems stayed empty).
+## `r.problem`, "and a problem is reported" (problems stayed empty); with `add`
+## storing a non-finite x, "a non-finite x, y or elevation is not stored"
+## (`projectDocument` then died in `nifFloat`'s assert).
 
 import std/[math, options, strutils]
 import parseSEG
@@ -251,6 +253,29 @@ proc main*() =
     doAssert back.stationMoves[0].station == stationKey(1.0, 2.0, 0)
     doAssert back.stationMoves[0].x == 3.0 and back.stationMoves[0].y == 4.0
     doAssert problems.len > 0, "and a problem is reported"
+
+  block nonfinite_position_refused:
+    var moves = StationMoves()
+    moves.add moveAt(1, 2, 1, some(10.0), NaN, 4.0)
+    moves.add moveAt(1, 2, 1, some(10.0), Inf, 4.0)
+    moves.add moveAt(1, 2, 1, some(10.0), -Inf, 4.0)
+    moves.add moveAt(1, 2, 1, some(10.0), 3.0, NaN)
+    moves.add moveAt(1, 2, 1, some(10.0), 3.0, Inf)
+    moves.add moveAt(1, 2, 1, some(10.0), 3.0, 4.0, some(NaN))
+    moves.add moveAt(1, 2, 1, some(10.0), 3.0, 4.0, some(Inf))
+    moves.add moveAt(1, 2, 1, some(10.0), 3.0, 4.0, some(-Inf))
+    doAssert moves.len == 0, "a non-finite x, y or elevation is not stored"
+    var d = ProjectDoc(name: "Land")
+    d.stationMoves = moves
+    doAssert "stationMoves" notin projectDocument(d), "save writes no move and does not die"
+    moves.add moveAt(1, 2, 1, some(10.0), 3.0, 4.0, some(5.0))
+    moves.add moveAt(1, 2, 1, some(10.0), NaN, 9.0)
+    moves.add moveAt(1, 2, 1, some(10.0), 3.0, 4.0, some(NaN))
+    doAssert moves.len == 1 and moves[0].x == 3.0 and moves[0].y == 4.0
+    doAssert moves[0].elev == some(5.0), "a refused move does not replace a stored one"
+    d.stationMoves = moves
+    let text = projectDocument(d)
+    doAssert "(x 3.0)" in text and "(y 4.0)" in text and "(elev 5.0)" in text
 
   echo "tstationmoves: done"
 

@@ -101,14 +101,17 @@ proc add*(moves: var StationMoves; move: StationMove) =
   ## Puts `move` in, in station then time order. The same station and the
   ## same `fromTime` replaces the move already there. Line and point are
   ## stored as `stationKey` rounds them. A station whose line or point is
-  ## not a finite number is not added. A `fromTime` or elevation that is not
-  ## finite is stored as none.
+  ## not a finite number, whose x or y is not, or whose elevation is given
+  ## and not finite, is not added. A `fromTime` that is not finite is stored
+  ## as none.
   let key = stationKey(move.station.line, move.station.point, move.station.index)
   if not finite(key.line) or not finite(key.point): return
+  if not finite(move.x) or not finite(move.y): return
+  if move.elev.isSome and not finite(move.elev.get): return
   var stored = move
   stored.station = key
   stored.fromTime = finiteOpt(move.fromTime)
-  stored.elev = finiteOpt(move.elev)
+  stored.elev = move.elev
   let at = slot(moves, key, stored.fromTime)
   if sameSlot(moves, at, key, stored.fromTime): moves.list[at] = stored
   else: moves.list.insert(stored, at)
