@@ -2785,7 +2785,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       if layer.display.firstBreaks and bi >= 0 and not derived:
         let g = breakGeometry(st.shownBreaks(k), p.shown, p.layout, view, turn,
           Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y)), layer.display.breakSize,
-          max(1'f32, igGetFontSize() / 15), layer.display.breakShowWeak)
+          max(1'f32, igGetFontSize() / 15), layer.display.breakShowWeak, st.editsOf(k))
         drawBreakMarks(g, ink, layer.display, marks)
     if edited:
       let path = if source >= 0: st.sessions[source].path else: ""
@@ -2877,7 +2877,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
                  else: pick(tiles, p.layout, view, plot, vec2(mouse.x, mouse.y), turn)
       if layer.display.firstBreaks and res.pick.found and res.pick.trace >= 0:
         let bi = st.breaksIndex(k)
-        if bi >= 0: res.pick.breaks = st.shownBreaks(k).readoutText(res.pick.trace)
+        if bi >= 0:
+          res.pick.breaks = st.shownBreaks(k).readoutText(res.pick.trace, st.editsOf(k))
       if st.settings.cursorLine and res.pick.inside:
         tp.drawCursorLine(mouse, pos, size, turn, res.pick.at.tMs, p.layout.dtMs, ink, t, marks)
         if res.pick.found and res.pick.position >= 0:

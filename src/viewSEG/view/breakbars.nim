@@ -16,12 +16,13 @@
 ## - A pick the fit finds off the model (`mismatched`) has a link along time
 ##   between the two bars and a heavier pick bar.
 ## - Times are drawn where the plot draws that sample: each trace's own time
-##   axis moved to the layout's (`shiftOf`).
+##   axis moved to the layout's (`shiftOf`), and a pick also by the trace's
+##   edit shift (`displayShiftMs`). The model is not moved by an edit.
 ## - A pick not compared with the model (`faintOf`: low confidence, or no break found) is
 ##   `faint`.
 
 import std/math
-import ../core/[firstbreaks, geometry, orientation, panels, viewport]
+import ../core/[edits, firstbreaks, geometry, orientation, panels, viewport]
 
 const
   LineBelow* = 3.0     ## pixels a trace, under which the marks are lines
@@ -99,11 +100,17 @@ func screenOf*(view: Viewport; m: Turn; plot: Rect; axis: Axis; value: float64):
 
 func breakGeometry*(b: FirstBreaks; shown: openArray[int]; layout: PanelLayout;
     view: Viewport; m: Turn; plot: Rect; size = bzMedium; ui = 1'f32;
-    showWeak = true): BreakGeometry =
+    showWeak = true; edits = FileEdits()): BreakGeometry =
   ## The marks of the traces of `layout` in `view`, in `plot` (pixels),
-  ## turned as `m` says, bars of `size` (`barWidth`; `ui`: the interface scale). `shown[position]`
-  ## is the file trace at each position. Without `showWeak` a pick that is `faint` has no mark.
-  ## Empty unless `b` is done.
+  ## turned as `m` says, bars of `size` (`barWidth`; `ui`: the interface
+  ## scale). `shown[position]` is the file trace at each position. Without
+  ## `showWeak` a pick that is `faint` has no mark. Empty unless `b` is done.
+  ## `modelOf` and `pickOf` are file time. Both are drawn on the layout's axis
+  ## (header alignment, `shiftOf`). The pick, including a far-off first-pass
+  ## marker (`pickOf`), is then moved by the trace's edit shift
+  ## (`displayShiftMs`): display time, the same move the plot applies to the
+  ## samples. The model is not moved by an edit. A killed trace is not moved.
+  ## A reversal changes no time.
   result = BreakGeometry()
   if b.state != bkDone or shown.len == 0 or layout.traces <= 0: return
   let ta = m.along[axTraces]
@@ -116,12 +123,14 @@ func breakGeometry*(b: FirstBreaks; shown: openArray[int]; layout: PanelLayout;
   func inside(y: float32): bool = y >= t0 - 2 and y <= t1 + 2
   func centre(p: int): float32 = screenOf(view, m, plot, axTraces, float64(p))
   result.lines = perPos < LineBelow
+  func times(trace: int): (float64, float64) =
+    let sh = b.shiftOf(trace)
+    (b.modelOf(trace) + sh, b.pickOf(trace) + sh + displayShiftMs(edits, trace, layout.dtMs))
   if not result.lines:
     let half = barWidth(size, perPos, ui) / 2
     for p in vis.a .. min(vis.b, shown.high):
       let trace = shown[p]
-      let sh = b.shiftOf(trace)
-      let (model, pick) = (b.modelOf(trace) + sh, b.pickOf(trace) + sh)
+      let (model, pick) = times(trace)
       let c = centre(p)
       let off = b.mismatched(trace)
       var ym, yp = NaN.float32
@@ -153,11 +162,11 @@ func breakGeometry*(b: FirstBreaks; shown: openArray[int]; layout: PanelLayout;
     var flagged = 0
     for p in vis.a .. min(vis.b, shown.high):
       let trace = shown[p]
-      let sh = b.shiftOf(trace)
+      let (model, pick) = times(trace)
       let c = centre(p)
       let col = clamp(int(floor(c - plot.pos.along(ta))), 0, width - 1)
       var ys: array[bmModel .. bmPick, float32]
-      for (kind, value) in [(bmModel, b.modelOf(trace) + sh), (bmPick, b.pickOf(trace) + sh)]:
+      for (kind, value) in [(bmModel, model), (bmPick, pick)]:
         ys[kind] = NaN.float32
         if not value.isNaN and (showWeak or kind == bmModel or not b.faintOf(trace)):
           ys[kind] = screenOf(view, m, plot, axTime, value)

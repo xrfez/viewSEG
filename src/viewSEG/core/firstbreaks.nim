@@ -7,8 +7,9 @@
 ## whatever order the plot shows the traces in.
 ##
 ## The job that makes them is `core/firstbreakjobs`. Nothing here reads a
-## file or draws: the view maps these times to the plot's traces and
-## the cursor readout (`readoutText`) tells them in words.
+## file or draws: the view maps these times to the plot's traces (file time,
+## plus a trace's edit shift where the pick is drawn) and the cursor readout
+## (`readoutText`) tells the pick in display time and the model in file time.
 ##
 ## - A trace with no pick has only the model time; a trace the model cannot
 ##   place (no offset, or too few confident picks to fit) only the pick.
@@ -23,7 +24,7 @@
 import std/[math, strutils]
 import parseSEG
 import processSEG/qc/[firstbreak, shotfit]
-import breakmodel, breakrule, components, jobs, join, session
+import breakmodel, breakrule, components, edits, jobs, join, processing, session
 
 export breakrule
 
@@ -206,9 +207,9 @@ func place*(b: FirstBreaks; trace: int): int {.inline.} =
   if i >= 0 and i < b.pickMs.len and b.state == bkDone: i else: -1
 
 func pickOf*(b: FirstBreaks; trace: int): float64 =
-  ## The pick of file trace `trace` (ms); NaN for none.
-  ## For a trace far off the model (`rule.farOff`) it is the first pass's pick, which is where
-  ## the break was found; the guided pass found none in its window.
+  ## The pick of file trace `trace`, in file time (ms); NaN for none. A trace far off the
+  ## model (`rule.farOff`) uses the first pass's pick, still file time. The bars and the
+  ## status-bar pick add the edit shift (`displayShiftMs`) on top; this value is not changed.
   let i = b.place(trace)
   if i < 0: NaN
   elif i < b.rule.farOff.len and b.rule.farOff[i] and i < b.geometry.firstMs.len:
@@ -216,7 +217,8 @@ func pickOf*(b: FirstBreaks; trace: int): float64 =
   else: b.pickMs[i]
 
 func modelOf*(b: FirstBreaks; trace: int): float64 =
-  ## The model's time for file trace `trace` (ms); NaN for none.
+  ## The model's time for file trace `trace`, in file time (ms); NaN for none. It is a
+  ## function of offset for the record and is not moved by an edit.
   let i = b.place(trace)
   if i >= 0 and i < b.modelMs.len: b.modelMs[i] else: NaN
 
@@ -274,7 +276,8 @@ func setRule*(b: var FirstBreaks) =
   b.medianDiffMs = b.rule.medianMs
 
 func shiftOf*(b: FirstBreaks; trace: int): float64 =
-  ## What to add to the times of file trace `trace` for the plot's axis.
+  ## Header alignment to add to the file-time times of file trace `trace` for the plot's
+  ## axis (`layoutT0 - keys.t0Ms`); 0 when it has none. Not an edit shift.
   let i = b.place(trace)
   if i >= 0 and i < b.shiftMs.len and not b.shiftMs[i].isNaN: b.shiftMs[i] else: 0.0
 
@@ -362,11 +365,21 @@ func statusWords*(b: FirstBreaks): string =
 
 func ms(x: float64): string = formatFloat(x, ffDecimal, 1) & " ms"
 
-func readoutText*(b: FirstBreaks; trace: int): string =
-  ## The overlay's words for file trace `trace`, for the status bar: model
-  ## time, pick time and their difference; "" when the record has no
-  ## result for it, or the trace has neither time.
-  let (p, m) = (b.pickOf(trace), b.modelOf(trace))
+func displayShiftMs*(e: FileEdits; trace: int; dtMs: float64): float64 =
+  ## The display-time move to add to a file-time pick so it sits where the plot draws the
+  ## shifted samples. The stored pick stays file time. The move is `snappedShiftMs` (the
+  ## milliseconds `applyStoredShift` applies: positive later, whole samples). 0 when the
+  ## trace is killed (the reader does not shift a failed row) or it has no shift.
+  if e.has(teKilled, trace): return 0.0
+  snappedShiftMs(e.shiftOf(trace), dtMs)
+
+func readoutText*(b: FirstBreaks; trace: int; edits = FileEdits()): string =
+  ## The overlay's words for file trace `trace`, for the status bar. The model time is
+  ## file time (`modelOf`). The pick time is display time: file time (`pickOf`) plus the
+  ## edit shift the plot applies (`displayShiftMs`), so it matches the pick bar on the
+  ## drawn trace. The difference is that display pick less the file-time model. "" when
+  ## the record has no result for it, or the trace has neither time.
+  let (p, m) = (b.pickOf(trace) + displayShiftMs(edits, trace, b.dtMs), b.modelOf(trace))
   if not (known(p) or known(m)): return ""
   result = "first break: "
   if known(m): result.add "model " & ms(m) else: result.add "no model"

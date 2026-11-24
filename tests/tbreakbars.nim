@@ -7,11 +7,23 @@
 ##
 ## Seen to fail: with the line keeping one trace in four (as it first did),
 ## "trace 1 at 100.3 ms has no mark in its column"; with the shift left out,
-## "trace 5's pick bar is at 24.0 px, the plot draws its sample at 14.0".
+## "trace 5's pick bar is at 24.0 px, the plot draws its sample at 14.0";
+## with the edit shift left out of the pick bar, "trace 5's pick bar is at
+## 20.3 px, the shifted trace is drawn at 21.9".
 
 import std/[math, strutils]
-import viewSEG/core/[firstbreaks, geometry, orientation, panels, viewport]
+import viewSEG/core/[breakmodel, edits, firstbreaks, geometry, orientation, panels, session,
+  viewport]
 import viewSEG/view/breakbars
+
+proc markY(g: BreakGeometry; kind: MarkKind; position: int): float32 =
+  result = NaN
+  for m in g.marks:
+    if m.kind == kind and m.position == position: return m.a.y
+
+proc overlayKey(e: FileEdits; traces: Slice[int]): BreakKey =
+  ## What the overlay's job key stores from the edits: killed traces only.
+  (SessionId(1), 0, 1, e.listIn(teKilled, traces), newSeq[uint8](), BreakModel(), pbAsRecorded)
 
 proc made(n: int): FirstBreaks =
   result = FirstBreaks(state: bkDone, first: 0, dtMs: 2.0, modelled: n, used: n,
@@ -150,6 +162,62 @@ proc main*() =
       timeMs: Span(lo: 0, hi: 2000), columns: 600, rows: 400), TimeDown,
       Rect(pos: vec2(0, 0), size: vec2(150, 400)))
     doAssert dense.lines, "2.5 px a trace: two lines, not dashes"
+
+  block anEditShiftMovesThePickNotTheModel:
+    # A +8 ms edit (4 samples at 2 ms) draws the pick 8 ms later. The stored
+    # pick, the model, a zero shift, a reversal and a killed trace stay put.
+    # Undo puts the bar back; the job key, which stores killed traces only, does not change.
+    var b = made(60)
+    b.rule.farOff = newSeq[bool](60)
+    b.rule.farOff[4] = true
+    b.geometry.firstMs = newSeq[float64](60)
+    for i in 0 ..< 60: b.geometry.firstMs[i] = b.pickMs[i]
+    b.geometry.firstMs[4] = 80.0
+    b.pickMs[4] = 200.0
+    let stored = b.pickMs[5]
+    var shown = newSeq[int](60)
+    for i in 0 ..< 60: shown[i] = i
+    let layout = PanelLayout(traces: 60, samples: 1000, dtMs: 2, t0Ms: 0)
+    let view = Viewport(traces: Span(lo: -0.5, hi: 59.5), timeMs: Span(lo: 0, hi: 2000),
+      columns: 600, rows: 400)
+    let today = breakGeometry(b, shown, layout, view, TimeDown, plot)
+    var e: FileEdits
+    let traces = 0 .. 59
+    let key0 = overlayKey(e, traces)
+    discard e.setTimeShifts([5], 8.0, 2.0)
+    doAssert e.shiftOf(5) == 8.0 and b.pickMs[5] == stored, "the stored pick moved"
+    doAssert b.pickOf(5) == stored, "file-time pickOf took the edit"
+    doAssert overlayKey(e, traces) == key0, "a shift changed the pick key"
+    let g = breakGeometry(b, shown, layout, view, TimeDown, plot, edits = e)
+    let want = float32((stored + 8.0) * 400 / 2000)
+    let got = markY(g, bmPick, 5)
+    doAssert abs(got - want) < 0.5, "trace 5's pick bar is at " & $got &
+      " px, the shifted trace is drawn at " & $want
+    doAssert abs(markY(g, bmModel, 5) - markY(today, bmModel, 5)) < 0.5, "the model moved"
+    doAssert "pick 109.5 ms" in b.readoutText(5, e), b.readoutText(5, e)
+    doAssert "model 101.5 ms" in b.readoutText(5, e), b.readoutText(5, e)
+    discard e.undo()
+    doAssert e.shiftOf(5) == 0.0 and overlayKey(e, traces) == key0, "undo changed the key"
+    let back = breakGeometry(b, shown, layout, view, TimeDown, plot, edits = e)
+    doAssert abs(markY(back, bmPick, 5) - markY(today, bmPick, 5)) < 0.5,
+      "undo did not move the bar back"
+    doAssert "pick 101.5 ms" in b.readoutText(5, e), b.readoutText(5, e)
+    discard e.setTimeShifts([6], 0.0, 2.0)
+    discard e.change(teReversed, [7], true)
+    discard e.change(teKilled, [8], true)
+    discard e.setTimeShifts([8], 8.0, 2.0)
+    discard e.setTimeShifts([4], 8.0, 2.0)
+    let later = breakGeometry(b, shown, layout, view, TimeDown, plot, edits = e)
+    doAssert abs(markY(later, bmPick, 6) - markY(today, bmPick, 6)) < 0.5, "shift 0 moved"
+    doAssert abs(markY(later, bmPick, 7) - markY(today, bmPick, 7)) < 0.5, "a reversal moved"
+    doAssert abs(markY(later, bmPick, 8) - markY(today, bmPick, 8)) < 0.5,
+      "a killed trace moved"
+    let far = float32((80.0 + 8.0) * 400 / 2000)
+    doAssert abs(markY(later, bmPick, 4) - far) < 0.5, "the far-off marker did not move"
+    doAssert b.pickOf(4) == 80.0 and b.pickMs[4] == 200.0, "the stored far-off pick changed"
+    doAssert abs(b.differenceMs(4) - (b.pickOf(4) - b.modelOf(4))) < 1e-9
+    doAssert "pick 88.0 ms" in b.readoutText(4, e), b.readoutText(4, e)
+    doAssert overlayKey(e, traces).killed == @[8], "the key stored more than the kill"
 
   echo "tbreakbars: ok"
 

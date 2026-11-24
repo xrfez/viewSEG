@@ -575,7 +575,9 @@ is ticked (below), and then faint with no line; the counts and the flags are the
 place (no offset) only the pick. The bars have a halo in the plot's background colour, so they
 read over the wiggles and over density. They are the traces' own: they follow zoom, pan, the
 sort order and the trace filter, are drawn for the traces in view only, and a killed trace has
-none. Where the traces are closer than three pixels the bars become two lines through the
+none. A time-shift edit moves the pick bar, and the status bar's pick time, with the
+samples (positive later, whole samples, the same move the plot applies); the model bar
+does not move, and a reversal does not. A stored shift on a killed trace is not applied. Where the traces are closer than three pixels the bars become two lines through the
 times (the model's and the pick's). A key beside the overlay's button names the two colours
 ("model", "pick"), marks a given model with a small "given" and, in the warning colour, counts
 the traces more than 12 ms off it ("358 off"); it is the same width whatever the model, and
