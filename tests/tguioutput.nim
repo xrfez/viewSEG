@@ -501,7 +501,15 @@ proc namePatterns() =
       discard clickWhen(f, "output.part 0.kind")
       false
     proc kindOpen(f: FrameInfo): bool =
-      f.markOf("output.part 0.item Source line").size.x > 0
+      if f.markOf("output.part 0.item Source line").size.x == 0: return false
+      # Parts only one sort of file gives are listed, with a note, not hidden.
+      doAssert f.markOf("output.part 0.note Controller (signature files)").size.x > 0,
+        "Controller has no note: " & $f.markNames("output.part 0.note")
+      doAssert f.markOf("output.part 0.note Source line (seismic files)").size.x > 0,
+        "Source line has no note"
+      doAssert f.markNames("output.part 0.note File name").len == 0 and
+        f.markNames("output.part 0.note Time").len == 0, "a shared part has a note"
+      true
     step("the first part's kinds are open", openKind, kindOpen)
 
     proc pickLine(f: FrameInfo): bool = clickWhen(f, "output.part 0.item Source line")

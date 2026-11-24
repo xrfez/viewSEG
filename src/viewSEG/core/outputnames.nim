@@ -121,6 +121,22 @@ func partWord*(kind: NamePartKind): string =
   of npSweepId: "Sweep id"
   of npSensorSerial: "Sensor serial"
 
+func partNote*(kind: NamePartKind): string =
+  ## Which files give `kind` a value, when only one sort does: "" for a part
+  ## both a seismic file and a vibrator signature file can give.
+  case kind
+  of npController, npVibrator, npFileNumber, npSigLine, npSigStation, npShotId, npSweepId:
+    "(signature files)"
+  of npRecord, npSrcLine, npSrcPoint, npRcvLine, npRcvPoint, npRcvIndex, npSystemSerial,
+      npSensorSerial:
+    "(seismic files)"
+  of npStem, npText, npSrcIndex, npTime: ""
+
+func partLabel*(kind: NamePartKind): string =
+  ## `partWord`, then `partNote` when there is one: the chooser's entry.
+  let note = partNote(kind)
+  if note.len == 0: partWord(kind) else: partWord(kind) & " " & note
+
 func refused(sentence: string): NameResult =
   NameResult(problem: sentence)
 

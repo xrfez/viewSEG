@@ -898,7 +898,9 @@ proc placeKindList(ui: OutputUi) =
   let style = igGetStyle()
   let n = float32(ord(NamePartKind.high) + 1)
   let h = n * igGetFrameHeight() + style.WindowPadding.y * 2
-  let w = max(ui.kindWidth, textWidth("Receiver index") + style.WindowPadding.x * 2)
+  var widest = textWidth("Receiver index")
+  for k in NamePartKind: widest = max(widest, textWidth(partLabel(k)))
+  let w = max(ui.kindWidth, widest + style.WindowPadding.x * 2)
   let x = max(vp.WorkPos.x, min(ui.kindAnchor.x, vp.WorkPos.x + vp.WorkSize.x - w))
   let y = max(vp.WorkPos.y, min(ui.kindAnchor.y, vp.WorkPos.y + vp.WorkSize.y - h))
   igSetNextWindowPos(ImVec2_c(x: x, y: y), ImGui_Cond_Always.cint, ImVec2_c(x: 0, y: 0))
@@ -927,11 +929,13 @@ proc drawKindList(ui: var OutputUi; marks: var Marks) =
   let pop = igGetCurrentWindow()
   for k in NamePartKind:
     let word = partWord(k)
-    if igSelectable_Bool((word & "##k").cstring, k == kind, 0, ImVec2_c(x: 0, y: 0)):
+    if igSelectable_Bool((partLabel(k) & "##k").cstring, k == kind, 0, ImVec2_c(x: 0, y: 0)):
       ui.draft.parts[ui.kindRow].kind = k
       ui.closeKind()
       igCloseCurrentPopup()
     marks.mark("output.part " & $ui.kindRow & ".item " & word)
+    if partNote(k).len > 0:
+      marks.mark("output.part " & $ui.kindRow & ".note " & word & " " & partNote(k))
   igEndPopup()
   # A popup that hangs out of its pane is marked hidden every other frame, so a
   # click on a visible row misses. Leave it hittable for the next frame.

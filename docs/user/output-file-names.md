@@ -28,7 +28,10 @@ project is open read-only."). You can still pick the pattern the project already
   `"-" hyphen`.
 - **The parts**, one row each, in the order they are written. The first box on a row is
   the kind of part. **Up** and **Down** move the row, **Remove** takes it away, and **Add part**
-  adds one at the end. A pattern has at least one part and at most 16.
+  adds one at the end. A pattern has at least one part and at most 16. The list of kinds
+  shows every part. One that only one sort of file can give carries a note: "(signature
+  files)" for the parts of a vibrator signature file, "(seismic files)" for the parts only
+  a seismic file has. They are not hidden, because one pattern can serve both sorts of file.
 - **Example:** shows the name the pattern makes with made-up values and the extension of
   the chosen format, or the reason it cannot make one. Nothing is read from a file for it.
 - **Save** keeps the pattern in the project. **Delete** removes the saved pattern of that

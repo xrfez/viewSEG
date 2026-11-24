@@ -369,6 +369,14 @@ proc main*() =
       "\"CON\" is a name Windows keeps for a device."
     doAssert patternProblem(pat(nsDot, part(npText, text = "line-12"))) == ""
 
+  block partNotes:
+    doAssert partLabel(npVibrator) == "Vibrator (signature files)"
+    doAssert partLabel(npRcvLine) == "Receiver line (seismic files)"
+    doAssert partLabel(npStem) == "File name"
+    doAssert partLabel(npTime) == "Time"
+    for k in NamePartKind:
+      doAssert partLabel(k).startsWith(partWord(k))
+
   echo "toutputnames: ok"
 
 when isMainModule:
