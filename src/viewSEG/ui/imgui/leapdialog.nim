@@ -2,6 +2,7 @@
 ## date the table is known complete through, and the file it is saved in.
 ## A floating window. It posts commands; it does not read or write the file.
 
+import std/math
 import parseSEG
 import imguin/cimgui
 import ../../core/[leapfile, state]
@@ -34,6 +35,12 @@ proc button(label: string; enabled: bool; marks: var Marks; name: string): bool 
 
 proc clamp(n, lo, hi: int32): int32 =
   if n < lo: lo elif n > hi: hi else: n
+
+proc steppedWidth(sample: string): float32 =
+  ## An integer box with step buttons, wide enough that `sample` is not clipped.
+  let style = igGetStyle()
+  let field = igCalcTextSize(sample.cstring, nil, false, -1).x + 2 * style.FramePadding.x
+  round(field + 2 * (igGetFrameHeight() + style.ItemInnerSpacing.x))
 
 proc drawLeap*(ui: var LeapUi; st: AppState; t: Theme; marks: var Marks): seq[Command] =
   ## The window, while it is open. Apply, Remove, Reload and Reset post a
@@ -83,11 +90,11 @@ proc drawLeap*(ui: var LeapUi; st: AppState; t: Theme; marks: var Marks): seq[Co
       igEndTable()
     igSeparator()
     igTextUnformatted("Add a leap second", nil)
-    igSetNextItemWidth(igGetFontSize() * 6)
+    igSetNextItemWidth(steppedWidth("0000"))
     if igInputInt("Year##leap".cstring, addr ui.year, 1, 10, 0):
       ui.year = clamp(ui.year, 1972, 2099)
     igSameLine(0, -1)
-    igSetNextItemWidth(igGetFontSize() * 5)
+    igSetNextItemWidth(steppedWidth("00"))
     if igInputInt("Month##leap".cstring, addr ui.month, 1, 1, 0):
       ui.month = clamp(ui.month, 1, 12)
     igSameLine(0, -1)
