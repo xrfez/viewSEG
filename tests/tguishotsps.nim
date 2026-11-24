@@ -20,7 +20,7 @@ import std/[monotimes, options, os, strutils, times]
 import parseSEG
 import viewSEG/core/[geometry, shotlog, shotlogsps, state]
 import viewSEG/ui/imgui/app
-import utils/[fixtures, waiting]
+import utils/[faultyfs, fixtures, waiting]
 
 func centre(r: Rect): Vec2 =
   vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
@@ -68,6 +68,8 @@ proc main*() =
     let shot = root / ".scratch" / "shotlog-sps.png"
     createDir(shot.parentDir)
 
+    createDir(fx.dir / "slow")
+    install()
     var nextLog = good
     var nextDest = taken
     var asked: seq[DialogKind]
@@ -156,6 +158,26 @@ proc main*() =
         doAssert f.savePng(shot), "the screenshot was not written"
         return true
       false, 2000)
+    # A file on a drive that does not answer: the window goes on drawing, Export
+    # is dim and says it is checking, and the file's answer comes when the drive's does.
+    step("a file on a drive that does not answer", proc (f: FrameInfo) =
+      fault(fx.dir / "slow", fkHang, {foStat})
+      nextDest = fx.dir / "slow" / "late.sps"
+      f.click(f.markOf("shotlog.sps.choose").centre),
+      proc (f: FrameInfo): bool =
+        why = $f.markNames("shotlog.sps.")
+        f.hasMark("shotlog.sps.file " & nextDest) and
+          f.hasMark("shotlog.sps.why Checking the destination..."))
+    step("Export is refused while it checks", proc (f: FrameInfo) =
+      f.click(f.markOf("shotlog.sps.run").centre),
+      proc (f: FrameInfo): bool =
+      doAssert f.hasMark("shotlog.sps.why Checking the destination..."),
+        "the answer came from a drive that was hung"
+      doAssert not f.core.spsRunning, "Export started while the destination was unchecked"
+      wait > 8)
+    step("the drive answers", proc (f: FrameInfo) = release(fx.dir / "slow"),
+      proc (f: FrameInfo): bool =
+      not f.hasMark("shotlog.sps.why") and f.hasMark("shotlog.sps.file " & nextDest))
     step("another log, with a shot point", proc (f: FrameInfo) =
       nextLog = second
       f.click(f.markOf("menu.Project").centre),

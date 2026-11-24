@@ -19,7 +19,7 @@ import std/[monotimes, options, os, strutils]
 import parseSEG
 import viewSEG/core/[geometry, shotlog, state]
 import viewSEG/ui/imgui/app
-import utils/[fixtures, waiting]
+import utils/[faultyfs, fixtures, waiting]
 
 const
   BaseUs = 1_772_323_200_000_000'i64 # 2026-03-01T00:00:00 UTC
@@ -84,6 +84,7 @@ proc main*() =
     let logPath = fx.dir / "shots.csv"
     let map = writeLog(logPath)
     let dest = fx.dir / "out" / "rec_cut.sgd"
+    install()
     let hook = proc (kind: DialogKind; location: string): seq[string] =
       if kind == dkCutDest: @[fx.dir / "out"] else: @[]
     let opts = RunOptions(windowSize: (1920, 1080), theme: forceDark, persist: true,
@@ -192,6 +193,27 @@ proc main*() =
       proc (f: FrameInfo): bool =
       let i = f.core.shownFile(f.core.findPanel(MainPanel))
       i >= 0 and f.core.sessions[i].path.endsWith("rec_cut.sgd"))
+    # A destination on a drive that does not answer: the window goes on
+    # drawing, Cut is dim and says it is checking, and the answer comes when the
+    # drive does.
+    step("a name on a drive that does not answer", proc (f: FrameInfo) =
+      fault(fx.dir / "out", fkHang, {foStat})
+      clicks = 0
+      f.click(f.markOf("cut.name").centre),
+      proc (f: FrameInfo): bool =
+      inc clicks
+      if clicks == 4: f.typeText("x")
+      f.hasMark("cut.checking"))
+    step("Cut is refused while it checks", proc (f: FrameInfo) =
+      clicks = 0
+      f.click(f.markOf("cut.run").centre),
+      proc (f: FrameInfo): bool =
+      inc clicks
+      doAssert f.hasMark("cut.checking"), "the answer came from a drive that was hung"
+      doAssert not f.core.cutRunning, "Cut started while the destination was unchecked"
+      clicks >= 8)
+    step("the drive answers", proc (f: FrameInfo) = release(fx.dir / "out"),
+      proc (f: FrameInfo): bool = not f.hasMark("cut.checking") and not f.hasMark("cut.exists"))
     var at = 0
     var started = false
     var failed = ""
@@ -216,6 +238,7 @@ proc main*() =
     let code = run(o)
     doAssert code == 0, "run() exit code " & $code
     doAssert failed.len == 0, "the cut did not finish: " & failed
+    doAssert uiCalls().len == 0, "the UI thread called the file system:\n" & uiCalls().join("\n")
     doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
 
 when isMainModule:

@@ -241,6 +241,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
         cutOptions: opts, cutDest: ui.folder / ui.nameText)
     igEndDisabled()
     marks.mark("cut.run")
+    if ui.dest.pending: marks.mark("cut.checking")
     tip(if why.len > 0: why
         elif ui.folder.len == 0: NeedFolder
         elif nameWhy.len > 0: nameWhy
