@@ -23,6 +23,9 @@ const
   EmptyProblems* = "No problems."
   CappedNote* = "The list shows the first problems only."
   DuplicateTail* = " is chosen more than once"
+  RevertCell* = "Revert to the file's value"
+  UndoCellTip* = "Undo the last cell edit"
+  RedoCellTip* = "Redo the cell edit undone last"
 
 proc utcMicrosText*(us: int64): string =
   ## UTC microseconds since 1970 as a date and time, to the microsecond.

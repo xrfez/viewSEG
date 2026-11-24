@@ -1138,7 +1138,16 @@ The grid has one row per shot. The first column is the time in UTC, to the micro
 worked out from the time columns. A narrow column marks a row that has a problem; the
 tooltip says what is wrong. The other columns are the table's own, with the header name
 and, under it, what the column means. A click selects a row. Ctrl+C copies the row. A
-right-click copies one cell. **Filter** keeps rows whose cells hold the text typed.
+right-click copies one cell. A double-click on a cell, or F2 on the selected cell, turns
+that one cell into a text box. Enter keeps the text. Escape leaves the cell as it was.
+Tab keeps the text and moves to the next cell. The time column and the status column are
+not edited. A cell whose text is not the file's is marked, and the tooltip shows the
+file's own text. A right-click on a marked cell can revert it to the file's value. Two
+buttons in the top line, and Ctrl+Z and Ctrl+Y while the window has the focus, undo and
+redo cell edits (up to 1000). Elsewhere, Ctrl+Z still undoes an edit of the file the
+Seismic window shows. A read-only project still shows an edit for this run, and the top
+line says the log is not saved. A cell cannot hold a line break: the text box stays open
+and the reason is shown under it. **Filter** keeps rows whose cells hold the text typed.
 **Problems only** keeps rows that have a problem. The **Problems** list names each
 problem; a click shows that row in the grid.
 

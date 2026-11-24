@@ -1,6 +1,7 @@
 ## The Shot log window in the running frontend, headless: Project > Import shot
 ## log... reads the sample; the top line, row 0's time, a cell and a role line
-## match; Columns changes a role and flags a duplicated X; a filter and
+## match; a cell can be edited, escaped, and undone; Columns changes a role and
+## flags a duplicated X; a filter and
 ## Problems only narrow the rows; removing the log leaves the window up.
 ## A generated log of 100 000 rows is then scrolled, and those frames stay
 ## under the budget the other GUI tests use.
@@ -82,6 +83,7 @@ proc main*() =
     writeBig(big, 100_000)
     let gridShot = root / ".scratch" / "shotlog-grid.png"
     let columnsShot = root / ".scratch" / "shotlog-columns.png"
+    let editShot = root / ".scratch" / "shotlog-edit.png"
     createDir(gridShot.parentDir)
 
     block sampleLog:
@@ -103,6 +105,12 @@ proc main*() =
           limit = 400) =
         steps.add Step(name: name, limit: limit, act: act, done: done)
       proc noop(f: FrameInfo) = discard
+      proc doubleClick(f: FrameInfo; at: Vec2; n: int) =
+        if n == 2: f.moveMouse(at)
+        if n == 3: f.pressMouse(at, true)
+        if n == 4: f.pressMouse(at, false)
+        if n == 5: f.pressMouse(at, true)
+        if n == 6: f.pressMouse(at, false)
 
       step("the bar", proc (f: FrameInfo) =
         f.resizeWindow(1920, 1080)
@@ -128,6 +136,71 @@ proc main*() =
             doAssert asked == @[dkShotLog], "asked for " & $asked
             doAssert f.savePng(gridShot), "the grid screenshot was not written"
         , 2000)
+
+      var pointAt = vec2(0, 0)
+      var fileCol = -1
+      var fileAt = vec2(0, 0)
+      step("edit a cell", proc (f: FrameInfo) =
+        pointAt = f.markOf("shotlog.cell 0 " & $pointCol & " 1000").centre
+        f.moveMouse(pointAt),
+        proc (f: FrameInfo): bool =
+          f.doubleClick(pointAt, wait)
+          f.markOf("shotlog.editbox").size.x > 0 and f.typing)
+      var typed = false
+      step("type and Enter", proc (f: FrameInfo) =
+        typed = false,
+        proc (f: FrameInfo): bool =
+          if not typed and f.typing and
+              f.markNames("shotlog.edittext 1000").len > 0:
+            f.typeText("4242")
+            typed = true
+          if typed and f.markNames("shotlog.edittext 4242").len > 0:
+            if wait mod 8 == 0: f.pressKey(skEnter, true)
+            if wait mod 8 == 1: f.pressKey(skEnter, false)
+          why = $f.markNames("shotlog.edittext ")
+          if wait < 8: return false
+          let cell = "shotlog.cell 0 " & $pointCol & " 4242"
+          cell in f.markNames("shotlog.cell 0 ") and
+            f.core.shotView(0).rows[0].shotPoint == 4242.0 and
+            f.markNames("shotlog.edited 0 " & $pointCol).len > 0
+      , 2000)
+      step("open another cell", proc (f: FrameInfo) =
+        fileCol = roleCol(f, "file number")
+        fileAt = f.markOf("shotlog.cell 0 " & $fileCol & " 5000").centre
+        f.moveMouse(fileAt),
+        proc (f: FrameInfo): bool =
+          if fileCol < 0: return false
+          f.doubleClick(fileAt, wait)
+          if f.markOf("shotlog.editbox").size.x > 0 and
+              f.markNames("shotlog.edited 0 " & $pointCol).len > 0:
+            doAssert f.savePng(editShot), "the edit screenshot was not written"
+            return true
+          false)
+      var escaped = false
+      step("Escape leaves it", proc (f: FrameInfo) =
+        escaped = false,
+        proc (f: FrameInfo): bool =
+          if not escaped and f.typing and
+              f.markNames("shotlog.edittext 5000").len > 0:
+            f.typeText("9999")
+            escaped = true
+          if f.markNames("shotlog.edittext 9999").len > 0:
+            if wait mod 8 == 0: f.pressKey(skEscape, true)
+            if wait mod 8 == 1: f.pressKey(skEscape, false)
+          if wait < 8: return false
+          ("shotlog.cell 0 " & $fileCol & " 5000") in f.markNames("shotlog.cell 0 ") and
+            f.markOf("shotlog.editbox").size.x == 0)
+      step("Ctrl+Z restores", proc (f: FrameInfo) =
+        f.pressKey(skCtrl, true, {smCtrl})
+        f.pressKey(skZ, true, {smCtrl}),
+        proc (f: FrameInfo): bool =
+          if wait == 4:
+            f.pressKey(skZ, false, {smCtrl})
+            f.pressKey(skCtrl, false)
+          if wait < 6: return false
+          ("shotlog.cell 0 " & $pointCol & " 1000") in f.markNames("shotlog.cell 0 ") and
+            f.core.shotView(0).rows[0].shotPoint == 1000.0
+      , 2000)
 
       step("Columns...", proc (f: FrameInfo) = f.click(f.markOf("shotlog.columns").centre),
         proc (f: FrameInfo): bool =

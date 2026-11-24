@@ -1,6 +1,6 @@
 ## The Shot log window: a table of shots, its column map, and its problems.
 ## Import is Project > Import shot log...; this window opens once a file is
-## chosen, and View shows or hides it. Cells are read-only.
+## chosen, and View shows or hides it. One cell can be edited at a time.
 
 import std/[algorithm, options, os, strutils, tables]
 import imguin/cimgui
@@ -21,9 +21,9 @@ type
     bringUp: bool
     placeAgain: bool
     focus: FocusClicks
-    haveSeen: bool  ## a loaded log has been followed
-    seenMax: int    ## the highest id followed
-    currentId: int  ## the log on show
+    haveSeen: bool   ## a loaded log has been followed
+    seenMax: int     ## the highest id followed
+    currentId: int   ## the log on show
     columnsOpen: bool
     draft: ShotLogMap
     draftWidth: int
@@ -37,10 +37,20 @@ type
     matches: seq[int]
     filterDone: bool
     problemsOnly: bool
-    tab: int        ## 0 grid, 1 problems
-    forceGrid: bool ## the grid tab is selected next frame
+    tab: int         ## 0 grid, 1 problems
+    forceGrid: bool  ## the grid tab is selected next frame
     selected: int
+    selectedCol: int ## a data column; -1 when the time or status column is selected
     scrollTo: int
+    editing: bool
+    editRow: int
+    editCol: int
+    editBuf: seq[char]
+    editReason: string
+    armEdit: bool    ## the text box takes the keyboard when it is drawn
+    pending: bool    ## Tab committed: open the next cell next frame
+    pendingRow: int
+    pendingCol: int
     bound: bool
     boundId: int
     boundRev: int
@@ -55,6 +65,10 @@ proc open*(ui: var ShotLogUi) =
 proc placeAgain*(ui: var ShotLogUi) =
   ## Puts the window back at its first place and size when next drawn.
   ui.placeAgain = true
+
+func focused*(ui: ShotLogUi): bool {.inline.} =
+  ## Whether the window had the focus at the end of the last frame.
+  ui.focus.focused
 
 proc setText(buf: var openArray[char]; text: string) =
   let n = min(text.len, buf.len - 1)
@@ -116,6 +130,40 @@ proc clearFilter(ui: var ShotLogUi) =
   ui.needle = ""
   ui.resetScan()
 
+proc stopEdit(ui: var ShotLogUi) =
+  ui.editing = false
+  ui.editReason = ""
+  ui.armEdit = false
+  ui.pending = false
+
+proc beginEdit(ui: var ShotLogUi; row, col: int; text: string) =
+  ui.editing = true
+  ui.editRow = row
+  ui.editCol = col
+  ui.selected = row
+  ui.selectedCol = col
+  ui.editReason = ""
+  ui.armEdit = true
+  ui.pending = false
+  let n = max(text.len + 64, 256)
+  ui.editBuf = newSeq[char](n)
+  let m = min(text.len, n - 1)
+  for i in 0 ..< m: ui.editBuf[i] = text[i]
+  ui.editBuf[m] = '\0'
+
+proc editText(ui: ShotLogUi): string =
+  if ui.editBuf.len == 0: ""
+  else: $cast[cstring](unsafeAddr ui.editBuf[0])
+
+proc selectEditedCell(data: ptr ImGuiInputTextCallbackData): cint {.cdecl, raises: [].} =
+  ## A multiline box ignores AutoSelectAll. Select the cell once, as it is focused.
+  if data != nil and data.EventActivated:
+    ImGuiInputTextCallbackData_SelectAll(data)
+  0
+
+proc hasBreak(s: string): bool =
+  '\n' in s or '\r' in s
+
 proc cacheFaults(ui: var ShotLogUi; st: AppState; i: int) =
   ui.faultRows.setLen 0
   ui.faultText.clear()
@@ -139,13 +187,16 @@ proc bindLog(ui: var ShotLogUi; st: AppState; i, rev: int) =
     ui.boundRev = rev
     ui.columnsOpen = false
     ui.selected = -1
+    ui.selectedCol = -1
     ui.scrollTo = -1
+    ui.stopEdit()
     ui.clearFilter()
     ui.cacheFaults(st, i)
   elif ui.boundRev != rev:
     ui.boundRev = rev
     ui.resetScan()
     ui.cacheFaults(st, i)
+    ui.stopEdit()
 
 proc loadDraft(ui: var ShotLogUi; map: ShotLogMap; width: int) =
   ui.draft = map
@@ -197,6 +248,15 @@ proc listedIndex(ui: ShotLogUi; row, n: int): int =
       if r == row: return i
   elif row in 0 ..< n:
     result = row
+
+proc nextListed(ui: ShotLogUi; row, col, width, n: int): tuple[row, col: int] =
+  ## The next editable cell after (`row`, `col`), or (-1, -1).
+  if width <= 0: return (-1, -1)
+  if col + 1 < width: return (row, col + 1)
+  let at = ui.listedIndex(row, n)
+  if at < 0: return (-1, -1)
+  if at + 1 >= ui.listedCount(n): return (-1, -1)
+  (ui.listedRow(at + 1), 0)
 
 proc copyRow(st: AppState; i, row, width: int; d: Delimiter) =
   var cells = newSeq[string](width)
@@ -312,15 +372,79 @@ proc drawColumns(ui: var ShotLogUi; st: AppState; i: int; t: Theme; marks: var M
   marks.mark("shotlog.guess")
   tip("Fill the map from the header names and the first rows")
 
-proc cellBox(text: string; acts: bool): tuple[clicked, copied: bool] =
+proc commitEdit(ui: var ShotLogUi; i, width, n: int; st: AppState; advance: bool;
+    commands: var seq[Command]) =
+  let text = ui.editText
+  let row = ui.editRow
+  let col = ui.editCol
+  if hasBreak(text):
+    ui.editReason = ShotLogLineBreak
+    ui.armEdit = true
+    commands.add Command(kind: ckEditShotCell, logIndex: i, logRow: row, logCol: col,
+      logCell: text)
+    return
+  commands.add Command(kind: ckEditShotCell, logIndex: i, logRow: row, logCol: col,
+    logCell: text)
+  if advance:
+    let nxt = ui.nextListed(row, col, width, n)
+    if nxt.row >= 0:
+      ui.pending = true
+      ui.pendingRow = nxt.row
+      ui.pendingCol = nxt.col
+      ui.scrollTo = nxt.row
+  ui.editing = false
+  ui.editReason = ""
+
+proc cornerMark(t: Theme) =
+  let mn = igGetItemRectMin()
+  let mx = igGetItemRectMax()
+  let s = igGetFontSize() * 0.4
+  ImDrawList_AddTriangleFilled(igGetWindowDrawList(),
+    ImVec2_c(x: mx.x, y: mn.y),
+    ImVec2_c(x: mx.x - s, y: mn.y),
+    ImVec2_c(x: mx.x, y: mn.y + s),
+    u32(t.roles[rlHighlight]))
+
+proc cellBox(text: string; acts: bool; copy = true): tuple[clicked, copied: bool] =
   let shown = if text.len == 0: " " else: text
   if igSelectable_Bool((shown & "##c").cstring, false, 0, ImVec2_c(x: 0, y: 0)) and acts:
     result.clicked = true
-  if igIsItemClicked(ImGui_MouseButton_Right.cint) and acts:
+  if copy and igIsItemClicked(ImGui_MouseButton_Right.cint) and acts:
     igSetClipboardText(text.cstring)
     result.copied = true
 
-proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme; marks: var Marks) =
+proc drawEditor(ui: var ShotLogUi; i, width, n: int; st: AppState; t: Theme;
+    marks: var Marks; commands: var seq[Command]) =
+  igBeginGroup()
+  if ui.armEdit:
+    igSetKeyboardFocusHere(0)
+    ui.armEdit = false
+  igSetNextItemWidth(-1)
+  let h = igGetTextLineHeight() + igGetStyle().FramePadding.y * 2
+  let flags = ImGui_InputTextFlags_EnterReturnsTrue.cint or
+    ImGui_InputTextFlags_CtrlEnterForNewLine.cint or
+    ImGui_InputTextFlags_AutoSelectAll.cint or
+    ImGui_InputTextFlags_CallbackAlways.cint
+  let entered = igInputTextMultiline("##edit", cast[cstring](addr ui.editBuf[0]),
+    csize_t(ui.editBuf.len), ImVec2_c(x: 0, y: h), flags, selectEditedCell, nil)
+  marks.mark("shotlog.editbox")
+  marks.mark("shotlog.edittext " & ui.editText)
+  let escape = igIsKeyPressed_Bool(ImGui_Key_Escape, false)
+  let tab = igIsKeyPressed_Bool(ImGui_Key_Tab, false) and not igGetIO_Nil().KeyShift
+  if entered or tab:
+    ui.commitEdit(i, width, n, st, tab, commands)
+  elif escape or igIsItemDeactivated():
+    ui.stopEdit()
+  if ui.editReason.len > 0:
+    wrapped(ui.editReason, t.roles[rlWarning])
+    marks.mark("shotlog.editreason")
+  igEndGroup()
+
+proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
+    marks: var Marks): seq[Command] =
+  if ui.pending and not ui.editing:
+    ui.beginEdit(ui.pendingRow, ui.pendingCol, st.shotCell(i, ui.pendingRow, ui.pendingCol))
+    ui.scrollTo = ui.pendingRow
   ui.scanFilter(st, i, width, n)
   let listed = ui.listedCount(n)
   if ui.needle.len > 0 and not ui.filterDone:
@@ -364,6 +488,9 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme; marks
   ImGuiListClipper_Begin(clipper, cint(listed), -1)
   let jump = ui.listedIndex(ui.scrollTo, n)
   if jump >= 0: ImGuiListClipper_IncludeItemByIndex(clipper, cint(jump))
+  if ui.editing:
+    let at = ui.listedIndex(ui.editRow, n)
+    if at >= 0: ImGuiListClipper_IncludeItemByIndex(clipper, cint(at))
   var edge = -1
   let delim = st.shotLogMap(i).delimiter
   while ImGuiListClipper_Step(clipper):
@@ -380,22 +507,49 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme; marks
       igPushID_Int(-1)
       let timeHit = cellBox(time, ui.focus.acts)
       igPopID()
-      if timeHit.clicked: ui.selected = row
+      if timeHit.clicked:
+        ui.selected = row
+        ui.selectedCol = -1
       if row == 0: marks.mark("shotlog.time 0 " & time)
       discard igTableNextColumn()
       let fault = if ui.faultText.hasKey(row): ui.faultText[row] else: ""
       igPushID_Int(-2)
       let statusHit = cellBox(if fault.len > 0: IconWarning else: "", ui.focus.acts)
       igPopID()
-      if statusHit.clicked: ui.selected = row
+      if statusHit.clicked:
+        ui.selected = row
+        ui.selectedCol = -1
       if fault.len > 0: tip(fault)
       for c in 0 ..< width:
         if igTableNextColumn():
           igPushID_Int(cint(c))
           let text = st.shotCell(i, row, c)
-          let hit = cellBox(text, ui.focus.acts)
+          let editing = ui.editing and row == ui.editRow and c == ui.editCol
+          if editing:
+            ui.drawEditor(i, width, n, st, t, marks, result)
+          else:
+            let differs = st.shotCellDiffers(i, row, c)
+            if differs:
+              igTableSetBgColor(ImGui_TableBgTarget_CellBg.cint, highlight, -1)
+            let hit = cellBox(text, ui.focus.acts, not differs)
+            if hit.clicked:
+              ui.selected = row
+              ui.selectedCol = c
+            let dbl = igIsItemHovered(0) and
+              igIsMouseDoubleClicked_Nil(ImGui_MouseButton_Left.cint) and ui.focus.acts
+            if dbl: ui.beginEdit(row, c, text)
+            if differs:
+              if igBeginPopupContextItem(nil, ImGui_PopupFlags_MouseButtonRight.cint):
+                if igMenuItem_Bool("Copy", nil, false, true):
+                  igSetClipboardText(text.cstring)
+                if igMenuItem_Bool(RevertCell.cstring, nil, false, true):
+                  result.add Command(kind: ckEditShotCell, logIndex: i, logRow: row,
+                    logCol: c, logCell: st.shotFileCell(i, row, c))
+                igEndPopup()
+              cornerMark(t)
+              marks.mark("shotlog.edited " & $row & " " & $c)
+              tip(st.shotFileCell(i, row, c))
           igPopID()
-          if hit.clicked: ui.selected = row
           if row == 0: marks.mark("shotlog.cell 0 " & $c & " " & text)
       if row == ui.selected: marks.mark("shotlog.at " & $row)
       if row == ui.scrollTo:
@@ -408,6 +562,12 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme; marks
       not igGetIO_Nil().WantTextInput and igGetIO_Nil().KeyCtrl and
       igIsKeyPressed_Bool(ImGui_Key_C, false):
     copyRow(st, i, ui.selected, width, delim)
+  if not ui.editing and ui.selected >= 0 and ui.selectedCol >= 0 and
+      ui.selectedCol < width and
+      igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint) and
+      not igGetIO_Nil().WantTextInput and igIsKeyPressed_Bool(ImGui_Key_F2, false):
+    ui.scrollTo = ui.selected
+    ui.beginEdit(ui.selected, ui.selectedCol, st.shotCell(i, ui.selected, ui.selectedCol))
   igEndChild()
 
 proc drawProblems(ui: var ShotLogUi; st: AppState; i: int; t: Theme; marks: var Marks) =
@@ -433,8 +593,10 @@ proc drawProblems(ui: var ShotLogUi; st: AppState; i: int; t: Theme; marks: var 
 
 proc drawShotLog*(ui: var ShotLogUi; title: string; st: AppState; t: Theme;
     marks: var Marks): seq[Command] =
-  ## The window, titled `title`, while it is open. A re-map is returned as a command.
-  if not ui.shown: return
+  ## The window, titled `title`, while it is open. Edits and a re-map are commands.
+  if not ui.shown:
+    ui.focus.blur()
+    return
   if ui.bringUp:
     igSetWindowFocus_Str(title.cstring)
     ui.bringUp = false
@@ -466,7 +628,27 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: AppState; t: Theme;
       let problems = st.shotView(i).problems.count
       let file = st.shotLogSource(i).extractFilename
       let name = if file.len > 0: file else: st.shotLogName(i)
-      let line = shotLogSummary(name, n, width, problems, where)
+      var line = shotLogSummary(name, n, width, problems, where)
+      if st.inProject and st.project.readOnly:
+        line.add " · "
+        line.add ReadOnlyShotLog
+      igAlignTextToFramePadding()
+      igBeginDisabled(st.shotUndoCount(i) == 0)
+      if igButton((IconUndo & "##undoshot").cstring, ImVec2_c(x: 0, y: 0)) and
+          ui.focus.acts:
+        result.add Command(kind: ckUndoShotEdit, logIndex: i)
+      igEndDisabled()
+      marks.mark("shotlog.undo")
+      tip(UndoCellTip)
+      igSameLine(0, -1)
+      igBeginDisabled(st.shotRedoCount(i) == 0)
+      if igButton((IconRedo & "##redoshot").cstring, ImVec2_c(x: 0, y: 0)) and
+          ui.focus.acts:
+        result.add Command(kind: ckRedoShotEdit, logIndex: i)
+      igEndDisabled()
+      marks.mark("shotlog.redo")
+      tip(RedoCellTip)
+      igSameLine(0, -1)
       igTextUnformatted(line.cstring, nil)
       marks.mark("shotlog.summary")
       marks.mark("shotlog.summary " & line)
@@ -512,7 +694,7 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: AppState; t: Theme;
       marks.mark("shotlog.columns")
       tip("How the table was read, and what each column means")
       if ui.columnsOpen:
-        result = ui.drawColumns(st, i, t, marks, reading)
+        result.add ui.drawColumns(st, i, t, marks, reading)
       else:
         if igBeginTabBar("shotlog.tabs", 0):
           let gridFlags = if ui.forceGrid: ImGui_TabItemFlags_SetSelected.cint else: 0
@@ -521,7 +703,7 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: AppState; t: Theme;
           if gridOn:
             ui.forceGrid = false
             ui.tab = 0
-            ui.drawGrid(st, i, width, n, t, marks)
+            result.add ui.drawGrid(st, i, width, n, t, marks)
             igEndTabItem()
           let problemsOn = igBeginTabItem(ProblemsTab.cstring, nil, 0)
           marks.mark("shotlog.tab Problems")
@@ -530,6 +712,17 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: AppState; t: Theme;
             ui.drawProblems(st, i, t, marks)
             igEndTabItem()
           igEndTabBar()
+    if i >= 0 and ui.focus.focused and not igGetIO_Nil().WantTextInput:
+      let io = igGetIO_Nil()
+      if io.KeyCtrl and igIsKeyPressed_Bool(ImGui_Key_Z, false):
+        if io.KeyShift:
+          result.add Command(kind: ckRedoShotEdit, logIndex: i)
+        else:
+          result.add Command(kind: ckUndoShotEdit, logIndex: i)
+      elif io.KeyCtrl and igIsKeyPressed_Bool(ImGui_Key_Y, false):
+        result.add Command(kind: ckRedoShotEdit, logIndex: i)
     ui.focus.settle()
+  else:
+    ui.focus.blur()
   igEnd()
   if not open: ui.shown = false
