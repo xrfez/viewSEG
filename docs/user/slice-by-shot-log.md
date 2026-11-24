@@ -33,8 +33,10 @@ components of the same type and never re-sorting anything:
    continuous. Anything else is a receiver gather.
 2. **Is the receiver gather continuous?** Each trace starts a whole number of trace lengths
    after the one before it, with no variance. For one receiver (one component at one point:
-   its line and point, else its group coordinates) the traces are taken in time order and
-   those sharing one start time count as one segment (they are its components). The channel
+   its line and point, else its group coordinates, which within 5 survey units of each other
+   are one point, as a node's position written a little differently from record to record)
+   the traces are taken in time order and those sharing one start time count as one segment
+   (they are its components). The channel
    number tells receivers apart only where two traces of one component at one point start
    together (uncoded components of one station); otherwise it is left out, so a receiver whose
    channel number changes from record to record, or rises from trace to trace, is still one.

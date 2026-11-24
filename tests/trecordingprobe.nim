@@ -16,7 +16,8 @@
 
 import std/[algorithm, assertions, os, sets, strutils, times]
 import parseSEG
-import viewSEG/core/[correlatejobs, cutgather, recordingkind, recordingprobe, vendormaps]
+import viewSEG/core/[correlatejobs, cutgather, recordingkind, recordingprobe, segmentclock,
+  vendormaps]
 import utils/[fixtures, kindfiles]
 
 proc whole(path: string; reg: VendorRegistry): RecordingFacts =
@@ -44,6 +45,11 @@ proc same(dir, name: string; specs: openArray[Spec]; want: RecordingKind) =
   let got = kindOfFile(path, VendorRegistry())
   doAssert got.outcome == poKnown and got.kind == want, name & ": " & $got
   doAssert got.kind == whole(path, VendorRegistry()).kind, name & " differs from the whole"
+
+proc shots(stations: int; starts: openArray[int]): seq[Spec] =
+  ## A shot after shot, every station each time, in file order.
+  for first in starts:
+    for r in 0 ..< stations: result.add spec(r, first)
 
 proc main*() =
   let dir = getTempDir() / "trecordingprobe"
@@ -99,6 +105,25 @@ proc main*() =
       doAssert f.kind == rkReceiverContinuous and f.components == 1, path & ": " & $f
       doAssert f.abutting == 5, path & ": " & $f
       doAssert kindOfFile(path, VendorRegistry()).kind == f.kind, path
+
+  block a_position_written_a_little_differently_is_one_receiver_point:
+    # SEG-Y nodes placed by their group coordinates, every other trace 1 m off: one node is
+    # one receiver, continuous; two nodes 50 m apart are two
+    var one: seq[Spec] = @[]
+    for i in 0 ..< 6: one.add spec(0, i * 1000)
+    let path = writeSegySpecs(dir, "jitter", one, channelPerTrace = true, jitter = 1)
+    let f = whole(path, VendorRegistry())
+    doAssert f.kind == rkReceiverContinuous and f.components == 1 and f.stations == 1, $f
+    doAssert kindOfFile(path, VendorRegistry()).kind == f.kind
+    let two = whole(writeSegySpecs(dir, "jitter2", shots(2, [0, 1000, 2000, 3000]),
+      jitter = 1), VendorRegistry())
+    doAssert two.kind == rkReceiverContinuous and two.components == 2 and two.stations == 2,
+      $two
+    # the one place both the keys and the segment clock take a point from
+    var g = openSeismic(path, keys = true)
+    defer: g.close()
+    let places = stationPlaces(g)
+    for p in places: doAssert p == places[0] and p.how == 1, $places
 
   block uncoded_channels_that_start_together_keep_their_channels:
     # three channels of one station, every component 0, at each of four starts: the channel

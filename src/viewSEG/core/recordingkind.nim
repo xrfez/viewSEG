@@ -112,8 +112,9 @@ type
   RecordingPlan* = object
     ## The segments of a file as the cut plans them.
     meta*: ChunkMeta
-    times*: seq[float64] ## per trace: UTC POSIX seconds of its time zero
-    receivers*: seq[int] ## per trace: its receiver
+    times*: seq[float64]       ## per trace: UTC POSIX seconds of its time zero
+    receivers*: seq[int]       ## per trace: its receiver
+    places*: seq[StationPlace] ## per trace: its receiver point (`stationPlaces`)
     clock*: SegmentClock
     streams*: SliceStreams
 
@@ -166,6 +167,7 @@ proc planRecording*(file: ptr SeismicFile; source: string; dtMs: float64;
     if not file[].inMemory: fs.mappedRead(source, headers = true)
     file[].ensureKeys()
   result.meta = chunkMeta(file[], 0 ..< file[].len, dtMs = dtMs)
+  result.places = stationPlaces(file[])
   if startFieldDeclared(file[], reg):
     if not file[].inMemory: fs.mappedRead(source, headers = true)
     result.clock = segmentClock(file[], reg, check)
@@ -182,7 +184,7 @@ proc planRecording*(file: ptr SeismicFile; source: string; dtMs: float64;
     for i in 0 ..< file[].len:
       let k = result.meta.keys(i)
       result.times[i] = if k.timeOrigin == toFirstSample: k.time - k.t0Ms / 1000 else: k.time
-    result.receivers = receiverIds(file[], result.times, dtMs / 1000)
+    result.receivers = receiverIds(file[], result.places, result.times, dtMs / 1000)
   result.streams = initSliceStreams(result.meta, result.times, result.receivers)
 
 proc endToEndTimes*(plan: RecordingPlan): seq[float64] =
@@ -219,8 +221,6 @@ type Seg = object
   row: int
 
 type Place = StationPlace
-
-func placeOf(k: TraceKeys): Place {.inline.} = stationPlace(k)
 
 func stepOf(diffs: seq[int]; len: int): int =
   ## The commonest start difference d, in samples, with 0.9 len <= d <= len (one
@@ -308,9 +308,10 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int; r: var Recordin
       r.offTrace = used[offAt].row + 1
       r.offSeconds = float64(offGap) * dtS
 
-proc receiverChanges(meta: ChunkMeta; segs: seq[Seg]; dtS: float64): bool =
+proc receiverChanges(meta: ChunkMeta; at: seq[StationPlace]; segs: seq[Seg]; dtS: float64):
+    bool =
   ## Whether, between most consecutive segments of one component in file order, the receiver
-  ## point changes (`placeOf`: its line and point, else its group coordinates, else its
+  ## point changes (`at`, per trace: its line and point, else its group coordinates, else its
   ## channel). Consecutive traces of one point that share one start time are one segment:
   ## they are its components, coded or not, so the channels of one station are never
   ## compared with each other. With coded components each component is followed on its own;
@@ -320,7 +321,7 @@ proc receiverChanges(meta: ChunkMeta; segs: seq[Seg]; dtS: float64): bool =
   var order = segs
   order.sort do (a, b: Seg) -> int: cmp(a.row, b.row)
   var places = newSeq[Place](order.len)
-  for x in 0 ..< order.len: places[x] = placeOf(meta.keys(order[x].row))
+  for x in 0 ..< order.len: places[x] = at[order[x].row]
   var last: array[uint8, tuple[have: bool; place: Place]]
   var pairs, changed = 0
   var x = 0
@@ -358,7 +359,7 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
   var inFile = newSeq[OrderTrace](segs.len) # the live traces in file order
   for x, sg in segs:
     inFile[x] = OrderTrace(component: meta.keys(sg.row).component,
-      place: placeOf(meta.keys(sg.row)), start: sg.start)
+      place: plan.places[sg.row], start: sg.start)
   segs.sort do (a, b: Seg) -> int:
     result = cmp(a.recv, b.recv)
     if result == 0: result = cmp(a.start, b.start)
@@ -371,7 +372,7 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     var j = i + 1
     while j < segs.len and segs[j].recv == segs[i].recv: inc j
     inc result.components
-    let place = placeOf(meta.keys(segs[i].row))
+    let place = plan.places[segs[i].row]
     if place.how < 2: placed.add (st: place, segs: j - i)
     for x in i ..< j:
       result.firstTime = min(result.firstTime, segs[x].start)
@@ -426,7 +427,7 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     # not continuous: the receiver changing from trace to trace, in the order of the file, is
     # a shot gather (the receivers repeat from record to record); staying put, a receiver's
     # own segments. `slicedWhy` keeps what the continuous test measured.
-    if result.kind == rkReceiverSliced and receiverChanges(meta, segs, dtS):
+    if result.kind == rkReceiverSliced and receiverChanges(meta, plan.places, segs, dtS):
       result.kind = rkShotGather
   result.order = traceOrder(inFile, dtS, result.kind == rkShotGather)
 

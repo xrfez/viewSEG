@@ -10,8 +10,9 @@
 ## every trace and numbers the receivers so the segments of one receiver chain
 ## by their start times.
 ##
-## A receiver is a station and a component (`stationPlace`: the receiver line and point,
-## else the group coordinates, else the channel alone). From the keys (`receiverIds`), the
+## A receiver is a station and a component (`stationPlaces`: the receiver line and point,
+## else the group coordinates, those within `SameSpot` of each other one point, else the
+## channel alone). From the keys (`receiverIds`), the
 ## channel number also tells apart the traces of one station and component that share a
 ## start time, and only those. When the times come from the headers, a trace without a
 ## station or group coordinates is never merged with a trace of another channel (its
@@ -72,20 +73,58 @@ type Place = tuple[how: int8; a, b: float64; index: int16; channel: float64; com
     sub: int]
   ## a station (`StationPlace`), then what tells its receivers apart
 
+const
+  SameSpot* = 5.0
+    ## group coordinates (survey units) this near each other are one receiver point: a node
+    ## whose position is written a little differently from record to record stays one
+  FarCoordinate = 1e15 ## beyond this a group coordinate is no position
+
+func isCoordinate(v: float64): bool =
+  v.classify in {fcNormal, fcZero, fcNegZero, fcSubnormal} and abs(v) < FarCoordinate
+
 func stationPlace*(k: TraceKeys): StationPlace =
   ## Where the trace `k` was recorded: its receiver line and point (`how` 0), else its group
   ## coordinates when they are not both zero (1), else its channel alone (2; -1 when it has
-  ## none).
+  ## none). The coordinates are as written: `stationPlaces` takes near ones as one point.
   if not (k.rcvLine.isNaN or k.rcvPoint.isNaN):
     let s = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
     (0'i8, s.line, s.point, s.index)
-  elif not (k.rcvX.isNaN or k.rcvY.isNaN) and (k.rcvX != 0 or k.rcvY != 0):
+  elif k.rcvX.isCoordinate and k.rcvY.isCoordinate and (k.rcvX != 0 or k.rcvY != 0):
     (1'i8, k.rcvX, k.rcvY, 0'i16)
   else:
     (2'i8, (if k.channel.isNaN: -1.0 else: k.channel), 0.0, 0'i16)
 
-func placeOf(k: TraceKeys; channel: float64; sub: int): Place =
-  let st = stationPlace(k)
+proc stationPlaces*(f: SeismicFile): seq[StationPlace] =
+  ## Per trace of `f`: its `stationPlace`, group coordinates within `SameSpot` of a point met
+  ## earlier in the file named as that point. The one place both the kind and the segment
+  ## clock take a receiver point from. Needs the keys of `f`.
+  result = newSeq[StationPlace](f.len)
+  func cell(v: float64): int64 = int64(floor(v / SameSpot))
+  var points: seq[tuple[x, y: float64]] = @[]
+  # coordinates as written: their point
+  var exact = initTable[tuple[x, y: float64], int]()
+  var byCell = initTable[(int64, int64), seq[int]]()
+  for i in 0 ..< f.len:
+    result[i] = stationPlace(f.traceKeys(i))
+    if result[i].how == 1:
+      let p = (x: result[i].a, y: result[i].b)
+      var near = exact.getOrDefault(p, -1)
+      if near < 0:
+        let (cx, cy) = (cell(p.x), cell(p.y))
+        near = high(int)
+        for dx in -1'i64 .. 1'i64:
+          for dy in -1'i64 .. 1'i64:
+            for q in byCell.getOrDefault((cx + dx, cy + dy)):
+              if q < near and hypot(points[q].x - p.x, points[q].y - p.y) <= SameSpot: near = q
+        if near == high(int):
+          near = points.len
+          points.add p
+          byCell.mgetOrPut((cx, cy), @[]).add near
+        exact[p] = near
+      result[i].a = points[near].x
+      result[i].b = points[near].y
+
+func placeOf(st: StationPlace; k: TraceKeys; channel: float64; sub: int): Place =
   (st.how, st.a, st.b, st.index, channel, k.component, sub)
 
 func cmpNaN(x, y: float64): int =
@@ -106,85 +145,83 @@ func cmpPlace(x, y: Place): int =
   if result == 0: result = cmp(x.component, y.component)
   if result == 0: result = cmp(x.sub, y.sub)
 
-proc numbered(places: seq[Place]): seq[int] =
-  ## The ids of `places`, equal places sharing one, in the order the file shows
-  ## them: stations by their first trace, within a station the components by
-  ## theirs, then by sub-receiver and first trace. Nothing is sorted by station
-  ## number or component code. A place named by its channel alone is a station of its own.
-  var order = newSeq[int](places.len)
-  for i in 0 ..< places.len: order[i] = i
-  order.sort do (a, b: int) -> int:
-    result = cmpPlace(places[a], places[b])
-    if result == 0: result = cmp(a, b)
-  type Group = tuple[first, run, stationFirst, compFirst, sub: int]
-  var groups: seq[Group] = @[]
-  var groupOf = newSeq[int](places.len)
-  var runs = 0 # the stations met: a run of places of one station
-  for n, row in order:
-    let pl = places[row]
-    if n == 0 or cmpPlace(places[order[n - 1]], pl) != 0:
-      if n == 0 or not sameStation(places[order[n - 1]], pl): inc runs
-      groups.add (row, runs - 1, row, row, pl.sub)
-    groupOf[row] = groups.len - 1
-  var stationFirst = newSeq[int](runs)
-  for r in 0 ..< runs: stationFirst[r] = high(int)
-  var compFirst = initTable[tuple[run: int; comp: uint8], int]()
-  for g in groups:
-    stationFirst[g.run] = min(stationFirst[g.run], g.first)
-    let key = (g.run, places[g.first].component)
-    compFirst[key] = min(compFirst.getOrDefault(key, high(int)), g.first)
-  for g in groups.mitems:
-    g.stationFirst = stationFirst[g.run]
-    g.compFirst = compFirst[(g.run, places[g.first].component)]
-  var ranked = newSeq[int](groups.len)
-  for i in 0 ..< groups.len: ranked[i] = i
-  ranked.sort do (a, b: int) -> int:
-    result = cmp(groups[a].stationFirst, groups[b].stationFirst)
-    if result == 0: result = cmp(groups[a].compFirst, groups[b].compFirst)
-    if result == 0: result = cmp(groups[a].sub, groups[b].sub)
-    if result == 0: result = cmp(groups[a].first, groups[b].first)
-  var idOfGroup = newSeq[int](groups.len)
-  for id, g in ranked: idOfGroup[g] = id
+proc ranked(places: seq[Place]; groupOf: seq[int]; count: int): seq[int] =
+  ## The ids of `places` whose equal places are numbered `groupOf` (0 ..< `count`, each new
+  ## one in file order), in the order the file shows them: stations by their first trace,
+  ## within a station the components by theirs, then by sub-receiver and first trace.
+  ## Nothing is sorted by station number or component code. A place named by its channel
+  ## alone is a station of its own. No place may hold a NaN (they are hashed).
+  var keys = newSeq[tuple[key: tuple[stationFirst, compFirst, sub, first: int]; g: int]](count)
+  var stationFirst = initTable[StationPlace, int]()
+  var compFirst = initTable[(StationPlace, uint8), int]()
+  var seen = 0
+  for row, pl in places:
+    let g = groupOf[row]
+    if g == seen:
+      inc seen
+      let st: StationPlace = (pl.how, pl.a, pl.b, pl.index)
+      keys[g] =
+        if pl.how < 2: ((stationFirst.mgetOrPut(st, row),
+          compFirst.mgetOrPut((st, pl.component), row), pl.sub, row), g)
+        else: ((row, row, pl.sub, row), g)
+  keys.sort()
+  var idOf = newSeq[int](count)
+  for id, k in keys: idOf[k.g] = id
   result = newSeq[int](places.len)
-  for row in 0 ..< places.len: result[row] = idOfGroup[groupOf[row]]
+  for row in 0 ..< places.len: result[row] = idOf[groupOf[row]]
 
-proc receiverIds*(f: SeismicFile; times: seq[float64]; dtS: float64): seq[int] =
+proc numbered(places: seq[Place]): seq[int] =
+  ## `ranked`, equal places sharing one id.
+  var groupOf = newSeq[int](places.len)
+  var groups = initTable[Place, int]()
+  for row, pl in places: groupOf[row] = groups.mgetOrPut(pl, groups.len)
+  ranked(places, groupOf, groups.len)
+
+proc receiverIds*(f: SeismicFile; stations: seq[StationPlace]; times: seq[float64];
+    dtS: float64): seq[int] =
   ## Per trace: the receiver, numbered in the order the file shows them (stations by their
-  ## first trace, components of a station by theirs). A receiver is a station
-  ## (`stationPlace`) and a component; its channel number tells its traces apart only when
-  ## two live traces of that station and component share a start time (`times`, per trace,
-  ## within half a sample of `dtS` seconds): the uncoded components of one station, as
-  ## `initSliceStreams` tells them from the keys. Otherwise the channel is left out, so a
-  ## receiver whose channel number changes from record to record, or rises from trace to
-  ## trace, stays one receiver. Needs the keys of `f`.
+  ## first trace, components of a station by theirs). A receiver is a station (`stations`,
+  ## per trace, from `stationPlaces`) and a component; its channel number tells its traces
+  ## apart only when two live traces of that station and component share a start time
+  ## (`times`, per trace, within half a sample of `dtS` seconds): the uncoded components of
+  ## one station, as `initSliceStreams` tells them from the keys. Otherwise the channel is
+  ## left out, so a receiver whose channel number changes from record to record, or rises
+  ## from trace to trace, stays one receiver. Needs the keys of `f`.
   var places = newSeq[Place](f.len)
-  for i in 0 ..< f.len: places[i] = placeOf(f.traceKeys(i), 0.0, 0)
+  var channels = newSeq[float64](f.len)
+  var groupOf = newSeq[int](f.len) # per trace: its station and component, numbered
+  var groups = initTable[Place, int]()
   var timed: seq[int] = @[] # the live traces with a start time
   for i in 0 ..< f.len:
-    if f.traceKeys(i).status in {tsLive, tsUnknown} and times[i].classify in
+    let k = f.traceKeys(i)
+    places[i] = placeOf(stations[i], k, 0.0, 0)
+    channels[i] = if k.channel.isNaN: NegInf else: k.channel
+    groupOf[i] = groups.mgetOrPut(places[i], groups.len)
+    if k.status in {tsLive, tsUnknown} and times[i].classify in
         {fcNormal, fcZero, fcNegZero, fcSubnormal}:
       timed.add i
-  timed.sort do (a, b: int) -> int:
-    result = cmpPlace(places[a], places[b])
-    if result == 0: result = cmp(times[a], times[b])
-    if result == 0: result = cmp(a, b)
-  func together(x, y: float64): bool =
-    if dtS > 0: abs(y - x) < dtS / 2 else: x == y
-  var told: seq[Place] = @[] # the stations and components whose channels tell traces apart
-  var n = 0
-  while n < timed.len:
-    var m = n + 1
-    var shared = false
-    while m < timed.len and cmpPlace(places[timed[n]], places[timed[m]]) == 0:
-      if together(times[timed[m - 1]], times[timed[m]]): shared = true
-      inc m
-    if shared: told.add places[timed[n]]
-    n = m
-  if told.len > 0: # (in order: `timed` is sorted by place)
+  # the start times of each station and component, together (a counting sort), each run
+  # sorted: two within half a sample are traces the channel must tell apart
+  var bounds = newSeq[int](groups.len + 1)
+  for i in timed: inc bounds[groupOf[i] + 1]
+  for g in 1 .. groups.len: bounds[g] += bounds[g - 1]
+  var fill = bounds
+  var starts = newSeq[float64](timed.len)
+  for i in timed:
+    starts[fill[groupOf[i]]] = times[i]
+    inc fill[groupOf[i]]
+  var told = newSeq[bool](groups.len)
+  for g in 0 ..< groups.len:
+    if bounds[g + 1] - bounds[g] > 1:
+      sort(starts.toOpenArray(bounds[g], bounds[g + 1] - 1))
+      for x in bounds[g] + 1 ..< bounds[g + 1]:
+        let d = starts[x] - starts[x - 1]
+        if (if dtS > 0: d < dtS / 2 else: d == 0): told[g] = true
+  if true notin told: result = ranked(places, groupOf, groups.len)
+  else:
     for i in 0 ..< f.len:
-      if told.binarySearch(places[i], cmpPlace) >= 0:
-        places[i].channel = f.traceKeys(i).channel
-  result = numbered(places)
+      if told[groupOf[i]]: places[i].channel = channels[i]
+    result = numbered(places)
 
 func declaresStart(m: VendorMap): bool =
   for t in m.targets:
@@ -235,6 +272,7 @@ proc segmentClock*(f: SeismicFile; reg: VendorRegistry;
   if found == 0: return
   var times = newSeq[float64](f.len)
   var places = newSeq[Place](f.len)
+  let stations = stationPlaces(f)
   var grouped: seq[int] = @[] # the traces with a station and a start time
   for i in 0 ..< f.len:
     let k = f.traceKeys(i)
@@ -242,7 +280,7 @@ proc segmentClock*(f: SeismicFile; reg: VendorRegistry;
     else:
       times[i] = NaN
       inc result.leftOut
-    places[i] = placeOf(k, 0.0, -1)
+    places[i] = placeOf(stations[i], k, 0.0, -1)
     if places[i].how < 2:
       if us[i] >= 0: grouped.add i
     else: places[i].sub = 0
