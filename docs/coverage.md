@@ -39,14 +39,14 @@ next part's.
 
 Capabilities are the rows below, each counted by the first part of its status ("in part": built, with a part still planned or to plan). Names are the names each library exports, enum values not counted, each at the most advanced status of the rows that name it.
 
-| Status | parseSEG 0.21.3: capabilities | names | processSEG 0.14.0: capabilities | names |
+| Status | parseSEG 0.22.0: capabilities | names | processSEG 0.14.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 62 (25 in part) | 211 | 46 (29 in part) | 256 |
 | `internal` | 22 | 66 | 10 | 88 |
-| `planned` | 31 | 217 | 40 | 360 |
+| `planned` | 34 | 231 | 40 | 360 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 22 | 352 | 7 | 68 |
-| all | 139 | 855 | 104 | 777 |
+| all | 142 | 869 | 104 | 777 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -139,6 +139,8 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | SEG-2 strings by keyword, typed | `Seg2String`, `value`, `contains`, `find`, `number`, `numbers`, `integer`, `sampleInterval`, `delay`, `channelNumber`, `receiverLocation`, `sourceLocation`, `Seg2Location`, `traceType`, `Seg2TraceType`, `traceSort`, `Seg2TraceSort`, `units`, `Seg2Units`, `acquisitionTime` | Header inspector: a SEG-2 file's strings with their typed values (interval, delay, locations, trace type, units, time) | planned |
 | A stanza's text and user data | `stanzaText`, `stanzaBytes`, `isBinary`, `isEndText`, `isUserData`, `key`, `userDataBytes`, `isRetained` | Headers window, File headers: Stanzas and User data (above) | built |
 | A decoded vendor block | `VendorRegistry.addMap`, `loadVendorMap`, `VendorMap`, `decode`, `VendorBlock` (`[]`, `contains`), `VendorField`, `VendorValue`, `VendorValueKind`, `applies`, `vendorContext`, `VendorContext`, `VendorArea`, `VendorDecoder`, `decodeTarget`, `usesRecordBlocks`, `VendorBlockMatch`, `VendorBlockSize`, `VendorBytesMatch`, `VendorCondSource`, `VendorCondition`, `csByte`, `csField`, `csHighNibble`, `csLowNibble`, `decodeAll` | Headers window, File headers, Vendor tab: a decoded vendor block's fields and values (with `decodeVendorAreas`, above) | built (the Vendor tab); not applicable (`VendorField`, `applies`, `vendorContext`, `VendorContext`, `VendorArea`, `VendorDecoder`, `decodeTarget`, `usesRecordBlocks`, `VendorBlockMatch`, `VendorBlockSize`, `VendorBytesMatch`, `VendorCondSource`, `VendorCondition`, `csByte`, `csField`, `csHighNibble`, `csLowNibble`, `decodeAll`: `decodeVendorAreas` builds the context and the areas, matches the map's targets and conditions and decodes; the viewer reads the blocks it returns, one per matched target) |
+| A vendor field by name as a column over records or traces | `vendorFieldNames`, `vendorColumn`, `vendorColumnInt`, `VendorColumn`, `VendorColumnInt`, `VendorFieldInfo`, `VendorLevel`, `vlRecord`, `vlTrace` | Header tables: a vendor field chosen by name as a column over the records or the traces listed | planned |
+| Write a vendor field by name | `setVendorField`, `clearVendorField`, `VendorFieldAbsentError` | Header editor: change or clear a vendor field's value in a file | planned |
 | Extended textual header, parsed record by record | `initExtendedTextHeader`, `add`, `finish`, `isComplete`, `needsMore`, `hasEndText`, `inBinaryStanza`, `continuesUserData`, `ExtTextIssue`, `streamLimit=`, `startsStanza`, `startsStanzaRecord`, `normalizeStanzaName`; writing: `addText`, `addStanza`, `addUserData`, `UserDataItem`, `addEndText`, `inUserDataChain`, `stanzaRecordCount`, `withoutEndText` | The readers parse a file's stanzas into `index.segy.extended`; the writers copy them | not applicable (the readers' and writers' work, and the stanza helpers a writer of an extended text header uses: `inUserDataChain`, `stanzaRecordCount`, `withoutEndText`; the viewer reads the parsed stanzas) |
 | Layouts made by hand | `standardLayout`, `parseLayout`, `merge`, `normalizeEntryName`, `size` | The file's own layout (`layoutOf`, above) | not applicable (the viewer shows a file's layout; it makes none) |
 | A compiled vendor map's parts | `VendorMatch`, `VendorRevisionRange`, `VendorTarget`, `VendorTargetKind`, `VendorFieldPlan`, `VendorRepeatPlan`, `VendorEncoding`, `VendorTrim`, `VendorEnumLabel`, `VendorBitFlag`, `VendorScaffold` | Maps are text files; `checkVendorMap` says what is wrong with one | not applicable (a map's inner structure, built and used by its decoder) |
@@ -196,6 +198,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Per-standard streaming writers | `openSegyWriter`, `openSegdWriter`, `writeSegd`, `openSeg2Writer`, `SegyWriter`, `SegyWriteOptions`, `initSegyWriteOptions`, `tracesWritten`, `SegdWriter`, `SegdWriteOptions`, `writeRecordHeaders`, `endRecord`, `setRev3Trailer`, `computeRev3Sizes`, `MaxFixedBlock`, `Seg2Writer`, `Seg2WriteOptions`, `initSeg2File`, `abandon` | Conversion and the test suite's fixtures | not applicable (the viewer writes through `openSeismicWriter` and `convertFile`; its tests build their fixtures with these) |
 | Write a file to memory | `openSeismicWriterBytes`, `finishBytes` | Opening a vibrator controller's signature files (decoded to SEG-Y in memory) | internal (the open job of a signature file) |
 | Write a stanza into a memory file | `addTextStanza` | Opening a vibrator controller's signature files (decoded to SEG-Y in memory) | planned |
+| Write a record as a subset of a source file's traces, with its header blocks carried | `startSubset`, `SubsetPatch`, `abandonRecord`, `useVendorMaps` | Export a record's live traces to a new file, keeping the source's vendor blocks | planned |
 
 ### Header edits
 
