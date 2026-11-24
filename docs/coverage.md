@@ -39,14 +39,14 @@ next part's.
 
 Capabilities are the rows below, each counted by the first part of its status ("in part": built, with a part still planned or to plan). Names are the names each library exports, enum values not counted, each at the most advanced status of the rows that name it.
 
-| Status | parseSEG 0.20.0: capabilities | names | processSEG 0.13.0: capabilities | names |
+| Status | parseSEG 0.21.0: capabilities | names | processSEG 0.13.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 55 (21 in part) | 187 | 45 (28 in part) | 249 |
 | `internal` | 20 | 61 | 7 | 44 |
-| `planned` | 33 | 219 | 41 | 385 |
+| `planned` | 35 | 239 | 41 | 385 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 22 | 356 | 7 | 71 |
-| all | 132 | 832 | 101 | 754 |
+| all | 134 | 852 | 101 | 754 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -166,6 +166,8 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Join by station, with statistics | `applySurvey(f, g, stats, overwrite)`, `joinStations`, `JoinStats`, `JoinMatch`, `stationKey` | Project → Import survey: worked out on copies of the keys first (`joinStations` and `applySurvey` per trace), then joined with the readers stopped; matched and unmatched traces, how they matched, why none did, the headers' coordinates kept or replaced, in plain words and in Messages; linked highlighting fills the stations a hovered trace's headers lack from the loaded relation file | built |
 | Receiver point codes and the sensor a trace is | `SensorClass` (`scUnknown`, `scHydrophone`, `scGeophone`, `scOther`), `sensorClass`, `receiverPointCode`, `pointCodeWarnings` | Project → Import survey: a station with a hydrophone row and a geophone row gives each trace its own row; the stations whose codes leave a choice are listed | planned |
 | GPS time turned into UTC | `GpsEpochUnix`, `gpsMinusUtc` | internal: a shot log's time break given in microseconds since the GPS epoch becomes the UTC instant of its row | internal |
+| The leap-second table | `LeapTable`, `LeapSecond`, `LeapDate`, `LeapStartOffset`, `currentLeapTable`, `defaultLeapTable`, `leapKnownAt`, `leapTableNif`, `parseLeapTable`, `useLeapTable`, `withLeap`, `gpsUsToUtcUs`, `utcUsToGpsUs`, `utcMinusGps` | Tools > Leap seconds: see the table and add a leap second | planned |
+| The instant of a sample | `TimeOrigin` (`toNone`, `toHeaderSeconds`, `toHeaderSubsec`, `toFirstSample`, `toRecordTimeZero`), `timeOrigin`, `firstSampleUs`, `sampleTimeUs`, `sampleAtUs`, `noteRecordedTime` | Cutting a continuous record at the shot times of a shot log | planned |
 | Traces by join outcome (conflict, ambiguous, unmatched) | `joinStations` per trace | Import survey: "Select unmatched traces" (the survey lacks the source or receiver); conflicting and ambiguous traces counted in the words; a selection per outcome, to come | built (unmatched); to plan (priority 1: a selection per outcome) |
 | Join options: line names, trailing digits, multi-component, one tape | `mapLine`, `trailingDigits`, `multiComponent`, `tape` | Import survey window, Options (remembered): line names as numbers, trailing digits, several channels per station; one tape, to come | built (but `tape`); to plan (priority 2: one tape as an option) |
 | Relation lookups (the spread of a shot, the shots of a receiver) | `relation`, `relations`, `records`, `expectedChannels`, `recordsAt`, `channelOf`, `relationRuns`, `relationsDisjoint` | Map: the point under the pointer names a source's field records (`recordsAt`); the record on show is marked by the stations its relation runs plan (`relationRuns`) when its headers name none; the template box round the spread planned for the record on show and the shot under the pointer (X), or a receiver's planned shots (O); a hovered survey receiver's traces through `channelOf` (headers without stations), to come | built (a source's records, the record on show's planned spread, the template box, a receiver's planned shots); planned (a receiver's traces before the join) |

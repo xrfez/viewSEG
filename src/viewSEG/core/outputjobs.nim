@@ -240,7 +240,7 @@ func intAfter(line: string; at: int): int =
     inc i
   if any and n > 0: n else: 1
 
-func gapCount(line, msg: string): int =
+func gapsNoted(line, msg: string): int =
   const inMark = "; not written in "
   let inAt = line.find(inMark)
   if inAt >= 0: return intAfter(line, inAt + inMark.len)
@@ -256,7 +256,7 @@ func addGap(g: var GapCounts; line: string) =
       line.find("do not fit") < 0:
     return
   let msg = messageOf(line)
-  let n = gapCount(line, msg)
+  let n = gapsNoted(line, msg)
   let colon = msg.find(": ")
   if colon > 0 and not msg.startsWith("not written"):
     let kind = msg[0 ..< colon].strip()
