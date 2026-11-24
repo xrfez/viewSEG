@@ -433,7 +433,9 @@ func secs(x: float64): string =
 func cutRefusal*(f: RecordingFacts): string =
   ## Why the cut refuses a file: for one that is not a continuous receiver gather what
   ## the file is, then the reason, in sentences; for a continuous one whose like-typed
-  ## channels of a station cannot be told apart safely, that; "" when the cut may go on.
+  ## channels of a station cannot be told apart safely, that; for facts that are not
+  ## `ready` that there is no live trace with a start time; "" when the cut may go on.
+  if not f.ready: return NoLiveTraceWords
   case f.kind
   of rkReceiverContinuous:
     if f.unevenChannels > 0:

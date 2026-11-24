@@ -51,8 +51,11 @@ const
     ## a segment may be this share of its length longer than the step between
     ## starts: it repeats a little of the data at its ends and still continues
 
-const NoLiveTraceWords* = "No live trace with a start time."
-  ## what a file with no live trace with a start time is told
+const
+  NoLiveTraceWords* = "No live trace with a start time."
+    ## what a file with no live trace with a start time is told
+  NoSampleIntervalWords* = "There is no seismic trace with a sample interval."
+    ## what a file with no seismic trace with a sample interval is told
 
 type
   RecordingKind* = enum

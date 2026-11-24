@@ -10964,7 +10964,12 @@ proc watchRecording*(state: var AppState; wanted: bool) =
     let dtMs = seismicDtMs(s.filePtr)
     state.recKey = key
     state.recHave = false
-    if not dtMs.isNaN and dtMs > 0:
+    if dtMs.isNaN or dtMs <= 0:
+      # the answer for this key: not asked again, so no trace is walked every frame
+      state.recFacts = RecordingFacts()
+      state.recWhy = NoSampleIntervalWords
+      state.recHave = true
+    else:
       state.recSink = RecordingSink()
       state.recJob = state.jobs.submit(JobSpec(title: "Read " & s.name & " as a recording",
         lane: jlBackground, reads: @[s.diskPath]),

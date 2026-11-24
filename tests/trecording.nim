@@ -283,6 +283,9 @@ proc main*() =
     for row in 0 ..< specs.len:
       doAssert receivers[row] == row mod 6, "row " & $row & ": " & $receivers
 
+  block facts_that_are_not_ready_are_not_a_shot_gather:
+    doAssert cutRefusal(RecordingFacts()) == "No live trace with a start time."
+
   block one_live_trace_is_continuous:
     let f = factsOf(dir, "single", [spec(0, 0, 0, stationed = false)])
     doAssert f.kind == rkReceiverContinuous and f.segments == 1, $f

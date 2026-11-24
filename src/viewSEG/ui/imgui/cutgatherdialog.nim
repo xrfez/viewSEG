@@ -182,8 +182,8 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     elif shown >= 0 and st.recordingBusy:
       problem = RecordingBeingRead
     elif shown >= 0:
-      problem = HeadersNotRead
-    let refusal = cutRefusal(facts)
+      problem = if st.recordingWhy.len > 0: st.recordingWhy else: HeadersNotRead
+    let refusal = if shown >= 0: cutRefusal(facts) else: ""
     if problem.len == 0 and refusal.len > 0: problem = refusal
     if problem.len == 0 and ui.haveShots and ui.shots.shots.len == 0:
       problem = "The shot log has no shot with a time."

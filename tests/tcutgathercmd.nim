@@ -8,7 +8,7 @@
 ## missing". With the result's sentences not logged, "the result is not in the
 ## log". With the outcome line not kept, "the outcome line was not kept".
 
-import std/[os, sets, strutils]
+import std/[os, sequtils, sets, strutils]
 import parseSEG
 import viewSEG/core/[cutgather, jobs, recordingkind, shotlog]
 import viewSEG/core/state {.all.}
@@ -238,6 +238,32 @@ proc main*() =
     doAssert jobsSeen.len == 1, "the job was started " & $jobsSeen.len & " times"
     doAssert not st.recordingBusy and not st.recordingFacts.ready
     doAssert st.recordingWhy == NoLiveTraceWords, st.recordingWhy
+    discard st.shutdown()
+
+  block a_file_without_a_sample_interval_is_answered_once:
+    # only an auxiliary trace: no seismic trace has a sample interval; the answer is kept
+    # under the key so no trace is walked and no job started on later frames
+    let auxFile = dir / "in" / "aux.sgy"
+    var w = openSeismicWriter(auxFile, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+    var k = initTraceKeys()
+    k.status = tsAuxiliary
+    k.traceCode = 4 # a time break
+    k.record = 1
+    k.channel = 1
+    k.intervalUs = 2000
+    k.time = float64(BaseUs div 1_000_000)
+    w.writeTrace(k, newSeq[float32](100))
+    discard w.close()
+    var st = start(dir)
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: auxFile)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut),
+      "the file was not shown"
+    st.watchRecording(true)
+    doAssert not st.recordingBusy and not st.recordingFacts.ready
+    doAssert st.recordingWhy == NoSampleIntervalWords, st.recordingWhy
+    for _ in 0 ..< 20: st.watchRecording(true)
+    doAssert st.jobs.list.allIt(not it.spec.title.endsWith("as a recording"))
+    doAssert st.recordingWhy == NoSampleIntervalWords
     discard st.shutdown()
 
 when isMainModule:
