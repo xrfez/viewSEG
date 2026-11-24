@@ -41,6 +41,11 @@ func summaryLine*(t: FolderTotals): string =
     plural(t.problems, "problem", "problems") & ", " &
     plural(t.skipped, "skipped", "skipped") & "."
 
+func sentenceOf*(row: FolderRow): string =
+  ## The sentence column. A file that was not judged has its reason here, not
+  ## only in the problem column.
+  if row.sentence.len > 0: row.sentence else: row.problem
+
 func verdictCell(row: FolderRow): string =
   case row.outcome
   of foJudged: $row.verdict
@@ -79,7 +84,7 @@ func warningsCell(row: FolderRow): string =
 
 func cells(row: FolderRow): seq[string] =
   result = @[row.path.extractFilename, $row.kind, row.pair.extractFilename,
-    verdictCell(row), row.sentence]
+    verdictCell(row), sentenceOf(row)]
   for l in QcLimit: result.add measureCell(row, l)
   result.add polarityCell(row)
   result.add warningsCell(row)

@@ -6,7 +6,8 @@
 ##
   ## Seen to fail: with the measure columns untitled, `textAndCsv` does not
   ## find "Average phase (°)". With the totals always saying "files" and
-  ## "problems", `plurals` still finds "1 problems".
+  ## "problems", `plurals` still finds "1 problems". With a problem row's
+  ## sentence left empty, `problemSentence` does not find the reason.
 
 import std/[math, strutils]
 import viewSEG/core/[sigtypes, units, vibfolderqc, vibjudge]
@@ -127,6 +128,12 @@ proc main*() =
     doAssert "2 files," in many and "0 passes," in many, many
     doAssert "2 fails," in many and "2 problems," in many, many
     doAssert "2 skipped" in many, many
+
+  block problemSentence:
+    let bad = row("corrupt.dat", foProblem, qvNotJudged, problem = "it cannot be read")
+    doAssert rowCells(bad)[4] == "it cannot be read", rowCells(bad)[4]
+    let judged = row("good.dat", foJudged, qvPass, sentence = "PASS: within limits")
+    doAssert rowCells(judged)[4] == "PASS: within limits", rowCells(judged)[4]
 
   block textAndCsv:
     var measured = FolderRow(path: "/tmp/one.dat", kind: sgDat, outcome: foJudged,
