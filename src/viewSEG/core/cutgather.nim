@@ -164,12 +164,16 @@ type
       # window not yet cut reads (`high(int)`: none does)
     failedRows: HashSet[int] # rows a fetch has failed on
     failedOverlaps: HashSet[int] # overlaps whose samples could not be had
-    released: seq[bool] # per overlap: its rows were let go after it was settled
+    indexed: bool # `byRow` is built (for the one plan this buffer serves)
+    byRow: Table[int, seq[int]]
+      # per row, the overlaps that touch it and whose two rows the plan reads
+    dirty: seq[int] # rows whose `pending` changed since the last overlap check
 
 func initSourceBuffer*(): SourceBuffer =
   ## An empty buffer.
   SourceBuffer(rows: initTable[int, HeldRow](), pending: initTable[int, int](),
-    failedRows: initHashSet[int](), failedOverlaps: initHashSet[int]())
+    failedRows: initHashSet[int](), failedOverlaps: initHashSet[int](),
+    byRow: initTable[int, seq[int]]())
 
 func heldSamples*(buf: SourceBuffer): int =
   ## The samples held, over every row.
@@ -237,6 +241,7 @@ proc evictBefore*(buf: var SourceBuffer, row, sample: int) =
   ## Drops the columns of `row` before `sample`, and notes `sample` as the
   ## earliest column of `row` still wanted (`checkOverlaps` uses it).
   buf.pending[row] = sample
+  buf.dirty.add row
   if row in buf.rows:
     let first = buf.rows[row].first
     if sample >= first + buf.rows[row].data.len:
@@ -251,12 +256,27 @@ proc evictBefore*(buf: var SourceBuffer, row, sample: int) =
 proc evictRow*(buf: var SourceBuffer, row: int) =
   ## Drops everything held of `row`; nothing of it is wanted any more.
   buf.pending[row] = high(int)
+  buf.dirty.add row
   buf.rows.del row
 
 func readsRow(plan: SlicePlan, row: int): bool =
   plan.rowsNeeded.binarySearch(row) >= 0
 
-func evictable*(plan: SlicePlan, buf: SourceBuffer, report: SliceReport,
+proc indexOverlaps(plan: SlicePlan, buf: var SourceBuffer) =
+  ## Lists, per row, the overlaps that touch it and whose rows the plan reads,
+  ## once. A buffer serves one plan.
+  if not buf.indexed:
+    buf.indexed = true
+    for i, o in plan.overlaps:
+      if plan.readsRow(o.earlier) and plan.readsRow(o.later):
+        buf.byRow.mgetOrPut(o.earlier, @[]).add i
+        buf.byRow.mgetOrPut(o.later, @[]).add i
+
+func pendingOverlap(buf: SourceBuffer, report: SliceReport, i: int): bool =
+  ## Not yet compared and not given up.
+  report.overlapCheck(i).status == osNotRead and i notin buf.failedOverlaps
+
+proc evictable*(plan: SlicePlan, buf: var SourceBuffer, report: SliceReport,
     row, earliestPendingStart: int): int =
   ## The first column of `row` that must still be held: every column before
   ## it may go (`evictBefore`). `earliestPendingStart` is the first column of
@@ -264,13 +284,15 @@ func evictable*(plan: SlicePlan, buf: SourceBuffer, report: SliceReport,
   ## included). It is lowered for an overlap on the row that is not yet
   ## checked (and not one whose samples could not be had, which would pin
   ## the rows to the end): the earlier row's trimmed tail is in no piece, and the later
-  ## row is needed from column 0.
+  ## row is needed from column 0. Looks only at the overlaps of `row`.
+  indexOverlaps(plan, buf)
   result = max(earliestPendingStart, 0)
-  for i, o in plan.overlaps:
-    if report.overlapCheck(i).status == osNotRead and o.samples > 0 and
-        i notin buf.failedOverlaps and plan.readsRow(o.earlier) and plan.readsRow(o.later):
-      if o.earlier == row: result = min(result, o.first)
-      elif o.later == row: result = 0
+  buf.byRow.withValue(row, list):
+    for i in list[]:
+      let o = plan.overlaps[i]
+      if o.samples > 0 and buf.pendingOverlap(report, i):
+        if o.earlier == row: result = min(result, o.first)
+        elif o.later == row: result = 0
 
 proc cutOne*(plan: SlicePlan, trace: int, buf: var SourceBuffer, fetch: FetchProc,
     dst: var openArray[float32], report: var SliceReport, ws: var Workspace): bool =
@@ -300,39 +322,71 @@ proc cutOne*(plan: SlicePlan, trace: int, buf: var SourceBuffer, fetch: FetchPro
         result = true
   finishSliceTrace(plan, trace, dst, report, ws)
 
+proc compareOverlap(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
+    report: var SliceReport, i: int, settled: var seq[int]): int =
+  ## Compares overlap `i` (due, not yet compared); 1 when it was compared.
+  let o = plan.overlaps[i]
+  let nothing = default(seq[float32])
+  if o.samples == 0:
+    if o.earlier in buf.failedRows or o.later in buf.failedRows:
+      buf.failedOverlaps.incl i
+    else:
+      checkSliceOverlap(plan, i, nothing, nothing, report)
+      settled.add i
+      result = 1
+  else:
+    let a = buf.need(o.earlier, o.first, o.samples, fetch)
+    let b = if a >= 0: buf.need(o.later, 0, o.samples, fetch) else: -1
+    if b >= 0:
+      checkSliceOverlap(plan, i, buf.held(o.earlier).toOpenArray(a, a + o.samples - 1),
+        buf.held(o.later).toOpenArray(b, b + o.samples - 1), report)
+      settled.add i
+      result = 1
+    else:
+      buf.failedOverlaps.incl i
+
 proc checkOverlaps*(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
-    report: var SliceReport, final = false): int =
+    report: var SliceReport, settled: var seq[int], final = false): int =
   ## Compares the overlaps that are due, not yet compared, whose two rows the
   ## plan reads and whose two runs can be had (through the buffer, so nothing
-  ## is read twice), and returns how many it compared. An overlap is due when
-  ## no window still to be cut reads the earlier row below the overlap (the
-  ## `sample` of the last `evictBefore` of that row is at or after
-  ## `overlap.first`, or the row is finished): then its tail is an append to
-  ## the held run or a fresh run, and the later row is read from its start
-  ## anyway. `final` makes every overlap due (after the last shot). An overlap
-  ## whose run cannot be read stays `osNotRead`, is not tried again and pins
-  ## nothing; one with no samples is compared only when neither row has failed
-  ## to read.
-  let nothing = default(seq[float32])
-  for i, o in plan.overlaps:
-    if report.overlapCheck(i).status == osNotRead and i notin buf.failedOverlaps and
-        plan.readsRow(o.earlier) and plan.readsRow(o.later) and
-        (final or (o.earlier in buf.pending and buf.pending[o.earlier] >= o.first)):
-      if o.samples == 0:
-        if o.earlier in buf.failedRows or o.later in buf.failedRows:
-          buf.failedOverlaps.incl i
-        else:
-          checkSliceOverlap(plan, i, nothing, nothing, report)
-          inc result
-      else:
-        let a = buf.need(o.earlier, o.first, o.samples, fetch)
-        let b = if a >= 0: buf.need(o.later, 0, o.samples, fetch) else: -1
-        if b >= 0:
-          checkSliceOverlap(plan, i, buf.held(o.earlier).toOpenArray(a, a + o.samples - 1),
-            buf.held(o.later).toOpenArray(b, b + o.samples - 1), report)
-          inc result
-        else:
-          buf.failedOverlaps.incl i
+  ## is read twice), and returns how many it compared; their indices are
+  ## added to `settled`. An overlap is due when no window still to be cut
+  ## reads the earlier row below the overlap (the `sample` of the last
+  ## `evictBefore` of that row is at or after `overlap.first`, or the row is
+  ## finished): then its tail is an append to the held run or a fresh run, and
+  ## the later row is read from its start anyway. Only the overlaps of rows
+  ## whose `evictBefore` or `evictRow` came since the last call are looked at
+  ## (nothing else can have become due). `final` makes every overlap due
+  ## (after the last shot). An overlap whose run cannot be read stays
+  ## `osNotRead`, is not tried again and pins nothing; one with no samples is
+  ## compared only when neither row has failed to read.
+  indexOverlaps(plan, buf)
+  if final:
+    buf.dirty.setLen 0
+    for i, o in plan.overlaps:
+      if buf.pendingOverlap(report, i) and plan.readsRow(o.earlier) and
+          plan.readsRow(o.later):
+        result += compareOverlap(plan, buf, fetch, report, i, settled)
+  else:
+    let rows = move buf.dirty
+    buf.dirty = @[]
+    for row in rows:
+      var due: seq[int] = @[]
+      buf.byRow.withValue(row, list):
+        for i in list[]:
+          let o = plan.overlaps[i]
+          if o.earlier == row and buf.pendingOverlap(report, i) and
+              row in buf.pending and buf.pending[row] >= o.first:
+            due.add i
+      for i in due:
+        if buf.pendingOverlap(report, i):
+          result += compareOverlap(plan, buf, fetch, report, i, settled)
+
+proc checkOverlaps*(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
+    report: var SliceReport, final = false): int =
+  ## As above, without the list of what was settled.
+  var settled: seq[int] = @[]
+  checkOverlaps(plan, buf, fetch, report, settled, final)
 
 func firstUse*(plan: SlicePlan, shot, row: int): int =
   ## The first column of `row` that any trace of `shot` reads, `high(int)`
@@ -349,19 +403,19 @@ proc settleShot*(plan: SlicePlan, buf: var SourceBuffer, fetch: FetchProc,
   ## the shot read. Drops what the next shot does not read, then compares the
   ## overlaps now due and drops the rows of those, again and again until no
   ## more overlap is due (a comparison frees rows, which can make the overlap
-  ## behind them due). Returns the overlaps compared.
+  ## behind them due). Returns the overlaps compared. Its cost follows the
+  ## rows touched and the overlaps of those, not the number of overlaps.
   let total = plan.shotCount
-  if buf.released.len != plan.overlaps.len: buf.released.setLen plan.overlaps.len
   for row in touched:
     let next = if shot + 1 < total: firstUse(plan, shot + 1, row) else: high(int)
     buf.evictBefore(row, evictable(plan, buf, report, row, next))
+  var settled: seq[int] = @[]
   while true:
-    let compared = checkOverlaps(plan, buf, fetch, report)
-    if compared == 0: break
-    result += compared
-    for i, o in plan.overlaps:
-      if not buf.released[i] and report.overlapCheck(i).status != osNotRead:
-        buf.released[i] = true
-        for row in [o.earlier, o.later]:
-          let next = if shot + 1 < total: firstUse(plan, shot + 1, row) else: high(int)
-          buf.evictBefore(row, evictable(plan, buf, report, row, next))
+    settled.setLen 0
+    result += checkOverlaps(plan, buf, fetch, report, settled)
+    if settled.len == 0: break
+    for i in settled:
+      let o = plan.overlaps[i]
+      for row in [o.earlier, o.later]:
+        let next = if shot + 1 < total: firstUse(plan, shot + 1, row) else: high(int)
+        buf.evictBefore(row, evictable(plan, buf, report, row, next))

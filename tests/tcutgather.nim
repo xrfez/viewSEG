@@ -13,9 +13,10 @@
 ## once (`several_overlaps_checked_when_due`: "fetched 9970 of 6000"); a failed
 ## overlap tried again and pinning its rows ("held 940 at the end"); one
 ## overlap compared per shot (`buffer_stays_bounded_over_a_long_run`: "held 9930
-## of at most 480").
+## of at most 480"); every shot walking every overlap
+## (`bookkeeping_cost_follows_the_shot`: "took 20359 ms").
 
-import std/[assertions, math, options]
+import std/[assertions, math, monotimes, options, times]
 import parseSEG, processSEG
 import viewSEG/core/[cutgather, shotlog]
 
@@ -422,6 +423,46 @@ proc main*() =
       for i, o in plan.overlaps:
         if o.earlier in plan.rowsNeeded and o.later in plan.rowsNeeded:
           doAssert report.overlapCheck(i).status != osNotRead, "overlap " & $i
+
+  block bookkeeping_cost_follows_the_shot:
+    # 4000 shots over 4001 rows with 4000 overlaps and an in-memory fetch.
+    # Fails when every shot walks every overlap (about 3.6 s in an optimised
+    # build, far more in a debug build: "took 31 s").
+    var spans: seq[(int, int)] = @[]
+    for k in 0 ..< 4001: spans.add (k * 90, 100)
+    let src = makeSrc(spans)
+    let meta = metaOf(src)
+    var shots: seq[SliceShot]
+    var t = 0
+    while t + 50 <= 4001 * 90:
+      shots.add initSliceShot(timeOf(float64(t)), float64(shots.len + 1))
+      t += 90
+    let plan = planSlices(meta, shots, window(50), soShotRecords, saNearest)
+    doAssert plan.overlaps.len >= 4000 and plan.shotCount >= 3990
+    var report = initSliceReport(plan)
+    prepareSliceReport(plan, report)
+    var ws = initWorkspace()
+    var buf = initSourceBuffer()
+    let fetch = fetcher(src)
+    var dst = newSeq[float32](plan.samples)
+    var spent = initDuration()
+    var peak = 0
+    for s in 0 ..< plan.shotCount:
+      var touched: seq[int] = @[]
+      for pc in plan.pieces(s):
+        if pc.row >= 0 and pc.row notin touched: touched.add pc.row
+      doAssert not cutOne(plan, s, buf, fetch, dst, report, ws)
+      let t0 = getMonoTime()
+      discard settleShot(plan, buf, fetch, report, touched, s)
+      spent += getMonoTime() - t0
+      peak = max(peak, buf.heldSamples)
+    discard checkOverlaps(plan, buf, fetch, report, final = true)
+    doAssert spent < initDuration(seconds = 5), "took " & $spent.inMilliseconds & " ms"
+    doAssert peak <= 50 + 10 + 20, "held " & $peak
+    var compared = 0
+    for i in 0 ..< plan.overlaps.len:
+      if report.overlapCheck(i).status == osMatch: inc compared
+    doAssert compared >= 3990, "compared " & $compared
 
   echo "tcutgather ok"
 
