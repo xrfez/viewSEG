@@ -14,7 +14,7 @@
 ## ensemble fold was kept; with the twin check removed, Rev 2.1 got both
 ## `ensembleFold` and `extEnsembleFold`, which the writer refuses.
 
-import std/[options, strutils]
+import std/[options, os, strutils]
 import parseSEG
 import viewSEG/core/outputbinary
 
@@ -140,6 +140,27 @@ proc main*() =
     let a = set1(("jobId", "1"))
     doAssert chosenBinary([a], "Survey").isSome and chosenBinary([a], "").isNone
     doAssert chosenBinary([a], "other").isNone
+
+  block notes_and_shown:
+    let jobId = fieldInfo("jobId").get
+    doAssert valueProblem(jobId, "x") == "'x' is not a whole number."
+    doAssert valueProblem(fieldInfo("ensembleFold").get, "40000") ==
+      "40000 is not from -32768 to 32767."
+    doAssert valueProblem(jobId, " 5 ") == ""
+    doAssert twinOf("ensembleFold") == "extEnsembleFold" and twinOf("jobId") == ""
+    let land = currentSourcePath().parentDir.parentDir / "samples" / "land"
+    var f = openSeismic(land / "shots.sgy", keys = false)
+    let got = shownValues(f)
+    doAssert got.ok and got.values.len == BinaryFields.len
+    for i, info in BinaryFields:
+      if not info.rev2: doAssert got.values[i] == $int64(f.fileField("binary." &
+          info.name).toFloat),
+        info.name
+    f.close()
+    var d = openSeismic(land / "shots.sgd", keys = false)
+    doAssert not shownValues(d).ok, "a SEG-D file has no SEG-Y binary header"
+    d.close()
+    doAssert not shownValues(SeismicFile()).ok
 
   echo "toutputbinary: ok"
 

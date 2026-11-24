@@ -19,6 +19,7 @@
 
 import std/[math, options, parseutils, strutils, unicode]
 import parseSEG
+import parseSEG/model/traceindex
 import outputnames
 
 const
@@ -136,20 +137,32 @@ func nameProblem(name: string): string =
 
 func numberOf(info: BinaryFieldInfo; text: string; whole: var int64; real: var float64): string =
   ## Reads `text` as the field's number; "" when it is one the field holds,
-  ## else a sentence.
+  ## else what is wrong with it (no field name in it).
   let t = strip(text)
   if info.kind == bkFloat:
     let used = if '_' in t: 0 else: parseFloat(t, real)
     if used != t.len or t.len == 0 or classify(real) in {fcNan, fcInf, fcNegInf}:
-      return info.label & ": '" & t & "' is not a number."
+      return "'" & t & "' is not a number."
     return ""
   let used = if '_' in t: 0 else: parseBiggestInt(t, whole)
   if used != t.len or t.len == 0:
-    return info.label & ": '" & t & "' is not a whole number."
+    return "'" & t & "' is not a whole number."
   if whole < info.lowest or whole > info.highest:
-    return info.label & ": " & $whole & " is not from " & $info.lowest & " to " &
-      $info.highest & "."
+    return $whole & " is not from " & $info.lowest & " to " & $info.highest & "."
   ""
+
+func valueProblem*(info: BinaryFieldInfo; text: string): string =
+  ## Why `text` is not a value of the field `info`: `'abc' is not a whole number.`,
+  ## `40000 is not from -32768 to 32767.`; "" when it is one.
+  var whole = 0'i64
+  var real = 0.0
+  numberOf(info, text, whole, real)
+
+func twinOf*(field: string): string =
+  ## The Rev 2 extended field that hides the 16-bit `field` when it is set;
+  ## "" when `field` has none.
+  for (small, big) in Twins:
+    if small == field: return big
 
 func binaryProblem*(b: OutputBinary): string =
   ## Why `b` cannot be kept; "" when it can: no name, a name that is too long
@@ -164,10 +177,8 @@ func binaryProblem*(b: OutputBinary): string =
       return "'" & e.field & "' is not a binary header field that can be set."
     if e.field in seen: return info.get.label & " is given twice."
     seen.add e.field
-    var whole = 0'i64
-    var real = 0.0
-    let why = numberOf(info.get, e.value, whole, real)
-    if why.len > 0: return why
+    let why = valueProblem(info.get, e.value)
+    if why.len > 0: return info.get.label & ": " & why
 
 func revisionWord(rev: SegyRevision): string =
   ## `0`, `1`, `2.0`, `2.1`: the words the revisions go by.
@@ -215,3 +226,19 @@ func chosenBinary*(sets: openArray[OutputBinary]; name: string): Option[OutputBi
   if name.len > 0:
     for s in sets:
       if s.name == name: return some(s)
+
+func shownValues*(file: SeismicFile): tuple[ok: bool; values: seq[string]] =
+  ## The value of every `BinaryFields` field in the binary header of `file`
+  ## (as its index holds it: nothing is read), as text; "" for a Rev 2 field
+  ## of a file that is not Rev 2. Not ok, no values, when `file` is not an
+  ## open SEG-Y file.
+  result = (false, @[])
+  if file.isOpen and file.kind == skSegy:
+    let h = file.index.segy.binary
+    let rev2 = file.index.segy.revision.major >= 2
+    result.ok = true
+    for f in BinaryFields:
+      let v = fieldByName(h, f.name)
+      if v.isNone or (f.rev2 and not rev2): result.values.add ""
+      elif v.get.kind == fvInt: result.values.add $v.get.intVal
+      else: result.values.add $v.get.toFloat
