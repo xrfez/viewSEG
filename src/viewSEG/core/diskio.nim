@@ -77,6 +77,7 @@ type
     text: string           ## what to write; for a prune, the names' start
     entries: seq[LogEntry] ## an append or a replace: written after `text`, a line each
     what: string           ## what the file is, for a message: "the settings"
+    failNote: string       ## appended to a failed save, when not ""
     keep: int              ## a prune: how many to keep
     suffix: string         ## a prune: the names' end
     spare: string          ## a prune: a file never removed
@@ -289,7 +290,11 @@ proc replaceFile(w: var Writer; t: Task) =
       fs.removeFile(tmp)
     except OSError:
       discard
-    w.warn("Could not save " & t.what & " in " & t.path & ": " & why)
+    var msg = "Could not save " & t.what & " in " & t.path & ": " & why
+    if t.failNote.len > 0:
+      msg.add " "
+      msg.add t.failNote
+    w.warn(msg)
 
 proc closeLog(w: var Writer) =
   if w.log != nil:
@@ -649,17 +654,18 @@ proc leave(x: DiskIo; t: sink Task) =
     signal(x.p.changed)
 
 proc replace*(x: DiskIo; path: string; text: sink string; what: string; done = "";
-    entries: sink seq[LogEntry] = @[]; fresh = false; first = false) =
+    entries: sink seq[LogEntry] = @[]; fresh = false; first = false; failNote = "") =
   ## Writes `text`, then each of `entries` as a line (`fileLine`), to `path`
   ## atomically, soon (the module documentation); `what` names the document
   ## in a message ("the settings"), and `done`, when not "", is logged once
   ## it is written. With `fresh`, never over a file: under the first name
   ## no file has (`path`, or `-2`, `-3` ... before its extension), and
   ## `done` is followed by that path and a full stop. With `first`, before
-  ## what waits to be written.
+  ## what waits to be written. `failNote`, when not "", ends the warning if
+  ## the save fails.
   if x.p != nil:
     x.leave Task(kind: tkReplace, path: path, text: text, what: what, done: done,
-      entries: entries, fresh: fresh, first: first)
+      entries: entries, fresh: fresh, first: first, failNote: failNote)
 
 proc replace*(x: DiskIo; path: string; record: sink FileRecord; what: string) =
   ## Writes `record`'s document (`memoryDocument`, made on the disk thread:

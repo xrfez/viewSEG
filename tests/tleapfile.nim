@@ -13,7 +13,7 @@
 import std/[math, monotimes, os, strutils, times]
 import parseSEG
 import viewSEG/core/[leapfile, state]
-import utils/[fixtures, waiting]
+import utils/[faultyfs, fixtures, waiting]
 
 const
   July2026 = 1782864000'i64
@@ -193,6 +193,24 @@ proc main*() =
       doAssert readFile(path) == body, "a refused file was written over"
       doAssert currentLeapTable().entries.len == shipped.entries.len,
         "a refused reload did not use the shipped table"
+      useLeapTable(shipped)
+
+    block saveFails:
+      removeFile(path)
+      writeFile(path, leapTableNif(shipped))
+      let kept = readFile(path)
+      install()
+      defer:
+        releaseAll()
+        setFsHook(nil)
+      fault(path & "." & $getCurrentProcessId() & ".tmp", fkFail, {foOpen})
+      var st = initAppState()
+      st.keepSettingsIn(dir, LoadedSettings(saveable: true))
+      st.apply Command(kind: ckAddLeap, leapYear: 2027, leapMonth: 1, leapStep: 1)
+      st.flushFiles()
+      doAssert st.settle(said(st, "this run only")), "a failed save did not say this run only"
+      doAssert readFile(path) == kept, "a failed save changed the file"
+      doAssert currentLeapTable().entries[^1].year == 2027, "a failed save dropped the leap"
       useLeapTable(shipped)
 
     block commands:

@@ -8462,7 +8462,8 @@ proc adoptLeap(state: var AppState; table: LeapTable; said: string; save = true)
     state.log.add(sevWarning, "leap seconds",
       "There is no settings folder, so the leap-second table was not saved.")
   elif save:
-    state.diskIo.replace(path, leapTableNif(table), "the leap-second table")
+    state.diskIo.replace(path, leapTableNif(table), "the leap-second table",
+      failNote = "The table is used for this run only.")
   if said.len > 0: state.log.add(sevInfo, "leap seconds", said)
   state.queueLeapReads()
   state.followLeap()
