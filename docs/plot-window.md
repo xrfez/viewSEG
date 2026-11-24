@@ -1438,7 +1438,8 @@ under the pointer then, as desktop programs do.
   record shown), round the shots the O records plan for its receiver, and for the receiver
   under the pointer. The record's X record is the one the filters' check finds (processSEG's
   `recordCompleteness`: the source station's, else the FFID's, as the record match in
-  Import survey's options says), checked on a background job from the keys while the box
+  Import survey's options says; an X record found by the FFID alone that belongs to another
+  source than the headers' is no basis, and the record is "not checked" with that said), checked on a background job from the keys while the box
   is on; for a record whose headers name no station (a SEG-Y file without a header
   layout), the survey file's station at its place is the record's for the check, and the
   box says so ("X record 77 (by the source at its place)"), so the box and the filters
