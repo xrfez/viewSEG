@@ -26,21 +26,25 @@
 
 import std/[algorithm, hashes, intsets, math, os, sets, strutils]
 from parseSEG import GatherKind, gkReceiver, gkUnknown, known, recordsAt, stationKey
-import ../core/[geometry, state]
+import ../core/[geometry, shotlog, state]
 import plotink, theme
 
 type
   MapShape* = enum
-    msDisc = "disc" ## a filled disc: a survey file's point
-    msRing = "ring" ## a ring: an open file's own position
+    msDisc = "disc"       ## a filled disc: a survey file's point
+    msRing = "ring"       ## a ring: an open file's own position
+    msDiamond = "diamond" ## a filled diamond: a shot of a shot log
 
   MapInk* = object
     ## The map's colours.
     background*: Rgba
     roles*: array[PointRole, Rgba] ## sources, receivers
-    hover*: Rgba                   ## the points under the pointer, in the map or in the plot
-    selected*: Rgba                ## the selected points
-    outline*: Rgba                 ## round the highlighted points: the background's opposite
+    shotLog*: Rgba
+      ## a shot log's shots: the sources' and the receivers' colours halfway, so
+      ## the theme gives it a hue of its own (a diamond, apart from the discs and rings)
+    hover*: Rgba ## the points under the pointer, in the map or in the plot
+    selected*: Rgba ## the selected points
+    outline*: Rgba ## round the highlighted points: the background's opposite
     active*: Rgba
       ## the receivers of the record on show: the receivers' colour, darker
       ## on paper (on a dark background lighter, or darker where they are
@@ -87,6 +91,7 @@ func mapInk*(t: Theme; colours: PlotColours; custom = CustomColours()): MapInk =
     outline: (if luminance(bg) > 0.18: PaperInk else: PaperBackground))
   result.roles[prSource] = readableOn(t.roles[rlSource], bg)
   result.roles[prReceiver] = readableOn(t.roles[rlReceiver], bg)
+  result.shotLog = readableOn(mix(t.roles[rlSource], t.roles[rlReceiver], 0.5), bg)
   # Toward the outline (darker on paper); where the receivers are close to
   # it already (light receivers on a dark map), toward the background.
   let rcv = result.roles[prReceiver]
@@ -114,7 +119,7 @@ func mapLayers*(st: AppState; ink: MapInk): seq[MapLayerView] =
   ## highlight last. Each is in its group: the survey files' points in the
   ## Preplot, the open files' own positions (as their headers give them, or
   ## as a join made them) in the Recorded.
-  for origin in [loSurveyFile, loTraces]:
+  for origin in [loSurveyFile, loTraces, loShotLog]:
     for r in [prReceiver, prSource]:
       for i in 0 ..< st.survey.layers.len:
         # An alias, not a copy: a layer of a million points is 100 MB.
@@ -123,11 +128,16 @@ func mapLayers*(st: AppState; ink: MapInk): seq[MapLayerView] =
           let key = l.keyOf(r)
           let joined = origin == loTraces and st.joinedOf(l.session) >= 0
           result.add MapLayerView(key: key, layer: l.id, role: r, group: l.groupOf,
-            file: l.name, points: l.points[r].len, colour: ink.roles[r],
+            file: l.name, points: l.points[r].len,
+            colour: (if origin == loShotLog: ink.shotLog else: ink.roles[r]),
             shown: st.layerShown(l, r), own: st.map.shown(key),
-            spacing: l.levels[r].spacing, shape: (if origin == loTraces: msRing else: msDisc),
-            name: roleName(r, true) & (if origin == loTraces: " in " else: " of ") & l.name &
-              (if joined: " (joined)" else: ""))
+            spacing: l.levels[r].spacing, shape: (case origin
+            of loTraces: msRing
+            of loSurveyFile: msDisc
+            of loShotLog: msDiamond),
+            name: (if origin == loShotLog: "Shots of " & l.name
+            else: roleName(r, true) & (if origin == loTraces: " in " else: " of ") &
+              l.name) & (if joined: " (joined)" else: ""))
   result.add MapLayerView(key: HighlightKey, name: "Highlight: the trace under the " &
     "pointer, the selection", colour: ink.hover, shape: msDisc,
     shown: st.map.shown(HighlightKey), own: st.map.shown(HighlightKey))
@@ -201,6 +211,8 @@ func opensRecord*(st: AppState; p: PointRef): bool =
   ## receiver whose traces form a receiver gather; a survey file's source
   ## no open file's trace was recorded at whose record a file of the folder
   ## listed holds.
+  let at = st.survey.find(p.layer)
+  if at >= 0 and st.survey.layers[at].origin == loShotLog: return false # a click selects it
   let traces = st.survey.tracesAt(p)
   if traces.len == 0: return p.role == prSource and st.shots.shotsAt(p).len > 0 # a listed file's
   let (found, kind) = st.recordKind(traces[0])
@@ -444,6 +456,25 @@ func shotLines*(st: AppState; p: PointRef): seq[string] =
   if places.len > 3: result.add "  and " & $(places.len - 3) & " more"
   if places.len > 1: result.add "A click shows the newest" # (the menu lists each)
 
+const ShotIdentity = [crSailLine, crSourceLine, crShotPoint, crPointIndex, crFileNumber,
+  crSequence, crGpsMicros, crUtcMicros, crUtcSeconds, crDateTime, crStatus]
+  ## the columns that say which shot a row is, as the column map names them
+
+func shotLogRows(st: AppState; l: SurveyLayer; point: int): seq[string] =
+  ## The identifying cells of the first row at `point` of shot log layer `l`, as
+  ## "column: value" (the column's header, or its role's name when it has none).
+  for i in 0 ..< st.shotLogCount:
+    if st.shotLogId(i) == l.shotLog:
+      for row in l.shotRows(point):
+        let map = st.shotLogMap(i)
+        for role in ShotIdentity:
+          for col, r in map.roles:
+            let cell = st.shotCell(i, row, col)
+            if r == role and cell.len > 0:
+              let name = st.shotLogColumn(i, col)
+              result.add (if name.len > 0: name else: $role) & ": " & cell
+        return
+
 proc pointInfo*(st: AppState; p: PointRef; units: string): PointInfo =
   ## What the map says of point `p`: its role, station and file; its
   ## coordinates and elevation; the traces of the open files recorded there
@@ -460,6 +491,11 @@ proc pointInfo*(st: AppState; p: PointRef; units: string): PointInfo =
   var place = "E " & fixed(ps.index.x(p.point), d) & "   N " & fixed(ps.index.y(p.point), d)
   if not ps.z[p.point].isNaN: place.add "   Z " & fixed(ps.z[p.point], d)
   result.lines.add place & u
+  if l.origin == loShotLog:
+    result.title = "Shot, " & stationText(station)
+    result.lines.add "In the shot log " & elided(l.name)
+    result.lines.add st.shotLogRows(l, p.point)
+    return
   result.lines.add (if l.origin == loTraces: "In the traces of " else: "In ") & elided(l.name)
   let traces = st.survey.tracesAt(p)
   if traces.len > 0: result.lines.add st.recordsText(traces)

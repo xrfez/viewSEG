@@ -13,7 +13,7 @@
 ## it after the job is no longer running. A failed read is one sentence.
 
 import std/[os, strutils]
-import filesystem, jobs, project, shotfollow, shotlog
+import filesystem, jobs, project, shotfollow, shotlog, shotmap, survey
 
 const
   ShotLogCap* = 256'i64 * 1024 * 1024 ## a larger file is refused, and not read
@@ -32,6 +32,9 @@ type
     dropped*: bool ## a re-map dropped edited cells
     usedLast*: bool ## the project's last column map was used; a guess leaves this false
     index*: ref ShotIndex ## the view arranged for follow; nil when there is no log
+    layer*: ref SurveyLayer
+      ## the shots as a map layer (`core/shotmap`), its log's id not set yet; nil when the
+      ## log has no positions
 
   ShotLogSink* = ref object
     ## Filled when the job ends, except when it is cancelled. Read it after
@@ -163,9 +166,12 @@ proc fill(sink: ShotLogSink; log: ShotLog; view: ShotView; map: ShotLogMap; text
     dropped = false; usedLast = false) =
   if sink != nil:
     var index: ref ShotIndex = nil
-    if log != nil: index = boxedIndex(view)
+    var layer: ref SurveyLayer = nil
+    if log != nil:
+      index = boxedIndex(view)
+      layer = shotLayer(view, map)
     sink.result = ShotLogJobResult(ok: true, log: log, view: view, map: map, text: text,
-      dropped: dropped, usedLast: usedLast, index: index)
+      dropped: dropped, usedLast: usedLast, index: index, layer: layer)
 
 proc clippedHeader(name: string): string =
   ## `name` as a remembered header is compared: ends trimmed, capitals ignored.

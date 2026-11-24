@@ -80,7 +80,8 @@ const
     ## with room inside for its filter's symbol
   Glyphs: array[FlagShape, GlyphKind] = [gkSquare, gkCircle, gkDiamond, gkTriangle]
   MarkStroke = 2.5'f32
-    ## their outlines' width
+  DiamondMin = 5'f32 ## the smallest diamond of a shot log's shot, pixels at 100 %
+                       ## their outlines' width
   MarkHalo = 1.5'f32
     ## the halo on each side of it
   hoveredSize = 12'f32
@@ -621,7 +622,7 @@ proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
     var any = false
     igBeginDisabled(not on)
     for i, l in layers:
-      if l.key.kind != mlHighlight and l.group == g:
+      if l.key.kind notin {mlHighlight, mlShotLog} and l.group == g:
         any = true
         layerRow(l, i, marks, res)
     igEndDisabled()
@@ -631,6 +632,16 @@ proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
       igTextDisabled("%s", none.cstring)
     if g == mgPreplot: drawTemplateRow(st, marks, res)
     else: drawShotsRow(st, marks, res)
+    igUnindent(0)
+  var shotLogs = false # a log with positions only: no entry, not even an empty one, else
+  for l in layers: shotLogs = shotLogs or l.key.kind == mlShotLog
+  if shotLogs:
+    igTextUnformatted("Shot log".cstring, nil)
+    marks.mark("map.shotlogs")
+    tip("The shots of a loaded shot log whose columns give positions")
+    igIndent(0)
+    for i, l in layers:
+      if l.key.kind == mlShotLog: layerRow(l, i, marks, res)
     igUnindent(0)
   drawFilters(st, hits, t, marks, res)
   igSeparator()
@@ -1425,6 +1436,8 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
               MapStyle(colour: l.colour, edge: l.colour, size: ring * s,
                 edgeWidth: ringWidth * s, shape: skRing)
             elif l.shape == msRing: MapStyle(colour: l.colour, size: ring * s)
+            elif l.shape == msDiamond:
+              MapStyle(colour: l.colour, size: max(disc, DiamondMin) * s, shape: skDiamond)
             else: MapStyle(colour: l.colour, size: disc * s))
       let tex = mu.renderer.render(frame, st.survey)
       if tex != 0:

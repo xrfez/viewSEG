@@ -5711,6 +5711,7 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
         state.saidPositions.incl said
         state.log.add(sevInfo, name, name & ": " & problems.join("; ") & ". They are left " &
           "off the map.")
+  of loShotLog: discard # made with its log's job (`setShotLayer`), never posted as a layer
   of loSurveyFile:
     let dropped = state.droppedLoads.find(job)
     if dropped >= 0: # a cancelled import's: the map stays as it was
@@ -6836,6 +6837,25 @@ proc findShot(state: AppState; id: int): int =
   for i, s in state.shotLogs:
     if s.id == id: return i
 
+proc setShotLayer(state: var AppState; loaded: LoadedShotLog; layer: ref SurveyLayer) =
+  ## Puts the map layer a job made of loaded shot log `loaded` in the survey, in place
+  ## of the one before; none (`layer` nil) takes the old one off.
+  let at = state.survey.findShotLog(loaded.id)
+  if layer == nil:
+    if at >= 0: discard state.survey.remove(state.survey.layers[at].id)
+  else:
+    layer.shotLog = loaded.id
+    layer.path = if loaded.source.len > 0: loaded.source else: loaded.name
+    layer.name = loaded.name
+    discard state.survey.add(move layer[])
+
+proc dropShotLayers(state: var AppState) =
+  ## Takes every shot log's layer off the map.
+  var ids: seq[SurveyLayerId] = @[]
+  for i in 0 ..< state.survey.layers.len:
+    if state.survey.layers[i].origin == loShotLog: ids.add state.survey.layers[i].id
+  for id in ids: discard state.survey.remove(id)
+
 proc dropShotLogs(state: var AppState) =
   ## Cancels a shot log's jobs and drops the loaded logs. A close, or a
   ## project opening, starts from none. A delete already asked for is left
@@ -6847,6 +6867,7 @@ proc dropShotLogs(state: var AppState) =
     elif w.job != NoJob: discard state.jobs.cancel(w.job)
   state.shotWork = kept
   state.follow.dropAll()
+  state.dropShotLayers()
   state.shotLogs.setLen 0
   inc state.shotLogsRev
 
@@ -6955,6 +6976,7 @@ proc removeShotLogCmd(state: var AppState; cmd: Command) =
     else: kept.add w
   state.shotWork = kept
   state.follow.drop(id)
+  state.setShotLayer(loaded, nil)
   state.shotLogs.delete(cmd.logIndex)
   inc state.shotLogsRev
   if stored.len == 0 or not state.inProject: return
@@ -7094,6 +7116,7 @@ proc tookShotImport(state: var AppState; w: ShotLogWork) =
   inc state.nextShotId
   state.shotLogs.add loaded
   state.follow.keep(loaded.id, r.index)
+  state.setShotLayer(loaded, r.layer)
   inc state.shotLogsRev
   state.settleShotMap(r.log, r.map)
   if r.usedLast: state.log.add(sevInfo, "shot log", ColumnsAsLast)
@@ -7107,6 +7130,7 @@ proc tookShotLoad(state: var AppState; w: ShotLogWork) =
   inc state.nextShotId
   state.shotLogs.add loaded
   state.follow.keep(loaded.id, r.index)
+  state.setShotLayer(loaded, r.layer)
   inc state.shotLogsRev
 
 proc tookShotSave(state: var AppState; w: ShotLogWork) =
@@ -7118,6 +7142,7 @@ proc tookShotSave(state: var AppState; w: ShotLogWork) =
   loaded.busy = false
   if w.sink.result.ok:
     state.follow.keep(loaded.id, w.sink.result.index)
+    state.setShotLayer(loaded, w.sink.result.layer)
     loaded.view = w.sink.result.view
     inc loaded.revision
     inc state.shotLogsRev
@@ -7139,6 +7164,7 @@ proc tookShotRemap(state: var AppState; w: ShotLogWork) =
   loaded.busy = false
   let r = w.sink.result
   state.follow.keep(loaded.id, r.index)
+  state.setShotLayer(loaded, r.layer)
   loaded.log = r.log
   loaded.view = r.view
   loaded.map = r.map
@@ -7159,6 +7185,7 @@ proc tookShotRebuild(state: var AppState; w: ShotLogWork) =
   loaded.busy = false
   if w.sink.result.ok:
     state.follow.keep(loaded.id, w.sink.result.index)
+    state.setShotLayer(loaded, w.sink.result.layer)
     loaded.view = w.sink.result.view
     inc loaded.revision
     inc state.shotLogsRev

@@ -65,6 +65,7 @@ type
   LayerOrigin* = enum
     loTraces = "traces"          ## an open file's traces
     loSurveyFile = "survey file" ## an SPS or P1 file
+    loShotLog = "shot log"       ## the shots of a shot log whose column map gives positions
 
   Station* = object
     ## A station: line, point and point index. Line and point are NaN when
@@ -108,6 +109,7 @@ type
     size*: int64          ## survey files: the file's size and time as it was read
     modified*: Time
     session*: SessionId   ## traces: the open file; `NoSession` for a survey file
+    shotLog*: int         ## shot logs: the loaded log's id; 0 for the others
     base*: int            ## traces: the survey-wide id of the file's trace 0
     keysRevision*: int    ## traces: the keys it was made from (parseSEG's `keysRevision`)
     traces*: int          ## traces: the file's traces
@@ -510,6 +512,58 @@ proc finish*(b: var SurveyFileBuilder): SurveyLayer =
       for _ in result.relations[].records(d): inc records # (sorts them)
   result.relationRecords = records
 
+type
+  ShotLayerBuilder* = object
+    ## Makes the layer of a shot log's shots (sources only), a row at a
+    ## time (`addShot`), then `finish`. Every placed row is a point of its
+    ## own: two shots at one spot are two points a click can tell apart.
+    layer: SurveyLayer
+    xs, ys, zs: seq[float64]
+    stations: seq[Station]
+    rowOf: seq[int32] ## per point: its row, in the order given
+
+proc initShotLayerBuilder*(path, name: string; log: int): ShotLayerBuilder =
+  ## A builder for the shots of loaded shot log `log`, read from `path`.
+  ShotLayerBuilder(layer: SurveyLayer(origin: loShotLog, kind: fkUnknown, path: path,
+    name: name, shotLog: log))
+
+proc addShot*(b: var ShotLayerBuilder; line, point, x, y, z: float64) =
+  ## The next row: its source line and shot point (NaN for none) and its
+  ## position (`x`, `y`) with elevation `z` (NaN when not known). A row
+  ## without finite coordinates, or at (0, 0), is counted and left off.
+  template c: untyped = b.layer.counts[prSource]
+  let row = b.layer.traces
+  inc b.layer.traces
+  inc c.given
+  if line.isNaN or point.isNaN: inc c.noStation
+  if not (finite(x) and finite(y)): inc c.missing
+  elif x == 0 and y == 0: inc c.zero
+  else:
+    inc c.placed
+    b.xs.add x
+    b.ys.add y
+    b.zs.add z
+    b.stations.add(if line.isNaN or point.isNaN: noStation()
+                   else: Station(line: line, point: point))
+    b.rowOf.add int32(row)
+
+proc finish*(b: var ShotLayerBuilder): SurveyLayer =
+  ## The layer: its points indexed, each point's row.
+  result = move b.layer
+  var (points, rank) = indexed(b.xs, b.ys, b.zs, b.stations)
+  result.pointOf[prSource] = newSeq[int32](result.traces)
+  for row in result.pointOf[prSource].mitems: row = -1
+  for i, row in b.rowOf: result.pointOf[prSource][row] = rank[i]
+  groups(result.pointOf[prSource], points.len, points.traceStart, points.traceList)
+  result.bounds.incl points.index.bounds
+  result.points[prSource] = move points
+
+iterator shotRows*(l: SurveyLayer; point: int): int =
+  ## Shot log layer `l`: the rows of its log at source point `point`.
+  if l.origin == loShotLog and point in 0 ..< l.points[prSource].len:
+    let p = addr l.points[prSource]
+    for i in p.traceStart[point] ..< p.traceStart[point + 1]: yield int(p.traceList[i])
+
 proc withLevels*(l: var SurveyLayer) =
   ## Makes the map's levels of detail of each role's points (on the worker
   ## that made the layer: a million points take a few tens of ms).
@@ -594,6 +648,12 @@ func findFile*(s: Survey; path: string): int =
     if l.origin == loSurveyFile and l.path == path: return i
   -1
 
+func findShotLog*(s: Survey; log: int): int =
+  ## The index of the layer of loaded shot log `log`; -1 for none.
+  for i, l in s.layers:
+    if l.origin == loShotLog and l.shotLog == log: return i
+  -1
+
 func findTraces*(s: Survey; session: SessionId): int =
   ## The index of the traces layer of open file `session`; -1 for none.
   for i, l in s.layers:
@@ -606,8 +666,10 @@ proc add*(s: var Survey; layer: sink SurveyLayer): SurveyLayerId =
   inc s.nextId
   result = SurveyLayerId(s.nextId)
   layer.id = result
-  let old = if layer.origin == loSurveyFile: s.findFile(layer.path)
-            else: s.findTraces(layer.session)
+  let old = case layer.origin
+    of loSurveyFile: s.findFile(layer.path)
+    of loTraces: s.findTraces(layer.session)
+    of loShotLog: s.findShotLog(layer.shotLog)
   if old >= 0: s.layers[old] = layer
   else: s.layers.add layer
   inc s.revision
@@ -617,8 +679,10 @@ proc add*(s: var Survey; layer: sink SurveyLayer; replaced: var SurveyLayer): Su
   ## `replaced` (else its id is `NoSurveyLayer`), to be put back
   ## (`putBack`).
   replaced = SurveyLayer(id: NoSurveyLayer)
-  let old = if layer.origin == loSurveyFile: s.findFile(layer.path)
-            else: s.findTraces(layer.session)
+  let old = case layer.origin
+    of loSurveyFile: s.findFile(layer.path)
+    of loTraces: s.findTraces(layer.session)
+    of loShotLog: s.findShotLog(layer.shotLog)
   if old >= 0: replaced = move s.layers[old]
   s.add(layer)
 
@@ -662,6 +726,7 @@ func tracePoints*(s: Survey; trace: int; keys: TraceKeys): seq[PointRef] =
       let at = case l.origin
         of loTraces: l.pointOf(r, trace - l.base)
         of loSurveyFile: l.stationPoint(r, ends[ord(r)])
+        of loShotLog: -1 # a shot log's shots are not linked to traces
       if at >= 0: result.add PointRef(layer: l.id, role: r, point: at)
 
 func tracePointsOf*(s: Survey; trace: int): seq[PointRef] =
@@ -772,6 +837,7 @@ func tracesAt*(s: Survey; at: PointRef): seq[int] =
     let st = l.points[at.role].station[at.point]
     for m in s.layers:
       for t in m.stationTraces(at.role, st): result.add m.base + t
+  of loShotLog: discard
 
 func tracesAt*(s: Survey; points: openArray[PointRef]): seq[int] =
   ## The traces recorded at any of `points`, each once (a survey file's
@@ -798,6 +864,7 @@ func tracesAt*(s: Survey; points: openArray[PointRef]): seq[int] =
           if m.origin == loTraces:
             for t in m.stationTraces(p.role, st):
               if not seen.containsOrIncl(m.base + t): result.add m.base + t
+      of loShotLog: discard
 
 # -------------------------------------------------------------- in words --
 
@@ -807,7 +874,10 @@ func plural(n: int; one, many: string): string =
 func problems*(l: SurveyLayer): seq[string] =
   ## What was left off the map, or taken twice, in plain words; none when
   ## every position was placed.
-  let what = if l.origin == loTraces: ("trace", "traces") else: ("record", "records")
+  let what = case l.origin
+    of loTraces: ("trace", "traces")
+    of loSurveyFile: ("record", "records")
+    of loShotLog: ("shot", "shots")
   for r in PointRole:
     let c = l.counts[r]
     let role = $r
@@ -832,5 +902,8 @@ func summary*(l: SurveyLayer): string =
   if l.origin == loTraces:
     result = plural(l.traces, "trace", "traces") & " at " &
       (if parts.len == 0: "no point" else: parts.join(" and "))
+  elif l.origin == loShotLog:
+    result = plural(l.traces, "shot", "shots") & ", " &
+      $l.points[prSource].len & " placed on the map"
   elif parts.len == 0: result = "no point and no relation"
   else: result = parts.join(", ")

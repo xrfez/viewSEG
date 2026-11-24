@@ -47,8 +47,9 @@ type
     muHalo = "haloWidth", muPass = "pass", muSymbol = "symbol"
 
   MapShapeKind* = enum
-    skDisc ## filled
-    skRing ## an outline only
+    skDisc    ## filled
+    skRing    ## an outline only
+    skDiamond ## filled, a square on its corner
 
   GlyphKind* = enum
     ## A mark's outline (`MapStyle.glyph`): none for a disc or ring.
@@ -192,7 +193,9 @@ void main() {
     if (colour.a <= 0.0) discard;
     return;
   }
-  float r = length(gl_PointCoord * 2.0 - 1.0) * size / 2.0; // pixels from the centre
+  vec2 q = gl_PointCoord * 2.0 - 1.0;
+  // pixels from the centre (a diamond's: its edge is where the corners' sum reaches 1)
+  float r = (hollow == 2 ? abs(q.x) + abs(q.y) : length(q)) * size / 2.0;
   float outer = clamp(size / 2.0 - r + 0.5, 0.0, 1.0);
   if (outer <= 0.0) discard;
   vec4 c = fill;
@@ -375,7 +378,10 @@ proc use(r: MapRenderer; f: MapFrame; origin: MapPoint; st: MapStyle) =
   glUniform2f(loc(muScale), float32(2 / a.width), float32(2 / a.height))
   glUniform1f(loc(muSize), st.size)
   glUniform1f(loc(muEdge), st.edgeWidth)
-  glUniform1i(loc(muHollow), GLint(st.shape == skRing))
+  glUniform1i(loc(muHollow), GLint(case st.shape
+    of skDisc: 0
+    of skRing: 1
+    of skDiamond: 2))
   glUniform1i(loc(muGlyph), GLint(ord(st.glyph)))
   glUniform1i(loc(muSymbol), GLint(ord(st.symbol)))
   glUniform1f(loc(muHalo), st.halo)

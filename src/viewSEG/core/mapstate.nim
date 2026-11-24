@@ -8,7 +8,7 @@
 ## by its file and role (`MapLayerKey`), not by the survey layer's id, so it
 ## stays hidden when its file is loaded again. The layers are in groups
 ## (`core/mapkinds`): the survey files' are the Preplot, the open files' own
-## positions the Recorded; a group hidden as a whole (the settings'
+## positions the Recorded (a shot log's shots are a layer of their own); a group hidden as a whole (the settings'
 ## `map.hiddenGroups`) hides its layers whatever their own toggles say
 ## (`drawn`).
 ##
@@ -26,6 +26,7 @@ type
   MapLayerKind* = enum
     mlSurveyFile = "survey file" ## an SPS or P1 file's points
     mlTraces = "traces"          ## an open file's own positions
+    mlShotLog = "shot log"       ## the shots of a loaded shot log
     mlHighlight = "highlight"    ## the hovered and selected points
 
   MapLayerKey* = object
@@ -47,8 +48,10 @@ const HighlightKey* = MapLayerKey(kind: mlHighlight)
 
 func keyOf*(l: SurveyLayer; r: PointRole): MapLayerKey =
   ## The map layer of role `r` of survey layer `l`.
-  MapLayerKey(kind: (if l.origin == loTraces: mlTraces else: mlSurveyFile), path: l.path,
-    role: r)
+  MapLayerKey(kind: (case l.origin
+    of loTraces: mlTraces
+    of loSurveyFile: mlSurveyFile
+    of loShotLog: mlShotLog), path: l.path, role: r)
 
 func shown*(m: MapState; key: MapLayerKey): bool =
   ## Whether the layer `key` names is shown by its own toggle (its group's
@@ -57,13 +60,15 @@ func shown*(m: MapState; key: MapLayerKey): bool =
 
 func groupOf*(l: SurveyLayer): MapGroup {.inline.} =
   ## The group of the Layers list survey layer `l` is in: a survey file's
-  ## points are the Preplot, an open file's own positions the Recorded.
+  ## points are the Preplot, an open file's own positions the Recorded. A
+  ## shot log's layer has a list of its own (`drawn` ignores the groups).
   if l.origin == loSurveyFile: mgPreplot else: mgRecorded
 
 func drawn*(m: MapState; hiddenGroups: set[MapGroup]; l: SurveyLayer; r: PointRole): bool =
   ## Whether the map draws (and finds points in) role `r` of survey layer
-  ## `l`: its own toggle on and its group not hidden.
-  l.groupOf notin hiddenGroups and m.shown(l.keyOf(r))
+  ## `l`: its own toggle on and its group not hidden (a shot log's layer is
+  ## in no group the user can hide).
+  (l.origin == loShotLog or l.groupOf notin hiddenGroups) and m.shown(l.keyOf(r))
 
 proc show*(m: var MapState; key: MapLayerKey; on: bool) =
   ## Shows or hides layer `key`.
