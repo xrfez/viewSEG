@@ -51,6 +51,12 @@ Land 2026/                  the project folder: this is what is opened
 - **`survey/survey.bin`** is what parseSEG read from the copies, in a compact binary form
   (below). Opening the project reads it instead of the survey files.
 - **`cache/`** holds only what the program can make again from the data.
+- The project document also holds the job's vibrator QC profile (`vibProfile`), when one
+  was taken from a Vibrator window: the six limits, the statistics window, the harmonics,
+  the accelerometer set, the force scale, a typed 100 % force and drive level, the
+  reference's archive id and the top typed for that reference. A document without it has
+  no profile, so a project made earlier opens unchanged. A field inside it that this
+  version does not know is kept and written back.
 - The project document also holds which vendor map decodes the project's files (`vendorMap`:
   a map's name, empty for none; absent for Automatic): Project > Vendor map
   (docs/user/vendor-maps.md). A document without it reads as Automatic, so projects made earlier

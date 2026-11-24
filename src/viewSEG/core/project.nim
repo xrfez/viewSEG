@@ -19,7 +19,8 @@
 
 import std/[os, strutils, times]
 import parseSEG
-import breakmodel, displaypresets, filesystem, join, nif, processing, vendormaps
+import breakmodel, displaypresets, filesystem, join, nif, processing, vendormaps,
+  vibprofile
 
 const
   ProjectFileName* = "project.nif"       ## the project document, in the project folder
@@ -108,6 +109,11 @@ type
     vibTops*: seq[string]
       ## the vibrator signature's top frequency typed per reference in this project
       ## (`topText`: "220.0 reference-id")
+    vibProfile*: VibQcProfile
+      ## the job's vibrator QC profile, when `hasVibProfile`: settings taken from
+      ## one Vibrator window so a QC run can apply them to other files
+    hasVibProfile*: bool
+      ## `vibProfile` was stored; an older project, or one with none, is false
     vendorChoice*: VendorChoice
       ## the vendor map rule of the project's files (`core/vendormaps`); automatic when
       ## the document says nothing

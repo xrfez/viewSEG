@@ -29,8 +29,9 @@
 ## was. A document of a later version than `ProjectVersion` reads as far as
 ## it can; the program then opens the project read-only.
 
-import std/[strutils, times]
-import breakmodel, identity, join, nif, processing, project, settingsnif, vendormaps
+import std/[math, strutils, times]
+import analysis, breakmodel, identity, join, nif, processing, project, settings,
+  settingsnif, vendormaps, vibprofile
 
 const
   KindNames: array[JoinFileKind, string] = ["sps", "p1", "csv"]
@@ -62,6 +63,14 @@ proc value(w: var NifWriter; tag: string; b: bool) =
   w.add b
   w.close
 
+proc value(w: var NifWriter; tag: string; x: float64) =
+  w.open tag
+  w.add x
+  w.close
+
+proc finite(x: float64): bool {.inline.} =
+  x == x and x != Inf and x != -Inf
+
 proc choice(w: var NifWriter; tag, name: string) =
   w.open tag
   w.ident name
@@ -75,6 +84,38 @@ proc modified(w: var NifWriter; t: Time; tag = "modified") =
   w.open tag
   w.add t.toUnix
   w.add int64(t.nanosecond)
+  w.close
+
+proc writeLimit(w: var NifWriter; tag: string; x: float64) =
+  if finite(x): w.value(tag, x)
+
+proc writeVibProfile(w: var NifWriter; p: VibQcProfile) =
+  ## The job's vibrator QC profile. A limit or a typed value that is not set
+  ## is left out; a field this version does not know is written back.
+  w.open "vibProfile"
+  if finite(p.qcWindowMs): w.value("qcWindowMs", p.qcWindowMs)
+  w.value("harmonics", int64(p.harmonics))
+  w.choice("accelSet", $p.accelSet)
+  w.open "limits"
+  w.writeLimit("avgPhaseDeg", p.limits.avgPhaseDeg)
+  w.writeLimit("peakPhaseDeg", p.limits.peakPhaseDeg)
+  w.writeLimit("avgDistortionPct", p.limits.avgDistortionPct)
+  w.writeLimit("peakDistortionPct", p.limits.peakDistortionPct)
+  w.writeLimit("avgForcePct", p.limits.avgForcePct)
+  w.writeLimit("peakForcePct", p.limits.peakForcePct)
+  w.close
+  if finite(p.forceScale.datCountsPerLbf) or finite(p.forceScale.vibAccMvPerCount):
+    w.open "forceScale"
+    if finite(p.forceScale.datCountsPerLbf):
+      w.value("datCountsPerLbf", p.forceScale.datCountsPerLbf)
+    if finite(p.forceScale.vibAccMvPerCount):
+      w.value("vibAccMvPerCount", p.forceScale.vibAccMvPerCount)
+    w.close
+  if finite(p.forceHundredPct): w.value("forceHundredPct", p.forceHundredPct)
+  if finite(p.targetPct): w.value("targetPct", p.targetPct)
+  if p.referenceId.len > 0: w.value("referenceId", p.referenceId)
+  if finite(p.topHz): w.value("topHz", p.topHz)
+  for n in p.later: w.add n
   w.close
 
 proc projectDocument*(d: ProjectDoc): string =
@@ -142,6 +183,7 @@ proc projectDocument*(d: ProjectDoc): string =
   w.value("referenceId", d.referenceId)
   for c in d.vibRoles: w.value("vibRole", c)
   for c in d.vibTops: w.value("vibTop", c)
+  if d.hasVibProfile: w.writeVibProfile(d.vibProfile)
   if d.lastFolder.len > 0: w.value("lastFolder", d.lastFolder)
   if d.includeSubfolders: w.value("includeSubfolders", true)
   case d.vendorChoice.mode
@@ -315,6 +357,74 @@ proc survey(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "store": r.store(c, d.store)
       else: discard
 
+proc number(r: var Reading; n: NifNode; range: SettingRange; x: var float64) =
+  ## `(tag v)`: `x` = v when it is a number `range` allows.
+  if n.kids.len == 1 and n.kids[0].kind in {nkFloat, nkInt}:
+    let v = if n.kids[0].kind == nkFloat: n.kids[0].floatVal
+            else: float64(n.kids[0].intVal)
+    if range.allows(v): x = v
+    else: r.problem(n, "(" & n.tag & ") needs a number " & range.words)
+  else: r.problem(n, "(" & n.tag & ") needs a number")
+
+proc whole(r: var Reading; n: NifNode; lo, hi: int; x: var int) =
+  if n.kids.len == 1 and n.kids[0].kind == nkInt and n.kids[0].intVal >= lo and
+      n.kids[0].intVal <= hi:
+    x = int(n.kids[0].intVal)
+  else:
+    r.problem(n, "(" & n.tag & ") needs a whole number from " & $lo & " to " & $hi)
+
+proc accel(r: var Reading; n: NifNode; x: var AccelSet) =
+  if n.kids.len == 1 and n.kids[0].kind == nkIdent:
+    for v in AccelSet:
+      if $v == n.kids[0].text:
+        x = v
+        return
+  r.problem(n, "(accelSet) needs A or B")
+
+proc limits(r: var Reading; n: NifNode; p: var VibQcProfile) =
+  ## A limit written is on; one left out is off. A field not known is kept.
+  p.limits = QcLimits(avgPhaseDeg: NaN, peakPhaseDeg: NaN, avgDistortionPct: NaN,
+    peakDistortionPct: NaN, avgForcePct: NaN, peakForcePct: NaN)
+  for l in n.kids:
+    if l.kind != nkTree: r.problem(l, "(limits) holds trees")
+    else:
+      case l.tag
+      of "avgPhaseDeg": r.number(l, NumberRange, p.limits.avgPhaseDeg)
+      of "peakPhaseDeg": r.number(l, NumberRange, p.limits.peakPhaseDeg)
+      of "avgDistortionPct": r.number(l, NumberRange, p.limits.avgDistortionPct)
+      of "peakDistortionPct": r.number(l, NumberRange, p.limits.peakDistortionPct)
+      of "avgForcePct": r.number(l, NumberRange, p.limits.avgForcePct)
+      of "peakForcePct": r.number(l, NumberRange, p.limits.peakForcePct)
+      else: p.later.add l
+
+proc forceScale(r: var Reading; n: NifNode; p: var VibQcProfile) =
+  for k in n.kids:
+    if k.kind != nkTree: r.problem(k, "(forceScale) holds trees")
+    else:
+      case k.tag
+      of "datCountsPerLbf": r.number(k, ForceScaleRange, p.forceScale.datCountsPerLbf)
+      of "vibAccMvPerCount": r.number(k, ForceScaleRange, p.forceScale.vibAccMvPerCount)
+      else: p.later.add k
+
+proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
+  ## One profile. A field this version does not know is kept and written back.
+  d.hasVibProfile = true
+  for c in n.kids:
+    if c.kind != nkTree: r.problem(c, "(vibProfile) holds trees")
+    else:
+      case c.tag
+      of "qcWindowMs": r.number(c, WindowMsRange, d.vibProfile.qcWindowMs)
+      of "harmonics": r.whole(c, int(HarmonicRange.lo), int(HarmonicRange.hi),
+          d.vibProfile.harmonics)
+      of "accelSet": r.accel(c, d.vibProfile.accelSet)
+      of "limits": r.limits(c, d.vibProfile)
+      of "forceScale": r.forceScale(c, d.vibProfile)
+      of "forceHundredPct": r.number(c, MassKgRange, d.vibProfile.forceHundredPct)
+      of "targetPct": r.number(c, TargetPctRange, d.vibProfile.targetPct)
+      of "referenceId": r.text(c, d.vibProfile.referenceId)
+      of "topHz": r.number(c, TopHzRange, d.vibProfile.topHz)
+      else: d.vibProfile.later.add c
+
 proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[string]): ProjectDoc =
   ## The project document `doc` (`parseNif`; `name` names it in problems).
   ## Raises `NifError` when it is not a project document.
@@ -361,6 +471,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
         var text = ""
         r.text(c, text)
         if text.len > 0 and result.vibTops.len < 256: result.vibTops.add text
+      of "vibProfile": r.vibProfile(c, result)
       of "vendorMap":
         var name = ""
         r.text(c, name)
