@@ -210,9 +210,15 @@ proc main*() =
     doAssert unread.st == jsDone, unread.error
     let unreadRow = rowOf(unread.table, plain)
     doAssert unreadRow.outcome == foProblem
-    doAssert unreadRow.problem == "the reference \"kept\" is no longer in the archive " &
-      "(the reference file is missing)", unreadRow.problem
     markWorkerThread()
+    var loader = ""
+    try:
+      discard readReferenceFile(junk)
+    except CatchableError as e:
+      loader = e.msg
+    doAssert loader.len > 0 and loader != "the reference file is missing", loader
+    doAssert unreadRow.problem == "the reference \"kept\" is no longer in the archive (" &
+      loader & ")", unreadRow.problem
     let emptyPath = dir / "empty-ref.sgy"
     var one = newSeq[float32](1)
     one[0] = 1
@@ -234,8 +240,14 @@ proc main*() =
     doAssert empty.st == jsDone, empty.error
     let emptyRow = rowOf(empty.table, plain)
     doAssert emptyRow.outcome == foProblem, $emptyRow.outcome & " " & emptyRow.problem
-    doAssert emptyRow.problem == "the reference \"bare\" is no longer in the archive " &
-      "(the reference file is missing)", emptyRow.problem
+    var emptyWhy = ""
+    try:
+      discard readReferenceFile(emptyPath)
+    except CatchableError as e:
+      emptyWhy = e.msg
+    doAssert emptyWhy.len > 0, "the empty reference was readable"
+    doAssert emptyRow.problem == "the reference \"bare\" is no longer in the archive (" &
+      emptyWhy & ")", emptyRow.problem
     doAssert emptyRow.measures.len == 0
 
   block corruptDoesNotStop:

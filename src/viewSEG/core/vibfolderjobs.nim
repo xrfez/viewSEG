@@ -331,8 +331,10 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
       let name = if held.name.len > 0: held.name
                  elif reference.name.len > 0: reference.name
                  else: reference.path.extractFilename
+      let why = if loaded.problem.len > 0: loaded.problem
+                else: "the reference file is missing"
       gone = "the reference \"" & name &
-        "\" is no longer in the archive (the reference file is missing)"
+        "\" is no longer in the archive (" & why & ")"
   var done = 0
   for i, item in files:
     ctx.setPhase(filePhase(i, count, item.path))
