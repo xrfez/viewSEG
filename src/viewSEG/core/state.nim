@@ -307,6 +307,10 @@ type
       ## parse a loaded shot log again with another map, on a job
     ckEditShotCell = "edit shot log cell"
       ## overlay one cell of a loaded shot log; a writable project writes the copy
+    ckUndoShotEdit = "undo shot log edit"
+      ## put back the text a cell of a loaded shot log had before the last edit
+    ckRedoShotEdit = "redo shot log edit"
+      ## apply again a shot-log cell edit that was undone
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -602,7 +606,8 @@ type
     of ckVibWeights:
       vibWeights*: VibJobWeights
         ## the hold-down, baseplate and reaction-mass weights, kilograms; NaN is not set
-    of ckImportShotLog, ckRemoveShotLog, ckRemapShotLog, ckEditShotCell:
+    of ckImportShotLog, ckRemoveShotLog, ckRemapShotLog, ckEditShotCell,
+        ckUndoShotEdit, ckRedoShotEdit:
       logPath*: string ## ckImportShotLog: the file to read
       logMap*: ShotLogMap ## ckImportShotLog when logMapped; ckRemapShotLog: the new map
       logMapped*: bool ## ckImportShotLog: a map was given (else one is guessed)
@@ -974,17 +979,24 @@ type
     why: string
     shown: FirstBreaks
 
+  ShotCellEdit = object
+    ## One cell edit of a loaded shot log, for undo. Not saved with the project.
+    row, col: int
+    before, after: string
+
   LoadedShotLog = ref object
     ## A shot log read into this run. Its text is `log`'s, not a second copy.
     id: int
     name: string
-    source: string ## the file it was read from
-    stored: string ## the copy's file name under shotlogs/; "" when not stored
+    source: string          ## the file it was read from
+    stored: string          ## the copy's file name under shotlogs/; "" when not stored
     map: ShotLogMap
     log: ShotLog
     view: ShotView
-    revision: int  ## bumps when a job assigns a new view
-    busy: bool     ## a job is reading it: a cell edit waits
+    revision: int           ## bumps when a job assigns a new view
+    busy: bool              ## a job is reading it: a cell edit waits
+    undo: seq[ShotCellEdit] ## cell edits that can be taken back; capped
+    redo: seq[ShotCellEdit] ## edits undone, until a new edit clears them
 
   ShotLogJobKind = enum
     sjImport, sjLoad, sjSave, sjRemap, sjRebuild, sjDelete
@@ -2124,6 +2136,24 @@ proc shotCell*(state: AppState; i, row, col: int): string =
   ## One cell of loaded shot log `i`, as a grid shows it.
   if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: return ""
   state.shotLogs[i].log.cell(row, col)
+
+proc shotFileCell*(state: AppState; i, row, col: int): string =
+  ## The cell as the file has it, ignoring an overlay.
+  if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: return ""
+  state.shotLogs[i].log.fileCell(row, col)
+
+proc shotCellDiffers*(state: AppState; i, row, col: int): bool =
+  ## Whether the cell the grid shows is not the file's own text.
+  if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: return false
+  state.shotLogs[i].log.cellDiffers(row, col)
+
+func shotUndoCount*(state: AppState; i: int): int =
+  ## Cell edits that can be undone on loaded shot log `i`.
+  if i < 0 or i >= state.shotLogs.len: 0 else: state.shotLogs[i].undo.len
+
+func shotRedoCount*(state: AppState; i: int): int =
+  ## Cell edits that can be redone on loaded shot log `i`.
+  if i < 0 or i >= state.shotLogs.len: 0 else: state.shotLogs[i].redo.len
 
 func projectOpening*(state: AppState): string =
   ## The project folder being opened (or made); "" for none.
@@ -6594,6 +6624,8 @@ proc remapShotLogCmd(state: var AppState; cmd: Command) =
   if loaded.log == nil:
     state.ignore(cmd, "the shot log is not loaded")
     return
+  loaded.undo.setLen 0
+  loaded.redo.setLen 0
   loaded.busy = true
   let sink = ShotLogSink()
   let job = state.jobs.submit(remapSpec(loaded.source),
@@ -6601,27 +6633,72 @@ proc remapShotLogCmd(state: var AppState; cmd: Command) =
   state.shotWork.add ShotLogWork(job: job, kind: sjRemap, id: loaded.id, sink: sink,
     name: loaded.name, source: loaded.source, stored: loaded.stored, map: cmd.logMap)
 
-proc editShotCellCmd(state: var AppState; cmd: Command) =
+const ShotEditCap = 1000
+
+proc finishShotCell(state: var AppState; index: int) =
+  let loaded = state.shotLogs[index]
+  if loaded.stored.len > 0 and state.inProject and state.readOnlyProject:
+    state.log.add(sevWarning, "shot log", ReadOnlyShotLog)
+    state.submitShotRebuild(index)
+  elif loaded.stored.len > 0 and state.inProject:
+    state.submitShotSave(index)
+  else:
+    state.submitShotRebuild(index)
+
+proc noteShotEdit(loaded: LoadedShotLog; row, col: int; before, after: string) =
+  loaded.redo.setLen 0
+  if before == after: return
+  if loaded.undo.len >= ShotEditCap: loaded.undo.delete(0)
+  loaded.undo.add ShotCellEdit(row: row, col: col, before: before, after: after)
+
+proc shotLogReady(state: var AppState; cmd: Command): bool =
   if cmd.logIndex < 0 or cmd.logIndex >= state.shotLogs.len:
     state.ignore(cmd, "no such shot log")
-    return
+    return false
   let loaded = state.shotLogs[cmd.logIndex]
   if loaded.busy:
     state.ignore(cmd, "the shot log is still being read")
-    return
+    return false
   if loaded.log == nil:
     state.ignore(cmd, "the shot log is not loaded")
-    return
+    return false
+  true
+
+proc editShotCellCmd(state: var AppState; cmd: Command) =
+  if not state.shotLogReady(cmd): return
+  let loaded = state.shotLogs[cmd.logIndex]
+  let before = loaded.log.cell(cmd.logRow, cmd.logCol)
   if not loaded.log.setCell(cmd.logRow, cmd.logCol, cmd.logCell):
     state.log.add(sevWarning, "shot log", ShotLogLineBreak)
     return
-  if loaded.stored.len > 0 and state.inProject and state.readOnlyProject:
-    state.log.add(sevWarning, "shot log", ReadOnlyShotLog)
-    state.submitShotRebuild(cmd.logIndex)
-  elif loaded.stored.len > 0 and state.inProject:
-    state.submitShotSave(cmd.logIndex)
-  else:
-    state.submitShotRebuild(cmd.logIndex)
+  loaded.noteShotEdit(cmd.logRow, cmd.logCol, before, cmd.logCell)
+  state.finishShotCell(cmd.logIndex)
+
+proc undoShotEditCmd(state: var AppState; cmd: Command) =
+  if not state.shotLogReady(cmd): return
+  let loaded = state.shotLogs[cmd.logIndex]
+  if loaded.undo.len == 0: return
+  let step = loaded.undo[^1]
+  if not loaded.log.setCell(step.row, step.col, step.before):
+    state.log.add(sevWarning, "shot log", ShotLogLineBreak)
+    return
+  loaded.undo.setLen(loaded.undo.len - 1)
+  if loaded.redo.len >= ShotEditCap: loaded.redo.delete(0)
+  loaded.redo.add step
+  state.finishShotCell(cmd.logIndex)
+
+proc redoShotEditCmd(state: var AppState; cmd: Command) =
+  if not state.shotLogReady(cmd): return
+  let loaded = state.shotLogs[cmd.logIndex]
+  if loaded.redo.len == 0: return
+  let step = loaded.redo[^1]
+  if not loaded.log.setCell(step.row, step.col, step.after):
+    state.log.add(sevWarning, "shot log", ShotLogLineBreak)
+    return
+  loaded.redo.setLen(loaded.redo.len - 1)
+  if loaded.undo.len >= ShotEditCap: loaded.undo.delete(0)
+  loaded.undo.add step
+  state.finishShotCell(cmd.logIndex)
 
 proc tookShotImport(state: var AppState; w: ShotLogWork) =
   let r = w.sink.result
@@ -10796,6 +10873,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckRemoveShotLog: state.removeShotLogCmd(cmd)
   of ckRemapShotLog: state.remapShotLogCmd(cmd)
   of ckEditShotCell: state.editShotCellCmd(cmd)
+  of ckUndoShotEdit: state.undoShotEditCmd(cmd)
+  of ckRedoShotEdit: state.redoShotEditCmd(cmd)
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept

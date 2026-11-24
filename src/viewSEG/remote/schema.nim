@@ -21,7 +21,8 @@ import ../core/state
 const
   WritesAFile* = {ckExportSettings, ckExportLayout, ckExportLog, ckSaveLayout,
     ckImportLayout, ckResetSettings, ckExportEdits, ckImportEdits, ckForgetFiles,
-    ckImportShotLog, ckRemoveShotLog, ckRemapShotLog, ckEditShotCell}
+    ckImportShotLog, ckRemoveShotLog, ckRemapShotLog, ckEditShotCell,
+    ckUndoShotEdit, ckRedoShotEdit}
     ## refused: each writes a file (a reset keeps a backup of the settings;
     ## edits imported are remembered with the file; forgetting files removes
     ## what is remembered about them; a shot log is copied into the project

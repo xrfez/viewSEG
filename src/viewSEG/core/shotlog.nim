@@ -522,6 +522,19 @@ proc cell*(log: ShotLog; row, col: int): string {.raises: [].} =
   if col < 0 or col >= count: return ""
   unquoteRange(log.text, log.fieldStart[base + col].int, log.fieldStop[base + col].int)
 
+proc fileCell*(log: ShotLog; row, col: int): string {.raises: [].} =
+  ## The cell as the file has it, quotes removed. An overlay from `setCell`
+  ## is ignored. An absent field is empty.
+  if row < 0 or row + 1 >= log.fieldOf.len: return ""
+  let base = log.fieldOf[row].int
+  let count = log.fieldOf[row + 1].int - base
+  if col < 0 or col >= count: return ""
+  unquoteRange(log.text, log.fieldStart[base + col].int, log.fieldStop[base + col].int)
+
+proc cellDiffers*(log: ShotLog; row, col: int): bool {.raises: [].} =
+  ## True when the text a grid shows is not the file's own text.
+  log.cell(row, col) != log.fileCell(row, col)
+
 proc setCell*(log: ShotLog; row, col: int; text: sink string): bool {.raises: [].} =
   ## Remembers `text` as the cell a later `cell` and `toText` use, without
   ## rewriting the stored file text. One line: a newline is refused, the

@@ -9,6 +9,9 @@
 ## read-only project says so and does not write. A re-map keeps edits when
 ## the column count is unchanged, and says they were dropped when it changes.
 ## A cell edit that holds a line break is refused, said, and left unchanged.
+## Undo and redo put a cell's text back through the same save path, a new
+## edit clears redo, the history holds 1000 steps, a re-map clears it, and
+## undo with nothing changes nothing.
 ##
 ## Seen to fail: with the cap refusal shortened, `over_the_cap` rejected
 ## "big.csv is too large."; with the read-only edit saving anyway,
@@ -523,6 +526,73 @@ proc main*() =
     doAssert st.settle(st.inProject and st.shotLogCount == 0 and st.jobs.active.len == 0),
       "an old project loaded a shot log"
     doAssert not st.said("could not be read")
+    discard st.shutdown()
+
+  block undo_and_redo:
+    var st = start(root / "config-undo")
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    let before = st.shotCell(0, 0, 0)
+    doAssert st.shotUndoCount(0) == 0 and st.shotRedoCount(0) == 0
+    st.apply Command(kind: ckUndoShotEdit, logIndex: 0)
+    st.apply Command(kind: ckRedoShotEdit, logIndex: 0)
+    doAssert st.shotCell(0, 0, 0) == before
+    doAssert st.jobs.active.len == 0, "undo with nothing started a job"
+    doAssert not st.said("Ignored"), "undo with nothing was ignored"
+    st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 0, logCell: "11")
+    doAssert st.settle(st.shotCell(0, 0, 0) == "11" and st.jobs.active.len == 0)
+    let rev = st.shotRevision(0)
+    doAssert st.shotUndoCount(0) == 1 and st.shotRedoCount(0) == 0
+    st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 1, logCell: "22")
+    doAssert st.settle(st.shotCell(0, 0, 1) == "22" and st.jobs.active.len == 0)
+    doAssert st.shotUndoCount(0) == 2
+    st.apply Command(kind: ckUndoShotEdit, logIndex: 0)
+    doAssert st.settle(st.shotCell(0, 0, 1) == "5000" and st.shotRevision(0) == rev + 2 and
+      st.jobs.active.len == 0), "undo did not go through the save path"
+    doAssert st.shotUndoCount(0) == 1 and st.shotRedoCount(0) == 1
+    doAssert st.shotCell(0, 0, 0) == "11"
+    st.apply Command(kind: ckRedoShotEdit, logIndex: 0)
+    doAssert st.settle(st.shotCell(0, 0, 1) == "22" and st.jobs.active.len == 0)
+    doAssert st.shotUndoCount(0) == 2 and st.shotRedoCount(0) == 0
+    st.apply Command(kind: ckUndoShotEdit, logIndex: 0)
+    doAssert st.settle(st.jobs.active.len == 0)
+    st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 0, logCell: "33")
+    doAssert st.settle(st.shotCell(0, 0, 0) == "33" and st.jobs.active.len == 0)
+    doAssert st.shotRedoCount(0) == 0, "a new edit left the redo list"
+    doAssert st.shotUndoCount(0) == 2, "undo pushed a history step"
+    discard st.shutdown()
+
+  block undo_cap:
+    var st = start(root / "config-cap")
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    for n in 1 .. 1001:
+      st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 0,
+        logCell: $n)
+      doAssert st.settle(st.shotCell(0, 0, 0) == $n and st.jobs.active.len == 0),
+        "edit " & $n & " did not finish"
+    doAssert st.shotUndoCount(0) == 1000, "the history was not capped"
+    st.apply Command(kind: ckUndoShotEdit, logIndex: 0)
+    doAssert st.settle(st.shotCell(0, 0, 0) == "1000" and st.jobs.active.len == 0),
+      "the oldest step was not dropped"
+    discard st.shutdown()
+
+  block remap_clears_history:
+    var st = start(root / "config-hist")
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 0, logCell: "9")
+    doAssert st.settle(st.shotCell(0, 0, 0) == "9" and st.jobs.active.len == 0)
+    doAssert st.shotUndoCount(0) == 1
+    var same = st.shotLogMap(0)
+    same.roles[0] = crText
+    st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: same)
+    doAssert st.shotUndoCount(0) == 0 and st.shotRedoCount(0) == 0,
+      "a re-map left the history"
+    doAssert st.settle(st.jobs.active.len == 0)
+    doAssert st.shotUndoCount(0) == 0
+    st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
+    doAssert st.shotLogCount == 0
     discard st.shutdown()
 
   removeDir(root)
