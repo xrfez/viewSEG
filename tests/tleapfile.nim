@@ -36,7 +36,8 @@ proc said(st: AppState; bit: string): bool =
   for e in st.log:
     if bit in e.text: return true
 
-proc writeSegd(path: string; whenSec: float64) =
+proc writeSegd(path: string; whenSec: float64; channelType = sctSeismic;
+    status = tsLive) =
   var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: 4,
     time: whenSec))
   var k = initTraceKeys()
@@ -44,8 +45,8 @@ proc writeSegd(path: string; whenSec: float64) =
   k.channel = 1
   k.intervalUs = 2000
   k.t0Ms = 0
-  k.status = tsLive
-  w.writeTrace(k, newSeq[float32](4))
+  k.status = status
+  w.writeTrace(k, newSeq[float32](4), channelType = channelType)
   doAssert w.close().len == 0, "the SEG-D file was not written"
 
 proc main*() =
@@ -250,6 +251,39 @@ proc main*() =
       let after = st.sessions[0].file.traceKeys(0).time
       doAssert abs(before - after - 1.0) < 0.001, "time moved by " & $(before - after) &
         " from " & $before & " to " & $after
+      useLeapTable(shipped)
+
+    block derived:
+      useLeapTable(shipped)
+      let segd = fx.dir / "derived.sgd"
+      writeSegd(segd, float64(July2027))
+      var st = initAppState()
+      st.apply Command(kind: ckOpen, paths: @[segd])
+      doAssert st.settle(st.sessions.len == 1), "the derived file did not open"
+      st.sessions[0].asDerived()
+      doAssert st.sessions[0].derived
+      let before = st.sessions[0].file.traceKeys(0).time
+      let rev = st.sessions[0].keysRevision
+      st.apply Command(kind: ckAddLeap, leapYear: 2027, leapMonth: 1, leapStep: 1)
+      doAssert st.settle(st.sessions[0].keysRevision > rev), "a derived file was not read again"
+      let after = st.sessions[0].file.traceKeys(0).time
+      doAssert abs(before - after - 1.0) < 0.001, "derived time moved by " & $(before - after)
+      useLeapTable(shipped)
+
+    block auxOnly:
+      useLeapTable(shipped)
+      let segd = fx.dir / "aux.sgd"
+      writeSegd(segd, float64(July2027), sctTimeBreak, tsAuxiliary)
+      var st = initAppState()
+      st.apply Command(kind: ckOpen, paths: @[segd])
+      doAssert st.settle(st.sessions.len == 1 and st.sessions[0].noSeismic),
+        "the aux-only file did not open as aux-only"
+      let before = st.sessions[0].file.traceKeys(0).time
+      let rev = st.sessions[0].keysRevision
+      st.apply Command(kind: ckAddLeap, leapYear: 2027, leapMonth: 1, leapStep: 1)
+      doAssert st.settle(st.sessions[0].keysRevision > rev), "an aux-only file was not read again"
+      let after = st.sessions[0].file.traceKeys(0).time
+      doAssert abs(before - after - 1.0) < 0.001, "aux time moved by " & $(before - after)
       useLeapTable(shipped)
 
     block shift:

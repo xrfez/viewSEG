@@ -8431,7 +8431,7 @@ proc followLeap(state: var AppState) =
     let i = state.findSession(id)
     if i >= 0:
       let s = state.sessions[i]
-      if not s.isSignature and not s.noSeismic and not s.derived:
+      if not s.isSignature:
         state.pauseLeapReaders(s.path)
         state.leapSession = id
         state.leapDone = false
@@ -8442,9 +8442,9 @@ proc followLeap(state: var AppState) =
         return
 
 proc queueLeapReads(state: var AppState) =
-  ## Every open seismic file waits to have its times read again.
+  ## Every open file that is not a signature waits to have its times read again.
   for s in state.sessions:
-    if not s.isSignature and not s.noSeismic and not s.derived and s.id notin state.leapQueue:
+    if not s.isSignature and s.id notin state.leapQueue:
       state.leapQueue.add s.id
 
 proc adoptLeap(state: var AppState; table: LeapTable; said: string; save = true) =
