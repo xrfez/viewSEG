@@ -138,15 +138,25 @@ proc main*() =
 
   block size_formulas:
     var o = initCutOptions(1000.0)
-    # 2 shots, 3 traces, 250 samples: record 192; trace 20 + 64 + 1000 = 1084
-    doAssert estimateBytes(o, 2, 3, 250, false, false, false) == 2 * 192 + 6 * 1084
+    # 2 shots, 3 traces, 250 samples: record 256; trace 20 + 64 + 1000 = 1084
+    doAssert estimateBytes(o, 2, 3, 250, false, false, false) == 2 * 256 + 6 * 1084
     # source station +32, source XY +96 per record; receiver XY: 5 extensions
     doAssert estimateBytes(o, 2, 3, 250, true, true, true) ==
-      2 * (192 + 32 + 96) + 6 * (20 + 160 + 1000)
+      2 * (256 + 32 + 96) + 6 * (20 + 160 + 1000)
     o.standard = csSegy
     doAssert estimateBytes(o, 2, 3, 250, true, true, true) == 3600 + 6 * (240 + 1000)
     doAssert estimateBytes(o, 3_000_000, 4, 500_000, false, false, false) >
       int64(high(int32)), "int64 throughout"
+
+  block point_index_counted:
+    var a = shotAt(T0, 1)
+    a.pointIndex = some(300'i64)
+    var b = shotAt(T0 + 1, 2)
+    b.pointIndex = some(3'i64)
+    var c = shotAt(T0 + 2, 3)
+    c.pointIndex = some(-1'i64)
+    let sh = shotsInTime([a, b, c, untimed(9)])
+    doAssert sh.pointIndexOutOfRange == 2, $sh.pointIndexOutOfRange
 
   block check_options:
     doAssert checkOptions(initCutOptions(1000.0), 2.0) == ""

@@ -109,7 +109,7 @@ func estimateBytes*(opts: CutOptions, shots, components, samplesPerTrace: int,
     withSourceStation, withSourceXY, withReceiverXY: bool): int64 =
   ## The size of the output, one record per shot of `components` traces.
   ## SEG-D Rev 3: per record 96 bytes of general headers, 96 of channel-set
-  ## descriptor, 32 for a source station and 96 for a source position; per
+  ## descriptor, 64 more (measured on the writer's output), 32 for a source station and 96 for a source position; per
   ## trace 20 bytes, 32 per header extension (2, or 5 with a receiver
   ## position) and 4 per sample. CRS blocks are not counted. SEG-Y: 3600
   ## bytes, then per trace 240 and 4 per sample.
@@ -119,7 +119,7 @@ func estimateBytes*(opts: CutOptions, shots, components, samplesPerTrace: int,
   of csSegy:
     result = 3600'i64 + traces * (240'i64 + samples * 4)
   of csSegdRev3:
-    var record = 96'i64 + 96
+    var record = 96'i64 + 96 + 64
     if withSourceStation: record += 32
     if withSourceXY: record += 96
     let exts = if withReceiverXY: 5'i64 else: 2'i64
