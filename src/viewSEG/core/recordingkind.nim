@@ -66,6 +66,9 @@
 ## share a start are the components of one segment: the step is compared with the
 ## next trace of a different start). The cut places every segment, so its job asks
 ## for `AllStarts`: a trace off the step anywhere refuses the cut with a sentence.
+## `swNoFollow` alone is never said from the first starts: when none of them follows on
+## another, the rest of each receiver's starts are looked through for one that does (on the
+## step measured), so the window never refuses what the cut accepts for it.
 
 import std/[algorithm, math, sequtils, tables]
 import parseSEG
@@ -251,11 +254,17 @@ func stepOf(diffs: seq[int]; len: int): int =
         best = run
         result = quotients[x]
 
-proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int; r: var RecordingFacts) =
+type Unseen = tuple[next, j, step: int; last: float64]
+  ## the segments `next ..< j` of a receiver that `tally` did not reach, its step and the
+  ## last start it used
+
+proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int;
+    r: var RecordingFacts): Unseen =
   ## Counts the boundaries of the receiver `segs[i ..< j]` (in time order) against its step
   ## and checks the segments cover it, for its first `starts` distinct start times: traces
   ## that share a start are the components of one segment, only the first of them is used.
-  ## The first trace that breaks the rule names the reason, unless one is named.
+  ## The first trace that breaks the rule names the reason, unless one is named. Returns
+  ## what was left unseen (`next == j`: nothing).
   var used: seq[Seg] = @[]
   var x = i
   while x < j and used.len < starts:
@@ -263,6 +272,7 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int; r: var Recordin
       used.add segs[x]
     inc x
   let count = used.len
+  result = (j, j, 0, 0.0)
   if count < 2: return
   r.boundaries += count - 1
   var diffs = newSeq[int](count - 1)
@@ -273,6 +283,7 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int; r: var Recordin
   lens.sort()
   let typical = lens[count div 2]
   let step = stepOf(diffs, typical)
+  result = (x, j, step, used[^1].start)
   var offAt = high(int) # the first used trace off the rule, by its place in the receiver
   var offGap = 0
   for x in 1 ..< count:
@@ -307,6 +318,16 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int; r: var Recordin
     else:
       r.offTrace = used[offAt].row + 1
       r.offSeconds = float64(offGap) * dtS
+
+func abutsLater(segs: seq[Seg]; u: Unseen; dtS: float64): bool =
+  ## Whether a start of the receiver's segments `tally` left unseen is one step after the
+  ## start before it: the file is then not one in which no trace follows on another.
+  var last = u.last
+  for x in u.next ..< u.j:
+    let d = int(round((segs[x].start - last) / dtS))
+    if d != 0:
+      if abs(d - u.step) <= 1: return true
+      last = segs[x].start
 
 proc receiverChanges(meta: ChunkMeta; at: seq[StationPlace]; segs: seq[Seg]; dtS: float64):
     bool =
@@ -367,6 +388,7 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
   result.segments = segs.len
   # per receiver with a station: how many segments it has
   var placed: seq[tuple[st: Place; segs: int]]
+  var unseen: seq[Unseen] = @[] # receivers with more starts than were checked
   var i = 0
   while i < segs.len:
     var j = i + 1
@@ -377,7 +399,9 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     for x in i ..< j:
       result.firstTime = min(result.firstTime, segs[x].start)
       result.lastTime = max(result.lastTime, segs[x].finish)
-    if j - i > 1: tally(segs, i, j, dtS, starts, result)
+    if j - i > 1:
+      let left = tally(segs, i, j, dtS, starts, result)
+      if left.next < j: unseen.add left
     i = j
   result.ready = true
   placed.sort do (a, b: tuple[st: Place; segs: int]) -> int:
@@ -411,7 +435,7 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
         run.sort do (a, b: Seg) -> int:
           result = cmp(a.start, b.start)
           if result == 0: result = cmp(a.row, b.row)
-        tally(run, 0, run.len, dtS, starts, result)
+        discard tally(run, 0, run.len, dtS, starts, result)
         if result.slicedWhy == swNone: result.slicedWhy = swNoStep
     else:
       result.kind = rkShotGather
@@ -421,7 +445,8 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     # the step; traces that all start together are named first. Every boundary a whole
     # number of steps but none of one step is not continuous: no trace follows on another
     if segs.len > 1 and segs.allIt(it.start == segs[0].start): result.slicedWhy = swSameStart
-    elif result.slicedWhy == swNone and result.boundaries > 0 and result.abutting == 0:
+    elif result.slicedWhy == swNone and result.boundaries > 0 and result.abutting == 0 and
+        not unseen.anyIt(abutsLater(segs, it, dtS)):
       result.slicedWhy = swNoFollow
     result.kind = if result.slicedWhy == swNone: rkReceiverContinuous else: rkReceiverSliced
     # not continuous: the receiver changing from trace to trace, in the order of the file, is

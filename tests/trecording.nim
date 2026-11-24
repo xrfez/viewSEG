@@ -439,6 +439,23 @@ proc main*() =
     for i in 0 ..< 12: early.add spec(0, i * 1000 + (if i == 4: 150 else: 0))
     doAssert factsOf(dir, "early", early).kind == rkReceiverSliced
 
+  block a_trace_that_follows_on_another_after_the_first_few_starts_is_seen:
+    # every gap two trace lengths for the first KindStarts starts, then traces that follow on
+    # each other: the kind looks on for one and says continuous, as the slice does
+    var specs: seq[Spec]
+    for i in 0 ..< KindStarts: specs.add spec(0, i * 2000)
+    for i in 0 ..< 4: specs.add spec(0, (2 * KindStarts + i) * 1000)
+    let late = factsOf(dir, "lateFollow", specs)
+    doAssert late.kind == rkReceiverContinuous and late.abutting == 0, $late
+    let sliced = factsOf(dir, "lateFollow", specs, starts = AllStarts)
+    doAssert sliced.kind == rkReceiverContinuous and cutRefusal(sliced) == "", $sliced
+    # two lengths apart to the end: time sliced, whatever is looked at
+    var gaps: seq[Spec]
+    for i in 0 ..< KindStarts + 4: gaps.add spec(0, i * 2000)
+    for starts in [KindStarts, AllStarts]:
+      let f = factsOf(dir, "allGaps", gaps, starts = starts)
+      doAssert f.kind == rkReceiverSliced and f.slicedWhy == swNoFollow, $f
+
   block traces_sharing_a_start_are_the_components_of_one_segment:
     # the same receiver twice at each start: the step is compared with the next DIFFERENT start
     let f = factsOf(dir, "pairs", [spec(0, 0), spec(0, 0), spec(0, 1000), spec(0, 1000),

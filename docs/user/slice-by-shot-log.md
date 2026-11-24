@@ -75,7 +75,9 @@ on the one before it: ...").
 
 The kind is asked of any file you open, so the window decides it from the first 8 distinct start
 times of each receiver. The slice itself places every segment and checks every start: a trace off
-the step anywhere later in the file refuses the slice with the sentence above.
+the step anywhere later in the file refuses the slice with the sentence above. Only the rule that
+some trace must follow on another looks further: when none of the first 8 does, the window looks
+through the rest of the file for one before it says so.
 
 If the recorder was off for a while, the next trace starts after more than one step (k greater
 than 1): the box pads with zeros, so a long silence is still a whole number of steps. As long as
