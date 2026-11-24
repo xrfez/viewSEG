@@ -5,7 +5,9 @@
 ## Seen to fail: with only the first trace compared, shots.sgy's Record was
 ## one value (`Record is one value`); with the file's own keys ignored,
 ## Source point was the session station (`the session station was used`);
-## with the sweep ignored, Controller was not an int 4321.
+## with the sweep ignored, Controller was not an int 4321. With the clock
+## ignored, shots.sgy record 1 was `20260301T000000000000Z` (`a whole-second
+## clock kept a fraction`).
 ##
 ## Runs on samples/vib/vib_uncorrelated.sgd and samples/land/shots.sgy.
 
@@ -55,6 +57,29 @@ proc main*() =
       parts: @[part(npRecord, 4)]), v, ".sgy")
     doAssert named.name.len == 0
     doAssert named.problem == "Record is not one value in this file.", named.problem
+    f.close()
+
+  block wholeSecondClock:
+    var f = openSeismic(segy, keys = true)
+    var edits = FileEdits()
+    var drop = newSeq[int]()
+    for t in 0 ..< f.len:
+      if f.mindex.keys[t].record != 1.0: drop.add t
+    discard edits.change(teKilled, drop, true)
+    let v = nameValuesOf(f, segy, SignatureFacts(), edits, true, nil)
+    doAssert v[npTime].state == nvTimeUs and v[npTime].wholeSeconds,
+      "a whole-second clock kept a fraction"
+    let named = render(OutputPattern(name: "Time", separator: nsDot,
+      parts: @[part(npTime)]), v, ".sgy")
+    doAssert named.problem.len == 0, named.problem
+    doAssert named.name == "20260301T000000Z.sgy", named.name
+    f.mindex.keys[0].noteRecordedTime(toHeaderSubsec, v[npTime].timeUs)
+    let fraction = nameValuesOf(f, segy, SignatureFacts(), edits, true, nil)
+    doAssert fraction[npTime].state == nvTimeUs and not fraction[npTime].wholeSeconds,
+      "a microsecond clock was dropped"
+    let shown = render(OutputPattern(name: "Time", separator: nsDot,
+      parts: @[part(npTime)]), fraction, ".sgy")
+    doAssert shown.name == "20260301T000000000000Z.sgy", shown.name
     f.close()
 
   block recordZero:

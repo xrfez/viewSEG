@@ -78,13 +78,17 @@ proc considerInt(a: var IntAcc; x: int64; zeroMissing: bool) =
     return
   if missing or a.value != x: a.mixed = true
 
-proc considerTime(a: var TimeAcc; us: Option[int64]) =
+proc considerTime(a: var TimeAcc; us: Option[int64]; origin: TimeOrigin) =
+  ## `whole` stays true only when every trace considered so far is a
+  ## whole-second clock (`toHeaderSeconds`). Any other origin clears it.
   let missing = not us.isSome
   if not a.set:
     a.set = true
     a.miss = missing
+    a.whole = origin == toHeaderSeconds
     if not missing: a.value = us.get
     return
+  if origin != toHeaderSeconds: a.whole = false
   if a.mixed: return
   if a.miss:
     if not missing: a.mixed = true
@@ -104,7 +108,7 @@ func asInt(a: IntAcc): NameValue =
 func asTime(a: TimeAcc): NameValue =
   if not a.set or (a.miss and not a.mixed): NameValue(state: nvMissing)
   elif a.mixed: NameValue(state: nvMixed)
-  else: NameValue(state: nvTimeUs, timeUs: a.value, wholeSeconds: false)
+  else: NameValue(state: nvTimeUs, timeUs: a.value, wholeSeconds: a.whole)
 
 proc putInt(v: var NameValues; kind: NamePartKind; n: int64; missing: bool) =
   if not missing: v[kind] = NameValue(state: nvInt, intValue: n)
@@ -132,9 +136,12 @@ proc fillSignature(v: var NameValues; facts: SignatureFacts) =
 
 proc fillSeismic(v: var NameValues; file: SeismicFile; edits: FileEdits;
     dropKilled: bool; own: ptr SeismicFile) =
-  ## One value when every kept trace shares it. SEG-D system serial is one
-  ## value when every record that still has a kept trace agrees. Record 0 is
-  ## missing; an index of 0 is a real value; SEG-Y has no index parts.
+  ## One value when every kept trace shares it. The time is whole seconds
+  ## only when every kept trace's origin is a whole-second clock
+  ## (`toHeaderSeconds`: a SEG-Y header with no fraction, or a SEG-D Rev 0-2
+  ## general-header clock). SEG-D system serial is one value when every
+  ## record that still has a kept trace agrees. Record 0 is missing; an
+  ## index of 0 is a real value; SEG-Y has no index parts.
   let segd = file.kind == skSegd
   let useOwn = own != nil and own[].isOpen and own[].len == file.len
   var
@@ -169,7 +176,7 @@ proc fillSeismic(v: var NameValues; file: SeismicFile; edits: FileEdits;
             considerInt(serial, int64(file.index.segdRecords[ri].gh1.manufacturerSerial), false)
           else:
             considerInt(serial, 0, true)
-      considerTime(time, file.recordTimeZeroUs(i))
+      considerTime(time, file.recordTimeZeroUs(i), buf[k].timeOrigin)
     t += count
   v[npRecord] = asNumber(rec)
   v[npSrcLine] = asNumber(srcLine)
@@ -192,7 +199,8 @@ proc nameValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
   ## fraction. Any other file is named from the trace keys, skipping a killed
   ## trace when `dropKilled`. `own`, when open and the same length, supplies
   ## the position fields (line, point, index); record and time stay the
-  ## session's. Does not open a file.
+  ## session's. The name keeps the value from the keys; a file name may
+  ## carry what a header cannot. Does not open a file.
   result[npStem] = NameValue(state: nvText, text: stemOf(source))
   if facts.isSignature: fillSignature(result, facts)
   else: fillSeismic(result, file, edits, dropKilled, own)
