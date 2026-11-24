@@ -1211,7 +1211,7 @@ proc main*() =
           name & " notes: " & $got.wrote.lines
         f.close()
     block segdSetsFit:
-      ## Only the reference is auxiliary, so SEG-D can hold the delay: read back.
+      ## Only the reference is auxiliary: SEG-D to SEG-D keeps the template and its delay.
       let src = srcDir / "delay-sets.sgd"
       var w = openSeismicWriter(src, SegdOutputOptions(sampleIntervalUs: DtMs * 1000.0,
         numSamples: Record, time: 1_700_000_000.0, format: sd8058))
@@ -1236,9 +1236,16 @@ proc main*() =
         let dest = outDir / ("delay-sets" & (if format == ofSegd: ".sgd" else: ".sgy"))
         let got = runWrite(f, src, dest, option(sweep, format))
         doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
-        doAssert not noted(got.wrote.lines), "notes: " & $got.wrote.lines
         let d = delaysOf(dest)
-        doAssert d == @[10.0, 10.0, 10.0, 100.0 - Lead], $format & " delays " & $d
+        if format == ofSegd:
+          # Same-format SEG-D keeps the source's own headers, so the delay stays.
+          doAssert noted(got.wrote.lines), "no note: " & $got.wrote.lines
+          doAssert "Headers were built from the trace keys. Template headers were not copied." notin
+            got.wrote.lines, "the template path was left: " & $got.wrote.lines
+          doAssert d == @[10.0, 10.0, 10.0, 100.0], "SEG-D delays " & $d
+        else:
+          doAssert not noted(got.wrote.lines), "notes: " & $got.wrote.lines
+          doAssert d == @[10.0, 10.0, 10.0, 100.0 - Lead], "SEG-Y delays " & $d
 
   block storedBytesUnchanged:
     ## (d) The stored-sweep Output is as it was before pilots existed.

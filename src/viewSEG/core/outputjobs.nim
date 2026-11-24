@@ -71,8 +71,9 @@ const
     "Survey and moved positions could not be written in this format."
     ## Every joined or moved position of a written trace had no slot, or did not fit.
   RefDelayNotWritten* =
-    "The reference traces' time zero could not be written in this file, so they keep " &
-    "the delay it had."
+    "The reference traces' time zero could not be written in this file (a SEG-D channel " &
+    "set has one start time, and the file's own headers are kept), so they keep the " &
+    "delay it had."
   OwnPositionsWritten* =
     "The file's own positions were written from its header keys."
     ## The keys path, with the tick on: geometry came from the file's own headers.
@@ -685,12 +686,17 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       # zeros at the output's interval, as the correlation job writes it.
       let oddSegd = correlating and segdOut and odd.len > 0
       # A reference trace written shifted by the lead says so in its delay: its
-      # own delay less the lead. SEG-D keeps one start time per channel set, so
-      # it is written only when every auxiliary trace of a record is such a
-      # reference with the same delay; the set is then written from the keys.
+      # own delay less the lead. The template writer cannot change a SEG-D channel
+      # set's start time, and a file is never rebuilt from its keys just for this
+      # (that drops the source's own headers), so only an output already written
+      # from the keys carries it. SEG-D keeps one start time per channel set: it
+      # is written only when every auxiliary trace of a record is such a
+      # reference with the same delay.
       let leadMs = float64(abs(lag)) * corrDtMs
+      let like = srcKind == outKind and not oddSegd and
+        (srcKind == skSegy or (sameOrder and dropped == 0))
       var segdDelays = false
-      if correlating and segdOut and lag != 0:
+      if correlating and segdOut and lag != 0 and not like:
         var want = initTable[int64, float64]()
         var fits = true
         for i in 0 ..< n:
@@ -705,8 +711,6 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             else: fits = false
         segdDelays = fits and want.len > 0
       var delayLost = false
-      let like = srcKind == outKind and not oddSegd and not segdDelays and
-        (srcKind == skSegy or (sameOrder and dropped == 0))
       if not file[].hasKeys and (opts.sortKeys.len > 0 or not like or opts.applyReversals or
           opts.applyShifts or opts.applyOwnFilters or opts.applyProcessing):
         if not file[].inMemory: fs.mappedRead(source, headers = true)

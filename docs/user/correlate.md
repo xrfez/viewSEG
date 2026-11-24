@@ -52,9 +52,9 @@ What is written:
   others, after it is shifted by its lag. Any other auxiliary trace is cut to the listen
   time and written as it is.
   Reference traces are written with the lead and a matching negative delay (their own delay
-  less the lead), so a reader that honours the delay puts the wavelet peak at time 0. SEG-D
-  keeps one start time per channel set, so it holds that delay only when every auxiliary trace
-  of a record is such a reference; otherwise the notes say the time zero could not be written.
+  less the lead), so a reader that honours the delay puts the wavelet peak at time 0. A SEG-D
+  file written from a SEG-D file keeps its own headers, which hold one start time per channel
+  set, so there the reference traces keep the delay the file had and the notes say so.
 - **An unreadable trace fails the file.** A trace that cannot be read (the file is cut short,
   the drive fails) fails that file, with the reason in its row of the results, and the part
   of the file already written is removed. The other files of the run go on.
