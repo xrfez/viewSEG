@@ -125,8 +125,10 @@ listing, and never holds up opening or showing a file. A file up to 256 MB is re
 trace headers only, never a sample, and the answer is the one the file gets when you open it. A
 larger file is not opened for it, since a receiver that first appears late in the file can
 change the kind and its start alone cannot tell: the cell shows **?** and the tooltip says "Open
-the file to see its kind". Once you open the file the row takes its kind. A file whose kind is
-not worked out yet, a file that is not seismic and one without a live trace have an empty cell.
+the file to see its kind". A multiplexed SEG-D file is not opened for it either, since opening
+it makes a demultiplexed copy of the whole file: its cell shows **?** too, and the tooltip says
+it is multiplexed. Once you open the file the row takes its kind. A file whose kind is not
+worked out yet, a file that is not seismic and one without a live trace have an empty cell.
 Click the header to sort by it. A folder listed again in the same session takes the kinds
 already read and reads only the files that changed. A file that changes on disk is read again
 once it is steady, and every kind is read again when the vendor header maps change, since a

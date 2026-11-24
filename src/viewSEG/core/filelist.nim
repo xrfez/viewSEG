@@ -53,14 +53,17 @@ type
     ksNone   ## read: not a file with a kind (no live trace, or it cannot be read)
     ksNotKnown
       ## read: a seismic file too large to be opened for its kind; opening it tells
-    ksKnown  ## read: `FileEntry.recording` is its kind
+    ksMultiplexed
+      ## read: multiplexed SEG-D, not opened for its kind (the open demultiplexes a copy of the
+      ## whole file); opening it tells
+    ksKnown ## read: `FileEntry.recording` is its kind
 
   KindAnswer* = object
     ## What the job that reads kinds found for one file, as the file was then.
     path*: string
     size*: int64
     modified*: Time
-    state*: KindState    ## `ksNone`, `ksNotKnown` or `ksKnown`
+    state*: KindState    ## `ksNone`, `ksNotKnown`, `ksMultiplexed` or `ksKnown`
     kind*: RecordingKind ## when `state` is `ksKnown`
 
   FileEntry* = object

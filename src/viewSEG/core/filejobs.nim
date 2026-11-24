@@ -466,6 +466,7 @@ proc kindsWork*(gen: uint64; vendorGen: int; asks: seq[WatchedFile]; vendors: Ve
       let state = case probe.outcome
         of poNone: ksNone
         of poNotKnown: ksNotKnown
+        of poMultiplexed: ksMultiplexed
         of poKnown: ksKnown
       batch.kinds.add KindAnswer(path: a.path, size: a.size, modified: a.modified, state: state,
         kind: probe.kind)

@@ -5,9 +5,10 @@
 ## Seen to fail with a deliberate fault: the probe's answer made always a shot gather
 ## ("abut: some(rkShotGather)"); with the start-of-file probe put back for a file above the
 ## limit, the receiver written last is never seen ("late: (outcome: poKnown, kind:
-## rkReceiverContinuous)").
+## rkReceiverContinuous)"); with the multiplexed record not looked for in the first read,
+## "mux: (outcome: poKnown, kind: rkShotGather)" (it was opened, a copy demultiplexed).
 
-import std/[assertions, os, times]
+import std/[assertions, os, strutils, times]
 import parseSEG
 import viewSEG/core/[recordingkind, recordingprobe, vendormaps]
 import utils/[fixtures, kindfiles]
@@ -117,6 +118,21 @@ proc main*() =
     let text = dir / "big.txt"
     writeFile(text, "not a seismic file\n")
     doAssert kindOfFile(text, VendorRegistry(), wholeBytes = 0).outcome == poNone
+
+  block multiplexed_segd_is_not_opened:
+    # the open would demultiplex a copy of the whole file: the list does not, and says so
+    createDir(dir)
+    let path = dir / "mux.sgd"
+    writeMultiplexed(path)
+    var copies = 0
+    for kind, f in walkDir(getTempDir()):
+      if f.extractFilename.startsWith("parseseg_demux_"): inc copies
+    let got = kindOfFile(path, VendorRegistry())
+    doAssert got == KindProbe(outcome: poMultiplexed), "mux: " & $got
+    var after = 0
+    for kind, f in walkDir(getTempDir()):
+      if f.extractFilename.startsWith("parseseg_demux_"): inc after
+    doAssert after == copies, "a demultiplexed copy was made"
 
   removeDir(dir)
 

@@ -1,7 +1,7 @@
 ## Synthetic recordings of known kinds, written as SEG-D, for the tests of what a file is as
 ## a recording: `writeSpecs` (a trace per `Spec`, SEG-D Rev 3, 2 ms, one record per trace)
 ## and `writeClockRecording` (six traces of one receiver whose vendor block holds each start
-## time, read through `clockRegistry`).
+## time, read through `clockRegistry`); `writeMultiplexed`, a multiplexed SEG-D record.
 
 import std/[options, os]
 import parseSEG
@@ -113,3 +113,29 @@ proc writeClockRecording*(path: string; raw: openArray[int64]) =
     doAssert log.len == 0, $log
   finally:
     sink.close()
+
+proc writeMultiplexed*(path: string) =
+  ## One multiplexed SEG-D record (format 0058): four channels of six scans of 2 ms.
+  const channels = 4
+  const scans = 6
+  const bytesPerScan = 8 + 4 * channels
+  func bcd6(n: int): array[3, byte] =
+    var v = n
+    for i in countdown(2, 0):
+      result[i] = byte((v mod 10) or ((v div 10 mod 10) shl 4))
+      v = v div 100
+  let g = SegdGeneralHeader1(fileNumber: 12, formatCode: 58, year: 26, julianDay: 60,
+    hour: 0, minute: 0, second: 0, manufacturerCode: 9, baseScanInterval16: 32,
+    unused20: bcd6(bytesPerScan), recordType: 8, recordLength: 1, scanTypesPerRecord: 1,
+    channelSetsPerScanType: 1, skewBlocks: 1)
+  var data: seq[byte] = @(g.encoded)
+  let d = SegdChannelSetDescriptor(scanTypeNumber: 1, channelSetNumber: 1, startTime: 0,
+    endTime: uint16(scans), channelCount: channels, channelType: 1, gainControl: 3)
+  data.add @(d.encoded)
+  for i in 0 ..< 32: data.add 0
+  for scan in 0 ..< scans:
+    let t = uint32(scan * 2 * 256)
+    data.add [0xFF'u8, 0xFF, 0xFF, 0x41, byte(t shr 16), byte((t shr 8) and 0xFF),
+      byte(t and 0xFF), 0]
+    for ch in 0 ..< channels: data.add [0x3F'u8, 0x80, 0, 0]
+  writeFile(path, cast[string](data))

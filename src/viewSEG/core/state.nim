@@ -11213,14 +11213,15 @@ proc exportShotSpsCmd(state: var AppState; cmd: Command) =
 proc watchRecording*(state: var AppState; wanted: bool) =
   ## Keeps a job reading the shown file as a recording (`describeRecording`)
   ## while `wanted` (the cut dialog is open) or while the Files panel does not know the
-  ## file's kind (it was too large to be opened for it, `ksNotKnown`; the facts give the
+  ## file's kind (it was too large to be opened for it, `ksNotKnown`, or is multiplexed,
+  ## `ksMultiplexed`; the facts give the
   ## row its kind): started once its keys are read
   ## and again when the shown file or its keys change, cancelled when no longer
   ## wanted or the file changes. Call it every frame; it does nothing when
   ## nothing changed.
   let shown = state.shownFile(state.findPanel(MainPanel))
   let row = if shown >= 0: state.files.find(state.sessions[shown].path) else: -1
-  let rowAsks = row >= 0 and state.files.entries[row].kindState == ksNotKnown
+  let rowAsks = row >= 0 and state.files.entries[row].kindState in {ksNotKnown, ksMultiplexed}
   let usable = (wanted or rowAsks) and shown >= 0 and not state.sessions[shown].derived and
     not state.sessions[shown].isSignature and state.sessions[shown].filePtr[].hasKeys
   let key = if usable: (int(state.sessions[shown].id), state.sessions[shown].keysRevision,

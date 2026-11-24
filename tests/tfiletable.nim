@@ -12,7 +12,8 @@
 ## the chosen file's row is found once, not every frame.
 ##
 ## Seen to fail: with the shot gather ranked before the continuous one in the Kind sort
-## (`kindColumn` found the rows differing); with the sort's closure naming `list` (it held a copy of
+## (`kindColumn` found the rows differing); with a multiplexed file's cell left empty, "?"
+## expected; with the sort's closure naming `list` (it held a copy of
 ## every entry), `noAllocationPerFile` counted 40 013 allocations for 20 000
 ## files sorted by size; with the filter lower-casing each name, 20 012; with
 ## `update` making every row again after a change, `aScanIsMerged` found "the
@@ -215,7 +216,9 @@ proc main*() =
     none.kindState = ksNone
     var far = entry("f.sgd", fkSegd, 1)
     far.kindState = ksNotKnown
-    list.merge([shot, sliced, cont, none, entry("e.sgd", fkSegd, 1), far])
+    var mux = entry("g.sgd", fkSegd, 1)
+    mux.kindState = ksMultiplexed
+    list.merge([shot, sliced, cont, none, entry("e.sgd", fkSegd, 1), far, mux])
     doAssert kindText(list.entries[0]) == "Shot" and kindTip(list.entries[0]) == "Shot gather"
     doAssert kindText(list.entries[1]) == "Time-sliced" and
       kindTip(list.entries[1]) == "Time-sliced receiver gather"
@@ -225,17 +228,22 @@ proc main*() =
     doAssert kindTip(list.entries[3]) == "" and kindTip(list.entries[4]) == ""
     doAssert kindText(list.entries[5]) == "?" and
       kindTip(list.entries[5]) == "Open the file to see its kind."
+    doAssert kindText(list.entries[6]) == "?" and kindTip(list.entries[6]) == "A multiplexed " &
+      "SEG-D file is not read for its kind in the list. Open the file to see its kind."
     var t: FileTable
     t.update(list, "", FileOrder(column: fcKind))
-    doAssert t.names(list) == @["d.sgd", "e.sgd", "f.sgd", "c.sgd", "a.sgd", "b.sgd"], $t.names(list)
+    doAssert t.names(list) == @["d.sgd", "e.sgd", "f.sgd", "g.sgd", "c.sgd", "a.sgd", "b.sgd"],
+      $t.names(list)
     t.update(list, "", FileOrder(column: fcKind, descending: true))
-    doAssert t.names(list) == @["b.sgd", "a.sgd", "c.sgd", "f.sgd", "e.sgd", "d.sgd"], $t.names(list)
+    doAssert t.names(list) == @["b.sgd", "a.sgd", "c.sgd", "g.sgd", "f.sgd", "e.sgd", "d.sgd"],
+      $t.names(list)
     t.update(list, "", FileOrder(column: fcKind))
     list.entries[4].kindState = ksKnown # e.sgd is read: a shot gather
     list.entries[4].recording = rkShotGather
     list.changedAt(4)
     t.update(list, "", FileOrder(column: fcKind))
-    doAssert t.names(list) == @["d.sgd", "f.sgd", "c.sgd", "a.sgd", "e.sgd", "b.sgd"], $t.names(list)
+    doAssert t.names(list) == @["d.sgd", "f.sgd", "g.sgd", "c.sgd", "a.sgd", "e.sgd", "b.sgd"],
+      $t.names(list)
 
 when isMainModule:
   main()

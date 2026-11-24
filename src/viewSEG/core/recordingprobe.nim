@@ -7,8 +7,8 @@
 ## show a file: only the header blocks are touched, no sample is read, and the answer is exactly
 ## that of `describeRecording`. A larger file is not opened (`poNotKnown`): the Files panel says
 ## the kind is known once the file is opened. Before that, the first `ProbeHeadBytes` say what
-## the file is: not seismic, or multiplexed SEG-D, which the open demultiplexes into a temporary
-## copy of the whole file, too much to do for a list: neither has a kind here (`poNone`).
+## the file is: not seismic (`poNone`), or multiplexed SEG-D (`poMultiplexed`), which the open
+## demultiplexes into a temporary copy of the whole file, too much to do for a list.
 
 import parseSEG
 import parseSEG/io/memsource
@@ -21,9 +21,10 @@ const
 
 type
   ProbeOutcome* = enum
-    poNone     ## not a seismic file, cannot be read, or has no live trace with a sample interval
-    poKnown    ## `KindProbe.kind` is the answer
-    poNotKnown ## a seismic file larger than the whole-open limit: it must be opened
+    poNone        ## not a seismic file, cannot be read, or has no live trace with a sample interval
+    poKnown       ## `KindProbe.kind` is the answer
+    poNotKnown    ## a seismic file larger than the whole-open limit: it must be opened
+    poMultiplexed ## multiplexed SEG-D: not opened for its kind, it must be opened
 
   KindProbe* = object
     outcome*: ProbeOutcome
@@ -99,7 +100,8 @@ proc kindOfFile*(path: string; vendors: VendorRegistry;
       close(file)
     let kind = detectKind(head)
     if kind == skUnknown: discard
-    elif kind == skSegd and multiplexedSegd(move head, path): discard
+    elif kind == skSegd and multiplexedSegd(move head, path):
+      result = KindProbe(outcome: poMultiplexed)
     elif size > wholeBytes: result = KindProbe(outcome: poNotKnown)
     else: result = wholeKind(path, vendors, check)
   except JobCancelledError:

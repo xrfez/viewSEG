@@ -94,7 +94,7 @@ func kindRankOf(e: FileEntry): int =
   ## Each kind's place when the kinds are sorted by the words shown: a file with none first,
   ## then those not known ("?").
   let k = e.recordingOf
-  if k.isNone: (if e.kindState == ksNotKnown: 1 else: 0)
+  if k.isNone: (if e.kindState in {ksNotKnown, ksMultiplexed}: 1 else: 0)
   else:
     case k.get
     of rkReceiverContinuous: 2
@@ -450,10 +450,11 @@ func typeText*(e: FileEntry): string = $e.kind
 
 func kindText*(e: FileEntry): string =
   ## What the Kind column shows: the kind read from the file ("Shot"); "?" for a file whose kind
-  ## is not known until it is opened; "" while it is not read and for a file with none.
+  ## is not known until it is opened (too large, or multiplexed); "" while it is not read and
+  ## for a file with none.
   let k = e.recordingOf
   if k.isSome: kindShort(k.get)
-  elif e.kindState == ksNotKnown: "?"
+  elif e.kindState in {ksNotKnown, ksMultiplexed}: "?"
   else: ""
 
 func kindTip*(e: FileEntry): string =
@@ -462,4 +463,5 @@ func kindTip*(e: FileEntry): string =
   let k = e.recordingOf
   if k.isSome: kindTitle(k.get)
   elif e.kindState == ksNotKnown: NotKnownWords
+  elif e.kindState == ksMultiplexed: MultiplexedWords
   else: ""

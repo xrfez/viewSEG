@@ -9,8 +9,12 @@ func kindWords*(k: RecordingKind): string =
   of rkReceiverContinuous: "continuous receiver gather"
   of rkReceiverSliced: "time-sliced receiver gather"
 
-const NotKnownWords* = "Open the file to see its kind."
-  ## what the Files panel says of a file too large to be opened for its kind
+const
+  NotKnownWords* = "Open the file to see its kind."
+    ## what the Files panel says of a file too large to be opened for its kind
+  MultiplexedWords* = "A multiplexed SEG-D file is not read for its kind in the list. " &
+    NotKnownWords
+    ## what the Files panel says of a multiplexed SEG-D file
 
 func kindShort*(k: RecordingKind): string =
   ## `kindWords` in a word or two, for a table cell: "Shot".
