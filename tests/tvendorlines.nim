@@ -19,6 +19,7 @@
 ## - a file closed, written again with the same size and opened again shows its new values;
 ##   the columns of a file no longer shown are let go (`columnsHeld`);
 ## - a row's value is read in place: 2000 values of a column of a million take under 50 ms;
+## - a settings name longer than 200 characters is a problem and its line is dropped.
 ##
 ## Seen to fail: with `valueAt` giving 0 for an absent trace, `absent` found 0; with the spread
 ## left out of the column (record-level read per trace of the first record only), `record`
@@ -28,7 +29,7 @@
 ## ms; with the session left out of `build`'s key, `reload` kept the column of another open
 ## file; with that and the reader dropping its columns only for no file (as before),
 ## `reopened` showed the old column, and with the latter alone it found the columns of a
-## file no longer shown held.
+## file no longer shown held; with `usableLineName` not asked, `limits` kept the long name.
 import std/[json, math, monotimes, options, os, sequtils, strutils, times]
 import parseSEG
 import parseSEG/io/diskio
@@ -309,6 +310,12 @@ proc main*() =
       problems.setLen 0
       let got = readSettings(doc, "many", Settings(), problems)
       doAssert got.plot.header.fields.len == MaxHeaderLines and problems.len > 0, $problems
+      # a name longer than a line's is a problem, and its line is not kept
+      problems.setLen 0
+      let long = readSettings("(settings (version 1) (plot (header trace (vendor \"" &
+        "x".repeat(201) & "\"))))", "long", Settings(), problems)
+      doAssert long.plot.header.fields == @[headerRef(hfTrace)], $long.plot.header.fields
+      doAssert problems.len == 1 and "1 to 200 characters" in problems[0], $problems
       problems.setLen 0
       discard readSettings("(settings (version 1) (plot (header bogus)))", "bad", Settings(),
         problems)
