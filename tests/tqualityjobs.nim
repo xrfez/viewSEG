@@ -15,7 +15,7 @@ import std/[os, strutils, tables]
 import parseSEG
 import processSEG/qc/amplitude
 import viewSEG/core/[edits, jobs, qualityjobs, qualityreport]
-import utils/[faultyfs, waiting]
+import utils/[faultyfs, fixtures, noisefiles, waiting]
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
@@ -373,7 +373,9 @@ proc main*() =
     doAssert mixScan.st == jsDone, mixScan.error & " / " & mixScan.sink.result.reason
     doAssert mixScan.sink.result.ok and mixScan.sink.result.unread.len == 0,
       $mixScan.sink.result.unread
-    doAssert mixReads - deadReads == 4, $mixReads & " - " & $deadReads
+    # each of the four live traces (a record of its own) is read once for its samples and
+    # once to find the record's first breaks; the dead, killed and auxiliary ones not at all
+    doAssert mixReads - deadReads == 8, $mixReads & " - " & $deadReads
     let report = mixScan.sink.result.report
     doAssert report.totals.traces == 6 and report.totals.killed == 1, $report.totals
     doAssert report.totals.counts[qfHeaderDead] == 1, $report.totals.counts
@@ -387,6 +389,39 @@ proc main*() =
     doAssert dead.seen == 1 and dead.counts[qfHeaderDead] == 1, $dead
     for r in report.records:
       doAssert r.file != mixed or r.record != 6, "an auxiliary trace was noted"
+
+  block noisy_and_weak_traces_are_counted_as_the_map_finds_them:
+    withFixtures fx:
+      # 64 traces of one record: traces 40 and 50 are the noisy ones (the map's test, on the
+      # same shot, names the same two), trace 60 planted weak
+      let shot = fx.noisyShot("both.sgy", weakAt = 60)
+      let plain = fx.noisyShot("plain.sgy")
+      let got = run(@[shot, plain], none)
+      doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+      let report = got.sink.result.report
+      let a = recordAt(report.records, shot, 1)
+      doAssert a.tested == NoisyTraces and a.noisy == 2 and a.weak == 1, $a
+      let b = recordAt(report.records, plain, 1)
+      doAssert b.tested == NoisyTraces and b.noisy == 2 and b.weak == 0, $b
+      doAssert report.totals.tested == 2 * NoisyTraces and report.totals.noisy == 4 and
+        report.totals.weak == 1, $report.totals
+      doAssert report.totals.bad == 0, "noisy and weak are not findings: " & $report.totals.bad
+      doAssert recordsCsv(report.records).splitLines[0].endsWith(",noisy,weak")
+      doAssert totalsCsv(report.totals).splitLines[1].endsWith(",4,1")
+
+  block a_trace_not_tested_leaves_its_cells_empty:
+    withFixtures fx:
+      let shot = fx.noisyShot("killed.sgy")
+      var edits = initTable[string, FileEdits]()
+      var killed = FileEdits()
+      for t in 0 ..< NoisyTraces: discard killed.change(teKilled, [t], true)
+      edits[shot] = killed
+      let got = run(@[shot], edits)
+      doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+      let report = got.sink.result.report
+      doAssert report.totals.killed == NoisyTraces and report.totals.tested == 0, $report.totals
+      doAssert totalsCsv(report.totals).splitLines[1].endsWith(",,"), "cells not empty"
+      doAssert recordsCsv(report.records).splitLines[1].endsWith(",,"), "cells not empty"
 
 when isMainModule:
   main()

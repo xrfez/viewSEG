@@ -158,5 +158,35 @@ proc main*() =
     doAssert totals.startsWith("files,records,traces,killed,bad,stations,")
     doAssert "\n2,3,3,0,3,1," in totals, totals
 
+  block noisy_and_weak_counts_and_empty_cells:
+    var b = initQualityBuild()
+    proc noted(b: var QualityBuild; file: string; record: float64; tested, noisy, weak: bool;
+        killed = false) =
+      b.addTrace(TraceNote(file: file, record: record, line: 10, point: record, index: 1,
+        component: 1, killed: killed, findings: {}, tested: tested, noisy: noisy, weak: weak))
+    b.noted("a.sgd", 1, true, true, false)
+    b.noted("a.sgd", 1, true, false, true)
+    b.noted("a.sgd", 1, true, false, false)
+    b.noted("a.sgd", 1, true, true, true, killed = true) # killed: never counted
+    b.noted("b.sgd", 2, false, false, false) # not tested: empty cells
+    let report = qualityReport(b)
+    let a = recordAt(report.records, "a.sgd", 1)
+    doAssert a.tested == 3 and a.noisy == 1 and a.weak == 1 and a.bad == 0, $a
+    let c = recordAt(report.records, "b.sgd", 2)
+    doAssert c.tested == 0 and c.noisy == 0 and c.weak == 0, $c
+    let t = report.totals
+    doAssert t.tested == 3 and t.noisy == 1 and t.weak == 1 and t.bad == 0, $t
+    let lines = recordsCsv(report.records).splitLines
+    doAssert lines[0].endsWith(",noisy,weak"), lines[0]
+    doAssert lines[1].endsWith(",1,1") and lines[2].endsWith(",,"), $lines
+    doAssert totalsCsv(report.totals).splitLines[1].endsWith(",1,1")
+    doAssert stationsCsv(report.stations).splitLines[0].endsWith(",noisy,weak,badRecords")
+    var rows = report.records
+    sortRecords(rows, @[(column: rsNoisy, descending: true)])
+    doAssert rows[0].file == "a.sgd", "an untested record sorts before every count"
+    var empty = initQualityBuild()
+    empty.noted("c.sgd", 3, false, false, false)
+    doAssert totalsCsv(qualityReport(empty).totals).splitLines[1].endsWith(",,")
+
 when isMainModule:
   main()

@@ -16,6 +16,13 @@
 ## be opened, or that is not seismic, is one unread row and the scan goes
 ## on. A cancel leaves the sink untouched.
 ##
+## Weak and noisy traces are found as the map finds them (`noiseOfRecord`,
+## the record's first breaks found as the map's job finds them, the user's
+## exclusion area), one field record (a gather of the session) at a time: a
+## record holds only its own traces' statistics until it is judged. Traces
+## that were not sample-read, and records whose test the library refuses,
+## are not tested: their cells stay empty.
+##
 ## The report keeps each path as the caller named it. Unread files are not
 ## a total of the report.
 
@@ -23,7 +30,9 @@ import std/[algorithm, os, sets, tables]
 import parseSEG
 import processSEG/core/[rows, types, workspace]
 import processSEG/qc/amplitude
-import components, edits, filejobs, filesystem, jobs, qualityreport, session, threads
+import components, edits, filejobs, filesystem, firstbreakjobs, firstbreaks, jobs, noisearea,
+    qualityreport,
+  recordqc, session, threads
 
 const QcChunk = 512 ## traces read and measured at a time
 
@@ -87,13 +96,14 @@ proc liveSpans(f: ptr SeismicFile; part: Slice[int]; killed: HashSet[int]): seq[
   if start >= 0: result.add start .. part.b
 
 proc noteTrace(b: var QualityBuild; path: string; k: TraceKeys; killed: bool;
-    flags: set[AmplitudeFlag]) =
+    flags: set[AmplitudeFlag]; tested: bool) =
   if not k.isSeismic: return
   var findings: set[Finding] = {}
   if not killed:
     findings = findingsOf(flags, k.status == tsDead)
   b.addTrace(TraceNote(file: path, record: k.record, line: k.rcvLine, point: k.rcvPoint,
-    index: k.rcvIndex, component: componentOf(k), killed: killed, findings: findings))
+    index: k.rcvIndex, component: componentOf(k), killed: killed, findings: findings,
+    tested: tested, noisy: tested and afNoisy in flags, weak: tested and afWeak in flags))
 
 func msOfUs(us: float64): float64 =
   if us > 0 and us < Inf: us / 1000.0 else: 1.0
@@ -124,11 +134,49 @@ func cutShortWhy(f: SeismicFile): string =
       if d.msg.len > 0: result.add ": " & d.msg
       return
 
+proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
+    amps: var seq[TraceAmplitude]; unread: openArray[int]; killed: HashSet[int];
+    noise: NoiseSettings; ctx: JobContext): bool =
+  ## The map's noisy and weak test on the record `traces`, whose statistics are `amps`
+  ## (`unread`: rows left out). Sets the flags in `amps`. False when there is nothing to
+  ## judge or the library refuses.
+  if unread.len >= traces.len: return false
+  var off: seq[int] = @[]
+  for t in traces:
+    if t in killed: off.add t
+  var br = FirstBreaks()
+  try:
+    {.cast(gcsafe).}:
+      br = breaksOfRecord(f, path, traces, off, proc (done, total: int): bool =
+        ctx.checkCancelled()
+        true)
+      result = true
+      discard noiseOfRecord(f[], traces, amps, unread, [], br, noise)
+  except ValueError:
+    result = false
+
 proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var QualityBuild;
-    unread: var seq[tuple[path, why: string]]; ctx: JobContext) =
+    unread: var seq[tuple[path, why: string]]; gathers: seq[Gather];
+    noise: NoiseSettings; ctx: JobContext) =
   let n = f[].len
   var first = 0
   var chunk = 0
+  var held: seq[TraceAmplitude] = @[] # statistics of the traces from `heldFrom` on
+  var heldFrom = 0
+  var missedAll = initHashSet[int]()
+  var nextGather = 0
+  var noted = 0 # traces before it are in `b`
+  template note(upTo: int; judged: bool) =
+    # Counts the traces `noted` .. `upTo` from `held`, tested when the record was judged.
+    for t in noted .. upTo:
+      if t in missedAll: continue
+      let k = f[].index.keys[t]
+      let sampled = wantsSamples(k, t in killed)
+      let flags = if sampled: held[t - heldFrom].flags else: {}
+      noteTrace(b, path, k, t in killed, flags, judged and sampled)
+    held = held[(upTo + 1 - heldFrom) .. ^1]
+    heldFrom = upTo + 1
+    noted = upTo + 1
   while first < n:
     if chunk > 0: ctx.setPhase "measuring"
     ctx.checkCancelled()
@@ -163,13 +211,25 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
           let at = run.a - part.a
           for row, a in runAmps: amps[at + row] = a
       for t in unreadFailed(log, span, path, unread): missed.incl t
-    for t in part.a .. part.b:
-      if t in missed: continue
-      let k = f[].index.keys[t]
-      let flags = if wantsSamples(k, t in killed): amps[t - part.a].flags else: {}
-      noteTrace(b, path, k, t in killed, flags)
+    for t in missed: missedAll.incl t
+    held.add amps
+    while nextGather < gathers.len and gathers[nextGather].traces.b <= last:
+      let g = gathers[nextGather].traces
+      inc nextGather
+      if g.a < noted or g.b < g.a: continue
+      if g.a > noted: note(g.a - 1, false)
+      var rec = held[g.a - heldFrom .. g.b - heldFrom]
+      var skip: seq[int] = @[]
+      for t in g:
+        if t in missedAll or not wantsSamples(f[].index.keys[t], t in killed):
+          skip.add t - g.a
+      let judged = judgeRecord(f, path, g, rec, skip, killed, noise, ctx)
+      if judged:
+        for i in 0 ..< rec.len: held[g.a - heldFrom + i] = rec[i]
+      note(g.b, judged)
     first = last + 1
     inc chunk
+  if noted < n: note(n - 1, false)
 
 proc fail(sink: QualitySink; why: string; unread: seq[tuple[path, why: string]]) =
   if sink != nil:
@@ -177,12 +237,13 @@ proc fail(sink: QualitySink; why: string; unread: seq[tuple[path, why: string]])
   raise newException(ValueError, why)
 
 proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: QualitySink;
-    cacheDir = ""): JobWork =
+    cacheDir = ""; noise = NoiseSettings()): JobWork =
   ## The work of a job that scans `paths` and fills `sink` (`qualitySpec`
   ## is the spec to submit it with). Worker-only. `edits` is keyed by the
   ## path strings in `paths`. A cancel raises `JobCancelledError` and leaves
   ## `sink` as it was. `cacheDir` is the index cache folder: "" leaves the
-  ## cache alone. A nil `sink` is not filled.
+  ## cache alone. A nil `sink` is not filled. `noise` is the user's choice of
+  ## exclusion area for the noisy test.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     var unread: seq[tuple[path, why: string]] = @[]
@@ -204,7 +265,7 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
             elif s.file.len == 0: why = "has no trace keys"
             else:
               let f = s.filePtr
-              measure(f, path, killedSet(edits, path), build, unread, ctx)
+              measure(f, path, killedSet(edits, path), build, unread, s.gathers, noise, ctx)
               shortWhy = cutShortWhy(s.file)
           except SegCancelledError:
             raise newException(JobCancelledError, "cancelled")

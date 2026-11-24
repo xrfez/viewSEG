@@ -355,7 +355,7 @@ proc applyOwnQc(samples: var Tensor[float32]; f: SeismicFile; part: Slice[int];
         ws.reserve(plan)
         plan.apply(b, initChunkMeta(rows, (if dt > 0: dt else: 1.0), 0, skip), ws)
 
-proc noiseOfRecord(f: SeismicFile; traces: Slice[int]; amps: var seq[TraceAmplitude];
+proc noiseOfRecord*(f: SeismicFile; traces: Slice[int]; amps: var seq[TraceAmplitude];
     unread: openArray[int]; outside: openArray[bool]; br: FirstBreaks;
     settings: NoiseSettings): NoiseSummary =
   ## The noisy-trace test of the record `traces` of `f`, on its traces'

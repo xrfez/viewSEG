@@ -52,10 +52,10 @@ type
     line*, point*: float64
     index*: int16
     component*: uint8
-    seen*, killed*, bad*: int ## `seen` includes killed. `bad` does not.
+    seen*, killed*, bad*: int   ## `seen` includes killed. `bad` does not.
     counts*: array[Finding, int]
     tested*, noisy*, weak*: int ## `tested` traces; the cells show nothing when it is 0.
-    badRecords*: string       ## Compact ranges, one line per file the station was bad in.
+    badRecords*: string         ## Compact ranges, one line per file the station was bad in.
 
   RecordRow* = object
     ## One field record of one file.

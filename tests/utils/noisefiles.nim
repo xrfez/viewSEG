@@ -23,7 +23,7 @@ func offsetOf*(i: int): float64 = 100.0 + 25.0 * float64(i)
 func arrival(x: float64): float64 = 20.0 + 0.4 * x
 
 proc noisyShot*(fx: Fixtures; name: string; lines = 1; stations = true; offsets = true;
-    comps = 1): string =
+    comps = 1; weakAt = -1): string =
   ## One shot of `NoisyTraces` traces over `lines` receiver lines (consecutive stations of one
   ## line, then the next, the stations' coordinates in the headers), offsets in the headers
   ## (`offsets`), stations (`stations`); the first `NearLoud` traces loud. `comps` 3: unrotated nodes, three traces a station, the
@@ -41,6 +41,7 @@ proc noisyShot*(fx: Fixtures; name: string; lines = 1; stations = true; offsets 
     if comps == 1 and i == PlantedNoisy: gain = 30.0
     if comps == 1 and i == PlantedLouder: gain = 2.8
     if comps == 3 and i mod 3 == 1: gain *= 0.02
+    if i == weakAt: gain *= 0.02
     buf.addRicker(Step, arrival(offsetOf(node * comps)) + 15, 30, gain)
     buf.addNoise(0.03 * gain, int64(i + 1))
     var k = initTraceKeys()
