@@ -7,7 +7,8 @@
 ## are the raw record, not the listen time`); analysis rows of length 1000;
 ## the constant trace flagged `constant` after correlation; inspector samples
 ## of length 1000 and time zero 0; noise QC picking on the raw record (`view
-## picks @[106.0, ...] vs @[80.0, ...]`).
+## picks @[106.0, ...] vs @[80.0, ...]`); rows of a file cut short
+## reported undecodable (`a cut view reports undecodable @[6, 7, 8, 9]`).
 
 import std/[atomics, locks, math, monotimes, os]
 import parseSEG
@@ -306,6 +307,37 @@ proc main*() =
   doAssert viewNoise.qcNoise.state == memNoise.qcNoise.state, "noise windows differ"
   doAssert sampleHits(viewNoise.qcHits) == sampleHits(memNoise.qcHits),
     "noise QC flags differ"
+
+  # A file cut short while open: its lost rows are unread, not undecodable, on a view as on
+  # a plain file.
+  block cutShortWhileOpen:
+    let cutPath = dir / "cut.sgy"
+    writeRaw(cutPath, sweep)
+    var plainFile = openSeismic(cutPath, keys = true)
+    var viewFile = openSeismic(cutPath, keys = true)
+    let plain = newSession(cutPath, plainFile)
+    let viewOf = newSession(cutPath, viewFile)
+    let cutBuilt = initCorrelateView(viewOf.filePtr, sweep, DtMs, [RefAux])
+    doAssert cutBuilt.refusal.len == 0, cutBuilt.refusal
+    let cutView = asCorrelatedView(viewOf, cutBuilt.view)
+    defer:
+      discard cutView.close()
+      discard viewOf.close()
+      discard plain.close()
+    var indexed = openSeismic(cutPath)
+    let cutAt = 5
+    let start = indexed.index.entries[cutAt].offset
+    let size = getFileSize(cutPath)
+    indexed.close()
+    let mid = start + (size - start) div 4
+    doAssert mid > start and mid < size, "the cut is not inside trace " & $cutAt
+    writeFile(cutPath, readFile(cutPath)[0 ..< int(mid)])
+    let cutPlain = askQc(plain, SessionId(7), nil).qcHits
+    let cutViewHits = askQc(cutView, SessionId(8), cutView.correlatedView).qcHits
+    doAssert cutPlain[mfUndecodable].traces.len == 0, "the plain file reports undecodable " &
+      $cutPlain[mfUndecodable].traces
+    doAssert cutViewHits[mfUndecodable].traces == cutPlain[mfUndecodable].traces,
+      "a cut view reports undecodable " & $cutViewHits[mfUndecodable].traces
 
   doAssert virtMaps.load == 0, "the virtual path was mapped " & $virtMaps.load & " times"
   echo "tcorrviewreaders: ok"

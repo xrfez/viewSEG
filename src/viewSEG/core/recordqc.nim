@@ -511,7 +511,9 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
           let rows = part.len
           samples = readListenChunk(held, file, part, viewWs)
           failed = viewWs.failed
-          notDecoded = failed
+          # (as a plain file's: a cut or a failed drive is unread, not undecodable)
+          for k, r in failed:
+            if viewWs.why[k] == rfOther: notDecoded.add r
           listenKeys.setLen(rows)
           for i in 0 ..< rows:
             listenKeys[i] = f.traceKeys(part.a + i)
