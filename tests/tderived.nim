@@ -17,12 +17,14 @@
 ## a compile error (`=copy` and `=dup` are `{.error.}`). The hold is private,
 ## so this file cannot name it in `compiles`. With a SEG-D estimate taken from
 ## the source map, `estimate - actual <= oneHeaderSet` failed: estimate 20772,
-## actual 16676, header set 192 (the 4096-byte external header).
+## actual 16676, header set 192 (the 4096-byte external header). With listen
+## time still labelled "Samples per trace", `summaryValue(lines, "Samples per
+## trace (correlated)") == grouped(Listen)` failed.
 
 import std/[locks, math, monotimes, os, sequtils, strutils, times]
 import parseSEG
 import processSEG
-import viewSEG/core/[correlatejobs, correlateread, filesystem, jobs, session, state]
+import viewSEG/core/[correlatejobs, correlateread, filesystem, jobs, properties, session, state]
 import utils/[fixtures, waiting]
 
 var
@@ -163,6 +165,130 @@ proc segdEstimate() =
     $estimate & " actual " & $actual
   doAssert close(raw)
 
+proc summaryValue(lines: openArray[SummaryLine]; label: string): string =
+  for l in lines:
+    if not l.heading and l.label == label: return l.value
+
+proc hasSummary(lines: openArray[SummaryLine]; label: string): bool =
+  for l in lines:
+    if not l.heading and l.label == label: return true
+
+proc anyValueHas(lines: openArray[SummaryLine]; piece: string): bool =
+  for l in lines:
+    if piece in l.value: return true
+
+proc storedBinary(rows: openArray[FieldRow]): bool =
+  var saw = false
+  for row in rows:
+    if row.blockName == "binary" or row.blockName.startsWith("gh"):
+      saw = true
+      if not row.description.startsWith("Stored: "): return false
+  saw
+
+proc plainBinary(rows: openArray[FieldRow]): bool =
+  for row in rows:
+    if row.blockName == "binary" or row.blockName.startsWith("gh"):
+      if row.description.startsWith("Stored: "): return false
+  true
+
+proc openView(path: string; sweep: openArray[float32]): tuple[raw, view: Session] =
+  var opened = openSeismic(path, keys = true)
+  result.raw = newSession(path, opened)
+  let built = initCorrelateView(result.raw.filePtr, sweep, DtMs, [])
+  doAssert built.refusal.len == 0, built.refusal
+  result.view = asCorrelatedView(result.raw, built.view)
+
+proc writeInt16(path: string) =
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
+    measurementSystem: 1, format: st3, text: @["C01 stored format"]))
+  var buf = newSeq[float32](Record)
+  for j in 0 ..< Record: buf[j] = float32(j mod 100)
+  for i in 0 .. 4:
+    var k = initTraceKeys()
+    k.record = 7.0
+    k.channel = float64(i + 1)
+    k.intervalUs = DtMs * 1000.0
+    k.time = 1_700_000_000.0
+    k.traceCode = 1
+    k.status = tsLive
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the integer file did not close"
+
+proc viewLabels() =
+  ## A view names listen time as correlated and keeps the raw header's record
+  ## length. A file that is not a view is worded as before.
+  let dir = getTempDir() / ("tderived-labels-" & $getCurrentProcessId())
+  createDir(dir)
+  defer: removeDir(dir)
+  let sweep = linearSweep(8.0, 80.0, float64(SweepLen) * DtMs, DtMs).sweepSamples(float32)
+  let path = dir / "raw.sgy"
+  writeRaw(path, sweep)
+  let segy = openView(path, sweep)
+  let plain = summaryLines(segy.raw, -1)
+  doAssert summaryValue(plain, "Samples per trace") == grouped(Record)
+  doAssert not hasSummary(plain, "Samples per trace (correlated)")
+  doAssert hasSummary(plain, "Trace length")
+  doAssert not hasSummary(plain, "Trace length (correlated)")
+  doAssert summaryValue(plain, "Sample format") == "5: IEEE float, 4 bytes"
+  doAssert not hasSummary(plain, "Sample format (stored)")
+  doAssert plainBinary(segy.raw.facts.rows)
+  let lines = summaryLines(segy.view, -1)
+  doAssert summaryValue(lines, "Samples per trace (correlated)") == grouped(Listen)
+  doAssert not hasSummary(lines, "Samples per trace")
+  doAssert "1600 ms" in summaryValue(lines, "Trace length (correlated)")
+  doAssert not hasSummary(lines, "Trace length")
+  doAssert summaryValue(lines, "Sample format") == "IEEE float32 (correlated)"
+  doAssert summaryValue(lines, "Sample format (stored)") == "5: IEEE float, 4 bytes"
+  doAssert not hasSummary(lines, "Record length (header)")
+  doAssert storedBinary(segy.view.facts.rows)
+  doAssert plainBinary(segy.raw.facts.rows)
+  var storedSamples = false
+  for row in segy.view.facts.rows:
+    if row.field == "samplesPerTrace" and row.blockName == "binary":
+      storedSamples = row.number == float64(Record) and
+        row.description.startsWith("Stored: ")
+  doAssert storedSamples, "the stored sample count was not marked stored"
+  doAssert abs(segy.view.facts.summary.recordLengthMs -
+    segy.raw.facts.summary.recordLengthMs) < 1e-3
+  doAssert close(segy.view)
+  doAssert close(segy.raw)
+
+  let intPath = dir / "int16.sgy"
+  writeInt16(intPath)
+  let narrow = openView(intPath, sweep)
+  let narrowLines = summaryLines(narrow.view, -1)
+  doAssert summaryValue(narrowLines, "Sample format") == "IEEE float32 (correlated)"
+  doAssert summaryValue(narrowLines, "Sample format (stored)") == "3: integer, 2 bytes"
+  let narrowPlain = summaryLines(narrow.raw, -1)
+  doAssert summaryValue(narrowPlain, "Sample format") == "3: integer, 2 bytes"
+  doAssert not hasSummary(narrowPlain, "Sample format (stored)")
+  doAssert close(narrow.view)
+  doAssert close(narrow.raw)
+
+  let segdPath = dir / "raw.sgd"
+  writeSegdExternal(segdPath)
+  let segd = openView(segdPath, sweep)
+  doAssert not segd.raw.facts.summary.recordLengthMs.isNaN
+  doAssert abs(segd.view.facts.summary.recordLengthMs -
+    segd.raw.facts.summary.recordLengthMs) < 1e-3
+  doAssert abs(segd.view.facts.summary.recordLengthMs - float64(Listen) * DtMs) > 1
+  doAssert segd.view.records.len > 0
+  let segdLines = summaryLines(segd.view, 0)
+  let headerLen = summaryValue(segdLines, "Record length (header)")
+  doAssert headerLen.startsWith("2000 ms"), headerLen
+  doAssert not headerLen.startsWith("1600")
+  doAssert summaryValue(segdLines, "Samples per trace (correlated)") == grouped(Listen)
+  doAssert "1600 ms" in summaryValue(segdLines, "Trace length (correlated)")
+  doAssert anyValueHas(segdLines, $Listen & " (correlated) samples")
+  doAssert not anyValueHas(segdLines, $Record & " samples at")
+  let segdPlain = summaryLines(segd.raw, 0)
+  doAssert not hasSummary(segdPlain, "Samples per trace (correlated)")
+  doAssert summaryValue(segdPlain, "Record length (header)").startsWith("2000 ms")
+  doAssert anyValueHas(segdPlain, $Record & " samples at")
+  doAssert not anyValueHas(segdPlain, "(correlated)")
+  doAssert close(segd.view)
+  doAssert close(segd.raw)
+
 proc viewOfSweep() =
   ## Listen facts of a view, the copy's size, and closing the raw file under a view.
   let dir = getTempDir() / ("tderived-view-" & $getCurrentProcessId())
@@ -192,8 +318,8 @@ proc viewOfSweep() =
   doAssert view.facts.summary.samplesPerTrace == written.facts.summary.samplesPerTrace
   doAssert abs(view.facts.summary.sampleIntervalUs -
     written.facts.summary.sampleIntervalUs) < 1e-6
-  doAssert abs(view.facts.summary.recordLengthMs - written.facts.summary.recordLengthMs) < 1e-3
-  doAssert abs(view.facts.summary.recordLengthMs - float64(Listen) * DtMs) < 1e-6
+  doAssert abs(view.facts.summary.recordLengthMs - raw.facts.summary.recordLengthMs) < 1e-3
+  doAssert abs(view.facts.summary.recordLengthMs - float64(Record) * DtMs) < 1e-6
   doAssert raw.facts.summary.samplesPerTrace == Record
   doAssert view.facts.text == raw.facts.text
   doAssert rawSampleLeft(view.facts.rows), "the raw sample count was not left in the header rows"
@@ -280,6 +406,7 @@ proc main*() =
   armed = false
   viewOfSweep()
   segdEstimate()
+  viewLabels()
   echo "tderived: ok"
 
 when isMainModule: main()

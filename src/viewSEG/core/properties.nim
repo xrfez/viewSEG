@@ -6,8 +6,11 @@
 ## made, mapped or not, and what "Reopen with options" changed), its
 ## coordinates (the units its headers say or the user chose, its CRS
 ## text), the survey joined to it, and the record shown with its counts and,
-## for SEG-D, its channel sets. Made from what was read when the file was
-## opened (`Session.facts`): nothing here reads the file.
+## for SEG-D, its channel sets. A correlated view names the listen sample
+## count, trace length and channel-set counts as correlated, and the stored
+## sample format as stored. The record length is the raw header's. A file
+## that is not a view is worded as before. Made from what was read when the
+## file was opened (`Session.facts`): nothing here reads the file.
 
 import std/[math, os, strutils, times]
 import parseSEG
@@ -97,6 +100,15 @@ func gatherWord(k: GatherKind): string =
   of gkCmp: "CMP gather"
   of gkOffset: "common-offset gather"
   of gkUnknown, gkOther: "record"
+
+func storedFormat(sm: FileSummary): string =
+  ## The sample format the file stored, in the summary's words; "" when it
+  ## has none to name.
+  if sm.formatCode >= 0:
+    let name = formatName(sm.standard, sm.formatCode)
+    result = $sm.formatCode & (if name.len > 0: ": " & name else: "")
+  elif sm.standard == skSegd:
+    result = "differs between records"
 
 func standardText(s: FileSummary): string =
   result = case s.standard
@@ -312,11 +324,12 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
   if facts.textEncoding.len > 0: result.add "Textual header", facts.textEncoding
   if facts.extendedText.len > 0:
     result.add "Extended textual headers", $facts.extendedText.len
-  if sm.formatCode >= 0:
-    let name = formatName(sm.standard, sm.formatCode)
-    result.add "Sample format", $sm.formatCode & (if name.len > 0: ": " & name else: "")
-  elif sm.standard == skSegd:
-    result.add "Sample format", "differs between records"
+  let stored = storedFormat(sm)
+  if s.isCorrelatedView:
+    result.add "Sample format", "IEEE float32 (correlated)"
+    if stored.len > 0: result.add "Sample format (stored)", stored
+  elif stored.len > 0:
+    result.add "Sample format", stored
   result.add "Samples decodable", (if sm.decodable: "yes"
     else: "no: some traces are in a sample format that cannot be decoded")
   if facts.opened.wide:
@@ -341,13 +354,15 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
     let what = if sm.standard == skSegd: "File numbers" else: "Field records (FFID)"
     result.add what, (if sm.lastFieldRecord == sm.firstFieldRecord: $sm.firstFieldRecord
       else: $sm.firstFieldRecord & " to " & $sm.lastFieldRecord)
-  result.add "Samples per trace", (if sm.samplesPerTrace >= 0: grouped(sm.samplesPerTrace)
-    else: "differ between traces")
+  let correlated = s.isCorrelatedView
+  result.add (if correlated: "Samples per trace (correlated)" else: "Samples per trace"),
+    (if sm.samplesPerTrace >= 0: grouped(sm.samplesPerTrace) else: "differ between traces")
   result.add "Sample interval", (if sm.sampleIntervalUs.isNaN: "differs between " &
     (if sm.standard == skSegd: "channel sets" else: "traces")
     else: exactText(sm.sampleIntervalUs / 1000) & " ms")
   let traceLength = traceLengthText(sm.samplesPerTrace, sm.sampleIntervalUs)
-  if traceLength.len > 0: result.add "Trace length", traceLength
+  if traceLength.len > 0:
+    result.add (if correlated: "Trace length (correlated)" else: "Trace length"), traceLength
   if sm.standard == skSegd and not sm.recordLengthMs.isNaN:
     result.add "Record length (header)",
       recordLengthText(sm.recordLengthMs, longestEndMs(facts.channelSets))
@@ -416,6 +431,7 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
               $(c.scanType + 1) & ")" else: ""),
               channelTypeName(rev3, c.channelType) & ", " & $c.traceCount &
               (if c.traceCount == 1: " trace, " else: " traces, ") & $c.samplesPerTrace &
+              (if correlated: " (correlated)" else: "") &
               " samples at " & msText(c.sampleIntervalUs / 1000) & ", " &
               endTimeText(c.startTimeMs, c.endTimeMs, c.samplesPerTrace, c.sampleIntervalUs,
                 rev3)

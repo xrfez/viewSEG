@@ -22,10 +22,12 @@
 ## A correlated view is derived the same way, and does not own a second file.
 ## `asCorrelatedView` keeps the raw session open and shares one `CorrelateView`.
 ## `file` and `filePtr` are that raw file. `facts` report the listen time
-## (sample count, interval, trace length, record length). Header rows stay the
-## raw file's, including its stored sample count. `close` of the view does not
-## close the raw file. `close` of the raw file is refused while a view of it
-## exists: close the view first, as a derived view is closed before its origin.
+## (sample count, interval and trace length). The record length stays the raw
+## header's. Header rows of the binary and general header are marked stored;
+## their values stay the raw file's, including its stored sample count. `close`
+## of the view does not close the raw file. `close` of the raw file is refused
+## while a view of it exists: close the view first, as a derived view is closed
+## before its origin.
 
 import std/[atomics, math, os, strutils, times]
 import parseSEG
@@ -259,18 +261,30 @@ proc asDerived*(s: Session) =
   s.origin = s.path
   s.path = correlatedPath(s.origin)
 
+proc markStoredHeaders(facts: var FileFacts) =
+  ## Binary and general-header rows are the raw file's. `facts.rows` groups
+  ## them by `blockName` (`binary`, `gh1`, ...). Their descriptions say stored,
+  ## so a listen count is not read as the stored sample count. SEG-D general
+  ## headers are per record and are not in `facts.rows`; the summary's record
+  ## length is that header fact.
+  for row in facts.rows.mitems:
+    if (row.blockName == "binary" or row.blockName.startsWith("gh")) and
+        not row.description.startsWith("Stored: "):
+      row.description = "Stored: " & row.description
+
 proc applyListenFacts(facts: var FileFacts; listen: int; dtMs: float64) =
-  ## Summary and channel-set lengths become the listen time. Header rows are
-  ## left as the raw file stored them.
+  ## Summary and channel-set sample counts become the listen time. The record
+  ## length stays the raw header's. Binary and general-header rows are marked
+  ## stored; their values are left as the raw file stored them.
   let us = dtMs * 1000.0
   facts.summary.samplesPerTrace = listen
   facts.summary.sampleIntervalUs = us
-  facts.summary.recordLengthMs = float64(listen) * dtMs
   for c in facts.channelSets.mitems:
     c.samplesPerTrace = listen
     c.sampleIntervalUs = us
     if c.startTimeMs.isNaN: c.endTimeMs = float64(listen) * dtMs
     else: c.endTimeMs = c.startTimeMs + float64(listen) * dtMs
+  markStoredHeaders(facts)
 
 proc viewReady(view: CorrelateView): bool =
   view.listenSamples > 0 and view.dtMs > 0 and not view.dtMs.isNaN and view.dtMs != Inf
@@ -279,9 +293,10 @@ proc asCorrelatedView*(raw: Session; view: CorrelateView): Session =
   ## A derived session that is `raw`'s file seen at `view`'s listen time.
   ## The raw file stays open: this session does not own a copy of it, and
   ## `file` / `filePtr` are that file. `facts` report the listen sample count,
-  ## interval, trace length and record length. Header rows stay `raw`'s,
-  ## including the stored sample count. Raises `ValueError` when `raw` is
-  ## closed, is itself a view, or `view` was not built.
+  ## interval and trace length. The record length stays the raw header's.
+  ## Binary and general-header rows are marked stored; their values stay
+  ## `raw`'s, including the stored sample count. Raises `ValueError` when `raw`
+  ## is closed, is itself a view, or `view` was not built.
   if raw.isNil or not raw.file.isOpen:
     raise newException(ValueError, "the file is not open.")
   if not raw.view.isNil:
