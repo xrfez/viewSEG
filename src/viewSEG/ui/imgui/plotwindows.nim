@@ -19,7 +19,8 @@
 
 import std/[math, sets, strutils, tables]
 import imguin/cimgui
-import ../../core/[colourmaps, explain, geometry, plotcursor, plotoptions, state, units]
+import ../../core/[colourmaps, explain, geometry, plotcursor, plotoptions, state, units,
+  vibprofile]
 import ../../view/[analysisview, axisfit, curveplot, theme]
 import chrome, curveplot as curves, explainmenu, fittext, overflow, icons, marks, placement,
     spectrumwindow,
@@ -764,13 +765,25 @@ proc drawWheel(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: str
     tip(ResetTip)
   igEndPopup()
 
+proc askedProfile(st: AppState; w: AnalysisWindow; p: AnalysisParams): VibQcProfile =
+  ## This window's settings as a profile: the limits, window, harmonics, set, force scale,
+  ## a typed 100 % force and drive level, the reference's archive id and the top typed for
+  ## it. Nothing read from the file.
+  let refId = if p.projectReference and st.chosenReference.len > 0: st.chosenReference else: ""
+  let key = st.vibTopKey(w)
+  var top = p.tops.topOf(key)
+  if top.isNaN and st.inProject: top = topsOf(st.project.doc.vibTops).topOf(key)
+  profileOf(p.qc, p.qcWindowMs, p.harmonics, p.accelSet, st.settings.forceScale,
+    p.forceHundredPct, p.targetPct, refId, top, p.forceHundredUnit, p.forceHundredSet)
+
 proc drawVibratorSettings(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: string;
     box: float32; t: Theme; marks: var Marks; p: var AnalysisParams; frozen, changed: var bool;
     res: var PlotWindowsOutput) =
-  ## A vibrator signature's controls: one strip of icon buttons under the verdict (Roles,
-  ## Limits..., Details, the settings wheel and Freeze at the right). Roles opens the roles
+  ## A vibrator signature's controls: one strip under the verdict (Roles, Limits..., Details,
+  ## Use as profile, the settings wheel and Freeze at the right). Roles opens the roles
   ## table (the one place to reverse a polarity), the wheel the settings, in headed groups for
   ## the file shown, Limits... the six limits of the verdict and the window they are judged in.
+  ## Use as profile stores those settings on the project; it is inactive without one.
   let planeAt = st.findPlot(w.id)
   let forceNote = st.vibForceNote(planeAt)
   let kind = st.vibSignature(planeAt)
@@ -805,6 +818,19 @@ proc drawVibratorSettings(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow
       markName = name & ".details"):
     p.details = not p.details
     changed = true
+  # Use as profile: the window's settings, through the project's command path
+  igSameLine(0, 2)
+  let canStore = st.inProject
+  if not canStore: igBeginDisabled(true)
+  if igSmallButton("Use as profile") and canStore:
+    res.commands.add Command(kind: ckVibProfile, vibProfile: askedProfile(st, w, p))
+  if not canStore: igEndDisabled()
+  marks.mark(name & ".use as profile")
+  if not canStore: marks.mark(name & ".use as profile.disabled")
+  tip(if canStore:
+        "Store this window's limits, window, harmonics, accelerometer set, force scale, " &
+        "typed 100 % force and reference as the project's vibrator QC profile"
+      else: "A project is needed to store this window as the vibrator QC profile")
   # the settings wheel and Freeze, at the right
   let wheelX = strip.rowRight - size
   igSetCursorScreenPos(ImVec2_c(x: wheelX, y: strip.top))

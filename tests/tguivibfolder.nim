@@ -2,11 +2,14 @@
 ## item is inactive until a folder is open; the window is closed at the start,
 ## then a tab beside the Seismic window; the run matches an independent run;
 ## a sort, a filter, an untick and a CSV export are what the window shows.
+## Use as profile is inactive until a project is open, then stores the open
+## Vibrator window's limits.
 ##
 ## Seen to fail: with the Reports item left enabled when no folder is open
 ## (no disabled mark), "Reports is inactive without a folder did not happen".
 ## With the mass left as recorded, good.dat and reversed.dat do not split
-## into one pass and one fail.
+## into one pass and one fail. With the button left out, "Use as profile
+## stores the window did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24"`.
 
@@ -179,19 +182,49 @@ proc main*() =
       not f.core.fileList.scanning and f.core.fileList.folder.len > 0
     step("the folder is listed", listFolder, folderListed)
 
+    proc openFile(f: FrameInfo) =
+      f.apply Command(kind: ckOpen, paths: @[good])
+    proc fileShown(f: FrameInfo): bool =
+      f.core.sessions.len > 0 and
+        f.core.panels[f.core.findPanel(MainPanel)].laidOut
+    step("the signature file is shown", openFile, fileShown)
+
+    proc openVib(f: FrameInfo) =
+      if f.core.plots.len > 0: return
+      let b = f.core.sessions[0].base
+      let p = AnalysisParams(qc: limits, qcWindowMs: 500.0, harmonics: 5, targetPct: NaN)
+      f.apply Command(kind: ckOpenPlot, plotView: avVibrator, plotTraces: @[b], plotParams: p)
+    proc vibDisabled(f: FrameInfo): bool =
+      if f.core.plots.len == 0 or f.core.inProject: return false
+      let mark = "new plot " & $f.core.plots[0].id & ".use as profile"
+      f.markOf(mark).size.x > 0 and f.markOf(mark & ".disabled").size.x > 0
+    step("Use as profile is inactive without a project", openVib, vibDisabled)
+
     proc makeProject(f: FrameInfo) =
       f.apply Command(kind: ckNewProject, projectPath: proj, dataFolders: @[folder])
     proc projectOpen(f: FrameInfo): bool =
-      f.core.inProject and not f.core.project.readOnly and
-        not f.core.fileList.scanning and f.core.fileList.folder.len > 0
+      if not (f.core.inProject and not f.core.project.readOnly and
+          not f.core.fileList.scanning and f.core.fileList.folder.len > 0):
+        return false
+      if f.core.plots.len == 0: return false
+      let mark = "new plot " & $f.core.plots[0].id & ".use as profile"
+      f.markOf(mark).size.x > 0 and f.markOf(mark & ".disabled").size.x == 0
     step("a project is open beside the data", makeProject, projectOpen)
 
-    proc storeProfile(f: FrameInfo) =
-      f.apply Command(kind: ckVibProfile, vibProfile: profile)
+    proc useProfile(f: FrameInfo) =
+      let mark = "new plot " & $f.core.plots[0].id & ".use as profile"
+      f.click(f.markOf(mark).centre)
     proc profileStored(f: FrameInfo): bool =
       f.core.profileNoted and f.core.project.doc.hasVibProfile and
+        f.core.project.doc.vibProfile == profile and
         f.markOf("status.profile").size.x > 0
-    step("the profile is stored", storeProfile, profileStored)
+    step("Use as profile stores the window", useProfile, profileStored)
+
+    proc closeVib(f: FrameInfo) =
+      if f.core.plots.len > 0:
+        f.apply Command(kind: ckClosePlot, plot: f.core.plots[0].id)
+    proc vibClosed(f: FrameInfo): bool = f.core.plots.len == 0
+    step("the Vibrator window is closed", closeVib, vibClosed)
 
     var opened = false
     proc openReport(f: FrameInfo) =
