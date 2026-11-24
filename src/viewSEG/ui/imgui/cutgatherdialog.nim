@@ -6,7 +6,7 @@
 import std/[math, os]
 import imguin/cimgui
 import processSEG/continuous/slice
-import ../../core/[cutfacts, cutgather, geometry, panels, shotlog, state]
+import ../../core/[cutfacts, cutgather, destwatch, geometry, panels, shotlog, state]
 import ../../view/[cutwords, theme]
 import marks, style
 
@@ -30,8 +30,7 @@ type
     facts: CutFacts
     factsKey: tuple[session: int, keys: int]
     haveFacts: bool
-    existKey: string ## the destination and cut state `exists` was worked out for
-    exists: bool     ## a file or folder of the chosen name is already there
+    dest: DestWatch ## whether a file or folder of the chosen name is already there
 
   CutDraw* = object
     commands*: seq[Command]
@@ -111,13 +110,13 @@ proc nameProblem(name: string): string =
   else: ""
 
 proc checkExists(ui: var CutUi; st: AppState; nameWhy: string) =
-  ## Looks at the disk only when the destination or the state of the cut
-  ## changed, never on every frame.
+  ## Asks the disk, on a job, only when the destination or the state of the
+  ## cut changed, never on every frame.
   let dest = if ui.folder.len > 0 and nameWhy.len == 0: ui.folder / ui.nameText else: ""
-  let key = dest & '\0' & st.cutOutcome & (if st.cutRunning: "1" else: "0")
-  if key != ui.existKey:
-    ui.existKey = key
-    ui.exists = dest.len > 0 and (fileExists(dest) or dirExists(dest))
+  let key = if dest.len > 0:
+      dest & '\0' & st.cutOutcome & (if st.cutRunning: "1" else: "0")
+    else: ""
+  ui.dest.follow(st.jobs, dest, key)
 
 proc drawLog(ui: var CutUi; st: AppState; marks: var Marks) =
   let li = st.findShotLog(ui.logId)
@@ -217,7 +216,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     let nameWhy = nameProblem(ui.nameText)
     if nameWhy.len > 0 and ui.nameTouched: coloured(nameWhy, t.roles[rlWarning], wide)
     ui.checkExists(st, nameWhy)
-    if ui.exists:
+    if ui.dest.exists:
       coloured(DestExists, t.roles[rlWarning], wide)
       marks.mark("cut.exists")
     igSeparator()
@@ -234,7 +233,8 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
         marks.mark("cut.numbering")
     let why = st.cutProblem()
     let canCut = why.len == 0 and problem.len == 0 and ui.folder.len > 0 and
-      nameWhy.len == 0 and not ui.exists and summary.len > 0
+      nameWhy.len == 0 and not ui.dest.exists and not ui.dest.pending and
+      summary.len > 0
     igBeginDisabled(not canCut)
     if igButton("Cut##cut".cstring, ImVec2_c(x: 0, y: 0)):
       result.commands.add Command(kind: ckCutGather, cutLog: st.findShotLog(ui.logId),
@@ -244,7 +244,8 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     tip(if why.len > 0: why
         elif ui.folder.len == 0: NeedFolder
         elif nameWhy.len > 0: nameWhy
-        elif ui.exists: DestExists
+        elif ui.dest.pending: DestChecking
+        elif ui.dest.exists: DestExists
         elif problem.len > 0: problem
         else: "Cut the recording and write the file; the Jobs window shows its progress")
     igSameLine(0, -1)

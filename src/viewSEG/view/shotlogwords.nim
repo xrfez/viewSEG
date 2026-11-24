@@ -63,6 +63,7 @@ const
   SpsNoFile* = "not chosen"
   SpsNeedFile* = "Choose the file to write first."
   SpsBadLine* = "The default line is not a number."
+  SpsChecking* = "Checking the destination..."
   SpsExistsTip* = "That file exists: the export never replaces a file. Choose a new name."
   SpsRun* = "Export"
   SpsRunTip* = "Write the file; the Jobs window shows the job and Messages the result."

@@ -19,6 +19,7 @@ const
   FormatSegy* = "SEG-Y"
   NeedFolder* = "Choose the folder the file is written to."
   NeedName* = "Give the file a name."
+  DestChecking* = "Checking the destination..."
   DestExists* = "A file or folder of this name is already in the folder: choose another " &
     "name or folder."
   NameHasFolder* = "The name is a file name: choose the folder with the button."
