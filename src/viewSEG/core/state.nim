@@ -113,7 +113,8 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
       join, layouts, log,
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, reader,
-  recordqc, referencejobs, references, selection, session, settings, shots, spectra,
+  recordqc, referencejobs, references, selection, session, settings, shotlog, shotlogjobs,
+  shots, spectra,
   spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids, vendorjobs,
   vendormaps, vibprofile, watch, zoom
 
@@ -298,6 +299,14 @@ type
       ## keep these settings as the project's vibrator QC profile
     ckVibWeights = "vibrator weights"
       ## keep these as the project's vibrator QC job weights
+    ckImportShotLog = "import shot log"
+      ## read a shot log and keep it; stored in the project when one is open and writable
+    ckRemoveShotLog = "remove shot log"
+      ## drop a loaded shot log; a writable project also drops its copy
+    ckRemapShotLog = "remap shot log"
+      ## parse a loaded shot log again with another map, on a job
+    ckEditShotCell = "edit shot log cell"
+      ## overlay one cell of a loaded shot log; a writable project writes the copy
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -593,6 +602,14 @@ type
     of ckVibWeights:
       vibWeights*: VibJobWeights
         ## the hold-down, baseplate and reaction-mass weights, kilograms; NaN is not set
+    of ckImportShotLog, ckRemoveShotLog, ckRemapShotLog, ckEditShotCell:
+      logPath*: string ## ckImportShotLog: the file to read
+      logMap*: ShotLogMap ## ckImportShotLog when logMapped; ckRemapShotLog: the new map
+      logMapped*: bool ## ckImportShotLog: a map was given (else one is guessed)
+      logIndex*: int ## which loaded shot log
+      logRow*: int ## ckEditShotCell: the data row
+      logCol*: int ## ckEditShotCell: the column
+      logCell*: string ## ckEditShotCell: the new cell text
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -957,6 +974,33 @@ type
     why: string
     shown: FirstBreaks
 
+  LoadedShotLog = ref object
+    ## A shot log read into this run. The text is the copy under `shotlogs/`
+    ## when `stored` is set; otherwise it is only here.
+    id: int
+    name: string
+    source: string ## the file it was read from
+    stored: string ## the copy's file name under shotlogs/; "" when not stored
+    map: ShotLogMap
+    log: ShotLog
+    view: ShotView
+    revision: int ## bumps when the view or a cell changes
+    text: string ## the text a re-map parses again
+    busy: bool ## a job is reading it: a cell edit waits
+
+  ShotLogJobKind = enum
+    sjImport, sjLoad, sjSave, sjRemap, sjRebuild
+
+  ShotLogWork = object
+    job: JobId
+    kind: ShotLogJobKind
+    id: int ## the loaded log, or -1 before an import has one
+    sink: ShotLogSink
+    name: string
+    source: string
+    stored: string
+    map: ShotLogMap
+
   AppState* = object
     ## Everything the views show. Move-only.
     log: MessageLog
@@ -1205,6 +1249,12 @@ type
     layoutList: seq[SavedLayout]
     loaded: Layout ## the layout loaded last, for the frontend to show
     loads: int ## bumped each time a layout is loaded
+    shotLogs: seq[LoadedShotLog]
+      ## shot logs read this run, in the order they were imported or loaded
+    shotLogsRev: int ## bumps when that list, or a log's view, changes
+    nextShotId: int
+    shotWork: seq[ShotLogWork]
+      ## jobs reading or writing a shot log; the sink is read when the job ends
     jobs: Jobs
       ## Fields are destroyed last to first: the runners stop before
       ## anything a running job uses is freed.
@@ -2004,6 +2054,43 @@ func project*(state: AppState): lent ProjectState {.inline.} =
 func inProject*(state: AppState): bool {.inline.} =
   ## Whether a project is open.
   state.project.dir.len > 0
+
+func shotLogCount*(state: AppState): int {.inline.} =
+  ## How many shot logs are loaded.
+  state.shotLogs.len
+
+func shotLogsRevision*(state: AppState): int {.inline.} =
+  ## Bumps when a shot log is added, removed, or its view changes.
+  state.shotLogsRev
+
+func shotView*(state: AppState; i: int): lent ShotView =
+  ## The typed rows of loaded shot log `i`, without copying them.
+  state.shotLogs[i].view
+
+func shotRevision*(state: AppState; i: int): int {.inline.} =
+  ## The revision of loaded shot log `i`.
+  state.shotLogs[i].revision
+
+func shotLogName*(state: AppState; i: int): string {.inline.} =
+  ## The short name of loaded shot log `i`.
+  state.shotLogs[i].name
+
+func shotLogStored*(state: AppState; i: int): string {.inline.} =
+  ## The copy's file name under `shotlogs/`, or "" when it is not stored.
+  state.shotLogs[i].stored
+
+func shotLogSource*(state: AppState; i: int): string {.inline.} =
+  ## The file loaded shot log `i` was read from.
+  state.shotLogs[i].source
+
+func shotLogMap*(state: AppState; i: int): ShotLogMap {.inline.} =
+  ## The map loaded shot log `i` was parsed with.
+  state.shotLogs[i].map
+
+proc shotCell*(state: AppState; i, row, col: int): string =
+  ## One cell of loaded shot log `i`, as a grid shows it.
+  if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: return ""
+  state.shotLogs[i].log.cell(row, col)
 
 func projectOpening*(state: AppState): string =
   ## The project folder being opened (or made); "" for none.
@@ -6330,9 +6417,255 @@ proc forgetFileMemory(state: var AppState) =
   state.remembered.setLen 0
   state.knownDocs.clear()
 
+const
+  ReadOnlyShotLog* = "The project is open read-only: the shot log is not saved."
+  ShotLogNotStored* = "The shot log is not stored: no project is open."
+  ShotLogEditsDropped* = "The column count changed: the edited cells were dropped."
+
+proc findShot(state: AppState; id: int): int =
+  result = -1
+  for i, s in state.shotLogs:
+    if s.id == id: return i
+
+proc dropShotLogs(state: var AppState) =
+  ## Cancels a shot log's jobs and drops the loaded logs. A close, or a
+  ## project opening, starts from none.
+  for w in state.shotWork:
+    if w.job != NoJob: discard state.jobs.cancel(w.job)
+  state.shotWork.setLen 0
+  state.shotLogs.setLen 0
+  inc state.shotLogsRev
+
+proc takenShotFiles(state: AppState): seq[string] =
+  for s in state.project.doc.shotLogs: result.add s.file
+  for w in state.shotWork:
+    if w.stored.len > 0: result.add w.stored
+  for s in state.shotLogs:
+    if s.stored.len > 0: result.add s.stored
+
+proc submitShotSave(state: var AppState; i: int) =
+  let loaded = state.shotLogs[i]
+  loaded.busy = true
+  let sink = ShotLogSink()
+  let path = state.project.dir.partOf(loaded.stored.shotLogCopy)
+  let job = state.jobs.submit(saveSpec(path),
+    saveShotLog(state.project.dir, loaded.stored, loaded.log, loaded.map, sink))
+  state.shotWork.add ShotLogWork(job: job, kind: sjSave, id: loaded.id, sink: sink,
+    name: loaded.name, source: loaded.source, stored: loaded.stored, map: loaded.map)
+
+proc submitShotRebuild(state: var AppState; i: int) =
+  let loaded = state.shotLogs[i]
+  loaded.busy = true
+  let sink = ShotLogSink()
+  let job = state.jobs.submit(remapSpec(loaded.source),
+    rebuildShotLog(loaded.log, loaded.map, sink))
+  state.shotWork.add ShotLogWork(job: job, kind: sjRebuild, id: loaded.id, sink: sink,
+    name: loaded.name, source: loaded.source, stored: loaded.stored, map: loaded.map)
+
+proc storeOrSay(state: var AppState; i: int) =
+  ## Copies a loaded log into the project, or says why it is not stored.
+  let loaded = state.shotLogs[i]
+  if not state.inProject:
+    state.log.add(sevInfo, "shot log", ShotLogNotStored)
+    return
+  if state.readOnlyProject:
+    state.log.add(sevWarning, "shot log", ReadOnlyShotLog)
+    return
+  let file = copyName(loaded.source.extractFilename, state.takenShotFiles)
+  if not file.isShotLogFile:
+    state.log.add(sevWarning, "shot log", file & " could not be saved.")
+    return
+  loaded.stored = file
+  state.submitShotSave(i)
+
+proc loadStoredShotLogs(state: var AppState) =
+  ## Reads each shot log the open project stores, on a job.
+  if not state.inProject: return
+  for s in state.project.doc.shotLogs:
+    let path = state.project.dir.partOf(s.file.shotLogCopy)
+    let sink = ShotLogSink()
+    let job = state.jobs.submit(loadSpec(path), loadShotLog(path, s.map, sink))
+    state.shotWork.add ShotLogWork(job: job, kind: sjLoad, id: -1, sink: sink,
+      name: s.name, source: path, stored: s.file, map: s.map)
+
+proc importShotLogCmd(state: var AppState; cmd: Command) =
+  if cmd.logPath.len == 0:
+    state.ignore(cmd, "no file was named")
+    return
+  let path = canonical(cmd.logPath)
+  var name = path.extractFilename.splitFile.name
+  if name.len == 0: name = path.extractFilename
+  if name.len > MaxShotLogName: name.setLen(MaxShotLogName)
+  let sink = ShotLogSink()
+  let job = state.jobs.submit(importSpec(path),
+    importShotLog(path, cmd.logMap, cmd.logMapped, sink))
+  state.shotWork.add ShotLogWork(job: job, kind: sjImport, id: -1, sink: sink,
+    name: name, source: path, map: cmd.logMap)
+
+proc removeShotLogCmd(state: var AppState; cmd: Command) =
+  if cmd.logIndex < 0 or cmd.logIndex >= state.shotLogs.len:
+    state.ignore(cmd, "no such shot log")
+    return
+  let loaded = state.shotLogs[cmd.logIndex]
+  let stored = loaded.stored
+  let id = loaded.id
+  var kept: seq[ShotLogWork] = @[]
+  for w in state.shotWork:
+    if w.id == id: discard state.jobs.cancel(w.job)
+    else: kept.add w
+  state.shotWork = kept
+  state.shotLogs.delete(cmd.logIndex)
+  inc state.shotLogsRev
+  if stored.len == 0 or not state.inProject: return
+  if state.readOnlyProject:
+    state.log.add(sevWarning, "shot log", ReadOnlyShotLog)
+    return
+  var left: seq[StoredShotLog] = @[]
+  for s in state.project.doc.shotLogs:
+    if s.file != stored: left.add s
+  state.project.doc.shotLogs = left
+  state.projectChanged()
+  discard fs.tryRemoveFile(state.project.dir.partOf(stored.shotLogCopy))
+
+proc remapShotLogCmd(state: var AppState; cmd: Command) =
+  if cmd.logIndex < 0 or cmd.logIndex >= state.shotLogs.len:
+    state.ignore(cmd, "no such shot log")
+    return
+  let loaded = state.shotLogs[cmd.logIndex]
+  if loaded.busy:
+    state.ignore(cmd, "the shot log is still being read")
+    return
+  loaded.busy = true
+  let sink = ShotLogSink()
+  let job = state.jobs.submit(remapSpec(loaded.source),
+    remapShotLog(loaded.text, loaded.log, cmd.logMap, sink))
+  state.shotWork.add ShotLogWork(job: job, kind: sjRemap, id: loaded.id, sink: sink,
+    name: loaded.name, source: loaded.source, stored: loaded.stored, map: cmd.logMap)
+
+proc editShotCellCmd(state: var AppState; cmd: Command) =
+  if cmd.logIndex < 0 or cmd.logIndex >= state.shotLogs.len:
+    state.ignore(cmd, "no such shot log")
+    return
+  let loaded = state.shotLogs[cmd.logIndex]
+  if loaded.busy:
+    state.ignore(cmd, "the shot log is still being read")
+    return
+  if loaded.log == nil:
+    state.ignore(cmd, "the shot log is not loaded")
+    return
+  loaded.log.setCell(cmd.logRow, cmd.logCol, cmd.logCell)
+  inc loaded.revision
+  inc state.shotLogsRev
+  if loaded.stored.len > 0 and state.inProject and state.readOnlyProject:
+    state.log.add(sevWarning, "shot log", ReadOnlyShotLog)
+    state.submitShotRebuild(cmd.logIndex)
+  elif loaded.stored.len > 0 and state.inProject:
+    state.submitShotSave(cmd.logIndex)
+  else:
+    state.submitShotRebuild(cmd.logIndex)
+
+proc tookShotImport(state: var AppState; w: ShotLogWork) =
+  let r = w.sink.result
+  let loaded = LoadedShotLog(id: state.nextShotId, name: w.name, source: w.source,
+    map: r.map, log: r.log, view: r.view, text: r.text, revision: 1)
+  inc state.nextShotId
+  state.shotLogs.add loaded
+  inc state.shotLogsRev
+  state.storeOrSay(state.shotLogs.high)
+
+proc tookShotLoad(state: var AppState; w: ShotLogWork) =
+  if not state.inProject: return
+  let r = w.sink.result
+  let loaded = LoadedShotLog(id: state.nextShotId, name: w.name, source: w.source,
+    stored: w.stored, map: r.map, log: r.log, view: r.view, text: r.text, revision: 1)
+  inc state.nextShotId
+  state.shotLogs.add loaded
+  inc state.shotLogsRev
+
+proc tookShotSave(state: var AppState; w: ShotLogWork) =
+  let i = state.findShot(w.id)
+  if i < 0:
+    if state.inProject and not state.readOnlyProject and w.stored.len > 0:
+      discard fs.tryRemoveFile(state.project.dir.partOf(w.stored.shotLogCopy))
+    return
+  let loaded = state.shotLogs[i]
+  loaded.busy = false
+  if w.sink.result.ok:
+    loaded.view = w.sink.result.view
+    inc loaded.revision
+    inc state.shotLogsRev
+  if not state.inProject or state.readOnlyProject: return
+  var found = false
+  for s in state.project.doc.shotLogs.mitems:
+    if s.file == w.stored:
+      s.map = w.map
+      s.name = w.name
+      found = true
+  if not found:
+    state.project.doc.shotLogs.add StoredShotLog(name: w.name, file: w.stored, map: w.map)
+  state.projectChanged()
+
+proc tookShotRemap(state: var AppState; w: ShotLogWork) =
+  let i = state.findShot(w.id)
+  if i < 0: return
+  let loaded = state.shotLogs[i]
+  loaded.busy = false
+  let r = w.sink.result
+  loaded.log = r.log
+  loaded.view = r.view
+  loaded.map = r.map
+  loaded.text = r.text
+  inc loaded.revision
+  inc state.shotLogsRev
+  if r.dropped: state.log.add(sevWarning, "shot log", ShotLogEditsDropped)
+  if loaded.stored.len == 0 or not state.inProject: return
+  if state.readOnlyProject:
+    state.log.add(sevWarning, "shot log", ReadOnlyShotLog)
+  else:
+    state.submitShotSave(i)
+
+proc tookShotRebuild(state: var AppState; w: ShotLogWork) =
+  let i = state.findShot(w.id)
+  if i < 0: return
+  let loaded = state.shotLogs[i]
+  loaded.busy = false
+  if w.sink.result.ok:
+    loaded.view = w.sink.result.view
+    inc loaded.revision
+    inc state.shotLogsRev
+
+proc takeShotLog(state: var AppState; job: JobInfo): bool =
+  ## A shot log's job ended. The sink is read only here, after the job ended.
+  ## A cancel leaves it unread. True when `job` was one.
+  var at = -1
+  for i, w in state.shotWork:
+    if w.job == job.id: at = i
+  if at < 0: return false
+  result = true
+  let w = state.shotWork[at]
+  state.shotWork.delete(at)
+  if job.state == jsCancelled:
+    let i = state.findShot(w.id)
+    if i >= 0: state.shotLogs[i].busy = false
+    return
+  if job.state != jsDone or w.sink == nil or not w.sink.result.ok:
+    let i = state.findShot(w.id)
+    if i >= 0: state.shotLogs[i].busy = false
+    let why = if w.sink != nil and w.sink.result.reason.len > 0: w.sink.result.reason
+              elif job.error.len > 0: job.error else: "The shot log could not be read."
+    state.log.add(sevError, "shot log", if why.endsWith('.'): why else: why & ".")
+    return
+  case w.kind
+  of sjImport: state.tookShotImport(w)
+  of sjLoad: state.tookShotLoad(w)
+  of sjSave: state.tookShotSave(w)
+  of sjRemap: state.tookShotRemap(w)
+  of sjRebuild: state.tookShotRebuild(w)
+
 proc clearSession(state: var AppState) =
   ## Every open file closed, the survey files taken off the map, an import
   ## under way cancelled: a project begins, or ends, with nothing of before.
+  state.dropShotLogs()
   if state.joining.job != NoJob: discard state.jobs.cancel(state.joining.job)
   if state.movesJob != NoJob: discard state.jobs.cancel(state.movesJob)
   state.moveQueue.setLen 0
@@ -6792,6 +7125,8 @@ proc takeOpened(state: var AppState; m: sink Msg) =
     for s in state.sessions:
       if state.surveyMatchable and state.joinedOf(s.id) < 0: p.queue.add s.id
     state.queueOpenMoves()
+  if news.created and not wasIn: state.dropShotLogs()
+  state.loadStoredShotLogs()
 
 proc takeKept(state: var AppState; m: sink Msg) =
   ## The survey copied into the project and `survey.bin` written.
@@ -7971,6 +8306,7 @@ proc onFinished(state: var AppState; job: JobInfo) =
   if job.id == state.movesJob:
     state.finishMoves(job)
     return
+  if state.takeShotLog(job): return
   if state.takeCorrelate(job): return
   if job.id == state.comparePicJob and job.state == jsFailed:
     state.comparePicJob = NoJob
@@ -10398,6 +10734,10 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckSubfolders: state.setSubfolders(cmd)
   of ckVibProfile: state.storeVibProfile(cmd.origin, cmd.vibProfile)
   of ckVibWeights: state.storeVibWeights(cmd.origin, cmd.vibWeights)
+  of ckImportShotLog: state.importShotLogCmd(cmd)
+  of ckRemoveShotLog: state.removeShotLogCmd(cmd)
+  of ckRemapShotLog: state.remapShotLogCmd(cmd)
+  of ckEditShotCell: state.editShotCellCmd(cmd)
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept

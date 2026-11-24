@@ -1,14 +1,20 @@
-## A shot log is read and written on a background job.
+## A shot log is read and written on a background job, and held on the
+## application state.
 ##
 ## The job refuses a file over 256 MiB without opening it, and a cancel
-## leaves the sink empty. A failed read is one sentence. The file it was
-## imported from is not modified.
+## leaves the sink empty. A failed read is one sentence. With no project a
+## log is kept for the session and not stored. With a project it is copied
+## under `shotlogs/`, and a close and open brings the log, its map and an
+## edited cell back. The file it was imported from is not modified. A
+## read-only project says so and does not write. A re-map keeps edits when
+## the column count is unchanged, and says they were dropped when it changes.
 ##
 ## Seen to fail: with the cap refusal shortened, `over_the_cap` rejected
-## "big.csv is too large."
+## "big.csv is too large."; with the read-only edit saving anyway,
+## `read_only_refuses_the_save` rejected a log that did not say the refusal.
 
 import std/[options, os, strutils]
-import viewSEG/core/[filesystem, jobs, project, shotlog, shotlogjobs]
+import viewSEG/core/[filesystem, jobs, project, shotlog, shotlogjobs, state]
 import utils/[faultyfs, waiting]
 
 const Sample = currentSourcePath().parentDir.parentDir / "samples" / "land" / "shotlog.csv"
@@ -27,6 +33,14 @@ proc runImport(path: string; map = ShotLogMap(); given = false):
   doAssert waitUntil(jobs.ended(id)), "the import did not finish: " & $jobs.stateOf(id)
   let info = jobs.info(id).get
   (info.state, result.sink, info.error)
+
+proc said(st: AppState; words: string): bool =
+  for e in st.log:
+    if words in e.text: return true
+
+proc start(config: string): AppState =
+  result = initAppState()
+  result.rememberFilesIn(config)
 
 proc sparse(path: string; bytes: int64) =
   var f: File
@@ -146,6 +160,150 @@ proc main*() =
     doAssert got.error == "bad.csv could not be read.", got.error
     doAssert got.sink.result.reason == got.error
     doAssert '\n' notin got.error and "stack" notin got.error.toLowerAscii
+
+  block no_project:
+    var st = start(root / "config")
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not kept for the session"
+    doAssert st.shotLogStored(0).len == 0
+    doAssert st.said(ShotLogNotStored)
+    doAssert st.shotView(0).rows.len == 200
+    doAssert st.shotView(0).rows[0].shotPoint == 1000.0
+    doAssert st.shotCell(0, 0, 1) == "5000"
+    doAssert readFile(Sample) == original
+    discard st.shutdown()
+
+  block project_reopen:
+    let job = root / "Job"
+    let config = root / "config2"
+    createDir(config)
+    var st = start(config)
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0), "the project did not open"
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0),
+      "the log was not stored"
+    doAssert st.shotLogStored(0) == "shotlog.csv", st.shotLogStored(0)
+    let map = st.shotLogMap(0)
+    st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 0, logCell: "EDITED")
+    doAssert st.settle(st.shotCell(0, 0, 0) == "EDITED" and st.jobs.active.len == 0),
+      "the edited cell was not saved"
+    st.flushFiles()
+    let copy = job.partOf("shotlog.csv".shotLogCopy)
+    doAssert "EDITED" in readFile(copy), "the copy does not hold the edit"
+    doAssert readFile(Sample) == original, "the original file was modified"
+    st.apply Command(kind: ckCloseProject)
+    doAssert st.settle(not st.inProject and st.jobs.active.len == 0)
+    doAssert st.shotLogCount == 0
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.shotLogCount == 1 and st.shotCell(0, 0, 0) ==
+        "EDITED" and
+      st.jobs.active.len == 0), "the log did not come back"
+    doAssert st.shotLogMap(0) == map, "the map did not come back"
+    doAssert st.shotView(0).rows[0].fileNumber.get == 5000
+    doAssert st.shotLogsRevision > 0 and st.shotRevision(0) > 0
+    discard st.shutdown()
+
+  block remove_drops_the_copy:
+    let job = root / "JobRemove"
+    var st = start(root / "config3")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0)
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    let copy = job.partOf(st.shotLogStored(0).shotLogCopy)
+    doAssert fileExists(copy)
+    st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
+    doAssert st.shotLogCount == 0
+    doAssert not fileExists(copy), "the copy was kept"
+    doAssert readFile(Sample) == original
+    st.flushFiles()
+    st.apply Command(kind: ckCloseProject)
+    doAssert st.settle(not st.inProject and st.jobs.active.len == 0)
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.shotLogCount == 0 and st.jobs.active.len == 0),
+      "a removed log came back"
+    discard st.shutdown()
+
+  block read_only_refuses_the_save:
+    let job = root / "JobRo"
+    let config = root / "config4"
+    createDir(config)
+    var holder = start(config)
+    holder.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert holder.settle(holder.inProject and holder.jobs.active.len == 0)
+    holder.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert holder.settle(holder.shotLogCount == 1 and holder.jobs.active.len == 0)
+    holder.flushFiles()
+    let copy = job.partOf("shotlog.csv".shotLogCopy)
+    let before = readFile(copy)
+    var other = start(root / "config5")
+    other.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert other.settle(other.inProject and other.project.readOnly and
+      other.shotLogCount == 1 and other.jobs.active.len == 0),
+      "the second program did not open read-only with the log"
+    other.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 1,
+      logCell: "EDITED")
+    doAssert other.shotCell(0, 0, 1) == "EDITED"
+    doAssert other.said(ReadOnlyShotLog), "the refusal is not said"
+    doAssert other.settle(other.jobs.active.len == 0)
+    doAssert readFile(copy) == before, "a read-only program wrote the copy"
+    let extra = root / "extra.csv"
+    writeFile(extra, "a,b\n1,2\n")
+    other.apply Command(kind: ckImportShotLog, logPath: extra)
+    doAssert other.settle(other.shotLogCount == 2 and other.jobs.active.len == 0)
+    doAssert other.shotLogStored(1).len == 0
+    doAssert other.said(ReadOnlyShotLog)
+    discard other.shutdown()
+    discard holder.shutdown()
+
+  block remap_keeps_edits:
+    var st = start(root / "config6")
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 0, logCell: "9")
+    doAssert st.settle(st.shotCell(0, 0, 0) == "9" and st.jobs.active.len == 0)
+    var same = st.shotLogMap(0)
+    same.roles[0] = crText
+    st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: same)
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotLogMap(0).roles[0] == crText),
+      "the re-map did not finish"
+    doAssert st.shotCell(0, 0, 0) == "9", "edits were dropped though the width was unchanged"
+    discard st.shutdown()
+
+  block remap_drops_edits:
+    var st = start(root / "config6b")
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: 0, logCell: "9")
+    doAssert st.settle(st.shotCell(0, 0, 0) == "9" and st.jobs.active.len == 0)
+    var narrow = initShotLogMap()
+    narrow.delimiter = dlTab
+    narrow.hasHeader = true
+    st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: narrow)
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotLogMap(0).delimiter == dlTab),
+      "the re-map did not finish"
+    doAssert st.said(ShotLogEditsDropped), "the drop was not said"
+    doAssert st.shotCell(0, 0, 0) != "9"
+    discard st.shutdown()
+
+  block old_project_has_no_log:
+    let job = root / "JobOld"
+    var st = start(root / "config7")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and fileExists(job.projectDirOf.documentOf) and
+      st.jobs.active.len == 0)
+    doAssert st.shotLogCount == 0
+    st.flushFiles()
+    doAssert "shotLogs" notin readFile(job.projectDirOf.documentOf)
+    st.apply Command(kind: ckCloseProject)
+    doAssert st.settle(not st.inProject and st.jobs.active.len == 0)
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.shotLogCount == 0 and st.jobs.active.len == 0),
+      "an old project loaded a shot log"
+    doAssert not st.said("could not be read")
+    discard st.shutdown()
 
   removeDir(root)
   echo "tshotlogjobs: ok"
