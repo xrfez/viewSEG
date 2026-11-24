@@ -51,6 +51,8 @@ type
   KindState* = enum
     ksUnread ## not read yet (a job reads it after the listing)
     ksNone   ## read: not a file with a kind (no live trace, or it cannot be read)
+    ksNotKnown
+      ## read: a seismic file too large for its start to tell the kind; opening it does
     ksKnown  ## read: `FileEntry.recording` is its kind
 
   KindAnswer* = object
@@ -58,7 +60,8 @@ type
     path*: string
     size*: int64
     modified*: Time
-    kind*: Option[RecordingKind]
+    state*: KindState    ## `ksNone`, `ksNotKnown` or `ksKnown`
+    kind*: RecordingKind ## when `state` is `ksKnown`
 
   FileEntry* = object
     ## One file of the list: a seismic file, or a survey file.
@@ -76,7 +79,7 @@ type
       ## a signature file's facts from its header, never a decoded sample (`kind` is `fkDat` or
       ## `fkVib`); empty for every other file
     kindState*: KindState
-    recording*: RecordingKind ## the kind read from the first traces, when `kindState` is `ksKnown`
+    recording*: RecordingKind ## the kind read from the file, when `kindState` is `ksKnown`
     steadySince*: MonoTime
       ## when the watch first saw the file as it is now (`fs.now`): a stopped `.dat` is followed
       ## once it has stayed so for `StoppedShowAfter`; unset for a file not being watched

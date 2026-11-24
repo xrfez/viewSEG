@@ -1,7 +1,8 @@
 ## The kind of recording of each listed file, read in the background (`startKinds`): a folder
 ## listed gets each file's kind (`FileEntry.recording`) without anything being opened; a file the
 ## watch reports as changed is read again; an answer for a file that changed since it was read,
-## or for a listing replaced since, is not kept.
+## or for a listing replaced since, is not kept; a file whose kind is not known takes it once it
+## is shown.
 ##
 ## Seen to fail with a deliberate fault: with the entry marked unread by the watch taken out
 ## (`if not same: e.kindState = ksUnread`), "a changed file is not asked again"; with the size
@@ -58,7 +59,8 @@ proc main*() =
       let i = st.fileList.find(canonical(shot))
       st.mailbox.post Msg(kind: mkKinds, kindsGen: st.fileList.gen, kinds: @[KindAnswer(
         path: canonical(shot), size: st.fileList.entries[i].size + 1,
-        modified: st.fileList.entries[i].modified, kind: some(rkReceiverContinuous))])
+        modified: st.fileList.entries[i].modified, state: ksKnown,
+        kind: rkReceiverContinuous)])
       discard st.drainInbox()
       doAssert st.kindOf(shot) == some(rkShotGather), "an answer for a changed file was kept"
 
@@ -66,9 +68,24 @@ proc main*() =
       let i = st.fileList.find(canonical(shot))
       st.mailbox.post Msg(kind: mkKinds, kindsGen: st.fileList.gen + 7, kinds: @[KindAnswer(
         path: canonical(shot), size: st.fileList.entries[i].size,
-        modified: st.fileList.entries[i].modified, kind: some(rkReceiverContinuous))])
+        modified: st.fileList.entries[i].modified, state: ksKnown,
+        kind: rkReceiverContinuous)])
       discard st.drainInbox()
       doAssert st.kindOf(shot) == some(rkShotGather), "an answer for another listing was kept"
+
+    block aFileNotKnownTakesItsKindWhenItIsShown:
+      # a file whose start did not tell its kind (posted so: the probe's cap is 16 MiB): once the
+      # file is open and shown, its row takes the kind of the facts of the whole file
+      let i = st.fileList.find(canonical(sliced))
+      st.mailbox.post Msg(kind: mkKinds, kindsGen: st.fileList.gen, kinds: @[KindAnswer(
+        path: canonical(sliced), size: st.fileList.entries[i].size,
+        modified: st.fileList.entries[i].modified, state: ksNotKnown)])
+      discard st.drainInbox()
+      doAssert st.fileList.entries[i].kindState == ksNotKnown and st.kindOf(sliced).isNone
+      st.apply Command(kind: ckOpen, paths: @[sliced])
+      doAssert st.settle((st.watchRecording(false); st.kindOf(sliced).isSome)),
+        "the file shown did not give its row the kind"
+      doAssert st.kindOf(sliced) == some(rkReceiverSliced)
 
     block aNewListingStopsTheReading:
       let other = fx.dir / "other"

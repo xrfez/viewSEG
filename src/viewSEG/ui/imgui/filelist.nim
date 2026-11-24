@@ -331,7 +331,7 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
         if not igIsItemVisible(): igSetScrollHereY(0.5)
         ui.follow = false
       tip(e.path & "\n" & sizeText(e.size) & ", modified " & dateText(e.modified) &
-        (if kindText(e).len > 0: "\n" & kindText(e) else: "") & markText(e) &
+        (if kindTip(e).len > 0: "\n" & kindTip(e) else: "") & markText(e) &
         (if survey: surveyText(e, st) else: openedText(e, st)) &
         (if failed: "\nIt could not be " & (if survey: "loaded" else: "opened") &
           ": Messages says why." else: ""))

@@ -9,6 +9,16 @@ func kindWords*(k: RecordingKind): string =
   of rkReceiverContinuous: "continuous receiver gather"
   of rkReceiverSliced: "time-sliced receiver gather"
 
+const NotKnownWords* = "Open the file to see its kind."
+  ## what the Files panel says of a file too large for its start to tell the kind
+
+func kindShort*(k: RecordingKind): string =
+  ## `kindWords` in a word or two, for a table cell: "Shot".
+  case k
+  of rkShotGather: "Shot"
+  of rkReceiverContinuous: "Continuous"
+  of rkReceiverSliced: "Time-sliced"
+
 func kindTitle*(k: RecordingKind): string =
   ## `kindWords` as a title, for a table cell: "Shot gather".
   case k

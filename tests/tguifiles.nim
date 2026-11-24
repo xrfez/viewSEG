@@ -262,7 +262,7 @@ proc main*() =
         discard writeSpecs(result, "b sliced", [spec(0, 0), spec(0, 1000), spec(0, 2150),
           spec(0, 3150)])
         discard writeSpecs(result, "c shot", [spec(0, 0), spec(1, 0), spec(2, 0)])
-      const words = ["Continuous receiver gather", "Time-sliced receiver gather", "Shot gather"]
+      const words = ["Continuous", "Time-sliced", "Shot"]
       proc kinds(f: FrameInfo): seq[string] =
         for e in f.core.fileList.entries: result.add kindText(e)
       proc unread(f: FrameInfo): int =

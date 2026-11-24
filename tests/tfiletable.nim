@@ -198,8 +198,9 @@ proc main*() =
     doAssert list.find("/data/a0.sgy") == 1 and list.find("/data/none.sgy") == -1
 
   block kindColumn:
-    # the Kind cell says the kind read from the first traces; empty while unread and for a file
-    # with none; sorted by the words shown, the empty first; a kind that arrives moves its row
+    # the Kind cell says the kind read from the file in a word; "?" for a file not known until
+    # it is opened; empty while unread and for a file with none; sorted by the words shown,
+    # the empty first; a kind that arrives moves its row
     var list = FileList(gen: 1, revision: 1)
     var shot = entry("a.sgd", fkSegd, 1)
     shot.kindState = ksKnown
@@ -212,22 +213,29 @@ proc main*() =
     cont.recording = rkReceiverContinuous
     var none = entry("d.sgd", fkSegd, 1)
     none.kindState = ksNone
-    list.merge([shot, sliced, cont, none, entry("e.sgd", fkSegd, 1)])
-    doAssert kindText(list.entries[0]) == "Shot gather"
-    doAssert kindText(list.entries[1]) == "Time-sliced receiver gather"
-    doAssert kindText(list.entries[2]) == "Continuous receiver gather"
+    var far = entry("f.sgd", fkSegd, 1)
+    far.kindState = ksNotKnown
+    list.merge([shot, sliced, cont, none, entry("e.sgd", fkSegd, 1), far])
+    doAssert kindText(list.entries[0]) == "Shot" and kindTip(list.entries[0]) == "Shot gather"
+    doAssert kindText(list.entries[1]) == "Time-sliced" and
+      kindTip(list.entries[1]) == "Time-sliced receiver gather"
+    doAssert kindText(list.entries[2]) == "Continuous" and
+      kindTip(list.entries[2]) == "Continuous receiver gather"
     doAssert kindText(list.entries[3]) == "" and kindText(list.entries[4]) == ""
+    doAssert kindTip(list.entries[3]) == "" and kindTip(list.entries[4]) == ""
+    doAssert kindText(list.entries[5]) == "?" and
+      kindTip(list.entries[5]) == "Open the file to see its kind."
     var t: FileTable
     t.update(list, "", FileOrder(column: fcKind))
-    doAssert t.names(list) == @["d.sgd", "e.sgd", "c.sgd", "a.sgd", "b.sgd"], $t.names(list)
+    doAssert t.names(list) == @["d.sgd", "e.sgd", "f.sgd", "c.sgd", "a.sgd", "b.sgd"], $t.names(list)
     t.update(list, "", FileOrder(column: fcKind, descending: true))
-    doAssert t.names(list) == @["b.sgd", "a.sgd", "c.sgd", "e.sgd", "d.sgd"], $t.names(list)
+    doAssert t.names(list) == @["b.sgd", "a.sgd", "c.sgd", "f.sgd", "e.sgd", "d.sgd"], $t.names(list)
     t.update(list, "", FileOrder(column: fcKind))
     list.entries[4].kindState = ksKnown # e.sgd is read: a shot gather
     list.entries[4].recording = rkShotGather
     list.changedAt(4)
     t.update(list, "", FileOrder(column: fcKind))
-    doAssert t.names(list) == @["d.sgd", "c.sgd", "a.sgd", "e.sgd", "b.sgd"], $t.names(list)
+    doAssert t.names(list) == @["d.sgd", "f.sgd", "c.sgd", "a.sgd", "e.sgd", "b.sgd"], $t.names(list)
 
 when isMainModule:
   main()

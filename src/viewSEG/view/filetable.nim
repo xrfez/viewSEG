@@ -30,9 +30,9 @@ type
     fcForce = "Force avg %"
     fcThd = "THD max %"
     fcLimits = "Limits"
-    fcKind = "Kind"             ## shot, continuous or time-sliced receiver gather; shown after Type (last
-                                ## here so that the numbers of the columns before it, which a saved table
-                                ## layout names them by, stay)
+    fcKind = "Kind"
+      ## shot, continuous or time-sliced receiver gather; shown after Type (ImGui matches a
+      ## saved column by the hash of its label, not by its number: the place here is free)
 
   SweepFilter* = object
     ## What the Files window's tick and drop-downs ask of the signature files.
@@ -91,14 +91,15 @@ const kindRank = block:
   rank
 
 func kindRankOf(e: FileEntry): int =
-  ## Each kind's place when the kinds are sorted by the words shown; a file with none first.
+  ## Each kind's place when the kinds are sorted by the words shown: a file with none first,
+  ## then those not known ("?").
   let k = e.recordingOf
-  if k.isNone: 0
+  if k.isNone: (if e.kindState == ksNotKnown: 1 else: 0)
   else:
     case k.get
-    of rkReceiverContinuous: 1
-    of rkShotGather: 2
-    of rkReceiverSliced: 3
+    of rkReceiverContinuous: 2
+    of rkShotGather: 3
+    of rkReceiverSliced: 4
 
 func cmpEntries(a, b: FileEntry; column: FileColumn): int =
   ## By `column` alone: 0 when equal there.
@@ -448,7 +449,17 @@ proc shortDateText*(t, now: Time): string =
 func typeText*(e: FileEntry): string = $e.kind
 
 func kindText*(e: FileEntry): string =
-  ## What the Kind column shows: the kind read from the file's first traces ("Shot gather"); ""
-  ## while it is not read and for a file with none. The one place a row's kind is asked.
+  ## What the Kind column shows: the kind read from the file ("Shot"); "?" for a file whose kind
+  ## is not known until it is opened; "" while it is not read and for a file with none.
   let k = e.recordingOf
-  if k.isSome: kindTitle(k.get) else: ""
+  if k.isSome: kindShort(k.get)
+  elif e.kindState == ksNotKnown: "?"
+  else: ""
+
+func kindTip*(e: FileEntry): string =
+  ## What the tooltip of a row says of its kind: the full words ("Shot gather"), or why it is
+  ## not known; "" while it is not read and for a file with none.
+  let k = e.recordingOf
+  if k.isSome: kindTitle(k.get)
+  elif e.kindState == ksNotKnown: NotKnownWords
+  else: ""

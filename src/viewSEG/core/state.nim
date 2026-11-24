@@ -1171,6 +1171,7 @@ type
     recJob: JobId = NoJob
       ## the job that describes the shown file as a recording for the cut dialog
     recSink: RecordingSink
+    recPath: string ## the file `recJob` reads (its row of the file list takes the kind)
     recKey: tuple[session, revision, vendors: int]
       ## the file, its keys revision and the vendor maps' load `recFacts` (or the job) is for
     recFacts: RecordingFacts
@@ -9133,6 +9134,14 @@ proc onFinished(state: var AppState; job: JobInfo) =
                      else: "The recording could not be read."
     state.recHave = true
     state.recSink = nil
+    if state.recFacts.ready:
+      # the file shown has its whole facts: its row of Files takes the kind they give
+      let i = state.files.find(state.recPath)
+      if i >= 0 and (state.files.entries[i].kindState != ksKnown or
+          state.files.entries[i].recording != state.recFacts.kind):
+        state.files.entries[i].kindState = ksKnown
+        state.files.entries[i].recording = state.recFacts.kind
+        state.files.changedAt(i)
     return
   if job.id == state.leapJob:
     state.finishLeap(job)
@@ -9495,8 +9504,8 @@ proc takeKinds(state: var AppState; m: sink Msg) =
     let i = f.find(a.path)
     if i >= 0 and f.entries[i].size == a.size and f.entries[i].modified == a.modified:
       template e: untyped = f.entries[i]
-      e.kindState = if a.kind.isSome: ksKnown else: ksNone
-      if a.kind.isSome: e.recording = a.kind.get
+      e.kindState = a.state
+      if a.state == ksKnown: e.recording = a.kind
       f.changedAt(i)
 
 proc takeListed(state: var AppState; m: sink Msg) =
@@ -11166,12 +11175,16 @@ proc exportShotSpsCmd(state: var AppState; cmd: Command) =
 
 proc watchRecording*(state: var AppState; wanted: bool) =
   ## Keeps a job reading the shown file as a recording (`describeRecording`)
-  ## while `wanted` (the cut dialog is open): started once its keys are read
+  ## while `wanted` (the cut dialog is open) or while the Files panel does not know the
+  ## file's kind (it was too large for its start to tell, `ksNotKnown`; the facts give the
+  ## row its kind): started once its keys are read
   ## and again when the shown file or its keys change, cancelled when no longer
   ## wanted or the file changes. Call it every frame; it does nothing when
   ## nothing changed.
   let shown = state.shownFile(state.findPanel(MainPanel))
-  let usable = wanted and shown >= 0 and not state.sessions[shown].derived and
+  let row = if shown >= 0: state.files.find(state.sessions[shown].path) else: -1
+  let rowAsks = row >= 0 and state.files.entries[row].kindState == ksNotKnown
+  let usable = (wanted or rowAsks) and shown >= 0 and not state.sessions[shown].derived and
     not state.sessions[shown].isSignature and state.sessions[shown].filePtr[].hasKeys
   let key = if usable: (int(state.sessions[shown].id), state.sessions[shown].keysRevision,
                 state.vendor.gen)
@@ -11187,6 +11200,7 @@ proc watchRecording*(state: var AppState; wanted: bool) =
     let s = state.sessions[shown]
     let dtMs = seismicDtMs(s.filePtr)
     state.recKey = key
+    state.recPath = s.path
     state.recHave = false
     if dtMs.isNaN or dtMs <= 0:
       # the answer for this key: not asked again, so no trace is walked every frame

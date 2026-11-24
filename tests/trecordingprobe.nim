@@ -1,6 +1,7 @@
-## The cheap kind of a file on disk (`kindOfFile`): it reads the start of the file and
-## gives the answer of `describeRecording` for every file small enough to be read whole,
-## and none for what is not seismic, cannot be read or has no live trace.
+## The kind of a file on disk (`kindOfFile`): a file up to `ProbeWholeBytes` is opened whole
+## (headers only) and gets the answer of `describeRecording`; a larger one is read by its start
+## and has an answer only when every receiver seen has its starts, else it is not known; none
+## for what is not seismic, cannot be read or has no live trace.
 ##
 ## Seen to fail with a deliberate fault: the probe's answer made always a shot gather
 ## ("abut: some(rkShotGather)"); the stop test made the total of segments (8 per receiver
@@ -20,9 +21,11 @@ proc whole(path: string; reg: VendorRegistry): RecordingFacts =
 
 proc same(dir, name: string; specs: openArray[Spec]; want: RecordingKind) =
   let path = writeSpecs(dir, name, specs)
-  let got = kindOfFile(path, VendorRegistry())
-  doAssert got.isSome and got.get == want, name & ": " & $got
-  doAssert got.get == whole(path, VendorRegistry()).kind, name & " differs from the whole"
+  for wholeBytes in [ProbeWholeBytes, 0'i64]:
+    # opened whole, and read by its start only (a file this small is then read to its end)
+    let got = kindOfFile(path, VendorRegistry(), wholeBytes = wholeBytes)
+    doAssert got.outcome == poKnown and got.kind == want, name & ": " & $got
+    doAssert got.kind == whole(path, VendorRegistry()).kind, name & " differs from the whole"
 
 proc main*() =
   let dir = getTempDir() / "trecordingprobe"
@@ -60,42 +63,61 @@ proc main*() =
     let path = dir / "clock.sgd"
     writeClockRecording(path, raw)
     let got = kindOfFile(path, reg)
-    doAssert got == some(rkReceiverContinuous), $got
-    doAssert got.get == whole(path, reg).kind
+    doAssert got == KindProbe(outcome: poKnown, kind: rkReceiverContinuous), $got
+    doAssert got.kind == whole(path, reg).kind
     # without the map the six traces are six receivers of one station that start together
     let bare = kindOfFile(path, VendorRegistry())
-    doAssert bare == some(whole(path, VendorRegistry()).kind) and bare != got, $bare
+    doAssert bare.outcome == poKnown and bare.kind == whole(path, VendorRegistry()).kind and
+      bare != got, $bare
 
   block not_seismic_unreadable_or_empty:
     createDir(dir)
     let text = dir / "notes.txt"
     writeFile(text, "this is not a seismic file\n")
-    doAssert kindOfFile(text, VendorRegistry()).isNone
-    doAssert kindOfFile(dir / "missing.sgy", VendorRegistry()).isNone
+    doAssert kindOfFile(text, VendorRegistry()).outcome == poNone
+    doAssert kindOfFile(dir / "missing.sgy", VendorRegistry()).outcome == poNone
     let empty = dir / "empty.sgy"
     writeFile(empty, "")
-    doAssert kindOfFile(empty, VendorRegistry()).isNone
+    doAssert kindOfFile(empty, VendorRegistry()).outcome == poNone
     let junk = dir / "junk.bin"
     writeFile(junk, newString(3 * 1024 * 1024))
-    doAssert kindOfFile(junk, VendorRegistry()).isNone
+    doAssert kindOfFile(junk, VendorRegistry()).outcome == poNone
 
   block a_file_cut_short_is_still_told:
     let path = writeSpecs(dir, "cut", [spec(0, 0), spec(0, 1000), spec(0, 2000)])
     let size = getFileSize(path)
     let cut = dir / "cutshort.sgd"
     writeFile(cut, readFile(path)[0 ..< size.int - 1500])
-    doAssert kindOfFile(cut, VendorRegistry()).isSome
+    doAssert kindOfFile(cut, VendorRegistry()).outcome != poNone
 
-  block a_large_file_is_decided_from_its_first_traces:
-    # 20000 traces of 1000 samples, ~85 MB: well past the bytes the probe may read
+  block a_large_file_is_opened_whole_or_decided_from_its_first_traces:
+    # 20000 traces of 1000 samples, ~85 MB: past the bytes the prefix probe may read
     var specs: seq[Spec] = @[]
     for i in 0 ..< 20000: specs.add spec(0, i * 1000)
     let path = writeSpecs(dir, "large", specs)
     doAssert getFileSize(path) > 4 * ProbeMaxBytes
     let t0 = cpuTime()
-    let got = kindOfFile(path, VendorRegistry())
+    let whole = kindOfFile(path, VendorRegistry())
     echo "kindOfFile of ", getFileSize(path) div (1024 * 1024), " MB: ", cpuTime() - t0, " s"
-    doAssert got == some(rkReceiverContinuous), $got
+    doAssert whole == KindProbe(outcome: poKnown, kind: rkReceiverContinuous), $whole
+    # one receiver with its eight starts in the first prefix: the start alone is enough
+    let prefix = kindOfFile(path, VendorRegistry(), wholeBytes = 0)
+    doAssert prefix == whole, $prefix
+    removeFile(path)
+
+  block a_start_that_does_not_tell_the_kind_is_not_known:
+    # one shot of 5000 receivers (~20 MB): every receiver has one start in the first 16 MiB,
+    # so the start cannot tell a shot gather from the first record of many; opened whole it is
+    # a shot gather
+    var specs: seq[Spec] = @[]
+    for r in 0 ..< 5000: specs.add spec(r, 0)
+    let path = writeSpecs(dir, "onebig", specs)
+    doAssert getFileSize(path) > ProbeMaxBytes
+    let start = kindOfFile(path, VendorRegistry(), wholeBytes = 0)
+    doAssert start.outcome == poNotKnown, $start
+    let whole = kindOfFile(path, VendorRegistry())
+    doAssert whole == KindProbe(outcome: poKnown, kind: rkShotGather), $whole
+    removeFile(path)
 
   removeDir(dir)
 

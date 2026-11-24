@@ -451,7 +451,7 @@ const KindBatch = 16 ## a kinds job posts at least this often (files)
 proc kindsWork*(gen: uint64; asks: seq[WatchedFile]; vendors: VendorRegistry;
     to: Poster): JobWork =
   ## The work of a job that reads the kind of recording of each file of `asks` (path, size and
-  ## time as listed) from its first traces (`kindOfFile`), a file at a time, and posts the
+  ## time as listed) from the file (`kindOfFile`), a file at a time, and posts the
   ## answers as `mkKinds` messages for listing `gen`. A file that cannot be read has no kind;
   ## stops at a cancel (between files, and inside a file between its steps).
   result = proc (ctx: JobContext) {.gcsafe.} =
@@ -460,10 +460,15 @@ proc kindsWork*(gen: uint64; asks: seq[WatchedFile]; vendors: VendorRegistry;
     var last = getMonoTime()
     for i, a in asks:
       if not ctx.progress(i, asks.len): raise newException(JobCancelledError, "cancelled")
-      var kind: Option[RecordingKind]
+      var probe: KindProbe
       {.cast(gcsafe).}:
-        kind = kindOfFile(a.path, vendors, proc () {.gcsafe.} = ctx.checkCancelled())
-      batch.kinds.add KindAnswer(path: a.path, size: a.size, modified: a.modified, kind: kind)
+        probe = kindOfFile(a.path, vendors, proc () {.gcsafe.} = ctx.checkCancelled())
+      let state = case probe.outcome
+        of poNone: ksNone
+        of poNotKnown: ksNotKnown
+        of poKnown: ksKnown
+      batch.kinds.add KindAnswer(path: a.path, size: a.size, modified: a.modified, state: state,
+        kind: probe.kind)
       if batch.kinds.len >= KindBatch or getMonoTime() - last >= ListPause:
         to.post move batch
         batch = Msg(job: ctx.id, kind: mkKinds, kindsGen: gen)
