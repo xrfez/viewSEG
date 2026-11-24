@@ -127,7 +127,7 @@ type
     outputReady*: bool ## File > Output... can run
     outputWhy*: string ## why it cannot; "" when it can
     shotLogFocused*: bool
-      ## the Shot log window had the focus: Ctrl+Z and Ctrl+Y undo its cell edits
+      ## the Shot log window takes Ctrl+Z and Ctrl+Y for its cell edits
 
   MenuResult* = object
     actions*: set[MenuAction]

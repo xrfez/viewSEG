@@ -54,8 +54,8 @@ Mouse gestures are listed after the keys of each group.
 
 | Keys | What it does |
 |---|---|
-| Ctrl+Z | Undo the last edit of the file shown. In the Shot log window, undo the last cell edit |
-| Ctrl+Shift+Z, Ctrl+Y | Redo the edit undone last. In the Shot log window, redo a cell edit |
+| Ctrl+Z | Undo the last edit of the file shown. In the Shot log window, while Allow editing is ticked, undo the last cell edit |
+| Ctrl+Shift+Z, Ctrl+Y | Redo the edit undone last. In the Shot log window, while Allow editing is ticked, redo a cell edit |
 | Ctrl+A | Select every trace the Seismic window shows |
 | R | Reverse the polarity of the trace under the pointer, or put it back |
 | K | Kill the trace under the pointer, or restore it |

@@ -1,12 +1,18 @@
 ## The Shot log window in the running frontend, headless: Project > Import shot
 ## log... reads the sample; the top line, row 0's time, a cell and a role line
-## match; a cell can be edited, escaped, and undone; Columns changes a role and
+## match; Allow editing starts off, so a double-click opens no box and Ctrl+Z
+## does not undo a planted cell edit; ticked, a cell can be edited, escaped, and
+## undone; Columns changes a role and
 ## flags a duplicated X; a filter and
-## Problems only narrow the rows; removing the log leaves the window up.
+## Problems only narrow the rows; another log clears the tick; removing the log
+## leaves the window up.
 ## A generated log of 100 000 rows is then scrolled, and those frames stay
 ## under the budget the other GUI tests use.
 ##
 ## Seen to fail: with the row 0 time left unmarked, "row 0 time was @[]".
+## With editing left on (no tick), "a double-click opened a box while editing
+## was off". With Ctrl+Z still taken while the tick was off, "Ctrl+Z undid a
+## shot edit while editing was off".
 ##
 ## Needs a display: run under
 ## `env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1920x1080x24"`.
@@ -84,6 +90,7 @@ proc main*() =
     let gridShot = root / ".scratch" / "shotlog-grid.png"
     let columnsShot = root / ".scratch" / "shotlog-columns.png"
     let editShot = root / ".scratch" / "shotlog-edit.png"
+    let allowShot = root / ".scratch" / "shotlog-allow.png"
     createDir(gridShot.parentDir)
 
     block sampleLog:
@@ -140,6 +147,43 @@ proc main*() =
       var pointAt = vec2(0, 0)
       var fileCol = -1
       var fileAt = vec2(0, 0)
+      var planted = 0.0
+      step("double-click edits nothing", proc (f: FrameInfo) =
+        pointAt = f.markOf("shotlog.cell 0 " & $pointCol & " 1000").centre
+        f.moveMouse(pointAt),
+        proc (f: FrameInfo): bool =
+          f.doubleClick(pointAt, wait)
+          if f.markOf("shotlog.editbox").size.x > 0:
+            doAssert false, "a double-click opened a box while editing was off"
+          if wait < 12: return false
+          f.markOf("shotlog.allowbox").size.x > 0 and
+            f.markNames("shotlog.allowon").len == 0 and
+            f.markOf("shotlog.undo").size.x == 0 and
+            ("shotlog.cell 0 " & $pointCol & " 1000") in f.markNames("shotlog.cell 0 "))
+      step("plant a cell edit", proc (f: FrameInfo) =
+        planted = f.core.shotView(0).rows[1].shotPoint
+        let cmd = Command(kind: ckEditShotCell, logIndex: 0, logRow: 1,
+          logCol: pointCol, logCell: "7777")
+        f.apply(cmd),
+        proc (f: FrameInfo): bool =
+          f.core.shotView(0).rows[1].shotPoint == 7777.0)
+      step("Ctrl+Z leaves the edit", proc (f: FrameInfo) =
+        f.pressKey(skCtrl, true, {smCtrl})
+        f.pressKey(skZ, true, {smCtrl}),
+        proc (f: FrameInfo): bool =
+          if wait == 4:
+            f.pressKey(skZ, false, {smCtrl})
+            f.pressKey(skCtrl, false)
+          if f.core.shotView(0).rows[1].shotPoint != 7777.0:
+            doAssert false, "Ctrl+Z undid a shot edit while editing was off"
+          if wait < 10: return false
+          result = f.core.shotView(0).rows[1].shotPoint == 7777.0 and planted != 7777.0)
+      step("Allow editing", proc (f: FrameInfo) =
+        f.click(f.markOf("shotlog.allowbox").centre),
+        proc (f: FrameInfo): bool =
+          if f.markNames("shotlog.allowon").len == 0 and wait mod 8 == 0:
+            f.click(f.markOf("shotlog.allowbox").centre)
+          f.markNames("shotlog.allowon").len > 0 and f.markOf("shotlog.undo").size.x > 0)
       step("edit a cell", proc (f: FrameInfo) =
         pointAt = f.markOf("shotlog.cell 0 " & $pointCol & " 1000").centre
         f.moveMouse(pointAt),
@@ -172,8 +216,10 @@ proc main*() =
           if fileCol < 0: return false
           f.doubleClick(fileAt, wait)
           if f.markOf("shotlog.editbox").size.x > 0 and
-              f.markNames("shotlog.edited 0 " & $pointCol).len > 0:
+              f.markNames("shotlog.edited 0 " & $pointCol).len > 0 and
+              f.markNames("shotlog.allowon").len > 0:
             doAssert f.savePng(editShot), "the edit screenshot was not written"
+            doAssert f.savePng(allowShot), "the allow-editing screenshot was not written"
             return true
           false)
       var escaped = false
@@ -261,7 +307,8 @@ proc main*() =
         proc (f: FrameInfo): bool =
           let line = f.summaryLine
           "bad-shotlog.csv" in line and "2 rows" in line and not line.endsWith("0 problems") and
-            line.endsWith("session only")
+            line.endsWith("session only") and f.markNames("shotlog.allowon").len == 0 and
+            f.markOf("shotlog.allowbox").size.x > 0
         , 2000)
       step("Problems only", proc (f: FrameInfo) =
         f.click(f.markOf("shotlog.problemsbox").centre),

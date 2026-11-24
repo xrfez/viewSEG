@@ -15,6 +15,9 @@ const
   CancelButton* = "Cancel"
   GuessButton* = "Guess again"
   ProblemsOnly* = "Problems only"
+  AllowEditing* = "Allow editing"
+  AllowEditingTip* = "Change cells here. A log corrected outside the program is better " &
+    "imported again."
   FilterHint* = "Filter"
   GridTab* = "Grid"
   ProblemsTab* = "Problems"

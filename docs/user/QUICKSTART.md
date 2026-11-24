@@ -1138,8 +1138,12 @@ The grid has one row per shot. The first column is the time in UTC, to the micro
 worked out from the time columns. A narrow column marks a row that has a problem; the
 tooltip says what is wrong. The other columns are the table's own, with the header name
 and, under it, what the column means. A click selects a row. Ctrl+C copies the row. A
-right-click copies one cell. A double-click on a cell, or F2 on the selected cell, turns
-that one cell into a text box. Enter keeps the text. Escape leaves the cell as it was.
+right-click copies one cell. **Allow editing**, beside **Problems only**, starts unticked
+and is unticked again when another log is loaded or the log is removed: until it is ticked,
+a double-click or F2 opens no text box, the undo and redo buttons are not shown, revert is
+not offered, and Ctrl+Z still undoes an edit of the file the Seismic window shows. A
+double-click on a cell, or F2 on the selected cell, turns that one cell into a text box.
+Enter keeps the text. Escape leaves the cell as it was.
 Tab keeps the text and moves to the next cell. The time column and the status column are
 not edited. A cell whose text is not the file's is marked, and the tooltip shows the
 file's own text. A right-click on a marked cell can revert it to the file's value. Two
