@@ -39,14 +39,14 @@ next part's.
 
 Capabilities are the rows below, each counted by the first part of its status ("in part": built, with a part still planned or to plan). Names are the names each library exports, enum values not counted, each at the most advanced status of the rows that name it.
 
-| Status | parseSEG 0.21.0: capabilities | names | processSEG 0.13.0: capabilities | names |
+| Status | parseSEG 0.21.0: capabilities | names | processSEG 0.14.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 55 (21 in part) | 187 | 45 (28 in part) | 249 |
 | `internal` | 20 | 61 | 7 | 44 |
-| `planned` | 35 | 239 | 41 | 385 |
+| `planned` | 35 | 239 | 44 | 408 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 22 | 356 | 7 | 71 |
-| all | 134 | 852 | 101 | 754 |
+| all | 134 | 852 | 104 | 777 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -404,6 +404,9 @@ name, so these are building blocks for code that works on raw headers.
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Cut continuous node data into records at shot times | `initSliceStreams`, `planSlices`, `extractInto`, `sliceKeys`, `SliceShot`, `SliceWindow`, `SliceStreams` (`rowCount`, `receiverKeys`), `SlicePlan` (`margin`, `order`, `align`, `window`, `shotCount`, `receiverCount`, `shotOf`, `receiverOf`, `rowsNeeded`, `tracesNeeded`, `maxColumn`, `fraction`), `initSliceShot`, `SliceOrder`, `SliceAlign`, `SlicePiece`, `pieces`, `sliceWorkspace` | "Cut at shot times…" (shots from SPS / P1 or a list), result as a virtual file | planned |
+| Cut one trace from the pieces a plan names, without holding the whole row | `addPiece`, `beginSliceTrace`, `finishSliceTrace`, `pieceSource`, `checkSliceOverlap`, `prepareSliceReport`, `failedSamples`, `failedPieces`, `initSliceShotGps` | Cutting a continuous receiver gather larger than memory into records at shot-log times: each piece is read, added and dropped. | planned |
+| The leap-second table, as processSEG shares it | `LeapDate`, `LeapSecond`, `LeapTable`, `currentLeapTable`, `defaultLeapTable`, `leapKnownAt`, `parseLeapTable`, `useLeapTable`, `withLeap`, `useLeapTableNif`, `gpsUsToUtcSeconds`, `utcUsOfGps` | Shot times given in GPS microseconds for the cut, converted with the same table the viewer's Tools > Leap seconds will edit. | planned |
+| A sub-sample shift by windowed sinc | `SincHalf`, `sincInto` | The most exact alignment of a cut window whose shot time falls between samples. | planned |
 | Gaps, overlaps and timing errors | `SliceReport`, `gaps`, `overlapCheck`, `timingIssues`, `untimed`, `otherInterval`, `initSliceReport`, `gapSamples`, `gapCount`, `SliceGap`, `SliceOverlap`, `SliceTimingIssue`, `OverlapStatus`, `SliceOverlapCheck`, `mismatches`, `overlaps` | Continuous data QC per receiver | planned |
 | Clock drift correction | `driftCorrectTimes`, `driftCorrectedTimes` | Node clock drift correction | planned |
 
