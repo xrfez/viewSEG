@@ -10,6 +10,7 @@
 ## the name filter hides. A folder tick counts every file under it.
 
 import std/[algorithm, options, os, strutils, tables]
+from std/unicode import cmpRunesIgnoreCase
 import sdl3_nim
 import imguin/cimgui
 import ../../core/[edits, filejobs, filekinds, filesystem, jobs, outputbatch, outputjobs,
@@ -397,6 +398,22 @@ proc liveFiles(st: AppState; items: seq[BatchItem]): seq[OpenFile] =
           signature: st.sessions[i].signature)
         break
 
+proc chosenPattern(st: AppState): OutputPattern =
+  ## The saved pattern whose label matches the project's choice, spaces
+  ## stripped and case ignored. Empty when nothing is chosen or the label
+  ## names nothing: the batch then keeps today's names.
+  result = OutputPattern()
+  if not st.inProject: return
+  let want = strip(st.project.doc.outputPattern)
+  if want.len == 0: return
+  for p in st.project.doc.outputPatterns:
+    if cmpRunesIgnoreCase(p.name, want) == 0: return p
+
+func chosenLabel(st: AppState): string =
+  ## The chosen pattern's own label, or "" when no pattern is in use.
+  let p = chosenPattern(st)
+  if p.parts.len > 0: p.name else: ""
+
 proc submitRun(ui: var OutputUi; st: AppState) =
   var items: seq[BatchItem] = @[]
   for f in ui.listed:
@@ -411,7 +428,7 @@ proc submitRun(ui: var OutputUi; st: AppState) =
     if ui.processingOn: opts.processing = st.panels[pk].layers[0].processing
     if ui.sortOn: opts.sortKeys = st.panels[pk].layers[0].order
   let ask = BatchAsk(root: ui.source, items: items, destRoot: ui.dest, options: opts,
-    mirrorFolders: ui.mirror)
+    mirrorFolders: ui.mirror, pattern: chosenPattern(st))
   ui.sink = BatchSink()
   ui.haveResult = false
   ui.stopped = false
@@ -656,7 +673,7 @@ proc drawLeft(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Output
     igPushTextWrapPos(0)
     igTextUnformatted(CappedNote.cstring, nil)
     igPopTextWrapPos()
-  let tally = tickedLine(ui.tickedCount, sizeText(ui.tickedBytes))
+  let tally = tickedLine(ui.tickedCount, sizeText(ui.tickedBytes), chosenLabel(st))
   igTextUnformatted(tally.cstring, nil)
   marks.mark("output.tally " & tally)
 

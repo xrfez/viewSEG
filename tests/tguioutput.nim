@@ -15,11 +15,17 @@
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ##
 ## A second run builds a three-part file-name pattern in the editor, saves it,
-## chooses it from the drop-down and deletes it. Seen to fail: with the source
-## line placeholder 11, "the preview is not 00012.1034p5.file.sgd".
+## chooses it from the drop-down, writes one sample file under that name, then
+## with "As the source file" writes the source's name, and deletes the pattern.
+## Seen to fail: with the source line placeholder 11, "the preview is not
+## 00012.1034p5.file.sgd". With the chosen pattern left off the batch, the
+## write step said the file was still vib_uncorrelated.sgd, not
+## 02001.103.vib_uncorrelated.sgd. With the tally suffix removed, "the tally
+## does not name the pattern".
 
 import std/[math, monotimes, options, os, strutils]
-import viewSEG/core/[edits, geometry, jobs, state]
+import parseSEG
+import viewSEG/core/[edits, geometry, jobs, outputnamevalues, sigtypes, state]
 import viewSEG/ui/imgui/app
 import utils/[fixtures, waiting]
 
@@ -89,6 +95,24 @@ proc beside(f: FrameInfo): bool =
 proc hasPrefix(f: FrameInfo; prefix: string): bool =
   for name in f.markNames(prefix):
     if name.startsWith(prefix): return true
+
+proc tallyHas(f: FrameInfo; text: string): bool =
+  for name in f.markNames("output.tally "):
+    if text in name: return true
+
+proc renderedName(path: string): string =
+  ## The leaf the editor's three-part pattern writes for `path` as SEG-D.
+  var seismic = openSeismic(path, keys = true)
+  let values = nameValuesOf(seismic, path, SignatureFacts(), FileEdits(), true, nil)
+  seismic.close()
+  let pattern = OutputPattern(name: "Line", separator: nsDot, parts: @[
+    NamePart(kind: npSrcLine, pad: 5),
+    NamePart(kind: npSrcPoint),
+    NamePart(kind: npStem)])
+  let named = render(pattern, values, ".sgd")
+  doAssert named.problem.len == 0, named.problem
+  doAssert named.name != "vib_uncorrelated.sgd", named.name
+  named.name
 
 proc stacked(f: FrameInfo): bool =
   let l = f.markOf("output.pane.left")
@@ -368,13 +392,23 @@ proc main*() =
 
 proc namePatterns() =
   ## The editor, on its own project: three parts, a padded preview, save,
-  ## choose, delete. No write job.
+  ## choose, then a batch that writes the rendered name and, with "As the
+  ## source file", the source name. Then the pattern is deleted.
   setJobHook(nil)
   withFixtures fx:
     let field = fx.dir / "data"
     let job = fx.dir / "job"
+    let sample = currentSourcePath().parentDir.parentDir / "samples" / "vib" /
+      "vib_uncorrelated.sgd"
+    doAssert fileExists(sample), "missing " & sample
     createDir(field)
+    copyFile(sample, field / "vib_uncorrelated.sgd")
     writeFile(field / "note.txt", "x")
+    let wantName = renderedName(field / "vib_uncorrelated.sgd")
+    let namedDest = fx.dir / "named"
+    let plainDest = fx.dir / "plain"
+    createDir(namedDest)
+    createDir(plainDest)
     createDir(fx.dir / "config")
     createDir(fx.dir / "logs")
     createDir(fx.dir / "cache")
@@ -540,6 +574,86 @@ proc namePatterns() =
     proc chosen(f: FrameInfo): bool =
       f.markOf("output.names Line").size.x > 0 and f.core.project.doc.outputPattern == "Line"
     step("Line is chosen", choose, chosen)
+
+    proc tickAll(f: FrameInfo): bool =
+      if f.markOf("output.file vib_uncorrelated.sgd on").size.x > 0: return true
+      clickWhen(f, "output.all")
+    proc namedTally(f: FrameInfo): bool =
+      if f.markOf("output.ready").size.x > 0 and
+          f.markOf("output.file vib_uncorrelated.sgd off").size.x == 0 and
+          f.markOf("output.file vib_uncorrelated.sgd on").size.x == 0:
+        doAssert false, "the sample file is not listed: " & $f.markNames("output.file")
+      let on = f.markOf("output.file vib_uncorrelated.sgd on").size.x > 0
+      if on and not tallyHas(f, "named by Line"):
+        doAssert false, "the tally does not name the pattern: " &
+          $f.markNames("output.tally")
+      on
+    step("the tally names the pattern", tickAll, namedTally)
+
+    proc setNamed(f: FrameInfo): bool =
+      answer = @[namedDest]
+      if not reveal(f, "output.changeDest"): return false
+      clickWhen(f, "output.changeDest")
+    proc namedReady(f: FrameInfo): bool =
+      f.markOf("output.destination " & namedDest).size.x > 0 and
+        f.markOf("output.run").size.x > 0
+    step("the patterned run has a destination", setNamed, namedReady)
+
+    proc runNamed(f: FrameInfo): bool =
+      if not reveal(f, "output.run"): return false
+      clickWhen(f, "output.run")
+    proc wroteNamed(f: FrameInfo): bool =
+      ## The results table sits below the editor, so a clipped row is not the
+      ## check. The written leaf is.
+      if f.markOf("output.summary 0 1 0").size.x > 0:
+        doAssert false, "the patterned write failed: " & $f.markNames("output.row") &
+          " " & $f.markNames("output.summary")
+      if not fileExists(namedDest / wantName):
+        if f.markOf("output.summary 1 0 0").size.x == 0: return false
+        var names: seq[string] = @[]
+        for kind, path in walkDir(namedDest):
+          names.add path.extractFilename
+        doAssert false, "wrote " & $names & " not " & wantName
+      not fileExists(namedDest / "vib_uncorrelated.sgd")
+    step("Run writes the rendered name", runNamed, wroteNamed)
+
+    var armSrc = 0
+    var coolSrc = 0
+    proc chooseSource(f: FrameInfo): bool =
+      if f.markOf("output.names.item As the source file").size.x > 0:
+        inc armSrc
+        if armSrc < 2: return false
+        return clickWhen(f, "output.names.item As the source file")
+      armSrc = 0
+      if f.markOf("output.names.open").size.x > 0: return false
+      if not reveal(f, "output.names"): return false
+      inc coolSrc
+      if coolSrc == 1 or coolSrc mod 12 == 0:
+        discard clickWhen(f, "output.names")
+      false
+    proc sourceShown(f: FrameInfo): bool =
+      f.markOf("output.names As the source file").size.x > 0 and
+        f.core.project.doc.outputPattern.len == 0 and not tallyHas(f, "named by")
+    step("As the source file is chosen", chooseSource, sourceShown)
+
+    proc setPlain(f: FrameInfo): bool =
+      answer = @[plainDest]
+      if not reveal(f, "output.changeDest"): return false
+      clickWhen(f, "output.changeDest")
+    proc plainReady(f: FrameInfo): bool =
+      f.markOf("output.destination " & plainDest).size.x > 0 and
+        f.markOf("output.run").size.x > 0
+    step("the source-name run has a destination", setPlain, plainReady)
+
+    proc runPlain(f: FrameInfo): bool =
+      if not reveal(f, "output.run"): return false
+      clickWhen(f, "output.run")
+    proc wrotePlain(f: FrameInfo): bool =
+      if f.markOf("output.summary 0 1 0").size.x > 0:
+        doAssert false, "the source-name write failed: " & $f.markNames("output.summary")
+      if not fileExists(plainDest / "vib_uncorrelated.sgd"): return false
+      not fileExists(plainDest / wantName)
+    step("As the source file writes the source name", runPlain, wrotePlain)
 
     proc remove(f: FrameInfo): bool =
       if not reveal(f, "output.pattern.delete"): return false

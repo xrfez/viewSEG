@@ -93,10 +93,14 @@ func runWhy*(ticked: int; dest: string): string =
   elif noDest: NeedDest
   else: ""
 
-func tickedLine*(files: int; size: string): string =
-  ## "3 files ticked, 6.4 MB", under the tree.
+func tickedLine*(files: int; size: string; pattern = ""): string =
+  ## "3 files ticked, 6.4 MB", under the tree. A chosen pattern adds
+  ## "named by <label>".
   let word = if files == 1: "file" else: "files"
-  $files & " " & word & " ticked, " & size
+  result = $files & " " & word & " ticked, " & size
+  if pattern.len > 0:
+    result.add ", named by "
+    result.add pattern
 
 func folderCount*(name: string; on, total: int): string =
   ## "sub (1 of 1)": how many of a folder's files are ticked.
