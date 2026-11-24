@@ -23,9 +23,14 @@
 ## general-header blocks and trace-header extensions are not copied. A start
 ## time the headers cannot give may read back as 0. SEG-2 cannot be written
 ## in memory.
+##
+## `correlatedBytesEstimate` is the byte length that in-memory copy would have.
+## The job still writes the copy; `fitsInMemory` is how a caller decides whether
+## it fits.
 
 import std/[algorithm, cpuinfo, formatfloat, math, sets, strutils]
 import parseSEG
+import parseSEG/model/traceindex
 import processSEG
 import cutfile, filesystem, jobs, processing, references, session, threads, traceids
 
@@ -188,6 +193,58 @@ proc listenShape*(file: ptr SeismicFile; reference: openArray[float32];
   result.odd = shape.odd
   result.padded = shape.padded
   result.cut = shape.cut
+
+proc addSat(a, b: int64): int64 {.inline.} =
+  if b > 0 and a > high(int64) - b: high(int64) else: a + b
+
+proc mulSat(a, b: int64): int64 {.inline.} =
+  if a > 0 and b > high(int64) div a: high(int64) else: a * b
+
+proc bytesOfListen(file: ptr SeismicFile; listen: int): int64 =
+  ## Headers the open file is not using for samples, plus `listen` IEEE
+  ## float32 samples on every trace. A SEG-Y writer keeps those headers and
+  ## replaces the sample bytes, so this is that file's length. A count that
+  ## would overflow is `high(int64)`, which does not fit in memory.
+  let n = file[].len
+  var payload = 0'i64
+  let ix = file[].index
+  for i in 0 ..< n:
+    payload = addSat(payload, int64(ix.dataBytes(i)))
+  var headers = 0'i64
+  let mapped = file[].mappedSize
+  if mapped > payload: headers = mapped - payload
+  let samples = mulSat(int64(n), int64(listen))
+  addSat(headers, mulSat(samples, 4))
+
+type
+  ListenCount = concept v
+    v.listenSamples is int
+
+proc correlatedBytesEstimate*(file: ptr SeismicFile; sweepLen: int): int64 =
+  ## Bytes the in-memory correlated copy of `file` would have for a sweep of
+  ## `sweepLen` samples. Listen time is the record length minus the sweep, as
+  ## `correlateWork` writes it. Raises `ValueError` for a closed file, a file
+  ## the job would refuse, or a sweep that leaves no listen time.
+  if file == nil or not file[].isOpen: refuse("the file is not open.")
+  let shape = recordShape(file)
+  if sweepLen < 0 or sweepLen >= shape.samples:
+    refuse("the reference sweep is as long as the record or longer, " &
+      "so there is no listen time.")
+  bytesOfListen(file, shape.samples - sweepLen)
+
+proc correlatedBytesEstimate*(file: ptr SeismicFile; view: ListenCount): int64 =
+  ## Bytes the in-memory copy would have for a view already built: its
+  ## `listenSamples`, not a sweep length recomputed here. Raises `ValueError`
+  ## for a closed file or a view that was not built.
+  if file == nil or not file[].isOpen: refuse("the file is not open.")
+  let listen = view.listenSamples
+  if listen <= 0: refuse("the correlated view was not built.")
+  bytesOfListen(file, listen)
+
+proc fitsInMemory*(estimate, limit: int64): bool {.inline.} =
+  ## Whether a correlated copy of `estimate` bytes is at most `limit` (pass
+  ## `MaxPrepareBytes`). A negative estimate does not fit.
+  estimate >= 0 and estimate <= limit
 
 proc wholeMicroseconds*(dtMs: float64): float64 =
   ## The interval in microseconds, or the refusal a SEG-D correlation write

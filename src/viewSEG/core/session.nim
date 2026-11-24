@@ -18,16 +18,30 @@
 ## same for that file every time, and not a path any file system can name.
 ## Readers and jobs still hold, read and close by `path`. `diskPath` is the
 ## file on disk.
+##
+## A correlated view is derived the same way, and does not own a second file.
+## `asCorrelatedView` keeps the raw session open and shares one `CorrelateView`.
+## `file` and `filePtr` are that raw file. `facts` report the listen time
+## (sample count, interval, trace length, record length). Header rows stay the
+## raw file's, including its stored sample count. `close` of the view does not
+## close the raw file. `close` of the raw file is refused while a view of it
+## exists: close the view first, as a derived view is closed before its origin.
 
 import std/[math, os, strutils, times]
 import parseSEG
-import filesystem, headers, records, sigtypes
+import correlateview, filesystem, headers, records, sigtypes
 
 export headers, records, sigtypes
 
 type
   SessionId* = distinct int
     ## Names an open file; never reused. `NoSession` (0) names none.
+
+  ViewHold = object
+    ## One correlated view's count against the raw session it reads. Destroying
+    ## the view drops the count, so the raw file can be closed afterwards.
+    raw: Session
+    released: bool
 
   FileCrs* = object
     ## What a file's headers say of its coordinates, read on the open job (a
@@ -74,6 +88,30 @@ type
     signature: SignatureFacts
       ## a vibrator controller's signature file decoded in memory: what is known of it beyond
       ## the SEG-Y (`kind` `sgNone` for any other file)
+    view: ref CorrelateView
+      ## the shared correlated view; nil when this session is not one
+    listenSamples: int
+      ## listen-time samples; 0 when this session is not a correlated view
+    listenDtMs: float64
+      ## listen-time sample interval, ms; 0 when this session is not one
+    originSession: Session
+      ## the raw session a correlated view reads; nil otherwise
+    openViews: int
+      ## correlated views that still read this raw file
+    hold: ViewHold
+      ## this view's count in the raw session's `openViews`
+
+template releaseHold(h: var ViewHold) =
+  if not h.released:
+    if not h.raw.isNil and h.raw.openViews > 0: dec h.raw.openViews
+    h.released = true
+    h.raw = nil
+
+proc `=destroy`(h: ViewHold) =
+  ## Drops the count when the view is discarded without `close`.
+  if not h.released and not h.raw.isNil and h.raw.openViews > 0:
+    dec h.raw.openViews
+  `=destroy`(h.raw)
 
 const NoSession* = SessionId(0)
 
@@ -201,6 +239,69 @@ proc asDerived*(s: Session) =
   s.origin = s.path
   s.path = correlatedPath(s.origin)
 
+proc applyListenFacts(facts: var FileFacts; listen: int; dtMs: float64) =
+  ## Summary and channel-set lengths become the listen time. Header rows are
+  ## left as the raw file stored them.
+  let us = dtMs * 1000.0
+  facts.summary.samplesPerTrace = listen
+  facts.summary.sampleIntervalUs = us
+  facts.summary.recordLengthMs = float64(listen) * dtMs
+  for c in facts.channelSets.mitems:
+    c.samplesPerTrace = listen
+    c.sampleIntervalUs = us
+    if c.startTimeMs.isNaN: c.endTimeMs = float64(listen) * dtMs
+    else: c.endTimeMs = c.startTimeMs + float64(listen) * dtMs
+
+proc viewReady(view: CorrelateView): bool =
+  view.listenSamples > 0 and view.dtMs > 0 and not view.dtMs.isNaN and view.dtMs != Inf
+
+proc asCorrelatedView*(raw: Session; view: CorrelateView): Session =
+  ## A derived session that is `raw`'s file seen at `view`'s listen time.
+  ## The raw file stays open: this session does not own a copy of it, and
+  ## `file` / `filePtr` are that file. `facts` report the listen sample count,
+  ## interval, trace length and record length. Header rows stay `raw`'s,
+  ## including the stored sample count. Raises `ValueError` when `raw` is
+  ## closed, is itself a view, or `view` was not built.
+  if raw.isNil or not raw.file.isOpen:
+    raise newException(ValueError, "the file is not open.")
+  if not raw.view.isNil:
+    raise newException(ValueError, "a correlated view is not a raw file.")
+  if not viewReady(view):
+    raise newException(ValueError, "the correlated view was not built.")
+  let onDisk = if raw.origin.len > 0: raw.origin else: raw.path
+  if view.path.len > 0 and view.path != raw.path and view.path != onDisk:
+    raise newException(ValueError, "the correlated view is of another file.")
+  result = Session(path: correlatedPath(onDisk), origin: onDisk,
+    gathers: raw.gathers, records: raw.records, columns: raw.columns,
+    size: raw.size, modified: raw.modified, checkedAgainst: raw.checkedAgainst,
+    crs: raw.crs, facts: raw.facts, keysRevision: raw.keysRevision,
+    leapRead: raw.leapRead, zeroKept: raw.zeroKept, signature: raw.signature,
+    listenSamples: view.listenSamples, listenDtMs: view.dtMs, originSession: raw)
+  result.view = new CorrelateView
+  result.view[] = view
+  inc raw.openViews
+  result.hold = ViewHold(raw: raw)
+  applyListenFacts(result.facts, view.listenSamples, view.dtMs)
+
+proc dropView(s: Session) =
+  releaseHold(s.hold)
+  s.view = nil
+  s.originSession = nil
+  s.listenSamples = 0
+  s.listenDtMs = 0
+
+proc close*(s: Session): bool =
+  ## Closes `s`. A correlated view drops its hold and does not close the raw
+  ## file. A raw file that still has a view is left open (false): close the
+  ## view first. Idempotent. A nil session is already closed.
+  if s.isNil: return true
+  if not s.view.isNil:
+    dropView(s)
+    return true
+  if s.openViews > 0: return false
+  if s.file.isOpen: s.file.close()
+  true
+
 proc register*(s: Session; id: SessionId; base: int) =
   ## Gives `s` its id and the survey-wide id of its first trace (`AppState`
   ## does this when it adopts the session).
@@ -224,6 +325,18 @@ func origin*(s: Session): lent string {.inline.} = s.origin
   ## The path of the file this session was derived from; empty for a file on disk.
 func derived*(s: Session): bool {.inline.} = s.origin.len > 0
   ## Whether this session was derived from a file on disk.
+func isCorrelatedView*(s: Session): bool {.inline.} =
+  ## Whether `s` is a correlated view of a raw file that stays open.
+  not s.isNil and not s.view.isNil
+func correlatedView*(s: Session): ref CorrelateView {.inline.} =
+  ## The shared view, or nil when `s` is not a correlated view.
+  if s.isNil: nil else: s.view
+func listenSamples*(s: Session): int {.inline.} =
+  ## Listen-time samples; 0 when `s` is not a correlated view.
+  if s.isNil: 0 else: s.listenSamples
+func listenDtMs*(s: Session): float64 {.inline.} =
+  ## Listen-time sample interval, ms; 0 when `s` is not a correlated view.
+  if s.isNil: 0 else: s.listenDtMs
 func diskPath*(s: Session): string {.inline.} =
   ## The file on disk: the origin when this session was derived from one,
   ## otherwise its path.
@@ -231,7 +344,10 @@ func diskPath*(s: Session): string {.inline.} =
 func name*(s: Session): string = s.diskPath.extractFilename
   ## The file's name, for messages and titles: the file on disk, never a
   ## derived session's virtual key.
-func file*(s: Session): lent SeismicFile {.inline.} = s.file
+func file*(s: Session): lent SeismicFile {.inline.} =
+  ## The open file. A correlated view's is the raw session's, not a copy.
+  if not s.originSession.isNil: return s.originSession.file
+  s.file
 func zeroKept*(s: Session): int {.inline.} = s.zeroKept
   ## Traces with field record number 0 that were kept with the record before them.
 func gathers*(s: Session): lent seq[Gather] {.inline.} = s.gathers
@@ -289,8 +405,9 @@ proc setChecks*(s: Session; against: string; planned, missing: openArray[int];
       r.unlisted = if unlisted.len == s.records.len: unlisted[i] else: -1
       r.duplicates = if duplicates.len == s.records.len: duplicates[i] else: -1
 
-func len*(s: Session): int {.inline.} = s.file.len
+func len*(s: Session): int {.inline.} =
   ## The number of traces.
+  if s.originSession.isNil: s.file.len else: s.originSession.file.len
 func size*(s: Session): int64 {.inline.} = s.size
   ## The file's size in bytes when it was opened; -1 when not known.
 func modified*(s: Session): Time {.inline.} = s.modified
@@ -298,7 +415,7 @@ func modified*(s: Session): Time {.inline.} = s.modified
 
 func traceIds*(s: Session): Slice[int] {.inline.} =
   ## The survey-wide ids of the file's traces.
-  s.base ..< s.base + s.file.len
+  s.base ..< s.base + s.len
 
 func contains*(s: Session; trace: int): bool {.inline.} =
   ## Whether survey-wide trace id `trace` is one of this file's.
@@ -306,5 +423,6 @@ func contains*(s: Session; trace: int): bool {.inline.} =
 
 proc filePtr*(s: Session): ptr SeismicFile {.inline.} =
   ## The file, for a worker that reads it while the UI thread keeps the
-  ## session (and closes it only once no job uses it).
-  addr s.file
+  ## session (and closes it only once no job uses it). A correlated view's
+  ## pointer is the raw session's file, which that view keeps alive.
+  if s.originSession.isNil: addr s.file else: addr s.originSession.file
