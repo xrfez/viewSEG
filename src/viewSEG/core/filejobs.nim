@@ -481,6 +481,7 @@ proc kindsWork*(gen: uint64; vendorGen: int; asks: seq[WatchedFile]; vendors: Ve
         kind: probe.kind, order: probe.order)
     if batch.kinds.len > 0:
       var ids: seq[FileIdentity] = @[]
+      var times: seq[Time] = @[]
       for a in batch.kinds:
         var modified: Time
         var id = FileIdentity(size: -1)
@@ -494,8 +495,9 @@ proc kindsWork*(gen: uint64; vendorGen: int; asks: seq[WatchedFile]; vendors: Ve
               k.id.quick == id.quick:
             id = k.id
         ids.add id
+        times.add modified
       ctx.checkCancelled()
       {.cast(gcsafe).}:
-        let treats = store.treatsOf(ids)
+        let treats = store.treatsOf(ids, times)
         for i in 0 ..< batch.kinds.len: batch.kinds[i].treat = treats[i]
       to.post move batch

@@ -37,8 +37,9 @@
 ##   document in between, which would lose one of the two changes.
 ## - **What a file is treated as.** The `treat` node of a document of the
 ##   store (`core/treatas`) has one writer: a treat (`treat`), which reads the
-##   document as it is then, under the store's lock, sets that node alone and
-##   writes it back (or writes a new document, or removes one left with
+##   document as it is then, under the store's lock, sets the parts of that node
+##   the user changed (the kind, the grouping, the sort: each on its own, so a
+##   second viewSEG's choice of another part stays) and writes it back (or writes a new document, or removes one left with
 ##   nothing). Every other write of a document keeps the node as it is on
 ##   disk: as this thread last wrote it, else as the UI thread last read it,
 ##   else, when another program changed the document, as that one left it.
@@ -101,6 +102,7 @@ type
       ## merged with another program's change (`base`, `expect`)
     base: EditLists ## `merging`: the edits the document held as this run read or wrote it
     expect: DocStamp ## `merging`: its stamp then; size -1 for no document
+    parts: set[TreatPart] ## a treat: the parts of `memory.treat` it sets
     first: bool ## left before the tasks waiting (after those left so before it)
 
   DiskObj = object
@@ -399,9 +401,10 @@ proc treatFor(w: var Writer; t: Task) =
       w.warn("What " & name & " is treated as is kept for this session only: its document " &
         t.path & " cannot be read (" & getCurrentExceptionMsg() & "), and it is left as it is.")
       return
-    rec.treat = t.memory.treat
-  elif not rec.treat.isSet:
-    return # nothing forced and no document
+    rec.treat = rec.treat.merged(t.memory.treat, t.parts)
+  else:
+    rec.treat = TreatAs().merged(t.memory.treat, t.parts)
+    if not rec.treat.isSet: return # nothing forced and no document
   rec.doc = t.path.extractFilename
   # the document as this run knew it, until now: what it holds next is known here too; a
   # document another program changed meanwhile is merged at this run's next write of it
@@ -685,6 +688,7 @@ proc leave(x: DiskIo; t: sink Task) =
       for i in countdown(x.p.tasks.high, 0):
         if x.p.tasks[i].kind == tkTreat and x.p.tasks[i].path == t.path:
           t.expect = x.p.tasks[i].expect
+          t.parts.incl x.p.tasks[i].parts # (the newer has the newest of every part)
           x.p.tasks.delete(i)
     of tkReplace, tkRemove: # only the newest document of a path is written (or removed)
       # ... but a write under a name no file has (`fresh`: a backup) is a
@@ -756,13 +760,15 @@ proc removeMerging*(x: DiskIo; path: string; record: sink FileRecord; what: stri
     x.leave Task(kind: tkRemove, path: path, memory: record, what: what, merging: true,
       base: base, expect: expect)
 
-proc treat*(x: DiskIo; path: string; record: sink FileRecord; what: string; expect: DocStamp) =
-  ## Sets what the file of `record` is treated as (`record.treat`) in the document of the store
-  ## `path`, as it is when it is written, and nothing else of it (the module documentation):
-  ## `record` is the new document when there is none. `expect` is the document's stamp as this
-  ## run last read it (`replace`'s).
-  if x.p != nil:
-    x.leave Task(kind: tkTreat, path: path, memory: record, what: what, expect: expect)
+proc treat*(x: DiskIo; path: string; record: sink FileRecord; parts: set[TreatPart];
+    what: string; expect: DocStamp) =
+  ## Sets the `parts` of what the file of `record` is treated as (as `record.treat` has them)
+  ## in the document of the store `path`, as it is when it is written, and nothing else of it
+  ## (the module documentation): `record` is the new document when there is none. `expect` is
+  ## the document's stamp as this run last read it (`replace`'s).
+  if x.p != nil and parts != {}:
+    x.leave Task(kind: tkTreat, path: path, memory: record, what: what, expect: expect,
+      parts: parts)
 
 proc read*(x: DiskIo; path: string; purpose: ReadPurpose; limit: int) =
   ## Reads `path`, soon, and posts it as an `mkRead` message for `purpose`,

@@ -19,7 +19,12 @@
 ## after a choice; a file opened by its path did not have its choice, and its first edit made a
 ## second document; a document that may be another file's gave the row its choice; the look-up
 ## ran on the peeks lane ("peeks"). With the choice taken when the look-up was asked for, not when
-## its answer came, the read-back of the newest choice failed.
+## its answer came, the read-back of the newest choice failed. Before a document of only a
+## choice was taken as the file's own: a file touched since and edited got a second document
+## ("a second document: 2"), and edits made on one and a quit before the hash came back only
+## offered; the list showed the choice of a document of another content and time; a look-up
+## left at the quit or stopped was said nowhere; and the choice was written whole, so a second
+## program's choice of the grouping erased the first one's kind.
 
 import std/[importutils, options, os, sequtils, strutils, tables, times]
 import parseSEG
@@ -466,6 +471,137 @@ proc main*() =
       doAssert b.jobs.list.countIt(it.spec.lane == jlHashes and
         it.spec.title.startsWith("Remember what")) <= 1, "hashed again"
       b.shutdown()
+
+    block aTouchedFilesChoiceStaysWithItsEdits:
+      # the choice made in the list; the file touched since; opened and edited: one document
+      # holds both, and the next run shows the choice
+      let cfg = fx.dir / "touched-config"
+      let f = writeSpecs(fx.dir / "touched", "t", [spec(0, 0), spec(0, 1000), spec(0, 2000)])
+      var a = appIn(cfg)
+      a.apply Command(kind: ckBrowse, paths: @[fx.dir / "touched"])
+      doAssert a.settle(a.listed(1))
+      a.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "shot")
+      doAssert a.settled(a.idle and docs(cfg).len == 1)
+      a.shutdown()
+      setLastModificationTime(f, getLastModificationTime(f) + initDuration(hours = 1))
+      var b = appIn(cfg)
+      b.showFile(f)
+      doAssert b.settled(b.idle)
+      b.kill(0)
+      doAssert b.settled(b.idle)
+      doAssert docs(cfg).len == 1, "a second document: " & $docs(cfg).len
+      var p: seq[string]
+      let rec = readMemoryFile(docs(cfg)[0], p)
+      doAssert rec.treat.kind == some(rkShotGather) and rec.edits.lists[teKilled] == @[0] and
+        rec.identity.fullKnown, $rec.treat & " " & $rec.edits.lists[teKilled]
+      b.shutdown()
+      var c = appIn(cfg)
+      c.apply Command(kind: ckBrowse, paths: @[fx.dir / "touched"])
+      doAssert c.settle(c.listed(1))
+      doAssert c.fileList.entries[0].treat.kind == some(rkShotGather), "the choice was lost"
+      c.shutdown()
+
+    block editsMadeOnADocumentOfOnlyAChoiceAreTheFilesOwn:
+      # the edits made on a file whose document says only what it is treated as come back
+      # applied, also when viewSEG quits before the hash of every byte
+      let cfg = fx.dir / "bare-config"
+      let f = writeSpecs(fx.dir / "bare", "b", [spec(0, 0), spec(0, 1000), spec(0, 2000)])
+      var a = appIn(cfg)
+      a.apply Command(kind: ckBrowse, paths: @[fx.dir / "bare"])
+      doAssert a.settle(a.listed(1))
+      a.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "shot")
+      doAssert a.settled(a.idle and docs(cfg).len == 1)
+      a.shutdown()
+      var b = appIn(cfg)
+      b.apply Command(kind: ckShowFile, panel: MainPanel, path: f)
+      doAssert b.settle(b.sessions.len == 1 and b.remembered.len == 1 and b.remembered[0].known)
+      b.kill(0) # and the quit, before any hash
+      b.shutdown()
+      var p: seq[string]
+      doAssert docs(cfg).len == 1 and not readMemoryFile(docs(cfg)[0], p).unconfirmed and
+        readMemoryFile(docs(cfg)[0], p).edits.lists[teKilled] == @[0],
+        "the edits were not written as the file's own: " & $docs(cfg).len
+      var c = appIn(cfg)
+      c.showFile(f)
+      doAssert c.settled(c.idle and c.editsAt(canonical(f)).kept.lists[teKilled] == @[0]),
+        "the edits did not come back applied"
+      doAssert c.earlierOf(canonical(f)).len == 0, "the edits were offered"
+      c.shutdown()
+
+    block aChoiceOfAFileTouchedSinceIsNotShownUntilIdentified:
+      # the one document of the file's quick identity knows another content and another time
+      let cfg = fx.dir / "stranger-config"
+      let target = writeSpecs(fx.dir / "stranger", "s", [spec(0, 0), spec(1, 0), spec(2, 0)])
+      var modified: Time
+      let id = quickIdentity(target, modified)
+      let store = Store(home: cfg / StoreFolder)
+      createDir(store.home)
+      var rec = FileRecord(identity: id, name: "other.sgd", path: "/elsewhere/other.sgd",
+        opened: getTime(), modified: modified - initDuration(hours = 2),
+        treat: TreatAs(kind: some rkReceiverContinuous))
+      (rec.identity.full, rec.identity.fullKnown) = (fullHash(target) xor 1, true)
+      rec.edits.lists[teKilled] = @[1]
+      writeFile(store.docPath(freeDocName(id, @[])), memoryDocument(rec))
+      var a = appIn(cfg)
+      a.apply Command(kind: ckBrowse, paths: @[fx.dir / "stranger"])
+      doAssert a.settle(a.listed(1))
+      doAssert not a.fileList.entries[0].treat.isSet, "shown before the file is identified"
+      a.showFile(target)
+      doAssert a.settled(a.idle and a.remembered[0].hashed)
+      doAssert not a.treatOf(target).isSet and not a.fileList.entries[0].treat.isSet,
+        "another file's choice after the hash"
+      a.shutdown()
+
+    block aChoiceWhoseLookUpDidNotEndIsSaid:
+      let cfg = fx.dir / "quit-config"
+      let f = writeSpecs(fx.dir / "quit", "q", [spec(0, 0), spec(0, 1000), spec(0, 2000)])
+      var a = appIn(cfg)
+      a.apply Command(kind: ckBrowse, paths: @[fx.dir / "quit"])
+      doAssert a.settle(a.listed(1))
+      a.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "shot")
+      a.shutdown() # its look-up not taken
+      doAssert a.log.anyIt("The choice for q.sgd is kept for this session only: viewSEG quit " &
+        "before its look-up ended." in it.text), "not said at the quit"
+      # an open file's document is known: the choice goes to it at the quit
+      var b = appIn(cfg)
+      b.showFile(f)
+      b.kill(0)
+      doAssert b.settled(b.idle and docs(cfg).len == 1)
+      b.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "sliced")
+      b.shutdown()
+      var p: seq[string]
+      doAssert readMemoryFile(docs(cfg)[0], p).treat.kind == some(rkReceiverSliced),
+        "the choice of the quit was not written"
+      # a look-up stopped in Jobs
+      var c = appIn(cfg)
+      c.treatJobs[canonical(f)] = JobId(987654)
+      discard c.endMemoryWork(JobInfo(id: JobId(987654), state: jsCancelled))
+      doAssert c.log.anyIt("The choice for q.sgd is kept for this session only: its look-up " &
+        "was stopped." in it.text), "not said at the cancel"
+      c.shutdown()
+
+    block twoProgramsEachSetTheirOwnPart:
+      let cfg = fx.dir / "two-config"
+      let f = writeSpecs(fx.dir / "two", "w", [spec(0, 0), spec(0, 1000), spec(0, 2000)])
+      var p1 = appIn(cfg)
+      var p2 = appIn(cfg)
+      for st in [addr p1, addr p2]:
+        st[].apply Command(kind: ckBrowse, paths: @[fx.dir / "two"])
+        doAssert st[].settle(st[].listed(1))
+      p1.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "sliced")
+      doAssert p1.settled(p1.idle and docs(cfg).len == 1)
+      p2.apply Command(kind: ckTreatAs, treatPath: f, treatGrouping: "flag") # knows no kind
+      var p: seq[string]
+      doAssert p2.settled(p2.idle and
+        readMemoryFile(docs(cfg)[0], p).treat.grouping == some(tgByFlag))
+      doAssert readMemoryFile(docs(cfg)[0], p).treat.kind == some(rkReceiverSliced),
+        "the other program's kind was erased"
+      # automatic for one part clears that part alone
+      p1.apply Command(kind: ckTreatAs, treatPath: f, treatGrouping: "automatic")
+      doAssert p1.settled(p1.idle and readMemoryFile(docs(cfg)[0], p).treat.grouping.isNone)
+      doAssert readMemoryFile(docs(cfg)[0], p).treat.kind == some(rkReceiverSliced)
+      p1.shutdown()
+      p2.shutdown()
 
     block aForcedKindIsWhatTheDialogGoesBy:
       # the shown file's facts carry the forced kind: the refusal of the slice follows it

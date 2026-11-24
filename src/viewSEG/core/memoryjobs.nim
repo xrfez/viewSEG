@@ -23,7 +23,7 @@
 
 import std/[os, sequtils, strutils, times]
 import parseSEG
-import filememory, filesystem, identity, inbox, jobs, nif, threads
+import edits, filememory, filesystem, identity, inbox, jobs, nif, threads
 
 proc identifyWork*(path: string; store: Store; to: Poster): JobWork =
   ## Posts `mkIdentified`: the quick identity of the file at `path` and the
@@ -215,7 +215,11 @@ proc treatWork*(path: string; store: Store; hint: FileRecord; taken: seq[string]
         var problems: seq[string]
         var found: seq[FileRecord] = @[]
         for r in store.recordsOf(id, names, problems):
-          if not r.unconfirmed: found.add r
+          # (edits without a hash, made at another time, are never taken for the file: an open
+          # would not find the choice there)
+          if not r.unconfirmed and
+              (r.identity.fullKnown or r.modified == modified or r.edits.isEmpty):
+            found.add r
         if not id.fullKnown and (found.len > 1 or found.anyIt(it.identity.fullKnown)):
           if not hashing:
             msg.treatHash = true

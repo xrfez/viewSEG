@@ -12,6 +12,10 @@ type
     grouping*: Option[TraceGrouping] ## only `tgNone`, `tgByFlag` or `tgByComponent`
     subSort*: Option[TraceSubSort]   ## only `tsByStation` or `tsByTime`
 
+  TreatPart* = enum
+    ## A part of what a file is treated as, set or cleared on its own.
+    tpKind, tpGrouping, tpSubSort
+
 func isSet*(t: TreatAs): bool =
   ## Whether anything is forced.
   t.kind.isSome or t.grouping.isSome or t.subSort.isSome
@@ -19,6 +23,14 @@ func isSet*(t: TreatAs): bool =
 func orderSet*(t: TreatAs): bool =
   ## Whether the order is forced, in either part.
   t.grouping.isSome or t.subSort.isSome
+
+func merged*(t, given: TreatAs; parts: set[TreatPart]): TreatAs =
+  ## `t` with each part of `parts` as `given` has it (none: automatic again), and the others
+  ## as they are.
+  result = t
+  if tpKind in parts: result.kind = given.kind
+  if tpGrouping in parts: result.grouping = given.grouping
+  if tpSubSort in parts: result.subSort = given.subSort
 
 func kindName*(k: RecordingKind): string =
   ## The word a kind is kept and commanded by.
