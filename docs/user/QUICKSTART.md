@@ -132,14 +132,15 @@ headers: the file as it was listed, before a survey join or station moves change
 (a joined file keeps the kind the list read). A file whose kind is not worked out yet, a file
 that is not seismic and one without a live trace have an empty cell. Click the header to sort by
 it. The **Order** column, after Kind, says how the traces of the file are written, told from
-the same trace headers in the same read: **Station** or **Time** for a file of one component;
+the same trace headers in the same read: **Station** or **Time** for a file of one component (also when the components are not
+coded and so cannot be told apart: the tooltip then says the grouping cannot be told);
 for several components, **Flag · station** or **Flag · time** (the components of a station or a
 time together) and **Component · station** or **Component · time** (all of one component, then
 the next); the tooltip says it in a sentence. An order holds only when every trace follows the
-one before it (a tie is fine), and components are never compared with each other; when no order
+one before it of its component (a tie is fine), and components are never compared with each other; when no order
 holds, the key never changes or the file has one trace, the cell shows **?**. A file that has
 both orders (stations and times rising together) shows Station for a shot gather and Time for
-a receiver gather. The columns after Name are as wide as their words and Name takes the rest; when the panel is
+a receiver gather. A trace placed by its channel alone has no station order. The columns after Name are as wide as their words and Name takes the rest; when the panel is
 too narrow for 16 characters of a name beside them, the list scrolls sideways. A folder listed
 again in the same session takes the kinds already read and reads only the files that changed. A
 file that changes on disk is read again once it is steady, and every kind is read again when the

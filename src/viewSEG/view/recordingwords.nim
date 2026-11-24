@@ -31,9 +31,10 @@ func kindTitle*(k: RecordingKind): string =
   of rkReceiverSliced: "Time-sliced receiver gather"
 
 const
-  OrderNotKnownWords* = "The traces are in no order by station or time that holds from " &
-    "one trace to the next, or there are too few to tell."
+  OrderNotKnownWords* = "No order by station or time could be told: the traces are out of " &
+    "order, their grouping is irregular, the key never changes, or there are too few."
     ## what the Order column says of a file whose traces are in no order that can be told
+  UncodedWords = " Their components are not coded, so the grouping cannot be told."
 
 func orderShort*(o: TraceOrder): string =
   ## The order of the traces in a word or two, for a table cell: "Station", "Flag · station";
@@ -42,20 +43,21 @@ func orderShort*(o: TraceOrder): string =
     of tsByStation: "station"
     of tsByTime: "time"
     of tsNotKnown: ""
-  if sub.len == 0 or o.grouping == tgNotKnown: "?"
+  if sub.len == 0: "?"
   else:
     case o.grouping
-    of tgNone: (if o.subSort == tsByStation: "Station" else: "Time")
+    of tgNone, tgNotKnown: (if o.subSort == tsByStation: "Station" else: "Time")
     of tgByFlag: "Flag · " & sub
     else: "Component · " & sub
 
 func orderTitle*(o: TraceOrder): string =
   ## The order as a sentence, for a tooltip.
-  if o.subSort == tsNotKnown or o.grouping == tgNotKnown: OrderNotKnownWords
+  if o.subSort == tsNotKnown: OrderNotKnownWords
   else:
     let sub = if o.subSort == tsByStation: "by station" else: "by time"
     case o.grouping
     of tgNone: "Traces are sorted " & sub & "."
+    of tgNotKnown: "Traces are sorted " & sub & "." & UncodedWords
     of tgByFlag:
       "Traces are grouped by flag (the components of a " &
         (if o.subSort == tsByStation: "station" else: "time") & " together), sorted " & sub & "."

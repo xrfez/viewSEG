@@ -84,12 +84,64 @@ proc main*() =
     split[1].place = (0'i8, 1.0, 99.0, 0'i16)
     doAssert traceOrder(split, Dt, true) == none
 
+  block theFlagIsOneStationWhateverTheSubSort:
+    # (the review's cases) components of one time at different stations are no flag
+    var crossed: seq[OrderTrace] = @[]
+    var pairs: seq[OrderTrace] = @[]
+    for k in 0 ..< 5:
+      crossed.add [tr(1, 1, 1, k * 1000), tr(2, 1, 2, k * 1000), tr(2, 1, 1, k * 1000),
+        tr(1, 1, 2, k * 1000)]
+      pairs.add [tr(1, 1, 1, k * 1000), tr(2, 1, 7, k * 1000 + 1)]
+    doAssert traceOrder(crossed, Dt, false) == none, "crossed stations in a flag by time"
+    doAssert traceOrder(pairs, Dt, false) == none, "pairs of different stations"
+    # placed by the channel alone: the grouping cannot be told, and a rising channel is no
+    # station order
+    var channels: seq[OrderTrace] = @[]
+    for k in 0 ..< 5:
+      for c in 1 .. 3:
+        channels.add OrderTrace(component: uint8(c), place: (2'i8, float64(c), 0.0, 0'i16),
+          start: float64(k * 1000) * Dt)
+    doAssert traceOrder(channels, Dt, false) == none, "channel-only flag by time"
+    var rising: seq[OrderTrace] = @[]
+    for c in 1 .. 8:
+      rising.add OrderTrace(component: 1, place: (2'i8, float64(c), 0.0, 0'i16), start: 0)
+    doAssert traceOrder(rising, Dt, true) == none, "a rising channel is not a station order"
+    for i, t in rising.mpairs: t.start = float64(i * 1000) * Dt
+    doAssert traceOrder(rising, Dt, true) == order(tgNone, tsByTime), "time of channel-only"
+
+  block uncodedComponents:
+    # component 0 for every trace: several at one station and start are components that
+    # cannot be told apart; the sub-sort is still said, the grouping is not
+    var flat, byComp, one: seq[OrderTrace] = @[]
+    for s in 1 .. 4:
+      for c in 1 .. 3: flat.add tr(0, 1, float64(s), 0)
+    doAssert traceOrder(flat, Dt, true) == order(tgNotKnown, tsByStation), "uncoded 3C"
+    for k in 0 ..< 5:
+      for c in 1 .. 3: byComp.add tr(0, 1, 1, k * 1000)
+    doAssert traceOrder(byComp, Dt, false) == order(tgNotKnown, tsByTime)
+    for s in 1 .. 4: one.add tr(0, 1, float64(s), 0)
+    doAssert traceOrder(one, Dt, true) == order(tgNone, tsByStation), "uncoded, one per station"
+    doAssert orderShort(order(tgNotKnown, tsByStation)) == "Station"
+    doAssert orderTitle(order(tgNotKnown, tsByStation)) == "Traces are sorted by station. " &
+      "Their components are not coded, so the grouping cannot be told."
+
+  block backwardCreep:
+    # many steps under half a sample, each rounding to a tie, are not sorted
+    var creep: seq[OrderTrace] = @[tr(1, 1, 1, 0)]
+    for k in 1 .. 100: creep.add OrderTrace(component: 1, place: (0'i8, 1.0, 1.0, 0'i16),
+      start: 10.0 - float64(k) * 0.0009)
+    creep.insert(tr(1, 1, 1, 0), 0)
+    creep[1].start = 10.0
+    doAssert traceOrder(creep, Dt, false) == none, "creeping back"
+
   block words:
     doAssert orderShort(order(tgNone, tsByStation)) == "Station"
     doAssert orderShort(order(tgNone, tsByTime)) == "Time"
     doAssert orderShort(order(tgByFlag, tsByStation)) == "Flag · station"
     doAssert orderShort(order(tgByComponent, tsByTime)) == "Component · time"
     doAssert orderShort(none) == "?"
+    doAssert orderTitle(none) == "No order by station or time could be told: the traces are " &
+      "out of order, their grouping is irregular, the key never changes, or there are too few."
     doAssert orderTitle(order(tgByComponent, tsByTime)) ==
       "Traces are grouped by component, and inside each component sorted by time."
     doAssert kindShort(rkReceiverSliced) == "Sliced" and kindShort(rkReceiverContinuous) ==

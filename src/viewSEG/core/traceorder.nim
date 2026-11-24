@@ -53,14 +53,17 @@ func placeCmp(a, b: StationPlace): int =
 
 func holds(traces: openArray[OrderTrace]; dtS: float64; byTime: bool): bool =
   ## Whether the traces of every component are non-decreasing in the key (station, or time in
-  ## samples) and the key rises somewhere.
-  var last: array[uint8, int] # per component: 1 + the index of its last trace, 0 for none
+  ## samples) and the key rises somewhere. A time is compared with the latest of its component,
+  ## not with the trace before it, so small steps back cannot add up unseen. A trace placed by
+  ## its channel alone has no station: the station order is then not told.
+  var top: array[uint8, int] # per component: 1 + the index of its latest trace, 0 for none
   var rose = false
   result = true
   for i in 0 ..< traces.len:
     let c = traces[i].component
-    if last[c] > 0:
-      let p = traces[last[c] - 1]
+    if not byTime and traces[i].place.how == 2: return false
+    if top[c] > 0:
+      let p = traces[top[c] - 1]
       let d =
         if byTime:
           if dtS > 0: cmp(int(round((traces[i].start - p.start) / dtS)), 0)
@@ -68,7 +71,8 @@ func holds(traces: openArray[OrderTrace]; dtS: float64; byTime: bool): bool =
         else: placeCmp(traces[i].place, p.place)
       if d < 0: return false
       if d > 0: rose = true
-    last[c] = i + 1
+      if (byTime and traces[i].start > p.start) or (not byTime and d > 0): top[c] = i + 1
+    else: top[c] = i + 1
   result = rose
 
 func contiguousComponents(traces: openArray[OrderTrace]): bool =
@@ -80,37 +84,54 @@ func contiguousComponents(traces: openArray[OrderTrace]): bool =
       if traces[i].component in done: return false
   result = true
 
-func cycles(traces: openArray[OrderTrace]; count: int; samePlace: bool): bool =
+func cycles(traces: openArray[OrderTrace]; count: int): bool =
   ## Whether the traces are consecutive sets of `count` traces, each of `count` different
-  ## components (and, with `samePlace`, of one station).
-  if traces.len mod count != 0: return false
+  ## components and of one station (never one placed by its channel alone: its components
+  ## cannot be told to be together).
+  if traces.len mod count != 0 or traces[0].place.how == 2: return false
   var i = 0
   while i < traces.len:
     var seen: set[uint8] = {}
     for j in i ..< i + count:
       if traces[j].component in seen: return false
-      if samePlace and traces[j].place != traces[i].place: return false
+      if traces[j].place != traces[i].place: return false
       seen.incl traces[j].component
     i += count
   result = true
+
+func uncodedGroups(traces: openArray[OrderTrace]; dtS: float64): bool =
+  ## Whether the traces are all of component 0 (not coded) and some two in a row share their
+  ## station and start: the components of one station, which cannot be told apart.
+  for t in traces:
+    if t.component != 0: return false
+  for i in 1 ..< traces.len:
+    if traces[i].place == traces[i - 1].place:
+      let d = traces[i].start - traces[i - 1].start
+      if (if dtS > 0: int(round(d / dtS)) == 0 else: d == 0): return true
 
 func traceOrder*(traces: openArray[OrderTrace]; dtS: float64; shot: bool): TraceOrder =
   ## The order of `traces` (live traces, in file order), times compared in samples of `dtS`
   ## seconds. `shot`: the file is a shot gather, which prefers the station when both
   ## sub-sorts hold; a receiver gather prefers the time.
+  ## Traces that are all of component 0 with two in a row at one station and start are several
+  ## uncoded components: the grouping is not known (`tgNotKnown`) whatever the layout, though
+  ## the sub-sort is still said when it holds. Uncoded data laid out by component, whose
+  ## station repeats from one component to the next, is told only when its time rises.
   result = TraceOrder(grouping: tgNotKnown, subSort: tsNotKnown)
   if traces.len < 2: return
   var comps: set[uint8] = {}
   for t in traces: comps.incl t.component
   let count = comps.card
   let blocks = count > 1 and contiguousComponents(traces)
+  let uncoded = uncodedGroups(traces, dtS)
   let keys = if shot: [tsByStation, tsByTime] else: [tsByTime, tsByStation]
   for key in keys:
     let byTime = key == tsByTime
     if holds(traces, dtS, byTime):
       let g =
-        if count == 1: tgNone
+        if uncoded: tgNotKnown
+        elif count == 1: tgNone
         elif blocks: tgByComponent
-        elif cycles(traces, count, not byTime): tgByFlag
+        elif cycles(traces, count): tgByFlag
         else: tgNotKnown
-      if g != tgNotKnown: return TraceOrder(grouping: g, subSort: key)
+      if g != tgNotKnown or uncoded: return TraceOrder(grouping: g, subSort: key)
