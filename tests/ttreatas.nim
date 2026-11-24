@@ -9,7 +9,8 @@
 ## Seen to fail with a deliberate fault: with the choice left out of `memoryDocument`, the
 ## choice was not kept ("futureNote" and "(treat" in the document); with `endToEndTimes` giving
 ## the file's own times, "the slice did not follow end to end"; with the sentence of the segment
-## times written twice, it was counted twice.
+## times written twice, it was counted twice; with the end-to-end sentence saying the start times
+## "could not be read", the words were not those of a file whose starts are the same.
 
 import std/[importutils, options, os, sequtils, strutils, tables, times]
 import parseSEG
@@ -328,6 +329,10 @@ proc main*() =
     let got = run(opts, dir / "out" / "forced.sgd")
     doAssert got.st == jsDone and got.res.ok and got.res.endToEnd, got.res.reason
     doAssert "vendor header map" in got.res.lines.join(" "), $got.res.lines
+    # the start times were read: they are the same, which is what is said
+    doAssert "Every trace of a component carries the same start time" in
+      got.res.lines.join(" ") and "could not be read" notin got.res.lines.join(" "),
+      $got.res.lines
     var f = openSeismic(dir / "out" / "forced.sgd", keys = true)
     defer: f.close()
     let x = f.readTraces(0 .. 0)

@@ -149,10 +149,10 @@ By time). A tick shows what you forced. A forced value shows in its cell with a 
 word, and the tooltip says "Set by you" and what the file says on its own. It is remembered for
 the file, by its content, so it follows the file when it is renamed or moved, and every part of
 viewSEG that asks what the file is (the Files columns, the Headers summary, the slice by shot
-log) goes by it. A file whose traces carry no start time and that you set to continuous is
-sliced taking each receiver's traces to follow one another end to end from the time of its
-first trace; the slice says so, and a vendor header map that names the start time gives the
-real times. The order you force is only shown for now. A choice an agent makes through the
+log) goes by it. A file whose traces of a component all carry the same start time and that
+you set to continuous is sliced taking each receiver's traces to follow one another end to end
+from the time of its first trace; the slice says so, and a vendor header map that names each
+trace's start time gives the real times. The order you force is only shown for now. A choice an agent makes through the
 command interface is for the session only. If several remembered documents could be the file's,
 the choice is kept for the session and Messages says to open the file once first. The columns after Name are as wide as their words and Name takes the rest; when the panel is
 too narrow for 16 characters of a name beside them, the list scrolls sideways. A folder listed

@@ -173,8 +173,8 @@ proc planRecording*(file: ptr SeismicFile; source: string; dtMs: float64;
 
 proc endToEndTimes*(plan: RecordingPlan): seq[float64] =
   ## The times of the traces of `plan` if each receiver's traces followed one another end to end
-  ## from the start of its first trace, in file order: what a file whose start times cannot be
-  ## read is taken to be when the user says it is continuous.
+  ## from the start of its first trace, in file order: what a file whose traces of a component
+  ## all carry one start time is taken to be when the user says it is continuous.
   let meta = plan.meta
   let dtS = meta.dtMs / 1000
   result = plan.times
