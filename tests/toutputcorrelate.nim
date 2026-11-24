@@ -1143,6 +1143,9 @@ proc main*() =
     sameTraces(viaB, ownB, Listen)
     for f in [addr viaA, addr viaB, addr ownA, addr ownB]: f[].close()
 
+  proc noted(lines: seq[string]): bool =
+    RefDelayScalar in lines or RefDelaySharedSet in lines or RefDelayKeptHeaders in lines
+
   block referenceDelay:
     ## A correlated file's reference trace is written shifted by the lead, so its
     ## header delay is the source's own less that lead; seismic delays are kept.
@@ -1185,8 +1188,6 @@ proc main*() =
       var f = openSeismic(path, keys = true)
       defer: f.close()
       for t in 0 ..< f.len: result.add f.traceKeys(t).t0Ms
-    proc noted(lines: seq[string]): bool =
-      RefDelayScalar in lines or RefDelaySharedSet in lines or RefDelayKeptHeaders in lines
 
     for (name, segdIn, segdOut) in [("yy", false, false), ("yd", false, true),
         ("dy", true, false)]:
@@ -1216,6 +1217,20 @@ proc main*() =
           doAssert "Headers were built from the trace keys. Template headers were not copied." in
             got.wrote.lines, "keys-path line missing"
         f.close()
+    block everyAuxiliaryIsReference:
+      ## SEG-Y in, SEG-D out from the keys, the one auxiliary trace a reference: its
+      ## delay is the source's less the lead, and nothing is noted.
+      let src = srcDir / "delay-one-aux.sgy"
+      delayFile(src, sweep, false, 100.0, 10.0, withOther = false)
+      var f = openSeismic(src, keys = true)
+      defer: f.close()
+      let dest = outDir / "delay-one-aux.sgd"
+      let got = runWrite(f, src, dest, option(sweep, ofSegd))
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      doAssert not noted(got.wrote.lines), "notes: " & $got.wrote.lines
+      let d = delaysOf(dest)
+      doAssert d == @[10.0, 10.0, 10.0, 100.0 - Lead], "delays " & $d
+
     block segdSetsFit:
       ## Only the reference is auxiliary: SEG-D to SEG-D keeps the template and its delay.
       let src = srcDir / "delay-sets.sgd"
@@ -1260,7 +1275,7 @@ proc main*() =
     ## a Rev 0 file has none: bytes 215-216 hold whatever they held, and the library
     ## does not read them. Seen to fail: with the scalar read on a Rev 0 file whose
     ## reference trace had -10 there, the delay was stored as -5000, not -500.
-    proc scalarFile(path: string; rev: SegyRevision; scalar: int16) =
+    proc scalarFile(path: string; rev: SegyRevision; scalar: int16; lagA: int16 = 0) =
       var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
         measurementSystem: 1, revision: rev))
       for i in 0 .. RefAux:
@@ -1279,20 +1294,43 @@ proc main*() =
         k.time = 1_700_000_000.0
         w.writeTrace(k, buf)
       doAssert w.close().len == 0, "the scalar file did not close"
-      if scalar != 0:
-        var f = openSeismic(path)
-        let at = int(f.traceEntry(RefAux).offset) + 214
-        f.close()
-        var bytes = readFile(path)
-        bytes[at] = char((uint16(scalar) shr 8) and 0xFF)
-        bytes[at + 1] = char(uint16(scalar) and 0xFF)
-        writeFile(path, bytes)
+      var f = openSeismic(path)
+      let base = int(f.traceEntry(RefAux).offset)
+      f.close()
+      var bytes = readFile(path)
+      for (at, v) in [(base + 214, scalar), (base + 104, lagA)]: # bytes 215 and 105
+        bytes[at] = char((uint16(v) shr 8) and 0xFF)
+        bytes[at + 1] = char(uint16(v) and 0xFF)
+      writeFile(path, bytes)
     proc peakTime(f: SeismicFile; t: int): float64 =
       let x = samplesOf(f, t)
       var best = 0
       for j in 0 ..< x.len:
         if abs(x[j]) > abs(x[best]): best = j
       f.traceKeys(t).t0Ms + float64(best) * DtMs
+
+    block scalarKept:
+      ## Scalar -10 stores -500 ms as -5000; the scalar and the other scaled time
+      ## fields (lag A, 70 here) are untouched. Seen to fail: with the delay written
+      ## through scalar 0 the stored bytes were -500 and the output read t0 -50.
+      let src = srcDir / "scalar-m10.sgy"
+      scalarFile(src, SegyRevision(major: 2, minor: 1), -10, 70)
+      var f = openSeismic(src, keys = true)
+      let dest = outDir / "scalar-m10.sgy"
+      let got = runWrite(f, src, dest, option(sweep, ofSegy))
+      doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+      f.close()
+      doAssert not noted(got.wrote.lines), "notes: " & $got.wrote.lines
+      var o = openSeismic(dest, keys = true)
+      defer: o.close()
+      proc field(name: string): int64 =
+        let v = o.findTraceField(RefAux, name)
+        if v.isSome: v.get.intVal else: -999999
+      doAssert field("trace.delayRecordingTime") == -5000, "stored " &
+        $field("trace.delayRecordingTime")
+      doAssert field("trace.timeScalar") == -10 and field("trace.lagTimeA") == 70,
+        "scalar " & $field("trace.timeScalar") & " lag A " & $field("trace.lagTimeA")
+      doAssert o.traceKeys(RefAux).t0Ms == -500.0, "t0 " & $o.traceKeys(RefAux).t0Ms
 
     block scalarTooCoarse:
       ## Scalar -1000 stores a delay in 1/1000 ms: -500 ms would be -500000, past 16 bits.
