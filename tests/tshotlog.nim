@@ -214,6 +214,20 @@ proc main*() =
     doAssert v.problems.items.len == ProblemCap
     doAssert v.problems.count == 150
 
+  block edits:
+    let raw = "a,b\n1,2\n3,4\n"
+    let log = parseShotLog(raw, dlComma)
+    doAssert log.toText == raw and not log.changed
+    log.setCell(0, 1, "9")
+    doAssert log.cell(0, 1) == "9" and log.cell(1, 1) == "4" and log.changed
+    doAssert log.toText == "a,b\n1,9\n3,4\n"
+    log.setCell(0, 1, "a,b")
+    doAssert log.toText == "a,b\n1,\"a,b\"\n3,4\n"
+    log.revert(0, 1)
+    doAssert log.cell(0, 1) == "2" and log.toText == raw and not log.changed
+    let quoted = "a,b\r\n\"x,y\",2\r\n"
+    doAssert parseShotLog(quoted, dlComma).toText == quoted
+
   block manyRows:
     var b = newStringOfCap(4_000_000)
     for i in 0 ..< 100_000:
