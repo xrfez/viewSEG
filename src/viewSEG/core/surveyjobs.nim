@@ -525,8 +525,8 @@ proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[in
             let c = relations[].recordCompleteness(file[].rowsOf(g), recordMatch, traceMatch)
             # an X record matched by file number alone, of another source than the
             # header's, is no basis for a check
-            if c.xpsRecord >= 0 and not (c.recordMatch == rmFieldRecord and c.hasSource and
-                c.sourceMismatch):
+            if c.xpsRecord >= 0 and not (recordMatch == rmAuto and
+                c.recordMatch == rmFieldRecord and c.hasSource and c.sourceMismatch):
               (planned[i], missing[i], unlisted[i], duplicates[i]) = (c.expected, c.missing,
                 c.unlisted, c.duplicates)
           except ValueError:
