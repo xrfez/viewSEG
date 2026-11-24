@@ -9,6 +9,9 @@
 ## `keysRevision` move ("the keys were not read again"). With the earlier-date
 ## warning put back, an earlier file said "checked-to". With Apply leaving
 ## `checkedTo` as `withLeap` does, adding 2027-01-01 left it at 2026-06-30.
+## With a failed save that did not end in "this run only", that test did not
+## finish. With a file over 1 MB still read, `calls(foRead, path)` was not 0.
+## With one note per parser problem, a refused file had more than one sentence.
 
 import std/[math, monotimes, os, strutils, times]
 import parseSEG

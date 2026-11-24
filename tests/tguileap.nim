@@ -4,7 +4,8 @@
 ##
 ## Seen to fail: with Tools > Leap seconds... opening nothing, "open did not finish".
 ## With the Set checked-to button still marked `leap.setchecked`, "no checked-to
-## control" did not finish.
+## control" did not finish. With no undo line under the buttons, "undo notice"
+## did not finish.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24"`.
 
@@ -66,6 +67,8 @@ proc main*() =
     step("no checked-to control", proc (f: FrameInfo) = discard,
       proc (f: FrameInfo): bool =
       not f.hasMark("leap.setchecked") and not f.hasMark("leap.unchecked"))
+    step("undo notice", proc (f: FrameInfo) = discard,
+      proc (f: FrameInfo): bool = f.hasMark("leap.undo"))
     var clicked = false
     step("apply", proc (f: FrameInfo) =
       if not shot:

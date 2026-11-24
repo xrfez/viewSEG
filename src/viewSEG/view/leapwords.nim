@@ -13,6 +13,8 @@ const
     "at each leap second. Recordings stamped in GPS time are converted with this table."
   AddHelp* = "A leap second takes effect at 00:00:00 UTC on the first of a month, " &
     "after the last entry. +1 puts GPS one second further ahead of UTC; -1, one second less."
+  NotUndoable* = "Changes are saved at once. Edit > Undo does not undo them: use Remove " &
+    "last or Reset."
 
 proc pathLine*(path: string): string =
   ## Where the table is saved, or that it is not.

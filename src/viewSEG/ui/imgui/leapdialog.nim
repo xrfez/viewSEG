@@ -124,5 +124,9 @@ proc drawLeap*(ui: var LeapUi; st: AppState; t: Theme; marks: var Marks): seq[Co
     igSameLine(0, -1)
     if button("Reset", true, marks, "leap.reset"):
       result.add Command(kind: ckResetLeaps)
+    igPushTextWrapPos(igGetCursorPos().x + igGetFontSize() * 28)
+    igTextUnformatted(NotUndoable.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("leap.undo")
   igEnd()
   if not open: ui.shown = false
