@@ -115,6 +115,10 @@ type
       ## `yyyy`, `mm`, `dd`, `hh`, `ss`, `f` and literals, as in
       ## `yyyy/mm/dd hh:mm:ss.ffffff`. Empty: recognize that form and ISO.
     sentinels*: seq[string] ## cell text that means missing, besides a blank
+    decimalComma*: bool
+      ## When set, a comma in a numeric cell is the decimal point. Default
+      ## false. `guessMap` sets it only when the delimiter is not a comma and
+      ## number columns use `digits,digits` rather than `digits.digits`.
     lengthUnit*: LengthUnit
 
   Shot* = object
@@ -771,6 +775,25 @@ proc guessFromCells(cells: openArray[string]): tuple[role: ColumnRole; pattern: 
   if year == n:
     return (crYear, "")
 
+type NumShape = enum
+  nsBlank, nsInt, nsDot, nsComma, nsOther
+
+func numShape(s: string): NumShape =
+  ## `digits`, `digits.digits` or `digits,digits`, with an optional sign.
+  let t = s.strip
+  if t.len == 0: return nsBlank
+  var i = 0
+  if t[0] in {'+', '-'}: inc i
+  if i >= t.len or t[i] notin Digits: return nsOther
+  while i < t.len and t[i] in Digits: inc i
+  if i == t.len: return nsInt
+  let sep = t[i]
+  if sep notin {'.', ','}: return nsOther
+  inc i
+  if i >= t.len or t[i] notin Digits: return nsOther
+  while i < t.len and t[i] in Digits: inc i
+  if i != t.len: nsOther elif sep == '.': nsDot else: nsComma
+
 proc fieldText(text: string; a, b: int): string =
   unquoteRange(text, a, b)
 
@@ -895,12 +918,45 @@ proc guessMap*(text: string): ShotLogMap {.raises: [].} =
         result.dateTimePattern.len == 0:
       let g = guessFromCells(samples[c])
       if g.pattern.len > 0: result.dateTimePattern = g.pattern
+  if result.delimiter != dlComma:
+    var commaDec, dotDec = false
+    for col in samples:
+      var numeric = false
+      var other = false
+      var colComma, colDot = false
+      for cell in col:
+        let shape = numShape(cell)
+        if shape == nsOther:
+          other = true
+          break
+        elif shape == nsComma:
+          numeric = true
+          colComma = true
+        elif shape == nsDot:
+          numeric = true
+          colDot = true
+        elif shape == nsInt:
+          numeric = true
+      if numeric and not other:
+        if colComma: commaDec = true
+        if colDot: dotDec = true
+    if commaDec and not dotDec:
+      result.decimalComma = true
 
-func isMissing(cell: string; sentinels: openArray[string]): bool =
+func dotDecimal(s: string; decimalComma: bool): string =
+  ## `s`, with a comma written as a dot when `decimalComma`.
+  if not decimalComma or ',' notin s: return s
+  result = newString(s.len)
+  for i, c in s:
+    result[i] = if c == ',': '.' else: c
+
+func isMissing(cell: string; sentinels: openArray[string];
+    decimalComma = false): bool =
   let t = cell.strip
   if t.len == 0: return true
+  let shown = dotDecimal(t, decimalComma)
   var number = 0.0
-  let parsed = parseutils.parseFloat(t, number) == t.len and t.len > 0
+  let parsed = parseutils.parseFloat(shown, number) == shown.len and shown.len > 0
   for s in sentinels:
     let u = s.strip
     if u.len == 0: discard
@@ -911,7 +967,7 @@ func isMissing(cell: string; sentinels: openArray[string]): bool =
         return true
   false
 
-proc parseWhole(s: string): tuple[ok: bool; value: int64] =
+proc parseWhole(s: string; decimalComma = false): tuple[ok: bool; value: int64] =
   let t = s.strip
   if t.len == 0: return
   var i = 0
@@ -925,7 +981,8 @@ proc parseWhole(s: string): tuple[ok: bool; value: int64] =
   while i < t.len and t[i] in Digits:
     if not accDigit(v, ord(t[i]) - ord('0')): return
     inc i
-  if i < t.len and t[i] == '.':
+  let dec = if decimalComma: ',' else: '.'
+  if i < t.len and t[i] == dec:
     inc i
     if i >= t.len: return
     while i < t.len and t[i] == '0': inc i
@@ -933,14 +990,14 @@ proc parseWhole(s: string): tuple[ok: bool; value: int64] =
   if neg: v = -v
   (true, v)
 
-proc parseNum(s: string): tuple[ok: bool; value: float64] =
-  let t = s.strip
+proc parseNum(s: string; decimalComma = false): tuple[ok: bool; value: float64] =
+  let t = dotDecimal(s.strip, decimalComma)
   if t.len == 0: return
   var n = 0.0
   let c = parseutils.parseFloat(t, n)
   if c == t.len and c > 0: (true, n) else: (false, NaN)
 
-proc parseSecondsUs(s: string): tuple[ok: bool; us: int64] =
+proc parseSecondsUs(s: string; decimalComma = false): tuple[ok: bool; us: int64] =
   ## Microseconds from a seconds field, digits only, so a fraction is not
   ## rounded through `float64`. At most six fraction digits, then half-up.
   let t = s.strip
@@ -958,7 +1015,8 @@ proc parseSecondsUs(s: string): tuple[ok: bool; us: int64] =
     inc i
   var frac = 0'i64
   var digits = 0
-  if i < t.len and t[i] == '.':
+  let dec = if decimalComma: ',' else: '.'
+  if i < t.len and t[i] == dec:
     inc i
     if i >= t.len: return
     while i < t.len and t[i] in Digits and digits < 6:
@@ -987,7 +1045,7 @@ proc parseSecondsUs(s: string): tuple[ok: bool; us: int64] =
   if neg: us = -us
   (true, us)
 
-proc parseSecond(s: string): tuple[ok: bool; sec, us: int] =
+proc parseSecond(s: string; decimalComma = false): tuple[ok: bool; sec, us: int] =
   ## Whole seconds and microseconds from a second field. The fraction is
   ## taken from the digits, so 59.999999 stays 59 s + 999999 us.
   let t = s.strip
@@ -1000,7 +1058,8 @@ proc parseSecond(s: string): tuple[ok: bool; sec, us: int] =
     if not accDigit(sec, ord(t[i]) - ord('0')): return
     inc i
   var us = 0
-  if i < t.len and t[i] == '.':
+  let dec = if decimalComma: ',' else: '.'
+  if i < t.len and t[i] == dec:
     inc i
     var digits = 0
     var frac = 0
@@ -1181,7 +1240,8 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
       if role == crIgnored: discard
       else:
         let raw = cell(log, row, col)
-        let missing = col >= fieldCount or isMissing(raw, map.sentinels)
+        let missing = col >= fieldCount or isMissing(raw, map.sentinels,
+          map.decimalComma)
         case role
         of crIgnored: discard
         of crText:
@@ -1204,7 +1264,7 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
               crHour, crMinute, crMicrosecond}:
             cols[3] = col
           if not missing:
-            let whole = parseWhole(raw)
+            let whole = parseWhole(raw, map.decimalComma)
             if not whole.ok:
               addProblem(result.problems, pkBadNumber, row, col,
                 "not a whole number: " & raw.strip)
@@ -1246,7 +1306,7 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
           if cols[3] < 0 and role == crSecond: cols[3] = col
           if not missing:
             if role == crUtcSeconds:
-              let sec = parseSecondsUs(raw)
+              let sec = parseSecondsUs(raw, map.decimalComma)
               if not sec.ok:
                 addProblem(result.problems, pkBadNumber, row, col,
                   "not a number: " & raw.strip)
@@ -1254,7 +1314,7 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
                 utcSecUs = some(sec.us)
                 cols[2] = col
             elif role == crSecond:
-              let sec = parseSecond(raw)
+              let sec = parseSecond(raw, map.decimalComma)
               if not sec.ok:
                 addProblem(result.problems, pkBadNumber, row, col,
                   "not a number: " & raw.strip)
@@ -1265,7 +1325,7 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
                 secRaw = raw.strip
                 shot.second = float64(sec.sec) + float64(sec.us) / 1e6
             else:
-              let num = parseNum(raw)
+              let num = parseNum(raw, map.decimalComma)
               if not num.ok:
                 addProblem(result.problems, pkBadNumber, row, col,
                   "not a number: " & raw.strip)

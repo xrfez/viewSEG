@@ -12,6 +12,7 @@
 ## `pkTooLong`. With the fraction left replaced by the microsecond
 ## column, `fractionAndMicros` keeps 59.000000 and reports no problem.
 ## With the year column stored as parsed, `yearColumnPivot` keeps 16.
+## With no decimal-comma reading, `decimalComma` leaves `1,5` unparsed.
 
 import std/[math, options, os, strutils]
 import viewSEG/core/shotlog
@@ -368,6 +369,39 @@ proc main*() =
     doAssert y216.rows[0].timeUtcUs.isNone
     doAssert hasKind(y216.problems, pkBadNumber)
     doAssert "216" in kindText(y216.problems, pkBadNumber)
+
+  block decimalComma:
+    doAssert not initShotLogMap().decimalComma
+    let semi = guessMap("shot;depth\n1;1,5\n2;2,25\n")
+    doAssert semi.delimiter == dlSemicolon
+    doAssert semi.decimalComma
+    let readSemi = shots(parseShotLog("shot;depth\n1;1,5\n2;2,25\n", semi), semi)
+    doAssert readSemi.rows[0].shotPoint == 1.0
+    doAssert readSemi.rows[0].sourceDepth == 1.5
+    doAssert readSemi.rows[1].sourceDepth == 2.25
+    let dotted = guessMap("shot;depth\n1;1.5\n")
+    doAssert dotted.delimiter == dlSemicolon
+    doAssert not dotted.decimalComma
+    let mixed = guessMap("shot;depth\n1,5;1.5\n")
+    doAssert not mixed.decimalComma
+    let commas = guessMap("shot,depth\n1,1.5\n")
+    doAssert commas.delimiter == dlComma
+    doAssert not commas.decimalComma
+    let tabs = guessMap("shot\tdepth\n1\t1,5\n")
+    doAssert tabs.delimiter == dlTab
+    doAssert tabs.decimalComma
+    var m = mapOf([crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond],
+      dlSemicolon, header = false)
+    m.decimalComma = true
+    let sec = shots(parseShotLog("2024;3;1;0;0;59,5\n", m), m)
+    doAssert sec.rows[0].second == 59.5
+    doAssert sec.rows[0].timeUtcUs.get == UtcMarch + 59_500000
+    m.sentinels = @["-999.25"]
+    m.roles = @[crShotPoint]
+    let missing = shots(parseShotLog("1,5\n-999,25\n", m), m)
+    doAssert missing.rows[0].shotPoint == 1.5
+    doAssert missing.rows[1].shotPoint.isNaN
+    doAssert not hasKind(missing.problems, pkBadNumber)
 
   echo "tshotlog ok"
 
