@@ -214,6 +214,23 @@ proc main*() =
     doAssert "Text header: template 'L' was not used" in r3.lines.join("\n")
     doAssert readFile(dir / "label-set.sgy") == readFile(noText)
 
+  block leftoverBytesOfARev1Source:
+    # Bytes where Rev 2 has the extended fold are not one in a Rev 1 source: the
+    # library clears them when it writes Rev 2.1, so the 16-bit fold is written.
+    # Seen to fail: with the source's header passed whatever its revision, the fold was
+    # left out with a note.
+    let old = inDir / "rev1-leftover.sgy"
+    writeSmall(old, SegyRevision(major: 1, minor: 0))
+    var bytes = readFile(old)
+    for i in 3292 .. 3295: bytes[i] = char(9)
+    writeFile(old, bytes)
+    let dest = dir / "rev1-leftover-out.sgy"
+    let r = runOne(old, dest, OutputOptions(format: ofSegy, revision: orSegy21,
+      headerBinary: some(one("Both", ("jobId", "3"), ("ensembleFold", "5")))))
+    doAssert r.ok, r.reason
+    doAssert r.binaryLines == @["Binary header: set 'Both' (2 fields)."], $r.binaryLines
+    doAssert fieldOf(dest, "jobId") == 3 and fieldOf(dest, "ensembleFold") == 5
+
   block badSet:
     # A set that holds a problem (the project never keeps one) writes nothing.
     let dest = dir / "bad.sgy"
