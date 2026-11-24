@@ -11649,6 +11649,8 @@ proc cutGatherCmd(state: var AppState; cmd: Command) =
   state.cutPath = ""
   var opts = cmd.cutOptions
   opts.treatKind = state.treats.getOrDefault(s.path).kind # what the user forced for the file
+  opts.logName = extractFilename(state.shotLogs[cmd.cutLog].source)
+  if opts.logName.len == 0: opts.logName = state.shotLogs[cmd.cutLog].name
   state.cutJob = state.jobs.submit(cutGatherSpec(s.diskPath, dest),
     cutGatherWork(s.filePtr, s.diskPath, dest, shots, opts, state.cutSink, others))
 

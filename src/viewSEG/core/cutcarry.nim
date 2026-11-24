@@ -96,7 +96,7 @@ proc setStartUs*(file: SeismicFile; trace: int): int64 =
     of slRev3:
       if cs < scan.descriptorsRev3.len: result = int64(scan.descriptorsRev3[cs].startTime)
 
-func firstRow(plan: SlicePlan; trace, fallback: int): int =
+func firstRow*(plan: SlicePlan; trace, fallback: int): int =
   ## The source trace that holds the first sample of the window of output
   ## trace `trace`: the piece that covers column 0; when that is a gap, the
   ## first segment the window does read, else `fallback`.

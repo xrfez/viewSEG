@@ -35,14 +35,14 @@
 ## counted from the size estimate as the shot is written, and the result has
 ## the file's size at the end.
 
-import std/[math, options, os, random, sequtils, strutils, times]
+import std/[math, options, os, random, sequtils, strutils, tables, times]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
 import processSEG/continuous/slice
 import processSEG/core/[rows, workspace]
-import cutcarry, cutfile, cutgather, filesystem, jobs, outputjobs, recordingkind, segmentclock,
-    shotlog, vendormaps
+import cutcarry, cutfile, cutfills, cutgather, filesystem, jobs, outputjobs, recordingkind,
+    segmentclock, shotlog, vendormaps
 
 const
   NamedMax* = 5 ## how many overlaps and timing issues the result names
@@ -62,6 +62,15 @@ type
       ## true: the record numbers are the shots' file numbers; false: 1 to N
     pointIndexOutOfRange*: int
       ## shots whose point index does not fit the writer (written as 0)
+    fills*: FillNotes
+      ## the filter, gain and sensor facts of the recording that the keys-built output took
+      ## or has no place for
+    fillOutput*: string ## where the facts with no place would have gone ("SEG-Y revision 2.1")
+    provenanceIn*: string
+      ## where the output says it was sliced, by which program, from which files ("the
+      ## textual header"); "" when it does not
+    textReplaced*: int
+      ## characters of the file names that the output's character set cannot hold ("?")
     sourceKeysDropped*: bool
       ## SEG-Y output of shots that have a source line or a point index, which
       ## SEG-Y has no place for
@@ -266,9 +275,18 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
     if res.sourceXyDropped:
       result.add "A SEG-D Rev 2 record has no place for the source's coordinates; they are " &
         "left out."
-  elif res.fallbackWhy.len > 0:
-    result.add "The headers were built from the options, not carried from the source: " &
-      res.fallbackWhy & "."
+  else:
+    if res.fallbackWhy.len > 0:
+      result.add "The headers were built from the options, not carried from the source: " &
+        res.fallbackWhy & "."
+    result.add fillLines(res.fills, res.fillOutput)
+    if res.provenanceIn.len > 0:
+      result.add "The " & res.provenanceIn.replace("the ", "") & " says the file was sliced by " &
+        "viewSEG, from the recording and the shot log named there."
+      if res.textReplaced > 0:
+        result.add plural(res.textReplaced, "character", "characters") &
+          " of those file names cannot be written in " & res.provenanceIn &
+          " and " & (if res.textReplaced == 1: "is" else: "are") & " written as \"?\"."
   if res.recordsFromFileNumbers:
     result.add "The records are numbered by the shots' file numbers."
   else:
@@ -408,8 +426,13 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let rows = carryRows(plan)
       let candidate = opts.standard == csSegdRev3 and
         carryRefusal(file[], plan, rows).len == 0
+      # What the output says about itself (keys path only): text cards in SEG-Y's textual
+      # header, which has them anyway; a SEG-D external header, which adds to each record.
+      let provenance = sliceProvenance(source.extractFilename, opts.logName, shots.shots.len,
+        if opts.standard == csSegy: teEbcdic else: teAscii)
+      let external = if opts.standard == csSegdRev3: externalHeaderOf(provenance) else: @[]
       let keysBytes = estimateBytes(opts, shots.shots.len, comps, plan.samples, anyStation,
-        anySourceXY, anyReceiverXY)
+        anySourceXY, anyReceiverXY) + int64(shots.shots.len) * int64(external.len)
       var expected = if candidate: carryBytes(file[], plan, rows, shots.shots.len)
         else: keysBytes
       var res = CutResult(path: dest, shotsDropped: shots.dropped,
@@ -476,7 +499,14 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           w = openSeismicWriter(part, SegdOutputOptions(sampleIntervalUs: intervalUs,
             numSamples: plan.samples))
         of csSegy:
-          w = openSeismicWriter(part, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+          w = openSeismicWriter(part, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
+            text: provenance.lines))
+        res.provenanceIn =
+          if opts.standard == csSegy: "the textual header" else: "the external header"
+        res.textReplaced = provenance.replaced
+        res.fillOutput =
+          if opts.standard == csSegy: "SEG-Y revision " & $SegyOutputOptions().revision
+          else: "the SEG-D output, whose headers are built from keys"
 
       var ws = initWorkspace()
       ws.reserve(sliceWorkspace(float32, plan))
@@ -490,6 +520,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var dst = newSeq[float32](plan.samples)
       var touched: seq[int] = @[]
       var startCount = StartCount()
+      var sourceFactsOf = initTable[int, Facts]() # by source trace, read once
       var startsNoted = false
       var lastDetail = fs.now() - DetailEvery
       let total = shots.shots.len
@@ -576,15 +607,31 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             var k = plan.sliceKeys(trace)
             k.record = float64(numbered.numbers[s])
             k.channel = float64(r + 1)
+            # the facts of the recording's headers come from the segment that holds the
+            # trace's first sample, each trace from its own
+            var fill = TraceFill()
+            let origin = firstRow(plan, trace, rows.fallback[r])
+            if origin >= 0:
+              if origin notin sourceFactsOf:
+                if not file[].inMemory: fs.mappedRead(source, headers = true)
+                sourceFactsOf[origin] = sourceFacts(file[], origin)
+              let facts = sourceFactsOf[origin]
+              case opts.standard
+              of csSegdRev3: keysOnly(facts, res.fills)
+              of csSegy:
+                fill = segyFill(facts, res.fills)
+                if fill.traceCode != 0 and k.status != tsDead: k.traceCode = fill.traceCode
             case opts.standard
             of csSegdRev3:
               k.time = toPosixSeconds(firstUs)
               k.noteRecordedTime(toFirstSample, firstUs)
+              w.writeTrace(k, dst, fill.overrides, channelType = sctSeismic,
+                externalHeader = external)
             of csSegy:
               # The SEG-Y writer takes `time` as time zero.
               k.time = toPosixSeconds(shots.shots[s].timeUs)
               k.noteRecordedTime(toRecordTimeZero, shots.shots[s].timeUs)
-            w.writeTrace(k, dst, channelType = sctSeismic)
+              w.writeTrace(k, dst, fill.overrides, channelType = sctSeismic)
         if shotFailed: inc res.shotsWithFailures
         discard settleShot(plan, buf, fetch, sliceReport, touched, s)
         if refusal.len > 0:

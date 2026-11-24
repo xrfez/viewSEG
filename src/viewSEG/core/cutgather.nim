@@ -28,6 +28,9 @@ type
     standard*: CutStandard
     treatKind*: Option[RecordingKind]
       ## the kind the user forced for the file, filled by the command from what the state holds
+    logName*: string
+      ## the shot log's file name (not its path), for the note a slice writes about itself;
+      ## "" when it has none
 
   CutShots* = object
     ## The timed shots of a log, in time order.
