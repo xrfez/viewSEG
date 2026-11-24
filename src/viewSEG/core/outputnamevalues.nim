@@ -6,7 +6,7 @@
 
 import std/[math, options, os, sets]
 import parseSEG
-import edits, outputnames, recordtime, sigtypes, unitserial, vendormaps
+import edits, outputnames, outputtext, recordtime, sigtypes, unitserial, vendormaps
 
 const KeyChunk = 64 ## traces whose keys are compared together
 
@@ -261,3 +261,70 @@ proc nameValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
   result[npStem] = NameValue(state: nvText, text: stemOf(source))
   if facts.isSignature: fillSignature(result, facts)
   else: fillSeismic(result, file, edits, dropKilled, own, wanted, vendors)
+
+const EndParts = [npRecord, npSrcLine, npSrcPoint, npRcvLine, npRcvPoint, npSrcIndex, npRcvIndex]
+  ## the parts a text header token can show as first-last
+
+type EndKeys = object
+  ## The keys of the first and the last trace of one group, in the file's order.
+  seen: bool
+  first, last: TraceKeys
+
+func keyValue(keys: TraceKeys; kind: NamePartKind): NameValue =
+  ## One part of one trace's keys; missing when the trace gives none.
+  func number(x: float64; zeroMissing: bool): NameValue =
+    if x.isNaN or abs(x) >= 1e15 or (zeroMissing and x == 0.0): NameValue(state: nvMissing)
+    else: NameValue(state: nvNumber, number: x)
+  case kind
+  of npRecord: number(keys.record, true)
+  of npSrcLine: number(keys.srcLine, false)
+  of npSrcPoint: number(keys.srcPoint, false)
+  of npRcvLine: number(keys.rcvLine, false)
+  of npRcvPoint: number(keys.rcvPoint, false)
+  of npSrcIndex: NameValue(state: nvInt, intValue: int64(keys.srcIndex))
+  of npRcvIndex: NameValue(state: nvInt, intValue: int64(keys.rcvIndex))
+  else: NameValue(state: nvMissing)
+
+proc fillFirstLast(v: var TextValues; file: SeismicFile; edits: FileEdits; dropKilled: bool;
+    own: ptr SeismicFile) =
+  ## The first and the last value, in the file's order, of each part that is
+  ## not one value in the file (the trace group `fillSeismic` compares).
+  let useOwn = own != nil and own[].isOpen and own[].len == file.len
+  var seismic, auxiliary: EndKeys
+  var buf, ownBuf: array[KeyChunk, TraceKeys]
+  var t = 0
+  while t < file.len:
+    let count = min(KeyChunk, file.len - t)
+    let span = t ..< t + count
+    file.traceKeysInto(span, buf.toOpenArray(0, count - 1))
+    if useOwn: own[].traceKeysInto(span, ownBuf.toOpenArray(0, count - 1))
+    for k in 0 ..< count:
+      if not (dropKilled and edits.has(teKilled, t + k)):
+        var keys = buf[k]
+        if useOwn: keys = ownGeometry(keys, ownBuf[k])
+        let group = if keys.status == tsAuxiliary: addr auxiliary else: addr seismic
+        if not group[].seen:
+          group[].seen = true
+          group[].first = keys
+        group[].last = keys
+    t += count
+  let ends = if seismic.seen: seismic else: auxiliary
+  if ends.seen:
+    for kind in EndParts:
+      if v.values[kind].state == nvMixed:
+        v.firstLast[kind] = (first: keyValue(ends.first, kind), last: keyValue(ends.last, kind))
+
+proc textValuesOf*(file: SeismicFile; source: string; facts: SignatureFacts;
+    edits: FileEdits; dropKilled: bool; writtenUs: int64; own: ptr SeismicFile = nil;
+    wanted: set[NamePartKind] = {}; vendors = VendorRegistry()): TextValues =
+  ## What one file gives the tokens of a text header template: its name
+  ## values (`nameValuesOf`), `source`, the time of writing, and, for a
+  ## record, line, point or index that is not one value in the file, its
+  ## first and last value in the file's order. A signature file has no
+  ## trace keys to compare, so has none.
+  result.source = source
+  result.writtenUs = writtenUs
+  result.values = nameValuesOf(file, source, facts, edits, dropKilled, own, wanted, vendors)
+  var mixed = false
+  for kind in EndParts: mixed = mixed or result.values[kind].state == nvMixed
+  if mixed and not facts.isSignature: fillFirstLast(result, file, edits, dropKilled, own)

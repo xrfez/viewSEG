@@ -13,7 +13,7 @@
 ## (`renderProblem`), and the file is not written with them. The character
 ## rule is the library's own (`checkTextHeader`).
 
-import std/[math, os, strutils, times, unicode]
+import std/[math, options, os, strutils, times, unicode]
 import parseSEG
 import outputnames
 
@@ -281,3 +281,21 @@ proc renderProblem*(t: OutputText; v: TextValues): string =
       return lineWord(i + 1) & " is " & $line.runeLen & " characters long once its tokens are " &
         "filled in; at most " & $MaxTextLine & " fit."
   result = charProblem(lines, t.encoding)
+
+proc cardsOf*(t: OutputText; v: TextValues): seq[string] =
+  ## The cards the writer takes (`fullText`) for `t` and the file `v`
+  ## describes: `render`'s lines one byte a character (UTF-8 to Latin-1).
+  ## Call it when `renderProblem` is "": a character past U+00FF is cut to
+  ## its low byte otherwise.
+  result = @[]
+  for line in render(t, v):
+    var one = ""
+    for r in line.runes: one.add char(int32(r) and 0xFF)
+    result.add one
+
+func chosenText*(texts: openArray[OutputText]; name: string): Option[OutputText] =
+  ## The template called `name`; none when `name` is "" or names none.
+  result = none(OutputText)
+  if name.len > 0:
+    for t in texts:
+      if t.name == name: return some(t)
