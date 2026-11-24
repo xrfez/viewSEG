@@ -3,17 +3,16 @@
 ## is read. The job that fills a table is `core/vibfolderjobs`; the sentences
 ## are `view/vibfolderwords`.
 
-import std/[algorithm, math, strutils, tables]
+import std/[algorithm, math, os, strutils, tables]
 from sigtypes import SignatureKind, SweepInfo, VibWeights, groupDigits
 import sigjudge, units, vibjudge
 
 type
   FolderOutcome* = enum
-    ## What a row is. A contributed file was judged only to add to its pair.
+    ## What a row is. A paired file keeps its own verdict.
     foJudged = "judged"
     foProblem = "problem"
     foSkipped = "skipped"
-    foContributed = "contributed"
 
   FolderMeasure* = object
     ## One limit, as judged. `measured` is NaN when that limit was not judged.
@@ -29,8 +28,8 @@ type
     label*, viewseg*, controller*, tip*: string
 
   FolderRow* = object
-    ## One file. `pair` is the partner's path, or "". A contributed row keeps
-    ## its polarity and warnings; its verdict is not a verdict of its own.
+    ## One file. `pair` is the partner's path, or "". A paired file keeps its
+    ## own verdict, sentence and measures.
     path*: string
     kind*: SignatureKind
     pair*: string
@@ -53,8 +52,8 @@ type
 
   FolderTotals* = object
     ## Counts of the rows in hand. `passed`, `failed` and `notJudged` are
-    ## judged rows only. A contributed row is none of those.
-    files*, passed*, failed*, notJudged*, problems*, skipped*, contributed*: int
+    ## judged rows only. Every file is counted under its own verdict.
+    files*, passed*, failed*, notJudged*, problems*, skipped*: int
 
   FolderTable* = object
     ## The rows, the profile's problems (said once) and the fleet's weight words.
@@ -88,7 +87,6 @@ func totalsOf*(rows: openArray[FolderRow]): FolderTotals =
       of qvNotJudged: inc result.notJudged
     of foProblem: inc result.problems
     of foSkipped: inc result.skipped
-    of foContributed: inc result.contributed
 
 func closeLb(headerLb, jobKg: float64): bool =
   ## Whether a header weight in pounds and a job weight in kilograms are the
@@ -132,28 +130,29 @@ func fleetWords*(sweeps: openArray[tuple[vibrator: int;
   if unknown.len > 0: result.add unknown
 
 proc attachPairs*(rows: var seq[FolderRow]) =
-  ## A paired `.vib` that was judged becomes contributed: it keeps its
-  ## polarity and warnings, drops its own verdict, and those findings are
-  ## copied onto the partner. A problem or a skipped file is left as it is.
-  ## An unpaired `.vib` is left with its own verdict.
+  ## Pairing adds the partner's name, and copies a judged `.vib`'s polarity
+  ## and warnings onto its partner, the way a Vibrator window shows them on
+  ## a file opened with its pair. Every file keeps its own verdict, sentence
+  ## and measures, and is counted under that verdict. A problem or a skipped
+  ## file keeps them too. An unpaired file is left as it is.
   var at = initTable[string, int]()
   for i, row in rows:
     at[row.path] = i
   for i in 0 ..< rows.len:
     let row = rows[i]
-    if row.kind == sgVib and row.pair.len > 0 and row.outcome == foJudged:
-      if row.pair in at:
-        let j = at[row.pair]
-        if rows[j].extraPolarity.len == 0 and row.polarity.len > 0:
-          rows[j].extraPolarity = row.polarity
-        for w in row.warnings:
-          if w notin rows[j].extraWarnings: rows[j].extraWarnings.add w
-        for w in row.weightWords:
-          if w notin rows[j].weightWords: rows[j].weightWords.add w
-      rows[i].outcome = foContributed
-      rows[i].verdict = qvNotJudged
-      rows[i].sentence = ""
-      rows[i].measures = @[]
+    if row.kind == sgVib and row.pair.len > 0 and row.outcome == foJudged and
+        row.pair in at:
+      let j = at[row.pair]
+      if rows[j].extraPolarity.len == 0 and row.polarity.len > 0:
+        rows[j].extraPolarity = row.polarity
+      for w in row.warnings:
+        if w notin rows[j].extraWarnings: rows[j].extraWarnings.add w
+      for w in row.weightWords:
+        if w notin rows[j].weightWords: rows[j].weightWords.add w
+  for i in 0 ..< rows.len:
+    if rows[i].pair.len == 0: continue
+    let named = "Paired with " & rows[i].pair.extractFilename
+    if named notin rows[i].warnings: rows[i].warnings.add named
 
 func verdictRank(row: FolderRow): int =
   case row.outcome
@@ -163,8 +162,7 @@ func verdictRank(row: FolderRow): int =
     of qvNotJudged: 1
     of qvPass: 2
   of foProblem: 3
-  of foContributed: 4
-  of foSkipped: 5
+  of foSkipped: 4
 
 func limitOf(c: FolderColumn): QcLimit =
   case c

@@ -36,15 +36,10 @@ func summaryLine*(t: FolderTotals): string =
   result = $t.files & " files, " & $t.passed & " pass, " & $t.failed &
     " fail, " & $t.notJudged & " not judged, " & $t.problems & " problems, " &
     $t.skipped & " skipped."
-  if t.contributed > 0:
-    result.add " "
-    result.add $t.contributed
-    result.add " contributed."
 
 func verdictCell(row: FolderRow): string =
   case row.outcome
   of foJudged: $row.verdict
-  of foContributed: "contributed"
   of foProblem: "problem"
   of foSkipped: "skipped"
 

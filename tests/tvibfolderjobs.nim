@@ -343,6 +343,34 @@ proc main*() =
       if w == "Measured against the project reference sweep-a": said = true
     doAssert said, $row.warnings
 
+  block pairedVibKeepsFail:
+    ## A paired `.vib` that fails peak force keeps that verdict and is counted.
+    ## Seen to fail when pairing wiped it and the totals said 0 failed.
+    let pairDir = dir / "pairfail"
+    let dat = datFile(pairDir, "4321_0.dat", SynthDat(samples: 12000))
+    let vib = vibFile(pairDir, "0007.VIB")
+    var limits = QcLimits(peakForcePct: 0.01)
+    let tight = applied(profileOf(limits, 500.0, 5, asB, ForceScale(), 1000.0, NaN,
+      "", NaN, "pound-counts"), [])
+    let got = runJob(@[listed(dat), listed(vib)], tight)
+    doAssert got.st == jsDone, got.error
+    let vibRow = rowOf(got.table, vib)
+    doAssert vibRow.outcome == foJudged, $vibRow.outcome & " " & vibRow.problem
+    doAssert vibRow.verdict == qvFail, $vibRow.verdict & " " & vibRow.sentence
+    doAssert vibRow.sentence.len > 0
+    doAssert vibRow.measures.len > 0
+    let datRow = rowOf(got.table, dat)
+    doAssert datRow.outcome == foJudged, $datRow.outcome & " " & datRow.problem
+    var vibNamed = false
+    var datNamed = false
+    for w in vibRow.warnings:
+      if w == "Paired with 4321_0.dat": vibNamed = true
+    for w in datRow.warnings:
+      if w == "Paired with 0007.VIB": datNamed = true
+    doAssert vibNamed, $vibRow.warnings
+    doAssert datNamed, $datRow.warnings
+    doAssert got.table.totals.failed >= 1, $got.table.totals
+
   block cancel:
     lane = initJobs()
     setJobHook(stopAtSecond)

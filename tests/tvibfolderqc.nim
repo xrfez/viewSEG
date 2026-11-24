@@ -1,11 +1,11 @@
-## A folder QC table counts judged rows apart from problems, skips and
-## contributed files, sorts stably, and filters without dropping the
-## profile's problems. Header weights that differ from the job's are words;
-## nothing is rescaled.
+## A folder QC table counts every file under its own verdict, apart from
+## problems and skips, sorts stably, and filters without dropping the
+## profile's problems. A paired file keeps that verdict and names its
+## partner. Header weights that differ from the job's are words; nothing
+## is rescaled.
 ##
-## Seen to fail: with a contributed row also counted as not judged, `totals`
-## names it (notJudged 2, not 1). With the measure columns untitled,
-## `textAndCsv` does not find "Average phase (°)".
+## Seen to fail: with the measure columns untitled, `textAndCsv` does not
+## find "Average phase (°)".
 
 import std/[math, strutils]
 import viewSEG/core/[sigtypes, units, vibfolderqc, vibjudge]
@@ -24,11 +24,11 @@ proc main*() =
       row("c.dat", foJudged, qvNotJudged),
       row("d.dat", foProblem, qvNotJudged, problem = "cannot be read"),
       row("e.dat", foSkipped, qvNotJudged, problem = "Cancelled."),
-      row("f.vib", foContributed, qvNotJudged, kind = sgVib, pair = "a.dat")]
+      row("f.vib", foJudged, qvFail, kind = sgVib, pair = "a.dat")]
     let t = totalsOf(rows)
     doAssert t.files == 6, $t.files
-    doAssert t.passed == 1 and t.failed == 1 and t.notJudged == 1, $t
-    doAssert t.problems == 1 and t.skipped == 1 and t.contributed == 1, $t
+    doAssert t.passed == 1 and t.failed == 2 and t.notJudged == 1, $t
+    doAssert t.problems == 1 and t.skipped == 1, $t
 
   block stable:
     var table = FolderTable(rows: @[
@@ -63,17 +63,54 @@ proc main*() =
     doAssert "Nothing is corrected or rescaled" in found[0], found[0]
     doAssert weightFindings(VibWeights(), 10000, 10000, 10000).len == 0
 
-  block pairContributes:
+  block pairKeepsOwnVerdict:
+    ## A paired `.vib` that fails keeps that verdict, sentence and measures,
+    ## and is counted as a failure. Pairing only adds the partner's name.
+    ## Seen to fail when the `.vib` was marked contributed and its fail vanished.
     var rows = @[
       row("a.dat", foJudged, qvPass, sentence = "PASS"),
       row("a.vib", foJudged, qvFail, kind = sgVib, pair = "a.dat", polarity = "opposite",
-        sentence = "FAIL")]
+        sentence = "FAIL: peak force")]
+    rows[0].pair = "a.vib"
     rows[1].warnings = @["Sweep fit: too few crossings"]
+    rows[1].measures = @[FolderMeasure(limit: qlPeakForce, measured: 400.0, bound: 10.0,
+      status: qsFail)]
     attachPairs(rows)
-    doAssert rows[1].outcome == foContributed and rows[1].sentence.len == 0
+    doAssert rows[1].outcome == foJudged, $rows[1].outcome
+    doAssert rows[1].verdict == qvFail and rows[1].sentence == "FAIL: peak force"
+    doAssert rows[1].measures.len == 1
     doAssert rows[0].outcome == foJudged and rows[0].verdict == qvPass
     doAssert rows[0].extraPolarity == "opposite", rows[0].extraPolarity
     doAssert rows[0].extraWarnings == @["Sweep fit: too few crossings"]
+    var vibNamed = false
+    var datNamed = false
+    for w in rows[1].warnings:
+      if w == "Paired with a.dat": vibNamed = true
+    for w in rows[0].warnings:
+      if w == "Paired with a.vib": datNamed = true
+    doAssert vibNamed, $rows[1].warnings
+    doAssert datNamed, $rows[0].warnings
+    let t = totalsOf(rows)
+    doAssert t.passed == 1 and t.failed == 1, $t
+    doAssert t.notJudged == 0 and t.problems == 0
+    let text = resultsText(FolderTable(rows: rows))
+    doAssert "Paired with a.dat" in text and "Paired with a.vib" in text, text
+    doAssert "contributed" notin text
+
+  block pairProblemKeepsVerdict:
+    ## A problem or a skipped partner does not take the other file's verdict.
+    var rows = @[
+      row("bad.dat", foProblem, qvNotJudged, pair = "ok.vib", problem = "cannot be read"),
+      row("ok.vib", foJudged, qvPass, kind = sgVib, pair = "bad.dat", sentence = "PASS"),
+      row("skip.dat", foSkipped, qvNotJudged, pair = "late.vib", problem = "Cancelled."),
+      row("late.vib", foJudged, qvFail, kind = sgVib, pair = "skip.dat", sentence = "FAIL")]
+    attachPairs(rows)
+    doAssert rows[0].outcome == foProblem and rows[0].problem == "cannot be read"
+    doAssert rows[1].outcome == foJudged and rows[1].verdict == qvPass
+    doAssert rows[1].sentence == "PASS"
+    doAssert rows[2].outcome == foSkipped
+    doAssert rows[3].outcome == foJudged and rows[3].verdict == qvFail
+    doAssert rows[3].sentence == "FAIL"
 
   block textAndCsv:
     var measured = FolderRow(path: "/tmp/one.dat", kind: sgDat, outcome: foJudged,
