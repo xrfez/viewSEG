@@ -667,7 +667,14 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           var perm: seq[int] = @[]
           let rows = file[].rowsOf(traces)
           let stop = proc (): bool {.gcsafe, raises: [].} = ctx.cancelled
-          if not sortRowsInto(rows, opts.sortKeys, perm, stop):
+          var startOf: StartProc = nil
+          var starts: seq[float64] = @[]
+          for key in opts.sortKeys:
+            if key.field == hfStartTime and starts.len == 0:
+              starts = vendorStartsOf(file, source, stop)
+          if starts.len > 0:
+            startOf = proc (t: int): float64 {.gcsafe, raises: [].} = starts[t]
+          if not sortRowsInto(rows, opts.sortKeys, perm, stop, nil, startOf):
             abort(sink, dest, part, claimed, "The sort was stopped.", true)
           for k, row in perm:
             if row != k: changed = true

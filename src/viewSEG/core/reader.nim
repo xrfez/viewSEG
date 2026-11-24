@@ -292,24 +292,29 @@ proc letGo(rd: var Reader) =
 
 type SortGivenUp = object of CatchableError
 
-proc vendorStarts(rd: Reader): seq[float64] =
-  ## The start time of every trace of the file, in UTC microseconds, from the
-  ## trace headers through the vendor maps in force (`segmentClock`); empty when
-  ## no map gives them, or when a newer note came first (the caller then sees
-  ## `superseded`). Untimed traces are NaN.
-  let f = rd.src.file
-  let r = rd.r
+proc vendorStartsOf*(f: ptr SeismicFile; path: string; stop: StopProc): seq[float64] =
+  ## The start time of every trace of `f` (read from `path`), in UTC
+  ## microseconds, from the trace headers through the vendor maps in force
+  ## (`segmentClock`); empty when no map gives them, or when `stop` said to
+  ## give up. Untimed traces are NaN. Both the plot's reader and the output
+  ## jobs sort by the Start time key through this.
   if f[].hasKeys:
     let reg = currentVendors()
     if startFieldDeclared(f[], reg):
-      if not f[].inMemory: fs.mappedRead(rd.src.path, headers = true)
+      if not f[].inMemory: fs.mappedRead(path, headers = true)
       try:
         let clock = segmentClock(f[], reg, proc () {.gcsafe.} =
-          if r.superseded: raise newException(SortGivenUp, "a newer order is waiting"))
+          if stop != nil and stop(): raise newException(SortGivenUp, "a newer order is waiting"))
         if clock.fromHeaders:
           result = newSeq[float64](clock.times.len)
           for i, t in clock.times: result[i] = t * 1e6
       except SortGivenUp: discard
+
+proc vendorStarts(rd: Reader): seq[float64] =
+  ## `vendorStartsOf` for the reader's file; empty also when a newer note came
+  ## first (the caller then sees `superseded`).
+  let r = rd.r
+  vendorStartsOf(rd.src.file, rd.src.path, proc (): bool {.gcsafe, raises: [].} = r.superseded)
 
 proc arrange(rd: var Reader; order: seq[SortKey]) =
   ## Puts the positions in `order` (the traces the filter keeps, sorted),

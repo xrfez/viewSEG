@@ -18,8 +18,8 @@ import parseSEG/io/diskio
 import parseSEG/segd/blocks
 import processSEG
 import processSEG/continuous/slice
-import viewSEG/core/[cutgather, cutgatherjobs, jobs, recordingkind, segmentclock, shotlog,
-  state, vendormaps]
+import viewSEG/core/[cutgather, cutgatherjobs, edits, jobs, outputjobs, panels, recordingkind,
+  segmentclock, shotlog, state, vendormaps]
 import utils/[fixtures, waiting]
 
 const
@@ -541,6 +541,37 @@ proc main*() =
       defer: publishVendors(VendorRegistry())
       doAssert tileOrder(true) == @[5, 4, 3, 2, 1, 0], "with the map"
       doAssert tileOrder(false) == @[0, 1, 2, 3, 4, 5], "without the map"
+
+    block output_sorts_by_the_recorders_own_starts:
+      # The same file as the plot's Time order, written with that sort: the
+      # traces come out earliest first as the plot shows them (5 ... 0), by
+      # the vendor start times, not tied and left in the file's order.
+      # Seen to fail with the output job not passing `startOf`: the written
+      # file held 0 ..< 6.
+      var raw = gpsStarts()
+      raw.reverse
+      let path = rec / "outsort.sgd"
+      makeRecording(path, raw)
+      proc written(withMap: bool): seq[int] =
+        publishVendors(if withMap: gps else: VendorRegistry())
+        var src = openSeismic(path, keys = true)
+        defer: src.close()
+        let dest = fx.dir / "out" / (if withMap: "sorted-map.sgd" else: "sorted-none.sgd")
+        let sink = OutputSink()
+        let jobs = initJobs()
+        let id = jobs.submit(outputSpec(path, dest), outputWork(addr src, path, dest,
+          OutputOptions(format: ofSegd, sortKeys: @[SortKey(field: hfStartTime)]),
+          FileEdits(), @[path], sink))
+        doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}),
+          "the write did not finish"
+        doAssert jobs.info(id).get.state == jsDone, jobs.info(id).get.error
+        var back = openSeismic(dest, keys = true)
+        defer: back.close()
+        doAssert back.len == Segments
+        for k in 0 ..< Segments: result.add int(samplesOf(back, k)[0]) div SegLen
+      defer: publishVendors(VendorRegistry())
+      doAssert written(true) == @[5, 4, 3, 2, 1, 0], "with the map"
+      doAssert written(false) == @[0, 1, 2, 3, 4, 5], "without the map"
 
   echo "tsegmentclock ok"
 
