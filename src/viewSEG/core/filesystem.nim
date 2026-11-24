@@ -402,12 +402,141 @@ proc createExclusive*(_: FileSystem; path: string): bool {.raises: [OSError].} =
     if posix.errno == posix.EEXIST: return false
     raiseOSError(osLastError())
 
+type
+  MoveStep* = enum
+    ## The ways `moveNoReplace` moves a file, in the order it tries them.
+    msRename ## one call that renames and refuses to replace (Linux, macOS)
+    msLink   ## a hard link at `dst`, then `src` removed
+    msCopy   ## `dst` created exclusively and filled, then `src` removed
+
+when not defined(windows):
+  type StepResult = enum
+    srMoved
+    srExists      ## `dst` exists: nothing was changed
+    srUnsupported ## this drive or system cannot do the step: try the next
+
+  const AtFdcwd = -100.cint # AT_FDCWD
+  when defined(linux):
+    proc syscall(n: clong): clong {.importc, header: "<unistd.h>", varargs.}
+    let sysRenameat2 {.importc: "SYS_renameat2", header: "<sys/syscall.h>".}: clong
+  elif defined(macosx):
+    proc renamexNp(src, dst: cstring; flags: cuint): cint
+      {.importc: "renamex_np", header: "<stdio.h>".}
+
+  func noHardLinks*(err: int): bool =
+    ## Whether `err` (an `errno`) from `link` says that the drive has no
+    ## hard links or not here (FAT, exFAT, many network shares and FUSE
+    ## mounts), so that the step must give way to a copy.
+    err in [int(posix.EPERM), int(posix.EOPNOTSUPP), int(posix.ENOSYS), int(posix.EMLINK),
+      int(posix.EXDEV), int(posix.EINVAL)]
+
+  func noRenameFlag*(err: int): bool =
+    ## Whether `err` from the no-replace rename says that the kernel or the
+    ## drive does not know the flag (or the two names are on different
+    ## drives), so that the step must give way to a link.
+    err in [int(posix.ENOSYS), int(posix.EINVAL), int(posix.EOPNOTSUPP), int(posix.EXDEV),
+      int(posix.EPERM)]
+
+  proc failWith(err: int) {.noreturn, raises: [OSError].} =
+    raiseOSError(OSErrorCode(err))
+
+  proc renameStep(src, dst: string): StepResult {.raises: [OSError].} =
+    when defined(linux) or defined(macosx):
+      when defined(linux):
+        let rc = syscall(sysRenameat2, AtFdcwd, cstring(src), AtFdcwd, cstring(dst),
+          1.cuint) # RENAME_NOREPLACE
+      else:
+        let rc = renamexNp(cstring(src), cstring(dst), 4.cuint)             # RENAME_EXCL
+      if rc == 0: return srMoved
+      let err = int(posix.errno)
+      if err == int(posix.EEXIST): return srExists
+      if noRenameFlag(err): return srUnsupported
+      failWith(err)
+    else:
+      discard src
+      discard dst
+      srUnsupported
+
+  proc linkStep(src, dst: string): StepResult {.raises: [OSError].} =
+    if posix.link(cstring(src), cstring(dst)) == 0:
+      if posix.unlink(cstring(src)) != 0:
+        # the new name is ours; drop it so a failed move leaves `dst` free
+        let err = int(posix.errno)
+        discard posix.unlink(cstring(dst))
+        failWith(err)
+      return srMoved
+    let err = int(posix.errno)
+    if err == int(posix.EEXIST): return srExists
+    if noHardLinks(err): return srUnsupported
+    failWith(err)
+
+  proc copyStep(src, dst: string; failAfter: int): StepResult {.raises: [OSError].} =
+    ## Creates `dst` exclusively, so an existing file is never touched and
+    ## the one made here is ours to remove again on any failure.
+    let inFd = posix.open(cstring(src), posix.O_RDONLY or posix.O_CLOEXEC)
+    if inFd < 0: failWith(int(posix.errno))
+    let outFd = posix.open(cstring(dst), posix.O_WRONLY or posix.O_CREAT or posix.O_EXCL or
+      posix.O_CLOEXEC, 0o666)
+    if outFd < 0:
+      let err = int(posix.errno)
+      discard posix.close(inFd)
+      if err == int(posix.EEXIST): return srExists
+      failWith(err)
+    var
+      buf: array[65536, byte]
+      err = 0
+      written = 0
+    while err == 0:
+      if failAfter >= 0 and written >= failAfter:
+        err = int(posix.EIO) # injected by a test
+      else:
+        let n = posix.read(inFd, addr buf[0], buf.len)
+        if n == 0: break
+        if n < 0:
+          if posix.errno != posix.EINTR: err = int(posix.errno)
+        else:
+          var at = 0
+          while at < n and err == 0:
+            let w = posix.write(outFd, addr buf[at], n - at)
+            if w < 0:
+              if posix.errno != posix.EINTR: err = int(posix.errno)
+            else:
+              at += w
+          written += n
+    if err == 0 and posix.fsync(outFd) != 0: err = int(posix.errno)
+    if posix.close(outFd) != 0 and err == 0: err = int(posix.errno)
+    discard posix.close(inFd)
+    if err == 0 and posix.unlink(cstring(src)) != 0: err = int(posix.errno)
+    if err != 0:
+      discard posix.unlink(cstring(dst))
+      failWith(err)
+    srMoved
+
+  proc moveNoReplaceUsing*(src, dst: string; steps: set[MoveStep] = {msRename, msLink, msCopy};
+      failCopyAfter = -1): bool {.raises: [OSError].} =
+    ## `moveNoReplace` without the hook, limited to `steps`: a step left out
+    ## answers as a drive that cannot do it would, so the next one runs.
+    ## `failCopyAfter >= 0` makes the copy fail once that many bytes were
+    ## written (for tests). Raises `OSError` when no step can move the file.
+    var r = srUnsupported
+    if msRename in steps: r = renameStep(src, dst)
+    if r == srUnsupported and msLink in steps: r = linkStep(src, dst)
+    if r == srUnsupported and msCopy in steps: r = copyStep(src, dst, failCopyAfter)
+    case r
+    of srMoved: true
+    of srExists: false
+    of srUnsupported: failWith(int(posix.EOPNOTSUPP))
+
 proc moveNoReplace*(_: FileSystem; src, dst: string): bool {.raises: [OSError].} =
   ## Moves `src` onto `dst` only when `dst` does not exist. True when it did:
   ## `src` is gone and `dst` is that file. False when `dst` already exists:
   ## both files are left as they are, and neither is opened. Raises `OSError`
-  ## for any other failure (no folder, a drive that does not answer). Atomic,
-  ## so another program cannot see a partial `dst`.
+  ## for any other failure (no folder, a drive that does not answer). Never
+  ## replaces a file, even when two movers race for `dst`. Atomic where the
+  ## system can rename without replacing or link (so another program cannot
+  ## see a partial `dst`); on a drive with neither (FAT, exFAT, some network
+  ## shares) or across drives it copies into a `dst` created exclusively, and
+  ## removes that `dst` again when the copy fails.
   enter(foWrite, dst)
   when defined(windows):
     const
@@ -415,18 +544,11 @@ proc moveNoReplace*(_: FileSystem; src, dst: string): bool {.raises: [OSError].}
       ErrorFileExists = 80'i32
     let fromName = newWideCString(src)
     let toName = newWideCString(dst)
-    # flags 0: fail when `dst` exists; do not replace it
-    if winlean.moveFileExW(fromName, toName, 0) != 0: return true
+    # no MOVEFILE_REPLACE_EXISTING: fail when `dst` exists. COPY_ALLOWED (2)
+    # lets a move across drives copy, and never replaces either.
+    if winlean.moveFileExW(fromName, toName, 2) != 0: return true
     let err = osLastError().int32
     if err == ErrorAlreadyExists or err == ErrorFileExists: return false
     raiseOSError(osLastError())
   else:
-    if posix.link(cstring(src), cstring(dst)) == 0:
-      if posix.unlink(cstring(src)) != 0:
-        # the new name is ours; drop it so a failed move leaves `dst` free
-        let err = osLastError()
-        discard posix.unlink(cstring(dst))
-        raiseOSError(err)
-      return true
-    if posix.errno == posix.EEXIST: return false
-    raiseOSError(osLastError())
+    moveNoReplaceUsing(src, dst)
