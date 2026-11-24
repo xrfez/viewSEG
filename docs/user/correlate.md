@@ -31,6 +31,10 @@ The tick is dim until a reference is chosen that the write can use; hover it to 
 is dim. When it is on, the totals line above the results table ends with "correlated with" and the
 reference's name.
 
+A stored sweep is loaded once for the whole run. A pilot reference is taken from each record
+being written, so every record is correlated with its own pilot; a record without that
+auxiliary trace fails the file.
+
 What is written:
 
 - **The order.** Each trace is correlated first. The edits you chose in the window are applied

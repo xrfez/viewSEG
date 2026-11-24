@@ -11,9 +11,11 @@
 ## does not take station moves; the result says the batch wrote that file's
 ## own positions. A file already open is written as the session holds it.
 ##
-## When `correlate` is on, the reference is loaded once on this job's thread,
-## the same way the Correlate button loads a sweep, and passed to
-## every seismic file. A signature file in that batch is written as today, and
+## When `correlate` is on, a stored sweep is loaded once on this job's thread,
+## the same way the Correlate button loads a sweep, and passed to every seismic
+## file. A pilot reference is not loaded by the job: each file's records are read
+## for their own pilot as that file is written, and a record without that
+## auxiliary trace fails the file. A signature file in that batch is written as today, and
 ## the result says so. A file the correlation refuses fails alone; the batch goes on.
 ##
 ## Submit it with `outputBatchSpec`. That spec does not touch the file
@@ -81,8 +83,9 @@ type
       ## How each file is named. No parts: today's names, including a kept
       ## source extension when signature files would share one name.
     correlate*: BatchCorrelate
-      ## Off unless the window asked to correlate. The job loads that
-      ## reference once and passes it to every seismic file.
+      ## Off unless the window asked to correlate. A stored sweep is loaded
+      ## once and passed to every seismic file; a pilot reference is read
+      ## from each file's records as that file is written.
 
   BatchCorrelate* = object
     ## A reference the job loads once. `on` false: every file is written as today.
