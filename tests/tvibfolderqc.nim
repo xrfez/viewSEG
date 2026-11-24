@@ -4,7 +4,8 @@
 ## nothing is rescaled.
 ##
 ## Seen to fail: with a contributed row also counted as not judged, `totals`
-## names it (notJudged 2, not 1).
+## names it (notJudged 2, not 1). With the measure columns untitled,
+## `textAndCsv` does not find "Average phase (°)".
 
 import std/[math, strutils]
 import viewSEG/core/[sigtypes, units, vibfolderqc, vibjudge]
@@ -85,7 +86,11 @@ proc main*() =
     let text = resultsText(table)
     doAssert text.countLines >= 4, $text.countLines
     doAssert "No 100 % force" in text
-    doAssert "Average phase" in text and "one.dat" in text
+    doAssert "Average phase (°)" in text and "one.dat" in text
+    doAssert "Peak phase (°)" in text and "Average distortion (%)" in text
+    doAssert "Peak distortion (%)" in text and "Average force (%)" in text
+    doAssert "Peak force (%)" in text
+    doAssert "Average phase (°)" in resultsCsv(table)
     doAssert "1 files, 0 pass, 1 fail" in text
     doAssert "two sets" in text
     let csv = resultsCsv(table)

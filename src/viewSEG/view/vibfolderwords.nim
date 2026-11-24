@@ -16,12 +16,12 @@ const
 
 func measureHead(l: QcLimit): string =
   case l
-  of qlAvgPhase: "Average phase"
-  of qlPeakPhase: "Peak phase"
-  of qlAvgDistortion: "Average distortion"
-  of qlPeakDistortion: "Peak distortion"
-  of qlAvgForce: "Average force"
-  of qlPeakForce: "Peak force"
+  of qlAvgPhase: "Average phase (°)"
+  of qlPeakPhase: "Peak phase (°)"
+  of qlAvgDistortion: "Average distortion (%)"
+  of qlPeakDistortion: "Peak distortion (%)"
+  of qlAvgForce: "Average force (%)"
+  of qlPeakForce: "Peak force (%)"
 
 func headers*(): seq[string] =
   ## The column labels, in order.
