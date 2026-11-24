@@ -41,14 +41,16 @@
 ## button, "a plain drag measures" found no reading; with a Ctrl drag not
 ## turning the Ruler on, "a Ctrl drag measures" found the button off; with
 ## the second Ruler click aimed off the button, "the Ruler button turns it
-## on did not happen" names the button rectangle when it was marked and when
-## it was clicked, the pointer, the frames waited, rulerOn and the window
-## size. `hovered` there is the last mark whose rectangle contains the
-## pointer (a mark drawn over the whole work area wins over the button), and
-## `id` is ImGui's hovered item id, not a window id. The same line names the
-## hovered window, the active item id, whether a popup is open, whether the
-## press and the release were seen on different frames, and the step just
-## before.
+## on did not happen" names the button rectangle when it was marked, when it
+## was clicked, and on the last frame, whether that rectangle lies inside the
+## window, the pointer, the frames waited, rulerOn and the window size.
+## `hovered` there is the last mark whose rectangle contains the pointer (a
+## mark drawn over the whole work area wins over the button), and `id` is
+## ImGui's hovered item id, not a window id. The same line names the hovered
+## window, the active item id, whether a popup is open, whether the press and
+## the release were seen on different frames, and the step just before. A
+## click is not sent while the button's rectangle is outside the window: the
+## failure names that rectangle.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-*.png there.
@@ -90,6 +92,24 @@ proc pixel(f: FrameInfo; at: Vec2): Rgba = f.readPixel(int(floor(at.x)), int(flo
 
 func same(a, b: Rgba): bool = a.r == b.r and a.g == b.g and a.b == b.b
 
+func rectInWindow(r: Rect; w, h: int): bool =
+  ## The whole of `r` lies in a window `w` by `h` framebuffer pixels. Empty,
+  ## starting outside, or hanging over an edge, does not.
+  r.size.x > 0 and r.size.y > 0 and r.pos.x >= 0 and r.pos.y >= 0 and
+    r.pos.x + r.size.x <= float32(w) and r.pos.y + r.size.y <= float32(h)
+
+proc checkRectInWindow() =
+  ## Break to see it fail: `rectInWindow` reports a rectangle that starts
+  ## above the window as inside.
+  let on = Rect(pos: vec2(1405, 106), size: vec2(68, 25))
+  doAssert rectInWindow(on, 1600, 972), "a button in the window is inside"
+  let off = Rect(pos: vec2(1241, -19), size: vec2(68, 25))
+  doAssert not rectInWindow(off, 1600, 972), "a button above the window is not inside"
+  let past = Rect(pos: vec2(1580, 10), size: vec2(68, 25))
+  doAssert not rectInWindow(past, 1600, 972), "a button past the right edge is not inside"
+  let empty = Rect(pos: vec2(10, 10), size: vec2(0, 25))
+  doAssert not rectInWindow(empty, 1600, 972), "an undrawn button is not inside"
+
 proc runMain() =
   withFixtures fx:
     let sps = fx.mapSps()
@@ -106,7 +126,7 @@ proc runMain() =
     var backs = 0
     var saved: seq[string]
     var measured = "" # the Ctrl drag's reading, which a plain drag with the Ruler must match
-    var rulerMark, rulerPress, rulerRelease: Rect
+    var rulerMark, rulerLive, rulerPress, rulerRelease: Rect
     var pressAt, releaseAt = vec2(0, 0)
     var pressHover, releaseHover = ""
     var beforeStep = ""
@@ -170,14 +190,17 @@ proc runMain() =
     proc rulerMiss(f: FrameInfo; frames: int): string =
       let separate = downSeen >= 0 and upSeen > downSeen
       let before = if beforeStep.len > 0: beforeStep else: "(none)"
-      "; mark=" & box(rulerMark) & "; click=" & box(rulerRelease) & "; pointer=" &
-        px(releaseAt.x) & "," & px(releaseAt.y) & "; frames=" & $frames & "; hovered=" &
-        releaseHover & "; win=" & releaseWin & "; active=" & $releaseActive & "; popup=" &
-        $releasePopup & "; separate=" & $separate & "; downFrame=" & $downSeen &
-        "; upFrame=" & $upSeen & "; before=" & before & "; rulerOn=" & $f.mapWindow.rulerOn &
-        "; window=" & $f.width & "x" & $f.height & "; atPress=" & box(rulerPress) &
-        " pointer=" & px(pressAt.x) & "," & px(pressAt.y) & " hovered=" & pressHover &
-        " win=" & pressWin & " active=" & $pressActive & " popup=" & $pressPopup
+      "; mark=" & box(rulerMark) & "; live=" & box(rulerLive) & "; inside=" &
+        $rectInWindow(rulerLive, f.width, f.height) & "; click=" & box(rulerRelease) &
+        "; pointer=" & px(releaseAt.x) & "," & px(releaseAt.y) & "; now=" &
+        px(pointerFb().x) & "," & px(pointerFb().y) & "; frames=" & $frames &
+        "; hovered=" & releaseHover & "; win=" & releaseWin & "; active=" &
+        $releaseActive & "; popup=" & $releasePopup & "; separate=" & $separate &
+        "; downFrame=" & $downSeen & "; upFrame=" & $upSeen & "; before=" & before &
+        "; rulerOn=" & $f.mapWindow.rulerOn & "; window=" & $f.width & "x" & $f.height &
+        "; atPress=" & box(rulerPress) & " pointer=" & px(pressAt.x) & "," &
+        px(pressAt.y) & " hovered=" & pressHover & " win=" & pressWin & " active=" &
+        $pressActive & " popup=" & $pressPopup
 
     step("loaded", noop, proc (f: FrameInfo): bool =
       result = f.core.survey.layers.len == 2 and f.mapWindow.mapImagesDrawn > 0 and
@@ -442,13 +465,23 @@ proc runMain() =
       let live = f.markOf("map.ruler button")
       if live.size.x > 0:
         p = vec2(round(live.pos.x + live.size.x / 2), round(live.pos.y + live.size.y / 2))
+    proc requireRulerVisible(f: FrameInfo; r: Rect) =
+      ## A click at a rectangle that is not on the window cannot land. The
+      ## message names that rectangle, so a miss is not a bare timeout.
+      doAssert rectInWindow(r, f.width, f.height),
+        "the Ruler button is not inside the window: " & box(r) & " window " &
+        $f.width & "x" & $f.height & " pointer " & px(pointerFb().x) & "," &
+        px(pointerFb().y)
     proc clickRuler(f: FrameInfo) =
       ## Press once the pointer is inside the live button (this frame saw
-      ## it), release once that press has been seen. Not on a frame count.
+      ## it) and that rectangle is inside the window, release once that press
+      ## has been seen. Not on a frame count.
       f.aimRuler()
       let live = f.markOf("map.ruler button")
+      rulerLive = live
       if not clickDown:
         if live.contains(pointerFb()):
+          f.requireRulerVisible(live)
           f.pressMouse(p, true)
           clickDown = true
         elif live.size.x > 0:
@@ -470,6 +503,7 @@ proc runMain() =
       # the name is drawn beside the icon: a button about twice as wide as high
       doAssert r.size.x > 2 * r.size.y, "the Ruler button is an icon alone: " & $r
       rulerMark = r
+      rulerLive = r
       beforeStep = if at > 0: steps[at - 1].name else: ""
       (clickDown, clickUp) = (false, false)
       (downSeen, upSeen) = (-1, -1)
@@ -520,9 +554,14 @@ proc runMain() =
         doAssert f.mapWindow.rulerOn, "Esc turned the Ruler off"
         doAssert f.core.selection.points.len == 1, "Esc cleared the selection")
     step("the Ruler button turns it off", proc (f: FrameInfo) =
+      let r = f.markOf("map.ruler button")
+      f.requireRulerVisible(r)
       p = stripButtonAt(f, "map.ruler button")
       f.moveMouse(p), proc (f: FrameInfo): bool =
-      if wait == 3: f.pressMouse(p, true)
+      let r = f.markOf("map.ruler button")
+      if wait == 3:
+        f.requireRulerVisible(r)
+        f.pressMouse(p, true)
       if wait == 5: f.pressMouse(p, false)
       result = wait > 6 and not f.mapWindow.rulerOn)
     step("Esc clears the selection again", proc (f: FrameInfo) = f.chord(skEscape),
@@ -757,7 +796,7 @@ proc landSurvey(dir: string) =
   echo "tguimap: saved ", dir / "map-land-1.png", " and -2.png"
 
 proc main*() =
-
+  checkRectInWindow()
   runMain()
   linked()
 
