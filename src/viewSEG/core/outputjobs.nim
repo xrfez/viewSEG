@@ -37,11 +37,13 @@
 ## other file.
 ##
 ## `correlation` set: each written trace is correlated with that loaded
-## reference after the other sample options, into the listen time, and the
-## writer is opened with that sample count. The reference and its spectrum
-## are prepared once. None leaves every sample as it is written today. A
-## reference the correlation job would refuse is refused before any byte is
-## written, in that job's words.
+## reference into the listen time, and the writer is opened with that sample
+## count. A reference auxiliary is shifted by its lag first. Time shift,
+## polarity, an own filter and the plot's filters are applied after that, on
+## the listen-length trace, in the order a plain write applies them. The
+## reference and its spectrum are prepared once. None leaves every sample as
+## it is written today. A reference the correlation job would refuse is
+## refused before any byte is written, in that job's words.
 
 import std/[math, options, os, random, sets, strutils, times]
 import parseSEG
@@ -653,15 +655,6 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           # that is kept is written like any other, options applied. With
           # no option on, the samples stay as read (no key lookup, so a
           # file opened without keys still writes).
-          let reversed = opts.applyReversals and edits.effectivelyReversed(t)
-          let shiftMs = if opts.applyShifts: edits.shiftOf(t) else: 0.0
-          if reversed or shiftMs != 0.0 or opts.applyOwnFilters or opts.applyProcessing:
-            var own = OwnFilter()
-            if opts.applyOwnFilters or opts.applyProcessing:
-              let listed = edits.plotFiltersIn(t .. t)
-              if listed.len > 0: own = listed[0].filter
-            applyPreparedTrace(samples, file[].traceKeys(t), dtMs, reversed, shiftMs,
-              opts.processing, opts.applyProcessing, own, opts.applyOwnFilters)
           if correlating:
             let have = samples.len
             if have < recordSamples:
@@ -683,6 +676,19 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               rowBlock(corrDst, 1, listen), corrMeta, ws)
             if not (aux and not isRef and not isOdd):
               for j in 0 ..< listen: samples[j] = corrDst[j]
+            # Edits below see the listen length, as a plain write of the
+            # correlated file does. A shift or a filter before correlation
+            # is not that result.
+            samples.setLen(listen)
+          let reversed = opts.applyReversals and edits.effectivelyReversed(t)
+          let shiftMs = if opts.applyShifts: edits.shiftOf(t) else: 0.0
+          if reversed or shiftMs != 0.0 or opts.applyOwnFilters or opts.applyProcessing:
+            var own = OwnFilter()
+            if opts.applyOwnFilters or opts.applyProcessing:
+              let listed = edits.plotFiltersIn(t .. t)
+              if listed.len > 0: own = listed[0].filter
+            applyPreparedTrace(samples, file[].traceKeys(t), dtMs, reversed, shiftMs,
+              opts.processing, opts.applyProcessing, own, opts.applyOwnFilters)
           if like:
             if correlating:
               if carryPositions:

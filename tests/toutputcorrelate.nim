@@ -13,14 +13,19 @@
 ## (c) an interval that differs refuses and leaves no file.
 ## (d) a record that is not longer than the sweep refuses the same way.
 ## (e) a dead seismic trace is written dead, as zeros, equal to the button.
+## (f) a time shift, an own filter and a polarity reversal, each applied with
+## the option, match the button then Output.
 ##
 ## Seen to fail: trace 1 was marked live and correlated, so sample 0 was 1.0
-## against the button's 0.0.
+## against the button's 0.0. A +8 ms shift before correlation left trace 0
+## sample 0 at -0.2962032 against the button's 0.0. An own filter on the raw
+## trace left sample 0 at 0.43718278 against the button's 0.2898751. Polarity
+## left off left sample 0 at 1.0 against the button's -1.0.
 
 import std/[math, options, os, strutils]
 import parseSEG
 import processSEG
-import viewSEG/core/[correlatejobs, edits, jobs, outputjobs, session]
+import viewSEG/core/[correlatejobs, edits, jobs, outputjobs, processing, session]
 import utils/waiting
 
 const
@@ -33,6 +38,9 @@ const
   DeadRecord = 400
   DeadTrace = 1
   DeadListen = DeadRecord - SweepLen
+  ShortSweep = 32
+  ShortRecord = 400
+  ShortListen = ShortRecord - ShortSweep
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
@@ -101,6 +109,32 @@ proc writeDead(path: string; sweep: openArray[float32]) =
     w.writeTrace(k, buf)
   doAssert w.close().len == 0, "the dead-trace file did not close"
 
+proc writeShort(path: string; sweep: openArray[float32]) =
+  ## SEG-Y, 2 ms, 400 samples, a 32-sample sweep at sample 0 of trace 0.
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
+    measurementSystem: 1, text: @["C01 correlate then edit"]))
+  for i in 0 .. 4:
+    var buf: seq[float32]
+    var k = initTraceKeys()
+    if i < Delays.len:
+      let delay = if i == 0: 0 else: Delays[i]
+      buf = delayedSweep(sweep, ShortRecord, delay)
+      (k.traceCode, k.status) = (1'i16, tsLive)
+    elif i == RefAux:
+      buf = delayedSweep(sweep, ShortRecord, 0)
+      (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+    else:
+      buf = newSeq[float32](ShortRecord)
+      for j in 0 ..< ShortRecord: buf[j] = float32(j + 1)
+      (k.traceCode, k.status) = (6'i16, tsAuxiliary)
+    k.record = 7.0
+    k.channel = float64(i + 1)
+    k.intervalUs = DtMs * 1000.0
+    k.t0Ms = 0.0
+    k.time = 1_700_000_000.0
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the short-sweep file did not close"
+
 proc writeSegd(path: string; sweep: openArray[float32]) =
   var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: DtMs * 1000.0,
     numSamples: Record, time: 1_700_000_000.0))
@@ -136,12 +170,12 @@ proc likeCopy(file: var SeismicFile; dest: string) =
     w.writeTrace(file, t, samples)
   doAssert w.close().len == 0, "the template copy did not close"
 
-proc runWrite(file: var SeismicFile; source, dest: string; opts: OutputOptions):
-    tuple[st: JobState; wrote: OutputResult; error: string] =
+proc runWrite(file: var SeismicFile; source, dest: string; opts: OutputOptions;
+    edits = FileEdits()): tuple[st: JobState; wrote: OutputResult; error: string] =
   let jobs = initJobs()
   let sink = OutputSink()
   let id = jobs.submit(outputSpec(source, dest),
-    outputWork(addr file, source, dest, opts, FileEdits(), @[source], sink))
+    outputWork(addr file, source, dest, opts, edits, @[source], sink))
   doAssert waitUntil(state(jobs, id) in {jsDone, jsFailed, jsCancelled}),
     "the write did not finish: " & $state(jobs, id)
   let info = jobs.info(id).get
@@ -168,6 +202,27 @@ proc correlate(file: var SeismicFile; path: string; sweep: seq[float32]): Correl
 proc option(sweep: seq[float32]; format: OutputFormat): OutputOptions =
   OutputOptions(format: format, correlation: some(OutputCorrelation(
     reference: sweep, referenceDtMs: DtMs, referenceTraces: @[RefAux])))
+
+proc withCorrelation(opts: OutputOptions; sweep: seq[float32]): OutputOptions =
+  result = opts
+  result.format = ofSegy
+  result.correlation = some(OutputCorrelation(reference: sweep, referenceDtMs: DtMs,
+    referenceTraces: @[RefAux]))
+
+proc withoutCorrelation(opts: OutputOptions): OutputOptions =
+  result = opts
+  result.format = ofSegy
+  result.correlation = none(OutputCorrelation)
+
+proc sameTraces(a, b: SeismicFile; listen: int) =
+  doAssert a.len == b.len, "trace count " & $a.len & " vs " & $b.len
+  for t in 0 ..< a.len:
+    let x = samplesOf(a, t)
+    let y = samplesOf(b, t)
+    doAssert x.len == y.len and x.len == listen, "trace " & $t & " count " & $x.len &
+      " vs " & $y.len
+    for j in 0 ..< x.len:
+      doAssert x[j] == y[j], "trace " & $t & " sample " & $j & " " & $x[j] & " vs " & $y[j]
 
 proc sameWritten(a, b: SeismicFile; segy: bool) =
   doAssert a.len == b.len, "trace count " & $a.len & " vs " & $b.len
@@ -285,6 +340,87 @@ proc main*() =
     b.close()
     opened[].close()
     dead.close()
+
+  block editsAfterCorrelate:
+    ## Sweep of 32 samples, 2 ms. A +8 ms shift, an own filter and a polarity
+    ## reversal, each equal to the button then Output.
+    let specSweep = linearSweep(8.0, 80.0, float64(ShortSweep) * DtMs, DtMs)
+    let short = specSweep.sweepSamples(float32)
+    doAssert short.len == ShortSweep
+    let shortPath = srcDir / "short-sweep.sgy"
+    writeShort(shortPath, short)
+    var raw = openSeismic(shortPath, keys = true)
+    let made = correlate(raw, shortPath, short)
+    var opened = made.opened.filePtr
+    block shifted:
+      ## Trace 0, +8 ms. Seen to fail: the shift ran before correlation, so
+      ## sample 0 was -0.2962032 against the button's 0.0.
+      var edits: FileEdits
+      doAssert edits.setTimeShifts([0], 8.0, DtMs) == 1
+      doAssert edits.shiftOf(0) == 8.0
+      let flags = OutputOptions(applyShifts: true)
+      let fromButton = outDir / "shift-button.sgy"
+      let fromOption = outDir / "shift-option.sgy"
+      let button = runWrite(opened[], shortPath, fromButton, withoutCorrelation(flags), edits)
+      doAssert button.st == jsDone, button.error & " / " & button.wrote.reason
+      let opted = runWrite(raw, shortPath, fromOption, withCorrelation(flags, short), edits)
+      doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+      var a = openSeismic(fromOption, keys = true)
+      var b = openSeismic(fromButton, keys = true)
+      sameTraces(a, b, ShortListen)
+      doAssert samplesOf(b, 0)[3] == 0, "button sample 3 was " & $samplesOf(b, 0)[3]
+      a.close()
+      b.close()
+    block ownFilter:
+      ## An own filter on trace 0. Seen to fail: it filtered the raw trace, so
+      ## sample 0 was 0.43718278 against the button's 0.2898751.
+      var edits: FileEdits
+      let own = bounded(OwnFilter(spec: Processing(band: pbBandPass, f1: 8, f2: 12,
+        f3: 40, f4: 50)))
+      doAssert edits.setOwnFilters([0], own) == 1
+      let flags = OutputOptions(applyOwnFilters: true)
+      let fromButton = outDir / "own-button.sgy"
+      let fromOption = outDir / "own-option.sgy"
+      let plain = outDir / "own-plain.sgy"
+      let button = runWrite(opened[], shortPath, fromButton, withoutCorrelation(flags), edits)
+      doAssert button.st == jsDone, button.error & " / " & button.wrote.reason
+      let opted = runWrite(raw, shortPath, fromOption, withCorrelation(flags, short), edits)
+      doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+      let bare = runWrite(raw, shortPath, plain, withCorrelation(OutputOptions(), short))
+      doAssert bare.st == jsDone, bare.error & " / " & bare.wrote.reason
+      var a = openSeismic(fromOption, keys = true)
+      var b = openSeismic(fromButton, keys = true)
+      var p = openSeismic(plain, keys = true)
+      sameTraces(a, b, ShortListen)
+      doAssert samplesOf(a, 0) != samplesOf(p, 0), "the own filter changed nothing"
+      a.close()
+      b.close()
+      p.close()
+    block polarity:
+      ## Polarity still equal. Seen to fail: left off, sample 0 was 1.0 against
+      ## the button's -1.0.
+      var edits: FileEdits
+      doAssert edits.change(teReversed, [0], true) == 1
+      let flags = OutputOptions(applyReversals: true)
+      let fromButton = outDir / "flip-button.sgy"
+      let fromOption = outDir / "flip-option.sgy"
+      let button = runWrite(opened[], shortPath, fromButton, withoutCorrelation(flags), edits)
+      doAssert button.st == jsDone, button.error & " / " & button.wrote.reason
+      let opted = runWrite(raw, shortPath, fromOption, withCorrelation(flags, short), edits)
+      doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+      var a = openSeismic(fromOption, keys = true)
+      var b = openSeismic(fromButton, keys = true)
+      sameTraces(a, b, ShortListen)
+      var negated = false
+      let plain = samplesOf(opened[], 0)
+      let wrote = samplesOf(a, 0)
+      for j in 0 ..< wrote.len:
+        if wrote[j] == -plain[j] and wrote[j] != 0: negated = true
+      doAssert negated, "polarity did not negate trace 0"
+      a.close()
+      b.close()
+    opened[].close()
+    raw.close()
 
   block segdSource:
     let segd = srcDir / "src.sgd"
