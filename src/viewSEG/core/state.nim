@@ -6709,21 +6709,31 @@ proc redoShotEditCmd(state: var AppState; cmd: Command) =
   loaded.undo.add step
   state.finishShotCell(cmd.logIndex)
 
+proc headerTooLong(log: ShotLog): bool =
+  ## Whether any header name is longer than a shot log's name. `columnName`
+  ## has already trimmed the ends.
+  if log == nil: return false
+  for col in 0 ..< log.width:
+    if log.columnName(col).len > MaxShotLogName: return true
+  false
+
 proc headerNamesOf(log: ShotLog; map: ShotLogMap): seq[string] =
-  ## Header names of `log`, as `columnName` returns them, cut to a shot log's
-  ## name. Empty when `map` has no header.
+  ## Header names of `log`, as `columnName` returns them. Empty when `map`
+  ## has no header. A name longer than a shot log's name is not stored: the
+  ## caller does not remember that file.
   result = @[]
   if log == nil or not map.hasHeader: return
   let n = min(log.width, MaxShotLogColumns)
   for col in 0 ..< n:
-    var name = log.columnName(col)
-    if name.len > MaxShotLogName: name.setLen(MaxShotLogName)
-    result.add name
+    result.add log.columnName(col)
 
 proc settleShotMap(state: var AppState; log: ShotLog; map: ShotLogMap) =
   ## Remembers the column map a shot log ended with. A read-only project, or
-  ## none, remembers nothing. Removing a log does not call this.
+  ## none, remembers nothing. A file with a header name longer than a shot
+  ## log's name, after trimming, is not remembered. Removing a log does not
+  ## call this.
   if not state.inProject or state.readOnlyProject: return
+  if log.headerTooLong: return
   var kept = LastShotMap()
   if state.project.doc.lastShotMap.isSome:
     kept = state.project.doc.lastShotMap.get

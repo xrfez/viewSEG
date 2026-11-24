@@ -3,7 +3,8 @@
 ## `importShotLog` reads a file through the file-system layer, refuses one
 ## larger than 256 MiB without reading it, and parses. A map given is used;
 ## otherwise a remembered map is used when `remember` is set and it fits the
-## file, and a guess otherwise. `loadShotLog` reads a project copy with the
+## file, and a guess otherwise. A header name longer than a shot log's name,
+## after trimming, does not fit. `loadShotLog` reads a project copy with the
 ## map stored for it.
 ## `saveShotLog` writes `toText` to the copy, to a temporary file that is then
 ## renamed onto it. The file the log was imported from is never named here.
@@ -158,23 +159,23 @@ proc fill(sink: ShotLogSink; log: ShotLog; view: ShotView; map: ShotLogMap; text
       dropped: dropped, usedLast: usedLast)
 
 proc clippedHeader(name: string): string =
-  ## `name` as a remembered header is compared: ends trimmed, cut to a shot
-  ## log's name, capitals ignored.
-  var t = name.strip()
-  if t.len > MaxShotLogName: t.setLen(MaxShotLogName)
-  t.toLowerAscii
+  ## `name` as a remembered header is compared: ends trimmed, capitals ignored.
+  name.strip().toLowerAscii
 
 proc sameHeader(a, b: string): bool =
   clippedHeader(a) == clippedHeader(b)
 
 proc rememberedFits(log: ShotLog; map: ShotLogMap; headers: openArray[string]): bool =
   ## The remembered map fits when the column count is the same and, when
-  ## there is a header, the header names are the same.
+  ## there is a header, the header names are the same. A file with any header
+  ## name longer than a shot log's name, after trimming, does not fit.
   if log == nil or log.width != map.roles.len: return false
   if not map.hasHeader: return true
   if headers.len != log.width: return false
   for col in 0 ..< log.width:
-    if not sameHeader(log.columnName(col), headers[col]): return false
+    let name = log.columnName(col)
+    if name.len > MaxShotLogName: return false
+    if not sameHeader(name, headers[col]): return false
   true
 
 proc importShotLog*(path: string; map: ShotLogMap; given: bool; sink: ShotLogSink;
@@ -182,7 +183,8 @@ proc importShotLog*(path: string; map: ShotLogMap; given: bool; sink: ShotLogSin
   ## The work of a job that reads `path` (`importSpec` is the spec to submit
   ## it with). `given`: use `map`. Otherwise, when `remember` is set and
   ## `remembered` fits the file (same column count, and the same header names
-  ## when there is a header), use that; else guess one. `headers` are the
+  ## when there is a header; a header name longer than a shot log's name does
+  ## not fit), use that; else guess one. `headers` are the
   ## names beside `remembered`. Worker-only. A cancel raises
   ## `JobCancelledError` and leaves `sink` as it was.
   result = proc (ctx: JobContext) {.gcsafe.} =

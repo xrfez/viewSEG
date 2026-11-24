@@ -76,7 +76,9 @@ Land 2026/                  the project folder: this is what is opened
   the column map used last (`lastShotMap`: a `map` written and read as a stored log's
   map, and `headerName` entries beside it, one per column). An import with no map
   given uses it when the column count is the same and, when there is a header, the
-  header names are the same after trimming and ignoring capitals. Removing a log does
+  header names are the same after trimming and ignoring capitals. A header name
+  longer than a shot log's name is not remembered and does not match; the meanings
+  are guessed. Removing a log does
   not remove the node. A document without the node has none. A role that is not one,
   more columns or header names than a stored map keeps, or a header name longer than
   a shot log's name, is said and the node is left out. A field inside it that this

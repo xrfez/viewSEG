@@ -1139,9 +1139,11 @@ not forget it when that log is removed. The next import, if no map is given, rea
 with that delimiter, those lines skipped and that header setting, and uses those column
 meanings when the file has the same number of columns and, if it has a header, the same
 header names (a space at either end, or a capital letter, does not count as a difference).
+A header name longer than 120 characters is not remembered and is not matched.
 Messages then says "Columns set as in the last shot log." When the columns do not match,
-the meanings are guessed, as they are when nothing is remembered, and Messages says nothing
-extra. A project open read-only still uses the remembered map and does not write a new one.
+or a header name is longer than that, the meanings are guessed, as they are when nothing
+is remembered, and Messages says nothing extra. A project open read-only still uses the
+remembered map and does not write a new one.
 With no project open, nothing is remembered.
 
 The grid has one row per shot. The first column is the time in UTC, to the microsecond,

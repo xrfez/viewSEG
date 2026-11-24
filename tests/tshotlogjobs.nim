@@ -15,7 +15,9 @@
 ## The project remembers the last column map. An import with no map given uses
 ## it when the file has the same columns and, with a header, the same names;
 ## a guess is used otherwise, and the completion sentence is only said when
-## the remembered map was used. Removing a log does not clear it. A read-only
+## the remembered map was used. A header name longer than a shot log's name,
+## after trimming, is not remembered and does not match. Removing a log does
+## not clear it. A read-only
 ## project uses it and does not write it. No project remembers nothing.
 ##
 ## Seen to fail: with the cap refusal shortened, `over_the_cap` rejected
@@ -35,7 +37,10 @@
 ## lost the edit; with the remembered map not applied, `remembered_map_on_the_job`
 ## rejected `usedLast`; with a read-only project remembering a new map anyway,
 ## `read_only_uses_the_map` kept the guess; with `decimalComma` left out of the
-## map writer, `decimal_comma_survives_reopen` read `1,5` as not a number.
+## map writer, `decimal_comma_survives_reopen` read `1,5` as not a number; with
+## header names cut to 120 characters, `long_header_does_not_match` used the
+## remembered map for a longer name, and `long_header_is_not_remembered` kept
+## the re-mapped roles.
 
 import std/[options, os, strutils]
 import viewSEG/core/[filesystem, jobs, project, shotlog, shotlogjobs, state]
@@ -657,6 +662,45 @@ proc main*() =
     doAssert not gotGiven.sink.result.usedLast, "a given map was treated as remembered"
     doAssert gotGiven.sink.result.map.roles == @[crText, crText, crText]
 
+  block long_header_does_not_match:
+    # A header longer than a shot log's name, after trimming, does not match a
+    # remembered map either way: a longer file against the shared prefix, and
+    # a prefix file against a longer remembered name. Cutting both to 120 would
+    # make them the same.
+    let prefix = "h".repeat(MaxShotLogName)
+    let longer = root / "job-long-header.csv"
+    let exact = root / "job-exact-header.csv"
+    let padded = root / "job-padded-header.csv"
+    writeFile(longer, prefix & "X;shot\n3;4\n")
+    writeFile(exact, prefix & ";shot\n1;2\n")
+    writeFile(padded, " " & prefix & " ;shot\n9;10\n")
+    var remembered = initShotLogMap()
+    remembered.delimiter = dlSemicolon
+    remembered.hasHeader = true
+    remembered.roles = @[crText, crSequence]
+    let gotLong = runImport(longer, remember = true, remembered = remembered,
+      headers = @[prefix, "shot"])
+    doAssert gotLong.st == jsDone, gotLong.error
+    doAssert not gotLong.sink.result.usedLast, "a long header used the remembered map"
+    doAssert gotLong.sink.result.map.roles[1] == crShotPoint
+    let gotCut = runImport(exact, remember = true, remembered = remembered,
+      headers = @[prefix & "X", "shot"])
+    doAssert gotCut.st == jsDone, gotCut.error
+    doAssert not gotCut.sink.result.usedLast, "a cut remembered header matched"
+    doAssert gotCut.sink.result.map.roles[1] == crShotPoint
+    let gotSame = runImport(longer, remember = true, remembered = remembered,
+      headers = @[prefix & "X", "shot"])
+    doAssert gotSame.st == jsDone, gotSame.error
+    doAssert not gotSame.sink.result.usedLast, "an equal long header used the remembered map"
+    let gotExact = runImport(exact, remember = true, remembered = remembered,
+      headers = @[prefix, "shot"])
+    doAssert gotExact.st == jsDone, gotExact.error
+    doAssert gotExact.sink.result.usedLast, "a header of 120 did not fit"
+    let gotPad = runImport(padded, remember = true, remembered = remembered,
+      headers = @[prefix, "shot"])
+    doAssert gotPad.st == jsDone, gotPad.error
+    doAssert gotPad.sink.result.usedLast, "a trimmed header of 120 did not fit"
+
   block remembered_map_survives_remove:
     let job = root / "JobRemember"
     let table = root / "remember.csv"
@@ -771,6 +815,46 @@ proc main*() =
     doAssert st.shotLogMap(0).roles == @[crText, crSequence, crText],
       "the map was not remembered after reopen"
     doAssert st.said(ColumnsAsLast)
+    discard st.shutdown()
+
+  block long_header_is_not_remembered:
+    let prefix = "h".repeat(MaxShotLogName)
+    let job = root / "JobLongHeader"
+    let exact = root / "state-exact-header.csv"
+    let longer = root / "state-long-header.csv"
+    let other = root / "state-other-header.csv"
+    writeFile(exact, prefix & ";shot\n1;2\n")
+    writeFile(longer, prefix & "X;shot\n3;4\n")
+    writeFile(other, prefix & "Y;shot\n5;6\n")
+    var st = start(root / "config-long-header")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0)
+    st.apply Command(kind: ckImportShotLog, logPath: exact)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    var changed = st.shotLogMap(0)
+    changed.roles[1] = crSequence
+    st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: changed)
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotLogMap(0).roles[1] == crSequence)
+    doAssert st.project.doc.lastShotMap.isSome and
+      st.project.doc.lastShotMap.get.headers[0] == prefix
+    let said = st.timesSaid(ColumnsAsLast)
+    st.apply Command(kind: ckImportShotLog, logPath: longer)
+    doAssert st.settle(st.shotLogCount == 2 and st.jobs.active.len == 0),
+      "the long import did not finish"
+    doAssert st.shotLogMap(1).roles[1] == crShotPoint, "a long header used the remembered map"
+    doAssert st.timesSaid(ColumnsAsLast) == said, "a long header said the remembered sentence"
+    var longMap = st.shotLogMap(1)
+    longMap.roles[1] = crFileNumber
+    st.apply Command(kind: ckRemapShotLog, logIndex: 1, logMap: longMap)
+    doAssert st.settle(st.jobs.active.len == 0 and st.shotLogMap(1).roles[1] == crFileNumber)
+    doAssert st.project.doc.lastShotMap.get.headers[0] == prefix, "a long header was remembered"
+    doAssert st.project.doc.lastShotMap.get.map.roles[1] == crSequence,
+      "re-mapping a long header was remembered"
+    st.apply Command(kind: ckImportShotLog, logPath: other)
+    doAssert st.settle(st.shotLogCount == 3 and st.jobs.active.len == 0)
+    doAssert st.shotLogMap(2).roles[1] == crShotPoint,
+      "another long header used the remembered map"
+    doAssert st.timesSaid(ColumnsAsLast) == said
     discard st.shutdown()
 
   block extra_column_is_guessed:
