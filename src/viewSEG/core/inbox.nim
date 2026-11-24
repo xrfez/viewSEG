@@ -13,7 +13,7 @@ import std/[locks, times]
 import parseSEG
 import analysis, compare, edits, filelist, filememory, firstbreaks, identity, join, jobs, layouts,
   log, mapkinds, nif, noisearea, panels, project, references, session, shotfiles, sigtypes,
-  spectra, stationmoves, survey, tiles, vendormaps
+  spectra, stationmoves, survey, tiles, vendorfieldlist, vendormaps
 
 type
   MsgKind* = enum
@@ -64,6 +64,7 @@ type
     mkCompare ## a trace copied into a compare slot (`core/comparejobs`)
     mkComparePicture ## the compare window's picture, computed on a job
     mkVendor ## the vendor header maps a load read (`core/vendorjobs`)
+    mkVendorFields ## the vendor fields an open file has (`core/vendorfieldjobs`)
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -315,6 +316,8 @@ type
     of mkVendor:
       vendorLoad*: VendorLoad ## moved, never shared
       vendorGen*: int ## the load's number: a newer load makes it stale
+    of mkVendorFields:
+      vendorFields*: VendorFieldList ## moved, never shared
     of mkEarlier:
       earlierPath*: string ## the file
       earlierOf*: FileIdentity ## its identity, which none of them is

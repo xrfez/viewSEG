@@ -120,15 +120,16 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
       shotfollowtarget, shotlog,
   shotlogjobs, shotlogsps, shotspsjobs,
   shots, spectra,
-  spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids, vendorjobs,
-  vendormaps, vibprofile, watch, zoom
+  spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids,
+      vendorfieldjobs,
+  vendorfieldlist, vendorjobs, vendormaps, vibprofile, watch, zoom
 
 export analysis, compare, edits, filelist, filememory, firstbreaks, identity, inbox, jobs, join,
     shotfollowtarget,
     layouts, log,
   mapstate, panels, persist, pick, project, outputnames, recordqc, references, selection, session,
     settings,
-  shots, spectra, spread, survey, threads, tiles, traceids, vendormaps, zoom
+  shots, spectra, spread, survey, threads, tiles, traceids, vendorfieldlist, vendormaps, zoom
 export CutOptions, CutStandard, initCutOptions
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues, MaxTableRows
 export tracetable
@@ -1177,6 +1178,12 @@ type
     recFacts: RecordingFacts
     recHave: bool ## `recFacts` is the answer for `recKey`
     recWhy: string ## why `recFacts` is not `ready` when `recHave`: what the job said
+    vfJob: JobId = NoJob
+      ## the job that lists the vendor fields of one open file (`watchVendorFields`)
+    vfKey: tuple[session: SessionId; vendors: int]
+      ## the file and the vendor maps' load `vfJob` is for
+    vfLists: seq[VendorFieldList]
+      ## the fields of each shown file, as read for the maps' load now in force
     joins: seq[Joined]
       ## the open files joined with survey files
     project: ProjectState
@@ -2761,6 +2768,16 @@ func recordingWhy*(state: AppState): string {.inline.} =
   ## Why the shown file has no ready facts once the job has ended: no live trace
   ## with a start time, or what failed; "" while it is read or when they are ready.
   if state.recHave: state.recWhy else: ""
+
+func vendorFields*(state: AppState; session: SessionId): Option[VendorFieldList] =
+  ## The vendor fields open file `session` has under the vendor maps in force, once
+  ## `watchVendorFields` has had them listed; none before that (the menu says it is reading).
+  for l in state.vfLists:
+    if l.session == session and l.vendors == state.vendor.gen: return some(l)
+
+func vendorFieldsBusy*(state: AppState): bool {.inline.} =
+  ## The vendor fields of a shown file are being listed.
+  state.vfJob != NoJob
 
 func recordingBusy*(state: AppState): bool {.inline.} =
   ## The shown file is being read as a recording.
@@ -7299,6 +7316,9 @@ proc clearSession(state: var AppState) =
   state.recJob = NoJob
   state.recHave = false
   state.recWhy = ""
+  if state.vfJob != NoJob: discard state.jobs.cancel(state.vfJob)
+  state.vfJob = NoJob
+  state.vfLists.setLen 0
   state.moveQueue.setLen 0
   state.leapQueue.setLen 0
   state.moveBases.setLen 0
@@ -9204,6 +9224,13 @@ proc onFinished(state: var AppState; job: JobInfo) =
     state.recSink = nil
     if state.recFacts.ready and ownKeys: state.kindFromOpen()
     return
+  if job.id == state.vfJob:
+    state.vfJob = NoJob
+    # a job that failed gives the answer "none", so the file is not asked again every frame
+    if state.vendorFields(state.vfKey.session).isNone and state.vfKey.vendors == state.vendor.gen:
+      state.vfLists.add VendorFieldList(session: state.vfKey.session,
+        vendors: state.vfKey.vendors)
+    return
   if job.id == state.leapJob:
     state.finishLeap(job)
     return
@@ -9575,6 +9602,15 @@ proc takeKinds(state: var AppState; m: sink Msg) =
         e.traceOrder = a.order
       f.changedAt(i)
       state.kindCache.remember(a, m.kindsVendors, f)
+
+proc takeVendorFields(state: var AppState; m: sink Msg) =
+  ## The vendor fields a job listed for an open file: kept, unless the maps were loaded again
+  ## or the file closed meanwhile.
+  if m.vendorFields.vendors != state.vendor.gen or
+      state.findSession(m.vendorFields.session) < 0:
+    return
+  state.vfLists.keepItIf(it.session != m.vendorFields.session)
+  state.vfLists.add move m.vendorFields
 
 proc takeListed(state: var AppState; m: sink Msg) =
   ## What a scan found for the file list; shows the first file found (or the
@@ -11282,6 +11318,35 @@ proc watchRecording*(state: var AppState; wanted: bool) =
         lane: jlBackground, reads: @[s.diskPath]),
         recordingFactsWork(s.filePtr, s.diskPath, dtMs, currentVendors(), state.recSink))
 
+proc watchVendorFields*(state: var AppState) =
+  ## Keeps the vendor fields of the files the panels show listed, for the display-line menu
+  ## (`vendorFields`): one job at a time lists the fields of the first shown file that has no
+  ## answer for the vendor maps in force. A list of the maps of an older load, or of a file no
+  ## panel shows, is let go; a job whose file is no longer shown, or whose maps were replaced, is
+  ## cancelled. Call it every frame; it does nothing when nothing changed.
+  var shown: seq[int] = @[] # the indices in `sessions` of the files shown
+  var ids: seq[SessionId] = @[]
+  for k in 0 ..< state.panels.len:
+    let i = state.shownFile(k)
+    if i >= 0 and i notin shown and not state.sessions[i].isSignature:
+      shown.add i
+      ids.add state.sessions[i].id
+  state.vfLists.keepItIf(it.vendors == state.vendor.gen and it.session in ids)
+  if state.vfJob != NoJob and (state.vfKey.vendors != state.vendor.gen or
+      state.vfKey.session notin ids):
+    discard state.jobs.cancel(state.vfJob)
+    state.vfJob = NoJob
+  if state.vfJob == NoJob:
+    for i in shown:
+      let s = state.sessions[i]
+      if state.vendorFields(s.id).isNone:
+        state.vfKey = (s.id, state.vendor.gen)
+        state.vfJob = state.jobs.submit(JobSpec(title: "List the vendor fields of " & s.name,
+          lane: jlBackground, reads: @[s.diskPath]),
+          vendorFieldsWork(s.filePtr, s.id, state.vendor.gen, currentVendors(),
+            state.inbox.poster))
+        break
+
 proc applyCommand(state: var AppState; cmd: Command) =
   if cmd.kind in AuxRefused:
     let a = state.findPanel(cmd.panel)
@@ -12082,6 +12147,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkListed: state.takeListed(move m)
     of mkWatched: state.takeWatched(move m)
     of mkKinds: state.takeKinds(move m)
+    of mkVendorFields: state.takeVendorFields(move m)
     of mkPaired: state.takePaired(move m)
     of mkSurvey: state.takeSurvey(move m.layer, m.job)
     of mkChecked: state.takeChecked(move m)
