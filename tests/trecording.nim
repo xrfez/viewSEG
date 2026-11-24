@@ -16,7 +16,8 @@
 ## the order of the file (`slicedWhy` reset): the uneven shots and "offonce" refused with the
 ## kind alone; the rest of a receiver's starts not looked through for one that follows on
 ## another: "lateFollow" read rkReceiverSliced; the no-follow sentence in steps: "starts 2
-## trace lengths or more".
+## trace lengths or more"; the follow-on count over the first starts only: "skipsFirst:
+## rkShotGather" and "abutFirst: rkReceiverContinuous".
 
 import std/[assertions, math, os, strutils]
 import parseSEG
@@ -466,6 +467,22 @@ proc main*() =
     for starts in [KindStarts, AllStarts]:
       let f = factsOf(dir, "allGaps", gaps, starts = starts)
       doAssert f.kind == rkReceiverSliced and f.slicedWhy == swNoFollow, $f
+
+  block whether_traces_mostly_follow_on_is_counted_over_every_start:
+    # ten stations in time order. Skips for the first KindStarts starts, then traces that
+    # follow on: continuous, in the window as in the slice; the other way round, a shot gather
+    var skipsFirst, abutFirst: seq[int] = @[]
+    for i in 0 ..< KindStarts: skipsFirst.add i * 2000
+    for i in 0 ..< 26: skipsFirst.add (2 * KindStarts - 1 + i) * 1000
+    for i in 0 ..< KindStarts: abutFirst.add i * 1000
+    for i in 0 ..< 20: abutFirst.add (KindStarts + 1 + 2 * i) * 1000
+    for (name, firsts, want) in [("skipsFirst", skipsFirst, rkReceiverContinuous),
+        ("abutFirst", abutFirst, rkShotGather)]:
+      let window = factsOf(dir, name, shots(10, firsts))
+      let slice = factsOf(dir, name, shots(10, firsts), starts = AllStarts)
+      doAssert window.kind == want and slice.kind == want, name & ": " & $window.kind &
+        ", the slice " & $slice.kind
+      doAssert (cutRefusal(slice) == "") == (want == rkReceiverContinuous), cutRefusal(slice)
 
   block traces_sharing_a_start_are_the_components_of_one_segment:
     # the same receiver twice at each start: the step is compared with the next DIFFERENT start

@@ -33,7 +33,7 @@ components of the same type and never re-sorting anything:
    continuous. Anything else is a receiver gather.
 2. **Is the receiver gather continuous?** Each trace starts a whole number of trace lengths
    after the one before it, with no variance. For one receiver (one component at one point:
-   its line and point, else its group coordinates, which within 5 survey units of each other
+   its line and point, else its group coordinates, which within 2 survey units of each other
    are one point, as a node's position written a little differently from record to record)
    the traces are taken in time order and those sharing one start time count as one segment
    (they are its components). The channel
@@ -81,7 +81,8 @@ The kind is asked of any file you open, so the window decides it from the first 
 times of each receiver. The slice itself places every segment and checks every start: a trace off
 the step anywhere later in the file refuses the slice with the sentence above. Only the rule that
 some trace must follow on another looks further: when none of the first 8 does, the window looks
-through the rest of the file for one before it says so.
+through the rest of the file for one before it says so, and whether most traces follow on or
+skip is counted over the whole file.
 
 If the recorder was off for a while, the next trace starts after more than one step (k greater
 than 1): the box pads with zeros, so a long silence is still a whole number of steps. As long as

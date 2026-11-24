@@ -13,7 +13,7 @@
 ## (`abutting == 0` not asked), the samples' shot records read "land/shots.sgd:
 ## rkReceiverContinuous", "wholeShots: ... rkReceiverContinuous" and "sliced: ...
 ## rkReceiverContinuous"; with group coordinates compared exactly, "jitter" reads two stations;
-## with a file that passes the continuous test never asked whether its receiver changes,
+## with `SameSpot` 5, "close" reads one station; with a file that passes the continuous test never asked whether its receiver changes,
 ## "fewFollow" reads rkReceiverContinuous.
 
 import std/[algorithm, assertions, os, sets, strutils, times]
@@ -121,6 +121,10 @@ proc main*() =
       jitter = 1), VendorRegistry())
     doAssert two.kind == rkReceiverContinuous and two.components == 2 and two.stations == 2,
       $two
+    # two nodes 3 m apart are two, never one
+    let close = whole(writeSegySpecs(dir, "close", shots(2, [0, 1000, 2000, 3000]),
+      spacing = 3), VendorRegistry())
+    doAssert close.components == 2 and close.stations == 2, $close
     # the one place both the keys and the segment clock take a point from
     var g = openSeismic(path, keys = true)
     defer: g.close()

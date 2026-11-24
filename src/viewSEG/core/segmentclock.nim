@@ -74,9 +74,11 @@ type Place = tuple[how: int8; a, b: float64; index: int16; channel: float64; com
   ## a station (`StationPlace`), then what tells its receivers apart
 
 const
-  SameSpot* = 5.0
+  SameSpot* = 2.0
     ## group coordinates (survey units) this near each other are one receiver point: a node
-    ## whose position is written a little differently from record to record stays one
+    ## whose position is written a little differently from record to record stays one. Two
+    ## real nodes must never merge, and dense spreads lay them 5 m apart and closer, so the
+    ## distance is kept well under that: a metre or so of jitter, not a neighbour
   FarCoordinate = 1e15 ## beyond this a group coordinate is no position
 
 func isCoordinate(v: float64): bool =

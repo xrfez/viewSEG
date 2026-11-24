@@ -73,7 +73,9 @@
 ## for `AllStarts`: a trace off the step anywhere refuses the cut with a sentence.
 ## `swNoFollow` alone is never said from the first starts: when none of them follows on
 ## another, the rest of each receiver's starts are looked through for one that does (on the
-## step measured), so the window never refuses what the cut accepts for it.
+## step measured), so the window never refuses what the cut accepts for it. So are the
+## boundaries that follow on and that skip counted over every start before a file the test
+## passes is called a shot gather by them.
 
 import std/[algorithm, math, sequtils, tables]
 import parseSEG
@@ -327,15 +329,22 @@ proc tally(segs: seq[Seg]; i, j: int; dtS: float64; starts: int;
       r.offTrace = used[offAt].row + 1
       r.offSeconds = float64(offGap) * dtS
 
-func abutsLater(segs: seq[Seg]; u: Unseen; dtS: float64): bool =
-  ## Whether a start of the receiver's segments `tally` left unseen is one step after the
-  ## start before it: the file is then not one in which no trace follows on another.
+iterator laterSteps(segs: seq[Seg]; u: Unseen; dtS: float64): int =
+  ## The boundaries of the receiver's segments `tally` left unseen that are on its step: how
+  ## many steps each is (1: the next trace follows on the one before it).
   var last = u.last
   for x in u.next ..< u.j:
     let d = int(round((segs[x].start - last) / dtS))
     if d != 0:
-      if abs(d - u.step) <= 1: return true
+      let k = max(1, (2 * d + u.step) div (2 * u.step))
+      if abs(d - k * u.step) <= 1: yield k
       last = segs[x].start
+
+func abutsLater(segs: seq[Seg]; u: Unseen; dtS: float64): bool =
+  ## Whether a start of the receiver's segments `tally` left unseen is one step after the
+  ## start before it: the file is then not one in which no trace follows on another.
+  for k in laterSteps(segs, u, dtS):
+    if k == 1: return true
 
 proc receiverChanges(meta: ChunkMeta; at: seq[StationPlace]; segs: seq[Seg]; dtS: float64):
     bool =
@@ -461,8 +470,14 @@ proc describeRecording*(plan: RecordingPlan; starts = KindStarts): RecordingFact
     # a shot gather (the receivers repeat from record to record); staying put, a receiver's
     # own segments. `slicedWhy` keeps what the continuous test measured. So is a file whose
     # traces follow on each other at no more boundaries than they skip: shot records, a few
-    # of them one record length apart
-    let fewFollow = result.boundaries > 0 and result.abutting <= result.skips
+    # of them one record length apart. Counted over every start (no read: the segments are
+    # in memory), so the window and the slice, which checks every start, agree
+    var (abutting, skips) = (result.abutting, result.skips)
+    if result.kind == rkReceiverContinuous:
+      for u in unseen:
+        for k in laterSteps(segs, u, dtS):
+          if k == 1: inc abutting else: inc skips
+    let fewFollow = result.boundaries > 0 and abutting <= skips
     if (result.kind == rkReceiverSliced or fewFollow) and
         receiverChanges(meta, plan.places, segs, dtS):
       result.kind = rkShotGather

@@ -50,10 +50,10 @@ proc writeSpecs*(dir, name: string; specs: openArray[Spec]; n = 1000;
   discard w.close()
 
 proc writeSegySpecs*(dir, name: string; specs: openArray[Spec]; n = 1000;
-    channelPerTrace = false; jitter = 0.0): string =
+    channelPerTrace = false; jitter = 0.0; spacing = 50.0): string =
   ## `writeSpecs` as a SEG-Y file, one record. SEG-Y keeps no receiver line, so a station
-  ## is placed by its group coordinates, 50 apart in x; every other trace moves `jitter`
-  ## in x, a position written a little differently from record to record.
+  ## is placed by its group coordinates, `spacing` apart in x; every other trace moves
+  ## `jitter` in x, a position written a little differently from record to record.
   createDir(dir)
   result = dir / (name & ".sgy")
   var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
@@ -61,7 +61,7 @@ proc writeSegySpecs*(dir, name: string; specs: openArray[Spec]; n = 1000;
     var k = specKeys(i, s, channelPerTrace, coded = true)
     k.record = 1
     if s.stationed:
-      k.rcvX = 512_300 + 50 * float64(s.rcv) + jitter * float64(i mod 2)
+      k.rcvX = 512_300 + spacing * float64(s.rcv) + jitter * float64(i mod 2)
       k.rcvY = 6_401_200
     w.writeTrace(k, newSeq[float32](n))
   discard w.close()
