@@ -478,6 +478,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var corrKeys: seq[TraceKeys] = @[]
       var corrCounts: seq[int] = @[]
       var corrMeta: ChunkMeta
+      var corrDtMs = 0.0
       if opts.correlation.isSome:
         if file == nil or not file[].isOpen:
           raise newException(ValueError, "The source file is not open.")
@@ -501,6 +502,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         corrKeys = @[initTraceKeys()]
         corrCounts = @[recordSamples]
         corrMeta = initChunkMeta(rowsOf(corrKeys, corrCounts), ready.dtMs)
+        corrDtMs = ready.dtMs
         correlating = true
       part = claimPart(dest)
       if part.len == 0:
@@ -625,7 +627,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         headerKeys = openHeaderKeys(file[], source)
         openedHeader = true
       var samples = newSeq[float32]()
-      let dtMs = file[].sampleIntervalUs(0) / 1000.0
+      let dtMs = if correlating: corrDtMs else: file[].sampleIntervalUs(0) / 1000.0
       var correlatedOver: seq[HeaderOverride] = @[]
       if correlating and not segdOut:
         correlatedOver = @[headerOverride("trace.correlated", CorrelatedYes)]

@@ -29,6 +29,8 @@
 ## source whose listen length was 94 refused: "SEG-D format 8015 holds
 ## samples in groups of 4". With the interval left on the keys, SEG-D from
 ## keys refused "the keys' sample interval is 4000.0 µs, the output's is 2000.0".
+## With the filter designed at trace 0's interval, an own filter on a seismic
+## trace left sample 0 at -0.015427755 against the button's -0.01319716.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -172,6 +174,55 @@ proc writePlaced(path: string; sweep: openArray[float32]) =
     (k.srcX, k.srcY) = (OwnSrcX, OwnSrcY)
     w.writeTrace(k, buf)
   doAssert w.close().len == 0, "the placed file did not close"
+
+proc writeAuxFirst(path: string; sweep: openArray[float32]) =
+  ## SEG-D. Trace 0 is an auxiliary of its own channel type; the reference
+  ## auxiliary is another type, so the two can be given different intervals.
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: DtMs * 1000.0,
+    numSamples: Record, time: 1_700_000_000.0))
+  for i in 0 .. 4:
+    var buf: seq[float32]
+    var k = initTraceKeys()
+    var ct: SegdChannelType
+    if i == 0:
+      buf = newSeq[float32](Record)
+      for j in 0 ..< Record: buf[j] = float32(j + 1)
+      (k.traceCode, k.status) = (6'i16, tsAuxiliary)
+      ct = sctOther
+    elif i == RefAux:
+      buf = delayedSweep(sweep, Record, 0)
+      (k.traceCode, k.status) = (5'i16, tsAuxiliary)
+      ct = sctTimeBreak
+    else:
+      buf = delayedSweep(sweep, Record, Delays[0])
+      (k.traceCode, k.status) = (1'i16, tsLive)
+      ct = sctSeismic
+    k.record = 7.0
+    k.channel = float64(i + 1)
+    k.intervalUs = DtMs * 1000.0
+    k.t0Ms = 0.0
+    k.time = 1_700_000_000.0
+    w.writeTrace(k, buf, channelType = ct)
+  doAssert w.close().len == 0, "the auxiliary-first file did not close"
+
+proc patchChannelInterval(path: string; code: uint8; us: int) =
+  ## Sets one channel set's sampling interval. The keys writer stores one
+  ## interval; a file with two is made by editing that field.
+  var f = openSeismic(path, keys = true)
+  let rec = f.index.segdRecords[0]
+  var which = -1
+  for i, d in rec.scanTypes[0].descriptorsRev3:
+    if d.channelType == code: which = i
+  doAssert which >= 0, "channel type " & $code & " was not written"
+  let at = int(rec.offset) + 3 * SegdBlockSize + rec.generalBlocks.len + which * 96 + 23
+  f.close()
+  var bytes = readFile(path)
+  doAssert ord(bytes[at]) == 0 and ord(bytes[at + 1]) == 0x07 and ord(bytes[at + 2]) == 0xD0,
+    "interval bytes at " & $at & " are not 2000"
+  bytes[at] = chr((us shr 16) and 0xFF)
+  bytes[at + 1] = chr((us shr 8) and 0xFF)
+  bytes[at + 2] = chr(us and 0xFF)
+  writeFile(path, bytes)
 
 proc writeMixed(path: string; sweep: openArray[float32]) =
   ## SEG-Y, 2 ms, with the last auxiliary trace at 4 ms.
@@ -675,6 +726,44 @@ proc main*() =
       a.close()
       b.close()
     sameTraces(a, b, Listen)
+
+  block oddAuxFilter:
+    ## Trace 0 is an auxiliary at 4 ms, the seismic traces at 2 ms. An own
+    ## filter on a seismic trace matches the button then Output.
+    let auxFirst = srcDir / "auxfirst.sgd"
+    writeAuxFirst(auxFirst, sweep)
+    patchChannelInterval(auxFirst, uint8(ord(sctOther)), 4000)
+    var src = openSeismic(auxFirst, keys = true)
+    defer: src.close()
+    doAssert src.traceKeys(0).status == tsAuxiliary, $src.traceKeys(0).status
+    doAssert src.sampleIntervalUs(0) == 4000.0, $src.sampleIntervalUs(0)
+    doAssert src.traceKeys(1).intervalUs == 2000.0, $src.traceKeys(1).intervalUs
+    doAssert src.traceKeys(RefAux).status == tsAuxiliary
+    doAssert src.traceKeys(RefAux).intervalUs == 2000.0, $src.traceKeys(RefAux).intervalUs
+    let made = correlate(src, auxFirst, sweep)
+    var opened = made.opened.filePtr
+    defer: opened[].close()
+    doAssert opened[].sampleIntervalUs(0) == 2000.0, $opened[].sampleIntervalUs(0)
+    var edits: FileEdits
+    let own = bounded(OwnFilter(spec: Processing(band: pbBandPass, f1: 8, f2: 12,
+      f3: 40, f4: 50)))
+    doAssert edits.setOwnFilters([1], own) == 1
+    var optedOpts = option(sweep, ofSegd)
+    optedOpts.applyOwnFilters = true
+    let fromButton = outDir / "auxfirst-button.sgd"
+    let fromOption = outDir / "auxfirst-option.sgd"
+    let button = runWrite(opened[], auxFirst, fromButton,
+      OutputOptions(format: ofSegd, applyOwnFilters: true), edits)
+    doAssert button.st == jsDone, button.error & " / " & button.wrote.reason
+    let opted = runWrite(src, auxFirst, fromOption, optedOpts, edits)
+    doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+    var a = openSeismic(fromOption, keys = true)
+    var b = openSeismic(fromButton, keys = true)
+    defer:
+      a.close()
+      b.close()
+    sameTraces(a, b, Listen)
+    doAssert samplesOf(a, 1) != samplesOf(opened[], 1), "the own filter changed nothing"
 
 when isMainModule:
   main()
