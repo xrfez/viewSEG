@@ -8,6 +8,7 @@
 ## values); with `labelled` starting at the first visible position,
 ## `labelsOnMultiples` labelled 3, 8, 13 ...
 
+import viewSEG/core/panels
 import viewSEG/view/displayheader
 
 proc main*() =
@@ -44,6 +45,11 @@ proc main*() =
     doAssert headerText(99.5) == "99.5" and headerText(12.25) == "12.25"
     doAssert headerText(0.1 + 0.2) == "0.3"
     doAssert headerText(NaN) == "" and headerText(Inf) == ""
+
+  block startTimeAsUtc:
+    # Seen to fail with the label left as the raw count: "1772323200123000".
+    doAssert headerLabel(hfStartTime, 1_772_323_200_123_000.0, "") == "2026-03-01 00:00:00.123000"
+    doAssert headerLabel(hfStartTime, NaN, "") == ""
 
 when isMainModule:
   main()

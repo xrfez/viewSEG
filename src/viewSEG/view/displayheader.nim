@@ -9,7 +9,8 @@
 
 import std/math
 from ../core/readout import numberText
-from ../core/panels import HeaderField, hfChannelSet, hfTraceId
+from shotlogwords import utcMicrosText
+from ../core/panels import HeaderField, hfChannelSet, hfStartTime, hfTraceId
 from ../core/traceids import traceIdText
 from ../core/sigtypes import headerName
 
@@ -38,13 +39,16 @@ func headerText*(v: float64): string =
   ## others with up to two; "" when unknown (as the status bar shows them).
   numberText(v)
 
-func headerLabel*(f: HeaderField; v: float64; channelSet: string): string =
+proc headerLabel*(f: HeaderField; v: float64; channelSet: string): string =
   ## What the header shows for value `v` of field `f`: `headerText`, except
   ## for the channel set (`channelSet`, its number and type in words, when the
-  ## tile has it) and the trace ID code (the code in words).
+  ## tile has it), the trace ID code (the code in words) and the start time
+  ## (UTC microseconds as a UTC date and time to the microsecond, as the shot log
+  ## shows a time).
   case f
   of hfChannelSet: (if channelSet.len > 0: headerName(channelSet) else: headerText(v))
   of hfTraceId:
     (if v.isNaN: "" elif channelSet.len > 0: headerName(channelSet) # (a signature file's own names)
       else: traceIdText(int(v)))
+  of hfStartTime: (if v.isNaN or abs(v) > 1e17: "" else: utcMicrosText(int64(v)))
   else: headerText(v)
