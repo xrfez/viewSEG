@@ -44,7 +44,9 @@
 ## the listen-length trace, in the order a plain write applies them. The
 ## reference and its spectrum are prepared once. None leaves every sample as
 ## it is written today. A reference the correlation job would refuse is
-## refused before any byte is written, in that job's words.
+## refused before any byte is written, in that job's words. The result's
+## lines then include that job's notes for this file. A trace that could
+## not be read is written as zeros, and the result says how many.
 
 import std/[math, options, os, random, sets, strutils, times]
 import parseSEG
@@ -112,7 +114,7 @@ type
     ok*: bool
     written*: int
     dropped*: int
-    lines*: seq[string] ## the writer's diagnostics, and a note when records bound a sort
+    lines*: seq[string] ## writer's diagnostics; correlation notes when correlating
     path*: string
     reason*: string
     removed*: bool      ## a partial file of ours was removed
@@ -545,6 +547,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         file[].ensureKeys()
       var dropped = 0
       var written = 0
+      var unread = 0
       var records = 0
       var rec = int64(-1)
       var firstKept = -1
@@ -658,8 +661,12 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           w = openSeismicWriter(part, o)
         else:
           w = openSeismicWriter(part, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+        var readLog: DiagLog
         template writeOne(t: int) =
-          let x = file[].readTraces(t .. t)
+          readLog = DiagLog()
+          let x = if correlating: file[].readTraces(t .. t, readLog)
+                  else: file[].readTraces(t .. t)
+          if correlating and readLog.len > 0: inc unread
           let cols = x.shape[1]
           samples.setLen cols
           for j in 0 ..< cols: samples[j] = x[0, j]
@@ -703,12 +710,26 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
               opts.processing, opts.applyProcessing, own, opts.applyOwnFilters)
           if like:
             if correlating:
-              if carryPositions:
-                w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
-                  keys = file[].traceKeys(t), overrides = correlatedOver)
-              else:
-                w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
-                  overrides = correlatedOver)
+              # A file cut while it is open refuses a template header read.
+              # The samples are already in hand (zeros when the read failed):
+              # write those from the keys, which do not touch the map.
+              var stored = false
+              try:
+                if carryPositions:
+                  w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
+                    keys = file[].traceKeys(t), overrides = correlatedOver)
+                else:
+                  w.writeTrace(file[], t, toOpenArray(samples, 0, listen - 1),
+                    overrides = correlatedOver)
+                stored = true
+              except SegTruncatedError:
+                discard
+              if not stored:
+                var keys = file[].traceKeys(t)
+                let channel = if keys.status == tsAuxiliary: sctOther else: sctSeismic
+                if segdOut: keys.intervalUs = outUs
+                w.writeTrace(keys, toOpenArray(samples, 0, listen - 1),
+                  overrides = correlatedOver, channelType = channel)
             elif carryPositions:
               w.writeTrace(file[], t, samples, keys = file[].traceKeys(t))
             else:
@@ -773,6 +794,29 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           let sentence = positionSentence(writtenPositions(file[], edits, opts.dropKilled), gaps)
           if sentence.len > 0: lines.add sentence
         for d in log: lines.add($d)
+        if correlating:
+          let loaded = opts.correlation.get
+          let ready = listenShape(file, loaded.reference, loaded.referenceDtMs)
+          var delayed = 0
+          for t in loaded.referenceTraces:
+            if file[].traceKeys(t).status == tsAuxiliary and t notin ready.odd:
+              inc delayed
+          let leadSamples = abs(wholeSamples(-AuxLeadMs, ready.dtMs))
+          # A cut found while writing refuses a later header read. The notes
+          # that can still be built are kept; the unread count does not depend
+          # on that read.
+          try:
+            for line in correlationLines(file, file[].len, ready.listen, loaded.reference.len,
+                float64(ready.listen) * ready.dtMs,
+                float64(loaded.reference.len) * ready.dtMs, ready.dtMs, delayed,
+                leadSamples, ready.padded, ready.cut, refs, ready.odd):
+              lines.add line
+          except SegTruncatedError:
+            discard
+          if unread == 1:
+            lines.add "1 trace could not be read and is written as zeros."
+          elif unread > 1:
+            lines.add($unread & " traces could not be read and are written as zeros.")
         if not fs.moveNoReplace(part, dest):
           let kept = "The file appeared while writing; the output is kept as " & part & "."
           if sink != nil:

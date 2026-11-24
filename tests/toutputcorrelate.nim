@@ -31,6 +31,10 @@
 ## keys refused "the keys' sample interval is 4000.0 µs, the output's is 2000.0".
 ## With the filter designed at trace 0's interval, an own filter on a seismic
 ## trace left sample 0 at -0.015427755 against the button's -0.01319716.
+## With no correlation notes, the result's lines were empty, so "5 traces,
+## 800 samples (1600 ms of listen time)." was missing. A file cut while it
+## was open failed the write ("was cut short while it was open") instead of
+## writing the unreadable trace as zeros.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -764,6 +768,64 @@ proc main*() =
       b.close()
     sameTraces(a, b, Listen)
     doAssert samplesOf(a, 1) != samplesOf(opened[], 1), "the own filter changed nothing"
+
+  block correlationNotes:
+    ## A reference auxiliary and an auxiliary at another interval: the lines
+    ## are the button's, in its order.
+    let mixed = srcDir / "notes.sgy"
+    writeMixed(mixed, sweep)
+    var src = openSeismic(mixed, keys = true)
+    defer: src.close()
+    let made = correlate(src, mixed, sweep)
+    let fromOption = outDir / "notes-option.sgy"
+    let opted = runWrite(src, mixed, fromOption, option(sweep, ofSegy))
+    doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+    var at = 0
+    for line in made.lines:
+      var found = false
+      while at < opted.wrote.lines.len:
+        if opted.wrote.lines[at] == line:
+          found = true
+          inc at
+          break
+        inc at
+      doAssert found, "missing " & line & " in " & $opted.wrote.lines
+    doAssert made.lines.len >= 3, $made.lines
+    doAssert "delayed by" in made.lines[1], made.lines[1]
+    var oddNote = false
+    for line in made.lines:
+      if "written as zeros." in line: oddNote = true
+    doAssert oddNote, $made.lines
+
+  block unreadTrace:
+    ## Trace 4's samples are cut after the file is open. That trace is written
+    ## as zeros, and the result says so. Windows will not shrink a mapped file.
+    when not defined(windows):
+      let cutPath = srcDir / "unread.sgy"
+      writeMixed(cutPath, sweep)
+      var src = openSeismic(cutPath, keys = true)
+      defer: src.close()
+      let earlier = src.traceEntry(3)
+      let last = src.traceEntry(4)
+      let earlierData = earlier.offset + int64(earlier.headerBytes)
+      let span = last.offset - earlierData
+      doAssert span mod int64(earlier.numSamples) == 0, "samples are not a whole number of bytes"
+      let sampleBytes = span div int64(earlier.numSamples)
+      let data = last.offset + int64(last.headerBytes)
+      let cutAt = data + (int64(last.numSamples) div 2) * sampleBytes
+      doAssert cutAt > data and cutAt < getFileSize(cutPath), "the cut is not inside the last trace"
+      writeFile(cutPath, readFile(cutPath)[0 ..< int(cutAt)])
+      let fromOption = outDir / "unread-option.sgy"
+      let opted = runWrite(src, cutPath, fromOption, option(sweep, ofSegy))
+      doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
+      var said = false
+      for line in opted.wrote.lines:
+        if "could not be read and" in line and "written as zeros." in line: said = true
+      doAssert said, $opted.wrote.lines
+      var written = openSeismic(fromOption, keys = true)
+      defer: written.close()
+      for v in samplesOf(written, 4):
+        doAssert v == 0.0, $v
 
 when isMainModule:
   main()

@@ -327,6 +327,32 @@ proc binaryUncorrelatedLine(file: ptr SeismicFile): string =
     result = "the binary header still says the data are not correlated " &
       "(byte 3249 is 1); this writer cannot change it."
 
+proc correlationLines*(file: ptr SeismicFile; nTraces, listen, sweepLen: int;
+    listenMs, sweepMs, dtMs: float64; delayed, leadSamples, padded, cut: int;
+    refs: HashSet[int]; odd: openArray[int]): seq[string] =
+  ## The notes `correlateWork` gives for this file, in its order. `odd` is
+  ## that job's list, so an odd-interval note keeps its place.
+  let leadMs = float64(leadSamples) * dtMs
+  var oddSet = initHashSet[int]()
+  for t in odd: oddSet.incl(t)
+  result = @[
+    $nTraces & " traces, " & $listen & " samples (" & msText(listenMs) &
+      " ms of listen time).",
+    sweepLine(sweepMs, delayed, leadMs)]
+  if delayed > 0 and listenMs < 2.0 * leadMs:
+    result.add waveletLine(listenMs, leadMs)
+  let fitted = fitLine(padded, cut)
+  if fitted.len > 0: result.add fitted
+  for t in 0 ..< nTraces:
+    if t in refs and file[].traceKeys(t).status == tsAuxiliary and t notin oddSet:
+      let held = int(file[].traceEntry(t).numSamples)
+      if held < sweepLen + leadSamples:
+        result.add cutSweepLine(t, float64(held) * dtMs, sweepMs, leadMs)
+  for t in odd:
+    result.add intervalLine(t, t in refs, traceDt(file, t), dtMs)
+  let uncorrelated = binaryUncorrelatedLine(file)
+  if uncorrelated.len > 0: result.add uncorrelated
+
 proc writeRow(w: var SeismicWriter; file: ptr SeismicFile; trace, row, listen: int;
     src, dst: Tensor[float32]; keys: TraceKeys; fromSrc, segd: bool; intervalUs: float64) =
   if segd:
@@ -426,24 +452,8 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   slot[].listenMs = float64(listen) * dtMs
   slot[].sweepMs = float64(sweepLen) * dtMs
   let leadSamples = abs(lag)
-  let leadMs = float64(leadSamples) * dtMs
-  slot[].lines = @[
-    $nTraces & " traces, " & $listen & " samples (" & msText(slot[].listenMs) &
-      " ms of listen time).",
-    sweepLine(slot[].sweepMs, delayed, leadMs)]
-  if delayed > 0 and slot[].listenMs < 2.0 * leadMs:
-    slot[].lines.add waveletLine(slot[].listenMs, leadMs)
-  let fitted = fitLine(ready.padded, ready.cut)
-  if fitted.len > 0: slot[].lines.add fitted
-  for t in 0 ..< nTraces:
-    if t in refs and file[].traceKeys(t).status == tsAuxiliary and t notin odd:
-      let held = int(file[].traceEntry(t).numSamples)
-      if held < sweepLen + leadSamples:
-        slot[].lines.add cutSweepLine(t, float64(held) * dtMs, slot[].sweepMs, leadMs)
-  for t in ready.odd:
-    slot[].lines.add intervalLine(t, t in refs, traceDt(file, t), dtMs)
-  let uncorrelated = binaryUncorrelatedLine(file)
-  if uncorrelated.len > 0: slot[].lines.add uncorrelated
+  slot[].lines = correlationLines(file, nTraces, listen, sweepLen, slot[].listenMs,
+    slot[].sweepMs, dtMs, delayed, leadSamples, ready.padded, ready.cut, refs, ready.odd)
   slot[].opened = made
   slot[].ok = true
 
