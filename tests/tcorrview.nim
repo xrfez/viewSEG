@@ -219,6 +219,18 @@ proc writeBlockFile(path: string; sweep: openArray[float32]) =
     w.writeTrace(k, buf)
   doAssert w.close().len == 0, "the block file did not close"
 
+proc checkBlockRows() =
+  ## The rows of a block are bounded by bytes: 32 MiB of raw plus correlated rows,
+  ## 8 to 256 of them, one when even 8 would pass 256 MiB.
+  doAssert blockRows(1000, 800) == BlockMostRows, "2 s at 2 ms is not a full block"
+  let minute = blockRows(60000, 50000)
+  doAssert minute in 60 .. 80, "60 s at 1 ms gives " & $minute & " rows"
+  doAssert blockRows(600000, 500000) == BlockLeastRows, "10 min at 1 ms is not the least block"
+  doAssert blockRows(300000, 290000) == 14, "10 min at 2 ms gives " & $blockRows(300000, 290000)
+  doAssert blockRows(40_000_000, 39_000_000) == 1, "an absurd record is not one row"
+  doAssert blockRows(0, 0) == BlockMostRows
+  doAssert blockRows(int.high, int.high) == 1, "an overflowing record is not one row"
+
 proc checkBlocks(dir: string; sweep: seq[float32]) =
   ## `correlateBlock` against `correlateRead` row by row, bit for bit.
   let path = dir / "block.sgy"
@@ -244,7 +256,7 @@ proc checkBlocks(dir: string; sweep: seq[float32]) =
       correlateRead(view, addr f, [t], first, count, row, one)
       if one.failed.len > 0: wantFailed.add r
       for j in 0 ..< count: want[r * count + j] = row[j]
-    for size in [traces.len, 20, 1]:
+    for size in [traces.len, blockRows(view), 20, BlockLeastRows, 1]:
       var got = newSeq[float32](want.len)
       var gotFailed: seq[int]
       var at = 0
@@ -270,6 +282,7 @@ proc main*() =
   let sweep = linearSweep(8.0, 80.0, float64(SweepLen) * DtMs, DtMs).sweepSamples(float32)
   doAssert sweep.len == SweepLen
   writeRaw(path, sweep)
+  checkBlockRows()
   checkBlocks(dir, sweep)
   var rawFile = openSeismic(path, keys = true)
   let raw = newSession(path, rawFile)

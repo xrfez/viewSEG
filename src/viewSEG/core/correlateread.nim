@@ -279,6 +279,29 @@ proc correlateRead*(view: CorrelateView; file: ptr SeismicFile; traces: openArra
         ws.failed.add r
         ws.why.add why
 
+const
+  BlockBudget* = 32 * 1024 * 1024    ## bytes a block's raw and correlated rows may hold
+  BlockMostRows* = 256
+  BlockLeastRows* = 8                ## one lane batch of the kernel
+  BlockHardLimit = 256 * 1024 * 1024 ## past it even `BlockLeastRows` rows are too many
+
+func blockRows*(recordSamples, listenSamples: int): int =
+  ## How many rows one `correlateBlock` call should take for a record of
+  ## `recordSamples` and a listen time of `listenSamples`: as many as
+  ## `BlockBudget` bytes hold of raw plus correlated float32 rows, from
+  ## `BlockLeastRows` to `BlockMostRows`; 1 when even the least would pass
+  ## `BlockHardLimit`. The workspace's scratch is that big, and a newer request
+  ## waits for at most one block.
+  const Huge = 1'i64 shl 40 # keeps the sum from overflowing
+  let row = 4 * (clamp(int64(recordSamples), 0'i64, Huge) +
+    clamp(int64(listenSamples), 0'i64, Huge))
+  if row <= 0: return BlockMostRows
+  if row * BlockLeastRows > BlockHardLimit: return 1
+  int(clamp(BlockBudget div row, int64(BlockLeastRows), int64(BlockMostRows)))
+
+func blockRows*(view: CorrelateView): int =
+  blockRows(view.recordSamples, view.listenSamples)
+
 proc blockOf(t: Tensor[float32]): RowBlock[float32] =
   try:
     result = rowBlock(t)

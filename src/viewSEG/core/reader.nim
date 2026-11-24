@@ -1220,9 +1220,10 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
     if rd.src.view != nil:
       # Listen time, on this thread: the prefetcher reads raw windows, and the
       # kernel rejects a windowed record. The virtual path is not mapped;
-      # `correlateRead` advises the raw file (`view.path`). One workspace for
-      # this view, kept until another view or file is shown. Stop between
-      # chunks of rows, each correlated across the reader's pool.
+      # `correlateBlock` advises the raw file (`view.path`). One workspace for
+      # this view, its block scratch bounded by `blockRows`, dropped when another
+      # view or file is shown. Stop between blocks of rows, each correlated
+      # across the reader's pool.
       if rd.viewOf != rd.src.view:
         rd.heldView = rd.src.view[]
         rd.viewWs = newWorkspace(rd.heldView)
@@ -1232,7 +1233,7 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
         if (if level: rd.r.levelSuperseded else: rd.r.interrupted):
           given = true
           break
-        let n = min(HeldTraces, q.count - rowAt)
+        let n = min(blockRows(rd.heldView), q.count - rowAt)
         rd.viewChunk.setLen n * cols # empty when the window is past the row
         var chunkFailed: seq[int]
         if cols > 0:
@@ -1245,7 +1246,6 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
             chunkFailed.add k
             failed.add rowAt + k
             inc tile.failed
-        if given: break
         tile.readTime += fs.now() - waitFrom
         inc tile.chunks
         let rows = f[].rowsOf(list.toOpenArray(rowAt, rowAt + n - 1))
