@@ -1,0 +1,286 @@
+## Correlated samples of the traces a plot asks for, without a correlated file.
+##
+## `correlateWork` correlates every trace into an in-memory file. A gather of
+## tens of GB cannot do that. `initCorrelateView` prepares, once, what that job
+## uses for one raw file; `correlateRead` then correlates the traces it is
+## asked for and copies a listen-time window into the caller's buffer. The
+## result of a window matches that file, including the auxiliary-trace policy
+## (a reference auxiliary shifted by `-AuxLeadMs`, any other auxiliary not
+## correlated).
+##
+## The kernel rejects a windowed record (`firstSample != 0`), so each trace is
+## read whole, correlated from sample 0, and sliced afterwards. One
+## `CorrelateWorkspace` per thread; `correlateRead` allocates nothing once it
+## exists. Threads share the plan and must not share a workspace.
+
+import std/[math, sets, strutils]
+import parseSEG
+import processSEG
+import correlatejobs, filesystem, threads
+
+type
+  RecordShape = object
+    samples: int
+    dtMs: float64
+    odd: seq[int]
+
+  CorrelateView* = object
+    ## What correlating any trace of one raw file needs. The plan is a `ref`
+    ## only so threads can share it; everything else is a value. Built by
+    ## `initCorrelateView`; do not use one whose build was refused.
+    plan: ref CorrelationPlan[float32]
+    pilot: seq[float32]
+    path: string ## the raw file's path, copied once so a later read does not allocate
+    refs: HashSet[int]
+    odd: HashSet[int]
+    recordSamples: int
+    listenSamples*: int ## samples of listen time: the record minus the sweep
+    dtMs*: float64
+    lag: int ## `wholeSamples(-AuxLeadMs, dtMs)`; 0 when the lead is not a shift
+
+  CorrelateWorkspace* = object
+    ## Scratch for one thread's `correlateRead` calls. Move-only, like the
+    ## `Workspace` it holds. `failed` is the rows of the last call that could
+    ## not be read, ascending, left zero: the same mark as the reader's rows.
+    ws: Workspace
+    raw: Tensor[float32]
+    correlated: Tensor[float32]
+    key: array[1, TraceKeys]
+    counts: array[1, int]
+    failed*: seq[int]
+
+proc msText(ms: float64): string =
+  ## `msText` of correlatejobs.nim:68, so a refusal reads the same.
+  var s = formatFloat(ms, ffDecimal, 6)
+  if '.' in s:
+    while s.len > 0 and s[^1] == '0': s.setLen(s.len - 1)
+    if s.len > 0 and s[^1] == '.': s.setLen(s.len - 1)
+  if s.len == 0: "0" else: s
+
+proc traceDt(file: ptr SeismicFile; trace: int): float64 =
+  ## `traceDt` of correlatejobs.nim:78.
+  let us = file[].traceKeys(trace).intervalUs
+  let got = if us > 0 and us < Inf: us else: file[].sampleIntervalUs(trace)
+  if got.isNaN or got <= 0 or got == Inf: NaN else: got / 1000.0
+
+proc isSeismic(status: TraceStatus): bool {.inline.} =
+  ## `isSeismic` of correlatejobs.nim:90.
+  status != tsAuxiliary
+
+proc checkReference(samples: openArray[float32]): string =
+  ## `checkReference` of correlatejobs.nim:126. Empty when the sweep is usable.
+  if samples.len == 0: return "the reference sweep is empty."
+  if samples.len < 2: return "the reference sweep needs at least two samples."
+  var energy = 0.0
+  for i, v in samples:
+    let x = float64(v)
+    if x.isNaN or abs(x) == Inf:
+      return "the reference sweep has a sample that is not a number."
+    energy += x * x
+  if energy == 0: return "the reference sweep is all zeros."
+
+proc referenceSet(n: int; traces: openArray[int]): tuple[refs: HashSet[int]; refusal: string] =
+  ## `referenceSet` of correlatejobs.nim:137.
+  result.refs = initHashSet[int]()
+  for t in traces:
+    if t < 0 or t >= n:
+      return (result.refs, "reference trace " & $t & " is outside 0 .. " & $(n - 1) & ".")
+    if t in result.refs:
+      return (result.refs, "reference trace " & $t & " is listed twice.")
+    result.refs.incl(t)
+
+proc recordShape(file: ptr SeismicFile): tuple[shape: RecordShape; refusal: string] =
+  ## `recordShape` of correlatejobs.nim:93. A refusal is that proc's sentence.
+  let n = file[].len
+  if n == 0: return (result.shape, "the file has no traces.")
+  result.shape.odd = @[]
+  var seismic = 0
+  for i in 0 ..< n:
+    if isSeismic(file[].traceKeys(i).status):
+      let d = traceDt(file, i)
+      let samples = int(file[].traceEntry(i).numSamples)
+      if seismic == 0:
+        if d.isNaN: return (result.shape, "the file has no sample interval.")
+        result.shape.samples = samples
+        result.shape.dtMs = d
+      else:
+        if samples != result.shape.samples:
+          return (result.shape, "the seismic traces do not share one length.")
+        if d.isNaN or not sameInterval(d, result.shape.dtMs):
+          return (result.shape, "the traces do not share one sample interval.")
+      inc seismic
+  if seismic == 0: return (result.shape, "the file has no seismic traces.")
+  for i in 0 ..< n:
+    if not isSeismic(file[].traceKeys(i).status):
+      let d = traceDt(file, i)
+      if not d.isNaN and not sameInterval(d, result.shape.dtMs):
+        result.shape.odd.add i
+
+proc copySamples(samples: openArray[float32]): seq[float32] =
+  result = newSeq[float32](samples.len)
+  for i, v in samples: result[i] = v
+
+proc copyPath(file: ptr SeismicFile): string =
+  let lent = file[].path
+  result = newString(lent.len)
+  for i, c in lent: result[i] = c
+
+proc initCorrelateView*(file: ptr SeismicFile; reference: openArray[float32];
+    referenceDtMs: float64; referenceTraces: openArray[int]):
+    tuple[view: CorrelateView; refusal: string] =
+  ## The view `correlateWork` would use for `file` and this sweep, or that
+  ## job's refusal (interval mismatch, a record shorter than the sweep, and
+  ## the rest of its checks of the samples). The plan is prepared once.
+  ## Write-only refusals (a kind that cannot be written in memory) are not
+  ## repeated: nothing is written.
+  if file == nil or not file[].isOpen: return (result.view, "the file is not open.")
+  if not file[].hasKeys: return (result.view, "the file was opened without its keys.")
+  let badSweep = checkReference(reference)
+  if badSweep.len > 0: return (result.view, badSweep)
+  if referenceDtMs.isNaN or referenceDtMs <= 0 or referenceDtMs == Inf:
+    return (result.view, "the reference sweep has no sample interval.")
+  let shaped = recordShape(file)
+  if shaped.refusal.len > 0: return (result.view, shaped.refusal)
+  let dtMs = shaped.shape.dtMs
+  if not sameInterval(referenceDtMs, dtMs):
+    return (result.view, "the reference sweep is sampled every " & msText(referenceDtMs) &
+      " ms and the record every " & msText(dtMs) & " ms.")
+  let recordSamples = shaped.shape.samples
+  if reference.len >= recordSamples:
+    return (result.view, "the reference sweep is as long as the record or longer, " &
+      "so there is no listen time.")
+  let named = referenceSet(file[].len, referenceTraces)
+  if named.refusal.len > 0: return (result.view, named.refusal)
+  var pilotSamples = copySamples(reference)
+  var forPlan = pilotSamples
+  var built: CorrelationPlan[float32]
+  try:
+    let pilot = initPilot(forPlan, referenceDtMs)
+    built = initCorrelationPlan(float32, pilot, dtMs, recordSamples)
+  except ValueError as e:
+    return (result.view, e.msg)
+  result.view.plan = new CorrelationPlan[float32]
+  result.view.plan[] = built
+  result.view.pilot = pilotSamples
+  result.view.path = copyPath(file)
+  result.view.refs = named.refs
+  result.view.odd = initHashSet[int]()
+  for t in shaped.shape.odd: result.view.odd.incl(t)
+  result.view.recordSamples = recordSamples
+  result.view.listenSamples = recordSamples - reference.len
+  result.view.dtMs = dtMs
+  result.view.lag = wholeSamples(-AuxLeadMs, dtMs)
+
+proc newWorkspace*(view: CorrelateView): CorrelateWorkspace =
+  ## Scratch for one thread. Call it once; later `correlateRead` calls on it
+  ## allocate nothing. A workspace cannot be copied.
+  if view.plan != nil: result.ws.reserve(view.plan[].workspaceSize)
+  if view.recordSamples > 0: result.raw = zeros[float32](1, view.recordSamples)
+  if view.listenSamples > 0: result.correlated = zeros[float32](1, view.listenSamples)
+
+proc zeroRow(dst: var openArray[float32]; at, count: int) {.inline.} =
+  if count > 0: zeroMem(addr dst[at], count * sizeof(float32))
+
+proc paint(src: ptr UncheckedArray[float32]; srcLen, firstSample, count: int;
+    dst: var openArray[float32]; at: int) =
+  ## Listen-time samples `firstSample ..< firstSample+count`, clamped to
+  ## `0 ..< srcLen`, into `dst[at ..< at+count]`. The rest of the row stays
+  ## as `zeroRow` left it.
+  let start = int64(firstSample)
+  let finish = start + int64(count)
+  let lo = max(start, 0'i64)
+  let hi = min(finish, int64(srcLen))
+  if hi <= lo: return
+  copyMem(addr dst[at + int(lo - start)], addr src[int(lo)], int(hi - lo) * sizeof(float32))
+
+proc whollyOutside(firstSample, count, listen: int): bool =
+  if count <= 0: return true
+  let start = int64(firstSample)
+  let finish = start + int64(count)
+  finish <= 0 or start >= int64(listen) or min(finish, int64(listen)) <= max(start, 0'i64)
+
+proc readOne(file: ptr SeismicFile; trace: int; ws: var CorrelateWorkspace): bool =
+  ## The whole raw trace into `ws.raw`, zero-padded or cut to the record.
+  ## False when it could not be decoded: the row is left zero, and this does
+  ## not raise.
+  if ws.raw.size > 0:
+    let raw = rowBlock(ws.raw)
+    zeroMem(raw.rowPtr(0), raw.cols * sizeof(float32))
+  try:
+    result = file[].readTracesInto([trace], ws.raw) == 0
+  except CatchableError:
+    result = false
+
+proc correlateRow(view: CorrelateView; ws: var CorrelateWorkspace) =
+  ws.counts[0] = view.recordSamples
+  let meta = initChunkMeta(rowsOf(ws.key, ws.counts), view.dtMs)
+  view.plan[].correlateInto(ws.raw, ws.correlated, meta, ws.ws)
+
+proc fillRow(view: CorrelateView; file: ptr SeismicFile; trace, firstSample, count: int;
+    dst: var openArray[float32]; at: int; ws: var CorrelateWorkspace): bool =
+  ## One trace's listen-time window. False when the raw read failed.
+  if not readOne(file, trace, ws): return false
+  if trace in view.odd: return true
+  var keys: TraceKeys
+  try:
+    keys = file[].traceKeys(trace)
+  except CatchableError:
+    return false
+  let aux = keys.status == tsAuxiliary
+  if aux and trace notin view.refs:
+    # Not a reference: the listen window of the raw row, not the correlation.
+    let raw = rowBlock(ws.raw)
+    paint(raw.rowPtr(0), view.listenSamples, firstSample, count, dst, at)
+    return true
+  if aux and view.lag != 0:
+    timeShift(rowBlock(ws.raw).row(0), view.lag)
+  ws.key[0] = keys
+  try:
+    correlateRow(view, ws)
+  except ValueError as e:
+    raiseAssert e.msg
+  let done = rowBlock(ws.correlated)
+  paint(done.rowPtr(0), view.listenSamples, firstSample, count, dst, at)
+  true
+
+proc correlateRead*(view: CorrelateView; file: ptr SeismicFile; traces: openArray[int];
+    firstSample, count: int; dst: var openArray[float32]; ws: var CorrelateWorkspace) {.
+    raises: [].} =
+  ## Correlates each of `traces` (the whole raw trace: the kernel rejects a
+  ## window) and copies listen-time samples `firstSample ..< firstSample+count`
+  ## into `dst`, `traces.len` rows of `count` float32, row-major, as the
+  ## reader's sample buffer. A window past the listen time is clamped; one
+  ## wholly outside it is zeros and is not read. A raw read that fails leaves
+  ## that row zero and lists it in `ws.failed`, ascending, and does not raise.
+  ## Allocates nothing once `ws` exists. Threads may call it together on one
+  ## view when each has its own workspace.
+  assertWorkerThread()
+  ws.failed.setLen(0)
+  doAssert view.plan != nil, "the view was refused"
+  doAssert count >= 0, "count must be >= 0"
+  if traces.len == 0 or count == 0:
+    doAssert dst.len == 0, "dst must be traces.len * count"
+    return
+  doAssert traces.len <= high(int) div count, "traces.len * count overflows"
+  doAssert dst.len == traces.len * count, "dst must be traces.len * count"
+  let listen = view.listenSamples
+  if whollyOutside(firstSample, count, listen):
+    zeroMem(addr dst[0], dst.len * sizeof(float32))
+    return
+  var blocked = file == nil or not file[].isOpen
+  if not blocked and not file[].inMemory:
+    try:
+      fs.mappedRead(view.path)
+    except CatchableError:
+      blocked = true
+  let nTraces = if file == nil: 0 else: file[].len
+  for r, trace in traces:
+    let at = r * count
+    zeroRow(dst, at, count)
+    var bad = blocked or trace < 0 or trace >= nTraces
+    if not bad:
+      try:
+        bad = not fillRow(view, file, trace, firstSample, count, dst, at, ws)
+      except CatchableError:
+        bad = true
+    if bad: ws.failed.add r
