@@ -2273,7 +2273,7 @@ proc followAnswer*(state: var AppState; logIndex: int): ShotFollowAnswer {.raise
     stamp.hoverKeys = 0
   if state.follow.unchanged(id, logRev, stamp.hover, stamp.hoverSession, stamp.hoverKeys,
       stamp.chosenSession, stamp.chosenKeys, stamp.filesRev, stamp.sessions):
-    return state.follow.answer(id)
+    return state.follow.lastAnswer(id)
   let none = noMatch()
   template put(source: ShotFollowSource; matched: ShotMatch): ShotFollowAnswer =
     state.follow.publish(id, logRev, source, matched, stamp.hover, stamp.hoverSession,

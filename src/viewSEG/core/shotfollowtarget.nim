@@ -84,7 +84,7 @@ func unchanged*(f: ShotFollow; id, logRev, hover, hoverSession, hoverKeys, chose
   let at = f.slot(id)
   at >= 0 and f.held[at].ready and f.held[at].logRev == logRev
 
-func answer*(f: ShotFollow; id: int): ShotFollowAnswer =
+func lastAnswer*(f: ShotFollow; id: int): ShotFollowAnswer =
   ## The last answer stored for `id`, or none.
   let at = f.slot(id)
   if at >= 0: f.held[at].answer else: ShotFollowAnswer(source: sfNone, logId: id)
