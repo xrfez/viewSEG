@@ -5,6 +5,8 @@
 ## `quotedFields` still sees two quotes. With `abs(diff) > DisagreeUs` inverted,
 ## `crossCheck` flags a row whose sources agree. With `toText` appending a
 ## space when nothing changed, `quotedFields` is no longer byte-identical.
+## With the digit check in `parseWhole` left as `v > high(int64) div 10`,
+## `overflowAndYearRange` raises OverflowDefect on 9223372036854775808.
 
 import std/[math, options, os, strutils]
 import viewSEG/core/shotlog
@@ -259,6 +261,41 @@ proc main*() =
     doAssert v.rows[0].x == 1000.0 and v.rows[0].y == 2000.0
     doAssert not hasKind(v.problems, pkTimeDisagree)
     doAssert not hasKind(v.problems, pkDuplicateShot)
+
+  block overflowAndYearRange:
+    let hugeSec = read("1393286418000000\n", [crUtcSeconds], header = false)
+    doAssert hugeSec.rows[0].timeUtcUs.isNone
+    doAssert hasKind(hugeSec.problems, pkBadNumber)
+    let over = read("9223372036854775808\n", [crSequence], header = false)
+    doAssert over.rows[0].sequence.isNone
+    doAssert "not a whole number" in kindText(over.problems, pkBadNumber)
+    let fit = read("9223372036854775807\n", [crSequence], header = false)
+    doAssert fit.rows[0].sequence.get == high(int64)
+    let nines = read("2024,3,1,0,0,99999999999999999999\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert nines.rows[0].timeUtcUs.isNone
+    doAssert hasKind(nines.problems, pkBadNumber)
+    discard gpsMicrosToUtcMicros(high(int64))
+    let gps = read($high(int64) & "\n", [crGpsMicros], header = false)
+    doAssert gps.rows[0].timeUtcUs.isNone
+    doAssert hasKind(gps.problems, pkBadNumber)
+    let early = read("1899,12,31,23,59,59\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert early.rows[0].timeUtcUs.isNone
+    doAssert "1900..2200" in kindText(early.problems, pkBadNumber)
+    let start = read("1900,1,1,0,0,0\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert start.rows[0].timeUtcUs.isSome
+    let last = read("2200,12,31,23,59,59\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert last.rows[0].timeUtcUs.isSome
+    let past = read("2201,1,1,0,0,0\n",
+      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert past.rows[0].timeUtcUs.isNone
+    doAssert "1900..2200" in kindText(past.problems, pkBadNumber)
+    let far = read("10000000000\n", [crUtcSeconds], header = false)
+    doAssert far.rows[0].timeUtcUs.isNone
+    doAssert "1900..2200" in kindText(far.problems, pkBadNumber)
 
   echo "tshotlog ok"
 

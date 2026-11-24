@@ -199,19 +199,50 @@ func toPosixSeconds*(utcUs: int64): float64 {.inline.} =
   ## the seconds.
   float64(utcUs) / float64(UsPerSec)
 
+func mulUs(v: int64): tuple[ok: bool; us: int64] =
+  ## `v` microseconds-per-unit, or not ok when `v * 1_000_000` does not fit.
+  const lim = high(int64) div UsPerSec
+  const limLo = low(int64) div UsPerSec
+  if v > lim or v < limLo: return
+  (true, v * UsPerSec)
+
+func add64(a, b: int64): tuple[ok: bool; v: int64] =
+  if b > 0 and a > high(int64) - b: return
+  if b < 0 and a < low(int64) - b: return
+  (true, a + b)
+
+func accDigit[T: int | int64](v: var T; digit: int): bool =
+  ## False when the next digit would overflow `T`. `v` stays unchanged then.
+  if digit notin 0 .. 9: return false
+  if v > (high(T) - T(digit)) div 10: return false
+  v = v * 10 + T(digit)
+  true
+
 func gpsMicrosToUtcMicros*(gpsUs: int64): int64 {.raises: [].} =
   ## UTC microseconds since 1970 of `gpsUs` microseconds since the GPS
   ## epoch (1980-01-06). parseSEG exports `gpsMinusUtc` (GPS minus UTC,
   ## whole seconds) and `GpsEpochUnix`; the leap table itself is not
   ## exported, so the integer instant is `gpsUs` plus the epoch minus that
   ## offset. The float form `timestampToUnix` is the check, not the value.
+  ## When that instant does not fit in an int64, the result is `low(int64)`,
+  ## which is not a time in 1900..2200.
   var leap = 0
   try:
     leap = gpsMinusUtc(gpsUs)
   except CatchableError:
     let unix = timestampToUnix(gpsUs)
-    leap = int(round(float64(gpsUs) / 1e6 + float64(GpsEpochUnix) - unix))
-  gpsUs + GpsEpochUnix * UsPerSec - int64(leap) * UsPerSec
+    let raw = round(float64(gpsUs) / 1e6 + float64(GpsEpochUnix) - unix)
+    if raw != raw or raw < float64(low(int)) or raw > float64(high(int)):
+      return low(int64)
+    leap = int(raw)
+  let epochUs = mulUs(GpsEpochUnix)
+  let leapUs = mulUs(int64(leap))
+  if not epochUs.ok or not leapUs.ok: return low(int64)
+  let shifted = add64(gpsUs, epochUs.us)
+  if not shifted.ok: return low(int64)
+  let utc = add64(shifted.v, -leapUs.us)
+  if not utc.ok: return low(int64)
+  utc.v
 
 proc addProblem(list: var ProblemList; kind: ProblemKind; row, col: int;
     text: string) =
@@ -230,6 +261,11 @@ func daysFromCivil(y, m, d: int): int64 =
   let doy = (153 * mp + 2) div 5 + d - 1
   let doe = yoe * 365 + yoe div 4 - yoe div 100 + doy
   int64(era400) * 146097 + int64(doe) - 719468
+
+const
+  InstantLo = daysFromCivil(1900, 1, 1) * 86_400 * UsPerSec
+  InstantHi = daysFromCivil(2201, 1, 1) * 86_400 * UsPerSec - 1
+    ## UTC microseconds of years 1900..2200, inclusive of the last microsecond.
 
 func isLeap(y: int): bool {.inline.} =
   (y mod 4 == 0 and y mod 100 != 0) or y mod 400 == 0
@@ -863,8 +899,7 @@ proc parseWhole(s: string): tuple[ok: bool; value: int64] =
   if i >= t.len or t[i] notin Digits: return
   var v = 0'i64
   while i < t.len and t[i] in Digits:
-    if v > high(int64) div 10: return
-    v = v * 10 + int64(ord(t[i]) - ord('0'))
+    if not accDigit(v, ord(t[i]) - ord('0')): return
     inc i
   if i < t.len and t[i] == '.':
     inc i
@@ -895,8 +930,7 @@ proc parseSecondsUs(s: string): tuple[ok: bool; us: int64] =
   if i >= t.len or t[i] notin Digits: return
   var whole = 0'i64
   while i < t.len and t[i] in Digits:
-    if whole > high(int64) div 10: return
-    whole = whole * 10 + int64(ord(t[i]) - ord('0'))
+    if not accDigit(whole, ord(t[i]) - ord('0')): return
     inc i
   var frac = 0'i64
   var digits = 0
@@ -918,9 +952,14 @@ proc parseSecondsUs(s: string): tuple[ok: bool; us: int64] =
       inc frac
       if frac >= UsPerSec:
         frac -= UsPerSec
+        if whole == high(int64): return
         inc whole
   if i != t.len: return
-  var us = whole * UsPerSec + frac
+  let scaled = mulUs(whole)
+  if not scaled.ok: return
+  let summed = add64(scaled.us, frac)
+  if not summed.ok: return
+  var us = summed.v
   if neg: us = -us
   (true, us)
 
@@ -934,7 +973,7 @@ proc parseSecond(s: string): tuple[ok: bool; sec, us: int] =
   if i >= t.len or t[i] notin Digits: return
   var sec = 0
   while i < t.len and t[i] in Digits:
-    sec = sec * 10 + (ord(t[i]) - ord('0'))
+    if not accDigit(sec, ord(t[i]) - ord('0')): return
     inc i
   var us = 0
   if i < t.len and t[i] == '.':
@@ -1017,14 +1056,26 @@ proc civilToUtcUs(y, m, d, hh, mm, ss, us: int; clock: TimeClock): Option[int64]
   if not validDate(y, m, d): return none(int64)
   if hh notin 0 .. 23 or mm notin 0 .. 59 or ss notin 0 .. 60 or us notin 0 .. 999999:
     return none(int64)
-  let dayUs = daysFromCivil(y, m, d) * 86_400 * UsPerSec +
-    int64(hh) * 3_600 * UsPerSec + int64(mm) * 60 * UsPerSec +
-    int64(ss) * UsPerSec + int64(us)
+  let days = daysFromCivil(y, m, d)
+  if days > high(int64) div 86_400 or days < low(int64) div 86_400:
+    return none(int64)
+  var dayUs = int64(us)
+  for part in [mulUs(days * 86_400), mulUs(int64(hh) * 3_600),
+      mulUs(int64(mm) * 60), mulUs(int64(ss))]:
+    if not part.ok: return none(int64)
+    let summed = add64(dayUs, part.us)
+    if not summed.ok: return none(int64)
+    dayUs = summed.v
   if clock == tcUtc:
-    some(dayUs)
-  else:
-    let gpsUs = dayUs - daysFromCivil(1980, 1, 6) * 86_400 * UsPerSec
-    some(gpsMicrosToUtcMicros(gpsUs))
+    return some(dayUs)
+  let epochDays = daysFromCivil(1980, 1, 6)
+  if epochDays > high(int64) div 86_400 or epochDays < low(int64) div 86_400:
+    return none(int64)
+  let epochUs = mulUs(epochDays * 86_400)
+  if not epochUs.ok: return none(int64)
+  let gpsUs = add64(dayUs, -epochUs.us)
+  if not gpsUs.ok: return none(int64)
+  some(gpsMicrosToUtcMicros(gpsUs.v))
 
 func blankShot(): Shot =
   result.sailLine = NaN
@@ -1044,6 +1095,14 @@ func blankShot(): Shot =
 func canonBits(x: float64): int64 =
   if x == 0.0: 0'i64 else: cast[int64](x)
 
+proc keepInstant(instants: var seq[Instant]; problems: var ProblemList; row: int;
+    name: string; us, named: int64; col: int) =
+  if us < InstantLo or us > InstantHi:
+    addProblem(problems, pkBadNumber, row, col,
+      name & " " & $named & " is outside 1900..2200")
+  else:
+    instants.add Instant(name: name, us: us, col: col)
+
 func fmtDiff(us: int64): string =
   let a = abs(us)
   if a mod UsPerSec == 0: $(a div UsPerSec) & " s"
@@ -1058,7 +1117,8 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
   ## millisecond, that is a problem naming both values; a gap of 18 s is
   ## called out as GPS and UTC mixed. Times that go backwards, a repeated
   ## (source line, shot point, index) and a repeated file number are problems
-  ## too. Missing cells and sentinels are empty, not faults.
+  ## too. An instant outside years 1900..2200 is a bad number and is not the
+  ## row's time. Missing cells and sentinels are empty, not faults.
   result.problems = log.problems
   result.rows = newSeq[Shot](log.len)
   var seenFile = initTable[int64, int]()
@@ -1191,12 +1251,15 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
         elif role == crShotPoint: pointCol = col
     var instants: seq[Instant] = @[]
     if gps.isSome:
-      instants.add Instant(name: "GPS microseconds",
-        us: gpsMicrosToUtcMicros(gps.get), col: cols[0])
+      let utc = gpsMicrosToUtcMicros(gps.get)
+      keepInstant(instants, result.problems, row, "GPS microseconds", utc, gps.get,
+        cols[0])
     if utcUs.isSome:
-      instants.add Instant(name: "UTC microseconds", us: utcUs.get, col: cols[1])
+      keepInstant(instants, result.problems, row, "UTC microseconds", utcUs.get,
+        utcUs.get, cols[1])
     if utcSecUs.isSome:
-      instants.add Instant(name: "UTC seconds", us: utcSecUs.get, col: cols[2])
+      keepInstant(instants, result.problems, row, "UTC seconds", utcSecUs.get,
+        utcSecUs.get, cols[2])
     var splitUs: Option[int64] = none(int64)
     if year.isSome and (doy.isSome or (month.isSome and day.isSome)) and
         hour.isSome and minute.isSome and haveSecond:
@@ -1238,7 +1301,8 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
           addProblem(result.problems, pkBadNumber, row, -1,
             "split fields are not a time")
     if splitUs.isSome:
-      instants.add Instant(name: "split fields", us: splitUs.get, col: cols[3])
+      keepInstant(instants, result.problems, row, "split fields", splitUs.get,
+        splitUs.get, cols[3])
     if haveDate:
       var pattern = map.dateTimePattern
       if pattern.len == 0: pattern = detectPattern(dateText)
@@ -1251,7 +1315,8 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
         let textUs = civilToUtcUs(parsed.y, parsed.m, parsed.d, parsed.hh, parsed.mm,
           parsed.ss, parsed.us, map.clock)
         if textUs.isSome:
-          instants.add Instant(name: "date-time text", us: textUs.get, col: cols[4])
+          keepInstant(instants, result.problems, row, "date-time text", textUs.get,
+            textUs.get, cols[4])
         else:
           addProblem(result.problems, pkBadNumber, row, cols[4],
             "date-time text is not a time")
