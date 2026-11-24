@@ -9,7 +9,8 @@
 ## reference still judged against the recorded pilot, `missingReference`
 ## names a judged row. With `applyFileScale` not called, `holdDownWhenScaled`
 ## finds no hold-down words. With the unit guessed as newtons, `emptyUnitRefused`
-## names "N".
+## names "N". With `controllerNote` left out, `setBWarning` finds no
+## "follows set A (probable)".
 
 import std/[math, os, strutils]
 import parseSEG
@@ -306,6 +307,20 @@ proc main*() =
     doAssert said, $row.weightWords
     let bare = runJob(@[listed(vib)], ask)
     doAssert rowOf(bare.table, vib).verdict == row.verdict
+
+  block setBWarning:
+    ## A `.vib` judged on set B keeps the window's note that the controller's
+    ## QC report follows set A. Seen to fail when `controllerNote` was dropped.
+    let pairDir = dir / "setb"
+    discard datFile(pairDir, "4321_0.dat", SynthDat(samples: 12000))
+    let vib = vibFile(pairDir, "0007.VIB")
+    let got = runJob(@[listed(pairDir / "4321_0.dat"), listed(vib)], ask)
+    doAssert got.st == jsDone, got.error
+    let row = rowOf(got.table, vib)
+    var said = false
+    for w in row.warnings:
+      if "follows set A (probable)" in w: said = true
+    doAssert said, $row.outcome & " " & $row.warnings
 
   block cancel:
     lane = initJobs()

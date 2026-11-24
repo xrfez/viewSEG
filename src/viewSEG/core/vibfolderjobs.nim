@@ -284,6 +284,7 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
   addLine(warnings, answer.band.warning)
   addLine(warnings, answer.hundredProblem)
   addLine(warnings, answer.judgeWarning)
+  addLine(warnings, answer.controllerNote)
   addLine(warnings, answer.against)
   if answer.problem.len > 0:
     return FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foProblem,
