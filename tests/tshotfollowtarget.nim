@@ -8,7 +8,8 @@
 ## With exact forced false, rev3_matches_exactly got row 0 rule
 ## mrTimeAndNumbers, and delay_matches_time_zero matched row -1. With the
 ## pointer leave falling back at once, pointer_stays_off_the_plot became
-## file row 0 mrTime, and precedence's leave became signature row 2.
+## file row 0 mrTime, and precedence's leave became signature row 2. With one
+## shared answer, each_log_keeps_its_row's older log was pointer row 1.
 
 import std/[math, options, os, strutils, times]
 import parseSEG
@@ -113,7 +114,7 @@ proc main*() =
       var st = initAppState()
       st.openLand()
       st.apply Command(kind: ckHover, trace: st.sessions[0].base)
-      let a = st.followAnswer()
+      let a = st.followAnswer(0)
       doAssert a.source == sfNone, "a pointer with no log followed " & $a.source
       doAssert st.selection.hover == st.sessions[0].base
       doAssert st.selection.selectedCount == 0
@@ -130,12 +131,12 @@ proc main*() =
       st.importLog(path, 1)
       let hover = st.sessions[0].base + local
       st.apply Command(kind: ckHover, trace: hover)
-      let a = st.followAnswer()
+      let a = st.followAnswer(0)
       doAssert a.source == sfPointer, $a.source
       doAssert a.match.row == 1, "row " & $a.match.row
       doAssert a.match.count == 1
       let before = allocations()
-      let again = st.followAnswer()
+      let again = st.followAnswer(0)
       doAssert allocations() - before == 0, "a second call allocated"
       doAssert again.revision == a.revision
       doAssert st.selection.hover == hover
@@ -148,11 +149,11 @@ proc main*() =
           break
       doAssert twin >= 0, "no second trace shares that time zero"
       st.apply Command(kind: ckHover, trace: st.sessions[0].base + twin)
-      let moved = st.followAnswer()
+      let moved = st.followAnswer(0)
       doAssert moved.match.row == 1, "a twin trace left row " & $moved.match.row
       doAssert moved.revision == a.revision, "a twin trace bumped the revision"
       st.apply Command(kind: ckHover, trace: st.sessions[0].base)
-      let other = st.followAnswer()
+      let other = st.followAnswer(0)
       doAssert other.match.row == 0, "row " & $other.match.row
       doAssert other.revision > a.revision
       st.shutdown()
@@ -168,7 +169,7 @@ proc main*() =
         row(us, int(round(k.record)), k.srcLine, k.srcPoint)])
       st.importLog(path, 1)
       st.apply Command(kind: ckHover, trace: st.sessions[0].base + local)
-      let a = st.followAnswer()
+      let a = st.followAnswer(0)
       doAssert a.source == sfPointer
       doAssert a.match.row == 1, "time did not pick the later row: " & $a.match.row
       doAssert a.match.count == 1
@@ -191,7 +192,7 @@ proc main*() =
         row(zero.get, 1, 0, 0)])
       st.importLog(log, 1)
       st.apply Command(kind: ckHover, trace: st.sessions[0].base)
-      let a = st.followAnswer()
+      let a = st.followAnswer(0)
       doAssert a.source == sfPointer
       doAssert a.match.row == 1, "matched row " & $a.match.row & " (0 is keys.time)"
       st.shutdown()
@@ -211,7 +212,7 @@ proc main*() =
         row(us + 400_000, int(round(k.record)), k.srcLine, k.srcPoint)])
       st.importLog(path, 1)
       st.apply Command(kind: ckHover, trace: st.sessions[0].base)
-      let a = st.followAnswer()
+      let a = st.followAnswer(0)
       doAssert a.source == sfPointer, $a.source
       doAssert a.match.row == 0, "row " & $a.match.row & " rule " & $a.match.rule
       doAssert a.match.rule in {mrSecond, mrTimeAndNumbers, mrNumbers}, $a.match.rule
@@ -230,7 +231,7 @@ proc main*() =
         row(zero, 9, 9, 9)])
       st.importLog(log, 1)
       st.apply Command(kind: ckHover, trace: st.sessions[0].base)
-      let a = st.followAnswer()
+      let a = st.followAnswer(0)
       doAssert a.source == sfPointer, $a.source
       doAssert a.match.row == 1, "row " & $a.match.row & " rule " & $a.match.rule
       doAssert a.match.rule == mrTime, $a.match.rule
@@ -244,7 +245,7 @@ proc main*() =
       st.importLog(path, 1)
       st.apply Command(kind: ckHover, trace: -1)
       doAssert st.fileList.chosen.len > 0
-      let a = st.followAnswer()
+      let a = st.followAnswer(0)
       doAssert a.source == sfFile, $a.source
       doAssert a.match.row == 1, "row " & $a.match.row
       st.shutdown()
@@ -261,7 +262,7 @@ proc main*() =
       let path = writeLog(fx.dir, "sig.csv", [row(us - 5_000_000, 1, 1, 1), row(us, 1, 1, 1)])
       st.importLog(path, 1)
       st.apply Command(kind: ckHover, trace: -1)
-      let a = st.followAnswer()
+      let a = st.followAnswer(0)
       doAssert a.source == sfSignature, $a.source
       doAssert a.match.row == 1, "row " & $a.match.row
       st.shutdown()
@@ -295,17 +296,17 @@ proc main*() =
         row(first, 1, 1, 1), row(otherUs, 2, 2, 2), row(trigger, 3, 3, 3)])
       st.importLog(path, 1)
       st.apply Command(kind: ckHover, trace: st.sessions[landAt].base + other)
-      let pointed = st.followAnswer()
+      let pointed = st.followAnswer(0)
       doAssert pointed.source == sfPointer and pointed.match.row == 1, $pointed.source &
         " row " & $pointed.match.row
       st.apply Command(kind: ckHover, trace: -1)
-      let stayed = st.followAnswer()
+      let stayed = st.followAnswer(0)
       doAssert stayed.source == sfPointer and stayed.match.row == 1, $stayed.source &
         " row " & $stayed.match.row
       doAssert stayed.revision == pointed.revision, "leaving the plot bumped the revision"
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: st.sessions[landAt].path)
       doAssert st.settle(st.fileList.chosen == st.sessions[landAt].path)
-      let filed = st.followAnswer()
+      let filed = st.followAnswer(0)
       doAssert filed.source == sfFile and filed.match.row == 0, $filed.source &
         " row " & $filed.match.row
       st.shutdown()
@@ -317,7 +318,7 @@ proc main*() =
       let path = writeLog(fx.dir, "many.csv", [row(us, 1, 1, 1), row(us, 1, 1, 1)])
       st.importLog(path, 1)
       st.apply Command(kind: ckHover, trace: st.sessions[0].base)
-      let a = st.followAnswer()
+      let a = st.followAnswer(0)
       doAssert a.source == sfPointer, $a.source
       doAssert a.match.row == -1, "row " & $a.match.row
       doAssert a.match.count >= 2, "count " & $a.match.count
@@ -330,7 +331,7 @@ proc main*() =
       let path = writeLog(fx.dir, "edit.csv", [row(us, 1, 1, 1), row(us + 60_000_000, 2, 2, 2)])
       st.importLog(path, 1)
       st.apply Command(kind: ckHover, trace: st.sessions[0].base)
-      let before = st.followAnswer()
+      let before = st.followAnswer(0)
       doAssert before.match.row == 0
       var col = -1
       for c in 0 ..< st.shotLogMap(0).roles.len:
@@ -341,7 +342,7 @@ proc main*() =
       doAssert st.settle(st.jobs.active.len == 0 and not st.shotLogBusy(0)), "the edit did not finish"
       st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 1, logCol: col, logCell: $us)
       doAssert st.settle(st.jobs.active.len == 0 and not st.shotLogBusy(0)), "the second edit did not finish"
-      let after = st.followAnswer()
+      let after = st.followAnswer(0)
       doAssert after.match.row == 1, "row " & $after.match.row
       doAssert after.revision > before.revision, "revision did not move"
       st.shutdown()
@@ -353,10 +354,10 @@ proc main*() =
       let path = writeLog(fx.dir, "gone.csv", [row(us, 1, 1, 1)])
       st.importLog(path, 1)
       st.apply Command(kind: ckHover, trace: st.sessions[0].base)
-      doAssert st.followAnswer().source == sfPointer
+      doAssert st.followAnswer(0).source == sfPointer
       st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
       doAssert st.shotLogCount == 0
-      let a = st.followAnswer()
+      let a = st.followAnswer(0)
       doAssert a.source == sfNone, $a.source
       st.shutdown()
 
@@ -369,11 +370,11 @@ proc main*() =
       st.importLog(path, 1)
       let hover = st.sessions[0].base + later
       st.apply Command(kind: ckHover, trace: hover)
-      let pointed = st.followAnswer()
+      let pointed = st.followAnswer(0)
       doAssert pointed.source == sfPointer and pointed.match.rule == mrNone, $pointed.source &
         " " & $pointed.match.rule
       st.apply Command(kind: ckHover, trace: -1)
-      let stayed = st.followAnswer()
+      let stayed = st.followAnswer(0)
       doAssert stayed.source == sfPointer and stayed.match.rule == mrNone, $stayed.source &
         " row " & $stayed.match.row & " " & $stayed.match.rule
       doAssert stayed.revision == pointed.revision
@@ -382,12 +383,12 @@ proc main*() =
       st.apply Command(kind: ckOpen, paths: @[other])
       doAssert st.settle(st.sessions.len == 2 and st.jobs.active.len == 0), "the other file did not open"
       st.apply Command(kind: ckHover, trace: -1)
-      let left = st.followAnswer()
+      let left = st.followAnswer(0)
       doAssert left.source != sfPointer, "the other file still followed " & $left.source
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: Land)
       doAssert st.settle(st.fileList.chosen == Land)
       st.apply Command(kind: ckHover, trace: -1)
-      let back = st.followAnswer()
+      let back = st.followAnswer(0)
       doAssert back.source == sfFile and back.match.row == 0, $back.source & " row " &
           $back.match.row
       st.shutdown()
@@ -401,13 +402,47 @@ proc main*() =
       st.importLog(path, 1)
       let id = st.sessions[0].id
       st.apply Command(kind: ckHover, trace: st.sessions[0].base + later)
-      doAssert st.followAnswer().source == sfPointer
+      doAssert st.followAnswer(0).source == sfPointer
       st.apply Command(kind: ckHover, trace: -1)
-      doAssert st.followAnswer().source == sfPointer
+      doAssert st.followAnswer(0).source == sfPointer
       st.apply Command(kind: ckClose, file: id)
       doAssert st.sessions.len == 0, "the file stayed open"
-      let a = st.followAnswer()
+      let a = st.followAnswer(0)
       doAssert a.source != sfPointer, $a.source
+      st.shutdown()
+
+    block each_log_keeps_its_row:
+      var st = initAppState()
+      st.openLand()
+      let later = laterTrace(st)
+      let first = timeZeroOf(st, 0)
+      let other = timeZeroOf(st, later)
+      doAssert first != other
+      let older = writeLog(fx.dir, "older.csv", [row(first, 1, 1, 1)])
+      let newer = writeLog(fx.dir, "newer.csv", [
+        row(other, 9, 9, 9), row(first, 1, 1, 1)])
+      st.importLog(older, 1)
+      st.importLog(newer, 2)
+      st.apply Command(kind: ckHover, trace: st.sessions[0].base)
+      let old = st.followAnswer(0)
+      doAssert old.source == sfPointer and old.match.row == 0, $old.source & " row " & $old.match.row
+      doAssert old.logId == st.shotLogId(0), $old.logId
+      let new = st.followAnswer(1)
+      doAssert new.source == sfPointer and new.match.row == 1, $new.source & " row " & $new.match.row
+      doAssert new.logId == st.shotLogId(1), $new.logId
+      doAssert new.logId != old.logId
+      let again = st.followAnswer(0)
+      doAssert again.match.row == 0 and again.logId == old.logId, "row " & $again.match.row
+      doAssert again.revision == old.revision, "the other log bumped this revision"
+      let before = allocations()
+      let cached = st.followAnswer(0)
+      doAssert allocations() - before == 0, "a second call allocated"
+      doAssert cached.revision == old.revision
+      let missing = st.followAnswer(2)
+      doAssert missing.source == sfNone and missing.logId == -1, $missing.source & " " & $missing.logId
+      doAssert st.followAnswer(-1).source == sfNone
+      let still = st.followAnswer(0)
+      doAssert still.match.row == 0 and still.revision == old.revision and still.logId == old.logId
       st.shutdown()
 
 when isMainModule:

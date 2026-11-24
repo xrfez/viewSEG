@@ -1,5 +1,6 @@
 ## The shot a loaded shot log follows: the trace under the pointer, the
-## selected signature, or the selected open file, by time.
+## selected signature, or the selected open file, by time. Each loaded log
+## has its own answer.
 ##
 ## Each loaded log's `ShotIndex` is built on the shot-log job and kept here.
 ## Time zero is not on the keys a tile already holds, so a trace query takes
@@ -19,87 +20,109 @@ type
     sfSignature = "signature" ## the selected signature
 
   ShotFollowAnswer* = object
-    ## The last follow. `revision` goes up only when `source` or `match` changes.
+    ## The last follow of one loaded log. `revision` goes up only when
+    ## `source` or `match` of this log changes.
     source*: ShotFollowSource
     match*: ShotMatch
     revision*: int
+    logId*: int
+      ## The loaded log this answer is for, or -1 when none was asked.
 
   HeldIndex = object
     id: int
     index: ref ShotIndex
-
-  ShotFollow* = object
-    ## Per loaded shot log, its index, and the last answer.
-    held: seq[HeldIndex]
     answer: ShotFollowAnswer
     ready: bool
-    hover, hoverSession, hoverKeys, chosenSession, chosenKeys, filesRev, sessions, logId,
-      logRev: int
+    logRev: int
+
+  ShotFollow* = object
+    ## Per loaded shot log, its index and its own last answer.
+    held: seq[HeldIndex]
+    hover, hoverSession, hoverKeys, chosenSession, chosenKeys, filesRev, sessions: int
+    inputsReady: bool
+
+func slot(f: ShotFollow; id: int): int =
+  for i, h in f.held:
+    if h.id == id: return i
+  -1
 
 proc keep*(f: var ShotFollow; id: int; index: ref ShotIndex) =
   ## Keeps `index` for loaded log `id`, replacing one already kept. A nil
-  ## index drops `id`. The next answer is worked out again.
-  f.ready = false
-  var at = -1
-  for i, h in f.held:
-    if h.id == id: at = i
+  ## index drops `id`. That log's next answer is worked out again.
+  let at = f.slot(id)
   if index == nil:
     if at >= 0: f.held.delete(at)
     return
-  if at >= 0: f.held[at].index = index
-  else: f.held.add HeldIndex(id: id, index: index)
+  if at >= 0:
+    f.held[at].index = index
+    f.held[at].ready = false
+  else:
+    f.held.add HeldIndex(id: id, index: index)
 
 proc drop*(f: var ShotFollow; id: int) =
-  ## Drops the index of loaded log `id`.
-  f.ready = false
-  var at = -1
-  for i, h in f.held:
-    if h.id == id: at = i
+  ## Drops the index and answer of loaded log `id`.
+  let at = f.slot(id)
   if at >= 0: f.held.delete(at)
 
 proc dropAll*(f: var ShotFollow) =
-  ## Drops every kept index.
-  f.ready = false
+  ## Drops every kept index and answer.
+  f.inputsReady = false
   f.held.setLen 0
 
 proc indexOf*(f: ShotFollow; id: int): ref ShotIndex =
   ## The index kept for `id`, or nil.
-  for h in f.held:
-    if h.id == id: return h.index
+  let at = f.slot(id)
+  if at >= 0: f.held[at].index else: nil
 
-func unchanged*(f: ShotFollow; hover, hoverSession, hoverKeys, chosenSession, chosenKeys,
-    filesRev, sessions, logId, logRev: int): bool {.inline.} =
-  ## Whether the last answer was made from these same inputs.
-  f.ready and f.hover == hover and f.hoverSession == hoverSession and
+func unchanged*(f: ShotFollow; id, logRev, hover, hoverSession, hoverKeys, chosenSession,
+    chosenKeys, filesRev, sessions: int): bool =
+  ## Whether log `id` at `logRev` was already answered from these inputs.
+  if not f.inputsReady or f.hover != hover or f.hoverSession != hoverSession or
+      f.hoverKeys != hoverKeys or f.chosenSession != chosenSession or
+      f.chosenKeys != chosenKeys or f.filesRev != filesRev or f.sessions != sessions:
+    return false
+  let at = f.slot(id)
+  at >= 0 and f.held[at].ready and f.held[at].logRev == logRev
+
+func answer*(f: ShotFollow; id: int): ShotFollowAnswer =
+  ## The last answer stored for `id`, or none.
+  let at = f.slot(id)
+  if at >= 0: f.held[at].answer else: ShotFollowAnswer(source: sfNone, logId: id)
+
+proc publish*(f: var ShotFollow; id, logRev: int; source: ShotFollowSource;
+    matched: ShotMatch; hover, hoverSession, hoverKeys, chosenSession, chosenKeys,
+    filesRev, sessions: int): ShotFollowAnswer =
+  ## Stores `source` and `matched` for log `id`, and bumps that log's revision
+  ## only when they differ from the answer already stored for it. A change of
+  ## the shared inputs marks every stored answer stale.
+  let sameInputs = f.inputsReady and f.hover == hover and f.hoverSession == hoverSession and
     f.hoverKeys == hoverKeys and f.chosenSession == chosenSession and
-    f.chosenKeys == chosenKeys and f.filesRev == filesRev and f.sessions == sessions and
-    f.logId == logId and f.logRev == logRev
-
-func answer*(f: ShotFollow): ShotFollowAnswer {.inline.} =
-  ## The last answer, including when `unchanged` is false.
-  f.answer
-
-proc publish*(f: var ShotFollow; source: ShotFollowSource; matched: ShotMatch; hover,
-    hoverSession, hoverKeys, chosenSession, chosenKeys, filesRev, sessions, logId,
-    logRev: int): ShotFollowAnswer =
-  ## Stores `source` and `matched`, and bumps the revision only when they differ
-  ## from the answer already stored.
-  if not f.ready or f.answer.source != source or f.answer.match.rule != matched.rule or
-      f.answer.match.row != matched.row or f.answer.match.count != matched.count:
-    inc f.answer.revision
-    f.answer.source = source
-    f.answer.match = matched
-  f.ready = true
-  f.hover = hover
-  f.hoverSession = hoverSession
-  f.hoverKeys = hoverKeys
-  f.chosenSession = chosenSession
-  f.chosenKeys = chosenKeys
-  f.filesRev = filesRev
-  f.sessions = sessions
-  f.logId = logId
-  f.logRev = logRev
-  f.answer
+    f.chosenKeys == chosenKeys and f.filesRev == filesRev and f.sessions == sessions
+  if not sameInputs:
+    for i in 0 ..< f.held.len: f.held[i].ready = false
+    f.hover = hover
+    f.hoverSession = hoverSession
+    f.hoverKeys = hoverKeys
+    f.chosenSession = chosenSession
+    f.chosenKeys = chosenKeys
+    f.filesRev = filesRev
+    f.sessions = sessions
+    f.inputsReady = true
+  var at = f.slot(id)
+  if at < 0:
+    f.held.add HeldIndex(id: id)
+    at = f.held.high
+  if f.held[at].answer.source != source or
+      f.held[at].answer.match.rule != matched.rule or
+      f.held[at].answer.match.row != matched.row or
+      f.held[at].answer.match.count != matched.count:
+    inc f.held[at].answer.revision
+    f.held[at].answer.source = source
+    f.held[at].answer.match = matched
+  f.held[at].answer.logId = id
+  f.held[at].ready = true
+  f.held[at].logRev = logRev
+  f.held[at].answer
 
 proc timeZero(f: SeismicFile; local: int): Option[int64] {.raises: [].} =
   ## Time zero of trace `local`, or none. Skips a SEG-Y without stored keys,

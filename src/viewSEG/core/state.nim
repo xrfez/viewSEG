@@ -1290,7 +1290,7 @@ type
     loads: int ## bumped each time a layout is loaded
     shotLogs: seq[LoadedShotLog]
       ## shot logs read this run, in the order they were imported or loaded
-    follow: ShotFollow ## per loaded log, its index, and the last follow answer
+    follow: ShotFollow ## per loaded log, its index and its own last answer
     followTrace: int = -1
       ## last seismic trace hovered while this file is on show; -1 until one is
     followShown: int
@@ -2119,7 +2119,7 @@ proc sameDisk(s: Session; path: string): bool {.inline.} =
   if s.origin.len > 0: s.origin == path else: s.path == path
 
 proc followStamp(state: AppState): tuple[hover, hoverSession, hoverKeys, chosenSession,
-    chosenKeys, filesRev, sessions, logId, logRev: int] {.raises: [].} =
+    chosenKeys, filesRev, sessions: int] {.raises: [].} =
   result.hover = state.selection.hover
   result.hoverSession = -1
   result.chosenSession = -1
@@ -2129,21 +2129,14 @@ proc followStamp(state: AppState): tuple[hover, hoverSession, hoverKeys, chosenS
       result.hoverSession = int(state.sessions[i].id)
       result.hoverKeys = state.sessions[i].keysRevision
   if state.files.chosen.len > 0:
-    for s in state.sessions:
-      let hit =
-        if s.origin.len > 0: s.origin == state.files.chosen
-        else: s.path == state.files.chosen
+    for i in 0 ..< state.sessions.len:
+      let hit = sameDisk(state.sessions[i], state.files.chosen)
       if hit:
-        result.chosenSession = int(s.id)
-        result.chosenKeys = s.keysRevision
+        result.chosenSession = int(state.sessions[i].id)
+        result.chosenKeys = state.sessions[i].keysRevision
         break
   result.filesRev = state.fileList.revision
   result.sessions = state.sessions.len
-  if state.shotLogs.len == 0: result.logId = -1
-  else:
-    let n = state.shotLogs.len - 1
-    result.logId = state.shotLogs[n].id
-    result.logRev = state.shotLogs[n].revision
 
 proc pointerQuery(state: AppState; trace: int; q: var ShotQuery): bool =
   ## Trace `trace`, when it is a trace of an open seismic file.
@@ -2230,13 +2223,18 @@ proc followedTrace(state: var AppState): int =
   state.followTrace = -1
   -1
 
-proc followAnswer*(state: var AppState): ShotFollowAnswer {.raises: [].} =
-  ## The shot the newest loaded log follows: the trace under the pointer, or
+proc followAnswer*(state: var AppState; logIndex: int): ShotFollowAnswer {.raises: [].} =
+  ## The shot loaded log `logIndex` follows: the trace under the pointer, or
   ## the last one hovered while this file is still on show, then the selected
   ## signature, then the selected open file. Leaving the plot does not jump
   ## until the shown file changes, that file is closed, or another trace is
-  ## hovered. Nothing is moved or scrolled.
-  ## No allocation when the pointer, the chosen file and the log are unchanged.
+  ## hovered. An index that is not a loaded log is none and does not change
+  ## another log's answer. Nothing is moved or scrolled.
+  ## No allocation when the pointer, the chosen file and that log are unchanged.
+  if logIndex < 0 or logIndex >= state.shotLogs.len:
+    return ShotFollowAnswer(source: sfNone, match: noMatch(), logId: -1)
+  let id = state.shotLogs[logIndex].id
+  let logRev = state.shotLogs[logIndex].revision
   let trace = state.followedTrace()
   var stamp = followStamp(state)
   stamp.hover = trace
@@ -2251,17 +2249,14 @@ proc followAnswer*(state: var AppState): ShotFollowAnswer {.raises: [].} =
   else:
     stamp.hoverSession = -1
     stamp.hoverKeys = 0
-  if state.follow.unchanged(stamp.hover, stamp.hoverSession, stamp.hoverKeys,
-      stamp.chosenSession, stamp.chosenKeys, stamp.filesRev, stamp.sessions, stamp.logId,
-      stamp.logRev):
-    return state.follow.answer
+  if state.follow.unchanged(id, logRev, stamp.hover, stamp.hoverSession, stamp.hoverKeys,
+      stamp.chosenSession, stamp.chosenKeys, stamp.filesRev, stamp.sessions):
+    return state.follow.answer(id)
   let none = noMatch()
   template put(source: ShotFollowSource; matched: ShotMatch): ShotFollowAnswer =
-    state.follow.publish(source, matched, stamp.hover, stamp.hoverSession, stamp.hoverKeys,
-      stamp.chosenSession, stamp.chosenKeys, stamp.filesRev, stamp.sessions, stamp.logId,
-      stamp.logRev)
-  if stamp.logId < 0: return put(sfNone, none)
-  let index = state.follow.indexOf(stamp.logId)
+    state.follow.publish(id, logRev, source, matched, stamp.hover, stamp.hoverSession,
+      stamp.hoverKeys, stamp.chosenSession, stamp.chosenKeys, stamp.filesRev, stamp.sessions)
+  let index = state.follow.indexOf(id)
   if index == nil: return put(sfNone, none)
   var q = ShotQuery()
   if pointerQuery(state, trace, q): return put(sfPointer, matched(index, q))
