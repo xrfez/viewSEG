@@ -1586,6 +1586,10 @@ one step that Undo takes back).
 to another computer), **Tools > Import settings...** takes such a file in (what it does
 not hold stays as it is), and **Tools > Reset the settings** puts them back to the defaults
 (the recent files and the window's place stay; the settings before are kept in a copy).
+**Tools > Leap seconds...** shows the GPS minus UTC table the open files' times are read
+with, and adds a leap second (the first of a month, after the last entry). The table is
+kept in `leapseconds.nif` beside the settings. A time after the date the table was last
+checked through is still read, and the window says so.
 
 Every import and export is in the menu of what it is about: **Project** (the survey),
 **Edit** (the trace edits), **Tools** (the settings, the messages) and **Window** (the

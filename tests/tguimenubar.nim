@@ -55,7 +55,8 @@ const
     ("Reports", @["Missing traces...", "Missing traces.disabled", "Trace quality",
       "Vibrator QC of a folder"]),
     ("Tools", @["Settings...", "Import settings...", "Export settings...",
-      "Reset the settings", "Reload vendor maps", "Export messages...", "Agent control"]),
+      "Reset the settings", "Reload vendor maps", "Leap seconds...", "Export messages...",
+      "Agent control"]),
     ("Window", @["Reset the windows", "Bring all windows onto this screen", "Load",
       "Save layout as...", "Import layout...", "Export layout...", "tray.icon",
       "tray.minimize"])]
