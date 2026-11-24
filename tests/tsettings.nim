@@ -65,7 +65,8 @@ proc everyFieldSet(): Settings =
       line: 4960), LineName(name: "A line", line: 12.5)]),
     headers: HeadersView(tab: htTable, traceTab: ttData, followPointer: false,
       asDisplayed: true, columns: {hcName, hcOffset}, tableFields: @["keys.offset",
-      "trace.sourceX"], tableScope: tsFile), hideKilled: true,
+      "trace.sourceX"], tableScope: tsFile),
+    shotLog: ShotLogView(followPlot: true), hideKilled: true,
     spectrum: SpectrumOptions(window: SpectrumDisplay(scale: ssLinear, logFrequency: true,
       time: stVisible, raw: false, processed: false, response: false, phase: true,
       phasePicture: ppSigned),
@@ -216,6 +217,7 @@ proc main*() =
       problems)
     doAssert problems.len == 0, $problems
     doAssert s.hideKilled and s.tray.icon and not s.tray.minimize, $s.tray
+    doAssert not s.shotLog.followPlot, "an older file turned Follow the plot on"
 
   block everyField:
     let s = everyFieldSet()
@@ -233,6 +235,8 @@ proc main*() =
       doAssert a != b, "window field " & name & " is at its default"
     for name, a, b in fieldPairs(s.headers, d.headers):
       doAssert a != b, "headers field " & name & " is at its default"
+    for name, a, b in fieldPairs(s.shotLog, d.shotLog):
+      doAssert a != b, "shot log field " & name & " is at its default"
     for name, a, b in fieldPairs(s.spectrum.window, d.spectrum.window):
       doAssert a != b, "spectrum window field " & name & " is at its default"
     for name, a, b in fieldPairs(s.spectrum.live, d.spectrum.live):

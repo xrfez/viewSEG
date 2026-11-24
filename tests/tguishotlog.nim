@@ -8,16 +8,29 @@
 ## leaves the window up.
 ## A generated log of 100 000 rows is then scrolled, and those frames stay
 ## under the budget the other GUI tests use.
+## Follow the plot starts unticked: a hover (the command the plot sends for the
+## trace under the pointer) does not move the grid. Ticked, the grid scrolls to
+## the row whose time is that trace's and the status line names it; a hover
+## with no match leaves the scroll and says so; two rows at one time say so.
+## Allow editing stays off.
 ##
 ## Seen to fail: with the row 0 time left unmarked, "row 0 time was @[]".
 ## With editing left on (no tick), "a double-click opened a box while editing
 ## was off". With Ctrl+Z still taken while the tick was off, "Ctrl+Z undid a
 ## shot edit while editing was off".
+## With follow applied while the tick was off, "a hover moved the grid while
+## follow was off: edge 196 line Trace under the pointer: row 181, by time on 0".
+## With the jump not scrolling, "the matched row was not shown: edge 30 line
+## [Trace under the pointer: row 181, by time]". With a miss scrolling to row 0,
+## "a miss did not leave the grid: edge 30 held 195 line [No row at this time]".
+## With two rows scrolling to row 0, "two rows did not leave the grid: edge 30
+## held 195 line [2 rows at this time]".
 ##
 ## Needs a display: run under
 ## `env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1920x1080x24"`.
 
 import std/[algorithm, math, monotimes, options, os, strutils, times]
+import parseSEG
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import utils/[fixtures, waiting]
@@ -61,6 +74,48 @@ proc summaryLine(f: FrameInfo): string =
   for n in f.markNames("shotlog.summary "):
     return n["shotlog.summary ".len .. ^1]
 
+proc followLineOf(f: FrameInfo): string =
+  const prefix = "shotlog.followline "
+  for n in f.markNames(prefix):
+    return n[prefix.len .. ^1]
+
+proc writeFollowSegd(path: string) =
+  ## Three records, one trace each, a hundred seconds apart.
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: 4))
+  var samples = newSeq[float32](4)
+  const times = [1_700_000_000.0, 1_700_000_100.0, 1_700_000_200.0]
+  for i, t in times:
+    var k = initTraceKeys()
+    k.record = float64(i + 1)
+    k.channel = 1
+    k.intervalUs = 2000
+    k.t0Ms = 0
+    k.time = t
+    k.status = tsLive
+    w.writeTrace(k, samples)
+  doAssert w.close().len == 0, "the follow SEG-D was not written"
+
+proc recordTimes(path: string): array[3, int64] =
+  ## The UTC microseconds the file actually stores, leap seconds included.
+  var f = openSeismic(path)
+  doAssert f.len == 3, "the follow SEG-D has " & $f.len & " traces"
+  for i in 0 .. 2:
+    let t = f.recordTimeZeroUs(i)
+    doAssert t.isSome, "trace " & $i & " has no time"
+    result[i] = t.get
+  f.close()
+
+proc writeFollowLog(path: string; times: array[3, int64]; rows, k: int) =
+  ## Row `k` matches trace 2; rows 8 and 9 match trace 1; trace 0 matches none.
+  var f = open(path, fmWrite)
+  f.writeLine("shot point,UTC microseconds")
+  for i in 0 ..< rows:
+    var us = times[0] - 86_400_000_000 + int64(i)
+    if i == 8 or i == 9: us = times[1]
+    elif i == k: us = times[2]
+    f.writeLine($(10_000 + i) & "," & $us)
+  f.close()
+
 proc writeBig(path: string; n: int) =
   var f = open(path, fmWrite)
   f.writeLine("shot point,X,Y")
@@ -87,6 +142,13 @@ proc main*() =
     let big = fx.dir / "big-shotlog.csv"
     writeFile(bad, "shot point,X,Y\n1,10,20\n2,not-a-number,21\n")
     writeBig(big, 100_000)
+    let segd = fx.dir / "follow.sgd"
+    let followLog = fx.dir / "follow-shotlog.csv"
+    const followRows = 220
+    const followRow = 180
+    writeFollowSegd(segd)
+    let times = recordTimes(segd)
+    writeFollowLog(followLog, times, followRows, followRow)
     let gridShot = root / ".scratch" / "shotlog-grid.png"
     let columnsShot = root / ".scratch" / "shotlog-columns.png"
     let editShot = root / ".scratch" / "shotlog-edit.png"
@@ -430,6 +492,107 @@ proc main*() =
         " ms; scrolling median ", formatFloat(ms, ffDecimal, 1), " ms (slowest ",
         formatFloat(scrolling.max, ffDecimal, 1), ")"
       doAssert ms < 33 and ms < mi + 15, "the shot log lags: " & $ms & " ms a frame, idle " & $mi
+
+    block followPlot:
+      let followShot = root / ".scratch" / "shotlog-follow.png"
+      let want = "Trace under the pointer: row " & $(followRow + 1) & ", by time"
+      var stage = 0
+      var wait = 0
+      var since = getMonoTime()
+      var oneId, twoId, noneId = -1
+      var matchedEdge = -1
+      var lastEdge = -2
+      var same = 0
+      var why = ""
+      let hook = proc (kind: DialogKind; location: string): seq[string] =
+        if kind == dkShotLog: @[followLog] else: @[]
+      proc onFrame(f: FrameInfo) =
+        inc wait
+        template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
+        if f.index == 0: f.keepInMainWindow()
+        case stage
+        of 0:
+          if f.markOf("menu.Project").size.x > 0 and f.core.sessions.len > 0 and
+              f.core.sessions[0].len == 3 and f.markOf("plot.data").size.x > 0 and wait > 3:
+            let base = f.core.sessions[0].base
+            noneId = base
+            twoId = base + 1
+            oneId = base + 2
+            f.moveMouse(f.markOf("plot.data").centre)
+            next 1
+          doAssert not overdue(wait, 2000, since), "the follow file was not shown"
+        of 1:
+          if wait == 2: f.moveMouse(vec2(4, 4))
+          if wait == 6:
+            f.apply(Command(kind: ckHover, trace: oneId))
+            next 2
+        of 2:
+          if f.markOf("menu.Project").size.x > 0 and wait > 2:
+            f.click(f.markOf("menu.Project").centre)
+            next 3
+          doAssert not overdue(wait, 400, since), "Project was not shown"
+        of 3:
+          if f.markOf("menu.Import shot log...").size.x > 0:
+            f.click(f.markOf("menu.Import shot log...").centre)
+            next 4
+          doAssert not overdue(wait, 400, since), "Import shot log was not shown"
+        of 4:
+          let line = f.summaryLine
+          if "follow-shotlog.csv" in line and "220 rows" in line and
+              f.markOf("shotlog.grid").size.x > 0 and f.markOf("shotlog.followbox").size.x > 0:
+            f.apply(Command(kind: ckHover, trace: oneId))
+            next 5
+          doAssert not overdue(wait, 2000, since), "the follow log was not shown: " & line
+        of 5:
+          let edge = edgeRow(f)
+          why = "edge " & $edge & " line " & followLineOf(f) & " on " &
+            $f.markNames("shotlog.followon").len
+          if edge >= 0 and edge < followRow and followLineOf(f).len == 0 and
+              f.markNames("shotlog.followon").len == 0 and
+              f.markNames("shotlog.at " & $followRow).len == 0 and
+              f.markNames("shotlog.allowon").len == 0 and wait > 4:
+            f.click(f.markOf("shotlog.followbox").centre)
+            next 6
+          doAssert not overdue(wait, 400, since),
+            "a hover moved the grid while follow was off: " & why
+        of 6:
+          if f.markNames("shotlog.followon").len == 0 and wait mod 8 == 0:
+            f.click(f.markOf("shotlog.followbox").centre)
+          let edge = edgeRow(f)
+          if edge == lastEdge: inc same else: same = 0
+          lastEdge = edge
+          why = "edge " & $edge & " line [" & followLineOf(f) & "]"
+          if edge >= followRow and same >= 3 and followLineOf(f) == want and
+              f.markNames("shotlog.at " & $followRow).len > 0 and
+              f.markNames("shotlog.allowon").len == 0 and wait > 2:
+            matchedEdge = edge
+            doAssert f.savePng(followShot), "the follow screenshot was not written"
+            f.apply(Command(kind: ckHover, trace: noneId))
+            next 7
+          doAssert not overdue(wait, 400, since), "the matched row was not shown: " & why
+        of 7:
+          let edge = edgeRow(f)
+          why = "edge " & $edge & " held " & $matchedEdge & " line [" & followLineOf(f) & "]"
+          if followLineOf(f) == "No row at this time" and edge == matchedEdge and
+              f.markNames("shotlog.allowon").len == 0 and wait > 2:
+            f.apply(Command(kind: ckHover, trace: twoId))
+            next 8
+          doAssert not overdue(wait, 400, since), "a miss did not leave the grid: " & why
+        of 8:
+          let edge = edgeRow(f)
+          why = "edge " & $edge & " held " & $matchedEdge & " line [" & followLineOf(f) & "]"
+          if followLineOf(f) == "2 rows at this time" and edge == matchedEdge and
+              f.markNames("shotlog.allowon").len == 0 and wait > 2:
+            f.stop()
+          doAssert not overdue(wait, 400, since), "two rows did not leave the grid: " & why
+        else: discard
+      var opts = runOpts(fx, hook)
+      opts.openPaths = @[segd]
+      opts.onFrame = onFrame
+      let code = run(opts)
+      doAssert code == 0, "run() exit code " & $code
+      doAssert stage == 8, "stopped at stage " & $stage & " " & why
+      echo "tguishotlog: follow row ", followRow + 1
 
 when isMainModule:
   main()

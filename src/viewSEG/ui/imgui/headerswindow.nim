@@ -976,7 +976,7 @@ proc drawTraceHeader(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; ma
   # the vendor fields of each trace the maps decode something of, above its header table,
   # with room above (the search box is over it) and the fold remembered
   for k in 0 ..< answer.traces.len:
-    template v: untyped = answer.traces[k].vendor
+    template v: untyped = st.inspection.answer.traces[k].vendor
     if v.blocks.len > 0 or v.problems.len > 0 or v.rule.len > 0:
       igDummy(ImVec2_c(x: 0, y: igGetStyle().ItemSpacing.y * 2))
       igSetNextItemOpen(not ui.vendorClosed, ImGui_Cond_Always.cint)
@@ -1028,7 +1028,7 @@ proc drawTraceData(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerIn
   var n = 0
   var traces: seq[int] # the answer's traces with samples
   for k in 0 ..< answer.traces.len: # (an index: nothing of the answer is copied a frame)
-    template d: untyped = answer.traces[k]
+    template d: untyped = st.inspection.answer.traces[k]
     if d.samples.len > 0:
       traces.add k
       n = max(n, d.samples.len)
@@ -1039,7 +1039,7 @@ proc drawTraceData(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerIn
   if traces.len == 0:
     if st.inspection.waiting: igTextDisabled("Reading the samples...")
     return
-  template first: untyped = answer.traces[traces[0]]
+  template first: untyped = st.inspection.answer.traces[traces[0]]
   var other = false
   for k in traces:
     if answer.traces[k].dtMs != first.dtMs or answer.traces[k].t0Ms != first.t0Ms: other = true
@@ -1092,7 +1092,7 @@ proc drawTraceData(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerIn
         igTextUnformatted(time.cstring, nil)
         for c, k in traces:
           if igTableNextColumn():
-            template d: untyped = answer.traces[k]
+            template d: untyped = st.inspection.answer.traces[k]
             if i < d.samples.len:
               let v = sampleText(d.samples[i])
               igPushID_Int(cint(c))

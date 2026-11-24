@@ -1,13 +1,14 @@
 ## The Shot log window: a table of shots, its column map, and its problems.
 ## Import is Project > Import shot log...; this window opens once a file is
 ## chosen, and View shows or hides it. One cell can be edited at a time, and
-## only while Allow editing is ticked.
+## only while Allow editing is ticked. Follow the plot, off until ticked,
+## shows the row the plot is on.
 
 import std/[algorithm, options, os, strutils, tables]
 import imguin/cimgui
 import ../../core/[geometry, shotlog, state]
 import ../../view/[shotlogwords, theme]
-import focus, icons, marks, style
+import chrome, focus, icons, marks, style
 
 const
   ScanBatch = 1600 ## filter rows looked at in one frame
@@ -56,6 +57,9 @@ type
     bound: bool
     boundId: int
     boundRev: int
+    followSeen: bool   ## an answer has been applied for the log on show
+    followRev: int
+    followId: int
     faultRows: seq[int]
     faultText: Table[int, string]
 
@@ -198,6 +202,7 @@ proc bindLog(ui: var ShotLogUi; st: AppState; i, rev: int) =
     ui.selected = -1
     ui.selectedCol = -1
     ui.scrollTo = -1
+    ui.followSeen = false
     ui.stopEdit()
     ui.clearFilter()
     ui.cacheFaults(st, i)
@@ -235,6 +240,32 @@ proc scanFilter(ui: var ShotLogUi; st: AppState; i, width, n: int) =
       ui.matches.add row
   ui.scanAt = stop
   ui.filterDone = ui.scanAt >= n
+
+proc rowFiltered(ui: ShotLogUi; st: AppState; i, row, width, n: int): bool =
+  ## Whether data row `row` is left out by the filter box or Problems only.
+  if row < 0 or row >= n: return false
+  if ui.problemsOnly and not ui.faultText.hasKey(row): return true
+  if ui.needle.len > 0 and not rowHits(st, i, row, width, ui.needle): return true
+  false
+
+proc noteFollow(ui: var ShotLogUi; st: var AppState; i, width, n: int): string =
+  ## The follow line, and a scroll to the one row when the answer changed.
+  ## A click's selection stays until that change. Filtering is left as it is.
+  if not st.settings.shotLog.followPlot:
+    ui.followSeen = false
+    return ""
+  let a = st.followAnswer(i)
+  let changed = not ui.followSeen or ui.followId != ui.currentId or
+    a.revision != ui.followRev
+  ui.followSeen = true
+  ui.followId = ui.currentId
+  ui.followRev = a.revision
+  let hidden = a.match.row >= 0 and ui.rowFiltered(st, i, a.match.row, width, n)
+  if changed and a.match.row >= 0 and not hidden:
+    ui.selected = a.match.row
+    ui.selectedCol = -1
+    ui.scrollTo = a.match.row
+  followStatus(a, hidden)
 
 proc listedCount(ui: ShotLogUi; n: int): int =
   if ui.needle.len > 0: ui.matches.len
@@ -602,7 +633,7 @@ proc drawProblems(ui: var ShotLogUi; st: AppState; i: int; t: Theme; marks: var 
     igSameLine(0, -1)
     igTextUnformatted(p.text.cstring, nil)
 
-proc drawShotLog*(ui: var ShotLogUi; title: string; st: AppState; t: Theme;
+proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
     marks: var Marks): seq[Command] =
   ## The window, titled `title`, while it is open. Edits and a re-map are commands.
   if not ui.shown:
@@ -636,6 +667,7 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: AppState; t: Theme;
     else:
       let width = st.shotLogWidth(i)
       let n = st.shotView(i).rows.len
+      let followLine = ui.noteFollow(st, i, width, n)
       let problems = st.shotView(i).problems.count
       let file = st.shotLogSource(i).extractFilename
       let name = if file.len > 0: file else: st.shotLogName(i)
@@ -705,6 +737,15 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: AppState; t: Theme;
       if ui.allowEditing: marks.mark("shotlog.allowon")
       tip(AllowEditingTip)
       igSameLine(0, -1)
+      var follow = st.settings.shotLog.followPlot
+      if igCheckbox(FollowPlot.cstring, addr follow) and ui.focus.acts:
+        var s = st.settings
+        s.shotLog.followPlot = follow
+        result.add Command(kind: ckSettings, settings: s)
+      marks.mark("shotlog.followbox")
+      if st.settings.shotLog.followPlot: marks.mark("shotlog.followon")
+      tip(FollowPlotTip)
+      igSameLine(0, -1)
       igBeginDisabled(reading)
       if igButton(ColumnsButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts and
           not reading:
@@ -713,6 +754,12 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: AppState; t: Theme;
       igEndDisabled()
       marks.mark("shotlog.columns")
       tip("How the table was read, and what each column means")
+      if followLine.len > 0:
+        igSameLine(0, -1)
+        igAlignTextToFramePadding()
+        rightAlign(followLine)
+        igTextUnformatted(followLine.cstring, nil)
+        marks.mark("shotlog.followline " & followLine)
       if ui.columnsOpen:
         result.add ui.drawColumns(st, i, t, marks, reading)
       else:

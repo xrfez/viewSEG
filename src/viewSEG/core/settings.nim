@@ -7,8 +7,9 @@
 ## toggles, the plot's cursor time line, whether the Files window follows
 ## the latest file, where the map shows the point under the pointer, the
 ## survey import's options (Project > Import survey), the Headers window's
-## tabs, toggles and columns, whether killed traces are hidden, how the
-## spectrum windows show their spectra, the named display presets, the
+## tabs, toggles and columns, the Shot log window's follow tick, whether
+## killed traces are hidden, how the spectrum windows show their spectra, the
+## named display presets, the
 ## colours of a multi-component record, and whether a plot shows a physical
 ## value in metric or imperial units.
 ## Every field has a default.
@@ -159,6 +160,12 @@ type
       ## the trace table's columns, after the trace's number (`core/tracetable`)
     tableScope*: TableScope ## the trace table's rows: the record shown, or the file
 
+  ShotLogView* = object
+    ## How the Shot log window follows the plot.
+    followPlot*: bool
+      ## the grid shows the row of the trace under the pointer, of a selected
+      ## signature, or of the selected file; off until ticked
+
   SpectrumOptions* = object
     ## How the spectrum windows show their spectra: each new FFT window as
     ## the last one changed, the live panel as it was left.
@@ -207,6 +214,7 @@ type
     map*: MapOptions ## the map's own settings
     join*: JoinOptions ## the geometry join's options, as set last
     headers*: HeadersView ## the Headers window's tabs and toggles
+    shotLog*: ShotLogView ## the Shot log window's follow tick
     hideKilled*: bool
       ## killed traces are left out of the plot (the traces beside them close
       ## up); off: drawn blank

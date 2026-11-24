@@ -1,7 +1,7 @@
 ## Words for the Shot log window. Drawing lives in the frontend.
 
 import std/[strutils, times]
-import ../core/shotlog
+import ../core/[shotfollow, shotfollowtarget, shotlog]
 
 const
   WindowTip* = "A shot log: one row per shot, with a time in UTC and the problems the reader found."
@@ -18,6 +18,19 @@ const
   AllowEditing* = "Allow editing"
   AllowEditingTip* = "Change cells here. A log corrected outside the program is better " &
     "imported again."
+  FollowPlot* = "Follow the plot"
+  FollowPlotTip* = "Show the row of the trace under the pointer, of a selected vibrator " &
+    "signature, or of the selected file, matched by time."
+  PointerRow = "Trace under the pointer: row "
+  SignatureRow = "Selected signature: row "
+  FileRow = "Selected file: row "
+  ByTime = ", by time"
+  ByTimeAndNumbers = ", by time and numbers"
+  WithinSecond = ", within the second"
+  ByNumbers = ", by numbers only"
+  RowsAtTime = " rows at this time"
+  NoRowAtTime = "No row at this time"
+  HiddenByFilter = ", hidden by the filter"
   FilterHint* = "Filter"
   GridTab* = "Grid"
   ProblemsTab* = "Problems"
@@ -38,6 +51,26 @@ proc utcMicrosText*(us: int64): string =
     frac += 1_000_000
     dec sec
   fromUnix(sec).utc.format("yyyy-MM-dd HH:mm:ss") & "." & align($frac, 6, '0')
+
+func followStatus*(a: ShotFollowAnswer; hidden: bool): string =
+  ## The follow line, or "" when there is nothing to follow. `hidden` adds
+  ## that the one row is left out by the filter.
+  if a.source == sfNone: return ""
+  if a.match.count > 1: return $a.match.count & RowsAtTime
+  if a.match.row < 0: return NoRowAtTime
+  let who = case a.source
+    of sfPointer: PointerRow
+    of sfSignature: SignatureRow
+    of sfFile: FileRow
+    of sfNone: ""
+  let how = case a.match.rule
+    of mrTime: ByTime
+    of mrTimeAndNumbers: ByTimeAndNumbers
+    of mrSecond: WithinSecond
+    of mrNumbers: ByNumbers
+    of mrNone: ""
+  result = who & $(a.match.row + 1) & how
+  if hidden: result.add HiddenByFilter
 
 func shotLogSummary*(file: string; rows, columns, problems: int; where: string): string =
   ## The window's top line.

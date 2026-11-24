@@ -1167,6 +1167,16 @@ and the reason is shown under it. **Filter** keeps rows whose cells hold the tex
 **Problems only** keeps rows that have a problem. The **Problems** list names each
 problem; a click shows that row in the grid.
 
+**Follow the plot**, beside **Allow editing**, starts unticked and is remembered.
+While it is ticked, the grid shows the row of the trace under the pointer, of a
+selected vibrator signature, or of the selected file, matched by time. One row
+is scrolled into view, centred when it was not already shown, and highlighted
+as a clicked row is. A line at the right of that row names it. Several rows at
+that time, or none, leave the grid where it is and the line says so. A row
+hidden by **Filter** or **Problems only** stays hidden; the line says it is
+hidden by the filter. A click in the grid still selects that row until what is
+followed changes. The tick does not turn on editing.
+
 The window stays open if the log is read again, if a project is opened or closed, or if
 the log is removed. `samples/land/shotlog.csv` is a small table of this kind.
 

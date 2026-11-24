@@ -45,6 +45,7 @@
 ##  (headers (tab summary) (traceTab header) (followPointer true) (asDisplayed false)
 ##   (columns description bytes) (tableFields "keys.record" "keys.channel")
 ##   (tableScope record))
+##  (shotLog (followPlot false))
 ##  (hideKilled false)
 ##  (spectrum
 ##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
@@ -500,6 +501,9 @@ proc settingsDocument*(s: Settings): string =
   for f in s.headers.tableFields: w.add f
   w.close()
   w.choice("tableScope", TableScopeNames[s.headers.tableScope])
+  w.close()
+  w.open("shotLog")
+  w.value("followPlot", s.shotLog.followPlot)
   w.close()
   w.value("hideKilled", s.hideKilled)
   w.open("spectrum")
@@ -1154,6 +1158,10 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
             result.headers.tableFields = got
           elif k.isTree("tableScope"): r.choice(k, TableScopeNames, result.headers.tableScope)
           else: r.unknown(k, "headers")
+      of "shotLog":
+        for k in c.kids:
+          if k.isTree("followPlot"): r.flag(k, result.shotLog.followPlot)
+          else: r.unknown(k, "shotLog")
       of "hideKilled": r.flag(c, result.hideKilled)
       of "spectrum":
         for k in c.kids:
