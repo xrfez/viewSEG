@@ -13,11 +13,15 @@
 ## - **Comparable** (`isComparable`): a guided pick of confidence from `ConfidentPick` strictly
 ##   inside the guided window (`guideWindowMs` of the fit's scatter) of the model it is judged
 ##   against. On the boundary is not inside. (A pick the picker returned on the first or last
-##   sample of its search window is no guided pick at all: the job drops it.)
+##   sample of its search window is no guided pick at all: the job drops it.) A trace whose
+##   guided pick is not comparable is judged by its first-pass pick: when that one is comparable
+##   (confident and strictly inside the same band of the same model) it is the trace's pick
+##   (`firstPick`), compared, off the model and off its neighbours as any other. It is not a
+##   break seen for `expectedRange`, which counts guided picks alone.
 ## - **Off the model**: a comparable trace whose residual (pick less model) is larger than
 ##   the record's limit, `max(LimitFloorMs, LimitSigmas * sigma)`, `sigma` being 1.4826 times
 ##   the median absolute deviation (MAD) of the picks' own scatter about the record's fit.
-## - **Far off the model**: a trace whose guided pick is not comparable, but whose first-pass
+## - **Far off the model**: a trace whose guided pick is not comparable, and whose first-pass
 ##   pick is confident and not inside that window, at most `FarOffMaxMs`, from the model,
 ##   and not before the model's intercept less the limit (no break comes before the first
 ##   possible arrival). Everything else with a model time is "no break found", never flagged.
@@ -45,6 +49,15 @@
 ##
 ## One function (`applyRule`) decides all of it, so the flags, the counts and the words cannot
 ## disagree.
+##
+## Known and accepted:
+## - a guided pick one sample inside its window's edge is taken as a pick (at 4 ms, a trace 28 ms
+##   late picked 16 ms late, one sample before the window's end, is off the model at +16 rather
+##   than far off at +28);
+## - a break before the window whose wavelet's body lies inside it is picked on that body (a
+##   block 26 ms early is compared at about -6 ms and not flagged);
+## - the shoulder's excuse cannot tell a drift from far-off noise that happens to lean the same
+##   way: a wrong station beside two such noise picks is not off its neighbours.
 ##
 ## Before that, processSEG's `trimmedModel` (`qc/breakfit`) makes the model the picks are
 ## compared with: it starts from the closer half of the picks to a robust line, then keeps the
@@ -142,7 +155,10 @@ type
   BreakRule* = object
     ## What the rule found; per-trace seqs are indexed as the record's traces.
     comparable*, noBreak*, beyond*, farOff*, offModel*, offNeighbours*, flagged*: seq[bool]
+    firstPick*: seq[bool]
+      ## comparable on the first pass's pick (`RuleGeometry.firstMs`): the guided one was not
     nComparable*, nNoBreak*, nBeyond*, nFarOff*, nOffModel*, nOffNeighbours*, nFlagged*: int
+    nFirstPick*: int          ## the comparable traces judged on the first pass's pick
     nInRange*: int            ## traces with a model time within the expected offsets
     limitMs*: float64         ## the record limit (ms); NaN when there is no scatter to go by
     sigmaMs*: float64         ## the pick scatter the limits come from (`ownSigmaMs`, else the
@@ -354,7 +370,8 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
   let band = if g.guideWindowMs > 0 and g.guideWindowMs < Inf: g.guideWindowMs else: GuideMaxMs
   result = BreakRule(comparable: newSeq[bool](n), noBreak: newSeq[bool](n),
     beyond: newSeq[bool](n), farOff: newSeq[bool](n), offModel: newSeq[bool](n),
-    offNeighbours: newSeq[bool](n), flagged: newSeq[bool](n), limitMs: NaN, sigmaMs: NaN,
+    offNeighbours: newSeq[bool](n), flagged: newSeq[bool](n), firstPick: newSeq[bool](n),
+    limitMs: NaN, sigmaMs: NaN,
     misfitSigmaMs: NaN, stationLimitMs: NaN, stationSigmaMs: NaN, medianMs: NaN,
     constantMs: NaN, leanMs: NaN, earlyTowardDeg: NaN, guideWindowMs: band)
   var res = newSeq[float64](n)
@@ -371,13 +388,20 @@ func applyRule*(pickMs, confidence, modelMs: openArray[float64]; g: RuleGeometry
         inc result.nBeyond
       else:
         inc result.nInRange
+        # the guided pick; when it is not comparable, the first pass's (`firstPick`)
+        var d = NaN
         if isComparable(pickMs[i], confidence[i], modelMs[i], band):
-          let d = pickMs[i] - modelMs[i]
+          d = pickMs[i] - modelMs[i]
+        elif haveFirst and isComparable(g.firstMs[i], g.firstConf[i], modelMs[i], band):
+          d = g.firstMs[i] - modelMs[i]
+          result.firstPick[i] = true
+          inc result.nFirstPick
+        if d.isNaN: result.noBreak[i] = true # until the far-off test below
+        else:
           res[i] = d
           result.comparable[i] = true
           all.add d
           inc result.nComparable
-        else: result.noBreak[i] = true # until the far-off test below
   result.misfitSigmaMs = robustSigma(all)
   result.sigmaMs = if g.ownSigmaMs.isNaN: result.misfitSigmaMs else: g.ownSigmaMs
   if all.len > 0: result.medianMs = median(all)

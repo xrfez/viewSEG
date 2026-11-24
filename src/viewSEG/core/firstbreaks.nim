@@ -206,14 +206,22 @@ func place*(b: FirstBreaks; trace: int): int {.inline.} =
   let i = trace - b.first
   if i >= 0 and i < b.pickMs.len and b.state == bkDone: i else: -1
 
+func onFirstPick(b: FirstBreaks; i: int): bool {.inline.} =
+  ## Whether trace `i` (of the record) is shown with its first pass's pick: far off the model,
+  ## or compared on that pick (the guided one was not comparable).
+  i < b.geometry.firstMs.len and i < b.geometry.firstConf.len and
+    ((i < b.rule.farOff.len and b.rule.farOff[i]) or
+    (i < b.rule.firstPick.len and b.rule.firstPick[i]))
+
 func pickOf*(b: FirstBreaks; trace: int): float64 =
   ## The pick of file trace `trace`, in file time (ms); NaN for none. A trace far off the
-  ## model (`rule.farOff`) uses the first pass's pick, still file time. The bars and the
-  ## status-bar pick add the edit shift (`displayShiftMs`) on top; this value is not changed.
+  ## model (`rule.farOff`) uses the first pass's pick, which is where the break was found
+  ## (the guided pass found none in its window); so does a trace compared on its first
+  ## pass's pick (`rule.firstPick`). Still file time: the bars and the status-bar pick add
+  ## the edit shift (`displayShiftMs`) on top; this value is not changed.
   let i = b.place(trace)
   if i < 0: NaN
-  elif i < b.rule.farOff.len and b.rule.farOff[i] and i < b.geometry.firstMs.len:
-    b.geometry.firstMs[i]
+  elif b.onFirstPick(i): b.geometry.firstMs[i]
   else: b.pickMs[i]
 
 func modelOf*(b: FirstBreaks; trace: int): float64 =
@@ -225,8 +233,7 @@ func modelOf*(b: FirstBreaks; trace: int): float64 =
 func confidenceOf*(b: FirstBreaks; trace: int): float64 =
   ## The confidence of the pick of file trace `trace`; 0 for none.
   let i = b.place(trace)
-  if i >= 0 and i < b.rule.farOff.len and b.rule.farOff[i] and i < b.geometry.firstConf.len:
-    b.geometry.firstConf[i]
+  if i >= 0 and b.onFirstPick(i): b.geometry.firstConf[i]
   elif i >= 0 and i < b.confidence.len: b.confidence[i]
   else: 0.0
 
@@ -250,10 +257,10 @@ func comparableOf*(b: FirstBreaks; trace: int): bool =
 func faintOf*(b: FirstBreaks; trace: int): bool =
   ## Whether the pick of file trace `trace` is drawn faint: of low confidence, or (with a model)
   ## no break found at it, or the trace lies beyond the offsets where breaks are seen. A trace
-  ## far off the model is not: its pick is a confident one.
+  ## far off the model, or compared on its first pass's pick, is not: its pick is a confident one.
   let i = b.place(trace)
   if i < 0 or i >= b.confidence.len: false
-  elif i < b.rule.farOff.len and b.rule.farOff[i]: false
+  elif b.onFirstPick(i): false
   elif b.confidence[i] < ConfidentPick: true
   else:
     (i < b.rule.noBreak.len and b.rule.noBreak[i]) or
@@ -396,6 +403,8 @@ func readoutText*(b: FirstBreaks; trace: int; edits = FileEdits()): string =
     result.add ", " & (if d >= 0: "+" else: "") & formatFloat(d, ffDecimal, 1) & " ms"
   let i = b.place(trace)
   if i >= 0 and i < b.rule.flagged.len:
+    if i < b.rule.firstPick.len and b.rule.firstPick[i]:
+      result.add ", the first pass's pick (the guided one was not within the window)"
     if b.rule.offModel[i]: result.add ", off the model"
     if b.rule.offNeighbours[i]: result.add ", off its neighbours"
     if b.rule.farOff[i]: result.add ", far off the model"
@@ -554,6 +563,10 @@ func ruleWords*(b: FirstBreaks; unit: SurveyUnit): string =
     " beyond those offsets (never a finding), " & $r.nFarOff & " far off the model (a break " &
     r.guideWindowMs.windowWords & " to " & $int(FarOffMaxMs) & " ms from it), " & $r.nOffModel &
     " off the model, " & $r.nOffNeighbours & " off their neighbours; " & $r.nFlagged & " flagged"
+  if r.nFirstPick > 0:
+    result.add "\n" & $r.nFirstPick & " of the traces compared are compared on the first " &
+      "pass's pick: the guided pick was on its window's edge or not within " &
+      r.guideWindowMs.windowWords & " ms of the model"
   if not r.limitMs.isNaN:
     result.add "\nOff the model: more than " & formatFloat(r.limitMs, ffDecimal, 1) &
       " ms away (3 sigmas of the picks' own scatter, " & formatFloat(r.sigmaMs, ffDecimal, 1) &

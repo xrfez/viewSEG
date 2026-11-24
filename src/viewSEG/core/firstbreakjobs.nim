@@ -430,7 +430,11 @@ proc breaksOfRecord*(file: ptr SeismicFile; path: string; traces: Slice[int];
   # is centred on that first-trim model; the picks are judged against the model fitted again to
   # them (`final`), with the same half-width. The two need not agree, which is why a pick on the
   # search's edge is dropped: a pick is comparable only strictly inside the interval searched
-  # and strictly inside the band of the model it is judged against.
+  # and strictly inside the band of the model it is judged against (else the trace is judged by
+  # its first-pass pick, `applyRule`). The first-trim model lies some 4 to 6 ms later than the
+  # refit one on the tests' synthetic records (the first pass picks the samples as recorded,
+  # later than the guided pass on the smoothed copy), so a 20 ms search reaches only 14 to 16 ms
+  # before the refit model; the search is left centred where it is.
   let firstTrim = trimOf(picks)
   let firstW = guideWindowMs(firstTrim.tr.sigmaMs)
   var fitted = picks
