@@ -328,11 +328,16 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
     skipFrom(table.rows, files, paired.pairs, 0)
     stopJob(sink, table)
   var held: HeldRef
+  var gone = ""
   if reference.path.len > 0:
     let loaded = loadReference(reference)
     held = loaded.held
-    if loaded.problem.len > 0 and loaded.problem notin table.problems:
-      table.problems.add loaded.problem
+    if loaded.problem.len > 0 or held.samples.len == 0:
+      let name = if held.name.len > 0: held.name
+                 elif reference.name.len > 0: reference.name
+                 else: reference.path.extractFilename
+      gone = "the reference \"" & name &
+        "\" is no longer in the archive (the reference file is missing)"
   var done = 0
   for i, item in files:
     ctx.setPhase(filePhase(i, count, item.path))
@@ -344,7 +349,10 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
     let note = paired.notes.getOrDefault(item.path)
     try:
       var row: FolderRow
-      if item.info.problem.len > 0:
+      if gone.len > 0:
+        row = FolderRow(path: item.path, kind: item.info.kind, pair: partner,
+          outcome: foProblem, problem: gone)
+      elif item.info.problem.len > 0:
         row = FolderRow(path: item.path, kind: item.info.kind, pair: partner,
           outcome: foProblem, problem: item.info.problem)
       elif item.info.kind notin {sgDat, sgVib}:
@@ -383,8 +391,9 @@ proc folderQcWork*(ask: VibQcAsk; weights: VibJobWeights; files: seq[FolderListe
   ## `weights` are compared with a `.vib` header and never applied. `choice`
   ## is the open choice; the default is the file's own. `reference.path`,
   ## when set, is read once and used instead of the recorded pilot when the
-  ## sample interval agrees. One file is open at a time. The sink is set
-  ## before this returns.
+  ## sample interval agrees. A reference that cannot be read, or that has no
+  ## samples, is a problem on every row and no file is judged. One file is
+  ## open at a time. The sink is set before this returns.
   result = proc (ctx: JobContext) {.gcsafe.} =
     {.cast(gcsafe).}:
       runFolder(ctx, ask, weights, files, sink, choice, reference)

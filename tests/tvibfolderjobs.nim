@@ -5,15 +5,16 @@
 ##
 ## Seen to fail: with ground-force polarity set to reversed,
 ## `rolesStayRecorded` names it. With the ground-force samples negated
-## before the verdict, `sameAsAlone` names it (fail / pass).
+## before the verdict, `sameAsAlone` names it (fail / pass). With a missing
+## reference still judged against the recorded pilot, `missingReference`
+## names a judged row.
 
 import std/[math, os, strutils]
 import parseSEG
 import parseSEG/common/diagnostics
 import parseSSDAT
-import viewSEG/core/[analysis, jobs, project, session, settings, signatures, sigtypes, sweepinfo,
-  threads,
-  vibanalysis, vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
+import viewSEG/core/[analysis, jobs, project, references, session, settings, signatures, sigtypes,
+  sweepinfo, threads, vibanalysis, vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
 import utils/[sigfiles, waiting]
 
 const Samples = 6000
@@ -53,11 +54,13 @@ proc reversedFile(dir, name: string): string =
   s.data[dcBaseplate] = newSeq[int32](Samples)
   datFile(dir, name, s)
 
-proc runJob(files: seq[FolderListed]; ask: VibQcAsk; weights = VibJobWeights()):
+proc runJob(files: seq[FolderListed]; ask: VibQcAsk; weights = VibJobWeights();
+    reference = FolderReference()):
     tuple[st: JobState; table: FolderTable; error: string] =
   let jobs = initJobs()
   let sink = FolderQcSink()
-  let id = jobs.submit(folderQcSpec(files), folderQcWork(ask, weights, files, sink))
+  let id = jobs.submit(folderQcSpec(files, reference.path),
+    folderQcWork(ask, weights, files, sink, reference = reference))
   doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
     "the folder job did not finish: " & $jobs.state(id)
   let info = jobs.info(id).get
@@ -179,6 +182,57 @@ proc main*() =
     doAssert "reversed for the analysis" notin row.polarity, row.polarity
     doAssert phaseOf(row) > 90, $phaseOf(row)
     doAssert bytesOf(rev) == before, "the job wrote the signature file"
+
+  block missingReference:
+    ## A reference that cannot be read is a problem on every row, not a banner
+    ## the files then ignore. Seen to fail when the load's words were added once
+    ## and each file was judged against its own pilot.
+    let sentence = "the reference \"pilot\" is no longer in the archive " &
+      "(the reference file is missing)"
+    let gone = FolderReference(path: dir / "missing-ref.sgy", name: "pilot")
+    let got = runJob(@[listed(plain), listed(other)], ask, reference = gone)
+    doAssert got.st == jsDone, got.error
+    doAssert got.table.rows.len == 2, $got.table.rows.len
+    for row in got.table.rows:
+      doAssert row.outcome == foProblem, $row.outcome & " " & row.problem
+      doAssert row.problem == sentence, row.problem
+      doAssert row.sentence.len == 0 and row.verdict == qvNotJudged
+      doAssert row.measures.len == 0
+    doAssert sentence notin got.table.problems
+    let junk = dir / "junk-ref.sgy"
+    writeFile(junk, "not a reference")
+    let unread = runJob(@[listed(plain)], ask,
+      reference = FolderReference(path: junk, name: "kept"))
+    doAssert unread.st == jsDone, unread.error
+    let unreadRow = rowOf(unread.table, plain)
+    doAssert unreadRow.outcome == foProblem
+    doAssert unreadRow.problem == "the reference \"kept\" is no longer in the archive " &
+      "(the reference file is missing)", unreadRow.problem
+    markWorkerThread()
+    let emptyPath = dir / "empty-ref.sgy"
+    var one = newSeq[float32](1)
+    one[0] = 1
+    writeReferenceFile(emptyPath, "bare", 1000.0, one, ReferenceOrigin())
+    var raw = readFile(emptyPath)
+    # a trace of no samples: the writer refuses to author one, so the sample
+    # count in the binary header and the trace header is set to 0 and the
+    # sample is dropped
+    doAssert raw.len > 3200 + 400 + 240
+    raw[3220] = '\0'
+    raw[3221] = '\0'
+    let traceAt = 3200 + 400
+    raw[traceAt + 114] = '\0'
+    raw[traceAt + 115] = '\0'
+    raw.setLen(traceAt + 240)
+    writeFile(emptyPath, raw)
+    let empty = runJob(@[listed(plain)], ask,
+      reference = FolderReference(path: emptyPath, name: "bare"))
+    doAssert empty.st == jsDone, empty.error
+    let emptyRow = rowOf(empty.table, plain)
+    doAssert emptyRow.outcome == foProblem, $emptyRow.outcome & " " & emptyRow.problem
+    doAssert emptyRow.problem == "the reference \"bare\" is no longer in the archive " &
+      "(the reference file is missing)", emptyRow.problem
+    doAssert emptyRow.measures.len == 0
 
   block corruptDoesNotStop:
     let got = runJob(@[listed(bad), listed(other)], ask)
