@@ -29,6 +29,7 @@ Land 2026/                  the project folder: this is what is opened
     survey.bin              the survey as imported: what parseSEG read from the copies
   cache/                    what can be made again; safe to delete
   vendormaps/               the project's vendor header maps (*.nif), with a note and the guide to writing one
+  shotlogs/                 copies of shot logs imported; the document keeps the name and the map
   owner.nif                 who has the project open (a note; the lock is below)
   .lock                     the lock between programs, held while the project is open
 ```
@@ -56,6 +57,13 @@ Land 2026/                  the project folder: this is what is opened
   every edit made goes there and nothing changes in the program's own store.
 - **`survey/files/`** holds copies of the survey files imported, so a project handed over
   carries its survey. Each copy keeps its original's path and identity (below).
+- **`shotlogs/`** holds copies of shot logs imported into the project. The document
+  names each one (`shotLogs`: a short name, the copy's file name, and the column map).
+  The text is the copy, never a node of `project.nif`, and the file it was imported
+  from is not changed. A document without the node has none. A field inside a log
+  that this version does not know is kept and written back. A role that is not one,
+  a map with more columns than this version keeps, or a file name that is not a
+  plain name in `shotlogs/` is said and left out.
 - **`survey/survey.bin`** is what parseSEG read from the copies, in a compact binary form
   (below). Opening the project reads it instead of the survey files.
 - **`cache/`** holds only what the program can make again from the data.

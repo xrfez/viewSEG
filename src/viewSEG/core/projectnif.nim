@@ -29,6 +29,14 @@
 ## was. A document of a later version than `ProjectVersion` reads as far as
 ## it can; the program then opens the project read-only.
 ##
+## A shot log imported into the project is
+## `(shotLogs (log (name ...) (file ...) (map (delimiter comma) (header true)
+## (clock UTC) (unit metres) (role "file number") ...)))`. `file` is a plain
+## file name; the text is the copy under `shotlogs/`, not a node here. Absent
+## means none. A field this version does not know is kept and written back.
+## A role that is not one, a map with more than `MaxShotLogColumns` columns,
+## or a file that is not a plain name is said and left out.
+##
 ## A station moved during a deployment is
 ## `(stationMoves (move (line ...) (point ...) (index ...) (x ...) (y ...)))`.
 ## `fromTime` (the same absolute time as `TraceKeys.time`) and `elev` are
@@ -39,13 +47,16 @@
 import std/[math, options, strutils, times]
 import parseSEG
 import analysis, breakmodel, identity, join, nif, processing, project, settings,
-  settingsnif, stationmoves, vendormaps, vibprofile
+  settingsnif, shotlog, stationmoves, vendormaps, vibprofile
 
 const
   KindNames: array[JoinFileKind, string] = ["sps", "p1", "csv"]
   RoleNames: array[CsvRole, string] = ["column", "sources", "receivers"]
   UnitNames: array[SurveyUnit, string] = ["notGiven", "metres", "feet", "usFeet", "degrees",
     "arcSeconds", "dms"]
+  DelimNames: array[Delimiter, string] = ["comma", "tab", "semicolon", "spaces"]
+  ClockNames: array[TimeClock, string] = ["UTC", "GPS"]
+  LengthNames: array[shotlog.LengthUnit, string] = ["metres", "feet"]
 
 proc timeText(t: Time): string = t.utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
 
@@ -140,6 +151,29 @@ proc writeVibProfile(w: var NifWriter; p: VibQcProfile) =
   for n in p.later: w.add n
   w.close
 
+proc writeShotMap(w: var NifWriter; s: StoredShotLog) =
+  ## How to read the log. A field this version does not know is written back.
+  w.open "map"
+  w.choice("delimiter", $s.map.delimiter)
+  if s.map.skipLines != 0: w.value("skipLines", int64(s.map.skipLines))
+  w.value("header", s.map.hasHeader)
+  w.choice("clock", $s.map.clock)
+  w.choice("unit", $s.map.lengthUnit)
+  if s.map.dateTimePattern.len > 0: w.value("pattern", s.map.dateTimePattern)
+  for t in s.map.sentinels: w.value("sentinel", t)
+  for role in s.map.roles: w.value("role", $role)
+  for n in s.mapLater: w.add n
+  w.close
+
+proc writeShotLog(w: var NifWriter; s: StoredShotLog) =
+  ## One stored shot log: its name, the copy's file name, and its map.
+  w.open "log"
+  w.value("name", s.name)
+  w.value("file", s.file)
+  w.writeShotMap s
+  for n in s.later: w.add n
+  w.close
+
 proc writeVibWeights(w: var NifWriter; m: VibJobWeights) =
   ## The job's vibrator weights, in kilograms. One not set is left out; a field
   ## this version does not know is written back. Not a file header's weights.
@@ -230,6 +264,11 @@ proc projectDocument*(d: ProjectDoc): string =
   if d.hasProcessing: w.writeProcessing(d.processing)
   if d.hasPresets: w.writeDisplayPresets(d.displayPresets)
   if d.hasBreakModel: w.writeBreakModel(d.breakModel)
+  if d.shotLogs.len > 0 or d.shotLogsLater.len > 0:
+    w.open "shotLogs"
+    for s in d.shotLogs: w.writeShotLog s
+    for n in d.shotLogsLater: w.add n
+    w.close
   for n in d.later: w.add n
   w.close
   w.finish
@@ -545,6 +584,89 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "topHz": r.number(c, TopHzRange, d.vibProfile.topHz)
       else: d.vibProfile.later.add c
 
+proc columnRole(name: string): tuple[ok: bool; role: ColumnRole] =
+  for role in ColumnRole:
+    if $role == name: return (true, role)
+  (false, crText)
+
+proc readShotMap(r: var Reading; n: NifNode; s: var StoredShotLog; bad, tooMany: var bool) =
+  var roles = 0
+  for c in n.kids:
+    if c.kind != nkTree:
+      r.problem(c, "(map) holds trees")
+      continue
+    case c.tag
+    of "delimiter": r.choice(c, DelimNames, s.map.delimiter)
+    of "skipLines":
+      var v = 0
+      r.count(c, v)
+      if v > MaxShotLogSkip:
+        r.problem(c, "(skipLines) is too large; it is left out")
+      else: s.map.skipLines = v
+    of "header": r.flag(c, s.map.hasHeader)
+    of "clock": r.choice(c, ClockNames, s.map.clock)
+    of "unit": r.choice(c, LengthNames, s.map.lengthUnit)
+    of "pattern": r.text(c, s.map.dateTimePattern)
+    of "sentinel":
+      if s.map.sentinels.len >= MaxShotLogSentinels:
+        r.problem(c, "a shot log keeps at most " & $MaxShotLogSentinels &
+          " sentinels; the rest are left out")
+      else:
+        var t = ""
+        r.text(c, t)
+        if t.len > 0: s.map.sentinels.add t
+    of "role":
+      inc roles
+      if roles > MaxShotLogColumns:
+        tooMany = true
+      elif c.kids.len != 1 or c.kids[0].kind notin {nkString, nkIdent}:
+        r.problem(c, "(role) needs a role name; the log is left out")
+        bad = true
+      else:
+        let found = columnRole(c.kids[0].text)
+        if not found.ok:
+          r.problem(c, "\"" & c.kids[0].text & "\" is not a column role; the log is left out")
+          bad = true
+        elif not bad and not tooMany: s.map.roles.add found.role
+    else: s.mapLater.add c
+
+proc shotLog(r: var Reading; n: NifNode; d: var ProjectDoc) =
+  ## One log. A role that is not one, too many columns, or a file that is
+  ## not a plain name: said, and the log is left out.
+  if d.shotLogs.len >= MaxShotLogs:
+    r.problem(n, "a project keeps at most " & $MaxShotLogs & " shot logs; this one is left out")
+    return
+  var s = StoredShotLog()
+  var bad = false
+  var tooMany = false
+  for k in n.kids:
+    if k.kind != nkTree:
+      r.problem(k, "(log) holds trees")
+      continue
+    case k.tag
+    of "name": r.text(k, s.name)
+    of "file": r.text(k, s.file)
+    of "map": r.readShotMap(k, s, bad, tooMany)
+    else: s.later.add k
+  if tooMany:
+    r.problem(n, "a shot log keeps at most " & $MaxShotLogColumns &
+      " columns; this one is left out")
+    return
+  if bad: return
+  if s.name.len == 0 or s.name.len > MaxShotLogName:
+    r.problem(n, "a shot log's name cannot be used; it is left out")
+    return
+  if not s.file.isShotLogFile:
+    r.problem(n, "a shot log's file is not a file in shotlogs; it is left out")
+    return
+  d.shotLogs.add s
+
+proc shotLogs(r: var Reading; n: NifNode; d: var ProjectDoc) =
+  for c in n.kids:
+    if c.isTree("log"): r.shotLog(c, d)
+    elif c.kind == nkTree: d.shotLogsLater.add c
+    else: r.problem(c, "(shotLogs) holds logs")
+
 proc vibWeights(r: var Reading; n: NifNode; d: var ProjectDoc) =
   ## The job's weights. A field this version does not know is kept and written back.
   for c in n.kids:
@@ -610,6 +732,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
         r.text(c, name)
         result.vendorChoice = if name.len == 0: VendorChoice(mode: vmNone)
                               else: VendorChoice(mode: vmNamed, name: name)
+      of "shotLogs": r.shotLogs(c, result)
       else: result.later.add c
   if result.version == 0:
     r.problem(doc[root], "(project) gives no (version); read as version " & $ProjectVersion)

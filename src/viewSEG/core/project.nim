@@ -14,12 +14,13 @@
 ##   survey/survey.bin    the survey as imported (`core/surveystore`)
 ##   cache/               what can be made again
 ##   vendormaps/          the project's vendor header maps (`core/vendormaps`)
+##   shotlogs/            copies of shot logs imported (`core/shotlog`)
 ##   owner.nif, .lock     who has the project open, and the lock between programs
 ## ```
 
 import std/[os, strutils, times]
 import parseSEG
-import breakmodel, displaypresets, filesystem, join, nif, processing, stationmoves,
+import breakmodel, displaypresets, filesystem, join, nif, processing, shotlog, stationmoves,
   vendormaps, vibprofile
 
 const
@@ -29,11 +30,17 @@ const
   ProjectStoreFolder* = "files"          ## the store of what is remembered about files
   SurveyFolder* = "survey"
   SurveyCopies* = "survey/files"         ## the survey files copied into the project
+  ShotLogsFolder* = "shotlogs"           ## copies of shot logs imported into the project
   SurveyStoreName* = "survey/survey.bin" ## the survey as imported
   CacheFolder* = "cache"
   LockName* = ".lock"                    ## the lock between programs
   OwnerName* = "owner.nif"               ## who holds the lock
   MaxProjectData* = 64                   ## data folders a project keeps, at most
+  MaxShotLogs* = 64                      ## shot logs a project keeps, at most
+  MaxShotLogColumns* = 256               ## columns a stored map keeps, at most
+  MaxShotLogSentinels* = 64              ## sentinels a stored map keeps, at most
+  MaxShotLogName* = 120                  ## a shot log's name, at most, in characters
+  MaxShotLogSkip* = 1_000_000            ## lines a stored map skips, at most
 
 type
   ProjectPath* = object
@@ -76,6 +83,18 @@ type
     reactionMassKg*: float64 = NaN
     later*: seq[NifNode]
       ## fields of the weights tree this version does not know, written back
+
+  StoredShotLog* = object
+    ## A shot log kept with the project: a short name, the copy's file name
+    ## under `shotlogs/`, and how to read it. The text is the copy, not a
+    ## node of the document.
+    name*: string
+    file*: string ## a plain file name; the copy is `shotlogs/` & file
+    map*: ShotLogMap
+    later*: seq[NifNode]
+      ## fields of the log this version does not know, written back
+    mapLater*: seq[NifNode]
+      ## fields of the map this version does not know, written back inside it
 
   StoreInfo* = object
     ## `survey.bin` as written: none while `bytes` is 0.
@@ -131,6 +150,10 @@ type
     vendorChoice*: VendorChoice
       ## the vendor map rule of the project's files (`core/vendormaps`); automatic when
       ## the document says nothing
+    shotLogs*: seq[StoredShotLog]
+      ## shot logs imported into the project; absent in an older document is none
+    shotLogsLater*: seq[NifNode]
+      ## children of `(shotLogs)` this version does not know, written back
     later*: seq[NifNode]
       ## what the document holds that this version does not know (a later
       ## version's), written back as it was
@@ -307,6 +330,21 @@ func displayName*(p: ProjectPath): string =
     chars = {DirSep, AltSep, '/'})
   result = s.extractFilename
   if result.len == 0: result = s
+
+func isShotLogFile*(name: string): bool =
+  ## Whether `name` can be a shot log's copy: a plain file name, not empty,
+  ## not `.` or `..`, and without a separator or a drive colon.
+  name.len > 0 and name.len <= MaxShotLogName and name notin [".", ".."] and
+    name.find({'/', '\\', ':'}) < 0
+
+func shotLogCopy*(name: string): string {.inline.} =
+  ## The copy of a shot log named `name`, relative to the project folder.
+  ShotLogsFolder & "/" & name
+
+func isShotLogCopy*(copy: string): bool =
+  ## `copy` is `shotlogs/<name>` with `<name>` a plain file name.
+  const Prefix = ShotLogsFolder & "/"
+  copy.startsWith(Prefix) and copy[Prefix.len .. ^1].isShotLogFile
 
 func copyName*(name: string; taken: openArray[string]): string =
   ## A name for the copy of a survey file named `name` that none of `taken`

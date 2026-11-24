@@ -22,7 +22,7 @@
 
 import std/[options, os, strutils, times]
 import parseSEG
-import viewSEG/core/[jobs, join, nif, processing, project, projectnif, surveystore]
+import viewSEG/core/[jobs, join, nif, processing, project, projectnif, shotlog, surveystore]
 import utils/[fixtures, waiting]
 
 func h(path: string): string =
@@ -77,6 +77,60 @@ proc main*() =
     problems.setLen 0
     discard readProject(text.replace("(size 4812733)", "(size big)"), "project.nif", problems)
     doAssert problems.len == 1 and "line" in problems[0], $problems
+
+  block shotLogs:
+    # A log's map is kept with the project; the text itself is not in the document.
+    var d = ProjectDoc(name: "Land 2026")
+    var m = initShotLogMap()
+    m.delimiter = dlSemicolon
+    m.skipLines = 2
+    m.hasHeader = false
+    m.roles = @[crFileNumber, crShotPoint, crDateTime]
+    m.clock = tcGps
+    m.dateTimePattern = "yyyy-mm-dd hh:mm:ss"
+    m.sentinels = @["-999.25"]
+    m.lengthUnit = luFeet
+    d.shotLogs = @[StoredShotLog(name: "morning", file: "morning.csv", map: m)]
+    let text = projectDocument(d)
+    doAssert "(shotLogs" in text and "(file \"morning.csv\")" in text, text
+    doAssert "shotlogs/" notin text, "the copy's folder is not written into the document: " & text
+    var problems: seq[string]
+    let back = readProject(text, "project.nif", problems)
+    doAssert problems.len == 0, $problems
+    doAssert back.shotLogs.len == 1, $back.shotLogs.len
+    doAssert back.shotLogs[0].name == "morning" and back.shotLogs[0].file == "morning.csv"
+    doAssert back.shotLogs[0].map == m, "the map did not come back"
+    # An older document has no node: none, and writing it does not add one.
+    let old = projectDocument(ProjectDoc(name: "old"))
+    doAssert "(shotLogs" notin old, old
+    problems.setLen 0
+    doAssert readProject(old, "project.nif", problems).shotLogs.len == 0 and problems.len == 0
+    # A field this version does not know is kept and written back.
+    let extra = text.replace("(file \"morning.csv\")",
+      "(file \"morning.csv\") (kept (n 1))")
+    let kept = readProject(extra, "project.nif", problems)
+    doAssert kept.shotLogs.len == 1 and kept.shotLogs[0].later.len == 1
+    doAssert "(kept" in projectDocument(kept), "a later version's part of a shot log is kept"
+    # Hostile: wrong arity, an unknown role, and a huge column count are said
+    # and left out. The rest of the document still reads.
+    proc hostile(body, words: string) =
+      problems.setLen 0
+      let doc = "(project (version 1) (name \"h\") (shotLogs " & body & "))"
+      let got = readProject(doc, "project.nif", problems)
+      doAssert got.shotLogs.len == 0, "a hostile shot log was stored: " & body
+      doAssert got.name == "h"
+      var said = false
+      for p in problems:
+        if words in p: said = true
+      doAssert said, "not said (" & words & "): " & $problems
+    hostile("(log)", "left out")
+    hostile("(log (name \"a\" \"b\") (file \"a.csv\"))", "string")
+    hostile("(log (name \"a\") (file \"a.csv\") (map (role \"not a role\")))", "not a column role")
+    var roles = ""
+    for i in 1 .. 10_000: roles.add " (role \"text\")"
+    hostile("(log (name \"a\") (file \"a.csv\") (map" & roles & "))", "left out")
+    # A copy that is not a plain file name is left out.
+    hostile("(log (name \"a\") (file \"shotlogs/../a.csv\"))", "left out")
 
   block places:
     let dir = h"/jobs/Land 2026"
