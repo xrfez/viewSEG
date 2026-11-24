@@ -6,7 +6,8 @@
 ##
 ## Seen to fail with a deliberate fault: with the entry marked unread by the watch taken out
 ## (`if not same: e.kindState = ksUnread`), "a changed file is not asked again"; with the size
-## and time of an answer not compared in `takeKinds`, "an answer for a changed file was kept".
+## and time of an answer not compared in `takeKinds`, "an answer for a changed file was kept"; with the kinds job on the background lane, "the
+## kinds are not read on the peeks lane".
 
 import std/[options, os, sequtils, times]
 import viewSEG/core/state {.all.}
@@ -41,6 +42,9 @@ proc main*() =
       doAssert st.kindOf(sliced) == some(rkReceiverSliced)
       doAssert st.kindOf(shot) == some(rkShotGather)
       doAssert st.sessions.len == 0, "reading the kinds opened a file"
+      let reading = st.jobs.list.filterIt(it.spec.title == "Read what the files are")
+      doAssert reading.len > 0 and reading.allIt(it.spec.lane == jlPeeks),
+        "the kinds are not read on the peeks lane: " & $reading.mapIt(it.spec.lane)
 
     block aChangedFileIsReadAgain:
       # the continuous file is written again with a late start: time sliced

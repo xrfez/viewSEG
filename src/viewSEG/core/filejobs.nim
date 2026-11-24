@@ -17,9 +17,9 @@
 ## says, so losing one costs only time; the seismic file itself is never
 ## written.
 
-import std/[algorithm, monotimes, options, os, strutils, times]
+import std/[algorithm, monotimes, os, strutils, times]
 import parseSEG
-import cutfile, filelist, filesystem, inbox, jobs, leapfile, log, recordingkind, recordingprobe,
+import cutfile, filelist, filesystem, inbox, jobs, leapfile, log, recordingprobe,
   session, sweepinfo, threads, vendormaps
 from project import ProjectFileName
 

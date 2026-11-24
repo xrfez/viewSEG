@@ -12,7 +12,7 @@
 ## to its end, or whose every receiver has its starts, has its answer.
 
 import parseSEG
-import ./[correlatejobs, filesystem, jobs, recordingkind, vendormaps]
+import ./[correlatejobs, filesystem, recordingkind]
 
 const
   ProbeFirstBytes* = 256 * 1024     ## the first prefix read

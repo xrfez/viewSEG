@@ -94,9 +94,9 @@ type
       ## share): a lane of their own, so that it holds neither a data file's
       ## hash nor the background work
     jlPeeks = "peeks"
-      ## a few bytes at the start of a file read for what its headers say
-      ## (a survey file's units): a lane of their own, so that a file on a
-      ## drive that does not answer holds no open and no import
+      ## a file's headers read for what they say (a survey file's units, the
+      ## kind of recording of each listed file): a lane of their own, so that
+      ## a file on a drive that does not answer holds no open and no import
 
   JobState* = enum
     jsQueued = "queued"

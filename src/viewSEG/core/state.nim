@@ -9100,7 +9100,10 @@ proc releaseSurvey(state: AppState; job: JobInfo) =
   state.batchSurvey.held.keepItIf(it.job != job.id)
 
 proc startKinds(state: var AppState) =
-  ## Starts a job on the background lane that reads the kind of recording of the listed seismic
+  ## Starts a job on the peeks lane (the file headers read for what they say, a lane of its own
+  ## so that it holds no record QC, first breaks or next-file preparation, and a drive that does
+  ## not answer holds nothing but this and the survey units) that reads the kind of recording
+  ## of the listed seismic
   ## files not read yet (`kindsWork`), unless one runs: it ends, and this runs again, so files
   ## listed or changed meanwhile are read too. A file being written waits until it is steady.
   if state.kindJob != NoJob: return
@@ -9110,7 +9113,7 @@ proc startKinds(state: var AppState) =
       asks.add WatchedFile(path: e.path, size: e.size, modified: e.modified)
   if asks.len > 0:
     state.kindJob = state.jobs.submit(JobSpec(title: "Read what the files are",
-      lane: jlBackground), kindsWork(state.files.gen, asks, currentVendors(),
+      lane: jlPeeks), kindsWork(state.files.gen, asks, currentVendors(),
       state.inbox.poster))
 
 proc onFinished(state: var AppState; job: JobInfo) =
