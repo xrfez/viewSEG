@@ -23,8 +23,8 @@
 ## change from one to the other).
 
 import std/[math, sequtils]
-import components, displaypresets, geometry, join, log, mapkinds, noisearea, panels, plotoptions,
-  readout, scales, spectra, tracetable, units
+import components, displaypresets, geometry, join, log, mapkinds, noisearea, outputrevision, panels,
+  plotoptions, readout, scales, spectra, tracetable, units
 
 export displaypresets, join, mapkinds, noisearea, plotoptions, readout, scales, spectra, units
 
@@ -180,6 +180,10 @@ type
     ## What the Slice by shot log window offers again.
     recordMs*: float64 = DefaultRecordMs ## the record length, in ms
 
+  OutputView* = object
+    ## What the Output window offers again.
+    revision*: OutputRevision ## the revision of the file written
+
   SpectrumOptions* = object
     ## How the spectrum windows show their spectra: each new FFT window as
     ## the last one changed, the live panel as it was left.
@@ -230,6 +234,7 @@ type
     headers*: HeadersView ## the Headers window's tabs and toggles
     shotLog*: ShotLogView ## the Shot log window's follow tick
     cutGather*: CutGatherView ## the Slice by shot log window's record length
+    output*: OutputView ## the Output window's revision
     hideKilled*: bool
       ## killed traces are left out of the plot (the traces beside them close
       ## up); off: drawn blank

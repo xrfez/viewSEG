@@ -290,6 +290,26 @@ proc main*() =
     doAssert readFile(plain) == plainBytes and readFile(edited) == editedBytes and
       readFile(segdCopy) == segdBytes
 
+  block revisionReachesEveryFile:
+    ## Seen to fail: with `revision` not passed on to each file's write, the
+    ## SEG-Y files read back as their own revisions, not 0.0.
+    let dest = dir / "revised"
+    for (format, choice, want) in [(ofSegy, orSegy0, "0.0"), (ofSegd, orSegd31, "3.1")]:
+      let ask = BatchAsk(root: srcRoot, items: items, destRoot: dest / $choice,
+        options: OutputOptions(format: format, revision: choice), mirrorFolders: true)
+      let got = runBatch(ask, store, @[])
+      if format == ofSegd:
+        # the SEG-D file in the folder is refused, the others are written
+        doAssert got.wrote.written == 2 and got.wrote.failed == 1,
+          "written " & $got.wrote.written & " failed " & $got.wrote.failed
+        doAssert "its own revision" in itemOf(got.wrote, "other" / "extra.sgd").why
+      else:
+        doAssert got.wrote.written == 3 and got.wrote.failed == 0, got.wrote.reason
+      for file in walkDirRec(dest / $choice):
+        var f = openSeismic(file, keys = false)
+        doAssert $f.summary.revision == want, file & " is " & $f.summary.revision
+        f.close()
+
   block flatClash:
     let dest = dir / "flat"
     let ask = BatchAsk(root: srcRoot, items: items, destRoot: dest, options: opts,

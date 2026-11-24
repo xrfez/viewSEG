@@ -47,6 +47,7 @@
 ##   (tableScope record))
 ##  (shotLog (followPlot false))
 ##  (cutGather (recordMs 10000.0))
+##  (output (revision same))
 ##  (hideKilled false)
 ##  (spectrum
 ##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
@@ -79,9 +80,8 @@
 ## making old files unreadable.
 
 import std/[math, strutils]
-import analysis, breakmodel, geometry, join, log, nif, noisearea, panels, plotoptions, readout,
-    scales, settings,
-  tracetable, units
+import analysis, breakmodel, geometry, join, log, nif, noisearea, outputrevision, panels,
+  plotoptions, readout, scales, settings, tracetable, units
 
 export nif
 
@@ -124,6 +124,8 @@ const
   SeverityNames: array[Severity, string] = ["info", "warning", "error", "fatal"]
   HeadersTabNames: array[HeadersTab, string] = ["summary", "fileHeaders", "trace", "traceTable"]
   TableScopeNames: array[TableScope, string] = ["record", "file"]
+  OutputRevisionNames: array[OutputRevision, string] = ["same", "segy0", "segy1", "segy20",
+    "segy21", "segd30", "segd31"]
   TraceTabNames: array[TraceTab, string] = ["header", "data"]
   HeaderColumnNames: array[HeaderColumn, string] = ["description", "name", "bytes", "offset"]
   SpectrumScaleNames: array[SpectrumScale, string] = ["db", "linear"]
@@ -152,7 +154,8 @@ func persistedNames*(): seq[seq[string]] =
     @TimeGainNames, @ScopeNames,
     @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
     @TraceTabNames, @HeaderColumnNames, @SpectrumScaleNames, @SpectrumTimeNames,
-    @PhasePictureNames, @PhaseAgainstNames, @PhaseShowNames, @TableScopeNames, @UnitNames]
+    @PhasePictureNames, @PhaseAgainstNames, @PhaseShowNames, @TableScopeNames, @UnitNames,
+    @OutputRevisionNames]
 
 # ----------------------------------------------------------------- writing --
 
@@ -509,6 +512,9 @@ proc settingsDocument*(s: Settings): string =
   w.close()
   w.open("cutGather")
   w.value("recordMs", s.cutGather.recordMs)
+  w.close()
+  w.open("output")
+  w.choice("revision", OutputRevisionNames[s.output.revision])
   w.close()
   w.value("hideKilled", s.hideKilled)
   w.open("spectrum")
@@ -1172,6 +1178,10 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
           if k.isTree("recordMs"): r.number(k, MinRecordMs, MaxRecordMs,
             result.cutGather.recordMs)
           else: r.unknown(k, "cutGather")
+      of "output":
+        for k in c.kids:
+          if k.isTree("revision"): r.choice(k, OutputRevisionNames, result.output.revision)
+          else: r.unknown(k, "output")
       of "hideKilled": r.flag(c, result.hideKilled)
       of "spectrum":
         for k in c.kids:

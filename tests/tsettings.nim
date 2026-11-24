@@ -29,7 +29,7 @@
 ## Runs alone: it bounds the time taking in an import holds a frame (25 ms).
 
 import std/[math, monotimes, os, random, sequtils, strutils, times]
-import viewSEG/core/[geometry, state]
+import viewSEG/core/[geometry, outputrevision, state]
 import utils/[fixtures, owntime, waiting]
 
 func has(log: MessageLog; part: string; severity = sevInfo): bool =
@@ -67,6 +67,7 @@ proc everyFieldSet(): Settings =
       asDisplayed: true, columns: {hcName, hcOffset}, tableFields: @["keys.offset",
       "trace.sourceX"], tableScope: tsFile),
     shotLog: ShotLogView(followPlot: true), cutGather: CutGatherView(recordMs: 2500.5),
+    output: OutputView(revision: orSegd31),
     hideKilled: true,
     spectrum: SpectrumOptions(window: SpectrumDisplay(scale: ssLinear, logFrequency: true,
       time: stVisible, raw: false, processed: false, response: false, phase: true,
@@ -257,6 +258,20 @@ proc main*() =
     let bad = readSettings("(settings (version 1) (cutGather (recordMs -5.0)))",
       "settings.nif", Settings(), problems)
     doAssert bad.cutGather.recordMs == 10_000.0 and problems.len == 1, $problems
+
+  block outputRevisionRemembered:
+    ## Seen to fail: with the revision not written, a Rev 2.0 choice read back
+    ## as "same" (`round trip`).
+    var problems: seq[string]
+    let old = readSettings("(settings (version 1) (hideKilled true))", "settings.nif",
+      Settings(), problems)
+    doAssert problems.len == 0 and old.output.revision == orSame, $problems
+    var top = Settings()
+    top.output.revision = orSegy20
+    doAssert roundTrip(top)[0].output.revision == orSegy20, "round trip"
+    let bad = readSettings("(settings (version 1) (output (revision segy99)))",
+      "settings.nif", Settings(), problems)
+    doAssert bad.output.revision == orSame and problems.len == 1, $problems
 
   block everyField:
     let s = everyFieldSet()

@@ -55,8 +55,10 @@ import std/[math, options, os, random, sets, strutils, tables, times]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
-import correlatejobs, edits, filesystem, jobs, panels, processing, reader, references, signatures,
-  sorting, vendormaps
+import correlatejobs, edits, filekinds, filesystem, jobs, outputrevision, panels, processing, reader,
+  references, signatures, sorting, vendormaps
+
+export outputrevision
 
 const
   TraceBlock = 64 ## traces read, then written, between two cancel checks
@@ -109,6 +111,10 @@ type
   OutputOptions* = object
     ## What to apply while writing one file. Display-only gain is never applied.
     format*: OutputFormat
+    revision*: OutputRevision
+      ## `orSame`: a file of the standard written keeps its own revision, any
+      ## other is written as SEG-Y 2.1 or SEG-D 3.0. Explicit: that revision,
+      ## where the way the file is written can honour it (see `refusedRevision`).
     applyReversals*: bool   ## reversed traces written reversed
     applyShifts*: bool
       ## Shifted traces are written shifted, same length, zeros where no sample exists.
@@ -144,6 +150,34 @@ type
     ## Filled when the job ends, including when it fails or is cancelled.
     ## Read it after the job is no longer running.
     result*: OutputResult
+
+const SegdLike = {fkSegd, fkDat, fkVib} ## written to SEG-D with their own revision
+
+func revisionChoices*(format: OutputFormat; sources: set[FileKind]): seq[OutputRevision] =
+  ## The revisions the window offers for `format`, written from files of the
+  ## `sources` standards (empty: not known): "same as the source" first, then
+  ## those every such source can be written as. A SEG-D file (a signature file
+  ## too) keeps its own revision, so a SEG-D output is explicit only when no
+  ## source is one.
+  result = @[orSame]
+  case format
+  of ofSegy: result.add SegyRevisions
+  of ofSegd:
+    if sources * SegdLike == {}: result.add SegdRevisions
+
+func refusedRevision*(format: OutputFormat; revision: OutputRevision;
+    source: FileKind): string =
+  ## "" when the write can honour `revision`; otherwise the sentence that says
+  ## why not. `source` is the standard of the file written.
+  if revision == orSame: ""
+  elif format == ofSegy and not revision.isSegy:
+    "SEG-D " & revision.revisionLabel & " does not apply to a SEG-Y output."
+  elif format == ofSegd and not revision.isSegd:
+    "SEG-Y " & revision.revisionLabel & " does not apply to a SEG-D output."
+  elif format == ofSegd and source in SegdLike:
+    "A SEG-D file is written with its own revision; " & revision.revisionLabel &
+      " cannot be chosen for it."
+  else: ""
 
 proc outputSpec*(source, dest: string): JobSpec =
   ## The job that writes `source` to `dest`: background, reading `source`,
@@ -615,6 +649,9 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let outKind = kindOf(opts.format)
       let srcKind = file[].kind
       let segdOut = outKind == skSegd
+      let revisionWhy = refusedRevision(opts.format, opts.revision,
+        if signature.isSignature: fkDat else: fileKind(srcKind))
+      if revisionWhy.len > 0: abort(sink, dest, part, claimed, revisionWhy, false)
       if signature.isSignature and segdOut and not changesTraces(opts):
         # `index.joined` is set only when a join changed the keys, the same
         # fact a finished join keeps once positions were filled in.
@@ -638,6 +675,10 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         return
       if srcKind notin {skSegy, skSegd, skSeg2}:
         abort(sink, dest, part, claimed, "The file is not SEG-Y, SEG-D or SEG-2.", false)
+      let segyRev =
+        if opts.revision.isSegy and srcKind == skSegy:
+          some(SegyRevision(major: opts.revision.major, minor: opts.revision.minor))
+        else: none(SegyRevision)
       let byEntry = srcKind == skSegd
       let splitRecords = outKind == skSegd
       if not file[].hasKeys and (opts.sortKeys.len > 0 or (splitRecords and not byEntry)):
@@ -774,9 +815,9 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           if correlating and segdOut:
             w = openSeismicWriter(part, file[], segdFormat = tf8058)
           elif correlating:
-            w = openSeismicWriter(part, file[], segyFormat = st5)
+            w = openSeismicWriter(part, file[], segyFormat = st5, segyRevision = segyRev)
           else:
-            w = openSeismicWriter(part, like = file[])
+            w = openSeismicWriter(part, like = file[], segyRevision = segyRev)
         elif segdOut:
           var count = int(file[].traceEntry(head).numSamples)
           if correlating: count = listen
@@ -789,12 +830,17 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
                   "SEG-D output needs one sample count; this file has more than one.", false)
           var o = SegdOutputOptions(sampleIntervalUs: file[].sampleIntervalUs(head),
             numSamples: count)
+          if opts.revision.isSegd:
+            o.revision = SegdRevision(major: opts.revision.major, minor: opts.revision.minor)
           if correlating: o.sampleIntervalUs = outUs
           let t0 = file[].traceKeys(head).time
           if not t0.isNaN: o.time = t0
           w = openSeismicWriter(part, o)
         else:
-          w = openSeismicWriter(part, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+          var o = SegyOutputOptions(traceSorting: 1, measurementSystem: 1)
+          if opts.revision.isSegy:
+            o.revision = SegyRevision(major: opts.revision.major, minor: opts.revision.minor)
+          w = openSeismicWriter(part, o)
         var readLog: DiagLog
         template writeOne(t: int) =
           readLog = DiagLog()
@@ -941,6 +987,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           let sentence = positionSentence(writtenPositions(file[], edits, opts.dropKilled), gaps)
           if sentence.len > 0: lines.add sentence
         for d in log: lines.add($d)
+        for d in w.revisionNotes: lines.add($d)
         if correlating:
           # The job's notes read only the index and the keys, so a file cut
           # after its traces were read keeps them. The binary header's note

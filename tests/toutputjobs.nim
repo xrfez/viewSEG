@@ -20,14 +20,14 @@
 ## -0.15360254 vs -0.08667881", and shifted it by 2 samples, not 4: "shift:
 ## sample 3 0.46603155 vs 0.0".
 
-import std/[math, os, sequtils, strutils]
+import std/[math, os, sequtils, strutils, tables]
 when defined(windows):
   from std/winlean import nil
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
-import viewSEG/core/[edits, jobs, outputjobs, panels, processing, sorting, state]
+import viewSEG/core/[edits, filekinds, jobs, outputjobs, panels, processing, sorting, state]
 import utils/[faultyfs, sigfiles, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
@@ -148,6 +148,29 @@ proc writeAuxFirstSegd(path: string; auxUs: int) =
   bytes[at + 1] = chr((auxUs shr 8) and 0xFF)
   bytes[at + 2] = chr(auxUs and 0xFF)
   writeFile(path, bytes)
+
+proc writeSynthetic(path: string; segdOut: bool; rev: SegyRevision) =
+  ## Three live traces of 120 samples, 2 ms: a SEG-Y file of revision `rev`, or
+  ## a SEG-D one (3.0) when `segdOut`.
+  var w =
+    if segdOut: openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000.0,
+      numSamples: 120, time: 1_700_000_000.0))
+    else: openSeismicWriter(path, SegyOutputOptions(revision: rev, traceSorting: 1,
+      measurementSystem: 1))
+  for i in 0 .. 2:
+    var buf = newSeq[float32](120)
+    for j in 0 ..< buf.len: buf[j] = float32(sin(float64(j + i) * 0.3))
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs) = (7.0, float64(i + 1), 0.0, 2000.0)
+    k.time = 1_700_000_000.0
+    k.status = tsLive
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "the synthetic file did not close"
+
+proc revisionOf(path: string): string =
+  var f = openSeismic(path, keys = false)
+  result = $f.summary.revision
+  f.close()
 
 proc main*() =
   install()
@@ -712,6 +735,69 @@ proc main*() =
         left = true
     doAssert not left, "cancel left the part file"
     st.shutdown()
+
+  block revisionChoice:
+    ## Seen to fail: with the revision left out of the writers, "SEG-Y rev 0"
+    ## read back as 1.0 (`revision of rev1-to-0`), the SEG-D 3.1 output as 3.0,
+    ## the refusal never came ("an explicit SEG-D revision for a SEG-D source
+    ## was written"), and a Rev 2.1 source written as Rev 0 listed no notes.
+    createDir(dir / "revsrc")
+    let one = dir / "revsrc" / "rev1.sgy"
+    let two = dir / "revsrc" / "rev21.sgy"
+    let seg = dir / "revsrc" / "rev3.sgd"
+    writeSynthetic(one, false, SegyRevision(major: 1, minor: 0))
+    writeSynthetic(two, false, SegyRevision(major: 2, minor: 1))
+    writeSynthetic(seg, true, SegyRevision())
+    doAssert revisionOf(one) == "1.0" and revisionOf(two) == "2.1"
+    var notes = initTable[string, seq[string]]()
+    for (source, name) in [(one, "rev1"), (two, "rev21"), (seg, "rev3")]:
+      for choice in @[orSame, orSegy0, orSegy1, orSegy20, orSegy21]:
+        var src = openSeismic(source, keys = true)
+        let dest = dir / (name & "-to-" & $choice & ".sgy")
+        let got = runJob(src, source, dest, OutputOptions(format: ofSegy, revision: choice),
+          FileEdits(), @[source])
+        doAssert got.st == jsDone and got.wrote.ok, name & " " & $choice & " " & got.wrote.reason
+        let want =
+          if choice == orSame: (if name == "rev1": "1.0" elif name == "rev21": "2.1" else: "2.1")
+          else: $choice.major & "." & $choice.minor
+        doAssert revisionOf(dest) == want,
+          "revision of " & name & "-to-" & $choice & " is " & revisionOf(dest) & ", not " & want
+        notes[name & $choice] = got.wrote.lines
+        src.close()
+    doAssert readFile(dir / "rev1-to-same.sgy") == readFile(dir / "rev1-to-segy1.sgy"),
+      "'same' differs from the source's own revision chosen"
+    doAssert notes["rev21segy0"].len > notes["rev21same"].len,
+      "a Rev 2.1 file written as Rev 0 listed no notes: " & $notes["rev21segy0"]
+    # SEG-Y source or SEG-D source, written as SEG-D
+    for choice in [orSame, orSegd30, orSegd31]:
+      var src = openSeismic(one, keys = true)
+      let dest = dir / ("rev1-to-" & $choice & ".sgd")
+      let got = runJob(src, one, dest, OutputOptions(format: ofSegd, revision: choice),
+        FileEdits(), @[one])
+      doAssert got.st == jsDone and got.wrote.ok, $choice & " " & got.wrote.reason
+      let want = if choice == orSegd31: "3.1" else: "3.0"
+      doAssert revisionOf(dest) == want, "SEG-D " & $choice & " read back as " & revisionOf(dest)
+      src.close()
+    block explicitSegdForSegd:
+      var src = openSeismic(seg, keys = true)
+      let dest = dir / "segd-explicit.sgd"
+      let got = runJob(src, seg, dest, OutputOptions(format: ofSegd, revision: orSegd31),
+        FileEdits(), @[seg])
+      doAssert not got.wrote.ok and "its own revision" in got.wrote.reason,
+        "an explicit SEG-D revision for a SEG-D source was written: " & got.wrote.reason
+      doAssert not fileExists(dest), "the refused write left a file"
+      src.close()
+    block wrongStandard:
+      var src = openSeismic(one, keys = true)
+      let dest = dir / "wrong.sgy"
+      let got = runJob(src, one, dest, OutputOptions(format: ofSegy, revision: orSegd30),
+        FileEdits(), @[one])
+      doAssert not got.wrote.ok and "does not apply" in got.wrote.reason, got.wrote.reason
+      src.close()
+    doAssert revisionChoices(ofSegy, {fkSegy}) == @[orSame, orSegy0, orSegy1, orSegy20, orSegy21]
+    doAssert revisionChoices(ofSegd, {fkSegy}) == @[orSame, orSegd30, orSegd31]
+    doAssert revisionChoices(ofSegd, {fkSegy, fkSegd}) == @[orSame]
+    doAssert revisionChoices(ofSegd, {fkDat}) == @[orSame]
 
   doAssert readFile(segy) == srcBytes and readFile(segd) == sgdBytes
   dropDirLink(dir / "linked-folder")
