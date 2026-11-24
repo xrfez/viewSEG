@@ -3,10 +3,13 @@
 ## file is unread and the scan goes on. A cancel leaves the sink empty.
 ##
 ## Seen to fail: with header-dead not recorded, `findings_from_samples`
-## rejected a dead station whose bad count was 0.
+## rejected a dead station whose bad count was 0. With a chunk measured at
+## the first trace's interval, `each_interval_measured_alone` rejected a
+## 2000 us trace that was spiky only at 4000 us.
 
 import std/[os, strutils, tables]
 import parseSEG
+import processSEG/qc/amplitude
 import viewSEG/core/[edits, jobs, qualityjobs, qualityreport]
 import utils/waiting
 
@@ -71,6 +74,51 @@ proc nanSamples(): seq[float32] =
   for i in 0 ..< 32:
     result[i] = if i mod 2 == 0: float32(i + 1) else: -float32(i + 1)
   result[7] = NaN
+
+proc bumped(): seq[float32] =
+  ## Spiky at 4 ms, not at 2 ms: a bump in a quiet gap between alternating samples.
+  let n = 120
+  let mid = n div 2
+  result = newSeq[float32](n)
+  for i in 0 ..< n: result[i] = if i mod 2 == 0: 2 else: -2
+  for i in mid - 8 .. mid + 8: result[i] = 0
+  result[mid] = 1
+
+proc quiet(): seq[float32] =
+  result = newSeq[float32](120)
+  for i in 0 ..< result.len: result[i] = if i mod 2 == 0: 1 else: -1
+
+proc seismos(path: string; traces: openArray[tuple[line, point: float64;
+    intervalUs: float64; samples: seq[float32]]]) =
+  var w = openSeismicWriter(path, SegyOutputOptions())
+  for i, t in traces:
+    var k = initTraceKeys()
+    k.record = float64(i + 1)
+    k.channel = float64(i + 1)
+    k.srcLine = 1
+    k.srcPoint = 1
+    k.srcIndex = 1
+    k.rcvLine = t.line
+    k.rcvPoint = t.point
+    k.rcvIndex = 1
+    k.intervalUs = t.intervalUs
+    k.component = 1
+    k.status = tsLive
+    w.writeTrace(k, t.samples)
+  doAssert w.close().len == 0, "file was not written: " & path
+
+proc matchesAlone(seen, killed, bad: int; counts: array[Finding, int];
+    samples: openArray[float32]; dtMs: float64) =
+  let want = findingsOf(traceAmplitude(samples, dtMs).flags, false)
+  doAssert seen == 1 and killed == 0, $seen & " killed " & $killed
+  doAssert bad == ord(want.len > 0), $bad & " want " & $want
+  for q in Finding:
+    doAssert counts[q] == ord(q in want), $q & " " & $counts[q] & " want " & $want
+
+proc recordAt(rows: openArray[RecordRow]; file: string; record: float64): RecordRow =
+  for r in rows:
+    if r.file == file and r.record == record: return r
+  doAssert false, "no record " & $record & " in " & file
 
 proc stationAt(rows: openArray[StationRow]; line, point: float64; component: uint8): StationRow =
   for r in rows:
@@ -228,6 +276,23 @@ proc main*() =
     doAssert lane.state(id) == jsCancelled, $lane.state(id) & " " & lane.info(id).get.error
     doAssert sink.result.report.totals.traces == 0
     doAssert sink.result.unread.len == 0
+
+  block each_interval_measured_alone:
+    let slow = quiet()
+    let fast = bumped()
+    doAssert traceAmplitude(fast, 2.0).flags != traceAmplitude(fast, 4.0).flags
+    let path = dir / "intervals.sgy"
+    seismos(path, @[
+      (line: 70.0, point: 1.0, intervalUs: 4000.0, samples: slow),
+      (line: 70.0, point: 2.0, intervalUs: 2000.0, samples: fast)])
+    let got = run(@[path], none)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    doAssert got.sink.result.ok and got.sink.result.unread.len == 0, $got.sink.result.unread
+    let report = got.sink.result.report
+    let first = recordAt(report.records, path, 1)
+    let second = recordAt(report.records, path, 2)
+    matchesAlone(first.seen, first.killed, first.bad, first.counts, slow, 4.0)
+    matchesAlone(second.seen, second.killed, second.bad, second.counts, fast, 2.0)
 
 when isMainModule:
   main()

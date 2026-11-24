@@ -4,8 +4,9 @@
 ## The caller lists the paths and the per-file edits. A killed trace is
 ## counted as killed, not as bad, and is not measured. An auxiliary trace
 ## is not a note. Header-dead is that finding only. Samples are read in
-## chunks of 512 traces, through the file-system layer, and each file is
-## closed before the next opens. A path already scanned (compared
+## chunks of 512 traces, through the file-system layer, and each run of
+## one sample interval is measured at that interval. Each file is closed
+## before the next opens. A path already scanned (compared
 ## normalised) is not scanned again and is not unread. A file that cannot
 ## be opened, or that is not seismic, is one unread row and the scan goes
 ## on. A cancel leaves the sink untouched.
@@ -15,7 +16,7 @@
 
 import std/[algorithm, os, sets, tables]
 import parseSEG
-import processSEG/core/[types, workspace]
+import processSEG/core/[rows, types, workspace]
 import processSEG/qc/amplitude
 import components, edits, filejobs, filesystem, jobs, qualityreport, session, threads
 
@@ -83,6 +84,9 @@ proc noteTrace(b: var QualityBuild; path: string; k: TraceKeys; killed: bool;
   b.addTrace(TraceNote(file: path, record: k.record, line: k.rcvLine, point: k.rcvPoint,
     index: k.rcvIndex, component: componentOf(k), killed: killed, findings: findings))
 
+func intervalMs(us: float64): float64 =
+  if us > 0 and us < Inf: us / 1000.0 else: 1.0
+
 proc failedRows(log: DiagLog; part: Slice[int]): seq[int] =
   for d in log:
     if d.loc.trace in part:
@@ -116,13 +120,22 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
         {.cast(gcsafe).}:
           let samples = f[].readTraces(part, 0 ..< cols, log)
           failed = failedRows(log, part)
-          let us = f[].index.keys[part.a].intervalUs
-          let dt = if us > 0 and us < Inf: us / 1000.0 else: 1.0
-          let meta = initChunkMeta(f[].rowsOf(part), dt, 0, failed)
-          amps.setLen(part.b - part.a + 1)
           var ws = initWorkspace()
           ws.reserve(traceAmplitudeWorkspace(cols))
-          traceAmplitudeInto(samples, meta, AmplitudeParams(), amps, ws)
+          let read = rowBlock(samples)
+          amps.setLen(part.b - part.a + 1)
+          var runAmps: seq[TraceAmplitude] = @[]
+          for run in f[].uniformRuns(part):
+            let rows = (run.a - part.a) .. (run.b - part.a)
+            var runFailed: seq[int] = @[]
+            for row in failed:
+              if row >= rows.a and row <= rows.b: runFailed.add row - rows.a
+            let meta = initChunkMeta(f[].rowsOf(run),
+              intervalMs(f[].index.keys[run.a].intervalUs), 0, runFailed)
+            let piece = read.sub(rows)
+            runAmps.setLen piece.len
+            traceAmplitudeInto(piece, meta, AmplitudeParams(), runAmps, ws)
+            for row, a in runAmps: amps[rows.a + row] = a
         for row in 0 ..< amps.len:
           let t = part.a + row
           let flags = if t in killed or f[].index.keys[t].status == tsDead: {} else: amps[row].flags
