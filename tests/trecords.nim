@@ -88,8 +88,11 @@ proc main*() =
       block fromTheSurvey:
         let rows = st.sessions[0].records
         doAssert st.sessions[0].checkedAgainst == "survey.x"
+        # this file's traces name no source line: a record is never matched to an X
+        # record by its record number alone, so nothing is planned for it and its
+        # missing traces stay counted against the file's own declaration
         for k, r in rows:
-          doAssert r.planned == Channels and r.missingSource == msSurvey, $r
+          doAssert r.planned == -1 and r.missingSource == msFile, $r
           doAssert r.missing == (if k == PatchyShort: 5 else: 0), $r
       st.apply Command(kind: ckUnloadSurvey, layer: st.survey.layers[^1].id)
       doAssert st.sessions[0].checkedAgainst == "" and
