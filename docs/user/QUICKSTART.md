@@ -1363,12 +1363,50 @@ open, the window names the project.
 
 The top line gives the file name, how many rows and columns, and how many problems the
 reader found. **Columns...** shows how the table was read: the delimiter, lines to skip,
-whether the first row is a header, whether split times and date-time text are UTC or GPS,
-the date-time pattern, values that mean missing, and one row per column (its header, the
-first three values, and what that column means). **Apply** reads the table again with that
+whether the first row is a header, whether a time written as a calendar date is UTC or GPS,
+the time pattern, values that mean missing, and one row per column (its header, the first
+three values, and what that column means). **Apply** reads the table again with that
 map. **Cancel** leaves the map as it was. **Guess again** fills the map from the header
-names and the first rows. A meaning that should belong to one column only (shot point, X,
-Y, a time part) is flagged when it is chosen twice.
+names and the first rows.
+
+What a column can mean is a short list: **Ignore**, **Time (UTC)**, **GPSTB**, **SEQ**,
+**FFID**, **Status**, **SailLine**, **SourceLine**, **SourcePoint**, **Index**, **Depth**,
+**Water Depth**, **X**, **Y**, **Z**, **SourceType**, **SourceID**, **Uphole** and **User
+defined**. The names from Time (UTC) to Uphole are the system's columns: the program
+refers to them by name (the clock, the follow, the map, the SPS export and the slice by
+shot log), and each can be chosen for one column only, except Time (UTC). GPSTB is the GPS
+time break in microseconds since the GPS epoch; Uphole is the uphole time in milliseconds.
+A column marked **Ignore** never enters the table: it is not shown, not exported, and no
+problem is counted for it. Every other column is **User defined**: it keeps its text, shows
+in the grid under a name of its own, and the name starts as the header's. A user defined
+name cannot be one of the system's names, whatever its capitals, spaces or punctuation
+("source line", "Water_Depth"), nor Ignore, nor another column's name; the dialog says why
+under the name, and **Apply** stays off until it is fixed. A header that uses a system name
+for a column left user defined gets " (file)" after it.
+
+**Time (UTC)** can be chosen for several columns: their cells are joined, in column order,
+with one space, and read as one time. That covers one text column (`2024-03-01
+00:00:00.5`), a date column and a time column, a year, a day of year (or month and day), an
+hour, a minute and a second in columns of their own (with the microseconds in one more), or
+one column of seconds or microseconds since 1970. The program finds the form in the first
+rows and shows it as a pattern; type another when it is wrong. In a pattern `yyyy` or `yy`
+is the year (two digits: 50 to 99 is 19xx), `ddd` the day of the year, `mm` the month (the
+minute once an hour came before it), `mi` the minute, `dd` the day, `hh` the hour, `ss` the
+second, `f` the fraction of the second (the dot before it may be missing), `u` whole
+microseconds, and any other character must be there as written: `yyyy ddd hh mi ss.ffffff`,
+`yyyy/mm/dd hh:mm:ss`. The whole pattern can also be `epoch seconds` or `epoch
+microseconds`. A time that does not read says so in Problems with the row, the time as it was
+joined and the pattern: "time '2024 361 23:59:xx' does not match yyyy ddd hh:mi:ss".
+
+A header cut at spaces has more names than the rows have columns when a name holds a
+space ("Sail line", "Day of year"): the delimiter is taken from the rows, names are grouped
+to fit, and a header that cannot be fitted leaves its columns user defined rather than
+guessing a meaning one column off.
+
+A project saved with the earlier column meanings (UTC seconds, year, day of year, gun array
+and the others) opens as the same columns under the present names: the time parts become
+Time (UTC) with the pattern that reads them the same way, and gun array, volume, pressure,
+heading, speed and text become user defined columns.
 
 The project remembers the column map of the last shot log imported or re-mapped, and does
 not forget it when that log is removed. The next import, if no map is given, reads the file

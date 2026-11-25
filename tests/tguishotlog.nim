@@ -31,7 +31,7 @@
 
 import std/[algorithm, math, monotimes, options, os, strutils, times]
 import parseSEG
-import viewSEG/core/[geometry, recordtime, state]
+import viewSEG/core/[geometry, recordtime, shotlog, state]
 import viewSEG/ui/imgui/app
 import utils/[fixtures, waiting]
 
@@ -152,6 +152,8 @@ proc main*() =
     let gridShot = root / ".scratch" / "shotlog-grid.png"
     let dockedShot = root / ".scratch" / "shotlog-docked.png"
     let columnsShot = root / ".scratch" / "shotlog-columns.png"
+    let choicesShot = root / ".scratch" / "shotlog-choices.png"
+    let nameShot = root / ".scratch" / "shotlog-name.png"
     let editShot = root / ".scratch" / "shotlog-edit.png"
     let allowShot = root / ".scratch" / "shotlog-allow.png"
     createDir(gridShot.parentDir)
@@ -193,7 +195,10 @@ proc main*() =
         f.click(f.markOf("menu.Import shot log...").centre),
         proc (f: FrameInfo): bool =
           let line = f.summaryLine
-          let point = roleCol(f, "shot point")
+          let point = roleCol(f, "SourcePoint")
+          if "shotlog.csv" in line and "200 rows" in line:
+            doAssert f.markNames("shotlog.time 0 2024-03-01 00:00:00.000000").len > 0,
+              "row 0 time was " & $f.markNames("shotlog.time 0 ")
           result = "shotlog.csv" in line and "200 rows" in line and "22 columns" in line and
             line.endsWith("session only") and point >= 0 and
             f.windowPlace("shotlog").inSight and
@@ -279,7 +284,7 @@ proc main*() =
             f.markNames("shotlog.edited 0 " & $pointCol).len > 0
       , 2000)
       step("open another cell", proc (f: FrameInfo) =
-        fileCol = roleCol(f, "file number")
+        fileCol = roleCol(f, "FFID")
         fileAt = f.markOf("shotlog.cell 0 " & $fileCol & " 5000").centre
         f.moveMouse(fileAt),
         proc (f: FrameInfo): bool =
@@ -323,8 +328,8 @@ proc main*() =
         if f.markOf("shotlog.guess").size.x == 0 and wait mod 8 == 0:
           f.click(f.markOf("shotlog.columns").centre)
         yCol = roleCol(f, "Y")
-        pointCol = roleCol(f, "shot point")
-        yCol >= 0 and pointCol >= 0 and f.markOf("shotlog.guess").size.x > 0)
+        pointCol = roleCol(f, "SourcePoint")
+        yCol >= 0 and pointCol >= 0 and f.markOf("shotlog.guess").size.x > 0 and wait > 12)
       step("shot point becomes X", proc (f: FrameInfo) =
         f.click(f.markOf("shotlog.rolecombo " & $pointCol).centre),
         proc (f: FrameInfo): bool =
@@ -338,25 +343,73 @@ proc main*() =
         proc (f: FrameInfo): bool =
         if f.markOf("shotlog.cancel").size.x > 0 and wait mod 8 == 0:
           f.click(f.markOf("shotlog.cancel").centre)
-        f.markOf("shotlog.grid").size.x > 0 and roleCol(f, "shot point") == pointCol)
+        f.markOf("shotlog.grid").size.x > 0 and roleCol(f, "SourcePoint") == pointCol)
 
       step("Columns again", proc (f: FrameInfo) = f.click(f.markOf("shotlog.columns").centre),
         proc (f: FrameInfo): bool =
         if f.markOf("shotlog.guess").size.x == 0 and wait mod 8 == 0:
           f.click(f.markOf("shotlog.columns").centre)
-        seqCol = roleCol(f, "sequence")
-        seqCol >= 0 and f.markOf("shotlog.rolecombo " & $seqCol).size.x > 0)
+        seqCol = roleCol(f, "SEQ")
+        seqCol >= 0 and f.markOf("shotlog.rolecombo " & $seqCol).size.x > 0 and wait > 12)
       step("sequence becomes ignored", proc (f: FrameInfo) =
         f.click(f.markOf("shotlog.rolecombo " & $seqCol).centre),
         proc (f: FrameInfo): bool =
-          let item = f.markOf("shotlog.roleitem " & $seqCol & " ignored")
-          if item.size.x > 0 and wait == 4: f.click(item.centre)
-          roleCol(f, "ignored") == seqCol)
+          let item = f.markOf("shotlog.roleitem " & $seqCol & " Ignore")
+          if item.size.x > 0 and wait == 4:
+            # the choices, in the order and the spelling the dialog promises
+            const choices = ["Ignore", "Time (UTC)", "GPSTB", "SEQ", "FFID", "Status",
+              "SailLine", "SourceLine", "SourcePoint", "Index", "Depth", "Water Depth",
+              "X", "Y", "Z", "SourceType", "SourceID", "Uphole", "User defined"]
+            let listed = f.markNames("shotlog.roleitem " & $seqCol & " ")
+            doAssert listed.len == choices.len, $listed
+            var lastY = -1.0'f32
+            for choice in choices:
+              let at = f.markOf("shotlog.roleitem " & $seqCol & " " & choice)
+              doAssert at.size.x > 0 and at.pos.y > lastY, "choice out of order: " & choice
+              lastY = at.pos.y
+            doAssert f.savePng(choicesShot), "the choices screenshot was not written"
+            f.click(item.centre)
+          f.markNames("shotlog.role " & $seqCol & " Ignore").len > 0)
       step("Apply", noop, proc (f: FrameInfo): bool =
         if f.markOf("shotlog.apply").size.x > 0 and wait mod 8 == 0:
           f.click(f.markOf("shotlog.apply").centre)
-        f.markOf("shotlog.grid").size.x > 0 and roleCol(f, "ignored") == seqCol
+        # an ignored column is not in the grid at all, nor in the table behind it
+        f.markOf("shotlog.grid").size.x > 0 and
+          f.core.shotLogMap(0).roles[seqCol] == crIgnored and
+          f.markNames("shotlog.role " & $seqCol & " ").len == 0 and
+          f.core.shotView(0).rows[0].sequence.isNone
       , 2000)
+      var nameCol = -1
+      step("Columns for a name", proc (f: FrameInfo) = f.click(f.markOf("shotlog.columns").centre),
+        proc (f: FrameInfo): bool =
+        if f.markOf("shotlog.guess").size.x == 0 and wait mod 8 == 0:
+          f.click(f.markOf("shotlog.columns").centre)
+        for n in f.markNames("shotlog.name "):
+          if nameCol < 0: nameCol = parseInt(n["shotlog.name ".len .. ^1])
+        nameCol >= 0 and f.markOf("shotlog.name " & $nameCol).size.x > 0 and wait > 12)
+      step("a system name is refused", proc (f: FrameInfo) =
+        let at = f.markOf("shotlog.name " & $nameCol).centre
+        f.moveMouse(at),
+        proc (f: FrameInfo): bool =
+          let at = f.markOf("shotlog.name " & $nameCol).centre
+          if wait == 3: f.pressMouse(at, true)
+          if wait == 5: f.pressMouse(at, false)
+          # the box holds the header's name: clear it, then type
+          if wait == 7: f.pressKey(skEnd, true)
+          if wait == 8: f.pressKey(skEnd, false)
+          if wait in 10 .. 50 and wait mod 2 == 0: f.pressKey(skBackspace, true)
+          if wait in 11 .. 51 and wait mod 2 == 1: f.pressKey(skBackspace, false)
+          if wait == 60: f.typeText("source_line")
+          if wait > 70 and f.markNames("shotlog.nameproblem " & $nameCol).len > 0:
+            doAssert f.savePng(nameShot), "the name screenshot was not written"
+            return true
+          false
+      , 2000)
+      step("Cancel the name", proc (f: FrameInfo) = f.click(f.markOf("shotlog.cancel").centre),
+        proc (f: FrameInfo): bool =
+        if f.markOf("shotlog.cancel").size.x > 0 and wait mod 8 == 0:
+          f.click(f.markOf("shotlog.cancel").centre)
+        f.markOf("shotlog.grid").size.x > 0 and f.markOf("shotlog.guess").size.x == 0)
 
       step("the filter", proc (f: FrameInfo) =
         filterAt = f.markOf("shotlog.filter").centre
