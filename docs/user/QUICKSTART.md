@@ -1406,7 +1406,10 @@ followed by a month and a day (`-`, `/` or `.` between them) or by a day of year
 hour, a minute and a second, in the same form on every sampled row; a fraction of the second
 on some rows and not on others is read where it is there (`.ffffff`), and a `Z` at the end is
 accepted. For a year and a day of year it does so when some day is above 12 or every day has
-three digits. It does not guess a day or a month first (`dd/mo/yy`, `mo/dd/yy`, `yy/mo/dd`), a four-digit
+three digits. The form is decided from the shapes of the rows: a row of that form whose
+value is not a date or a time (30 February, hour 25) is a problem on that row, and the other
+rows are read. 24:00:00 is read as 00:00:00 of the next day. A month above 12 on any sampled
+row may be a day, so then nothing is proposed. It does not guess a day or a month first (`dd/mo/yy`, `mo/dd/yy`, `yy/mo/dd`), a four-digit
 year in the third place (`dd/mo/yyyy` against `mo/dd/yyyy`), a time with a zone offset
 (`+01`, `-0500`), a column whose rows are in different forms, or GPS seconds. The dialog
 then says "The time's form could not be decided: type the pattern, for example dd/mo/yyyy

@@ -1193,8 +1193,12 @@ proc matchTime(text: string; pat: TimePattern; parts: var TimeParts): bool =
   ti == t.len
 
 proc civilToUtcUs(y, m, d, hh, mm, ss, us: int; clock: TimeClock): Option[int64] =
+  ## The instant of a calendar date and time on `clock`. 24:00:00 is 00:00:00
+  ## of the next day; a second of 60 rolls into the next minute.
   if not validDate(y, m, d): return none(int64)
-  if hh notin 0 .. 23 or mm notin 0 .. 59 or ss notin 0 .. 60 or us notin 0 .. 999999:
+  let midnight = hh == 24 and mm == 0 and ss == 0 and us == 0
+  if (hh notin 0 .. 23 and not midnight) or mm notin 0 .. 59 or ss notin 0 .. 60 or
+      us notin 0 .. 999999:
     return none(int64)
   let days = daysFromCivil(y, m, d)
   if days > high(int64) div 86_400 or days < low(int64) div 86_400:
@@ -1284,6 +1288,7 @@ type Shape = object
   zulu: bool      ## a `Z` ends the cell
   doy: bool       ## the date is a year and a day of year
   second: string  ## the digits of that day
+  month: int      ## the month, of a year, a month and a day
 
 proc shapeOf(t: string): Shape =
   ## The form of one date-time cell: a four-digit year first, then yyyy-mo-dd
@@ -1314,6 +1319,7 @@ proc shapeOf(t: string): Shape =
         s notin ["-", "/", "."]:
       return
     pat.add s & "mo" & s & "dd"
+    for k in runs[1].a ..< runs[1].b: result.month = result.month * 10 + (ord(t[k]) - ord('0'))
     timeAt = 3
   elif core == 5:
     let s = sep(0)
@@ -1373,6 +1379,7 @@ proc detectWith(cells: openArray[string]; epochLike: bool): string =
     if shape.pattern != first.pattern: return ""
     fraction = fraction or shape.fraction
     zulu = zulu and shape.zulu
+    if shape.month > 12: return "" # it may be the day: the order cannot be told
     if shape.doy:
       if shape.second.len != 3: threeWide = false
       var day = 0
@@ -1383,14 +1390,14 @@ proc detectWith(cells: openArray[string]; epochLike: bool): string =
   var pattern = first.pattern
   if fraction: pattern.add ".ffffff"
   if zulu: pattern.add "Z"
-  let pat = compilePattern(pattern)
-  for t in vals:
-    if not readTime(t, pat, tcUtc).ok: return ""
+  # a row of this form whose value is not a time is a problem on that row
   pattern
 
 proc detectTimePattern*(cells: openArray[string]): string =
-  ## The pattern that reads every non-blank cell of one column, or "" when
-  ## the cells do not decide one. Plain numbers are never proposed: seconds or
+  ## The pattern of the form of the non-blank cells of one column, or ""
+  ## when the cells do not decide one. The form is decided from the cells'
+  ## shapes: a cell of that form whose value is not a time (30 February, hour
+  ## 25) is a problem on its row in `shots`, not a reason to refuse the form. Plain numbers are never proposed: seconds or
   ## microseconds may be on the GPS clock or since 1970, and the number cannot
   ## tell (`timePattern` proposes them under a header that says UTC).
   ## Proposed: a date and a time, as `shapeOf` says, when every cell has the
@@ -1399,8 +1406,9 @@ proc detectTimePattern*(cells: openArray[string]): string =
   ## year, a day above 12 is there or every day has three digits. Not
   ## proposed: a leading
   ## one or two digit run (dd/mo/yy, mo/dd/yy, yy/mo/dd), a four-digit year
-  ## in the third place (dd/mo/yyyy or mo/dd/yyyy), a zone offset, and forms
-  ## that differ between cells; the pattern is then typed.
+  ## in the third place (dd/mo/yyyy or mo/dd/yyyy), a month above 12 in any
+  ## cell (it may be the day), a zone offset, and forms that differ between
+  ## cells; the pattern is then typed.
   detectWith(cells, false)
 
 proc nameLike(s: string): bool =

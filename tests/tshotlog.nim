@@ -42,7 +42,10 @@
 ## nothing, and `noHeaderAndGuess` guessed GPSTB with no header at all. With
 ## ten digits under Time proposed as epoch seconds, `secondsAsked` read GPS
 ## seconds of 2024 as 2014. With the shapes compared with their fraction,
-## `optionalFraction` read no row of a log whose rows read before.
+## `optionalFraction` read no row of a log whose rows read before. With the
+## pattern still made to read every sampled row, `shapesDecide` and
+## `guessRules` read no row of a log with one 30 February or hour 25; with
+## hour 24 refused, 24:00:00 was not read.
 
 import std/[math, options, os, strutils, times]
 import viewSEG/core/shotlog
@@ -617,10 +620,16 @@ proc main*() =
       let gb = guessMap(good & bad & ",4\n")
       doAssert gb.roles == @[crText, crFileNumber], bad
       doAssert gb.dateTimePattern == "", bad
-    # a bad row among the sampled ones also keeps a header's Time from deciding a pattern
-    let late = guessMap("Time,FFID\n" & "2024-03-01 00:00:00,1\n2024-03-01 00:00:10,2\n" &
-      "2024-03-01 25:00:00,3\n")
-    doAssert late.roles == @[crTime, crFileNumber] and late.dateTimePattern == ""
+    # a row whose value does not read does not keep the others from deciding the form
+    let lateText = "Time,FFID\n" & "2024-03-01 00:00:00,1\n2024-03-01 00:00:10,2\n" &
+      "2024-03-01 25:00:00,3\n"
+    let late = guessMap(lateText)
+    doAssert late.roles == @[crTime, crFileNumber]
+    doAssert late.dateTimePattern == "yyyy-mo-dd hh:mi:ss"
+    let lv = shots(parseShotLog(lateText, late), late)
+    doAssert lv.rows[1].timeUtcUs.get == UtcMarch + 10_000_000 and lv.rows[2].timeUtcUs.isNone
+    doAssert kindText(lv.problems, pkBadNumber) ==
+      "time '2024-03-01 25:00:00' is not a valid date and time"
     # a header that says time over a form that cannot be decided: Time (UTC), no pattern
     let amb = "Time,FFID\n01/03/24 10:00:00,1\n02/03/24 10:00:00,2\n"
     let ga = guessMap(amb)
@@ -760,6 +769,27 @@ proc main*() =
     doAssert v.rows[1].timeUtcUs == some(feb + 1_000_000)
     doAssert v.rows[2].timeUtcUs == some(feb + 2_000_000)
     doAssert v.problems.count == 0
+
+  block shapesDecide:
+    # the form is decided from the rows' shapes: a row that has the form but not a
+    # date (30 February, day 366 of a common year) is a problem on that row
+    for (cells, pat) in [(@["2024-02-30 13:14:15", "2024-02-29 13:14:15"],
+        "yyyy-mo-dd hh:mi:ss"), (@["2023 366 00:00:00", "2024 366 00:00:00"],
+        "yyyy ddd hh:mi:ss")]:
+      doAssert detectTimePattern(cells) == pat, $cells
+      let v = timeOf(cells.join("\n") & "\n")
+      doAssert v.rows[0].timeUtcUs.isNone and v.rows[1].timeUtcUs.isSome, $cells
+      doAssert v.problems.count == 1 and v.problems.items[0].row == 0, $cells
+      doAssert v.problems.items[0].kind == pkBadNumber, $cells
+    # a month above 12 may be a day: the order cannot be told, so nothing is proposed
+    doAssert detectTimePattern(["2024-02-03 10:00:00", "2024-13-02 10:00:00"]) == ""
+    # 24:00:00 is 00:00:00 of the next day; any later time of hour 24 is not a time
+    doAssert timeAt("2024-02-29T24:00:00", "") == some(UtcMarch)
+    doAssert timeAt("2024-12-30 24:00:00", "yyyy-mo-dd hh:mi:ss") == some(UtcDec31)
+    doAssert timeAt("2024 366 24:00:00", "yyyy ddd hh:mi:ss") == some(UtcJan1)
+    doAssert timeAt("2024-02-29 24:00:01", "yyyy-mo-dd hh:mi:ss").isNone
+    doAssert timeAt("2024-02-29 24:01:00", "yyyy-mo-dd hh:mi:ss").isNone
+    doAssert timeAt("2024-02-29 24:00:00.5", "yyyy-mo-dd hh:mi:ss.f").isNone
 
   block spacesInHeader:
     # the header names hold spaces, so a header cut at spaces has more fields
