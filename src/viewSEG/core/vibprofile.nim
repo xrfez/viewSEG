@@ -54,8 +54,8 @@ type
     targetPct*: float64 = NaN ## NaN: the user did not type a drive level
     hundredHow*: HundredHow = hhTyped ## how `forceHundredPct` (the default) was given
     hundredAtPct*: float64 = NaN ## the target force (%) it was given at
-    hundredFile*: string ## the file the sweep was set on (`hundredHow` sweep); "": not known
-    hundredVibrator*: int ## the vibrator of that sweep; 0: not known
+    hundredFile*: string ## the file the window showed when it was set or typed; "": not known
+    hundredVibrator*: int ## the vibrator of that file's sweep; 0: not known
     olderHundreds*: seq[VibHundred]
       ## 100 % forces an older version kept per vibrator that differ from each other (or from
       ## `forceHundredPct`): the project then has no 100 % force (`forceHundredPct` is NaN)

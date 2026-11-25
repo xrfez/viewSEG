@@ -25,7 +25,9 @@
 ## vibrator 11 kept its own; with the run's value kept per vibrator, a window moved to vibrator
 ## 12's sweep had none; with the other open windows not told of a new value, vibrator 12's
 ## window kept none; with a window coming from a SEG-Y file given none, it judged no force;
-## with differing older values taken as the first one, the project had a
+## with a typed value's file and vibrator written only for one set from a sweep, the typed
+## value read back without them; with differing older values taken as the first one, the
+## project had a
 ## value and no sentence; with the entries dropped on reading, they were not in the document
 ## until a value was set.
 
@@ -465,6 +467,20 @@ proc main*() =
       doAssert hundredSource(lone.plots[y].params) == "set on v11.dat (vibrator 11) at target 60 %",
         hundredSource(lone.plots[y].params)
       lone.shutdown()
+
+  block typedRoundTrip:
+    # a typed value keeps the file and the vibrator of the window it was typed on, read back
+    var d = ProjectDoc(name: "Typed", hasVibProfile: true)
+    d.vibProfile.setHundred(VibHundred(vibrator: 12, pct: 5, unit: "N", how: hhTyped,
+      file: "v12.dat"))
+    var problems: seq[string]
+    let text = projectDocument(d)
+    doAssert "(hundredFile \"v12.dat\")" in text and "(hundredVibrator 12)" in text, text
+    let back = readProject(text, "project.nif", problems)
+    doAssert problems.len == 0, $problems
+    doAssert back.vibProfile == d.vibProfile, $back.vibProfile.hundredOf
+    doAssert readProject(projectDocument(back), "project.nif", problems).vibProfile ==
+      d.vibProfile
 
   block olderProject:
     # a project that kept one 100 % force: it is the project's, for every vibrator

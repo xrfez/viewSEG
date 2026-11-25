@@ -95,8 +95,8 @@ Land 2026/                  the project folder: this is what is opened
    the accelerometer set, the force scale, the project's one 100 % force
    (`forceHundredPct`, used for every vibrator, with `forceHundredUnit`, the accelerometer set
    (`forceHundredSet`) that a pound-counts force was given on, and how and where it was given:
-   `hundredHow`, `hundredAtPct`, `hundredFile`, `hundredVibrator`, the vibrator of the sweep it
-   was set on, information only). A document of a version that kept one per vibrator
+   `hundredHow`, `hundredAtPct`, `hundredFile`, `hundredVibrator`: the file and the vibrator of
+   the sweep it was set or typed on, information only). A document of a version that kept one per vibrator
    (`vibratorHundred`; `hundredFor` of a version that kept one unit for every vibrator is read
    with no known unit, to be set again) reads as the one value when only one was kept or all
    agree; values that differ give no 100 % force, are said once in Messages and stay in the

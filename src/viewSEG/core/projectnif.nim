@@ -228,7 +228,7 @@ proc writeVibProfile(w: var NifWriter; p: VibQcProfile) =
   if one.setKnown: w.choice("forceHundredSet", $one.accelSet)
   if one.how == hhSweep: w.choice("hundredHow", "sweep")
   if finite(one.atPct): w.value("hundredAtPct", one.atPct)
-  if one.how == hhSweep and finite(one.pct):
+  if finite(one.pct): # (typed or set from a sweep: where it was given)
     if one.file.len > 0: w.value("hundredFile", one.file)
     if one.vibrator > 0: w.value("hundredVibrator", int64(one.vibrator))
   for e in p.olderHundreds:
