@@ -1397,7 +1397,7 @@ microseconds since 1970. The program decides the pattern from the cells it sampl
 64 rows) and shows it ("Time (UTC) is read as yyyy-mo-dd hh:mi:ss"); type another when it is
 wrong. In a pattern `yyyy` (four digits) or `yy` (two: 50 to 99 is 19xx) is the year, `ddd`
 the day of the year, `mo` the month, `dd` the day of the month, `hh` the hour, `mi` the
-minute, `ss` the second, `f` the digits of the fraction of the second (after a dot or a
+minute, `ss` the second, `f` the digits of the fraction of the second (read to the microsecond, half up, after a dot or a
 comma), `u` whole microseconds, and any other character must be there as written:
 `yyyy-mo-dd hh:mi:ss.ffffff`, `dd/mo/yyyy hh:mi:ss`. A `Z` at the end is accepted. `mm` is not a
 field, because it could be the month or the minute: write `mo` or `mi`. The whole pattern can

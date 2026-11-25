@@ -1030,7 +1030,9 @@ type
 
   TimeParts = object
     y, m, d, doy, hh, mi, ss: int
-    fracUs: int ## the fraction of the second, in microseconds
+    fracUs: int
+      ## the fraction of the second, in microseconds, half up: 1_000_000 when
+      ## it rounds up to the next second
     micros: int ## the `u` field; -1 when the pattern has none
 
 func tokenOf(kind: TimeFieldKind): string =
@@ -1142,8 +1144,9 @@ func fieldWidth(kind: TimeFieldKind): tuple[lo, hi: int] =
 
 proc matchTime(text: string; pat: TimePattern; parts: var TimeParts): bool =
   ## Reads `text` as `pat` says. A `.` before `f` is also matched by a `,`,
-  ## and the dot with its fraction may be absent (a whole second). A two-digit year uses the pivot 50: 50..99 is 19xx. A trailing `Z` is
-  ## accepted.
+  ## and the dot with its fraction may be absent (a whole second); a fraction
+  ## is read to the microsecond, half up. A two-digit year uses the pivot 50:
+  ## 50..99 is 19xx. A trailing `Z` is accepted.
   let t = text.strip
   var ti = 0
   parts = TimeParts(micros: -1)
@@ -1164,16 +1167,19 @@ proc matchTime(text: string; pat: TimePattern; parts: var TimeParts): bool =
         noFraction = false
       else:
         var seen, used, frac = 0
+        var roundUp = false
         while ti < t.len and t[ti] in Digits:
           if used < 6:
             frac = frac * 10 + (ord(t[ti]) - ord('0'))
             inc used
+          elif seen == 6:
+            roundUp = t[ti] >= '5'
           inc seen
           inc ti
         if seen == 0: return false
         var scale = 1
         for _ in used ..< 6: scale *= 10
-        parts.fracUs = frac * scale
+        parts.fracUs = frac * scale + ord(roundUp)
     else:
       let (lo, hi) = fieldWidth(f.kind)
       var v, got = 0
@@ -1198,11 +1204,12 @@ proc matchTime(text: string; pat: TimePattern; parts: var TimeParts): bool =
 
 proc civilToUtcUs(y, m, d, hh, mm, ss, us: int; clock: TimeClock): Option[int64] =
   ## The instant of a calendar date and time on `clock`. 24:00:00 is 00:00:00
-  ## of the next day; a second of 60 rolls into the next minute.
+  ## of the next day; a second of 60 rolls into the next minute, and `us` of
+  ## 1_000_000 (a fraction rounded up) into the next second.
   if not validDate(y, m, d): return none(int64)
   let midnight = hh == 24 and mm == 0 and ss == 0 and us == 0
   if (hh notin 0 .. 23 and not midnight) or mm notin 0 .. 59 or ss notin 0 .. 60 or
-      us notin 0 .. 999999:
+      us notin 0 .. 1_000_000:
     return none(int64)
   let days = daysFromCivil(y, m, d)
   if days > high(int64) div 86_400 or days < low(int64) div 86_400:

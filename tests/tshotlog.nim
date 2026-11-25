@@ -46,7 +46,9 @@
 ## pattern still made to read every sampled row, `shapesDecide` and
 ## `guessRules` read no row of a log with one 30 February or hour 25; with
 ## hour 24 refused, 24:00:00 was not read. With Time (UTC) taken where GPSTB
-## is empty, `crossCheck` mixed two clocks in one log and said nothing.
+## is empty, `crossCheck` mixed two clocks in one log and said nothing. With
+## a calendar fraction cut after six digits, `epochRounding` read .0000005 as
+## 0 where epoch seconds read 1.
 
 import std/[math, options, os, strutils, times]
 import viewSEG/core/shotlog
@@ -297,9 +299,9 @@ proc main*() =
     doAssert timeAt("2024 061 00:00:00 " & nines, "yyyy ddd hh:mi:ss uuuuuu").isNone
     doAssert timeAt(nines, EpochSeconds).isNone
     doAssert timeAt(nines, EpochMicros).isNone
-    # a long fraction is read to the microsecond
+    # a long fraction is read to the microsecond, half up
     doAssert timeAt("2024-03-01 00:00:00." & nines & nines, dated) ==
-      some(UtcMarch + 999_999)
+      some(UtcMarch + 1_000_000)
 
   block leapDayAndFraction:
     const doyForm = "yyyy ddd hh:mi:ss.ffffff"
@@ -326,6 +328,14 @@ proc main*() =
     doAssert timeAt("1709251200.1234564", EpochSeconds) == some(UtcMarch + 123_456)
     doAssert timeAt("1709251200.9999995", EpochSeconds) == some(UtcMarch + 1_000_000)
     doAssert timeAt("1709251200.9999994", EpochSeconds) == some(UtcMarch + 999_999)
+    # a calendar time's fraction the same way, carrying into the next second and day
+    for (frac, want) in [("0000004", 0'i64), ("0000005", 1'i64), ("1234565", 123_457'i64),
+        ("1234564", 123_456'i64), ("9999995", 1_000_000'i64), ("9999994", 999_999'i64)]:
+      doAssert timeAt("2024-03-01 00:00:00." & frac, "yyyy-mo-dd hh:mi:ss.ffffff") ==
+        some(UtcMarch + want), frac
+      doAssert timeAt("2024-03-01T00:00:00." & frac & "Z", "") == some(UtcMarch + want), frac
+    doAssert timeAt("2024-12-30 23:59:59.99999951", "yyyy-mo-dd hh:mi:ss.f") == some(UtcDec31)
+    doAssert timeAt("2024 366 23:59:59,9999995", "yyyy ddd hh:mi:ss.ffffff") == some(UtcJan1)
 
   block crossCheck:
     let both = "gps,utc\n" & $GpsMarch & "," & $UtcMarch & "\n"
