@@ -39,8 +39,8 @@ const
 
 const
   ForcedMark* = " *" ## after the word of a cell whose value the user set
-  PendingWords* = "Chosen for a file with other content at this place. Not used until this " &
-    "file's content is checked."
+  PendingWords* = "Remembered for a file of this name and size that may have other content. " &
+    "Not used until this file's content is checked."
   ForcedWords* = "Set by you: right-click to return to automatic. Automatic says: "
 
 func orderShort*(o: TraceOrder): string =

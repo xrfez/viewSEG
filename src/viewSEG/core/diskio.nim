@@ -103,6 +103,10 @@ type
     base: EditLists ## `merging`: the edits the document held as this run read or wrote it
     expect: DocStamp ## `merging`: its stamp then; size -1 for no document
     parts: set[TreatPart] ## a treat: the parts of `memory.treat` it sets
+    src: string ## a treat that moves: the document the parts come from, left once it is done
+    srcRec: FileRecord ## ... its record, with no treat
+    leave: set[TreatPart] ## ... the parts taken from it
+    srcStamp: DocStamp ## ... its stamp as this run last read it
     first: bool ## left before the tasks waiting (after those left so before it)
 
   DiskObj = object
@@ -274,12 +278,14 @@ proc lockStore(path: string): FileLock =
     discard # said by the write
   fs.lockFile(path.parentDir & StoreLockSuffix, StoreLockWait)
 
-proc replaceFile(w: var Writer; t: Task) =
+proc replaceFile(w: var Writer; t: Task): bool {.discardable.} =
+  ## Writes the document; true when it is written (or the document was merged and left).
   var t = t
   if t.fresh: t.path = freshName(t.path)
   var lock = if t.merging: lockStore(t.path) else: FileLock()
   defer: fs.unlock(lock)
   if t.merging and not w.mergeOthers(t, removing = false): return
+  result = true
   let tmp = t.path & "." & $getCurrentProcessId() & ".tmp"
   try:
     fs.createDir(t.path.parentDir)
@@ -297,6 +303,7 @@ proc replaceFile(w: var Writer; t: Task) =
       w.written[t.path] = (stampOf(t.path), t.memory.edits, t.memory.treat)
     if t.done.len > 0: w.say(sevInfo, if t.fresh: t.done & t.path & "." else: t.done)
   except IOError, OSError:
+    result = false
     let why = getCurrentExceptionMsg()
     try:
       fs.removeFile(tmp)
@@ -376,12 +383,13 @@ proc removeFor(w: var Writer; t: Task) =
   except OSError:
     w.warn("Could not remove " & t.what & " (" & t.path & "): " & getCurrentExceptionMsg())
 
-proc treatFor(w: var Writer; t: Task) =
+proc treatOne(w: var Writer; t: Task): bool =
   ## Sets the `treat` of the document `t.path` to `t.memory.treat` and nothing else of it (the
   ## module documentation); a new document when there is none and something is forced, none
   ## when it is left with nothing.
   var lock = lockStore(t.path)
   defer: fs.unlock(lock)
+  result = true
   let expect = if t.path in w.written: w.written[t.path].stamp else: t.expect
   let now = stampOf(t.path)
   let name = t.memory.name
@@ -400,7 +408,7 @@ proc treatFor(w: var Writer; t: Task) =
     except NifError, IOError, OSError:
       w.warn("What " & name & " is treated as is kept for this session only: its document " &
         t.path & " cannot be read (" & getCurrentExceptionMsg() & "), and it is left as it is.")
-      return
+      return false
     rec.treat = rec.treat.merged(t.memory.treat, t.parts)
   else:
     rec.treat = TreatAs().merged(t.memory.treat, t.parts)
@@ -419,10 +427,18 @@ proc treatFor(w: var Writer; t: Task) =
   var x = Task(kind: tkReplace, path: t.path, memory: rec, render: true, what: t.what)
   let before = w.written.getOrDefault(t.path)
   let had = t.path in w.written
-  w.replaceFile(x)
+  result = w.replaceFile(x)
   if not known: # not what this run last knew: its next write merges with it
     if had: w.written[t.path] = before
     else: w.written.del t.path
+
+proc treatFor(w: var Writer; t: Task) =
+  ## `treatOne`; for a task that moves a choice, once it is in the document, the parts taken
+  ## are left out of the document they came from (`DiskIo.moveTreat`).
+  let done = t.parts == {} or w.treatOne(t)
+  if done and t.src.len > 0:
+    discard w.treatOne(Task(kind: tkTreat, path: t.src, memory: t.srcRec,
+      parts: t.leave, what: t.what, expect: t.srcStamp))
 
 func isLeftover*(name: string): bool =
   ## Whether `name` is a temporary file a write of a document of the store
@@ -686,7 +702,8 @@ proc leave(x: DiskIo; t: sink Task) =
     case t.kind
     of tkTreat: # the newest choice for a document: it carries every one before it
       for i in countdown(x.p.tasks.high, 0):
-        if x.p.tasks[i].kind == tkTreat and x.p.tasks[i].path == t.path:
+        if x.p.tasks[i].kind == tkTreat and x.p.tasks[i].path == t.path and
+            t.src.len == 0 and x.p.tasks[i].src.len == 0:
           t.expect = x.p.tasks[i].expect
           t.parts.incl x.p.tasks[i].parts # (the newer has the newest of every part)
           x.p.tasks.delete(i)
@@ -769,6 +786,18 @@ proc treat*(x: DiskIo; path: string; record: sink FileRecord; parts: set[TreatPa
   if x.p != nil and parts != {}:
     x.leave Task(kind: tkTreat, path: path, memory: record, what: what, expect: expect,
       parts: parts)
+
+proc moveTreat*(x: DiskIo; path: string; record: sink FileRecord; parts: set[TreatPart];
+    source: string; sourceRecord: sink FileRecord; leaving: set[TreatPart]; what: string;
+    expect, sourceStamp: DocStamp) =
+  ## `treat`, and once the document `path` holds the `parts`, the `leaving` parts leave the
+  ## document `source` (`sourceRecord` says which file it is): if the first cannot be written,
+  ## the source keeps what it says. `parts` may be empty (the document has every part of its
+  ## own).
+  if x.p != nil:
+    x.leave Task(kind: tkTreat, path: path, memory: record, what: what, expect: expect,
+      parts: parts, src: source, srcRec: sourceRecord, leave: leaving,
+      srcStamp: sourceStamp)
 
 proc read*(x: DiskIo; path: string; purpose: ReadPurpose; limit: int) =
   ## Reads `path`, soon, and posts it as an `mkRead` message for `purpose`,

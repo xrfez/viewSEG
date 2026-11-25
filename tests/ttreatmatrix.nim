@@ -42,10 +42,11 @@
 ## leaving the choice the list showed, 2 cells of a list and an open (another content's
 ## document at the file's time).
 
-import std/[importutils, options, os, sequtils, strutils, tables, times]
+import std/[importutils, json, options, os, sequtils, strutils, tables, times]
 import parseSEG
 import viewSEG/core/state {.all.}
 import viewSEG/core/[edits, filelist, filememory, identity, jobs, recordingkind, treatas]
+import viewSEG/remote/[protocol, tools]
 import viewSEG/view/[filetable, recordingwords]
 import utils/[fixtures, kindfiles, waiting]
 
@@ -295,6 +296,11 @@ proc main*() =
           let row = st.fileList.entries[0]
           doAssert row.kindPending and kindText(row).endsWith(ForcedMark) and
             PendingWords in kindTip(row), name & ": the row does not say it is not in use"
+          let answer = st.stateReport(Frontend(), """{"parts":["fileList"]}""")
+          let told = parseJson(parseJson(answer)["content"][0]["text"].getStr)["fileList"][
+            "entries"][0]["treated"]
+          doAssert told["pending"]["recording"].getBool and told["forced"]["recording"].getBool and
+            not told["pending"]["grouping"].getBool, name & ": the agent is not told: " & $told
           st.apply Command(kind: ckTreatAs, treatPath: f, treatGrouping: "flag", origin: origin)
           doAssert st.treatInForce(f).kind.isNone and
             st.treatInForce(f).grouping == some(tgByFlag), name & ": the command took the pending"
@@ -308,6 +314,35 @@ proc main*() =
           doAssert st.treatOf(f) == st.treatInForce(f) and
             st.fileList.entries[0].treatPending == {} and st.treatPendingOf(f) == {}, name & ": still pending after the hash"
           st.shutdown()
+    block agentThenUser:
+      # the file's own document says continuous and flag; an agent sets the kind (shot) before
+      # the hash confirms; then the user sets the sort in a window: the agent's kind goes
+      # (the user's choice starts from what is kept) and the document's comes back
+      let at = fx.dir / "agentuser"
+      let cfg = at / "config"
+      let f = canonical(writeSpecs(at / "data", "f", [spec(0, 0), spec(0, 1000), spec(0, 2000)]))
+      var modified: Time
+      var id = quickIdentity(f, modified)
+      id.full = fullHash(f)
+      id.fullKnown = true
+      let store = Store(home: cfg / StoreFolder)
+      createDir(store.home)
+      writeFile(store.docPath(freeDocName(id, @[])), memoryDocument(FileRecord(identity: id,
+        name: "f.sgd", path: f, opened: getTime() - initDuration(days = 1), modified: modified,
+        treat: TreatAs(kind: some rkReceiverContinuous, grouping: some tgByFlag))))
+      var st = appIn(cfg)
+      st.apply Command(kind: ckBrowse, paths: @[at / "data"])
+      doAssert st.settled(st.listed), "agentThenUser: not listed"
+      st.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "shot", origin: coAgent)
+      st.open(f)
+      doAssert st.settled(st.idle), "agentThenUser: not settled"
+      doAssert st.treatInForce(f).kind == some rkShotGather, "agentThenUser: the agent's kind"
+      st.apply Command(kind: ckTreatAs, treatPath: f, treatSubSort: "time", origin: coWindow)
+      doAssert st.settled(st.idle), "agentThenUser: not written"
+      doAssert st.treatInForce(f) == TreatAs(kind: some(rkReceiverContinuous),
+        grouping: some(tgByFlag), subSort: some(tsByTime)),
+        "agentThenUser: the document's kind did not come back: " & $st.treatInForce(f)
+      st.shutdown()
     doAssert wrong.len == 0, $wrong.len & " of " & $cells.len & " cells:\n" & wrong.join("\n")
     echo "ttreatmatrix: ", cells.len, " cells"
 

@@ -586,7 +586,8 @@ func treatedJson(e: FileEntry): JsonNode =
   ## What a seismic file of the list is treated as, in the words of the `treat as` command: its
   ## kind (`recording`) and the order of its traces (`grouping`, `sort`), each null while it is
   ## not read or for a file without one ("unknown" when it is known only once the file is opened),
-  ## and which of them the user or an agent set (`forced`).
+  ## and which of them the user or an agent set (`forced`), and which of those no job uses yet
+  ## because the file's content is not checked (`pending`).
   let unknown = e.kindState in {ksNotKnown, ksMultiplexed}
   proc word(known: bool; words: string): JsonNode =
     if known: %words elif unknown: %"unknown" else: newJNull()
@@ -596,7 +597,9 @@ func treatedJson(e: FileEntry): JsonNode =
     "grouping": word(e.traceOrderOf.isSome, groupingName(o.grouping)),
     "sort": word(e.traceOrderOf.isSome, subSortName(o.subSort)),
     "forced": {"recording": e.treat.kind.isSome, "grouping": e.treat.grouping.isSome,
-      "sort": e.treat.subSort.isSome}}
+      "sort": e.treat.subSort.isSome},
+    "pending": {"recording": tpKind in e.treatPending, "grouping": tpGrouping in e.treatPending,
+      "sort": tpSubSort in e.treatPending}}
 
 proc fileListJson(state: AppState; limit: int): JsonNode =
   let l = state.fileList

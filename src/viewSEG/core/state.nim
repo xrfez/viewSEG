@@ -1303,6 +1303,9 @@ type
       ## commands set (`shownTreat`), but no job uses it (`treatInForce`)
     treatsOwn: Table[string, set[TreatPart]]
       ## the parts of a file's choice that a command set this session (`treatsTouched`)
+    treatsOwnKept: Table[string, set[TreatPart]]
+      ## those of them that a command of the user's window set (`keeps`): only these override
+      ## what the document says in `treatsKept`
     treatsTouched: HashSet[string]
       ## the paths a command changed this session: a late answer of the kinds job does not
       ## put back what it read before
@@ -1846,7 +1849,8 @@ proc loadTreat(state: var AppState; path: string; t: TreatAs; pending = false) =
     state.treatsPending.del path
     # (the commands' parts stay over what the document says)
     let now = t.merged(state.treats.getOrDefault(path), own)
-    let kept = t.merged(state.treatsKept.getOrDefault(path), own)
+    let kept = t.merged(state.treatsKept.getOrDefault(path),
+      state.treatsOwnKept.getOrDefault(path))
     if now.isSet: state.treats[path] = now else: state.treats.del path
     if kept.isSet: state.treatsKept[path] = kept else: state.treatsKept.del path
   let i = state.files.find(path)
@@ -1906,20 +1910,31 @@ proc carryTreat(state: var AppState; carried: TreatAs; doc: string) =
 
 proc takeTreatFrom(state: var AppState; other: FileRecord; doc: string) =
   ## What the document `other` of the same content says the file is treated as joins the document
-  ## `doc` (`carryTreat`) once, and goes from `other`, which stays (it has edits): a later
-  ## choice of automatic in `doc` is then not undone by it.
-  if not other.treat.isSet: return
-  state.carryTreat(other.treat, doc)
-  if state.store.isNowhere or (state.project.dir.len > 0 and state.project.readOnly): return
+  ## `doc` (as `carryTreat` does) once, and goes from `other`, which stays (it has edits): a
+  ## later choice of automatic in `doc` is then not undone by it. The disk thread leaves it out
+  ## of `other` only once `doc` holds it; nothing for a document this run neither read nor wrote.
+  if not other.treat.isSet or state.store.isNowhere or
+      (state.project.dir.len > 0 and state.project.readOnly) or doc notin state.knownDocs:
+    return
+  let kept = state.knownDocs[doc]
+  let carried = other.treat
   var parts: set[TreatPart] = {}
-  if other.treat.kind.isSome: parts.incl tpKind
-  if other.treat.grouping.isSome: parts.incl tpGrouping
-  if other.treat.subSort.isSome: parts.incl tpSubSort
+  if carried.kind.isSome and kept.treat.kind.isNone: parts.incl tpKind
+  if carried.grouping.isSome and kept.treat.grouping.isNone: parts.incl tpGrouping
+  if carried.subSort.isSome and kept.treat.subSort.isNone: parts.incl tpSubSort
+  var leaves: set[TreatPart] = {}
+  if carried.kind.isSome: leaves.incl tpKind
+  if carried.grouping.isSome: leaves.incl tpGrouping
+  if carried.subSort.isSome: leaves.incl tpSubSort
   var bare = other
   bare.treat = TreatAs()
-  state.diskIo.treat(state.store.docPath(other.doc), bare, parts,
-    "what is remembered about " & other.name,
+  state.diskIo.moveTreat(state.store.docPath(doc), FileRecord(identity: kept.identity,
+    name: kept.name, path: kept.path, opened: kept.opened, modified: kept.modified, doc: doc,
+    treat: carried), parts, state.store.docPath(other.doc), bare, leaves,
+    "what is remembered about " & kept.name,
+    if kept.stamp.modified == Time(): NoDoc else: kept.stamp,
     if other.stamp.modified == Time(): NoDoc else: other.stamp)
+  state.knownDocs[doc].treat = kept.treat.merged(carried, parts)
 
 proc handTreat(state: var AppState; path, doc: string; id: FileIdentity; modified: Time) =
   ## Hands the disk thread the parts of the user's choice for the file at `path` changed since
@@ -11595,6 +11610,7 @@ proc treatAs(state: var AppState; cmd: Command) =
   if cmd.treatGrouping.len > 0: named.incl tpGrouping
   if cmd.treatSubSort.len > 0: named.incl tpSubSort
   state.treatsOwn[path] = state.treatsOwn.getOrDefault(path) + named
+  if kept: state.treatsOwnKept[path] = state.treatsOwnKept.getOrDefault(path) + named
   if path in state.treatsPending: # (what this command names is the user's now)
     let rest = state.treatsPending[path].merged(TreatAs(), named)
     if rest.isSet: state.treatsPending[path] = rest else: state.treatsPending.del path

@@ -531,7 +531,8 @@ proc main*() =
           if e["path"].getStr == third: result = e["treated"]
       let back = st.treated
       doAssert back["recording"].getStr == "shot" and back["forced"]["recording"].getBool and
-        not back["forced"]["grouping"].getBool and back.hasKey("sort"), $back
+        not back["forced"]["grouping"].getBool and back.hasKey("sort") and
+        not back["pending"]["recording"].getBool and back["pending"].hasKey("sort"), $back
       st.agent(%*{"kind": "treat as", "treatPath": third, "treatKind": "automatic"})
       doAssert not st.treatOf(third).isSet
       doAssert not st.treated["forced"]["recording"].getBool, $st.treated

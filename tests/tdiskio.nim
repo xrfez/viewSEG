@@ -34,8 +34,9 @@
 ## thread is held (`rescue`), `heldBeforeTheQuit` found "the settings were
 ## not written behind a write held before the quit".
 
-import std/[monotimes, os, sequtils, strutils, times]
-import viewSEG/core/[diskio, filememory, identity, inbox, layouts, log, nif, persist, state]
+import std/[monotimes, options, os, sequtils, strutils, times]
+import viewSEG/core/[diskio, filememory, identity, inbox, layouts, log, nif, persist, state,
+  treatas, recordingkind]
 import utils/[faultyfs, waiting]
 when not defined(windows):
   from std/posix import nil
@@ -65,6 +66,37 @@ proc main*() =
     for kind, f in walkDir(tmp / "a"):
       doAssert not f.endsWith(".tmp"), "a temporary file was left: " & f
     doAssert box.warnings.len == 0
+
+  block moveTreatNeedsTheFirstWrite:
+    # a choice moved from one document to another leaves the first only once the second holds
+    # it: a second that cannot be written leaves the first as it was
+    let box = initInbox()
+    var d = newDiskIo(box.poster)
+    let id = FileIdentity(size: 10, quick: 7)
+    let when0 = getTime()
+    let force = TreatAs(kind: some rkReceiverContinuous)
+    let other = tmp / "move" / "other.nim"
+    var rec = FileRecord(identity: id, name: "f.sgd", path: "/f.sgd", opened: when0,
+      modified: when0, treat: force)
+    createDir(tmp / "move")
+    writeFile(other, memoryDocument(rec))
+    writeFile(tmp / "move" / "afile", "x") # (a folder under a file cannot be made)
+    var bare = rec
+    bare.treat = TreatAs()
+    d.moveTreat(tmp / "move" / "afile" / "taken.nim", rec, {tpKind}, other, bare, {tpKind},
+      "what is remembered", NoDoc, NoDoc)
+    d.flush()
+    var problems: seq[string]
+    doAssert fileExists(other) and readMemoryFile(other, problems).treat == force,
+      "the force left a document " &
+      "that its taker could not write"
+    d.moveTreat(tmp / "move" / "taken.nim", rec, {tpKind}, other, bare, {tpKind},
+      "what is remembered", NoDoc, NoDoc)
+    d.flush()
+    doAssert readMemoryFile(tmp / "move" / "taken.nim", problems).treat == force
+    doAssert not fileExists(other) or not readMemoryFile(other, problems).treat.isSet,
+      "the force stayed in the document it moved from"
+    d.stop()
 
   block burst:
     let box = initInbox()
