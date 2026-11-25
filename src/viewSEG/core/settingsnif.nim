@@ -403,6 +403,14 @@ proc settingsDocument*(s: Settings): string =
   w.open("recentProjects")
   for f in s.recentProjects: w.add f
   w.close()
+  if s.pickerPlaces.len > 0:
+    w.open("pickerPlaces")
+    for p in s.pickerPlaces:
+      w.open("place")
+      w.add p.name
+      w.add p.folder
+      w.close()
+    w.close()
   w.value("lastProject", s.lastProject)
   w.value("reopenProject", s.reopenProject)
   w.value("referenceId", s.referenceId)
@@ -686,6 +694,18 @@ proc strings(r: var Reading; n: NifNode; x: var seq[string]) =
   for v in n.kids:
     if v.kind != nkString or not usableText(v.text): r.unusable(v, n.tag, "strings")
     elif v.text notin got and got.len < MaxRecent: got.add v.text
+  x = got
+
+proc pickerPlaces(r: var Reading; n: NifNode; x: var seq[PickerPlace]) =
+  ## `(pickerPlaces (place "name" "folder") ...)`: a name no version here uses is
+  ## kept as it is and never asked for.
+  var got: seq[PickerPlace]
+  for c in n.kids:
+    if c.isTree("place") and c.kids.len == 2 and c.kids[0].kind == nkString and
+        c.kids[1].kind == nkString and usableText(c.kids[0].text) and
+        usableText(c.kids[1].text):
+      got.remember(c.kids[0].text, c.kids[1].text)
+    else: r.unusable(c, n.tag, "(place \"name\" \"folder\")")
   x = got
 
 proc breakModel(r: var Reading; n: NifNode; m: var BreakModel) =
@@ -1110,6 +1130,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
       of "recentFiles": r.strings(c, result.recentFiles)
       of "recentFolders": r.strings(c, result.recentFolders)
       of "recentProjects": r.strings(c, result.recentProjects)
+      of "pickerPlaces": r.pickerPlaces(c, result.pickerPlaces)
       of "lastProject": r.text(c, result.lastProject, allowEmpty = true)
       of "reopenProject": r.flag(c, result.reopenProject)
       of "referenceId": r.text(c, result.referenceId, allowEmpty = true)

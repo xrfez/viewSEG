@@ -44,6 +44,8 @@ proc everyFieldSet(): Settings =
     recentFiles: @[r"C:\Data\shot (1).sgd", "/data/two.segy", "/données/trois.sgd"],
     recentFolders: @[r"\\server\share\line 7", "/data"],
     recentProjects: @["/jobs/Land 2026", r"D:\jobs\Line 7"],
+    pickerPlaces: @[PickerPlace(name: "openFolder", folder: "/data/line 7"),
+      PickerPlace(name: "importSettings", folder: r"D:\jobs\settings")],
     lastProject: "/jobs/Land 2026", reopenProject: false,
     scale: ScaleUnits(length: luCm, speed: true),
     noise: NoiseSettings(choice: ncSteps, edgeMs: 140, radius: 640, steps: 3, allLines: true,

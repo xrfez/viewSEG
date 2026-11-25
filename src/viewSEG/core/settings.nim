@@ -24,9 +24,10 @@
 
 import std/[math, sequtils]
 import components, displaypresets, geometry, join, log, mapkinds, noisearea, outputrevision, panels,
-  plotoptions, readout, scales, spectra, tracetable, units
+  pickerplaces, plotoptions, readout, scales, spectra, tracetable, units
 
-export displaypresets, join, mapkinds, noisearea, plotoptions, readout, scales, spectra, units
+export displaypresets, join, mapkinds, noisearea, pickerplaces, plotoptions, readout, scales,
+    spectra, units
 
 const
   DefaultRecordMs* = 10_000.0 ## the Slice by shot log window's record length to begin with
@@ -217,6 +218,8 @@ type
     recentFiles*: seq[string] ## the files opened last, newest first
     recentFolders*: seq[string] ## their folders, newest first
     recentProjects*: seq[string] ## the project folders opened last, newest first
+    pickerPlaces*: seq[PickerPlace]
+      ## where each file or folder picker was last used, by the picker's stable name
     lastProject*: string ## the project open at the quit; "" for none
     reopenProject*: bool = true ## start with the project open at the quit
     referenceId*: string

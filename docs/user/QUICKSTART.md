@@ -83,7 +83,10 @@ on. Each open seismic file's source and receiver positions are read into the sur
 and everything in the survey is drawn on the **Map** (below).
 
 **File > Open recent** lists the files and the folders opened last (the start screen
-shows the newest ones); the file dialogs start in the folder of the last file opened.
+shows the newest ones); the file dialogs start in the folder of the last file opened. Every file and
+folder dialog (the Missing traces folder, the Output folders, the exports, the survey files and so
+on) opens where that same dialog was last used, also after a restart, and falls back to the
+nearest folder that still exists.
 
 ## Step through a folder
 

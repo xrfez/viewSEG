@@ -71,6 +71,51 @@ type
     dkVibFiles = "Vibrator QC files"           ## signature files to judge
     dkGenerateOFile = "Generate O file"        ## an SPS file of O records to write (a save dialog)
 
+func pickerName*(kind: DialogKind): string =
+  ## The stable name the settings keep a picker's last folder under: it never
+  ## follows the enum's order or its labels, so a new dialog shifts nothing.
+  case kind
+  of dkOpenFile: "openFile"
+  of dkOpenFiles: "openFiles"
+  of dkOpenFolder: "openFolder"
+  of dkExportSettings: "exportSettings"
+  of dkImportSettings: "importSettings"
+  of dkExportLayout: "exportLayout"
+  of dkImportLayout: "importLayout"
+  of dkExportLog: "exportMessages"
+  of dkJoinFiles: "joinFiles"
+  of dkExportEdits: "exportEdits"
+  of dkImportEdits: "importEdits"
+  of dkOpenProject: "openProject"
+  of dkProjectPlace: "projectPlace"
+  of dkProjectData: "projectData"
+  of dkLocateFolder: "locateFolder"
+  of dkExportMissing: "exportMissing"
+  of dkExportQuality: "exportQuality"
+  of dkExportVibFolder: "exportVibFolder"
+  of dkOutputSource: "outputSource"
+  of dkOutputDest: "outputDest"
+  of dkShotLog: "shotLog"
+  of dkCutDest: "cutDest"
+  of dkMissingFolder: "missingFolder"
+  of dkExportShotSps: "exportShotSps"
+  of dkOutputLog: "outputLog"
+  of dkOutputText: "outputText"
+  of dkVibFolder: "vibFolder"
+  of dkVibFiles: "vibFiles"
+  of dkGenerateOFile: "generateOFile"
+
+func isFolderDialog*(kind: DialogKind): bool =
+  ## Whether the dialog chooses a folder (its answer is the place to remember).
+  kind in {dkOpenFolder, dkOpenProject, dkProjectPlace, dkProjectData, dkLocateFolder,
+    dkOutputSource, dkOutputDest, dkCutDest, dkMissingFolder, dkVibFolder}
+
+func isSaveDialog*(kind: DialogKind): bool =
+  ## Whether the dialog names a file to write.
+  kind in {dkExportSettings, dkExportLayout, dkExportLog, dkExportEdits, dkExportMissing,
+    dkExportQuality, dkExportVibFolder, dkExportShotSps, dkOutputLog, dkGenerateOFile}
+
+type
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
     seCancelled,    ## a dialog was closed without a choice

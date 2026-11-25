@@ -205,6 +205,7 @@ type
     ckExportSettings = "export settings" ## write the settings to a file of the user's
     ckImportSettings = "import settings" ## take settings in from such a file
     ckResetSettings = "reset settings"   ## back to the defaults
+    ckRememberPlace = "remember place"   ## a file picker was used in a folder
     ckLayout = "window layout"           ## how the windows are arranged now
     ckSaveLayout = "save layout"         ## keep the arrangement under a name
     ckLoadLayout = "load layout"         ## arrange the windows as a layout file says
@@ -473,6 +474,9 @@ type
     of ckExportSettings, ckImportSettings, ckLoadLayout, ckExportLayout, ckImportLayout,
         ckExportLog:
       docPath*: string ## the file written or read
+    of ckRememberPlace:
+      placeName*: string ## the picker's stable name
+      placePath*: string ## the folder it was used in
     of ckLayout: arrangement*: string ## the toolkit's layout text
     of ckSaveLayout: layoutName*: string
       ## the name to keep it under
@@ -12565,6 +12569,11 @@ proc applyCommand(state: var AppState; cmd: Command) =
     else:
       state.diskIo.read(cmd.docPath, rpImportSettings, MaxNifBytes)
       state.importsBy.add cmd.origin
+  of ckRememberPlace:
+    if cmd.placeName.len == 0 or cmd.placePath.len == 0:
+      state.ignore(cmd, "no picker or folder was named")
+    elif state.settings.pickerPlaces.folderOf(cmd.placeName) != cmd.placePath:
+      state.change(cmd.origin, s): s.pickerPlaces.remember(cmd.placeName, cmd.placePath)
   of ckLayout:
     if cmd.arrangement != state.arrangement:
       state.arrangement = cmd.arrangement
@@ -12608,6 +12617,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
       s = state.defaults
       s.recentFiles = was.recentFiles # memory, not preferences
       s.recentFolders = was.recentFolders
+      s.pickerPlaces = was.pickerPlaces
       s.window = was.window
   of ckDisplay:
     let k = state.findPanel(cmd.panel)

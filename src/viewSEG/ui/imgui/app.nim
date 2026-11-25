@@ -859,13 +859,17 @@ proc followSettings(ui: var Ui) =
 
 # ------------------------------------------------------------------- tray --
 
-proc ask(ui: Ui; kind: DialogKind; location = "") =
-  ## Shows the file dialog `kind`, starting at `location`; its answer comes
-  ## as a shell event (from `RunOptions.dialogs` when a test gives one).
+proc ask(ui: Ui; kind: DialogKind; location = ""; explicit = false) =
+  ## Shows the file dialog `kind`; its answer comes as a shell event (from
+  ## `RunOptions.dialogs` when a test gives one). It starts at `location` when
+  ## `explicit` (a folder or file the user is editing) and it exists, else where
+  ## this picker was last used (`pickerplaces.startAt`), else at `location`.
+  let at = ui.core.settings.pickerPlaces.startAt(kind.pickerName, location, explicit,
+    kind.isSaveDialog)
   if ui.dialogs == nil:
-    showDialog(kind, SDL_GetWindowID(ui.window), location)
+    showDialog(kind, SDL_GetWindowID(ui.window), at)
   else:
-    let paths = ui.dialogs(kind, location)
+    let paths = ui.dialogs(kind, at)
     postShellEvent(if paths.len > 0: ShellEvent(kind: sePathsChosen, dialog: kind,
       paths: paths) else: ShellEvent(kind: seCancelled, dialog: kind))
 
@@ -934,6 +938,9 @@ proc followTray(ui: var Ui) =
 proc onShellEvent(ui: var Ui; ev: ShellEvent) =
   case ev.kind
   of sePathsChosen:
+    let where = if ev.dialog.isFolderDialog: ev.paths[0] else: ev.paths[0].parentDir
+    ui.core.apply Command(kind: ckRememberPlace, placeName: ev.dialog.pickerName,
+      placePath: where)
     case ev.dialog
     of dkOpenFile, dkOpenFiles:
       # One file: shown at once, its folder listed beside it; several: listed
@@ -1649,7 +1656,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     for c in missing.commands.mitems:
       ui.core.apply move c
     if missing.exportAsked: ui.ask(dkExportMissing, missing.exportPath)
-    if missing.askFolder: ui.ask(dkMissingFolder, missing.askAt)
+    if missing.askFolder: ui.ask(dkMissingFolder, missing.askAt, explicit = true)
     if missing.close: ui.windows.hide(awMissing)
   if ui.windows.shows(awQuality):
     ui.windows.beforeDrawing(awQuality)
@@ -1663,7 +1670,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     for c in folderQc.commands.mitems:
       ui.core.apply move c
     if folderQc.exportAsked: ui.ask(dkExportVibFolder, folderQc.exportPath)
-    if folderQc.askFolder: ui.ask(dkVibFolder, folderQc.askAt)
+    if folderQc.askFolder: ui.ask(dkVibFolder, folderQc.askAt, explicit = true)
     if folderQc.askFiles: ui.ask(dkVibFiles, folderQc.askAt)
     if folderQc.closed: ui.windows.hide(awVibFolder)
   if ui.windows.shows(awOutput):
@@ -1671,8 +1678,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     var written = ui.output.drawOutput(outputTitle, ui.core, ui.fonts, ui.theme, ui.marks)
     for c in written.commands.mitems:
       ui.core.apply move c
-    if written.askSource: ui.ask(dkOutputSource, written.askAt)
-    if written.askDest: ui.ask(dkOutputDest, written.askAt)
+    if written.askSource: ui.ask(dkOutputSource, written.askAt, explicit = true)
+    if written.askDest: ui.ask(dkOutputDest, written.askAt, explicit = true)
     if written.askText: ui.ask(dkOutputText, written.askAt)
     if written.askLog: ui.ask(dkOutputLog, written.askAt)
   if ui.windows.shows(awHeaders):
@@ -1741,7 +1748,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.core.apply move c
   case project.ask
   of paNone: discard
-  of paPlace: ui.ask(dkProjectPlace, project.askAt)
+  of paPlace: ui.ask(dkProjectPlace, project.askAt, explicit = true)
   of paData: ui.ask(dkProjectData, project.askAt)
   of paLocate: ui.ask(dkLocateFolder, project.askAt)
   if join.clearSurvey: ui.clearSurvey.ask(joinTitle)
@@ -1764,7 +1771,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   var cut = ui.cut.drawCut(ui.core, ui.theme, ui.marks)
   for c in cut.commands.mitems:
     ui.core.apply move c
-  if cut.askFolder: ui.ask(dkCutDest, cut.askAt)
+  if cut.askFolder: ui.ask(dkCutDest, cut.askAt, explicit = true)
   if ui.windows.shortcutsOpen and not ui.shortcuts.shown:
     ui.shortcuts.shown = true
   ui.shortcuts.drawShortcuts(ui.theme, ui.marks)
