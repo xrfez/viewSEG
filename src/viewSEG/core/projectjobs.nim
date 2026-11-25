@@ -46,18 +46,8 @@ proc post(to: Poster; job: JobId; news: sink ProjectNews) =
   to.post Msg(job: job, kind: mkProject, news: news)
 
 proc writeWhole(path, text: string) =
-  ## `text` written to `path` atomically: a temporary file beside it, then
-  ## a rename.
-  let tmp = path & "." & $getCurrentProcessId() & ".tmp"
-  var f: File
-  if not fs.open(f, tmp, fmWrite): raise newException(IOError, "cannot write " & tmp)
-  try:
-    if text.len > 0 and fs.writeBuffer(f, tmp, unsafeAddr text[0], text.len) != text.len:
-      raise newException(IOError, "the disk did not take " & tmp)
-    flushFile(f)
-  finally:
-    close(f)
-  fs.moveFile(tmp, path)
+  ## `text` written to `path` atomically (`fs.writeTextAtomic`).
+  fs.writeTextAtomic(path, text)
 
 proc lookPlace*(p: ProjectPath; dir: string): PlaceLook =
   ## Where data folder `p` of the project in `dir` is now.

@@ -1208,17 +1208,7 @@ proc loadIndex*(folder: string): ReferenceIndex {.gcsafe.} =
 proc writeAtomic(path, text: string) =
   ## `text` written to `path`: a temporary file beside it, flushed, then
   ## renamed over it. A reader sees the old file or the new one.
-  let tmp = path & "." & $getCurrentProcessId() & ".tmp"
-  var f: File
-  if not fs.open(f, tmp, fmWrite):
-    raise newException(IOError, "cannot write " & tmp)
-  try:
-    if text.len > 0 and fs.writeBuffer(f, tmp, unsafeAddr text[0], text.len) != text.len:
-      raise newException(IOError, "the disk did not take " & tmp)
-    flushFile(f)
-  finally:
-    close(f)
-  fs.moveFile(tmp, path)
+  fs.writeTextAtomic(path, text)
 
 proc writeIndex*(folder: string; index: ReferenceIndex) {.gcsafe.} =
   ## Writes `index` atomically. A damaged file already there is moved aside
