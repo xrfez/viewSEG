@@ -451,12 +451,13 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
   at[vsBaseplate] = roles.baseplate
   var recorded = -1
   var aligned = ""
+  var shiftMs = NaN
   if held.samples.len > 0:
     var stored = held.samples
     if roles.reference >= 0 and roles.reference < rows.len:
       let al = alignStored(rows[roles.reference], held.samples, dtMs)
       aligned = al.words
-      if al.found: stored = placedSinc(held.samples, al.shiftMs, dtMs)
+      if al.found: (stored, shiftMs) = (placedSinc(held.samples, al.shiftMs, dtMs), al.shiftMs)
       recorded = roles.reference
     else:
       stored = startedAt(held.samples, held.startMs, dtMs)
@@ -478,7 +479,8 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
   # (the window's check of the converter's order: said when the other order fits clearly better)
   let exactTopHz = if held.samples.len > 0: held.exactTopHz else: NaN
   var answer = vibratorOf(rows, names, at, dtMs, params, recorded, topHz, exactTopHz, note, sig,
-    converterOrder = facts.kind == sgNone and isConverterLayout(codes))
+    converterOrder = facts.kind == sgNone and isConverterLayout(codes),
+    plan = PlanAsk(stored: held.samples.len > 0, shiftMs: shiftMs))
   if answer.problem.len == 0:
     if held.samples.len > 0:
       let label = if held.name.len > 0: held.name else: "reference"
@@ -511,7 +513,9 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
     addLine(warnings, forceWhy.capitalizeAscii)
   FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foJudged,
     verdict: answer.qc.verdict, sentence: answer.qc.line, forceWhy: forceWhy,
-    measures: measures, polarity: answer.polarity.line,
+    measures: measures, plan: measuresOf(answer.qc.plan.rows),
+    fileMeasures: measuresOf(answer.qc.plan.fileRows), ownPilot: answer.qc.ownPilot,
+    partial: not answer.qc.recordedPct.isNaN, polarity: answer.polarity.line,
     warnings: warnings, controllers: controllersOf(answer.controller))
 
 type

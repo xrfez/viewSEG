@@ -57,6 +57,16 @@ type
     verdict*: QcVerdict
     sentence*: string
     measures*: seq[FolderMeasure]
+    plan*: seq[FolderMeasure]
+      ## the recorded pilot's average and peak phase against the project's reference (the
+      ## plan), judged with the ground force's phase limits; empty when not compared
+    fileMeasures*: seq[FolderMeasure]
+      ## the judged ground force's average and peak phase against the file's own reference
+      ## trace, beside `measures` against the plan: shown, never judged; empty without both
+    ownPilot*: bool
+      ## judged against the file's own pilot: it shows the vibrator followed its pilot, not that
+      ## the pilot is the planned sweep
+    partial*: bool ## the judged part covers less than the whole reference sweep
     polarity*: string
     warnings*: seq[string]
     problem*: string
@@ -77,9 +87,12 @@ type
   FolderTotals* = object
     ## Counts of the rows in hand. `passed`, `failed` and `notJudged` are
     ## judged rows only. Every file is counted under its own verdict.
-    ## `forceNotJudged` counts judged rows whose force limits were not judged
-    ## (also counted under their verdict).
+    ## `forceNotJudged` counts judged rows whose force limits were not judged, `ownPilot`
+    ## those judged against their own pilot rather than the project's reference, and
+    ## `partial` the passes on part of the reference sweep (each also counted under its
+    ## verdict).
     files*, passed*, failed*, notJudged*, problems*, skipped*, forceNotJudged*: int
+    ownPilot*, partial*: int
 
   FolderTable* = object
     ## The rows, the profile's problems (said once) and the fleet's weight words.
@@ -120,6 +133,8 @@ func totalsOf*(rows: openArray[FolderRow]): FolderTotals =
       of qvFail: inc result.failed
       of qvNotJudged: inc result.notJudged
       if row.forceWhy.len > 0: inc result.forceNotJudged
+      if row.ownPilot: inc result.ownPilot
+      if row.partial and row.verdict == qvPass: inc result.partial
     of foProblem: inc result.problems
     of foSkipped: inc result.skipped
 

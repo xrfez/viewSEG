@@ -35,8 +35,8 @@
 
 import std/[math, os, strutils]
 import parseSSDAT
-import viewSEG/core/[analysis, jobs, openchoice, project, settings, signatures, state,
-  sweepinfo, threads, vibfolderconf, vibfolderjobs, vibfolderqc, vibjudge]
+import viewSEG/core/[analysis, jobs, openchoice, project, references, settings, signatures,
+  state, sweepinfo, threads, vibfolderconf, vibfolderjobs, vibfolderqc, vibjudge]
 import viewSEG/view/vibfolderwords
 import utils/[chosenref, fixtures, gfsynth, sigfiles, vibsynth, waiting]
 
@@ -151,6 +151,20 @@ proc differences(win: AnalysisResult; row: FolderRow): seq[string] =
             $q.bound & "), folder " & $m.status & " " & $m.measured & " (limit " &
             $m.bound & ")"
     if not found: result.add $q.limit & " is not in the row"
+  # the recorded pilot against the plan, and what the file was judged against
+  if win.qc.plan.rows.len != row.plan.len:
+    result.add "plan rows: window " & $win.qc.plan.rows.len & ", folder " & $row.plan.len
+  else:
+    for i, q in win.qc.plan.rows:
+      let m = row.plan[i]
+      if m.limit != q.limit or m.status != q.status or not same(m.measured, q.measured):
+        result.add "the pilot's " & $q.limit & ": window " & $q.status & " " & $q.measured &
+          ", folder " & $m.status & " " & $m.measured
+  if win.qc.ownPilot != row.ownPilot:
+    result.add "judged against its own pilot: window " & $win.qc.ownPilot & ", folder " &
+      $row.ownPilot
+  if win.qc.recordedPct.isNaN == row.partial:
+    result.add "part recorded: window " & $win.qc.recordedPct & ", folder " & $row.partial
   for m in row.measures:
     var found = false
     for q in win.qc.rows:
@@ -170,7 +184,107 @@ proc parity(st: var AppState; files: seq[FolderListed]; t: FolderTable) =
     doAssert said.len == 0, f.path.extractFilename & ": " & said.join("; ")
     st.close(w)
 
+proc chirp(n: int; seconds: float64; gain = 1.0): seq[int32] =
+  ## `n` samples at 1 ms of an 8-80 Hz linear sweep `seconds` long (0.1 s cos² tapers), zero
+  ## after it.
+  result = newSeq[int32](n)
+  for i in 0 ..< n:
+    let t = float64(i) / 1000
+    if t <= seconds:
+      let taper = if t < 0.1: pow(sin(PI / 2 * t / 0.1), 2)
+        elif t > seconds - 0.1: pow(sin(PI / 2 * (seconds - t) / 0.1), 2)
+        else: 1.0
+      result[i] = int32(gain * 6000 * taper * sin(2 * PI * (8 * t + 72 / (2 * seconds) * t * t)))
+
+proc planDat(dir, name: string; n: int; seconds: float64; number: int): string =
+  ## A `.dat` whose ground force (its two channels' sum) follows its own pilot, `seconds` long
+  ## in `n` samples.
+  var s = SynthDat(samples: n, vibrator: 11, fileNumber: number)
+  s.data[dcReference] = chirp(n, seconds)
+  s.data[dcMass] = chirp(n, seconds, 0.5)
+  s.data[dcBaseplate] = chirp(n, seconds, 0.5)
+  datFile(dir, name, s)
+
 proc main*() =
+  block againstThePlan:
+    # the vibrator QC judges against the plan (the project's stored reference), in the window
+    # and the folder alike: a 10 s file against a 12 s plan fails on its pilot, against the
+    # same sweep with a longer listen time passes; with a pilot rule, both say it was judged
+    # against the file's own pilot, and the folder counts it so; with the project reference
+    # switched off, the window says it too
+    # Seen to fail: with the recorded pilot's rows left out of the folder's row, "plan rows:
+    # window 2, folder 0".
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      let plans = fx.dir / "plans"
+      let plan12 = planDat(plans, "plan12.dat", 12001, 12, 7101)
+      let plan10 = planDat(plans, "plan10.dat", 12001, 10, 7102)
+      let file10 = planDat(fx.dir / "sweeps", "file10.dat", 10001, 10, 7201)
+      let files = @[listed(file10)]
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      proc storePlan(st: var AppState; path, name: string) =
+        let w = st.window(path)
+        let trace = st.plots[w].traces[st.plots[w].params.roles.reference]
+        st.close(w)
+        discard st.chooseStored(fx.dir / "refs", trace, name)
+      st.storePlan(plan12, "plan 12 s")
+      block profile:
+        let w = st.window(file10)
+        var p = st.plots[w].params
+        p.harmonics = 4 # (the limits: a profile)
+        st.change(w, p)
+        st.close(w)
+      var t = st.run(files)
+      st.parity(files, t)
+      let fail = rowOf(t, file10)
+      doAssert fail.verdict == qvFail and fail.sentence.startsWith("✗ FAIL: the recorded pilot " &
+        "is not the project's reference sweep (average phase "), fail.sentence
+      doAssert "the project reference sweeps 8-80 Hz in 12.0 s; the recorded pilot sweeps " &
+        "8-80 Hz in 10.0 s" in fail.sentence, fail.sentence
+      doAssert fail.plan.len == 2 and fail.plan[0].status == qsFail and not fail.ownPilot
+      doAssert "✗" in rowCells(fail)[headers().find(ColPlan)], $rowCells(fail)
+      doAssert "the last 2.0 s of the reference sweep lie past the end" in resultsCsv(t)
+      # both phase figures in the row: against the plan, and against the file's reference
+      doAssert fail.fileMeasures.len == 2 and fail.fileMeasures[0].measured < 3,
+        $fail.fileMeasures
+      doAssert fail.measures[0].measured > 20, $fail.measures[0].measured
+      st.storePlan(plan10, "plan 10 s, listen 2 s")
+      t = st.run(files)
+      st.parity(files, t)
+      let pass = rowOf(t, file10)
+      doAssert pass.verdict == qvPass and pass.plan[0].status == qsPass, pass.sentence
+      doAssert not pass.partial and "part recorded" notin pass.sentence and
+        OwnPilotWords notin pass.sentence, pass.sentence
+      # a pilot rule: the file's own pilot is the reference, said and counted
+      let before = st.references.entries.len
+      st.apply Command(kind: ckPilotReference, refPilot: PilotRule(name: "pilot rule",
+        aux: true, trace: 1, startMs: 0, spanMs: 10000))
+      doAssert st.settle(st.references.entries.len > before)
+      for e in st.references.entries:
+        if e.isPilot: st.apply Command(kind: ckSelectReference, refId: e.id)
+      t = st.run(files)
+      st.parity(files, t)
+      let own = rowOf(t, file10)
+      doAssert own.ownPilot and own.sentence.endsWith("; " & OwnPilotWords), own.sentence
+      doAssert own.plan.len == 0 and rowCells(own)[headers().find(ColPlan)] == "own pilot"
+      doAssert summaryLine(t.totals).endsWith(", 1 judged against its own pilot, not the " &
+        "project's reference."), summaryLine(t.totals)
+      # the project reference switched off in the window: its own pilot, said
+      st.storePlan(plan12, "plan 12 s again")
+      let w = st.window(file10)
+      doAssert not st.plots[w].result.qc.ownPilot, st.plots[w].result.qc.line
+      var p = st.plots[w].params
+      p.projectReference = false
+      st.change(w, p)
+      doAssert st.plots[w].result.qc.ownPilot and
+        st.plots[w].result.qc.line.endsWith("; " & OwnPilotWords), st.plots[w].result.qc.line
+      st.close(w)
+      st.shutdown()
+
   block inProject:
     withFixtures fx:
       let dir = fx.dir / "config"
@@ -225,7 +339,8 @@ proc main*() =
         "in another unit)", made.forceWhy
       doAssert made.verdict == qvPass, made.sentence
       doAssert summaryLine(t.totals) == "5 files, 4 passes, 1 fail, 0 not judged, 0 problems, " &
-        "0 skipped, 1 with force not judged.", summaryLine(t.totals)
+        "0 skipped, 1 with force not judged, 5 judged against their own pilot, not the " &
+        "project's reference.", summaryLine(t.totals)
       for row in t.rows:
         if row.path != sgy:
           doAssert "reversed for the analysis, as you chose" in row.polarity, row.polarity
