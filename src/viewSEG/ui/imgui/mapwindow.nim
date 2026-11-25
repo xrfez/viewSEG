@@ -1348,6 +1348,27 @@ func overlaps(a, b: Rect): bool =
   a.pos.x < b.pos.x + b.size.x and b.pos.x < a.pos.x + a.size.x and
     a.pos.y < b.pos.y + b.size.y and b.pos.y < a.pos.y + a.size.y
 
+proc textWidth(text: string): float32 =
+  igCalcTextSize(text.cstring, nil, false, -1).x
+
+proc wrapped(text: string; width: float32): seq[string] =
+  ## `text` broken at its spaces into lines no wider than `width` (a word wider
+  ## than that is broken between letters).
+  var line = ""
+  for word in text.split(' '):
+    let joined = if line.len == 0: word else: line & " " & word
+    if line.len == 0 or joined.textWidth <= width:
+      line = joined
+    else:
+      result.add line
+      line = word
+    while line.textWidth > width and line.len > 1:
+      var n = line.len - 1
+      while n > 1 and line[0 ..< n].textWidth > width: dec n
+      result.add line[0 ..< n]
+      line = line[n .. ^1]
+  result.add line
+
 proc drawInfoBox(info: openArray[PointInfo]; at: ImVec2_c; plotPos, plotSize: ImVec2_c;
     t: Theme; marks: var Marks; menu = Rect()) =
   ## What the map says of the points under the pointer, in a box beside the
@@ -1356,20 +1377,54 @@ proc drawInfoBox(info: openArray[PointInfo]; at: ImVec2_c; plotPos, plotSize: Im
   ## its own and take the keyboard focus from the map). With the right-click
   ## `menu` open (its area, not empty), on a side of the pointer where the
   ## menu does not cover it, if the plot has room there.
-  var rows: seq[(string, bool)] # text, a title
+  var all: seq[(string, bool)] # text, a title
   for i in info.merged:
-    if i.title.len > 0: rows.add (i.title, true)
-    for l in i.lines: rows.add (l, false)
+    if i.title.len > 0: all.add (i.title, true)
+    for l in i.lines: all.add (l, false)
   let pad = igGetStyle().WindowPadding
   let lineH = igGetTextLineHeightWithSpacing()
-  var w = 0'f32
-  for (text, _) in rows: w = max(w, igCalcTextSize(text.cstring, nil, false, -1).x)
-  let size = ImVec2_c(x: w + 2 * pad.x, y: float32(rows.len) * lineH + 2 * pad.y -
-    igGetStyle().ItemSpacing.y)
-  var lo = ImVec2_c(x: at.x + 18, y: at.y + 18)
-  if lo.x + size.x > plotPos.x + plotSize.x: lo.x = at.x - 18 - size.x
-  if lo.y + size.y > plotPos.y + plotSize.y: lo.y = at.y - 18 - size.y
-  lo = ImVec2_c(x: max(lo.x, plotPos.x), y: max(lo.y, plotPos.y))
+  type Box = object
+    rows: seq[(string, bool)]
+    size, lo: ImVec2_c
+    clear: bool ## inside the bounds and not covering the pointer
+  proc layout(bpos, bsize: ImVec2_c): Box =
+    # lines wider than the bounds are broken at their spaces
+    let room = max(bsize.x - 2 * pad.x - 2, 1'f32)
+    var w = 0'f32
+    for (text, title) in all:
+      for part in text.wrapped(room):
+        result.rows.add (part, title)
+        w = max(w, part.textWidth)
+    result.size = ImVec2_c(x: w + 2 * pad.x, y: float32(result.rows.len) * lineH + 2 * pad.y -
+      igGetStyle().ItemSpacing.y)
+    let size = result.size
+    var lo = ImVec2_c(x: at.x + 18, y: at.y + 18)
+    if lo.x + size.x > bpos.x + bsize.x: lo.x = at.x - 18 - size.x
+    if lo.y + size.y > bpos.y + bsize.y: lo.y = at.y - 18 - size.y
+    lo = ImVec2_c(x: max(lo.x, bpos.x), y: max(lo.y, bpos.y))
+    let covers = at.x >= lo.x and at.x <= lo.x + size.x and at.y >= lo.y and
+      at.y <= lo.y + size.y
+    if covers:
+      # a box as wide as a narrow bounds would cover the pointer: above or below it
+      let x = clamp(at.x - size.x / 2, bpos.x, max(bpos.x, bpos.x + bsize.x - size.x))
+      if at.y + 18 + size.y <= bpos.y + bsize.y: lo = ImVec2_c(x: x, y: at.y + 18)
+      elif at.y - 18 - size.y >= bpos.y: lo = ImVec2_c(x: x, y: at.y - 18 - size.y)
+    result.lo = lo
+    result.clear = lo.x >= bpos.x and lo.y >= bpos.y and lo.x + size.x <= bpos.x + bsize.x and
+      lo.y + size.y <= bpos.y + bsize.y and not (at.x >= lo.x and at.x <= lo.x + size.x and
+      at.y >= lo.y and at.y <= lo.y + size.y)
+  var box = layout(plotPos, plotSize)
+  var dl = igGetWindowDrawList()
+  if not box.clear and menu.size.x <= 0:
+    # A plot too small for it (a map docked narrow): over what lies beside the
+    # map, kept inside the window.
+    let vp = igGetMainViewport()
+    let other = layout(vp.Pos, vp.Size)
+    if other.clear:
+      box = other
+      dl = igGetForegroundDrawList_ViewportPtr(vp)
+  let (rows, size) = (box.rows, box.size)
+  var lo = box.lo
   if menu.size.x > 0:
     # Beside the pointer, beside the menu, or above or below it, kept inside
     # the plot (a box wider than the plot from its left edge, cut there).
@@ -1386,7 +1441,6 @@ proc drawInfoBox(info: openArray[PointInfo]; at: ImVec2_c; plotPos, plotSize: Im
         lo = ImVec2_c(x: r.pos.x, y: r.pos.y)
         break
   let hi = ImVec2_c(x: lo.x + size.x, y: lo.y + size.y)
-  let dl = igGetWindowDrawList()
   ImDrawList_AddRectFilled(dl, lo, hi, u32(t.roles[rlPopup]), igGetStyle().PopupRounding, 0)
   ImDrawList_AddRect(dl, lo, hi, u32(t.roles[rlBorder]), igGetStyle().PopupRounding, 1, 0)
   var y = lo.y + pad.y
