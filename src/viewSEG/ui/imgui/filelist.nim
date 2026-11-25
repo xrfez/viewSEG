@@ -237,6 +237,16 @@ proc drawSweepFilters(ui: var FileListUi; t: Theme; marks: var Marks) =
   tip("Show only this vibrator's sweeps (the vibrator ID in the .dat's QC record; a .vib " &
     "takes it from the .dat of its sweep)")
 
+proc cellText(text: string; pending: bool; dim: Rgba) =
+  ## A cell's words; the mark of a choice no job uses yet is drawn dimmed after them.
+  if pending and text.endsWith(ForcedMark):
+    igTextUnformatted(text[0 ..< text.len - ForcedMark.len].cstring, nil)
+    igSameLine(0, 0)
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(dim))
+    igTextUnformatted(ForcedMark.cstring, nil)
+    igPopStyleColor(1)
+  else: igTextUnformatted(text.cstring, nil)
+
 proc treatMenu(e: FileEntry; commands: var seq[Command]; marks: var Marks) =
   ## The menu of a seismic file's row: what to treat it as (its kind of recording, the grouping
   ## and the sort of its traces), remembered for the file. A tick shows what the user forced;
@@ -451,9 +461,9 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
       discard igTableNextColumn()
       igTextUnformatted(typeText(e).cstring, nil)
       discard igTableNextColumn()
-      igTextUnformatted(kindText(e).cstring, nil)
+      cellText(kindText(e), e.kindPending, t.roles[rlTextDim])
       discard igTableNextColumn()
-      igTextUnformatted(orderText(e).cstring, nil)
+      cellText(orderText(e), e.orderPending, t.roles[rlTextDim])
       discard igTableNextColumn()
       let size = sizeText(e.size)
       let w = igCalcTextSize(size.cstring, nil, false, -1).x

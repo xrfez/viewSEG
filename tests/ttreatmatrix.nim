@@ -46,6 +46,7 @@ import std/[importutils, options, os, sequtils, strutils, tables, times]
 import parseSEG
 import viewSEG/core/state {.all.}
 import viewSEG/core/[edits, filelist, filememory, identity, jobs, recordingkind, treatas]
+import viewSEG/view/[filetable, recordingwords]
 import utils/[fixtures, kindfiles, waiting]
 
 privateAccess(AppState)
@@ -255,14 +256,11 @@ proc main*() =
           doAssert not st.treatOf(f).isSet
         st.shutdown()
       doAssert run(true) == rkReceiverContinuous, "carriedOnce: the force did not go to the taken"
-      var before: seq[string] = @[]
-      for _, p in walkDir(store.home):
-        if p.endsWith(MemorySuffix): before.add readFile(p)
+      let before = docs(cfg).mapIt((it.doc, it.treat, it.edits.lists[teKilled]))
       doAssert run(false) == rkShotGather, "carriedOnce: the cleared force came back"
-      var after: seq[string] = @[]
-      for _, p in walkDir(store.home):
-        if p.endsWith(MemorySuffix): after.add readFile(p)
-      doAssert before == after, "carriedOnce: an open with nothing to carry wrote"
+      # (an open may write when the file is seen again; never what the file is treated as)
+      doAssert docs(cfg).mapIt((it.doc, it.treat, it.edits.lists[teKilled])) == before,
+        "carriedOnce: an open with nothing to carry changed a document"
       doAssert docs(cfg).allIt(not it.treat.isSet), "carriedOnce: a force stayed"
     block pendingParts:
       # a listing finds a force in a document that may be another content's (it knows a hash):
@@ -292,12 +290,15 @@ proc main*() =
           st.apply Command(kind: ckBrowse, paths: @[at / "data"])
           doAssert st.settled(st.listed), name & ": not listed"
           doAssert st.treatOf(f).kind == some(rkReceiverContinuous) and
-            not st.treatInForce(f).isSet and st.fileList.entries[0].treatPending,
+            not st.treatInForce(f).isSet and tpKind in st.fileList.entries[0].treatPending,
             name & ": the listed choice is not shown pending"
+          let row = st.fileList.entries[0]
+          doAssert row.kindPending and kindText(row).endsWith(ForcedMark) and
+            PendingWords in kindTip(row), name & ": the row does not say it is not in use"
           st.apply Command(kind: ckTreatAs, treatPath: f, treatGrouping: "flag", origin: origin)
           doAssert st.treatInForce(f).kind.isNone and
             st.treatInForce(f).grouping == some(tgByFlag), name & ": the command took the pending"
-          doAssert st.treatOf(f).kind.isSome and st.fileList.entries[0].treatPending,
+          doAssert st.treatOf(f).kind.isSome and tpKind in st.fileList.entries[0].treatPending,
             name & ": the pending kind is not shown beneath"
           st.open(f)
           doAssert st.settled(st.idle), name & ": not settled"
@@ -305,7 +306,7 @@ proc main*() =
           doAssert st.treatInForce(f).kind == (if confirms: some rkReceiverContinuous
             else: none(RecordingKind)), name & ": the pending kind after the hash"
           doAssert st.treatOf(f) == st.treatInForce(f) and
-            not st.fileList.entries[0].treatPending, name & ": still pending after the hash"
+            st.fileList.entries[0].treatPending == {} and st.treatPendingOf(f) == {}, name & ": still pending after the hash"
           st.shutdown()
     doAssert wrong.len == 0, $wrong.len & " of " & $cells.len & " cells:\n" & wrong.join("\n")
     echo "ttreatmatrix: ", cells.len, " cells"

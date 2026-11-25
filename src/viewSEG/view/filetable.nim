@@ -468,6 +468,14 @@ func kindText*(e: FileEntry): string =
   elif e.kindState in {ksNotKnown, ksMultiplexed}: "?"
   else: ""
 
+func kindPending*(e: FileEntry): bool =
+  ## Whether the kind shown is a choice no job uses yet (`FileEntry.treatPending`).
+  tpKind in e.treatPending and e.treat.kind.isSome
+
+func orderPending*(e: FileEntry): bool =
+  ## Whether a part of the order shown is a choice no job uses yet.
+  e.treatPending * {tpGrouping, tpSubSort} != {}
+
 func autoKindWords(e: FileEntry): string =
   ## What the file says of its kind, for the tooltip of one the user set.
   let k = e.autoRecordingOf
@@ -480,7 +488,9 @@ func kindTip*(e: FileEntry): string =
   ## not known; for a kind the user set, that and what the file says; "" while it is not read
   ## and for a file with none.
   let k = e.recordingOf
-  if e.treat.kind.isSome: kindTitle(k.get) & ". " & ForcedWords & autoKindWords(e) & "."
+  if e.kindPending:
+    kindTitle(k.get) & ". " & PendingWords & " Automatic says: " & autoKindWords(e) & "."
+  elif e.treat.kind.isSome: kindTitle(k.get) & ". " & ForcedWords & autoKindWords(e) & "."
   elif k.isSome: kindTitle(k.get)
   elif e.kindState == ksNotKnown: NotKnownWords
   elif e.kindState == ksMultiplexed: MultiplexedWords
@@ -501,7 +511,8 @@ func orderTip*(e: FileEntry): string =
   let o = e.traceOrderOf
   if e.treat.orderSet:
     let auto = if e.kindState == ksKnown: orderTitle(e.traceOrder) else: "not known"
-    orderTitle(o.get) & " " & ForcedWords & auto
+    if e.orderPending: orderTitle(o.get) & " " & PendingWords & " Automatic says: " & auto
+    else: orderTitle(o.get) & " " & ForcedWords & auto
   elif o.isSome: orderTitle(o.get)
   elif e.kindState == ksNotKnown: NotKnownWords
   elif e.kindState == ksMultiplexed: MultiplexedWords

@@ -1818,13 +1818,17 @@ func shownTreat(state: AppState; path: string): TreatAs =
   if result.grouping.isNone: result.grouping = p.grouping
   if result.subSort.isNone: result.subSort = p.subSort
 
-func treatNotInUse(state: AppState; path: string): bool =
-  ## Whether the file is shown a choice that no job uses yet (`treatsPending`).
-  state.treatsPending.getOrDefault(path).isSet
+func pendingParts(state: AppState; path: string): set[TreatPart] =
+  ## The parts of the choice shown for the file at `path` (canonical) that no job uses yet: a
+  ## listing found them in a document that may be another content's (`treatsPending`).
+  let p = state.treatsPending.getOrDefault(path)
+  if p.kind.isSome: result.incl tpKind
+  if p.grouping.isSome: result.incl tpGrouping
+  if p.subSort.isSome: result.incl tpSubSort
 
 func showTreat(state: AppState; e: var FileEntry) =
   e.treat = state.shownTreat(e.path)
-  e.treatPending = state.treatNotInUse(e.path)
+  e.treatPending = state.pendingParts(e.path)
 
 proc loadTreat(state: var AppState; path: string; t: TreatAs; pending = false) =
   ## What the store keeps of what the user forced for the file at `path`, as its document was
@@ -1849,7 +1853,7 @@ proc loadTreat(state: var AppState; path: string; t: TreatAs; pending = false) =
   if i >= 0:
     let shown = state.shownTreat(path)
     if state.files.entries[i].treat != shown or
-        state.files.entries[i].treatPending != state.treatNotInUse(path):
+        state.files.entries[i].treatPending != state.pendingParts(path):
       state.showTreat(state.files.entries[i])
       state.files.changedAt(i)
 
@@ -3335,6 +3339,11 @@ proc treatOf*(state: AppState; path: string): TreatAs =
   ## What the user forced for the file at `path` (kind and order); nothing is forced for a
   ## file that has no choice.
   state.shownTreat(canonical(path))
+
+proc treatPendingOf*(state: AppState; path: string): set[TreatPart] =
+  ## The parts of what `treatOf` says that no job uses yet: a listing found them in a document
+  ## that may be another content's, and the file's hash has not confirmed it.
+  state.pendingParts(canonical(path))
 
 proc ignore(state: var AppState; cmd: Command; why: string) =
   state.log.add(sevWarning, "commands", "Ignored \"" & $cmd.kind & "\": " & why & ".")

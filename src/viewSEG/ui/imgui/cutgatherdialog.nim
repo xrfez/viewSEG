@@ -8,8 +8,8 @@ import imguin/cimgui
 from parseSEG import skSegd
 import processSEG/continuous/slice
 import ../../core/[cutgather, destwatch, geometry, outputbinary, outputtext, panels, recordingkind,
-  shotlog, state]
-import ../../view/[cutwords, theme]
+  shotlog, state, treatas]
+import ../../view/[cutwords, recordingwords, theme]
 import marks, style
 
 const NameRoom = 256
@@ -257,6 +257,9 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     if problem.len > 0:
       coloured(problem, t.roles[rlWarning], wide)
       marks.mark("cut.why " & problem)
+    if shown >= 0 and tpKind in st.treatPendingOf(st.sessions[shown].path):
+      coloured(PendingWords, t.roles[rlTextDim], wide)
+      marks.mark("cut.kindPending")
     ui.drawAlign(marks)
     let segd = shown >= 0 and st.sessions[shown].facts.summary.standard == skSegd
     let uncarried = segd and facts.ready and facts.carryHeaderBytes == 0

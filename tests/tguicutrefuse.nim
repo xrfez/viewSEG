@@ -3,15 +3,19 @@
 ## each) is read by a job, the dialog says why it is refused above the buttons
 ## and Cut stays dim, whatever is clicked.
 ##
+## A kind found for the file in a document not yet confirmed is not in force: the dialog says
+## so ("cut.kindPending") and the refusal stays.
+##
 ## Seen to fail: with the refusal left out of the dialog's problem, "the dialog
 ## gave no reason"; with Cut enabled on a refusal, "Cut started on a shot gather".
 ##
 ## Needs a display: run under
 ## `env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1920x1080x24"`.
 
-import std/[monotimes, options, os, strutils]
+import std/[importutils, monotimes, options, os, strutils, tables]
 import parseSEG
-import viewSEG/core/[geometry, shotlog, state]
+import viewSEG/core/[geometry, recordingkind, shotlog, treatas]
+import viewSEG/core/state {.all.}
 import viewSEG/ui/imgui/app
 import utils/[fixtures, waiting]
 
@@ -25,6 +29,8 @@ type
     name: string
     act: proc (f: FrameInfo)
     done: proc (f: FrameInfo): bool
+
+privateAccess(AppState)
 
 func centre(r: Rect): Vec2 = vec2(r.pos.x + r.size.x / 2, r.pos.y + r.size.y / 2)
 
@@ -111,6 +117,14 @@ proc main*() =
     proc refused(f: FrameInfo): bool =
       f.why.startsWith("This file is a shot gather (the receiver changes from trace to trace)")
     step("the reason", proc (f: FrameInfo) = discard, refused)
+    proc pendKind(f: FrameInfo) =
+      # (what a listing leaves for a file of a document its hash has not confirmed)
+      let core = cast[ptr AppState](unsafeAddr f.core)
+      core.treatsPending[canonical(rec)] = TreatAs(kind: some rkReceiverContinuous)
+    proc pendingSaid(f: FrameInfo): bool =
+      doAssert refused(f), "the pending kind took the refusal away"
+      f.hasMark("cut.kindPending")
+    step("a kind not yet confirmed", pendKind, pendingSaid)
     step("a folder", proc (f: FrameInfo) = f.click(f.markOf("cut.changeFolder").centre),
       proc (f: FrameInfo): bool = f.hasMark("cut.folder " & (fx.dir / "out")))
     var shot = false

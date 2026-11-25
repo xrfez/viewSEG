@@ -89,7 +89,7 @@ type
     recording*: RecordingKind ## the kind read from the file, when `kindState` is `ksKnown`
     traceOrder*: TraceOrder ## the order of its traces, read with the kind
     treat*: TreatAs ## what the user forced for the file: kind and order shown instead
-    treatPending*: bool
+    treatPending*: set[TreatPart]
       ## `treat` is, in part, of a document that may be another content's: no job uses that
       ## part until the file's hash confirms it
     steadySince*: MonoTime
