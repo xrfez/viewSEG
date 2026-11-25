@@ -591,17 +591,18 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
   ## order, so the report is the same on one thread and on eight; the files in hand hold at
   ## most 256 MiB together (a file larger than that runs alone). With `noise.templateOnly`
   ## (the setting's default), the traces a record's template does not list are left out: a
-  ## shot's X record in `relations`, a receiver gather's O records in `receivers`, found as
-  ## the map's check finds them (`recordqc.leftOutOfTemplate`, `traceMatch` as the join's).
-  ## They are not measured, not counted in a station or a total, and counted apart
-  ## (`Totals.outside`). Before that, `join` is joined to each file's keys in memory (a record
-  ## whose headers name no station finds its template by the survey's). A record whose
-  ## template is not found is measured whole and counted by why (`Totals.unknown`), and so is
-  ## a record of a side with no relation records when the other side has some; with
-  ## `relations` and `receivers` both nil every record is measured whole and none is counted.
-  ## They are read in place:
-  ## the work holds their addresses, never a `ref`, and the caller keeps them alive and
-  ## unchanged until the work is back (`Jobs.workingOn`; the app's `holdGeometry`).
+  ## shot's X record in `relations`, a receiver gather's O records in `receivers` (nil: the O
+  ## records of `relations`, else those derived here from its X records, as the map derives
+  ## them: `derivedReceiverRecords`), found as the map's check finds them
+  ## (`recordqc.leftOutOfTemplate`, `traceMatch` as the join's). They are not measured, not
+  ## counted in a station or a total, and counted apart (`Totals.outside`). Before that,
+  ## `join` is joined to each file's keys in memory (a record whose headers name no station
+  ## finds its template by the survey's). A record whose template is not found is measured
+  ## whole and counted by why (`Totals.unknown`), and so is a record of a side with no
+  ## relation records when the other side has some; with `relations` and `receivers` both nil
+  ## every record is measured whole and none is counted. They are read in place: the work
+  ## holds their addresses, never a `ref`, and the caller keeps them alive and unchanged until
+  ## the work is back (`Jobs.workingOn`; the app's `holdGeometry`).
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     var st = ScanState(builds: [initQualityBuild(), initQualityBuild()])
@@ -612,11 +613,22 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
         {.cast(gcsafe).}:
           survey = geometryOf(join.relations, join.stations)
         ctx.checkCancelled()
+      # no O records given: those of `relations`, else derived here from its X records
+      var made = SurveyGeometry()
+      var oRecords = receivers
+      if oRecords == nil and relations != nil and noise.templateOnly:
+        if relations[].relationCount(rdReceiver) > 0: oRecords = relations
+        elif relations[].relationCount(rdSource) > 0:
+          ctx.setPhase "deriving the receivers' shots"
+          {.cast(gcsafe).}:
+            made = derivedReceiverRecords(relations[])
+          oRecords = addr made
+          ctx.checkCancelled()
       # the files, each path once (compared normalised)
       var args = QualityItems(cacheDir: cacheDir, noise: noise, untold: untold,
         folderRun: folderRun, traceMatch: traceMatch,
-        shotTemplate: relations, receiverTemplate: receivers,
-        templates: noise.templateOnly and (relations != nil or receivers != nil),
+        shotTemplate: relations, receiverTemplate: oRecords,
+        templates: noise.templateOnly and (relations != nil or oRecords != nil),
         survey: (if join.relations != nil: addr survey else: nil), options: join.options,
         moves: join.moves)
       var seen = initHashSet[string]()

@@ -10,7 +10,8 @@
 ##
 ## A record whose headers name no source station takes it from the survey on the map, joined
 ## in memory as the recorded fold joins it. A record whose template is still not known is
-## measured whole and counted by why, in the totals, the words and the CSV.
+## measured whole and counted by why, in the totals, the words and the CSV. Given X records
+## and no O records, the job derives the receivers' O records from the X records itself.
 ##
 ## The job reads the relation records by address: the app keeps them for it until its work is
 ## back (`holdGeometry`), so the state letting go of its own `ref` meanwhile changes nothing.
@@ -21,6 +22,8 @@
 ## job and another geometry took their place: it left out 0 traces where 3 were expected. With
 ## the join left out of `qualityItem`, `a_record_whose_headers_name_no_source_*` measured 8
 ## traces where 5 were expected; with `measuredWhole` never called, it counted no record whole.
+## With no O records derived in the job, `a_receiver_gather_with_only_x_records_*` measured the
+## five records whole.
 
 import std/[atomics, math, os, strutils, tables]
 import parseSEG
@@ -218,6 +221,18 @@ proc main*() =
       doAssert r.totals.outside == 2, "outside " & $r.totals.outside
       let all = scanOne(path, rkReceiverSliced, nil, rec, templateOnly = false).sources
       doAssert all.totals.traces == 5 and all.totals.outside == 0, $all.totals
+
+  block a_receiver_gather_with_only_x_records_derives_its_o_records:
+    withFixtures fx:
+      let path = fx.dir / "receiver.sgd"
+      receiverFile(path)
+      # sources 1 .. 3 of line 5 each recorded receiver 90 of line 20: its O records, derived
+      var lines: seq[string] = @[]
+      for s in 1 .. 3: lines.add xRec(s, "5.00", $s & ".00", 1, 1, 20, 90, 90)
+      let x = surveyOf(lines.join("\n"))
+      let r = scanOne(path, rkReceiverSliced, x, nil).sources
+      doAssert r.totals.traces == 3 and r.totals.outside == 2, $r.totals
+      doAssert r.totals.unknown == default(array[TemplateUnknown, int]), $r.totals
 
   block a_record_whose_headers_name_no_source_takes_it_from_the_survey_joined:
     withFixtures fx:

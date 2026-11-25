@@ -561,6 +561,13 @@ proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[in
       againstLayer: layer, keysRevision: revision, planned: planned, plannedMissing: missing,
       unlisted: unlisted, duplicates: duplicates)
 
+proc derivedReceiverRecords*(relations: SurveyGeometry): SurveyGeometry =
+  ## The O records (a receiver's shots) derived from the X records of `relations`, as a
+  ## geometry of their own: what `deriveReceiversWork` posts, and what a scan that is given
+  ## no O records derives for itself.
+  result = initSurveyGeometry()
+  result.addSps(SpsFile(relations: relations.receiverRelations()), rdReceiver)
+
 proc deriveReceiversWork*(relations: ptr SurveyGeometry; to: Poster): JobWork =
   ## The work of a job that derives the O records (a receiver's shots) from the X
   ## records of `relations` once, for every check of a receiver gather against
@@ -571,8 +578,7 @@ proc deriveReceiversWork*(relations: ptr SurveyGeometry; to: Poster): JobWork =
     var made = new SurveyGeometry
     {.cast(gcsafe).}:
       ctx.checkCancelled()
-      made[] = initSurveyGeometry()
-      made[].addSps(SpsFile(relations: relations[].receiverRelations()), rdReceiver)
+      made[] = derivedReceiverRecords(relations[])
       ctx.checkCancelled()
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkDerived, derived: made)

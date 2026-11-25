@@ -494,7 +494,8 @@ without the per-trace filters, reversals or shifts the map applies to the record
 With a relation file loaded and **Only inside the template** ticked in Tools > Settings
 (the default), a record is measured only at the stations its template lists (a shot's X
 record, a receiver gather's O records, found by the station, as the map's template check
-finds them): a trace at a station the template does not list is not measured, is in no
+finds them; with no O file loaded, the O records are derived from the X file, as the map
+derives them): a trace at a station the template does not list is not measured, is in no
 row and in no figure, and is counted apart on a line **Left out as outside the template**
 (and in a column of the statistics file). Before that, the survey files loaded on the map,
 the join options and the station moves are joined to each file in memory, as for the
