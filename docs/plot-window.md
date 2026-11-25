@@ -1437,11 +1437,13 @@ under the pointer then, as desktop programs do.
   1127 receivers planned" above it) and for the source under the pointer (in the hover
   colour, its words below it); for a file of receiver gathers (the domain follows the
   record shown), round the shots the O records plan for its receiver, and for the receiver
-  under the pointer. The record's X record is the one the filters' check finds (processSEG's
-  `recordCompleteness`: the source station's, else the FFID's, as the record match in
-  Import survey's options says; an X record found by the FFID alone that belongs to another
-  source than the headers' is no basis, and the record is "not checked" with that said), checked on a background job from the keys while the box
-  is on; for a record whose headers name no station (a SEG-Y file without a header
+  under the pointer. The record's relation record is the one the filters' check finds, by
+  station and never by a record number: a shot's X record at its source station (the one
+  the data fits best when the station has several, a tie being "not checked" with that
+  said), a receiver gather's O records at its receiver station together (a time-sliced
+  receiver gather of one shot is one). A record whose headers name no source station
+  (receiver station) is "not checked" with that said. It is checked on a background job
+  from the keys while the box is on; for a record whose headers name no station (a SEG-Y file without a header
   layout), the survey file's station at its place is the record's for the check, and the
   box says so ("X record 77 (by the source at its place)"), so the box and the filters
   always name the same record. A source under the pointer shows its station's first X
@@ -1451,13 +1453,13 @@ under the pointer then, as desktop programs do.
   template the user gives in the Layers list (lines × stations centred on the source, or a
   distance box along and across the receiver lines), on a job, through processSEG's
   `generateRelations` over the S and R files, and the box says "Generated"; with X records
-  but no O records, a receiver gather's planned shots are made from the X records the same
-  way. **The folder's shots** (under the Recorded; the user: "clicking on a shot that
+  but no O records, a receiver gather's planned shots are made from the X records once, the
+  same O records the Records window checks the record against. **The folder's shots** (under the Recorded; the user: "clicking on a shot that
   exists inside the folder of seg files should open that file"): each seismic file the
   Files window lists is read in the background, without being shown, for its records'
   FFID, source station and source coordinates, and matched to the survey files' sources
-  (by station; by place when the headers name none; by the FFID through the relation file
-  when they give neither); a source whose record a listed file holds is **ringed**, its
+  (by station; by place when the headers name none; a source with neither is not placed:
+  a record number finds none); a source whose record a listed file holds is **ringed**, its
   description names the file ("Shot in the folder: shot-14.sgy (FFID 1014)"), and a click
   on it shows that file at that record. **A shot several files hold** (a reshoot, a copy of
   a record): the description names them latest first, a line each ("also in ..."), and a

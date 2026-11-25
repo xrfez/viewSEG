@@ -110,7 +110,7 @@ const Reached = {
   "map.spreadTemplate.inlineHalf": "", "map.spreadTemplate.crosslineHalf": "",
   "map.folderShots": "", "map.filters": "",
   "join.trailingDigits": "", "join.multiComponent": "", "join.lineNames": "",
-  "join.coordinates": "", "join.recordMatch": "", "join.traceMatch": "",
+  "join.coordinates": "", "join.traceMatch": "",
   "headers.tab": "", "headers.traceTab": "", "headers.followPointer": "",
   "headers.asDisplayed": "", "headers.columns": "", "headers.tableFields": "",
   "headers.tableScope": "", "shotLog.followPlot": "", "cutGather.recordMs": "",

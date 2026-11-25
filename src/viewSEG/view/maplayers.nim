@@ -195,7 +195,7 @@ proc activePoints*(st: AppState): array[PointRole, seq[PointRef]] =
   let domain = st.shownDomain
   let placed = st.shownPlace(s, g.gather, domain)
   for p in st.survey.recordPoints(s.base, s.gathers[g.gather].traces, domain,
-      placed.station, placed.found, st.spreads.relations):
+      placed.station, placed.found, st.madeRelations(domain)):
     result[p.role].add p
 
 func recordKind(st: AppState; trace: int): (bool, GatherKind) =

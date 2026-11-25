@@ -126,7 +126,7 @@ Land 2026/                  the project folder: this is what is opened
   (file (kind sps) (copy "survey/files/land.s")
    (path "../samples/land/land.s") (absolute "/data/samples/land/land.s")
    (size 776) (modified 1763200961 120000000) (quick "9a0c51f3e2d4b6a7"))
-  (join (trailingDigits false) (multiComponent false) (coordinates fill) (recordMatch auto)
+  (join (trailingDigits false) (multiComponent false) (coordinates fill)
    (traceMatch auto) (lineNames (line "CLT4960" 4960)))
   (units (survey usFeet) (file usFeet) (surveyFromHeaders false) (fileFromHeaders true))
   (notes "H20 Description of grid units: US survey feet")

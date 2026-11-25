@@ -30,11 +30,11 @@
 ## that cannot be read, a named pipe, are refused with a message (the job
 ## fails); everything else is read as far as it goes.
 
-import std/[cpuinfo, locks, options, os, strutils, times]
+import std/[cpuinfo, locks, options, os, strutils, tables, times]
 import parseSEG
 import processSEG/qc/record
-import filejobs, filekinds, filesystem, inbox, jobs, join, log, session, signatures, stationmoves,
-  survey, threads
+import filejobs, filekinds, filesystem, inbox, jobs, join, log, mapkinds, relationcheck, session,
+  signatures, stationmoves, survey, threads
 
 const
   SurveyChunk* = 4 * 1024 * 1024 ## bytes of an SPS file parsed at a time
@@ -501,36 +501,58 @@ proc openFileWork*(path: string; to: Poster; cache = "";
 
 proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[int]];
     relations: ptr SurveyGeometry; against: string; layer: SurveyLayerId;
-    to: Poster; recordMatch = rmAuto; traceMatch = tmAuto): JobWork =
+    to: Poster; traceMatch = tmAuto; kinds: seq[GatherKind] = @[];
+    receivers: ptr SurveyGeometry = nil): JobWork =
   ## The work of a job that checks each of `gathers` of open file `session`
-  ## (`file`) against the X records of a loaded relation file, or of the
+  ## (`file`) against the relation records of a loaded relation file, or of the
   ## survey files it was joined with (`relations`, of layer `layer`,
-  ## `NoSurveyLayer` for a join's; named `against`): processSEG's
-  ## `recordCompleteness`, from the keys alone, matching records and traces as
-  ## `recordMatch` and `traceMatch` say, posted as the stations each record's
-  ## X record plans, those with no trace in it, the traces at stations it
-  ## does not list and the stations recorded twice (`mkChecked`). Submitted
-  ## with the file in `reads`; `relations` is read where it is, never copied,
-  ## and the caller keeps it alive and unchanged until the job has finished.
+  ## `NoSurveyLayer` for a join's; named `against`), posted as the stations
+  ## each record's relation record plans, those with no trace in it, the
+  ## traces at stations it does not list and the stations recorded twice
+  ## (`mkChecked`). A gather is a shot or a receiver's, told from its stations
+  ## (`gatherSides`, `kinds` the gathers' kinds when known): a shot is checked
+  ## against the X record at its source station (`shotCheck`), a receiver
+  ## gather against the O records at its receiver station, together (the O
+  ## records derived from the X records when none are loaded, once, by
+  ## `deriveReceiversWork`; `receivers` is the loaded or derived O records when `relations`
+  ## has none). A gather that
+  ## cannot be matched by station is not checked (-1): a record number never
+  ## finds a relation record. Traces are matched as `traceMatch` says.
+  ## Submitted with the file in `reads`; `relations` is read where it is, never
+  ## copied, and the caller keeps it alive and unchanged until the job has
+  ## finished.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "checking the records"
     var planned, missing, unlisted, duplicates = newSeq[int](gathers.len)
     var revision = 0
     {.cast(gcsafe).}:
       revision = file[].keysRevision
+      let keyed = file[].index.keys.len == file[].len
+      let sides = if keyed: gatherSides(file[].index.keys, gathers, kinds) else: @[]
       for i, g in gathers:
         (planned[i], missing[i], unlisted[i], duplicates[i]) = (-1, -1, -1, -1)
-        if g.len > 0:
-          try:
-            let c = relations[].recordCompleteness(file[].rowsOf(g), recordMatch, traceMatch)
-            # an X record matched by file number alone, of another source than the
-            # header's, is no basis for a check
-            if c.xpsRecord >= 0 and not (recordMatch == rmAuto and
-                c.recordMatch == rmFieldRecord and c.hasSource and c.sourceMismatch):
+        if g.len > 0 and keyed:
+          case sides[i]
+          of sdShot:
+            let (c, why) = relations[].shotCheck(file[].rowsOf(g), ctx, traceMatch)
+            if why.len == 0:
               (planned[i], missing[i], unlisted[i], duplicates[i]) = (c.expected, c.missing,
                 c.unlisted, c.duplicates)
-          except ValueError:
-            discard # no keys: nothing to check against
+          of sdReceiver, sdOpen:
+            let (found, rcv) = file[].index.keys.gatherReceiver(g)
+            if found and file[].index.keys.namesSource(g):
+              # the O records: the relation file's own, else the loaded O file's or the ones
+              # derived from its X records (`deriveReceiversWork`), made once
+              let o = if relations[].relationCount(rdReceiver) > 0: relations else: receivers
+              if not o.isNil and o[].relationCount(rdReceiver) > 0:
+                let (records, why) = o[].receiverRecords(rcv)
+                if why.len == 0:
+                  var hits: array[MapFilter, FilterHits]
+                  hits.placeTraces(file[].index.keys, 0, g, o[], records, rdReceiver)
+                  (planned[i], missing[i], unlisted[i], duplicates[i]) =
+                    (o[].calledOf(records).len, hits[mfMissing].count,
+                      hits[mfUnlisted].count, hits[mfDuplicate].count)
+          of sdNeither: discard
         if i mod 64 == 0 and not ctx.progress(i, gathers.len):
           raise newException(JobCancelledError, "cancelled")
     discard ctx.progress(1, 1)
@@ -538,6 +560,22 @@ proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[in
     to.post Msg(job: ctx.id, kind: mkChecked, checkedSession: session, against: against,
       againstLayer: layer, keysRevision: revision, planned: planned, plannedMissing: missing,
       unlisted: unlisted, duplicates: duplicates)
+
+proc deriveReceiversWork*(relations: ptr SurveyGeometry; to: Poster): JobWork =
+  ## The work of a job that derives the O records (a receiver's shots) from the X
+  ## records of `relations` once, for every check of a receiver gather against
+  ## them (`checkWork`'s `receivers`), and posts them (`mkDerived`). `relations` is
+  ## read where it is: the caller keeps it alive and unchanged until the job ends.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "deriving the receivers' shots"
+    var made = new SurveyGeometry
+    {.cast(gcsafe).}:
+      ctx.checkCancelled()
+      made[] = initSurveyGeometry()
+      made[].addSps(SpsFile(relations: relations[].receiverRelations()), rdReceiver)
+      ctx.checkCancelled()
+    clearCycleRoots()
+    to.post Msg(job: ctx.id, kind: mkDerived, derived: made)
 
 proc positionsWork*(file: ptr SeismicFile; path: string; kind: FileKind; session: SessionId;
     base: int; to: Poster): JobWork =

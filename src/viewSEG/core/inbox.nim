@@ -37,6 +37,7 @@ type
     mkInspected
       ## what the Headers window shows of a record and of traces, from its reader
     mkSpreads        ## relation records made for the map's planned spreads (`core/spread`)
+    mkDerived        ## the O records derived from a relation file's X records, for the records' check
     mkShots          ## a listed file's shots, for the map (`core/shots`)
     mkRecordQc
       ## what the map's filters find in the record shown (`core/recordqc`)
@@ -232,6 +233,8 @@ type
         ## the X records whose receivers are not those of their template
       compared*: int
         ## the X records compared with their template
+    of mkDerived:
+      derived*: ref SurveyGeometry ## moved, never shared; nil when none could be made
     of mkShots:
       shotsGen*: uint64
         ## the file list's `gen` the file was listed by
@@ -248,6 +251,8 @@ type
         ## what each filter of `TraceFilters` found
       qcRecord*: int64
         ## the relation record it was checked against; -1 for none
+      qcRecords*: seq[int64]
+        ## all of them (a receiver's O records)
       qcByPlace*: bool
         ## that record found with the station at the record's place
       qcOnStations*: bool

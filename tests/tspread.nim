@@ -124,8 +124,7 @@ proc main*() =
 
   block oneRecordForBoxAndFilters:
     # A SEG-Y record without stations: the box and the filters' check name
-    # the same X record, found by the source at the record's place, with the
-    # user's record match.
+    # the same X record, found by the source at the record's place.
     withFixtures fx:
       let sps = fx.mapSps()
       var st = initAppState()
@@ -137,17 +136,7 @@ proc main*() =
       doAssert hits.state == fsDone, "the filters name no X record: " & hits.note
       doAssert ("X record " & $want & " plans") in hits.note, hits.note
       doAssert st.shownSpread.record == want, $st.shownSpread.record
-      # By the FFID only: neither finds one (the FFIDs are not the X records').
-      var set = st.settings
-      set.join.recordMatch = rmFieldRecord
-      st.apply Command(kind: ckSettings, settings: set)
-      doAssert st.checked
-      doAssert st.shownSpread.record == -1 and st.filterHits[mfMissing].state == fsNotChecked,
-        "by its FFID: X record " & $st.shownSpread.record
-      set.join.recordMatch = rmSourceStation
-      st.apply Command(kind: ckSettings, settings: set)
-      doAssert st.checked and st.shownSpread.record == want and
-        st.filterHits[mfMissing].state == fsDone
+      # (the FFIDs are not the X records': a record number finds none)
 
   block receiverGathers:
     withFixtures fx:
@@ -157,8 +146,10 @@ proc main*() =
       doAssert st.loaded(sps.s, sps.r, fx.mapXps)
       doAssert st.show(fx.mapReceiverSegy(1, 4))
       doAssert st.shownDomain == rdReceiver, "a receiver gather"
-      # The O records made from the X records, on a job.
-      doAssert st.settle(st.spreads.job == NoJob and not st.spreads.relations.isNil)
+      # The O records made from the X records, on a job: the one derivation the Records
+      # window reads too (not a second one of the spreads' own).
+      doAssert st.settle(st.jobs.active.len == 0 and not st.derivedReceivers.isNil)
+      doAssert st.spreads.relations.isNil and st.madeRelations(rdReceiver) == st.derivedReceivers
       doAssert st.checked
       var s = st.shownSpread
       doAssert s.domain == rdReceiver and s.generated and s.stations == MapSrcPoints,

@@ -11,8 +11,11 @@
 ##   file's data traces per ensemble (binary header, where it is set);
 ## - against the survey once a relation file (SPS X) is loaded: the
 ##   stations its X record plans for the shot that have no trace in the
-##   record (processSEG's `recordCompleteness`; `planned`, `plannedMissing`,
-##   filled by a job, `surveyjobs.checkWork`), which then takes precedence.
+##   record (`planned`, `plannedMissing`, filled by a job,
+##   `surveyjobs.checkWork`), which then takes precedence. A receiver gather
+##   is checked against its O records instead, by its receiver station: which
+##   a gather is comes from its stations (`side`, `relationside`), not from its
+##   kind alone, and a record number never finds a relation record.
 ##
 ## Where nothing says what was expected, `missing` is -1 (an empty cell,
 ## never 0).
@@ -23,20 +26,26 @@
 
 import std/math
 import parseSEG
+import relationside
+
+export relationside.Side
 
 type
   RecordRow* = object
     ## One gather of a file.
     kind*: GatherKind
-    first*: int                  ## its first trace
-    traces*: int                 ## how many traces it holds
-    record*: float64             ## the FFID; NaN when not known
-    ensemble*: float64           ## the CDP; NaN when not known
+    side*: Side
+      ## which relation records it is checked against, from its stations: `sdReceiver` a
+      ## receiver's (O records), `sdShot` a shot's (X records), `sdNeither` neither
+    first*: int ## its first trace
+    traces*: int ## how many traces it holds
+    record*: float64 ## the FFID; NaN when not known
+    ensemble*: float64 ## the CDP; NaN when not known
     srcLine*, srcPoint*: float64 ## NaN when not known
     rcvLine*, rcvPoint*: float64
-    seismic*: int                ## its seismic traces
-    aux*: int                    ## its auxiliary traces
-    dead*: int                   ## its seismic traces the file marks dead
+    seismic*: int ## its seismic traces
+    aux*: int ## its auxiliary traces
+    dead*: int ## its seismic traces the file marks dead
     declared*: int = -1
       ## seismic traces the file declares for it; -1 when it does not say
     planned*: int = -1
@@ -100,11 +109,19 @@ proc recordRows*(f: SeismicFile; gathers: openArray[Gather]): seq[RecordRow] =
   ## the file.
   result = newSeqOfCap[RecordRow](gathers.len)
   let keyed = f.index.keys.len == f.len
+  var sides: seq[Side] = @[]
+  if keyed:
+    var spans = newSeq[Slice[int]](gathers.len)
+    var kinds = newSeq[GatherKind](gathers.len)
+    for i, g in gathers: (spans[i], kinds[i]) = (g.traces, g.kind)
+    sides = gatherSides(f.index.keys, spans, kinds)
   let perEnsemble = if f.kind == skSegy:
       int(f.index.segy.binary.effectiveDataTracesPerEnsemble) else: 0
-  for g in gathers:
+  for gi, g in gathers:
     var row = RecordRow(kind: g.kind, first: g.traces.a, traces: g.traces.len, record: NaN,
-      ensemble: NaN, srcLine: NaN, srcPoint: NaN, rcvLine: NaN, rcvPoint: NaN)
+      ensemble: NaN, srcLine: NaN, srcPoint: NaN, rcvLine: NaN, rcvPoint: NaN,
+      side: if g.kind == gkReceiver: sdReceiver else: sdShot)
+    if keyed: row.side = sides[gi]
     if keyed and g.traces.len > 0:
       var t = g.traces.a
       # the first seismic trace with a record number (a run of 0s kept with the record

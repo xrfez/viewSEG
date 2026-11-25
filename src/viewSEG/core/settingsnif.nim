@@ -41,7 +41,7 @@
 ##  (noise (area auto) (timeMs 100.0) (radius 500.0) (steps 8) (allLines false)
 ##   (templateOnly true))
 ##  (join (trailingDigits false) (multiComponent false) (coordinates fill)
-##   (recordMatch auto) (traceMatch auto) (lineNames (line "CLT4960" 4960)))
+##   (traceMatch auto) (lineNames (line "CLT4960" 4960)))
 ##  (headers (tab summary) (traceTab header) (followPointer true) (asDisplayed false)
 ##   (columns description bytes) (tableFields "keys.record" "keys.channel")
 ##   (tableScope record))
@@ -117,7 +117,6 @@ const
     "unlisted", "duplicate", "auxiliary", "noPosition", "reversed", "spreadDiffers", "louder",
     "notJudged"]
   CoordinateNames: array[HeaderCoordinates, string] = ["fill", "replace"]
-  RecordMatchNames: array[RecordMatch, string] = ["auto", "source", "ffid"]
   TraceMatchNames: array[TraceMatch, string] = ["auto", "station", "channel"]
   MaxLineNames = 1000  ## line names mapped to numbers, kept
   FieldNames: array[HeaderField, string] = ["rcvLine", "rcvPoint", "component", "channel",
@@ -357,7 +356,6 @@ proc writeJoinOptions*(w: var NifWriter; j: JoinOptions) =
   w.value("trailingDigits", j.trailingDigits)
   w.value("multiComponent", j.multiComponent)
   w.choice("coordinates", CoordinateNames[j.coordinates])
-  w.choice("recordMatch", RecordMatchNames[j.recordMatch])
   w.choice("traceMatch", TraceMatchNames[j.traceMatch])
   w.open("lineNames")
   for n in j.lineNames:
@@ -958,7 +956,10 @@ proc join(r: var Reading; n: NifNode; x: var JoinOptions) =
       of "trailingDigits": r.flag(k, x.trailingDigits)
       of "multiComponent": r.flag(k, x.multiComponent)
       of "coordinates": r.choice(k, CoordinateNames, x.coordinates)
-      of "recordMatch": r.choice(k, RecordMatchNames, x.recordMatch)
+      of "recordMatch": discard
+        # An older settings file's choice of how a record finds its relation record
+        # (auto, source, ffid): a record is always found by its station now, so any
+        # value reads as that and is not written again.
       of "traceMatch": r.choice(k, TraceMatchNames, x.traceMatch)
       of "lineNames":
         var got: seq[LineName]
