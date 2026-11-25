@@ -37,8 +37,9 @@
 ## other file.
 ##
 ## `correlation` set: each written trace is correlated with that loaded
-## reference into the listen time, and the writer is opened with that sample
-## count. SEG-Y samples are IEEE float32, whatever the source format. A
+## reference (a block of traces of one record at a time, on a pool of worker
+## threads that is joined when the write ends) into the listen time, and the
+## writer is opened with that sample count. SEG-Y samples are IEEE float32, whatever the source format. A
 ## marked auxiliary trace is shifted by its own mark first (the file's marks, or the
 ## project's in `projectMarks`). Time shift,
 ## polarity, an own filter and the plot's filters are applied after that, on
@@ -62,6 +63,12 @@ import correlatejobs, edits, filekinds, filesystem, jobs, outputnames, outputnam
   vendorlines, vendormaps
 
 export outputrevision
+
+var correlateInBlocks* = true
+  ## Test only, not a user setting: false makes a correlated write correlate one
+  ## trace per call, as it did before the pooled call; the bytes written are the
+  ## same either way, so that path is the reference the tests compare against.
+  ## It is read once per write, on the job thread, when the write starts.
 
 const
   TraceBlock = 64 ## traces read, then written, between two cancel checks
@@ -651,6 +658,14 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var corrCounts: seq[int] = @[]
       var corrMeta: ChunkMeta
       var corrDtMs = 0.0
+      let blocked = correlateInBlocks ## the pool, or the one-row call (tests)
+      var pool: ProcessPool ## joined when this proc ends, on every path
+      var blockSrc: seq[float32] = @[] ## up to TraceBlock traces of a record, as read
+      var blockDst: seq[float32] = @[]
+      var blockKeys: seq[TraceKeys] = @[]
+      var blockCounts: seq[int] = @[]
+      var rowShifted: seq[bool] = @[]
+      var rowKeeps: seq[bool] = @[]
       var shape: ListenShape
       var markNotes: seq[string] = @[]
       if opts.correlation.isSome:
@@ -706,6 +721,16 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         corrKeys = @[initTraceKeys()]
         corrCounts = @[recordSamples]
         corrMeta = initChunkMeta(rowsOf(corrKeys, corrCounts), ready.dtMs)
+        if blocked:
+          pool = newProcessPool(workerCount())
+          blockSrc = newSeq[float32](TraceBlock * recordSamples)
+          blockDst = newSeq[float32](TraceBlock * listen)
+          blockKeys = newSeq[TraceKeys](TraceBlock)
+          for k in blockKeys.mitems: k = initTraceKeys()
+          blockCounts = newSeq[int](TraceBlock)
+          for c in blockCounts.mitems: c = recordSamples
+          rowShifted = newSeq[bool](TraceBlock)
+          rowKeeps = newSeq[bool](TraceBlock)
         corrDtMs = ready.dtMs
         shape = ready
         correlating = true
@@ -1024,7 +1049,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           lines.add textUsed(textName)
           if recoded: lines.add textKeptSet(textName, cardsEncoding)
         var readLog: DiagLog
-        template writeOne(t: int) =
+        template readSamples(t: int) =
           readLog = DiagLog()
           let x = if correlating: file[].readTraces(t .. t, readLog)
                   else: file[].readTraces(t .. t)
@@ -1035,48 +1060,38 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           let cols = x.shape[1]
           samples.setLen cols
           for j in 0 ..< cols: samples[j] = x[0, j]
-          # A kill is only applied by leaving the trace out. A killed trace
-          # that is kept is written like any other, options applied. With
-          # no option on, the samples stay as read (no key lookup, so a
-          # file opened without keys still writes).
-          var shifted = false
-          if correlating:
-            let have = samples.len
-            if have < recordSamples:
-              samples.setLen recordSamples
-              for j in have ..< recordSamples: samples[j] = 0
-            elif have > recordSamples:
-              samples.setLen recordSamples
-            let want = if planOf.len > 0: planOf[t] else: 0
-            if want != planRec:
-              # Traces stay inside their record: only this record's plan is kept.
-              corrPlans.setLen 0
-              let got = loadSweep(file, source, pilotLoads[want].load)
-              corrPlans.add initCorrelationPlan(float32, initPilot(got.samples, planDt),
-                corrDtMs, recordSamples)
-              ws.reserve(corrPlans[0].workspaceSize)
-              planRec = want
-            let status = file[].traceKeys(t).status
-            let aux = status == tsAuxiliary
-            let isOdd = t in odd
-            let isRef = t in refs
-            if aux and isRef and not isOdd and t in lags:
-              timeShift(samples, lags[t])
-              shifted = true
-            # A dead seismic trace stays dead. correlateInto then writes zeros,
-            # as the correlation job does; marking it live would correlate it.
-            if status == tsDead or (aux and (not isRef or isOdd)):
-              corrKeys[0].status = tsDead
-            else: corrKeys[0].status = tsLive
-            corrPlans[0].correlateInto(
-              rowBlock(samples, 1, recordSamples),
-              rowBlock(corrDst, 1, listen), corrMeta, ws)
-            if not (aux and not isRef and not isOdd):
-              for j in 0 ..< listen: samples[j] = corrDst[j]
-            # Edits below see the listen length, as a plain write of the
-            # correlated file does. A shift or a filter before correlation
-            # is not that result.
-            samples.setLen(listen)
+        template fitRecord() =
+          # Zero-padded or cut to the record length the correlation takes.
+          let have = samples.len
+          if have < recordSamples:
+            samples.setLen recordSamples
+            for j in have ..< recordSamples: samples[j] = 0
+          elif have > recordSamples:
+            samples.setLen recordSamples
+        template ensurePlan(want: int) =
+          if want != planRec:
+            # Traces stay inside their record: only this record's plan is kept.
+            corrPlans.setLen 0
+            let got = loadSweep(file, source, pilotLoads[want].load)
+            corrPlans.add initCorrelationPlan(float32, initPilot(got.samples, planDt),
+              corrDtMs, recordSamples)
+            ws.reserve(corrPlans[0].workspaceSize)
+            planRec = want
+        template planFor(t: int): int = (if planOf.len > 0: planOf[t] else: 0)
+        template prepareCorrelation(t: int; shifted: var bool; dead, keeps: var bool) =
+          # An auxiliary trace marked as a reference is shifted by its own mark first.
+          let status = file[].traceKeys(t).status
+          let aux = status == tsAuxiliary
+          let isOdd = t in odd
+          let isRef = t in refs
+          if aux and isRef and not isOdd and t in lags:
+            timeShift(samples, lags[t])
+            shifted = true
+          # A dead seismic trace stays dead. correlateInto then writes zeros,
+          # as the correlation job does; marking it live would correlate it.
+          dead = status == tsDead or (aux and (not isRef or isOdd))
+          keeps = aux and not isRef and not isOdd
+        template finishOne(t: int; shifted: bool) =
           let reversed = opts.applyReversals and edits.effectivelyReversed(t)
           let shiftMs = if opts.applyShifts: edits.shiftOf(t) else: 0.0
           if reversed or shiftMs != 0.0 or opts.applyOwnFilters or opts.applyProcessing:
@@ -1131,11 +1146,72 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             else:
               w.writeTrace(keys, samples, channelType = channel)
           inc written
+        template writeOne(t: int) =
+          readSamples(t)
+          # A kill is only applied by leaving the trace out. A killed trace
+          # that is kept is written like any other, options applied. With
+          # no option on, the samples stay as read (no key lookup, so a
+          # file opened without keys still writes).
+          var shifted = false
+          if correlating:
+            fitRecord()
+            ensurePlan(planFor(t))
+            var dead, keeps = false
+            prepareCorrelation(t, shifted, dead, keeps)
+            corrKeys[0].status = if dead: tsDead else: tsLive
+            corrPlans[0].correlateInto(
+              rowBlock(samples, 1, recordSamples),
+              rowBlock(corrDst, 1, listen), corrMeta, ws)
+            if not keeps:
+              for j in 0 ..< listen: samples[j] = corrDst[j]
+            # Edits below see the listen length, as a plain write of the
+            # correlated file does. A shift or a filter before correlation
+            # is not that result.
+            samples.setLen(listen)
+          finishOne(t, shifted)
+        template writeCorrelated(list: openArray[int]) =
+          ## The correlated path for up to TraceBlock traces: each read and
+          ## prepared as writeOne does, then the rows of one plan correlated
+          ## together on the pool, then each written in order.
+          let rows = list.len
+          for i in 0 ..< rows:
+            let t = list[i]
+            readSamples(t)
+            fitRecord()
+            var dead, keeps = false
+            rowShifted[i] = false
+            prepareCorrelation(t, rowShifted[i], dead, keeps)
+            blockKeys[i].status = if dead: tsDead else: tsLive
+            rowKeeps[i] = keeps
+            copyMem(addr blockSrc[i * recordSamples], addr samples[0],
+              recordSamples * sizeof(float32))
+          var from0 = 0
+          while from0 < rows:
+            let want = planFor(list[from0])
+            var upTo = from0 + 1
+            while upTo < rows and planFor(list[upTo]) == want: inc upTo
+            ensurePlan(want)
+            let meta = initChunkMeta(rowsOf(blockKeys.toOpenArray(from0, upTo - 1),
+              blockCounts.toOpenArray(from0, upTo - 1)), corrDtMs)
+            pool.correlateInto(corrPlans[0],
+              rowBlock(blockSrc, TraceBlock, recordSamples).sub(from0 ..< upTo),
+              rowBlock(blockDst, TraceBlock, listen).sub(from0 ..< upTo), meta)
+            from0 = upTo
+          for i in 0 ..< rows:
+            samples.setLen recordSamples
+            copyMem(addr samples[0], addr blockSrc[i * recordSamples],
+              recordSamples * sizeof(float32))
+            if not rowKeeps[i]:
+              for j in 0 ..< listen: samples[j] = blockDst[i * listen + j]
+            samples.setLen(listen)
+            finishOne(list[i], rowShifted[i])
         template writeList(list: openArray[int]) =
           if list.len > 0:
             if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
             if not file[].inMemory: fs.mappedRead(source)
-            for t in list: writeOne(t)
+            if correlating and blocked: writeCorrelated(list)
+            else:
+              for t in list: writeOne(t)
             if report == nil or not report(written + dropped, n):
               abort(sink, dest, part, claimed, "Cancelled.", true)
         template flush(batch: var seq[int]) =

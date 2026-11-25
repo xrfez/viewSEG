@@ -93,7 +93,8 @@ type
     view*: CorrelateView
     estimate*: int64 ## `onDemand`: the bytes the correlated copy would have had
 
-proc workerCount(): int =
+proc workerCount*(): int =
+  ## Threads for a correlation pool.
   clamp(countProcessors() div 2, 1, 4)
 
 proc msText*(ms: float64): string =
