@@ -45,7 +45,8 @@
 
 import std/[json, math, options, os, sequtils, strutils, tables]
 import parseSEG
-import viewSEG/core/[analysis, breakmodel, colourmaps, edits, geometry, nif, outputtext,
+import viewSEG/core/[analysis, breakmodel, colourmaps, edits, geometry, nif, stationmoves,
+  outputtext,
   phasepicture,
   plotoptions, project, recordingkind, state, treatas]
 import viewSEG/remote/[schema, tools]
@@ -569,6 +570,14 @@ proc main*() =
       doAssert st.project.doc.auxMarks == @[AuxMarkEntry(position: 2, marked: true, ms: 40.0)]
       st.agent(%*{"kind": "project aux mark", "auxPosition": 2, "auxMarked": "forget"})
       doAssert st.project.doc.auxMarks.len == 0
+      # a station move: kept for this run with no project; its own header position is read
+      st.agent(%*{"kind": "station move", "moveLine": 100, "movePoint": 101, "moveIndex": 1,
+        "moveX": 7000.0, "moveY": 1.0, "moveNote": "moved"})
+      doAssert st.project.doc.stationMoves.len == 1
+      st.agent(%*{"kind": "station move", "moveLine": 100, "movePoint": 101, "moveIndex": 1,
+        "moveForget": true})
+      doAssert st.project.doc.stationMoves.len == 0
+      st.agent(%*{"kind": "own position", "ownTrace": 0})
       st.agent(%*{"kind": "vendor map", "vendorMap": "none"})
       st.agent(%*{"kind": "vendor map", "vendorMap": "automatic"})
       st.agent(%*{"kind": "name pattern", "patternAction": "choose",

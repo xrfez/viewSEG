@@ -57,7 +57,7 @@ const
     ckCopyReference,
     ckViewReference, ckCloseRefView, ckSetCompare, ckClearCompare, ckSwapCompare,
     ckCompareDisplay, ckCompareWindow, ckSubfolders, ckCorrelate, ckTreatAs,
-    ckFileAuxMark, ckProjectAuxMark}
+    ckFileAuxMark, ckProjectAuxMark, ckStationMove, ckOwnPosition}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The survey
@@ -82,7 +82,10 @@ const
     ## are kept in the project open, which must be writable. An agent may make, open
     ## and close a project (`ckNewProject` writes a new folder only, never
     ## data); its
-    ## trace edits and survey imports are not written into it. A file opened
+    ## trace edits and survey imports are not written into it, but a station move
+    ## (`ckStationMove`) IS: it is kept in the project open (for the run only with none, or a
+    ## read-only one), and takes effect on the map, the checks and the written positions;
+    ## `ckOwnPosition` only reads. A file opened
     ## again with other options (`ckReopen`) is read as before, read-only, for
     ## the session; a folder for a demultiplexed copy, which would be written
     ## there, is refused. A reference (listed, stored, generated, a pilot rule stored or
@@ -372,7 +375,8 @@ func commandDocs*(source: string): CommandDocs =
   result = CommandDocs()
   var section = 0 # 1: the enum, 2: the object
   var last = ""
-  for raw in source.splitLines:
+  let start = max(source.find("CommandKind* = enum"), 0)       # what comes before is not read
+  for raw in source.substr(start).splitLines:
     let line = raw.strip
     let indent = raw.len - raw.strip(trailing = false).len
     if raw.contains("CommandKind* = enum"):
@@ -382,6 +386,7 @@ func commandDocs*(source: string): CommandDocs =
       section = 2
       last = ""
     elif section > 0 and line.len > 0 and indent <= 2:
+      if section == 2: break # the object ends the sections this reads (the enum comes first)
       section = 0
     elif section > 0 and line.startsWith("##"):
       if last.len > 0 and section == 1: result.kinds.addDoc(last, line.substr(2).strip)

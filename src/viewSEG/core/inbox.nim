@@ -45,6 +45,8 @@ type
       ## a record's first breaks, picked and modelled, for the overlay (`core/firstbreakjobs`)
     mkTraceRead
       ## one trace's keys and header fields, read on a job (`readTraceHeaders`)
+    mkOwnPosition
+      ## the receiver position one trace's own header gives, read from the file on disk
     mkIdentified
       ## an opened file's quick identity and what is remembered about it (`core/memoryjobs`)
     mkHashed         ## an opened file's identity with the hash of every byte
@@ -271,6 +273,11 @@ type
       headerRows*: seq[HeaderRow]
       readVendor*: VendorShown ## what the vendor maps decode of its header blocks
                                  ## the fields of its headers (parseSEG's), in file order
+    of mkOwnPosition:
+      ownSession*: SessionId ## the open file
+      ownIndex*: int ## the trace in that file (from 0)
+      ownKeys*: TraceKeys ## the trace's keys as its headers give them
+      ownWhy*: string ## why the header was not read; "" when it was
     of mkIdentified:
       identPath*: string ## the file
       identity*: FileIdentity ## its quick identity

@@ -687,7 +687,7 @@ proc readMove(r: var Reading; n: NifNode; moves: var StationMoves) =
       r.problem(n, "a station's line or point cannot be stored; the move is left out")
     else:
       moves.add StationMove(station: StationKey(line: line, point: point, index: index),
-        fromTime: fromTime, x: x, y: y, elev: elev, note: note)
+        fromTime: fromTime, x: x, y: y, elev: elev, note: cleanNote(note))
 
 proc readMoves(r: var Reading; n: NifNode; moves: var StationMoves) =
   for c in n.kids:

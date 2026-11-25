@@ -482,6 +482,31 @@ proc manyTracesSegy*(fx: Fixtures; traces: int; samples = 4): string =
     w.writeTrace(k, buf)
   w.checkClose()
 
+proc fixedLengthSegy*(fx: Fixtures): string =
+  ## A Rev 1 file whose binary header says every trace has the same length (it opens by
+  ## sampling): one record of 6 traces of 8 samples, the receiver of trace c at
+  ## (1000 + c, 2000).
+  result = fx.dir / "fixed-length.sgy"
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    revision: SegyRevision(major: 1, minor: 0),
+    text: @["C01 viewSEG test fixture: fixed-length traces"]))
+  var buf = newSeq[float32](8)
+  for i in 0 ..< 8: buf[i] = float32(i)
+  for c in 1 .. 6:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(c), 0.0, 1000.0,
+      tsLive)
+    (k.rcvX, k.rcvY) = (1000.0 + float64(c), 2000.0)
+    w.writeTrace(k, buf)
+  w.checkClose()
+  # the writer leaves the fixed-length flag (bytes 3503-3504) 0 and refuses to set it
+  var f = open(result, fmReadWriteExisting)
+  f.setFilePos(3502)
+  var flag = [0'u8, 1'u8]
+  discard f.writeBuffer(addr flag[0], 2)
+  f.close()
+
 proc millionTracesSegy*(fx: Fixtures): string =
   ## A million traces of one sample: 1000 records (FFID 1 .. 1000) of 1000
   ## channels, record by record. About 244 MB, written once per fixture

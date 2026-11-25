@@ -15,9 +15,11 @@
 ## storing a non-finite x, "a non-finite x, y or elevation is not stored"
 ## (`projectDocument` then died in `nifFloat`'s assert); with lookup by exact
 ## index only, "a trace with index 0 takes the move stored at index 1" (the
-## move at index 1 was not applied).
+## move at index 1 was not applied); with `cleanNote` cutting always at the last edge, "a
+## character ending at the cap was dropped"; with `readMove` keeping the note as read, the
+## note read from a document was 1200 bytes long.
 
-import std/[math, options, strutils]
+import std/[math, options, strutils, unicode]
 import parseSEG
 import viewSEG/core/[project, projectnif, stationmoves]
 
@@ -315,6 +317,26 @@ proc main*() =
     var early = filled(10, 20, 3, 1000.0)
     doAssert not applyMoves(later, early),
       "an exact move that does not apply yet is not replaced by index 0"
+
+  block note_cap:
+    # A note ending exactly at the cap keeps its last character; one cut inside a character
+    # drops that character whole.
+    let exact = repeat('a', MaxMoveNote - 2) & "é"
+    doAssert cleanNote(exact & "zzz") == exact, "a character ending at the cap was dropped"
+    doAssert cleanNote(repeat('a', MaxMoveNote - 1) & "éz").len == MaxMoveNote - 1
+    doAssert cleanNote("a\nb\x01") == "a b "
+    var d = ProjectDoc(name: "Notes")
+    var moves = StationMoves()
+    moves.add moveAt(10, 20, 0, none(float64), 8, 9, note = "x")
+    d.stationMoves = moves
+    let long = repeat("é\n", 600)
+    let text = projectDocument(d).replace("(note \"x\")", "(note \"" & long & "\")")
+    doAssert long in text, "the document was not edited"
+    var problems: seq[string]
+    let back = readProject(text, "project.nif", problems)
+    doAssert back.stationMoves.len == 1
+    let note = back.stationMoves[0].note
+    doAssert note.len <= MaxMoveNote and '\n' notin note and note.validateUtf8 == -1, $note.len
 
   echo "tstationmoves: done"
 

@@ -17,10 +17,11 @@
 ## says, so losing one costs only time; the seismic file itself is never
 ## written.
 
-import std/[algorithm, monotimes, os, strutils, times]
+import std/[algorithm, monotimes, os, sequtils, strutils, times]
 import parseSEG
 import cutfile, filelist, filememory, filesystem, identity, inbox, jobs, leapfile, log,
   recordingprobe, session, sweepinfo, threads, vendormaps
+from parseSEG/model/traceindex import mappedSize
 from project import ProjectFileName
 
 const
@@ -263,6 +264,48 @@ proc traceHeadersWork*(file: ptr SeismicFile; path: string; size: int64; index: 
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkTraceRead, readKeys: keys, headerRows: move rows,
       readVendor: vendor)
+
+const
+  OwnReadLimit* = 64'i64 shl 20
+    ## the size above which a file with no index cache, and not opened by sampling, is not
+    ## opened again for one trace's position
+  OwnNoIndexWhy* = "the file has no index to read one trace from (a multiplexed SEG-D " &
+    "file, a file opened with other options, or a large file)"
+  OwnUnreadableWhy* = "the trace could not be read from the file"
+
+proc ownPositionWork*(file: ptr SeismicFile; path: string; session: SessionId; index: int;
+    choice: OpenChoice; cache: string; to: Poster; limit = OwnReadLimit): JobWork =
+  ## The work of a job that reads the receiver position trace `index` of open file `file` (at
+  ## `path`) has in its own headers, from the file on disk and not from the keys in memory,
+  ## which a survey join or a station move may have replaced (`mkOwnPosition`). parseSEG gives
+  ## the keys of a file that has them stored only as stored, so the file is opened again
+  ## without keys, as the session opened it (`choice`: the standard forced, the mantissa
+  ## reading) and through its index cache `cache` when that exists, and the one trace is read.
+  ## With no cache a SEG-D file (its demultiplexed copy is made again), or a variable-length
+  ## file above `limit` bytes, is not opened: the post says why (`ownWhy`). A fixed-length
+  ## SEG-Y file opens by sampling, so its size does not matter. Never writes the file. A
+  ## trace that cannot be read says so too.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "reading a trace's own position"
+    var own: array[1, TraceKeys]
+    own[0].rcvX = NaN
+    own[0].rcvY = NaN
+    var why = OwnNoIndexWhy
+    {.cast(gcsafe).}:
+      let cached = cache.len > 0 and choice.usesCache and fs.fileExists(cache)
+      let sampled = file[].kind == skSegy and file[].log.anyIt(it.code == dcIndexSampled)
+      let cheap = cached or sampled or (file[].kind != skSegd and file[].mappedSize <= limit)
+      if not file[].inMemory and index in 0 ..< file[].len and cheap:
+        why = OwnUnreadableWhy
+        fs.mappedRead(path, headers = true)
+        let disk = openSeismic(path, keys = false,
+          opts = openOptions(choice, if cached: cache else: "", currentVendors()))
+        if index < disk.len:
+          disk.traceKeysInto([index], own)
+          why = ""
+    clearCycleRoots()
+    to.post Msg(job: ctx.id, kind: mkOwnPosition, ownSession: session, ownIndex: index,
+      ownKeys: own[0], ownWhy: why)
 
 proc closeWork*(): JobWork =
   ## The work of a close job: none. Submitted with the file in `exclusive`,

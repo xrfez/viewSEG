@@ -33,6 +33,36 @@ import parseSEG
 import parseSEG/model/traceindex
 import stationindex
 
+const MaxMoveNote* = 256 ## bytes of a move's note
+
+func cleanNote*(note: string): string =
+  ## `note` cut to `MaxMoveNote` bytes at a character's edge (a character that ends exactly
+  ## there stays), its control characters and line breaks made blanks.
+  result = note
+  if result.len > MaxMoveNote:
+    let edge = (ord(result[MaxMoveNote]) and 0xC0) != 0x80         # a character starts at the cut
+    result.setLen MaxMoveNote
+    if not edge:
+      while result.len > 0 and (ord(result[^1]) and 0xC0) == 0x80: result.setLen result.len - 1
+      if result.len > 0 and ord(result[^1]) >= 0xC0: result.setLen result.len - 1
+  for c in result.mitems:
+    if c < ' ' or c == '\x7f': c = ' '
+
+type OwnPositionKind* = enum
+  opReading ## asked for and not yet back, or not asked for
+  opNone    ## the header gives no position (NaN or (0, 0))
+  opNotRead ## the header was not read: `why` says
+  opGiven   ## the header gives a position
+
+func ownPositionTip*(kind: OwnPositionKind; why, station: string): string =
+  ## What the "header position" choice says when it offers no position, of `station` (words
+  ## naming it): the header gives none, is not read yet, or was not read for `why`.
+  case kind
+  of opNotRead: "This trace's header was not read: " & why & ". The position can be typed " &
+    "with \"Move this station...\"."
+  of opNone: "This trace's header gives " & station & " no position to move it to."
+  of opReading, opGiven: "This trace's header is still being read."
+
 type
   StationMove* = object
     ## A new position for one receiver station, in the survey's units.
