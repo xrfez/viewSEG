@@ -114,7 +114,7 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
   edits, filejobs,
   filelist, filememory, filesystem, firstbreakjobs, firstbreaks, identity, inbox, inspector, jobs,
       join, layouts, leapfile, log,
-  mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif,
+  mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, receivergather,
     outputbinary, outputnames, outputtext, reader,
   recordingkind, recordqc, referencejobs, references, selection, session, settings,
       shotfollowtarget, shotlayout, shotlog, shotsort,
@@ -366,6 +366,9 @@ type
     ckOwnPosition = "own position"
       ## read the position a trace's own header gives its receiver, as the file has it on disk,
       ## off the UI thread, for the station move's choice; changes nothing
+    ckReceiverGather = "receiver gather"
+      ## collect one receiver station's trace from every listed seismic file into one record
+      ## held in memory, for looking at; read-only, nothing is written, on a job
     ckImportShotLog = "import shot log"
       ## read a shot log and keep it; stored in the project when one is open and writable
     ckRemoveShotLog = "remove shot log"
@@ -735,6 +738,11 @@ type
       moveForget*: bool
         ## ckStationMove: take away the move of this station (at `moveFrom` when `moveHasFrom`,
         ## else the undated one); the position fields are then not used
+    of ckReceiverGather:
+      gatherLine*: float64 ## ckReceiverGather: the receiver station's line
+      gatherPoint*: float64 ## ckReceiverGather: its point (its index never splits the station)
+      gatherComponent*: int
+        ## ckReceiverGather: the component of the traces taken (0: a trace with none given)
     of ckOwnPosition:
       ownTrace*: int
         ## ckOwnPosition: the survey-wide id of the trace whose own header position is read
@@ -1291,6 +1299,8 @@ type
     leapDone: bool ## the job posted what it did (`mkLeap`)
     cutJob: JobId = NoJob
       ## the slice by shot log under way; `NoJob` for none
+    gatherJob: JobId = NoJob
+      ## the receiver gather being collected; `NoJob` for none
     cutSink: CutSink
       ## what that job found, read once the job has ended
     cutOutcome: string
@@ -1929,6 +1939,12 @@ func keyOf(state: AppState; path: string): string =
   ## run (`linkSame`).
   let path = diskOf(path)
   state.editKey.getOrDefault(path, path)
+
+func editKeyOf*(state: AppState; path: string): string =
+  ## The key of `edits` for the file open under `path`: that of the file on disk or, for a
+  ## derived session, of the file it was derived from. A receiver gather's is its own, which
+  ## no file's is.
+  state.keyOf(path)
 
 func rememberedAt(state: AppState; path: string): int =
   let path = diskOf(path)
@@ -2623,6 +2639,12 @@ const
   CutRunning* = "A slice is already running."
   CutDerived* = "The window shows a correlated view: show the file itself to slice it."
   CutSignature* = "A signature file is not a recording that can be sliced."
+  CutGathered* = "The window shows a receiver gather, made in memory: show a file to slice it."
+  GatherReadOnly* = "a receiver gather is for looking at: it is read-only, so its traces are " &
+    "not edited (show the file itself to edit it)"
+  GatherRunning* = "a receiver gather is already being collected"
+  GatherNoFiles* = "no seismic file is listed in the Files window, so there is nothing to " &
+    "gather from"
 
 func notices*(state: AppState): lent seq[Notice] {.inline.} =
   ## The newest notices, oldest first: what background jobs had to say
@@ -3195,6 +3217,7 @@ func cutProblem*(state: AppState): string =
   if not haveFile and not haveLog: CutNeedBoth
   elif not haveFile: CutNeedFile
   elif not haveLog: CutNeedLog
+  elif state.sessions[shown].gathered: CutGathered
   elif state.sessions[shown].derived: CutDerived
   elif state.sessions[shown].isSignature: CutSignature
   elif state.cutJob != NoJob: CutRunning
@@ -4232,7 +4255,7 @@ proc watchOpen(state: var AppState) =
   var paths: seq[string]
   for s in state.sessions:
     let p = s.diskPath
-    if p notin paths: paths.add p
+    if not s.gathered and p notin paths: paths.add p # (a gather is no file in a folder)
   for r in state.reopens:
     if r.path notin paths: paths.add r.path
   if paths.len > 0 or not state.watch.isNil: state.folderWatch.watchOpen(paths)
@@ -7348,6 +7371,49 @@ proc adoptDerived*(state: var AppState; s: sink Session) =
   if k >= 0: state.showReplacing(k, id, gather)
   state.choose(origin)
   if previous != NoSession: state.closeIfUnused(previous)
+
+proc takeGathered(state: var AppState; m: sink Msg) =
+  ## A receiver gather job's answer: its sentence is said, and its session, when there is one,
+  ## is shown in the main panel in place of what it showed. An answer of a job that is not
+  ## the one wanted (a newer gather asked for since) is dropped.
+  var s = move m.gathered
+  if m.job != state.gatherJob:
+    state.release(s)
+    return
+  state.log.add(if s.isNil: sevWarning else: sevInfo, "receiver gather", m.gatherSaid)
+  if s.isNil: return
+  let id = SessionId(state.nextFile)
+  inc state.nextFile
+  s.register(id, state.nextBase)
+  state.nextBase += s.len
+  state.sessions.add s # (no identity, edits, recent file or map position: it is no file)
+  state.watchOpen()
+  let k = state.findPanel(MainPanel)
+  if k >= 0: state.showReplacing(k, id, 0)
+
+proc startReceiverGather(state: var AppState; cmd: Command) =
+  ## `ckReceiverGather`: has a job collect the trace of one receiver station from every
+  ## seismic file the Files window lists, into a session held in memory.
+  if state.gatherJob != NoJob:
+    state.ignore(cmd, GatherRunning)
+    return
+  if cmd.gatherComponent notin 0 .. 255:
+    state.ignore(cmd, "a component is a number from 0 to 255")
+    return
+  var ask = GatherAsk(line: cmd.gatherLine, point: cmd.gatherPoint,
+    component: cmd.gatherComponent, survey: state.projectSurvey,
+    options: (if state.inProject: state.project.doc.options else: state.settings.join),
+    moves: state.project.doc.stationMoves, tableOnly: state.projectTableOnly,
+    cacheDir: state.indexCache)
+  for i in 0 ..< state.fileList.entries.len:
+    if state.fileList.entries[i].kind in SeismicKinds - SignatureFileKinds:
+      ask.files.add GatherFile(path: state.fileList.entries[i].path,
+        size: state.fileList.entries[i].size)
+  if ask.files.len == 0:
+    state.ignore(cmd, GatherNoFiles)
+    return
+  state.gatherJob = state.jobs.submit(gatherSpec(ask), gatherWork(ask, state.inbox.poster))
+  state.holdSurvey(state.gatherJob) # (the work reads it through a pointer)
 
 proc notePicks(state: var AppState; origin: string) =
   ## Once, that first-break picks of this file are not drawn on the correlated record.
@@ -10477,6 +10543,14 @@ proc onFinished(state: var AppState; job: JobInfo) =
   if job.id == state.cutJob:
     state.finishCut(job)
     return
+  if job.id == state.gatherJob:
+    state.gatherJob = NoJob
+    if job.state == jsFailed:
+      state.log.add(sevWarning, "receiver gather", "The receiver gather could not be made: " &
+        job.error.splitLines()[0])
+    elif job.state == jsCancelled:
+      state.log.add(sevInfo, "receiver gather", "The receiver gather was cancelled.")
+    return
   if job.id == state.spsJob:
     state.finishSps(job)
     return
@@ -11328,6 +11402,9 @@ proc editTraces(state: var AppState; cmd: Command) =
       else: " shows no file"))
     return
   let s = state.sessions[i]
+  if s.gathered:
+    state.ignore(cmd, GatherReadOnly)
+    return
   let keep = keeps(cmd.origin)
   var changed = EditStep()
   var said = ""
@@ -13882,6 +13959,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckCompareDisplay: state.showCompare(cmd)
   of ckCompareWindow: state.setCompareWindow(cmd)
   of ckCorrelate: state.setCorrelate(cmd)
+  of ckReceiverGather: state.startReceiverGather(cmd)
   of ckSubfolders: state.setSubfolders(cmd)
   of ckTreatAs: state.treatAs(cmd)
   of ckFileAuxMark: state.fileAuxMark(cmd)
@@ -14028,6 +14106,7 @@ proc drainInbox*(state: var AppState): bool =
       if m.job == state.preparing.job: state.takePrepared(move m.session, m.job)
       else: state.adopt(move m.session, m.job)
     of mkLog: state.log.add(move m.entry)
+    of mkGathered: state.takeGathered(move m)
     of mkRead: state.takeIn(m)
     of mkListed: state.takeListed(move m)
     of mkWatched: state.takeWatched(move m)

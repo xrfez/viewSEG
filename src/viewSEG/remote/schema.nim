@@ -57,7 +57,7 @@ const
     ckCopyReference,
     ckViewReference, ckCloseRefView, ckSetCompare, ckClearCompare, ckSwapCompare,
     ckCompareDisplay, ckCompareWindow, ckSubfolders, ckCorrelate, ckTreatAs,
-    ckFileAuxMark, ckProjectAuxMark, ckStationMove, ckOwnPosition}
+    ckFileAuxMark, ckProjectAuxMark, ckStationMove, ckOwnPosition, ckReceiverGather}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The survey
@@ -85,7 +85,8 @@ const
     ## trace edits and survey imports are not written into it, but a station move
     ## (`ckStationMove`) IS: it is kept in the project open (for the run only with none, or a
     ## read-only one), and takes effect on the map, the checks and the written positions;
-    ## `ckOwnPosition` only reads. A file opened
+    ## `ckOwnPosition` only reads. A receiver gather (`ckReceiverGather`) is made in memory
+    ## from the listed files, read-only, and writes nothing. A file opened
     ## again with other options (`ckReopen`) is read as before, read-only, for
     ## the session; a folder for a demultiplexed copy, which would be written
     ## there, is refused. A reference (listed, stored, generated, a pilot rule stored or

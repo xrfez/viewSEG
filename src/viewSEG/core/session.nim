@@ -105,6 +105,12 @@ type
       ## may be another thread
     hold: ViewHold
       ## this view's count in the raw session's `openViews`
+    gatherTitle: string
+      ## a receiver gather's title (`asGathered`); empty for any other session
+    gatherPaths: seq[string]
+      ## a receiver gather: the seismic files its traces come from, each once
+    gatherFile: seq[int32]
+      ## a receiver gather: per trace, the index in `gatherPaths` of the file it was read from
 
 proc `=destroy`(h: ViewHold)
 proc `=wasMoved`(h: var ViewHold)
@@ -284,6 +290,23 @@ proc asDerived*(s: Session) =
   s.origin = s.path
   s.path = freshDerivedKey(s.origin)
 
+proc freshGatherKey*(title: string): string =
+  ## The virtual key of one receiver gather: `title`, a NUL and a number no other derived
+  ## session of the run has. Not a path any file system can name, and not that of any file
+  ## or other derived session, so nothing keyed by it (the edits) is shared with a file.
+  title & "\0gathered" & $(derivedKeys.fetchAdd(1, moRelaxed) + 1)
+
+proc asGathered*(s: Session; title: string; sources: seq[string]; fileOf: seq[int32]) =
+  ## Marks `s`, made by `newSession` under the path `freshGatherKey(title)`, as a receiver
+  ## gather: read-only, titled `title`, with no file on disk behind it (its `origin` is its own
+  ## key). `sources` are the files its traces were read from and `fileOf` holds, per trace, the
+  ## index in `sources` of its file.
+  assert fileOf.len == s.file.len, "a source file is named for each trace"
+  s.origin = s.path
+  s.gatherTitle = title
+  s.gatherPaths = sources
+  s.gatherFile = fileOf
+
 proc markStoredHeaders(facts: var FileFacts) =
   ## Binary and general-header rows are the raw file's. `facts.rows` groups
   ## them by `blockName` (`binary`, `gh1`, ...). Their descriptions say stored,
@@ -399,9 +422,19 @@ func diskPath*(s: Session): string {.inline.} =
   ## The file on disk: the origin when this session was derived from one,
   ## otherwise its path.
   if s.origin.len > 0: s.origin else: s.path
-func name*(s: Session): string = s.diskPath.extractFilename
+func gathered*(s: Session): bool {.inline.} = not s.isNil and s.gatherTitle.len > 0
+  ## Whether `s` is a receiver gather: made in memory from other files' traces, read-only.
+func gatherSource*(s: Session; trace: int): string =
+  ## The file trace `trace` (the session's own index) of a receiver gather was read from;
+  ## empty for another session or a trace outside it.
+  if s.gathered and trace in 0 ..< s.gatherFile.len: s.gatherPaths[s.gatherFile[trace]]
+  else: ""
+func gatherSources*(s: Session): lent seq[string] {.inline.} = s.gatherPaths
+  ## The files a receiver gather's traces come from, each once; none for another session.
+func name*(s: Session): string =
   ## The file's name, for messages and titles: the file on disk, never a
-  ## derived session's virtual key.
+  ## derived session's virtual key; a receiver gather's title.
+  if s.gatherTitle.len > 0: s.gatherTitle else: s.diskPath.extractFilename
 func file*(s: Session): lent SeismicFile {.inline.} =
   ## The open file. A correlated view's is the raw session's, not a copy.
   if not s.originSession.isNil: return s.originSession.file

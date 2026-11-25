@@ -68,6 +68,7 @@ type
     mkComparePicture ## the compare window's picture, computed on a job
     mkVendor ## the vendor header maps a load read (`core/vendorjobs`)
     mkVendorFields ## the vendor fields an open file has (`core/vendorfieldjobs`)
+    mkGathered ## a receiver gather's session, or why there is none (`core/receivergather`)
     mkTreated ## which document of the store keeps what the user forced for a file (`treatWork`)
 
   UnreadCause* = enum
@@ -90,6 +91,9 @@ type
     job*: JobId = NoJob               ## the job that sent it; `NoJob` for none
     case kind*: MsgKind
     of mkOpened: session*: Session
+    of mkGathered:
+      gathered*: Session              ## nil when no listed file holds the station
+      gatherSaid*: string             ## what the gather came to, in plain words
     of mkLog: entry*: LogEntry
     of mkLayout:
       panel*: PanelId
