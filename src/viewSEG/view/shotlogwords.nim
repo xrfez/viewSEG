@@ -15,6 +15,19 @@ const
   ApplyButton* = "Apply"
   CancelButton* = "Cancel"
   GuessButton* = "Guess again"
+  PatternTip* = "How the Time (UTC) columns read as one time: their cells are joined by " &
+    "one space, in column order.\n" &
+    "yyyy or yy: year (two digits: 50 to 99 is 19xx, 0 to 49 is 20xx)\n" &
+    "ddd: day of year      mm: month, or the minute after an hour      mi: minute\n" &
+    "dd: day of month      hh: hour      ss: second\n" &
+    "f: the fraction of the second (digits after a dot; the dot may be left out)\n" &
+    "u: whole microseconds      any other character must be there as written\n" &
+    "Example: yyyy ddd hh mi ss.ffffff\n" &
+    "A column of seconds or microseconds since 1970: epoch seconds, epoch microseconds.\n" &
+    "Empty: the form of the first rows is used."
+  NameTip* = "The name of a user defined column. It cannot be one of the system's names " &
+    "(whatever the capitals, spaces or punctuation), Ignore, or another column's name. " &
+    "Empty: the header's name."
   ProblemsOnly* = "Problems only"
   AllowEditing* = "Allow editing"
   AllowEditingTip* = "Change cells here. A log corrected outside the program is better " &
@@ -109,12 +122,6 @@ func shotLogSummary*(file: string; rows, columns, problems: int; where: string):
   ## The window's top line.
   file & " · " & $rows & " rows · " & $columns & " columns · " & $problems &
     " problems · " & where
-
-func roleUnique*(role: ColumnRole): bool =
-  ## A meaning that should belong to one column only.
-  case role
-  of crIgnored, crText, crStatus, crSourceType, crSourceId, crGunArray: false
-  else: true
 
 func duplicateRoles*(roles: openArray[ColumnRole]): seq[ColumnRole] =
   ## Unique roles chosen more than once, in the order they repeat.

@@ -83,7 +83,7 @@ proc writeLog(path: string; withStation: bool) =
 proc logMap(): ShotLogMap =
   result = initShotLogMap()
   result.hasHeader = true
-  result.roles = @[crSourceLine, crShotPoint, crX, crY, crUtcMicros]
+  result.roles = @[crSourceLine, crShotPoint, crX, crY, crTime]
 
 proc layerOf(st: AppState): SurveyLayer =
   st.survey.layers[st.survey.findShotLog(st.shotLogId(0))]

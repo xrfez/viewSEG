@@ -23,9 +23,8 @@ proc allocations(): int =
 proc row(timeUs: Option[int64] = none(int64); fileNo: Option[int64] = none(int64);
     line = NaN; point = NaN; index: Option[int64] = none(int64)): Shot =
   Shot(sailLine: NaN, sourceLine: line, shotPoint: point, sourceDepth: NaN,
-    waterDepth: NaN, x: NaN, y: NaN, z: NaN, volume: NaN, pressure: NaN,
-    heading: NaN, speed: NaN, second: NaN, timeUtcUs: timeUs, fileNumber: fileNo,
-    pointIndex: index)
+    waterDepth: NaN, x: NaN, y: NaN, z: NaN, uphole: NaN, timeUtcUs: timeUs,
+    fileNumber: fileNo, pointIndex: index)
 
 proc viewOf(rows: varargs[Shot]): ShotView =
   result.rows = @rows

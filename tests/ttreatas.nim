@@ -656,7 +656,7 @@ proc main*() =
     let path = record("same.sgd", float64(BaseUs div 1_000_000))
     var m = initShotLogMap()
     m.hasHeader = false
-    m.roles = @[crFileNumber, crUtcMicros]
+    m.roles = @[crFileNumber, crTime]
     let shots = shotsInTime(shots(parseShotLog("1," & $(BaseUs + 5_000_000) & "\n", m), m).rows)
     let jobs = initJobs()
     proc run(opts: CutOptions; dest: string; path = path): tuple[st: JobState; res: CutResult] =

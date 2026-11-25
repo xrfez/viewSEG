@@ -335,7 +335,7 @@ proc main*() =
       doAssert before.match.row == 0
       var col = -1
       for c in 0 ..< st.shotLogMap(0).roles.len:
-        if st.shotLogMap(0).roles[c] == crUtcMicros: col = c
+        if st.shotLogMap(0).roles[c] == crTime: col = c
       doAssert col >= 0, "no UTC microseconds column"
       st.apply Command(kind: ckEditShotCell, logIndex: 0, logRow: 0, logCol: col,
         logCell: $(us + 120_000_000))

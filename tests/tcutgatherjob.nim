@@ -93,7 +93,7 @@ proc logOf(files: openArray[int]; offsetsUs: openArray[int64]): ShotView =
     text.add $files[i] & "," & $(BaseUs + offsetsUs[i]) & "\n"
   var m = initShotLogMap()
   m.hasHeader = false
-  m.roles = @[crFileNumber, crUtcMicros]
+  m.roles = @[crFileNumber, crTime]
   shots(parseShotLog(text, m), m)
 
 const
@@ -364,7 +364,7 @@ proc main*() =
   block untimed_rows_and_point_index:
     var m = initShotLogMap()
     m.hasHeader = false
-    m.roles = @[crFileNumber, crPointIndex, crUtcMicros]
+    m.roles = @[crFileNumber, crPointIndex, crTime]
     var raw = ""
     raw.add "101,3," & $(BaseUs + 3_000_000) & "\n"
     raw.add "102,4,\n"
@@ -423,7 +423,7 @@ proc main*() =
     defer: srcXy.close()
     var m = initShotLogMap()
     m.hasHeader = false
-    m.roles = @[crFileNumber, crUtcMicros, crSourceLine, crShotPoint, crX, crY]
+    m.roles = @[crFileNumber, crTime, crSourceLine, crShotPoint, crX, crY]
     var raw = ""
     for i in 0 ..< 7:
       raw.add $Files[i] & "," & $(BaseUs + Offsets[i]) & ",5," & $(100 + i) & "," &
@@ -487,7 +487,7 @@ proc main*() =
     # so) or the line is said for SEG-D, which keeps it.
     var m = initShotLogMap()
     m.hasHeader = false
-    m.roles = @[crFileNumber, crUtcMicros, crSourceLine, crShotPoint, crPointIndex]
+    m.roles = @[crFileNumber, crTime, crSourceLine, crShotPoint, crPointIndex]
     var raw = ""
     for i in 0 ..< 7:
       raw.add $Files[i] & "," & $(BaseUs + Offsets[i]) & ",5," & $(100 + i) & "," & $i & "\n"

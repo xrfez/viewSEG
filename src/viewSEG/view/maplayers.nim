@@ -460,7 +460,7 @@ func shotLines*(st: AppState; p: PointRef): seq[string] =
   if places.len > 1: result.add "A click shows the newest" # (the menu lists each)
 
 const ShotIdentity = [crSailLine, crSourceLine, crShotPoint, crPointIndex, crFileNumber,
-  crSequence, crGpsMicros, crUtcMicros, crUtcSeconds, crDateTime, crStatus]
+  crSequence, crGpsMicros, crTime, crStatus]
   ## the columns that say which shot a row is, as the column map names them
 
 func shotLogRows(st: AppState; l: SurveyLayer; point: int): seq[string] =

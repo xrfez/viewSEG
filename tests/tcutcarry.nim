@@ -149,8 +149,8 @@ proc shotUs(i: int): int64 =
 
 proc shotsOf(withFiles: bool): CutShots =
   var text = ""
-  let roles = if withFiles: @[crFileNumber, crUtcMicros, crSourceLine, crShotPoint]
-    else: @[crUtcMicros, crSourceLine, crShotPoint]
+  let roles = if withFiles: @[crFileNumber, crTime, crSourceLine, crShotPoint]
+    else: @[crTime, crSourceLine, crShotPoint]
   for i in 0 ..< 3:
     if withFiles: text.add $Files[i] & ","
     text.add $shotUs(i) & "," & $(20 + i) & "," & $(30 + i) & "\n"
@@ -306,7 +306,7 @@ proc gapShots(): CutShots =
   for i, u in us: text.add $(200 + i) & "," & $u & "\n"
   var m = initShotLogMap()
   m.hasHeader = false
-  m.roles = @[crFileNumber, crUtcMicros]
+  m.roles = @[crFileNumber, crTime]
   shotsInTime(shots(parseShotLog(text, m), m).rows)
 
 proc checkGapsAndRefusals(dir: string; jobs: Jobs) =
@@ -345,7 +345,7 @@ proc checkGapsAndRefusals(dir: string; jobs: Jobs) =
     var text = $201 & "," & $(BaseUs - 3 * 86_400_000_000'i64) & "\n"
     var m = initShotLogMap()
     m.hasHeader = false
-    m.roles = @[crFileNumber, crUtcMicros]
+    m.roles = @[crFileNumber, crTime]
     shotsInTime(shots(parseShotLog(text, m), m).rows)
   let viaKeys = runCut(jobs, ref0, sgy, dir / "out" / "gapkeys.sgd", two, opts)
   doAssert viaKeys.st == jsDone and not viaKeys.res.carried, viaKeys.error & viaKeys.res.reason
@@ -506,7 +506,7 @@ proc checkRev2SourcePlace(dir: string; jobs: Jobs) =
   for i in 0 ..< 3: timesOnly.add $Files[i] & "," & $shotUs(i) & "\n"
   var m = initShotLogMap()
   m.hasHeader = false
-  m.roles = @[crFileNumber, crUtcMicros]
+  m.roles = @[crFileNumber, crTime]
   let bare = shotsInTime(shots(parseShotLog(timesOnly, m), m).rows)
   const
     NoPlace = "The recording has no source header block: the shot log's source line and " &
@@ -557,7 +557,7 @@ proc checkRev2Time(dir: string; jobs: Jobs; csUs = 0'i64) =
   var text = "101," & $shotUs & "\n"
   var m = initShotLogMap()
   m.hasHeader = false
-  m.roles = @[crFileNumber, crUtcMicros]
+  m.roles = @[crFileNumber, crTime]
   let sh = shotsInTime(shots(parseShotLog(text, m), m).rows)
   let dest = dir / "out" / ("t2cs" & $csUs & ".sgd")
   let got = runCut(jobs, src, path, dest, sh, initCutOptions(LengthMs, StartMs))
@@ -600,7 +600,7 @@ proc checkRev3(dir: string; jobs: Jobs; comps: int; startMs: float64; origin: in
       123 * int64(i)) & "\n"
   var m = initShotLogMap()
   m.hasHeader = false
-  m.roles = @[crFileNumber, crUtcMicros]
+  m.roles = @[crFileNumber, crTime]
   let sh = shotsInTime(shots(parseShotLog(text, m), m).rows)
   let dest = dir / "out" / (tag & ".sgd")
   let got = runCut(jobs, src, path, dest, sh, initCutOptions(LengthMs, startMs))

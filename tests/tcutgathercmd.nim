@@ -89,7 +89,7 @@ proc writeLog(path: string): ShotLogMap =
   writeFile(path, text)
   result = initShotLogMap()
   result.hasHeader = false
-  result.roles = @[crFileNumber, crUtcMicros]
+  result.roles = @[crFileNumber, crTime]
 
 proc start(dir: string): AppState =
   result = initAppState()

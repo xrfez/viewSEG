@@ -165,7 +165,7 @@ proc shotsAt(times: openArray[int64]): CutShots =
   for i, t in times: text.add $(101 + i) & "," & $t & "\n"
   var m = initShotLogMap()
   m.hasHeader = false
-  m.roles = @[crFileNumber, crUtcMicros]
+  m.roles = @[crFileNumber, crTime]
   shotsInTime(shots(parseShotLog(text, m), m).rows)
 
 proc shotsOf(): CutShots =

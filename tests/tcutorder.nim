@@ -48,7 +48,7 @@ proc makeRecording(path: string; coded: bool) =
 proc logOf(two = false): ShotView =
   var m = initShotLogMap()
   m.hasHeader = false
-  m.roles = @[crFileNumber, crUtcMicros]
+  m.roles = @[crFileNumber, crTime]
   shots(parseShotLog("101," & $(BaseUs + 20_000) & "\n" &
     (if two: "102," & $(BaseUs + 1_500_000) & "\n" else: ""), m), m)
 

@@ -48,7 +48,7 @@ proc runCut(jobs: Jobs; f: var SeismicFile; source, dest: string; opts: CutOptio
     two = false): tuple[ok: bool; res: CutResult] =
   var m = initShotLogMap()
   m.hasHeader = false
-  m.roles = @[crFileNumber, crUtcMicros]
+  m.roles = @[crFileNumber, crTime]
   let view = shots(parseShotLog("101," & $(BaseUs + 20_000) & "\n" &
     (if two: "102," & $(BaseUs + 1_020_000) & "\n" else: ""), m), m)
   let sink = CutSink()

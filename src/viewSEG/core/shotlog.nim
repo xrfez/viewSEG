@@ -3,10 +3,12 @@
 ## (`cell`), so a log of 100 000 rows is an index, not a copy of every cell.
 ## The caller reads the file; nothing here touches the file system.
 ##
-## A `ShotLogMap` says which column is which (`ColumnRole`), which clock the
-## split fields and the date-time text are on, and which sentinels mean
-## missing. `guessMap` is a starting point from the header names and the
-## first rows; the roles can be set without it. `shots` turns the rows into
+## A `ShotLogMap` says which column is which (`ColumnRole`: Ignore, a system
+## column the code refers to by role, or a user defined column with a name of
+## its own), which clock the time is on, and which sentinels mean missing. The
+## cells of the Time (UTC) columns are read together as one time. `guessMap`
+## is a starting point from the header names and the first rows; the roles can
+## be set without it. `shots` turns the rows into
 ## typed values and one UTC instant per row (microseconds since 1970).
 ## A row that is short, long, unreadable or inconsistent is kept, and the
 ## fault is a `ShotProblem`, not an exception. The first 100 are kept and
@@ -37,40 +39,30 @@ type
     dlSpaces = "spaces"
 
   ColumnRole* = enum
-    ## What a column of a shot log means. `$` and `label` are the plain words.
-    crIgnored = "ignored"
-    crSequence = "sequence"
-    crFileNumber = "file number"
-    crStatus = "status"
-    crSailLine = "sail line"
-    crSourceLine = "source line"
-    crShotPoint = "shot point"
-    crPointIndex = "point index"
-    crGpsMicros = "GPS microseconds"
-    crUtcMicros = "UTC microseconds"
-    crUtcSeconds = "UTC seconds"
-    crYear = "year"
-    crDayOfYear = "day of year"
-    crMonth = "month"
-    crDayOfMonth = "day of month"
-    crHour = "hour"
-    crMinute = "minute"
-    crSecond = "second"
-    crMicrosecond = "microsecond"
-    crDateTime = "date-time text"
-    crSourceDepth = "source depth"
-    crWaterDepth = "water depth"
+    ## What a column of a shot log means. `$` and `label` are the words the
+    ## Columns dialog shows. Every role from `crTime` to `crUphole` is a
+    ## system column that code refers to by role (one column each, except
+    ## `crTime`, which several columns can share); `crText` is a user defined
+    ## column, which has a name of its own (`ShotLogMap.names`).
+    crIgnored = "Ignore"
+    crTime = "Time (UTC)"
+    crGpsMicros = "GPSTB"
+    crSequence = "SEQ"
+    crFileNumber = "FFID"
+    crStatus = "Status"
+    crSailLine = "SailLine"
+    crSourceLine = "SourceLine"
+    crShotPoint = "SourcePoint"
+    crPointIndex = "Index"
+    crSourceDepth = "Depth"
+    crWaterDepth = "Water Depth"
     crX = "X"
     crY = "Y"
     crZ = "Z"
-    crSourceType = "source type"
-    crSourceId = "source id"
-    crGunArray = "gun array"
-    crVolume = "volume"
-    crPressure = "pressure"
-    crHeading = "heading"
-    crSpeed = "speed"
-    crText = "text"
+    crSourceType = "SourceType"
+    crSourceId = "SourceID"
+    crUphole = "Uphole"
+    crText = "User defined"
 
   TimeClock* = enum
     ## The clock of the split fields and of the date-time text.
@@ -110,10 +102,17 @@ type
     skipLines*: int         ## physical lines before the header (or the first row)
     hasHeader*: bool
     roles*: seq[ColumnRole] ## one per column; a missing entry is `crText`
-    clock*: TimeClock       ## split fields and date-time text
+    names*: seq[string]
+      ## one per column, read only where the role is `crText` (user defined):
+      ## its name. Empty: the header's name, or "Column N".
+    clock*: TimeClock ## a time written as a calendar date; the epoch forms are UTC
     dateTimePattern*: string
-      ## `yyyy`, `mm`, `dd`, `hh`, `ss`, `f` and literals, as in
-      ## `yyyy/mm/dd hh:mm:ss.ffffff`. Empty: recognize that form and ISO.
+      ## How the cells of the `crTime` columns, joined in column order with
+      ## one space, read as one time: `yyyy`, `yy`, `ddd` (day of year), `mm`
+      ## (month before an hour, else minute), `mi`, `dd`, `hh`, `ss`, `f`
+      ## (fraction of a second), `u` (whole microseconds) and literals, as in
+      ## `yyyy ddd hh mi ss.ffffff`; or `epoch seconds` or `epoch
+      ## microseconds`. Empty: the form is detected from the first rows.
     sentinels*: seq[string] ## cell text that means missing, besides a blank
     decimalComma*: bool
       ## When set, a comma in a numeric cell is the decimal point. Default
@@ -125,6 +124,7 @@ type
     ## Typed values of one row. An integer is `none` when missing or a
     ## sentinel; a float is NaN. `timeUtcUs` is the one instant, UTC
     ## microseconds since 1970, from the most trusted source that parsed.
+    ## A column mapped to Ignore is not here at all.
     sequence*: Option[int64]
     fileNumber*: Option[int64]
     status*: string
@@ -140,21 +140,8 @@ type
     z*: float64
     sourceType*: string
     sourceId*: string
-    gunArray*: string
-    volume*: float64
-    pressure*: float64
-    heading*: float64
-    speed*: float64
-    year*: Option[int64]
-    dayOfYear*: Option[int64]
-    month*: Option[int64]
-    dayOfMonth*: Option[int64]
-    hour*: Option[int64]
-    minute*: Option[int64]
-    second*: float64 ## the second column, fraction kept; NaN when absent
-    microsecond*: Option[int64]
-    dateTime*: string
-    texts*: seq[string] ## columns whose role is `crText`, in column order
+    uphole*: float64 ## the uphole time in ms; NaN when absent
+    texts*: seq[string] ## user defined columns, in column order
 
   ShotView* = object
     ## `shots`: one entry per data row, and every fault of the log and of
@@ -399,7 +386,8 @@ proc parseShotLog*(text: sink string; delimiter: Delimiter; skipLines = 0;
   ## Indexes `text`. `skipLines` physical lines are ignored, then a header
   ## line if `hasHeader`, then one data row per remaining non-blank line.
   ## A row with fewer or more fields than the header (or than the first
-  ## data row, when there is no header) is kept and listed. Line endings
+  ## data row, when there is no header, or when the rows are cut at spaces,
+  ## where a header's names may hold spaces) is kept and listed. Line endings
   ## may be LF or CRLF. Quoted fields may contain the delimiter and a
   ## doubled quote. A text longer than `high(int32)` bytes is not indexed:
   ## the log is empty and one problem names the limit.
@@ -443,6 +431,17 @@ proc parseShotLog*(text: sink string; delimiter: Delimiter; skipLines = 0;
     result.headerCount = result.fieldStart.len - result.headerField.int
     result.width = result.headerCount
   let first = skip + (if hasHeader: 1 else: 0)
+  if hasHeader and delimiter == dlSpaces:
+    # a header's names may hold spaces: its fields are not the rows' columns
+    for lineIdx in first ..< result.lineStart.len:
+      let a = result.lineStart[lineIdx].int
+      let b = result.lineStop[lineIdx].int
+      if a != b:
+        var starts: seq[int32] = @[]
+        var stops: seq[int32] = @[]
+        scanFields(result.text, a, b, delimiter, starts, stops)
+        if starts.len > 0: result.width = starts.len
+        break
   var row = 0
   if first < result.lineStart.len:
     for lineIdx in first ..< result.lineStart.len:
@@ -623,24 +622,22 @@ const Aliases = [
   ("gpsmicroseconds", crGpsMicros), ("gpstimemicroseconds", crGpsMicros),
   ("timebreakmicroseconds", crGpsMicros), ("timebreakus", crGpsMicros),
   ("gpsus", crGpsMicros), ("gpstime", crGpsMicros), ("timebreak", crGpsMicros),
-  ("tb", crGpsMicros),
-  ("utcmicroseconds", crUtcMicros), ("utcus", crUtcMicros),
-  ("unixtimeus", crUtcMicros),
-  ("utcseconds", crUtcSeconds), ("epochseconds", crUtcSeconds),
-  ("unixtime", crUtcSeconds), ("utcs", crUtcSeconds), ("posix", crUtcSeconds),
-  ("year", crYear), ("yr", crYear),
-  ("dayofyear", crDayOfYear), ("julianday", crDayOfYear), ("julian", crDayOfYear),
-  ("jday", crDayOfYear), ("doy", crDayOfYear),
-  ("month", crMonth), ("mon", crMonth),
-  ("dayofmonth", crDayOfMonth), ("dom", crDayOfMonth), ("day", crDayOfMonth),
-  ("hour", crHour), ("hr", crHour), ("hh", crHour),
-  ("minute", crMinute), ("min", crMinute),
-  ("microsecond", crMicrosecond), ("microseconds", crMicrosecond),
-  ("usec", crMicrosecond),
-  ("second", crSecond), ("sec", crSecond), ("ss", crSecond),
-  ("datetimeutc", crDateTime), ("datetimetext", crDateTime),
-  ("datetime", crDateTime), ("timestamp", crDateTime), ("shottime", crDateTime),
-  ("date", crDateTime), ("time", crDateTime),
+  ("tb", crGpsMicros), ("gpstb", crGpsMicros),
+  ("utcmicroseconds", crTime), ("utcus", crTime), ("unixtimeus", crTime),
+  ("utcseconds", crTime), ("epochseconds", crTime), ("unixtime", crTime),
+  ("utcs", crTime), ("posix", crTime),
+  ("year", crTime), ("yr", crTime),
+  ("dayofyear", crTime), ("julianday", crTime), ("julian", crTime),
+  ("jday", crTime), ("doy", crTime),
+  ("month", crTime), ("mon", crTime),
+  ("dayofmonth", crTime), ("dom", crTime), ("day", crTime),
+  ("hour", crTime), ("hr", crTime), ("hh", crTime),
+  ("minute", crTime), ("min", crTime),
+  ("microsecond", crTime), ("microseconds", crTime), ("usec", crTime),
+  ("second", crTime), ("sec", crTime), ("ss", crTime),
+  ("datetimeutc", crTime), ("datetimetext", crTime),
+  ("datetime", crTime), ("timestamp", crTime), ("shottime", crTime),
+  ("date", crTime), ("time", crTime), ("timeutc", crTime),
   ("sourcedepth", crSourceDepth), ("gundepth", crSourceDepth),
   ("srcdepth", crSourceDepth), ("depth", crSourceDepth),
   ("waterdepth", crWaterDepth), ("seafloor", crWaterDepth), ("wd", crWaterDepth),
@@ -650,12 +647,39 @@ const Aliases = [
   ("sourcetype", crSourceType), ("srctype", crSourceType), ("type", crSourceType),
   ("sourceids", crSourceId), ("sourceid", crSourceId), ("srcid", crSourceId),
   ("gunid", crSourceId), ("id", crSourceId),
-  ("gunarray", crGunArray), ("subarray", crGunArray), ("array", crGunArray),
-  ("gunvolume", crVolume), ("volume", crVolume), ("vol", crVolume),
-  ("airpressure", crPressure), ("pressure", crPressure), ("pres", crPressure),
-  ("heading", crHeading), ("bearing", crHeading), ("gyro", crHeading),
-  ("hdg", crHeading),
-  ("vesselspeed", crSpeed), ("speed", crSpeed), ("sog", crSpeed)]
+  ("uphole", crUphole), ("upholetime", crUphole), ("tuh", crUphole)]
+
+func nameKey*(s: string): string =
+  ## `s` compared as a name: lower case letters and digits only, so
+  ## "Source Line", "source_line" and "SourceLine" are one name.
+  for c in s:
+    if c in Letters + Digits: result.add c.toLowerAscii
+
+func isSystemName*(name: string): bool =
+  ## Whether `name` is one of the choices of the Columns dialog (Ignore, a
+  ## system column, or User defined), compared by `nameKey`.
+  let k = nameKey(name)
+  for r in ColumnRole:
+    if nameKey($r) == k: return true
+
+func nameFault*(name: string): string =
+  ## Why `name` cannot be a user defined column's name; "" when it can.
+  ## A system name is refused whatever its spaces, case and punctuation.
+  if name.strip.len == 0:
+    "A user defined column needs a name."
+  elif isSystemName(name):
+    "\"" & name.strip & "\" is one of the system's column names. Give this column " &
+      "another name."
+  else: ""
+
+func isSystemRole*(role: ColumnRole): bool {.inline.} =
+  ## A column the system refers to by role.
+  role in {crTime .. crUphole}
+
+func roleUnique*(role: ColumnRole): bool {.inline.} =
+  ## A meaning that belongs to one column only. `crTime` may be on several
+  ## columns, which are read together as one time.
+  role in {crGpsMicros .. crUphole}
 
 func normHeader(s: string): string =
   ## Letters only, lower case, with a leading number prefix such as `07_`
@@ -685,6 +709,9 @@ func roleOfName(raw: string): ColumnRole =
   for a in Aliases:
     if a[0] == n: return a[1]
   crText
+
+func knownHeader(raw: string): bool =
+  roleOfName(raw) != crText
 
 func hasLetter(s: string): bool =
   for c in s:
@@ -760,41 +787,6 @@ proc isGpsMicrosText(s: string): bool =
   let head = (ord(t[0]) - ord('0')) * 10 + (ord(t[1]) - ord('0'))
   head in 11 .. 16
 
-proc isYearText(s: string): bool =
-  let t = s.strip
-  if t.len != 4: return false
-  var y = 0
-  for c in t:
-    if c notin Digits: return false
-    y = y * 10 + (ord(c) - ord('0'))
-  y in 1900 .. 2099
-
-proc guessFromCells(cells: openArray[string]): tuple[role: ColumnRole; pattern: string] =
-  ## GPS microseconds, a year, or date-time text, when every non-empty cell
-  ## agrees. Otherwise `crText`.
-  result = (crText, "")
-  var n = 0
-  var gps, year, time = 0
-  var pattern = ""
-  for c in cells:
-    let t = c.strip
-    if t.len == 0: discard
-    else:
-      inc n
-      if isGpsMicrosText(t): inc gps
-      if isYearText(t): inc year
-      let p = detectPattern(t)
-      if p.len > 0:
-        inc time
-        if pattern.len == 0: pattern = p
-  if n == 0: return
-  if time == n:
-    return (crDateTime, pattern)
-  if gps == n:
-    return (crGpsMicros, "")
-  if year == n:
-    return (crYear, "")
-
 type NumShape = enum
   nsBlank, nsInt, nsDot, nsComma, nsOther
 
@@ -831,137 +823,6 @@ proc lineDelimiter(text: string; a, b: int): Delimiter =
 proc nameLike(s: string): bool =
   ## A header cell: a letter, and not a date-time such as an ISO instant.
   hasLetter(s) and detectPattern(s).len == 0
-
-proc guessMap*(text: string): ShotLogMap {.raises: [].} =
-  ## A starting map: delimiter, lines to skip, whether a header is there,
-  ## and a role per column. Header names are matched ignoring case, spaces,
-  ## underscores and a leading number prefix such as `07_`. A name that is
-  ## not known, and every column when there is no header, is judged from
-  ## the first data rows: a 16-digit integer near 1.4e15 is GPS microseconds,
-  ## a 4-digit 19xx or 20xx is a year, and `yyyy/mm/dd hh:mm:ss.f` or an ISO
-  ## form is date-time text. Anything else is `crText`. The clock stays UTC
-  ## and the length unit stays metres unless a header says feet.
-  result = initShotLogMap()
-  if text.len > high(int32): return
-  var phys = 0
-  var keptPhys: seq[int] = @[]
-  var keptStart: seq[int] = @[]
-  var keptStop: seq[int] = @[]
-  var i = 0
-  let n = text.len
-  while i < n and keptPhys.len < 40:
-    let start = i
-    var j = i
-    while j < n and text[j] != '\n' and text[j] != '\r': inc j
-    let stop = j
-    if j < n and text[j] == '\r':
-      inc j
-      if j < n and text[j] == '\n': inc j
-    elif j < n and text[j] == '\n':
-      inc j
-    if stop > start and firstChar(text, start, stop) != '#':
-      keptPhys.add phys
-      keptStart.add start
-      keptStop.add stop
-    inc phys
-    i = j
-  var headerAt = -1
-  for k in 0 ..< keptStart.len:
-    let d = lineDelimiter(text, keptStart[k], keptStop[k])
-    var starts: seq[int32] = @[]
-    var stops: seq[int32] = @[]
-    scanFields(text, keptStart[k], keptStop[k], d, starts, stops)
-    var names = 0
-    for c in 0 ..< starts.len:
-      if nameLike(fieldText(text, starts[c].int, stops[c].int)): inc names
-    if names >= 2:
-      headerAt = k
-      result.delimiter = d
-      break
-  if headerAt < 0:
-    var commas, tabs, semis = 0
-    for k in 0 ..< keptStart.len:
-      if countDelim(text, keptStart[k], keptStop[k], ',') > 0: inc commas
-      if countDelim(text, keptStart[k], keptStop[k], '\t') > 0: inc tabs
-      if countDelim(text, keptStart[k], keptStop[k], ';') > 0: inc semis
-    if tabs > 0 and tabs >= commas and tabs >= semis:
-      result.delimiter = dlTab
-    elif semis > commas and semis > 0:
-      result.delimiter = dlSemicolon
-    elif commas > 0:
-      result.delimiter = dlComma
-    else:
-      result.delimiter = dlSpaces
-  var dataFrom = 0
-  if headerAt >= 0:
-    result.hasHeader = true
-    result.skipLines = keptPhys[headerAt]
-    dataFrom = headerAt + 1
-    var hStart: seq[int32] = @[]
-    var hStop: seq[int32] = @[]
-    scanFields(text, keptStart[headerAt], keptStop[headerAt], result.delimiter,
-      hStart, hStop)
-    result.roles.setLen hStart.len
-    for c in 0 ..< hStart.len:
-      let name = fieldText(text, hStart[c].int, hStop[c].int)
-      result.roles[c] = roleOfName(name)
-      if mentionsFeet(name): result.lengthUnit = luFeet
-  else:
-    result.hasHeader = false
-    result.skipLines = if keptPhys.len > 0: keptPhys[0] else: 0
-    dataFrom = 0
-  var samples: seq[seq[string]] = @[]
-  var taken = 0
-  var k = dataFrom
-  while k < keptStart.len and taken < 12:
-    var starts: seq[int32] = @[]
-    var stops: seq[int32] = @[]
-    scanFields(text, keptStart[k], keptStop[k], result.delimiter, starts, stops)
-    if starts.len > samples.len: samples.setLen starts.len
-    for c in 0 ..< starts.len:
-      samples[c].add fieldText(text, starts[c].int, stops[c].int)
-    inc taken
-    inc k
-  if result.roles.len < samples.len:
-    let old = result.roles.len
-    result.roles.setLen samples.len
-    for c in old ..< result.roles.len:
-      result.roles[c] = crText
-  for c in 0 ..< result.roles.len:
-    if c < samples.len and (headerAt < 0 or result.roles[c] == crText):
-      let g = guessFromCells(samples[c])
-      if g.role != crText:
-        result.roles[c] = g.role
-      if g.pattern.len > 0 and result.dateTimePattern.len == 0:
-        result.dateTimePattern = g.pattern
-    elif result.roles[c] == crDateTime and c < samples.len and
-        result.dateTimePattern.len == 0:
-      let g = guessFromCells(samples[c])
-      if g.pattern.len > 0: result.dateTimePattern = g.pattern
-  if result.delimiter != dlComma:
-    var commaDec, dotDec = false
-    for col in samples:
-      var numeric = false
-      var other = false
-      var colComma, colDot = false
-      for cell in col:
-        let shape = numShape(cell)
-        if shape == nsOther:
-          other = true
-          break
-        elif shape == nsComma:
-          numeric = true
-          colComma = true
-        elif shape == nsDot:
-          numeric = true
-          colDot = true
-        elif shape == nsInt:
-          numeric = true
-      if numeric and not other:
-        if colComma: commaDec = true
-        if colDot: dotDec = true
-    if commaDec and not dotDec:
-      result.decimalComma = true
 
 const White = {' ', '\t', '\v', '\r', '\n', '\f'}
 
@@ -1130,93 +991,96 @@ proc parseSecondsUs(s: openArray[char]; decimalComma = false): tuple[ok: bool; u
   if neg: us = -us
   (true, us)
 
-proc parseSecond(s: openArray[char]; decimalComma = false): tuple[ok: bool; sec, us: int] =
-  ## Whole seconds and microseconds from a second field. The fraction is
-  ## taken from the digits, so 59.999999 stays 59 s + 999999 us.
-  let span = trimSpan(s)
-  var i = span.a
-  if i >= span.b: return
-  if s[i] == '+': inc i
-  if i >= span.b or s[i] notin Digits: return
-  var sec = 0
-  while i < span.b and s[i] in Digits:
-    if not accDigit(sec, ord(s[i]) - ord('0')): return
-    inc i
-  var us = 0
-  let dec = if decimalComma: ',' else: '.'
-  if i < span.b and s[i] == dec:
-    inc i
-    var digits = 0
-    var frac = 0
-    while i < span.b and s[i] in Digits and digits < 6:
-      frac = frac * 10 + (ord(s[i]) - ord('0'))
-      inc digits
-      inc i
-    while i < span.b and s[i] in Digits: inc i
-    if digits == 0: return
-    var scale = 1
-    for _ in digits ..< 6: scale *= 10
-    us = frac * scale
-  if i != span.b: return
-  (true, sec, us)
+const
+  EpochSeconds* = "epoch seconds"
+    ## a `dateTimePattern` for one column of seconds since 1970, fraction allowed
+  EpochMicros* = "epoch microseconds"
+    ## a `dateTimePattern` for one column of whole microseconds since 1970
 
-proc matchPattern(text, pattern: string): tuple[ok: bool; y, m, d, hh, mm, ss, us: int] =
+type
+  TimeParts = object
+    ok: bool
+    y, m, d, doy, hh, mi, ss: int
+    fracUs: int ## the fraction of the second, in microseconds
+    micros: int ## the `u` field; -1 when the pattern has none
+
+func isToken(c: char): bool {.inline.} =
+  c.toLowerAscii in {'y', 'm', 'd', 'h', 's', 'f', 'u'}
+
+proc matchPattern(text, pattern: string): TimeParts =
+  ## Reads `text` as `pattern` says. A field with a literal or the end after
+  ## it takes one up to its width in digits, so `5` is an hour for `hh`; a
+  ## field followed by another field takes exactly its width. A `.` before
+  ## `f` is optional. A two-digit year uses the pivot 50: 50..99 is 19xx.
   let t = text.strip
   var ti = 0
   var pi = 0
   var seenHour = false
+  result.micros = -1
   result.ok = pattern.len > 0
   while result.ok and pi < pattern.len:
     let c = pattern[pi]
-    let kind = c.toLowerAscii
-    if kind in {'y', 'm', 'd', 'h', 's', 'f'}:
-      var n = 0
+    var kind = c.toLowerAscii
+    var n = 0
+    if kind == 'm' and pi + 1 < pattern.len and pattern[pi + 1].toLowerAscii == 'i':
+      kind = 'i'
+      n = 2
+      pi += 2
+    elif isToken(c):
       while pi < pattern.len and pattern[pi].toLowerAscii == kind:
         inc n
         inc pi
-      if kind == 'f':
-        var digits = 0
-        var frac = 0
-        while ti < t.len and t[ti] in Digits and digits < max(n, 6):
-          if digits < 6:
-            frac = frac * 10 + (ord(t[ti]) - ord('0'))
-          inc digits
+    if n == 0:
+      if c == '.' and pi + 1 < pattern.len and pattern[pi + 1].toLowerAscii == 'f':
+        if ti < t.len and t[ti] == '.':
           inc ti
-        if digits == 0:
-          result.ok = false
+          inc pi
         else:
-          var scale = 1
-          let used = min(digits, 6)
-          for _ in used ..< 6: scale *= 10
-          result.us = frac * scale
-      elif ti + n > t.len:
+          inc pi
+          while pi < pattern.len and pattern[pi].toLowerAscii == 'f': inc pi
+      elif ti < t.len and t[ti] == c:
+        inc ti
+        inc pi
+      else:
+        result.ok = false
+    elif kind == 'f':
+      var seen, used, frac = 0
+      while ti < t.len and t[ti] in Digits:
+        if used < 6:
+          frac = frac * 10 + (ord(t[ti]) - ord('0'))
+          inc used
+        inc seen
+        inc ti
+      if seen == 0:
         result.ok = false
       else:
-        var v = 0
-        for _ in 0 ..< n:
-          if t[ti] notin Digits:
-            result.ok = false
-            break
-          v = v * 10 + (ord(t[ti]) - ord('0'))
-          inc ti
-        if result.ok:
-          case kind
-          of 'y':
-            if n <= 2: v = if v >= 50: 1900 + v else: 2000 + v
-            result.y = v
-          of 'm':
-            if seenHour: result.mm = v else: result.m = v
-          of 'd': result.d = v
-          of 'h':
-            result.hh = v
-            seenHour = true
-          of 's': result.ss = v
-          else: discard
-    elif ti < t.len and t[ti] == c:
-      inc ti
-      inc pi
+        var scale = 1
+        for _ in used ..< 6: scale *= 10
+        result.fracUs = frac * scale
     else:
-      result.ok = false
+      let exact = pi < pattern.len and isToken(pattern[pi])
+      var v, got = 0
+      while ti < t.len and t[ti] in Digits and got < n:
+        v = v * 10 + (ord(t[ti]) - ord('0'))
+        inc got
+        inc ti
+      if got == 0 or (exact and got != n):
+        result.ok = false
+      else:
+        case kind
+        of 'y':
+          if got <= 2: v = if v >= 50: 1900 + v else: 2000 + v
+          result.y = v
+        of 'm':
+          if seenHour: result.mi = v else: result.m = v
+        of 'i': result.mi = v
+        of 'd':
+          if n >= 3: result.doy = v else: result.d = v
+        of 'h':
+          result.hh = v
+          seenHour = true
+        of 's': result.ss = v
+        else: result.micros = v
   if result.ok and ti < t.len and t[ti] in {'Z', 'z'}: inc ti
   if result.ok and ti != t.len: result.ok = false
 
@@ -1245,6 +1109,589 @@ proc civilToUtcUs(y, m, d, hh, mm, ss, us: int; clock: TimeClock): Option[int64]
   if not gpsUs.ok: return none(int64)
   some(gpsMicrosToUtcMicros(gpsUs.v))
 
+type TimeRead = object
+  ok: bool
+  us: int64
+  leap: bool    ## the second was 60
+  clash: string ## the seconds' fraction and the microseconds differ: both, in words
+  why: string   ## when not `ok`, how the text fails
+
+proc readTime(text, pattern: string; clock: TimeClock): TimeRead =
+  ## One instant from `text` as `pattern` says. The epoch forms are UTC; the
+  ## others are on `clock`.
+  let key = pattern.strip.toLowerAscii
+  if key == EpochSeconds:
+    let sec = parseSecondsUs(text)
+    if sec.ok: result = TimeRead(ok: true, us: sec.us)
+    else: result.why = "does not match " & pattern
+  elif key == EpochMicros:
+    let whole = parseWhole(text)
+    if whole.ok: result = TimeRead(ok: true, us: whole.value)
+    else: result.why = "does not match " & pattern
+  else:
+    let p = matchPattern(text, pattern)
+    if not p.ok:
+      result.why = "does not match " & pattern
+    else:
+      var m = p.m
+      var d = p.d
+      var dateOk = true
+      if p.doy > 0:
+        let md = doyToMonthDay(p.y, p.doy)
+        if md.ok:
+          m = md.month
+          d = md.day
+        else:
+          dateOk = false
+          result.why = "has day of year " & $p.doy & ", not a day of " & $p.y
+      var us = p.fracUs
+      if p.micros >= 0:
+        if p.fracUs != 0 and abs(p.fracUs - p.micros) > 1:
+          result.clash = "second fraction " & $p.fracUs & " us and microsecond " &
+            $p.micros & " us differ"
+        us = p.micros
+      if dateOk:
+        let at = civilToUtcUs(p.y, m, d, p.hh, p.mi, p.ss, us, clock)
+        if at.isSome:
+          result.ok = true
+          result.us = at.get
+          result.leap = p.ss == 60
+        else:
+          result.why = "is not a valid date and time"
+
+proc detectTimePattern*(text: string): string =
+  ## The pattern of one joined time text, or "" when it has no form this
+  ## knows: seconds or microseconds since 1970 (`epoch seconds`, `epoch
+  ## microseconds`), or a date (year, then day of year or month and day), an
+  ## hour, a minute, a second, then an optional fraction (`.` and digits) or
+  ## whole microseconds, with the separators it holds and an optional `Z`.
+  let t = text.strip
+  if t.len == 0: return ""
+  var j = 0
+  while j < t.len and t[j] in Digits: inc j
+  let whole = j
+  var k = j
+  if k < t.len and t[k] == '.':
+    inc k
+    let at = k
+    while k < t.len and t[k] in Digits: inc k
+    if k == at: k = -1
+  if whole > 0 and k == t.len:
+    if k == whole and whole in 15 .. 17: return EpochMicros
+    if whole in 9 .. 11: return EpochSeconds
+    return ""
+  var runs: seq[tuple[a, b: int]] = @[]
+  var i = 0
+  while i < t.len:
+    if t[i] in Digits:
+      let a = i
+      while i < t.len and t[i] in Digits: inc i
+      runs.add (a, i)
+    else:
+      inc i
+  if runs.len < 5 or runs[0].a != 0: return ""
+  func runLen(r: tuple[a, b: int]): int = r.b - r.a
+  var pat = ""
+  var at = 0
+  proc put(token: string): bool =
+    ## The separator before run `at`, then `token`.
+    if at > 0:
+      let sep = t.substr(runs[at - 1].b, runs[at].a - 1)
+      if sep.len > 2: return false
+      for c in sep:
+        if c in Digits or (c in Letters and c notin {'T', 't'}): return false
+      pat.add sep
+    pat.add token
+    inc at
+    true
+  var date = false
+  if runLen(runs[0]) in [2, 4]:
+    let fraction = if runs.len > 5 and
+        t.substr(runs[^2].b, runs[^1].a - 1) == ".": 1 else: 0
+    let core = runs.len - fraction
+    var dayOfYear = false
+    if core == 5:
+      dayOfYear = true
+    elif core == 6:
+      let second = t.substr(runs[1].a, runs[1].b - 1)
+      dayOfYear = second.len == 3 or (second.len == 2 and second > "12")
+    if core in 5 .. 7:
+      date = put(if runLen(runs[0]) == 4: "yyyy" else: "yy")
+      if date and dayOfYear: date = put("ddd")
+      elif date: date = put("mm") and put("dd")
+  if not date or runs.len < at + 3: return ""
+  for token in ["hh", "mi", "ss"]:
+    if runLen(runs[at]) notin 1 .. 2 or not put(token): return ""
+  var fractionDone = false
+  while at < runs.len:
+    let sep = t.substr(runs[at - 1].b, runs[at].a - 1)
+    if sep == "." and not fractionDone:
+      fractionDone = true
+      if not put(repeat('f', runLen(runs[at]))): return ""
+    elif runLen(runs[at]) <= 6:
+      if not put("uuuuuu"): return ""
+    else:
+      return ""
+  if at != runs.len: return ""
+  let rest = t.substr(runs[^1].b)
+  if rest.len > 0:
+    if rest in ["Z", "z"]: pat.add rest else: return ""
+  pat
+
+
+func uniqueName(base: string; used: var seq[string]; col: int): string =
+  ## `base` as a user defined column's name: "Column N" when empty, " (file)"
+  ## added to a system name, and a number added to a name another column has.
+  ## The name's key is then added to `used`.
+  var stem = base.strip
+  if stem.len == 0: stem = "Column " & $(col + 1)
+  if isSystemName(stem): stem.add " (file)"
+  result = stem
+  var k = 1
+  while nameKey(result) in used:
+    inc k
+    result = stem & " " & $k
+  used.add nameKey(result)
+
+proc columnNames*(log: ShotLog; map: ShotLogMap; count: int): seq[string] =
+  ## The name of each of `count` columns as a grid shows it: the system name
+  ## of a system column, and for a user defined column its own name, else
+  ## the header's, else "Column N", made legal (`uniqueName`). An ignored
+  ## column has the header's name or "Column N".
+  result = newSeq[string](count)
+  var used: seq[string] = @[]
+  for c in 0 ..< count:
+    let role = if c < map.roles.len: map.roles[c] else: crText
+    case role
+    of crText:
+      var base = if c < map.names.len: map.names[c].strip else: ""
+      if base.len == 0 and log != nil: base = log.columnName(c)
+      result[c] = uniqueName(base, used, c)
+    of crIgnored:
+      let h = if log == nil: "" else: log.columnName(c)
+      result[c] = if h.len > 0: h else: "Column " & $(c + 1)
+    else:
+      result[c] = $role
+
+proc nameProblems*(map: ShotLogMap): seq[tuple[col: int; why: string]] =
+  ## The user defined columns whose given name cannot be used: a system name,
+  ## or a name an earlier column has already. An empty name is not a problem:
+  ## the column takes the header's name.
+  var named: seq[string] = @[]
+  for c, role in map.roles:
+    if role == crText and c < map.names.len and map.names[c].strip.len > 0:
+      let fault = nameFault(map.names[c])
+      if fault.len > 0:
+        result.add (c, fault)
+      else:
+        let key = nameKey(map.names[c])
+        if key in named:
+          result.add (c, "Another column is named \"" & map.names[c].strip &
+            "\". Give each its own name.")
+        else:
+          named.add key
+
+proc mapFault*(map: ShotLogMap): string =
+  ## Why `map` cannot be applied, in words; "" when it can: a system column
+  ## chosen for two columns (`crTime` may be on several), or a user defined
+  ## name that is a system name or that two columns share.
+  var seen: set[ColumnRole] = {}
+  for role in map.roles:
+    if roleUnique(role):
+      if role in seen:
+        return $role & " is chosen for more than one column. Choose it for one."
+      seen.incl role
+  let bad = nameProblems(map)
+  if bad.len > 0: "Column " & $(bad[0].col + 1) & ": " & bad[0].why else: ""
+
+type
+  LegacyPart = enum
+    lpNone, lpUtcUs, lpUtcSec, lpYear, lpDoy, lpMonth, lpDom, lpHour, lpMinute,
+    lpSecond, lpMicro, lpText
+
+const LegacyRoles = [
+  ("ignored", crIgnored, lpNone), ("sequence", crSequence, lpNone),
+  ("file number", crFileNumber, lpNone), ("status", crStatus, lpNone),
+  ("sail line", crSailLine, lpNone), ("source line", crSourceLine, lpNone),
+  ("shot point", crShotPoint, lpNone), ("point index", crPointIndex, lpNone),
+  ("GPS microseconds", crGpsMicros, lpNone), ("UTC microseconds", crTime, lpUtcUs),
+  ("UTC seconds", crTime, lpUtcSec), ("year", crTime, lpYear),
+  ("day of year", crTime, lpDoy), ("month", crTime, lpMonth),
+  ("day of month", crTime, lpDom), ("hour", crTime, lpHour),
+  ("minute", crTime, lpMinute), ("second", crTime, lpSecond),
+  ("microsecond", crTime, lpMicro), ("date-time text", crTime, lpText),
+  ("source depth", crSourceDepth, lpNone), ("water depth", crWaterDepth, lpNone),
+  ("X", crX, lpNone), ("Y", crY, lpNone), ("Z", crZ, lpNone),
+  ("source type", crSourceType, lpNone), ("source id", crSourceId, lpNone),
+  ("gun array", crText, lpNone), ("volume", crText, lpNone),
+  ("pressure", crText, lpNone), ("heading", crText, lpNone),
+  ("speed", crText, lpNone), ("text", crText, lpNone)]
+  ## the words a project saved before the system columns were named used
+
+func legacyToken(part: LegacyPart): string =
+  case part
+  of lpYear: "yyyy"
+  of lpDoy: "ddd"
+  of lpMonth: "mm"
+  of lpDom: "dd"
+  of lpHour: "hh"
+  of lpMinute: "mi"
+  of lpSecond: "ss.ffffff"
+  of lpMicro: "uuuuuu"
+  else: ""
+
+proc applyRoleNames*(map: var ShotLogMap; roleNames, columnNames: openArray[string]):
+    string =
+  ## Sets `map.roles` and `map.names` from the role words a project stored:
+  ## the words of `ColumnRole`, and the older words, which are migrated. The
+  ## older time roles become `crTime` on those columns, with `dateTimePattern`
+  ## set to what reads them the same way (one source, in the order UTC
+  ## microseconds, UTC seconds, split fields, date-time text; the columns of
+  ## another source become user defined). Gun array, volume, pressure, heading,
+  ## speed and text become user defined, named by their old word (text: by the
+  ## header). `columnNames` are the stored user defined names, if any. The
+  ## result is "" or the first word that is neither.
+  map.roles.setLen 0
+  map.names.setLen 0
+  var parts: seq[LegacyPart] = @[]
+  for i, word in roleNames:
+    var role = crText
+    var part = lpNone
+    var name = if i < columnNames.len: columnNames[i] else: ""
+    var found = false
+    for r in ColumnRole:
+      if $r == word:
+        role = r
+        found = true
+        break
+    if not found:
+      for e in LegacyRoles:
+        if e[0] == word:
+          role = e[1]
+          part = e[2]
+          found = true
+          if role == crText and word != "text": name = word
+          break
+    if not found: return word
+    map.roles.add role
+    map.names.add name
+    parts.add part
+  var group = lpNone
+  var cols: seq[int] = @[]
+  for want in [lpUtcUs, lpUtcSec]:
+    if group == lpNone:
+      for c, p in parts:
+        if p == want:
+          group = want
+          cols = @[c]
+          break
+  if group == lpNone:
+    var have: set[LegacyPart] = {}
+    var seenPart: set[LegacyPart] = {}
+    var pick: seq[int] = @[]
+    for c, p in parts:
+      if p in {lpYear .. lpMicro} and p notin seenPart:
+        seenPart.incl p
+        pick.add c
+        have.incl p
+    if lpYear in have and (lpDoy in have or (lpMonth in have and lpDom in have)) and
+        lpHour in have and lpMinute in have and lpSecond in have:
+      group = lpYear
+      cols = pick
+  if group == lpNone:
+    for c, p in parts:
+      if p == lpText:
+        group = lpText
+        cols = @[c]
+        break
+  var pattern = map.dateTimePattern
+  case group
+  of lpUtcUs: pattern = EpochMicros
+  of lpUtcSec: pattern = EpochSeconds
+  of lpYear:
+    pattern = ""
+    for c in cols:
+      if pattern.len > 0: pattern.add ' '
+      pattern.add legacyToken(parts[c])
+  else: discard
+  for c, p in parts:
+    if p != lpNone:
+      if c in cols:
+        map.roles[c] = crTime
+        map.names[c] = ""
+      else:
+        map.roles[c] = crText
+        for e in LegacyRoles:
+          if e[2] == p: map.names[c] = e[0]
+  if group != lpNone: map.dateTimePattern = pattern
+  var named = false
+  for name in map.names:
+    if name.len > 0: named = true
+  if not named: map.names.setLen 0
+
+proc guessFromCells(cells: openArray[string]): ColumnRole =
+  ## GPSTB or a date-time text, when every non-empty cell agrees. Otherwise
+  ## `crText`.
+  result = crText
+  var n, gps, time = 0
+  for c in cells:
+    let t = c.strip
+    if t.len > 0:
+      inc n
+      if isGpsMicrosText(t): inc gps
+      if detectPattern(t).len > 0: inc time
+  if n > 0:
+    if time == n: result = crTime
+    elif gps == n: result = crGpsMicros
+
+proc cellsFit(role: ColumnRole; cells: openArray[string]): bool =
+  ## Whether most non-empty cells read as `role`: whole numbers for SEQ, FFID,
+  ## Index and GPSTB, numbers for the number columns. Text columns fit.
+  var n, bad = 0
+  for c in cells:
+    if c.strip.len > 0:
+      inc n
+      case role
+      of crSequence, crFileNumber, crPointIndex, crGpsMicros:
+        if not parseWhole(c, true).ok: inc bad
+      of crSailLine, crSourceLine, crShotPoint, crSourceDepth, crWaterDepth, crX, crY,
+          crZ, crUphole:
+        if numShape(c) == nsOther and not parseNum(c).ok: inc bad
+      else: discard
+  bad * 2 <= n
+
+proc alignHeader(fields: seq[string]; width: int): tuple[ok: bool; names: seq[string]] =
+  ## `fields` cut into `width` consecutive groups, each joined by a space,
+  ## that are as many known names as possible; a group of several fields must
+  ## be a known name. For a header whose names hold spaces in a file cut at
+  ## spaces: "Sail line" is one name, not two.
+  const MaxGroup = 4
+  let n = fields.len
+  if width <= 0 or n < width or n > MaxGroup * width: return
+  var best = newSeq[seq[int]](n + 1)
+  var pick = newSeq[seq[int]](n + 1)
+  for i in 0 .. n:
+    best[i] = newSeq[int](width + 1)
+    pick[i] = newSeq[int](width + 1)
+    for j in 0 .. width: best[i][j] = -1
+  best[0][0] = 0
+  for i in 1 .. n:
+    for j in 1 .. min(i, width):
+      for k in 1 .. min(MaxGroup, i):
+        if best[i - k][j - 1] >= 0:
+          let group = fields[i - k ..< i].join(" ")
+          let known = knownHeader(group)
+          if k == 1 or known:
+            let score = best[i - k][j - 1] + (if known: 1 else: 0)
+            if score > best[i][j]:
+              best[i][j] = score
+              pick[i][j] = k
+  if best[n][width] < 0: return
+  var i = n
+  var j = width
+  var rev: seq[string] = @[]
+  while j > 0:
+    let k = pick[i][j]
+    rev.add fields[i - k ..< i].join(" ")
+    i -= k
+    dec j
+  result.ok = true
+  for g in countdown(rev.high, 0): result.names.add rev[g]
+
+proc guessMap*(text: string): ShotLogMap {.raises: [].} =
+  ## A starting map: delimiter, lines to skip, whether a header is there,
+  ## and a role per column. The delimiter is the one most of the data rows
+  ## use, not the header line's. Header names are matched ignoring case,
+  ## spaces, underscores and a leading number prefix such as `07_`. When the
+  ## header has more names than the rows have columns (names with spaces, in
+  ## a file cut at spaces), the names are grouped to fit, and a header that
+  ## cannot be fitted names nothing. A name that is not known, and every
+  ## column when there is no header, is judged from the first data rows: a
+  ## 16-digit integer near 1.4e15 is GPSTB, and an ISO date-time is Time
+  ## (UTC). A role whose cells do not read as that role is not assigned, a
+  ## system column found twice is kept once, and the other columns are user
+  ## defined, named by their header. The time columns are read as one time,
+  ## and the pattern that reads the first rows is `dateTimePattern`; when they
+  ## do not read together, the first that reads alone is the time; the others
+  ## are user defined. The clock stays UTC and the
+  ## length unit stays metres unless a header says feet.
+  result = initShotLogMap()
+  if text.len > high(int32): return
+  var phys = 0
+  var keptPhys: seq[int] = @[]
+  var keptStart: seq[int] = @[]
+  var keptStop: seq[int] = @[]
+  var i = 0
+  let n = text.len
+  while i < n and keptPhys.len < 40:
+    let start = i
+    var j = i
+    while j < n and text[j] != '\n' and text[j] != '\r': inc j
+    let stop = j
+    if j < n and text[j] == '\r':
+      inc j
+      if j < n and text[j] == '\n': inc j
+    elif j < n and text[j] == '\n':
+      inc j
+    if stop > start and firstChar(text, start, stop) != '#':
+      keptPhys.add phys
+      keptStart.add start
+      keptStop.add stop
+    inc phys
+    i = j
+  var headerAt = -1
+  var headerDelim = dlSpaces
+  for k in 0 ..< keptStart.len:
+    let d = lineDelimiter(text, keptStart[k], keptStop[k])
+    var starts: seq[int32] = @[]
+    var stops: seq[int32] = @[]
+    scanFields(text, keptStart[k], keptStop[k], d, starts, stops)
+    var names = 0
+    for c in 0 ..< starts.len:
+      if nameLike(fieldText(text, starts[c].int, stops[c].int)): inc names
+    if names >= 2:
+      headerAt = k
+      headerDelim = d
+      break
+  let dataFrom = if headerAt >= 0: headerAt + 1 else: 0
+  var judged: seq[int] = @[]
+  if headerAt >= 0: judged.add headerAt
+  for k in dataFrom ..< min(keptStart.len, dataFrom + 12): judged.add k
+  result.delimiter = if headerAt >= 0: headerDelim else: dlSpaces
+  var bestScore = 0
+  for d in [dlTab, dlSemicolon, dlComma, dlSpaces]:
+    var perLine: seq[int] = @[]
+    for k in judged:
+      var starts: seq[int32] = @[]
+      var stops: seq[int32] = @[]
+      scanFields(text, keptStart[k], keptStop[k], d, starts, stops)
+      perLine.add starts.len
+    var score = 0
+    for c in perLine:
+      if c >= 2:
+        var same = 0
+        for e in perLine:
+          if e == c: inc same
+        score = max(score, same)
+    if score > bestScore:
+      bestScore = score
+      result.delimiter = d
+  var samples: seq[seq[string]] = @[]
+  var counts: seq[int] = @[]
+  var taken = 0
+  for k in dataFrom ..< keptStart.len:
+    if taken < 12:
+      var starts: seq[int32] = @[]
+      var stops: seq[int32] = @[]
+      scanFields(text, keptStart[k], keptStop[k], result.delimiter, starts, stops)
+      if starts.len > samples.len: samples.setLen starts.len
+      for c in 0 ..< starts.len:
+        samples[c].add fieldText(text, starts[c].int, stops[c].int)
+      counts.add starts.len
+      inc taken
+  var width = 0
+  var mostSeen = 0
+  for c in counts:
+    var same = 0
+    for d in counts:
+      if d == c: inc same
+    if same > mostSeen:
+      mostSeen = same
+      width = c
+  var headerNames: seq[string] = @[]
+  if headerAt >= 0:
+    result.hasHeader = true
+    result.skipLines = keptPhys[headerAt]
+    var hStart: seq[int32] = @[]
+    var hStop: seq[int32] = @[]
+    scanFields(text, keptStart[headerAt], keptStop[headerAt], result.delimiter,
+      hStart, hStop)
+    var fieldsOf: seq[string] = @[]
+    for c in 0 ..< hStart.len:
+      fieldsOf.add fieldText(text, hStart[c].int, hStop[c].int).strip
+    if width == 0 or width == fieldsOf.len:
+      headerNames = fieldsOf
+      width = fieldsOf.len
+    else:
+      let fit = alignHeader(fieldsOf, width)
+      if fit.ok: headerNames = fit.names
+  else:
+    result.hasHeader = false
+    result.skipLines = if keptPhys.len > 0: keptPhys[0] else: 0
+  if samples.len < width: samples.setLen width
+  result.roles = newSeq[ColumnRole](width)
+  result.names = newSeq[string](width)
+  var seenRoles: set[ColumnRole] = {}
+  for c in 0 ..< width:
+    var role = crText
+    if c < headerNames.len:
+      role = roleOfName(headerNames[c])
+      if mentionsFeet(headerNames[c]): result.lengthUnit = luFeet
+    if role == crText: role = guessFromCells(samples[c])
+    if role != crText and not cellsFit(role, samples[c]): role = crText
+    if roleUnique(role) and role in seenRoles: role = crText
+    if roleUnique(role): seenRoles.incl role
+    result.roles[c] = role
+  if result.delimiter != dlComma:
+    var commaDec, dotDec = false
+    for col in samples:
+      var numeric = false
+      var other = false
+      var colComma, colDot = false
+      for cell in col:
+        let shape = numShape(cell)
+        if shape == nsOther:
+          other = true
+          break
+        elif shape == nsComma:
+          numeric = true
+          colComma = true
+        elif shape == nsDot:
+          numeric = true
+          colDot = true
+        elif shape == nsInt:
+          numeric = true
+      if numeric and not other:
+        if colComma: commaDec = true
+        if colDot: dotDec = true
+    if commaDec and not dotDec:
+      result.decimalComma = true
+  var timeCols: seq[int] = @[]
+  for c in 0 ..< width:
+    if result.roles[c] == crTime: timeCols.add c
+  let decimalComma = result.decimalComma
+  proc patternOf(cols: seq[int]): string =
+    ## The pattern that reads the joined cells of `cols` in every sample row.
+    var joined: seq[string] = @[]
+    for r in 0 ..< counts.len:
+      var line = ""
+      for c in cols:
+        if r < samples[c].len and samples[c][r].strip.len > 0:
+          if line.len > 0: line.add ' '
+          line.add samples[c][r].strip
+      if line.len > 0: joined.add dotDecimal(line, decimalComma)
+    if joined.len > 0:
+      result = detectTimePattern(joined[0])
+      for line in joined:
+        if result.len > 0 and not readTime(line, result, tcUtc).ok: result = ""
+  if timeCols.len > 0:
+    var chosen = timeCols
+    var pattern = patternOf(timeCols)
+    if pattern.len == 0 and timeCols.len > 1:
+      for c in timeCols:
+        pattern = patternOf(@[c])
+        if pattern.len > 0:
+          chosen = @[c]
+          break
+    for c in timeCols:
+      if c notin chosen or pattern.len == 0: result.roles[c] = crText
+    result.dateTimePattern = pattern
+  var used: seq[string] = @[]
+  for c in 0 ..< width:
+    if result.roles[c] == crText:
+      if c < headerNames.len and headerNames[c].len > 0:
+        result.names[c] = uniqueName(headerNames[c], used, c)
+
 func blankShot(): Shot =
   result.sailLine = NaN
   result.sourceLine = NaN
@@ -1254,11 +1701,7 @@ func blankShot(): Shot =
   result.x = NaN
   result.y = NaN
   result.z = NaN
-  result.volume = NaN
-  result.pressure = NaN
-  result.heading = NaN
-  result.speed = NaN
-  result.second = NaN
+  result.uphole = NaN
 
 func canonBits(x: float64): int64 =
   if x == 0.0: 0'i64 else: cast[int64](x)
@@ -1277,97 +1720,100 @@ func fmtDiff(us: int64): string =
   elif a mod 1000 == 0: $(a div 1000) & " ms"
   else: $a & " us"
 
-proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
-  ## Typed rows. The instant is the first source that parsed, in this order:
-  ## GPS microseconds, UTC microseconds, UTC seconds, the split fields, the
-  ## date-time text. Split fields and text are read on `map.clock`. When a
-  ## row has more than one source and two of them differ by more than a
-  ## millisecond, that is a problem naming both values; a gap of 18 s is
-  ## called out as GPS and UTC mixed. Times that go backwards, a repeated
-  ## (source line, shot point, index) and a repeated file number are problems
-  ## too. An instant outside years 1900..2200 is a bad number and is not the
-  ## row's time. A microsecond column replaces a fraction in the seconds
-  ## cell; a non-zero fraction that differs from it by more than one
-  ## microsecond is a disagreement naming both values. A year column of
-  ## two digits uses the same pivot as `yy` in a date-time pattern; a
-  ## three-digit year is a bad number and is not stored. A second of 60 is
-  ## kept, rolled into the next minute, and reported as `second 60`. Missing
-  ## cells and sentinels are empty, not faults. A numeric cell is read from
-  ## the stored text; it is not copied.
-  result.problems = log.problems
-  result.rows = newSeq[Shot](log.len)
-  var sentText: seq[string] = @[]
-  var sentVal: seq[float64] = @[]
+proc timeText(log: ShotLog; row: int; cols: openArray[int]; sentText: openArray[string];
+    sentVal: openArray[float64]; decimalComma: bool): string =
+  ## The cells of the time columns of `row`, in column order, one space
+  ## between; a missing cell is left out.
+  let count = fields(log, row)
+  for col in cols:
+    if col < count:
+      let raw = cell(log, row, col)
+      if not isMissing(raw, sentText, sentVal, decimalComma):
+        if result.len > 0: result.add ' '
+        result.add raw.strip
+  if decimalComma: result = dotDecimal(result, true)
+
+proc shotted(chars: openArray[char]): string =
+  let sp = trimSpan(chars)
+  copySpan(chars, sp.a, sp.b)
+
+proc sentinelLists(map: ShotLogMap): tuple[text: seq[string]; val: seq[float64]] =
+  ## The missing-value words in lower case, and those that are numbers.
   for s in map.sentinels:
     let u = s.strip
-    if u.len == 0: continue
-    sentText.add u.toLowerAscii
-    var n = 0.0
-    if parseutils.parseFloat(u, n) == u.len and u.len > 0:
-      sentVal.add n
-    elif map.decimalComma:
-      let d = dotDecimal(u, true)
-      if parseutils.parseFloat(d, n) == d.len and d.len > 0:
-        sentVal.add n
+    if u.len > 0:
+      result.text.add u.toLowerAscii
+      var n = 0.0
+      if parseutils.parseFloat(u, n) == u.len:
+        result.val.add n
+      elif map.decimalComma:
+        let d = dotDecimal(u, true)
+        if parseutils.parseFloat(d, n) == d.len and d.len > 0:
+          result.val.add n
+
+proc timePattern*(log: ShotLog; map: ShotLogMap): string {.raises: [].} =
+  ## The pattern that reads `map`'s Time (UTC) columns: `map.dateTimePattern`,
+  ## or, when that is empty, the form of the first row that has a time. Empty
+  ## when there is no Time (UTC) column or no row shows a form it knows.
+  var cols: seq[int] = @[]
+  for col, role in map.roles:
+    if role == crTime: cols.add col
+  result = map.dateTimePattern.strip
+  if cols.len > 0 and result.len == 0 and log != nil:
+    let (sentText, sentVal) = sentinelLists(map)
+    var row = 0
+    while row < log.len and row < 64 and result.len == 0:
+      result = detectTimePattern(timeText(log, row, cols, sentText, sentVal,
+        map.decimalComma))
+      inc row
+
+proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
+  ## Typed rows. The instant is the first source that parsed, in this order:
+  ## GPSTB, then Time (UTC). The cells of the Time (UTC) columns are joined in
+  ## column order, one space between, and read as `map.dateTimePattern` says
+  ## (empty: the form of the first row that has a time); a calendar time is
+  ## read on `map.clock`, the epoch forms are UTC. When both sources are there
+  ## and differ by more than a millisecond, that is a problem naming both
+  ## values; a gap of 18 s is called out as GPS and UTC mixed. Times that go
+  ## backwards, a repeated (source line, source point, index) and a repeated
+  ## FFID are problems too. An instant outside years 1900..2200 is a bad
+  ## number and is not the row's time. A time that does not read as the
+  ## pattern says is a problem naming the row's time text and the pattern. A
+  ## second of 60 is kept, rolled into the next minute, and reported. Missing
+  ## cells and sentinels are empty, not faults. A column mapped to Ignore is
+  ## not read; user defined columns are kept as text in `texts`. A numeric
+  ## cell is read from the stored text; it is not copied.
+  result.problems = log.problems
+  result.rows = newSeq[Shot](log.len)
+  let (sentText, sentVal) = sentinelLists(map)
   var sentLo = Inf
   var sentHi = NegInf
   for v in sentVal:
     if v < sentLo: sentLo = v
     if v > sentHi: sentHi = v
-  const FastRoles = {crSequence, crFileNumber, crPointIndex, crGpsMicros,
-    crUtcMicros, crYear, crDayOfYear, crMonth, crDayOfMonth, crHour, crMinute,
-    crMicrosecond, crSailLine, crSourceLine, crShotPoint, crUtcSeconds,
-    crSecond, crSourceDepth, crWaterDepth, crX, crY, crZ, crVolume,
-    crPressure, crHeading, crSpeed}
-  template readFast(chars: openArray[char]) =
+  var timeCols: seq[int] = @[]
+  for col, role in map.roles:
+    if role == crTime: timeCols.add col
+  let pattern = timePattern(log, map)
+  template readNumber(chars: untyped) =
     case role
-    of crSequence, crFileNumber, crPointIndex, crGpsMicros, crUtcMicros, crYear,
-        crDayOfYear, crMonth, crDayOfMonth, crHour, crMinute, crMicrosecond:
-      let missing = isMissing(chars, sentText, sentVal, map.decimalComma)
-      if cols[3] < 0 and role in {crYear, crDayOfYear, crMonth, crDayOfMonth,
-          crHour, crMinute, crMicrosecond}:
-        cols[3] = col
-      if not missing:
+    of crSequence, crFileNumber, crPointIndex, crGpsMicros:
+      if not isMissing(chars, sentText, sentVal, map.decimalComma):
         let whole = parseWhole(chars, map.decimalComma)
         if not whole.ok:
           addProblem(result.problems, pkBadNumber, row, col,
-            "not a whole number: " & copySpan(chars, trimSpan(chars).a,
-            trimSpan(chars).b))
+            $role & " '" & shotted(chars) & "' is not a whole number")
         else:
           case role
           of crSequence: shot.sequence = some(whole.value)
           of crFileNumber: shot.fileNumber = some(whole.value)
           of crPointIndex: shot.pointIndex = some(whole.value)
-          of crGpsMicros:
+          else:
             if gps.isNone:
               gps = some(whole.value)
-              cols[0] = col
-          of crUtcMicros:
-            if utcUs.isNone:
-              utcUs = some(whole.value)
-              cols[1] = col
-          of crYear:
-            if whole.value >= 0 and whole.value <= 99:
-              year = some(if whole.value >= 50: 1900 + whole.value
-                else: 2000 + whole.value)
-            elif whole.value >= 100 and whole.value <= 999:
-              addProblem(result.problems, pkBadNumber, row, col,
-                "three-digit year " & $whole.value)
-            else:
-              year = some(whole.value)
-          of crDayOfYear: doy = some(whole.value)
-          of crMonth: month = some(whole.value)
-          of crDayOfMonth: day = some(whole.value)
-          of crHour: hour = some(whole.value)
-          of crMinute: minute = some(whole.value)
-          of crMicrosecond:
-            let sp = trimSpan(chars)
-            micros = some(whole.value)
-            microsRaw = copySpan(chars, sp.a, sp.b)
-            microsCol = col
-          else: discard
-    of crSailLine, crSourceLine, crShotPoint, crSourceDepth, crWaterDepth, crX,
-        crY, crZ, crVolume, crPressure, crHeading, crSpeed:
+              gpsCol = col
+    of crSailLine, crSourceLine, crShotPoint, crSourceDepth, crWaterDepth, crX, crY,
+        crZ, crUphole:
       let num = parseNum(chars, map.decimalComma)
       var miss = false
       if num.ok:
@@ -1388,73 +1834,13 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
         of crX: shot.x = num.value
         of crY: shot.y = num.value
         of crZ: shot.z = num.value
-        of crVolume: shot.volume = num.value
-        of crPressure: shot.pressure = num.value
-        of crHeading: shot.heading = num.value
-        of crSpeed: shot.speed = num.value
-        else: discard
+        else: shot.uphole = num.value
       elif not miss:
-        let sp = trimSpan(chars)
         addProblem(result.problems, pkBadNumber, row, col,
-          "not a number: " & copySpan(chars, sp.a, sp.b))
-    of crUtcSeconds, crSecond:
-      let missing = isMissing(chars, sentText, sentVal, map.decimalComma)
-      if cols[3] < 0 and role == crSecond: cols[3] = col
-      if not missing:
-        if role == crUtcSeconds:
-          let sec = parseSecondsUs(chars, map.decimalComma)
-          if not sec.ok:
-            let sp = trimSpan(chars)
-            addProblem(result.problems, pkBadNumber, row, col,
-              "not a number: " & copySpan(chars, sp.a, sp.b))
-          elif utcSecUs.isNone:
-            utcSecUs = some(sec.us)
-            cols[2] = col
-        elif role == crSecond:
-          let sec = parseSecond(chars, map.decimalComma)
-          if not sec.ok:
-            let sp = trimSpan(chars)
-            addProblem(result.problems, pkBadNumber, row, col,
-              "not a number: " & copySpan(chars, sp.a, sp.b))
-          else:
-            let sp = trimSpan(chars)
-            haveSecond = true
-            secPart = sec.sec
-            secUs = sec.us
-            secRaw = copySpan(chars, sp.a, sp.b)
-            secCol = col
-            shot.second = float64(sec.sec) + float64(sec.us) / 1e6
-        else:
-          let num = parseNum(chars, map.decimalComma)
-          if not num.ok:
-            let sp = trimSpan(chars)
-            addProblem(result.problems, pkBadNumber, row, col,
-              "not a number: " & copySpan(chars, sp.a, sp.b))
-          else:
-            case role
-            of crSailLine: shot.sailLine = num.value
-            of crSourceLine: shot.sourceLine = num.value
-            of crShotPoint: shot.shotPoint = num.value
-            of crSourceDepth: shot.sourceDepth = num.value
-            of crWaterDepth: shot.waterDepth = num.value
-            of crX: shot.x = num.value
-            of crY: shot.y = num.value
-            of crZ: shot.z = num.value
-            of crVolume: shot.volume = num.value
-            of crPressure: shot.pressure = num.value
-            of crHeading: shot.heading = num.value
-            of crSpeed: shot.speed = num.value
-            else: discard
+          $role & " '" & shotted(chars) & "' is not a number")
     else: discard
-    if role == crYear: shot.year = year
-    elif role == crDayOfYear: shot.dayOfYear = doy
-    elif role == crMonth: shot.month = month
-    elif role == crDayOfMonth: shot.dayOfMonth = day
-    elif role == crHour: shot.hour = hour
-    elif role == crMinute: shot.minute = minute
-    elif role == crMicrosecond: shot.microsecond = micros
-    elif role == crFileNumber: fileCol = col
-    elif role == crShotPoint: pointCol = col
+  const NumberRoles = {crSequence, crFileNumber, crPointIndex, crGpsMicros, crSailLine,
+    crSourceLine, crShotPoint, crSourceDepth, crWaterDepth, crX, crY, crZ, crUphole}
   var seenFile = initTable[int64, int]()
   var seenShot = initTable[(int64, int64, int64), int]()
   var lastTime: Option[int64] = none(int64)
@@ -1462,21 +1848,7 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
   for row in 0 ..< log.len:
     var shot = blankShot()
     var gps: Option[int64] = none(int64)
-    var utcUs: Option[int64] = none(int64)
-    var utcSecUs: Option[int64] = none(int64)
-    var year, doy, month, day, hour, minute, micros: Option[int64] = none(int64)
-    var secPart = 0
-    var secUs = 0
-    var haveSecond = false
-    var secRaw = ""
-    var secCol = -1
-    var microsRaw = ""
-    var microsCol = -1
-    var dateText = ""
-    var haveDate = false
-    var cols = [0, 0, 0, 0, 0]
-    # gps, utcUs, utcSec, split, text
-    for i in 0 .. 4: cols[i] = -1
+    var gpsCol = -1
     let roleCount = map.roles.len
     let fieldCount = fields(log, row)
     let colsN = max(roleCount, fieldCount)
@@ -1484,213 +1856,51 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
     var pointCol = -1
     for col in 0 ..< colsN:
       let role = if col < roleCount: map.roles[col] else: crText
-      var tookFast = false
-      if role != crIgnored and log.edits.len == 0 and role in FastRoles:
+      if role in NumberRoles:
         if col >= fieldCount:
-          readFast("")
-          tookFast = true
+          readNumber("")
         else:
           let base = log.fieldOf[row].int
           let fa = log.fieldStart[base + col].int
           let fb = log.fieldStop[base + col].int
-          if fb <= fa or log.text[fa] != '"':
-            if fb <= fa: readFast("")
-            else: readFast(log.text.toOpenArray(fa, fb - 1))
-            tookFast = true
-      if role == crIgnored or tookFast: discard
-      else:
-        let raw = cell(log, row, col)
-        let missing = col >= fieldCount or isMissing(raw, sentText, sentVal,
-          map.decimalComma)
-        case role
-        of crIgnored: discard
-        of crText:
-          shot.texts.add(if missing: "" else: raw.strip)
-        of crStatus: shot.status = if missing: "" else: raw.strip
-        of crSourceType: shot.sourceType = if missing: "" else: raw.strip
-        of crSourceId: shot.sourceId = if missing: "" else: raw.strip
-        of crGunArray: shot.gunArray = if missing: "" else: raw.strip
-        of crDateTime:
-          if not missing:
-            shot.dateTime = raw.strip
-            if not haveDate:
-              haveDate = true
-              dateText = raw.strip
-              cols[4] = col
-        of crSequence, crFileNumber, crPointIndex, crGpsMicros, crUtcMicros,
-            crYear, crDayOfYear, crMonth, crDayOfMonth, crHour, crMinute,
-            crMicrosecond:
-          if cols[3] < 0 and role in {crYear, crDayOfYear, crMonth, crDayOfMonth,
-              crHour, crMinute, crMicrosecond}:
-            cols[3] = col
-          if not missing:
-            let whole = parseWhole(raw, map.decimalComma)
-            if not whole.ok:
-              addProblem(result.problems, pkBadNumber, row, col,
-                "not a whole number: " & raw.strip)
-            else:
-              case role
-              of crSequence: shot.sequence = some(whole.value)
-              of crFileNumber: shot.fileNumber = some(whole.value)
-              of crPointIndex: shot.pointIndex = some(whole.value)
-              of crGpsMicros:
-                if gps.isNone:
-                  gps = some(whole.value)
-                  cols[0] = col
-              of crUtcMicros:
-                if utcUs.isNone:
-                  utcUs = some(whole.value)
-                  cols[1] = col
-              of crYear:
-                if whole.value >= 0 and whole.value <= 99:
-                  year = some(if whole.value >= 50: 1900 + whole.value
-                    else: 2000 + whole.value)
-                elif whole.value >= 100 and whole.value <= 999:
-                  addProblem(result.problems, pkBadNumber, row, col,
-                    "three-digit year " & $whole.value)
-                else:
-                  year = some(whole.value)
-              of crDayOfYear: doy = some(whole.value)
-              of crMonth: month = some(whole.value)
-              of crDayOfMonth: day = some(whole.value)
-              of crHour: hour = some(whole.value)
-              of crMinute: minute = some(whole.value)
-              of crMicrosecond:
-                micros = some(whole.value)
-                microsRaw = raw.strip
-                microsCol = col
-              else: discard
-        of crSailLine, crSourceLine, crShotPoint, crUtcSeconds, crSecond,
-            crSourceDepth, crWaterDepth, crX, crY, crZ, crVolume, crPressure,
-            crHeading, crSpeed:
-          if cols[3] < 0 and role == crSecond: cols[3] = col
-          if not missing:
-            if role == crUtcSeconds:
-              let sec = parseSecondsUs(raw, map.decimalComma)
-              if not sec.ok:
-                addProblem(result.problems, pkBadNumber, row, col,
-                  "not a number: " & raw.strip)
-              elif utcSecUs.isNone:
-                utcSecUs = some(sec.us)
-                cols[2] = col
-            elif role == crSecond:
-              let sec = parseSecond(raw, map.decimalComma)
-              if not sec.ok:
-                addProblem(result.problems, pkBadNumber, row, col,
-                  "not a number: " & raw.strip)
-              else:
-                haveSecond = true
-                secPart = sec.sec
-                secUs = sec.us
-                secRaw = raw.strip
-                secCol = col
-                shot.second = float64(sec.sec) + float64(sec.us) / 1e6
-            else:
-              let num = parseNum(raw, map.decimalComma)
-              if not num.ok:
-                addProblem(result.problems, pkBadNumber, row, col,
-                  "not a number: " & raw.strip)
-              else:
-                case role
-                of crSailLine: shot.sailLine = num.value
-                of crSourceLine: shot.sourceLine = num.value
-                of crShotPoint: shot.shotPoint = num.value
-                of crSourceDepth: shot.sourceDepth = num.value
-                of crWaterDepth: shot.waterDepth = num.value
-                of crX: shot.x = num.value
-                of crY: shot.y = num.value
-                of crZ: shot.z = num.value
-                of crVolume: shot.volume = num.value
-                of crPressure: shot.pressure = num.value
-                of crHeading: shot.heading = num.value
-                of crSpeed: shot.speed = num.value
-                else: discard
-        if role == crYear: shot.year = year
-        elif role == crDayOfYear: shot.dayOfYear = doy
-        elif role == crMonth: shot.month = month
-        elif role == crDayOfMonth: shot.dayOfMonth = day
-        elif role == crHour: shot.hour = hour
-        elif role == crMinute: shot.minute = minute
-        elif role == crMicrosecond: shot.microsecond = micros
-        elif role == crFileNumber: fileCol = col
+          if log.edits.len == 0 and (fb <= fa or log.text[fa] != '"'):
+            if fb <= fa: readNumber("")
+            else: readNumber(log.text.toOpenArray(fa, fb - 1))
+          else:
+            let raw = cell(log, row, col)
+            readNumber(raw)
+        if role == crFileNumber: fileCol = col
         elif role == crShotPoint: pointCol = col
+      elif role in {crText, crStatus, crSourceType, crSourceId}:
+        let raw = cell(log, row, col)
+        let value = if col >= fieldCount or isMissing(raw, sentText, sentVal,
+            map.decimalComma): "" else: raw.strip
+        case role
+        of crStatus: shot.status = value
+        of crSourceType: shot.sourceType = value
+        of crSourceId: shot.sourceId = value
+        else: shot.texts.add value
     var instants: seq[Instant] = @[]
     if gps.isSome:
       let utc = gpsMicrosToUtcMicros(gps.get)
-      keepInstant(instants, result.problems, row, "GPS microseconds", utc, gps.get,
-        cols[0])
-    if utcUs.isSome:
-      keepInstant(instants, result.problems, row, "UTC microseconds", utcUs.get,
-        utcUs.get, cols[1])
-    if utcSecUs.isSome:
-      keepInstant(instants, result.problems, row, "UTC seconds", utcSecUs.get,
-        utcSecUs.get, cols[2])
-    if haveSecond and secPart == 60:
-      addProblem(result.problems, pkBadNumber, row, secCol, "second 60")
-    var splitUs: Option[int64] = none(int64)
-    if year.isSome and (doy.isSome or (month.isSome and day.isSome)) and
-        hour.isSome and minute.isSome and haveSecond:
-      var us = secUs
-      var ss = secPart
-      if micros.isSome:
-        if secUs != 0 and abs(int64(secUs) - micros.get) > 1:
-          addProblem(result.problems, pkTimeDisagree, row, microsCol,
-            "second " & secRaw & " and microsecond " & microsRaw)
-        us = int(micros.get)
-      var y = int(year.get)
-      var m = 0
-      var d = 0
-      var splitOk = false
-      if doy.isSome:
-        let md = doyToMonthDay(y, int(doy.get))
-        if md.ok:
-          m = md.month
-          d = md.day
-          splitOk = true
+      keepInstant(instants, result.problems, row, $crGpsMicros, utc, gps.get, gpsCol)
+    if timeCols.len > 0:
+      let joined = timeText(log, row, timeCols, sentText, sentVal, map.decimalComma)
+      if joined.len > 0:
+        let read = if pattern.len > 0: readTime(joined, pattern, map.clock)
+          else: TimeRead(why: "does not match any known form")
+        if not read.ok:
+          addProblem(result.problems, pkBadNumber, row, timeCols[0],
+            "time '" & joined & "' " & read.why)
         else:
-          addProblem(result.problems, pkBadNumber, row, -1,
-            "day of year " & $doy.get & " is not a day of " & $y)
-      elif month.isSome and day.isSome:
-        m = int(month.get)
-        d = int(day.get)
-        splitOk = true
-      if splitOk and month.isSome and day.isSome and doy.isSome:
-        let other = civilToUtcUs(y, int(month.get), int(day.get), int(hour.get),
-          int(minute.get), ss, us, map.clock)
-        let fromDoy = civilToUtcUs(y, m, d, int(hour.get), int(minute.get), ss, us,
-          map.clock)
-        if other.isSome and fromDoy.isSome and abs(other.get - fromDoy.get) > DisagreeUs:
-          addProblem(result.problems, pkTimeDisagree, row, -1,
-            "day of year " & $fromDoy.get & " and month and day " & $other.get &
-            " differ by " & fmtDiff(other.get - fromDoy.get))
-      if splitOk:
-        splitUs = civilToUtcUs(y, m, d, int(hour.get), int(minute.get), ss, us,
-          map.clock)
-        if splitUs.isNone:
-          addProblem(result.problems, pkBadNumber, row, -1,
-            "split fields are not a time")
-    if splitUs.isSome:
-      keepInstant(instants, result.problems, row, "split fields", splitUs.get,
-        splitUs.get, cols[3])
-    if haveDate:
-      var pattern = map.dateTimePattern
-      if pattern.len == 0: pattern = detectPattern(dateText)
-      let parsed = matchPattern(dateText, pattern)
-      if not parsed.ok:
-        addProblem(result.problems, pkBadNumber, row, cols[4],
-          "date-time text does not match " &
-          (if map.dateTimePattern.len > 0: map.dateTimePattern else: "a known form"))
-      else:
-        if parsed.ss == 60:
-          addProblem(result.problems, pkBadNumber, row, cols[4], "second 60")
-        let textUs = civilToUtcUs(parsed.y, parsed.m, parsed.d, parsed.hh, parsed.mm,
-          parsed.ss, parsed.us, map.clock)
-        if textUs.isSome:
-          keepInstant(instants, result.problems, row, "date-time text", textUs.get,
-            textUs.get, cols[4])
-        else:
-          addProblem(result.problems, pkBadNumber, row, cols[4],
-            "date-time text is not a time")
+          if read.leap:
+            addProblem(result.problems, pkBadNumber, row, timeCols[0],
+              "time '" & joined & "' has second 60")
+          if read.clash.len > 0:
+            addProblem(result.problems, pkTimeDisagree, row, timeCols[0],
+              "time '" & joined & "': " & read.clash)
+          keepInstant(instants, result.problems, row, $crTime, read.us, read.us,
+            timeCols[0])
     if instants.len > 0:
       shot.timeUtcUs = some(instants[0].us)
       for k in 1 ..< instants.len:
@@ -1711,7 +1921,7 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
       let fn = shot.fileNumber.get
       if seenFile.hasKey(fn):
         addProblem(result.problems, pkDuplicateFile, row, fileCol,
-          "file number " & $fn & " also on row " & $seenFile.getOrDefault(fn))
+          $crFileNumber & " " & $fn & " also on row " & $seenFile.getOrDefault(fn))
       else:
         seenFile[fn] = row
     if not shot.sourceLine.isNaN and not shot.shotPoint.isNaN:
@@ -1719,8 +1929,9 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
       let key = (canonBits(shot.sourceLine), canonBits(shot.shotPoint), idx)
       if seenShot.hasKey(key):
         addProblem(result.problems, pkDuplicateShot, row, pointCol,
-          "source line " & $shot.sourceLine & " shot point " & $shot.shotPoint &
-          " index " & (if shot.pointIndex.isSome: $shot.pointIndex.get else: "none") &
+          $crSourceLine & " " & $shot.sourceLine & " " & $crShotPoint & " " &
+          $shot.shotPoint & " " & $crPointIndex & " " &
+          (if shot.pointIndex.isSome: $shot.pointIndex.get else: "none") &
           " also on row " & $seenShot.getOrDefault(key))
       else:
         seenShot[key] = row

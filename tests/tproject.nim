@@ -117,7 +117,7 @@ proc main*() =
     m.delimiter = dlSemicolon
     m.skipLines = 2
     m.hasHeader = false
-    m.roles = @[crFileNumber, crShotPoint, crDateTime]
+    m.roles = @[crFileNumber, crShotPoint, crTime]
     m.clock = tcGps
     m.dateTimePattern = "yyyy-mm-dd hh:mm:ss"
     m.sentinels = @["-999.25"]
@@ -173,6 +173,53 @@ proc main*() =
     hostile("(log (name \"a\") (file \"lpt9\"))", "left out")
     hostile("(log (name \"a\") (file \"end.\"))", "left out")
     hostile("(log (name \"a\") (file \"end \"))", "left out")
+
+  block oldShotLogRoles:
+    # A project saved before the system columns were named holds the older
+    # role words. They are read as the same columns, and the same shots.
+    var m = initShotLogMap()
+    m.hasHeader = false
+    m.roles = @[crFileNumber, crSequence, crStatus, crX, crY, crZ, crSourceDepth, crIgnored]
+    var d = ProjectDoc(name: "Land 2026")
+    d.shotLogs = @[StoredShotLog(name: "morning", file: "morning.csv", map: m)]
+    d.lastShotMap = some(LastShotMap(map: m, headers: @["a", "b", "c", "d", "e", "f", "g",
+      "h"]))
+    let current = projectDocument(d)
+    doAssert "(role \"FFID\")" in current and "(role \"Ignore\")" in current, current
+    var old = current
+    for (now, was) in [("FFID", "file number"), ("SEQ", "year"), ("Status", "day of year"),
+        ("X", "hour"), ("Y", "minute"), ("Z", "second"), ("Depth", "gun array"),
+        ("Ignore", "ignored")]:
+      old = old.replace("(role \"" & now & "\")", "(role \"" & was & "\")")
+    doAssert "FFID" notin old and "(role \"gun array\")" in old
+    var problems: seq[string]
+    let back = readProject(old, "project.nif", problems)
+    doAssert problems.len == 0, $problems
+    let got = back.shotLogs[0].map
+    doAssert got.roles == @[crFileNumber, crTime, crTime, crTime, crTime, crTime, crText,
+      crIgnored], $got.roles
+    doAssert got.dateTimePattern == "yyyy ddd hh mi ss.ffffff", got.dateTimePattern
+    doAssert got.names == @["", "", "", "", "", "", "gun array", ""], $got.names
+    doAssert back.lastShotMap.get.map.roles == got.roles
+    let text = "7,2024,61,0,0,59.5,12.5,x\n"
+    let view = shots(parseShotLog(text, got), got)
+    doAssert view.problems.count == 0
+    doAssert view.rows[0].fileNumber == some(7'i64)
+    doAssert view.rows[0].timeUtcUs == some(1_709_251_259_500_000'i64)
+    doAssert view.rows[0].texts == @["12.5"]
+    # what is written now reads back to itself, names included
+    var named = m
+    named.roles = @[crText, crTime, crTime]
+    named.names = @["Note", "", ""]
+    named.dateTimePattern = "yyyy-mm-dd hh:mi:ss"
+    d.shotLogs = @[StoredShotLog(name: "morning", file: "morning.csv", map: named)]
+    problems.setLen 0
+    doAssert readProject(projectDocument(d), "project.nif", problems).shotLogs[0].map == named
+    doAssert problems.len == 0
+    let bad = current.replace("(role \"FFID\")", "(role \"no such role\")")
+    problems.setLen 0
+    doAssert readProject(bad, "project.nif", problems).shotLogs.len == 0
+    doAssert problems.len > 0 and "no such role" in problems[0]
 
   block lastShotMap:
     # The column map used last is kept beside a stored log, and comes back

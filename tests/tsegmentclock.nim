@@ -130,7 +130,7 @@ proc shotsAt(offsetsUs: openArray[int64]): CutShots =
   for i, o in offsetsUs: text.add $(101 + i) & "," & $(BaseUs + o) & "\n"
   var m = initShotLogMap()
   m.hasHeader = false
-  m.roles = @[crFileNumber, crUtcMicros]
+  m.roles = @[crFileNumber, crTime]
   shotsInTime(shots(parseShotLog(text, m), m).rows)
 
 proc main*() =

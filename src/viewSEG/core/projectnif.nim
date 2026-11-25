@@ -34,11 +34,14 @@
 ##
 ## A shot log imported into the project is
 ## `(shotLogs (log (name ...) (file ...) (map (delimiter comma) (header true)
-## (clock UTC) (unit metres) (role "file number") ...)))`. `file` is a plain
+## (clock UTC) (unit metres) (role "FFID") ... (colname "") ...)))`. `file` is a plain
 ## file name; the text is the copy under `shotlogs/`, not a node here. Absent
 ## means none. `(decimalComma true)` is written when a comma is the decimal
-## point; absent reads as false. A field this version does not know is kept
-## and written back.
+## point; absent reads as false. A `colname` per column (written when a user
+## defined column has a name) is that name, in column order. A project saved
+## with the earlier role words (for example "UTC seconds" or "gun array") is
+## read as the same columns under the present ones. A field this version does
+## not know is kept and written back.
 ## A role that is not one, a map with more than `MaxShotLogColumns` columns,
 ## or a file that is not a plain name is said and left out.
 ##
@@ -235,6 +238,12 @@ proc writeShotMap(w: var NifWriter; s: StoredShotLog) =
   if s.map.dateTimePattern.len > 0: w.value("pattern", s.map.dateTimePattern)
   for t in s.map.sentinels: w.value("sentinel", t)
   for role in s.map.roles: w.value("role", $role)
+  var named = false
+  for name in s.map.names:
+    if name.len > 0: named = true
+  if named:
+    for col in 0 ..< s.map.roles.len:
+      w.value("colname", if col < s.map.names.len: s.map.names[col] else: "")
   for n in s.mapLater: w.add n
   w.close
 
@@ -765,16 +774,14 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "fromFile": r.text(c, d.vibProfile.fromFile)
       else: d.vibProfile.later.add c
 
-proc columnRole(name: string): tuple[ok: bool; role: ColumnRole] =
-  for role in ColumnRole:
-    if $role == name: return (true, role)
-  (false, crText)
-
 proc readShotMap(r: var Reading; n: NifNode; s: var StoredShotLog; bad, tooMany: var bool;
     leftOut: string) =
   ## `leftOut` is the clause after a bad role: a stored log is left out, or
   ## the remembered column map is.
   var roles = 0
+  var roleWords: seq[string] = @[]
+  var roleNodes: seq[NifNode] = @[]
+  var colWords: seq[string] = @[]
   for c in n.kids:
     if c.kind != nkTree:
       r.problem(c, "(map) holds trees")
@@ -808,12 +815,24 @@ proc readShotMap(r: var Reading; n: NifNode; s: var StoredShotLog; bad, tooMany:
         r.problem(c, "(role) needs a role name; " & leftOut)
         bad = true
       else:
-        let found = columnRole(c.kids[0].text)
-        if not found.ok:
-          r.problem(c, "\"" & c.kids[0].text & "\" is not a column role; " & leftOut)
-          bad = true
-        elif not bad and not tooMany: s.map.roles.add found.role
+        roleWords.add c.kids[0].text
+        roleNodes.add c
+    of "colname":
+      if colWords.len < MaxShotLogColumns:
+        var t = ""
+        r.text(c, t)
+        colWords.add t
     else: s.mapLater.add c
+  if not bad and not tooMany:
+    let unknown = applyRoleNames(s.map, roleWords, colWords)
+    if unknown.len > 0:
+      var at = n
+      for k, word in roleWords:
+        if word == unknown:
+          at = roleNodes[k]
+          break
+      r.problem(at, "\"" & unknown & "\" is not a column role; " & leftOut)
+      bad = true
 
 proc shotLog(r: var Reading; n: NifNode; d: var ProjectDoc) =
   ## One log. A role that is not one, too many columns, or a file that is

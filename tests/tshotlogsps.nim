@@ -32,6 +32,7 @@ proc viewOf(text: string; roles: openArray[ColumnRole]; clock = tcUtc;
   m.hasHeader = true
   m.clock = clock
   m.roles = @roles
+  m.dateTimePattern = EpochMicros
   if not sentinels: m.sentinels.setLen(0)
   shots(parseShotLog(text, m), m)
 
@@ -253,7 +254,7 @@ proc main*() =
 
   block time:
     let head = "point,line,x,y,utc\n"
-    let roles = [crShotPoint, crSourceLine, crX, crY, crUtcMicros]
+    let roles = [crShotPoint, crSourceLine, crX, crY, crTime]
     proc row(point: int; us: int64): string =
       $point & ",10,1,2," & $us & "\n"
     let before = viewOf(head & row(1, UtcMarch - 1), roles)
@@ -304,7 +305,7 @@ proc main*() =
 
   block fractionOnSkipped:
     let text = "point,line,x,y,utc\n,10,1,2," & $(UtcMarch + 1) & "\n"
-    let view = viewOf(text, [crShotPoint, crSourceLine, crX, crY, crUtcMicros])
+    let view = viewOf(text, [crShotPoint, crSourceLine, crX, crY, crTime])
     let made = toSps(view, options(time = true))
     doAssert made.written == 0 and made.skipped == 0 and made.noShotPoint == 1
     doAssert made.fractionDropped == 1
@@ -323,7 +324,7 @@ proc main*() =
 
   block bothRevisionsTime:
     let text = "point,line,x,y,utc\n4,8,1,2," & $UtcMarch & "\n"
-    let view = viewOf(text, [crShotPoint, crSourceLine, crX, crY, crUtcMicros])
+    let view = viewOf(text, [crShotPoint, crSourceLine, crX, crY, crTime])
     for rev in [sps10, sps21]:
       let made = toSps(view, options(rev, time = true, code = "A"))
       let back = readBack(made.text, rev)
@@ -337,7 +338,7 @@ proc main*() =
       crSequence, crFileNumber, crSourceLine, crShotPoint, crPointIndex, crGpsMicros,
       crIgnored, crIgnored, crIgnored, crIgnored, crIgnored, crIgnored,
       crSourceDepth, crWaterDepth, crX, crY, crZ, crSourceType,
-      crVolume, crPressure, crHeading, crSpeed]
+      crText, crText, crText, crText]
     let view = viewOf(readFile(path), roles, tcGps)
     doAssert view.rows.len == 200
     doAssert view.rows[0].timeUtcUs == some(UtcMarch)

@@ -14,11 +14,15 @@
 ## With the year column stored as parsed, `yearColumnPivot` keeps 16.
 ## With no decimal-comma reading, `decimalComma` leaves `1,5` unparsed.
 ## With no leap-second problem, `leapSecond` keeps the rolled instant and
-## reports nothing. A per-cell copy in `shots` took 1232 ms and
+## reports nothing. With the delimiter taken from the header line alone,
+## `spacesInHeader` and `headerSplitsOtherwise` guess a role one column to the
+## right of its cells and `three-digit year` is reported for a log whose year
+## has four digits; with every header name grouped by position only, the
+## day-of-year cells land in the year. A per-cell copy in `shots` took 1232 ms and
 ## 30000005 allocations on 100000 rows of 30 numbers. With `setCell`
 ## returning void, `oneLine` cannot refuse a newline.
 
-import std/[math, options, os, strutils]
+import std/[math, options, os, sequtils, strutils]
 import viewSEG/core/shotlog
 
 const
@@ -37,11 +41,17 @@ proc mapOf(roles: openArray[ColumnRole]; d = dlComma; header = true): ShotLogMap
   result.roles = @roles
 
 proc read(text: string; roles: openArray[ColumnRole]; d = dlComma; header = true;
-    clock = tcUtc; skip = 0): ShotView =
+    clock = tcUtc; skip = 0; pattern = ""): ShotView =
   var m = mapOf(roles, d, header)
   m.clock = clock
   m.skipLines = skip
+  m.dateTimePattern = pattern
   shots(parseShotLog(text, m), m)
+
+proc timeOf(text: string; pattern = ""; cols = 1; clock = tcUtc): ShotView =
+  ## `text` (no header) with every column a Time (UTC) column.
+  read(text, newSeq[ColumnRole](cols).mapIt(crTime), header = false, clock = clock,
+    pattern = pattern)
 
 proc kindText(p: ProblemList; k: ProblemKind): string =
   for it in p.items:
@@ -53,10 +63,11 @@ proc hasKind(p: ProblemList; k: ProblemKind): bool =
 
 proc main*() =
   block plainWords:
-    doAssert label(crFileNumber) == "file number"
-    doAssert $crGpsMicros == "GPS microseconds"
-    doAssert $crPointIndex == "point index"
-    doAssert $crDateTime == "date-time text"
+    var choices: seq[string] = @[]
+    for r in ColumnRole: choices.add label(r)
+    doAssert choices == @["Ignore", "Time (UTC)", "GPSTB", "SEQ", "FFID", "Status",
+      "SailLine", "SourceLine", "SourcePoint", "Index", "Depth", "Water Depth", "X", "Y",
+      "Z", "SourceType", "SourceID", "Uphole", "User defined"]
     let m = initShotLogMap()
     doAssert m.delimiter == dlComma and m.hasHeader and m.clock == tcUtc
     doAssert m.lengthUnit == luMetres and m.sentinels.len > 0
@@ -109,7 +120,7 @@ proc main*() =
     let g = guessMap("07_shot_point,07-file number,Shot_Point\n1,2,3\n")
     doAssert g.hasHeader and g.skipLines == 0 and g.delimiter == dlComma
     doAssert g.roles[0] == crShotPoint and g.roles[1] == crFileNumber
-    doAssert g.roles[2] == crShotPoint
+    doAssert g.roles[2] == crText and g.names[2] == "Shot_Point"
     let feet = guessMap("source depth (ft),X\n6,10\n")
     doAssert feet.lengthUnit == luFeet and feet.roles[0] == crSourceDepth
     doAssert feet.roles[1] == crX
@@ -122,11 +133,11 @@ proc main*() =
     let text = $GpsMarch & ",2024,1.5\n" & $(GpsMarch + 10_000_000) & ",2024,2.5\n"
     let g = guessMap(text)
     doAssert not g.hasHeader and g.delimiter == dlComma
-    doAssert g.roles[0] == crGpsMicros and g.roles[1] == crYear
+    doAssert g.roles[0] == crGpsMicros and g.roles[1] == crText
     doAssert g.roles[2] == crText
     let v = shots(parseShotLog(text, g), g)
     doAssert v.rows[0].timeUtcUs.get == UtcMarch
-    doAssert v.rows[0].year.get == 2024
+    doAssert v.rows[0].texts == @["2024", "1.5"]
 
   block eachTimeSource:
     doAssert toPosixSeconds(UtcMarch) == 1_709_251_200.0
@@ -134,86 +145,90 @@ proc main*() =
     doAssert gpsMicrosToUtcMicros(GpsMarch) == UtcMarch
     let gps = read($GpsMarch & "\n", [crGpsMicros], header = false)
     doAssert gps.rows[0].timeUtcUs.get == UtcMarch
-    let us = read($UtcMarch & "\n", [crUtcMicros], header = false)
-    doAssert us.rows[0].timeUtcUs.get == UtcMarch
-    let sec = read("1709251200\n", [crUtcSeconds], header = false)
-    doAssert sec.rows[0].timeUtcUs.get == UtcMarch
-    let frac = read("1709251200.005\n", [crUtcSeconds], header = false)
+    doAssert detectTimePattern($UtcMarch) == EpochMicros
+    doAssert timeOf($UtcMarch & "\n").rows[0].timeUtcUs.get == UtcMarch
+    doAssert timeOf("1709251200\n").rows[0].timeUtcUs.get == UtcMarch
+    doAssert detectTimePattern("1709251200") == EpochSeconds
+    let frac = timeOf("1709251200.005\n")
     doAssert frac.rows[0].timeUtcUs.get == UtcMarch + 5_000
-    let doy = read("2024,61,0,0,0\n",
-      [crYear, crDayOfYear, crHour, crMinute, crSecond], header = false)
+    doAssert detectTimePattern("2024 061 00 00 00") == "yyyy ddd hh mi ss"
+    let doy = timeOf("2024,61,0,0,0\n", cols = 5)
     doAssert doy.rows[0].timeUtcUs.get == UtcMarch
-    let md = read("2024,3,1,0,0,0\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert doy.problems.count == 0
+    let md = timeOf("2024,3,1,0,0,0\n", cols = 6)
     doAssert md.rows[0].timeUtcUs.get == UtcMarch
-    let text = read("2024-03-01 00:00:00\n", [crDateTime], header = false)
+    doAssert detectTimePattern("2024 3 1 0 0 0") == "yyyy mm dd hh mi ss"
+    let text = timeOf("2024-03-01 00:00:00\n")
     doAssert text.rows[0].timeUtcUs.get == UtcMarch
-    let iso = read("2024-03-01T00:00:00Z\n", [crDateTime], header = false)
+    let iso = timeOf("2024-03-01T00:00:00Z\n")
     doAssert iso.rows[0].timeUtcUs.get == UtcMarch
-    let slash = read("2024/03/01 00:00:00.000000\n", [crDateTime], header = false)
+    let slash = timeOf("2024/03/01 00:00:00.000000\n")
     doAssert slash.rows[0].timeUtcUs.get == UtcMarch
-    var custom = mapOf([crDateTime], header = false)
-    custom.dateTimePattern = "yyyy/mm/dd hh:mm:ss"
-    let used = shots(parseShotLog("2024/03/01 00:00:00\n", custom), custom)
-    doAssert used.rows[0].timeUtcUs.get == UtcMarch
-    let epoch = read("1980,1,6,0,0,0\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert detectTimePattern("2024/03/01 00:00:00.000000") == "yyyy/mm/dd hh:mi:ss.ffffff"
+    let dateAndTime = timeOf("2024-03-01,00:00:00.5\n", cols = 2)
+    doAssert dateAndTime.rows[0].timeUtcUs.get == UtcMarch + 500_000
+    let typed = timeOf("2024/03/01 00:00:00\n", "yyyy/mm/dd hh:mm:ss")
+    doAssert typed.rows[0].timeUtcUs.get == UtcMarch
+    let spaced = timeOf("2024,361,23,59,59.5,250000\n", "yyyy ddd hh mi ss.f uuuuuu", 6)
+    doAssert spaced.rows[0].timeUtcUs.isSome
+    let epoch = timeOf("1980,1,6,0,0,0\n", cols = 6)
     doAssert epoch.rows[0].timeUtcUs.get == 315_964_800'i64 * 1_000_000
+    let blank = timeOf("2024,,\n", cols = 3)
+    doAssert blank.rows[0].timeUtcUs.isNone
 
   block leapDayAndFraction:
-    let feb = read("2024,60,0,0,0\n",
-      [crYear, crDayOfYear, crHour, crMinute, crSecond], header = false)
+    const doyForm = "yyyy ddd hh mi ss.ffffff"
+    let feb = timeOf("2024,60,0,0,0\n", doyForm, 5)
     doAssert feb.rows[0].timeUtcUs.get == UtcFeb29
-    let yearEnd = read("2024,366,0,0,0\n2025,1,0,0,0\n",
-      [crYear, crDayOfYear, crHour, crMinute, crSecond], header = false)
+    let yearEnd = timeOf("2024,366,0,0,0\n2025,1,0,0,0\n", doyForm, 5)
     doAssert yearEnd.rows[0].timeUtcUs.get == UtcDec31
     doAssert yearEnd.rows[1].timeUtcUs.get == UtcJan1
     doAssert yearEnd.rows[1].timeUtcUs.get - yearEnd.rows[0].timeUtcUs.get == DayUs
-    let common = read("2023,60,0,0,0\n",
-      [crYear, crDayOfYear, crHour, crMinute, crSecond], header = false)
+    let common = timeOf("2023,60,0,0,0\n", doyForm, 5)
     doAssert common.rows[0].timeUtcUs.get == Utc2023Mar
-    let frac = read("2024,61,0,0,59.999999\n",
-      [crYear, crDayOfYear, crHour, crMinute, crSecond], header = false)
+    let frac = timeOf("2024,61,0,0,59.999999\n", doyForm, 5)
     doAssert frac.rows[0].timeUtcUs.get == UtcMarch + 59_999999
-    doAssert frac.rows[0].second == 59.999999
-    let usec = read("2024,61,0,0,59,999999\n",
-      [crYear, crDayOfYear, crHour, crMinute, crSecond, crMicrosecond], header = false)
+    let usec = timeOf("2024,61,0,0,59,999999\n", "yyyy ddd hh mi ss uuuuuu", 6)
     doAssert usec.rows[0].timeUtcUs.get == UtcMarch + 59_999999
     doAssert not hasKind(frac.problems, pkBadNumber)
+    let notADay = timeOf("2023,366,0,0,0\n", doyForm, 5)
+    doAssert notADay.rows[0].timeUtcUs.isNone
+    doAssert "366" in kindText(notADay.problems, pkBadNumber)
 
   block crossCheck:
-    let both = "gps,utc,sec,text\n" & $GpsMarch & "," & $UtcMarch &
-      ",1709251200,2024-03-01 00:00:00\n"
-    let agree = read(both, [crGpsMicros, crUtcMicros, crUtcSeconds, crDateTime])
+    let both = "gps,utc\n" & $GpsMarch & "," & $UtcMarch & "\n"
+    let agree = read(both, [crGpsMicros, crTime])
     doAssert agree.rows[0].timeUtcUs.get == UtcMarch
     doAssert agree.problems.count == 0
     let near = read($GpsMarch & "," & $(UtcMarch + 500) & "\n",
-      [crGpsMicros, crUtcMicros], header = false)
+      [crGpsMicros, crTime], header = false)
     doAssert not hasKind(near.problems, pkTimeDisagree)
     let gap = read($GpsMarch & "," & $(UtcMarch + 5_000) & "\n",
-      [crGpsMicros, crUtcMicros], header = false)
+      [crGpsMicros, crTime], header = false)
     doAssert hasKind(gap.problems, pkTimeDisagree)
     let msg = kindText(gap.problems, pkTimeDisagree)
     doAssert $UtcMarch in msg and $(UtcMarch + 5_000) in msg
     doAssert "5 ms" in msg and "mixed" notin msg
+    doAssert "GPSTB" in msg and "Time (UTC)" in msg
     doAssert gap.problems.items[0].row == 0 and gap.problems.items[0].col == 1
-    let mixed = read($UtcMarch & ",2024-03-01 00:00:00\n",
-      [crUtcMicros, crDateTime], header = false, clock = tcGps)
+    let mixed = read($GpsMarch & ",2024-03-01 00:00:00\n",
+      [crGpsMicros, crTime], header = false, clock = tcGps)
     doAssert mixed.rows[0].timeUtcUs.get == UtcMarch
     let mixedMsg = kindText(mixed.problems, pkTimeDisagree)
     doAssert "GPS and UTC mixed" in mixedMsg
     doAssert "18 s" in mixedMsg
-    let gpsClock = read("2024,61,0,0,0\n",
-      [crYear, crDayOfYear, crHour, crMinute, crSecond], header = false, clock = tcGps)
+    let gpsClock = timeOf("2024,61,0,0,0\n", "yyyy ddd hh mi ss", 5, clock = tcGps)
     doAssert gpsClock.rows[0].timeUtcUs.get == UtcMarch - 18_000_000
 
   block duplicatesAndOrder:
     let dup = read("file,line,sp,index,utc\n5,1,2,3,100\n5,1,2,3,90\n6,1,2,4,80\n",
-      [crFileNumber, crSourceLine, crShotPoint, crPointIndex, crUtcMicros])
+      [crFileNumber, crSourceLine, crShotPoint, crPointIndex, crTime],
+      pattern = EpochMicros)
     doAssert hasKind(dup.problems, pkDuplicateFile)
     doAssert hasKind(dup.problems, pkDuplicateShot)
     doAssert hasKind(dup.problems, pkTimeBackward)
     doAssert dup.problems.items[0].col >= 0
+    doAssert "FFID 5 also on row 0" in kindText(dup.problems, pkDuplicateFile)
     let otherIndex = read("line,sp,index\n1,2,3\n1,2,4\n",
       [crSourceLine, crShotPoint, crPointIndex])
     doAssert not hasKind(otherIndex.problems, pkDuplicateShot)
@@ -259,7 +274,10 @@ proc main*() =
     let g = guessMap(text)
     doAssert g.delimiter == dlComma and g.hasHeader
     doAssert g.roles[0] == crSequence and g.roles[1] == crFileNumber
-    doAssert g.roles[5] == crGpsMicros and g.roles[11] == crDateTime
+    doAssert g.roles[5] == crGpsMicros and g.roles[11] == crTime
+    doAssert g.dateTimePattern == "yyyy-mm-dd hh:mi:ss.ffffff"
+    doAssert g.roles[6] == crText and g.names[6] == "year"
+    doAssert g.roles[18] == crText and g.names[21] == "speed"
     let log = parseShotLog(text, g)
     doAssert log.len == 200 and log.width == 22
     let v = shots(log, g)
@@ -269,41 +287,38 @@ proc main*() =
     doAssert v.rows[199].shotPoint == 1199.0
     doAssert v.rows[3].sourceDepth.isNaN and v.rows[5].waterDepth.isNaN
     doAssert v.rows[0].x == 1000.0 and v.rows[0].y == 2000.0
+    doAssert v.rows[0].texts.len == 9 and v.rows[0].texts[0] == "2024"
     doAssert not hasKind(v.problems, pkTimeDisagree)
     doAssert not hasKind(v.problems, pkDuplicateShot)
 
   block overflowAndYearRange:
-    let hugeSec = read("1393286418000000\n", [crUtcSeconds], header = false)
+    let hugeSec = timeOf("1393286418000000\n", EpochSeconds)
     doAssert hugeSec.rows[0].timeUtcUs.isNone
     doAssert hasKind(hugeSec.problems, pkBadNumber)
     let over = read("9223372036854775808\n", [crSequence], header = false)
     doAssert over.rows[0].sequence.isNone
     doAssert "not a whole number" in kindText(over.problems, pkBadNumber)
+    doAssert "SEQ '9223372036854775808'" in kindText(over.problems, pkBadNumber)
     let fit = read("9223372036854775807\n", [crSequence], header = false)
     doAssert fit.rows[0].sequence.get == high(int64)
-    let nines = read("2024,3,1,0,0,99999999999999999999\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    let nines = timeOf("2024,3,1,0,0,99999999999999999999\n", cols = 6)
     doAssert nines.rows[0].timeUtcUs.isNone
     doAssert hasKind(nines.problems, pkBadNumber)
     discard gpsMicrosToUtcMicros(high(int64))
     let gps = read($high(int64) & "\n", [crGpsMicros], header = false)
     doAssert gps.rows[0].timeUtcUs.isNone
     doAssert hasKind(gps.problems, pkBadNumber)
-    let early = read("1899,12,31,23,59,59\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    let early = timeOf("1899,12,31,23,59,59\n", cols = 6)
     doAssert early.rows[0].timeUtcUs.isNone
     doAssert "1900..2200" in kindText(early.problems, pkBadNumber)
-    let start = read("1900,1,1,0,0,0\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    let start = timeOf("1900,1,1,0,0,0\n", cols = 6)
     doAssert start.rows[0].timeUtcUs.isSome
-    let last = read("2200,12,31,23,59,59\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    let last = timeOf("2200,12,31,23,59,59\n", cols = 6)
     doAssert last.rows[0].timeUtcUs.isSome
-    let past = read("2201,1,1,0,0,0\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    let past = timeOf("2201,1,1,0,0,0\n", cols = 6)
     doAssert past.rows[0].timeUtcUs.isNone
     doAssert "1900..2200" in kindText(past.problems, pkBadNumber)
-    let far = read("10000000000\n", [crUtcSeconds], header = false)
+    let far = timeOf("10000000000\n")
     doAssert far.rows[0].timeUtcUs.isNone
     doAssert "1900..2200" in kindText(far.problems, pkBadNumber)
 
@@ -324,55 +339,38 @@ proc main*() =
     doAssert "2147483647" in log.problems.items[0].text
 
   block fractionAndMicros:
-    let clash = read("2024,3,1,0,0,59.5,0\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond, crMicrosecond],
-      header = false)
+    const form = "yyyy mm dd hh mi ss.f uuuuuu"
+    let clash = timeOf("2024,3,1,0,0,59.5,0\n", form, 7)
     doAssert clash.rows[0].timeUtcUs.get == UtcMarch + 59_000000
-    doAssert clash.rows[0].microsecond.get == 0
-    doAssert clash.rows[0].second == 59.5
     doAssert hasKind(clash.problems, pkTimeDisagree)
     let named = kindText(clash.problems, pkTimeDisagree)
-    doAssert "59.5" in named and "0" in named
-    let same = read("2024,3,1,0,0,59.5,500000\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond, crMicrosecond],
-      header = false)
+    doAssert "500000" in named and "microsecond 0" in named
+    let same = timeOf("2024,3,1,0,0,59.5,500000\n", form, 7)
     doAssert same.rows[0].timeUtcUs.get == UtcMarch + 59_500000
     doAssert not hasKind(same.problems, pkTimeDisagree)
-    let supplied = read("2024,3,1,0,0,59,500000\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond, crMicrosecond],
-      header = false)
+    let supplied = timeOf("2024,3,1,0,0,59,500000\n", form, 7)
     doAssert supplied.rows[0].timeUtcUs.get == UtcMarch + 59_500000
     doAssert not hasKind(supplied.problems, pkTimeDisagree)
-    let close = read("2024,3,1,0,0,59.000001,0\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond, crMicrosecond],
-      header = false)
+    let close = timeOf("2024,3,1,0,0,59.000001,0\n", form, 7)
     doAssert close.rows[0].timeUtcUs.get == UtcMarch + 59_000000
     doAssert not hasKind(close.problems, pkTimeDisagree)
 
-  block yearColumnPivot:
-    let full = read("2016,3,1,0,0,0\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
-    let y16 = read("16,3,1,0,0,0\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
-    doAssert y16.rows[0].year.get == 2016
+  block yearPivot:
+    let full = timeOf("2016,3,1,0,0,0\n", cols = 6)
+    let y16 = timeOf("16,3,1,0,0,0\n", "yy mm dd hh mi ss", 6)
     doAssert y16.rows[0].timeUtcUs.get == full.rows[0].timeUtcUs.get
     doAssert not hasKind(y16.problems, pkBadNumber)
-    let y50 = read("50\n", [crYear], header = false)
-    doAssert y50.rows[0].year.get == 1950
-    let y49 = read("49\n", [crYear], header = false)
-    doAssert y49.rows[0].year.get == 2049
-    let y99 = read("99\n", [crYear], header = false)
-    doAssert y99.rows[0].year.get == 1999
-    let y00 = read("0\n", [crYear], header = false)
-    doAssert y00.rows[0].year.get == 2000
-    let y2024 = read("2024\n", [crYear], header = false)
-    doAssert y2024.rows[0].year.get == 2024
-    let y216 = read("216,3,1,0,0,0\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
-    doAssert y216.rows[0].year.isNone
+    doAssert detectTimePattern("16 361 10 20 30") == "yy ddd hh mi ss"
+    for (yy, year) in [("50", 1950), ("49", 2049), ("99", 1999), ("00", 2000)]:
+      let v = timeOf(yy & ",1,1,0,0,0\n", "yy mm dd hh mi ss", 6)
+      let want = timeOf($year & ",1,1,0,0,0\n", cols = 6)
+      doAssert v.rows[0].timeUtcUs.get == want.rows[0].timeUtcUs.get, yy
+    let wide = timeOf("16,3,1,0,0,0\n", "yyyy mm dd hh mi ss", 6)
+    doAssert wide.rows[0].timeUtcUs.get == full.rows[0].timeUtcUs.get
+    let y216 = timeOf("216,3,1,0,0,0\n", "yyyy mm dd hh mi ss", 6)
     doAssert y216.rows[0].timeUtcUs.isNone
-    doAssert hasKind(y216.problems, pkBadNumber)
-    doAssert "216" in kindText(y216.problems, pkBadNumber)
+    doAssert "1900..2200" in kindText(y216.problems, pkBadNumber)
+    doAssert "three-digit" notin kindText(y216.problems, pkBadNumber)
 
   block decimalComma:
     doAssert not initShotLogMap().decimalComma
@@ -394,11 +392,11 @@ proc main*() =
     let tabs = guessMap("shot\tdepth\n1\t1,5\n")
     doAssert tabs.delimiter == dlTab
     doAssert tabs.decimalComma
-    var m = mapOf([crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond],
+    var m = mapOf([crTime, crTime, crTime, crTime, crTime, crTime],
       dlSemicolon, header = false)
     m.decimalComma = true
+    m.dateTimePattern = "yyyy mm dd hh mi ss.f"
     let sec = shots(parseShotLog("2024;3;1;0;0;59,5\n", m), m)
-    doAssert sec.rows[0].second == 59.5
     doAssert sec.rows[0].timeUtcUs.get == UtcMarch + 59_500000
     m.sentinels = @["-999.25"]
     m.roles = @[crShotPoint]
@@ -408,20 +406,162 @@ proc main*() =
     doAssert not hasKind(missing.problems, pkBadNumber)
 
   block leapSecond:
-    let leap = read("2024,3,1,0,0,60\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
-    let next = read("2024,3,1,0,1,0\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    let leap = timeOf("2024,3,1,0,0,60\n", cols = 6)
+    let next = timeOf("2024,3,1,0,1,0\n", cols = 6)
     doAssert leap.rows[0].timeUtcUs.get == UtcMarch + 60_000000
     doAssert leap.rows[0].timeUtcUs.get == next.rows[0].timeUtcUs.get
-    doAssert kindText(leap.problems, pkBadNumber) == "second 60"
-    let asText = read("2024-03-01 00:00:60\n", [crDateTime], header = false)
+    doAssert "has second 60" in kindText(leap.problems, pkBadNumber)
+    let asText = timeOf("2024-03-01 00:00:60\n")
     doAssert asText.rows[0].timeUtcUs.get == UtcMarch + 60_000000
-    doAssert kindText(asText.problems, pkBadNumber) == "second 60"
-    let ordinary = read("2024,3,1,0,0,59\n",
-      [crYear, crMonth, crDayOfMonth, crHour, crMinute, crSecond], header = false)
+    doAssert "has second 60" in kindText(asText.problems, pkBadNumber)
+    let ordinary = timeOf("2024,3,1,0,0,59\n", cols = 6)
     doAssert ordinary.rows[0].timeUtcUs.get == UtcMarch + 59_000000
     doAssert "second 60" notin kindText(ordinary.problems, pkBadNumber)
+
+  block badTime:
+    let v = timeOf("2024 361 23:59:60\n2024 361 23:59:xx\n", "yyyy ddd hh:mi:ss")
+    doAssert v.rows[0].timeUtcUs.isSome
+    doAssert v.rows[1].timeUtcUs.isNone
+    let said = kindText(v.problems, pkBadNumber)
+    doAssert said.len > 0
+    var found = false
+    for it in v.problems.items:
+      if it.row == 1:
+        doAssert it.text == "time '2024 361 23:59:xx' does not match yyyy ddd hh:mi:ss"
+        doAssert it.col == 0
+        found = true
+    doAssert found
+    let nonsense = timeOf("2024,13,40,0,0,0\n", "yyyy mm dd hh mi ss", 6)
+    doAssert "is not a valid date and time" in kindText(nonsense.problems, pkBadNumber)
+    let unknown = timeOf("hello\n")
+    doAssert "does not match any known form" in kindText(unknown.problems, pkBadNumber)
+    let word = read("sp\nabc\n", [crShotPoint])
+    doAssert kindText(word.problems, pkBadNumber) == "SourcePoint 'abc' is not a number"
+
+  block uphole:
+    let v = read("up,x\n12.5,1\n,2\n", [crUphole, crX])
+    doAssert v.rows[0].uphole == 12.5 and v.rows[1].uphole.isNaN
+    doAssert v.rows[1].x == 2.0
+
+  block ignoreAndUserDefined:
+    let text = "a,b,c,d\n1,2,abc,xyz\n3,4,def,\n"
+    let v = read(text, [crSequence, crIgnored, crText, crText])
+    doAssert v.rows[0].sequence.get == 1 and v.rows[1].sequence.get == 3
+    doAssert v.rows[0].texts == @["abc", "xyz"] and v.rows[1].texts == @["def", ""]
+    doAssert v.problems.count == 0
+    let junk = read("a,b\nx,2\n", [crIgnored, crSequence])
+    doAssert junk.problems.count == 0 and junk.rows[0].sequence.get == 2
+    var m = mapOf([crSequence, crIgnored, crText, crText])
+    m.names = @["", "", "", "Note"]
+    let log = parseShotLog(text, m)
+    doAssert columnNames(log, m, 4) == @["SEQ", "b", "c", "Note"]
+    m.names = @["", "", "Source Line", ""]
+    doAssert mapFault(m).len > 0 and "system's column names" in mapFault(m)
+    m.names = @["", "", "water_depth", ""]
+    doAssert mapFault(m).len > 0
+    m.names = @["", "", "x", ""]
+    doAssert mapFault(m).len > 0
+    m.names = @["", "", "Ignore", ""]
+    doAssert mapFault(m).len > 0
+    m.names = @["", "", "Time (UTC)", ""]
+    doAssert mapFault(m).len > 0
+    m.names = @["", "", "Note", "note"]
+    doAssert "Another column is named" in mapFault(m)
+    m.names = @["", "", "Note", "Remark"]
+    doAssert mapFault(m) == ""
+    m.roles = @[crSequence, crSequence, crText, crText]
+    doAssert "SEQ is chosen for more than one column" in mapFault(m)
+    m.roles = @[crTime, crTime, crText, crText]
+    doAssert mapFault(m) == ""
+    for bad in ["sourceline", "Source Line", "water_depth", "WATER-DEPTH", "SourceID",
+        "time (utc)", "Uphole", "ignore", "FFID"]:
+      doAssert isSystemName(bad), bad
+    doAssert not isSystemName("Depth 2") and not isSystemName("Note")
+    # a header that uses a system name for a user defined column
+    var named = mapOf([crText, crText])
+    let withHeader = parseShotLog("Depth,Depth\n1,2\n", named)
+    doAssert columnNames(withHeader, named, 2) == @["Depth (file)", "Depth (file) 2"]
+
+  block spacesInHeader:
+    # the header names hold spaces, so a header cut at spaces has more fields
+    # than the rows have columns
+    let text = "Sail line Shot point Year Day of year Hour Minute Second\n" &
+      "5 1001 2024 361 23 59 59.5\n6 1002 2024 361 23 59 59.75\n"
+    let g = guessMap(text)
+    doAssert g.delimiter == dlSpaces and g.hasHeader
+    doAssert g.roles == @[crSailLine, crShotPoint, crTime, crTime, crTime, crTime, crTime]
+    doAssert g.dateTimePattern == "yyyy ddd hh mi ss.f"
+    let log = parseShotLog(text, g)
+    doAssert log.len == 2 and log.width == 7 and log.problems.count == 0
+    let v = shots(log, g)
+    doAssert v.problems.count == 0
+    doAssert v.rows[0].sailLine == 5.0 and v.rows[0].shotPoint == 1001.0
+    doAssert v.rows[0].timeUtcUs.get == UtcDec31 - 5 * DayUs + 86_399_500_000
+    # the same header over rows whose names the guess cannot place
+    let unplaced = guessMap("Alpha beta gamma delta\n1 2 3\n4 5 6\n")
+    doAssert unplaced.roles == @[crText, crText, crText]
+    doAssert unplaced.names == @["", "", ""]
+
+  block noThreeDigitYear:
+    # the header cut at spaces put "year" on the column of the day of year
+    let text = "Sail line Year Day of year Hour Minute Second\n" &
+      "5 2024 361 23 59 59.5\n6 2024 361 23 59 59.75\n"
+    let g = guessMap(text)
+    doAssert g.roles == @[crSailLine, crTime, crTime, crTime, crTime, crTime]
+    let v = shots(parseShotLog(text, g), g)
+    doAssert v.problems.count == 0
+    for p in v.problems.items:
+      doAssert "three-digit" notin p.text
+    doAssert v.rows[1].timeUtcUs.get == v.rows[0].timeUtcUs.get + 250_000
+
+  block headerSplitsOtherwise:
+    # the header line holds a comma, the rows are cut at spaces
+    let text = "SEQ,FFID Status\n1 1001 OK\n2 1002 OK\n"
+    let g = guessMap(text)
+    doAssert g.delimiter == dlSpaces
+    doAssert g.roles.len == 3
+    doAssert crTime notin g.roles
+    let v = shots(parseShotLog(text, g), g)
+    doAssert v.problems.count == 0
+    # a year of four digits is never called three digits
+    let years = "year,day of year,hour,minute,second\n2024,361,12,30,15\n" &
+      "2024,362,12,30,15\n"
+    let y = guessMap(years)
+    doAssert y.roles == @[crTime, crTime, crTime, crTime, crTime]
+    let yv = shots(parseShotLog(years, y), y)
+    doAssert yv.problems.count == 0
+    doAssert yv.rows[0].timeUtcUs.isSome
+    # a role whose cells do not read as that role is not assigned
+    let words = "sequence,x\nabc,def\nghi,jkl\n"
+    let w = guessMap(words)
+    doAssert w.roles == @[crText, crText]
+    doAssert w.names == @["sequence", "x (file)"]
+
+  block oldMaps:
+    # a project saved before the system columns were named
+    var m = initShotLogMap()
+    var old = @["file number", "UTC microseconds", "gun array", "text", "ignored", "X"]
+    doAssert applyRoleNames(m, old, []) == ""
+    doAssert m.roles == @[crFileNumber, crTime, crText, crText, crIgnored, crX]
+    doAssert m.dateTimePattern == EpochMicros
+    doAssert m.names == @["", "", "gun array", "", "", ""]
+    var split = initShotLogMap()
+    split.hasHeader = false
+    let parts = ["year", "day of year", "hour", "minute", "second", "microsecond", "volume"]
+    doAssert applyRoleNames(split, parts, []) == ""
+    doAssert split.roles == @[crTime, crTime, crTime, crTime, crTime, crTime, crText]
+    doAssert split.dateTimePattern == "yyyy ddd hh mi ss.ffffff uuuuuu"
+    let oldRead = shots(parseShotLog("2024,61,0,0,59.5,0,7\n", split), split)
+    doAssert oldRead.rows[0].timeUtcUs.get == UtcMarch + 59_000_000
+    doAssert oldRead.rows[0].texts == @["7"]
+    var incomplete = initShotLogMap()
+    doAssert applyRoleNames(incomplete, ["year", "hour"], []) == ""
+    doAssert incomplete.roles == @[crText, crText]
+    doAssert incomplete.names == @["year", "hour"]
+    var fresh = initShotLogMap()
+    doAssert applyRoleNames(fresh, ["Time (UTC)", "User defined", "SEQ"], ["", "Note"]) == ""
+    doAssert fresh.roles == @[crTime, crText, crSequence] and fresh.names[1] == "Note"
+    doAssert applyRoleNames(fresh, ["no such role"], []) == "no such role"
 
   block sliceRead:
     let quoted = read("\"1.5\",2\n", [crShotPoint, crSequence], header = false)

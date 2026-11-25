@@ -2772,6 +2772,18 @@ proc shotLogGuess*(state: AppState; i: int): ShotLogMap =
   if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: initShotLogMap()
   else: guessMap(state.shotLogs[i].log.text)
 
+proc shotLogPattern*(state: AppState; i: int; map: ShotLogMap): string =
+  ## The pattern that reads `map`'s Time (UTC) columns of loaded shot log `i`
+  ## (`timePattern`); "" when it has none.
+  if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: ""
+  else: timePattern(state.shotLogs[i].log, map)
+
+proc shotLogNames*(state: AppState; i: int; map: ShotLogMap; count: int): seq[string] =
+  ## The names of the first `count` columns of loaded shot log `i` as `map`
+  ## gives them (`columnNames`).
+  if i < 0 or i >= state.shotLogs.len: newSeq[string](count)
+  else: columnNames(state.shotLogs[i].log, map, count)
+
 proc findShotLog*(state: AppState; id: int): int =
   ## The index of the loaded shot log with `id`, or -1.
   result = -1
@@ -7636,6 +7648,11 @@ proc importShotLogCmd(state: var AppState; cmd: Command) =
   if cmd.logPath.len == 0:
     state.ignore(cmd, "no file was named")
     return
+  if cmd.logMapped:
+    let fault = mapFault(cmd.logMap)
+    if fault.len > 0:
+      state.ignore(cmd, fault.strip(leading = false, chars = {'.'}))
+      return
   let path = canonical(cmd.logPath)
   var name = path.extractFilename.splitFile.name
   if name.len == 0: name = path.extractFilename
@@ -7692,6 +7709,10 @@ proc remapShotLogCmd(state: var AppState; cmd: Command) =
     return
   if loaded.log == nil:
     state.ignore(cmd, "the shot log is not loaded")
+    return
+  let fault = mapFault(cmd.logMap)
+  if fault.len > 0:
+    state.ignore(cmd, fault.strip(leading = false, chars = {'.'}))
     return
   loaded.undo.setLen 0
   loaded.redo.setLen 0
