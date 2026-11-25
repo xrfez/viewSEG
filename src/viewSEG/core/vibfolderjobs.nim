@@ -1,6 +1,7 @@
 ## A background job that judges each vibrator signature file of a folder the
 ## way one Vibrator window would, and fills a table (`core/vibfolderqc`).
-## One file is open at a time. One file that cannot be read does not stop
+## Up to the item pool's threads of files are open at once, and the rows are taken in file
+## order. One file that cannot be read does not stop
 ## the rest. A cancel stops before the first file, between files and inside
 ## a file, and every file not judged is listed as skipped. The sink is set
 ## before the job returns, fails or is cancelled.
@@ -16,6 +17,10 @@ import analysis, filejobs, filekinds, filesystem, jobs, project, references, ses
   signatures, sigjudge, sweepinfo, sweeppairs, threads, traceids, vibalign, vibanalysis,
   vibfolderqc, vibjudge, vibprofile
 import sigtypes except QcLimit
+
+var itemBudget* = 256'i64 shl 20
+  ## Most bytes of files in hand at once. The pool lets the first file not yet taken run
+  ## whatever its size, so a file over the budget runs alone and never waits for ever. Set only by tests.
 
 const FolderScale* = 1000
   ## Files of progress in one file. A job's `done div FolderScale` is files finished.
@@ -486,20 +491,19 @@ static:
 proc judgeItem(it: ItemContext; a: ptr FolderItems; i: int): FolderRow {.nimcall, gcsafe.} =
   ## The row of file `i` before the job's own words are added: raises when the file cannot
   ## be judged.
-  {.cast(gcsafe).}:
-    let item = a.files[i]
-    let partner = a.partners[i]
-    if a.gone.len > 0:
-      FolderRow(path: item.path, kind: item.info.kind, pair: partner,
-        outcome: foProblem, problem: a.gone)
-    elif item.info.problem.len > 0:
-      FolderRow(path: item.path, kind: item.info.kind, pair: partner,
-        outcome: foProblem, problem: item.info.problem)
-    elif item.info.kind notin {sgDat, sgVib} and not item.converted:
-      FolderRow(path: item.path, kind: item.info.kind, pair: partner,
-        outcome: foProblem, problem: item.path.extractFilename & " is not a signature file.")
-    else:
-      judgeFile(it, item, partner, a.partnerInfos[i], a.ask, a.choice, a.held)
+  let item = a.files[i]
+  let partner = a.partners[i]
+  if a.gone.len > 0:
+    FolderRow(path: item.path, kind: item.info.kind, pair: partner,
+      outcome: foProblem, problem: a.gone)
+  elif item.info.problem.len > 0:
+    FolderRow(path: item.path, kind: item.info.kind, pair: partner,
+      outcome: foProblem, problem: item.info.problem)
+  elif item.info.kind notin {sgDat, sgVib} and not item.converted:
+    FolderRow(path: item.path, kind: item.info.kind, pair: partner,
+      outcome: foProblem, problem: item.path.extractFilename & " is not a signature file.")
+  else:
+    judgeFile(it, item, partner, a.partnerInfos[i], a.ask, a.choice, a.held)
 
 proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
     files: seq[FolderListed]; target: FolderQcSink; choice: SignatureChoice;
@@ -564,8 +568,15 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
         pair: partner, outcome: foProblem, problem: why,
         weightWords: weightFindings(item.info.weights, weights.holdDownKg,
         weights.baseplateMassKg, weights.reactionMassKg)), item.info, partnerInfo, partner)
+  var sizes = newSeq[int64](count)
+  for i, item in files:
+    try:
+      sizes[i] = max(0'i64, fs.getFileSize(item.path))
+    except OSError:
+      sizes[i] = 0 # the item says why it cannot be read
+  ctx.setPhase("judging " & $count & (if count == 1: " file" else: " files"))
   let ran = ctx.parallelItems(count, addr args, judgeItem, take,
-    ItemOptions(scale: FolderScale))
+    ItemOptions(scale: FolderScale, cost: sizes, budget: itemBudget))
   if ran.taken < count:
     # a cancel the batch saw between files: the rest is skipped, as in a file
     skipFrom(table.rows, files, paired.pairs, ran.taken)
@@ -586,8 +597,10 @@ proc folderQcWork*(ask: VibQcAsk; weights: VibJobWeights; files: seq[FolderListe
   ## is the open choice; the default is the file's own. `reference.path`,
   ## when set, is read once and used instead of the recorded pilot when the
   ## sample interval agrees. A reference that cannot be read, or that has no
-  ## samples, is a problem on every row and no file is judged. One file is
-  ## open at a time. The sink is set before this returns.
+  ## samples, is a problem on every row and no file is judged. Up to the item
+  ## pool's threads of files are open at once, and the rows are taken in file
+  ## order; the files in hand hold at most 256 MiB together (a file
+  ## larger than that runs alone). The sink is set before this returns.
   result = proc (ctx: JobContext) {.gcsafe.} =
     {.cast(gcsafe).}:
       runFolder(ctx, ask, weights, files, sink, choice, reference)

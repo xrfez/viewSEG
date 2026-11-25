@@ -232,9 +232,10 @@ so the wait the user notices is never behind a long job.
   a batch started from an item is a Defect in every build. The workers start on the first
   batch that needs them (never once `Jobs.stop` began), clear their ORC cycle roots after
   each item, and are joined by `stop`. The models are `docs/models/itempool.nif` and
-  `docs/models/itempoollanes.nif`; `tests/titempool.nim` runs the pool under many shapes. The vibrator QC of a folder
-  (`core/vibfolderjobs`) is the first caller: one item per file, `FolderRow` out, the
-  rows' words added in `take`; `tests/tvibfolderpool.nim` holds its table equal on 1 to 8 threads.
+  `docs/models/itempoollanes.nif`; `tests/titempool.nim` runs the pool under many shapes.
+  The vibrator QC of a folder (`core/vibfolderjobs`) is the first caller: one item per
+  file, `FolderRow` out, the rows' words added in `take`, the files' sizes as costs under
+  a 256 MiB budget; `tests/tvibfolderpool.nim` holds its table equal on 1 to 8 threads.
 - **A job** (`JobSpec`, `JobInfo`) has a title in plain words, a lane, a state (queued,
   running, done, failed, cancelled), progress (done of total, a phase label), and the
   files it reads or needs to itself. Queued jobs can be reordered, removed or cancelled;

@@ -87,6 +87,17 @@ proc main*() =
         doAssert resultsCsv(got.table) == resultsCsv(serial.table),
           "the CSV differs on " & $threads & " threads"
 
+    block budgetInForce:
+      ## a budget no file fits: one file at a time, every file still judged, the same table
+      let serial = runOn(1, files, ask)
+      let saved = itemBudget
+      itemBudget = 1
+      let got = runOn(4, files, ask)
+      itemBudget = saved
+      doAssert got.st == jsDone
+      doAssert got.table.rows.len == files.len
+      doAssert $got.table == $serial.table, "the table differs under a budget"
+
     block cancelStops:
       lane = initJobs()
       lane.setItemThreads(4)
