@@ -506,8 +506,8 @@ too, and counted on a line of its own, for example "3 traces at no station (not 
 the headers or the survey): left out" (and in a column of the statistics file). A record whose template still cannot be found (no station of
 its own, no relation record at it, traces matched by channel, or no relation file of its
 side) is measured whole, and a line says how many and why, for example "2 records were
-measured whole: their template is not known (1 with no source station, 1 whose X record is
-not found)"; on the receiver side a receiver gather counts once, however many records and
+measured whole: their template is not known (1 with no source station: load the relation
+file or a survey that places the source, 1 whose X record is not found)"; on the receiver side a receiver gather counts once, however many records and
 files it has: "1 receiver gather was measured whole: its template is not known (1 whose O
 records are not found)". The statistics file has a column for each reason. Unticked, or with no
 relation file, every trace is measured. Every column header has a tooltip that says what it

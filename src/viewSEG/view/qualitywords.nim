@@ -110,7 +110,9 @@ func unknownWords(why: TemplateUnknown; side: StationSide): string =
   ## Why records of `side` were measured whole, after their count.
   let shots = side == ssReceivers
   case why
-  of tuNoStation: (if shots: "with no source station" else: "with no receiver station")
+  of tuNoStation:
+    if shots: "with no source station: load the relation file or a survey that places the source"
+    else: "with no receiver station"
   of tuNoSources: "whose traces name no source station"
   of tuNoRecord: (if shots: "whose X record is not found" else: "whose O records are not found")
   of tuByChannel: "matched to their X record by channel, not by station"

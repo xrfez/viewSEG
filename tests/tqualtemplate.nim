@@ -40,6 +40,8 @@
 ## never let go of, it was kept after the survey went. With each record of a receiver gather
 ## counted whole (as before), `a_record_whose_template_is_not_known_*` counted 5 where 1
 ## receiver gather was expected; with `absorb` summing the gathers of every file, 3 where 2.
+## With the reason worded as before ("with no source station"), the words did not say what
+## would place the source.
 
 import std/[atomics, math, os, strutils, tables]
 import parseSEG
@@ -280,13 +282,15 @@ proc main*() =
       doAssert joined.totals.traces == 5 and joined.totals.outside == 3, $joined.totals
       doAssert joined.totals.unknown == default(array[TemplateUnknown, int]), $joined.totals
       doAssert wholeLine(joined.totals, ssReceivers) == ""
-      # not joined: measured whole, and said so
+      # not joined (a template generated from S and R files, no X file): measured whole, and
+      # said so, with what would place the source
       let whole = scanOne(path, rkShotGather, x, nil).receivers
       doAssert whole.totals.traces == 8 and whole.totals.outside == 0, $whole.totals
       doAssert whole.totals.unknown[tuNoStation] == 1, $whole.totals
       doAssert "1 record was measured whole: its template is not known (1 with no source " &
-        "station)" in statisticLines(whole.totals, ssReceivers, false), $statisticLines(
-        whole.totals, ssReceivers, false)
+        "station: load the relation file or a survey that places the source)" in
+        statisticLines(whole.totals, ssReceivers, false), $statisticLines(whole.totals,
+        ssReceivers, false)
       doAssert csvCell(totalsCsv(whole.totals), "records measured whole: " & $tuNoStation) ==
         "1", totalsCsv(whole.totals)
 
