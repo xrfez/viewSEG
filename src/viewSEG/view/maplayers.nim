@@ -757,11 +757,11 @@ func markedHereText*(counts: openArray[(MapFilter, int)]): string =
 
 func filterLabel*(f: MapFilter; h: FilterHits): string =
   ## A filter's line in the Layers list: its name and what it found,
-  ## "noisy  (3)", "missing from the template  (...)".
+  ## "noisy  (3)", "missing from the template  (computing...)".
   let name = ($f)[0 .. 0].toUpperAscii & ($f)[1 .. ^1]
   name & (case h.state
     of fsOff: ""
-    of fsComputing: "  (...)"
+    of fsComputing: "  (computing...)"
     of fsDone: "  (" & $h.count & ")"
     of fsNotChecked: "  (not checked)")
 

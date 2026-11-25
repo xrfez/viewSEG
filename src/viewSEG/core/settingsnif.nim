@@ -121,7 +121,9 @@ const
   MapFilterNames: array[MapFilter, string] = ["dead", "undecodable", "killed", "noisy",
     "clipped", "spiky", "constant", "weak", "dcOffset", "allZero", "notANumber", "missing",
     "unlisted", "duplicate", "auxiliary", "noPosition", "reversed", "spreadDiffers", "louder",
-    "notJudged"]
+    "notJudged", "positionOff", "breakOffModel", "breakOffNeighbours"]
+  RetiredFilterNames = ["offsetOff", "midpointOff"]
+    ## filters there are no more: a settings file that names them reads without a problem
   CoordinateNames: array[HeaderCoordinates, string] = ["fill", "replace"]
   TraceMatchNames: array[TraceMatch, string] = ["auto", "station", "channel"]
   MaxLineNames = 1000  ## line names mapped to numbers, kept
@@ -513,6 +515,7 @@ proc settingsDocument*(s: Settings): string =
   w.open("filters")
   for f in s.map.filters: w.ident MapFilterNames[f]
   w.close()
+  if s.map.positionTolerance > 0: w.value("positionTolerance", s.map.positionTolerance)
   w.open("template")
   w.choice("shape", TemplateShapeNames[s.map.spreadTemplate.shape])
   w.value("lines", s.map.spreadTemplate.lines)
@@ -1255,11 +1258,14 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
             r.integer(k, 0, MaxClasses, result.map.foldOffsetClass)
           elif k.isTree("foldSectors"): r.integer(k, MinSectors, MaxSectors, result.map.foldSectors)
           elif k.isTree("foldSector"): r.integer(k, 0, MaxSectors, result.map.foldSector)
+          elif k.isTree("positionTolerance"):
+            r.number(k, MinPositionTolerance, MaxPositionTolerance, result.map.positionTolerance)
           elif k.isTree("filters"):
             var on: set[MapFilter]
             for v in k.kids:
               var f = mfDead
-              if r.pick(v, MapFilterNames, "filters", f): on.incl f
+              if v.kind == nkIdent and v.text in RetiredFilterNames: discard
+              elif r.pick(v, MapFilterNames, "filters", f): on.incl f
             result.map.filters = on
           elif k.isTree("template"):
             template t: untyped = result.map.spreadTemplate

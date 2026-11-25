@@ -143,6 +143,8 @@ const
   MaxNotices* = 20       ## notices kept
   MaxOwnPositions = 32
     ## traces whose own header position is kept (`askOwnPosition`), at most
+  MaxOwnHeaderBytes* = 16 * 1024 * 1024
+    ## the bytes of the records' own header positions kept (`ownHeaders`: 32 a trace), at most
   MaxTraceReads* = 16
     ## traces read for agent control and not taken, kept at most
   MaxPanelValues* = 48 * 1024 * 1024
@@ -1090,6 +1092,9 @@ type
       ## the geometry joins ended so far (`joinReport.serial`): a join
       ## changes the keys the Trace tab shows (read here, never the file's
       ## `keysRevision`, which a join's job writes)
+    positions: int
+      ## the record checks' revision (`RecordQc.revision`) while the trace table shows the
+      ## position error, which they find; 0 otherwise
     keysRev: seq[int]
       ## the shown files' keys revisions (`Session.keysRevision`), in the
       ## order of the traces asked for, then the table's file if it is
@@ -1192,6 +1197,15 @@ type
     why: string
     shown: FirstBreaks
 
+  BreakFilterFind = object
+    ## What the map's first-break filters (`BreakFilters`) show for the record shown: the
+    ## overlay's flags of the result its panel shows, or would show with the overlay on.
+    hits: BreakFilterHits
+    made: tuple[on: set[MapFilter]; file: SessionId; gather, base: int; key: BreakKey;
+      revision: int; model: BreakModel; guided: GuideState; state: BreakState; why: string]
+      ## what `hits` were made of: made again only when it changes
+    revision: int ## bumped when `hits` change
+
   ShotCellEdit = object
     ## One cell edit of a loaded shot log, for undo. Not saved with the project.
     row, col: int
@@ -1279,6 +1293,10 @@ type
       ## the join under way (its geometry, too, destroyed after `jobs`)
     moveBases: seq[tuple[session: SessionId; bases: seq[ReceiverBase]]]
       ## per open file, the receiver fields a station move replaced
+    ownHeaders: seq[tuple[session: SessionId; traces: Slice[int]; own: OwnHeaders]]
+      ## per record of an open file, its own header positions (`core/geometryqc`), read once
+      ## while the file is open and the vendor maps unchanged; the newest last, at most
+      ## `MaxOwnHeaderBytes` together
     moveQueue: seq[SessionId]
       ## open files waiting for a station-move job
     movesJob: JobId = NoJob
@@ -1382,6 +1400,8 @@ type
     breakViews: seq[BreakView]
       ## each record panel's overlay as it shows it (`shownBreaks`), made when its result or
       ## its model changes rather than on every frame
+    breakFilters: BreakFilterFind
+      ## the map's first-break filters on the record shown (`followBreakFilters`)
     batchSurvey: SurveyHolds
       ## the survey each batch write's job joins from (`holdSurvey`), until it ends
     qcHeld: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
@@ -2994,6 +3014,76 @@ func joinedOf*(state: AppState; session: SessionId): int =
     if state.joins[i].session == session: return i
   -1
 
+func geometryUnitsOf(state: AppState; i: int): GeometryUnits =
+  ## Whether the offsets and the coordinates of open file `sessions[i]` are lengths of one
+  ## unit, so its geometry can be checked (`core/geometryqc`): the units its join confirmed
+  ## (the survey's when the join replaced the coordinates and the offsets with them),
+  ## else those its headers give (as an analysis reads them). The offsets keep their own
+  ## unit, the header's measurement system, unless the join replaced them.
+  let s = state.sessions[i]
+  let joined = state.joinedOf(s.id)
+  if joined >= 0 and state.joins[joined].units.file != suNotGiven:
+    template units: untyped = state.joins[joined].units
+    if state.joins[joined].plan.replace:
+      let u = if units.survey in {suMetres, suFeet, suUsFeet}: units.survey else: units.file
+      geometryUnits(u, u)
+    else: geometryUnits(units.file, offsetUnitOf(s.crs))
+  else: geometryUnits(headerUnitOf(s.crs), offsetUnitOf(s.crs))
+
+func stationsOf(state: AppState; i: int): ref SurveyGeometry =
+  ## The stations open file `sessions[i]` is joined with: its join's, else the project's
+  ## survey; nil when none.
+  let joined = state.joinedOf(state.sessions[i].id)
+  if joined >= 0 and not state.joins[joined].geometry.isNil: state.joins[joined].geometry
+  elif joined >= 0 or state.project.dir.len > 0: state.project.geometry
+  else: nil
+
+func geometryAskOf(state: AppState; i: int; filters: set[MapFilter];
+    stations: ref SurveyGeometry; surveyUnit: SurveyUnit): GeometryAsk =
+  ## What the position filter of open file `sessions[i]` is given: its units, the stations it
+  ## was joined with (`stations`, from `stationsOf`), the survey's unit (its join's, else
+  ## `surveyUnit`, the map's), the position tolerance in it, the station moves, and whether
+  ## its own header positions are to be read (the filter is on).
+  let s = state.sessions[i]
+  let joined = state.joinedOf(s.id)
+  let units = state.geometryUnitsOf(i)
+  let position = mfPositionOff in filters
+  var unit = if joined >= 0: state.joins[joined].units.survey else: suNotGiven
+  if unit == suNotGiven: unit = surveyUnit
+  if unit == suNotGiven: unit = units.unit
+  result = GeometryAsk(units: units, unit: unit,
+    survey: (if stations.isNil: nil else: addr stations[]),
+    projectSurvey: joined < 0 and not stations.isNil,
+    tolerance: positionTolerance(state.settings.map.positionTolerance, unit), own: position)
+  if position: result.moves = state.project.doc.stationMoves
+
+func ownHeadersAt(state: AppState; session: SessionId; traces: Slice[int]): int =
+  ## Where the own header positions of record `traces` of open file `session` are kept in
+  ## `ownHeaders`, read with the vendor maps in force; -1 when nowhere.
+  result = -1
+  for k, e in state.ownHeaders:
+    if e.session == session and e.traces == traces and e.own.vendors == state.vendor.gen:
+      return k
+
+func bytesOf(own: OwnHeaders): int = own.rows.len * sizeof(OwnHeader)
+
+proc keepOwnHeaders(state: var AppState; session: SessionId; traces: Slice[int];
+    read: sink OwnHeaders) =
+  ## Keeps the own header positions a record job read of record `traces` of open file
+  ## `session`; the oldest records go once all of them pass `MaxOwnHeaderBytes`. A read that
+  ## failed is not kept, whatever the reason (no index for the file: one may be made later), so
+  ## the next job tries again; nor is one made with vendor maps no longer in force.
+  if not state.sessions.anyIt(it.id == session): return # (closed meanwhile)
+  if read.rows.len != traces.len or read.vendors != state.vendor.gen: return
+  let k = state.ownHeadersAt(session, traces)
+  if k >= 0: state.ownHeaders.delete(k)
+  state.ownHeaders.add (session, traces, OwnHeaders(rows: move read.rows, vendors: read.vendors))
+  var total = 0
+  for e in state.ownHeaders: total += bytesOf(e.own)
+  while total > MaxOwnHeaderBytes and state.ownHeaders.len > 1:
+    total -= bytesOf(state.ownHeaders[0].own)
+    state.ownHeaders.delete(0)
+
 func spreads*(state: AppState): lent Spreads {.inline.} =
   ## The relation records made for the map's planned spreads, and what was
   ## made in words (`core/spread`).
@@ -4265,6 +4355,7 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
   var s = move state.sessions[i]
   state.sessions.delete(i)
   state.dropMoveBases(s.id)
+  state.ownHeaders.keepItIf(it.session != s.id)
   state.moveQueue.keepItIf(it != s.id)
   state.leapQueue.keepItIf(it != s.id)
   for job in state.jobs.list:
@@ -4671,6 +4762,8 @@ proc followInspect(state: var AppState) =
     want.tableOf = (s.id, scope)
     want.table = ins.table
   want.joins = state.joinReport.serial
+  if want.tableOf[0] != NoSession and PositionErrorColumn in want.table.fields:
+    want.positions = state.recordQc.revision
   block shownKeys:
     var seen: seq[SessionId] = @[]
     for t in want.traces:
@@ -4713,6 +4806,7 @@ proc followInspect(state: var AppState) =
   if want.parts == was.parts and want.traces == was.traces and want.edits == was.edits and
       want.own == was.own and want.hasOwn == was.hasOwn and want.shiftMs == was.shiftMs and
       want.joins == was.joins and want.keysRev == was.keysRev and
+      want.positions == was.positions and
       want.displayed == was.displayed and
       want.table == was.table and want.tableOf == was.tableOf and
       want.shown == was.shown and want.record == was.record and
@@ -4760,7 +4854,13 @@ proc followInspect(state: var AppState) =
     req.flowAux = layer.flowReachesAux(state.gatherKind(layer))
   if want.tableOf[0] != NoSession:
     req.table = TableAsk(at: state.fileOf(req, held, state.findSession(want.tableOf[0])),
-      traces: want.tableOf[1], view: want.table, joins: want.joins)
+      traces: want.tableOf[1], view: want.table, joins: want.joins,
+      lengths: state.geometryUnitsOf(state.findSession(want.tableOf[0])).judged,
+      angles: state.geometryUnitsOf(state.findSession(want.tableOf[0])).angles,
+      positions: want.positions)
+    let g = state.recordQc.geometry
+    if want.positions != 0 and state.recordQc.key.file == want.tableOf[0] and g.ready:
+      (req.table.positionTraces, req.table.positionErrors) = (g.span, g.positionDistance)
   for n, t in want.traces:
     let i = state.findTrace(t)
     if i >= 0:
@@ -8736,6 +8836,7 @@ proc takeVendor(state: var AppState; m: sink Msg) =
   state.vendor.job = NoJob
   state.vendor.load = move m.vendorLoad
   inc state.vendor.gen
+  state.ownHeaders.setLen 0 # (read with the maps before: the record's check reads them again)
   template load: untyped = state.vendor.load
   publishVendors(load.registry, state.vendor.choice)
   state.refetchVendorLines()
@@ -9863,12 +9964,13 @@ func breakUnitFromSurvey*(state: AppState; k: int): bool =
   ## Whether `breakOffsetUnit` is the project's survey's because the file names none.
   state.fileOffsetUnit(k) == suNotGiven and state.surveyLengthUnit != suNotGiven
 
-proc breakKeyOf(state: AppState; k: int): (bool, BreakKey, int) =
-  ## What the first-break overlay of `panels[k]` is of, when it is on and the
-  ## panel shows a record: its key, and the session's index.
+proc breakKeyOf(state: AppState; k: int; always = false): (bool, BreakKey, int) =
+  ## What the first-break overlay of `panels[k]` is of, when it is on (or, with `always`,
+  ## would be if it were) and the panel shows a record: its key, and the session's index.
   result[2] = -1
   template p: untyped = state.panels[k]
-  if p.shows != psTraces or p.layers.len == 0 or not p.layers[0].display.firstBreaks: return
+  if p.shows != psTraces or p.layers.len == 0 or
+      not (always or p.layers[0].display.firstBreaks): return
   let src = p.layers[0].source
   if src.kind != lsRecord: return
   let i = state.findSession(src.file)
@@ -9884,11 +9986,12 @@ proc breakKeyOf(state: AppState; k: int): (bool, BreakKey, int) =
 
 proc breakKeyFor(state: AppState; i, gather: int): BreakKey =
   ## The key of the first breaks of record `gather` of session `i`: that of a
-  ## panel showing it with the overlay on (so the noisy-trace test and the
-  ## overlay share one result), else its file's keys with the traces killed in it
-  ## and no component switched off.
+  ## panel showing it with the overlay on, or with a first-break filter of the map on (so the
+  ## noisy-trace test, the overlay and the filters share one result), else its file's keys
+  ## with the traces killed in it and no component switched off.
+  let filters = state.settings.map.filters * BreakFilters != {}
   for k in 0 ..< state.panels.len:
-    let (on, key, j) = state.breakKeyOf(k)
+    let (on, key, j) = state.breakKeyOf(k, always = filters)
     if on and j == i and key.gather == gather:
       # the record's check is not of the given model: it must not start again when that changes
       result = key
@@ -9898,8 +10001,39 @@ proc breakKeyFor(state: AppState; i, gather: int): BreakKey =
   (s.id, gather, s.keysRevision, state.editsAt(s.path).listIn(teKilled, s.gathers[gather].traces),
     newSeq[uint8](), BreakModel(), pbSmoothed)
 
-const SignatureNoFilters = NoiseFilters + {mfMissing, mfUnlisted}
-  ## the filters a signature file has no receivers for: the noise test and the template's
+const SignatureNoFilters = NoiseFilters + BreakFilters + {mfMissing, mfUnlisted}
+  ## the filters a signature file has no receivers for: the noise test, the first breaks and
+  ## the template's
+
+func recordPanel(state: AppState; file: SessionId; gather: int): int =
+  ## The record panel that shows record `gather` of open file `file` (the main panel first);
+  ## -1 for none.
+  result = -1
+  for k in 0 ..< state.panels.len:
+    template p: untyped = state.panels[k]
+    if p.shows == psTraces and p.layers.len > 0 and p.layers[0].source.kind == lsRecord and
+        p.layers[0].source.file == file and p.layers[0].source.gather == gather and
+        (result < 0 or p.id == MainPanel):
+      result = k
+
+func breakFiltersKey(state: AppState): tuple[on: bool; key: BreakKey; session, panel: int] =
+  ## What the map's first-break filters are of, while one is on and a record of a file that is
+  ## not a signature is shown: the key the overlay of the panel showing it has, or would have
+  ## with the overlay on (else the record's own: no component off, the default picking), the
+  ## session's index and that panel's (-1 for none).
+  result = (false, default(BreakKey), -1, -1)
+  if state.settings.map.filters * BreakFilters == {}: return
+  let g = state.selection.activeGather
+  let i = state.findSession(g.file)
+  if i < 0 or g.gather notin 0 ..< state.sessions[i].gathers.len or
+      state.sessions[i].isSignature: return
+  let k = state.recordPanel(g.file, g.gather)
+  if k >= 0:
+    let (on, key, j) = state.breakKeyOf(k, always = true)
+    if on and j == i: return (true, key, i, k)
+  let s = state.sessions[i]
+  result = (true, (s.id, g.gather, s.keysRevision, state.editsAt(s.path).listIn(teKilled,
+    s.gathers[g.gather].traces), newSeq[uint8](), BreakModel(), pbSmoothed), i, -1)
 
 proc followRecordQc(state: var AppState) =
   ## Reads the record shown on a job for the map's filters when one of
@@ -9929,6 +10063,7 @@ proc followRecordQc(state: var AppState) =
   let domain = state.shownDomain
   let (rel, against) = state.qcRelations(domain)
   let placed = state.shownPlace(s, g.gather, domain)
+  let stations = state.stationsOf(i)
   let samples = filters * SampleFilters != {}
   let tr = s.gathers[g.gather].traces
   var gatherTraces = newSeq[int](tr.len)
@@ -9951,9 +10086,13 @@ proc followRecordQc(state: var AppState) =
       for b in state.breaks:
         if b.key.sameRecord(work.key):
           share = 2 # failed or stopped: a result too, the job does not ask again
+  let units = state.unitSources
+  let ask = state.geometryAskOf(i, filters, stations,
+    if units.len > 0: units[0].unit else: suNotGiven)
   let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
     domain, state.settings.join.traceMatch, placed, samples,
-    ownKeyOf(state.editsAt(s.path), gatherTraces), work.settings, work.key, share)
+    ownKeyOf(state.editsAt(s.path), gatherTraces), work.settings, work.key, share, ask,
+    state.vendor.gen)
   if key == q.key: return
   if q.job != NoJob:
     discard state.jobs.cancel(q.job)
@@ -9963,17 +10102,23 @@ proc followRecordQc(state: var AppState) =
   (q.record, q.byPlace, q.onStations) = (-1'i64, false, false)
   q.records = @[]
   q.noise = NoiseSummary()
+  q.geometry = GeometrySummary()
   q.picks = work.on and share == 0
   q.pickKey = work.key
   q.job = NoJob
   inc q.revision
   if share == 1: return # the overlay's job is finding the first breaks: this one follows it
+  let at = state.ownHeadersAt(s.id, tr)
+  let cached = if at >= 0: state.ownHeaders[at].own else: OwnHeaders()
   q.job = state.jobs.submit(JobSpec(title: "Check the record shown for the map's filters",
     lane: jlBackground, auto: true, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
     g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
     state.settings.join.traceMatch, placed, samples,
-    own, reversed, shifts, work, state.inbox.poster, s.correlatedView))
+    own, reversed, shifts, work, state.inbox.poster, s.correlatedView, ask,
+    OwnOpen(choice: s.facts.opened.choice, cache: indexCacheFile(state.indexCache, s.path),
+      limit: state.ownReadLimit, vendors: state.vendor.gen), cached))
   if not rel.isNil: state.qcHeld.add (q.job, rel)
+  if not stations.isNil: state.qcHeld.add (q.job, stations)
 
 proc nextBreakRevision(state: var AppState): int =
   ## A revision no result had before: a view made of a result is of that result as it was.
@@ -10001,9 +10146,16 @@ proc takeRecordQc(state: var AppState; m: sink Msg) =
   ## What the filters' job found in the record it read, while that record,
   ## as it is now, is the one shown.
   template q: untyped = state.recordQc
+  if m.qcGeometryOnly and m.qcOwn.rows.len > 0:
+    state.keepOwnHeaders(m.qcSession, m.qcTraces, move m.qcOwn)
   if m.job == q.job and m.qcSession == q.key.file and m.qcGather == q.key.gather and
+      m.qcKeys == q.key.keys and m.qcGeometryOnly:
+    for f in GeometryFilters: q.hits[f] = move m.qcHits[f]
+    q.geometry = move m.qcGeometry
+    inc q.revision
+  elif m.job == q.job and m.qcSession == q.key.file and m.qcGather == q.key.gather and
       m.qcKeys == q.key.keys:
-    for f in TraceFilters: q.hits[f] = move m.qcHits[f]
+    for f in TraceFilters - GeometryFilters: q.hits[f] = move m.qcHits[f]
     (q.record, q.byPlace, q.onStations) = (m.qcRecord, m.qcByPlace, m.qcOnStations)
     q.records = move m.qcRecords
     q.noise = move m.qcNoise
@@ -10021,6 +10173,9 @@ func filterHits*(state: AppState): array[MapFilter, FilterHits] =
   ## their source); and the shots whose listed spread is not the template's.
   let on = state.settings.map.filters
   for f in TraceFilters * on: result[f] = state.recordQc.hits[f]
+  if mfBreakOffModel in on: result[mfBreakOffModel] = state.breakFilters.hits.offModel
+  if mfBreakOffNeighbours in on:
+    result[mfBreakOffNeighbours] = state.breakFilters.hits.offNeighbours
   let g = state.selection.activeGather
   let i = state.findSession(g.file)
   if state.shownDomain == rdReceiver and state.qcRelations(rdReceiver)[0].isNil and
@@ -10084,6 +10239,10 @@ proc followFirstBreaks(state: var AppState) =
   for k in 0 ..< state.panels.len:
     let (on, key, i) = state.breakKeyOf(k)
     if on and (key, i) notin wanted: wanted.add (key, i)
+  # the map's first-break filters ask for the same result, with the overlay off too
+  let forFilters = state.breakFiltersKey
+  if forFilters.on and (forFilters.key, forFilters.session) notin wanted:
+    wanted.add (forFilters.key, forFilters.session)
   # one result per record and guide: two panels on one record with different models each keep
   # theirs, and neither is given up for the other's
   var kept: seq[FirstBreaks]
@@ -10151,6 +10310,60 @@ proc followFirstBreaks(state: var AppState) =
         views.add v
   state.breakViews = views
 
+proc followBreakFilters(state: var AppState) =
+  ## The map's first-break filters follow the result the overlay shows for the record shown
+  ## (`shownBreaks` of its panel), or would show with the overlay on: one result, so the flags
+  ## on the map and on the plot are the same traces. Made again only when that changes.
+  template bf: untyped = state.breakFilters
+  let (on, key, i, k) = state.breakFiltersKey
+  var made = (on: state.settings.map.filters * BreakFilters, file: NoSession, gather: -1,
+    base: 0, key: key, revision: -1, model: BreakModel(), guided: gdOwn, state: bkComputing,
+    why: "")
+  var shown = FirstBreaks()
+  var found = false
+  if on:
+    let s = state.sessions[i]
+    (made.file, made.gather, made.base) = (s.id, key.gather, s.base)
+    if s.derived:
+      made.why = "no first breaks are found for a record derived from another file"
+    elif k >= 0:
+      let (bi, v) = state.viewOfPanel(k)
+      if bi >= 0:
+        (made.key, made.revision, made.model, made.guided) = (v.key, v.revision, v.model,
+          v.guided)
+        made.state = state.breaks[bi].state
+        found = true
+    else:
+      for b in state.breaks:
+        if b.key == key:
+          (made.revision, made.state, found) = (b.revision, b.state, true)
+  elif made.on != {}:
+    made.why = "no record is shown"
+  if made == bf.made and bf.revision > 0: return
+  bf.made = made
+  inc bf.revision
+  if made.on == {}: bf.hits = BreakFilterHits()
+  elif made.why.len > 0:
+    bf.hits = BreakFilterHits(offModel: FilterHits(state: fsNotChecked, note: made.why),
+      offNeighbours: FilterHits(state: fsNotChecked, note: made.why))
+  elif not found:
+    bf.hits = FirstBreaks().filterHitsOf(made.base) # (computing: its job is asked for)
+  else:
+    if k >= 0: shown = state.shownBreaks(k)
+    else:
+      for b in state.breaks:
+        if b.key == key: shown = b
+    bf.hits = shown.filterHitsOf(made.base)
+
+func breakFilterWords*(state: AppState): string {.inline.} =
+  ## The traces the first-break filters do not judge, in a line (no break found, beyond the
+  ## offsets where breaks are seen); "" when none, or while no first-break filter is on.
+  state.breakFilters.hits.notJudged
+
+func breakFilterRevision*(state: AppState): int {.inline.} =
+  ## Bumped whenever what the first-break filters show changes.
+  state.breakFilters.revision
+
 proc takeFirstBreaks(state: var AppState; m: sink Msg) =
   ## A record's first breaks, while its key is still wanted; the answer of a
   ## job given up for a newer key is dropped.
@@ -10185,6 +10398,7 @@ proc followMapWork(state: var AppState) =
   state.followShots()
   state.followRecordQc()
   state.followFirstBreaks()
+  state.followBreakFilters()
   state.followUnits()
 
 proc endMapWork(state: var AppState; job: JobInfo): bool =

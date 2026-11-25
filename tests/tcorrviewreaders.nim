@@ -159,7 +159,7 @@ proc awaitQc(box: Inbox; session: SessionId): Msg =
     for m in msgs:
       let text = noteOf(m)
       if text.len > 0: why.add text & "\n"
-      if m.kind == mkRecordQc and m.qcSession == session:
+      if m.kind == mkRecordQc and m.qcSession == session and not m.qcGeometryOnly:
         found = m
         got = true
     got

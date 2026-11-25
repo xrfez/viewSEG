@@ -67,7 +67,9 @@ proc everyFieldSet(): Settings =
       inlineHalf: 2500.5, crosslineHalf: 750), folderShots: false, foldLayer: true,
       foldActual: true, foldDifference: true, foldAlong: 25.5, foldAcross: 12.25,
       foldOffsets: "0, 1000, 2000.5", foldOffsetClass: 2, foldSectors: 8, foldSector: 3,
-      filters: {mfNoisy, mfClipped, mfMissing, mfSpreadDiffers}),
+      filters: {mfNoisy, mfClipped, mfMissing, mfSpreadDiffers, mfPositionOff, mfBreakOffModel,
+        mfBreakOffNeighbours},
+      positionTolerance: 2.5),
     join: JoinOptions(trailingDigits: true, multiComponent: true, coordinates: hcReplace,
       traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
       line: 4960), LineName(name: "A line", line: 12.5)]),
@@ -166,8 +168,8 @@ proc main*() =
       not s.map.templateBox and s.map.spreadTemplate == TemplateSpec() and s.map.folderShots and
       s.map.filters == {} and not s.map.foldLayer and not s.map.foldActual and
       not s.map.foldDifference and s.map.foldAlong == 0 and s.map.foldOffsets == "" and
-      s.map.foldOffsetClass == 0 and s.map.foldSectors == 0 and s.map.foldSector == 0,
-      "the map's settings take their defaults"
+      s.map.foldOffsetClass == 0 and s.map.foldSectors == 0 and s.map.foldSector == 0 and
+      s.map.positionTolerance == 0, "the map's settings take their defaults"
     doAssert s.join == JoinOptions(), "the join's options take their defaults"
     doAssert s.headers == HeadersView(), "the Headers window's settings take their defaults"
     doAssert s.headers.followPointer and s.headers.columns == {hcDescription, hcBytes}
@@ -243,6 +245,37 @@ proc main*() =
       problems)
     doAssert ok.map.foldOffsets == "0, 1000" and ok.map.foldOffsetClass == 1 and
       ok.map.foldSectors == 8 and ok.map.foldSector == 8 and problems.len == 0, $problems
+
+  block positionTolerance:
+    # The position filter's tolerance: one out of range (0.1 to 1000) keeps the base's value,
+    # with a line; one in range is kept. Seen to fail with the setting not read.
+    var problems: seq[string]
+    let s = readSettings("(settings (version 1) (map (positionTolerance 5000)))",
+      "settings.nif", Settings(), problems)
+    doAssert s.map.positionTolerance == 0 and problems.len == 1, $problems
+    problems = @[]
+    let ok = readSettings("(settings (version 1) (map (positionTolerance 0.5)))",
+      "settings.nif", Settings(), problems)
+    doAssert ok.map.positionTolerance == 0.5 and problems.len == 0, $problems
+    # what the settings are given otherwise (a command, the agent's) is brought into range
+    for (given, kept) in [(5000.0, MaxPositionTolerance), (0.01, MinPositionTolerance),
+        (NaN, 0.0), (-2.0, 0.0), (Inf, 0.0), (0.0, 0.0), (12.5, 12.5)]:
+      var t = Settings()
+      t.map.positionTolerance = given
+      let c = cleaned(t)
+      doAssert c[0].map.positionTolerance == kept and c[1] == 0, $given & ": " &
+        $c[0].map.positionTolerance
+
+  block retiredFilters:
+    # Filters there are no more ("offsetOff", "midpointOff") are passed over without a line;
+    # an unknown name still has one. Seen to fail with the names taken out of the list alone.
+    var problems: seq[string]
+    let s = readSettings("(settings (version 1) (map (filters offsetOff noisy midpointOff " &
+      "positionOff)))", "settings.nif", Settings(), problems)
+    doAssert s.map.filters == {mfNoisy, mfPositionOff} and problems.len == 0, $problems
+    discard readSettings("(settings (version 1) (map (filters noSuchFilter)))", "settings.nif",
+      Settings(), problems)
+    doAssert problems.len == 1, $problems
 
   block foldEdgesExact:
     # Edges are kept as typed, not to six digits: these were saved as "0, 100000, 100001",

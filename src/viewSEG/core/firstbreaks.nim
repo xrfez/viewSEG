@@ -24,7 +24,7 @@
 import std/[math, strutils]
 import parseSEG
 import processSEG/qc/[firstbreak, shotfit]
-import breakmodel, breakrule, components, edits, jobs, join, processing, session
+import breakmodel, breakrule, components, edits, jobs, join, mapkinds, processing, session
 
 export breakrule
 
@@ -667,3 +667,60 @@ func keyNote*(b: FirstBreaks): string =
     of gdMaking: "picking again for this model..."
     of gdFailed: "picks of " & guideWords(b.guidedBy) & ": " & b.guideWhy
   else: b.statusWords
+
+func firstSentence(words: string): string =
+  ## The first sentence of `words`, without its full stop, its first letter small: the reason
+  ## a filter gives.
+  let stop = words.find(". ")
+  result = if stop >= 0: words[0 ..< stop] else: words.strip(leading = false, chars = {'.'})
+  if result.len > 0: result[0] = result[0].toLowerAscii
+
+type BreakFilterHits* = object
+  ## What the map's first-break filters (`BreakFilters`) find in a record: the overlay's flags.
+  offModel*, offNeighbours*: FilterHits
+  notJudged*: string
+    ## the traces with no break found and those beyond the offsets where breaks are seen, in
+    ## a line ("" when none)
+
+func filterHitsOf*(b: FirstBreaks; base: int): BreakFilterHits =
+  ## The overlay's flags of `b` (the result as the overlay shows it: `withModel` applied) as the
+  ## map's filters: off the model, which holds the traces far off it too (the overlay draws
+  ## both alike), and off its neighbours; `base` is the survey-wide id of the file's trace 0.
+  ## While the result is being made, `fsComputing`; when it failed, or has no model, not
+  ## checked with the overlay's reason.
+  template both(s: FilterState; why: string) =
+    result.offModel = FilterHits(state: s, note: why)
+    result.offNeighbours = FilterHits(state: s, note: why)
+  case b.state
+  of bkComputing: both(fsComputing, "the first breaks are being found")
+  of bkFailed: both(fsNotChecked, "the first breaks could not be found: " & b.why)
+  of bkDone:
+    if not b.hasModel:
+      both(fsNotChecked, b.modelNote.firstSentence)
+    else:
+      let r = b.rule
+      both(fsDone, "")
+      for i in 0 ..< min(r.offModel.len, b.pickMs.len):
+        if r.offModel[i] or (i < r.farOff.len and r.farOff[i]):
+          result.offModel.traces.add base + b.first + i
+        if i < r.offNeighbours.len and r.offNeighbours[i]:
+          result.offNeighbours.traces.add base + b.first + i
+      result.offModel.count = result.offModel.traces.len
+      result.offNeighbours.count = result.offNeighbours.traces.len
+      result.offModel.note = "traces whose pick is more than " &
+        formatFloat(r.limitMs, ffDecimal, 1) & " ms from the model (" & $r.nOffModel &
+        "), or whose break was found " & r.guideWindowMs.windowWords & " to " &
+        $int(FarOffMaxMs) & " ms from it (" & $r.nFarOff & " far off)"
+      result.offNeighbours.note = if r.stationLimitMs.isNaN:
+          "traces whose pick differs from those beside it on its receiver line (none has " &
+            "enough neighbours to be judged)"
+        else: "traces whose pick is more than " & formatFloat(r.stationLimitMs, ffDecimal, 1) &
+          " ms from what the stations beside it on its receiver line say"
+      var parts: seq[string] = @[]
+      if r.nNoBreak > 0:
+        parts.add $r.nNoBreak & (if r.nNoBreak == 1: " trace" else: " traces") &
+          " with no break found"
+      if r.nBeyond > 0:
+        parts.add $r.nBeyond & (if parts.len == 0: (if r.nBeyond == 1: " trace" else: " traces")
+          else: "") & " beyond the offsets where breaks are seen"
+      if parts.len > 0: result.notJudged = "First breaks: " & parts.join("; ") & ": not judged."

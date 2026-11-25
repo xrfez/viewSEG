@@ -24,8 +24,12 @@
 ## zero, not a number), the stations the template plans that the record
 ## lacks, its traces at stations the template does not list and stations
 ## recorded twice (processSEG's `recordCompleteness`), auxiliary traces,
-## traces without a position, reversed traces, and the shots whose listed
-## spread differs from the template (processSEG's `compareRelations`). What
+## traces without a position, reversed traces, the shots whose listed
+## spread differs from the template (processSEG's `compareRelations`), the
+## traces whose own header position is not the survey's (`core/geometryqc`),
+## and the first-break overlay's flags: a pick off the record's model, or off
+## its neighbours on its receiver line (`core/firstbreaks`, the overlay's own
+## result, so the map and the plot never disagree). What
 ## each finds is a `FilterHits`: today for the record shown (and the
 ## survey-wide spread check); the survey-wide QC passes fill the same.
 ##
@@ -37,6 +41,7 @@
 ## cannot tell the colours apart), with a symbol inside for the filter
 ## within the kind (`FlagSymbol`), so no two filters mark alike.
 
+import std/math
 import parseSEG
 
 export StationKey
@@ -91,13 +96,20 @@ type
       ## traces outside the exclusion area far above those either side of them on their line
     mfNotJudged = "not judged for noise"
       ## traces inside the exclusion area, or whose sensor or station is unknown
+    mfPositionOff = "header position disagrees with the survey"
+      ## traces whose own header receiver or source position is not the survey's station's
+    mfBreakOffModel = "first break off the model"
+      ## traces whose first-break pick is farther from the record's model than its scatter
+      ## allows, or whose break was found far off it (the overlay's "far off the model")
+    mfBreakOffNeighbours = "first break off its neighbours"
+      ## traces whose pick differs from those beside it on its receiver line
 
   FlagFamily* = enum
     ## What kind of finding a filter's mark says, in its colour.
     ffFailed = "failed traces" ## dead, not decodable, all zero, not a number
     ffAmplitude = "amplitude"  ## noisy, clipped, spiky, constant, weak, DC offset
     ffEdited = "your edits"    ## killed, reversed
-    ffSpread = "the spread"    ## missing, not in the template, twice, ... spread differs
+    ffSpread = "the spread"    ## missing, not in the template, twice, ... spread differs, geometry
 
   FlagShape* = enum
     ## The outline of a kind of finding's marks, round its station: one a
@@ -118,6 +130,7 @@ type
     syRing = "a ring"
     syDot = "a dot"
     syDash = "a slash"
+    syBackslash = "a backslash"
 
   FilterMark* = tuple[family: FlagFamily; symbol: FlagSymbol]
     ## how a filter's points are marked on the map: its kind's colour and
@@ -148,7 +161,8 @@ const
     (ffAmplitude, syUpright), (ffAmplitude, syRing), (ffAmplitude, syCross),
     (ffAmplitude, syPlus), (ffFailed, syRing), (ffFailed, syCross), (ffSpread, syNone),
     (ffSpread, syPlus), (ffSpread, syRing), (ffSpread, syBar), (ffSpread, syUpright),
-    (ffEdited, syNone), (ffSpread, syCross), (ffAmplitude, syDot), (ffAmplitude, syDash)]
+    (ffEdited, syNone), (ffSpread, syCross), (ffAmplitude, syDot), (ffAmplitude, syDash),
+    (ffSpread, syBackslash), (ffSpread, syDot), (ffSpread, syDash)]
     ## each filter's mark, in `MapFilter`'s order: no two alike, and the
     ## filters most used plain outlines (dead a square, noisy a circle,
     ## missing from the template a triangle, reversed a diamond; killed an X
@@ -156,13 +170,28 @@ const
     ## position are counted, not marked
   TraceFilters* = {mfDead, mfUndecodable, mfNoisy, mfClipped, mfSpiky, mfConstant, mfWeak,
     mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted, mfDuplicate, mfAuxiliary,
-    mfLouder, mfNotJudged}
+    mfLouder, mfNotJudged, mfPositionOff}
     ## the filters found by reading the record shown on a job (`core/recordqc`)
+  GeometryFilters* = {mfPositionOff}
+    ## those found from the trace keys and the file's own headers (`core/geometryqc`)
+  MinPositionTolerance* = 0.1
+    ## the least tolerance of "header position disagrees with the survey" that can be set
+  MaxPositionTolerance* = 1000.0 ## the most
+  BreakFilters* = {mfBreakOffModel, mfBreakOffNeighbours}
+    ## those that are the first-break overlay's flags of the record shown: they take its
+    ## result (`core/firstbreaks`), and ask for its job when it has none
   NoiseFilters* = {mfNoisy, mfWeak, mfLouder, mfNotJudged}
     ## those that come from the noisy-trace test (`core/noisearea`): they run it, and the
     ## Seismic window marks the exclusion area while one is on
   MaxTemplateLines* = 1000 ## a patch's lines, at most
   MaxTemplateChannels* = 100_000 ## a patch's stations on a line, at most
+
+func boundedTolerance*(setting: float64): float64 =
+  ## `setting` as the settings keep it: 0 (the default) stays 0; a value from
+  ## `MinPositionTolerance` to `MaxPositionTolerance` stays; one outside is brought to the
+  ## nearer end; NaN, a negative or an infinite one is the default (0).
+  if setting.isNaN or setting <= 0 or setting == Inf: 0.0
+  else: clamp(setting, MinPositionTolerance, MaxPositionTolerance)
 
 func shapeOf*(f: MapFilter): FlagShape {.inline.} = FamilyShapes[FilterMarks[f].family]
   ## The outline filter `f`'s marks are drawn with: its kind's.

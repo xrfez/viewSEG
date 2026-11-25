@@ -158,7 +158,7 @@ type
     boxes: seq[tuple[name: string; corners: array[4, Vec2]]]
       ## the template boxes drawn last frame, ImGui's coordinates (for tests)
     marksFor: tuple[shots, survey: int; on: bool; hidden: seq[MapLayerKey];
-      groups: set[MapGroup]; filters: set[MapFilter]; qc, spreads, edits: int;
+      groups: set[MapGroup]; filters: set[MapFilter]; qc, breaks, spreads, edits: int;
       gather: GatherRef]
       ## what the marked points were found from
     hits: array[MapFilter, FilterHits]
@@ -214,6 +214,9 @@ type
     foldSplitFor: tuple[offsets: string; sectors: int] ## the settings the text boxes show
     foldSplitSet: bool
     foldSplitError: tuple[offsets, sectors: string]
+    toleranceBuf: array[24, char] ## the position filter's tolerance as typed
+    toleranceFor: float64 ## the tolerance the box shows
+    toleranceSet: bool
       ## why the last text typed in each box was refused (the setting keeps its last value)
 
   MapOutput* = object
@@ -409,6 +412,7 @@ proc glyphIcon(c, background: Rgba; shape: FlagShape; symbol: FlagSymbol; id: st
   of syRing: ImDrawList_AddCircle(dl, p(0, 0), 0.7 * k, col, 0, ws)
   of syDot: ImDrawList_AddCircleFilled(dl, p(0, 0), 0.35 * k, col, 0)
   of syDash: ImDrawList_AddLine(dl, p(-0.7 * k, 0.7 * k), p(0.7 * k, -0.7 * k), col, ws)
+  of syBackslash: ImDrawList_AddLine(dl, p(-0.7 * k, -0.7 * k), p(0.7 * k, 0.7 * k), col, ws)
 
 proc layerRow(l: MapLayerView; i: int; marks: var Marks; res: var MapOutput) =
   ## One layer of the popover: its colour, its own toggle and its points.
@@ -641,6 +645,10 @@ proc binBox(id: string; buf: var array[24, char]; hint: string): bool =
 
 func boxText(v: float64): string = (if v > 0: $v else: "")
 
+func numberText(v: float64): string =
+  ## `v` as a box shows it: "5", "0.5".
+  if v == round(v) and abs(v) < 1e15: $int64(v) else: $v
+
 proc fillBox(buf: var array[24, char]; text: string) =
   for i in 0 ..< buf.len: buf[i] = '\0'
   for i in 0 ..< min(text.len, buf.len - 1): buf[i] = text[i]
@@ -834,6 +842,11 @@ proc drawFoldRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutp
     else: discard
     igUnindent(0)
 
+const ClearCase = "A station marked both by a first-break filter and by \"header position" &
+  " disagrees with the survey\" is the clear case for \"Move this station...\" in the" &
+  " station-move menu"
+  ## what the position filter's and the first-break filters' tips end with
+
 const filterTips: array[MapFilter, string] = [
   "Traces the file marks dead in their headers",
   "Traces whose samples could not be decoded",
@@ -858,9 +871,31 @@ const filterTips: array[MapFilter, string] = [
   "Traces outside the exclusion area far louder than those either side of them on their own" &
     " line (a station that is loud against its neighbours, not noisy against the record)",
   "Traces whose noise was not judged: inside the exclusion area, whose sensor or station is" &
-    " not known, or of a node with a component missing. They are not shown as good"]
+    " not known, or of a node with a component missing. They are not shown as good",
+  "Traces whose own header receiver or source position is not where the survey puts their" &
+    " station (a station that moved, or a survey that is not the file's). Any format. In the" &
+    " station-move menu, \"Move this station to the position in this trace's headers\"" &
+    " follows it. " & ClearCase,
+  "Traces whose first-break pick is further from the refraction model fitted to the record" &
+    " than the record's own scatter allows (three times the scatter of the picks near the" &
+    " model, never less than 12 ms), or whose break was found 100 to 400 ms from it (far off" &
+    " the model): the first-break overlay's flags, the same traces it joins with a line on the" &
+    " Seismic plot. Ticked with the overlay off, it has the overlay's picks made all the same;" &
+    " the overlay stays off. " & ClearCase,
+  "Traces whose first-break pick differs from those of the traces beside it on its receiver" &
+    " line by more than the record's scatter allows: a wrong station, even where the breaks" &
+    " bend away from a straight model. The first-break overlay's flags, as for \"off the" &
+    " model\". " & ClearCase]
 
 const NoiseWrapEm = 30'f32 ## the words' lines wrap at this many font sizes
+
+func geometryShown(st: AppState): seq[string] =
+  ## The lines the position filter's and the first-break filters' words take under
+  ## "Filters": why the position is not judged, what the header positions share, the traces
+  ## the first breaks do not judge (none while those filters are off).
+  if mfPositionOff in st.settings.map.filters: result = st.recordQc.geometry.geometryLines
+  let breaks = st.breakFilterWords
+  if breaks.len > 0 and st.settings.map.filters * BreakFilters != {}: result.add breaks
 
 func noiseLines(st: AppState): seq[string] =
   ## The lines the noisy-trace test's words take under "Filters" (none while no
@@ -872,12 +907,46 @@ func noiseLines(st: AppState): seq[string] =
 
 const FilterOrder = [mfDead, mfUndecodable, mfKilled, mfNoisy, mfLouder, mfWeak, mfNotJudged,
   mfClipped, mfSpiky, mfConstant, mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted,
-  mfDuplicate, mfAuxiliary, mfNoPosition, mfReversed, mfSpreadDiffers]
+  mfDuplicate, mfAuxiliary, mfNoPosition, mfReversed, mfSpreadDiffers, mfPositionOff,
+  mfBreakOffModel, mfBreakOffNeighbours]
   ## the order the filters are listed in: the noisy-trace test's findings together
 static: doAssert FilterOrder.len == ord(high(MapFilter)) + 1, "a filter is not listed"
 
-proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; marks: var Marks;
-    res: var MapOutput) =
+proc toleranceRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput) =
+  ## Beside the position filter: how far a header position may be from the position in
+  ## force, in the survey's unit ("more than [ 5 ] m from the survey"); emptied, the default.
+  let g = st.recordQc.geometry
+  let unit = if g.ready and g.tolerance > 0: g.positionUnit else: st.surveyUnit
+  let shown = positionTolerance(st.settings.map.positionTolerance, unit)
+  if not mu.toleranceSet or mu.toleranceFor != shown:
+    mu.toleranceBuf.fillBox(numberText(shown))
+    (mu.toleranceFor, mu.toleranceSet) = (shown, true)
+  igIndent(0)
+  igAlignTextToFramePadding()
+  igTextUnformatted("more than", nil)
+  igSameLine(0, -1)
+  if binBox("##positiontolerance", mu.toleranceBuf, numberText(positionTolerance(0, unit))):
+    let v = boxValue(mu.toleranceBuf)
+    if v == 0 or v in MinPositionTolerance .. MaxPositionTolerance:
+      var s = st.settings
+      s.map.positionTolerance = v
+      res.commands.add Command(kind: ckSettings, settings: s)
+    mu.toleranceSet = false # (refused: the box shows the tolerance in force again)
+  marks.mark("map.filter tolerance")
+  tip("How far a trace's own header position may be from its station's position in force " &
+    "(the survey's, or a station move's) before it is marked, in the survey's unit: from " &
+    $MinPositionTolerance & " to " & $MaxPositionTolerance & ". Empty: " &
+    lengthWords(DefaultMetres, suMetres) & ", or " & lengthWords(DefaultFeet, suFeet) &
+    " when the survey is in feet. A number typed is kept as typed: when a survey in another " &
+    "unit is loaded it is read in that unit, not converted.")
+  igSameLine(0, -1)
+  let words = if unit.abbreviation.len > 0: unit.abbreviation & " from the survey"
+              else: "from the survey (in its unit)"
+  igTextUnformatted(words.cstring, nil)
+  igUnindent(0)
+
+proc drawFilters(mu: var MapUi; st: AppState; hits: array[MapFilter, FilterHits]; t: Theme;
+    marks: var Marks; res: var MapOutput) =
   ## The map's filters on the record shown: each with its colour, its tick
   ## and what it found (a count, "..." while its job runs, "not checked"
   ## with the reason in its tooltip), and Select for those that found
@@ -919,7 +988,23 @@ proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; mar
         res.commands.add Command(kind: ckSelect, traces: h.traces, mode: smReplace)
       marks.mark("map.filter select " & $f)
       tip("Select these " & $h.traces.len & " traces in the plot")
+    if f == mfPositionOff and on: mu.toleranceRow(st, marks, res)
     igPopID()
+  let geometry = geometryShown(st)
+  if geometry.len > 0:
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    igPushTextWrapPos(igGetCursorPosX() + NoiseWrapEm * igGetFontSize())
+    for line in geometry: igTextUnformatted(line.cstring, nil)
+    igPopTextWrapPos()
+    igPopStyleColor(1)
+    marks.mark("map.geometry")
+    tip("The file's own header positions are compared with the positions in force: the " &
+      "survey's stations, or their station moves. A trace with no position, or whose station " &
+      "the survey lacks, cannot be compared. The first-break filters do not judge a trace " &
+      "where no break was found, nor one beyond the offsets where breaks are seen, as the " &
+      "overlay does not." & (if st.recordQc.geometry.projectSurvey:
+      " This file is not joined to the project's survey: its headers are compared with it " &
+      "by the stations they name." else: ""))
 
 proc drawLayers(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
     res: var MapOutput; hits: array[MapFilter, FilterHits]; t: Theme) =
@@ -972,7 +1057,7 @@ proc drawLayers(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ma
     for i, l in layers:
       if l.key.kind == mlShotLog: layerRow(l, i, marks, res)
     igUnindent(0)
-  drawFilters(st, hits, t, marks, res)
+  mu.drawFilters(st, hits, t, marks, res)
   igSeparator()
   for i, l in layers:
     if l.key.kind == mlHighlight: layerRow(l, i, marks, res)
@@ -1354,7 +1439,7 @@ proc followMarks(mu: var MapUi; st: AppState) =
   let edits = if k >= 0: st.editsOf(k).revision else: 0
   let now = (st.shots.revision, st.survey.revision, on, st.map.hidden,
     st.settings.map.hiddenGroups, st.settings.map.filters, st.recordQc.revision,
-    st.spreads.revision, edits, st.selection.activeGather)
+    st.breakFilterRevision, st.spreads.revision, edits, st.selection.activeGather)
   if now == mu.marksFor and mu.marksRev > 0: return
   mu.marksFor = now
   mu.marked.setLen 1

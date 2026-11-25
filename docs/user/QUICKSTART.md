@@ -1145,7 +1145,9 @@ are drawn. **Use this record's fit** copies the fit of a good record into the bo
 the others. The model
 is kept in the project when one is open, else in the settings. A killed trace has no bars. With the pointer on a trace the status bar adds
 the model's time, the pick's and their difference. It is off until you turn it on, and
-works in the background, so stepping through records is not held up.
+works in the background, so stepping through records is not held up. Its flags can also be
+shown on the map: the filters **first break off the model** (the far off ones with them, as
+the overlay draws both alike) and **first break off its neighbours** (Map > Layers, below).
 
 ## Station moves
 
@@ -1383,8 +1385,45 @@ for noise** (below), **clipped**, spiky, constant, DC offset, all zero, not a nu
 (processSEG's amplitude checks, default thresholds); stations **missing from
 the template** (planned in the X file, no trace in the record), traces **not in the
 template**, stations **recorded twice**; auxiliary traces, traces **without a position**,
-**reversed** ones; and the shots whose X record stands out from its template (**spread not
-the template**). Hover a filter for what it counts; **Select** selects its traces in the
+**reversed** ones; the shots whose X record stands out from its template (**spread not
+the template**); and **header position disagrees with the survey**: the file's own header
+receiver position (read from the file, not what an import or a station move made of it)
+against its position in force, the station's in the survey it was joined to or the station
+move that applies; any format. Beside it, the tolerance: "more than [ 5 ] m from the survey",
+in the survey's unit (5 m by default, 16 ft when the survey is in feet; 0.1 to 1000; empty the
+box for the default), kept with the settings; a number typed is kept as typed, so a survey in
+another unit loaded later reads it in that unit. A marked trace is the one to move the station
+for: "Move this station to the position in this trace's headers", after which it is no longer
+marked and the list says "1 station moved to agree with the headers". A source that is off
+marks its source point on the map, not the receivers' traces, and the list names it ("The
+source 1/1001 is 25 m from the survey."). When most of the record's stations sit the same
+distance and bearing from the survey, they are marked and the list says so, with the stations
+off by more than that counted apart ("26 stations sit about 50 m east of the survey (the same
+shift for all of them: check the survey file or the coordinate frame); 4 more are further
+off."). It says "not checked" and why, never a count of 0, when it could not compare: with no
+survey joined, where the coordinates are angles (degrees, arc seconds), with no station or
+header position to compare, where the file's own headers cannot be read without walking a
+large file again (no usable index for it: tried again for the next record shown, so an index
+made meanwhile is used), or where the header positions are the survey's times 3.2808 or
+0.3048 (feet against metres: most stations so, or every station of a small record). A file
+not joined to the project's survey is compared with it by the stations its headers name, and
+the list says so. The file's own headers of a record are read once while it is open (and
+again after the vendor maps are loaded again). A trace whose station the survey does not have
+is not judged: the list says how many ("12 traces' stations are not in the survey: not
+judged") and does not mark them.
+
+The first-break overlay's flags are filters too: **first break off the model** (the pick is
+farther from the record's model than the record's own scatter allows, or the break was found
+far off it) and **first break off its neighbours** (the pick differs from those of the traces
+beside it on its receiver line). They are the overlay's own result for the record shown, as
+its Seismic window shows it or would with the overlay on (its pick choice, its given model),
+so the map and the plot mark the same traces; ticked with the overlay off, the picks are made
+all the same ("computing..." beside the tick, never a 0, while they are) and the overlay
+stays off. Where the overlay has no model (no offsets, no coordinates, too few picks) they
+say "not checked" with its reason; the traces with no break found and those beyond the
+offsets where breaks are seen are not judged, and a line under the list says how many. A
+station marked by a first-break filter and by "header position disagrees with the survey"
+is the clear case for "Move this station...". Hover a filter for what it counts; **Select** selects its traces in the
 plot; point at a ringed receiver and its description says which filters mark it.
 
 **Noisy traces and the area left out.** With a relation file, **noisy** and **weak** are
@@ -2139,7 +2178,12 @@ holds, read-only, in four tabs:
   and the map: point at a row and its trace lights up in both, click to select it
   (Ctrl+click adds or takes away, Shift+click selects a range), double-click to show its
   record; selected rows are marked, and so is the row of the trace under the plot's
-  pointer. Right-click a row to copy it or every row read. Only the rows on screen are
+  pointer. Three columns are worked out from the positions: **Distance, source to
+  receiver**, **Offset error** (the offset's size less that distance; empty where the units
+  differ or a position is not known; both empty where the coordinates are angles) and
+  **Position error** (the file's own header receiver position's distance from its position
+  in force, in the survey's unit, as the map's "header position disagrees with the survey"
+  found it: only for the record it checked, while that filter is on; empty elsewhere). Right-click a row to copy it or every row read. Only the rows on screen are
   read; a column you sort, find or graph by is read whole once, in the background (a
   million traces scroll at frame rate).
 

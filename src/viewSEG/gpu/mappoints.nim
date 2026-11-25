@@ -60,7 +60,7 @@ type
     ## What a mark holds inside its outline (`MapStyle.symbol`), drawn as
     ## the outline is, a little thinner, its size what the outline has room
     ## for.
-    gsNone, gsCross, gsPlus, gsBar, gsUpright, gsRing, gsDot, gsSlash
+    gsNone, gsCross, gsPlus, gsBar, gsUpright, gsRing, gsDot, gsSlash, gsBackslash
 
   MapStyle* = object
     ## How one set of points is drawn.
@@ -185,7 +185,8 @@ void main() {
       else if (symbol == 4) ds = segment(p, vec2(0.0, -k), vec2(0.0, k));
       else if (symbol == 5) ds = abs(length(p) - k * 0.7);
       else if (symbol == 6) ds = length(p) - k * 0.3;
-      else ds = segment(p, vec2(-k * 0.8, k * 0.8), vec2(k * 0.8, -k * 0.8));
+      else if (symbol == 7) ds = segment(p, vec2(-k * 0.8, k * 0.8), vec2(k * 0.8, -k * 0.8));
+      else ds = segment(p, vec2(-k * 0.8, -k * 0.8), vec2(k * 0.8, k * 0.8));
     }
     float sw = edgeWidth * 0.7; // the symbol's stroke
     float stroke = max(clamp(edgeWidth / 2.0 - d + 0.5, 0.0, 1.0),

@@ -859,6 +859,28 @@ proc mapTrace(w: var SeismicWriter; record: int64; channel: int; sl, sk, rl, rk:
   for i in 0 ..< Samples: buf[i] = float32(scale * float64(mapWave(k.offset, i)))
   w.writeTrace(k, buf)
 
+proc surveyShotSegy*(fx: Fixtures; name: string; movedReceiver = -1;
+    coordScale = 1.0): string =
+  ## Shot 0 of `surveySps`'s survey as a SEG-Y file (its headers name no station: the join
+  ## finds them by the field record number); channel `movedReceiver` + 1's receiver position
+  ## 30 east of its station, every coordinate `coordScale` times the survey's.
+  result = fx.dir / name
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
+    text: @["C01 viewSEG test fixture: a shot of the survey"]))
+  var buf = newSeq[float32](16)
+  for i in 0 ..< Channels:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.srcPoint) = (float64(FirstRecord), float64(i + 1), FirstSrcPoint)
+    (k.t0Ms, k.intervalUs, k.status) = (0.0, DtMs * 1000, tsLive)
+    k.offset = abs(rcvX(i + 1) - srcX(0))
+    let east = if i == movedReceiver: 30.0 else: 0.0
+    (k.srcX, k.srcY, k.rcvX, k.rcvY) = (srcX(0) * coordScale, OriginY * coordScale,
+      (rcvX(i + 1) + east) * coordScale, OriginY * coordScale)
+    for j in 0 ..< buf.len: buf[j] = float32(i + 1)
+    w.writeTrace(k, buf)
+  let log = w.close()
+  doAssert log.len == 0, $log
+
 const MapFfid* = 1000
   ## `mapShotSegy`'s FFIDs are their X records' numbers plus this: the X
   ## record is found by the source's station, as a recorder numbers its

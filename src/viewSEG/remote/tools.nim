@@ -693,6 +693,15 @@ proc mapJson(state: AppState; limit: int): JsonNode =
         "sensorOrStationUnknown": n.unknown, "incompleteNodes": n.incomplete,
         "noSamples": n.unusable, "notJudged": n.notJudged, "noisy": n.noisy, "weak": n.weak,
         "louder": n.louderCount, "lines": n.lines, "linesReached": n.linesReached}
+    let g = state.recordQc.geometry
+    if g.ready:
+      result["geometry"] = %*{"words": g.geometryLines, "positionNotJudged": g.positionWhy,
+        "positionDisagrees": g.positionOff, "receiversOff": g.receiversOff,
+        "sourcesOff": g.sourcesOff, "positionTolerance": g.tolerance,
+        "notInSurvey": g.notInSurvey, "movedToAgree": g.movedAgree,
+        "sharedShiftStations": g.shift.stations, "furtherOff": g.furtherOff}
+    if state.settings.map.filters * BreakFilters != {}:
+      result["firstBreaks"] = %*{"notJudged": state.breakFilterWords}
   var selected = newJArray()
   for i in 0 ..< min(state.selection.points.len, limit):
     selected.add state.pointJson(state.selection.points[i])
