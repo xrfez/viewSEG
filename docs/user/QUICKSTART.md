@@ -1406,6 +1406,12 @@ comma), `u` whole microseconds, and any other character must be there as written
 because it could be the month or the minute: write `mo` or `mi`. The whole pattern can also be
 `epoch seconds` or `epoch microseconds`. A field takes at most its width in digits, so a long
 run of digits does not match rather than read as something else.
+The **Presets** list beside the pattern box fills it with **Unix microseconds**
+(`epoch microseconds`), **Unix seconds** (`epoch seconds`) or one of three calendar forms; the
+box stays free text. Choosing Time (UTC) for a column of 15 or 16 digit numbers (10 digits for
+seconds) fills the box with `epoch microseconds` (`epoch seconds`) at once, so the answer to
+"GPS or Unix: choose GPSTB, or Time (UTC)" is two clicks; the numbers may as well be GPS
+times, which is why nothing is read until Time (UTC) is chosen and **Apply** pressed.
 
 The program proposes a pattern only when it is sure. It does so for a four-digit year first,
 followed by a month and a day (`-`, `/` or `.` between them) or by a day of year, then an

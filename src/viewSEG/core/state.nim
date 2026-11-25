@@ -2790,6 +2790,12 @@ proc shotLogTimeNote*(state: AppState; i: int; map: ShotLogMap): string =
   if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: ""
   else: timeNote(state.shotLogs[i].log, map)
 
+proc shotLogEpochPreset*(state: AppState; i: int; map: ShotLogMap; col: int): string =
+  ## The pattern the Columns dialog starts a column with when it is chosen as Time (UTC)
+  ## on loaded shot log `i` (`epochPreset`); "" for none.
+  if i < 0 or i >= state.shotLogs.len: ""
+  else: epochPreset(state.shotLogs[i].log, map, col)
+
 proc shotLogNames*(state: AppState; i: int; map: ShotLogMap; count: int): seq[string] =
   ## The names of the first `count` columns of loaded shot log `i` as `map`
   ## gives them (`columnNames`).

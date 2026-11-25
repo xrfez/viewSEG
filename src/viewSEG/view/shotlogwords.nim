@@ -29,6 +29,15 @@ const
     "Seconds or microseconds since 1970: epoch seconds, epoch microseconds.\n" &
     "Empty: the form the first rows decide is used; when they decide none, type it.\n" &
     TimeSourceTip
+  PresetsHint* = "Presets"
+  PresetsTip* = "Fill the pattern box with a form that is often needed. The box stays free text."
+  TimePresets* = [(label: "Unix microseconds", pattern: "epoch microseconds"),
+    (label: "Unix seconds", pattern: "epoch seconds"),
+    (label: "2024-03-01 00:00:00.000000", pattern: "yyyy-mo-dd hh:mi:ss.ffffff"),
+    (label: "2024-03-01T00:00:00Z", pattern: "yyyy-mo-ddThh:mi:ssZ"),
+    (label: "2024 061 00:00:00 (day of year)", pattern: "yyyy ddd hh:mi:ss")]
+    ## the Time pattern box's pick-list: the epoch forms, then calendar forms of the kind
+    ## `detectTimePattern` proposes
   NameTip* = "The name of a user defined column. It cannot be one of the system's names " &
     "(whatever the capitals, spaces or punctuation), Ignore, or another column's name. " &
     "Empty: the header's name."

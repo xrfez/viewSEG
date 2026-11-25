@@ -2052,6 +2052,18 @@ proc timePattern*(log: ShotLog; map: ShotLogMap): string {.raises: [].} =
   if col >= 0 and result.len == 0 and log != nil:
     result = detectWith(sampleCells(log, map, col), utcHeader(log.columnName(col)))
 
+proc epochPreset*(log: ShotLog; map: ShotLogMap; col: int): string {.raises: [].} =
+  ## The pattern to suggest when column `col` is chosen as Time (UTC): `EpochMicros`
+  ## when its first filled cells are whole numbers of microseconds in about 1999..2100
+  ## (15 or 16 digits), `EpochSeconds` when they are seconds (9 or 10 digits), else "".
+  ## It is only a suggestion for the pattern box: the number cannot tell Unix from GPS,
+  ## and nothing is read until the choice is applied.
+  if log == nil or col < 0 or col >= log.width: return ""
+  let cells = sampleCells(log, map, col)
+  if microsLike(cells): EpochMicros
+  elif secondsLike(cells): EpochSeconds
+  else: ""
+
 proc undecidedWords(log: ShotLog; map: ShotLogMap): string =
   ## What is said when the Time (UTC) column's form is not decided.
   let col = timeColumn(map)

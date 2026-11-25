@@ -742,12 +742,29 @@ proc drawColumns(ui: var ShotLogUi; st: AppState; i: int; t: Theme; marks: var M
   igAlignTextToFramePadding()
   igTextUnformatted("Time pattern", nil)
   igSameLine(0, -1)
-  igSetNextItemWidth(-1)
+  let current = bufText(ui.pattern).strip
+  var preview = PresetsHint
+  for p in TimePresets:
+    if p.pattern == current: preview = p.label
+  let presetWidth = igGetFontSize() * 13
+  igSetNextItemWidth(-(presetWidth + igGetStyle().ItemSpacing.x))
   if igInputText("##pattern", cast[cstring](addr ui.pattern[0]),
       csize_t(ui.pattern.len), 0, nil, nil):
     ui.draftDirty = true
   marks.mark("shotlog.pattern")
+  marks.mark("shotlog.patterntext " & current)
   tip(PatternTip)
+  igSameLine(0, -1)
+  igSetNextItemWidth(presetWidth)
+  if igBeginCombo("##presets", preview.cstring, 0):
+    for p in TimePresets:
+      if igSelectable_Bool(p.label.cstring, p.pattern == current, 0, ImVec2_c(x: 0, y: 0)):
+        setText(ui.pattern, p.pattern)
+        ui.draftDirty = true
+      marks.mark("shotlog.presetitem " & p.label)
+    igEndCombo()
+  marks.mark("shotlog.presets")
+  tip(PresetsTip)
   if ui.draftNote.len > 0:
     dim(ui.draftNote, t)
     marks.mark("shotlog.timenote " & ui.draftNote)
@@ -781,7 +798,13 @@ proc drawColumns(ui: var ShotLogUi; st: AppState; i: int; t: Theme; marks: var M
         sample.add st.shotCell(i, r, c)
       igTextUnformatted(sample.cstring, nil)
       discard igTableNextColumn()
-      if roleCombo(c, ui.draft.roles[c], marks): ui.draftDirty = true
+      let was = ui.draft.roles[c]
+      if roleCombo(c, ui.draft.roles[c], marks):
+        ui.draftDirty = true
+        if ui.draft.roles[c] == crTime and was != crTime and bufText(ui.pattern).strip.len == 0:
+          # a column of Unix times chosen as Time (UTC) starts with its form filled in
+          ui.readDraft()
+          setText(ui.pattern, st.shotLogEpochPreset(i, ui.draft, c))
       discard igTableNextColumn()
       if ui.draft.roles[c] == crText:
         igSetNextItemWidth(-1)
