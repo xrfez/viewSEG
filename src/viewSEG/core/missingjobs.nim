@@ -41,8 +41,9 @@
 ## Several X records at a shot's source station: the record number does not
 ## pick one (`recordCompleteness` would). The shot is checked against each, a
 ## template shared by several records (a reshoot of one patch) once, and takes
-## the one that shares the most stations with the data; a tie between
-## different templates is listed in `unmatched` (`SeveralFit`).
+## the one that shares the most stations with the data, then the one that lacks
+## the fewest; a tie on both between different templates is listed in
+## `unmatched` (`SeveralFit`).
 ##
 ## A receiver is checked here rather than by `recordCompleteness`: its
 ## template is every source its O records call for (two O records of one
@@ -433,9 +434,10 @@ proc bestOfSeveral(g: SurveyGeometry; rows: TraceRows; first: RecordCompleteness
     ctx: JobContext): tuple[c: RecordCompleteness; why: string] =
   ## The shot `rows` checked against each X record at its source station
   ## (`first.candidates`, more than one), the record number left out: the one
-  ## whose template shares the most stations with the data. Records with the
-  ## same template (a reshoot of one patch) are checked once. A tie between
-  ## different templates is `why` (`SeveralFit`).
+  ## whose template shares the most stations with the data, and of those the one
+  ## that lacks the fewest. Records with the same template (a reshoot of one
+  ## patch) are checked once. A tie on both between different templates is
+  ## `why` (`SeveralFit`).
   var keys = newSeq[TraceKeys](rows.len)
   for i in 0 ..< keys.len: keys[i] = rows.keysAt(i)
   let counts = newSeq[int](keys.len)
@@ -443,7 +445,7 @@ proc bestOfSeveral(g: SurveyGeometry; rows: TraceRows; first: RecordCompleteness
   var templates: seq[HashSet[tuple[channel: int64; station: StationKey]]] = @[]
   var tied = false
   result = (c: first, why: SeveralFit)
-  var best = -1
+  var best = (present: -1, missing: 0)
   for record in first.candidates:
     ctx.checkCancelled()
     let calls = g.templateOf(record, byChannel)
@@ -452,10 +454,10 @@ proc bestOfSeveral(g: SurveyGeometry; rows: TraceRows; first: RecordCompleteness
       # The number put in the keys only makes the library check that one record.
       for k in keys.mitems: k.record = float64(record)
       var c = g.recordCompleteness(rowsOf(keys, counts), rmSourceStation)
-      if c.present > best:
+      if c.present > best.present or (c.present == best.present and c.missing < best.missing):
         c.fieldRecord = first.fieldRecord
-        (best, tied, result.c) = (c.present, false, c)
-      elif c.present == best:
+        (best, tied, result.c) = ((present: c.present, missing: c.missing), false, c)
+      elif c.present == best.present and c.missing == best.missing:
         tied = true
   result.why = if tied: SeveralFit else: ""
 

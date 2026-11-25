@@ -15,7 +15,9 @@
 ## of a receiver picked by the record number, `two_o_records_at_one_receiver`
 ## rejected found 0, missing 3 (record 5) and an unmatched receiver (record 9);
 ## with any file of one receiver taken for receiver data,
-## `a_shot_of_one_live_receiver_among_shots` rejected 4 shots and no missing receiver.
+## `a_shot_of_one_live_receiver_among_shots` rejected 4 shots and no missing receiver;
+## with X records at one source compared by the stations found alone,
+## `two_x_records_one_inside_the_other` rejected data 1..4 as unmatched.
 
 import std/[os, strutils]
 import parseSEG
@@ -406,6 +408,24 @@ proc main*() =
     let r = run(dir, @[p], sv)
     doAssert r.unmatched.len == 0, $r.unmatched
     expect(r.shot.figures, "1 1 4 4 0 | 4 4 0")
+
+  block two_x_records_one_inside_the_other:
+    ## X10 calls receivers 1..4 and X11 receivers 1..6, both at source 1. Data 1..4
+    ## shares 4 stations with each and lacks none of X10's: X10, nothing missing.
+    ## Data 1..3 lacks one of X10's and three of X11's: X10, receiver 4 missing.
+    ## Data 1..6 is X11. The record number (10, 11 or 99) changes nothing.
+    let sv = surveyOf(xRec(10, "1.00", "1.00", 1, 4, 10, 1, 4),
+      xRec(11, "1.00", "1.00", 1, 6, 10, 1, 6))
+    for ffid in [10, 11, 99]:
+      for (last, want) in [(4, "1 1 4 4 0 | 4 4 0"), (3, "1 1 4 3 1 | 4 3 1 10/4x1"),
+          (6, "1 1 6 6 0 | 6 6 0")]:
+        let p = dir / ("nested-" & $ffid & "-" & $last & ".sgd")
+        var trs: seq[Tr] = @[]
+        for q in 1 .. last: trs.add (ffid, 1.0, float64(q), 1, 1)
+        traceFile(p, trs)
+        let r = run(dir, @[p], sv)
+        doAssert r.unmatched.len == 0, $ffid & " " & $last & " " & $r.unmatched
+        expect(r.shot.figures, want)
 
   block two_o_records_at_one_receiver:
     ## Receiver 2 has O records for sources 1..3 and 4..6; its data holds 1..3.
