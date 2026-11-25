@@ -13,8 +13,17 @@
 ## A cancel asked between blocks removes the part file; a file cut after it was
 ## opened fails that file only, and the next file is written.
 ##
+## A pilot written with the plot's sort interleaves records, so the rows of a block
+## belong to several plans: the plans are kept per record (a bounded cache, lowered
+## here through `planCacheBytes` to hold two plans, one, or none beyond the newest),
+## the rows of one plan are correlated together wherever they sit in the block, and
+## the traces are written in their order. A record without a pilot fails the file
+## the same way both paths.
+##
 ## Seen to fail: block row `i` read at row `i + 1` of the source block (every
-## trace differed); a dead row given the live status of its neighbour (a dead
+## trace differed); a plan's rows read back from their unsorted places (the interleaved
+## cases differed); a cache that returns its first plan whatever the record (the pilot
+## cases differed); a dead row given the live status of its neighbour (a dead
 ## trace written as a correlation, not zeros).
 
 import std/[os, options, strutils]
@@ -41,8 +50,13 @@ type Layout = object
   records, live: int ## per record: live traces, then one dead, one pilot, one other auxiliary
   dead, aux: bool
   byPosition = false ## channel is the position in the record, so a sort interleaves records
+  lacking = -1       ## the record that has no auxiliary traces, so no pilot
 
-proc traceCount(l: Layout): int = l.records * (l.live + ord(l.dead) + 2 * ord(l.aux))
+proc perRecord(l: Layout; r: int): int =
+  l.live + ord(l.dead) + 2 * ord(l.aux and r != l.lacking)
+
+proc traceCount(l: Layout): int =
+  for r in 0 ..< l.records: result += l.perRecord(r)
 
 proc writeSet(path: string; segd: bool; sweeps: seq[seq[float32]]; l: Layout) =
   ## One record for each of `sweeps`. Traces get their own noise-free content: a
@@ -58,10 +72,11 @@ proc writeSet(path: string; segd: bool; sweeps: seq[seq[float32]]; l: Layout) =
   var n = 0
   for r in 0 ..< l.records:
     let sweep = sweeps[r mod sweeps.len]
+    let before = n
     var plan: seq[tuple[kind: char; at: int]] = @[]
     for i in 0 ..< l.live: plan.add (kind: 'L', at: i)
     if l.dead: plan.insert((kind: 'D', at: 0), min(1, plan.len))
-    if l.aux:
+    if l.aux and r != l.lacking:
       plan.add (kind: 'P', at: 0)
       plan.add (kind: 'O', at: 0)
     for (kind, at) in plan:
@@ -84,8 +99,7 @@ proc writeSet(path: string; segd: bool; sweeps: seq[seq[float32]]; l: Layout) =
         for j in 0 ..< Record: buf[j] = float32(j + 1)
         (k.traceCode, k.status) = (6'i16, tsAuxiliary)
       k.record = float64(7 + r)
-      k.channel = float64(if l.byPosition: n mod (l.live + ord(l.dead) + 2 * ord(l.aux)) +
-          1 else: n + 1)
+      k.channel = float64(if l.byPosition: (n - before) mod l.perRecord(r) + 1 else: n + 1)
       k.intervalUs = DtMs * 1000.0
       k.t0Ms = 0.0
       k.time = 1_700_000_000.0
@@ -165,37 +179,78 @@ proc main*() =
   defer: correlateInBlocks = true
 
   type Case = tuple[name: string; segdIn: bool; format: OutputFormat; pilot: bool;
-    layout: Layout; edited: bool]
+    layout: Layout; edited: bool; cache: int]
   let cases: seq[Case] = @[
     ("segy-segy-stored", false, ofSegy, false,
-      Layout(records: 1, live: 126, dead: true, aux: true), true),
+      Layout(records: 1, live: 126, dead: true, aux: true), true, 0),
     ("segy-segy-pilot", false, ofSegy, true,
-      Layout(records: 7, live: 20, dead: true, aux: true), true),
+      Layout(records: 7, live: 20, dead: true, aux: true), true, 0),
     ("segd-segd-stored", true, ofSegd, false,
-      Layout(records: 1, live: 126, dead: true, aux: true), true),
+      Layout(records: 1, live: 126, dead: true, aux: true), true, 0),
     ("segd-segy-stored", true, ofSegy, false,
-      Layout(records: 1, live: 61, dead: true, aux: true), true),
+      Layout(records: 1, live: 61, dead: true, aux: true), true, 0),
     ("segy-pilot-interleaved", false, ofSegy, true,
-      Layout(records: 7, live: 20, dead: true, aux: true, byPosition: true), false),
+      Layout(records: 7, live: 20, dead: true, aux: true, byPosition: true), false, 0),
+    ("segy-pilot-interleaved-edited", false, ofSegy, true,
+      Layout(records: 7, live: 20, dead: true, aux: true, byPosition: true), true, 0),
+    ("segy-pilot-evicting", false, ofSegy, true,
+      Layout(records: 7, live: 20, dead: true, aux: true, byPosition: true), true, 25_000),
+    ("segy-pilot-one-plan-kept", false, ofSegy, true,
+      Layout(records: 7, live: 20, dead: true, aux: true, byPosition: true), false, 1),
+    ("segd-segy-pilot-interleaved", true, ofSegy, true,
+      Layout(records: 7, live: 20, dead: true, aux: true, byPosition: true), true, 0),
+    ("segd-segd-pilot-interleaved", true, ofSegd, true,
+      Layout(records: 7, live: 20, dead: true, aux: true, byPosition: true), true, 0),
+    ("segd-segd-pilot-evicting", true, ofSegd, true,
+      Layout(records: 7, live: 20, dead: true, aux: true, byPosition: true), false, 25_000),
     ("one-block", false, ofSegy, false,
-      Layout(records: 1, live: 61, dead: true, aux: true), false),
+      Layout(records: 1, live: 61, dead: true, aux: true), false, 0),
     ("one-trace-records", false, ofSegy, false,
-      Layout(records: 70, live: 1, dead: false, aux: false), false),
+      Layout(records: 70, live: 1, dead: false, aux: false), false, 0),
     ("one-trace", false, ofSegy, false,
-      Layout(records: 1, live: 1, dead: false, aux: false), false),
+      Layout(records: 1, live: 1, dead: false, aux: false), false, 0),
     ("pilot-one-per-record", false, ofSegy, true,
-      Layout(records: 70, live: 1, dead: false, aux: true), false)]
+      Layout(records: 70, live: 1, dead: false, aux: true), false, 0)]
   for c in cases:
     let path = srcDir / (c.name & (if c.segdIn: ".sgd" else: ".sgy"))
     writeSet(path, c.segdIn, @[sweep, other], c.layout)
     var file = openSeismic(path, keys = true)
     var opts = if c.edited: flags else: OutputOptions()
     opts.format = c.format
-    if c.name.endsWith("interleaved"): opts.sortKeys = @[SortKey(field: hfChannel)]
+    if c.layout.byPosition: opts.sortKeys = @[SortKey(field: hfChannel)]
     opts.correlation = some(if c.pilot: pilot else: stored)
+    if c.cache > 0: planCacheBytes = c.cache
     sameBytes(file, path, outDir, c.name, opts,
       if c.edited: editsFor(c.layout.traceCount) else: FileEdits())
+    planCacheBytes = 64 shl 20
     file.close()
+
+  block recordWithoutPilot:
+    ## A record in the middle has no auxiliary trace to take a pilot from: the file
+    ## fails with the same words both ways and no partial file is left, whether the
+    ## plans are kept or not.
+    let path = srcDir / "nopilot.sgy"
+    let layout = Layout(records: 7, live: 20, dead: true, aux: true, byPosition: true,
+      lacking: 3)
+    writeSet(path, false, @[sweep, other], layout)
+    var file = openSeismic(path, keys = true)
+    defer: file.close()
+    var opts = OutputOptions(format: ofSegy, correlation: some(pilot),
+      sortKeys: @[SortKey(field: hfChannel)])
+    correlateInBlocks = false
+    let old = runWrite(file, path, outDir / "nopilot-old.out", opts)
+    correlateInBlocks = true
+    let fresh = runWrite(file, path, outDir / "nopilot-new.out", opts)
+    planCacheBytes = 1
+    let tiny = runWrite(file, path, outDir / "nopilot-tiny.out", opts)
+    planCacheBytes = 64 shl 20
+    doAssert old.st == jsFailed, "a record without a pilot was written one row at a time"
+    for got in [fresh, tiny]:
+      doAssert got.st == jsFailed, "a record without a pilot was written"
+      doAssert got.error == old.error, got.error & " vs " & old.error
+      doAssert got.wrote.reason == old.wrote.reason, got.wrote.reason & " vs " & old.wrote.reason
+    doAssert old.error.len > 0
+    for stem in ["nopilot-old.out", "nopilot-new.out", "nopilot-tiny.out"]: noPart(outDir, stem)
 
   block cancelBetweenBlocks:
     ## The progress report says no after the first block: the part file goes.
