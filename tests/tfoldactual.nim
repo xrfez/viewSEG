@@ -43,7 +43,9 @@
 ## when the files change, "a count of the same grid is not cancelled" failed; before the
 ## reasons were told apart, the receivers-only file was "gives no source or receiver
 ## positions" and the far file an empty map; with no look for files listed twice, the linked
-## files were counted twice (8 files); with short and more swapped, "short is red" found blue.
+## files were counted twice (8 files); with a count cancelled by the user while the files
+## changed under it started again, "a count cancelled by the user is followed by another"
+## failed; with short and more swapped, "short is red" found blue.
 
 import std/[algorithm, atomics, locks, math, os, sequtils, strutils, tables]
 import parseSEG
@@ -571,6 +573,25 @@ proc main*() =
         "the file added since: " & $readNow()
       removeFile rec / "shot7.sgy"
       removeFile rec / "shot8.sgy"
+      # such a count cancelled from the Jobs window: no other count starts behind it
+      slowReads.store true
+      shotFile(rec / "shot9.sgy", 3, coordinates = false)
+      doAssert r.folder(rec)
+      t.follow(r.jobs, r.survey, want(), NaN, NaN)
+      let gated = t.running
+      doAssert gated != NoJob
+      shotFile(rec / "shot7.sgy", 1, coordinates = false)
+      doAssert r.folder(rec)
+      t.follow(r.jobs, r.survey, want(), NaN, NaN)
+      doAssert t.running == gated
+      discard r.jobs.cancel(gated)
+      slowReads.store false
+      doAssert waitUntil((t.follow(r.jobs, r.survey, want(), NaN, NaN);
+        t.status != fmComputing))
+      doAssert t.status == fmFailed and t.reason == Cancelled and t.running == NoJob,
+        "a count cancelled by the user is followed by another: " & $t.status
+      removeFile rec / "shot7.sgy"
+      removeFile rec / "shot9.sgy"
       # past the bytes the parts may take they go (the newest map stays), and are read again
       foldCacheBytes = 1
       shotFile(rec / "shot7.sgy", 1, coordinates = false)

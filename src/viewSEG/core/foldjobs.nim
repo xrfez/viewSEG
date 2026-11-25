@@ -699,9 +699,10 @@ proc poll(t: var FoldTracker; jobs: Jobs) =
       elif state == jsFailed and wanted:
         (t.status, t.reason) = (fmFailed, "The fold could not be counted: " & info.get.error & ".")
         if not t.shown.isNil: t.show(nil)
-      elif state == jsCancelled and wanted:
-        # cancelled from the Jobs window
-        (t.status, t.reason) = (fmFailed, Cancelled)
+      elif state == jsCancelled and (wanted or t.pending):
+        # cancelled from the Jobs window (also a count the files changed under: the next one
+        # is not started behind the user's back)
+        (t.status, t.reason, t.pending) = (fmFailed, Cancelled, false)
         if not t.shown.isNil: t.show(nil)
       t.unpin(jobs)
 
