@@ -51,7 +51,9 @@ func summaryLine*(t: FolderTotals): string =
   plural(t.files, "file", "files") & ", " & plural(t.passed, "pass", "passes") & ", " &
     plural(t.failed, "fail", "fails") & ", " & $t.notJudged & " not judged, " &
     plural(t.problems, "problem", "problems") & ", " &
-    plural(t.skipped, "skipped", "skipped") & "."
+    plural(t.skipped, "skipped", "skipped") &
+    (if t.forceNotJudged > 0: ", " & $t.forceNotJudged & " with force not judged" else: "") &
+    "."
 
 func kindLabel*(kind: SignatureKind): string =
   ## What the Kind column shows. The two signature files do not share a prefix,
@@ -68,7 +70,9 @@ func sentenceOf*(row: FolderRow): string =
 
 func verdictCell(row: FolderRow): string =
   case row.outcome
-  of foJudged: $row.verdict
+  of foJudged:
+    if row.forceWhy.len > 0 and row.verdict == qvPass: "pass (force not judged)"
+    else: $row.verdict
   of foProblem: "problem"
   of foSkipped: "skipped"
 

@@ -58,6 +58,9 @@ type
     polarity*: string
     warnings*: seq[string]
     problem*: string
+    forceWhy*: string
+      ## why this judged file's force limits were not judged, in words; "": they were
+      ## (or the file was not judged)
     extraPolarity*: string
     extraWarnings*: seq[string]
     weightWords*: seq[string]
@@ -72,7 +75,9 @@ type
   FolderTotals* = object
     ## Counts of the rows in hand. `passed`, `failed` and `notJudged` are
     ## judged rows only. Every file is counted under its own verdict.
-    files*, passed*, failed*, notJudged*, problems*, skipped*: int
+    ## `forceNotJudged` counts judged rows whose force limits were not judged
+    ## (also counted under their verdict).
+    files*, passed*, failed*, notJudged*, problems*, skipped*, forceNotJudged*: int
 
   FolderTable* = object
     ## The rows, the profile's problems (said once) and the fleet's weight words.
@@ -104,6 +109,7 @@ func totalsOf*(rows: openArray[FolderRow]): FolderTotals =
       of qvPass: inc result.passed
       of qvFail: inc result.failed
       of qvNotJudged: inc result.notJudged
+      if row.forceWhy.len > 0: inc result.forceNotJudged
     of foProblem: inc result.problems
     of foSkipped: inc result.skipped
 
@@ -246,7 +252,7 @@ func haystack(row: FolderRow): string =
   result = row.path & "\n" & $row.kind & "\n" & row.pair & "\n" & row.sentence &
     "\n" & row.polarity & "\n" & row.extraPolarity & "\n" & row.problem & "\n" &
     $row.verdict & "\n" & $row.outcome & "\n" & row.shot.ffid & "\n" & row.shot.line &
-    "\n" & row.shot.point
+    "\n" & row.shot.point & "\n" & row.forceWhy
   if row.controller != 0: result.add "\n" & $row.controller
   if row.vibrator != 0: result.add "\n" & $row.vibrator
   for w in row.warnings: result.add '\n'; result.add w

@@ -26,6 +26,7 @@ import parseSSDAT
 import viewSEG/core/[analysis, jobs, persist, project, references, session, settings,
   signatures, sigjudge, sigtypes, state, sweepinfo, threads, units, vibanalysis, vibfolderconf,
   vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
+import viewSEG/view/vibfolderwords
 import utils/[chosenref, fixtures, sigfiles, waiting]
 
 const Samples = 6000
@@ -328,6 +329,65 @@ proc main*() =
     let counted = applied(profileOf(QcLimits(), 500.0, 5, asB,
       ForceScale(datCountsPerLbf: 8.0), 1000.0, NaN, "", NaN, "counts"), [])
     doAssert folderParams(counted, roles, sgDat).forceHundredUnit == "counts"
+
+  block forcePerFile:
+    ## The force limits not judged are said per file: in its warnings, its Verdict
+    ## cell and the totals, and the run-wide notice shows when any file has them.
+    ## Seen to fail when `filesGiveForce` hid the notice for the whole run (a drive
+    ## level typed with no scale: verdict pass and nothing said).
+    let drive = applied(profileOf(QcLimits(), 500.0, 5, asB, ForceScale(), NaN, 60.0, "",
+      NaN), [])
+    var got = runJob(@[listed(plain)], drive)
+    doAssert got.st == jsDone, got.error
+    var row = rowOf(got.table, plain)
+    doAssert row.outcome == foJudged, row.problem
+    doAssert row.forceWhy == "the force limits are not judged: no counts-per-pound scale " &
+      "is set", row.forceWhy
+    doAssert "The force limits are not judged: no counts-per-pound scale is set" in
+      row.warnings, $row.warnings
+    doAssert ForceNotJudged in got.table.problems
+    doAssert got.table.totals.forceNotJudged == 1
+    doAssert "1 with force not judged" in summaryLine(got.table.totals)
+    if row.verdict == qvPass:
+      doAssert rowCells(row)[9] == "pass (force not judged)", rowCells(row)[9]
+    # a mixed folder: the .dat has a scale and no drive level, the .vib the constant
+    let mixed = applied(profileOf(QcLimits(), 500.0, 5, asB,
+      ForceScale(datCountsPerLbf: 8.0, vibAccMvPerCount: 10.0), NaN, NaN, "", NaN), [])
+    let vibOk = vibFile(dir, "mixed.vib")
+    got = runJob(@[listed(plain), listed(vibOk)], mixed)
+    doAssert got.st == jsDone, got.error
+    row = rowOf(got.table, plain)
+    doAssert row.forceWhy.endsWith("no drive level is set"), row.forceWhy
+    let vibRow = rowOf(got.table, vibOk)
+    doAssert vibRow.outcome == foJudged and vibRow.forceWhy.len == 0, vibRow.forceWhy
+    doAssert got.table.totals.forceNotJudged == 1
+    doAssert ForceNotJudged in got.table.problems
+    # a .vib with no constant, one whose header gives no hold-down weight
+    let noConst = runJob(@[listed(vibOk)], drive)
+    doAssert rowOf(noConst.table, vibOk).forceWhy.endsWith("no accelerometer constant is set"),
+      rowOf(noConst.table, vibOk).forceWhy
+    var head = MadeUpHeader
+    head.holdDownLb = 0
+    let noHold = vibFile(dir, "nohold.vib", SynthVib(header: head))
+    let holdRun = runJob(@[listed(noHold)], mixed)
+    doAssert rowOf(holdRun.table, noHold).forceWhy.endsWith(
+      "the header gives no hold-down weight"), rowOf(holdRun.table, noHold).forceWhy
+    # a .dat with no QC block holds no target force
+    let noQc = datFile(dir, "noqc.dat", SynthDat(samples: Samples, noQc: true))
+    let full = applied(profileOf(QcLimits(), 500.0, 5, asB, ForceScale(datCountsPerLbf: 8.0),
+      NaN, 60.0, "", NaN), [])
+    got = runJob(@[listed(noQc)], full)
+    doAssert rowOf(got.table, noQc).forceWhy.endsWith("this file holds no target force"),
+      rowOf(got.table, noQc).forceWhy
+    # every piece present: judged, nothing said
+    got = runJob(@[listed(plain)], full)
+    row = rowOf(got.table, plain)
+    doAssert row.outcome == foJudged and row.forceWhy.len == 0, row.forceWhy
+    for w in row.warnings:
+      doAssert "not judged" notin w, w
+    doAssert ForceNotJudged notin got.table.problems
+    doAssert got.table.totals.forceNotJudged == 0
+    doAssert "force not judged" notin summaryLine(got.table.totals)
 
   block weights:
     let vib = vibFile(dir, "one.vib")

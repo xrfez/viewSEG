@@ -474,6 +474,12 @@ puts its reason in the sentence column. A box above the table narrows the rows. 
 header to sort by it (again for the other way); Warnings, FFID and the source columns do not
 sort. The totals count the whole run, not only the rows the filter leaves in sight.
 
+Every file gives its own 100 % force where it can: a `.dat` from its target force (needs the
+counts-per-pound scale and the drive level), a `.vib` from its header's hold-down weight (needs
+the accelerometer constant). A file whose force limits could not be judged says which piece is
+missing in its warnings, its Verdict reads "pass (force not judged)", the totals say "N with
+force not judged", and a line above the table says that some force limits were not judged.
+
 **Run** lists nothing new: it judges the ticked files. Listing and judging are background jobs
 with progress; while it runs, the button is **Cancel**. When it finishes, the **Results** tab is
 the one in front. **Copy** puts the whole table on the clipboard. **Export CSV...** writes the

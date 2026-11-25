@@ -58,8 +58,10 @@ type
     problems*: seq[string]
 
 const ForceNotJudged* = "No 100 % force: the force limits are not judged."
-  ## What `applied` says when the profile has no 100 % force. The force limits
-  ## are then not judged (`forceHundredPct` stays unset); the run does not fail.
+  ## What a run's table says above the rows when any file's force limits were not
+  ## judged. A profile with no typed 100 % force is not a problem of its own: each
+  ## file may give its force (a `.dat` from its target force, a `.vib` from its
+  ## hold-down weight), and the file that cannot says why.
 
 func sameFloat(x, y: float64): bool {.inline.} =
   x == y or (x.isNaN and y.isNaN)
@@ -111,17 +113,11 @@ func profileOf*(limits: QcLimits; qcWindowMs: float64; harmonics: int;
 func typedForce(x: float64): bool {.inline.} =
   x > 0 and x < Inf
 
-func filesGiveForce*(targetPct: float64; scale: ForceScale): bool =
-  ## Whether each signature file can give its own 100 % force: a `.dat` from
-  ## the controller's target force when a drive level was typed, a `.vib` from
-  ## its hold-down weight when the accelerometer constant is set.
-  typedForce(targetPct) or typedForce(scale.vibAccMvPerCount)
-
 func applied*(p: VibQcProfile; archiveIds: openArray[string]): VibQcAsk =
   ## The plot options and ask parameters a QC run on another file must use.
-  ## A reference id that is not in `archiveIds`, and a profile with no 100 %
-  ## force, are named in `problems` and are not a failure: the force limits are
-  ## then not judged, and the other settings are still applied.
+  ## A reference id that is not in `archiveIds` is named in `problems` and is
+  ## not a failure: the other settings are still applied. A profile with no
+  ## typed 100 % force leaves it unset; each file may give its own.
   result = VibQcAsk(options: VibratorOptions(harmonics: p.harmonics,
     qcWindowMs: p.qcWindowMs, qc: p.limits, forceHundredPct: p.forceHundredPct,
     targetPct: p.targetPct), accelSet: p.accelSet, forceScale: p.forceScale,
@@ -130,6 +126,5 @@ func applied*(p: VibQcProfile; archiveIds: openArray[string]): VibQcAsk =
     forceHundredSetKnown: p.forceHundredSetKnown)
   if p.referenceId.len == 0 or p.referenceId notin archiveIds:
     result.problems.add referenceProblem(p.referenceId)
-  if not typedForce(p.forceHundredPct) and not filesGiveForce(p.targetPct, p.forceScale):
-    result.problems.add ForceNotJudged
+  if not typedForce(p.forceHundredPct):
     result.options.forceHundredPct = NaN

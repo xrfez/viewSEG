@@ -4,7 +4,7 @@
 ##   file's own facts (no controller, serial, header weight, polarity, fitted
 ##   top, alignment, residual, `swapForces` or `fromFirstFrame`);
 ## - `applied` gives those settings back for a QC run on another file, and names
-##   a missing reference and a missing 100 % force instead of failing;
+##   a missing reference instead of failing;
 ## - the project document keeps one profile beside the other vibrator fields, an
 ##   older document has none, and a field this version does not know is kept;
 ## - the job's hold-down, baseplate and reaction mass are stored once, in
@@ -77,15 +77,13 @@ proc main*() =
     doAssert "not in the archive" in none.problems[0]
     let bare = applied(profileOf(limits, 400.0, 4, asB, ForceScale(), NaN, NaN, "", NaN),
       ["r1"])
-    doAssert bare.problems.len == 2, $bare.problems
-    doAssert bare.problems[1] == ForceNotJudged
+    doAssert bare.problems.len == 1, $bare.problems
     doAssert none.options.forceHundredPct.isNaN
     doAssert none.options.qc.avgPhaseDeg == 3 and none.options.qc.peakForcePct == 110
     doAssert none.options.qc.peakPhaseDeg.isNaN
     let both = applied(profileOf(limits, 400.0, 4, asB, ForceScale(), 0.0, NaN, "missing", NaN), [])
-    doAssert both.problems.len == 2
+    doAssert both.problems.len == 1
     doAssert "not in the archive" in both.problems[0]
-    doAssert both.problems[1] == ForceNotJudged
 
   block document:
     let limits = QcLimits(avgPhaseDeg: 4, peakPhaseDeg: 9, avgDistortionPct: 15,

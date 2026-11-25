@@ -173,6 +173,8 @@ proc folderSignature*(facts: SignatureFacts; scale: ForceScale; accelSet: AccelS
 proc finish(sink: FolderQcSink; table: var FolderTable) =
   attachPairs(table.rows)
   table.totals = totalsOf(table.rows)
+  if table.totals.forceNotJudged > 0 and ForceNotJudged notin table.problems:
+    table.problems.add ForceNotJudged
   if sink != nil: sink.result = table
 
 proc stopJob(sink: FolderQcSink; table: var FolderTable) =
@@ -269,6 +271,37 @@ proc loadReference(reference: FolderReference): tuple[held: HeldRef; problem: st
   except CatchableError as e:
     result.problem = e.msg
 
+func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasure];
+    hundredProblem: string): string =
+  ## Why this file's force limits were not judged, in words; "" when they were (or
+  ## are off). The missing piece is named from what the file and the settings hold.
+  var notJudged = false
+  for m in measures:
+    if m.limit in {qlAvgForce, qlPeakForce} and m.status == qsNotJudged and
+        not m.bound.isNaN:
+      notJudged = true
+  if not notJudged: return
+  result = "the force limits are not judged: "
+  if hundredProblem.len > 0:
+    result.add "the typed 100 % force does not apply (" & hundredProblem & ")"
+  elif typedForce(ask.options.forceHundredPct):
+    result.add "no force was measured in the judged part"
+  else:
+    case facts.kind
+    of sgDat:
+      if not typedForce(ask.forceScale.datCountsPerLbf):
+        result.add "no counts-per-pound scale is set"
+      elif not facts.qc.valid or facts.qc.targetForceLbf <= 0:
+        result.add "this file holds no target force"
+      else:
+        result.add "no drive level is set"
+    of sgVib:
+      if not typedForce(ask.forceScale.vibAccMvPerCount):
+        result.add "no accelerometer constant is set"
+      else:
+        result.add "the header gives no hold-down weight"
+    of sgNone: result.add "no 100 % force is available"
+
 proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: SweepInfo;
     ask: VibQcAsk; choice: SignatureChoice; held: HeldRef; fileNo, count: int): FolderRow =
   let path = item.path
@@ -362,19 +395,19 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
   if answer.problem.len > 0:
     return FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foProblem,
       problem: answer.problem, polarity: answer.polarity.line, warnings: warnings)
+  let measures = measuresOf(answer.qc.rows)
+  let forceWhy = forceWhyNot(facts, ask, measures, answer.hundredProblem)
+  if forceWhy.len > 0:
+    addLine(warnings, forceWhy.capitalizeAscii)
   FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foJudged,
-    verdict: answer.qc.verdict, sentence: answer.qc.line,
-    measures: measuresOf(answer.qc.rows), polarity: answer.polarity.line,
+    verdict: answer.qc.verdict, sentence: answer.qc.line, forceWhy: forceWhy,
+    measures: measures, polarity: answer.polarity.line,
     warnings: warnings, controllers: controllersOf(answer.controller))
 
 proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
     files: seq[FolderListed]; sink: FolderQcSink; choice: SignatureChoice;
     reference: FolderReference) =
   var table = FolderTable(problems: ask.problems, rows: @[])
-  if not typedForce(ask.options.forceHundredPct) and
-      not filesGiveForce(ask.options.targetPct, ask.forceScale) and
-      ForceNotJudged notin table.problems:
-    table.problems.add ForceNotJudged
   var keys: seq[PairKey] = @[]
   for f in files: keys.add pairKeyOf(f.path, f.info)
   let paired = pairSweeps(keys)
