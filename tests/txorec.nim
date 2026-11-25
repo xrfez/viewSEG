@@ -166,6 +166,20 @@ proc main*() =
         " planned, " & $row.plannedMissing & " missing"
       doAssert "X record 7" in hits[mfMissing].note, what & ": " & hits[mfMissing].note
 
+  block derivedOnce:
+    # X records only, no map filter: the O records are derived once for two receiver files
+    var st = initAppState()
+    st.apply Command(kind: ckLoadSurvey, paths: @[xs])
+    doAssert st.settle(st.survey.layers.len == 1 and st.jobs.active.len == 0)
+    for f in [rcv, slice]:
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: f)
+      doAssert st.settle(st.sessions.len > 0 and st.sessions[^1].path == f.expandFilename and
+        st.jobs.active.len == 0 and st.sessions[^1].checkedAgainst.len > 0), f
+      doAssert st.sessions[^1].records[0].planned == 4, f & ": " &
+        $st.sessions[^1].records[0].planned
+    doAssert st.derivedRuns == 1, "derived " & $st.derivedRuns & " times"
+    st.shutdown()
+
   block oldSettings:
     # a settings file written when a record could be matched by its FFID: read as station
     # matching, the choice dropped without a word

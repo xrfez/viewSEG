@@ -513,8 +513,9 @@ proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[in
   ## (`gatherSides`, `kinds` the gathers' kinds when known): a shot is checked
   ## against the X record at its source station (`shotCheck`), a receiver
   ## gather against the O records at its receiver station, together (the O
-  ## records made from the X records when none are loaded; `receivers`, when not nil,
-  ## the loaded relation file that has them when `relations` has none). A gather that
+  ## records derived from the X records when none are loaded, once, by
+  ## `deriveReceiversWork`; `receivers` is the loaded or derived O records when `relations`
+  ## has none). A gather that
   ## cannot be matched by station is not checked (-1): a record number never
   ## finds a relation record. Traces are matched as `traceMatch` says.
   ## Submitted with the file in `reads`; `relations` is read where it is, never
@@ -528,8 +529,6 @@ proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[in
       revision = file[].keysRevision
       let keyed = file[].index.keys.len == file[].len
       let sides = if keyed: gatherSides(file[].index.keys, gathers, kinds) else: @[]
-      var made = initSurveyGeometry() # the O records made from the X records, once
-      var haveMade = false
       for i, g in gathers:
         (planned[i], missing[i], unlisted[i], duplicates[i]) = (-1, -1, -1, -1)
         if g.len > 0 and keyed:
@@ -542,22 +541,17 @@ proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[in
           of sdReceiver, sdOpen:
             let (found, rcv) = file[].index.keys.gatherReceiver(g)
             if found:
-              var o = addr relations[]
-              if relations[].relationCount(rdReceiver) == 0:
-                if not receivers.isNil and receivers[].relationCount(rdReceiver) > 0:
-                  o = receivers
-                else:
-                  if not haveMade:
-                    made.addSps(SpsFile(relations: relations[].receiverRelations()), rdReceiver)
-                    haveMade = true
-                  o = addr made
-              let (records, why) = o[].receiverRecords(rcv)
-              if why.len == 0:
-                var hits: array[MapFilter, FilterHits]
-                hits.placeTraces(file[].index.keys, 0, g, o[], records, rdReceiver)
-                (planned[i], missing[i], unlisted[i], duplicates[i]) =
-                  (o[].plannedOf(records, rdReceiver).len, hits[mfMissing].count,
-                    hits[mfUnlisted].count, hits[mfDuplicate].count)
+              # the O records: the relation file's own, else the loaded O file's or the ones
+              # derived from its X records (`deriveReceiversWork`), made once
+              let o = if relations[].relationCount(rdReceiver) > 0: relations else: receivers
+              if not o.isNil and o[].relationCount(rdReceiver) > 0:
+                let (records, why) = o[].receiverRecords(rcv)
+                if why.len == 0:
+                  var hits: array[MapFilter, FilterHits]
+                  hits.placeTraces(file[].index.keys, 0, g, o[], records, rdReceiver)
+                  (planned[i], missing[i], unlisted[i], duplicates[i]) =
+                    (o[].plannedOf(records, rdReceiver).len, hits[mfMissing].count,
+                      hits[mfUnlisted].count, hits[mfDuplicate].count)
           of sdNeither: discard
         if i mod 64 == 0 and not ctx.progress(i, gathers.len):
           raise newException(JobCancelledError, "cancelled")
@@ -566,6 +560,22 @@ proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[in
     to.post Msg(job: ctx.id, kind: mkChecked, checkedSession: session, against: against,
       againstLayer: layer, keysRevision: revision, planned: planned, plannedMissing: missing,
       unlisted: unlisted, duplicates: duplicates)
+
+proc deriveReceiversWork*(relations: ptr SurveyGeometry; to: Poster): JobWork =
+  ## The work of a job that derives the O records (a receiver's shots) from the X
+  ## records of `relations` once, for every check of a receiver gather against
+  ## them (`checkWork`'s `receivers`), and posts them (`mkDerived`). `relations` is
+  ## read where it is: the caller keeps it alive and unchanged until the job ends.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "deriving the receivers' shots"
+    var made = new SurveyGeometry
+    {.cast(gcsafe).}:
+      ctx.checkCancelled()
+      made[] = initSurveyGeometry()
+      made[].addSps(SpsFile(relations: relations[].receiverRelations()), rdReceiver)
+      ctx.checkCancelled()
+    clearCycleRoots()
+    to.post Msg(job: ctx.id, kind: mkDerived, derived: made)
 
 proc positionsWork*(file: ptr SeismicFile; path: string; kind: FileKind; session: SessionId;
     base: int; to: Poster): JobWork =
