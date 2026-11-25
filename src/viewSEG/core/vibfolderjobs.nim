@@ -304,6 +304,12 @@ func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasu
   result = "the force limits are not judged: "
   if hundredProblem.len > 0:
     result.add "the typed 100 % force does not apply (" & hundredProblem & ")"
+  elif ask.judge == joWeighted and facts.kind == sgNone and
+      typedForce(ask.options.reactionMassKg) and typedForce(ask.options.baseplateMassKg):
+    # (a converter's file whose ground force is made: its own 100 % force is the one that counts)
+    result.add(if typedForce(ask.options.forceHundredWeighted):
+        "no force was measured in the judged part"
+      else: "no 100 % force is set for the ground force made from mass and baseplate")
   elif typedForce(ask.options.forceHundredPct):
     result.add "no force was measured in the judged part"
   else:

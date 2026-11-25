@@ -17,11 +17,11 @@
 ## - each made signal has its own 100 % force: not set, the force limits are not judged.
 ##
 ## Seen to fail: with the made signal of a signature file left out of the user's polarity, the
-## `.dat` and `.vib` blocks found the made phase 180 degrees from the recorded; with `vibratorOf` ignoring `roles.judge` for a signature file, the `.dat` and
-## `.vib` blocks found no second signal; with the made signal's weights not scaled by the
-## window's force scale the scaled block read another ground force; with the typed masses
-## multiplying the roles' traces the other way round, the converter block's correlation fell
-## below 0.99.
+## `.dat` and `.vib` blocks found it half a turn from the recorded one; with `vibratorOf`
+## ignoring `roles.judge` for a signature file, they found no second signal; with the made
+## signal's weights not scaled by the window's force scale the scaled block read another ground
+## force; with the typed masses multiplying the roles' traces the other way round, the converter
+## block's correlation fell below 0.99.
 
 import std/[math, os, strutils]
 import viewSEG/core/[analysis, plotoptions, settings, state, vibanalysis]

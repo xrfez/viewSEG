@@ -94,6 +94,30 @@ proc main*() =
       doAssert not convertedSegy(datFile(fx.dir, "a.dat"))
       doAssert not convertedSegy(fx.dir / "no such file.sgy")
 
+  block widths:
+    # sample widths of the formats beyond the four-byte ones are read right (format 11 is two
+    # bytes, 7 three), and a record of more than four traces is not the converter's
+    withFixtures fx:
+      proc file(name: string; format, samples, traces: int): string =
+        var b = newSeq[byte](3600)
+        (b[3220], b[3221]) = (byte(samples shr 8), byte(samples and 255))
+        (b[3224], b[3225]) = (byte(format shr 8), byte(format and 255))
+        let width = case format
+          of 3, 11: 2
+          of 7: 3
+          of 8: 1
+          else: 4
+        for t in 0 ..< traces:
+          var h = newSeq[byte](240)
+          (h[28], h[29]) = (0'u8, byte([21, 19, 18, 20, 5][t mod 5]))
+          b.add h
+          b.add newSeq[byte](samples * width)
+        result = fx.dir / name
+        writeBytes(result, b)
+      for (format, name) in [(1, "f1"), (3, "f3"), (5, "f5"), (7, "f7"), (8, "f8"), (11, "f11")]:
+        doAssert convertedSegy(file(name & ".sgy", format, 50, 4)), name
+        doAssert not convertedSegy(file(name & "x.sgy", format, 50, 5)), name & " with 5 traces"
+
   block mixedFolder:
     withFixtures fx:
       let c = converterOf()
@@ -135,6 +159,10 @@ proc main*() =
       let right = made.rowOf(sgy)
       doAssert wrong.rowOf(sgy).sentence != right.sentence,
         "the weights made no difference: " & right.sentence
+      # the made ground force with its own 100 % force not set says so on the row
+      let noMade = runJob(@[files[0]], applied(profile(joWeighted, Wm, Wb, NaN), []))
+      doAssert "no 100 % force is set for the ground force made from mass and baseplate" in
+        noMade.rowOf(sgy).forceWhy, noMade.rowOf(sgy).forceWhy
       # a profile with no weights: the converter's file stays on the record, with a warning on
       # its row; the .dat takes the file's own
       let bare = runJob(files, applied(profile(joWeighted), []))

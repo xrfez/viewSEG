@@ -179,7 +179,7 @@ What the two traces are decides the weights, so the window treats each kind of f
 | File | What M and B are | "Made from mass and baseplate" |
 |---|---|---|
 | An ordinary SEG-Y | accelerations of the reaction mass and the baseplate | `Mr x M + Mb x B` with the masses typed in the Masses group (the old behaviour of the window) |
-| The external converter's SEG-Y (traces coded 21, 19, 18, 20) | each force channel, mean removed and divided by its own weight, so acceleration-like | the same sum with the two **weights** typed as the masses: they undo the converter's scaling, and the result is the true ground force up to one constant factor |
+| The external converter's SEG-Y (traces coded 21, 19, 18, 20) | each force channel, mean removed and divided by its own weight, so acceleration-like | the same sum with the two **weights** typed as the masses: they undo the converter's scaling. With the weights typed exactly, the result is the true ground force minus a constant offset (the two channels' means, which the converter removed); a constant factor appears only when the weights are in another unit than the converter's |
 | A `.dat` | forces already, weighted by the controller | their plain sum, with no mass applied (typed masses are never used here): the same curve as the file's own ground-force trace |
 | A `.vib` | accelerations | the file's own weights from its header times the two accelerations: the same curve as the file's computed ground force |
 
