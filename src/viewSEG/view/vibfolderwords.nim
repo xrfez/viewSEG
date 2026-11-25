@@ -88,7 +88,7 @@ func verdictCell(row: FolderRow): string =
   case row.outcome
   of foJudged:
     if row.verdict == qvPass and (row.forceWhy.len > 0 or row.partial):
-      "pass (" & (if row.partial: "part recorded" else: "") &
+      "pass (" & (if row.partial: plain(floor(row.recordedPct), 0) & " % recorded" else: "") &
         (if row.partial and row.forceWhy.len > 0: ", " else: "") &
         (if row.forceWhy.len > 0: "force not judged" else: "") & ")"
     else: $row.verdict

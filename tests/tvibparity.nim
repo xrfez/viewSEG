@@ -285,6 +285,48 @@ proc main*() =
       st.close(w)
       st.shutdown()
 
+  block lessThanHalfTheSweep:
+    # files cut at 4 s and at 6 s of the plan's 10 s sweep: under half of it is no pass (not
+    # judged, and counted so), from half up a pass on the part recorded, its share in the
+    # verdict's cell
+    # Seen to fail: with no floor, the 4 s file read "pass (part recorded)" and counted as a
+    # pass.
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      let plan10 = planDat(fx.dir / "plans", "plan10.dat", 10001, 10, 7111)
+      let cut4 = planDat(fx.dir / "sweeps", "cut4.dat", 4001, 10, 7211)
+      let cut6 = planDat(fx.dir / "sweeps", "cut6.dat", 6001, 10, 7212)
+      let files = @[listed(cut4), listed(cut6)]
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      block store:
+        let w = st.window(plan10)
+        let trace = st.plots[w].traces[st.plots[w].params.roles.reference]
+        st.close(w)
+        discard st.chooseStored(fx.dir / "refs", trace, "plan 10 s")
+      block profile:
+        let w = st.window(cut6)
+        var p = st.plots[w].params
+        p.harmonics = 4 # (the limits: a profile)
+        st.change(w, p)
+        st.close(w)
+      let t = st.run(files)
+      st.parity(files, t)
+      let four = rowOf(t, cut4)
+      doAssert four.verdict == qvNotJudged and four.sentence.startsWith("not judged: only 39 % " &
+        "of the reference sweep is in this file's traces"), four.sentence
+      doAssert four.measures.len == 6, $four.measures.len
+      let six = rowOf(t, cut6)
+      doAssert six.verdict == qvPass and six.partial, six.sentence
+      let cell = rowCells(six)[headers().find(ColVerdict)]
+      doAssert cell.startsWith("pass (59 % recorded"), cell
+      doAssert t.totals.passed == 1 and t.totals.notJudged == 1 and t.totals.partial == 1,
+        summaryLine(t.totals)
+      st.shutdown()
+
   block inProject:
     withFixtures fx:
       let dir = fx.dir / "config"

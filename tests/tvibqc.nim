@@ -986,8 +986,48 @@ proc sameSweepReadsTheSame() =
     doAssert r.qc.plan.sweep == "the project reference sweeps 9-80 Hz in 10.0 s; the " &
       "recorded pilot sweeps 8-80 Hz in 10.0 s", r.qc.plan.sweep
 
+proc aPassNeedsHalfTheSweep() =
+  ## A file whose traces hold less than half the reference sweep (`LeastSweepShare`) is not
+  ## judged, its limits still listed; from half up it passes on the part recorded; a fail on
+  ## any part is a fail.
+  ## Seen to fail: with no floor, traces cut at 4 s of a 10 s sweep read "✓ pass on the part
+  ## recorded (39 % of the reference sweep)".
+  proc basis(pct: float64; verdict = qvPass): QcReport =
+    result = QcReport(verdict: verdict, recordedPct: pct, line: (if verdict == qvPass:
+      "✓ PASS: 6 of 6 limits met" else: "✗ FAIL: peak distortion 70 % > 60 %"))
+    result.withBasis()
+  block forty:
+    let q = basis(40)
+    doAssert q.verdict == qvNotJudged, q.line
+    doAssert q.line == "not judged: only 40 % of the reference sweep is in this file's " &
+      "traces (a pass needs half of it); on that part 6 of 6 limits met", q.line
+  block fifty:
+    let q = basis(50)
+    doAssert q.verdict == qvPass and q.line == "✓ pass on the part recorded (50 % of the " &
+      "reference sweep): 6 of 6 limits met", q.line
+  block sixty:
+    let q = basis(60)
+    doAssert q.verdict == qvPass and q.line.startsWith("✓ pass on the part recorded (60 % "),
+      q.line
+  block a_fail_on_a_small_part_is_a_fail:
+    let q = basis(30, qvFail)
+    doAssert q.verdict == qvFail and q.line.startsWith("✗ FAIL: peak distortion"), q.line
+  block in_the_window:
+    var file = planSweep()
+    file.cutAtS = 4
+    let r = againstPlan(file, planSweep().referenceOf.sweepRow)
+    doAssert r.qc.verdict == qvNotJudged, r.qc.line
+    doAssert r.qc.line.startsWith("not judged: only 39 % of the reference sweep is in this " &
+      "file's traces (a pass needs half of it); on that part 6 of 6 limits met"), r.qc.line
+    doAssert r.qc.rows[ord(qlAvgPhase)].status == qsPass and r.qc.rows.len == 6
+    file.cutAtS = 6
+    let six = againstPlan(file, planSweep().referenceOf.sweepRow)
+    doAssert six.qc.verdict == qvPass and six.qc.line.startsWith("✓ pass on the part " &
+      "recorded (59 % of the reference sweep)"), six.qc.line
+
 proc main*() =
   againstThePlan()
+  aPassNeedsHalfTheSweep()
   sameSweepReadsTheSame()
   sweepTolerances()
   baseTests()

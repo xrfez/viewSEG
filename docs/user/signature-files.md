@@ -279,16 +279,22 @@ share one value (same unit, same curve).
   same two phase limits as the ground force; a pilot that is not the plan fails the file, the
   verdict opening with "the recorded pilot is not the project's reference sweep (average
   phase N°)" and, when the two sweeps differ, both in numbers ("the project reference sweeps
-  8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in 10.0 s": the same start and end
-  frequency within what the sweep moves in one tracked step, 10 ms, and the same length within
-  one step). The limits table adds the pilot's two rows ("recorded pilot to the plan") and the
+  8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in 10.0 s"). Two sweeps are the same
+  when each end frequency agrees within 0.5 Hz or 1 % of the band, whichever is more, and the
+  length within 50 ms or 1 % of it: noise on a recorded pilot, or a taper of another length,
+  moves its ends by a few tens of ms. A pilot that follows the plan in phase never has a
+  difference in its verdict; the two sweeps as read are then only in the note ("sweeps read
+  as ..."). The limits table adds the pilot's two rows ("recorded pilot to the plan") and the
   ground force's phase to the file's own reference trace ("not judged": what the vibrator did
   against what it was told). The phase plot draws the ground force against the file's
   reference and against the stored reference; the frequency plot the file's reference, the
   stored reference and the ground force. When the file's traces end before the reference
   sweep, the verdict says how much was not judged and a pass reads "pass on the part recorded
-  (N % of the reference sweep)"; a reference longer only by listen time after its sweep is no
-  difference. Against the file's own pilot (no stored reference chosen, the project reference
+  (N % of the reference sweep)", N the share of the sweep judged. Less than half of the sweep
+  is no pass: the verdict reads "not judged: only N % of the reference sweep is in this file's
+  traces (a pass needs half of it)", the limits measured on that part still listed, and the
+  folder QC counts the file as not judged. A reference longer only by listen time after its
+  sweep is no difference. Against the file's own pilot (no stored reference chosen, the project reference
   switched off, or a reference that is a trace of each record), every verdict says "judged
   against the file's own pilot: this shows the vibrator followed its pilot, not that the pilot
   is the planned sweep". The folder QC says the same on each row, and counts those files apart.

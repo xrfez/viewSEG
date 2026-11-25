@@ -24,7 +24,8 @@
 ## - Against the project's stored reference (the plan), the file's recorded pilot is judged
 ##   too, with the same two phase limits (`judgePlan`): a pilot that is not the planned sweep
 ##   fails the file, and `withBasis` says so first. A judged part shorter than the reference
-##   sweep is a pass "on the part recorded" only; a file judged against its own pilot says
+##   sweep is a pass "on the part recorded" only, and holding less than half of it
+##   (`LeastSweepShare`) no pass at all: not judged; a file judged against its own pilot says
 ##   that this shows the vibrator followed its pilot, not that the pilot is the plan.
 ##
 ## Pure: numbers in, a report out.
@@ -291,6 +292,10 @@ const
   PlanRowPrefix* = "recorded pilot to the plan: "
     ## the limits table's label of a plan row, before the limit ("recorded pilot to the plan:
     ## average phase")
+  LeastSweepShare* = 0.5
+    ## the least share of the reference sweep a file's judged part holds for the file to pass:
+    ## below it the file is not judged (its limits still listed), never a pass; from it up it
+    ## passes "on the part recorded"
   FileRowPrefix* = "ground force to the file's reference (not judged): "
     ## the limits table's label of a row of the ground force against the file's own reference
     ## trace, shown beside the judged one against the plan
@@ -321,7 +326,8 @@ func unsigned(line: string): string =
 func withBasis*(q: var QcReport) =
   ## The verdict and its line with what the reference is: a recorded pilot that is not the
   ## plan fails the file, its sentence first; a judged part shorter than the reference sweep
-  ## passes only "on the part recorded"; how the sweeps differ, and what was not judged, is
+  ## passes only "on the part recorded", and is not judged under `LeastSweepShare` of it; how
+  ## the sweeps differ, and what was not judged, is
   ## said; a file judged against its own pilot says what that shows. Call once, after `judge`.
   q.forceLine = q.line
   var parts: seq[string] = @[]
@@ -333,8 +339,15 @@ func withBasis*(q: var QcReport) =
     parts.add "ground force " & unsigned(q.line)
   elif q.verdict == qvPass and not q.recordedPct.isNaN:
     let rest = if q.line.startsWith("✓ PASS"): q.line["✓ PASS".len .. ^1] else: ""
-    parts.add "✓ pass on the part recorded (" & plain(floor(q.recordedPct), 0) &
-      " % of the reference sweep)" & rest
+    let pct = plain(floor(q.recordedPct), 0)
+    if q.recordedPct < 100 * LeastSweepShare:
+      # too little of the sweep to stand for it: no pass, the limits measured still listed
+      q.verdict = qvNotJudged
+      parts.add "not judged: only " & pct & " % of the reference sweep is in this file's " &
+        "traces (a pass needs half of it)" &
+        (if rest.startsWith(": "): "; on that part " & rest[2 .. ^1] else: "")
+    else:
+      parts.add "✓ pass on the part recorded (" & pct & " % of the reference sweep)" & rest
   else: parts.add q.line
   if q.plan.sweep.len > 0 and not failed: parts.add q.plan.sweep
   if q.lengthWords.len > 0: parts.add q.lengthWords

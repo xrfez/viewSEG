@@ -515,7 +515,8 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
     verdict: answer.qc.verdict, sentence: answer.qc.line, forceWhy: forceWhy,
     measures: measures, plan: measuresOf(answer.qc.plan.rows),
     fileMeasures: measuresOf(answer.qc.plan.fileRows), ownPilot: answer.qc.ownPilot,
-    partial: not answer.qc.recordedPct.isNaN, polarity: answer.polarity.line,
+    partial: not answer.qc.recordedPct.isNaN, recordedPct: answer.qc.recordedPct,
+    polarity: answer.polarity.line,
     warnings: warnings, controllers: controllersOf(answer.controller))
 
 type

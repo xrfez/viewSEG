@@ -587,7 +587,8 @@ the file's own pilot (see the Vibrator window above). Against a stored reference
 and **Phase to the file's reference (°)** the ground force's average phase to the file's own
 reference trace, beside the measures against the plan; a file whose pilot is not the plan
 fails, and the sentence says why first. A file judged on part of the reference sweep reads
-"pass (part recorded)" and the totals say "N passes on part of the reference sweep". A file
+"pass (N % recorded)" and the totals say "N passes on part of the reference sweep"; one whose
+traces hold less than half of it is not judged, and counted so. A file
 judged against its own pilot says so in its sentence, its Pilot to the plan column reads "own
 pilot", and the totals count those files apart: "N judged against their own pilot, not the
 project's reference".
@@ -2013,7 +2014,8 @@ What you see, top down:
    reference** and **against the stored reference** (the one judged), and the frequency plot
    three: the **file's reference**, the **stored reference** and the ground force. When the
    traces end before the reference sweep does, the verdict says what was not judged and a
-   pass reads "pass on the part recorded (N % of the reference sweep)"; a reference that is
+   pass reads "pass on the part recorded (N % of the reference sweep)", or under half of it
+   "not judged: only N % of the reference sweep is in this file's traces"; a reference that is
    longer only by listen time after its sweep is no difference. With no stored reference
    (none chosen, the project reference switched off, or a reference that is a trace of the
    record), the verdict says "judged against the file's own pilot: this shows the vibrator

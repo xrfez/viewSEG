@@ -67,6 +67,8 @@ type
       ## judged against the file's own pilot: it shows the vibrator followed its pilot, not that
       ## the pilot is the planned sweep
     partial*: bool ## the judged part covers less than the whole reference sweep
+    recordedPct*: float64 = NaN
+      ## ... the share of it it covers, % (`QcReport.recordedPct`); NaN: all of it
     polarity*: string
     warnings*: seq[string]
     problem*: string
