@@ -742,7 +742,8 @@ type
       gatherLine*: float64 ## ckReceiverGather: the receiver station's line
       gatherPoint*: float64 ## ckReceiverGather: its point (its index never splits the station)
       gatherComponent*: int
-        ## ckReceiverGather: the component of the traces taken (0: a trace with none given)
+        ## ckReceiverGather: the component of the traces taken (0: a trace with none given;
+        ## -1: every component at the station)
     of ckOwnPosition:
       ownTrace*: int
         ## ckOwnPosition: the survey-wide id of the trace whose own header position is read
@@ -2642,7 +2643,11 @@ const
   CutGathered* = "The window shows a receiver gather, made in memory: show a file to slice it."
   GatherReadOnly* = "a receiver gather is for looking at: it is read-only, so its traces are " &
     "not edited (show the file itself to edit it)"
+  GatherNoReopen* = "a receiver gather is made in memory: it is no file, so it has no " &
+    "options to reopen it with"
   GatherRunning* = "a receiver gather is already being collected"
+  GatherSurveyLoading* = "the survey is still loading: ask for the receiver gather again " &
+    "when it is on the map"
   GatherNoFiles* = "no seismic file is listed in the Files window, so there is nothing to " &
     "gather from"
 
@@ -4381,7 +4386,12 @@ proc closeIfUnused(state: var AppState; id: SessionId) =
   if state.panels.anyIt(it.layers.anyIt(it.shows(id))): return
   if state.plotsUse(id) or state.spectraUse(id): return
   let i = state.findSession(id)
-  if i >= 0: state.closeSession(i, quiet = true)
+  if i >= 0:
+    if state.sessions[i].gathered: # (temporary: nothing to save)
+      let name = state.sessions[i].name
+      state.log.add(sevInfo, "receiver gather", "The " & name[0].toLowerAscii & name[1 .. ^1] &
+        " was closed.")
+    state.closeSession(i, quiet = true)
 
 proc showReplacing(state: var AppState; k: int; file: SessionId; gather: int) =
   ## Shows `gather` of `file` in `panels[k]`, in place of what it showed,
@@ -7397,23 +7407,44 @@ proc startReceiverGather(state: var AppState; cmd: Command) =
   if state.gatherJob != NoJob:
     state.ignore(cmd, GatherRunning)
     return
-  if cmd.gatherComponent notin 0 .. 255:
-    state.ignore(cmd, "a component is a number from 0 to 255")
+  if cmd.gatherComponent notin AnyComponent .. 255:
+    state.ignore(cmd, "a component is a number from 0 to 255, or -1 for any")
     return
+  if (state.importing and not state.joining.auto) or state.projectSurveyLoading or
+      state.loading.anyIt(it.session == NoSession):
+    state.ignore(cmd, GatherSurveyLoading)
+    return
+  # the survey that places the recorded fold's traces: the survey files loaded on the map
+  var relations: ref SurveyGeometry = nil
+  var stations: array[PointRole, GatherStations]
+  for i in 0 ..< state.survey.layers.len:
+    template l: untyped = state.survey.layers[i]
+    if l.origin == loSurveyFile:
+      if relations.isNil and l.xRuns > 0: relations = l.relations
+      for r in PointRole:
+        template p: untyped = l.points[r]
+        for k in 0 ..< p.len:
+          if p.station[k].known:
+            stations[r].stations.add p.station[k]
+            stations[r].xs.add p.index.x(k)
+            stations[r].ys.add p.index.y(k)
   var ask = GatherAsk(line: cmd.gatherLine, point: cmd.gatherPoint,
-    component: cmd.gatherComponent, survey: state.projectSurvey,
+    component: cmd.gatherComponent,
+    relations: (if relations.isNil: nil else: addr relations[]), stations: stations,
     options: (if state.inProject: state.project.doc.options else: state.settings.join),
-    moves: state.project.doc.stationMoves, tableOnly: state.projectTableOnly,
-    cacheDir: state.indexCache)
+    moves: state.project.doc.stationMoves, cacheDir: state.indexCache)
   for i in 0 ..< state.fileList.entries.len:
     if state.fileList.entries[i].kind in SeismicKinds - SignatureFileKinds:
+      var kills = state.editsAt(state.fileList.entries[i].path).shown.lists[teKilled]
+      kills.sort()
       ask.files.add GatherFile(path: state.fileList.entries[i].path,
-        size: state.fileList.entries[i].size)
+        size: state.fileList.entries[i].size, kills: kills)
   if ask.files.len == 0:
     state.ignore(cmd, GatherNoFiles)
     return
   state.gatherJob = state.jobs.submit(gatherSpec(ask), gatherWork(ask, state.inbox.poster))
-  state.holdSurvey(state.gatherJob) # (the work reads it through a pointer)
+  if not relations.isNil: # (the work reads them through a pointer)
+    state.batchSurvey.held.add (state.gatherJob, relations)
 
 proc notePicks(state: var AppState; origin: string) =
   ## Once, that first-break picks of this file are not drawn on the correlated record.
@@ -9042,7 +9073,8 @@ proc takeOpened(state: var AppState; m: sink Msg) =
         state.keepSurvey(files)
   if news.created:
     for s in state.sessions:
-      if state.surveyMatchable and state.joinedOf(s.id) < 0: p.queue.add s.id
+      if state.surveyMatchable and not s.gathered and state.joinedOf(s.id) < 0:
+        p.queue.add s.id
     state.queueOpenMoves()
   if news.created and not wasIn: state.dropShotLogs()
   state.loadStoredShotLogs()
@@ -9095,7 +9127,8 @@ proc takeKept(state: var AppState; m: sink Msg) =
   elif p.geometry.isNil or p.rebuilding: state.restoreSurvey(layers = layers)
   else: p.survey = srLoaded
   for s in state.sessions:
-    if state.joinedOf(s.id) < 0 and s.id notin p.queue: p.queue.add s.id
+    if not s.gathered and state.joinedOf(s.id) < 0 and s.id notin p.queue:
+      p.queue.add s.id
 
 proc takeRestored(state: var AppState; m: sink Msg) =
   ## The project's survey made from `survey.bin`: every open file not
@@ -9142,7 +9175,8 @@ proc takeRestored(state: var AppState; m: sink Msg) =
     " O records), made from what the " &
     "project keeps in " & formatFloat(p.restoreMs, ffDecimal, 1) & " ms: no survey file was read.")
   for s in state.sessions:
-    if (updated or state.joinedOf(s.id) < 0) and s.id notin p.queue: p.queue.add s.id
+    if not s.gathered and (updated or state.joinedOf(s.id) < 0) and s.id notin p.queue:
+      p.queue.add s.id
 
 proc takeProject(state: var AppState; m: sink Msg) =
   case m.news.kind
@@ -9235,7 +9269,7 @@ proc queueOpenMoves(state: var AppState) =
   let moves = state.project.doc.stationMoves
   let matchable = state.surveyMatchable
   for s in state.sessions:
-    if s.isSignature or s.noSeismic: continue
+    if s.isSignature or s.noSeismic or s.gathered: continue # (a gather is no file)
     # (a move job under way has not posted its bases yet: it is not "nothing to take back")
     let underWay = (state.movesJob != NoJob and state.movesSession == s.id) or
       (state.joining.job != NoJob and state.joining.session == s.id and
@@ -9273,7 +9307,7 @@ proc followMoves(state: var AppState) =
     let i = state.findSession(id)
     if i < 0: continue
     let s = state.sessions[i]
-    if s.isSignature or s.noSeismic: continue
+    if s.isSignature or s.noSeismic or s.gathered: continue
     if state.surveyMatchable:
       if id notin state.project.queue: state.project.queue.add id
       continue
@@ -9300,7 +9334,8 @@ proc followProject(state: var AppState) =
     let id = p.queue[0]
     p.queue.delete(0)
     let i = state.findSession(id)
-    if i >= 0 and not state.sessions[i].noSeismic: # auxiliary traces are never matched
+    if i >= 0 and not state.sessions[i].noSeismic and not state.sessions[i].gathered:
+      # (auxiliary traces are never matched, and a gather is no file)
       state.startAutoJoin(i)
       return
 
@@ -10300,7 +10335,7 @@ proc followLeap(state: var AppState) =
     let i = state.findSession(id)
     if i >= 0:
       let s = state.sessions[i]
-      if not s.isSignature:
+      if not s.isSignature and not s.gathered:
         state.pauseLeapReaders(s.path)
         state.leapSession = id
         state.leapName = s.name
@@ -10314,7 +10349,7 @@ proc followLeap(state: var AppState) =
 proc queueLeapReads(state: var AppState) =
   ## Every open file that is not a signature waits to have its times read again.
   for s in state.sessions:
-    if not s.isSignature and s.id notin state.leapQueue:
+    if not s.isSignature and not s.gathered and s.id notin state.leapQueue:
       state.leapQueue.add s.id
 
 proc adoptLeap(state: var AppState; table: LeapTable; said: string; save = true) =
@@ -13563,6 +13598,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckOutputBinary: state.outputBinary(cmd)
   of ckReopen:
     if cmd.reopenPath.len == 0: state.ignore(cmd, "no file was named")
+    elif state.sessions.anyIt(it.gathered and it.path == cmd.reopenPath):
+      state.ignore(cmd, GatherNoReopen)
     elif cmd.origin == coAgent and cmd.openChoice.demuxDir.len > 0:
       state.ignore(cmd, "agent control writes no file, and a demultiplexed copy is one: " &
         "its folder is the user's to choose")

@@ -166,7 +166,9 @@ proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks:
     igPopTextWrapPos()
     igPopStyleColor(1)
     marks.mark("headers.summary unknown")
+  igBeginDisabled(ses.gathered)
   if igButton("Reopen with options...##summary", ImVec2_c(x: 0, y: 0)): output.reopen = true
+  igEndDisabled()
   marks.mark("headers.summary reopen")
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
     igSetTooltip("%s", ReopenTip.cstring)

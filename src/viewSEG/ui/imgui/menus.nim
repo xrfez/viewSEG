@@ -82,6 +82,7 @@ type
     recent*: seq[string]         ## File > Open recent, newest first
     recentFolders*: seq[string]  ## the folders there, newest first
     canClose*: bool              ## a file is shown, so File > Close closes it
+    canReopen*: bool             ## the shown file is on disk (a receiver gather is not)
     signature*: string           ## the shown file is a vibrator signature file: "dat" or "vib"
     pairName*: string            ## its other file's name when known; "" when not
     layouts*: seq[SavedLayout]   ## Window: the presets, and the user's under Layouts > Load
@@ -636,7 +637,7 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       item(maClose, result)
       igEndDisabled()
       tip("Close the file the plot window shows")
-      igBeginDisabled(not input.canClose)
+      igBeginDisabled(not (input.canClose and input.canReopen))
       item(maReopen, result)
       igEndDisabled()
       tip(ReopenTip)

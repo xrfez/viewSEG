@@ -1151,6 +1151,7 @@ proc openReopen(ui: var Ui) =
   ## "Reopen with options" for the file the Seismic window shows.
   let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
   if i < 0: ui.say("Reopen with options: no file is shown.", mlWarning)
+  elif ui.core.sessions[i].gathered: ui.say("Reopen with options: " & GatherNoReopen, mlWarning)
   else:
     let s = ui.core.sessions[i]
     ui.reopen.open(s.path, ui.core.openChoiceOf(s.path), s.facts.opened, s.signature.kind)
@@ -1502,7 +1503,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     else: ""), memoryShown: ui.memory.shown, themes: ui.themes, theme: ui.selected,
     follows: DefaultThemeNames[resolveTheme(ui.choice, ui.system)],
     recent: ui.core.settings.recentFiles, recentFolders: ui.core.settings.recentFolders,
-    canClose: ui.core.shownFile(ui.core.findPanel(MainPanel)) >= 0, layouts: ui.core.layouts,
+    canClose: shownAt >= 0, canReopen: shownAt >= 0 and not ui.core.sessions[shownAt].gathered,
+    layouts: ui.core.layouts,
     signature: signatureWord(ui.core), pairName: pairNameOf(ui.core),
     keepsLayouts: ui.keepsLayouts, followLatest: ui.core.settings.files.followLatest,
     agentOn: ui.agent.running, agentSocket: ui.agentSocket,

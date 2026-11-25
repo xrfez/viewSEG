@@ -8,6 +8,12 @@
 ## never names a station), and the trace's component. A file with several such traces gives
 ## all of them, in file order.
 ##
+## Each file is read with its default reading, as the recorded fold reads it. The survey that
+## places the traces is the one the recorded fold uses: the survey files loaded on the map, in
+## a project and outside one (`GatherAsk.relations` and `stations`; the job lays them out as
+## one geometry). A file listed twice (a linked folder among the subfolders) is read once, and
+## the traces its edits kill are left out.
+##
 ## The files are read several at a time on the item pool. An item's result is plain data (the
 ## traces' keys and samples, or why the file gave none); the job's own thread takes them in
 ## file order, so the gather is the same on any number of threads. The survey is reached
@@ -16,11 +22,14 @@
 ##
 ## - sorts the traces by record time, then by source station (a stable sort: the traces of
 ##   one shot stay in file order);
-## - takes the sample interval and the length of the first file that gave a trace: a trace of
-##   another interval is left out and its file named, one of another length is padded with
-##   zeros or cut, and that is said;
+## - takes the sample interval, the length and the start time of the first trace that has a
+##   finite interval above zero: a trace of another interval, or whose start differs by a
+##   part of a sample, is left out and its file named; one of another length is padded with
+##   zeros or cut; one that starts a whole number of samples away is shifted onto the
+##   gather's time axis; and that is said;
 ## - stops at `gatherTraces` traces or `gatherBytes` bytes of samples (traces times samples
-##   times 4) and says so;
+##   times 4) and says so; the files after that are neither opened nor read, and a single
+##   trace that alone is over the byte limit is refused before it is read;
 ## - writes the traces as an in-memory SEG-Y file (float32, so the samples are the source
 ##   traces' own, bit for bit) and opens it as a `Session`, which `asGathered` marks read-only.
 ##
@@ -32,17 +41,19 @@
 ## ends the job with no session. Nothing is written to disk, and no source file is opened for
 ## writing.
 
-import std/[algorithm, math, os, strutils, times]
+import std/[algorithm, atomics, math, os, sets, strutils, times]
 import parseSEG
 import parseSEG/model/traceindex # (`mindex`: the keys of the new file are set below)
 import processSEG/core/rows
-import filejobs, filesystem, inbox, itempool, jobs, join, session, stationmoves, surveyjobs,
-  threads
+import filejobs, filesystem, inbox, itempool, jobs, join, session, stationmoves, survey,
+  surveyjobs, threads
 
 const
   KeysChunk = 65_536 ## traces whose keys are read at a time
   CancelEvery = 4096 ## traces between cancel checks
   MaxNamed = 5       ## files named one by one in the sentence; the rest are counted
+  WholeSample = 0.01 ## how far from a whole number of samples a start time may be
+  AnyComponent* = -1 ## `GatherAsk.component`: every component at the station, in file order
 
 var
   gatherTraces* = 20_000
@@ -57,17 +68,24 @@ type
   GatherFile* = object
     path*: string
     size*: int64
+    kills*: seq[int] ## the traces its edits kill, ascending
+
+  GatherStations* = object
+    ## The stations of one role of the map's survey files, with their coordinates.
+    stations*: seq[Station]
+    xs*, ys*: seq[float64]
 
   GatherAsk* = object
     ## What the job needs, copied on the UI thread.
     line*, point*: float64           ## the receiver station
-    component*: int                  ## the component of its traces
+    component*: int                  ## the component of its traces, or `AnyComponent`
     files*: seq[GatherFile]          ## the listed seismic files, in the Files window's order
-    survey*: ptr SurveyGeometry
-      ## the project's survey (nil: none), kept alive by the caller until the work is back
+    relations*: ptr SurveyGeometry
+      ## the relation records of the map's survey (nil: no survey), kept alive by the caller
+      ## until the work is back
+    stations*: array[PointRole, GatherStations]
     options*: JoinOptions
     moves*: StationMoves
-    tableOnly*: bool
     cacheDir*: string
     maxTraces, maxBytes, budget: int ## the limits, as `gatherWork` found them
 
@@ -77,11 +95,16 @@ type
 
   GatherPart = object
     ## What reading one file came to. `skip`: why it gave nothing, "" when it gave traces.
+    ## `stopped`: the file was not opened, the gather being full.
     skip: string
+    stopped: bool
+    killed: int
     traces: seq[GatherTrace]
 
   GatherItems = object
     ask: ptr GatherAsk
+    survey: ptr SurveyGeometry
+    full: Atomic[bool] ## set by the job thread alone, once a limit is reached
 
   GatherRow = object
     keys: TraceKeys
@@ -94,10 +117,11 @@ type
     rows: seq[GatherRow]
     paths: seq[string]
     intervalUs: float64
+    t0Ms: float64           ## the time of sample 0 of the gather
     length: int             ## samples per trace; 0 until a trace was taken
     absent, unreadable: int ## files with no trace at the station, files that could not be read
     others: seq[string]     ## sentences of the files left out for another reason
-    padded, cut, mismatched, notAdded: int
+    padded, cut, mismatched, notAdded, shifted, killed, twice: int
     capped: string
     maxTraces: int
     maxBytes: int64
@@ -146,6 +170,8 @@ proc readStation(it: ItemContext; a: ptr GatherItems; k: int): GatherPart {.nimc
   let ask = a.ask
   let (line, point, component) = (ask.line, ask.point, ask.component)
   let path = ask.files[k].path
+  if a.full.load(moRelaxed): # the gather is full: this file is neither opened nor read
+    return GatherPart(stopped: true)
   var s: Session = nil
   try:
     {.cast(gcsafe).}:
@@ -155,7 +181,7 @@ proc readStation(it: ItemContext; a: ptr GatherItems; k: int): GatherPart {.nimc
       else:
         let file = s.filePtr
         let progress = proc (done, total: int): bool {.gcsafe, raises: [].} = not it.cancelled
-        discard joinOwnFile(file, ask.survey, ask.options, ask.moves, ask.tableOnly, progress)
+        discard joinOwnFile(file, a.survey, ask.options, ask.moves, false, progress)
         let n = file[].len
         var keys = newSeq[TraceKeys](min(n, KeysChunk))
         var at: seq[int] = @[]
@@ -167,13 +193,25 @@ proc readStation(it: ItemContext; a: ptr GatherItems; k: int): GatherPart {.nimc
             if (t + j) mod CancelEvery == 0: it.checkCancelled()
             template key: untyped = keys[j]
             if key.status != tsAuxiliary and sameNumber(key.rcvLine, line) and
-                sameNumber(key.rcvPoint, point) and int(key.component) == component:
-              at.add t + j
-              result.traces.add GatherTrace(keys: key)
+                sameNumber(key.rcvPoint, point) and
+                (component == AnyComponent or int(key.component) == component):
+              if ask.files[k].kills.binarySearch(t + j) >= 0: inc result.killed
+              else:
+                at.add t + j
+                result.traces.add GatherTrace(keys: key)
           t += m
+        var bytes = 0'i64
         for i, trace in at:
           it.checkCancelled()
           let count = int(file[].index.entries[trace].numSamples)
+          if int64(count) * 4 > ask.maxBytes:
+            result = GatherPart(skip: "a trace of " & plural(count, "sample") &
+              " is over the memory limit of " & formatSize(ask.maxBytes, includeSpace = true))
+            break
+          bytes += int64(count) * 4
+          if i >= ask.maxTraces or bytes > ask.maxBytes:
+            result.traces.setLen i # more than the gather can take: the rest is not read
+            break
           var log: DiagLog
           let block1 = file[].readTraces([trace], 0 ..< count, log)
           if log.hasErrors:
@@ -197,52 +235,83 @@ func fits(c: Collected; length: int): bool =
   ## Whether one more trace of `length` samples is within both limits.
   c.rows.len < c.maxTraces and int64(c.rows.len + 1) * int64(length) * 4 <= c.maxBytes
 
+func validInterval(us: float64): bool {.inline.} = us > 0 and us < Inf
+
+func startMs(k: TraceKeys): float64 {.inline.} =
+  ## The time of the trace's sample 0 in ms; none given counts as 0, as the reader takes it.
+  if k.t0Ms.isNaN: 0.0 else: k.t0Ms
+
+func shiftedBy(x: seq[float32]; by, length: int): seq[float32] =
+  ## `x` on a time axis that starts `by` samples earlier (a trace that starts `by` samples
+  ## later gets zeros in front; `by` below 0 cuts the front), `length` samples long.
+  result = newSeq[float32](length)
+  for j in 0 ..< length:
+    let src = j - by
+    if src in 0 ..< x.len: result[j] = x[src]
+
 proc add(c: var Collected; path: string; part: sink GatherPart) =
   ## Takes the traces file `path` gave, in file order.
-  if part.skip.len > 0:
+  if part.stopped: inc c.notAdded
+  elif part.skip.len > 0:
     inc c.unreadable
     c.others.add path.extractFilename & " (" & part.skip & ")"
-  elif part.traces.len == 0: inc c.absent
-  elif c.capped.len > 0: inc c.notAdded
   else:
-    var named = false
-    let file = int32(c.paths.len)
-    var added = 0
-    for t in part.traces.mitems:
-      if c.length == 0 and t.samples.len > 0:
-        c.length = t.samples.len
-        c.intervalUs = t.keys.intervalUs
-      if c.length == 0 or t.samples.len == 0:
-        inc c.mismatched # a trace with no samples says nothing
-        named = true
-      elif not (t.keys.intervalUs == c.intervalUs):
+    c.killed += part.killed
+    if part.traces.len == 0: inc c.absent
+    elif c.capped.len > 0: inc c.notAdded
+    else:
+      var named = false
+      template nameOnce(why: string) =
         inc c.mismatched
-        if not named:
-          c.others.add path.extractFilename & " (sample interval " &
-            (if t.keys.intervalUs.isNaN: "not given" else: numText(t.keys.intervalUs / 1000) &
-            " ms") & ", the gather's is " & numText(c.intervalUs / 1000) & " ms)"
+        if not named: c.others.add path.extractFilename & " (" & why & ")"
         named = true
-      elif not c.fits(c.length):
-        c.capped = if c.rows.len >= c.maxTraces: "the limit of " & plural(c.maxTraces, "trace")
-                   else: "the memory limit of " & formatSize(c.maxBytes, includeSpace = true) & " of samples"
-        inc c.notAdded
-        break
-      else:
-        if t.samples.len < c.length:
-          inc c.padded
-          t.samples.setLen c.length
-        elif t.samples.len > c.length:
-          inc c.cut
-          t.samples.setLen c.length
-        c.rows.add GatherRow(keys: t.keys, samples: move t.samples, file: file,
-          order: c.rows.len)
-        inc added
-    if added > 0: c.paths.add path
+      let file = int32(c.paths.len)
+      var added = 0
+      for t in part.traces.mitems:
+        let usable = t.samples.len > 0 and t.keys.intervalUs.validInterval
+        if c.length == 0 and usable:
+          c.length = t.samples.len
+          c.intervalUs = t.keys.intervalUs
+          c.t0Ms = t.keys.startMs
+        if t.samples.len == 0:
+          inc c.mismatched # a trace with no samples says nothing
+          named = true
+        elif not t.keys.intervalUs.validInterval:
+          nameOnce "sample interval not given"
+        elif t.keys.intervalUs != c.intervalUs:
+          nameOnce "sample interval " & numText(t.keys.intervalUs / 1000) &
+              " ms, the gather's is " &
+            numText(c.intervalUs / 1000) & " ms"
+        else:
+          let off = (t.keys.startMs - c.t0Ms) * 1000.0 / c.intervalUs               ## samples later
+          let whole = round(off)
+          if abs(off - whole) > WholeSample:
+            nameOnce "starts " & numText(t.keys.startMs - c.t0Ms) &
+              " ms from the gather's start, not a whole number of samples"
+          elif not c.fits(c.length):
+            c.capped = if c.rows.len >= c.maxTraces: "the limit of " & plural(c.maxTraces, "trace")
+                       else: "the memory limit of " &
+                         formatSize(c.maxBytes, includeSpace = true) & " of samples"
+            inc c.notAdded
+            break
+          else:
+            if t.samples.len < c.length: inc c.padded
+            elif t.samples.len > c.length: inc c.cut
+            if whole != 0:
+              inc c.shifted
+              t.samples = t.samples.shiftedBy(int(whole), c.length)
+            else: t.samples.setLen c.length
+            t.keys.t0Ms = c.t0Ms
+            c.rows.add GatherRow(keys: t.keys, samples: move t.samples, file: file,
+              order: c.rows.len)
+            inc added
+      if added > 0: c.paths.add path
 
 func sentence(c: Collected; ask: GatherAsk; kept, listed: int): string =
   ## What the gather came to, in plain words.
   let station = "receiver station " & stationText(ask.line, ask.point) &
-    " (component " & $ask.component & ")"
+    (if ask.component == AnyComponent: " (any component)"
+      else: " (component " & $ask.component & ")")
   if kept == 0:
     result = "No listed file holds " & station & "."
   else:
@@ -251,6 +320,10 @@ func sentence(c: Collected; ask: GatherAsk; kept, listed: int): string =
   if c.absent > 0:
     result.add " " & plural(c.absent, "file") & (if c.absent == 1: " has" else: " have") &
       " no trace at the station."
+  if c.twice > 0:
+    result.add " " & plural(c.twice, "file") & " listed twice " &
+      (if c.twice == 1: "was" else: "were") & " read once."
+  if c.killed > 0: result.add " " & plural(c.killed, "killed trace") & " left out."
   if c.others.len > 0:
     result.add " Left out: "
     for i, o in c.others:
@@ -265,6 +338,10 @@ func sentence(c: Collected; ask: GatherAsk; kept, listed: int): string =
     if c.padded > 0 and c.cut > 0: result.add ","
     if c.cut > 0: result.add " " & plural(c.cut, "longer trace") & " cut"
     result.add "."
+  if c.shifted > 0:
+    result.add " " & plural(c.shifted, "trace") & " start" & (if c.shifted == 1: "s" else: "") &
+      " at another time and " & (if c.shifted == 1: "was" else: "were") &
+      " shifted to the gather's."
   if c.capped.len > 0:
     result.add " Stopped at " & c.capped & ": the traces of " &
       plural(c.notAdded, "later file") & " (or the rest of one) were not added."
@@ -304,6 +381,16 @@ proc buildSession(c: var Collected; ask: GatherAsk): Session =
   for i, r in c.rows: fileOf[i] = r.file
   result.asGathered(title, c.paths, fileOf)
 
+proc geometryOf(rel: ptr SurveyGeometry; stations: array[PointRole, GatherStations]):
+    SurveyGeometry =
+  ## The relations and the stations as one geometry, as the recorded fold lays them out.
+  result = rel[]
+  for r in PointRole:
+    for k, st in stations[r].stations:
+      if r == prSource: result.addSource(st.line, st.point, st.index, stations[r].xs[k],
+        stations[r].ys[k])
+      else: result.addReceiver(st.line, st.point, st.index, stations[r].xs[k], stations[r].ys[k])
+
 proc gatherWork*(ask: sink GatherAsk; to: Poster): JobWork =
   ## The work of a job that collects the traces at `ask`'s station from `ask`'s files and
   ## posts the gather (`mkGathered`), or only the sentence when there is none. A cancel raises
@@ -315,9 +402,26 @@ proc gatherWork*(ask: sink GatherAsk; to: Poster): JobWork =
   mine.budget = int(gatherReadBudget)
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
+    # a file reached twice (a linked folder among the subfolders) is read once
+    ctx.setPhase "looking for files listed twice"
+    var (once, seen, twice) = (newSeq[GatherFile](), initHashSet[string](), 0)
+    for i, f in mine.files:
+      if i mod 256 == 0: ctx.checkCancelled()
+      var real = f.path
+      try: real = fs.expandFilename(real)
+      except OSError: discard
+      if seen.containsOrIncl(real): inc twice
+      else: once.add f
+    mine.files = once
+    var geometry = initSurveyGeometry()
     var args = GatherItems(ask: addr mine)
+    if mine.relations != nil:
+      ctx.setPhase "gathering the stations"
+      {.cast(gcsafe).}:
+        geometry = geometryOf(mine.relations, mine.stations)
+      args.survey = addr geometry
     let total = mine.files.len
-    var c = Collected(maxTraces: mine.maxTraces, maxBytes: mine.maxBytes)
+    var c = Collected(maxTraces: mine.maxTraces, maxBytes: mine.maxBytes, twice: twice)
     var sizes = newSeq[int64](total)
     for i, f in mine.files: sizes[i] = max(0'i64, f.size)
     ctx.setPhase "reading " & plural(total, "file")
@@ -325,7 +429,9 @@ proc gatherWork*(ask: sink GatherAsk; to: Poster): JobWork =
       ctx.checkCancelled()
       let path = mine.files[k].path
       ctx.setPhase "reading " & path.extractFilename
-      if outcome.ok: c.add(path, move outcome.value)
+      if outcome.ok:
+        c.add(path, move outcome.value)
+        if c.capped.len > 0: args.full.store(true, moRelaxed)
       elif outcome.failure.cancelled: raise newException(JobCancelledError, "cancelled")
       else:
         inc c.unreadable
@@ -347,6 +453,6 @@ proc gatherWork*(ask: sink GatherAsk; to: Poster): JobWork =
     to.post Msg(job: ctx.id, kind: mkGathered, gathered: move made, gatherSaid: said)
 
 func gatherSpec*(ask: GatherAsk): JobSpec =
-  ## The job's spec: it reads the listed files, so the files' closing waits for it.
-  result = JobSpec(title: gatherTitle(ask.line, ask.point), lane: jlBackground)
-  for f in ask.files: result.reads.add f.path
+  ## The job's spec. It names no file in `reads`, as the recorded fold does: each item opens
+  ## its own session, so closing or leaving a listed file never cancels the gather.
+  JobSpec(title: gatherTitle(ask.line, ask.point), lane: jlBackground)

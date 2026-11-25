@@ -409,7 +409,7 @@ proc drawToolbar*(t: Theme; marks: var Marks; input: MenuInput;
     let plotsOn = input.canPlot
     igSameLine(0, ButtonGap)
     if iconButton(IconRefresh, "Reopen with options", "", size, t, marks,
-        tipText = menuLabel(maReopen), enabled = input.canClose):
+        tipText = menuLabel(maReopen), enabled = input.canClose and input.canReopen):
       result.actions.incl maReopen
     groupDivider(t, size)
     if iconButton(IconUndo, "Undo", shortcutName(maUndo), size, t, marks,

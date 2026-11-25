@@ -14,15 +14,33 @@
 ##   no session and a sentence.
 ## - Every edit command is refused with a sentence, no edits are kept for the gather, and its
 ##   edit key is no file's.
-## - A cancelled gather leaves no session.
+## - A cancelled gather leaves no session; stepping the main panel to another listed file
+##   while the job runs does not cancel it.
+## - A trace whose start differs by whole samples is shifted onto the gather's axis, one by a
+##   part of a sample is left out and named; a file whose interval is not given sets nothing.
+## - The survey is the map's, with or without a project, and a survey still loading refuses
+##   the command. A file listed twice is read once; a killed trace is left out; "any
+##   component" takes every component.
+## - A full gather opens no later file; a single trace over the byte limit is refused.
+## - The gather's key reaches no file system call, a reopen is refused, a station move leaves
+##   its keys alone, and replacing it says it was closed.
 ##
 ## Seen to fail: with the refusal in `editTraces` taken out, "an edit is refused" failed on
 ## the first edit; with the sort by record time left out, trace 0 was the first file's, not
-## the earliest shot's.
+## the earliest shot's; with the listed files back in the job's reads, "stepAway" ended with
+## a cancelled gather; with the shift taken out, "a later start was not shifted"; with no
+## survey given, no trace was found; with the look for files listed twice taken out, 3
+## traces came, not 2; with the reopen refusal taken out, "a reopen was not refused"; with
+## the join queues' skip of a gather taken out, "a move changed the gather"; with every
+## interval accepted, the first file's interval set the gather's and the run overflowed;
+## with the stop flag not set, 150 files were touched; with the single-trace check taken out,
+## no file said "over the memory limit"; with the kills ignored, 5 traces came; with the
+## "closed" line taken out, none was said; with the exact component only, "any component"
+## found none; with the loading check taken out, the gather ran with the survey loading.
 
-import std/[atomics, os, sequtils, strutils]
+import std/[atomics, locks, os, sequtils, sets, strutils]
 import parseSEG
-import viewSEG/core/[edits, filesystem, jobs, receivergather, session, state]
+import viewSEG/core/[edits, filesystem, jobs, receivergather, session, state, stationmoves]
 import utils/[fixtures, waiting]
 
 const
@@ -32,6 +50,9 @@ const
 
 var gate: Gate
 var reached: Atomic[bool]
+var keyTouched: Atomic[bool] ## a file system call named a gather's key
+var touchLock: Lock
+var touched: HashSet[string] ## files the job's threads touched
 var mainThread: int
 
 proc holdOpen(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
@@ -44,21 +65,59 @@ proc holdOpen(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
         sleep 1
         inc waited
 
+proc watchKeys(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
+  if "gathered" in path or '\0' in path: keyTouched.store(true)
+
+proc countOpens(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
+  if op in {foOpen, foMapped} and getThreadId() != mainThread and path.endsWith(".sgy"):
+    {.cast(gcsafe).}:
+      withLock touchLock:
+        touched.incl path
+
 proc shotFile(path: string; record: int64; time: float64; intervalUs = 2000.0;
-    samples = Samples) =
+    samples = Samples; t0Ms = 0.0; rev1 = false) =
   ## A record of 30 channels; the sample `i` of channel `ch` is its own number.
-  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+  var opts = SegyOutputOptions(traceSorting: 1, measurementSystem: 1)
+  if rev1: opts.revision = SegyRevision(major: 1, minor: 0)
+  var w = openSeismicWriter(path, opts)
   for ch in 1 .. 30:
     var k = initTraceKeys()
     k.record = float64(record)
     k.channel = float64(ch)
     k.srcPoint = 1000.0 + float64(record) # the X record's source
     k.time = time
+    k.t0Ms = t0Ms
     (k.intervalUs, k.status) = (intervalUs, tsLive)
     var buf = newSeq[float32](samples)
     for i in 0 ..< samples: buf[i] = float32(int(record) * 1000 + ch * 10) + float32(i) * 0.37'f32
     w.writeTrace(k, buf)
   doAssert w.close().len == 0, "shot file was not written: " & path
+
+proc componentFile(path: string; component: int) =
+  ## A SEG-D file of one trace: receiver 100/105, record 99, the given component.
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: Samples))
+  var k = initTraceKeys()
+  k.status = tsLive
+  (k.record, k.channel, k.component) = (99.0, 1.0, uint8(component))
+  (k.rcvLine, k.rcvPoint, k.intervalUs, k.time) = (100.0, 105.0, 2000.0, Time0 + 600)
+  (k.srcLine, k.srcPoint) = (1.0, 1099.0)
+  var buf = newSeq[float32](Samples)
+  for i in 0 ..< Samples: buf[i] = 9000'f32 + float32(i)
+  w.writeTrace(k, buf)
+  doAssert w.close().len == 0, "component file was not written: " & path
+
+proc zeroInterval(path: string) =
+  ## Writes 0 into the file's sample interval fields (the writer refuses to), binary header
+  ## and every trace header: a file whose interval is not given.
+  var bytes = readFile(path)
+  bytes[3216] = '\0'
+  bytes[3217] = '\0'
+  var at = 3600
+  while at + 240 <= bytes.len:
+    bytes[at + 116] = '\0'
+    bytes[at + 117] = '\0'
+    at += 240 + Samples * 4
+  writeFile(path, bytes)
 
 proc sourceTrace(path: string; index: int): seq[float32] =
   ## Trace `index` of the file at `path`, as the viewer reads it.
@@ -97,6 +156,7 @@ proc ask(st: var AppState; line = Station.line; point = Station.point; component
 
 proc main*() =
   mainThread = getThreadId()
+  initLock touchLock
   withFixtures fx:
     let (sps, _) = (fx.mapSps, 0)
     let xps = fx.mapXps
@@ -183,7 +243,7 @@ proc main*() =
       gatherTraces = 2
       st.ask()
       doAssert st.settle(st.jobs.active.len == 0 and st.sessions.len == 1 and
-        st.sessions[0].gathered)
+        st.sessions[0].gathered), st.lastSaid
       gatherTraces = 20_000
       doAssert st.sessions[0].len == 2, $st.sessions[0].len
       doAssert "Stopped at the limit of 2 traces" in st.lastSaid, st.lastSaid
@@ -220,6 +280,187 @@ proc main*() =
       doAssert st.settle(st.jobs.info(job).get.state == jsCancelled)
       doAssert st.sessions.len == 1 and not st.sessions[0].gathered, "a cancel left a session"
       doAssert "was cancelled" in st.lastSaid, st.lastSaid
+
+    block stepAway:
+      # stepping the main panel to another listed file while the job is held closes the file
+      # it showed: the gather goes on (no listed file is in the job's reads)
+      gate.close()
+      reached.store(false)
+      setFsHook(holdOpen)
+      st.ask()
+      doAssert waitUntil(reached.load), "the job did not reach its file"
+      let job = st.jobs.active[0].id
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: paths[2])
+      doAssert st.settle(st.sessions.len == 1 and st.sessions[0].diskPath == paths[2])
+      doAssert st.jobs.info(job).get.state in {jsQueued, jsRunning}, "the gather was cancelled"
+      gate.open
+      doAssert st.settle(st.jobs.active.len == 0 and st.sessions.len == 1 and
+        st.sessions[0].gathered), st.lastSaid
+      setFsHook(nil)
+      doAssert st.sessions[0].len == 5
+
+    block keyIsNoFile:
+      let s = st.sessions[0]
+      let keys = s.file.index.keys.mapIt($it)
+      keyTouched.store(false)
+      setFsHook(watchKeys)
+      let said = st.sayings("no options to reopen")
+      st.apply Command(kind: ckReopen, reopenPath: s.path)
+      doAssert st.sayings("no options to reopen") == said + 1, "a reopen was not refused"
+      doAssert st.sessions.len == 1 and st.sessions[0].gathered and not keyTouched.load,
+        "the gather's key reached the file system"
+      # a station move and a survey update leave the gather's keys as they were
+      var moves = StationMoves()
+      moves.add StationMove(station: stationKey(100, 105, 1), x: 1.0, y: 2.0)
+      st.setStationMoves(moves)
+      for _ in 1 .. 3:
+        doAssert st.settle(st.jobs.active.len == 0)
+        sleep 100
+      doAssert st.sessions[0].file.index.keys.mapIt($it) == keys, "a move changed the gather"
+      doAssert not keyTouched.load, "the gather's key reached the file system"
+      doAssert st.sayings("Matched Receiver gather") == 0
+      setFsHook(nil)
+      st.setStationMoves(StationMoves())
+      doAssert st.settle(st.jobs.active.len == 0)
+
+    block replacedSaid:
+      let said = st.sayings("The receiver gather 100/105 was closed.")
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: paths[0])
+      doAssert st.settle(st.sessions.len == 1 and not st.sessions[0].gathered)
+      doAssert st.sayings("The receiver gather 100/105 was closed.") == said + 1
+
+    block limits:
+      # a full gather opens no more files; a trace bigger than the memory limit is refused
+      let many = fx.dir / "many"
+      createDir(many)
+      for i in 1 .. 150: shotFile(many / ("f" & align($i, 3, '0') & ".sgy"), 1, Time0 + float64(i))
+      st.apply Command(kind: ckBrowse, paths: @[many])
+      doAssert st.settle(not st.fileList.scanning and st.fileList.folder == many)
+      doAssert st.settle(st.jobs.active.len == 0) # (the kinds of the files are read)
+      gatherTraces = 1
+      touched.clear()
+      setFsHook(countOpens)
+      st.ask()
+      doAssert st.settle(st.jobs.active.len == 0 and st.sessions.len == 1 and
+        st.sessions[0].gathered), st.lastSaid
+      setFsHook(nil)
+      gatherTraces = 20_000
+      doAssert st.sessions[0].len == 1 and "Stopped at the limit of 1 trace" in st.lastSaid,
+        st.lastSaid
+      doAssert touched.len < 150, "every file was opened: " & $touched.len
+      doAssert "later files" in st.lastSaid, st.lastSaid
+      st.apply Command(kind: ckBrowse, paths: @[dir])
+      doAssert st.settle(not st.fileList.scanning and st.fileList.folder == dir)
+      gatherBytes = 8
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: paths[0])
+      doAssert st.settle(st.sessions.len == 1 and not st.sessions[0].gathered)
+      st.ask()
+      doAssert st.settle(st.jobs.active.len == 0 and
+        "over the memory limit" in st.lastSaid), st.lastSaid
+      gatherBytes = 512'i64 shl 20
+      doAssert not st.sessions[0].gathered
+
+    block times:
+      # start times: a whole number of samples is shifted, a part of a sample is left out; an
+      # interval that is not given sets nothing; the components; a file listed twice
+      let d2 = fx.dir / "times"
+      createDir(d2)
+      shotFile(d2 / "0-nointerval.sgy", 7, Time0 + 700, rev1 = true)
+      zeroInterval(d2 / "0-nointerval.sgy")
+      shotFile(d2 / "a.sgy", 1, Time0 + 300)
+      shotFile(d2 / "b-late.sgy", 2, Time0 + 200, t0Ms = 4.0)
+      shotFile(d2 / "c-frac.sgy", 3, Time0 + 100, t0Ms = 1.0)
+      shotFile(d2 / "d-early.sgy", 4, Time0 + 400, t0Ms = -4.0)
+      componentFile(d2 / "e-comp.sgd", 2)
+      st.apply Command(kind: ckBrowse, paths: @[d2])
+      doAssert st.settle(not st.fileList.scanning and st.fileList.folder == d2)
+      st.ask()
+      doAssert st.settle(st.jobs.active.len == 0 and st.sessions.len == 1 and
+        st.sessions[0].gathered), st.lastSaid
+      let s = st.sessions[0]
+      let said = st.lastSaid
+      doAssert s.len == 3, $s.len & ": " & said
+      let late = sourceTrace(d2 / "b-late.sgy", 4)
+      let early = sourceTrace(d2 / "d-early.sgy", 4)
+      let a = sourceTrace(d2 / "a.sgy", 4)
+      # record time order: b (200), a (300), d (400)
+      doAssert s.gatherSource(0) == d2 / "b-late.sgy" and s.gatherSource(1) == d2 / "a.sgy"
+      var want = newSeq[float32](Samples)
+      for j in 2 ..< Samples: want[j] = late[j - 2]
+      doAssert gatherSamples(s, 0) == want, "a later start was not shifted"
+      doAssert gatherSamples(s, 1) == a
+      for j in 0 ..< Samples - 2: want[j] = early[j + 2]
+      want[Samples - 2] = 0
+      want[Samples - 1] = 0
+      doAssert gatherSamples(s, 2) == want, "an earlier start was not shifted"
+      for i in 0 ..< s.len: doAssert s.file.index.keys[i].t0Ms == 0.0, "t0 of trace " & $i
+      doAssert "2 traces start at another time and were shifted to the gather's" in said, said
+      doAssert "c-frac.sgy (starts 1 ms from the gather's start, not a whole number of " &
+        "samples)" in said, said
+      doAssert "0-nointerval.sgy (sample interval not given)" in said and
+        "e-comp.sgd" notin said, said
+      # any component takes e-comp's trace too, in file order
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: d2 / "a.sgy")
+      doAssert st.settle(st.sessions.len == 1 and not st.sessions[0].gathered)
+      st.ask(component = AnyComponent)
+      doAssert st.settle(st.jobs.active.len == 0 and st.sessions.len == 1 and
+        st.sessions[0].gathered), st.lastSaid
+      doAssert st.sessions[0].len == 4 and "(any component)" in st.lastSaid, st.lastSaid
+      doAssert d2 / "e-comp.sgd" in st.sessions[0].gatherSources
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: d2 / "a.sgy")
+      doAssert st.settle(st.sessions.len == 1 and not st.sessions[0].gathered)
+      st.ask(component = 7)
+      doAssert st.settle(st.jobs.active.len == 0 and
+        "No listed file holds receiver station 100/105 (component 7)" in st.lastSaid), st.lastSaid
+
+    block listedTwice:
+      let top = fx.dir / "top"
+      createDir top / "sub"
+      for r in 1 .. 2: shotFile(top / "sub" / ("shot" & $r & ".sgy"), r, Time0 + float64(r))
+      createSymlink(top / "sub" / "shot1.sgy", top / "link1.sgy")
+      st.apply Command(kind: ckBrowse, paths: @[top])
+      doAssert st.settle(not st.fileList.scanning and st.fileList.folder == top)
+      st.apply Command(kind: ckSubfolders, subfolders: true)
+      doAssert st.settle(not st.fileList.scanning and st.fileList.recursive)
+      st.ask()
+      doAssert st.settle(st.jobs.active.len == 0 and st.sessions.len == 1 and
+        st.sessions[0].gathered), st.lastSaid
+      doAssert st.sessions[0].len == 2 and "1 file listed twice was read once" in st.lastSaid,
+        $st.sessions[0].len & ": " & st.lastSaid
+
+    block killed:
+      st.apply Command(kind: ckBrowse, paths: @[dir])
+      doAssert st.settle(not st.fileList.scanning and st.fileList.folder == dir)
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: paths[0])
+      doAssert st.settle(st.sessions.len == 1 and not st.sessions[0].gathered)
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled,
+        edited: @[st.sessions[0].base + 4], on: true)
+      st.ask()
+      doAssert st.settle(st.jobs.active.len == 0 and st.sessions.len == 1 and
+        st.sessions[0].gathered), st.lastSaid
+      doAssert st.sessions[0].len == 4 and paths[0] notin st.sessions[0].gatherSources and
+        "1 killed trace left out" in st.lastSaid, st.lastSaid
+
+    block noProject:
+      # the map's survey files place the traces with no project open; a survey still being
+      # loaded is no reason to gather with none
+      var lone = initAppState()
+      lone.rememberFilesIn(fx.dir / "config2")
+      lone.apply Command(kind: ckShowFile, panel: MainPanel, path: paths[0])
+      doAssert lone.settle(lone.sessions.len == 1 and lone.panel(MainPanel).laidOut)
+      lone.apply Command(kind: ckJoin, joinFile: lone.sessions[0].id, joinFiles: @[
+        JoinFile(path: sps.s, kind: jkSps), JoinFile(path: sps.r, kind: jkSps),
+        JoinFile(path: xps, kind: jkSps)])
+      lone.ask()
+      doAssert lone.sayings("still loading") == 1, "a gather ran with the survey loading"
+      doAssert lone.settle(not lone.importing and lone.survey.layers.len >= 3)
+      lone.apply Command(kind: ckBrowse, paths: @[dir])
+      doAssert lone.settle(not lone.fileList.scanning and lone.fileList.folder == dir)
+      lone.ask()
+      doAssert lone.settle(lone.jobs.active.len == 0 and lone.sessions.len == 1 and
+        lone.sessions[0].gathered), lone.lastSaid
+      doAssert lone.sessions[0].len == 5, $lone.sessions[0].len & ": " & lone.lastSaid
+      lone.shutdown()
     st.shutdown()
   echo "treceivergather: done"
 
