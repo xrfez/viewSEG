@@ -324,7 +324,15 @@ proc main*() =
       let expect = filtered(samplesOf(src, 1), dt, plot.filterPipeline(dt))
       doAssert samplesOf(back, 1) == expect, "the plot filter is not the plot path"
       doAssert samplesOf(back, 1) != samplesOf(src, 1), "the plot filter changed nothing"
+      doAssert "The written traces will be filtered: high-cut 40-50 Hz." in got.wrote.lines,
+        "the notes do not say what was filtered: " & $got.wrote.lines
       back.close()
+      removeFile(dest)
+      let bare = runJob(src, segy, dest,
+        OutputOptions(format: ofSegy, applyProcessing: true), FileEdits(), @[segy])
+      doAssert bare.st == jsDone, bare.error
+      doAssert "The Seismic window has no filter on: nothing is changed." in bare.wrote.lines,
+        "the notes do not say no filter was on: " & $bare.wrote.lines
       removeFile(dest)
     block sorted:
       let keys = @[SortKey(field: hfChannel, descending: true)]

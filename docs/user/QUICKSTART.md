@@ -456,8 +456,12 @@ keep (extended text, trailers, a time that was rounded, and so on). SEG-D offers
 and 3.1 only when no ticked file is SEG-D, as a SEG-D file keeps its own revision; a
 folder that mixes standards offers the choices that hold for all of them, and a line says
 what each file gets. The choice is remembered for each format; one the ticked files cannot take is shown as Same as the source for that write, and is not forgotten. The boxes under it, in two columns,
-are on: polarity reversals, dropping killed traces, each trace's own filter, the Seismic
-window's processing, time shifts, and the plot's sort. **Keep the file's own positions**
+are on: polarity reversals, dropping killed traces, each trace's own filter, time shifts,
+and the plot's sort. **Processing**, the Seismic window's filters, is off every time you
+start the program, so a band-pass on the plot is never written unasked. Tick it and a line
+under the boxes says what will be written (for example "The written traces will be
+filtered: band-pass 5-10-40-60 Hz."), or that no filter is on and nothing is changed; each
+file's notes say the same. **Keep the file's own positions**
 is off: a survey join or a station move in an open file is written into the headers on
 every path, including when headers are built from the trace keys. The notes say how many
 traces changed, or that the positions were written where the format has a place for them,

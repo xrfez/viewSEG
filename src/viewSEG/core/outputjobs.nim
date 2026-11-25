@@ -476,6 +476,15 @@ proc boundary(file: SeismicFile; trace: int; byEntry, segdOut: bool): int64 =
   elif segdOut: recordKey(file, trace)
   else: 0
 
+func processingSentence*(p: Processing): string =
+  ## What writing with the Seismic window's filters does, in plain words: the
+  ## filters in force, or that none is on and nothing is changed.
+  if p.filtering:
+    let band = if p.band == pbBandPass: "band-pass " else: ""
+    "The written traces will be filtered: " & band & p.describe & "."
+  else:
+    "The Seismic window has no filter on: nothing is changed."
+
 func changesTraces(opts: OutputOptions): bool =
   ## Whether an option that changes samples or which traces are written is on.
   ## The flag counts, not whether a trace is actually different.
@@ -1158,6 +1167,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           for d in log: addGap(gaps, $d)
           let sentence = positionSentence(writtenPositions(file[], edits, opts.dropKilled), gaps)
           if sentence.len > 0: lines.add sentence
+        if opts.applyProcessing: lines.add processingSentence(opts.processing)
         for d in log: lines.add($d)
         for d in w.revisionNotes: lines.add($d)
         if correlating:

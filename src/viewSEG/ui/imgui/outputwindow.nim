@@ -15,8 +15,8 @@ from parseSEG import SeismicFile, TextEncoding, teEbcdic, teAscii
 import sdl3_nim
 import imguin/cimgui
 import ../../core/[edits, filejobs, filekinds, filesystem, geometry, jobs, outputbatch,
-  namepreviewjobs, outputbinary, outputjobs, outputtext, panels, references, settings, state,
-  vendormaps]
+  namepreviewjobs, outputbinary, outputjobs, outputtext, panels, processing, references,
+  settings, state, vendormaps]
 import ../../view/[filetable, outputbinaryedit, outputtextedit, outputwords, theme]
 import fittext, focus, fonts, icons, marks, overflow, style
 from windows import awOutput, beginClosable
@@ -64,7 +64,7 @@ type
     reversals: bool = true
     dropKilled: bool = true
     ownFilters: bool = true
-    processingOn: bool = true
+    processingOn: bool ## off at the start of a session: the plot's filters are never written unasked
     shifts: bool = true
     correlate: bool
     sortOn: bool = true
@@ -795,7 +795,7 @@ proc optBox(label: cstring; on: var bool; help: string) =
   discard igCheckbox(label, addr on)
   if help.len > 0: tip(help)
 
-proc drawOptions(ui: var OutputUi; st: AppState; marks: var Marks) =
+proc drawOptions(ui: var OutputUi; st: AppState; t: Theme; marks: var Marks) =
   var keys = ""
   let pk = st.findPanel(MainPanel)
   if pk >= 0 and st.panels[pk].layers.len > 0:
@@ -810,6 +810,8 @@ proc drawOptions(ui: var OutputUi; st: AppState; marks: var Marks) =
   igTableNextRow(0, 0)
   optBox(OptFilters.cstring, ui.ownFilters, "")
   optBox(OptProcessing.cstring, ui.processingOn, ProcessingTip)
+  marks.markRect("output.processing.tick", igGetItemRectMin(), igGetItemRectMax())
+  marks.mark("output.processing " & (if ui.processingOn: "on" else: "off"))
   igTableNextRow(0, 0)
   optBox(OptShifts.cstring, ui.shifts, "")
   optBox(OptSort.cstring, ui.sortOn, sortTip(keys))
@@ -827,6 +829,16 @@ proc drawOptions(ui: var OutputUi; st: AppState; marks: var Marks) =
   marks.mark(if sweep.why.len > 0: "output.correlate.disabled" else: "output.correlate")
   if corr: flagMark(marks, "output.correlate.on")
   igEndTable()
+  if ui.processingOn:
+    var plot = Processing()
+    if pk >= 0 and st.panels[pk].layers.len > 0: plot = st.panels[pk].layers[0].processing
+    let said = processingSentence(plot)
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+    igPushTextWrapPos(0)
+    igTextUnformatted(said.cstring, nil)
+    igPopTextWrapPos()
+    igPopStyleColor(1)
+    marks.mark("output.processing.says " & said)
 
 proc activityLine(ui: OutputUi; phase: string): string =
   ## The progress line: the current state, never the results summary.
@@ -1791,7 +1803,7 @@ proc drawBinaryEditor(ui: var OutputUi; st: AppState; t: Theme; marks: var Marks
   elif cancel or not open:
     ui.binOpen = false
 
-proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
+proc drawRight(ui: var OutputUi; st: AppState; t: Theme; phase: string; marks: var Marks;
     outp: var OutputOutput) =
   let extra = if ui.dest.len > 0: "output.destination " & ui.dest else: ""
   if pathLine(DestLabel, ui.dest, ChangeDest, "output.dest", extra, "output.changeDest",
@@ -1818,7 +1830,7 @@ proc drawRight(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
   if ui.format == ofSegy:
     ui.drawTextRow(st, marks, outp)
     ui.drawBinaryRow(st, marks, outp)
-  ui.drawOptions(st, marks)
+  ui.drawOptions(st, t, marks)
   discard igCheckbox(KeepFolders.cstring, addr ui.mirror)
   marks.mark("output.mirror")
   tip(MirrorTip)
@@ -1854,7 +1866,7 @@ proc drawOutput*(ui: var OutputUi; title: string; st: AppState; fonts: Fonts; t:
       if igBeginChild_Str("##out.right", ImVec2_c(x: 0, y: 0),
           ImGui_ChildFlags_Borders.cint, 0):
         marks.markWindow("output.pane.right")
-        ui.drawRight(st, phase, marks, result)
+        ui.drawRight(st, t, phase, marks, result)
       igEndChild()
       flagMark(marks, "output.beside")
     else:
@@ -1867,7 +1879,7 @@ proc drawOutput*(ui: var OutputUi; title: string; st: AppState; fonts: Fonts; t:
       if igBeginChild_Str("##out.right.stack", ImVec2_c(x: 0, y: 0),
           ImGui_ChildFlags_Borders.cint, 0):
         marks.markWindow("output.pane.right")
-        ui.drawRight(st, phase, marks, result)
+        ui.drawRight(st, t, phase, marks, result)
       igEndChild()
       flagMark(marks, "output.stacked")
     marks.markOverflow("output")
