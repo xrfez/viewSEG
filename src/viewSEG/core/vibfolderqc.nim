@@ -8,6 +8,7 @@ from sigtypes import SignatureKind, SweepInfo, VibWeights, groupDigits
 import shotfollow, shotfollowtarget, shotlog, sigjudge, units, vibjudge
 
 const
+  TwoShotLogs* = "Two shot logs match this sweep."
   ListingPhase* = "Listing the folder."
   CannotListFolder* = "The folder could not be listed."
 
@@ -35,6 +36,7 @@ type
     ## The shot log's row for a sweep, as the log gives it. `found` is false
     ## when no log is loaded or no row fits; the texts are then empty.
     found*: bool
+    byTime*: bool ## the row was found by the sweep's time, not by numbers alone
     ffid*, line*, point*: string
 
   FolderRow* = object
@@ -309,6 +311,7 @@ proc shotOf*(q: ShotQuery; ix: ShotIndex; view: ShotView): FolderShot =
   if m.row >= 0 and m.row < view.rows.len:
     let r = view.rows[m.row]
     result.found = true
+    result.byTime = m.rule in {mrTime, mrTimeAndNumbers, mrSecond}
     if r.fileNumber.isSome: result.ffid = $r.fileNumber.get
     if r.sourceLine == r.sourceLine: result.line = sensible(r.sourceLine)
     if r.shotPoint == r.shotPoint: result.point = sensible(r.shotPoint)

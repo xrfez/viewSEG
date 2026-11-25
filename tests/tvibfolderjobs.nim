@@ -868,6 +868,40 @@ proc main*() =
       doAssert not miss.shot.found and miss.shot.ffid.len == 0 and miss.shot.point.len == 0,
         "a guess for a sweep the log does not have: " & $miss.shot
 
+    block twoShotLogs:
+      ## With two logs loaded, a match by the sweep's time in any log wins over a match
+      ## by numbers in an earlier one; two logs that match by time with different rows
+      ## give nothing and the row says so. Seen to fail when the first log with any hit
+      ## won (the earlier log's row without a time beat the later exact time).
+      var st = started()
+      let files = @[listed(good)]
+      var table = runJob(files, ask).table
+      let us = files[0].info.triggerNs div 1000
+      let blank = fx.dir / "shots-blank.csv"
+      writeFile(blank, "UTC microseconds,file number,source line,shot point\n" &
+        ",7001,100.00,5.00\n")
+      let exact = fx.dir / "shots-exact.csv"
+      writeFile(exact, "UTC microseconds,file number,source line,shot point\n" &
+        $us & ",7001,100.00,1010.00\n")
+      let clash = fx.dir / "shots-clash.csv"
+      writeFile(clash, "UTC microseconds,file number,source line,shot point\n" &
+        $us & ",8888,200.00,2020.00\n")
+      st.apply Command(kind: ckImportShotLog, logPath: blank)
+      doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0), "no first log"
+      st.apply Command(kind: ckImportShotLog, logPath: exact)
+      doAssert st.settle(st.shotLogCount == 2 and st.jobs.active.len == 0), "no second log"
+      table.rows.withShots(st)
+      var hit = rowOf(table, good)
+      doAssert hit.shot.found and hit.shot.point == "1010", "the earlier log won: " & $hit.shot
+      st.apply Command(kind: ckImportShotLog, logPath: clash)
+      doAssert st.settle(st.shotLogCount == 3 and st.jobs.active.len == 0), "no third log"
+      table.rows.withShots(st)
+      hit = rowOf(table, good)
+      doAssert not hit.shot.found and hit.shot.ffid.len == 0, $hit.shot
+      doAssert TwoShotLogs in hit.warnings, $hit.warnings
+      table.rows.withShots(st)
+      doAssert timesOf(rowOf(table, good).warnings, TwoShotLogs) == 1, "the warning piled up"
+
   echo "tvibfolderjobs: ok"
 
 when isMainModule:

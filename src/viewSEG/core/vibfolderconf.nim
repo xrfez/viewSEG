@@ -4,7 +4,7 @@
 ## weights. A run asks for nothing else; when the project has no profile the
 ## run is not configured.
 
-import std/os
+import std/[os, sequtils]
 import analysis, project, settings, state, vibfolderqc, vibprofile
 
 const
@@ -91,16 +91,30 @@ func vibQcConfig*(st: AppState): VibQcConfig =
     of rfMissing: ReferenceMissing
     else: ""
 
+func sameShot(a, b: FolderShot): bool =
+  a.ffid == b.ffid and a.line == b.line and a.point == b.point
+
 proc withShots*(rows: var seq[FolderRow]; st: AppState) =
-  ## Each row's shot log match, from the loaded logs (the first that has a row
-  ## for the sweep). In memory only: no file is read. A row no log fits, or any
-  ## row with no log loaded, has none: never a guess.
+  ## Each row's shot log match, from the loaded logs, in two passes over all of
+  ## them: a match by the sweep's time first, and only when no log matches by time
+  ## one by numbers (the first log that has one). Two logs that match by time with
+  ## different rows give nothing, and the row says so. In memory only: no file is
+  ## read. A row no log fits, or any row with no log loaded, has none: never a guess.
   for row in rows.mitems:
     row.shot = FolderShot()
+    row.warnings.keepItIf(it != TwoShotLogs)
+    var byNumbers = FolderShot()
+    var clash = false
     for i in 0 ..< st.shotLogCount:
       let ix = st.shotIndexOf(st.shotLogId(i))
       if ix != nil:
         let hit = shotOf(row.query, ix[], st.shotView(i))
-        if hit.found:
-          row.shot = hit
-          break
+        if hit.found and hit.byTime:
+          if not row.shot.found: row.shot = hit
+          elif not sameShot(row.shot, hit): clash = true
+        elif hit.found and not byNumbers.found: byNumbers = hit
+    if clash:
+      row.shot = FolderShot()
+      row.warnings.add TwoShotLogs
+    elif not row.shot.found:
+      row.shot = byNumbers
