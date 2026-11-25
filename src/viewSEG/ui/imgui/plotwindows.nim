@@ -1340,13 +1340,17 @@ proc drawIdentity(w: AnalysisWindow; name: string; t: Theme; marks: var Marks) =
 
 proc drawVerdict(name: string; q: QcReport; t: Theme; marks: var Marks) =
   ## A vibrator signature's verdict, one line, in words and a sign (never colour alone):
-  ## pass, fail with the worst failing value and its time, or not judged.
+  ## pass, fail with the worst failing value and its time, or not judged; wrapped, never cut
+  ## (it says what the file was judged against, and what of the sweep was not judged). A pass
+  ## on part of the reference sweep is in the warning colour.
   let colour = case q.verdict
-    of qvPass: t.roles[rlOk]
+    of qvPass: (if q.recordedPct.isNaN: t.roles[rlOk] else: t.roles[rlWarning])
     of qvFail: t.roles[rlError]
     of qvNotJudged: t.roles[rlWarning]
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(colour))
-  fittedText(q.line, igGetContentRegionAvail().x)
+  igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
+  igTextUnformatted(q.line.cstring, nil)
+  igPopTextWrapPos()
   igPopStyleColor(1)
   marks.mark(name & ".verdict")
   tip("The sweep judged as a vibrator controller's QC does: the mean of each " &
@@ -1431,6 +1435,7 @@ proc drawQcTable(name: string; q: QcReport; judged: string; t: Theme; marks: var
       ImGui_TableFlags_BordersInnerH.cint or ImGui_TableFlags_Resizable.cint or
       ImGui_TableFlags_BordersInnerV.cint
   let table = q.tableOf
+  let rows = q.allRows
   igPushStyleVar_Vec2(ImGui_StyleVar_CellPadding.cint, ImVec2_c(x: 4, y: 1))
   defer: igPopStyleVar(1)
   if igBeginTable(("##qctable" & name).cstring, 5, flags, ImVec2_c(x: 0, y: 0), 0):
@@ -1441,7 +1446,7 @@ proc drawQcTable(name: string; q: QcReport; judged: string; t: Theme; marks: var
     igTableHeadersRow()
     for i, row in table[1 .. ^1]:
       igTableNextRow(0, 0)
-      let status = q.rows[i].status
+      let status = rows[i].status
       for k, cell in row:
         discard igTableSetColumnIndex(cint(k))
         if k == 0 and status != qsNotJudged:
@@ -1457,7 +1462,8 @@ proc drawQcTable(name: string; q: QcReport; judged: string; t: Theme; marks: var
           if status == qsNotJudged: igPopStyleColor(1)
         else:
           igTextUnformatted(cell.cstring, nil)
-          if k == 1 and q.rows[i].limit == qlPeakForce and judged == "GF (M, B)":
+          if k == 1 and i < q.rows.len and q.rows[i].limit == qlPeakForce and
+              judged == "GF (M, B)":
             tip(PeakFromMassesTip)
     igEndTable()
     marks.mark(name & ".qc table")
