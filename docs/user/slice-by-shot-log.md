@@ -12,8 +12,9 @@ SEG-D or SEG-Y. The recording is never changed.
 - A shot log loaded: **Project > Import shot log...** (see the shot log section of the
   [quick start](QUICKSTART.md)). Only rows with a time are sliced.
 
-Until both are there the menu item is dim, and its tooltip says which is missing ("Show a
-seismic file and load a shot log first."). Only one slice runs at a time.
+Until a log is loaded the menu item is dim, and its tooltip says so. The window opens with no
+file shown: it says to choose one, and **Choose file...** opens the recording in the Seismic
+window; **Slice** stays dim until a recording is shown. Only one slice runs at a time.
 
 ## What the slice accepts
 

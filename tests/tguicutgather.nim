@@ -1,6 +1,6 @@
 ## Project > Slice by shot log, headless, driven by real clicks: the menu item does
-## nothing while no file is shown and no log is loaded and opens the dialog once
-## both are there; the dialog sums up the shots, the components and the size; a
+## nothing while no log is loaded and opens the dialog once one is, with no file shown too (the
+## dialog asks for one and its Choose file opens it); the dialog sums up the shots, the components and the size; a
 ## record length that is not a whole number of samples shows the sentence of
 ## `checkOptions` and Cut stays dim; with a good length a run writes the file and
 ## the dialog offers to open it.
@@ -8,7 +8,8 @@
 ## The record length typed is kept in the settings and offered by the next open (a new
 ## session too). Seen to fail: with the window never storing it, "the length is remembered"
 ## never comes; with `open` ignoring its argument, "the remembered length was not offered".
-## With the menu item always enabled, "the dialog opened with no
+## With the menu item still dim for a missing file, "the dialog opened with no file shown" never
+## comes. With the menu item always enabled, "the dialog opened with no
 ## file and no log". With the summary counting the row without a time, "the
 ## summary names the wrong shots". With the length sentence not marked, "the cut
 ## did not finish: a length that is not whole samples". With Cut left enabled on
@@ -102,7 +103,9 @@ proc main*() =
     let dest = fx.dir / "out" / "rec_slice.sgd"
     install()
     let hook = proc (kind: DialogKind; location: string): seq[string] =
-      if kind == dkCutDest: @[fx.dir / "out"] else: @[]
+      if kind == dkCutDest: @[fx.dir / "out"]
+      elif kind == dkOpenFile: @[rec]
+      else: @[]
     let opts = RunOptions(windowSize: (1920, 1080), theme: forceDark, persist: true,
       configDir: some(fx.dir / "config"), logDir: some(fx.dir / "logs"),
       indexCacheDir: some(fx.dir / "cache"), userThemeDir: some(fx.dir / "no-user-themes"),
@@ -134,16 +137,25 @@ proc main*() =
     step("the item with no file and no log", proc (f: FrameInfo) =
       clicks = 0
       f.click(f.markOf(ItemName).centre), noDialog)
-    proc showBoth(f: FrameInfo) =
-      f.apply Command(kind: ckShowFile, panel: MainPanel, path: rec)
+    proc logOnly(f: FrameInfo) =
       f.apply Command(kind: ckImportShotLog, logPath: logPath, logMap: map, logMapped: true)
-    proc bothReady(f: FrameInfo): bool =
+    step("a log and no file", logOnly, proc (f: FrameInfo): bool =
       f.core.shotLogCount == 1 and f.core.jobs.active.len == 0 and
-        f.core.shownFile(f.core.findPanel(MainPanel)) >= 0
-    step("a file and a log", showBoth, bothReady)
+        f.core.shownFile(f.core.findPanel(MainPanel)) < 0)
     proc openItem(f: FrameInfo): bool =
       if f.hasMark(ItemName) and not f.hasMark("cut"): f.click(f.markOf(ItemName).centre)
       f.hasMark("cut")
+    step("the item opens the dialog with no file shown", menuItem, openItem)
+    step("the dialog says to choose a file", proc (f: FrameInfo) = discard,
+      proc (f: FrameInfo): bool =
+      doAssert f.core.cutProblem == CutNeedFile, f.core.cutProblem
+      f.hasMark("cut.needSource") and f.hasMark("cut.chooseFile"))
+    step("Choose file", proc (f: FrameInfo) = f.click(f.markOf("cut.chooseFile").centre),
+      proc (f: FrameInfo): bool =
+      f.core.shownFile(f.core.findPanel(MainPanel)) >= 0 and f.core.jobs.active.len == 0 and
+        not f.hasMark("cut.needSource"))
+    step("Close the dialog", proc (f: FrameInfo) = f.click(f.markOf("cut.close").centre),
+      proc (f: FrameInfo): bool = not f.hasMark("cut"))
     step("the item opens the dialog", menuItem, openItem)
     proc summed(f: FrameInfo): bool =
       let s = f.summary

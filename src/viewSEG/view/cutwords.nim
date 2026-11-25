@@ -24,6 +24,9 @@ const
   NoCarry* = "This recording's headers cannot be carried into the output (it has more than " &
     "one record, or is in Rev 3 extended recording mode): they are built from the options, " &
     "as Rev 3."
+  ChooseFileTip* = "Open the recording to slice; it is shown in the Seismic window"
+  NeedSource* = "No recording is shown: choose the file to slice. It opens in the Seismic " &
+    "window."
   NeedFolder* = "Choose the folder the file is written to."
   NeedName* = "Give the file a name."
   DestChecking* = "Checking the destination..."
@@ -92,11 +95,11 @@ func standardExt*(s: CutStandard): string =
   if s == csSegy: ".sgy" else: ".sgd"
 
 func defaultName*(source: string; s: CutStandard): string =
-  ## The source's stem, "_slice", and the format's extension.
+  ## The source's stem, "_slice", and the format's extension; "slice" with no source.
   var stem = source
   let dot = stem.rfind('.')
   if dot > 0: stem.setLen dot
-  stem & "_slice" & standardExt(s)
+  (if stem.len == 0: "slice" else: stem & "_slice") & standardExt(s)
 
 func sizeWords*(bytes: int64): string =
   ## "about 1.5 GB" style, decimal units.

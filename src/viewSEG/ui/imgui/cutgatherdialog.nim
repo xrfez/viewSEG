@@ -36,6 +36,7 @@ type
     commands*: seq[Command]
     askFolder*: bool ## the Change folder button was pressed: ask for one
     askAt*: string
+    askFile*: bool   ## the Choose file button was pressed: ask for the recording to slice
 
 proc open*(ui: var CutUi; logId: int; recordMs = DefaultRecordMs) =
   ## Shows the window. `logId` is the shot log the Shot log window shows; a
@@ -228,6 +229,19 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
         0: sourceName else: "no file shown")).cstring,
       nil)
     marks.mark("cut.source")
+    igSameLine(0, -1)
+    if igButton((if shown >= 0: "Choose another file...##cut" else: "Choose file...##cut").cstring,
+        ImVec2_c(x: 0, y: 0)):
+      result.askFile = true
+    marks.mark("cut.chooseFile")
+    tip(ChooseFileTip)
+    let why = st.cutProblem()
+    if shown < 0 and st.shotLogCount > 0:
+      coloured(NeedSource, t.roles[rlWarning], wide)
+      marks.mark("cut.needSource")
+    elif why in [CutDerived, CutSignature]:
+      coloured(why, t.roles[rlWarning], wide)
+      marks.mark("cut.why " & why)
     ui.sources(st)
     let facts = st.recordingFacts
     ui.drawLog(st, marks)
@@ -301,7 +315,6 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
       if numbering.len > 0:
         wrapped(numbering, wide)
         marks.mark("cut.numbering")
-    let why = st.cutProblem()
     let canCut = why.len == 0 and problem.len == 0 and ui.folder.len > 0 and
       nameWhy.len == 0 and not ui.dest.exists and not ui.dest.pending and
       summary.len > 0
