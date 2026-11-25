@@ -9,9 +9,9 @@
 
 import std/[os, strutils, times]
 import imguin/cimgui
-import ../../core/state
+import ../../core/[join, state, stationmoves]
 import ../../view/theme
-import chrome, clearsurvey, focus, icons, style
+import chrome, clearsurvey, focus, icons, stationmovemenu, style
 
 type
   ProjectAsk* = enum
@@ -249,6 +249,38 @@ proc drawShownFile(ui: var ProjectUi; st: AppState; t: Theme; marks: var Marks;
       res.commands.add Command(kind: ckForgetFiles, forget: @[c.doc])
     igPopID()
 
+proc drawMoves(ui: var ProjectUi; st: AppState; t: Theme; marks: var Marks;
+    res: var ProjectOutput) =
+  ## The station moves: one row each with Remove, or how to make one.
+  igSeparatorText("Station moves")
+  marks.mark("project.moves")
+  let moves = st.project.doc.stationMoves
+  if moves.len == 0:
+    t.dim("No receiver station is moved. Right-click a trace in the Seismic window and choose " &
+      "a move under Map.")
+  else:
+    t.dim((if st.inProject: "Moves are kept in the project" else:
+      "No project is open: these moves hold for this run only") & ". They change a station's " &
+      "position on the map, in the checks and in written output; they never change the survey " &
+      "files or the recordings.")
+    let unit = st.stationMoveUnit.abbreviation
+    for i, m in moves:
+      igPushID_Int(cint(i))
+      let at = if m.fromTime.isSome: "from " & utcWords(m.fromTime.get) else: "every trace"
+      let line = "Receiver " & stationWords(m.station) & ", " & at & ": X " &
+        formatFloat(m.x, ffDecimal, 2) & ", Y " & formatFloat(m.y, ffDecimal, 2) &
+        (if unit.len > 0: " " & unit else: "") &
+        (if m.elev.isSome: ", elevation " & formatFloat(m.elev.get, ffDecimal, 2) else: "") &
+        (if m.note.len > 0: " (" & m.note & ")" else: "")
+      if igSmallButton("Remove"):
+        res.commands.add forgetCommand(m)
+      marks.mark("project.move.remove." & $i)
+      tip("Take this move away: the station's position from the survey or the headers holds again")
+      igSameLine(0, -1)
+      igTextWrapped("%s", line.cstring)
+      marks.mark("project.move." & $i)
+      igPopID()
+
 proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks: var Marks;
     res: var ProjectOutput) =
   let p = st.project
@@ -263,6 +295,7 @@ proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks
       igTextDisabled((if opening.len > 0: "Opening " & opening & "..." else:
         "No project is open. Project > New project... makes one; Project > Open project... opens " &
         "one.").cstring)
+      ui.drawMoves(st, t, marks, res)
     else:
       igTextUnformatted((IconFolder & "  " & p.doc.name).cstring, nil)
       t.dim(p.dir)
@@ -339,6 +372,7 @@ proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks
             (if p.readOnly: "Not offered: the project is open read-only (" & p.whyReadOnly & ")"
             else: ClearSurveyHelp), not p.readOnly, marks) and ui.focusProject.acts:
           res.clearSurvey = true
+      ui.drawMoves(st, t, marks, res)
       igSeparator()
       if button(IconClose & "  Close project", "project.close", "Write what is pending, close " &
           "its files and survey and go back to working without a project", true, marks):

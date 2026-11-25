@@ -96,8 +96,8 @@ import ../../gpu/[plotimage, textures]
 import ../../view/[areabands, breakbars, displayheader, maplayers, plotink, strip, theme, timeaxis,
   vendorfieldmenu]
 from windows import awAux, beginClosable
-import auxmarkmenu, breakdraw, chrome, dpi, explainmenu, fittext, focus, fonts, icons, menus,
-    plotbars, plotfilters, plotgain, plotsort,
+import auxmarkmenu, stationmovemenu, breakdraw, chrome, dpi, explainmenu, fittext, focus, fonts,
+    icons, menus, plotbars, plotfilters, plotgain, plotsort,
   shortcutkeys,
   plotviews, references, style,
   symbols
@@ -231,6 +231,7 @@ type
     markMouse: ImVec2_c ## where it opened, for the filter popover
     store: StoreDialog ## Store as reference, opened from the plot's menu
     aux: AuxMarkUi ## the auxiliary trace's mark and shift, from the plot's menu
+    station: StationMoveUi ## the station move's dialog, from the plot's menu
     menuAux: int ## the auxiliary position of the trace under the menu; 0 for none
     cursorText: string ## the time the cursor's time line showed last; "" for none
     cursorHeader: seq[string] ## the header values it showed over the rows; none for none
@@ -2043,6 +2044,7 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
       res.commands.add tp.menuStations
     marks.mark("plot.menu.station")
     tip("Select this trace's station on the map (M)")
+    if under >= 0: tp.station.drawStationMoveGroup(st, under, tp.menuMouse, marks, res.commands)
   template e: untyped = st.editsOf(k) # not copied
   if caps.menuWholeRecord:
     menuHeading(marks, "Whole record", "plot.menu.heading.record")
@@ -2987,6 +2989,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       tp.menuMouse = igGetIO_Nil().MousePos
       tp.menuStations = if under >= 0: stationCommand(st, k, under)
                         else: Command(kind: ckSelectPoints)
+      if under >= 0: res.commands.add Command(kind: ckOwnPosition, ownTrace: under)
     tp.cur = after
     if after != p.view:
       res.commands.add Command(kind: ckView, panel: p.id, view: after, remember: remember)
@@ -3032,6 +3035,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
         on: true, processing: tp.ownDraft.spec, filterPlace: tp.ownDraft.place)
   for c in tp.store.drawStore(st, t, marks): res.commands.add c
   tp.aux.drawAuxShift(st, marks, res.commands)
+  tp.station.drawStationMoveDialog(st, marks, res.commands)
   drawHeaderMenu(p, st, marks, res)
   tp.sortKeys.drawSortKeys(p, st, marks, res.commands)
   tp.drawGoTo(st, p, marks, res)
