@@ -1180,6 +1180,38 @@ the map, the template box, the missing-trace checks and the Output window's posi
 "Keep the file's own positions" is ticked). A move wins over a survey's position. It never
 changes a survey file or a recording; there is no Undo for it, **Remove** is the way back.
 
+## Sensors and physical units
+
+Many recorders write counts, not ground motion. With a **sensor table** the status bar's
+raw amplitude (the sample as the file has it) can be read in volts, or in the unit of the
+sensor: m/s for a geophone, m/s² for an accelerometer, Pa for a hydrophone.
+
+- **Type the sensors.** **Project > Project...**, under **Sensors**: one row for each
+  component in the open files (H, Z, X, Y, or the component's number). Type the sensitivity
+  from the data sheet and choose its unit: V/(m/s) or V/(in/s) for a geophone, V/(m/s²) or V/g
+  for an accelerometer, V/bar, V/Pa or µV/Pa for a hydrophone. The figure is kept exactly as
+  typed, in the unit it was typed in, whatever the Units setting says. **Remove** takes a row
+  away. With no project open the table holds for this run only; a project made next keeps it.
+- **Type the sensitivity as wired.** A data sheet's figure is usually the open-circuit
+  sensitivity, and a damping shunt lowers it: use the figure for your shunt.
+- **Only the flat band is converted.** Below the sensor's natural frequency the true motion is
+  larger than the converted value shows: the response is not corrected.
+- **Choose what is read.** Right-click the status bar, or use **Raw amplitude in** under
+  Sensors: *Counts* (as before), *Volts*, or *Physical units*. Volts and physical units add the
+  **raw** field to the status bar; the field after the plot's gain ("amp") is not converted.
+  The unit follows the Units setting (m/s or in/s, with a prefix such as µm/s), not the unit the
+  sensitivity was typed in.
+- **Where the volts come from.** From the file itself: a SEG-D channel set's descale
+  multiplier, a SEG-Y trace's weighting factor, a SEG-2 file's DESCALING_FACTOR. When the file
+  gives none, the status bar says "volts unknown for this file" and its tooltip names the
+  header; when no sensor is typed for the trace's component it says "no sensor for component
+  Z". A number is never guessed. Auxiliary traces are given in volts only.
+- **Messages.** When a file is shown or the sensors change while *Physical units* is chosen,
+  one line says how many of the traces shown convert, how many lack a descale in the file and
+  how many lack a sensor.
+
+The plot, the spectra and the exports are not converted: they keep the recorded values.
+
 ## The map
 
 Only seismic traces are placed on the map. A file whose coordinates are on its auxiliary
