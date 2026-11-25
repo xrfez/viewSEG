@@ -8,7 +8,9 @@
 ##
 ## A pipe and a folder are refused with a sentence, not opened.
 ##
-## An answer that arrives after the editor was closed and opened again is dropped.
+## An answer that arrives after the editor was closed and opened again is dropped,
+## and so is a dialog's answer when the editor was closed and opened again while
+## the dialog was open.
 ##
 ## Seen to fail: with the pipe check removed, the read waits for a writer and
 ## "a pipe is refused, not waited on" did not happen; with the over-limit check removed, "a file over 1 MiB is refused
@@ -25,7 +27,7 @@ when defined(posix):
 import parseSEG
 import viewSEG/core/[geometry, state]
 import viewSEG/view/outputtextimport
-import viewSEG/ui/imgui/app
+import viewSEG/ui/imgui/[app, shell]
 import utils/[faultyfs, fixtures, waiting]
 
 type
@@ -183,6 +185,25 @@ proc main*() =
       f.markNames("output.text.count 0 of 38 lines").len > 0 and
         f.markNames("output.text.import.undo").len == 0
     step("the late answer did not replace the lines", noop, untouched)
+
+    # the Import... dialog stays open while the editor is closed and opened again
+    let lateDialog = inbox / "late-dialog.txt"
+    writeFile(lateDialog, "LATE DIALOG\n")
+    answer = @[]
+    proc askOnly(f: FrameInfo): bool = clickWhen(f, "output.text.import")
+    step("the Import... dialog is asked for and stays open", askOnly, noop)
+    step("the editor is closed with the dialog open", closeEditor, closed)
+    step("the editor is opened again at once", edit, editing)
+    proc answerLate(f: FrameInfo): bool =
+      postShellEvent ShellEvent(kind: sePathsChosen, dialog: dkOutputText, paths: @[lateDialog])
+      reopenedAt = getMonoTime()
+      true
+    proc leftAlone(f: FrameInfo): bool =
+      doAssert f.markNames("output.text.import.note LATE DIALOG").len == 0
+      doAssert f.markNames("output.text.import.note 1 line was taken in.").len == 0
+      getMonoTime() - reopenedAt > initDuration(milliseconds = 1500)
+    step("the dialog's answer for the closed editor is dropped", answerLate, leftAlone)
+    step("the lines were not replaced by the dialog's answer", noop, untouched)
 
     var at = 0
     var started = false

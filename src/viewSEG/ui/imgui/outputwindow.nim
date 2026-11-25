@@ -131,6 +131,7 @@ type
     importPath: string                         ## the file the editor takes its lines from
     wantImport: bool
     askText: bool                              ## the Import... dialog is wanted
+    askTextGen: int                            ## `importGen` when that dialog was asked for
     importSay: string                          ## what the last import did, or why not
     importUndo: string                         ## the lines before the last import
     haveUndo: bool
@@ -185,6 +186,9 @@ proc setDest*(ui: var OutputUi; folder: string) =
 
 proc setTextFile*(ui: var OutputUi; path: string) =
   ## The text header editor's Import... dialog's answer.
+  ## Dropped when the editor was closed or loaded with another template since
+  ## the dialog was asked for.
+  if ui.askTextGen != ui.importGen: return
   ui.importPath = path
   ui.wantImport = true
 
@@ -1645,6 +1649,7 @@ proc drawTextEditor(ui: var OutputUi; st: AppState; fonts: Fonts; t: Theme;
     igSameLine(0, -1)
     if igButton((ImportButton & "##text").cstring, ImVec2_c(x: 0, y: 0)):
       ui.askText = true
+      ui.askTextGen = ui.importGen
       outp.askAt = ui.source
     marks.mark("output.text.import")
     tip(ImportTip)
