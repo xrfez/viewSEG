@@ -22,6 +22,8 @@
 ## job and another geometry took their place: it left out 0 traces where 3 were expected. With
 ## the join left out of `qualityItem`, `a_record_whose_headers_name_no_source_*` measured 8
 ## traces where 5 were expected; with `measuredWhole` never called, it counted no record whole.
+## With the answer named by the relation records' addresses and Only inside the template alone
+## (as the window named it), `an_answer_is_named_by_*` saw no change for another exclusion edge.
 ## With no O records derived in the job, `a_receiver_gather_with_only_x_records_*` measured the
 ## five records whole.
 
@@ -283,6 +285,32 @@ proc main*() =
       doAssert r.traces == 5 and r.unknown[tuNoRecord] == 5, $r
       doAssert wholeLine(r, ssSources) == "5 records were measured whole: their template is " &
         "not known (5 whose O records are not found)", wholeLine(r, ssSources)
+
+  block an_answer_is_named_by_its_inputs_never_by_an_address:
+    withFixtures fx:
+      let plan = fx.dir / "plan.x"
+      writeFile(plan, H00 & "\n" & xRec(7, "1.00", "99.00", 1, 5, 10, 1, 5) & "\n")
+      var st = initAppState()
+      st.rememberFilesIn(fx.dir / "config")
+      let none = st.qualityInputsKey
+      st.apply Command(kind: ckLoadSurvey, paths: @[plan])
+      doAssert st.settle(st.jobs.active.len == 0 and st.survey.layers.len == 1)
+      let first = st.qualityInputsKey
+      doAssert first != none
+      st.apply Command(kind: ckClearSurvey)
+      doAssert st.settle(st.jobs.active.len == 0 and st.survey.layers.len == 0)
+      doAssert st.qualityInputsKey == none
+      # the same file loaded again is another layer: its answers are not the old ones
+      st.apply Command(kind: ckLoadSurvey, paths: @[plan])
+      doAssert st.settle(st.jobs.active.len == 0 and st.survey.layers.len == 1)
+      let again = st.qualityInputsKey
+      doAssert again != first
+      # every noise setting the figures depend on, not only Only inside the template
+      var settings = st.settings
+      settings.noise.edgeMs = 250
+      st.apply Command(kind: ckSettings, settings: settings)
+      doAssert st.qualityInputsKey != again
+      st.shutdown()
 
   block the_relations_are_held_for_the_job_until_its_work_is_back:
     mainThread = getThreadId()

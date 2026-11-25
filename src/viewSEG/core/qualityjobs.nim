@@ -742,3 +742,27 @@ proc qualityJoinKey*(st: AppState): string =
   ## its), and the vendor maps' load.
   surveySignature(st.survey) & "|" & $st.joinOptions & "|" &
     (if st.inProject: $st.project.revision else: "-") & "|" & $st.vendorGen
+
+proc relationsKey(st: AppState; domain: RelationDomain): string =
+  ## Names the relation records of `domain` a scan is given (`qcRelations`), or for a receiver
+  ## gather with none given those it derives, by what names them and never by their address
+  ## (a geometry freed and another made at its address is not the same): a loaded layer by the
+  ## id its load gave it, O records derived by the X records they come from, the template made
+  ## by its revision.
+  let i = st.survey.listedLayer(domain)
+  let made = st.spreads.relations
+  if i >= 0: "layer " & $int(st.survey.layers[i].id)
+  elif domain == rdReceiver and (not st.derivedReceivers.isNil or made.isNil or
+      made[].relationCount(rdReceiver) == 0):
+    "derived from " & st.relationsKey(rdSource)
+  elif not made.isNil and made[].relationCount(domain) > 0: "template " & $st.spreads.revision
+  else: "none"
+
+proc qualityInputsKey*(st: AppState): string =
+  ## Names everything a scan's figures depend on apart from its files and their edits, cheaply
+  ## enough for every frame: the noise settings (the exclusion area and Only inside the
+  ## template), how traces find their channels, the relation records of each side
+  ## (`relationsKey`) and the survey joined (`qualityJoinKey`). An answer whose key is not the
+  ## one now is stale.
+  $st.settings.noise & "|" & $st.settings.join.traceMatch & "|x " &
+    st.relationsKey(rdSource) & "|o " & st.relationsKey(rdReceiver) & "|" & st.qualityJoinKey

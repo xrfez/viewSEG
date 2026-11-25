@@ -6,7 +6,8 @@
 ##
 ## Both are background jobs (`fileScan`, `folderScan`). The window reads a sink only after
 ## its job is no longer running, and drops an answer that is no longer the one asked for
-## (another file shown or edited, another folder or the subfolders tick changed): the job is
+## (another file shown or edited, another folder or the subfolders tick changed, another
+## noise setting, relation file or survey on the map, `qualityInputsKey`): the job is
 ## cancelled and its result never read. Edits are copied on the UI thread (`editsSnapshot`)
 ## before a job is submitted: the worker must not read `AppState`. The relation records a job
 ## reads are given to it by address, never as a `ref`, and the state keeps them until the job's
@@ -278,15 +279,6 @@ proc forcedKey(st: AppState; only = ""): string =
   forced.sort()
   forced.join(";")
 
-proc templateKey(st: AppState): string =
-  ## Which relation records the answers are read against (the loaded or made geometry, by
-  ## address), whether only the traces in the template are measured, and the survey joined to
-  ## the files (`qualityJoinKey`): a change drops them.
-  let x = st.qcRelations(rdSource)[0]
-  let o = st.qcRelations(rdReceiver)[0]
-  $st.settings.noise.templateOnly & "|" & $cast[int](x) & "|" & $cast[int](o) & "|" &
-    $st.settings.join.traceMatch & "|" & st.qualityJoinKey
-
 func addrOf(g: ref SurveyGeometry): ptr SurveyGeometry =
   if g.isNil: nil else: addr g[]
 
@@ -330,7 +322,7 @@ proc consider(ui: var QualityUi; st: AppState) =
   ui.poll(ui.folder, st)
   let path = st.shownPath
   let fileKey = if path.len > 0 and not st.shownIsSignature:
-      path & "|" & $st.shownRevision & "|" & st.forcedKey(path) & "|" & st.templateKey
+      path & "|" & $st.shownRevision & "|" & st.forcedKey(path) & "|" & st.qualityInputsKey
     else: ""
   if fileKey != ui.file.key:
     ui.file.cancel(st)
@@ -339,7 +331,7 @@ proc consider(ui: var QualityUi; st: AppState) =
   let folder = st.settings.quality.folder
   let folderKey = if folder.len > 0:
       folder & "|" & $st.settings.quality.subfolders & "|" & $st.settings.quality.untold & "|" &
-        st.forcedKey & "|" & st.templateKey
+        st.forcedKey & "|" & st.qualityInputsKey
     else: ""
   if ui.folder.key.len > 0 and ui.folder.key != folderKey:
     ui.folder.cancel(st)
