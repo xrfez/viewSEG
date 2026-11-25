@@ -262,7 +262,7 @@ proc main*() =
       let x = fileLayer(paths.x, fkSpsRelation)
       doAssert x.relationRuns == Shots and x.relationRecords == Shots
       doAssert x.points[prSource].len == 0 and x.points[prReceiver].len == 0
-      doAssert x.summary == $Shots & " relation records for " & $Shots & " field records",
+      doAssert x.summary == $Shots & " X records for " & $Shots & " field records",
         x.summary
 
   block p1File:

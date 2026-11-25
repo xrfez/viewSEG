@@ -638,8 +638,8 @@ proc restoreWork*(dir: string; doc: ProjectDoc; layers: bool; to: Poster): JobWo
               b.addPoint(roleOf(q.kind), b.lineOf(q.lineName, q.line), q.point,
                 pointIndex(q.index), q.easting, q.northing, q.elevation)
             var rel = part # (`addRelations` takes the points out for a moment)
-            b.addRelations(rel)
-          g[].addSps(part, relationDomainOf(f.copy))
+            b.addRelations(rel, f.domain)
+          g[].addSps(part, f.domain)
         proc onP1(f: StoredFile; pf: P1File) =
           if building:
             for lf in pf.files:

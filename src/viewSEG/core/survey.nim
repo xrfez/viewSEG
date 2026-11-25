@@ -125,7 +125,9 @@ type
       ## of a large X file's costs a frame
     relationRuns*: int ## X and O records kept
     xRuns*: int ## of those, X records (the source domain's): what records are checked against
-    relationRecords*: int ## field records they describe
+    relationRecords*: int ## field records and gathers they describe
+    xRecords*, oRecords*: int
+      ## of those, the field records the X records describe, and the gathers the O records do
     gridUnit*: GridUnit ## survey files: the unit the SPS header gives
     bounds*: Bounds ## of every point
     levels*: array[PointRole, PointLevels]
@@ -467,14 +469,16 @@ proc addPoint*(b: var SurveyFileBuilder; r: PointRole; line, point: float64; ind
       discard p.ids.findOrAdd(mix(uint64(p.xs.len) + 0x9E3779B97F4A7C15'u64), false,
         (p.xs.add x; p.ys.add y; p.zs.add z; p.stations.add noStation()))
 
-proc addRelations*(b: var SurveyFileBuilder; f: var SpsFile) =
+proc addRelations*(b: var SurveyFileBuilder; f: var SpsFile;
+    xDomain = relationDomainOf(f.name)) =
   ## The relation records (X, O) of `f`, part of an SPS file, as parseSEG's
   ## join reads them (its point records are left alone: `addPoint` takes
   ## them; they are out of `f` meanwhile, not copied); and its grid unit,
-  ## when it gives one.
+  ## when it gives one. Its X records are of `xDomain` (by the file's name
+  ## unless the caller knows better: the store keeps it).
   if f.relations.len > 0:
     var points = move f.points
-    try: b.layer.relations[].addSps(f, relationDomainOf(f.name))
+    try: b.layer.relations[].addSps(f, xDomain)
     finally: f.points = move points
   if not b.layer.gridUnit.known: b.layer.gridUnit = f.gridUnit
 
@@ -506,10 +510,13 @@ proc finish*(b: var SurveyFileBuilder): SurveyLayer =
   result.relationRuns = result.xRuns + result.relations[].relationCount(rdReceiver)
   var records = 0
   for d in RelationDomain:
+    var n = 0
     when compiles(result.relations[].recordCount(d)):
-      records += result.relations[].recordCount(d)
+      n = result.relations[].recordCount(d)
     else:
-      for _ in result.relations[].records(d): inc records # (sorts them)
+      for _ in result.relations[].records(d): inc n # (sorts them)
+    records += n
+    if d == rdSource: result.xRecords = n else: result.oRecords = n
   result.relationRecords = records
 
 type
@@ -917,9 +924,12 @@ func summary*(l: SurveyLayer): string =
   for r in PointRole:
     if l.counts[r].given > 0 or l.points[r].len > 0:
       parts.add plural(l.points[r].len, $r & " point", $r & " points")
-  if l.relationRuns > 0:
-    parts.add plural(l.relationRuns, "relation record", "relation records") & " for " &
-      plural(l.relationRecords, "field record", "field records")
+  if l.xRuns > 0:
+    parts.add plural(l.xRuns, "X record", "X records") & " for " &
+      plural(l.xRecords, "field record", "field records")
+  if l.relationRuns > l.xRuns:
+    parts.add plural(l.relationRuns - l.xRuns, "O record", "O records") & " for " &
+      plural(l.oRecords, "receiver gather", "receiver gathers")
   if l.origin == loTraces:
     result = plural(l.traces, "trace", "traces") & " at " &
       (if parts.len == 0: "no point" else: parts.join(" and "))

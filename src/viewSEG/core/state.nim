@@ -8437,7 +8437,8 @@ proc takeRestored(state: var AppState; m: sink Msg) =
   p.restoreMs = news.restoreMs
   state.log.add(sevInfo, "project", "The project's survey is ready (" &
     $p.joinSurvey.stations[prSource] & " sources, " & $p.joinSurvey.stations[prReceiver] &
-    " receivers, " & $p.joinSurvey.relations & " relation records), made from what the " &
+    " receivers, " & $p.joinSurvey.xRelations & " X records, " & $p.joinSurvey.oRelations &
+    " O records), made from what the " &
     "project keeps in " & formatFloat(p.restoreMs, ffDecimal, 1) & " ms: no survey file was read.")
   for s in state.sessions:
     if (updated or state.joinedOf(s.id) < 0) and s.id notin p.queue: p.queue.add s.id

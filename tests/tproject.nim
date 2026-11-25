@@ -292,7 +292,7 @@ proc main*() =
         {.cast(gcsafe).}: info = writeStore(dir, copies, ctx))
       let path = dir / "survey" / "survey.bin"
       doAssert info.bytes == getFileSize(path) and info.sources == Shots and
-        info.receivers == Channels and info.relations == Shots, $info
+        info.receivers == Channels and info.relations == Shots and info.receiverRelations == 0, $info
       proc readBack(path: string): tuple[points: seq[SpsPoint]; rel: seq[SpsRelation];
           csv: string; files: seq[string]; failure: string] =
         var got: typeof(result)

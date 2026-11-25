@@ -330,12 +330,12 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     if ask.len > 0: result.commands.add Command(kind: ckSurveyUnits, unitsOf: ask)
     let said = surveyUnitsSaid(heads)
     if loaded == 0 and ui.added.len == 0:
-      dim("Choose the survey's files: its S, R and X files (SPS), SEG P1 files or a CSV " &
+      dim("Choose the survey's files: its S, R, X and O files (SPS), SEG P1 files or a CSV " &
         "table of stations.", t)
     if igButton((IconOpenFile & "  Add files...").cstring, ImVec2_c(x: 0, y: 0)):
       result.addFiles = true
     marks.marked("join.add")
-    tip("SPS (S, R, X), SEG P1 files, or a CSV table of stations: line, point, x, y " &
+    tip("SPS (S, R, X, O), SEG P1 files, or a CSV table of stations: line, point, x, y " &
       "(and index, elevation, kind) columns")
     igAlignTextToFramePadding()
     igTextUnformatted("Their coordinates are in", nil)

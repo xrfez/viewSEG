@@ -18,7 +18,7 @@
 ##   (notes "H20 Description of grid units: US survey feet")
 ##   (imported "2026-11-15T21:42:10Z")
 ##   (store (format 1) (bytes 31457280) (hash "51f3...") (sources 1200) (receivers 3954)
-##    (relations 1200)))
+##    (relations 1200) (receiverRelations 0)))
 ##  (processing (dc none) (band bandPass) (f1 4.0) ...)
 ##  (displayPresets (preset "Section" (mode density) ...))
 ##  (outputPatterns (pattern "Line" (separator "_") (part "srcLine" (pad 5))
@@ -398,6 +398,7 @@ proc projectDocument*(d: ProjectDoc): string =
       w.value("sources", int64(d.store.sources))
       w.value("receivers", int64(d.store.receivers))
       w.value("relations", int64(d.store.relations))
+      w.value("receiverRelations", int64(d.store.receiverRelations))
       w.close
     w.close
   if d.hasImport:
@@ -669,6 +670,7 @@ proc store(r: var Reading; n: NifNode; s: var StoreInfo) =
       of "sources": r.count(k, s.sources)
       of "receivers": r.count(k, s.receivers)
       of "relations": r.count(k, s.relations)
+      of "receiverRelations": r.count(k, s.receiverRelations)
       else: discard
 
 proc survey(r: var Reading; n: NifNode; d: var ProjectDoc) =

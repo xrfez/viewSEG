@@ -142,6 +142,8 @@ type
       ## with coordinates
     relations*: int
       ## relation records (X and O) kept
+    xRelations*, oRelations*: int
+      ## of those, the X records (source domain) and the O records (receiver domain)
     records*: Extent
       ## the field records they describe
     lines*, points*: array[PointRole, Extent]
@@ -909,7 +911,9 @@ proc surveyOf*(g: SurveyGeometry; files: openArray[string];
         result.points[r].incl k.point
   let r = if relations.isNil: addr g else: relations
   for d in RelationDomain:
-    result.relations += r[].relationCount(d)
+    let n = r[].relationCount(d)
+    result.relations += n
+    if d == rdSource: result.xRelations = n else: result.oRelations = n
     for rec in r[].records(d): result.records.incl float64(rec)
 
 # ------------------------------------------------------------ in words --

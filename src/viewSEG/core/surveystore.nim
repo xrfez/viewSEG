@@ -58,7 +58,10 @@ type
     kind*: JoinFileKind
     fileKind*: FileKind ## as told from its first bytes
     role*: CsvRole
-    size*: int64        ## the copy's size and modification time when read
+    domain*: RelationDomain
+      ## the domain of its X records, as told when it was kept (by its name then): a
+      ## reload uses this, not the name of the copy
+    size*: int64 ## the copy's size and modification time when read
     modified*: Time
 
   StoreReader* = object
@@ -310,7 +313,11 @@ proc writeStore*(dir: string; files: openArray[SurveyCopy]; ctx: JobContext;
             i = j
           for p in part.points:
             if p.kind == pkSource: inc res.sources else: inc res.receivers
-          res.relations += part.relations.len)
+          for x in part.relations:
+            if (if x.recordType == 'O': rdReceiver else: domain) == rdReceiver:
+              inc res.receiverRelations
+            else:
+              inc res.relations)
         if not started:
           w.fileBlock(sf, domain, sps21)
       of jkP1:
@@ -446,7 +453,6 @@ proc readStore*(path: string; ctx: JobContext; r: StoreReader) =
     var current = StoredFile()
     var headers: seq[SpsHeader] = @[]
     var revision = sps21
-    var domain = rdSource
     var open = false
     let size = fs.getFileSize(path)
     while true:
@@ -468,7 +474,7 @@ proc readStore*(path: string; ctx: JobContext; r: StoreReader) =
         current.kind = c.read8(jkSps, jkCsv)
         current.fileKind = c.read8(low(FileKind), high(FileKind))
         current.role = c.read8(low(CsvRole), high(CsvRole))
-        domain = c.read8(rdSource, rdReceiver)
+        current.domain = c.read8(rdSource, rdReceiver)
         revision = c.read8(low(SpsRevision), high(SpsRevision))
         c.get current.size
         var secs = 0'i64

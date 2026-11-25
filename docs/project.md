@@ -129,13 +129,16 @@ Land 2026/                  the project folder: this is what is opened
   (notes "H20 Description of grid units: US survey feet")
   (imported "2026-11-15T21:42:10Z")
   (store (format 1) (bytes 4096) (hash "51f3a0c4e2d4b6a7") (sources 6)
-   (receivers 96) (relations 6)))
+   (receivers 96) (relations 6) (receiverRelations 0)))
  (processing (dc none) (band bandPass) (f1 4.0) (f2 8.0) (f3 60.0) (f4 80.0) (aux false))
  (displayPresets (preset "Section" (mode density) ...))
  (outputPatterns (pattern "Line" (separator "_") (part "srcLine" (pad 5))
   (part "text" (text "abc"))))
  (outputPattern "Line"))
 ```
+
+  `relations` counts the survey's X records and `receiverRelations` its O records; a
+  document with only `relations` (an earlier one) is read with that count as X records.
 
 - **Output names.** Beside the display presets, the document can say how a file written
   from the project is named: `(outputPatterns (pattern "Line" (separator "_") (part "srcLine"
@@ -233,7 +236,7 @@ What is kept is what the files say, not what the options made of them: line and 
 fields as text beside their numbers, so the line names and trailing digits can change
 without a new read. The format (1): a 16-byte magic and the format number, then blocks
 (a kind, a count and a size before each payload): a file's block (its copy, its kinds, its
-size and time), its SPS header records, its point records and relation records in parts
+size and time, and the domain its X records belong to), its SPS header records, its point records and relation records in parts
 of at most 65 536, a P1 logical file's shotpoints, a CSV table's text; an end block, then
 an XXH64 hash of every byte before it. The whole file's hash is checked before anything
 in it is used.
@@ -457,7 +460,7 @@ each opened file queued to be matched (`followProject`).
   its data folders (each `found`, `missing`, `looking` or `notAnswering`, and where it was
   found), its survey (the copies with their originals' state: `asCopied`, `changed`,
   `notFound`; the state: `none`, `loading`, `loaded`, `keeping`, `failed`; the options and
-  units; sources, receivers, relations, `survey.bin`'s size; `restoreMs`, `updateOffered`),
+  units; sources, receivers, relations (X records) and receiverRelations (O records), `survey.bin`'s size; `restoreMs`, `updateOffered`),
   and whether it holds its own presets and filters.
 - **Commands:** `new project` (`projectPath`: the folder to make; `projectName`,
   `dataFolders`, `useSurvey`, `bringMemory`, `takePresets`), `open project` (`projectPath`:

@@ -116,8 +116,12 @@ type
     ## `survey.bin` as written: none while `bytes` is 0.
     format*: int
     bytes*: int64
-    hash*: uint64 ## XXH64 of the whole file
-    sources*, receivers*, relations*: int
+    hash*: uint64           ## XXH64 of the whole file
+    sources*, receivers*: int
+    relations*: int
+      ## the X records (source-domain relations; `(relations n)` in the document, as
+      ## it always was, so an older build and an older document read as before)
+    receiverRelations*: int ## the O records (receiver-domain relations)
 
   ProjectDoc* = object
     ## What the project document holds.

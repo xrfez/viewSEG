@@ -322,7 +322,9 @@ proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks
           of srKeeping: "being copied into the project..."
           of srFailed: "could not be made: " & p.surveyNote
         igTextUnformatted(($p.doc.store.sources & " sources, " & $p.doc.store.receivers &
-          " receivers, " & $p.doc.store.relations & " relation records: " & state).cstring, nil)
+          " receivers, " & $p.doc.store.relations & " X records, " &
+          $p.doc.store.receiverRelations &
+          " O records: " & state).cstring, nil)
         marks.mark("project.survey")
         if p.restoreMs > 0:
           t.dim("Made from the project's copy in " & formatFloat(p.restoreMs, ffDecimal, 0) &

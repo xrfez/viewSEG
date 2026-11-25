@@ -165,7 +165,7 @@ proc main*() =
       doAssert st.log.has("Loaded planted.r (SPS R): " & $Channels & " receiver points. 1 record " &
         "without receiver coordinates; 1 record with the receiver at (0, 0); 2 receiver stations " &
         "given again (1 at other coordinates: the last is kept).", sevWarning), st.log.lastLines
-      doAssert st.log.has("Loaded planted.x (SPS X): " & $Shots & " relation records for " &
+      doAssert st.log.has("Loaded planted.x (SPS X): " & $Shots & " X records for " &
         $Shots & " field records.")
       doAssert st.log.has("Loaded survey.p1 (P1): " & $(P1Shots + 1) & " source points. 1 record " &
         "with the source at (0, 0).", sevWarning), st.log.lastLines

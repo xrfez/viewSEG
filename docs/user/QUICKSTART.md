@@ -1155,7 +1155,7 @@ seismic file's traces, so that each trace has its source's and receiver's coordi
 changed**. The **Import survey** window goes in the order of the work:
 
 - **Survey files**: those loaded, ticked (untick one to leave it out); **Add files...**
-  adds SPS files (S, R, X), SEG P1 files, or a **CSV table** of stations, with columns
+  adds SPS files (S, R, X, O), SEG P1 files, or a **CSV table** of stations, with columns
   line, point (or station), x (or easting), y (or northing), and index, elevation and a
   kind column (S or R) where you have them; a table without a kind column is all sources
   or all receivers, as you choose beside it. Below, the units the survey's coordinates are
@@ -1165,7 +1165,13 @@ changed**. The **Import survey** window goes in the order of the work:
   0.3048 international feet); SEG P1: H2000; a CSV table: a comment before its first row
   (`# units: US survey feet`) or a unit in brackets in a column's name (`x (ftUS)`,
   `Easting [m]`). "The SPS headers say ..." is written under the box; files that say
-  different units are named in a warning, and the first is taken.
+  different units are named in a warning, and the first is taken. X records (field records,
+  the source domain: shot gathers) and O records (receiver gathers, the receiver domain)
+  can be imported together: the Project window and Messages count them apart ("96 sources,
+  384 receivers, 96 X records, 96 O records"), and the layer's summary says "X records for
+  ... field records" and "O records for ... receiver gathers". A file's X records are
+  receiver-domain when it was named `.ops` as imported; the project keeps that choice, so
+  a copy renamed later is read as it was imported.
 - **Seismic file**: the file whose traces the survey is matched to, the one the plot
   shows (or another open file), the units its headers give its coordinates in, and its
   coordinate reference system as the file gives it (SEG-Y Rev 2 stanza, SEG-D Rev 3
