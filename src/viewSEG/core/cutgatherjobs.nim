@@ -126,6 +126,9 @@ type
     bytesWritten*, expectedBytes*: int64
     lines*: seq[string] ## plain sentences for the log
 
+  SourceReadError* = object of CatchableError
+    ## the recording could not be read while it was sliced (not a failure to write)
+
   CutSink* = ref object
     ## Filled when the job ends. Read it after the job is no longer running.
     result*: CutResult
@@ -186,6 +189,11 @@ func failureReason*(why: string; claimed, removed: bool): string =
       "The partial file could not be removed.")
   elif result.len > 0 and result[^1] notin {'.', '!', '?'}:
     result.add '.'
+
+func readFailure*(msg: string): string =
+  ## An operating-system error from reading the recording, as a sentence.
+  let first = firstLine(msg)
+  "Reading the recording failed: " & first & (if first.endsWith('.'): "" else: ".")
 
 func writeFailure*(msg: string): string =
   ## An operating-system error from the output, as a sentence.
@@ -896,7 +904,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         of skProducer:
           let m = pipe.stopMessage()
           case m[0]
-          of 'O': raise newException(OSError, m[1 .. ^1])
+          of 'O': raise newException(SourceReadError, readFailure(m[1 .. ^1]))
           else: raise newException(IOError, m[1 .. ^1])
         of skNone: discard
         else: abort(sink, dest, part, claimed, "The slice stopped before its end.", false)

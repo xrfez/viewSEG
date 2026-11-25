@@ -8,7 +8,7 @@
 ## format or the destination change), and a second job writes. Both are the window's
 ## own, as the Trace quality window's scans are; the window never reads a file itself.
 
-import std/[math, options, os]
+import std/[math, options, os, tables]
 import imguin/cimgui
 from parseSEG import skSegd
 import processSEG/continuous/slice
@@ -44,6 +44,9 @@ type
     runJob: JobId = NoJob
     runSink: FolderSink
     ran: FolderResult          ## what the last run did
+    runFolder: string          ## the folder the run in flight, or the last, was of
+    known: seq[FolderFacts]    ## what the last job found out about each file of the folder
+    lengthActive: bool         ## the record length is being typed: no check meanwhile
     haveRan: bool
 
   CutDraw* = object
@@ -78,6 +81,7 @@ proc setFolder*(ui: var CutUi; folder: string) =
 proc setSourceFolder*(ui: var CutUi; folder: string) =
   ## The answer of the dialog that chooses the folder whose recordings are sliced.
   ui.srcFolder = folder
+  ui.known = @[]
   ui.checkKey = ""
   ui.checked = FolderResult()
   ui.haveRan = false
@@ -232,7 +236,7 @@ proc folderPlan(ui: CutUi; st: AppState; opts: CutOptions; write: bool): FolderP
   ## What the folder jobs are given: a copy of the log's rows, the options, the open files.
   let li = st.findShotLog(ui.logId)
   result = FolderPlan(folder: ui.srcFolder, destFolder: ui.folder, rows: st.shotView(li).rows,
-    opts: opts, cacheDir: st.indexCache, write: write)
+    opts: opts, cacheDir: st.indexCache, write: write, known: ui.known, treats: st.forcedKinds)
   result.opts.logName = extractFilename(st.shotLogSource(li))
   if result.opts.logName.len == 0: result.opts.logName = st.shotLogName(li)
   for x in st.sessions: result.others.add x.diskPath
@@ -259,15 +263,19 @@ proc pollFolder(ui: var CutUi; st: AppState) =
   var state = jsQueued
   var error = ""
   if ui.checkJob != NoJob and st.ended(ui.checkJob, state, error):
-    if ui.checkSink != nil: ui.checked = ui.checkSink.result
+    if ui.checkSink != nil:
+      ui.checked = ui.checkSink.result
+      ui.known = ui.checked.facts
     if state == jsFailed and ui.checked.reason.len == 0: ui.checked.reason = error
     ui.checkJob = NoJob
     ui.checkSink = nil
   if ui.runJob != NoJob and st.ended(ui.runJob, state, error):
-    if ui.runSink != nil: ui.ran = ui.runSink.result
-    if state == jsFailed and ui.ran.reason.len == 0: ui.ran.reason = error
-    elif state == jsCancelled: ui.ran.reason = "The run was cancelled."
-    ui.haveRan = true
+    if ui.runSink != nil and ui.runFolder == ui.srcFolder:
+      ui.ran = ui.runSink.result
+      ui.known = ui.ran.facts
+      if state == jsFailed and ui.ran.reason.len == 0: ui.ran.reason = error
+      elif state == jsCancelled: ui.ran.reason = "The run was cancelled."
+      ui.haveRan = true
     ui.runJob = NoJob
     ui.runSink = nil
     ui.checkKey = "" # the folder is looked at again: its slices are there now
@@ -276,11 +284,13 @@ proc considerFolder(ui: var CutUi; st: AppState; opts: CutOptions) =
   ## Starts the check of the chosen folder when what it depends on changed. Nothing is
   ## read until a folder is chosen, and nothing is checked while a run writes.
   ui.pollFolder(st)
-  if ui.runJob != NoJob: return
+  if ui.runJob != NoJob or ui.lengthActive: return
   let li = st.findShotLog(ui.logId)
+  var treated = ""
+  for path, kind in st.forcedKinds: treated.add path & ':' & $ord(kind) & ';'
   let key = if ui.srcFolder.len > 0 and li >= 0 and ui.haveShots and usableRecordMs(ui.recordMs):
       ui.srcFolder & '\0' & $ui.shotsKey & '\0' & $ui.recordMs & '\0' & $ord(ui.standard) &
-        '\0' & $ord(ui.align) & '\0' & ui.folder
+        '\0' & $ord(ui.align) & '\0' & ui.folder & '\0' & treated
     else: ""
   if key == ui.checkKey: return
   ui.stopCheck(st)
@@ -294,6 +304,7 @@ proc considerFolder(ui: var CutUi; st: AppState; opts: CutOptions) =
 proc startFolder(ui: var CutUi; st: AppState; opts: CutOptions) =
   ui.stopCheck(st)
   ui.haveRan = false
+  ui.runFolder = ui.srcFolder
   ui.runSink = FolderSink()
   ui.runJob = st.jobs.submit(cutFolderSpec(ui.srcFolder, true),
     cutFolderWork(ui.folderPlan(st, opts, true), ui.runSink))
@@ -311,8 +322,9 @@ proc drawFolder(ui: var CutUi; st: AppState; t: Theme; marks: var Marks; wide: f
   elif li < 0: why = "Load a shot log first."
   elif not usableRecordMs(ui.recordMs): why = "The record length is not usable."
   elif ui.folder.len == 0: why = NeedFolder
-  elif ui.checkJob != NoJob or ui.checkKey.len == 0: why = FolderBeingRead
+  elif ui.checkJob != NoJob or ui.checkKey.len == 0 or ui.lengthActive: why = FolderBeingRead
   elif ui.checked.reason.len > 0: why = ui.checked.reason
+  elif ui.checked.refused.len > 0: why = ui.checked.refused
   elif ui.checked.countSliceable == 0: why = "No recording of the folder can be sliced."
   elif st.cutRunning: why = CutRunning
   if ui.srcFolder.len > 0:
@@ -321,6 +333,9 @@ proc drawFolder(ui: var CutUi; st: AppState; t: Theme; marks: var Marks; wide: f
       marks.mark("cut.folderReading")
     elif ui.checked.reason.len > 0:
       coloured(ui.checked.reason, t.roles[rlWarning], wide)
+    elif ui.checked.refused.len > 0:
+      coloured(ui.checked.refused, t.roles[rlWarning], wide)
+      marks.mark("cut.folderRefused")
     elif ui.checked.listed:
       let words = checkWords(ui.checked)
       wrapped(words, wide)
@@ -405,6 +420,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
       var s = st.settings
       s.cutGather.recordMs = ui.recordMs
       result.commands.add Command(kind: ckSettings, settings: s)
+    ui.lengthActive = igIsItemActive()
     marks.mark("cut.length")
     marks.mark("cut.recordMs " & $ui.recordMs)
     igSetNextItemWidth(igGetFontSize() * 10)

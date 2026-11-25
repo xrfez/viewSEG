@@ -163,26 +163,40 @@ listed by name, not those of its subfolders, and each is checked in the backgrou
 slice: the window says how many of its files can be sliced and how many shots they hold ("2
 recordings of 5 files can be sliced (14 shots)"), and names the files that cannot, with the
 reason: not a SEG-Y, SEG-D or SEG-2 file, a vibrator signature file, not a continuous receiver
-gather (the sentence of the single slice), no shot of the log with its whole record inside the
-recording, or a slice that would not be written (below). The check is made again when the
+gather (the sentence of the single slice), no shot whose record starts inside the recording, or a slice that would not be written (below). The check is made again when the
 log, the record length, the alignment, the format or the destination changes.
 
 **Slice the folder** starts one job (the Jobs window shows it and can cancel it). Each
 recording is sliced as a single file is, with the same options, and writes a file of its own
 into the destination, named like the single slice's default: the recording's name, `_slice`
-and the format's extension. A shot goes to the first file, in name order, whose time span
-holds its whole record: from the shot's time for the record length. A shot that no file holds
-(it falls in a gap between recordings, or reaches past the end of one) is counted once and
-the first few are named, "3 shots are in no file of the folder", not once for each file. The
-grouped trace orders are not offered for a folder (they depend on one recording's headers),
-and a recording that is open in the Seismic window is sliced from disk like any other.
+and the format's extension. A folder usually holds one recording for each node, all of the
+same time, so **every file takes every shot it holds**: a file takes a shot when the start of
+the shot's record lies inside the time the file covers. The start is placed as a single slice
+places it (with **Nearest sample**, a start half a sample before the first sample is the first
+sample), and a record that runs past the end of the file is written zero-padded, with the
+missing samples counted as gaps, as in a single slice. Day files of one node, one after the
+other, each take the shots that start in them. A shot that no file takes (it starts before every
+recording or after them all) is counted once and the first few are named, "3 shots are in no file
+of the folder", not once for each file. The grouped trace orders are not offered for a folder
+(they depend on one recording's headers), and a recording that is open in the Seismic window is
+sliced from disk like any other. A kind you set for a file in Files (right-click, treat as) is
+used for it, as in a single slice: a recording you said is continuous is sliced, one you said is
+not is refused with the sentence that says you set it.
 
 Nothing is replaced. A file whose slice would have the name of another file's slice (say
-`a.sgy` and `a.segy`, both `a_slice.sgd`) is not written, and the window says so; so is one whose
-slice already exists in the destination. A file that fails while it is sliced does not stop the
-others: the outcome lists it with the reason, and what the others wrote stays. Cancelling
+`a.sgy` and `a.segy`, both `a_slice.sgd`; names that differ only in case count as one) is not
+written, and so is one whose slice already exists in the destination. The window and the outcome
+name such a file with its reason and the number of shots that were therefore not sliced. A
+destination inside the folder being sliced, or inside the folder of an open file, is refused
+once for the whole folder. A file that fails while it is sliced, or cannot be read, does not stop
+the others: the outcome lists it with the reason, and what the others wrote stays. Cancelling
 removes the part file of the one being written; files already finished stay. The recordings are
 never changed.
+
+What the check found about each file is kept while the file's size and time and the kind you set
+for it stay as they are, so changing the record length, the alignment, the format or the
+destination does not read the files again; the check waits until you leave the record length
+box.
 
 ## What the file holds
 

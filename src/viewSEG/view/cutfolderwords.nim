@@ -9,20 +9,24 @@ const NamedFiles = 5 ## how many skipped or failed files are named
 func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
 
+func lostWords(f: FolderFile): string =
+  ## What a file skipped after the shots were placed leaves unsliced.
+  if f.shots > 0: " (" & plural(f.shots, "shot", "shots") & " not sliced)" else: ""
+
 func skipLines*(r: FolderResult): seq[string] =
   ## The files that are not sliced, each with its reason; the first few.
   var left = 0
   for f in r.files:
     if f.skip.len > 0:
-      if result.len < NamedFiles: result.add f.path.extractFilename & ": " & f.skip
+      if result.len < NamedFiles: result.add f.path.extractFilename & ": " & f.skip & lostWords(f)
       else: inc left
   if left > 0: result.add "and " & plural(left, "more file", "more files") & " not sliced"
 
 func unplacedWords*(r: FolderResult): string =
   ## The shots no file holds, counted once and the first few named; "" when none.
   if r.unplaced == 0: return ""
-  result = plural(r.unplaced, "shot is", "shots are") & " in no file of the folder (its record " &
-    "is not inside one recording): " & r.unplacedNamed.join(", ")
+  result = plural(r.unplaced, "shot is", "shots are") & " in no file of the folder (its " &
+    "record does not start inside a recording): " & r.unplacedNamed.join(", ")
   if r.unplaced > r.unplacedNamed.len: result.add ", ..."
   result.add "."
 
@@ -37,6 +41,7 @@ func checkWords*(r: FolderResult): string =
     " can be sliced"
   if n > 0: result.add " (" & plural(shots, "shot", "shots") & ")"
   result.add "."
+  if r.capped: result.add " The list of files stopped at the limit."
 
 func outcomeWords*(r: FolderResult): string =
   ## What a run did, in a sentence.
@@ -56,5 +61,10 @@ func outcomeLines*(r: FolderResult): seq[string] =
     if f.reason.len > 0 and named < NamedFiles:
       result.add f.path.extractFilename & " failed: " & f.reason
       inc named
+  var skipped = 0
+  for f in r.files:
+    if f.skip.len > 0 and f.shots > 0 and skipped < NamedFiles:
+      result.add f.path.extractFilename & " not sliced: " & f.skip & lostWords(f)
+      inc skipped
   let un = unplacedWords(r)
   if un.len > 0: result.add un
