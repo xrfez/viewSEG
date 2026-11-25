@@ -279,7 +279,7 @@ proc lockStore(path: string): FileLock =
   fs.lockFile(path.parentDir & StoreLockSuffix, StoreLockWait)
 
 proc replaceFile(w: var Writer; t: Task): bool {.discardable.} =
-  ## Writes the document; true when it is written (or the document was merged and left).
+  ## Writes the document; true when it is written (merged with another program's changes or not).
   var t = t
   if t.fresh: t.path = freshName(t.path)
   var lock = if t.merging: lockStore(t.path) else: FileLock()

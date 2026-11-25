@@ -314,6 +314,45 @@ proc main*() =
           doAssert st.treatOf(f) == st.treatInForce(f) and
             st.fileList.entries[0].treatPending == {} and st.treatPendingOf(f) == {}, name & ": still pending after the hash"
           st.shutdown()
+    block userBeforeTheConfirm:
+      # two documents of one content, the one that stays holding a force; the user picks another
+      # kind before the hash confirms: the move of the force must not write the old kind over it
+      let at = fx.dir / "userfirst"
+      let cfg = at / "config"
+      let f = canonical(writeSpecs(at / "data", "f", [spec(0, 0), spec(0, 1000), spec(0, 2000)]))
+      var modified: Time
+      var id = quickIdentity(f, modified)
+      id.full = fullHash(f)
+      id.fullKnown = true
+      let store = Store(home: cfg / StoreFolder)
+      createDir(store.home)
+      var taken: seq[string] = @[]
+      for later in [true, false]:
+        var d = FileRecord(identity: id, name: "f.sgd", path: f,
+          opened: getTime() - initDuration(days = 1),
+          modified: if later: modified else: modified - initDuration(hours = 2))
+        if later: d.edits.lists[teKilled] = @[0]
+        else:
+          d.edits.lists[teKilled] = @[1]
+          d.treat = TreatAs(kind: some rkReceiverContinuous)
+        taken.add freeDocName(id, taken)
+        writeFile(store.docPath(taken[^1]), memoryDocument(d))
+      var one = appIn(cfg)
+      one.apply Command(kind: ckBrowse, paths: @[at / "data"])
+      doAssert one.settled(one.listed), "userBeforeTheConfirm: not listed"
+      one.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "shot", origin: coWindow)
+      one.open(f)
+      doAssert one.settled(one.idle), "userBeforeTheConfirm: not settled"
+      doAssert one.treatInForce(f).kind == some rkShotGather
+      one.shutdown()
+      doAssert docs(cfg).anyIt(it.treat.kind == some rkShotGather) and
+        not docs(cfg).anyIt(it.treat.kind == some rkReceiverContinuous),
+        "userBeforeTheConfirm: the disk says " & $docs(cfg).mapIt(it.treat.kind)
+      var two = appIn(cfg)
+      two.open(f)
+      doAssert two.settled(two.idle), "userBeforeTheConfirm: the next run did not settle"
+      doAssert two.treatOf(f).kind == some rkShotGather, "userBeforeTheConfirm: the next run"
+      two.shutdown()
     block agentThenUser:
       # the file's own document says continuous and flag; an agent sets the kind (shot) before
       # the hash confirms; then the user sets the sort in a window: the agent's kind goes

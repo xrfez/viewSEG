@@ -1890,10 +1890,11 @@ func treatHint(state: AppState; path: string): FileRecord =
     result = FileRecord(doc: state.remembered[i].doc, identity: state.remembered[i].identity)
   elif path in state.treatDocs: result = state.treatDocs[path]
 
-proc carryTreat(state: var AppState; carried: TreatAs; doc: string) =
+proc carryTreat(state: var AppState; carried: TreatAs; doc, path: string) =
   ## Puts the parts of `carried` (what a document that goes said its file is treated as) into
   ## the document `doc` of the same file, where that one says none (`DiskIo.treat`); nothing
-  ## for a document this run neither read nor wrote.
+  ## for a document this run neither read nor wrote. A part the user set for the file at `path`
+  ## this session is theirs, not carried.
   if state.store.isNowhere or (state.project.dir.len > 0 and state.project.readOnly) or
       doc notin state.knownDocs:
     return
@@ -1902,13 +1903,14 @@ proc carryTreat(state: var AppState; carried: TreatAs; doc: string) =
   if carried.kind.isSome and kept.treat.kind.isNone: parts.incl tpKind
   if carried.grouping.isSome and kept.treat.grouping.isNone: parts.incl tpGrouping
   if carried.subSort.isSome and kept.treat.subSort.isNone: parts.incl tpSubSort
+  parts = parts - state.treatsOwnKept.getOrDefault(path)
   state.diskIo.treat(state.store.docPath(doc), FileRecord(identity: kept.identity,
     name: kept.name, path: kept.path, opened: kept.opened, modified: kept.modified, doc: doc,
     treat: carried), parts, "what is remembered about " & kept.name,
     if kept.stamp.modified == Time(): NoDoc else: kept.stamp)
   state.knownDocs[doc].treat = kept.treat.merged(carried, parts)
 
-proc takeTreatFrom(state: var AppState; other: FileRecord; doc: string) =
+proc takeTreatFrom(state: var AppState; other: FileRecord; doc, path: string) =
   ## What the document `other` of the same content says the file is treated as joins the document
   ## `doc` (as `carryTreat` does) once, and goes from `other`, which stays (it has edits): a
   ## later choice of automatic in `doc` is then not undone by it. The disk thread leaves it out
@@ -1922,6 +1924,7 @@ proc takeTreatFrom(state: var AppState; other: FileRecord; doc: string) =
   if carried.kind.isSome and kept.treat.kind.isNone: parts.incl tpKind
   if carried.grouping.isSome and kept.treat.grouping.isNone: parts.incl tpGrouping
   if carried.subSort.isSome and kept.treat.subSort.isNone: parts.incl tpSubSort
+  parts = parts - state.treatsOwnKept.getOrDefault(path) # (the user's choice for the file)
   var leaves: set[TreatPart] = {}
   if carried.kind.isSome: leaves.incl tpKind
   if carried.grouping.isSome: leaves.incl tpGrouping
@@ -1955,6 +1958,9 @@ proc handTreat(state: var AppState; path, doc: string; id: FileIdentity; modifie
     opened: getTime(), modified: modified, doc: doc, treat: state.treatsKept.getOrDefault(path),
     stamp: (-1'i64, Time(), 0'i64)), parts, "what is remembered about " & name,
     if was.stamp.modified == Time(): NoDoc else: was.stamp)
+  if doc in state.knownDocs: # (what later decisions see of it: what was handed over)
+    state.knownDocs[doc].treat = state.knownDocs[doc].treat.merged(
+      state.treatsKept.getOrDefault(path), parts)
 
 proc hashFile(state: var AppState; i: int) =
   ## Hashes every byte of `remembered[i]`'s file, on the lane of hashes (a
@@ -5260,7 +5266,7 @@ proc link(state: var AppState; i, j: int) =
   elif theirs.len > 0 and theirs != doc and not state.knownDocs.getOrDefault(theirs).damaged:
     if not state.readOnlyProject:
       # what it says the file is treated as goes to the other, in the parts that one leaves
-      state.carryTreat(state.knownDocs.getOrDefault(theirs).treat, doc)
+      state.carryTreat(state.knownDocs.getOrDefault(theirs).treat, doc, "")
       state.diskIo.remove(state.store.docPath(theirs), "what is remembered about " &
         state.remembered[i].path.extractFilename) # its edits are in the other now
     state.knownDocs.del theirs
@@ -5534,7 +5540,7 @@ proc takeHashed(state: var AppState; m: sink Msg) =
         carried = state.treatsKept.getOrDefault(r.path)
         state.treatParts[r.path] = {tpKind, tpGrouping, tpSubSort}
         state.handTreat(r.path, r.doc, r.identity, r.modified)
-      else: state.carryTreat(carried, r.doc)
+      else: state.carryTreat(carried, r.doc, r.path)
       state.knownDocs.del own
     elif own.len > 0: r.savedRev = -1 # its document gets the hash
   elif not state.knownDocs.getOrDefault(r.doc).identity.fullKnown and
@@ -5550,9 +5556,9 @@ proc takeHashed(state: var AppState; m: sink Msg) =
       if c.doc != r.doc and c.identity.fullKnown and c.identity.full == r.identity.full and
           not c.damaged and not state.readOnlyProject:
         if c.edits.isEmpty:
-          state.carryTreat(c.treat, r.doc)
+          state.carryTreat(c.treat, r.doc, r.path)
           state.diskIo.remove(state.store.docPath(c.doc), "what is remembered about " & name)
-        else: state.takeTreatFrom(c, r.doc)
+        else: state.takeTreatFrom(c, r.doc, r.path)
   # confirmed: what its document says it is treated as; none when no document is the file's
   state.loadTreat(r.path, if r.doc.len > 0: state.knownDocs.getOrDefault(r.doc).treat
     else: TreatAs())
