@@ -8,10 +8,11 @@
 ## more than one line and point per station, and `report` turns it into the
 ## rows (line, point, and in how many records it is missing) and the figures.
 ##
-## Counts are of stations, not traces: the components of one station count
-## once (the library's `RecordCompleteness` already does this), and a station
-## is present when any trace of it is in the record, whatever its number of
-## components.
+## Counts are of stations (a line and point), not traces or channels: the
+## components of one station count once, and a station is present when any
+## trace of it is in the record, whatever its number of components. This holds
+## when the traces were matched by channel too, where the library reports one
+## entry for each channel: a station is missing only when all its entries are.
 ##
 ## This module does not read files, start jobs or keep state.
 
@@ -83,25 +84,31 @@ proc noteFile*(t: var StationTally) =
 
 proc addGather*(t: var StationTally; calls: openArray[StationKey];
     c: RecordCompleteness) =
-  ## Adds one record: `calls` are the stations its relation record calls
-  ## for, `c` its completeness against them (`missingStations` are the ones
-  ## the record lacks).
+  ## Adds one record: `calls` are the entries its relation record calls for (a
+  ## station, or a channel when the traces were matched by channel), `c` its
+  ## completeness against them (`missingStations` are the entries the record
+  ## lacks). The figures are of stations, by line and point: a station is
+  ## missing from the record only when all its entries are, so a station that
+  ## lacks one component of several, or one of two indices, is found.
   inc t.records
-  t.expected += c.expected
-  t.present += c.present
-  t.missing += c.missing
-  var gone = initHashSet[PointKey]()
-  for st in c.missingStations: gone.incl (line: st.line, point: st.point)
-  var here = initHashSet[PointKey]()
+  let byChannel = c.traceMatch == tmChannel
+  var entries = initTable[PointKey, int]()
+  var counted = initHashSet[StationKey]()
   for st in calls:
-    let key: PointKey = (line: st.line, point: st.point)
-    if not here.containsOrIncl(key):
-      let lost = key in gone
-      t.cells.withValue(key, cell):
-        if lost: inc cell[].missingIn
-        else: cell[].found = true
-      do:
-        t.cells[key] = StationCell(found: not lost, missingIn: ord(lost))
+    if byChannel or not counted.containsOrIncl(st):
+      inc entries.mgetOrPut((line: st.line, point: st.point), 0)
+  var lacking = initTable[PointKey, int]()
+  for st in c.missingStations: inc lacking.mgetOrPut((line: st.line, point: st.point), 0)
+  for key, n in entries:
+    let lost = lacking.getOrDefault(key) >= n
+    inc t.expected
+    if lost: inc t.missing
+    else: inc t.present
+    t.cells.withValue(key, cell):
+      if lost: inc cell[].missingIn
+      else: cell[].found = true
+    do:
+      t.cells[key] = StationCell(found: not lost, missingIn: ord(lost))
 
 func percentOf(part, whole: int): float64 =
   if whole <= 0: 0.0 else: 100.0 * float64(part) / float64(whole)

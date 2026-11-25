@@ -235,10 +235,9 @@ proc fail(sink: MissingSink; why: string; skipped: seq[tuple[path, why: string]]
   raise newException(ValueError, why)
 
 func templateStations(g: SurveyGeometry; record: int64): seq[StationKey] =
-  ## The stations the relation record `record` calls for, each once.
-  var seen = initHashSet[StationKey]()
-  for (_, rel) in g.channelRelations(record):
-    if not seen.containsOrIncl(rel.receiver): result.add rel.receiver
+  ## The entries the relation record `record` calls for, one for each channel
+  ## relation (`addGather` counts the stations in them).
+  for (_, rel) in g.channelRelations(record): result.add rel.receiver
 
 type Verdict = tuple[known: bool; receiver: bool; continuous: bool]
 

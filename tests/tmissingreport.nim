@@ -5,7 +5,8 @@
 ## components; a multi-record or multi-file tally adds one to Missing each
 ## time another record lacks the station. A stable sort and RFC 4180 CSV.
 ##
-## Seen to fail: with a missing count that did not go up for a lost station,
+## Seen to fail: with one entry of a station enough to call it missing,
+## `channels_of_a_station_count_as_one_station` rejected missing 2 for 1; with a missing count that did not go up for a lost station,
 ## `two_records_one_station_each` rejected missing 1 for 2; with the percent
 ## taken of the found stations, `percent_of_the_template` rejected 100 for 50.
 
@@ -133,6 +134,37 @@ proc main*() =
     doAssert text.startsWith("stations,files,records,inTemplate,found,missing,percentMissing,"),
       text
     doAssert "receivers,0,1,4,3,1,25," in text, text
+
+  block channels_of_a_station_count_as_one_station:
+    ## Traces matched by channel: one entry for each channel. A 3C station that
+    ## lacks one component is found; one that lacks all three is missing.
+    var calls: seq[StationKey] = @[]
+    for p in 1 .. 6:
+      for c in 1 .. 3: calls.add st(10, float64(p))
+    var c = RecordCompleteness(xpsRecord: 1, traceMatch: tmChannel, expected: 18,
+      missing: 4, present: 14)
+    c.missingStations = @[st(10, 2), st(10, 5), st(10, 5), st(10, 5)]
+    var t = initTally(ssReceivers)
+    t.addGather(calls, c)
+    let r = t.report
+    doAssert r.stats.inTemplate == 6 and r.stats.found == 5 and r.stats.missing == 1,
+      $r.stats
+    doAssert r.stats.expectedInRecords == 6 and r.stats.presentInRecords == 5 and
+      r.stats.missingInRecords == 1, $r.stats
+    doAssert r.rows.len == 1 and r.rows[0].point == 5, $r.rows
+
+  block one_station_at_two_indices:
+    ## A line and point called for at index 1 and index 2 with data at index 1 only
+    ## is found.
+    let calls = @[stationKey(10, 1, 1), stationKey(10, 1, 2)]
+    var c = RecordCompleteness(xpsRecord: 1, expected: 2, present: 1, missing: 1)
+    c.missingStations = @[stationKey(10, 1, 2)]
+    var t = initTally(ssReceivers)
+    t.addGather(calls, c)
+    let s = t.report.stats
+    doAssert s.inTemplate == 1 and s.found == 1 and s.missing == 0, $s
+    doAssert s.expectedInRecords == 1 and s.presentInRecords == 1 and
+      s.missingInRecords == 0, $s
 
   block receivers_are_counted_as_receivers:
     var t = initTally(ssSources)

@@ -8,7 +8,9 @@
 ## one sentence; a cancel leaves the sink empty; the folder walk goes into
 ## subfolders only when asked.
 ##
-## Seen to fail: with the record number allowed to match a gather with no source station,
+## Seen to fail: with a station called missing when any one of its entries is,
+## `three_components_by_station_or_by_channel` rejected missing 2 for 1 (by channel);
+## with the record number allowed to match a gather with no source station,
 ## `record_number_alone_never_matches` rejected a checked record; with a receiver checked in
 ## each gather alone,
 ## `receiver_slices_are_one_check` rejected 3 records for 1; with the subfolder flag ignored (always on),
@@ -32,7 +34,7 @@ proc put(line: var string; at: int; text: string) =
     if i + j < line.len: line[i + j] = c
 
 proc xRec(record: int; srcLine, srcPoint: string; fromCh, toCh, rcvLine, fromR,
-    toR: int): string =
+    toR: int; rcvIndex = 1; chInc = 1): string =
   result = repeat(' ', 80)
   result[0] = 'X'
   put(result, 2, "T1")
@@ -43,11 +45,11 @@ proc xRec(record: int; srcLine, srcPoint: string; fromCh, toCh, rcvLine, fromR,
   put(result, 38, "1")
   put(result, 39, align($fromCh, 5))
   put(result, 44, align($toCh, 5))
-  put(result, 49, "1")
+  put(result, 49, $chInc)
   put(result, 50, align($rcvLine & ".00", 10))
   put(result, 60, align($fromR & ".00", 10))
   put(result, 70, align($toR & ".00", 10))
-  put(result, 80, "1")
+  put(result, 80, $rcvIndex)
 
 proc oRec(record: int; rcvLine, rcvPoint, srcLine: string; fromS, toS: int): string =
   ## An O record: the receiver is in the source columns, the sources in the
@@ -156,6 +158,38 @@ proc plainFile(path: string; record: int; receivers: Slice[int]; stationless = f
     if not stationless:
       k.rcvLine = 10
       k.rcvPoint = float64(point)
+      k.rcvIndex = 1
+    k.intervalUs = 2000
+    k.status = tsLive
+    w.writeTrace(k, @[0'f32])
+  doAssert w.close().len == 0, "file was not written: " & path
+
+proc multiSurvey(lines: openArray[string]): ref SurveyGeometry =
+  const H00 = "H00 SPS format version number   SPS 2.1;"
+  var g = SurveyGeometry()
+  g.multiComponent = true
+  g.addSps(parseSps(H00 & "\n" & lines.join("\n")))
+  result = new SurveyGeometry
+  result[] = g
+
+proc componentFile(path: string; points: openArray[tuple[point, comp: int]];
+    withStations: bool) =
+  ## One shot (source 1): a trace for each receiver point and component. Without
+  ## stations the traces carry channel numbers 3 for each point, and no receiver
+  ## line or point.
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
+    numSamples: 1, time: 1_700_000_000.0))
+  for i, p in points:
+    var k = initTraceKeys()
+    k.record = 1
+    k.channel = if withStations: float64(i + 1) else: float64(3 * (p.point - 1) + p.comp)
+    k.component = uint8(p.comp)
+    k.srcLine = 1
+    k.srcPoint = 1
+    k.srcIndex = 1
+    if withStations:
+      k.rcvLine = 10
+      k.rcvPoint = float64(p.point)
       k.rcvIndex = 1
     k.intervalUs = 2000
     k.status = tsLive
@@ -458,6 +492,41 @@ proc main*() =
     let ok = run(dir, @[same], survey).sink.result
     doAssert ok.unmatched.len == 0 and ok.shot.stats.records == 1 and
       ok.shot.stats.missing == 0, $ok.shot.stats
+
+  block three_components_by_station_or_by_channel:
+    ## Six 3C stations; station 2 lacks component 3, station 5 is absent. Matched by
+    ## receiver station or, with no station in the headers, by channel: found 5,
+    ## missing 1, and per record 6 expected, 5 present, 1 missing.
+    let survey = multiSurvey([xRec(1, "1.00", "1.00", 1, 18, 10, 1, 6, 1, 3)])
+    var traces: seq[tuple[point, comp: int]] = @[]
+    for point in 1 .. 6:
+      for comp in 1 .. 3:
+        if point != 5 and not (point == 2 and comp == 3): traces.add (point: point, comp: comp)
+    for withStations in [true, false]:
+      let path = dir / ("comp3-" & $withStations & ".sgd")
+      componentFile(path, traces, withStations)
+      let got = run(dir, @[path], survey)
+      doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+      let r = got.sink.result.shot
+      let t = r.stats
+      doAssert got.sink.result.unmatched.len == 0, $got.sink.result.unmatched
+      doAssert t.inTemplate == 6 and t.found == 5 and t.missing == 1, $withStations & " " & $t
+      doAssert t.expectedInRecords == 6 and t.presentInRecords == 5 and
+        t.missingInRecords == 1, $withStations & " " & $t
+      doAssert r.rows.len == 1 and rowAt(r.rows, 10, 5).missing == 1, $r.rows
+
+  block one_record_two_indices_one_point:
+    ## One record calls point 1 at index 1 and at index 2 (and point 2); the data holds
+    ## index 1 only: both points are found.
+    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 1, 10, 1, 1),
+      xRec(1, "1.00", "1.00", 2, 2, 10, 1, 1, 2), xRec(1, "1.00", "1.00", 3, 3, 10, 2, 2))
+    let path = dir / "two-indices.sgd"
+    plainFile(path, 1, 1 .. 2)
+    let got = run(dir, @[path], survey)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    let t = got.sink.result.shot.stats
+    doAssert t.records == 1 and t.inTemplate == 2 and t.found == 2 and t.missing == 0, $t
+    doAssert t.expectedInRecords == 2 and t.missingInRecords == 0, $t
 
   block cancel_leaves_the_sink:
     reads = 0
