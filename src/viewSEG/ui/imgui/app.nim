@@ -170,6 +170,7 @@ type
     layoutDone: bool
     running: bool
     agent: AgentControl ## agent control: off until turned on
+    statusJob: JobId ## the job the status bar showed last frame (it keeps showing it)
     agentSocket: string ## where it listens; "" until first needed
     version: string ## the program's version, for agents
     dialogs: DialogHook ## `RunOptions.dialogs`
@@ -1557,7 +1558,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
       spectrumShow: ui.core.settings.spectrum.window)
   if bar.plot:
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: bar.plotView)
-  let job = jobStatus(ui.core.jobs.active, getMonoTime(), fs.now())
+  let job = jobStatus(ui.core.jobs.active, getMonoTime(), fs.now(), ui.statusJob)
+  ui.statusJob = job.job
   # The readout is last frame's pick: the bar is drawn before the plot.
   let status = drawStatusBar(ui.fonts, ui.theme,
     ChromeInfo(themeName: ui.theme.name, scale: ui.scale, agent: AgentSign(

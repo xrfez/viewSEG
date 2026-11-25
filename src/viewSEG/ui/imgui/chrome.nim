@@ -525,43 +525,77 @@ proc drawReadoutMenu(fields: openArray[ReadoutField]; res: var StatusOutput) =
     res.chose = true
     res.fields = chosen
 
+proc fitted(text: string; room: float32): string =
+  ## `text` cut with "..." to fit `room` pixels.
+  result = text
+  var n = text.runeLen
+  let w = igCalcTextSize(text.cstring, nil, false, -1).x
+  if w > room and n > 0:
+    n = max(1, int(n.float32 * room / w))
+    result = elide(text, n)
+    while n > 1 and igCalcTextSize(result.cstring, nil, false, -1).x > room:
+      dec n
+      result = elide(text, n)
+
 proc jobField(job: JobStatus; t: Theme; marks: var Marks; res: var StatusOutput) =
-  ## The running job: a progress bar labelled with what it does and how far
-  ## it is, Cancel, and what else runs or waits. Clicking the bar or the
+  ## The running job. Every part has a fixed place and size whatever the
+  ## words: Cancel first (its place is kept, empty, for a job that cannot be
+  ## cancelled), the progress bar, the percentage in a cell of its own, then
+  ## the label in a cell of fixed width, cut to it. Clicking the bar or the
   ## words asks for the Jobs window.
   igSameLine(0, -1)
   if job.job != NoJob:
     let style = igGetStyle()
-    let width = round(igGetFontSize() * 22)
-    let height = igGetFontSize() + 2 * round(style.FramePadding.y / 2)
-    # A negative fraction draws ImGui's moving "busy" bar: progress unknown.
-    let fraction = if job.fraction >= 0: job.fraction else: -float32(igGetTime())
+    let fs = igGetFontSize()
+    let barW = round(fs * 22)
+    let height = fs + 2 * round(style.FramePadding.y / 2)
+    let cancelW = round(igCalcTextSize((IconStop & " Cancel").cstring, nil, false, -1).x +
+      2 * style.FramePadding.x + 8)
+    let pctW = round(igCalcTextSize("100 %".cstring, nil, false, -1).x)
+    let labelW = round(fs * 30)
+    let x0 = igGetCursorPosX()
     igPushStyleVar_Vec2(ImGui_StyleVar_FramePadding.cint,
       ImVec2_c(x: style.FramePadding.x, y: round(style.FramePadding.y / 2)))
-    igProgressBar(fraction, ImVec2_c(x: width, y: height), "")
+    if job.cancellable:
+      igBeginDisabled(job.cancelling)
+      if igButton((IconStop & " Cancel##job").cstring, ImVec2_c(x: cancelW, y: height)):
+        res.cancel = job.job
+      igEndDisabled()
+      marks.mark("status.cancel")
+      tooltip("Ask this job to stop", "", t)
+    else:
+      igDummy(ImVec2_c(x: cancelW, y: height))
+    igSameLine(x0 + cancelW + 6, 0)
+    # A negative fraction draws ImGui's moving "busy" bar: progress unknown.
+    let fraction = if job.fraction >= 0: job.fraction else: -float32(igGetTime())
+    igProgressBar(fraction, ImVec2_c(x: barW, y: height), "")
     marks.mark("status.progress")
     if igIsItemClicked(0): res.showJobs = true
     if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
       igTextUnformatted(job.text.cstring, nil)
       igTextDisabled("Click for the Jobs window")
       igEndTooltip()
+    igPopStyleVar(1)
+    let pctX = x0 + cancelW + 6 + barW + 6
+    igSameLine(pctX, 0)
+    if job.percent.len > 0:
+      let w = igCalcTextSize(job.percent.cstring, nil, false, -1).x
+      igSetCursorPosX(pctX + pctW - w)
+      igTextUnformatted(job.percent.cstring, nil)
+    else:
+      igDummy(ImVec2_c(x: pctW, y: height))
+    let labelX = pctX + pctW + 6
+    igSameLine(labelX, 0)
     # The label beside the bar, so a long title never hides the bar itself.
-    igSameLine(0, 6)
-    igTextUnformatted(job.text.cstring, nil)
+    igTextUnformatted(job.label.fitted(labelW).cstring, nil)
     marks.mark("status.job")
     if igIsItemClicked(0): res.showJobs = true
-    if job.cancellable:
-      igSameLine(0, 8)
-      igBeginDisabled(job.cancelling)
-      if igSmallButton((IconStop & " Cancel##job").cstring):
-        res.cancel = job.job
-      igEndDisabled()
-      marks.mark("status.cancel")
-      tooltip("Ask this job to stop", "", t)
-    igPopStyleVar(1)
+    if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+      igTextUnformatted(job.text.cstring, nil)
+      igEndTooltip()
+    igSameLine(labelX + labelW, 12)
   let others = job.others
   if others.len > 0:
-    igSameLine(0, 12)
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
     igTextUnformatted(others.cstring, nil)
     igPopStyleColor(1)
@@ -624,10 +658,11 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
     igDummy(ImVec2_c(x: 0, y: 0))
     # First: whatever else the bar holds (a job, the readout, a long note),
     # the sign that agents may act is in view.
-    if info.agent.on:
-      agentField(info.agent, t, marks)
+    # The job field comes before the sign, whose words change width.
     if job.shown:
       jobField(job, t, marks, result)
+    if info.agent.on:
+      agentField(info.agent, t, marks)
     if mapCursor.len > 0:
       igTextUnformatted(mapCursor.cstring, nil)
       marks.mark("status.map")

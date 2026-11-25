@@ -75,5 +75,29 @@ proc main*() =
     let s = jobStatus([asked], t0)
     doAssert s.cancelling and s.text == "Open a.sgy: indexing (cancelling)", s.text
 
+  block stickyChoice:
+    let a = running(1, "Open a.sgy", started = 5)
+    let b = running(2, "Open b.sgy", started = 6)
+    let o = running(3, "Open c.sgy", started = 1)
+    doAssert jobStatus([a, b], t0 + secs(7)).job == JobId(1)
+    doAssert jobStatus([b, a], t0 + secs(7), prefer = JobId(2)).job == JobId(2)
+    let s = jobStatus([a, b, o], t0 + secs(7), prefer = JobId(2))
+    doAssert s.job == JobId(2) and s.otherRunning == 2, "the shown job is kept"
+    # The one shown last has ended: the oldest running one takes over.
+    doAssert jobStatus([a, o], t0 + secs(7), prefer = JobId(2)).job == JobId(3)
+    var waiting = b
+    waiting.state = jsQueued
+    doAssert jobStatus([a, waiting], t0, prefer = JobId(2)).job == JobId(1)
+
+  block labelAndElision:
+    let s = jobStatus([running(1, "Scan", done = 1, total = 4, phase = "reading")], t0)
+    doAssert s.label == "Scan: reading" and s.percent == "25 %", s.label
+    doAssert s.text == "Scan: reading 25 %"
+    doAssert elide("short", 10) == "short"
+    doAssert elide("a longer title", 10) == "a longe..."
+    doAssert elide("a longer title", 10).len == 10
+    doAssert elide("abcdef", 2) == ".." and elide("abc", 0) == ""
+    doAssert elide("äöüäöüäöü", 6) == "äöü..."
+
 when isMainModule:
   main()

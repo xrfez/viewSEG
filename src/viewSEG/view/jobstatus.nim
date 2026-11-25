@@ -3,7 +3,7 @@
 ## be cancelled, and how many others run or wait. Toolkit-neutral: a
 ## frontend draws it as a progress bar with a Cancel button.
 
-import std/[math, monotimes, times]
+import std/[math, monotimes, times, unicode]
 import ../core/jobs
 
 type
@@ -39,16 +39,24 @@ func shownFirst(a, b: JobInfo): bool =
   if a.spec.lane != b.spec.lane: a.spec.lane == jlInteractive
   else: a.startedAt < b.startedAt
 
-func jobStatus*(active: openArray[JobInfo]; now: MonoTime; drives = now): JobStatus =
+func jobStatus*(active: openArray[JobInfo]; now: MonoTime; drives = now;
+    prefer = NoJob): JobStatus =
   ## The status bar's job field for `active` (`Jobs.active`: the running
   ## and queued jobs) at time `now`; `drives` is `fs.now`, the clock jobs
-  ## that do not answer are timed on.
+  ## that do not answer are timed on. `prefer` is the job the bar showed
+  ## last time: while it still runs it stays the one shown, so the bar never
+  ## alternates between several jobs.
   result = JobStatus(job: NoJob, fraction: -1)
   var best = -1
   for i, j in active:
+    if j.state == jsRunning and prefer != NoJob and j.id == prefer:
+      best = i
+  let sticky = best >= 0
+  for i, j in active:
     case j.state
     of jsRunning:
-      if best < 0 or shownFirst(j, active[best]):
+      if i == best: discard
+      elif not sticky and (best < 0 or shownFirst(j, active[best])):
         if best >= 0: inc result.otherRunning
         best = i
       else:
@@ -74,6 +82,22 @@ func jobStatus*(active: openArray[JobInfo]; now: MonoTime; drives = now): JobSta
         p.since != MonoTime():
       let left = initDuration(nanoseconds = int64(spent.inNanoseconds.float * (1 - f) / f))
       result.timeLeft = formatLeft(left)
+
+func label*(s: JobStatus): string =
+  ## The bar's label without the percentage, which has a cell of its own:
+  ## "Open survey.sgy: indexing, about 3 s left".
+  result = s.title
+  if s.phase.len > 0: result.add ": " & s.phase
+  if s.timeLeft.len > 0: result.add (if s.percent.len > 0: ", " else: ": ") & s.timeLeft
+  if s.silent > initDuration():
+    result.add " (not answering for " & $max(1, s.silent.inSeconds) & " s)"
+  if s.cancelling: result.add " (cancelling)"
+
+func elide*(s: string; maxRunes: int): string =
+  ## `s` cut to at most `maxRunes` characters, ending in "..." when cut.
+  if s.runeLen <= maxRunes: s
+  elif maxRunes <= 3: "...".substr(0, max(maxRunes, 0) - 1)
+  else: s.runeSubStr(0, maxRunes - 3) & "..."
 
 func text*(s: JobStatus): string =
   ## The bar's label: "Open survey.sgy: indexing 42 %, about 3 s left".
