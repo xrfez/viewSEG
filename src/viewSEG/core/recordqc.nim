@@ -114,6 +114,9 @@ func namesSource(f: SeismicFile; traces: Slice[int]): bool =
     if k.status != tsAuxiliary and hasStation(k.srcLine, k.srcPoint): return true
   false
 
+func hasNoSources(f: SeismicFile; traces: Slice[int]): bool =
+  not f.index.keys.namesSource(traces)
+
 proc withSource(f: SeismicFile; traces: Slice[int]; st: StationKey): seq[TraceKeys] =
   ## The keys of the record's traces with source station `st` in them.
   result = newSeq[TraceKeys](traces.len)
@@ -172,6 +175,9 @@ proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: 
     hits[mfDuplicate].note = "stations with two traces of one component"
   else:
     # A receiver gather: the O records of its receiver station, together.
+    if f.hasNoSources(traces):
+      notChecked("this record is unmatched in " & against & ": " & NoSourceStation)
+      return
     var (found, rcv) = f.index.keys.gatherReceiver(traces)
     if not found and placed.found:
       (rcv, found, byPlace) = (placed.station, true, true)

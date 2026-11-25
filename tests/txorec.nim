@@ -104,6 +104,8 @@ proc main*() =
   dataFile(tie, 10, [(8.0, 1.0), (8.0, 3.0)])
   let noSource = dir / "nosource.sgd" # receivers 1..5, no source station: FFID 7 is a record's
   dataFile(noSource, 7, [(0.0, 1.0), (0.0, 2.0), (0.0, 3.0), (0.0, 4.0), (0.0, 5.0)])
+  let noSources = dir / "nosources.sgd" # a receiver gather whose traces name no source
+  dataFile(noSources, 3, [(0.0, 2.0), (0.0, 2.0)], receiverGather = true)
   let slice = dir / "slice.sgd" # one trace: receiver 2 of shot 5
   dataFile(slice, 7, [(5.0, 2.0)], receiverGather = true)
   let own = dir / "own.sgd" # source 5 with the FFID of source 6's X record
@@ -149,6 +151,11 @@ proc main*() =
 
     check "noSourceStation", noSource:
       doAssert row.planned == -1, what & ": matched by its FFID, planned " & $row.planned
+      doAssert hits[mfMissing].state == fsNotChecked and
+        "no source station" in hits[mfMissing].note, what & ": " & hits[mfMissing].note
+
+    check "receiverWithoutSources", noSources:
+      doAssert row.planned == -1 and row.plannedMissing == -1, what & ": planned " & $row.planned
       doAssert hits[mfMissing].state == fsNotChecked and
         "no source station" in hits[mfMissing].note, what & ": " & hits[mfMissing].note
 

@@ -540,7 +540,7 @@ proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[in
                 c.unlisted, c.duplicates)
           of sdReceiver, sdOpen:
             let (found, rcv) = file[].index.keys.gatherReceiver(g)
-            if found:
+            if found and file[].index.keys.namesSource(g):
               # the O records: the relation file's own, else the loaded O file's or the ones
               # derived from its X records (`deriveReceiversWork`), made once
               let o = if relations[].relationCount(rdReceiver) > 0: relations else: receivers

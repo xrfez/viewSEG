@@ -140,6 +140,13 @@ func calledSources*(records: openArray[ORecord]): seq[StationKey] =
     for s in rec.sources:
       if not listed.containsOrIncl(s): result.add s
 
+func namesSource*(keys: openArray[TraceKeys]; traces: Slice[int]): bool =
+  ## Whether the headers of `traces` name a source station (a trace that is not
+  ## auxiliary): a receiver gather with none cannot be told what it recorded.
+  for t in traces:
+    if keys[t].status != tsAuxiliary and hasStation(keys[t].srcLine, keys[t].srcPoint):
+      return true
+
 func sourceAlternatives*(source: StationKey): array[2, StationKey] =
   ## The keys a source station of a template is heard under: its own, else the same
   ## point with no index (0) in the headers, an index 0 of the template taking the
