@@ -423,6 +423,15 @@ func crs*(s: Session): lent FileCrs {.inline.} = s.crs
   ## What the file's headers say of its coordinates: units and CRS text.
 func facts*(s: Session): lent FileFacts {.inline.} = s.facts
   ## What the Headers window shows of the file: its summary and file headers.
+func domainOf*(s: Session; gather: int): RelationDomain =
+  ## The relation domain gather `gather` is checked in: `rdReceiver` (O records,
+  ## by its receiver station) for a receiver gather, else `rdSource` (a shot's
+  ## X record, by its source station). Told from the gather's stations, not
+  ## from its kind alone: a time sliced receiver gather (one receiver, one shot)
+  ## is a receiver's.
+  if gather in 0 ..< s.records.len and s.records[gather].side == sdReceiver: rdReceiver
+  else: rdSource
+
 func checkedAgainst*(s: Session): lent string {.inline.} = s.checkedAgainst
   ## The relation file the records' planned stations come from; "" for none.
 func leapRead*(s: Session): int {.inline.} = s.leapRead
