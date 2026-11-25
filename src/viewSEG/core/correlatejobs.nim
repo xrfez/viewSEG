@@ -208,8 +208,9 @@ func marksOf*(traces: openArray[int]; shiftMs: float64): seq[AuxMark] =
   for t in traces: result.add AuxMark(trace: t, shiftMs: shiftMs)
 
 func lagOf*(shiftMs, dtMs: float64): int {.inline.} =
-  ## The `timeShift` count of a shift later by `shiftMs`: negative moves later.
-  wholeSamples(-shiftMs, dtMs)
+  ## The `timeShift` count of a shift later by `shiftMs`: negative moves later. Kept within
+  ## 2^40 samples, far past any record, which a longer shift only zero-fills.
+  clamp(wholeSamples(-shiftMs, dtMs), -(1 shl 40), 1 shl 40)
 
 proc appliedLags*(file: ptr SeismicFile; marked: openArray[AuxMark]; odd: HashSet[int];
     dtMs: float64): Table[int, int] =

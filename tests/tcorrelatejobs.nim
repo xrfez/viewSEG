@@ -347,6 +347,15 @@ proc main*() =
   defer: file.close()
   let before = file.readTraces(0 .. 0)
 
+  block lagSaturates:
+    ## A shift far beyond any record is a lag of at most 2^40 samples, which the job
+    ## zero-fills, and its negation cannot overflow.
+    for ms in [1e30, -1e30, Inf, -Inf]:
+      let lag = lagOf(ms, 1e-9)
+      doAssert abs(lag) <= 1 shl 40 and -lag != low(int), "lag " & $lag & " for " & $ms
+    doAssert lagOf(1e30, 2.0) == -(1 shl 40) and lagOf(-1e30, 2.0) == 1 shl 40
+    doAssert lagOf(100.0, 2.0) == -50 and lagOf(-100.0, 2.0) == 50
+
   block correlated:
     var jobs = initJobs()
     var slot: CorrelateResult
