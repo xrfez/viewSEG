@@ -328,6 +328,13 @@ proc buildShotIndex*(view: ShotView): ShotIndex {.raises: [].} =
     let c = cmp(a.us, b.us)
     if c != 0: c else: cmp(a.row, b.row))
 
+func rowsAtStation*(ix: ShotIndex; line, point: float64): seq[int] =
+  ## Every row of the log at source line `line` and shot point `point`, compared in
+  ## hundredths as `match` does, ascending; none when either is not a finite number
+  ## that fits, or no row is there.
+  let (l, p) = (hundredths(line), hundredths(point))
+  if l.ok and p.ok: result = ix.byStation.getOrDefault((l.h, p.h))
+
 proc match*(ix: ShotIndex; q: ShotQuery; toleranceUs = 1000'i64): ShotMatch {.raises: [].} =
   ## The one row for `q`, or none.
   ##

@@ -124,30 +124,6 @@ proc publish*(f: var ShotFollow; id, logRev: int; source: ShotFollowSource;
   f.held[at].logRev = logRev
   f.held[at].answer
 
-proc timeZero(f: SeismicFile; local: int): Option[int64] {.raises: [].} =
-  ## Time zero of trace `local`, or none. Skips a SEG-Y without stored keys,
-  ## which would read the file.
-  if local < 0 or local >= f.len: return none(int64)
-  let kind = f.kind
-  if kind == skSegy and not f.hasKeys: return none(int64)
-  if kind notin {skSegd, skSegy}: return none(int64)
-  try:
-    f.timeZeroOfRecord(local)
-  except ValueError, IOError, SegTruncatedError:
-    none(int64)
-
-proc numbersOf(f: SeismicFile; local: int): tuple[record, line, point: float64; index: int]
-    {.raises: [].} =
-  ## Record number, source line, source point and source index, from stored
-  ## keys. Unknown when the file was opened without them.
-  result = (NaN, NaN, NaN, 0)
-  if local < 0 or local >= f.len or not f.hasKeys: return
-  try:
-    let k = f.traceKeys(local)
-    result = (k.record, k.srcLine, k.srcPoint, int(k.srcIndex))
-  except ValueError:
-    discard
-
 proc noMatch*(): ShotMatch {.inline.} =
   ## No row.
   ShotMatch(rule: mrNone, row: -1, count: 0)
@@ -157,34 +133,42 @@ proc matched*(index: ref ShotIndex; q: ShotQuery): ShotMatch {.raises: [].} =
   if index == nil: return noMatch()
   match(index[], q)
 
-proc microsecondClock(f: SeismicFile; local: int): bool {.raises: [].} =
-  ## Whether trace `local`'s clock is good to a microsecond. A SEG-Y is when
+proc microsecondClock(f: SeismicFile; local: int; k: TraceKeys): bool {.raises: [].} =
+  ## Whether trace `local`'s clock is good to a microsecond, given its keys `k`. A SEG-Y is when
   ## its stored keys say `toHeaderSubsec`. A SEG-D is when the record is
   ## revision 3. A whole-second clock, or a file opened without keys, is not.
   ## Reads no file.
   if local < 0 or local >= f.len: return false
   case f.kind
-  of skSegy:
-    if not f.hasKeys: return false
-    try:
-      f.traceKeys(local).timeOrigin == toHeaderSubsec
-    except ValueError:
-      false
+  of skSegy: f.hasKeys and k.timeOrigin == toHeaderSubsec
   of skSegd:
     if local >= f.index.entries.len: return false
     let rec = int(f.index.entries[local].record)
-    if rec < 0 or rec >= f.index.segdRecords.len: return false
-    f.index.segdRecords[rec].isRev3
+    rec >= 0 and rec < f.index.segdRecords.len and f.index.segdRecords[rec].isRev3
   else:
     false
 
+proc queryOfTrace*(f: SeismicFile; local: int; k: TraceKeys): ShotQuery {.raises: [].} =
+  ## A trace's query from its keys `k` (as `f.traceKeys(local)` gives them): time zero, exact
+  ## when the file's clock is good to a microsecond, plus the trace's record number, source line,
+  ## source point and source index. A whole-second clock is not exact. A SEG-Y without stored
+  ## keys has no time and no numbers, so the UI thread does not read one.
+  var t = none(int64)
+  var n = (record: NaN, line: NaN, point: NaN, index: 0)
+  if local in 0 ..< f.len:
+    if f.kind in {skSegd, skSegy} and (f.kind == skSegd or f.hasKeys):
+      t = timeZeroOfRecord(k, f.kind)
+    if f.hasKeys: n = (k.record, k.srcLine, k.srcPoint, int(k.srcIndex))
+  queryOfKeys(t, microsecondClock(f, local, k), n.record, n.line, n.point, n.index)
+
 proc traceQuery*(f: SeismicFile; local: int): ShotQuery {.raises: [].} =
-  ## A trace's query: time zero, exact when the file's clock is good to a
-  ## microsecond, plus the trace's record number, source line, source point
-  ## and source index. A whole-second clock is not exact.
-  let t = timeZero(f, local)
-  let n = numbersOf(f, local)
-  queryOfKeys(t, microsecondClock(f, local), n.record, n.line, n.point, n.index)
+  ## A trace's query (`queryOfTrace`) from the keys the file holds; a trace out of range or
+  ## whose keys cannot be had asks with no time and no numbers.
+  var k = initTraceKeys()
+  if local in 0 ..< f.len and (f.kind != skSegy or f.hasKeys):
+    try: k = f.traceKeys(local)
+    except ValueError: discard
+  queryOfTrace(f, local, k)
 
 proc fitsInt(n: int64): bool {.inline.} =
   n > 0 and n <= int64(high(int))

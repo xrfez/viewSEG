@@ -118,7 +118,7 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
     outputbinary, outputnames, outputtext, reader,
   recordingkind, recordqc, referencejobs, references, selection, session, settings,
       shotfollowtarget, shotlog,
-  shotlogjobs, shotlogsps, shotselect, shotspsjobs,
+  shotlogjobs, shotlogsps, shotselect, shotselectjobs, shotspsjobs,
   shots, spectra,
   spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids,
       vendorfieldjobs,
@@ -1471,6 +1471,15 @@ type
       ## shot logs read this run, in the order they were imported or loaded
     follow: ShotFollow ## per loaded log, its index and its own last answer
     shotRows: ShotRows ## the rows chosen in a loaded shot log (`ckSelectShotRows`)
+    stJob: JobId = NoJob
+      ## the job that makes `stMap`, the traces of the file shown told to the rows of a log
+    stSink: ShotTraceSink
+    stKey: tuple[session, keys, log, revision: int]
+      ## the file, its keys' revision, the log and its revision `stMap` (or the job) is for
+    stMap: ShotTraceMap
+    stHave: bool ## `stMap` is the answer for `stKey`
+    stWant: int = -1
+      ## the revision of the rows chosen whose traces are selected when the job answers; -1 none
     followTrace: int = -1
       ## last seismic trace hovered while this file is on show; -1 until one is
     followShown: int
@@ -5025,19 +5034,53 @@ func shotRowsChosen*(state: AppState): lent ShotRows {.inline.} =
   ## The rows chosen in a loaded shot log, from the map or the grid; `log` is -1 for none.
   state.shotRows
 
+func shotIndexOf*(state: AppState; log: int): typeof(state.follow.indexOf(0)) {.inline.} =
+  ## The lookup of loaded shot log `log` (by time, station and file number), or nil while it is
+  ## not built.
+  state.follow.indexOf(log)
+
 func hoveredShotRows*(state: AppState; log: int): seq[int] =
   ## The rows of loaded shot log `log` at the map points under the pointer, each once.
   for p in state.selection.hoverPoints:
     let i = state.survey.find(p.layer)
     if i >= 0 and state.survey.layers[i].origin == loShotLog and
         state.survey.layers[i].shotLog == log:
-      for row in state.survey.layers[i].rowsAtPoint(p.point):
+      for row in state.survey.layers[i].rowsAtPoint(p.point, state.follow.indexOf(log)):
         if row notin result: result.add row
 
-proc shotTracesWhy(state: AppState; k: int; logId: int; rows: seq[int];
-    found: var seq[int]): string =
-  ## The traces (survey-wide) of the file panel `k` shows that belong to `rows` of log
-  ## `logId`, in `found`; else why there are none, as a sentence.
+proc showShotTraces(state: var AppState; k: int; found: seq[int]) =
+  ## The main panel `k` shows the record that holds the first of survey-wide traces `found`
+  ## (ascending); a record on show that holds one of them stays.
+  let (shown, gather) = state.shownTraces(k)
+  for t in found:
+    if shown >= 0 and t in state.sessions[shown] and t - state.sessions[shown].base in gather:
+      return
+  let i = state.findTrace(found[0])
+  let g = if i >= 0: state.sessions[i].gatherOf(found[0] - state.sessions[i].base) else: -1
+  if g >= 0:
+    if state.shownFile(k) != i: state.showReplacing(k, state.sessions[i].id, g)
+    else: state.show(MainPanel, state.sessions[i].id, g)
+
+func shotTraceKey(state: AppState; i, log: int): tuple[session, keys, log, revision: int] =
+  ## What a map of the traces of `sessions[i]` against shot log index `log` is for.
+  (int(state.sessions[i].id), state.sessions[i].keysRevision, state.shotLogs[log].id,
+    state.shotLogs[log].revision)
+
+proc stopShotTraces(state: var AppState) =
+  ## Lets go of the map of traces, and of the job that makes one.
+  if state.stJob != NoJob: discard state.jobs.cancel(state.stJob)
+  state.stJob = NoJob
+  state.stSink = nil
+  state.stHave = false
+  state.stMap = ShotTraceMap()
+  state.stWant = -1
+
+proc shotTracesFor(state: var AppState; k, log: int; rows: seq[int]; found: var seq[int];
+    removing: bool): string =
+  ## The traces (survey-wide, ascending) of the file panel `k` shows that belong to `rows` of
+  ## loaded log index `log`, in `found`: by look-up in the map of the file against the log,
+  ## which a job makes once (`ShotTraceMap`; until it answers `found` stays empty and the
+  ## answer is applied then, `applyShotTraces`). Else why there are none, as a sentence.
   let i = state.shownFile(k)
   if i < 0: return "No file is shown, so no trace was chosen."
   let s = state.sessions[i]
@@ -5046,57 +5089,107 @@ proc shotTracesWhy(state: AppState; k: int; logId: int; rows: seq[int];
   if e >= 0 and state.files.entries[e].recordingOf == some(rkReceiverContinuous):
     return s.name & " is a continuous receiver gather: its traces are not shots; " &
       "slice it by the shot log first."
-  let m = shotTraces(s.file, state.follow.indexOf(logId), rows)
-  if m.unreadable:
-    return s.name & " was opened without trace keys, so its traces cannot be told to " &
-      "shots; no trace was chosen."
-  for t in m.traces: found.add s.base + t
-  if found.len == 0:
-    result = "No trace of " & s.name & " belongs to " &
-      (if rows.len == 1: "that shot." else: "those shots.")
+  let key = state.shotTraceKey(i, log)
+  if state.stHave and state.stKey == key:
+    if state.stMap.unreadable:
+      return s.name & " was opened without trace keys, so its traces cannot be told to " &
+        "shots; no trace was chosen."
+    for t in state.stMap.tracesOfRows(rows): found.add s.base + t
+    if found.len == 0 and not removing:
+      result = "No trace of " & s.name & " belongs to " &
+        (if rows.len == 1: "that shot." else: "those shots.")
+  else:
+    if state.stHave or (state.stJob != NoJob and state.stKey != key): state.stopShotTraces()
+    if state.stJob == NoJob:
+      let index = state.follow.indexOf(state.shotLogs[log].id)
+      if index == nil: return
+      state.stKey = key
+      state.stSink = ShotTraceSink()
+      state.stJob = state.jobs.submit(traceMapSpec(s.name, s.diskPath),
+        traceMapWork(s.filePtr, index, state.shotLogs[log].view.rows.len, state.stSink))
+    state.stWant = state.shotRows.revision
 
-proc selectShotRows(state: var AppState; logId: int; wanted: seq[int]; traces: bool) =
-  ## `ckSelectShotRows`: `wanted` rows of loaded log `logId` become the rows chosen, their
-  ## points on the map the selected points, and, with `traces`, the traces of the file shown
-  ## that belong to those shots the selected traces; the main panel shows the record of the
-  ## first (the one on show stays when it holds one). A sentence says why, once, when no
-  ## trace was chosen.
+proc applyShotTraces(state: var AppState) =
+  ## The map of traces is ready: the traces of the rows chosen are selected and shown, when
+  ## they are still the rows asked for, and the file and the log are the ones the map is for.
+  let want = state.stWant
+  state.stWant = -1
+  if want != state.shotRows.revision or state.shotRows.log < 0: return
+  let k = state.findPanel(MainPanel)
+  let i = state.shownFile(k)
+  let log = state.findShotLog(state.shotRows.log)
+  if i < 0 or log < 0 or state.shotTraceKey(i, log) != state.stKey: return
+  var found: seq[int]
+  var why = ""
+  if state.stMap.unreadable:
+    why = state.sessions[i].name & " was opened without trace keys, so its traces cannot be " &
+      "told to shots; no trace was chosen."
+  else:
+    for t in state.stMap.tracesOfRows(state.shotRows.rows): found.add state.sessions[i].base + t
+    if found.len == 0:
+      why = "No trace of " & state.sessions[i].name & " belongs to " &
+        (if state.shotRows.rows.len == 1: "that shot." else: "those shots.")
+  if found.len > 0:
+    state.selection.select(found, smAdd)
+    state.showShotTraces(k, found)
+  else: state.log.add(sevInfo, "Shot log", why)
+
+proc selectShotRows(state: var AppState; logId: int; wanted: seq[int]; traces: bool;
+    mode = smReplace; others = false) =
+  ## `ckSelectShotRows`: `wanted` rows of loaded log `logId` become the rows chosen (a replace;
+  ## with `mode` add, remove or toggle (their shot's rows in or out), the choice changes by
+  ## them), their points on the map selected, and, with `traces`, the traces of the file shown
+  ## that belong to those shots, the main panel showing the first. A replace with no row in the
+  ## log clears the choice, the points and the traces. `others`: the command selected points of
+  ## other layers already, which a replace leaves. A sentence says why, once, when no trace was
+  ## chosen.
   let at = state.findShotLog(logId)
-  var rows: seq[int]
+  var valid: seq[int]
   if at >= 0:
     let n = state.shotLogs[at].view.rows.len
     for r in wanted.sorted:
-      if r in 0 ..< n and (rows.len == 0 or rows[^1] != r): rows.add r
-  let was = state.shotRows
-  state.shotRows = ShotRows(log: (if rows.len > 0: logId else: -1), rows: rows,
-    revision: was.revision + 1)
+      if r in 0 ..< n and (valid.len == 0 or valid[^1] != r): valid.add r
+  let was = if state.shotRows.log == logId: state.shotRows.rows else: @[]
+  let op = case mode
+    of smReplace, smRange: smReplace
+    of smAdd: smAdd
+    of smRemove: smRemove
+    of smToggle: (if valid.len > 0 and valid[0] in was: smRemove else: smAdd)
+  var final = valid
+  if op == smAdd:
+    final = was & valid
+    final.sort()
+    final = final.deduplicate(isSorted = true)
+  elif op == smRemove:
+    final = @[]
+    for r in was:
+      if r notin valid: final.add r
+  elif valid.len == 0 and op != smReplace: return
+  state.shotRows = ShotRows(log: (if final.len > 0: logId else: -1), rows: final,
+    revision: state.shotRows.revision + 1)
+  let k = state.findPanel(MainPanel)
+  let asked = if op == smReplace: final else: valid
   var found: seq[int]
   var why = ""
-  let k = state.findPanel(MainPanel)
-  if traces and rows.len > 0:
-    why = state.shotTracesWhy(k, logId, rows, found)
-    state.selection.select(found, smReplace)
+  if traces and asked.len > 0:
+    why = state.shotTracesFor(k, at, asked, found, op == smRemove)
   var points: seq[PointRef]
   let layer = state.survey.findShotLog(logId)
   if layer >= 0:
     template l: untyped = state.survey.layers[layer]
-    for p in l.pointsOfRows(rows): points.add PointRef(layer: l.id, role: prSource, point: p)
-  state.selection.selectPoints(points, smReplace)
-  if found.len > 0:
-    let (shown, gather) = state.shownTraces(k)
-    var onShow = false
-    for t in found:
-      if shown >= 0 and t in state.sessions[shown] and t - state.sessions[shown].base in gather:
-        onShow = true
-    if not onShow:
-      let pick = found[0] # (ascending: the file's own order)
-      let i = state.findTrace(pick)
-      let g = if i >= 0: state.sessions[i].gatherOf(pick - state.sessions[i].base) else: -1
-      if g >= 0:
-        if state.shownFile(k) != i: state.showReplacing(k, state.sessions[i].id, g)
-        else: state.show(MainPanel, state.sessions[i].id, g)
-  elif why.len > 0:
-    state.log.add(sevInfo, "Shot log", why)
+    for p in l.pointsOfRows(asked): points.add PointRef(layer: l.id, role: prSource, point: p)
+  case op
+  of smReplace:
+    if traces or final.len == 0: state.selection.select(found, if others: smAdd else: smReplace)
+    state.selection.selectPoints(points, if others: smAdd else: smReplace)
+  of smRemove:
+    state.selection.selectPoints(points, smRemove)
+    if traces: state.selection.select(found, smRemove)
+  else:
+    state.selection.selectPoints(points, smAdd)
+    if traces: state.selection.select(found, smAdd)
+  if found.len > 0 and op != smRemove: state.showShotTraces(k, found)
+  elif why.len > 0 and found.len == 0: state.log.add(sevInfo, "Shot log", why)
 
 proc mark(state: var AppState; path: string; short, seen: bool) =
   ## Marks the file list's entry of `path`: with `short`, as ending before
@@ -7333,6 +7426,7 @@ proc dropShotLogs(state: var AppState) =
     elif w.job != NoJob: discard state.jobs.cancel(w.job)
   state.shotWork = kept
   state.follow.dropAll()
+  state.stopShotTraces()
   state.dropShotLayers()
   state.shotLogs.setLen 0
   inc state.shotLogsRev
@@ -7442,6 +7536,7 @@ proc removeShotLogCmd(state: var AppState; cmd: Command) =
     else: kept.add w
   state.shotWork = kept
   state.follow.drop(id)
+  if state.stKey.log == id: state.stopShotTraces()
   state.setShotLayer(loaded, nil)
   state.shotLogs.delete(cmd.logIndex)
   inc state.shotLogsRev
@@ -7696,6 +7791,7 @@ proc clearSession(state: var AppState) =
   if state.spsJob != NoJob: discard state.jobs.cancel(state.spsJob)
   if state.recJob != NoJob: discard state.jobs.cancel(state.recJob)
   state.recJob = NoJob
+  state.stopShotTraces()
   state.recHave = false
   state.recWhy = ""
   if state.vfJob != NoJob: discard state.jobs.cancel(state.vfJob)
@@ -9596,6 +9692,20 @@ proc onFinished(state: var AppState; job: JobInfo) =
     return
   if job.id == state.spsJob:
     state.finishSps(job)
+    return
+  if job.id == state.stJob:
+    state.stJob = NoJob
+    if job.state == jsDone and state.stSink != nil:
+      state.stMap = state.stSink.map
+      state.stHave = true
+      state.stSink = nil
+      state.applyShotTraces()
+    else:
+      state.stSink = nil
+      state.stWant = -1
+      if job.state == jsFailed:
+        state.log.add(sevWarning, "Shot log", "The traces could not be told to shots: " &
+          job.error.splitLines()[0])
     return
   if job.id == state.recJob:
     state.recJob = NoJob
@@ -12441,44 +12551,53 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckMapLayer:
     state.map.show(cmd.mapLayer, cmd.shown)
   of ckSelectPoints:
-    # A point of a shot log chooses the rows of its shot, all of them (a shot taken
-    # twice has two), and the traces of the file shown that belong to them.
+    # A range: the points along the line from the one clicked last.
+    let anchor = state.selection.pointAnchor
+    let points = if cmd.pointMode != smRange or cmd.points.len == 0: cmd.points
+                 elif state.survey.find(anchor.layer) < 0: @[cmd.points[0]]
+                 else: state.survey.lineRange(anchor, cmd.points[0])
+    # A point of a shot log chooses the rows of its shot, all of them (a shot taken twice has
+    # two), and the traces of the file shown that belong to them, in the mode the others are
+    # selected in; the points of other layers are selected as ever.
+    var plain: seq[PointRef]
     var shotLogId = -1
     var shotRows: seq[int]
-    for p in cmd.points:
+    for p in points:
       let li = state.survey.find(p.layer)
-      if shotLogId < 0 and li >= 0 and state.survey.layers[li].origin == loShotLog:
+      if li >= 0 and state.survey.layers[li].origin == loShotLog and
+          (shotLogId < 0 or shotLogId == state.survey.layers[li].shotLog):
         shotLogId = state.survey.layers[li].shotLog
-        shotRows = state.survey.layers[li].rowsAtPoint(p.point)
-    if shotLogId >= 0:
-      state.selectShotRows(shotLogId, shotRows, traces = true)
-    else:
-      # A range: the points along the line from the one clicked last.
-      let anchor = state.selection.pointAnchor
-      let points = if cmd.pointMode != smRange or cmd.points.len == 0: cmd.points
-                   elif state.survey.find(anchor.layer) < 0: @[cmd.points[0]]
-                   else: state.survey.lineRange(anchor, cmd.points[0])
-      let traces = state.survey.tracesAt(points)
+        for row in state.survey.layers[li].rowsAtPoint(p.point, state.follow.indexOf(shotLogId)):
+          if row notin shotRows: shotRows.add row
+      else: plain.add p
+    var traces: seq[int]
+    if plain.len > 0 or shotLogId < 0:
+      traces = state.survey.tracesAt(plain)
       case cmd.pointMode
       of smReplace, smRange: # the points' own traces replace those selected
         # (the traces first: a replace of them takes the points out too; the
         # points once, not kept and selected again: half a million of them
         # took a frame each time)
         state.selection.select(traces, smReplace)
-        state.selection.selectPoints(points, smReplace)
-        # a range starts where the one before did
-        if cmd.pointMode == smRange and state.survey.find(anchor.layer) >= 0:
-          state.selection.pointAnchor = anchor
+        state.selection.selectPoints(plain, smReplace)
       of smAdd, smRemove:
-        state.selection.selectPoints(points, cmd.pointMode)
+        state.selection.selectPoints(plain, cmd.pointMode)
         state.selection.select(traces, cmd.pointMode)
       of smToggle:
-        state.selection.selectPoints(points, cmd.pointMode)
-        let added = points.len > 0 and points[0].key in state.selection.pointKeys
+        state.selection.selectPoints(plain, cmd.pointMode)
+        let added = plain.len > 0 and plain[0].key in state.selection.pointKeys
         state.selection.select(traces, if added: smAdd else: smRemove)
-      if cmd.jump and traces.len > 0: state.showPoints(cmd)
+    if shotLogId >= 0:
+      state.selectShotRows(shotLogId, shotRows, traces = true, mode = cmd.pointMode,
+        others = plain.len > 0)
+    # a range starts where the one before did
+    if cmd.pointMode == smRange and state.survey.find(anchor.layer) >= 0:
+      state.selection.pointAnchor = anchor
+    if cmd.jump and traces.len > 0 and shotLogId < 0: state.showPoints(cmd)
   of ckSelectShotRows:
-    state.selectShotRows(cmd.shotLogId, cmd.shotRows, cmd.shotTraces)
+    if state.findShotLog(cmd.shotLogId) < 0:
+      state.ignore(cmd, "no shot log has the id " & $cmd.shotLogId)
+    else: state.selectShotRows(cmd.shotLogId, cmd.shotRows, cmd.shotTraces)
   of ckHoverPoints:
     # Every move over the map: the plot draws their traces as it draws its
     # own hover. A point of a layer gone in the same frame is passed by.

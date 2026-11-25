@@ -477,7 +477,7 @@ func shotLogRows(st: AppState; l: SurveyLayer; point: int): seq[string] =
 
 proc shotTakes(st: AppState; l: SurveyLayer; point: int): seq[string] =
   ## For a shot taken more than once ("Taken 2 times"), when each was: the log's times.
-  let rows = l.rowsAtPoint(point)
+  let rows = l.rowsAtPoint(point, st.shotIndexOf(l.shotLog))
   let i = st.findShotLog(l.shotLog)
   if rows.len < 2 or i < 0: return
   result.add "Taken " & $rows.len & " times"

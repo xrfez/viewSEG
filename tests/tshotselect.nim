@@ -16,7 +16,7 @@
 ## layer's click not asking for a jump, `source_click_jumps_in_receiver_gather` stayed on
 ## the first receiver gather.
 
-import std/[os, strutils]
+import std/[algorithm, os, strutils]
 import parseSEG
 import viewSEG/core/[shotlog, shotselect, state, survey]
 import viewSEG/view/maplayers
@@ -88,6 +88,9 @@ proc logMap(): ShotLogMap =
 proc layerOf(st: AppState): SurveyLayer =
   st.survey.layers[st.survey.findShotLog(st.shotLogId(0))]
 
+proc rowsAt(st: AppState; p: PointRef): seq[int] =
+  st.layerOf.rowsAtPoint(p.point, st.shotIndexOf(st.shotLogId(0)))
+
 proc pointWithX(st: AppState; x: float64): PointRef =
   let l = st.layerOf
   for p in 0 ..< l.points[prSource].len:
@@ -118,7 +121,7 @@ proc main*() =
     var st = initAppState()
     st.openBoth(sliced, log)
     let p = st.pointWithX(1010)
-    doAssert st.layerOf.rowsAtPoint(p.point) == @[1, 4], $st.layerOf.rowsAtPoint(p.point)
+    doAssert st.rowsAt(p) == @[1, 4], $st.rowsAt(p)
     st.apply Command(kind: ckSelectPoints, points: @[p], pointMode: smReplace)
     doAssert st.shotRowsChosen.log == st.shotLogId(0) and st.shotRowsChosen.rows == @[1, 4],
       $st.shotRowsChosen.rows
@@ -132,12 +135,102 @@ proc main*() =
     st.openBoth(sliced, log)
     st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1010)],
       pointMode: smReplace)
+    doAssert st.settle(st.selection.selected.len == 2 and st.jobs.active.len == 0),
+      "the traces were not selected when the job answered: " & $st.jobs.active.len & " " &
+        $st.selection.selected.len
     var picked: seq[int]
     for t in 0 ..< 6:
       if t + st.sessions[0].base in st.selection.selected: picked.add t
     doAssert picked == @[1, 4], $picked
+    doAssert st.panels[0].layers[0].source.gather == 1, "the first trace's record is shown"
     doAssert st.selection.points.len == 2, "both rows' points are selected on the map: " &
+      $st.selection.points & $st.shotRowsChosen.rows
+    # the map is kept: another shot is a look-up, answered at once
+    st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1030)], pointMode: smReplace)
+    doAssert st.selection.selected.len == 1 and st.jobs.active.len == 0 and
+      st.panels[0].layers[0].source.gather == 3, "a second click is not a look-up"
+    discard st.shutdown()
+
+  block record_on_show_stays:
+    var st = initAppState()
+    st.openBoth(sliced, log)
+    st.apply Command(kind: ckGather, panel: MainPanel, gather: 4)
+    doAssert st.settle(st.panels[0].layers[0].source.gather == 4)
+    st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1010)], pointMode: smReplace)
+    doAssert st.settle(st.selection.selected.len == 2 and st.jobs.active.len == 0)
+    doAssert st.panels[0].layers[0].source.gather == 4,
+      "a record on show that holds a chosen trace moved"
+    discard st.shutdown()
+
+  block toggle_and_range:
+    var st = initAppState()
+    st.openBoth(sliced, log)
+    st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1010)], pointMode: smReplace)
+    doAssert st.settle(st.selection.selected.len == 2 and st.jobs.active.len == 0)
+    st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1030)], pointMode: smToggle)
+    doAssert st.shotRowsChosen.rows == @[1, 3, 4], $st.shotRowsChosen.rows
+    doAssert st.selection.selected.len == 3 and st.selection.points.len == 3
+    st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1030)], pointMode: smToggle)
+    doAssert st.shotRowsChosen.rows == @[1, 4], $st.shotRowsChosen.rows
+    doAssert st.selection.selected.len == 2 and st.selection.points.len == 2
+    st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1020)], pointMode: smReplace)
+    st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1050)], pointMode: smRange)
+    doAssert st.shotRowsChosen.rows == @[2, 3, 5], "a range: " & $st.shotRowsChosen.rows
+    discard st.shutdown()
+
+  block other_layers_points_stay:
+    let two = dir / "two-for-log.sgy"
+    writeTwoReceivers(two)
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: two)
+    doAssert st.settle(st.sessions.len == 1 and st.jobs.active.len == 0 and
+      st.survey.layers.len == 1)
+    st.apply Command(kind: ckImportShotLog, logPath: log, logMap: logMap(), logMapped: true)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0 and
+      st.survey.layers.len == 2)
+    var src: PointRef
+    let own = st.survey.layers[st.survey.find(st.survey.layers[0].id)]
+    for p in 0 ..< own.points[prSource].len:
+      if own.points[prSource].index.x(p) == 1030: src = PointRef(layer: own.id, role: prSource, point: p)
+    doAssert src.layer == own.id
+    st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1030), src],
+      pointMode: smReplace)
+    doAssert st.shotRowsChosen.rows == @[3], $st.shotRowsChosen.rows
+    doAssert st.selection.points.len == 2, "the source of the other layer is selected too: " &
       $st.selection.points.len
+    doAssert st.selection.selected.len >= 1, "its trace is selected"
+    discard st.shutdown()
+
+  block stations_that_cannot_be_compared_are_not_grouped:
+    # a point and a line too large to compare in hundredths, and a row with none at the same
+    # place as one that has a station
+    let odd = dir / "odd.csv"
+    writeFile(odd, "line,point,x,y,time\n" &
+      "10,1e13,1000,2000,1\n10,2e13,1010,2000,2\n,,1000,2000,3\n10,100,1000,2000,4\n")
+    var st = initAppState()
+    st.apply Command(kind: ckImportShotLog, logPath: odd, logMap: logMap(), logMapped: true)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0 and
+      st.survey.layers.len == 1)
+    var seen: seq[seq[int]]
+    for p in 0 ..< st.layerOf.points[prSource].len:
+      seen.add st.rowsAt(PointRef(layer: st.layerOf.id, role: prSource, point: p))
+    seen.sort(proc(a, b: seq[int]): int = cmp(a[0], b[0]))
+    doAssert seen == @[@[0], @[1], @[2], @[3]], "grouped: " & $seen
+    discard st.shutdown()
+
+  block stale_ids_and_empty_rows:
+    var st = initAppState()
+    st.openBoth(sliced, log)
+    st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1010)], pointMode: smReplace)
+    doAssert st.settle(st.selection.selected.len == 2 and st.jobs.active.len == 0)
+    let before = st.shotRowsChosen.revision
+    st.apply Command(kind: ckSelectShotRows, shotLogId: 999, shotRows: @[1], shotTraces: true)
+    doAssert st.shotRowsChosen.revision == before and st.selection.selected.len == 2,
+      "a log that is not loaded changed the choice"
+    st.apply Command(kind: ckSelectShotRows, shotLogId: st.shotLogId(0), shotRows: @[500],
+      shotTraces: true)
+    doAssert st.shotRowsChosen.rows.len == 0 and st.selection.selected.len == 0 and
+      st.selection.points.len == 0, "rows out of range left traces or points selected"
     discard st.shutdown()
 
   block unmatched_says_why:
@@ -160,11 +253,10 @@ proc main*() =
       logMapped: true)
     doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0 and
       st.survey.layers.len == 1), "the log did not load"
-    let l = st.layerOf
     # rows 1 and 4 are at the same place (x 1010, y 2000): one source point
-    doAssert l.rowsAtPoint(st.pointWithX(1010).point) == @[1, 4],
-      $l.rowsAtPoint(st.pointWithX(1010).point)
-    doAssert l.rowsAtPoint(st.pointWithX(1030).point) == @[3]
+    doAssert st.rowsAt(st.pointWithX(1010)) == @[1, 4],
+      $st.rowsAt(st.pointWithX(1010))
+    doAssert st.rowsAt(st.pointWithX(1030)) == @[3]
     discard st.shutdown()
 
   block hover_says_taken_twice:
