@@ -217,31 +217,45 @@ proc outsideTemplate*(keys: openArray[TraceKeys]; traces: Slice[int]; g: SurveyG
         let st = stationKey(line, point, max(index, 0'i16))
         result[i] = not plan.lists(st.line, st.point)
 
+func atNoStation*(keys: openArray[TraceKeys]; traces: Slice[int];
+    domain: RelationDomain): seq[bool] =
+  ## Per trace of `traces`: whether it is a seismic trace whose headers name no station on the
+  ## side the relation records of `domain` list (a shot's receivers, a receiver gather's
+  ## sources). Once the record's template is known, such a trace cannot be in it.
+  result = newSeq[bool](traces.len)
+  for i in 0 ..< traces.len:
+    let k = keys[traces.a + i]
+    if k.isSeismic:
+      result[i] = if domain == rdSource: not hasStation(k.rcvLine, k.rcvPoint)
+                  else: not hasStation(k.srcLine, k.srcPoint)
+
 proc leftOutOfTemplate*[C: JobContext | ItemContext](f: SeismicFile; traces: Slice[int];
     g: SurveyGeometry; domain: RelationDomain; traceMatch: TraceMatch; ctx: C):
-    tuple[known: bool; outside: seq[bool]; why: TemplateUnknown] =
+    tuple[known: bool; outside, unplaced: seq[bool]; why: TemplateUnknown] =
   ## Per trace of the record `traces` (a gather of `f`), in `outside`: whether the record's
   ## template does not list its station, found as the map's check finds it (a shot's X record
   ## by its source station, a receiver gather's O records by its receiver station, a record
-  ## number never used). `known` false when the template is not known for the record, and
-  ## `why` says why (no station in the headers, no record at it, traces matched by channel):
-  ## `outside` is empty then, and nothing is left out.
-  result = (false, @[], tuNoRecord)
+  ## number never used); in `unplaced`: whether it is a seismic trace at no station
+  ## (`atNoStation`), which the template cannot list either. `known` false when the template
+  ## is not known for the record, and `why` says why (no station in the headers, no record at
+  ## it, traces matched by channel): `outside` and `unplaced` are empty then, and nothing is
+  ## left out.
+  result = (false, @[], @[], tuNoRecord)
   var records: seq[int64] = @[]
   if domain == rdSource:
-    if not f.namesSource(traces): return (false, @[], tuNoStation)
+    if not f.namesSource(traces): return (false, @[], @[], tuNoStation)
     let checked = g.shotCheck(f.rowsOf(traces), ctx, traceMatch)
     if checked.why.len > 0: return
-    if checked.c.traceMatch != tmStation: return (false, @[], tuByChannel)
+    if checked.c.traceMatch != tmStation: return (false, @[], @[], tuByChannel)
     records = @[checked.c.xpsRecord]
   else:
     let (found, rcv) = f.index.keys.gatherReceiver(traces)
-    if not found: return (false, @[], tuNoStation)
-    if f.hasNoSources(traces): return (false, @[], tuNoSources)
+    if not found: return (false, @[], @[], tuNoStation)
+    if f.hasNoSources(traces): return (false, @[], @[], tuNoSources)
     records = g.receiverRecords(rcv).records
     if records.len == 0: return
   result = (true, outsideTemplate(f.index.keys, traces, g, records, domain, liveOnly = false),
-    tuNoRecord)
+    atNoStation(f.index.keys, traces, domain), tuNoRecord)
 
 proc negateQc(samples: var Tensor[float32]; part: Slice[int]; reversed: openArray[int]) =
   ## Multiplies each reversed trace of `part` by -1, before its own filter

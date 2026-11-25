@@ -27,7 +27,10 @@
 ## With `absorb` keeping only the last file's count of the traces left out (or of the records
 ## measured whole), `a_folder_of_six_*` saw 3 where 18 were expected (1 where 6 were).
 ## With no O records derived in the job, `a_receiver_gather_with_only_x_records_*` measured the
-## five records whole.
+## five records whole. With the traces at no station not left out of a known template (as a
+## trace whose headers name no station is never outside it), `a_known_template_leaves_out_*`
+## measured 8 traces where 5 were expected and counted none at no station; with `absorb` not
+## summing them, the folder counted 3 where 18 were expected.
 
 import std/[atomics, math, os, strutils, tables]
 import parseSEG
@@ -276,6 +279,40 @@ proc main*() =
         whole.totals, ssReceivers, false)
       doAssert csvCell(totalsCsv(whole.totals), "records measured whole: " & $tuNoStation) ==
         "1", totalsCsv(whole.totals)
+
+  block a_known_template_leaves_out_the_traces_at_no_station_and_says_so:
+    withFixtures fx:
+      # no station in the headers at all; the survey places the source and the channels its
+      # X record lists (1 .. 5), never channels 6 .. 8
+      let path = fx.dir / "shot.sgd"
+      writeFile(path, shotRows(0, 0, false), false)
+      let x = surveyOf(xRec(7, "1.00", "99.00", 1, 5, 10, 1, 5))
+      let join = QualityJoin(relations: addr x[], stations: mapSurvey())
+      let r = scanOne(path, rkShotGather, x, nil, join = join).receivers
+      doAssert r.totals.traces == 5 and r.totals.outside == 0 and r.totals.noStation == 3, $r.totals
+      doAssert r.totals.stations == 5 and r.stations.len == 5, $r.stations.len
+      doAssert r.totals.unknown == default(array[TemplateUnknown, int]), $r.totals
+      let words = statisticLines(r.totals, ssReceivers, false)
+      doAssert "3 traces at no station (not placed by the headers or the survey): left out" in
+        words, $words
+      doAssert csvCell(totalsCsv(r.totals), "at no station") == "3", totalsCsv(r.totals)
+      doAssert csvCell(totalsCsv(r.totals), "outside the template") == "0", totalsCsv(r.totals)
+      # not joined, the template is not known: measured whole as before, and said
+      let whole = scanOne(path, rkShotGather, x, nil).receivers.totals
+      doAssert whole.traces == 8 and whole.noStation == 0 and whole.unknown[tuNoStation] == 1,
+        $whole
+      # a folder of six such shots: summed over the files, on one thread and on four
+      var paths: seq[string] = @[]
+      for i in 1 .. 6:
+        paths.add fx.dir / ("more" & $i & ".sgd")
+        writeFile(paths[^1], shotRows(0, 0, false), false)
+      for threads in [1, 4]:
+        let sink = QualitySink()
+        run(scanQuality(paths, initTable[string, FileEdits](), sink, "", NoiseSettings(),
+          forcedKinds(paths, rkShotGather), relations = addr x[], join = join), paths, sink,
+          threads)
+        let t = sink.result.receivers.totals
+        doAssert t.files == 6 and t.traces == 30 and t.noStation == 18, $threads & ": " & $t
 
   block a_record_whose_template_is_not_known_is_counted_by_why:
     withFixtures fx:

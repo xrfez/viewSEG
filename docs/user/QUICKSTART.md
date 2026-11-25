@@ -500,7 +500,10 @@ row and in no figure, and is counted apart on a line **Left out as outside the t
 (and in a column of the statistics file). Before that, the survey files loaded on the map,
 the join options and the station moves are joined to each file in memory, as for the
 recorded fold (the file is never written), so a record whose headers name no station finds
-its template by the survey's. A record whose template still cannot be found (no station of
+its template by the survey's. In a record whose template is known, a trace that neither its
+headers nor the survey place at a station cannot be in the template either: it is left out
+too, and counted on a line of its own, for example "3 traces at no station (not placed by
+the headers or the survey): left out" (and in a column of the statistics file). A record whose template still cannot be found (no station of
 its own, no relation record at it, traces matched by channel, or no relation file of its
 side) is measured whole, and a line says how many and why, for example "2 records were
 measured whole: their template is not known (1 with no source station, 1 whose X record is

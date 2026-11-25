@@ -80,11 +80,14 @@ type
     ## Scan totals over the notes. Unread files are not counted.
     files*, traces*, killed*, bad*, stations*: int
     outside*: int ## seismic traces left out as outside the record's template (not in `traces`)
+    noStation*: int
+      ## seismic traces left out of a record whose template is known because no station holds
+      ## them: neither the headers nor the survey joined place them (not in `traces`)
     unknown*: array[TemplateUnknown, int]
       ## records measured whole with a relation file loaded: their template is not known
-    badStations*: int                             ## stations with at least one bad trace
-    lacking*: int                                 ## stations that lacked a component in some file
-    components*: int                              ## most components one file has
+    badStations*: int ## stations with at least one bad trace
+    lacking*: int ## stations that lacked a component in some file
+    components*: int ## most components one file has
     counts*: array[Finding, int]
     noisyTested*, noisy*, weakTested*, weak*: int ## As in `StationRow`.
 
@@ -267,6 +270,7 @@ type
     ## What is kept for a station does not grow with the number of files.
     files: int
     outside: int ## traces left out (`leaveOut`)
+    noStation: int ## traces left out at no station (`leaveOut`)
     unknown: array[TemplateUnknown, int] ## records measured whole (`measuredWhole`)
     most: int ## the most components one file had
     serial: int ## the serial of the open file
@@ -349,16 +353,18 @@ proc closeFile(b: var QualityBuild) =
     b.inFile.setLen 0
   b.open = false
 
-proc leaveOut*(b: var QualityBuild; file: string) =
-  ## Counts one seismic trace of `file` left out as outside the template of its record: it
-  ## is no note, no station and no finding. The file counts as read.
+proc leaveOut*(b: var QualityBuild; file: string; noStation = false) =
+  ## Counts one seismic trace of `file` left out of its record, whose template is known: as
+  ## outside the template, or with `noStation` as at no station (the template cannot list
+  ## it). It is no note, no station and no finding. The file counts as read.
   if not b.open or file != b.current:
     b.closeFile()
     b.open = true
     b.current = file
     inc b.serial
     inc b.files
-  inc b.outside
+  if noStation: inc b.noStation
+  else: inc b.outside
 
 proc measuredWhole*(b: var QualityBuild; why: TemplateUnknown) =
   ## Counts one record measured whole because its template is not known (`why`): its traces
@@ -409,6 +415,7 @@ proc absorb*(b: var QualityBuild; part: sink QualityBuild) =
   b.closeFile()
   b.files += done.files
   b.outside += done.outside
+  b.noStation += done.noStation
   for why in TemplateUnknown: b.unknown[why] += done.unknown[why]
   b.most = max(b.most, done.most)
   for key in done.stOrder:
@@ -447,8 +454,9 @@ proc tableOf(b: QualityBuild): QualityReport =
     weakTested += acc.weakTested
     weak += acc.weak
     for f in Finding: counts[f] += acc.counts[f]
-  result.totals = Totals(files: b.files, outside: b.outside, unknown: b.unknown, traces: traces,
-    killed: killed, bad: bad, stations: stations, badStations: badStations, lacking: lacking,
+  result.totals = Totals(files: b.files, outside: b.outside, noStation: b.noStation,
+    unknown: b.unknown, traces: traces, killed: killed, bad: bad, stations: stations,
+    badStations: badStations, lacking: lacking,
     components: b.most, counts: counts, noisyTested: noisyTested, noisy: noisy,
     weakTested: weakTested, weak: weak)
   sortStations(result.stations, DefaultStationSort)
@@ -481,12 +489,13 @@ proc totalsCsv*(t: Totals): string =
   result = csvLine("files", "traces", "killed", "bad", "stations", "stations with a bad trace",
     "stations lacking a component", $qfHeaderDead, $qfAllZero, $qfConstant, $qfClipped,
     $qfSpiky, $qfDcOffset, $qfNonFinite, NoisyTestedCsv, "noisy", WeakTestedCsv, "weak",
-    "outside the template", "records measured whole: " & $tuNoStation,
+    "outside the template", "at no station", "records measured whole: " & $tuNoStation,
     "records measured whole: " & $tuNoSources, "records measured whole: " & $tuNoRecord,
     "records measured whole: " & $tuByChannel)
   result.add csvLine($t.files, $t.traces, $t.killed, $t.bad, $t.stations, $t.badStations,
     $t.lacking, $t.counts[qfHeaderDead], $t.counts[qfAllZero], $t.counts[qfConstant],
     $t.counts[qfClipped], $t.counts[qfSpiky], $t.counts[qfDcOffset],
     $t.counts[qfNonFinite], $t.noisyTested, noiseCell(t.noisyTested, t.noisy),
-    $t.weakTested, noiseCell(t.weakTested, t.weak), $t.outside, $t.unknown[tuNoStation],
+    $t.weakTested, noiseCell(t.weakTested, t.weak), $t.outside, $t.noStation,
+    $t.unknown[tuNoStation],
     $t.unknown[tuNoSources], $t.unknown[tuNoRecord], $t.unknown[tuByChannel])

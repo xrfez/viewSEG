@@ -45,7 +45,9 @@
 ## The survey loaded on the map, the join options and the station moves are joined to each
 ## file's keys in memory first (`QualityJoin`, as the recorded fold joins them), so a record
 ## whose headers name no station finds its template by the survey's. A record whose template
-## is not found is measured whole and counted by why (`Totals.unknown`): never left unsaid.
+## is not found is measured whole and counted by why (`Totals.unknown`): never left unsaid. In
+## a record whose template is known, a trace that neither the headers nor the survey place at
+## a station cannot be in it: it is left out and counted on its own (`Totals.noStation`).
 ##
 ## `folderScan` lists a folder (its subfolders only when asked) and scans its files.
 
@@ -253,7 +255,8 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
     templates: bool) =
   ## Measures the file into `b`. With a `relation` (the relation records of `domain`) and
   ## `noise.templateOnly`, only the traces the record's template lists are measured: the
-  ## others are counted as left out (`leaveOut`), as the map's check marks them. A record
+  ## others are counted as left out (`leaveOut`), as the map's check marks them, and apart
+  ## from them the traces at no station, which the template cannot list. A record
   ## with a seismic trace whose template is not known is measured whole and counted as such
   ## (`measuredWhole`), with `relation` nil too when `templates` (the scan has relation
   ## records of the other side).
@@ -266,6 +269,7 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
   var noisyAt = initHashSet[int]()
   var weakAt = initHashSet[int]()
   var leftAt = initHashSet[int]() # traces of the records judged so far outside the template
+  var unplacedAt = initHashSet[int]() # of those, the traces at no station
   var nextGather = 0
   var noted = 0 # traces before it are in `b`
   template note(upTo: int) =
@@ -277,8 +281,9 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
         leftAt.excl t
         noisyAt.excl t
         weakAt.excl t
+        let placed = unplacedAt.missingOrExcl t
         if k.isSeismic:
-          for side in sides: b[side].leaveOut(path)
+          for side in sides: b[side].leaveOut(path, noStation = not placed)
         continue
       let sampled = wantsSamples(k, t in killed)
       let flags = if sampled: held[t - heldFrom].flags else: {}
@@ -339,14 +344,19 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
           skip.add t - g.a
       var outside: seq[bool] = @[]
       if noise.templateOnly and (relation != nil or templates) and f.anySeismic(g):
-        var found = (known: false, outside: newSeq[bool](), why: tuNoRecord)
+        var found = (known: false, outside: newSeq[bool](), unplaced: newSeq[bool](),
+          why: tuNoRecord)
         if relation != nil:
           {.cast(gcsafe).}:
             found = leftOutOfTemplate(f[], g, relation[], domain, traceMatch, it)
         if found.known:
+          # a trace at no station (the join did not place it) cannot be in the template either
           outside = move found.outside
-          for i, o in outside:
-            if o: leftAt.incl g.a + i
+          for i in 0 ..< outside.len:
+            if found.unplaced[i]:
+              outside[i] = true
+              unplacedAt.incl g.a + i
+            if outside[i]: leftAt.incl g.a + i
         else:
           for side in sides: b[side].measuredWhole(found.why)
       let tick = proc (done, total: int): bool {.closure, gcsafe.} =
@@ -595,7 +605,8 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
   ## records of `relations`, else those derived here from its X records, as the map derives
   ## them: `derivedReceiverRecords`), found as the map's check finds them
   ## (`recordqc.leftOutOfTemplate`, `traceMatch` as the join's). They are not measured, not
-  ## counted in a station or a total, and counted apart (`Totals.outside`). Before that,
+  ## counted in a station or a total, and counted apart (`Totals.outside`); so is a trace at
+  ## no station in a record whose template is known (`Totals.noStation`). Before that,
   ## `join` is joined to each file's keys in memory (a record whose headers name no station
   ## finds its template by the survey's). A record whose template is not found is measured
   ## whole and counted by why (`Totals.unknown`), and so is a record of a side with no

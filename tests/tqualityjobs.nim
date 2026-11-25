@@ -506,7 +506,7 @@ proc main*() =
       doAssert report.totals.bad == 0, "noisy and weak are not findings: " & $report.totals.bad
       doAssert stationsCsv(report.stations).splitLines[0].endsWith(",noisy,tested (weak),weak")
       doAssert totalsCsv(report.totals).splitLines[1].endsWith(",4," &
-        $report.totals.weakTested & ",1,0,0,0,0,0")
+        $report.totals.weakTested & ",1,0,0,0,0,0,0")
 
   block a_trace_not_tested_leaves_its_cells_empty:
     withFixtures fx:
@@ -520,7 +520,7 @@ proc main*() =
       let report = got.sink.result.receivers
       doAssert report.totals.killed == NoisyTraces and report.totals.noisyTested == 0 and
         report.totals.weakTested == 0, $report.totals
-      doAssert totalsCsv(report.totals).splitLines[1].endsWith(",0,,0,,0,0,0,0,0"),
+      doAssert totalsCsv(report.totals).splitLines[1].endsWith(",0,,0,,0,0,0,0,0,0"),
         "cells not empty"
       doAssert stationsCsv(report.stations).splitLines[1].endsWith(",0,,0,"), "cells not empty"
 
