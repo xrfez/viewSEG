@@ -1277,7 +1277,12 @@ and the map draws their points as it draws any selected point. When the file the
 window shows is a receiver gather whose traces can be told to shots (a time-sliced file,
 as **Slice by shot log** makes), every trace of those shots is selected, as the follow of
 the grid matches a trace to a row (by time, then by numbers), and the Seismic window shows the
-record that holds the first one; a record on show that holds one stays. When no trace can
+record that holds the first one; a record on show that holds one stays. Which trace
+belongs to which shot is worked out once for the file shown and the log, on a job (the keys of
+every trace are read once): the first click chooses the rows at once and the traces when the
+job answers, and every click after is a look-up. Ctrl+click adds a shot's rows to the choice or
+takes them out, and Shift+click chooses the rows of every shot from the last one clicked, as for
+any point on the map. When no trace can
 be matched, the rows are still chosen and Messages says why once (a continuous receiver
 gather is not made of shots: slice it by the shot log first; no file is shown; the file was
 opened without trace keys; no trace of the file belongs to those shots). Hover a shot taken
