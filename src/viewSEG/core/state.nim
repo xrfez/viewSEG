@@ -3840,18 +3840,26 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
     if state.sessions[i].isSignature:
       if layer.display.gain == dgAuto:
         layer.display.gain = dgNormalized
-        if layer.display.fills == {wfPositive}: layer.display.fills = {}
-        if layer.display.overlap == 1.0: layer.display.overlap = SignatureOverlap # (bands that do not touch)
+        state.panels[k].look = {lfGain}
+        if layer.display.fills == {wfPositive}:
+          layer.display.fills = {}
+          state.panels[k].look.incl lfFills
+        if layer.display.overlap == 1.0: # (bands that do not touch)
+          layer.display.overlap = SignatureOverlap
+          state.panels[k].look.incl lfOverlap
       if state.panels[k].header.auto: state.panels[k].header = SignatureHeader
     else:
       # (left a signature file: what its first look set goes back to the user's)
       if state.panels[k].header == SignatureHeader:
         state.panels[k].header = state.settings.plot.header
-      if layer.display.gain == dgNormalized and layer.display.overlap == SignatureOverlap and
-          layer.display.fills == {}:
-        let d = state.settings.plot.display
-        (layer.display.gain, layer.display.overlap, layer.display.fills) = (d.gain, d.overlap,
-          d.fills)
+      let d = state.settings.plot.display
+      if lfGain in state.panels[k].look and layer.display.gain == dgNormalized:
+        layer.display.gain = d.gain
+      if lfOverlap in state.panels[k].look and layer.display.overlap == SignatureOverlap:
+        layer.display.overlap = d.overlap
+      if lfFills in state.panels[k].look and layer.display.fills == {}:
+        layer.display.fills = d.fills
+      state.panels[k].look = {}
   state.selection.activeGather = GatherRef(file: file, gather: gather) # (before the read: it
   inc state.selection.revision # asks whether the record's template is known)
   state.newSource(k)
@@ -12640,6 +12648,16 @@ proc applyCommand(state: var AppState; cmd: Command) =
       # what this command changed in the display; a new mode leaves the
       # gain as the user had it, whatever an agent made it meanwhile
       var kept = remembered(d)
+      if not aux and p.look != {}:
+        # what a signature file's first look set and this command left alone is not the
+        # user's choice: the settings keep their value; a field changed here is the user's
+        let mine = state.settings.plot.display
+        if lfGain in p.look:
+          if d.gain == was.gain: kept.gain = mine.gain else: p.look.excl lfGain
+        if lfOverlap in p.look:
+          if d.overlap == was.overlap: kept.overlap = mine.overlap else: p.look.excl lfOverlap
+        if lfFills in p.look:
+          if d.fills == was.fills: kept.fills = mine.fills else: p.look.excl lfFills
       let modelChanged = d.breakModel != was.breakModel
       if aux:
         state.change(cmd.origin, s):

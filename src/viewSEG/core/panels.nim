@@ -316,6 +316,10 @@ type
     menuWholeRecord*: bool ## its Whole record group
     menuFilters*: bool ## its Exclude and Filter entries
 
+  LookField* = enum
+    ## A display setting a signature file's first look set.
+    lfGain, lfOverlap, lfFills
+
   Panel* = object
     id*: PanelId
     role*: PanelRole = prSeismic
@@ -323,11 +327,14 @@ type
     shows*: PanelShows        ## what it draws
     layers*: seq[Layer]       ## drawn in order; layer 0 is the one gather navigation moves
     header*: HeaderChoice
-    requestGen*: uint64       ## bumped whenever the panel needs new data; tiles carry it
-    sourceGen*: uint64        ## `requestGen` when layer 0's source last changed; layouts carry it
-    layout*: PanelLayout      ## layer 0's traces, from the reader; `traces` 0 until it says
-    laidOut*: bool            ## `layout` is known: the reader said, or there is nothing to read
-    known*: set[HeaderField]  ## the header fields layer 0's traces have values for
+    look*: set[LookField]
+      ## the display settings a signature file's first look set on layer 0 and the
+      ## user has not changed since: never remembered as the user's, put back on leaving
+    requestGen*: uint64 ## bumped whenever the panel needs new data; tiles carry it
+    sourceGen*: uint64 ## `requestGen` when layer 0's source last changed; layouts carry it
+    layout*: PanelLayout ## layer 0's traces, from the reader; `traces` 0 until it says
+    laidOut*: bool ## `layout` is known: the reader said, or there is nothing to read
+    known*: set[HeaderField] ## the header fields layer 0's traces have values for
     widest*: array[HeaderField, int]
       ## per field, its longest value over layer 0's traces as the header
       ## shows it (`numberText`), in characters: its column's width when
