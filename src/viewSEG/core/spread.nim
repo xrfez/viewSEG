@@ -213,19 +213,20 @@ proc plannedSpread*(s: Survey; made: Spreads; domain: RelationDomain;
       result.generated = true
 
 proc checkedSpread*(s: Survey; made: Spreads; domain: RelationDomain;
-    record: int64): PlannedSpread =
-  ## The spread relation record `record` of `domain` plans, in the records
-  ## a record's check is made against: the first loaded survey file's with
-  ## relation records of `domain`, else the records made (`made`). `record`
-  ## -1 for none.
+    records: openArray[int64]): PlannedSpread =
+  ## The spread the relation `records` of `domain` plan together (a shot's one
+  ## X record; a receiver's O records, their union, as the hover box draws
+  ## it), in the records a record's check is made against: the first loaded
+  ## survey file's with relation records of `domain`, else the records made
+  ## (`made`). `record` -1 for none (`records` empty).
   result = PlannedSpread(domain: domain)
-  if record < 0: return
+  if records.len == 0: return
   let i = s.listedLayer(domain)
   if i >= 0:
-    result = s.recordSpread(s.layers[i].relations[], record, domain)
+    result = s.recordsSpread(s.layers[i].relations[], records, domain)
     result.source = s.layers[i].name
   elif not made.relations.isNil:
-    result = s.recordSpread(made.relations[], record, domain)
+    result = s.recordsSpread(made.relations[], records, domain)
     result.generated = true
 
 func describe*(t: TemplateSpec; units: string): string =

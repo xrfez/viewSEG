@@ -248,6 +248,8 @@ type
         ## what each filter of `TraceFilters` found
       qcRecord*: int64
         ## the relation record it was checked against; -1 for none
+      qcRecords*: seq[int64]
+        ## all of them (a receiver's O records)
       qcByPlace*: bool
         ## that record found with the station at the record's place
       qcOnStations*: bool
