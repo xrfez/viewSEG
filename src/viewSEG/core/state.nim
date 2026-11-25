@@ -1183,6 +1183,15 @@ type
     why: string
     shown: FirstBreaks
 
+  BreakFilterFind = object
+    ## What the map's first-break filters (`BreakFilters`) show for the record shown: the
+    ## overlay's flags of the result its panel shows, or would show with the overlay on.
+    hits: BreakFilterHits
+    made: tuple[on: set[MapFilter]; file: SessionId; gather, base: int; key: BreakKey;
+      revision: int; model: BreakModel; guided: GuideState; state: BreakState; why: string]
+      ## what `hits` were made of: made again only when it changes
+    revision: int ## bumped when `hits` change
+
   ShotCellEdit = object
     ## One cell edit of a loaded shot log, for undo. Not saved with the project.
     row, col: int
@@ -1377,6 +1386,8 @@ type
     breakViews: seq[BreakView]
       ## each record panel's overlay as it shows it (`shownBreaks`), made when its result or
       ## its model changes rather than on every frame
+    breakFilters: BreakFilterFind
+      ## the map's first-break filters on the record shown (`followBreakFilters`)
     batchSurvey: SurveyHolds
       ## the survey each batch write's job joins from (`holdSurvey`), until it ends
     qcHeld: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
@@ -9882,12 +9893,13 @@ func breakUnitFromSurvey*(state: AppState; k: int): bool =
   ## Whether `breakOffsetUnit` is the project's survey's because the file names none.
   state.fileOffsetUnit(k) == suNotGiven and state.surveyLengthUnit != suNotGiven
 
-proc breakKeyOf(state: AppState; k: int): (bool, BreakKey, int) =
-  ## What the first-break overlay of `panels[k]` is of, when it is on and the
-  ## panel shows a record: its key, and the session's index.
+proc breakKeyOf(state: AppState; k: int; always = false): (bool, BreakKey, int) =
+  ## What the first-break overlay of `panels[k]` is of, when it is on (or, with `always`,
+  ## would be if it were) and the panel shows a record: its key, and the session's index.
   result[2] = -1
   template p: untyped = state.panels[k]
-  if p.shows != psTraces or p.layers.len == 0 or not p.layers[0].display.firstBreaks: return
+  if p.shows != psTraces or p.layers.len == 0 or
+      not (always or p.layers[0].display.firstBreaks): return
   let src = p.layers[0].source
   if src.kind != lsRecord: return
   let i = state.findSession(src.file)
@@ -9903,11 +9915,12 @@ proc breakKeyOf(state: AppState; k: int): (bool, BreakKey, int) =
 
 proc breakKeyFor(state: AppState; i, gather: int): BreakKey =
   ## The key of the first breaks of record `gather` of session `i`: that of a
-  ## panel showing it with the overlay on (so the noisy-trace test and the
-  ## overlay share one result), else its file's keys with the traces killed in it
-  ## and no component switched off.
+  ## panel showing it with the overlay on, or with a first-break filter of the map on (so the
+  ## noisy-trace test, the overlay and the filters share one result), else its file's keys
+  ## with the traces killed in it and no component switched off.
+  let filters = state.settings.map.filters * BreakFilters != {}
   for k in 0 ..< state.panels.len:
-    let (on, key, j) = state.breakKeyOf(k)
+    let (on, key, j) = state.breakKeyOf(k, always = filters)
     if on and j == i and key.gather == gather:
       # the record's check is not of the given model: it must not start again when that changes
       result = key
@@ -9917,8 +9930,39 @@ proc breakKeyFor(state: AppState; i, gather: int): BreakKey =
   (s.id, gather, s.keysRevision, state.editsAt(s.path).listIn(teKilled, s.gathers[gather].traces),
     newSeq[uint8](), BreakModel(), pbSmoothed)
 
-const SignatureNoFilters = NoiseFilters + {mfMissing, mfUnlisted}
-  ## the filters a signature file has no receivers for: the noise test and the template's
+const SignatureNoFilters = NoiseFilters + BreakFilters + {mfMissing, mfUnlisted}
+  ## the filters a signature file has no receivers for: the noise test, the first breaks and
+  ## the template's
+
+func recordPanel(state: AppState; file: SessionId; gather: int): int =
+  ## The record panel that shows record `gather` of open file `file` (the main panel first);
+  ## -1 for none.
+  result = -1
+  for k in 0 ..< state.panels.len:
+    template p: untyped = state.panels[k]
+    if p.shows == psTraces and p.layers.len > 0 and p.layers[0].source.kind == lsRecord and
+        p.layers[0].source.file == file and p.layers[0].source.gather == gather and
+        (result < 0 or p.id == MainPanel):
+      result = k
+
+func breakFiltersKey(state: AppState): tuple[on: bool; key: BreakKey; session, panel: int] =
+  ## What the map's first-break filters are of, while one is on and a record of a file that is
+  ## not a signature is shown: the key the overlay of the panel showing it has, or would have
+  ## with the overlay on (else the record's own: no component off, the default picking), the
+  ## session's index and that panel's (-1 for none).
+  result = (false, default(BreakKey), -1, -1)
+  if state.settings.map.filters * BreakFilters == {}: return
+  let g = state.selection.activeGather
+  let i = state.findSession(g.file)
+  if i < 0 or g.gather notin 0 ..< state.sessions[i].gathers.len or
+      state.sessions[i].isSignature: return
+  let k = state.recordPanel(g.file, g.gather)
+  if k >= 0:
+    let (on, key, j) = state.breakKeyOf(k, always = true)
+    if on and j == i: return (true, key, i, k)
+  let s = state.sessions[i]
+  result = (true, (s.id, g.gather, s.keysRevision, state.editsAt(s.path).listIn(teKilled,
+    s.gathers[g.gather].traces), newSeq[uint8](), BreakModel(), pbSmoothed), i, -1)
 
 proc followRecordQc(state: var AppState) =
   ## Reads the record shown on a job for the map's filters when one of
@@ -10058,6 +10102,9 @@ func filterHits*(state: AppState): array[MapFilter, FilterHits] =
   ## their source); and the shots whose listed spread is not the template's.
   let on = state.settings.map.filters
   for f in TraceFilters * on: result[f] = state.recordQc.hits[f]
+  if mfBreakOffModel in on: result[mfBreakOffModel] = state.breakFilters.hits.offModel
+  if mfBreakOffNeighbours in on:
+    result[mfBreakOffNeighbours] = state.breakFilters.hits.offNeighbours
   let g = state.selection.activeGather
   let i = state.findSession(g.file)
   if state.shownDomain == rdReceiver and state.qcRelations(rdReceiver)[0].isNil and
@@ -10121,6 +10168,10 @@ proc followFirstBreaks(state: var AppState) =
   for k in 0 ..< state.panels.len:
     let (on, key, i) = state.breakKeyOf(k)
     if on and (key, i) notin wanted: wanted.add (key, i)
+  # the map's first-break filters ask for the same result, with the overlay off too
+  let forFilters = state.breakFiltersKey
+  if forFilters.on and (forFilters.key, forFilters.session) notin wanted:
+    wanted.add (forFilters.key, forFilters.session)
   # one result per record and guide: two panels on one record with different models each keep
   # theirs, and neither is given up for the other's
   var kept: seq[FirstBreaks]
@@ -10188,6 +10239,60 @@ proc followFirstBreaks(state: var AppState) =
         views.add v
   state.breakViews = views
 
+proc followBreakFilters(state: var AppState) =
+  ## The map's first-break filters follow the result the overlay shows for the record shown
+  ## (`shownBreaks` of its panel), or would show with the overlay on: one result, so the flags
+  ## on the map and on the plot are the same traces. Made again only when that changes.
+  template bf: untyped = state.breakFilters
+  let (on, key, i, k) = state.breakFiltersKey
+  var made = (on: state.settings.map.filters * BreakFilters, file: NoSession, gather: -1,
+    base: 0, key: key, revision: -1, model: BreakModel(), guided: gdOwn, state: bkComputing,
+    why: "")
+  var shown = FirstBreaks()
+  var found = false
+  if on:
+    let s = state.sessions[i]
+    (made.file, made.gather, made.base) = (s.id, key.gather, s.base)
+    if s.derived:
+      made.why = "no first breaks are found for a record derived from another file"
+    elif k >= 0:
+      let (bi, v) = state.viewOfPanel(k)
+      if bi >= 0:
+        (made.key, made.revision, made.model, made.guided) = (v.key, v.revision, v.model,
+          v.guided)
+        made.state = state.breaks[bi].state
+        found = true
+    else:
+      for b in state.breaks:
+        if b.key == key:
+          (made.revision, made.state, found) = (b.revision, b.state, true)
+  elif made.on != {}:
+    made.why = "no record is shown"
+  if made == bf.made and bf.revision > 0: return
+  bf.made = made
+  inc bf.revision
+  if made.on == {}: bf.hits = BreakFilterHits()
+  elif made.why.len > 0:
+    bf.hits = BreakFilterHits(offModel: FilterHits(state: fsNotChecked, note: made.why),
+      offNeighbours: FilterHits(state: fsNotChecked, note: made.why))
+  elif not found:
+    bf.hits = FirstBreaks().filterHitsOf(made.base) # (computing: its job is asked for)
+  else:
+    if k >= 0: shown = state.shownBreaks(k)
+    else:
+      for b in state.breaks:
+        if b.key == key: shown = b
+    bf.hits = shown.filterHitsOf(made.base)
+
+func breakFilterWords*(state: AppState): string {.inline.} =
+  ## The traces the first-break filters do not judge, in a line (no break found, beyond the
+  ## offsets where breaks are seen); "" when none, or while no first-break filter is on.
+  state.breakFilters.hits.notJudged
+
+func breakFilterRevision*(state: AppState): int {.inline.} =
+  ## Bumped whenever what the first-break filters show changes.
+  state.breakFilters.revision
+
 proc takeFirstBreaks(state: var AppState; m: sink Msg) =
   ## A record's first breaks, while its key is still wanted; the answer of a
   ## job given up for a newer key is dropped.
@@ -10222,6 +10327,7 @@ proc followMapWork(state: var AppState) =
   state.followShots()
   state.followRecordQc()
   state.followFirstBreaks()
+  state.followBreakFilters()
   state.followUnits()
 
 proc endMapWork(state: var AppState; job: JobInfo): bool =

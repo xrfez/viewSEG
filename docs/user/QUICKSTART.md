@@ -1145,7 +1145,9 @@ are drawn. **Use this record's fit** copies the fit of a good record into the bo
 the others. The model
 is kept in the project when one is open, else in the settings. A killed trace has no bars. With the pointer on a trace the status bar adds
 the model's time, the pick's and their difference. It is off until you turn it on, and
-works in the background, so stepping through records is not held up.
+works in the background, so stepping through records is not held up. Its flags can also be
+shown on the map: the filters **first break off the model** (the far off ones with them, as
+the overlay draws both alike) and **first break off its neighbours** (Map > Layers, below).
 
 ## Station moves
 
@@ -1370,7 +1372,20 @@ not joined to the project's survey is compared with it by the stations its heade
 the list says so. The file's own headers of a record are read once while it is open (and
 again after the vendor maps are loaded again). A trace whose station the survey does not have
 is not judged: the list says how many ("12 traces' stations are not in the survey: not
-judged") and does not mark them. Hover a filter for what it counts; **Select** selects its traces in the
+judged") and does not mark them.
+
+The first-break overlay's flags are filters too: **first break off the model** (the pick is
+farther from the record's model than the record's own scatter allows, or the break was found
+far off it) and **first break off its neighbours** (the pick differs from those of the traces
+beside it on its receiver line). They are the overlay's own result for the record shown, as
+its Seismic window shows it or would with the overlay on (its pick choice, its given model),
+so the map and the plot mark the same traces; ticked with the overlay off, the picks are made
+all the same ("computing..." beside the tick, never a 0, while they are) and the overlay
+stays off. Where the overlay has no model (no offsets, no coordinates, too few picks) they
+say "not checked" with its reason; the traces with no break found and those beyond the
+offsets where breaks are seen are not judged, and a line under the list says how many. A
+station marked by a first-break filter and by "header position disagrees with the survey"
+is the clear case for "Move this station...". Hover a filter for what it counts; **Select** selects its traces in the
 plot; point at a ringed receiver and its description says which filters mark it.
 
 **Noisy traces and the area left out.** With a relation file, **noisy** and **weak** are

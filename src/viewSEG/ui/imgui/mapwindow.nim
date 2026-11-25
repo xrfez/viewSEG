@@ -158,7 +158,7 @@ type
     boxes: seq[tuple[name: string; corners: array[4, Vec2]]]
       ## the template boxes drawn last frame, ImGui's coordinates (for tests)
     marksFor: tuple[shots, survey: int; on: bool; hidden: seq[MapLayerKey];
-      groups: set[MapGroup]; filters: set[MapFilter]; qc, spreads, edits: int;
+      groups: set[MapGroup]; filters: set[MapFilter]; qc, breaks, spreads, edits: int;
       gather: GatherRef]
       ## what the marked points were found from
     hits: array[MapFilter, FilterHits]
@@ -842,6 +842,11 @@ proc drawFoldRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutp
     else: discard
     igUnindent(0)
 
+const ClearCase = "A station marked both by a first-break filter and by \"header position" &
+  " disagrees with the survey\" is the clear case for \"Move this station...\" in the" &
+  " station-move menu"
+  ## what the position filter's and the first-break filters' tips end with
+
 const filterTips: array[MapFilter, string] = [
   "Traces the file marks dead in their headers",
   "Traces whose samples could not be decoded",
@@ -870,14 +875,27 @@ const filterTips: array[MapFilter, string] = [
   "Traces whose own header receiver or source position is not where the survey puts their" &
     " station (a station that moved, or a survey that is not the file's). Any format. In the" &
     " station-move menu, \"Move this station to the position in this trace's headers\"" &
-    " follows it"]
+    " follows it. " & ClearCase,
+  "Traces whose first-break pick is further from the refraction model fitted to the record" &
+    " than the record's own scatter allows (three times the scatter of the picks near the" &
+    " model, never less than 12 ms), or whose break was found 100 to 400 ms from it (far off" &
+    " the model): the first-break overlay's flags, the same traces it joins with a line on the" &
+    " Seismic plot. Ticked with the overlay off, it has the overlay's picks made all the same;" &
+    " the overlay stays off. " & ClearCase,
+  "Traces whose first-break pick differs from those of the traces beside it on its receiver" &
+    " line by more than the record's scatter allows: a wrong station, even where the breaks" &
+    " bend away from a straight model. The first-break overlay's flags, as for \"off the" &
+    " model\". " & ClearCase]
 
 const NoiseWrapEm = 30'f32 ## the words' lines wrap at this many font sizes
 
 func geometryShown(st: AppState): seq[string] =
-  ## The lines the position filter's words take under "Filters": why it is not judged, what
-  ## the header positions share (none while it is off).
-  if mfPositionOff in st.settings.map.filters: st.recordQc.geometry.geometryLines else: @[]
+  ## The lines the position filter's and the first-break filters' words take under
+  ## "Filters": why the position is not judged, what the header positions share, the traces
+  ## the first breaks do not judge (none while those filters are off).
+  if mfPositionOff in st.settings.map.filters: result = st.recordQc.geometry.geometryLines
+  let breaks = st.breakFilterWords
+  if breaks.len > 0 and st.settings.map.filters * BreakFilters != {}: result.add breaks
 
 func noiseLines(st: AppState): seq[string] =
   ## The lines the noisy-trace test's words take under "Filters" (none while no
@@ -889,7 +907,8 @@ func noiseLines(st: AppState): seq[string] =
 
 const FilterOrder = [mfDead, mfUndecodable, mfKilled, mfNoisy, mfLouder, mfWeak, mfNotJudged,
   mfClipped, mfSpiky, mfConstant, mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted,
-  mfDuplicate, mfAuxiliary, mfNoPosition, mfReversed, mfSpreadDiffers, mfPositionOff]
+  mfDuplicate, mfAuxiliary, mfNoPosition, mfReversed, mfSpreadDiffers, mfPositionOff,
+  mfBreakOffModel, mfBreakOffNeighbours]
   ## the order the filters are listed in: the noisy-trace test's findings together
 static: doAssert FilterOrder.len == ord(high(MapFilter)) + 1, "a filter is not listed"
 
@@ -981,7 +1000,9 @@ proc drawFilters(mu: var MapUi; st: AppState; hits: array[MapFilter, FilterHits]
     marks.mark("map.geometry")
     tip("The file's own header positions are compared with the positions in force: the " &
       "survey's stations, or their station moves. A trace with no position, or whose station " &
-      "the survey lacks, cannot be compared." & (if st.recordQc.geometry.projectSurvey:
+      "the survey lacks, cannot be compared. The first-break filters do not judge a trace " &
+      "where no break was found, nor one beyond the offsets where breaks are seen, as the " &
+      "overlay does not." & (if st.recordQc.geometry.projectSurvey:
       " This file is not joined to the project's survey: its headers are compared with it " &
       "by the stations they name." else: ""))
 
@@ -1418,7 +1439,7 @@ proc followMarks(mu: var MapUi; st: AppState) =
   let edits = if k >= 0: st.editsOf(k).revision else: 0
   let now = (st.shots.revision, st.survey.revision, on, st.map.hidden,
     st.settings.map.hiddenGroups, st.settings.map.filters, st.recordQc.revision,
-    st.spreads.revision, edits, st.selection.activeGather)
+    st.breakFilterRevision, st.spreads.revision, edits, st.selection.activeGather)
   if now == mu.marksFor and mu.marksRev > 0: return
   mu.marksFor = now
   mu.marked.setLen 1

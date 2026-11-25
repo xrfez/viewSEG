@@ -119,7 +119,7 @@ const
   MapFilterNames: array[MapFilter, string] = ["dead", "undecodable", "killed", "noisy",
     "clipped", "spiky", "constant", "weak", "dcOffset", "allZero", "notANumber", "missing",
     "unlisted", "duplicate", "auxiliary", "noPosition", "reversed", "spreadDiffers", "louder",
-    "notJudged", "positionOff"]
+    "notJudged", "positionOff", "breakOffModel", "breakOffNeighbours"]
   RetiredFilterNames = ["offsetOff", "midpointOff"]
     ## filters there are no more: a settings file that names them reads without a problem
   CoordinateNames: array[HeaderCoordinates, string] = ["fill", "replace"]

@@ -24,8 +24,12 @@
 ## zero, not a number), the stations the template plans that the record
 ## lacks, its traces at stations the template does not list and stations
 ## recorded twice (processSEG's `recordCompleteness`), auxiliary traces,
-## traces without a position, reversed traces, and the shots whose listed
-## spread differs from the template (processSEG's `compareRelations`). What
+## traces without a position, reversed traces, the shots whose listed
+## spread differs from the template (processSEG's `compareRelations`), the
+## traces whose own header position is not the survey's (`core/geometryqc`),
+## and the first-break overlay's flags: a pick off the record's model, or off
+## its neighbours on its receiver line (`core/firstbreaks`, the overlay's own
+## result, so the map and the plot never disagree). What
 ## each finds is a `FilterHits`: today for the record shown (and the
 ## survey-wide spread check); the survey-wide QC passes fill the same.
 ##
@@ -94,6 +98,11 @@ type
       ## traces inside the exclusion area, or whose sensor or station is unknown
     mfPositionOff = "header position disagrees with the survey"
       ## traces whose own header receiver or source position is not the survey's station's
+    mfBreakOffModel = "first break off the model"
+      ## traces whose first-break pick is farther from the record's model than its scatter
+      ## allows, or whose break was found far off it (the overlay's "far off the model")
+    mfBreakOffNeighbours = "first break off its neighbours"
+      ## traces whose pick differs from those beside it on its receiver line
 
   FlagFamily* = enum
     ## What kind of finding a filter's mark says, in its colour.
@@ -153,7 +162,7 @@ const
     (ffAmplitude, syPlus), (ffFailed, syRing), (ffFailed, syCross), (ffSpread, syNone),
     (ffSpread, syPlus), (ffSpread, syRing), (ffSpread, syBar), (ffSpread, syUpright),
     (ffEdited, syNone), (ffSpread, syCross), (ffAmplitude, syDot), (ffAmplitude, syDash),
-    (ffSpread, syBackslash)]
+    (ffSpread, syBackslash), (ffSpread, syDot), (ffSpread, syDash)]
     ## each filter's mark, in `MapFilter`'s order: no two alike, and the
     ## filters most used plain outlines (dead a square, noisy a circle,
     ## missing from the template a triangle, reversed a diamond; killed an X
@@ -168,6 +177,9 @@ const
   MinPositionTolerance* = 0.1
     ## the least tolerance of "header position disagrees with the survey" that can be set
   MaxPositionTolerance* = 1000.0 ## the most
+  BreakFilters* = {mfBreakOffModel, mfBreakOffNeighbours}
+    ## those that are the first-break overlay's flags of the record shown: they take its
+    ## result (`core/firstbreaks`), and ask for its job when it has none
   NoiseFilters* = {mfNoisy, mfWeak, mfLouder, mfNotJudged}
     ## those that come from the noisy-trace test (`core/noisearea`): they run it, and the
     ## Seismic window marks the exclusion area while one is on
