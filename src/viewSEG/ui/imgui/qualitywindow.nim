@@ -11,7 +11,7 @@
 ## before a job is submitted: the worker must not read `AppState`. Nothing here is looked up
 ## by a record number.
 
-import std/[os, strutils]
+import std/[algorithm, os, strutils, tables]
 import imguin/cimgui
 import ../../core/[edits, filesystem, jobs, qualityjobs, qualityreport, state]
 import ../../core/records as filerecs
@@ -271,13 +271,23 @@ proc poll(ui: var QualityUi; s: var Scan; st: AppState) =
     ui.finish(s, info.get.state, info.get.error)
     s.job = NoJob
 
+proc forcedKey(st: AppState; only = ""): string =
+  ## The kinds of recording the user set in the Files window (those of file `only`, when
+  ## given): a change of them makes an answer stale.
+  var forced: seq[string] = @[]
+  for path, kind in st.forcedKinds:
+    if only.len == 0 or path == canonical(only): forced.add path & "=" & $kind
+  forced.sort()
+  forced.join(";")
+
 proc submitFile(ui: var QualityUi; st: AppState; key, path: string) =
   ui.file = Scan(key: key, running: true, status: Scanning, sink: QualitySink())
   var spec = qualitySpec(@[path])
   spec.title = "Trace quality in " & path.extractFilename
   spec.auto = true # started by the program as the file shown changes: its end is not announced
   ui.file.job = st.jobs.submit(spec,
-    fileScan(path, st.indexCache, st.editsSnapshot, ui.file.sink, st.settings.noise))
+    fileScan(path, st.indexCache, st.editsSnapshot, ui.file.sink, st.settings.noise,
+      st.forcedKinds))
 
 proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
   let folder = st.settings.quality.folder
@@ -288,7 +298,7 @@ proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
   spec.title = if name.len == 0: "Trace quality" else: "Trace quality in " & name
   ui.folder.job = st.jobs.submit(spec,
     folderScan(folder, st.settings.quality.subfolders, st.indexCache, st.editsSnapshot,
-      ui.folder.sink, ui.folder.note, st.settings.noise))
+      ui.folder.sink, ui.folder.note, st.settings.noise, st.forcedKinds))
 
 proc consider(ui: var QualityUi; st: AppState) =
   ## Polls the jobs, drops an answer that is stale, and starts the File computation for
@@ -300,14 +310,16 @@ proc consider(ui: var QualityUi; st: AppState) =
   ui.poll(ui.folder, st)
   let path = st.shownPath
   let fileKey = if path.len > 0 and not st.shownIsSignature:
-      path & "|" & $st.shownRevision
+      path & "|" & $st.shownRevision & "|" & st.forcedKey(path)
     else: ""
   if fileKey != ui.file.key:
     ui.file.cancel(st)
     ui.shownKey = ["", ""]
     if fileKey.len > 0: ui.submitFile(st, fileKey, path)
   let folder = st.settings.quality.folder
-  let folderKey = if folder.len > 0: folder & "|" & $st.settings.quality.subfolders else: ""
+  let folderKey = if folder.len > 0:
+      folder & "|" & $st.settings.quality.subfolders & "|" & st.forcedKey
+    else: ""
   if ui.folder.key.len > 0 and ui.folder.key != folderKey:
     ui.folder.cancel(st)
     ui.shownKey = ["", ""]
@@ -474,6 +486,18 @@ proc drawScan(ui: var QualityUi; st: AppState; folderTab: bool; marks: var Marks
   marks.mark("quality.ready")
   let r = s.result
   if s.capped: igTextUnformatted(CappedNote.cstring, nil)
+  if r.mixed.len > 0:
+    igPushTextWrapPos(0)
+    igTextUnformatted(r.mixed.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("quality.message " & r.mixed)
+    return
+  let notChecked = notCheckedNote(r.notChecked)
+  if notChecked.len > 0:
+    igPushTextWrapPos(0)
+    igTextUnformatted(notChecked.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("quality.message " & notChecked)
   if r.receivers.totals.traces > 0 and r.sources.totals.traces > 0:
     var sources = ui.side == ssSources
     if igRadioButton_Bool(ReceiversOption.cstring, not sources): ui.side = ssReceivers

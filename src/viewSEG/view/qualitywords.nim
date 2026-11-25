@@ -171,6 +171,13 @@ func unreadNote*(rows: openArray[tuple[path, why: string]]): string =
   elif files > 0: filePart & " could not be read."
   else: tracePart & " could not be read."
 
+func notCheckedNote*(rows: openArray[tuple[path, why: string]]): string =
+  ## One line for the files left out because they are not gathers of one side (a continuous
+  ## receiver recording) or their kind is not told; "" for none.
+  if rows.len == 0: return ""
+  if rows.len == 1: return "1 file was not measured: " & rows[0].why & "."
+  $rows.len & " files were not measured: " & rows[0].why & " (the first of them)."
+
 func countLabel*(what: string; n: int): string =
   ## A button label with its count.
   what & " (" & $n & ")"

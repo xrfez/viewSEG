@@ -7,14 +7,16 @@
 ## listed and counted; the Folder tab starts nothing until Run, takes the folder from the
 ## dialog, reads its subfolders only when the box says so (off by default; changing it
 ## drops the answer), counts a station over the files, exports the list, and the window
-## closes by its tab's button and returns from the View menu.
+## closes by its tab's button and returns from the View menu. A folder of shot gathers and
+## receiver gathers is not measured: the tab says how many files are of each kind.
 ##
 ## Seen to fail: with the Folder tab's job started as soon as a folder is chosen,
 ## "Folder... chooses the folder" found a folder job before Run; with the subfolders tick
 ## ignored by the walk, "Run: the folder without its subfolders" did not happen (2 files,
 ## not 1); with the station counts of the second file not added to the first's, "Run with
 ## subfolders" saw a row of 1 trace; with the menu item disabled without a folder,
-## "Reports > Trace quality" found a disabled mark.
+## "Reports > Trace quality" found a disabled mark; with the mix measured as the majority
+## side, "a folder of shot and receiver gathers is not measured" found figures.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -40,12 +42,12 @@ proc click(f: FrameInfo; at: Vec2) =
   f.pressMouse(at, false)
 
 proc writeTraceAt(w: var SeismicWriter; record, channel: int; line, point: float64;
-    component: uint8; status: TraceStatus; samples: openArray[float32]) =
+    component: uint8; status: TraceStatus; samples: openArray[float32]; srcPoint = 1.0) =
   var k = initTraceKeys()
   k.record = float64(record)
   k.channel = float64(channel)
   k.srcLine = 1
-  k.srcPoint = 1
+  k.srcPoint = srcPoint
   k.srcIndex = 1
   k.rcvLine = line
   k.rcvPoint = point
@@ -92,6 +94,19 @@ proc main*() =
       (line: 101.0, point: 1.0, component: 1'u8, status: tsLive, samples: wave()),
       (line: 101.0, point: 1.0, component: 2'u8, status: tsLive, samples: wave())])
     writeFile(folder / "notes.txt", "not seismic\n")
+    let mixed = fx.dir / "mixed"
+    createDir(mixed)
+    seismicFile(mixed / "shot.sgd", 1, @[
+      (line: 10.0, point: 1.0, component: 1'u8, status: tsLive, samples: zeros(32)),
+      (line: 10.0, point: 2.0, component: 1'u8, status: tsLive, samples: zeros(32)),
+      (line: 10.0, point: 3.0, component: 1'u8, status: tsLive, samples: zeros(32))])
+    block receiverGather:
+      # one receiver (10 / 7) of three shots
+      var w = openSeismicWriter(mixed / "receiver.sgd", SegdOutputOptions(
+        sampleIntervalUs: 2000, numSamples: 32, time: 1_700_000_000.0, receiverGather: true))
+      for shot in 1 .. 3:
+        writeTraceAt(w, 2, shot, 10, 7, 1, tsLive, zeros(32), srcPoint = float64(shot))
+      doAssert w.close().len == 0, "receiver gather was not written"
     let outCsv = fx.dir / "out" / "trace-quality.csv"
     createDir(fx.dir / "out")
     createDir(fx.dir / "cache")
@@ -355,6 +370,29 @@ proc main*() =
         f.click(f.markOf("quality.tab Folder").centre)
       result = f.has("quality.counts 2 files, 10 traces")
     step("hiding kept the Folder answer", backToFolder, folderKept)
+
+    proc mixedTab(f: FrameInfo) = f.click(f.markOf("quality.tab Folder").centre)
+    proc mixedIdle(f: FrameInfo): bool =
+      if not f.has("quality.folderbutton") and wait mod 8 == 4:
+        f.click(f.markOf("quality.tab Folder").centre)
+      result = f.has("quality.folderbutton")
+    step("the Folder tab, to measure a mixed folder", mixedTab, mixedIdle)
+    proc chooseMixed(f: FrameInfo) =
+      answer = @[mixed]
+      f.click(f.markOf("quality.folderbutton").centre)
+    proc mixedChosen(f: FrameInfo): bool = f.core.settings.quality.folder == mixed
+    step("Folder... chooses the mixed folder", chooseMixed, mixedChosen)
+    proc runMixed(f: FrameInfo) = f.click(f.markOf("quality.run").centre)
+    proc mixedSaid(f: FrameInfo): bool =
+      let said = f.markNames("quality.message The files are not all of one kind")
+      result = f.has("quality.ready") and said.len == 1
+      if result:
+        doAssert "1 is a shot gather" in said[0] and "1 is a receiver gather" in said[0] and
+          "Files window" in said[0], said[0]
+        doAssert f.markNames("quality.counts ").len == 0 and
+          f.markNames("quality.row ").len == 0, "figures for a mix"
+    step("a folder of shot and receiver gathers is not measured, and says so", runMixed,
+      mixedSaid)
 
     var at = 0
     var started = false

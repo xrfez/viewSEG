@@ -3506,6 +3506,13 @@ proc treatOf*(state: AppState; path: string): TreatAs =
   ## file that has no choice.
   state.shownTreat(canonical(path))
 
+func forcedKinds*(state: AppState): Table[string, RecordingKind] =
+  ## The kind of recording the user set for each file (`treatOf`), by canonical path: what
+  ## the reports that tell shot gathers from receiver gathers use over the kind told from
+  ## the file. Only what jobs use (`treatInForce`).
+  for path, t in state.treats:
+    if t.kind.isSome: result[path] = t.kind.get
+
 proc treatPendingOf*(state: AppState; path: string): set[TreatPart] =
   ## The parts of what `treatOf` says that no job uses yet: a listing found them in a document
   ## that may be another content's, and the file's hash has not confirmed it.

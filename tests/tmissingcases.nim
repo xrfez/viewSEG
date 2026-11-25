@@ -5,8 +5,10 @@
 ## derived O records, a folder, a record with no source station or a wrong
 ## record number, files of one receiver (one trace, one station, one slice),
 ## sliced receivers with a record number for each slice or one for all, two X
-## records at one source and two O records at one receiver, and a shot of one
-## live receiver among other shots.
+## records at one source and two O records at one receiver, a file of one receiver and
+## one source among shots (left out until its kind is set), a mix of shot and receiver
+## gathers (not calculated), and the O file loaded or derived for receiver gathers.
+## The kind a file is treated as (the Files window) is passed as `forced`.
 ##
 ## Seen to fail: with a file of one receiver checked as a shot,
 ## `one_receiver_files` rejected 100 in the template, 1 found, 99 missing; with
@@ -14,17 +16,18 @@
 ## `two_x_records_at_one_source` rejected found 0, missing 4; with the O record
 ## of a receiver picked by the record number, `two_o_records_at_one_receiver`
 ## rejected found 0, missing 3 (record 5) and an unmatched receiver (record 9);
-## with any file of one receiver taken for receiver data,
-## `a_shot_of_one_live_receiver_among_shots` rejected 4 shots and no missing receiver;
+## with the kind set by the user ignored, `one_receiver_files` rejected the receiver
+## figures 1 1 1 1 0 for none; with a mix counted as a side,
+## `a_shot_and_a_receiver_in_one_folder_is_not_calculated` rejected the message;
 ## with X records at one source compared by the stations found alone,
 ## `two_x_records_one_inside_the_other` rejected data 1..4 as unmatched. With the
 ## set grown to twice the word it needs, `a_receiver_keeps_a_bit_for_each_source`
 ## rejected 4 088 bytes; with every file of several receivers counted,
 ## `receivers_merged_over_files` rejected 4 files for 3.
 
-import std/[os, strutils]
+import std/[os, strutils, tables]
 import parseSEG
-import viewSEG/core/[jobs, missingjobs, missingreport]
+import viewSEG/core/[jobs, missingjobs, missingreport, recordingkind, reportside]
 import utils/waiting
 
 proc put(line: var string; at: int; text: string) =
@@ -160,12 +163,17 @@ proc sliceTraces(path: string; slices: openArray[tuple[rcv, src: float64; srcInd
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
-proc run(folder: string; paths: seq[string]; relations: ref SurveyGeometry):
+proc forcing(paths: openArray[string]; kind: RecordingKind): Table[string, RecordingKind] =
+  ## The kind the user set in the Files window for each of `paths`.
+  for p in paths: result[p.normalizedPath] = kind
+
+proc run(folder: string; paths: seq[string]; relations: ref SurveyGeometry;
+    forced = initTable[string, RecordingKind](); receivers: ref SurveyGeometry = nil):
     MissingJobResult =
   let jobs = initJobs()
   let sink = MissingSink()
   let id = jobs.submit(missingSpec(folder, paths),
-    scanMissing(folder, paths, relations, sink, ""))
+    scanMissing(folder, paths, relations, sink, "", forced, receivers))
   doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}), "the scan did not end"
   doAssert jobs.state(id) == jsDone, jobs.info(id).get.error
   sink.result
@@ -294,19 +302,26 @@ proc main*() =
     expect(run(dir, @[p2], sv).shot.figures, "1 1 4 4 0 | 4 4 0")
 
   block one_receiver_files:
-    ## One shot of receivers 1..100: one trace, or one station's three components,
-    ## is receiver 7 (its derived O record: source 1), not a shot lacking 99
-    ## receivers. Two receivers of the shot are a shot.
+    ## One shot of receivers 1..100: one trace, or one station's three components, of
+    ## receiver 7 is one receiver and one source: the kind cannot be told, so nothing is
+    ## checked and the file says to set it. Set as a receiver gather it is receiver 7 (its
+    ## derived O record: source 1), not a shot lacking 99 receivers. Two receivers of the
+    ## shot are a shot.
     let sv = surveyOf(xRec(1, "1.00", "1.00", 1, 100, 10, 1, 100))
     let p = dir / "k.sgd"
     traceFile(p, [(1, 1.0, 7.0, 1, 1)])
     var r = run(dir, @[p], sv)
     expect(r.shot.figures, "0 0 0 0 0 | 0 0 0")
+    expect(r.receiver.figures, "0 0 0 0 0 | 0 0 0")
+    doAssert r.notChecked.len == 1 and r.notChecked[0].why.contains("Files window"),
+      $r.notChecked
+    doAssert r.sides.untold == 1 and r.mixed.len == 0
+    r = run(dir, @[p], sv, @[p].forcing(rkReceiverSliced))
     expect(r.receiver.figures, "1 1 1 1 0 | 1 1 0")
-    doAssert r.singleSlice
+    doAssert r.notChecked.len == 0 and r.sides.receivers == 1
     let p2 = dir / "k2.sgd"
     traceFile(p2, [(1, 1.0, 7.0, 1, 1), (1, 1.0, 7.0, 2, 1), (1, 1.0, 7.0, 3, 1)])
-    r = run(dir, @[p2], sv)
+    r = run(dir, @[p2], sv, @[p2].forcing(rkReceiverSliced))
     expect(r.shot.figures, "0 0 0 0 0 | 0 0 0")
     expect(r.receiver.figures, "1 1 1 1 0 | 1 1 0")
     let p3 = dir / "k3.sgd"
@@ -314,7 +329,7 @@ proc main*() =
     r = run(dir, @[p3], sv)
     doAssert r.shot.stats.records == 1 and r.shot.stats.found == 2 and
       r.shot.stats.missing == 98, r.shot.figures
-    doAssert r.receiver.stats.records == 0 and not r.singleSlice
+    doAssert r.receiver.stats.records == 0
     # five shots of receivers 1..100: receiver 7 lacks the other four
     var xs: seq[string] = @[]
     for s in 1 .. 5: xs.add xRec(s, "1.00", $s & ".00", 1, 100, 10, 1, 100)
@@ -323,17 +338,16 @@ proc main*() =
       var trs: seq[Tr] = @[]
       for c in 1 .. n: trs.add (1, 1.0, 7.0, c, 1)
       traceFile(path, trs)
-      r = run(dir, @[path], surveyOf(xs))
+      r = run(dir, @[path], surveyOf(xs), @[path].forcing(rkReceiverSliced))
       expect(r.shot.figures, "0 0 0 0 0 | 0 0 0")
       expect(r.receiver.figures, "1 1 5 1 4 | 5 1 4 1/2x1 1/3x1 1/4x1 1/5x1")
-      doAssert r.singleSlice
 
-  block a_shot_of_one_live_receiver_among_shots:
+  block a_file_of_one_receiver_and_one_source_among_shots:
     ## Shots 1..5 of receivers 1..100, a file each; shot 1's file holds receiver 7 only
     ## (one trace, or its three components). One receiver and one source cannot say
-    ## which it is; the other files are shots, so it is shot 1, lacking 99 receivers,
-    ## and nothing is checked as a receiver. Alone, as the File tab checks it, it is
-    ## a slice of receiver 7.
+    ## which it is: it is left out and the other four files are the shots (not a mix). Set
+    ## as a shot gather, it is shot 1, lacking 99 receivers. Set as a receiver gather, the
+    ## folder is a mix and is not calculated.
     var xs: seq[string] = @[]
     for s in 1 .. 5: xs.add xRec(s, "1.00", $s & ".00", 1, 100, 10, 1, 100)
     let sv = surveyOf(xs)
@@ -350,8 +364,12 @@ proc main*() =
           for r in 1 .. 100: trs.add (s, float64(s), float64(r), 1, 1)
         traceFile(p, trs)
         paths.add p
-      let r = run(folder, paths, sv)
-      doAssert r.unmatched.len == 0 and not r.singleSlice, $r.unmatched
+      var r = run(folder, paths, sv)
+      doAssert r.unmatched.len == 0 and r.mixed.len == 0, $r.unmatched
+      doAssert r.notChecked.len == 1 and r.notChecked[0].path == "s1.sgd", $r.notChecked
+      doAssert r.shot.stats.files == 4 and r.shot.stats.records == 4, $r.shot.stats
+      r = run(folder, paths, sv, @[paths[0]].forcing(rkShotGather))
+      doAssert r.unmatched.len == 0 and r.notChecked.len == 0, $r.unmatched
       let t = r.shot.stats
       doAssert t.files == 5 and t.records == 5 and t.inTemplate == 100 and t.found == 100 and
         t.missing == 99, $components & " " & $t
@@ -359,14 +377,17 @@ proc main*() =
         t.missingInRecords == 99, $t
       doAssert r.shot.rows.len == 99 and r.shot.rows[0].point == 1 and r.shot.rows[0].missing == 1
       expect(r.receiver.figures, "0 0 0 0 0 | 0 0 0")
-      let one = run(folder, @[paths[0]], sv)
+      r = run(folder, paths, sv, @[paths[0]].forcing(rkReceiverSliced))
+      doAssert r.mixed.len > 0 and r.sides.shots == 4 and r.sides.receivers == 1, r.mixed
+      let one = run(folder, @[paths[0]], sv, @[paths[0]].forcing(rkReceiverSliced))
       expect(one.shot.figures, "0 0 0 0 0 | 0 0 0")
       expect(one.receiver.figures, "1 1 5 1 4 | 5 1 4 1/2x1 1/3x1 1/4x1 1/5x1")
-      doAssert one.singleSlice
 
-  block a_shot_and_a_receiver_in_one_folder:
+  block a_shot_and_a_receiver_in_one_folder_is_not_calculated:
     ## A shot of source 1 (receivers 1..3 of 1..4) and receiver 2 cut in slices of
-    ## sources 2 and 3: each is checked on its own side.
+    ## sources 2 and 3: a mix of shot and receiver gathers. Nothing is calculated; the
+    ## result counts the files of each kind. Set both as shots (or both as receiver
+    ## gathers) it is calculated again.
     var xs: seq[string] = @[]
     for s in 1 .. 3: xs.add xRec(s, "1.00", $s & ".00", 1, 4, 10, 1, 4)
     let sv = surveyOf(xs)
@@ -375,10 +396,48 @@ proc main*() =
     traceFile(sh, [(1, 1.0, 1.0, 1, 1), (1, 1.0, 2.0, 1, 1), (1, 1.0, 3.0, 1, 1)])
     let sl = dir / "mix" / "slice.sgd"
     slicedFile(sl, 2.0, [2.0, 3.0], true)
-    let r = run(dir / "mix", @[sh, sl], sv)
-    doAssert r.unmatched.len == 0, $r.unmatched
-    expect(r.shot.figures, "1 1 4 3 1 | 4 3 1 10/4x1")
-    expect(r.receiver.figures, "1 1 3 2 1 | 3 2 1 1/1x1")
+    var r = run(dir / "mix", @[sh, sl], sv)
+    doAssert r.mixed.len > 0 and r.mixed.contains("1 is a shot gather") and
+      r.mixed.contains("1 is a receiver gather") and r.mixed.contains("Files window"), r.mixed
+    doAssert r.sides.shots == 1 and r.sides.receivers == 1 and r.sides.untold == 0
+    expect(r.shot.figures, "0 0 0 0 0 | 0 0 0")
+    expect(r.receiver.figures, "0 0 0 0 0 | 0 0 0")
+    r = run(dir / "mix", @[sh, sl], sv, @[sh, sl].forcing(rkShotGather))
+    doAssert r.mixed.len == 0 and r.sides.shots == 2, r.mixed
+    doAssert r.shot.stats.records == 3, r.shot.figures # the slice's two shots and the shot
+    r = run(dir / "mix", @[sh, sl], sv, @[sh, sl].forcing(rkReceiverSliced))
+    doAssert r.mixed.len == 0 and r.sides.receivers == 2, r.mixed
+    doAssert r.receiver.stats.records > 0 and r.shot.stats.records == 0, r.receiver.figures
+
+  block receiver_gathers_follow_the_o_file_loaded_else_the_derived_records:
+    ## Shots 1..4 of receivers 1..3 (X records); receiver 2's file holds sources 1 and 2.
+    ## The loaded O file says receiver 2 expects sources 1..3, so 1 is missing (a missing
+    ## SHOT, source 3); without it the O records derived from the X records say 1..4, so 2
+    ## are. The same for the File tab (one path) and the Folder tab (the folder's paths).
+    var xs: seq[string] = @[]
+    for s in 1 .. 4: xs.add xRec(s, "1.00", $s & ".00", 1, 3, 10, 1, 3)
+    let sv = surveyOf(xs)
+    let ofile = surveyOf(oRec(50, "10.00", "2.00", "1", 1, 3))
+    createDir(dir / "rg")
+    let p = dir / "rg" / "r2.sgd"
+    receiverFile(p, 2, 2.0, [1.0, 2.0])
+    let q = dir / "rg" / "r2b.sgd"
+    receiverFile(q, 3, 2.0, [1.0])
+    for paths in [@[p], @[p, q]]:
+      let forced = paths.forcing(rkReceiverSliced)
+      let withO = run(dir / "rg", paths, sv, forced, receivers = ofile)
+      doAssert withO.mixed.len == 0 and withO.sides.receivers == paths.len, withO.mixed
+      expect(withO.shot.figures, "0 0 0 0 0 | 0 0 0")
+      expect(withO.receiver.figures, "" & $paths.len & " 1 3 2 1 | 3 2 1 1/3x1")
+      doAssert not withO.receiver.stats.derived
+      let derived = run(dir / "rg", paths, sv, forced)
+      expect(derived.receiver.figures, "" & $paths.len & " 1 4 2 2 | 4 2 2 1/3x1 1/4x1")
+      doAssert derived.receiver.stats.derived
+    # told from the file (not set): the same side
+    expect(run(dir / "rg", @[p], sv).receiver.figures, "1 1 4 2 2 | 4 2 2 1/3x1 1/4x1")
+    # set the other way, the file is a shot gather: its report is of receivers
+    let flipped = run(dir / "rg", @[p], sv, @[p].forcing(rkShotGather))
+    doAssert flipped.sides.shots == 1 and flipped.receiver.stats.records == 0, $flipped.sides
 
   block a_receiver_keeps_a_bit_for_each_source:
     ## A receiver's sources are a bit each, up to the highest source number of the
@@ -410,17 +469,17 @@ proc main*() =
     sliceTraces(a, [(rcv: 2.0, src: 1.0, srcIndex: 1)])
     sliceTraces(b, [(rcv: 2.0, src: 2.0, srcIndex: 1)])
     sliceTraces(c, [(rcv: 2.0, src: 1.0, srcIndex: 1)])
-    expect(run(folder, @[a, b, c], sv).receiver.figures, "3 1 3 2 1 | 3 2 1 1/3x1")
+    expect(run(folder, @[a, b, c], sv, @[a, b, c].forcing(rkReceiverSliced)).receiver.figures, "3 1 3 2 1 | 3 2 1 1/3x1")
     let b2 = folder / "b2.sgd"
     let c2 = folder / "c2.sgd"
     sliceTraces(b2, [(rcv: 2.0, src: 3.0, srcIndex: 1), (rcv: 3.0, src: 1.0, srcIndex: 1),
       (rcv: 3.0, src: 2.0, srcIndex: 2)])
     sliceTraces(c2, [(rcv: 3.0, src: 3.0, srcIndex: 1)])
-    expect(run(folder, @[a, b2, c2], sv).receiver.figures, "3 2 3 3 1 | 6 5 1 1/2x1")
+    expect(run(folder, @[a, b2, c2], sv, @[a, b2, c2].forcing(rkReceiverSliced)).receiver.figures, "3 2 3 3 1 | 6 5 1 1/2x1")
     # a source written with index 0 matches the source at either index
     let e = folder / "e.sgd"
     sliceTraces(e, [(rcv: 2.0, src: 2.0, srcIndex: 0)])
-    expect(run(folder, @[e], sv).receiver.figures, "1 1 3 1 2 | 3 1 2 1/1x1 1/3x1")
+    expect(run(folder, @[e], sv, @[e].forcing(rkReceiverSliced)).receiver.figures, "1 1 3 1 2 | 3 1 2 1/1x1 1/3x1")
     # two loaded O records of receiver 2 that overlap: sources 1..3 and 2..4
     let xs = [xRec(1, "1.00", "1.00", 1, 3, 10, 1, 3), xRec(2, "1.00", "2.00", 1, 3, 10, 1, 3),
       xRec(3, "1.00", "3.00", 1, 3, 10, 1, 3), xRec(4, "1.00", "4.00", 1, 3, 10, 1, 3)]
@@ -436,7 +495,8 @@ proc main*() =
       (rcv: 99.0, src: 1.0, srcIndex: 1), (rcv: 99.0, src: 2.0, srcIndex: 1)], timedByShot = true)
     let lone = folder / "lone.sgd"
     sliceTraces(lone, [(rcv: 99.0, src: 3.0, srcIndex: 1)])
-    let r = run(folder, @[a, b2, none, lone, c2], sv)
+    let r = run(folder, @[a, b2, none, lone, c2], sv,
+      @[a, b2, none, lone, c2].forcing(rkReceiverSliced))
     expect(r.receiver.figures, "3 2 3 3 1 | 6 5 1 1/2x1")
     doAssert r.unmatched.len == 2 and r.unmatched[0].path == "none.sgd" and
       r.unmatched[1].path == "none.sgd", $r.unmatched

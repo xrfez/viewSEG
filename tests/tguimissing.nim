@@ -2,13 +2,14 @@
 ## closed at the start and then a tab beside the Seismic window; with no
 ## relation records it says what to import and shows no table; with a file
 ## shown it computes only the File tab (no job lists a folder), and the tab
-## has the statistics lines and the table of Line, Point, Missing (no record
+## has the statistics lines and the table of Receiver line, Receiver point, Missing (no record
 ## column); the Folder tab starts nothing until Run, takes the folder from the
 ## dialog, honours Include subfolders (off by default; changing it drops the
 ## answer), exports the list, the File tab follows the file shown, and the
-## window closes by its tab's button and returns from the View menu. A file of
-## one shot slice is checked as its receiver, and the File tab says the other
-## shots of that receiver are in other files.
+## window closes by its tab's button and returns from the View menu. A file of one
+## receiver and one source is not checked until its kind is set in the Files window (a
+## receiver gather: its report is of the shots missing, with Source line and point), and a
+## folder of shot and receiver gathers is not calculated: the tab says so.
 ##
 ## Seen to fail: with the Folder tab's job started as soon as a folder is chosen,
 ## "Folder... chooses the folder" found a folder job before Run; with the
@@ -16,8 +17,8 @@
 ## did not happen (3 files, not 2); "a reloaded survey is checked again" guards the survey
 ## key (a reload that reuses an address is not reproducible here); with the export taking every row whatever the filter,
 ## "Export CSV... writes the rows the filter shows" read both stations back; with
-## the note left out of the File tab, "a file of one shot slice is a receiver, and
-## the File tab says so" did not happen.
+## the kind set in the Files window ignored, `tmissingcases` rejects the receiver figures of
+## a file set as a receiver gather (the steps here, on the window, were not run broken).
 ##
 ## The File tab is quiet and sparing: stepping through three files leaves no "is done" line and
 ## no toast for them and never more than one job; a vibrator signature file starts no job and the
@@ -113,6 +114,25 @@ proc shotFile(path: string; receivers: Slice[int]) =
     inc ch
   doAssert w.close().len == 0, "shot file was not written: " & path
 
+proc receiverGatherFile(path: string) =
+  ## One receiver (10 / 7) of three shots: a receiver gather.
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
+    numSamples: 1, time: 1_700_000_000.0, receiverGather: true))
+  for shot in 1 .. 3:
+    var k = initTraceKeys()
+    k.record = 1
+    k.channel = float64(shot)
+    k.srcLine = 1
+    k.srcPoint = float64(shot)
+    k.srcIndex = 1
+    k.rcvLine = 10
+    k.rcvPoint = 7
+    k.rcvIndex = 1
+    k.intervalUs = 2000
+    k.status = tsLive
+    w.writeTrace(k, @[0'f32])
+  doAssert w.close().len == 0, "receiver file was not written: " & path
+
 proc main*() =
   var wait = 0
   var since = getMonoTime()
@@ -125,7 +145,12 @@ proc main*() =
     shotFile(folder / "sub" / "three.sgd", 1 .. 4)
     writeFile(folder / "notes.txt", "not seismic\n")
     createDir(fx.dir / "slice")
-    sliceFile(fx.dir / "slice" / "slice.sgd")
+    let slicePath = fx.dir / "slice" / "slice.sgd"
+    sliceFile(slicePath)
+    let mixed = fx.dir / "mixed"
+    createDir(mixed)
+    shotFile(mixed / "shot.sgd", 1 .. 2)
+    receiverGatherFile(mixed / "receiver.sgd")
     let plan = fx.dir / "plan.x"
     writeFile(plan, "H00 SPS format version number   SPS 2.1;\n" & xRec(1, "1.00", 4, 1, 4) & "\n")
     let outCsv = fx.dir / "out" / "missing.csv"
@@ -173,7 +198,7 @@ proc main*() =
         doAssert m.inSight and m.docked and not m.apart, "not in the centre dock: " & $m
         doAssert abs(m.rect.pos.x - p.rect.pos.x) <= 2 and abs(m.rect.pos.y - p.rect.pos.y) <= 2,
           "not a tab beside the Seismic window: " & $m.rect & " plot " & $p.rect
-        doAssert f.markNames("missing.row ").len == 0 and not f.has("missing.header Line"),
+        doAssert f.markNames("missing.row ").len == 0 and not f.has("missing.header Receiver line"),
           "a table without relation records"
     step("no relation records: one sentence and no table", openReport, noTemplate)
 
@@ -196,15 +221,15 @@ proc main*() =
           $f.markNames("missing.row ")
         var headers: seq[string] = @[]
         for n in f.markNames("missing.header "): headers.add n
-        doAssert headers.len == 3 and "missing.header Line" in headers and
-          "missing.header Point" in headers and "missing.header Missing" in headers,
+        doAssert headers.len == 3 and "missing.header Receiver line" in headers and
+          "missing.header Receiver point" in headers and "missing.header Missing" in headers,
           "columns: " & $headers
         for t in f.jobTitles:
           doAssert t != "Missing traces in line",
             "the window computes the file only, a job for the folder: " & t
         doAssert f.has("missing.statsbox")
         doAssert f.savePng(shots / "missing-file.png"), "file shot was not written"
-    step("the File tab: statistics and Line, Point, Missing", showFile, fileStats)
+    step("the File tab: statistics and the receiver line, point, Missing", showFile, fileStats)
 
     proc folderTab(f: FrameInfo) = f.click(f.markOf("missing.tab Folder").centre)
     proc folderIdle(f: FrameInfo): bool =
@@ -272,10 +297,10 @@ proc main*() =
         exportClicked = true
       if not fileExists(outCsv): return false
       let got = readFile(outCsv)
-      doAssert got == "line,point,missing\n10,3,1\n10,4,2\n", got
+      doAssert got == "receiverLine,receiverPoint,missing\n10,3,1\n10,4,2\n", got
       doAssert asked == @[dkExportMissing], "asked for " & $asked
       true
-    step("Export CSV... writes Line, Point, Missing", exportCsv, exported)
+    step("Export CSV... writes the receiver line, point and Missing", exportCsv, exported)
 
     let filtered = fx.dir / "out" / "filtered.csv"
     var filterClicked, boxClicked, secondExport = false
@@ -297,7 +322,8 @@ proc main*() =
         secondExport = true
       if not fileExists(filtered) or not fileExists(fx.dir / "out" / "filtered-statistics.csv"):
         return false
-      doAssert readFile(filtered) == "line,point,missing\n10,4,2\n", readFile(filtered)
+      doAssert readFile(filtered) == "receiverLine,receiverPoint,missing\n10,4,2\n",
+        readFile(filtered)
       let stats = readFile(fx.dir / "out" / "filtered-statistics.csv")
       doAssert stats.splitLines[0].endsWith(",filter") and stats.splitLines[1].endsWith(",4"),
         stats
@@ -331,26 +357,46 @@ proc main*() =
           "a killed trace changed the figures: " & $f.markNames("missing.stat ")
     step("a killed trace counts as present and the window says so", killOne, killedNote)
 
+    proc notChecked(f: FrameInfo): bool =
+      for n in f.markNames("missing.message This file is not checked: one receiver and one source"):
+        if "Files window" in n: return true
     proc showSlice(f: FrameInfo) =
-      doAssert not f.has("missing.message " & SingleSliceNote), "the slice note for a shot"
-      f.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.dir / "slice" / "slice.sgd",
-        listFolder: false)
-    proc sliceNote(f: FrameInfo): bool =
-      result = f.has("missing.message " & SingleSliceNote)
+      f.apply Command(kind: ckShowFile, panel: MainPanel, path: slicePath, listFolder: false)
+    proc sliceNotTold(f: FrameInfo): bool =
+      result = f.notChecked
       if result:
-        doAssert f.has("missing.stat Source stations expected by the O records derived " &
-          "from the X records."), $f.markNames("missing.stat ")
+        doAssert not f.has("missing.counts 1 receiver") and
+          f.markNames("missing.row ").len == 0, "figures for a file whose kind is not told"
+    step("a file of one receiver and one source is not checked: set its kind", showSlice,
+      sliceNotTold)
+    proc forceSliced(f: FrameInfo) =
+      f.apply Command(kind: ckTreatAs, treatPath: slicePath, treatKind: "sliced")
+    proc sliceAsReceiver(f: FrameInfo): bool =
+      result = f.has("missing.stat Source stations expected by the O records derived " &
+        "from the X records.")
+      if result:
         doAssert f.has("missing.counts 1 receiver"), $f.markNames("missing.counts ")
-    step("a file of one shot slice is a receiver, and the File tab says so", showSlice,
-      sliceNote)
+        doAssert not f.has("missing.header Receiver line")
+    step("set as a receiver gather in the Files window, the report is of its shots",
+      forceSliced, sliceAsReceiver)
+    proc forceShot(f: FrameInfo) =
+      f.apply Command(kind: ckTreatAs, treatPath: slicePath, treatKind: "shot")
+    proc sliceAsShot(f: FrameInfo): bool =
+      result = f.has("missing.stat Receiver stations expected by the X records.") and
+        f.has("missing.header Receiver line")
+      if result: doAssert not f.has("missing.header Source line")
+    step("set as a shot gather, the report is of receivers again", forceShot, sliceAsShot)
+    proc unforce(f: FrameInfo) =
+      f.apply Command(kind: ckTreatAs, treatPath: slicePath, treatKind: "automatic")
+    step("the kind taken off, the file is not checked again", unforce, sliceNotTold)
     proc backToTwo(f: FrameInfo) =
       f.apply Command(kind: ckShowFile, panel: MainPanel, path: folder / "two.sgd",
         listFolder: false)
     proc twoAgain(f: FrameInfo): bool =
       result = f.has("missing.ready") and
         f.has("missing.stat Receiver stations found in the file: 3")
-      if result: doAssert not f.has("missing.message " & SingleSliceNote)
-    step("a shot file again: no slice note", backToTwo, twoAgain)
+      if result: doAssert not f.notChecked
+    step("a shot file again", backToTwo, twoAgain)
 
     var scans = 0
     proc scansOfTwo(f: FrameInfo): int =
@@ -470,6 +516,29 @@ proc main*() =
       result = back > 5 and f.windowPlace("missing").inSight and f.has("missing.ready") and
         f.fileScans("one.sgd") == hiddenBefore + 1
     step("shown again, it computes for the file then shown", comeBack, computes)
+
+    proc mixedTab(f: FrameInfo) = f.click(f.markOf("missing.tab Folder").centre)
+    proc mixedIdle(f: FrameInfo): bool =
+      if not f.has("missing.folderbutton") and wait mod 8 == 4:
+        f.click(f.markOf("missing.tab Folder").centre)
+      result = f.has("missing.folderbutton")
+    step("the Folder tab, to check a mixed folder", mixedTab, mixedIdle)
+    proc chooseMixed(f: FrameInfo) =
+      answer = @[mixed]
+      f.click(f.markOf("missing.folderbutton").centre)
+    proc mixedChosen(f: FrameInfo): bool = f.has("missing.folderpath " & mixed)
+    step("Folder... chooses the mixed folder", chooseMixed, mixedChosen)
+    proc runMixed(f: FrameInfo) = f.click(f.markOf("missing.run").centre)
+    proc mixedSaid(f: FrameInfo): bool =
+      let said = f.markNames("missing.message The files are not all of one kind")
+      result = f.has("missing.ready") and said.len == 1
+      if result:
+        doAssert "1 is a shot gather" in said[0] and "1 is a receiver gather" in said[0] and
+          "Files window" in said[0], said[0]
+        doAssert f.markNames("missing.row ").len == 0 and
+          f.markNames("missing.stat ").len == 0, "figures for a mix"
+    step("a folder of shot and receiver gathers is not calculated, and says so", runMixed,
+      mixedSaid)
 
     var at = 0
     var started = false

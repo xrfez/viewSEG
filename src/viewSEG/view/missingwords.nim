@@ -1,7 +1,7 @@
 ## Words for the Missing traces window and the Reports menu. Drawing lives in
 ## the frontend; this module holds the sentences.
 
-import ../core/[missingjobs, missingreport]
+import ../core/[missingjobs, missingreport, reportside]
 
 const
   MenuTip* = "Stations the survey's relation records call for that a file does not hold: " &
@@ -16,8 +16,6 @@ const
   NoTemplate* = "No relation records (X records) are imported, so there is nothing to " &
     "check against: import a survey with an X or O relation file."
   KilledNote* = "Killed traces count as present: the file is checked as it is on disk."
-  SingleSliceNote* = "This file holds one shot slice of one receiver: the other shots of " &
-    "this receiver are in other files. Run the folder to check the receiver as a whole."
   SignatureNote* = "A vibrator signature file is not checked: it holds no survey stations."
   Continuous* = "This file is a continuous receiver recording; it is not checked."
   NoTemplateRecord* = "No record of the file has a record in the relation records."
@@ -50,13 +48,29 @@ const
   NoneNotChecked* = "Every file was checked."
   ColLine* = "Line"
   ColPoint* = "Point"
+  ColReceiverLine* = "Receiver line"
+  ColReceiverPoint* = "Receiver point"
+  ColSourceLine* = "Source line"
+  ColSourcePoint* = "Source point"
   ColMissing* = "Missing"
   MissingTip* = "The records (of the files) whose relation record calls for this station and " &
     "that do not have it."
   FilterStations* = "Filter by line or point"
   FilterStationsTip* = "Show only the stations whose line or point holds every word typed here."
+
+const
   ReceiversOption* = "Receiver stations (shot gathers)"
   SourcesOption* = "Source stations (receiver gathers)"
+
+func columnNames*(side: StationSide): array[3, string] =
+  ## The table's headers: the stations are the receivers missing from shot gathers, or the
+  ## shots (source stations) missing from receiver gathers.
+  if side == ssReceivers: [ColReceiverLine, ColReceiverPoint, ColMissing]
+  else: [ColSourceLine, ColSourcePoint, ColMissing]
+
+func fileNotChecked*(why: string): string =
+  ## What the File tab says of a file that is not checked.
+  if why == ContinuousWhy: Continuous else: "This file is not checked: " & why & "."
 
 func stationNoun*(side: StationSide): string =
   ## "Receiver" for a shot gather's stations, "Source" for a receiver gather's.
