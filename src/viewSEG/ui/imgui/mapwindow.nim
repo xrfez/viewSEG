@@ -46,9 +46,9 @@
 ## takes out; Shift + click selects the stations along the line from the
 ## point clicked last.
 
-import std/[math, strutils]
+import std/[bitops, math, strutils]
 import imguin/cimgui
-import ../../core/[explain, geometry, join, mapthin, noisearea, state]
+import ../../core/[explain, foldgrid, foldjobs, geometry, join, mapthin, noisearea, state]
 import ../../gpu/mappoints
 import ../../view/[maplayers, theme]
 import explainmenu, focus, icons, marks, style
@@ -115,14 +115,14 @@ type
     started: bool
     cur: MapView
       ## the view the map shows, with the plot's size last frame
-    jumps: int             ## the map's `jumps` last followed
+    jumps: int                                 ## the map's `jumps` last followed
     drag: MapDrag
-    ruler: MapRuler        ## on or off: the button, and the line when one is drawn
+    ruler: MapRuler                            ## on or off: the button, and the line when one is drawn
     gesture: MapGesture
     gestureAt: float64
     focus: FocusClicks
-    hovered: seq[PointRef] ## under the pointer: the nearest point, and others on its spot
-    info: seq[PointInfo]   ## what the map says of them
+    hovered: seq[PointRef]                     ## under the pointer: the nearest point, and others on its spot
+    info: seq[PointInfo]                       ## what the map says of them
     infoFor: tuple[survey, shots, files, marks: int]
       ## what `info` was made from, besides the points
     sentHover: seq[PointRef]
@@ -194,6 +194,15 @@ type
       ## the plot's area last frame, framebuffer pixels
     wanted: MapView ## a view to give the map next frame (`show`)
     want: bool
+    fold: FoldTracker
+      ## the pre-plot fold layer's job and results (`core/foldjobs`)
+    foldGrid: FoldGrid ## `fold.shown` with the levels made for it
+    foldFor: int ## the `fold.revision` `foldGrid` is of
+    foldBin: int ## the fold bin under the pointer; -1 for none
+    foldLabel: string ## the layer's line in the Layers popover, as drawn last
+    foldBufs: tuple[along, across: array[24, char]]
+    foldBufsFor: tuple[along, across: float64] ## the settings the text boxes show
+    foldBufsSet: bool
 
   MapOutput* = object
     ## What the map window asks for.
@@ -268,6 +277,18 @@ func mapPointsDrawn*(mu: MapUi): int {.inline.} = mu.renderer.pointsDrawn
 
 func mapLayersUploaded*(mu: MapUi): int {.inline.} = mu.renderer.layersUploaded
   ## How many layers' points went to the GPU (for tests: a hover uploads none).
+
+func foldLayerLine*(mu: MapUi): lent string {.inline.} = mu.foldLabel
+  ## The pre-plot fold layer's line in the Layers popover as drawn last (for tests).
+
+func foldStatus*(mu: MapUi): FoldStatus {.inline.} = mu.fold.status
+  ## Where the pre-plot fold layer stands (for tests).
+
+func foldResult*(mu: MapUi): ref FoldResult {.inline.} = mu.fold.shown
+  ## The fold map the layer draws; nil for none (for tests).
+
+func foldBlocksDrawn*(mu: MapUi): int {.inline.} = mu.renderer.foldDrawn
+  ## The blocks of bins the last image's fold layer drew (for tests).
 
 func activeMarked*(mu: MapUi): lent array[PointRole, seq[PointRef]] {.inline.} = mu.active
   ## The points of the gather on show the map marks (for tests).
@@ -513,6 +534,105 @@ proc drawShotsRow(st: AppState; marks: var Marks; res: var MapOutput) =
         " not answer: tried again in a minute.")
     igUnindent(0)
 
+const foldTip = "Off by default. The pre-plot fold: how many source-receiver pairs the " &
+  "relation (X) records plan for each bin of a grid laid on the survey's midpoints, as a " &
+  "heat map under the points. The grid follows the receiver lines; the bin is half the " &
+  "receiver interval by half the source interval unless you give one below."
+
+func foldWords(mu: MapUi; st: AppState): string =
+  ## The layer's line in the Layers popover.
+  const name = "Pre-plot fold"
+  if not st.settings.map.foldLayer: return name
+  case mu.fold.status
+  of fmComputing: name & ": computing..."
+  of fmReady:
+    let r = mu.fold.shown
+    name & ": max fold " & $r.maxFold
+  else: name
+
+proc binBox(id: string; buf: var array[24, char]; hint: string): bool =
+  ## A text box for a bin size: true once the user has finished typing into it.
+  igSetNextItemWidth(round(igCalcTextSize("00000000", nil, false, -1).x +
+    2 * igGetStyle().FramePadding.x))
+  discard igInputTextWithHint(id.cstring, hint.cstring, cast[cstring](addr buf[0]),
+    csize_t(buf.len), 0, nil, nil)
+  igIsItemDeactivatedAfterEdit()
+
+func boxText(v: float64): string = (if v > 0: $v else: "")
+
+proc fillBox(buf: var array[24, char]; text: string) =
+  for i in 0 ..< buf.len: buf[i] = '\0'
+  for i in 0 ..< min(text.len, buf.len - 1): buf[i] = text[i]
+
+proc boxValue(buf: array[24, char]): float64 =
+  var text = ""
+  for c in buf:
+    if c == '\0': break
+    text.add c
+  text = text.strip
+  if text.len == 0: return 0
+  try: result = parseFloat(text)
+  except ValueError: result = -1
+  if not (result > 0 and result < 1e12): result = -1
+
+proc drawFoldRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput) =
+  ## The pre-plot fold's tick, under the Preplot: dim with the reason when the
+  ## survey cannot give one; its bin sizes and its totals under it once ticked.
+  let reason = st.survey.foldReason
+  var s = st.settings
+  var on = s.map.foldLayer
+  mu.foldLabel = mu.foldWords(st)
+  igBeginDisabled(reason.len > 0)
+  if igCheckbox((mu.foldLabel & "###foldlayer").cstring, addr on):
+    s.map.foldLayer = on
+    res.commands.add Command(kind: ckSettings, settings: s)
+  igEndDisabled()
+  marks.mark("map.fold")
+  tip(if reason.len > 0: reason else: foldTip)
+  if reason.len > 0:
+    igIndent(0)
+    wrapped(reason)
+    igUnindent(0)
+  elif on:
+    igIndent(0)
+    if not mu.foldBufsSet or mu.foldBufsFor != (s.map.foldAlong, s.map.foldAcross):
+      mu.foldBufs.along.fillBox(boxText(s.map.foldAlong))
+      mu.foldBufs.across.fillBox(boxText(s.map.foldAcross))
+      mu.foldBufsFor = (s.map.foldAlong, s.map.foldAcross)
+      mu.foldBufsSet = true
+    let unit = st.unitsOf
+    var changed = false
+    igTextUnformatted("Bin along the receiver lines:", nil)
+    igSameLine(0, -1)
+    if binBox("##foldalong", mu.foldBufs.along, "natural"):
+      let v = boxValue(mu.foldBufs.along)
+      if v >= 0: (s.map.foldAlong, changed) = (v, true)
+      else: mu.foldBufsSet = false
+    marks.mark("map.fold along")
+    igSameLine(0, -1)
+    igTextUnformatted(unit.cstring, nil)
+    igTextUnformatted("Bin across them:", nil)
+    igSameLine(0, -1)
+    if binBox("##foldacross", mu.foldBufs.across, "natural"):
+      let v = boxValue(mu.foldBufs.across)
+      if v >= 0: (s.map.foldAcross, changed) = (v, true)
+      else: mu.foldBufsSet = false
+    marks.mark("map.fold across")
+    igSameLine(0, -1)
+    igTextUnformatted(unit.cstring, nil)
+    if changed: res.commands.add Command(kind: ckSettings, settings: s)
+    case mu.fold.status
+    of fmReady:
+      let r = mu.fold.shown
+      wrapped($r.binned & " pairs in " & $r.inlines & " x " & $r.crosslines &
+        " bins, max fold " & $r.maxFold & "; " & $r.outside & " pairs outside the grid, " &
+        $r.noCoordinates & " without coordinates. Bins " & $r.binAlong & " x " &
+        $r.binAcross & " " & unit & ".")
+      marks.mark("map.fold totals")
+    of fmFailed: wrapped(mu.fold.reason)
+    else: discard
+    igUnindent(0)
+
 const filterTips: array[MapFilter, string] = [
   "Traces the file marks dead in their headers",
   "Traces whose samples could not be decoded",
@@ -600,7 +720,7 @@ proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; mar
       tip("Select these " & $h.traces.len & " traces in the plot")
     igPopID()
 
-proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
+proc drawLayers(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
     res: var MapOutput; hits: array[MapFilter, FilterHits]; t: Theme) =
   ## The layers popover, in groups: the Preplot (the survey files), then the
   ## Recorded (the open files' own positions), each with its own toggle and
@@ -636,7 +756,9 @@ proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
       let none = if g == mgPreplot: "No survey file loaded (open SPS or SEG P1 files)"
                  else: "No seismic file whose traces carry positions is open"
       igTextDisabled("%s", none.cstring)
-    if g == mgPreplot: drawTemplateRow(st, marks, res)
+    if g == mgPreplot:
+      drawTemplateRow(st, marks, res)
+      mu.drawFoldRow(st, marks, res)
     else: drawShotsRow(st, marks, res)
     igUnindent(0)
   var shotLogs = false # a log with positions only: no entry, not even an empty one, else
@@ -676,7 +798,8 @@ proc layersWidth(layers: openArray[MapLayerView]; words: openArray[string]): flo
     "Shots in the folder: 10000 of 10000 sources have a file",
     "Missing from the template  (not checked)  Select",
     "No survey file loaded (open SPS or SEG P1 files)",
-    "No seismic file whose traces carry positions is open"]
+    "No seismic file whose traces carry positions is open",
+    "Pre-plot fold: max fold 99999", "Bin along the receiver lines:  natural  US survey ft"]
   for l in layers: lines.add l.name & "  (" & $l.points & ")"
   max(widest(lines), min(widest(words), NoiseWrapEm * igGetFontSize())) +
     igGetStyle().IndentSpacing
@@ -727,7 +850,7 @@ proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; mar
     tip("Where the map describes the point under the pointer, and the unit of its lengths")
   placePopover(under[0], layersWidth(layers, noiseLines(st)))
   if igBeginPopup(layersId, 0):
-    drawLayers(st, layers, marks, res, mu.hits, t)
+    mu.drawLayers(st, layers, marks, res, mu.hits, t)
     igEndPopup()
   placePopover(under[1], widest(["In US survey feet (ftUS: 1200/3937 m)",
     "As the survey gives them (US survey feet, ftUS)", "In a strip along the map's bottom"]))
@@ -1339,6 +1462,62 @@ func markStyle(t: Theme; f: MapFilter; ink: MapInk; scale: float32): MapStyle =
     size: MarkSizes[family] * scale, edgeWidth: MarkStroke * scale, halo: MarkHalo * scale,
     glyph: Glyphs[FamilyShapes[family]], symbol: GlyphSymbol(ord(symbol)))
 
+proc foldFrame(mu: var MapUi; st: AppState; area: Bounds; perPixel: float64): FoldDraw =
+  ## What the fold layer draws for map area `area` at `perPixel` map units a
+  ## framebuffer pixel: the level whose blocks are wide enough, uploaded when it
+  ## changed, and the block rows the area touches.
+  let r = mu.fold.shown
+  if r.isNil or mu.fold.status != fmReady or not st.settings.map.foldLayer or
+      mgPreplot in st.settings.map.hiddenGroups or r.counts.len == 0:
+    return
+  if mu.foldGrid.res != r or mu.foldFor != mu.fold.revision:
+    mu.foldGrid = initFoldGrid(r)
+    mu.foldFor = mu.fold.revision
+  let factor = mu.foldGrid.factorFor(perPixel)
+  let rows = r[].visibleRows(factor, area)
+  let key = mu.fold.revision * 64 + factor.countTrailingZeroBits + 1
+  if mu.renderer.foldKey != key:
+    mu.renderer.setFoldCells(key, mu.foldGrid.level(factor).colours)
+  let l = mu.foldGrid.level(factor)
+  FoldDraw(on: rows.a <= rows.b, key: key, x0: r.x0, y0: r.y0, azimuthDeg: r.azimuthDeg,
+    binAlong: r.binAlong, binAcross: r.binAcross, crosslines: r.crosslines,
+    inlines: r.inlines, factor: factor, cols: l.cols, rows: l.rows, firstRow: rows.a,
+    rowCount: max(0, rows.b - rows.a + 1))
+
+proc drawFoldLegend(mu: MapUi; pos, size: ImVec2_c; ink: MapInk; marks: var Marks) =
+  ## The fold's colour bar in the plot's bottom-right corner: 0 to the highest fold.
+  let r = mu.fold.shown
+  if r.isNil or mu.fold.status != fmReady or mu.renderer.foldKey == 0: return
+  let dl = igGetWindowDrawList()
+  let title = "Pre-plot fold"
+  let top = "0"
+  let high = $r.maxFold
+  let ts = igCalcTextSize(title.cstring, nil, false, -1)
+  let hs = igCalcTextSize(high.cstring, nil, false, -1)
+  let pad = 6'f32
+  let barW = 110'f32
+  let barH = 10'f32
+  let w = max(barW, ts.x) + 2 * pad
+  let hi = ImVec2_c(x: pos.x + size.x - 10, y: pos.y + size.y - 10)
+  let lo = ImVec2_c(x: hi.x - w, y: hi.y - ts.y - barH - hs.y - 2 * pad - 2)
+  ImDrawList_AddRectFilled(dl, lo, hi, u32(withAlpha(ink.background, 210)), 3, 0)
+  let c = u32(ink.outline)
+  ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + pad, y: lo.y + pad), c, title.cstring, nil)
+  let y0 = lo.y + pad + ts.y + 2
+  let steps = 32
+  for k in 0 ..< steps:
+    let a = lo.x + pad + barW * float32(k) / float32(steps)
+    let b = lo.x + pad + barW * float32(k + 1) / float32(steps)
+    let col = legendColour((float64(k) + 0.5) / float64(steps))
+    ImDrawList_AddRectFilled(dl, ImVec2_c(x: a, y: y0), ImVec2_c(x: b + 0.5, y: y0 + barH),
+      u32(col), 0, 0)
+  ImDrawList_AddRect(dl, ImVec2_c(x: lo.x + pad, y: y0), ImVec2_c(x: lo.x + pad + barW,
+    y: y0 + barH), c, 0, 1, 0)
+  ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + pad, y: y0 + barH + 1), c, top.cstring, nil)
+  ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + pad + barW - hs.x, y: y0 + barH + 1), c,
+    high.cstring, nil)
+  marks.markRect("map.fold legend", lo, hi)
+
 proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink: MapInk;
     t: Theme; marks: var Marks; res: var MapOutput; ask: MapAskKind) =
   ## The map's plot and the mouse and keys over it.
@@ -1445,6 +1624,7 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
             elif l.shape == msDiamond:
               MapStyle(colour: l.colour, size: max(disc, DiamondMin) * s, shape: skDiamond)
             else: MapStyle(colour: l.colour, size: disc * s))
+      frame.fold = mu.foldFrame(st, frame.area, (limits.X.Max - limits.X.Min) / float64(columns))
       let tex = mu.renderer.render(frame, st.survey)
       if tex != 0:
         ImPlot_PlotImage("##points", ImTextureRef_c(internal_TexID: ImTextureID(tex)),
@@ -1479,13 +1659,18 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
     # the menu.
     var under: seq[PointRef] = @[]
     var near: seq[(MapFilter, int)] = @[] # what the marks under the pointer mark
+    var foldBin = -1
+    let foldShown = not mu.fold.shown.isNil and mu.fold.status == fmReady and
+      st.settings.map.foldLayer and mgPreplot notin st.settings.map.hiddenGroups
     if held:
       under = mu.menuPoints
       near = mu.near
+      foldBin = mu.foldBin
       res.cursor = mu.menuCursor
     elif hovered and mu.drag.kind in {mdNone, mdMeasure}:
       let m = igGetIO_Nil().MousePos
       let at = view.mapAt(plot, v2(m))
+      if foldShown: foldBin = mu.fold.shown[].binAt(at.x, at.y)
       res.cursor = coordinatesText(at, view.perPixel, units)
       under = st.pointsAt(at, float64(pickRadius) * view.width / float64(max(size.x, 1)))
       # survey units of half a pixel at 100 %
@@ -1496,7 +1681,10 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       res.cursor = coordinatesText(view.mapAt(plot, v2(igGetIO_Nil().MousePos)),
         view.perPixel, units)
     let infoFor = (st.survey.revision, st.shots.revision, st.sessions.len, mu.marksRev)
-    if under != mu.hovered or infoFor != mu.infoFor or near != mu.near:
+    if foldBin >= 0 and not foldShown: foldBin = -1
+    if under != mu.hovered or infoFor != mu.infoFor or near != mu.near or
+        foldBin != mu.foldBin or (foldShown and mu.foldFor != mu.fold.revision):
+      mu.foldBin = foldBin
       # (what it says may have changed too)
       mu.hovered = under
       mu.infoFor = infoFor
@@ -1514,6 +1702,9 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       if things > named:
         if mu.info.len == 0: mu.info.add PointInfo(title: "Marks here")
         mu.info[0].lines.add markedHereText(near)
+      if foldBin >= 0:
+        if mu.info.len == 0: mu.info.add PointInfo(title: "Pre-plot fold")
+        mu.info[0].lines.add mu.fold.shown[].foldText(foldBin)
     mu.sendHover(res)
     # A click on a source shows its record (on a receiver in a file of
     # receiver gathers, its gather; on a source of a receiver gather, the
@@ -1540,6 +1731,7 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       mu.drawSpreads(view, plot, ink, t, marks)
       mu.drawRuler(view, plot, lengths, ink, t, marks)
       mu.drawScaleBar(view, pos, size, fb.x, lengths, ink, t, marks)
+      mu.drawFoldLegend(pos, size, ink, marks)
     if (hovered or held) and mu.info.len > 0 and st.settings.map.info == miPopup and
         mu.drag.kind == mdNone:
       # (beside the menu, not under it)
@@ -1600,6 +1792,10 @@ proc drawMap*(mu: var MapUi; id: string; st: AppState; t: Theme; marks: var Mark
     igSetScrollX_Float(0)
     igSetScrollY_Float(0)
     marks.markWindow("map")
+    let map = st.settings.map
+    mu.fold.follow(st.jobs, st.survey, map.foldLayer, (if map.foldAlong >
+        0: map.foldAlong else: NaN),
+      (if map.foldAcross > 0: map.foldAcross else: NaN))
     let ink = mapInk(t, st.settings.plot.display.colours, st.settings.plot.display.custom)
     let layers = mapLayers(st, ink)
     var points = 0

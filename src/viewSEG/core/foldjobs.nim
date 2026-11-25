@@ -48,15 +48,15 @@ type
   FoldResult* = object
     ## A fold map as the map window draws it.
     ok*: bool
-    reason*: string ## when not `ok`: a sentence for the user
+    reason*: string                        ## when not `ok`: a sentence for the user
     kind*: FoldKind
-    x0*, y0*: float64 ## the centre of the first bin (inline 0, crossline 0)
-    azimuthDeg*: float64 ## degrees clockwise from north: the crossline axis
+    x0*, y0*: float64                      ## the centre of the first bin (inline 0, crossline 0)
+    azimuthDeg*: float64                   ## degrees clockwise from north: the crossline axis
     binAlong*, binAcross*: float64
       ## bin sizes along the azimuth (between crosslines) and across it (between inlines)
     firstInline*, firstCrossline*: float64
     inlines*, crosslines*: int
-    counts*: seq[int32] ## `inlines * crosslines`, bin = inline * crosslines + crossline
+    counts*: seq[int32]                    ## `inlines * crosslines`, bin = inline * crosslines + crossline
     maxFold*: int32
     binned*, outside*, noCoordinates*: int ## pairs
 
@@ -69,24 +69,24 @@ type
     xs*, ys*: seq[float64]
 
   FoldInputs* = object
-    key*: string ## names the survey files and the bin sizes
+    key*: string                   ## names the survey files and the bin sizes
     relations*: ref SurveyGeometry ## kept alive by the caller while the job runs
     stations*: array[PointRole, FoldStations]
     binAlong*, binAcross*: float64 ## NaN: the library's natural bin
 
   FoldStatus* = enum
-    fsOff        ## the layer is off
-    fsImpossible ## the survey cannot give one: `reason` says why
-    fsComputing
-    fsReady
-    fsFailed     ## the job ended without a map: `reason` says why
+    fmOff        ## the layer is off
+    fmImpossible ## the survey cannot give one: `reason` says why
+    fmComputing
+    fmReady
+    fmFailed     ## the job ended without a map: `reason` says why
 
   FoldTracker* = object
     ## Starts, follows and caches the layer's job.
     status*: FoldStatus
     reason*: string
-    shown*: ref FoldResult ## the map to draw; nil for none
-    revision*: int ## bumped whenever `shown` changes
+    shown*: ref FoldResult   ## the map to draw; nil for none
+    revision*: int           ## bumped whenever `shown` changes
     job: JobId
     sink: FoldSink
     hold: ref SurveyGeometry ## the relations the job reads
@@ -268,12 +268,12 @@ proc poll(t: var FoldTracker; jobs: Jobs; wantKey: string) =
         if r.ok: t.remember(key, r)
         if key == wantKey:
           if r.ok:
-            t.status = fsReady
+            t.status = fmReady
             t.show(r)
           else:
-            (t.status, t.reason) = (fsFailed, r.reason)
+            (t.status, t.reason) = (fmFailed, r.reason)
       elif state == jsFailed and key == wantKey:
-        (t.status, t.reason) = (fsFailed, "The fold could not be counted: " & info.get.error & ".")
+        (t.status, t.reason) = (fmFailed, "The fold could not be counted: " & info.get.error & ".")
       t.sink = nil
 
 proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; on: bool; along, across: float64) =
@@ -287,7 +287,7 @@ proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; on: bool; along, across:
   t.seenSet = true
   if t.retired.len > 0: t.release(jobs)
   if not changed:
-    if t.status == fsComputing: t.poll(jobs, t.jobKey)
+    if t.status == fmComputing: t.poll(jobs, t.jobKey)
   else:
     let sig = s.surveySignature
     if sig != t.cacheSig:
@@ -296,11 +296,11 @@ proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; on: bool; along, across:
     let reason = if on: s.foldReason else: ""
     if not on:
       t.retire(jobs)
-      t.status = fsOff
+      t.status = fmOff
       t.reason = ""
       if not t.shown.isNil: t.show(nil)
     elif reason.len > 0:
-      (t.status, t.reason) = (fsImpossible, reason)
+      (t.status, t.reason) = (fmImpossible, reason)
       if not t.shown.isNil: t.show(nil)
     else:
       let key = foldKey(s, along, across)
@@ -309,11 +309,11 @@ proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; on: bool; along, across:
         if k == key: held = r
       if not held.isNil:
         t.retire(jobs)
-        t.status = fsReady
+        t.status = fmReady
         t.reason = ""
         if t.shown != held: t.show(held)
       elif t.job != NoJob and t.jobKey == key:
-        t.status = fsComputing
+        t.status = fmComputing
       else:
         t.retire(jobs)
         let inp = foldInputs(s, along, across)
@@ -321,7 +321,7 @@ proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; on: bool; along, across:
         t.hold = inp.relations
         t.jobKey = key
         t.job = jobs.submit(foldSpec(), foldWork(inp, t.sink))
-        t.status = fsComputing
+        t.status = fmComputing
         t.reason = ""
         if not t.shown.isNil: t.show(nil)
-  if t.status == fsComputing and t.job != NoJob: t.poll(jobs, t.jobKey)
+  if t.status == fmComputing and t.job != NoJob: t.poll(jobs, t.jobKey)

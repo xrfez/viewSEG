@@ -58,7 +58,8 @@ proc everyFieldSet(): Settings =
     files: FilesView(followLatest: true, prepareNext: false),
     map: MapOptions(info: miStrip, lengths: dlUsFeet, hiddenGroups: {mgRecorded},
       templateBox: true, spreadTemplate: TemplateSpec(shape: tsBox, lines: 12, channels: 240,
-      inlineHalf: 2500.5, crosslineHalf: 750), folderShots: false,
+      inlineHalf: 2500.5, crosslineHalf: 750), folderShots: false, foldLayer: true,
+      foldAlong: 25.5, foldAcross: 12.25,
       filters: {mfNoisy, mfClipped, mfMissing, mfSpreadDiffers}),
     join: JoinOptions(trailingDigits: true, multiComponent: true, coordinates: hcReplace,
       recordMatch: rmFieldRecord, traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
@@ -153,7 +154,7 @@ proc main*() =
     doAssert s.files.prepareNext, "preparing the next file is on by default"
     doAssert s.map.info == miPopup and s.map.lengths == dlSurvey and s.map.hiddenGroups == {} and
       not s.map.templateBox and s.map.spreadTemplate == TemplateSpec() and s.map.folderShots and
-      s.map.filters == {},
+      s.map.filters == {} and not s.map.foldLayer and s.map.foldAlong == 0,
       "the map's settings take their defaults"
     doAssert s.join == JoinOptions(), "the join's options take their defaults"
     doAssert s.headers == HeadersView(), "the Headers window's settings take their defaults"

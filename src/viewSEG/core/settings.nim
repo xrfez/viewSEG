@@ -131,6 +131,12 @@ type
       ## shot under the pointer is drawn (off by default)
     spreadTemplate*: TemplateSpec
       ## what planned spreads are generated from when no relation file is loaded
+    foldLayer*: bool
+      ## the pre-plot fold of the survey's X records is drawn as a heat map under
+      ## the points (off by default)
+    foldAlong*, foldAcross*: float64
+      ## its bin sizes along the receiver lines and across them, in the survey's
+      ## unit; 0: the natural bin (half the receiver interval, half the source interval)
     folderShots*: bool = true
       ## the survey's sources whose record is in a file of the folder listed are marked
     filters*: set[MapFilter]

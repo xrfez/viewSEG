@@ -31,7 +31,7 @@ proc finish(t: var FoldTracker; st: var AppState; on: bool; along = NaN; across 
   ## Follows until the tracker is ready or has said why not.
   t.follow(st.jobs, st.survey, on, along, across)
   waitUntil((t.follow(st.jobs, st.survey, on, along, across);
-    t.status != fsComputing))
+    t.status != fmComputing))
 
 proc main*() =
   block counts:
@@ -39,7 +39,7 @@ proc main*() =
     doAssert st.loaded(Land & ".s", Land & ".r", Land & ".x")
     doAssert st.survey.foldReason == ""
     var t: FoldTracker
-    doAssert t.finish(st, true) and t.status == fsReady, t.reason
+    doAssert t.finish(st, true) and t.status == fmReady, t.reason
     let r = t.shown
     doAssert not r.isNil and r.ok and r.kind == fkPreplot
     var g = initSurveyGeometry()
@@ -78,7 +78,7 @@ proc main*() =
     doAssert st.survey.foldReason == NoRelations
     var t: FoldTracker
     t.follow(st.jobs, st.survey, true, NaN, NaN)
-    doAssert t.status == fsImpossible and t.reason == NoRelations and t.shown.isNil
+    doAssert t.status == fmImpossible and t.reason == NoRelations and t.shown.isNil
     doAssert st.jobs.active.len == 0
 
   block budget:
@@ -86,7 +86,7 @@ proc main*() =
     doAssert st.loaded(Land & ".s", Land & ".r", Land & ".x")
     var t: FoldTracker
     doAssert t.finish(st, true, 0.01, 0.01)
-    doAssert t.status == fsFailed and "too many bins" in t.reason, t.reason
+    doAssert t.status == fmFailed and "too many bins" in t.reason, t.reason
     doAssert t.shown.isNil
 
   block cache:
@@ -95,18 +95,18 @@ proc main*() =
     var t: FoldTracker
     doAssert t.finish(st, true)
     let first = t.shown
-    doAssert t.finish(st, true, 50.0, 50.0) and t.status == fsReady
+    doAssert t.finish(st, true, 50.0, 50.0) and t.status == fmReady
     let second = t.shown
     doAssert second != first and second.binAlong != first.binAlong,
       "a bin size chosen again found the first size's map for the second"
     let rev = t.revision
     t.follow(st.jobs, st.survey, true, NaN, NaN) # back to the natural bin: from the cache
-    doAssert t.status == fsReady and t.shown == first and st.jobs.active.len == 0,
+    doAssert t.status == fmReady and t.shown == first and st.jobs.active.len == 0,
       "a bin size chosen again starts no job"
     doAssert t.revision > rev
     # off: nothing drawn, the results kept
     t.follow(st.jobs, st.survey, false, NaN, NaN)
-    doAssert t.status == fsOff and t.shown.isNil
+    doAssert t.status == fmOff and t.shown.isNil
     t.follow(st.jobs, st.survey, true, NaN, NaN)
     doAssert t.shown == first, "turned on again: the kept map"
     # a new import drops them
@@ -114,7 +114,7 @@ proc main*() =
     st.apply Command(kind: ckClearSurvey)
     doAssert st.settle(st.survey.layers.len == 0 and st.jobs.active.len == 0)
     t.follow(st.jobs, st.survey, true, NaN, NaN)
-    doAssert t.shown.isNil and t.status == fsImpossible,
+    doAssert t.shown.isNil and t.status == fmImpossible,
       "dropped when the survey is cleared"
     doAssert st.loaded(Land & ".s", Land & ".r", Land & ".x")
     doAssert t.finish(st, true) and t.shown != first and t.shown != nil,
