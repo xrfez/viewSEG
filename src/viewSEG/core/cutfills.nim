@@ -25,6 +25,12 @@
 ## built from keys the channel set descriptor has no field for any filter or gain value.
 ## A value that rounds to 0 or does not fit 16 bits is left out and said.
 ##
+## A filter slope of 0 says the filter is out: neither its frequency nor its slope is
+## written. A slope the source does not state (a Rev 2 channel set descriptor whose slope
+## digits are all F or not decimal) says nothing of the filter: a stated frequency is
+## written, the slope stays unset, and the result says so once. A Rev 3 channel set holds the
+## slope as a float with no "not set" value, so there 0 and absent both mean out.
+##
 ## Position: the keys writer always writes the coordinate units as length (1), whatever the
 ## source had; the units are one field of a trace, which the shot's coordinates share, so
 ## they are not copied from a source in degrees or seconds of arc.
@@ -54,6 +60,8 @@ type
     fkInitialGain = "initial gain"
     fkSensor = "sensor type"
     fkSensorOther = "sensor type without a SEG-Y code"
+    fkSlopeUnstated = "filter slope not stated"
+      ## a flag, not a value: a filter's frequency is stated and its slope is not
 
   Facts* = array[FactKind, float64] ## NaN: the source says nothing
 
@@ -66,6 +74,7 @@ type
       ## keys does not set
     noFit*: set[FactKind] ## the output has the field but not for the value
     rounded*: bool ## a value was rounded to the whole number the field holds
+    slopeUnstated*: bool ## a filter's frequency was taken and its slope is not stated
 
   TraceFill* = object
     ## What one output trace takes: header overrides, and the trace identification code
@@ -78,7 +87,7 @@ const
     "trace.aliasFilterFreq", "trace.aliasFilterSlope", "trace.highCutFreq",
     "trace.highCutSlope", "trace.notchFilterFreq", "trace.notchFilterSlope", "", "", "",
     "trace.gainType", "", "trace.instrumentGainConstant", "trace.instrumentInitialGain", "",
-    ""]
+    "", ""]
   FilterGain* = {fkLowCutFreq .. fkInitialGain} ## the facts that are filters or gain
 
 func initFacts*(): Facts =
@@ -122,6 +131,7 @@ proc segdFacts(file: SeismicFile; trace: int; result: var Facts) =
   if st notin 0 ..< rec.scanTypes.len or cs < 0: return
   template scan: untyped = rec.scanTypes[st]
   var gain = 0
+  var unstated: set[FactKind] ## the slopes the source leaves unset, not 0
   case scan.layout
   of slRev2:
     if cs < scan.descriptors.len:
@@ -130,6 +140,9 @@ proc segdFacts(file: SeismicFile; trace: int; result: var Facts) =
       result.put fkLowCutSlope, float64(d.lowCutSlope)
       result.put fkAliasFreq, float64(d.aliasFilterFreq)
       result.put fkAliasSlope, float64(d.aliasFilterSlope)
+      # the BCD field reads BcdAllF (all F) or BcdInvalid when the slope is not set; 0 is out
+      if d.lowCutSlope < 0: unstated.incl fkLowCutSlope
+      if d.aliasFilterSlope < 0: unstated.incl fkAliasSlope
       result.put fkNotchFreq, float64(d.notch1Freq) / 10
       if d.notch2Freq > 0 or d.notch3Freq > 0: result[fkExtraNotches] = 1
       gain = int(d.gainControl)
@@ -140,14 +153,19 @@ proc segdFacts(file: SeismicFile; trace: int; result: var Facts) =
       result.put fkLowCutSlope, float64(d.lowCutFilterSlope)
       result.put fkAliasFreq, float64(d.aliasFilterFreq)
       result.put fkAliasSlope, float64(d.aliasFilterSlope)
+      # a float has no "not set" value of its own: 0, a negative or a NaN slope all read as
+      # a filter that is out, as before
       result.put fkNotchFreq, float64(d.notch1Freq)
       if d.notch2Freq > 0 or d.notch3Freq > 0: result[fkExtraNotches] = 1
       result.put fkFilterPhase, float64(d.filterPhase)
       result.put fkFilterDelay, float64(d.filterDelay)
       gain = int(d.channelGainControl)
-  # a slope of 0 says the filter is out: its frequency is not a setting then
+  # a slope of 0 says the filter is out: its frequency is not a setting then; a slope that
+  # is not stated says nothing of it, so a stated frequency stays
   for (freq, slope) in [(fkLowCutFreq, fkLowCutSlope), (fkAliasFreq, fkAliasSlope)]:
-    if not result.has(slope): result[freq] = NaN
+    if not result.has(slope):
+      if slope in unstated and result.has(freq): result[fkSlopeUnstated] = 1
+      else: result[freq] = NaN
   if gain > 0:
     let t = gainTypeOfSegd(gain)
     if t > 0: result[fkGainType] = float64(t) else: result[fkGainMethod] = float64(gain)
@@ -179,7 +197,9 @@ proc segyFill*(facts: Facts; notes: var FillNotes): TraceFill =
   ## The overrides and code that write `facts` into a SEG-Y output trace; `notes` takes
   ## note of what was written and what has no field or no room.
   for k in FactKind:
-    if facts.has(k):
+    if k == fkSlopeUnstated:
+      if facts.has(k): notes.slopeUnstated = true
+    elif facts.has(k):
       let v = facts[k]
       if k == fkSensor:
         result.traceCode = int16(v)
@@ -197,8 +217,9 @@ proc keysOnly*(facts: Facts; notes: var FillNotes) =
   ## Notes the facts of a source whose output is built from keys alone (SEG-D): the keys
   ## carry the sensor type, nothing else of these. The channel set has fields for most, which
   ## the writer does not set; the rest have none.
+  if facts.has(fkSlopeUnstated): notes.slopeUnstated = true
   for k in FactKind:
-    if facts.has(k) and k notin {fkSensor, fkSensorOther}:
+    if facts.has(k) and k notin {fkSensor, fkSensorOther, fkSlopeUnstated}:
       if k in ChannelSetFacts: notes.notSet.incl k else: notes.noField.incl k
 
 func names(s: set[FactKind]): string =
@@ -213,6 +234,9 @@ func fillLines*(notes: FillNotes; output: string): seq[string] =
     result.add "Filters and gain were taken from the recording's own headers."
   if fkSensor in notes.written:
     result.add "The sensor type of each trace was taken from the recording's own headers."
+  if notes.slopeUnstated:
+    result.add "The slope of a filter is not stated in the recording: its frequency was " &
+      "taken and its slope left unset."
   if notes.rounded:
     result.add "Filter and gain values were rounded to the whole numbers the output's fields " &
       "hold."

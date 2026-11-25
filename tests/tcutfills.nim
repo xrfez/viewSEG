@@ -51,7 +51,8 @@ func value(comp, k: int): float32 =
 func shotUs(i: int): int64 =
   sampleUs(FirstSamples[i]) - int64(StartMs * 1000) + 123 * int64(i)
 
-proc makeSegd(path: string; facts: bool; zeroSlope = false; rev1 = false) =
+proc makeSegd(path: string; facts: bool; zeroSlope = false; rev1 = false;
+    unsetSlope = false) =
   ## Rev 2.1, two records (segments 0 to 2, then 3 to 5), one channel set each. With
   ## `facts`: record one has a 3 Hz low-cut of 18 dB/octave, an alias filter of 200 Hz,
   ## 72 dB/octave, a notch at 50.0 Hz and fixed gain; record two 5 Hz, 12, 300 Hz, 96,
@@ -95,6 +96,9 @@ proc makeSegd(path: string; facts: bool; zeroSlope = false; rev1 = false) =
       if zeroSlope:
         d2.aliasFilterSlope = 0
         d2.lowCutSlope = 0
+      if unsetSlope:
+        d2.lowCutSlope = BcdAllF
+        d2.aliasFilterSlope = BcdAllF
       rec.scanTypes[0].descriptors[0] = d2
     var all: seq[SegdTrace] = @[]
     for seg in part * 3 ..< part * 3 + 3:
@@ -201,6 +205,8 @@ const Fields = ["lowCutFreq", "lowCutSlope", "aliasFilterFreq", "aliasFilterSlop
   "highCutFreq", "highCutSlope", "notchFilterFreq", "notchFilterSlope", "gainType",
   "instrumentGainConstant", "instrumentInitialGain"]
 
+proc linesOf(r: Ran): string = r.res.lines.join("|")
+
 proc check(dir: string; jobs: Jobs) =
   # --- a SEG-D source: each shot takes the filters, gain and sensor of its own segment
   let sgd = dir / "rec" / "a.sgd"
@@ -291,12 +297,29 @@ proc check(dir: string; jobs: Jobs) =
   # --- a filter whose slope is 0 is out: neither its frequency nor its slope is written
   let zero = dir / "rec" / "z.sgd"
   makeSegd(zero, facts = true, zeroSlope = true)
-  discard cut(jobs, zero, dir / "out" / "z.sgy", csSegy)
+  let zr = cut(jobs, zero, dir / "out" / "z.sgy", csSegy)
   var z = openSeismic(dir / "out" / "z.sgy", keys = true)
   defer: z.close()
   doAssert z.intField(0, "aliasFilterFreq") == 200 and z.intField(2, "aliasFilterFreq") == 0,
     "alias frequency of a filter that is out: " & $z.intField(2, "aliasFilterFreq")
   doAssert z.intField(2, "lowCutFreq") == 0 and z.intField(2, "notchFilterFreq") == 60
+
+  doAssert "slope of a filter is not stated" notin linesOf(zr), "a slope of 0 is stated"
+
+  # --- a slope the source does not state keeps the stated frequency, leaves the slope unset
+  # and says so once for the job
+  let unset = dir / "rec" / "u.sgd"
+  makeSegd(unset, facts = true, unsetSlope = true)
+  let u = cut(jobs, unset, dir / "out" / "u.sgy", csSegy)
+  var us = openSeismic(dir / "out" / "u.sgy", keys = true)
+  defer: us.close()
+  doAssert us.intField(2, "aliasFilterFreq") == 300 and us.intField(2, "aliasFilterSlope") == 0,
+    "alias of an unstated slope: " & $us.intField(2, "aliasFilterFreq")
+  doAssert us.intField(2, "lowCutFreq") == 5 and us.intField(2, "lowCutSlope") == 0
+  doAssert us.intField(0, "lowCutFreq") == 3 and us.intField(0, "lowCutSlope") == 18
+  doAssert us.intField(0, "aliasFilterSlope") == 72
+  let saidU = u.res.lines.join("|")
+  doAssert saidU.count("slope of a filter is not stated in the recording") == 1, saidU
 
   # --- a trace no segment reaches is dead and says nothing of the recording
   let gapAt = shotsAt([BaseUs - 3 * 86_400_000_000'i64, shotUs(0)])

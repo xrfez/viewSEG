@@ -187,7 +187,9 @@ While it runs, the window says so. When it ends, the window gives the outcome, a
   the options writes none of the channel set's filter and gain settings, because it builds its
   headers from the trace keys, which do not carry them; Messages says so, and for a SEG-D
   recording whose own headers could not be carried it gives that reason first. A filter whose
-  slope is 0 is out, and is not written. The receiver's position is written as
+  slope is 0 is out, and is not written; one whose slope the recording leaves unset (a SEG-D
+  Rev 2 channel set with the slope digits all F) keeps its stated frequency, the slope stays 0,
+  and Messages says once that the slope is not stated. The receiver's position is written as
   before, from the recording or the survey. SEG-Y's textual header gets two lines after the
   writer's own, "SLICED BY viewSEG <version> FROM <recording file name>" and "SHOT LOG <log file
   name>, <n> SHOTS, RECORDS START AT THE SHOT TIME" (with a start other than 0 it reads "FIRST
