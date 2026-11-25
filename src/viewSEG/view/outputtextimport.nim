@@ -51,10 +51,6 @@ func latinToUtf8(s: string): string =
     if c < '\x80': result.add c
     else: result.add Rune(ord(c)).toUTF8
 
-func cutRunes(line: string; width: int): string =
-  ## The first `width` characters of `line`.
-  if line.runeLen <= width: line else: line.substr(0, line.runeOffset(width) - 1)
-
 func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
 
@@ -105,6 +101,40 @@ func rawCards(b: string): TextImport =
     ": cards 1 to " & $MaxTextLines & " were taken in; cards 39 and 40 are written by the " &
     "library.")
 
+type Changes = object
+  ## What making a line fit the template changed, counted over the file.
+  tabs, controls, unholdable, braces, cut: int
+
+func fitLine(line: string; ch: var Changes): string =
+  ## `line` as the template can hold it: tabs and other controls become
+  ## spaces, characters past U+00FF or in U+0080..U+009F become "?", a literal
+  ## brace is written twice (so it stays text), and what passes 80 characters
+  ## as written (`textProblem` counts them so) is cut.
+  var width = 0
+  for r in line.runes:
+    let c = int32(r)
+    let brace = c == int32('{') or c == int32('}')
+    let w = if brace: 2 else: 1
+    if width + w > MaxTextLine:
+      inc ch.cut
+      return
+    inc width, w
+    if c == 9:
+      inc ch.tabs
+      result.add ' '
+    elif c < 0x20 or c == 0x7F:
+      inc ch.controls
+      result.add ' '
+    elif c in 0x80'i32 .. 0x9F or c > 0xFF:
+      inc ch.unholdable
+      result.add '?'
+    elif brace:
+      inc ch.braces
+      result.add char(c)
+      result.add char(c)
+    else:
+      result.add r.toUTF8
+
 func plainLines(b: string): TextImport =
   var text = b
   if text.startsWith("\xEF\xBB\xBF"): text = text.substr(3)
@@ -112,22 +142,30 @@ func plainLines(b: string): TextImport =
   var lines = text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
   while lines.len > 0 and lines[^1].strip.len == 0: lines.setLen(lines.len - 1)
   if lines.len == 0: return TextImport(why: ImportEmpty)
-  var cut = 0
-  for line in lines.mitems:
-    if line.runeLen > MaxTextLine:
-      line = cutRunes(line, MaxTextLine)
-      inc cut
   var dropped = 0
   if lines.len > MaxTextLines:
     dropped = lines.len - MaxTextLines
     lines.setLen(MaxTextLines)
+  var ch = Changes()
+  for line in lines.mitems: line = fitLine(line, ch)
   var parts: seq[string] = @[]
-  if cut > 0:
-    parts.add plural(cut, "line was", "lines were") & " longer than " & $MaxTextLine &
-      " characters and " & (if cut == 1: "was" else: "were") & " cut"
+  if ch.cut > 0:
+    parts.add plural(ch.cut, "line was", "lines were") & " longer than " & $MaxTextLine &
+      " characters and " & (if ch.cut == 1: "was" else: "were") & " cut"
   if dropped > 0:
     parts.add plural(dropped, "line", "lines") & " after line " & $MaxTextLines &
       (if dropped == 1: " was" else: " were") & " dropped"
+  if ch.tabs > 0:
+    parts.add plural(ch.tabs, "tab was", "tabs were") & " made a space"
+  if ch.controls > 0:
+    parts.add plural(ch.controls, "other control character was", "other control characters were") &
+      " made a space"
+  if ch.unholdable > 0:
+    parts.add plural(ch.unholdable, "character the header cannot hold was", "characters the " &
+      "header cannot hold were") & " made a ?"
+  if ch.braces > 0:
+    parts.add plural(ch.braces, "brace was", "braces were") & " written as {{ or }} so " &
+      (if ch.braces == 1: "it stays" else: "they stay") & " text, not tokens"
   let note = if parts.len == 0: plural(lines.len, "line was", "lines were") & " taken in."
     else: capitalizeAscii(parts.join("; ")) & "."
   TextImport(ok: true, text: lines.join("\n"), encoding: teEbcdic, note: note)
@@ -139,5 +177,9 @@ func importHeader*(b: string; size: int64): TextImport =
   if size > ImportLimit: return TextImport(why: ImportTooBig)
   if size == 0 or b.len == 0: return TextImport(why: ImportEmpty)
   if isUtf16(b): return TextImport(why: ImportUtf16)
-  if b.anyIt(isControl(it)): return TextImport(why: ImportNotText)
+  var controls = 0
+  for c in b:
+    if c == '\0': return TextImport(why: ImportNotText)
+    if isControl(c): inc controls
+  if 10 * controls > b.len: return TextImport(why: ImportNotText)
   plainLines(b)

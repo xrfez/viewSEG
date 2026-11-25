@@ -154,6 +154,38 @@ proc main*() =
     for c in g.text:
       doAssert c == '\n' or c >= ' ', "a control stayed in a card"
 
+  block widthIsCharactersNotBytes:
+    let fits = repeat("\xC3\xA9", 80) & "\n"
+    let a = importHeader(fits, fits.len)
+    doAssert a.ok and a.note == "1 line was taken in.", "80 characters counted as bytes: " & a.note
+    doAssert a.text == fits.strip, "a line of 80 accented characters was cut"
+    let wide = repeat("\xC3\xA9", 85) & "\n"
+    let b = importHeader(wide, wide.len)
+    doAssert b.text == repeat("\xC3\xA9", 80), "a long accented line was not cut at 80 characters"
+
+  block plainTextTheTemplateCanHold:
+    # what the template cannot hold is changed at import, each counted in the note
+    let text = "a\tb\tc\nform\ffeed\narrow \xE2\x86\x92 here\nthe {date} and a}b\n" &
+      repeat("{", 50) & "\n"
+    let got = importHeader(text, text.len)
+    doAssert got.ok, got.why
+    let lines = got.text.split('\n')
+    doAssert lines[0] == "a b c", lines[0]
+    doAssert lines[1] == "form feed", lines[1]
+    doAssert lines[2] == "arrow ? here", lines[2]
+    doAssert lines[3] == "the {{date}} and a}}b", lines[3]
+    doAssert lines[4] == repeat("{{", 40), "a brace line was not cut by what it holds"
+    for want in ["2 tabs were made a space", "1 other control character was made a space",
+        "1 character the header cannot hold was made a ?", "braces were written as {{ or }}",
+        "1 line was longer than 80 characters and was cut"]:
+      doAssert want in got.note, want & " not in: " & got.note
+    let t = OutputText(name: "x", lines: lines, encoding: got.encoding)
+    doAssert textProblem(t) == "", textProblem(t)
+    # a literal {date} stays text
+    doAssert "{{date}}" in got.text
+    # a file of controls and NULs is not text
+    doAssert importHeader("\x01\x02\x03\x04\x05 abc", 9).why == ImportNotText
+
   echo "toutputtextimport: ok"
 
 when isMainModule:

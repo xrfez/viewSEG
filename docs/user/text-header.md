@@ -39,9 +39,12 @@ in use (or an empty one).
   ("3 lines were longer than 80 characters and were cut; 5 lines after line 38 were
   dropped."). Lines are not padded: the writer pads each card. From a SEG-Y header, cards 1
   to 38 are taken, with their trailing blanks left off, and the line says which character set
-  was read; the template's character set is not changed. A character the character set
-  cannot hold is a problem, as when typed. A file over 1 MiB that does not start with a SEG-Y
-  text header is refused with a sentence. **Undo import** puts back the lines that were there
+  was read; the template's character set is not changed. From a plain text file, what the
+  template cannot hold is changed and counted in that line: tabs and other control characters
+  become spaces, characters past U+00FF (or U+0080 to U+009F) become "?", and a brace is
+  written as `{{` or `}}` so that it stays text and is not taken for a token. A file over
+  1 MiB that does not start with a SEG-Y text header, a binary file and a UTF-16 file are
+  refused with a sentence. **Undo import** puts back the lines that were there
   before.
 - **Preview** shows the lines filled in for the file the Seismic window shows, or with
   sample values when none is shown (it says which). A problem is shown in the warning colour
