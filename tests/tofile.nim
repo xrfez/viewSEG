@@ -16,8 +16,11 @@
 ## behind a link is not refused".
 
 import std/[os, sequtils, sets, strutils]
+when defined(linux):
+  import std/posix
+  const RlimitFsize = 1.cint # RLIMIT_FSIZE on Linux
 import parseSEG
-import viewSEG/core/[jobs, missingjobs, missingreport, ofile, state]
+import viewSEG/core/[jobs, missingjobs, missingreport, ofile, shotlogsps, state]
 import utils/waiting
 
 const
@@ -233,6 +236,24 @@ proc main*() =
       doAssert not st.oFileRunning and readFile(target) == bytes,
         "the X file was overwritten through a link"
       doAssert "own files" in st.oFileOutcome, st.oFileOutcome
+
+  block full_disk_is_an_error:
+    when defined(linux):
+      # A file size limit stands for a full disk: the write comes up short.
+      let dest = dir / "full.ops"
+      writeFile(dest, "OLD")
+      var old: RLimit
+      doAssert getrlimit(RlimitFsize, old) == 0
+      var small = old
+      small.rlim_cur = 1000
+      let was = signal(SIGXFSZ, SIG_IGN)
+      doAssert setrlimit(RlimitFsize, small) == 0
+      let err = writeBeside(dest, repeat('O', 3000), replace = true)
+      doAssert setrlimit(RlimitFsize, old) == 0
+      discard signal(SIGXFSZ, was)
+      doAssert err.len > 0, "a truncated file was reported as written: '" & err & "'"
+      doAssert readFile(dest) == "OLD", "the target was touched"
+      doAssert toSeq(walkFiles(dir / "full.ops*")) == @[dest], "a temporary file was left"
 
   block the_command:
     let source = dir / "cmd.x"

@@ -386,6 +386,9 @@ proc writeBeside*(path, text: string; replace: bool): string {.raises: [].} =
       flushFile(f)
     finally:
       close(f)
+    # A full disk can fail the flush or the close without a word: the file is short.
+    if fs.getFileSize(tmp) != text.len:
+      raise newException(IOError, "the disk did not take " & path)
     if replace:
       fs.moveFile(tmp, path)
     elif not fs.moveNoReplace(tmp, path):
