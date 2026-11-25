@@ -12,7 +12,8 @@
 ## Seen to fail: with the last O record left out of the file, "not the library's"
 ## (land, by the record count); with the H records left out, "H records differ"; with a cancel not
 ## checked before the write, "a cancelled job wrote the file"; with the
-## refusal left out, "the X file was overwritten".
+## refusal left out, "the X file was overwritten"; with only the names compared, "the file
+## behind a link is not refused".
 
 import std/[os, sequtils, sets, strutils]
 import parseSEG
@@ -211,6 +212,27 @@ proc main*() =
     doAssert refusedTarget("/a/x.ops", ["/a/x.ops"]).len > 0
     doAssert refusedTarget("/a/y.ops", ["/a/x.ops"]).len == 0
     doAssert refusedTarget("", ["/a/x.ops"]).len > 0
+
+  block symlinked_survey_file_is_refused:
+    when defined(posix):
+      let real = dir / "real"
+      createDir(real)
+      let target = real / "land.x"
+      copyFile(Surveys[0], target)
+      let bytes = readFile(target)
+      createSymlink(target, dir / "link.x")
+      doAssert refusedTarget(target, [dir / "link.x"]).len > 0,
+        "the file behind a link is not refused"
+      doAssert refusedTarget(dir / "link.x", [target]).len > 0, "a link to the X file is not refused"
+      doAssert refusedTarget(real / "other.ops", [dir / "link.x"]).len == 0
+      doAssert refusedTarget(target, [dir / "gone.x"]).len == 0, "a missing source refused a target"
+      var st = initAppState()
+      st.apply Command(kind: ckLoadSurvey, paths: @[dir / "link.x"])
+      doAssert st.settle(st.relationLayer >= 0), "the linked X file was not loaded"
+      st.apply Command(kind: ckGenerateOFile, oDest: target)
+      doAssert not st.oFileRunning and readFile(target) == bytes,
+        "the X file was overwritten through a link"
+      doAssert "own files" in st.oFileOutcome, st.oFileOutcome
 
   block the_command:
     let source = dir / "cmd.x"

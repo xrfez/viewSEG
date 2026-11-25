@@ -109,12 +109,20 @@ proc deriveOFile*(g: SurveyGeometry; head: SpsFile): tuple[file: SpsFile; summar
 
 proc refusedTarget*(dest: string; sources: openArray[string]): string =
   ## Why `dest` may not be written: it is one of `sources` (the survey's files
-  ## and the open files); "" when it may. Paths are compared as given, so pass
-  ## them canonical.
+  ## and the open files), by name, or, when it exists, the same file as one of
+  ## them (a link, a hard link); "" when it may. Pass canonical paths. A source
+  ## that cannot be looked at decides nothing by itself.
   let name = dest.extractFilename
   if name.len == 0: return "no file name was given"
+  let exists = fs.fileExists(dest)
   for p in sources:
-    if p == dest:
+    var same = p == dest
+    if not same and exists:
+      try:
+        same = sameFile(p, dest)
+      except OSError:
+        discard
+    if same:
       return name & " is one of the survey's own files or an open file; choose another name"
   ""
 
