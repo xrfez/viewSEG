@@ -12,6 +12,14 @@
 ##   of no fold has the background's.
 ## - The legend (0 to the highest fold) is in a corner; the hover readout names
 ##   the bin under the pointer ("fold N (inline I, crossline X)").
+## - "Actual fold" counts the shot files of the Files window's folder (one file for each
+##   shot of the survey, positions in their headers): ticking it unticks the other layers,
+##   the bins have the Viridis colour of the recorded fold, the legend is titled "Actual
+##   fold", and the hover says "recorded N (planned M)". With one shot file taken out of the
+##   folder, "Fold difference" draws the diverging colours (short bins red, as planned a light
+##   grey), the legend stands clear of the scale bar, the
+##   legend is titled "Fold difference (planned − recorded)", and the hover says "N short of
+##   the plan"; ticking the pre-plot fold unticks it.
 ## - A bin size typed in the popover is saved, and a restart brings the layer
 ##   back with it, counting again with that bin.
 ##
@@ -19,11 +27,16 @@
 ## "the colour at the centre of the bins" found 8 of 64 bins right; with the hover
 ## bin looked up on the unrotated grid, "the hover names the bin" found another bin's fold.
 ##
+## Seen to fail (the layers): with a tick leaving the other fold layers on, "Actual fold
+## ticked did not happen"; with the legend left in the corner of a narrow window, "the legend
+## covers the scale bar".
+##
 ## Needs a display: run under `env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1920x1080x24"`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-fold-*.png there.
 
-import std/[math, monotimes, options, os, strformat, strutils]
-import viewSEG/core/[foldgrid, foldjobs, geometry, state]
+import std/[math, monotimes, options, os, strformat, strutils, tables]
+import parseSEG
+import viewSEG/core/[colourmaps, foldgrid, foldjobs, geometry, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/maplayers
 import utils/[fixtures, waiting]
@@ -72,6 +85,54 @@ proc rotated(src, dest: string; degrees: float64) =
     text.add l & "\n"
   writeFile(dest, text)
 
+type Spot = tuple[x, y: float64]
+
+proc spots(path: string; role: char): Table[(int, int), Spot] =
+  ## The stations of an SPS S or R file, by line and point (columns as `rotated` reads them).
+  for line in lines(path):
+    if line.len >= 65 and line[0] == role:
+      result[(int(parseFloat(line[1 .. 10].strip)), int(parseFloat(line[11 .. 20].strip)))] =
+        (parseFloat(line[46 .. 54].strip), parseFloat(line[55 .. 64].strip))
+
+proc shotFile(path: string; shot: int; sources, receivers: Table[(int, int), Spot]) =
+  ## Shot `shot` (1 to 6) of the sample: a trace for each of its 96 receivers, the stations
+  ## and positions in the headers.
+  var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 2))
+  var ch = 0
+  for line in [1001, 1002]:
+    for point in 101 .. 148:
+      inc ch
+      var k = initTraceKeys()
+      k.record = float64(shot)
+      k.channel = float64(ch)
+      (k.srcLine, k.srcPoint, k.srcIndex) = (2001.0, float64(100 + shot), 1'i16)
+      (k.rcvLine, k.rcvPoint, k.rcvIndex) = (float64(line), float64(point), 1'i16)
+      let (s, r) = (sources[(2001, 100 + shot)], receivers[(line, point)])
+      (k.srcX, k.srcY, k.rcvX, k.rcvY) = (s.x, s.y, r.x, r.y)
+      (k.intervalUs, k.status) = (2000.0, tsLive)
+      w.writeTrace(k, @[0'f32, 0, 0, 0])
+  doAssert w.close().len == 0, "shot file was not written: " & path
+
+func unpack(c: uint32): Rgba =
+  Rgba(r: uint8(c and 255), g: uint8((c shr 8) and 255), b: uint8((c shr 16) and 255),
+    a: uint8(c shr 24))
+
+proc probe(f: FrameInfo; r: FoldResult; bins: seq[int];
+    want: proc (bin: int): Rgba): tuple[tried, right: int] =
+  ## How many of a sample of `bins` that are on the screen have the colour `want(bin)` at
+  ## their centre.
+  let plot = f.mapWindow.mapPlot
+  let stride = max(1, bins.len div 60)
+  var k = 0
+  while k < bins.len:
+    let (x, y) = binCentre(r, bins[k])
+    let p = f.screen(x, y)
+    if p.x > plot.pos.x + 4 and p.x < plot.pos.x + plot.size.x - 4 and
+        p.y > plot.pos.y + 4 and p.y < plot.pos.y + plot.size.y - 4:
+      inc result.tried
+      if near(f.readPixel(int(round(p.x)), int(round(p.y))), want(bins[k]), 8): inc result.right
+    k += stride
+
 proc runStages(fx: Fixtures; config: string; paths: seq[string]; list: seq[Step];
     size = (1400, 900)) =
   let steps = list
@@ -111,6 +172,8 @@ proc main*() =
     rotated(Land & ".s", sFile, 30)
     rotated(Land & ".r", rFile, 30)
     var ink: MapInk
+    let (sources, receivers) = (spots(sFile, 'S'), spots(rFile, 'R'))
+    for shot in 1 .. 6: shotFile(fx.dir / ("shot" & $shot & ".sgy"), shot, sources, receivers)
 
     block firstRun:
       var steps: seq[Step]
@@ -229,6 +292,135 @@ proc main*() =
             $f.mapWindow.pointTexts
         if result: f.shot("map-fold-hover.png")
       step("hover", hoverAct, hoverDone)
+
+      # ---- the recorded fold and the difference
+      proc hovered(f: FrameInfo; want: string): bool =
+        for t in f.mapWindow.pointTexts:
+          if want in t: return true
+      proc seismicListed(f: FrameInfo): int =
+        for e in f.core.fileList.entries:
+          if e.kind in {fkSegy, fkSegd, fkSeg2}: inc result
+      proc browse(f: FrameInfo) = f.apply Command(kind: ckBrowse, paths: @[fx.dir])
+      proc openLayers(f: FrameInfo) = f.click(f.markOf("map.layers").centre)
+      step("the shot files listed", browse, proc (f: FrameInfo): bool =
+        f.seismicListed == 6 and not f.core.fileList.scanning)
+      step("the popover for the layers", openLayers, proc (f: FrameInfo): bool =
+        f.popoverOpen("map.fold actual"))
+      proc tickActual(f: FrameInfo) = f.click(f.markOf("map.fold actual").tick)
+      proc actualCounted(f: FrameInfo): bool =
+        let m = f.core.settings.map
+        result = m.foldActual and not m.foldLayer and not m.foldDifference and
+          f.mapWindow.foldStatus == fmReady and f.mapWindow.foldResult.kind == fkActual
+        if result:
+          doAssert "max fold" in f.mapWindow.foldLayerLine(fkActual),
+            f.mapWindow.foldLayerLine(fkActual)
+          let r = f.mapWindow.foldResult
+          doAssert r.files == 6 and r.traces == 576 and r.binned == 576 and r.unplaced == 0,
+            "the shots were not all counted: " & $(r.files, r.traces, r.binned, r.unplaced)
+      step("Actual fold ticked", tickActual, actualCounted)
+      step("the popover closed", closePopover, proc (f: FrameInfo): bool =
+        wait > 4 and f.markOf("map.fold").size.x == 0)
+      proc actualDrawn(f: FrameInfo): bool =
+        result = wait > 6 and f.markOf("map.fold legend").size.x > 0 and
+          f.mapWindow.foldLegendTitle == "Actual fold" and f.mapWindow.foldBlocksDrawn > 0
+        if result:
+          f.shot("map-fold-actual.png")
+          let r = f.mapWindow.foldResult[]
+          var bins: seq[int] = @[]
+          for k in 0 ..< r.counts.len:
+            if r.counts[k] > 0: bins.add k
+          let (tried, right) = f.probe(r, bins, proc (k: int): Rgba =
+            legendColour(float64(r.counts[k]) / float64(r.maxFold)))
+          doAssert tried >= 20, "too few bins on the screen to probe: " & $tried
+          doAssert right * 10 >= tried * 6, "the recorded fold's colours: " & $right & " of " &
+            $tried & " right"
+      step("the recorded fold is drawn", noop, actualDrawn)
+      var actualBin = 0
+      proc hoverActual(f: FrameInfo) =
+        let r = f.mapWindow.foldResult[]
+        for q in 0 ..< r.counts.len:
+          if r.counts[q] == r.maxFold:
+            actualBin = q
+            break
+        let (x, y) = binCentre(r, actualBin)
+        f.moveMouse(f.screen(x, y))
+      proc actualHovered(f: FrameInfo): bool =
+        let r = f.mapWindow.foldResult[]
+        let want = "recorded " & $r.counts[actualBin] & " (planned " & $r.planned[actualBin] & ")"
+        result = f.hovered(want)
+        if wait > 20 and not result:
+          doAssert false, "the hover says what was recorded: wanted " & want & ", got " &
+            $f.mapWindow.pointTexts
+      step("hover on the recorded fold", hoverActual, actualHovered)
+      proc takeOut(f: FrameInfo) =
+        removeFile fx.dir / "shot3.sgy"
+        f.browse
+      step("a shot file taken out", takeOut, proc (f: FrameInfo): bool =
+        f.seismicListed == 5 and not f.core.fileList.scanning)
+      step("the popover for the difference", openLayers, proc (f: FrameInfo): bool =
+        f.popoverOpen("map.fold difference"))
+      proc tickDifference(f: FrameInfo) = f.click(f.markOf("map.fold difference").tick)
+      proc differenceCounted(f: FrameInfo): bool =
+        let m = f.core.settings.map
+        result = m.foldDifference and not m.foldLayer and not m.foldActual and
+          f.mapWindow.foldStatus == fmReady and f.mapWindow.foldResult.kind == fkDifference and
+          f.mapWindow.foldResult.files == 5
+        if result:
+          doAssert "largest" in f.mapWindow.foldLayerLine(fkDifference),
+            f.mapWindow.foldLayerLine(fkDifference)
+      step("Fold difference ticked", tickDifference, differenceCounted)
+      step("the popover closed again", closePopover, proc (f: FrameInfo): bool =
+        wait > 4 and f.markOf("map.fold").size.x == 0)
+      proc differenceDrawn(f: FrameInfo): bool =
+        result = wait > 6 and f.markOf("map.fold legend").size.x > 0 and
+          f.mapWindow.foldLegendTitle == "Fold difference (planned − recorded)" and
+          f.mapWindow.foldBlocksDrawn > 0
+        if result:
+          f.shot("map-fold-difference.png")
+          let r = f.mapWindow.foldResult[]
+          doAssert r.maxFold > 0, "the missing shot left no difference"
+          var bins: seq[int] = @[]
+          for k in 0 ..< r.counts.len:
+            if r.counts[k] != 0 or r.planned[k] != 0: bins.add k
+          let (tried, right) = f.probe(r, bins, proc (k: int): Rgba =
+            unpack(diffColour(r.counts[k], r.maxFold)))
+          doAssert tried >= 20, "too few bins on the screen to probe: " & $tried
+          doAssert right * 10 >= tried * 6, "the difference's colours: " & $right & " of " &
+            $tried & " right"
+          # the legend does not cover the scale bar's words
+          let (legend, scale) = (f.markOf("map.fold legend"), f.markOf("map.scale bar"))
+          doAssert scale.size.x > 0
+          doAssert legend.pos.x >= scale.pos.x + scale.size.x or
+            legend.pos.y + legend.size.y <= scale.pos.y, "the legend covers the scale bar: " &
+            $legend & " " & $scale
+      step("the difference is drawn", noop, differenceDrawn)
+      var diffBin = 0
+      proc hoverDifference(f: FrameInfo) =
+        let r = f.mapWindow.foldResult[]
+        for q in 0 ..< r.counts.len:
+          if r.counts[q] == r.maxFold:
+            diffBin = q
+            break
+        let (x, y) = binCentre(r, diffBin)
+        f.moveMouse(f.screen(x, y))
+      proc differenceHovered(f: FrameInfo): bool =
+        let r = f.mapWindow.foldResult[]
+        let want = $r.counts[diffBin] & " short of the plan"
+        result = f.hovered(want)
+        if wait > 20 and not result:
+          doAssert false, "the hover says how short: wanted " & want & ", got " &
+            $f.mapWindow.pointTexts
+      step("hover on the difference", hoverDifference, differenceHovered)
+      step("the popover once more", openLayers, proc (f: FrameInfo): bool =
+        f.popoverOpen("map.fold"))
+      proc tickPreplot(f: FrameInfo) = f.click(f.markOf("map.fold").tick)
+      step("Pre-plot fold ticked again", tickPreplot, proc (f: FrameInfo): bool =
+        let m = f.core.settings.map
+        m.foldLayer and not m.foldActual and not m.foldDifference and
+          f.mapWindow.foldStatus == fmReady and f.mapWindow.foldResult.kind == fkPreplot and
+          f.mapWindow.foldLegendTitle == "Pre-plot fold")
+      step("the popover closed last", closePopover, proc (f: FrameInfo): bool =
+        wait > 4 and f.markOf("map.fold").size.x == 0)
 
       proc typeAct(f: FrameInfo) =
         var s = f.core.settings

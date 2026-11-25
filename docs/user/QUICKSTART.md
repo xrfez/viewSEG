@@ -1269,6 +1269,48 @@ without coordinates. Point at a bin and the description adds "fold 12 (inline 3,
 41)". Zoomed far out, a block of bins is drawn as one, in the highest fold of the block.
 A size that would make too many bins is refused with a sentence, not counted.
 
+Two more ticks sit under it, on the same grid (the same bins, whatever the bin sizes). **Actual
+fold** counts the traces recorded in the seismic files the Files window lists (SEG-Y, SEG-D and
+SEG-2; the subfolders' files too when **Include subfolders** is on): each live trace is counted
+once, in the bin of the midpoint of its source and receiver. The survey the grid is laid from
+(the survey files on the map, in a project or not) is joined to each file's trace headers in
+memory first, with the join options (the project's, else those set last) and the station moves
+(as Output does for a file it opens itself; no file is changed), so a file with station
+numbers and no positions of its own takes them from the survey. When the project's stored
+survey is another than the one on the map, the map's is used and the line under the ticks
+says so. Left out, and counted in the line under the ticks: traces
+that are not live (dead or auxiliary), traces you killed, traces with no coordinates and no
+midpoint, and traces outside the grid. A file that gives no source or receiver positions, and
+that the survey does not place, is named in that line; when no file gives any, the layer says
+so and draws nothing (a recording of receivers alone, as a continuous one is, has no source
+positions and so no fold, and the layer says that), and when every trace falls outside the
+grid it says the files' coordinates may be in another unit or frame than the survey; a file
+that cannot be read is skipped with its reason. A file listed twice (a link to a file of a
+subfolder) is counted once and the line says so; copies of one recording in the folder (a
+converted copy beside its original) are different files and are counted twice. Each file is
+read with the default options: one opened with **Reopen with options** is counted as the
+defaults read it. A file changed is counted again even within the same second (its time is
+compared as finely as the file system gives it). The legend is
+titled "Actual fold" (0 to the highest fold, Viridis), and the description of a bin adds
+"recorded 10 (planned 12) at inline 3, crossline 41". **Fold difference** draws the pre-plot
+fold less the recorded fold in each bin: red where it is short of the plan, blue where more
+was recorded than planned, a light grey where the two agree (so the bins as planned show on the
+white map), the largest difference at either end of the legend "Fold difference (planned -
+recorded)", labelled "short" and "more"; a bin with no plan and no trace is clear. Zoomed far
+out, a block of bins shows its largest difference, the shortfall where a block holds a
+shortfall and an excess of one size. In a narrow window the legend stands above the scale bar.
+Its description says "2 short of the plan" or "2 more than planned". Only one of the three fold
+layers is drawn at a time: ticking one unticks the others. Both are dim, with the reason, when
+the survey cannot give a pre-plot fold or no seismic file is listed ("No seismic files are
+listed in the Files window."), and while the folder is still being listed. They are counted in
+the background, several files at a time, and counted again when a file is added to the folder
+or changed, a trace is killed or restored, a station move changes, or a survey is loaded. A
+count after a file was added or changed, or a trace killed, reads only those files (what the
+others came to is kept, within the memory the fold maps may take); while it runs, the map
+counted last stays, with "updating..." beside the tick, in the legend and in the line under the
+ticks, so a folder still being recorded keeps its map. It goes at once for another survey,
+other bin sizes or another folder.
+
 Under the Recorded, **Shots in the folder** rings the survey's sources whose record is in a
 file of the folder listed in Files (read in the background, while a survey file with
 sources is loaded): point at one and its description names the file; click it and the plot

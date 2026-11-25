@@ -48,7 +48,8 @@
 
 import std/[bitops, math, strutils]
 import imguin/cimgui
-import ../../core/[explain, foldgrid, foldjobs, geometry, join, mapthin, noisearea, state]
+import ../../core/[explain, foldactual, foldgrid, foldjobs, geometry, join, jobs, mapthin,
+  noisearea, state]
 import ../../gpu/mappoints
 import ../../view/[maplayers, theme]
 import explainmenu, focus, icons, marks, style
@@ -200,7 +201,12 @@ type
     foldFor: int ## the `fold.revision` `foldGrid` is of
     foldBin: int ## the fold bin under the pointer; -1 for none
     foldSpans: seq[FoldSpan] ## the runs of fold blocks the view touches (kept between frames)
-    foldLabel: string ## the layer's line in the Layers popover, as drawn last
+    foldLabel: string ## the pre-plot layer's line in the Layers popover, as drawn last
+    foldLabels: array[FoldKind, string] ## each fold layer's line, as drawn last
+    foldActual: ref ActualInputs ## the files the recorded fold counts, as built for `foldStamp`
+    foldStamp: int
+    foldStampSet: bool
+    foldLegend: string ## the title of the colour bar drawn last
     foldBufs: tuple[along, across: array[24, char]]
     foldBufsFor: tuple[along, across: float64] ## the settings the text boxes show
     foldBufsSet: bool
@@ -286,11 +292,17 @@ func mapLayersUploaded*(mu: MapUi): int {.inline.} = mu.renderer.layersUploaded
 func foldLayerLine*(mu: MapUi): lent string {.inline.} = mu.foldLabel
   ## The pre-plot fold layer's line in the Layers popover as drawn last (for tests).
 
+func foldLayerLine*(mu: MapUi; kind: FoldKind): lent string {.inline.} = mu.foldLabels[kind]
+  ## The line of fold layer `kind` as drawn last (for tests).
+
 func foldStatus*(mu: MapUi): FoldStatus {.inline.} = mu.fold.status
   ## Where the pre-plot fold layer stands (for tests).
 
 func foldResult*(mu: MapUi): ref FoldResult {.inline.} = mu.fold.shown
   ## The fold map the layer draws; nil for none (for tests).
+
+func foldLegendTitle*(mu: MapUi): lent string {.inline.} = mu.foldLegend
+  ## The title of the fold colour bar as drawn last (for tests).
 
 func foldBlocksDrawn*(mu: MapUi): int {.inline.} = mu.renderer.foldDrawn
   ## The blocks of bins the last image's fold layer drew (for tests).
@@ -539,21 +551,70 @@ proc drawShotsRow(st: AppState; marks: var Marks; res: var MapOutput) =
         " not answer: tried again in a minute.")
     igUnindent(0)
 
-const foldTip = "Off by default. The pre-plot fold: how many source-receiver pairs the " &
-  "relation (X) records plan for each bin of a grid laid on the survey's midpoints, as a " &
-  "heat map under the points. The grid follows the receiver lines; the bin is half the " &
-  "receiver interval by half the source interval unless you give one below."
+const
+  foldTip = "Off by default. The pre-plot fold: how many source-receiver pairs the " &
+    "relation (X) records plan for each bin of a grid laid on the survey's midpoints, as a " &
+    "heat map under the points. The grid follows the receiver lines; the bin is half the " &
+    "receiver interval by half the source interval unless you give one below. One fold layer " &
+    "is drawn at a time: ticking one unticks the others."
+  actualTip = "Off by default. The fold of the traces recorded in the seismic files the Files " &
+    "window lists (its subfolders' files when it includes them), over the same bins as the " &
+    "pre-plot fold. Each trace is counted once, at the midpoint of its source and receiver " &
+    "(the map's survey and the station moves applied in memory; the files are not changed); " &
+    "traces that are not live, that you killed, that have no positions or that fall outside " &
+    "the grid are left out and counted. A file reached twice through a link is counted once, " &
+    "but copies of one recording in the folder (a converted copy beside its original) are " &
+    "counted twice. Files are read with the default options, also one opened with Reopen " &
+    "with options. One fold layer is drawn at a time: ticking one unticks the others."
+  differenceTip = "Off by default. The pre-plot fold less the recorded fold, per bin: " &
+    "positive is short of the plan (red), negative is more than planned (blue), 0 (as planned) " &
+    "is a light grey; a bin with neither a plan nor a trace is left clear. " &
+    "The files are those of the recorded fold layer. One fold layer is drawn at a time: " &
+    "ticking one unticks the others."
+  FoldNames: array[FoldKind, string] = ["Pre-plot fold", "Actual fold", "Fold difference"]
 
-func foldWords(mu: MapUi; st: AppState): string =
-  ## The layer's line in the Layers popover.
-  const name = "Pre-plot fold"
-  if not st.settings.map.foldLayer: return name
+func foldOn(m: MapOptions; kind: FoldKind): bool =
+  case kind
+  of fkPreplot: m.foldLayer
+  of fkActual: m.foldActual
+  of fkDifference: m.foldDifference
+
+func foldAny(m: MapOptions): bool = m.foldLayer or m.foldActual or m.foldDifference
+
+func foldKindOf(m: MapOptions): FoldKind =
+  ## The layer drawn: the difference, else the recorded fold, else the pre-plot.
+  if m.foldDifference: fkDifference elif m.foldActual: fkActual else: fkPreplot
+
+func foldWords(mu: MapUi; st: AppState; kind: FoldKind): string =
+  ## The line of fold layer `kind` in the Layers popover.
+  let name = FoldNames[kind]
+  if not st.settings.map.foldOn(kind): return name
+  let r = mu.fold.shown
+  let most = if r.isNil: "" elif r.kind == fkDifference: ": largest " & $r.maxFold
+             else: ": max fold " & $r.maxFold
   case mu.fold.status
-  of fmComputing: name & ": computing..."
-  of fmReady:
-    let r = mu.fold.shown
-    name & ": max fold " & $r.maxFold
+  of fmComputing: name & (if mu.fold.updating: most & ", updating..." else: ": computing...")
+  of fmReady: name & most
   else: name
+
+proc foldWant(mu: var MapUi; st: AppState): FoldWant =
+  ## What the follower is asked for this frame: the layer ticked and, for the recorded fold
+  ## and the difference, the files to count (built again only when the stamp moved).
+  let m = st.settings.map
+  result = FoldWant(kind: m.foldKindOf, on: m.foldAny,
+    scope: st.fileList.folder & "|" & $st.fileList.recursive)
+  if result.on and result.kind != fkPreplot:
+    result.why = actualReason(st)
+    result.waiting = result.why == Listing
+    if result.why.len == 0:
+      let stamp = actualStamp(st)
+      if mu.foldActual.isNil or not mu.foldStampSet or stamp != mu.foldStamp:
+        mu.foldActual = actualInputs(st)
+        (mu.foldStamp, mu.foldStampSet) = (stamp, true)
+      result.actual = mu.foldActual
+      result.stamp = stamp
+    else:
+      result.stamp = -1 - result.why.len
 
 proc binBox(id: string; buf: var array[24, char]; hint: string): bool =
   ## A text box for a bin size: true once the user has finished typing into it.
@@ -580,25 +641,39 @@ proc boxValue(buf: array[24, char]): float64 =
   except ValueError: result = -1
   if not (result > 0 and result < 1e12): result = -1
 
-proc drawFoldRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput) =
-  ## The pre-plot fold's tick, under the Preplot: dim with the reason when the
-  ## survey cannot give one; its bin sizes and its totals under it once ticked.
-  let reason = st.survey.foldReason
+proc foldTick(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput;
+    kind: FoldKind) =
+  ## The tick of fold layer `kind`, dim with the reason when it cannot be made. Ticking one
+  ## layer unticks the others.
+  var reason = st.survey.foldReason
+  if reason.len == 0 and kind != fkPreplot: reason = actualReason(st)
   var s = st.settings
-  var on = s.map.foldLayer
-  mu.foldLabel = mu.foldWords(st)
-  igBeginDisabled(reason.len > 0)
-  if igCheckbox((mu.foldLabel & "###foldlayer").cstring, addr on):
-    s.map.foldLayer = on
+  var on = s.map.foldOn(kind)
+  mu.foldLabels[kind] = mu.foldWords(st, kind)
+  if kind == fkPreplot: mu.foldLabel = mu.foldLabels[kind]
+  igBeginDisabled(reason.len > 0 and not on)
+  if igCheckbox((mu.foldLabels[kind] & "###fold" & $ord(kind)).cstring, addr on):
+    (s.map.foldLayer, s.map.foldActual, s.map.foldDifference) = (false, false, false)
+    case kind
+    of fkPreplot: s.map.foldLayer = on
+    of fkActual: s.map.foldActual = on
+    of fkDifference: s.map.foldDifference = on
     res.commands.add Command(kind: ckSettings, settings: s)
   igEndDisabled()
-  marks.mark("map.fold")
-  tip(if reason.len > 0: reason else: foldTip)
-  if reason.len > 0:
+  marks.mark(["map.fold", "map.fold actual", "map.fold difference"][ord(kind)])
+  tip(if reason.len > 0: reason else: [foldTip, actualTip, differenceTip][ord(kind)])
+  if reason.len > 0 and not on and (kind == fkPreplot or st.survey.foldReason.len == 0):
     igIndent(0)
     wrapped(reason)
     igUnindent(0)
-  elif on:
+
+proc drawFoldRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput) =
+  ## The fold layers' ticks, under the Preplot: the pre-plot fold, the recorded fold and the
+  ## difference (one is drawn at a time), each dim with the reason when the survey or the
+  ## files cannot give one; the bin sizes and the totals under them once one is ticked.
+  for kind in FoldKind: mu.foldTick(st, marks, res, kind)
+  var s = st.settings
+  if s.map.foldAny:
     igIndent(0)
     if not mu.foldBufsSet or mu.foldBufsFor != (s.map.foldAlong, s.map.foldAcross):
       mu.foldBufs.along.fillBox(boxText(s.map.foldAlong))
@@ -631,9 +706,14 @@ proc drawFoldRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutp
       let r = mu.fold.shown
       wrapped(r[].totalsText(unit))
       marks.mark("map.fold totals")
-    of fmFailed: wrapped(mu.fold.reason)
+    of fmFailed, fmImpossible: wrapped(mu.fold.reason)
     of fmComputing:
-      if mu.fold.reason.len > 0: wrapped(mu.fold.reason)
+      if mu.fold.updating:
+        # the last map counted stays while the files changed are counted
+        wrapped("Updating... " & (if mu.fold.reason.len > 0: mu.fold.reason & " " else: "") &
+          mu.fold.shown[].totalsText(unit))
+        marks.mark("map.fold totals")
+      elif mu.fold.reason.len > 0: wrapped(mu.fold.reason)
     else: discard
     igUnindent(0)
 
@@ -1184,9 +1264,10 @@ proc followMarks(mu: var MapUi; st: AppState) =
 
 proc drawScaleBar(mu: var MapUi; view: MapView; pos, size: ImVec2_c; fb: float32;
     lengths: tuple[unit: SurveyUnit; factor: float64]; ink: MapInk; t: Theme;
-    marks: var Marks) =
+    marks: var Marks): tuple[lo, hi: ImVec2_c] =
   ## The scale bar in the plot's bottom-left corner, in the unit the map
   ## states lengths in (`shownLengths`), and a north arrow in its top-right one.
+  ## Returns the bar's box (empty when there is none).
   let bar = scaleBar(view.perPixel * lengths.factor, float64(scalePixels * fb))
   mu.scaleText = ""
   mu.scale = bar
@@ -1209,6 +1290,7 @@ proc drawScaleBar(mu: var MapUi; view: MapView; pos, size: ImVec2_c; fb: float32
       ImVec2_c(x: x, y: y), c, 1.5)
   ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + pad, y: lo.y + 2), c, text.cstring, nil)
   marks.markRect("map.scale bar", lo, hi)
+  result = (lo, hi)
   # north: grid north is up
   let n = ImVec2_c(x: pos.x + size.x - 22, y: pos.y + 12)
   ImDrawList_AddTriangleFilled(dl, ImVec2_c(x: n.x, y: n.y), ImVec2_c(x: n.x - 6, y: n.y + 16),
@@ -1525,7 +1607,7 @@ proc foldFrame(mu: var MapUi; st: AppState; area: Bounds; perPixel: float64): Fo
   ## framebuffer pixel: the level whose blocks are wide enough, uploaded when it
   ## changed, and the block rows the area touches.
   let r = mu.fold.shown
-  if r.isNil or mu.fold.status != fmReady or not st.settings.map.foldLayer or
+  if not mu.fold.showing or not st.settings.map.foldAny or
       mgPreplot in st.settings.map.hiddenGroups or r.counts.len == 0:
     return
   if mu.foldGrid.res != r or mu.foldFor != mu.fold.revision:
@@ -1543,22 +1625,33 @@ proc foldFrame(mu: var MapUi; st: AppState; area: Bounds; perPixel: float64): Fo
     inlines: r.inlines, factor: factor, cols: l.cols, rows: l.rows, spans: named.count,
     spansSum: named.sum)
 
-proc drawFoldLegend(mu: MapUi; pos, size: ImVec2_c; ink: MapInk; marks: var Marks) =
-  ## The fold's colour bar in the plot's bottom-right corner: 0 to the highest fold.
+proc drawFoldLegend(mu: var MapUi; pos, size: ImVec2_c; scale: tuple[lo, hi: ImVec2_c];
+    ink: MapInk; marks: var Marks) =
+  ## The fold's colour bar in the plot's bottom-right corner: 0 to the highest fold, or for
+  ## the difference the diverging bar from the most short of the plan to the most more than
+  ## planned. Where it would cover the scale bar (`scale`, bottom-left: a narrow window) it
+  ## stands above it.
   let r = mu.fold.shown
-  if r.isNil or mu.fold.status != fmReady or mu.renderer.foldKey == 0: return
+  mu.foldLegend = ""
+  if not mu.fold.showing or mu.renderer.foldKey == 0: return
   let dl = igGetWindowDrawList()
-  let title = "Pre-plot fold"
-  let top = "0"
-  let high = $r.maxFold
+  let diff = r.kind == fkDifference
+  let title = r.kind.foldTitle & (if mu.fold.updating: " (updating...)" else: "")
+  mu.foldLegend = title
+  let top = if diff: $r.maxFold & " short" else: "0"
+  let mid = if diff: "0" else: ""
+  let high = if diff: $r.maxFold & " more" else: $r.maxFold
   let ts = igCalcTextSize(title.cstring, nil, false, -1)
   let hs = igCalcTextSize(high.cstring, nil, false, -1)
   let pad = 6'f32
-  let barW = 110'f32
+  let barW = if diff: 150'f32 else: 110'f32
   let barH = 10'f32
   let w = max(barW, ts.x) + 2 * pad
-  let hi = ImVec2_c(x: pos.x + size.x - 10, y: pos.y + size.y - 10)
-  let lo = ImVec2_c(x: hi.x - w, y: hi.y - ts.y - barH - hs.y - 2 * pad - 2)
+  let h = ts.y + barH + hs.y + 2 * pad + 2
+  var hi = ImVec2_c(x: pos.x + size.x - 10, y: pos.y + size.y - 10)
+  if scale.hi.x > scale.lo.x and hi.x - w < scale.hi.x + 6:
+    hi.y = scale.lo.y - 6 # beside it there is no room: above it
+  let lo = ImVec2_c(x: hi.x - w, y: hi.y - h)
   ImDrawList_AddRectFilled(dl, lo, hi, u32(withAlpha(ink.background, 210)), 3, 0)
   let c = u32(ink.outline)
   ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + pad, y: lo.y + pad), c, title.cstring, nil)
@@ -1567,12 +1660,17 @@ proc drawFoldLegend(mu: MapUi; pos, size: ImVec2_c; ink: MapInk; marks: var Mark
   for k in 0 ..< steps:
     let a = lo.x + pad + barW * float32(k) / float32(steps)
     let b = lo.x + pad + barW * float32(k + 1) / float32(steps)
-    let col = legendColour((float64(k) + 0.5) / float64(steps))
+    let t = (float64(k) + 0.5) / float64(steps)
+    let col = if diff: diffLegendColour(t) else: legendColour(t)
     ImDrawList_AddRectFilled(dl, ImVec2_c(x: a, y: y0), ImVec2_c(x: b + 0.5, y: y0 + barH),
       u32(col), 0, 0)
   ImDrawList_AddRect(dl, ImVec2_c(x: lo.x + pad, y: y0), ImVec2_c(x: lo.x + pad + barW,
     y: y0 + barH), c, 0, 1, 0)
   ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + pad, y: y0 + barH + 1), c, top.cstring, nil)
+  if mid.len > 0:
+    let ms = igCalcTextSize(mid.cstring, nil, false, -1)
+    ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + pad + (barW - ms.x) / 2, y: y0 + barH + 1),
+      c, mid.cstring, nil)
   ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + pad + barW - hs.x, y: y0 + barH + 1), c,
     high.cstring, nil)
   marks.markRect("map.fold legend", lo, hi)
@@ -1719,8 +1817,8 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
     var under: seq[PointRef] = @[]
     var near: seq[(MapFilter, int)] = @[] # what the marks under the pointer mark
     var foldBin = -1
-    let foldShown = not mu.fold.shown.isNil and mu.fold.status == fmReady and
-      st.settings.map.foldLayer and mgPreplot notin st.settings.map.hiddenGroups
+    let foldShown = mu.fold.showing and
+      st.settings.map.foldAny and mgPreplot notin st.settings.map.hiddenGroups
     if held:
       under = mu.menuPoints
       near = mu.near
@@ -1762,7 +1860,7 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
         if mu.info.len == 0: mu.info.add PointInfo(title: "Marks here")
         mu.info[0].lines.add markedHereText(near)
       if foldBin >= 0:
-        if mu.info.len == 0: mu.info.add PointInfo(title: "Pre-plot fold")
+        if mu.info.len == 0: mu.info.add PointInfo(title: mu.fold.shown.kind.foldTitle)
         mu.info[0].lines.add mu.fold.shown[].foldText(foldBin)
     mu.sendHover(res)
     # A click on a source shows its record (on a receiver in a file of
@@ -1789,8 +1887,8 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       mu.followSpreads(st)
       mu.drawSpreads(view, plot, ink, t, marks)
       mu.drawRuler(view, plot, lengths, ink, t, marks)
-      mu.drawScaleBar(view, pos, size, fb.x, lengths, ink, t, marks)
-      mu.drawFoldLegend(pos, size, ink, marks)
+      let scale = mu.drawScaleBar(view, pos, size, fb.x, lengths, ink, t, marks)
+      mu.drawFoldLegend(pos, size, scale, ink, marks)
     if (hovered or held) and mu.info.len > 0 and st.settings.map.info == miPopup and
         mu.drag.kind == mdNone:
       # (beside the menu, not under it)
@@ -1852,8 +1950,8 @@ proc drawMap*(mu: var MapUi; id: string; st: AppState; t: Theme; marks: var Mark
     igSetScrollY_Float(0)
     marks.markWindow("map")
     let map = st.settings.map
-    mu.fold.follow(st.jobs, st.survey, map.foldLayer, (if map.foldAlong >
-        0: map.foldAlong else: NaN),
+    mu.fold.follow(st.jobs, st.survey, mu.foldWant(st),
+      (if map.foldAlong > 0: map.foldAlong else: NaN),
       (if map.foldAcross > 0: map.foldAcross else: NaN))
     let ink = mapInk(t, st.settings.plot.display.colours, st.settings.plot.display.custom)
     let layers = mapLayers(st, ink)
