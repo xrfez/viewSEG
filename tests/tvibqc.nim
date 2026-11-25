@@ -820,9 +820,12 @@ proc againstThePlan() =
     doAssert abs(fileHz[500] - storedHz[500]) > 5, $(fileHz[500], storedHz[500])
     # the limits table has the pilot's rows and the ground force's to the file's reference
     let table = tableOf(r.qc)
-    doAssert table.len == 1 + 6 + 2 + 2, $table.len
+    doAssert table.len == 1 + 6 + 3 + 2 and allRows(r.qc).len == table.len - 1, $table.len
     doAssert table[7][1] == PlanRowPrefix & "average phase" and table[7][0] == "✗", $table[7]
-    doAssert table[9][1] == FileRowPrefix & "average phase" and table[9][0] == "✓", $table[9]
+    doAssert table[9] == @["✗", PlanRowPrefix & SameSweepLimit, "8-80 Hz in 10.0 s",
+      "8-80 Hz in 12.0 s", ""], $table[9]
+    doAssert table[10][1] == FileRowPrefix & "average phase" and table[10][0] == "✓",
+      $table[10]
   block another_end_frequency:
     let r = againstPlan(planSweep(), planSweep(f1 = 60).referenceOf.sweepRow)
     doAssert r.qc.plan.verdict == qvFail and r.qc.verdict == qvFail, r.qc.line
@@ -1002,6 +1005,54 @@ proc sameSweepReadsTheSame() =
     doAssert r.qc.plan.sweep == "the project reference sweeps 9-80 Hz in 10.0 s; the " &
       "recorded pilot sweeps 8-80 Hz in 10.0 s", r.qc.plan.sweep
 
+proc anotherSweepFailsWhateverItsPhase() =
+  ## A recorded pilot at the plan's rate passes it in phase where the two overlap; when it
+  ## stops early, or sweeps on past the plan's end, it is still not the plan: the file fails,
+  ## the two sweeps first in the verdict, a row of its own in the limits table. Traces that
+  ## end while the same sweep runs are no other sweep: a pass on the part recorded.
+  ## Seen to fail: with a difference read off the sweeps' ends left to the note whenever the
+  ## pilot passed in phase, all five pilots below read "✓ PASS: 6 of 6 limits met" or failed
+  ## on the force alone ("✗ FAIL: average force 49.5 % < 90 %"); with the pilot's end read at
+  ## the traces' end compared too, traces cut at 8 s read "the recorded pilot sweeps 8-65.6 Hz
+  ## in 8.0 s" and failed; with the start blamed for any gap, a pilot 170° off read "starts
+  ## 16 ms before the stored reference's".
+  let base = planSweep().referenceOf.sweepRow
+  for (file, pilotIs) in [(planSweep(seconds = 5, f1 = 44, tailS = 5.001), "8-44 Hz in 5.0 s"),
+      (planSweep(seconds = 9, f1 = 72.8, tailS = 1.001), "8-72.8 Hz in 9.0 s"),
+      (planSweep(seconds = 11, f1 = 87.2), "8-87.2 Hz in 11.0 s"),
+      (planSweep(seconds = 20, f1 = 152), "8-152 Hz in 20.0 s"),
+      (planSweep(seconds = 8, f1 = 65.6, tailS = 2.001), "8-65.6 Hz in 8.0 s")]:
+    let r = againstPlan(file, base)
+    doAssert r.qc.verdict == qvFail and r.qc.plan.verdict == qvFail and
+      r.qc.plan.sweepFails, r.qc.line
+    # its phase where the two overlap passes: not said
+    doAssert r.qc.plan.rows[ord(qlAvgPhase)].status == qsPass, $r.qc.plan.rows
+    doAssert r.qc.line.startsWith("✗ FAIL: the recorded pilot is not the project's reference " &
+      "sweep: the project reference sweeps 8-80 Hz in 10.0 s; the recorded pilot sweeps " &
+      pilotIs & "; ground force "), r.qc.line
+    let table = tableOf(r.qc)
+    doAssert table[9] == @["✗", PlanRowPrefix & SameSweepLimit, pilotIs, "8-80 Hz in 10.0 s",
+      ""], $table[9]
+    doAssert allRows(r.qc).len == table.len - 1 and allRows(r.qc)[8].status == qsFail
+  block traces_cut_while_the_sweep_runs:
+    # every trace of the record, the pilot too, ends at 8 s of the plan's 10 s sweep
+    var file = planSweep()
+    file.cutAtS = 8
+    var pilot = file.referenceOf
+    pilot.cutAtS = 8
+    let r = againstPlan(file, base, pilot = pilot.sweepRow)
+    doAssert r.qc.verdict == qvPass and not r.qc.plan.sweepFails, r.qc.line
+    doAssert r.qc.line.startsWith("✓ pass on the part recorded (79 % of the reference " &
+      "sweep): "), r.qc.line
+    doAssert tableOf(r.qc).len == 1 + 6 + 2 + 2
+  block the_same_sweep_out_of_phase_is_in_step:
+    let pilot = SynthSweep(f0: 8, f1: 80, seconds: 10, tailS: 0.001, amp: 1,
+      phaseDeg: 170).sweepRow
+    let r = againstPlan(planSweep(), base, pilot = pilot)
+    doAssert r.qc.verdict == qvFail and not r.qc.plan.sweepFails, r.qc.line
+    doAssert r.qc.plan.sweep == "the two are the same sweep (8-80 Hz in 10.0 s), in step, " &
+      "but the phase differs", r.qc.plan.sweep
+
 proc aPassNeedsHalfTheSweep() =
   ## A file whose traces hold less than half the reference sweep (`LeastSweepShare`) is not
   ## judged, its limits still listed; from half up it passes on the part recorded; a fail on
@@ -1043,6 +1094,7 @@ proc aPassNeedsHalfTheSweep() =
 
 proc main*() =
   againstThePlan()
+  anotherSweepFailsWhateverItsPhase()
   aPassNeedsHalfTheSweep()
   sameSweepReadsTheSame()
   sweepTolerances()

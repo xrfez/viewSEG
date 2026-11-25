@@ -282,9 +282,18 @@ share one value (same unit, same curve).
   8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in 10.0 s"). Two sweeps are the same
   when each end frequency agrees within 0.5 Hz or 1 % of the band, whichever is more, and the
   length within 50 ms or 1 % of it: noise on a recorded pilot, or a taper of another length,
-  moves its ends by a few tens of ms. A pilot that follows the plan in phase never has a
-  difference in its verdict; the two sweeps as read are then only in the note ("sweeps read
-  as ..."). A recorded pilot that is the plan's sweep with its sign reversed (average phase
+  moves its ends by a few tens of ms. Phase is judged only where the two sweeps overlap, so a
+  pilot that follows the plan in phase but is another sweep (it stops early, or sweeps on past
+  the plan's end, at the plan's rate) still fails the file: the verdict opens with "the recorded
+  pilot is not the project's reference sweep: the project reference sweeps 8-80 Hz in 10.0 s;
+  the recorded pilot sweeps 8-44 Hz in 5.0 s", and the limits table has a failed row for it
+  ("recorded pilot to the plan: the same sweep"). An end the traces do not hold is not compared:
+  traces that stop while the sweep still runs pass on the part recorded (below). A difference
+  within those tolerances, or read only outside the traces (a start taken on through a taper
+  to before the record's first sample), is never in the verdict; the two sweeps as read are
+  then only in the note ("sweeps read as ..."). The same sweep failing in phase with the two
+  starting together is said as "the same sweep, in step, but the phase differs". A recorded
+  pilot that is the plan's sweep with its sign reversed (average phase
   to the plan within the average phase limit of 180°) is said as such, "the recorded pilot is
   the project's reference sweep with opposite polarity (average phase N°)", N near 180°: a
   finding, nothing is reversed, and the file still fails. The limits table adds the pilot's

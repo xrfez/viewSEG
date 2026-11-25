@@ -184,25 +184,26 @@ proc parity(st: var AppState; files: seq[FolderListed]; t: FolderTable) =
     doAssert said.len == 0, f.path.extractFilename & ": " & said.join("; ")
     st.close(w)
 
-proc chirp(n: int; seconds: float64; gain = 1.0): seq[int32] =
+proc chirp(n: int; seconds: float64; gain = 1.0; stopS = seconds): seq[int32] =
   ## `n` samples at 1 ms of an 8-80 Hz linear sweep `seconds` long (0.1 s cos² tapers), zero
-  ## after it.
+  ## after it; with `stopS`, stopped there (its end taper there).
   result = newSeq[int32](n)
   for i in 0 ..< n:
     let t = float64(i) / 1000
-    if t <= seconds:
+    if t <= stopS:
       let taper = if t < 0.1: pow(sin(PI / 2 * t / 0.1), 2)
-        elif t > seconds - 0.1: pow(sin(PI / 2 * (seconds - t) / 0.1), 2)
+        elif t > stopS - 0.1: pow(sin(PI / 2 * (stopS - t) / 0.1), 2)
         else: 1.0
       result[i] = int32(gain * 6000 * taper * sin(2 * PI * (8 * t + 72 / (2 * seconds) * t * t)))
 
-proc planDat(dir, name: string; n: int; seconds: float64; number: int): string =
+proc planDat(dir, name: string; n: int; seconds: float64; number: int;
+    stopS = seconds): string =
   ## A `.dat` whose ground force (its two channels' sum) follows its own pilot, `seconds` long
-  ## in `n` samples.
+  ## in `n` samples (stopped at `stopS`).
   var s = SynthDat(samples: n, vibrator: 11, fileNumber: number)
-  s.data[dcReference] = chirp(n, seconds)
-  s.data[dcMass] = chirp(n, seconds, 0.5)
-  s.data[dcBaseplate] = chirp(n, seconds, 0.5)
+  s.data[dcReference] = chirp(n, seconds, stopS = stopS)
+  s.data[dcMass] = chirp(n, seconds, 0.5, stopS)
+  s.data[dcBaseplate] = chirp(n, seconds, 0.5, stopS)
   datFile(dir, name, s)
 
 proc main*() =
@@ -325,6 +326,43 @@ proc main*() =
       doAssert cell.startsWith("pass (59 % recorded"), cell
       doAssert t.totals.passed == 1 and t.totals.notJudged == 1 and t.totals.partial == 1,
         summaryLine(t.totals)
+      st.shutdown()
+
+  block aPilotStoppedEarly:
+    # a file whose pilot, and ground force, stop at 5 s of the plan's 10 s sweep at its rate
+    # passes the plan in phase where the two overlap and is still not the plan: the folder
+    # row fails as its window does, the two sweeps first in its sentence and in the CSV
+    # Seen to fail: with the difference left to the note when the pilot passed in phase, the
+    # row read "✓ PASS: 4 of 6 limits met (2 not judged: ...)", as its window did.
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      let plan10 = planDat(fx.dir / "plans", "plan10.dat", 10001, 10, 7121)
+      let stopped = planDat(fx.dir / "sweeps", "stopped.dat", 10001, 10, 7221, stopS = 5)
+      let files = @[listed(stopped)]
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      block store:
+        let w = st.window(plan10)
+        let trace = st.plots[w].traces[st.plots[w].params.roles.reference]
+        st.close(w)
+        discard st.chooseStored(fx.dir / "refs", trace, "plan 10 s")
+      block profile:
+        let w = st.window(stopped)
+        var p = st.plots[w].params
+        p.harmonics = 4 # (the limits: a profile)
+        st.change(w, p)
+        st.close(w)
+      let t = st.run(files)
+      st.parity(files, t)
+      let row = rowOf(t, stopped)
+      const said = "✗ FAIL: the recorded pilot is not the project's reference sweep: the " &
+        "project reference sweeps 8-80 Hz in 10.0 s; the recorded pilot sweeps 8-44 Hz in 5.0 s"
+      doAssert row.verdict == qvFail and row.sentence.startsWith(said), row.sentence
+      doAssert row.plan.len == 2 and row.plan[0].status == qsPass, $row.plan
+      doAssert said in resultsCsv(t) and t.totals.failed == 1, summaryLine(t.totals)
       st.shutdown()
 
   block inProject:

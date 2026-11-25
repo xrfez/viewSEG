@@ -102,6 +102,9 @@ type
     firstMs*, lastMs*: float64 ## the sweep's first and last samples, ms from the row's first
     startStepHz*, endStepHz*: float64 ## the frequency moved through in one step at each end
     stepMs*: float64
+    lastCut*: bool
+      ## the envelope is still up at the row's last sample that is not zero: the sweep stops
+      ## there with no taper, or the row does while the sweep runs (`sweepFails` tells which)
     why*: string ## "" when the shape is read
 
 func number(x: float64; digits = 1): string =
@@ -190,15 +193,16 @@ func levelAtMs(x: openArray[float32]; dtMs, level: float64;
         return ((float64(prevAt) + f * float64(i - prevAt)) * dtMs, false)
       (prevAt, prevV) = (i, v)
 
-func sweepEnds(x: openArray[float32];
-    dtMs: float64): tuple[firstMs, lastMs, halfFromMs, halfToMs: float64] =
+func sweepEnds(x: openArray[float32]; dtMs: float64): tuple[firstMs, lastMs, halfFromMs,
+    halfToMs: float64; lastCut: bool] =
   ## The first and last samples (ms) of the sweep in `x`: where its envelope leaves zero, read
   ## where it crosses `SweepEndDb` below its peak and half the peak, and taken on through the
   ## rest of a cos² taper (that level lies a share of the taper in, half the peak half of it);
   ## a sweep that rises to that level from nothing within a half period starts there. With
   ## the half-peak crossings (`halfFromMs .. halfToMs`), the part of the sweep well above
-  ## the noise. NaN without both levels.
-  result = (NaN, NaN, NaN, NaN)
+  ## the noise. NaN without both levels. `lastCut`: the envelope is still at that level at
+  ## the last sample that is not zero (the sweep stops there with no taper, or `x` does).
+  result = (NaN, NaN, NaN, NaN, false)
   var peak = 0.0
   for v in x: peak = max(peak, abs(float64(v)))
   if not (peak > 0): return
@@ -209,7 +213,8 @@ func sweepEnds(x: openArray[float32];
     let b = levelAtMs(x, dtMs, 0.5 * peak, fromEnd)
     if not (a.ms.isNaN or b.ms.isNaN):
       let taper = if a.rose: 0.0 else: abs(b.ms - a.ms) / (0.5 - share)
-      if fromEnd: (result.lastMs, result.halfToMs) = (a.ms + share * taper, b.ms)
+      if fromEnd:
+        (result.lastMs, result.halfToMs, result.lastCut) = (a.ms + share * taper, b.ms, a.rose)
       else: (result.firstMs, result.halfFromMs) = (a.ms - share * taper, b.ms)
 
 func phaseLine(x, h: openArray[float32]; lo, hi: int;
@@ -288,7 +293,7 @@ proc sweepShape*(t: SweepTrack; x: openArray[float32]; dtMs: float64): SweepShap
   result.startHz = head.hz - head.rate * (float64(a) * dtMs - ends.firstMs)
   result.endHz = tail.hz + tail.rate * (ends.lastMs - float64(tailLo) * dtMs)
   result.lengthMs = ends.lastMs - ends.firstMs
-  (result.firstMs, result.lastMs) = (ends.firstMs, ends.lastMs)
+  (result.firstMs, result.lastMs, result.lastCut) = (ends.firstMs, ends.lastMs, ends.lastCut)
   result.startStepHz = abs(head.rate) * result.stepMs
   result.endStepHz = abs(tail.rate) * result.stepMs
   if result.startHz.isNaN or result.endHz.isNaN or result.lengthMs.isNaN:
@@ -320,7 +325,20 @@ func shapeWords(s: SweepShape; hzDigits, sDigits: int): string =
   plain(s.startHz, hzDigits) & "-" & plain(s.endHz, hzDigits) & " Hz in " &
     formatFloat(s.lengthMs / 1000, ffDecimal, sDigits) & " s"
 
-func sweepDifference*(plan, pilot: SweepShape): tuple[same: bool; words, readAs: string] =
+func offs(plan, pilot: SweepShape): tuple[length, start, stop: bool] =
+  ## Which of the two read sweeps' length, start and end frequency differ beyond the
+  ## tolerances (`sweepDifference`).
+  let step = max(plan.stepMs, pilot.stepMs)
+  let hzFloor = max(SweepHzFloor, SweepBandShare * abs(plan.endHz - plan.startHz))
+  (abs(plan.lengthMs - pilot.lengthMs) > max([SweepTimeSteps * step,
+    SweepLengthShare * plan.lengthMs, SweepLengthFloorMs]),
+    abs(plan.startHz - pilot.startHz) >
+      max(SweepHzSteps * max(plan.startStepHz, pilot.startStepHz), hzFloor),
+    abs(plan.endHz - pilot.endHz) >
+      max(SweepHzSteps * max(plan.endStepHz, pilot.endStepHz), hzFloor))
+
+func sweepDifference*(plan, pilot: SweepShape): tuple[same: bool; words, readAs, planIs,
+    pilotIs: string] =
   ## Whether the recorded pilot's sweep `pilot` is the stored reference's `plan`: the same
   ## start and end frequencies (within `SweepHzSteps` of a step's change, `SweepHzFloor` and
   ## `SweepBandShare` of the band, whichever is the most) and length (within one tracked
@@ -328,24 +346,17 @@ func sweepDifference*(plan, pilot: SweepShape): tuple[same: bool; words, readAs:
   ## sweeps in words, each number with the decimals that tell the two apart (`words`: "the
   ## project reference sweeps 8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in 10.0 s";
   ## `readAs`, for a note: "sweeps read as 8-80 Hz in 12.0 s (the project reference) and 8-80
-  ## Hz in 10.0 s (the recorded pilot)"); when either cannot be read, "sweeps not compared"
-  ## and why, never the same.
+  ## Hz in 10.0 s (the recorded pilot)"; `planIs` and `pilotIs` each alone, "8-80 Hz in
+  ## 12.0 s"); when either cannot be read, "sweeps not compared" and why, never the same.
   if plan.why.len > 0:
     return (false, "sweeps not compared: the project reference's sweep cannot be read (" &
-      plan.why & ")", "")
+      plan.why & ")", "", "", "")
   if pilot.why.len > 0:
     return (false, "sweeps not compared: the recorded pilot's sweep cannot be read (" &
-      pilot.why & ")", "")
-  let step = max(plan.stepMs, pilot.stepMs)
-  let lengthOff = abs(plan.lengthMs - pilot.lengthMs) > max([SweepTimeSteps * step,
-    SweepLengthShare * plan.lengthMs, SweepLengthFloorMs])
-  let hzFloor = max(SweepHzFloor, SweepBandShare * abs(plan.endHz - plan.startHz))
-  let startOff = abs(plan.startHz - pilot.startHz) >
-    max(SweepHzSteps * max(plan.startStepHz, pilot.startStepHz), hzFloor)
-  let endOff = abs(plan.endHz - pilot.endHz) >
-    max(SweepHzSteps * max(plan.endStepHz, pilot.endStepHz), hzFloor)
+      pilot.why & ")", "", "", "")
+  let (lengthOff, startOff, endOff) = offs(plan, pilot)
   if not (lengthOff or startOff or endOff):
-    return (true, "", "")
+    return (true, "", "", "", "")
   var hzDigits = 1
   while hzDigits < 3 and ((startOff and plain(plan.startHz, hzDigits) ==
       plain(pilot.startHz, hzDigits)) or (endOff and plain(plan.endHz, hzDigits) ==
@@ -357,7 +368,23 @@ func sweepDifference*(plan, pilot: SweepShape): tuple[same: bool; words, readAs:
     inc sDigits
   let (a, b) = (shapeWords(plan, hzDigits, sDigits), shapeWords(pilot, hzDigits, sDigits))
   (false, "the project reference sweeps " & a & "; the recorded pilot sweeps " & b,
-    "sweeps read as " & a & " (the project reference) and " & b & " (the recorded pilot)")
+    "sweeps read as " & a & " (the project reference) and " & b & " (the recorded pilot)", a, b)
+
+func sweepFails*(plan, pilot: SweepShape; traceEndMs: float64): bool =
+  ## Whether the recorded pilot's sweep `pilot` is another sweep than the plan's `plan`, as a
+  ## failing plan check is, whatever its phase where the two overlap: both read, and the
+  ## length or an end frequency beyond the tolerances of `sweepDifference`. An end read
+  ## outside the traces is no reading of the sweep's, and is not compared (nor the length):
+  ## the pilot's end where its envelope is still up within one step of `traceEndMs` (the
+  ## traces' end, the shortest of the pilot and the force traces: they stop while the sweep
+  ## runs; a sweep that stops with no taper before them is read), or its start taken on to
+  ## before the row's first sample (a taper that is not cos²). An unread sweep never fails.
+  if plan.why.len > 0 or pilot.why.len > 0: return false
+  let tol = SweepTimeSteps * max(plan.stepMs, pilot.stepMs)
+  let startRead = pilot.firstMs >= -tol
+  let endRead = not (pilot.lastCut and pilot.lastMs >= traceEndMs - tol)
+  let (lengthOff, startOff, endOff) = offs(plan, pilot)
+  (startOff and startRead) or (endOff and endRead) or (lengthOff and startRead and endRead)
 
 func unusable(r: TopReading; chordHz, nyquistHz: float64): string =
   ## Why a reading is not made the band's edge ("" when it is): the median of the estimates that fit stands in.
@@ -759,9 +786,19 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       else: SweepShape(why: "it was not tracked")
     let d = sweepDifference(planShape, pilotShape)
     (result.qc.plan.sameSweep, result.qc.plan.sweep) = (d.same, d.words)
-    if not pilotFails and d.readAs.len > 0:
-      # the pilot follows the plan in phase: a difference read off the two sweeps' ends is
-      # no finding of the verdict's, only a note
+    # the traces' end: the shortest of the pilot and the force traces
+    var shortest = rows[recorded].len
+    for role in [vsGroundForce, vsMass, vsBaseplate]:
+      if at[role] >= 0: shortest = min(shortest, counts[at[role]])
+    if sweepFails(planShape, pilotShape, float64(shortest - 1) * dtMs):
+      # phase is judged only where the two sweeps overlap: a pilot that stops early, or sweeps
+      # on past the plan's end, at the plan's rate passes it there, and is still not the plan
+      (result.qc.plan.sweepFails, result.qc.plan.verdict) = (true, qvFail)
+      result.qc.plan.sweepAs = (d.planIs, d.pilotIs)
+    elif not pilotFails and d.readAs.len > 0:
+      # the pilot follows the plan in phase, and the difference read off the two sweeps' ends
+      # lies outside the traces (an end they do not hold, a start taken on to before them): no
+      # finding of the verdict's, only a note
       result.qc.plan.sweep = ""
       readAs = d.readAs
     let pe = if pilotOwn.len > 0: pilotOwn[0].tracks[vsReference].extent else: SweepExtent()
@@ -773,15 +810,17 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     if result.qc.plan.opposite and d.same:
       result.qc.plan.sweep = ""
     elif d.same and pilotFails:
-      # the same sweep, out of step: alignment found no clear shift within its reach
+      # the same sweep failing in phase: out of step when their starts lie further apart than
+      # two sweeps' ends are read to (the length's tolerance); closer, a gap the reading of the
+      # ends explains, the start is not blamed
       let gap = pilotShape.firstMs - planShape.firstMs
-      let how = if abs(gap) <= SweepTimeSteps * stepMs:
-          "they start together and still differ in phase"
-        else: "the recorded pilot's sweep starts " & gapText(abs(gap)) & " " &
-          (if gap > 0: "after" else: "before") & " the stored reference's (alignment " &
-          "looks no further than " & seconds(MaxAlignShiftMs) & " either way)"
+      let together = max([SweepTimeSteps * stepMs, SweepLengthShare * planShape.lengthMs,
+        SweepLengthFloorMs])
       result.qc.plan.sweep = "the two are the same sweep (" & shapeWords(planShape, 1, 1) &
-        ") but not in step: " & how
+        (if abs(gap) <= together: "), in step, but the phase differs"
+        else: ") but not in step: the recorded pilot's sweep starts " & gapText(abs(gap)) &
+          " " & (if gap > 0: "after" else: "before") & " the stored reference's (alignment " &
+          "looks no further than " & seconds(MaxAlignShiftMs) & " either way)")
     var past: seq[string] = @[]
     if not (pe.startMs.isNaN or e0.startMs.isNaN):
       if pe.endMs - e0.endMs > SweepTimeSteps * stepMs:

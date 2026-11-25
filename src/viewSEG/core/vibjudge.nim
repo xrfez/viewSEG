@@ -93,7 +93,9 @@ type
     ## phase limits after the same alignment.
     compared*: bool ## a recorded pilot was measured against a stored reference
     rows*: seq[QcRow] ## its average and peak phase (`qlAvgPhase`, `qlPeakPhase`)
-    verdict*: QcVerdict ## those two rows' verdict; `qvNotJudged` when not compared
+    verdict*: QcVerdict
+      ## those two rows' verdict, a fail too when the sweeps differ (`sweepFails`);
+      ## `qvNotJudged` when not compared
     shiftMs*: float64 = NaN
       ## how far the stored reference was moved to the recorded pilot (`alignStored`); NaN:
       ## not aligned
@@ -102,6 +104,12 @@ type
       ## 8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in 10.0 s"), or why they could
       ## not be compared ("sweeps not compared: ..."); "" when they are the same sweep
     sameSweep*: bool ## start, end and length agree within the tolerances
+    sweepFails*: bool
+      ## both sweeps were read and differ beyond the tolerances: the pilot is not the plan,
+      ## whatever its phase where the two overlap (a pilot that stops early, or sweeps on past
+      ## the plan's end); a row of its own in the limits table
+    sweepAs*: tuple[plan, pilot: string]
+      ## the two sweeps as read ("8-80 Hz in 10.0 s"), for that row
     opposite*: bool
       ## the recorded pilot is the plan's sweep with opposite polarity: its average phase to it
       ## lies within the average phase limit of 180°. A finding, said; nothing is reversed
@@ -295,6 +303,9 @@ const
   PlanRowPrefix* = "recorded pilot to the plan: "
     ## the limits table's label of a plan row, before the limit ("recorded pilot to the plan:
     ## average phase")
+  SameSweepLimit* = "the same sweep"
+    ## the limits table's row of a recorded pilot whose sweep is not the plan's, after
+    ## `PlanRowPrefix`
   LeastSweepShare* = 0.5
     ## the least share of the reference sweep a file's judged part holds for the file to pass:
     ## below it the file is not judged (its limits still listed), never a pass; from it up it
@@ -317,8 +328,14 @@ func planWords*(p: PlanCheck): string =
   ## "the recorded pilot is not the project's reference sweep (average phase N°)": the
   ## sentence a failing plan check opens the verdict with; for a pilot of opposite polarity
   ## (`opposite`) "the recorded pilot is the project's reference sweep with opposite polarity
-  ## (average phase N°)".
+  ## (average phase N°)"; for one whose phase passes but whose sweep is another
+  ## (`sweepFails`), no phase.
   let avg = p.rows[ord(qlAvgPhase)]
+  var phaseFails = false
+  for row in p.rows:
+    if row.status == qsFail: phaseFails = true
+  if p.sweepFails and not phaseFails:
+    return "the recorded pilot is not the project's reference sweep"
   let phase = "(average phase " &
     (if avg.measured.isNaN: "not measured" else: plain(avg.measured) & "°") & ")"
   if p.opposite: "the recorded pilot is the project's reference sweep with opposite polarity " &
@@ -365,7 +382,8 @@ func withBasis*(q: var QcReport) =
 func tableOf*(r: QcReport): seq[seq[string]] =
   ## The limits table: a header, then a row per limit: the mark (first, so a narrow window never
   ## cuts it off), what, measured, limit, where; then the recorded pilot's rows against the
-  ## plan, when it was compared (`allRows` gives the rows in the same order).
+  ## plan, when it was compared, with a failed row of `SameSweepLimit` when its sweep is
+  ## another (`sweepFails`; `allRows` gives the rows in the same order).
   result = @[@["Met", "Limit", "Measured", "Limit value", "Worst window"]]
   for row in r.rows:
     result.add @[row.markText, $row.limit, row.measuredText, row.boundText,
@@ -373,10 +391,18 @@ func tableOf*(r: QcReport): seq[seq[string]] =
   for row in r.plan.rows:
     result.add @[row.markText, PlanRowPrefix & $row.limit, row.measuredText, row.boundText,
       (if row.status == qsNotJudged: row.why else: row.atText)]
+  if r.plan.sweepFails:
+    result.add @["✗", PlanRowPrefix & SameSweepLimit, r.plan.sweepAs.pilot,
+      r.plan.sweepAs.plan, ""]
   for row in r.plan.fileRows:
     result.add @[row.markText, FileRowPrefix & $row.limit, row.measuredText, row.boundText,
       (if row.status == qsNotJudged: row.why else: row.atText)]
 
 func allRows*(r: QcReport): seq[QcRow] =
-  ## The rows of `tableOf` after its header: the limits, then the plan's.
-  r.rows & r.plan.rows & r.plan.fileRows
+  ## The rows of `tableOf` after its header: the limits, then the plan's. The row of a sweep
+  ## that is not the plan's (`sweepFails`) has no limit of `QcLimit`'s: only its status, a
+  ## fail, is its own.
+  result = r.rows & r.plan.rows
+  if r.plan.sweepFails:
+    result.add QcRow(limit: qlAvgPhase, measured: NaN, bound: NaN, atMs: NaN, status: qsFail)
+  result.add r.plan.fileRows
