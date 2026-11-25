@@ -1,0 +1,12 @@
+(.nif27)
+(.vendor "viewSEG")
+(references
+ (version 1)
+ (entry
+  (id "sweep-1")
+  (name "Linear 10-80 Hz 4 s")
+  (intervalUs 2000.0)
+  (samples 2000)
+  (date "2024-03-01T00:00:00Z")
+  (file "sweep-1.sgy")
+  (source (generated true) (law "linear") (f1Hz 10.0) (f2Hz 80.0) (durationMs 4000.0) (dtMs 2.0) (taperStartMs 200.0) (taperEndMs 200.0) (taperShape "tpCos2") (phaseDeg 0.0) (amplitude 1.0) (boostDb 0.0))))

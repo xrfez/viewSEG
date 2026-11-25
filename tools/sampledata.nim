@@ -13,6 +13,7 @@
 
 import std/[math, options, os, strutils, times]
 import parseSEG, processSEG
+import ../src/viewSEG/core/[cutgather, cutgatherjobs, jobs, references, shotlog]
 
 const
   DtLand = 2.0
@@ -78,6 +79,7 @@ const
   ObnN = 5_800_000.0
   ObnScale = 10_000.0                ## 8036 counts per unit amplitude
   MaxBytes = 7 * 1000 * 1000
+  MaxSetBytes = 15 * 1000 * 1000
 
 type Station = object
   line, point, easting, northing, elevation: float64
@@ -759,10 +761,315 @@ proc writeShotLog(dir: string) =
     b.add ",2000,12,air,100,100,90,4.5\n"
   writeFile(dir / "shotlog.csv", b)
 
+# ---------------------------------------------------- the vibroseis and impulsive sets
+
+const
+  SetLines = [10.0, 20.0]            ## receiver lines
+  SetFirst = 1001                    ## first station of each line
+  SetCount = 12                      ## stations a line
+  SetSpacing = 50.0
+  SetLineGap = 200.0
+  SetSrcLine = 30.0
+  SetSrcFirst = 1001
+  SetShots = 6
+  SetShotStep = 100.0
+  SetE0 = 500_000.0
+  SetN0 = 4_000_000.0
+  SetSrcE = SetE0 + 5.5 * SetSpacing ## between stations 1006 and 1007
+  SetSrcN0 = SetN0 - 150.0
+  SetDt = 2.0
+  SetUs = 2000.0
+  SetNoise = 0.02
+  SetDirectVel = 2000.0              ## m/s
+  SetReflT0 = 800.0                  ## ms
+  SetReflVel = 2400.0                ## m/s
+  SetReflAmp = 0.6
+  SetRickerHz = 30.0
+  SetSegmentSamples = 5000           ## 10 s of the continuous recordings
+  SetPilotChannel = 25
+  SetAuxChannel = 26
+  SetMissingShot = 3                 ## shot 4 (0-based): its files lack two stations
+  SetMissingChannels = [16, 21]      ## line 20 stations 1004 and 1009
+  SetBadReceiver = 4                 ## line 10 station 1005
+  SetDeadShot = 1
+  SetNoisyShot = 4
+  SetSweepMs = 4000.0
+  SetSweepTaperMs = 200.0
+  SetVibRecord = 3000                ## 4 s sweep and 2 s listen
+
+type SurveySet = object
+  name: string        ## the folder, and the prefix of the survey files
+  vibrator: bool      ## a sweep and a pilot; else an impulsive source
+  start: float64      ## UTC POSIX seconds of the first continuous sample
+  firstShotS: float64 ## the first shot, seconds after `start`
+  stepS: float64      ## seconds between shots
+  recordSamples: int
+  segments: int       ## continuous segments of `SetSegmentSamples`
+  ffid0: int          ## the first shot's field file number
+  noisySigma: float64 ## the noisy trace's noise
+  seed: int64
+
+proc vibroseisSet(): SurveySet =
+  SurveySet(name: "vibroseis", vibrator: true, start: unixUtc(2024, mMar, 1, 6),
+    firstShotS: 4, stepS: 8, recordSamples: SetVibRecord, segments: 5, ffid0: 101,
+    noisySigma: 5.0, seed: 50_000)
+
+func shotTime(ss: SurveySet; shot: int): float64 =
+  ss.start + ss.firstShotS + float64(shot) * ss.stepS
+
+func shotSample(ss: SurveySet; shot: int): int =
+  ## The shot's first sample in the continuous recordings.
+  int(round((ss.firstShotS + float64(shot) * ss.stepS) * 1000 / SetDt))
+
+func setElev(easting, northing: float64): float64 =
+  round((100.0 + 0.5 * (easting - SetE0) / SetSpacing + 2.0 * (northing - SetN0) /
+    SetLineGap) * 10) / 10
+
+proc setReceiver(line: float64; station: int): Station =
+  let e = SetE0 + float64(station - SetFirst) * SetSpacing
+  let n = SetN0 + (line - SetLines[0]) / (SetLines[1] - SetLines[0]) * SetLineGap
+  Station(line: line, point: float64(station), easting: e, northing: n,
+    elevation: setElev(e, n))
+
+proc setSource(shot: int): Station =
+  let n = SetSrcN0 + float64(shot) * SetShotStep
+  Station(line: SetSrcLine, point: float64(SetSrcFirst + shot), easting: SetSrcE,
+    northing: n, elevation: setElev(SetSrcE, n))
+
+proc setSpread(): seq[Station] =
+  ## Channels 1..12 line 10, 13..24 line 20, stations 1001..1012.
+  for line in SetLines:
+    for s in SetFirst ..< SetFirst + SetCount:
+      result.add setReceiver(line, s)
+
+proc writeSetSps(dir: string; ss: SurveySet) =
+  let headers = surveyHeaders("Metres", "1.0", "Universal Transverse Mercator", "15N",
+    "WGS 84")
+  var s, r, x = SpsFile(headers: headers)
+  for shot in 0 ..< SetShots:
+    let src = setSource(shot)
+    s.points.add spsPoint(pkSource, src, "E1", 6, NaN, NaN)
+    for l, line in SetLines:
+      x.relations.add spsRelation(ss.ffid0 + shot, src, 1 + l * SetCount,
+        (l + 1) * SetCount, 1, line, float64(SetFirst), float64(SetFirst + SetCount - 1))
+  for st in setSpread():
+    r.points.add spsPoint(pkReceiver, st, "G1", NaN, NaN, NaN)
+  createDir(dir)
+  saveSps(s, dir / (ss.name & ".s"))
+  saveSps(r, dir / (ss.name & ".r"))
+  saveSps(x, dir / (ss.name & ".x"))
+
+proc gpsMicros(utcUs: int64): int64 =
+  ## The GPS count of a UTC instant: the epoch and the leap seconds then in force.
+  let guess = utcUs - int64(GpsEpochUnix) * 1_000_000
+  guess + int64(gpsMinusUtc(guess + 18_000_000)) * 1_000_000
+
+proc shotLogText(ss: SurveySet): string =
+  result = "Time (UTC),GPS time,sequence,FFID,source line,source point,index,X,Y,Z,status\n"
+  for shot in 0 ..< SetShots:
+    let src = setSource(shot)
+    let utc = ss.shotTime(shot)
+    let t = fromUnix(int64(utc)).utc
+    result.add t.format("yyyy-MM-dd HH:mm:ss") & ".000000," &
+      $gpsMicros(int64(utc) * 1_000_000) & "," & $(shot + 1) & "," & $(ss.ffid0 + shot) &
+      "," & $int(src.line) & "," & $int(src.point) & ",1," & $src.easting & "," &
+      $src.northing & "," & $src.elevation & ",OK\n"
+
+proc setSweep(): GeneratedReference =
+  GeneratedReference(law: rlLinear, f1Hz: 10, f2Hz: 80, durationMs: SetSweepMs,
+    dtMs: SetDt, taperStartMs: SetSweepTaperMs, taperEndMs: SetSweepTaperMs,
+    taperShape: tpCos2, taperParam: NaN, amplitude: 1)
+
+proc arrivals(offset: float64): array[2, tuple[ms, amp: float64]] =
+  ## The direct wave and one reflection, as the sweep response or the wavelet is placed.
+  [(ms: linearMs(0, SetDirectVel, offset), amp: 1.0),
+   (ms: hyperbolicMs(SetReflT0, SetReflVel, offset), amp: SetReflAmp)]
+
+proc continuousRow(ss: SurveySet; ri: int; rcv: Station;
+    sweep: openArray[float32]): seq[float32] =
+  ## One receiver's whole recording: every shot's response, seeded noise, and for the
+  ## one bad receiver a dead trace and a noisy trace in two shots' windows.
+  result = newSeq[float32](ss.segments * SetSegmentSamples)
+  for shot in 0 ..< SetShots:
+    let first = ss.shotSample(shot)
+    let off = signedOffset(setSource(shot), rcv)
+    for a in arrivals(off):
+      let at = round(a.ms / SetDt)
+      if ss.vibrator:
+        addSpike(result.toOpenArray(first, first + ss.recordSamples - 1), sweep, int(at),
+          float32(a.amp))
+      else:
+        addRicker(result.toOpenArray(first, first + ss.recordSamples - 1), SetDt,
+          at * SetDt, SetRickerHz, amp = a.amp)
+  addNoise(result, SetNoise, DefaultNoiseSeed + ss.seed + int64(ri))
+  if ri == SetBadReceiver:
+    let dead = ss.shotSample(SetDeadShot)
+    for j in dead ..< dead + ss.recordSamples: result[j] = 0
+    let noisy = ss.shotSample(SetNoisyShot)
+    addNoise(result.toOpenArray(noisy, noisy + ss.recordSamples - 1), ss.noisySigma,
+      DefaultNoiseSeed + ss.seed + 900)
+
+func fileOf(rcv: Station): string =
+  $int(rcv.line) & "_" & $int(rcv.point)
+
+proc writeContinuous(ss: SurveySet; path: string; rcv: Station; row: seq[float32]) =
+  ## One receiver, one segment a record, each stamped with its first sample's time.
+  var w = openSeismicWriter(path, segdOpts(SetUs, SetSegmentSamples, false, ss.start))
+  for seg in 0 ..< ss.segments:
+    var k = initTraceKeys()
+    k.record = float64(seg + 1)
+    k.channel = 1
+    k.rcvLine = rcv.line
+    k.rcvPoint = rcv.point
+    k.rcvIndex = 1
+    k.rcvX = rcv.easting
+    k.rcvY = rcv.northing
+    k.rcvZ = rcv.elevation
+    k.t0Ms = 0
+    k.intervalUs = SetUs
+    k.time = ss.start + float64(seg * SetSegmentSamples) * SetDt / 1000
+    k.status = tsLive
+    k.traceCode = 1
+    k.sensorType = 2
+    k.component = 2
+    w.writeTrace(k, row[seg * SetSegmentSamples ..< (seg + 1) * SetSegmentSamples])
+  fail(w.close(), path)
+
+type AuxTrace = object
+  data: seq[float32]
+  segd: SegdChannelType
+
+proc shotAux(ss: SurveySet; sweep: openArray[float32]): seq[AuxTrace] =
+  let n = ss.recordSamples
+  if ss.vibrator:
+    var pilot = newSeq[float32](n)
+    for j, v in sweep: pilot[j] = v
+    var force = linearSweep(10, 80, SetSweepMs, SetDt,
+      initSweepTaper(SetSweepTaperMs, SetSweepTaperMs))
+    force.amplitude = 2.0
+    let gf = force.sweepHarmonics(float32, [
+      SweepHarmonic(phaseDeg: PhaseLag),
+      SweepHarmonic(order: 2, amp: 0.08),
+      SweepHarmonic(order: 3, amp: 0.04)], samples = n)
+    @[AuxTrace(data: pilot, segd: sctSourceRefPilot),
+      AuxTrace(data: gf, segd: sctSourceSigMeasured)]
+  else:
+    @[AuxTrace(data: auxTrace(n, 0, 80, 1.0), segd: sctTimeBreak),
+      AuxTrace(data: auxTrace(n, 12, 60, 0.8), segd: sctUpHole)]
+
+proc markDead(path: string; trace: int) =
+  ## The SEG-D to SEG-Y conversion does not carry the dead flag: set the trace
+  ## identification code, as the land set does.
+  let journal = path & ".journal"
+  var ed = openEditor(path, journal)
+  var done = false
+  try:
+    done = ed.setTraceField(trace, "trace.traceIdCode", 2)
+    if not done: echo ed.log
+  finally:
+    ed.close()
+  if fileExists(journal): removeFile(journal)
+  if not done: quit "could not flag the dead trace of " & path
+
+proc writeShot(ss: SurveySet; dir: string; geometry: SurveyGeometry; shot: int;
+    rows: seq[seq[float32]]; aux: seq[AuxTrace]) =
+  ## One shot gather as SEG-D (the receiver traces by channel, the missing shot without
+  ## two stations, then the auxiliary traces), and the same as SEG-Y converted with the
+  ## survey, as the land set's.
+  let src = setSource(shot)
+  let ffid = ss.ffid0 + shot
+  let time = ss.shotTime(shot)
+  let base = dir / ("ffid_" & $ffid)
+  var d = openSeismicWriter(base & ".sgd", segdOpts(SetUs, ss.recordSamples, false, time))
+  for i, rcv in setSpread():
+    if not (shot == SetMissingShot and i + 1 in SetMissingChannels):
+      let dead = shot == SetDeadShot and i == SetBadReceiver
+      let k = traceKey(ffid, i + 1, src, rcv, true, time, SetUs,
+        (if dead: tsDead else: tsLive), 2)
+      d.writeTrace(k, rows[i])
+  for j, a in aux:
+    let k = traceKey(ffid, SetPilotChannel + j, src, Station(), false, time, SetUs,
+      tsAuxiliary, 0)
+    d.writeTrace(k, a.data, channelType = a.segd)
+  fail(d.close(), base & ".sgd")
+  fail(convertWithGeometry(base & ".sgd", base & ".sgy", geometry,
+    ConvertOptions(format: st5)), base & ".sgy")
+  if shot == SetDeadShot: markDead(base & ".sgy", SetBadReceiver)
+
+proc waitJob(jobs: Jobs; id: JobId) =
+  for _ in 0 ..< 60_000:
+    let st = jobs.info(id).get.state
+    if st in {jsDone, jsFailed, jsCancelled}:
+      doAssert st == jsDone, "a cut ended " & $st & ": " & jobs.info(id).get.error
+      return
+    sleep 5
+  quit "a cut did not finish"
+
+proc cutReceiverGathers(ss: SurveySet; logPath, fromDir, toDir: string) =
+  ## The receiver-gather files are what the program's own Slice by shot log makes of the
+  ## continuous files with the shot log, a record per shot, the record the shot's length.
+  let text = readFile(logPath)
+  let map = guessMap(text)
+  let view = shots(parseShotLog(text, map), map)
+  doAssert view.problems.count == 0, "the shot log has problems"
+  let cuts = shotsInTime(view.rows)
+  doAssert cuts.shots.len == SetShots and cuts.dropped == 0
+  let opts = initCutOptions(float64(ss.recordSamples) * SetDt)
+  let jobs = initJobs()
+  for rcv in setSpread():
+    let source = fromDir / (fileOf(rcv) & ".sgd")
+    let dest = toDir / (fileOf(rcv) & ".sgd")
+    var f = openSeismic(source, keys = true)
+    let sink = CutSink()
+    waitJob(jobs, jobs.submit(cutGatherSpec(source, dest),
+      cutGatherWork(addr f, source, dest, cuts, opts, sink)))
+    doAssert sink.result.ok and sink.result.recordsFromFileNumbers, sink.result.reason
+    f.close()
+
+proc writeSetReference(dir: string) =
+  ## The sweep as Analysis > References keeps one: a one-trace SEG-Y and `index.nif`.
+  let g = setSweep()
+  let name = defaultGenerateName(g)
+  let origin = ReferenceOrigin(generated: true, law: g.law, f1Hz: g.f1Hz, f2Hz: g.f2Hz,
+    durationMs: g.durationMs, dtMs: g.dtMs, taperStartMs: g.taperStartMs,
+    taperEndMs: g.taperEndMs, taperShape: g.taperShape, taperParam: g.taperParam,
+    phaseDeg: 0, amplitude: 1, boostDb: 0)
+  let entry = ReferenceEntry(id: "sweep-1", name: name, intervalUs: SetUs,
+    samples: int(g.durationMs / g.dtMs), origin: origin, date: "2024-03-01T00:00:00Z",
+    file: "sweep-1.sgy")
+  createDir(dir)
+  writeReferenceFile(dir / entry.file, name, SetUs, generateSamples(g), origin)
+  writeIndex(dir, ReferenceIndex(version: ReferenceVersion, entries: @[entry]))
+
+proc writeSurveySet(root: string; ss: SurveySet) =
+  let top = root / "samples" / ss.name
+  for sub in ["survey", "continuous", "shots", "receiver-gathers"]:
+    removeDir(top / sub)
+    createDir(top / sub)
+  writeSetSps(top / "survey", ss)
+  writeFile(top / "shotlog.csv", shotLogText(ss))
+  let sweep = if ss.vibrator: generateSamples(setSweep()) else: newSeq[float32]()
+  let spread = setSpread()
+  var rows: seq[seq[float32]] = @[]
+  for ri, rcv in spread:
+    rows.add continuousRow(ss, ri, rcv, sweep)
+    writeContinuous(ss, top / "continuous" / (fileOf(rcv) & ".sgd"), rcv, rows[ri])
+  let aux = shotAux(ss, sweep)
+  var geometry = initSurveyGeometry()
+  for ext in [".s", ".r", ".x"]: geometry.addSps(top / "survey" / (ss.name & ext))
+  for shot in 0 ..< SetShots:
+    let first = ss.shotSample(shot)
+    var window: seq[seq[float32]] = @[]
+    for ri in 0 ..< spread.len:
+      window.add rows[ri][first ..< first + ss.recordSamples]
+    writeShot(ss, top / "shots", geometry, shot, window, aux)
+  cutReceiverGathers(ss, top / "shotlog.csv", top / "continuous", top / "receiver-gathers")
+  if ss.vibrator: writeSetReference(top / "reference")
+
 proc report(root: string) =
   var total = 0'i64
   for kind, path in walkDir(root / "samples"):
-    if kind == pcDir:
+    if kind == pcDir and path.extractFilename notin ["vibroseis", "impulsive"]:
       for k, f in walkDir(path):
         if k == pcFile:
           let n = getFileSize(f)
@@ -771,6 +1078,15 @@ proc report(root: string) =
   echo "samples/ ", total, " bytes"
   if total > MaxBytes:
     quit "samples/ is " & $total & " bytes, over " & $MaxBytes
+
+proc reportSet(root, name: string) =
+  ## The size of a survey set, its folders included.
+  var total = 0'i64
+  for f in walkDirRec(root / "samples" / name):
+    total += getFileSize(f)
+  echo "samples/", name, "/ ", total, " bytes"
+  if total > MaxSetBytes:
+    quit "samples/" & name & "/ is " & $total & " bytes, over " & $MaxSetBytes
 
 proc main() =
   let root = currentSourcePath().parentDir.parentDir
@@ -798,7 +1114,9 @@ proc main() =
   writeObnReceivers(root / "samples" / "obn", obnT + 3600.0)
   checkObn(root / "samples" / "obn")
   writeShotLog(root / "samples" / "land")
+  writeSurveySet(root, vibroseisSet())
   report(root)
+  reportSet(root, "vibroseis")
   echo "wrote samples/"
 
 main()
