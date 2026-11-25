@@ -312,34 +312,44 @@ so records compare one after the other.
 
 ## Missing traces
 
-**Reports > Missing traces...** scans the folder open in the file list, including the
-folders under it, against the loaded relation file. The item stays in the menu. It is
-inactive until a folder is open and a relation file is loaded, and it names whichever
-of those is missing.
+**Reports > Missing traces...** lists the stations the survey's relation records call
+for that a file does not hold. It needs relation records (X records) imported; without
+them the window says so in one sentence and shows no table. A shot gather is checked
+against the X record of its shot (the receiver stations expected). A receiver gather
+that is cut into records is checked against the O record of its receiver (the source
+stations expected); when no O records are loaded they are worked out from the X records.
+A continuous receiver recording is not checked, and the window says so.
 
-The **Missing traces** window stays closed until you ask for it. It opens as a tab
-beside the **Seismic** window, and that tab is the one in front. Closing it and opening
-it again keeps the place you last gave it. The totals are small labelled figures
-(files, records, expected, present, missing and its percent, never recorded, duplicates,
-extras, survey records with no data) and wrap onto the next line when the window is
-narrow. **Rescan** runs the scan again; while one is running, that button is **Stop**.
-**Skipped** lists files that were not seismic or could not be read. **Unmatched** lists
-records that could not be checked against the relation file. Those three sit on the
-left; **with missing points** (Records tab only) and **totals in a second file** sit
-next to **Export CSV...**.
+A station is one line and point, however many components it has: a station with three
+or four components is one station, and it is present when any of its traces is in the
+record.
 
-The **Folder** tab is one row per station the relation file expected: how many records
-should have recorded it, and how many did not. The **Records** tab is one row per
-record that was read, and how that record compares with the spread planned for it.
-A box above the table narrows the rows: by line or point on the Folder tab, by file
-name on the Records tab. Click a column header to sort by it (again for the other way;
-Shift-click adds a column). The sort's place is a small number after the header name.
-**Never** and **Unknown** are a mark, not the words true and false.
+The **Missing traces** window stays closed until you ask for it. It opens as a tab beside
+the **Seismic** window; its close button (or the View menu) hides it, and opening it again
+keeps the place you last gave it. It has two tabs.
 
-**Export CSV...** writes the table on screen. On the Records tab, **with missing
-points** writes one row per missing station instead of one row per record. **totals in
-a second file** also writes a file beside the one you save, with `-totals` before the
-extension. Double-click a record to open that file at that record.
+- **File** checks the file shown in the Seismic window, as soon as the window is drawn,
+  and again when another file is shown. Above the table are the figures, one to a line:
+  which stations are expected and by which records ("Receiver stations expected by the X
+  records"), how many are in the template, how many are found in the file, how many are
+  missing, and the percent of the template missing. A file with several records also has
+  a line that counts per record (each station once for each record that calls for it:
+  expected, present, missing, percent). The table has the columns **Line**, **Point** and
+  **Missing**: how many records of the file call for that station and do not have it.
+- **Folder** checks the files of a folder you choose, and does nothing until you press
+  **Run**. **Folder...** opens the folder dialog and the chosen path is shown and kept for
+  next time. **Include subfolders** is off until you tick it; changing the folder or the
+  tick drops the answer on screen. The figures are the same, added over the files, and
+  **Missing** goes up by one for every file (for a file of several records, every record)
+  that lacks the station.
+
+While a check runs, a progress bar and **Stop** show; the Jobs window lists it too.
+**Skipped** lists files that were not seismic or could not be read, **Unmatched**
+records that have no relation record to be checked against, and (Folder tab) **Not
+checked** the continuous recordings. A box narrows the rows by line or point. Click a
+column header to sort by it (again for the other way; Shift-click adds a column).
+**Export CSV...** writes the table on screen (`line,point,missing`); **statistics in a
+second file** also writes the figures beside it, with `-statistics` before the extension.
 
 ## Trace quality
 
