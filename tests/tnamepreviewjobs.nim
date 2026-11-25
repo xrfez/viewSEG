@@ -10,13 +10,13 @@
 ## submits as the window does: one submit per key and none while it runs, the answer used, a
 ## changed pattern dropping a stale answer, a key that differs by the edits revision (killing
 ## traces with killed traces dropped) or by the session (a file reloaded under the same path),
-## a cancelled job asked again, a failed one not, and a job pruned from the history
+## a cancelled or failed one not asked again, and a job pruned from the history
 ## (`initJobs(historyLimit = 0)`) still answering.
 ##
 ## Seen to fail: with `vendorAnswer` not comparing the key, `stale_answer_dropped` found the
 ## old pattern's answer used. With the key lacking the revision, `key_revision` failed; lacking
-## the session, `key_session` failed; with `cancelled` not clearing `asked`,
-## `cancel_asks_again` failed; with the answer read only for a done job, `pruned_job` failed;
+## the session, `key_session` failed; with a cancelled job clearing `asked`,
+## `cancel_not_retried` counted a second submit; with the answer read only for a done job, `pruned_job` failed;
 ## with a failed job clearing `asked`, `failed_not_retried` counted a second submit.
 
 import std/[options, os]
@@ -80,11 +80,11 @@ proc frame(d: var Driver; jobs: Jobs; f: ptr SeismicFile; path: string;
 
 proc settle(d: var Driver; jobs: Jobs; f: ptr SeismicFile; path, key: string;
     reg: VendorRegistry; fields: seq[string]): VendorStep =
-  ## Frames until the job is over (at most 2000 ms), returns the last decision.
-  for n in 0 ..< 2000:
-    result = d.frame(jobs, f, path, key, reg, fields)
-    if result == vsUse: return
-    sleep(1)
+  ## Frames until the job is over (at most `Patience`), returns the last decision.
+  var step = vsSample
+  discard waitUntil((step = d.frame(jobs, f, path, key, reg, fields);
+      step == vsUse))
+  step
 
 proc main*() =
   withFixtures fx:
@@ -141,9 +141,12 @@ proc main*() =
 
       block one_submit_then_use:
         var d = Driver()
+        var open = false
+        d.gate = addr open
         let key = vendorPreviewKey(path, 1, true, 0, ["kind"], 1)
         doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSubmit
         doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSample
+        open = true
         doAssert d.settle(jobs, addr f, path, key, mapped, @["kind"]) == vsUse
         doAssert d.submits == 1, "asked more than once: " & $d.submits
         doAssert d.st.values.len == 1 and d.st.values[0].name == "kind"
@@ -185,31 +188,59 @@ proc main*() =
         doAssert d.frame(jobs, addr f, path, b, mapped, @["kind"]) == vsSubmit,
           "a file reloaded under the same path kept the old values"
 
-      block cancel_asks_again:
+      block cancel_not_retried:
         var d = Driver()
         var open = false
         d.gate = addr open
         let key = vendorPreviewKey(path, 1, true, 0, ["kind"], 1)
         doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSubmit
         doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSample
-        doAssert jobs.cancel(d.st.job)
-        var again = false
-        for n in 0 ..< 2000:
-          if d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSubmit:
-            again = true
-            break
+        let id = d.st.job
+        doAssert jobs.cancel(id)
+        doAssert waitUntil(jobs.info(id).isSome and
+          jobs.info(id).get.state == jsCancelled), "the job was not cancelled"
+        for n in 0 ..< 20:
+          doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSample,
+            "a cancelled job was asked again or its answer used"
           sleep(1)
-        doAssert again, "a cancelled job was never asked again"
+        doAssert d.submits == 1, "a cancelled job was submitted again"
+        let other = vendorPreviewKey(path, 2, true, 0, ["kind"], 1)
+        doAssert d.frame(jobs, addr f, path, other, mapped, @["kind"]) == vsSubmit,
+          "a reloaded file was not asked"
         open = true
-        doAssert d.settle(jobs, addr f, path, key, mapped, @["kind"]) == vsUse
+        doAssert d.settle(jobs, addr f, path, other, mapped, @["kind"]) == vsUse
         doAssert d.submits == 2
+
+      block key_changes_while_running:
+        var d = Driver()
+        var open = false
+        d.gate = addr open
+        let k1 = vendorPreviewKey(path, 1, true, 0, ["kind"], 1)
+        let k2 = vendorPreviewKey(path, 1, true, 0, ["kind", "nosuch"], 1)
+        doAssert d.frame(jobs, addr f, path, k1, mapped, @["kind"]) == vsSubmit
+        for n in 0 ..< 5:
+          doAssert d.frame(jobs, addr f, path, k2, mapped, @["kind", "nosuch"]) ==
+              vsSample, "the key changed while the job ran: not waited for it"
+        doAssert d.submits == 1, "submitted while the job ran"
+        let first = d.st.job
+        open = true
+        doAssert waitUntil(jobs.info(first).isSome and
+          jobs.info(first).get.state == jsDone), "the first job did not end"
+        doAssert d.frame(jobs, addr f, path, k2, mapped, @["kind", "nosuch"]) ==
+            vsSubmit, "the first key's answer was used, or k2 not asked"
+        doAssert d.settle(jobs, addr f, path, k2, mapped, @["kind", "nosuch"]) == vsUse
+        doAssert d.submits == 2, "asked more than once for the new key"
+        doAssert d.st.values.len == 2 and d.st.shownKey == k2
 
       block failed_not_retried:
         var d = Driver()
         let key = vendorPreviewKey(path, 1, true, 0, ["kind"], 1)
         doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"],
             fail = true) == vsSubmit
-        for n in 0 ..< 200:
+        let id = d.st.job
+        doAssert waitUntil(jobs.info(id).isSome and
+          jobs.info(id).get.state == jsFailed), "the job did not fail"
+        for n in 0 ..< 20:
           doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSample
           sleep(1)
         doAssert d.submits == 1, "a failed job was retried"

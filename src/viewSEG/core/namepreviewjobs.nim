@@ -78,8 +78,9 @@ proc vendorPreviewStep*(s: var VendorPreviewState; jobs: Jobs;
   ## The decision of one frame. `key` is `vendorPreviewKey` of the shown file, or "" when
   ## there is nothing to read (no field, no file open). A job that is not queued or running
   ## is read whatever its state, so a pruned job still gives its answer. A job that was
-  ## cancelled, or was pruned without an answer, is asked again; a failed one is not (it
-  ## would fail on every frame). An answer for another key is not used.
+  ## pruned without an answer is asked again; a cancelled one (the user stopped it in the Jobs
+  ## window) and a failed one are not, for the same key (it would run again on every frame):
+  ## the sample is shown. A file reloaded or closed changes the key, so it is asked again. An answer for another key is not used.
   if s.job != NoJob:
     let info = jobs.info(s.job)
     if info.isSome and info.get.state in {jsQueued, jsRunning}: return vsSample
@@ -87,7 +88,7 @@ proc vendorPreviewStep*(s: var VendorPreviewState; jobs: Jobs;
     if got.isSome:
       s.values = got.get
       s.shownKey = s.asked
-    elif info.isNone or info.get.state == jsCancelled:
+    elif info.isNone:
       s.asked = ""
     s.job = NoJob
   if key.len == 0: return vsSample
