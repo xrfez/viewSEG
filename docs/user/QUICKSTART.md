@@ -405,7 +405,7 @@ until you press **Run**.
 
 The **Trace quality** window stays closed until you ask for it. It opens as a tab beside
 the **Seismic** window, and that tab is the one in front. The close button on its tab (or
-**View**, the window's entry) hides it and stops what runs; the entry brings it back where
+**View**, the window's entry) hides it. A Folder run goes on while it is hidden and its answer is kept; the File tab measures nothing while hidden, and measures the file then shown when the window is back. A vibrator signature file is not measured here; the entry brings it back where
 you last left it.
 
 **Folder** takes the folder from **Folder...** (remembered, with the **Include
@@ -419,11 +419,11 @@ traces (read, killed, measured), the bad traces and the stations with one, each 
 finite**), the noisy and the weak among the traces tested for them, each with its percent,
 and, when a file has more than one component, how many stations lack a component (in at least one file). The
 stations are the receiver stations of a shot gather's traces, the source stations of a
-receiver gather's (the rule the Missing traces window uses for a file); when a folder holds
+receiver gather's (the rule the Missing traces window uses for a file; a file of one receiver and one source takes the side most of the other files took, and a lone one is a slice, counted at its source station); when a folder holds
 both, **Receiver stations** and **Source stations** choose which are shown. A killed trace
 is counted as killed, not as bad, and it is not measured.
 
-The table has one row per station (line and point), whatever its components and files: a
+Traces that name no line or no point are one row, **unknown**, which is not counted as a station in the figures (its traces are in the trace figures). The table has one row per station (line and point), whatever its components and files: a
 station's traces in every file measured count in its one row, so on the Folder tab the
 counts add up across the files. **Traces** counts the traces of the station (killed ones
 included), **Killed** and **Bad** the killed and the bad ones, then the count of each
@@ -431,7 +431,7 @@ finding. **Lacks component** and **Files lacking** (shown when a file has more t
 component) are judged file by file: in a file, a station that has a trace there lacks the
 components that file has at other stations and it has none of. The first column lists the
 components lacked in any file, the second counts the files in which the station lacked one
-(it adds up across the files of a folder). A file of one component flags nobody. The last counts, **Noisy** and
+(it adds up across the files of a folder). A file of one component flags nobody. A component counts for a file only when at least two of its stations, and at least half of them, have it: one hydrophone on one node does not make every other station lack it. The last counts, **Noisy** and
 **Weak**, are the traces the map's noisy and weak filters show for each field record,
 found the same way (the exclusion area you chose in Tools > Settings applies, and a
 record's first breaks are found for it, so a scan takes longer). They are not counted as
@@ -449,7 +449,7 @@ to sort by it (again for the other way; Shift-click adds a column). The sort's p
 small number after the header name. When a file or a trace could not be read, a line says
 how many; **Unread** opens that list, each with the reason.
 
-**Export CSV...** writes the table, only the rows the filter leaves in sight.
+**Export CSV...** writes the table, only the rows the filter leaves in sight; its first line, a comment, names the stations (receiver or source). It does not write over a file the scan read or one open in viewSEG.
 **statistics in a second file** also writes the figures beside the one you save, with
 `-statistics` before the extension.
 

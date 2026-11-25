@@ -34,6 +34,9 @@ const
   Written* = "Wrote the CSV."
   ExportFailed* = "The CSV could not be written."
   NoRows* = "Nothing to show."
+  ExportIsData* = "The CSV was not written: that file is one the scan read, or one that is " &
+    "open in viewSEG."
+  SignatureNote* = "A vibrator signature file is not measured here: use Vibrator QC."
   NoStations* = "No trace of the file has a station."
   NoneUnread* = "No file was unread."
   ColLine* = "Line"

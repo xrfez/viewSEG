@@ -42,11 +42,11 @@ proc main*() =
     add(b, "one.sgd", 10, 1, 1, {qfAllZero})
     add(b, "one.sgd", 10, 1, 1, {qfClipped})
     add(b, "one.sgd", 10, 1, 1, {qfSpiky})
-    add(b, "two.sgd", 10, 1, 1, {qfDcOffset})
     add(b, "one.sgd", 10, 1, 2, {qfConstant})
     add(b, "one.sgd", 10, 2, 1, {})
     add(b, "one.sgd", 20, 1, 1, {qfAllZero}, killed = true)
     add(b, "one.sgd", 20, 1, 1, {qfHeaderDead})
+    add(b, "two.sgd", 10, 1, 1, {qfDcOffset})
     let report = qualityReport(b)
     doAssert report.stations.len == 3, "a row for each component: " & $report.stations.len
     let zero = stationAt(report.stations, 10, 1)
@@ -117,14 +117,70 @@ proc main*() =
     for file in ["a.sgd", "b.sgd", "c.sgd"]:
       add(b, file, 10, 1, 1, {})
       add(b, file, 10, 1, 2, {})
+      add(b, file, 10, 3, 1, {})
+      add(b, file, 10, 3, 2, {})
       # station 10:2 has both components in c.sgd, only component 1 in a and b
       add(b, file, 10, 2, 1, {})
-    add(b, "c.sgd", 10, 2, 2, {})
+      if file == "c.sgd": add(b, file, 10, 2, 2, {})
     let report = qualityReport(b)
     let two = stationAt(report.stations, 10, 2)
     doAssert two.lackFiles == 2 and two.lacking == {2'u8}, $two
     doAssert stationAt(report.stations, 10, 1).lackFiles == 0
     doAssert report.totals.lacking == 1, $report.totals
+
+  block a_component_at_one_station_is_not_the_files:
+    # Seen to fail: with every component any station has counted, the hundred stations of
+    # three components were flagged as lacking the fourth.
+    var b = initQualityBuild()
+    for p in 1 .. 100:
+      for c in 1'u8 .. 3'u8: add(b, "a.sgd", 10, float64(p), c, {})
+    add(b, "a.sgd", 10, 50, 4, {}) # one hydrophone on one node
+    let report = qualityReport(b)
+    doAssert report.totals.lacking == 0 and report.totals.components == 3, $report.totals
+    var c = initQualityBuild()
+    for p in 1 .. 100:
+      add(c, "a.sgd", 10, float64(p), 1, {})
+      add(c, "a.sgd", 10, float64(p), 2, {})
+      if p != 7: add(c, "a.sgd", 10, float64(p), 3, {})
+    let flagged = qualityReport(c)
+    doAssert flagged.totals.lacking == 1, $flagged.totals
+    doAssert stationAt(flagged.stations, 10, 7).lacking == {3'u8}
+
+  block memory_per_station_does_not_grow_with_the_files:
+    # Seen to fail: with each station keeping its components of every file, the build at
+    # 400 files held about four times what it did at 100.
+    proc held(files: int): int =
+      var b = initQualityBuild()
+      let before = getOccupiedMem()
+      for f in 0 ..< files:
+        var part = initQualityBuild()
+        for p in 1 .. 200:
+          for c in 1'u8 .. 3'u8:
+            if p != 3 or c != 2: add(part, "file" & $f & ".sgd", 10, float64(p), c, {})
+        b.absorb part
+      doAssert qualityReport(b).totals.lacking == 1
+      result = getOccupiedMem() - before
+    let small = held(100)
+    let large = held(400)
+    doAssert large < small * 3 div 2 + 200_000, "100 files " & $small & " bytes, 400 files " &
+      $large
+
+  block unknown_station_is_not_a_station:
+    var b = initQualityBuild()
+    add(b, "a.sgd", 3, NaN, 1, {qfAllZero})
+    add(b, "a.sgd", NaN, 5, 1, {qfAllZero})
+    add(b, "a.sgd", NaN, NaN, 1, {qfAllZero})
+    add(b, "a.sgd", 10, 1, 1, {})
+    let report = qualityReport(b)
+    doAssert report.stations.len == 2, $report.stations
+    let unknown = report.stations[1]
+    doAssert unknown.isUnknown and unknown.seen == 3 and unknown.lineText == "unknown", $unknown
+    doAssert report.totals.stations == 1 and report.totals.badStations == 0 and
+      report.totals.traces == 4 and report.totals.bad == 3, $report.totals
+    doAssert "Receiver stations with a bad trace: 0 of 1 (0%)" in
+      statisticLines(report.totals, ssReceivers, false)
+    doAssert stationsCsv(report.stations).splitLines[2].startsWith("unknown,,"),
+      stationsCsv(report.stations)
 
   block one_component_has_nothing_to_lack:
     var b = initQualityBuild()
@@ -147,6 +203,7 @@ proc main*() =
     doAssert unknown.seen == 3 and unknown.bad == 2, $unknown.seen
     doAssert stationAt(report.stations, 10, 2).seen == 2
     doAssert report.stations.len == 2
+    doAssert report.totals.stations == 1
 
   block sort_ties_and_nan:
     var b = initQualityBuild()

@@ -246,15 +246,15 @@ proc main*() =
     let dead = stationAt(report.stations, 20, 1)
     doAssert dead.seen == 1 and dead.bad == 1 and dead.counts[qfHeaderDead] == 1, $dead
     doAssert dead.counts[qfAllZero] == 0
-    doAssert dead.lacking == {2'u8} and dead.lackFiles == 1,
-      "one.sgd has component 2 at another station, not at this one"
+    doAssert dead.lacking == {} and dead.lackFiles == 0,
+      "component 2 is at one station of one.sgd only: not the file's"
     let gone = stationAt(report.stations, 30, 1)
     doAssert gone.seen == 1 and gone.killed == 1 and gone.bad == 0, $gone
     doAssert gone.counts[qfAllZero] == 0
     doAssert report.stations.len == 3, $report.stations.len
     doAssert report.totals.files == 3 and report.totals.stations == 3, $report.totals
     doAssert gone.lacking == {}, "killed.sgd has one component: nothing to lack there"
-    doAssert report.totals.lacking == 1 and report.totals.components == 2, $report.totals
+    doAssert report.totals.lacking == 0 and report.totals.components == 1, $report.totals
     doAssert report.totals.traces == 7 and report.totals.killed == 1, $report.totals
     doAssert report.totals.bad == 6 and report.totals.counts[qfHeaderDead] == 1
     doAssert got.sink.result.sources.totals.traces == 0, "a source side with no file"
@@ -532,7 +532,10 @@ proc main*() =
       (line: 10.0, point: 1.0, component: 2'u8, status: tsLive, samples: z),
       (line: 10.0, point: 1.0, component: 3'u8, status: tsLive, samples: z),
       (line: 10.0, point: 2.0, component: 1'u8, status: tsLive, samples: z),
-      (line: 10.0, point: 2.0, component: 3'u8, status: tsLive, samples: z)])
+      (line: 10.0, point: 2.0, component: 3'u8, status: tsLive, samples: z),
+      (line: 10.0, point: 3.0, component: 1'u8, status: tsLive, samples: z),
+      (line: 10.0, point: 3.0, component: 2'u8, status: tsLive, samples: z),
+      (line: 10.0, point: 3.0, component: 3'u8, status: tsLive, samples: z)])
     let got = run(@[path], none)
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
     let report = got.sink.result.receivers
@@ -563,6 +566,21 @@ proc main*() =
     let both = stationAt(report.stations, 10, 2)
     doAssert both.seen == 2 and both.counts[qfAllZero] == 1 and both.counts[qfClipped] == 1,
       $both
+
+  block a_file_of_one_receiver_and_one_source_takes_the_side_of_the_others:
+    # Seen to fail: with the open file always counted at the receivers, the lone file's
+    # station was in the receivers table; with it always at the sources, the one beside
+    # shots was.
+    let z = zeros(32)
+    let lone = dir / "lone.sgd"
+    seismicFile(lone, 1, @[(line: 5.0, point: 5.0, component: 1'u8, status: tsLive, samples: z)])
+    let alone = run(@[lone], none).sink.result
+    doAssert alone.receivers.totals.traces == 0 and alone.sources.totals.traces == 1,
+      "a lone slice is counted at its source"
+    let shot = dir / "b1.sgd"
+    let beside = run(@[lone, shot], none).sink.result
+    doAssert beside.receivers.totals.traces == 5 + 1 and beside.sources.totals.traces == 0,
+      "beside a shot it is counted at the receivers: " & $beside.receivers.totals
 
   block a_receiver_gather_is_counted_at_its_sources:
     # one receiver, three sources: its traces are named by the source stations

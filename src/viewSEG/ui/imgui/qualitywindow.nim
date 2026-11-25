@@ -22,6 +22,8 @@ type
   ExportAsk* = object
     rows*: seq[StationRow]
     totals*: Totals
+    side*: StationSide
+    taken*: seq[string] ## files the CSV must not replace
     withStats*, live*: bool
 
   Scan = object
@@ -68,6 +70,12 @@ proc shownPath(st: AppState): string =
   let panel = st.findPanel(MainPanel)
   let shown = if panel >= 0: st.shownFile(panel) else: -1
   if shown >= 0: st.sessions[shown].diskPath else: ""
+
+proc shownIsSignature(st: AppState): bool =
+  ## Whether the file shown is a vibrator signature file, which this window does not measure.
+  let panel = st.findPanel(MainPanel)
+  let shown = if panel >= 0: st.shownFile(panel) else: -1
+  shown >= 0 and st.sessions[shown].signature.kind != sgNone
 
 proc shownRevision(st: AppState): int =
   ## The revision of the shown file's edits, so a kill or an undo measures it again.
@@ -147,7 +155,7 @@ func sortText(spec: SortSpec[StationSortColumn]): string =
   parts.join(",")
 
 func stationMark(r: StationRow): string =
-  "quality.station " & filerecs.stationNumber(r.line) & " " & filerecs.stationNumber(r.point) &
+  "quality.station " & r.lineText & " " & r.pointText &
     " " & $r.seen & " " & $r.killed & " " & $r.bad & " " & $r.counts[qfAllZero] & " " &
     (if r.lacking == {}: "-" else: componentList(r.lacking).replace(", ", ",")) & " " &
     $r.lackFiles
@@ -219,12 +227,6 @@ proc cancel(s: var Scan; st: AppState) =
   if s.job != NoJob: discard st.jobs.cancel(s.job)
   s = Scan()
 
-proc stop*(ui: var QualityUi; st: AppState) =
-  ## Cancels what runs and forgets the answers: the window is closed.
-  ui.file.cancel(st)
-  ui.folder.cancel(st)
-  ui.shownKey = ["", ""]
-
 func reportOf(r: QualityJobResult; side: StationSide): QualityReport =
   if side == ssReceivers: r.receivers else: r.sources
 
@@ -273,6 +275,7 @@ proc submitFile(ui: var QualityUi; st: AppState; key, path: string) =
   ui.file = Scan(key: key, running: true, status: Scanning, sink: QualitySink())
   var spec = qualitySpec(@[path])
   spec.title = "Trace quality in " & path.extractFilename
+  spec.auto = true # started by the program as the file shown changes: its end is not announced
   ui.file.job = st.jobs.submit(spec,
     fileScan(path, st.indexCache, st.editsSnapshot, ui.file.sink, st.settings.noise))
 
@@ -296,7 +299,9 @@ proc consider(ui: var QualityUi; st: AppState) =
   ui.poll(ui.file, st)
   ui.poll(ui.folder, st)
   let path = st.shownPath
-  let fileKey = if path.len > 0: path & "|" & $st.shownRevision else: ""
+  let fileKey = if path.len > 0 and not st.shownIsSignature:
+      path & "|" & $st.shownRevision
+    else: ""
   if fileKey != ui.file.key:
     ui.file.cancel(st)
     ui.shownKey = ["", ""]
@@ -327,8 +332,11 @@ proc startExport*(ui: var QualityUi; st: AppState; path: string) =
   ui.exportJob = st.jobs.submit(JobSpec(title: "Export trace quality",
     lane: jlBackground, reads: @[]), proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
-    writeCsv(dest, stationsCsv(ask.rows))
-    if ask.withStats: writeCsv(beside, totalsCsv(ask.totals)))
+    if normalizedPath(dest) in ask.taken or normalizedPath(beside) in ask.taken:
+      raise newException(IOError, ExportIsData)
+    let head = "# " & ask.side.stationNoun & " stations\n"
+    writeCsv(dest, head & stationsCsv(ask.rows))
+    if ask.withStats: writeCsv(beside, head & totalsCsv(ask.totals)))
 
 proc pollExport(ui: var QualityUi; st: AppState) =
   if ui.exportJob == NoJob: return
@@ -392,8 +400,8 @@ proc drawRows(ui: var QualityUi; report: QualityReport; tab: int; key: string;
       let r = rows[ui.shown[tab][int(i)]]
       igTableNextRow(0, 0)
       igPushID_Int(cint(i))
-      numberCell(filerecs.stationNumber(r.line))
-      numberCell(filerecs.stationNumber(r.point))
+      numberCell(r.lineText)
+      numberCell(r.pointText)
       if report.totals.components > 1:
         if igTableNextColumn():
           igTextUnformatted(componentList(r.lacking).cstring, nil)
@@ -442,6 +450,10 @@ proc drawScan(ui: var QualityUi; st: AppState; folderTab: bool; marks: var Marks
   ## progress, or the figures and the table.
   template s: untyped = (if folderTab: ui.folder else: ui.file)
   if not folderTab and ui.file.key.len == 0:
+    if st.shownIsSignature:
+      igTextUnformatted(SignatureNote.cstring, nil)
+      marks.mark("quality.message " & SignatureNote)
+      return
     igTextUnformatted(NeedFile.cstring, nil)
     marks.mark("quality.message " & NeedFile)
     return
@@ -482,8 +494,10 @@ proc drawScan(ui: var QualityUi; st: AppState; folderTab: bool; marks: var Marks
     let text = filterText(ui.filter[int(folderTab)])
     var rows: seq[StationRow] = @[]
     for i in filterStations(report.stations, text): rows.add report.stations[i]
-    ui.ask = ExportAsk(rows: rows, totals: report.totals, withStats: ui.withStats,
-      live: true)
+    var taken = r.paths
+    for session in st.sessions: taken.add normalizedPath($session.path)
+    ui.ask = ExportAsk(rows: rows, totals: report.totals, side: ui.side, taken: taken,
+      withStats: ui.withStats, live: true)
     out0.exportAsked = true
     out0.exportPath = (if folderTab and st.settings.quality.folder.len > 0:
       st.settings.quality.folder else: st.shownPath.parentDir) / SuggestedName
@@ -554,7 +568,7 @@ proc drawQuality*(ui: var QualityUi; title: string; st: AppState; marks: var Mar
     marks.markWindow("quality")
     if ui.status.len > 0:
       igTextUnformatted(ui.status.cstring, nil)
-      marks.mark("quality.exported")
+      marks.mark("quality.exported " & ui.status)
     if igBeginTabBar("##qualitytabs", tabFlags):
       marks.mark("quality.tab")
       let fileOn = igBeginTabItem(FileTab.cstring, nil, 0)

@@ -257,17 +257,21 @@ func sideOf(st: Stations; verdict: Verdict): Side =
   elif verdict.known: (if verdict.receiver: sdReceiver else: sdShot)
   else: sdNeither
 
-func stationSide*(keys: openArray[TraceKeys]): StationSide =
+func fileSide*(keys: openArray[TraceKeys]): tuple[side: StationSide; open: bool] =
   ## The side whose stations name a file's traces, by the rule `sideOf` applies to a
   ## file: one receiver and several sources is a receiver gather (`ssSources`: its
-  ## stations are the sources); anything else, including a file `sideOf` leaves open or
-  ## cannot tell, names its receivers (`ssReceivers`). A receiver and no source station at
-  ## all is read as receivers too: the sources would have no stations to name.
+  ## stations are the sources); several receivers is a shot (`ssReceivers`). `open`: one
+  ## receiver and one source, which `sideOf` leaves to the other files (the caller decides;
+  ## `side` is then `ssReceivers`). A file it cannot tell is a shot, as is one receiver with
+  ## no source station at all (the sources would have no stations to name).
   var st = initStations()
   for k in keys: st.note(k)
-  if st.sideOf((known: false, receiver: false, continuous: false)) == sdReceiver and
-      st.sources >= 2: ssSources
-  else: ssReceivers
+  case st.sideOf((known: false, receiver: false, continuous: false))
+  of sdOpen: (ssReceivers, true)
+  of sdReceiver:
+    let side = if st.sources >= 2: ssSources else: ssReceivers
+    (side, false)
+  of sdShot, sdNeither: (ssReceivers, false)
 
 func isOneSlice(st: Stations): bool =
   ## One receiver, one source and one trace for each component: one shot slice.

@@ -31,21 +31,25 @@
 ## listed unread once.
 ##
 ## A station is a line and point. Which of a trace's two stations names it is the
-## file's side (`stationSide`, the rule the missing-traces scan applies to a file): a
+## file's side (`fileSide`, the rule the missing-traces scan applies to a file): a
 ## shot gather's traces are by their receiver stations, a receiver gather's by their
-## source stations, and a file's traces all take the one side. A scan keeps one report for
+## source stations, and a file's traces all take the one side. A file of one receiver and
+## one source takes the side most of the other files of the scan took, and a lone one (or
+## a folder of such files only) is a slice, counted at its source station, as the
+## missing-traces scan checks it as a receiver; such a file is measured once and its notes
+## kept for both sides until the scan ends. A scan keeps one report for
 ## each side (`receivers`, `sources`); a side no file took is empty. Nothing is
 ## computed from a trace's record number.
 ##
 ## `folderScan` lists a folder (its subfolders only when asked) and scans its files.
 
-import std/[algorithm, os, sets, tables]
+import std/[algorithm, os, sets, sequtils, tables]
 import parseSEG
 import processSEG/core/[pool, rows, types, workspace]
 import processSEG/qc/amplitude
 import components, edits, filejobs, filesystem, firstbreakjobs, firstbreaks, jobs, noisearea,
   qualityreport, recordqc, session, state, threads
-from missingjobs import stationSide
+from missingjobs import fileSide
 from missingreport import StationSide
 export StationSide
 
@@ -63,6 +67,7 @@ type
     ok*: bool
     receivers*, sources*: QualityReport ## by the side of the file each trace was in
     unread*: seq[tuple[path, why: string]]
+    paths*: seq[string] ## the files the scan was given, normalised (what an export must not replace)
     reason*: string
 
   QualityNote* = ref object
@@ -137,18 +142,20 @@ proc liveSpans(f: ptr SeismicFile; part: Slice[int]; killed: HashSet[int]): seq[
       start = -1
   if start >= 0: result.add start .. part.b
 
-proc noteTrace(b: var QualityBuild; path: string; k: TraceKeys; side: StationSide;
-    killed: bool; flags: set[AmplitudeFlag]; noisyTested, weakTested: bool) =
+proc noteTrace(b: var array[StationSide, QualityBuild]; path: string; k: TraceKeys;
+    sides: set[StationSide]; killed: bool; flags: set[AmplitudeFlag];
+    noisyTested, weakTested: bool) =
   if not k.isSeismic: return
   var findings: set[Finding] = {}
   if not killed:
     findings = findingsOf(flags, k.status == tsDead)
-  let sources = side == ssSources
-  b.addTrace(TraceNote(file: path, line: if sources: k.srcLine else: k.rcvLine,
-    point: if sources: k.srcPoint else: k.rcvPoint,
-    component: componentOf(k), killed: killed, findings: findings,
-    noisyTested: noisyTested, weakTested: weakTested,
-    noisy: noisyTested and afNoisy in flags, weak: weakTested and afWeak in flags))
+  for side in sides:
+    let sources = side == ssSources
+    b[side].addTrace(TraceNote(file: path, line: if sources: k.srcLine else: k.rcvLine,
+      point: if sources: k.srcPoint else: k.rcvPoint,
+      component: componentOf(k), killed: killed, findings: findings,
+      noisyTested: noisyTested, weakTested: weakTested,
+      noisy: noisyTested and afNoisy in flags, weak: weakTested and afWeak in flags))
 
 func msOfUs(us: float64): float64 =
   if us > 0 and us < Inf: us / 1000.0 else: 1.0
@@ -205,8 +212,8 @@ proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
   except ValueError:
     result = false
 
-proc measure(f: ptr SeismicFile; path: string; side: StationSide; killed: HashSet[int];
-    b: var QualityBuild;
+proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: HashSet[int];
+    b: var array[StationSide, QualityBuild];
     unread: var seq[tuple[path, why: string]]; gathers: seq[Gather];
     noise: NoiseSettings; ctx: JobContext; workers: ptr ProcessPool; at, count: int) =
   let n = f[].len
@@ -226,7 +233,7 @@ proc measure(f: ptr SeismicFile; path: string; side: StationSide; killed: HashSe
       let k = f[].index.keys[t]
       let sampled = wantsSamples(k, t in killed)
       let flags = if sampled: held[t - heldFrom].flags else: {}
-      noteTrace(b, path, k, side, t in killed, flags, sampled and t in noisyAt,
+      noteTrace(b, path, k, sides, t in killed, flags, sampled and t in noisyAt,
         sampled and t in weakAt)
       noisyAt.excl t
       weakAt.excl t
@@ -311,6 +318,9 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
     ctx.checkCancelled()
     var unread: seq[tuple[path, why: string]] = @[]
     var builds: array[StationSide, QualityBuild] = [initQualityBuild(), initQualityBuild()]
+    # files of one receiver and one source: kept until the others say which side they are
+    var opened: seq[array[StationSide, QualityBuild]] = @[]
+    var took = [0, 0] # files that were not open: at the receivers, at the sources
     var seen = initHashSet[string]()
     # one set of threads for every record
     var workers = newProcessPool(defaultBreakWorkers())
@@ -330,12 +340,17 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
             elif s.file.len == 0: why = "has no trace keys"
             else:
               # (a file that fails part-way counts nothing: it is listed unread, once)
-              var part = initQualityBuild()
+              var part: array[StationSide, QualityBuild] =
+                [initQualityBuild(), initQualityBuild()]
               var partUnread: seq[tuple[path, why: string]] = @[]
-              let side = stationSide(s.file.index.keys)
-              measure(s.filePtr, path, side, killedSet(edits, path), part, partUnread,
-                s.gathers, noise, ctx, addr workers, i, paths.len)
-              builds[side].absorb part
+              let (side, open) = fileSide(s.file.index.keys)
+              measure(s.filePtr, path, if open: {ssReceivers, ssSources} else: {side},
+                killedSet(edits, path), part, partUnread, s.gathers, noise, ctx,
+                addr workers, i, paths.len)
+              if open: opened.add part
+              else:
+                builds[side].absorb part[side]
+                inc took[ord(side)]
               unread.add partUnread
               shortWhy = cutShortWhy(s.file)
           except SegCancelledError:
@@ -351,12 +366,15 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
           if shortWhy.len > 0: unread.add (path: path, why: shortWhy)
         if not ctx.progress(PerFile * int64(i + 1), PerFile * int64(paths.len)):
           raise newException(JobCancelledError, "cancelled")
+      let openSide = if took[0] > took[1]: ssReceivers else: ssSources
+      for part in opened: builds[openSide].absorb part[openSide]
       ctx.setPhase "reporting"
       ctx.checkCancelled()
       if sink != nil:
         sink.result = QualityJobResult(ok: true,
           receivers: qualityReport(builds[ssReceivers]),
-          sources: qualityReport(builds[ssSources]), unread: unread)
+          sources: qualityReport(builds[ssSources]), unread: unread,
+          paths: paths.mapIt(it.normalizedPath))
     except JobCancelledError:
       raise
     except SegCancelledError:

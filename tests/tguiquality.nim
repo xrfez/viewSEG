@@ -82,11 +82,15 @@ proc main*() =
     seismicFile(folder / "one.sgd", 7, @[
       (line: 40.0, point: 1.0, component: 1'u8, status: tsLive, samples: zeros(32)),
       (line: 90.0, point: 1.0, component: 1'u8, status: tsLive, samples: wave()),
-      (line: 90.0, point: 1.0, component: 2'u8, status: tsLive, samples: wave())])
+      (line: 90.0, point: 1.0, component: 2'u8, status: tsLive, samples: wave()),
+      (line: 91.0, point: 1.0, component: 1'u8, status: tsLive, samples: wave()),
+      (line: 91.0, point: 1.0, component: 2'u8, status: tsLive, samples: wave())])
     seismicFile(folder / "sub" / "two.sgd", 8, @[
       (line: 40.0, point: 1.0, component: 1'u8, status: tsLive, samples: zeros(32)),
       (line: 100.0, point: 1.0, component: 1'u8, status: tsLive, samples: wave()),
-      (line: 100.0, point: 1.0, component: 2'u8, status: tsLive, samples: wave())])
+      (line: 100.0, point: 1.0, component: 2'u8, status: tsLive, samples: wave()),
+      (line: 101.0, point: 1.0, component: 1'u8, status: tsLive, samples: wave()),
+      (line: 101.0, point: 1.0, component: 2'u8, status: tsLive, samples: wave())])
     writeFile(folder / "notes.txt", "not seismic\n")
     let outCsv = fx.dir / "out" / "trace-quality.csv"
     createDir(fx.dir / "out")
@@ -109,6 +113,9 @@ proc main*() =
     proc has(f: FrameInfo; name: string): bool = f.markOf(name).size.x > 0
     proc jobTitles(f: FrameInfo): seq[string] =
       for j in f.core.jobs.list(): result.add j.spec.title
+    proc said(f: FrameInfo; text: string): bool =
+      for e in f.core.log:
+        if text in e.text: return true
     proc qualityJobs(f: FrameInfo): seq[string] =
       for t in f.jobTitles:
         if t.startsWith("Trace quality"): result.add t
@@ -153,14 +160,16 @@ proc main*() =
     proc fileStats(f: FrameInfo): bool =
       result = f.has("quality.ready") and f.has("quality.header Line")
       if result:
-        for line in ["Receiver stations in the file: 2", "Traces: 3, 0 killed, 3 measured",
-            "Bad traces: 1 (33.33% of the measured)",
-            "Receiver stations with a bad trace: 1 of 2 (50%)",
+        for line in ["Receiver stations in the file: 3", "Traces: 5, 0 killed, 5 measured",
+            "Bad traces: 1 (20% of the measured)",
+            "Receiver stations with a bad trace: 1 of 3 (33.33%)",
             "Dead: 0, all zero: 1, constant: 0, clipped: 0, spiky: 0, DC offset: 0, " &
             "not finite: 0", "1 receiver station lacks a component (of 2 components)"]:
           doAssert f.has("quality.stat " & line), "no line " & line & " in " &
             $f.markNames("quality.stat ")
-        doAssert f.has("quality.counts 3 traces"), $f.markNames("quality.counts ")
+        doAssert f.has("quality.counts 5 traces"), $f.markNames("quality.counts ")
+        doAssert not f.said("Trace quality in one.sgd is done"),
+          "the File tab announced its own end"
         doAssert f.has("quality.station 40 1 1 0 1 1 2 1"), $f.markNames("quality.station ")
         doAssert f.has("quality.station 90 1 2 0 0 0 - 0"), $f.markNames("quality.station ")
         var headers: seq[string] = @[]
@@ -204,9 +213,10 @@ proc main*() =
 
     proc run(f: FrameInfo) = f.click(f.markOf("quality.run").centre)
     proc folderOff(f: FrameInfo): bool =
-      result = f.has("quality.ready") and f.has("quality.counts 1 file, 3 traces")
+      result = f.has("quality.ready") and f.has("quality.counts 1 file, 5 traces")
       if result:
-        doAssert f.has("quality.stat Receiver stations in the files: 2"),
+        doAssert f.said("Trace quality in line is done"), "the Folder run is announced"
+        doAssert f.has("quality.stat Receiver stations in the files: 3"),
           $f.markNames("quality.stat ")
         doAssert f.has("quality.station 40 1 1 0 1 1 2 1"), $f.markNames("quality.station ")
         doAssert f.markNames("quality.station 100 ").len == 0, "the subfolder was read"
@@ -220,12 +230,12 @@ proc main*() =
     step("Include subfolders drops the answer", tick, dropped)
 
     proc withSub(f: FrameInfo): bool =
-      result = f.has("quality.ready") and f.has("quality.counts 2 files, 6 traces")
+      result = f.has("quality.ready") and f.has("quality.counts 2 files, 10 traces")
       if result:
         # station 40:1 is in both files: one row with the counts of both
         doAssert f.has("quality.station 40 1 2 0 2 2 2 2"), $f.markNames("quality.station ")
         doAssert f.has("quality.station 100 1 2 0 0 0 - 0"), $f.markNames("quality.station ")
-        doAssert f.has("quality.stat Receiver stations in the files: 3"),
+        doAssert f.has("quality.stat Receiver stations in the files: 5"),
           $f.markNames("quality.stat ")
         doAssert f.has("quality.stat 1 receiver station lacks a component in at least one file " &
           "(of 2 components)"),
@@ -242,14 +252,26 @@ proc main*() =
         exportClicked = true
       if not fileExists(outCsv): return false
       let rows = readFile(outCsv).splitLines
-      doAssert rows[0].startsWith("line,point,lacking components,files lacking,seen,killed,bad,"),
+      doAssert rows[0] == "# Receiver stations", rows[0]
+      doAssert rows[1].startsWith("line,point,lacking components,files lacking,seen,killed,bad,"),
           rows[0]
-      doAssert rows[1].startsWith("40,1,2,2,2,0,2,"), rows[1]
-      doAssert rows[2].startsWith("90,1,,0,2,0,0,"), rows[2]
-      doAssert rows.len == 5 and rows[4] == "", $rows
+      doAssert rows[2].startsWith("40,1,2,2,2,0,2,"), rows[2]
+      doAssert rows[3].startsWith("90,1,,0,2,0,0,"), rows[3]
+      doAssert rows.len == 8 and rows[7] == "", $rows
       doAssert asked == @[dkExportQuality], "asked for " & $asked
       true
     step("Export CSV... writes the stations", exportCsv, exported)
+
+    var refused = false
+    let dataSize = getFileSize(folder / "one.sgd")
+    proc exportOnData(f: FrameInfo) =
+      asked.setLen 0
+      answer = @[folder / "one.sgd"]
+      f.click(f.markOf("quality.export").centre)
+    proc exportRefused(f: FrameInfo): bool =
+      result = f.has("quality.exported " & ExportIsData)
+      if result: doAssert getFileSize(folder / "one.sgd") == dataSize, "a data file was written"
+    step("Export CSV... refuses a file of the scan", exportOnData, exportRefused)
 
     proc sortBad(f: FrameInfo) = f.click(f.markOf("quality.header Bad").centre)
     proc sortedBad(f: FrameInfo): bool = f.has("quality.sort Bad")
@@ -272,15 +294,15 @@ proc main*() =
       f.apply Command(kind: ckShowFile, panel: MainPanel, path: folder / "sub" / "two.sgd",
         listFolder: false)
     proc followsFile(f: FrameInfo): bool =
-      if not f.has("quality.stat Traces: 3, 0 killed, 3 measured") and wait mod 8 == 4:
+      if not f.has("quality.stat Traces: 5, 0 killed, 5 measured") and wait mod 8 == 4:
         f.click(f.markOf("quality.tab File").centre)
-      result = f.has("quality.ready") and f.has("quality.stat Traces: 3, 0 killed, 3 measured")
+      result = f.has("quality.ready") and f.has("quality.stat Traces: 5, 0 killed, 5 measured")
       if result:
         # (the Folder tab's filter box says 100; this tab's box is its own, empty)
         doAssert f.has("quality.station 100 1 2 0 0 0 - 0") and
           f.has("quality.station 40 1 1 0 1 1 2 1") and
           not f.has("quality.station 90 1 2 0 0 0 - 0"), $f.markNames("quality.station ")
-        doAssert f.has("quality.counts 3 traces")
+        doAssert f.has("quality.counts 5 traces")
     step("the File tab follows the file shown", fileTab, followsFile)
 
     proc unreadButton(f: FrameInfo): bool = f.has("quality.unread")
@@ -297,6 +319,18 @@ proc main*() =
       result = closed and awQuality in f.hiddenWindows and not f.windowPlace("quality").inSight
     step("the window's close button hides it", closeIt, closedDone)
 
+    var jobsBefore = 0
+    proc showOther(f: FrameInfo) =
+      jobsBefore = f.qualityJobs.len
+      f.apply Command(kind: ckShowFile, panel: MainPanel, path: folder / "one.sgd",
+        listFolder: false)
+    proc hiddenIdle(f: FrameInfo): bool =
+      result = wait >= 15
+      if result:
+        doAssert f.qualityJobs.len == jobsBefore, "a job started for the file shown while the " &
+          "window was hidden: " & $f.qualityJobs
+    step("hidden: no job starts for the file shown", showOther, hiddenIdle)
+
     var shownAgain = false
     proc showAgain(f: FrameInfo) =
       f.click(f.markOf("menu.View").centre)
@@ -310,6 +344,17 @@ proc main*() =
           f.click(f.markOf("menu.View").centre)
       result = shownAgain and f.windowPlace("quality").inSight and f.has("quality.tab File")
     step("the View menu brings it back", showAgain, returned)
+
+    proc measuresOnReturn(f: FrameInfo): bool =
+      result = f.qualityJobs.len > jobsBefore and f.has("quality.ready")
+    step("back in sight it measures the file then shown", noop, measuresOnReturn)
+
+    proc backToFolder(f: FrameInfo) = f.click(f.markOf("quality.tab Folder").centre)
+    proc folderKept(f: FrameInfo): bool =
+      if not f.has("quality.counts 2 files, 10 traces") and wait mod 8 == 4:
+        f.click(f.markOf("quality.tab Folder").centre)
+      result = f.has("quality.counts 2 files, 10 traces")
+    step("hiding kept the Folder answer", backToFolder, folderKept)
 
     var at = 0
     var started = false
