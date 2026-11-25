@@ -29,7 +29,10 @@
 ## moving windows and per-monitor scales are not covered (the rules are
 ## tested on made-up screens in `tscreens`).
 ##
-## Seen to fail: with `resetWindows` not showing the hidden windows, the
+## - a window's title-bar close button (`askClose`, what the button raises) hides it as
+##   unticking it in the Window menu does, and its entry brings it back.
+##
+## Seen to fail: with `closeClicked` not called, "close files by its button did not happen"; with `resetWindows` not showing the hidden windows, the
 ## reset never showed Records ("Reset the windows did not happen"); with the Files window's entry
 ## only bringing it forward (never hiding), "files is still drawn"; with the
 ## settings handler not writing its section, "the layout does not say that
@@ -44,6 +47,8 @@
 import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, screens, state]
 import viewSEG/ui/imgui/app
+from viewSEG/ui/imgui/windows import AppWindow, askClose, awFiles, awRecords, awMap, awHeaders, awJobs,
+  awMessages, awSpectrum, awOutput
 import viewSEG/view/theme
 import privatefiles
 import utils/[fixtures, waiting]
@@ -273,6 +278,47 @@ proc main*() =
       result = wait > 4
       if result: doAssert f.windowPlace("plot").inSight and
         f.hiddenWindows == {awAux, awMissing, awQuality, awVibFolder, awOutput})
+    # ------------------------------------------- the title bars' close buttons --
+    # A close button's click is `askClose` (the helper `beginClosable` calls when Dear
+    # ImGui reports the window closed): clicking the tab's button itself is not driven here.
+    proc closing(id: string; w: AppWindow) =
+      step("close " & id & " by its button", proc (f: FrameInfo) = askClose(w),
+        proc (f: FrameInfo): bool =
+        result = wait > 4 and not f.windowPlace(id).shown
+        if result:
+          doAssert w in f.hiddenWindows, id & " is not unticked in the menu"
+          doAssert ("Hidden=" in f.layoutText) and ($w in f.layoutText.split("Hidden=")[1].
+            splitLines[0].split(',')), "the layout does not say that " & id & " is hidden")
+    proc closedAndBack(id: string; w: AppWindow) =
+      closing(id, w)
+      menu(id & " closed: brought back by the menu", "menu.window." & $w,
+        proc (f: FrameInfo): bool =
+        result = wait > 4 and f.windowPlace(id).shown
+        if result:
+          doAssert w notin f.hiddenWindows
+          doAssert f.windowPlace(id).docked, id & " came back undocked")
+    closedAndBack("files", awFiles)
+    closedAndBack("records", awRecords)
+    closedAndBack("map", awMap)
+    closedAndBack("headers", awHeaders)
+    closedAndBack("jobs", awJobs)
+    closedAndBack("Messages", awMessages)
+    closedAndBack("spectrum", awSpectrum)
+    menu("Output: opened", "menu.window.output", proc (f: FrameInfo): bool =
+      wait > 4 and f.windowPlace("output").shown)
+    closing("output", awOutput)
+    step("the windows are as before", noop, proc (f: FrameInfo): bool =
+      result = wait > 4
+      if result: f.allDocked("after the close buttons"))
+    if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
+      # the pointer over the Files tab, which shows its close button
+      step("hover the Files tab", proc (f: FrameInfo) =
+        let r = f.windowPlace("files").rect
+        f.moveMouse(vec2(r.pos.x + 40, r.pos.y - 10)), proc (f: FrameInfo): bool =
+        result = wait > 10
+        if result:
+          createDir(getEnv("VIEWSEG_SCREENSHOTS"))
+          doAssert f.savePng(getEnv("VIEWSEG_SCREENSHOTS") / "window-close-button.png"))
     # ---------------------------------------------- onto this screen --
     step("the main window off the left edge, two windows outside it", proc (f: FrameInfo) =
       f.moveMainWindow(int(screen.pos.x) - 300, int(screen.pos.y) + 80)

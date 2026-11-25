@@ -95,6 +95,7 @@ import ../../core/[components, editmarks, explain, geometry, openchoice, state, 
 import ../../gpu/[plotimage, textures]
 import ../../view/[areabands, breakbars, displayheader, maplayers, plotink, strip, theme, timeaxis,
   vendorfieldmenu]
+from windows import awAux, beginClosable
 import breakdraw, chrome, dpi, explainmenu, fittext, focus, fonts, icons, menus, plotbars,
     plotfilters, plotgain, plotsort,
   shortcutkeys,
@@ -3100,7 +3101,10 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
     let words = text
     tp.instead = words
     centredText(words, colour)
-  if igBegin(title.cstring, nil, windowFlags):
+  let begun =
+    if aux: beginClosable(awAux, title.cstring, windowFlags)
+    else: igBegin(title.cstring, nil, windowFlags)
+  if begun:
     tp.focus.watch()
     # The window never scrolls as a whole: the strip wraps and the plot fits.
     igSetScrollX_Float(0)

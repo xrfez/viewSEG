@@ -22,6 +22,7 @@ import imguin/cimgui
 import ../../core/state
 import ../../view/theme
 import chrome, focus, listkeys, style
+from windows import awRecords, beginClosable
 
 type
   RecordSort = enum
@@ -132,7 +133,7 @@ proc drawRecordList*(ui: var RecordListUi; title: string; st: AppState; panel: P
     t: Theme; marks: var Marks): RecordListOutput =
   ## The window, docked or floating like any other, titled `title`, for the
   ## file `panel` shows.
-  if igBegin(title.cstring, nil, 0):
+  if beginClosable(awRecords, title.cstring):
     ui.focus.watch()
     marks.markWindow("records")
     let k = st.findPanel(panel)

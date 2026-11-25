@@ -52,6 +52,7 @@ import ../../core/[explain, geometry, join, mapthin, noisearea, state]
 import ../../gpu/mappoints
 import ../../view/[maplayers, theme]
 import explainmenu, focus, icons, marks, style
+from windows import awMap, beginClosable
 
 export MapRenderer
 
@@ -1589,7 +1590,7 @@ proc drawMap*(mu: var MapUi; id: string; st: AppState; t: Theme; marks: var Mark
   const windowFlags = ImGui_WindowFlags_NoNavInputs.cint or
     ImGui_WindowFlags_NoScrollWithMouse.cint or ImGui_WindowFlags_NoScrollbar.cint
   var drawn = false
-  if igBegin(title.cstring, nil, windowFlags):
+  if beginClosable(awMap, title.cstring, windowFlags):
     mu.focus.watch()
     igSetScrollX_Float(0)
     igSetScrollY_Float(0)

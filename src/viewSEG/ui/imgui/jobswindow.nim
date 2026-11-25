@@ -11,6 +11,7 @@ import imguin/cimgui
 import ../../core/[geometry, state]
 import ../../view/[joblist, theme]
 import chrome, icons, style
+from windows import awJobs, beginClosable
 
 type
   JobsOutput* = object
@@ -50,7 +51,7 @@ proc laneTag(lane: JobLane; t: Theme) =
 
 proc drawJobs*(title: string; st: AppState; t: Theme; marks: var Marks): JobsOutput =
   ## The window, docked or floating like any other, titled `title`.
-  if igBegin(title.cstring, nil, 0):
+  if beginClosable(awJobs, title.cstring):
     marks.markWindow("jobs")
     let rows = jobRows(st.jobs.list, st.jobs.queues, getMonoTime())
     let style = igGetStyle()

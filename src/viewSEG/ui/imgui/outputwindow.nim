@@ -19,6 +19,7 @@ import ../../core/[edits, filejobs, filekinds, filesystem, geometry, jobs, outpu
   vendormaps]
 import ../../view/[filetable, outputbinaryedit, outputtextedit, outputwords, theme]
 import fittext, focus, fonts, icons, marks, overflow, style
+from windows import awOutput, beginClosable
 
 type
   ListedFile = object
@@ -1830,7 +1831,7 @@ proc drawOutput*(ui: var OutputUi; title: string; st: AppState; fonts: Fonts; t:
   ## the last draw starts here. Wide: two panes sharing the height, a
   ## draggable split. Narrow: the source above the write.
   ui.consider(st)
-  if igBegin(title.cstring, nil, 0):
+  if beginClosable(awOutput, title.cstring):
     ui.focus.watch()
     marks.markWindow("output")
     if ui.listing: flagMark(marks, "output.listing")

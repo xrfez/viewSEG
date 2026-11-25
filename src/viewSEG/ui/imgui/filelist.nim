@@ -29,6 +29,7 @@ import imguin/cimgui
 import ../../core/[geometry, recordingkind, state, traceorder, treatas]
 import ../../view/[filetable, recordingwords, theme]
 import chrome, focus, icons, listkeys, menus, style
+from windows import awFiles, beginClosable
 
 const NameChars = 16 ## the Name column is never narrower than this many characters
 
@@ -565,7 +566,7 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
   ## the commands and actions it asks for.
   # Tab moves between the controls (Dear ImGui's navigation); the arrow keys
   # step through the files (`listkeys`).
-  if igBegin(title.cstring, nil, 0):
+  if beginClosable(awFiles, title.cstring):
     ui.focus.watch()
     marks.markWindow("files")
     template f: untyped = st.fileList # a view: a copy would take every entry each frame

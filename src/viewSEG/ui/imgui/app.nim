@@ -1673,6 +1673,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   if ui.windows.shows(awSpectrum): ui.windows.beforeDrawing(awSpectrum)
   var spectra = SpectraOutput()
   ui.spectra.drawLive(ui.core, ui.windows.shows(awSpectrum), ui.theme, ui.marks, spectra)
+  ui.windows.closeClicked() # the title bars' close buttons, as the Window menu's unticking
   ui.spectra.drawFfts(ui.core, ui.theme, ui.scale, ui.marks, spectra)
   var plotWins = PlotWindowsOutput()
   ui.plotWins.drawPlotWindows(ui.core, ui.theme, ui.scale, ui.marks, plotWins)

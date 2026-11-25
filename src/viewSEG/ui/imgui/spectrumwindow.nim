@@ -18,6 +18,7 @@ import imguin/cimgui
 import ../../core/[explain, state]
 import ../../view/[curveplot, spectrumview, theme]
 import chrome, curveplot as curves, explainmenu, icons, marks, overflow, placement, style
+from windows import awSpectrum, beginClosable
 
 const
   SpectrumWindowTitle* = IconPulse & "  Spectrum###spectrum"
@@ -315,7 +316,7 @@ proc drawLive*(ui: var SpectraUi; st: AppState; shown: bool; t: Theme; marks: va
     res.bringForward = true
   var visible = false
   if shown:
-    let open = igBegin(SpectrumWindowTitle.cstring, nil, 0)
+    let open = beginClosable(awSpectrum, SpectrumWindowTitle.cstring)
     if open:
       visible = true
       ui.drawBody(st, live, t, marks, res)

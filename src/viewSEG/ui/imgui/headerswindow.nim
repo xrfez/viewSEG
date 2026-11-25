@@ -41,6 +41,7 @@ from parseSEG import SeismicKind, skSegy, skSegd, skSeg2, skUnknown
 import ../../core/state
 import ../../view/[byteview, headerviews, theme]
 import chrome, focus, fonts, headerstable, menus, style
+from windows import awHeaders, beginClosable
 
 type
   CachedTable = object
@@ -1189,7 +1190,7 @@ proc drawHeaders*(ui: var HeadersUi; title: string; st: AppState; cursorMs: floa
     ui.selectingTrace = true
   ui.started = true
   var parts: set[InspectPart]
-  if igBegin(title.cstring, nil, 0):
+  if beginClosable(awHeaders, title.cstring):
     ui.focus.watch()
     marks.markWindow("headers")
     let waiting = st.headersWait()

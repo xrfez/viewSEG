@@ -26,6 +26,7 @@ import imguin/cimgui
 import ../../core/[geometry, log, settings]
 import ../../view/theme
 import focus, icons, marks, menus, style
+from windows import awMessages, beginClosable
 
 type
   MessageLevel* = enum
@@ -195,7 +196,7 @@ proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
   let colour: array[MessageLevel, Rgba] = [t.roles[rlInfo], t.roles[rlWarning],
     t.roles[rlError]]
   result = LogOutput(view: settings, showTrace: -1, showRecord: -1)
-  if igBegin(title.cstring, nil, 0):
+  if beginClosable(awMessages, title.cstring):
     view.focus.watch()
     marks.markWindow("messages")
     view.strip(log, t, marks, result)

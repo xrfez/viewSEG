@@ -165,6 +165,19 @@ proc behind(w: AppWindow): bool =
   let win = windowOf(w)
   win != nil and win.DockIsActive and not win.DockTabIsVisible
 
+var closeAsked: set[AppWindow] ## close buttons clicked this frame, not yet applied
+
+proc askClose*(w: AppWindow) =
+  ## Window `w`'s close button was clicked (`closeClicked` hides it).
+  closeAsked.incl w
+
+proc beginClosable*(w: AppWindow; title: cstring; flags: cint = 0): bool =
+  ## `igBegin` for window `w` with a close button in its title bar (a docked tab too).
+  ## Clicking it is asked of `closeClicked`; the caller still calls `igEnd`.
+  var open = true
+  result = igBegin(title, addr open, flags)
+  if not open: askClose(w)
+
 proc shows*(ws: WindowsUi; w: AppWindow): bool {.inline.} =
   ## Whether `w` is drawn.
   w notin ws.hidden
@@ -188,6 +201,13 @@ proc hide*(ws: var WindowsUi; w: AppWindow) =
     ws.hidden.incl w
     ws.front.excl w
     changed()
+
+proc closeClicked*(ws: var WindowsUi) =
+  ## Once a frame, after the windows are drawn: hides each window whose close button was
+  ## clicked, as unticking it in the Window menu does.
+  let asked = closeAsked
+  closeAsked = {}
+  for w in asked: ws.hide(w)
 
 proc picked*(ws: var WindowsUi; w: AppWindow) =
   ## Its Window menu entry was clicked: a hidden window is shown in front, a
