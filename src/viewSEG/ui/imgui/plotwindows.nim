@@ -652,18 +652,15 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
   # where the value came from: typed, or set on a sweep (which file, which vibrator, which
   # target); it is the project's one, used for every vibrator
   let source = hundredSource(p)
-  if source.len > 0:
+  # (the sentence of a project that kept different values: made once a frame, and only when shown)
+  let said = if source.len > 0: source
+             elif planeAt >= 0 and p.forceHundredPct.isNaN: st.hundredConflictNote(w)
+             else: ""
+  if said.len > 0:
     igSameLine(0, -1)
     igAlignTextToFramePadding()
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-    igTextUnformatted(("(" & source & ")").cstring, nil)
-    igPopStyleColor(1)
-    marks.mark(name & ".hundred source")
-  elif planeAt >= 0 and p.forceHundredPct.isNaN and st.hundredConflictNote(w).len > 0:
-    igSameLine(0, -1)
-    igAlignTextToFramePadding()
-    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-    igTextUnformatted(("(" & st.hundredConflictNote(w) & ")").cstring, nil)
+    igTextUnformatted(("(" & said & ")").cstring, nil)
     igPopStyleColor(1)
     marks.mark(name & ".hundred source")
   if w.result.hundredWords.len > 0 and p.forceHundredPct.isNaN:

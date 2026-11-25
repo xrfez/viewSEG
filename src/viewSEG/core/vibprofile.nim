@@ -187,16 +187,23 @@ func takeOlder*(p: var VibQcProfile) =
       p.olderSingle = single
       p.setHundred(VibHundred())
 
+const MaxConflictNames* = 8
+  ## the vibrators the conflict sentence names at most; the rest are counted
+
 func hundredConflict*(p: VibQcProfile): string =
   ## The sentence for a project whose older document kept 100 % forces that differ, so that it
-  ## has none until one is set from a sweep; "" when there is nothing to say.
+  ## has none until one is set from a sweep; "" when there is nothing to say. It names at most
+  ## `MaxConflictNames` vibrators and counts the others, however many the document kept.
   if p.forceHundredPct.isNaN and p.olderHundreds.len > 0:
-    var names: seq[string] = @[]
-    for h in p.olderHundreds: names.add $h.vibrator
-    var words = (if names.len == 1: "vibrator " else: "vibrators ") & names[0]
-    for i in 1 ..< names.len:
-      words.add (if i == names.high and p.olderSingle.pct.isNaN: " and " else: ", ") & names[i]
-    if not p.olderSingle.pct.isNaN: words.add " and the others"
+    let shown = min(p.olderHundreds.len, MaxConflictNames)
+    let more = p.olderHundreds.len - shown
+    let last = more == 0 and p.olderSingle.pct.isNaN # (the last name follows "and")
+    var words = if p.olderHundreds.len == 1: "vibrator " else: "vibrators "
+    for i in 0 ..< shown:
+      if i > 0: words.add(if i == shown - 1 and last: " and " else: ", ")
+      words.add $p.olderHundreds[i].vibrator
+    if more > 0: words.add " and " & $more & (if more == 1: " other" else: " others")
+    elif not p.olderSingle.pct.isNaN: words.add " and the others"
     result = "This project kept different 100 % forces for " & words &
       "; it now keeps one: set it again from a sweep."
 

@@ -26,7 +26,8 @@
 ## 12's sweep had none; with the other open windows not told of a new value, vibrator 12's
 ## window kept none; with a window coming from a SEG-Y file given none, it judged no force;
 ## with a typed value's file and vibrator written only for one set from a sweep, the typed
-## value read back without them; with differing older values taken as the first one, the
+## value read back without them; with the conflict sentence naming every vibrator kept, a
+## document of 9000 named them all; with differing older values taken as the first one, the
 ## project had a
 ## value and no sentence; with the entries dropped on reading, they were not in the document
 ## until a value was set.
@@ -321,6 +322,17 @@ proc main*() =
           "kg" notin x: inc said
     doAssert unitProblems == 1 and twice == 1 and said == 1, $problems
     doAssert p.hundredConflict.len > 0
+    # a document of thousands of values: the sentence names eight vibrators and counts the rest
+    var many = VibQcProfile()
+    for v in 1 .. 9000: many.olderHundreds.add VibHundred(vibrator: v, pct: float64(v), unit: "N")
+    doAssert many.hundredConflict == "This project kept different 100 % forces for vibrators " &
+      "1, 2, 3, 4, 5, 6, 7, 8 and 8992 others; it now keeps one: set it again from a sweep.",
+      many.hundredConflict
+    many.olderHundreds.setLen(8)
+    doAssert "vibrators 1, 2, 3, 4, 5, 6, 7 and 8;" in many.hundredConflict, many.hundredConflict
+    many.olderSingle = VibHundred(pct: 9, unit: "N")
+    doAssert "vibrators 1, 2, 3, 4, 5, 6, 7, 8 and the others;" in many.hundredConflict,
+      many.hundredConflict
 
   block conflictInWindow:
     # a project whose document kept different forces for vibrators: Messages say so once, a
