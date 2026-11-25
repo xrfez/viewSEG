@@ -68,6 +68,7 @@ proc everyFieldSet(): Settings =
       "trace.sourceX"], tableScope: tsFile),
     shotLog: ShotLogView(followPlot: true), cutGather: CutGatherView(recordMs: 2500.5),
     output: OutputView(segyRevision: orSegy1, segdRevision: orSegd31),
+    missing: MissingView(folder: "/jobs/line 7", subfolders: true),
     hideKilled: true,
     spectrum: SpectrumOptions(window: SpectrumDisplay(scale: ssLinear, logFrequency: true,
       time: stVisible, raw: false, processed: false, response: false, phase: true,
@@ -258,6 +259,19 @@ proc main*() =
     let bad = readSettings("(settings (version 1) (cutGather (recordMs -5.0)))",
       "settings.nif", Settings(), problems)
     doAssert bad.cutGather.recordMs == 10_000.0 and problems.len == 1, $problems
+
+  block missingFolderRemembered:
+    ## Seen to fail: with the folder not written, the remembered folder read back as "".
+    var problems: seq[string]
+    let old = readSettings("(settings (version 1) (hideKilled true))", "settings.nif",
+      Settings(), problems)
+    doAssert problems.len == 0 and old.missing.folder.len == 0 and
+      not old.missing.subfolders, $problems
+    var top = Settings()
+    top.missing.folder = "/jobs/line 7"
+    top.missing.subfolders = true
+    let back = roundTrip(top)[0].missing
+    doAssert back.folder == "/jobs/line 7" and back.subfolders, "round trip"
 
   block outputRevisionRemembered:
     ## Seen to fail: with the SEG-D choice not written, a remembered Rev 3.1

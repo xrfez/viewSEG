@@ -63,6 +63,7 @@ type
     dkOutputDest = "Output destination",       ## the folder those files are written into
     dkShotLog = "Shot log",                    ## one shot log to import: CSV, text or TSV
     dkCutDest = "Slice destination"            ## the folder a slice by shot log is written into
+    dkMissingFolder = "Missing traces folder"  ## the folder whose files the Missing traces window checks
     dkExportShotSps = "Export SPS"             ## an SPS file to write (a save dialog)
     dkOutputLog = "Output log"                 ## a text file to write (a save dialog)
     dkOutputText = "Text header file"          ## a text file or a SEG-Y file whose text header is read
@@ -311,7 +312,7 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr seismicFilters[0],
       seismicFilters.len.cint, at, kind == dkOpenFiles)
   of dkOpenFolder, dkOpenProject, dkProjectPlace, dkProjectData, dkLocateFolder,
-      dkOutputSource, dkOutputDest, dkCutDest:
+      dkOutputSource, dkOutputDest, dkCutDest, dkMissingFolder:
     SDL_ShowOpenFolderDialog(onDialogResult, userdata, parent, at, false)
   of dkImportSettings, dkImportLayout:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr nifFilters[0],

@@ -444,6 +444,24 @@ proc windowPlace*(frame: FrameInfo; id: string): WindowPlace =
     while node != nil and node.ParentNode != nil: node = node.ParentNode
     result.docked = node != nil and node.ID == frame.ui.windows.dockspace
 
+proc tabCloseAt*(frame: FrameInfo; id: string): Vec2 =
+  ## Where the close button of the tab of the docked window `id` is, in framebuffer
+  ## pixels of the main window, as the marks give them (for tests); (0, 0) when the
+  ## window has no tab bar.
+  let w = igFindWindowByName(("###" & id).cstring)
+  if w != nil and w.DockNode != nil and w.DockNode.TabBar != nil:
+    let bar = w.DockNode.TabBar
+    for i in 0 ..< bar.Tabs.Size:
+      let tab = cast[ptr UncheckedArray[ImGuiTabItem]](bar.Tabs.Data)[i]
+      if tab.ID == w.TabId:
+        let style = igGetStyle()
+        let right = bar.BarRect.Min.x + tab.Offset - bar.ScrollingAnim + tab.Width
+        let at = ImVec2_c(x: right - style.FramePadding.x - igGetFontSize() * 0.5,
+          y: (bar.BarRect.Min.y + bar.BarRect.Max.y) / 2)
+        let sc = igGetIO_Nil().DisplayFramebufferScale
+        let o = igGetMainViewport().Pos
+        return vec2((at.x - o.x) * sc.x, (at.y - o.y) * sc.y)
+
 proc mainWindowRect*(frame: FrameInfo): Rect =
   ## Where the main window is, in the desktop's coordinates (for tests).
   let vp = igGetMainViewport()
@@ -971,6 +989,7 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     of dkOutputText: ui.output.setTextFile(ev.paths[0])
     of dkOutputLog: ui.output.setLogFile(ev.paths[0])
     of dkCutDest: ui.cut.setFolder(ev.paths[0])
+    of dkMissingFolder: ui.missing.setFolder(ev.paths[0])
     of dkExportShotSps: ui.shotLog.setSpsDest(ev.paths[0])
     of dkShotLog:
       ui.core.apply Command(kind: ckImportShotLog, logPath: ev.paths[0])
@@ -1173,7 +1192,6 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       ui.core.apply Command(kind: ckCompareWindow, compareOpen: not ui.core.compareOpen)
     of maMissingTraces:
       ui.windows.bringForward(awMissing)
-      ui.missing.requestScan()
     of maTraceQuality:
       ui.windows.bringForward(awQuality)
       ui.quality.requestScan()
@@ -1487,8 +1505,6 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     compareShown: ui.core.compareOpen, firstBreaksOn: ui.core.breaksOn(MainPanel),
     templateOnlyOn: ui.core.templateView(ui.core.findPanel(MainPanel)).on,
     templateAvailable: ui.core.templateView(ui.core.findPanel(MainPanel)).available,
-    missingReady: missingReady(ui.core.fileList.folder.len > 0, ui.core.relationLayer >= 0),
-    missingWhy: missingWhy(ui.core.fileList.folder.len > 0, ui.core.relationLayer >= 0),
     qualityReady: qualityReady(ui.core.fileList.folder.len > 0),
     qualityWhy: qualityWhy(ui.core.fileList.folder.len > 0),
     folderReady: folderReady(ui.core.fileList.folder.len > 0),
@@ -1510,7 +1526,6 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     if menu.toggleTrayMinimize: s.tray.minimize = not s.tray.minimize
     ui.core.apply Command(kind: ckSettings, settings: s)
   for w in menu.pickedWindows:
-    if w == awMissing and ui.windows.willShow(w): ui.missing.requestScan()
     if w == awQuality and ui.windows.willShow(w): ui.quality.requestScan()
     if w == awVibFolder and ui.windows.willShow(w): ui.vibfolder.requestList()
     ui.windows.picked(w)
@@ -1633,6 +1648,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     for c in missing.commands.mitems:
       ui.core.apply move c
     if missing.exportAsked: ui.ask(dkExportMissing, missing.exportPath)
+    if missing.askFolder: ui.ask(dkMissingFolder, missing.askAt)
+    if missing.close: ui.windows.hide(awMissing)
   if ui.windows.shows(awQuality):
     ui.windows.beforeDrawing(awQuality)
     var quality = ui.quality.drawQuality(qualityTitle, ui.core, ui.marks)

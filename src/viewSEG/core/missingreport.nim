@@ -4,7 +4,7 @@
 ## A shot gather is checked against the X record of its shot: the receiver
 ## stations it expects. A receiver gather is checked against the O record of
 ## its receiver: the source stations it expects (`ssSources`). A `StationTally`
-## takes one record at a time (`addRecord`), so a folder of files never holds
+## takes one record at a time (`addGather`), so a folder of files never holds
 ## more than one line and point per station, and `report` turns it into the
 ## rows (line, point, and in how many records it is missing) and the figures.
 ##
@@ -38,8 +38,8 @@ type
     derived*: bool ## receiver side: the O records were derived from the X records
     files*, records*: int
     inTemplate*: int ## distinct stations the template calls for
-    found*: int      ## of those, stations that at least one record holds
-    missing*: int    ## distinct stations that at least one record lacks
+    found*: int ## of those, stations that at least one record holds
+    missing*: int ## distinct stations that at least one record lacks
     percentMissing*: float64 ## `100 * missing / inTemplate`, 0 when nothing is expected
     expectedInRecords*, presentInRecords*, missingInRecords*: int
     percentMissingInRecords*: float64
@@ -81,7 +81,7 @@ proc noteFile*(t: var StationTally) =
   ## One more file has at least one record in the tally.
   inc t.files
 
-proc addRecord*(t: var StationTally; calls: openArray[StationKey];
+proc addGather*(t: var StationTally; calls: openArray[StationKey];
     c: RecordCompleteness) =
   ## Adds one record: `calls` are the stations its relation record calls
   ## for, `c` its completeness against them (`missingStations` are the ones

@@ -1,11 +1,14 @@
-## The Missing traces window: a scan of the open folder (subfolders included)
-## against the loaded relation file, two tables, and a CSV export. Totals wrap.
-## The table fills the rest of the window; a box above it narrows the rows.
+## The Missing traces window: the stations the survey's relation records call
+## for that a file does not hold, as a table of line, point and how many
+## records lack it, under the figures that sum it up. Two tabs: File, the
+## file shown (computed when the window is drawn), and Folder, the files of a
+## folder the user chooses, computed only when Run is pressed (its subfolders
+## only when the box says so). The window closes with its button.
 ##
-## The scan is a background job. The window reads its sink only after the job
-## is no longer running. A cancel leaves the tables already shown. Listing uses
-## the same file list the folder scan uses (`listedNames`), not a second walk
-## posted to the file list.
+## Both are background jobs (`scanMissing`). The window reads a sink only
+## after its job is no longer running, and drops an answer that is no longer
+## the one asked for (another file shown, another folder or the subfolders tick
+## changed, another survey): the job is cancelled and its result never read.
 
 import std/[os, strutils]
 import parseSEG
@@ -17,61 +20,66 @@ import focus, icons, marks, overflow
 
 type
   MissingTab* = enum
-    mtFolder, mtRecords
+    mtFile, mtFolder
 
   ExportAsk* = object
-    tab*: MissingTab
-    withPoints*, withTotals*, live*: bool
+    rows*: seq[StationRow]
+    stats*: MissingStats
+    withStats*, live*: bool
 
-  PendingOpen = object
-    path: string
-    record: float64
-    live: bool
-
-  ScanNote = ref object
-    capped: bool
-
-  MissingUi* = object
-    scanJob: JobId = NoJob
-    exportJob: JobId = NoJob
+  Scan = object
+    ## One tab's job and what it answered.
+    job: JobId = NoJob
     sink: MissingSink
     note: ScanNote
-    wantScan: bool
-    scanning: bool
-    have: bool
-    capped: bool
-    exported: bool
-    folder: string
+    key: string ## what the job (or the answer) is for; "" for nothing asked
+    running, have, capped: bool
+    done, total: int64
     status: string
-    report: MissingReport
-    skipped: seq[tuple[path, why: string]]
-    unmatched: seq[tuple[path: string; record: int64; why: string]]
+    result: MissingJobResult
+
+  MissingUi* = object
+    file, folder: Scan
     tab: MissingTab
-    withPoints, withTotals: bool
+    side: StationSide
+    runAsked: bool
+    chosen: string
+    exportJob: JobId = NoJob
+    exported: bool
+    status: string
+    withStats: bool
     ask: ExportAsk
-    pointSort: SortSpec[PointSortColumn]
-    recordSort: SortSpec[RecordSortColumn]
-    sortsReady, pointDirty, recordDirty: bool
+    sort: SortSpec[StationSortColumn]
+    sortsReady, sortDirty: bool
     focus: FocusClicks
-    pending: PendingOpen
-    folderFilter, recordFilter: array[128, char]
-    folderShown, recordShown: seq[int]
-    folderKey, recordKey: string
+    filter: array[128, char]
+    shown: seq[int]
+    shownKey: string
 
   MissingOutput* = object
     commands*: seq[Command]
     exportAsked*: bool
     exportPath*: string
+    askFolder*: bool ## the Folder... button was clicked
+    askAt*: string
+    close*: bool     ## the window's close button was clicked
 
-proc requestScan*(ui: var MissingUi) =
-  ## The next draw starts a scan, cancelling one already running.
-  ui.wantScan = true
+proc setFolder*(ui: var MissingUi; path: string) =
+  ## The folder dialog's answer: kept in the settings on the next draw.
+  ui.chosen = path
 
-proc canScan(st: AppState): bool =
-  missingReady(st.fileList.folder.len > 0, st.relationLayer >= 0)
+proc surveyKey(st: AppState): string =
+  ## Which survey the answers are for: the layer holding the relation records and
+  ## its relations (a reloaded file is another).
+  let layer = st.relationLayer
+  if layer < 0: ""
+  else: $layer & "@" & $cast[int](st.survey.layers[layer].relations)
 
-proc whyNot(st: AppState): string =
-  missingWhy(st.fileList.folder.len > 0, st.relationLayer >= 0)
+proc shownPath(st: AppState): string =
+  ## The disk path of the file shown in the main panel; "" for none.
+  let panel = st.findPanel(MainPanel)
+  let shown = if panel >= 0: st.shownFile(panel) else: -1
+  if shown >= 0: st.sessions[shown].diskPath else: ""
 
 proc writeCsv(path, text: string) =
   ## `text` written to `path`: a temporary file beside it, then a rename.
@@ -95,163 +103,6 @@ proc writeCsv(path, text: string) =
     discard fs.tryRemoveFile(tmp)
     raise
 
-proc totalsBeside(path: string): string =
-  let s = path.splitFile
-  let ext = if s.ext.len == 0: ".csv" else: s.ext
-  s.dir / (s.name & "-totals" & ext)
-
-proc folderScan(folder, cache: string; relations: ref SurveyGeometry; sink: MissingSink;
-    note: ScanNote): JobWork =
-  result = proc (ctx: JobContext) {.gcsafe.} =
-    ctx.checkCancelled()
-    ctx.setPhase Listing
-    var capped = false
-    var paths: seq[string] = @[]
-    try:
-      paths = listedNames(@[folder], true, capped,
-        proc (found: int): bool {.gcsafe, raises: [].} = ctx.progress(int64(found), 0))
-    except OSError:
-      raise newException(ValueError, CannotList)
-    if note != nil: note.capped = capped
-    ctx.checkCancelled()
-    let scan = scanMissing(folder, paths, relations, sink, cache)
-    scan(ctx)
-
-proc exportWork(path, beside: string; points: seq[PointRow];
-    records: seq[missingreport.RecordRow];
-    recordPoints: seq[RecordPointRow]; totals: Totals; ask: ExportAsk): JobWork =
-  result = proc (ctx: JobContext) {.gcsafe.} =
-    ctx.checkCancelled()
-    let main = if ask.tab == mtRecords and ask.withPoints: recordPointsCsv(recordPoints)
-      elif ask.tab == mtRecords: recordsCsv(records)
-      else: pointsCsv(points)
-    writeCsv(path, main)
-    if ask.withTotals: writeCsv(beside, totalsCsv(totals))
-
-proc finishScan(ui: var MissingUi; state: JobState; error: string) =
-  ui.scanning = false
-  if ui.note != nil: ui.capped = ui.note.capped
-  if state == jsCancelled:
-    ui.status = Stopped
-    return
-  let failed = state == jsFailed or ui.sink == nil or not ui.sink.result.ok
-  if failed:
-    if ui.sink != nil and ui.sink.result.reason.len > 0: ui.status = ui.sink.result.reason
-    elif error.len > 0: ui.status = error
-    else: ui.status = ScanFailed
-    return
-  ui.report = ui.sink.result.report
-  ui.skipped = ui.sink.result.skipped
-  ui.unmatched = ui.sink.result.unmatched
-  ui.have = true
-  ui.pointDirty = true
-  ui.recordDirty = true
-  ui.folderKey = ""
-  ui.recordKey = ""
-  ui.status = Ready
-
-proc poll(ui: var MissingUi; st: AppState) =
-  if ui.scanJob != NoJob:
-    let info = st.jobs.info(ui.scanJob)
-    if info.isNone:
-      ui.scanJob = NoJob
-      ui.scanning = false
-    elif info.get.state in {jsQueued, jsRunning}:
-      ui.scanning = true
-      let phase = info.get.progress.phase
-      ui.status = if phase.len > 0: phase else: Scanning
-    else:
-      ui.finishScan(info.get.state, info.get.error)
-      ui.scanJob = NoJob
-  if ui.exportJob != NoJob:
-    let info = st.jobs.info(ui.exportJob)
-    if info.isNone: ui.exportJob = NoJob
-    elif info.get.state notin {jsQueued, jsRunning}:
-      if info.get.state == jsDone:
-        ui.exported = true
-        ui.status = Written
-      elif info.get.state == jsFailed:
-        ui.status = if info.get.error.len > 0: info.get.error else: ExportFailed
-      ui.exportJob = NoJob
-
-proc submit(ui: var MissingUi; st: AppState) =
-  let folder = st.fileList.folder
-  let layer = st.relationLayer
-  if folder.len == 0 or layer < 0: return
-  if ui.scanJob != NoJob:
-    discard st.jobs.cancel(ui.scanJob)
-    ui.scanJob = NoJob
-  var relations: ref SurveyGeometry = nil
-  relations = st.survey.layers[layer].relations
-  let cache = st.indexCache
-  ui.folder = folder
-  ui.note = ScanNote()
-  ui.sink = MissingSink()
-  ui.capped = false
-  ui.scanning = true
-  ui.status = Scanning
-  ui.scanJob = st.jobs.submit(missingSpec(folder, @[folder]),
-    folderScan(folder, cache, relations, ui.sink, ui.note))
-
-proc consider(ui: var MissingUi; st: AppState) =
-  if not ui.sortsReady:
-    ui.pointSort = DefaultPointSort
-    ui.recordSort = DefaultRecordSort
-    ui.sortsReady = true
-  ui.poll(st)
-  if ui.wantScan:
-    ui.wantScan = false
-    if canScan(st): ui.submit(st)
-    elif not ui.have: ui.status = whyNot(st)
-
-proc startExport*(ui: var MissingUi; st: AppState; path: string) =
-  ## Writes the CSV asked for when Export CSV... was clicked, from the rows
-  ## shown now. `path` gains ".csv" when it has no extension.
-  if not ui.ask.live: return
-  let ask = ui.ask
-  ui.ask.live = false
-  var dest = path
-  if dest.splitFile.ext.len == 0: dest.add ".csv"
-  let beside = totalsBeside(dest)
-  let points = ui.report.points
-  let records = ui.report.records
-  let recordPoints = ui.report.recordPoints
-  let totals = ui.report.totals
-  if ui.exportJob != NoJob:
-    discard st.jobs.cancel(ui.exportJob)
-    ui.exportJob = NoJob
-  ui.exportJob = st.jobs.submit(JobSpec(title: "Export missing traces",
-    lane: jlBackground, reads: @[ui.folder]),
-    exportWork(dest, beside, points, records, recordPoints, totals, ask))
-
-proc takePending(ui: var MissingUi; st: AppState): seq[Command] =
-  if not ui.pending.live: return
-  for s in st.sessions:
-    if canonical(s.path) != ui.pending.path: continue
-    if s.gathers.len == 0: return
-    let g = filerecs.findRecord(s.records, ui.pending.record)
-    ui.pending.live = false
-    if g >= 0:
-      result.add Command(kind: ckGather, panel: MainPanel, gather: g)
-    return
-
-proc openRecord(ui: var MissingUi; st: AppState; file: string; record: float64): seq[Command] =
-  if ui.folder.len == 0 or file.len == 0: return
-  let path = canonical(ui.folder / file)
-  result.add Command(kind: ckShowFile, panel: MainPanel, path: path, listFolder: false)
-  let known = record == record
-  var open = false
-  if known:
-    for s in st.sessions:
-      if canonical(s.path) == path:
-        open = true
-        let g = filerecs.findRecord(s.records, record)
-        if g >= 0:
-          result.add Command(kind: ckGather, panel: MainPanel, gather: g)
-        break
-  if open or not known: ui.pending.live = false
-  else: ui.pending = PendingOpen(path: path, record: record, live: true)
-
 proc clickSort[C](spec: var SortSpec[C]; col: C; shift: bool) =
   if shift:
     var at = -1
@@ -268,50 +119,6 @@ proc clickSort[C](spec: var SortSpec[C]; col: C; shift: bool) =
 func placeOf[C](spec: SortSpec[C]; col: C): int =
   for i, s in spec:
     if s.column == col: return i + 1
-
-func pointName(c: PointSortColumn): string =
-  case c
-  of psNever: ColNever
-  of psMissingIn: ColMissingIn
-  of psExpectedIn: ColExpectedIn
-  of psLine: ColLine
-  of psPoint: ColPoint
-  of psIndex: ColIndex
-  of psFirstFile: ColFirstFile
-  of psFirstRecord: ColFirstRecord
-  of psLastFile: ColLastFile
-  of psLastRecord: ColLastRecord
-
-func recordName(c: RecordSortColumn): string =
-  case c
-  of rsFile: ColFile
-  of rsRecord: ColRecord
-  of rsExpected: ColExpected
-  of rsPresent: ColPresent
-  of rsMissing: ColMissing
-  of rsDuplicates: ColDuplicates
-  of rsUnlisted: ColExtras
-
-func pointSortText(spec: SortSpec[PointSortColumn]): string =
-  var parts: seq[string]
-  for s in spec:
-    parts.add pointName(s.column) & (if s.descending: "-" else: "")
-  parts.join(",")
-
-func recordSortText(spec: SortSpec[RecordSortColumn]): string =
-  var parts: seq[string]
-  for s in spec:
-    parts.add recordName(s.column) & (if s.descending: "-" else: "")
-  parts.join(",")
-
-func firstLine(s: string): string =
-  let n = s.find('\n')
-  if n < 0: s else: s[0 ..< n]
-
-func totalsMark(t: Totals): string =
-  "missing.totals " & $t.files & " " & $t.records & " " & $t.expected & " " &
-    $t.present & " " & $t.missing & " " & $t.never & " " & $t.duplicates & " " &
-    $t.extras & " " & $t.xpsWithoutData.len
 
 proc tip(text: string) =
   if text.len == 0: return
@@ -369,31 +176,6 @@ func matchesWords(text: string; words: openArray[string]): bool =
     if not hasWord(text, w): return false
   true
 
-proc refreshFolder(ui: var MissingUi; words: seq[string]) =
-  if words.len == 0:
-    ui.folderKey = ""
-    return
-  let next = filterText(ui.folderFilter) & "|" & pointSortText(ui.pointSort) & "|" &
-    $ui.report.points.len
-  if next == ui.folderKey: return
-  ui.folderShown.setLen 0
-  for i, p in ui.report.points:
-    let text = filerecs.stationNumber(p.line) & " " & filerecs.stationNumber(p.point)
-    if matchesWords(text, words): ui.folderShown.add i
-  ui.folderKey = next
-
-proc refreshRecords(ui: var MissingUi; words: seq[string]) =
-  if words.len == 0:
-    ui.recordKey = ""
-    return
-  let next = filterText(ui.recordFilter) & "|" & recordSortText(ui.recordSort) & "|" &
-    $ui.report.records.len
-  if next == ui.recordKey: return
-  ui.recordShown.setLen 0
-  for i, r in ui.report.records:
-    if matchesWords(r.file, words): ui.recordShown.add i
-  ui.recordKey = next
-
 proc rightText(text: string) =
   let w = igCalcTextSize(text.cstring, nil, false, -1).x
   let avail = igGetContentRegionAvail().x
@@ -403,11 +185,6 @@ proc rightText(text: string) =
 proc numberCell(text: string) =
   if igTableNextColumn(): rightText(text)
 
-proc flagCell(on: bool; sentence: string) =
-  if not igTableNextColumn(): return
-  if on: igTextUnformatted(IconCheck.cstring, nil)
-  else: igDummy(ImVec2_c(x: igGetFontSize(), y: igGetTextLineHeight()))
-  tip(sentence)
 
 proc textWidth(label: string): float32 =
   igCalcTextSize(label.cstring, nil, false, -1).x
@@ -437,151 +214,6 @@ proc pushRight(width: float32): bool =
     return true
   false
 
-proc figureWidth(label, value: string; cap: float32): float32 =
-  igPushFont(igGetFont(), igGetStyle().FontSizeBase * 0.72)
-  let labelW = igCalcTextSize(label.cstring, nil, false, cap).x
-  igPopFont()
-  min(cap, max(labelW, igCalcTextSize(value.cstring, nil, false, -1).x) + 1)
-
-proc drawFigure(label, value, mark, tipText: string; width: float32; marks: var Marks) =
-  igBeginGroup()
-  igPushFont(igGetFont(), igGetStyle().FontSizeBase * 0.72)
-  igPushTextWrapPos(igGetCursorPos().x + width)
-  igTextDisabled("%s", label.cstring)
-  igPopTextWrapPos()
-  igPopFont()
-  igTextUnformatted(value.cstring, nil)
-  igEndGroup()
-  marks.mark("missing.figure " & mark)
-  if tipText.len > 0: tip(tipText)
-
-proc drawFigures(figs: openArray[tuple[label, value, mark, tip: string]]; marks: var Marks) =
-  let spacing = igGetStyle().ItemSpacing.x
-  let avail = max(igGetFontSize() * 6, igGetContentRegionAvail().x)
-  for i, fig in figs:
-    let cap = min(avail, igGetFontSize() * 14)
-    let w = figureWidth(fig.label, fig.value, cap)
-    if i > 0 and fitsBeside(w): igSameLine(0, spacing)
-    drawFigure(fig.label, fig.value, fig.mark, fig.tip, min(w, cap), marks)
-
-proc drawPoints(ui: var MissingUi; marks: var Marks) =
-  if ui.pointDirty:
-    sortPoints(ui.report.points, ui.pointSort)
-    ui.pointDirty = false
-    ui.folderKey = ""
-  const names = [ColLine, ColPoint, ColIndex, ColExpectedIn, ColMissingIn, ColNever,
-    ColUnknown, ColFirstRecord, ColLastRecord]
-  const keys = [psLine, psPoint, psIndex, psExpectedIn, psMissingIn, psNever,
-    psLine, psFirstRecord, psLastRecord]
-  const on = [true, true, true, true, true, true, false, true, true]
-  let words = filterWords(filterText(ui.folderFilter))
-  ui.refreshFolder(words)
-  let rows = ui.report.points
-  let n = if words.len == 0: rows.len else: ui.folderShown.len
-  if n == 0:
-    igTextDisabled(NoRows)
-    return
-  if not igBeginTable("##points", names.len.cint, tableFlags, ImVec2_c(x: 0, y: 0), 0):
-    return
-  setupColumns(names, [0'f32, 0, 0, 0, 0, 0, 0, 0, 0])
-  for c, name in names:
-    if igTableSetColumnIndex(cint(c)):
-      let place = if on[c]: placeOf(ui.pointSort, keys[c]) else: 0
-      let sentence = if name == ColNever: NeverTip
-        elif name == ColUnknown: UnknownTip
-        elif not on[c]: NotSortable
-        else: ""
-      let clicked = headerCell(name, place, marks, sentence)
-      if on[c] and clicked:
-        clickSort(ui.pointSort, keys[c], igGetIO_Nil().KeyShift)
-        ui.pointDirty = true
-        ui.folderKey = ""
-  let clipper = ImGuiListClipper_ImGuiListClipper()
-  ImGuiListClipper_Begin(clipper, cint(n), -1)
-  while ImGuiListClipper_Step(clipper):
-    for i in clipper.DisplayStart ..< clipper.DisplayEnd:
-      let at = if words.len == 0: int(i) else: ui.folderShown[int(i)]
-      let p = rows[at]
-      igTableNextRow(0, 0)
-      igPushID_Int(cint(i))
-      numberCell(filerecs.stationNumber(p.line))
-      numberCell(filerecs.stationNumber(p.point))
-      numberCell($p.index)
-      numberCell($p.expectedIn)
-      numberCell($p.missingIn)
-      flagCell(p.never, NeverTip)
-      flagCell(p.expectedUnknown, UnknownTip)
-      if igTableNextColumn():
-        rightText(filerecs.stationNumber(p.firstRecord))
-        tip(p.firstFile)
-      if igTableNextColumn():
-        rightText(filerecs.stationNumber(p.lastRecord))
-        tip(p.lastFile)
-      igPopID()
-  ImGuiListClipper_End(clipper)
-  ImGuiListClipper_destroy(clipper)
-  igEndTable()
-
-proc drawRecords(ui: var MissingUi; st: AppState; marks: var Marks; commands: var seq[Command]) =
-  if ui.recordDirty:
-    sortRecords(ui.report.records, ui.recordSort)
-    ui.recordDirty = false
-    ui.recordKey = ""
-  const names = [ColFile, ColRecord, ColExpected, ColPresent, ColMissing, ColDuplicates,
-    ColExtras, ColAlsoIn, ColMissingPoints]
-  const keys = [rsFile, rsRecord, rsExpected, rsPresent, rsMissing, rsDuplicates, rsUnlisted,
-    rsFile, rsFile]
-  const on = [true, true, true, true, true, true, true, false, false]
-  let words = filterWords(filterText(ui.recordFilter))
-  ui.refreshRecords(words)
-  let rows = ui.report.records
-  let n = if words.len == 0: rows.len else: ui.recordShown.len
-  if n == 0:
-    igTextDisabled(NoRows)
-    return
-  if not igBeginTable("##records", names.len.cint, tableFlags, ImVec2_c(x: 0, y: 0), 0):
-    return
-  setupColumns(names, [14'f32, 0, 0, 0, 0, 0, 0, 0, 24])
-  for c, name in names:
-    if igTableSetColumnIndex(cint(c)):
-      let place = if on[c]: placeOf(ui.recordSort, keys[c]) else: 0
-      let clicked = headerCell(name, place, marks, if on[c]: "" else: NotSortable)
-      if on[c] and clicked:
-        clickSort(ui.recordSort, keys[c], igGetIO_Nil().KeyShift)
-        ui.recordDirty = true
-        ui.recordKey = ""
-  let clipper = ImGuiListClipper_ImGuiListClipper()
-  ImGuiListClipper_Begin(clipper, cint(n), -1)
-  while ImGuiListClipper_Step(clipper):
-    for i in clipper.DisplayStart ..< clipper.DisplayEnd:
-      let at = if words.len == 0: int(i) else: ui.recordShown[int(i)]
-      let r = rows[at]
-      igTableNextRow(0, 0)
-      igPushID_Int(cint(i))
-      discard igTableNextColumn()
-      let flags = ImGui_SelectableFlags_SpanAllColumns.cint or
-        ImGui_SelectableFlags_AllowDoubleClick.cint
-      if igSelectable_Bool((r.file & "##row").cstring, false, flags,
-          ImVec2_c(x: 0, y: 0)) and ui.focus.acts and
-          igIsMouseDoubleClicked_Nil(ImGui_MouseButton_Left.cint):
-        for c in ui.openRecord(st, r.file, r.record): commands.add c
-      marks.mark("missing.file " & r.file)
-      if int(i) < 8: marks.mark("missing.record " & $int(i))
-      numberCell(filerecs.stationNumber(r.record))
-      numberCell($r.expected)
-      numberCell($r.present)
-      numberCell($r.missing)
-      numberCell($r.duplicates)
-      numberCell($r.unlisted)
-      numberCell($r.alsoIn)
-      if igTableNextColumn():
-        igTextUnformatted(firstLine(r.missingPoints).cstring, nil)
-        tip(r.missingPoints)
-      igPopID()
-  ImGuiListClipper_End(clipper)
-  ImGuiListClipper_destroy(clipper)
-  igEndTable()
-
 proc drawPopup(id, empty, markPrefix: string; lines: openArray[string]; marks: var Marks) =
   if not igBeginPopup(id.cstring, 0): return
   if lines.len == 0: igTextUnformatted(empty.cstring, nil)
@@ -595,133 +227,363 @@ proc drawPopup(id, empty, markPrefix: string; lines: openArray[string]; marks: v
     igEndChild()
   igEndPopup()
 
+func statsBeside(path: string): string =
+  let s = path.splitFile
+  let ext = if s.ext.len == 0: ".csv" else: s.ext
+  s.dir / (s.name & "-statistics" & ext)
+
+func sortText(spec: SortSpec[StationSortColumn]): string =
+  var parts: seq[string] = @[]
+  for s in spec:
+    let name = case s.column
+      of scLine: ColLine
+      of scPoint: ColPoint
+      of scMissing: ColMissing
+    parts.add name & (if s.descending: "-" else: "")
+  parts.join(",")
+
+proc cancel(s: var Scan; st: AppState) =
+  if s.job != NoJob: discard st.jobs.cancel(s.job)
+  s = Scan()
+
+proc finish(ui: var MissingUi; s: var Scan; state: JobState; error: string) =
+  s.running = false
+  if s.note != nil: s.capped = s.note.capped
+  if state == jsCancelled:
+    s.status = Stopped
+    return
+  let failed = state == jsFailed or s.sink == nil or not s.sink.result.ok
+  if failed:
+    s.status =
+      if s.sink != nil and s.sink.result.reason.len > 0: s.sink.result.reason
+      elif error.len > 0: error
+      else: ScanFailed
+    return
+  s.result = s.sink.result
+  s.have = true
+  s.status = Ready
+  ui.sortDirty = true
+  ui.shownKey = ""
+  if ui.side == ssReceivers and s.result.shot.stats.records == 0 and
+      s.result.receiver.stats.records > 0:
+    ui.side = ssSources
+  elif ui.side == ssSources and s.result.receiver.stats.records == 0 and
+      s.result.shot.stats.records > 0:
+    ui.side = ssReceivers
+
+proc poll(ui: var MissingUi; s: var Scan; st: AppState) =
+  if s.job == NoJob: return
+  let info = st.jobs.info(s.job)
+  if info.isNone:
+    s.job = NoJob
+    s.running = false
+  elif info.get.state in {jsQueued, jsRunning}:
+    s.running = true
+    s.done = info.get.progress.done
+    s.total = info.get.progress.total
+    let phase = info.get.progress.phase
+    s.status = if phase.len > 0: phase else: Scanning
+  else:
+    ui.finish(s, info.get.state, info.get.error)
+    s.job = NoJob
+
+proc submitFile(ui: var MissingUi; st: AppState; key, path: string) =
+  let layer = st.relationLayer
+  let folder = path.parentDir
+  ui.file = Scan(key: key, running: true, status: Scanning, sink: MissingSink())
+  var spec = missingSpec(folder, @[path])
+  spec.title = "Missing traces in " & path.extractFilename
+  ui.file.job = st.jobs.submit(spec,
+    scanMissing(folder, @[path], st.survey.layers[layer].relations, ui.file.sink,
+      st.indexCache))
+
+proc submitFolder(ui: var MissingUi; st: AppState; key: string) =
+  let layer = st.relationLayer
+  let folder = st.settings.missing.folder
+  ui.folder = Scan(key: key, running: true, status: Scanning, sink: MissingSink(),
+    note: ScanNote())
+  ui.folder.job = st.jobs.submit(missingSpec(folder, @[folder]),
+    folderScan(folder, st.settings.missing.subfolders, st.indexCache,
+      st.survey.layers[layer].relations, ui.folder.sink, ui.folder.note))
+
+proc consider(ui: var MissingUi; st: AppState) =
+  ## Polls the jobs, drops an answer that is stale, and starts the File
+  ## computation for the file shown. Nothing here lists or reads a folder
+  ## unless Run was pressed.
+  if not ui.sortsReady:
+    ui.sort = DefaultStationSort
+    ui.sortsReady = true
+  ui.poll(ui.file, st)
+  ui.poll(ui.folder, st)
+  let survey = st.surveyKey
+  let path = st.shownPath
+  let fileKey = if survey.len > 0 and path.len > 0: path & "|" & survey else: ""
+  if fileKey != ui.file.key:
+    ui.file.cancel(st)
+    ui.shownKey = ""
+    if fileKey.len > 0: ui.submitFile(st, fileKey, path)
+  let folder = st.settings.missing.folder
+  let folderKey = if survey.len > 0 and folder.len > 0:
+    folder & "|" & $st.settings.missing.subfolders & "|" & survey else: ""
+  if ui.folder.key.len > 0 and ui.folder.key != folderKey:
+    ui.folder.cancel(st)
+    ui.shownKey = ""
+  if ui.runAsked:
+    ui.runAsked = false
+    if folderKey.len > 0:
+      ui.folder.cancel(st)
+      ui.submitFolder(st, folderKey)
+
+proc startExport*(ui: var MissingUi; st: AppState; path: string) =
+  ## Writes the CSV asked for when Export CSV... was clicked: the list shown
+  ## then, and the statistics beside it when asked. `path` gains ".csv" when
+  ## it has no extension.
+  if not ui.ask.live: return
+  let ask = ui.ask
+  ui.ask.live = false
+  var dest = path
+  if dest.splitFile.ext.len == 0: dest.add ".csv"
+  let beside = statsBeside(dest)
+  if ui.exportJob != NoJob:
+    discard st.jobs.cancel(ui.exportJob)
+    ui.exportJob = NoJob
+  ui.exportJob = st.jobs.submit(JobSpec(title: "Export missing traces",
+    lane: jlBackground, reads: @[]), proc (ctx: JobContext) {.gcsafe.} =
+    ctx.checkCancelled()
+    writeCsv(dest, stationsCsv(ask.rows))
+    if ask.withStats: writeCsv(beside, statsCsv(ask.stats)))
+
+proc pollExport(ui: var MissingUi; st: AppState) =
+  if ui.exportJob == NoJob: return
+  let info = st.jobs.info(ui.exportJob)
+  if info.isNone: ui.exportJob = NoJob
+  elif info.get.state notin {jsQueued, jsRunning}:
+    if info.get.state == jsDone:
+      ui.exported = true
+      ui.status = Written
+    elif info.get.state == jsFailed:
+      ui.status = if info.get.error.len > 0: info.get.error else: ExportFailed
+    ui.exportJob = NoJob
+
+proc applySort(ui: var MissingUi) =
+  if not ui.sortDirty: return
+  ui.sortDirty = false
+  for s in [addr ui.file, addr ui.folder]:
+    sortStations(s.result.shot.rows, ui.sort)
+    sortStations(s.result.receiver.rows, ui.sort)
+
+proc drawRows(ui: var MissingUi; rows: seq[StationRow]; key: string; marks: var Marks) =
+  let words = filterWords(filterText(ui.filter))
+  let next = key & "|" & filterText(ui.filter) & "|" & sortText(ui.sort) & "|" & $rows.len
+  if words.len > 0 and next != ui.shownKey:
+    ui.shown.setLen 0
+    for i, r in rows:
+      if matchesWords(filerecs.stationNumber(r.line) & " " & filerecs.stationNumber(r.point),
+          words): ui.shown.add i
+    ui.shownKey = next
+  let n = if words.len == 0: rows.len else: ui.shown.len
+  if n == 0:
+    igTextDisabled(if rows.len == 0: NothingMissing else: NoRows)
+    marks.mark("missing.norows")
+    return
+  const names = [ColLine, ColPoint, ColMissing]
+  const keys = [scLine, scPoint, scMissing]
+  if not igBeginTable("##stations", names.len.cint, tableFlags, ImVec2_c(x: 0, y: 0), 0):
+    return
+  setupColumns(names, [0'f32, 0, 0])
+  for c, name in names:
+    if igTableSetColumnIndex(cint(c)):
+      let clicked = headerCell(name, placeOf(ui.sort, keys[c]), marks,
+        if keys[c] == scMissing: MissingTip else: "")
+      if clicked:
+        clickSort(ui.sort, keys[c], igGetIO_Nil().KeyShift)
+        ui.sortDirty = true
+        ui.shownKey = ""
+  let clipper = ImGuiListClipper_ImGuiListClipper()
+  ImGuiListClipper_Begin(clipper, cint(n), -1)
+  while ImGuiListClipper_Step(clipper):
+    for i in clipper.DisplayStart ..< clipper.DisplayEnd:
+      let at = if words.len == 0: int(i) else: ui.shown[int(i)]
+      let r = rows[at]
+      igTableNextRow(0, 0)
+      igPushID_Int(cint(i))
+      numberCell(filerecs.stationNumber(r.line))
+      numberCell(filerecs.stationNumber(r.point))
+      numberCell($r.missing)
+      if int(i) < 8:
+        marks.mark("missing.row " & filerecs.stationNumber(r.line) & " " &
+          filerecs.stationNumber(r.point) & " " & $r.missing)
+      igPopID()
+  ImGuiListClipper_End(clipper)
+  ImGuiListClipper_destroy(clipper)
+  igEndTable()
+
+proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks;
+    out0: var MissingOutput) =
+  ## What a tab shows below its own controls: a sentence for what is missing, the
+  ## job in progress, or the figures and the table.
+  template s: untyped = (if folderTab: ui.folder else: ui.file)
+  if st.relationLayer < 0:
+    igPushTextWrapPos(0)
+    igTextUnformatted(NoTemplate.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("missing.message " & NoTemplate)
+    return
+  if not folderTab and ui.file.key.len == 0:
+    igTextUnformatted(NeedFile.cstring, nil)
+    marks.mark("missing.message " & NeedFile)
+    return
+  if folderTab and ui.folder.key.len == 0:
+    igTextUnformatted((if st.settings.missing.folder.len == 0: NeedFolder
+      else: "Press Run to check " & st.settings.missing.folder & ".").cstring, nil)
+    marks.mark("missing.message folder")
+    return
+  if s.running:
+    marks.mark("missing.scanning")
+    igTextUnformatted(s.status.cstring, nil)
+    let fraction = if s.total > 0: clamp(float32(s.done) / float32(s.total), 0, 1) else: 0'f32
+    igProgressBar(fraction, ImVec2_c(x: igGetFontSize() * 12, y: 0), "")
+    marks.mark("missing.progress")
+    igSameLine(0, -1)
+    if igButton(StopButton.cstring, ImVec2_c(x: 0, y: 0)) and s.job != NoJob:
+      out0.commands.add Command(kind: ckCancelJob, job: s.job)
+    marks.mark("missing.stop")
+    return
+  if not s.have:
+    igPushTextWrapPos(0)
+    igTextUnformatted(s.status.cstring, nil)
+    igPopTextWrapPos()
+    return
+  marks.mark("missing.ready")
+  let r = s.result
+  var status = ""
+  if s.capped: status = CappedNote
+  if status.len > 0: igTextUnformatted(status.cstring, nil)
+  if r.notChecked.len > 0 and not folderTab:
+    igTextUnformatted(Continuous.cstring, nil)
+    marks.mark("missing.message " & Continuous)
+  if r.shot.stats.records == 0 and r.receiver.stats.records == 0:
+    if not (r.notChecked.len > 0 and not folderTab):
+      igPushTextWrapPos(0)
+      igTextUnformatted(NoTemplateRecord.cstring, nil)
+      igPopTextWrapPos()
+      marks.mark("missing.message " & NoTemplateRecord)
+  else:
+    if r.shot.stats.records > 0 and r.receiver.stats.records > 0:
+      var sources = ui.side == ssSources
+      if igRadioButton_Bool(ReceiversOption.cstring, not sources): ui.side = ssReceivers
+      igSameLine(0, -1)
+      if igRadioButton_Bool(SourcesOption.cstring, sources): ui.side = ssSources
+      marks.mark("missing.side")
+    let side = if ui.side == ssReceivers: r.shot else: r.receiver
+    marks.mark("missing.sort " & sortText(ui.sort))
+    let counts = countsLine(side.stats, folderTab)
+    igTextUnformatted(counts.cstring, nil)
+    marks.mark("missing.counts " & counts)
+    for line in statisticLines(side.stats, folderTab):
+      igTextUnformatted(line.cstring, nil)
+      marks.mark("missing.stat " & line)
+    if igButton(ExportButton.cstring, ImVec2_c(x: 0, y: 0)):
+      ui.ask = ExportAsk(rows: side.rows, stats: side.stats, withStats: ui.withStats,
+        live: true)
+      out0.exportAsked = true
+      out0.exportPath = (if folderTab and st.settings.missing.folder.len > 0:
+        st.settings.missing.folder else: st.shownPath.parentDir) / SuggestedName
+    marks.mark("missing.export")
+    igSameLine(0, -1)
+    discard igCheckbox((WithStats & "##stats").cstring, addr ui.withStats)
+    marks.mark("missing.statsbox")
+    tip(StatsTip)
+  var skippedLines: seq[string] = @[]
+  for row in r.skipped: skippedLines.add row.path & " — " & row.why
+  var unmatchedLines: seq[string] = @[]
+  for row in r.unmatched: unmatchedLines.add row.path & " " & $row.record & ": " & row.why
+  var notCheckedLines: seq[string] = @[]
+  for row in r.notChecked: notCheckedLines.add row.path & " — " & row.why
+  template popupButton(label, id, markName: string) =
+    if igButton(label.cstring, ImVec2_c(x: 0, y: 0)): igOpenPopup_Str(id.cstring, 0)
+    marks.mark(markName)
+    igSameLine(0, -1)
+  popupButton(countLabel(SkippedFiles, r.skipped.len), "##skipped", "missing.skipped")
+  popupButton(countLabel(UnmatchedRecords, r.unmatched.len), "##unmatched",
+    "missing.unmatched")
+  if folderTab:
+    popupButton(countLabel(NotChecked, r.notChecked.len), "##notchecked",
+      "missing.notchecked")
+  igNewLine()
+  drawPopup("##skipped", NoneSkipped, "missing.skippedline ", skippedLines, marks)
+  drawPopup("##unmatched", NoneUnmatched, "", unmatchedLines, marks)
+  drawPopup("##notchecked", NoneNotChecked, "missing.notcheckedline ", notCheckedLines, marks)
+  if r.shot.stats.records > 0 or r.receiver.stats.records > 0:
+    let side = if ui.side == ssReceivers: r.shot else: r.receiver
+    igSetNextItemWidth(-1)
+    discard igInputTextWithHint("##filterstations", (IconFilter & "  " & FilterStations).cstring,
+      cast[cstring](addr ui.filter[0]), csize_t(ui.filter.len), 0, nil, nil)
+    marks.mark("missing.filter")
+    tip(FilterStationsTip)
+    ui.drawRows(side.rows, (if folderTab: "folder" else: "file") & $ui.side, marks)
+
+proc drawFolderControls(ui: var MissingUi; st: AppState; marks: var Marks;
+    out0: var MissingOutput) =
+  if igButton(FolderButton.cstring, ImVec2_c(x: 0, y: 0)):
+    out0.askFolder = true
+    out0.askAt = st.settings.missing.folder
+  marks.mark("missing.folderbutton")
+  igSameLine(0, -1)
+  let chosen = st.settings.missing.folder
+  igTextUnformatted((if chosen.len > 0: chosen else: NoFolderChosen).cstring, nil)
+  marks.mark("missing.folderpath " & chosen)
+  var sub = st.settings.missing.subfolders
+  if igCheckbox((SubfoldersBox & "##subfolders").cstring, addr sub) and ui.focus.acts:
+    var s = st.settings
+    s.missing.subfolders = sub
+    out0.commands.add Command(kind: ckSettings, settings: s)
+  marks.mark("missing.subfolders")
+  if sub: marks.mark("missing.subfolderson")
+  tip(SubfoldersTip)
+  igSameLine(0, -1)
+  igBeginDisabled(chosen.len == 0 or st.relationLayer < 0 or ui.folder.running)
+  if igButton(RunButton.cstring, ImVec2_c(x: 0, y: 0)): ui.runAsked = true
+  igEndDisabled()
+  marks.mark("missing.run")
+
 proc drawMissing*(ui: var MissingUi; title: string; st: AppState; marks: var Marks): MissingOutput =
-  ## The window titled `title`. A scan asked for since the last draw starts here.
+  ## The window titled `title`. Closing it cancels what runs.
+  if ui.chosen.len > 0:
+    var s = st.settings
+    s.missing.folder = ui.chosen
+    ui.chosen = ""
+    result.commands.add Command(kind: ckSettings, settings: s)
   ui.consider(st)
-  result.commands = ui.takePending(st)
-  if igBegin(title.cstring, nil, 0):
+  ui.pollExport(st)
+  ui.applySort()
+  var open = true
+  if igBegin(title.cstring, addr open, 0):
     ui.focus.watch()
     marks.markWindow("missing")
-    if ui.status.len == 0: ui.status = if canScan(st): Ready else: whyNot(st)
-    var status = ui.status
-    if ui.capped:
-      if status.len > 0: status.add " "
-      status.add CappedNote
-    igPushTextWrapPos(0)
-    igTextUnformatted(status.cstring, nil)
-    igPopTextWrapPos()
-    if ui.scanning: marks.mark("missing.scanning")
-    if ui.have and not ui.scanning:
-      marks.mark("missing.ready")
-      let spec = if ui.tab == mtFolder: pointSortText(ui.pointSort)
-        else: recordSortText(ui.recordSort)
-      marks.mark("missing.sort " & spec)
-      let t = ui.report.totals
-      let dupTip = if t.duplicates > 0: ui.report.duplicatesNote else: ""
-      let missingValue = $t.missing & " (" & percentText(t.percentMissing) & "%)"
-      igBeginGroup()
-      drawFigures([
-        (FigFiles, $t.files, "files", ""),
-        (FigRecords, $t.records, "records", ""),
-        (FigExpected, $t.expected, "expected", ""),
-        (FigPresent, $t.present, "present", ""),
-        (FigMissing, missingValue, "missing", ""),
-        (FigNever, $t.never, "never", ""),
-        (FigDuplicates, $t.duplicates, "duplicates", dupTip),
-        (FigExtras, $t.extras, "extras", ""),
-        (FigNoData, $t.xpsWithoutData.len, "nodata", "")], marks)
-      igEndGroup()
-      marks.mark(totalsMark(t))
-      let here = igGetCursorScreenPos()
-      marks.markRect("missing.totals.scroll", here, ImVec2_c(x: here.x, y: here.y + 1))
-    template pointsBox() =
-      discard igCheckbox((WithPoints & "##points").cstring, addr ui.withPoints)
-      marks.mark("missing.points")
-      tip(PointsTip)
-    template totalsBox() =
-      discard igCheckbox((WithTotals & "##totals").cstring, addr ui.withTotals)
-      marks.mark("missing.totalsbox")
-      tip(TotalsTip)
-    template exportBox() =
-      igBeginDisabled(not ui.have)
-      if igButton(ExportButton.cstring, ImVec2_c(x: 0, y: 0)):
-        ui.ask = ExportAsk(tab: ui.tab, withPoints: ui.withPoints,
-          withTotals: ui.withTotals, live: true)
-        result.exportAsked = true
-        let base = if ui.folder.len > 0: ui.folder else: st.fileList.folder
-        result.exportPath = base / SuggestedName
-      igEndDisabled()
-      marks.mark("missing.export")
-    let skippedLabel = countLabel(SkippedFiles, ui.skipped.len)
-    let unmatchedLabel = countLabel(UnmatchedRecords, ui.unmatched.len)
-    if ui.scanning:
-      if igButton(StopButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.scanJob != NoJob:
-        result.commands.add Command(kind: ckCancelJob, job: ui.scanJob)
-      marks.mark("missing.stop")
-    else:
-      igBeginDisabled(not canScan(st))
-      if igButton(RescanButton.cstring, ImVec2_c(x: 0, y: 0)): ui.requestScan()
-      igEndDisabled()
-      marks.mark("missing.rescan")
-    sameLineIfFits(buttonWidth(skippedLabel))
-    if igButton(skippedLabel.cstring, ImVec2_c(x: 0, y: 0)):
-      igOpenPopup_Str("##skipped", 0)
-    marks.mark("missing.skipped")
-    sameLineIfFits(buttonWidth(unmatchedLabel))
-    if igButton(unmatchedLabel.cstring, ImVec2_c(x: 0, y: 0)):
-      igOpenPopup_Str("##unmatched", 0)
-    marks.mark("missing.unmatched")
-    var rightW = checkWidth(WithTotals) + igGetStyle().ItemSpacing.x + buttonWidth(ExportButton)
-    if ui.tab == mtRecords:
-      rightW += checkWidth(WithPoints) + igGetStyle().ItemSpacing.x
-    if pushRight(rightW):
-      if ui.tab == mtRecords:
-        pointsBox()
-        igSameLine(0, -1)
-      totalsBox()
-      igSameLine(0, -1)
-      exportBox()
-    else:
-      if ui.tab == mtRecords:
-        sameLineIfFits(checkWidth(WithPoints))
-        pointsBox()
-      sameLineIfFits(checkWidth(WithTotals))
-      totalsBox()
-      sameLineIfFits(buttonWidth(ExportButton))
-      exportBox()
-    var skippedLines: seq[string] = @[]
-    for row in ui.skipped: skippedLines.add row.path & " — " & row.why
-    var unmatchedLines: seq[string] = @[]
-    for row in ui.unmatched:
-      unmatchedLines.add row.path & " " & $row.record & ": " & row.why
-    drawPopup("##skipped", NoneSkipped, "missing.skippedline ", skippedLines, marks)
-    drawPopup("##unmatched", NoneUnmatched, "", unmatchedLines, marks)
+    if ui.status.len > 0:
+      igTextUnformatted(ui.status.cstring, nil)
+      marks.mark("missing.exported")
     if igBeginTabBar("##missingtabs", tabFlags):
       marks.mark("missing.tab")
+      let fileOn = igBeginTabItem(FileTab.cstring, nil, 0)
+      marks.mark("missing.tab File")
+      if fileOn:
+        ui.tab = mtFile
+        ui.drawScan(st, false, marks, result)
+        igEndTabItem()
       let folderOn = igBeginTabItem(FolderTab.cstring, nil, 0)
       marks.mark("missing.tab Folder")
       if folderOn:
         ui.tab = mtFolder
-        igEndTabItem()
-      let recordsOn = igBeginTabItem(RecordsTab.cstring, nil, 0)
-      marks.mark("missing.tab Records")
-      if recordsOn:
-        ui.tab = mtRecords
+        ui.drawFolderControls(st, marks, result)
+        ui.drawScan(st, true, marks, result)
         igEndTabItem()
       igEndTabBar()
-    if ui.have:
-      let recordsTab = ui.tab == mtRecords
-      let hint = IconFilter & "  " & (if recordsTab: FilterRecords else: FilterFolder)
-      let id = if recordsTab: "##filterrecords" else: "##filterfolder"
-      let buf = if recordsTab: addr ui.recordFilter[0] else: addr ui.folderFilter[0]
-      igSetNextItemWidth(-1)
-      discard igInputTextWithHint(id.cstring, hint.cstring, cast[cstring](buf),
-        csize_t(ui.folderFilter.len), 0, nil, nil)
-      marks.mark("missing.filter")
-      tip(if recordsTab: FilterRecordsTip else: FilterFolderTip)
-      if ui.tab == mtFolder: ui.drawPoints(marks)
-      else: ui.drawRecords(st, marks, result.commands)
     marks.markOverflow("missing")
   ui.focus.settle()
   igEnd()
-  ui.consider(st)
+  if not open:
+    result.close = true
+    ui.file.cancel(st)
+    ui.folder.cancel(st)

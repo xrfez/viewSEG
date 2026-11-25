@@ -199,7 +199,7 @@ func templateStations(g: SurveyGeometry; record: int64): seq[StationKey] =
   for (_, rel) in g.channelRelations(record):
     if not seen.containsOrIncl(rel.receiver): result.add rel.receiver
 
-type Verdict = tuple[known: bool, receiver: bool, continuous: bool]
+type Verdict = tuple[known: bool; receiver: bool; continuous: bool]
 
 proc verdictOf(s: Session; path: string; ctx: JobContext): Verdict =
   ## The recording kind of the open file, as the program shows it; not known
@@ -292,10 +292,10 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
                         why: if asReceiver: "no O record matches this receiver"
                           else: "no X record matches this source")
                     elif asReceiver:
-                      recv.addRecord(receiver[].templateStations(checked.xpsRecord), checked)
+                      recv.addGather(receiver[].templateStations(checked.xpsRecord), checked)
                       anyReceiver = true
                     else:
-                      shot.addRecord(relations[].templateStations(checked.xpsRecord), checked)
+                      shot.addGather(relations[].templateStations(checked.xpsRecord), checked)
                       anyShot = true
           except SegCancelledError:
             raise newException(JobCancelledError, "cancelled")

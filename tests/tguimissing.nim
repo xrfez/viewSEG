@@ -1,20 +1,25 @@
-## Reports > Missing traces... in the running frontend, headless: the item is
-## inactive until a folder is open and a relation file is loaded; the window is
-## closed at the start, then a tab beside the Seismic window; the scan of that
-## folder (subfolders included) matches an independent scan of the same files;
-## the totals, the skipped file, a header sort, a CSV export, a filter and a
-## double-click are what the window shows. Hiding it and showing it again keeps
-## its place. The totals do not scroll sideways at 1600 px or at 500 px.
+## Reports > Missing traces... in the running frontend, headless: the window is
+## closed at the start and then a tab beside the Seismic window; with no
+## relation records it says what to import and shows no table; with a file
+## shown it computes only the File tab (no job lists a folder), and the tab
+## has the statistics lines and the table of Line, Point, Missing (no record
+## column); the Folder tab starts nothing until Run, takes the folder from the
+## dialog, honours Include subfolders (off by default; changing it drops the
+## answer), exports the list, the File tab follows the file shown, and the
+## window closes by its tab's button and returns from the View menu.
 ##
-## Seen to fail: with the Reports item left enabled when no folder is open
-## (no disabled mark), "Reports is inactive without a folder did not happen".
+## Seen to fail: with the Folder tab's job started as soon as a folder is chosen,
+## "Folder... chooses the folder" found a folder job before Run; with the
+## subfolders tick ignored by the walk, "Run: the folder without its subfolders"
+## did not happen (3 files, not 2).
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
 import std/[math, monotimes, options, os, strutils]
-import viewSEG/core/[filejobs, geometry, jobs, missingjobs, missingreport, state]
+import parseSEG
+import viewSEG/core/[geometry, jobs, state]
 import viewSEG/ui/imgui/app
-import viewSEG/view/theme
+import viewSEG/view/[missingwords, theme]
 import utils/[fixtures, waiting]
 
 type
@@ -31,12 +36,48 @@ proc click(f: FrameInfo; at: Vec2) =
   f.pressMouse(at, true)
   f.pressMouse(at, false)
 
-proc filesOf(f: FrameInfo): int =
-  ## The file count in the totals mark, or -1 when that mark is not drawn.
-  result = -1
-  for name in f.markNames("missing.totals "):
-    let parts = name.split(' ')
-    if parts.len > 1: return parseInt(parts[1])
+proc put(line: var string; at: int; text: string) =
+  let i = at - 1
+  for j, c in text:
+    if i + j < line.len: line[i + j] = c
+
+proc xRec(record: int; srcPoint: string; toCh, fromR, toR: int): string =
+  result = repeat(' ', 80)
+  result[0] = 'X'
+  put(result, 2, "T1")
+  put(result, 8, align($record, 8))
+  put(result, 16, "11")
+  put(result, 18, align("1.00", 10))
+  put(result, 28, align(srcPoint, 10))
+  put(result, 38, "1")
+  put(result, 39, align("1", 5))
+  put(result, 44, align($toCh, 5))
+  put(result, 49, "1")
+  put(result, 50, align("10.00", 10))
+  put(result, 60, align($fromR & ".00", 10))
+  put(result, 70, align($toR & ".00", 10))
+  put(result, 80, "1")
+
+proc shotFile(path: string; receivers: Slice[int]) =
+  ## One shot record (field record 1, source 1.00 / 1.00) with a trace at each receiver.
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
+    numSamples: 1, time: 1_700_000_000.0))
+  var ch = 1
+  for point in receivers:
+    var k = initTraceKeys()
+    k.record = 1
+    k.channel = float64(ch)
+    k.srcLine = 1
+    k.srcPoint = 1
+    k.srcIndex = 1
+    k.rcvLine = 10
+    k.rcvPoint = float64(point)
+    k.rcvIndex = 1
+    k.intervalUs = 2000
+    k.status = tsLive
+    w.writeTrace(k, @[0'f32])
+    inc ch
+  doAssert w.close().len == 0, "shot file was not written: " & path
 
 proc main*() =
   var wait = 0
@@ -45,11 +86,12 @@ proc main*() =
   withFixtures fx:
     let folder = fx.dir / "line"
     createDir(folder / "sub")
-    copyFile(fx.stationsSegd(), folder / "one.sgd")
-    copyFile(fx.stationsSegd(), folder / "two.sgd")
-    copyFile(fx.stationsSegd(), folder / "sub" / "one.sgd")
+    shotFile(folder / "one.sgd", 1 .. 2)
+    shotFile(folder / "two.sgd", 1 .. 3)
+    shotFile(folder / "sub" / "three.sgd", 1 .. 4)
     writeFile(folder / "notes.txt", "not seismic\n")
-    let sps = fx.surveySps()
+    let plan = fx.dir / "plan.x"
+    writeFile(plan, "H00 SPS format version number   SPS 2.1;\n" & xRec(1, "1.00", 4, 1, 4) & "\n")
     let outCsv = fx.dir / "out" / "missing.csv"
     createDir(fx.dir / "out")
     createDir(fx.dir / "cache")
@@ -60,48 +102,17 @@ proc main*() =
 
     var asked: seq[DialogKind]
     var answer: seq[string]
-    var expected = ""
-    var expectedCsv = ""
-    var scanned = false
     let hook = proc (kind: DialogKind; location: string): seq[string] =
       asked.add kind
       answer
-
-    proc scanOnce(f: FrameInfo) =
-      if scanned: return
-      let layer = f.core.relationLayer
-      doAssert layer >= 0, "no relation file"
-      let relations = f.core.survey.layers[layer].relations
-      let listed = $(f.core.fileList.folder)
-      let cache = $(f.core.indexCache)
-      var capped = false
-      let paths = listedNames(@[listed], true, capped)
-      let jobs = initJobs()
-      let sink = MissingSink()
-      let id = jobs.submit(missingSpec(listed, @[listed]),
-        scanMissing(listed, paths, relations, sink, cache))
-      doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}),
-        "the independent scan did not finish"
-      let info = jobs.info(id).get
-      doAssert info.state == jsDone, info.error
-      let t = sink.result.report.totals
-      expected = "missing.totals " & $t.files & " " & $t.records & " " & $t.expected &
-        " " & $t.present & " " & $t.missing & " " & $t.never & " " & $t.duplicates &
-        " " & $t.extras & " " & $t.xpsWithoutData.len
-      expectedCsv = pointsCsv(sink.result.report.points)
-      doAssert t.files == 3, "independent scan saw " & $t.files & " files"
-      doAssert sink.result.report.points.len > 0, "nothing missing to sort"
-      doAssert sink.result.report.records.len > 0, "no record row to open"
-      var skippedNotes = false
-      for row in sink.result.skipped:
-        if row.path == "notes.txt": skippedNotes = true
-      doAssert skippedNotes, "notes.txt was not skipped: " & $sink.result.skipped
-      scanned = true
 
     var steps: seq[Step]
     proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
       steps.add Step(name: name, act: act, done: done)
     proc noop(f: FrameInfo) = discard
+    proc has(f: FrameInfo; name: string): bool = f.markOf(name).size.x > 0
+    proc jobTitles(f: FrameInfo): seq[string] =
+      for j in f.core.jobs.list(): result.add j.spec.title
 
     step("closed at the start", noop, proc (f: FrameInfo): bool =
       result = wait > 4
@@ -109,231 +120,164 @@ proc main*() =
         doAssert awMissing in f.hiddenWindows, $f.hiddenWindows
         doAssert not f.windowPlace("missing").inSight)
 
-    proc inactive(f: FrameInfo) = f.click(f.markOf("menu.Reports").centre)
-    proc inactiveDone(f: FrameInfo): bool =
-      f.markOf("menu.Missing traces...").size.x > 0 and
-        f.markOf("menu.Missing traces.disabled").size.x > 0
-    step("Reports is inactive without a folder", inactive, inactiveDone)
-
-    proc listFolder(f: FrameInfo) =
-      f.apply Command(kind: ckBrowse, paths: @[folder], showFirst: false)
-    proc folderListed(f: FrameInfo): bool =
-      not f.core.fileList.scanning and f.core.fileList.folder.len > 0
-    step("the folder is listed", listFolder, folderListed)
-
-    proc stillInactive(f: FrameInfo) =
-      if f.markOf("menu.Missing traces...").size.x == 0:
-        f.click(f.markOf("menu.Reports").centre)
-    proc stillInactiveDone(f: FrameInfo): bool =
-      f.markOf("menu.Missing traces.disabled").size.x > 0
-    step("still inactive without a relation file", stillInactive, stillInactiveDone)
-
-    proc loadSurvey(f: FrameInfo) =
-      f.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r, sps.x])
-    proc surveyLoaded(f: FrameInfo): bool = f.core.relationLayer >= 0
-    step("the relation file is loaded", loadSurvey, surveyLoaded)
-
     var opened = false
     proc openReport(f: FrameInfo) =
       if f.markOf("menu.Missing traces...").size.x == 0:
         f.click(f.markOf("menu.Reports").centre)
-    proc reportReady(f: FrameInfo): bool =
+    proc noTemplate(f: FrameInfo): bool =
       if not opened:
         let it = f.markOf("menu.Missing traces...")
-        if it.size.x > 0 and f.markOf("menu.Missing traces.disabled").size.x == 0:
+        if it.size.x > 0:
+          doAssert not f.has("menu.Missing traces.disabled"), "the menu item is inactive"
           f.click(it.centre)
           opened = true
-      result = f.markOf("missing.ready").size.x > 0 and f.markOf("missing.tab Folder").size.x > 0
+      result = f.has("missing.tab File") and f.has("missing.message " & NoTemplate)
       if result:
         let (m, p) = (f.windowPlace("missing"), f.windowPlace("plot"))
         doAssert m.inSight and m.docked and not m.apart, "not in the centre dock: " & $m
-        doAssert abs(m.rect.pos.x - p.rect.pos.x) <= 2 and abs(m.rect.pos.y - p.rect.pos.y) <= 2 and
-          abs(m.rect.size.x - p.rect.size.x) <= 2 and abs(m.rect.size.y - p.rect.size.y) <= 2,
+        doAssert abs(m.rect.pos.x - p.rect.pos.x) <= 2 and abs(m.rect.pos.y - p.rect.pos.y) <= 2,
           "not a tab beside the Seismic window: " & $m.rect & " plot " & $p.rect
-        doAssert f.markOf("missing.points").size.x == 0, "with missing points is on the Folder tab"
-    step("Reports > Missing traces...", openReport, reportReady)
+        doAssert f.markNames("missing.row ").len == 0 and not f.has("missing.header Line"),
+          "a table without relation records"
+    step("no relation records: one sentence and no table", openReport, noTemplate)
 
-    proc totalsMatch(f: FrameInfo): bool =
-      scanOnce(f)
-      result = f.markOf(expected).size.x > 0
+    proc showFile(f: FrameInfo) =
+      f.apply Command(kind: ckLoadSurvey, paths: @[plan])
+      f.apply Command(kind: ckShowFile, panel: MainPanel, path: folder / "one.sgd",
+        listFolder: true)
+    proc fileStats(f: FrameInfo): bool =
+      result = f.has("missing.ready") and f.has("missing.header Missing")
       if result:
-        doAssert f.savePng(shots / "missing-folder.png"), "folder shot was not written"
-    step("the totals match an independent scan", noop, totalsMatch)
+        for line in ["Receiver stations expected by the X records.",
+            "Receiver stations in the template: 4", "Receiver stations found in the file: 2",
+            "Receiver stations missing: 2", "Percent of the template missing: 50%"]:
+          doAssert f.has("missing.stat " & line), "no line " & line & " in " &
+            $f.markNames("missing.stat ")
+        doAssert f.markNames("missing.stat Counted per record").len == 0,
+          "per record figures for one record"
+        doAssert f.has("missing.counts 1 record")
+        doAssert f.has("missing.row 10 3 1") and f.has("missing.row 10 4 1"),
+          $f.markNames("missing.row ")
+        var headers: seq[string] = @[]
+        for n in f.markNames("missing.header "): headers.add n
+        doAssert headers.len == 3 and "missing.header Line" in headers and
+          "missing.header Point" in headers and "missing.header Missing" in headers,
+          "columns: " & $headers
+        for t in f.jobTitles:
+          doAssert t != "Missing traces in line",
+            "the window computes the file only, a job for the folder: " & t
+        doAssert f.has("missing.statsbox")
+        doAssert f.savePng(shots / "missing-file.png"), "file shot was not written"
+    step("the File tab: statistics and Line, Point, Missing", showFile, fileStats)
 
-    proc openSkipped(f: FrameInfo) = f.click(f.markOf("missing.skipped").centre)
-    proc skippedNames(f: FrameInfo): bool =
-      for name in f.markNames("missing.skippedline "):
-        if "notes.txt" in name: return true
-    step("Skipped names notes.txt", openSkipped, skippedNames)
+    proc folderTab(f: FrameInfo) = f.click(f.markOf("missing.tab Folder").centre)
+    proc folderIdle(f: FrameInfo): bool =
+      if not f.has("missing.folderbutton") and wait mod 8 == 4:
+        f.click(f.markOf("missing.tab Folder").centre)
+      result = f.has("missing.message folder") and f.has("missing.folderbutton")
+      if result:
+        doAssert not f.has("missing.scanning") and not f.has("missing.ready")
+        for t in f.jobTitles:
+          doAssert t != "Missing traces in line", "a folder job before Run"
+    step("the Folder tab starts nothing", folderTab, folderIdle)
+
+    proc chooseFolder(f: FrameInfo) =
+      asked.setLen 0
+      answer = @[folder]
+      f.click(f.markOf("missing.folderbutton").centre)
+    proc folderChosen(f: FrameInfo): bool =
+      result = f.has("missing.folderpath " & folder)
+      if result:
+        doAssert asked == @[dkMissingFolder], $asked
+        doAssert f.core.settings.missing.folder == folder
+        doAssert not f.core.settings.missing.subfolders, "subfolders is on by default"
+        doAssert not f.has("missing.subfolderson")
+        for t in f.jobTitles:
+          doAssert t != "Missing traces in line", "a folder job before Run"
+    step("Folder... chooses the folder", chooseFolder, folderChosen)
+
+    proc run(f: FrameInfo) = f.click(f.markOf("missing.run").centre)
+    proc folderOff(f: FrameInfo): bool =
+      result = f.has("missing.ready") and f.has("missing.counts 2 files, 2 records")
+      if result:
+        for line in ["Receiver stations in the template: 4",
+            "Receiver stations found in the files: 3",
+            "Receiver stations missing: 2",
+            "Counted per record, each station once for each record that calls for it: " &
+            "8 expected, 5 present, 3 missing, 37.50% missing"]:
+          doAssert f.has("missing.stat " & line), "no line " & line & " in " &
+            $f.markNames("missing.stat ")
+        doAssert f.has("missing.row 10 3 1") and f.has("missing.row 10 4 2"),
+          $f.markNames("missing.row ")
+        doAssert f.savePng(shots / "missing-folder.png"), "folder shot was not written"
+    step("Run: the folder without its subfolders", run, folderOff)
+
+    proc tick(f: FrameInfo) = f.click(f.markOf("missing.subfolders").centre)
+    proc dropped(f: FrameInfo): bool =
+      result = f.core.settings.missing.subfolders and not f.has("missing.ready") and
+        f.has("missing.message folder")
+    step("Include subfolders drops the answer", tick, dropped)
+
+    proc withSub(f: FrameInfo): bool =
+      result = f.has("missing.ready") and f.has("missing.counts 3 files, 3 records")
+      if result:
+        doAssert f.has("missing.stat Counted per record, each station once for each " &
+          "record that calls for it: 12 expected, 9 present, 3 missing, 25% missing"),
+          $f.markNames("missing.stat ")
+    step("Run with subfolders", run, withSub)
 
     var exportClicked = false
     proc exportCsv(f: FrameInfo) =
       asked.setLen 0
       answer = @[outCsv]
-      f.click(vec2(8, 8)) # the skipped list is open; a click elsewhere closes it
     proc exported(f: FrameInfo): bool =
-      if not exportClicked and wait >= 4:
-        let b = f.markOf("missing.export")
-        doAssert b.size.x > 0, "Export CSV... is not shown"
-        f.click(b.centre)
+      if not exportClicked and wait >= 2:
+        f.click(f.markOf("missing.export").centre)
         exportClicked = true
       if not fileExists(outCsv): return false
       let got = readFile(outCsv)
-      doAssert got == expectedCsv, "csv differs, asked " & $asked & "\n" &
-        got[0 ..< min(240, got.len)]
+      doAssert got == "line,point,missing\n10,3,1\n10,4,2\n", got
       doAssert asked == @[dkExportMissing], "asked for " & $asked
       true
-    step("Export CSV... writes the points", exportCsv, exported)
+    step("Export CSV... writes Line, Point, Missing", exportCsv, exported)
 
-    proc sortLine(f: FrameInfo) = f.click(f.markOf("missing.header Line").centre)
-    proc sortedLine(f: FrameInfo): bool = f.markOf("missing.sort Line").size.x > 0
-    step("a click on Line sorts by Line", sortLine, sortedLine)
-
-    proc reverseLine(f: FrameInfo) = f.click(f.markOf("missing.header Line").centre)
-    proc reversedLine(f: FrameInfo): bool = f.markOf("missing.sort Line-").size.x > 0
-    step("a second click reverses Line", reverseLine, reversedLine)
-
-    proc shiftPoint(f: FrameInfo) =
-      f.pressKey(skShift, true, {smShift})
-      f.click(f.markOf("missing.header Point").centre)
-    proc shiftedPoint(f: FrameInfo): bool =
-      result = f.markOf("missing.sort Line-,Point").size.x > 0
-      if result: f.pressKey(skShift, false)
-    step("Shift-click adds Point", shiftPoint, shiftedPoint)
-
-    proc recordsTab(f: FrameInfo) = f.click(f.markOf("missing.tab Records").centre)
-    proc recordsShown(f: FrameInfo): bool =
-      if f.markOf("missing.record 0").size.x == 0 and wait mod 8 == 0:
-        f.click(f.markOf("missing.tab Records").centre)
-      result = f.markOf("missing.record 0").size.x > 0 and f.markOf("missing.points").size.x > 0
+    proc fileTab(f: FrameInfo) =
+      f.apply Command(kind: ckShowFile, panel: MainPanel, path: folder / "two.sgd",
+        listFolder: false)
+    proc followsFile(f: FrameInfo): bool =
+      if not f.has("missing.row 10 4 1") and wait mod 8 == 4:
+        f.click(f.markOf("missing.tab File").centre)
+      result = f.has("missing.ready") and f.has("missing.stat Receiver stations found in the file: 3")
       if result:
-        doAssert f.savePng(shots / "missing-records.png"), "records shot was not written"
-      elif wait > 20:
-        var seen = ""
-        for n in f.markNames("missing."): seen.add n & "; "
-        let t = f.markOf("missing.tab Records")
-        doAssert false, "tab " & $t.pos & " " & $t.size & " marks [" & seen & "]"
-    step("the Records tab", recordsTab, recordsShown)
+        doAssert f.has("missing.stat Receiver stations missing: 1")
+        doAssert f.has("missing.row 10 4 1") and not f.has("missing.row 10 3 1"),
+          $f.markNames("missing.row ")
+    step("the File tab follows the file shown", fileTab, followsFile)
 
-    var filterAt = vec2(0, 0)
-    proc startFilter(f: FrameInfo) =
-      filterAt = f.markOf("missing.filter").centre
-      f.moveMouse(filterAt)
-    proc filtered(f: FrameInfo): bool =
-      if wait == 3: f.pressMouse(filterAt, true)
-      if wait == 5: f.pressMouse(filterAt, false)
-      if wait == 7: f.typeText("two")
-      if wait < 14: return false
-      var files = 0
-      for name in f.markNames("missing.file "):
-        inc files
-        if "two" notin name.toLowerAscii: return false
-      files > 0 and f.markOf("missing.record 0").size.x > 0
-    step("the filter keeps two.sgd", startFilter, filtered)
+    var closed = false
+    proc closeIt(f: FrameInfo) = discard
+    proc closedDone(f: FrameInfo): bool =
+      if not closed and wait >= 3:
+        let at = f.tabCloseAt("missing")
+        doAssert at.x > 0, "no tab close button"
+        f.click(at)
+        closed = true
+      result = closed and awMissing in f.hiddenWindows and not f.windowPlace("missing").inSight
+    step("the window's close button hides it", closeIt, closedDone)
 
-    proc openedFile(f: FrameInfo): bool =
-      var sawTwo = false
-      for s in f.core.sessions:
-        if "two" in s.path: sawTwo = true
-      if not sawTwo:
-        let row = f.markOf("missing.record 0")
-        let q = vec2(row.pos.x + 12, round(row.pos.y + row.size.y / 2))
-        case wait mod 12
-        of 2: f.moveMouse(q)
-        of 4: f.pressMouse(q, true)
-        of 5: f.pressMouse(q, false)
-        of 6: f.pressMouse(q, true)
-        of 7: f.pressMouse(q, false)
-        else: discard
-      sawTwo
-    step("a double click opens the file", noop, openedFile)
-
-    proc rescan(f: FrameInfo) =
-      removeFile(folder / "two.sgd")
-      f.click(f.markOf("missing.rescan").centre)
-    proc rescanned(f: FrameInfo): bool =
-      f.markOf("missing.ready").size.x > 0 and filesOf(f) == 2
-    step("Rescan after a file is removed", rescan, rescanned)
-
-    var saved = Rect()
-    var hid = false
-    proc hideMissing(f: FrameInfo) =
-      saved = f.windowPlace("missing").rect
-      if f.markOf("menu.window.missing").size.x == 0:
-        f.click(f.markOf("menu.View").centre)
-    proc hiddenMissing(f: FrameInfo): bool =
+    var shownAgain = false
+    proc showAgain(f: FrameInfo) =
+      f.click(f.markOf("menu.View").centre)
+    proc returned(f: FrameInfo): bool =
       let item = f.markOf("menu.window.missing")
-      if not hid:
+      if not shownAgain:
         if item.size.x > 0:
           f.click(item.centre)
-          hid = true
+          shownAgain = true
         elif wait mod 12 == 0:
           f.click(f.markOf("menu.View").centre)
-      hid and not f.windowPlace("missing").inSight and awMissing in f.hiddenWindows
-    step("hide Missing traces", hideMissing, hiddenMissing)
-
-    var shown = false
-    proc showMissing(f: FrameInfo) =
-      if f.markOf("menu.window.missing").size.x == 0:
-        f.click(f.markOf("menu.View").centre)
-    proc shownAgain(f: FrameInfo): bool =
-      let item = f.markOf("menu.window.missing")
-      if not shown:
-        if item.size.x > 0:
-          f.click(item.centre)
-          shown = true
-        elif wait mod 12 == 0:
-          f.click(f.markOf("menu.View").centre)
-      let m = f.windowPlace("missing")
-      result = shown and m.inSight and m.docked and wait > 4
-      if result:
-        doAssert abs(m.rect.pos.x - saved.pos.x) <= 2 and abs(m.rect.pos.y - saved.pos.y) <= 2 and
-          abs(m.rect.size.x - saved.size.x) <= 2 and abs(m.rect.size.y - saved.size.y) <= 2,
-          "place changed: " & $m.rect & " was " & $saved
-    step("show Missing traces in the same place", showMissing, shownAgain)
-
-    proc fits(f: FrameInfo) =
-      let over = f.markOf("missing.overflow")
-      doAssert over.size.x <= 0.5, "overflow " & $over & " window " & $f.windowPlace("missing").rect
-      let scroll = f.markOf("missing.totals.scroll")
-      doAssert scroll.size.y > 0 and scroll.size.x <= 0.5, $scroll
-    var askedOpen = false
-    proc reopen(f: FrameInfo) =
-      if f.windowPlace("missing").inSight or askedOpen: return
-      let item = f.markOf("menu.Missing traces...")
-      if item.size.x == 0:
-        if wait mod 10 == 0: f.click(f.markOf("menu.Reports").centre)
-      elif f.markOf("menu.Missing traces.disabled").size.x == 0:
-        f.click(item.centre)
-        askedOpen = true
-    step("1600 px: totals do not scroll", proc (f: FrameInfo) =
-      askedOpen = false
-      f.resizeWindow(1600, 900)
-      f.resetLayout(),
-      proc (f: FrameInfo): bool =
-        let (w, _) = f.windowSize
-        if w != 1600 or f.windowPlace("plot").rect.size.x < 400: return false
-        f.reopen()
-        result = f.windowPlace("missing").inSight and f.markOf("missing.ready").size.x > 0 and
-          f.markOf("missing.figure files").size.x > 0 and
-          f.windowPlace("missing").rect.size.x > 200
-        if result: f.fits())
-    step("500 px: totals wrap", proc (f: FrameInfo) =
-      askedOpen = false
-      f.resizeWindow(500, 700)
-      f.resetLayout(),
-      proc (f: FrameInfo): bool =
-        let (w, _) = f.windowSize
-        if w != 500 or f.windowPlace("plot").rect.size.x < 80: return false
-        f.reopen()
-        let files = f.markOf("missing.figure files")
-        let nodata = f.markOf("missing.figure nodata")
-        result = f.windowPlace("missing").inSight and files.size.x > 0 and nodata.size.y > 0 and
-          f.windowPlace("missing").rect.size.x > 80
-        if result:
-          doAssert nodata.pos.y >= files.pos.y + files.size.y - 1,
-            "nodata " & $nodata & " files " & $files
-          f.fits())
+      result = shownAgain and f.windowPlace("missing").inSight and f.has("missing.tab File")
+    step("the View menu brings it back", showAgain, returned)
 
     var at = 0
     var started = false

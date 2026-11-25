@@ -42,7 +42,7 @@ proc main*() =
   block percent_of_the_template:
     var t = initTally(ssReceivers)
     t.noteFile()
-    t.addRecord(template4(), rec(template4(), [3, 4]))
+    t.addGather(template4(), rec(template4(), [3, 4]))
     let r = t.report
     doAssert r.stats.inTemplate == 4 and r.stats.found == 2 and r.stats.missing == 2
     doAssert r.stats.percentMissing == 50.0, $r.stats.percentMissing
@@ -54,8 +54,8 @@ proc main*() =
     ## found stations are counted once, the per-record figures twice.
     var t = initTally(ssReceivers)
     t.noteFile()
-    t.addRecord(template4(), rec(template4(), [4]))
-    t.addRecord(template4(), rec(template4(), [1, 4]))
+    t.addGather(template4(), rec(template4(), [4]))
+    t.addGather(template4(), rec(template4(), [1, 4]))
     let s = t.report.stats
     doAssert s.inTemplate == 4 and s.found == 3 and s.missing == 2, $s
     doAssert s.expectedInRecords == 8 and s.presentInRecords == 5 and
@@ -66,7 +66,7 @@ proc main*() =
     var t = initTally(ssSources, derived = true)
     for lost in [@[4], @[3, 4], @[4]]:
       t.noteFile()
-      t.addRecord(template4(), rec(template4(), lost))
+      t.addGather(template4(), rec(template4(), lost))
     let r = t.report
     doAssert r.rows.rowAt(4).missing == 3 and r.rows.rowAt(3).missing == 1, $r.rows
     doAssert r.stats.files == 3 and r.stats.derived and r.stats.side == ssSources
@@ -109,7 +109,7 @@ proc main*() =
       doAssert c.expected == 4 and c.present == 3 and c.missing == 1,
         $components & "C: " & $c
       var t = initTally(ssReceivers)
-      t.addRecord(stations, c)
+      t.addGather(stations, c)
       let s = t.report.stats
       doAssert s.inTemplate == 4 and s.found == 3 and s.missing == 1, $components & "C: " & $s
       doAssert s.expectedInRecords == 4 and s.presentInRecords == 3, $components & "C: " & $s
@@ -127,7 +127,7 @@ proc main*() =
     let rows = @[StationRow(line: 1, point: 1.5, missing: 2)]
     doAssert stationsCsv(rows) == "line,point,missing\n1,1.5,2\n", stationsCsv(rows)
     var t = initTally(ssReceivers)
-    t.addRecord(template4(), rec(template4(), [2]))
+    t.addGather(template4(), rec(template4(), [2]))
     let text = statsCsv(t.report.stats)
     doAssert text.startsWith("stations,files,records,inTemplate,found,missing,percentMissing,"),
       text
