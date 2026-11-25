@@ -300,6 +300,19 @@ type
       ## hydrophone, vertical, inline, crossline: the Seismic window's
       ## component buttons and, on a multi-component record, its traces
 
+func withAmplitudeIn*(s: Settings; a: AmplitudeIn): Settings =
+  ## `s` with the amplitude read in `a`; in volts or physical units the raw amplitude is shown
+  ## in the status bar, since that is the field that is converted.
+  result = s
+  result.amplitudeIn = a
+  if a != aiCounts and rfRawAmplitude notin result.readout:
+    result.readout.add rfRawAmplitude
+
+func carriesRaw*(s: Settings): bool =
+  ## Whether the tiles carry the samples as the file has them: the raw amplitude is a field of
+  ## the status bar, or the amplitude is read in volts or physical units (which convert them).
+  rfRawAmplitude in s.readout or s.amplitudeIn != aiCounts
+
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not
   ## calibrated.

@@ -15,7 +15,7 @@
 
 import std/[math, strutils, times]
 import parseSEG
-import components, edits, pick, sigtypes, traceids
+import components, edits, pick, sensors, sigtypes, traceids
 
 type
   ReadoutField* = enum
@@ -124,6 +124,41 @@ proc utcText*(seconds: float64): string =
   if not known(seconds) or abs(seconds) > 1e11: return ""
   fromUnixFloat(seconds).utc.format("yyyy-MM-dd HH:mm:ss'.'fff")
 
+const
+  MissingScaleFields =
+    "SEG-D: the channel set's descale multiplier (Rev 2: the MP factor); SEG-Y: the " &
+    "trace weighting factor; SEG-2: DESCALING_FACTOR"
+
+proc convertRaw*(p: var Pick; table: SensorTable; want: AmplitudeIn; imperial: bool) =
+  ## Sets what the raw amplitude of `p` says (`rawText`, `rawTip`) when it is read in volts or
+  ## physical units (`want`): the sample as the file has it, converted with its file's own
+  ## scale and the sensor of its component, with a readable prefix (and inches when
+  ## `imperial`), or the words for what is missing: never a guessed number. Reads no file.
+  p.rawText = ""
+  p.rawTip = ""
+  if want == aiCounts or not p.inside or not p.found or p.raw.isNaN: return
+  if not p.hasScale:
+    p.rawText = "not converted for this view"
+    p.rawTip = "This view's samples are not the file's counts (a correlated view, say), so " &
+      "they are not converted."
+    return
+  let plan = initCalibrationPlan(table.calibrationOf(
+    if want == aiVolts: ctVolts else: ctPhysical))
+  let s = scaleSample(plan, p.keys, p.scale, float64(p.raw), want)
+  case s.kind
+  of skCounts: discard
+  of skValue:
+    let (number, unit) = s.scaledParts(imperial)
+    p.rawText = significant(number) & " " & unit &
+      (if p.binned > 1: " (peak of " & $p.binned & ")" else: "")
+    p.rawTip = "The file's sample " & significant(p.raw) & " converted " &
+      (if want == aiVolts: "to volts at the recorder's input with the file's own descale"
+        else: "with the file's own descale and the sensor of " & componentName(s.component)) &
+      "; flat band only."
+  of skNoVolts, skNoSensor, skNotFitting:
+    p.rawText = s.problemText
+    p.rawTip = s.problemTip(MissingScaleFields)
+
 proc text*(p: Pick; f: ReadoutField): string =
   ## Field `f` of the readout at `p`, without its caption; "" when the
   ## value is not known.
@@ -138,6 +173,7 @@ proc text*(p: Pick; f: ReadoutField): string =
     else: significant(p.amplitude)
   of rfRawAmplitude:
     if p.raw.isNaN: ""
+    elif p.rawText.len > 0: p.rawText
     elif p.binned > 1: significant(p.raw) & " (peak of " & $p.binned & ")"
     else: significant(p.raw)
   else:

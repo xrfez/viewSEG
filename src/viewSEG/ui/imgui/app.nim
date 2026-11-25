@@ -42,7 +42,7 @@ import asserts # before imguin: Nim keys its cache of imguin's C++ objects on th
 import sdl3_nim
 import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
-import ../../core/[filesystem, geometry, leapfile, ofile, screens, state, watchdog]
+import ../../core/[filesystem, geometry, leapfile, ofile, readout, screens, state, watchdog]
 from ../../core/vibfolderqc import FolderRow
 from ../../core/editmarks import shiftWords
 import ../../platform/[paths, trayguard, trayhost]
@@ -1594,7 +1594,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.core.settings.readout, ui.pick, ui.marks, ui.mapCursor,
     if ui.core.hoverNote.len > 0: ui.core.hoverNote
     else: withAuxHint(ui.core.correlateNote),
-    if ui.core.profileNoted: ProfileStored else: "")
+    if ui.core.profileNoted: ProfileStored else: "", ui.core.settings.amplitudeIn)
+  if status.choseAmplitude:
+    ui.core.apply Command(kind: ckSettings,
+      settings: ui.core.settings.withAmplitudeIn(status.amplitude))
   if status.cancel != NoJob:
     ui.core.apply Command(kind: ckCancelJob, job: status.cancel)
   if status.showJobs: ui.windows.bringForward(awJobs)
@@ -1617,6 +1620,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
       if has: ui.pick.filterNote = filterWords(f)
       let ms = ui.core.shownShift(ui.core.sessions[shown].base + ui.pick.trace)
       if ms != 0.0: ui.pick.shiftNote = shiftWords(ms)
+  ui.pick.convertRaw(ui.core.project.doc.sensors, ui.core.settings.amplitudeIn,
+    ui.core.settings.units == usImperial)
   for n in plot.notes:
     ui.say(n, mlWarning)
   for c in plot.commands.mitems:

@@ -88,6 +88,8 @@
 import std/[algorithm, atomics, cpuinfo, locks, math, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
+import processSEG/filescales
+from processSEG/core/units import FileScale
 import processSEG/core/[basic, pool, rows, types, workspace]
 import processSEG/gain/stats
 import channelsets, components, correlateread, cutfile, edits, filesystem, inbox, jobs, log, panels,
@@ -145,6 +147,7 @@ type
     shifts*: seq[ShiftEntry]
       ## the gather's traces that carry a time shift, ascending
     raw*: bool ## the tile carries the samples as the file has them too
+    scales*: bool ## and, per row, the file's own scale (`Tile.scales`), read off the UI thread
     chunkTraces*: int ## traces per read from the file; 0: `ChunkTraces`
     basis*: bool
       ## the record's level is taken over these traces and samples: the
@@ -1363,6 +1366,18 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
     rd.basisRaw = rd.raw # the record's level is taken over them again, read once
   result = true
 
+proc addScales(rd: Reader; tile: var Tile) =
+  ## The file's own scale of each row's trace, from its headers (`fileScalesInto`), for the
+  ## readout in volts or physical units. None for a correlated view, whose samples are no
+  ## longer the file's, or when the headers cannot be read.
+  if rd.src.view != nil or tile.traces.len == 0: return
+  var scales = newSeq[FileScale](tile.traces.len)
+  try:
+    rd.src.file[].fileScalesInto(tile.traces, scales)
+    tile.scales = move scales
+  except CatchableError:
+    discard
+
 proc serve(rd: var Reader; req: sink ReaderRequest) =
   ## Reads, processes and posts the tile `req` asks for, unless a newer note
   ## comes first.
@@ -1370,6 +1385,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
   var given = false
   rd.lastIo = false
   if rd.make(req, level = false, tile, given):
+    if req.scales: rd.addScales(tile)
     rd.r.poster.post Msg(job: NoJob, kind: mkTile, tile: move tile)
     discard rd.r.served.fetchAdd(1, moRelease)
     if rd.lastIo: # after the tile, which clears it: the plot says its drive is not answering

@@ -1551,6 +1551,10 @@ type
     memoryWork: seq[JobId]
       ## the identifications and hashes under way: they end quietly
     exports: seq[JobId] ## the exports of edits under way
+    scalesNoted: string
+      ## the file and sensors the Messages last summed up the physical-units conversion for
+    scalesStamp: tuple[path: string; panel, project: int]
+      ## what the summary was last looked at for, so a frame that changed none of it does no work
     editImports: seq[tuple[job: JobId; path: string; by: CommandOrigin; replace: bool;
       label: string]]
       ## the imports of edits under way: each job, and the file it is for
@@ -4123,14 +4127,15 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
     flowAux: p.layers[0].flowReachesAux(state.gatherKind(p.layers[0])),
     clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
     excluded: excluded, own: own, shifts: shifts,
-    raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0,
+    raw: state.settings.carriesRaw, scales: state.settings.amplitudeIn != aiCounts,
+    chunkTraces: if slow: SlowChunkTraces else: 0,
     basis: first and req.sameReach(p.basis))
   if p.relevel and not p.levelAsked and not req.sameReach(p.basis):
     var whole = asked
     whole.read = p.basis
     (whole.read.gen, whole.read.margin, whole.read.envelope) = (req.gen, req.margin, false)
     whole.fields.setLen 0
-    (whole.raw, whole.basis) = (false, false)
+    (whole.raw, whole.scales, whole.basis) = (false, false, false)
     state.readers[k].askLevel(whole)
     p.levelAsked = true
   state.readers[k].request asked
@@ -9214,6 +9219,45 @@ proc setStationMoves*(state: var AppState; moves: StationMoves) =
       "this run only.")
   state.queueOpenMoves()
 
+proc noteScales(state: var AppState) =
+  ## While the amplitude is read in physical units: one Messages line for the shown record,
+  ## when a file is shown, or the sensors change, or the choice is made: how many of its
+  ## traces convert, how many lack a descale in the file, how many lack a sensor. Looks at
+  ## the main panel's newest tile that carries the file's scales; reads no file.
+  if state.settings.amplitudeIn != aiPhysical:
+    state.scalesNoted = ""
+    return
+  let k = state.findPanel(MainPanel)
+  if k < 0 or state.tiles[k].len == 0: return
+  let shown = state.shownFile(k)
+  if shown < 0: return
+  let stamp = (state.sessions[shown].path, state.panels[k].revision, state.project.revision)
+  if stamp == state.scalesStamp: return
+  state.scalesStamp = stamp
+  var at = -1
+  for i in countdown(state.tiles[k].high, 0):
+    if state.tiles[k][i].scales.len > 0 and
+        state.tiles[k][i].scales.len == state.tiles[k][i].keys.len:
+      at = i
+      break
+  if at < 0: return
+  var key = state.sessions[shown].path & "|"
+  for r in state.project.doc.sensors: key.add $r.component & ":" & $r.value & $r.unit & ";"
+  if key == state.scalesNoted: return
+  state.scalesNoted = key
+  let plan = initCalibrationPlan(state.project.doc.sensors.calibrationOf)
+  var converted, noVolts, noSensor, other = 0
+  for i, keys in state.tiles[k][at].keys:
+    case scaleSample(plan, keys, state.tiles[k][at].scales[i], 1.0, aiPhysical).kind
+    of skValue: inc converted
+    of skNoVolts: inc noVolts
+    of skNoSensor: inc noSensor
+    of skCounts, skNotFitting: inc other
+  state.log.add(sevInfo, "project", "Physical units, " & state.sessions[shown].name & ": " &
+    $converted & " of " & $state.tiles[k][at].keys.len & " traces shown convert, " & $noVolts &
+    " lack a descale in the file, " & $noSensor & " lack a sensor for their component" &
+    (if other > 0: ", " & $other & " are left as recorded" else: "") & ".")
+
 proc followMoves(state: var AppState) =
   ## The next open file takes the project's station moves, once no import and
   ## no other move job runs. A file a project survey can still match is left
@@ -13414,7 +13458,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
         "be used (a calibration that is not a positive number, an entry given twice, a " &
         "sort preset without a name or keys) and were left out.")
     let follow = s.files.followLatest and not state.settings.files.followLatest
-    let raw = (rfRawAmplitude in s.readout) != (rfRawAmplitude in state.settings.readout)
+    let raw = s.carriesRaw != state.settings.carriesRaw or
+      s.amplitudeIn != state.settings.amplitudeIn
     # The settings a window sends are those in effect with its change: only
     # that change is the user's (what an agent changed meanwhile is not).
     let scaled = not sameScale(s.forceScale, state.settings.forceScale)
@@ -14254,5 +14299,6 @@ proc drainInbox*(state: var AppState): bool =
   state.followMapWork()
   state.followMemoryLook()
   state.followProject()
+  state.noteScales()
   state.followMoves()
   state.followLeap()

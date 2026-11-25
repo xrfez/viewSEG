@@ -15,7 +15,7 @@
 
 import std/[math, os, strutils, unicode]
 import imguin/cimgui
-import ../../core/[geometry, jobs, pick, readout]
+import ../../core/[geometry, jobs, pick, readout, sensors]
 import ../../view/[jobstatus, theme]
 import fonts, icons, marks, menus, plotviews, style, symbols
 
@@ -46,6 +46,8 @@ type
     showJobs*: bool            ## the job field was clicked: bring the Jobs window forward
     chose*: bool               ## the user changed the readout's fields
     fields*: seq[ReadoutField] ## ... to these, in this order
+    choseAmplitude*: bool      ## the user chose what the raw amplitude is read in
+    amplitude*: AmplitudeIn    ## ... this
 
 const readoutMenu = "##readoutfields"
 
@@ -457,7 +459,7 @@ func valueChars(f: ReadoutField): int =
   of rfChannelSet: 24
 
 proc readoutField(fonts: Fonts; f: ReadoutField; value: string; t: Theme;
-    marks: var Marks; joined = false) =
+    marks: var Marks; joined = false; rawTip = "") =
   ## One field of the readout: its caption, dim, then its value in mono,
   ## given room for `valueChars`; a value a geometry join gave (`joined`) in
   ## the accent colour.
@@ -479,13 +481,15 @@ proc readoutField(fonts: Fonts; f: ReadoutField; value: string; t: Theme;
   igEndGroup()
   marks.mark("status." & $f)
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    if f == rfRawAmplitude and rawTip.len > 0: igTextUnformatted(rawTip.cstring, nil)
     igTextUnformatted(($f & (if f == rfAmplitude: ", as displayed (after processing and " &
       "gain)" else: "") & (if joined: ", from the survey, not the trace header"
       else: "") & ". Right-click the bar to choose the fields.").cstring, nil)
     igEndTooltip()
   igSameLine(0, 16)
 
-proc drawReadoutMenu(fields: openArray[ReadoutField]; res: var StatusOutput) =
+proc drawReadoutMenu(fields: openArray[ReadoutField]; amplitude: AmplitudeIn;
+    res: var StatusOutput) =
   ## The status bar's menu: which fields it shows, and in what order.
   igSeparatorText("Status bar fields")
   var chosen = @fields
@@ -521,6 +525,12 @@ proc drawReadoutMenu(fields: openArray[ReadoutField]; res: var StatusOutput) =
   if igButton("Restore the defaults", ImVec2_c(x: 0, y: 0)):
     chosen = @DefaultReadout
     changed = true
+  igSeparatorText("Raw amplitude in")
+  for a in AmplitudeIn:
+    if igMenuItem_Bool(($a).capitalizeAscii.cstring, nil, a == amplitude, true) and
+        a != amplitude:
+      res.choseAmplitude = true
+      res.amplitude = a
   if changed:
     res.chose = true
     res.fields = chosen
@@ -640,7 +650,7 @@ proc agentField(a: AgentSign; t: Theme; marks: var Marks) =
 
 proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
     fields: openArray[ReadoutField]; at: Pick; marks: var Marks;
-    mapCursor = ""; linkNote = ""; profileNote = ""): StatusOutput =
+    mapCursor = ""; linkNote = ""; profileNote = ""; amplitude = aiCounts): StatusOutput =
   ## The status strip along the bottom of the main window: the sign that
   ## agent control is on (`info.agent`), the running job, then the readout
   ## of `fields` at `at` (blank where a value is not known),
@@ -669,7 +679,7 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
       igSameLine(0, 16)
     else:
       for f in fields:
-        readoutField(fonts, f, at.text(f), t, marks, at.joined(f))
+        readoutField(fonts, f, at.text(f), t, marks, at.joined(f), at.rawTip)
     let note = if mapCursor.len > 0: "" else: at.editNote # whatever the fields: the trace's edits
     if note.len > 0:
       igSameLine(0, -1)
@@ -709,7 +719,7 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
     igSetNextWindowPos(ImVec2_c(x: igGetIO_Nil().MousePos.x, y: igGetWindowPos().y),
       ImGui_Cond_Appearing.cint, ImVec2_c(x: 0, y: 1))
     if igBeginPopup(readoutMenu, 0):
-      drawReadoutMenu(fields, result)
+      drawReadoutMenu(fields, amplitude, result)
       igEndPopup()
   igEnd()
 

@@ -23,7 +23,8 @@
 import std/[math, options, os, sequtils, strutils]
 import parseSEG
 import processSEG/filescales
-import viewSEG/core/[components, nif, project, projectnif, sensors, state]
+import viewSEG/core/[components, nif, pick, project, projectnif, readout, sensors, settings,
+  state]
 import utils/[fixtures, waiting]
 
 proc keysOf(component: uint8; sensor = 2'u8): TraceKeys =
@@ -177,6 +178,33 @@ proc main*() =
     problems = @[]
     let big = readProject(many, "project.nif", problems)
     doAssert big.sensors.len == MaxSensors and problems.len > 0
+
+  block statusBarText:
+    var t = SensorTable()
+    doAssert t.put(SensorRow(component: 2, value: 2.032, unit: suVPerInPerS))
+    var p = noPick()
+    (p.inside, p.found, p.raw, p.hasScale) = (true, true, 1000'f32, true)
+    p.keys = keysOf(2)
+    p.scale = fileScale(0.298e-6)
+    p.convertRaw(t, aiPhysical, imperial = false)
+    doAssert p.text(rfRawAmplitude) == "3.725 µm/s", p.text(rfRawAmplitude)
+    p.convertRaw(t, aiPhysical, imperial = true)
+    doAssert p.text(rfRawAmplitude) == "146.7 µin/s", p.text(rfRawAmplitude)
+    p.convertRaw(t, aiVolts, imperial = false)
+    doAssert p.text(rfRawAmplitude) == "298 µV", p.text(rfRawAmplitude)
+    p.convertRaw(t, aiCounts, imperial = false)
+    doAssert p.text(rfRawAmplitude) == "1000", "counts are as the file has them"
+    p.scale = initFileScale()
+    p.convertRaw(t, aiPhysical, imperial = false)
+    doAssert p.text(rfRawAmplitude) == "volts unknown for this file" and p.rawTip.len > 0
+    p.scale = fileScale(1e-6)
+    p.keys = keysOf(3)
+    p.convertRaw(t, aiPhysical, imperial = false)
+    doAssert p.text(rfRawAmplitude).startsWith("no sensor for component X"), p.rawText
+    # choosing volts or physical units shows the raw amplitude
+    let s = Settings().withAmplitudeIn(aiPhysical)
+    doAssert s.amplitudeIn == aiPhysical and rfRawAmplitude in s.readout and s.carriesRaw
+    doAssert not Settings().carriesRaw
 
   block fileDescale:
     withFixtures fx:
