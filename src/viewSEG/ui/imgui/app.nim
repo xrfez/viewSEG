@@ -999,6 +999,7 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     of dkOutputLog: ui.output.setLogFile(ev.paths[0])
     of dkCutDest: ui.cut.setFolder(ev.paths[0])
     of dkMissingFolder: ui.missing.setFolder(ev.paths[0])
+    of dkQualityFolder: ui.quality.setFolder(ev.paths[0])
     of dkVibFolder: ui.vibfolder.setFolder(ev.paths[0])
     of dkVibFiles: ui.vibfolder.setFiles(ev.paths)
     of dkExportShotSps: ui.shotLog.setSpsDest(ev.paths[0])
@@ -1209,7 +1210,6 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       ui.windows.bringForward(awMissing)
     of maTraceQuality:
       ui.windows.bringForward(awQuality)
-      ui.quality.requestScan()
     of maVibFolder:
       ui.windows.bringForward(awVibFolder)
     of maOutput:
@@ -1519,8 +1519,6 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     compareShown: ui.core.compareOpen, firstBreaksOn: ui.core.breaksOn(MainPanel),
     templateOnlyOn: ui.core.templateView(ui.core.findPanel(MainPanel)).on,
     templateAvailable: ui.core.templateView(ui.core.findPanel(MainPanel)).available,
-    qualityReady: qualityReady(ui.core.fileList.folder.len > 0),
-    qualityWhy: qualityWhy(ui.core.fileList.folder.len > 0),
     outputReady: ui.core.fileList.folder.len > 0,
     outputWhy: if ui.core.fileList.folder.len > 0: "" else: OutputNeedFolder,
     cutWhy: ui.core.cutMenuProblem(), shotLogsLoaded: ui.core.shotLogsHeld,
@@ -1539,7 +1537,6 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     if menu.toggleTrayMinimize: s.tray.minimize = not s.tray.minimize
     ui.core.apply Command(kind: ckSettings, settings: s)
   for w in menu.pickedWindows:
-    if w == awQuality and ui.windows.willShow(w): ui.quality.requestScan()
     ui.windows.picked(w)
   if menu.toggleJoin:
     if ui.join.shown: ui.join.shown = false else: ui.join.open()
@@ -1668,6 +1665,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     for c in quality.commands.mitems:
       ui.core.apply move c
     if quality.exportAsked: ui.ask(dkExportQuality, quality.exportPath)
+    if quality.askFolder: ui.ask(dkQualityFolder, quality.askAt)
+  else:
+    ui.quality.stop(ui.core)
   if ui.windows.shows(awVibFolder):
     ui.windows.beforeDrawing(awVibFolder)
     var folderQc = ui.vibfolder.drawVibFolder(vibfolderTitle, ui.core, ui.marks)

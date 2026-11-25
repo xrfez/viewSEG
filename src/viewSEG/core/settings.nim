@@ -186,6 +186,11 @@ type
     folder*: string   ## the folder its Folder tab checks; "" for none chosen
     subfolders*: bool ## the Folder tab also checks the folders inside it; off until ticked
 
+  QualityView* = object
+    ## What the Trace quality window offers again.
+    folder*: string   ## the folder its Folder tab measures; "" for none chosen
+    subfolders*: bool ## the Folder tab also measures the folders inside it; off until ticked
+
   OutputView* = object
     ## What the Output window offers again.
     segyRevision*: OutputRevision ## the revision chosen for a SEG-Y file written
@@ -245,6 +250,7 @@ type
     cutGather*: CutGatherView ## the Slice by shot log window's record length
     output*: OutputView ## the Output window's revisions
     missing*: MissingView ## the Missing traces window's folder and subfolders tick
+    quality*: QualityView ## the Trace quality window's folder and subfolders tick
     hideKilled*: bool
       ## killed traces are left out of the plot (the traces beside them close
       ## up); off: drawn blank

@@ -1,5 +1,5 @@
-## Trace-quality tables: one row per receiver station and component, one row
-## per file and record, and the totals, sorted and written as CSV.
+## Trace-quality table: one row per station (line and point), counting every
+## trace of it in every file of the scan, the totals, sorted and written as CSV.
 ##
 ## A scan hands in one `TraceNote` per seismic trace (`addTrace`). This
 ## module does not read files, start jobs or keep state of its own: the
@@ -13,13 +13,15 @@
 ## exclusion area is tested for weak but not for noisy. A count is shown only
 ## where some trace was tested for it.
 ##
-## A station is the receiver (line, point, index) and its component.
-## Components are never compared across stations: each row counts only
-## its own traces. Line and point are rounded to 1/100, and a non-finite
-## line or point shares one unknown station per index and component. A
-## record is the file path as the caller named it and the header record
-## number; a non-finite number shares one row per file. The records a
-## station was bad in are compact ranges, one line of text per file.
+## A station is the line and point the caller gives a note (the receiver of a
+## shot gather's traces, the source of a receiver gather's: the caller's rule).
+## Its components, its indices and its files are not rows of their own: every
+## trace of the station counts in its one row, and the row names the components
+## it has. Components are never compared across stations: each row counts only
+## its own traces. Line and point are rounded to 1/100, and a non-finite line or
+## point shares one unknown station. The components of a build are the ones any
+## station of it has; a station with some of them but not all lacks the others
+## (`lacking`), which matters only when the build has more than one component.
 ## Unread files are not a total here.
 
 import std/[algorithm, hashes, math, sets, strutils, tables]
@@ -40,9 +42,7 @@ type
   TraceNote* = object
     ## One seismic trace. `file` is the path the caller named.
     file*: string
-    record*: float64       ## Header record number; NaN when the file has none.
-    line*, point*: float64 ## Receiver station; NaN when the headers name none.
-    index*: int16
+    line*, point*: float64 ## The station; NaN when the headers name none.
     component*: uint8
     killed*: bool          ## A per-file edit killed it: counted as killed, not bad.
     findings*: set[Finding]
@@ -51,56 +51,41 @@ type
     noisy*, weak*: bool    ## Only meaningful when `noisyTested`, `weakTested`.
 
   StationRow* = object
-    ## One receiver station and component, over every file of the scan.
+    ## One station, over every file of the scan.
     line*, point*: float64
-    index*: int16
-    component*: uint8
+    components*: set[uint8]   ## the components that have a trace here
+    lacking*: set[uint8]      ## components of the scan this station has none of; {} when it has
+                              ## none, or when the scan has one component
     seen*, killed*, bad*: int ## `seen` includes killed. `bad` does not.
     counts*: array[Finding, int]
     noisyTested*, noisy*: int ## `noisy` of `noisyTested` traces; nothing shown when it is 0.
     weakTested*, weak*: int   ## The same for weak.
-    badRecords*: string       ## Compact ranges, one line per file the station was bad in.
-
-  RecordRow* = object
-    ## One field record of one file.
-    file*: string
-    record*: float64
-    seen*, killed*, bad*: int
-    counts*: array[Finding, int]
-    noisyTested*, noisy*, weakTested*, weak*: int ## As in `StationRow`.
 
   Totals* = object
     ## Scan totals over the notes. Unread files are not counted.
-    files*, records*, traces*, killed*, bad*, stations*: int
+    files*, traces*, killed*, bad*, stations*: int
+    badStations*: int                             ## stations with at least one bad trace
+    lacking*: int                                 ## stations that lack a component the scan has
+    components*: int                              ## components of the scan
     counts*: array[Finding, int]
     noisyTested*, noisy*, weakTested*, weak*: int ## As in `StationRow`.
 
   QualityReport* = object
     stations*: seq[StationRow]
-    records*: seq[RecordRow]
     totals*: Totals
 
   StationSortColumn* = enum
     ## A column of `StationRow`.
-    ssLine, ssPoint, ssIndex, ssComponent, ssSeen, ssKilled, ssBad,
+    ssLine, ssPoint, ssLacking, ssSeen, ssKilled, ssBad,
     ssHeaderDead, ssAllZero, ssConstant, ssClipped, ssSpiky, ssDcOffset,
-    ssNonFinite, ssNoisyTested, ssNoisy, ssWeakTested, ssWeak, ssBadRecords
-
-  RecordSortColumn* = enum
-    ## A column of `RecordRow`.
-    rsFile, rsRecord, rsSeen, rsKilled, rsBad, rsHeaderDead, rsAllZero,
-    rsConstant, rsClipped, rsSpiky, rsDcOffset, rsNonFinite, rsNoisyTested, rsNoisy,
-    rsWeakTested, rsWeak
+    ssNonFinite, ssNoisyTested, ssNoisy, ssWeakTested, ssWeak
 
   SortSpec*[C] = seq[tuple[column: C, descending: bool]]
     ## Sort keys, first one most significant. A tie keeps the rows' order.
 
 const
   DefaultStationSort*: SortSpec[StationSortColumn] = @[
-    (column: ssLine, descending: false), (column: ssPoint, descending: false),
-    (column: ssIndex, descending: false), (column: ssComponent, descending: false)]
-  DefaultRecordSort*: SortSpec[RecordSortColumn] = @[
-    (column: rsFile, descending: false), (column: rsRecord, descending: false)]
+    (column: ssLine, descending: false), (column: ssPoint, descending: false)]
 
 func findingsOf*(flags: set[AmplitudeFlag]; headerDead: bool): set[Finding] =
   ## The findings of one trace. Header-dead is only that finding: amplitude
@@ -136,6 +121,12 @@ func noiseCell*(tested, n: int): string =
   ## A count of `tested` traces, or "" when no trace was tested for it.
   if tested > 0: $n else: ""
 
+func componentList*(components: set[uint8]): string =
+  ## The component numbers in order, separated by a comma and a space; "" for none.
+  for c in components:
+    if result.len > 0: result.add ", "
+    result.add $c
+
 func csvLine(fields: varargs[string]): string =
   for i, f in fields:
     if i > 0: result.add ','
@@ -162,17 +153,6 @@ func kindColumn(column: StationSortColumn): Finding =
   of ssNonFinite: qfNonFinite
   else: qfHeaderDead
 
-func recordKind(column: RecordSortColumn): Finding =
-  case column
-  of rsHeaderDead: qfHeaderDead
-  of rsAllZero: qfAllZero
-  of rsConstant: qfConstant
-  of rsClipped: qfClipped
-  of rsSpiky: qfSpiky
-  of rsDcOffset: qfDcOffset
-  of rsNonFinite: qfNonFinite
-  else: qfHeaderDead
-
 func known(tested, n: int): int =
   ## The count to sort by: rows with nothing tested come before every count.
   if tested > 0: n else: -1
@@ -181,12 +161,10 @@ func cmpStation(a, b: StationRow; column: StationSortColumn): int =
   case column
   of ssLine: cmpNum(a.line, b.line)
   of ssPoint: cmpNum(a.point, b.point)
-  of ssIndex: cmp(a.index, b.index)
-  of ssComponent: cmp(a.component, b.component)
+  of ssLacking: cmp(a.lacking.card, b.lacking.card)
   of ssSeen: cmp(a.seen, b.seen)
   of ssKilled: cmp(a.killed, b.killed)
   of ssBad: cmp(a.bad, b.bad)
-  of ssBadRecords: cmp(a.badRecords, b.badRecords)
   of ssNoisyTested: cmp(a.noisyTested, b.noisyTested)
   of ssNoisy: cmp(known(a.noisyTested, a.noisy), known(b.noisyTested, b.noisy))
   of ssWeakTested: cmp(a.weakTested, b.weakTested)
@@ -194,47 +172,24 @@ func cmpStation(a, b: StationRow; column: StationSortColumn): int =
   of ssHeaderDead, ssAllZero, ssConstant, ssClipped, ssSpiky, ssDcOffset, ssNonFinite:
     cmp(a.counts[kindColumn(column)], b.counts[kindColumn(column)])
 
-func cmpRecord(a, b: RecordRow; column: RecordSortColumn): int =
-  case column
-  of rsFile: cmp(a.file, b.file)
-  of rsRecord: cmpNum(a.record, b.record)
-  of rsSeen: cmp(a.seen, b.seen)
-  of rsKilled: cmp(a.killed, b.killed)
-  of rsBad: cmp(a.bad, b.bad)
-  of rsNoisyTested: cmp(a.noisyTested, b.noisyTested)
-  of rsNoisy: cmp(known(a.noisyTested, a.noisy), known(b.noisyTested, b.noisy))
-  of rsWeakTested: cmp(a.weakTested, b.weakTested)
-  of rsWeak: cmp(known(a.weakTested, a.weak), known(b.weakTested, b.weak))
-  of rsHeaderDead, rsAllZero, rsConstant, rsClipped, rsSpiky, rsDcOffset, rsNonFinite:
-    cmp(a.counts[recordKind(column)], b.counts[recordKind(column)])
-
 proc reorder[T](rows: seq[T]; order: openArray[int]): seq[T] =
   result.setLen(rows.len)
   for i, src in order:
     result[i] = rows[src]
 
-proc sortBy[T, C](rows: var seq[T]; by: SortSpec[C];
-    cmpCol: proc (a, b: T; column: C): int) =
+proc sortStations*(rows: var seq[StationRow]; by: SortSpec[StationSortColumn]) =
+  ## Sorts `rows` by `by`. A tie, including a tie on every column, keeps the
+  ## rows in the order they had. A NaN line or point sorts after every number.
   if rows.len < 2 or by.len == 0: return
   let view = rows
   var order = newSeq[int](view.len)
   for i in 0 ..< order.len: order[i] = i
   order.sort proc (a, b: int): int =
     for spec in by:
-      let c = cmpCol(view[a], view[b], spec.column)
+      let c = cmpStation(view[a], view[b], spec.column)
       if c != 0: return if spec.descending: -c else: c
     cmp(a, b)
   rows = reorder(view, order)
-
-proc sortStations*(rows: var seq[StationRow]; by: SortSpec[StationSortColumn]) =
-  ## Sorts `rows` by `by`. A tie, including a tie on every column, keeps the
-  ## rows in the order they had. A NaN line, point or record sorts after
-  ## every number.
-  sortBy(rows, by, cmpStation)
-
-proc sortRecords*(rows: var seq[RecordRow]; by: SortSpec[RecordSortColumn]) =
-  ## Sorts `rows` by `by`, as `sortStations` does.
-  sortBy(rows, by, cmpRecord)
 
 func holds(text, word: string): bool =
   if word.len == 0: return true
@@ -251,49 +206,21 @@ func matchesAll(text, filter: string): bool =
   true
 
 func stationText(r: StationRow): string =
-  stationNumber(r.line) & " " & stationNumber(r.point) & " " & $r.index & " " &
-    $r.component & " " & r.badRecords
-
-func recordText(r: RecordRow): string =
-  r.file & " " & stationNumber(r.record)
+  stationNumber(r.line) & " " & stationNumber(r.point) & " " & componentList(r.lacking)
 
 func filterStations*(rows: openArray[StationRow]; filter: string): seq[int] =
-  ## Indices of the rows whose line, point, index, component or bad-record
-  ## text holds every word of `filter`, in any case. An empty filter, or
-  ## one of only spaces, is every row.
+  ## Indices of the rows whose line, point or lacking components hold every word of
+  ## `filter`, in any case. An empty filter, or one of only spaces, is every row.
   for i, r in rows:
     if matchesAll(stationText(r), filter): result.add i
-
-func filterRecords*(rows: openArray[RecordRow]; filter: string): seq[int] =
-  ## Indices of the rows whose file or record number holds every word of
-  ## `filter`, in any case. An empty filter is every row.
-  for i, r in rows:
-    if matchesAll(recordText(r), filter): result.add i
 
 type
   StKey = object
     lineKnown, pointKnown: bool
     lineH, pointH: int64
-    index: int16
-    component: uint8
-
-  RecKey = object
-    file: int
-    finite: bool
-    record: float64
-
-  FileBad = object
-    wholes: HashSet[int64]
-    others: seq[float64]
 
   StAcc = object
-    seen, killed, bad: int
-    counts: array[Finding, int]
-    noisyTested, noisy, weakTested, weak: int
-    fileOrder: seq[int]
-    badFiles: Table[int, FileBad]
-
-  RecAcc = object
+    components: set[uint8]
     seen, killed, bad: int
     counts: array[Finding, int]
     noisyTested, noisy, weakTested, weak: int
@@ -301,35 +228,20 @@ type
   QualityBuild* = object
     ## Notes gathered for `qualityReport`. Fields are private: add with
     ## `addTrace`.
-    files: seq[string]
-    fileIds: Table[string, int]
+    files: HashSet[string]
     stOrder: seq[StKey]
     stations: Table[StKey, StAcc]
-    recOrder: seq[RecKey]
-    records: Table[RecKey, RecAcc]
 
 func hash(k: StKey): Hash =
   var h = hash(k.lineKnown)
   h = h !& hash(k.pointKnown)
   h = h !& hash(k.lineH)
   h = h !& hash(k.pointH)
-  h = h !& hash(k.index)
-  h = h !& hash(k.component)
   !$h
 
 func `==`(a, b: StKey): bool =
   a.lineKnown == b.lineKnown and a.pointKnown == b.pointKnown and
-    a.lineH == b.lineH and a.pointH == b.pointH and a.index == b.index and
-    a.component == b.component
-
-func hash(k: RecKey): Hash =
-  var h = hash(k.file)
-  h = h !& hash(k.finite)
-  if k.finite: h = h !& hash(k.record)
-  !$h
-
-func `==`(a, b: RecKey): bool =
-  a.file == b.file and a.finite == b.finite and (not a.finite or a.record == b.record)
+    a.lineH == b.lineH and a.pointH == b.pointH
 
 func hundredths(x: float64): tuple[known: bool; n: int64] =
   if x != x or x == Inf or x == -Inf: return (false, 0)
@@ -337,17 +249,10 @@ func hundredths(x: float64): tuple[known: bool; n: int64] =
   if h != h or abs(h) > 9.0e18: return (false, 0)
   (true, int64(h))
 
-func stKey(line, point: float64; index: int16; component: uint8): StKey =
+func stKey(line, point: float64): StKey =
   let ln = hundredths(line)
   let pt = hundredths(point)
-  StKey(lineKnown: ln.known, pointKnown: pt.known, lineH: ln.n, pointH: pt.n,
-    index: index, component: component)
-
-func recKey(file: int; record: float64): RecKey =
-  if record == record and record != Inf and record != -Inf:
-    RecKey(file: file, finite: true, record: if record == 0: 0.0 else: record)
-  else:
-    RecKey(file: file, finite: false, record: NaN)
+  StKey(lineKnown: ln.known, pointKnown: pt.known, lineH: ln.n, pointH: pt.n)
 
 func lineOf(k: StKey): float64 =
   if k.lineKnown: float64(k.lineH) / 100.0 else: NaN
@@ -355,41 +260,8 @@ func lineOf(k: StKey): float64 =
 func pointOf(k: StKey): float64 =
   if k.pointKnown: float64(k.pointH) / 100.0 else: NaN
 
-func recordOf(k: RecKey): float64 =
-  if k.finite: k.record else: NaN
-
-func sameNum(a, b: float64): bool =
-  a == b or (a != a and b != b)
-
-func hasOther(s: openArray[float64]; x: float64): bool =
-  for y in s:
-    if sameNum(y, x): return true
-  false
-
-func wholeId(x: float64): tuple[whole: bool; id: int64] =
-  if x == x and abs(x) < 9.0e18 and float64(int64(x)) == x: (true, int64(x))
-  else: (false, 0)
-
-proc noteBad(acc: var StAcc; file: int; record: float64) =
-  let id = wholeId(record)
-  acc.badFiles.withValue(file, cell):
-    if id.whole: cell[].wholes.incl id.id
-    elif not hasOther(cell[].others, record): cell[].others.add record
-    return
-  acc.fileOrder.add file
-  var fresh = FileBad()
-  if id.whole: fresh.wholes.incl id.id
-  else: fresh.others.add record
-  acc.badFiles[file] = fresh
-
-proc fileId(b: var QualityBuild; file: string): int =
-  b.fileIds.withValue(file, id):
-    return id[]
-  result = b.files.len
-  b.files.add file
-  b.fileIds[file] = result
-
-proc bump[T: StAcc | RecAcc](acc: var T; note: TraceNote) =
+proc bump(acc: var StAcc; note: TraceNote) =
+  acc.components.incl note.component
   inc acc.seen
   if note.killed:
     inc acc.killed
@@ -404,86 +276,23 @@ proc bump[T: StAcc | RecAcc](acc: var T; note: TraceNote) =
       inc acc.weakTested
       if note.weak: inc acc.weak
 
-proc noteStation(b: var QualityBuild; note: TraceNote; fid: int) =
-  let sk = stKey(note.line, note.point, note.index, note.component)
+proc addTrace*(b: var QualityBuild; note: TraceNote) =
+  ## Counts `note`. A killed trace increments `killed` only, whatever
+  ## `findings` holds. A trace with several findings increments each of
+  ## those counts and `bad` once. The first note of a station opens its row,
+  ## including a clean trace and a killed-only station.
+  b.files.incl note.file
+  let sk = stKey(note.line, note.point)
   b.stations.withValue(sk, acc):
     bump(acc[], note)
-    if not note.killed and note.findings != {}: noteBad(acc[], fid, note.record)
     return
   b.stOrder.add sk
   var acc = StAcc()
   bump(acc, note)
-  if not note.killed and note.findings != {}: noteBad(acc, fid, note.record)
   b.stations[sk] = acc
 
-proc noteRecord(b: var QualityBuild; note: TraceNote; fid: int) =
-  let rk = recKey(fid, note.record)
-  b.records.withValue(rk, acc):
-    bump(acc[], note)
-    return
-  b.recOrder.add rk
-  var acc = RecAcc()
-  bump(acc, note)
-  b.records[rk] = acc
-
-proc addTrace*(b: var QualityBuild; note: TraceNote) =
-  ## Counts `note`. A killed trace increments `killed` only, whatever
-  ## `findings` holds. A trace with several findings increments each of
-  ## those counts and `bad` once. The first note of a station or a record
-  ## opens its row, including a clean trace and a killed-only station.
-  let fid = b.fileId(note.file)
-  b.noteStation(note, fid)
-  b.noteRecord(note, fid)
-
-func sortedWholes(s: HashSet[int64]): seq[int64] =
-  for id in s: result.add id
-  result.sort()
-
-func sortedOthers(s: seq[float64]): seq[float64] =
-  result = s
-  result.sort(cmpNum)
-
-func joinRanges(ids: seq[int64]): string =
-  var i = 0
-  var first = true
-  while i < ids.len:
-    let start = ids[i]
-    var last = start
-    if start >= 0:
-      while i + 1 < ids.len and ids[i + 1] == last + 1:
-        inc i
-        last = ids[i]
-    if not first: result.add ", "
-    first = false
-    result.add $start
-    if last != start:
-      result.add '-'
-      result.add $last
-    inc i
-
-func rangeText(wholes: seq[int64]; others: seq[float64]): string =
-  let ranges = joinRanges(wholes)
-  var rest = ""
-  for i, x in others:
-    if i > 0: rest.add ", "
-    rest.add stationNumber(x)
-  if ranges.len == 0: rest
-  elif rest.len == 0: ranges
-  else: ranges & ", " & rest
-
-func badRecordsText(b: QualityBuild; acc: StAcc): string =
-  var first = true
-  for fid in acc.fileOrder:
-    if not first: result.add '\n'
-    first = false
-    result.add b.files[fid]
-    let cell = acc.badFiles[fid]
-    let text = rangeText(sortedWholes(cell.wholes), sortedOthers(cell.others))
-    if text.len > 0:
-      result.add ' '
-      result.add text
-
-proc addCounts[T: StAcc | RecAcc](dst: var T; src: T) =
+proc addCounts(dst: var StAcc; src: StAcc) =
+  dst.components = dst.components + src.components
   dst.seen += src.seen
   dst.killed += src.killed
   dst.bad += src.bad
@@ -494,10 +303,9 @@ proc addCounts[T: StAcc | RecAcc](dst: var T; src: T) =
   dst.weak += src.weak
 
 proc absorb*(b: var QualityBuild; part: QualityBuild) =
-  ## Adds everything `part` counted to `b`, its stations and records after those `b` has
-  ## (a row both have is summed), as if `part`'s notes had been added to `b` one by one.
-  var ids = newSeq[int](part.files.len)
-  for i, name in part.files: ids[i] = b.fileId(name)
+  ## Adds everything `part` counted to `b`, its stations after those `b` has
+  ## (a station both have is summed), as if `part`'s notes had been added to `b` one by one.
+  for name in part.files: b.files.incl name
   for key in part.stOrder:
     let src = part.stations[key]
     if key notin b.stations:
@@ -505,88 +313,63 @@ proc absorb*(b: var QualityBuild; part: QualityBuild) =
       b.stations[key] = StAcc()
     b.stations.withValue(key, dst):
       addCounts(dst[], src)
-      for file in src.fileOrder:
-        let bad = src.badFiles[file]
-        for id in sortedWholes(bad.wholes): noteBad(dst[], ids[file], float64(id))
-        for record in bad.others: noteBad(dst[], ids[file], record)
-  for key in part.recOrder:
-    let src = part.records[key]
-    let at = RecKey(file: ids[key.file], finite: key.finite, record: key.record)
-    if at notin b.records:
-      b.recOrder.add at
-      b.records[at] = RecAcc()
-    b.records.withValue(at, dst):
-      addCounts(dst[], src)
 
 proc initQualityBuild*(): QualityBuild =
   ## An empty set of notes.
   QualityBuild()
 
 proc qualityReport*(b: QualityBuild): QualityReport =
-  ## The tables of `b`, in the default sort. A station row is emitted for
-  ## every station and component that was seen, and a record row for every
-  ## file and record that had a seismic trace.
-  var traces, killed, bad, noisyTested, noisy, weakTested, weak = 0
+  ## The table of `b`, in the default sort. A row is emitted for every station
+  ## that was seen. A station lacks the components of the build it has no trace of
+  ## when it has at least one trace of some component.
+  var traces, killed, bad, noisyTested, noisy, weakTested, weak, badStations = 0
   var counts: array[Finding, int]
+  var every: set[uint8] = {}
+  for key in b.stOrder: every = every + b.stations[key].components
+  let multi = every.card > 1
+  var lacking = 0
   for key in b.stOrder:
     let acc = b.stations[key]
+    let gap = if multi and acc.components.card > 0: every - acc.components else: {}
     result.stations.add StationRow(line: lineOf(key), point: pointOf(key),
-      index: key.index, component: key.component, seen: acc.seen, killed: acc.killed,
+      components: acc.components, lacking: gap, seen: acc.seen, killed: acc.killed,
       bad: acc.bad, counts: acc.counts, noisyTested: acc.noisyTested, noisy: acc.noisy,
-      weakTested: acc.weakTested, weak: acc.weak, badRecords: badRecordsText(b, acc))
+      weakTested: acc.weakTested, weak: acc.weak)
     traces += acc.seen
     killed += acc.killed
     bad += acc.bad
+    if acc.bad > 0: inc badStations
+    if gap.card > 0: inc lacking
     noisyTested += acc.noisyTested
     noisy += acc.noisy
     weakTested += acc.weakTested
     weak += acc.weak
     for f in Finding: counts[f] += acc.counts[f]
-  for key in b.recOrder:
-    let acc = b.records[key]
-    result.records.add RecordRow(file: b.files[key.file], record: recordOf(key),
-      seen: acc.seen, killed: acc.killed, bad: acc.bad, counts: acc.counts,
-      noisyTested: acc.noisyTested, noisy: acc.noisy, weakTested: acc.weakTested,
-      weak: acc.weak)
-  result.totals = Totals(files: b.files.len, records: result.records.len,
-    traces: traces, killed: killed, bad: bad, stations: result.stations.len,
-    counts: counts, noisyTested: noisyTested, noisy: noisy, weakTested: weakTested,
-    weak: weak)
+  result.totals = Totals(files: b.files.len, traces: traces, killed: killed, bad: bad,
+    stations: result.stations.len, badStations: badStations, lacking: lacking,
+    components: every.card, counts: counts, noisyTested: noisyTested, noisy: noisy,
+    weakTested: weakTested, weak: weak)
   sortStations(result.stations, DefaultStationSort)
-  sortRecords(result.records, DefaultRecordSort)
 
 proc stationsCsv*(rows: openArray[StationRow]): string =
   ## A header and one line per station. Fields are quoted per RFC 4180.
-  result = csvLine("line", "point", "index", "component", "seen", "killed", "bad",
+  result = csvLine("line", "point", "lacking components", "seen", "killed", "bad",
     $qfHeaderDead, $qfAllZero, $qfConstant, $qfClipped, $qfSpiky, $qfDcOffset,
-    $qfNonFinite, NoisyTestedCsv, "noisy", WeakTestedCsv, "weak", "badRecords")
+    $qfNonFinite, NoisyTestedCsv, "noisy", WeakTestedCsv, "weak")
   for r in rows:
-    result.add csvLine(stationNumber(r.line), stationNumber(r.point), $r.index,
-      $r.component, $r.seen, $r.killed, $r.bad, $r.counts[qfHeaderDead],
+    result.add csvLine(stationNumber(r.line), stationNumber(r.point),
+      componentList(r.lacking), $r.seen, $r.killed, $r.bad, $r.counts[qfHeaderDead],
       $r.counts[qfAllZero], $r.counts[qfConstant], $r.counts[qfClipped],
       $r.counts[qfSpiky], $r.counts[qfDcOffset], $r.counts[qfNonFinite], $r.noisyTested,
-      noiseCell(r.noisyTested, r.noisy), $r.weakTested, noiseCell(r.weakTested, r.weak),
-      r.badRecords)
-
-proc recordsCsv*(rows: openArray[RecordRow]): string =
-  ## A header and one line per record. Fields are quoted per RFC 4180.
-  result = csvLine("file", "record", "seen", "killed", "bad", $qfHeaderDead,
-    $qfAllZero, $qfConstant, $qfClipped, $qfSpiky, $qfDcOffset, $qfNonFinite,
-    NoisyTestedCsv, "noisy", WeakTestedCsv, "weak")
-  for r in rows:
-    result.add csvLine(r.file, stationNumber(r.record), $r.seen, $r.killed, $r.bad,
-      $r.counts[qfHeaderDead], $r.counts[qfAllZero], $r.counts[qfConstant],
-      $r.counts[qfClipped], $r.counts[qfSpiky], $r.counts[qfDcOffset],
-      $r.counts[qfNonFinite], $r.noisyTested, noiseCell(r.noisyTested, r.noisy),
-      $r.weakTested, noiseCell(r.weakTested, r.weak))
+      noiseCell(r.noisyTested, r.noisy), $r.weakTested, noiseCell(r.weakTested, r.weak))
 
 proc totalsCsv*(t: Totals): string =
   ## One header and one totals line.
-  result = csvLine("files", "records", "traces", "killed", "bad", "stations",
-    $qfHeaderDead, $qfAllZero, $qfConstant, $qfClipped, $qfSpiky, $qfDcOffset,
-    $qfNonFinite, NoisyTestedCsv, "noisy", WeakTestedCsv, "weak")
-  result.add csvLine($t.files, $t.records, $t.traces, $t.killed, $t.bad, $t.stations,
-    $t.counts[qfHeaderDead], $t.counts[qfAllZero], $t.counts[qfConstant],
+  result = csvLine("files", "traces", "killed", "bad", "stations", "stations with a bad trace",
+    "stations lacking a component", $qfHeaderDead, $qfAllZero, $qfConstant, $qfClipped,
+    $qfSpiky, $qfDcOffset, $qfNonFinite, NoisyTestedCsv, "noisy", WeakTestedCsv, "weak")
+  result.add csvLine($t.files, $t.traces, $t.killed, $t.bad, $t.stations, $t.badStations,
+    $t.lacking, $t.counts[qfHeaderDead], $t.counts[qfAllZero], $t.counts[qfConstant],
     $t.counts[qfClipped], $t.counts[qfSpiky], $t.counts[qfDcOffset],
     $t.counts[qfNonFinite], $t.noisyTested, noiseCell(t.noisyTested, t.noisy),
     $t.weakTested, noiseCell(t.weakTested, t.weak))

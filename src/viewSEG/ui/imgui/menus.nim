@@ -121,8 +121,6 @@ type
     firstBreaksOn*: bool ## the Seismic window's first-break overlay is on
     templateOnlyOn*: bool ## the Seismic window shows only the traces its record's template lists
     templateAvailable*: bool ## a relation file is there for that (the item is enabled)
-    qualityReady*: bool ## Reports > Trace quality can run
-    qualityWhy*: string ## why it cannot; "" when it can
     outputReady*: bool ## File > Output... can run
     outputWhy*: string ## why it cannot; "" when it can
     cutWhy*: string
@@ -572,17 +570,12 @@ proc drawToolsMenu(input: MenuInput; res: var MenuResult) =
 
 proc drawReportsMenu(input: MenuInput; res: var MenuResult) =
   ## Reports: the missing-trace scan, the trace-quality scan, then vibrator
-  ## QC of the folder or files you choose. Missing traces opens its window, which
-  ## says what it needs (an open file, imported relation records). Trace quality
-  ## needs only the folder; Vibrator QC always opens.
+  ## QC of the folder or files you choose. Each opens its window; Missing traces says
+  ## what it needs (an open file, imported relation records).
   item(maMissingTraces, res)
   tip(MenuTip)
-  igBeginDisabled(not input.qualityReady)
   item(maTraceQuality, res)
-  igEndDisabled()
-  tip(if input.qualityReady: QualityTip else: input.qualityWhy)
-  if not input.qualityReady and marked != nil:
-    marked[].mark("menu.Trace quality.disabled")
+  tip(QualityTip)
   item(maVibFolder, res)
   tip(FolderTip)
 

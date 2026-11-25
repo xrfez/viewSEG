@@ -2,36 +2,43 @@
 ## the frontend; this module holds the sentences.
 
 import std/strutils
-import ../core/qualityreport
+import ../core/[missingreport, qualityreport]
+from missingwords import ReceiversOption, SourcesOption, stationNoun
+export ReceiversOption, SourcesOption, stationNoun
 
 const
-  QualityTip* = "Traces in the open folder that are dead, all zero, constant, " &
-    "clipped, spiky, offset or not finite. A killed trace is counted as killed, not as bad."
-  NeedFolder* = "Open a folder first."
+  QualityTip* = "Traces that are dead, all zero, constant, clipped, spiky, offset or not " &
+    "finite, and stations that lack a component: the open file, or the files of a folder " &
+    "you choose. A killed trace is counted as killed, not as bad."
+  NeedFile* = "Open a file first."
+  NeedFolder* = "Choose a folder, then press Run."
   Ready* = "Ready."
-  Scanning* = "Scanning the folder."
+  Scanning* = "Scanning."
   Stopped* = "The scan was stopped."
   ScanFailed* = "The scan failed."
-  Listing* = "Listing the folder."
-  CannotList* = "The folder could not be listed."
   CappedNote* = "The list stopped at the file limit; later files were not scanned."
   ExportButton* = "Export CSV..."
-  RescanButton* = "Rescan"
-  CancelButton* = "Cancel"
+  StopButton* = "Stop"
+  RunButton* = "Run"
+  FolderButton* = "Folder..."
+  FileTab* = "File"
+  FolderTab* = "Folder"
+  SubfoldersBox* = "Include subfolders"
+  SubfoldersTip* = "Also measure the files of the folders inside the chosen folder."
+  NoFolderChosen* = "No folder chosen."
   UnreadFiles* = "Unread"
-  StationsTab* = "Stations"
-  RecordsTab* = "Records"
-  WithTotals* = "totals in a second file"
-  TotalsTip* = "Also write a file beside the one you save, with -totals before the extension."
+  WithStats* = "statistics in a second file"
+  StatsTip* = "Also write a file beside the one you save, with -statistics before the " &
+    "extension."
   SuggestedName* = "trace-quality.csv"
   Written* = "Wrote the CSV."
   ExportFailed* = "The CSV could not be written."
   NoRows* = "Nothing to show."
+  NoStations* = "No trace of the file has a station."
   NoneUnread* = "No file was unread."
   ColLine* = "Line"
   ColPoint* = "Point"
-  ColIndex* = "Index"
-  ColComponent* = "Component"
+  ColLacking* = "Lacks component"
   ColSeen* = "Traces"
   ColKilled* = "Killed"
   ColBad* = "Bad"
@@ -46,12 +53,12 @@ const
   ColNoisy* = "Noisy"
   ColWeakTested* = "Tested (weak)"
   ColWeak* = "Weak"
-  ColBadRecords* = "Bad records"
-  LineTip* = "The receiver line of the station."
-  PointTip* = "The receiver point of the station."
-  IndexTip* = "The receiver index of the station."
-  ComponentTip* = "The component number of the trace in its receiver station."
-  SeenTip* = "Traces read, killed ones included."
+  LineTip* = "The line of the station: the receiver of a shot gather's traces, the source " &
+    "of a receiver gather's."
+  PointTip* = "The point of the station."
+  LackingTip* = "The components the data has that this station has no trace of, when it " &
+    "has a trace of another component. Empty when it has every component."
+  SeenTip* = "Traces read, killed ones included, of all the components of the station."
   DeadTip* = "Traces the header marks dead. A dead trace is not also counted as all zero."
   ZeroTip* = "Traces whose every finite sample is zero."
   ConstantTip* = "Traces whose samples are all the same value."
@@ -59,9 +66,6 @@ const
   SpikyTip* = "Traces with samples far above their neighbours."
   DcTip* = "Traces whose mean is large against their spread, so they sit away from zero."
   NonFiniteTip* = "Traces with a sample that is not a finite number."
-  BadRecordsTip* = "The records in which the station had a bad trace, one line for each file."
-  FileTip* = "The file the record is in."
-  RecordTip* = "The record number from the trace headers."
   ScanJudgesTip = "The scan judges the samples as recorded, with your kills and noise " &
     "settings, but without the per-trace filters, reversals, shifts or template-only " &
     "restriction the map applies to the record shown."
@@ -73,58 +77,64 @@ const
     "around the source too."
   WeakTip* = "Of the traces tested for weak, those much quieter than the others of their " &
     "record. Not counted as bad. Empty when no trace was tested for weak. " & ScanJudgesTip
-  ColFile* = "File"
-  ColRecord* = "Record"
   KilledTip* = "Traces an edit killed. They are counted as killed, not as bad, and are not " &
     "measured."
   BadTip* = "Traces with a finding. A killed trace is not among them."
-  FilterStations* = "Filter by line, point, index or component"
-  FilterRecords* = "Filter by file name or record"
-  FilterStationsTip* = "Show only the stations whose line, point, index, component or " &
-    "bad-record text holds every word typed here."
-  FilterRecordsTip* = "Show only the records whose file name or record number holds every " &
-    "word typed here."
-
-func qualityReady*(hasFolder: bool): bool =
-  ## Whether Reports > Trace quality can start a scan. A relation file is not needed.
-  hasFolder
-
-func qualityWhy*(hasFolder: bool): string =
-  ## One sentence naming what is missing, or "" when a scan can start.
-  if not hasFolder: NeedFolder else: ""
+  FiguresTip* = "Each station (line and point) counts once, over all its components and " &
+    "files. A trace with several findings is one bad trace."
+  FilterStations* = "Filter by line, point or component"
+  FilterStationsTip* = "Show only the stations whose line, point or lacking components " &
+    "hold every word typed here."
 
 func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
 
-func totalsLine*(t: Totals): string =
-  ## The totals strip, in the words of the column headers: counts, then each finding, then
-  ## the traces tested for noisy and the noisy among them, and the same for weak, each when
-  ## any trace was tested. Counts are traces, except files, records and stations. Killed is
-  ## not bad.
-  plural(t.files, "file", "files") & ", " & plural(t.records, "record", "records") & ", " &
-    plural(t.traces, "trace", "traces") & ", " & $t.killed & " killed, " & $t.bad & " bad, " &
-    $t.stations & " stations, " & $t.counts[qfHeaderDead] & " dead, " &
-    $t.counts[qfAllZero] & " all zero, " & $t.counts[qfConstant] & " constant, " &
-    $t.counts[qfClipped] & " clipped, " & $t.counts[qfSpiky] & " spiky, " &
-    $t.counts[qfDcOffset] & " DC offset, " & $t.counts[qfNonFinite] & " not finite" &
-    (if t.noisyTested > 0: ", " & $t.noisyTested & " tested (noisy), " & $t.noisy & " noisy"
-    else: "") &
-    (if t.weakTested > 0: ", " & $t.weakTested & " tested (weak), " & $t.weak & " weak"
-    else: "")
+func percentOf(n, whole: int): string =
+  ## `n` of `whole` as a percentage, 0 for an empty whole.
+  percentText(if whole <= 0: 0.0 else: 100.0 * float64(n) / float64(whole))
+
+func countsLine*(t: Totals; folder: bool): string =
+  ## What was read: files (for a folder) and traces.
+  let traces = plural(t.traces, "trace", "traces")
+  if folder: plural(t.files, "file", "files") & ", " & traces else: traces
+
+func statisticLines*(t: Totals; side: StationSide; folder: bool): seq[string] =
+  ## One line for each figure, worded for what is counted, in the words of the column
+  ## headers. Counts are traces except the stations. Killed is not bad. The noisy and weak
+  ## lines only when some trace was tested for them, the component line only when the data
+  ## has more than one component.
+  let noun = side.stationNoun
+  let where = if folder: "the files" else: "the file"
+  let measured = t.traces - t.killed
+  result.add noun & " stations in " & where & ": " & $t.stations
+  result.add "Traces: " & $t.traces & ", " & $t.killed & " killed, " & $measured & " measured"
+  result.add "Bad traces: " & $t.bad & " (" & percentOf(t.bad, measured) & "% of the measured)"
+  result.add noun & " stations with a bad trace: " & $t.badStations & " of " & $t.stations &
+    " (" & percentOf(t.badStations, t.stations) & "%)"
+  result.add "Dead: " & $t.counts[qfHeaderDead] & ", all zero: " & $t.counts[qfAllZero] &
+    ", constant: " & $t.counts[qfConstant] & ", clipped: " & $t.counts[qfClipped] &
+    ", spiky: " & $t.counts[qfSpiky] & ", DC offset: " & $t.counts[qfDcOffset] &
+    ", not finite: " & $t.counts[qfNonFinite]
+  if t.noisyTested > 0:
+    result.add "Noisy: " & $t.noisy & " of " & $t.noisyTested & " tested (" &
+      percentOf(t.noisy, t.noisyTested) & "%)"
+  if t.weakTested > 0:
+    result.add "Weak: " & $t.weak & " of " & $t.weakTested & " tested (" &
+      percentOf(t.weak, t.weakTested) & "%)"
+  if t.components > 1:
+    result.add $t.lacking & " " & noun.toLowerAscii & " " &
+      (if t.lacking == 1: "station lacks" else: "stations lack") & " a component (of " &
+      $t.components & " components)"
 
 func headerTip*(name: string): string =
   ## The tooltip of column title `name`, or "" when the title says enough.
   case name
   of ColLine: LineTip
   of ColPoint: PointTip
-  of ColIndex: IndexTip
-  of ColComponent: ComponentTip
+  of ColLacking: LackingTip
   of ColSeen: SeenTip
-  of ColFile: FileTip
-  of ColRecord: RecordTip
   of ColClipped: ClippedTip
   of ColSpiky: SpikyTip
-  of ColBadRecords: BadRecordsTip
   of ColKilled: KilledTip
   of ColBad: BadTip
   of ColHeaderDead: DeadTip
@@ -139,9 +149,8 @@ func headerTip*(name: string): string =
   else: ""
 
 func unreadNote*(rows: openArray[tuple[path, why: string]]): string =
-  ## One line under the totals when a file or a trace could not be read, or ""
-  ## when none could not. A reason that starts with "trace " is one trace; any
-  ## other reason is one file.
+  ## One line when a file or a trace could not be read, or "" when none could not.
+  ## A reason that starts with "trace " is one trace; any other reason is one file.
   if rows.len == 0: return ""
   var files, traces = 0
   for row in rows:

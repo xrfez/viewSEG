@@ -1,79 +1,79 @@
-## The Trace quality window: a scan of the open folder (subfolders included),
-## two tables, and a CSV export. The totals wrap. A line under them names files
-## or traces that could not be read, when any could not. The table fills the
-## rest of the window; a box above it narrows the rows.
+## The Trace quality window: the traces of the stations measured, as a table of one
+## row per station (line and point) with a count for each problem, under the figures
+## that sum it up. Two tabs: File, the file shown (computed when the window is drawn), and
+## Folder, the files of a folder the user chooses, computed only when Run is pressed (its
+## subfolders only when the box says so). The window closes with its button.
 ##
-## The scan is a background job. The window reads its sink only after the job
-## is no longer running. A cancel leaves the tables already shown. Listing uses
-## the same file list the folder scan uses (`listedNames`), not a second walk
-## posted to the file list. Edits are copied on the UI thread (`editsSnapshot`)
-## before the job is submitted: the worker must not read `AppState`.
+## Both are background jobs (`fileScan`, `folderScan`). The window reads a sink only after
+## its job is no longer running, and drops an answer that is no longer the one asked for
+## (another file shown or edited, another folder or the subfolders tick changed): the job is
+## cancelled and its result never read. Edits are copied on the UI thread (`editsSnapshot`)
+## before a job is submitted: the worker must not read `AppState`. Nothing here is looked up
+## by a record number.
 
-import std/[os, strutils, tables]
+import std/[os, strutils]
 import imguin/cimgui
-import ../../core/[edits, filejobs, filesystem, jobs, noisearea, qualityjobs, qualityreport,
-  session, state]
+import ../../core/[edits, filesystem, jobs, qualityjobs, qualityreport, state]
 import ../../core/records as filerecs
 import ../../view/qualitywords
-import focus, icons, marks, overflow
+import focus, icons, marks, overflow, windows
 
 type
-  QualityTab* = enum
-    qtStations, qtRecords
-
   ExportAsk* = object
-    tab*: QualityTab
-    withTotals*, live*: bool
+    rows*: seq[StationRow]
+    totals*: Totals
+    withStats*, live*: bool
 
-  PendingOpen = object
-    path: string
-    record: float64
-    live: bool
-
-  ScanNote = ref object
-    capped: bool
+  Scan = object
+    ## One tab's job and what it answered.
+    job: JobId = NoJob
+    sink: QualitySink
+    note: QualityNote
+    key: string ## what the job (or the answer) is for; "" for nothing asked
+    running, have, capped: bool
+    done, total: int64
+    status: string
+    result: QualityJobResult
 
   QualityUi* = object
-    scanJob: JobId = NoJob
+    file, folder: Scan
+    side: StationSide
+    runAsked: bool
+    chosen: string
     exportJob: JobId = NoJob
-    sink: QualitySink
-    note: ScanNote
-    wantScan: bool
-    scanning: bool
-    have: bool
-    capped: bool
     exported: bool
-    folder: string
     status: string
-    progressDone, progressTotal: int64
-    report: QualityReport
-    unread: seq[tuple[path, why: string]]
-    tab: QualityTab
-    withTotals: bool
+    withStats: bool
     ask: ExportAsk
-    stationSort: SortSpec[StationSortColumn]
-    recordSort: SortSpec[RecordSortColumn]
-    sortsReady, stationDirty, recordDirty: bool
+    sort: SortSpec[StationSortColumn]
+    sortsReady, sortDirty: bool
     focus: FocusClicks
-    pending: PendingOpen
-    stationFilter, recordFilter: array[128, char]
-    stationShown, recordShown: seq[int]
-    stationKey, recordKey: string
+    filter: array[128, char]
+    shown: seq[int]
+    shownKey: string
 
   QualityOutput* = object
     commands*: seq[Command]
     exportAsked*: bool
     exportPath*: string
+    askFolder*: bool ## the Folder... button was clicked
+    askAt*: string
 
-proc requestScan*(ui: var QualityUi) =
-  ## The next draw starts a scan, cancelling one already running.
-  ui.wantScan = true
+proc setFolder*(ui: var QualityUi; path: string) =
+  ## The folder dialog's answer: kept in the settings on the next draw.
+  ui.chosen = path
 
-proc canScan(st: AppState): bool =
-  qualityReady(st.fileList.folder.len > 0)
+proc shownPath(st: AppState): string =
+  ## The disk path of the file shown in the main panel; "" for none.
+  let panel = st.findPanel(MainPanel)
+  let shown = if panel >= 0: st.shownFile(panel) else: -1
+  if shown >= 0: st.sessions[shown].diskPath else: ""
 
-proc whyNot(st: AppState): string =
-  qualityWhy(st.fileList.folder.len > 0)
+proc shownRevision(st: AppState): int =
+  ## The revision of the shown file's edits, so a kill or an undo measures it again.
+  let panel = st.findPanel(MainPanel)
+  let shown = if panel >= 0: st.shownFile(panel) else: -1
+  if shown >= 0: st.editsAt(st.sessions[shown].path).revision else: -1
 
 proc writeCsv(path, text: string) =
   ## `text` written to `path`: a temporary file beside it, then a rename.
@@ -97,177 +97,10 @@ proc writeCsv(path, text: string) =
     discard fs.tryRemoveFile(tmp)
     raise
 
-proc totalsBeside(path: string): string =
+proc statsBeside(path: string): string =
   let s = path.splitFile
   let ext = if s.ext.len == 0: ".csv" else: s.ext
-  s.dir / (s.name & "-totals" & ext)
-
-proc editsFor(paths: openArray[string]; snap: EditsSnapshot): Table[string, FileEdits] =
-  ## `snap` keyed by each listed path, so a killed trace is found under the
-  ## path the scan names. A path with no edits is left out.
-  for path in paths:
-    var key = ""
-    let disk = diskOf(path)
-    if disk in snap.alias: key = snap.alias[disk]
-    elif path in snap.alias: key = snap.alias[path]
-    elif disk in snap.byKey: key = disk
-    elif path in snap.byKey: key = path
-    else:
-      let canon = canonical(path)
-      if canon in snap.alias: key = snap.alias[canon]
-      elif canon in snap.byKey: key = canon
-    if key.len > 0 and key in snap.byKey:
-      result[path] = snap.byKey[key]
-
-proc folderScan(folder, cache: string; snap: EditsSnapshot; sink: QualitySink;
-    note: ScanNote; noise: NoiseSettings): JobWork =
-  result = proc (ctx: JobContext) {.gcsafe.} =
-    ctx.checkCancelled()
-    ctx.setPhase Listing
-    var capped = false
-    var paths: seq[string] = @[]
-    try:
-      paths = listedNames(@[folder], true, capped,
-        proc (found: int): bool {.gcsafe, raises: [].} = ctx.progress(int64(found), 0))
-    except OSError:
-      raise newException(ValueError, CannotList)
-    if note != nil: note.capped = capped
-    ctx.checkCancelled()
-    let scan = scanQuality(paths, editsFor(paths, snap), sink, cache, noise)
-    scan(ctx)
-
-proc exportWork(path, beside: string; stations: seq[StationRow];
-    records: seq[qualityreport.RecordRow];
-    totals: Totals; ask: ExportAsk): JobWork =
-  result = proc (ctx: JobContext) {.gcsafe.} =
-    ctx.checkCancelled()
-    let main = if ask.tab == qtRecords: recordsCsv(records) else: stationsCsv(stations)
-    writeCsv(path, main)
-    if ask.withTotals: writeCsv(beside, totalsCsv(totals))
-
-proc finishScan(ui: var QualityUi; state: JobState; error: string) =
-  ui.scanning = false
-  if ui.note != nil: ui.capped = ui.note.capped
-  if state == jsCancelled:
-    ui.status = Stopped
-    return
-  let failed = state == jsFailed or ui.sink == nil or not ui.sink.result.ok
-  if failed:
-    if ui.sink != nil and ui.sink.result.reason.len > 0: ui.status = ui.sink.result.reason
-    elif error.len > 0: ui.status = error
-    else: ui.status = ScanFailed
-    return
-  ui.report = ui.sink.result.report
-  ui.unread = ui.sink.result.unread
-  ui.have = true
-  ui.stationDirty = true
-  ui.recordDirty = true
-  ui.stationKey = ""
-  ui.recordKey = ""
-  ui.status = Ready
-
-proc poll(ui: var QualityUi; st: AppState) =
-  if ui.scanJob != NoJob:
-    let info = st.jobs.info(ui.scanJob)
-    if info.isNone:
-      ui.scanJob = NoJob
-      ui.scanning = false
-    elif info.get.state in {jsQueued, jsRunning}:
-      ui.scanning = true
-      let p = info.get.progress
-      ui.progressDone = p.done
-      ui.progressTotal = p.total
-      ui.status = if p.phase.len > 0: p.phase else: Scanning
-    else:
-      ui.finishScan(info.get.state, info.get.error)
-      ui.scanJob = NoJob
-  if ui.exportJob != NoJob:
-    let info = st.jobs.info(ui.exportJob)
-    if info.isNone: ui.exportJob = NoJob
-    elif info.get.state notin {jsQueued, jsRunning}:
-      if info.get.state == jsDone:
-        ui.exported = true
-        ui.status = Written
-      elif info.get.state == jsFailed:
-        ui.status = if info.get.error.len > 0: info.get.error else: ExportFailed
-      ui.exportJob = NoJob
-
-proc submit(ui: var QualityUi; st: AppState) =
-  let folder = st.fileList.folder
-  if folder.len == 0: return
-  if ui.scanJob != NoJob:
-    discard st.jobs.cancel(ui.scanJob)
-    ui.scanJob = NoJob
-  let snap = st.editsSnapshot
-  let cache = st.indexCache
-  ui.folder = folder
-  ui.note = ScanNote()
-  ui.sink = QualitySink()
-  ui.capped = false
-  ui.scanning = true
-  ui.progressDone = 0
-  ui.progressTotal = 0
-  ui.status = Scanning
-  ui.scanJob = st.jobs.submit(qualitySpec(@[folder]),
-    folderScan(folder, cache, snap, ui.sink, ui.note, st.settings.noise))
-
-proc consider(ui: var QualityUi; st: AppState) =
-  if not ui.sortsReady:
-    ui.stationSort = DefaultStationSort
-    ui.recordSort = DefaultRecordSort
-    ui.sortsReady = true
-  ui.poll(st)
-  if ui.wantScan:
-    ui.wantScan = false
-    if canScan(st): ui.submit(st)
-    elif not ui.have: ui.status = whyNot(st)
-
-proc startExport*(ui: var QualityUi; st: AppState; path: string) =
-  ## Writes the CSV asked for when Export CSV... was clicked, from the rows
-  ## shown now. `path` gains ".csv" when it has no extension.
-  if not ui.ask.live: return
-  let ask = ui.ask
-  ui.ask.live = false
-  var dest = path
-  if dest.splitFile.ext.len == 0: dest.add ".csv"
-  let beside = totalsBeside(dest)
-  let stations = ui.report.stations
-  let records = ui.report.records
-  let totals = ui.report.totals
-  if ui.exportJob != NoJob:
-    discard st.jobs.cancel(ui.exportJob)
-    ui.exportJob = NoJob
-  ui.exportJob = st.jobs.submit(JobSpec(title: "Export trace quality",
-    lane: jlBackground, reads: @[ui.folder]),
-    exportWork(dest, beside, stations, records, totals, ask))
-
-proc takePending(ui: var QualityUi; st: AppState): seq[Command] =
-  if not ui.pending.live: return
-  for s in st.sessions:
-    if canonical(s.path) != ui.pending.path: continue
-    if s.gathers.len == 0: return
-    let g = filerecs.findRecord(s.records, ui.pending.record)
-    ui.pending.live = false
-    if g >= 0:
-      result.add Command(kind: ckGather, panel: MainPanel, gather: g)
-    return
-
-proc openRecord(ui: var QualityUi; st: AppState; file: string; record: float64): seq[Command] =
-  if file.len == 0: return
-  let path = canonical(file)
-  result.add Command(kind: ckShowFile, panel: MainPanel, path: path, listFolder: false)
-  let known = record == record
-  var open = false
-  if known:
-    for s in st.sessions:
-      if canonical(s.path) == path:
-        open = true
-        let g = filerecs.findRecord(s.records, record)
-        if g >= 0:
-          result.add Command(kind: ckGather, panel: MainPanel, gather: g)
-        break
-  if open or not known: ui.pending.live = false
-  else: ui.pending = PendingOpen(path: path, record: record, live: true)
+  s.dir / (s.name & "-statistics" & ext)
 
 proc clickSort[C](spec: var SortSpec[C]; col: C; shift: bool) =
   if shift:
@@ -286,12 +119,11 @@ func placeOf[C](spec: SortSpec[C]; col: C): int =
   for i, s in spec:
     if s.column == col: return i + 1
 
-func stationName(c: StationSortColumn): string =
+func columnName(c: StationSortColumn): string =
   case c
   of ssLine: ColLine
   of ssPoint: ColPoint
-  of ssIndex: ColIndex
-  of ssComponent: ColComponent
+  of ssLacking: ColLacking
   of ssSeen: ColSeen
   of ssKilled: ColKilled
   of ssBad: ColBad
@@ -306,51 +138,17 @@ func stationName(c: StationSortColumn): string =
   of ssNoisy: ColNoisy
   of ssWeakTested: ColWeakTested
   of ssWeak: ColWeak
-  of ssBadRecords: ColBadRecords
 
-func recordName(c: RecordSortColumn): string =
-  case c
-  of rsFile: ColFile
-  of rsRecord: ColRecord
-  of rsSeen: ColSeen
-  of rsKilled: ColKilled
-  of rsBad: ColBad
-  of rsHeaderDead: ColHeaderDead
-  of rsAllZero: ColAllZero
-  of rsConstant: ColConstant
-  of rsClipped: ColClipped
-  of rsSpiky: ColSpiky
-  of rsDcOffset: ColDcOffset
-  of rsNonFinite: ColNonFinite
-  of rsNoisyTested: ColNoisyTested
-  of rsNoisy: ColNoisy
-  of rsWeakTested: ColWeakTested
-  of rsWeak: ColWeak
-
-func stationSortText(spec: SortSpec[StationSortColumn]): string =
+func sortText(spec: SortSpec[StationSortColumn]): string =
   var parts: seq[string] = @[]
   for s in spec:
-    parts.add stationName(s.column) & (if s.descending: "-" else: "")
+    parts.add columnName(s.column) & (if s.descending: "-" else: "")
   parts.join(",")
-
-func recordSortText(spec: SortSpec[RecordSortColumn]): string =
-  var parts: seq[string] = @[]
-  for s in spec:
-    parts.add recordName(s.column) & (if s.descending: "-" else: "")
-  parts.join(",")
-
-func firstLine(s: string): string =
-  let n = s.find('\n')
-  if n < 0: s else: s[0 ..< n]
-
-func totalsMark(t: Totals): string =
-  "quality.totals " & $t.files & " " & $t.records & " " & $t.traces & " " &
-    $t.killed & " " & $t.bad & " " & $t.stations & " " & $t.counts[qfAllZero]
 
 func stationMark(r: StationRow): string =
   "quality.station " & filerecs.stationNumber(r.line) & " " & filerecs.stationNumber(r.point) &
-    " " & $r.index & " " & $r.component & " " & $r.seen & " " & $r.killed & " " &
-    $r.bad & " " & $r.counts[qfAllZero]
+    " " & $r.seen & " " & $r.killed & " " & $r.bad & " " & $r.counts[qfAllZero] & " " &
+    (if r.lacking == {}: "-" else: componentList(r.lacking).replace(", ", ","))
 
 proc tip(text: string) =
   if text.len == 0: return
@@ -377,6 +175,8 @@ const
   tabFlags = ImGui_TabBarFlags_DrawSelectedOverline.cint
 
 proc setupColumns(names: openArray[string]) =
+  ## Each column is as wide as its title and the sort number after it. A table wider than
+  ## the window scrolls sideways; a title is never cut.
   let extra = igGetFontSize() * 1.5
   for i, name in names:
     let w = igCalcTextSize(name.cstring, nil, false, -1).x + extra
@@ -391,20 +191,6 @@ func filterText(buf: openArray[char]): string =
     if c == '\0': break
     result.add c
 
-proc refreshStations(ui: var QualityUi) =
-  let text = filterText(ui.stationFilter)
-  let next = text & "|" & stationSortText(ui.stationSort) & "|" & $ui.report.stations.len
-  if next == ui.stationKey: return
-  ui.stationShown = filterStations(ui.report.stations, text)
-  ui.stationKey = next
-
-proc refreshRecords(ui: var QualityUi) =
-  let text = filterText(ui.recordFilter)
-  let next = text & "|" & recordSortText(ui.recordSort) & "|" & $ui.report.records.len
-  if next == ui.recordKey: return
-  ui.recordShown = filterRecords(ui.report.records, text)
-  ui.recordKey = next
-
 proc rightText(text: string) =
   let w = igCalcTextSize(text.cstring, nil, false, -1).x
   let avail = igGetContentRegionAvail().x
@@ -413,159 +199,6 @@ proc rightText(text: string) =
 
 proc numberCell(text: string) =
   if igTableNextColumn(): rightText(text)
-
-proc textWidth(label: string): float32 =
-  igCalcTextSize(label.cstring, nil, false, -1).x
-
-proc buttonWidth(label: string): float32 =
-  textWidth(label) + igGetStyle().FramePadding.x * 2 + 8
-
-proc checkWidth(label: string): float32 =
-  igGetFrameHeight() + igGetStyle().ItemInnerSpacing.x + textWidth(label) + 8
-
-proc fitsBeside(need: float32): bool =
-  let edge = igGetCursorScreenPos().x + igGetContentRegionAvail().x
-  edge - igGetItemRectMax().x >= need + igGetStyle().ItemSpacing.x
-
-proc sameLineIfFits(need: float32) =
-  if fitsBeside(need): igSameLine(0, -1)
-
-proc drawStations(ui: var QualityUi; marks: var Marks) =
-  if ui.stationDirty:
-    sortStations(ui.report.stations, ui.stationSort)
-    ui.stationDirty = false
-    ui.stationKey = ""
-  const names = [ColLine, ColPoint, ColIndex, ColComponent, ColSeen, ColKilled, ColBad,
-    ColHeaderDead, ColAllZero, ColConstant, ColClipped, ColSpiky, ColDcOffset,
-    ColNonFinite, ColNoisyTested, ColNoisy, ColWeakTested, ColWeak, ColBadRecords]
-  const keys = [ssLine, ssPoint, ssIndex, ssComponent, ssSeen, ssKilled, ssBad,
-    ssHeaderDead, ssAllZero, ssConstant, ssClipped, ssSpiky, ssDcOffset, ssNonFinite,
-    ssNoisyTested, ssNoisy, ssWeakTested, ssWeak, ssBadRecords]
-  ui.refreshStations()
-  let rows = ui.report.stations
-  let n = ui.stationShown.len
-  if n == 0:
-    igTextDisabled(NoRows)
-    return
-  if not igBeginTable("##stations", names.len.cint, tableFlags, ImVec2_c(x: 0, y: 0), 0):
-    return
-  setupColumns(names)
-  for c, name in names:
-    if igTableSetColumnIndex(cint(c)):
-      if headerCell(name, placeOf(ui.stationSort, keys[c]), marks, headerTip(name)):
-        clickSort(ui.stationSort, keys[c], igGetIO_Nil().KeyShift)
-        ui.stationDirty = true
-        ui.stationKey = ""
-  let clipper = ImGuiListClipper_ImGuiListClipper()
-  ImGuiListClipper_Begin(clipper, cint(n), -1)
-  while ImGuiListClipper_Step(clipper):
-    for i in clipper.DisplayStart ..< clipper.DisplayEnd:
-      let r = rows[ui.stationShown[int(i)]]
-      igTableNextRow(0, 0)
-      igPushID_Int(cint(i))
-      discard igTableNextColumn()
-      discard igSelectable_Bool((filerecs.stationNumber(r.line) & "##row").cstring, false,
-        ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0))
-      marks.mark(stationMark(r))
-      numberCell(filerecs.stationNumber(r.point))
-      numberCell($r.index)
-      numberCell($r.component)
-      numberCell($r.seen)
-      numberCell($r.killed)
-      tip(KilledTip)
-      numberCell($r.bad)
-      tip(BadTip)
-      numberCell($r.counts[qfHeaderDead])
-      numberCell($r.counts[qfAllZero])
-      numberCell($r.counts[qfConstant])
-      numberCell($r.counts[qfClipped])
-      numberCell($r.counts[qfSpiky])
-      numberCell($r.counts[qfDcOffset])
-      numberCell($r.counts[qfNonFinite])
-      numberCell($r.noisyTested)
-      tip(NoisyTestedTip)
-      numberCell(noiseCell(r.noisyTested, r.noisy))
-      tip(NoisyTip)
-      numberCell($r.weakTested)
-      tip(WeakTestedTip)
-      numberCell(noiseCell(r.weakTested, r.weak))
-      tip(WeakTip)
-      if igTableNextColumn():
-        igTextUnformatted(firstLine(r.badRecords).cstring, nil)
-        tip(r.badRecords)
-      igPopID()
-  ImGuiListClipper_End(clipper)
-  ImGuiListClipper_destroy(clipper)
-  igEndTable()
-
-proc drawRecords(ui: var QualityUi; st: AppState; marks: var Marks; commands: var seq[Command]) =
-  if ui.recordDirty:
-    sortRecords(ui.report.records, ui.recordSort)
-    ui.recordDirty = false
-    ui.recordKey = ""
-  const names = [ColFile, ColRecord, ColSeen, ColKilled, ColBad, ColHeaderDead, ColAllZero,
-    ColConstant, ColClipped, ColSpiky, ColDcOffset, ColNonFinite, ColNoisyTested, ColNoisy,
-    ColWeakTested, ColWeak]
-  const keys = [rsFile, rsRecord, rsSeen, rsKilled, rsBad, rsHeaderDead, rsAllZero,
-    rsConstant, rsClipped, rsSpiky, rsDcOffset, rsNonFinite, rsNoisyTested, rsNoisy,
-    rsWeakTested, rsWeak]
-  ui.refreshRecords()
-  let rows = ui.report.records
-  let n = ui.recordShown.len
-  if n == 0:
-    igTextDisabled(NoRows)
-    return
-  if not igBeginTable("##records", names.len.cint, tableFlags, ImVec2_c(x: 0, y: 0), 0):
-    return
-  setupColumns(names)
-  for c, name in names:
-    if igTableSetColumnIndex(cint(c)):
-      if headerCell(name, placeOf(ui.recordSort, keys[c]), marks, headerTip(name)):
-        clickSort(ui.recordSort, keys[c], igGetIO_Nil().KeyShift)
-        ui.recordDirty = true
-        ui.recordKey = ""
-  let clipper = ImGuiListClipper_ImGuiListClipper()
-  ImGuiListClipper_Begin(clipper, cint(n), -1)
-  while ImGuiListClipper_Step(clipper):
-    for i in clipper.DisplayStart ..< clipper.DisplayEnd:
-      let r = rows[ui.recordShown[int(i)]]
-      igTableNextRow(0, 0)
-      igPushID_Int(cint(i))
-      discard igTableNextColumn()
-      let flags = ImGui_SelectableFlags_SpanAllColumns.cint or
-        ImGui_SelectableFlags_AllowDoubleClick.cint
-      let shown = r.file.extractFilename
-      if igSelectable_Bool((shown & "##row").cstring, false, flags, ImVec2_c(x: 0, y: 0)) and
-          ui.focus.acts and igIsMouseDoubleClicked_Nil(ImGui_MouseButton_Left.cint):
-        for c in ui.openRecord(st, r.file, r.record): commands.add c
-      marks.mark("quality.file " & shown)
-      tip(r.file)
-      if int(i) < 8: marks.mark("quality.record " & $int(i))
-      numberCell(filerecs.stationNumber(r.record))
-      numberCell($r.seen)
-      numberCell($r.killed)
-      tip(KilledTip)
-      numberCell($r.bad)
-      tip(BadTip)
-      numberCell($r.counts[qfHeaderDead])
-      numberCell($r.counts[qfAllZero])
-      numberCell($r.counts[qfConstant])
-      numberCell($r.counts[qfClipped])
-      numberCell($r.counts[qfSpiky])
-      numberCell($r.counts[qfDcOffset])
-      numberCell($r.counts[qfNonFinite])
-      numberCell($r.noisyTested)
-      tip(NoisyTestedTip)
-      numberCell(noiseCell(r.noisyTested, r.noisy))
-      tip(NoisyTip)
-      numberCell($r.weakTested)
-      tip(WeakTestedTip)
-      numberCell(noiseCell(r.weakTested, r.weak))
-      tip(WeakTip)
-      igPopID()
-  ImGuiListClipper_End(clipper)
-  ImGuiListClipper_destroy(clipper)
-  igEndTable()
 
 proc drawPopup(id, empty, markPrefix: string; lines: openArray[string]; marks: var Marks) =
   if not igBeginPopup(id.cstring, 0): return
@@ -580,110 +213,354 @@ proc drawPopup(id, empty, markPrefix: string; lines: openArray[string]; marks: v
     igEndChild()
   igEndPopup()
 
-proc drawProgress(ui: QualityUi; commands: var seq[Command]; marks: var Marks) =
-  let cancelW = buttonWidth(CancelButton)
-  let width = max(igGetFontSize() * 6, igGetContentRegionAvail().x - cancelW -
-    igGetStyle().ItemSpacing.x)
-  let fraction = if ui.progressTotal > 0:
-      min(1'f32, float32(ui.progressDone) / float32(ui.progressTotal))
-    else: -float32(igGetTime())
-  let overlay = scanProgressWords(ui.progressDone, ui.progressTotal)
-  igProgressBar(fraction, ImVec2_c(x: width, y: 0), overlay.cstring)
+proc cancel(s: var Scan; st: AppState) =
+  if s.job != NoJob: discard st.jobs.cancel(s.job)
+  s = Scan()
+
+proc stop*(ui: var QualityUi; st: AppState) =
+  ## Cancels what runs and forgets the answers: the window is closed.
+  ui.file.cancel(st)
+  ui.folder.cancel(st)
+  ui.shownKey = ""
+
+func reportOf(r: QualityJobResult; side: StationSide): QualityReport =
+  if side == ssReceivers: r.receivers else: r.sources
+
+proc finish(ui: var QualityUi; s: var Scan; state: JobState; error: string) =
+  s.running = false
+  if s.note != nil: s.capped = s.note.capped
+  if state == jsCancelled:
+    s.status = Stopped
+    return
+  let failed = state == jsFailed or s.sink == nil or not s.sink.result.ok
+  if failed:
+    s.status =
+      if s.sink != nil and s.sink.result.reason.len > 0: s.sink.result.reason
+      elif error.len > 0: error
+      else: ScanFailed
+    return
+  s.result = s.sink.result
+  s.have = true
+  s.status = Ready
+  ui.sortDirty = true
+  ui.shownKey = ""
+  if ui.side == ssReceivers and s.result.receivers.totals.traces == 0 and
+      s.result.sources.totals.traces > 0:
+    ui.side = ssSources
+  elif ui.side == ssSources and s.result.sources.totals.traces == 0 and
+      s.result.receivers.totals.traces > 0:
+    ui.side = ssReceivers
+
+proc poll(ui: var QualityUi; s: var Scan; st: AppState) =
+  if s.job == NoJob: return
+  let info = st.jobs.info(s.job)
+  if info.isNone:
+    s.job = NoJob
+    s.running = false
+  elif info.get.state in {jsQueued, jsRunning}:
+    s.running = true
+    s.done = info.get.progress.done
+    s.total = info.get.progress.total
+    let phase = info.get.progress.phase
+    s.status = if phase.len > 0: phase else: Scanning
+  else:
+    ui.finish(s, info.get.state, info.get.error)
+    s.job = NoJob
+
+proc submitFile(ui: var QualityUi; st: AppState; key, path: string) =
+  ui.file = Scan(key: key, running: true, status: Scanning, sink: QualitySink())
+  var spec = qualitySpec(@[path])
+  spec.title = "Trace quality in " & path.extractFilename
+  ui.file.job = st.jobs.submit(spec,
+    fileScan(path, st.indexCache, st.editsSnapshot, ui.file.sink, st.settings.noise))
+
+proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
+  let folder = st.settings.quality.folder
+  let name = folder.extractFilename
+  ui.folder = Scan(key: key, running: true, status: Scanning, sink: QualitySink(),
+    note: QualityNote())
+  var spec = qualitySpec(@[folder])
+  spec.title = if name.len == 0: "Trace quality" else: "Trace quality in " & name
+  ui.folder.job = st.jobs.submit(spec,
+    folderScan(folder, st.settings.quality.subfolders, st.indexCache, st.editsSnapshot,
+      ui.folder.sink, ui.folder.note, st.settings.noise))
+
+proc consider(ui: var QualityUi; st: AppState) =
+  ## Polls the jobs, drops an answer that is stale, and starts the File computation for
+  ## the file shown. Nothing here lists or reads a folder unless Run was pressed.
+  if not ui.sortsReady:
+    ui.sort = DefaultStationSort
+    ui.sortsReady = true
+  ui.poll(ui.file, st)
+  ui.poll(ui.folder, st)
+  let path = st.shownPath
+  let fileKey = if path.len > 0: path & "|" & $st.shownRevision else: ""
+  if fileKey != ui.file.key:
+    ui.file.cancel(st)
+    ui.shownKey = ""
+    if fileKey.len > 0: ui.submitFile(st, fileKey, path)
+  let folder = st.settings.quality.folder
+  let folderKey = if folder.len > 0: folder & "|" & $st.settings.quality.subfolders else: ""
+  if ui.folder.key.len > 0 and ui.folder.key != folderKey:
+    ui.folder.cancel(st)
+    ui.shownKey = ""
+  if ui.runAsked:
+    ui.runAsked = false
+    if folderKey.len > 0:
+      ui.folder.cancel(st)
+      ui.submitFolder(st, folderKey)
+
+proc startExport*(ui: var QualityUi; st: AppState; path: string) =
+  ## Writes the CSV asked for when Export CSV... was clicked: the list shown then, and
+  ## the statistics beside it when asked. `path` gains ".csv" when it has no extension.
+  if not ui.ask.live: return
+  let ask = ui.ask
+  ui.ask.live = false
+  var dest = path
+  if dest.splitFile.ext.len == 0: dest.add ".csv"
+  let beside = statsBeside(dest)
+  if ui.exportJob != NoJob:
+    discard st.jobs.cancel(ui.exportJob)
+    ui.exportJob = NoJob
+  ui.exportJob = st.jobs.submit(JobSpec(title: "Export trace quality",
+    lane: jlBackground, reads: @[]), proc (ctx: JobContext) {.gcsafe.} =
+    ctx.checkCancelled()
+    writeCsv(dest, stationsCsv(ask.rows))
+    if ask.withStats: writeCsv(beside, totalsCsv(ask.totals)))
+
+proc pollExport(ui: var QualityUi; st: AppState) =
+  if ui.exportJob == NoJob: return
+  let info = st.jobs.info(ui.exportJob)
+  if info.isNone: ui.exportJob = NoJob
+  elif info.get.state notin {jsQueued, jsRunning}:
+    if info.get.state == jsDone:
+      ui.exported = true
+      ui.status = Written
+    elif info.get.state == jsFailed:
+      ui.status = if info.get.error.len > 0: info.get.error else: ExportFailed
+    ui.exportJob = NoJob
+
+proc applySort(ui: var QualityUi) =
+  if not ui.sortDirty: return
+  ui.sortDirty = false
+  for s in [addr ui.file, addr ui.folder]:
+    sortStations(s.result.receivers.stations, ui.sort)
+    sortStations(s.result.sources.stations, ui.sort)
+
+proc drawRows(ui: var QualityUi; report: QualityReport; key: string; marks: var Marks) =
+  let text = filterText(ui.filter)
+  let rows = report.stations
+  let next = key & "|" & text & "|" & sortText(ui.sort) & "|" & $rows.len
+  if next != ui.shownKey:
+    ui.shown = filterStations(rows, text)
+    ui.shownKey = next
+  let n = ui.shown.len
+  if n == 0:
+    igTextDisabled(if rows.len == 0: NoStations else: NoRows)
+    marks.mark("quality.norows")
+    return
+  var names = @[ColLine, ColPoint]
+  var keys = @[ssLine, ssPoint]
+  if report.totals.components > 1:
+    names.add ColLacking
+    keys.add ssLacking
+  for (name, column) in [(ColSeen, ssSeen), (ColKilled, ssKilled), (ColBad, ssBad),
+      (ColHeaderDead, ssHeaderDead), (ColAllZero, ssAllZero), (ColConstant, ssConstant),
+      (ColClipped, ssClipped), (ColSpiky, ssSpiky), (ColDcOffset, ssDcOffset),
+      (ColNonFinite, ssNonFinite), (ColNoisyTested, ssNoisyTested), (ColNoisy, ssNoisy),
+      (ColWeakTested, ssWeakTested), (ColWeak, ssWeak)]:
+    names.add name
+    keys.add column
+  if not igBeginTable("##stations", names.len.cint, tableFlags, ImVec2_c(x: 0, y: 0), 0):
+    return
+  setupColumns(names)
+  for c, name in names:
+    if igTableSetColumnIndex(cint(c)):
+      if headerCell(name, placeOf(ui.sort, keys[c]), marks, headerTip(name)):
+        clickSort(ui.sort, keys[c], igGetIO_Nil().KeyShift)
+        ui.sortDirty = true
+        ui.shownKey = ""
+  let clipper = ImGuiListClipper_ImGuiListClipper()
+  ImGuiListClipper_Begin(clipper, cint(n), -1)
+  while ImGuiListClipper_Step(clipper):
+    for i in clipper.DisplayStart ..< clipper.DisplayEnd:
+      let r = rows[ui.shown[int(i)]]
+      igTableNextRow(0, 0)
+      igPushID_Int(cint(i))
+      numberCell(filerecs.stationNumber(r.line))
+      numberCell(filerecs.stationNumber(r.point))
+      if report.totals.components > 1:
+        if igTableNextColumn():
+          igTextUnformatted(componentList(r.lacking).cstring, nil)
+      numberCell($r.seen)
+      numberCell($r.killed)
+      tip(KilledTip)
+      numberCell($r.bad)
+      tip(BadTip)
+      numberCell($r.counts[qfHeaderDead])
+      numberCell($r.counts[qfAllZero])
+      numberCell($r.counts[qfConstant])
+      numberCell($r.counts[qfClipped])
+      numberCell($r.counts[qfSpiky])
+      numberCell($r.counts[qfDcOffset])
+      numberCell($r.counts[qfNonFinite])
+      numberCell($r.noisyTested)
+      tip(NoisyTestedTip)
+      numberCell(noiseCell(r.noisyTested, r.noisy))
+      tip(NoisyTip)
+      numberCell($r.weakTested)
+      tip(WeakTestedTip)
+      numberCell(noiseCell(r.weakTested, r.weak))
+      tip(WeakTip)
+      if int(i) < 8: marks.mark(stationMark(r))
+      igPopID()
+  ImGuiListClipper_End(clipper)
+  ImGuiListClipper_destroy(clipper)
+  igEndTable()
+
+proc drawProgress(s: Scan; commands: var seq[Command]; marks: var Marks) =
+  igTextUnformatted(s.status.cstring, nil)
+  let fraction = if s.total > 0: clamp(float32(s.done) / float32(s.total), 0, 1) else: 0'f32
+  let overlay = scanProgressWords(s.done, s.total)
+  igProgressBar(fraction, ImVec2_c(x: igGetFontSize() * 12, y: 0), overlay.cstring)
   marks.mark("quality.progress")
   if overlay.len > 0: marks.mark("quality.progress " & overlay)
   igSameLine(0, -1)
-  if igButton(CancelButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.scanJob != NoJob:
-    commands.add Command(kind: ckCancelJob, job: ui.scanJob)
-  marks.mark("quality.cancel")
+  if igButton(StopButton.cstring, ImVec2_c(x: 0, y: 0)) and s.job != NoJob:
+    commands.add Command(kind: ckCancelJob, job: s.job)
+  marks.mark("quality.stop")
 
-proc drawFiltered(ui: var QualityUi; st: AppState; marks: var Marks;
-    commands: var seq[Command]) =
-  if not ui.have: return
-  let recordsTab = ui.tab == qtRecords
-  let hint = IconFilter & "  " & (if recordsTab: FilterRecords else: FilterStations)
-  let id = if recordsTab: "##filterrecords" else: "##filterstations"
-  let buf = if recordsTab: addr ui.recordFilter[0] else: addr ui.stationFilter[0]
-  igSetNextItemWidth(-1)
-  discard igInputTextWithHint(id.cstring, hint.cstring, cast[cstring](buf),
-    csize_t(ui.stationFilter.len), 0, nil, nil)
-  marks.mark("quality.filter")
-  tip(if recordsTab: FilterRecordsTip else: FilterStationsTip)
-  if ui.tab == qtStations: ui.drawStations(marks)
-  else: ui.drawRecords(st, marks, commands)
+proc drawScan(ui: var QualityUi; st: AppState; folderTab: bool; marks: var Marks;
+    out0: var QualityOutput) =
+  ## What a tab shows below its own controls: a sentence for what is missing, the job in
+  ## progress, or the figures and the table.
+  template s: untyped = (if folderTab: ui.folder else: ui.file)
+  if not folderTab and ui.file.key.len == 0:
+    igTextUnformatted(NeedFile.cstring, nil)
+    marks.mark("quality.message " & NeedFile)
+    return
+  if folderTab and ui.folder.key.len == 0:
+    igTextUnformatted((if st.settings.quality.folder.len == 0: NeedFolder
+      else: "Press Run to measure " & st.settings.quality.folder & ".").cstring, nil)
+    marks.mark("quality.message folder")
+    return
+  if s.running:
+    marks.mark("quality.scanning")
+    drawProgress(s, out0.commands, marks)
+    return
+  if not s.have:
+    igPushTextWrapPos(0)
+    igTextUnformatted(s.status.cstring, nil)
+    igPopTextWrapPos()
+    return
+  marks.mark("quality.ready")
+  let r = s.result
+  if s.capped: igTextUnformatted(CappedNote.cstring, nil)
+  if r.receivers.totals.traces > 0 and r.sources.totals.traces > 0:
+    var sources = ui.side == ssSources
+    if igRadioButton_Bool(ReceiversOption.cstring, not sources): ui.side = ssReceivers
+    igSameLine(0, -1)
+    if igRadioButton_Bool(SourcesOption.cstring, sources): ui.side = ssSources
+    marks.mark("quality.side")
+  let report = r.reportOf(ui.side)
+  marks.mark("quality.sort " & sortText(ui.sort))
+  let counts = countsLine(report.totals, folderTab)
+  igTextUnformatted(counts.cstring, nil)
+  marks.mark("quality.counts " & counts)
+  for line in statisticLines(report.totals, ui.side, folderTab):
+    igTextUnformatted(line.cstring, nil)
+    marks.mark("quality.stat " & line)
+    tip(FiguresTip)
+  igBeginDisabled(report.totals.traces == 0)
+  if igButton(ExportButton.cstring, ImVec2_c(x: 0, y: 0)):
+    let text = filterText(ui.filter)
+    var rows: seq[StationRow] = @[]
+    for i in filterStations(report.stations, text): rows.add report.stations[i]
+    ui.ask = ExportAsk(rows: rows, totals: report.totals, withStats: ui.withStats,
+      live: true)
+    out0.exportAsked = true
+    out0.exportPath = (if folderTab and st.settings.quality.folder.len > 0:
+      st.settings.quality.folder else: st.shownPath.parentDir) / SuggestedName
+  igEndDisabled()
+  marks.mark("quality.export")
+  igSameLine(0, -1)
+  discard igCheckbox((WithStats & "##stats").cstring, addr ui.withStats)
+  marks.mark("quality.statsbox")
+  tip(StatsTip)
+  var unreadLines: seq[string] = @[]
+  for row in r.unread: unreadLines.add row.path & " — " & row.why
+  igSameLine(0, -1)
+  if igButton(countLabel(UnreadFiles, r.unread.len).cstring, ImVec2_c(x: 0, y: 0)):
+    igOpenPopup_Str("##unread", 0)
+  marks.mark("quality.unread")
+  if r.unread.len > 0:
+    let note = unreadNote(r.unread)
+    igPushTextWrapPos(0)
+    igTextUnformatted(note.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("quality.unreadnote " & note)
+  drawPopup("##unread", NoneUnread, "quality.unreadline ", unreadLines, marks)
+  if report.totals.traces > 0:
+    igSetNextItemWidth(-1)
+    discard igInputTextWithHint("##filterstations", (IconFilter & "  " & FilterStations).cstring,
+      cast[cstring](addr ui.filter[0]), csize_t(ui.filter.len), 0, nil, nil)
+    marks.mark("quality.filter")
+    tip(FilterStationsTip)
+    ui.drawRows(report, (if folderTab: "folder" else: "file") & $ui.side, marks)
+
+proc drawFolderControls(ui: var QualityUi; st: AppState; marks: var Marks;
+    out0: var QualityOutput) =
+  if igButton(FolderButton.cstring, ImVec2_c(x: 0, y: 0)):
+    out0.askFolder = true
+    out0.askAt = st.settings.quality.folder
+  marks.mark("quality.folderbutton")
+  igSameLine(0, -1)
+  let chosen = st.settings.quality.folder
+  igTextUnformatted((if chosen.len > 0: chosen else: NoFolderChosen).cstring, nil)
+  marks.mark("quality.folderpath " & chosen)
+  var sub = st.settings.quality.subfolders
+  if igCheckbox((SubfoldersBox & "##subfolders").cstring, addr sub) and ui.focus.acts:
+    var s = st.settings
+    s.quality.subfolders = sub
+    out0.commands.add Command(kind: ckSettings, settings: s)
+  marks.mark("quality.subfolders")
+  if sub: marks.mark("quality.subfolderson")
+  tip(SubfoldersTip)
+  igSameLine(0, -1)
+  igBeginDisabled(chosen.len == 0 or ui.folder.running)
+  if igButton(RunButton.cstring, ImVec2_c(x: 0, y: 0)): ui.runAsked = true
+  igEndDisabled()
+  marks.mark("quality.run")
 
 proc drawQuality*(ui: var QualityUi; title: string; st: AppState; marks: var Marks): QualityOutput =
-  ## The window titled `title`. A scan asked for since the last draw starts here.
+  ## The window titled `title`. Closing it (`stop`, called by the caller while it is
+  ## hidden) cancels what runs.
+  if ui.chosen.len > 0:
+    var s = st.settings
+    s.quality.folder = ui.chosen
+    ui.chosen = ""
+    result.commands.add Command(kind: ckSettings, settings: s)
   ui.consider(st)
-  result.commands = ui.takePending(st)
-  if igBegin(title.cstring, nil, 0):
+  ui.pollExport(st)
+  ui.applySort()
+  if beginClosable(awQuality, title.cstring):
     ui.focus.watch()
     marks.markWindow("quality")
-    if ui.status.len == 0: ui.status = if canScan(st): Ready else: whyNot(st)
-    var status = ui.status
-    if ui.capped and not ui.scanning:
-      if status.len > 0: status.add " "
-      status.add CappedNote
-    igPushTextWrapPos(0)
-    igTextUnformatted(status.cstring, nil)
-    igPopTextWrapPos()
-    if ui.scanning: marks.mark("quality.scanning")
-    if ui.capped: marks.mark("quality.capped")
-    if ui.have and not ui.scanning:
-      marks.mark("quality.ready")
-      let spec = if ui.tab == qtStations: stationSortText(ui.stationSort)
-        else: recordSortText(ui.recordSort)
-      marks.mark("quality.sort " & spec)
-      igPushTextWrapPos(0)
-      igTextUnformatted(totalsLine(ui.report.totals).cstring, nil)
-      igPopTextWrapPos()
-      marks.mark(totalsMark(ui.report.totals))
-      marks.mark("quality.totalsline " & totalsLine(ui.report.totals))
-      if ui.unread.len > 0:
-        let note = unreadNote(ui.unread)
-        igPushTextWrapPos(0)
-        igTextUnformatted(note.cstring, nil)
-        igPopTextWrapPos()
-        marks.mark("quality.unreadnote " & note)
-    let unreadLabel = countLabel(UnreadFiles, ui.unread.len)
-    if ui.scanning: drawProgress(ui, result.commands, marks)
-    else:
-      igBeginDisabled(not canScan(st))
-      if igButton(RescanButton.cstring, ImVec2_c(x: 0, y: 0)): ui.requestScan()
-      igEndDisabled()
-      marks.mark("quality.rescan")
-    sameLineIfFits(buttonWidth(unreadLabel))
-    if igButton(unreadLabel.cstring, ImVec2_c(x: 0, y: 0)):
-      igOpenPopup_Str("##unread", 0)
-    marks.mark("quality.unread")
-    sameLineIfFits(checkWidth(WithTotals))
-    discard igCheckbox((WithTotals & "##totals").cstring, addr ui.withTotals)
-    marks.mark("quality.totalsbox")
-    tip(TotalsTip)
-    sameLineIfFits(buttonWidth(ExportButton))
-    igBeginDisabled(not ui.have)
-    if igButton(ExportButton.cstring, ImVec2_c(x: 0, y: 0)):
-      ui.ask = ExportAsk(tab: ui.tab, withTotals: ui.withTotals, live: true)
-      result.exportAsked = true
-      let base = if ui.folder.len > 0: ui.folder else: st.fileList.folder
-      result.exportPath = base / SuggestedName
-    igEndDisabled()
-    marks.mark("quality.export")
-    var unreadLines: seq[string] = @[]
-    for row in ui.unread: unreadLines.add row.path & " — " & row.why
-    drawPopup("##unread", NoneUnread, "quality.unreadline ", unreadLines, marks)
+    if ui.status.len > 0:
+      igTextUnformatted(ui.status.cstring, nil)
+      marks.mark("quality.exported")
     if igBeginTabBar("##qualitytabs", tabFlags):
       marks.mark("quality.tab")
-      let stationsOn = igBeginTabItem(StationsTab.cstring, nil, 0)
-      marks.mark("quality.tab Stations")
-      if stationsOn:
-        ui.tab = qtStations
-        ui.drawFiltered(st, marks, result.commands)
+      let fileOn = igBeginTabItem(FileTab.cstring, nil, 0)
+      marks.mark("quality.tab File")
+      if fileOn:
+        ui.drawScan(st, false, marks, result)
         igEndTabItem()
-      let recordsOn = igBeginTabItem(RecordsTab.cstring, nil, 0)
-      marks.mark("quality.tab Records")
-      if recordsOn:
-        ui.tab = qtRecords
-        ui.drawFiltered(st, marks, result.commands)
+      let folderOn = igBeginTabItem(FolderTab.cstring, nil, 0)
+      marks.mark("quality.tab Folder")
+      if folderOn:
+        ui.drawFolderControls(st, marks, result)
+        ui.drawScan(st, true, marks, result)
         igEndTabItem()
       igEndTabBar()
     marks.markOverflow("quality")

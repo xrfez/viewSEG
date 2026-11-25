@@ -49,6 +49,7 @@
 ##  (cutGather (recordMs 10000.0))
 ##  (output (segyRevision same) (segdRevision same))
 ##  (missing (folder "/jobs/Land 2026/lines") (subfolders true))
+##  (quality (folder "/jobs/Land 2026/lines") (subfolders false))
 ##  (hideKilled false)
 ##  (spectrum
 ##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
@@ -532,6 +533,10 @@ proc settingsDocument*(s: Settings): string =
   w.open("missing")
   w.value("folder", s.missing.folder)
   w.value("subfolders", s.missing.subfolders)
+  w.close()
+  w.open("quality")
+  w.value("folder", s.quality.folder)
+  w.value("subfolders", s.quality.subfolders)
   w.close()
   w.value("hideKilled", s.hideKilled)
   w.open("spectrum")
@@ -1250,6 +1255,11 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
           if k.isTree("folder"): r.text(k, result.missing.folder, allowEmpty = true)
           elif k.isTree("subfolders"): r.flag(k, result.missing.subfolders)
           else: r.unknown(k, "missing")
+      of "quality":
+        for k in c.kids:
+          if k.isTree("folder"): r.text(k, result.quality.folder, allowEmpty = true)
+          elif k.isTree("subfolders"): r.flag(k, result.quality.subfolders)
+          else: r.unknown(k, "quality")
       of "output":
         for k in c.kids:
           if k.isTree("segyRevision"):

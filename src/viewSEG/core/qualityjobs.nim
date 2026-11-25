@@ -29,16 +29,29 @@
 ## The report keeps each path as the caller named it. Unread files are not
 ## a total of the report: a file that fails to read part-way adds nothing to it and is
 ## listed unread once.
+##
+## A station is a line and point. Which of a trace's two stations names it is the
+## file's side (`stationSide`, the rule the missing-traces scan applies to a file): a
+## shot gather's traces are by their receiver stations, a receiver gather's by their
+## source stations, and a file's traces all take the one side. A scan keeps one report for
+## each side (`receivers`, `sources`); a side no file took is empty. Nothing is
+## computed from a trace's record number.
+##
+## `folderScan` lists a folder (its subfolders only when asked) and scans its files.
 
 import std/[algorithm, os, sets, tables]
 import parseSEG
 import processSEG/core/[pool, rows, types, workspace]
 import processSEG/qc/amplitude
 import components, edits, filejobs, filesystem, firstbreakjobs, firstbreaks, jobs, noisearea,
-    qualityreport,
-  recordqc, session, threads
+  qualityreport, recordqc, session, state, threads
+from missingjobs import stationSide
+from missingreport import StationSide
+export StationSide
 
 const
+  Listing* = "Listing the folder."
+  CannotList* = "The folder could not be listed."
   QcChunk = 512            ## traces read and measured at a time
   PerFile = 1000'i64       ## the job's progress is this many units for each file
   Opening = PerFile div 10 ## of which the open takes the first
@@ -48,9 +61,13 @@ type
     ## What the scan did. `ok` false: `reason` is a sentence, and `report`
     ## is empty. A cancel does not fill this.
     ok*: bool
-    report*: QualityReport
+    receivers*, sources*: QualityReport ## by the side of the file each trace was in
     unread*: seq[tuple[path, why: string]]
     reason*: string
+
+  QualityNote* = ref object
+    ## Set by `folderScan`: the list stopped at the file limit.
+    capped*: bool
 
   QualitySink* = ref object
     ## Filled when the job ends, except when it is cancelled. Read it after
@@ -120,14 +137,16 @@ proc liveSpans(f: ptr SeismicFile; part: Slice[int]; killed: HashSet[int]): seq[
       start = -1
   if start >= 0: result.add start .. part.b
 
-proc noteTrace(b: var QualityBuild; path: string; k: TraceKeys; killed: bool;
-    flags: set[AmplitudeFlag]; noisyTested, weakTested: bool) =
+proc noteTrace(b: var QualityBuild; path: string; k: TraceKeys; side: StationSide;
+    killed: bool; flags: set[AmplitudeFlag]; noisyTested, weakTested: bool) =
   if not k.isSeismic: return
   var findings: set[Finding] = {}
   if not killed:
     findings = findingsOf(flags, k.status == tsDead)
-  b.addTrace(TraceNote(file: path, record: k.record, line: k.rcvLine, point: k.rcvPoint,
-    index: k.rcvIndex, component: componentOf(k), killed: killed, findings: findings,
+  let sources = side == ssSources
+  b.addTrace(TraceNote(file: path, line: if sources: k.srcLine else: k.rcvLine,
+    point: if sources: k.srcPoint else: k.rcvPoint,
+    component: componentOf(k), killed: killed, findings: findings,
     noisyTested: noisyTested, weakTested: weakTested,
     noisy: noisyTested and afNoisy in flags, weak: weakTested and afWeak in flags))
 
@@ -186,7 +205,8 @@ proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
   except ValueError:
     result = false
 
-proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var QualityBuild;
+proc measure(f: ptr SeismicFile; path: string; side: StationSide; killed: HashSet[int];
+    b: var QualityBuild;
     unread: var seq[tuple[path, why: string]]; gathers: seq[Gather];
     noise: NoiseSettings; ctx: JobContext; workers: ptr ProcessPool; at, count: int) =
   let n = f[].len
@@ -206,7 +226,7 @@ proc measure(f: ptr SeismicFile; path: string; killed: HashSet[int]; b: var Qual
       let k = f[].index.keys[t]
       let sampled = wantsSamples(k, t in killed)
       let flags = if sampled: held[t - heldFrom].flags else: {}
-      noteTrace(b, path, k, t in killed, flags, sampled and t in noisyAt,
+      noteTrace(b, path, k, side, t in killed, flags, sampled and t in noisyAt,
         sampled and t in weakAt)
       noisyAt.excl t
       weakAt.excl t
@@ -290,7 +310,7 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     var unread: seq[tuple[path, why: string]] = @[]
-    var build = initQualityBuild()
+    var builds: array[StationSide, QualityBuild] = [initQualityBuild(), initQualityBuild()]
     var seen = initHashSet[string]()
     # one set of threads for every record
     var workers = newProcessPool(defaultBreakWorkers())
@@ -312,9 +332,10 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
               # (a file that fails part-way counts nothing: it is listed unread, once)
               var part = initQualityBuild()
               var partUnread: seq[tuple[path, why: string]] = @[]
-              measure(s.filePtr, path, killedSet(edits, path), part, partUnread, s.gathers,
-                noise, ctx, addr workers, i, paths.len)
-              build.absorb part
+              let side = stationSide(s.file.index.keys)
+              measure(s.filePtr, path, side, killedSet(edits, path), part, partUnread,
+                s.gathers, noise, ctx, addr workers, i, paths.len)
+              builds[side].absorb part
               unread.add partUnread
               shortWhy = cutShortWhy(s.file)
           except SegCancelledError:
@@ -333,10 +354,54 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
       ctx.setPhase "reporting"
       ctx.checkCancelled()
       if sink != nil:
-        sink.result = QualityJobResult(ok: true, report: qualityReport(build), unread: unread)
+        sink.result = QualityJobResult(ok: true,
+          receivers: qualityReport(builds[ssReceivers]),
+          sources: qualityReport(builds[ssSources]), unread: unread)
     except JobCancelledError:
       raise
     except SegCancelledError:
       raise newException(JobCancelledError, "cancelled")
     except CatchableError as e:
       fail(sink, if e.msg.len > 0: e.msg else: $e.name, unread)
+
+proc editsFor(paths: openArray[string]; snap: EditsSnapshot): Table[string, FileEdits] =
+  ## `snap` keyed by each listed path, so a killed trace is found under the
+  ## path the scan names. A path with no edits is left out.
+  for path in paths:
+    var key = ""
+    let disk = diskOf(path)
+    if disk in snap.alias: key = snap.alias[disk]
+    elif path in snap.alias: key = snap.alias[path]
+    elif disk in snap.byKey: key = disk
+    elif path in snap.byKey: key = path
+    else:
+      let canon = canonical(path)
+      if canon in snap.alias: key = snap.alias[canon]
+      elif canon in snap.byKey: key = canon
+    if key.len > 0 and key in snap.byKey:
+      result[path] = snap.byKey[key]
+
+proc fileScan*(path, cacheDir: string; snap: EditsSnapshot; sink: QualitySink;
+    noise: NoiseSettings): JobWork =
+  ## The work of a job that scans the one file `path`, with the edits `snap` holds for it.
+  scanQuality(@[path], editsFor([path], snap), sink, cacheDir, noise)
+
+proc folderScan*(folder: string; subfolders: bool; cacheDir: string; snap: EditsSnapshot;
+    sink: QualitySink; note: QualityNote; noise: NoiseSettings): JobWork =
+  ## The work of a job that lists the seismic files of `folder`, its subfolders only
+  ## when `subfolders`, and scans them as `scanQuality` does. `note.capped` says the list
+  ## stopped at the file limit.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.checkCancelled()
+    ctx.setPhase Listing
+    var capped = false
+    var paths: seq[string] = @[]
+    try:
+      paths = listedNames(@[folder], subfolders, capped,
+        proc (found: int): bool {.gcsafe, raises: [].} = ctx.progress(int64(found), 0))
+    except OSError:
+      raise newException(ValueError, CannotList)
+    if note != nil: note.capped = capped
+    ctx.checkCancelled()
+    let scan = scanQuality(paths, editsFor(paths, snap), sink, cacheDir, noise)
+    scan(ctx)

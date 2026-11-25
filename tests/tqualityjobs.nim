@@ -2,6 +2,17 @@
 ## A killed trace is not bad. Header-dead is not all-zero. An unreadable
 ## file is unread and the scan goes on. A cancel leaves the sink empty.
 ##
+## A station is a line and point: its components and files are not rows, and the side of a
+## file (receivers of a shot, sources of a receiver gather) decides which of a trace's
+## two stations it is counted at. A folder scan reads its subfolders only when asked.
+## The measures are those of the scan before the table was one row per station: the
+## `measures_are_unchanged` figures were taken from it on the same data.
+##
+## Seen to fail: with the folder walk always taking subfolders,
+## `a_folder_scan_takes_subfolders_only_when_asked` saw 2 files for the folder alone. With
+## every file counted at the receivers, `a_receiver_gather_is_counted_at_its_sources` saw
+## its three traces at the receivers.
+##
 ## Seen to fail: with header-dead not recorded, `findings_from_samples`
 ## rejected a dead station whose bad count was 0. With a chunk measured at
 ## the first trace's interval, `each_interval_measured_alone` rejected a
@@ -16,7 +27,7 @@
 import std/[os, strutils, tables]
 import parseSEG
 import processSEG/qc/amplitude
-import viewSEG/core/[edits, jobs, qualityjobs, qualityreport]
+import viewSEG/core/[edits, jobs, noisearea, qualityjobs, qualityreport, state]
 import utils/[faultyfs, fixtures, noisefiles, waiting]
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
@@ -33,12 +44,12 @@ proc run(paths: seq[string]; edits: Table[string, FileEdits]; cacheDir = ""):
 
 proc writeTraceAt(w: var SeismicWriter; record, channel: int; line, point: float64;
     component: uint8; status: TraceStatus; samples: openArray[float32];
-    channelType = sctSeismic) =
+    channelType = sctSeismic; srcLine = 1.0; srcPoint = 1.0) =
   var k = initTraceKeys()
   k.record = float64(record)
   k.channel = float64(channel)
-  k.srcLine = 1
-  k.srcPoint = 1
+  k.srcLine = srcLine
+  k.srcPoint = srcPoint
   k.srcIndex = 1
   k.rcvLine = line
   k.rcvPoint = point
@@ -124,6 +135,8 @@ proc statusFile(path: string; traces: openArray[TraceStatus]) =
     k.srcLine = 1
     k.srcPoint = 1
     k.srcIndex = 1
+    k.rcvLine = 60
+    k.rcvPoint = float64(i + 1)
     k.rcvIndex = 1
     k.intervalUs = 2000
     k.component = 1
@@ -132,23 +145,21 @@ proc statusFile(path: string; traces: openArray[TraceStatus]) =
     w.writeTrace(k, samples)
   doAssert w.close().len == 0, "file was not written: " & path
 
-proc matchesAlone(seen, killed, bad: int; counts: array[Finding, int];
-    samples: openArray[float32]; dtMs: float64) =
-  let want = findingsOf(traceAmplitude(samples, dtMs).flags, false)
-  doAssert seen == 1 and killed == 0, $seen & " killed " & $killed
-  doAssert bad == ord(want.len > 0), $bad & " want " & $want
-  for q in Finding:
-    doAssert counts[q] == ord(q in want), $q & " " & $counts[q] & " want " & $want
-
-proc recordAt(rows: openArray[RecordRow]; file: string; record: float64): RecordRow =
+proc stationAt(rows: openArray[StationRow]; line, point: float64): StationRow =
   for r in rows:
-    if r.file == file and r.record == record: return r
-  doAssert false, "no record " & $record & " in " & file
+    if r.line == line and r.point == point: return r
+  doAssert false, "no station " & $line & ":" & $point
 
-proc stationAt(rows: openArray[StationRow]; line, point: float64; component: uint8): StationRow =
-  for r in rows:
-    if r.line == line and r.point == point and r.component == component: return r
-  doAssert false, "no station " & $line & ":" & $point & " c" & $component
+proc runFolder(folder: string; subfolders: bool; cacheDir = ""):
+    tuple[st: JobState; sink: QualitySink; error: string] =
+  let jobs = initJobs()
+  let sink = QualitySink()
+  let id = jobs.submit(qualitySpec(@[folder]), folderScan(folder, subfolders, cacheDir,
+    EditsSnapshot(), sink, QualityNote(), NoiseSettings()))
+  doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
+    "the folder scan did not finish: " & $jobs.state(id)
+  let info = jobs.info(id).get
+  (info.state, sink, info.error)
 
 proc unreadWhy(rows: openArray[tuple[path, why: string]]; path: string): string =
   for r in rows:
@@ -224,25 +235,27 @@ proc main*() =
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
     doAssert got.sink.result.ok
     doAssert got.sink.result.unread.len == 0, $got.sink.result.unread
-    let report = got.sink.result.report
-    let both = stationAt(report.stations, 10, 1, 1)
-    doAssert both.seen == 4 and both.bad == 4 and both.killed == 0, $both
-    doAssert both.counts[qfAllZero] == 2, $both.counts[qfAllZero]
+    let report = got.sink.result.receivers
+    let both = stationAt(report.stations, 10, 1)
+    # two components of one station, over two files: one row
+    doAssert both.seen == 5 and both.bad == 5 and both.killed == 0, $both
+    doAssert both.counts[qfAllZero] == 3, $both.counts[qfAllZero]
     doAssert both.counts[qfClipped] == 1, $both.counts
     doAssert both.counts[qfNonFinite] == 1
-    doAssert both.badRecords == one & " 1\n" & two & " 2", both.badRecords
-    let other = stationAt(report.stations, 10, 1, 2)
-    doAssert other.seen == 1 and other.counts[qfAllZero] == 1 and other.bad == 1
-    let dead = stationAt(report.stations, 20, 1, 1)
+    doAssert both.components == {1'u8, 2'u8} and both.lacking == {}, $both
+    let dead = stationAt(report.stations, 20, 1)
     doAssert dead.seen == 1 and dead.bad == 1 and dead.counts[qfHeaderDead] == 1, $dead
     doAssert dead.counts[qfAllZero] == 0
-    let gone = stationAt(report.stations, 30, 1, 1)
+    doAssert dead.lacking == {2'u8}, "component 2 is in the data, not at this station"
+    let gone = stationAt(report.stations, 30, 1)
     doAssert gone.seen == 1 and gone.killed == 1 and gone.bad == 0, $gone
     doAssert gone.counts[qfAllZero] == 0
-    doAssert report.stations.len == 4, $report.stations.len
-    doAssert report.totals.files == 3 and report.totals.records == 3, $report.totals
+    doAssert report.stations.len == 3, $report.stations.len
+    doAssert report.totals.files == 3 and report.totals.stations == 3, $report.totals
+    doAssert report.totals.lacking == 2 and report.totals.components == 2, $report.totals
     doAssert report.totals.traces == 7 and report.totals.killed == 1, $report.totals
     doAssert report.totals.bad == 6 and report.totals.counts[qfHeaderDead] == 1
+    doAssert got.sink.result.sources.totals.traces == 0, "a source side with no file"
 
   block unread_does_not_stop_the_scan:
     let one = dir / "one.sgd"
@@ -252,7 +265,7 @@ proc main*() =
     let got = run(@[one, notes, missing], none)
     doAssert got.st == jsDone, got.error
     doAssert got.sink.result.ok
-    doAssert got.sink.result.report.totals.files == 1
+    doAssert got.sink.result.receivers.totals.files == 1
     doAssert unreadWhy(got.sink.result.unread, notes) ==
       "not a SEG-Y, SEG-D or SEG-2 file"
     doAssert unreadWhy(got.sink.result.unread, missing) == "there is no such file",
@@ -264,7 +277,7 @@ proc main*() =
     createDir(dir / "sub")
     let got = run(@[one, one, again], none)
     doAssert got.st == jsDone, got.error
-    doAssert got.sink.result.report.totals.files == 1, $got.sink.result.report.totals
+    doAssert got.sink.result.receivers.totals.files == 1, $got.sink.result.receivers.totals
     doAssert got.sink.result.unread.len == 0
 
   block nil_sink_is_skipped:
@@ -287,7 +300,7 @@ proc main*() =
       "the scan did not finish"
     doAssert lane.state(id) == jsCancelled, $lane.state(id) & " " & lane.info(id).get.error
     doAssert not sink.result.ok
-    doAssert sink.result.report.totals.traces == 0
+    doAssert sink.result.receivers.totals.traces == 0
     doAssert sink.result.unread.len == 0
 
   block cancel_during_reporting:
@@ -299,7 +312,7 @@ proc main*() =
     let id = lane.submit(qualitySpec(@[one]), scanQuality(@[one], none, sink))
     doAssert waitUntil(lane.state(id) in {jsDone, jsFailed, jsCancelled})
     doAssert lane.state(id) == jsCancelled, $lane.state(id) & " " & lane.info(id).get.error
-    doAssert sink.result.report.totals.traces == 0
+    doAssert sink.result.receivers.totals.traces == 0
     doAssert sink.result.unread.len == 0
 
   block cancel_between_chunks:
@@ -321,7 +334,7 @@ proc main*() =
     let id = lane.submit(qualitySpec(@[wide]), scanQuality(@[wide], none, sink))
     doAssert waitUntil(lane.state(id) in {jsDone, jsFailed, jsCancelled})
     doAssert lane.state(id) == jsCancelled, $lane.state(id) & " " & lane.info(id).get.error
-    doAssert sink.result.report.totals.traces == 0
+    doAssert sink.result.receivers.totals.traces == 0
     doAssert sink.result.unread.len == 0
 
   block one_measuring_phase_a_file:
@@ -341,7 +354,7 @@ proc main*() =
     defer: setJobHook(nil)
     let got = run(paths, none)
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
-    doAssert got.sink.result.report.totals.traces == 1700, $got.sink.result.report.totals
+    doAssert got.sink.result.receivers.totals.traces == 1700, $got.sink.result.receivers.totals
     doAssert measurings == 2, $measurings & " measuring phases for two files"
 
   block each_interval_measured_alone:
@@ -355,11 +368,16 @@ proc main*() =
     let got = run(@[path], none)
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
     doAssert got.sink.result.ok and got.sink.result.unread.len == 0, $got.sink.result.unread
-    let report = got.sink.result.report
-    let first = recordAt(report.records, path, 1)
-    let second = recordAt(report.records, path, 2)
-    matchesAlone(first.seen, first.killed, first.bad, first.counts, slow, 4.0)
-    matchesAlone(second.seen, second.killed, second.bad, second.counts, fast, 2.0)
+    # the file has no line and point: its two traces are the one unknown station, so the
+    # counts are the two traces' findings, each measured at its own interval
+    let report = got.sink.result.receivers
+    doAssert report.stations.len == 1 and report.stations[0].seen == 2, $report.stations
+    let row = report.stations[0]
+    let a = findingsOf(traceAmplitude(slow, 4.0).flags, false)
+    let b = findingsOf(traceAmplitude(fast, 2.0).flags, false)
+    doAssert row.bad == ord(a.len > 0) + ord(b.len > 0), $row.bad & " want " & $a & $b
+    for q in Finding:
+      doAssert row.counts[q] == ord(q in a) + ord(q in b), $q & " " & $row.counts[q]
 
   block cut_in_the_last_trace_is_unread:
     let path = dir / "cut.sgy"
@@ -384,11 +402,11 @@ proc main*() =
     let got = run(@[path], none)
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
     doAssert got.sink.result.ok
-    doAssert got.sink.result.report.totals.traces == 1, $got.sink.result.report.totals
-    doAssert got.sink.result.report.totals.files == 1
+    doAssert got.sink.result.receivers.totals.traces == 1, $got.sink.result.receivers.totals
+    doAssert got.sink.result.receivers.totals.files == 1
     doAssert "cut short" in unreadWhy(got.sink.result.unread, path),
       unreadWhy(got.sink.result.unread, path)
-    let kept = recordAt(got.sink.result.report.records, path, 1)
+    let kept = got.sink.result.receivers.stations[0]
     doAssert kept.seen == 1, $kept
 
   block skipped_traces_are_not_sample_read:
@@ -422,19 +440,20 @@ proc main*() =
     # of their own that are not judged, so they are not read at all (the first-break pass reads
     # a judged record whole, skipped traces inside it included: that is not counted here)
     doAssert mixReads - deadReads == 8, $mixReads & " - " & $deadReads
-    let report = mixScan.sink.result.report
+    let report = mixScan.sink.result.receivers
     doAssert report.totals.traces == 6 and report.totals.killed == 1, $report.totals
     doAssert report.totals.counts[qfHeaderDead] == 1, $report.totals.counts
     var ramp = newSeq[float32](32)
     for i in 0 ..< ramp.len: ramp[i] = float32(i + 1)
-    let live = recordAt(report.records, mixed, 1)
-    matchesAlone(live.seen, live.killed, live.bad, live.counts, ramp, 2.0)
-    let gone = recordAt(report.records, mixed, 2)
-    doAssert gone.seen == 1 and gone.killed == 1 and gone.bad == 0, $gone
-    let dead = recordAt(report.records, mixed, 4)
-    doAssert dead.seen == 1 and dead.counts[qfHeaderDead] == 1, $dead
-    for r in report.records:
-      doAssert r.file != mixed or r.record != 6, "an auxiliary trace was noted"
+    let want = findingsOf(traceAmplitude(ramp, 2.0).flags, false)
+    # the file has no line and point: one unknown station holds the four measured live
+    # traces, the killed one and the dead one; the auxiliary trace is not a note
+    doAssert report.stations.len == 1, $report.stations
+    let row = report.stations[0]
+    doAssert row.seen == 6 and row.killed == 1, $row
+    doAssert row.bad == 4 * ord(want.len > 0) + 1, $row.bad & " want " & $want
+    for q in Finding:
+      doAssert row.counts[q] == 4 * ord(q in want) + ord(q == qfHeaderDead), $q
 
   block noisy_and_weak_traces_are_counted_as_the_map_finds_them:
     withFixtures fx:
@@ -444,20 +463,22 @@ proc main*() =
       let plain = fx.noisyShot("plain.sgy")
       let got = run(@[shot, plain], none)
       doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
-      let report = got.sink.result.report
-      let a = recordAt(report.records, shot, 1)
+      let report = got.sink.result.receivers
+      # each file alone is one station of 64 traces (the fixture has no line and point)
+      let one = run(@[shot], none).sink.result.receivers
+      let a = one.stations[0]
       # the loud traces near the source are inside the area: not judged, so not tested
       # (they are tested for weak)
       doAssert a.noisyTested in NoisyTraces div 2 ..< NoisyTraces and a.noisy == 2 and
         a.weakTested > a.noisyTested and a.weak == 1, $a
-      let b = recordAt(report.records, plain, 1)
+      let b = run(@[plain], none).sink.result.receivers.stations[0]
       doAssert b.noisyTested == a.noisyTested and b.weakTested == a.weakTested and
         b.noisy == 2 and b.weak == 0, $b
       doAssert report.totals.noisyTested == 2 * a.noisyTested and report.totals.noisy == 4 and
         report.totals.weakTested == 2 * a.weakTested and report.totals.weak == 1,
         $report.totals
       doAssert report.totals.bad == 0, "noisy and weak are not findings: " & $report.totals.bad
-      doAssert recordsCsv(report.records).splitLines[0].endsWith(",noisy,tested (weak),weak")
+      doAssert stationsCsv(report.stations).splitLines[0].endsWith(",noisy,tested (weak),weak")
       doAssert totalsCsv(report.totals).splitLines[1].endsWith(",4," &
         $report.totals.weakTested & ",1")
 
@@ -470,11 +491,92 @@ proc main*() =
       edits[shot] = killed
       let got = run(@[shot], edits)
       doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
-      let report = got.sink.result.report
+      let report = got.sink.result.receivers
       doAssert report.totals.killed == NoisyTraces and report.totals.noisyTested == 0 and
         report.totals.weakTested == 0, $report.totals
       doAssert totalsCsv(report.totals).splitLines[1].endsWith(",0,,0,"), "cells not empty"
-      doAssert recordsCsv(report.records).splitLines[1].endsWith(",0,,0,"), "cells not empty"
+      doAssert stationsCsv(report.stations).splitLines[1].endsWith(",0,,0,"), "cells not empty"
+
+  block measures_are_unchanged:
+    # The figures below were taken from the scan before the table was by station, on this
+    # data: the measures of every trace are the same, only the rows they are counted in differ.
+    let a = dir / "b1.sgd"
+    let b = dir / "b2.sgd"
+    let z = zeros(32)
+    seismicFile(a, 1, @[
+      (line: 10.0, point: 1.0, component: 1'u8, status: tsLive, samples: z),
+      (line: 10.0, point: 1.0, component: 1'u8, status: tsLive, samples: clippedSamples()),
+      (line: 10.0, point: 1.0, component: 1'u8, status: tsLive, samples: nanSamples()),
+      (line: 20.0, point: 1.0, component: 1'u8, status: tsDead, samples: z),
+      (line: 10.0, point: 1.0, component: 2'u8, status: tsLive, samples: z)])
+    seismicFile(b, 2, @[(line: 10.0, point: 1.0, component: 1'u8, status: tsLive, samples: z)])
+    let t = run(@[a, b], none).sink.result.receivers.totals
+    doAssert (t.files, t.traces, t.killed, t.bad) == (2, 6, 0, 6), $t
+    doAssert t.counts == [1, 3, 0, 1, 0, 0, 1], $t.counts
+    doAssert (t.noisyTested, t.noisy, t.weakTested, t.weak) == (2, 0, 2, 0), $t
+    withFixtures fx:
+      let shot = fx.noisyShot("both.sgy", weakAt = 60)
+      let plain = fx.noisyShot("plain.sgy")
+      let n = run(@[shot, plain], none).sink.result.receivers.totals
+      doAssert (n.files, n.traces, n.killed, n.bad) == (2, 128, 0, 0), $n
+      doAssert n.counts == [0, 0, 0, 0, 0, 0, 0], $n.counts
+      doAssert (n.noisyTested, n.noisy, n.weakTested, n.weak) == (102, 4, 128, 1), $n
+
+  block a_station_missing_a_component_is_listed:
+    let path = dir / "three.sgd"
+    let z = zeros(32)
+    seismicFile(path, 1, @[
+      (line: 10.0, point: 1.0, component: 1'u8, status: tsLive, samples: z),
+      (line: 10.0, point: 1.0, component: 2'u8, status: tsLive, samples: z),
+      (line: 10.0, point: 1.0, component: 3'u8, status: tsLive, samples: z),
+      (line: 10.0, point: 2.0, component: 1'u8, status: tsLive, samples: z),
+      (line: 10.0, point: 2.0, component: 3'u8, status: tsLive, samples: z)])
+    let got = run(@[path], none)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    let report = got.sink.result.receivers
+    doAssert stationAt(report.stations, 10, 1).lacking == {}
+    doAssert stationAt(report.stations, 10, 2).lacking == {2'u8}, $report.stations
+    doAssert report.totals.lacking == 1 and report.totals.components == 3, $report.totals
+
+  block a_folder_scan_takes_subfolders_only_when_asked:
+    let folder = dir / "tree"
+    createDir(folder / "inner")
+    let z = zeros(32)
+    seismicFile(folder / "top.sgd", 1, @[
+      (line: 10.0, point: 1.0, component: 1'u8, status: tsLive, samples: z),
+      (line: 10.0, point: 2.0, component: 1'u8, status: tsLive, samples: z)])
+    seismicFile(folder / "inner" / "low.sgd", 2, @[
+      (line: 10.0, point: 2.0, component: 1'u8, status: tsLive, samples: clippedSamples()),
+      (line: 10.0, point: 3.0, component: 1'u8, status: tsLive, samples: z)])
+    let flat = runFolder(folder, false)
+    doAssert flat.st == jsDone, flat.error & " / " & flat.sink.result.reason
+    doAssert flat.sink.result.receivers.totals.files == 1,
+      "the folder alone read " & $flat.sink.result.receivers.totals.files & " files"
+    doAssert flat.sink.result.receivers.stations.len == 2
+    let deep = runFolder(folder, true)
+    doAssert deep.st == jsDone, deep.error & " / " & deep.sink.result.reason
+    let report = deep.sink.result.receivers
+    doAssert report.totals.files == 2 and report.stations.len == 3, $report.totals
+    # station 10:2 is in both files: one row, the counts of both
+    let both = stationAt(report.stations, 10, 2)
+    doAssert both.seen == 2 and both.counts[qfAllZero] == 1 and both.counts[qfClipped] == 1,
+      $both
+
+  block a_receiver_gather_is_counted_at_its_sources:
+    # one receiver, three sources: its traces are named by the source stations
+    let path = dir / "gather.sgd"
+    var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
+      numSamples: 32, time: 1_700_000_000.0))
+    for i in 0 ..< 3:
+      writeTraceAt(w, i + 1, 1, 5, 5, 1, tsLive, zeros(32), srcLine = 80,
+        srcPoint = float64(i + 1))
+    doAssert w.close().len == 0
+    let got = run(@[path], none)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    doAssert got.sink.result.receivers.totals.traces == 0
+    let report = got.sink.result.sources
+    doAssert report.stations.len == 3 and report.totals.traces == 3, $report.totals
+    doAssert stationAt(report.stations, 80, 2).seen == 1
 
   block the_progress_reads_as_files_and_a_share:
     # the job counts 1000 units a file: 1450 of 3000 is in the second file of three

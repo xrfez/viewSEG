@@ -1,22 +1,28 @@
-## Reports > Trace quality in the running frontend, headless: the item is
-## inactive until a folder is open; the window is closed at the start, then a
-## tab beside the Seismic window; the scan matches an independent scan; the
-## totals, the all-zero station, a sort, a filter, a CSV export and a
-## double-click are what the window shows.
+## Reports > Trace quality in the running frontend, headless: the menu item is always
+## active; the window is closed at the start and then a tab beside the Seismic window;
+## opening it computes nothing, not even on a listed folder; the File tab measures the
+## file shown only, with the statistics lines on top and a table of one row per station
+## (Line, Point, Lacks component, the counts: no Index, Component, File or Record column,
+## no record number anywhere); a station with a component the data has but it has not is
+## listed and counted; the Folder tab starts nothing until Run, takes the folder from the
+## dialog, reads its subfolders only when the box says so (off by default; changing it
+## drops the answer), counts a station over the files, exports the list, and the window
+## closes by its tab's button and returns from the View menu.
 ##
-## Seen to fail: with the Reports item left enabled when no folder is open
-## (no disabled mark), "Reports is inactive without a folder did not happen".
-##
-## Seen to fail: titles clipped in the stations table; totals said "1 files,
-## 1 records, 2 traces"; the Records tab looked selected while that table showed
-## Line, Point, Index; unread files were only in the Unread list.
+## Seen to fail: with the Folder tab's job started as soon as a folder is chosen,
+## "Folder... chooses the folder" found a folder job before Run; with the subfolders tick
+## ignored by the walk, "Run: the folder without its subfolders" did not happen (2 files,
+## not 1); with the station counts of the second file not added to the first's, "Run with
+## subfolders" saw a row of 1 trace; with the menu item disabled without a folder,
+## "Reports > Trace quality" found a disabled mark.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, monotimes, options, os, strutils, tables]
+import std/[math, monotimes, options, os, strutils]
 import parseSEG
-import viewSEG/core/[filejobs, geometry, jobs, qualityjobs, qualityreport, state]
+import viewSEG/core/[geometry, jobs, state]
 import viewSEG/ui/imgui/app
+import viewSEG/view/[qualitywords, theme]
 import utils/[fixtures, waiting]
 
 type
@@ -66,92 +72,52 @@ proc wave(): seq[float32] =
   for i in 0 ..< 32:
     result[i] = sin(float32(i) * 0.4'f32) * 20
 
-proc stationBad(f: FrameInfo; line: string): tuple[seen: bool; bad, allZero: int] =
-  for name in f.markNames("quality.station " & line & " "):
-    let parts = name.split(' ')
-    if parts.len >= 9:
-      return (true, parseInt(parts[7]), parseInt(parts[8]))
-
 proc main*() =
   var wait = 0
   var since = getMonoTime()
 
   withFixtures fx:
     let folder = fx.dir / "line"
-    createDir(folder)
+    createDir(folder / "sub")
     seismicFile(folder / "one.sgd", 7, @[
       (line: 40.0, point: 1.0, component: 1'u8, status: tsLive, samples: zeros(32)),
-      (line: 90.0, point: 1.0, component: 1'u8, status: tsLive, samples: wave())])
+      (line: 90.0, point: 1.0, component: 1'u8, status: tsLive, samples: wave()),
+      (line: 90.0, point: 1.0, component: 2'u8, status: tsLive, samples: wave())])
+    seismicFile(folder / "sub" / "two.sgd", 8, @[
+      (line: 40.0, point: 1.0, component: 1'u8, status: tsLive, samples: zeros(32)),
+      (line: 100.0, point: 1.0, component: 1'u8, status: tsLive, samples: wave()),
+      (line: 100.0, point: 1.0, component: 2'u8, status: tsLive, samples: wave())])
     writeFile(folder / "notes.txt", "not seismic\n")
     let outCsv = fx.dir / "out" / "trace-quality.csv"
     createDir(fx.dir / "out")
     createDir(fx.dir / "cache")
     createDir(fx.dir / "config")
     createDir(fx.dir / "logs")
-    let scratch = currentSourcePath().parentDir.parentDir / ".scratch"
-    let shot = scratch / "quality-window.png"
-    let stationsShot = scratch / "quality-stations.png"
-    let recordsShot = scratch / "quality-records.png"
-    createDir(scratch)
+    let shots = currentSourcePath().parentDir.parentDir / ".scratch" / "shots"
+    createDir(shots)
 
     var asked: seq[DialogKind]
     var answer: seq[string]
-    var expectedTotals = ""
-    var expectedCsv = ""
-    var scanned = false
     let hook = proc (kind: DialogKind; location: string): seq[string] =
       asked.add kind
       answer
-
-    proc scanOnce(f: FrameInfo) =
-      if scanned: return
-      let listed = $(f.core.fileList.folder)
-      let cache = $(f.core.indexCache)
-      var capped = false
-      let paths = listedNames(@[listed], true, capped)
-      let snap = f.core.editsSnapshot
-      var edits = initTable[string, FileEdits]()
-      for path in paths:
-        var key = ""
-        if path in snap.alias: key = snap.alias[path]
-        elif path in snap.byKey: key = path
-        if key.len > 0 and key in snap.byKey: edits[path] = snap.byKey[key]
-      let jobs = initJobs()
-      let sink = QualitySink()
-      let id = jobs.submit(qualitySpec(paths), scanQuality(paths, edits, sink, cache))
-      doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}),
-        "the independent scan did not finish"
-      let info = jobs.info(id).get
-      doAssert info.state == jsDone, info.error
-      let t = sink.result.report.totals
-      expectedTotals = "quality.totals " & $t.files & " " & $t.records & " " & $t.traces &
-        " " & $t.killed & " " & $t.bad & " " & $t.stations & " " & $t.counts[qfAllZero]
-      expectedCsv = stationsCsv(sink.result.report.stations)
-      doAssert t.files == 1, "independent scan saw " & $t.files & " files"
-      doAssert t.bad >= 1, "the all-zero trace was not bad"
-      doAssert t.counts[qfAllZero] >= 1, "no all-zero count"
-      var unreadNotes = false
-      for row in sink.result.unread:
-        if "notes.txt" in row.path: unreadNotes = true
-      doAssert unreadNotes, "notes.txt was not unread: " & $sink.result.unread
-      scanned = true
 
     var steps: seq[Step]
     proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
       steps.add Step(name: name, act: act, done: done)
     proc noop(f: FrameInfo) = discard
+    proc has(f: FrameInfo; name: string): bool = f.markOf(name).size.x > 0
+    proc jobTitles(f: FrameInfo): seq[string] =
+      for j in f.core.jobs.list(): result.add j.spec.title
+    proc qualityJobs(f: FrameInfo): seq[string] =
+      for t in f.jobTitles:
+        if t.startsWith("Trace quality"): result.add t
 
     step("closed at the start", noop, proc (f: FrameInfo): bool =
       result = wait > 4
       if result:
         doAssert awQuality in f.hiddenWindows, $f.hiddenWindows
         doAssert not f.windowPlace("quality").inSight)
-
-    proc inactive(f: FrameInfo) = f.click(f.markOf("menu.Reports").centre)
-    proc inactiveDone(f: FrameInfo): bool =
-      f.markOf("menu.Trace quality").size.x > 0 and
-        f.markOf("menu.Trace quality.disabled").size.x > 0
-    step("Reports is inactive without a folder", inactive, inactiveDone)
 
     proc listFolder(f: FrameInfo) =
       f.apply Command(kind: ckBrowse, paths: @[folder], showFirst: false)
@@ -163,56 +129,128 @@ proc main*() =
     proc openReport(f: FrameInfo) =
       if f.markOf("menu.Trace quality").size.x == 0:
         f.click(f.markOf("menu.Reports").centre)
-    proc reportReady(f: FrameInfo): bool =
+    proc noFile(f: FrameInfo): bool =
       if not opened:
         let it = f.markOf("menu.Trace quality")
-        if it.size.x > 0 and f.markOf("menu.Trace quality.disabled").size.x == 0:
+        if it.size.x > 0:
+          doAssert not f.has("menu.Trace quality.disabled"), "the menu item is inactive"
           f.click(it.centre)
           opened = true
-      result = f.markOf("quality.ready").size.x > 0 and
-        f.markOf("quality.tab Stations").size.x > 0
+      result = f.has("quality.tab File") and f.has("quality.message " & NeedFile)
       if result:
         let (m, p) = (f.windowPlace("quality"), f.windowPlace("plot"))
         doAssert m.inSight and m.docked and not m.apart, "not in the centre dock: " & $m
         doAssert abs(m.rect.pos.x - p.rect.pos.x) <= 2 and abs(m.rect.pos.y - p.rect.pos.y) <= 2,
           "not a tab beside the Seismic window: " & $m.rect & " plot " & $p.rect
-    step("Reports > Trace quality", openReport, reportReady)
+        doAssert f.qualityJobs.len == 0, "opening the window computed something: " &
+          $f.qualityJobs
+        doAssert f.markNames("quality.station ").len == 0
+    step("Reports > Trace quality opens the window and computes nothing", openReport, noFile)
 
-    proc totalsMatch(f: FrameInfo): bool =
-      scanOnce(f)
-      if f.markOf(expectedTotals).size.x == 0: return false
-      var plural = false
-      for name in f.markNames("quality.totalsline "):
-        if "1 file, 1 record, 2 traces" in name: plural = true
-      var note = false
-      for name in f.markNames("quality.unreadnote "):
-        if "1 file could not be read" in name: note = true
-      doAssert plural, "totals were not singular: " & $f.markNames("quality.totalsline ")
-      doAssert note, "no unread line: " & $f.markNames("quality.unreadnote ")
-      doAssert f.markOf("quality.header Line").size.x > 0, "stations table has no Line column"
-      doAssert f.markOf("quality.header Dead").size.x > 0, "Dead header missing"
-      doAssert f.savePng(stationsShot), "stations shot was not written"
-      true
-    step("the totals match an independent scan", noop, totalsMatch)
+    proc showFile(f: FrameInfo) =
+      f.apply Command(kind: ckShowFile, panel: MainPanel, path: folder / "one.sgd",
+        listFolder: false)
+    proc fileStats(f: FrameInfo): bool =
+      result = f.has("quality.ready") and f.has("quality.header Line")
+      if result:
+        for line in ["Receiver stations in the file: 2", "Traces: 3, 0 killed, 3 measured",
+            "Bad traces: 1 (33.33% of the measured)",
+            "Receiver stations with a bad trace: 1 of 2 (50%)",
+            "Dead: 0, all zero: 1, constant: 0, clipped: 0, spiky: 0, DC offset: 0, " &
+            "not finite: 0", "1 receiver station lacks a component (of 2 components)"]:
+          doAssert f.has("quality.stat " & line), "no line " & line & " in " &
+            $f.markNames("quality.stat ")
+        doAssert f.has("quality.counts 3 traces"), $f.markNames("quality.counts ")
+        doAssert f.has("quality.station 40 1 1 0 1 1 2"), $f.markNames("quality.station ")
+        doAssert f.has("quality.station 90 1 2 0 0 0 -"), $f.markNames("quality.station ")
+        var headers: seq[string] = @[]
+        for n in f.markNames("quality.header "): headers.add n[len("quality.header ") .. ^1]
+        for h in ["Line", "Point", "Lacks component", "Traces", "Killed", "Bad", "Dead",
+            "All zero"]:
+          doAssert h in headers, h & " missing from " & $headers
+        for h in ["Index", "Component", "File", "Record", "Bad records"]:
+          doAssert h notin headers, "a duplicated or record column: " & h
+        doAssert not f.has("quality.tab Records") and not f.has("quality.tab Stations")
+        doAssert f.qualityJobs == @["Trace quality in one.sgd"], $f.qualityJobs
+        doAssert f.has("quality.statsbox")
+        doAssert f.savePng(shots / "quality-file.png"), "file shot was not written"
+    step("the File tab: statistics and one row per station", showFile, fileStats)
+
+    proc folderTab(f: FrameInfo) = f.click(f.markOf("quality.tab Folder").centre)
+    proc folderIdle(f: FrameInfo): bool =
+      if not f.has("quality.folderbutton") and wait mod 8 == 4:
+        f.click(f.markOf("quality.tab Folder").centre)
+      result = f.has("quality.message folder") and f.has("quality.folderbutton")
+      if result:
+        doAssert not f.has("quality.scanning") and not f.has("quality.ready")
+        for t in f.qualityJobs:
+          doAssert t != "Trace quality in line", "a folder job before Run"
+    step("the Folder tab starts nothing", folderTab, folderIdle)
+
+    proc chooseFolder(f: FrameInfo) =
+      asked.setLen 0
+      answer = @[folder]
+      f.click(f.markOf("quality.folderbutton").centre)
+    proc folderChosen(f: FrameInfo): bool =
+      result = f.has("quality.folderpath " & folder)
+      if result:
+        doAssert asked == @[dkQualityFolder], $asked
+        doAssert f.core.settings.quality.folder == folder
+        doAssert not f.core.settings.quality.subfolders, "subfolders is on by default"
+        doAssert not f.has("quality.subfolderson")
+        for t in f.qualityJobs:
+          doAssert t != "Trace quality in line", "a folder job before Run"
+    step("Folder... chooses the folder", chooseFolder, folderChosen)
+
+    proc run(f: FrameInfo) = f.click(f.markOf("quality.run").centre)
+    proc folderOff(f: FrameInfo): bool =
+      result = f.has("quality.ready") and f.has("quality.counts 1 file, 3 traces")
+      if result:
+        doAssert f.has("quality.stat Receiver stations in the files: 2"),
+          $f.markNames("quality.stat ")
+        doAssert f.has("quality.station 40 1 1 0 1 1 2"), $f.markNames("quality.station ")
+        doAssert f.markNames("quality.station 100 ").len == 0, "the subfolder was read"
+        doAssert f.savePng(shots / "quality-folder.png"), "folder shot was not written"
+    step("Run: the folder without its subfolders", run, folderOff)
+
+    proc tick(f: FrameInfo) = f.click(f.markOf("quality.subfolders").centre)
+    proc dropped(f: FrameInfo): bool =
+      result = f.core.settings.quality.subfolders and not f.has("quality.ready") and
+        f.has("quality.message folder")
+    step("Include subfolders drops the answer", tick, dropped)
+
+    proc withSub(f: FrameInfo): bool =
+      result = f.has("quality.ready") and f.has("quality.counts 2 files, 6 traces")
+      if result:
+        # station 40:1 is in both files: one row with the counts of both
+        doAssert f.has("quality.station 40 1 2 0 2 2 2"), $f.markNames("quality.station ")
+        doAssert f.has("quality.station 100 1 2 0 0 0 -"), $f.markNames("quality.station ")
+        doAssert f.has("quality.stat Receiver stations in the files: 3"),
+          $f.markNames("quality.stat ")
+        doAssert f.has("quality.stat 1 receiver station lacks a component (of 2 components)"),
+          $f.markNames("quality.stat ")
+    step("Run with subfolders: a station counts over the files", run, withSub)
 
     var exportClicked = false
     proc exportCsv(f: FrameInfo) =
       asked.setLen 0
       answer = @[outCsv]
-      f.click(f.markOf("quality.export").centre)
-      exportClicked = true
     proc exported(f: FrameInfo): bool =
-      if not exportClicked: return false
+      if not exportClicked and wait >= 2:
+        f.click(f.markOf("quality.export").centre)
+        exportClicked = true
       if not fileExists(outCsv): return false
-      let got = readFile(outCsv)
-      doAssert got == expectedCsv, "csv differs, asked " & $asked & "\n" &
-        got[0 ..< min(240, got.len)]
+      let rows = readFile(outCsv).splitLines
+      doAssert rows[0].startsWith("line,point,lacking components,seen,killed,bad,"), rows[0]
+      doAssert rows[1].startsWith("40,1,2,2,0,2,"), rows[1]
+      doAssert rows[2].startsWith("90,1,,2,0,0,"), rows[2]
+      doAssert rows.len == 5 and rows[4] == "", $rows
       doAssert asked == @[dkExportQuality], "asked for " & $asked
       true
     step("Export CSV... writes the stations", exportCsv, exported)
 
     proc sortBad(f: FrameInfo) = f.click(f.markOf("quality.header Bad").centre)
-    proc sortedBad(f: FrameInfo): bool = f.markOf("quality.sort Bad").size.x > 0
+    proc sortedBad(f: FrameInfo): bool = f.has("quality.sort Bad")
     step("a click on Bad sorts by Bad", sortBad, sortedBad)
 
     var filterAt = vec2(0, 0)
@@ -222,67 +260,52 @@ proc main*() =
     proc filtered(f: FrameInfo): bool =
       if wait == 3: f.pressMouse(filterAt, true)
       if wait == 5: f.pressMouse(filterAt, false)
-      if wait == 7: f.typeText("40")
+      if wait == 7: f.typeText("100")
       if wait < 14: return false
-      let bad = f.stationBad("40")
-      let other = f.stationBad("90")
-      result = bad.seen and bad.bad >= 1 and bad.allZero >= 1 and not other.seen
+      result = f.has("quality.station 100 1 2 0 0 0 -") and not f.has("quality.station 90 1 2 0 0 0 -")
+    step("the filter shows one station", startFilter, filtered)
+
+    proc fileTab(f: FrameInfo) =
+      f.apply Command(kind: ckShowFile, panel: MainPanel, path: folder / "sub" / "two.sgd",
+        listFolder: false)
+    proc followsFile(f: FrameInfo): bool =
+      if not f.has("quality.stat Traces: 3, 0 killed, 3 measured") and wait mod 8 == 4:
+        f.click(f.markOf("quality.tab File").centre)
+      result = f.has("quality.ready") and f.has("quality.stat Traces: 3, 0 killed, 3 measured")
       if result:
-        doAssert f.savePng(shot), "the screenshot was not written"
-    step("the filter shows the all-zero station", startFilter, filtered)
+        # (the filter box still says 100)
+        doAssert f.has("quality.station 100 1 2 0 0 0 -") and
+          not f.has("quality.station 90 1 2 0 0 0 -"), $f.markNames("quality.station ")
+        doAssert f.has("quality.counts 3 traces")
+    step("the File tab follows the file shown", fileTab, followsFile)
 
-    var tabPhase = 0
-    proc checkTabs(f: FrameInfo) = tabPhase = 0
-    proc tabsShown(f: FrameInfo): bool =
-      case tabPhase
-      of 0:
-        f.click(f.markOf("quality.tab Stations").centre)
-        inc tabPhase
-      of 1:
-        if f.markOf("quality.header Line").size.x > 0 and
-            f.markOf("quality.header File").size.x == 0:
-          f.click(f.markOf("quality.tab Records").centre)
-          inc tabPhase
-      of 2:
-        if f.markOf("quality.header File").size.x == 0 and wait mod 8 == 0:
-          f.click(f.markOf("quality.tab Records").centre)
-        if f.markOf("quality.header File").size.x > 0 and
-            f.markOf("quality.header Line").size.x == 0:
-          doAssert f.savePng(recordsShot), "records shot was not written"
-          return true
-      else: discard
-      false
-    step("each tab shows its table", checkTabs, tabsShown)
+    proc unreadButton(f: FrameInfo): bool = f.has("quality.unread")
+    step("the Unread button is there", noop, unreadButton)
 
-    proc recordsTab(f: FrameInfo) = f.click(f.markOf("quality.tab Records").centre)
-    proc recordsShown(f: FrameInfo): bool =
-      if f.markOf("quality.record 0").size.x == 0 and wait mod 8 == 0:
-        f.click(f.markOf("quality.tab Records").centre)
-      f.markOf("quality.file one.sgd").size.x > 0
-    step("the Records tab", recordsTab, recordsShown)
+    var closed = false
+    proc closeIt(f: FrameInfo) = discard
+    proc closedDone(f: FrameInfo): bool =
+      if not closed and wait >= 3:
+        let at = f.tabCloseAt("quality")
+        doAssert at.x > 0, "no tab close button"
+        f.click(at)
+        closed = true
+      result = closed and awQuality in f.hiddenWindows and not f.windowPlace("quality").inSight
+    step("the window's close button hides it", closeIt, closedDone)
 
-    proc openedFile(f: FrameInfo): bool =
-      var saw = false
-      for s in f.core.sessions:
-        if "one.sgd" in s.path: saw = true
-      if not saw:
-        let row = f.markOf("quality.record 0")
-        let q = vec2(row.pos.x + 12, round(row.pos.y + row.size.y / 2))
-        case wait mod 12
-        of 2: f.moveMouse(q)
-        of 4: f.pressMouse(q, true)
-        of 5: f.pressMouse(q, false)
-        of 6: f.pressMouse(q, true)
-        of 7: f.pressMouse(q, false)
-        else: discard
-      saw
-    step("a double click opens the file", noop, openedFile)
-
-    proc openUnread(f: FrameInfo) = f.click(f.markOf("quality.unread").centre)
-    proc unreadNames(f: FrameInfo): bool =
-      for name in f.markNames("quality.unreadline "):
-        if "notes.txt" in name: return true
-    step("Unread names notes.txt", openUnread, unreadNames)
+    var shownAgain = false
+    proc showAgain(f: FrameInfo) =
+      f.click(f.markOf("menu.View").centre)
+    proc returned(f: FrameInfo): bool =
+      let item = f.markOf("menu.window.quality")
+      if not shownAgain:
+        if item.size.x > 0:
+          f.click(item.centre)
+          shownAgain = true
+        elif wait mod 12 == 0:
+          f.click(f.markOf("menu.View").centre)
+      result = shownAgain and f.windowPlace("quality").inSight and f.has("quality.tab File")
+    step("the View menu brings it back", showAgain, returned)
 
     var at = 0
     var started = false
