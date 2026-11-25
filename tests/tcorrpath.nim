@@ -35,6 +35,12 @@ proc main*() =
     doAssert diskOf(key) == raw, "diskOf kept the virtual key"
     doAssert diskOf(key & "x") == key & "x", "diskOf stripped a path that is not a key"
     doAssert diskOf("") == ""
+    let a = freshDerivedKey(raw)
+    let b = freshDerivedKey(raw)
+    doAssert a != b and a != key, "two derived sessions of a file share a key"
+    doAssert diskOf(a) == raw and diskOf(b) == raw, "diskOf kept a numbered key"
+    doAssert '\0' in a and $cstring(a) != raw
+    doAssert diskOf(raw & "12") == raw & "12", "diskOf stripped digits of a real path"
 
   block derived_session_keeps_the_disk_path:
     setFsHook(note)
@@ -51,13 +57,14 @@ proc main*() =
       doAssert s.derived
       doAssert s.origin == raw
       doAssert s.diskPath == raw
-      doAssert s.path == forbidden
+      doAssert s.path.startsWith(forbidden) and diskOf(s.path) == raw
       doAssert s.path != raw
+      let key = s.path
       doAssert s.name == raw.extractFilename, "the name carries the virtual key: " & s.name
       doAssert '\0' notin s.name
       s.asDerived()
       doAssert s.origin == raw, "a second bind replaced the origin"
-      doAssert s.path == forbidden, "a second bind changed the key"
+      doAssert s.path == key, "a second bind changed the key"
     doAssert hits > 0, "the file-system hook saw no call"
     doAssert seen.len == 0, "fs was asked to stat the virtual path: " & strutils.join(seen, "; ")
     setFsHook(nil)

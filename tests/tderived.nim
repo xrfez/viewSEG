@@ -310,7 +310,7 @@ proc viewOfSweep() =
   doAssert view.isCorrelatedView
   doAssert not raw.isCorrelatedView
   doAssert view.derived
-  doAssert view.path == correlatedPath(path)
+  doAssert view.path.startsWith(correlatedPath(path)) and diskOf(view.path) == path
   doAssert view.diskPath == path
   doAssert view.filePtr == raw.filePtr
   doAssert view.len == raw.len
@@ -385,14 +385,14 @@ proc main*() =
     doAssert copy.inMemory
     let derived = newSession(raw, copy)
     derived.asDerived()
-    doAssert derived.path == forbidden
+    doAssert derived.path.startsWith(forbidden) and diskOf(derived.path) == raw
     doAssert derived.diskPath == raw
     st.adoptDerived(derived)
     let shown = st.shownFile(st.findPanel(MainPanel))
     doAssert shown >= 0 and st.sessions[shown].derived, "the derived view was not shown"
     doAssert st.sessions.anyIt(not it.derived and it.path == raw), "the raw file was closed"
     doAssert st.fileList.chosen == raw, "the chosen file is not the file on disk"
-    doAssert forbidden notin st.settings.recentFiles, "the virtual key was remembered"
+    doAssert not st.settings.recentFiles.anyIt(it.startsWith(forbidden)), "the virtual key was remembered"
     let since = getMonoTime()
     doAssert st.settle(st.panel(MainPanel).laidOut and st.jobs.active.len == 0 and
       getMonoTime() - since > initDuration(milliseconds = 80)),

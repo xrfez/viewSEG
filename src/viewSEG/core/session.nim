@@ -14,8 +14,8 @@
 ##
 ## A session derived from a file on disk (a correlated record) keeps that
 ## file's path in `origin` and a virtual key in `path`, set by `asDerived`
-## before it is adopted. The key is `correlatedPath` of the file on disk: the
-## same for that file every time, and not a path any file system can name.
+## before it is adopted. The key is `correlatedPath` of the file on disk and a number of
+## its own (`freshDerivedKey`), not a path any file system can name; `diskOf` takes it back.
 ## Readers and jobs still hold, read and close by `path`. `diskPath` is the
 ## file on disk.
 ##
@@ -147,10 +147,25 @@ func correlatedPath*(raw: string): string {.inline.} =
   ## that file, and not a path any file system can name. Built here only.
   raw & CorrelateSuffix
 
-func diskOf*(path: string): string {.inline.} =
-  ## The file on disk a path names. A derived session's virtual key is
-  ## stripped of its suffix; any other path is returned as given.
-  if path.endsWith(CorrelateSuffix): path[0 ..< path.len - CorrelateSuffix.len]
+var derivedKeys: Atomic[int]
+
+proc freshDerivedKey*(raw: string): string =
+  ## The virtual key of one session derived from the file at `raw`: `correlatedPath` and a
+  ## number no other derived session of the run has. A view that replaces another of the
+  ## same file has a key of its own, so what is held or closed under the old key does not
+  ## wait for the new one.
+  correlatedPath(raw) & $(derivedKeys.fetchAdd(1, moRelaxed) + 1)
+
+func diskOf*(path: string): string =
+  ## The file on disk a path names. A derived session's virtual key (the suffix and the
+  ## digits of its number) is stripped; any other path is returned as given.
+  var j = path.len
+  while j > 0 and path[j - 1] in {'0' .. '9'}: dec j
+  let n = CorrelateSuffix.len
+  var key = j >= n
+  for k in 0 ..< n:
+    if key and path[j - n + k] != CorrelateSuffix[k]: key = false
+  if key: path[0 ..< j - n]
   else: path
 
 func `==`*(a, b: SessionId): bool {.borrow.}
@@ -266,7 +281,7 @@ proc asDerived*(s: Session) =
   ## already has an origin is left as it is.
   if s.origin.len > 0: return
   s.origin = s.path
-  s.path = correlatedPath(s.origin)
+  s.path = freshDerivedKey(s.origin)
 
 proc markStoredHeaders(facts: var FileFacts) =
   ## Binary and general-header rows are the raw file's. `facts.rows` groups
@@ -313,7 +328,7 @@ proc asCorrelatedView*(raw: Session; view: CorrelateView): Session =
   let onDisk = if raw.origin.len > 0: raw.origin else: raw.path
   if view.path.len > 0 and view.path != raw.path and view.path != onDisk:
     raise newException(ValueError, "the correlated view is of another file.")
-  result = Session(path: correlatedPath(onDisk), origin: onDisk,
+  result = Session(path: freshDerivedKey(onDisk), origin: onDisk,
     gathers: raw.gathers, records: raw.records, columns: raw.columns,
     size: raw.size, modified: raw.modified, checkedAgainst: raw.checkedAgainst,
     crs: raw.crs, facts: raw.facts, keysRevision: raw.keysRevision,

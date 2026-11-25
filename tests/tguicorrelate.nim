@@ -51,7 +51,7 @@ proc note(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
       fsSeen.add $op & " " & path.replace("\0", "\\0")
     else:
       for f in forbidden:
-        if path == f: fsSeen.add $op & " " & path
+        if path.startsWith(f): fsSeen.add $op & " " & path
 
 type
   Step = object
@@ -85,7 +85,7 @@ proc delayedSweep(sweep: openArray[float32]; samples, delay: int): seq[float32] 
 
 proc writeRaw(path: string; sweep: openArray[float32]) =
   var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1,
-    measurementSystem: 1, text: @["C01 correlation button test"]))
+    measurementSystem: 1, text: @["C01 correlation button test " & path.extractFilename]))
   for i in 0 .. 4:
     var buf: seq[float32]
     var k = initTraceKeys()
@@ -377,7 +377,7 @@ proc main*() =
       if i < 0: return false
       let asked = f.core.spectrumAsked
       asked.path == f.core.sessions[i].path and asked.session == int(f.core.sessions[i].id) and
-        asked.path == correlatedPath(rawA)
+        asked.path.startsWith(correlatedPath(rawA))
     step("spectrum of the derived file", askSpectrum, spectrumAsked)
 
     proc killTrace(f: FrameInfo) {.closure.} =

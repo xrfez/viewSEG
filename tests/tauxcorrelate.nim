@@ -22,7 +22,11 @@
 ## with `auxMarks` left out of the memory document, (f) read back none; with a position
 ## a record lacks given the record's last auxiliary trace, (g) listed trace 6 twice; with
 ## each record's pilot trace marked whatever the marks, (h) found the unmarked pilot
-## trace correlated.
+## trace correlated; with every derived view of a file under one key, the close of a view
+## replaced by a new one stayed queued while the new one was shown (the replaced view was not
+## closed); with the marks that arrive after the view was asked for left out of
+## `editsChanged`, a file reopened with Correlate on showed the raw trace 3 and an imported
+## mark changed nothing.
 
 import std/[math, options, os, sequtils, strutils, times]
 import parseSEG
@@ -158,6 +162,11 @@ proc raw(f: SeismicFile; trace: int): seq[float32] =
 proc said(st: AppState; text: string): bool =
   for e in st.log:
     if text in e.text: return true
+
+proc closesOpen(st: AppState): int =
+  ## Close jobs not yet done.
+  for j in st.jobs.list:
+    if j.spec.title.startsWith("Close") and j.state in {jsQueued, jsRunning}: inc result
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); st.persist(); cond) and
@@ -591,6 +600,47 @@ proc main*() =
         not st.correlating and st.derivedTrace(3) != before),
         "the imported mark did not reach the correlated view"
       discard st.shutdown()
+
+  withFixtures fq:
+    ## A correlated view that replaces another of the same file (a mark changed, then another
+    ## reference): the old view's close runs at once, it does not wait for as long as
+    ## the new one is shown, and only the new view is kept.
+    let src = fq.dir / "replace.sgy"
+    writeRecords(src, one)
+    var st = initAppState(watchEvery = initDuration(hours = 1))
+    var settings = st.settings
+    settings.files.prepareNext = false
+    st.apply Command(kind: ckSettings, settings: settings)
+    st.rememberFilesIn(fq.dir / "config")
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: src)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    doAssert st.settle(st.referencesLoaded), "the archive was not read"
+    for (name, toMs) in [("short", 100.0), ("longer", 150.0)]:
+      st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: name,
+        trace: st.sessions[0].base, fromMs: 0, toMs: toMs))
+      doAssert st.settle(st.references.entries.anyIt(it.name == name))
+    proc choose(st: var AppState; name: string) =
+      for e in st.references.entries:
+        if e.name == name: st.apply Command(kind: ckSelectReference, refId: e.id)
+    proc replaced(st: var AppState; what: string) =
+      doAssert st.settle(not st.correlating and st.closesOpen == 0 and
+        st.sessions.filterIt(it.derived).len == 1),
+        "after " & what & " the old correlated view was not closed: " &
+        $st.sessions.filterIt(it.derived).len & " views, " & $st.closesOpen &
+        " closes open; on: " & $st.correlateOn & "; log: " & st.log.mapIt(it.text).join(" | ")
+    st.choose("short")
+    st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: true)
+    doAssert st.settle(st.sessions.anyIt(it.derived) and not st.correlating)
+    let first = st.sessions.filterIt(it.derived)[0].path
+    st.apply Command(kind: ckFileAuxMark, auxFile: src, auxPosition: 1, auxMarked: amMarked,
+      auxShiftMs: 500.0)
+    st.replaced("a mark changed")
+    doAssert st.sessions.filterIt(it.derived)[0].path != first,
+      "the new view has the old one's key"
+    doAssert diskOf(first) == src and diskOf(st.sessions.filterIt(it.derived)[0].path) == src
+    st.choose("longer")
+    st.replaced("the reference changed")
+    discard st.shutdown()
   echo "tauxcorrelate: ok"
 
 when isMainModule:
