@@ -495,7 +495,9 @@ proc main*() =
     let got = runBatch(ask, store, @[])
     doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
     let applied = itemOf(got.wrote, "line1" / "shots.sgy")
-    doAssert applied.lines.len == 2, $applied.lines
+    doAssert applied.lines.len == 4, $applied.lines
+    doAssert applied.lines[2] == "1 trace had its polarity reversed.", applied.lines[2]
+    doAssert applied.lines[3] == "1 killed trace was left out.", applied.lines[3]
     doAssert applied.lines[0] == "applied this file's saved edits: " & keptWords(lists),
       applied.lines[0]
     doAssert applied.lines[1] == BatchOwnPositions, applied.lines[1]

@@ -478,12 +478,12 @@ proc boundary(file: SeismicFile; trace: int; byEntry, segdOut: bool): int64 =
 
 func processingSentence*(p: Processing): string =
   ## What writing with the Seismic window's filters does, in plain words: the
-  ## filters in force, or that none is on and nothing is changed.
+  ## filters in force, or that none is on.
   if p.filtering:
     let band = if p.band == pbBandPass: "band-pass " else: ""
     "The written traces will be filtered: " & band & p.describe & "."
   else:
-    "The Seismic window has no filter on: nothing is changed."
+    "The Seismic window has no filter on."
 
 func changesTraces(opts: OutputOptions): bool =
   ## Whether an option that changes samples or which traces are written is on.
@@ -754,6 +754,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         file[].ensureKeys()
       var dropped = 0
       var written = 0
+      var ownFiltered, reversedCount, shiftedCount, ownIgnored = 0
       var records = 0
       var rec = int64(-1)
       var firstKept = -1
@@ -1086,6 +1087,14 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             # Designed at this trace's interval: an auxiliary trace at another
             # interval does not set the seismic traces' filters.
             let dtMs = if correlating: corrDtMs else: traceDt(file, t)
+            let traceKeys = file[].traceKeys(t)
+            if traceKeys.status != tsDead:
+              if reversed: inc reversedCount
+              if shiftMs != 0.0 and traceKeys.isSeismic: inc shiftedCount
+              if opts.applyOwnFilters and own.spec.hasFilters: inc ownFiltered
+              elif opts.applyProcessing and not opts.applyOwnFilters and
+                  opts.processing.filtering and own.place == fpInstead:
+                inc ownIgnored
             applyPreparedTrace(samples, file[].traceKeys(t), dtMs, reversed, shiftMs,
               opts.processing, opts.applyProcessing, own, opts.applyOwnFilters, plans)
           if like:
@@ -1168,6 +1177,22 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           let sentence = positionSentence(writtenPositions(file[], edits, opts.dropKilled), gaps)
           if sentence.len > 0: lines.add sentence
         if opts.applyProcessing: lines.add processingSentence(opts.processing)
+        if ownIgnored > 0:
+          lines.add(if ownIgnored == 1: "1 trace has a filter of its own that is not applied: " &
+            "it is written unfiltered." else: $ownIgnored & " traces have a filter of their " &
+            "own that is not applied: they are written unfiltered.")
+        if ownFiltered > 0:
+          lines.add($ownFiltered & (if ownFiltered == 1: " trace had its own filter applied."
+            else: " traces had their own filters applied."))
+        if reversedCount > 0:
+          lines.add($reversedCount & (if reversedCount == 1: " trace had its polarity reversed."
+            else: " traces had their polarity reversed."))
+        if shiftedCount > 0:
+          lines.add($shiftedCount & (if shiftedCount == 1: " trace was time shifted."
+            else: " traces were time shifted."))
+        if dropped > 0:
+          lines.add($dropped & (if dropped == 1: " killed trace was left out."
+            else: " killed traces were left out."))
         for d in log: lines.add($d)
         for d in w.revisionNotes: lines.add($d)
         if correlating:

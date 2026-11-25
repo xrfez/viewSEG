@@ -313,6 +313,39 @@ proc main*() =
       doAssert samplesOf(back, 1) == samplesOf(src, 1), "a neighbour was filtered"
       back.close()
       removeFile(dest)
+    block appliedNotes:
+      # each file's notes say what was applied to its samples, only what applies
+      var edits: FileEdits
+      doAssert edits.change(teReversed, [3, 4], true) == 2
+      doAssert edits.change(teKilled, [5], true) == 1
+      doAssert edits.setOwnFilters([1, 2], bounded(OwnFilter(spec: Processing(band: pbBandPass,
+        f1: 8, f2: 12, f3: 40, f4: 50)))) == 2
+      doAssert edits.setTimeShifts([0], 8.0, 2.0) == 1
+      let dest = dir / "applied.sgy"
+      let all = runJob(src, segy, dest, OutputOptions(format: ofSegy, applyReversals: true,
+        dropKilled: true, applyOwnFilters: true, applyShifts: true), edits, @[segy])
+      doAssert all.st == jsDone, all.error
+      for want in ["2 traces had their polarity reversed.", "2 traces had their own filters " &
+          "applied.", "1 trace was time shifted.", "1 killed trace was left out."]:
+        doAssert want in all.wrote.lines, want & " is not in " & $all.wrote.lines
+      removeFile(dest)
+      let none = runJob(src, segy, dest, OutputOptions(format: ofSegy), edits, @[segy])
+      for line in none.wrote.lines:
+        doAssert not line.endsWith("reversed.") and not line.endsWith("applied.") and
+          not line.endsWith("shifted.") and not line.endsWith("left out."),
+          "a note says something was applied that was not: " & line
+      removeFile(dest)
+      # "instead" filters with Processing ticked and Own filters off are not applied
+      var instead: FileEdits
+      doAssert instead.setOwnFilters([1, 2], bounded(OwnFilter(place: fpInstead,
+        spec: Processing(band: pbBandPass, f1: 8, f2: 12, f3: 40, f4: 50)))) == 2
+      let plot = bounded(Processing(band: pbHighCut, f3: 40, f4: 50))
+      let held = runJob(src, segy, dest, OutputOptions(format: ofSegy, applyProcessing: true,
+        processing: plot), instead, @[segy])
+      doAssert held.st == jsDone, held.error
+      doAssert "2 traces have a filter of their own that is not applied: they are written " &
+        "unfiltered." in held.wrote.lines, $held.wrote.lines
+      removeFile(dest)
     block plotFilter:
       let plot = bounded(Processing(band: pbHighCut, f3: 40, f4: 50))
       let dest = dir / "plot.sgy"
@@ -331,7 +364,7 @@ proc main*() =
       let bare = runJob(src, segy, dest,
         OutputOptions(format: ofSegy, applyProcessing: true), FileEdits(), @[segy])
       doAssert bare.st == jsDone, bare.error
-      doAssert "The Seismic window has no filter on: nothing is changed." in bare.wrote.lines,
+      doAssert "The Seismic window has no filter on." in bare.wrote.lines,
         "the notes do not say no filter was on: " & $bare.wrote.lines
       removeFile(dest)
     block sorted:

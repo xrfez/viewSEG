@@ -460,7 +460,7 @@ are on: polarity reversals, dropping killed traces, each trace's own filter, tim
 and the plot's sort. **Processing**, the Seismic window's filters, is off every time you
 start the program, so a band-pass on the plot is never written unasked. Tick it and a line
 under the boxes says what will be written (for example "The written traces will be
-filtered: band-pass 5-10-40-60 Hz."), or that no filter is on and nothing is changed; each
+filtered: band-pass 5-10-40-60 Hz."), or that no filter is on; each
 file's notes say the same. **Keep the file's own positions**
 is off: a survey join or a station move in an open file is written into the headers on
 every path, including when headers are built from the trace keys. The notes say how many
