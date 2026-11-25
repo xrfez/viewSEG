@@ -1384,8 +1384,11 @@ name cannot be one of the system's names, whatever its capitals, spaces or punct
 under the name, and **Apply** stays off until it is fixed. A header that uses a system name
 for a column left user defined gets " (file)" after it.
 
-Each shot has one instant, and slicing and matching use it. It is read from **GPSTB** when
-that column is chosen and reads, and otherwise from **Time (UTC)**. If both are chosen and a
+Each shot has one instant, and slicing and matching use it. When **GPSTB** is chosen the
+instant is read from it alone: a row whose GPSTB is empty, a missing value or does not read
+has no time, Problems says "GPSTB missing" on that row, and the row is not sliced or matched
+by time; Time (UTC) is never used for it instead, so two clocks are never mixed in one log.
+Without GPSTB the instant is read from **Time (UTC)**. If both are chosen and a
 row's two differ by more than a millisecond, Problems says so, naming both values and
 that GPSTB is used. **Time (UTC)** is chosen for at most one column, like every other
 system column, and the dialog refuses a second. Its cell is read by one pattern for the whole

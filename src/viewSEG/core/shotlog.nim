@@ -136,7 +136,8 @@ type
   Shot* = object
     ## Typed values of one row. An integer is `none` when missing or a
     ## sentinel; a float is NaN. `timeUtcUs` is the one instant, UTC
-    ## microseconds since 1970: GPSTB when that column reads, else Time (UTC).
+    ## microseconds since 1970: GPSTB's when GPSTB is chosen (`none` where its
+    ## cell does not read), else Time (UTC)'s.
     ## A column mapped to Ignore is not here at all.
     sequence*: Option[int64]
     fileNumber*: Option[int64]
@@ -1006,6 +1007,9 @@ const
   SplitTimeOld* = "This log's time was read from several columns before; that is no " &
     "longer done. Choose GPSTB or one Time (UTC) column."
   MmFault = "A pattern cannot have mm: write mo for the month and mi for the minute."
+  GpsMissing* = "GPSTB missing"
+    ## said on a row with no GPSTB when GPSTB is chosen: that row has no time
+  GpsMissingAfter = "; " & GpsMissing
   SampleRows* = 64 ## rows whose cells decide a time's form
 
 type
@@ -1948,12 +1952,16 @@ func canonBits(x: float64): int64 =
   if x == 0.0: 0'i64 else: cast[int64](x)
 
 proc keepInstant(instants: var seq[Instant]; problems: var ProblemList; row: int;
-    name: string; us, named: int64; col: int) =
+    name: string; us, named: int64; col: int; outside = ""): bool =
+  ## Adds the instant, or, outside years 1900..2200, a problem that ends with
+  ## `outside`. True when it was added.
   if us < InstantLo or us > InstantHi:
     addProblem(problems, pkBadNumber, row, col,
-      name & " " & $named & " is outside 1900..2200")
+      name & " " & $named & " is outside 1900..2200" & outside)
+    false
   else:
     instants.add Instant(name: name, us: us, col: col)
+    true
 
 func fmtDiff(us: int64): string =
   let a = abs(us)
@@ -2059,17 +2067,20 @@ proc timeNote*(log: ShotLog; map: ShotLogMap): string {.raises: [].} =
   timeAsk(log, map).text
 
 proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
-  ## Typed rows. The instant is the first source that parsed, in this order:
-  ## GPSTB, then Time (UTC), which is one column. Its cell is read as
-  ## `map.dateTimePattern` says (empty: the pattern the first rows decide;
-  ## when they decide none, no time is read from the column and one problem
-  ## at the top says so); a calendar time is read on `map.clock`, the epoch
-  ## forms are UTC. A log whose time was found spread over several columns
-  ## (`map.timeSplit`), with neither GPSTB nor Time (UTC) mapped, has one
-  ## problem at the top and no times. When both sources are there and differ
-  ## by more than a millisecond, that is a problem naming both values and
-  ## saying GPSTB is used; a gap of 18 s is called out as GPS and UTC mixed. Times that go
-  ## backwards, a repeated (source line, source point, index) and a repeated
+  ## Typed rows. With GPSTB chosen the instant is GPSTB's: a row whose GPSTB
+  ## is empty, a sentinel, unreadable or outside 1900..2200 has no time and a
+  ## problem that says `GpsMissing`, and Time (UTC) is never its instant
+  ## instead. Without GPSTB the instant is Time (UTC)'s, which is one column.
+  ## Its cell is read as `map.dateTimePattern` says (empty: the pattern the
+  ## first rows decide; when they decide none, no time is read from the
+  ## column and one problem at the top says so); a calendar time is read on
+  ## `map.clock`, the epoch forms are UTC. A log whose time was found spread
+  ## over several columns (`map.timeSplit`), or that has a user defined
+  ## column holding a time that is not read (`timeNote`), with neither GPSTB
+  ## nor Time (UTC) mapped, has one problem at the top and no times. When
+  ## both sources are there and differ by more than a millisecond, that is a
+  ## problem naming both values and saying GPSTB is used; a gap of 18 s is
+  ## called out as GPS and UTC mixed. Times that go backwards, a repeated (source line, source point, index) and a repeated
   ## FFID are problems too. An instant outside years 1900..2200 is a bad
   ## number and is not the row's time. A time that does not read as the
   ## pattern says is a problem naming the row's time text and the pattern. A
@@ -2110,7 +2121,9 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
         let whole = parseWhole(chars, map.decimalComma)
         if not whole.ok:
           addProblem(result.problems, pkBadNumber, row, col,
-            $role & " '" & shotted(chars) & "' is not a whole number")
+            $role & " '" & shotted(chars) & "' is not a whole number" &
+            (if role == crGpsMicros: GpsMissingAfter else: ""))
+          if role == crGpsMicros: gpsSaid = true
         else:
           case role
           of crSequence: shot.sequence = some(whole.value)
@@ -2149,6 +2162,7 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
     else: discard
   const NumberRoles = {crSequence, crFileNumber, crPointIndex, crGpsMicros, crSailLine,
     crSourceLine, crShotPoint, crSourceDepth, crWaterDepth, crX, crY, crZ, crUphole}
+  let gpsColumn = map.roles.find(crGpsMicros)
   var seenFile = initTable[int64, int]()
   var seenShot = initTable[(int64, int64, int64), int]()
   var lastTime: Option[int64] = none(int64)
@@ -2157,6 +2171,7 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
     var shot = blankShot()
     var gps: Option[int64] = none(int64)
     var gpsCol = -1
+    var gpsSaid = false ## a problem already says the row's GPSTB is missing
     let roleCount = map.roles.len
     let fieldCount = fields(log, row)
     let colsN = max(roleCount, fieldCount)
@@ -2189,9 +2204,14 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
         of crSourceId: shot.sourceId = value
         else: shot.texts.add value
     var instants: seq[Instant] = @[]
+    var gpsKept = false
     if gps.isSome:
       let utc = gpsMicrosToUtcMicros(gps.get)
-      keepInstant(instants, result.problems, row, $crGpsMicros, utc, gps.get, gpsCol)
+      gpsKept = keepInstant(instants, result.problems, row, $crGpsMicros, utc, gps.get,
+        gpsCol, GpsMissingAfter)
+      gpsSaid = not gpsKept
+    if gpsColumn >= 0 and not gpsSaid and not gpsKept:
+      addProblem(result.problems, pkNoTime, row, gpsColumn, GpsMissing)
     if timeCol >= 0 and pat.text.len > 0 and pat.fault.len == 0 and
         timeCol < fieldCount:
       let raw = cell(log, row, timeCol)
@@ -2208,8 +2228,10 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
           if read.clash.len > 0:
             addProblem(result.problems, pkTimeDisagree, row, timeCol,
               "time '" & text & "': " & read.clash)
-          keepInstant(instants, result.problems, row, $crTime, read.us, read.us,
+          discard keepInstant(instants, result.problems, row, $crTime, read.us, read.us,
             timeCol)
+    if gpsColumn >= 0 and not gpsKept:
+      instants.setLen 0 # with GPSTB chosen, Time (UTC) is never the instant instead
     if instants.len > 0:
       shot.timeUtcUs = some(instants[0].us)
       for k in 1 ..< instants.len:

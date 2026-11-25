@@ -45,7 +45,8 @@
 ## `optionalFraction` read no row of a log whose rows read before. With the
 ## pattern still made to read every sampled row, `shapesDecide` and
 ## `guessRules` read no row of a log with one 30 February or hour 25; with
-## hour 24 refused, 24:00:00 was not read.
+## hour 24 refused, 24:00:00 was not read. With Time (UTC) taken where GPSTB
+## is empty, `crossCheck` mixed two clocks in one log and said nothing.
 
 import std/[math, options, os, strutils, times]
 import viewSEG/core/shotlog
@@ -351,14 +352,28 @@ proc main*() =
     let swapped = read($(UtcMarch + 2_000_000) & "," & $GpsMarch & "\n",
       [crTime, crGpsMicros], header = false, pattern = EpochMicros)
     doAssert swapped.rows[0].timeUtcUs.get == UtcMarch
-    # an empty or unreadable GPSTB cell: Time (UTC)'s instant, nothing more said
-    let noGps = read("," & $UtcMarch & "\n" & "x," & $(UtcMarch + 10_000_000) & "\n",
-      [crGpsMicros, crTime], header = false, pattern = EpochMicros)
-    doAssert noGps.rows[0].timeUtcUs.get == UtcMarch
-    doAssert noGps.rows[0].timeUtcUs.get == UtcMarch
-    doAssert noGps.rows[1].timeUtcUs.get == UtcMarch + 10_000_000
+    # with GPSTB chosen, a row whose GPSTB is empty, a sentinel, unreadable or outside
+    # 1900..2200 has no time, and says so: Time (UTC) is never its instant instead
+    let noGps = read("," & $UtcMarch & "\n" & "x," & $(UtcMarch + 10_000_000) & "\n" &
+      "-999," & $(UtcMarch + 20_000_000) & "\n" & $high(int64) & "," &
+      $(UtcMarch + 30_000_000) & "\n" & $(GpsMarch + 40_000_000) & "," &
+      $(UtcMarch + 40_000_000) & "\n", [crGpsMicros, crTime], header = false,
+      pattern = EpochMicros)
+    for row in 0 .. 3: doAssert noGps.rows[row].timeUtcUs.isNone, $row
+    doAssert noGps.rows[4].timeUtcUs.get == UtcMarch + 40_000_000
     doAssert not hasKind(noGps.problems, pkTimeDisagree)
-    doAssert "GPSTB 'x' is not a whole number" in kindText(noGps.problems, pkBadNumber)
+    var said = newSeq[string](5)
+    for it in noGps.problems.items:
+      doAssert it.col == 0
+      said[it.row].add it.text
+    doAssert said[0] == "GPSTB missing" and said[2] == "GPSTB missing"
+    doAssert said[1] == "GPSTB 'x' is not a whole number; GPSTB missing"
+    doAssert "is outside 1900..2200; GPSTB missing" in said[3]
+    doAssert said[4] == ""
+    let gpsOnly = read("g\n\n" & $GpsMarch & "\n,\n", [crGpsMicros, crText])
+    doAssert gpsOnly.rows[0].timeUtcUs.get == UtcMarch
+    doAssert gpsOnly.rows[1].timeUtcUs.isNone
+    doAssert kindText(gpsOnly.problems, pkNoTime) == "GPSTB missing"
     # neither reads: no time and the usual problem
     let neither = read("x,y\n", [crGpsMicros, crTime], header = false, pattern = EpochMicros)
     doAssert neither.rows[0].timeUtcUs.isNone

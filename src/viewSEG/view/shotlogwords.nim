@@ -15,8 +15,9 @@ const
   ApplyButton* = "Apply"
   CancelButton* = "Cancel"
   GuessButton* = "Guess again"
-  TimeSourceTip* = "Slicing and matching use GPSTB when that column is chosen, otherwise " &
-    "Time (UTC)."
+  TimeSourceTip* = "Slicing and matching use GPSTB when that column is chosen: a row " &
+    "whose GPSTB is empty or does not read has no time (Problems says GPSTB missing), " &
+    "and Time (UTC) is not used instead. Without GPSTB they use Time (UTC)."
   PatternTip* = "How the cell of the Time (UTC) column reads as a time.\n" &
     "yyyy: year, four digits      yy: two digits (50 to 99 is 19xx, 0 to 49 is 20xx)\n" &
     "ddd: day of year      mo: month      dd: day of month\n" &
