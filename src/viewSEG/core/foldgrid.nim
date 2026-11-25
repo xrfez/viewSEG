@@ -13,9 +13,9 @@
 ## `MinBinPixels` wide), each the **maximum** of the fold of its bins. The
 ## maximum rather than the mean: it keeps the edge of the surveyed area where
 ## it is and does not paint a block darker for a hole beside a covered bin
-## (a hole narrower than a block is not drawn at that zoom: zoom in to see it). A
-## level is made once, the first time it is drawn, and kept; nothing is
-## allocated per frame.
+## (a hole narrower than a block is not drawn at that zoom: zoom in to see it). The
+## levels are made by the job that counts the fold (`FoldResult.levels`), so the UI
+## thread only looks one up; nothing is allocated per frame.
 ##
 ## **Where a bin is.** The grid is rotated to the receiver lines' azimuth `a`
 ## (degrees clockwise from north). With `u = (sin a, cos a)` along the
@@ -23,35 +23,18 @@
 ## bin (inline `i`, crossline `j`) is centred at `(x0, y0) + j * binAlong * u +
 ## i * binAcross * v` and spans half a bin to each side (`binAt` inverts it).
 
-import std/math
+import std/[math, strutils]
 import colourmaps, foldjobs, geometry, spatial
+
+export foldjobs
 
 const
   MinBinPixels* = 3.0 ## the smallest bin, in pixels, a level draws
-  MaxCells* = 4096    ## the most blocks a level has along either axis (a GPU texture's size)
 
 type
-  FoldLevel* = object
-    ## Blocks of `factor x factor` bins, row-major, `rows x cols` blocks.
-    factor*, cols*, rows*: int
-    colours*: seq[uint32]
-      ## per block, packed as bytes r, g, b, a (little-endian); alpha 0 for no fold
-
   FoldGrid* = object
     ## A fold map and its levels.
     res*: ref FoldResult
-    levels: seq[FoldLevel] ## index `log2(factor)`; `factor` 0 for one not made yet
-
-func pack(c: Rgba): uint32 {.inline.} =
-  uint32(c.r) or (uint32(c.g) shl 8) or (uint32(c.b) shl 16) or (uint32(c.a) shl 24)
-
-func foldColour*(lut: Lut; fold, maxFold: int32): uint32 =
-  ## The packed colour of a bin with `fold` pairs; 0 (clear) for none.
-  if fold <= 0 or maxFold <= 0: return 0
-  let t = min(1.0, float64(fold) / float64(maxFold))
-  var c = lut[int(round(t * 255))]
-  c.a = 255
-  pack(c)
 
 func legendColour*(t: float64): Rgba =
   ## The colour at fraction `t` (0 to 1) of the maximum fold.
@@ -76,28 +59,11 @@ func factorFor*(g: FoldGrid; perPixel: float64): int =
 func levelIndex(factor: int): int =
   while (1 shl result) < factor: inc result
 
-proc level*(g: var FoldGrid; factor: int): lent FoldLevel =
-  ## The level of blocks of `factor` bins (a power of two), made the first time.
-  let k = levelIndex(factor)
-  if g.levels.len <= k: g.levels.setLen k + 1
-  if g.levels[k].factor == 0:
-    let r = g.res
-    let lut = lutOf(cmViridis)
-    var l = FoldLevel(factor: factor, cols: (r.crosslines + factor - 1) div factor,
-      rows: (r.inlines + factor - 1) div factor)
-    l.colours = newSeq[uint32](l.cols * l.rows)
-    if factor == 1:
-      for k in 0 ..< r.counts.len: l.colours[k] = lut.foldColour(r.counts[k], r.maxFold)
-    else:
-      var peak = newSeq[int32](l.cols * l.rows)
-      for i in 0 ..< r.inlines:
-        let row = (i div factor) * l.cols
-        for j in 0 ..< r.crosslines:
-          let at = row + j div factor
-          peak[at] = max(peak[at], r.counts[i * r.crosslines + j])
-      for k in 0 ..< peak.len: l.colours[k] = lut.foldColour(peak[k], r.maxFold)
-    g.levels[k] = l
-  g.levels[k]
+func level*(g: FoldGrid; factor: int): lent FoldLevel =
+  ## The level of blocks of `factor` bins (a power of two), as the job made it;
+  ## the coarsest one for a factor beyond the levels.
+  let k = min(levelIndex(factor), g.res.levels.high)
+  g.res.levels[k]
 
 func binAt*(r: FoldResult; x, y: float64): int =
   ## The bin under map position (`x`, `y`): `inline * crosslines + crossline`,
@@ -112,6 +78,22 @@ func binAt*(r: FoldResult; x, y: float64): int =
   else: -1
 
 func foldAt*(r: FoldResult; bin: int): int32 {.inline.} = r.counts[bin]
+
+func sizeText*(v: float64): string =
+  ## A bin size to at most six significant digits.
+  result = formatFloat(v, ffDefault, 6)
+  result.trimZeros()
+
+func totalsText*(r: FoldResult; unit: string): string =
+  ## The totals line of the layer's popover for map `r`, with lengths in `unit`.
+  if r.inlines * r.crosslines == 1:
+    "One bin holds " & $r.binned & " pairs (" & $r.outside & " outside the grid, " &
+      $r.noCoordinates & " without coordinates)."
+  else:
+    $r.binned & " pairs in " & $r.inlines & " x " & $r.crosslines & " bins, max fold " &
+      $r.maxFold & "; " & $r.outside & " pairs outside the grid, " & $r.noCoordinates &
+      " without coordinates. Bins " & sizeText(r.binAlong) & " x " & sizeText(r.binAcross) &
+      " " & unit & "."
 
 func foldText*(r: FoldResult; bin: int): string =
   ## "fold 12 (inline 3, crossline 41)" for bin `bin` (in `0 ..< len`).

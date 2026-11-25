@@ -625,12 +625,11 @@ proc drawFoldRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutp
     case mu.fold.status
     of fmReady:
       let r = mu.fold.shown
-      wrapped($r.binned & " pairs in " & $r.inlines & " x " & $r.crosslines &
-        " bins, max fold " & $r.maxFold & "; " & $r.outside & " pairs outside the grid, " &
-        $r.noCoordinates & " without coordinates. Bins " & $r.binAlong & " x " &
-        $r.binAcross & " " & unit & ".")
+      wrapped(r[].totalsText(unit))
       marks.mark("map.fold totals")
     of fmFailed: wrapped(mu.fold.reason)
+    of fmComputing:
+      if mu.fold.reason.len > 0: wrapped(mu.fold.reason)
     else: discard
     igUnindent(0)
 
