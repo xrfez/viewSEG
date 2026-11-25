@@ -38,11 +38,11 @@
 ## Not mutated: that an agent's polarity is never saved (it is the existing `keeps` rule); the
 ## words of the three kinds of polarity beyond "opposite", "in phase" and "unclear".
 
-import std/[json, math, os, strutils, times]
+import std/[json, math, os, sequtils, strutils, times]
 import parseSEG
 import parseSSDAT
 import parseSSVIB
-import viewSEG/core/[analysis, persist, plotoptions, settings, signatures, state, units,
+import viewSEG/core/[analysis, sigjudge, persist, plotoptions, settings, signatures, state, units,
   vendormaps]
 import viewSEG/remote/tools
 import utils/[fixtures, sigfiles, waiting]
@@ -913,6 +913,17 @@ proc main*() =
         doAssert said, name & ": " & line
         plainWords(line)
         st.shutdown()
+
+  block meanPhaseWrap:
+    # the mean phase is in (-180, 180]: a half turn stays +180, a full turn is 0, and NaN phases are left out (too few left: unclear)
+    let ask = SignatureAsk()
+    let zero = newSeq[float64](8) # eight points: the least a verdict needs
+    doAssert polarityOf(zero, true, false, ask).meanPhaseDeg == 180.0
+    doAssert polarityOf(zero, false, false, ask).meanPhaseDeg == 0.0
+    doAssert abs(polarityOf(newSeqWith(8, 180.0), true, false,
+        ask).meanPhaseDeg) < 1e-9
+    doAssert polarityOf(newSeqWith(8, NaN), false, false,
+        ask).kind == pkUnclear
 
   echo "tsigvib: ok"
 

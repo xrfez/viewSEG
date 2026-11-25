@@ -7,6 +7,7 @@
 ## Pure: numbers in, words out.
 
 import std/[algorithm, math, strutils, tables]
+import processSEG/vibroseis/sweeptrack
 import sigtypes, sigvib, units, vibjudge
 
 type
@@ -103,11 +104,6 @@ proc applyFileScale*(into: var SignatureAsk; kind: SignatureKind;
           into.hundredWords = "100 % from the file's hold-down weight (" &
             sensible(hold) & " lb)"
   of sgNone: discard
-
-func wrapDeg(x: float64): float64 =
-  result = x
-  while result > 180: result -= 360
-  while result <= -180: result += 360
 
 func degText(x: float64): string =
   let r = int(round(x))
