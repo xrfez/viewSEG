@@ -692,7 +692,7 @@ proc plotsShowWhatIsJudged() =
       $[phase.yLo, phase.yHi]
     var names: seq[string] = @[]
     for c in phase.curves: names.add c.name
-    doAssert names == @["GF"], $names
+    doAssert names == @["GF " & AgainstFile], $names
     var dist: seq[string] = @[]
     for c in r.plots[^1].curves: dist.add c.name
     doAssert dist == @["GF THD"], $dist
@@ -700,11 +700,184 @@ proc plotsShowWhatIsJudged() =
     let all = fourRows(spec, m, b, detailed)
     names = @[]
     for c in all.plots[0].curves: names.add c.name
-    doAssert "GF as recorded" in names and "M" in names and "B" in names and "B off scale" in names,
+    doAssert "GF as recorded " & AgainstFile in names and "M" in names and "B" in names and
+        "B off scale" in names,
       $names
     for c in all.plots[0].curves: doAssert c.style != csLimit, c.name
 
+func planSweep(seconds = 10.0; f1 = 80.0; tailS = 0.001; delayMs = 0.0): SynthSweep =
+  ## The file's sweep for the plan tests: 8 to `f1` Hz in `seconds`, the ground force 1° off
+  ## its own pilot.
+  SynthSweep(f0: 8, f1: f1, seconds: seconds, tailS: tailS, delayMs: delayMs, amp: 1000,
+    phaseDeg: 1, h2: 0.02)
+
+proc againstPlan(file: SynthSweep; stored: seq[float32]; p = AnalysisParams()): AnalysisResult =
+  ## The file's ground force against the stored reference `stored` as the window reads it:
+  ## the stored samples aligned to the file's recorded pilot, that pilot judged against them.
+  let recorded = file.referenceOf.sweepRow
+  let al = alignStored(recorded, stored, file.dtMs)
+  let placed = if al.found: placedSinc(stored, al.shiftMs, file.dtMs) else: stored
+  var q = p
+  if q.forceHundredPct.isNaN: q.forceHundredPct = Hundred
+  result = vibratorOf(@[recorded, file.sweepRow, placed], @["R", "GF", "stored"],
+    [vsReference: 2, vsGroundForce: 1, vsMass: -1, vsBaseplate: -1], file.dtMs, q, 0, 80.0,
+    plan = PlanAsk(stored: true, shiftMs: (if al.found: al.shiftMs else: NaN)))
+  doAssert result.problem == "", result.problem
+
+func curveOf(r: AnalysisResult; plot: int; name: string): seq[float64] =
+  for c in r.plots[plot].curves:
+    if c.name == name: return c.ys
+  doAssert false, "no curve " & name & " in " & r.plots[plot].title & ": " &
+    $r.plots[plot].curves.len
+
+func meanAbs(r: AnalysisResult; ys: seq[float64]): float64 =
+  ## The mean |value| of `ys` over the judged part (not dimmed).
+  var (sum, n) = (0.0, 0)
+  let p = r.plots[0]
+  for m in 0 ..< min(p.xs.len, ys.len):
+    var dim = false
+    for d in p.dimmed:
+      if p.xs[m] >= d.a and p.xs[m] <= d.b: dim = true
+    if not dim and not ys[m].isNaN:
+      sum += abs(ys[m])
+      inc n
+  if n == 0: NaN else: sum / float64(n)
+
+proc againstThePlan() =
+  ## The vibrator window answers whether the vibrator did what it should (the project's
+  ## stored reference, the plan), not only what its recorded pilot said.
+  ## Seen to fail: with the recorded pilot never judged, "a longer planned sweep fails" read
+  ## "✗ FAIL: average phase ..." with no word on the pilot; with the plan's verdict not
+  ## applied (`withBasis` keeping the ground force's), "another end frequency" passed the pilot;
+  ## with the listen-time test left out, the listen tail warned "the last 2 000 ms of the
+  ## reference have no data"; with `recordedPct` not read, "traces shorter than the sweep"
+  ## read a clean "✓ PASS"; with the file's reference unit dropped, the phase plot had one line.
+  block same_sweep_longer_listen_tail_is_no_difference:
+    # 12 001 samples stored, the same 10 s sweep and 2 s of listen time: nothing to say
+    let file = planSweep()
+    let stored = planSweep(tailS = 2.001).referenceOf.sweepRow
+    doAssert stored.len == 12001 and file.sweepRow.len == 10001
+    let r = againstPlan(file, stored)
+    doAssert r.qc.verdict == qvPass, r.qc.line
+    doAssert r.qc.plan.compared and r.qc.plan.verdict == qvPass and r.qc.plan.sameSweep,
+      r.qc.plan.sweep
+    doAssert r.qc.plan.sweep == "" and r.qc.lengthWords == "" and r.qc.recordedPct.isNaN,
+      r.qc.line
+    doAssert "part recorded" notin r.qc.line and OwnPilotWords notin r.qc.line, r.qc.line
+    doAssert r.qc.line.startsWith("✓ PASS"), r.qc.line
+    doAssert "have no data" notin r.warning, r.warning
+    doAssert "only by time after its sweep" in r.note, r.note
+    # both phase lines lie together (the file's reference and the stored one are the same)
+    let mine = r.curveOf(0, "GF " & AgainstFile)
+    let theirs = r.curveOf(0, "GF " & AgainstStored)
+    doAssert abs(r.meanAbs(mine) - r.meanAbs(theirs)) < 0.3,
+      $(r.meanAbs(mine), r.meanAbs(theirs))
+    doAssert r.qc.plan.fileRows.len == 2 and r.qc.plan.fileRows[0].status == qsPass
+  block a_longer_planned_sweep_fails:
+    # the user's case: the plan sweeps 8-80 Hz in 12 s (12 001 samples), the file's pilot in
+    # 10 s, and the ground force follows its pilot
+    let file = planSweep()
+    let r = againstPlan(file, planSweep(seconds = 12).referenceOf.sweepRow)
+    doAssert r.qc.verdict == qvFail and r.qc.plan.verdict == qvFail, r.qc.line
+    doAssert r.qc.line.startsWith("✗ FAIL: the recorded pilot is not the project's " &
+      "reference sweep (average phase "), r.qc.line
+    doAssert r.qc.plan.sweep == "the project reference sweeps 8-80 Hz in 12.0 s; the " &
+      "recorded pilot sweeps 8-80 Hz in 10.0 s", r.qc.plan.sweep
+    doAssert r.qc.plan.sweep in r.qc.line, r.qc.line
+    # the ground force, which followed the file's 10 s pilot, fails against the plan
+    doAssert "FAIL" in r.qc.forceLine and r.qc.rows[ord(qlAvgPhase)].status == qsFail,
+      r.qc.forceLine
+    doAssert "ground force FAIL: " in r.qc.line, r.qc.line
+    doAssert "the last 2.0 s of the reference sweep lie past the end of this file's " &
+      "traces: not judged" in r.qc.line, r.qc.line
+    # the plots: the phase against the file's reference near zero, against the stored one
+    # large; the pilot's own curve drawn without Details (it failed); three frequency lines
+    let mine = r.curveOf(0, "GF " & AgainstFile)
+    let theirs = r.curveOf(0, "GF " & AgainstStored)
+    doAssert r.meanAbs(mine) < 3 and r.meanAbs(theirs) > 20,
+      $(r.meanAbs(mine), r.meanAbs(theirs))
+    discard r.curveOf(0, RecordedRef)
+    var names: seq[string] = @[]
+    for c in r.plots[2].curves: names.add c.name
+    doAssert names == @[FileRefName, StoredRefName, "GF"], $names
+    let fileHz = r.curveOf(2, FileRefName)
+    let storedHz = r.curveOf(2, StoredRefName)
+    doAssert abs(fileHz[500] - storedHz[500]) > 5, $(fileHz[500], storedHz[500])
+    # the limits table has the pilot's rows and the ground force's to the file's reference
+    let table = tableOf(r.qc)
+    doAssert table.len == 1 + 6 + 2 + 2, $table.len
+    doAssert table[7][1] == PlanRowPrefix & "average phase" and table[7][0] == "✗", $table[7]
+    doAssert table[9][1] == FileRowPrefix & "average phase" and table[9][0] == "✓", $table[9]
+  block another_end_frequency:
+    let r = againstPlan(planSweep(), planSweep(f1 = 60).referenceOf.sweepRow)
+    doAssert r.qc.plan.verdict == qvFail and r.qc.verdict == qvFail, r.qc.line
+    doAssert r.qc.plan.sweep == "the project reference sweeps 8-60 Hz in 10.0 s; the " &
+      "recorded pilot sweeps 8-80 Hz in 10.0 s", r.qc.plan.sweep
+  block another_start_within_the_alignment_range:
+    # the file's sweep begins 500 ms into its record: aligned, passed, the shift kept
+    let r = againstPlan(planSweep(delayMs = 500), planSweep().referenceOf.sweepRow)
+    doAssert r.qc.verdict == qvPass and r.qc.plan.verdict == qvPass, r.qc.line
+    doAssert near(r.qc.plan.shiftMs, 500, 1) and r.qc.plan.sameSweep, $r.qc.plan.shiftMs
+  block another_start_beyond_the_alignment_range:
+    # 2 600 ms: past the 2 s alignment looks through (it takes a peak at its edge, 1 995 ms),
+    # the same sweep out of step: failed, and said
+    let r = againstPlan(planSweep(delayMs = 2600), planSweep().referenceOf.sweepRow)
+    doAssert r.qc.plan.verdict == qvFail and r.qc.verdict == qvFail, r.qc.line
+    doAssert r.qc.plan.sweep.startsWith("the two are the same sweep (8-80 Hz in 10.0 s) but " &
+      "not in step: the recorded pilot's sweep starts "), r.qc.plan.sweep
+    doAssert "alignment looks no further than 2.0 s either way" in r.qc.line, r.qc.line
+  block traces_shorter_than_the_sweep_pass_on_the_part_recorded:
+    # the force traces end at 8 s of a 10 s sweep (the pilot and the plan the whole sweep)
+    var file = planSweep()
+    file.cutAtS = 8
+    let r = againstPlan(file, planSweep().referenceOf.sweepRow)
+    doAssert r.qc.verdict == qvPass and r.qc.plan.verdict == qvPass, r.qc.line
+    doAssert r.qc.line.startsWith("✓ pass on the part recorded (80 % of the reference " &
+      "sweep): "), r.qc.line
+    doAssert "the last 2.0 s of the reference sweep lie past the end of this file's " &
+      "traces: not judged" in r.qc.line, r.qc.line
+  block judged_against_the_files_own_pilot:
+    let r = judgeOf(good())
+    doAssert r.qc.ownPilot and r.qc.line.endsWith("; " & OwnPilotWords), r.qc.line
+    doAssert not r.qc.plan.compared and r.qc.plan.rows.len == 0
+    var names: seq[string] = @[]
+    for c in r.plots[2].curves: names.add c.name
+    doAssert names == @[FileRefName, "GF"], $names
+
+proc sweepTolerances() =
+  ## `sweepDifference` on both sides of each tolerance: one tracked step for the length, one
+  ## step's change of frequency for each end.
+  ## Seen to fail: with `>=` for `>`, a length one step off read as another sweep.
+  let plan = SweepShape(startHz: 8, endHz: 80, lengthMs: 10000, startStepHz: 0.072,
+    endStepHz: 0.072, stepMs: 10)
+  block lengths:
+    var pilot = plan
+    pilot.lengthMs = 10010
+    doAssert sweepDifference(plan, pilot).same
+    pilot.lengthMs = 10011
+    let d = sweepDifference(plan, pilot)
+    doAssert not d.same and d.words == "the project reference sweeps 8-80 Hz in 10.00 s; " &
+      "the recorded pilot sweeps 8-80 Hz in 10.01 s", d.words
+  block frequencies:
+    var pilot = plan
+    pilot.startHz = 8.07
+    doAssert sweepDifference(plan, pilot).same
+    pilot.startHz = 8.08
+    doAssert not sweepDifference(plan, pilot).same
+    pilot = plan
+    pilot.endHz = 79.93
+    doAssert sweepDifference(plan, pilot).same
+    pilot.endHz = 79.9
+    let d = sweepDifference(plan, pilot)
+    doAssert not d.same and "8-79.9 Hz" in d.words, d.words
+  block not_compared:
+    let d = sweepDifference(SweepShape(why: "too few points of it could be tracked"), plan)
+    doAssert not d.same and d.words.startsWith("sweeps not compared: the project " &
+      "reference's sweep cannot be read"), d.words
+
 proc main*() =
+  againstThePlan()
+  sweepTolerances()
   baseTests()
   judgeChoice()
   fullScalePerSignal()

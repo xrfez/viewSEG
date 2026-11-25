@@ -64,12 +64,13 @@ func curvePlots*(r: AnalysisResult; t: Theme; units = usMetric): seq[CurvePlot] 
   # plot has the whole width
   if r.view == avVibrator:
     for i in 0 ..< result.high: result[i].bareX = true
-    for c in result.mitems:
+    for i, c in result.mpairs:
       var shown = 0
       for k in c.curves:
         if not k.overlay: inc shown
       c.legendInside = true
-      c.legend = shown > 1
+      # (the phase plot's one line has a legend too: it says which reference it is against)
+      c.legend = shown > 1 or (i == 0 and shown == 1)
 
 func cellAt*(img: AnalysisImage; x, y: float64): PlotCursor =
   ## The cell whose centre is nearest (`x`, `y`), within the image; `x` -1

@@ -21,6 +21,11 @@
 ## - The verdict is `qvFail` when any limit fails, `qvPass` when at least one was judged
 ##   and none failed, else `qvNotJudged`. Its line names the worst failing value
 ##   (the one furthest past its limit, in proportion) and the time of its window.
+## - Against the project's stored reference (the plan), the file's recorded pilot is judged
+##   too, with the same two phase limits (`judgePlan`): a pilot that is not the planned sweep
+##   fails the file, and `withBasis` says so first. A judged part shorter than the reference
+##   sweep is a pass "on the part recorded" only; a file judged against its own pilot says
+##   that this shows the vibrator followed its pilot, not that the pilot is the plan.
 ##
 ## Pure: numbers in, a report out.
 
@@ -81,6 +86,25 @@ type
       ## the largest window mean of the fundamental and its % of the 100 % force: shown beside
       ## the peak force (the raw envelope's, with the harmonics), never judged
 
+  PlanCheck* = object
+    ## The file's recorded pilot (what the vibrator was told to do) against the project's
+    ## stored reference (the plan, what it should do), judged with the ground force's own two
+    ## phase limits after the same alignment.
+    compared*: bool ## a recorded pilot was measured against a stored reference
+    rows*: seq[QcRow] ## its average and peak phase (`qlAvgPhase`, `qlPeakPhase`)
+    verdict*: QcVerdict ## those two rows' verdict; `qvNotJudged` when not compared
+    shiftMs*: float64 = NaN
+      ## how far the stored reference was moved to the recorded pilot (`alignStored`); NaN:
+      ## not aligned
+    sweep*: string
+      ## how the two sweeps differ, in words with numbers ("the project reference sweeps
+      ## 8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in 10.0 s"), or why they could
+      ## not be compared ("sweeps not compared: ..."); "" when they are the same sweep
+    sameSweep*: bool ## start, end and length agree within the tolerances
+    fileRows*: seq[QcRow]
+      ## the judged ground force's average and peak phase against the file's own reference
+      ## trace, beside the judged ones against the plan: shown, never judged
+
   QcReport* = object
     verdict*: QcVerdict
     line*: string        ## "FAIL: peak force 157 % > 120 % at 9.5 s"
@@ -89,6 +113,16 @@ type
     stats*: QcStats
     hundredPct*: float64 ## "100 % force =" in the file's unit; NaN: not given
     forceNote*: string   ## why the force limits are not judged; "" when they are
+    plan*: PlanCheck     ## the recorded pilot against the plan (`withBasis`)
+    recordedPct*: float64 = NaN
+      ## the share of the reference sweep the judged part covers, % (below 100); NaN: all of it
+    lengthWords*: string
+      ## what of a sweep lies past the other's end and was not judged; "" for nothing
+    ownPilot*: bool
+      ## judged against the file's own pilot: it shows the vibrator followed its pilot, not
+      ## that the pilot is the planned sweep
+    forceLine*: string
+      ## the ground force's own line, as `judge` wrote it, before `withBasis` added the plan's
 
 func plain*(x: float64; digits = 1): string =
   ## A number for a sentence: up to `digits` decimals, none when it is whole.
@@ -249,10 +283,79 @@ func judge*(s: WindowSummary; windowMs: float64; limits: QcLimits;
     result.line = "NOT JUDGED: no limit could be judged" &
       (if noScale.len > 0: " (" & noScale & ")" else: "")
 
+const
+  OwnPilotWords* = "judged against the file's own pilot: this shows the vibrator followed " &
+    "its pilot, not that the pilot is the planned sweep"
+    ## said in every verdict judged against the file's own pilot (no project reference, the
+    ## switch off, or a reference that is a trace of each record)
+  PlanRowPrefix* = "recorded pilot to the plan: "
+    ## the limits table's label of a plan row, before the limit ("recorded pilot to the plan:
+    ## average phase")
+  FileRowPrefix* = "ground force to the file's reference (not judged): "
+    ## the limits table's label of a row of the ground force against the file's own reference
+    ## trace, shown beside the judged one against the plan
+
+func judgePlan*(s: WindowSummary; windowMs: float64; limits: QcLimits;
+    shiftMs = NaN): PlanCheck =
+  ## The recorded pilot's window statistics `s` (measured against the stored reference) judged
+  ## with the phase limits of `limits` alone, the ground force's: no limit of its own.
+  let phases = QcLimits(avgPhaseDeg: limits.avgPhaseDeg, peakPhaseDeg: limits.peakPhaseDeg,
+    avgDistortionPct: NaN, peakDistortionPct: NaN, avgForcePct: NaN, peakForcePct: NaN)
+  let q = judge(s, windowMs, phases, NaN)
+  PlanCheck(compared: true, rows: q.rows[ord(qlAvgPhase) .. ord(qlPeakPhase)],
+    verdict: q.verdict, shiftMs: shiftMs)
+
+func planWords*(p: PlanCheck): string =
+  ## "the recorded pilot is not the project's reference sweep (average phase N°)": the
+  ## sentence a failing plan check opens the verdict with.
+  let avg = p.rows[ord(qlAvgPhase)]
+  "the recorded pilot is not the project's reference sweep (average phase " &
+    (if avg.measured.isNaN: "not measured" else: plain(avg.measured) & "°") & ")"
+
+func unsigned(line: string): string =
+  ## `line` without the sign `judge` opens it with ("✓ ", "✗ ").
+  for sign in ["✓ ", "✗ "]:
+    if line.startsWith(sign): return line[sign.len .. ^1]
+  line
+
+func withBasis*(q: var QcReport) =
+  ## The verdict and its line with what the reference is: a recorded pilot that is not the
+  ## plan fails the file, its sentence first; a judged part shorter than the reference sweep
+  ## passes only "on the part recorded"; how the sweeps differ, and what was not judged, is
+  ## said; a file judged against its own pilot says what that shows. Call once, after `judge`.
+  q.forceLine = q.line
+  var parts: seq[string] = @[]
+  let failed = q.plan.compared and q.plan.verdict == qvFail
+  if failed:
+    q.verdict = qvFail
+    parts.add "✗ FAIL: " & planWords(q.plan) &
+      (if q.plan.sweep.len > 0: ": " & q.plan.sweep else: "")
+    parts.add "ground force " & unsigned(q.line)
+  elif q.verdict == qvPass and not q.recordedPct.isNaN:
+    let rest = if q.line.startsWith("✓ PASS"): q.line["✓ PASS".len .. ^1] else: ""
+    parts.add "✓ pass on the part recorded (" & plain(floor(q.recordedPct), 0) &
+      " % of the reference sweep)" & rest
+  else: parts.add q.line
+  if q.plan.sweep.len > 0 and not failed: parts.add q.plan.sweep
+  if q.lengthWords.len > 0: parts.add q.lengthWords
+  if q.ownPilot: parts.add OwnPilotWords
+  q.line = parts.join("; ")
+
 func tableOf*(r: QcReport): seq[seq[string]] =
   ## The limits table: a header, then a row per limit: the mark (first, so a narrow window never
-  ## cuts it off), what, measured, limit, where.
+  ## cuts it off), what, measured, limit, where; then the recorded pilot's rows against the
+  ## plan, when it was compared (`allRows` gives the rows in the same order).
   result = @[@["Met", "Limit", "Measured", "Limit value", "Worst window"]]
   for row in r.rows:
     result.add @[row.markText, $row.limit, row.measuredText, row.boundText,
       (if row.status == qsNotJudged: row.why else: row.atText)]
+  for row in r.plan.rows:
+    result.add @[row.markText, PlanRowPrefix & $row.limit, row.measuredText, row.boundText,
+      (if row.status == qsNotJudged: row.why else: row.atText)]
+  for row in r.plan.fileRows:
+    result.add @[row.markText, FileRowPrefix & $row.limit, row.measuredText, row.boundText,
+      (if row.status == qsNotJudged: row.why else: row.atText)]
+
+func allRows*(r: QcReport): seq[QcRow] =
+  ## The rows of `tableOf` after its header: the limits, then the plan's.
+  r.rows & r.plan.rows & r.plan.fileRows

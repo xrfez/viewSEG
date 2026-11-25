@@ -709,8 +709,9 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk; viewOf: var ref CorrelateView;
                               else: ""
                 let n = (answer.leftOut, answer.atOtherInterval)
                 answer = vibratorOf(rows, names, at, dtMs, a.params, recorded,
-                  a.topHz,
-                  a.exactTopHz, a.forceNote, a.sig, a.converterOrder)
+                  a.topHz, a.exactTopHz, a.forceNote, a.sig, a.converterOrder,
+                  PlanAsk(stored: archiveSamples.len > 0, shiftMs: (if alignment.kind ==
+                    "aligned": alignment.shiftMs else: NaN)))
                 (answer.leftOut, answer.atOtherInterval) = n
                 if answer.problem.len == 0:
                   answer.against = against

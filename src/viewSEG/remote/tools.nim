@@ -792,6 +792,17 @@ proc plotJson(w: AnalysisWindow; fe: Frontend; units: UnitSystem; limit: int): J
     result["madeNote"] = %r.madeNote
     result["judgeWarning"] = %r.judgeWarning
     result["qcLimits"] = limits
+    var planRows = newJArray()
+    for row in q.plan.rows:
+      planRows.add %*{"limit": $row.limit, "measured": toJson(row.measured),
+        "bound": toJson(row.bound), "status": $row.status, "worstWindowMs": toJson(row.atMs),
+        "why": row.why}
+    # the recorded pilot against the project's reference (the plan), and what the verdict
+    # was judged against
+    result["plan"] = %*{"compared": q.plan.compared, "verdict": $q.plan.verdict,
+      "limits": planRows, "shiftMs": toJson(q.plan.shiftMs), "sameSweep": q.plan.sameSweep,
+      "sweep": q.plan.sweep, "ownPilot": q.ownPilot,
+      "recordedPct": toJson(q.recordedPct), "notJudged": q.lengthWords}
     result["windowStats"] = %*{"windowMs": toJson(s.windowMs),
         "windows": s.windows,
       "avgPhaseDeg": toJson(s.avgPhaseDeg), "peakPhaseDeg": toJson(

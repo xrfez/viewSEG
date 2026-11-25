@@ -28,7 +28,7 @@ import std/[algorithm, math, sequtils, strutils]
 import parseSEG
 import processSEG/core/[rows, types, units, workspace]
 import processSEG/vibroseis/[sweeptrack, vibqc]
-import analysis, signalend, sweepedge, vibjudge
+import analysis, signalend, sweepedge, vibalign, vibjudge
 
 export VibRole, VibSignal
 
@@ -37,11 +37,49 @@ const
     ## the made ground force's mean phase to the reference must be lower by more than this with
     ## the two weights the other way round for the window to say so (a converter file's right
     ## order read 1.0 degrees, the wrong one 35.9)
+  AgainstFile* = "against the file's reference"
+    ## a phase line's words when it is measured against the file's own reference trace
+  AgainstStored* = "against the stored reference"
+    ## ... and when it is measured against the project's stored reference
+  FileRefName* = "file's reference"
+    ## the frequency plot's line of the file's own reference trace
+  StoredRefName* = "stored reference"
+    ## the frequency plot's line of the project's stored reference
   RecordedRef* = "Ref (recorded)"
     ## the recorded pilot measured against the project's reference: its name in the plots
     ## and the table
   Shown = [vsReference, vsGroundForce, vsWeightedSum, vsMass, vsBaseplate]
     ## the signals in the order the plots and the table give them
+  SweepTimeSteps* = 1.0
+    ## two sweeps' lengths (and a sweep's end against a trace's) agree within this many tracked
+    ## steps (`TrackParams.stepMs`, 10 ms): a sweep's first and last tracked points fall on that
+    ## grid, so an identical sweep can read one step apart, and more is a real difference
+  SweepHzSteps* = 1.0
+    ## two sweeps' start (end) frequencies agree within this many times the frequency the
+    ## sweep moves through in one tracked step at that end: the track's own frequency
+    ## resolution, as fine as its time grid (8-80 Hz in 10 s: 0.07 Hz)
+
+  FitPoints = 50
+    ## the tracked points (half a second) a sweep's start or end frequency is read from
+
+type
+  PlanAsk* = object
+    ## What the reference of `vibratorOf` is.
+    stored*: bool
+      ## the project's stored reference (the plan); false: the file's own pilot
+    shiftMs*: float64 = NaN
+      ## the stored reference was moved by this to the recorded pilot (`alignStored`); NaN:
+      ## it was not aligned
+
+  SweepShape* = object
+    ## A reference's sweep as its own track reads it: the frequencies at the sweep's first
+    ## and last samples (the track's first and last points taken on to the sweep's ends at
+    ## their own rate) and its length; `why` says why there is none.
+    startHz*, endHz*, lengthMs*: float64
+    firstMs*, lastMs*: float64 ## the sweep's first and last samples, ms from the row's first
+    startStepHz*, endStepHz*: float64 ## the frequency moved through in one step at each end
+    stepMs*: float64
+    why*: string ## "" when the shape is read
 
 func number(x: float64; digits = 1): string =
   if x.isNaN or abs(x) == Inf: "–"
@@ -105,6 +143,137 @@ func shortEndMs(track: SweepTrack; p: TrackParams; counts: openArray[int];
       if result.isNaN and not f.isNaN and f > 0 and
           track.timeMs[m] + 500.0 * float64(windowPeriods(p, f)) / f <= last:
         result = track.timeMs[m]
+
+func levelAtMs(x: openArray[float32]; dtMs, level: float64; fromEnd: bool): float64 =
+  ## Where the envelope of `x` first reaches `level` (from its start, or from its end with
+  ## `fromEnd`), in ms: read on the crests of `|x|` (one each half period), between the last
+  ## crest below `level` and the first at it or above, so that a slow start is not late by a
+  ## half period; at its first sample that is not zero when no crest comes before. NaN when no
+  ## crest reaches it.
+  result = NaN
+  var (prevAt, prevV) = (-1, 0.0)
+  for k in 1 ..< x.len - 1:
+    let i = if fromEnd: x.len - 1 - k else: k
+    let v = abs(float64(x[i]))
+    if v > 0 and v >= abs(float64(x[i - 1])) and v >= abs(float64(x[i + 1])):
+      if v >= level:
+        if prevAt < 0:
+          # it rose from nothing within a half period (a sweep from the record's first
+          # sample, or after exact zeros): it starts at its first sample that is not zero
+          for q in 0 ..< x.len:
+            let j = if fromEnd: x.len - 1 - q else: q
+            if x[j] != 0: return float64(j) * dtMs
+        let f = (level - prevV) / (v - prevV)
+        return (float64(prevAt) + f * float64(i - prevAt)) * dtMs
+      (prevAt, prevV) = (i, v)
+
+func sweepEnds(x: openArray[float32]; dtMs: float64): (float64, float64) =
+  ## The first and last samples (ms) of the sweep in `x`: where its envelope leaves zero, read
+  ## where it crosses `minReferenceDb` below its peak and half the peak, and taken on through
+  ## the rest of a cos² taper (that level lies a share of the taper in, half the peak half of
+  ## it). NaN, NaN without both.
+  var peak = 0.0
+  for v in x: peak = max(peak, abs(float64(v)))
+  if not (peak > 0): return (NaN, NaN)
+  let low = pow(10.0, -abs(TrackParams().minReferenceDb) / 20)
+  let share = 2 / PI * arcsin(sqrt(low)) # of the taper, at `low`
+  result = (NaN, NaN)
+  for fromEnd in [false, true]:
+    let a = levelAtMs(x, dtMs, low * peak, fromEnd)
+    let b = levelAtMs(x, dtMs, 0.5 * peak, fromEnd)
+    if not (a.isNaN or b.isNaN):
+      let taper = abs(b - a) / (0.5 - share)
+      if fromEnd: result[1] = a + share * taper
+      else: result[0] = a - share * taper
+
+func sweepShape*(t: SweepTrack; x: openArray[float32]; dtMs: float64): SweepShape =
+  ## The sweep of the reference `x` (at `dtMs`) whose own track `t` is: its first and last
+  ## samples (`sweepEnds`), the frequencies there (the line through the first or last
+  ## `FitPoints` tracked points taken on to them: a point lies half a window inside the
+  ## sweep), and its length.
+  result = SweepShape(startHz: NaN, endHz: NaN, lengthMs: NaN, startStepHz: NaN,
+    endStepHz: NaN, stepMs: NaN, firstMs: NaN, lastMs: NaN)
+  let e = t.extent
+  if e.startMs.isNaN or e.endMs.isNaN:
+    result.why = "its envelope is nowhere within " & $TrackParams().minReferenceDb &
+      " dB of its peak"
+    return
+  var first, last = -1
+  for m in 0 ..< t.len:
+    let f = t.referenceHz[m]
+    if not f.isNaN and f > 0:
+      if first < 0: first = m
+      last = m
+  if first < 0 or last - first < 2:
+    result.why = "too few points of it could be tracked"
+    return
+  let (hz, ms) = (t.referenceHz, t.timeMs)
+  func rateOf(lo, hi: int): (float64, float64) =
+    ## the line through the tracked points `lo .. hi` (least squares, NaN points left out):
+    ## its frequency at `ms[lo]` and its rate (Hz per ms); a window's frequency ripples by a
+    ## tenth of a hertz near the sweep's ends, a line through half a second of them does not
+    var (sx, sy, sxx, sxy, n) = (0.0, 0.0, 0.0, 0.0, 0.0)
+    for m in lo .. hi:
+      if not hz[m].isNaN:
+        let x = ms[m] - ms[lo]
+        sx += x
+        sy += hz[m]
+        sxx += x * x
+        sxy += x * hz[m]
+        n += 1
+    let d = n * sxx - sx * sx
+    let b = if d == 0: 0.0 else: (n * sxy - sx * sy) / d
+    ((sy - b * sx) / n, b)
+  let (f0, r0) = rateOf(first, min(first + FitPoints, last))
+  let lo = max(last - FitPoints, first)
+  let (f1, r1) = rateOf(lo, last)
+  result.stepMs = (ms[last] - ms[first]) / float64(last - first)
+  let (startMs, endMs) = sweepEnds(x, dtMs)
+  if startMs.isNaN or endMs.isNaN:
+    result.why = "its envelope does not rise to half its peak"
+    return
+  result.startHz = f0 - r0 * (ms[first] - startMs)
+  result.endHz = f1 + r1 * (endMs - ms[lo])
+  result.lengthMs = endMs - startMs
+  (result.firstMs, result.lastMs) = (startMs, endMs)
+  result.startStepHz = abs(r0) * result.stepMs
+  result.endStepHz = abs(r1) * result.stepMs
+
+func shapeWords(s: SweepShape; hzDigits, sDigits: int): string =
+  plain(s.startHz, hzDigits) & "-" & plain(s.endHz, hzDigits) & " Hz in " &
+    formatFloat(s.lengthMs / 1000, ffDecimal, sDigits) & " s"
+
+func sweepDifference*(plan, pilot: SweepShape): tuple[same: bool; words: string] =
+  ## Whether the recorded pilot's sweep `pilot` is the stored reference's `plan`: the same
+  ## start and end frequencies (within `SweepHzSteps`) and length (within `SweepTimeSteps`).
+  ## When not, both sweeps in words, each number with the decimals that tell the two apart
+  ## ("the project reference sweeps 8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in
+  ## 10.0 s"); when either cannot be read, "sweeps not compared" and why, never the same.
+  if plan.why.len > 0:
+    return (false, "sweeps not compared: the project reference's sweep cannot be read (" &
+      plan.why & ")")
+  if pilot.why.len > 0:
+    return (false, "sweeps not compared: the recorded pilot's sweep cannot be read (" &
+      pilot.why & ")")
+  let step = max(plan.stepMs, pilot.stepMs)
+  let lengthOff = abs(plan.lengthMs - pilot.lengthMs) > SweepTimeSteps * step
+  let startOff = abs(plan.startHz - pilot.startHz) >
+    SweepHzSteps * max(plan.startStepHz, pilot.startStepHz)
+  let endOff = abs(plan.endHz - pilot.endHz) > SweepHzSteps * max(plan.endStepHz,
+    pilot.endStepHz)
+  if not (lengthOff or startOff or endOff):
+    return (true, "")
+  var hzDigits = 1
+  while hzDigits < 3 and ((startOff and plain(plan.startHz, hzDigits) ==
+      plain(pilot.startHz, hzDigits)) or (endOff and plain(plan.endHz, hzDigits) ==
+      plain(pilot.endHz, hzDigits))):
+    inc hzDigits
+  var sDigits = 1
+  while sDigits < 3 and lengthOff and formatFloat(plan.lengthMs / 1000, ffDecimal, sDigits) ==
+      formatFloat(pilot.lengthMs / 1000, ffDecimal, sDigits):
+    inc sDigits
+  (false, "the project reference sweeps " & shapeWords(plan, hzDigits, sDigits) &
+    "; the recorded pilot sweeps " & shapeWords(pilot, hzDigits, sDigits))
 
 func unusable(r: TopReading; chordHz, nyquistHz: float64): string =
   ## Why a reading is not made the band's edge ("" when it is): the median of the estimates that fit stands in.
@@ -210,7 +379,7 @@ func roundedTop*(est: float64): float64 =
 proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     at: array[VibRole, int]; dtMs: float64; p: AnalysisParams;
     recorded = -1; topHz = NaN; exactTopHz = NaN; forceNote = "";
-    sig = SignatureAsk(); converterOrder = false): AnalysisResult =
+    sig = SignatureAsk(); converterOrder = false; plan = PlanAsk()): AnalysisResult =
   ## The vibrator signature of the unit whose role `r` is row `at[r]` of
   ## `rows` (traces from their first sample at `dtMs`, named `names`; -1:
   ## the unit has none), with the masses, polarities, harmonics and limits
@@ -227,6 +396,10 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   ## `sig` says what a signature file adds (its force scale, a 100 % force from the file, the
   ## controller's QC): the ground force's polarity is then reported, never changed, and the
   ## Automatic polarity is not honoured.
+  ## `plan` says whether the reference is the project's stored one: the recorded pilot is
+  ## then judged against it too (`judgePlan`, its sweep compared, `sweepDifference`), else the
+  ## verdict says it is judged against the file's own pilot (`withBasis`). The verdict says
+  ## what of the reference sweep lies past the traces' end, and passes only on the part recorded.
   result = AnalysisResult(view: avVibrator, dtMs: dtMs)
   if at[vsReference] notin 0 ..< rows.len:
     result.problem = "no reference (Ref): give the pilot's trace that role"
@@ -297,6 +470,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   var reading = TopReading(hz: NaN) # ... and how far to trust it
   var readWhy = "" # the sentence shown when that reading is not sure, or unusable
   var otherPhase = NaN # the made ground force's mean |phase| with the two weights the other way
+  var pilotOwn: seq[UnitSignature[float32]] = @[] # the recorded pilot as a reference of its own
   try:
     if pair and masses:
       unit.reactionMass = mass(massR, muKilogram)
@@ -361,6 +535,13 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       tp.analyzeVibrators(rowBlock(work, rows.len, cols), meta, @[other], limits, again, ws)
       if vsWeightedSum in again[0].signals:
         otherPhase = again[0].summaries[vsWeightedSum].meanAbsPhaseDeg
+    if withRecorded:
+      # the unit against the file's own reference trace: that trace's sweep, tracked as a
+      # reference, to compare with the plan's, and the ground force against it (did the
+      # vibrator do what its pilot said), measured the same way
+      var mine = unit
+      mine.rows[vsReference] = recorded
+      tp.analyzeVibrators(rowBlock(work, rows.len, cols), meta, @[mine], limits, pilotOwn, ws)
   except ValueError as e:
     result.problem = e.msg
     return
@@ -468,6 +649,64 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     (if both: (if judged == vsWeightedSum: "GF from M and B" else: "GF as recorded")
       else: ""))
   result.judged = $judged
+  let stepMs = if xs.len > 1: xs[1] - xs[0] else: TrackParams().stepMs
+  let e0 = u.reference.extent
+  var pilotFails = false
+  if withRecorded:
+    # what the vibrator was told to do (its recorded pilot) against what it should do (the
+    # plan), with the ground force's phase limits, after the same alignment
+    result.qc.plan = judgePlan(statsOf(results[1].tracks[vsGroundForce]).summary,
+      p.qcWindowMs, p.qc, plan.shiftMs)
+    pilotFails = result.qc.plan.verdict == qvFail
+    if pilotOwn.len > 0 and judged in pilotOwn[0].signals:
+      # the judged ground force against the file's own reference: shown beside the judged one
+      # (what the vibrator did against what it was told), never judged
+      result.qc.plan.fileRows = judgePlan(statsOf(pilotOwn[0].tracks[judged]).summary,
+        p.qcWindowMs, p.qc).rows
+    let planShape = sweepShape(u.tracks[vsReference], rows[at[vsReference]], dtMs)
+    let pilotShape = if pilotOwn.len > 0: sweepShape(pilotOwn[0].tracks[vsReference],
+      rows[recorded], dtMs)
+      else: SweepShape(why: "it was not tracked")
+    let d = sweepDifference(planShape, pilotShape)
+    (result.qc.plan.sameSweep, result.qc.plan.sweep) = d
+    let pe = if pilotOwn.len > 0: pilotOwn[0].tracks[vsReference].extent else: SweepExtent()
+    if d.same and pilotFails:
+      # the same sweep, out of step: alignment found no clear shift within its reach
+      let gap = pilotShape.firstMs - planShape.firstMs
+      let how = if abs(gap) <= SweepTimeSteps * stepMs:
+          "they start together and still differ in phase"
+        else: "the recorded pilot's sweep starts " & seconds(abs(gap)) & " " &
+          (if gap > 0: "after" else: "before") & " the stored reference's (alignment " &
+          "looks no further than " & seconds(MaxAlignShiftMs) & " either way)"
+      result.qc.plan.sweep = "the two are the same sweep (" & shapeWords(planShape, 1, 1) &
+        ") but not in step: " & how
+    var past: seq[string] = @[]
+    if not (pe.startMs.isNaN or e0.startMs.isNaN):
+      if pe.endMs - e0.endMs > SweepTimeSteps * stepMs:
+        past.add "the last " & seconds(pe.endMs - e0.endMs) & " of this file's pilot sweep " &
+          "lie past the end of the reference sweep: not judged"
+      if e0.startMs - pe.startMs > SweepTimeSteps * stepMs:
+        past.add "the first " & seconds(e0.startMs - pe.startMs) & " of this file's pilot " &
+          "sweep lie before the start of the reference sweep: not judged"
+    result.qc.lengthWords = past.join("; ")
+  block coverage:
+    # the reference sweep past the force traces' end (zero-padded, never judged): the verdict
+    # passes only on the part recorded. A reference longer only by time after its sweep (its
+    # listen time) loses nothing.
+    var shortest = cols
+    for role in [vsGroundForce, vsMass, vsBaseplate]:
+      if at[role] >= 0: shortest = min(shortest, counts[at[role]])
+    let traceEnd = float64(shortest - 1) * dtMs
+    if shortest > 0 and not (e0.startMs.isNaN or e0.endMs.isNaN) and
+        e0.endMs > e0.startMs and traceEnd + SweepTimeSteps * stepMs < e0.endMs:
+      result.qc.recordedPct = 100 * max(0.0, traceEnd - e0.startMs) / (e0.endMs - e0.startMs)
+      let words = "the last " & seconds(e0.endMs - max(traceEnd, e0.startMs)) &
+        " of the reference sweep lie past the end of this file's traces: not judged"
+      result.qc.lengthWords = if result.qc.lengthWords.len > 0:
+          words & "; " & result.qc.lengthWords
+        else: words
+  result.qc.ownPilot = not (plan.stored or withRecorded)
+  result.qc.withBasis()
   if sig.given and sig.ctl.valid and sig.ctl.forceAvgPct >= 0:
     result.controllerAvgForcePct = float64(sig.ctl.forceAvgPct)
   result.bothSignals = both
@@ -542,16 +781,26 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   # Phase to the reference
   var phase = AnalysisPlot(title: "Phase to the reference", xLabel: "Sweep time (ms)",
     xUnit: "ms", yLabel: "Phase (°)", yUnit: "°", xs: xs)
-  let judgedPhase = phaseCurve(nameOf(judged), u.tracks[judged].phaseDeg, p.phaseShow)
+  # the judged line says which reference it is against; with a stored reference and the file's
+  # own reference trace both, the line against the file's (shown, not judged: did the vibrator
+  # do what its pilot said) comes first, in the plot's first colour, then the judged one
+  let storedRef = plan.stored or withRecorded
+  let fileLine = withRecorded and pilotOwn.len > 0 and judged in pilotOwn[0].signals
+  let judgedName = nameOf(judged) & " " & (if storedRef: AgainstStored else: AgainstFile)
+  if fileLine:
+    phase.curves.add phaseCurve(nameOf(judged) & " " & AgainstFile,
+      pilotOwn[0].tracks[judged].phaseDeg, p.phaseShow)
+  let judgedPhase = phaseCurve(judgedName, u.tracks[judged].phaseDeg, p.phaseShow)
   phase.curves.add judgedPhase
-  phase.curves.addFailing overlay(nameOf(judged), judgedPhase.ys, stats.meanAbsPhaseDeg,
+  phase.curves.addFailing overlay(judgedName, judgedPhase.ys, stats.meanAbsPhaseDeg,
     q.peakPhaseDeg)
   if details:
     for s in others & @[vsMass, vsBaseplate]:
       if s in u.signals: phase.curves.add phaseCurve(nameOf(s), u.tracks[s].phaseDeg, p.phaseShow)
-    if withRecorded:
-      phase.curves.add phaseCurve(RecordedRef, results[1].tracks[vsGroundForce].phaseDeg,
-        p.phaseShow)
+  if withRecorded and (details or pilotFails):
+    # (a recorded pilot that is not the plan is drawn whatever Details says)
+    phase.curves.add phaseCurve(RecordedRef, results[1].tracks[vsGroundForce].phaseDeg,
+      p.phaseShow)
   block fitPhase:
     # the axis holds the judged curve as drawn, with a margin (signed, it runs up to a turn
     # either side of its centre); the others may run off it, and the legend says so
@@ -605,10 +854,13 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   # Frequency
   var freq = AnalysisPlot(title: "Frequency", xLabel: "Sweep time (ms)", xUnit: "ms",
     yLabel: "Frequency (Hz)", yUnit: "Hz", xs: xs)
-  freq.curves.add AnalysisCurve(name: "Ref", ys: u.tracks[vsReference].referenceHz)
-  if details and withRecorded:
-    freq.curves.add AnalysisCurve(name: RecordedRef,
-      ys: results[1].tracks[vsGroundForce].frequencyHz)
+  # each reference's own sweep, as its own track reads it: the file's reference trace, the
+  # stored reference, or both
+  if withRecorded and pilotOwn.len > 0:
+    freq.curves.add AnalysisCurve(name: FileRefName,
+      ys: pilotOwn[0].tracks[vsReference].referenceHz)
+  freq.curves.add AnalysisCurve(name: (if storedRef: StoredRefName else: FileRefName),
+    ys: u.tracks[vsReference].referenceHz)
   for s in @[judged] & others:
     if (s == judged or details) and s in u.signals:
       freq.curves.add AnalysisCurve(name: nameOf(s), ys: u.tracks[s].frequencyHz)
@@ -802,8 +1054,14 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   let traceRow = if main == vsGroundForce: at[vsGroundForce] else: at[vsMass]
   if traceRow in 0 ..< rows.len:
     let traceMs = float64(rows[traceRow].len) * dtMs
-    result.warning = shortWords("trace", traceMs, float64(rows[at[
-        vsReference]].len) * dtMs)
+    let refMs = float64(rows[at[vsReference]].len) * dtMs
+    if traceMs < refMs and not e.endMs.isNaN and e.endMs <=
+        traceMs - dtMs + SweepTimeSteps * stepMs:
+      # longer only by time after its sweep: no part of the sweep is lost
+      result.note.add "; the reference is longer than the traces only by time after its " &
+        "sweep (its listen time): the whole sweep is judged"
+    else:
+      result.warning = shortWords("trace", traceMs, refMs)
     # where the reference's own fundamental is last measured, not the sweep's end: above 80 %
     # of Nyquist (2 and 4 ms sampling) the fundamental is not measured, and that is no
     # signal ending
