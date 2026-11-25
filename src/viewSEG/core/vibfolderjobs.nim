@@ -480,7 +480,7 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
   let exactTopHz = if held.samples.len > 0: held.exactTopHz else: NaN
   var answer = vibratorOf(rows, names, at, dtMs, params, recorded, topHz, exactTopHz, note, sig,
     converterOrder = facts.kind == sgNone and isConverterLayout(codes),
-    plan = PlanAsk(stored: held.samples.len > 0, shiftMs: shiftMs))
+    plan = PlanAsk(stored: held.samples.len > 0, shiftMs: shiftMs, storedRow: held.samples))
   if answer.problem.len == 0:
     if held.samples.len > 0:
       let label = if held.name.len > 0: held.name else: "reference"

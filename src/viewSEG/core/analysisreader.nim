@@ -677,6 +677,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk; viewOf: var ref CorrelateView;
                 # the project's reference is the Ref; the recorded R trace, when the
                 # role has one, is measured against it as a signal of its own
                 var recorded = -1
+                let asStored = archiveSamples # (the plan's sweep is read off it, unmoved)
                 if archiveSamples.len > 0:
                   let refName = a.archiveName & " (archive)"
                   recorded = at[vsReference]
@@ -711,7 +712,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk; viewOf: var ref CorrelateView;
                 answer = vibratorOf(rows, names, at, dtMs, a.params, recorded,
                   a.topHz, a.exactTopHz, a.forceNote, a.sig, a.converterOrder,
                   PlanAsk(stored: archiveSamples.len > 0, shiftMs: (if alignment.kind ==
-                    "aligned": alignment.shiftMs else: NaN)))
+                    "aligned": alignment.shiftMs else: NaN), storedRow: asStored))
                 (answer.leftOut, answer.atOtherInterval) = n
                 if answer.problem.len == 0:
                   answer.against = against

@@ -724,7 +724,8 @@ proc againstPlan(file: SynthSweep; stored: seq[float32]; p = AnalysisParams();
   if q.forceHundredPct.isNaN: q.forceHundredPct = Hundred
   result = vibratorOf(@[recorded, file.sweepRow, placed], @["R", "GF", "stored"],
     [vsReference: 2, vsGroundForce: 1, vsMass: -1, vsBaseplate: -1], file.dtMs, q, 0, 80.0,
-    plan = PlanAsk(stored: true, shiftMs: (if al.found: al.shiftMs else: NaN)))
+    plan = PlanAsk(stored: true, shiftMs: (if al.found: al.shiftMs else: NaN),
+      storedRow: stored))
   doAssert result.problem == "", result.problem
 
 proc noisy(x: seq[float32]; share: float64; seed: int64): seq[float32] =
@@ -832,7 +833,7 @@ proc againstThePlan() =
     # the same sweep out of step: failed, and said
     let r = againstPlan(planSweep(delayMs = 2600), planSweep().referenceOf.sweepRow)
     doAssert r.qc.plan.verdict == qvFail and r.qc.verdict == qvFail, r.qc.line
-    doAssert r.qc.plan.sweep.startsWith("the two are the same sweep (7.9-80 Hz in 10.0 s) but " &
+    doAssert r.qc.plan.sweep.startsWith("the two are the same sweep (8-80 Hz in 10.0 s) but " &
       "not in step: the recorded pilot's sweep starts "), r.qc.plan.sweep
     doAssert "alignment looks no further than 2.0 s either way" in r.qc.line, r.qc.line
   block traces_shorter_than_the_sweep_pass_on_the_part_recorded:
@@ -916,7 +917,8 @@ proc sameSweepReadsTheSame() =
   ## "the recorded pilot sweeps 7.8-80.1 Hz in 10.0 s", 20 % "15.7-81 Hz", and a 0.5 s taper
   ## against 0.1 s "7.7-80 Hz in 10.04 s"; with a difference put in the verdict whatever the
   ## pilot's phase, the linear fade-in read "✓ PASS: 6 of 6 limits met; the project reference
-  ## sweeps ...".
+  ## sweeps ..."; with the plan's sweep read off the stored samples as moved to the pilot,
+  ## "the plan is read as stored" read "8.4-80 Hz in 9.9 s", a 2 Hz higher end "7.9-82 Hz".
   let base = planSweep().referenceOf.sweepRow
   for (share, seed) in [(0.01, 7'i64), (0.05, 8'i64), (0.2, 9'i64)]:
     let r = againstPlan(planSweep(), base, pilot = noisy(base, share, seed))
@@ -945,13 +947,20 @@ proc sameSweepReadsTheSame() =
   block higher_end:
     let r = againstPlan(planSweep(), planSweep(f1 = 82).referenceOf.sweepRow)
     doAssert r.qc.plan.verdict == qvFail and not r.qc.plan.sameSweep, r.qc.line
-    doAssert r.qc.plan.sweep == "the project reference sweeps 7.9-82 Hz in 10.0 s; the " &
+    doAssert r.qc.plan.sweep == "the project reference sweeps 8-82 Hz in 10.0 s; the " &
       "recorded pilot sweeps 8-80 Hz in 10.0 s", r.qc.plan.sweep
     doAssert r.qc.plan.sweep in r.qc.line, r.qc.line
+  block the_plan_is_read_as_stored_not_as_moved:
+    # the file sweeps 8-88 Hz in 11 s at the plan's rate: the plan is moved 64 ms earlier to
+    # it, which cuts its first 64 ms; the plan is still 8-80 Hz in 10 s
+    let r = againstPlan(planSweep(seconds = 11, f1 = 88), base)
+    doAssert r.qc.plan.shiftMs < -50, $r.qc.plan.shiftMs
+    doAssert r.qc.plan.sweep == "the project reference sweeps 8-80 Hz in 10.0 s; the " &
+      "recorded pilot sweeps 8-88 Hz in 11.0 s", r.qc.plan.sweep
   block higher_start:
     let r = againstPlan(planSweep(), planSweep(f0 = 9).referenceOf.sweepRow)
     doAssert r.qc.plan.verdict == qvFail and not r.qc.plan.sameSweep, r.qc.line
-    doAssert r.qc.plan.sweep == "the project reference sweeps 8.9-80 Hz in 10.0 s; the " &
+    doAssert r.qc.plan.sweep == "the project reference sweeps 9-80 Hz in 10.0 s; the " &
       "recorded pilot sweeps 8-80 Hz in 10.0 s", r.qc.plan.sweep
 
 proc main*() =

@@ -89,6 +89,10 @@ type
     shiftMs*: float64 = NaN
       ## the stored reference was moved by this to the recorded pilot (`alignStored`); NaN:
       ## it was not aligned
+    storedRow*: seq[float32]
+      ## the stored reference's samples as stored, before that move: the plan's sweep is read
+      ## off them, as a move that cuts its start or end would misstate it; empty: off the
+      ## reference row
 
   SweepShape* = object
     ## A reference's sweep as its own track reads it: the frequencies at the sweep's first
@@ -290,6 +294,22 @@ proc sweepShape*(t: SweepTrack; x: openArray[float32]; dtMs: float64): SweepShap
   if result.startHz.isNaN or result.endHz.isNaN or result.lengthMs.isNaN:
     # (a NaN compares as no difference: never the same sweep unread)
     result.why = "its frequency could not be read off its phase"
+
+proc ownShape(x: openArray[float32]; dtMs: float64): SweepShape =
+  ## The sweep of `x` tracked as a reference of its own (`sweepShape`): the stored reference
+  ## as stored, before it is moved to a recorded pilot.
+  try:
+    let tp = initSweepTrackPlan(float32, TrackParams(harmonics: 1), dtMs, x.len)
+    var ws = initWorkspace()
+    ws.reserve(tp.workspaceSize)
+    var r = initSweepReference(tp)
+    tp.referenceInto(x, r, ws)
+    var t = initSweepTrack(tp)
+    tp.trackInto(x, r, t, ws)
+    result = sweepShape(t, x, dtMs)
+  except ValueError as e:
+    result = SweepShape(startHz: NaN, endHz: NaN, lengthMs: NaN, startStepHz: NaN,
+      endStepHz: NaN, stepMs: NaN, firstMs: NaN, lastMs: NaN, why: e.msg)
 
 func shapeWords(s: SweepShape; hzDigits, sDigits: int): string =
   plain(s.startHz, hzDigits) & "-" & plain(s.endHz, hzDigits) & " Hz in " &
@@ -723,7 +743,12 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       # (what the vibrator did against what it was told), never judged
       result.qc.plan.fileRows = judgePlan(statsOf(pilotOwn[0].tracks[judged]).summary,
         p.qcWindowMs, p.qc).rows
-    let planShape = sweepShape(u.tracks[vsReference], rows[at[vsReference]], dtMs)
+    var planShape = if plan.storedRow.len > 0: ownShape(plan.storedRow, dtMs)
+      else: sweepShape(u.tracks[vsReference], rows[at[vsReference]], dtMs)
+    if plan.storedRow.len > 0 and not plan.shiftMs.isNaN:
+      # where the plan's sweep lies in this record: moved as its samples were
+      planShape.firstMs += plan.shiftMs
+      planShape.lastMs += plan.shiftMs
     let pilotShape = if pilotOwn.len > 0: sweepShape(pilotOwn[0].tracks[vsReference],
       rows[recorded], dtMs)
       else: SweepShape(why: "it was not tracked")
