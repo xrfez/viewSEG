@@ -223,6 +223,10 @@ proc stopGpu*(mu: var MapUi) =
   ## Frees the GPU objects, with the GL context still current.
   if mu.renderer.ready: mu.renderer.free()
 
+proc keepForStragglers*(mu: MapUi) =
+  ## At a quit that left a thread running: what the fold's count may still read stays.
+  mu.fold.keepForStragglers()
+
 proc show*(mu: var MapUi; v: MapView) =
   ## Gives the map the centre and scale of `v` next frame, as a pan or zoom
   ## of the user's would (its pixel size is the map's own).

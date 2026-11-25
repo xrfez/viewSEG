@@ -49,6 +49,8 @@ const
   CachedBytes = 256 shl 20 ## and the most bytes they may hold together (the newest is kept)
   MaxCells* = 4096         ## the most blocks a level has along either axis (a GPU texture's size)
   Waiting = "Waiting for the earlier count to stop."
+  Cancelled* = "The count was cancelled. Turn the layer off and on, or change a bin size, " &
+    "to count again."
 
 type
   FoldLevel* = object
@@ -376,6 +378,8 @@ proc poll(t: var FoldTracker; jobs: Jobs; wantKey: string) =
         t.take(key, wantKey)
       elif state == jsFailed and key == wantKey:
         (t.status, t.reason) = (fmFailed, "The fold could not be counted: " & info.get.error & ".")
+      elif state == jsCancelled and key == wantKey: # cancelled from the Jobs window
+        (t.status, t.reason) = (fmFailed, Cancelled)
       t.sink = nil
 
 proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; on: bool; along, across: float64) =
@@ -433,3 +437,12 @@ proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; on: bool; along, across:
           t.job = jobs.submit(foldSpec(), foldWork(inp, t.sink))
           t.reason = ""
   if t.status == fmComputing and t.job != NoJob: t.poll(jobs, t.jobKey)
+
+proc keepForStragglers*(t: FoldTracker) =
+  ## A count still working at the quit may read the relations it was given and
+  ## write its sink: they stay, to the end of the process, instead of being
+  ## released under it (as `AppState`'s own do).
+  if not t.hold.isNil: GC_ref(t.hold)
+  if not t.sink.isNil: GC_ref(t.sink)
+  for (_, hold) in t.retired:
+    if not hold.isNil: GC_ref(hold)

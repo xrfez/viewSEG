@@ -16,7 +16,8 @@
 ## - A survey rotated by 33 degrees (made here from the sample): its corner and inner bins are
 ##   where the library's `location` puts them, and `binAt` finds them again.
 ##
-## Seen to fail: with the layer's id left out of the cache key, "a file read again" kept the old
+## Seen to fail: with a cancelled job left unhandled, "a cancel from the Jobs window" found it
+## still computing; with the layer's id left out of the cache key, "a file read again" kept the old
 ## map; with a forgotten job's record left unhandled the follower stayed "computing" (the test
 ## timed out); with the typed sizes measured from `location` again, "typed sizes" found
 ## 12.300000000046566; with every size 1, the rotated survey's bins were far from `location`;
@@ -230,6 +231,19 @@ proc main*() =
       t.follow(st.jobs, st.survey, true, size, size)
     doAssert waitUntil((t.follow(st.jobs, st.survey, true, 40.0, 40.0); t.status != fmComputing))
     doAssert t.status == fmReady and t.shown.binAlong == 40.0, "the last size's map"
+
+  block userCancel:
+    var st = initAppState()
+    doAssert st.loaded(Land & ".s", Land & ".r", Land & ".x")
+    var t: FoldTracker
+    t.follow(st.jobs, st.survey, true, NaN, NaN)
+    for j in st.jobs.active: discard st.jobs.cancel(j.id) # as the Jobs window does
+    doAssert waitUntil(st.jobs.active.len == 0)
+    for k in 0 ..< 20: t.follow(st.jobs, st.survey, true, NaN, NaN)
+    doAssert t.status == fmFailed and t.reason == Cancelled and t.shown.isNil,
+      "a cancel from the Jobs window: still " & $t.status
+    t.follow(st.jobs, st.survey, false, NaN, NaN) # off and on counts again
+    doAssert t.finish(st, true) and t.status == fmReady
 
   block rotated:
     withFixtures fx:

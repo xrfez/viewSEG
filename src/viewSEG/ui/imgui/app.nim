@@ -2440,11 +2440,12 @@ proc run*(opts = RunOptions()): int =
   # or one given up, was not seen at all).
   let quitAt = getMonoTime()
   let diskLimit = if opts.quitDiskLimit > initDuration(): opts.quitDiskLimit else: DiskQuitLimit
-  ui.core.shutdown(diskLimit = diskLimit, tick = proc () {.raises: [].} =
+  let ended = ui.core.shutdown(diskLimit = diskLimit, tick = proc () {.raises: [].} =
     if getMonoTime() - quitAt >= SavingShownAfter:
       inc frame
       try: ui.savingFrame(window, opts, frame)
       except Exception: discard) # a frame that fails only stops the message
+  if not ended: ui.map.keepForStragglers() # the fold's count may still be reading
   when RoutedChecks:
     if opts.onFrame != nil and not opts.allowToolkitErrors and checkCount() > 0:
       raise newException(AssertionDefect, "Dear ImGui's checks failed:\n" & checkReport())
