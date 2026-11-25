@@ -101,13 +101,17 @@ proc place*[T](p: CutPipe[T]; i: int; item: var T): bool =
   ## `i < written + ring`, waiting until then. False, with `item` untouched,
   ## when the run was stopped. Each `i` in `0 ..< records` is placed once.
   acquire p.lock
-  doAssert i >= p.written and i < p.records, "record placed twice or out of range"
+  if i < p.written or i >= p.records:
+    release p.lock # a Defect must not leave the lock held: the stop would deadlock on it
+    raiseAssert "record placed twice or out of range"
   while p.stop == skNone and i >= p.written + p.ring:
     wait(p.slotFree, p.lock)
   result = p.stop == skNone
   if result:
     let s = i mod p.ring
-    doAssert not p.full[s], "record placed twice"
+    if p.full[s]:
+      release p.lock
+      raiseAssert "record placed twice"
     swap(item, p.slots[s])
     p.full[s] = true
     inc p.inRing

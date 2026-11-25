@@ -517,7 +517,8 @@ proc cutShots(c: ptr CutterJob) =
 
 proc cutterMain(c: ptr CutterJob) {.thread.} =
   ## The cutter thread. A failure stops the pipe with the first letter of the kind
-  ## (`T` a source cut short, `O` an `OSError`, `D` a `Defect`, `E` any other) and its message.
+  ## (`T` a source cut short, `O` an `OSError`, `E` any other; a `Defect` is not caught: it
+  ## ends the program, as on the job thread) and its message.
   markWorkerThread()
   {.cast(gcsafe).}:
     try:
@@ -528,8 +529,6 @@ proc cutterMain(c: ptr CutterJob) {.thread.} =
       c.pipe.stopWith(skProducer, 'O' & e.msg)
     except CatchableError as e:
       c.pipe.stopWith(skProducer, 'E' & e.msg)
-    except Defect as e:
-      c.pipe.stopWith(skProducer, 'D' & e.msg)
     clearCycleRoots()
 
 proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
@@ -898,7 +897,6 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           let m = pipe.stopMessage()
           case m[0]
           of 'O': raise newException(OSError, m[1 .. ^1])
-          of 'D': raise newException(AssertionDefect, m[1 .. ^1])
           else: raise newException(IOError, m[1 .. ^1])
         of skNone: discard
         else: abort(sink, dest, part, claimed, "The slice stopped before its end.", false)

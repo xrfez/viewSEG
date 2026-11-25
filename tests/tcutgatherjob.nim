@@ -593,7 +593,7 @@ proc main*() =
       doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}, limit),
         what & ": the job did not end"
       doAssert jobs.info(id).get.state == jsFailed, what & ": " & $jobs.info(id).get.state
-      doAssert "Input/output error" in sink.result.reason and
+      doAssert "Writing the file failed: Input/output error" in sink.result.reason and
         "partial file was removed" in sink.result.reason, what & ": " & sink.result.reason
       doAssert not fileExists(dest), what
       doAssert partFiles(outDir).len == 0, what & ": " & $partFiles(outDir)
