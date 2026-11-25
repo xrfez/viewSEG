@@ -164,6 +164,8 @@ proc runMain() =
           result = f.core.settings.map.positionTolerance == want and
             f.core.recordQc.job == NoJob and h.state == fsDone and h.traces.len == marked and
             f.core.recordQc.geometry.tolerance == (if want > 0: want else: 5.0)
+          if result and tries > 0:
+            echo "tolerance box \"", text, "\": the keys took ", tries, " retries"
           if not result and wait - at > 90 and f.core.settings.map.positionTolerance != want:
             next 8
         else:

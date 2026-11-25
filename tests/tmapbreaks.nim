@@ -22,6 +22,8 @@
 ## filters' key, the picks on the samples as recorded gave other traces than the overlay's; with
 ## `breakKeyFor` keeping to panels with the overlay on, the noise check picked the record a second
 ## time.
+## With the filters' hits made again only when the filter set changed and not on a record
+## change, record 0's trace was shown on record 1.
 
 import std/[algorithm, atomics, strutils]
 import parseSEG
@@ -165,6 +167,37 @@ proc main*() =
       "breaks are seen: not judged.", b.filterHitsOf(0).notJudged
     b.state = bkComputing
     doAssert b.filterHitsOf(0).offModel.state == fsComputing
+
+  block aRecordChange:
+    # two records, the overlay off, both filters ticked: on the next record the hits are at
+    # once "computing" with no traces, then that record's planted trace, not the first's
+    proc two(i: int; k: var TraceKeys): float64 =
+      k.record = float64(1 + i div Traces)
+      k.channel = float64(1 + i mod Traces)
+      let late = if i == 20 or i == Traces + 30: PlantedMs else: 0.0
+      arrivalMs(offsetOf(i mod Traces)) + late
+
+    withFixtures fx:
+      var st = initAppState()
+      st.shown fx.customShot("two.sgy", 2 * Traces, two)
+      let base = st.sessions[0].base
+      st.on(BreakFilters)
+      doAssert st.settle(st.jobs.active.len == 0 and
+        st.filterHits[mfBreakOffModel].state != fsComputing)
+      doAssert base + 20 in st.filterHits[mfBreakOffModel].traces,
+        $st.filterHits[mfBreakOffModel]
+      st.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
+      discard st.drainInbox()
+      var h = st.filterHits
+      for f in BreakFilters:
+        doAssert h[f].state == fsComputing and h[f].traces.len == 0,
+          "stale after a record change, " & $f & ": " & $h[f]
+      doAssert st.settle(st.jobs.active.len == 0 and
+        st.filterHits[mfBreakOffModel].state != fsComputing)
+      h = st.filterHits
+      doAssert base + Traces + 30 in h[mfBreakOffModel].traces and
+        base + 20 notin h[mfBreakOffModel].traces, $h[mfBreakOffModel]
+      st.shutdown()
 
   setJobHook(nil)
   echo "tmapbreaks: ok"

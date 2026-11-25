@@ -300,10 +300,9 @@ proc checkPositions(f: SeismicFile; traces: Slice[int]; base: int; ask: Geometry
   # with a shift: the stations off the position in force by more than it, beyond the tolerance
   var further = newSeq[bool](facts.len)
   if s.shift.stations > 0:
-    let size = hypot(s.shift.dx, s.shift.dy)
     for j, fact in facts:
       if hypot(fact.hx - fact.fx - s.shift.dx, fact.hy - fact.fy - s.shift.dy) > tol and
-          fact.far > size + tol:
+          fact.far > tol:
         further[j] = true
         inc s.furtherOff
   for fact in facts:

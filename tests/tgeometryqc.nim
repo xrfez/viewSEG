@@ -46,6 +46,8 @@
 ## source 1/1001 is 1155306 m from the survey"; with the "no index" answer kept, the record
 ## stayed not judged after its cache was made current; with the own headers kept over a load
 ## of the vendor maps, they were not read again.
+## With a station counted as further off only when it was also more than the shift away from
+## the survey, one 50 m west of a record shifted 50 m east was not counted.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -379,7 +381,7 @@ proc main*() =
       doAssert h[mfPositionOff].sources.len == 1, $h[mfPositionOff].sources
       var lines = g.geometryLines
       doAssert "12 stations sit about 50 m west of the survey (the same shift for all of them: " &
-        "check the survey file or the coordinate frame)." in lines, $lines
+        "check the survey file or the coordinate frame); 1 more is further off." in lines, $lines
       doAssert "The source 1/1001 is 25 m from the survey." in lines, $lines
       doAssert "12 traces' stations are not in the survey: not judged." in lines, $lines
       # a second join over the first compares the file's own headers again: none off, then
@@ -451,6 +453,19 @@ proc main*() =
       doAssert "26 stations sit about 50 m east of the survey (the same shift for all of them: " &
         "check the survey file or the coordinate frame); 4 more are further off." in
         g.geometryLines, $g.geometryLines
+      st.shutdown()
+
+  block aShiftAndOneTheOtherWay:
+    # 29 receivers 50 m east, one 50 m west: its own distance (50 m) is no more than the
+    # shift's, but it is 100 m from the shift: counted as further off
+    withFixtures fx:
+      var off = shifted(30, 50, 0)
+      off[12] = (-50.0, 0.0)
+      var st = fx.onLine(off)
+      let base = st.sessions[0].base
+      let g = st.recordQc.geometry
+      doAssert g.shift.stations == 29 and g.furtherOff == 1, $g.shift & " " & $g.furtherOff
+      doAssert g.furtherTraces == @[base + 12], $g.furtherTraces
       st.shutdown()
 
   block aSmallRecordInFeet:
