@@ -9,7 +9,7 @@
 ## are dropped, and the note says how many. Lines are not padded: the writer
 ## pads each card.
 
-import std/[strutils, unicode]
+import std/[sequtils, strutils, unicode]
 import parseSEG
 import ../core/outputtext
 
@@ -25,6 +25,8 @@ const
   ImportTooBig* = "The file is larger than 1 MiB and does not start with a SEG-Y text " &
     "header: it was not taken in."
   ImportNotText* = "The file is not text and does not start with a SEG-Y text header."
+  ImportUtf16* = "The file is UTF-16 text, which is not read: save it as UTF-8 or Latin-1 " &
+    "and import it again."
   ImportEmpty* = "The file holds no text."
   ImportUnreadable* = "The file could not be read."
 
@@ -56,15 +58,35 @@ func cutRunes(line: string; width: int): string =
 func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
 
+func bytesOf(b: string; first, last: int): seq[byte] =
+  ## `b[first ..< last]` as bytes.
+  result = newSeq[byte](last - first)
+  for i in first ..< last: result[i - first] = byte(b[i])
+
+func isUtf16(b: string): bool =
+  ## Whether `b` starts with a UTF-16 byte order mark or has a NUL in every
+  ## other byte of its start (text in the Latin alphabets).
+  if b.len >= 2 and b[0] in {'\xFE', '\xFF'} and b[1] == char(0xFE + 0xFF - ord(b[0])):
+    return true
+  let n = min(b.len, 512) div 2
+  var even, odd = 0
+  for i in 0 ..< n:
+    if b[2 * i] == '\0': inc even
+    if b[2 * i + 1] == '\0': inc odd
+  result = n >= 2 and (4 * even >= 3 * n or 4 * odd >= 3 * n)
+
 func looksRaw(b: string; size: int64): bool =
-  ## Whether `b`, the start of a file of `size` bytes, is a SEG-Y text header: the
-  ## whole file is 3200 bytes with no line feed, or the file goes on after the
-  ## header with bytes no text holds (the binary header), or it starts as EBCDIC "C ".
-  if b.len < TextHeaderSize: return false
-  if size == TextHeaderSize: return '\n' notin b
+  ## Whether `b`, the start of a file of `size` bytes, is a SEG-Y text header:
+  ## its first 3200 bytes read as text (EBCDIC or ASCII) and either the whole
+  ## file is 3200 bytes with no line feed, or the file goes on with 400 bytes no
+  ## text holds (the binary header), or it starts as EBCDIC "C ".
+  if b.len < TextHeaderSize or not looksLikeText(bytesOf(b, 0, TextHeaderSize)):
+    return false
+  if size == TextHeaderSize: return '\n' notin b.substr(0, TextHeaderSize - 1)
   if b[0] == '\xC3' and b[1] == '\x40': return true
-  for i in 0 ..< min(b.len, TextHeaderSize + 400):
-    if isControl(b[i]): return true
+  if b.len < TextHeaderSize + 400: return false
+  let tail = bytesOf(b, TextHeaderSize, TextHeaderSize + 400)
+  result = not looksLikeText(tail) or tail.allIt(it == 0)
 
 func rawCards(b: string): TextImport =
   var bytes = newSeq[byte](TextHeaderSize)
@@ -116,6 +138,6 @@ func importHeader*(b: string; size: int64): TextImport =
   if looksRaw(b, size): return rawCards(b)
   if size > ImportLimit: return TextImport(why: ImportTooBig)
   if size == 0 or b.len == 0: return TextImport(why: ImportEmpty)
-  for c in b:
-    if isControl(c): return TextImport(why: ImportNotText)
+  if isUtf16(b): return TextImport(why: ImportUtf16)
+  if b.anyIt(isControl(it)): return TextImport(why: ImportNotText)
   plainLines(b)

@@ -90,6 +90,48 @@ proc main*() =
     doAssert importHeader("", 0).why == ImportEmpty
     doAssert importHeader("\n\n  \n", 5).why == ImportEmpty
 
+  block longFilesAreNotAllHeaders:
+    # a binary with one control byte, a UTF-16 file and a report with a form feed
+    # were all taken for a SEG-Y text header; only a header followed by the binary
+    # header (or started as EBCDIC "C ") is one
+    var png = "\x89PNG\r\n\x1A\n"
+    for i in 0 .. 5000: png.add char((i * 37 + 1) mod 255 + 1)
+    let a = importHeader(png, png.len)
+    doAssert not a.ok and not a.raw, "a binary file was imported"
+    var u = "\xFF\xFE"
+    for n in 1 .. 300:
+      for c in "line " & $n & "\n":
+        u.add c
+        u.add '\0'
+    let b = importHeader(u, u.len)
+    doAssert not b.ok and b.why == ImportUtf16, b.why
+    var u2 = ""
+    for n in 1 .. 300:
+      for c in "line " & $n & "\n":
+        u2.add c
+        u2.add '\0'
+    doAssert importHeader(u2, u2.len).why == ImportUtf16
+    var p = ""
+    for n in 1 .. 400: p.add "report line " & $n & "\n"
+    p[2000] = '\f'
+    let c = importHeader(p, p.len)
+    doAssert not c.raw, "a text report was taken for a text header"
+
+  block headerThenBinary:
+    var h = initTextHeader(teAscii)
+    h.text = "C 1 HELLO" & repeat(' ', 71)
+    var seg = bytesOf(h) & "\x00\x01\x00\x00" & repeat('\0', 396) & repeat('\1', 500)
+    let g = importHeader(seg, seg.len)
+    doAssert g.ok and g.raw, "an ASCII header with its binary header was refused"
+    var allZero = bytesOf(h) & repeat('\0', 900)
+    doAssert importHeader(allZero, allZero.len).raw
+    # a header whose binary header holds only EBCDIC blanks still starts as "C "
+    var e = initTextHeader(teEbcdic)
+    e.text = "C 1 FROM THE FIELD" & repeat(' ', 62)
+    let eb = bytesOf(e) & repeat('\x40', 400) & repeat('\x40', 100)
+    let r = importHeader(eb, eb.len)
+    doAssert r.ok and r.raw and r.encoding == teEbcdic, "the EBCDIC \"C \" start was ignored"
+
   echo "toutputtextimport: ok"
 
 when isMainModule:
