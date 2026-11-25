@@ -87,6 +87,13 @@ proc main*() =
     doAssert inchUnit == "µin/s" and near(inch, 3.725 / 0.0254, 1e-3), $(inch, inchUnit)
     doAssert ri.scaledParts(imperial = false).unit == "µm/s"
     doAssert r.scaledParts(imperial = true).unit == "µin/s"
+    # imperial acceleration: in/s² down to 1e-3, then µin/s²
+    let a1 = Scaled(kind: skValue, value: 0.039 * 0.0254, unit: auAcceleration)
+    let (big, bigUnit) = a1.scaledParts(imperial = true)
+    doAssert bigUnit == "in/s²" and near(big, 0.039, 1e-9), $(big, bigUnit)
+    let a2 = Scaled(kind: skValue, value: 0.0005 * 0.0254, unit: auAcceleration)
+    let (small, smallUnit) = a2.scaledParts(imperial = true)
+    doAssert smallUnit == "µin/s²" and near(small, 500, 1e-9), $(small, smallUnit)
     # volts need no sensor
     let v = SensorTable().read(2, fileScale(0.298e-6), 1000, aiVolts)
     doAssert v.kind == skValue and v.unit == auVolt and near(v.value, 0.298e-3), $v
@@ -315,6 +322,13 @@ proc main*() =
     p.convertRaw(t, aiPhysical, false)
     doAssert p.text(rfRawAmplitude) == "1 mV" and "sensor" notin p.rawTip and
       "(file)" notin p.text(rfRawAmplitude), p.text(rfRawAmplitude) & " / " & p.rawTip
+    # a file in physical units with a typed row: the conflict is said, not "none is typed"
+    p.keys = keysOf(2)
+    p.scale = phys
+    p.convertRaw(t, aiPhysical, false)
+    doAssert "none is typed" notin p.rawTip, p.rawTip
+    p.convertRaw(SensorTable(), aiPhysical, false)
+    doAssert "none is typed for Z (vertical) in Project > Sensors" in p.rawTip, p.rawTip
     # a dead or auxiliary trace without a descale: as recorded, with words
     for st in [tsDead, tsAuxiliary]:
       p.keys.status = st

@@ -223,7 +223,10 @@ func scaledParts*(s: Scaled; imperial: bool): Prefixed =
       prefixed(s.value, "m/s", [(1.0, "m/s"), (1e-3, "mm/s"), (1e-6, "µm/s"), (1e-9, "nm/s")])
   of auAcceleration:
     if imperial:
-      prefixed(s.value / Inch, "in/s²", [(1.0, "in/s²"), (1e-6, "µin/s²")])
+      # in/s² down to 1e-3, then µin/s²: no prefix reads as minutes
+      let a = s.value / Inch
+      if a == 0 or a.isNaN or abs(a) >= 1e-3: (a, "in/s²")
+      else: prefixed(a, "in/s²", [(1e-6, "µin/s²"), (1e-9, "nin/s²")])
     else:
       prefixed(s.value, "m/s²", [(1.0, "m/s²"), (1e-3, "mm/s²"), (1e-6, "µm/s²")])
   of auPressure:

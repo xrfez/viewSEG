@@ -9246,19 +9246,23 @@ proc noteScales(state: var AppState) =
   if key == state.scalesNoted: return
   state.scalesNoted = key
   let plan = initCalibrationPlan(state.project.doc.sensors.calibrationOf)
-  var typed, fromFile, noVolts, noSensor, other, conflicts = 0
+  var typed, fromFile, volts, noVolts, noSensor, other, conflicts = 0
   for i, keys in state.tiles[k][at].keys:
     let r = scaleSample(plan, keys, state.tiles[k][at].scales[i], 1.0, aiPhysical)
     case r.kind
     of skValue:
-      if r.source == ssFile: inc fromFile else: inc typed
+      if r.unit == auVolt: inc volts
+      elif r.source == ssFile: inc fromFile
+      else: inc typed
       if r.conflict: inc conflicts
     of skNoVolts: inc noVolts
     of skNoSensor: inc noSensor
     of skCounts, skNotFitting, skKept: inc other
   state.log.add(sevInfo, "project", "Physical units, " & state.sessions[shown].name & ": " &
-    $(typed + fromFile) & " of " & $state.tiles[k][at].keys.len & " traces shown convert, " &
-    $typed & " with the typed sensor, " & $fromFile & " with the file's own sensitivity, " &
+    $(typed + fromFile + volts) & " of " & $state.tiles[k][at].keys.len &
+    " traces shown convert, " & $typed & " with the typed sensor, " & $fromFile &
+    " with the file's own sensitivity, " &
+    (if volts > 0: $volts & " in volts only (auxiliary), " else: "") &
     $noVolts & " lack a descale in the file, " & $noSensor & " lack a sensor for their " &
     "component" & (if other > 0: ", " & $other & " are left as recorded" else: "") &
     (if conflicts > 0: "; " & $conflicts & " differ from the file's headers" else: "") & ".")

@@ -227,6 +227,14 @@ proc main*() =
         if e.text.startsWith("Physical units, "):
           doAssert "with the typed sensor" in e.text and
             "with the file's own sensitivity" in e.text, e.text
+          # the counts add up to the traces shown; volts-only traces are counted apart
+          let parts = e.text.split(": ", 1)[1].split(", ")
+          let shown = parseInt(parts[0].split(' ')[0])
+          let typedN = parseInt(parts[1].split(' ')[0])
+          let fileN = parseInt(parts[2].split(' ')[0])
+          let voltsN = if parts[3].endsWith("in volts only (auxiliary)"):
+            parseInt(parts[3].split(' ')[0]) else: 0
+          doAssert shown == typedN + fileN + voltsN, e.text
       true
     step("the summary counts the typed and the file's sensitivities apart", noop, counted)
     closeWindow()

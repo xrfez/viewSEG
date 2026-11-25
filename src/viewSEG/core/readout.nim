@@ -164,13 +164,16 @@ proc convertRaw*(p: var Pick; table: SensorTable; want: AmplitudeIn; imperial: b
     let sensor = s.unit != auVolt # volts name no sensor
     let fromFile = sensor and s.source == ssFile
     p.rawText = significant(number) & " " & unit & (if fromFile: " (file)" else: "") & peak
+    # the file's physical samples name the missing sensor only when no row is typed for it
+    let missing = if table.get(s.component).isNone:
+        "; none is typed for " & componentName(s.component) & " in Project > Sensors"
+      else: ""
     p.rawTip = "The file's sample " & significant(p.raw) & " converted " &
       (if not sensor: "to volts at the recorder's input with the file's own descale"
         elif not fromFile: "with the file's own descale and the sensor typed for " &
           componentName(s.component)
         elif p.scale.physical: "with the file's own descale: its headers say the samples " &
-          "are already in " & unit & "; none is typed for " & componentName(s.component) &
-          " in Project > Sensors"
+          "are already in " & unit & missing
         else: "with the sensitivity in the file's headers (" &
           significant(p.scale.sensitivity) & " V per " & sensitivityBase(p.scale.unit) & "); " &
           "none is typed for " & componentName(s.component) & " in Project > Sensors") &
