@@ -64,6 +64,9 @@ type
     atMs*: float64     ## the start of the worst window (a peak's); NaN for an average
     status*: QcStatus
     why*: string       ## when not judged
+    ofHundred*, target*: float64 = NaN
+      ## the average force row's: the same force in % of the 100 % force, and the target (%) the
+      ## measured value is a percent of
 
   QcStats* = object
     ## The window statistics, as measured (the forces in the file's unit, and in % of
@@ -74,6 +77,9 @@ type
     avgDistortionPct*, peakDistortionPct*, peakDistortionAtMs*: float64
     avgForce*, minForce*, minForceAtMs*, peakForce*, peakForceAtMs*: float64
     avgForcePct*, minForcePct*, peakForcePct*: float64
+    fundamentalPeak*, fundamentalPeakPct*: float64
+      ## the largest window mean of the fundamental and its % of the 100 % force: shown beside
+      ## the peak force (the raw envelope's, with the harmonics), never judged
 
   QcReport* = object
     verdict*: QcVerdict
@@ -134,7 +140,12 @@ func measuredText*(r: QcRow): string =
   let text = if digits == 4 and plain(r.measured, 4) == plain(r.bound):
                formatFloat(r.measured, ffDecimal, 4)
              else: plain(r.measured, digits)
-  text & r.limit.unitOf
+  result = text & r.limit.unitOf
+  if r.limit == qlAvgForce and not r.ofHundred.isNaN and not r.target.isNaN and
+      r.target != 100:
+    # both bases in one place: the plot's axis is % of the 100 % force, the limit a % of target
+    result = plain(r.ofHundred) & " % of 100 % force = " & result & " of the " &
+      plain(r.target) & " % target"
 
 func markText*(r: QcRow): string =
   ## The mark as text, never colour alone: "✓", "✗", or "–" (not judged).
@@ -187,7 +198,8 @@ func judge*(s: WindowSummary; windowMs: float64; limits: QcLimits;
     peakDistortionAtMs: s.maxThdAtMs, avgForce: s.meanForce,
     minForce: s.minForce,
     minForceAtMs: s.minForceAtMs, peakForce: s.maxPeak,
-    peakForceAtMs: s.maxPeakAtMs,
+    peakForceAtMs: s.maxPeakAtMs, fundamentalPeak: s.maxForce,
+    fundamentalPeakPct: percent(s.maxForce, hundred),
     avgForcePct: percent(s.meanForce, hundred * target / 100),
     minForcePct: percent(s.minForce, hundred * target / 100),
     peakForcePct: percent(s.maxPeak, hundred))
@@ -204,6 +216,8 @@ func judge*(s: WindowSummary; windowMs: float64; limits: QcLimits;
       st.peakDistortionAtMs, ""),
     rowOf(qlAvgForce, st.avgForcePct, limits.avgForcePct, NaN, noScale),
     rowOf(qlPeakForce, st.peakForcePct, limits.peakForcePct, st.peakForceAtMs, noScale)]
+  result.rows[ord(qlAvgForce)].ofHundred = percent(s.meanForce, hundred)
+  result.rows[ord(qlAvgForce)].target = target
   let onWords = if on.len > 0: " on " & on else: ""
   var failed, passed = 0
   var worst = 0.0

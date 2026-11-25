@@ -104,6 +104,21 @@ proc baseTests() =
       doAssert p.dimmed.len == 2, p.title & ": " & $p.dimmed
     doAssert "judged from" in r.note and "the sweep less its tapers" in r.note, r.note
 
+  block peak_force_shows_the_fundamental_beside:
+    # a 2nd harmonic of 40 % lifts the waveform's envelope peak to about 120 % of the 100 %
+    # force while the fundamental holds 100 %: the peak force verdict stays on the envelope's
+    # peak (it exposes distortion), the fundamental's peak is shown beside it and decides nothing
+    var spec = good()
+    spec.h2 = 0.4
+    let r = judgeOf(spec, topHz = 200)
+    let s = r.qc.stats
+    doAssert near(s.fundamentalPeakPct, 100, 1.5), "fundamental peak " & $s.fundamentalPeakPct
+    doAssert s.peakForcePct > 115, "peak force " & $s.peakForcePct
+    doAssert near(r.row(qlPeakForce).measured, s.peakForcePct, 1e-9)
+    doAssert "peak fundamental force 100" in r.note and "peak force (with harmonics)" in r.note,
+      r.note
+    doAssert "points at distortion or decoupling" in r.note
+
   block phase_limits:
     var spec = good()
     spec.phaseDeg = 8

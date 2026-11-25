@@ -652,9 +652,13 @@ proc main*() =
       var p = st.plots[w].params
       p.targetPct = 60
       p.qc.avgPhaseDeg = 33
+      p.roles.groundForcePolarity = poReversed # (kept for the file layout, not the profile)
       st.change(w, p)
       let cfg = vibQcConfig(st)
       doAssert cfg.configured, "the window's settings were not kept"
+      # the roles kept per file layout reach the run, as the window uses them
+      doAssert cfg.ask.layouts.len == 1 and cfg.ask.layouts == st.vibRoleChoices,
+        $cfg.ask.layouts
       doAssert cfg.ask.options.targetPct == 60, $cfg.ask.options.targetPct
       doAssert cfg.ask.options.qc.avgPhaseDeg == 33
       doAssert cfg.profile.fromFile == "good.dat", cfg.profile.fromFile
@@ -756,7 +760,9 @@ proc main*() =
       st.change(b, q, frozen = true)
       cfg = vibQcConfig(st)
       doAssert cfg.ask.options.targetPct == 60, "the second window wiped the drive level"
-      doAssert cfg.ask.options.forceHundredPct == 5000, "the second window wiped the force"
+      # (the force is kept for the vibrator of the sweep it was set on, not for the project)
+      doAssert cfg.profile.hundredByVibrator.len == 1 and
+        cfg.profile.hundredByVibrator[0].pct == 5000, "the second window wiped the force"
       doAssert cfg.ask.options.qc.avgPhaseDeg == 7
       doAssert cfg.profile.fromFile == "good.dat", "a limit change moved fromFile: " &
         cfg.profile.fromFile

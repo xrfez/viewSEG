@@ -126,8 +126,8 @@ and a file that breaks its format are refused in words.
 
 Under the verdict one strip of buttons (Roles, Limits..., Details, the settings
 wheel and Freeze) holds the controls; the wheel's popover has headed groups, only those that apply to the
-file (a signature file has no Masses group: its channels are forces already, or the file's own
-weights are used). A finding a group holds is also told in words under the verdict, and the wheel
+file (a signature file asks for no masses: its channels are forces already, or the file's own
+weights are used; see "Which ground force the window uses" below). A finding a group holds is also told in words under the verdict, and the wheel
 carries a warning sign.
 
 - **The project's vibrator QC configuration.** With a project open, what you set in this
@@ -160,6 +160,99 @@ carries a warning sign.
 The roles come from the trace codes (reference 21, reaction mass 18, baseplate 19, ground force
 20) and no typed mass is applied: trace 4 is the ground force, as the file has it. The trace
 pickers are read-only; the polarity can be chosen.
+
+## Which ground force the window uses
+
+In the settings wheel, **Ground force** has two values, for every file that has a ground-force
+trace and the traces of the mass and the baseplate (an ordinary SEG-Y, the external converter's
+SEG-Y from a signature file, a `.dat`, a `.vib`):
+
+- **In the record**: the trace coded as ground force, as it is. This is what every file does
+  until you choose otherwise.
+- **Made from mass and baseplate**: the window forms the ground force itself from the two
+  traces, `Mr x M + Mb x B`. Its plots, numbers, table, verdict and exports then all use that one;
+  the other is still drawn as a second curve under Details. The choice is remembered with the
+  roles for the file layout, and in a project it is the vibrator QC profile's, which the folder
+  QC follows.
+
+In a project the weights typed for a converter's file (with the choice and the made signal's
+100 % force) are **one set for the project**, as a line beside the boxes says: the folder QC uses
+them and a new window of a converter's file opens with them. They are not kept per vibrator (use
+another project, or change them, for another set). The two weights are one pair: a window that
+changes one keeps the other as the project holds it (another window may have changed it) and
+then shows the pair kept; a window already open is not refreshed until it changes one. The
+Ground force choice is one for the project too: the folder QC judges every file with the one set
+last in any Vibrator window, `.dat` and `.vib` files included. When a converter's window makes
+the project's first profile, the profile takes that window's limits, statistics window and
+harmonics as it shows them (not its 100 % force of the recorded ground force or its drive level,
+which are in that file's terms); after that it writes only the made signal's settings. When the profile keeps 100 % forces for more
+than one vibrator and the ground force is made, one line in the window, and one above the folder
+QC's rows, says that the made signal uses that one set for every vibrator.
+
+What the two traces are decides the weights, so the window treats each kind of file its own way:
+
+| File | What M and B are | "Made from mass and baseplate" |
+|---|---|---|
+| An ordinary SEG-Y | accelerations of the reaction mass and the baseplate | `Mr x M + Mb x B` with the masses typed in the Masses group (the old behaviour of the window) |
+| The external converter's SEG-Y (traces coded 21, 19, 18, 20) | each force channel, mean removed and divided by its own weight, so acceleration-like | the same sum with the two **weights** typed as the masses: they undo the converter's scaling. With the weights typed exactly, the result is the true ground force minus a constant offset (the two channels' means, which the converter removed); a constant factor appears only when the weights are in another unit than the converter's |
+| A `.dat` | forces already, weighted by the controller | their plain sum, with no mass applied (typed masses are never used here): the same curve as the file's own ground-force trace |
+| A `.vib` | accelerations | the file's own weights from its header times the two accelerations: the same curve as the file's computed ground force |
+
+In a converter file the fourth trace (hold-down weight times the sum of the two channels with
+equal weights) is **not** the ground force: it adds two accelerations as if both had the same
+weight, and on a poorly coupled sweep it hardly resembles the true one. Choose **Made from mass
+and baseplate** and type the file's reaction-mass and baseplate weights to judge the real thing.
+The converter codes its two channels the other way round from a `.dat`: the trace coded 19 is the
+reaction mass's channel and the one coded 18 the baseplate's. For this layout only, the window opens with
+the reaction mass on the trace coded 19 and the baseplate on the one coded 18 (the other way
+round from the codes' usual meaning), so no swap is needed; the Masses group says which trace
+each mass multiplies (trace number and code), and **Swap mass and baseplate** in Roles still
+works and is remembered for the file layout. The role pickers are free for these files. When
+the ground force is made and the two weights on the other traces follow the reference clearly
+better (a mean phase more than 20° lower), a line says so and nothing is swapped. No such line
+does not prove the order is right: when the two channels are nearly in phase with each other,
+both orders give much the same phase and the check cannot tell them apart. The folder QC judges a converter's file on the roles the window takes for its layout, a swap
+included, and its row carries the same word when the other order fits the reference clearly
+better (the polarity stays as recorded there).
+
+For a `.dat` and a `.vib` a line under the choice says that both choices give the same ground
+force. When a file cannot follow the choice (no mass or baseplate trace, masses not typed, a `.vib`
+whose header gives no weights), a line says why and the ground force in the record is judged.
+
+**Two peaks, and what each says.** The average force is read from the fundamental, in % of the
+target as well as in % of the 100 % force ("121 % of 100 % force = 201 % of the 60 % target"). The
+peak force limit stays on the raw envelope's peak (the fundamental with its harmonics), and the
+fundamental's own peak is shown beside it, both in % of the 100 % force and named apart ("peak
+force (with harmonics)", "peak fundamental force"); the Force plot's legend says which curve is
+which. The fundamental says whether the drive level is at target; a raw peak well above it points
+at distortion or decoupling. The fundamental's peak decides nothing.
+
+**Where the 100 % force comes from.** Beside its box a note says whether it was typed, or set
+from a sweep (on which file, at which target force), or taken from the project's QC profile, and
+for which vibrator. Set it once on a high-force sweep and every later sweep of that vibrator is
+read against it, so a low-force sweep simply reads low. It is kept **per vibrator** in the
+project's QC profile: a vibrator with no value says so and is not judged on force (it never takes
+another vibrator's); a project saved before keeps its one value as the default for every
+vibrator until a vibrator gets its own. Each vibrator's value keeps the unit (and, for
+pound-counts, the accelerometer set) it was given in, so one set in counts before the force scale
+was given is converted exactly with the scale for the window and the folder QC, and one set in
+newtons is not read as counts when the scale is taken away (that vibrator is not judged on force,
+and says to set it again). A value kept by a version that had one unit for every vibrator has no
+known unit: set it again. With no project open, each vibrator's value is kept the same way for
+the run only (never saved): a window moved to another vibrator's sweep has none until you set
+it, says so, and is not judged on force; moved back, it has the first vibrator's again. If the file carries the controller's own average force
+and it differs from the target you typed by more than 10 percentage points when you press Set from
+this sweep, the value is set all the same and a line under the box (and Messages) says what a
+sweep at the target would then read. The force in pounds (the force scale) is under **Advanced:
+force in pounds**, closed at first: only for those who know the electronics' calibration.
+The mass and weight boxes show kg or lb, as the Units setting says (one choice for the window).
+
+**The 100 % force.** The force limits are percent of a 100 % force in the unit of the signal
+judged: the recorded ground force's in counts (or newtons with your scale), the made one's in
+weight times the traces' unit. The box shows and stores the one for the choice made and its unit
+is said next to it. Changing the choice never reuses the other value: when the one needed is
+not set, the force limits read "not judged" and say which box to fill. A `.dat` and a `.vib`
+share one value (same unit, same curve).
 
 - **The ground force against the reference.** A line under the verdict says how the ground force
   stands to the reference over the judged part, as recorded: "opposite" with its mean phase in

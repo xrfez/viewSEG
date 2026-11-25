@@ -125,7 +125,8 @@ proc main*() =
     doAssert r.curve(0, "M").sameAs(sizes(lib.tracks[vsMass].phaseDeg))
     doAssert r.curve(0, "B").sameAs(sizes(lib.tracks[vsBaseplate].phaseDeg))
     doAssert r.curve(1, "GF as recorded fundamental").sameAs(lib.tracks[vsGroundForce].amplitude[0])
-    doAssert r.curve(1, "GF as recorded peak").sameAs(lib.tracks[vsGroundForce].peak)
+    doAssert r.curve(1, "GF as recorded peak (with harmonics)").sameAs(lib.tracks[
+        vsGroundForce].peak)
     doAssert r.curve(2, "GF from M and B fundamental").sameAs(lib.tracks[vsWeightedSum].amplitude[0])
     doAssert r.curve(3, "Ref").sameAs(lib.tracks[vsReference].referenceHz)
     doAssert r.curve(3, "GF as recorded").sameAs(lib.tracks[vsGroundForce].frequencyHz)
@@ -225,7 +226,7 @@ proc main*() =
     # the force: judged in % of the 100 % force when it is given, windows past the peak limit
     p.forceHundredPct = 500 # GF is 1000: 200 % of it
     let f = vibratorOf(unitRows, names, inOrder, Dt, p)
-    doAssert f.plots[1].yLabel == "Force (%)", f.plots[1].yLabel
+    doAssert f.plots[1].yLabel == "Force (% of 100 % force)", f.plots[1].yLabel
     doAssert f.curve(1, "GF as recorded fundamental")[350] > 150, $f.curve(1,
         "GF as recorded fundamental")[350]
     var forceFail = false

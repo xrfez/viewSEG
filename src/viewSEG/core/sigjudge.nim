@@ -52,6 +52,10 @@ type
     correlationStored*: bool
     correlationLagZero*: int
     setA*: bool ## a `.vib` judged on accelerometer set A
+    madeReaction*, madeBaseplate*: float64 = NaN
+      ## the weights the ground force is made from M and B with, as the file stands: a
+      ## `.dat`'s two force channels are weighted already (1 and 1: their plain sum), a
+      ## `.vib`'s are its header's (pounds); NaN: none
 
 const
   VibSetAMassCode* = 258'i16        ## a .vib's reaction-mass acceleration, set A
@@ -69,6 +73,10 @@ proc applyFileScale*(into: var SignatureAsk; kind: SignatureKind;
   ## sets them. A `.dat` takes 100 % from the controller's target force when a
   ## drive level was typed. A `.vib` takes 100 % from the header hold-down when
   ## the accelerometer constant is set.
+  case kind
+  of sgDat: (into.madeReaction, into.madeBaseplate) = (1.0, 1.0)
+  of sgVib: (into.madeReaction, into.madeBaseplate) = (weights.massLb, weights.baseplateLb)
+  of sgNone: discard
   case kind
   of sgDat:
     if datCountsPerLbf > 0 and datCountsPerLbf < Inf:

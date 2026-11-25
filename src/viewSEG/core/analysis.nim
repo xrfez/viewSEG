@@ -69,10 +69,18 @@ type
       ## a choice made by hand on an earlier file of the same layout (the trace count of
       ## the record and its code sequence), kept in the project or the user's settings
 
+  HundredHow* = enum
+    ## How the 100 % force came to be what it is.
+    hhTyped = "typed"            ## typed in its box
+    hhSweep = "set from a sweep" ## "Set from this sweep" on a sweep
+
   JudgeOn* = enum
-    ## Which ground force the verdict judges when the unit has both.
-    joRecorded = "GF"        ## the recorded ground force
-    joWeighted = "GF (M, B)" ## GF from M and B: the same sum formed here with the typed masses
+    ## The ground force switch: which ground force the window judges and draws as its
+    ## ground force when the unit has both.
+    joRecorded = "GF" ## "In the record": the trace coded as ground force, as it is
+    joWeighted = "GF (M, B)"
+      ## "Made from mass and baseplate": the weighted sum formed here, `Mr·a_M + Mb·a_B`, with
+      ## the typed masses (a converter's file: its weights), or a signature file's own weights
 
   VibRoles* = object
     ## A vibrator signature's roles: each one's place among the window's
@@ -175,6 +183,11 @@ type
     forceHundredPct*: float64 = NaN
       ## vibrator signature: the force that is 100 % (the file's unit), for the force
       ## limits; NaN: not given, the force limits are not judged
+    forceHundredHow*: HundredHow = hhTyped ## how the 100 % force (either) was given
+    forceHundredFile*: string ## the file the window showed when it was given; "": unknown
+    forceHundredAtPct*: float64 = NaN ## the target force (%) it was given at; NaN: unknown
+    forceHundredFromProfile*: bool
+      ## it came from the project's vibrator QC profile, not from this window's own edit
     rolesOpen*: bool = false ## vibrator signature: the roles' table is unfolded
     noteOpen*: bool = false ## vibrator signature: the note ("how this was measured") is unfolded
     details*: bool = false
@@ -291,8 +304,20 @@ type
       ## a trace that cannot be matched to the whole of its reference, one line each (shown
       ## first, in the warning colour): shorter than it, or its signal stops early
       ## (`core/signalend`); "" for none
+    controllerAvgForcePct*: float64 = NaN
+      ## a signature file's: the controller's own average force for this sweep, % of the
+      ## hold-down weight; NaN: the file has none
     judged*: string ## a vibrator signature's judged signal: "GF" or "GF (M, B)"
     bothSignals*: bool ## it has both ground forces: the user may choose which is judged
+    canMake*: bool
+      ## the window has the traces to make the ground force from mass and baseplate (a ground
+      ## force, M and B): the switch `roles.judge` is offered, whether or not it can be made
+    sameAsRecorded*: bool
+      ## a signature file's ground force made from M and B, in the unit of its recorded one:
+      ## it is judged against the recorded ground force's 100 % force
+    madeNote*: string
+      ## a signature file's: what making the ground force from M and B gives there ("both
+      ## choices give the same ground force"); "" for another file
     judgeWarning*: string ## the recorded GF does not match M and B with the typed masses; "" none
     judgedAxis*: string ## the judged force's axis label (its unit), for the 100 % box
     qc*: QcReport ## a vibrator signature's verdict, its limits table and window statistics
@@ -338,6 +363,33 @@ func topTexts*(tops: openArray[TopFrequency]): seq[string] =
   ## `tops` as the project's document keeps them.
   for t in tops: result.add topText(t.reference, t.hz)
 
+func hundredSource*(p: AnalysisParams; vibrator: int): string =
+  ## Where the 100 % force box's value came from, for the note beside it: "typed", "set on
+  ## a.dat at target 60 %", "from the project's QC profile, set on a.dat at target 60 %", each
+  ## "for vibrator 12" when the sweep's vibrator is known; "" when no value is given.
+  if p.forceHundredPct.isNaN and p.forceHundredWeighted.isNaN: return ""
+  func whole(x: float64): string =
+    if x == round(x): $int64(x) else: formatFloat(x, ffDecimal, 1)
+  case p.forceHundredHow
+  of hhTyped: result = "typed"
+  of hhSweep:
+    result = "set " & (if p.forceHundredFile.len > 0: "on " & p.forceHundredFile
+      else: "from a sweep")
+    if not p.forceHundredAtPct.isNaN: result.add " at target " & whole(p.forceHundredAtPct) & " %"
+  if p.forceHundredFromProfile: result = "from the project's QC profile, " & result
+  if vibrator > 0: result.add " for vibrator " & $vibrator
+
+func hundredGuard*(controllerPct, targetPct: float64): string =
+  ## What to say when "Set from this sweep" is pressed on a sweep whose own controller reports
+  ## an average force more than 10 percentage points from the target typed: the value is
+  ## set all the same. "" when they agree or either is not known.
+  if controllerPct.isNaN or targetPct.isNaN or abs(controllerPct - targetPct) <= 10: return ""
+  func whole(x: float64): string = $int64(round(x))
+  "The controller reports about " & whole(controllerPct) & " % average force for this " &
+    "sweep; the target typed is " & whole(targetPct) & " %. A 100 % force set here makes a " &
+    whole(targetPct) & " % sweep read about " & whole(targetPct * targetPct / controllerPct) &
+    " %."
+
 func topOf*(tops: openArray[TopFrequency]; reference: string): float64 =
   ## The top frequency typed for `reference` (`RecordedKey`: the record's own trace); NaN
   ## when none is.
@@ -356,6 +408,15 @@ func samePlaces*(a, b: VibRoles): bool =
   ## Whether `a` and `b` give every role the same trace.
   a.reference == b.reference and a.groundForce == b.groundForce and a.mass == b.mass and
     a.baseplate == b.baseplate
+
+func isConverterLayout*(codes: openArray[int16]): bool =
+  ## Whether `codes` are exactly the external converter's SEG-Y from a vibrator signature
+  ## file, four traces, as it writes them (a longer record is not taken for it): reference (21), then the two force channels coded 19 and 18, then the
+  ## ground force (20). In such a file the trace coded 19 is the converter's second channel,
+  ## the reaction mass's, and the one coded 18 the baseplate's: the other way round from the
+  ## SEG-Y standard's codes and from a `.dat`'s own traces.
+  codes.len == 4 and codes[0] == VibReferenceCode and codes[1] == VibBaseplateCode and
+    codes[2] == VibReactionMassCode and codes[3] == VibGroundForceCode
 
 func withCodeRoles*(roles: VibRoles; codes: openArray[int16]; file: string): VibRoles =
   ## `roles` for a window whose traces have the trace identification `codes`
@@ -378,6 +439,11 @@ func withCodeRoles*(roles: VibRoles; codes: openArray[int16]; file: string): Vib
     result.groundForce = places.groundForce
     result.mass = places.mass
     result.baseplate = places.baseplate
+    if codes.isConverterLayout:
+      # the converter's trace coded 19 is the reaction mass's channel and the one coded 18 the
+      # baseplate's (the other way round from the codes' standard meaning): the reaction mass
+      # takes the one coded 19, so the typed weights multiply the channels they belong to
+      swap(result.mass, result.baseplate)
     result.source = rsCodes
     result.handFile = ""
 
@@ -557,6 +623,10 @@ const
     words: "above 0 and at most 1000 %")
   MassKgRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
     words: "above 0 and at most 1000000000 kg")
+  ForceHundredRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
+    words: "above 0 and at most 1000000000 in its unit")
+    ## a 100 % force: in the unit of the signal judged (counts, pound-counts, newtons, or kg
+    ## times the traces' unit), never a mass
   HundredUnits* = ["", "counts", "pound-counts", "N"]
     ## the units a typed 100 % force may be in ("": not said)
   ForceScaleRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
@@ -603,8 +673,8 @@ func settingProblem*(p: AnalysisParams; view: AnalysisView; signature = false): 
     check("qcWindowMs", p.qcWindowMs, WindowMsRange)
     for name, v in fieldPairs(p.qc):
       check("qc." & name, v, NumberRange, none = true)
-    check("forceHundredPct", p.forceHundredPct, MassKgRange, none = true)
-    check("forceHundredWeighted", p.forceHundredWeighted, MassKgRange, none = true)
+    check("forceHundredPct", p.forceHundredPct, ForceHundredRange, none = true)
+    check("forceHundredWeighted", p.forceHundredWeighted, ForceHundredRange, none = true)
     check("targetPct", p.targetPct, TargetPctRange, none = signature)
     if signature and p.forceHundredUnit notin HundredUnits:
       return "forceHundredUnit must be one of \"\", \"counts\", \"pound-counts\" and \"N\", " &

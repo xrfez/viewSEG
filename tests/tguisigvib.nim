@@ -166,10 +166,14 @@ proc main*() =
       list.step "the wheel opened":
         f.click(W & ".wheel")
       do:
-        f.shown(W & ".force scale") and f.shown(W & ".group Force") and
+        f.shown(W & ".advanced") and not f.shown(W & ".force scale") and
+          f.shown(W & ".group Force") and
           f.shown(W & ".masses note") and not f.shown(W & ".group Masses") and
           not f.shown(W & ".set A") and not f.shown(W & ".group Weights from the header") and
           f.shown(W & ".identity") and f.shown(W & ".tripped")
+      list.step "the force in pounds opened":
+        f.click(W & ".advanced")
+      do: f.shown(W & ".force scale") and f.shown(W & ".advanced note")
       list.step "a scale is set":
         var s = f.core.settings
         s.forceScale.datCountsPerLbf = 8

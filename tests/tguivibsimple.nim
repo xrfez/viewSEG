@@ -150,7 +150,7 @@ proc main*() =
       let w = f.core.plots[0]
       doAssert f.markOf("new plot 1.wheel popover").size.x == 0, "the wheel stays open"
       doAssert abs(w.result.qc.stats.avgForcePct - 100) < 0.5, $w.result.qc.stats.avgForcePct
-      doAssert w.result.plots[1].yLabel == "Force (%)", w.result.plots[1].yLabel
+      doAssert w.result.plots[1].yLabel == "Force (% of 100 % force)", w.result.plots[1].yLabel
       doAssert w.result.qc.verdict == qvPass, w.result.qc.line
       doAssert f.errorPixels(0) == 0, "an error-colour stretch on the good record"
       true)

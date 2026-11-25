@@ -788,6 +788,8 @@ proc plotJson(w: AnalysisWindow; fe: Frontend; units: UnitSystem; limit: int): J
     result["verdictLine"] = %q.line
     result["judged"] = %r.judged # the signal judged: GF, or GF (M, B)
     result["bothSignals"] = %r.bothSignals # the unit has both: `roles.judge` chooses
+    result["canMake"] = %r.canMake # the ground force can be made from M and B: `roles.judge`
+    result["madeNote"] = %r.madeNote
     result["judgeWarning"] = %r.judgeWarning
     result["qcLimits"] = limits
     result["windowStats"] = %*{"windowMs": toJson(s.windowMs),

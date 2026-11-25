@@ -6,7 +6,7 @@
 ##   with no vibrator codes, or with the reference only, keeps the roles it had;
 ##   a choice made by hand on the same file stays, on another file the codes win;
 ## - in a window on a record of traces 21, 19, 18, 20 (the files' order), the roles are
-##   Ref 0, GF 3, M 2, B 1 (not the window order Ref, GF, M, B), `source` says the
+##   Ref 0, GF 3, M 1, B 2 (the converter's layout: the reaction mass is the trace coded 19), `source` says the
 ##   codes did it and the window's note says "roles taken from the trace
 ##   identification codes";
 ## - a role changed in the window is a choice by hand, and stays;
@@ -45,10 +45,14 @@ proc main*() =
   block pureRoles:
     let order = VibRoles()
     let a = order.withCodeRoles([21'i16, 19, 18, 20], "a")
-    doAssert (a.reference, a.baseplate, a.mass, a.groundForce) == (0, 1, 2, 3)
+    # (the external converter's layout: the reaction mass is the trace coded 19)
+    doAssert (a.reference, a.mass, a.baseplate, a.groundForce) == (0, 1, 2, 3)
     doAssert a.source == rsCodes
     let b = order.withCodeRoles([20'i16, 18, 19, 21], "a")
     doAssert (b.reference, b.baseplate, b.mass, b.groundForce) == (3, 2, 1, 0)
+    # only a record of exactly these four traces is the converter's: more traces keep the codes
+    let longer = order.withCodeRoles([21'i16, 19, 18, 20, 30], "a")
+    doAssert (longer.mass, longer.baseplate) == (2, 1), $longer
     # some codes missing: those roles are none
     let c = order.withCodeRoles([21'i16, 20], "a")
     doAssert (c.reference, c.groundForce, c.mass, c.baseplate) == (0, 1, -1, -1)
@@ -89,7 +93,7 @@ proc main*() =
       doAssert st.settle(st.plots[0].file == st.sessions[st.sessionOf(coded)].name and
         not st.plots[0].waiting and st.plots[0].result.gen > 0)
       let r = st.plots[0].params.roles
-      doAssert r.source == rsCodes and (r.reference, r.baseplate, r.mass, r.groundForce) ==
+      doAssert r.source == rsCodes and (r.reference, r.mass, r.baseplate, r.groundForce) ==
         (0, 1, 2, 3), "the persisted choice won on the new file: " & $r
       doAssert st.log.has("do not apply here"), "not said in the Messages"
     # a window opened on the coded file: its codes in the files' order 21, 19, 18, 20
@@ -104,7 +108,9 @@ proc main*() =
       doAssert w.traces.len == 4, $w.traces
       let r = w.params.roles
       doAssert r.source == rsCodes
-      doAssert (r.reference, r.groundForce, r.mass, r.baseplate) == (0, 3, 2, 1), $r
+      doAssert (r.reference, r.groundForce, r.mass, r.baseplate) == (0, 3, 1, 2), $r
+      doAssert "the baseplate-coded trace is taken as the reaction mass" in st.vibRolesLine(w) and
+        "Swap changes it" in st.vibRolesLine(w), st.vibRolesLine(w)
       doAssert "roles taken from the trace identification codes" in w.result.note,
         w.result.note
       doAssert w.result.problem == "", w.result.problem
@@ -114,11 +120,12 @@ proc main*() =
         shown["groundForce"].getInt == 3, $shown
     block byHand:
       var q = st.plots[0].params
-      (q.roles.mass, q.roles.baseplate) = (1, 2)
+      (q.roles.mass, q.roles.baseplate) = (2, 1)
       st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: q)
       doAssert st.settle(not st.plots[0].waiting and st.plots[0].result.gen > 0)
       doAssert st.plots[0].params.roles.source == rsHand
       doAssert "roles taken from the trace" notin st.plots[0].result.note
+      doAssert "taken as the reaction mass" notin st.vibRolesLine(st.plots[0])
     discard st.shutdown()
   echo "tvibroles: ok"
 

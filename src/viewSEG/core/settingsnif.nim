@@ -1068,9 +1068,9 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
         elif c.isTree("qcWindowMs"): r.ranged(c, WindowMsRange,
             o.vibrator.qcWindowMs)
         elif c.isTree("targetPct"): r.ranged(c, TargetPctRange, o.vibrator.targetPct)
-        elif c.isTree("forceHundredPct"): r.ranged(c, MassKgRange,
+        elif c.isTree("forceHundredPct"): r.ranged(c, ForceHundredRange,
             o.vibrator.forceHundredPct)
-        elif c.isTree("forceHundredWeighted"): r.ranged(c, MassKgRange,
+        elif c.isTree("forceHundredWeighted"): r.ranged(c, ForceHundredRange,
             o.vibrator.forceHundredWeighted)
         elif c.isTree("forceHundredScoped"): scoped = true
         elif c.isTree("qc"):

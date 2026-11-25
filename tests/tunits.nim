@@ -6,7 +6,8 @@
 ## "1 lb is 0.45 kg"; with `sensible` printing the raw float, `roundTrip`
 ## found "3968.320000001"; with the imperial note left in kilograms,
 ## `notes` found "2450 kg·M". With `massBoxValue` returning the raw conversion,
-## `massBox` found 7936.658599999999 where the box shows 7936.6.
+## `massBox` found 7936.658599999999 where the box shows 7936.6. With `massTyped` storing the
+## number the box showed, `massTyped` found 3600 kg moved after the unit was switched.
 
 import std/[math, strutils]
 import viewSEG/core/[analysis, units]
@@ -60,6 +61,33 @@ proc main*() =
     doAssert abs(storeMass(7936.6, usImperial) - 3600) < 0.03 # the box's rounding, typed back
     doAssert abs(storeMass(100, usImperial) - 45.359237) < 1e-12
     doAssert massBoxValue(storeMass(100, usImperial), usImperial) == 100
+
+  block massTyped:
+    # what a mass box does with a number typed: always kept in kilograms; 3600 lb is
+    # 1632.932532 kg and shows back as 3600 lb; the box left as it showed (a unit switched, any
+    # number of times) stores nothing, so 3600 kg stays exactly 3600 kg; out of range is refused
+    let lb = massTyped(3600, massBoxValue(2000, usImperial), 2000, usImperial)
+    doAssert lb.changed and abs(lb.kg - 1632.932532) < 1e-9, $lb.kg
+    doAssert lb.kg == 3600 * KgPerLb and massBoxValue(lb.kg, usImperial) == 3600
+    doAssert formatFloat(massBoxValue(lb.kg, usMetric), ffDecimal, 2) == "1632.93"
+    var stored = 3600.0
+    for i in 0 ..< 1000:
+      let u = if i mod 2 == 0: usImperial else: usMetric
+      let shown = massBoxValue(stored, u)
+      let got = massTyped(shown, shown, stored, u) # the box returned what it showed
+      doAssert not got.changed and not got.refused
+      stored = got.kg
+    doAssert stored == 3600.0, $stored
+    # 7936.6 lb typed on purpose is a mass of its own (the box's rounding, typed back)
+    let typedBack = massTyped(7936.6, 7936.5, 3600, usImperial)
+    doAssert typedBack.changed and abs(typedBack.kg - 3600) < 0.03 and typedBack.kg != 3600
+    doAssert not massTyped(3600, 3600, 3600, usMetric).changed
+    doAssert massTyped(0, 3600, 3600, usMetric).refused and
+      massTyped(0, 3600, 3600, usMetric).kg == 3600
+    doAssert massTyped(3e9, 1, 1, usImperial).refused
+    let cleared = massTyped(NaN, 3600, 3600, usMetric)
+    doAssert cleared.changed and cleared.kg.isNaN
+    doAssert not massTyped(NaN, NaN, NaN, usImperial).changed
 
   block about:
     # the About window's strings: one place, the licence read from the repository's file

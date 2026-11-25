@@ -3,6 +3,7 @@
 
 import std/[math, os, strutils]
 from ../core/sigtypes import SignatureKind, sgDat, sgNone, sgVib, timeText
+from ../core/analysis import JudgeOn, joWeighted
 import ../core/[project, settings, units, vibfolderconf, vibfolderqc, vibjudge, vibprofile]
 
 const
@@ -22,6 +23,7 @@ const
   ColProblem* = "Problem"
   DatKindLabel* = ".dat signature file"
   VibKindLabel* = ".vib file"
+  SegyKindLabel* = "converted SEG-Y"
   ArchiveMissing* = "The reference is not in the archive."
   RecordedReference* = "Measured against each file's recorded reference."
 
@@ -61,7 +63,7 @@ func kindLabel*(kind: SignatureKind): string =
   case kind
   of sgDat: DatKindLabel
   of sgVib: VibKindLabel
-  of sgNone: ""
+  of sgNone: SegyKindLabel # (only a converter's SEG-Y file is listed with no signature kind)
 
 func sentenceOf*(row: FolderRow): string =
   ## The sentence column. A file that was not judged has its reason here, not
@@ -267,12 +269,24 @@ func profileLines*(p: VibQcProfile): seq[string] =
       line.add " "
       line.add p.forceHundredUnit
     line.add "."
+  if p.hundredByVibrator.len > 0:
+    # each vibrator's own, in the unit it was given in
+    var each: seq[string] = @[]
+    for e in p.hundredByVibrator:
+      each.add "vibrator " & $e.vibrator & " " & sensible(e.pct) &
+        (if e.unit.len > 0: " " & e.unit else: " (unit not known: set it again)")
+    line.add " 100% force for " & each.join(", ") & "."
   if not p.targetPct.isNaN:
     line.add " Drive " & sensible(p.targetPct) & "%."
   if not p.topHz.isNaN:
     line.add " Top " & sensible(p.topHz) & " Hz."
   if p.referenceId.len > 0:
     line.add " Reference " & p.referenceId & "."
+  line.add (if p.judge == joWeighted: " Ground force made from mass and baseplate" &
+    (if not (p.madeReactionKg.isNaN or p.madeBaseplateKg.isNaN):
+      " (" & sensible(p.madeReactionKg) & " kg, " & sensible(p.madeBaseplateKg) & " kg)"
+    else: "") & "."
+    else: " Ground force in the record.")
   result = @[line]
   let lim = p.limits
   result.add "Average phase " & offOr(lim.avgPhaseDeg, "°") &
