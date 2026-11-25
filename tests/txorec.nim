@@ -191,6 +191,22 @@ proc main*() =
     doAssert st.shownSpread.stations == 4, $st.shownSpread.stations
     st.shutdown()
 
+  block oRecordsOnly:
+    # Only an O file loaded: its receiver gathers are checked against it; its shots have
+    # no X records to be checked against
+    var st = initAppState()
+    st.open(@[os], rcv)
+    doAssert st.settle(st.sessions[0].checkedAgainst.len > 0 and st.jobs.active.len == 0)
+    doAssert st.sessions[0].records[0].planned == 4 and
+      st.sessions[0].records[0].plannedMissing == 1, $st.sessions[0].records[0].planned
+    st.shutdown()
+    var shots = initAppState()
+    shots.open(@[os], own)
+    doAssert shots.settle(shots.sessions[0].checkedAgainst.len > 0 and
+      shots.jobs.active.len == 0)
+    doAssert shots.sessions[0].records[0].planned == -1, "a shot with no X records"
+    shots.shutdown()
+
   block derivedOnce:
     # X records only, no map filter: the O records are derived once for two receiver files
     var st = initAppState()

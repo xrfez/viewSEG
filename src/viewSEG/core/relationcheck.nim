@@ -31,6 +31,7 @@ const
     "matched to the survey by its record number, which is not trusted"
   NoSourceStation* = "no source station in the trace headers: the sources this receiver " &
     "recorded cannot be told"
+  NoXRecords* = "the survey has no X records"
   NoORecord* = "no O record matches this receiver"
   UnknownIndex* = "the trace headers give no receiver index (0) and the survey has this " &
     "point at several indices"
@@ -112,6 +113,9 @@ proc shotCheck*(g: SurveyGeometry; rows: TraceRows; ctx: JobContext; traceMatch 
   ## shot is unmatched: the reason in words, and `c` is not a basis for a check.
   ## A match the library made by the FFID (a source with no X record, or no
   ## source in the headers) is refused by `unmatchedWhy`.
+  if g.relationCount(rdSource) == 0:
+    result.why = NoXRecords
+    return
   result.c = g.recordCompleteness(rows, rmAuto, traceMatch)
   if result.c.recordMatch == rmSourceStation and result.c.candidates.len > 1:
     # Several X records at this source: the data decides, never the record number.

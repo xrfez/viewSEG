@@ -6241,6 +6241,13 @@ func relationLayer*(state: AppState): int =
     if l.origin == loSurveyFile and l.xRuns > 0: return i
   -1
 
+func checkLayer(state: AppState): int =
+  ## The loaded survey file the records of open files are checked against: the first with
+  ## X records (`relationLayer`), else the first with O records alone (its receiver
+  ## gathers are checked; its shots have no X records); -1 for none.
+  result = state.relationLayer
+  if result < 0: result = state.survey.listedLayer(rdReceiver)
+
 func joinedRelations(state: AppState; session: SessionId): int =
   ## The index in `joins` of open file `session`'s join when its survey has
   ## relation records (what its records are then checked against); -1 when not.
@@ -6306,7 +6313,7 @@ proc checkRecords(state: var AppState; s: Session) =
     state.checking.add (job, g)
     if not orel.isNil: state.checking.add (job, orel)
     return
-  let r = state.relationLayer
+  let r = state.checkLayer
   if r < 0:
     s.setChecks("", [], [])
     return
@@ -6345,7 +6352,7 @@ proc takeChecked(state: var AppState; m: sink Msg) =
   let i = state.findSession(m.checkedSession)
   if i < 0 or state.sessions[i].keysRevision != m.keysRevision: return
   let joined = state.joinedRelations(m.checkedSession) >= 0
-  let r = state.relationLayer
+  let r = state.checkLayer
   if (m.againstLayer == NoSurveyLayer and joined) or (not joined and r >= 0 and
       state.survey.layers[r].id == m.againstLayer):
     state.sessions[i].setChecks(m.against, m.planned, m.plannedMissing, m.unlisted,
@@ -6444,7 +6451,7 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
       ": " & layer.summary & "." & (if problems.len > 0: " " & problems.join("; ") & "." else: "")
     var lost = 0
     for c in layer.counts: lost += c.missing + c.zero + c.moved
-    let before = state.relationLayer
+    let before = state.checkLayer
     let wasId = if before >= 0: state.survey.layers[before].id else: NoSurveyLayer
     # An import's layer in place of the same file's keeps the one it
     # replaces until the import ends: a cancel or a failure puts it back.
@@ -6454,7 +6461,7 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
     let id = if ours: state.survey.add(layer, replaced) else: state.survey.add(layer)
     if ours and replaced.id != NoSurveyLayer: j.replaced.add (id, move replaced)
     state.log.add(if lost > 0: sevWarning else: sevInfo, name, text)
-    let now = state.relationLayer
+    let now = state.checkLayer
     if now >= 0 and state.survey.layers[now].id != wasId:
       for s in state.sessions: # against the relation file now loaded
         if state.joining.job != NoJob and state.joining.session == s.id:
@@ -6909,7 +6916,7 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
     state.enqueueMoves(id)
   if not state.sessions[^1].isSignature: # (a signature file has no place on the map)
     state.readPositions(state.sessions[^1])
-  if state.relationLayer >= 0: state.checkRecords(state.sessions[^1])
+  if state.checkLayer >= 0: state.checkRecords(state.sessions[^1])
   state.watchOpen()
   let k = state.findPanel(panel)
   if holdOpen and state.correlateOn:
@@ -7342,7 +7349,7 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
       discard state.jobs.cancel(job)
       state.droppedLoads.add job
     # its layers taken off, those they replaced put back as they were
-    let before = state.relationLayer
+    let before = state.checkLayer
     let wasId = if before >= 0: state.survey.layers[before].id else: NoSurveyLayer
     for id in j.added:
       var back = -1
@@ -7352,7 +7359,7 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
       else: discard state.survey.remove(id)
     if j.added.len > 0:
       state.map.followed(state.survey)
-      let now = state.relationLayer
+      let now = state.checkLayer
       if now >= 0 and state.survey.layers[now].id != wasId:
         for s in state.sessions: # against the relation file the map has again
           if s.id == j.session: j.checkLater = true # (below)
@@ -13002,7 +13009,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
       state.ignore(cmd, $cmd.layer & " holds an open file's positions: they go when it is closed")
     else:
       let name = state.survey.layers[i].name
-      let checked = state.relationLayer
+      let checked = state.checkLayer
       discard state.survey.remove(cmd.layer)
       state.log.add(sevInfo, name, name & " was taken out of the survey.")
       if checked == i: # the records were checked against it
