@@ -1334,8 +1334,9 @@ proc shapeOf(t: string): Shape =
 
 proc detectWith(cells: openArray[string]; epochLike: bool): string =
   ## `detectTimePattern`; with `epochLike` (the column's header says UTC), a
-  ## column of microseconds since 1970 is epoch microseconds. Without it, the
-  ## same digits may be GPS microseconds, and none is proposed.
+  ## column of seconds or microseconds since 1970 is epoch seconds or epoch
+  ## microseconds. Without it, the same digits may be GPS seconds or
+  ## microseconds, and no form is proposed for plain numbers.
   var vals: seq[string] = @[]
   for c in cells:
     let t = c.strip
@@ -1347,7 +1348,7 @@ proc detectWith(cells: openArray[string]; epochLike: bool): string =
   if numbers > 0:
     if numbers != vals.len: return ""
     var micros = epochLike
-    var seconds = true
+    var seconds = epochLike
     for t in vals:
       let whole = parseWhole(t)
       micros = micros and whole.ok and whole.value in 946_684_800_000_000'i64 ..
@@ -1379,10 +1380,10 @@ proc detectWith(cells: openArray[string]; epochLike: bool): string =
 
 proc detectTimePattern*(cells: openArray[string]): string =
   ## The pattern that reads every non-blank cell of one column, or "" when
-  ## the cells do not decide one. Proposed: seconds since 1970 when every cell
-  ## is a plain number in 2000..2100 (microseconds are not proposed: they may
-  ## be GPS microseconds, and the number cannot tell); a date and a time, as
-  ## `shapeOf` says, when
+  ## the cells do not decide one. Plain numbers are never proposed: seconds or
+  ## microseconds may be on the GPS clock or since 1970, and the number cannot
+  ## tell (`timePattern` proposes them under a header that says UTC).
+  ## Proposed: a date and a time, as `shapeOf` says, when
   ## every cell has the same form and, for a year and a day of year, a day
   ## above 12 is there or every day has three digits. Not proposed: a leading
   ## one or two digit run (dd/mo/yy, mo/dd/yy, yy/mo/dd), a four-digit year
@@ -1592,6 +1593,21 @@ func gpsPlausible(cells: openArray[string]): bool =
       let whole = parseWhole(t)
       if not (whole.ok and whole.value in 600_000_000_000_000'i64 ..
           3_300_000_000_000_000'i64):
+        return false
+  n > 0
+
+func secondsLike(cells: openArray[string]): bool =
+  ## Every non-empty cell is a plain number whose whole part reads as seconds
+  ## in about 1999..2100 on the GPS clock or since 1970, and there is one.
+  var n = 0
+  for c in cells:
+    let t = c.strip
+    if t.len > 0:
+      inc n
+      if not plainNumber(t): return false
+      let dot = t.find('.')
+      let whole = parseWhole(if dot < 0: t else: t.substr(0, dot - 1))
+      if not (whole.ok and whole.value in 600_000_000'i64 .. 4_102_444_800'i64):
         return false
   n > 0
 
@@ -1992,11 +2008,15 @@ proc timeAsk(log: ShotLog; map: ShotLogMap): tuple[col: int; text: string] =
     if role == crText:
       let header = log.columnName(col)
       let name = if header.len > 0: header else: "Column " & $(col + 1)
-      if microsLike(sampleCells(log, map, col)):
+      let cells = sampleCells(log, map, col)
+      if microsLike(cells):
         return (col, "\"" & name & "\" holds microsecond times, GPS or Unix: choose " &
           "GPSTB or Time (UTC).")
-      if header.len > 0 and (roleOfName(header) in {crTime, crGpsMicros} or
-          gpsHeader(header)):
+      let timeNamed = header.len > 0 and roleOfName(header) == crTime
+      if timeNamed and not gpsHeader(header) and secondsLike(cells):
+        return (col, "\"" & name & "\" holds seconds, GPS or Unix: choose Time (UTC) and " &
+          "type epoch seconds if they are Unix seconds; GPS seconds are not read.")
+      if timeNamed or (header.len > 0 and gpsHeader(header)):
         return (col, "\"" & name & "\" looks like a time, but its values are not in a " &
           "form that is read (GPS seconds are not). Choose Time (UTC) for it and type " &
           "the pattern, or choose GPSTB.")

@@ -39,7 +39,9 @@
 ##
 ## Seen to fail on the earlier guess: with 16 digits under Time taken as
 ## GPSTB, `microsAsked` read Unix microseconds of 2023 as 2033 and asked
-## nothing, and `noHeaderAndGuess` guessed GPSTB with no header at all.
+## nothing, and `noHeaderAndGuess` guessed GPSTB with no header at all. With
+## ten digits under Time proposed as epoch seconds, `secondsAsked` read GPS
+## seconds of 2024 as 2014.
 
 import std/[math, options, os, strutils, times]
 import viewSEG/core/shotlog
@@ -179,9 +181,11 @@ proc main*() =
     doAssert detectTimePattern([$UtcMarch]) == ""
     doAssert timeOf($UtcMarch & "\n").rows[0].timeUtcUs.isNone
     doAssert timeOf($UtcMarch & "\n", EpochMicros).rows[0].timeUtcUs.get == UtcMarch
-    doAssert timeOf("1709251200\n").rows[0].timeUtcUs.get == UtcMarch
-    doAssert detectTimePattern(["1709251200"]) == EpochSeconds
-    let frac = timeOf("1709251200.005\n")
+    doAssert timeOf("1709251200\n").rows[0].timeUtcUs.isNone
+    doAssert timeOf("1709251200\n").problems.items[0].text == UndecidedNumbers
+    doAssert timeOf("1709251200\n", EpochSeconds).rows[0].timeUtcUs.get == UtcMarch
+    doAssert detectTimePattern(["1709251200"]) == ""
+    let frac = timeOf("1709251200.005\n", EpochSeconds)
     doAssert frac.rows[0].timeUtcUs.get == UtcMarch + 5_000
     # every form that is proposed: found, and typed, read to the same instant
     let feb = unixUs(2024, 2, 29, 13, 14, 15)
@@ -702,6 +706,36 @@ proc main*() =
     doAssert og.roles == @[crFileNumber, crGpsMicros, crText]
     doAssert shots(parseShotLog(other, og), og).problems.count == 0
     doAssert timeNote(parseShotLog(other, og), og) == ""
+
+  block secondsAsked:
+    # ten digits are GPS or Unix seconds: GPS seconds of 2024-02-24 read as Unix seconds
+    # would be 2014, so seconds are proposed only under a header that says UTC
+    for header in ["Time", "Timestamp", "Shot time"]:
+      let text = "FFID," & header & "\n1,1393249473\n2,1393249483\n"
+      let g = guessMap(text)
+      doAssert g.roles == @[crFileNumber, crText] and g.dateTimePattern == "", header
+      let log = parseShotLog(text, g)
+      let ask = "\"" & header & "\" holds seconds, GPS or Unix: choose Time (UTC) and " &
+        "type epoch seconds if they are Unix seconds; GPS seconds are not read."
+      doAssert timeNote(log, g) == ask, header
+      let v = shots(log, g)
+      doAssert v.rows[0].timeUtcUs.isNone and v.rows[1].timeUtcUs.isNone, header
+      doAssert v.problems.count == 1 and v.problems.items[0].text == ask, header
+      var utc = g
+      utc.roles[1] = crTime
+      doAssert shots(log, utc).problems.items[0].text == UndecidedNumbers, header
+      utc.dateTimePattern = EpochSeconds
+      doAssert shots(log, utc).rows[0].timeUtcUs.get == 1_393_249_473_000_000'i64, header
+    for header in ["UTC seconds", "Unix time", "Epoch seconds", "Time (UTC)"]:
+      let text = "FFID," & header & "\n1,1709251200.5\n"
+      let g = guessMap(text)
+      doAssert g.roles == @[crFileNumber, crTime] and g.dateTimePattern == EpochSeconds, header
+      doAssert shots(parseShotLog(text, g), g).rows[0].timeUtcUs.get == UtcMarch + 500_000
+    # with no header the numbers are not guessed, and nothing is asked of a plain number
+    let bare = "1,1709251200\n2,1709251210\n"
+    let bg = guessMap(bare)
+    doAssert bg.roles == @[crText, crText]
+    doAssert shots(parseShotLog(bare, bg), bg).problems.count == 0
 
   block spacesInHeader:
     # the header names hold spaces, so a header cut at spaces has more fields
