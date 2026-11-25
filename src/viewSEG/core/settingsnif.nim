@@ -36,7 +36,8 @@
 ##  (cursorLine false)
 ##  (files (followLatest false) (prepareNext true) (listSignatureFiles false))
 ##  (map (info popup) (lengths survey) (hide recorded) (templateBox false) (folderShots true)
-##   (foldLayer true) (foldAlong 25.0) (foldAcross 25.0)
+##   (foldLayer true) (foldAlong 25.0) (foldAcross 25.0) (foldOffsets "0, 1000, 2000")
+##   (foldOffsetClass 2) (foldSectors 8) (foldSector 3)
 ##   (filters noisy clipped)
 ##   (template (shape patch) (lines 8) (channels 120) (inline 1500.0) (crossline 500.0)))
 ##  (noise (area auto) (timeMs 100.0) (radius 500.0) (steps 8) (allLines false)
@@ -84,7 +85,8 @@
 ## making old files unreadable.
 
 import std/[math, strutils]
-import analysis, breakmodel, geometry, itempool, join, log, nif, noisearea, outputrevision, panels,
+import analysis, breakmodel, foldsplit, geometry, itempool, join, log, nif, noisearea,
+    outputrevision, panels,
   plotoptions, readout, scales, settings, tracetable, units
 
 export nif
@@ -501,6 +503,10 @@ proc settingsDocument*(s: Settings): string =
   if s.map.foldDifference: w.value("foldDifference", true)
   if s.map.foldAlong > 0: w.value("foldAlong", s.map.foldAlong)
   if s.map.foldAcross > 0: w.value("foldAcross", s.map.foldAcross)
+  if s.map.foldOffsets.len > 0: w.value("foldOffsets", s.map.foldOffsets)
+  if s.map.foldOffsetClass > 0: w.value("foldOffsetClass", s.map.foldOffsetClass)
+  if s.map.foldSectors > 0: w.value("foldSectors", s.map.foldSectors)
+  if s.map.foldSector > 0: w.value("foldSector", s.map.foldSector)
   w.open("filters")
   for f in s.map.filters: w.ident MapFilterNames[f]
   w.close()
@@ -1232,6 +1238,19 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
           elif k.isTree("foldDifference"): r.flag(k, result.map.foldDifference)
           elif k.isTree("foldAlong"): r.number(k, 1e-6, 1e12, result.map.foldAlong)
           elif k.isTree("foldAcross"): r.number(k, 1e-6, 1e12, result.map.foldAcross)
+          elif k.isTree("foldOffsets"):
+            var text = ""
+            r.text(k, text)
+            let edges = parseEdges(text)
+            if edges.error.len == 0 and edges.edges.len >= 2:
+              result.map.foldOffsets = edgesText(edges.edges)
+            elif text.len > 0:
+              r.problem(k, "(foldOffsets) needs ascending offsets such as \"0, 1000, 2000\"; " &
+                "that setting keeps its value.")
+          elif k.isTree("foldOffsetClass"):
+            r.integer(k, 0, MaxClasses, result.map.foldOffsetClass)
+          elif k.isTree("foldSectors"): r.integer(k, MinSectors, MaxSectors, result.map.foldSectors)
+          elif k.isTree("foldSector"): r.integer(k, 0, MaxSectors, result.map.foldSector)
           elif k.isTree("filters"):
             var on: set[MapFilter]
             for v in k.kids:

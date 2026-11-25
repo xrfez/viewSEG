@@ -31,8 +31,10 @@ import arraymancer/tensor
 import parseSEG
 import processSEG/qc/fold
 import processSEG/stack/binning
-import edits, filejobs, filekinds, filelist, filesystem, itempool, jobs, join, project, session,
-  state, stationmoves, survey, surveyjobs, threads
+import edits, filejobs, filekinds, filelist, filesystem, foldsplit, itempool, jobs, join, project,
+  session, state, stationmoves, survey, surveyjobs, threads
+
+export foldsplit
 
 const
   ActualKinds* = {fkSegy, fkSegd, fkSeg2}
@@ -74,12 +76,20 @@ type
     unplaced*: bool
       ## the file has live traces and none has a position: the survey did not place them
     bins*, counts*: seq[int32] ## the bins the file fills, ascending, and its traces in each
+    noClass*: int
+      ## with a restriction: of `binned`, the traces in no class or sector (`FoldSplit`)
+    classStarts*: seq[int32]
+      ## with a restriction: `classes + 1` places in `classBins`, where each class's run starts
+    classBins*, classCounts*: seq[int32]
+      ## with a restriction: the bins each class or sector fills, ascending in each run, and
+      ## its traces in each
 
   ActualTally* = object
     ## What the count came to over all the files.
     files*: int      ## files read
     traces*, notLive*, killed*, noCoordinates*, outside*, binned*: int
     noSource*: int   ## of `noCoordinates`: a receiver position and no source
+    noClass*: int    ## with a restriction: of `binned`, the traces in no class or sector
     unplaced*: int   ## files read that gave no position
     duplicates*: int ## files listed twice (one reached through a link), counted once
     skipped*: seq[tuple[path, why: string]]
@@ -88,7 +98,8 @@ type
     inp: ptr ActualInputs
     survey: ptr SurveyGeometry
     grid: Binning
-    order: seq[int] ## the files read, by item
+    split: FoldSplit ## read only by the items
+    order: seq[int]  ## the files read, by item
 
 static:
   doAssert plainData(ActualPart)
@@ -106,6 +117,31 @@ func binOfTrace(grid: Binning; k: TraceKeys): int {.inline.} =
       return if receiver and not (finite(k.srcX) or finite(k.srcY)): -3 else: -2
     (x, y) = ((k.srcX + k.rcvX) * 0.5, (k.srcY + k.rcvY) * 0.5)
   grid.binAt(x, y)
+
+proc fillPart*(part: var ActualPart; bins: var seq[int32]; classKeys: var seq[int64];
+    classes: int) =
+  ## Sets the sparse lists of `part` from the bin of each counted trace (`bins`) and, with a
+  ## restriction of `classes` classes, from `classKeys` (`class shl 32 or bin` of each trace
+  ## that is in one). Both are sorted here.
+  bins.sort()
+  for b in bins:
+    if part.bins.len > 0 and part.bins[^1] == b: inc part.counts[^1]
+    else:
+      part.bins.add b
+      part.counts.add 1
+  if classes > 0:
+    classKeys.sort()
+    part.classStarts = newSeq[int32](classes + 1)
+    var last = -1'i64
+    for key in classKeys:
+      let (cls, bin) = (int(key shr 32), int32(key and 0xFFFF_FFFF'i64))
+      if key == last: inc part.classCounts[^1]
+      else:
+        part.classBins.add bin
+        part.classCounts.add 1
+        inc part.classStarts[cls + 1]
+        last = key
+    for c in 0 ..< classes: part.classStarts[c + 1] += part.classStarts[c]
 
 proc openKeys(path, cacheDir: string; it: ItemContext): Session =
   ## The file at `path`, keys only, closed by the caller. A current index cache in `cacheDir`
@@ -144,6 +180,8 @@ proc readActual(it: ItemContext; a: ptr ActualItems; k: int): ActualPart {.nimca
         let n = file[].len
         var keys = newSeq[TraceKeys](min(n, KeysChunk))
         var bins = newSeqOfCap[int32](n)
+        var classKeys: seq[int64] = @[]
+        template split: untyped = a.split
         var (t, nextKill) = (0, 0)
         while t < n:
           let m = min(keys.len, n - t)
@@ -163,15 +201,14 @@ proc readActual(it: ItemContext; a: ptr ActualItems; k: int): ActualPart {.nimca
               else:
                 inc result.binned
                 bins.add int32(bin)
+                if split.active:
+                  let cls = split.classOf(keys[j])
+                  if cls >= 0: classKeys.add (int64(cls) shl 32) or int64(bin)
+                  else: inc result.noClass
           t += m
         result.traces = n
         result.unplaced = result.noCoordinates > 0 and result.binned + result.outside == 0
-        bins.sort()
-        for b in bins:
-          if result.bins.len > 0 and result.bins[^1] == b: inc result.counts[^1]
-          else:
-            result.bins.add b
-            result.counts.add 1
+        result.fillPart(bins, classKeys, split.classes)
   except SegCancelledError:
     raise newException(JobCancelledError, "cancelled")
   except JobCancelledError:
@@ -182,9 +219,10 @@ proc readActual(it: ItemContext; a: ptr ActualItems; k: int): ActualPart {.nimca
     s = nil
     clearCycleRoots()
 
-proc add(tally: var ActualTally; raw: ptr UncheckedArray[int32]; path: string;
+proc add(tally: var ActualTally; raw, all: ptr UncheckedArray[int32]; pick: int; path: string;
     r: ActualPart) =
-  ## Adds what file `path` came to.
+  ## Adds what file `path` came to: into `raw` the bins of class `pick` (-1: of all the file's
+  ## traces), and, when `all` is not nil, into `all` those of all of them.
   if r.skip.len > 0:
     tally.skipped.add (path: path, why: r.skip)
     return
@@ -197,13 +235,23 @@ proc add(tally: var ActualTally; raw: ptr UncheckedArray[int32]; path: string;
   tally.noSource += r.noSource
   tally.outside += r.outside
   tally.binned += r.binned
-  for k, bin in r.bins: raw[bin] += r.counts[k]
+  tally.noClass += r.noClass
+  if pick < 0:
+    for k, bin in r.bins: raw[bin] += r.counts[k]
+  else:
+    for k, bin in r.bins: all[bin] += r.counts[k]
+    if r.classStarts.len > pick + 1:
+      for k in r.classStarts[pick] ..< r.classStarts[pick + 1]:
+        raw[r.classBins[k]] += r.classCounts[k]
 
 proc countActual*(ctx: JobContext; inp: ptr ActualInputs; known: openArray[ptr ActualPart];
-    survey: ptr SurveyGeometry; grid: Binning; actual: var FoldMap;
-    fresh: var seq[ActualPart]): ActualTally =
+    survey: ptr SurveyGeometry; grid: Binning; split: FoldSplit; actual: var FoldMap;
+    totals: var seq[int32]; fresh: var seq[ActualPart]): ActualTally =
   ## Counts the traces of `inp`'s files into `actual` (a fold map over `grid`, empty), adding
   ## each file's bins in file order; `survey` (nil: none) places traces by their stations.
+  ## With a restriction (`split.active`) each file's part also holds its traces per class or
+  ## sector; with one drawn (`split.drawn`) `actual` gets only that class's traces and `totals`
+  ## (made here, one per bin) all of them.
   ## File `i` is not read again when `known[i]` is not nil (`known` may be shorter): that is
   ## its part as an earlier count read it, with the same inputs and grid, read through its
   ## address (the caller keeps it alive and unchanged until the work is back). `fresh` gets,
@@ -211,7 +259,7 @@ proc countActual*(ctx: JobContext; inp: ptr ActualInputs; known: openArray[ptr A
   ## Worker-only. A cancel raises `JobCancelledError`; `actual` is then partly filled, and the
   ## caller drops it.
   let total = inp.files.len
-  var args = ActualItems(inp: inp, survey: survey, grid: grid)
+  var args = ActualItems(inp: inp, survey: survey, grid: grid, split: split)
   # a file reached twice (a linked folder among the subfolders) is counted once
   ctx.setPhase "looking for files listed twice"
   var twice = newSeq[bool](total)
@@ -246,10 +294,16 @@ proc countActual*(ctx: JobContext; inp: ptr ActualInputs; known: openArray[ptr A
   if ran.taken < reads: raise newException(JobCancelledError, "cancelled")
   var cells = actual.fold # the map's own counts (a tensor shares its storage)
   let raw = cast[ptr UncheckedArray[int32]](cells.unsafe_raw_offset(aligned = false))
+  var all: ptr UncheckedArray[int32] = nil
+  let pick = if split.drawn: split.pick else: -1
+  if pick >= 0:
+    totals = newSeq[int32](grid.len)
+    all = cast[ptr UncheckedArray[int32]](addr totals[0])
   for i in 0 ..< total:
     if twice[i]: inc result.duplicates
-    elif i < known.len and not known[i].isNil: result.add(raw, inp.files[i].path, known[i][])
-    else: result.add(raw, inp.files[i].path, got[i])
+    elif i < known.len and not known[i].isNil:
+      result.add(raw, all, pick, inp.files[i].path, known[i][])
+    else: result.add(raw, all, pick, inp.files[i].path, got[i])
   fresh = move got
 
 # ---------------------------------------------------------------- the inputs --

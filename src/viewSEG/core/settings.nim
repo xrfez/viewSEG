@@ -122,7 +122,7 @@ type
 
   MapOptions* = object
     ## How the map shows what it shows.
-    info*: MapInfo ## where the point under the pointer is described
+    info*: MapInfo    ## where the point under the pointer is described
     lengths*: MapLengths
       ## the unit of the scale bar's and the ruler's lengths, converted from
       ## the survey's when another is chosen
@@ -143,6 +143,13 @@ type
     foldAlong*, foldAcross*: float64
       ## its bin sizes along the receiver lines and across them, in the survey's
       ## unit; 0: the natural bin (half the receiver interval, half the source interval)
+    foldOffsets*: string
+      ## the offset class edges the fold layers can be restricted to, in the survey's length
+      ## unit, as `core/foldsplit.edgesText` gives them ("0, 1000, 2000"); empty: none
+    foldOffsetClass*: int
+      ## the class drawn: 0 for all offsets, else the class + 1
+    foldSectors*: int ## the azimuth sectors (none, or 2 to 36), the first starting at north
+    foldSector*: int ## the sector drawn: 0 for all bearings, else the sector + 1
     folderShots*: bool = true
       ## the survey's sources whose record is in a file of the folder listed are marked
     filters*: set[MapFilter]
