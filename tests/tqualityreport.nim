@@ -278,7 +278,7 @@ proc main*() =
     doAssert lines[0].endsWith(",tested (noisy),noisy,tested (weak),weak"), lines[0]
     doAssert lines[1].endsWith(",3,1,4,2") and lines[2].endsWith(",0,,0,") and
       lines[3].endsWith(",0,,1,1"), $lines
-    doAssert totalsCsv(report.totals).splitLines[1].endsWith(",3,1,5,3,0")
+    doAssert totalsCsv(report.totals).splitLines[1].endsWith(",3,1,5,3,0,0,0,0,0")
     let words = statisticLines(t, ssReceivers, true)
     doAssert "Noisy: 1 of 3 tested (33.33%)" in words and "Weak: 3 of 5 tested (60%)" in words,
       $words
@@ -289,7 +289,7 @@ proc main*() =
     doAssert rows[0].point == 2 and rows[1].point == 4, $rows
     var empty = initQualityBuild()
     empty.noted("c.sgd", 3, false, false, false, false)
-    doAssert totalsCsv(qualityReport(empty).totals).splitLines[1].endsWith(",0,,0,,0")
+    doAssert totalsCsv(qualityReport(empty).totals).splitLines[1].endsWith(",0,,0,,0,0,0,0,0")
     for line in statisticLines(qualityReport(empty).totals, ssReceivers, false):
       doAssert "Noisy" notin line and "Weak" notin line, line
 

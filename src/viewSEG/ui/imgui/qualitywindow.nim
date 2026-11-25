@@ -280,11 +280,12 @@ proc forcedKey(st: AppState; only = ""): string =
 
 proc templateKey(st: AppState): string =
   ## Which relation records the answers are read against (the loaded or made geometry, by
-  ## address) and whether only the traces in the template are measured: a change drops them.
+  ## address), whether only the traces in the template are measured, and the survey joined to
+  ## the files (`qualityJoinKey`): a change drops them.
   let x = st.qcRelations(rdSource)[0]
   let o = st.qcRelations(rdReceiver)[0]
   $st.settings.noise.templateOnly & "|" & $cast[int](x) & "|" & $cast[int](o) & "|" &
-    $st.settings.join.traceMatch
+    $st.settings.join.traceMatch & "|" & st.qualityJoinKey
 
 func addrOf(g: ref SurveyGeometry): ptr SurveyGeometry =
   if g.isNil: nil else: addr g[]
@@ -295,13 +296,13 @@ proc submitFile(ui: var QualityUi; st: AppState; key, path: string) =
   spec.title = "Trace quality in " & path.extractFilename
   spec.auto = true # started by the program as the file shown changes: its end is not announced
   let (x, o) = (st.qcRelations(rdSource)[0], st.qcRelations(rdReceiver)[0])
+  let (join, survey) = st.qualityJoin
   ui.file.job = st.jobs.submit(spec,
     fileScan(path, st.indexCache, st.editsSnapshot, ui.file.sink, st.settings.noise,
       st.forcedKinds, relations = x.addrOf, receivers = o.addrOf,
-      traceMatch = st.settings.join.traceMatch))
+      traceMatch = st.settings.join.traceMatch, join = join))
   # the job reads them in place: the state keeps them until its work is back
-  st.holdGeometry(ui.file.job, x)
-  st.holdGeometry(ui.file.job, o)
+  for g in [x, o, survey]: st.holdGeometry(ui.file.job, g)
 
 proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
   let folder = st.settings.quality.folder
@@ -311,13 +312,13 @@ proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
   var spec = qualitySpec(@[folder])
   spec.title = if name.len == 0: "Trace quality" else: "Trace quality in " & name
   let (x, o) = (st.qcRelations(rdSource)[0], st.qcRelations(rdReceiver)[0])
+  let (join, survey) = st.qualityJoin
   ui.folder.job = st.jobs.submit(spec,
     folderScan(folder, st.settings.quality.subfolders, st.indexCache, st.editsSnapshot,
       ui.folder.sink, ui.folder.note, st.settings.noise, st.forcedKinds,
       st.settings.quality.untold, relations = x.addrOf, receivers = o.addrOf,
-      traceMatch = st.settings.join.traceMatch))
-  st.holdGeometry(ui.folder.job, x)
-  st.holdGeometry(ui.folder.job, o)
+      traceMatch = st.settings.join.traceMatch, join = join))
+  for g in [x, o, survey]: st.holdGeometry(ui.folder.job, g)
 
 proc consider(ui: var QualityUi; st: AppState) =
   ## Polls the jobs, drops an answer that is stale, and starts the File computation for

@@ -411,9 +411,10 @@ func bytes*(r: FoldResult): int =
   result = (r.counts.len + r.planned.len + r.totals.len + r.plannedTotals.len) * 4
   for l in r.levels: result += l.colours.len * 4
 
-func geometryOf(rel: ptr SurveyGeometry; stations: array[PointRole, FoldStations]):
+func geometryOf*(rel: ptr SurveyGeometry; stations: array[PointRole, FoldStations]):
     SurveyGeometry =
-  ## The relations and the stations as one geometry.
+  ## The relations and the stations as one geometry: the survey a recorded count, or a trace
+  ## quality scan, joins to the files' keys.
   result = rel[]
   for r in PointRole:
     for k, st in stations[r].stations:

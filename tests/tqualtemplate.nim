@@ -8,18 +8,25 @@
 ## clipped; 6 is dead in its header, 7 and 8 are clipped), and a receiver recording 5 sources
 ## whose O record lists the first 3 (source 3 is clipped, 4 is dead, 5 clipped).
 ##
+## A record whose headers name no source station takes it from the survey on the map, joined
+## in memory as the recorded fold joins it. A record whose template is still not known is
+## measured whole and counted by why, in the totals, the words and the CSV.
+##
 ## The job reads the relation records by address: the app keeps them for it until its work is
 ## back (`holdGeometry`), so the state letting go of its own `ref` meanwhile changes nothing.
 ##
 ## Seen to fail: with the leaving out switched off in the scan (`measure` never asking
 ## `leftOutOfTemplate`), `a_shot_s_unlisted_*` saw 8 traces where 5 were expected. With the
 ## `holdGeometry` call left out of `the_relations_are_held_*`, the records were freed under the
-## job and another geometry took their place: it left out 0 traces where 3 were expected.
+## job and another geometry took their place: it left out 0 traces where 3 were expected. With
+## the join left out of `qualityItem`, `a_record_whose_headers_name_no_source_*` measured 8
+## traces where 5 were expected; with `measuredWhole` never called, it counted no record whole.
 
 import std/[atomics, math, os, strutils, tables]
 import parseSEG
-import viewSEG/core/[edits, filesystem, jobs, state, noisearea, qualityjobs, qualityreport,
-  recordingkind, reportside]
+import viewSEG/core/[edits, filesystem, foldjobs, jobs, state, noisearea, qualityjobs,
+  qualityreport, recordingkind, reportside, survey]
+import viewSEG/view/qualitywords
 import utils/[fixtures, qualityfolders, waiting]
 
 const H00 = "H00 SPS format version number   SPS 2.1;"
@@ -109,15 +116,40 @@ proc run(work: JobWork; paths: seq[string]; sink: QualitySink; threads = 0) =
     "the scan did not finish"
   doAssert sink.result.ok, sink.result.reason
 
+proc shotRows(srcLine, srcPoint: float64; rcv: bool): seq[tuple[rcvLine, rcvPoint, srcLine,
+    srcPoint: float64; dead, loud: bool]] =
+  ## The shot of `shotFile` (record 7), its source station `srcLine`/`srcPoint` (0, 0: none),
+  ## its receivers' stations in the headers only when `rcv`.
+  for p in 1 .. 8:
+    result.add (rcvLine: (if rcv: 10.0 else: 0.0), rcvPoint: (if rcv: float64(p) else: 0.0),
+      srcLine: srcLine, srcPoint: srcPoint, dead: p == 6, loud: p in {5, 7, 8})
+
+proc csvCell(csv, column: string): string =
+  ## The cell of `column` in the one line of a totals CSV.
+  let lines = csv.splitLines
+  let at = lines[0].split(',').find(column)
+  doAssert at >= 0, "no column " & column & " in " & lines[0]
+  lines[1].split(',')[at]
+
+proc mapSurvey(): array[PointRole, FoldStations] =
+  ## The survey files' stations as the map holds them: source 1/99, receivers 10/1 .. 10/8.
+  result[prSource] = FoldStations(stations: @[Station(line: 1, point: 99, index: 1)],
+    xs: @[500.0], ys: @[0.0])
+  for p in 1 .. 8:
+    result[prReceiver].stations.add Station(line: 10, point: float64(p), index: 1)
+    result[prReceiver].xs.add float64(p) * 25
+    result[prReceiver].ys.add 100.0
+
 func addrOf(g: ref SurveyGeometry): ptr SurveyGeometry =
   if g.isNil: nil else: addr g[]
 
 proc scanOne(path: string; kind: RecordingKind; relations, receivers: ref SurveyGeometry;
-    templateOnly = true; threads = 0): QualityJobResult =
+    templateOnly = true; threads = 0; join = QualityJoin()): QualityJobResult =
   let sink = QualitySink()
   run(scanQuality(@[path], initTable[string, FileEdits](), sink, "",
     NoiseSettings(templateOnly: templateOnly), forcedKinds([path], kind),
-    relations = relations.addrOf, receivers = receivers.addrOf), @[path], sink, threads)
+    relations = relations.addrOf, receivers = receivers.addrOf, join = join), @[path], sink,
+    threads)
   sink.result
 
 var gate: Gate
@@ -150,7 +182,8 @@ proc main*() =
         "bad " & $r.totals.bad & ", " & $r.totals
       doAssert r.totals.outside == 3, "outside " & $r.totals.outside
       for row in r.stations: doAssert row.point <= 5.0, "station " & $row.point
-      doAssert totalsCsv(r.totals).splitLines[1].endsWith(",3"), totalsCsv(r.totals)
+      doAssert csvCell(totalsCsv(r.totals), "outside the template") == "3", totalsCsv(r.totals)
+      doAssert r.totals.unknown == default(array[TemplateUnknown, int]), $r.totals
       # the file tab and the folder tab, on one thread and on four, are the same
       let same = digest(scanOne(path, rkShotGather, x, nil))
       doAssert digest(scanOne(path, rkShotGather, x, nil, threads = 4)) == same
@@ -185,6 +218,56 @@ proc main*() =
       doAssert r.totals.outside == 2, "outside " & $r.totals.outside
       let all = scanOne(path, rkReceiverSliced, nil, rec, templateOnly = false).sources
       doAssert all.totals.traces == 5 and all.totals.outside == 0, $all.totals
+
+  block a_record_whose_headers_name_no_source_takes_it_from_the_survey_joined:
+    withFixtures fx:
+      let path = fx.dir / "shot.sgd"
+      writeFile(path, shotRows(0, 0, true), false)
+      let x = surveyOf(xRec(7, "1.00", "99.00", 1, 5, 10, 1, 5))
+      let joined = scanOne(path, rkShotGather, x, nil,
+        join = QualityJoin(relations: addr x[], stations: mapSurvey())).receivers
+      doAssert joined.totals.traces == 5 and joined.totals.outside == 3, $joined.totals
+      doAssert joined.totals.unknown == default(array[TemplateUnknown, int]), $joined.totals
+      doAssert wholeLine(joined.totals, ssReceivers) == ""
+      # not joined: measured whole, and said so
+      let whole = scanOne(path, rkShotGather, x, nil).receivers
+      doAssert whole.totals.traces == 8 and whole.totals.outside == 0, $whole.totals
+      doAssert whole.totals.unknown[tuNoStation] == 1, $whole.totals
+      doAssert "1 record was measured whole: its template is not known (1 with no source " &
+        "station)" in statisticLines(whole.totals, ssReceivers, false), $statisticLines(
+        whole.totals, ssReceivers, false)
+      doAssert csvCell(totalsCsv(whole.totals), "records measured whole: " & $tuNoStation) ==
+        "1", totalsCsv(whole.totals)
+
+  block a_record_whose_template_is_not_known_is_counted_by_why:
+    withFixtures fx:
+      let path = fx.dir / "shot.sgd"
+      let x = surveyOf(xRec(7, "1.00", "99.00", 1, 5, 10, 1, 5))
+      writeFile(path, shotRows(0, 0, false), false) # no station at all
+      var t = scanOne(path, rkShotGather, x, nil).receivers.totals
+      doAssert t.traces == 8 and t.unknown[tuNoStation] == 1, $t
+      writeFile(path, shotRows(1, 77, true), false) # a source with no X record
+      t = scanOne(path, rkShotGather, x, nil).receivers.totals
+      doAssert t.traces == 8 and t.unknown[tuNoRecord] == 1 and t.unknown[tuNoStation] == 0, $t
+      doAssert wholeLine(t, ssReceivers) == "1 record was measured whole: its template is not " &
+        "known (1 whose X record is not found)", wholeLine(t, ssReceivers)
+      # only O records loaded: the shot's side has no template, and that is said too
+      var o = xRec(1, "20.00", "90.00", 1, 3, 5, 1, 3)
+      o[0] = 'O'
+      t = scanOne(path, rkShotGather, nil, surveyOf(o)).receivers.totals
+      doAssert t.traces == 8 and t.unknown[tuNoRecord] == 1, $t
+      # no relation file at all: every record whole, none counted
+      t = scanOne(path, rkShotGather, nil, nil).receivers.totals
+      doAssert t.traces == 8 and t.unknown == default(array[TemplateUnknown, int]), $t
+      # a receiver whose O records are not found: each of its five records (a trace each)
+      let rpath = fx.dir / "receiver.sgd"
+      receiverFile(rpath)
+      var other = xRec(1, "20.00", "91.00", 1, 3, 5, 1, 3)
+      other[0] = 'O'
+      let r = scanOne(rpath, rkReceiverSliced, nil, surveyOf(other)).sources.totals
+      doAssert r.traces == 5 and r.unknown[tuNoRecord] == 5, $r
+      doAssert wholeLine(r, ssSources) == "5 records were measured whole: their template is " &
+        "not known (5 whose O records are not found)", wholeLine(r, ssSources)
 
   block the_relations_are_held_for_the_job_until_its_work_is_back:
     mainThread = getThreadId()

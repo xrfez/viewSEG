@@ -42,15 +42,20 @@
 ## (`mixed`). A scan keeps one report for each side (`receivers`, `sources`); a side no
 ## file took is empty. Nothing is computed from a trace's record number.
 ##
+## The survey loaded on the map, the join options and the station moves are joined to each
+## file's keys in memory first (`QualityJoin`, as the recorded fold joins them), so a record
+## whose headers name no station finds its template by the survey's. A record whose template
+## is not found is measured whole and counted by why (`Totals.unknown`): never left unsaid.
+##
 ## `folderScan` lists a folder (its subfolders only when asked) and scans its files.
 
-import std/[algorithm, atomics, options, os, sets, sequtils, tables]
+import std/[algorithm, atomics, math, options, os, sets, sequtils, tables]
 import parseSEG
 import processSEG/core/[pool, rows, types, workspace]
 import processSEG/qc/amplitude
-import components, edits, filejobs, filesystem, firstbreakjobs, firstbreaks, itempool, jobs,
-  noisearea, qualityreport, recordingkind, recordqc, relationside, reportside, session, settings,
-      state, threads
+import components, edits, filejobs, filesystem, firstbreakjobs, firstbreaks, foldactual,
+  foldjobs, itempool, jobs, join, noisearea, qualityreport, recordingkind, recordqc, relationside,
+  reportside, session, settings, state, stationmoves, surveyjobs, threads
 from missingreport import StationSide
 export StationSide
 
@@ -84,6 +89,18 @@ type
   QualityNote* = ref object
     ## Set by `folderScan`: the list stopped at the file limit.
     capped*: bool
+
+  QualityJoin* = object
+    ## The survey the scan joins to each file's keys in memory before it tells the file's side
+    ## and finds its records' templates, as the recorded fold joins it (`foldactual`): the
+    ## survey files loaded on the map, the join options and the station moves (`qualityJoin`).
+    ## A file is never written.
+    relations*: ptr SurveyGeometry
+      ## the first survey file's X records, read in place: the caller keeps them alive and
+      ## unchanged until the work is back; nil: no survey is joined, only the moves applied
+    stations*: array[PointRole, FoldStations] ## the survey files' stations with coordinates
+    options*: JoinOptions
+    moves*: StationMoves
 
   QualitySink* = ref object
     ## Filled when the job ends, except when it is cancelled. Read it after
@@ -224,14 +241,22 @@ proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
   except ValueError:
     result = false
 
+func anySeismic(f: ptr SeismicFile; traces: Slice[int]): bool =
+  for t in traces:
+    if f[].index.keys[t].isSeismic: return true
+
 proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: HashSet[int];
     b: var array[StationSide, QualityBuild];
     unread: var seq[tuple[path, why: string]]; gathers: seq[Gather];
     noise: NoiseSettings; it: ItemContext; workers: ptr ProcessPool;
-    relation: ptr SurveyGeometry; domain: RelationDomain; traceMatch: TraceMatch) =
+    relation: ptr SurveyGeometry; domain: RelationDomain; traceMatch: TraceMatch;
+    templates: bool) =
   ## Measures the file into `b`. With a `relation` (the relation records of `domain`) and
   ## `noise.templateOnly`, only the traces the record's template lists are measured: the
-  ## others are counted as left out (`leaveOut`), as the map's check marks them.
+  ## others are counted as left out (`leaveOut`), as the map's check marks them. A record
+  ## with a seismic trace whose template is not known is measured whole and counted as such
+  ## (`measuredWhole`), with `relation` nil too when `templates` (the scan has relation
+  ## records of the other side).
   let n = f[].len
   var first = 0
   var held: seq[TraceAmplitude] = @[] # statistics of the traces from `heldFrom` on
@@ -313,11 +338,17 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
         if t in missedAll or not wantsSamples(f[].index.keys[t], t in killed):
           skip.add t - g.a
       var outside: seq[bool] = @[]
-      if relation != nil and noise.templateOnly:
-        {.cast(gcsafe).}:
-          outside = leftOutOfTemplate(f[], g, relation[], domain, traceMatch, it)
-        for i, o in outside:
-          if o: leftAt.incl g.a + i
+      if noise.templateOnly and (relation != nil or templates) and f.anySeismic(g):
+        var found = (known: false, outside: newSeq[bool](), why: tuNoRecord)
+        if relation != nil:
+          {.cast(gcsafe).}:
+            found = leftOutOfTemplate(f[], g, relation[], domain, traceMatch, it)
+        if found.known:
+          outside = move found.outside
+          for i, o in outside:
+            if o: leftAt.incl g.a + i
+        else:
+          for side in sides: b[side].measuredWhole(found.why)
       let tick = proc (done, total: int): bool {.closure, gcsafe.} =
         it.fileProgress((last + 1 + g.a + g.len * done div max(total, 1)) div 2, n)
         true
@@ -353,6 +384,10 @@ type
       ## the relation records the shot gathers' X records and the receiver gathers' O records
       ## are read from (nil for none); the job keeps them alive and unchanged
     traceMatch: TraceMatch
+    templates: bool ## the template is asked for, and some relation records are given
+    survey: ptr SurveyGeometry ## the survey joined to each file (nil: none), the job's own
+    options: JoinOptions
+    moves: StationMoves
     untold: UntoldKind
     folderRun: bool
     sizes: seq[int64] ## the file sizes: what an item can tell of what runs beside it
@@ -414,6 +449,12 @@ proc qualityItem(it: ItemContext; a: ptr QualityItems; i: int): QualityOne
     if s.file.kind == skUnknown: result.why = "not a SEG-Y, SEG-D or SEG-2 file"
     elif s.file.len == 0: result.why = "has no trace keys"
     else:
+      if a.survey != nil or a.moves.len > 0:
+        # the survey on the map and the moves, in memory only, as the recorded fold joins them:
+        # a record whose headers name no station finds its template by the survey's
+        let progress = proc (done, total: int): bool {.gcsafe, raises: [].} = not it.cancelled
+        {.cast(gcsafe).}:
+          discard joinOwnFile(s.filePtr, a.survey, a.options, a.moves, false, progress)
       let isForced = a.files[i].forced
       let kind =
         if isForced: some(a.files[i].forcedKind)
@@ -444,7 +485,7 @@ proc qualityItem(it: ItemContext; a: ptr QualityItems; i: int): QualityOne
           let shot = fileSide.side == rsShot
           measure(s.filePtr, path, {side}, a.files[i].killed, part, partUnread, s.gathers,
             a.noise, it, addr workers, (if shot: a.shotTemplate else: a.receiverTemplate),
-            (if shot: rdSource else: rdReceiver), a.traceMatch)
+            (if shot: rdSource else: rdReceiver), a.traceMatch, a.templates)
           result.measured = true
           result.build = part[side]
           result.unread = partUnread
@@ -535,7 +576,7 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
     cacheDir = ""; noise = NoiseSettings();
     forced = initTable[string, RecordingKind](); untold = ukNotChecked;
     folderRun = false; relations: ptr SurveyGeometry = nil;
-    receivers: ptr SurveyGeometry = nil; traceMatch = tmAuto): JobWork =
+    receivers: ptr SurveyGeometry = nil; traceMatch = tmAuto; join = QualityJoin()): JobWork =
   ## The work of a job that scans `paths` and fills `sink` (`qualitySpec`
   ## is the spec to submit it with). Worker-only. `edits` is keyed by the
   ## path strings in `paths`. A cancel raises `JobCancelledError` and leaves
@@ -553,18 +594,31 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
   ## shot's X record in `relations`, a receiver gather's O records in `receivers`, found as
   ## the map's check finds them (`recordqc.leftOutOfTemplate`, `traceMatch` as the join's).
   ## They are not measured, not counted in a station or a total, and counted apart
-  ## (`Totals.outside`). A record whose template is not found is measured whole; nil
-  ## `relations` or `receivers` leaves that side's records whole. They are read in place:
+  ## (`Totals.outside`). Before that, `join` is joined to each file's keys in memory (a record
+  ## whose headers name no station finds its template by the survey's). A record whose
+  ## template is not found is measured whole and counted by why (`Totals.unknown`), and so is
+  ## a record of a side with no relation records when the other side has some; with
+  ## `relations` and `receivers` both nil every record is measured whole and none is counted.
+  ## They are read in place:
   ## the work holds their addresses, never a `ref`, and the caller keeps them alive and
   ## unchanged until the work is back (`Jobs.workingOn`; the app's `holdGeometry`).
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     var st = ScanState(builds: [initQualityBuild(), initQualityBuild()])
     try:
+      var survey = SurveyGeometry() # the survey joined, read by every item
+      if join.relations != nil:
+        ctx.setPhase "gathering the survey"
+        {.cast(gcsafe).}:
+          survey = geometryOf(join.relations, join.stations)
+        ctx.checkCancelled()
       # the files, each path once (compared normalised)
       var args = QualityItems(cacheDir: cacheDir, noise: noise, untold: untold,
         folderRun: folderRun, traceMatch: traceMatch,
-        shotTemplate: relations, receiverTemplate: receivers)
+        shotTemplate: relations, receiverTemplate: receivers,
+        templates: noise.templateOnly and (relations != nil or receivers != nil),
+        survey: (if join.relations != nil: addr survey else: nil), options: join.options,
+        moves: join.moves)
       var seen = initHashSet[string]()
       var at: seq[int] = @[]
       for path in paths:
@@ -584,7 +638,9 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
           st.taken = st.deferred.len
           var again = QualityItems(cacheDir: cacheDir, noise: noise, untold: untold,
             folderRun: folderRun, round: 1, takenAs: one, traceMatch: traceMatch,
-            shotTemplate: args.shotTemplate, receiverTemplate: args.receiverTemplate)
+            shotTemplate: args.shotTemplate, receiverTemplate: args.receiverTemplate,
+            templates: args.templates, survey: args.survey, options: args.options,
+            moves: args.moves)
           for k in st.deferredAt: again.files.add args.files[k]
           st.deferred.setLen 0
           st.deferredAt.setLen 0
@@ -627,20 +683,20 @@ proc editsFor(paths: openArray[string]; snap: EditsSnapshot): Table[string, File
 proc fileScan*(path, cacheDir: string; snap: EditsSnapshot; sink: QualitySink;
     noise: NoiseSettings; forced = initTable[string, RecordingKind](); untold = ukNotChecked;
     relations: ptr SurveyGeometry = nil; receivers: ptr SurveyGeometry = nil;
-    traceMatch = tmAuto): JobWork =
+    traceMatch = tmAuto; join = QualityJoin()): JobWork =
   ## The work of a job that scans the one file `path`, with the edits `snap` holds for it.
-  ## `relations` and `receivers` as `scanQuality` reads them.
+  ## `relations`, `receivers` and `join` as `scanQuality` reads them.
   scanQuality(@[path], editsFor([path], snap), sink, cacheDir, noise, forced, untold,
-    relations = relations, receivers = receivers, traceMatch = traceMatch)
+    relations = relations, receivers = receivers, traceMatch = traceMatch, join = join)
 
 proc folderScan*(folder: string; subfolders: bool; cacheDir: string; snap: EditsSnapshot;
     sink: QualitySink; note: QualityNote; noise: NoiseSettings;
     forced = initTable[string, RecordingKind](); untold = ukNotChecked;
     relations: ptr SurveyGeometry = nil; receivers: ptr SurveyGeometry = nil;
-    traceMatch = tmAuto): JobWork =
+    traceMatch = tmAuto; join = QualityJoin()): JobWork =
   ## The work of a job that lists the seismic files of `folder`, its subfolders only
-  ## when `subfolders`, and scans them as `scanQuality` does (`relations` and `receivers`
-  ## read in place as it reads them). `note.capped` says the list
+  ## when `subfolders`, and scans them as `scanQuality` does (`relations`, `receivers` and
+  ## `join` read in place as it reads them). `note.capped` says the list
   ## stopped at the file limit.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
@@ -655,5 +711,22 @@ proc folderScan*(folder: string; subfolders: bool; cacheDir: string; snap: Edits
     if note != nil: note.capped = capped
     ctx.checkCancelled()
     let scan = scanQuality(paths, editsFor(paths, snap), sink, cacheDir, noise, forced, untold,
-      true, relations, receivers, traceMatch)
+      true, relations, receivers, traceMatch, join)
     scan(ctx)
+
+proc qualityJoin*(st: AppState): tuple[join: QualityJoin; held: ref SurveyGeometry] =
+  ## What a scan joins (`QualityJoin`), taken from `st` on the UI thread as the recorded fold
+  ## takes it (`foldInputs`, `actualInputs`): the survey files loaded on the map, in a project
+  ## and outside one, the join options (the project's, else the session's) and the station
+  ## moves. `held` is the `ref` of `join.relations`: the caller keeps it until the work is back.
+  let fold = foldInputs(st.survey, NaN, NaN)
+  result.held = fold.relations
+  result.join = QualityJoin(relations: (if fold.relations.isNil: nil else: addr fold.relations[]),
+    stations: fold.stations, options: st.joinOptions, moves: st.project.doc.stationMoves)
+
+proc qualityJoinKey*(st: AppState): string =
+  ## Names what `qualityJoin` gives, cheaply enough for every frame: the survey files loaded
+  ## (`surveySignature`), the join options, in a project its revision (the station moves are
+  ## its), and the vendor maps' load.
+  surveySignature(st.survey) & "|" & $st.joinOptions & "|" &
+    (if st.inProject: $st.project.revision else: "-") & "|" & $st.vendorGen

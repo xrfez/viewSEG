@@ -106,11 +106,35 @@ func countsLine*(t: Totals; folder: bool): string =
   let traces = plural(t.traces, "trace", "traces")
   if folder: plural(t.files, "file", "files") & ", " & traces else: traces
 
+func unknownWords(why: TemplateUnknown; side: StationSide): string =
+  ## Why records of `side` were measured whole, after their count.
+  let shots = side == ssReceivers
+  case why
+  of tuNoStation: (if shots: "with no source station" else: "with no receiver station")
+  of tuNoSources: "whose traces name no source station"
+  of tuNoRecord: (if shots: "whose X record is not found" else: "whose O records are not found")
+  of tuByChannel: "matched to their X record by channel, not by station"
+
+func wholeLine*(t: Totals; side: StationSide): string =
+  ## How many records were measured whole although a relation file is loaded, because their
+  ## template is not known, and why; "" for none.
+  var whole = 0
+  var why: seq[string] = @[]
+  for w in TemplateUnknown:
+    if t.unknown[w] > 0:
+      whole += t.unknown[w]
+      why.add $t.unknown[w] & " " & unknownWords(w, side)
+  if whole == 0: ""
+  elif whole == 1: "1 record was measured whole: its template is not known (" & why[0] & ")"
+  else: $whole & " records were measured whole: their template is not known (" &
+    why.join(", ") & ")"
+
 func statisticLines*(t: Totals; side: StationSide; folder: bool): seq[string] =
   ## One line for each figure, worded for what is counted, in the words of the column
   ## headers. Counts are traces except the stations. Killed is not bad. The noisy and weak
   ## lines only when some trace was tested for them, the component line only when the data
-  ## has more than one component.
+  ## has more than one component, the line of the records measured whole only when there are
+  ## some (`wholeLine`).
   let noun = side.stationNoun
   let where = if folder: "the files" else: "the file"
   let measured = t.traces - t.killed
@@ -126,6 +150,8 @@ func statisticLines*(t: Totals; side: StationSide; folder: bool): seq[string] =
   if t.outside > 0:
     result.add "Left out as outside the template: " & plural(t.outside, "trace", "traces") &
       " (not counted above)"
+  let whole = wholeLine(t, side)
+  if whole.len > 0: result.add whole
   if t.noisyTested > 0:
     result.add "Noisy: " & $t.noisy & " of " & $t.noisyTested & " tested (" &
       percentOf(t.noisy, t.noisyTested) & "%)"

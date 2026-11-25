@@ -65,10 +65,23 @@ type
     noisyTested*, noisy*: int ## `noisy` of `noisyTested` traces; nothing shown when it is 0.
     weakTested*, weak*: int   ## The same for weak.
 
+  TemplateUnknown* = enum
+    ## Why a record's template is not known, so that the record was measured whole.
+    tuNoStation = "no station of its own"
+      ## the headers name no station of the record: a shot's source, a receiver gather's
+      ## receiver
+    tuNoSources = "no source stations" ## a receiver gather whose traces name no source station
+    tuNoRecord = "no relation record"
+      ## no X record at the shot's source, no O record at the receiver (or none told apart),
+      ## or no relation file of the record's side
+    tuByChannel = "matched by channel" ## the shot's traces match its X record by channel alone
+
   Totals* = object
     ## Scan totals over the notes. Unread files are not counted.
     files*, traces*, killed*, bad*, stations*: int
     outside*: int ## seismic traces left out as outside the record's template (not in `traces`)
+    unknown*: array[TemplateUnknown, int]
+      ## records measured whole with a relation file loaded: their template is not known
     badStations*: int                             ## stations with at least one bad trace
     lacking*: int                                 ## stations that lacked a component in some file
     components*: int                              ## most components one file has
@@ -254,6 +267,7 @@ type
     ## What is kept for a station does not grow with the number of files.
     files: int
     outside: int ## traces left out (`leaveOut`)
+    unknown: array[TemplateUnknown, int] ## records measured whole (`measuredWhole`)
     most: int ## the most components one file had
     serial: int ## the serial of the open file
     current: string ## the open file
@@ -346,6 +360,11 @@ proc leaveOut*(b: var QualityBuild; file: string) =
     inc b.files
   inc b.outside
 
+proc measuredWhole*(b: var QualityBuild; why: TemplateUnknown) =
+  ## Counts one record measured whole because its template is not known (`why`): its traces
+  ## are noted as usual.
+  inc b.unknown[why]
+
 proc addTrace*(b: var QualityBuild; note: TraceNote) =
   ## Counts `note`. A killed trace increments `killed` only, whatever
   ## `findings` holds. A trace with several findings increments each of
@@ -390,6 +409,7 @@ proc absorb*(b: var QualityBuild; part: sink QualityBuild) =
   b.closeFile()
   b.files += done.files
   b.outside += done.outside
+  for why in TemplateUnknown: b.unknown[why] += done.unknown[why]
   b.most = max(b.most, done.most)
   for key in done.stOrder:
     let src = done.stations[key]
@@ -427,7 +447,8 @@ proc tableOf(b: QualityBuild): QualityReport =
     weakTested += acc.weakTested
     weak += acc.weak
     for f in Finding: counts[f] += acc.counts[f]
-  result.totals = Totals(files: b.files, outside: b.outside, traces: traces, killed: killed,
+  result.totals = Totals(files: b.files, outside: b.outside, unknown: b.unknown, traces: traces,
+    killed: killed,
     bad: bad,
     stations: stations, badStations: badStations, lacking: lacking,
     components: b.most, counts: counts, noisyTested: noisyTested, noisy: noisy,
@@ -462,9 +483,12 @@ proc totalsCsv*(t: Totals): string =
   result = csvLine("files", "traces", "killed", "bad", "stations", "stations with a bad trace",
     "stations lacking a component", $qfHeaderDead, $qfAllZero, $qfConstant, $qfClipped,
     $qfSpiky, $qfDcOffset, $qfNonFinite, NoisyTestedCsv, "noisy", WeakTestedCsv, "weak",
-    "outside the template")
+    "outside the template", "records measured whole: " & $tuNoStation,
+    "records measured whole: " & $tuNoSources, "records measured whole: " & $tuNoRecord,
+    "records measured whole: " & $tuByChannel)
   result.add csvLine($t.files, $t.traces, $t.killed, $t.bad, $t.stations, $t.badStations,
     $t.lacking, $t.counts[qfHeaderDead], $t.counts[qfAllZero], $t.counts[qfConstant],
     $t.counts[qfClipped], $t.counts[qfSpiky], $t.counts[qfDcOffset],
     $t.counts[qfNonFinite], $t.noisyTested, noiseCell(t.noisyTested, t.noisy),
-    $t.weakTested, noiseCell(t.weakTested, t.weak), $t.outside)
+    $t.weakTested, noiseCell(t.weakTested, t.weak), $t.outside, $t.unknown[tuNoStation],
+    $t.unknown[tuNoSources], $t.unknown[tuNoRecord], $t.unknown[tuByChannel])

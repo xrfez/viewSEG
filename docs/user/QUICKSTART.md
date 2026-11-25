@@ -496,8 +496,16 @@ With a relation file loaded and **Only inside the template** ticked in Tools > S
 record, a receiver gather's O records, found by the station, as the map's template check
 finds them): a trace at a station the template does not list is not measured, is in no
 row and in no figure, and is counted apart on a line **Left out as outside the template**
-(and in the last column of the statistics file). A record whose template cannot be found is
-measured whole. Unticked, or with no relation file, every trace is measured. Every column header has a tooltip that says what it counts.
+(and in a column of the statistics file). Before that, the survey files loaded on the map,
+the join options and the station moves are joined to each file in memory, as for the
+recorded fold (the file is never written), so a record whose headers name no station finds
+its template by the survey's. A record whose template still cannot be found (no station of
+its own, no relation record at it, traces matched by channel, or no relation file of its
+side) is measured whole, and a line says how many and why, for example "2 records were
+measured whole: their template is not known (1 with no source station, 1 whose X record is
+not found)"; the statistics file has a column for each reason. Unticked, or with no
+relation file, every trace is measured. Every column header has a tooltip that says what it
+counts.
 Nothing is looked up by a record number, and the table has no column for one.
 
 A box above the table narrows the rows by line, point or component; each tab keeps its own. Click a column header

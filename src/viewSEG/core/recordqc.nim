@@ -51,6 +51,7 @@ import processSEG/pipeline
 import processSEG/qc/[amplitude, exclusion, record]
 import components, correlateread, edits, filesystem, firstbreakjobs, firstbreaks, inbox, jobs,
   itempool, mapkinds, noisearea, processing, relationcheck, session, threads
+from qualityreport import TemplateUnknown, tuNoStation, tuNoSources, tuNoRecord, tuByChannel
 
 export mapkinds, relationcheck.placeTraces
 
@@ -217,24 +218,30 @@ proc outsideTemplate*(keys: openArray[TraceKeys]; traces: Slice[int]; g: SurveyG
         result[i] = not plan.lists(st.line, st.point)
 
 proc leftOutOfTemplate*[C: JobContext | ItemContext](f: SeismicFile; traces: Slice[int];
-    g: SurveyGeometry; domain: RelationDomain; traceMatch: TraceMatch; ctx: C): seq[bool] =
-  ## Per trace of the record `traces` (a gather of `f`): whether the record's template
-  ## does not list its station, found as the map's check finds it (a shot's X record by
-  ## its source station, a receiver gather's O records by its receiver station, a record
-  ## number never used). Empty when the template is not known for the record (no station
-  ## in the headers, no record at it, traces matched by channel): nothing is left out then.
+    g: SurveyGeometry; domain: RelationDomain; traceMatch: TraceMatch; ctx: C):
+    tuple[known: bool; outside: seq[bool]; why: TemplateUnknown] =
+  ## Per trace of the record `traces` (a gather of `f`), in `outside`: whether the record's
+  ## template does not list its station, found as the map's check finds it (a shot's X record
+  ## by its source station, a receiver gather's O records by its receiver station, a record
+  ## number never used). `known` false when the template is not known for the record, and
+  ## `why` says why (no station in the headers, no record at it, traces matched by channel):
+  ## `outside` is empty then, and nothing is left out.
+  result = (false, @[], tuNoRecord)
   var records: seq[int64] = @[]
   if domain == rdSource:
-    if not f.namesSource(traces): return
+    if not f.namesSource(traces): return (false, @[], tuNoStation)
     let checked = g.shotCheck(f.rowsOf(traces), ctx, traceMatch)
-    if checked.why.len > 0 or checked.c.traceMatch != tmStation: return
+    if checked.why.len > 0: return
+    if checked.c.traceMatch != tmStation: return (false, @[], tuByChannel)
     records = @[checked.c.xpsRecord]
   else:
     let (found, rcv) = f.index.keys.gatherReceiver(traces)
-    if not found or f.hasNoSources(traces): return
+    if not found: return (false, @[], tuNoStation)
+    if f.hasNoSources(traces): return (false, @[], tuNoSources)
     records = g.receiverRecords(rcv).records
     if records.len == 0: return
-  outsideTemplate(f.index.keys, traces, g, records, domain, liveOnly = false)
+  result = (true, outsideTemplate(f.index.keys, traces, g, records, domain, liveOnly = false),
+    tuNoRecord)
 
 proc negateQc(samples: var Tensor[float32]; part: Slice[int]; reversed: openArray[int]) =
   ## Multiplies each reversed trace of `part` by -1, before its own filter
