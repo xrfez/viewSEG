@@ -603,12 +603,11 @@ proc main*() =
       doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
         "the scan did not finish"
       doAssert jobs.state(id) == jsDone, jobs.info(id).get.error
-      let t = sink.result.report.totals
-      doAssert t.expected == 3 and t.present == 2 and t.missing == 1, $t
-      # (the numbers of the gathers without data differ: the derived ones follow the X
-      # records' numbers, the file's own start at 1)
-      totals.add [t.files, t.records, t.expected, t.present, t.missing, t.alsoIn, t.never,
-        t.duplicates, t.extras, t.xpsWithoutData.len].join(",") & $sink.result.unmatched
+      doAssert sink.result.ok, sink.result.reason
+      let t = sink.result.receiver.stats
+      doAssert t.inTemplate == 3 and t.found == 2 and t.missing == 1, $t
+      totals.add [t.files, t.records, t.inTemplate, t.found, t.missing, t.expectedInRecords,
+        t.presentInRecords, t.missingInRecords].join(",") & $sink.result.unmatched
     doAssert totals[0] == totals[1] and totals[0] == totals[2],
       "Missing traces differs: " & totals.join(" / ")
 
