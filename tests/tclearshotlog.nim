@@ -7,12 +7,16 @@
 ##   opened again has no log, and the remembered column map is left as it was;
 ## - several logs are all cleared by one command;
 ## - a log read while the command comes: the read is cancelled and nothing of it arrives later;
-## - a read-only project keeps its log and the command is ignored with the reason.
+## - a read-only project keeps its log and the command is ignored with the reason;
+## - a project whose document names a copy that is gone: Clear shot log is allowed with no log
+##   loaded, the document on disk is written before the copy's removal job ends (no flush), and
+##   a reopen says nothing about an unreadable log.
 ##
 ## Seen to fail: with the project's document left as it was, "a cleared log came back" after the
 ## reopen; with the copies' removal left out, "the copy was kept"; with the jobs under way not
 ## cancelled, "a log arrived after Clear"; with the map's layers kept, "the map keeps the shot
-## layer".
+## layer"; with `shotLogsHeld` counting only loaded logs, "an unreadable entry cannot be
+## cleared"; with the document left to `SaveDelay`, "the document still names the copy".
 
 import std/[os, options, strutils]
 import viewSEG/core/[filesystem, project, shotlog, state, survey]
@@ -114,6 +118,37 @@ proc main*() =
     doAssert other.said("read-only"), "the refusal is not said"
     discard other.shutdown()
     discard holder.shutdown()
+
+  block an_unreadable_entry:
+    let job = root / "JobGone"
+    var st = start(root / "config-gone")
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0)
+    st.apply Command(kind: ckImportShotLog, logPath: Sample)
+    doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+    let copy = job.partOf(st.shotLogStored(0).shotLogCopy)
+    doAssert st.settle(fileExists(copy) and st.jobs.active.len == 0), "no copy was written"
+    st.flushFiles()
+    st.apply Command(kind: ckCloseProject)
+    doAssert st.settle(not st.inProject and st.jobs.active.len == 0)
+    removeFile(copy)
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject and st.jobs.active.len == 0)
+    doAssert st.shotLogCount == 0 and st.project.doc.shotLogs.len == 1
+    doAssert st.shotLogsHeld == 1, "the entry cannot be cleared"
+    st.apply Command(kind: ckClearShotLog)
+    doAssert not st.said("no shot log is loaded"), "the entry was ignored"
+    doAssert st.settle(st.jobs.active.len == 0)
+    doAssert st.project.doc.shotLogs.len == 0
+    doAssert not readFile(documentOf(job)).contains("shotlog"),
+      "the document on disk still names the copy"
+    discard st.shutdown()
+    var again = start(root / "config-gone-again")
+    again.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert again.settle(again.inProject and again.jobs.active.len == 0)
+    doAssert not again.said("could not be read"), "the reopen still reads the copy"
+    doAssert again.shotLogsHeld == 0
+    discard again.shutdown()
   echo "tclearshotlog: ok"
 
 when isMainModule: main()

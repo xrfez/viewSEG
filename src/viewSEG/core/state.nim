@@ -2581,6 +2581,13 @@ func shotLogCount*(state: AppState): int {.inline.} =
   ## How many shot logs are loaded.
   state.shotLogs.len
 
+func shotLogsHeld*(state: AppState): int =
+  ## How many shot logs Clear shot log would take away: those loaded, or, in a project,
+  ## the entries its document names, when there are more (a copy that could not be read
+  ## is an entry with no log).
+  result = state.shotLogs.len
+  if state.inProject: result = max(result, state.project.doc.shotLogs.len)
+
 func shotLogsRevision*(state: AppState): int {.inline.} =
   ## Bumps when a shot log is added, removed, or its view changes.
   state.shotLogsRev
@@ -7617,13 +7624,16 @@ proc submitShotSave(state: var AppState; i: int) =
   state.shotWork.add ShotLogWork(job: job, kind: sjSave, id: loaded.id, sink: sink,
     name: loaded.name, source: loaded.source, stored: loaded.stored, map: loaded.map)
 
-proc submitShotDelete(state: var AppState; stored: string) =
+proc submitShotDelete(state: var AppState; stored: string; afterDocument = false) =
   ## Removes the project copy `stored` on a job. The name stays taken until
-  ## that job ends, so a new copy is not written there first.
+  ## that job ends, so a new copy is not written there first. With `afterDocument`, the job
+  ## first waits for the disk thread to write what it holds (the project's document, which
+  ## no longer names the copy), so a program that dies later never reopens on a missing copy.
   if stored.len == 0 or not state.inProject or state.readOnlyProject: return
   let path = state.project.dir.partOf(stored.shotLogCopy)
   let sink = ShotLogSink()
-  let job = state.jobs.submit(removeSpec(path), removeShotLogCopy(path, sink))
+  let job = state.jobs.submit(removeSpec(path), removeShotLogCopy(path, sink,
+    (if afterDocument: addr state.disk else: nil)))
   state.shotWork.add ShotLogWork(job: job, kind: sjDelete, id: -1, sink: sink,
     name: stored, source: state.project.dir, stored: stored)
 
@@ -7748,7 +7758,8 @@ proc clearShotLogCmd(state: var AppState; cmd: Command) =
     if stored.len > 0:
       state.project.doc.shotLogs = @[]
       state.projectChanged()
-      for file in stored: state.submitShotDelete(file)
+      state.saveProject(first = true) # now, not `SaveDelay` later: the copies go next
+      for file in stored: state.submitShotDelete(file, afterDocument = true)
     state.log.add(sevInfo, "shot log", "The shot log" & (if held == 1: " was" else: "s were") &
       " cleared" & (if held > 1: " (" & $held & " logs)" else: "") &
       (if stored.len > 0: "; the project " & state.project.doc.name & " keeps none now" else: "") &

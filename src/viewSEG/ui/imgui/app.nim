@@ -1523,7 +1523,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     qualityWhy: qualityWhy(ui.core.fileList.folder.len > 0),
     outputReady: ui.core.fileList.folder.len > 0,
     outputWhy: if ui.core.fileList.folder.len > 0: "" else: OutputNeedFolder,
-    cutWhy: ui.core.cutMenuProblem(), shotLogsLoaded: ui.core.shotLogCount,
+    cutWhy: ui.core.cutMenuProblem(), shotLogsLoaded: ui.core.shotLogsHeld,
         shotLogFocused: ui.shotLog.takesUndo)
   let menu = drawMainMenu(menuInput, ui.marks)
   if menu.newPlot:
@@ -1757,7 +1757,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   of paLocate: ui.ask(dkLocateFolder, project.askAt)
   if join.clearSurvey: ui.clearSurvey.ask(joinTitle)
   if project.clearSurvey: ui.clearSurvey.ask(projectTitle)
-  for c in ui.clearShotLog.drawClearShotLog(ui.core.shotLogCount, ui.marks):
+  for c in ui.clearShotLog.drawClearShotLog(ui.core.shotLogsHeld, ui.marks):
     ui.core.apply c
   for c in ui.clearSurvey.drawClearSurvey(ui.marks):
     ui.core.apply c

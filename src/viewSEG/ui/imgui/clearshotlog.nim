@@ -19,9 +19,10 @@ const
   ClearShotLogId = "Clear shot log?###shotlog.clear"
 
 func clearShotLogQuestion*(count: int): string =
-  ## What the dialog asks for `count` loaded logs.
-  (if count == 1: "Remove the loaded shot log? "
-    else: "Remove all " & $count & " loaded shot logs? ") &
+  ## What the dialog asks for `count` logs, loaded or kept by the project (a copy that could
+  ## not be read is one of them).
+  (if count == 1: "Remove the shot log? "
+    else: "Remove all " & $count & " shot logs? ") &
      "The Shot log window empties and the map loses the shots, and an open project keeps no " &
      "copy of " & (if count == 1: "it" else: "them") & ". The log files on disk are not touched."
 
@@ -31,7 +32,7 @@ proc ask*(ui: var ClearShotLogUi) =
 
 proc drawClearShotLog*(ui: var ClearShotLogUi; count: int; marks: var Marks): seq[Command] =
   ## The confirmation while it is open: Clear shot log sends `ckClearShotLog`, Cancel (or
-  ## Escape) changes nothing. `count` is how many logs are loaded.
+  ## Escape) changes nothing. `count` is how many logs there are to remove (`shotLogsHeld`).
   if ui.asked:
     igOpenPopup_Str(ClearShotLogId.cstring, 0)
     ui.asked = false

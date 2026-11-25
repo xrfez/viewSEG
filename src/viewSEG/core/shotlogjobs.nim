@@ -13,7 +13,7 @@
 ## it after the job is no longer running. A failed read is one sentence.
 
 import std/[os, strutils]
-import filesystem, jobs, project, shotfollow, shotlog, shotmap, survey
+import diskio, filesystem, jobs, project, shotfollow, shotlog, shotmap, survey
 
 const
   ShotLogCap* = 256'i64 * 1024 * 1024 ## a larger file is refused, and not read
@@ -276,11 +276,15 @@ proc writeCopy(ctx: JobContext; dest, text: string; sink: ShotLogSink) =
     discard fs.tryRemoveFile(tmp)
     fail(sink, cannotSave(name))
 
-proc removeShotLogCopy*(path: string; sink: ShotLogSink): JobWork =
+proc removeShotLogCopy*(path: string; sink: ShotLogSink; writes: ptr DiskIo = nil):
+    JobWork =
   ## The work of a job that removes the project copy at `path` (`removeSpec`
   ## is the spec). A file that is already gone is success. Worker-only. A
-  ## cancel leaves the file as it was.
+  ## cancel leaves the file as it was. With `writes`, it first waits for the disk thread
+  ## to write what it holds.
   result = proc (ctx: JobContext) {.gcsafe.} =
+    {.cast(gcsafe).}:
+      if writes != nil: writes.flush()
     ctx.checkCancelled()
     ctx.setPhase("removing")
     ctx.checkCancelled()

@@ -128,7 +128,7 @@ type
     cutWhy*: string
       ## why Project > Slice by shot log cannot open (no log is loaded, or a slice is under
       ## way); "" when it can: the file is chosen in the window
-    shotLogsLoaded*: int ## how many shot logs are loaded (Clear shot log is dim at none)
+    shotLogsLoaded*: int ## how many shot logs Clear shot log would take away (dim at none)
     shotLogFocused*: bool
       ## the Shot log window takes Ctrl+Z and Ctrl+Y for its cell edits
 
