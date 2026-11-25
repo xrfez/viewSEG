@@ -1157,7 +1157,7 @@ right of that line's first row. A change works it out again.
     rest). **Phase**: its phase to the reference, the axis fitted to the curve as drawn (its
     maximum is never clipped, also signed around a half turn), with Absolute phase the
     floor a little under 0 so a line at 0 degrees is visible. **Force**: its fundamental
-    and peak, in % of the 100 % force ("Force (%)") when that is set, else as recorded.
+    and peak, in % of the 100 % force ("Force (% of 100 % force)") when that is set, else as recorded.
     **Frequency**: Ref and the ground force. **Distortion**: its THD. The pieces of the
     sweep (the QC windows) whose mean phase or distortion, or whose peak force, is past the
     *peak* limit are drawn over the curve in the error colour; no limit lines, no window

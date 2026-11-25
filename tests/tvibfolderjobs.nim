@@ -756,7 +756,9 @@ proc main*() =
       st.change(b, q, frozen = true)
       cfg = vibQcConfig(st)
       doAssert cfg.ask.options.targetPct == 60, "the second window wiped the drive level"
-      doAssert cfg.ask.options.forceHundredPct == 5000, "the second window wiped the force"
+      # (the force is kept for the vibrator of the sweep it was set on, not for the project)
+      doAssert cfg.profile.hundredByVibrator.len == 1 and
+        cfg.profile.hundredByVibrator[0].pct == 5000, "the second window wiped the force"
       doAssert cfg.ask.options.qc.avgPhaseDeg == 7
       doAssert cfg.profile.fromFile == "good.dat", "a limit change moved fromFile: " &
         cfg.profile.fromFile

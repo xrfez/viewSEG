@@ -292,7 +292,7 @@ proc loadReference(reference: FolderReference): tuple[held: HeldRef; problem: st
     result.problem = e.msg
 
 func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasure];
-    hundredProblem: string): string =
+    hundredProblem: string; ownHundred: bool; vibrator: int): string =
   ## Why this file's force limits were not judged, in words; "" when they were (or
   ## are off). The missing piece is named from what the file and the settings hold.
   var notJudged = false
@@ -310,8 +310,10 @@ func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasu
     result.add(if typedForce(ask.options.forceHundredWeighted):
         "no force was measured in the judged part"
       else: "no 100 % force is set for the ground force made from mass and baseplate")
-  elif typedForce(ask.options.forceHundredPct):
+  elif ownHundred:
     result.add "no force was measured in the judged part"
+  elif vibrator > 0 and ask.hundredByVibrator.len > 0:
+    result.add "no 100 % force is set for vibrator " & $vibrator & " in the project's QC profile"
   else:
     case facts.kind
     of sgDat:
@@ -397,7 +399,13 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
     let label = if held.name.len > 0: held.name else: "reference"
     names.add label & " (archive)"
     at[vsReference] = rows.high
-  let params = folderParams(ask, roles, facts.kind)
+  var params = folderParams(ask, roles, facts.kind)
+  # the 100 % force of this file's vibrator (its pair's for a `.vib`), else the project's one
+  var vibrator = item.info.vibrator
+  if vibrator == 0 and pairInfo.vibrator > 0: vibrator = pairInfo.vibrator
+  let hundred = hundredFor(ask.hundredByVibrator, VibHundred(pct: ask.options.forceHundredPct),
+    vibrator)
+  params.forceHundredPct = hundred.pct
   let sig = if item.converted: SignatureAsk()
     else: folderSignature(facts, ask.forceScale, ask.accelSet, pair, ask.options.targetPct)
   var answer = vibratorOf(rows, names, at, dtMs, params, recorded, ask.topHz, NaN, note, sig)
@@ -426,7 +434,8 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
     return FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foProblem,
       problem: answer.problem, polarity: answer.polarity.line, warnings: warnings)
   let measures = measuresOf(answer.qc.rows)
-  let forceWhy = forceWhyNot(facts, ask, measures, answer.hundredProblem)
+  let forceWhy = forceWhyNot(facts, ask, measures, answer.hundredProblem,
+    typedForce(hundred.pct), vibrator)
   if forceWhy.len > 0:
     addLine(warnings, forceWhy.capitalizeAscii)
   FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foJudged,

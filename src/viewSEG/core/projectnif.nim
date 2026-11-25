@@ -215,6 +215,16 @@ proc writeVibProfile(w: var NifWriter; p: VibQcProfile) =
   if finite(p.forceHundredPct): w.value("forceHundredPct", p.forceHundredPct)
   if p.forceHundredUnit.len > 0: w.value("forceHundredUnit", p.forceHundredUnit)
   if p.forceHundredSetKnown: w.choice("forceHundredSet", $p.forceHundredSet)
+  if p.hundredHow == hhSweep: w.choice("hundredHow", "sweep")
+  if finite(p.hundredAtPct): w.value("hundredAtPct", p.hundredAtPct)
+  for e in p.hundredByVibrator:
+    w.open "hundredFor"
+    w.value("vibrator", int64(e.vibrator))
+    w.value("pct", e.pct)
+    if e.how == hhSweep: w.choice("how", "sweep")
+    if finite(e.atPct): w.value("atPct", e.atPct)
+    if e.file.len > 0: w.value("file", e.file)
+    w.close
   if p.judge == joWeighted: w.choice("judge", "made")
   if finite(p.madeReactionKg): w.value("madeReactionKg", p.madeReactionKg)
   if finite(p.madeBaseplateKg): w.value("madeBaseplateKg", p.madeBaseplateKg)
@@ -764,6 +774,23 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
         if r.accel(c, d.vibProfile.forceHundredSet):
           d.vibProfile.forceHundredSetKnown = true
       of "targetPct": r.number(c, TargetPctRange, d.vibProfile.targetPct)
+      of "hundredHow":
+        if c.kids.len == 1 and c.kids[0].kind == nkIdent and c.kids[0].text == "sweep":
+          d.vibProfile.hundredHow = hhSweep
+        else: r.problem(c, "(hundredHow) needs sweep")
+      of "hundredAtPct": r.number(c, TargetPctRange, d.vibProfile.hundredAtPct)
+      of "hundredFor":
+        var e = VibHundred()
+        for k in c.kids:
+          if k.kind == nkTree:
+            case k.tag
+            of "vibrator": r.whole(k, 1, 1_000_000, e.vibrator)
+            of "pct": r.number(k, MassKgRange, e.pct)
+            of "how": e.how = hhSweep
+            of "atPct": r.number(k, TargetPctRange, e.atPct)
+            of "file": r.text(k, e.file)
+            else: discard
+        if e.vibrator > 0 and not e.pct.isNaN: d.vibProfile.hundredByVibrator.add e
       of "judge":
         if c.kids.len == 1 and c.kids[0].kind == nkIdent and c.kids[0].text == "made":
           d.vibProfile.judge = joWeighted

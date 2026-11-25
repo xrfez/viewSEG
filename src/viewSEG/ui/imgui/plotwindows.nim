@@ -501,6 +501,36 @@ proc drawGroundForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: fl
     (if not typedTop.isNaN: "(typed)" elif band.hz.isNaN: "" else: "(from the reference)").cstring)
   marks.mark(name & ".top frequency source")
 
+proc drawUnitToggle(name: string; t: Theme; marks: var Marks; res: var PlotWindowsOutput;
+    st: AppState) =
+  ## kg | lb after the mass boxes: it sets Units (the Settings window's switch), so one choice
+  ## serves every mass and weight box of the window; the numbers convert in place and the
+  ## stored kilograms stay; the unit shown is the one selected.
+  let units = st.settings.units
+  igSameLine(0, -1)
+  for i, u in [usMetric, usImperial]:
+    if i > 0: igSameLine(0, 0)
+    let on = units == u
+    if on:
+      igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(withAlpha(t.roles[rlAccent], 110)))
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlText]))
+      igPushStyleColor_Vec4(ImGui_Col_Border.cint, vec4(t.roles[rlAccent]))
+      igPushStyleVar_Float(ImGui_StyleVar_FrameBorderSize.cint, 1)
+    else:
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    if igButton((massName(u) & "##units" & name).cstring, ImVec2_c(x: 0, y: 0)) and not on:
+      var s = st.settings
+      s.units = u
+      res.commands.add Command(kind: ckSettings, settings: s)
+    if on:
+      igPopStyleVar(1)
+      igPopStyleColor(3)
+    else: igPopStyleColor(1)
+    marks.mark(name & ".unit " & massName(u))
+    tip("Show masses in " & massName(u) & " (" & systemName(u) & "). The numbers convert " &
+      "in place, so the masses do not change; they are kept in kilograms. This is the " &
+      "Units setting.")
+
 proc drawMassesGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
     forceNote: string; t: Theme;
     marks: var Marks; p: var AnalysisParams; changed: var bool; res: var PlotWindowsOutput;
@@ -557,32 +587,7 @@ proc drawMassesGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32
   marks.mark(name & ".baseplate mass")
   tip("The baseplate's mass, in " & unitWord & ". Empty: none. A mass is " &
     massLimitWords(units) & ".")
-  # kg | lb after both masses: it sets Units (the Settings window's switch), the
-  # numbers convert in place and the stored kilograms stay; the unit shown is the
-  # one selected.
-  igSameLine(0, -1)
-  for i, u in [usMetric, usImperial]:
-    if i > 0: igSameLine(0, 0)
-    let on = units == u
-    if on:
-      igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(withAlpha(t.roles[rlAccent], 110)))
-      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlText]))
-      igPushStyleColor_Vec4(ImGui_Col_Border.cint, vec4(t.roles[rlAccent]))
-      igPushStyleVar_Float(ImGui_StyleVar_FrameBorderSize.cint, 1)
-    else:
-      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-    if igButton((massName(u) & "##units").cstring, ImVec2_c(x: 0, y: 0)) and not on:
-      var s = st.settings
-      s.units = u
-      res.commands.add Command(kind: ckSettings, settings: s)
-    if on:
-      igPopStyleVar(1)
-      igPopStyleColor(3)
-    else: igPopStyleColor(1)
-    marks.mark(name & ".unit " & massName(u))
-    tip("Show masses in " & massName(u) & " (" & systemName(u) & "). The numbers convert " &
-      "in place, so the masses do not change; they are kept in kilograms. This is the " &
-      "Units setting.")
+  drawUnitToggle(name, t, marks, res, st)
 
 proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
     kind: SignatureKind; forceNote: string; t: Theme; marks: var Marks;
@@ -623,6 +628,7 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
       elif not (stored.isNaN and shownHundred.isNaN) and stored != shownHundred:
         if weighted: p.forceHundredWeighted = stored
         else: (p.forceHundredPct, p.forceHundredUnit) = (stored, judgedUnit)
+        p.forceHundredHow = hhTyped
         changed = true
     else:
       res.notes.add "100 % force must be above 0, not " & sensible(typed) & "."
@@ -641,6 +647,27 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
     igAlignTextToFramePadding()
     igTextUnformatted(forceShown.unit.cstring, nil)
     marks.mark(name & ".force unit")
+  # where the value came from: typed, or set on a sweep (which file, at which target), and for
+  # which vibrator; a vibrator with none says so
+  let vibrator = if planeAt >= 0: st.vibratorOf(w) else: 0
+  let source = hundredSource(p, vibrator)
+  if source.len > 0:
+    igSameLine(0, -1)
+    igAlignTextToFramePadding()
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    igTextUnformatted(("(" & source & ")").cstring, nil)
+    igPopStyleColor(1)
+    marks.mark(name & ".hundred source")
+  elif vibrator > 0 and st.inProject and st.project.doc.hasVibProfile and
+      st.project.doc.vibProfile.hundredByVibrator.len > 0 and
+      p.forceHundredPct.isNaN and w.result.hundredWords.len == 0:
+    igSameLine(0, -1)
+    igAlignTextToFramePadding()
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    igTextUnformatted(("(no 100 % force for vibrator " & $vibrator &
+      " in the project's QC profile: not judged on force)").cstring, nil)
+    igPopStyleColor(1)
+    marks.mark(name & ".hundred source")
   if w.result.hundredWords.len > 0 and p.forceHundredPct.isNaN:
     igSameLine(0, -1)
     igAlignTextToFramePadding()
@@ -652,6 +679,13 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
   if hint.len > 0:
     wrapped(hint, t, colour = rlWarning)
     marks.mark(name & ".hundred hint")
+  if p.forceHundredHow == hhSweep and p.forceHundredFile == w.file:
+    # set on this very sweep: when the controller reports another force for it than the target
+    # typed, say so (the value is set all the same)
+    let guard = hundredGuard(w.result.controllerAvgForcePct, p.forceHundredAtPct)
+    if guard.len > 0:
+      wrapped(guard, t, colour = rlWarning)
+      marks.mark(name & ".hundred guard")
   # 100 % from this very sweep: its average force (the verdict's) over the target's share
   let average = w.result.qc.stats.avgForce
   let fromSweep = average / ((if p.targetPct > 0: p.targetPct else: 100.0) / 100)
@@ -660,6 +694,7 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
   if igSmallButton("Set from this sweep##hundred"):
     if weighted: p.forceHundredWeighted = fromSweep
     else: (p.forceHundredPct, p.forceHundredUnit) = (fromSweep, judgedUnit)
+    p.forceHundredHow = hhSweep
     changed = true
   igEndDisabled()
   marks.mark(name & ".set hundred")
@@ -691,26 +726,33 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
       "controller's target force needs the drive level typed here, in this window"
       else: ""))
   if kind != sgNone:
-    let scale = st.settings.forceScale
-    let (shown, id, what) = if kind == sgDat: (scale.datCountsPerLbf, "##datscale",
-        "counts per lbf") else: (scale.vibAccMvPerCount, "##vibscale", "accelerometer constant")
-    label("Force scale: " & what)
-    if limitBox(id, shown, box, typed):
-      if typed.isNaN or ForceScaleRange.allows(typed):
-        if not sameMass(typed, shown):
-          var s = st.settings
-          if kind == sgDat: s.forceScale.datCountsPerLbf = typed
-          else: s.forceScale.vibAccMvPerCount = typed
-          res.commands.add Command(kind: ckSettings, settings: s)
-      else:
-        res.notes.add "The force scale must be " & ForceScaleRange.words & ", not " &
-          sensible(typed) & "."
-    marks.mark(name & ".force scale")
-    tip((if kind == sgDat: "Your scale for a .dat's force channels: counts per pound-force. "
-      else: "Your accelerometer constant: with the header's sensitivity it turns the pound-" &
-        "counts of the ground force into pounds-force. ") &
-      "Empty: the force stays in counts (pound-counts). It changes what is shown and judged, " &
-      "never the samples. A local setting, kept in your settings and shipped with nothing")
+    let open = igCollapsingHeader_TreeNodeFlags("Advanced: force in pounds##advanced", 0)
+    marks.mark(name & ".advanced")
+    if open:
+      wrapped("Only if you know the electronics' calibration: it shows forces in pounds-force " &
+        "(newtons with the Units setting), and then the 100 % force box above is in that unit " &
+        "too. Leave it empty and use 100 % force with Set from this sweep.", t)
+      marks.mark(name & ".advanced note")
+      let scale = st.settings.forceScale
+      let (shown, id, what) = if kind == sgDat: (scale.datCountsPerLbf, "##datscale",
+          "counts per lbf") else: (scale.vibAccMvPerCount, "##vibscale", "accelerometer constant")
+      label("Force scale: " & what)
+      if limitBox(id, shown, box, typed):
+        if typed.isNaN or ForceScaleRange.allows(typed):
+          if not sameMass(typed, shown):
+            var s = st.settings
+            if kind == sgDat: s.forceScale.datCountsPerLbf = typed
+            else: s.forceScale.vibAccMvPerCount = typed
+            res.commands.add Command(kind: ckSettings, settings: s)
+        else:
+          res.notes.add "The force scale must be " & ForceScaleRange.words & ", not " &
+            sensible(typed) & "."
+      marks.mark(name & ".force scale")
+      tip((if kind == sgDat: "Your scale for a .dat's force channels: counts per pound-force. "
+        else: "Your accelerometer constant: with the header's sensitivity it turns the pound-" &
+          "counts of the ground force into pounds-force. ") &
+        "Empty: the force stays in counts (pound-counts). It changes what is shown and judged, " &
+        "never the samples. A local setting, kept in your settings and shipped with nothing")
 
 proc drawAccelGroup(name: string; t: Theme; marks: var Marks; p: var AnalysisParams;
     changed: var bool) =
@@ -759,13 +801,18 @@ proc drawWeightsGroup(ui: var PlotWindowsUi; st: AppState; planeAt: int; name: s
   marks.mark(name & ".fleet")
   igPopTextWrapPos()
 
-proc drawJobWeightsGroup(st: AppState; name: string; box: float32; marks: var Marks;
-    res: var PlotWindowsOutput) =
+proc drawJobWeightsGroup(st: AppState; name: string; box: float32; t: Theme;
+    marks: var Marks; res: var PlotWindowsOutput) =
   ## The job's three weights, kept with the project and compared by the folder QC with each
-  ## `.vib` header's (never applied). Empty is not set. Inactive without a project.
+  ## `.vib` header's (never applied). Empty is not set. Inactive without a project. Shown in
+  ## kg or lb as the Units setting says; stored in kilograms.
   let can = st.inProject
+  let units = st.settings.units
   igSeparatorText("Job weights (vibrator QC)")
   marks.mark(name & ".group Job weights")
+  wrapped("Compared with each .vib header's weights in the folder QC; never applied to a " &
+    "signal.", t)
+  marks.mark(name & ".job weights note")
   if not can: igBeginDisabled(true)
   let now = if can: st.project.doc.vibJobWeights else: VibJobWeights()
   var next = now
@@ -775,22 +822,27 @@ proc drawJobWeightsGroup(st: AppState; name: string; box: float32; marks: var Ma
     igTextUnformatted(label, nil)
     igSameLine(0, -1)
     var typed = 0.0
-    if limitBox(id, now.field, box, typed) and can:
-      if typed.isNaN or MassKgRange.allows(typed):
-        if typed != now.field and not (typed.isNaN and now.field.isNaN):
-          next.field = typed
-          changed = true
-      else:
-        res.notes.add "The weight must be " & MassKgRange.words & ", not " &
-          sensible(typed) & "."
+    let shown = massBoxValue(now.field, units)
+    if limitBox(id & "." & $units, shown, box, typed) and can:
+      let kg = if typed.isNaN: NaN else: storeMass(typed, units)
+      if not sameMass(typed, shown):
+        if typed.isNaN or MassKgRange.allows(kg):
+          if not (kg.isNaN and now.field.isNaN) and kg != now.field:
+            next.field = kg
+            changed = true
+        else:
+          res.notes.add "The weight must be " & massLimitWords(units) & ", not " &
+            sensible(typed) & " " & massName(units) & "."
     marks.mark(name & ".job weight " & label)
     tip(if can: WeightsHint else: NeedProjectWeights)
     igSameLine(0, -1)
-    igTextUnformatted("kg", nil)
+    igTextUnformatted(massName(units).cstring, nil)
   one(HoldDownLabel, "##jobholddown", holdDownKg)
   one(BaseplateLabel, "##jobbaseplate", baseplateMassKg)
   one(ReactionLabel, "##jobreaction", reactionMassKg)
   if not can: igEndDisabled()
+  igSameLine(0, -1)
+  drawUnitToggle(name & ".job", t, marks, res, st)
   if changed: res.commands.add Command(kind: ckVibWeights, vibWeights: next)
 
 proc drawWheel(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: string;
@@ -806,7 +858,7 @@ proc drawWheel(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: str
   drawGroundForceGroup(w, name, planeAt, box, t, marks, p, changed, res, st)
   drawMassesGroup(w, name, planeAt, box, forceNote, t, marks, p, changed, res, st)
   drawForceGroup(w, name, planeAt, box, kind, forceNote, t, marks, p, changed, res, st)
-  if kind != sgNone: drawJobWeightsGroup(st, name, box, marks, res)
+  if kind != sgNone: drawJobWeightsGroup(st, name, box, t, marks, res)
   if kind == sgVib:
     drawAccelGroup(name, t, marks, p, changed)
     ui.drawWeightsGroup(st, planeAt, name, t, marks)

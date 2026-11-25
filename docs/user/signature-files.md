@@ -198,6 +198,27 @@ For a `.dat` and a `.vib` a line under the choice says that both choices give th
 force. When a file cannot follow the choice (no mass or baseplate trace, masses not typed, a `.vib`
 whose header gives no weights), a line says why and the ground force in the record is judged.
 
+**Two peaks, and what each says.** The average force is read from the fundamental, in % of the
+target as well as in % of the 100 % force ("121 % of 100 % force = 201 % of the 60 % target"). The
+peak force limit stays on the raw envelope's peak (the fundamental with its harmonics), and the
+fundamental's own peak is shown beside it, both in % of the 100 % force and named apart ("peak
+force (with harmonics)", "peak fundamental force"); the Force plot's legend says which curve is
+which. The fundamental says whether the drive level is at target; a raw peak well above it points
+at distortion or decoupling. The fundamental's peak decides nothing.
+
+**Where the 100 % force comes from.** Beside its box a note says whether it was typed, or set
+from a sweep (on which file, at which target force), or taken from the project's QC profile, and
+for which vibrator. Set it once on a high-force sweep and every later sweep of that vibrator is
+read against it, so a low-force sweep simply reads low. It is kept **per vibrator** in the
+project's QC profile: a vibrator with no value says so and is not judged on force (it never takes
+another vibrator's); a project saved before keeps its one value as the default for every
+vibrator until a vibrator gets its own. If the file carries the controller's own average force
+and it differs from the target you typed by more than 10 percentage points when you press Set from
+this sweep, the value is set all the same and a line under the box (and Messages) says what a
+sweep at the target would then read. The force in pounds (the force scale) is under **Advanced:
+force in pounds**, closed at first: only for those who know the electronics' calibration.
+The mass and weight boxes show kg or lb, as the Units setting says (one choice for the window).
+
 **The 100 % force.** The force limits are percent of a 100 % force in the unit of the signal
 judged: the recorded ground force's in counts (or newtons with your scale), the made one's in
 weight times the traces' unit. The box shows and stores the one for the choice made and its unit

@@ -69,6 +69,11 @@ type
       ## a choice made by hand on an earlier file of the same layout (the trace count of
       ## the record and its code sequence), kept in the project or the user's settings
 
+  HundredHow* = enum
+    ## How the 100 % force came to be what it is.
+    hhTyped = "typed"            ## typed in its box
+    hhSweep = "set from a sweep" ## "Set from this sweep" on a sweep
+
   JudgeOn* = enum
     ## The ground force switch: which ground force the window judges and draws as its
     ## ground force when the unit has both.
@@ -178,6 +183,11 @@ type
     forceHundredPct*: float64 = NaN
       ## vibrator signature: the force that is 100 % (the file's unit), for the force
       ## limits; NaN: not given, the force limits are not judged
+    forceHundredHow*: HundredHow = hhTyped ## how the 100 % force (either) was given
+    forceHundredFile*: string ## the file the window showed when it was given; "": unknown
+    forceHundredAtPct*: float64 = NaN ## the target force (%) it was given at; NaN: unknown
+    forceHundredFromProfile*: bool
+      ## it came from the project's vibrator QC profile, not from this window's own edit
     rolesOpen*: bool = false ## vibrator signature: the roles' table is unfolded
     noteOpen*: bool = false ## vibrator signature: the note ("how this was measured") is unfolded
     details*: bool = false
@@ -294,6 +304,9 @@ type
       ## a trace that cannot be matched to the whole of its reference, one line each (shown
       ## first, in the warning colour): shorter than it, or its signal stops early
       ## (`core/signalend`); "" for none
+    controllerAvgForcePct*: float64 = NaN
+      ## a signature file's: the controller's own average force for this sweep, % of the
+      ## hold-down weight; NaN: the file has none
     judged*: string ## a vibrator signature's judged signal: "GF" or "GF (M, B)"
     bothSignals*: bool ## it has both ground forces: the user may choose which is judged
     canMake*: bool
@@ -349,6 +362,33 @@ func topsOf*(texts: openArray[string]): seq[TopFrequency] =
 func topTexts*(tops: openArray[TopFrequency]): seq[string] =
   ## `tops` as the project's document keeps them.
   for t in tops: result.add topText(t.reference, t.hz)
+
+func hundredSource*(p: AnalysisParams; vibrator: int): string =
+  ## Where the 100 % force box's value came from, for the note beside it: "typed", "set on
+  ## a.dat at target 60 %", "from the project's QC profile, set on a.dat at target 60 %", each
+  ## "for vibrator 12" when the sweep's vibrator is known; "" when no value is given.
+  if p.forceHundredPct.isNaN and p.forceHundredWeighted.isNaN: return ""
+  func whole(x: float64): string =
+    if x == round(x): $int64(x) else: formatFloat(x, ffDecimal, 1)
+  case p.forceHundredHow
+  of hhTyped: result = "typed"
+  of hhSweep:
+    result = "set " & (if p.forceHundredFile.len > 0: "on " & p.forceHundredFile
+      else: "from a sweep")
+    if not p.forceHundredAtPct.isNaN: result.add " at target " & whole(p.forceHundredAtPct) & " %"
+  if p.forceHundredFromProfile: result = "from the project's QC profile, " & result
+  if vibrator > 0: result.add " for vibrator " & $vibrator
+
+func hundredGuard*(controllerPct, targetPct: float64): string =
+  ## What to say when "Set from this sweep" is pressed on a sweep whose own controller reports
+  ## an average force more than 10 percentage points from the target typed: the value is
+  ## set all the same. "" when they agree or either is not known.
+  if controllerPct.isNaN or targetPct.isNaN or abs(controllerPct - targetPct) <= 10: return ""
+  func whole(x: float64): string = $int64(round(x))
+  "The controller reports about " & whole(controllerPct) & " % average force for this " &
+    "sweep; the target typed is " & whole(targetPct) & " %. A 100 % force set here makes a " &
+    whole(targetPct) & " % sweep read about " & whole(targetPct * targetPct / controllerPct) &
+    " %."
 
 func topOf*(tops: openArray[TopFrequency]; reference: string): float64 =
   ## The top frequency typed for `reference` (`RecordedKey`: the record's own trace); NaN

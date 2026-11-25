@@ -468,6 +468,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     (if both: (if judged == vsWeightedSum: "GF from M and B" else: "GF as recorded")
       else: ""))
   result.judged = $judged
+  if sig.given and sig.ctl.valid and sig.ctl.forceAvgPct >= 0:
+    result.controllerAvgForcePct = float64(sig.ctl.forceAvgPct)
   result.bothSignals = both
   result.judgedAxis = if judged == vsWeightedSum:
       "GF (M, B) (" & madeUnit() & ")"
@@ -578,7 +580,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     result = AnalysisPlot(xLabel: "Sweep time (ms)", xUnit: "ms", xs: xs,
       title: (if fromMasses: "Force from M and B" elif s == judged: "Force"
       else: "Force (GF as recorded)"),
-      yLabel: (if percent: "Force (%)"
+      yLabel: (if percent: "Force (% of 100 % force)"
       elif fromMasses:
         (if details and both: "GF from M and B" else: "Force") & " (" & madeUnit() & ")"
       else: "Force (" & (if s == vsGroundForce: gfUnit(u.units[s], sig, scaled)
@@ -591,10 +593,11 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     let named = nameOf(s)
     let fundamental = AnalysisCurve(name: named & " fundamental",
       ys: scaled(u.tracks[s].amplitude[0]))
-    let peak = AnalysisCurve(name: named & " peak", ys: scaled(u.tracks[s].peak))
+    let peak = AnalysisCurve(name: named & " peak (with harmonics)", ys: scaled(u.tracks[s].peak))
     result.curves.add [fundamental, peak]
     if s == judged and not hundredRaw.isNaN:
-      result.curves.addFailing overlay(named & " peak", peak.ys, stats.peak, q.peakForcePct,
+      result.curves.addFailing overlay(named & " peak (with harmonics)", peak.ys, stats.peak,
+        q.peakForcePct,
         percentScale)
   var plots: seq[AnalysisPlot] = @[phase, forcePlotOf(judged, not hundredRaw.isNaN)]
   if details:
@@ -772,6 +775,12 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     words.add "; GF (M, B) is uncalibrated without accelerometer sensitivities: in " &
       weightedUnit(u.units[vsWeightedSum]) & ", on an axis of its own"
   let e = u.reference.extent
+  if not hundredRaw.isNaN:
+    words.add "; peak force (with harmonics) " & number(result.qc.stats.peakForcePct, 1) &
+      " % of the 100 % force (judged); peak fundamental force " &
+      number(result.qc.stats.fundamentalPeakPct, 1) & " % (shown, not judged): the " &
+      "fundamental says whether the drive level is at target, a raw peak well above it " &
+      "points at distortion or decoupling"
   words.add "; judged from " & number(span.a, 0) & " to " & number(span.b, 0) &
       " ms (" &
     (if judging.skipStartMs.isNaN and judging.skipEndMs.isNaN: "the sweep less its tapers"
