@@ -796,6 +796,7 @@ const
   SetSweepMs = 4000.0
   SetSweepTaperMs = 200.0
   SetVibRecord = 3000                ## 4 s sweep and 2 s listen
+  SetImpRecord = 1000                ## 2 s
 
 type SurveySet = object
   name: string        ## the folder, and the prefix of the survey files
@@ -813,6 +814,11 @@ proc vibroseisSet(): SurveySet =
   SurveySet(name: "vibroseis", vibrator: true, start: unixUtc(2024, mMar, 1, 6),
     firstShotS: 4, stepS: 8, recordSamples: SetVibRecord, segments: 5, ffid0: 101,
     noisySigma: 5.0, seed: 50_000)
+
+proc impulsiveSet(): SurveySet =
+  SurveySet(name: "impulsive", vibrator: false, start: unixUtc(2024, mMar, 1, 9),
+    firstShotS: 3, stepS: 4, recordSamples: SetImpRecord, segments: 3, ffid0: 201,
+    noisySigma: 0.4, seed: 60_000)
 
 func shotTime(ss: SurveySet; shot: int): float64 =
   ss.start + ss.firstShotS + float64(shot) * ss.stepS
@@ -1115,8 +1121,10 @@ proc main() =
   checkObn(root / "samples" / "obn")
   writeShotLog(root / "samples" / "land")
   writeSurveySet(root, vibroseisSet())
+  writeSurveySet(root, impulsiveSet())
   report(root)
   reportSet(root, "vibroseis")
+  reportSet(root, "impulsive")
   echo "wrote samples/"
 
 main()
