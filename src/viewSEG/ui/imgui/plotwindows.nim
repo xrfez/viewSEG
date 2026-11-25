@@ -552,13 +552,11 @@ proc drawMassesGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32
   let unitWord = massName(units)
   template takeMass(which: string; stored, shown: untyped) =
     # a number left as the box showed it is no edit (the box rounds a conversion)
-    let kg = if typed.isNaN: NaN else: storeMass(typed, units)
-    if not sameMass(typed, shown):
-      if typed.isNaN or MassKgRange.allows(kg):
-        if not sameMass(kg, stored): (stored, changed) = (kg, true)
-      else:
-        res.notes.add "The " & which & " must be " & massLimitWords(units) & ", not " &
-          sensible(typed) & " " & unitWord & "."
+    let got = massTyped(typed, shown, stored, units)
+    if got.changed: (stored, changed) = (got.kg, true)
+    elif got.refused:
+      res.notes.add "The " & which & " must be " & massLimitWords(units) & ", not " &
+        sensible(typed) & " " & unitWord & "."
   group("Masses", name, marks)
   # which trace each mass multiplies, as the roles say (the pickers can swap them)
   if planeAt >= 0 and p.roles.mass >= 0 and p.roles.baseplate >= 0:
@@ -828,15 +826,13 @@ proc drawJobWeightsGroup(st: AppState; name: string; box: float32; t: Theme;
     var typed = 0.0
     let shown = massBoxValue(now.field, units)
     if limitBox(id & "." & $units, shown, box, typed) and can:
-      let kg = if typed.isNaN: NaN else: storeMass(typed, units)
-      if not sameMass(typed, shown):
-        if typed.isNaN or MassKgRange.allows(kg):
-          if not (kg.isNaN and now.field.isNaN) and kg != now.field:
-            next.field = kg
-            changed = true
-        else:
-          res.notes.add "The weight must be " & massLimitWords(units) & ", not " &
-            sensible(typed) & " " & massName(units) & "."
+      let got = massTyped(typed, shown, now.field, units)
+      if got.changed:
+        next.field = got.kg
+        changed = true
+      elif got.refused:
+        res.notes.add "The weight must be " & massLimitWords(units) & ", not " &
+          sensible(typed) & " " & massName(units) & "."
     marks.mark(name & ".job weight " & label)
     tip(if can: WeightsHint else: NeedProjectWeights)
     igSameLine(0, -1)

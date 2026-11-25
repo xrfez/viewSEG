@@ -166,3 +166,25 @@ func keyMove*(up, down, left, right, home, ending: bool): CursorMove =
   elif home: cmFirst
   elif ending: cmLast
   else: cmNone
+
+type MassTyped* = object
+  ## What a mass box does with a number typed into it.
+  changed*: bool
+    ## `kg` is a new mass to store
+  kg*: float64
+    ## the kilograms kept: the new ones, or the stored ones (NaN: none)
+  refused*: bool
+    ## outside `MassKgRange`: nothing is stored, and the box says so
+
+func massTyped*(typed, shown, stored: float64; u: UnitSystem): MassTyped =
+  ## The box showed `shown` (`massBoxValue` of the `stored` kilograms in `u`) and now holds
+  ## `typed`. A number left as the box showed it is no edit, so switching the unit back and
+  ## forth never stores the rounding of a conversion; another number is stored in kilograms
+  ## (`storeMass`) when `MassKgRange` allows it, and an emptied box stores none.
+  func same(a, b: float64): bool = a == b or (a.isNaN and b.isNaN)
+  result = MassTyped(kg: stored)
+  if not same(typed, shown):
+    let kg = storeMass(typed, u)
+    if typed.isNaN or MassKgRange.allows(kg):
+      result = MassTyped(changed: not same(kg, stored), kg: kg)
+    else: result.refused = true
