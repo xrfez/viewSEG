@@ -15,6 +15,21 @@
 ##   is said and left out;
 ## - the command: kept in the project, or for this run when none is open, and said so.
 ##
+## - whose sensitivity: none typed but the file's headers give one reads "(file)" with a tip
+##   that says so; a typed row and a file's figure that differ say both and which was used;
+##   a dead or auxiliary trace without a descale reads "<n> counts"; an auxiliary trace in
+##   physical units names no sensor; imperial velocity steps in/s then µin/s;
+## - the pick of a tile: the second row of a SEG-Y file with another trace weighting factor
+##   converts with its own descale, and a trace whose code is no component has none;
+## - editing a row keeps the children of it this version does not know.
+##
+## Seen to fail (the second paragraph): with `scaleSample` ignoring `sensitivityFrom`, the
+## "(file)" readout read as a typed sensor's; with `skKept` mapped to counts, a dead trace
+## read a bare number; with `s.unit` not tested, an auxiliary trace named a sensor; with
+## `pickAt` taking the first row's scale, the second trace read 2^-10; with `componentOf`
+## dropped, the vibrator trace read a value; with `sensorCommand` dropping `later`, the row
+## lost `(shunt 1800)`.
+##
 ## Seen to fail: with `calibrationOf` giving a rule no sensitivity, "80 V/(m/s) ..." read
 ## "no sensor"; with the unit stored as the SI figure, the V/(in/s) row came back as
 ## 80 V/(m/s); with `readSensor` not checking `sensorOk`, the 1e300 row was kept; with the
@@ -24,7 +39,7 @@ import std/[math, options, os, sequtils, strutils]
 import parseSEG
 import processSEG/filescales
 import viewSEG/core/[components, nif, pick, project, projectnif, readout, sensors, settings,
-  state]
+  state, tiles]
 import utils/[fixtures, waiting]
 
 proc keysOf(component: uint8; sensor = 2'u8): TraceKeys =
@@ -247,6 +262,130 @@ proc main*() =
       doAssert scaleSample(initCalibrationPlan(SensorTable().calibrationOf(ctVolts)),
         g.index.keys[1], gs[1], 5, aiVolts).kind == skNoVolts
       g.close()
+
+  block moreUnits:
+    # 1000 counts of 1e-6 V: 1e-3 V over the sensitivity, in SI
+    let cases = [(suVPerMPerS2, 50'u8, 0'u8, 1.5, 1e-3 / 1.5),
+      (suVPerG, 50'u8, 0'u8, 1.2, 1e-3 / (1.2 / 9.80665)),
+      (suVPerPa, 1'u8, 1'u8, 3e-4, 1e-3 / 3e-4)]
+    for (u, comp, sens, v, want) in cases:
+      var t = SensorTable()
+      doAssert t.put(SensorRow(component: comp, value: v, unit: u)), $u
+      let r = t.read(comp, fileScale(1e-6), 1000, sensor = sens)
+      doAssert r.kind == skValue and near(r.value, want), $u & " " & $r & " want " & $want
+
+  block imperialSteps:
+    let slow = Scaled(kind: skValue, value: 0.039 * 0.0254, unit: auVelocity)
+    doAssert slow.scaledParts(true).unit == "in/s" and
+      significant(slow.scaledParts(true).value) == "0.039", $slow.scaledParts(true)
+    let slower = Scaled(kind: skValue, value: 0.0005 * 0.0254, unit: auVelocity)
+    doAssert slower.scaledParts(true).unit == "µin/s" and
+      near(slower.scaledParts(true).value, 500), $slower.scaledParts(true)
+
+  block whoseSensitivity:
+    var s = fileScale(1e-6)
+    s.sensitivity = 50.0
+    s.unit = auVelocity
+    var p = noPick()
+    (p.inside, p.found, p.raw, p.hasScale) = (true, true, 1000'f32, true)
+    p.keys = keysOf(2)
+    p.scale = s
+    p.convertRaw(SensorTable(), aiPhysical, false)
+    doAssert p.text(rfRawAmplitude) == "20 µm/s (file)", p.text(rfRawAmplitude)
+    doAssert "in the file's headers (50 V per m/s)" in p.rawTip and
+      "none is typed for Z (vertical) in Project > Sensors" in p.rawTip, p.rawTip
+    # a typed row differing from the file's figure: both are said, the typed one used
+    var t = SensorTable()
+    doAssert t.put(SensorRow(component: 2, value: 80, unit: suVPerMPerS))
+    p.convertRaw(t, aiPhysical, false)
+    doAssert p.text(rfRawAmplitude) == "12.5 µm/s", p.text(rfRawAmplitude)
+    doAssert "50 V per m/s" in p.rawTip and "typed 80 V/(m/s) was used" in p.rawTip, p.rawTip
+    # the file says its samples are already physical: its descale is used, and it says so
+    var phys = fileScale(1e-9)
+    phys.physical = true
+    phys.unit = auVelocity
+    p.scale = phys
+    p.convertRaw(t, aiPhysical, false)
+    doAssert p.text(rfRawAmplitude).endsWith(" (file)") and "1 µm/s" in p.text(rfRawAmplitude) and
+      "the file's was used" in p.rawTip and "80" in p.rawTip, p.text(rfRawAmplitude) & p.rawTip
+    # an auxiliary trace in physical units reads volts and names no sensor
+    p.scale = fileScale(1e-6)
+    p.keys = keysOf(2)
+    p.keys.status = tsAuxiliary
+    p.convertRaw(t, aiPhysical, false)
+    doAssert p.text(rfRawAmplitude) == "1 mV" and "sensor" notin p.rawTip and
+      "(file)" notin p.text(rfRawAmplitude), p.text(rfRawAmplitude) & " / " & p.rawTip
+    # a dead or auxiliary trace without a descale: as recorded, with words
+    for st in [tsDead, tsAuxiliary]:
+      p.keys.status = st
+      p.scale = initFileScale()
+      for want in [aiVolts, aiPhysical]:
+        p.convertRaw(t, want, false)
+        doAssert p.text(rfRawAmplitude) == "1000 counts" and
+          p.rawTip == "A dead or auxiliary trace without a descale is shown as recorded.",
+          $st & " " & p.text(rfRawAmplitude)
+
+  block pickOfSecondRow:
+    withFixtures fx:
+      # SEG-Y: trace weighting factors 10 and 12: the two rows have different descales
+      let sgy = fx.dir / "two.sgy"
+      var w = openSeismicWriter(sgy, SegyOutputOptions())
+      var tk = initTraceKeys()
+      tk.intervalUs = 2000
+      tk.t0Ms = 0
+      tk.status = tsLive
+      w.writeTrace(tk, newSeq[float32](4), [headerOverride("trace.traceWeightingFactor", 10)])
+      w.writeTrace(tk, newSeq[float32](4), [headerOverride("trace.traceWeightingFactor", 12)])
+      doAssert w.close().len == 0
+      var g = openSeismic(sgy, keys = true)
+      var scales = newSeq[FileScale](g.len)
+      g.fileScalesInto(0 ..< g.len, scales)
+      g.close()
+      var tile = Tile(id: 1, request: ReadRequest(first: 0, count: 2, stride: 1, samples: 1,
+        decimation: 1), dtMs: 2, t0Ms: 0, columns: 1)
+      tile.traces = @[0, 1]
+      tile.data = @[1000'f32, 1000'f32]
+      tile.raw = tile.data
+      tile.scales = scales
+      for (code, comp) in [(12'i16, 2'u8), (18'i16, 2'u8)]:
+        var k = initTraceKeys()
+        k.status = tsLive
+        k.component = comp
+        k.traceCode = code
+        tile.keys.add k
+      var table = SensorTable()
+      doAssert table.put(SensorRow(component: 2, value: 1, unit: suVPerMPerS))
+      let layout = PanelLayout(dtMs: 2, samples: 1, t0Ms: 0)
+      # the first row: component 2 (code 12), weighting 10
+      var a = pickAt([tile], layout, DataPoint(x: 0, tMs: 0))
+      a.inside = true
+      a.convertRaw(table, aiVolts, false)
+      doAssert a.text(rfRawAmplitude) == "976.6 mV", a.text(rfRawAmplitude) # 1000 * 2^-10
+      # the second row's code names no component: no sensor, however `component` reads
+      var b = pickAt([tile], layout, DataPoint(x: 1, tMs: 0))
+      b.inside = true
+      b.convertRaw(table, aiPhysical, false)
+      doAssert b.text(rfRawAmplitude).startsWith("no sensor for component"), b.rawText
+      # the same row with a code that is a component: its own descale, 2^-12
+      tile.keys[1].traceCode = 12
+      b = pickAt([tile], layout, DataPoint(x: 1, tMs: 0))
+      b.inside = true
+      b.convertRaw(table, aiVolts, false)
+      doAssert b.text(rfRawAmplitude) == "244.1 mV", b.text(rfRawAmplitude) # 1000 * 2^-12
+      b.convertRaw(table, aiPhysical, false)
+      doAssert near(b.raw.float64 * pow(2.0, -12), 0.244140625) and
+        b.text(rfRawAmplitude) == "244.1 mm/s", b.text(rfRawAmplitude)
+
+  block editKeepsLater:
+    var st = initAppState()
+    var table = SensorTable()
+    doAssert table.put(SensorRow(component: 2, value: 80, unit: suVPerMPerS,
+      later: @[NifNode(kind: nkTree, tag: "shunt", kids: @[NifNode(kind: nkInt, intVal: 1800)])]))
+    st.setSensors(table)
+    st.apply sensorCmd(2, 90, "V/(m/s)")
+    doAssert st.project.doc.sensors[0].value == 90 and st.project.doc.sensors[0].later.len == 1,
+      "an edit dropped the row's later children"
+    st.shutdown()
 
   block commandWithNoProject:
     withFixtures fx:

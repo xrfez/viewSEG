@@ -9246,17 +9246,22 @@ proc noteScales(state: var AppState) =
   if key == state.scalesNoted: return
   state.scalesNoted = key
   let plan = initCalibrationPlan(state.project.doc.sensors.calibrationOf)
-  var converted, noVolts, noSensor, other = 0
+  var typed, fromFile, noVolts, noSensor, other, conflicts = 0
   for i, keys in state.tiles[k][at].keys:
-    case scaleSample(plan, keys, state.tiles[k][at].scales[i], 1.0, aiPhysical).kind
-    of skValue: inc converted
+    let r = scaleSample(plan, keys, state.tiles[k][at].scales[i], 1.0, aiPhysical)
+    case r.kind
+    of skValue:
+      if r.source == ssFile: inc fromFile else: inc typed
+      if r.conflict: inc conflicts
     of skNoVolts: inc noVolts
     of skNoSensor: inc noSensor
-    of skCounts, skNotFitting: inc other
+    of skCounts, skNotFitting, skKept: inc other
   state.log.add(sevInfo, "project", "Physical units, " & state.sessions[shown].name & ": " &
-    $converted & " of " & $state.tiles[k][at].keys.len & " traces shown convert, " & $noVolts &
-    " lack a descale in the file, " & $noSensor & " lack a sensor for their component" &
-    (if other > 0: ", " & $other & " are left as recorded" else: "") & ".")
+    $(typed + fromFile) & " of " & $state.tiles[k][at].keys.len & " traces shown convert, " &
+    $typed & " with the typed sensor, " & $fromFile & " with the file's own sensitivity, " &
+    $noVolts & " lack a descale in the file, " & $noSensor & " lack a sensor for their " &
+    "component" & (if other > 0: ", " & $other & " are left as recorded" else: "") &
+    (if conflicts > 0: "; " & $conflicts & " differ from the file's headers" else: "") & ".")
 
 proc followMoves(state: var AppState) =
   ## The next open file takes the project's station moves, once no import and
@@ -12052,12 +12057,13 @@ proc sensorCommand(state: var AppState; cmd: Command) =
     if unit.isNone:
       state.ignore(cmd, "a sensitivity's unit is one of " & OfferedUnits.mapIt($it).join(", "))
       return
-    let row = SensorRow(component: component, value: cmd.sensorValue, unit: unit.get)
+    let old = table.get(component)
+    var row = SensorRow(component: component, value: cmd.sensorValue, unit: unit.get)
+    if old.isSome: row.later = old.get.later
     if not row.sensorOk:
       state.ignore(cmd, "a sensitivity is a finite number above 0 whose value in SI is " &
         "between " & $MinSensitivity & " and " & $MaxSensitivity & " volts per unit")
       return
-    let old = table.get(component)
     if not table.put(row):
       state.ignore(cmd, "at most " & $MaxSensors & " sensors are kept")
       return

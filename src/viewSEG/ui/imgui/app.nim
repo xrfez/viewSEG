@@ -1620,13 +1620,14 @@ proc drawUi(ui: var Ui): set[MenuAction] =
       if has: ui.pick.filterNote = filterWords(f)
       let ms = ui.core.shownShift(ui.core.sessions[shown].base + ui.pick.trace)
       if ms != 0.0: ui.pick.shiftNote = shiftWords(ms)
-  ui.pick.convertRaw(ui.core.project.doc.sensors, ui.core.settings.amplitudeIn,
-    ui.core.settings.units == usImperial)
   for n in plot.notes:
     ui.say(n, mlWarning)
   for c in plot.commands.mitems:
     ui.core.apply move c
   ui.drawAux()
+  # Once, whichever panel the pick came from (the Aux window's replaces the plot's).
+  ui.pick.convertRaw(ui.core.project.doc.sensors, ui.core.settings.amplitudeIn,
+    ui.core.settings.units == usImperial)
   var files = FileListOutput()
   if ui.windows.shows(awFiles):
     ui.windows.beforeDrawing(awFiles)

@@ -9,7 +9,9 @@
 ## Units imperial the same sample reads in in/s; hovering the hydrophone says there is no
 ## sensor for it; Remove on the vertical row says "no sensor for component Z".
 ##
-## Seen to fail: with `convertRaw` never called for the plot's pick, the readout stayed in
+## Seen to fail: with `convertRaw` called before the Aux window's pick replaced the plot's,
+## hovering the Aux window read counts (not covered here: no Aux window is opened); with
+## `convertRaw` never called for the plot's pick, the readout stayed in
 ## counts ("a value in m/s"); with the unit taken from the sensitivity's and not the Units
 ## setting, the imperial run read m/s; with Remove doing nothing, "no sensor for component Z"
 ## never came.
@@ -124,6 +126,18 @@ proc main*() =
           doAssert f.savePng(shots / name), "cannot save " & name
         frames >= 4
       step("a picture " & name, act, done)
+    proc shootUnder(name: string) =
+      ## the picture with the trace still under the pointer: the status bar shows its value
+      var frames = 0
+      proc act(f: FrameInfo) = f.moveMouse(pointAt)
+      proc done(f: FrameInfo): bool =
+        f.moveMouse(pointAt)
+        inc frames
+        if frames == 6 and shots.len > 0:
+          createDir(shots)
+          doAssert f.savePng(shots / name), "cannot save " & name
+        frames >= 6
+      step("a picture " & name, act, done)
     proc hover(component: uint8; then: proc (f: FrameInfo): bool) =
       proc go(f: FrameInfo) =
         let p = f.positionOf(component)
@@ -208,6 +222,13 @@ proc main*() =
         if e.text.startsWith("Physical units, "): inc n
       n == 1
     step("the record's summary is said once", noop, summed)
+    proc counted(f: FrameInfo): bool =
+      for e in f.core.log:
+        if e.text.startsWith("Physical units, "):
+          doAssert "with the typed sensor" in e.text and
+            "with the file's own sensitivity" in e.text, e.text
+      true
+    step("the summary counts the typed and the file's sensitivities apart", noop, counted)
     closeWindow()
     proc velocity(f: FrameInfo): bool =
       let s = f.rawText
@@ -219,7 +240,7 @@ proc main*() =
       doAssert s.split(' ')[^1] in ["m/s", "mm/s", "µm/s", "nm/s"], s
       true
     step("the readout names a velocity", noop, named)
-    shoot("sensors-readout.png")
+    shootUnder("sensors-readout.png")
     proc setUnits(system: UnitSystem): proc (f: FrameInfo) =
       result = proc (f: FrameInfo) =
         var s = f.core.settings

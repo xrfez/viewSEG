@@ -351,12 +351,13 @@ proc drawSensors(ui: var ProjectUi; st: AppState; t: Theme; marks: var Marks;
         if igSelectable_Bool(($u).cstring, u == unit, 0, ImVec2_c(x: 0, y: 0)): picked = u
       igEndCombo()
     marks.mark("project.sensor.unit." & $c)
+    tip("Changing the unit keeps the number as typed; it is not converted.")
     if picked != unit:
       ui.unitPicked[c] = int8(units.find(picked))
       if have.isSome:
         res.commands.add Command(kind: ckSensor, sensorComponent: int(c),
           sensorValue: have.get.value, sensorUnit: $picked)
-    elif typed and v > 0:
+    elif typed:
       res.commands.add Command(kind: ckSensor, sensorComponent: int(c), sensorValue: v,
         sensorUnit: $unit)
     if have.isSome:

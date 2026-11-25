@@ -1205,10 +1205,16 @@ sensor: m/s for a geophone, m/s² for an accelerometer, Pa for a hydrophone.
   multiplier, a SEG-Y trace's weighting factor, a SEG-2 file's DESCALING_FACTOR. When the file
   gives none, the status bar says "volts unknown for this file" and its tooltip names the
   header; when no sensor is typed for the trace's component it says "no sensor for component
-  Z". A number is never guessed. Auxiliary traces are given in volts only.
+  Z". A number is never guessed. Auxiliary traces are given in volts only. A dead or
+  auxiliary trace the file gives no descale for reads "<n> counts" (as recorded).
+- **Whose sensitivity.** The sensor you typed is used. When none is typed for a component but
+  the file's own headers give a sensitivity, the number is converted with that one and the
+  readout ends with "(file)"; the tooltip says so, and that none is typed. When both exist and
+  differ (or the file says its samples are already physical), the tooltip gives both figures
+  and says which was used.
 - **Messages.** When a file is shown or the sensors change while *Physical units* is chosen,
-  one line says how many of the traces shown convert, how many lack a descale in the file and
-  how many lack a sensor.
+  one line says how many of the traces shown convert with the typed sensor, how many with the
+  file's own sensitivity, how many lack a descale in the file and how many lack a sensor.
 
 The plot, the spectra and the exports are not converted: they keep the recorded values.
 

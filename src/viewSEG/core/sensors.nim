@@ -54,13 +54,22 @@ type
     skNoVolts    ## the file gives no counts-to-volts factor for this trace
     skNoSensor   ## no sensor is entered for the trace's component
     skNotFitting ## the sensor's unit measures another quantity than the trace's sensor
+    skKept       ## a dead or auxiliary trace the file gives no descale for: as recorded
+
+  SensorSource* = enum
+    ## Whose sensitivity a converted sample used.
+    ssTyped ## the row typed in Project > Sensors (or none was needed: volts)
+    ssFile  ## the file's own headers: nothing is typed for the component
 
   Scaled* = object
     ## One sample in the unit asked for, or why it cannot be given.
     kind*: ScaledKind
-    value*: float64 ## in SI (V, m/s, m/s², Pa) when `skValue`
+    value*: float64       ## in SI (V, m/s, m/s², Pa) when `skValue`
     unit*: AmplitudeUnit
     component*: uint8
+    source*: SensorSource ## whose sensitivity was used
+    conflict*: bool       ## the file also gave a figure, or says its samples are physical, and
+                          ## a row is typed: the two differ
 
 const
   MaxSensors* = 64        ## rows a table holds
@@ -178,10 +187,12 @@ proc scaleSample*(plan: CalibrationPlan; keys: TraceKeys; scale: FileScale; coun
     of csConverted:
       if row[0].mismatch: result.kind = skNotFitting
       else: result = Scaled(kind: skValue, value: counts * row[0].factor, unit: row[0].unit,
-        component: k.component)
+        component: k.component,
+        source: if row[0].sensitivityFrom == fsFile: ssFile else: ssTyped,
+        conflict: row[0].conflict)
     of csUnresolved:
       result.kind = if row[0].descaleFrom == fsNone: skNoVolts else: skNoSensor
-    of csKept: discard
+    of csKept: result.kind = skKept
   except ValueError:
     result.kind = skNoVolts
 
@@ -204,7 +215,10 @@ func scaledParts*(s: Scaled; imperial: bool): Prefixed =
   of auVolt: prefixed(s.value, "V", [(1.0, "V"), (1e-3, "mV"), (1e-6, "µV"), (1e-9, "nV")])
   of auVelocity:
     if imperial:
-      prefixed(s.value / Inch, "in/s", [(1.0, "in/s"), (1e-6, "µin/s"), (1e-9, "nin/s")])
+      # in/s down to 1e-3, then µin/s: no prefix reads as minutes
+      let v = s.value / Inch
+      if v == 0 or v.isNaN or abs(v) >= 1e-3: (v, "in/s")
+      else: prefixed(v, "in/s", [(1e-6, "µin/s"), (1e-9, "nin/s")])
     else:
       prefixed(s.value, "m/s", [(1.0, "m/s"), (1e-3, "mm/s"), (1e-6, "µm/s"), (1e-9, "nm/s")])
   of auAcceleration:
@@ -228,7 +242,7 @@ func noSensorText*(component: uint8): string =
 func problemText*(s: Scaled): string =
   ## The words that stand for a number that cannot be given; "" for a number.
   case s.kind
-  of skCounts, skValue: ""
+  of skCounts, skValue, skKept: ""
   of skNoVolts: unknownVoltsText()
   of skNoSensor: noSensorText(s.component)
   of skNotFitting: "the sensor's unit does not fit this trace's sensor"
@@ -236,7 +250,7 @@ func problemText*(s: Scaled): string =
 func problemTip*(s: Scaled; field: string): string =
   ## The tooltip of such a text; "" for a number.
   case s.kind
-  of skCounts, skValue: ""
+  of skCounts, skValue, skKept: ""
   of skNoVolts:
     "The file does not give this trace's counts-to-volts factor (" & field & "), and none " &
       "is guessed."
