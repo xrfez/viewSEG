@@ -109,6 +109,12 @@ type
       ## one, in that file's unit; NaN: none): the external converter's SEG-Y's recorded ground
       ## force is judged with it, never with the signature files' value; not part of the profile
     segyTargetPct*: float64 = 100.0 ## ... and its drive level
+    segyLimits*: QcLimits
+      ## the limits a Vibrator window on a SEG-Y file opens with (those remembered for the
+      ## kind): the external converter's SEG-Y is judged with the profile's, and its row says so
+      ## when these differ; not part of the profile
+    segyQcWindowMs*: float64 = NaN ## ... its statistics window; NaN: not known, nothing said
+    segyHarmonics*: int ## ... and its harmonics
     problems*: seq[string]
 
 const ForceNotJudged* = "No 100 % force: the force limits are not judged."

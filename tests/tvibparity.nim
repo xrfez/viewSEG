@@ -26,7 +26,9 @@
 ## profile makes it), a converter's file chosen made was judged on the record without its 100 %
 ## force, and a .dat left in the record on the made signal; with the run shown kept current while
 ## its configuration's lines alone did not change, the ground force reversed, a top typed on a
-## converter's window, and a file reopened at another interval each left it current. The
+## converter's window, and a file reopened at another interval each left it current; with the
+## converter's row's word on its window's own limits left out, and with it said always, its row
+## did not say it when the limits differ, and said it when they agree. The
 ## comparison itself (`differences`) was seen to fail on a row's polarity line changed, on its
 ## reason for the force not judged changed to one the window does not give, and on a limit the
 ## row has and the window lacks.
@@ -217,6 +219,7 @@ proc main*() =
         rowOf(t, a12).verdict == qvPass, rowOf(t, a11).sentence
       doAssert rowOf(t, low12).verdict == qvFail, rowOf(t, low12).sentence
       let made = rowOf(t, sgy)
+      doAssert OwnLimitsNote notin made.warnings, $made.warnings # (its window's are the same)
       doAssert made.forceWhy == "the force limits are not judged: no 100 % force is typed for " &
         "a SEG-Y file's recorded ground force (the project's 100 % force is a signature file's, " &
         "in another unit)", made.forceWhy
@@ -406,6 +409,40 @@ proc main*() =
           st.jobs.active.len == 0), what
         doAssert st.stale(r), "a file reopened at " & what & " left the run current"
         r = st.ran
+      st.shutdown()
+
+  block segyLimitsSaid:
+    # the project's profile is the authority for the folder: a converter's SEG-Y row is judged
+    # with its limits, and says so only when a window on that file would open with other ones
+    # (the limits remembered for a SEG-Y window); a signature file's window opens with the
+    # profile's, so its row never says it
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      let a11 = sweep(fx.dir / "sweeps", "a11.dat", 11, 7001, 1.0)
+      let c = converterOf()
+      let sgy = fx.dir / "sweeps" / "converted.sgy"
+      writeVibSegy(sgy, [c.reference, c.mass, c.plate, c.record], 1.0, [21'i16, 19, 18, 20])
+      let files = @[listed(a11), listed(sgy)]
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let w = st.window(a11)
+      var p = st.plots[w].params
+      p.qc.avgPhaseDeg = 40
+      st.change(w, p)
+      st.close(w)
+      var t = st.run(files)
+      doAssert OwnLimitsNote notin rowOf(t, sgy).warnings, $rowOf(t, sgy).warnings
+      var settings = st.settings
+      settings.plotOptions.vibrator.qc.avgPhaseDeg = 3
+      st.apply Command(kind: ckSettings, settings: settings)
+      doAssert st.project.doc.vibProfile.limits.avgPhaseDeg == 40
+      t = st.run(files)
+      doAssert OwnLimitsNote in rowOf(t, sgy).warnings, $rowOf(t, sgy).warnings
+      doAssert OwnLimitsNote notin rowOf(t, a11).warnings, $rowOf(t, a11).warnings
+      doAssert OwnLimitsNote in warningsCell(rowOf(t, sgy))
       st.shutdown()
 
   block noProject:

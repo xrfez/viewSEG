@@ -60,6 +60,22 @@ func sameDt(a, b: float64): bool {.inline.} =
 
 func typedForce(x: float64): bool {.inline.} = x > 0 and x < Inf
 
+const OwnLimitsNote* = "Judged with the project's QC profile limits; a window on this file " &
+  "opens with its own remembered limits"
+  ## said on a converter's SEG-Y row whose window would open with other limits, statistics
+  ## window or harmonics than the profile's (`VibQcAsk.segyLimits`)
+
+func sameNumber(a, b: float64): bool {.inline.} = a == b or (a.isNaN and b.isNaN)
+
+func opensOtherwise(ask: VibQcAsk): bool =
+  ## Whether a Vibrator window on a SEG-Y file opens with other limits, statistics window or
+  ## harmonics than the profile's; false when they are not known.
+  if ask.segyQcWindowMs.isNaN: return false
+  result = not sameNumber(ask.segyQcWindowMs, ask.options.qcWindowMs) or
+    ask.segyHarmonics != ask.options.harmonics
+  for mine, theirs in fields(ask.options.qc, ask.segyLimits):
+    if not sameNumber(mine, theirs): result = true
+
 func hasChoice*(c: FolderChoice): bool =
   ## Whether a folder or a file was picked.
   c.folder.len > 0 or c.files.len > 0
@@ -484,6 +500,7 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
   addLine(warnings, answer.judgeWarning)
   addLine(warnings, answer.controllerNote)
   addLine(warnings, answer.against)
+  if item.converted and ask.opensOtherwise: addLine(warnings, OwnLimitsNote)
   if answer.problem.len > 0:
     return FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foProblem,
       problem: answer.problem, polarity: answer.polarity.line, warnings: warnings)

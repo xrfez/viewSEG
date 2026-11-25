@@ -142,7 +142,11 @@ carries a warning sign.
   ground force polarity chosen for the file's layout, the top frequency typed for its layout
   (against the recorded reference) or the one the project keeps for the stored reference now
   (typed in any Vibrator window on it, a SEG-Y one's too) and the options the file opens with (Reopen with options,
-  for one file or for every file of its kind in the listing). A change made by an agent, or with no
+  for one file or for every file of its kind in the listing). The profile is the authority for
+  the limits, the statistics window and the harmonics: the external converter's SEG-Y is judged
+  with them too, and when a window on such a file would open with other ones (those remembered
+  for a SEG-Y window), its row says "Judged with the project's QC profile limits; a window on
+  this file opens with its own remembered limits". A change made by an agent, or with no
   project open, is for that run only and is not kept. **Reports > Vibrator QC of a folder** reads
   this configuration; until a window has set it, that window says that vibrator signature QC is
   not configured.

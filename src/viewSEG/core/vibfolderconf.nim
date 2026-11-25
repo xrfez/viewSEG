@@ -90,6 +90,9 @@ func vibQcConfig*(st: AppState): VibQcConfig =
   result.ask.tops = st.project.doc.vibTops
   result.ask.segyHundredPct = st.settings.plotOptions.vibrator.forceHundredPct
   result.ask.segyTargetPct = st.settings.plotOptions.vibrator.targetPct
+  (result.ask.segyLimits, result.ask.segyQcWindowMs, result.ask.segyHarmonics) = (
+    st.settings.plotOptions.vibrator.qc, st.settings.plotOptions.vibrator.qcWindowMs,
+    st.settings.plotOptions.vibrator.harmonics)
   result.weights = st.project.doc.vibJobWeights
   let found = referenceChoice(st.referencesLoaded, st.references, st.referencesHome,
     result.profile.referenceId)
