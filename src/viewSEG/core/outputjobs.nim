@@ -38,8 +38,8 @@
 ##
 ## `correlation` set: each written trace is correlated with that loaded
 ## reference (a block of traces of one record at a time, on a pool of worker
-## threads that is joined when the write ends) into the listen time, and the writer is opened with that sample
-## count. SEG-Y samples are IEEE float32, whatever the source format. A
+## threads that is joined when the write ends) into the listen time, and the
+## writer is opened with that sample count. SEG-Y samples are IEEE float32, whatever the source format. A
 ## marked auxiliary trace is shifted by its own mark first (the file's marks, or the
 ## project's in `projectMarks`). Time shift,
 ## polarity, an own filter and the plot's filters are applied after that, on
@@ -65,8 +65,10 @@ import correlatejobs, edits, filekinds, filesystem, jobs, outputnames, outputnam
 export outputrevision
 
 var correlateInBlocks* = true
-  ## Test hook: false makes a correlated write correlate one trace per call, as
-  ## it did before the pooled call. The bytes written are the same either way.
+  ## Test only, not a user setting: false makes a correlated write correlate one
+  ## trace per call, as it did before the pooled call; the bytes written are the
+  ## same either way, so that path is the reference the tests compare against.
+  ## It is read once per write, on the job thread, when the write starts.
 
 const
   TraceBlock = 64 ## traces read, then written, between two cancel checks

@@ -20,7 +20,7 @@
 import std/[os, options, strutils]
 import parseSEG
 import processSEG
-import viewSEG/core/[edits, jobs, outputbatch, outputjobs, processing, references]
+import viewSEG/core/[edits, jobs, outputbatch, outputjobs, panels, processing, references]
 import utils/waiting
 
 const
@@ -40,6 +40,7 @@ proc delayedSweep(sweep: openArray[float32]; samples, delay: int): seq[float32] 
 type Layout = object
   records, live: int ## per record: live traces, then one dead, one pilot, one other auxiliary
   dead, aux: bool
+  byPosition = false ## channel is the position in the record, so a sort interleaves records
 
 proc traceCount(l: Layout): int = l.records * (l.live + ord(l.dead) + 2 * ord(l.aux))
 
@@ -83,7 +84,8 @@ proc writeSet(path: string; segd: bool; sweeps: seq[seq[float32]]; l: Layout) =
         for j in 0 ..< Record: buf[j] = float32(j + 1)
         (k.traceCode, k.status) = (6'i16, tsAuxiliary)
       k.record = float64(7 + r)
-      k.channel = float64(n + 1)
+      k.channel = float64(if l.byPosition: n mod (l.live + ord(l.dead) + 2 * ord(l.aux)) +
+          1 else: n + 1)
       k.intervalUs = DtMs * 1000.0
       k.t0Ms = 0.0
       k.time = 1_700_000_000.0
@@ -173,6 +175,8 @@ proc main*() =
       Layout(records: 1, live: 126, dead: true, aux: true), true),
     ("segd-segy-stored", true, ofSegy, false,
       Layout(records: 1, live: 61, dead: true, aux: true), true),
+    ("segy-pilot-interleaved", false, ofSegy, true,
+      Layout(records: 7, live: 20, dead: true, aux: true, byPosition: true), false),
     ("one-block", false, ofSegy, false,
       Layout(records: 1, live: 61, dead: true, aux: true), false),
     ("one-trace-records", false, ofSegy, false,
@@ -187,6 +191,7 @@ proc main*() =
     var file = openSeismic(path, keys = true)
     var opts = if c.edited: flags else: OutputOptions()
     opts.format = c.format
+    if c.name.endsWith("interleaved"): opts.sortKeys = @[SortKey(field: hfChannel)]
     opts.correlation = some(if c.pilot: pilot else: stored)
     sameBytes(file, path, outDir, c.name, opts,
       if c.edited: editsFor(c.layout.traceCount) else: FileEdits())
@@ -224,11 +229,21 @@ proc main*() =
       writeSet(cutPath, false, @[sweep], Layout(records: 1, live: 150, dead: false, aux: true))
       var cut = openSeismic(cutPath, keys = true)
       defer: cut.close()
+      var cutOld = openSeismic(cutPath, keys = true)
+      defer: cutOld.close()
       let mid = cut.traceEntry(30)
       writeFile(cutPath, readFile(cutPath)[0 ..< int(mid.offset) + 100])
       let opts = OutputOptions(format: ofSegy, correlation: some(stored))
       let failed = runWrite(cut, cutPath, outDir / "cut.out", opts)
       doAssert failed.st == jsFailed, "a cut file was written correlated"
+      correlateInBlocks = false
+      let oneRow = runWrite(cutOld, cutPath, outDir / "cut-old.out", opts)
+      correlateInBlocks = true
+      doAssert oneRow.st == jsFailed, "a cut file was written by the one-row path"
+      doAssert oneRow.error == failed.error, oneRow.error & " vs " & failed.error
+      doAssert oneRow.wrote.reason == failed.wrote.reason,
+        oneRow.wrote.reason & " vs " & failed.wrote.reason
+      noPart(outDir, "cut-old.out")
       doAssert failed.wrote.removed, failed.wrote.reason
       noPart(outDir, "cut.out")
       let goodPath = srcDir / "good.sgy"
