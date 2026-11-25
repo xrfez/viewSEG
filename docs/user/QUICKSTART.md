@@ -1171,7 +1171,11 @@ changed**. The **Import survey** window goes in the order of the work:
   384 receivers, 96 X records, 96 O records"), and the layer's summary says "X records for
   ... field records" and "O records for ... receiver gathers". A file's X records are
   receiver-domain when it was named `.ops` as imported; the project keeps that choice, so
-  a copy renamed later is read as it was imported.
+  a copy renamed later is read as it was imported. An import replaces the project's survey
+  with the files it names: Messages says "No longer in the survey: ..." for each file that
+  was in the project and is not named, and "The survey now has no X records." (or O records)
+  when that took all of them. A project made by an earlier version shows "N relation
+  records" until the survey is imported again.
 - **Seismic file**: the file whose traces the survey is matched to, the one the plot
   shows (or another open file), the units its headers give its coordinates in, and its
   coordinate reference system as the file gives it (SEG-Y Rev 2 stanza, SEG-D Rev 3

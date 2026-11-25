@@ -6,7 +6,8 @@
 ## alone; and a reload takes the domain of a file's X records from what the store kept,
 ## not from the name of the copy.
 ##
-## Seen to fail: with `writeStore` counting every record as X, `receiverRelations` was 0
+## Seen to fail: with the dropped files not said, "No longer in the survey" was missing; with the split
+## flag always true, an old document's `relations` was shown as X records; with `writeStore` counting every record as X, `receiverRelations` was 0
 ## ("both domains are counted apart"); with `receiverRelations` not written to the document,
 ## the reopened project said 0 O records; with the reload using `relationDomainOf(f.copy)`
 ## instead of `f.domain`, a store whose first X file was kept as receiver-domain came back
@@ -133,13 +134,16 @@ proc main*() =
       st.shutdown()
 
     block oldDocument:
-      # a document of an earlier version has only `(relations n)`: that is the X count
-      let nif = readFile(job / "project.nif")
-      let old = nif.replace(" (receiverRelations " & $wantO & ")", "")
-      doAssert old != nif
+      # a document of an earlier build, written by hand: `relations` held X and O together,
+      # so the split is unknown
+      let old = "(.nif27)\n(.vendor \"viewSEG\")\n(project\n (version 1)\n (name \"Old\")\n" &
+        " (survey\n  (store (format 1) (bytes 4096) (hash \"51f3a0c4e2d4b6a7\") (sources 3)\n" &
+        "   (receivers 24) (relations 27)))\n)\n"
       var problems: seq[string] = @[]
       let doc = readProject(old, "project.nif", problems)
-      doAssert doc.store.relations == wantX and doc.store.receiverRelations == 0, $doc.store
+      doAssert doc.store.relations == 27 and not doc.store.splitKnown, $doc.store
+      let now = readProject(readFile(job / "project.nif"), "project.nif", problems)
+      doAssert now.store.splitKnown and now.store.receiverRelations == wantO, $now.store
 
     block storedDomain:
       # the store keeps the domain of each file's X records; one kept as receiver-domain is
@@ -217,6 +221,38 @@ proc main*() =
       let c = st.counts
       doAssert c.xPairs == xPairs and c.oPairs == oPairs
       st.flushFiles()
+      st.shutdown()
+  block droppedFiles:
+    withFixtures fx:
+      let field = fx.dir / "field"
+      createDir(field)
+      let record = field / "stations-only.sgd"
+      moveFile(fx.stationsSegd(), record)
+      let survey = fx.surveySps()
+      var g = initSurveyGeometry()
+      g.addSps(survey.x)
+      let ops = fx.dir / "survey.ops"
+      var o = SpsFile(headers: @[SpsHeader(code: "00", description: "SPS format version num.",
+        data: "SPS 2.1;")], relations: g.receiverRelations())
+      doAssert writeSps(o, ops).len == 0
+      var st = start(fx.dir / "config")
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: record)
+      doAssert st.settle(st.sessions.len >= 1 and st.panel(MainPanel).laidOut)
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "Drop", dataFolders: @[field])
+      doAssert st.settle(st.inProject and st.projectOpening.len == 0)
+      template importFiles(paths: openArray[string]) =
+        let before = st.joinReport.serial
+        var files: seq[JoinFile] = @[]
+        for q in paths: files.add JoinFile(path: q, kind: jkSps)
+        st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id, joinFiles: files)
+        doAssert st.settle(st.joinReport.serial > before and not st.importing)
+        doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore)
+      importFiles([survey.s, survey.r, survey.x])
+      importFiles([survey.s, survey.r, ops])
+      var said = ""
+      for e in st.log: said.add e.text & "\n"
+      doAssert "No longer in the survey: survey.x." in said, said
+      doAssert "The survey now has no X records." in said and "no O records" notin said, said
       st.shutdown()
   echo "txoproject: ok"
 

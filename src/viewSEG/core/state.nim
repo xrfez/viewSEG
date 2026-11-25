@@ -8384,10 +8384,22 @@ proc takeKept(state: var AppState; m: sink Msg) =
       p.doc.name & ": " & news.keptFailure & ".")
     if p.survey == srFailed: state.drainProjectMoves()
     return
+  var gone: seq[string] = @[]
+  if not news.updated:
+    for c in p.doc.survey:
+      if news.copies.allIt(it.copy != c.copy): gone.add c.copy.extractFilename
+  let before = p.doc.store
   p.doc.survey = move news.copies
   p.doc.store = news.store
   p.doc.importing.setLen 0
   state.projectChanged()
+  if gone.len > 0:
+    var said = "No longer in the survey: " & gone.join(", ") & "."
+    if before.splitKnown and before.relations > 0 and news.store.relations == 0:
+      said.add " The survey now has no X records."
+    if before.splitKnown and before.receiverRelations > 0 and news.store.receiverRelations == 0:
+      said.add " The survey now has no O records."
+    state.log.add(sevWarning, "project", said)
   state.log.add(sevInfo, "project", (if news.updated: "The survey files that changed were " &
     "copied into the project again; the survey" else: "The survey") & " is kept in the project " &
     p.doc.name & " (" & $p.doc.survey.len & (if p.doc.survey.len == 1: " file" else: " files") &
