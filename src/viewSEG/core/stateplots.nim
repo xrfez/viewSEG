@@ -1037,6 +1037,35 @@ proc keepVibProfile(state: var AppState; had, now: VibQcProfile) =
   state.project.doc.hasVibProfile = true
   state.projectChanged()
 
+func oneHundred(state: AppState): VibHundred =
+  ## The one 100 % force windows on signature files take: the project's profile's, else (no
+  ## project) the run's; none in a project without a profile.
+  if state.inProject:
+    if state.project.doc.hasVibProfile: state.project.doc.vibProfile.hundredOf
+    else: VibHundred()
+  else: state.sessionHundreds.hundredOf
+
+proc reseedHundreds(state: var AppState; but: int) =
+  ## Every open Vibrator window on a signature file but `plots[but]` takes the one 100 % force
+  ## again, frozen ones too (freezing keeps the sweep shown, not the project's settings), and
+  ## the ones it changes are measured again.
+  if state.inProject and not state.project.doc.hasVibProfile: return
+  let fromProject = state.inProject
+  let source = if fromProject: state.project.doc.vibProfile else: state.sessionHundreds
+  for w in 0 ..< state.plots.len:
+    if w != but and state.plots[w].view == avVibrator:
+      let i = state.vibWindowFile(w)
+      if i >= 0 and state.sessions[i].isSignature:
+        var params = state.plots[w].params
+        params.seedHundred(source, fromProject)
+        if params != state.plots[w].params or params.forceHundredFromProfile !=
+            state.plots[w].params.forceHundredFromProfile:
+          state.plots[w].params = params
+          inc state.plots[w].revision
+          if not state.askPlot(w):
+            state.log.add(sevWarning, "New plot", "The file of " & state.plots[w].title &
+              " is not open any more, or busy: it shows what it had.")
+
 proc showPlot(state: var AppState; cmd: Command) =
   ## `ckPlotDisplay`: an analysis window's settings, and whether it is
   ## frozen; asked again when a setting changed (from the samples, once
@@ -1153,6 +1182,7 @@ proc showPlot(state: var AppState; cmd: Command) =
   (measured.rolesOpen, measured.noteOpen) = (pw.params.rolesOpen, pw.params.noteOpen)
   (measured.setupOpen, measured.setupSet) = (pw.params.setupOpen, pw.params.setupSet)
   let changed = measured != pw.params
+  let hundredWas = state.oneHundred
   pw.params = params
   if signature and state.inProject and keeps(cmd.origin) and not state.project.readOnly:
     # what the user sets on a signature window is the project's vibrator QC profile: one
@@ -1218,6 +1248,9 @@ proc showPlot(state: var AppState; cmd: Command) =
   if changed and not state.askPlot(w):
     state.log.add(sevWarning, "New plot", "The file of " & pw.title & " is not open any " &
       "more, or busy: it shows what it had.")
+  if not sameHundred(hundredWas, state.oneHundred):
+    # the one 100 % force changed: every other window on a signature file uses it at once
+    state.reseedHundreds(w)
 
 proc holdPlotCursor(state: var AppState; cmd: Command) =
   ## `ckPlotCursor`: where an analysis window's cursor is held (by its
@@ -1445,14 +1478,20 @@ proc repick(state: var AppState; w, k, i: int): bool =
     pw.params.roles = state.rolesOf(s, seed, oldRoles, s.name, pw.params.accelSet)
     if s.isSignature != wasSignature:
       # from another kind of file to a signature file, or back: the drive level and the 100 %
-      # force are those a window of the new kind opens with (a signature file's: none typed)
+      # force are those a window of the new kind opens with (a signature file's: none typed,
+      # then the one 100 % force of the project, else of this run)
       let kind = state.settings.plotOptions.vibrator
       pw.params.forceHundredPct = if s.isSignature: NaN else: kind.forceHundredPct
       pw.params.forceHundredUnit = ""
       pw.params.targetPct = if s.isSignature: NaN else: kind.targetPct
-    elif s.isSignature and oldAt >= 0 and sigVibrator(s) != sigVibrator(state.sessions[oldAt]):
-      # another vibrator's sweep: the one 100 % force of the project's profile, else of this
-      # run, whatever vibrator it was set on (it may have been set since the window opened)
+      if s.isSignature and state.inProject and state.project.doc.hasVibProfile:
+        pw.params.seedHundred(state.project.doc.vibProfile)
+        pw.params.targetPct = state.project.doc.vibProfile.targetPct
+      elif s.isSignature and not state.inProject:
+        pw.params.seedHundred(state.sessionHundreds, fromProject = false)
+    elif s.isSignature and oldAt >= 0:
+      # another sweep, of any vibrator: the one 100 % force of the project's profile, else of
+      # this run, whatever vibrator it was set on (it may have been set since the window opened)
       if state.inProject and state.project.doc.hasVibProfile:
         pw.params.seedHundred(state.project.doc.vibProfile)
       elif not state.inProject:

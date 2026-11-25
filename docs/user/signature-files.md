@@ -240,7 +240,8 @@ from a sweep (on which file, which vibrator's sweep, at which target force: "set
 high-force sweep and every later sweep is read against it, so a low-force sweep simply reads low.
 There is **one 100 % force for the project**, kept in its QC profile and used for every vibrator,
 in every window and in the folder QC: "Set from this sweep" sets it for all of them, whichever
-vibrator's sweep is shown. A project with different vibrators needs it set again for each, or
+vibrator's sweep is shown, and every Vibrator window open on a sweep takes it at once (a frozen
+one too: freezing keeps the sweep shown, not the project's settings). A project with different vibrators needs it set again for each, or
 another project for each; the program does not keep a value per vibrator. The value keeps the
 unit (and, for pound-counts, the accelerometer set) it was given in, so one set in counts before
 the force scale was given is converted exactly with the scale for the window and the folder QC,

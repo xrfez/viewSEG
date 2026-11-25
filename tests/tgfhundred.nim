@@ -10,7 +10,9 @@
 ##   set all the same;
 ## - the 100 % force is one for the project: set on a sweep of vibrator 11, a window on vibrator
 ##   12's sweep and the folder QC use it, and setting it again on 12's sweep replaces it for
-##   11 too; without a project it is one value for the run;
+##   11 too; without a project it is one value for the run; windows already open on other
+##   sweeps (frozen ones too) take it at once, and so does a window that follows from a SEG-Y
+##   file to a sweep;
 ## - the value keeps the unit it was given in: counts set before the force scale was given are
 ##   converted exactly with it, newtons are never read as counts;
 ## - a project written by a version that kept one per vibrator: one value, or values that
@@ -21,7 +23,9 @@
 ## Seen to fail: with the value written for the vibrator of the sweep alone, vibrator 12's
 ## window had none; with a second Set not replacing the value kept for the first vibrator,
 ## vibrator 11 kept its own; with the run's value kept per vibrator, a window moved to vibrator
-## 12's sweep had none; with differing older values taken as the first one, the project had a
+## 12's sweep had none; with the other open windows not told of a new value, vibrator 12's
+## window kept none; with a window coming from a SEG-Y file given none, it judged no force;
+## with differing older values taken as the first one, the project had a
 ## value and no sentence; with the entries dropped on reading, they were not in the document
 ## until a value was set.
 
@@ -29,7 +33,7 @@ import std/[math, os, strutils]
 import viewSEG/core/[analysis, jobs, log, project, projectnif, settings, signatures, sigtypes,
   state, sweepinfo, threads, units, vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
 import viewSEG/view/vibfolderwords
-import utils/[fixtures, sigfiles, waiting]
+import utils/[fixtures, gfsynth, sigfiles, vibsynth, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); cond))
@@ -400,6 +404,67 @@ proc main*() =
         again.plots[fresh].result.gen > before and not again.plots[fresh].waiting)
       doAssert again.plots[fresh].params.forceHundredPct.isNaN, "the run's value was saved"
       again.shutdown()
+
+  block openWindowsFollow:
+    # windows already open on other sweeps take a value set in one at once, frozen ones too, and
+    # say where it came from; a window that follows to another sweep of the same vibrator takes
+    # the value in force; without a project the run's one value is taken the same way
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let a = datFile(fx.dir, "v11.dat", SynthDat(samples: 12000, vibrator: 11))
+      let b = datFile(fx.dir, "v12.dat", SynthDat(samples: 12000, vibrator: 12))
+      let b2 = datFile(fx.dir, "v12b.dat", SynthDat(samples: 12000, vibrator: 12,
+        fileNumber: 7002))
+      proc freeze(st: var AppState; w: int; frozen = true) =
+        st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: st.plots[w].params,
+          plotFrozen: frozen, origin: coWindow)
+        doAssert st.settle(st.plots[w].frozen == frozen and not st.plots[w].waiting)
+      let w11 = st.window(a)
+      st.freeze(w11) # (it stays on v11.dat when the next file is shown)
+      let w12 = st.window(b)
+      doAssert st.plots[w12].params.forceHundredPct.isNaN
+      proc measured(st: var AppState; w: int; pct: float64): bool =
+        st.settle(not st.plots[w].waiting and st.plots[w].params.forceHundredPct == pct and
+          abs(st.plots[w].result.qc.hundredPct - pct) < 1e-9)
+      st.setFromSweep(w11, 1000, 60)
+      doAssert st.measured(w12, 1000), $st.plots[w12].result.qc.hundredPct
+      doAssert hundredSource(st.plots[w12].params) ==
+        "from the project's QC profile, set on v11.dat (vibrator 11) at target 60 %",
+        hundredSource(st.plots[w12].params)
+      # frozen: the sweep stays, the project's value is taken
+      st.freeze(w12)
+      st.setFromSweep(w11, 2000, 50)
+      doAssert st.measured(w12, 2000), $st.plots[w12].result.qc.hundredPct
+      doAssert st.plots[w12].frozen and st.plots[w12].file == "v12.dat"
+      # a window on a SEG-Y file, which takes no signature file's value, follows to a sweep: it
+      # takes the value in force there, as a window opened on it does
+      let c = converterOf()
+      let sgy = fx.dir / "converted.sgy"
+      writeVibSegy(sgy, [c.reference, c.mass, c.plate, c.record], 1.0, [21'i16, 19, 18, 20])
+      st.freeze(w12, false)
+      let ws = st.window(sgy)
+      doAssert st.plots[ws].params.forceHundredPct.isNaN
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: b2)
+      doAssert st.settle(st.plots[ws].file == "v12b.dat" and st.measured(ws, 2000)),
+        $st.plots[ws].params.forceHundredPct
+      doAssert st.plots[w12].file == "v12b.dat" and st.measured(w12, 2000)
+      st.shutdown()
+      # no project: the run's one value, the same way
+      var lone = initAppState()
+      lone.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      let x = lone.window(a)
+      lone.freeze(x)
+      let y = lone.window(b)
+      lone.setFromSweep(x, 1500, 60)
+      doAssert lone.measured(y, 1500), $lone.plots[y].result.qc.hundredPct
+      doAssert hundredSource(lone.plots[y].params) == "set on v11.dat (vibrator 11) at target 60 %",
+        hundredSource(lone.plots[y].params)
+      lone.shutdown()
 
   block olderProject:
     # a project that kept one 100 % force: it is the project's, for every vibrator

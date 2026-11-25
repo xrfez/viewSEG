@@ -133,7 +133,8 @@ func sameLimits(a, b: QcLimits): bool =
     sameFloat(a.avgForcePct, b.avgForcePct) and
     sameFloat(a.peakForcePct, b.peakForcePct)
 
-func sameHundred(a, b: VibHundred): bool =
+func sameHundred*(a, b: VibHundred): bool =
+  ## Whether `a` and `b` are the same value, given in the same way (a NaN equal to a NaN).
   a.vibrator == b.vibrator and sameFloat(a.pct, b.pct) and a.unit == b.unit and
     a.accelSet == b.accelSet and a.setKnown == b.setKnown and a.how == b.how and
     sameFloat(a.atPct, b.atPct) and a.file == b.file
