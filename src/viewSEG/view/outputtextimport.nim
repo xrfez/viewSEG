@@ -61,6 +61,13 @@ func bytesOf(b: string; first, last: int): seq[byte] =
   result = newSeq[byte](last - first)
   for i in first ..< last: result[i - first] = byte(b[i])
 
+func bytesOfBlank(b: string; first, last: int): seq[byte] =
+  ## `b[first ..< last]` as bytes, a NUL read as a blank: a text header's unused
+  ## cards are often NUL-filled, which `looksLikeText` counts as binary.
+  result = bytesOf(b, first, last)
+  for x in result.mitems:
+    if x == 0: x = 0x20
+
 func isUtf16(b: string): bool =
   ## Whether `b` starts with a UTF-16 byte order mark or has a NUL in every
   ## other byte of its start (text in the Latin alphabets).
@@ -73,12 +80,26 @@ func isUtf16(b: string): bool =
     if b[2 * i + 1] == '\0': inc odd
   result = n >= 2 and (4 * even >= 3 * n or 4 * odd >= 3 * n)
 
+func utf16Shaped(b: string): bool =
+  ## Whether `b` starts with a UTF-16 byte order mark or has NULs in one parity
+  ## of its bytes only (text in the Latin alphabets). NUL-filled cards have them
+  ## in both.
+  if b.len >= 2 and b[0] in {'\xFE', '\xFF'} and b[1] == char(0xFE + 0xFF - ord(b[0])):
+    return true
+  let n = min(b.len, 512) div 2
+  var even, odd = 0
+  for i in 0 ..< n:
+    if b[2 * i] == '\0': inc even
+    if b[2 * i + 1] == '\0': inc odd
+  result = n >= 2 and ((4 * even >= 3 * n) != (4 * odd >= 3 * n))
+
 func looksRaw(b: string; size: int64): bool =
   ## Whether `b`, the start of a file of `size` bytes, is a SEG-Y text header:
   ## its first 3200 bytes read as text (EBCDIC or ASCII) and either the whole
   ## file is 3200 bytes with no line feed, or the file goes on with 400 bytes no
   ## text holds (the binary header), or it starts as EBCDIC "C ".
-  if b.len < TextHeaderSize or not looksLikeText(bytesOf(b, 0, TextHeaderSize)):
+  if b.len < TextHeaderSize or utf16Shaped(b) or
+      not looksLikeText(bytesOfBlank(b, 0, TextHeaderSize)):
     return false
   if size == TextHeaderSize: return '\n' notin b.substr(0, TextHeaderSize - 1)
   if b[0] == '\xC3' and b[1] == '\x40': return true

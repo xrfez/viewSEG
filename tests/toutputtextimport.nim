@@ -67,6 +67,27 @@ proc main*() =
     doAssert got.ok and got.raw and got.encoding == teAscii, got.why
     doAssert got.text.startsWith("C 1\nC 2\n"), got.text
 
+  block nulFilledCards:
+    # Seen to fail with the NULs not read as blanks: "The file is not text and ..."
+    func nulled(h: SegyTextHeader; cards: int): string =
+      result = bytesOf(h).substr(0, cards * 80 - 1)
+      result.add repeat('\0', 3200 - result.len)
+    for enc in [teEbcdic, teAscii]:
+      var h = initTextHeader(enc)
+      h.text = "C 1 FROM THE FIELD" & repeat(' ', 62) & "C 2 SECOND" & repeat(' ', 70)
+      let head = nulled(h, (if enc == teEbcdic: 5 else: 10))
+      doAssert head.len == 3200
+      let binary = "\x00\x01\x80\xFF\x02\x03".repeat(67).substr(0, 399)
+      for file in [head, head & binary]:
+        let got = importHeader(file, file.len)
+        doAssert got.ok and got.raw and got.encoding == enc, $enc & ": " & got.why
+        let lines = got.text.split('\n')
+        doAssert lines[0] == "C 1 FROM THE FIELD" and lines[1] == "C 2 SECOND", got.text
+    # UTF-16 text is still refused
+    var wide = "\xFF\xFE"
+    for c in repeat("hello world ", 40): wide.add c; wide.add '\0'
+    doAssert importHeader(wide, wide.len).why == ImportUtf16
+
   block segyFile:
     withFixtures fx:
       let path = fx.surveySegy()
