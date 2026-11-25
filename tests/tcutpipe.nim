@@ -11,6 +11,8 @@
 ##   ends the run (`threads did not end within 10 s: W=2 C=2 Q=2`)
 ## - `broadcast p.slotFree` in `stopWith` removed: the watchdog ends the
 ##   cancel that arrives while producers wait for a slot
+## - the range check at the top of `place` removed: a record past the end or one already
+##   written was accepted (`a record out of range or already written was accepted`)
 ## - the room check `i >= p.written + p.ring` replaced by "ring holds `ring`
 ##   records": `record placed twice` (a later record fills the slot an earlier
 ##   one needs)
@@ -166,6 +168,21 @@ proc main*() =
     doAssert res.kind == skCancel and res.message == "cancelled"
     doAssert res.order.len < 100
     for i, v in res.order: doAssert v == i
+  # a record out of range, or one already written, is refused (the lock stays held after a
+  # defect, so these pipes are not closed)
+  block:
+    let p = newCutPipe[Payload](4, 8, 1)
+    var item: Payload = @[1]
+    var refused = 0
+    try: discard p.place(4, item)
+    except AssertionDefect: inc refused
+    let q = newCutPipe[Payload](4, 2, 1)
+    doAssert q.place(0, item)
+    doAssert q.takeNext(item) == tkRecord
+    q.written()
+    try: discard q.place(0, item)
+    except AssertionDefect: inc refused
+    doAssert refused == 2, "a record out of range or already written was accepted"
   # the first stop wins: a later stop changes nothing
   block:
     let p = newCutPipe[Payload](4, 2, 1)

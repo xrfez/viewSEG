@@ -18,6 +18,10 @@
 ## `written + ring - 1` may go, and a single wake-up could go to another).
 ## The model is `docs/models/cutpipe.nif`.
 ##
+## The payload `T` must hold no `ref` the producer keeps a way to: a moved value is
+## owned by one thread at a time, and a cyclic ref aliased by the producer is unsafe
+## under ORC. Plain seqs, strings and values are fine.
+##
 ## Shared by `ptr`: make it with `newCutPipe` before starting the threads, and
 ## `close` it after joining them all.
 
@@ -51,7 +55,9 @@ type
   Taken* = enum
     ## What `takeNext` found.
     tkRecord  ## A record was taken.
-    tkDone    ## Every record was taken.
+    tkDone    ## Every record was taken. This does not mean the run succeeded: a stop
+              ## may have come since (a producer failing after its last record), so read
+              ## `stopped` after joining the producers.
     tkStopped ## The run was stopped.
 
 proc newCutPipe*[T](records, ring, chunk: int): CutPipe[T] =
@@ -95,6 +101,7 @@ proc place*[T](p: CutPipe[T]; i: int; item: var T): bool =
   ## `i < written + ring`, waiting until then. False, with `item` untouched,
   ## when the run was stopped. Each `i` in `0 ..< records` is placed once.
   acquire p.lock
+  doAssert i >= p.written and i < p.records, "record placed twice or out of range"
   while p.stop == skNone and i >= p.written + p.ring:
     wait(p.slotFree, p.lock)
   result = p.stop == skNone
