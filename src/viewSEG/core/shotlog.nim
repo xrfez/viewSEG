@@ -1516,20 +1516,38 @@ const LegacyRoles = [
   ## the words a project saved before the system columns were named used
 
 func modernPattern(p: string): string =
-  ## A stored pattern in which `mm` is written as the earlier readers took
-  ## it: the month before an hour, else the minute.
+  ## A stored pattern written as the earlier readers took it, where a run of
+  ## y, m, d, h, s or f was a field of exactly that many digits: `mm`, and a
+  ## lone `m`, is the month before an hour, else the minute; a lone `h`, `d`
+  ## or `s` is `hh`, `dd` or `ss`. A lone letter before another field took
+  ## exactly one digit, which no pattern says now: it is kept, and refused in
+  ## words. The epoch forms, and today's `mo` and `mi`, are kept.
+  const OldFields = {'y', 'm', 'd', 'h', 's', 'f'}
+  let key = p.strip.toLowerAscii
+  if key == EpochSeconds or key == EpochMicros: return p
   var seenHour = false
   var i = 0
   while i < p.len:
     let c = p[i].toLowerAscii
-    if c == 'm' and i + 1 < p.len and p[i + 1].toLowerAscii == 'm' and
-        (i + 2 >= p.len or p[i + 2].toLowerAscii != 'm'):
-      result.add if seenHour: "mi" else: "mo"
+    var run = 1
+    while i + run < p.len and p[i + run].toLowerAscii == c: inc run
+    let next = if i + run < p.len: p[i + run].toLowerAscii else: '\0'
+    let alone = run == 1 and next notin OldFields
+    if c == 'm' and run == 1 and next in {'o', 'i'}:
+      result.add p.substr(i, i + 1)
       i += 2
+    elif c == 'm' and (run == 2 or alone):
+      result.add if seenHour: "mi" else: "mo"
+      i += run
+    elif c in {'h', 'd', 's'} and alone:
+      result.add c
+      result.add c
+      if c == 'h': seenHour = true
+      inc i
     else:
       if c == 'h': seenHour = true
-      result.add p[i]
-      inc i
+      result.add p.substr(i, i + run - 1)
+      i += run
 
 proc applyRoleNames*(map: var ShotLogMap; roleNames, columnNames: openArray[string]):
     string =
@@ -1538,7 +1556,8 @@ proc applyRoleNames*(map: var ShotLogMap; roleNames, columnNames: openArray[stri
   ## Time (UTC) is on one column. An older map's time becomes `crTime` on
   ## one column, with `dateTimePattern` set to read it the same way: UTC
   ## microseconds (`epoch microseconds`), else UTC seconds (`epoch seconds`),
-  ## else date-time text (its pattern, with `mm` written `mo` or `mi`); the
+  ## else date-time text (its pattern, `modernPattern`: `mm` written `mo` or
+  ## `mi`, a lone `h`, `d` or `s` doubled); the
   ## first column of that kind, as the earlier reader took it. A map that
   ## already has a Time (UTC) column keeps its first, and its pattern. Every
   ## other older time column, and the year, day of year, month, day of month,

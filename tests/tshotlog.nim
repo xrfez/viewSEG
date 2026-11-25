@@ -48,7 +48,8 @@
 ## hour 24 refused, 24:00:00 was not read. With Time (UTC) taken where GPSTB
 ## is empty, `crossCheck` mixed two clocks in one log and said nothing. With
 ## a calendar fraction cut after six digits, `epochRounding` read .0000005 as
-## 0 where epoch seconds read 1.
+## 0 where epoch seconds read 1. With only `mm` migrated, `oldMaps` refused
+## an older project's `h:mm:ss`, whose time read before.
 
 import std/[math, options, os, strutils, times]
 import viewSEG/core/shotlog
@@ -986,6 +987,37 @@ proc main*() =
       let v = shots(parseShotLog(text, one), one)
       doAssert v.rows[0].timeUtcUs == some(want), word
       doAssert v.problems.count == 0, word
+    # an older typed pattern's single letters, read as the earlier reader read them
+    for (pattern, now, cell, want) in [
+        ("yyyy-mm-dd h:mm:ss", "yyyy-mo-dd hh:mi:ss", "2024-02-29 1:14:15",
+          unixUs(2024, 2, 29, 1, 14, 15)),
+        ("d/m/yyyy h:m:s", "dd/mo/yyyy hh:mi:ss", "9/2/2024 1:2:3", unixUs(2024, 2, 9, 1, 2, 3)),
+        ("YYYY-MM-DD HH:MM:SS.fff", "YYYY-mo-DD HH:mi:SS.fff", "2024-02-29 13:14:15.250",
+          unixUs(2024, 2, 29, 13, 14, 15) + 250_000)]:
+      var one = initShotLogMap()
+      one.hasHeader = false
+      one.dateTimePattern = pattern
+      doAssert applyRoleNames(one, ["date-time text"], []) == "", pattern
+      doAssert one.dateTimePattern == now, pattern
+      let v = shots(parseShotLog("\"" & cell & "\"\n", one), one)
+      doAssert v.rows[0].timeUtcUs == some(want), pattern
+      doAssert v.problems.count == 0, pattern
+    # a single letter before another field took exactly one digit, which no pattern of
+    # today says: it is refused in words, never read another way
+    var compact = initShotLogMap()
+    compact.hasHeader = false
+    compact.dateTimePattern = "yyyymmddhmmss"
+    doAssert applyRoleNames(compact, ["date-time text"], []) == ""
+    doAssert patternFault(compact.dateTimePattern).len > 0
+    let cv = shots(parseShotLog("2024022911415\n", compact), compact)
+    doAssert cv.rows[0].timeUtcUs.isNone and cv.problems.items[0].kind == pkNoTime
+    # the epoch forms and today's patterns are kept as they are
+    for pattern in [EpochSeconds, EpochMicros, "yyyy ddd hh:mi:ss.ffffff uuuuuu",
+        "dd/mo/yy hh:mi:ss"]:
+      var kept = initShotLogMap()
+      kept.dateTimePattern = pattern
+      doAssert applyRoleNames(kept, ["Time (UTC)"], []) == "", pattern
+      doAssert kept.dateTimePattern == pattern, pattern
     var incomplete = initShotLogMap()
     doAssert applyRoleNames(incomplete, ["year", "hour"], []) == ""
     doAssert incomplete.roles == @[crText, crText]

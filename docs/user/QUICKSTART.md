@@ -1447,8 +1447,10 @@ names fit the leading columns and the rest are "Column N".
 A project saved with the earlier column meanings (UTC seconds, year, day of year, gun array
 and the others) opens as the same columns under the present names. Of the older time
 columns, the first of UTC microseconds, else of UTC seconds, else of date-time text becomes
-the one Time (UTC) column, with the pattern that reads it the same way (an older `mm` is
-written `mo` or `mi`); the year, day of year, month, day of month, hour, minute, second and
+the one Time (UTC) column, with the pattern that reads it the same way (an older `mm` or
+`m` is written `mo` or `mi`, and a single `h`, `d` or `s` is written `hh`, `dd` or `ss`; a
+single letter directly before another field, as in `yyyymmddhmmss`, took exactly one digit,
+which no pattern says now, so the dialog asks for the pattern again); the year, day of year, month, day of month, hour, minute, second and
 microsecond columns become user defined columns named by their old word, and are not read.
 If the log's time was only in those columns, the project opens and its rows have no time
 until GPSTB or one Time (UTC) column is chosen; Problems says so once at the top. Gun array,
