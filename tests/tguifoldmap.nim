@@ -20,6 +20,11 @@
 ##   grey), the legend stands clear of the scale bar, the
 ##   legend is titled "Fold difference (planned − recorded)", and the hover says "N short of
 ##   the plan"; ticking the pre-plot fold unticks it.
+## - Edges typed in the popover ("0, 1000, 2000") and one class picked: the legend is titled
+##   "Pre-plot fold, offsets 1000-2000 <unit>", the hover gives the bin's count in the class and
+##   its fold in all; edges that do not ascend are refused and the last good ones stay; a
+##   number of sectors typed and one sector picked: the legend names it and the offset class
+##   is back to All. `map-fold-offset.png` and `map-fold-azimuth.png` show the popover rows.
 ## - A bin size typed in the popover is saved, and a restart brings the layer
 ##   back with it, counting again with that bin.
 ##
@@ -188,6 +193,11 @@ proc main*() =
         if shots.len > 0:
           createDir(shots)
           discard f.savePng(shots / name)
+      proc desktop(f: FrameInfo; name: string) =
+        ## The whole display, where an open popover (a window of its own) shows.
+        if shots.len > 0:
+          createDir(shots)
+          discard execShellCmd("scrot -o " & quoteShell(shots / name))
       proc popoverOpen(f: FrameInfo; mark: string): bool =
         result = f.markOf(mark).size.x > 0
         if not result and wait mod 8 == 7: f.click(f.markOf("map.layers").centre)
@@ -421,6 +431,93 @@ proc main*() =
           f.mapWindow.foldLegendTitle == "Pre-plot fold")
       step("the popover closed last", closePopover, proc (f: FrameInfo): bool =
         wait > 4 and f.markOf("map.fold").size.x == 0)
+
+      # ---- one offset class, one azimuth sector
+      proc unitOf(f: FrameInfo): string = unitsOf(f.core)
+      proc typeInto(f: FrameInfo; mark, text: string) =
+        f.click(f.markOf(mark).centre)
+        f.typeText(text)
+      proc enter(f: FrameInfo) =
+        f.pressKey(skEnter, true)
+        f.pressKey(skEnter, false)
+      step("the popover for the restriction", openLayers, proc (f: FrameInfo): bool =
+        f.popoverOpen("map.fold offsets"))
+      step("edges typed", proc (f: FrameInfo) = f.typeInto("map.fold offsets", "0, 1000, 2000"),
+        proc (f: FrameInfo): bool = wait > 3)
+      step("edges entered", enter, proc (f: FrameInfo): bool =
+        f.core.settings.map.foldOffsets == "0, 1000, 2000")
+      step("the choice of class", proc (f: FrameInfo) =
+        f.click(f.markOf("map.fold offsets pick").centre), proc (f: FrameInfo): bool =
+        f.markOf("map.fold offsets pick 2").size.x > 0)
+      step("the second class picked", proc (f: FrameInfo) =
+        f.click(f.markOf("map.fold offsets pick 2").centre), proc (f: FrameInfo): bool =
+        let r = f.mapWindow.foldResult
+        result = f.core.settings.map.foldOffsetClass == 2 and f.mapWindow.foldStatus == fmReady and
+          not r.isNil and r.split.pick == 1 and
+          f.mapWindow.foldLegendTitle == "Pre-plot fold, offsets 1000–2000 " & f.unitOf)
+      step("the popover seen with a class", noop, proc (f: FrameInfo): bool =
+        result = wait > 6
+        if result:
+          doAssert f.markOf("map.fold offsets").size.x > 0, "the popover is open"
+          f.desktop("map-fold-offset.png"))
+      step("edges refused", proc (f: FrameInfo) = f.typeInto("map.fold offsets", ", 5"),
+        proc (f: FrameInfo): bool = wait > 3)
+      step("refused entered", enter, proc (f: FrameInfo): bool =
+        result = wait > 6
+        if result:
+          doAssert f.core.settings.map.foldOffsets == "0, 1000, 2000", "the last good edges stay"
+          f.desktop("map-fold-offset-refused.png"))
+      step("the popover closed for the class", closePopover, proc (f: FrameInfo): bool =
+        wait > 4 and f.markOf("map.fold").size.x == 0)
+      var classBin = 0
+      proc hoverClass(f: FrameInfo) =
+        let r = f.mapWindow.foldResult[]
+        for q in 0 ..< r.counts.len:
+          if r.counts[q] == r.maxFold:
+            classBin = q
+            break
+        let (x, y) = binCentre(r, classBin)
+        f.moveMouse(f.screen(x, y))
+      proc classHovered(f: FrameInfo): bool =
+        let r = f.mapWindow.foldResult[]
+        let want = r.foldText(classBin, f.unitOf)
+        result = f.hovered(want) and "in offsets 1000–2000 " & f.unitOf in want and
+          $r.totals[classBin] & " in all" in want
+        if wait > 20 and not result:
+          doAssert false, "the hover names the class: wanted " & want & ", got " &
+            $f.mapWindow.pointTexts
+      step("hover on the class", hoverClass, classHovered)
+      step("the popover for the sectors", openLayers, proc (f: FrameInfo): bool =
+        f.popoverOpen("map.fold sectors"))
+      step("sectors typed", proc (f: FrameInfo) = f.typeInto("map.fold sectors", "8"),
+        proc (f: FrameInfo): bool = wait > 3)
+      step("sectors entered", enter, proc (f: FrameInfo): bool =
+        f.core.settings.map.foldSectors == 8 and
+        f.markOf("map.fold sectors pick").size.x > 0)
+      step("the choice of sector", proc (f: FrameInfo) =
+        f.click(f.markOf("map.fold sectors pick").centre), proc (f: FrameInfo): bool =
+        f.markOf("map.fold sectors pick 2").size.x > 0)
+      step("the second sector picked", proc (f: FrameInfo) =
+        f.click(f.markOf("map.fold sectors pick 2").centre), proc (f: FrameInfo): bool =
+        let r = f.mapWindow.foldResult
+        let m = f.core.settings.map
+        result = m.foldSector == 2 and m.foldOffsetClass == 0 and
+          f.mapWindow.foldStatus == fmReady and not r.isNil and r.split.kind == spAzimuth and
+          r.split.pick == 1 and f.mapWindow.foldLegendTitle == "Pre-plot fold, azimuth 45–90°")
+      step("the popover seen with a sector", noop, proc (f: FrameInfo): bool =
+        result = wait > 6
+        if result: f.desktop("map-fold-azimuth.png"))
+      step("the popover closed for the sector", closePopover, proc (f: FrameInfo): bool =
+        wait > 4 and f.markOf("map.fold").size.x == 0)
+      proc takeOff(f: FrameInfo) =
+        var s = f.core.settings
+        (s.map.foldOffsets, s.map.foldOffsetClass, s.map.foldSectors, s.map.foldSector) =
+          ("", 0, 0, 0)
+        f.apply Command(kind: ckSettings, settings: s)
+      step("the restriction taken off", takeOff, proc (f: FrameInfo): bool =
+        let r = f.mapWindow.foldResult
+        f.mapWindow.foldStatus == fmReady and not r.isNil and r.split.kind == spNone and
+          f.mapWindow.foldLegendTitle == "Pre-plot fold")
 
       proc typeAct(f: FrameInfo) =
         var s = f.core.settings

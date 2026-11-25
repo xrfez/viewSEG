@@ -112,6 +112,7 @@ const Reached = {
   "map.spreadTemplate.inlineHalf": "", "map.spreadTemplate.crosslineHalf": "",
   "map.folderShots": "", "map.filters": "", "map.foldLayer": "", "map.foldActual": "",
   "map.foldDifference": "", "map.foldAlong": "", "map.foldAcross": "",
+  "map.foldOffsets": "", "map.foldOffsetClass": "", "map.foldSectors": "", "map.foldSector": "",
   "join.trailingDigits": "", "join.multiComponent": "", "join.lineNames": "",
   "join.coordinates": "", "join.traceMatch": "",
   "headers.tab": "", "headers.traceTab": "", "headers.followPointer": "",

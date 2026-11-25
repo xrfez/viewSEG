@@ -30,7 +30,7 @@
 ## Runs alone: it bounds the time taking in an import holds a frame (25 ms).
 
 import std/[math, monotimes, os, random, sequtils, strutils, times]
-import viewSEG/core/[geometry, itempool, outputrevision, state]
+import viewSEG/core/[foldsplit, geometry, itempool, outputrevision, state]
 import utils/[fixtures, owntime, waiting]
 
 func has(log: MessageLog; part: string; severity = sevInfo): bool =
@@ -66,6 +66,7 @@ proc everyFieldSet(): Settings =
       templateBox: true, spreadTemplate: TemplateSpec(shape: tsBox, lines: 12, channels: 240,
       inlineHalf: 2500.5, crosslineHalf: 750), folderShots: false, foldLayer: true,
       foldActual: true, foldDifference: true, foldAlong: 25.5, foldAcross: 12.25,
+      foldOffsets: "0, 1000, 2000.5", foldOffsetClass: 2, foldSectors: 8, foldSector: 3,
       filters: {mfNoisy, mfClipped, mfMissing, mfSpreadDiffers}),
     join: JoinOptions(trailingDigits: true, multiComponent: true, coordinates: hcReplace,
       traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
@@ -163,7 +164,8 @@ proc main*() =
     doAssert s.map.info == miPopup and s.map.lengths == dlSurvey and s.map.hiddenGroups == {} and
       not s.map.templateBox and s.map.spreadTemplate == TemplateSpec() and s.map.folderShots and
       s.map.filters == {} and not s.map.foldLayer and not s.map.foldActual and
-      not s.map.foldDifference and s.map.foldAlong == 0,
+      not s.map.foldDifference and s.map.foldAlong == 0 and s.map.foldOffsets == "" and
+      s.map.foldOffsetClass == 0 and s.map.foldSectors == 0 and s.map.foldSector == 0,
       "the map's settings take their defaults"
     doAssert s.join == JoinOptions(), "the join's options take their defaults"
     doAssert s.headers == HeadersView(), "the Headers window's settings take their defaults"
@@ -223,6 +225,36 @@ proc main*() =
     let c = cleaned(Settings(map: MapOptions(spreadTemplate: TemplateSpec(lines: -3,
       inlineHalf: NaN))))[0]
     doAssert c.map.spreadTemplate == TemplateSpec(lines: 1), $c.map.spreadTemplate
+
+  block foldRestriction:
+    # The fold layers' restriction: edges that do not ascend, a class or sector count out of
+    # range keep the base's value, with a line each; good ones are kept as the box shows them.
+    # Seen to fail with the edges kept as read: "0,1000" was not written back as "0, 1000".
+    var problems: seq[string]
+    let s = readSettings("(settings (version 1) (map (foldOffsets \"0,1000,500\") " &
+      "(foldOffsetClass 99) (foldSectors 1) (foldSector 40)))", "settings.nif", Settings(),
+      problems)
+    doAssert s.map.foldOffsets == "" and s.map.foldOffsetClass == 0 and s.map.foldSectors == 0 and
+      s.map.foldSector == 0 and problems.len == 4, $problems
+    problems = @[]
+    let ok = readSettings("(settings (version 1) (map (foldOffsets \"0,1000\") " &
+      "(foldOffsetClass 1) (foldSectors 8) (foldSector 8)))", "settings.nif", Settings(),
+      problems)
+    doAssert ok.map.foldOffsets == "0, 1000" and ok.map.foldOffsetClass == 1 and
+      ok.map.foldSectors == 8 and ok.map.foldSector == 8 and problems.len == 0, $problems
+
+  block foldEdgesExact:
+    # Edges are kept as typed, not to six digits: these were saved as "0, 100000, 100001",
+    # "1.23457e+06" and "0, 1000, 1000" (which then read back as no restriction).
+    for (text, classes) in [("0, 100000.4, 100000.6", 2), ("0, 1234567", 1),
+        ("0, 1000.0001, 1000.0002", 2)]:
+      var problems: seq[string]
+      let s = readSettings("(settings (version 1) (map (foldOffsets \"" & text & "\")))",
+        "settings.nif", Settings(), problems)
+      doAssert s.map.foldOffsets == text and problems.len == 0, text & ": " & $problems
+      doAssert splitOf(s.map.foldOffsets, 0, 0, 0).offsetClasses == classes
+      let again = readSettings(settingsDocument(s), "settings.nif", Settings(), problems)
+      doAssert again.map.foldOffsets == text, "written and read back: " & again.map.foldOffsets
 
   block gainAmountTo300:
     # The gain amount reads from -300 to +300 dB (60 before: a file of an

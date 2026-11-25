@@ -58,6 +58,12 @@ func foldTitle*(kind: FoldKind): string =
   of fkActual: "Actual fold"
   of fkDifference: "Fold difference (planned − recorded)"
 
+func layerTitle*(r: FoldResult; unit: string): string =
+  ## The layer's name with what it is restricted to: "Pre-plot fold, offsets 1000–2000 ft",
+  ## "Actual fold, azimuth 45–90°"; the name alone when every class is drawn.
+  let what = r.split.drawnLabel(unit)
+  r.kind.foldTitle & (if what.len > 0: ", " & what else: "")
+
 func initFoldGrid*(res: ref FoldResult): FoldGrid = FoldGrid(res: res)
 
 func factorFor*(g: FoldGrid; perPixel: float64): int =
@@ -103,8 +109,8 @@ func sizeText*(v: float64): string =
 
 func plural(n: int; word: string): string = $n & " " & word & (if n == 1: "" else: "s")
 
-func totalsText*(r: FoldResult; unit: string): string =
-  ## The totals line of the layer's popover for map `r`, with lengths in `unit`.
+func totalsBase(r: FoldResult; unit: string): string =
+  ## The totals line without the restriction's words.
   if r.kind != fkPreplot:
     result = "Counted " & plural(r.files, "file") & ", " & plural(r.traces, "trace") & ": " &
       $r.binned & " in the bins; left out " & $r.notLive & " not live, " & $r.killed &
@@ -130,22 +136,43 @@ func totalsText*(r: FoldResult; unit: string): string =
       " without coordinates. Bins " & sizeText(r.binAlong) & " x " & sizeText(r.binAcross) &
       " " & unit & "."
 
-func foldText*(r: FoldResult; bin: int): string =
+func totalsText*(r: FoldResult; unit: string): string =
+  ## The totals line of the layer's popover for map `r`, with lengths in `unit`. With a
+  ## restriction it says what is drawn and, for the recorded fold, how many traces fell in
+  ## none of the classes or sectors.
+  result = r.totalsBase(unit)
+  if r.split.drawn: result.add " Drawn: " & r.split.drawnLabel(unit) & "."
+  if r.kind != fkPreplot and r.split.active:
+    result.add " " & plural(r.noClass, "trace") & " of the " & $r.binned & " binned fell in " &
+      r.split.noneWord & "."
+
+func foldText*(r: FoldResult; bin: int; unit = ""): string =
   ## "fold 12 (inline 3, crossline 41)" for bin `bin` (in `0 ..< len`); for the recorded
   ## fold "recorded 10 (planned 12) at inline 3, crossline 41"; for the difference "2 short
-  ## of the plan" or "2 more than planned" at the bin.
+  ## of the plan" or "2 more than planned" at the bin. With one class or sector drawn the
+  ## counts are its own and the bin's total fold follows: "fold 3 in offsets 1000–2000 ft, 12
+  ## in all (inline 3, crossline 41)".
   let (i, j) = (bin div r.crosslines, bin mod r.crosslines)
   let place = "inline " & $(r.firstInline + float64(i)).int & ", crossline " &
     $(r.firstCrossline + float64(j)).int
+  let (what, all) = (r.split.drawnLabel(unit), r.totals.len > 0)
   case r.kind
-  of fkPreplot: "fold " & $r.counts[bin] & " (" & place & ")"
+  of fkPreplot:
+    if all: "fold " & $r.counts[bin] & " in " & what & ", " & $r.totals[bin] & " in all (" &
+      place & ")"
+    else: "fold " & $r.counts[bin] & " (" & place & ")"
   of fkActual:
-    "recorded " & $r.counts[bin] & " (planned " & $r.planned[bin] & ") at " & place
+    if all: "recorded " & $r.counts[bin] & " in " & what & ", " & $r.totals[bin] &
+      " in all (planned " & $r.planned[bin] & " in " & what & ", " & $r.plannedTotals[bin] &
+      " in all) at " & place
+    else: "recorded " & $r.counts[bin] & " (planned " & $r.planned[bin] & ") at " & place
   of fkDifference:
     let d = r.counts[bin]
     (if d > 0: $d & " short of the plan" elif d < 0: $(-int64(d)) & " more than planned"
-      else: "as planned") & " (planned " & $r.planned[bin] & ", recorded " &
-       $(int64(r.planned[bin]) - d) & ") at " & place
+      else: "as planned") & (if all: " in " & what else: "") & " (planned " & $r.planned[bin] &
+      ", recorded " & $(int64(r.planned[bin]) - d) &
+      (if all: "; in all, planned " & $r.plannedTotals[bin] & ", recorded " & $r.totals[bin]
+        else: "") & ") at " & place
 
 type
   FoldSpan* = tuple[row, first, last: int] ## blocks `first .. last` of block row `row`

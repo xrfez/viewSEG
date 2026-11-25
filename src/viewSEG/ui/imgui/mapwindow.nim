@@ -116,14 +116,14 @@ type
     started: bool
     cur: MapView
       ## the view the map shows, with the plot's size last frame
-    jumps: int                                 ## the map's `jumps` last followed
+    jumps: int                                         ## the map's `jumps` last followed
     drag: MapDrag
-    ruler: MapRuler                            ## on or off: the button, and the line when one is drawn
+    ruler: MapRuler                                    ## on or off: the button, and the line when one is drawn
     gesture: MapGesture
     gestureAt: float64
     focus: FocusClicks
-    hovered: seq[PointRef]                     ## under the pointer: the nearest point, and others on its spot
-    info: seq[PointInfo]                       ## what the map says of them
+    hovered: seq[PointRef] ## under the pointer: the nearest point, and others on its spot
+    info: seq[PointInfo]                               ## what the map says of them
     infoFor: tuple[survey, shots, files, marks: int]
       ## what `info` was made from, besides the points
     sentHover: seq[PointRef]
@@ -210,6 +210,11 @@ type
     foldBufs: tuple[along, across: array[24, char]]
     foldBufsFor: tuple[along, across: float64] ## the settings the text boxes show
     foldBufsSet: bool
+    foldSplitBufs: tuple[offsets: array[160, char]; sectors: array[8, char]]
+    foldSplitFor: tuple[offsets: string; sectors: int] ## the settings the text boxes show
+    foldSplitSet: bool
+    foldSplitError: tuple[offsets, sectors: string]
+      ## why the last text typed in each box was refused (the setting keeps its last value)
 
   MapOutput* = object
     ## What the map window asks for.
@@ -571,6 +576,15 @@ const
     "is a light grey; a bin with neither a plan nor a trace is left clear. " &
     "The files are those of the recorded fold layer. One fold layer is drawn at a time: " &
     "ticking one unticks the others."
+  splitTip = "Restricts the fold layers to one class of offsets (the distance from source to " &
+    "receiver; the edges are in the survey's length unit, such as 0, 1000, 2000, 4000: a " &
+    "class holds its first edge up to but not including the next) or to one sector of the " &
+    "bearing from source to receiver (2 to 36 sectors, the first starting at north, " &
+    "clockwise; many sectors on a fine grid need much memory, and are refused beyond the " &
+    "budget). Draw one of them, or All. Only one restriction applies at a time: " &
+    "choosing an offset class sets the azimuth to All, and the reverse. The recorded fold " &
+    "of every class is counted at once, so another class draws without reading the files " &
+    "again."
   FoldNames: array[FoldKind, string] = ["Pre-plot fold", "Actual fold", "Fold difference"]
 
 func foldOn(m: MapOptions; kind: FoldKind): bool =
@@ -602,7 +616,8 @@ proc foldWant(mu: var MapUi; st: AppState): FoldWant =
   ## and the difference, the files to count (built again only when the stamp moved).
   let m = st.settings.map
   result = FoldWant(kind: m.foldKindOf, on: m.foldAny,
-    scope: st.fileList.folder & "|" & $st.fileList.recursive)
+    scope: st.fileList.folder & "|" & $st.fileList.recursive,
+    split: splitOf(m.foldOffsets, m.foldOffsetClass, m.foldSectors, m.foldSector))
   if result.on and result.kind != fkPreplot:
     result.why = actualReason(st)
     result.waiting = result.why == Listing
@@ -640,6 +655,107 @@ proc boxValue(buf: array[24, char]): float64 =
   try: result = parseFloat(text)
   except ValueError: result = -1
   if not (result > 0 and result < 1e12): result = -1
+
+proc fillText(buf: var openArray[char]; text: string) =
+  for i in 0 ..< buf.len: buf[i] = '\0'
+  for i in 0 ..< min(text.len, buf.len - 1): buf[i] = text[i]
+
+func bufText(buf: openArray[char]): string =
+  for c in buf:
+    if c == '\0': break
+    result.add c
+
+proc splitBox(id: string; buf: var openArray[char]; hint: string; chars: int): bool =
+  ## A text box `chars` wide for what restricts the fold layers: true once the user has
+  ## finished typing into it.
+  igSetNextItemWidth(round(igCalcTextSize("0".cstring, nil, false, -1).x * float32(chars) +
+    2 * igGetStyle().FramePadding.x))
+  discard igInputTextWithHint(id.cstring, hint.cstring, cast[cstring](addr buf[0]),
+    csize_t(buf.len), 0, nil, nil)
+  igIsItemDeactivatedAfterEdit()
+
+proc splitPick(split: FoldSplit; id, mark: string; unit: string; picked: int;
+    marks: var Marks): int =
+  ## The choice of which class or sector is drawn: -1 for no change, else 0 for all or the
+  ## class + 1.
+  result = -1
+  let now = if split.drawn: split.classLabel(split.pick, unit) else: "All"
+  igSetNextItemWidth(round(igCalcTextSize("0".cstring, nil, false, -1).x * 22 +
+    2 * igGetStyle().FramePadding.x))
+  if igBeginCombo(id.cstring, now.cstring, 0):
+    for k in 0 .. split.classes:
+      let label = if k == 0: "All" else: split.classLabel(k - 1, unit)
+      if igSelectable_Bool((label & "##" & id & $k).cstring, k == picked, 0,
+          ImVec2_c(x: 0, y: 0)):
+        result = k
+      marks.mark(mark & " " & $k)
+    igEndCombo()
+  marks.mark(mark)
+
+proc drawSplitRows(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput) =
+  ## The restriction of the fold layers to one offset class or one azimuth sector: the class
+  ## edges and the number of sectors typed in boxes, and which class or sector is drawn.
+  var s = st.settings
+  let unit = st.unitsOf
+  if not mu.foldSplitSet or mu.foldSplitFor != (s.map.foldOffsets, s.map.foldSectors):
+    mu.foldSplitBufs.offsets.fillText(s.map.foldOffsets)
+    mu.foldSplitBufs.sectors.fillText(if s.map.foldSectors > 0: $s.map.foldSectors else: "")
+    mu.foldSplitFor = (s.map.foldOffsets, s.map.foldSectors)
+    mu.foldSplitSet = true
+    mu.foldSplitError = ("", "")
+  var changed = false
+  igTextUnformatted("Offsets:", nil)
+  igSameLine(0, -1)
+  if splitBox("##foldoffsets", mu.foldSplitBufs.offsets, "all, or 0, 1000, 2000", 22):
+    let text = bufText(mu.foldSplitBufs.offsets)
+    let edges = parseEdges(text)
+    mu.foldSplitError.offsets = edges.error
+    if edges.error.len == 0:
+      let good = edgesText(edges.edges)
+      if good != s.map.foldOffsets: (s.map.foldOffsets, s.map.foldOffsetClass) = (good, 0)
+      changed = true
+  marks.mark("map.fold offsets")
+  tip(splitTip)
+  igSameLine(0, -1)
+  igTextUnformatted(unit.cstring, nil)
+  if mu.foldSplitError.offsets.len > 0: wrapped(mu.foldSplitError.offsets)
+  if s.map.foldOffsets.len > 0:
+    igIndent(0)
+    igTextUnformatted("Draw:", nil)
+    igSameLine(0, -1)
+    let edges = parseEdges(s.map.foldOffsets).edges
+    let k = splitPick(FoldSplit(kind: spOffset, edges: edges, pick: s.map.foldOffsetClass - 1),
+      "##foldoffsetpick", "map.fold offsets pick", unit, s.map.foldOffsetClass, marks)
+    tip(splitTip)
+    if k >= 0:
+      (s.map.foldOffsetClass, changed) = (k, true)
+      if k > 0: s.map.foldSector = 0
+    igUnindent(0)
+  igTextUnformatted("Azimuth sectors:", nil)
+  igSameLine(0, -1)
+  if splitBox("##foldsectors", mu.foldSplitBufs.sectors, "all", 3):
+    let sectors = parseSectors(bufText(mu.foldSplitBufs.sectors))
+    mu.foldSplitError.sectors = sectors.error
+    if sectors.error.len == 0:
+      if sectors.sectors != s.map.foldSectors: (s.map.foldSectors, s.map.foldSector) = (
+        sectors.sectors, 0)
+      changed = true
+  marks.mark("map.fold sectors")
+  tip(splitTip)
+  if mu.foldSplitError.sectors.len > 0: wrapped(mu.foldSplitError.sectors)
+  if s.map.foldSectors >= MinSectors:
+    igIndent(0)
+    igTextUnformatted("Draw:", nil)
+    igSameLine(0, -1)
+    let k = splitPick(FoldSplit(kind: spAzimuth, sectors: s.map.foldSectors,
+      pick: s.map.foldSector - 1), "##foldsectorpick", "map.fold sectors pick", unit,
+      s.map.foldSector, marks)
+    tip(splitTip)
+    if k >= 0:
+      (s.map.foldSector, changed) = (k, true)
+      if k > 0: s.map.foldOffsetClass = 0
+    igUnindent(0)
+  if changed: res.commands.add Command(kind: ckSettings, settings: s)
 
 proc foldTick(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput;
     kind: FoldKind) =
@@ -701,6 +817,7 @@ proc drawFoldRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutp
     igSameLine(0, -1)
     igTextUnformatted(unit.cstring, nil)
     if changed: res.commands.add Command(kind: ckSettings, settings: s)
+    mu.drawSplitRows(st, marks, res)
     case mu.fold.status
     of fmReady:
       let r = mu.fold.shown
@@ -1626,7 +1743,7 @@ proc foldFrame(mu: var MapUi; st: AppState; area: Bounds; perPixel: float64): Fo
     spansSum: named.sum)
 
 proc drawFoldLegend(mu: var MapUi; pos, size: ImVec2_c; scale: tuple[lo, hi: ImVec2_c];
-    ink: MapInk; marks: var Marks) =
+    unit: string; ink: MapInk; marks: var Marks) =
   ## The fold's colour bar in the plot's bottom-right corner: 0 to the highest fold, or for
   ## the difference the diverging bar from the most short of the plan to the most more than
   ## planned. Where it would cover the scale bar (`scale`, bottom-left: a narrow window) it
@@ -1636,7 +1753,7 @@ proc drawFoldLegend(mu: var MapUi; pos, size: ImVec2_c; scale: tuple[lo, hi: ImV
   if not mu.fold.showing or mu.renderer.foldKey == 0: return
   let dl = igGetWindowDrawList()
   let diff = r.kind == fkDifference
-  let title = r.kind.foldTitle & (if mu.fold.updating: " (updating...)" else: "")
+  let title = r[].layerTitle(unit) & (if mu.fold.updating: " (updating...)" else: "")
   mu.foldLegend = title
   let top = if diff: $r.maxFold & " short" else: "0"
   let mid = if diff: "0" else: ""
@@ -1860,8 +1977,8 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
         if mu.info.len == 0: mu.info.add PointInfo(title: "Marks here")
         mu.info[0].lines.add markedHereText(near)
       if foldBin >= 0:
-        if mu.info.len == 0: mu.info.add PointInfo(title: mu.fold.shown.kind.foldTitle)
-        mu.info[0].lines.add mu.fold.shown[].foldText(foldBin)
+        if mu.info.len == 0: mu.info.add PointInfo(title: mu.fold.shown[].layerTitle(st.unitsOf))
+        mu.info[0].lines.add mu.fold.shown[].foldText(foldBin, st.unitsOf)
     mu.sendHover(res)
     # A click on a source shows its record (on a receiver in a file of
     # receiver gathers, its gather; on a source of a receiver gather, the
@@ -1888,7 +2005,7 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       mu.drawSpreads(view, plot, ink, t, marks)
       mu.drawRuler(view, plot, lengths, ink, t, marks)
       let scale = mu.drawScaleBar(view, pos, size, fb.x, lengths, ink, t, marks)
-      mu.drawFoldLegend(pos, size, scale, ink, marks)
+      mu.drawFoldLegend(pos, size, scale, st.unitsOf, ink, marks)
     if (hovered or held) and mu.info.len > 0 and st.settings.map.info == miPopup and
         mu.drag.kind == mdNone:
       # (beside the menu, not under it)

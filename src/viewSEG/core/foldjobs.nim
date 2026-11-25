@@ -22,6 +22,13 @@
 ## options and the station moves as well as the survey and the bin sizes. The survey that places
 ## the recorded traces by their stations is the one the grid is laid from (`geometryOf`).
 ##
+## Each layer can be restricted to one offset class or one azimuth sector (`FoldSplit`, see
+## `core/foldsplit`): the pre-plot count asks the library for that class's or sector's tensor,
+## the recorded count takes it from each file's part (a part holds every class's or sector's
+## traces, so another class drawn reads no file again), and the difference is of the same class.
+## The result keeps the bins' total fold beside (`totals`, `plannedTotals`) for the hover. The
+## restriction is part of the result's key and its edges or sector count of the parts' (`partsKey`).
+##
 ## The result (`FoldResult`) is plain data: the grid's origin (the first
 ## bin's centre), its azimuth and bin sizes, the counts `[inlines x
 ## crosslines]` row-major as processSEG lays them out, and how many pairs
@@ -62,6 +69,8 @@ import colourmaps, geometry
 import processSEG/qc/fold
 import processSEG/stack/binning
 import foldactual, jobs, survey
+
+export foldsplit
 
 const
   NoRelations* = "The survey has no relation (X) records: the pre-plot fold counts " &
@@ -115,6 +124,14 @@ type
       ## actual and difference only: files read, traces in them, left out as not live and as
       ## killed, and files that gave no position
     skipped*: seq[tuple[path, why: string]] ## files that could not be read
+    split*: FoldSplit
+      ## the restriction the counts are of (its `pick`: -1 for every class); none: unrestricted
+    noClass*: int
+      ## actual and difference with a restriction: of `binned`, the traces in no class or sector
+    totals*, plannedTotals*: seq[int32]
+      ## with one class or sector drawn: the fold of all of them, per bin: the pre-plot's (the
+      ## pre-plot layer), the recorded (actual and difference) and the planned (actual and
+      ## difference)
     otherSurvey*: bool
       ## actual and difference only: the project's stored survey is another than the map's,
       ## and the map's placed the traces
@@ -140,6 +157,7 @@ type
     stations*: array[PointRole, FoldStations]
     binAlong*, binAcross*: float64 ## NaN: the library's natural bin
     kind*: FoldKind
+    split*: FoldSplit
     actual*: ref ActualInputs      ## the files to count, for the recorded fold and the difference
     known*: seq[ptr ActualPart]
       ## for each file of `actual`, its part from an earlier count of the same grid and join
@@ -158,10 +176,11 @@ type
     on*: bool
     actual*: ref ActualInputs
       ## recorded fold and difference: the files to count; nil when they cannot be counted
-    why*: string ## then, why not (a sentence for the user)
+    why*: string      ## then, why not (a sentence for the user)
     waiting*: bool
       ## `why` passes by itself (the folder is being listed): a map of the same scope stays
-    stamp*: int  ## changes when `actual` is another build
+    stamp*: int       ## changes when `actual` is another build
+    split*: FoldSplit ## the class or sector to draw
     scope*: string
       ## names what a recorded fold is of apart from the files' state (the folder listed): a
       ## map of another scope is never shown while a new count runs
@@ -204,7 +223,8 @@ type
     partsFor: string
     partsBytes: int
     counts: int ## counts of recorded traces started
-    seen: tuple[survey: int, on: bool, along, across: float64, kind: FoldKind, stamp: int]
+    seen: tuple[survey: int, on: bool, along, across: float64, kind: FoldKind, stamp: int,
+      split: string]
     seenSet: bool
     pending: bool
       ## a count waits: for the retired jobs' work to end, or for the running count of the same
@@ -241,20 +261,27 @@ func binText(v: float64): string = (if v.isNaN: "natural" else: $v)
 
 func isActual(kind: FoldKind): bool {.inline.} = kind in {fkActual, fkDifference}
 
+func splitKey(kind: FoldKind; split: FoldSplit): string =
+  ## Names the restriction a result is of: the class drawn; for a recorded count also the
+  ## edges when every class is drawn (the totals say how many traces are in none).
+  if split.drawn or (split.active and kind.isActual): "#" & split.pickId else: ""
+
 func foldKey(s: Survey; along, across: float64; kind = fkPreplot;
-    actual: ref ActualInputs = nil): string =
+    actual: ref ActualInputs = nil; split = FoldSplit()): string =
   ## Names the survey, the bin sizes and the layer; for the recorded fold and the difference
-  ## also the files counted (`ActualInputs.key`).
+  ## also the files counted (`ActualInputs.key`); and the restriction.
   result = s.surveySignature & "#" & binText(along) & "x" & binText(across)
   if kind != fkPreplot: result.add "#" & $kind & (if actual.isNil: "" else: "#" & actual.key)
+  result.add splitKey(kind, split)
 
 proc foldInputs*(s: Survey; along, across: float64; kind = fkPreplot;
-    actual: ref ActualInputs = nil): FoldInputs =
+    actual: ref ActualInputs = nil; split = FoldSplit()): FoldInputs =
   ## What the job needs from survey `s`, with bin sizes `along` and `across`
   ## the receiver lines (NaN: natural). Needs `foldReason(s) == ""`. `kind` names the
-  ## layer; the recorded fold and the difference count `actual`'s files too.
-  result = FoldInputs(key: foldKey(s, along, across, kind, actual), binAlong: along,
-    binAcross: across, kind: kind, actual: actual)
+  ## layer; the recorded fold and the difference count `actual`'s files too; `split` is the
+  ## restriction.
+  result = FoldInputs(key: foldKey(s, along, across, kind, actual, split), binAlong: along,
+    binAcross: across, kind: kind, split: split, actual: actual)
   for i in 0 ..< s.layers.len:
     template l: untyped = s.layers[i]
     if l.isSurveyFile:
@@ -381,7 +408,7 @@ proc makeLevels(r: FoldResult; ctx: JobContext): seq[FoldLevel] =
 
 func bytes*(r: FoldResult): int =
   ## About how much memory the counts and levels of `r` take.
-  result = (r.counts.len + r.planned.len) * 4
+  result = (r.counts.len + r.planned.len + r.totals.len + r.plannedTotals.len) * 4
   for l in r.levels: result += l.colours.len * 4
 
 func geometryOf(rel: ptr SurveyGeometry; stations: array[PointRole, FoldStations]):
@@ -425,14 +452,17 @@ proc describe(res: var FoldResult; grid: Binning; along, across: float64) =
 
 func plural(n: int; word: string): string = $n & " " & word & (if n == 1: "" else: "s")
 
-proc recorded(base: FoldResult; ctx: JobContext; pre, actual: FoldMap):
-    tuple[actual, difference: FoldResult] =
+proc recorded(base: FoldResult; ctx: JobContext; pre, actual: FoldMap;
+    totals, plannedTotals: sink seq[int32]): tuple[actual, difference: FoldResult] =
   ## The recorded fold and the difference (planned less recorded) of `actual` against `pre`,
-  ## both over `base`'s grid, with their zoom levels (the totals are the caller's to add).
+  ## both over `base`'s grid, with their zoom levels (the totals are the caller's to add);
+  ## `totals` and `plannedTotals` are the fold of all classes, when one is drawn.
   var a = base
   a.kind = fkActual
   a.counts = actual.fold.toFlatSeq
   a.planned = pre.fold.toFlatSeq
+  a.totals = totals
+  a.plannedTotals = plannedTotals
   for v in a.counts: a.maxFold = max(a.maxFold, v)
   var d = a
   d.kind = fkDifference
@@ -443,6 +473,28 @@ proc recorded(base: FoldResult; ctx: JobContext; pre, actual: FoldMap):
   a.levels = makeLevels(a, ctx)
   d.levels = makeLevels(d, ctx)
   (result.actual, result.difference) = (a, d)
+
+const MaxSplitCells = 1 shl 26
+  ## the most cells (bins times sectors) the library may count for one sector drawn
+
+func planOptions(split: FoldSplit): FoldOptions =
+  ## What the library counts for the pre-plot of `split`: for one offset class drawn, that class
+  ## alone (the same rule, one tensor); for one sector drawn, all the sectors.
+  if split.drawn and split.kind == spOffset:
+    FoldOptions(offsetBounds: @[split.edges[split.pick], split.edges[split.pick + 1]])
+  elif split.drawn and split.kind == spAzimuth: FoldOptions(azimuthSectors: split.sectors)
+  else: FoldOptions()
+
+proc restrictPlan(m: var FoldMap; split: FoldSplit): seq[int32] =
+  ## Makes `m`'s fold that of the class or sector drawn (`planOptions` counted it); returns the
+  ## fold of all of them.
+  var cells = m.fold # shares the map's storage
+  result = cells.toFlatSeq
+  var part = if split.kind == spOffset: m.offsetFold else: m.azimuthFold
+  let k = if split.kind == spOffset: 0 else: split.pick
+  let (src, dest) = (cast[ptr UncheckedArray[int32]](part.unsafe_raw_offset(aligned = false)),
+    cast[ptr UncheckedArray[int32]](cells.unsafe_raw_offset(aligned = false)))
+  copyMem(dest, addr src[k * result.len], result.len * sizeof(int32))
 
 proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
   ## The work of a job that counts the fold of `inp` into `sink`
@@ -457,6 +509,7 @@ proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
   let stations = inp.stations
   let (along, across) = (inp.binAlong, inp.binAcross)
   let kind = inp.kind
+  let split = inp.split
   var files = ActualInputs()
   if not inp.actual.isNil: files = inp.actual[]
   let known = inp.known
@@ -477,19 +530,28 @@ proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
         let grid = surveyGrid(g, binInline = along, binCrossline = across)
         ctx.checkCancelled()
         ctx.setPhase "counting the pairs"
-        var m = g.preplotFold(grid)
+        if split.drawn and split.kind == spAzimuth and grid.len * split.sectors > MaxSplitCells:
+          raise newException(ValueError, "These bins and " & $split.sectors & " sectors need " &
+            "more memory than a map may take. Give larger bins or fewer sectors.")
+        var m = g.preplotFold(grid, planOptions(split))
+        var plannedTotals: seq[int32] = @[]
+        if split.drawn: plannedTotals = m.restrictPlan(split)
         ctx.checkCancelled()
         res.describe(grid, along, across)
+        res.split = split
         if kind.isActual:
           var actual = initFoldMap(grid)
-          let tally = ctx.countActual(addr files, known, addr g, grid, actual, fresh)
+          var totals: seq[int32] = @[]
+          let tally = ctx.countActual(addr files, known, addr g, grid, split, actual, totals,
+            fresh)
           ctx.checkCancelled()
-          var made = res.recorded(ctx, m, actual)
+          var made = res.recorded(ctx, m, actual, totals, plannedTotals)
           for r in [addr made.actual, addr made.difference]:
             (r.files, r.traces, r.notLive, r.killed, r.unplaced, r.skipped) =
               (tally.files, tally.traces, tally.notLive, tally.killed, tally.unplaced,
                tally.skipped)
             r.duplicates = tally.duplicates
+            r.noClass = if split.shownKind == spAzimuth: tally.noSector else: tally.noClass
             (r.binned, r.outside, r.noCoordinates) = (tally.binned, tally.outside,
               tally.noCoordinates)
             r.otherSurvey = files.otherSurvey
@@ -516,6 +578,7 @@ proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
           else: (res, other) = (made.difference, made.actual)
         else:
           res.counts = m.fold.toFlatSeq
+          res.totals = plannedTotals
           for v in res.counts: res.maxFold = max(res.maxFold, v)
           ctx.setPhase "preparing the zoom levels"
           res.levels = makeLevels(res, ctx)
@@ -548,7 +611,8 @@ func foldScope(s: Survey; along, across: float64; folder: string): string =
   s.surveySignature & "#" & binText(along) & "x" & binText(across) & "#" & folder
 
 func bytes(p: ActualPart): int =
-  (p.bins.len + p.counts.len) * 4 + p.skip.len + sizeof(ActualPart)
+  (p.bins.len + p.counts.len + p.classStarts.len + p.classBins.len + p.classCounts.len) * 4 +
+    p.skip.len + sizeof(ActualPart)
 
 proc unpin(t: var FoldTracker; jobs: Jobs) =
   ## Lets go of what the job `t.pins` names was given, or keeps it until its work is back (it
@@ -706,21 +770,24 @@ proc poll(t: var FoldTracker; jobs: Jobs) =
         if not t.shown.isNil: t.show(nil)
       t.unpin(jobs)
 
-func partsKey(s: Survey; along, across: float64; actual: ref ActualInputs): string =
+func partsKey(s: Survey; along, across: float64; actual: ref ActualInputs;
+    split: FoldSplit): string =
   ## Names what a file's part depends on besides the file: the grid (the survey and the bin
-  ## sizes) and the join (`ActualInputs.join`).
-  s.surveySignature & "#" & binText(along) & "x" & binText(across) & "#" & actual.join
+  ## sizes), the join (`ActualInputs.join`) and the classes or sectors it holds (not which one
+  ## is drawn).
+  s.surveySignature & "#" & binText(along) & "x" & binText(across) & "#" & actual.join & "#" &
+    split.specId
 
 proc start(t: var FoldTracker; jobs: Jobs; s: Survey; want: FoldWant; along, across: float64;
     key, otherKey, scope: string) =
   ## Submits the count of `want`. A recorded fold is lent the parts of the files kept from an
   ## earlier count of the same grid and join, by address, and pins them until its work is back.
-  var inp = foldInputs(s, along, across, want.kind, want.actual)
+  var inp = foldInputs(s, along, across, want.kind, want.actual, want.split)
   t.pins = FoldPins(relations: inp.relations, sink: FoldSink())
   t.jobFiles.setLen 0
   t.jobJoin = ""
   if want.kind.isActual:
-    let join = partsKey(s, along, across, want.actual)
+    let join = partsKey(s, along, across, want.actual, want.split)
     if join != t.partsFor:
       t.dropParts()
       t.partsFor = join
@@ -757,8 +824,8 @@ proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; want: FoldWant; along, a
   let on = want.on
   var changed = not t.seenSet or t.seen.survey != s.revision or t.seen.on != on or
     binText(t.seen.along) != binText(along) or binText(t.seen.across) != binText(across) or
-    t.seen.kind != want.kind or t.seen.stamp != want.stamp
-  t.seen = (s.revision, on, along, across, want.kind, want.stamp)
+    t.seen.kind != want.kind or t.seen.stamp != want.stamp or t.seen.split != want.split.pickId
+  t.seen = (s.revision, on, along, across, want.kind, want.stamp, want.split.pickId)
   t.seenSet = true
   if t.retired.len > 0: t.release(jobs)
   if t.pending and t.retired.len == 0 and t.job == NoJob: changed = true
@@ -793,9 +860,10 @@ proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; want: FoldWant; along, a
       t.wantKey = ""
       if not t.shown.isNil: t.show(nil)
     else:
-      let key = foldKey(s, along, across, want.kind, want.actual)
+      let key = foldKey(s, along, across, want.kind, want.actual, want.split)
       let otherKind = if want.kind == fkActual: fkDifference else: fkActual
-      let otherKey = if want.kind.isActual: foldKey(s, along, across, otherKind, want.actual)
+      let otherKey = if want.kind.isActual:
+          foldKey(s, along, across, otherKind, want.actual, want.split)
         else: ""
       t.wantKey = key
       var held: ref FoldResult = nil
@@ -809,7 +877,7 @@ proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; want: FoldWant; along, a
       elif t.job != NoJob and (t.jobKey == key or (otherKey.len > 0 and t.jobOther == key)):
         t.status = fmComputing
       elif t.job != NoJob and want.kind.isActual and t.jobJoin.len > 0 and
-          t.jobJoin == partsKey(s, along, across, want.actual) and t.jobScope == scope:
+          t.jobJoin == partsKey(s, along, across, want.actual, want.split) and t.jobScope == scope:
         # the files changed under a count of the same grid and join: it runs to its end, and
         # the next count takes the parts it read
         (t.status, t.reason, t.pending) = (fmComputing, "", true)

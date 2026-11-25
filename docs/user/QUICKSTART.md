@@ -1311,6 +1311,27 @@ counted last stays, with "updating..." beside the tick, in the legend and in the
 ticks, so a folder still being recorded keeps its map. It goes at once for another survey,
 other bin sizes or another folder.
 
+Under the bin sizes, **Offsets** and **Azimuth sectors** restrict the fold layers to one class
+of offsets or one sector of bearings. Type the edges of the offset classes in the survey's
+length unit ("0, 1000, 2000, 4000": three classes, at most 16; a class holds its first edge up
+to but not including the next, so an offset equal to the last edge is in no class), then pick
+the class to draw under **Draw** ("All", "0–1000", ...). Or type a number of azimuth sectors (2
+to 36; the bearing is from the source to the receiver, in degrees clockwise from north, and
+the first sector starts at north) and pick one ("45–90°"). Only one restriction applies at a
+time: picking an offset class sets the azimuth to All, and the reverse. Edges that do not
+ascend, are negative or are not numbers, and a sector count outside 2 to 36, are refused with a
+sentence under the box, and the last good value stays. The legend and the description of a
+bin name the restriction ("Actual fold, offsets 1000–2000 ft": "recorded 3 in offsets
+1000–2000 ft, 12 in all"); the totals line says how many of the binned traces fell in no class
+(an offset outside every class, or an unknown one) or in no sector (no coordinates to give a
+bearing). The pre-plot counts the class from the source and receiver positions of the relation
+records; a recorded trace is put in its class by the distance between its source and receiver
+positions, or by the header's offset when it has no positions. The recorded fold keeps every
+class and every sector of each file (both, when both are typed), so picking another class or
+sector, or All, does not read the files again; typing other edges or another number of
+sectors does. Many sectors on a fine grid need much memory and are refused beyond a budget.
+The edges are kept exactly as typed.
+
 Under the Recorded, **Shots in the folder** rings the survey's sources whose record is in a
 file of the folder listed in Files (read in the background, while a survey file with
 sources is loaded): point at one and its description names the file; click it and the plot
