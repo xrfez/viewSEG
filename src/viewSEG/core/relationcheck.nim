@@ -124,8 +124,9 @@ proc templateOf*(g: SurveyGeometry; record: int64; byChannel: bool):
     result.incl (channel: (if byChannel: int64(channel) else: 0'i64),
       station: stationKey(rel.receiver.line, rel.receiver.point, 0))
 
-proc bestOfSeveral*(g: SurveyGeometry; rows: TraceRows; first: RecordCompleteness;
-    ctx: JobContext; traceMatch = tmAuto): tuple[c: RecordCompleteness; why: string] =
+proc bestOfSeveral*[C: JobContext | ItemContext](g: SurveyGeometry; rows: TraceRows;
+    first: RecordCompleteness; ctx: C; traceMatch = tmAuto):
+    tuple[c: RecordCompleteness; why: string] =
   ## The shot `rows` checked against each X record at its source station
   ## (`first.candidates`, more than one), the record number left out: the one
   ## whose template shares the most stations with the data, and of those the one
@@ -168,8 +169,8 @@ proc fixedIndices(g: SurveyGeometry; records: openArray[int64]; domain: Relation
       if i notin result: result.add i
       break
 
-proc shotCheck*(g: SurveyGeometry; rows: TraceRows; ctx: JobContext; traceMatch = tmAuto):
-    tuple[c: RecordCompleteness; why: string] =
+proc shotCheck*[C: JobContext | ItemContext](g: SurveyGeometry; rows: TraceRows; ctx: C;
+    traceMatch = tmAuto): tuple[c: RecordCompleteness; why: string] =
   ## The shot `rows` checked against its X record, found by its source station
   ## alone (`recordCompleteness`; one record's result when the station has
   ## one, `bestOfSeveral` when it has several), a station being its line and point
