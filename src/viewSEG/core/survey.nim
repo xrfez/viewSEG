@@ -689,12 +689,16 @@ func contents*(l: SurveyLayer): set[SurveyContent] =
   if l.xRuns > 0: result.incl scXRecords
   if l.relationRuns > l.xRuns: result.incl scORecords
 
-func kindsText*(c: set[SurveyContent]): string =
+func kindsText*(c: set[SurveyContent]; joiner = "and"): string =
   ## The kinds in `c` as the messages say them: "R", "R and S", "R, S and X".
   var names: seq[string] = @[]
   for k in c: names.add $k
   if names.len <= 1: return names.join("")
-  names[0 ..< names.len - 1].join(", ") & " and " & names[^1]
+  names[0 ..< names.len - 1].join(", ") & " " & joiner & " " & names[^1]
+
+func held*(s: Survey): set[SurveyContent] =
+  ## The kinds of record the loaded survey files hold.
+  for i in 0 ..< s.layers.len: result = result + s.layers[i].contents
 
 func clashes(old, layer: SurveyLayer): bool =
   ## Whether survey file layer `old` goes when `layer` is loaded: the same file, or one
@@ -740,14 +744,28 @@ proc add*(s: var Survey; layer: sink SurveyLayer): SurveyLayerId =
   var replaced: seq[SurveyLayer] = @[]
   s.add(layer, replaced)
 
-proc putBack*(s: var Survey; id: SurveyLayerId; layers: sink seq[SurveyLayer]) =
+func clashIndex*(s: Survey; layer: SurveyLayer): int =
+  ## The index of a loaded survey file's layer `layer` would replace; -1 for none.
+  if layer.origin != loSurveyFile: return -1
+  for i in 0 ..< s.layers.len:
+    if s.layers[i].clashes(layer): return i
+  -1
+
+proc putBack*(s: var Survey; id: SurveyLayerId; layers: sink seq[SurveyLayer]):
+    seq[SurveyLayer] =
   ## Puts `layers` (what `add` replaced, with their own ids) back: the first in the place
-  ## of layer `id`, the others after the last, or all at the end when `id` is gone.
-  let i = s.find(id)
-  for k in 0 ..< layers.len:
-    if k == 0 and i >= 0: s.layers[i] = layers[0]
-    else: s.layers.add layers[k]
-  if layers.len == 0 and i >= 0: s.layers.delete i
+  ## of layer `id` (which goes), the others after the last, or all at the end when `id` is
+  ## gone. A layer that clashes with one loaded since (not `id`'s) is not put back: those
+  ## are returned.
+  var at = s.find(id)
+  if at >= 0: s.layers.delete at
+  for l in layers:
+    if s.clashIndex(l) >= 0:
+      result.add l
+    elif at >= 0:
+      s.layers.insert(l, at)
+      at = -1
+    else: s.layers.add l
   inc s.revision
 
 proc remove*(s: var Survey; id: SurveyLayerId): bool =

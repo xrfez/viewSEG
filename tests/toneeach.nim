@@ -15,7 +15,7 @@
 
 import std/[os, strutils, times]
 import parseSEG
-import viewSEG/core/[filekinds, survey, state]
+import viewSEG/core/[filekinds, jobs, survey, state]
 import utils/[fixtures, waiting]
 
 proc header(): SpsHeader =
@@ -50,6 +50,8 @@ proc surveyFiles(st: AppState): seq[string] =
     if l.origin == loSurveyFile: result.add l.name
 
 proc idle(st: var AppState): bool = st.settle(st.jobs.active.len == 0)
+
+var gate: Gate
 
 proc layerOf(path: string; kinds: set[PointRole]): SurveyLayer =
   var b = initSurveyFileBuilder(path, fkSps, 1, fromUnix(0))
@@ -114,14 +116,17 @@ proc main*() =
     st.load sf
     doAssert st.idle
     doAssert st.surveyFiles == @["d.s"], $st.surveyFiles # S alone replaced it as well
-    doAssert st.said("It replaces both.sps (it held R and S: all go): one S file"), "no S"
+    doAssert st.said("It replaces both.sps: one S file"), "no S"
+    doAssert st.said("both.sps held R and S: its R points went with it, and no R file is " &
+      "loaded now."), "no word of the lost R points"
     st.load both
     doAssert st.idle
     doAssert st.surveyFiles == @["both.sps"], $st.surveyFiles
     st.load rf
     doAssert st.idle
     doAssert st.surveyFiles == @["c.r"], $st.surveyFiles
-    doAssert st.said("It replaces both.sps (it held R and S: all go): one R file"), "no R"
+    doAssert st.said("It replaces both.sps: one R file"), "no R"
+    doAssert st.said("its S points went with it, and no S file is loaded now."), "no S word"
     st.shutdown()
 
   block oneAction:
@@ -154,12 +159,12 @@ proc main*() =
     var early = layerOf("z", {prReceiver})
     early.order = 1
     doAssert s.supersededBy(early) == s.find(idb)
-    s.putBack(idb, move replaced)
+    doAssert s.putBack(idb, move replaced).len == 0
     doAssert s.find(ida) == 0 and s.find(idb) < 0 and s.layers.len == 2
 
   block oldProject:
-    # a project kept with two X files (as an earlier version allowed) opens with the last
-    # one and says so
+    # an import naming two X files the file list does not know: the later is loaded and kept
+    # in the project, the earlier is left out of both and Messages says so
     let config = dir / "config"
     let job = dir & "-project" / "Old project"
     createDir(config)
@@ -173,18 +178,139 @@ proc main*() =
     doAssert st.keepSettled(st.project.survey == srLoaded and st.project.doc.hasStore and
       not st.project.doc.hasImport), "not imported: " & st.project.surveyNote
     doAssert st.surveyFiles.len == 2, $st.surveyFiles
+    doAssert st.said("a.x is not kept in the project"), "the left-out file is not said"
     st.flushFiles()
+    doAssert "a.x" notin readFile(job / "project.nif"), "the project names the left-out file"
     st.shutdown()
     var again = initAppState()
     again.rememberFilesIn(config)
     again.apply Command(kind: ckOpenProject, projectPath: job)
     doAssert again.keepSettled(again.inProject and again.project.survey == srLoaded and
       again.surveyFiles.len == 2), $again.surveyFiles
-    doAssert again.project.doc.survey.len == 3, "the project names " &
+    doAssert again.project.doc.survey.len == 2, "the project names " &
       $again.project.doc.survey.len & " files"
     doAssert "b.x" in again.surveyFiles and "a.x" notin again.surveyFiles, $again.surveyFiles
-    doAssert again.said("It replaces a.x") or again.said("a.x is not kept")
     again.shutdown()
+
+  block laterAskWins:
+    # an import's layer arrives, then a file asked after the import began: the later ask
+    # stays, and cancelling the import leaves it (l.x, which the import replaced, is not put
+    # back over it, and Messages says so)
+    withFixtures fx:
+      let sv = fx.surveySps()
+      let seg = fx.stationsSegd()
+      let big = fx.dir / "e.x"
+      var g = SpsFile(headers: @[header()])
+      for k in 0 ..< 300_000: g.relations.add relation('X', k + 1, float64(k))
+      doAssert writeSps(g, big).len == 0
+      let small = fx.dir / "l.x"
+      write(small, relations = @[relation('X', 1, 5)])
+      for withSmall in [false, true]:
+        var st = initAppState()
+        st.apply Command(kind: ckShowFile, panel: MainPanel, path: seg)
+        doAssert st.settle(st.sessions.len == 1 and
+          st.survey.findTraces(st.sessions[0].id) >= 0)
+        if withSmall:
+          st.load small
+          doAssert st.settle(st.jobs.active.len == 0 and "l.x" in st.surveyFiles)
+        gate.close()
+        discard st.jobs.submit(JobSpec(title: "Hold it", lane: jlBackground, reads: @[seg]),
+          proc (ctx: JobContext) {.gcsafe.} = gate.waitAt(ctx))
+        st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id, joinFiles: @[
+          JoinFile(path: sv.s, kind: jkSps), JoinFile(path: sv.r, kind: jkSps),
+          JoinFile(path: sv.x, kind: jkSps)])
+        doAssert st.settle("survey.x" in st.surveyFiles)
+        st.load big
+        doAssert st.settle("e.x" in st.surveyFiles and st.surveyFiles.len == 3 or
+          st.said("e.x is not kept")), $st.surveyFiles
+        doAssert "e.x" in st.surveyFiles and "survey.x" notin st.surveyFiles, "e.x was " &
+          "asked later: " & $st.surveyFiles
+        doAssert not st.said("e.x is not kept")
+        st.apply Command(kind: ckCancelJob, job: st.joinUnderWay.job)
+        doAssert st.settle(st.joinUnderWay.job == NoJob)
+        gate.open()
+        discard st.settle(st.jobs.active.len == 0)
+        var xs = 0
+        for n in st.surveyFiles:
+          if n.endsWith(".x"): inc xs
+        doAssert xs == 1 and "e.x" in st.surveyFiles, "after the cancel: " & $st.surveyFiles
+        if withSmall:
+          doAssert st.said("l.x is not put back: e.x, loaded since, holds its X records"),
+            "l.x was put back beside e.x"
+        st.shutdown()
+
+  block askedAfterTheImportArrivesBefore:
+    # the import is asked, then a file of its kind straight after: the import's layers are
+    # posted when it has read its files, after the ask of the file but asked before it: the
+    # file asked last stays, and is not said to be asked before
+    withFixtures fx:
+      let sv = fx.surveySps()
+      let seg = fx.stationsSegd()
+      let small = fx.dir / "l.x"
+      write(small, relations = @[relation('X', 1, 5)])
+      var st = initAppState()
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: seg)
+      doAssert st.settle(st.sessions.len == 1 and st.survey.findTraces(st.sessions[0].id) >= 0)
+      st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id, joinFiles: @[
+        JoinFile(path: sv.s, kind: jkSps), JoinFile(path: sv.r, kind: jkSps),
+        JoinFile(path: sv.x, kind: jkSps)])
+      st.load small
+      doAssert st.settle(st.jobs.active.len == 0 and st.joinUnderWay.job == NoJob)
+      doAssert "l.x" in st.surveyFiles and "survey.x" notin st.surveyFiles,
+        "the file asked last was not kept: " & $st.surveyFiles
+      doAssert not st.said("l.x is not kept")
+      st.shutdown()
+
+  block earlierAskKeptOut:
+    # a file asked before the import began and read after its layer came is kept out, and
+    # put back when the import is cancelled
+    withFixtures fx:
+      let sv = fx.surveySps()
+      let seg = fx.stationsSegd()
+      let big = fx.dir / "e.x"
+      var g = SpsFile(headers: @[header()])
+      for k in 0 ..< 300_000: g.relations.add relation('X', k + 1, float64(k))
+      doAssert writeSps(g, big).len == 0
+      var st = initAppState()
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: seg)
+      doAssert st.settle(st.sessions.len == 1 and st.survey.findTraces(st.sessions[0].id) >= 0)
+      gate.close()
+      discard st.jobs.submit(JobSpec(title: "Hold it", lane: jlBackground, reads: @[seg]),
+        proc (ctx: JobContext) {.gcsafe.} = gate.waitAt(ctx))
+      st.load big
+      st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id, joinFiles: @[
+        JoinFile(path: sv.s, kind: jkSps), JoinFile(path: sv.r, kind: jkSps),
+        JoinFile(path: sv.x, kind: jkSps)])
+      doAssert st.settle("survey.x" in st.surveyFiles and not st.surveyLoading(big))
+      doAssert st.said("e.x is not kept: survey.x, asked after it") or
+        st.said("It replaces e.x"), "nothing said of e.x"
+      st.apply Command(kind: ckCancelJob, job: st.joinUnderWay.job)
+      doAssert st.settle(st.joinUnderWay.job == NoJob)
+      gate.open()
+      discard st.settle(st.jobs.active.len == 0)
+      doAssert "e.x" in st.surveyFiles and "survey.x" notin st.surveyFiles, $st.surveyFiles
+      st.shutdown()
+
+  block importLeavesOutEarlier:
+    # an import naming two X files uses the later, and keeps only that one in the project
+    let config = dir / "config2"
+    createDir(config)
+    let job = dir & "-project" / "Import two"
+    var st = initAppState()
+    st.rememberFilesIn(config)
+    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[dir])
+    doAssert st.keepSettled(st.inProject and st.projectOpening.len == 0)
+    st.apply Command(kind: ckBrowse, paths: @[dir])
+    doAssert st.keepSettled(not st.fileList.scanning and st.fileList.entries.len > 0)
+    st.apply Command(kind: ckJoin, joinFile: NoSession, joinFiles: @[
+      JoinFile(path: ax, kind: jkSps), JoinFile(path: bx, kind: jkSps)])
+    doAssert st.keepSettled(st.project.survey == srLoaded and st.project.doc.hasStore and
+      not st.project.doc.hasImport), "not imported: " & st.project.surveyNote
+    doAssert st.surveyFiles == @["b.x"], $st.surveyFiles
+    doAssert st.project.doc.survey.len == 1, "the project keeps " &
+      $st.project.doc.survey.len & " files"
+    doAssert st.said("a.x is left out of the import"), "left-out file not said"
+    st.shutdown()
 
   removeDir(dir)
   removeDir(dir & "-project")

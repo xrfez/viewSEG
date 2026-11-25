@@ -886,6 +886,8 @@ type
       ## its files' loads onto the map, until their layers come
     added: seq[SurveyLayerId]
       ## the layers they gave (taken out again at a cancel)
+    orders: seq[tuple[path: string; order: int]]
+      ## when each file its read makes a layer of was asked (`loadSerial`)
     replaced: seq[tuple[by: SurveyLayerId; layers: seq[SurveyLayer]]]
       ## the layers of the same files they took the place of (put back at a
       ## cancel or a failure)
@@ -957,6 +959,7 @@ type
     owner*: Owner                   ## who holds its lock, when this program does not
     folders*: seq[PlaceLook]        ## where each data folder was found
     originals*: seq[OriginalLook]   ## each survey file's original against its copy
+    unused: seq[string] ## the copies of survey files of the document no layer uses (dropped at the next save)
     offer*: bool ## originals changed since they were copied: "Update from the original" is offered
     survey*: SurveyRestore
     surveyNote*: string             ## why the survey failed
@@ -6581,12 +6584,24 @@ proc loadSurvey(state: var AppState; path: string; quiet = false;
 
 proc loaded(state: var AppState; job: JobId; layer: SurveyLayerId)
 
+func orphanText(name: string; held, orphans: set[SurveyContent]; how: string): string =
+  ## What is said of a file of several kinds that a file of fewer took the place of (or
+  ## kept out): the kinds no loaded file holds now.
+  var what: seq[string] = @[]
+  for k in orphans: what.add (if k in {scReceivers, scSources}: $k & " points" else: $k &
+    " records")
+  name & " held " & kindsText(held) & ": its " & what.join(" and ") & " " & how &
+    ", and no " & kindsText(orphans, "or") & " file is loaded now."
+
 proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
   ## A layer a job made: an open file's positions, kept while the file is
   ## open and its keys are as they were read; or a survey file, in place of
   ## its layer from before.
   inc state.loadSerial
-  layer.order = state.loadSerial # (a layer no ask made, an import's read: now)
+  layer.order = state.loadSerial # (a layer no ask made: now)
+  for k in 0 ..< state.joining.orders.len: # an import's read: when it was asked
+    if job != NoJob and job == state.joining.job and state.joining.orders[k].path == layer.path:
+      layer.order = state.joining.orders[k].order
   for i, x in state.loading:
     if x.job == job:
       layer.order = x.order
@@ -6647,12 +6662,25 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
       inc state.files.revision
     let later = state.survey.supersededBy(layer)
     if later >= 0:
-      # asked in the same action, before a file of its kind that is loaded already: the
-      # later of the two stays
+      # a file of its kind asked after it is loaded already: the later of the two stays
+      let winner = state.survey.layers[later].id
       let other = state.survey.layers[later].name
-      state.log.add(sevInfo, name, name & " is not kept: " & other & ", asked after it, " &
-        "holds its " & kindsText(layer.contents * state.survey.layers[later].contents) &
-        " records, and one file of each kind is loaded at a time.")
+      let lost = layer.contents - state.survey.layers[later].contents
+      let kinds = kindsText(layer.contents * state.survey.layers[later].contents)
+      var said = name & " is not kept: " & other & ", asked after it, holds its " & kinds &
+        " records, and one file of each kind is loaded at a time."
+      let orphans = layer.contents - state.survey.held
+      if orphans != {}: said.add " " & orphanText(name, layer.contents, orphans, "was not kept")
+      state.log.add(sevWarning, name, said)
+      template j: untyped = state.joining
+      if winner in j.added: # the import's: taken off at a cancel, this file is wanted then
+        var at = -1
+        for k in 0 ..< j.replaced.len:
+          if j.replaced[k].by == winner: at = k
+        if at < 0:
+          j.replaced.add (winner, newSeq[SurveyLayer]())
+          at = j.replaced.high
+        j.replaced[at].layers.add move(layer)
       state.loaded(job, NoSurveyLayer)
       return
     let again = state.survey.findFile(path) >= 0
@@ -6668,15 +6696,20 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
     var replaced: seq[SurveyLayer] = @[]
     let nowHolds = layer.contents
     let id = state.survey.add(layer, replaced)
+    var orphaned = false
+    let heldNow = state.survey.held
     for k in 0 ..< replaced.len: # by index: a layer is large
       template r: untyped = replaced[k]
       if r.path != path:
-        text.add " It replaces " & r.name & (if r.contents - nowHolds != {}: " (it held " &
-          kindsText(r.contents) & ": all go)" else: "") & ": one " &
-          kindsText(r.contents * nowHolds) & " file is loaded at a time."
+        text.add " It replaces " & r.name & ": one " & kindsText(r.contents * nowHolds) &
+          " file is loaded at a time."
+        let orphans = (r.contents - nowHolds) - heldNow
+        if orphans != {}:
+          orphaned = true
+          text.add " " & orphanText(r.name, r.contents, orphans, "went with it")
     if ours and replaced.len > 0: j.replaced.add (id, move replaced)
     state.pruneDerived() # (an O file loaded: the survey's derivation serves no more)
-    state.log.add(if lost > 0: sevWarning else: sevInfo, name, text)
+    state.log.add(if lost > 0 or orphaned: sevWarning else: sevInfo, name, text)
     if state.checkLayer >= 0 and state.checkKey != wasKey:
       for s in state.sessions: # against the relation file now loaded
         if state.joining.job != NoJob and state.joining.session == s.id:
@@ -7295,6 +7328,17 @@ proc notify(state: var AppState; severity: Severity; text: string) =
 
 proc finishImport(state: var AppState)
 
+func contentsListed(state: AppState; path: string): set[SurveyContent] =
+  ## The kinds of record the file list says survey file `path` holds; none when it is
+  ## not listed or says several kinds.
+  let e = state.files.find(path)
+  if e < 0: return {}
+  case state.files.entries[e].kind
+  of fkSpsSource, fkP1: {scSources}
+  of fkSpsReceiver: {scReceivers}
+  of fkSpsRelation: (if relationDomainOf(path) == rdSource: {scXRecords} else: {scORecords})
+  else: {}
+
 proc startJoin(state: var AppState; i: int; cmd: Command; carried = false) =
   ## `ckJoin`, the survey import. With an open file `sessions[i]`, the files
   ## are read once, on a job (`joinReadWork`), while the plot goes on reading
@@ -7316,6 +7360,25 @@ proc startJoin(state: var AppState; i: int; cmd: Command; carried = false) =
   if files.len == 0:
     state.ignore(cmd, "no survey file was named")
     return
+  # one file of each kind: of two the list names, the later is used (as far as the file list
+  # says what a file holds; the rest is decided as their layers come)
+  var taken: set[SurveyContent] = {}
+  var unused = newSeq[bool](files.len)
+  for k in countdown(files.high, 0):
+    let kinds = state.contentsListed(files[k].path)
+    if kinds * taken != {}:
+      unused[k] = true
+      state.log.add(sevWarning, "survey", files[k].path.extractFilename & " is left out of the " &
+        "import: a later file in the list holds its " & kindsText(kinds * taken) & " records.")
+    else: taken = taken + kinds
+  if true in unused:
+    var left: seq[JoinFile] = @[]
+    for k, f in files:
+      if not unused[k]: left.add f
+    files = left
+    reads = if i >= 0: @[state.sessions[i].path] else: @[]
+    for f in files: reads.add f.path
+  var orders: seq[tuple[path: string; order: int]] = @[]
   var loads: seq[JobId]
   var layers = newSeq[bool](files.len) # made by the import's read (a file open)
   var reuse = newSeq[ptr SurveyGeometry](files.len)
@@ -7325,7 +7388,10 @@ proc startJoin(state: var AppState; i: int; cmd: Command; carried = false) =
     let l = state.survey.findFile(f.path)
     if f.kind != jkCsv and (l < 0 or not state.survey.layers[l].readAs(cmd.joinOptions)) and
         not state.surveyLoading(f.path):
-      if i >= 0: layers[k] = true # its layer is made from what the join reads
+      if i >= 0:
+        layers[k] = true # its layer is made from what the join reads
+        inc state.loadSerial
+        orders.add (f.path, state.loadSerial)
       else:
         state.loadSurvey(f.path, quiet = true, lines = cmd.joinOptions)
         if state.loading.len > 0 and state.loading[^1].path == f.path:
@@ -7357,7 +7423,7 @@ proc startJoin(state: var AppState; i: int; cmd: Command; carried = false) =
       state.inbox.poster, layers, reuse))
     state.joining = Joining(job: job, step: jpReading, session: s.id, path: s.path,
       name: s.name, files: files, options: cmd.joinOptions, units: cmd.joinUnits, loads: loads,
-      reused: reused, by: cmd.origin, carried: carried)
+      orders: orders, reused: reused, by: cmd.origin, carried: carried)
     state.log.add(sevInfo, s.name, "Importing the survey (" & fileNames(files) & ") for " &
       s.name & ".")
 
@@ -7570,7 +7636,13 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
       var back = -1
       for k in 0 ..< j.replaced.len:
         if j.replaced[k].by == id: back = k
-      if back >= 0: state.survey.putBack(id, move j.replaced[back].layers)
+      if back >= 0:
+        let skipped = state.survey.putBack(id, move j.replaced[back].layers)
+        for l in skipped: # one loaded since holds its kind
+          let by = state.survey.clashIndex(l)
+          state.log.add(sevWarning, l.name, l.name & " is not put back: " &
+            (if by >= 0: state.survey.layers[by].name else: "a file") & ", loaded since, " &
+            "holds its " & kindsText(l.contents) & " records.")
       else: discard state.survey.remove(id)
     state.pruneDerived()
     if j.added.len > 0:
@@ -7743,7 +7815,20 @@ proc startListing(state: var AppState; paths: seq[string]; title, folder: string
     by: CommandOrigin)
 
 proc projectChanged(state: var AppState) =
-  ## The project's document changed: written `SaveDelay` later.
+  ## The project's document changed: written `SaveDelay` later. A survey file the project
+  ## named that no layer uses (another of its kind was loaded in its place) is dropped from
+  ## it now.
+  template p: untyped = state.project
+  if p.unused.len > 0 and not p.readOnly:
+    var kept: seq[SurveyCopy] = @[]
+    var looks: seq[OriginalLook] = @[]
+    for n, c in p.doc.survey:
+      if c.copy notin p.unused:
+        kept.add c
+        if n < p.originals.len: looks.add p.originals[n]
+    p.doc.survey = kept
+    p.originals = looks
+    p.unused.setLen 0
   inc state.project.docRev
   inc state.project.revision
   state.project.changedAt = getMonoTime()
@@ -8356,6 +8441,16 @@ proc keepImport(state: var AppState) =
   if p.dir.len == 0 or p.readOnly or not keeps(j.by) or
       j.outcome notin {joJoined, joNothing, joMapOnly}:
     return
+  # what the project keeps is what the map holds: a file whose kind another file took is
+  # left out
+  var kept: seq[JoinFile] = @[]
+  for f in j.files:
+    if f.kind == jkCsv or state.survey.findFile(f.path) >= 0: kept.add f
+    else:
+      state.log.add(sevWarning, "project", f.path.extractFilename & " is not kept in the " &
+        "project: it is not loaded, another file holds its kind of record.")
+  if kept.len == 0: return
+  j.files = kept
   p.doc.options = j.options
   p.doc.units = j.units
   p.doc.notes = j.survey.notes
@@ -8799,6 +8894,14 @@ proc takeRestored(state: var AppState; m: sink Msg) =
   p.joinSurvey = move news.survey
   p.survey = srLoaded
   p.restoreMs = news.restoreMs
+  p.unused.setLen 0
+  for c in p.doc.survey: # a project saved when several files of a kind were allowed
+    if news.layers > 0 and c.kind != jkCsv and
+        state.survey.findFile(p.dir.partOf(c.copy)) < 0:
+      p.unused.add c.copy
+      let name = c.copy.extractFilename
+      state.log.add(sevWarning, "project", name & " is no longer used and will not be kept " &
+        "when the project is next saved: another file holds its kind of record.")
   state.log.add(sevInfo, "project", "The project's survey is ready (" &
     $p.joinSurvey.stations[prSource] & " sources, " & $p.joinSurvey.stations[prReceiver] &
     " receivers, " & $p.joinSurvey.xRelations & " X records, " & $p.joinSurvey.oRelations &

@@ -88,7 +88,10 @@ takes the place of the loaded file that holds the same kind of record, and Messa
 ("It replaces land.x: one X file is loaded at a time."); a file that holds several kinds
 (R and S points) is replaced whole. Files of different kinds, also dropped or chosen
 together, are all loaded; of two of one kind in one action, the later in the list stays.
-Loading the same file again replaces it as before.
+Loading the same file again replaces it as before. When that leaves a kind with no file (an
+R and S file, then an S file), Messages warns that no R file is loaded now. An import that
+names two files of one kind uses the later and keeps only that one in the project; a project
+saved earlier with two of a kind opens with the last and says the other is no longer used.
 
 **File > Open recent** lists the files and the folders opened last (the start screen
 shows the newest ones); the file dialogs start in the folder of the last file opened. Every file and
