@@ -24,6 +24,8 @@
 ## traces where 5 were expected; with `measuredWhole` never called, it counted no record whole.
 ## With the answer named by the relation records' addresses and Only inside the template alone
 ## (as the window named it), `an_answer_is_named_by_*` saw no change for another exclusion edge.
+## With `absorb` keeping only the last file's count of the traces left out (or of the records
+## measured whole), `a_folder_of_six_*` saw 3 where 18 were expected (1 where 6 were).
 ## With no O records derived in the job, `a_receiver_gather_with_only_x_records_*` measured the
 ## five records whole.
 
@@ -189,15 +191,34 @@ proc main*() =
       for row in r.stations: doAssert row.point <= 5.0, "station " & $row.point
       doAssert csvCell(totalsCsv(r.totals), "outside the template") == "3", totalsCsv(r.totals)
       doAssert r.totals.unknown == default(array[TemplateUnknown, int]), $r.totals
-      # the file tab and the folder tab, on one thread and on four, are the same
-      let same = digest(scanOne(path, rkShotGather, x, nil))
-      doAssert digest(scanOne(path, rkShotGather, x, nil, threads = 4)) == same
+      # the file tab and the folder tab are the same
       let sink = QualitySink()
       run(folderScan(fx.dir, false, "", EditsSnapshot(), sink, QualityNote(),
         NoiseSettings(), forcedKinds([path], rkShotGather), relations = x.addrOf), @[path],
         sink, 4)
       doAssert sink.result.receivers.totals == r.totals
       doAssert stationsCsv(sink.result.receivers.stations) == stationsCsv(r.stations)
+
+  block a_folder_of_six_shots_is_the_same_on_one_thread_and_on_four:
+    withFixtures fx:
+      let x = surveyOf(xRec(7, "1.00", "99.00", 1, 5, 10, 1, 5))
+      for (folder, source, outside, whole) in [("listed", 99.0, 18, 0), ("unnamed", 0.0, 0, 6)]:
+        let dir = fx.dir / folder
+        createDir(dir)
+        var paths: seq[string] = @[]
+        for i in 1 .. 6:
+          paths.add dir / ("shot" & $i & ".sgd")
+          writeFile(paths[^1], shotRows((if source == 0: 0.0 else: 1.0), source, true), false)
+        var digests: seq[string] = @[]
+        for threads in [1, 4]:
+          let sink = QualitySink()
+          run(folderScan(dir, false, "", EditsSnapshot(), sink, QualityNote(), NoiseSettings(),
+            forcedKinds(paths, rkShotGather), relations = x.addrOf), paths, sink, threads)
+          let t = sink.result.receivers.totals
+          doAssert t.files == 6 and t.outside == outside and t.unknown[tuNoStation] == whole and
+            t.traces == 6 * (8 - outside div 6), folder & " on " & $threads & ": " & $t
+          digests.add digest(sink.result)
+        doAssert digests[0] == digests[1], folder
 
   block templateOnly_off_or_no_relation_file_judges_every_trace:
     withFixtures fx:
