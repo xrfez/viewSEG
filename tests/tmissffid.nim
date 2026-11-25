@@ -140,7 +140,7 @@ proc main*() =
       scanMissing(dir, @[other], surveyOf(xp), sink))
     doAssert waitUntil(lane.info(id).get.state in {jsDone, jsFailed, jsCancelled})
     doAssert lane.info(id).get.state == jsDone, lane.info(id).get.error
-    doAssert sink.result.report.records.len == 0, $sink.result.report.records
+    doAssert sink.result.shot.stats.records == 0, $sink.result.shot.stats
     doAssert sink.result.unmatched.len == 1, $sink.result.unmatched.len
     let u = sink.result.unmatched[0]
     doAssert u.path == "other.sgd" and u.record == 7, $u
@@ -148,7 +148,7 @@ proc main*() =
     let ok = MissingSink()
     let id2 = lane.submit(missingSpec(dir, @[own]), scanMissing(dir, @[own], surveyOf(xp), ok))
     doAssert waitUntil(lane.info(id2).get.state in {jsDone, jsFailed, jsCancelled})
-    doAssert ok.result.report.records.len == 1
+    doAssert ok.result.shot.stats.records == 1 and ok.result.shot.stats.missing == 2
 
   removeDir(dir)
   echo "tmissffid: ok"

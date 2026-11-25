@@ -1,30 +1,27 @@
-## A background job scans a folder's seismic files for the missing-trace
-## report. Paths come back relative to the folder. A file that is not
-## seismic, or that cannot be read, is skipped. No survey fails the job
-## with one sentence. A cancel leaves the sink empty.
+## A background job counts, for the seismic files it is given, the stations the
+## survey's relation records call for that the files do not hold. A shot gather
+## is checked against its X record (receiver stations), a sliced receiver
+## gather against its O record, loaded or derived from the X records (source
+## stations); a continuous receiver recording is not checked. The components of
+## a station count once. Paths come back relative to the folder; a file that
+## is not seismic or cannot be read is skipped; no survey fails the job with
+## one sentence; a cancel leaves the sink empty; the folder walk goes into
+## subfolders only when asked.
 ##
-## Seen to fail: with no index cache saved, `second_scan_uses_the_index` rejected
-## a second scan that walked headers (3 then 3); with a cancel during the report
-## still stored, `cancel_during_the_report`
-## rejected a job that finished done; with a path scanned once per listing,
-## `duplicate_path_is_scanned_once`
-## rejected files 3, records 3; with a receiver gather matched by its record number,
-## `receiver_matches_by_station` rejected a row of expected 1, present 1
-## for the other receiver; with an ambiguous gather stored as a row,
-## `ambiguous_is_unmatched` rejected a row of expected 0, present 0, missing 0;
-## with the stored path
-## left absolute, `shots_and_skips` rejected a file that was not `sub/one.sgd`.
-##
-## A receiver gather is checked with its stations swapped against the
-## receiver relations stored as source records, so the library's
-## source-domain check sees the gather's expected sources.
+## Seen to fail: with the subfolder flag ignored (always on),
+## `subfolders_only_when_asked` rejected 3 files for the walk without them;
+## with the continuous kind not looked for, `continuous_is_not_checked`
+## rejected a checked record of 4 missing stations; with no stored index cache,
+## `second_scan_uses_the_index` rejected a second scan that walked headers
+## (3 then 3); with a cancel during the report still stored,
+## `cancel_during_the_report` rejected a job that finished done.
 
 import std/[os, strutils, times]
 when defined(release):
   import std/[monotimes, times]
 import parseSEG
 import viewSEG/core/[jobs, missingjobs, missingreport]
-import utils/[faultyfs, waiting]
+import utils/[faultyfs, kindfiles, waiting]
 
 proc put(line: var string; at: int; text: string) =
   let i = at - 1
@@ -63,26 +60,29 @@ proc surveyOf(lines: varargs[string]): ref SurveyGeometry =
   result[] = g
 
 proc shotFile(path: string; shots: openArray[tuple[record: int; src: float64;
-    receivers: Slice[int]]]) =
+    receivers: Slice[int]]]; components = 1) =
+  ## Each receiver station is written once for each component (1 to `components`).
   var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
     numSamples: 1, time: 1_700_000_000.0))
   let samples = @[0'f32]
   for shot in shots:
     var ch = 1
     for point in shot.receivers:
-      var k = initTraceKeys()
-      k.record = float64(shot.record)
-      k.channel = float64(ch)
-      k.srcLine = 1
-      k.srcPoint = shot.src
-      k.srcIndex = 1
-      k.rcvLine = 10
-      k.rcvPoint = float64(point)
-      k.rcvIndex = 1
-      k.intervalUs = 2000
-      k.status = tsLive
-      w.writeTrace(k, samples)
-      inc ch
+      for comp in 1 .. components:
+        var k = initTraceKeys()
+        k.record = float64(shot.record)
+        k.channel = float64(ch)
+        k.component = uint8(comp)
+        k.srcLine = 1
+        k.srcPoint = shot.src
+        k.srcIndex = 1
+        k.rcvLine = 10
+        k.rcvPoint = float64(point)
+        k.rcvIndex = 1
+        k.intervalUs = 2000
+        k.status = tsLive
+        w.writeTrace(k, samples)
+        inc ch
   doAssert w.close().len == 0, "shot file was not written: " & path
 
 proc receiverFile(path: string; record: int; receiver: float64;
@@ -118,10 +118,10 @@ proc run(folder: string; paths: seq[string]; relations: ref SurveyGeometry; cach
   let info = jobs.info(id).get
   (info.state, sink, info.error)
 
-proc pointAt(rows: openArray[PointRow]; line, point: float64): PointRow =
+proc rowAt(rows: openArray[StationRow]; line, point: float64): StationRow =
   for r in rows:
     if r.line == line and r.point == point: return r
-  doAssert false, "no point " & $line & ":" & $point
+  doAssert false, "no station " & $line & ":" & $point
 
 proc skippedWhy(rows: openArray[tuple[path, why: string]]; path: string): string =
   for r in rows:
@@ -157,68 +157,74 @@ proc main*() =
     doAssert got.error == NoSurvey, got.error
     doAssert not got.sink.result.ok
     doAssert got.sink.result.reason == NoSurvey, got.sink.result.reason
-    doAssert got.sink.result.report.records.len == 0
+    doAssert got.sink.result.shot.stats.records == 0
     let empty = new SurveyGeometry
     let again = run(dir, @[], empty)
     doAssert again.st == jsFailed and again.error == NoSurvey, again.error
 
-  block shots_and_skips:
-    let survey = surveyOf(
-      xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4),
-      xRec(2, "1.00", "2.00", 1, 4, 10, 1, 4))
-    let one = dir / "sub" / "one.sgd"
-    let two = dir / "two.sgd"
-    shotFile(one, [(record: 1, src: 1.0, receivers: 1 .. 2)])
-    shotFile(two, [
-      (record: 1, src: 1.0, receivers: 1 .. 3),
-      (record: 2, src: 2.0, receivers: 1 .. 3)])
+  block shot_gather_against_x:
+    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4))
+    let path = dir / "sub" / "one.sgd"
+    shotFile(path, [(record: 1, src: 1.0, receivers: 1 .. 2)])
     writeFile(dir / "notes.txt", "not seismic\n")
     writeFile(dir / "gone.sgd", "x")
     install()
     fault(dir / "gone.sgd", fkIo)
-    let got = run(dir, @[one, two, dir / "notes.txt", dir / "gone.sgd"], survey)
+    let got = run(dir, @[path, dir / "notes.txt", dir / "gone.sgd"], survey)
     releaseAll()
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
-    doAssert got.sink.result.ok
-    let t = got.sink.result.report.totals
-    doAssert t.files == 2 and t.records == 3, $t
-    doAssert t.expected == 8 and t.present == 6 and t.missing == 2, $t
-    doAssert t.alsoIn == 1 and t.never == 1 and t.duplicates == 0 and t.extras == 0, $t
-    doAssert t.xpsWithoutData.len == 0, $t.xpsWithoutData
-    doAssert abs(t.percentMissing - 100.0 * 2.0 / 8.0) < 1e-9, $t.percentMissing
-    let rows = got.sink.result.report.records
-    doAssert rows.len == 3
-    doAssert rows[0].file == ("sub" / "one.sgd") or rows[1].file == ("sub" / "one.sgd") or
-      rows[2].file == ("sub" / "one.sgd")
-    var sawOne = false
-    for r in rows:
-      doAssert r.file in [("sub" / "one.sgd"), "two.sgd"], r.file
-      if r.file == ("sub" / "one.sgd"):
-        sawOne = true
-        doAssert r.record == 1 and r.missing == 2 and r.present == 2 and r.alsoIn == 1, $r
-    doAssert sawOne
-    let never = pointAt(got.sink.result.report.points, 10, 4)
-    doAssert never.never and never.missingIn == 2 and never.expectedIn == 2, $never
-    for p in got.sink.result.report.points:
-      doAssert not (p.line == 10 and p.point == 3), "recorded in one file: " & $p
-    doAssert skippedWhy(got.sink.result.skipped, "notes.txt") ==
-      "not a SEG-Y, SEG-D or SEG-2 file"
-    doAssert skippedWhy(got.sink.result.skipped, "gone.sgd") == "Input/output error"
+    let r = got.sink.result
+    doAssert r.ok and r.receiver.stats.records == 0
+    let t = r.shot.stats
+    doAssert t.side == ssReceivers and t.files == 1 and t.records == 1, $t
+    doAssert t.inTemplate == 4 and t.found == 2 and t.missing == 2, $t
+    doAssert abs(t.percentMissing - 50.0) < 1e-9, $t
+    doAssert t.expectedInRecords == 4 and t.presentInRecords == 2 and
+      t.missingInRecords == 2 and abs(t.percentMissingInRecords - 50.0) < 1e-9, $t
+    doAssert r.shot.rows.len == 2, $r.shot.rows
+    doAssert rowAt(r.shot.rows, 10, 3).missing == 1 and rowAt(r.shot.rows, 10, 4).missing == 1
+    doAssert skippedWhy(r.skipped, "notes.txt") == "not a SEG-Y, SEG-D or SEG-2 file"
+    doAssert skippedWhy(r.skipped, "gone.sgd") == "Input/output error"
 
-  block duplicate_path_is_scanned_once:
-    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 2, 10, 1, 2))
-    let path = dir / "dup.sgd"
-    shotFile(path, [(record: 1, src: 1.0, receivers: 1 .. 2)])
-    let again = dir / "sub" / ".." / "dup.sgd"
-    let got = run(dir, @[path, path, again], survey)
+  block records_of_one_file:
+    ## Two records of one file: the figures are the stations once and the
+    ## station-records both ways.
+    let survey = surveyOf(
+      xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4),
+      xRec(2, "1.00", "2.00", 1, 4, 10, 1, 4))
+    let path = dir / "two.sgd"
+    shotFile(path, [
+      (record: 1, src: 1.0, receivers: 1 .. 3),
+      (record: 2, src: 2.0, receivers: 2 .. 3)])
+    let got = run(dir, @[path], survey)
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
-    let t = got.sink.result.report.totals
-    doAssert t.files == 1 and t.records == 1, $t
-    doAssert t.expected == 2 and t.present == 2 and t.missing == 0, $t
-    doAssert got.sink.result.skipped.len == 0
-    doAssert got.sink.result.report.records[0].alsoIn == 0, $got.sink.result.report.records[0]
+    let t = got.sink.result.shot.stats
+    doAssert t.files == 1 and t.records == 2, $t
+    doAssert t.inTemplate == 4 and t.found == 3 and t.missing == 2, $t
+    doAssert t.expectedInRecords == 8 and t.presentInRecords == 5 and
+      t.missingInRecords == 3, $t
+    let rows = got.sink.result.shot.rows
+    doAssert rowAt(rows, 10, 4).missing == 2 and rowAt(rows, 10, 1).missing == 1, $rows
+    doAssert rows.len == 2
 
-  block receiver_gather:
+  block components_count_a_station_once:
+    ## The same stations written with one, three and four traces each give the
+    ## same station figures: a station is present when any trace of it is.
+    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 12, 10, 1, 12))
+    for components in [1, 3, 4]:
+      let path = dir / ("comp" & $components & ".sgd")
+      shotFile(path, [(record: 1, src: 1.0, receivers: 1 .. 8)], components)
+      let got = run(dir, @[path], survey)
+      doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+      let t = got.sink.result.shot.stats
+      doAssert t.inTemplate == 12 and t.found == 8 and t.missing == 4, $components & " " & $t
+      doAssert t.expectedInRecords == 12 and t.presentInRecords == 8 and
+        t.missingInRecords == 4, $components & " " & $t
+      doAssert abs(t.percentMissing - 100.0 / 3.0) < 1e-9, $t
+      doAssert got.sink.result.shot.rows.len == 4 and
+        rowAt(got.sink.result.shot.rows, 10, 12).missing == 1
+
+  block receiver_gather_against_derived_o:
     let survey = surveyOf(
       xRec(1, "1.00", "1.00", 1, 1, 10, 1, 1),
       xRec(2, "1.00", "2.00", 1, 1, 10, 1, 1),
@@ -227,12 +233,11 @@ proc main*() =
     receiverFile(path, 1, 1.0, [1.0, 2.0])
     let got = run(dir, @[path], survey)
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
-    let t = got.sink.result.report.totals
-    doAssert t.files == 1 and t.records == 1, $t
-    doAssert t.expected == 3 and t.present == 2 and t.missing == 1, $t
-    doAssert t.never == 1, $t
-    let miss = pointAt(got.sink.result.report.points, 1, 3)
-    doAssert miss.never and miss.missingIn == 1, $miss
+    let t = got.sink.result.receiver.stats
+    doAssert t.side == ssSources and t.derived and t.files == 1 and t.records == 1, $t
+    doAssert t.inTemplate == 3 and t.found == 2 and t.missing == 1, $t
+    doAssert got.sink.result.shot.stats.records == 0
+    doAssert rowAt(got.sink.result.receiver.rows, 1, 3).missing == 1
 
   block loaded_o_records:
     ## The same gather, with the O record loaded rather than derived.
@@ -245,34 +250,57 @@ proc main*() =
     receiverFile(path, 1, 1.0, [1.0, 2.0])
     let got = run(dir, @[path], survey)
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
-    let t = got.sink.result.report.totals
-    doAssert t.expected == 3 and t.present == 2 and t.missing == 1 and t.never == 1, $t
-    doAssert pointAt(got.sink.result.report.points, 1, 3).never
+    let t = got.sink.result.receiver.stats
+    doAssert not t.derived, $t
+    doAssert t.inTemplate == 3 and t.found == 2 and t.missing == 1, $t
+    doAssert rowAt(got.sink.result.receiver.rows, 1, 3).missing == 1
 
-  block mixed_folder:
-    let survey = surveyOf(
-      xRec(1, "1.00", "1.00", 1, 2, 10, 1, 2),
-      xRec(2, "1.00", "2.00", 1, 2, 10, 1, 2),
-      xRec(3, "1.00", "3.00", 1, 2, 10, 1, 2))
-    let shot = dir / "shot.sgd"
-    let node = dir / "node2.sgd"
-    shotFile(shot, [(record: 1, src: 1.0, receivers: 1 .. 1)])
-    receiverFile(node, 7, 1.0, [1.0, 2.0])
-    let got = run(dir, @[shot, node], survey)
+  block folder_adds_up_across_files:
+    ## One more file lacking a station adds one to its Missing.
+    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4))
+    createDir(dir / "add")
+    let a = dir / "add" / "a.sgd"
+    let b = dir / "add" / "b.sgd"
+    let c = dir / "add" / "c.sgd"
+    shotFile(a, [(record: 1, src: 1.0, receivers: 1 .. 2)])
+    shotFile(b, [(record: 1, src: 1.0, receivers: 1 .. 3)])
+    shotFile(c, [(record: 1, src: 1.0, receivers: 1 .. 2)])
+    let got = run(dir / "add", @[a, b, c], survey)
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
-    let rows = got.sink.result.report.records
-    doAssert rows.len == 2, $rows.len
-    var shotMissing, nodeMissing = false
-    for r in rows:
-      if r.file == "shot.sgd":
-        doAssert r.missing == 1 and r.present == 1, $r
-        shotMissing = true
-      elif r.file == "node2.sgd":
-        doAssert r.missing == 1 and r.present == 2, $r
-        nodeMissing = true
-    doAssert shotMissing and nodeMissing
-    doAssert pointAt(got.sink.result.report.points, 10, 2).missingIn >= 1
-    doAssert pointAt(got.sink.result.report.points, 1, 3).missingIn >= 1
+    let r = got.sink.result.shot
+    doAssert r.stats.files == 3 and r.stats.records == 3, $r.stats
+    doAssert rowAt(r.rows, 10, 3).missing == 2 and rowAt(r.rows, 10, 4).missing == 3, $r.rows
+    doAssert r.stats.inTemplate == 4 and r.stats.found == 3 and r.stats.missing == 2, $r.stats
+    doAssert r.stats.expectedInRecords == 12 and r.stats.presentInRecords == 7, $r.stats
+
+  block subfolders_only_when_asked:
+    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4))
+    let root = dir / "walk"
+    createDir(root / "inner")
+    shotFile(root / "top.sgd", [(record: 1, src: 1.0, receivers: 1 .. 4)])
+    shotFile(root / "inner" / "deep.sgd", [(record: 1, src: 1.0, receivers: 1 .. 2)])
+    shotFile(root / "inner" / "deeper.sgd", [(record: 1, src: 1.0, receivers: 1 .. 3)])
+    for subfolders in [false, true]:
+      let lane = initJobs()
+      let sink = MissingSink()
+      let id = lane.submit(missingSpec(root, @[root]),
+        folderScan(root, subfolders, "", survey, sink))
+      doAssert waitUntil(lane.state(id) in {jsDone, jsFailed, jsCancelled}),
+        "the walk did not finish"
+      doAssert lane.state(id) == jsDone, lane.info(id).get.error
+      let t = sink.result.shot.stats
+      doAssert t.files == (if subfolders: 3 else: 1), "subfolders " & $subfolders & ": " & $t
+      doAssert sink.result.shot.rows.len == (if subfolders: 2 else: 0), $sink.result.shot.rows
+
+  block continuous_is_not_checked:
+    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4))
+    let path = writeSpecs(dir / "cont", "cont", [spec(0, 0), spec(0, 1000), spec(0, 2000)])
+    let got = run(dir, @[path], survey)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    let r = got.sink.result
+    doAssert r.shot.stats.records == 0 and r.receiver.stats.records == 0, $r.shot.stats
+    doAssert r.notChecked.len == 1 and r.notChecked[0].path == "cont" / "cont.sgd", $r.notChecked
+    doAssert "continuous" in r.notChecked[0].why
 
   block ambiguous_is_unmatched:
     let survey = surveyOf(
@@ -280,17 +308,15 @@ proc main*() =
       xRec(2, "1.00", "1.00", 1, 2, 10, 1, 2),
       xRec(3, "1.00", "9.00", 1, 1, 10, 1, 1))
     let path = dir / "amb.sgd"
-    shotFile(path, [(record: 9, src: 1.0, receivers: 1 .. 1)])
+    shotFile(path, [(record: 9, src: 1.0, receivers: 1 .. 2)])
     let got = run(dir, @[path], survey)
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
-    doAssert got.sink.result.report.records.len == 0, $got.sink.result.report.records
+    doAssert got.sink.result.shot.stats.records == 0
     doAssert got.sink.result.unmatched.len == 1, $got.sink.result.unmatched.len
     let u = got.sink.result.unmatched[0]
     doAssert u.path == "amb.sgd" and u.record == 9, $u
     doAssert u.why ==
       "2 survey records share this source and the record number matches neither", u.why
-    doAssert got.sink.result.report.totals.xpsWithoutData == @[3'i64],
-      $got.sink.result.report.totals.xpsWithoutData
 
   block receiver_matches_by_station:
     ## Derived receiver records are numbered after the survey's. A gather
@@ -302,24 +328,18 @@ proc main*() =
     receiverFile(wrong, 3, 99.0, [1.0, 2.0])
     let got = run(dir, @[wrong], survey)
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
-    doAssert got.sink.result.report.records.len == 0, $got.sink.result.report.records
+    doAssert got.sink.result.receiver.stats.records == 0
     doAssert got.sink.result.unmatched.len == 1, $got.sink.result.unmatched
     let u = got.sink.result.unmatched[0]
     doAssert u.path == "wrong-node.sgd" and u.record == 3, $u
-    doAssert u.why == "no survey record matches this gather", u.why
-    let plain = dir / "plain-node.sgd"
-    receiverFile(plain, 9, 99.0, [1.0, 2.0])
-    let plainGot = run(dir, @[plain], survey)
-    doAssert plainGot.sink.result.report.records.len == 0, $plainGot.sink.result.report.records
-    doAssert plainGot.sink.result.unmatched.len == 1
-    doAssert plainGot.sink.result.unmatched[0].why == "no survey record matches this gather"
+    doAssert u.why == "no O record matches this receiver", u.why
     let right = dir / "right-node.sgd"
     receiverFile(right, 3, 2.0, [2.0, 8.0])
     let rightGot = run(dir, @[right], survey)
     doAssert rightGot.st == jsDone, rightGot.error
     doAssert rightGot.sink.result.unmatched.len == 0, $rightGot.sink.result.unmatched
-    let t = rightGot.sink.result.report.totals
-    doAssert t.records == 1 and t.expected == 1 and t.present == 1 and t.missing == 0, $t
+    let t = rightGot.sink.result.receiver.stats
+    doAssert t.records == 1 and t.inTemplate == 1 and t.found == 1 and t.missing == 0, $t
 
   block cancel_leaves_the_sink:
     reads = 0
@@ -337,7 +357,7 @@ proc main*() =
     doAssert lane.state(id) == jsCancelled, $lane.state(id) & " " & lane.info(id).get.error
     doAssert not sink.result.ok
     doAssert sink.result.reason.len == 0
-    doAssert sink.result.report.records.len == 0
+    doAssert sink.result.shot.stats.records == 0
     doAssert sink.result.skipped.len == 0
 
   block cancel_during_the_report:
@@ -353,7 +373,7 @@ proc main*() =
     doAssert lane.state(id) == jsCancelled, $lane.state(id) & " " & lane.info(id).get.error
     doAssert not sink.result.ok
     doAssert sink.result.reason.len == 0
-    doAssert sink.result.report.records.len == 0
+    doAssert sink.result.shot.stats.records == 0
     doAssert sink.result.skipped.len == 0
     doAssert sink.result.unmatched.len == 0
 
@@ -366,20 +386,20 @@ proc main*() =
     resetCounts()
     let first = run(dir, @[one], survey, cache)
     doAssert first.st == jsDone, first.error
-    doAssert first.sink.result.report.totals.missing == 0
+    doAssert first.sink.result.shot.stats.missing == 0
     let walked = calls(foMapped, one)
     resetCounts()
     let again = run(dir, @[one], survey, cache)
     let reread = calls(foMapped, one)
     doAssert again.st == jsDone, again.error
-    doAssert again.sink.result.report.totals.missing == 0
+    doAssert again.sink.result.shot.stats.missing == 0
     doAssert reread < walked, "second scan walked headers: " & $reread & " then " & $walked
     shotFile(one, [(record: 1, src: 1.0, receivers: 1 .. 2)])
     setLastModificationTime(one, getTime() + initDuration(seconds = 5))
     let changed = run(dir, @[one], survey, cache)
     doAssert changed.st == jsDone, changed.error
-    doAssert changed.sink.result.report.totals.missing == 2, "a changed file was not seen: " &
-      $changed.sink.result.report.totals.missing
+    doAssert changed.sink.result.shot.stats.missing == 2, "a changed file was not seen: " &
+      $changed.sink.result.shot.stats.missing
 
   when defined(release):
     block folder_of_two_hundred:
@@ -411,8 +431,8 @@ proc main*() =
       let got = run(dir, paths, survey)
       let ms = (getMonoTime() - t0).inMilliseconds
       doAssert got.st == jsDone, got.error
-      doAssert got.sink.result.report.totals.files == 200
-      doAssert got.sink.result.report.totals.missing == 0
+      doAssert got.sink.result.shot.stats.files == 200
+      doAssert got.sink.result.shot.stats.missing == 0
       echo "tmissingjobs: ", paths.len, " files, ", ms, " ms, ",
         paths.len.float64 * 1000.0 / float64(max(ms, 1)), " files/s"
 
