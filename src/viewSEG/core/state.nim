@@ -1297,9 +1297,12 @@ type
     treatsKept: Table[string, TreatAs]
       ## the part of `treats` that is the user's own, which the store keeps: an agent's choice is
       ## for the session only and never reaches a document the edits are written to
-    treatsPending: HashSet[string]
-      ## the paths whose choice in `treats` is of a document the file's hash has not confirmed
-      ## (it may be another content's): shown, but no job uses it (`treatInForce`)
+    treatsPending: Table[string, TreatAs]
+      ## what a listing found for a file in a document the file's hash has not confirmed (it
+      ## may be another content's), without the parts a command set: shown beneath what the
+      ## commands set (`shownTreat`), but no job uses it (`treatInForce`)
+    treatsOwn: Table[string, set[TreatPart]]
+      ## the parts of a file's choice that a command set this session (`treatsTouched`)
     treatsTouched: HashSet[string]
       ## the paths a command changed this session: a late answer of the kinds job does not
       ## put back what it read before
@@ -1802,27 +1805,53 @@ func recordOf(state: AppState; i: int): FileRecord =
     result.treat = state.knownDocs[r.doc].treat
 
 func treatInForce(state: AppState; path: string): TreatAs =
-  ## What jobs use as the file's forced treatment: nothing while the choice listed is of a
-  ## document the file's hash has not confirmed (`treatsPending`).
-  if path in state.treatsPending: TreatAs() else: state.treats.getOrDefault(path)
+  ## What jobs use as the file's forced treatment: what the commands set and what the file's
+  ## hash confirmed, never what a listing found in a document not yet confirmed.
+  state.treats.getOrDefault(path)
+
+func shownTreat(state: AppState; path: string): TreatAs =
+  ## What the file is shown as treated as: what is in force, and under it, for the parts none
+  ## of it sets, what a listing found in a document not yet confirmed.
+  result = state.treats.getOrDefault(path)
+  let p = state.treatsPending.getOrDefault(path)
+  if result.kind.isNone: result.kind = p.kind
+  if result.grouping.isNone: result.grouping = p.grouping
+  if result.subSort.isNone: result.subSort = p.subSort
+
+func treatNotInUse(state: AppState; path: string): bool =
+  ## Whether the file is shown a choice that no job uses yet (`treatsPending`).
+  state.treatsPending.getOrDefault(path).isSet
+
+func showTreat(state: AppState; e: var FileEntry) =
+  e.treat = state.shownTreat(e.path)
+  e.treatPending = state.treatNotInUse(e.path)
 
 proc loadTreat(state: var AppState; path: string; t: TreatAs; pending = false) =
   ## What the store keeps of what the user forced for the file at `path`, as its document was
   ## read: by the kinds of a listing (`takeKinds`), or with the document an open takes
   ## (`applyRecord`). A choice made by a command this session stays.
-  if path in state.treatsTouched: return
-  if t.isSet and pending: state.treatsPending.incl path
-  else: state.treatsPending.excl path
-  if t.isSet:
-    state.treats[path] = t
-    state.treatsKept[path] = t
+  let own = state.treatsOwn.getOrDefault(path)
+  if pending:
+    # (only the parts no command of this session set)
+    let rest = t.merged(TreatAs(), own)
+    if rest.isSet: state.treatsPending[path] = rest else: state.treatsPending.del path
+    if path notin state.treatsTouched:
+      state.treats.del path
+      state.treatsKept.del path
   else:
-    state.treats.del path
-    state.treatsKept.del path
+    state.treatsPending.del path
+    # (the commands' parts stay over what the document says)
+    let now = t.merged(state.treats.getOrDefault(path), own)
+    let kept = t.merged(state.treatsKept.getOrDefault(path), own)
+    if now.isSet: state.treats[path] = now else: state.treats.del path
+    if kept.isSet: state.treatsKept[path] = kept else: state.treatsKept.del path
   let i = state.files.find(path)
-  if i >= 0 and state.files.entries[i].treat != t:
-    state.files.entries[i].treat = t
-    state.files.changedAt(i)
+  if i >= 0:
+    let shown = state.shownTreat(path)
+    if state.files.entries[i].treat != shown or
+        state.files.entries[i].treatPending != state.treatNotInUse(path):
+      state.showTreat(state.files.entries[i])
+      state.files.changedAt(i)
 
 func checking(r: Remembered): bool {.inline.} =
   ## Whether the edits brought back for `r`'s file wait for the hash of every
@@ -3305,7 +3334,7 @@ proc canonical*(path: string): string =
 proc treatOf*(state: AppState; path: string): TreatAs =
   ## What the user forced for the file at `path` (kind and order); nothing is forced for a
   ## file that has no choice.
-  state.treats.getOrDefault(canonical(path))
+  state.shownTreat(canonical(path))
 
 proc ignore(state: var AppState; cmd: Command; why: string) =
   state.log.add(sevWarning, "commands", "Ignored \"" & $cmd.kind & "\": " & why & ".")
@@ -9413,7 +9442,7 @@ proc startKinds(state: var AppState) =
         e.kindState = had.get.state
         e.recording = had.get.kind
         e.traceOrder = had.get.order
-        e.treat = state.treats.getOrDefault(e.path)
+        state.showTreat(e)
         state.files.changedAt(i)
       elif asks.len < KindBatch:
         asks.add WatchedFile(path: e.path, size: e.size, modified: e.modified)
@@ -9847,7 +9876,7 @@ proc takeKinds(state: var AppState; m: sink Msg) =
       if r < 0 or not state.remembered[r].known or
           (state.remembered[r].doc.len == 0 and not state.remembered[r].hashed):
         state.loadTreat(a.path, a.treat, a.treatUnconfirmed)
-      e.treat = state.treats.getOrDefault(a.path)
+      state.showTreat(e)
       f.changedAt(i)
       state.kindCache.remember(a, m.kindsVendors, f)
 
@@ -11552,12 +11581,19 @@ proc treatAs(state: var AppState; cmd: Command) =
   # written whatever this run knew: another viewSEG may have set the part since)
   if t == before and state.treats.getOrDefault(path) == t and not kept: return
   state.treatsTouched.incl path
-  state.treatsPending.excl path
+  var named: set[TreatPart] = {}
+  if cmd.treatKind.len > 0: named.incl tpKind
+  if cmd.treatGrouping.len > 0: named.incl tpGrouping
+  if cmd.treatSubSort.len > 0: named.incl tpSubSort
+  state.treatsOwn[path] = state.treatsOwn.getOrDefault(path) + named
+  if path in state.treatsPending: # (what this command names is the user's now)
+    let rest = state.treatsPending[path].merged(TreatAs(), named)
+    if rest.isSet: state.treatsPending[path] = rest else: state.treatsPending.del path
   if t.isSet: state.treats[path] = t else: state.treats.del path
   if kept:
     if t.isSet: state.treatsKept[path] = t else: state.treatsKept.del path
   if listed >= 0:
-    state.files.entries[listed].treat = t
+    state.showTreat(state.files.entries[listed])
     state.files.changedAt(listed)
   if kept:
     var parts = state.treatParts.getOrDefault(path)

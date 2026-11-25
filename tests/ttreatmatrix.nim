@@ -177,6 +177,7 @@ proc main*() =
               one.open(f)
               doAssert one.settled(one.idle), name & ": what is remembered was not read"
               got.inRun = one.treatOf(f).kind
+              doAssert one.treatInForce(f) == one.treatOf(f), name & ": a choice still pending"
               if one.fileList.entries[0].treat.kind != got.inRun:
                 got.inRun = some rkShotGather # (the row and the file disagree: never wanted)
             of acOpen, acEdit:
@@ -263,6 +264,49 @@ proc main*() =
         if p.endsWith(MemorySuffix): after.add readFile(p)
       doAssert before == after, "carriedOnce: an open with nothing to carry wrote"
       doAssert docs(cfg).allIt(not it.treat.isSet), "carriedOnce: a force stayed"
+    block pendingParts:
+      # a listing finds a force in a document that may be another content's (it knows a hash):
+      # shown, not in force. A command that sets another part starts from what is in force, not
+      # from what is pending; the hash then confirms the pending part or drops it, and the
+      # command's part stays either way
+      var n = 0
+      for confirms in [true, false]:
+        for origin in [coWindow, coAgent]:
+          inc n
+          let at = fx.dir / ("pending" & $n)
+          let cfg = at / "config"
+          let f = canonical(writeSpecs(at / "data", "f", [spec(0, 0), spec(0, 1000),
+            spec(0, 2000)]))
+          var modified: Time
+          var id = quickIdentity(f, modified)
+          id.full = if confirms: fullHash(f) else: fullHash(f) xor 1
+          id.fullKnown = true
+          let store = Store(home: cfg / StoreFolder)
+          createDir(store.home)
+          let d = FileRecord(identity: id, name: "f.sgd", path: f,
+            opened: getTime() - initDuration(days = 1), modified: modified,
+            treat: TreatAs(kind: some rkReceiverContinuous))
+          writeFile(store.docPath(freeDocName(id, @[])), memoryDocument(d))
+          let name = (if confirms: "confirmed" else: "refuted") & " by " & $origin
+          var st = appIn(cfg)
+          st.apply Command(kind: ckBrowse, paths: @[at / "data"])
+          doAssert st.settled(st.listed), name & ": not listed"
+          doAssert st.treatOf(f).kind == some(rkReceiverContinuous) and
+            not st.treatInForce(f).isSet and st.fileList.entries[0].treatPending,
+            name & ": the listed choice is not shown pending"
+          st.apply Command(kind: ckTreatAs, treatPath: f, treatGrouping: "flag", origin: origin)
+          doAssert st.treatInForce(f).kind.isNone and
+            st.treatInForce(f).grouping == some(tgByFlag), name & ": the command took the pending"
+          doAssert st.treatOf(f).kind.isSome and st.fileList.entries[0].treatPending,
+            name & ": the pending kind is not shown beneath"
+          st.open(f)
+          doAssert st.settled(st.idle), name & ": not settled"
+          doAssert st.treatInForce(f).grouping == some(tgByFlag), name & ": the command's part went"
+          doAssert st.treatInForce(f).kind == (if confirms: some rkReceiverContinuous
+            else: none(RecordingKind)), name & ": the pending kind after the hash"
+          doAssert st.treatOf(f) == st.treatInForce(f) and
+            not st.fileList.entries[0].treatPending, name & ": still pending after the hash"
+          st.shutdown()
     doAssert wrong.len == 0, $wrong.len & " of " & $cells.len & " cells:\n" & wrong.join("\n")
     echo "ttreatmatrix: ", cells.len, " cells"
 
