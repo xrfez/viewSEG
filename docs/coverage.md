@@ -41,12 +41,12 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.22.0: capabilities | names | processSEG 0.14.1: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 67 (27 in part) | 232 | 46 (29 in part) | 257 |
+| `built` | 68 (27 in part) | 234 | 46 (29 in part) | 257 |
 | `internal` | 22 | 68 | 10 | 90 |
 | `planned` | 32 | 213 | 40 | 357 |
 | `to plan` | 2 | 9 | 1 | 5 |
-| `not applicable` | 22 | 347 | 7 | 68 |
-| all | 145 | 869 | 104 | 777 |
+| `not applicable` | 22 | 345 | 7 | 68 |
+| all | 146 | 869 | 104 | 777 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -235,6 +235,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Any standard to SEG-Y, with a loss report | `convertFile`, `ConvertOptions`, `convertSegdToSegy`, `convertSeg2ToSegy` | Convert… (file or folder, progress, cancel, losses listed) | planned |
 | SEG-Y revision, byte order, sample format | `convertSegy`, `ConvertOptions(revision, byteOrder, format)`, `targetFormat`, `SegyTargetFormat` | Convert… | planned |
 | A text header template's characters checked for its character set | `checkTextHeader`, `thfBadCharacter` | The project's text header templates (`core/outputtext`); no window yet | internal |
+| A SEG-Y text header read from a file for a template | `decodeTextHeader`, `TextHeaderSize` | The Output window's text header editor: Import... takes the lines of a text file or of the first 3200 bytes of a file (`view/outputtextimport`) | built |
 | A client's SEG-Y textual header checked, written whole, or replaced later | `TextHeaderProblem`, `TextHeaderFault` (`thfTooManyLines`, `thfLineTooLong`, `thfRevisionCard`, `thfEndMarker`, `thfReadBack`), `replaceTextHeader` | Output: a client text header typed or pasted, its faults shown before writing; a header stamped into a finished file | planned |
 | What a revision rewrite dropped | `revisionNotes`, `openSeismicWriter(path, like, segyRevision)`, `SegyOutputOptions.revision`, `SegdOutputOptions.revision` | Output: the Revision choice writes SEG-Y Rev 0, 1, 2.0, 2.1 or SEG-D Rev 3.0, 3.1 (or the source's own) and the notes list what the target revision cannot hold | built |
 | Binary file header values set on write | `binaryOverrides`, `binaryHeaderFields`, `HeaderOverride`'s `binary.<field>` names | A project's chosen binary header set (`core/outputbinary`, the output binary command) is written into every SEG-Y file Output writes: the settable fields come from `binaryHeaderFields`, the Rev 2 fields are left out of a Rev 0 or 1 file with a note, a set the writer refuses is not used and the result says why; no Output window choice yet | built (the project's sets and the command); planned (the window) |

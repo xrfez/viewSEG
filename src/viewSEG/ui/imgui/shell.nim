@@ -64,6 +64,7 @@ type
     dkShotLog = "Shot log",                    ## one shot log to import: CSV, text or TSV
     dkCutDest = "Slice destination"            ## the folder a slice by shot log is written into
     dkExportShotSps = "Export SPS"             ## an SPS file to write (a save dialog)
+    dkOutputText = "Text header file"          ## a text file or a SEG-Y file whose text header is read
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
@@ -264,6 +265,10 @@ let spsFilters = [
   SDL_DialogFileFilter(name: "SPS (*.sps, *.s01)", pattern: "sps;s01"),
   SDL_DialogFileFilter(name: "All files", pattern: "*")]
 
+let textHeaderFilters = [
+  SDL_DialogFileFilter(name: "Text or SEG-Y files", pattern: "txt;text;hdr;sgy;segy"),
+  SDL_DialogFileFilter(name: "All files", pattern: "*")]
+
 let shotLogFilters = [
   SDL_DialogFileFilter(name: "Shot log (*.csv, *.txt, *.tsv)", pattern: "csv;txt;tsv"),
   SDL_DialogFileFilter(name: "All files", pattern: "*")]
@@ -331,6 +336,9 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
   of dkExportShotSps:
     SDL_ShowSaveFileDialog(onDialogResult, userdata, parent, addr spsFilters[0],
       spsFilters.len.cint, at)
+  of dkOutputText:
+    SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr textHeaderFilters[0],
+      textHeaderFilters.len.cint, at, false)
   of dkShotLog:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr shotLogFilters[0],
       shotLogFilters.len.cint, at, false)

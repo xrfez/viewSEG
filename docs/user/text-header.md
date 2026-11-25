@@ -30,6 +30,19 @@ in use (or an empty one).
   character, no character past U+00FF); ASCII holds the printable ones.
 - **Insert a token** puts a token at the cursor, or at the end when the cursor was not in
   the lines.
+- **Import...** (beside the token list) takes the lines in from a file. Choose a plain text
+  file (ASCII, Latin-1 or UTF-8, with LF or CRLF line ends), or a file whose first 3200 bytes
+  are a SEG-Y text header, in EBCDIC or ASCII (a file of exactly 3200 bytes, or any SEG-Y
+  file). The file is read in the background and never changed. The lines replace the lines in
+  the box, and the template is kept only when you save it. A line longer than 80 characters
+  is cut and lines after line 38 are dropped; the line under the buttons says how many
+  ("3 lines were longer than 80 characters and were cut; 5 lines after line 38 were
+  dropped."). Lines are not padded: the writer pads each card. From a SEG-Y header, cards 1
+  to 38 are taken, with their trailing blanks left off, and the line says which character set
+  was read; the template's character set is not changed. A character the character set
+  cannot hold is a problem, as when typed. A file over 1 MiB that does not start with a SEG-Y
+  text header is refused with a sentence. **Undo import** puts back the lines that were there
+  before.
 - **Preview** shows the lines filled in for the file the Seismic window shows, or with
   sample values when none is shown (it says which). A problem is shown in the warning colour
   under it: a token the file has no value for, a line too long once filled in, or a

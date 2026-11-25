@@ -1,0 +1,121 @@
+## Taking a text header in from a file for the Output window's text header
+## editor: a plain text file, or the 3200 bytes of a SEG-Y text header (alone,
+## or the start of a SEG-Y file), in EBCDIC or ASCII. The functions work on
+## the bytes already read; reading the file is the window's job. No toolkit.
+##
+## The template holds the cards the writer leaves to the person: cards 1 to
+## 38 (`MaxTextLines`) of at most 80 characters (`MaxTextLine`); cards 39 and
+## 40 are always written by the library. A longer line is cut, lines past 38
+## are dropped, and the note says how many. Lines are not padded: the writer
+## pads each card.
+
+import std/[strutils, unicode]
+import parseSEG
+import ../core/outputtext
+
+const
+  ImportLimit* = 1 shl 20 ## bytes of a file read to be taken in as plain text
+  ImportButton* = "Import..."
+  ImportTip* = "Take the text of a file in as this template's lines: a text file, or the " &
+    "text header of a SEG-Y file. Nothing is kept until you save."
+  UndoImportButton* = "Undo import"
+  UndoImportTip* = "Put back the lines that were there before the import."
+  ImportReading* = "The file is being read."
+  ImportTitle* = "Read a text header file"
+  ImportTooBig* = "The file is larger than 1 MiB and does not start with a SEG-Y text " &
+    "header: it was not taken in."
+  ImportNotText* = "The file is not text and does not start with a SEG-Y text header."
+  ImportEmpty* = "The file holds no text."
+  ImportUnreadable* = "The file could not be read."
+
+type
+  TextImport* = object
+    ## `ok`: `text` holds the lines, one `\n` between two, and `note` says what
+    ## was done. Not ok: `why` says why nothing is taken in.
+    ok*: bool
+    text*: string
+    raw*: bool ## a SEG-Y text header, whose character set is `encoding`
+    encoding*: TextEncoding
+    note*: string
+    why*: string
+
+func isControl(c: char): bool {.inline.} =
+  (c < ' ' and c notin {'\t', '\n', '\r'}) or c == '\x7F'
+
+func latinToUtf8(s: string): string =
+  ## `s` as Latin-1, one byte a character, in UTF-8.
+  result = newStringOfCap(s.len + s.len div 8)
+  for c in s:
+    if c < '\x80': result.add c
+    else: result.add Rune(ord(c)).toUTF8
+
+func cutRunes(line: string; width: int): string =
+  ## The first `width` characters of `line`.
+  if line.runeLen <= width: line else: line.substr(0, line.runeOffset(width) - 1)
+
+func plural(n: int; one, many: string): string =
+  $n & " " & (if n == 1: one else: many)
+
+func looksRaw(b: string; size: int64): bool =
+  ## Whether `b`, the start of a file of `size` bytes, is a SEG-Y text header: the
+  ## whole file is 3200 bytes with no line feed, or the file goes on after the
+  ## header with bytes no text holds (the binary header), or it starts as EBCDIC "C ".
+  if b.len < TextHeaderSize: return false
+  if size == TextHeaderSize: return '\n' notin b
+  if b[0] == '\xC3' and b[1] == '\x40': return true
+  for i in 0 ..< min(b.len, TextHeaderSize + 400):
+    if isControl(b[i]): return true
+
+func rawCards(b: string): TextImport =
+  var bytes = newSeq[byte](TextHeaderSize)
+  for i in 0 ..< TextHeaderSize: bytes[i] = byte(b[i])
+  let h = decodeTextHeader(bytes)
+  let all = h.text
+  var lines: seq[string] = @[]
+  for n in 0 ..< MaxTextLines:
+    var card = all.substr(n * MaxTextLine, n * MaxTextLine + MaxTextLine - 1)
+    for c in card.mitems:
+      if isControl(c): c = ' '
+    lines.add latinToUtf8(card).strip(leading = false, chars = {' '})
+  while lines.len > 0 and lines[^1].len == 0: lines.setLen(lines.len - 1)
+  result = TextImport(ok: true, text: lines.join("\n"), raw: true, encoding: h.encoding,
+    note: "The text header was read as " & (if h.encoding == teAscii: "ASCII" else: "EBCDIC") &
+    ": cards 1 to " & $MaxTextLines & " were taken in; cards 39 and 40 are written by the " &
+    "library.")
+
+func plainLines(b: string): TextImport =
+  var text = b
+  if text.startsWith("\xEF\xBB\xBF"): text = text.substr(3)
+  if validateUtf8(text) >= 0: text = latinToUtf8(text)
+  var lines = text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
+  while lines.len > 0 and lines[^1].strip.len == 0: lines.setLen(lines.len - 1)
+  if lines.len == 0: return TextImport(why: ImportEmpty)
+  var cut = 0
+  for line in lines.mitems:
+    if line.runeLen > MaxTextLine:
+      line = cutRunes(line, MaxTextLine)
+      inc cut
+  var dropped = 0
+  if lines.len > MaxTextLines:
+    dropped = lines.len - MaxTextLines
+    lines.setLen(MaxTextLines)
+  var parts: seq[string] = @[]
+  if cut > 0:
+    parts.add plural(cut, "line was", "lines were") & " longer than " & $MaxTextLine &
+      " characters and " & (if cut == 1: "was" else: "were") & " cut"
+  if dropped > 0:
+    parts.add plural(dropped, "line", "lines") & " after line " & $MaxTextLines &
+      (if dropped == 1: " was" else: " were") & " dropped"
+  let note = if parts.len == 0: plural(lines.len, "line was", "lines were") & " taken in."
+    else: capitalizeAscii(parts.join("; ")) & "."
+  TextImport(ok: true, text: lines.join("\n"), encoding: teEbcdic, note: note)
+
+func importHeader*(b: string; size: int64): TextImport =
+  ## `b`: the first bytes of a file of `size` bytes (at most `ImportLimit` + 1 of
+  ## them are read). A SEG-Y text header is recognised first, then plain text.
+  if looksRaw(b, size): return rawCards(b)
+  if size > ImportLimit: return TextImport(why: ImportTooBig)
+  if size == 0 or b.len == 0: return TextImport(why: ImportEmpty)
+  for c in b:
+    if isControl(c): return TextImport(why: ImportNotText)
+  plainLines(b)

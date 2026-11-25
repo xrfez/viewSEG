@@ -17,7 +17,8 @@ import imguin/cimgui
 import ../../core/[edits, filejobs, filekinds, filesystem, geometry, jobs, outputbatch,
   namepreviewjobs, outputbinary, outputjobs, outputtext, panels, processing, references,
   settings, state, vendormaps]
-import ../../view/[filetable, outputbinaryedit, outputtextedit, outputwords, theme]
+import ../../view/[filetable, outputbinaryedit, outputtextedit, outputtextimport, outputwords,
+  theme]
 import fittext, focus, fonts, icons, marks, overflow, style
 from windows import awOutput, beginClosable
 
@@ -41,6 +42,13 @@ type
     ## What the job that reads the shown file's values for the preview left.
     ok: bool
     values: TextValues
+    why: string
+    gen: int
+
+  ImportNote = ref object
+    ## What the job that reads a header file for the text editor left.
+    bytes: string ## at most `ImportLimit` + 1 bytes from the start
+    size: int64
     why: string
     gen: int
 
@@ -110,6 +118,15 @@ type
     valuesJob: JobId = NoJob
     valuesNote: ValuesNote
     valuesGen: int
+    importJob: JobId = NoJob
+    importNote: ImportNote
+    importGen: int
+    importPath: string                         ## the file the editor takes its lines from
+    wantImport: bool
+    askText: bool                              ## the Import... dialog is wanted
+    importSay: string                          ## what the last import did, or why not
+    importUndo: string                         ## the lines before the last import
+    haveUndo: bool
     textFile: string                           ## the file the preview values are read from
     textFilled: bool                           ## `textValues` are that file's, not sample values
     textValues: TextValues
@@ -137,7 +154,7 @@ type
 
   OutputOutput* = object
     commands*: seq[Command]
-    askSource*, askDest*: bool
+    askSource*, askDest*, askText*: bool
     askAt*: string
 
 proc open*(ui: var OutputUi; folder: string) =
@@ -158,6 +175,11 @@ proc setDest*(ui: var OutputUi; folder: string) =
   ui.dest = folder
   ui.refusal = ""
   ui.wantRefuse = true
+
+proc setTextFile*(ui: var OutputUi; path: string) =
+  ## The text header editor's Import... dialog's answer.
+  ui.importPath = path
+  ui.wantImport = true
 
 func slash(path: string): string =
   result = newStringOfCap(path.len)
@@ -310,6 +332,38 @@ proc refuseWork(source, dest: string; note: RefuseNote; gen: int): JobWork =
     note.sentence = refuseOutputRoot(source, dest)
     note.gen = gen
 
+proc bufText(buf: openArray[char]): string =
+  if buf.len == 0 or buf[0] == '\0': return ""
+  $cast[cstring](unsafeAddr buf[0])
+
+proc setBuf(buf: var openArray[char]; text: string) =
+  let n = min(text.len, buf.high)
+  if n > 0: copyMem(addr buf[0], unsafeAddr text[0], n)
+  for i in n ..< buf.len: buf[i] = '\0'
+
+proc importWork(path: string; note: ImportNote; gen: int): JobWork =
+  ## Reads the start of the file, at most `ImportLimit` + 1 bytes. The file is only
+  ## opened to be read.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.checkCancelled()
+    ctx.setPhase ImportReading
+    note.why = ""
+    try:
+      note.size = fs.getFileSize(path)
+      let want = int(min(note.size, int64(ImportLimit + 1)))
+      var bytes = newString(want)
+      var f: syncio.File
+      if not fs.open(f, path, fmRead): raise newException(IOError, ImportUnreadable)
+      try:
+        let got = if want > 0: fs.readBuffer(f, path, addr bytes[0], want) else: 0
+        bytes.setLen got
+      finally:
+        close(f)
+      note.bytes = bytes
+    except IOError, OSError:
+      note.why = ImportUnreadable
+    note.gen = gen
+
 proc cancelJob(st: AppState; id: var JobId) =
   if id != NoJob:
     discard st.jobs.cancel(id)
@@ -350,6 +404,31 @@ proc startRefuse(ui: var OutputUi; st: AppState) =
   let gen = ui.refuseGen
   ui.refuseJob = st.jobs.submit(JobSpec(title: CheckTitle, lane: jlBackground),
     refuseWork(source, dest, note, gen))
+
+proc startImport(ui: var OutputUi; st: AppState) =
+  cancelJob(st, ui.importJob)
+  inc ui.importGen
+  ui.importNote = ImportNote(gen: -1)
+  ui.importSay = ImportReading
+  let path = ui.importPath
+  ui.importJob = st.jobs.submit(JobSpec(title: ImportTitle, lane: jlBackground,
+    reads: @[path]), importWork(path, ui.importNote, ui.importGen))
+
+proc applyImport(ui: var OutputUi) =
+  ## The file's bytes are in: the lines replace the editor's text, which
+  ## stays as it was, to be put back, when the file gives none.
+  let note = ui.importNote
+  let got = if note.why.len > 0: TextImport(why: note.why)
+            else: importHeader(note.bytes, note.size)
+  if got.ok:
+    ui.importUndo = ui.textEdit.text
+    ui.haveUndo = true
+    ui.textEdit.text = got.text
+    setBuf(ui.linesBuf, got.text)
+    ui.textCursor = -1
+    ui.importSay = got.note
+  else:
+    ui.importSay = got.why
 
 proc applyList(ui: var OutputUi; st: AppState) =
   ui.listed = ui.listNote.files
@@ -394,6 +473,16 @@ proc poll(ui: var OutputUi; st: AppState) =
         ui.refusal = ui.refuseNote.sentence
       ui.refuseJob = NoJob
       ui.checking = false
+  if ui.importJob != NoJob:
+    let info = st.jobs.info(ui.importJob)
+    if info.isNone:
+      ui.importJob = NoJob
+    elif info.get.state notin {jsQueued, jsRunning}:
+      if info.get.state == jsDone and ui.importNote != nil and
+          ui.importNote.gen == ui.importGen:
+        ui.applyImport()
+      elif info.get.state == jsFailed: ui.importSay = ImportUnreadable
+      ui.importJob = NoJob
   if ui.runJob != NoJob:
     let info = st.jobs.info(ui.runJob)
     if info.isNone:
@@ -426,6 +515,9 @@ proc consider(ui: var OutputUi; st: AppState) =
   if ui.wantRefuse:
     ui.wantRefuse = false
     ui.startRefuse(st)
+  if ui.wantImport:
+    ui.wantImport = false
+    ui.startImport(st)
 
 proc canRun(ui: OutputUi): bool =
   ui.source.len > 0 and ui.dest.len > 0 and ui.refusal.len == 0 and not ui.checking and
@@ -882,15 +974,6 @@ proc drawRun(ui: var OutputUi; st: AppState; phase: string; marks: var Marks;
 func takesWidth(kind: NamePartKind): bool =
   kind notin {npStem, npText, npTime, npSensorSerial, npVendor}
 
-proc bufText(buf: openArray[char]): string =
-  if buf.len == 0 or buf[0] == '\0': return ""
-  $cast[cstring](unsafeAddr buf[0])
-
-proc setBuf(buf: var openArray[char]; text: string) =
-  let n = min(text.len, buf.high)
-  if n > 0: copyMem(addr buf[0], unsafeAddr text[0], n)
-  for i in n ..< buf.len: buf[i] = '\0'
-
 proc padOf(buf: openArray[char]): int =
   let text = bufText(buf).strip
   if text.len == 0: return 0
@@ -1304,6 +1387,8 @@ proc loadText(ui: var OutputUi; e: TextEdit) =
   ui.textKey = ""
   ui.textFile = ""
   ui.textFilled = false
+  ui.importSay = ""
+  ui.haveUndo = false
 
 proc drawTextRow(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
   ## The SEG-Y text header: the project's template in use, and the button
@@ -1471,6 +1556,25 @@ proc drawTextEditor(ui: var OutputUi; st: AppState; fonts: Fonts; t: Theme;
       igEndCombo()
     marks.mark("output.text.insert")
     tip(InsertTip)
+    igSameLine(0, -1)
+    if igButton((ImportButton & "##text").cstring, ImVec2_c(x: 0, y: 0)):
+      ui.askText = true
+      outp.askAt = ui.source
+    marks.mark("output.text.import")
+    tip(ImportTip)
+    if ui.haveUndo:
+      igSameLine(0, -1)
+      if igButton((UndoImportButton & "##text").cstring, ImVec2_c(x: 0, y: 0)):
+        ui.textEdit.text = ui.importUndo
+        setBuf(ui.linesBuf, ui.importUndo)
+        ui.textCursor = -1
+        ui.haveUndo = false
+        ui.importSay = ""
+      marks.mark("output.text.import.undo")
+      tip(UndoImportTip)
+    if ui.importSay.len > 0:
+      wrappedIn(ui.importSay, t.roles[rlInfo])
+      marks.mark("output.text.import.note " & ui.importSay)
     ui.refreshPreview(st)
     let values = if ui.textFilled: ui.textValues else: sampleValues(nowUs())
     let shown = previewOf(ui.textEdit, values, not ui.textFilled)
@@ -1889,5 +1993,7 @@ proc drawOutput*(ui: var OutputUi; title: string; st: AppState; fonts: Fonts; t:
   ui.drawBinaryEditor(st, t, marks, result)
   result.askSource = ui.askSource
   result.askDest = ui.askDest
+  result.askText = ui.askText
+  ui.askText = false
   if ui.askSource: ui.askSource = false
   if ui.askDest: ui.askDest = false
