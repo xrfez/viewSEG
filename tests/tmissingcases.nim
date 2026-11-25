@@ -17,7 +17,10 @@
 ## with any file of one receiver taken for receiver data,
 ## `a_shot_of_one_live_receiver_among_shots` rejected 4 shots and no missing receiver;
 ## with X records at one source compared by the stations found alone,
-## `two_x_records_one_inside_the_other` rejected data 1..4 as unmatched.
+## `two_x_records_one_inside_the_other` rejected data 1..4 as unmatched. With the
+## set grown to twice the word it needs, `a_receiver_keeps_a_bit_for_each_source`
+## rejected 4 088 bytes; with every file of several receivers counted,
+## `receivers_merged_over_files` rejected 4 files for 3.
 
 import std/[os, strutils]
 import parseSEG
@@ -130,6 +133,28 @@ proc slicedFile(path: string; receiver: float64; sources: openArray[float64];
     k.intervalUs = 2000
     k.status = tsLive
     k.time = 1_700_000_000.0 + 60.0 * float64(i)
+    w.writeTrace(k, newSeq[float32](10))
+  doAssert w.close().len == 0, "not written: " & path
+
+proc sliceTraces(path: string; slices: openArray[tuple[rcv, src: float64; srcIndex: int]];
+    timedByShot = false) =
+  ## Shot slices a minute apart (or, `timedByShot`, at a minute times the source
+  ## point), each its own record, at receiver line 10.
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
+    numSamples: 10, time: 1_700_000_000.0, receiverGather: true))
+  for i, sl in slices:
+    var k = initTraceKeys()
+    k.record = float64(100 + i)
+    k.channel = float64(i + 1)
+    k.srcLine = 1
+    k.srcPoint = sl.src
+    k.srcIndex = int16(sl.srcIndex)
+    k.rcvLine = 10
+    k.rcvPoint = sl.rcv
+    k.rcvIndex = 1
+    k.intervalUs = 2000
+    k.status = tsLive
+    k.time = 1_700_000_000.0 + 60.0 * (if timedByShot: sl.src else: float64(i))
     w.writeTrace(k, newSeq[float32](10))
   doAssert w.close().len == 0, "not written: " & path
 
@@ -354,6 +379,67 @@ proc main*() =
     doAssert r.unmatched.len == 0, $r.unmatched
     expect(r.shot.figures, "1 1 4 3 1 | 4 3 1 10/4x1")
     expect(r.receiver.figures, "1 1 3 2 1 | 3 2 1 1/1x1")
+
+  block a_receiver_keeps_a_bit_for_each_source:
+    ## A receiver's sources are a bit each, up to the highest source number of the
+    ## scan it recorded, in words of 64: 20 000 sources take 313 words, 2 504 bytes.
+    var all = IdSet()
+    for id in 0 ..< 20_000: all.incl id
+    doAssert all.byteSize == 2_504, $all.byteSize
+    var last = IdSet()
+    last.incl 19_999
+    doAssert last.byteSize == 2_504 and 19_999 in last and 0 notin last
+    var few = IdSet()
+    for id in [0, 5, 63]: few.incl id
+    doAssert few.byteSize == 8 and 63 in few and 64 notin few and 4 notin few
+    doAssert IdSet().byteSize == 0 and 0 notin IdSet()
+
+  block receivers_merged_over_files:
+    ## Source 1 is shot twice (X1, X2), source 2 at index 1 (X3) and index 2 (X4),
+    ## source 3 once (X5), each recorded by receivers 1..3.
+    proc xAt(record: int; srcPoint: string; srcIndex: int): string =
+      result = xRec(record, "1.00", srcPoint, 1, 3, 10, 1, 3)
+      result[37] = char(ord('0') + srcIndex)
+    let sv = surveyOf(xAt(1, "1.00", 1), xAt(2, "1.00", 1), xAt(3, "2.00", 1),
+      xAt(4, "2.00", 2), xAt(5, "3.00", 1))
+    let folder = dir / "merged"
+    createDir(folder)
+    let a = folder / "a.sgd"
+    let b = folder / "b.sgd"
+    let c = folder / "c.sgd"
+    sliceTraces(a, [(rcv: 2.0, src: 1.0, srcIndex: 1)])
+    sliceTraces(b, [(rcv: 2.0, src: 2.0, srcIndex: 1)])
+    sliceTraces(c, [(rcv: 2.0, src: 1.0, srcIndex: 1)])
+    expect(run(folder, @[a, b, c], sv).receiver.figures, "3 1 3 2 1 | 3 2 1 1/3x1")
+    let b2 = folder / "b2.sgd"
+    let c2 = folder / "c2.sgd"
+    sliceTraces(b2, [(rcv: 2.0, src: 3.0, srcIndex: 1), (rcv: 3.0, src: 1.0, srcIndex: 1),
+      (rcv: 3.0, src: 2.0, srcIndex: 2)])
+    sliceTraces(c2, [(rcv: 3.0, src: 3.0, srcIndex: 1)])
+    expect(run(folder, @[a, b2, c2], sv).receiver.figures, "3 2 3 3 1 | 6 5 1 1/2x1")
+    # a source written with index 0 matches the source at either index
+    let e = folder / "e.sgd"
+    sliceTraces(e, [(rcv: 2.0, src: 2.0, srcIndex: 0)])
+    expect(run(folder, @[e], sv).receiver.figures, "1 1 3 1 2 | 3 1 2 1/1x1 1/3x1")
+    # two loaded O records of receiver 2 that overlap: sources 1..3 and 2..4
+    let xs = [xRec(1, "1.00", "1.00", 1, 3, 10, 1, 3), xRec(2, "1.00", "2.00", 1, 3, 10, 1, 3),
+      xRec(3, "1.00", "3.00", 1, 3, 10, 1, 3), xRec(4, "1.00", "4.00", 1, 3, 10, 1, 3)]
+    let overlap = surveyOf(@xs & @[oRec(50, "10.00", "2.00", "1", 1, 3),
+      oRec(51, "10.00", "2.00", "1", 2, 4)])
+    let d = folder / "d.sgd"
+    sliceTraces(d, [(rcv: 2.0, src: 1.0, srcIndex: 1), (rcv: 2.0, src: 2.0, srcIndex: 1)])
+    expect(run(folder, @[d], overlap).receiver.figures, "1 1 4 2 2 | 4 2 2 1/3x1 1/4x1")
+    # files count when they hold a receiver checked: receivers 98 and 99 have no O
+    # record, so the file of both of them and the file of 99 alone do not count
+    let none = folder / "none.sgd"
+    sliceTraces(none, [(rcv: 98.0, src: 1.0, srcIndex: 1), (rcv: 98.0, src: 2.0, srcIndex: 1),
+      (rcv: 99.0, src: 1.0, srcIndex: 1), (rcv: 99.0, src: 2.0, srcIndex: 1)], timedByShot = true)
+    let lone = folder / "lone.sgd"
+    sliceTraces(lone, [(rcv: 99.0, src: 3.0, srcIndex: 1)])
+    let r = run(folder, @[a, b2, none, lone, c2], sv)
+    expect(r.receiver.figures, "3 2 3 3 1 | 6 5 1 1/2x1")
+    doAssert r.unmatched.len == 2 and r.unmatched[0].path == "none.sgd" and
+      r.unmatched[1].path == "none.sgd", $r.unmatched
 
   block sliced_receiver_with_a_record_number_for_each_slice_or_one:
     let xs = [xRec(1, "1.00", "1.00", 1, 3, 10, 1, 3), xRec(2, "1.00", "2.00", 1, 3, 10, 1, 3),
