@@ -1542,11 +1542,12 @@ type
     traceReads: seq[tuple[job: JobId; keys: TraceKeys; rows: seq[HeaderRow];
       vendor: VendorShown]]
       ## traces read for agent control (`readTraceHeaders`), oldest first, until taken
-    ownPositions: seq[tuple[session: SessionId; index: int; keys: TraceKeys]]
+    ownPositions: seq[tuple[session: SessionId; index: int; keys: TraceKeys; why: string]]
       ## receiver positions traces' own headers give (`askOwnPosition`), oldest first; a trace
-      ## that gave none is kept too, with a NaN position, so it is not read again
+      ## that gave none, or was not read (`why` says), is kept too, so it is not read again
     ownAsking: seq[tuple[session: SessionId; index: int]] ## those being read
     ownReadCount: int ## how many reads were started
+    ownReadLimit*: int64 ## the size above which `ownPositionWork` opens no unsampled file
     mail: seq[Msg]
     indexCache: string ## the index cache folder; "" for none
     settings: Settings
@@ -1660,7 +1661,7 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
   markUiThread()
   result = AppState(log: initMessageLog(logCapacity), inbox: initInbox(),
     batchSurvey: SurveyHolds(),
-    jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
+    jobs: initJobs(jobHistory), indexCache: indexCache, ownReadLimit: OwnReadLimit, nextFile: 1,
     nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace(),
     files: FileList(job: NoJob), watchEvery: watchEvery, quietScan: NoJob, kindJob: NoJob,
     pairSearch: (NoJob, "", NoPanel, coWindow),
@@ -11829,18 +11830,30 @@ proc utcWords*(t: float64): string =
   ## A POSIX time as "2026-03-01 12:00:00 UTC".
   fromUnix(int64(floor(t))).utc.format("yyyy-MM-dd HH:mm:ss") & " UTC"
 
-proc ownPositionOf*(state: AppState; trace: int): Option[tuple[x, y, z: float64]] =
-  ## The receiver position the header of survey-wide trace `trace` gives, read from the file
-  ## on disk by `ckOwnPosition`; none until it is read, and when the header gives none (NaN
-  ## or (0, 0)).
-  result = none(tuple[x, y, z: float64])
+proc ownPositionState*(state: AppState; trace: int): tuple[kind: OwnPositionKind; why: string] =
+  ## What is known of the receiver position the header of survey-wide trace `trace` gives,
+  ## read from the file on disk by `ckOwnPosition`.
+  result = (kind: opReading, why: "")
   let i = state.findTrace(trace)
   if i < 0: return
   let local = trace - state.sessions[i].base
   for o in state.ownPositions:
-    if o.session == state.sessions[i].id and o.index == local and o.keys.rcvX == o.keys.rcvX and
-        o.keys.rcvY == o.keys.rcvY and
-        (o.keys.rcvX != 0 or o.keys.rcvY != 0): # (0, 0): the header gives no position
+    if o.session == state.sessions[i].id and o.index == local:
+      if o.why.len > 0: return (kind: opNotRead, why: o.why)
+      let k = o.keys
+      return (kind: if k.rcvX == k.rcvX and k.rcvY == k.rcvY and (k.rcvX != 0 or k.rcvY != 0):
+        opGiven else: opNone, why: "")
+
+proc ownPositionOf*(state: AppState; trace: int): Option[tuple[x, y, z: float64]] =
+  ## The receiver position the header of survey-wide trace `trace` gives, read from the file
+  ## on disk by `ckOwnPosition`; none until it is read, when the header gives none (NaN or
+  ## (0, 0)) and when it was not read (`ownPositionState`).
+  result = none(tuple[x, y, z: float64])
+  if state.ownPositionState(trace).kind != opGiven: return
+  let i = state.findTrace(trace)
+  let local = trace - state.sessions[i].base
+  for o in state.ownPositions:
+    if o.session == state.sessions[i].id and o.index == local:
       return some((x: o.keys.rcvX, y: o.keys.rcvY, z: o.keys.rcvZ))
 
 func keysInMemory*(state: AppState; trace: int): Option[TraceKeys] =
@@ -11852,6 +11865,19 @@ func keysInMemory*(state: AppState; trace: int): Option[TraceKeys] =
   let local = trace - state.sessions[i].base
   template keys: untyped = state.sessions[i].filePtr[].index.keys
   if local in 0 ..< keys.len: result = some(keys[local])
+
+proc keysHeld*(state: AppState; trace: int): tuple[keys: Option[TraceKeys]; busy: bool] =
+  ## `keysInMemory`, copied only while no job has the file to itself (a job replaces its keys);
+  ## `busy` when one has, and then no keys.
+  result = (keys: none(TraceKeys), busy: false)
+  let i = state.findTrace(trace)
+  if i < 0: return
+  let path = state.sessions[i].path
+  if not state.jobs.hold(path):
+    result.busy = true
+    return
+  result.keys = state.keysInMemory(trace)
+  discard state.jobs.release(path)
 
 func ownPositionReads*(state: AppState): int {.inline.} =
   ## How many reads of a trace's own header position were started (`askOwnPosition`).
@@ -11874,7 +11900,8 @@ proc askOwnPosition(state: var AppState; cmd: Command) =
   inc state.ownReadCount
   discard state.jobs.submit(JobSpec(title: "Read the header position of a trace of " & s.name,
     lane: jlInteractive, reads: @[s.path]), ownPositionWork(s.filePtr, s.path, s.id, local,
-    s.facts.opened.choice, indexCacheFile(state.indexCache, s.path), state.inbox.poster))
+    s.facts.opened.choice, indexCacheFile(state.indexCache, s.path), state.inbox.poster,
+        state.ownReadLimit))
 
 func headerUnitsProblem*(state: AppState; trace: int): string =
   ## Why the position the header of survey-wide trace `trace` gives cannot be taken as a
@@ -11903,18 +11930,6 @@ func movesAppliedTo*(state: AppState; key: StationKey): seq[StationMove] =
 const
   MaxStationNumber = 1e8 ## a line or point a move may name (SPS: F10.2)
   MaxMovePosition = 1e9  ## the largest x, y or elevation of a move, in the survey's units
-  MaxMoveNote = 256      ## characters of a move's note
-
-func moveNoteOf(note: string): string =
-  ## `note` cut to `MaxMoveNote` bytes (at a character's edge), its control characters and
-  ## line breaks made blanks.
-  result = note
-  if result.len > MaxMoveNote:
-    result.setLen MaxMoveNote
-    while result.len > 0 and (ord(result[^1]) and 0xC0) == 0x80: result.setLen result.len - 1
-    if result.len > 0 and ord(result[^1]) >= 0xC0: result.setLen result.len - 1
-  for c in result.mitems:
-    if c < ' ' or c == '\x7f': c = ' '
 
 proc stationMove(state: var AppState; cmd: Command) =
   ## `ckStationMove`: a receiver station sits at another position (from a time on), or its
@@ -11952,7 +11967,8 @@ proc stationMove(state: var AppState; cmd: Command) =
       return
   else:
     moves.add StationMove(station: key, fromTime: whenFrom, x: cmd.moveX, y: cmd.moveY,
-      elev: (if cmd.moveHasElev: some(cmd.moveElev) else: none(float64)), note: moveNoteOf(cmd.moveNote))
+      elev: (if cmd.moveHasElev: some(cmd.moveElev) else: none(float64)),
+      note: cleanNote(cmd.moveNote))
   let keptIn =
     if not state.inProject: "for this run only (no project is open)"
     elif state.project.readOnly: "for this run only (the project is read-only)"
@@ -14072,7 +14088,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkOwnPosition:
       state.ownAsking.keepItIf(it.session != m.ownSession or it.index != m.ownIndex)
       state.ownPositions.keepItIf(it.session != m.ownSession or it.index != m.ownIndex)
-      state.ownPositions.add (m.ownSession, m.ownIndex, m.ownKeys)
+      state.ownPositions.add (m.ownSession, m.ownIndex, m.ownKeys, m.ownWhy)
       if state.ownPositions.len > MaxOwnPositions: state.ownPositions.delete(0)
     of mkTile:
       let k = state.findPanel(m.tile.panel)

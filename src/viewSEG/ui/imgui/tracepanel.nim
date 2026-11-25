@@ -235,7 +235,8 @@ type
     station: StationMoveUi ## the station move's dialog, from the plot's menu
     menuKeys: Option[TraceKeys]
       ## a copy of the keys of the trace under the menu, taken when it opened (the index is
-      ## written by jobs; the menu never reads it while it is open)
+      ## written by jobs, and `keysHeld` copies it while none has the file)
+    menuBusy: bool ## a job had the file to itself when the menu opened
     menuAux: int ## the auxiliary position of the trace under the menu; 0 for none
     cursorText: string ## the time the cursor's time line showed last; "" for none
     cursorHeader: seq[string] ## the header values it showed over the rows; none for none
@@ -2048,7 +2049,8 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
       res.commands.add tp.menuStations
     marks.mark("plot.menu.station")
     tip("Select this trace's station on the map (M)")
-    if under >= 0: tp.station.drawStationMoveGroup(st, under, tp.menuKeys, marks, res.commands)
+    if under >= 0: tp.station.drawStationMoveGroup(st, under, tp.menuKeys, tp.menuBusy, marks,
+      res.commands)
   template e: untyped = st.editsOf(k) # not copied
   if caps.menuWholeRecord:
     menuHeading(marks, "Whole record", "plot.menu.heading.record")
@@ -2993,7 +2995,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       tp.menuMouse = igGetIO_Nil().MousePos
       tp.menuStations = if under >= 0: stationCommand(st, k, under)
                         else: Command(kind: ckSelectPoints)
-      tp.menuKeys = if under >= 0: st.keysInMemory(under) else: none(TraceKeys)
+      (tp.menuKeys, tp.menuBusy) = if under >= 0: st.keysHeld(under)
+                                   else: (none(TraceKeys), false)
       if under >= 0: res.commands.add Command(kind: ckOwnPosition, ownTrace: under)
     tp.cur = after
     if after != p.view:

@@ -5,7 +5,9 @@
 ## are kept in the project made next; a header move says that a dated move of the station keeps
 ## its time.
 ##
-## Seen to fail: with `askOwnPosition` not remembering a "no position" answer, the second ask of
+## Seen to fail: with the cap applied to a sampled SEG-Y file, "a sampled file above the cap not
+## read"; with a not-read header posted as a NaN position, the "was not read" tip said "no
+## position";  with `askOwnPosition` not remembering a "no position" answer, the second ask of
 ## a (0, 0) header started a second read; with `movesAppliedTo` listing every index's move, the
 ## "any index" move was returned for a station with a move of its own.
 
@@ -47,6 +49,63 @@ proc main*() =
       doAssert st.settle(st.jobs.active.len == 0)
       doAssert st.ownPositionOf(id).isNone, "a header of (0, 0) gave a position"
       doAssert st.ownPositionReads == 1, "the header was read " & $st.ownPositionReads & " times"
+      st.shutdown()
+
+  block threeAnswers:
+    # being read, the header gives none, not read (a multiplexed SEG-D file with no cache)
+    withFixtures fa:
+      var st = initAppState() # no index cache
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: fa.stationsSegd())
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      let id = st.sessions[0].base + 1
+      doAssert st.ownPositionState(id).kind == opReading
+      doAssert "still being read" in ownPositionTip(opReading, "", "receiver 100/101")
+      st.apply Command(kind: ckOwnPosition, ownTrace: id)
+      doAssert st.settle(st.ownPositionState(id).kind != opReading)
+      let (kind, why) = st.ownPositionState(id)
+      doAssert kind == opNotRead and why.len > 0, $kind
+      doAssert st.ownPositionOf(id).isNone
+      let tip = ownPositionTip(kind, why, "receiver 100/101")
+      doAssert "was not read" in tip and "no index to read one trace from" in tip and
+        "Move this station..." in tip and "no position" notin tip, tip
+      st.shutdown()
+    withFixtures fb:
+      var st = initAppState(indexCache = fb.dir / "cache")
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: fb.stationsSegd())
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      let id = st.sessions[0].base + 1
+      st.apply Command(kind: ckOwnPosition, ownTrace: id)
+      doAssert st.settle(st.ownPositionState(id).kind != opReading)
+      doAssert st.ownPositionState(id).kind == opNone
+      let tip = ownPositionTip(opNone, "", "receiver 100/101")
+      doAssert "gives receiver 100/101 no position" in tip and "not read" notin tip, tip
+      st.shutdown()
+
+  block sampledBeyondTheCap:
+    # a fixed-length SEG-Y file above the cap opens by sampling, so it is read; a SEG-Y file
+    # that does not is not read above it
+    withFixtures fc:
+      var st = initAppState()
+      st.ownReadLimit = 1
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: fc.fixedLengthSegy())
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      doAssert st.sessions[0].facts.opened.sampled, "the fixture is not opened by sampling"
+      let id = st.sessions[0].base + 3
+      st.apply Command(kind: ckOwnPosition, ownTrace: id)
+      doAssert st.settle(st.ownPositionState(id).kind != opReading)
+      doAssert st.ownPositionState(id).kind == opGiven, "a sampled file above the cap not read"
+      doAssert near(st.ownPositionOf(id).get.x, 1004)
+      st.shutdown()
+    withFixtures fd:
+      var st = initAppState()
+      st.ownReadLimit = 1
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: fd.surveySegy())
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      doAssert not st.sessions[0].facts.opened.sampled
+      let id = st.sessions[0].base + 3
+      st.apply Command(kind: ckOwnPosition, ownTrace: id)
+      doAssert st.settle(st.ownPositionState(id).kind != opReading)
+      doAssert st.ownPositionState(id).kind == opNotRead, "a walked file above the cap read"
       st.shutdown()
 
   block unitsAndOptions:

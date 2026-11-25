@@ -375,7 +375,8 @@ func commandDocs*(source: string): CommandDocs =
   result = CommandDocs()
   var section = 0 # 1: the enum, 2: the object
   var last = ""
-  for raw in source.splitLines:
+  let start = max(source.find("CommandKind* = enum"), 0)       # what comes before is not read
+  for raw in source.substr(start).splitLines:
     let line = raw.strip
     let indent = raw.len - raw.strip(trailing = false).len
     if raw.contains("CommandKind* = enum"):
@@ -385,6 +386,7 @@ func commandDocs*(source: string): CommandDocs =
       section = 2
       last = ""
     elif section > 0 and line.len > 0 and indent <= 2:
+      if section == 2: break # the object ends the sections this reads (the enum comes first)
       section = 0
     elif section > 0 and line.startsWith("##"):
       if last.len > 0 and section == 1: result.kinds.addDoc(last, line.substr(2).strip)

@@ -276,7 +276,8 @@ type
     of mkOwnPosition:
       ownSession*: SessionId ## the open file
       ownIndex*: int ## the trace in that file (from 0)
-      ownKeys*: TraceKeys ## the trace's keys as its headers give them; a NaN position when unread
+      ownKeys*: TraceKeys ## the trace's keys as its headers give them
+      ownWhy*: string ## why the header was not read; "" when it was
     of mkIdentified:
       identPath*: string ## the file
       identity*: FileIdentity ## its quick identity

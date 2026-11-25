@@ -57,10 +57,16 @@ proc forgetCommand*(m: StationMove): Command =
     moveFrom: m.fromTime.get(0.0))
 
 proc drawStationMoveGroup*(ui: var StationMoveUi; st: AppState; under: int;
-    found: Option[TraceKeys]; marks: var Marks; cmds: var seq[Command]) =
+    found: Option[TraceKeys]; busy: bool; marks: var Marks; cmds: var seq[Command]) =
   ## The three choices for the receiver station of survey-wide trace `under`, whose keys
   ## `found` is the copy taken when the menu opened; nothing for a trace with no station (an
-  ## auxiliary trace, a file without keys).
+  ## auxiliary trace, a file without keys). `busy`: a job had the file to itself when the menu
+  ## opened, so the keys were not copied and the choices are dim.
+  if busy:
+    for label in [HeaderItem, "Move this station...", "Remove the move of this station"]:
+      discard igMenuItem_Bool(label.cstring, nil, false, false)
+      tip("The file is busy: try again in a moment")
+    return
   if found.isNone: return
   let keys = found.get
   if not keys.isSeismic or keys.rcvLine != keys.rcvLine or keys.rcvPoint != keys.rcvPoint: return
@@ -70,6 +76,7 @@ proc drawStationMoveGroup*(ui: var StationMoveUi; st: AppState; under: int;
   let dated = moves.anyIt(it.fromTime.isSome)
   let inForce = (x: keys.rcvX, y: keys.rcvY)
   let own = st.ownPositionOf(under)
+  let ownState = st.ownPositionState(under)
   let d = if own.isSome: hypot(own.get.x - inForce.x, own.get.y - inForce.y) else: NaN
   let units = st.headerUnitsProblem(under)
   let far = own.isSome and st.headerMoveOffered(d)
@@ -92,8 +99,7 @@ proc drawStationMoveGroup*(ui: var StationMoveUi; st: AppState; under: int;
         "stays." & (if dated: " A move of this station from a time on is kept: the traces " &
         "from that time on keep that position." else: "")
       elif units.len > 0: "Not offered: " & units & "."
-      elif own.isNone: "This trace's header gives " & word & " no position to move it to " &
-        "(or it is still being read)."
+      elif own.isNone: ownPositionTip(ownState.kind, ownState.why, word)
       else: "This trace's header agrees with the position in force for " & word & " (within " &
         "1 m).")
   if igMenuItem_Bool("Move this station...", nil, false, true):
