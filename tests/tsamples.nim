@@ -11,6 +11,14 @@
 ## trace order, the component of each trace, the orientation of each node and
 ## the rotated horizontals.
 ##
+## The two survey sets (`samples/vibroseis/`, `samples/impulsive/`) are checked as
+## one acquisition: the files exist and open, the three recording kinds, the shot log
+## (no problems, every row a shot gather by FFID, time and source), the survey
+## (every trace joined, the missing-traces count), the cut (slicing `continuous/` with
+## the shot log reproduces `receiver-gathers/` sample for sample and agrees with the shot
+## gathers), the deliberate defects, and for the vibrator set the reference
+## (a correlation puts each arrival at its modelled sample).
+##
 ## Seen to fail: with the vibrator signature file as it was before it became one
 ## record (four records of six sweeps), the order check stopped at its count
 ## (24 traces, 1 record); with samples/land/shots.sgy moved aside, `present` quit on
@@ -18,12 +26,21 @@
 ## as 3000 kg in the weighted-sum check, "sweep 1 GF (M, B) differs by ..."; with node 103 written at azimuth 0,
 ## "azimuth 64"; with node 104's bump left out of `tools/sampledata.nim`, "roll 112"
 ## (trace 112 is the first one stepped).
+##
+## The survey sets were seen to fail with: the short shot's stations taken as channels 16
+## and 22 (the channel check names 21); the cut started 2 ms after each shot (the
+## reproduction check stops at the first receiver, "10_1001"); the reference shortened by
+## its first two samples (the correlation and the pilot disagree); the noisy trace's noise
+## at 2.0 instead of 5.0 (its rms was 3.2 times the loudest other trace, not 4).
 
-import std/[math, options, os]
+import std/[assertions, algorithm, math, options, os, sequtils, strutils, tables]
 import parseSEG
+import processSEG
 import processSEG/core/[types, units]
 import processSEG/vibroseis/vibqc
-import viewSEG/core/[join, session]
+import viewSEG/core/[cutgather, cutgatherjobs, edits, jobs, join, missingjobs, missingreport,
+  qualityjobs, qualityreport, recordingkind, references, session, shotlog, vendormaps]
+import utils/waiting
 
 const root = currentSourcePath().parentDir.parentDir
 
@@ -104,6 +121,385 @@ proc tonePower(x: openArray[float32]; hz, dtMs: float64): float64 =
     re += float64(v) * cos(p)
     im += float64(v) * sin(p)
   re * re + im * im
+
+
+const
+  SetDtMs = 2.0
+  SetShots = 6
+  SetReceivers = 24
+  SetLines = [10.0, 20.0]
+  SetDeadShot = 1    ## 0-based; line 10 station 1005
+  SetNoisyShot = 4
+  SetBadChannel = 5
+  SetMissingShot = 3 ## its files lack two stations
+  SetMissingChannels = [16, 21]
+
+type SetSpec = object
+  name: string
+  vibrator: bool
+  ffid0: int
+  recordSamples: int
+  segments: int
+  startUtc: float64 ## the first continuous sample, UTC POSIX seconds
+  firstShotS, stepS: float64
+
+proc vibroseisSpec(): SetSpec =
+  SetSpec(name: "vibroseis", vibrator: true, ffid0: 101, recordSamples: 3000, segments: 5,
+    startUtc: 1_709_272_800.0, firstShotS: 4, stepS: 8) ## 2024-03-01 06:00:00 UTC
+
+proc impulsiveSpec(): SetSpec =
+  SetSpec(name: "impulsive", vibrator: false, ffid0: 201, recordSamples: 1000, segments: 3,
+    startUtc: 1_709_283_600.0, firstShotS: 3, stepS: 4) ## 2024-03-01 09:00:00 UTC
+
+proc receiverNames(): seq[string] =
+  for line in SetLines:
+    for station in 1001 .. 1012: result.add $int(line) & "_" & $station
+
+proc kindOfFile(path: string): RecordingKind =
+  var f = openKeys(path)
+  defer: f.close()
+  let facts = describeRecording(planRecording(addr f, path,
+    f.traceKeys(0).intervalUs / 1000, VendorRegistry()))
+  doAssert facts.ready, path.extractFilename
+  facts.kind
+
+proc rowsOfFile(f: SeismicFile; first, last: int): seq[seq[float32]] =
+  let x = f.readTraces(first .. last)
+  for r in 0 ..< x.shape[0]:
+    result.add rowOf(x, r)
+
+proc rms(x: openArray[float32]): float64 =
+  for v in x: result += float64(v) * float64(v)
+  sqrt(result / float64(max(x.len, 1)))
+
+proc relationsOf(dir, name: string): ref SurveyGeometry =
+  var g = initSurveyGeometry()
+  for ext in [".s", ".r", ".x"]:
+    present(dir / "survey" / (name & ext))
+    g.addSps(dir / "survey" / (name & ext))
+  result = new SurveyGeometry
+  result[] = g
+
+proc surveyFiles(dir: string; name: string): seq[string] =
+  for ext in [".s", ".r", ".x"]: result.add dir / "survey" / (name & ext)
+
+proc waitJob(jobs: Jobs; id: JobId) =
+  doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}),
+    "a job did not finish"
+  let info = jobs.info(id).get
+  doAssert info.state == jsDone, $info.state & ": " & info.error
+
+proc shotLogOf(dir: string): tuple[view: ShotView; cuts: CutShots] =
+  let text = readFile(dir / "shotlog.csv")
+  let map = guessMap(text)
+  result.view = shots(parseShotLog(text, map), map)
+  result.cuts = shotsInTime(result.view.rows)
+
+proc shotPath(dir: string; ss: SetSpec; shot: int; ext: string): string =
+  dir / "shots" / ("ffid_" & $(ss.ffid0 + shot) & ext)
+
+proc argmaxAbs(x: openArray[float32]; first, last: int): int =
+  var best = -1.0
+  for j in max(first, 0) .. min(last, x.high):
+    if abs(float64(x[j])) > best:
+      best = abs(float64(x[j]))
+      result = j
+
+proc correlated(traces: seq[seq[float32]]; reference: seq[float32]): seq[seq[float32]] =
+  ## Each trace correlated with `reference` by processSEG's plan, as the program's
+  ## correlation does.
+  let n = traces[0].len
+  let plan = initCorrelationPlan(float32, initPilot(reference, SetDtMs), SetDtMs, n)
+  var raw = zeros[float32](traces.len, n)
+  var keys = newSeq[TraceKeys](traces.len)
+  var counts = newSeq[int](traces.len)
+  let b = rowBlock(raw)
+  for i, t in traces:
+    for j, v in t: b.row(i)[j] = v
+    keys[i] = initTraceKeys()
+    keys[i].status = tsLive
+    keys[i].intervalUs = 1000 * SetDtMs
+    counts[i] = n
+  let meta = initChunkMeta(rowsOf(keys, counts), dtMs = SetDtMs)
+  var ws = initWorkspace()
+  ws.reserve(plan.workspaceSize)
+  var corr = zeros[float32](traces.len, plan.outSamples)
+  plan.correlateInto(raw, corr, meta, ws)
+  for i in 0 ..< traces.len: result.add rowOf(corr, i)
+
+proc checkSet(ss: SetSpec; scratch: string) =
+  let dir = root / "samples" / ss.name
+  let names = receiverNames()
+  let ffids = block:
+    var r: seq[int] = @[]
+    for shot in 0 ..< SetShots: r.add ss.ffid0 + shot
+    r
+
+  block files_exist:
+    for ext in [".s", ".r", ".x"]: present(dir / "survey" / (ss.name & ext))
+    present(dir / "shotlog.csv")
+    for n in names:
+      present(dir / "continuous" / (n & ".sgd"))
+      present(dir / "receiver-gathers" / (n & ".sgd"))
+    for shot in 0 ..< SetShots:
+      present(shotPath(dir, ss, shot, ".sgd"))
+      present(shotPath(dir, ss, shot, ".sgy"))
+    doAssert dirExists(dir / "reference") == ss.vibrator, ss.name & " reference folder"
+
+  block kinds_are_as_intended:
+    for n in names:
+      doAssert kindOfFile(dir / "continuous" / (n & ".sgd")) == rkReceiverContinuous,
+        "continuous " & n
+      doAssert kindOfFile(dir / "receiver-gathers" / (n & ".sgd")) == rkReceiverSliced,
+        "receiver gather " & n
+    for shot in 0 ..< SetShots:
+      for ext in [".sgd", ".sgy"]:
+        doAssert kindOfFile(shotPath(dir, ss, shot, ext)) == rkShotGather,
+          "shot gather " & $shot & ext
+
+  block shot_log_matches_the_shot_gathers:
+    let (view, cuts) = shotLogOf(dir)
+    doAssert view.problems.count == 0, "shot log problems " & $view.problems.count
+    doAssert view.rows.len == SetShots and cuts.dropped == 0 and cuts.increasing
+    for shot, row in view.rows:
+      doAssert row.fileNumber == some(int64(ss.ffid0 + shot)), "FFID of row " & $shot
+      doAssert row.sequence == some(int64(shot + 1)) and row.pointIndex == some(1'i64)
+      doAssert row.sourceLine == 30 and row.shotPoint == float64(1001 + shot)
+      let us = row.timeUtcUs.get
+      doAssert us == int64(round((ss.startUtc + ss.firstShotS + float64(shot) * ss.stepS) *
+        1e6)), "time of row " & $shot
+      # the GPS column is the same instant: the leap seconds are those the library holds
+      let line = readFile(dir / "shotlog.csv").splitLines[shot + 1].split(',')
+      doAssert gpsMicrosToUtcMicros(parseBiggestInt(line[1])) == us, "GPS of row " & $shot
+      for ext in [".sgd", ".sgy"]:
+        var f = openKeys(shotPath(dir, ss, shot, ext))
+        let (live, aux) = (f.len - 2, f.len - 2 + 1)
+        for i in 0 ..< f.len:
+          let k = f.traceKeys(i)
+          doAssert k.record == float64(ss.ffid0 + shot), "record of " & $i
+          doAssert int64(round(k.time * 1e6)) == us, "time of trace " & $i
+          doAssert k.srcPoint == row.shotPoint and k.srcX == row.x and k.srcY == row.y
+        doAssert f.traceKeys(live - 1).status != tsAuxiliary and
+          f.traceKeys(aux - 1).status == tsAuxiliary
+        f.close()
+
+  block survey_joins_every_trace:
+    let sps = surveyFiles(dir, ss.name)
+    for shot in 0 ..< SetShots:
+      for ext in [".sgd", ".sgy"]:
+        joined(shotPath(dir, ss, shot, ext), sps)
+
+  block shot_gathers_hold_the_spread:
+    var f = openKeys(shotPath(dir, ss, 0, ".sgd"))
+    doAssert f.len == SetReceivers + 2 and f.recordCount == 1 and
+      f.maxSamples == ss.recordSamples
+    for i in 0 ..< SetReceivers:
+      let k = f.traceKeys(i)
+      doAssert k.channel == float64(i + 1) and k.status != tsAuxiliary
+      doAssert k.rcvLine == SetLines[i div 12] and k.rcvPoint == float64(1001 + i mod 12)
+      doAssert k.rcvX == 500_000.0 + 50.0 * float64(i mod 12), "easting " & $i
+      doAssert k.rcvY == 4_000_000.0 + 200.0 * float64(i div 12), "northing " & $i
+      doAssert k.srcX == 500_275.0 and k.srcY == 3_999_850.0
+    doAssert f.traceKeys(24).status == tsAuxiliary and f.traceKeys(25).status == tsAuxiliary
+    f.close()
+
+  block missing_stations_are_found:
+    let relations = relationsOf(dir, ss.name)
+    var paths: seq[string] = @[]
+    for shot in 0 ..< SetShots: paths.add shotPath(dir, ss, shot, ".sgd")
+    let lane = initJobs()
+    let sink = MissingSink()
+    lane.waitJob lane.submit(missingSpec(dir / "shots", paths),
+      scanMissing(dir / "shots", paths, relations, sink))
+    let r = sink.result
+    doAssert r.ok, r.reason
+    let t = r.report.totals
+    doAssert t.files == SetShots and t.records == SetShots, $t
+    doAssert t.expected == SetShots * SetReceivers and t.missing == 2 and
+      t.present == SetShots * SetReceivers - 2, $t
+    doAssert t.duplicates == 0 and t.extras == 0 and t.xpsWithoutData.len == 0, $t
+    doAssert r.report.points.len == 2, "stations missing: " & $r.report.points.len
+    for i, p in r.report.points:
+      doAssert p.line == 20 and p.point == float64([1004, 1009][i]) and p.missingIn == 1, $p
+    doAssert r.report.records.len == SetShots
+    for row in r.report.records:
+      doAssert row.missing == (if row.file == "ffid_" & $(ss.ffid0 + SetMissingShot) & ".sgd":
+        2 else: 0), $row
+
+  block missing_stations_are_the_x_records:
+    for ext in [".sgd", ".sgy"]:
+      var f = openKeys(shotPath(dir, ss, SetMissingShot, ext))
+      doAssert f.len == SetReceivers - 2 + 2, "traces of the short shot " & $f.len
+      for i in 0 ..< f.len:
+        let k = f.traceKeys(i)
+        doAssert k.channel notin SetMissingChannels.mapIt(float64(it)) or
+          k.status == tsAuxiliary and k.channel > 24, "channel " & $k.channel
+      f.close()
+
+  block cutting_the_continuous_files_reproduces_the_receiver_gathers:
+    let (_, cuts) = shotLogOf(dir)
+    let opts = initCutOptions(float64(ss.recordSamples) * SetDtMs)
+    let lane = initJobs()
+    createDir(scratch / ss.name)
+    for n in names:
+      let source = dir / "continuous" / (n & ".sgd")
+      let dest = scratch / ss.name / (n & ".sgd")
+      var f = openKeys(source)
+      let sink = CutSink()
+      lane.waitJob lane.submit(cutGatherSpec(source, dest),
+        cutGatherWork(addr f, source, dest, cuts, opts, sink))
+      doAssert sink.result.ok and sink.result.shotsWritten == SetShots,
+        sink.result.reason
+      doAssert sink.result.recordsFromFileNumbers
+      f.close()
+      var a = openKeys(dest)
+      var b = openKeys(dir / "receiver-gathers" / (n & ".sgd"))
+      doAssert a.len == SetShots and b.len == SetShots, n
+      for i in 0 ..< SetShots:
+        let (ka, kb) = (a.traceKeys(i), b.traceKeys(i))
+        doAssert ka.record == kb.record and ka.record == float64(ffids[i]), n
+        doAssert ka.time == kb.time and ka.rcvPoint == kb.rcvPoint and
+          ka.srcPoint == kb.srcPoint, n
+        doAssert rowOf(a.readTraces(i .. i), 0) == rowOf(b.readTraces(i .. i), 0),
+          n & " shot " & $i & " differs"
+      a.close()
+      b.close()
+    removeDir(scratch / ss.name)
+
+  block receiver_gathers_agree_with_the_shot_gathers:
+    var shotFiles: seq[SeismicFile] = @[]
+    for shot in 0 ..< SetShots: shotFiles.add openKeys(shotPath(dir, ss, shot, ".sgd"))
+    for r, n in names:
+      var g = openKeys(dir / "receiver-gathers" / (n & ".sgd"))
+      for shot in 0 ..< SetShots:
+        var at = -1
+        for i in 0 ..< shotFiles[shot].len:
+          let k = shotFiles[shot].traceKeys(i)
+          if k.status != tsAuxiliary and k.channel == float64(r + 1): at = i
+        if shot == SetMissingShot and (r + 1) in SetMissingChannels:
+          doAssert at < 0
+        else:
+          doAssert at >= 0, "no channel " & $(r + 1) & " in shot " & $shot
+          doAssert rowOf(shotFiles[shot].readTraces(at .. at), 0) ==
+            rowOf(g.readTraces(shot .. shot), 0), n & " shot " & $shot
+      g.close()
+    for f in shotFiles.mitems: f.close()
+
+  block continuous_recordings_cover_the_shot_log:
+    var f = openKeys(dir / "continuous" / "10_1001.sgd")
+    doAssert f.len == ss.segments and f.maxSamples == 5000
+    doAssert f.traceKeys(0).time <= ss.startUtc + ss.firstShotS
+    let end2 = f.traceKeys(f.len - 1).time + 5000 * SetDtMs / 1000
+    doAssert end2 >= ss.startUtc + ss.firstShotS + 5 * ss.stepS + float64(ss.recordSamples) *
+      SetDtMs / 1000, "the recording ends at " & $end2
+    f.close()
+
+  block the_dead_and_the_noisy_trace:
+    for ext in [".sgd", ".sgy"]:
+      var f = openKeys(shotPath(dir, ss, SetDeadShot, ext))
+      let dead = rowOf(f.readTraces(SetBadChannel - 1 .. SetBadChannel - 1), 0)
+      doAssert rms(dead) == 0, "the dead trace has samples"
+      f.close()
+      var g = openKeys(shotPath(dir, ss, SetNoisyShot, ext))
+      var others: seq[float64] = @[]
+      for i in 0 ..< SetReceivers:
+        let v = rms(rowOf(g.readTraces(i .. i), 0))
+        if i == SetBadChannel - 1: doAssert v > 0 else: others.add v
+      let noisy = rms(rowOf(g.readTraces(SetBadChannel - 1 .. SetBadChannel - 1), 0))
+      others.sort
+      doAssert noisy > 4 * others[^1], "noisy rms " & $noisy & " beside " & $others[^1]
+      g.close()
+    for ext in [".sgd", ".sgy"]:
+      var d = openKeys(shotPath(dir, ss, SetDeadShot, ext))
+      doAssert d.traceKeys(SetBadChannel - 1).status == tsDead, "flag in " & ext
+      doAssert d.traceKeys(SetBadChannel).status == tsLive
+      d.close()
+    var rg = openKeys(dir / "receiver-gathers" / "10_1005.sgd")
+    doAssert rms(rowOf(rg.readTraces(SetDeadShot .. SetDeadShot), 0)) == 0
+    rg.close()
+
+  block trace_quality_finds_them:
+    var paths: seq[string] = @[]
+    for shot in 0 ..< SetShots: paths.add shotPath(dir, ss, shot, ".sgd")
+    let lane = initJobs()
+    let sink = QualitySink()
+    lane.waitJob lane.submit(qualitySpec(paths),
+      scanQuality(paths, initTable[string, FileEdits](), sink))
+    doAssert sink.result.ok, sink.result.reason
+    var found = false
+    for st in sink.result.report.stations:
+      if st.line == 10 and st.point == 1005:
+        found = true
+        doAssert st.counts[qfHeaderDead] == 1 and st.noisy == 1, $st
+      else:
+        doAssert st.bad == 0 and st.noisy == 0, $st
+    doAssert found
+
+  if ss.vibrator:
+    block reference_is_the_sweep_in_the_data:
+      let folder = dir / "reference"
+      let index = loadIndex(folder)
+      doAssert index.problems.len == 0 and not index.damaged and index.entries.len == 1,
+        $index.problems
+      let e = index.entries[0]
+      doAssert e.name == "Linear 10-80 Hz 4 s" and e.origin.generated and not e.missing
+      doAssert e.origin.law == rlLinear and e.origin.f1Hz == 10 and e.origin.f2Hz == 80
+      doAssert e.origin.durationMs == 4000 and e.origin.dtMs == SetDtMs
+      doAssert e.origin.taperStartMs == 200 and e.origin.taperEndMs == 200
+      let (sweep, us) = readReferenceFile(segyPath(folder, e.file))
+      doAssert us == 2000 and sweep.len == 2000 and e.samples == 2000
+      var f = openKeys(shotPath(dir, ss, 0, ".sgd"))
+      let pilot = rowOf(f.readTraces(24 .. 24), 0)
+      doAssert pilot[0 ..< 2000] == sweep, "the pilot is not the reference"
+      for j in 2000 ..< pilot.len: doAssert pilot[j] == 0
+      f.close()
+
+    block correlating_puts_the_arrivals_at_the_modelled_samples:
+      let folder = dir / "reference"
+      let e = loadIndex(folder).entries[0]
+      let (sweep, _) = readReferenceFile(segyPath(folder, e.file))
+      var f = openKeys(shotPath(dir, ss, 0, ".sgd"))
+      let picks = [0, 5, 12, 23]
+      var traces: seq[seq[float32]] = @[]
+      for i in picks: traces.add rowOf(f.readTraces(i .. i), 0)
+      let pilot = rowOf(f.readTraces(24 .. 24), 0)
+      let viaReference = correlated(traces, sweep)
+      let viaPilot = correlated(traces, pilot[0 ..< 2000])
+      doAssert viaReference == viaPilot, "the reference and the pilot disagree"
+      for n, i in picks:
+        let k = f.traceKeys(i)
+        let off = hypot(k.rcvX - k.srcX, k.rcvY - k.srcY)
+        let direct = int(round(off / 2000 * 1000 / SetDtMs))
+        let reflection = int(round(sqrt(800.0 ^ 2 + (off / 2400 * 1000) ^ 2) / SetDtMs))
+        let a = argmaxAbs(viaReference[n], direct - 8, direct + 8)
+        doAssert abs(a - direct) <= 1, "direct arrival at " & $a & ", modelled " & $direct
+        doAssert viaReference[n][a] > 0.8, "weak direct peak " & $viaReference[n][a]
+        let b = argmaxAbs(viaReference[n], reflection - 8, reflection + 8)
+        doAssert abs(b - reflection) <= 1, "reflection at " & $b & ", modelled " & $reflection
+        # zero phase: the wavelet is symmetric about its peak
+        for d in 1 .. 4:
+          doAssert abs(viaReference[n][a + d] - viaReference[n][a - d]) <
+            0.2 * abs(viaReference[n][a]), "not zero phase at trace " & $i
+      f.close()
+  else:
+    block no_pilot_and_the_arrivals_are_in_the_data:
+      for shot in 0 ..< SetShots:
+        var f = openKeys(shotPath(dir, ss, shot, ".sgd"))
+        doAssert f.traceKeys(f.len - 2).status == tsAuxiliary and
+          f.traceKeys(f.len - 1).status == tsAuxiliary
+        f.close()
+      var f = openKeys(shotPath(dir, ss, 0, ".sgd"))
+      for i in [0, 5, 12, 23]:
+        let k = f.traceKeys(i)
+        let off = hypot(k.rcvX - k.srcX, k.rcvY - k.srcY)
+        let direct = int(round(off / 2000 * 1000 / SetDtMs))
+        let reflection = int(round(sqrt(800.0 ^ 2 + (off / 2400 * 1000) ^ 2) / SetDtMs))
+        let row = rowOf(f.readTraces(i .. i), 0)
+        doAssert abs(argmaxAbs(row, direct - 8, direct + 8) - direct) <= 1, "direct " & $i
+        doAssert abs(argmaxAbs(row, reflection - 8, reflection + 8) - reflection) <= 1,
+          "reflection " & $i
+        doAssert row[direct] > 0.7 and row[reflection] > 0.3, "polarity " & $i
+      f.close()
 
 proc main*() =
 
@@ -344,6 +740,12 @@ proc main*() =
     doAssert same > 0.5, "reflection correlation " & $same & " at sample " & $pp
     doAssert opp < -0.5, "ghost correlation " & $opp & " at sample " & $ghost
     o.close()
+
+  block survey_sets:
+    let scratch = getTempDir() / ("viewseg-samples-" & $getCurrentProcessId())
+    checkSet(vibroseisSpec(), scratch)
+    checkSet(impulsiveSpec(), scratch)
+    removeDir(scratch)
 
 when isMainModule:
   main()

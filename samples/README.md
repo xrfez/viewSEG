@@ -6,6 +6,10 @@ not field data, except the four vibrator signature records in
 (`tools/sampledata.nim`). The committed files are the ones to open: float
 samples are not regenerated in tests.
 
+`samples/vibroseis/` and `samples/impulsive/` are two complete little acquisitions (a
+survey, a shot log and the same shots as continuous recordings, shot gathers and receiver
+gathers) for trying raw data, slicing and correlation: see the last two sections.
+
 Noise uses processSEG's default seed. Wavelets, the sweep, the noise and
 the file writers are parseSEG and processSEG.
 
@@ -178,3 +182,127 @@ the Node orientation plot (New plot) shows as a step in the roll and azimuth lin
 
 Node 101 is the reference. On node 103 the converted wave, strong on the inline
 trace of node 101, is on the crossline trace.
+
+## The two survey sets (`samples/vibroseis/`, `samples/impulsive/`, metres)
+
+Each folder describes ONE acquisition in five forms that agree with each other: open any
+of them with the survey and the shot log and the lines, points, times and field file
+numbers (FFIDs) match. The coordinates are invented round numbers: easting 500 000,
+northing 4 000 000, SPS headers say metres, WGS 84, zone 15N.
+
+| Folder or file | What it is |
+|---|---|
+| `survey/` | SPS 2.1: `<set>.s` (sources), `<set>.r` (receivers), `<set>.x` (relations) |
+| `shotlog.csv` | one row a shot: time (UTC), GPS time, sequence, FFID, source line and point, index, X, Y, Z, status |
+| `continuous/` | one SEG-D file a receiver: the whole recording, 10 s segments one after another |
+| `shots/` | one uncorrelated shot gather a shot, as SEG-D (`ffid_<FFID>.sgd`) and SEG-Y (`.sgy`) |
+| `receiver-gathers/` | one SEG-D file a receiver: a record per shot, what Slice by shot log cuts from `continuous/` |
+| `reference/` | (vibroseis only) the sweep as Analysis > References keeps one |
+
+The survey, the same in both sets. Receiver lines 10 and 20, stations 1001..1012 on
+each, 50 m apart, lines 200 m apart: line 10 at northing 4 000 000, line 20 at
+4 000 200, easting 500 000 (1001) to 500 550 (1012). Elevation about 100 to 107.5 m.
+Source line 30, points 1001..1006 at easting 500 275 (between stations 1006 and 1007),
+northings 3 999 850, 3 999 950, 4 000 050, 4 000 150, 4 000 250 and 4 000 350, so the
+source line crosses both receiver lines. `<set>.x` lists, for each shot, channels 1..12
+as line 10 stations 1001..1012 and channels 13..24 as line 20 stations 1001..1012. No O
+records are written: the program derives the receiver-side relations from X.
+
+Shot gathers: SEG-D Rev 3, IEEE float, 2 ms. The 24 receiver traces are channels 1..24
+in that order, then two auxiliary traces (channels 25 and 26). The SEG-Y copy is the
+program's own conversion of the SEG-D with the survey, so its headers carry the
+receiver and source line and point too. Every trace carries the shot's time (the shot
+log's UTC row) as its time zero, the FFID as its record number, the source line, point
+and coordinates, and the receiver line, point and coordinates. The shot log's GPS
+column is the same instant, UTC plus the 18 leap seconds of 2024. The record has no
+lead-in: sample 0 is the shot instant.
+
+Continuous files are named `<line>_<station>.sgd` (`10_1001.sgd`). A file is one receiver,
+its segments are 5 000 samples (10 s) each, one record each, and each segment's time is the
+time of its first sample, so the program reads it as one continuous recording. The
+recording runs from the start time below to past the end of the last shot's record. Every
+shot's response sits in it at the shot's time, with seeded noise (sigma 0.02) everywhere.
+
+Receiver gathers are what Slice by shot log (SEG-D Rev 3, the record as long as the shot
+record, start 0 ms, nearest sample) makes of the continuous files with `shotlog.csv`: the
+generator calls the program's own cutter, so a trace is the shot's window of the continuous
+recording sample for sample, with the FFID as its record number. A shot gather's trace
+for a receiver is the same samples as that receiver's trace for that shot.
+
+Model of the records, both sets: a direct wave with velocity 2 000 m/s (time |x| / 2 000)
+and one reflection hyperbola, zero-offset time 800 ms, velocity 2 400 m/s, amplitude
+0.6, each placed at its modelled sample (the time rounded to the 2 ms sample).
+
+| Set | Vibroseis | Impulsive |
+|---|---|---|
+| Continuous recording starts | 2024-03-01 06:00:00 UTC | 2024-03-01 09:00:00 UTC |
+| FFIDs | 101..106 | 201..206 |
+| Shot times | 06:00:04, then every 8 s to 06:00:44 | 09:00:03, then every 4 s to 09:00:23 |
+| Record | 6 s, 3 000 samples (4 s sweep, 2 s listen) | 2 s, 1 000 samples |
+| Continuous | 5 segments, 50 s | 3 segments, 30 s |
+| Auxiliary traces | pilot (channel 25), ground force (26) | time break (25), uphole (26) |
+| Size | about 8.2 MB | about 3.6 MB |
+
+Shot 4 of the vibroseis set (06:00:28 to 06:00:34) starts in one continuous segment and
+ends in the next; so does shot 5 of the impulsive set (09:00:19 to 09:00:21).
+
+### Vibroseis
+
+An uncorrelated vibrator record. The source is a linear sweep, 10 to 80 Hz, 4 000 ms, 2 ms,
+cosine-squared tapers of 200 ms at each end, amplitude 1, start phase 0. Each arrival is that
+whole sweep (the data are the sweep convolved with the arrivals), so a correlation with the
+sweep puts a zero-phase wavelet at each arrival's time. Auxiliary trace 1 (channel 25, SEG-D
+channel type pilot) is the sweep, then zeros to the end of the record, exactly the samples of
+the reference. Auxiliary trace 2 (channel 26, measured ground force) is the same sweep with
+amplitude 2, 6 degrees ahead of the pilot and an 8 % second and a 4 % third harmonic.
+
+`reference/` holds `index.nif` and `sweep-1.sgy`, the form Analysis > References keeps a
+reference in: a one-trace SEG-Y (IEEE float, 2 ms, 2 000 samples) and the index entry
+"Linear 10-80 Hz 4 s". To use it, copy both files into a project's `references` folder (the
+reference archive then lists it; choose it with Use). To make the same reference yourself:
+Analysis > References > Generate a reference, linear, 10 to 80 Hz, length 4 000 ms,
+interval 2 ms, taper 200 ms at the start and the end (cosine squared), phase 0, amplitude 1.
+The sweep is also trace "auxiliary 1" of every record, so the rule "A trace of the record",
+auxiliary trace 1, start 0, length 4 000 ms, gives the same result as the stored reference.
+
+### Impulsive
+
+The same survey, shot log layout and folders with an impulsive source: no pilot, no sweep
+and no `reference/` folder. Each arrival is a Ricker wavelet of 30 Hz, zero phase, its
+centre at the modelled sample, amplitude 1 for the direct wave and 0.6 for the reflection.
+The two auxiliary traces are the time break (channel 25, a Ricker at 0 ms) and the uphole
+(channel 26, a pulse at 12 ms). Records are 2 s.
+
+### The deliberate defects (both sets)
+
+| What | Where | Found by |
+|---|---|---|
+| Two stations the survey calls for are not in the file | the shot 4 gathers (FFID 104, 204; `.sgd` and `.sgy`): channels 16 and 21, line 20 stations 1004 and 1009 are absent, the other channels keep their numbers | Missing traces: 144 expected, 142 present, 2 missing |
+| A dead trace | line 10 station 1005 (channel 5, file `10_1005.sgd`), shot 2 (FFID 102, 202): all zeros, flagged dead in the headers | Trace quality: header-dead; the trace is blank in the plot |
+| A noisy trace | the same receiver, shot 5 (FFID 105, 205): noise of sigma 5 (vibroseis) or 0.4 (impulsive) added to the record | Trace quality: noisy |
+
+The defects are in `continuous/` too (the receiver 10_1005 is zero for shot 2's window and
+loud for shot 5's), so `receiver-gathers/` have them. The continuous files and the receiver
+gathers still hold shot 4's two stations: only the shot gathers lack them.
+
+### Try this
+
+1. Open `samples/vibroseis/shots` (or one `ffid_101.sgd`). **Project > Import survey** with the
+   three files of `survey/`, then **Project > Import shot log...** with `shotlog.csv`: the log
+   imports with no problems, and its six rows are the six records (FFID, source point, time).
+2. Open `samples/vibroseis/continuous/10_1001.sgd`, a continuous receiver recording. With the
+   shot log loaded, **Project > Slice by shot log...**, record length 6 000 ms, start 0 ms:
+   the file written is the one in `receiver-gathers/` (same samples).
+3. Open `samples/vibroseis/receiver-gathers/10_1001.sgd`: a receiver gather sliced at the shots,
+   six records.
+4. Open a shot gather. In **Analysis > References**, copy `reference/` into the references
+   folder and Use the sweep (or Generate a reference with the parameters above, or store
+   "A trace of the record", auxiliary trace 1), then Correlate (`C`): the direct wave and the
+   reflection come out as zero-phase wavelets at the modelled times (direct wave at
+   |offset| / 2 000 s, reflection at the hyperbola).
+5. With the survey imported, open `samples/vibroseis/shots` and run **Reports > Missing
+   traces**: two stations of FFID 104. **Reports > Trace quality** on the same folder: line 10
+   station 1005 has a dead trace (FFID 102) and a noisy one (FFID 105).
+6. Do the same with `samples/impulsive` (FFIDs 201..206): there is nothing to correlate (the
+   wavelets are already in the shot gathers); slicing, the survey join, Missing traces and
+   Trace quality work as above.
