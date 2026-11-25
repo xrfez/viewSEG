@@ -1361,6 +1361,9 @@ type
     editKey: Table[string, string]
       ## a path opened this run of a file opened under another too (a copy,
       ## a link: the same bytes), to the path whose `edits` it shares
+    editsMoved: int
+      ## bumped when `edits` or `editKey` change other than through a file's own edits (an
+      ## entry moved or dropped): with `shownChangesHere`, `editsRevision`
       ## (`linkSame`); a path not in it has its own
     noEdits: FileEdits ## always empty: `editsOf` for a file with none
     showFound: PanelId ## show the first file the listing finds here; NoPanel for none
@@ -3345,6 +3348,11 @@ func traceEdits*(state: AppState; trace: int): set[TraceEdit] =
   let i = state.findTrace(trace)
   if i >= 0 and state.keyOf(state.sessions[i].path) in state.edits:
     result = state.edits[state.keyOf(state.sessions[i].path)].editsOf(trace - state.sessions[i].base)
+
+proc editsRevision*(state: AppState): int =
+  ## Changes whenever what `editsAt` gives for any path may have changed: a file's edits shown
+  ## (`FileEdits.revision`), or an entry moved to another path or dropped. The UI thread's.
+  state.editsMoved + shownChangesHere()
 
 func editsAt*(state: AppState; path: string): lent FileEdits =
   ## The edits of the file at `path`; none when it has none. Not a copy
@@ -5422,6 +5430,7 @@ proc unlink(state: var AppState; path: string) =
   ## (it changed on disk, or holds another file now): it keeps a copy of
   ## them, and the others keep theirs.
   let key = state.keyOf(path)
+  inc state.editsMoved
   var others: seq[string]
   for p, k in state.editKey:
     if k == key and p != path: others.add p
@@ -5630,6 +5639,7 @@ proc link(state: var AppState; i, j: int) =
   for p, k in state.editKey:
     if k == was: moved.add p
   var mine: FileEdits
+  inc state.editsMoved
   if state.edits.pop(was, mine):
     # Taken in only when this path has edits of its own. Compared with what
     # it brought back, not with the document as a save wrote it since: that
@@ -7938,6 +7948,7 @@ proc forgetFileMemory(state: var AppState) =
   state.saveMemory(getMonoTime(), force = true)
   state.edits.clear()
   state.editKey.clear()
+  inc state.editsMoved
   state.remembered.setLen 0
   state.knownDocs.clear()
 
@@ -8485,7 +8496,7 @@ proc leaveProject(state: var AppState; restoreUser: bool) =
     state.layoutSaved = state.layoutRev # the user's own, as saved
   let (job, jobDir, jobBy) = (p.job, p.jobDir, p.jobBy)
   state.project = ProjectState(job: job, jobDir: jobDir, jobBy: jobBy, surveyJob: NoJob,
-    lookJob: NoJob, originalsJob: NoJob)
+    lookJob: NoJob, originalsJob: NoJob, revision: p.revision + 1)
 
 proc openProject(state: var AppState; dir: string; by: CommandOrigin; make = false;
     np = NewProject(); useSurvey = false) =
@@ -8800,7 +8811,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
     folders: move news.folders, originals: move news.originals, by: by,
     userArrangement: userArrangement, userPresets: userPresets,
     userProcessing: userProcessing, userBreakModel: userBreakModel, surveyJob: NoJob,
-    lookJob: NoJob, originalsJob: NoJob, job: NoJob)
+    lookJob: NoJob, originalsJob: NoJob, job: NoJob, revision: p.revision + 1)
   p.readOnly = not p.lock.locked or p.doc.version > ProjectVersion
   p.whyReadOnly = if not p.lock.locked and p.lock.failure.len > 0:
                     "the project's lock file cannot be opened (" & p.lock.failure & ")"
@@ -9122,6 +9133,7 @@ proc setStationMoves*(state: var AppState; moves: StationMoves) =
   ## for this run. Never reads a file on this thread.
   assertUiThread()
   state.project.doc.stationMoves = moves
+  inc state.project.revision
   if state.project.dir.len > 0 and not state.project.readOnly: state.projectChanged()
   elif state.project.dir.len > 0:
     state.log.add(sevWarning, "project", "The project is read-only: the station moves are for " &

@@ -231,14 +231,21 @@ proc countActual*(ctx: JobContext; inp: ptr ActualInputs; known: openArray[ptr A
 # ---------------------------------------------------------------- the inputs --
 
 func seismicEntries(st: AppState): seq[int] =
-  ## The indices of the Files window's seismic entries that can be counted.
-  for i, e in st.fileList.entries:
-    if e.kind in ActualKinds: result.add i
+  ## The indices of the Files window's seismic entries that can be counted. By index: a `for`
+  ## over the entries of `fileList` (a `lent` call) copies them all first.
+  for i in 0 ..< st.fileList.entries.len:
+    if st.fileList.entries[i].kind in ActualKinds: result.add i
+
+func anySeismic(st: AppState): bool =
+  ## Whether the Files window lists a seismic file that can be counted (the first one, in
+  ## a folder of recordings, decides it).
+  for i in 0 ..< st.fileList.entries.len:
+    if st.fileList.entries[i].kind in ActualKinds: return true
 
 func actualReason*(st: AppState): string =
   ## Why the recorded fold cannot be counted now; "" when it can.
   if st.fileList.scanning: Listing
-  elif st.seismicEntries.len == 0: NoSeismicFiles
+  elif not st.anySeismic: NoSeismicFiles
   else: ""
 
 func movesKey(moves: StationMoves): string =
@@ -264,16 +271,15 @@ proc otherSurvey(st: AppState): bool =
     if l.origin == loSurveyFile and normalizedPath(l.path) notin own: return true
 
 proc actualStamp*(st: AppState): int =
-  ## A number that changes when anything `actualInputs` reads changes; cheap, so the window
-  ## asks each frame and builds the inputs only when it moved.
+  ## A number that changes when anything `actualInputs` reads changes; cheap (revisions only,
+  ## whatever the number of files), so the window asks each frame and builds the inputs only
+  ## when it moved: the file list's entries, every file's edits, the project (its options and
+  ## the station moves), the session's join options outside one, and the survey.
   var h: Hash = 0
   h = h !& hash(st.fileList.entriesRev) !& hash(st.fileList.gen) !& hash(st.fileList.recursive) !&
-    hash(st.fileList.scanning) !& hash(st.survey.revision) !& hash(st.inProject) !&
-    hash(st.fileList.entries.len)
-  for i in st.seismicEntries:
-    let e = st.editsAt(st.fileList.entries[i].path)
-    h = h !& hash(e.revision) !& hash(e.shown.lists[teKilled].len)
-  h = h !& hash(st.project.doc.stationMoves.movesKey) !& hash($st.joinOptions)
+    hash(st.fileList.scanning) !& hash(st.fileList.entries.len) !& hash(st.editsRevision) !&
+    hash(st.survey.revision) !& hash(st.inProject) !& hash(st.project.revision)
+  if not st.inProject: h = h !& hash($st.settings.join)
   !$h
 
 proc actualInputs*(st: AppState): ref ActualInputs =
@@ -287,7 +293,7 @@ proc actualInputs*(st: AppState): ref ActualInputs =
   result.otherSurvey = st.otherSurvey
   var key = "files:" & $st.fileList.recursive & ";"
   for i in st.seismicEntries:
-    let e = st.fileList.entries[i]
+    template e: untyped = st.fileList.entries[i]
     var f = ActualFile(path: e.path, size: e.size)
     let edits = st.editsAt(e.path)
     f.kills = edits.shown.lists[teKilled]

@@ -181,6 +181,18 @@ type
     revision: int ## bumped on every change of what is shown
     keptRevision: int ## bumped on every change of what is kept
 
+var shownChanges {.threadvar.}: int
+  ## the changes of what any `FileEdits` shows made on this thread
+
+template bumpShown(e: var FileEdits) =
+  inc e.revision
+  inc shownChanges
+
+proc shownChangesHere*(): int =
+  ## How many times what any `FileEdits` shows has changed on this thread (the UI thread's,
+  ## where edits are made): one revision of them all.
+  shownChanges
+
 func union(a, b: openArray[int]): seq[int] =
   ## The values of `a` and of `b` (both ascending), ascending, each once.
   result = newSeqOfCap[int](a.len + b.len)
@@ -645,7 +657,7 @@ proc make(e: var FileEdits; s: sink EditStep; keep: bool) =
   ## Makes the new step `s`, on what is kept too with `keep`, and drops the
   ## steps undone, and the oldest beyond `MaxSteps` or `MaxHeldTraces`.
   e.shown.turnShown(s, back = false)
-  inc e.revision
+  e.bumpShown
   if keep:
     let was = e.kept
     e.kept.turnKept(s, back = false)
@@ -1206,7 +1218,7 @@ proc remembered*(e: var FileEdits; l: EditLists) =
   e.kept.unionShifts(l)
   e.shown.unionAux(l)
   e.kept.unionAux(l)
-  if e.shown != was: inc e.revision
+  if e.shown != was: e.bumpShown
 
 proc setInSession*(e: FileEdits): tuple[shown, kept: EditLists] =
   ## What the steps of this session in effect set, as shown and as kept: the
@@ -1250,7 +1262,7 @@ proc keepIncoming*(e: var FileEdits; incomingShown, incomingKept, baseline: Edit
   for a in incomingKept.auxMarks:
     let b = baseline.auxEntry(a.position)
     if not b.has or b.entry != a: e.kept.assignAux(a.position, true, a.marked, a.ms)
-  if e.shown != wasShown: inc e.revision
+  if e.shown != wasShown: e.bumpShown
   if e.kept != wasKept: inc e.keptRevision
 
 func both(a, b: EditLists): EditLists {.inline.} = a.minus(a.minus(b))
@@ -1358,7 +1370,7 @@ proc takeOff*(e: var FileEdits; gone: EditLists; spared: tuple[shown, kept: Edit
         if n != i: e.undos[n] = move e.undos[i]
         inc n
     e.undos.setLen n
-  if e.shown != wasShown: inc e.revision
+  if e.shown != wasShown: e.bumpShown
   if e.kept != wasKept: inc e.keptRevision
 
 proc merge*(e: var FileEdits; other: sink FileEdits) =
@@ -1379,7 +1391,7 @@ proc merge*(e: var FileEdits; other: sink FileEdits) =
   e.kept.shifts = preferShifts(e.kept, other.kept)
   e.shown.auxMarks = preferAux(e.shown, other.shown)
   e.kept.auxMarks = preferAux(e.kept, other.kept)
-  if e.shown != wasShown: inc e.revision
+  if e.shown != wasShown: e.bumpShown
   if e.kept != wasKept: inc e.keptRevision
   for r in e.redos: e.held -= r.size
   e.redos.setLen 0
@@ -1445,12 +1457,12 @@ proc adopt*(e: var FileEdits; l: EditLists) =
   if l != e.kept:
     e.kept = l
     inc e.keptRevision
-  if e.shown != was: inc e.revision
+  if e.shown != was: e.bumpShown
 
 proc forget*(e: var FileEdits) =
   ## Takes away what is kept and what is shown, and the history: the file
   ## is shown as it is on disk, and nothing is remembered.
-  if not e.shown.isEmpty: inc e.revision
+  if not e.shown.isEmpty: e.bumpShown
   if not e.kept.isEmpty: inc e.keptRevision
   e.shown = EditLists()
   e.kept = EditLists()
@@ -1464,7 +1476,7 @@ proc undo*(e: var FileEdits; keep = true): EditStep =
   if e.undos.len == 0: return EditStep()
   result = e.undos.pop()
   e.shown.turnShown(result, back = true)
-  inc e.revision
+  e.bumpShown
   if keep:
     let was = e.kept
     e.kept.turnKept(result, back = true)
@@ -1477,7 +1489,7 @@ proc redo*(e: var FileEdits; keep = true): EditStep =
   if e.redos.len == 0: return EditStep()
   result = e.redos.pop()
   e.shown.turnShown(result, back = false)
-  inc e.revision
+  e.bumpShown
   if keep:
     let was = e.kept
     e.kept.turnKept(result, back = false)

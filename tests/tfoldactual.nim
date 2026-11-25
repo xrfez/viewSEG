@@ -15,6 +15,8 @@
 ##   a move gives another key; the follower keeps the recorded fold and the difference of one
 ##   count (switching between them starts no job) and keeps at most three results.
 ## - A cancel leaves the sink empty.
+## - The stamp (revisions only) moves with a file added, a kill, a station move and the join
+##   options, and stays while nothing changes.
 ## - A folder being recorded: a count after a file was added, a file changed in place (within
 ##   the same second) or a kill reads only that file, and its counts equal a count from nothing;
 ##   the map counted last stays, updating, meanwhile (also while the folder is listed again); a
@@ -317,6 +319,24 @@ proc main*() =
       doAssert first.files.len == 6 and first.key.len > 0
       let stamp = actualStamp(st)
       doAssert actualStamp(st) == stamp and actualInputs(st).key == first.key
+      # a station move, and the join options outside a project, move the stamp and the key
+      var moves = StationMoves()
+      moves.add StationMove(station: stationKey(1001, 101, 1), x: 1.0, y: 2.0)
+      st.setStationMoves(moves)
+      doAssert actualStamp(st) != stamp and actualInputs(st).key != first.key,
+        "a station move moves the stamp"
+      st.setStationMoves(StationMoves())
+      let unmoved = actualStamp(st)
+      var s = st.settings
+      s.join.trailingDigits = not s.join.trailingDigits
+      st.apply Command(kind: ckSettings, settings: s)
+      doAssert actualStamp(st) != unmoved and actualInputs(st).key != first.key,
+        "the join options move the stamp"
+      s.join.trailingDigits = not s.join.trailingDigits
+      st.apply Command(kind: ckSettings, settings: s)
+      doAssert actualInputs(st).key == first.key
+      let stamp2 = actualStamp(st)
+      doAssert actualStamp(st) == stamp2, "the stamp stays while nothing changes"
       # a kill is another key
       var e = st.editsAt(files[0])
       doAssert e.shown.lists[teKilled].len == 0
