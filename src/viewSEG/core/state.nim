@@ -9141,7 +9141,9 @@ proc queueOpenMoves(state: var AppState) =
   let matchable = state.surveyMatchable
   for s in state.sessions:
     if s.isSignature or s.noSeismic: continue
-    if moves.len == 0 and state.moveBasesOf(s.id).len == 0: continue
+    # (a move job under way has not posted its bases yet: it is not "nothing to take back")
+    let underWay = state.movesJob != NoJob and state.movesSession == s.id
+    if moves.len == 0 and state.moveBasesOf(s.id).len == 0 and not underWay: continue
     if matchable:
       if state.joining.job != NoJob and state.joining.session == s.id and
           state.joining.step == jpReading: continue
@@ -11827,6 +11829,16 @@ proc ownPositionOf*(state: AppState; trace: int): Option[tuple[x, y, z: float64]
         o.keys.rcvY == o.keys.rcvY and
         (o.keys.rcvX != 0 or o.keys.rcvY != 0): # (0, 0): the header gives no position
       return some((x: o.keys.rcvX, y: o.keys.rcvY, z: o.keys.rcvZ))
+
+func keysInMemory*(state: AppState; trace: int): Option[TraceKeys] =
+  ## The keys the index holds of survey-wide trace `trace`, as a survey join or a station
+  ## move left them; none when no open file has it or the file has no keys. Reads no file.
+  result = none(TraceKeys)
+  let i = state.findTrace(trace)
+  if i < 0: return
+  let local = trace - state.sessions[i].base
+  template keys: untyped = state.sessions[i].filePtr[].index.keys
+  if local in 0 ..< keys.len: result = some(keys[local])
 
 proc askOwnPosition(state: var AppState; cmd: Command) =
   ## `ckOwnPosition`: has a job read the position trace `ownTrace`'s own header gives, unless

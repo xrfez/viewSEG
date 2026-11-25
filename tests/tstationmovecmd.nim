@@ -6,14 +6,14 @@
 ## survey join has overwritten the keys and a move has replaced them.
 ##
 ## Seen to fail: with `ownPositionOf` answering from the keys in memory, the header position
-## after the join was the survey's 500050 and not the file's 500000; with `stationMove` leaving
-## `moveHasWas` out of the message the distance "50.0 m" was missing; with the read-only
-## project's list written by `projectChanged` the saved document held the move.
+## after the join was the survey's 500050 and not the file's 500000.
+## With `queueOpenMoves` forgetting a move while its job had not yet posted what it replaced,
+## the keys stayed moved (about 2 runs in 10, then the wait for the restore ran out).
 
 import std/[math, options, os, sequtils, strutils]
 import parseSEG
 import viewSEG/core/[project, projectnif, state, stationmoves]
-import utils/[fixtures, waiting]
+import utils/[farsurvey, fixtures, waiting]
 
 func near(a, b: float64): bool =
   abs(a - b) <= 0.01
@@ -26,20 +26,6 @@ proc moveCmd(point, x, y: float64; was = (x: NaN, y: NaN); fromTime = none(float
   Command(kind: ckStationMove, moveLine: 100, movePoint: point, moveIndex: 1, moveX: x,
     moveY: y, moveWasX: was.x, moveWasY: was.y, moveHasWas: was.x == was.x,
     moveHasFrom: fromTime.isSome, moveFrom: fromTime.get(0.0), moveNote: "moved in the field")
-
-proc surveyFarther(fx: Fixtures): tuple[s, r, x: string] =
-  ## `surveySps`'s files, the receivers 50 m east of where the headers put them.
-  let base = fx.surveySps()
-  var r = SpsFile(headers: @[SpsHeader(code: "00", description: "SPS format version num.",
-    data: "SPS 2.1;")])
-  for channel in 1 .. Channels:
-    r.points.add SpsPoint(kind: pkReceiver, line: RcvLine,
-      point: FirstRcvPoint + float64(channel - 1), index: 1, code: "G1",
-      easting: rcvX(channel) + 50.0, northing: OriginY, elevation: Elevation, dayOfYear: -1,
-      hour: -1, minute: -1, second: -1)
-  let path = fx.dir / "farther.r"
-  doAssert writeSps(r, path).len == 0
-  (base.s, path, base.x)
 
 proc main*() =
   block commandOnTheList:
