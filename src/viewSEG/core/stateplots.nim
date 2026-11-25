@@ -926,6 +926,19 @@ proc openPlot(state: var AppState; cmd: Command) =
       # empty), unless the command gives one other than the built-in 100
       w.params.targetPct = NaN
     w.params.forceHundredSet = w.params.accelSet
+    if s.isSignature and state.inProject and state.project.doc.hasVibProfile and
+        cmd.plotParams == AnalysisParams():
+      # a window opened on a file starts from the project's vibrator QC profile, so two
+      # windows agree and one cannot wipe what the other set
+      let p = state.project.doc.vibProfile
+      w.params.qc = p.limits
+      (w.params.qcWindowMs, w.params.harmonics) = (p.qcWindowMs, p.harmonics)
+      if s.signature.kind == sgVib: w.params.accelSet = p.accelSet
+      (w.params.forceHundredPct, w.params.forceHundredUnit) = (p.forceHundredPct,
+        p.forceHundredUnit)
+      w.params.forceHundredSet = if p.forceHundredSetKnown: p.forceHundredSet
+        else: w.params.accelSet
+      w.params.targetPct = p.targetPct
     if samePlaces(cmd.plotParams.roles, VibRoles()):
       w.params.roles = state.rolesOf(s, traces, w.params.roles, s.name, w.params.accelSet)
     else: # the command names the places: that is a choice made on this file
@@ -944,6 +957,22 @@ proc openPlot(state: var AppState; cmd: Command) =
   if outside > 0:
     state.log.add(sevWarning, s.name, $outside & " of the traces given are not in " & s.name &
       ": left out of the plot.")
+
+proc keepVibProfile(state: var AppState; had, now: VibQcProfile) =
+  ## Writes into the project's vibrator QC profile the settings that differ between
+  ## `had` and `now` (one window's before and after a change); with no profile yet,
+  ## `now` is the profile. The change is said in Messages once it has settled.
+  let hasOne = state.project.doc.hasVibProfile
+  let stored = state.project.doc.vibProfile
+  let next = if hasOne: merged(stored, had, now) else: now
+  if hasOne and next == stored: return
+  if state.profileNoteAt == MonoTime(): state.profileNoteBase = stored
+  state.profileNoteAt = getMonoTime()
+  state.profileNoteFile = now.fromFile
+  state.project.doc.vibProfile = next
+  state.project.doc.vibProfile.later = stored.later
+  state.project.doc.hasVibProfile = true
+  state.projectChanged()
 
 proc showPlot(state: var AppState; cmd: Command) =
   ## `ckPlotDisplay`: an analysis window's settings, and whether it is
@@ -1025,6 +1054,7 @@ proc showPlot(state: var AppState; cmd: Command) =
         params.roles.massPolarity != had.massPolarity or params.roles.judge != had.judge:
       # a polarity chosen on the window is remembered with the roles, for the layout
       state.rememberRoles(w, params.roles, cmd.origin)
+  let profileHad = if signature: state.vibProfileOf(pw) else: VibQcProfile()
   if pw.view == avVibrator and params.tops != pw.params.tops and state.inProject and
       keeps(cmd.origin) and not state.project.readOnly:
     # a top frequency typed on the window is kept with its reference in the project
@@ -1039,18 +1069,13 @@ proc showPlot(state: var AppState; cmd: Command) =
   (measured.rolesOpen, measured.noteOpen) = (pw.params.rolesOpen, pw.params.noteOpen)
   (measured.setupOpen, measured.setupSet) = (pw.params.setupOpen, pw.params.setupSet)
   let changed = measured != pw.params
-  let profileHad = if signature: state.vibProfileOf(pw) else: VibQcProfile()
   pw.params = params
   if signature and state.inProject and keeps(cmd.origin) and not state.project.readOnly:
     # what the user sets on a signature window is the project's vibrator QC profile: one
-    # configuration, which a QC run reads (no separate button)
-    var now = state.vibProfileOf(pw)
-    if state.project.doc.hasVibProfile: now.later = state.project.doc.vibProfile.later
-    if now != profileHad and (not state.project.doc.hasVibProfile or
-        state.project.doc.vibProfile != now):
-      state.project.doc.vibProfile = now
-      state.project.doc.hasVibProfile = true
-      state.projectChanged()
+    # configuration, which a QC run reads (no separate button). Only the settings this
+    # change touched are written; the rest of the stored profile stays as it is
+    let now = state.vibProfileOf(pw)
+    if now != profileHad: state.keepVibProfile(profileHad, now)
   # what the user set becomes what a new window of the kind opens with
   # (a signature file's typed 100 % force belongs to its window: never remembered for the kind)
   # (nor its drive level: a new window of a signature file opens with none typed)

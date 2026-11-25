@@ -19,7 +19,7 @@
 ## With the stored force scale used, `scaleInForce` finds NaN. With `withShots` left out,
 ## `shotLogMatch` finds no FFID.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils, times]
 import parseSEG
 import parseSEG/common/diagnostics
 import parseSSDAT
@@ -593,6 +593,9 @@ proc main*() =
     let lone = datFile(sigs, "lone.dat", SynthDat(samples: Samples, fileNumber: 7050,
       line: 300, station: 4000, trigger: DatTime(year: 2001, month: 2, day: 3, hour: 5,
       minute: 30, second: 1, nanosecond: 250_000_000)))
+    let second = datFile(sigs, "second.dat", SynthDat(samples: Samples, fileNumber: 7002,
+      vibrator: 13, trigger: DatTime(year: 2001, month: 2, day: 3, hour: 4, minute: 9,
+      second: 6, nanosecond: 0)))
     let configDir = fx.dir / "config"
     createDir(configDir)
     proc started(): AppState =
@@ -610,9 +613,10 @@ proc main*() =
       st.apply Command(kind: ckOpenPlot, plotView: avVibrator, plotTraces: @[base])
       result = st.plots.high
       doAssert st.settle(st.plots[result].result.gen > 0 and not st.plots[result].waiting)
-    proc change(st: var AppState; w: int; p: AnalysisParams; origin = coWindow) =
+    proc change(st: var AppState; w: int; p: AnalysisParams; origin = coWindow;
+        frozen = false) =
       st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p,
-        origin: origin)
+        origin: origin, plotFrozen: frozen)
       doAssert st.settle(not st.plots[w].waiting)
 
     block notConfigured:
@@ -692,6 +696,80 @@ proc main*() =
       st.apply Command(kind: ckSelectReference, refId: "")
       cfg = vibQcConfig(st)
       doAssert cfg.profile.referenceId == first, "no fallback to the stored reference"
+
+    block twoWindowsMerge:
+      ## A window that never had a drive level cannot wipe the one another window set:
+      ## only what a window changed reaches the profile; a new window starts from the
+      ## profile; the Messages window says once what changed. Seen to fail when the whole
+      ## window replaced the profile (the second window's limit change set the drive level
+      ## to NaN), and when a new window opened with none typed.
+      var st = started()
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job-m", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let a = st.openWindow(good)
+      st.change(a, st.plots[a].params, frozen = true) # it stays on its file
+      let b = st.openWindow(second) # opened before the profile exists: no drive level
+      doAssert st.plots[b].params.targetPct.isNaN
+      var p = st.plots[a].params
+      p.targetPct = 60
+      p.forceHundredPct = 5000
+      p.forceHundredUnit = "counts"
+      st.change(a, p, frozen = true)
+      var cfg = vibQcConfig(st)
+      doAssert cfg.ask.options.targetPct == 60 and cfg.profile.fromFile == "good.dat", $(cfg.ask.options.targetPct, cfg.profile.fromFile, st.plots[a].file, st.plots[b].file)
+      # the user touches one limit in the other window
+      var q = st.plots[b].params
+      q.qc.avgPhaseDeg = 7
+      st.change(b, q, frozen = true)
+      cfg = vibQcConfig(st)
+      doAssert cfg.ask.options.targetPct == 60, "the second window wiped the drive level"
+      doAssert cfg.ask.options.forceHundredPct == 5000, "the second window wiped the force"
+      doAssert cfg.ask.options.qc.avgPhaseDeg == 7
+      doAssert cfg.profile.fromFile == "good.dat", "a limit change moved fromFile: " &
+        cfg.profile.fromFile
+      # a window opened now starts from the profile
+      let c = st.openWindow(lone)
+      doAssert st.plots[c].params.targetPct == 60, "a new window did not start from the " &
+        "profile: " & $st.plots[c].params.targetPct
+      doAssert st.plots[c].params.forceHundredPct == 5000
+      doAssert st.plots[c].params.qc.avgPhaseDeg == 7
+      # a force change on the second window does move fromFile
+      var d = st.plots[b].params
+      d.targetPct = 70
+      st.change(b, d, frozen = true)
+      doAssert vibQcConfig(st).ask.options.qc.avgPhaseDeg == 7
+      doAssert vibQcConfig(st).profile.fromFile == "second.dat"
+      doAssert vibQcConfig(st).ask.options.targetPct == 70
+      # the note: once, in words, when the changes settled
+      let before = st.log.nextSerial
+      st.persist(getMonoTime() + initDuration(seconds = 30))
+      var notes: seq[string] = @[]
+      for e in st.log.since(before):
+        if e.text.startsWith("Vibrator QC profile:"): notes.add e.text
+      doAssert notes.len == 1, $notes
+      doAssert "drive level 70 %" in notes[0] and notes[0].endsWith("(from second.dat)"), notes[0]
+      st.persist(getMonoTime() + initDuration(seconds = 60))
+      var again = 0
+      for e in st.log.since(before):
+        if e.text.startsWith("Vibrator QC profile:"): inc again
+      doAssert again == 1, "the same change was said twice"
+
+    block firstTopReachesProfile:
+      ## The first top frequency typed reaches the profile. Seen to fail when the
+      ## profile before the change was read after the tops were stored (topHz NaN).
+      var st = started()
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job-t", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let w = st.openWindow(good)
+      var p = st.plots[w].params
+      p.targetPct = 60
+      st.change(w, p)
+      let key = st.vibTopKey(st.plots[w])
+      p = st.plots[w].params
+      p.tops = p.tops.withTop(key, 80.0)
+      st.change(w, p)
+      doAssert st.project.doc.vibProfile.topHz == 80.0, $st.project.doc.vibProfile.topHz
+      doAssert vibQcConfig(st).ask.topHz == 80.0
 
     block shotLogMatch:
       ## The sweep's row in a loaded shot log: its FFID and source line and point. With no

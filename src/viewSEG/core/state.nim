@@ -1404,6 +1404,9 @@ type
     correlateOn: bool ## the Seismic window shows the correlated record
     correlateNote: string ## a status sentence (no reference, a failure); not the hover
     profileNoted: bool ## the status line says the vibrator QC profile was stored
+    profileNoteBase: VibQcProfile ## the stored profile as the Messages window last heard of it
+    profileNoteAt: MonoTime ## when the stored profile last changed, once not yet said
+    profileNoteFile: string ## the file of the window that changed it
     correlateSaid: string ## the sentence logged last, so the same one is not said again
     picksSaid: bool ## the picks sentence was said this run
     correlateLimit: int64
@@ -2184,12 +2187,25 @@ proc saveMemory(state: var AppState; now: MonoTime; force: bool) =
           state.writeMemoryDoc(i)
           r.changedAt = MonoTime()
 
+proc sayProfileChange(state: var AppState; now: MonoTime; force: bool) =
+  ## Tells the Messages window, once and in words, what changed in the project's
+  ## vibrator QC profile since it was last said, when it has stayed as it is for
+  ## `SaveDelay` (a drag or typing is one note, not one per step).
+  if state.profileNoteAt == MonoTime(): return
+  if not force and now - state.profileNoteAt < SaveDelay: return
+  state.profileNoteAt = MonoTime()
+  let words = changeWords(state.profileNoteBase, state.project.doc.vibProfile)
+  if words.len > 0:
+    state.log.add(sevInfo, "vibrator QC", "Vibrator QC profile: " & words.join(", ") &
+      (if state.profileNoteFile.len > 0: " (from " & state.profileNoteFile & ")" else: ""))
+
 proc persist*(state: var AppState; now = getMonoTime()) =
   ## Hands what is due to the disk thread: what was logged since the last
   ## call, and the settings and the arrangement once `SaveDelay` has passed
   ## since they last changed. Call it once per frame, after the frame's
   ## commands; it never waits.
   assertUiThread()
+  state.sayProfileChange(now, force = false)
   state.writeLog()
   if state.savedRev != state.keptRev and now - state.changedAt >= SaveDelay:
     state.saveSettings()
@@ -2204,6 +2220,7 @@ proc flushFiles*(state: var AppState) =
   ## Saves what is due now, without waiting for `SaveDelay`, and waits
   ## until the disk thread has written everything handed to it (tests).
   assertUiThread()
+  state.sayProfileChange(getMonoTime(), force = true)
   state.writeLog()
   if state.savedRev != state.keptRev: state.saveSettings()
   if state.layoutSaved != state.layoutRev: state.saveArrangement()

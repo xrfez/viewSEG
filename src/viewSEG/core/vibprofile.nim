@@ -14,7 +14,7 @@
 ## part of this snapshot.
 
 import std/math
-import analysis, nif, settings
+import analysis, nif, settings, units
 
 type
   VibQcProfile* = object
@@ -86,6 +86,77 @@ func `==`*(a, b: VibQcProfile): bool =
     a.forceHundredSetKnown == b.forceHundredSetKnown and
     sameFloat(a.targetPct, b.targetPct) and a.referenceId == b.referenceId and
     sameFloat(a.topHz, b.topHz) and a.fromFile == b.fromFile
+
+func merged*(stored, had, now: VibQcProfile): VibQcProfile =
+  ## The stored profile with only what the user changed in one window written into
+  ## it: a field that differs between `had` (the window's settings before the
+  ## change) and `now` (after it) takes `now`'s value; every other field keeps its
+  ## stored value, so a window that never had a drive level cannot wipe one set
+  ## in another. `fromFile` follows only a change of the 100 % force, its unit or
+  ## the drive level.
+  result = stored
+  template take(field: untyped) =
+    if had.field != now.field: result.field = now.field
+  func takeFloat(into: var float64; was, became: float64) =
+    if not sameFloat(was, became): into = became
+  takeFloat(result.limits.avgPhaseDeg, had.limits.avgPhaseDeg, now.limits.avgPhaseDeg)
+  takeFloat(result.limits.peakPhaseDeg, had.limits.peakPhaseDeg, now.limits.peakPhaseDeg)
+  takeFloat(result.limits.avgDistortionPct, had.limits.avgDistortionPct,
+    now.limits.avgDistortionPct)
+  takeFloat(result.limits.peakDistortionPct, had.limits.peakDistortionPct,
+    now.limits.peakDistortionPct)
+  takeFloat(result.limits.avgForcePct, had.limits.avgForcePct, now.limits.avgForcePct)
+  takeFloat(result.limits.peakForcePct, had.limits.peakForcePct, now.limits.peakForcePct)
+  takeFloat(result.qcWindowMs, had.qcWindowMs, now.qcWindowMs)
+  take(harmonics)
+  take(accelSet)
+  take(forceScale)
+  takeFloat(result.forceHundredPct, had.forceHundredPct, now.forceHundredPct)
+  take(forceHundredUnit)
+  take(forceHundredSet)
+  take(forceHundredSetKnown)
+  takeFloat(result.targetPct, had.targetPct, now.targetPct)
+  take(referenceId)
+  takeFloat(result.topHz, had.topHz, now.topHz)
+  if had.referenceId != now.referenceId: result.topHz = now.topHz
+  if not sameFloat(had.forceHundredPct, now.forceHundredPct) or
+      had.forceHundredUnit != now.forceHundredUnit or
+      not sameFloat(had.targetPct, now.targetPct):
+    result.fromFile = now.fromFile
+
+func changeWords*(a, b: VibQcProfile): seq[string] =
+  ## What differs between two profiles, in words, one bit per setting: "drive level
+  ## 60 %", "average phase limit off". Empty when they hold the same settings.
+  result = @[]
+  proc limitBit(name: string; x, y: float64; unit: string; into: var seq[string]) =
+    if not sameFloat(x, y):
+      into.add name & " limit " & (if y.isNaN: "off" else: sensible(y) & unit)
+  limitBit("average phase", a.limits.avgPhaseDeg, b.limits.avgPhaseDeg, "°", result)
+  limitBit("peak phase", a.limits.peakPhaseDeg, b.limits.peakPhaseDeg, "°", result)
+  limitBit("average distortion", a.limits.avgDistortionPct, b.limits.avgDistortionPct, " %",
+    result)
+  limitBit("peak distortion", a.limits.peakDistortionPct, b.limits.peakDistortionPct, " %",
+    result)
+  limitBit("average force", a.limits.avgForcePct, b.limits.avgForcePct, " %", result)
+  limitBit("peak force", a.limits.peakForcePct, b.limits.peakForcePct, " %", result)
+  if not sameFloat(a.qcWindowMs, b.qcWindowMs):
+    result.add "statistics window " & sensible(b.qcWindowMs) & " ms"
+  if a.harmonics != b.harmonics: result.add "harmonics " & $b.harmonics
+  if a.accelSet != b.accelSet: result.add "accelerometer set " & $b.accelSet
+  if a.forceScale != b.forceScale: result.add "force scale"
+  if not sameFloat(a.forceHundredPct, b.forceHundredPct) or
+      a.forceHundredUnit != b.forceHundredUnit:
+    result.add (if b.forceHundredPct.isNaN: "100 % force cleared"
+      else: "100 % force " & sensible(b.forceHundredPct) &
+        (if b.forceHundredUnit.len > 0: " " & b.forceHundredUnit else: ""))
+  if not sameFloat(a.targetPct, b.targetPct):
+    result.add (if b.targetPct.isNaN: "drive level cleared"
+      else: "drive level " & sensible(b.targetPct) & " %")
+  if a.referenceId != b.referenceId:
+    result.add (if b.referenceId.len == 0: "no reference" else: "reference " & b.referenceId)
+  if not sameFloat(a.topHz, b.topHz):
+    result.add (if b.topHz.isNaN: "top frequency cleared"
+      else: "top frequency " & sensible(b.topHz) & " Hz")
 
 func referenceProblem*(id: string): string =
   ## What `applied` says when `id` is not among the archive ids it was given.

@@ -135,7 +135,9 @@ carries a warning sign.
   the limits, the statistics window, the harmonics, the accelerometer set, a typed 100 % force
   and drive level, the top frequency typed for the reference, and the name of the file you were
   looking at. The force scale is the one in the settings now, and the reference is the project's
-  chosen one. Nothing read from the file is copied. A change made by an agent, or with no
+  chosen one. Only the settings you change in a window are written into the profile, so a
+  second window cannot wipe what the first one set; a window opened on a file starts from the
+  profile, and Messages says once what changed. Nothing read from the file is copied. A change made by an agent, or with no
   project open, is for that run only and is not kept. **Reports > Vibrator QC of a folder** reads
   this configuration; until a window has set it, that window says that vibrator signature QC is
   not configured.
