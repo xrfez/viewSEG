@@ -533,6 +533,10 @@ proc cutSweepLine(trace: int; heldMs, sweepMs, leadMs: float64): string =
   if leadMs > 0: result.add " plus the " & msText(leadMs) & " ms lead"
   result.add ": its wavelet is of a cut sweep."
 
+proc advanceLine(trace: int; advanceMs: float64): string =
+  "auxiliary trace " & $trace & " is advanced by " & msText(advanceMs) & " ms: its first " &
+    msText(advanceMs) & " ms are cut off."
+
 proc intervalLine(trace: int; reference: bool; traceMs, recordMs: float64): string =
   let kind = if reference: "reference" else: "auxiliary"
   let tail = if reference: "not correlated, written as zeros." else: "written as zeros."
@@ -590,6 +594,11 @@ proc correlationLines*(file: ptr SeismicFile; nTraces, listen, sweepLen: int;
         result.add cutSweepLine(t, float64(held) * dtMs, sweepMs, float64(lead) * dtMs)
   for t in odd:
     result.add intervalLine(t, t in refs, traceDt(file, t), dtMs)
+  var advances = initHashSet[int]() # each advance said once, for the first trace that has it
+  for t in 0 ..< nTraces:
+    let lag = lags.getOrDefault(t, 0)
+    if lag > 0 and not advances.containsOrIncl(lag):
+      result.add advanceLine(t, float64(lag) * dtMs)
 
 proc unreadWhy*(file: SeismicFile): string =
   ## Why a trace of `file` could not be read, in the words `correlateWork`

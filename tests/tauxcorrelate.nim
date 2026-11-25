@@ -242,6 +242,9 @@ proc main*() =
       "sweep 400 ms. 1 reference trace advanced by 100 ms.", "an earlier shift: " &
       $negative.lines
     doAssert samplesOf(negative.opened.filePtr[], 3) != raw(file, 3), "an earlier shift left it raw"
+    doAssert negative.lines.count("auxiliary trace 3 is advanced by 100 ms: its first 100 ms " &
+      "are cut off.") == 1, "an advance cuts the front of the sweep, and it is not said: " &
+      $negative.lines
     discard negative.opened.close()
 
   block projectAndFile:
