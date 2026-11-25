@@ -36,6 +36,10 @@ type
     shared*: int
       ## pairs the X records give twice, through channels two runs cover or in two files,
       ## written once
+    widened*: bool ## written as SPS 2.1: the numbers did not fit the X file's SPS 1.0
+    extraGathers*: int
+      ## gathers made beyond one per receiver: a receiver with more traces than the
+      ## channel columns hold takes one more for each further run
     error*: string ## why nothing was written; "" when the file was
 
   OFileSink* = ref object
@@ -183,9 +187,71 @@ proc refusedTarget*(dest: string; sources: openArray[string]): string =
       return name & " is one of the survey's own files or an open file; choose another name"
   ""
 
-proc firstError(log: DiagLog): string =
+const
+  MaxChannel = [sps10: 9999'i64, sps21: 99999'i64] ## traces of a gather the columns hold
+  SizeError = "an O record does not fit the SPS "
+
+proc fitted(rels: openArray[SpsRelation]; maxChannel: int64):
+    tuple[rels: seq[SpsRelation]; extra: int] =
+  ## `rels` with their traces numbered from 1 in each gather, and a receiver whose
+  ## traces would pass `maxChannel` given a further gather (the same receiver, its
+  ## next traces numbered from 1), the runs cut where they must be. Gathers are
+  ## numbered on from 1 as the receivers come.
+  var gather = 0'i64
+  var next = 1'i64
+  var last = -1'i64
+  for r in rels:
+    if r.fieldRecord != last:
+      last = r.fieldRecord
+      inc gather
+      next = 1
+    let n = r.toChannel - r.fromChannel + 1
+    let step = if n > 1: (r.toReceiver - r.fromReceiver) / float64(n - 1) else: 0.0
+    var done = 0'i64
+    while done < n:
+      if next > maxChannel:
+        inc gather
+        inc result.extra
+        next = 1
+      let take = min(maxChannel - next + 1, n - done)
+      var p = r
+      p.fieldRecord = gather
+      p.fromChannel = next
+      p.toChannel = next + take - 1
+      if done > 0: p.fromReceiver = r.fromReceiver + float64(done) * step
+      if done + take < n: p.toReceiver = r.fromReceiver + float64(done + take - 1) * step
+      result.rels.add p
+      next += take
+      done += take
+
+proc firstError(log: DiagLog; rev: SpsRevision): string =
+  ## The first problem of the writer, naming the O record (not the X record the
+  ## writer's words are for).
   for d in log:
-    if d.severity in {sevError, sevFatal}: return d.msg
+    if d.severity in {sevError, sevFatal}:
+      let what = if d.msg.startsWith("X."): d.msg[2 .. ^1] else: d.msg
+      return SizeError & $rev & " columns (line " & $(d.loc.record + 1) & "): " & what
+
+proc renderOFile*(file: SpsFile; s: var OFileSummary): string =
+  ## The text of `file`'s O records in the revision of `s`, or, when its numbers do
+  ## not fit SPS 1.0, in SPS 2.1; a receiver with more traces than the channel
+  ## columns hold is given further gathers. Updates `s`; its `error` says why
+  ## when the text is "".
+  let first = s.revision
+  for rev in [first, sps21]:
+    let cut = fitted(file.relations, MaxChannel[rev])
+    var f = file
+    f.relations = cut.rels
+    let t = spsText(f, SpsWriteOptions(revision: rev))
+    if not t.log.hasErrors:
+      s.records = cut.rels.len
+      s.extraGathers = cut.extra
+      s.widened = rev != first
+      s.revision = rev
+      s.error = ""
+      return t.text
+    s.error = firstError(t.log, rev)
+    if first == sps21: break
 
 proc oFileSpec*(dest: string): JobSpec =
   ## The job that writes `dest`: background, needing `dest` to itself and reading the X file.
@@ -209,14 +275,13 @@ proc oFileWork*(gs: seq[ref SurveyGeometry]; sink: OFileSink): JobWork =
         s = made.summary
         ctx.checkCancelled()
         ctx.setPhase("Writing")
-        let t = spsText(made.file)
-        if t.log.hasErrors:
-          s.error = "an O record does not fit the columns: " & firstError(t.log)
-        elif t.text.len == 0:
+        let text = renderOFile(made.file, s)
+        if s.error.len > 0: discard
+        elif text.len == 0:
           s.error = "the survey has no X records to take O records from"
         else:
           ctx.checkCancelled()
-          s.error = writeBeside(sink.dest, t.text, replace = true)
+          s.error = writeBeside(sink.dest, text, replace = true)
           if s.error.len == 0: s.file = sink.dest
       except JobCancelledError:
         sink.summary = s
@@ -241,4 +306,9 @@ func oFileSentences*(s: OFileSummary; name: string; sources: openArray[string]):
     result.add " " & plural(s.shared, "pair", "pairs") &
       " that the X records give twice (through channels two runs share, or in two files) " &
       "are written once."
+  if s.widened:
+    result.add " It is written as SPS 2.1: the numbers do not fit SPS 1.0."
+  if s.extraGathers > 0:
+    result.add " " & plural(s.extraGathers, "gather was", "gathers were") &
+      " added: a receiver's traces do not fit the channel columns in one."
   result.add " The file is not imported: add it in the Import survey window to use it."

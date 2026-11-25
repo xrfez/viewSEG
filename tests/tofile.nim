@@ -289,6 +289,69 @@ proc main*() =
     file.addSps(dest)
     doAssert file.oPairs == union
 
+  proc pairsOfRelations(rels: seq[SpsRelation]): HashSet[string] =
+    var g = initSurveyGeometry()
+    g.addSps(SpsFile(relations: rels), rdSource)
+    g.xPairs
+
+  proc relation(rec: int; srcPoint: float64; fromCh, toCh: int; rcvLine, fromR, toR: float64):
+      SpsRelation =
+    result = initSpsRelation()
+    result.fieldRecord = rec
+    (result.srcLine, result.srcPoint) = (1.0, srcPoint)
+    (result.fromChannel, result.toChannel) = (int64(fromCh), int64(toCh))
+    (result.rcvLine, result.fromReceiver, result.toReceiver) = (rcvLine, fromR, toR)
+
+  block revision_1_0_that_does_not_fit_is_written_as_2_1:
+    # 10 005 receivers on one line: more gathers than SPS 1.0's four digits number.
+    var g = initSurveyGeometry()
+    g.addSps(SpsFile(relations: @[relation(1, 1, 1, 10_005, 10, 1, 10_005)]), rdSource)
+    var head = SpsFile(revision: sps10, revisionDeclared: true)
+    head.headers = @[SpsHeader(code: "00", description: "SPS format version num.",
+      data: "SPS001;")]
+    var made = deriveOFile(g, head)
+    doAssert made.summary.revision == sps10
+    let text = renderOFile(made.file, made.summary)
+    doAssert made.summary.error.len == 0 and made.summary.widened and
+      made.summary.revision == sps21, $made.summary
+    doAssert "SPS 2.1" in text.splitLines[0], text.splitLines[0]
+    var back = initSurveyGeometry()
+    back.addSps(parseSps(text, "w.ops"))
+    doAssert back.oPairs == g.xPairs and back.oPairs.len == 10_005
+    doAssert "written as SPS 2.1" in oFileSentences(made.summary, "w.ops", ["w.x"])
+    # One that fits stays SPS 1.0.
+    var small = initSurveyGeometry()
+    small.addSps(SpsFile(relations: @[relation(1, 1, 1, 5, 10, 1, 5)]), rdSource)
+    var m2 = deriveOFile(small, head)
+    let t2 = renderOFile(m2.file, m2.summary)
+    doAssert not m2.summary.widened and m2.summary.revision == sps10 and
+      "SPS001" in t2.splitLines[0], t2.splitLines[0]
+
+  block receiver_with_more_traces_than_the_columns_hold:
+    # 100 005 sources recorded by one receiver: SPS 2.1 counts to 99 999 traces.
+    var g = initSurveyGeometry()
+    var rels: seq[SpsRelation]
+    for i in 1 .. 100_005: rels.add relation(i, float64(i), 1, 1, 10, 1, 1)
+    g.addSps(SpsFile(relations: rels), rdSource)
+    var made = deriveOFile(g, SpsFile())
+    let text = renderOFile(made.file, made.summary)
+    doAssert made.summary.error.len == 0 and made.summary.extraGathers == 1 and
+      made.summary.records == 2, $made.summary
+    var back = initSurveyGeometry()
+    back.addSps(parseSps(text, "b.ops"))
+    doAssert back.oPairs == g.xPairs and back.oPairs.len == 100_005,
+      "pairs differ: " & $back.oPairs.len
+    doAssert "gather was added" in oFileSentences(made.summary, "b.ops", ["b.x"])
+
+  block what_does_not_fit_names_the_o_record:
+    var g = initSurveyGeometry()
+    g.addSps(SpsFile(relations: @[relation(1, 1, 1, 1, 12_345_678_901.0, 1, 1)]), rdSource)
+    var made = deriveOFile(g, SpsFile())
+    let text = renderOFile(made.file, made.summary)
+    doAssert text.len == 0 and made.summary.error.len > 0
+    doAssert "O record" in made.summary.error and "X." notin made.summary.error,
+      made.summary.error
+
   block the_command:
     let source = dir / "cmd.x"
     copyFile(Surveys[0], source)
