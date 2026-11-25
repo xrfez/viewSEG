@@ -16,7 +16,8 @@
   ## fits, `shotOf` indexes past the log.
 
 import std/[math, options, strutils]
-import viewSEG/core/[shotfollow, shotlog, sigtypes, units, vibfolderqc, vibjudge]
+import viewSEG/core/[shotfollow, shotlog, sigtypes, sweepinfo, units, vibfolderqc,
+  vibjudge]
 import viewSEG/view/vibfolderwords
 
 const TriggerNs = 981_173_106_789_000_000'i64 ## 2001-02-03 04:05:06.789 UTC
@@ -250,6 +251,24 @@ proc main*() =
     doAssert cells[4] == "7001" and cells[5] == "100" and cells[6] == "1010", $cells
     doAssert "7001" in resultsText(FolderTable(rows: @[shown]))
     doAssert "7001" in resultsCsv(FolderTable(rows: @[shown]))
+
+  block identityFromTheDat:
+    ## A `.vib`'s electronics number is its folder's hint; the paired `.dat`'s real
+    ## serial wins, and the row says when they differ.
+    ## Seen to fail when the hint was kept over the `.dat`'s serial (row shows 1111).
+    let vibInfo = SweepInfo(kind: sgVib, controller: 1111, serialFrom: sfFolder,
+      triggerNs: 1_000_000_000, timeIsStart: true)
+    let datInfo = SweepInfo(kind: sgDat, controller: 2222, serialFrom: sfFile, vibrator: 9,
+      triggerNs: 1_500_000_000, fileNumber: 5)
+    let same = stamped(FolderRow(path: "/x/1111/a.vib", kind: sgVib), vibInfo, datInfo,
+      "/y/b.dat")
+    doAssert same.controller == 2222 and same.vibrator == 9, $(same.controller, same.vibrator)
+    doAssert "The folder's number 1111 is not the .dat's serial 2222: the serial is shown" in
+      same.warnings, $same.warnings
+    let agree = stamped(FolderRow(path: "/x/2222/a.vib", kind: sgVib),
+      SweepInfo(kind: sgVib, controller: 2222, serialFrom: sfFolder, triggerNs: 1_000_000_000),
+      datInfo, "/y/b.dat")
+    doAssert agree.controller == 2222 and agree.warnings.len == 0, $agree.warnings
 
   echo "tvibfolderqc: ok"
 

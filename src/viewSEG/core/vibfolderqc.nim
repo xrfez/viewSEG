@@ -288,7 +288,12 @@ func stamped*(row: FolderRow; info, partner: SweepInfo; pairPath: string): Folde
   var pairNs = 0'i64
   var pairFile = -1'i64
   if info.kind == sgVib and pairPath.len > 0:
-    if info.controller == 0: result.controller = partner.controller
+    # the `.dat` holds the serial; a `.vib`'s own is a hint from its folder
+    if partner.controller != 0:
+      if info.controller != 0 and info.controller != partner.controller:
+        result.warnings.add "The folder's number " & $info.controller &
+          " is not the .dat's serial " & $partner.controller & ": the serial is shown"
+      result.controller = partner.controller
     if info.vibrator == 0: result.vibrator = partner.vibrator
     pairNs = partner.triggerNs
     pairFile = partner.fileNumber
