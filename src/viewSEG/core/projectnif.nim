@@ -118,6 +118,7 @@ const
   DelimNames: array[Delimiter, string] = ["comma", "tab", "semicolon", "spaces"]
   ClockNames: array[TimeClock, string] = ["UTC", "GPS"]
   LengthNames: array[shotlog.LengthUnit, string] = ["metres", "feet"]
+  SplitNames: array[TimeSplit, string] = ["none", "found", "old"]
   MaxPatternText = 120 ## a text part, in bytes
   MaxVendorName = 200  ## a vendor field part's name, in bytes
   PartLaterTag = " "
@@ -236,6 +237,7 @@ proc writeShotMap(w: var NifWriter; s: StoredShotLog) =
   w.choice("clock", $s.map.clock)
   w.choice("unit", $s.map.lengthUnit)
   if s.map.dateTimePattern.len > 0: w.value("pattern", s.map.dateTimePattern)
+  if s.map.timeSplit != tsNone: w.choice("timeSplit", SplitNames[s.map.timeSplit])
   for t in s.map.sentinels: w.value("sentinel", t)
   for role in s.map.roles: w.value("role", $role)
   var named = false
@@ -799,6 +801,7 @@ proc readShotMap(r: var Reading; n: NifNode; s: var StoredShotLog; bad, tooMany:
     of "clock": r.choice(c, ClockNames, s.map.clock)
     of "unit": r.choice(c, LengthNames, s.map.lengthUnit)
     of "pattern": r.text(c, s.map.dateTimePattern)
+    of "timeSplit": r.choice(c, SplitNames, s.map.timeSplit)
     of "sentinel":
       if s.map.sentinels.len >= MaxShotLogSentinels:
         r.problem(c, "a shot log keeps at most " & $MaxShotLogSentinels &

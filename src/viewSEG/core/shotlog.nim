@@ -6,7 +6,7 @@
 ## A `ShotLogMap` says which column is which (`ColumnRole`: Ignore, a system
 ## column the code refers to by role, or a user defined column with a name of
 ## its own), which clock the time is on, and which sentinels mean missing. The
-## cells of the Time (UTC) columns are read together as one time. `guessMap`
+## cell of the one Time (UTC) column is read by one pattern. `guessMap`
 ## is a starting point from the header names and the first rows; the roles can
 ## be set without it. `shots` turns the rows into
 ## typed values and one UTC instant per row (microseconds since 1970).
@@ -41,9 +41,9 @@ type
   ColumnRole* = enum
     ## What a column of a shot log means. `$` and `label` are the words the
     ## Columns dialog shows. Every role from `crTime` to `crUphole` is a
-    ## system column that code refers to by role (one column each, except
-    ## `crTime`, which several columns can share); `crText` is a user defined
-    ## column, which has a name of its own (`ShotLogMap.names`).
+    ## system column that code refers to by role (one column each); `crText`
+    ## is a user defined column, which has a name of its own
+    ## (`ShotLogMap.names`).
     crIgnored = "Ignore"
     crTime = "Time (UTC)"
     crGpsMicros = "GPSTB"
@@ -83,6 +83,15 @@ type
     pkDuplicateShot = "duplicate shot"
     pkDuplicateFile = "duplicate file number"
     pkTooLong = "too long"
+    pkNoTime = "no time"
+
+  TimeSplit* = enum
+    ## Whether a log's time was found spread over several columns, which are
+    ## not read: `tsFound` by `guessMap`, `tsOld` in a project saved when
+    ## they were.
+    tsNone = ""
+    tsFound = "found"
+    tsOld = "old"
 
   ShotProblem* = object
     ## One fault in a log or in the typed view of it.
@@ -106,13 +115,17 @@ type
       ## one per column, read only where the role is `crText` (user defined):
       ## its name. Empty: the header's name, or "Column N".
     clock*: TimeClock ## a time written as a calendar date; the epoch forms are UTC
+    timeSplit*: TimeSplit
+      ## the log's time is spread over several columns, which are not read
     dateTimePattern*: string
-      ## How the cells of the `crTime` columns, joined in column order with
-      ## one space, read as one time: `yyyy`, `yy`, `ddd` (day of year), `mm`
-      ## (month before an hour, else minute), `mi`, `dd`, `hh`, `ss`, `f`
-      ## (fraction of a second), `u` (whole microseconds) and literals, as in
-      ## `yyyy ddd hh mi ss.ffffff`; or `epoch seconds` or `epoch
-      ## microseconds`. Empty: the form is detected from the first rows.
+      ## How the cell of the one `crTime` column reads as a time: `yyyy` (four
+      ## digits), `yy` (two), `ddd` (day of year), `mo` (month), `dd` (day of
+      ## month), `hh`, `mi` (minute), `ss`, `f` (the digits of a fraction of a
+      ## second, after a `.` or a `,`), `u` (whole microseconds) and any other
+      ## character as written, as in `yyyy-mo-dd hh:mi:ss.ffffff`; a trailing
+      ## `Z` is accepted; or `epoch seconds` or `epoch microseconds`. `mm` is
+      ## not a token. Empty: the form is detected from the sampled rows, and
+      ## when it cannot be decided no time is read from the column.
     sentinels*: seq[string] ## cell text that means missing, besides a blank
     decimalComma*: bool
       ## When set, a comma in a numeric cell is the decimal point. Default
@@ -123,7 +136,7 @@ type
   Shot* = object
     ## Typed values of one row. An integer is `none` when missing or a
     ## sentinel; a float is NaN. `timeUtcUs` is the one instant, UTC
-    ## microseconds since 1970, from the most trusted source that parsed.
+    ## microseconds since 1970: GPSTB when that column reads, else Time (UTC).
     ## A column mapped to Ignore is not here at all.
     sequence*: Option[int64]
     fileNumber*: Option[int64]
@@ -169,6 +182,7 @@ type
     fieldOf: seq[int32] ## row r starts at fieldOf[r]; fieldOf[^1] is the end
     problems: ProblemList
     edits: Table[int64, string]
+    headerNames: seq[string] ## one per data column; "" where it has no name
 
   Instant = object
     name: string
@@ -375,6 +389,8 @@ proc quoteField(s: string; d: Delimiter): string =
     result.add c
   result.add '"'
 
+proc fitHeaderNames(fields: seq[string]; width: int; spaces: bool): seq[string] {.raises: [], gcsafe.}
+
 proc tooLongLog(delimiter: Delimiter; skip: int; hasHeader: bool): ShotLog =
   result = ShotLog(delimiter: delimiter, skipLines: skip, hasHeader: hasHeader,
     headerLine: -1, headerField: -1, edits: initTable[int64, string]())
@@ -387,7 +403,8 @@ proc parseShotLog*(text: sink string; delimiter: Delimiter; skipLines = 0;
   ## line if `hasHeader`, then one data row per remaining non-blank line.
   ## A row with fewer or more fields than the header (or than the first
   ## data row, when there is no header, or when the rows are cut at spaces,
-  ## where a header's names may hold spaces) is kept and listed. Line endings
+  ## where a header's names may hold spaces: they are fitted to the columns,
+  ## and a name that cannot be fitted is "Column N") is kept and listed. Line endings
   ## may be LF or CRLF. Quoted fields may contain the delimiter and a
   ## doubled quote. A text longer than `high(int32)` bytes is not indexed:
   ## the log is empty and one problem names the limit.
@@ -468,6 +485,13 @@ proc parseShotLog*(text: sink string; delimiter: Delimiter; skipLines = 0;
   if not fitsOffset(result.fieldStart.len):
     return tooLongLog(delimiter, skip, hasHeader)
   result.fieldOf.add int32(result.fieldStart.len)
+  if result.headerLine >= 0:
+    var raw: seq[string] = @[]
+    for k in 0 ..< result.headerCount:
+      let at = result.headerField.int + k
+      raw.add unquoteRange(result.text, result.fieldStart[at].int,
+        result.fieldStop[at].int).strip()
+    result.headerNames = fitHeaderNames(raw, result.width, delimiter == dlSpaces)
 
 proc parseShotLog*(text: sink string; map: ShotLogMap): ShotLog {.raises: [].} =
   ## Indexes `text` with `map.delimiter`, `map.skipLines` and `map.hasHeader`.
@@ -498,12 +522,12 @@ func problems*(log: ShotLog): ProblemList {.inline.} =
   log.problems
 
 proc columnName*(log: ShotLog; col: int): string {.raises: [].} =
-  ## The header cell, quotes removed and ends trimmed. Empty when there is
-  ## no header or `col` is outside it.
-  if log.headerLine < 0 or col < 0 or col >= log.headerCount: return ""
-  let a = log.fieldStart[log.headerField.int + col].int
-  let b = log.fieldStop[log.headerField.int + col].int
-  unquoteRange(log.text, a, b).strip()
+  ## The header name of data column `col`, quotes removed and ends trimmed.
+  ## In a file cut at spaces the names are fitted to the columns, so a name
+  ## with a space is one name; a name that could not be fitted is "Column N".
+  ## Empty when there is no header, the header's cell is blank, or `col` is
+  ## beyond the header.
+  if col < 0 or col >= log.headerNames.len: "" else: log.headerNames[col]
 
 func text*(log: ShotLog): lent string =
   ## The text that was parsed. An edit is not in it until `toText`.
@@ -626,15 +650,6 @@ const Aliases = [
   ("utcmicroseconds", crTime), ("utcus", crTime), ("unixtimeus", crTime),
   ("utcseconds", crTime), ("epochseconds", crTime), ("unixtime", crTime),
   ("utcs", crTime), ("posix", crTime),
-  ("year", crTime), ("yr", crTime),
-  ("dayofyear", crTime), ("julianday", crTime), ("julian", crTime),
-  ("jday", crTime), ("doy", crTime),
-  ("month", crTime), ("mon", crTime),
-  ("dayofmonth", crTime), ("dom", crTime), ("day", crTime),
-  ("hour", crTime), ("hr", crTime), ("hh", crTime),
-  ("minute", crTime), ("min", crTime),
-  ("microsecond", crTime), ("microseconds", crTime), ("usec", crTime),
-  ("second", crTime), ("sec", crTime), ("ss", crTime),
   ("datetimeutc", crTime), ("datetimetext", crTime),
   ("datetime", crTime), ("timestamp", crTime), ("shottime", crTime),
   ("date", crTime), ("time", crTime), ("timeutc", crTime),
@@ -649,11 +664,23 @@ const Aliases = [
   ("gunid", crSourceId), ("id", crSourceId),
   ("uphole", crUphole), ("upholetime", crUphole), ("tuh", crUphole)]
 
+const ExplicitEpoch = ["utcmicroseconds", "utcus", "unixtimeus", "utcseconds",
+  "epochseconds", "unixtime", "utcs", "posix"]
+  ## header names that say the numbers are on the UTC clock, not GPS
+
+const SplitNames = ["year", "yr", "dayofyear", "julianday", "julian", "jday", "doy",
+  "month", "mon", "dayofmonth", "dom", "day", "hour", "hr", "hh", "minute", "min",
+  "microsecond", "microseconds", "usec", "second", "sec", "ss"]
+  ## header names of one part of a time that is spread over several columns
+
 func nameKey*(s: string): string =
-  ## `s` compared as a name: lower case letters and digits only, so
-  ## "Source Line", "source_line" and "SourceLine" are one name.
+  ## `s` compared as a name: lower case ASCII letters and digits, and every
+  ## byte that is not ASCII as it is, so "Source Line", "source_line" and
+  ## "SourceLine" are one name and two names in another script are not.
+  ## Empty when `s` has only spaces and punctuation.
   for c in s:
     if c in Letters + Digits: result.add c.toLowerAscii
+    elif c >= '\x80': result.add c
 
 func isSystemName*(name: string): bool =
   ## Whether `name` is one of the choices of the Columns dialog (Ignore, a
@@ -667,6 +694,8 @@ func nameFault*(name: string): string =
   ## A system name is refused whatever its spaces, case and punctuation.
   if name.strip.len == 0:
     "A user defined column needs a name."
+  elif nameKey(name).len == 0:
+    "A user defined column's name needs a letter or a digit."
   elif isSystemName(name):
     "\"" & name.strip & "\" is one of the system's column names. Give this column " &
       "another name."
@@ -677,9 +706,9 @@ func isSystemRole*(role: ColumnRole): bool {.inline.} =
   role in {crTime .. crUphole}
 
 func roleUnique*(role: ColumnRole): bool {.inline.} =
-  ## A meaning that belongs to one column only. `crTime` may be on several
-  ## columns, which are read together as one time.
-  role in {crGpsMicros .. crUphole}
+  ## A meaning that belongs to one column only: every system column,
+  ## Time (UTC) too.
+  role in {crTime .. crUphole}
 
 func normHeader(s: string): string =
   ## Letters only, lower case, with a leading number prefix such as `07_`
@@ -710,8 +739,14 @@ func roleOfName(raw: string): ColumnRole =
     if a[0] == n: return a[1]
   crText
 
+func isSplitName(raw: string): bool =
+  ## Whether `raw` names one part of a time spread over several columns:
+  ## year, day of year, month, day, hour, minute, second or microsecond.
+  let n = normHeader(raw)
+  n in SplitNames
+
 func knownHeader(raw: string): bool =
-  roleOfName(raw) != crText
+  roleOfName(raw) != crText or isSplitName(raw)
 
 func hasLetter(s: string): bool =
   for c in s:
@@ -739,45 +774,6 @@ func firstChar(text: string; a, b: int): char =
   var i = a
   while i < b and text[i] == ' ': inc i
   if i < b: text[i] else: '\0'
-
-proc detectPattern(s: string): string =
-  ## `yyyy/mm/dd hh:mm:ss.f` or an ISO form, or "" when `s` is neither.
-  let t = s.strip
-  if t.len < 10: return ""
-  for k in 0 .. 3:
-    if t[k] notin Digits: return ""
-  let sep = t[4]
-  if sep notin {'/', '-'}: return ""
-  if t[7] != sep: return ""
-  for k in [5, 6, 8, 9]:
-    if t[k] notin Digits: return ""
-  result = "yyyy" & sep & "mm" & sep & "dd"
-  var i = 10
-  if i >= t.len or t[i] notin {' ', 'T'}: return ""
-  result.add t[i]
-  inc i
-  if i + 8 > t.len: return ""
-  for k in 0 .. 7:
-    let c = t[i + k]
-    if k in {2, 5}:
-      if c != ':': return ""
-    elif c notin Digits:
-      return ""
-  result.add "hh:mm:ss"
-  i += 8
-  if i < t.len and t[i] == '.':
-    result.add '.'
-    inc i
-    var f = 0
-    while i < t.len and t[i] in Digits:
-      result.add 'f'
-      inc i
-      inc f
-    if f == 0: return ""
-  if i < t.len and t[i] in {'Z', 'z'}:
-    result.add 'Z'
-    inc i
-  if i != t.len: result = ""
 
 proc isGpsMicrosText(s: string): bool =
   let t = s.strip
@@ -819,10 +815,6 @@ proc lineDelimiter(text: string; a, b: int): Delimiter =
   elif semis > commas and semis > 0: dlSemicolon
   elif commas > 0: dlComma
   else: dlSpaces
-
-proc nameLike(s: string): bool =
-  ## A header cell: a letter, and not a date-time such as an ISO instant.
-  hasLetter(s) and detectPattern(s).len == 0
 
 const White = {' ', '\t', '\v', '\r', '\n', '\f'}
 
@@ -993,96 +985,203 @@ proc parseSecondsUs(s: openArray[char]; decimalComma = false): tuple[ok: bool; u
 
 const
   EpochSeconds* = "epoch seconds"
-    ## a `dateTimePattern` for one column of seconds since 1970, fraction allowed
+    ## a `dateTimePattern` for a column of seconds since 1970, a fraction allowed
   EpochMicros* = "epoch microseconds"
-    ## a `dateTimePattern` for one column of whole microseconds since 1970
+    ## a `dateTimePattern` for a column of whole microseconds since 1970
+  PatternExample* = "dd/mo/yyyy hh:mi:ss"
+  UndecidedTime* = "The time's form could not be decided: type the pattern, for example " &
+    PatternExample
+    ## said when a Time (UTC) column has no pattern the sampled rows decide
+  SplitTimeFound* = "This log's time is spread over several columns. Choose GPSTB, or " &
+    "add one Time (UTC) column to the file."
+  SplitTimeOld* = "This log's time was read from several columns before; that is no " &
+    "longer done. Choose GPSTB or one Time (UTC) column."
+  MmFault = "A pattern cannot have mm: write mo for the month and mi for the minute."
+  SampleRows* = 64 ## rows whose cells decide a time's form
 
 type
+  TimeFieldKind = enum
+    fkYear4, fkYear2, fkDoy, fkMonth, fkDay, fkHour, fkMinute, fkSecond, fkFraction,
+    fkMicros, fkLiteral
+
+  PatField = object
+    kind: TimeFieldKind
+    lit: char
+
+  TimePattern = object
+    ## A `dateTimePattern` taken apart once.
+    text: string
+    epoch: int    ## 1: epoch seconds, 2: epoch microseconds, 0: fields
+    fault: string ## why the pattern cannot be used; "" when it can
+    fields: seq[PatField]
+
   TimeParts = object
-    ok: bool
     y, m, d, doy, hh, mi, ss: int
     fracUs: int ## the fraction of the second, in microseconds
     micros: int ## the `u` field; -1 when the pattern has none
 
-func isToken(c: char): bool {.inline.} =
-  c.toLowerAscii in {'y', 'm', 'd', 'h', 's', 'f', 'u'}
+func tokenOf(kind: TimeFieldKind): string =
+  case kind
+  of fkYear4: "yyyy"
+  of fkYear2: "yy"
+  of fkDoy: "ddd"
+  of fkMonth: "mo"
+  of fkDay: "dd"
+  of fkHour: "hh"
+  of fkMinute: "mi"
+  of fkSecond: "ss"
+  of fkFraction: "f"
+  of fkMicros: "u"
+  of fkLiteral: ""
 
-proc matchPattern(text, pattern: string): TimeParts =
-  ## Reads `text` as `pattern` says. A field with a literal or the end after
-  ## it takes one up to its width in digits, so `5` is an hour for `hh`; a
-  ## field followed by another field takes exactly its width. A `.` before
-  ## `f` is optional. A two-digit year uses the pivot 50: 50..99 is 19xx.
+func notAToken(p: string; at, run: int): string =
+  "\"" & p.substr(at, at + run - 1) & "\" is not a field of a pattern: use yyyy, yy, " &
+    "ddd, mo, dd, hh, mi, ss, f or u."
+
+proc checkFields(pat: var TimePattern) =
+  ## Each field once, and a year, a day, an hour, a minute and a second.
+  var have: set[TimeFieldKind] = {}
+  for f in pat.fields:
+    if f.kind != fkLiteral:
+      let slot = if f.kind == fkYear2: fkYear4 else: f.kind
+      if slot in have:
+        pat.fault = "\"" & tokenOf(f.kind) & "\" is written twice."
+        return
+      have.incl slot
+  if fkDoy in have and (fkMonth in have or fkDay in have):
+    pat.fault = "ddd is the day of the year: leave out mo and dd, or write mo and dd " &
+      "and leave out ddd."
+  elif fkYear4 notin have or fkHour notin have or fkMinute notin have or
+      fkSecond notin have or (fkDoy notin have and (fkMonth notin have or
+      fkDay notin have)):
+    pat.fault = "The pattern must say the year, the day (ddd, or mo and dd), the hour " &
+      "(hh), the minute (mi) and the second (ss)."
+
+proc compilePattern(pattern: string): TimePattern =
+  ## `pattern` taken apart. Its `fault` says why it cannot be used.
+  let p = pattern.strip
+  result.text = p
+  let key = p.toLowerAscii
+  if key == EpochSeconds:
+    result.epoch = 1
+  elif key == EpochMicros:
+    result.epoch = 2
+  else:
+    var i = 0
+    while i < p.len and result.fault.len == 0:
+      let c = p[i].toLowerAscii
+      var run = 1
+      while i + run < p.len and p[i + run].toLowerAscii == c: inc run
+      var kind = fkLiteral
+      var width = 1
+      case c
+      of 'y':
+        if run == 4: kind = fkYear4
+        elif run == 2: kind = fkYear2
+        else: result.fault = notAToken(p, i, run)
+        width = run
+      of 'd':
+        if run == 3: kind = fkDoy
+        elif run == 2: kind = fkDay
+        else: result.fault = notAToken(p, i, run)
+        width = run
+      of 'h':
+        if run == 2: kind = fkHour else: result.fault = notAToken(p, i, run)
+        width = run
+      of 's':
+        if run == 2: kind = fkSecond else: result.fault = notAToken(p, i, run)
+        width = run
+      of 'f':
+        kind = fkFraction
+        width = run
+      of 'u':
+        kind = fkMicros
+        width = run
+      of 'm':
+        let next = if i + 1 < p.len: p[i + 1].toLowerAscii else: ' '
+        if run == 1 and next == 'o':
+          kind = fkMonth
+          width = 2
+        elif run == 1 and next == 'i':
+          kind = fkMinute
+          width = 2
+        else:
+          result.fault = MmFault
+      else: discard
+      if result.fault.len == 0:
+        result.fields.add PatField(kind: kind, lit: p[i])
+        i += width
+    if result.fault.len == 0: checkFields(result)
+
+proc patternFault*(pattern: string): string =
+  ## Why a typed `dateTimePattern` cannot be used, in words; "" when it can,
+  ## and when it is empty (the form is then detected).
+  if pattern.strip.len == 0: "" else: compilePattern(pattern).fault
+
+func fieldWidth(kind: TimeFieldKind): tuple[lo, hi: int] =
+  ## Digits a field takes: at most `hi`, so a digit run can never overflow.
+  case kind
+  of fkYear4: (4, 4)
+  of fkYear2: (2, 2)
+  of fkDoy: (1, 3)
+  of fkMicros: (1, 6)
+  else: (1, 2)
+
+proc matchTime(text: string; pat: TimePattern; parts: var TimeParts): bool =
+  ## Reads `text` as `pat` says. A `.` before `f` is also matched by a `,`,
+  ## and the dot with its fraction may be absent (a whole second). A two-digit year uses the pivot 50: 50..99 is 19xx. A trailing `Z` is
+  ## accepted.
   let t = text.strip
   var ti = 0
-  var pi = 0
-  var seenHour = false
-  result.micros = -1
-  result.ok = pattern.len > 0
-  while result.ok and pi < pattern.len:
-    let c = pattern[pi]
-    var kind = c.toLowerAscii
-    var n = 0
-    if kind == 'm' and pi + 1 < pattern.len and pattern[pi + 1].toLowerAscii == 'i':
-      kind = 'i'
-      n = 2
-      pi += 2
-    elif isToken(c):
-      while pi < pattern.len and pattern[pi].toLowerAscii == kind:
-        inc n
-        inc pi
-    if n == 0:
-      if c == '.' and pi + 1 < pattern.len and pattern[pi + 1].toLowerAscii == 'f':
-        if ti < t.len and t[ti] == '.':
+  parts = TimeParts(micros: -1)
+  var noFraction = false
+  for k, f in pat.fields:
+    case f.kind
+    of fkLiteral:
+      let beforeFraction = f.lit == '.' and k + 1 < pat.fields.len and
+        pat.fields[k + 1].kind == fkFraction
+      if ti < t.len and (t[ti] == f.lit or (beforeFraction and t[ti] == ',')):
+        inc ti
+      elif beforeFraction:
+        noFraction = true
+      else:
+        return false
+    of fkFraction:
+      if noFraction:
+        noFraction = false
+      else:
+        var seen, used, frac = 0
+        while ti < t.len and t[ti] in Digits:
+          if used < 6:
+            frac = frac * 10 + (ord(t[ti]) - ord('0'))
+            inc used
+          inc seen
           inc ti
-          inc pi
-        else:
-          inc pi
-          while pi < pattern.len and pattern[pi].toLowerAscii == 'f': inc pi
-      elif ti < t.len and t[ti] == c:
-        inc ti
-        inc pi
-      else:
-        result.ok = false
-    elif kind == 'f':
-      var seen, used, frac = 0
-      while ti < t.len and t[ti] in Digits:
-        if used < 6:
-          frac = frac * 10 + (ord(t[ti]) - ord('0'))
-          inc used
-        inc seen
-        inc ti
-      if seen == 0:
-        result.ok = false
-      else:
+        if seen == 0: return false
         var scale = 1
         for _ in used ..< 6: scale *= 10
-        result.fracUs = frac * scale
+        parts.fracUs = frac * scale
     else:
-      let exact = pi < pattern.len and isToken(pattern[pi])
+      let (lo, hi) = fieldWidth(f.kind)
       var v, got = 0
-      while ti < t.len and t[ti] in Digits and got < n:
+      while ti < t.len and t[ti] in Digits and got < hi:
         v = v * 10 + (ord(t[ti]) - ord('0'))
         inc got
         inc ti
-      if got == 0 or (exact and got != n):
-        result.ok = false
-      else:
-        case kind
-        of 'y':
-          if got <= 2: v = if v >= 50: 1900 + v else: 2000 + v
-          result.y = v
-        of 'm':
-          if seenHour: result.mi = v else: result.m = v
-        of 'i': result.mi = v
-        of 'd':
-          if n >= 3: result.doy = v else: result.d = v
-        of 'h':
-          result.hh = v
-          seenHour = true
-        of 's': result.ss = v
-        else: result.micros = v
-  if result.ok and ti < t.len and t[ti] in {'Z', 'z'}: inc ti
-  if result.ok and ti != t.len: result.ok = false
+      if got < lo: return false
+      case f.kind
+      of fkYear4: parts.y = v
+      of fkYear2: parts.y = if v >= 50: 1900 + v else: 2000 + v
+      of fkDoy: parts.doy = v
+      of fkMonth: parts.m = v
+      of fkDay: parts.d = v
+      of fkHour: parts.hh = v
+      of fkMinute: parts.mi = v
+      of fkSecond: parts.ss = v
+      of fkMicros: parts.micros = v
+      else: discard
+  if ti < t.len and t[ti] in {'Z', 'z'}: inc ti
+  ti == t.len
 
 proc civilToUtcUs(y, m, d, hh, mm, ss, us: int; clock: TimeClock): Option[int64] =
   if not validDate(y, m, d): return none(int64)
@@ -1116,22 +1215,21 @@ type TimeRead = object
   clash: string ## the seconds' fraction and the microseconds differ: both, in words
   why: string   ## when not `ok`, how the text fails
 
-proc readTime(text, pattern: string; clock: TimeClock): TimeRead =
-  ## One instant from `text` as `pattern` says. The epoch forms are UTC; the
+proc readTime(text: string; pat: TimePattern; clock: TimeClock;
+    decimalComma = false): TimeRead =
+  ## One instant from `text` as `pat` says. The epoch forms are UTC; the
   ## others are on `clock`.
-  let key = pattern.strip.toLowerAscii
-  if key == EpochSeconds:
-    let sec = parseSecondsUs(text)
-    if sec.ok: result = TimeRead(ok: true, us: sec.us)
-    else: result.why = "does not match " & pattern
-  elif key == EpochMicros:
+  let mismatch = "does not match " & pat.text
+  if pat.epoch == 1:
+    let sec = parseSecondsUs(text, decimalComma)
+    if sec.ok: result = TimeRead(ok: true, us: sec.us) else: result.why = mismatch
+  elif pat.epoch == 2:
     let whole = parseWhole(text)
-    if whole.ok: result = TimeRead(ok: true, us: whole.value)
-    else: result.why = "does not match " & pattern
+    if whole.ok: result = TimeRead(ok: true, us: whole.value) else: result.why = mismatch
   else:
-    let p = matchPattern(text, pattern)
-    if not p.ok:
-      result.why = "does not match " & pattern
+    var p: TimeParts
+    if not matchTime(text, pat, p):
+      result.why = mismatch
     else:
       var m = p.m
       var d = p.d
@@ -1159,27 +1257,28 @@ proc readTime(text, pattern: string; clock: TimeClock): TimeRead =
         else:
           result.why = "is not a valid date and time"
 
-proc detectTimePattern*(text: string): string =
-  ## The pattern of one joined time text, or "" when it has no form this
-  ## knows: seconds or microseconds since 1970 (`epoch seconds`, `epoch
-  ## microseconds`), or a date (year, then day of year or month and day), an
-  ## hour, a minute, a second, then an optional fraction (`.` and digits) or
-  ## whole microseconds, with the separators it holds and an optional `Z`.
-  let t = text.strip
-  if t.len == 0: return ""
-  var j = 0
-  while j < t.len and t[j] in Digits: inc j
-  let whole = j
-  var k = j
-  if k < t.len and t[k] == '.':
-    inc k
-    let at = k
-    while k < t.len and t[k] in Digits: inc k
-    if k == at: k = -1
-  if whole > 0 and k == t.len:
-    if k == whole and whole in 15 .. 17: return EpochMicros
-    if whole in 9 .. 11: return EpochSeconds
-    return ""
+func plainNumber(t: string): bool =
+  ## Digits, and a fraction after a dot.
+  var i = 0
+  while i < t.len and t[i] in Digits: inc i
+  if i == 0: return false
+  if i == t.len: return true
+  if t[i] != '.': return false
+  inc i
+  let at = i
+  while i < t.len and t[i] in Digits: inc i
+  i == t.len and i > at
+
+type Shape = object
+  pattern: string ## "" when the cell has no form this proposes
+  doy: bool       ## the date is a year and a day of year
+  second: string  ## the digits of that day
+
+proc shapeOf(t: string): Shape =
+  ## The form of one date-time cell: a four-digit year first, then yyyy-mo-dd
+  ## (`-`, `/` or `.`) or a day of year, an hour, a minute and a second with
+  ## `:`, a fraction after `.` or `,`, and a `Z`. Anything else (a leading
+  ## one or two digit run, a zone offset, a stray run of digits) has none.
   var runs: seq[tuple[a, b: int]] = @[]
   var i = 0
   while i < t.len:
@@ -1189,62 +1288,107 @@ proc detectTimePattern*(text: string): string =
       runs.add (a, i)
     else:
       inc i
-  if runs.len < 5 or runs[0].a != 0: return ""
-  func runLen(r: tuple[a, b: int]): int = r.b - r.a
-  var pat = ""
-  var at = 0
-  proc put(token: string): bool =
-    ## The separator before run `at`, then `token`.
-    if at > 0:
-      let sep = t.substr(runs[at - 1].b, runs[at].a - 1)
-      if sep.len > 2: return false
-      for c in sep:
-        if c in Digits or (c in Letters and c notin {'T', 't'}): return false
-      pat.add sep
-    pat.add token
-    inc at
-    true
-  var date = false
-  if runLen(runs[0]) in [2, 4]:
-    let fraction = if runs.len > 5 and
-        t.substr(runs[^2].b, runs[^1].a - 1) == ".": 1 else: 0
-    let core = runs.len - fraction
-    var dayOfYear = false
-    if core == 5:
-      dayOfYear = true
-    elif core == 6:
-      let second = t.substr(runs[1].a, runs[1].b - 1)
-      dayOfYear = second.len == 3 or (second.len == 2 and second > "12")
-    if core in 5 .. 7:
-      date = put(if runLen(runs[0]) == 4: "yyyy" else: "yy")
-      if date and dayOfYear: date = put("ddd")
-      elif date: date = put("mm") and put("dd")
-  if not date or runs.len < at + 3: return ""
-  for token in ["hh", "mi", "ss"]:
-    if runLen(runs[at]) notin 1 .. 2 or not put(token): return ""
-  var fractionDone = false
-  while at < runs.len:
-    let sep = t.substr(runs[at - 1].b, runs[at].a - 1)
-    if sep == "." and not fractionDone:
-      fractionDone = true
-      if not put(repeat('f', runLen(runs[at]))): return ""
-    elif runLen(runs[at]) <= 6:
-      if not put("uuuuuu"): return ""
-    else:
-      return ""
-  if at != runs.len: return ""
+  if runs.len < 5 or runs[0].a != 0 or runs[0].b != 4: return
+  proc width(k: int): int = runs[k].b - runs[k].a
+  proc sep(k: int): string = t.substr(runs[k].b, runs[k + 1].a - 1)
   let rest = t.substr(runs[^1].b)
-  if rest.len > 0:
-    if rest in ["Z", "z"]: pat.add rest else: return ""
-  pat
+  if rest notin ["", "Z", "z"]: return
+  let fraction = if runs.len >= 6 and sep(runs.len - 2) in [".", ","]: 1 else: 0
+  let core = runs.len - fraction
+  var pat = "yyyy"
+  var timeAt = 0
+  if core == 6:
+    let s = sep(0)
+    if width(1) notin 1 .. 2 or width(2) notin 1 .. 2 or s != sep(1) or
+        s notin ["-", "/", "."]:
+      return
+    pat.add s & "mo" & s & "dd"
+    timeAt = 3
+  elif core == 5:
+    let s = sep(0)
+    if width(1) notin 1 .. 3 or s notin ["-", "/", ".", " "]: return
+    pat.add s & "ddd"
+    result.doy = true
+    result.second = t.substr(runs[1].a, runs[1].b - 1)
+    timeAt = 2
+  else:
+    return
+  let glue = sep(timeAt - 1)
+  if glue notin [" ", "T", "t"]: return
+  pat.add glue & "hh:mi:ss"
+  for k in timeAt .. timeAt + 2:
+    if width(k) notin 1 .. 2: return
+  if sep(timeAt) != ":" or sep(timeAt + 1) != ":": return
+  if fraction == 1: pat.add ".ffffff"
+  if rest.len > 0: pat.add "Z"
+  result.pattern = pat
 
+proc detectWith(cells: openArray[string]; epochLike: bool): string =
+  ## `detectTimePattern`; with `epochLike` (the column's header says UTC), a
+  ## column of 16 digits that could be GPS microseconds is epoch microseconds.
+  var vals: seq[string] = @[]
+  for c in cells:
+    let t = c.strip
+    if t.len > 0: vals.add t
+  if vals.len == 0: return ""
+  var numbers = 0
+  for t in vals:
+    if plainNumber(t): inc numbers
+  if numbers > 0:
+    if numbers != vals.len: return ""
+    var micros, seconds = true
+    for t in vals:
+      if isGpsMicrosText(t) and not epochLike: return ""
+      let whole = parseWhole(t)
+      micros = micros and whole.ok and whole.value in 946_684_800_000_000'i64 ..
+        4_102_444_800_000_000'i64
+      let dot = t.find('.')
+      let head = if dot < 0: t else: t.substr(0, dot - 1)
+      let secs = parseWhole(head)
+      seconds = seconds and secs.ok and secs.value in 946_684_800'i64 .. 4_102_444_800'i64
+    if micros: return EpochMicros
+    if seconds: return EpochSeconds
+    return ""
+  let first = shapeOf(vals[0])
+  if first.pattern.len == 0: return ""
+  var threeWide = true
+  var over12 = false
+  for t in vals:
+    let shape = shapeOf(t)
+    if shape.pattern != first.pattern: return ""
+    if shape.doy:
+      if shape.second.len != 3: threeWide = false
+      var day = 0
+      for ch in shape.second: day = day * 10 + (ord(ch) - ord('0'))
+      if day > 12: over12 = true
+  if first.doy and not (threeWide or over12): return ""
+  let pat = compilePattern(first.pattern)
+  for t in vals:
+    if not readTime(t, pat, tcUtc).ok: return ""
+  first.pattern
+
+proc detectTimePattern*(cells: openArray[string]): string =
+  ## The pattern that reads every non-blank cell of one column, or "" when
+  ## the cells do not decide one. Proposed: seconds or microseconds since 1970
+  ## when every cell is a plain number in 2000..2100 (a column of GPS
+  ## microseconds is not one); a date and a time, as `shapeOf` says, when
+  ## every cell has the same form and, for a year and a day of year, a day
+  ## above 12 is there or every day has three digits. Not proposed: a leading
+  ## one or two digit run (dd/mo/yy, mo/dd/yy, yy/mo/dd), a four-digit year
+  ## in the third place (dd/mo/yyyy or mo/dd/yyyy), a zone offset, and forms
+  ## that differ between cells; the pattern is then typed.
+  detectWith(cells, false)
+
+proc nameLike(s: string): bool =
+  ## A header cell: a letter, and not a date-time such as an ISO instant.
+  hasLetter(s) and detectTimePattern([s]).len == 0
 
 func uniqueName(base: string; used: var seq[string]; col: int): string =
   ## `base` as a user defined column's name: "Column N" when empty, " (file)"
   ## added to a system name, and a number added to a name another column has.
   ## The name's key is then added to `used`.
   var stem = base.strip
-  if stem.len == 0: stem = "Column " & $(col + 1)
+  if nameKey(stem).len == 0: stem = "Column " & $(col + 1)
   if isSystemName(stem): stem.add " (file)"
   result = stem
   var k = 1
@@ -1328,29 +1472,39 @@ const LegacyRoles = [
   ("speed", crText, lpNone), ("text", crText, lpNone)]
   ## the words a project saved before the system columns were named used
 
-func legacyToken(part: LegacyPart): string =
-  case part
-  of lpYear: "yyyy"
-  of lpDoy: "ddd"
-  of lpMonth: "mm"
-  of lpDom: "dd"
-  of lpHour: "hh"
-  of lpMinute: "mi"
-  of lpSecond: "ss.ffffff"
-  of lpMicro: "uuuuuu"
-  else: ""
+func modernPattern(p: string): string =
+  ## A stored pattern in which `mm` is written as the earlier readers took
+  ## it: the month before an hour, else the minute.
+  var seenHour = false
+  var i = 0
+  while i < p.len:
+    let c = p[i].toLowerAscii
+    if c == 'm' and i + 1 < p.len and p[i + 1].toLowerAscii == 'm' and
+        (i + 2 >= p.len or p[i + 2].toLowerAscii != 'm'):
+      result.add if seenHour: "mi" else: "mo"
+      i += 2
+    else:
+      if c == 'h': seenHour = true
+      result.add p[i]
+      inc i
 
 proc applyRoleNames*(map: var ShotLogMap; roleNames, columnNames: openArray[string]):
     string =
   ## Sets `map.roles` and `map.names` from the role words a project stored:
-  ## the words of `ColumnRole`, and the older words, which are migrated. The
-  ## older time roles become `crTime` on those columns, with `dateTimePattern`
-  ## set to what reads them the same way (one source, in the order UTC
-  ## microseconds, UTC seconds, split fields, date-time text; the columns of
-  ## another source become user defined). Gun array, volume, pressure, heading,
-  ## speed and text become user defined, named by their old word (text: by the
-  ## header). `columnNames` are the stored user defined names, if any. The
-  ## result is "" or the first word that is neither.
+  ## the words of `ColumnRole`, and the older words, which are migrated.
+  ## Time (UTC) is on one column. An older map's time becomes `crTime` on
+  ## one column, with `dateTimePattern` set to read it the same way: UTC
+  ## microseconds (`epoch microseconds`), else UTC seconds (`epoch seconds`),
+  ## else date-time text (its pattern, with `mm` written `mo` or `mi`); the
+  ## first column of that kind, as the earlier reader took it. A map that
+  ## already has a Time (UTC) column keeps its first, and its pattern. Every
+  ## other older time column, and the year, day of year, month, day of month,
+  ## hour, minute, second and microsecond columns, become user defined, named
+  ## by their old word, and are not read. When a map had only those split
+  ## columns for its time, `map.timeSplit` is `tsOld`. Gun array, volume,
+  ## pressure, heading, speed and text become user defined, named by their
+  ## old word (text: by the header). `columnNames` are the stored user
+  ## defined names, if any. The result is "" or the first word that is neither.
   map.roles.setLen 0
   map.names.setLen 0
   var parts: seq[LegacyPart] = @[]
@@ -1376,73 +1530,88 @@ proc applyRoleNames*(map: var ShotLogMap; roleNames, columnNames: openArray[stri
     map.roles.add role
     map.names.add name
     parts.add part
+  var current: seq[int] = @[] ## columns that already say Time (UTC)
+  for c, role in map.roles:
+    if role == crTime and parts[c] == lpNone: current.add c
+  var chosen = -1
   var group = lpNone
-  var cols: seq[int] = @[]
-  for want in [lpUtcUs, lpUtcSec]:
-    if group == lpNone:
-      for c, p in parts:
-        if p == want:
-          group = want
-          cols = @[c]
-          break
-  if group == lpNone:
-    var have: set[LegacyPart] = {}
-    var seenPart: set[LegacyPart] = {}
-    var pick: seq[int] = @[]
-    for c, p in parts:
-      if p in {lpYear .. lpMicro} and p notin seenPart:
-        seenPart.incl p
-        pick.add c
-        have.incl p
-    if lpYear in have and (lpDoy in have or (lpMonth in have and lpDom in have)) and
-        lpHour in have and lpMinute in have and lpSecond in have:
-      group = lpYear
-      cols = pick
-  if group == lpNone:
-    for c, p in parts:
-      if p == lpText:
-        group = lpText
-        cols = @[c]
-        break
-  var pattern = map.dateTimePattern
-  case group
-  of lpUtcUs: pattern = EpochMicros
-  of lpUtcSec: pattern = EpochSeconds
-  of lpYear:
-    pattern = ""
-    for c in cols:
-      if pattern.len > 0: pattern.add ' '
-      pattern.add legacyToken(parts[c])
-  else: discard
+  if current.len > 0:
+    chosen = current[0]
+    if current.len > 1: map.dateTimePattern = ""
+    map.dateTimePattern = modernPattern(map.dateTimePattern)
+  else:
+    for want in [lpUtcUs, lpUtcSec, lpText]:
+      if group == lpNone:
+        for c, p in parts:
+          if p == want:
+            group = want
+            chosen = c
+            break
+    case group
+    of lpUtcUs: map.dateTimePattern = EpochMicros
+    of lpUtcSec: map.dateTimePattern = EpochSeconds
+    else: map.dateTimePattern = modernPattern(map.dateTimePattern)
+  var split = false
   for c, p in parts:
     if p != lpNone:
-      if c in cols:
+      if c == chosen:
         map.roles[c] = crTime
         map.names[c] = ""
       else:
         map.roles[c] = crText
         for e in LegacyRoles:
           if e[2] == p: map.names[c] = e[0]
-  if group != lpNone: map.dateTimePattern = pattern
+        if p in {lpYear .. lpMicro}: split = true
+    elif map.roles[c] == crTime and c != chosen:
+      map.roles[c] = crText
+  if split and chosen < 0: map.timeSplit = tsOld
   var named = false
   for name in map.names:
     if name.len > 0: named = true
   if not named: map.names.setLen 0
 
-proc guessFromCells(cells: openArray[string]): ColumnRole =
-  ## GPSTB or a date-time text, when every non-empty cell agrees. Otherwise
-  ## `crText`.
-  result = crText
-  var n, gps, time = 0
+func gpsPlausible(cells: openArray[string]): bool =
+  ## Every non-empty cell is a whole number of microseconds on the GPS clock
+  ## in 1999..2081 (a column of GPS seconds is not).
+  var n = 0
   for c in cells:
     let t = c.strip
     if t.len > 0:
       inc n
-      if isGpsMicrosText(t): inc gps
-      if detectPattern(t).len > 0: inc time
-  if n > 0:
-    if time == n: result = crTime
-    elif gps == n: result = crGpsMicros
+      let whole = parseWhole(t)
+      if not (whole.ok and whole.value in 600_000_000_000_000'i64 ..
+          3_300_000_000_000_000'i64):
+        return false
+  n > 0
+
+func gpsLike(cells: openArray[string]): bool =
+  ## Every non-empty cell is 16 digits that read as GPS microseconds.
+  var n = 0
+  for c in cells:
+    let t = c.strip
+    if t.len > 0:
+      inc n
+      if not isGpsMicrosText(t): return false
+  n > 0
+
+proc timeLike(cells: openArray[string]): bool =
+  ## Every non-empty cell has at least three runs of digits, as a date or a
+  ## time has, and there is one.
+  var n = 0
+  for c in cells:
+    let t = c.strip
+    if t.len > 0:
+      inc n
+      var runs = 0
+      var i = 0
+      while i < t.len:
+        if t[i] in Digits:
+          inc runs
+          while i < t.len and t[i] in Digits: inc i
+        else:
+          inc i
+      if runs < 3: return false
+  n > 0
 
 proc cellsFit(role: ColumnRole; cells: openArray[string]): bool =
   ## Whether most non-empty cells read as `role`: whole numbers for SEQ, FFID,
@@ -1498,6 +1667,21 @@ proc alignHeader(fields: seq[string]; width: int): tuple[ok: bool; names: seq[st
   result.ok = true
   for g in countdown(rev.high, 0): result.names.add rev[g]
 
+proc fitHeaderNames(fields: seq[string]; width: int; spaces: bool): seq[string] {.raises: [], gcsafe.} =
+  ## The names of `width` data columns from the header's `fields`. Equal
+  ## counts, or more columns than names, or more names than columns in a file
+  ## cut at a character: the leading names, and "Column N" for the rest. In a
+  ## file cut at spaces a name may hold spaces: the fields are fitted into
+  ## `width` names (`alignHeader`), and when that cannot be done every name
+  ## is "Column N", never a piece of another name.
+  result = newSeq[string](max(width, 0))
+  for c in 0 ..< result.len: result[c] = "Column " & $(c + 1)
+  if not spaces or fields.len <= width:
+    for c in 0 ..< min(result.len, fields.len): result[c] = fields[c]
+  else:
+    let fit = alignHeader(fields, width)
+    if fit.ok: result = fit.names
+
 proc guessMap*(text: string): ShotLogMap {.raises: [].} =
   ## A starting map: delimiter, lines to skip, whether a header is there,
   ## and a role per column. The delimiter is the one most of the data rows
@@ -1523,7 +1707,7 @@ proc guessMap*(text: string): ShotLogMap {.raises: [].} =
   var keptStop: seq[int] = @[]
   var i = 0
   let n = text.len
-  while i < n and keptPhys.len < 40:
+  while i < n and keptPhys.len < 80:
     let start = i
     var j = i
     while j < n and text[j] != '\n' and text[j] != '\r': inc j
@@ -1580,7 +1764,7 @@ proc guessMap*(text: string): ShotLogMap {.raises: [].} =
   var counts: seq[int] = @[]
   var taken = 0
   for k in dataFrom ..< keptStart.len:
-    if taken < 12:
+    if taken < SampleRows:
       var starts: seq[int32] = @[]
       var stops: seq[int32] = @[]
       scanFields(text, keptStart[k], keptStop[k], result.delimiter, starts, stops)
@@ -1609,12 +1793,8 @@ proc guessMap*(text: string): ShotLogMap {.raises: [].} =
     var fieldsOf: seq[string] = @[]
     for c in 0 ..< hStart.len:
       fieldsOf.add fieldText(text, hStart[c].int, hStop[c].int).strip
-    if width == 0 or width == fieldsOf.len:
-      headerNames = fieldsOf
-      width = fieldsOf.len
-    else:
-      let fit = alignHeader(fieldsOf, width)
-      if fit.ok: headerNames = fit.names
+    if width == 0: width = fieldsOf.len
+    headerNames = fitHeaderNames(fieldsOf, width, result.delimiter == dlSpaces)
   else:
     result.hasHeader = false
     result.skipLines = if keptPhys.len > 0: keptPhys[0] else: 0
@@ -1622,16 +1802,44 @@ proc guessMap*(text: string): ShotLogMap {.raises: [].} =
   result.roles = newSeq[ColumnRole](width)
   result.names = newSeq[string](width)
   var seenRoles: set[ColumnRole] = {}
+  var timeCols: seq[int] = @[] ## columns that read as Time (UTC)
+  var decided: seq[int] = @[] ## those whose cells decide a pattern
+  var patterns = newSeq[string](width)
+  var splitNamed = 0
   for c in 0 ..< width:
     var role = crText
-    if c < headerNames.len:
-      role = roleOfName(headerNames[c])
-      if mentionsFeet(headerNames[c]): result.lengthUnit = luFeet
-    if role == crText: role = guessFromCells(samples[c])
-    if role != crText and not cellsFit(role, samples[c]): role = crText
-    if roleUnique(role) and role in seenRoles: role = crText
-    if roleUnique(role): seenRoles.incl role
-    result.roles[c] = role
+    let name = if c < headerNames.len: headerNames[c] else: ""
+    let cells = samples[c]
+    var split = false
+    if name.len > 0:
+      role = roleOfName(name)
+      split = role == crText and isSplitName(name)
+      if mentionsFeet(name): result.lengthUnit = luFeet
+    if split:
+      inc splitNamed
+    else:
+      let utcHeader = name.len > 0 and normHeader(name) in ExplicitEpoch
+      var skipTime = false ## the header says GPSTB over cells that are not
+      if role == crGpsMicros:
+        if not gpsPlausible(cells):
+          role = crText
+          skipTime = true
+      elif not utcHeader and role in {crText, crTime} and gpsLike(cells):
+        role = crGpsMicros
+      if role == crText and not skipTime and detectTimePattern(cells).len > 0:
+        role = crTime
+      if role == crTime:
+        patterns[c] = detectWith(cells, utcHeader)
+        if patterns[c].len > 0: decided.add c
+        elif not timeLike(cells): role = crText
+        if role == crTime: timeCols.add c
+      elif role != crText and not cellsFit(role, cells): role = crText
+    if role == crTime:
+      result.roles[c] = crTime
+    else:
+      if roleUnique(role) and role in seenRoles: role = crText
+      if roleUnique(role): seenRoles.incl role
+      result.roles[c] = role
   if result.delimiter != dlComma:
     var commaDec, dotDec = false
     for col in samples:
@@ -1656,36 +1864,14 @@ proc guessMap*(text: string): ShotLogMap {.raises: [].} =
         if colDot: dotDec = true
     if commaDec and not dotDec:
       result.decimalComma = true
-  var timeCols: seq[int] = @[]
-  for c in 0 ..< width:
-    if result.roles[c] == crTime: timeCols.add c
-  let decimalComma = result.decimalComma
-  proc patternOf(cols: seq[int]): string =
-    ## The pattern that reads the joined cells of `cols` in every sample row.
-    var joined: seq[string] = @[]
-    for r in 0 ..< counts.len:
-      var line = ""
-      for c in cols:
-        if r < samples[c].len and samples[c][r].strip.len > 0:
-          if line.len > 0: line.add ' '
-          line.add samples[c][r].strip
-      if line.len > 0: joined.add dotDecimal(line, decimalComma)
-    if joined.len > 0:
-      result = detectTimePattern(joined[0])
-      for line in joined:
-        if result.len > 0 and not readTime(line, result, tcUtc).ok: result = ""
-  if timeCols.len > 0:
-    var chosen = timeCols
-    var pattern = patternOf(timeCols)
-    if pattern.len == 0 and timeCols.len > 1:
-      for c in timeCols:
-        pattern = patternOf(@[c])
-        if pattern.len > 0:
-          chosen = @[c]
-          break
-    for c in timeCols:
-      if c notin chosen or pattern.len == 0: result.roles[c] = crText
-    result.dateTimePattern = pattern
+  var keep = -1
+  if decided.len > 0: keep = decided[0]
+  elif timeCols.len == 1: keep = timeCols[0]
+  elif timeCols.len > 1: result.timeSplit = tsFound
+  for c in timeCols:
+    if c != keep: result.roles[c] = crText
+  if keep >= 0: result.dateTimePattern = patterns[keep]
+  if splitNamed >= 3: result.timeSplit = tsFound
   var used: seq[string] = @[]
   for c in 0 ..< width:
     if result.roles[c] == crText:
@@ -1720,19 +1906,6 @@ func fmtDiff(us: int64): string =
   elif a mod 1000 == 0: $(a div 1000) & " ms"
   else: $a & " us"
 
-proc timeText(log: ShotLog; row: int; cols: openArray[int]; sentText: openArray[string];
-    sentVal: openArray[float64]; decimalComma: bool): string =
-  ## The cells of the time columns of `row`, in column order, one space
-  ## between; a missing cell is left out.
-  let count = fields(log, row)
-  for col in cols:
-    if col < count:
-      let raw = cell(log, row, col)
-      if not isMissing(raw, sentText, sentVal, decimalComma):
-        if result.len > 0: result.add ' '
-        result.add raw.strip
-  if decimalComma: result = dotDecimal(result, true)
-
 proc shotted(chars: openArray[char]): string =
   let sp = trimSpan(chars)
   copySpan(chars, sp.a, sp.b)
@@ -1751,30 +1924,61 @@ proc sentinelLists(map: ShotLogMap): tuple[text: seq[string]; val: seq[float64]]
         if parseutils.parseFloat(d, n) == d.len and d.len > 0:
           result.val.add n
 
-proc timePattern*(log: ShotLog; map: ShotLogMap): string {.raises: [].} =
-  ## The pattern that reads `map`'s Time (UTC) columns: `map.dateTimePattern`,
-  ## or, when that is empty, the form of the first row that has a time. Empty
-  ## when there is no Time (UTC) column or no row shows a form it knows.
-  var cols: seq[int] = @[]
+func timeColumn*(map: ShotLogMap): int =
+  ## The column mapped to Time (UTC), or -1. A map with several has the first.
+  result = -1
   for col, role in map.roles:
-    if role == crTime: cols.add col
+    if role == crTime: return col
+
+proc timePattern*(log: ShotLog; map: ShotLogMap): string {.raises: [].} =
+  ## The pattern that reads `map`'s Time (UTC) column: `map.dateTimePattern`,
+  ## or, when that is empty, the one the cells of its first rows decide
+  ## (`detectTimePattern`). Empty when there is no Time (UTC) column or the
+  ## cells decide none.
+  let col = timeColumn(map)
   result = map.dateTimePattern.strip
-  if cols.len > 0 and result.len == 0 and log != nil:
+  if col >= 0 and result.len == 0 and log != nil:
     let (sentText, sentVal) = sentinelLists(map)
-    var row = 0
-    while row < log.len and row < 64 and result.len == 0:
-      result = detectTimePattern(timeText(log, row, cols, sentText, sentVal,
-        map.decimalComma))
-      inc row
+    var cells: seq[string] = @[]
+    for row in 0 ..< min(log.len, SampleRows):
+      let raw = cell(log, row, col)
+      if not isMissing(raw, sentText, sentVal, map.decimalComma): cells.add raw
+    result = detectTimePattern(cells)
+
+proc timeNote*(log: ShotLog; map: ShotLogMap): string {.raises: [].} =
+  ## The sentence the Columns dialog shows about the time, true of `map`:
+  ## how Time (UTC) is read, that its form could not be decided or its
+  ## pattern cannot be used, that the log's time is spread over several
+  ## columns, or that a column that looks like a time is not read. "" when
+  ## there is nothing to say.
+  if timeColumn(map) >= 0:
+    let fault = patternFault(map.dateTimePattern)
+    if fault.len > 0: return fault
+    let used = timePattern(log, map)
+    return if used.len > 0: "Time (UTC) is read as " & used else: UndecidedTime
+  if crGpsMicros in map.roles: return ""
+  if map.timeSplit == tsOld: return SplitTimeOld
+  if map.timeSplit == tsFound: return SplitTimeFound
+  if log != nil:
+    for col, role in map.roles:
+      if role in {crText, crIgnored}:
+        let name = log.columnName(col)
+        if name.len > 0 and roleOfName(name) in {crTime, crGpsMicros}:
+          return "\"" & name & "\" looks like a time, but its values are not in a form " &
+            "that is read (GPS seconds are not). Choose Time (UTC) for it and type " &
+            "the pattern, or choose GPSTB."
 
 proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
   ## Typed rows. The instant is the first source that parsed, in this order:
-  ## GPSTB, then Time (UTC). The cells of the Time (UTC) columns are joined in
-  ## column order, one space between, and read as `map.dateTimePattern` says
-  ## (empty: the form of the first row that has a time); a calendar time is
-  ## read on `map.clock`, the epoch forms are UTC. When both sources are there
-  ## and differ by more than a millisecond, that is a problem naming both
-  ## values; a gap of 18 s is called out as GPS and UTC mixed. Times that go
+  ## GPSTB, then Time (UTC), which is one column. Its cell is read as
+  ## `map.dateTimePattern` says (empty: the pattern the first rows decide;
+  ## when they decide none, no time is read from the column and one problem
+  ## at the top says so); a calendar time is read on `map.clock`, the epoch
+  ## forms are UTC. A log whose time was found spread over several columns
+  ## (`map.timeSplit`), with neither GPSTB nor Time (UTC) mapped, has one
+  ## problem at the top and no times. When both sources are there and differ
+  ## by more than a millisecond, that is a problem naming both values and
+  ## saying GPSTB is used; a gap of 18 s is called out as GPS and UTC mixed. Times that go
   ## backwards, a repeated (source line, source point, index) and a repeated
   ## FFID are problems too. An instant outside years 1900..2200 is a bad
   ## number and is not the row's time. A time that does not read as the
@@ -1783,7 +1987,22 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
   ## cells and sentinels are empty, not faults. A column mapped to Ignore is
   ## not read; user defined columns are kept as text in `texts`. A numeric
   ## cell is read from the stored text; it is not copied.
-  result.problems = log.problems
+  let timeCol = timeColumn(map)
+  let pat = if timeCol >= 0 and map.dateTimePattern.strip.len > 0:
+      compilePattern(map.dateTimePattern)
+    else: compilePattern(timePattern(log, map))
+  var top = ProblemList()
+  if timeCol >= 0:
+    if pat.text.len == 0:
+      addProblem(top, pkNoTime, -1, timeCol, UndecidedTime)
+    elif pat.fault.len > 0:
+      addProblem(top, pkNoTime, -1, timeCol, "Time (UTC) cannot be read: " & pat.fault)
+  elif crGpsMicros notin map.roles and map.timeSplit != tsNone:
+    addProblem(top, pkNoTime, -1, -1,
+      if map.timeSplit == tsOld: SplitTimeOld else: SplitTimeFound)
+  for p in log.problems.items: addProblem(top, p.kind, p.row, p.col, p.text)
+  top.count += log.problems.count - log.problems.items.len
+  result.problems = top
   result.rows = newSeq[Shot](log.len)
   let (sentText, sentVal) = sentinelLists(map)
   var sentLo = Inf
@@ -1791,10 +2010,6 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
   for v in sentVal:
     if v < sentLo: sentLo = v
     if v > sentHi: sentHi = v
-  var timeCols: seq[int] = @[]
-  for col, role in map.roles:
-    if role == crTime: timeCols.add col
-  let pattern = timePattern(log, map)
   template readNumber(chars: untyped) =
     case role
     of crSequence, crFileNumber, crPointIndex, crGpsMicros:
@@ -1884,23 +2099,24 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
     if gps.isSome:
       let utc = gpsMicrosToUtcMicros(gps.get)
       keepInstant(instants, result.problems, row, $crGpsMicros, utc, gps.get, gpsCol)
-    if timeCols.len > 0:
-      let joined = timeText(log, row, timeCols, sentText, sentVal, map.decimalComma)
-      if joined.len > 0:
-        let read = if pattern.len > 0: readTime(joined, pattern, map.clock)
-          else: TimeRead(why: "does not match any known form")
+    if timeCol >= 0 and pat.text.len > 0 and pat.fault.len == 0 and
+        timeCol < fieldCount:
+      let raw = cell(log, row, timeCol)
+      if not isMissing(raw, sentText, sentVal, map.decimalComma):
+        let text = raw.strip
+        let read = readTime(text, pat, map.clock, map.decimalComma)
         if not read.ok:
-          addProblem(result.problems, pkBadNumber, row, timeCols[0],
-            "time '" & joined & "' " & read.why)
+          addProblem(result.problems, pkBadNumber, row, timeCol,
+            "time '" & text & "' " & read.why)
         else:
           if read.leap:
-            addProblem(result.problems, pkBadNumber, row, timeCols[0],
-              "time '" & joined & "' has second 60")
+            addProblem(result.problems, pkBadNumber, row, timeCol,
+              "time '" & text & "' has second 60")
           if read.clash.len > 0:
-            addProblem(result.problems, pkTimeDisagree, row, timeCols[0],
-              "time '" & joined & "': " & read.clash)
+            addProblem(result.problems, pkTimeDisagree, row, timeCol,
+              "time '" & text & "': " & read.clash)
           keepInstant(instants, result.problems, row, $crTime, read.us, read.us,
-            timeCols[0])
+            timeCol)
     if instants.len > 0:
       shot.timeUtcUs = some(instants[0].us)
       for k in 1 ..< instants.len:
@@ -1910,6 +2126,7 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
             instants[k].name & " " & $instants[k].us & " differ by " & fmtDiff(diff)
           if abs(abs(diff) - MixedClockUs) <= DisagreeUs:
             msg.add "; GPS and UTC mixed"
+          msg.add ": " & instants[0].name & " is used"
           addProblem(result.problems, pkTimeDisagree, row, instants[k].col, msg)
       if lastTime.isSome and shot.timeUtcUs.get < lastTime.get:
         addProblem(result.problems, pkTimeBackward, row, instants[0].col,

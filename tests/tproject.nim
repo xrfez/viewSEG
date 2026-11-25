@@ -119,7 +119,7 @@ proc main*() =
     m.hasHeader = false
     m.roles = @[crFileNumber, crShotPoint, crTime]
     m.clock = tcGps
-    m.dateTimePattern = "yyyy-mm-dd hh:mm:ss"
+    m.dateTimePattern = "yyyy-mo-dd hh:mi:ss"
     m.sentinels = @["-999.25"]
     m.lengthUnit = luFeet
     m.decimalComma = true
@@ -135,6 +135,17 @@ proc main*() =
     doAssert back.shotLogs[0].name == "morning" and back.shotLogs[0].file == "morning.csv"
     doAssert back.shotLogs[0].map == m, "the map did not come back"
     doAssert back.shotLogs[0].map.decimalComma, "decimalComma did not come back"
+    # a log whose time is spread over several columns says so after a reload
+    var spread = m
+    spread.timeSplit = tsFound
+    d.shotLogs = @[StoredShotLog(name: "morning", file: "morning.csv", map: spread)]
+    let spreadText = projectDocument(d)
+    doAssert "(timeSplit found)" in spreadText, spreadText
+    problems.setLen 0
+    doAssert readProject(spreadText, "project.nif", problems).shotLogs[0].map == spread
+    doAssert problems.len == 0, $problems
+    doAssert "timeSplit" notin text, "a map with no spread time writes no timeSplit"
+    d.shotLogs = @[StoredShotLog(name: "morning", file: "morning.csv", map: m)]
     # An older document has no node: none, and writing it does not add one.
     let old = projectDocument(ProjectDoc(name: "old"))
     doAssert "(shotLogs" notin old, old
@@ -196,22 +207,59 @@ proc main*() =
     let back = readProject(old, "project.nif", problems)
     doAssert problems.len == 0, $problems
     let got = back.shotLogs[0].map
-    doAssert got.roles == @[crFileNumber, crTime, crTime, crTime, crTime, crTime, crText,
+    # the split time columns are user defined, named by their old word, and not read
+    doAssert got.roles == @[crFileNumber, crText, crText, crText, crText, crText, crText,
       crIgnored], $got.roles
-    doAssert got.dateTimePattern == "yyyy ddd hh mi ss.ffffff", got.dateTimePattern
-    doAssert got.names == @["", "", "", "", "", "", "gun array", ""], $got.names
+    doAssert got.dateTimePattern == "" and got.timeSplit == tsOld
+    doAssert got.names == @["", "year", "day of year", "hour", "minute", "second",
+      "gun array", ""], $got.names
     doAssert back.lastShotMap.get.map.roles == got.roles
     let text = "7,2024,61,0,0,59.5,12.5,x\n"
     let view = shots(parseShotLog(text, got), got)
-    doAssert view.problems.count == 0
     doAssert view.rows[0].fileNumber == some(7'i64)
-    doAssert view.rows[0].timeUtcUs == some(1_709_251_259_500_000'i64)
-    doAssert view.rows[0].texts == @["12.5"]
+    doAssert view.rows[0].timeUtcUs.isNone
+    doAssert view.problems.count == 1, "one problem at the top, not one per row"
+    doAssert view.problems.items[0].text == SplitTimeOld and view.problems.items[0].row == -1
+    doAssert view.rows[0].texts == @["2024", "61", "0", "0", "59.5", "12.5"]
+    # the same map saved again keeps the problem
+    problems.setLen 0
+    doAssert readProject(projectDocument(back), "project.nif", problems).shotLogs[
+        0].map.timeSplit ==
+      tsOld
+    # an old map with GPS microseconds beside split fields reads its instants from GPSTB
+    var withGps = m
+    withGps.roles = @[crFileNumber, crSequence, crStatus, crX, crY, crZ, crSourceDepth, crIgnored]
+    d.shotLogs = @[StoredShotLog(name: "morning", file: "morning.csv", map: withGps)]
+    var gpsOld = projectDocument(d)
+    for (now, was) in [("FFID", "file number"), ("SEQ", "year"), ("Status", "day of year"),
+        ("X", "hour"), ("Y", "minute"), ("Z", "second"), ("Depth", "GPS microseconds"),
+        ("Ignore", "ignored")]:
+      gpsOld = gpsOld.replace("(role \"" & now & "\")", "(role \"" & was & "\")")
+    problems.setLen 0
+    let gpsMap = readProject(gpsOld, "project.nif", problems).shotLogs[0].map
+    doAssert gpsMap.roles[6] == crGpsMicros and gpsMap.roles[1] == crText
+    let gpsView = shots(parseShotLog("7,2024,61,0,0,59.5,1393286418000000,x\n", gpsMap), gpsMap)
+    doAssert gpsView.rows[0].timeUtcUs == some(1_709_251_200_000_000'i64)
+    doAssert gpsView.problems.count == 0
+    # an old map's UTC microseconds, with split fields beside it: the one source is read
+    var utcOld = projectDocument(d)
+    for (now, was) in [("FFID", "UTC microseconds"), ("SEQ", "year"), ("Status", "hour"),
+        ("X", "file number"), ("Y", "minute"), ("Z", "second"), ("Depth", "gun array"),
+        ("Ignore", "ignored")]:
+      utcOld = utcOld.replace("(role \"" & now & "\")", "(role \"" & was & "\")")
+    problems.setLen 0
+    let utcMap = readProject(utcOld, "project.nif", problems).shotLogs[0].map
+    doAssert utcMap.roles[0] == crTime and utcMap.dateTimePattern == EpochMicros
+    doAssert utcMap.roles[1] == crText and utcMap.names[1] == "year" and
+      utcMap.timeSplit == tsNone
+    let utcView = shots(parseShotLog("1709251200123456,2024,12,7,0,59,x,y\n", utcMap), utcMap)
+    doAssert utcView.rows[0].timeUtcUs == some(1_709_251_200_123_456'i64)
+    doAssert utcView.problems.count == 0
     # what is written now reads back to itself, names included
     var named = m
-    named.roles = @[crText, crTime, crTime]
+    named.roles = @[crText, crTime, crText]
     named.names = @["Note", "", ""]
-    named.dateTimePattern = "yyyy-mm-dd hh:mi:ss"
+    named.dateTimePattern = "yyyy-mo-dd hh:mi:ss"
     d.shotLogs = @[StoredShotLog(name: "morning", file: "morning.csv", map: named)]
     problems.setLen 0
     doAssert readProject(projectDocument(d), "project.nif", problems).shotLogs[0].map == named
@@ -231,7 +279,7 @@ proc main*() =
     m.hasHeader = true
     m.roles = @[crText, crSequence, crText]
     m.clock = tcGps
-    m.dateTimePattern = "yyyy-mm-dd hh:mm:ss"
+    m.dateTimePattern = "yyyy-mo-dd hh:mi:ss"
     m.sentinels = @["-999.25"]
     m.lengthUnit = luFeet
     m.decimalComma = true
@@ -265,8 +313,8 @@ proc main*() =
     let kept = readProject(extra, "project.nif", problems)
     doAssert kept.lastShotMap.isSome and kept.lastShotMap.get.later.len == 1
     doAssert "(kept" in projectDocument(kept), "a later field beside the map is kept"
-    let extraMap = text.replace("(pattern \"yyyy-mm-dd hh:mm:ss\")",
-      "(pattern \"yyyy-mm-dd hh:mm:ss\") (keptInMap (n 1))")
+    let extraMap = text.replace("(pattern \"yyyy-mo-dd hh:mi:ss\")",
+      "(pattern \"yyyy-mo-dd hh:mi:ss\") (keptInMap (n 1))")
     let keptMap = readProject(extraMap, "project.nif", problems)
     doAssert keptMap.lastShotMap.isSome and keptMap.lastShotMap.get.mapLater.len == 1
     doAssert "(keptInMap" in projectDocument(keptMap), "a later field of the map is kept"
