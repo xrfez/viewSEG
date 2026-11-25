@@ -9,18 +9,23 @@
 ##
 ## The folder holds four sweeps of two vibrators, their ground force recorded opposite to the
 ## pilot (as some controllers wire it): three at the force of the sweep the 100 % force was set
-## on, one at 40 % of it.
+## on, one at 40 % of it; and the external converter's SEG-Y of a sweep, whose recorded ground
+## force is in its own unit: a window on it has no 100 % force, so neither has its row (force
+## not judged, said, and counted as a pass with force not judged, never as a fail).
 ##
 ## Seen to fail: with the folder's roles as recorded whatever the layout's choice, every row
 ## failed the phase limits that the windows passed; with every file decoded with the default
-## options, the rows of files opened at another sample interval were not the windows'.
+## options, the rows of files opened at another sample interval were not the windows'; with the
+## signature files' 100 % force applied raw to the converter's SEG-Y, its row read 0 % average
+## force and failed; with the top frequency of the window's layout used for every file, the
+## converter's row was judged in another band than its window.
 
 import std/[math, os, strutils]
 import parseSSDAT
 import viewSEG/core/[analysis, jobs, openchoice, project, settings, signatures, state,
   sweepinfo, threads, vibfolderconf, vibfolderjobs, vibfolderqc, vibjudge]
 import viewSEG/view/vibfolderwords
-import utils/[fixtures, sigfiles, waiting]
+import utils/[fixtures, gfsynth, sigfiles, vibsynth, waiting]
 
 const Samples = 6000
 
@@ -66,6 +71,7 @@ proc sweep(dir, name: string; vibrator, number: int; gain: float64): string =
   datFile(dir, name, s)
 
 proc listed(path: string): FolderListed =
+  if convertedSegy(path): return FolderListed(path: path, converted: true)
   var head: seq[byte] = @[]
   let size = readHead(path, head)
   FolderListed(path: path, info: readSweepInfo(path, signatureKindOf(head), size))
@@ -128,13 +134,17 @@ proc main*() =
       let b11 = sweep(sweeps, "b11.dat", 11, 7002, 1.0)
       let a12 = sweep(sweeps, "a12.dat", 12, 7003, 1.0)
       let low12 = sweep(sweeps, "low12.dat", 12, 7004, 0.4)
-      let files = @[listed(a11), listed(b11), listed(a12), listed(low12)]
+      let c = converterOf()
+      let sgy = sweeps / "converted.sgy"
+      writeVibSegy(sgy, [c.reference, c.mass, c.plate, c.record], 1.0, [21'i16, 19, 18, 20])
+      let files = @[listed(a11), listed(b11), listed(a12), listed(low12), listed(sgy)]
+      doAssert files[^1].converted
       var st = initAppState()
       st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
       st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
       doAssert st.settle(st.inProject)
       st.apply Command(kind: ckBrowse, paths: @[sweeps])
-      doAssert st.settle(not st.fileList.scanning and st.fileList.entries.len == 4)
+      doAssert st.settle(not st.fileList.scanning and st.fileList.entries.len == 5)
       # everything set in one window on one sweep
       let w = st.window(a11)
       doAssert "opposite" in st.plots[w].result.polarity.line, st.plots[w].result.polarity.line
@@ -142,7 +152,7 @@ proc main*() =
       p.roles.groundForcePolarity = poReversed
       st.change(w, p)
       p = st.plots[w].params
-      (p.qc.avgPhaseDeg, p.qc.peakPhaseDeg, p.harmonics, p.qcWindowMs) = (4.0, 8.0, 4, 400.0)
+      (p.qc.avgPhaseDeg, p.qc.peakPhaseDeg, p.harmonics, p.qcWindowMs) = (40.0, 80.0, 4, 400.0)
       (p.targetPct, p.tops) = (60.0, p.tops.withTop(st.vibTopKey(st.plots[w]), 90.0))
       st.change(w, p)
       p = st.plots[w].params
@@ -162,10 +172,16 @@ proc main*() =
       doAssert rowOf(t, a11).verdict == qvPass and rowOf(t, b11).verdict == qvPass and
         rowOf(t, a12).verdict == qvPass, rowOf(t, a11).sentence
       doAssert rowOf(t, low12).verdict == qvFail, rowOf(t, low12).sentence
-      doAssert summaryLine(t.totals) ==
-        "4 files, 3 passes, 1 fail, 0 not judged, 0 problems, 0 skipped.", summaryLine(t.totals)
+      let made = rowOf(t, sgy)
+      doAssert made.forceWhy == "the force limits are not judged: no 100 % force is typed for " &
+        "a SEG-Y file's recorded ground force (the project's 100 % force is a signature file's, " &
+        "in another unit)", made.forceWhy
+      doAssert made.verdict == qvPass, made.sentence
+      doAssert summaryLine(t.totals) == "5 files, 4 passes, 1 fail, 0 not judged, 0 problems, " &
+        "0 skipped, 1 with force not judged.", summaryLine(t.totals)
       for row in t.rows:
-        doAssert "reversed for the analysis, as you chose" in row.polarity, row.polarity
+        if row.path != sgy:
+          doAssert "reversed for the analysis, as you chose" in row.polarity, row.polarity
       # a setting changed after the run: the run shown says so, and the next run is judged with it
       let ran = configLines(vibQcConfig(st))
       let again = st.window(b11)
@@ -176,7 +192,7 @@ proc main*() =
       st.close(again)
       let next = st.run(files)
       st.parity(files, next)
-      doAssert next.totals.failed == 4 and next.totals.passed == 0, summaryLine(next.totals)
+      doAssert next.totals.failed == 4 and next.totals.passed == 1, summaryLine(next.totals)
       st.shutdown()
 
   block noProject:

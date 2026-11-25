@@ -339,7 +339,7 @@ func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasu
       else: "no 100 % force is set for the ground force made from mass and baseplate")
   elif ownHundred:
     result.add "no force was measured in the judged part"
-  elif ask.hundredConflict.len > 0:
+  elif ask.hundredConflict.len > 0 and facts.kind != sgNone:
     result.add "no 100 % force is set (" & ask.hundredConflict & ")"
   else:
     case facts.kind
@@ -355,7 +355,9 @@ func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasu
         result.add "no accelerometer constant is set"
       else:
         result.add "the header gives no hold-down weight"
-    of sgNone: result.add "no 100 % force is available"
+    of sgNone:
+      result.add "no 100 % force is typed for a SEG-Y file's recorded ground force (the " &
+        "project's 100 % force is a signature file's, in another unit)"
 
 proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo: SweepInfo;
     ask: VibQcAsk; choice: SignatureChoice; held: HeldRef): FolderRow =
@@ -444,7 +446,13 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
     at[vsReference] = rows.high
   var params = folderParams(ask, roles, facts.kind)
   # the project's one 100 % force, for every vibrator, in the unit and set it was given in
-  # (`folderParams` takes them from the ask)
+  # (`folderParams` takes them from the ask). A converter's SEG-Y is no signature file: its
+  # recorded ground force is in its own unit, so it takes what a Vibrator window on it opens
+  # with, the 100 % force and drive level typed for a SEG-Y window (none: not judged), never
+  # the signature files' value read raw
+  if item.converted:
+    (params.forceHundredPct, params.forceHundredUnit) = (ask.segyHundredPct, "")
+    params.targetPct = ask.segyTargetPct
   let sig = if item.converted: SignatureAsk()
     else: folderSignature(facts, ask.forceScale, ask.accelSet, pair, ask.options.targetPct)
   # (the window's check of the converter's order: said when the other order fits clearly better)

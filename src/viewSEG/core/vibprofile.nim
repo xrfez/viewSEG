@@ -102,6 +102,11 @@ type
       ## the top frequencies typed in the project (`topTexts`): a file measured against its
       ## recorded reference takes the one typed for its layout (`recordedTopKey`), as a window
       ## does; not part of the profile
+    segyHundredPct*: float64 = NaN
+      ## the 100 % force a Vibrator window on a SEG-Y file opens with (the one typed last on
+      ## one, in that file's unit; NaN: none): the external converter's SEG-Y's recorded ground
+      ## force is judged with it, never with the signature files' value; not part of the profile
+    segyTargetPct*: float64 = 100.0 ## ... and its drive level
     problems*: seq[string]
 
 const ForceNotJudged* = "No 100 % force: the force limits are not judged."

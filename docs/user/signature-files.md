@@ -217,7 +217,10 @@ better (a mean phase more than 20° lower), a line says so and nothing is swappe
 does not prove the order is right: when the two channels are nearly in phase with each other,
 both orders give much the same phase and the check cannot tell them apart. The folder QC judges a converter's file on the roles the window takes for its layout, a swap
 included, and its row carries the same word when the other order fits the reference clearly
-better.
+better. Its recorded ground force is in the converter's own unit, so it is judged with the 100 %
+force and drive level a Vibrator window on a SEG-Y file opens with (the ones last typed on such a
+window), never with the signature files' 100 % force: with none typed its force limits are not
+judged, and the row says why.
 
 For a `.dat` and a `.vib` a line under the choice says that both choices give the same ground
 force. When a file cannot follow the choice (no mass or baseplate trace, masses not typed, a `.vib`
