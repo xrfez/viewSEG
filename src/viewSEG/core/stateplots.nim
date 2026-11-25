@@ -1174,15 +1174,38 @@ proc showPlot(state: var AppState; cmd: Command) =
       not state.project.readOnly and state.vibConverter(pw):
     # a converter's window: the switch, the weights its made ground force is formed with and that
     # signal's own 100 % force are the project's one set (the folder QC's); nothing else of the
-    # window is a setting of the profile
-    var had = state.project.doc.vibProfile
-    var now = had
-    (had.madeReactionKg, had.madeBaseplateKg, had.forceHundredWeighted, had.judge) = madeHad
-    (now.madeReactionKg, now.madeBaseplateKg, now.forceHundredWeighted, now.judge) = (
-      pw.params.reactionMassKg, pw.params.baseplateMassKg, pw.params.forceHundredWeighted,
-      pw.params.roles.judge)
-    (had.fromFile, now.fromFile) = (pw.file, pw.file)
-    if now != had: state.keepVibProfile(had, now)
+    # window is written once the project has a profile
+    func same(x, y: float64): bool = x == y or (x.isNaN and y.isNaN)
+    let (hadReaction, hadPlate, hadHundred, hadJudge) = madeHad
+    let reactionMoved = not same(hadReaction, pw.params.reactionMassKg)
+    let plateMoved = not same(hadPlate, pw.params.baseplateMassKg)
+    let hundredMoved = not same(hadHundred, pw.params.forceHundredWeighted)
+    let judgeMoved = hadJudge != pw.params.roles.judge
+    if reactionMoved or plateMoved or hundredMoved or judgeMoved:
+      let stored = state.project.doc.vibProfile
+      var next = stored
+      if not state.project.doc.hasVibProfile:
+        # the first profile: the window's settings as it shows them (its limits, statistics
+        # window, harmonics...), so the folder QC uses what the user was looking at. A SEG-Y
+        # window's 100 % force of the recorded ground force and its drive level are in that
+        # file's terms, not a signature file's: left unset
+        next = state.vibProfileOf(pw)
+        (next.forceHundredPct, next.forceHundredUnit, next.targetPct) = (NaN, "", NaN)
+        (next.hundredHow, next.hundredAtPct) = (hhTyped, NaN)
+      else:
+        if reactionMoved or plateMoved:
+          # the two weights are one pair: the one changed here, the other as the profile holds
+          # it (another window may have changed it since this one opened), and this window then
+          # shows the pair kept. Open windows are not refreshed when the profile changes
+          if reactionMoved or stored.madeReactionKg.isNaN:
+            next.madeReactionKg = pw.params.reactionMassKg
+          if plateMoved or stored.madeBaseplateKg.isNaN:
+            next.madeBaseplateKg = pw.params.baseplateMassKg
+          (pw.params.reactionMassKg, pw.params.baseplateMassKg) = (next.madeReactionKg,
+            next.madeBaseplateKg)
+        if hundredMoved: next.forceHundredWeighted = pw.params.forceHundredWeighted
+        if judgeMoved: next.judge = pw.params.roles.judge
+      state.keepVibProfile(stored, next)
   # what the user set becomes what a new window of the kind opens with
   # (a signature file's typed 100 % force belongs to its window: never remembered for the kind)
   # (nor its drive level: a new window of a signature file opens with none typed)

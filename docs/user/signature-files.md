@@ -178,7 +178,14 @@ SEG-Y from a signature file, a `.dat`, a `.vib`):
 In a project the weights typed for a converter's file (with the choice and the made signal's
 100 % force) are **one set for the project**, as a line beside the boxes says: the folder QC uses
 them and a new window of a converter's file opens with them. They are not kept per vibrator (use
-another project, or change them, for another set). When the profile keeps 100 % forces for more
+another project, or change them, for another set). The two weights are one pair: a window that
+changes one keeps the other as the project holds it (another window may have changed it) and
+then shows the pair kept; a window already open is not refreshed until it changes one. The
+Ground force choice is one for the project too: the folder QC judges every file with the one set
+last in any Vibrator window, `.dat` and `.vib` files included. When a converter's window makes
+the project's first profile, the profile takes that window's limits, statistics window and
+harmonics as it shows them (not its 100 % force of the recorded ground force or its drive level,
+which are in that file's terms); after that it writes only the made signal's settings. When the profile keeps 100 % forces for more
 than one vibrator and the ground force is made, one line in the window, and one above the folder
 QC's rows, says that the made signal uses that one set for every vibrator.
 

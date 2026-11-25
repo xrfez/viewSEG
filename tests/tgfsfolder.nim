@@ -23,7 +23,9 @@
 ## the made row was judged on the record; with the layouts' choices not applied, the swapped row's
 ## numbers were not the window's; with the order check left off, its row had no word of it; with
 ## the converter's window kept out of the profile, its weights did not reach the project; with
-## the note added per row, the run said it twice.
+## the note added per row, the run said it twice; with the first profile made of the four made
+## fields alone, it held the built-in phase limit, not the 3° the window showed; with each weight
+## merged on its own, the profile kept a pair neither window showed.
 
 import std/[math, os, strutils]
 import viewSEG/core/[analysis, jobs, nif, project, projectnif, settings, signatures, sigtypes,
@@ -266,6 +268,10 @@ proc main*() =
       writeVibSegy(sgy, [c.reference, c.mass, c.plate, c.record], 1.0, [21'i16, 19, 18, 20])
       let w = st.window(sgy)
       var p = st.plots[w].params
+      (p.qc.avgPhaseDeg, p.harmonics) = (3.0, 7)
+      st.change(w, p)
+      doAssert not st.project.doc.hasVibProfile, "a limit of a converter's window made a profile"
+      p = st.plots[w].params
       (p.reactionMassKg, p.baseplateMassKg, p.forceHundredWeighted) = (Wm, Wb, 1000.0)
       p.roles.judge = joWeighted
       st.change(w, p)
@@ -273,8 +279,16 @@ proc main*() =
       let kept = st.project.doc.vibProfile
       doAssert kept.madeReactionKg == Wm and kept.madeBaseplateKg == Wb and
         kept.forceHundredWeighted == 1000 and kept.judge == joWeighted, $kept
-      doAssert kept.forceHundredPct.isNaN and kept.hundredByVibrator.len == 0,
-        "a converter's window wrote another setting"
+      # the first profile is the window's as it shows it: no limit nobody chose
+      doAssert kept.limits.avgPhaseDeg == 3 and kept.harmonics == 7 and kept.fromFile == "a.sgy",
+        $kept
+      doAssert kept.forceHundredPct.isNaN and kept.targetPct.isNaN and
+        kept.hundredByVibrator.len == 0, "a SEG-Y window's own 100 % force or drive level"
+      # once there is a profile, a converter's window writes only the made signal's settings
+      p = st.plots[w].params
+      p.qc.avgPhaseDeg = 4.0
+      st.change(w, p)
+      doAssert st.project.doc.vibProfile.limits.avgPhaseDeg == 3
       # a new window of a converter's file takes the project's set, not the kind's last masses
       var settings = st.settings
       (settings.plotOptions.vibrator.reactionMassKg,
@@ -286,10 +300,28 @@ proc main*() =
       let w2 = st.window(b)
       doAssert st.plots[w2].params.reactionMassKg == Wm and
         st.plots[w2].params.forceHundredWeighted == 1000, $st.plots[w2].params.reactionMassKg
+      # the weights are a pair: one window changes the reaction mass's, the other (still showing
+      # the old pair) the baseplate's; the profile keeps the two changes and the window that
+      # changed last shows the pair kept
+      p = st.plots[w].params
+      p.reactionMassKg = 3000.0
+      st.change(w, p)
+      doAssert st.project.doc.vibProfile.madeReactionKg == 3000
+      var p2 = st.plots[w2].params
+      doAssert p2.reactionMassKg == Wm
+      p2.baseplateMassKg = 1500.0
+      st.change(w2, p2)
+      let pair = st.project.doc.vibProfile
+      doAssert pair.madeReactionKg == 3000 and pair.madeBaseplateKg == 1500, $pair
+      doAssert st.plots[w2].params.reactionMassKg == 3000 and
+        st.plots[w2].params.baseplateMassKg == 1500, "the window does not show the pair kept"
       st.shutdown()
     # the window's lines
     let two = @[VibHundred(vibrator: 11, pct: 1.0), VibHundred(vibrator: 12, pct: 2.0)]
     doAssert weightsNotes(two, joWeighted) == @[OneSetOfWeights, OneWeightsSet]
+    # (the switch a converter's window sets is the one the folder applies to every file)
+    doAssert "Ground force choice" in OneSetOfWeights and ".dat and .vib files included" in
+      OneSetOfWeights, OneSetOfWeights
     doAssert weightsNotes(two, joRecorded) == @[OneSetOfWeights]
     doAssert weightsNotes(two[0 .. 0], joWeighted) == @[OneSetOfWeights]
     # the folder run: once, when a SEG-Y file was judged on the one set

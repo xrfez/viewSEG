@@ -114,7 +114,10 @@ func oneWeightsForAll*(entries: openArray[VibHundred]; judge: JudgeOn): bool =
     for e in entries:
       if e.vibrator != entries[0].vibrator: return true
 
-const OneSetOfWeights* = "One set of weights for the project: the folder QC uses them too."
+const OneSetOfWeights* = "One set of weights for the project: the folder QC uses them too. " &
+  "The Ground force choice (In the record or Made from mass and baseplate) is one for the " &
+  "project as well: the folder QC judges every file with the one set last in any Vibrator " &
+  "window, .dat and .vib files included."
   ## The note beside a converter's weight boxes in a project.
 
 func weightsNotes*(entries: openArray[VibHundred]; judge: JudgeOn): seq[string] =
