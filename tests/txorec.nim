@@ -27,6 +27,9 @@
 ## and 2 as two (0 recorded twice), presence being taken by index; the shot unmatched when
 ## its source is at index 2 and the survey has the point at index 1 only; and the receiver
 ## gather at index 2 unmatched in the Records window (its O records found by index).
+## `oneDerivation` rejected the map making O records of its own from the X file, beside the
+## ones the Records window is checked against; `oFileLoadedAfterX` the derived O records
+## kept once an O file was loaded.
 
 import std/[os, strutils]
 import parseSEG
@@ -141,7 +144,8 @@ proc main*() =
       doAssert hits[mfMissing].state == fsDone and hits[mfMissing].count == 1, what & ": " &
         hits[mfMissing].note
       # the box and the filters name the same shots: the hover box's (all records)
-      let hover = st.survey.plannedSpread(st.spreads, rdReceiver, stationKey(10, 2, 1))
+      let hover = st.survey.plannedSpread(st.madeRelations(rdReceiver), rdReceiver,
+        stationKey(10, 2, 1))
       doAssert st.shownSpread.stations == 4 and hover.stations == 4, what & ": " &
         $st.shownSpread.stations & " / " & $hover.stations
 
@@ -304,6 +308,30 @@ proc main*() =
     doAssert st.sessions[0].records[0].planned == 4, $st.sessions[0].records[0].planned
     st.shutdown()
 
+  block oneDerivation:
+    # X records only, the template box and the filters on, a receiver gather shown: the
+    # Records window, the record shown and the box read one derivation of the O records
+    # (made once, not a second time for the map), and count the same shots.
+    var st = initAppState()
+    var set = st.settings
+    set.map.templateBox = true
+    st.apply Command(kind: ckSettings, settings: set)
+    st.open(@[xs], rcv)
+    doAssert st.settle(st.sessions[0].checkedAgainst.len > 0 and st.jobs.active.len == 0 and
+      st.filtersDone)
+    doAssert st.derivedRuns == 1, "derived " & $st.derivedRuns & " times"
+    doAssert st.spreads.relations.isNil, "the map made O records of its own"
+    doAssert not st.derivedReceivers.isNil and
+      st.madeRelations(rdReceiver) == st.derivedReceivers
+    let row = st.sessions[0].records[0]
+    let hover = st.survey.plannedSpread(st.madeRelations(rdReceiver), rdReceiver,
+      stationKey(10, 2, 1))
+    doAssert row.planned == 4 and st.shownSpread.stations == 4 and hover.stations == 4 and
+      "4 O record" in st.filterHits[mfMissing].note, $row.planned & " / " &
+      $st.shownSpread.stations & " / " & $hover.stations & " / " & st.filterHits[mfMissing].note
+    doAssert row.plannedMissing == st.filterHits[mfMissing].count
+    st.shutdown()
+
   block oRecordsOnly:
     # Only an O file loaded: its receiver gathers are checked against it; its shots have
     # no X records to be checked against
@@ -337,6 +365,7 @@ proc main*() =
     doAssert st.settle(st.survey.listedLayer(rdReceiver) >= 0 and
       st.sessions[0].records[0].planned == 2 and st.sessions[0].checkNote.len == 0 and
       st.jobs.active.len == 0), $st.sessions[0].records[0].planned
+    doAssert st.derivedCount == 0, "the O file serves: nothing derived is held"
     st.apply Command(kind: ckUnloadSurvey,
       layer: st.survey.layers[st.survey.listedLayer(rdReceiver)].id)
     doAssert st.settle(st.survey.listedLayer(rdReceiver) < 0 and st.sessions[0].records[

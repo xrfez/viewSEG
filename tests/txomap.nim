@@ -99,7 +99,7 @@ proc main*() =
       st.apply Command(kind: ckSettings, settings: set)
       doAssert st.loaded(sps.s, sps.r, fx.mapXps)
       doAssert st.show(fx.mapReceiverSegy(1, 4))
-      doAssert st.settle(st.spreads.job == NoJob and not st.spreads.relations.isNil)
+      doAssert st.settle(st.jobs.active.len == 0 and not st.derivedReceivers.isNil)
       var g = initSurveyGeometry()
       g.addSps(fx.mapOps)
       var want: HashSet[StationKey]
@@ -165,7 +165,7 @@ proc main*() =
       doAssert writeSps(xf, path).len == 0
       var st = initAppState()
       doAssert st.loaded(sps.s, sps.r, path)
-      let s = st.survey.plannedSpread(st.spreads, rdSource,
+      let s = st.survey.plannedSpread(st.madeRelations(rdSource), rdSource,
         stationKey(MapSrcLines[0], 1001, 1))
       doAssert s.stations == 10 and s.places.len == 10, "the union: " & $s.stations
       doAssert s.record == 7

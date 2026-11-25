@@ -1453,8 +1453,8 @@ under the pointer then, as desktop programs do.
   template the user gives in the Layers list (lines × stations centred on the source, or a
   distance box along and across the receiver lines), on a job, through processSEG's
   `generateRelations` over the S and R files, and the box says "Generated"; with X records
-  but no O records, a receiver gather's planned shots are made from the X records the same
-  way. **The folder's shots** (under the Recorded; the user: "clicking on a shot that
+  but no O records, a receiver gather's planned shots are made from the X records once, the
+  same O records the Records window checks the record against. **The folder's shots** (under the Recorded; the user: "clicking on a shot that
   exists inside the folder of seg files should open that file"): each seismic file the
   Files window lists is read in the background, without being shown, for its records'
   FFID, source station and source coordinates, and matched to the survey files' sources

@@ -554,11 +554,14 @@ samples), the hovered shot's its station's first (`plannedSpread`); the box roun
 planned stations' places along their lines (`boxOf`).
 When no relation file has them, a job on the background lane (`spreadWork`) reads the
 survey files again (`surveyjobs.readGeometry`, quietly) and makes them: X records
-generated from the user's template (`generateRelations`) and O records from them, or O
-records from the loaded X records (`receiverRelations`); `AppState.spreads` keeps them,
-the job is cancelled and another submitted when the survey files or the template change
-(`followMapWork`, after every command and drained inbox), and the records made before stay
-drawn until the new ones come.
+generated from the user's template (`generateRelations`) and O records from them;
+`AppState.spreads` keeps them, the job is cancelled and another submitted when the survey
+files or the template change (`followMapWork`, after every command and drained inbox), and
+the records made before stay drawn until the new ones come. With X records but no O
+records, a receiver gather's O records are not that job's: they are the one derivation of
+the X file's (`receiverRelations`, on a job once: `AppState.derived`, `derivedReceivers`)
+that the Records window's check reads too, so the Records window, the record shown and the
+box count the same shots; it is dropped when the X file goes or an O file is loaded.
 
 **Linking the plot and the map** goes through the selection only. `ckHover` (the plot's
 pointer) finds where the trace was recorded, `Selection.hoverAt`: from a copy of its keys
@@ -739,9 +742,9 @@ held 304 MB where Nim's allocator held 830 for the same X file (before
 records is now what a read waits for (about 800 instructions a record, in order, on one
 thread). The plan's end (`surveyOf`, the record numbers sorted) goes 0.4 s without
 progress at full scale. The map's planned spreads (`spreadWork`: a template with no relation
-file, or receiver gathers with an X file only) read the survey files once more
-(`readGeometry`) and, for receiver gathers, make O records of every X record
-(`receiverRelations`): seconds and gigabytes at full scale, not measured here.
+file) read the survey files once more (`readGeometry`); receiver gathers with an X file
+only have O records made of every X record once (`receiverRelations`, from the X file
+loaded, not read again): seconds and gigabytes at full scale, not measured here.
 
 **The import's units** (`core/join`, "the import's units"). A survey file chosen in the
 window (added, dropped, or loaded with no unit known) has its headers read at once, from

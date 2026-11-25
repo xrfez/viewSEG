@@ -146,8 +146,10 @@ proc main*() =
       doAssert st.loaded(sps.s, sps.r, fx.mapXps)
       doAssert st.show(fx.mapReceiverSegy(1, 4))
       doAssert st.shownDomain == rdReceiver, "a receiver gather"
-      # The O records made from the X records, on a job.
-      doAssert st.settle(st.spreads.job == NoJob and not st.spreads.relations.isNil)
+      # The O records made from the X records, on a job: the one derivation the Records
+      # window reads too (not a second one of the spreads' own).
+      doAssert st.settle(st.jobs.active.len == 0 and not st.derivedReceivers.isNil)
+      doAssert st.spreads.relations.isNil and st.madeRelations(rdReceiver) == st.derivedReceivers
       doAssert st.checked
       var s = st.shownSpread
       doAssert s.domain == rdReceiver and s.generated and s.stations == MapSrcPoints,

@@ -5,16 +5,17 @@
 ##
 ## **Where the plan comes from.** The first loaded survey file with
 ## relation records of the domain (`SurveyLayer.relations`: X for shots, O
-## for receiver gathers). Without one, relation records made on a job
-## (`spreadWork`, kept in `Spreads`): with no X records loaded at all, X
-## records generated from the user's template (`TemplateSpec`: a patch of
+## for receiver gathers). Without one, relation records made: with no X
+## records loaded at all, X records generated on a job (`spreadWork`, kept in
+## `Spreads`) from the user's template (`TemplateSpec`: a patch of
 ## lines × channels, or a distance box) over the survey's R stations for
 ## each of its S stations, with processSEG's `generateRelations`, and O
 ## records made from them with parseSEG's `receiverRelations`; with X
-## records but no O records, O records made from the X records, so a
-## receiver gather's planned shots are known. What was made is said in
-## plain words (`Spreads.words`), and a spread from records made, not read,
-## says so (`PlannedSpread.generated`).
+## records but no O records, the O records the program derives from the X
+## file for the check of the records (one derivation, which the Records window
+## and the record shown read too), so a receiver gather's planned shots are known.
+## What was made is said in plain words (`Spreads.words`), and a spread from
+## records made, not read, says so (`PlannedSpread.generated`).
 ##
 ## **The record** of the record on show is the one the map's filters'
 ## check found (`core/recordqc`: processSEG's `recordCompleteness` for a
@@ -45,7 +46,8 @@ type
     snGenerate = "generate"
       ## no X records loaded: X records generated from the template, O from them
     snReceivers = "receivers"
-      ## X records loaded but no O records: O records made from the X records
+      ## X records loaded but no O records: O records made from the X records (not by
+      ## `spreadWork`: the program's one derivation from the X file)
     snCompare = "compare"
       ## X records loaded: each against the template they describe (the
       ## filter "spread not the template")
@@ -189,7 +191,7 @@ proc recordSpread*(s: Survey; g: SurveyGeometry; record: int64;
   ## their places in the loaded survey files and the box round them.
   s.recordsSpread(g, [record], domain)
 
-proc plannedSpread*(s: Survey; made: Spreads; domain: RelationDomain;
+proc plannedSpread*(s: Survey; made: ref SurveyGeometry; domain: RelationDomain;
     fixed: StationKey): PlannedSpread =
   ## The spread planned for the shot of source station `fixed`
   ## (`rdSource`: its first X record) or for the receiver gather of
@@ -197,7 +199,8 @@ proc plannedSpread*(s: Survey; made: Spreads; domain: RelationDomain;
   ## the runs of every record at that station, found by the station alone,
   ## from the
   ## first loaded survey file with relation records of `domain`, else from
-  ## the records made (`made`). `record` is -1 when none plans it.
+  ## the records made (`made`: generated from the template, or the O records derived
+  ## from the X records; nil for none). `record` is -1 when none plans it.
   result = PlannedSpread(domain: domain, fixed: fixed)
   let i = s.listedLayer(domain)
   if i >= 0:
@@ -206,27 +209,27 @@ proc plannedSpread*(s: Survey; made: Spreads; domain: RelationDomain;
     if records.len > 0:
       result = s.recordsSpread(g, records, domain)
       result.source = s.layers[i].name
-  elif not made.relations.isNil:
-    let records = made.relations[].recordsAt(fixed, domain)
+  elif not made.isNil:
+    let records = made[].recordsAt(fixed, domain)
     if records.len > 0:
-      result = s.recordsSpread(made.relations[], records, domain)
+      result = s.recordsSpread(made[], records, domain)
       result.generated = true
 
-proc checkedSpread*(s: Survey; made: Spreads; domain: RelationDomain;
+proc checkedSpread*(s: Survey; made: ref SurveyGeometry; domain: RelationDomain;
     records: openArray[int64]): PlannedSpread =
   ## The spread the relation `records` of `domain` plan together (a shot's one
   ## X record; a receiver's O records, their union, as the hover box draws
   ## it), in the records a record's check is made against: the first loaded
   ## survey file's with relation records of `domain`, else the records made
-  ## (`made`). `record` -1 for none (`records` empty).
+  ## (`made`, as `plannedSpread`). `record` -1 for none (`records` empty).
   result = PlannedSpread(domain: domain)
   if records.len == 0: return
   let i = s.listedLayer(domain)
   if i >= 0:
     result = s.recordsSpread(s.layers[i].relations[], records, domain)
     result.source = s.layers[i].name
-  elif not made.relations.isNil:
-    result = s.recordsSpread(made.relations[], records, domain)
+  elif not made.isNil:
+    result = s.recordsSpread(made[], records, domain)
     result.generated = true
 
 func describe*(t: TemplateSpec; units: string): string =
@@ -301,8 +304,8 @@ proc spreadWork*(paths: seq[string]; spec: TemplateSpec; needs: set[SpreadNeed];
   ## The work of a job that makes the relation records the map's planned
   ## spreads need (`needs`) from the survey files `paths` (read again,
   ## quietly): X records generated from template `spec` for every source
-  ## station, and O records made from them (`snGenerate`); or O records made
-  ## from the files' X records (`snReceivers`). Posts them with what was made
+  ## station, and O records made from them (`snGenerate`); `snReceivers` is not this
+  ## job's (the program derives those once). Posts them with what was made
   ## in plain words (`mkSpreads`); a template that cannot be laid over the
   ## receivers (too few lines to measure, a template larger than any
   ## survey) posts no records and says why.
@@ -336,12 +339,6 @@ proc spreadWork*(paths: seq[string]; spec: TemplateSpec; needs: set[SpreadNeed];
               ctx.setPhase "making the receivers' planned shots"
               m[].addSps(SpsFile(relations: m[].receiverRelations()), rdReceiver)
               made = m
-        elif snReceivers in needs:
-          ctx.setPhase "making the receivers' planned shots"
-          m[].addSps(SpsFile(relations: g.receiverRelations()), rdReceiver)
-          words.add "The receivers' planned shots are made from the X records (no O " &
-            "records are loaded)."
-          made = m
       except ValueError as e:
         words.add "No spread can be generated from the template: " & e.msg & "."
       if snCompare in needs:
