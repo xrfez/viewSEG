@@ -1398,6 +1398,9 @@ type
     vibLayouts: seq[string]
       ## the vibrator signature's roles chosen by hand, per file layout, in force (the
       ## project's, else the settings'; `choiceText`)
+    sessionHundreds: VibQcProfile
+      ## without a project: the 100 % force given for each vibrator in this run, kept as a
+      ## project's profile keeps them (only `hundredByVibrator` is used); never saved
     refsLoaded: bool
     mainRefsLoaded: bool
     refsRev: int ## bumps when the archive or the choice changes, so a plot asks again

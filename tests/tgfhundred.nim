@@ -15,12 +15,16 @@
 ##   force scale was given and vibrator 12 in newtons after it; vibrator 11 is then converted
 ##   exactly with the scale, and with the scale taken away vibrator 12 is not judged on force;
 ##   a value kept under the older tag (one unit for all) reads with no unit, to be set again;
-## - a folder run judges each file with its own vibrator's value, in its own unit.
+## - a folder run judges each file with its own vibrator's value, in its own unit;
+## - without a project each vibrator's value is kept for the run alone: a window moved to another
+##   vibrator's sweep has none (and says so), back on the first vibrator's it has it again.
 ##
 ## Seen to fail: with the guard's threshold removed the 60 against 60 file warned; with the
 ## value written to the project's one slot, vibrator 13 had vibrator 12's; with the window given
 ## the project's one unit, vibrator 11 opened in "" instead of counts; with the folder run given
-## that one unit, vibrator 12's row was not judged on force.
+## that one unit, vibrator 12's row was not judged on force; with the run's values not taken when
+## the window moves (as before), the window moved to vibrator 12 kept vibrator 11's; with them
+## not kept, vibrator 12's window did not say it had none.
 
 import std/[math, os, strutils]
 import viewSEG/core/[analysis, jobs, log, project, projectnif, settings, signatures, sigtypes,
@@ -249,6 +253,57 @@ proc main*() =
       if "(unit) needs one of counts, pound-counts and N" in x: inc unitProblems
     doAssert p.hundredOf(13).unit == "" and unitProblems == 1, $problems
     doAssert "unit not known: set it again" in profileLines(p)[0], profileLines(p)[0]
+
+  block noProject:
+    # without a project each vibrator's 100 % force is kept for the run: a window moved to
+    # another vibrator's sweep has none (says so, not judged on force) and back on the first
+    # vibrator's it has that one's again; nothing is saved
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      let a = datFile(fx.dir, "v11.dat", SynthDat(samples: 12000, vibrator: 11))
+      let b = datFile(fx.dir, "v12.dat", SynthDat(samples: 12000, vibrator: 12))
+      let c = datFile(fx.dir, "v11b.dat", SynthDat(samples: 12000, vibrator: 11))
+      let w = st.window(a)
+      doAssert st.missingHundred(st.plots[w]) == "", "a note with no value kept"
+      st.setFromSweep(w, 1000, 60)
+      proc follow(st: var AppState; path: string) =
+        let before = st.plots[w].result.gen
+        st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+        doAssert st.settle(st.plots[w].file == path.extractFilename and
+          st.plots[w].result.gen > before and not st.plots[w].waiting and
+          st.plots[w].result.plots.len > 0), st.plots[w].file
+      st.follow(b)
+      doAssert st.plots[w].params.forceHundredPct.isNaN, "vibrator 12 kept vibrator 11's"
+      doAssert st.missingHundred(st.plots[w]) ==
+        "no 100 % force for vibrator 12 set in this run: not judged on force",
+        st.missingHundred(st.plots[w])
+      for q in st.plots[w].result.qc.rows:
+        if q.limit in {qlAvgForce, qlPeakForce}: doAssert q.status == qsNotJudged, $q.limit
+      st.follow(c)
+      doAssert st.plots[w].params.forceHundredPct == 1000 and
+        st.plots[w].params.forceHundredUnit == "counts" and
+        st.missingHundred(st.plots[w]) == "", $st.plots[w].params.forceHundredPct
+      let q = st.plots[w].params
+      doAssert not q.forceHundredFromProfile and
+        hundredSource(q, 11) == "set on v11.dat at target 60 % for vibrator 11",
+        hundredSource(q, 11)
+      # a new window still opens with none typed (a typed value is not carried into it)
+      let w11 = st.window(a)
+      doAssert st.plots[w11].params.forceHundredPct.isNaN
+      st.shutdown()
+      # a new run of the program has none: a window moved from vibrator 12 to 11 finds nothing
+      var again = initAppState()
+      again.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      let fresh = again.window(b)
+      let before = again.plots[fresh].result.gen
+      again.apply Command(kind: ckShowFile, panel: MainPanel, path: a)
+      doAssert again.settle(again.plots[fresh].file == "v11.dat" and
+        again.plots[fresh].result.gen > before and not again.plots[fresh].waiting)
+      doAssert again.plots[fresh].params.forceHundredPct.isNaN, "the run's value was saved"
+      again.shutdown()
 
   block olderProject:
     # a project that kept one 100 % force: it is every vibrator's default

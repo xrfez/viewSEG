@@ -665,14 +665,11 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
     igTextUnformatted(("(" & source & ")").cstring, nil)
     igPopStyleColor(1)
     marks.mark(name & ".hundred source")
-  elif vibrator > 0 and st.inProject and st.project.doc.hasVibProfile and
-      st.project.doc.vibProfile.hundredByVibrator.len > 0 and
-      p.forceHundredPct.isNaN and w.result.hundredWords.len == 0:
+  elif planeAt >= 0 and p.forceHundredPct.isNaN and st.missingHundred(w).len > 0:
     igSameLine(0, -1)
     igAlignTextToFramePadding()
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-    igTextUnformatted(("(no 100 % force for vibrator " & $vibrator &
-      " in the project's QC profile: not judged on force)").cstring, nil)
+    igTextUnformatted(("(" & st.missingHundred(w) & ")").cstring, nil)
     igPopStyleColor(1)
     marks.mark(name & ".hundred source")
   if w.result.hundredWords.len > 0 and p.forceHundredPct.isNaN:

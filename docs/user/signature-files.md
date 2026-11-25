@@ -231,7 +231,9 @@ pound-counts, the accelerometer set) it was given in, so one set in counts befor
 was given is converted exactly with the scale for the window and the folder QC, and one set in
 newtons is not read as counts when the scale is taken away (that vibrator is not judged on force,
 and says to set it again). A value kept by a version that had one unit for every vibrator has no
-known unit: set it again. If the file carries the controller's own average force
+known unit: set it again. With no project open, each vibrator's value is kept the same way for
+the run only (never saved): a window moved to another vibrator's sweep has none until you set
+it, says so, and is not judged on force; moved back, it has the first vibrator's again. If the file carries the controller's own average force
 and it differs from the target you typed by more than 10 percentage points when you press Set from
 this sweep, the value is set all the same and a line under the box (and Messages) says what a
 sweep at the target would then read. The force in pounds (the force scale) is under **Advanced:
