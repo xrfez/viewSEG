@@ -347,10 +347,13 @@ the folder, so a folder of one file for each slice, of one file for each receive
 mix of the two, gives the same answer. For receivers the window counts receivers, not
 records, and **Missing** for a source is the number of receivers that lack it. A receiver
 with two O records is checked against the sources of both at once: the record number
-does not choose between them. Traces of one receiver point with index 0 and index 1 are
-one receiver; the index makes two receivers only where the survey has the point at two
-indices. A source point a receiver's O records call for at two indices is one station: it
-counts once, and is missing only when every entry of it is.
+does not choose between them. A station is its line and point. Traces of one receiver
+point with index 0, 1 or 2 are one receiver, and a shot's source at index 2 is the source
+the survey has at index 1; the index makes two receivers (or two sources) only where the
+survey has the point at two indices. A station a relation record calls for at two indices
+counts once, and is there when the data holds a trace at its point, whatever the trace's
+index; two traces of one component at one point are that station recorded twice, whatever
+their indices. The Records window, the map's filters and template box count the same way.
 A record is never matched to the survey by its record (file) number alone: one whose trace
 headers hold no source station (no receiver station, for a receiver gather) is not checked
 and is listed under **Unmatched**.

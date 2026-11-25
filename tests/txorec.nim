@@ -22,33 +22,41 @@
 ## (planned 5, not unmatched); `oneSlice` rejected a slice of one receiver and
 ## one shot shown as a shot (the domain was `rdSource`); `oldSettings` rejected the
 ## match choice written again. `shotWithAnotherRecordsFfid` guards what already held.
+## `stationAtAnotherIndex` rejected, in turn: the check counting receiver 10/3 missing when
+## the data holds it at index 2 only (expected 3, missing 1) and the station at indices 1
+## and 2 as two (0 recorded twice), presence being taken by index; the shot unmatched when
+## its source is at index 2 and the survey has the point at index 1 only; and the receiver
+## gather at index 2 unmatched in the Records window (its O records found by index).
 
 import std/[os, strutils]
 import parseSEG
 import processSEG/qc/record
-import viewSEG/core/[jobs, join, missingjobs, missingreport, recordqc, session, settingsnif,
-  spread]
+import viewSEG/core/[jobs, join, missingjobs, missingreport, recordqc, relationcheck, session,
+  settingsnif, spread]
 import viewSEG/core/state
 import utils/waiting
 
 type Trace = tuple[src, rcv: float64] ## a source point of line 1 (0: none), a receiver of line 10
 
-proc dataFile(path: string; record: int; traces: openArray[Trace]; receiverGather = false) =
+proc dataFile(path: string; record: int; traces: openArray[Trace]; receiverGather = false;
+    srcIndices: openArray[int16] = []; rcvIndices: openArray[int16] = []) =
+  ## Trace `i` has source index `srcIndices[i]` and receiver index `rcvIndices[i]` when they
+  ## are given, else 1.
   var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
     numSamples: 1, time: 1_700_000_000.0, receiverGather: receiverGather))
   let samples = @[0'f32]
   var ch = 1
-  for t in traces:
+  for i, t in traces:
     var k = initTraceKeys()
     k.record = float64(record)
     k.channel = float64(ch)
     if t.src != 0:
       k.srcLine = 1
       k.srcPoint = t.src
-      k.srcIndex = 1
+      k.srcIndex = if srcIndices.len > 0: srcIndices[i] else: 1
     k.rcvLine = 10
     k.rcvPoint = t.rcv
-    k.rcvIndex = 1
+    k.rcvIndex = if rcvIndices.len > 0: rcvIndices[i] else: 1
     k.intervalUs = 2000
     k.status = tsLive
     w.writeTrace(k, samples)
@@ -227,6 +235,63 @@ proc main*() =
       st.filterHits[mfMissing].note & " " & $row.unlisted
     doAssert st.shownSpread.stations == 2, $st.shownSpread.stations
     st.shutdown()
+
+  block stationAtAnotherIndex:
+    # The relation record calls points 1..3 at index 1; the data holds point 3 at index 2
+    # only, and point 2 at indices 1 and 2 (a shot: its receivers 10/1..3; a receiver gather:
+    # its sources 1/5..7), and the gather's own station (the shot's source 1/11, the
+    # receiver 10/2) at index 2, which the survey has at index 1 only. A station is its line
+    # and point: matched, 3 planned, none missing, none unlisted, one recorded twice, in the
+    # check itself, the Records window, the filters, the box and the Missing traces report.
+    let x = dir / "index.x"
+    surveyFile(x, @[xRecord(40, 11, 1, 3)])
+    let o = dir / "index.o"
+    surveyFile(o, @[oRecord(1, 2, 5, 7)])
+    let shot = dir / "indexshot.sgd"
+    dataFile(shot, 40, [(11.0, 1.0), (11.0, 2.0), (11.0, 2.0), (11.0, 3.0)],
+      srcIndices = [2'i16, 2, 2, 2], rcvIndices = [1'i16, 1, 2, 2])
+    let gather = dir / "indexrcv.sgd"
+    dataFile(gather, 3, [(5.0, 2.0), (6.0, 2.0), (6.0, 2.0), (7.0, 2.0)],
+      receiverGather = true, srcIndices = [1'i16, 1, 2, 2], rcvIndices = [2'i16, 2, 2, 2])
+    block:
+      var g = SurveyGeometry()
+      g.addSps(parseSps(readFile(x)), rdSource)
+      var f = openSeismic(shot, keys = true)
+      let (c, why) = g.shotCheck(f.rowsOf(0 ..< f.len), JobContext())
+      doAssert why.len == 0, why
+      doAssert c.expected == 3 and c.missing == 0 and c.present == 3 and c.unlisted == 0 and
+        c.missingStations.len == 0 and c.duplicates == 1, $c.expected & " expected, " &
+        $c.missing & " missing, " & $c.unlisted & " unlisted, " & $c.duplicates & " twice"
+    for (what, survey, data) in [("shot", x, shot), ("receiver gather", o, gather)]:
+      var st = initAppState()
+      st.open(@[survey], data)
+      doAssert st.settle(st.sessions[0].checkedAgainst.len > 0 and st.jobs.active.len == 0 and
+        st.filtersDone), what
+      let row = st.sessions[0].records[0]
+      doAssert row.planned == 3 and row.plannedMissing == 0 and row.unlisted == 0 and
+        row.duplicates == 1, what & ": " & $row.planned & " planned, " & $row.plannedMissing &
+        " missing, " & $row.unlisted & " unlisted, " & $row.duplicates & " twice"
+      let hits = st.filterHits
+      doAssert hits[mfMissing].state == fsDone and hits[mfMissing].count == 0 and
+        hits[mfMissing].stations.len == 0, what & ": " & hits[mfMissing].note
+      doAssert hits[mfUnlisted].count == 0 and hits[mfUnlisted].traces.len == 0, what & ": " &
+        $hits[mfUnlisted].traces
+      doAssert hits[mfDuplicate].count == 1 and hits[mfDuplicate].traces.len == 2, what & ": " &
+        $hits[mfDuplicate].count & " " & $hits[mfDuplicate].traces
+      doAssert st.shownSpread.stations == 3, what & ": " & $st.shownSpread.stations
+      st.shutdown()
+      var g = SurveyGeometry()
+      g.addSps(parseSps(readFile(survey)), rdSource)
+      var geo = new SurveyGeometry
+      geo[] = g
+      let jobs = initJobs()
+      let sink = MissingSink()
+      let id = jobs.submit(missingSpec(dir, @[data]), scanMissing(dir, @[data], geo, sink, ""))
+      doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}), what
+      let r = if data == shot: sink.result.shot.stats else: sink.result.receiver.stats
+      doAssert r.records == 1 and r.inTemplate == 3 and r.missing == 0 and
+        r.missingInRecords == 0, what & ": " & $r.inTemplate & " in the template, " &
+        $r.missing & " missing"
 
   block twoXLayers:
     # Two X files loaded: a receiver file is checked against the first one's records alone

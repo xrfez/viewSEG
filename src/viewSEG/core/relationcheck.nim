@@ -65,20 +65,60 @@ func templateStations*(g: SurveyGeometry; record: int64): seq[StationKey] =
 const SeveralFit* = "several survey records at this source station fit equally: the " &
   "record number alone would decide, and it is not trusted"
 
+proc byPoint(g: SurveyGeometry; rows: TraceRows; c: var RecordCompleteness) =
+  ## Recounts `c` (a shot's check, traces matched by station) with a station as its line
+  ## and point, the index never telling two apart: a receiver point the X record calls (at
+  ## any index) is present when a seismic trace of the data is at it (at any index), else
+  ## missing; a point a live trace holds that the record lists at no index is unlisted; a
+  ## point with two traces of one component is recorded twice. `c.missingStations` keeps the
+  ## record's entries of the missing points.
+  var have = initHashSet[(float64, float64)]() # the points of the data's seismic traces
+  var live = initHashSet[(float64, float64)]() # those of its live traces
+  var seen = initHashSet[((float64, float64), uint8)]()
+  var twice = initHashSet[(float64, float64)]()
+  for i in 0 ..< rows.len:
+    let k = rows.keysAt(i)
+    if k.isSeismic and hasStation(k.rcvLine, k.rcvPoint):
+      let st = stationKey(k.rcvLine, k.rcvPoint, 0)
+      let at = (st.line, st.point)
+      have.incl at
+      if k.status != tsDead: live.incl at
+      if seen.containsOrIncl((at, componentOf(k))): twice.incl at
+  var planned = initHashSet[(float64, float64)]()
+  var lost = initHashSet[(float64, float64)]()
+  for st in g.templateStations(c.xpsRecord):
+    let at = (st.line, st.point)
+    if not planned.containsOrIncl(at) and at notin have: lost.incl at
+  var lostStations: seq[StationKey] = @[]
+  for st in c.missingStations:
+    if (st.line, st.point) in lost: lostStations.add st
+  var unlisted = 0
+  for at in live:
+    if at notin planned: inc unlisted
+  c.expected = planned.len
+  c.missing = lost.len
+  c.present = c.expected - c.missing
+  c.missingStations = lostStations
+  c.unlisted = unlisted
+  c.duplicates = twice.len
+
 proc templateOf*(g: SurveyGeometry; record: int64; byChannel: bool):
     HashSet[tuple[channel: int64; station: StationKey]] =
   ## What X record `record` calls for, as compared between records: its
-  ## stations, and their channels when traces are matched by channel.
+  ## stations (line and point: the index never tells two apart), and their channels when
+  ## traces are matched by channel.
   result = initHashSet[tuple[channel: int64; station: StationKey]]()
   for (channel, rel) in g.channelRelations(record):
-    result.incl (channel: (if byChannel: int64(channel) else: 0'i64), station: rel.receiver)
+    result.incl (channel: (if byChannel: int64(channel) else: 0'i64),
+      station: stationKey(rel.receiver.line, rel.receiver.point, 0))
 
 proc bestOfSeveral*(g: SurveyGeometry; rows: TraceRows; first: RecordCompleteness;
     ctx: JobContext; traceMatch = tmAuto): tuple[c: RecordCompleteness; why: string] =
   ## The shot `rows` checked against each X record at its source station
   ## (`first.candidates`, more than one), the record number left out: the one
   ## whose template shares the most stations with the data, and of those the one
-  ## that lacks the fewest. Records with the same template (a reshoot of one
+  ## that lacks the fewest, a station being its line and point (`byPoint`) when traces
+  ## are matched by station. Records with the same template (a reshoot of one
   ## patch) are checked once. A tie on both between different templates is
   ## `why` (`SeveralFit`).
   var keys = newSeq[TraceKeys](rows.len)
@@ -96,7 +136,9 @@ proc bestOfSeveral*(g: SurveyGeometry; rows: TraceRows; first: RecordCompletenes
       templates.add calls
       # The number put in the keys only makes the library check that one record.
       for k in keys.mitems: k.record = float64(record)
-      var c = g.recordCompleteness(rowsOf(keys, counts), rmSourceStation, traceMatch)
+      let view = rowsOf(keys, counts)
+      var c = g.recordCompleteness(view, rmSourceStation, traceMatch)
+      if c.traceMatch == tmStation and c.xpsRecord == record: g.byPoint(view, c)
       if c.present > best.present or (c.present == best.present and c.missing < best.missing):
         c.fieldRecord = first.fieldRecord
         (best, tied, result.c) = ((present: c.present, missing: c.missing), false, c)
@@ -104,54 +146,53 @@ proc bestOfSeveral*(g: SurveyGeometry; rows: TraceRows; first: RecordCompletenes
         tied = true
   result.why = if tied: SeveralFit else: ""
 
-
-proc byPoint(g: SurveyGeometry; rows: TraceRows; c: var RecordCompleteness) =
-  ## Recounts `c` (a shot's check, traces matched by station) with a station as its line
-  ## and point: a receiver point the X record calls at two indices is one station, missing
-  ## only when every entry of it is; a point the data holds that the record lists at no
-  ## index is not unlisted. `c.missingStations` keeps the entries of the missing points.
-  var entries = initTable[(float64, float64), int]()
-  var counted = initHashSet[StationKey]()
-  for st in g.templateStations(c.xpsRecord):
-    if not counted.containsOrIncl(st): inc entries.mgetOrPut((st.line, st.point), 0)
-  var lacking = initTable[(float64, float64), int]()
-  for st in c.missingStations: inc lacking.mgetOrPut((st.line, st.point), 0)
-  var lostStations: seq[StationKey] = @[]
-  var lost = initHashSet[(float64, float64)]()
-  for key, n in entries:
-    if lacking.getOrDefault(key) >= n: lost.incl key
-  for st in c.missingStations:
-    if (st.line, st.point) in lost: lostStations.add st
-  var unlisted = initHashSet[(float64, float64)]()
-  for i in 0 ..< rows.len:
-    let k = rows.keysAt(i)
-    if k.status notin {tsDead, tsAuxiliary} and hasStation(k.rcvLine, k.rcvPoint):
-      let st = stationKey(k.rcvLine, k.rcvPoint, 0)
-      if (st.line, st.point) notin entries: unlisted.incl (st.line, st.point)
-  c.expected = entries.len
-  c.missing = lost.len
-  c.present = c.expected - c.missing
-  c.missingStations = lostStations
-  c.unlisted = unlisted.len
+proc fixedIndices(g: SurveyGeometry; records: openArray[int64]; domain: RelationDomain):
+    seq[int16] =
+  ## The indices (0 read as 1) the fixed station of the relation `records` of `domain` (an
+  ## X record's source, an O record's receiver) has, each once.
+  for rec in records:
+    for run in g.relationRuns(rec, domain):
+      let i = if run.fixed.index == 0: 1'i16 else: run.fixed.index
+      if i notin result: result.add i
+      break
 
 proc shotCheck*(g: SurveyGeometry; rows: TraceRows; ctx: JobContext; traceMatch = tmAuto):
     tuple[c: RecordCompleteness; why: string] =
   ## The shot `rows` checked against its X record, found by its source station
   ## alone (`recordCompleteness`; one record's result when the station has
-  ## one, `bestOfSeveral` when it has several). `why` is not empty when the
+  ## one, `bestOfSeveral` when it has several), a station being its line and point
+  ## (`byPoint`) when traces are matched by station. `why` is not empty when the
   ## shot is unmatched: the reason in words, and `c` is not a basis for a check.
   ## A match the library made by the FFID (a source with no X record, or no
-  ## source in the headers) is refused by `unmatchedWhy`.
+  ## source in the headers) is refused by `unmatchedWhy`. The source is its line and
+  ## point too: its index tells X records apart only where the survey has the point at
+  ## several source indices.
   if g.relationCount(rdSource) == 0:
     result.why = NoXRecords
     return
-  result.c = g.recordCompleteness(rows, rmAuto, traceMatch)
+  var view = rows
+  result.c = g.recordCompleteness(view, rmAuto, traceMatch)
+  var keys: seq[TraceKeys] = @[]
+  var counts: seq[int] = @[]
+  let src = result.c.source
+  if result.c.hasSource and src.index != 0 and result.c.candidates.len == 0:
+    let all = g.recordsAt(stationKey(src.line, src.point, 0))
+    if all.len > 0 and g.fixedIndices(all, rdSource).len == 1:
+      # The X records at the source's point are at another index, and only there: theirs.
+      keys = newSeq[TraceKeys](rows.len)
+      for i in 0 ..< keys.len:
+        keys[i] = rows.keysAt(i)
+        if keys[i].status != tsAuxiliary: keys[i].srcIndex = 0 # (0: any index)
+      counts = newSeq[int](keys.len)
+      view = rowsOf(keys, counts)
+      result.c = g.recordCompleteness(view, rmAuto, traceMatch)
+      result.c.source = src
   if result.c.recordMatch == rmSourceStation and result.c.candidates.len > 1:
     # Several X records at this source: the data decides, never the record number.
-    (result.c, result.why) = g.bestOfSeveral(rows, result.c, ctx, traceMatch)
+    (result.c, result.why) = g.bestOfSeveral(view, result.c, ctx, traceMatch)
+  elif result.c.traceMatch == tmStation and unmatchedWhy(result.c).len == 0:
+    g.byPoint(view, result.c) # (`bestOfSeveral` counted each record so)
   if result.why.len == 0: result.why = unmatchedWhy(result.c)
-  if result.why.len == 0 and result.c.traceMatch == tmStation:
-    g.byPoint(rows, result.c)
 
 type ORecord* = tuple[index: int16; sources: seq[StationKey]]
 
@@ -206,23 +247,21 @@ proc gatherReceiver*(keys: openArray[TraceKeys]; traces: Slice[int]):
 proc receiverRecords*(g: SurveyGeometry; rcv: StationKey):
     tuple[records: seq[int64]; why: string] =
   ## The O records (`rdReceiver`) of receiver `rcv`, by its station alone: all
-  ## of them, their union being the template. Where the survey has the point at
-  ## several receiver indices and `rcv` names none (0), the records are not
-  ## told, and `why` says so; `why` is empty when they are.
-  result.records = g.recordsAt(rcv, rdReceiver)
-  if result.records.len == 0:
+  ## of them, their union being the template. A station is its line and point: its index
+  ## tells the records apart only where the survey has the point at several receiver
+  ## indices; there the records of `rcv`'s index are the receiver's, and where `rcv` names
+  ## none (0) they are not told, and `why` says so. `why` is empty when they are.
+  let all = g.recordsAt(stationKey(rcv.line, rcv.point, 0), rdReceiver)
+  if all.len == 0:
     result.why = NoORecord
-    return
-  if rcv.index == 0:
-    var indices: seq[int16] = @[]
-    for rec in result.records:
-      for run in g.relationRuns(rec, rdReceiver):
-        let i = if run.fixed.index == 0: 1'i16 else: run.fixed.index
-        if i notin indices: indices.add i
-        break
-    if indices.len > 1:
-      result.records = @[]
-      result.why = UnknownIndex
+  elif g.fixedIndices(all, rdReceiver).len <= 1:
+    result.records = all
+  elif rcv.index == 0:
+    result.why = UnknownIndex
+  else:
+    for rec in all:
+      if g.fixedIndices([rec], rdReceiver) == @[rcv.index]: result.records.add rec
+    if result.records.len == 0: result.why = NoORecord
 
 type Plan* = Table[(float64, float64), set[int16]]
   ## the stations a record plans, by line and point: their indices
@@ -252,27 +291,28 @@ proc placeTraces*(hits: var array[MapFilter, FilterHits]; keys: openArray[TraceK
   ## stations the relation `records` of `domain` (one X record; the O records of
   ## one receiver, their union) do not plan
   ## (`mfUnlisted`) and recorded twice (`mfDuplicate`), placed by their
-  ## receiver (a shot) or source (a receiver gather) station, keyed as
+  ## receiver (a shot) or source (a receiver gather) station, a station being its line
+  ## and point (the index never tells two apart), keyed as
   ## parseSEG keys stations (to 1/100: a SEG-D station decoded from a binary
   ## fraction is the survey file's). For a receiver gather also the counts,
   ## and the stations planned it lacks (`mfMissing`); a shot's are
-  ## `recordCompleteness`'s, set before.
+  ## `shotCheck`'s, set before.
   let plan = g.plannedOf(records, domain)
-  var seen: Table[(StationKey, uint8), int] # station (index 0 for none) and component: first trace
+  var seen: Table[((float64, float64), uint8), int] # station and component: first trace
   var have: HashSet[(float64, float64)] # the sources heard, by line and point
   var dupStations: HashSet[(float64, float64)]
   var firsts: HashSet[int] # the first trace of each key recorded twice, listed
   for t in traces:
     let k = keys[t]
     if k.isSeismic:
-      let (line, point, index) = if domain == rdSource: (k.rcvLine, k.rcvPoint, k.rcvIndex)
-                                 else: (k.srcLine, k.srcPoint, k.srcIndex)
+      let (line, point) = if domain == rdSource: (k.rcvLine, k.rcvPoint)
+                          else: (k.srcLine, k.srcPoint)
       if hasStation(line, point):
-        let st = stationKey(line, point, max(index, 0'i16))
+        let st = stationKey(line, point, 0)
         have.incl (st.line, st.point)
         if not plan.lists(st.line, st.point) and k.status != tsDead:
           hits[mfUnlisted].traces.add base + t
-        let key = (st, componentOf(k))
+        let key = ((st.line, st.point), componentOf(k))
         if key in seen:
           dupStations.incl (st.line, st.point)
           if not firsts.containsOrIncl(seen[key]):
