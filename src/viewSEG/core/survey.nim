@@ -700,7 +700,16 @@ func held*(s: Survey): set[SurveyContent] =
   ## The kinds of record the loaded survey files hold.
   for i in 0 ..< s.layers.len: result = result + s.layers[i].contents
 
-func clashes(old, layer: SurveyLayer): bool =
+func contentsOf*(kind: FileKind; domain: RelationDomain): set[SurveyContent] =
+  ## The kinds of record a survey file of `kind` holds, as far as the kind says (a relation
+  ## file by the domain of its records); none for a file of several kinds, or no survey file.
+  case kind
+  of fkSpsSource, fkP1: {scSources}
+  of fkSpsReceiver: {scReceivers}
+  of fkSpsRelation: (if domain == rdSource: {scXRecords} else: {scORecords})
+  else: {}
+
+func clashes*(old, layer: SurveyLayer): bool =
   ## Whether survey file layer `old` goes when `layer` is loaded: the same file, or one
   ## that holds a kind of record `layer` holds (one file of each kind is loaded).
   old.origin == loSurveyFile and (old.path == layer.path or (old.contents * layer.contents) != {})

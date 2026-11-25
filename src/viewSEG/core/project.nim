@@ -288,6 +288,8 @@ type
       geometry*: ref SurveyGeometry ## moved, never shared; nil when it failed
       survey*: JoinSurvey
       layers*: int                  ## the layers posted before it
+      unused*: seq[string]
+        ## the copies of the files it left out (another of their kind is later in the store)
       restoreMs*: float64           ## how long the restore took
       surveyFailure*: string
     of pnKept:

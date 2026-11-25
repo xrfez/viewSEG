@@ -6561,6 +6561,30 @@ func readAs(l: SurveyLayer; lines: JoinOptions): bool =
   ## trailing digits.
   l.sameLineNames(lines.lineNaming, lines.trailingDigits)
 
+func contentsListed(state: AppState; path: string): set[SurveyContent] =
+  ## The kinds of record the file list says survey file `path` holds; none when it is
+  ## not listed or says several kinds.
+  let e = state.files.find(path)
+  if e < 0: return {}
+  contentsOf(state.files.entries[e].kind, relationDomainOf(path))
+
+func importRefusal(state: AppState; path: string): string =
+  ## Why survey file `path` is not loaded now: an import is under way that reads a file of
+  ## its kind (or the file's kind is not known before it is read); "" when it may be.
+  if not state.importing: return ""
+  let name = path.extractFilename
+  let kinds = state.contentsListed(path)
+  var first = ""
+  for f in state.joining.files:
+    if f.kind == jkCsv: continue
+    let theirs = state.contentsListed(f.path)
+    if first.len == 0: first = f.path.extractFilename
+    if f.path == path or kinds == {} or theirs == {} or kinds * theirs != {}:
+      return f.path.extractFilename & " is being imported: wait for the import or cancel it, " &
+        "then load " & name & "."
+  if kinds == {}:
+    return "A survey import is under way: wait for it or cancel it, then load " & name & "."
+
 proc loadSurvey(state: var AppState; path: string; quiet = false;
     lines = state.settings.join) =
   ## Loads survey file `path` (canonical) on a job, its text line names made
@@ -6570,8 +6594,11 @@ proc loadSurvey(state: var AppState; path: string; quiet = false;
   let name = path.extractFilename
   let i = state.survey.findFile(path)
   let e = state.files.find(path)
+  let refusal = state.importRefusal(path)
   if state.surveyLoading(path):
     if not quiet: state.log.add(sevInfo, name, name & " is already being loaded.")
+  elif refusal.len > 0:
+    state.log.add(sevWarning, name, refusal)
   elif i >= 0 and e >= 0 and state.files.entries[e].size == state.survey.layers[i].size and
       state.files.entries[e].modified == state.survey.layers[i].modified and
       state.survey.layers[i].readAs(lines):
@@ -6680,7 +6707,17 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
         if at < 0:
           j.replaced.add (winner, newSeq[SurveyLayer]())
           at = j.replaced.high
-        j.replaced[at].layers.add move(layer)
+        # of the layers that hold a kind, the newest ask is the one put back at a cancel
+        var newest = true
+        var k = 0
+        while k < j.replaced[at].layers.len:
+          if j.replaced[at].layers[k].clashes(layer):
+            if j.replaced[at].layers[k].order > layer.order: newest = false
+            else:
+              j.replaced[at].layers.delete k
+              continue
+          inc k
+        if newest: j.replaced[at].layers.add move(layer)
       state.loaded(job, NoSurveyLayer)
       return
     let again = state.survey.findFile(path) >= 0
@@ -7328,17 +7365,6 @@ proc notify(state: var AppState; severity: Severity; text: string) =
 
 proc finishImport(state: var AppState)
 
-func contentsListed(state: AppState; path: string): set[SurveyContent] =
-  ## The kinds of record the file list says survey file `path` holds; none when it is
-  ## not listed or says several kinds.
-  let e = state.files.find(path)
-  if e < 0: return {}
-  case state.files.entries[e].kind
-  of fkSpsSource, fkP1: {scSources}
-  of fkSpsReceiver: {scReceivers}
-  of fkSpsRelation: (if relationDomainOf(path) == rdSource: {scXRecords} else: {scORecords})
-  else: {}
-
 proc startJoin(state: var AppState; i: int; cmd: Command; carried = false) =
   ## `ckJoin`, the survey import. With an open file `sessions[i]`, the files
   ## are read once, on a job (`joinReadWork`), while the plot goes on reading
@@ -7814,6 +7840,8 @@ proc selectUnmatched(state: var AppState; cmd: Command) =
 proc startListing(state: var AppState; paths: seq[string]; title, folder: string;
     by: CommandOrigin)
 
+proc keepSurvey(state: var AppState; files: seq[JoinFile]; resume: seq[ImportFile] = @[])
+
 proc projectChanged(state: var AppState) =
   ## The project's document changed: written `SaveDelay` later. A survey file the project
   ## named that no layer uses (another of its kind was loaded in its place) is dropped from
@@ -7829,6 +7857,10 @@ proc projectChanged(state: var AppState) =
     p.doc.survey = kept
     p.originals = looks
     p.unused.setLen 0
+    # the survey store is written again from the copies that stay
+    var files: seq[JoinFile] = @[]
+    for c in kept: files.add JoinFile(path: p.dir.partOf(c.copy), kind: c.kind, role: c.role)
+    if files.len > 0 and p.survey == srLoaded: state.keepSurvey(files)
   inc state.project.docRev
   inc state.project.revision
   state.project.changedAt = getMonoTime()
@@ -8448,7 +8480,9 @@ proc keepImport(state: var AppState) =
     if f.kind == jkCsv or state.survey.findFile(f.path) >= 0: kept.add f
     else:
       state.log.add(sevWarning, "project", f.path.extractFilename & " is not kept in the " &
-        "project: it is not loaded, another file holds its kind of record.")
+        "project: it is not loaded" &
+        (if state.contentsListed(f.path) * state.survey.held != {}: ", another file holds " &
+          "its kind of record." else: "."))
   if kept.len == 0: return
   j.files = kept
   p.doc.options = j.options
@@ -8894,14 +8928,10 @@ proc takeRestored(state: var AppState; m: sink Msg) =
   p.joinSurvey = move news.survey
   p.survey = srLoaded
   p.restoreMs = news.restoreMs
-  p.unused.setLen 0
-  for c in p.doc.survey: # a project saved when several files of a kind were allowed
-    if news.layers > 0 and c.kind != jkCsv and
-        state.survey.findFile(p.dir.partOf(c.copy)) < 0:
-      p.unused.add c.copy
-      let name = c.copy.extractFilename
-      state.log.add(sevWarning, "project", name & " is no longer used and will not be kept " &
-        "when the project is next saved: another file holds its kind of record.")
+  p.unused = news.unused # a project saved when several files of a kind were allowed
+  for copy in p.unused:
+    state.log.add(sevWarning, "project", copy.extractFilename & " is no longer used and " &
+      "will not be kept when the project is next saved: another file holds its kind of record.")
   state.log.add(sevInfo, "project", "The project's survey is ready (" &
     $p.joinSurvey.stations[prSource] & " sources, " & $p.joinSurvey.stations[prReceiver] &
     " receivers, " & $p.joinSurvey.xRelations & " X records, " & $p.joinSurvey.oRelations &

@@ -624,15 +624,33 @@ proc restoreWork*(dir: string; doc: ProjectDoc; layers: bool; to: Poster): JobWo
         var names: seq[string] = @[]
         var b: SurveyFileBuilder
         var building = false
+        # one file of each kind: of two the store holds the later is used, the earlier is
+        # neither on the map nor in the geometry (a project saved when more were allowed)
+        var stored: seq[tuple[copy: string; kinds: set[SurveyContent]]] = @[]
+        readStore(dir.partOf(SurveyStoreName), ctx, StoreReader(onFile: proc (f: StoredFile) =
+          stored.add (f.copy, contentsOf(f.fileKind, f.domain))))
+        var skip = newSeq[bool](stored.len)
+        var taken: set[SurveyContent] = {}
+        for k in countdown(stored.high, 0):
+          if stored[k].kinds * taken != {}:
+            skip[k] = true
+            news.unused.add stored[k].copy
+          else: taken = taken + stored[k].kinds
+        var at = -1
+        var skipping = false
         var (rows, skipped) = (0, 0)
         var problems: seq[string] = @[]
         proc onFile(f: StoredFile) =
+          inc at
+          skipping = skip[at]
+          if skipping: return
           names.add f.name
           if layers and f.kind != jkCsv:
             b = initSurveyFileBuilder(dir.partOf(f.copy), f.fileKind, f.size, f.modified,
               naming, opts.trailingDigits)
             building = true
         proc onSps(f: StoredFile; part: SpsFile) =
+          if skipping: return
           if building:
             for q in part.points:
               b.addPoint(roleOf(q.kind), b.lineOf(q.lineName, q.line), q.point,
@@ -641,6 +659,7 @@ proc restoreWork*(dir: string; doc: ProjectDoc; layers: bool; to: Poster): JobWo
             b.addRelations(rel, f.domain)
           g[].addSps(part, f.domain)
         proc onP1(f: StoredFile; pf: P1File) =
+          if skipping: return
           if building:
             for lf in pf.files:
               if lf.format == pfP1:
@@ -651,8 +670,10 @@ proc restoreWork*(dir: string; doc: ProjectDoc; layers: bool; to: Poster): JobWo
                   b.addPoint(prSource, line, r.point, index, r.easting, r.northing, NaN)
           g[].addP1(pf)
         proc onCsv(f: StoredFile; text: string) =
+          if skipping: return
           rows += g[].addCsv(text, f.name, f.role, problems, skipped)
         proc onEnd(f: StoredFile) =
+          if skipping: return
           if building:
             var l = b.finish()
             l.withLevels()

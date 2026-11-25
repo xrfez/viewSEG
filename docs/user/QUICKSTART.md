@@ -92,6 +92,7 @@ Loading the same file again replaces it as before. When that leaves a kind with 
 R and S file, then an S file), Messages warns that no R file is loaded now. An import that
 names two files of one kind uses the later and keeps only that one in the project; a project
 saved earlier with two of a kind opens with the last and says the other is no longer used.
+While an import runs, a file of a kind it reads is not loaded (Messages says to wait or cancel).
 
 **File > Open recent** lists the files and the folders opened last (the start screen
 shows the newest ones); the file dialogs start in the folder of the last file opened. Every file and
