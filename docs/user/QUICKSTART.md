@@ -1374,7 +1374,7 @@ What a column can mean is a short list: **Ignore**, **Time (UTC)**, **GPSTB**, *
 **Water Depth**, **X**, **Y**, **Z**, **SourceType**, **SourceID**, **Uphole** and **User
 defined**. The names from Time (UTC) to Uphole are the system's columns: the program
 refers to them by name (the clock, the follow, the map, the SPS export and the slice by
-shot log), and each can be chosen for one column only, except Time (UTC). GPSTB is the GPS
+shot log), and each can be chosen for one column only. GPSTB is the GPS
 time break in microseconds since the GPS epoch; Uphole is the uphole time in milliseconds.
 A column marked **Ignore** never enters the table: it is not shown, not exported, and no
 problem is counted for it. Every other column is **User defined**: it keeps its text, shows
@@ -1384,29 +1384,61 @@ name cannot be one of the system's names, whatever its capitals, spaces or punct
 under the name, and **Apply** stays off until it is fixed. A header that uses a system name
 for a column left user defined gets " (file)" after it.
 
-**Time (UTC)** can be chosen for several columns: their cells are joined, in column order,
-with one space, and read as one time. That covers one text column (`2024-03-01
-00:00:00.5`), a date column and a time column, a year, a day of year (or month and day), an
-hour, a minute and a second in columns of their own (with the microseconds in one more), or
-one column of seconds or microseconds since 1970. The program finds the form in the first
-rows and shows it as a pattern; type another when it is wrong. In a pattern `yyyy` or `yy`
-is the year (two digits: 50 to 99 is 19xx), `ddd` the day of the year, `mm` the month (the
-minute once an hour came before it), `mi` the minute, `dd` the day, `hh` the hour, `ss` the
-second, `f` the fraction of the second (the dot before it may be missing), `u` whole
-microseconds, and any other character must be there as written: `yyyy ddd hh mi ss.ffffff`,
-`yyyy/mm/dd hh:mm:ss`. The whole pattern can also be `epoch seconds` or `epoch
-microseconds`. A time that does not read says so in Problems with the row, the time as it was
-joined and the pattern: "time '2024 361 23:59:xx' does not match yyyy ddd hh:mi:ss".
+Each shot has one instant, and slicing and matching use it. It is read from **GPSTB** when
+that column is chosen and reads, and otherwise from **Time (UTC)**. If both are chosen and a
+row's two differ by more than a millisecond, Problems says so, naming both values and
+that GPSTB is used. **Time (UTC)** is chosen for at most one column, like every other
+system column, and the dialog refuses a second. Its cell is read by one pattern for the whole
+column: a text such as `2024-03-01 00:00:00.5` or `2024-061 00:00:00Z`, or seconds or
+microseconds since 1970. The program decides the pattern from the cells it samples (the first
+64 rows) and shows it ("Time (UTC) is read as yyyy-mo-dd hh:mi:ss"); type another when it is
+wrong. In a pattern `yyyy` (four digits) or `yy` (two: 50 to 99 is 19xx) is the year, `ddd`
+the day of the year, `mo` the month, `dd` the day of the month, `hh` the hour, `mi` the
+minute, `ss` the second, `f` the digits of the fraction of the second (after a dot or a
+comma), `u` whole microseconds, and any other character must be there as written:
+`yyyy-mo-dd hh:mi:ss.ffffff`, `dd/mo/yyyy hh:mi:ss`. A `Z` at the end is accepted. `mm` is not a
+field, because it could be the month or the minute: write `mo` or `mi`. The whole pattern can
+also be `epoch seconds` or `epoch microseconds`. A field takes at most its width in digits, so a
+long run of digits does not match rather than read as something else.
+
+The program proposes a pattern only when it is sure. It does so for a four-digit year first,
+followed by a month and a day (`-`, `/` or `.` between them) or by a day of year, then an
+hour, a minute and a second, with a fraction and a `Z` if every sampled row has them in the
+same form; for a year and a day of year, when some day is above 12 or every day has three
+digits; and for plain numbers in the years 2000 to 2100 as seconds or microseconds since 1970.
+It does not guess a day or a month first (`dd/mo/yy`, `mo/dd/yy`, `yy/mo/dd`), a four-digit
+year in the third place (`dd/mo/yyyy` against `mo/dd/yyyy`), a time with a zone offset
+(`+01`, `-0500`), a column whose rows are in different forms, or GPS seconds. The dialog
+then says "The time's form could not be decided: type the pattern, for example dd/mo/yyyy
+hh:mi:ss", and until a pattern is typed no time is read from that column (one problem at the
+top of Problems says so, not one per row). A column of 16 digits that reads as GPS
+microseconds is GPSTB even when its header says Time, unless the header says UTC. A time that
+does not read says so in Problems with the row, the time and the pattern: "time '2024 361
+23:59:xx' does not match yyyy ddd hh:mi:ss".
+
+A log whose time is spread over several columns (a year, a day of year, an hour, a minute
+and a second in columns of their own) has no Time (UTC) column: those columns are user
+defined, named from the header. The dialog says "This log's time is spread over several
+columns. Choose GPSTB, or add one Time (UTC) column to the file." When GPSTB is chosen its
+rows have their instants from it. Without GPSTB or a Time (UTC) column the rows have no time
+and Problems says the same at the top.
 
 A header cut at spaces has more names than the rows have columns when a name holds a
-space ("Sail line", "Day of year"): the delimiter is taken from the rows, names are grouped
-to fit, and a header that cannot be fitted leaves its columns user defined rather than
-guessing a meaning one column off.
+space ("Sail line", "Day of year"): the delimiter is taken from the rows, and the names are
+fitted to the columns so that each column keeps its own name in the grid and in the map's
+popup. A name that cannot be fitted is "Column N", never a piece of another name. When the
+rows have more columns than the header has names (a delimiter after the last value, say) the
+names fit the leading columns and the rest are "Column N".
 
 A project saved with the earlier column meanings (UTC seconds, year, day of year, gun array
-and the others) opens as the same columns under the present names: the time parts become
-Time (UTC) with the pattern that reads them the same way, and gun array, volume, pressure,
-heading, speed and text become user defined columns.
+and the others) opens as the same columns under the present names. Of the older time
+columns, the first of UTC microseconds, else of UTC seconds, else of date-time text becomes
+the one Time (UTC) column, with the pattern that reads it the same way (an older `mm` is
+written `mo` or `mi`); the year, day of year, month, day of month, hour, minute, second and
+microsecond columns become user defined columns named by their old word, and are not read.
+If the log's time was only in those columns, the project opens and its rows have no time
+until GPSTB or one Time (UTC) column is chosen; Problems says so once at the top. Gun array,
+volume, pressure, heading, speed and text become user defined columns.
 
 The project remembers the column map of the last shot log imported or re-mapped, and does
 not forget it when that log is removed. The next import, if no map is given, reads the file
