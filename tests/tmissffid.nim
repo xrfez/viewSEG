@@ -124,8 +124,9 @@ proc main*() =
   block noBasisReport:
     let lane = initJobs()
     let sink = MissingSink()
+    let survey = surveyOf(xp) # read in place by the job: kept until it ends
     let id = lane.submit(missingSpec(dir, @[other]),
-      scanMissing(dir, @[other], surveyOf(xp), sink))
+      scanMissing(dir, @[other], addr survey[], sink))
     doAssert waitUntil(lane.info(id).get.state in {jsDone, jsFailed, jsCancelled})
     doAssert lane.info(id).get.state == jsDone, lane.info(id).get.error
     doAssert sink.result.shot.stats.records == 0, $sink.result.shot.stats
@@ -134,7 +135,7 @@ proc main*() =
     doAssert u.path == "other.sgd" and u.record == 7, $u
     doAssert "belongs to another source" in u.why, u.why
     let ok = MissingSink()
-    let id2 = lane.submit(missingSpec(dir, @[own]), scanMissing(dir, @[own], surveyOf(xp), ok))
+    let id2 = lane.submit(missingSpec(dir, @[own]), scanMissing(dir, @[own], addr survey[], ok))
     doAssert waitUntil(lane.info(id2).get.state in {jsDone, jsFailed, jsCancelled})
     doAssert ok.result.shot.stats.records == 1 and ok.result.shot.stats.missing == 2
 

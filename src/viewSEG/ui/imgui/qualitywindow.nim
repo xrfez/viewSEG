@@ -6,12 +6,16 @@
 ##
 ## Both are background jobs (`fileScan`, `folderScan`). The window reads a sink only after
 ## its job is no longer running, and drops an answer that is no longer the one asked for
-## (another file shown or edited, another folder or the subfolders tick changed): the job is
+## (another file shown or edited, another folder or the subfolders tick changed, another
+## noise setting, relation file or survey on the map, `qualityInputsKey`): the job is
 ## cancelled and its result never read. Edits are copied on the UI thread (`editsSnapshot`)
-## before a job is submitted: the worker must not read `AppState`. Nothing here is looked up
-## by a record number.
+## before a job is submitted: the worker must not read `AppState`. The relation records a job
+## reads are given to it by address, never as a `ref`, and the state keeps them until the job's
+## work is back (`holdGeometry`); so are the sink it fills, the note it sets and the survey
+## it joins (`holdRef`). Nothing here is looked up by a record number.
 
 import std/[algorithm, os, strutils, tables]
+from parseSEG import SurveyGeometry
 import imguin/cimgui
 import ../../core/[edits, filesystem, jobs, qualityjobs, qualityreport, settings, state]
 import ../../core/records as filerecs
@@ -276,14 +280,24 @@ proc forcedKey(st: AppState; only = ""): string =
   forced.sort()
   forced.join(";")
 
+func addrOf(g: ref SurveyGeometry): ptr SurveyGeometry =
+  if g.isNil: nil else: addr g[]
+
 proc submitFile(ui: var QualityUi; st: AppState; key, path: string) =
   ui.file = Scan(key: key, running: true, status: Scanning, sink: QualitySink())
   var spec = qualitySpec(@[path])
   spec.title = "Trace quality in " & path.extractFilename
   spec.auto = true # started by the program as the file shown changes: its end is not announced
+  let (x, o) = (st.qcRelations(rdSource)[0], st.qcRelations(rdReceiver)[0])
+  let joined = st.qualityJoin # (the one made before, while the survey and its join are the same)
   ui.file.job = st.jobs.submit(spec,
     fileScan(path, st.indexCache, st.editsSnapshot, ui.file.sink, st.settings.noise,
-      st.forcedKinds))
+      st.forcedKinds, relations = x.addrOf, receivers = o.addrOf,
+      traceMatch = st.settings.join.traceMatch, join = QualityJoin(survey: addr joined[])))
+  # the job reads them, and fills the sink, in place: the state keeps them until its work is
+  # back
+  for g in [x, o]: st.holdGeometry(ui.file.job, g)
+  for pin in [RootRef(ui.file.sink), joined]: st.holdRef(ui.file.job, pin)
 
 proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
   let folder = st.settings.quality.folder
@@ -292,10 +306,15 @@ proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
     note: QualityNote())
   var spec = qualitySpec(@[folder])
   spec.title = if name.len == 0: "Trace quality" else: "Trace quality in " & name
+  let (x, o) = (st.qcRelations(rdSource)[0], st.qcRelations(rdReceiver)[0])
+  let joined = st.qualityJoin
   ui.folder.job = st.jobs.submit(spec,
     folderScan(folder, st.settings.quality.subfolders, st.indexCache, st.editsSnapshot,
       ui.folder.sink, ui.folder.note, st.settings.noise, st.forcedKinds,
-      st.settings.quality.untold))
+      st.settings.quality.untold, relations = x.addrOf, receivers = o.addrOf,
+      traceMatch = st.settings.join.traceMatch, join = QualityJoin(survey: addr joined[])))
+  for g in [x, o]: st.holdGeometry(ui.folder.job, g)
+  for pin in [RootRef(ui.folder.sink), ui.folder.note, joined]: st.holdRef(ui.folder.job, pin)
 
 proc consider(ui: var QualityUi; st: AppState) =
   ## Polls the jobs, drops an answer that is stale, and starts the File computation for
@@ -307,7 +326,7 @@ proc consider(ui: var QualityUi; st: AppState) =
   ui.poll(ui.folder, st)
   let path = st.shownPath
   let fileKey = if path.len > 0 and not st.shownIsSignature:
-      path & "|" & $st.shownRevision & "|" & st.forcedKey(path)
+      path & "|" & $st.shownRevision & "|" & st.forcedKey(path) & "|" & st.qualityInputsKey
     else: ""
   if fileKey != ui.file.key:
     ui.file.cancel(st)
@@ -316,7 +335,7 @@ proc consider(ui: var QualityUi; st: AppState) =
   let folder = st.settings.quality.folder
   let folderKey = if folder.len > 0:
       folder & "|" & $st.settings.quality.subfolders & "|" & $st.settings.quality.untold & "|" &
-        st.forcedKey
+        st.forcedKey & "|" & st.qualityInputsKey
     else: ""
   if ui.folder.key.len > 0 and ui.folder.key != folderKey:
     ui.folder.cancel(st)
@@ -346,7 +365,7 @@ proc startExport*(ui: var QualityUi; st: AppState; path: string) =
       raise newException(IOError, ExportIsData)
     let head = "# " & ask.side.stationNoun & " stations\n"
     writeCsv(dest, head & stationsCsv(ask.rows))
-    if ask.withStats: writeCsv(beside, head & totalsCsv(ask.totals)))
+    if ask.withStats: writeCsv(beside, head & totalsCsv(ask.totals, ask.side)))
 
 proc pollExport(ui: var QualityUi; st: AppState) =
   if ui.exportJob == NoJob: return

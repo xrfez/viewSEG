@@ -30,6 +30,7 @@
 
 import std/[algorithm, hashes, math, sets, strutils, tables]
 import processSEG/qc/amplitude
+from missingreport import StationSide, ssReceivers, ssSources
 from records import stationNumber
 
 type
@@ -65,12 +66,30 @@ type
     noisyTested*, noisy*: int ## `noisy` of `noisyTested` traces; nothing shown when it is 0.
     weakTested*, weak*: int   ## The same for weak.
 
+  TemplateUnknown* = enum
+    ## Why a record's template is not known, so that the record was measured whole.
+    tuNoStation = "no station of its own"
+      ## the headers name no station of the record: a shot's source, a receiver gather's
+      ## receiver
+    tuNoSources = "no source stations" ## a receiver gather whose traces name no source station
+    tuNoRecord = "no relation record"
+      ## no X record at the shot's source, no O record at the receiver (or none told apart),
+      ## or no relation file of the record's side
+    tuByChannel = "matched by channel" ## the shot's traces match its X record by channel alone
+
   Totals* = object
     ## Scan totals over the notes. Unread files are not counted.
     files*, traces*, killed*, bad*, stations*: int
-    badStations*: int                             ## stations with at least one bad trace
-    lacking*: int                                 ## stations that lacked a component in some file
-    components*: int                              ## most components one file has
+    outside*: int ## seismic traces left out as outside the record's template (not in `traces`)
+    noStation*: int
+      ## seismic traces left out of a record whose template is known because no station holds
+      ## them: neither the headers nor the survey joined place them (not in `traces`)
+    unknown*: array[TemplateUnknown, int]
+      ## records measured whole with a relation file loaded: their template is not known (of
+      ## receiver gathers: the gathers, each counted once for each reason, `gatherWhole`)
+    badStations*: int ## stations with at least one bad trace
+    lacking*: int ## stations that lacked a component in some file
+    components*: int ## most components one file has
     counts*: array[Finding, int]
     noisyTested*, noisy*, weakTested*, weak*: int ## As in `StationRow`.
 
@@ -252,6 +271,12 @@ type
     ## the file (`closeFile`), working out which stations lacked a component in it.
     ## What is kept for a station does not grow with the number of files.
     files: int
+    outside: int ## traces left out (`leaveOut`)
+    noStation: int ## traces left out at no station (`leaveOut`)
+    unknown: array[TemplateUnknown, int]
+      ## records measured whole (`measuredWhole`), receiver gathers (`gatherWhole`)
+    wholeGathers: HashSet[tuple[why: TemplateUnknown; station: StKey; file: string]]
+      ## the receiver gathers counted in `unknown`: by station, or by file for none
     most: int ## the most components one file had
     serial: int ## the serial of the open file
     current: string ## the open file
@@ -333,6 +358,34 @@ proc closeFile(b: var QualityBuild) =
     b.inFile.setLen 0
   b.open = false
 
+proc leaveOut*(b: var QualityBuild; file: string; noStation = false) =
+  ## Counts one seismic trace of `file` left out of its record, whose template is known: as
+  ## outside the template, or with `noStation` as at no station (the template cannot list
+  ## it). It is no note, no station and no finding. The file counts as read.
+  if not b.open or file != b.current:
+    b.closeFile()
+    b.open = true
+    b.current = file
+    inc b.serial
+    inc b.files
+  if noStation: inc b.noStation
+  else: inc b.outside
+
+proc measuredWhole*(b: var QualityBuild; why: TemplateUnknown) =
+  ## Counts one record measured whole because its template is not known (`why`): its traces
+  ## are noted as usual.
+  inc b.unknown[why]
+
+proc gatherWhole*(b: var QualityBuild; why: TemplateUnknown; file: string;
+    line, point: float64) =
+  ## Counts the receiver gather of the station `line`/`point` (one the headers do not name:
+  ## that of `file`) measured whole because its template is not known (`why`): once, however
+  ## many of its records and files are, for each reason they are. Its traces are noted as
+  ## usual.
+  let station = stKey(line, point)
+  if not b.wholeGathers.containsOrIncl((why, station, if station.known: "" else: file)):
+    inc b.unknown[why]
+
 proc addTrace*(b: var QualityBuild; note: TraceNote) =
   ## Counts `note`. A killed trace increments `killed` only, whatever
   ## `findings` holds. A trace with several findings increments each of
@@ -376,6 +429,12 @@ proc absorb*(b: var QualityBuild; part: sink QualityBuild) =
   done.closeFile()
   b.closeFile()
   b.files += done.files
+  b.outside += done.outside
+  b.noStation += done.noStation
+  for why in TemplateUnknown: b.unknown[why] += done.unknown[why]
+  for g in done.wholeGathers:
+    # (a gather the files before counted already is counted once)
+    if b.wholeGathers.containsOrIncl(g): dec b.unknown[g.why]
   b.most = max(b.most, done.most)
   for key in done.stOrder:
     let src = done.stations[key]
@@ -413,8 +472,9 @@ proc tableOf(b: QualityBuild): QualityReport =
     weakTested += acc.weakTested
     weak += acc.weak
     for f in Finding: counts[f] += acc.counts[f]
-  result.totals = Totals(files: b.files, traces: traces, killed: killed, bad: bad,
-    stations: stations, badStations: badStations, lacking: lacking,
+  result.totals = Totals(files: b.files, outside: b.outside, noStation: b.noStation,
+    unknown: b.unknown, traces: traces, killed: killed, bad: bad, stations: stations,
+    badStations: badStations, lacking: lacking,
     components: b.most, counts: counts, noisyTested: noisyTested, noisy: noisy,
     weakTested: weakTested, weak: weak)
   sortStations(result.stations, DefaultStationSort)
@@ -442,13 +502,20 @@ proc stationsCsv*(rows: openArray[StationRow]): string =
       $r.counts[qfSpiky], $r.counts[qfDcOffset], $r.counts[qfNonFinite], $r.noisyTested,
       noiseCell(r.noisyTested, r.noisy), $r.weakTested, noiseCell(r.weakTested, r.weak))
 
-proc totalsCsv*(t: Totals): string =
-  ## One header and one totals line.
+proc totalsCsv*(t: Totals; side = ssReceivers): string =
+  ## One header and one totals line. The records measured whole are receiver gathers for
+  ## `ssSources` (the receiver gathers' report).
+  let whole = if side == ssSources: "receiver gathers measured whole: "
+              else: "records measured whole: "
   result = csvLine("files", "traces", "killed", "bad", "stations", "stations with a bad trace",
     "stations lacking a component", $qfHeaderDead, $qfAllZero, $qfConstant, $qfClipped,
-    $qfSpiky, $qfDcOffset, $qfNonFinite, NoisyTestedCsv, "noisy", WeakTestedCsv, "weak")
+    $qfSpiky, $qfDcOffset, $qfNonFinite, NoisyTestedCsv, "noisy", WeakTestedCsv, "weak",
+    "outside the template", "at no station", whole & $tuNoStation, whole & $tuNoSources,
+    whole & $tuNoRecord, whole & $tuByChannel)
   result.add csvLine($t.files, $t.traces, $t.killed, $t.bad, $t.stations, $t.badStations,
     $t.lacking, $t.counts[qfHeaderDead], $t.counts[qfAllZero], $t.counts[qfConstant],
     $t.counts[qfClipped], $t.counts[qfSpiky], $t.counts[qfDcOffset],
     $t.counts[qfNonFinite], $t.noisyTested, noiseCell(t.noisyTested, t.noisy),
-    $t.weakTested, noiseCell(t.weakTested, t.weak))
+    $t.weakTested, noiseCell(t.weakTested, t.weak), $t.outside, $t.noStation,
+    $t.unknown[tuNoStation],
+    $t.unknown[tuNoSources], $t.unknown[tuNoRecord], $t.unknown[tuByChannel])

@@ -259,7 +259,7 @@ proc runOn(sc: Scenario; threads: int): tuple[st: JobState; result: MissingJobRe
   jobs.setItemThreads(threads)
   let sink = MissingSink()
   let id = jobs.submit(missingSpec(sc.folder, sc.paths),
-    scanMissing(sc.folder, sc.paths, sc.survey, sink, "", sc.forced, nil, false, sc.untold,
+    scanMissing(sc.folder, sc.paths, addr sc.survey[], sink, "", sc.forced, nil, false, sc.untold,
     sc.folderRun))
   doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}),
     "the scan of " & sc.name & " did not finish"
@@ -388,7 +388,7 @@ proc main*() =
     let sc = all[0]
     let sink = MissingSink()
     let id = lane.submit(missingSpec(sc.folder, sc.paths),
-      scanMissing(sc.folder, sc.paths, sc.survey, sink))
+      scanMissing(sc.folder, sc.paths, addr sc.survey[], sink))
     doAssert waitUntil(lane.info(id).get.state in {jsDone, jsFailed, jsCancelled}),
       "the cancelled scan did not finish"
     setJobHook(nil)
@@ -403,7 +403,7 @@ proc main*() =
     let sc = all[0]
     let sink = MissingSink()
     let id = lane.submit(missingSpec(sc.folder, sc.paths),
-      scanMissing(sc.folder, sc.paths, sc.survey, sink))
+      scanMissing(sc.folder, sc.paths, addr sc.survey[], sink))
     doAssert waitUntil(lane.info(id).get.state in {jsDone, jsFailed, jsCancelled}),
       "the cancelled scan did not finish"
     setJobHook(nil)
@@ -418,7 +418,7 @@ proc main*() =
     let sc = all[0]
     let sink = MissingSink()
     let id = jobs.submit(missingSpec(sc.folder, sc.paths),
-      scanMissing(sc.folder, sc.paths, sc.survey, sink))
+      scanMissing(sc.folder, sc.paths, addr sc.survey[], sink))
     sleep 100
     discard jobs.cancel(id)
     doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}),

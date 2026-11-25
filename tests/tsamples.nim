@@ -310,7 +310,7 @@ proc checkSet(ss: SetSpec; scratch: string) =
     let lane = initJobs()
     let sink = MissingSink()
     lane.waitJob lane.submit(missingSpec(dir / "shots", paths),
-      scanMissing(dir / "shots", paths, relations, sink))
+      scanMissing(dir / "shots", paths, addr relations[], sink))
     let r = sink.result
     doAssert r.ok, r.reason
     let t = r.shot.stats

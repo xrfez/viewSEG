@@ -89,14 +89,18 @@ type
       ## so (`reportside.mixedNote`); the reports above are empty
     reason*: string
 
-  ScanNote* = ref object
+  ScanNoteObj* = object of RootObj
     ## Set by `folderScan`: the list stopped at the file limit.
     capped*: bool
+  ScanNote* = ref ScanNoteObj
 
-  MissingSink* = ref object
-    ## Filled when the job ends, except when it is cancelled. Read it after
-    ## the job is no longer running.
+  MissingSinkObj* = object of RootObj
+    ## Filled when the job ends, except when it is cancelled, through its address: the work
+    ## holds no `ref` of it, and whoever submits it keeps the sink alive until the work is
+    ## back (`Jobs.workingOn`; the app's `holdRef`). Read it after the job is no longer
+    ## running.
     result*: MissingJobResult
+  MissingSink* = ref MissingSinkObj
 
 proc missingSpec*(folder: string; paths: openArray[string]): JobSpec =
   ## The job that scans `paths` under `folder`: background, reading each
@@ -362,10 +366,13 @@ proc checkReceivers(tally: var StationTally; m: ReceiverMerge; g: SurveyGeometry
     if (if f.more.bits.len > 0: f.more.meets(checked) else: f.first >= 0 and f.first in checked):
       inc result
 
-proc fail(sink: MissingSink; why: string; skipped: seq[tuple[path, why: string]]) =
-  if sink != nil:
-    sink.result = MissingJobResult(ok: false, reason: why, skipped: skipped)
+proc fail(into: ptr MissingSinkObj; why: string; skipped: seq[tuple[path, why: string]]) =
+  if into != nil:
+    into.result = MissingJobResult(ok: false, reason: why, skipped: skipped)
   raise newException(ValueError, why)
+
+func addrOf[T](r: ref T): ptr T {.inline.} =
+  if r.isNil: nil else: addr r[]
 
 proc checkShot[C: JobContext | ItemContext](tally: var StationTally; g: SurveyGeometry;
     rows: TraceRows; path: string; ctx: C; unmatched: var seq[tuple[path: string; record: int64;
@@ -525,9 +532,131 @@ proc readItem(it: ItemContext; a: ptr MissingItems; i: int): MissingFile {.nimca
     s = nil
     clearCycleRoots()
 
-proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeometry;
+proc missingInto(ctx: JobContext; folder: string; paths: seq[string];
+    relations: ptr SurveyGeometry; into: ptr MissingSinkObj; cacheDir: string;
+    forced: Table[string, RecordingKind]; receivers: ptr SurveyGeometry; receiversDerived: bool;
+    untold: UntoldKind; folderRun: bool) =
+  ## The scan of `scanMissing`, on the job's thread, filling `into` (nil: nothing).
+  ctx.checkCancelled()
+  if relations == nil or not relations[].hasRelations:
+    fail(into, NoSurvey, @[])
+  var skipped: seq[tuple[path, why: string]] = @[]
+  var notChecked: seq[tuple[path, why: string]] = @[]
+  var unmatched: seq[tuple[path: string; record: int64; why: string]] = @[]
+  let oSource = if receivers != nil and receivers[].relationCount(rdReceiver) > 0: receivers
+    else: relations
+  let derived = receiversDerived or oSource[].relationCount(rdReceiver) == 0
+  var shot = initTally(ssReceivers)
+  var recv = initTally(ssSources, derived)
+  var merge = initReceiverMerge()
+  var counts: SideCounts
+  var takenAs = rsCannotTell
+  var deferred: seq[tuple[path, why: string]] = @[]
+  var taken = 0
+  proc readFiles(list: seq[string]; round: int; lead = 0) {.gcsafe.} =
+    ## Reads each of `list` (a batch of items) and adds it to the scan, in order. The
+    ## `lead` items before it are done already (the bar goes on from there).
+    var args = MissingItems(relations: relations, shared: MissingShared(
+      paths: newSeq[string](lead) & list, cacheDir: cacheDir, forced: forced, untold: untold,
+      folderRun: folderRun, round: round, takenAs: takenAs, lead: lead))
+    var sizes = newSeq[int64](lead + list.len)
+    args.shared.rels = newSeq[string](lead)
+    for i, path in list:
+      args.shared.rels.add relTo(folder, path)
+      try:
+        sizes[lead + i] = max(0'i64, fs.getFileSize(path))
+      except OSError:
+        discard # the item says why it cannot be read
+    proc take(i: int; outcome: sink ItemOutcome[MissingFile]) {.closure, gcsafe.} =
+      if i < lead: return
+      let rel = args.shared.rels[i]
+      if round == 0: ctx.setPhase "reading " & list[i].extractFilename
+      ctx.checkCancelled()
+      if not outcome.ok:
+        if outcome.failure.cancelled: raise newException(JobCancelledError, "cancelled")
+        let e = outcome.failure
+        skipped.add (path: rel, why: if e.msg.len > 0: e.msg else: e.name)
+        return
+      template r: untyped = outcome.value
+      if r.skip.len > 0: skipped.add (path: rel, why: r.skip)
+      if not r.classified: return
+      if r.untoldTaken:
+        takenAs = if untold == ukShot: rsShot else: rsReceiver
+        inc taken
+      if r.deferred:
+        # taken for the side of the files that are told, when all are of one
+        deferred.add (path: list[i - lead], why: r.why)
+        return
+      counts.note r.side
+      if counts.isMixed: args.mixed.store(true, moRelease)
+      case r.side
+      of rsNotGather, rsCannotTell:
+        notChecked.add (path: rel, why: r.why)
+      of rsShot, rsReceiver:
+        # (a mix is not calculated: once both sides are seen, only the files are counted)
+        if counts.isMixed: return
+        if r.gatherSkip.len > 0: skipped.add (path: rel, why: r.gatherSkip)
+        unmatched.add r.unmatched
+        if r.side == rsShot:
+          shot.merge r.shot
+          if r.anyShot: shot.noteFile()
+        else:
+          merge.addPart(rel, r.part)
+    let total = lead + list.len
+    ctx.setPhase "scanning " & $list.len & (if list.len == 1: " file" else: " files")
+    if lead > 0: discard ctx.progress(int64(lead) * 1000, int64(total) * 1000)
+    let ran = ctx.parallelItems(total, addr args, readItem, take,
+      ItemOptions(cost: sizes, budget: missingBudget))
+    if ran.taken < total: raise newException(JobCancelledError, "cancelled")
+  try:
+    var list: seq[string] = @[]
+    var seen = initHashSet[string]()
+    for path in paths:
+      if not seen.containsOrIncl(path.normalizedPath): list.add path
+    let uniqueCount = list.len
+    if list.len > 0: readFiles(list, 0)
+    if deferred.len > 0:
+      # the files that cannot be told: the side of those that are, when all are of one
+      let one = unanimousSide(counts)
+      if one == rsCannotTell:
+        counts.untold += deferred.len
+        for d in deferred:
+          notChecked.add (path: relTo(folder, d.path), why: d.why)
+      else:
+        takenAs = one
+        taken = deferred.len
+        list = @[]
+        for d in deferred: list.add d.path
+        deferred.setLen 0
+        readFiles(list, 1, uniqueCount - list.len)
+    if merge.list.len > 0 and not counts.isMixed:
+      ctx.setPhase "checking the receivers"
+      let rels = oSource[].receiverRelationsOf(oSource[].highestRecord + 1)
+      var receiver = initSurveyGeometry()
+      receiver.addSps(SpsFile(relations: rels), rdSource)
+      for _ in 1 .. checkReceivers(recv, merge, receiver, ctx, unmatched): recv.noteFile()
+    ctx.setPhase "reporting"
+    ctx.checkCancelled()
+    clearCycleRoots()
+    if into != nil:
+      into.result = MissingJobResult(ok: true, sides: counts, skipped: skipped,
+        notChecked: notChecked, taken: takenNote(taken, takenAs, untold != ukNotChecked))
+      if counts.isMixed:
+        into.result.mixed = mixedNote(counts)
+      else:
+        into.result.shot = shot.report
+        into.result.receiver = recv.report
+        into.result.unmatched = unmatched
+  except JobCancelledError:
+    raise
+  except SegCancelledError:
+    raise newException(JobCancelledError, "cancelled")
+  except CatchableError as e:
+    fail(into, if e.msg.len > 0: e.msg else: $e.name, skipped)
+
+proc scanMissing*(folder: string; paths: seq[string]; relations: ptr SurveyGeometry;
     target: MissingSink; cacheDir = ""; forced = initTable[string, RecordingKind]();
-    receivers: ref SurveyGeometry = nil; receiversDerived = false;
+    receivers: ptr SurveyGeometry = nil; receiversDerived = false;
     untold = ukNotChecked; folderRun = false): JobWork =
   ## The work of a job that scans `paths` (relative to `folder` in messages)
   ## against `relations` and fills `target` (`missingSpec` is the spec to
@@ -544,131 +673,26 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
   ## that are told when all of those are of one (`takenNote` says so), else left out.
   ## Up to the item pool's threads of files are open at once, one file's keys each; their
   ## results are added to the scan in file order, so the report is the same on any number.
+  ## `relations` and `receivers` are read in place: the work holds their addresses, never a
+  ## `ref`, and the caller keeps them alive and unchanged until the work is back
+  ## (`Jobs.workingOn`; the app's `holdGeometry`). So is `target`: the work fills it
+  ## through its address and touches no `ref` (the app's `holdRef`).
+  let into = target.addrOf
   result = proc (ctx: JobContext) {.gcsafe.} =
-    ctx.checkCancelled()
-    if relations == nil or not relations[].hasRelations:
-      fail(target, NoSurvey, @[])
-    var skipped: seq[tuple[path, why: string]] = @[]
-    var notChecked: seq[tuple[path, why: string]] = @[]
-    var unmatched: seq[tuple[path: string; record: int64; why: string]] = @[]
-    let oSource = if receivers != nil and receivers[].relationCount(rdReceiver) > 0: receivers
-      else: relations
-    let derived = receiversDerived or oSource[].relationCount(rdReceiver) == 0
-    var shot = initTally(ssReceivers)
-    var recv = initTally(ssSources, derived)
-    var merge = initReceiverMerge()
-    var counts: SideCounts
-    var takenAs = rsCannotTell
-    var deferred: seq[tuple[path, why: string]] = @[]
-    var taken = 0
-    proc readFiles(list: seq[string]; round: int; lead = 0) {.gcsafe.} =
-      ## Reads each of `list` (a batch of items) and adds it to the scan, in order. The
-      ## `lead` items before it are done already (the bar goes on from there).
-      var args = MissingItems(relations: unsafeAddr relations[], shared: MissingShared(
-        paths: newSeq[string](lead) & list, cacheDir: cacheDir, forced: forced, untold: untold,
-        folderRun: folderRun, round: round, takenAs: takenAs, lead: lead))
-      var sizes = newSeq[int64](lead + list.len)
-      args.shared.rels = newSeq[string](lead)
-      for i, path in list:
-        args.shared.rels.add relTo(folder, path)
-        try:
-          sizes[lead + i] = max(0'i64, fs.getFileSize(path))
-        except OSError:
-          discard # the item says why it cannot be read
-      proc take(i: int; outcome: sink ItemOutcome[MissingFile]) {.closure, gcsafe.} =
-        if i < lead: return
-        let rel = args.shared.rels[i]
-        if round == 0: ctx.setPhase "reading " & list[i].extractFilename
-        ctx.checkCancelled()
-        if not outcome.ok:
-          if outcome.failure.cancelled: raise newException(JobCancelledError, "cancelled")
-          let e = outcome.failure
-          skipped.add (path: rel, why: if e.msg.len > 0: e.msg else: e.name)
-          return
-        template r: untyped = outcome.value
-        if r.skip.len > 0: skipped.add (path: rel, why: r.skip)
-        if not r.classified: return
-        if r.untoldTaken:
-          takenAs = if untold == ukShot: rsShot else: rsReceiver
-          inc taken
-        if r.deferred:
-          # taken for the side of the files that are told, when all are of one
-          deferred.add (path: list[i - lead], why: r.why)
-          return
-        counts.note r.side
-        if counts.isMixed: args.mixed.store(true, moRelease)
-        case r.side
-        of rsNotGather, rsCannotTell:
-          notChecked.add (path: rel, why: r.why)
-        of rsShot, rsReceiver:
-          # (a mix is not calculated: once both sides are seen, only the files are counted)
-          if counts.isMixed: return
-          if r.gatherSkip.len > 0: skipped.add (path: rel, why: r.gatherSkip)
-          unmatched.add r.unmatched
-          if r.side == rsShot:
-            shot.merge r.shot
-            if r.anyShot: shot.noteFile()
-          else:
-            merge.addPart(rel, r.part)
-      let total = lead + list.len
-      ctx.setPhase "scanning " & $list.len & (if list.len == 1: " file" else: " files")
-      if lead > 0: discard ctx.progress(int64(lead) * 1000, int64(total) * 1000)
-      let ran = ctx.parallelItems(total, addr args, readItem, take,
-        ItemOptions(cost: sizes, budget: missingBudget))
-      if ran.taken < total: raise newException(JobCancelledError, "cancelled")
-    try:
-      var list: seq[string] = @[]
-      var seen = initHashSet[string]()
-      for path in paths:
-        if not seen.containsOrIncl(path.normalizedPath): list.add path
-      let uniqueCount = list.len
-      if list.len > 0: readFiles(list, 0)
-      if deferred.len > 0:
-        # the files that cannot be told: the side of those that are, when all are of one
-        let one = unanimousSide(counts)
-        if one == rsCannotTell:
-          counts.untold += deferred.len
-          for d in deferred:
-            notChecked.add (path: relTo(folder, d.path), why: d.why)
-        else:
-          takenAs = one
-          taken = deferred.len
-          list = @[]
-          for d in deferred: list.add d.path
-          deferred.setLen 0
-          readFiles(list, 1, uniqueCount - list.len)
-      if merge.list.len > 0 and not counts.isMixed:
-        ctx.setPhase "checking the receivers"
-        let rels = oSource[].receiverRelationsOf(oSource[].highestRecord + 1)
-        var receiver = initSurveyGeometry()
-        receiver.addSps(SpsFile(relations: rels), rdSource)
-        for _ in 1 .. checkReceivers(recv, merge, receiver, ctx, unmatched): recv.noteFile()
-      ctx.setPhase "reporting"
-      ctx.checkCancelled()
-      clearCycleRoots()
-      if target != nil:
-        target.result = MissingJobResult(ok: true, sides: counts, skipped: skipped,
-          notChecked: notChecked, taken: takenNote(taken, takenAs, untold != ukNotChecked))
-        if counts.isMixed:
-          target.result.mixed = mixedNote(counts)
-        else:
-          target.result.shot = shot.report
-          target.result.receiver = recv.report
-          target.result.unmatched = unmatched
-    except JobCancelledError:
-      raise
-    except SegCancelledError:
-      raise newException(JobCancelledError, "cancelled")
-    except CatchableError as e:
-      fail(target, if e.msg.len > 0: e.msg else: $e.name, skipped)
+    missingInto(ctx, folder, paths, relations, into, cacheDir, forced, receivers,
+      receiversDerived, untold, folderRun)
 
 proc folderScan*(folder: string; subfolders: bool; cacheDir: string;
-    relations: ref SurveyGeometry; sink: MissingSink; note: ScanNote = nil;
-    forced = initTable[string, RecordingKind](); receivers: ref SurveyGeometry = nil;
+    relations: ptr SurveyGeometry; sink: MissingSink; note: ScanNote = nil;
+    forced = initTable[string, RecordingKind](); receivers: ptr SurveyGeometry = nil;
     receiversDerived = false; untold = ukNotChecked): JobWork =
   ## The work of a job that lists the seismic files of `folder`, its
-  ## subfolders only when `subfolders`, and scans them as `scanMissing` does.
-  ## `note.capped` says the list stopped at the file limit.
+  ## subfolders only when `subfolders`, and scans them as `scanMissing` does (`relations`
+  ## and `receivers` read in place as it reads them).
+  ## `note.capped` says the list stopped at the file limit: `sink` and `note` are reached
+  ## through their addresses, and the caller keeps them alive until the work is back.
+  let into = sink.addrOf
+  let noted = note.addrOf
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     ctx.setPhase Listing
@@ -679,8 +703,7 @@ proc folderScan*(folder: string; subfolders: bool; cacheDir: string;
         proc (found: int): bool {.gcsafe, raises: [].} = ctx.progress(int64(found), 0))
     except OSError:
       raise newException(ValueError, CannotList)
-    if note != nil: note.capped = capped
+    if noted != nil: noted.capped = capped
     ctx.checkCancelled()
-    let scan = scanMissing(folder, paths, relations, sink, cacheDir, forced, receivers,
+    missingInto(ctx, folder, paths, relations, into, cacheDir, forced, receivers,
       receiversDerived, untold, true)
-    scan(ctx)

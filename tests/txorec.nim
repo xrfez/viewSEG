@@ -232,7 +232,7 @@ proc main*() =
     geo[] = g
     let jobs = initJobs()
     let sink = MissingSink()
-    let id = jobs.submit(missingSpec(dir, @[rcv]), scanMissing(dir, @[rcv], geo, sink, ""))
+    let id = jobs.submit(missingSpec(dir, @[rcv]), scanMissing(dir, @[rcv], addr geo[], sink, ""))
     doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
     let r = sink.result.receiver.stats
     doAssert r.inTemplate == 3 and r.missing == 0, $r.inTemplate & " " & $r.missing
@@ -311,7 +311,8 @@ proc main*() =
       geo[] = g
       let jobs = initJobs()
       let sink = MissingSink()
-      let id = jobs.submit(missingSpec(dir, @[data]), scanMissing(dir, @[data], geo, sink, ""))
+      let id = jobs.submit(missingSpec(dir, @[data]),
+        scanMissing(dir, @[data], addr geo[], sink, ""))
       doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}), what
       let r = if data == shot: sink.result.shot.stats else: sink.result.receiver.stats
       doAssert r.records == 1 and r.inTemplate == 3 and r.missing == 0 and

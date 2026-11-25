@@ -9,6 +9,9 @@
 ## after its job is no longer running, and drops an answer that is no longer
 ## the one asked for (another file shown, another folder or the subfolders tick
 ## changed, another survey): the job is cancelled and its result never read.
+## The relation records a job reads are given to it by address, never as a `ref`, and the
+## state keeps them until the job's work is back (`holdGeometry`); so are the sink it fills
+## and the note it sets (`holdRef`).
 
 import std/[algorithm, os, strutils, tables]
 import parseSEG
@@ -325,6 +328,9 @@ proc poll(ui: var MissingUi; s: var Scan; st: AppState) =
     ui.finish(s, info.get.state, info.get.error)
     s.job = NoJob
 
+func addrOf(g: ref SurveyGeometry): ptr SurveyGeometry =
+  if g.isNil: nil else: addr g[]
+
 proc submitFile(ui: var MissingUi; st: AppState; key, path: string) =
   let layer = st.relationsLayer
   let (receivers, derived) = st.oRecordsFor
@@ -333,9 +339,14 @@ proc submitFile(ui: var MissingUi; st: AppState; key, path: string) =
   var spec = missingSpec(folder, @[path])
   spec.title = "Missing traces in " & path.extractFilename
   spec.auto = true # started by the window, not by the user: no "is done" line or toast
+  let x = st.survey.layers[layer].relations
   ui.file.job = st.jobs.submit(spec,
-    scanMissing(folder, @[path], st.survey.layers[layer].relations, ui.file.sink,
-      st.indexCache, st.forcedKinds, receivers, derived))
+    scanMissing(folder, @[path], x.addrOf, ui.file.sink, st.indexCache, st.forcedKinds,
+      receivers.addrOf, derived))
+  # the job reads them, and fills the sink, in place: the state keeps them until its work is
+  # back
+  for g in [x, receivers]: st.holdGeometry(ui.file.job, g)
+  st.holdRef(ui.file.job, ui.file.sink)
 
 proc submitFolder(ui: var MissingUi; st: AppState; key: string) =
   let layer = st.relationsLayer
@@ -343,10 +354,12 @@ proc submitFolder(ui: var MissingUi; st: AppState; key: string) =
   let folder = st.settings.missing.folder
   ui.folder = Scan(key: key, running: true, status: Scanning, sink: MissingSink(),
     note: ScanNote())
+  let x = st.survey.layers[layer].relations
   ui.folder.job = st.jobs.submit(missingSpec(folder, @[folder]),
-    folderScan(folder, st.settings.missing.subfolders, st.indexCache,
-      st.survey.layers[layer].relations, ui.folder.sink, ui.folder.note, st.forcedKinds,
-      receivers, derived, st.settings.missing.untold))
+    folderScan(folder, st.settings.missing.subfolders, st.indexCache, x.addrOf, ui.folder.sink,
+      ui.folder.note, st.forcedKinds, receivers.addrOf, derived, st.settings.missing.untold))
+  for g in [x, receivers]: st.holdGeometry(ui.folder.job, g)
+  for pin in [RootRef(ui.folder.sink), ui.folder.note]: st.holdRef(ui.folder.job, pin)
 
 proc startFile(ui: var MissingUi; st: AppState) =
   ## Called while the File tab is on screen: starts the computation for the file shown, after

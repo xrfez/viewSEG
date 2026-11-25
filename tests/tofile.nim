@@ -600,7 +600,7 @@ proc main*() =
       let jobs = initJobs()
       let sink = MissingSink()
       let id = jobs.submit(missingSpec(folder, @[file]),
-        scanMissing(folder, @[file], relations, sink, ""))
+        scanMissing(folder, @[file], addr relations[], sink, ""))
       doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
         "the scan did not finish"
       doAssert jobs.state(id) == jsDone, jobs.info(id).get.error

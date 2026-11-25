@@ -339,7 +339,7 @@ func movesKey(moves: StationMoves): string =
     result.add $m.station.line & "," & $m.station.point & "," & $m.station.index & "," &
       $m.x & "," & $m.y & "," & $m.elev & "," & $m.fromTime & ";"
 
-func joinOptions(st: AppState): JoinOptions =
+func joinOptions*(st: AppState): JoinOptions =
   ## The project's join options, else the session's.
   if st.inProject: st.project.doc.options else: st.settings.join
 

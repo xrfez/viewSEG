@@ -490,8 +490,28 @@ trace inside the exclusion area is tested for weak but not for noisy, as on the 
 Killed, dead and auxiliary traces, a record that could not be read and one the test cannot
 judge are tested for neither. A Noisy or Weak cell is empty where no trace was tested for
 it. The scan judges the samples as recorded, with your kills and noise settings, but
-without the per-trace filters, reversals, shifts or template-only restriction the map
-applies to the record shown. Every column header has a tooltip that says what it counts.
+without the per-trace filters, reversals or shifts the map applies to the record shown.
+With a relation file loaded and **Only inside the template** ticked in Tools > Settings
+(the default), a record is measured only at the stations its template lists (a shot's X
+record, a receiver gather's O records, found by the station, as the map's template check
+finds them; with no O file loaded, the O records are derived from the X file, as the map
+derives them): a trace at a station the template does not list is not measured, is in no
+row and in no figure, and is counted apart on a line **Left out as outside the template**
+(and in a column of the statistics file). Before that, the survey files loaded on the map,
+the join options and the station moves are joined to each file in memory, as for the
+recorded fold (the file is never written), so a record whose headers name no station finds
+its template by the survey's. In a record whose template is known, a trace that neither its
+headers nor the survey place at a station cannot be in the template either: it is left out
+too, and counted on a line of its own, for example "3 traces at no station (not placed by
+the headers or the survey): left out" (and in a column of the statistics file). A record whose template still cannot be found (no station of
+its own, no relation record at it, traces matched by channel, or no relation file of its
+side) is measured whole, and a line says how many and why, for example "2 records were
+measured whole: their template is not known (1 with no source station: load the relation
+file or a survey that places the source, 1 whose X record is not found)"; on the receiver side a receiver gather counts once, however many records and
+files it has: "1 receiver gather was measured whole: its template is not known (1 whose O
+records are not found)". The statistics file has a column for each reason. Unticked, or with no
+relation file, every trace is measured. Every column header has a tooltip that says what it
+counts.
 Nothing is looked up by a record number, and the table has no column for one.
 
 A box above the table narrows the rows by line, point or component; each tab keeps its own. Click a column header

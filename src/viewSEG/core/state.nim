@@ -899,12 +899,22 @@ type
     held: bool ## the derived view stays; the file is opened and correlated, not shown raw
 
   SurveyHolds = ref object
-    ## The project's survey a batch write joins from, kept alive for its job.
-    ## A ref so the window, which holds the state read-only, can add to it.
+    ## The geometries jobs read in place (the project's survey a batch write joins from, the
+    ## relation records and the survey a window's scan reads), kept alive for each job.
+    ## A ref so the windows, which hold the state read-only, can add to it.
     held: seq[tuple[job: JobId; geometry: ref SurveyGeometry]]
       ## per running job
     left: seq[tuple[job: JobId; geometry: ref SurveyGeometry]]
       ## those of jobs abandoned while their work still ran, until it is back
+    pins: seq[tuple[job: JobId; pin: RootRef]]
+      ## the other objects jobs fill or read through their addresses (a window's sink, its
+      ## note), per running job (`holdRef`)
+    pinsLeft: seq[tuple[job: JobId; pin: RootRef]]
+      ## those of jobs abandoned while their work still ran, until it is back
+    joined: RootRef
+      ## what the trace quality scans join, made from the survey files `joinedFrom` (`keepJoin`):
+      ## the next scan of the same survey is given it again
+    joinedFrom: seq[int] ## the ids of the survey files' layers it was made from, in order
 
   CorrelateHold = ref object
     ## One correlation, kept until its job has ended. A ref, not shared memory:
@@ -1403,7 +1413,8 @@ type
     breakFilters: BreakFilterFind
       ## the map's first-break filters on the record shown (`followBreakFilters`)
     batchSurvey: SurveyHolds
-      ## the survey each batch write's job joins from (`holdSurvey`), until it ends
+      ## the geometries each job given their addresses reads (`holdSurvey`, `holdGeometry`),
+      ## until it ends
     qcHeld: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
       ## the relation records each filters' job reads in place, kept until it ends
     unitsWarned: string
@@ -2397,8 +2408,11 @@ proc keepForStragglers(state: var AppState) =
   for c in state.checking: GC_ref(c.relations)
   for c in state.leftChecks: GC_ref(c.relations)
   for c in state.qcHeld: GC_ref(c.relations)
-  for c in state.batchSurvey.held: GC_ref(c.geometry) # a batch write joins from it
+  for c in state.batchSurvey.held: GC_ref(c.geometry) # a batch write or a scan reads it
   for c in state.batchSurvey.left: GC_ref(c.geometry)
+  for c in state.batchSurvey.pins: GC_ref(c.pin) # a scan fills its sink through its address
+  for c in state.batchSurvey.pinsLeft: GC_ref(c.pin)
+  if not state.batchSurvey.joined.isNil: GC_ref(state.batchSurvey.joined)
   if not state.joining.geometry.isNil: GC_ref(state.joining.geometry) # `joinApplyWork` reads it
   if not state.joining.relations.isNil: GC_ref(state.joining.relations)
   for r in state.joining.reused: GC_ref(r) # `joinReadWork` reads them
@@ -2691,15 +2705,57 @@ func projectTableOnly*(state: AppState): bool =
   ## the table alone (`applyGeometry`), as the session decides it.
   state.project.doc.survey.len > 0 and state.project.doc.survey.allIt(it.kind == jkCsv)
 
+proc holdGeometry*(state: AppState; job: JobId; geometry: ref SurveyGeometry) =
+  ## Keeps `geometry` alive until `job` has ended, whatever the state does with its own
+  ## `ref` meanwhile (a layer unloaded, a survey cleared): a job given its address reads it in
+  ## place, and so shares no `ref` with this thread. Released here when the job is seen
+  ## finished or cancelled, and, for one abandoned, when its work is back (`Jobs.workingOn`);
+  ## at the quit, kept to the end of the process. Nil holds nothing.
+  assertUiThread()
+  if job != NoJob and not geometry.isNil:
+    state.batchSurvey.held.add (job, geometry)
+
+proc holdRef*(state: AppState; job: JobId; pin: RootRef) =
+  ## Keeps `pin` alive until `job` has ended, as `holdGeometry` keeps a geometry: a job given
+  ## its address (a window's sink, which the job fills, or its note) shares no `ref` with this
+  ## thread, so the window may let go of its own meanwhile (a cancel, a new answer asked for).
+  ## Released when the job is seen finished or cancelled, and, for one abandoned, when its
+  ## work is back (`Jobs.workingOn`); at the quit, kept to the end of the process. Nil holds
+  ## nothing.
+  assertUiThread()
+  if job != NoJob and not pin.isNil:
+    state.batchSurvey.pins.add (job, pin)
+
+proc keepJoin*(state: AppState; joined: RootRef) =
+  ## Keeps `joined` (what the trace quality scans join, made from the survey as it is now) for
+  ## the next scan, which is given it again (`keptJoin`); let go of when the survey changes.
+  assertUiThread()
+  state.batchSurvey.joined = joined
+  state.batchSurvey.joinedFrom.setLen 0
+  for i in 0 ..< state.survey.layers.len:
+    if state.survey.layers[i].origin == loSurveyFile:
+      state.batchSurvey.joinedFrom.add int(state.survey.layers[i].id)
+
+func surveyFilesAre(s: Survey; ids: openArray[int]): bool =
+  ## Whether the survey files' layers of `s` are those of `ids`, in order.
+  var k = 0
+  for i in 0 ..< s.layers.len:
+    if s.layers[i].origin == loSurveyFile:
+      if k >= ids.len or int(s.layers[i].id) != ids[k]: return false
+      inc k
+  k == ids.len
+
+func keptJoin*(state: AppState): RootRef {.inline.} =
+  ## What `keepJoin` kept; nil for none.
+  state.batchSurvey.joined
+
 proc holdSurvey*(state: AppState; job: JobId) =
   ## Keeps the project's survey (the one `projectSurvey` gave when `job` was
   ## submitted, in the same frame) alive until `job` has ended, whatever the
   ## project does meanwhile: a close, a clear, an update or a new import
   ## frees the state's own copy. Released when the job is seen finished or
   ## cancelled, and, for one abandoned, when its work is back.
-  assertUiThread()
-  if job != NoJob and not state.project.geometry.isNil:
-    state.batchSurvey.held.add (job, state.project.geometry)
+  state.holdGeometry(job, state.project.geometry)
 
 func inProject*(state: AppState): bool {.inline.} =
   ## Whether a project is open.
@@ -9824,7 +9880,7 @@ proc takeShots(state: var AppState; m: sink Msg) =
           " not on the map.")
       x.unplacedSaid = n
 
-func qcRelations(state: AppState; domain: RelationDomain): (ref SurveyGeometry, string) =
+func qcRelations*(state: AppState; domain: RelationDomain): (ref SurveyGeometry, string) =
   ## The relation records the record shown is checked against: the first
   ## loaded survey file's of `domain`; else for a receiver gather the O records derived from
   ## the X file (`derivedReceivers`, as the Records window reads them); else those made
@@ -10682,10 +10738,14 @@ proc finishO(state: var AppState; job: JobInfo) =
     state.log.add(sevError, "generate O file", state.oOutcome)
 
 proc releaseSurvey(state: AppState; job: JobInfo) =
-  ## Lets go of the survey a batch write's job joined from.
+  ## Lets go of the geometries `job` read (`holdGeometry`) and of what else it was given by
+  ## address (`holdRef`).
   for c in state.batchSurvey.held:
     if c.job == job.id and job.abandoned: state.batchSurvey.left.add c # its work still runs
   state.batchSurvey.held.keepItIf(it.job != job.id)
+  for c in state.batchSurvey.pins:
+    if c.job == job.id and job.abandoned: state.batchSurvey.pinsLeft.add c
+  state.batchSurvey.pins.keepItIf(it.job != job.id)
 
 proc kindFromOpen(state: var AppState) =
   ## The shown file's facts (`recFacts`, read from its own header keys) give its row of Files
@@ -14508,6 +14568,11 @@ proc drainInbox*(state: var AppState): bool =
     state.releaseSurvey(job)
   if state.batchSurvey.left.len > 0:
     state.batchSurvey.left.keepItIf(state.jobs.workingOn(it.job))
+  if state.batchSurvey.pinsLeft.len > 0:
+    state.batchSurvey.pinsLeft.keepItIf(state.jobs.workingOn(it.job))
+  if not state.batchSurvey.joined.isNil and
+      not state.survey.surveyFilesAre(state.batchSurvey.joinedFrom):
+    state.batchSurvey.joined = nil # a survey file came or went (a job that reads it holds it)
   if state.leftChecks.len > 0: state.leftChecks.keepItIf(state.jobs.workingOn(it.job))
   state.prepareNext() # (once the main panel has its tile; or a prepare ended)
   if state.stoppedWaiting: state.followNewest() # (a stopped .dat's time may be up)

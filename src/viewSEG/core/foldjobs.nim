@@ -274,14 +274,11 @@ func foldKey(s: Survey; along, across: float64; kind = fkPreplot;
   if kind != fkPreplot: result.add "#" & $kind & (if actual.isNil: "" else: "#" & actual.key)
   result.add splitKey(kind, split)
 
-proc foldInputs*(s: Survey; along, across: float64; kind = fkPreplot;
-    actual: ref ActualInputs = nil; split = FoldSplit()): FoldInputs =
-  ## What the job needs from survey `s`, with bin sizes `along` and `across`
-  ## the receiver lines (NaN: natural). Needs `foldReason(s) == ""`. `kind` names the
-  ## layer; the recorded fold and the difference count `actual`'s files too; `split` is the
-  ## restriction.
-  result = FoldInputs(key: foldKey(s, along, across, kind, actual, split), binAlong: along,
-    binAcross: across, kind: kind, split: split, actual: actual)
+proc surveyStations*(s: Survey):
+    tuple[relations: ref SurveyGeometry; stations: array[PointRole, FoldStations]] =
+  ## The survey files' X records (the first file's that has some; nil for none) and their
+  ## known stations with coordinates, copied: what a count, or a trace quality scan, joins
+  ## to the files' keys (`geometryOf`).
   for i in 0 ..< s.layers.len:
     template l: untyped = s.layers[i]
     if l.isSurveyFile:
@@ -293,6 +290,16 @@ proc foldInputs*(s: Survey; along, across: float64; kind = fkPreplot;
             result.stations[r].stations.add p.station[k]
             result.stations[r].xs.add p.index.x(k)
             result.stations[r].ys.add p.index.y(k)
+
+proc foldInputs*(s: Survey; along, across: float64; kind = fkPreplot;
+    actual: ref ActualInputs = nil; split = FoldSplit()): FoldInputs =
+  ## What the job needs from survey `s`, with bin sizes `along` and `across`
+  ## the receiver lines (NaN: natural). Needs `foldReason(s) == ""`. `kind` names the
+  ## layer; the recorded fold and the difference count `actual`'s files too; `split` is the
+  ## restriction.
+  result = FoldInputs(key: foldKey(s, along, across, kind, actual, split), binAlong: along,
+    binAcross: across, kind: kind, split: split, actual: actual)
+  (result.relations, result.stations) = surveyStations(s)
 
 func foldSpec*(kind = fkPreplot): JobSpec =
   ## The job that counts the fold: background, started by the program.
@@ -411,9 +418,10 @@ func bytes*(r: FoldResult): int =
   result = (r.counts.len + r.planned.len + r.totals.len + r.plannedTotals.len) * 4
   for l in r.levels: result += l.colours.len * 4
 
-func geometryOf(rel: ptr SurveyGeometry; stations: array[PointRole, FoldStations]):
+func geometryOf*(rel: ptr SurveyGeometry; stations: array[PointRole, FoldStations]):
     SurveyGeometry =
-  ## The relations and the stations as one geometry.
+  ## The relations and the stations as one geometry: the survey a recorded count, or a trace
+  ## quality scan, joins to the files' keys.
   result = rel[]
   for r in PointRole:
     for k, st in stations[r].stations:
