@@ -13,10 +13,13 @@
 ##   record was dropped from the job history does not stay "computing", bin sizes as typed are
 ##   kept and shown to six digits, a grid of one bin says so, the zoom levels come with the
 ##   result, and bin sizes changed in quick succession end with the last one's map.
+## - Zoomed out, a block keeps the positive (short of the plan) of a +n and a -n, in either
+##   order.
 ## - A survey rotated by 33 degrees (made here from the sample): its corner and inner bins are
 ##   where the library's `location` puts them, and `binAt` finds them again.
 ##
-## Seen to fail: with a cancelled job left unhandled, "a cancel from the Jobs window" found it
+## Seen to fail: with the first of a tie kept, "halvedTies" found -2 for -2 then 2; with a
+## cancelled job left unhandled, "a cancel from the Jobs window" found it
 ## still computing; with the layer's id left out of the cache key, "a file read again" kept the old
 ## map; with a forgotten job's record left unhandled the follower stayed "computing" (the test
 ## timed out); with the typed sizes measured from `location` again, "typed sizes" found
@@ -207,6 +210,13 @@ proc main*() =
     doAssert r.binAlong == 1e7 and r.binAcross == 1e7, "one bin: sizes " & $(r.binAlong, r.binAcross)
     doAssert r[].totalsText("m").startsWith("One bin holds " & $r.binned)
     doAssert r.levels.len == 1 and r.levels[0].cols == 1
+
+  block halvedTies:
+    # of a block's +n and -n the positive (short of the plan) is kept, in either order
+    doAssert halved([2'i32, -2, 0, 0], 2, 2, byMagnitude = true) == @[2'i32]
+    doAssert halved([-2'i32, 2, 0, 0], 2, 2, byMagnitude = true) == @[2'i32]
+    doAssert halved([-3'i32, 2, 0, 0], 2, 2, byMagnitude = true) == @[-3'i32]
+    doAssert halved([0'i32, -1, 1, 0], 2, 2, byMagnitude = true) == @[1'i32]
 
   block levels:
     var st = initAppState()

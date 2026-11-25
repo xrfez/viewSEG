@@ -567,7 +567,8 @@ const
     "counted twice. Files are read with the default options, also one opened with Reopen " &
     "with options. One fold layer is drawn at a time: ticking one unticks the others."
   differenceTip = "Off by default. The pre-plot fold less the recorded fold, per bin: " &
-    "positive is short of the plan (blue), negative is more than planned (red), 0 is white. " &
+    "positive is short of the plan (red), negative is more than planned (blue), 0 (as planned) " &
+    "is a light grey; a bin with neither a plan nor a trace is left clear. " &
     "The files are those of the recorded fold layer. One fold layer is drawn at a time: " &
     "ticking one unticks the others."
   FoldNames: array[FoldKind, string] = ["Pre-plot fold", "Actual fold", "Fold difference"]
@@ -1263,9 +1264,10 @@ proc followMarks(mu: var MapUi; st: AppState) =
 
 proc drawScaleBar(mu: var MapUi; view: MapView; pos, size: ImVec2_c; fb: float32;
     lengths: tuple[unit: SurveyUnit; factor: float64]; ink: MapInk; t: Theme;
-    marks: var Marks) =
+    marks: var Marks): tuple[lo, hi: ImVec2_c] =
   ## The scale bar in the plot's bottom-left corner, in the unit the map
   ## states lengths in (`shownLengths`), and a north arrow in its top-right one.
+  ## Returns the bar's box (empty when there is none).
   let bar = scaleBar(view.perPixel * lengths.factor, float64(scalePixels * fb))
   mu.scaleText = ""
   mu.scale = bar
@@ -1288,6 +1290,7 @@ proc drawScaleBar(mu: var MapUi; view: MapView; pos, size: ImVec2_c; fb: float32
       ImVec2_c(x: x, y: y), c, 1.5)
   ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + pad, y: lo.y + 2), c, text.cstring, nil)
   marks.markRect("map.scale bar", lo, hi)
+  result = (lo, hi)
   # north: grid north is up
   let n = ImVec2_c(x: pos.x + size.x - 22, y: pos.y + 12)
   ImDrawList_AddTriangleFilled(dl, ImVec2_c(x: n.x, y: n.y), ImVec2_c(x: n.x - 6, y: n.y + 16),
@@ -1568,9 +1571,12 @@ proc foldFrame(mu: var MapUi; st: AppState; area: Bounds; perPixel: float64): Fo
     inlines: r.inlines, factor: factor, cols: l.cols, rows: l.rows, spans: named.count,
     spansSum: named.sum)
 
-proc drawFoldLegend(mu: var MapUi; pos, size: ImVec2_c; ink: MapInk; marks: var Marks) =
+proc drawFoldLegend(mu: var MapUi; pos, size: ImVec2_c; scale: tuple[lo, hi: ImVec2_c];
+    ink: MapInk; marks: var Marks) =
   ## The fold's colour bar in the plot's bottom-right corner: 0 to the highest fold, or for
-  ## the difference the diverging bar from the most negative to the most positive.
+  ## the difference the diverging bar from the most short of the plan to the most more than
+  ## planned. Where it would cover the scale bar (`scale`, bottom-left: a narrow window) it
+  ## stands above it.
   let r = mu.fold.shown
   mu.foldLegend = ""
   if not mu.fold.showing or mu.renderer.foldKey == 0: return
@@ -1578,17 +1584,20 @@ proc drawFoldLegend(mu: var MapUi; pos, size: ImVec2_c; ink: MapInk; marks: var 
   let diff = r.kind == fkDifference
   let title = r.kind.foldTitle & (if mu.fold.updating: " (updating...)" else: "")
   mu.foldLegend = title
-  let top = if diff: "-" & $r.maxFold else: "0"
+  let top = if diff: $r.maxFold & " short" else: "0"
   let mid = if diff: "0" else: ""
-  let high = if diff: "+" & $r.maxFold else: $r.maxFold
+  let high = if diff: $r.maxFold & " more" else: $r.maxFold
   let ts = igCalcTextSize(title.cstring, nil, false, -1)
   let hs = igCalcTextSize(high.cstring, nil, false, -1)
   let pad = 6'f32
-  let barW = 110'f32
+  let barW = if diff: 150'f32 else: 110'f32
   let barH = 10'f32
   let w = max(barW, ts.x) + 2 * pad
-  let hi = ImVec2_c(x: pos.x + size.x - 10, y: pos.y + size.y - 10)
-  let lo = ImVec2_c(x: hi.x - w, y: hi.y - ts.y - barH - hs.y - 2 * pad - 2)
+  let h = ts.y + barH + hs.y + 2 * pad + 2
+  var hi = ImVec2_c(x: pos.x + size.x - 10, y: pos.y + size.y - 10)
+  if scale.hi.x > scale.lo.x and hi.x - w < scale.hi.x + 6:
+    hi.y = scale.lo.y - 6 # beside it there is no room: above it
+  let lo = ImVec2_c(x: hi.x - w, y: hi.y - h)
   ImDrawList_AddRectFilled(dl, lo, hi, u32(withAlpha(ink.background, 210)), 3, 0)
   let c = u32(ink.outline)
   ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + pad, y: lo.y + pad), c, title.cstring, nil)
@@ -1824,8 +1833,8 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       mu.followSpreads(st)
       mu.drawSpreads(view, plot, ink, t, marks)
       mu.drawRuler(view, plot, lengths, ink, t, marks)
-      mu.drawScaleBar(view, pos, size, fb.x, lengths, ink, t, marks)
-      mu.drawFoldLegend(pos, size, ink, marks)
+      let scale = mu.drawScaleBar(view, pos, size, fb.x, lengths, ink, t, marks)
+      mu.drawFoldLegend(pos, size, scale, ink, marks)
     if (hovered or held) and mu.info.len > 0 and st.settings.map.info == miPopup and
         mu.drag.kind == mdNone:
       # (beside the menu, not under it)

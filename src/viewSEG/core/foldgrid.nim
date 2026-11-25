@@ -7,9 +7,9 @@
 ## plot uses (`lutOf(cmViridis)`), so the legend's gradient and the bins agree.
 ##
 ## The recorded fold ("Actual fold") is coloured the same way. The difference (planned less
-## recorded) uses the diverging red, white and blue map (`cmRedWhiteBlue`) centred on 0, the
-## largest magnitude at either end: 0 is the neutral colour, positive (short of the plan) goes
-## to blue, negative (more than planned) to red; a bin with neither a plan nor a trace is clear.
+## recorded) is diverging about 0 (`diffRgba`), the largest magnitude at either end: short of
+## the plan is the warning red, more than planned blue, and a bin as planned a light grey that
+## shows on the white map; a bin with neither a plan nor a trace is clear.
 ##
 ## **Levels.** Level 1 is the grid itself. A bin smaller than `MinBinPixels`
 ## on the screen would vanish or flicker as a quad, so when the bins are
@@ -47,10 +47,9 @@ func legendColour*(t: float64): Rgba =
   Rgba(r: c.r, g: c.g, b: c.b, a: 255)
 
 func diffLegendColour*(t: float64): Rgba =
-  ## The colour at fraction `t` (0 to 1) along the difference's bar: the most negative at 0,
-  ## zero in the middle, the most positive at 1.
-  let c = lutOf(cmRedWhiteBlue)[int(round(clamp(t, 0.0, 1.0) * 255))]
-  Rgba(r: c.r, g: c.g, b: c.b, a: 255)
+  ## The colour at fraction `t` (0 to 1) along the difference's bar: the most short of the
+  ## plan at 0, as planned in the middle, the most more than planned at 1.
+  diffRgba(clamp(1 - 2 * t, -1.0, 1.0))
 
 func foldTitle*(kind: FoldKind): string =
   ## The layer's name in the popover, the legend and the hover.

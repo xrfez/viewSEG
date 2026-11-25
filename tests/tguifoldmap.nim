@@ -16,7 +16,8 @@
 ##   shot of the survey, positions in their headers): ticking it unticks the other layers,
 ##   the bins have the Viridis colour of the recorded fold, the legend is titled "Actual
 ##   fold", and the hover says "recorded N (planned M)". With one shot file taken out of the
-##   folder, "Fold difference" draws the diverging colours (short bins blue, 0 white), the
+##   folder, "Fold difference" draws the diverging colours (short bins red, as planned a light
+##   grey), the legend stands clear of the scale bar, the
 ##   legend is titled "Fold difference (planned − recorded)", and the hover says "N short of
 ##   the plan"; ticking the pre-plot fold unticks it.
 ## - A bin size typed in the popover is saved, and a restart brings the layer
@@ -27,7 +28,8 @@
 ## bin looked up on the unrotated grid, "the hover names the bin" found another bin's fold.
 ##
 ## Seen to fail (the layers): with a tick leaving the other fold layers on, "Actual fold
-## ticked did not happen".
+## ticked did not happen"; with the legend left in the corner of a narrow window, "the legend
+## covers the scale bar".
 ##
 ## Needs a display: run under `env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1920x1080x24"`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-fold-*.png there.
@@ -380,12 +382,17 @@ proc main*() =
           var bins: seq[int] = @[]
           for k in 0 ..< r.counts.len:
             if r.counts[k] != 0 or r.planned[k] != 0: bins.add k
-          let lut = lutOf(cmRedWhiteBlue)
           let (tried, right) = f.probe(r, bins, proc (k: int): Rgba =
-            unpack(diffColour(lut, r.counts[k], r.maxFold)))
+            unpack(diffColour(r.counts[k], r.maxFold)))
           doAssert tried >= 20, "too few bins on the screen to probe: " & $tried
           doAssert right * 10 >= tried * 6, "the difference's colours: " & $right & " of " &
             $tried & " right"
+          # the legend does not cover the scale bar's words
+          let (legend, scale) = (f.markOf("map.fold legend"), f.markOf("map.scale bar"))
+          doAssert scale.size.x > 0
+          doAssert legend.pos.x >= scale.pos.x + scale.size.x or
+            legend.pos.y + legend.size.y <= scale.pos.y, "the legend covers the scale bar: " &
+            $legend & " " & $scale
       step("the difference is drawn", noop, differenceDrawn)
       var diffBin = 0
       proc hoverDifference(f: FrameInfo) =

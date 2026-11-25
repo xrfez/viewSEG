@@ -1260,9 +1260,12 @@ defaults read it. A file changed is counted again even within the same second (i
 compared as finely as the file system gives it). The legend is
 titled "Actual fold" (0 to the highest fold, Viridis), and the description of a bin adds
 "recorded 10 (planned 12) at inline 3, crossline 41". **Fold difference** draws the pre-plot
-fold less the recorded fold in each bin: red to white to blue, centred on 0 (white: as
-planned; blue: short of the plan; red: more than planned), the largest difference at either end
-of the legend "Fold difference (planned - recorded)"; a bin with no plan and no trace is clear.
+fold less the recorded fold in each bin: red where it is short of the plan, blue where more
+was recorded than planned, a light grey where the two agree (so the bins as planned show on the
+white map), the largest difference at either end of the legend "Fold difference (planned -
+recorded)", labelled "short" and "more"; a bin with no plan and no trace is clear. Zoomed far
+out, a block of bins shows its largest difference, the shortfall where a block holds a
+shortfall and an excess of one size. In a narrow window the legend stands above the scale bar.
 Its description says "2 short of the plan" or "2 more than planned". Only one of the three fold
 layers is drawn at a time: ticking one unticks the others. Both are dim, with the reason, when
 the survey cannot give a pre-plot fold or no seismic file is listed ("No seismic files are

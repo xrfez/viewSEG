@@ -8,6 +8,8 @@
 ## - With one shot file out of the folder the difference is exactly that shot's contribution;
 ##   a killed trace lowers exactly its bin; a trace that is not live is counted as left out.
 ## - The count is the same on 1, 2, 4 and 8 item threads.
+## - The difference's colours: short of the plan red, more than planned blue, as planned a light
+##   grey (not the map's white), the smallest difference told from the grey.
 ## - A file that gives no positions and that the survey does not place is reported, not
 ##   dropped; when all of them are, the layer says so and holds no counts; a file that cannot
 ##   be read is skipped with its reason; a recording of receivers alone is said to have no
@@ -41,14 +43,14 @@
 ## when the files change, "a count of the same grid is not cancelled" failed; before the
 ## reasons were told apart, the receivers-only file was "gives no source or receiver
 ## positions" and the far file an empty map; with no look for files listed twice, the linked
-## files were counted twice (8 files).
+## files were counted twice (8 files); with short and more swapped, "short is red" found blue.
 
 import std/[algorithm, atomics, locks, math, os, sequtils, strutils, tables]
 import parseSEG
 import processSEG/adapters
 import processSEG/qc/fold
 import processSEG/stack/binning
-import viewSEG/core/[colourmaps, edits, filesystem, foldactual, foldgrid, foldjobs, jobs, join,
+import viewSEG/core/[edits, filesystem, foldactual, foldgrid, foldjobs, geometry, jobs, join,
   state, stationmoves]
 import utils/[fixtures, waiting]
 
@@ -160,6 +162,13 @@ proc readNow(): seq[string] =
 proc forgetReads() =
   withLock readsLock: reads.setLen 0
 
+func unpack(c: uint32): Rgba =
+  Rgba(r: uint8(c and 0xFF), g: uint8((c shr 8) and 0xFF), b: uint8((c shr 16) and 0xFF),
+    a: uint8(c shr 24))
+
+func pack(c: Rgba): uint32 =
+  uint32(c.r) or (uint32(c.g) shl 8) or (uint32(c.b) shl 16) or (uint32(c.a) shl 24)
+
 proc main*() =
   initLock readsLock
   withFixtures fx:
@@ -193,14 +202,13 @@ proc main*() =
         doAssert r.binned == 576 and sum(r.counts.mapIt(int(it))) == r.binned,
           "every recorded trace is counted once"
         doAssert r.maxFold > 0 and r.levels.len > 1 and sink.other.levels.len > 1
-        # a difference of 0 is the neutral colour (a bin with a plan), a bin with none is clear
-        let lut = lutOf(cmRedWhiteBlue)
+        # a difference of 0 is a light grey (a bin with a plan), a bin with none is clear
         let planned0 = planned.find(0)
         let planned1 = planned.find(planned.max)
         doAssert planned0 < 0 or sink.other.levels[0].colours[planned0] == 0,
           "a bin with no plan and no trace is clear"
-        doAssert sink.other.levels[0].colours[planned1] ==
-          diffColour(lut, 0, 1), "a bin as planned is the neutral colour"
+        doAssert sink.other.levels[0].colours[planned1] == diffColour(0, 1) and
+          diffColour(0, 1) == pack(AsPlannedInk), "a bin as planned is the light grey"
       doAssert libraryCounts(filesXy) == planned, "the library's addFold agrees"
 
     block oneShotMissing:
@@ -224,9 +232,21 @@ proc main*() =
       var dsum = 0
       for v in sink.result.counts: dsum += int(v)
       doAssert dsum == 96
-      let lut = lutOf(cmRedWhiteBlue)
-      doAssert sink.result.levels[0].colours.anyIt(it != 0 and it != diffColour(lut, 0, 1)),
+      doAssert sink.result.levels[0].colours.anyIt(it != 0 and it != diffColour(0, 1)),
         "a short bin is not neutral"
+      # short of the plan is red, more than planned blue, as planned a grey that is not the
+      # white of the map; the smallest difference is not the grey
+      let (short, more, agree) = (unpack(diffColour(3, 3)), unpack(diffColour(-3, 3)),
+        unpack(diffColour(0, 3)))
+      doAssert short.r > 180 and short.b < 80, "short is red: " & $short
+      doAssert more.b > 150 and more.r < 80, "more is blue: " & $more
+      doAssert agree.r == agree.g and agree.g == agree.b and agree.r in 150'u8 .. 225'u8,
+        "as planned is a light grey: " & $agree
+      doAssert diffColour(1, 100) != diffColour(0, 100) and diffColour(-1, 100) != diffColour(0,
+        100), "the smallest difference is told from the grey"
+      let shortCount = sink.result.counts.find(sink.result.maxFold)
+      doAssert unpack(sink.result.levels[0].colours[shortCount]).r > 180,
+        "the shot left out makes red bins"
 
     block killedAndDead:
       let all = st.count(inputsOf(files))

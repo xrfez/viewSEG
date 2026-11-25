@@ -296,23 +296,41 @@ func foldColour*(lut: Lut; fold, maxFold: int32): uint32 =
   c.a = 255
   pack(c)
 
-const NoData = low(int32) ## a bin of a difference that has neither a plan nor a trace
+const
+  NoData = low(int32)
+    ## a bin of a difference that has neither a plan nor a trace
+  ShortInk* = Rgba(r: 215, g: 25, b: 28, a: 255)
+    ## short of the plan: the warning red
+  MoreInk* = Rgba(r: 33, g: 102, b: 172, a: 255)
+    ## more than planned: blue
+  AsPlannedInk* = Rgba(r: 190, g: 190, b: 190, a: 255)
+    ## as planned: a light neutral grey, seen on the white map
+  LeastInk = 0.3
+    ## how far the smallest difference is from the grey, towards its end
 
-func diffColour*(lut: Lut; diff, maxAbs: int32): uint32 =
+func mix(a, b: Rgba; t: float64): Rgba =
+  func ch(x, y: uint8): uint8 = uint8(round(float64(x) + (float64(y) - float64(x)) * t))
+  Rgba(r: ch(a.r, b.r), g: ch(a.g, b.g), b: ch(a.b, b.b), a: 255)
+
+func diffRgba*(f: float64): Rgba =
+  ## The colour of a difference that is fraction `f` (-1 to 1) of the largest: 0 is the grey
+  ## of `AsPlannedInk`, positive (short of the plan) goes to red, negative (more than planned)
+  ## to blue, the smallest step already `LeastInk` of the way.
+  if f == 0: AsPlannedInk
+  else: mix(AsPlannedInk, (if f > 0: ShortInk else: MoreInk),
+    LeastInk + (1 - LeastInk) * min(1.0, abs(f)))
+
+func diffColour*(diff, maxAbs: int32): uint32 =
   ## The packed colour of a bin whose planned fold exceeds the recorded by `diff` (negative:
-  ## more was recorded than planned), on a diverging colour map `lut` centred on 0: 0 is the
-  ## map's neutral entry, `maxAbs` its end on either side. `NoData` is clear (alpha 0).
+  ## more was recorded than planned), `maxAbs` the largest magnitude (`diffRgba`). `NoData`
+  ## is clear (alpha 0).
   if diff == NoData: return 0
-  let t = if maxAbs > 0: min(1.0, abs(float64(diff)) / float64(maxAbs)) else: 0.0
-  let at = if diff >= 0: ZeroEntry + int(round(t * float64(255 - ZeroEntry)))
-           else: ZeroEntry - int(round(t * float64(ZeroEntry)))
-  var c = lut[at]
-  c.a = 255
-  pack(c)
+  pack(diffRgba(if maxAbs > 0: float64(diff) / float64(maxAbs) else: 0.0))
 
-func halved(src: openArray[int32]; cols, rows: int; byMagnitude = false): seq[int32] =
+func halved*(src: openArray[int32]; cols, rows: int; byMagnitude = false): seq[int32] =
   ## The highest fold of each block of 2 x 2 of the `rows x cols` values `src`; the value
-  ## of largest magnitude when `byMagnitude` (`NoData` counts less than any other).
+  ## of largest magnitude when `byMagnitude` (`NoData` counts less than any other), the
+  ## positive (short of the plan) of two of one magnitude.
   let (c2, r2) = ((cols + 1) div 2, (rows + 1) div 2)
   result = newSeq[int32](c2 * r2)
   if byMagnitude:
@@ -323,7 +341,8 @@ func halved(src: openArray[int32]; cols, rows: int; byMagnitude = false): seq[in
       let at = row + j div 2
       let v = src[i * cols + j]
       if byMagnitude:
-        if v != NoData and (result[at] == NoData or abs(int64(v)) > abs(int64(result[at]))):
+        let (a, b) = (abs(int64(v)), abs(int64(result[at])))
+        if v != NoData and (result[at] == NoData or a > b or (a == b and v > result[at])):
           result[at] = v
       else:
         result[at] = max(result[at], v)
@@ -339,9 +358,9 @@ func levelOne(r: FoldResult): seq[int32] =
 proc makeLevels(r: FoldResult; ctx: JobContext): seq[FoldLevel] =
   ## The levels of `r` (see `FoldResult.levels`): each is the highest fold of
   ## the blocks of the one before, so the cost is a little over the count's. A difference
-  ## keeps the value of the largest magnitude of a block and is coloured with a diverging map.
+  ## keeps the value of the largest magnitude of a block and is coloured with `diffRgba`.
   let diff = r.kind == fkDifference
-  let lut = lutOf(if diff: cmRedWhiteBlue else: cmViridis)
+  let lut = lutOf(cmViridis)
   var (cols, rows, factor) = (r.crosslines, r.inlines, 1)
   var peak: seq[int32] = @[]
   let base = r.levelOne
@@ -352,7 +371,7 @@ proc makeLevels(r: FoldResult; ctx: JobContext): seq[FoldLevel] =
       l = FoldLevel(factor: factor, cols: cols, rows: rows, colours: newSeq[uint32](cols * rows))
       let src = if factor == 1: base else: peak
       if diff:
-        for k in 0 ..< src.len: l.colours[k] = lut.diffColour(src[k], r.maxFold)
+        for k in 0 ..< src.len: l.colours[k] = diffColour(src[k], r.maxFold)
       else:
         for k in 0 ..< src.len: l.colours[k] = lut.foldColour(src[k], r.maxFold)
     result.add move l
