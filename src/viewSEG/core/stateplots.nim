@@ -294,6 +294,21 @@ func vibTyped*(state: AppState; pw: AnalysisWindow): float64 =
   if result.isNaN and state.inProject:
     result = topsOf(state.project.doc.vibTops).topOf(key)
 
+proc vibProfileOf*(state: AppState; w: AnalysisWindow): VibQcProfile =
+  ## Vibrator window `w`'s settings as a profile: the limits, window, harmonics, set, the
+  ## force scale in force, a typed 100 % force and drive level, the chosen reference's
+  ## archive id and the top typed for it. Nothing read from the file but its name.
+  let p = w.params
+  let refId = if p.projectReference and state.chosenReference.len > 0:
+      state.chosenReference
+    else: ""
+  let key = state.vibTopKey(w)
+  var top = p.tops.topOf(key)
+  if top.isNaN and state.inProject: top = topsOf(state.project.doc.vibTops).topOf(key)
+  profileOf(p.qc, p.qcWindowMs, p.harmonics, p.accelSet, state.settings.forceScale,
+    p.forceHundredPct, p.targetPct, refId, top, p.forceHundredUnit, p.forceHundredSet,
+    w.file)
+
 proc signatureAsk(state: AppState; s: Session; p: AnalysisParams): SignatureAsk =
   ## What a signature file adds to the Vibrator window's ask: the user's force scale (the
   ## ground force in newtons, display and verdict only), the 100 % force the file itself
@@ -1024,7 +1039,18 @@ proc showPlot(state: var AppState; cmd: Command) =
   (measured.rolesOpen, measured.noteOpen) = (pw.params.rolesOpen, pw.params.noteOpen)
   (measured.setupOpen, measured.setupSet) = (pw.params.setupOpen, pw.params.setupSet)
   let changed = measured != pw.params
+  let profileHad = if signature: state.vibProfileOf(pw) else: VibQcProfile()
   pw.params = params
+  if signature and state.inProject and keeps(cmd.origin) and not state.project.readOnly:
+    # what the user sets on a signature window is the project's vibrator QC profile: one
+    # configuration, which a QC run reads (no separate button)
+    var now = state.vibProfileOf(pw)
+    if state.project.doc.hasVibProfile: now.later = state.project.doc.vibProfile.later
+    if now != profileHad and (not state.project.doc.hasVibProfile or
+        state.project.doc.vibProfile != now):
+      state.project.doc.vibProfile = now
+      state.project.doc.hasVibProfile = true
+      state.projectChanged()
   # what the user set becomes what a new window of the kind opens with
   # (a signature file's typed 100 % force belongs to its window: never remembered for the kind)
   # (nor its drive level: a new window of a signature file opens with none typed)

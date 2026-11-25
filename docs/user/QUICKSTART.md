@@ -434,43 +434,51 @@ before the extension. Double-click a record to open that file at that record.
 
 ## Vibrator QC of a folder
 
-**Reports > Vibrator QC of a folder** lists the vibrator signature files in the folder
-open in the file list, including the folders under it. The item stays in the menu. It is
-inactive until a folder is open, and it says so. A relation file is not needed.
+**Reports > Vibrator QC of a folder** judges the vibrator signature files you choose, with
+the project's vibrator QC configuration. The item is always active; nothing is listed or run
+until you choose a folder or files and press **Run**.
 
 The **Vibrator QC** window stays closed until you ask for it. It opens as a tab beside
-the **Seismic** window, and that tab is the one in front. Closing it and opening it again
-keeps the place you last gave it.
+the **Seismic** window, and that tab is the one in front. The close button on its tab (or
+**View**, the window's entry) hides it; the entry brings it back where you last left it.
 
-A line at the top names the project's vibrator QC profile: the window, the harmonics, the
-accelerometer set, and the limits. When the project has no profile yet, it says to open a
-signature file, set the Vibrator window, and choose **Use as profile**. **Run** stays
-inactive until a profile is stored and at least one file is ticked, and the tooltip says
-why.
+The window asks for no setting. A line at the top shows the configuration in force, as
+text: the reference measured against (the project's chosen reference, else the one stored with
+the profile, else each file's recorded reference), the file it was configured from, the
+statistics window, the harmonics, the accelerometer set, the force scale, the 100 % force and
+drive level, the top frequency and the limits, and the job's weights when set. You set all of
+this in a Vibrator signature window (**Analysis > New plot > Vibrator**, on a signature file):
+it is kept in the project as you set it, with no button. With no project, or with nothing set
+yet, the window says only "Vibrator signature QC is not configured." and where to set it, and
+**Run** stays inactive. The job's three weights (hold-down, baseplate, reaction mass) are in that
+window's settings wheel.
 
-Three boxes above the tabs hold the job's weights in kilograms: hold-down, baseplate and
-reaction mass. Empty means not set. They are compared with each file's header weights and
-never applied. With no project open the boxes are inactive.
+The **Files** tab picks what to run. **Folder...** opens the system's folder dialog;
+**Include subfolders** (off at first) also takes the folders under it. **Files...** opens the
+system's file dialog for single signature files. What was chosen is shown, and the signature
+files found are listed, each ticked, with how many are ticked ("3 of 3"). **All** ticks every
+file; **None** clears the ticks. Untick a file to leave it out. The choice is kept while the
+program runs.
 
-The **Files** tab lists the signature files found, each ticked, with how many are ticked
-("3 of 3"). **All** ticks every file; **None** clears the ticks. Untick a file to leave it
-out of the run. The **Results** tab is one row per file that was run: the verdict, the
-sentence, the measures, the polarity and any problem. The File column fits the names
-shown. The sentence column takes the width left in the window; a cell that is still cut
-off shows its full text when the pointer rests on it. Click a row to read its sentence,
-warnings and problem on the lines under the table. A file that could not be judged puts
-its reason in the sentence column. Kind names a `.dat` signature file and a `.vib` file
-apart. A box above the table narrows the rows. Click a column header to sort by it
-(again for the other way). Warnings does not sort. The totals under the tabs count the
-whole run, not only the rows the filter leaves in sight, and one of a kind is singular.
-When the profile uses each file's recorded reference, the window says so; it names a
-missing archive reference only when a project reference was chosen and is not there.
+The **Results** tab is one row per file that was run. The columns are File (the name; the
+full path is in its tooltip), Electronics number, Vibrator number, Time (the sweep's trigger
+time), FFID, Source line and Source point from the shot log, then Kind, Pair, the verdict, the
+sentence, the measures, the polarity, the warnings and any problem. A `.vib` takes its `.dat`'s
+electronics number, vibrator number and time. FFID and the source line and point come from the
+loaded shot logs, matched with the sweep as the Shot log window matches a signature; a sweep no
+log has stays empty, and with no shot log loaded the window says so above the table. The File
+column fits the names shown. The sentence column takes the width left in the window; a cell
+that is still cut off shows its full text when the pointer rests on it. Click a row to read its
+sentence, warnings and problem on the lines under the table. A file that could not be judged
+puts its reason in the sentence column. A box above the table narrows the rows. Click a column
+header to sort by it (again for the other way); Warnings, FFID and the source columns do not
+sort. The totals count the whole run, not only the rows the filter leaves in sight.
 
-**Run** judges the ticked files with the stored profile. While it runs, that button is
-**Cancel** and a progress bar shows how many files are done. When it finishes, the
-**Results** tab is the one in front. **Copy** puts the whole table on the clipboard.
-**Export CSV...** writes the whole table, not only the rows the filter leaves in sight.
-Double-click a row to open that file.
+**Run** lists nothing new: it judges the ticked files. Listing and judging are background jobs
+with progress; while it runs, the button is **Cancel**. When it finishes, the **Results** tab is
+the one in front. **Copy** puts the whole table on the clipboard. **Export CSV...** writes the
+whole table, with the same columns, not only the rows the filter leaves in sight. Double-click
+a row to open that file.
 
 ## Output
 

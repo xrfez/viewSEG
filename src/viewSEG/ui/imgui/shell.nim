@@ -67,6 +67,8 @@ type
     dkExportShotSps = "Export SPS"             ## an SPS file to write (a save dialog)
     dkOutputLog = "Output log"                 ## a text file to write (a save dialog)
     dkOutputText = "Text header file"          ## a text file or a SEG-Y file whose text header is read
+    dkVibFolder = "Vibrator QC folder"         ## the folder whose signature files are judged
+    dkVibFiles = "Vibrator QC files"           ## signature files to judge
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
@@ -237,6 +239,10 @@ let seismicFilters = [
   ## Module-lifetime storage: SDL reads the filters until the callback runs.
   ## Patterns match case-insensitively on every platform SDL supports.
 
+let signatureFilters = [
+  SDL_DialogFileFilter(name: "Vibrator signature files (*.dat, *.vib)", pattern: "dat;vib"),
+  SDL_DialogFileFilter(name: "All files", pattern: "*")]
+
 let nifFilters = [
   SDL_DialogFileFilter(name: "viewSEG settings and layouts (*.nif)", pattern: "nif"),
   SDL_DialogFileFilter(name: "All files", pattern: "*")]
@@ -312,7 +318,7 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr seismicFilters[0],
       seismicFilters.len.cint, at, kind == dkOpenFiles)
   of dkOpenFolder, dkOpenProject, dkProjectPlace, dkProjectData, dkLocateFolder,
-      dkOutputSource, dkOutputDest, dkCutDest, dkMissingFolder:
+      dkOutputSource, dkOutputDest, dkCutDest, dkMissingFolder, dkVibFolder:
     SDL_ShowOpenFolderDialog(onDialogResult, userdata, parent, at, false)
   of dkImportSettings, dkImportLayout:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr nifFilters[0],
@@ -326,6 +332,9 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
   of dkJoinFiles:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr joinFilters[0],
       joinFilters.len.cint, at, true)
+  of dkVibFiles:
+    SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr signatureFilters[0],
+      signatureFilters.len.cint, at, true)
   of dkExportEdits:
     SDL_ShowSaveFileDialog(onDialogResult, userdata, parent, addr editsFilters[0],
       editsFilters.len.cint, at)

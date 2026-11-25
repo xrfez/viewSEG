@@ -21,7 +21,7 @@ import std/[math, sets, strutils, tables]
 import imguin/cimgui
 import ../../core/[colourmaps, explain, geometry, plotcursor, plotoptions, state, units,
   vibprofile]
-import ../../view/[analysisview, axisfit, curveplot, theme]
+import ../../view/[analysisview, axisfit, curveplot, theme, vibfolderwords]
 import chrome, curveplot as curves, explainmenu, fittext, overflow, icons, marks, placement,
     spectrumwindow,
   style
@@ -740,6 +740,40 @@ proc drawWeightsGroup(ui: var PlotWindowsUi; st: AppState; planeAt: int; name: s
   marks.mark(name & ".fleet")
   igPopTextWrapPos()
 
+proc drawJobWeightsGroup(st: AppState; name: string; box: float32; marks: var Marks;
+    res: var PlotWindowsOutput) =
+  ## The job's three weights, kept with the project and compared by the folder QC with each
+  ## `.vib` header's (never applied). Empty is not set. Inactive without a project.
+  let can = st.inProject
+  igSeparatorText("Job weights (vibrator QC)")
+  marks.mark(name & ".group Job weights")
+  if not can: igBeginDisabled(true)
+  let now = if can: st.project.doc.vibJobWeights else: VibJobWeights()
+  var next = now
+  var changed = false
+  template one(label, id: string; field: untyped) =
+    igAlignTextToFramePadding()
+    igTextUnformatted(label, nil)
+    igSameLine(0, -1)
+    var typed = 0.0
+    if limitBox(id, now.field, box, typed) and can:
+      if typed.isNaN or MassKgRange.allows(typed):
+        if typed != now.field and not (typed.isNaN and now.field.isNaN):
+          next.field = typed
+          changed = true
+      else:
+        res.notes.add "The weight must be " & MassKgRange.words & ", not " &
+          sensible(typed) & "."
+    marks.mark(name & ".job weight " & label)
+    tip(if can: WeightsHint else: NeedProjectWeights)
+    igSameLine(0, -1)
+    igTextUnformatted("kg", nil)
+  one(HoldDownLabel, "##jobholddown", holdDownKg)
+  one(BaseplateLabel, "##jobbaseplate", baseplateMassKg)
+  one(ReactionLabel, "##jobreaction", reactionMassKg)
+  if not can: igEndDisabled()
+  if changed: res.commands.add Command(kind: ckVibWeights, vibWeights: next)
+
 proc drawWheel(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: string;
     planeAt: int; kind: SignatureKind; forceNote: string; box: float32; at: ImVec2_c;
     t: Theme; marks: var Marks; p: var AnalysisParams; changed: var bool;
@@ -753,6 +787,7 @@ proc drawWheel(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: str
   drawGroundForceGroup(w, name, planeAt, box, t, marks, p, changed, res, st)
   drawMassesGroup(w, name, box, forceNote, t, marks, p, changed, res, st)
   drawForceGroup(w, name, planeAt, box, kind, forceNote, t, marks, p, changed, res, st)
+  if kind != sgNone: drawJobWeightsGroup(st, name, box, marks, res)
   if kind == sgVib:
     drawAccelGroup(name, t, marks, p, changed)
     ui.drawWeightsGroup(st, planeAt, name, t, marks)
@@ -765,25 +800,14 @@ proc drawWheel(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: str
     tip(ResetTip)
   igEndPopup()
 
-proc askedProfile(st: AppState; w: AnalysisWindow; p: AnalysisParams): VibQcProfile =
-  ## This window's settings as a profile: the limits, window, harmonics, set, force scale,
-  ## a typed 100 % force and drive level, the reference's archive id and the top typed for
-  ## it. Nothing read from the file.
-  let refId = if p.projectReference and st.chosenReference.len > 0: st.chosenReference else: ""
-  let key = st.vibTopKey(w)
-  var top = p.tops.topOf(key)
-  if top.isNaN and st.inProject: top = topsOf(st.project.doc.vibTops).topOf(key)
-  profileOf(p.qc, p.qcWindowMs, p.harmonics, p.accelSet, st.settings.forceScale,
-    p.forceHundredPct, p.targetPct, refId, top, p.forceHundredUnit, p.forceHundredSet)
-
 proc drawVibratorSettings(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: string;
     box: float32; t: Theme; marks: var Marks; p: var AnalysisParams; frozen, changed: var bool;
     res: var PlotWindowsOutput) =
   ## A vibrator signature's controls: one strip under the verdict (Roles, Limits..., Details,
-  ## Use as profile, the settings wheel and Freeze at the right). Roles opens the roles
+  ## the settings wheel and Freeze at the right). Roles opens the roles
   ## table (the one place to reverse a polarity), the wheel the settings, in headed groups for
   ## the file shown, Limits... the six limits of the verdict and the window they are judged in.
-  ## Use as profile stores those settings on the project; it is inactive without one.
+  ## What is set here is kept as the project's vibrator QC profile as it is set.
   let planeAt = st.findPlot(w.id)
   let forceNote = st.vibForceNote(planeAt)
   let kind = st.vibSignature(planeAt)
@@ -818,19 +842,6 @@ proc drawVibratorSettings(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow
       markName = name & ".details"):
     p.details = not p.details
     changed = true
-  # Use as profile: the window's settings, through the project's command path
-  igSameLine(0, 2)
-  let canStore = st.inProject
-  if not canStore: igBeginDisabled(true)
-  if igSmallButton("Use as profile") and canStore:
-    res.commands.add Command(kind: ckVibProfile, vibProfile: askedProfile(st, w, p))
-  if not canStore: igEndDisabled()
-  marks.mark(name & ".use as profile")
-  if not canStore: marks.mark(name & ".use as profile.disabled")
-  tip(if canStore:
-        "Store this window's limits, window, harmonics, accelerometer set, force scale, " &
-        "typed 100 % force and reference as the project's vibrator QC profile"
-      else: "A project is needed to store this window as the vibrator QC profile")
   # the settings wheel and Freeze, at the right
   let wheelX = strip.rowRight - size
   igSetCursorScreenPos(ImVec2_c(x: wheelX, y: strip.top))

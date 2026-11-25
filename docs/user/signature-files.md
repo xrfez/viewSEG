@@ -124,17 +124,25 @@ and a file that breaks its format are refused in words.
 
 ## The Vibrator window on a signature file
 
-Under the verdict one strip of buttons (Roles, Limits..., Details, Use as profile, the settings
+Under the verdict one strip of buttons (Roles, Limits..., Details, the settings
 wheel and Freeze) holds the controls; the wheel's popover has headed groups, only those that apply to the
 file (a signature file has no Masses group: its channels are forces already, or the file's own
 weights are used). A finding a group holds is also told in words under the verdict, and the wheel
 carries a warning sign.
 
-- **Use as profile.** Stores this window's limits, statistics window, harmonics, accelerometer
-  set, force scale, a typed 100 % force and drive level, and the reference (its archive id, never
-  its samples) as the project's vibrator QC profile. The status line says so. With no project
-  open the button is inactive and its tooltip says a project is needed. Nothing read from the
-  file is copied.
+- **The project's vibrator QC configuration.** With a project open, what you set in this
+  window is kept in the project as the vibrator QC profile, as you set it, with no button:
+  the limits, the statistics window, the harmonics, the accelerometer set, a typed 100 % force
+  and drive level, the top frequency typed for the reference, and the name of the file you were
+  looking at. The force scale is the one in the settings now, and the reference is the project's
+  chosen one. Nothing read from the file is copied. A change made by an agent, or with no
+  project open, is for that run only and is not kept. **Reports > Vibrator QC of a folder** reads
+  this configuration; until a window has set it, that window says that vibrator signature QC is
+  not configured.
+- **Job weights.** The wheel's *Job weights (vibrator QC)* group holds the hold-down, baseplate
+  and reaction-mass weights of the job, in kilograms, stored once in the project (inactive with
+  no project). The folder QC compares them with each `.vib` header's weights and never applies
+  them.
 - **Which sweep this is.** A line at the top of the window gives the trigger time in UTC to
   the millisecond, the controller and the vibrator, and, only when the file gives them, the
   line and station and the shot and sweep ids (a point is never derived from the GPS position).

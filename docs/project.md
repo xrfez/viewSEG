@@ -92,8 +92,9 @@ Land 2026/                  the project folder: this is what is opened
   was taken from a Vibrator window: the six limits, the statistics window, the harmonics,
    the accelerometer set, the force scale, a typed 100 % force, the unit it was
    typed in and the accelerometer set that a pound-counts force was typed on,
-   a drive level, the reference's archive id and the top typed for that
-  reference. A document without it has
+   a drive level, the reference's archive id, the top typed for that
+  reference and the name of the file the Vibrator window was showing (`fromFile`, a
+  label only). The profile is kept as the window's settings change. A document without it has
   no profile, so a project made earlier opens unchanged. A field inside it that this
   version does not know is kept and written back. The job's vibrator weights
   (`vibWeights`) are stored once, in kilograms: the hold-down, the baseplate mass and

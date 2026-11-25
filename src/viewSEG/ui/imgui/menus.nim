@@ -123,8 +123,6 @@ type
     templateAvailable*: bool ## a relation file is there for that (the item is enabled)
     qualityReady*: bool ## Reports > Trace quality can run
     qualityWhy*: string ## why it cannot; "" when it can
-    folderReady*: bool ## Reports > Vibrator QC of a folder can open
-    folderWhy*: string ## why it cannot; "" when it can
     outputReady*: bool ## File > Output... can run
     outputWhy*: string ## why it cannot; "" when it can
     cutWhy*: string
@@ -567,9 +565,9 @@ proc drawToolsMenu(input: MenuInput; res: var MenuResult) =
 
 proc drawReportsMenu(input: MenuInput; res: var MenuResult) =
   ## Reports: the missing-trace scan, the trace-quality scan, then vibrator
-  ## QC of the open folder. Missing traces opens its window, which says what it
-  ## needs (an open file, imported relation records). Trace quality and
-  ## Vibrator QC need only the folder.
+  ## QC of the folder or files you choose. Missing traces opens its window, which
+  ## says what it needs (an open file, imported relation records). Trace quality
+  ## needs only the folder; Vibrator QC always opens.
   item(maMissingTraces, res)
   tip(MenuTip)
   igBeginDisabled(not input.qualityReady)
@@ -578,12 +576,8 @@ proc drawReportsMenu(input: MenuInput; res: var MenuResult) =
   tip(if input.qualityReady: QualityTip else: input.qualityWhy)
   if not input.qualityReady and marked != nil:
     marked[].mark("menu.Trace quality.disabled")
-  igBeginDisabled(not input.folderReady)
   item(maVibFolder, res)
-  igEndDisabled()
-  tip(if input.folderReady: FolderTip else: input.folderWhy)
-  if not input.folderReady and marked != nil:
-    marked[].mark("menu.Vibrator QC of a folder.disabled")
+  tip(FolderTip)
 
 proc drawAnalysisMenu(input: MenuInput; res: var MenuResult) =
   ## Analysis: new plots, the comparison, the references.

@@ -1,15 +1,16 @@
-## The Vibrator QC of a folder window: a list of the signature files in the
-## open folder (subfolders included), a run against the project's profile, and
-## a CSV export. The results table leaves room under it for the selected row.
+## The Vibrator QC window: the signature files of a folder or files the user
+## picks (subfolders only when asked), a run against the project's vibrator QC
+## configuration, and a CSV export. The window asks for no setting: it shows
+## the configuration in force, or says that QC is not configured. The results
+## table leaves room under it for the selected row.
 ##
 ## Listing and judging are background jobs. The window reads a sink only after
 ## that job is no longer running. The worker must not read `AppState`: the
-## profile, the weights and the reference are copied before the job starts.
+## configuration is copied before the job starts.
 
-import std/[math, os, strutils, tables]
+import std/[os, strutils, tables]
 import imguin/cimgui
-import ../../core/[filejobs, filekinds, filesystem, jobs, sigtypes, state, sweepinfo, units,
-  vibfolderjobs, vibfolderqc, vibprofile]
+import ../../core/[filesystem, jobs, state, vibfolderconf, vibfolderjobs, vibfolderqc]
 import ../../view/vibfolderwords
 import fittext, focus, icons, marks, overflow
 
@@ -17,17 +18,13 @@ type
   VibTab = enum
     vtFiles, vtResults
 
-  ListNote = ref object
-    files: seq[FolderListed]
-    capped: bool
-
   VibFolderUi* = object
     listJob: JobId = NoJob
     qcJob: JobId = NoJob
     exportJob: JobId = NoJob
     sink: FolderQcSink
-    note: ListNote
-    folder: string
+    listSink: FolderListSink
+    choice: FolderChoice
     listed: seq[FolderListed]
     unticked: Table[string, bool] = initTable[string, bool]()
     table: FolderTable
@@ -37,6 +34,8 @@ type
     running: bool
     capped: bool
     wantList: bool
+    askFolder, askFiles: bool
+    dropJobs: bool
     selectResults: bool
     tab: VibTab = vtFiles
     sortCol: FolderColumn = fcPath
@@ -49,6 +48,7 @@ type
     focus: FocusClicks
     shownGen: int
     viewKey: string
+    shotKey: string
     viewRows: seq[FolderRow]
     viewCells: seq[seq[string]]
     viewWidths: seq[float32]
@@ -58,10 +58,49 @@ type
     commands*: seq[Command]
     exportAsked*: bool
     exportPath*: string
+    askFolder*, askFiles*: bool ## a native dialog is wanted, starting at `askAt`
+    askAt*: string
+    closed*: bool               ## the window's close button was used: hide it as the Window menu does
 
-proc requestList*(ui: var VibFolderUi) =
-  ## The window was opened, or the folder changed: list on the next draw.
-  ui.wantList = true
+proc stopJobs(ui: var VibFolderUi; st: AppState)
+
+proc clearRun(ui: var VibFolderUi) =
+  ui.listed.setLen 0
+  ui.haveList = false
+  ui.have = false
+  ui.table = FolderTable()
+  inc ui.shownGen
+  ui.viewKey = ""
+  ui.selected = ""
+  ui.unticked = initTable[string, bool]()
+  ui.selectResults = false
+  ui.tab = vtFiles
+  ui.capped = false
+  ui.progressDone = 0
+  ui.progressTotal = 0
+
+proc choose(ui: var VibFolderUi; choice: FolderChoice) =
+  ui.choice = choice
+  ui.dropJobs = true
+  ui.clearRun()
+  ui.wantList = choice.hasChoice
+  ui.status = if choice.hasChoice: Listing else: NothingChosen
+
+proc setFolder*(ui: var VibFolderUi; folder: string) =
+  ## The folder dialog's answer (or a test's): the folder to run replaces the
+  ## choice, and is listed on the next draw. The tick for subfolders is kept.
+  ui.choose(FolderChoice(folder: folder, subfolders: ui.choice.subfolders))
+
+proc setFiles*(ui: var VibFolderUi; files: seq[string]) =
+  ## The files dialog's answer (or a test's): these files replace the choice.
+  ui.choose(FolderChoice(files: files, subfolders: ui.choice.subfolders))
+
+proc setSubfolders*(ui: var VibFolderUi; on: bool) =
+  ## Whether the chosen folder's subfolders are run too; the folder is listed again.
+  if on == ui.choice.subfolders: return
+  var next = ui.choice
+  next.subfolders = on
+  ui.choose(next)
 
 proc writeCsv(path, text: string) =
   ## `text` written to `path`: a temporary file beside it, then a rename.
@@ -85,33 +124,6 @@ proc writeCsv(path, text: string) =
     discard fs.tryRemoveFile(tmp)
     raise
 
-proc listWork(folder: string; note: ListNote): JobWork =
-  result = proc (ctx: JobContext) {.gcsafe.} =
-    ctx.checkCancelled()
-    ctx.setPhase(Listing)
-    var capped = false
-    var paths: seq[string] = @[]
-    try:
-      paths = listedNames(@[folder], true, capped,
-        proc (found: int): bool {.gcsafe, raises: [].} =
-        ctx.progress(int64(found), 0))
-    except OSError:
-      raise newException(ValueError, CannotList)
-    if note != nil: note.capped = capped
-    ctx.checkCancelled()
-    var files: seq[FolderListed] = @[]
-    for path in paths:
-      ctx.checkCancelled()
-      let kind = sniff(path)
-      if kind notin SignatureFileKinds: continue
-      var info = SweepInfo(kind: kind.sweepKindOf)
-      try:
-        info = readSweepInfo(path, kind.sweepKindOf, fs.getFileSize(path))
-      except OSError as e:
-        info.problem = if e.msg.len > 0: e.msg else: "it cannot be read"
-      files.add FolderListed(path: path, info: info)
-    if note != nil: note.files = files
-
 proc exportWork(path, text: string): JobWork =
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
@@ -119,14 +131,14 @@ proc exportWork(path, text: string): JobWork =
 
 proc finishList(ui: var VibFolderUi; state: JobState; error: string) =
   ui.listing = false
-  if ui.note != nil: ui.capped = ui.note.capped
+  if ui.listSink != nil: ui.capped = ui.listSink.capped
   if state == jsCancelled:
     ui.status = Stopped
     return
   if state == jsFailed:
     ui.status = if error.len > 0: error else: CannotList
     return
-  if ui.note != nil: ui.listed = ui.note.files
+  if ui.listSink != nil: ui.listed = ui.listSink.files
   ui.haveList = true
   ui.status = Ready
 
@@ -136,6 +148,7 @@ proc finishQc(ui: var VibFolderUi; state: JobState; error: string) =
     ui.table = ui.sink.result
     inc ui.shownGen
     ui.viewKey = ""
+    ui.shotKey = ""
     ui.have = true
     ui.selectResults = true
   if state == jsCancelled: ui.status = Stopped
@@ -180,81 +193,46 @@ proc poll(ui: var VibFolderUi; st: AppState) =
       ui.exportJob = NoJob
 
 proc submitList(ui: var VibFolderUi; st: AppState) =
-  let folder = st.fileList.folder
-  if folder.len == 0: return
+  if not ui.choice.hasChoice: return
   if ui.listJob != NoJob:
     discard st.jobs.cancel(ui.listJob)
     ui.listJob = NoJob
-  ui.folder = folder
-  ui.note = ListNote()
+  ui.listSink = FolderListSink()
   ui.listing = true
   ui.haveList = false
   ui.status = Listing
-  ui.listJob = st.jobs.submit(JobSpec(title: "List vibrator files",
-    lane: jlBackground, reads: @[folder]), listWork(folder, ui.note))
+  ui.listJob = st.jobs.submit(folderListSpec(ui.choice),
+    folderListWork(ui.choice, ui.listSink))
 
-proc clearRun(ui: var VibFolderUi) =
-  ui.listed.setLen 0
-  ui.haveList = false
-  ui.have = false
-  ui.table = FolderTable()
-  inc ui.shownGen
-  ui.viewKey = ""
-  ui.selected = ""
-  ui.unticked = initTable[string, bool]()
-  ui.selectResults = false
-  ui.tab = vtFiles
-  ui.capped = false
-  ui.progressDone = 0
-  ui.progressTotal = 0
+proc stopJobs(ui: var VibFolderUi; st: AppState) =
+  if ui.listJob != NoJob:
+    discard st.jobs.cancel(ui.listJob)
+    ui.listJob = NoJob
+    ui.listing = false
+  if ui.qcJob != NoJob:
+    discard st.jobs.cancel(ui.qcJob)
+    ui.qcJob = NoJob
+    ui.running = false
 
 proc consider(ui: var VibFolderUi; st: AppState) =
+  if ui.dropJobs:
+    ui.stopJobs(st)
+    ui.dropJobs = false
   ui.poll(st)
-  let folder = st.fileList.folder
-  if folder != ui.folder:
-    if ui.listJob != NoJob:
-      discard st.jobs.cancel(ui.listJob)
-      ui.listJob = NoJob
-      ui.listing = false
-    if ui.qcJob != NoJob:
-      discard st.jobs.cancel(ui.qcJob)
-      ui.qcJob = NoJob
-      ui.running = false
-    ui.clearRun()
-    ui.folder = folder
-    ui.wantList = folder.len > 0
-    ui.status = if folder.len == 0: folderWhy(false) else: Listing
-  if ui.wantList and ui.listJob == NoJob and folder.len > 0:
+  if ui.wantList and ui.choice.hasChoice:
     ui.wantList = false
     ui.submitList(st)
-
-proc archiveIds(st: AppState): seq[string] =
-  result = @[]
-  if not st.referencesLoaded: return
-  for e in st.references.entries:
-    if e.id.len > 0: result.add e.id
-
-proc referenceFor(st: AppState; id: string): FolderReference =
-  if id.len == 0 or not st.referencesLoaded: return
-  let home = st.referencesHome
-  if home.len == 0: return
-  for e in st.references.entries:
-    if e.id != id: continue
-    if e.isPilot or e.file.len == 0: return
-    return FolderReference(path: home / e.file, name: e.name, startMs: e.timeStart)
 
 proc ticked(ui: VibFolderUi): seq[FolderListed] =
   result = @[]
   for item in ui.listed:
     if item.path notin ui.unticked: result.add item
 
-proc hasProfile(st: AppState): bool =
-  st.inProject and st.project.doc.hasVibProfile
-
 proc submitQc(ui: var VibFolderUi; st: AppState) =
   if ui.listJob != NoJob or not ui.haveList: return
-  if not hasProfile(st):
-    ui.status = NoProfile
+  let config = vibQcConfig(st)
+  if not config.configured:
+    ui.status = NotConfigured
     return
   let files = ui.ticked
   if files.len == 0:
@@ -263,18 +241,15 @@ proc submitQc(ui: var VibFolderUi; st: AppState) =
   if ui.qcJob != NoJob:
     discard st.jobs.cancel(ui.qcJob)
     ui.qcJob = NoJob
-  let profile = st.project.doc.vibProfile
-  let ask = applied(profile, archiveIds(st))
-  let weights = st.project.doc.vibJobWeights
-  let reference = referenceFor(st, profile.referenceId)
   ui.sink = FolderQcSink()
   ui.running = true
   ui.have = false
   ui.progressDone = 0
   ui.progressTotal = 0
   ui.status = Judging
-  ui.qcJob = st.jobs.submit(folderQcSpec(files, reference.path),
-    folderQcWork(ask, weights, files, ui.sink, reference = reference))
+  ui.qcJob = st.jobs.submit(folderQcSpec(files, config.reference.path),
+    folderQcWork(config.ask, config.weights, files, ui.sink,
+    reference = config.reference))
 
 proc startExport*(ui: var VibFolderUi; st: AppState; path: string) =
   ## Writes the full table, not the filtered rows. `path` gains ".csv" when
@@ -286,7 +261,7 @@ proc startExport*(ui: var VibFolderUi; st: AppState; path: string) =
   if ui.exportJob != NoJob:
     discard st.jobs.cancel(ui.exportJob)
     ui.exportJob = NoJob
-  let reads = if ui.folder.len > 0: ui.folder else: dest
+  let reads = if ui.choice.folder.len > 0: ui.choice.folder else: dest
   ui.exportJob = st.jobs.submit(JobSpec(title: "Export vibrator QC",
     lane: jlBackground, reads: @[reads]), exportWork(dest, text))
 
@@ -299,69 +274,6 @@ proc tip(text: string; allowDisabled = false) =
     igTextUnformatted(text.cstring, nil)
     igPopTextWrapPos()
     igEndTooltip()
-
-type HeldWeight = object
-  text: array[64, char]
-  active: bool
-
-var weightBoxes: Table[string, HeldWeight]
-
-proc weightBox(id: string; value: float64; typed: var float64): bool =
-  ## A kilograms box, empty when unset (NaN). True once the user has finished
-  ## typing; nothing typed, or not a number, is none.
-  if id notin weightBoxes: weightBoxes[id] = HeldWeight()
-  if not weightBoxes[id].active:
-    zeroMem(addr weightBoxes[id].text[0], weightBoxes[id].text.len)
-    let text = if value.isNaN: "" else: sensible(value)
-    for i, c in text:
-      if i < weightBoxes[id].text.high: weightBoxes[id].text[i] = c
-  let width = round(igCalcTextSize("00000.0", nil, false, -1).x +
-    2 * igGetStyle().FramePadding.x)
-  igSetNextItemWidth(width)
-  discard igInputText(id.cstring, cast[cstring](addr weightBoxes[id].text[0]),
-    csize_t(weightBoxes[id].text.len), ImGui_InputTextFlags_CharsScientific.cint, nil, nil)
-  weightBoxes[id].active = igIsItemActive()
-  let got = $cast[cstring](addr weightBoxes[id].text[0])
-  typed = try: parseFloat(got.strip) except ValueError: NaN
-  igIsItemDeactivatedAfterEdit()
-
-proc changedWeight(a, b: float64): bool {.inline.} =
-  a != b and not (a.isNaN and b.isNaN)
-
-proc drawWeights(ui: var VibFolderUi; st: AppState; marks: var Marks;
-    commands: var seq[Command]) =
-  ## The job's three weights, above the tabs. Empty is not set. A finished edit
-  ## is a `ckVibWeights` of all three. Inactive without a project.
-  let can = st.inProject
-  if not can: igBeginDisabled(true)
-  let now = if st.inProject: st.project.doc.vibJobWeights else: VibJobWeights()
-  var next = now
-  var changed = false
-  template one(label, id: string; current: float64; field: untyped) =
-    igAlignTextToFramePadding()
-    igTextUnformatted(label, nil)
-    igSameLine(0, -1)
-    var typed = 0.0
-    if weightBox(id, current, typed) and can:
-      if typed.isNaN or MassKgRange.allows(typed):
-        if changedWeight(typed, current):
-          field = typed
-          changed = true
-      else:
-        ui.status = "The weight must be " & MassKgRange.words & ", not " &
-          sensible(typed) & "."
-    marks.mark("vibfolder.weight " & label)
-    if not can: marks.mark("vibfolder.weight " & label & ".disabled")
-    tip(if can: WeightsHint else: NeedProjectWeights, allowDisabled = true)
-    igSameLine(0, -1)
-    igTextUnformatted("kg", nil)
-    igSameLine(0, 8)
-  one(HoldDownLabel, "##holddown", now.holdDownKg, next.holdDownKg)
-  one(BaseplateLabel, "##baseplate", now.baseplateMassKg, next.baseplateMassKg)
-  one(ReactionLabel, "##reaction", now.reactionMassKg, next.reactionMassKg)
-  if changed and can: commands.add Command(kind: ckVibWeights, vibWeights: next)
-  if not can: igEndDisabled()
-  igNewLine()
 
 proc bufText(buf: openArray[char]): string =
   result = ""
@@ -387,6 +299,7 @@ proc showRows*(ui: var VibFolderUi; rows: seq[FolderRow]) =
   ui.filterBuf[0] = '\0'
   inc ui.shownGen
   ui.viewKey = ""
+  ui.shotKey = ""
 
 proc viewBuilds*(ui: VibFolderUi): int =
   ## How many times the shown rows were built. For tests.
@@ -429,11 +342,16 @@ proc columnWidths(rows: seq[FolderRow]; names: seq[string]): seq[float32] =
     if name == ColFile: result[i] = fileW
     elif name == ColKind: result[i] = max(result[i], kindW)
 
-proc ensureView(ui: var VibFolderUi) =
+proc ensureView(ui: var VibFolderUi; st: AppState) =
   ## Sort, filter, cell text and column widths for the current result. Rebuilt
-  ## when the result, the sort or the filter changes, not on every frame.
+  ## when the result, the sort, the filter or the loaded shot logs change, not on
+  ## every frame. The shot log match is made here, in memory: no file is read.
+  let shots = $st.shotLogCount & "|" & $st.shotLogsRevision
+  if shots != ui.shotKey:
+    ui.shotKey = shots
+    ui.table.rows.withShots(st)
   let key = $ui.shownGen & "|" & $ord(ui.sortCol) & "|" & $ui.sortDown & "|" &
-    bufText(ui.filterBuf)
+    bufText(ui.filterBuf) & "|" & shots
   if key == ui.viewKey: return
   let shown = ui.viewOf
   ui.viewRows = shown.rows
@@ -489,7 +407,37 @@ proc setAll(ui: var VibFolderUi; on: bool) =
   else:
     for item in ui.listed: ui.unticked[item.path] = true
 
+proc chosenText(c: FolderChoice): string =
+  ## What the user picked, in words.
+  if c.folder.len > 0: ChosenFolder & c.folder
+  elif c.files.len == 1: ChosenFiles & c.files[0]
+  elif c.files.len > 1: ChosenFiles & $c.files.len & " files, from " &
+    c.files[0].parentDir
+  else: NothingChosen
+
+proc drawChoice(ui: var VibFolderUi; marks: var Marks) =
+  ## The Folder... and Files... buttons, the subfolders tick and what was picked.
+  let busy = ui.running
+  igBeginDisabled(busy)
+  if igButton(FolderButton.cstring, ImVec2_c(x: 0, y: 0)): ui.askFolder = true
+  marks.mark("vibfolder.folder")
+  igSameLine(0, 8)
+  if igButton(FilesButton.cstring, ImVec2_c(x: 0, y: 0)): ui.askFiles = true
+  marks.mark("vibfolder.files")
+  igSameLine(0, 8)
+  var sub = ui.choice.subfolders
+  if igCheckbox(SubfoldersLabel.cstring, addr sub): ui.setSubfolders(sub)
+  marks.mark("vibfolder.subfolders " & (if ui.choice.subfolders: "on" else: "off"))
+  tip(SubfoldersTip)
+  igEndDisabled()
+  let text = chosenText(ui.choice)
+  igPushTextWrapPos(0)
+  igTextUnformatted(text.cstring, nil)
+  igPopTextWrapPos()
+  marks.mark("vibfolder.chosen " & text)
+
 proc drawFiles(ui: var VibFolderUi; marks: var Marks) =
+  ui.drawChoice(marks)
   var on = 0
   for item in ui.listed:
     if item.path notin ui.unticked: inc on
@@ -505,7 +453,8 @@ proc drawFiles(ui: var VibFolderUi; marks: var Marks) =
     marks.mark("vibfolder.ticked " & count)
   if igBeginChild_Str("##files", ImVec2_c(x: 0, y: 0), 0, 0):
     if ui.listed.len == 0:
-      igTextDisabled((if ui.listing: Listing else: NoFiles).cstring)
+      if ui.listing: igTextDisabled(Listing.cstring)
+      elif ui.choice.hasChoice: igTextDisabled(NoFiles.cstring)
     else:
       for i, item in ui.listed:
         let name = item.path.extractFilename
@@ -520,7 +469,8 @@ proc drawFiles(ui: var VibFolderUi; marks: var Marks) =
         else: marks.mark("vibfolder.untick " & name)
     igEndChild()
 
-proc drawResults(ui: var VibFolderUi; marks: var Marks; commands: var seq[Command]) =
+proc drawResults(ui: var VibFolderUi; st: AppState; marks: var Marks;
+    commands: var seq[Command]) =
   igSetNextItemWidth(-1)
   discard igInputTextWithHint("##filter".cstring,
     (IconFilter & "  " & FilterHint).cstring, cast[cstring](addr ui.filterBuf[0]),
@@ -529,7 +479,10 @@ proc drawResults(ui: var VibFolderUi; marks: var Marks; commands: var seq[Comman
   if not ui.have:
     igTextDisabled(NoRows.cstring)
     return
-  ui.ensureView()
+  ui.ensureView(st)
+  if st.shotLogCount == 0:
+    igTextUnformatted(NoShotLog.cstring, nil)
+    marks.mark("vibfolder.noshotlog")
   let names = headers()
   let rows = ui.viewRows
   let widths = ui.viewWidths
@@ -551,7 +504,8 @@ proc drawResults(ui: var VibFolderUi; marks: var Marks; commands: var seq[Comman
   igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
   for c, name in names:
     if igTableSetColumnIndex(cint(c)):
-      if name in [ColFile, ColKind, ColSentence]:
+      if name in [ColFile, ColController, ColVibrator, ColTime, ColFfid, ColSourceLine,
+          ColSourcePoint, ColKind, ColSentence]:
         markColumn(name, igGetContentRegionAvail().x, marks)
       var col = fcPath
       let sorts = sortColumn(name, col)
@@ -576,7 +530,6 @@ proc drawResults(ui: var VibFolderUi; marks: var Marks; commands: var seq[Comman
       igTableNextRow(0, 0)
       igPushID_Int(cint(i))
       discard igTableNextColumn()
-      let fileRoom = igGetContentRegionAvail().x
       let flags = ImGui_SelectableFlags_SpanAllColumns.cint or
         ImGui_SelectableFlags_AllowDoubleClick.cint
       let on = row.path == ui.selected
@@ -588,13 +541,16 @@ proc drawResults(ui: var VibFolderUi; marks: var Marks; commands: var seq[Comman
             listFolder: false)
       marks.mark("vibfolder.row " & name & " " & verdictWord(row))
       if name.len > 0 and igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
-        if textWidth(name) > fileRoom: tip(name)
+        tip(row.path)
       for c in 1 ..< cells.len:
         var cellMark = ""
         if c < names.len and names[c] == ColSentence:
           cellMark = "vibfolder.sentence " & name & " " & cells[c]
         elif c < names.len and names[c] == ColKind:
           cellMark = "vibfolder.kind " & name & " " & cells[c]
+        elif c < names.len and names[c] in [ColController, ColVibrator, ColTime, ColFfid,
+            ColSourceLine, ColSourcePoint]:
+          cellMark = "vibfolder.cell " & names[c] & " " & name & " " & cells[c]
         textCell(cells[c], cellMark, marks)
       igPopID()
   ImGuiListClipper_End(clipper)
@@ -602,27 +558,40 @@ proc drawResults(ui: var VibFolderUi; marks: var Marks; commands: var seq[Comman
   igEndTable()
   ui.drawDetail(rows, marks)
 
-proc runWhy(ui: VibFolderUi; st: AppState; n: int): string =
-  if not hasProfile(st): NoProfile
+proc runWhy(ui: VibFolderUi; config: VibQcConfig; n: int): string =
+  if not config.configured: NotConfigured
+  elif not ui.choice.hasChoice: NothingChosen
   elif ui.listing or not ui.haveList: Listing
   elif n == 0: NoTicked
   else: ""
+
+proc drawConfig(config: VibQcConfig; marks: var Marks) =
+  ## The configuration in force, as read-only text; or the one sentence that
+  ## says it is not configured, and where to configure it.
+  igPushTextWrapPos(0)
+  if not config.configured:
+    igTextUnformatted(NotConfigured.cstring, nil)
+    marks.mark("vibfolder.notconfigured")
+    igTextUnformatted(WhereToConfigure.cstring, nil)
+    marks.mark("vibfolder.configure where")
+  else:
+    let lines = configLines(config)
+    for line in lines:
+      igTextUnformatted(line.cstring, nil)
+    marks.mark("vibfolder.profile " & lines.join(" "))
+  igPopTextWrapPos()
 
 proc drawVibFolder*(ui: var VibFolderUi; title: string; st: AppState;
     marks: var Marks): VibFolderOutput =
   ## The window titled `title`. A list asked for since the last draw starts here.
   ui.consider(st)
-  if igBegin(title.cstring, nil, 0):
+  var open = true
+  if igBegin(title.cstring, addr open, 0):
     ui.focus.watch()
     marks.markWindow("vibfolder")
-    let profiled = hasProfile(st)
-    let lines = if profiled: profileLines(st.project.doc.vibProfile) else: @[NoProfile]
-    igPushTextWrapPos(0)
-    for line in lines:
-      igTextUnformatted(line.cstring, nil)
-    igPopTextWrapPos()
-    marks.mark("vibfolder.profile " & lines.join(" "))
-    if ui.status.len > 0:
+    let config = vibQcConfig(st)
+    drawConfig(config, marks)
+    if ui.status.len > 0 and ui.status != NothingChosen:
       igTextUnformatted(ui.status.cstring, nil)
     if ui.capped and not ui.listing:
       igTextUnformatted(CappedNote.cstring, nil)
@@ -636,13 +605,13 @@ proc drawVibFolder*(ui: var VibFolderUi; title: string; st: AppState;
         result.commands.add Command(kind: ckCancelJob, job: ui.qcJob)
       marks.mark("vibfolder.cancel")
     else:
-      let canRun = ui.haveList and not ui.listing and profiled and n > 0
+      let canRun = ui.haveList and not ui.listing and config.configured and n > 0
       igBeginDisabled(not canRun)
       if igButton(RunButton.cstring, ImVec2_c(x: 0, y: 0)): ui.submitQc(st)
       igEndDisabled()
       marks.mark("vibfolder.run")
       if not canRun: marks.mark("vibfolder.run.disabled")
-      tip(ui.runWhy(st, n), allowDisabled = true)
+      tip(ui.runWhy(config, n), allowDisabled = true)
       if ui.have:
         igSameLine(0, 8)
         if igButton(CopyButton.cstring, ImVec2_c(x: 0, y: 0)):
@@ -651,8 +620,10 @@ proc drawVibFolder*(ui: var VibFolderUi; title: string; st: AppState;
         igSameLine(0, 8)
         if igButton(ExportButton.cstring, ImVec2_c(x: 0, y: 0)):
           result.exportAsked = true
-          let base = if ui.folder.len > 0: ui.folder else: st.fileList.folder
-          result.exportPath = base / SuggestedName
+          let base = if ui.choice.folder.len > 0: ui.choice.folder
+            elif ui.choice.files.len > 0: ui.choice.files[0].parentDir
+            else: ""
+          result.exportPath = if base.len > 0: base / SuggestedName else: SuggestedName
         marks.mark("vibfolder.export")
     if ui.have:
       let line = summaryLine(ui.table.totals)
@@ -664,7 +635,6 @@ proc drawVibFolder*(ui: var VibFolderUi; title: string; st: AppState;
         let said = shownProblem(p)
         igTextUnformatted(said.cstring, nil)
         marks.mark("vibfolder.problem " & said)
-    ui.drawWeights(st, marks, result.commands)
     if igBeginTabBar("##vibfoldertabs", tabFlags):
       var filesFlags = 0.cint
       var resultsFlags = 0.cint
@@ -682,10 +652,18 @@ proc drawVibFolder*(ui: var VibFolderUi; title: string; st: AppState;
       marks.mark("vibfolder.tab Results")
       if resultsOn:
         ui.tab = vtResults
-        ui.drawResults(marks, result.commands)
+        ui.drawResults(st, marks, result.commands)
         marks.mark("vibfolder.results")
         igEndTabItem()
       igEndTabBar()
     marks.markOverflow("vibfolder")
   ui.focus.settle()
   igEnd()
+  if not open: result.closed = true
+  result.askFolder = ui.askFolder
+  result.askFiles = ui.askFiles
+  ui.askFolder = false
+  ui.askFiles = false
+  result.askAt = if ui.choice.folder.len > 0: ui.choice.folder & DirSep
+    elif ui.choice.files.len > 0: ui.choice.files[0].parentDir & DirSep
+    else: ""

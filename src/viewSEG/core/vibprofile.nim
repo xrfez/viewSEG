@@ -36,6 +36,9 @@ type
     targetPct*: float64 = NaN ## NaN: the user did not type a drive level
     referenceId*: string ## the reference's archive id; "" is none; never samples
     topHz*: float64 = NaN ## the top typed for `referenceId`; NaN: none
+    fromFile*: string
+      ## the name of the signature file the window that set these was showing;
+      ## a label for the user, never read back as a setting
     later*: seq[NifNode]
       ## fields of the profile tree this version does not know, written back
 
@@ -80,7 +83,7 @@ func `==`*(a, b: VibQcProfile): bool =
     a.forceHundredSet == b.forceHundredSet and
     a.forceHundredSetKnown == b.forceHundredSetKnown and
     sameFloat(a.targetPct, b.targetPct) and a.referenceId == b.referenceId and
-    sameFloat(a.topHz, b.topHz)
+    sameFloat(a.topHz, b.topHz) and a.fromFile == b.fromFile
 
 func referenceProblem*(id: string): string =
   ## What `applied` says when `id` is not among the archive ids it was given.
@@ -90,22 +93,29 @@ func referenceProblem*(id: string): string =
 func profileOf*(limits: QcLimits; qcWindowMs: float64; harmonics: int;
     accelSet: AccelSet; scale: ForceScale; forceHundredPct, targetPct: float64;
     referenceId: string; topHz: float64; forceHundredUnit = "";
-    forceHundredSet = asB): VibQcProfile =
+    forceHundredSet = asB; fromFile = ""): VibQcProfile =
   ## The profile a Vibrator window is using. Pass that window's values, not a
   ## signature file's built-in reset (which clears a typed 100 % force and drive
   ## level). `referenceId` is the archive id, never samples. `topHz` is the top
   ## typed for that reference; NaN when none is. A 100 % force or drive level
   ## left NaN was not typed. `forceHundredUnit` is the unit that force was typed
   ## in; empty when none was said. `forceHundredSet` is the accelerometer set a
-  ## pound-counts force was typed on; the window's, so it is known.
+  ## pound-counts force was typed on; the window's, so it is known. `fromFile`
+  ## names the file the window showed.
   VibQcProfile(limits: limits, qcWindowMs: qcWindowMs, harmonics: harmonics,
     accelSet: accelSet, forceScale: scale, forceHundredPct: forceHundredPct,
     forceHundredUnit: forceHundredUnit, forceHundredSet: forceHundredSet,
     forceHundredSetKnown: true, targetPct: targetPct,
-    referenceId: referenceId, topHz: topHz)
+    referenceId: referenceId, topHz: topHz, fromFile: fromFile)
 
 func typedForce(x: float64): bool {.inline.} =
   x > 0 and x < Inf
+
+func filesGiveForce*(targetPct: float64; scale: ForceScale): bool =
+  ## Whether each signature file can give its own 100 % force: a `.dat` from
+  ## the controller's target force when a drive level was typed, a `.vib` from
+  ## its hold-down weight when the accelerometer constant is set.
+  typedForce(targetPct) or typedForce(scale.vibAccMvPerCount)
 
 func applied*(p: VibQcProfile; archiveIds: openArray[string]): VibQcAsk =
   ## The plot options and ask parameters a QC run on another file must use.
@@ -120,6 +130,6 @@ func applied*(p: VibQcProfile; archiveIds: openArray[string]): VibQcAsk =
     forceHundredSetKnown: p.forceHundredSetKnown)
   if p.referenceId.len == 0 or p.referenceId notin archiveIds:
     result.problems.add referenceProblem(p.referenceId)
-  if not typedForce(p.forceHundredPct):
+  if not typedForce(p.forceHundredPct) and not filesGiveForce(p.targetPct, p.forceScale):
     result.problems.add ForceNotJudged
     result.options.forceHundredPct = NaN

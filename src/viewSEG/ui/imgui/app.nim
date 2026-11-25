@@ -990,6 +990,8 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     of dkOutputLog: ui.output.setLogFile(ev.paths[0])
     of dkCutDest: ui.cut.setFolder(ev.paths[0])
     of dkMissingFolder: ui.missing.setFolder(ev.paths[0])
+    of dkVibFolder: ui.vibfolder.setFolder(ev.paths[0])
+    of dkVibFiles: ui.vibfolder.setFiles(ev.paths)
     of dkExportShotSps: ui.shotLog.setSpsDest(ev.paths[0])
     of dkShotLog:
       ui.core.apply Command(kind: ckImportShotLog, logPath: ev.paths[0])
@@ -1197,7 +1199,6 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       ui.quality.requestScan()
     of maVibFolder:
       ui.windows.bringForward(awVibFolder)
-      ui.vibfolder.requestList()
     of maOutput:
       ui.output.open($(ui.core.fileList.folder))
       ui.windows.bringForward(awOutput)
@@ -1507,8 +1508,6 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     templateAvailable: ui.core.templateView(ui.core.findPanel(MainPanel)).available,
     qualityReady: qualityReady(ui.core.fileList.folder.len > 0),
     qualityWhy: qualityWhy(ui.core.fileList.folder.len > 0),
-    folderReady: folderReady(ui.core.fileList.folder.len > 0),
-    folderWhy: folderWhy(ui.core.fileList.folder.len > 0),
     outputReady: ui.core.fileList.folder.len > 0,
     outputWhy: if ui.core.fileList.folder.len > 0: "" else: OutputNeedFolder,
     cutWhy: ui.core.cutProblem(), shotLogFocused: ui.shotLog.takesUndo)
@@ -1527,7 +1526,6 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.core.apply Command(kind: ckSettings, settings: s)
   for w in menu.pickedWindows:
     if w == awQuality and ui.windows.willShow(w): ui.quality.requestScan()
-    if w == awVibFolder and ui.windows.willShow(w): ui.vibfolder.requestList()
     ui.windows.picked(w)
   if menu.toggleJoin:
     if ui.join.shown: ui.join.shown = false else: ui.join.open()
@@ -1662,6 +1660,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     for c in folderQc.commands.mitems:
       ui.core.apply move c
     if folderQc.exportAsked: ui.ask(dkExportVibFolder, folderQc.exportPath)
+    if folderQc.askFolder: ui.ask(dkVibFolder, folderQc.askAt)
+    if folderQc.askFiles: ui.ask(dkVibFiles, folderQc.askAt)
+    if folderQc.closed: ui.windows.hide(awVibFolder)
   if ui.windows.shows(awOutput):
     ui.windows.beforeDrawing(awOutput)
     var written = ui.output.drawOutput(outputTitle, ui.core, ui.fonts, ui.theme, ui.marks)

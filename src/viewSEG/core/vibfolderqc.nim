@@ -3,9 +3,13 @@
 ## is read. The job that fills a table is `core/vibfolderjobs`; the sentences
 ## are `view/vibfolderwords`.
 
-import std/[algorithm, math, os, strutils, tables]
+import std/[algorithm, math, options, os, strutils, tables]
 from sigtypes import SignatureKind, SweepInfo, VibWeights, groupDigits
-import sigjudge, units, vibjudge
+import shotfollow, shotfollowtarget, shotlog, sigjudge, units, vibjudge
+
+const
+  ListingPhase* = "Listing the folder."
+  CannotListFolder* = "The folder could not be listed."
 
 type
   FolderOutcome* = enum
@@ -27,12 +31,26 @@ type
     ## One line of the controller's QC beside this window's.
     label*, viewseg*, controller*, tip*: string
 
+  FolderShot* = object
+    ## The shot log's row for a sweep, as the log gives it. `found` is false
+    ## when no log is loaded or no row fits; the texts are then empty.
+    found*: bool
+    ffid*, line*, point*: string
+
   FolderRow* = object
     ## One file. `pair` is the partner's path, or "". A paired file keeps its
-    ## own verdict, sentence and measures.
+    ## own verdict, sentence and measures. `controller`, `vibrator` and
+    ## `triggerNs` are what the file list shows (a `.vib` takes its partner's);
+    ## 0 is not known. `query` is what a shot log is asked.
     path*: string
     kind*: SignatureKind
     pair*: string
+    controller*: int64
+    vibrator*: int
+    triggerNs*: int64
+    timeIsStart*: bool ## `triggerNs` is the second a lone `.vib` began
+    query*: ShotQuery
+    shot*: FolderShot
     outcome*: FolderOutcome
     verdict*: QcVerdict
     sentence*: string
@@ -48,6 +66,7 @@ type
   FolderColumn* = enum
     ## A column a sort key names. Measures sort by the measured number.
     fcPath, fcKind, fcPair, fcOutcome, fcVerdict, fcSentence, fcPolarity, fcProblem
+    fcController, fcVibrator, fcTime
     fcAvgPhase, fcPeakPhase, fcAvgDistortion, fcPeakDistortion, fcAvgForce, fcPeakForce
 
   FolderTotals* = object
@@ -199,6 +218,9 @@ func cmpCol(a, b: FolderRow; c: FolderColumn): int =
   of fcSentence: cmp(a.sentence, b.sentence)
   of fcPolarity: cmp(a.polarity, b.polarity)
   of fcProblem: cmp(a.problem, b.problem)
+  of fcController: cmp(a.controller, b.controller)
+  of fcVibrator: cmp(a.vibrator, b.vibrator)
+  of fcTime: cmp(a.triggerNs, b.triggerNs)
   of fcAvgPhase, fcPeakPhase, fcAvgDistortion, fcPeakDistortion, fcAvgForce, fcPeakForce:
     cmpFloat(measuredOf(a, limitOf(c)), measuredOf(b, limitOf(c)))
 
@@ -223,7 +245,10 @@ proc sortedBy*(table: FolderTable; columns: openArray[FolderColumn]): FolderTabl
 func haystack(row: FolderRow): string =
   result = row.path & "\n" & $row.kind & "\n" & row.pair & "\n" & row.sentence &
     "\n" & row.polarity & "\n" & row.extraPolarity & "\n" & row.problem & "\n" &
-    $row.verdict & "\n" & $row.outcome
+    $row.verdict & "\n" & $row.outcome & "\n" & row.shot.ffid & "\n" & row.shot.line &
+    "\n" & row.shot.point
+  if row.controller != 0: result.add "\n" & $row.controller
+  if row.vibrator != 0: result.add "\n" & $row.vibrator
   for w in row.warnings: result.add '\n'; result.add w
   for w in row.extraWarnings: result.add '\n'; result.add w
   for w in row.weightWords: result.add '\n'; result.add w
@@ -240,3 +265,36 @@ proc filtered*(table: FolderTable; text: string): FolderTable =
       if want in haystack(row).toLowerAscii: kept.add row
     result.rows = kept
   result.totals = totalsOf(result.rows)
+
+func stamped*(row: FolderRow; info, partner: SweepInfo; pairPath: string): FolderRow =
+  ## `row` with the electronics number, vibrator number, trigger time and shot
+  ## log query of the sweep `info` (and, for a `.vib`, its partner `partner`
+  ## when `pairPath` names one). A `.vib` has neither serial nor vibrator of
+  ## its own: the partner's are used.
+  result = row
+  result.controller = info.controller
+  result.vibrator = info.vibrator
+  result.triggerNs = info.triggerNs
+  result.timeIsStart = info.kind == sgVib and info.timeIsStart
+  var pairNs = 0'i64
+  var pairFile = -1'i64
+  if info.kind == sgVib and pairPath.len > 0:
+    if info.controller == 0: result.controller = partner.controller
+    if info.vibrator == 0: result.vibrator = partner.vibrator
+    pairNs = partner.triggerNs
+    pairFile = partner.fileNumber
+    if pairNs != 0:
+      result.triggerNs = pairNs
+      result.timeIsStart = false
+  result.query = signatureQuery(info, pairNs, pairFile)
+
+proc shotOf*(q: ShotQuery; ix: ShotIndex; view: ShotView): FolderShot =
+  ## The row of `view` that `ix` (built from it) finds for `q`; none found
+  ## when no row fits. A row's own numbers are given as the log has them.
+  let m = match(ix, q)
+  if m.row >= 0 and m.row < view.rows.len:
+    let r = view.rows[m.row]
+    result.found = true
+    if r.fileNumber.isSome: result.ffid = $r.fileNumber.get
+    if r.sourceLine == r.sourceLine: result.line = sensible(r.sourceLine)
+    if r.shotPoint == r.shotPoint: result.point = sensible(r.shotPoint)

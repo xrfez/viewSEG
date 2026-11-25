@@ -218,6 +218,7 @@ proc writeVibProfile(w: var NifWriter; p: VibQcProfile) =
   if finite(p.targetPct): w.value("targetPct", p.targetPct)
   if p.referenceId.len > 0: w.value("referenceId", p.referenceId)
   if finite(p.topHz): w.value("topHz", p.topHz)
+  if p.fromFile.len > 0: w.value("fromFile", p.fromFile)
   for n in p.later: w.add n
   w.close
 
@@ -761,6 +762,7 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "targetPct": r.number(c, TargetPctRange, d.vibProfile.targetPct)
       of "referenceId": r.text(c, d.vibProfile.referenceId)
       of "topHz": r.number(c, TopHzRange, d.vibProfile.topHz)
+      of "fromFile": r.text(c, d.vibProfile.fromFile)
       else: d.vibProfile.later.add c
 
 proc columnRole(name: string): tuple[ok: bool; role: ColumnRole] =

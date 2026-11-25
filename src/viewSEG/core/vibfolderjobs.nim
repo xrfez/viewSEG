@@ -12,8 +12,8 @@ import std/[math, os, strutils, tables]
 import parseSEG
 import parseSEG/common/diagnostics
 import processSEG/core/shift
-import analysis, filesystem, jobs, project, references, session, settings, signatures,
-  sigjudge, sweeppairs, threads, traceids, vibalign, vibanalysis,
+import analysis, filejobs, filekinds, filesystem, jobs, project, references, session, settings,
+  signatures, sigjudge, sweepinfo, sweeppairs, threads, traceids, vibalign, vibanalysis,
   vibfolderqc, vibjudge, vibprofile
 import sigtypes except QcLimit
 
@@ -21,6 +21,18 @@ const FolderScale* = 1000
   ## Files of progress in one file. A job's `done div FolderScale` is files finished.
 
 type
+  FolderChoice* = object
+    ## What the user picked to run: a folder (its subfolders only when
+    ## `subfolders`) and/or single files. Nothing else is listed.
+    folder*: string
+    files*: seq[string]
+    subfolders*: bool
+
+  FolderListSink* = ref object
+    ## Filled on the job thread before the list job returns.
+    files*: seq[FolderListed]
+    capped*: bool
+
   FolderQcSink* = ref object
     ## Filled on the job thread before the job returns. Read it after the job ends.
     result*: FolderTable
@@ -44,6 +56,53 @@ func sameDt(a, b: float64): bool {.inline.} =
   a > 0 and b > 0 and abs(a - b) <= 1e-9 * max(a, b)
 
 func typedForce(x: float64): bool {.inline.} = x > 0 and x < Inf
+
+func hasChoice*(c: FolderChoice): bool =
+  ## Whether a folder or a file was picked.
+  c.folder.len > 0 or c.files.len > 0
+
+func choicePaths(c: FolderChoice): seq[string] =
+  result = @[]
+  if c.folder.len > 0: result.add c.folder
+  for f in c.files: result.add f
+
+proc folderListSpec*(c: FolderChoice): JobSpec =
+  ## The job that lists the signature files `c` names: background, reading
+  ## the chosen folder and files.
+  JobSpec(title: "List vibrator files", lane: jlBackground, reads: choicePaths(c))
+
+proc folderListWork*(c: FolderChoice; sink: FolderListSink): JobWork =
+  ## Lists the signature files `c` names, each with the header facts read
+  ## (never a sample), in natural order of file name. `c.subfolders` is
+  ## honoured and nothing outside the choice is looked at. The sink is set
+  ## before the job returns. A folder that cannot be read fails the job.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.checkCancelled()
+    ctx.setPhase(ListingPhase)
+    var capped = false
+    var paths: seq[string] = @[]
+    try:
+      paths = listedNames(choicePaths(c), c.subfolders, capped,
+        proc (found: int): bool {.gcsafe, raises: [].} =
+        ctx.progress(int64(found), 0))
+    except OSError:
+      raise newException(ValueError, CannotListFolder)
+    ctx.checkCancelled()
+    var files: seq[FolderListed] = @[]
+    for i, path in paths:
+      ctx.checkCancelled()
+      discard ctx.progress(int64(i), int64(paths.len))
+      let kind = sniff(path)
+      if kind notin SignatureFileKinds: continue
+      var info = SweepInfo(kind: kind.sweepKindOf)
+      try:
+        info = readSweepInfo(path, kind.sweepKindOf, fs.getFileSize(path))
+      except OSError as e:
+        info.problem = if e.msg.len > 0: e.msg else: "it cannot be read"
+      files.add FolderListed(path: path, info: info)
+    if sink != nil:
+      sink.capped = capped
+      sink.files = files
 
 proc folderQcSpec*(files: openArray[FolderListed]; reference = ""): JobSpec =
   ## The job that judges `files`: background, reading each file, and the
@@ -121,16 +180,18 @@ proc stopJob(sink: FolderQcSink; table: var FolderTable) =
   finish(sink, table)
   raise newException(JobCancelledError, "Cancelled.")
 
+func infoOf(files: seq[FolderListed]; path: string): SweepInfo =
+  for f in files:
+    if f.path == path: return f.info
+
 proc skipFrom(rows: var seq[FolderRow]; files: seq[FolderListed];
     pairs: Table[string, string]; frm: int) =
   for j in frm ..< files.len:
     let item = files[j]
-    rows.add FolderRow(path: item.path, kind: item.info.kind,
-      pair: pairs.getOrDefault(item.path), outcome: foSkipped, problem: "Cancelled.")
-
-func infoOf(files: seq[FolderListed]; path: string): SweepInfo =
-  for f in files:
-    if f.path == path: return f.info
+    let partner = pairs.getOrDefault(item.path)
+    rows.add stamped(FolderRow(path: item.path, kind: item.info.kind,
+      pair: partner, outcome: foSkipped, problem: "Cancelled."), item.info,
+      infoOf(files, partner), partner)
 
 func sweepsOf(files: seq[FolderListed]; pairs: Table[string, string]): seq[
     tuple[vibrator: int; weights: VibWeights]] =
@@ -310,7 +371,9 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
     files: seq[FolderListed]; sink: FolderQcSink; choice: SignatureChoice;
     reference: FolderReference) =
   var table = FolderTable(problems: ask.problems, rows: @[])
-  if not typedForce(ask.options.forceHundredPct) and ForceNotJudged notin table.problems:
+  if not typedForce(ask.options.forceHundredPct) and
+      not filesGiveForce(ask.options.targetPct, ask.forceScale) and
+      ForceNotJudged notin table.problems:
     table.problems.add ForceNotJudged
   var keys: seq[PairKey] = @[]
   for f in files: keys.add pairKeyOf(f.path, f.info)
@@ -362,22 +425,26 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
       row.weightWords = weightFindings(item.info.weights, weights.holdDownKg,
         weights.baseplateMassKg, weights.reactionMassKg)
       if note.len > 0: row.warnings.add note
-      table.rows.add row
+      table.rows.add stamped(row, item.info, infoOf(files, partner), partner)
     except JobCancelledError:
-      table.rows.add FolderRow(path: item.path, kind: item.info.kind, pair: partner,
-        outcome: foSkipped, problem: "Cancelled.")
+      table.rows.add stamped(FolderRow(path: item.path, kind: item.info.kind,
+        pair: partner, outcome: foSkipped, problem: "Cancelled."), item.info,
+        infoOf(files, partner), partner)
       skipFrom(table.rows, files, paired.pairs, i + 1)
       stopJob(sink, table)
     except CatchableError as e:
       if ctx.cancelled:
-        table.rows.add FolderRow(path: item.path, kind: item.info.kind, pair: partner,
-          outcome: foSkipped, problem: "Cancelled.")
+        table.rows.add stamped(FolderRow(path: item.path, kind: item.info.kind,
+          pair: partner, outcome: foSkipped, problem: "Cancelled."), item.info,
+          infoOf(files, partner), partner)
         skipFrom(table.rows, files, paired.pairs, i + 1)
         stopJob(sink, table)
       let why = if e.msg.len > 0: e.msg else: $e.name
-      table.rows.add FolderRow(path: item.path, kind: item.info.kind, pair: partner,
-        outcome: foProblem, problem: why, weightWords: weightFindings(item.info.weights,
-        weights.holdDownKg, weights.baseplateMassKg, weights.reactionMassKg))
+      table.rows.add stamped(FolderRow(path: item.path, kind: item.info.kind,
+        pair: partner, outcome: foProblem, problem: why,
+        weightWords: weightFindings(item.info.weights, weights.holdDownKg,
+        weights.baseplateMassKg, weights.reactionMassKg)), item.info,
+        infoOf(files, partner), partner)
     inc done
     discard ctx.progress(int64(done) * FolderScale, int64(count) * FolderScale)
   finish(sink, table)

@@ -2,11 +2,17 @@
 ## file, and the same columns as CSV. Drawing lives in the frontend.
 
 import std/[math, os, strutils]
-from ../core/sigtypes import SignatureKind, sgDat, sgNone, sgVib
-import ../core/[settings, units, vibfolderqc, vibjudge, vibprofile]
+from ../core/sigtypes import SignatureKind, sgDat, sgNone, sgVib, timeText
+import ../core/[project, settings, units, vibfolderconf, vibfolderqc, vibjudge, vibprofile]
 
 const
   ColFile* = "File"
+  ColController* = "Electronics number"
+  ColVibrator* = "Vibrator number"
+  ColTime* = "Time"
+  ColFfid* = "FFID"
+  ColSourceLine* = "Source line"
+  ColSourcePoint* = "Source point"
   ColKind* = "Kind"
   ColPair* = "Pair"
   ColVerdict* = "Verdict"
@@ -30,7 +36,8 @@ func measureHead(l: QcLimit): string =
 
 func headers*(): seq[string] =
   ## The column labels, in order.
-  result = @[ColFile, ColKind, ColPair, ColVerdict, ColSentence]
+  result = @[ColFile, ColController, ColVibrator, ColTime, ColFfid, ColSourceLine,
+    ColSourcePoint, ColKind, ColPair, ColVerdict, ColSentence]
   for l in QcLimit: result.add measureHead(l)
   result.add ColPolarity
   result.add ColWarnings
@@ -100,9 +107,20 @@ func warningsCell*(row: FolderRow): string =
     if result.len > 0: result.add "; "
     result.add joinWords(row.weightWords)
 
+func numberCell(n: int64): string =
+  if n > 0: $n else: ""
+
+func timeCell*(row: FolderRow): string =
+  ## The sweep's trigger time as the file list shows it: to the millisecond;
+  ## a lone `.vib` states only the second its recording began.
+  if row.triggerNs == 0: ""
+  elif row.timeIsStart: "began " & timeText(row.triggerNs, 0)[11 .. ^1]
+  else: timeText(row.triggerNs, 3)
+
 func cells(row: FolderRow): seq[string] =
-  result = @[row.path.extractFilename, kindLabel(row.kind), row.pair.extractFilename,
-    verdictCell(row), sentenceOf(row)]
+  result = @[row.path.extractFilename, numberCell(row.controller),
+    numberCell(row.vibrator), timeCell(row), row.shot.ffid, row.shot.line, row.shot.point,
+    kindLabel(row.kind), row.pair.extractFilename, verdictCell(row), sentenceOf(row)]
   for l in QcLimit: result.add measureCell(row, l)
   result.add polarityCell(row)
   result.add warningsCell(row)
@@ -173,21 +191,27 @@ func resultsCsv*(table: FolderTable): string =
     result.add '\n'
 
 const
-  NoProfile* = "No profile yet: open a signature file, set the Vibrator " &
-    "window as you want it, and choose Use as profile"
   ProfileStored* = "Stored as the project's vibrator QC profile."
-  FolderTip* = "Judge each vibrator signature file in the open folder, " &
-    "including the folders under it, with the project's profile."
-  NeedFolder = "Open a folder first."
+  FolderTip* = "Judge the vibrator signature files you choose, with the project's " &
+    "vibrator QC configuration."
+  NoShotLog* = "No shot log is loaded: FFID and source point are not shown."
+  NothingChosen* = "Choose a folder or files."
+  FolderButton* = "Folder..."
+  FilesButton* = "Files..."
+  SubfoldersLabel* = "Include subfolders"
+  SubfoldersTip* = "Also run the files in the folders under the chosen folder. Off: " &
+    "only the files in the folder itself."
+  ChosenFolder* = "Folder: "
+  ChosenFiles* = "Files: "
   Ready* = "Ready."
-  Listing* = "Listing the folder."
+  Listing* = ListingPhase
   Judging* = "Judging the signature files."
   Stopped* = "The run was stopped."
   RunFailed* = "The run failed."
-  CannotList* = "The folder could not be listed."
+  CannotList* = CannotListFolder
   NoFiles* = "No signature files in this folder."
   NoTicked* = "Tick at least one file."
-  NoRows* = "No results yet. Tick the files and choose Run."
+  NoRows* = "No results yet. Choose a folder or files, tick them and choose Run."
   RunButton* = "Run"
   AllButton* = "All"
   NoneButton* = "None"
@@ -212,14 +236,6 @@ func rowCells*(row: FolderRow): seq[string] =
   ## The cells of one row, in `headers` order.
   cells(row)
 
-func folderReady*(hasFolder: bool): bool =
-  ## Whether Reports > Vibrator QC of a folder can open. A profile is not
-  ## needed to open the window.
-  hasFolder
-
-func folderWhy*(hasFolder: bool): string =
-  ## One sentence naming what is missing, or "" when the item can open.
-  if not hasFolder: NeedFolder else: ""
 
 func offOr(x: float64; suffix: string): string =
   if x.isNaN: "off" else: sensible(x) & suffix
@@ -261,9 +277,33 @@ func profileLines*(p: VibQcProfile): seq[string] =
     ", average force " & offOr(lim.avgForcePct, "%") &
     ", peak force " & offOr(lim.peakForcePct, "%") & "."
 
+func configLines*(c: VibQcConfig): seq[string] =
+  ## The configuration a run uses, as read-only lines: the reference measured
+  ## against, the file it was set from when known, the settings, then the job's
+  ## weights when any is set.
+  let against = if c.profile.referenceId.len == 0:
+      "each file's recorded reference"
+    elif c.referenceName.len > 0: c.referenceName
+    else: c.profile.referenceId
+  var head = "Reference: " & against & "."
+  if c.profile.fromFile.len > 0:
+    head.add " Configured from " & c.profile.fromFile & "."
+  result = @[head]
+  result.add profileLines(c.profile)
+  var kg: seq[string] = @[]
+  if not c.weights.holdDownKg.isNaN: kg.add "hold-down " & sensible(c.weights.holdDownKg) & " kg"
+  if not c.weights.baseplateMassKg.isNaN:
+    kg.add "baseplate " & sensible(c.weights.baseplateMassKg) & " kg"
+  if not c.weights.reactionMassKg.isNaN:
+    kg.add "reaction mass " & sensible(c.weights.reactionMassKg) & " kg"
+  if kg.len > 0: result.add "Job weights: " & kg.join(", ") & "."
+
 proc sortColumn*(name: string; col: var FolderColumn): bool =
   ## The sort key `name` is, when that header sorts. False for Warnings.
   if name == ColFile: col = fcPath
+  elif name == ColController: col = fcController
+  elif name == ColVibrator: col = fcVibrator
+  elif name == ColTime: col = fcTime
   elif name == ColKind: col = fcKind
   elif name == ColPair: col = fcPair
   elif name == ColVerdict: col = fcVerdict
@@ -285,6 +325,9 @@ func columnLabel*(col: FolderColumn): string =
   case col
   of fcPath: ColFile
   of fcKind: ColKind
+  of fcController: ColController
+  of fcVibrator: ColVibrator
+  of fcTime: ColTime
   of fcPair: ColPair
   of fcOutcome: "Outcome"
   of fcVerdict: ColVerdict
