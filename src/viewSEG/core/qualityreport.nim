@@ -19,9 +19,10 @@
 ## trace of the station counts in its one row, and the row names the components
 ## it has. Components are never compared across stations: each row counts only
 ## its own traces. Line and point are rounded to 1/100, and a non-finite line or
-## point shares one unknown station. The components of a build are the ones any
-## station of it has; a station with some of them but not all lacks the others
-## (`lacking`), which matters only when the build has more than one component.
+## point shares one unknown station. Components are judged file by file: in a file, a
+## station that has a trace there lacks the components that file has at other stations
+## and it does not (`lacking`, over every file; `lackFiles`, the files it lacked one in),
+## so a file of one component, or of another component set, flags nobody in the others.
 ## Unread files are not a total here.
 
 import std/[algorithm, hashes, math, sets, strutils, tables]
@@ -54,8 +55,8 @@ type
     ## One station, over every file of the scan.
     line*, point*: float64
     components*: set[uint8]   ## the components that have a trace here
-    lacking*: set[uint8]      ## components of the scan this station has none of; {} when it has
-                              ## none, or when the scan has one component
+    lackFiles*: int           ## files in which it lacked a component
+    lacking*: set[uint8]      ## components it lacked in some file; {} when it lacked none
     seen*, killed*, bad*: int ## `seen` includes killed. `bad` does not.
     counts*: array[Finding, int]
     noisyTested*, noisy*: int ## `noisy` of `noisyTested` traces; nothing shown when it is 0.
@@ -65,8 +66,8 @@ type
     ## Scan totals over the notes. Unread files are not counted.
     files*, traces*, killed*, bad*, stations*: int
     badStations*: int                             ## stations with at least one bad trace
-    lacking*: int                                 ## stations that lack a component the scan has
-    components*: int                              ## components of the scan
+    lacking*: int                                 ## stations that lacked a component in some file
+    components*: int                              ## most components one file has
     counts*: array[Finding, int]
     noisyTested*, noisy*, weakTested*, weak*: int ## As in `StationRow`.
 
@@ -76,7 +77,7 @@ type
 
   StationSortColumn* = enum
     ## A column of `StationRow`.
-    ssLine, ssPoint, ssLacking, ssSeen, ssKilled, ssBad,
+    ssLine, ssPoint, ssLacking, ssLackFiles, ssSeen, ssKilled, ssBad,
     ssHeaderDead, ssAllZero, ssConstant, ssClipped, ssSpiky, ssDcOffset,
     ssNonFinite, ssNoisyTested, ssNoisy, ssWeakTested, ssWeak
 
@@ -162,6 +163,7 @@ func cmpStation(a, b: StationRow; column: StationSortColumn): int =
   of ssLine: cmpNum(a.line, b.line)
   of ssPoint: cmpNum(a.point, b.point)
   of ssLacking: cmp(a.lacking.card, b.lacking.card)
+  of ssLackFiles: cmp(a.lackFiles, b.lackFiles)
   of ssSeen: cmp(a.seen, b.seen)
   of ssKilled: cmp(a.killed, b.killed)
   of ssBad: cmp(a.bad, b.bad)
@@ -221,6 +223,7 @@ type
 
   StAcc = object
     components: set[uint8]
+    byFile: Table[string, set[uint8]] ## its components in each file
     seen, killed, bad: int
     counts: array[Finding, int]
     noisyTested, noisy, weakTested, weak: int
@@ -229,6 +232,7 @@ type
     ## Notes gathered for `qualityReport`. Fields are private: add with
     ## `addTrace`.
     files: HashSet[string]
+    fileComponents: Table[string, set[uint8]] ## the components each file has
     stOrder: seq[StKey]
     stations: Table[StKey, StAcc]
 
@@ -262,6 +266,7 @@ func pointOf(k: StKey): float64 =
 
 proc bump(acc: var StAcc; note: TraceNote) =
   acc.components.incl note.component
+  acc.byFile.mgetOrPut(note.file, {}).incl note.component
   inc acc.seen
   if note.killed:
     inc acc.killed
@@ -282,6 +287,7 @@ proc addTrace*(b: var QualityBuild; note: TraceNote) =
   ## those counts and `bad` once. The first note of a station opens its row,
   ## including a clean trace and a killed-only station.
   b.files.incl note.file
+  b.fileComponents.mgetOrPut(note.file, {}).incl note.component
   let sk = stKey(note.line, note.point)
   b.stations.withValue(sk, acc):
     bump(acc[], note)
@@ -293,6 +299,8 @@ proc addTrace*(b: var QualityBuild; note: TraceNote) =
 
 proc addCounts(dst: var StAcc; src: StAcc) =
   dst.components = dst.components + src.components
+  for file, comps in src.byFile:
+    for c in comps: dst.byFile.mgetOrPut(file, {}).incl c
   dst.seen += src.seen
   dst.killed += src.killed
   dst.bad += src.bad
@@ -306,6 +314,8 @@ proc absorb*(b: var QualityBuild; part: QualityBuild) =
   ## Adds everything `part` counted to `b`, its stations after those `b` has
   ## (a station both have is summed), as if `part`'s notes had been added to `b` one by one.
   for name in part.files: b.files.incl name
+  for file, comps in part.fileComponents:
+    for c in comps: b.fileComponents.mgetOrPut(file, {}).incl c
   for key in part.stOrder:
     let src = part.stations[key]
     if key notin b.stations:
@@ -320,26 +330,32 @@ proc initQualityBuild*(): QualityBuild =
 
 proc qualityReport*(b: QualityBuild): QualityReport =
   ## The table of `b`, in the default sort. A row is emitted for every station
-  ## that was seen. A station lacks the components of the build it has no trace of
-  ## when it has at least one trace of some component.
+  ## that was seen. In each file a station lacks the components the file has at other
+  ## stations and the station has no trace of there.
   var traces, killed, bad, noisyTested, noisy, weakTested, weak, badStations = 0
   var counts: array[Finding, int]
-  var every: set[uint8] = {}
-  for key in b.stOrder: every = every + b.stations[key].components
-  let multi = every.card > 1
+  var most = 0
+  for comps in b.fileComponents.values: most = max(most, comps.card)
   var lacking = 0
   for key in b.stOrder:
     let acc = b.stations[key]
-    let gap = if multi and acc.components.card > 0: every - acc.components else: {}
+    var gap: set[uint8] = {}
+    var lackFiles = 0
+    for file, comps in acc.byFile:
+      let here = b.fileComponents[file] - comps
+      if here.card > 0:
+        gap = gap + here
+        inc lackFiles
     result.stations.add StationRow(line: lineOf(key), point: pointOf(key),
-      components: acc.components, lacking: gap, seen: acc.seen, killed: acc.killed,
-      bad: acc.bad, counts: acc.counts, noisyTested: acc.noisyTested, noisy: acc.noisy,
+      components: acc.components, lacking: gap, lackFiles: lackFiles, seen: acc.seen,
+      killed: acc.killed, bad: acc.bad, counts: acc.counts, noisyTested: acc.noisyTested,
+          noisy: acc.noisy,
       weakTested: acc.weakTested, weak: acc.weak)
     traces += acc.seen
     killed += acc.killed
     bad += acc.bad
     if acc.bad > 0: inc badStations
-    if gap.card > 0: inc lacking
+    if lackFiles > 0: inc lacking
     noisyTested += acc.noisyTested
     noisy += acc.noisy
     weakTested += acc.weakTested
@@ -347,18 +363,18 @@ proc qualityReport*(b: QualityBuild): QualityReport =
     for f in Finding: counts[f] += acc.counts[f]
   result.totals = Totals(files: b.files.len, traces: traces, killed: killed, bad: bad,
     stations: result.stations.len, badStations: badStations, lacking: lacking,
-    components: every.card, counts: counts, noisyTested: noisyTested, noisy: noisy,
+    components: most, counts: counts, noisyTested: noisyTested, noisy: noisy,
     weakTested: weakTested, weak: weak)
   sortStations(result.stations, DefaultStationSort)
 
 proc stationsCsv*(rows: openArray[StationRow]): string =
   ## A header and one line per station. Fields are quoted per RFC 4180.
-  result = csvLine("line", "point", "lacking components", "seen", "killed", "bad",
+  result = csvLine("line", "point", "lacking components", "files lacking", "seen", "killed", "bad",
     $qfHeaderDead, $qfAllZero, $qfConstant, $qfClipped, $qfSpiky, $qfDcOffset,
     $qfNonFinite, NoisyTestedCsv, "noisy", WeakTestedCsv, "weak")
   for r in rows:
     result.add csvLine(stationNumber(r.line), stationNumber(r.point),
-      componentList(r.lacking), $r.seen, $r.killed, $r.bad, $r.counts[qfHeaderDead],
+      componentList(r.lacking), $r.lackFiles, $r.seen, $r.killed, $r.bad, $r.counts[qfHeaderDead],
       $r.counts[qfAllZero], $r.counts[qfConstant], $r.counts[qfClipped],
       $r.counts[qfSpiky], $r.counts[qfDcOffset], $r.counts[qfNonFinite], $r.noisyTested,
       noiseCell(r.noisyTested, r.noisy), $r.weakTested, noiseCell(r.weakTested, r.weak))

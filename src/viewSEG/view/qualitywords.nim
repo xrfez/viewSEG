@@ -39,6 +39,7 @@ const
   ColLine* = "Line"
   ColPoint* = "Point"
   ColLacking* = "Lacks component"
+  ColLackFiles* = "Files lacking"
   ColSeen* = "Traces"
   ColKilled* = "Killed"
   ColBad* = "Bad"
@@ -56,8 +57,11 @@ const
   LineTip* = "The line of the station: the receiver of a shot gather's traces, the source " &
     "of a receiver gather's."
   PointTip* = "The point of the station."
-  LackingTip* = "The components the data has that this station has no trace of, when it " &
-    "has a trace of another component. Empty when it has every component."
+  LackingTip* = "The components a file has at other stations that this station has no " &
+    "trace of there, while it has a trace of another component; those of any file. Empty " &
+    "when it lacked none."
+  LackFilesTip* = "In how many files the station lacked a component: the file has it at " &
+    "other stations, this station has none of it there."
   SeenTip* = "Traces read, killed ones included, of all the components of the station."
   DeadTip* = "Traces the header marks dead. A dead trace is not also counted as all zero."
   ZeroTip* = "Traces whose every finite sample is zero."
@@ -123,7 +127,8 @@ func statisticLines*(t: Totals; side: StationSide; folder: bool): seq[string] =
       percentOf(t.weak, t.weakTested) & "%)"
   if t.components > 1:
     result.add $t.lacking & " " & noun.toLowerAscii & " " &
-      (if t.lacking == 1: "station lacks" else: "stations lack") & " a component (of " &
+      (if t.lacking == 1: "station lacks" else: "stations lack") & " a component" &
+      (if folder: " in at least one file" else: "") & " (of " &
       $t.components & " components)"
 
 func headerTip*(name: string): string =
@@ -132,6 +137,7 @@ func headerTip*(name: string): string =
   of ColLine: LineTip
   of ColPoint: PointTip
   of ColLacking: LackingTip
+  of ColLackFiles: LackFilesTip
   of ColSeen: SeenTip
   of ColClipped: ClippedTip
   of ColSpiky: SpikyTip

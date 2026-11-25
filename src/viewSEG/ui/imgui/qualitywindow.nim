@@ -48,9 +48,9 @@ type
     sort: SortSpec[StationSortColumn]
     sortsReady, sortDirty: bool
     focus: FocusClicks
-    filter: array[128, char]
-    shown: seq[int]
-    shownKey: string
+    filter: array[2, array[128, char]] ## the box of each tab
+    shown: array[2, seq[int]]
+    shownKey: array[2, string]
 
   QualityOutput* = object
     commands*: seq[Command]
@@ -124,6 +124,7 @@ func columnName(c: StationSortColumn): string =
   of ssLine: ColLine
   of ssPoint: ColPoint
   of ssLacking: ColLacking
+  of ssLackFiles: ColLackFiles
   of ssSeen: ColSeen
   of ssKilled: ColKilled
   of ssBad: ColBad
@@ -148,7 +149,8 @@ func sortText(spec: SortSpec[StationSortColumn]): string =
 func stationMark(r: StationRow): string =
   "quality.station " & filerecs.stationNumber(r.line) & " " & filerecs.stationNumber(r.point) &
     " " & $r.seen & " " & $r.killed & " " & $r.bad & " " & $r.counts[qfAllZero] & " " &
-    (if r.lacking == {}: "-" else: componentList(r.lacking).replace(", ", ","))
+    (if r.lacking == {}: "-" else: componentList(r.lacking).replace(", ", ",")) & " " &
+    $r.lackFiles
 
 proc tip(text: string) =
   if text.len == 0: return
@@ -221,7 +223,7 @@ proc stop*(ui: var QualityUi; st: AppState) =
   ## Cancels what runs and forgets the answers: the window is closed.
   ui.file.cancel(st)
   ui.folder.cancel(st)
-  ui.shownKey = ""
+  ui.shownKey = ["", ""]
 
 func reportOf(r: QualityJobResult; side: StationSide): QualityReport =
   if side == ssReceivers: r.receivers else: r.sources
@@ -243,7 +245,7 @@ proc finish(ui: var QualityUi; s: var Scan; state: JobState; error: string) =
   s.have = true
   s.status = Ready
   ui.sortDirty = true
-  ui.shownKey = ""
+  ui.shownKey = ["", ""]
   if ui.side == ssReceivers and s.result.receivers.totals.traces == 0 and
       s.result.sources.totals.traces > 0:
     ui.side = ssSources
@@ -297,13 +299,13 @@ proc consider(ui: var QualityUi; st: AppState) =
   let fileKey = if path.len > 0: path & "|" & $st.shownRevision else: ""
   if fileKey != ui.file.key:
     ui.file.cancel(st)
-    ui.shownKey = ""
+    ui.shownKey = ["", ""]
     if fileKey.len > 0: ui.submitFile(st, fileKey, path)
   let folder = st.settings.quality.folder
   let folderKey = if folder.len > 0: folder & "|" & $st.settings.quality.subfolders else: ""
   if ui.folder.key.len > 0 and ui.folder.key != folderKey:
     ui.folder.cancel(st)
-    ui.shownKey = ""
+    ui.shownKey = ["", ""]
   if ui.runAsked:
     ui.runAsked = false
     if folderKey.len > 0:
@@ -347,14 +349,15 @@ proc applySort(ui: var QualityUi) =
     sortStations(s.result.receivers.stations, ui.sort)
     sortStations(s.result.sources.stations, ui.sort)
 
-proc drawRows(ui: var QualityUi; report: QualityReport; key: string; marks: var Marks) =
-  let text = filterText(ui.filter)
+proc drawRows(ui: var QualityUi; report: QualityReport; tab: int; key: string;
+    marks: var Marks) =
+  let text = filterText(ui.filter[tab])
   let rows = report.stations
   let next = key & "|" & text & "|" & sortText(ui.sort) & "|" & $rows.len
-  if next != ui.shownKey:
-    ui.shown = filterStations(rows, text)
-    ui.shownKey = next
-  let n = ui.shown.len
+  if next != ui.shownKey[tab]:
+    ui.shown[tab] = filterStations(rows, text)
+    ui.shownKey[tab] = next
+  let n = ui.shown[tab].len
   if n == 0:
     igTextDisabled(if rows.len == 0: NoStations else: NoRows)
     marks.mark("quality.norows")
@@ -364,6 +367,8 @@ proc drawRows(ui: var QualityUi; report: QualityReport; key: string; marks: var 
   if report.totals.components > 1:
     names.add ColLacking
     keys.add ssLacking
+    names.add ColLackFiles
+    keys.add ssLackFiles
   for (name, column) in [(ColSeen, ssSeen), (ColKilled, ssKilled), (ColBad, ssBad),
       (ColHeaderDead, ssHeaderDead), (ColAllZero, ssAllZero), (ColConstant, ssConstant),
       (ColClipped, ssClipped), (ColSpiky, ssSpiky), (ColDcOffset, ssDcOffset),
@@ -379,12 +384,12 @@ proc drawRows(ui: var QualityUi; report: QualityReport; key: string; marks: var 
       if headerCell(name, placeOf(ui.sort, keys[c]), marks, headerTip(name)):
         clickSort(ui.sort, keys[c], igGetIO_Nil().KeyShift)
         ui.sortDirty = true
-        ui.shownKey = ""
+        ui.shownKey = ["", ""]
   let clipper = ImGuiListClipper_ImGuiListClipper()
   ImGuiListClipper_Begin(clipper, cint(n), -1)
   while ImGuiListClipper_Step(clipper):
     for i in clipper.DisplayStart ..< clipper.DisplayEnd:
-      let r = rows[ui.shown[int(i)]]
+      let r = rows[ui.shown[tab][int(i)]]
       igTableNextRow(0, 0)
       igPushID_Int(cint(i))
       numberCell(filerecs.stationNumber(r.line))
@@ -392,6 +397,7 @@ proc drawRows(ui: var QualityUi; report: QualityReport; key: string; marks: var 
       if report.totals.components > 1:
         if igTableNextColumn():
           igTextUnformatted(componentList(r.lacking).cstring, nil)
+        numberCell($r.lackFiles)
       numberCell($r.seen)
       numberCell($r.killed)
       tip(KilledTip)
@@ -473,7 +479,7 @@ proc drawScan(ui: var QualityUi; st: AppState; folderTab: bool; marks: var Marks
     tip(FiguresTip)
   igBeginDisabled(report.totals.traces == 0)
   if igButton(ExportButton.cstring, ImVec2_c(x: 0, y: 0)):
-    let text = filterText(ui.filter)
+    let text = filterText(ui.filter[int(folderTab)])
     var rows: seq[StationRow] = @[]
     for i in filterStations(report.stations, text): rows.add report.stations[i]
     ui.ask = ExportAsk(rows: rows, totals: report.totals, withStats: ui.withStats,
@@ -503,10 +509,10 @@ proc drawScan(ui: var QualityUi; st: AppState; folderTab: bool; marks: var Marks
   if report.totals.traces > 0:
     igSetNextItemWidth(-1)
     discard igInputTextWithHint("##filterstations", (IconFilter & "  " & FilterStations).cstring,
-      cast[cstring](addr ui.filter[0]), csize_t(ui.filter.len), 0, nil, nil)
+      cast[cstring](addr ui.filter[int(folderTab)][0]), csize_t(ui.filter[0].len), 0, nil, nil)
     marks.mark("quality.filter")
     tip(FilterStationsTip)
-    ui.drawRows(report, (if folderTab: "folder" else: "file") & $ui.side, marks)
+    ui.drawRows(report, int(folderTab), (if folderTab: "folder" else: "file") & $ui.side, marks)
 
 proc drawFolderControls(ui: var QualityUi; st: AppState; marks: var Marks;
     out0: var QualityOutput) =

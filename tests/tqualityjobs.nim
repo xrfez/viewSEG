@@ -246,13 +246,15 @@ proc main*() =
     let dead = stationAt(report.stations, 20, 1)
     doAssert dead.seen == 1 and dead.bad == 1 and dead.counts[qfHeaderDead] == 1, $dead
     doAssert dead.counts[qfAllZero] == 0
-    doAssert dead.lacking == {2'u8}, "component 2 is in the data, not at this station"
+    doAssert dead.lacking == {2'u8} and dead.lackFiles == 1,
+      "one.sgd has component 2 at another station, not at this one"
     let gone = stationAt(report.stations, 30, 1)
     doAssert gone.seen == 1 and gone.killed == 1 and gone.bad == 0, $gone
     doAssert gone.counts[qfAllZero] == 0
     doAssert report.stations.len == 3, $report.stations.len
     doAssert report.totals.files == 3 and report.totals.stations == 3, $report.totals
-    doAssert report.totals.lacking == 2 and report.totals.components == 2, $report.totals
+    doAssert gone.lacking == {}, "killed.sgd has one component: nothing to lack there"
+    doAssert report.totals.lacking == 1 and report.totals.components == 2, $report.totals
     doAssert report.totals.traces == 7 and report.totals.killed == 1, $report.totals
     doAssert report.totals.bad == 6 and report.totals.counts[qfHeaderDead] == 1
     doAssert got.sink.result.sources.totals.traces == 0, "a source side with no file"

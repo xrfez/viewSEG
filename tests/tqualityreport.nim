@@ -77,23 +77,54 @@ proc main*() =
     for c in 1'u8 .. 3'u8: add(b, "a.sgd", 10, 1, c, {})
     add(b, "a.sgd", 10, 2, 1, {})
     add(b, "a.sgd", 10, 2, 3, {})
-    # the component the station lacks may be in another file: that is not lacking
+    # a station with one component of a.sgd's three lacks the others there; the same
+    # station in b.sgd and c.sgd (files of one component) lacks nothing
     add(b, "a.sgd", 10, 3, 2, {})
-    add(b, "b.sgd", 10, 3, 1, {})
     add(b, "c.sgd", 10, 3, 3, {})
     let report = qualityReport(b)
     doAssert stationAt(report.stations, 10, 1).lacking == {}
     doAssert stationAt(report.stations, 10, 2).lacking == {2'u8}, $report.stations
-    doAssert stationAt(report.stations, 10, 3).lacking == {}
-    doAssert report.totals.lacking == 1 and report.totals.components == 3, $report.totals
+    doAssert stationAt(report.stations, 10, 2).lackFiles == 1
+    doAssert stationAt(report.stations, 10, 3).lacking == {1'u8, 3'u8}
+    doAssert stationAt(report.stations, 10, 3).lackFiles == 1
+    doAssert report.totals.lacking == 2 and report.totals.components == 3, $report.totals
     let lines = statisticLines(report.totals, ssReceivers, false)
-    doAssert "1 receiver station lacks a component (of 3 components)" in lines, $lines
-    doAssert stationsCsv(report.stations).splitLines[2].startsWith("10,2,2,2,"),
+    doAssert "2 receiver stations lack a component (of 3 components)" in lines, $lines
+    doAssert "2 receiver stations lack a component in at least one file (of 3 components)" in
+      statisticLines(report.totals, ssReceivers, true)
+    doAssert stationsCsv(report.stations).splitLines[2].startsWith("10,2,2,1,2,"),
       stationsCsv(report.stations)
     doAssert filterStations(report.stations, "10 2").len == 1
     var rows = report.stations
     sortStations(rows, @[(column: ssLacking, descending: true)])
-    doAssert rows[0].point == 2, $rows
+    doAssert rows[0].point == 3, $rows
+
+  block single_component_files_among_three_component_files_flag_nobody:
+    # Seen to fail: with the components taken as the union over the files, the stations of
+    # b.sgd and c.sgd (one component each) were flagged as lacking two.
+    var b = initQualityBuild()
+    for c in 1'u8 .. 3'u8:
+      add(b, "three.sgd", 10, 1, c, {})
+    add(b, "one.sgd", 10, 2, 1, {})
+    add(b, "other.sgd", 10, 3, 2, {})
+    let report = qualityReport(b)
+    doAssert report.totals.lacking == 0, $report.stations
+    for r in report.stations: doAssert r.lacking == {} and r.lackFiles == 0, $r
+
+  block a_station_lacking_in_two_of_three_files_counts_two:
+    # Seen to fail: with the count left at 1 per station, this saw 1.
+    var b = initQualityBuild()
+    for file in ["a.sgd", "b.sgd", "c.sgd"]:
+      add(b, file, 10, 1, 1, {})
+      add(b, file, 10, 1, 2, {})
+      # station 10:2 has both components in c.sgd, only component 1 in a and b
+      add(b, file, 10, 2, 1, {})
+    add(b, "c.sgd", 10, 2, 2, {})
+    let report = qualityReport(b)
+    let two = stationAt(report.stations, 10, 2)
+    doAssert two.lackFiles == 2 and two.lacking == {2'u8}, $two
+    doAssert stationAt(report.stations, 10, 1).lackFiles == 0
+    doAssert report.totals.lacking == 1, $report.totals
 
   block one_component_has_nothing_to_lack:
     var b = initQualityBuild()
@@ -155,8 +186,8 @@ proc main*() =
     add(b, "two.sgd", 10, 1, 1, {qfClipped})
     let report = qualityReport(b)
     let stations = stationsCsv(report.stations)
-    doAssert stations.splitLines[0].startsWith("line,point,lacking components,seen,"), stations
-    doAssert stations.splitLines[1].startsWith("10,1,,3,0,3,"), stations
+    doAssert stations.splitLines[0].startsWith("line,point,lacking components,files lacking,seen,"), stations
+    doAssert stations.splitLines[1].startsWith("10,1,,0,3,0,3,"), stations
     for line in stations.splitLines:
       doAssert "sgd" notin line, "a file name in a station row: " & line
     let totals = totalsCsv(report.totals)

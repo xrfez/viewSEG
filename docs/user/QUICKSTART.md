@@ -417,7 +417,7 @@ Under the tab's own controls come the figures, one per line: the stations measur
 traces (read, killed, measured), the bad traces and the stations with one, each finding
 (**Dead**, **All zero**, **Constant**, **Clipped**, **Spiky**, **DC offset**, **Not
 finite**), the noisy and the weak among the traces tested for them, each with its percent,
-and, when the data has more than one component, how many stations lack a component. The
+and, when a file has more than one component, how many stations lack a component (in at least one file). The
 stations are the receiver stations of a shot gather's traces, the source stations of a
 receiver gather's (the rule the Missing traces window uses for a file); when a folder holds
 both, **Receiver stations** and **Source stations** choose which are shown. A killed trace
@@ -427,9 +427,11 @@ The table has one row per station (line and point), whatever its components and 
 station's traces in every file measured count in its one row, so on the Folder tab the
 counts add up across the files. **Traces** counts the traces of the station (killed ones
 included), **Killed** and **Bad** the killed and the bad ones, then the count of each
-finding. **Lacks component** (shown when the data has more than one component) names the
-components the data has that the station has no trace of, while it has a trace of another
-component; a station that has them all leaves it empty. The last counts, **Noisy** and
+finding. **Lacks component** and **Files lacking** (shown when a file has more than one
+component) are judged file by file: in a file, a station that has a trace there lacks the
+components that file has at other stations and it has none of. The first column lists the
+components lacked in any file, the second counts the files in which the station lacked one
+(it adds up across the files of a folder). A file of one component flags nobody. The last counts, **Noisy** and
 **Weak**, are the traces the map's noisy and weak filters show for each field record,
 found the same way (the exclusion area you chose in Tools > Settings applies, and a
 record's first breaks are found for it, so a scan takes longer). They are not counted as
@@ -442,7 +444,7 @@ without the per-trace filters, reversals, shifts or template-only restriction th
 applies to the record shown. Every column header has a tooltip that says what it counts.
 Nothing is looked up by a record number, and the table has no column for one.
 
-A box above the table narrows the rows by line, point or component. Click a column header
+A box above the table narrows the rows by line, point or component; each tab keeps its own. Click a column header
 to sort by it (again for the other way; Shift-click adds a column). The sort's place is a
 small number after the header name. When a file or a trace could not be read, a line says
 how many; **Unread** opens that list, each with the reason.

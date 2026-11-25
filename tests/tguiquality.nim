@@ -161,8 +161,8 @@ proc main*() =
           doAssert f.has("quality.stat " & line), "no line " & line & " in " &
             $f.markNames("quality.stat ")
         doAssert f.has("quality.counts 3 traces"), $f.markNames("quality.counts ")
-        doAssert f.has("quality.station 40 1 1 0 1 1 2"), $f.markNames("quality.station ")
-        doAssert f.has("quality.station 90 1 2 0 0 0 -"), $f.markNames("quality.station ")
+        doAssert f.has("quality.station 40 1 1 0 1 1 2 1"), $f.markNames("quality.station ")
+        doAssert f.has("quality.station 90 1 2 0 0 0 - 0"), $f.markNames("quality.station ")
         var headers: seq[string] = @[]
         for n in f.markNames("quality.header "): headers.add n[len("quality.header ") .. ^1]
         for h in ["Line", "Point", "Lacks component", "Traces", "Killed", "Bad", "Dead",
@@ -208,7 +208,7 @@ proc main*() =
       if result:
         doAssert f.has("quality.stat Receiver stations in the files: 2"),
           $f.markNames("quality.stat ")
-        doAssert f.has("quality.station 40 1 1 0 1 1 2"), $f.markNames("quality.station ")
+        doAssert f.has("quality.station 40 1 1 0 1 1 2 1"), $f.markNames("quality.station ")
         doAssert f.markNames("quality.station 100 ").len == 0, "the subfolder was read"
         doAssert f.savePng(shots / "quality-folder.png"), "folder shot was not written"
     step("Run: the folder without its subfolders", run, folderOff)
@@ -223,11 +223,12 @@ proc main*() =
       result = f.has("quality.ready") and f.has("quality.counts 2 files, 6 traces")
       if result:
         # station 40:1 is in both files: one row with the counts of both
-        doAssert f.has("quality.station 40 1 2 0 2 2 2"), $f.markNames("quality.station ")
-        doAssert f.has("quality.station 100 1 2 0 0 0 -"), $f.markNames("quality.station ")
+        doAssert f.has("quality.station 40 1 2 0 2 2 2 2"), $f.markNames("quality.station ")
+        doAssert f.has("quality.station 100 1 2 0 0 0 - 0"), $f.markNames("quality.station ")
         doAssert f.has("quality.stat Receiver stations in the files: 3"),
           $f.markNames("quality.stat ")
-        doAssert f.has("quality.stat 1 receiver station lacks a component (of 2 components)"),
+        doAssert f.has("quality.stat 1 receiver station lacks a component in at least one file " &
+          "(of 2 components)"),
           $f.markNames("quality.stat ")
     step("Run with subfolders: a station counts over the files", run, withSub)
 
@@ -241,9 +242,10 @@ proc main*() =
         exportClicked = true
       if not fileExists(outCsv): return false
       let rows = readFile(outCsv).splitLines
-      doAssert rows[0].startsWith("line,point,lacking components,seen,killed,bad,"), rows[0]
-      doAssert rows[1].startsWith("40,1,2,2,0,2,"), rows[1]
-      doAssert rows[2].startsWith("90,1,,2,0,0,"), rows[2]
+      doAssert rows[0].startsWith("line,point,lacking components,files lacking,seen,killed,bad,"),
+          rows[0]
+      doAssert rows[1].startsWith("40,1,2,2,2,0,2,"), rows[1]
+      doAssert rows[2].startsWith("90,1,,0,2,0,0,"), rows[2]
       doAssert rows.len == 5 and rows[4] == "", $rows
       doAssert asked == @[dkExportQuality], "asked for " & $asked
       true
@@ -262,7 +264,8 @@ proc main*() =
       if wait == 5: f.pressMouse(filterAt, false)
       if wait == 7: f.typeText("100")
       if wait < 14: return false
-      result = f.has("quality.station 100 1 2 0 0 0 -") and not f.has("quality.station 90 1 2 0 0 0 -")
+      result = f.has("quality.station 100 1 2 0 0 0 - 0") and
+        not f.has("quality.station 90 1 2 0 0 0 - 0")
     step("the filter shows one station", startFilter, filtered)
 
     proc fileTab(f: FrameInfo) =
@@ -273,9 +276,10 @@ proc main*() =
         f.click(f.markOf("quality.tab File").centre)
       result = f.has("quality.ready") and f.has("quality.stat Traces: 3, 0 killed, 3 measured")
       if result:
-        # (the filter box still says 100)
-        doAssert f.has("quality.station 100 1 2 0 0 0 -") and
-          not f.has("quality.station 90 1 2 0 0 0 -"), $f.markNames("quality.station ")
+        # (the Folder tab's filter box says 100; this tab's box is its own, empty)
+        doAssert f.has("quality.station 100 1 2 0 0 0 - 0") and
+          f.has("quality.station 40 1 1 0 1 1 2 1") and
+          not f.has("quality.station 90 1 2 0 0 0 - 0"), $f.markNames("quality.station ")
         doAssert f.has("quality.counts 3 traces")
     step("the File tab follows the file shown", fileTab, followsFile)
 
