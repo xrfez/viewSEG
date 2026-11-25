@@ -32,6 +32,15 @@ const
     "Seconds or microseconds since 1970: epoch seconds, epoch microseconds.\n" &
     "Empty: the form the first rows decide is used; when they decide none, type it.\n" &
     TimeSourceTip
+  PresetsHint* = "Presets"
+  PresetsTip* = "Fill the pattern box with a form that is often needed. The box stays free text."
+  TimePresets* = [(label: "Unix microseconds", pattern: "epoch microseconds"),
+    (label: "Unix seconds", pattern: "epoch seconds"),
+    (label: "2024-03-01 00:00:00.000000", pattern: "yyyy-mo-dd hh:mi:ss.ffffff"),
+    (label: "2024-03-01T00:00:00Z", pattern: "yyyy-mo-ddThh:mi:ssZ"),
+    (label: "2024 061 00:00:00 (day of year)", pattern: "yyyy ddd hh:mi:ss")]
+    ## the Time pattern box's pick-list: the epoch forms, then calendar forms of the kind
+    ## `detectTimePattern` proposes
   NameTip* = "The name of a user defined column. It cannot be one of the system's names " &
     "(whatever the capitals, spaces or punctuation), Ignore, or another column's name. " &
     "Empty: the header's name."
@@ -55,6 +64,15 @@ const
   FilterHint* = "Filter"
   GridTab* = "Grid"
   ProblemsTab* = "Problems"
+  ClearSort* = "Clear sort"
+  ClearSortTip* = "Show the rows in the file's order again."
+  ResetColumns* = "Reset columns"
+  ResetColumnsTip* = "Show every column, in the file's order, at its first width."
+  HideColumn* = "Hide this column"
+  ShowColumnsHead* = "Columns"
+  SortingNote* = "Sorting..."
+  SortTip* = "Click a header to sort by it, again to reverse; Shift-click adds a further " &
+    "key. Drag a header to move the column; right-click for more."
   TimeHeader* = "Time (UTC)"
   StatusHeader* = " "
   EmptyProblems* = "No problems."

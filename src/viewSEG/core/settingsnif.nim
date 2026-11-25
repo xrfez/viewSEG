@@ -411,6 +411,14 @@ proc settingsDocument*(s: Settings): string =
       w.add p.folder
       w.close()
     w.close()
+  if s.shotLayouts.len > 0:
+    w.open("shotLayouts")
+    for l in s.shotLayouts:
+      w.open("headers")
+      w.add l.headers
+      w.writeLayout l.layout
+      w.close()
+    w.close()
   w.value("lastProject", s.lastProject)
   w.value("reopenProject", s.reopenProject)
   w.value("referenceId", s.referenceId)
@@ -713,6 +721,17 @@ proc pickerPlaces(r: var Reading; n: NifNode; x: var seq[PickerPlace]) =
         usableText(c.kids[1].text):
       got.remember(c.kids[0].text, c.kids[1].text)
     else: r.unusable(c, n.tag, "(place \"name\" \"folder\")")
+  x = got
+
+proc shotLayouts(r: var Reading; n: NifNode; x: var seq[SavedShotLayout]) =
+  ## `(shotLayouts (headers "names" (layout ...)) ...)`, newest first.
+  var got: seq[SavedShotLayout]
+  for c in n.kids:
+    if c.isTree("headers") and c.kids.len == 2 and c.kids[0].kind == nkString and
+        c.kids[1].isTree("layout") and c.kids[0].text.len > 0:
+      if got.len < MaxSavedLayouts:
+        got.add SavedShotLayout(headers: c.kids[0].text, layout: readLayout(c.kids[1]))
+    else: r.unusable(c, n.tag, "(headers \"names\" (layout ...))")
   x = got
 
 proc breakModel(r: var Reading; n: NifNode; m: var BreakModel) =
@@ -1141,6 +1160,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
       of "recentFolders": r.strings(c, result.recentFolders)
       of "recentProjects": r.strings(c, result.recentProjects)
       of "pickerPlaces": r.pickerPlaces(c, result.pickerPlaces)
+      of "shotLayouts": r.shotLayouts(c, result.shotLayouts)
       of "lastProject": r.text(c, result.lastProject, allowEmpty = true)
       of "reopenProject": r.flag(c, result.reopenProject)
       of "referenceId": r.text(c, result.referenceId, allowEmpty = true)

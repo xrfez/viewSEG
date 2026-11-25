@@ -37,6 +37,9 @@
 ## (the first mutation the reviewer made), `eachTimeSource` read
 ## 20240301000000 into the wrong fields.
 ##
+## Seen to fail: with `epochPreset` giving seconds for 16 digits, `epochPresetFor` gave
+## "epoch seconds" for the microsecond column.
+##
 ## Seen to fail on the earlier guess: with 16 digits under Time taken as
 ## GPSTB, `microsAsked` read Unix microseconds of 2023 as 2033 and asked
 ## nothing, and `noHeaderAndGuess` guessed GPSTB with no header at all. With
@@ -1125,6 +1128,25 @@ proc main*() =
     doAssert log.cell(0, 1) == "2"
     doAssert log.toText == "a,b\n1,2\n"
     doAssert not log.changed
+
+  block epochPresetFor:
+    # a column of Unix times chosen as Time (UTC) starts with its form: microseconds for
+    # 16 digits, seconds for 10; anything else none; nothing is read until the choice is applied
+    let micros = "shot,stamp\n1,1709251200000000\n2,1709251210000000\n"
+    var map = guessMap(micros)
+    let log = parseShotLog(micros, map)
+    doAssert epochPreset(log, map, 1) == "epoch microseconds"
+    doAssert epochPreset(log, map, 0) == "", "a shot number is no time"
+    doAssert epochPreset(log, map, 7) == "", "no such column"
+    doAssert log.shots(map).rows[0].timeUtcUs.isNone, "nothing is read before the role is chosen"
+    let seconds = "shot,stamp\n1,1709251200\n2,1709251210\n"
+    var smap = guessMap(seconds)
+    doAssert epochPreset(parseShotLog(seconds, smap), smap, 1) == "epoch seconds"
+    var chosen = map
+    chosen.roles[1] = crTime
+    chosen.dateTimePattern = epochPreset(log, map, 1)
+    doAssert log.shots(chosen).rows[0].timeUtcUs == some(1_709_251_200_000_000'i64)
+    doAssert epochPreset(nil, map, 1) == ""
 
   echo "tshotlog ok"
 

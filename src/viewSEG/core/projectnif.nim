@@ -34,10 +34,13 @@
 ##
 ## A shot log imported into the project is
 ## `(shotLogs (log (name ...) (file ...) (map (delimiter comma) (header true)
-## (clock UTC) (unit metres) (role "FFID") ... (colname "") ...)))`. `file` is a plain
+## (clock UTC) (unit metres) (role "FFID") ... (colname "") ...) (layout (sort "Y" desc)
+## (col "Y" 9.5 hidden) ...)))`. `file` is a plain
 ## file name; the text is the copy under `shotlogs/`, not a node here. Absent
 ## means none. `(decimalComma true)` is written when a comma is the decimal
-## point; absent reads as false. A `colname` per column (written when a user
+## point; absent reads as false. `layout` is how the grid shows the log: its sort, and
+## its columns by name in the order shown, with their widths and whether hidden (absent:
+## file order). A `colname` per column (written when a user
 ## defined column has a name) is that name, in column order. A project saved
 ## with the earlier role words (for example "UTC seconds" or "gun array") is
 ## read as the same columns under the present ones. A field this version does
@@ -266,6 +269,7 @@ proc writeShotLog(w: var NifWriter; s: StoredShotLog) =
   w.value("name", s.name)
   w.value("file", s.file)
   w.writeShotMap s
+  w.writeLayout s.layout
   for n in s.later: w.add n
   w.close
 
@@ -854,6 +858,7 @@ proc shotLog(r: var Reading; n: NifNode; d: var ProjectDoc) =
     of "name": r.text(k, s.name)
     of "file": r.text(k, s.file)
     of "map": r.readShotMap(k, s, bad, tooMany, "the log is left out")
+    of "layout": s.layout = readLayout(k)
     else: s.later.add k
   if tooMany:
     r.problem(n, "a shot log keeps at most " & $MaxShotLogColumns &

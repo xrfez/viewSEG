@@ -32,8 +32,7 @@ const
     ## beside the settings; a slice by shot log writes a new file; an SPS export of a
     ## shot log does, and so does an O file made from the survey's X records)
   Preferences* = {ckSettings, ckRememberPlace, ckImportSettings, ckLayout, ckLoadLayout,
-    ckProjectFolder,
-    ckUpdateSurvey, ckVibProfile, ckVibWeights}
+    ckProjectFolder, ckUpdateSurvey, ckVibProfile, ckVibWeights, ckShotLayout}
     ## refused: the user's preferences and the windows' arrangement; a
     ## project's data folders and its survey's update, which are written
     ## into the project

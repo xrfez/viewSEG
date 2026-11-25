@@ -7,13 +7,14 @@
 import std/[algorithm, math, options, os, strutils, tables]
 import imguin/cimgui
 import parseSEG/survey/sps
-import ../../core/[destwatch, geometry, shotlog, shotlogsps, state]
+import ../../core/[destwatch, geometry, shotlayout, shotlog, shotlogsps, shotsort, state]
 import ../../view/[shotlogrows, shotlogwords, theme]
 import chrome, focus, icons, marks, style
 from windows import awShotLog, beginClosable
 
 const
-  ScanBatch = 1600 ## filter rows looked at in one frame
+  ScanBatch = 1600   ## filter rows looked at in one frame
+  SortBatch = 25_000 ## rows whose sort keys are read in one frame
   PatternRoom = 256
   NameRoom = 64
   SentinelRoom = 1024
@@ -21,6 +22,9 @@ const
   SpsLineRoom = 32
 
 type
+  ListMode = enum
+    lmAll, lmMatches, lmFaults, lmOnly
+
   ShotLogUi* = object
     ## The window's own state between frames.
     focus: FocusClicks
@@ -90,6 +94,25 @@ type
     spsRows: int                      ## rows with a shot point, of the log keyed below
     spsKey: tuple[id, rev: int]
     spsHaveRows: bool
+    layout: ShotLayout                ## how the grid is laid out, as the user has it
+    layoutId: int                     ## the log `placed` and `sortCols` are worked out for
+    layoutCols: int                   ## ... and its column count
+    layoutRev: int
+    keys: seq[string]                 ## the log's columns' names, as a layout keeps them
+    placed: seq[ColumnPlace]          ## every column but the ignored, in the order shown
+    visible: seq[int]                 ## the shown columns of `placed`, as log columns, in order
+    sortCols: seq[tuple[col: int, descending: bool]]
+    gridGen: int                      ## the grid's table is made anew when this changes
+    gridAge: int                      ## frames since
+    sortBuild: SortBuild              ## the sort under way
+    sortKey: string                   ## what `order` (or the build) is of
+    order: seq[int]                   ## every row in the sort's order, once `haveOrder`
+    rank: seq[int32]                  ## each row's place in `order`
+    haveOrder: bool
+    orderStamp: int
+    sorted: seq[int]                  ## the listed rows in the sort's order (not for lmAll)
+    sortedFrom: seq[int]              ## the rows `sorted` is of
+    sortedStamp: int
 
 func shownId*(ui: ShotLogUi): int {.inline.} =
   ## The id of the log the window shows; -1 when there is none.
@@ -366,6 +389,10 @@ proc bindLog(ui: var ShotLogUi; st: AppState; i, rev: int) =
     ui.boundId = ui.currentId
     ui.boundRev = rev
     ui.columnsOpen = false
+    ui.layoutId = -1
+    ui.sortKey = ""
+    ui.haveOrder = false
+    ui.sortBuild = nil
     ui.allowEditing = false
     ui.selected = -1
     ui.selectedCol = -1
@@ -380,6 +407,90 @@ proc bindLog(ui: var ShotLogUi; st: AppState; i, rev: int) =
     ui.resetScan()
     ui.cacheFaults(st, i)
     ui.stopEdit()
+
+proc sortText(ui: ShotLogUi): string =
+  ## The sort as the header marks say it: the columns' names in order, a minus after a
+  ## descending one.
+  for k, s in ui.sortCols:
+    if k > 0: result.add ", "
+    result.add ui.keys[s.col]
+    if s.descending: result.add " -"
+
+proc layoutNow(ui: ShotLogUi): ShotLayout =
+  layoutFrom(ui.placed, ui.keys, ui.sortCols)
+
+proc placeVisible(ui: var ShotLogUi) =
+  ui.visible.setLen 0
+  for p in ui.placed:
+    if not p.hidden: ui.visible.add p.col
+
+proc eligible(ui: ShotLogUi; st: AppState; i: int): seq[bool] =
+  ## Which columns the grid may show: all but those mapped to Ignore.
+  let map = st.shotLogMap(i)
+  result = newSeq[bool](ui.keys.len)
+  for c in 0 ..< result.len:
+    result[c] = c >= map.roles.len or map.roles[c] != crIgnored
+
+proc clickSort(spec: var seq[tuple[col: int, descending: bool]]; col: int; shift: bool) =
+  ## A click on a header: it becomes the one key (or turns round when it is); with Shift it
+  ## is added as a further key (or turns round when it is one).
+  if shift:
+    var at = -1
+    for i, s in spec:
+      if s.col == col: at = i
+    if at >= 0: spec[at].descending = not spec[at].descending
+    elif spec.len < MaxLayoutSort: spec.add (col: col, descending: false)
+  elif spec.len == 1 and spec[0].col == col:
+    spec[0].descending = not spec[0].descending
+  else:
+    spec.setLen 0
+    spec.add (col: col, descending: false)
+
+proc syncLayout(ui: var ShotLogUi; st: AppState; i, width, rev: int) =
+  ## Works the layout out for the log on show: when the log changes it is the one kept
+  ## for it; a new revision (another map) places the same layout over its columns.
+  if ui.layoutId == ui.currentId and ui.layoutRev == rev and ui.layoutCols == width: return
+  if ui.layoutId != ui.currentId: ui.layout = st.shotLayout(i)
+  ui.layoutId = ui.currentId
+  ui.layoutRev = rev
+  ui.layoutCols = width
+  ui.keys = st.shotLogKeys(i)
+  ui.placed = ui.layout.places(ui.keys, ui.eligible(st, i))
+  ui.sortCols = ui.layout.sortColumns(ui.keys)
+  ui.placeVisible()
+  inc ui.gridGen
+
+proc ensureOrder(ui: var ShotLogUi; st: AppState; i, n, rev: int) =
+  ## The sort's order of the rows: read a batch of rows a frame, so a long log never holds
+  ## a frame, and made once for the log, its revision and the sort, not every frame.
+  if ui.sortCols.len == 0:
+    ui.sortKey = ""
+    ui.sortBuild = nil
+    if ui.haveOrder:
+      ui.haveOrder = false
+      ui.order.setLen 0
+      ui.rank.setLen 0
+      inc ui.orderStamp
+    return
+  let key = $ui.currentId & "|" & $rev & "|" & ui.sortText
+  if key != ui.sortKey:
+    ui.sortKey = key
+    let map = st.shotLogMap(i)
+    var keys: seq[RowKey] = @[]
+    for s in ui.sortCols:
+      keys.add RowKey(col: s.col, kind: rowKindOf(map, s.col), descending: s.descending)
+    ui.sortBuild = newSortBuild(n, keys, map.decimalComma)
+    ui.haveOrder = false
+  if ui.sortBuild != nil and st.shotSortStep(i, ui.sortBuild, SortBatch):
+    let rows = ui.sortBuild.order
+    ui.order = newSeq[int](rows.len)
+    ui.rank = newSeq[int32](rows.len)
+    for at, r in rows:
+      ui.order[at] = int(r)
+      ui.rank[int(r)] = int32(at)
+    ui.sortBuild = nil
+    ui.haveOrder = true
+    inc ui.orderStamp
 
 proc loadDraft(ui: var ShotLogUi; map: ShotLogMap; width: int) =
   ui.draft = map
@@ -494,14 +605,44 @@ proc chooseRow(ui: ShotLogUi; row: int): Command =
   ## A click on a row of the grid chooses it: the map selects its point (not its traces).
   Command(kind: ckSelectShotRows, shotLogId: ui.currentId, shotRows: @[row], shotTraces: false)
 
+func listMode(ui: ShotLogUi): ListMode =
+  if ui.onlySelected: lmOnly
+  elif ui.needle.len > 0: lmMatches
+  elif ui.problemsOnly: lmFaults
+  else: lmAll
+
+func inOrder(ui: ShotLogUi): bool =
+  ## Whether the rows are listed in the sort's order: it is made, and a filter that is
+  ## still being scanned does not list anything sorted yet.
+  ui.haveOrder and not (ui.listMode == lmMatches and not ui.filterDone)
+
+proc refreshSorted(ui: var ShotLogUi) =
+  ## `sorted`: the filtered rows in the sort's order; worked out again only when the sort
+  ## or the rows the filters list changed, never every frame.
+  if not ui.inOrder or ui.listMode == lmAll: return
+  let base = case ui.listMode
+    of lmOnly: addr ui.onlyRows
+    of lmMatches: addr ui.matches
+    else: addr ui.faultRows
+  if ui.sortedStamp == ui.orderStamp and ui.sortedFrom == base[]: return
+  ui.sortedFrom = base[]
+  ui.sorted = ui.sortedFrom
+  let rank = addr ui.rank
+  ui.sorted.sort(proc (a, b: int): int = cmp(rank[][a], rank[][b]))
+  ui.sortedStamp = ui.orderStamp
+
 proc listedCount(ui: ShotLogUi; n: int): int =
-  if ui.onlySelected: ui.onlyRows.len
+  if ui.inOrder and ui.listMode == lmAll: ui.order.len
+  elif ui.inOrder: ui.sorted.len
+  elif ui.onlySelected: ui.onlyRows.len
   elif ui.needle.len > 0: ui.matches.len
   elif ui.problemsOnly: ui.faultRows.len
   else: n
 
 proc listedRow(ui: ShotLogUi; i: int): int =
-  if ui.onlySelected: ui.onlyRows[i]
+  if ui.inOrder and ui.listMode == lmAll: ui.order[i]
+  elif ui.inOrder: ui.sorted[i]
+  elif ui.onlySelected: ui.onlyRows[i]
   elif ui.needle.len > 0: ui.matches[i]
   elif ui.problemsOnly: ui.faultRows[i]
   else: i
@@ -509,7 +650,13 @@ proc listedRow(ui: ShotLogUi; i: int): int =
 proc listedIndex(ui: ShotLogUi; row, n: int): int =
   ## Where data row `row` sits in the list on show, or -1.
   result = -1
-  if ui.onlySelected:
+  if row < 0: return
+  if ui.inOrder and ui.listMode == lmAll:
+    if row < ui.rank.len: result = int(ui.rank[row])
+  elif ui.inOrder:
+    for i, r in ui.sorted:
+      if r == row: return i
+  elif ui.onlySelected:
     for i, r in ui.onlyRows:
       if r == row: return i
   elif ui.needle.len > 0:
@@ -521,16 +668,16 @@ proc listedIndex(ui: ShotLogUi; row, n: int): int =
   elif row in 0 ..< n:
     result = row
 
-proc nextListed(ui: ShotLogUi; row, col, n: int; shown: openArray[int]):
-    tuple[row, col: int] =
-  ## The next editable cell after (`row`, `col`) among the `shown` columns, or (-1, -1).
-  if shown.len == 0: return (-1, -1)
-  let next = nextShown(shown, col)
+proc nextListed(ui: ShotLogUi; row, col, n: int): tuple[row, col: int] =
+  ## The next editable cell after (`row`, `col`) among the columns shown, in the order
+  ## shown, or (-1, -1): along the row, then the first column of the next listed row.
+  if ui.visible.len == 0: return (-1, -1)
+  let next = nextInOrder(ui.visible, col)
   if next >= 0: return (row, next)
   let at = ui.listedIndex(row, n)
   if at < 0: return (-1, -1)
   if at + 1 >= ui.listedCount(n): return (-1, -1)
-  (ui.listedRow(at + 1), shown[0])
+  (ui.listedRow(at + 1), ui.visible[0])
 
 proc copyRow(st: AppState; i, row, width: int; d: Delimiter) =
   var cells = newSeq[string](width)
@@ -595,12 +742,29 @@ proc drawColumns(ui: var ShotLogUi; st: AppState; i: int; t: Theme; marks: var M
   igAlignTextToFramePadding()
   igTextUnformatted("Time pattern", nil)
   igSameLine(0, -1)
-  igSetNextItemWidth(-1)
+  let current = bufText(ui.pattern).strip
+  var preview = PresetsHint
+  for p in TimePresets:
+    if p.pattern == current: preview = p.label
+  let presetWidth = igGetFontSize() * 13
+  igSetNextItemWidth(-(presetWidth + igGetStyle().ItemSpacing.x))
   if igInputText("##pattern", cast[cstring](addr ui.pattern[0]),
       csize_t(ui.pattern.len), 0, nil, nil):
     ui.draftDirty = true
   marks.mark("shotlog.pattern")
+  marks.mark("shotlog.patterntext " & current)
   tip(PatternTip)
+  igSameLine(0, -1)
+  igSetNextItemWidth(presetWidth)
+  if igBeginCombo("##presets", preview.cstring, 0):
+    for p in TimePresets:
+      if igSelectable_Bool(p.label.cstring, p.pattern == current, 0, ImVec2_c(x: 0, y: 0)):
+        setText(ui.pattern, p.pattern)
+        ui.draftDirty = true
+      marks.mark("shotlog.presetitem " & p.label)
+    igEndCombo()
+  marks.mark("shotlog.presets")
+  tip(PresetsTip)
   if ui.draftNote.len > 0:
     dim(ui.draftNote, t)
     marks.mark("shotlog.timenote " & ui.draftNote)
@@ -634,7 +798,13 @@ proc drawColumns(ui: var ShotLogUi; st: AppState; i: int; t: Theme; marks: var M
         sample.add st.shotCell(i, r, c)
       igTextUnformatted(sample.cstring, nil)
       discard igTableNextColumn()
-      if roleCombo(c, ui.draft.roles[c], marks): ui.draftDirty = true
+      let was = ui.draft.roles[c]
+      if roleCombo(c, ui.draft.roles[c], marks):
+        ui.draftDirty = true
+        if ui.draft.roles[c] == crTime and was != crTime and bufText(ui.pattern).strip.len == 0:
+          # a column of Unix times chosen as Time (UTC) starts with its form filled in
+          ui.readDraft()
+          setText(ui.pattern, st.shotLogEpochPreset(i, ui.draft, c))
       discard igTableNextColumn()
       if ui.draft.roles[c] == crText:
         igSetNextItemWidth(-1)
@@ -688,7 +858,7 @@ proc commitEdit(ui: var ShotLogUi; i, width, n: int; st: AppState; advance: bool
   commands.add Command(kind: ckEditShotCell, logIndex: i, logRow: row, logCol: col,
     logCell: text)
   if advance:
-    let nxt = ui.nextListed(row, col, n, shownColumns(st, i, width))
+    let nxt = ui.nextListed(row, col, n)
     if nxt.row >= 0:
       ui.pending = true
       ui.pendingRow = nxt.row
@@ -750,7 +920,13 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
     ui.beginEdit(ui.pendingRow, ui.pendingCol, st.shotCell(i, ui.pendingRow, ui.pendingCol))
     ui.scrollTo = ui.pendingRow
   ui.scanFilter(st, i, width, n)
+  ui.refreshSorted()
   let listed = ui.listedCount(n)
+  if ui.sortCols.len > 0 and not ui.haveOrder:
+    dim(SortingNote, t)
+    marks.mark("shotlog.sorting")
+  marks.mark("shotlog.sort " & ui.sortText)
+  marks.mark("shotlog.built " & $ui.orderStamp)
   if ui.needle.len > 0 and not ui.filterDone:
     dim("Filtering...", t)
     marks.mark("shotlog.filtering")
@@ -772,21 +948,103 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
     return
   marks.markWindow("shotlog.grid")
   let map = st.shotLogMap(i)
-  let shown = shownColumns(st, i, width) ## all but the columns mapped to Ignore
   let names = st.shotLogNames(i, map, width)
-  if not igBeginTable("shotlog.grid", cint(2 + shown.len), flags, ImVec2_c(x: 0, y: 0), 0):
+  let shown = ui.visible ## the columns shown, in the order shown
+  var changed = false ## the layout changed: kept
+  var regen = false ## ... and the table is made anew
+  if not igBeginTable(("shotlog.grid" & $ui.gridGen).cstring, cint(2 + shown.len), flags,
+      ImVec2_c(x: 0, y: 0), 0):
     igEndChild()
     return
+  inc ui.gridAge
   igTableSetupScrollFreeze(2, 2)
   igTableSetupColumn(TimeHeader.cstring, ImGui_TableColumnFlags_WidthFixed.cint, font * 16, 0)
   igTableSetupColumn(StatusHeader.cstring, ImGui_TableColumnFlags_WidthFixed.cint, font * 2, 1)
+  var widthOf = initTable[int, float32]() ## each shown column's width, in pixels
   for c in shown:
-    igTableSetupColumn(names[c].cstring, ImGui_TableColumnFlags_WidthFixed.cint, font * 8,
+    var w = font * DefaultColumnEm
+    for p in ui.placed:
+      if p.col == c:
+        w = if p.width > 0: p.width * font
+            else: max(w, textWidth(names[c]) + font * 2.5)
+    widthOf[c] = w
+    igTableSetupColumn(names[c].cstring, ImGui_TableColumnFlags_WidthFixed.cint, w,
       ImGuiID(10 + c))
   igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
-  for c in 0 ..< 2 + shown.len:
-    if igTableSetColumnIndex(cint(c)):
-      igTableHeader(igTableGetColumnName_Int(cint(c)))
+  var dragFrom = -1
+  var dragTo = -1
+  for k in 0 ..< 2 + shown.len:
+    if not igTableSetColumnIndex(cint(k)): continue
+    let col = if k < 2: -1 else: shown[k - 2]
+    let name = if k == 0: TimeHeader elif k == 1: StatusHeader else: names[col]
+    var label = name
+    var place = 0
+    for at, sc in ui.sortCols:
+      if sc.col == col and col >= 0:
+        place = at + 1
+        label.add " " & (if sc.descending: IconArrowDown else: IconArrowUp)
+        if ui.sortCols.len > 1: label.add $place
+    igPushID_Int(cint(k))
+    let avail = igGetContentRegionAvail().x
+    let hit = igSelectable_Bool((label & "##head").cstring, false, 0,
+      ImVec2_c(x: avail, y: 0)) and ui.focus.acts
+    if k >= 2: marks.mark("shotlog.header " & name)
+    else: marks.mark("shotlog.header " & (if k == 0: TimeHeader else: "status"))
+    if place > 0:
+      marks.mark("shotlog.headersort " & name & " " & $place &
+        (if ui.sortCols[place - 1].descending: " down" else: " up"))
+    if k == 2: tip(SortTip)
+    if k >= 2:
+      let io = igGetIO_Nil()
+      if hit and io.MouseDragMaxDistanceSqr[0] < 25:
+        clickSort(ui.sortCols, col, io.KeyShift)
+        changed = true
+      if igBeginDragDropSource(0):
+        var from0 = int32(k - 2)
+        discard igSetDragDropPayload("SHOTLOGCOL", addr from0, csize_t(sizeof(int32)), 0)
+        igTextUnformatted(name.cstring, nil)
+        igEndDragDropSource()
+      if igBeginDragDropTarget():
+        let payload = igAcceptDragDropPayload("SHOTLOGCOL", 0)
+        if payload != nil:
+          dragFrom = int(cast[ptr int32](payload.Data)[])
+          dragTo = k - 2
+        igEndDragDropTarget()
+      # the width the user dragged the column to
+      let now = (avail + 2 * igGetStyle().CellPadding.x) / font
+      var cur = widthOf[col] / font
+      if ui.gridAge > 3 and abs(now - cur) * font > 1.5 and not igIsMouseDown_Nil(0):
+        for p in ui.placed.mitems:
+          if p.col == col: p.width = float32(now)
+        changed = true
+    if igBeginPopupContextItem("##headmenu", ImGui_PopupFlags_MouseButtonRight.cint):
+      if k >= 2 and igMenuItem_Bool(HideColumn.cstring, nil, false, true):
+        for p in ui.placed.mitems:
+          if p.col == col: p.hidden = true
+        changed = true
+        regen = true
+      igBeginDisabled(ui.sortCols.len == 0)
+      if igMenuItem_Bool(ClearSort.cstring, nil, false, true):
+        ui.sortCols.setLen 0
+        changed = true
+      igEndDisabled()
+      marks.mark("shotlog.menu.clearsort")
+      if igMenuItem_Bool(ResetColumns.cstring, nil, false, true):
+        ui.placed = ShotLayout().places(ui.keys, ui.eligible(st, i))
+        changed = true
+        regen = true
+      marks.mark("shotlog.menu.reset")
+      igSeparator()
+      igTextDisabled(ShowColumnsHead.cstring)
+      for pi, p in ui.placed.mpairs:
+        var on = not p.hidden
+        if igMenuItem_Bool((ui.keys[p.col] & "##show" & $pi).cstring, nil, on, true):
+          p.hidden = not p.hidden
+          changed = true
+          regen = true
+        marks.mark("shotlog.menu.col " & ui.keys[p.col] & (if on: " shown" else: " hidden"))
+      igEndPopup()
+    igPopID()
   igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   for k in 0 ..< 2 + shown.len:
@@ -798,6 +1056,22 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
       igTextUnformatted((if header.len > 0: header else: role).cstring, nil)
       if k >= 2: marks.mark("shotlog.role " & $col & " " & role)
   igPopStyleColor(1)
+  if dragFrom >= 0 and dragTo >= 0 and dragFrom != dragTo and dragFrom < shown.len:
+    # the dragged column takes the place of the one it was dropped on
+    let moving = shown[dragFrom]
+    let target = shown[dragTo]
+    var at = 0
+    for q, p in ui.placed:
+      if p.col == moving: at = q
+    let one = ui.placed[at]
+    ui.placed.delete at
+    var into = 0
+    for q, p in ui.placed:
+      if p.col == target: into = q
+    if dragTo > dragFrom: inc into
+    ui.placed.insert(one, into)
+    changed = true
+    regen = true
   let highlight = u32(withAlpha(t.roles[rlHighlight], 70))
   let hoverMark = u32(withAlpha(t.roles[rlHighlight], 40))
   let clipper = ImGuiListClipper_ImGuiListClipper()
@@ -840,8 +1114,8 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
         ui.selectedCol = -1
         result.add ui.chooseRow(row)
       if fault.len > 0: tip(fault)
-      for c in shown:
-        if igTableNextColumn():
+      for slot, c in shown:
+        if igTableSetColumnIndex(cint(2 + slot)):
           igPushID_Int(cint(c))
           let text = st.shotCell(i, row, c)
           let editing = ui.editing and row == ui.editRow and c == ui.editCol
@@ -880,6 +1154,13 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
       igPopID()
   if edge >= 0: marks.mark("shotlog.edge " & $edge)
   igEndTable()
+  if changed:
+    ui.layout = ui.layoutNow()
+    if regen:
+      ui.placeVisible()
+      inc ui.gridGen
+      ui.gridAge = 0
+    result.add Command(kind: ckShotLayout, slogIndex: i, slogLayout: ui.layout)
   if ui.selected >= 0 and igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint) and
       not igGetIO_Nil().WantTextInput and igGetIO_Nil().KeyCtrl and
       igIsKeyPressed_Bool(ImGui_Key_C, false):
@@ -933,6 +1214,8 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
     else:
       let width = st.shotLogWidth(i)
       let n = st.shotView(i).rows.len
+      ui.syncLayout(st, i, width, rev)
+      ui.ensureOrder(st, i, n, rev)
       let followLine = ui.noteFollow(st, i, width, n)
       ui.markChosen(st, i, width, n)
       let problems = st.shotView(i).problems.count
