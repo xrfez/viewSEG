@@ -44,6 +44,7 @@ type
     tab: MissingTab
     side: StationSide
     runAsked: bool
+    wantFile: string ## the File tab's key for the file shown now; "" for none
     chosen: string
     exportJob: JobId = NoJob
     exported: bool
@@ -81,6 +82,12 @@ proc shownPath(st: AppState): string =
   let panel = st.findPanel(MainPanel)
   let shown = if panel >= 0: st.shownFile(panel) else: -1
   if shown >= 0: st.sessions[shown].diskPath else: ""
+
+proc shownIsSignature(st: AppState): bool =
+  ## Whether the file shown in the main panel is a vibrator signature file, decoded in memory.
+  let panel = st.findPanel(MainPanel)
+  let shown = if panel >= 0: st.shownFile(panel) else: -1
+  shown >= 0 and st.sessions[shown].isSignature
 
 proc shownHasKilled(st: AppState): bool =
   ## Whether the file shown in the main panel has killed traces.
@@ -308,6 +315,7 @@ proc submitFile(ui: var MissingUi; st: AppState; key, path: string) =
   ui.file = Scan(key: key, running: true, status: Scanning, sink: MissingSink())
   var spec = missingSpec(folder, @[path])
   spec.title = "Missing traces in " & path.extractFilename
+  spec.auto = true # started by the window, not by the user: no "is done" line or toast
   ui.file.job = st.jobs.submit(spec,
     scanMissing(folder, @[path], st.survey.layers[layer].relations, ui.file.sink,
       st.indexCache))
@@ -321,10 +329,23 @@ proc submitFolder(ui: var MissingUi; st: AppState; key: string) =
     folderScan(folder, st.settings.missing.subfolders, st.indexCache,
       st.survey.layers[layer].relations, ui.folder.sink, ui.folder.note))
 
+proc startFile(ui: var MissingUi; st: AppState) =
+  ## Called while the File tab is on screen: starts the computation for the file shown, after
+  ## cancelling the one for a file no longer shown. A vibrator signature file starts none and
+  ## says why.
+  if ui.wantFile == ui.file.key: return
+  ui.file.cancel(st)
+  ui.shownKey = ""
+  if ui.wantFile.len == 0: return
+  if st.shownIsSignature:
+    ui.file = Scan(key: ui.wantFile, status: SignatureNote)
+  else:
+    ui.submitFile(st, ui.wantFile, st.shownPath)
+
 proc consider(ui: var MissingUi; st: AppState) =
-  ## Polls the jobs, drops an answer that is stale, and starts the File
-  ## computation for the file shown. Nothing here lists or reads a folder
-  ## unless Run was pressed.
+  ## Polls the jobs, drops an answer that is stale, and notes the file the File
+  ## tab wants (`startFile` starts it when the tab is shown). Nothing here lists or
+  ## reads a folder unless Run was pressed.
   if not ui.sortsReady:
     ui.sort = DefaultStationSort
     ui.sortsReady = true
@@ -332,11 +353,7 @@ proc consider(ui: var MissingUi; st: AppState) =
   ui.poll(ui.folder, st)
   let survey = st.surveyKey
   let path = st.shownPath
-  let fileKey = if survey.len > 0 and path.len > 0: path & "|" & survey else: ""
-  if fileKey != ui.file.key:
-    ui.file.cancel(st)
-    ui.shownKey = ""
-    if fileKey.len > 0: ui.submitFile(st, fileKey, path)
+  ui.wantFile = if survey.len > 0 and path.len > 0: path & "|" & survey else: ""
   let folder = st.settings.missing.folder
   let folderKey = if survey.len > 0 and folder.len > 0:
     folder & "|" & $st.settings.missing.subfolders & "|" & survey else: ""
@@ -468,6 +485,7 @@ proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks
     igPushTextWrapPos(0)
     igTextUnformatted(s.status.cstring, nil)
     igPopTextWrapPos()
+    marks.mark("missing.message " & s.status)
     return
   marks.mark("missing.ready")
   let r = s.result
@@ -583,6 +601,7 @@ proc drawMissing*(ui: var MissingUi; title: string; st: AppState; marks: var Mar
   ui.pollExport(st)
   ui.applySort()
   var open = true
+  var fileShown = false
   if igBegin(title.cstring, addr open, 0):
     ui.focus.watch()
     marks.markWindow("missing")
@@ -595,6 +614,8 @@ proc drawMissing*(ui: var MissingUi; title: string; st: AppState; marks: var Mar
       marks.mark("missing.tab File")
       if fileOn:
         ui.tab = mtFile
+        fileShown = true
+        ui.startFile(st)
         ui.drawScan(st, false, marks, result)
         igEndTabItem()
       let folderOn = igBeginTabItem(FolderTab.cstring, nil, 0)
@@ -608,6 +629,8 @@ proc drawMissing*(ui: var MissingUi; title: string; st: AppState; marks: var Mar
     marks.markOverflow("missing")
   ui.focus.settle()
   igEnd()
+  # Not on screen (a background tab, the Folder tab, collapsed): nothing runs for the file.
+  if not fileShown and ui.file.running: ui.file.cancel(st)
   if not open:
     result.close = true
     ui.file.cancel(st)

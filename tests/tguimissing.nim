@@ -19,6 +19,16 @@
 ## the note left out of the File tab, "a file of one shot slice is a receiver, and
 ## the File tab says so" did not happen.
 ##
+## The File tab is quiet and sparing: stepping through three files leaves no "is done" line and
+## no toast for them and never more than one job; a vibrator signature file starts no job and the
+## tab says why; a window behind another tab starts no job, and computes for the file shown when
+## it comes forward again.
+##
+## Seen to fail (second set): with the File job not marked `auto`, "stepping through files is
+## quiet" found "one.sgd is done." in the log; with the signature check left out, "a signature
+## file starts no job" found its job; with the job started before the window is known to be
+## on screen, "a hidden window starts no job" found the job.
+##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
 import std/[math, monotimes, options, os, strutils]
@@ -26,7 +36,7 @@ import parseSEG
 import viewSEG/core/[geometry, jobs, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/[missingwords, theme]
-import utils/[fixtures, waiting]
+import utils/[fixtures, sigfiles, waiting]
 
 type
   Step = object
@@ -377,6 +387,89 @@ proc main*() =
           f.click(f.markOf("menu.View").centre)
       result = shownAgain and f.windowPlace("missing").inSight and f.has("missing.tab File")
     step("the View menu brings it back", showAgain, returned)
+
+    const sheet = "Missing traces in "
+    proc fileScans(f: FrameInfo; name: string): int =
+      for j in f.core.jobs.list():
+        if j.spec.title == sheet & name: inc result
+    var stepped = 0
+    var most = 0
+    proc stepFiles(f: FrameInfo) =
+      stepped = 0
+      most = 0
+      f.apply Command(kind: ckShowFile, panel: MainPanel, path: folder / "one.sgd",
+        listFolder: false)
+    proc quiet(f: FrameInfo): bool =
+      var running = 0
+      for j in f.core.jobs.list():
+        if j.spec.title.startsWith(sheet) and j.spec.title.endsWith(".sgd") and
+            j.state in {jsQueued, jsRunning}: inc running
+      most = max(most, running)
+      inc stepped
+      if stepped == 2:
+        f.apply Command(kind: ckShowFile, panel: MainPanel, path: folder / "two.sgd",
+          listFolder: false)
+      if stepped == 4:
+        f.apply Command(kind: ckShowFile, panel: MainPanel,
+          path: folder / "sub" / "three.sgd", listFolder: false)
+      result = stepped > 12 and f.has("missing.ready") and
+        f.has("missing.stat Receiver stations found in the file: 4")
+      if result:
+        doAssert most <= 1, "stepping left " & $most & " File jobs running at once"
+        for e in f.core.log:
+          doAssert ".sgd is done" notin e.text, "stepping through files is quiet: " & e.text
+        for n in f.core.notices:
+          doAssert ".sgd is done" notin n.text, "a toast for a file stepped to: " & n.text
+    step("stepping through files is quiet", stepFiles, quiet)
+
+    let sigDat = datFile(fx.dir / "sig", "0042_20010203T040506.789000000Z.dat")
+    var before = 0
+    proc sheets(f: FrameInfo): int =
+      for j in f.core.jobs.list():
+        if j.spec.title.startsWith(sheet): inc result
+    proc showSignature(f: FrameInfo) =
+      before = f.sheets
+      f.apply Command(kind: ckShowFile, panel: MainPanel, path: sigDat)
+    proc signatureSaid(f: FrameInfo): bool =
+      result = f.has("missing.message " & SignatureNote)
+      if result:
+        doAssert f.sheets == before, "a signature file starts no job"
+        doAssert not f.has("missing.scanning") and not f.has("missing.ready")
+    step("a signature file starts no job and the tab says why", showSignature, signatureSaid)
+
+    var hiddenBefore = 0
+    var frames = 0
+    proc hide(f: FrameInfo) =
+      frames = 0
+      hiddenBefore = f.fileScans("one.sgd")
+      f.click(f.markOf("menu.View").centre)
+    proc hidden(f: FrameInfo): bool =
+      inc frames
+      let item = f.markOf("menu.window.plot")
+      if frames == 3 and item.size.x > 0: f.click(item.centre)
+      if frames > 6 and not f.windowPlace("missing").inSight and
+          f.windowPlace("missing").shown:
+        if frames == 8:
+          f.apply Command(kind: ckShowFile, panel: MainPanel, path: folder / "one.sgd",
+            listFolder: false)
+        if frames > 30:
+          doAssert f.fileScans("one.sgd") == hiddenBefore,
+            "a window behind another tab started a job"
+          return true
+      elif frames > 60: doAssert false, "the Seismic window did not come forward"
+    step("a hidden window starts no job", hide, hidden)
+
+    var back = 0
+    proc comeBack(f: FrameInfo) =
+      back = 0
+      f.click(f.markOf("menu.View").centre)
+    proc computes(f: FrameInfo): bool =
+      inc back
+      let item = f.markOf("menu.window.missing")
+      if back == 3 and item.size.x > 0: f.click(item.centre)
+      result = back > 5 and f.windowPlace("missing").inSight and f.has("missing.ready") and
+        f.fileScans("one.sgd") == hiddenBefore + 1
+    step("shown again, it computes for the file then shown", comeBack, computes)
 
     var at = 0
     var started = false

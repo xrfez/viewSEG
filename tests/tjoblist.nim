@@ -35,6 +35,11 @@ proc gated(gate: int): JobWork =
 proc failing(ctx: JobContext) {.gcsafe.} =
   raise newException(IOError, "the disk is full")
 
+func says(log: MessageLog; part: string; severity = sevInfo): bool =
+  for e in log:
+    if part in e.text and e.severity == severity: return true
+  false
+
 proc main*() =
 
   block rowsOfEachKind:
@@ -106,6 +111,25 @@ proc main*() =
       discard st.jobs.submit(JobSpec(title: "QC " & $i, lane: jlBackground), gated(1))
     doAssert settle(st.notices.len == MaxNotices and st.notices[^1].serial == MaxNotices + 4)
     doAssert st.notices[0].serial == 5, "the oldest go first"
+    st.shutdown()
+
+  block quietJobs:
+    # A job marked `auto` that ends well leaves the log and the notices as they were; one that
+    # fails still says so, once.
+    var st = initAppState()
+    template settle(cond: untyped): bool = st.settle(cond)
+    let before = st.log.len
+    discard st.jobs.submit(JobSpec(title: "Quiet check", lane: jlBackground, auto: true),
+      gated(1))
+    gates[1].open()
+    doAssert settle(st.jobs.active.len == 0)
+    discard st.drainInbox()
+    doAssert st.notices.len == 0 and st.log.len == before and
+      not st.log.says("Quiet check"), "a quiet job that went well was announced"
+    discard st.jobs.submit(JobSpec(title: "Quiet failing", lane: jlBackground, auto: true),
+      failing)
+    doAssert settle(st.notices.len == 1 and st.log.says("Quiet failing failed: the disk is full", sevError))
+    doAssert st.log.len == before + 1, "one line for a failure"
     st.shutdown()
 
 when isMainModule:

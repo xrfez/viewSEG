@@ -18,6 +18,7 @@ const
   KilledNote* = "Killed traces count as present: the file is checked as it is on disk."
   SingleSliceNote* = "This file holds one shot slice of one receiver: the other shots of " &
     "this receiver are in other files. Run the folder to check the receiver as a whole."
+  SignatureNote* = "A vibrator signature file is not checked: it holds no survey stations."
   Continuous* = "This file is a continuous receiver recording; it is not checked."
   NoTemplateRecord* = "No record of the file has a record in the relation records."
   NothingMissing* = "Every station the template calls for is in the data."

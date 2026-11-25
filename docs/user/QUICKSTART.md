@@ -328,6 +328,8 @@ reshoot of the same patch) count as one. When two X records with different recei
 the shot equally on both counts, it is listed under **Unmatched**, as only the record
 number could tell them apart.
 
+The File tab checks the file shown only while it is in sight (not behind another tab, nor while the Folder tab is on), says nothing in Messages and raises no pop-up when it finishes, and does not check a vibrator signature file (`.dat`, `.vib`); the Folder tab's **Run** still announces its end.
+
 Which of the two a file is: a continuous receiver recording is not checked. Otherwise the
 stations in the trace headers decide. Several receivers and one source is a shot; one
 receiver and several sources is a receiver. One receiver and one source can be either a
