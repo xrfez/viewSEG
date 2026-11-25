@@ -41,7 +41,8 @@
 ## GPSTB, `microsAsked` read Unix microseconds of 2023 as 2033 and asked
 ## nothing, and `noHeaderAndGuess` guessed GPSTB with no header at all. With
 ## ten digits under Time proposed as epoch seconds, `secondsAsked` read GPS
-## seconds of 2024 as 2014.
+## seconds of 2024 as 2014. With the shapes compared with their fraction,
+## `optionalFraction` read no row of a log whose rows read before.
 
 import std/[math, options, os, strutils, times]
 import viewSEG/core/shotlog
@@ -225,7 +226,7 @@ proc main*() =
     for cells in [@["01/03/24 10:00:00"], @["01/03/2024 10:00:00"],
         @["2024-03-01 10:00:00+02"], @["2024-03-01 10:00:00-0500"],
         @["2024-03-01 10:00:00 +01"], @["2024-03-01 10:00:00", "2024/03/01 10:00:00"],
-        @["2024-03-01 10:00:00", "2024-03-01 10:00:00.5"], @["2024 05 10:00:00"],
+        @["2024 05 10:00:00"],
         @["2024 05 10:00:00", "2024 06 11:00:00"], @["2024-13-01 10:00:00"],
         @["2024-03-01 10:00:00", "not a time"], @["1393286418000000"],
         @["1393286418", "x"], @["12"]]:
@@ -612,7 +613,7 @@ proc main*() =
     doAssert gg.roles == @[crTime, crFileNumber]
     doAssert gg.dateTimePattern == "yyyy-mo-dd hh:mi:ss"
     for bad in ["not a time", "2024-13-01 00:00:00", "2024/03/01 00:00:30",
-        "2024-03-01 00:00:30.5", "2024-03-01 00:00:30 +01"]:
+        "2024-03-01 00:00:30 +01"]:
       let gb = guessMap(good & bad & ",4\n")
       doAssert gb.roles == @[crText, crFileNumber], bad
       doAssert gb.dateTimePattern == "", bad
@@ -736,6 +737,29 @@ proc main*() =
     let bg = guessMap(bare)
     doAssert bg.roles == @[crText, crText]
     doAssert shots(parseShotLog(bare, bg), bg).problems.count == 0
+
+  block optionalFraction:
+    # a fraction on some rows only, or a Z on some: one form, the fraction optional
+    doAssert detectTimePattern(["2024-02-29T13:14:15.5Z", "2024-02-29T13:14:16Z"]) ==
+      "yyyy-mo-ddThh:mi:ss.ffffffZ"
+    doAssert detectTimePattern(["2024-03-01 10:00:00", "2024-03-01 10:00:00.250"]) ==
+      "yyyy-mo-dd hh:mi:ss.ffffff"
+    doAssert detectTimePattern(["2024-03-01T10:00:00Z", "2024-03-01T10:00:01"]) ==
+      "yyyy-mo-ddThh:mi:ss"
+    let g = guessMap("Time,FFID\n2024-03-01 00:00:00,1\n2024-03-01 00:00:10.5,2\n")
+    doAssert g.roles == @[crTime, crFileNumber]
+    doAssert g.dateTimePattern == "yyyy-mo-dd hh:mi:ss.ffffff"
+    # an older project's date-time text column reads every row as before
+    var old = initShotLogMap()
+    old.hasHeader = false
+    doAssert applyRoleNames(old, ["date-time text", "file number"], []) == ""
+    let v = shots(parseShotLog("2024-02-29T13:14:15.5Z,1\n2024-02-29T13:14:16Z,2\n" &
+      "2024-02-29T13:14:17Z,3\n", old), old)
+    let feb = unixUs(2024, 2, 29, 13, 14, 15)
+    doAssert v.rows[0].timeUtcUs == some(feb + 500_000)
+    doAssert v.rows[1].timeUtcUs == some(feb + 1_000_000)
+    doAssert v.rows[2].timeUtcUs == some(feb + 2_000_000)
+    doAssert v.problems.count == 0
 
   block spacesInHeader:
     # the header names hold spaces, so a header cut at spaces has more fields

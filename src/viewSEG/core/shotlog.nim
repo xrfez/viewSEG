@@ -1279,7 +1279,9 @@ func plainNumber(t: string): bool =
   i == t.len and i > at
 
 type Shape = object
-  pattern: string ## "" when the cell has no form this proposes
+  pattern: string ## "" when the cell has no form this proposes; no fraction, no Z
+  fraction: bool  ## a fraction of the second follows
+  zulu: bool      ## a `Z` ends the cell
   doy: bool       ## the date is a year and a day of year
   second: string  ## the digits of that day
 
@@ -1328,8 +1330,8 @@ proc shapeOf(t: string): Shape =
   for k in timeAt .. timeAt + 2:
     if width(k) notin 1 .. 2: return
   if sep(timeAt) != ":" or sep(timeAt + 1) != ":": return
-  if fraction == 1: pat.add ".ffffff"
-  if rest.len > 0: pat.add "Z"
+  result.fraction = fraction == 1
+  result.zulu = rest.len > 0
   result.pattern = pat
 
 proc detectWith(cells: openArray[string]; epochLike: bool): string =
@@ -1364,28 +1366,38 @@ proc detectWith(cells: openArray[string]; epochLike: bool): string =
   if first.pattern.len == 0: return ""
   var threeWide = true
   var over12 = false
+  var fraction = false
+  var zulu = true
   for t in vals:
     let shape = shapeOf(t)
     if shape.pattern != first.pattern: return ""
+    fraction = fraction or shape.fraction
+    zulu = zulu and shape.zulu
     if shape.doy:
       if shape.second.len != 3: threeWide = false
       var day = 0
       for ch in shape.second: day = day * 10 + (ord(ch) - ord('0'))
       if day > 12: over12 = true
   if first.doy and not (threeWide or over12): return ""
-  let pat = compilePattern(first.pattern)
+  # the fraction is optional in `matchTime`, and a trailing Z is accepted
+  var pattern = first.pattern
+  if fraction: pattern.add ".ffffff"
+  if zulu: pattern.add "Z"
+  let pat = compilePattern(pattern)
   for t in vals:
     if not readTime(t, pat, tcUtc).ok: return ""
-  first.pattern
+  pattern
 
 proc detectTimePattern*(cells: openArray[string]): string =
   ## The pattern that reads every non-blank cell of one column, or "" when
   ## the cells do not decide one. Plain numbers are never proposed: seconds or
   ## microseconds may be on the GPS clock or since 1970, and the number cannot
   ## tell (`timePattern` proposes them under a header that says UTC).
-  ## Proposed: a date and a time, as `shapeOf` says, when
-  ## every cell has the same form and, for a year and a day of year, a day
-  ## above 12 is there or every day has three digits. Not proposed: a leading
+  ## Proposed: a date and a time, as `shapeOf` says, when every cell has the
+  ## same form, a fraction of the second and a trailing `Z` aside (a fraction
+  ## on some rows makes it optional on all), and, for a year and a day of
+  ## year, a day above 12 is there or every day has three digits. Not
+  ## proposed: a leading
   ## one or two digit run (dd/mo/yy, mo/dd/yy, yy/mo/dd), a four-digit year
   ## in the third place (dd/mo/yyyy or mo/dd/yyyy), a zone offset, and forms
   ## that differ between cells; the pattern is then typed.

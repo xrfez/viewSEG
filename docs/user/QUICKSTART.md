@@ -1403,9 +1403,10 @@ long run of digits does not match rather than read as something else.
 
 The program proposes a pattern only when it is sure. It does so for a four-digit year first,
 followed by a month and a day (`-`, `/` or `.` between them) or by a day of year, then an
-hour, a minute and a second, with a fraction and a `Z` if every sampled row has them in the
-same form; for a year and a day of year, when some day is above 12 or every day has three
-digits. It does not guess a day or a month first (`dd/mo/yy`, `mo/dd/yy`, `yy/mo/dd`), a four-digit
+hour, a minute and a second, in the same form on every sampled row; a fraction of the second
+on some rows and not on others is read where it is there (`.ffffff`), and a `Z` at the end is
+accepted. For a year and a day of year it does so when some day is above 12 or every day has
+three digits. It does not guess a day or a month first (`dd/mo/yy`, `mo/dd/yy`, `yy/mo/dd`), a four-digit
 year in the third place (`dd/mo/yyyy` against `mo/dd/yyyy`), a time with a zone offset
 (`+01`, `-0500`), a column whose rows are in different forms, or GPS seconds. The dialog
 then says "The time's form could not be decided: type the pattern, for example dd/mo/yyyy
