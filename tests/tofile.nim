@@ -7,15 +7,25 @@
 ## file, a folder that cannot be made fails with the reason, an existing file
 ## is replaced whole, a survey file or an open file is refused. A receiver
 ## gather is checked by Missing traces the same against the O file as
-## against the X records it was made from.
+## against the X records it was made from, and the O file loaded with its X
+## file gives every receiver the X records' sources. Several X files give what
+## one file of their records gives (a shot point shot again in the second is
+## one more trace), the components of every file are counted, a receiver with
+## more traces than SPS 2.1 numbers is an error that names it (nothing is
+## written), and the peak memory of two files is about one file's.
 ##
 ## Seen to fail: with the last O record left out of the file, "not the library's"
 ## (land, by the record count); with the H records left out, "H records differ"; with a cancel not
 ## checked before the write, "a cancelled job wrote the file"; with the
 ## refusal left out, "the X file was overwritten"; with only the names compared, "the file
-## behind a link is not refused".
+## behind a link is not refused". With the pairs of an earlier file left out of a later
+## one, "a pair two files give is not two traces: 9" and "the reshoot on day 2 is lost: 9
+## pairs"; with the components counted by the first file's setting, "components: 0 with the
+## one-component file first"; with a receiver's traces cut into further gathers, "a
+## receiver's traces were cut into gathers"; with a set of every pair kept for that, "two
+## files take 43376 KiB at their peak, one 3016 KiB".
 
-import std/[os, sequtils, sets, strutils]
+import std/[os, osproc, sequtils, sets, strutils, tables]
 when defined(linux):
   import std/posix
   const RlimitFsize = 1.cint # RLIMIT_FSIZE on Linux
@@ -111,7 +121,77 @@ proc receiverFile(path: string; record: int; receiver: float64; sources: openArr
     w.writeTrace(k, samples)
   doAssert w.close().len == 0, "receiver file was not written: " & path
 
+proc relation(rec: int; srcPoint: float64; fromCh, toCh: int; rcvLine, fromR, toR: float64):
+    SpsRelation =
+  result = initSpsRelation()
+  result.fieldRecord = rec
+  (result.srcLine, result.srcPoint) = (1.0, srcPoint)
+  (result.fromChannel, result.toChannel) = (int64(fromCh), int64(toCh))
+  (result.rcvLine, result.fromReceiver, result.toReceiver) = (rcvLine, fromR, toR)
+
+proc pairCounts(g: SurveyGeometry; domain: RelationDomain): CountTable[string] =
+  ## Every source and receiver pair of `domain`'s relations, as often as they give it.
+  for rec in g.records(domain):
+    for (_, rel) in g.relations(rec, domain):
+      if rel.component <= 1: result.inc key(rel.source) & ">" & key(rel.receiver)
+
+proc geometryOf(rels: seq[SpsRelation]; multi: bool): ref SurveyGeometry =
+  result = new SurveyGeometry
+  result[] = initSurveyGeometry()
+  result[].multiComponent = multi
+  result[].addSps(SpsFile(relations: rels), rdSource)
+
+proc sameRecords(a, b: seq[SpsRelation]): bool =
+  ## Whether two lists of O records are the same, record for record.
+  result = a.len == b.len
+  for i in 0 ..< min(a.len, b.len):
+    let (x, y) = (a[i], b[i])
+    if x.fieldRecord != y.fieldRecord or x.srcLine != y.srcLine or x.srcPoint != y.srcPoint or
+        x.srcIndex != y.srcIndex or x.fromChannel != y.fromChannel or
+        x.toChannel != y.toChannel or x.rcvLine != y.rcvLine or
+        x.fromReceiver != y.fromReceiver or x.toReceiver != y.toReceiver or
+        x.rcvIndex != y.rcvIndex:
+      return false
+
+const PeakVar = "VIEWSEG_OFILE_PEAK" ## set in the run of this test that measures memory
+
+proc peakSurvey(stations: int; files: int): seq[ref SurveyGeometry] =
+  ## 40 shots on source line 1, each recorded by 50 receiver lines of `stations` stations
+  ## (one X record per line), in `files` files of as many shots each.
+  let shots = 40 div files
+  for f in 0 ..< files:
+    var rels: seq[SpsRelation]
+    for r in 1 .. shots:
+      for l in 1 .. 50:
+        rels.add relation(r, float64(f * shots + r), (l - 1) * stations + 1, l * stations,
+          float64(100 + l), 1, float64(stations))
+    result.add geometryOf(rels, false)
+
+proc measurePeak(spec: string) =
+  ## The memory the O records of a `peakSurvey` take at their peak, said on stdout.
+  let parts = spec.split(':')
+  let gs = peakSurvey(parseInt(parts[1]), parseInt(parts[0]))
+  let before = getMaxMem()
+  var made = deriveOFile(gs, SpsFile())
+  let text = renderOFile(made.file, made.summary)
+  doAssert text.len > 0 and made.summary.pairs == 40 * 50 * parseInt(parts[1]), $made.summary
+  echo "peak ", getMaxMem() - before
+
+proc peakOf(files, stations: int): int =
+  putEnv(PeakVar, $files & ":" & $stations)
+  defer: delEnv(PeakVar)
+  var cmd = quoteShell(getAppFilename())
+  for p in commandLineParams(): cmd.add " " & quoteShell(p)
+  let (output, code) = execCmdEx(cmd)
+  doAssert code == 0, output
+  for l in output.splitLines:
+    if l.startsWith("peak "): return parseInt(l[5 .. ^1])
+  doAssert false, "no peak said: " & output
+
 proc main*() =
+  if existsEnv(PeakVar):
+    measurePeak(getEnv(PeakVar))
+    return
   let dir = getTempDir() / ("viewseg-ofile-" & $getCurrentProcessId())
   removeDir(dir)
   createDir(dir)
@@ -211,6 +291,23 @@ proc main*() =
     doAssert "cannot read" in missing.sink.summary.error and not fileExists(dir / "gone.ops"),
       missing.sink.summary.error
 
+  block o_file_loaded_with_its_x_file:
+    # The written O file and its X file in one geometry, both domains: every receiver
+    # station's sources are the X records' for it, as often.
+    for path in Surveys:
+      let g = new SurveyGeometry
+      g[] = geometryOf(path, false)
+      let dest = dir / path.extractFilename.changeFileExt(".ops")
+      let got = runOFile(g, path, dest)
+      doAssert got.sink.summary.error.len == 0, got.sink.summary.error
+      var both = initSurveyGeometry()
+      both.addSps(path)
+      both.addSps(dest)
+      doAssert both.relationCount(rdReceiver) == got.sink.summary.records
+      let x = both.pairCounts(rdSource)
+      doAssert x.len > 0 and x == both.pairCounts(rdReceiver), "the O file's pairs are not " &
+        "the X records' in " & path
+
   block refused_targets:
     doAssert refusedTarget("/a/x.ops", ["/a/x.ops"]).len > 0
     doAssert refusedTarget("/a/y.ops", ["/a/x.ops"]).len == 0
@@ -271,36 +368,78 @@ proc main*() =
       union.incl g[].xPairs
     doAssert union.len == 9
     let made = deriveOFile(each, parseSps(readFile(one), one))
-    doAssert made.summary.shared == 3, $made.summary
+    doAssert made.summary.overlapped == 0, $made.summary
     doAssert made.summary.sources == 3 and made.summary.receivers == 3, $made.summary
     var back = initSurveyGeometry()
     back.addSps(parseSps(spsText(made.file).text, "both.ops"))
     doAssert back.oPairs == union, "pairs differ: " & $back.oPairs.len & " against " & $union.len
-    doAssert made.summary.pairs == 9
+    doAssert made.summary.pairs == 12, "a pair two files give is not two traces: " &
+      $made.summary.pairs
     var st = initAppState()
     st.apply Command(kind: ckLoadSurvey, paths: @[one, two])
     doAssert st.settle(st.survey.layers.len == 2 and st.relationLayer >= 0), "no two X files"
     let dest = dir / "both.ops"
     st.apply Command(kind: ckGenerateOFile, oDest: dest)
     doAssert st.settle(not st.oFileRunning and st.oFileWritten.len > 0), st.oFileOutcome
-    doAssert "one.x, two.x" in st.oFileOutcome and "written once" in st.oFileOutcome,
+    doAssert "one.x, two.x" in st.oFileOutcome and "once" notin st.oFileOutcome,
       st.oFileOutcome
     var file = initSurveyGeometry()
     file.addSps(dest)
-    doAssert file.oPairs == union
+    doAssert file.oPairs == union and file.expectedChannels(2, rdReceiver) == 4
 
-  proc pairsOfRelations(rels: seq[SpsRelation]): HashSet[string] =
-    var g = initSurveyGeometry()
-    g.addSps(SpsFile(relations: rels), rdSource)
-    g.xPairs
+  block several_x_files_are_one_file:
+    # Shot point 5 is shot on day 1 and again on day 2, each day's records numbered from 1:
+    # the two files give what one file of the four shots gives, record for record.
+    const H00 = "H00 SPS format version number   SPS 2.1;"
+    let day1 = dir / "day1.x"
+    let day2 = dir / "day2.x"
+    let both = dir / "days.x"
+    writeFile(day1, [H00, xRec(1, 5, 1, 3, 1, 3), xRec(2, 6, 1, 3, 1, 3)].join("\n") & "\n")
+    writeFile(day2, [H00, xRec(1, 5, 1, 3, 1, 3), xRec(2, 7, 1, 3, 1, 3)].join("\n") & "\n")
+    writeFile(both, [H00, xRec(1, 5, 1, 3, 1, 3), xRec(2, 6, 1, 3, 1, 3),
+      xRec(3, 5, 1, 3, 1, 3), xRec(4, 7, 1, 3, 1, 3)].join("\n") & "\n")
+    var days: seq[ref SurveyGeometry]
+    for p in [day1, day2]:
+      let g = new SurveyGeometry
+      g[] = geometryOf(p, false)
+      days.add g
+    let whole = new SurveyGeometry
+    whole[] = geometryOf(both, false)
+    let head = readHead(day1)
+    let two = deriveOFile(days, head)
+    let one = deriveOFile([whole], head)
+    doAssert two.summary.pairs == 12 and one.summary.pairs == 12,
+      "the reshoot on day 2 is lost: " & $two.summary.pairs & " pairs"
+    doAssert sameRecords(two.file.relations, one.file.relations),
+      "two files give other O records than one: " & $two.file.relations.len & " against " &
+      $one.file.relations.len
+    doAssert two.summary == one.summary, $two.summary & " / " & $one.summary
+    # A file in which two X records of one field record give the same channel: the first
+    # one's station is written, and the other is counted.
+    let overlap = geometryOf(@[relation(1, 1, 1, 3, 10, 1, 3), relation(1, 1, 3, 5, 10, 3, 5)],
+      false)
+    let o = deriveOFile([overlap, overlap], SpsFile())
+    doAssert o.summary.overlapped == 2 and o.summary.pairs == 10, $o.summary
+    doAssert "left out" in oFileSentences(o.summary, "o.ops", ["a.x", "b.x"])
 
-  proc relation(rec: int; srcPoint: float64; fromCh, toCh: int; rcvLine, fromR, toR: float64):
-      SpsRelation =
-    result = initSpsRelation()
-    result.fieldRecord = rec
-    (result.srcLine, result.srcPoint) = (1.0, srcPoint)
-    (result.fromChannel, result.toChannel) = (int64(fromCh), int64(toCh))
-    (result.rcvLine, result.fromReceiver, result.toReceiver) = (rcvLine, fromR, toR)
+  block components_are_counted_in_every_file:
+    # One file of one component, one of three per station: the further components of the
+    # second are counted whichever file comes first.
+    let single = geometryOf(@[relation(1, 5, 1, 3, 10, 1, 3)], false)
+    var r = relation(1, 9, 1, 6, 10, 1, 2)
+    r.channelIncrement = 3
+    let three = geometryOf(@[r], true)
+    var want = single[].pairCounts(rdSource)
+    for k, n in three[].pairCounts(rdSource): want.inc(k, n)
+    for order in [@[single, three], @[three, single]]:
+      var made = deriveOFile(order, SpsFile())
+      doAssert made.summary.components == 4, "components: " & $made.summary.components &
+        " with the " & (if order[0][].multiComponent: "three" else: "one") &
+        "-component file first"
+      doAssert made.summary.pairs == 5, $made.summary
+      var back = initSurveyGeometry()
+      back.addSps(parseSps(renderOFile(made.file, made.summary), "c.ops"))
+      doAssert back.pairCounts(rdReceiver) == want, "pairs differ"
 
   block revision_1_0_that_does_not_fit_is_written_as_2_1:
     # 10 005 receivers on one line: more gathers than SPS 1.0's four digits number.
@@ -328,20 +467,46 @@ proc main*() =
       "SPS001" in t2.splitLines[0], t2.splitLines[0]
 
   block receiver_with_more_traces_than_the_columns_hold:
-    # 100 005 sources recorded by one receiver: SPS 2.1 counts to 99 999 traces.
-    var g = initSurveyGeometry()
+    # 100 005 sources recorded by receiver 10 1: SPS 2.1 numbers 99 999 traces. A gather is
+    # never cut in two (its traces would be numbered from 1 again, and a trace of it found
+    # in two gathers or in none): nothing is written, and the receiver is named.
     var rels: seq[SpsRelation]
     for i in 1 .. 100_005: rels.add relation(i, float64(i), 1, 1, 10, 1, 1)
-    g.addSps(SpsFile(relations: rels), rdSource)
-    var made = deriveOFile(g, SpsFile())
+    rels.add relation(200_000, 1, 1, 1, 10, 2, 2)
+    let g = geometryOf(rels, false)
+    var made = deriveOFile(g[], SpsFile())
     let text = renderOFile(made.file, made.summary)
-    doAssert made.summary.error.len == 0 and made.summary.extraGathers == 1 and
-      made.summary.records == 2, $made.summary
+    doAssert text.len == 0, "a receiver's traces were cut into gathers"
+    let why = made.summary.error
+    doAssert "line 10, point 1 " in why and "100005" in why and "99999" in why and
+      "SPS 2.1" in why, why
+    let source = dir / "many.x"
+    writeFile(source, "H00 SPS format version number   SPS 2.1;\n")
+    createDir(dir / "many")
+    let got = runOFile(g, source, dir / "many" / "many.ops")
+    doAssert got.sink.summary.error == why and got.sink.summary.file.len == 0, $got.sink.summary
+    doAssert toSeq(walkFiles(dir / "many" / "*")).len == 0, "a file was written"
+    # 10 005 traces do not fit SPS 1.0's four digits: written as SPS 2.1, in one gather.
+    var fewer: seq[SpsRelation]
+    for i in 1 .. 10_005: fewer.add relation(i, float64(i), 1, 1, 10, 1, 1)
+    let gf = geometryOf(fewer, false)
+    var m = deriveOFile(gf[], SpsFile(revision: sps10, revisionDeclared: true))
+    let t = renderOFile(m.file, m.summary)
+    doAssert t.len > 0 and m.summary.widened and m.summary.revision == sps21 and
+      m.summary.records == 1, $m.summary
     var back = initSurveyGeometry()
-    back.addSps(parseSps(text, "b.ops"))
-    doAssert back.oPairs == g.xPairs and back.oPairs.len == 100_005,
-      "pairs differ: " & $back.oPairs.len
-    doAssert "gather was added" in oFileSentences(made.summary, "b.ops", ["b.x"])
+    back.addSps(parseSps(t, "f.ops"))
+    doAssert back.oPairs == gf[].xPairs and back.expectedChannels(1, rdReceiver) == 10_005
+
+  block peak_memory_follows_the_relations:
+    # The O records of 40 shots, in one file or in two: two files take about what one does,
+    # at two sizes (four times the pairs), so nothing is held per pair beyond the relations.
+    when not defined(useMalloc):
+      for stations in [50, 200]:
+        let one = peakOf(1, stations)
+        let two = peakOf(2, stations)
+        doAssert two - one < 2 shl 20 + one div 4, "two files take " & $(two shr 10) &
+          " KiB at their peak, one " & $(one shr 10) & " KiB (" & $stations & " stations a line)"
 
   block what_does_not_fit_names_the_o_record:
     var g = initSurveyGeometry()
@@ -425,8 +590,10 @@ proc main*() =
     # Receiver 2's gather has sources 1 and 3: source 2 is missing from it.
     let file = folder / "node2.sgd"
     receiverFile(file, 9, 2.0, [1.0, 3.0])
+    var gxo = gx
+    gxo.addSps(parseSps(spsText(made.file).text, "m.ops"))
     var totals: seq[string]
-    for rels in [gx, go]:
+    for rels in [gx, go, gxo]:
       let relations = new SurveyGeometry
       relations[] = rels
       let jobs = initJobs()
@@ -442,7 +609,8 @@ proc main*() =
       # records' numbers, the file's own start at 1)
       totals.add [t.files, t.records, t.expected, t.present, t.missing, t.alsoIn, t.never,
         t.duplicates, t.extras, t.xpsWithoutData.len].join(",") & $sink.result.unmatched
-    doAssert totals[0] == totals[1], "Missing traces differs: " & totals[0] & " / " & totals[1]
+    doAssert totals[0] == totals[1] and totals[0] == totals[2],
+      "Missing traces differs: " & totals.join(" / ")
 
 when isMainModule:
   main()

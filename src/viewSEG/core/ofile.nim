@@ -5,11 +5,20 @@
 ## records say the same per receiver: which source points it recorded.
 ## `deriveOFile` takes them from parseSEG's `receiverRelations` and writes
 ## them in the revision, line ending and H records of the X file they come
-## from. O records hold one trace per source and receiver station: the
-## channels of a station's further components are not in them, and
-## `OFileSummary` counts what that leaves out. The file is written through a
+## from. Several X files give what one file of all their X records gives: each
+## file's field records are numbered on after the ones before, so a shot point
+## shot again in another file is one more trace, as in one file. O records hold
+## one trace per source and receiver station: the channels of a station's
+## further components are not in them, and `OFileSummary` counts what that
+## leaves out. A receiver gather is never cut in two: one with more traces than
+## the channel columns hold is an error. The file is written through a
 ## temporary file beside it, then renamed; the source files are never opened
 ## for writing (`refusedTarget`).
+##
+## Memory: with one X file, the job holds the O records, parseSEG's index of the
+## X records by receiver line (an entry per X record) with the sources of the
+## largest receiver line, and the file's text. Several files add one copy of
+## their X records, merged; nothing is held per source and receiver pair.
 
 import std/[os, sets, strutils]
 import parseSEG
@@ -19,6 +28,7 @@ const
   OFileExt* = ".ops"
     ## The extension parseSEG gives O records: it reads such a file's records as receiver gathers.
   HeadChunk = 64 * 1024
+  MergeChunk = 4096                ## X records added to a merged geometry at a time
   HeadTail = 8 * 1024              ## records read past the H records, to tell the revision
   MaxHeadBytes* = 64 * 1024 * 1024 ## the H records of an SPS file are not longer than this
 
@@ -34,14 +44,11 @@ type
     headers*: int   ## H records copied from the X file
     components*: int
       ## channels of a station beyond its first, in X records that cover several per
-      ## station: O records have no place for them
-    shared*: int
-      ## pairs the X records give twice, through channels two runs cover or in two files,
-      ## written once
+      ## station (summed over the X files): O records have no place for them
+    overlapped*: int
+      ## stations of X records left out because another X record of the same field
+      ## record, before them, gives their channels
     widened*: bool ## written as SPS 2.1: the numbers did not fit the X file's SPS 1.0
-    extraGathers*: int
-      ## gathers made beyond one per receiver: a receiver with more traces than the
-      ## channel columns hold takes one more for each further run
     error*: string ## why nothing was written; "" when the file was
 
   OFileSink* = ref object
@@ -52,6 +59,13 @@ type
 
 func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
+
+func stationWords(line, point: float64; index: int): string =
+  ## "line 100, point 105", with the index when it is one of several.
+  func num(x: float64): string =
+    if x == round(x) and abs(x) < 1e15: $int64(x) else: formatFloat(x, ffDecimal, 2)
+  result = "line " & num(line) & ", point " & num(point)
+  if index > 1: result.add ", index " & $index
 
 proc readHead*(path: string; limit = MaxHeadBytes): SpsFile {.raises: [IOError].} =
   ## The head of the SPS file `path`, read as a file of its own: its revision, line
@@ -102,89 +116,104 @@ proc countSources(rels: openArray[SpsRelation]): int =
       seen.incl pointKey(r.rcvLine, r.fromReceiver + float64(i) * step, r.rcvIndex)
   seen.len
 
-type PairKey = (float64, float64, int16, float64, float64, int16)
+proc xCounts(g: SurveyGeometry): tuple[stations, channels: int] =
+  ## The stations of `g`'s X records, and their channels (several per station in
+  ## X records that cover a station's components).
+  for rec in g.records(rdSource):
+    for run in g.relationRuns(rec, rdSource):
+      result.stations += run.stations
+      result.channels += run.stations * run.components
 
-func pairKey(src, rcv: StationKey): PairKey =
-  (src.line, src.point, src.index, rcv.line, rcv.point, rcv.index)
-
-proc mergedX(gs: openArray[ref SurveyGeometry]): tuple[g: SurveyGeometry; shared: int] =
-  ## The X relations of every geometry in one, a pair that an earlier one
-  ## has left out (counted in `shared`). Field records are numbered on after the
-  ## ones before, so two files' records do not meet.
-  var rels: seq[SpsRelation]
-  var seen = initHashSet[PairKey]()
-  var offset = 0'i64
+proc mergedX(gs: openArray[ref SurveyGeometry]): SurveyGeometry =
+  ## The X relations of every geometry of `gs` in one, as one file of all their X
+  ## records gives them: each geometry's field records numbered on after the ones
+  ## before (two files' records do not meet), each X record as its geometry holds
+  ## it. Only a station's first component is kept (O records have no other), so
+  ## geometries with and without several components per station merge alike; a
+  ## record whose X records share channels is taken channel by channel, each
+  ## channel's station as its own geometry decides. Added a few records at a time:
+  ## nothing but the merged geometry grows with the survey.
+  result = initSurveyGeometry()
+  var total = 0
+  for g in gs: total += g[].relationCount(rdSource)
+  result.reserveRelations(total, rdSource)
+  var part = SpsFile()
+  template take(r: SpsRelation) =
+    part.relations.add r
+    if part.relations.len >= MergeChunk:
+      result.addSps(part, rdSource)
+      part.relations.setLen 0
+  var next = 0'i64 # the number the next geometry's first record takes
   for g in gs:
-    var fresh = initHashSet[PairKey]()
-    var highest = 0'i64
-    for rec in g[].records(rdSource):
-      highest = max(highest, rec)
-      for run in g[].relationRuns(rec, rdSource):
-        var first = -1
-        proc flush(last: int) =
-          if first >= 0:
+    var first = 0'i64
+    var started = false
+    var last = next - 1
+    for rec in g[].records(rdSource): # (ascending)
+      if not started: (first, started) = (rec, true)
+      last = rec - first + next
+      if g[].relationsDisjoint(rec, rdSource):
+        for run in g[].relationRuns(rec, rdSource):
+          var r = initSpsRelation()
+          r.fieldRecord = last
+          (r.srcLine, r.srcPoint, r.srcIndex) =
+            (run.fixed.line, run.fixed.point, int(run.fixed.index))
+          r.fromChannel = run.fromChannel
+          r.toChannel = run.fromChannel + int64(run.stations - 1) * run.channelStep
+          r.channelIncrement = int(run.channelStep)
+          (r.rcvLine, r.fromReceiver, r.toReceiver, r.rcvIndex) =
+            (run.line, run.firstPoint, run.lastPoint, int(run.index))
+          take r
+      else:
+        for (channel, rel) in g[].relations(rec, rdSource):
+          if rel.component <= 1:
             var r = initSpsRelation()
-            r.fieldRecord = rec + offset
+            r.fieldRecord = last
             (r.srcLine, r.srcPoint, r.srcIndex) =
-              (run.fixed.line, run.fixed.point, int(run.fixed.index))
-            r.fromChannel = run.fromChannel + int64(first) * run.channelStep
-            r.toChannel = run.fromChannel + int64(last) * run.channelStep +
-              int64(run.components) - 1
-            r.channelIncrement = int(run.channelStep)
-            (r.rcvLine, r.fromReceiver, r.toReceiver, r.rcvIndex) =
-              (run.line, run.station(first).point, run.station(last).point, int(run.index))
-            rels.add r
-            first = -1
-        for i in 0 ..< run.stations:
-          let k = pairKey(run.fixed, run.station(i))
-          if k in seen:
-            inc result.shared
-            flush(i - 1)
-          else:
-            fresh.incl k
-            if first < 0: first = i
-        flush(run.stations - 1)
-    seen.incl fresh
-    offset += highest
-  result.g = initSurveyGeometry()
-  result.g.multiComponent = gs[0][].multiComponent
-  result.g.addSps(SpsFile(relations: rels), rdSource)
+              (rel.source.line, rel.source.point, int(rel.source.index))
+            (r.fromChannel, r.toChannel, r.channelIncrement) = (channel, channel, 1)
+            (r.rcvLine, r.fromReceiver, r.toReceiver, r.rcvIndex) = (rel.receiver.line,
+              rel.receiver.point, rel.receiver.point, int(rel.receiver.index))
+            take r
+    next = last + 1
+  if part.relations.len > 0: result.addSps(part, rdSource)
 
-proc deriveOFile*(g: SurveyGeometry; head: SpsFile; shared = 0):
+proc oFileOf(g: SurveyGeometry; head: SpsFile; stations, channels: int):
     tuple[file: SpsFile; summary: OFileSummary] =
-  ## The O records of `g`'s X relations, in a file that has `head`'s revision,
-  ## line ending and H records, and what they leave out. `shared` counts pairs
-  ## already left out of `g` because another file gave them.
+  ## `deriveOFile` of `g`, whose X files have `stations` stations in their X
+  ## records and `channels` channels.
   let rev = if head.revision == spsAuto: sps21 else: head.revision
   var file = SpsFile(name: head.name, revision: rev,
     revisionDeclared: head.revisionDeclared, crlf: head.crlf, headers: head.headers,
     relations: g.receiverRelations(1, 'O'), finalNewline: true)
   var s = OFileSummary(records: file.relations.len, revision: rev,
-    headers: head.headers.len, shared: shared)
+    headers: head.headers.len, components: channels - stations)
   var gathers = initHashSet[int64]()
   for r in file.relations:
     gathers.incl r.fieldRecord
     s.pairs += int(r.toChannel - r.fromChannel + 1)
   s.receivers = gathers.len
   s.sources = file.relations.countSources
-  var x = 0
-  var channels = 0
-  for rec in g.records(rdSource):
-    for run in g.relationRuns(rec, rdSource):
-      x += run.stations
-      channels += run.stations * run.components
-  s.components = channels - x
-  s.shared += max(x - s.pairs, 0)
+  s.overlapped = max(stations - s.pairs, 0)
   (file, s)
+
+proc deriveOFile*(g: SurveyGeometry; head: SpsFile):
+    tuple[file: SpsFile; summary: OFileSummary] =
+  ## The O records of `g`'s X relations, in a file that has `head`'s revision,
+  ## line ending and H records, and what they leave out.
+  let c = xCounts(g)
+  oFileOf(g, head, c.stations, c.channels)
 
 proc deriveOFile*(gs: openArray[ref SurveyGeometry]; head: SpsFile):
     tuple[file: SpsFile; summary: OFileSummary] =
-  ## `deriveOFile` of the X relations of every geometry of `gs` together.
-  if gs.len == 1:
-    result = deriveOFile(gs[0][], head)
-  else:
-    let m = mergedX(gs)
-    result = deriveOFile(m.g, head, m.shared)
+  ## `deriveOFile` of the X relations of every geometry of `gs`, as of one file
+  ## that holds all their X records, one geometry's after the other's.
+  var stations, channels = 0
+  for g in gs:
+    let c = xCounts(g[])
+    stations += c.stations
+    channels += c.channels
+  if gs.len == 1: oFileOf(gs[0][], head, stations, channels)
+  else: oFileOf(mergedX(gs), head, stations, channels)
 
 proc refusedTarget*(dest: string; sources: openArray[string]): string =
   ## Why `dest` may not be written: it is one of `sources` (the survey's files
@@ -209,38 +238,12 @@ const
   MaxChannel = [sps10: 9999'i64, sps21: 99999'i64] ## traces of a gather the columns hold
   SizeError = "an O record does not fit the SPS "
 
-proc fitted(rels: openArray[SpsRelation]; maxChannel: int64):
-    tuple[rels: seq[SpsRelation]; extra: int] =
-  ## `rels` with their traces numbered from 1 in each gather, and a receiver whose
-  ## traces would pass `maxChannel` given a further gather (the same receiver, its
-  ## next traces numbered from 1), the runs cut where they must be. Gathers are
-  ## numbered on from 1 as the receivers come.
-  var gather = 0'i64
-  var next = 1'i64
-  var last = -1'i64
-  for r in rels:
-    if r.fieldRecord != last:
-      last = r.fieldRecord
-      inc gather
-      next = 1
-    let n = r.toChannel - r.fromChannel + 1
-    let step = if n > 1: (r.toReceiver - r.fromReceiver) / float64(n - 1) else: 0.0
-    var done = 0'i64
-    while done < n:
-      if next > maxChannel:
-        inc gather
-        inc result.extra
-        next = 1
-      let take = min(maxChannel - next + 1, n - done)
-      var p = r
-      p.fieldRecord = gather
-      p.fromChannel = next
-      p.toChannel = next + take - 1
-      if done > 0: p.fromReceiver = r.fromReceiver + float64(done) * step
-      if done + take < n: p.toReceiver = r.fromReceiver + float64(done + take - 1) * step
-      result.rels.add p
-      next += take
-      done += take
+func mostTraces(rels: openArray[SpsRelation]): tuple[traces: int64; at: int] =
+  ## The traces of the receiver gather that has most (traces are numbered from 1 in
+  ## each gather), and the index in `rels` of an O record of it; -1 for none.
+  result = (0'i64, -1)
+  for i, r in rels:
+    if r.toChannel > result.traces: result = (r.toChannel, i)
 
 proc firstError(log: DiagLog; rev: SpsRevision): string =
   ## The first problem of the writer, naming the O record (not the X record the
@@ -252,24 +255,28 @@ proc firstError(log: DiagLog; rev: SpsRevision): string =
 
 proc renderOFile*(file: SpsFile; s: var OFileSummary): string =
   ## The text of `file`'s O records in the revision of `s`, or, when its numbers do
-  ## not fit SPS 1.0, in SPS 2.1; a receiver with more traces than the channel
-  ## columns hold is given further gathers. Updates `s`; its `error` says why
-  ## when the text is "".
+  ## not fit SPS 1.0, in SPS 2.1. Updates `s`. "" when they do not fit SPS 2.1
+  ## either: `s.error` then names the receiver with more traces than a gather
+  ## holds, or the O record that does not fit.
+  let most = mostTraces(file.relations)
+  if most.traces > MaxChannel[sps21]:
+    let r = file.relations[most.at]
+    s.error = "the receiver at " & stationWords(r.srcLine, r.srcPoint, r.srcIndex) &
+      " recorded " & $most.traces & " traces, and an SPS 2.1 gather holds at most " &
+      $MaxChannel[sps21]
+    return ""
   let first = s.revision
   for rev in [first, sps21]:
-    let cut = fitted(file.relations, MaxChannel[rev])
-    var f = file
-    f.relations = cut.rels
-    let t = spsText(f, SpsWriteOptions(revision: rev))
-    if not t.log.hasErrors:
-      s.records = cut.rels.len
-      s.extraGathers = cut.extra
-      s.widened = rev != first
-      s.revision = rev
-      s.error = ""
-      return t.text
-    s.error = firstError(t.log, rev)
+    if most.traces <= MaxChannel[rev]:
+      let t = spsText(file, SpsWriteOptions(revision: rev))
+      if not t.log.hasErrors:
+        s.widened = rev != first
+        s.revision = rev
+        s.error = ""
+        return t.text
+      s.error = firstError(t.log, rev)
     if first == sps21: break
+  ""
 
 proc oFileSpec*(dest: string): JobSpec =
   ## The job that writes `dest`: background, needing `dest` to itself and reading the X file.
@@ -286,14 +293,14 @@ proc oFileWork*(gs: seq[ref SurveyGeometry]; sink: OFileSink): JobWork =
       var s = OFileSummary()
       try:
         ctx.setPhase("Reading the X file's headers")
-        let head = readHead(sink.sources[0])
+        let head = if sink.sources.len > 0: readHead(sink.sources[0]) else: SpsFile()
         ctx.checkCancelled()
         ctx.setPhase("Deriving the O records")
         let made = deriveOFile(gs, head)
         s = made.summary
         ctx.checkCancelled()
         ctx.setPhase("Writing")
-        let text = renderOFile(made.file, s)
+        let text = if made.file.relations.len > 0: renderOFile(made.file, s) else: ""
         if s.error.len > 0: discard
         elif text.len == 0:
           s.error = "the survey has no X records to take O records from"
@@ -320,13 +327,10 @@ func oFileSentences*(s: OFileSummary; name: string; sources: openArray[string]):
   if s.components > 0:
     result.add " O records have no component: " & plural(s.components, "channel", "channels") &
       " beyond each station's first are not in the file."
-  if s.shared > 0:
-    result.add " " & plural(s.shared, "pair", "pairs") &
-      " that the X records give twice (through channels two runs share, or in two files) " &
-      "are written once."
+  if s.overlapped > 0:
+    result.add " " & plural(s.overlapped, "station", "stations") &
+      " of X records are left out: an X record of the same field record before them gives " &
+      "their channels."
   if s.widened:
     result.add " It is written as SPS 2.1: the numbers do not fit SPS 1.0."
-  if s.extraGathers > 0:
-    result.add " " & plural(s.extraGathers, "gather was", "gathers were") &
-      " added: a receiver's traces do not fit the channel columns in one."
   result.add " The file is not imported: add it in the Import survey window to use it."
