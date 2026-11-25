@@ -29,6 +29,7 @@ const
     "and import it again."
   ImportEmpty* = "The file holds no text."
   ImportNotFile* = "That is not a plain file (a folder, a pipe or a device), so it was not read."
+  ImportCancelled* = "The import was stopped."
   ImportUnreadable* = "The file could not be read."
 
 type

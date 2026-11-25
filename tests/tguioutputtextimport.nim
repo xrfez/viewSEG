@@ -8,6 +8,8 @@
 ##
 ## A pipe and a folder are refused with a sentence, not opened.
 ##
+## An answer that arrives after the editor was closed and opened again is dropped.
+##
 ## Seen to fail: with the pipe check removed, the read waits for a writer and
 ## "a pipe is refused, not waited on" did not happen; with the over-limit check removed, "a file over 1 MiB is refused
 ## did not happen" (the file was taken in as text). The cut is seen to fail in
@@ -24,7 +26,7 @@ import parseSEG
 import viewSEG/core/[geometry, state]
 import viewSEG/view/outputtextimport
 import viewSEG/ui/imgui/app
-import utils/[fixtures, waiting]
+import utils/[faultyfs, fixtures, waiting]
 
 type
   Step = object
@@ -155,6 +157,32 @@ proc main*() =
       doAssert mkfifo(pipe.cstring, 0o600) == 0, "cannot make a pipe"
       step("a pipe is refused, not waited on", importing(pipe), said(ImportNotFile, ""))
     step("a folder is refused", importing(inbox), said(ImportNotFile, ""))
+
+    # a slow read answers after the editor was closed and opened again: it is dropped
+    let slow = inbox / "slow.txt"
+    writeFile(slow, "SLOW ANSWER\n")
+    install()
+    fault(slow, fkDelay, {foOpen}, initDuration(milliseconds = 1500))
+    proc startSlow(f: FrameInfo): bool =
+      answer = @[slow]
+      clickWhen(f, "output.text.import")
+    step("a slow import is started", startSlow, noop)
+    proc closeEditor(f: FrameInfo): bool = clickWhen(f, "output.text.edit")
+    proc closed(f: FrameInfo): bool = f.markOf("output.text.import").size.x == 0
+    step("the editor is closed while it reads", closeEditor, closed)
+    step("the editor is opened again", edit, editing)
+    var reopenedAt = getMonoTime()
+    proc mark(f: FrameInfo): bool =
+      reopenedAt = getMonoTime()
+      true
+    proc waited(f: FrameInfo): bool =
+      doAssert f.markNames("output.text.import.note SLOW ANSWER").len == 0
+      getMonoTime() - reopenedAt > initDuration(milliseconds = 2500)
+    step("the late answer is waited for", mark, waited)
+    proc untouched(f: FrameInfo): bool =
+      f.markNames("output.text.count 0 of 38 lines").len > 0 and
+        f.markNames("output.text.import.undo").len == 0
+    step("the late answer did not replace the lines", noop, untouched)
 
     var at = 0
     var started = false

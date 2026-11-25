@@ -126,6 +126,7 @@ type
     importJob: JobId = NoJob
     importNote: ImportNote
     importGen: int
+    importJobGen: int                          ## the generation the running import was started in
     importPath: string                         ## the file the editor takes its lines from
     wantImport: bool
     askText: bool                              ## the Import... dialog is wanted
@@ -447,12 +448,14 @@ proc startImport(ui: var OutputUi; st: AppState) =
   ui.importNote = ImportNote(gen: -1)
   ui.importSay = ImportReading
   let path = ui.importPath
+  ui.importJobGen = ui.importGen
   ui.importJob = st.jobs.submit(JobSpec(title: ImportTitle, lane: jlBackground,
     reads: @[path]), importWork(path, ui.importNote, ui.importGen))
 
 proc applyImport(ui: var OutputUi) =
   ## The file's bytes are in: the lines replace the editor's text, which
   ## stays as it was, to be put back, when the file gives none.
+  if not ui.textOpen: return
   let note = ui.importNote
   let got = if note.why.len > 0: TextImport(why: note.why)
             else: importHeader(note.bytes, note.size)
@@ -514,10 +517,14 @@ proc poll(ui: var OutputUi; st: AppState) =
     if info.isNone:
       ui.importJob = NoJob
     elif info.get.state notin {jsQueued, jsRunning}:
-      if info.get.state == jsDone and ui.importNote != nil and
-          ui.importNote.gen == ui.importGen:
-        ui.applyImport()
-      elif info.get.state == jsFailed: ui.importSay = ImportUnreadable
+      # an answer for an editor that was closed, or loaded with another template, is dropped
+      if ui.importJobGen == ui.importGen:
+        if info.get.state == jsDone and ui.importNote != nil and
+            ui.importNote.gen == ui.importGen:
+          ui.applyImport()
+        elif info.get.state == jsFailed:
+          ui.importSay = if info.get.error.len > 0: info.get.error else: ImportUnreadable
+        elif info.get.state == jsCancelled: ui.importSay = ImportCancelled
       ui.importJob = NoJob
   if ui.runJob != NoJob:
     let info = st.jobs.info(ui.runJob)
@@ -1439,12 +1446,18 @@ proc chosenTextOf(st: AppState): Option[OutputText] =
   if st.inProject: chosenText(st.project.doc.outputTexts, st.project.doc.outputText)
   else: none(OutputText)
 
+proc closeText(ui: var OutputUi) =
+  ## The editor is closed: an import still running no longer has anywhere to land.
+  ui.textOpen = false
+  inc ui.importGen
+
 proc loadText(ui: var OutputUi; e: TextEdit) =
   ui.textEdit = e
   setBuf(ui.linesBuf, e.text)
   setBuf(ui.textNameBuf, e.name)
   ui.textCursor = -1
   ui.textOpen = true
+  inc ui.importGen
   ui.textArm = true
   ui.textKey = ""
   ui.textFile = ""
@@ -1490,7 +1503,7 @@ proc drawTextRow(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Out
   igSameLine(0, -1)
   igBeginDisabled(why.len > 0)
   if igButton((TextEditButton & "##text").cstring, ImVec2_c(x: 0, y: 0)):
-    if ui.textOpen: ui.textOpen = false
+    if ui.textOpen: ui.closeText()
     elif chosen.isSome: ui.loadText(initTextEdit(chosen.get))
     else: ui.loadText(initTextEdit())
   igEndDisabled()
@@ -1703,13 +1716,13 @@ proc drawTextEditor(ui: var OutputUi; st: AppState; fonts: Fonts; t: Theme;
     outp.commands.add Command(kind: ckOutputText, textAction: otaSave, textTemplate: tpl)
     outp.commands.add Command(kind: ckOutputText, textAction: otaChoose,
       textTemplate: OutputText(name: tpl.name))
-    ui.textOpen = false
+    ui.closeText()
   elif drop:
     outp.commands.add Command(kind: ckOutputText, textAction: otaDelete,
       textTemplate: OutputText(name: tpl.name))
-    ui.textOpen = false
+    ui.closeText()
   elif cancel or not open:
-    ui.textOpen = false
+    ui.closeText()
 
 func binaryWhy(st: AppState): string =
   ## Why binary header sets cannot be kept now; "" when they can.
