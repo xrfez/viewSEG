@@ -319,13 +319,23 @@ proc main*() =
         $r.missing & " missing"
 
   block twoXLayers:
-    # Two X files loaded: a receiver file is checked against the first one's records alone
+    # Two X files loaded in one action: one X file is loaded at a time, the later in the
+    # list; a receiver file is checked against its records alone.
     let more = dir / "more.x"
     surveyFile(more, @[xRecord(30, 20, 1, 3)])
     var st = initAppState()
-    st.open(@[xs, more], rcv)
+    st.apply Command(kind: ckLoadSurvey, paths: @[more, xs])
+    doAssert st.settle(st.survey.layers.len == 1 and st.jobs.active.len == 0)
+    doAssert st.survey.layers[0].name == "plan.x", st.survey.layers[0].name
+    var set = st.settings
+    set.map.filters = {mfMissing, mfUnlisted, mfDuplicate}
+    st.apply Command(kind: ckSettings, settings: set)
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: rcv)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut and
+      st.jobs.active.len == 0)
     doAssert st.settle(st.sessions[0].checkedAgainst.len > 0 and st.jobs.active.len == 0 and
       st.filtersDone)
+    doAssert st.sessions[0].checkedAgainst == "plan.x", st.sessions[0].checkedAgainst
     doAssert st.sessions[0].records[0].planned == 4, $st.sessions[0].records[0].planned
     st.shutdown()
 

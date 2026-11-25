@@ -113,12 +113,13 @@ proc main*() =
       echo "tmapunits: the survey SEG-Y's headers say ", st.sessions[0].crs.units
 
     block mixedUnits:
-      # A survey file in feet, another in metres: said, once; the map keeps feet.
+      # A survey file in feet, another in metres (a receiver file replaces the one in feet): said,
+      # once; the map keeps feet.
       var st = fx.loaded("feet2", "Feet", "0.3048")
       doAssert st.unitsDisagree == ""
       let m = fx.mapSpsIn("metres2", "Metres", "1.0")
-      st.apply Command(kind: ckLoadSurvey, paths: @[m.s])
-      doAssert st.settle(st.survey.layers.len == 3)
+      st.apply Command(kind: ckLoadSurvey, paths: @[m.r])
+      doAssert st.settle(st.survey.layers.len == 2 and st.survey.findFile(m.r) >= 0)
       let words = st.unitsDisagree
       doAssert "feet" in words and "metres" in words and "the map uses feet" in words, words
       doAssert st.surveyUnit == suFeet
@@ -126,7 +127,7 @@ proc main*() =
       for e in st.log:
         if e.severity == sevWarning and "units disagree" in e.text: inc said
       doAssert said == 1, "said in the messages: " & $said
-      st.apply Command(kind: ckLoadSurvey, paths: @[m.s]) # nothing new: not said again
+      st.apply Command(kind: ckLoadSurvey, paths: @[m.r]) # nothing new: not said again
       discard st.settle(st.jobs.active.len == 0)
       said = 0
       for e in st.log:

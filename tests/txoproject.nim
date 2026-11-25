@@ -41,10 +41,12 @@ proc pairs(g: SurveyGeometry; d: RelationDomain): seq[string] =
         $r.receiver.line & ":" & $r.receiver.point & ":" & $r.receiver.index
   result.sort
 
-proc onSurveyLoaded(st: var AppState; why: string) =
+proc onSurveyLoaded(st: var AppState; why: string; fewer = 0) =
+  ## `fewer`: files of the project that share a kind of record with a later one, which
+  ## is the one loaded.
   doAssert st.settle(st.inProject and st.project.survey == srLoaded and
-    st.surveyLayers == st.project.doc.survey.len), why & ": " & $st.project.survey & " " &
-    st.project.surveyNote & " " & $st.surveyLayers
+    st.surveyLayers == st.project.doc.survey.len - fewer), why & ": " & $st.project.survey &
+    " " & st.project.surveyNote & " " & $st.surveyLayers
 
 proc counts(st: AppState): tuple[x, o: int; xPairs, oPairs: seq[string]] =
   ## What the survey files' layers hold, domain by domain.
@@ -186,9 +188,10 @@ proc main*() =
       doAssert domains() == @[rdSource, rdSource, rdReceiver, rdReceiver], $domains()
       var st = start(config)
       st.apply Command(kind: ckOpenProject, projectPath: job / "project.nif")
-      st.onSurveyLoaded "the project's survey did not come back"
+      # survey.x is O records now, as the .ops file is: one O file is loaded, the later
+      st.onSurveyLoaded "the project's survey did not come back", fewer = 1
       let c = st.counts
-      doAssert c.x == 0 and c.o == wantX + wantO, "the stored domain is used: " & $(c.x, c.o)
+      doAssert c.x == 0 and c.o == wantO, "the stored domain is used: " & $(c.x, c.o)
       st.shutdown()
 
     block secondImport:

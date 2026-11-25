@@ -866,6 +866,7 @@ type
     job: JobId
     path: string
     session: SessionId ## positions: the open file; `NoSession` for a survey file
+    order: int         ## the serial of the ask (`loadSerial`)
 
   Linked = tuple[survey, selection, loading: int; active: GatherRef]
     ## what the hover's links and note were found from
@@ -885,7 +886,7 @@ type
       ## its files' loads onto the map, until their layers come
     added: seq[SurveyLayerId]
       ## the layers they gave (taken out again at a cancel)
-    replaced: seq[tuple[by: SurveyLayerId; layer: SurveyLayer]]
+    replaced: seq[tuple[by: SurveyLayerId; layers: seq[SurveyLayer]]]
       ## the layers of the same files they took the place of (put back at a
       ## cancel or a failure)
     checkLater: bool
@@ -1209,6 +1210,7 @@ type
     loading: seq[Loading] ## the jobs that fill the survey
     droppedLoads: seq[JobId]
       ## loads a cancelled import started: a layer one still posts is not taken
+    loadSerial: int ## counts the survey files asked for (`Loading.order`)
     checking: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
       ## the relations each record check reads in place, kept alive until it
       ## ends (destroyed after `jobs`, whose runners stop first)
@@ -6574,7 +6576,8 @@ proc loadSurvey(state: var AppState; path: string; quiet = false;
   else:
     let job = state.jobs.submit(JobSpec(title: "Load " & name, lane: jlInteractive,
       reads: @[path]), surveyWork(path, state.inbox.poster, lines))
-    state.loading.add Loading(job: job, path: path)
+    inc state.loadSerial
+    state.loading.add Loading(job: job, path: path, order: state.loadSerial)
 
 proc loaded(state: var AppState; job: JobId; layer: SurveyLayerId)
 
@@ -6582,8 +6585,11 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
   ## A layer a job made: an open file's positions, kept while the file is
   ## open and its keys are as they were read; or a survey file, in place of
   ## its layer from before.
+  inc state.loadSerial
+  layer.order = state.loadSerial # (a layer no ask made, an import's read: now)
   for i, x in state.loading:
     if x.job == job:
+      layer.order = x.order
       state.loading.delete(i)
       break
   let (name, path) = (layer.name, layer.path)
@@ -6639,8 +6645,18 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
     if failed >= 0:
       state.files.failed.delete(failed)
       inc state.files.revision
+    let later = state.survey.supersededBy(layer)
+    if later >= 0:
+      # asked in the same action, before a file of its kind that is loaded already: the
+      # later of the two stays
+      let other = state.survey.layers[later].name
+      state.log.add(sevInfo, name, name & " is not kept: " & other & ", asked after it, " &
+        "holds its " & kindsText(layer.contents * state.survey.layers[later].contents) &
+        " records, and one file of each kind is loaded at a time.")
+      state.loaded(job, NoSurveyLayer)
+      return
     let again = state.survey.findFile(path) >= 0
-    let text = "Loaded " & name & " (" & $layer.kind & ")" & (if again: " again" else: "") &
+    var text = "Loaded " & name & " (" & $layer.kind & ")" & (if again: " again" else: "") &
       ": " & layer.summary & "." & (if problems.len > 0: " " & problems.join("; ") & "." else: "")
     var lost = 0
     for c in layer.counts: lost += c.missing + c.zero + c.moved
@@ -6649,9 +6665,16 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
     # replaces until the import ends: a cancel or a failure puts it back.
     template j: untyped = state.joining
     let ours = j.loads.find(job) >= 0 or (job != NoJob and job == j.job)
-    var replaced: SurveyLayer
-    let id = if ours: state.survey.add(layer, replaced) else: state.survey.add(layer)
-    if ours and replaced.id != NoSurveyLayer: j.replaced.add (id, move replaced)
+    var replaced: seq[SurveyLayer] = @[]
+    let nowHolds = layer.contents
+    let id = state.survey.add(layer, replaced)
+    for k in 0 ..< replaced.len: # by index: a layer is large
+      template r: untyped = replaced[k]
+      if r.path != path:
+        text.add " It replaces " & r.name & (if r.contents - nowHolds != {}: " (it held " &
+          kindsText(r.contents) & ": all go)" else: "") & ": one " &
+          kindsText(r.contents * nowHolds) & " file is loaded at a time."
+    if ours and replaced.len > 0: j.replaced.add (id, move replaced)
     state.pruneDerived() # (an O file loaded: the survey's derivation serves no more)
     state.log.add(if lost > 0: sevWarning else: sevInfo, name, text)
     if state.checkLayer >= 0 and state.checkKey != wasKey:
@@ -7542,11 +7565,12 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
       state.droppedLoads.add job
     # its layers taken off, those they replaced put back as they were
     let wasKey = state.checkKey
-    for id in j.added:
+    for n in countdown(j.added.high, 0): # the last put back first: it may have replaced one added
+      let id = j.added[n]
       var back = -1
       for k in 0 ..< j.replaced.len:
         if j.replaced[k].by == id: back = k
-      if back >= 0: state.survey.putBack(id, move j.replaced[back].layer)
+      if back >= 0: state.survey.putBack(id, move j.replaced[back].layers)
       else: discard state.survey.remove(id)
     state.pruneDerived()
     if j.added.len > 0:
