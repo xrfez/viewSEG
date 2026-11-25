@@ -180,7 +180,7 @@ proc main*() =
     # Records window, the shown record, the box and the Missing traces report all say 3
     # planned, 0 missing.
     let two = dir / "twoindices.o"
-    surveyFile(two, @[oRecord(1, 2, 5, 7), oRecord(2, 2, 7, 7, srcIndex = 2)])
+    surveyFile(two, @[oRecord(1, 2, 5, 6), oRecord(2, 2, 7, 7, srcIndex = 2)])
     var st = initAppState()
     st.open(@[xs, two], rcv)
     doAssert st.settle(st.sessions[0].checkedAgainst.len > 0 and st.jobs.active.len == 0 and
@@ -189,6 +189,8 @@ proc main*() =
     doAssert row.planned == 3 and row.plannedMissing == 0, $row.planned & " planned, " &
       $row.plannedMissing & " missing"
     doAssert st.filterHits[mfMissing].count == 0, st.filterHits[mfMissing].note
+    doAssert row.unlisted == 0 and st.filterHits[mfUnlisted].count == 0,
+      "unlisted " & $row.unlisted & ": the source 1/7 of index 1 is the O record's 1/7"
     doAssert st.shownSpread.stations == 3, $st.shownSpread.stations
     st.shutdown()
     var g = SurveyGeometry()
@@ -201,6 +203,41 @@ proc main*() =
     doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
     let r = sink.result.receiver.stats
     doAssert r.inTemplate == 3 and r.missing == 0, $r.inTemplate & " " & $r.missing
+
+  block receiverPointAtTwoIndices:
+    # An X record that calls receiver point 2 at two indices plans two stations (points 1 and
+    # 2), as the box counts them; the data holds points 1 and 3, so point 2 is missing and 3 unlisted
+    let twice = dir / "twice.x"
+    var first = xRecord(20, 9, 1, 2)
+    var again = xRecord(20, 9, 2, 2)
+    again.fromChannel = 3
+    again.toChannel = 3
+    again.rcvIndex = 2
+    surveyFile(twice, @[first, again])
+    let one = dir / "one.sgd"
+    dataFile(one, 20, [(9.0, 1.0), (9.0, 3.0)])
+    var st = initAppState()
+    st.open(@[twice], one)
+    doAssert st.settle(st.sessions[0].checkedAgainst.len > 0 and st.jobs.active.len == 0 and
+      st.filtersDone)
+    let row = st.sessions[0].records[0]
+    doAssert row.planned == 2 and row.plannedMissing == 1, $row.planned & " planned, " &
+      $row.plannedMissing & " missing"
+    doAssert st.filterHits[mfMissing].count == 1 and row.unlisted == 1,
+      st.filterHits[mfMissing].note & " " & $row.unlisted
+    doAssert st.shownSpread.stations == 2, $st.shownSpread.stations
+    st.shutdown()
+
+  block twoXLayers:
+    # Two X files loaded: a receiver file is checked against the first one's records alone
+    let more = dir / "more.x"
+    surveyFile(more, @[xRecord(30, 20, 1, 3)])
+    var st = initAppState()
+    st.open(@[xs, more], rcv)
+    doAssert st.settle(st.sessions[0].checkedAgainst.len > 0 and st.jobs.active.len == 0 and
+      st.filtersDone)
+    doAssert st.sessions[0].records[0].planned == 4, $st.sessions[0].records[0].planned
+    st.shutdown()
 
   block oRecordsOnly:
     # Only an O file loaded: its receiver gathers are checked against it; its shots have

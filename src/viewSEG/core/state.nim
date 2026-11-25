@@ -6291,26 +6291,28 @@ func isLiveSource(state: AppState; source: ref SurveyGeometry): bool =
   for j in 0 ..< state.joins.len:
     if state.joins[j].relations == source or state.joins[j].geometry == source: return true
 
+proc pruneDerived(state: var AppState; keep: ref SurveyGeometry = nil) =
+  ## Drops the entries of sources that are gone (not `keep`, and no loaded survey file's
+  ## or join's relations), cancelling their jobs: nothing of a removed layer stays held.
+  template d: untyped = state.derived
+  var k = 0
+  while k < d.entries.len:
+    if d.entries[k].source != keep and not state.isLiveSource(d.entries[k].source):
+      if d.entries[k].job != NoJob: discard state.jobs.cancel(d.entries[k].job)
+      d.entries.delete k
+    else: inc k
+
 proc derivedFor(state: var AppState; source: ref SurveyGeometry; ready: var bool):
     ref SurveyGeometry =
   ## The O records the check of a receiver gather against `source`'s X records reads,
-  ## when `source` has none of its own: those the map's template box made from them, else
-  ## those derived on a job, once for `source` (`state.derived`, an entry for each source,
+  ## when `source` has none of its own: those derived from `source`'s X records alone, on a
+  ## job, once for `source` (`state.derived`, an entry for each source,
   ## found by identity: a new import is a new `source`, and an entry whose source is gone
   ## is dropped). `ready` false while the job runs: the check waits for it (`takeDerived`).
   ready = true
   if source[].relationCount(rdReceiver) > 0: return nil
-  template sp: untyped = state.spreads
-  if not sp.relations.isNil and snReceivers in sp.inputs.needs and
-      sp.relations[].relationCount(rdReceiver) > 0:
-    return sp.relations
   template d: untyped = state.derived
-  var k = 0
-  while k < d.entries.len: # entries of sources that are gone
-    if d.entries[k].source != source and not state.isLiveSource(d.entries[k].source):
-      if d.entries[k].job != NoJob: discard state.jobs.cancel(d.entries[k].job)
-      d.entries.delete k
-    else: inc k
+  state.pruneDerived(source)
   var at = -1
   for i in 0 ..< d.entries.len:
     if d.entries[i].source == source: at = i
@@ -10043,7 +10045,11 @@ proc onFinished(state: var AppState; job: JobInfo) =
         # the cells say so; the next open tries again
         let why = if job.state == jsCancelled: "cancelled" else: job.error
         for s in state.sessions:
-          s.setCheckNote("not checked: the O records were not derived (" & why & ")")
+          var receivers = false
+          for r in s.records:
+            if r.side == sdReceiver: receivers = true
+          if receivers:
+            s.setCheckNote("not checked: the O records were not derived (" & why & ")")
   for i in 0 ..< state.loading.len:
     if state.loading[i].job == job.id: # (one that posted its layer was let go of then)
       let x = state.loading[i]
@@ -13060,6 +13066,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
       let name = state.survey.layers[i].name
       let wasKey = state.checkKey
       discard state.survey.remove(cmd.layer)
+      state.pruneDerived()
       state.log.add(sevInfo, name, name & " was taken out of the survey.")
       if state.checkKey != wasKey: # the records were checked against it
         for s in state.sessions:

@@ -105,6 +105,35 @@ proc bestOfSeveral*(g: SurveyGeometry; rows: TraceRows; first: RecordCompletenes
   result.why = if tied: SeveralFit else: ""
 
 
+proc byPoint(g: SurveyGeometry; rows: TraceRows; c: var RecordCompleteness) =
+  ## Recounts `c` (a shot's check, traces matched by station) with a station as its line
+  ## and point: a receiver point the X record calls at two indices is one station, missing
+  ## only when every entry of it is; a point the data holds that the record lists at no
+  ## index is not unlisted. `c.missingStations` keeps the entries of the missing points.
+  var entries = initTable[(float64, float64), int]()
+  var counted = initHashSet[StationKey]()
+  for st in g.templateStations(c.xpsRecord):
+    if not counted.containsOrIncl(st): inc entries.mgetOrPut((st.line, st.point), 0)
+  var lacking = initTable[(float64, float64), int]()
+  for st in c.missingStations: inc lacking.mgetOrPut((st.line, st.point), 0)
+  var lostStations: seq[StationKey] = @[]
+  var lost = initHashSet[(float64, float64)]()
+  for key, n in entries:
+    if lacking.getOrDefault(key) >= n: lost.incl key
+  for st in c.missingStations:
+    if (st.line, st.point) in lost: lostStations.add st
+  var unlisted = initHashSet[(float64, float64)]()
+  for i in 0 ..< rows.len:
+    let k = rows.keysAt(i)
+    if k.status notin {tsDead, tsAuxiliary} and hasStation(k.rcvLine, k.rcvPoint):
+      let st = stationKey(k.rcvLine, k.rcvPoint, 0)
+      if (st.line, st.point) notin entries: unlisted.incl (st.line, st.point)
+  c.expected = entries.len
+  c.missing = lost.len
+  c.present = c.expected - c.missing
+  c.missingStations = lostStations
+  c.unlisted = unlisted.len
+
 proc shotCheck*(g: SurveyGeometry; rows: TraceRows; ctx: JobContext; traceMatch = tmAuto):
     tuple[c: RecordCompleteness; why: string] =
   ## The shot `rows` checked against its X record, found by its source station
@@ -121,6 +150,8 @@ proc shotCheck*(g: SurveyGeometry; rows: TraceRows; ctx: JobContext; traceMatch 
     # Several X records at this source: the data decides, never the record number.
     (result.c, result.why) = g.bestOfSeveral(rows, result.c, ctx, traceMatch)
   if result.why.len == 0: result.why = unmatchedWhy(result.c)
+  if result.why.len == 0 and result.c.traceMatch == tmStation:
+    g.byPoint(rows, result.c)
 
 type ORecord* = tuple[index: int16; sources: seq[StationKey]]
 
@@ -150,13 +181,6 @@ func namesSource*(keys: openArray[TraceKeys]; traces: Slice[int]): bool =
   for t in traces:
     if keys[t].status != tsAuxiliary and hasStation(keys[t].srcLine, keys[t].srcPoint):
       return true
-
-func sourceAlternatives*(source: StationKey): array[2, StationKey] =
-  ## The keys a source station of a template is heard under: its own, else the same
-  ## point with no index (0) in the headers, an index 0 of the template taking the
-  ## usual 1. The one rule of Missing traces and of the Records window.
-  [stationKey(source.line, source.point, source.index),
-   stationKey(source.line, source.point, (if source.index == 0: 1'i16 else: 0'i16))]
 
 proc calledOf*(g: SurveyGeometry; records: openArray[int64]): seq[StationKey] =
   ## The sources the O `records` (`rdReceiver`) call for together, each station
@@ -203,13 +227,10 @@ proc receiverRecords*(g: SurveyGeometry; rcv: StationKey):
 type Plan* = Table[(float64, float64), set[int16]]
   ## the stations a record plans, by line and point: their indices
 
-func planned*(p: Plan; line, point: float64; index: int16): bool =
-  ## Whether the plan lists the station: a header index 0 (not known) any
-  ## index, an index 1 also one the plan gives without (0).
-  let key = (line, point)
-  if key notin p: return false
-  let indices = p[key]
-  index <= 0 or index in indices or (index == 1 and 0'i16 in indices)
+func lists*(p: Plan; line, point: float64): bool =
+  ## Whether the plan lists the station of a trace: a station is its line and point, as
+  ## the Missing traces report counts it; the index is not part of it.
+  (line, point) in p
 
 proc plannedOf*(g: SurveyGeometry; records: openArray[int64]; domain: RelationDomain): Plan =
   ## What `records` plan together (several O records of one receiver: their union).
@@ -249,7 +270,7 @@ proc placeTraces*(hits: var array[MapFilter, FilterHits]; keys: openArray[TraceK
       if hasStation(line, point):
         let st = stationKey(line, point, max(index, 0'i16))
         have.incl (st.line, st.point)
-        if not plan.planned(st.line, st.point, index) and k.status != tsDead:
+        if not plan.lists(st.line, st.point) and k.status != tsDead:
           hits[mfUnlisted].traces.add base + t
         let key = (st, componentOf(k))
         if key in seen:

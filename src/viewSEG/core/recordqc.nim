@@ -213,7 +213,7 @@ proc outsideTemplate*(keys: openArray[TraceKeys]; traces: Slice[int]; g: SurveyG
                                  else: (k.srcLine, k.srcPoint, k.srcIndex)
       if hasStation(line, point):
         let st = stationKey(line, point, max(index, 0'i16))
-        result[i] = not plan.planned(st.line, st.point, index)
+        result[i] = not plan.lists(st.line, st.point)
 
 proc negateQc(samples: var Tensor[float32]; part: Slice[int]; reversed: openArray[int]) =
   ## Multiplies each reversed trace of `part` by -1, before its own filter

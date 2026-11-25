@@ -256,7 +256,7 @@ proc add(m: var ReceiverMerge; file: int; k: TraceKeys) =
     if f.more.bits.len == 0: f.more.incl f.first
     f.more.incl slot
   if hasStation(k.srcLine, k.srcPoint):
-    let source = stationKey(k.srcLine, k.srcPoint, k.srcIndex)
+    let source = stationKey(k.srcLine, k.srcPoint, 0)         # a station is its line and point
     var id = m.sourceIds.getOrDefault(source, -1)
     if id < 0:
       id = int32(m.sourceIds.len)
@@ -273,13 +273,11 @@ proc add(m: var ReceiverMerge; file: int; k: TraceKeys) =
 func isHeard(m: ReceiverMerge; r: ReceiverAt; source: StationKey;
     indices: openArray[int16]): bool =
   ## Whether the receiver recorded `source` at one of the receiver `indices`.
-  ## The source matches as a record check matches a station: with its index,
-  ## else with none (0) in the headers; a template index 0 takes the usual 1.
-  for k in sourceAlternatives(source):
-    let id = m.sourceIds.getOrDefault(k, -1)
-    if id >= 0:
-      for h in r.heard:
-        if h.index in indices and int(id) in h.sources: return true
+  ## A source is its line and point, whatever index the template or the headers give.
+  let id = m.sourceIds.getOrDefault(stationKey(source.line, source.point, 0), -1)
+  if id >= 0:
+    for h in r.heard:
+      if h.index in indices and int(id) in h.sources: return true
   false
 
 proc checkReceiver(tally: var StationTally; m: ReceiverMerge; r: ReceiverAt;
