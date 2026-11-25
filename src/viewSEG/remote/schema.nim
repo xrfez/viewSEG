@@ -31,7 +31,8 @@ const
     ## and its copy rewritten or removed; a leap-second change is written
     ## beside the settings; a slice by shot log writes a new file; an SPS export of a
     ## shot log does, and so does an O file made from the survey's X records)
-  Preferences* = {ckSettings, ckImportSettings, ckLayout, ckLoadLayout, ckProjectFolder,
+  Preferences* = {ckSettings, ckRememberPlace, ckImportSettings, ckLayout, ckLoadLayout,
+    ckProjectFolder,
     ckUpdateSurvey, ckVibProfile, ckVibWeights}
     ## refused: the user's preferences and the windows' arrangement; a
     ## project's data folders and its survey's update, which are written
