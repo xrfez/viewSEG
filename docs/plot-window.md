@@ -1140,11 +1140,12 @@ right of that line's first row. A change works it out again.
     (the **Target force (%)** box, 100 at first: the drive level the sweep was set to, a
     percent of the 100 % force); the minimum shown is in the same percent; the peak force
     limit is a percent of the 100 % force itself (the table says "of target" and "of
-    100 %"). With both ground forces the **Ground force judged** choice (GF as recorded, or
-    GF from M and B with the masses typed) says which the window uses (plots, verdict and
-    table); it is named in the verdict line, remembered with the roles and the polarity for the file layout (project, else
+    100 %"). The **Ground force** switch (**In the record**, or **Made from mass and
+    baseplate**: the masses typed, the converter's weights, a `.dat`'s plain sum, a `.vib`'s
+    header weights; docs/user/signature-files.md) is offered for every file with a ground
+    force, M and B, and says which the window uses (plots, verdict and table); it is named in the verdict line, remembered with the roles and the polarity for the file layout (project, else
     settings; an agent's change is for the session) and in the agent state (`judged`,
-    `bothSignals`, `judgeWarning`, `roles.judge`). The recorded GF is the weighted sum the
+    `bothSignals`, `canMake`, `madeNote`, `judgeWarning`, `roles.judge`). The recorded GF is the weighted sum the
     recorder wrote with its own masses; the other is the same sum formed here. When the
     recorded one does not match (the level ratio between the two varies by more than 3 dB
     along the sweep, or their phases differ by more than 10 degrees in some window) the

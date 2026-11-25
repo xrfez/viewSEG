@@ -460,6 +460,17 @@ When the chosen stored reference is not in the archive, or the references are st
 read, the window says so and **Run** waits; to measure against each file's recorded reference,
 choose a reference that is a trace of the record (**Analysis > References**).
 
+The line also says which ground force the run judges: **in the record** (the default) or **made
+from mass and baseplate**, the Ground force switch of the Vibrator window when you chose **Use as
+profile** (docs/user/signature-files.md, "Which ground force the window uses"). The profile keeps
+the masses and the 100 % force that choice needs. Made from mass and baseplate judges a `.dat` on
+the plain sum of its channels, a `.vib` on its header's weights and the external converter's
+SEG-Y files (traces coded 21, 19, 18, 20, which the list shows as **converted SEG-Y**) on the
+profile's masses, typed as the converter's reaction-mass and baseplate weights; the run applies
+them to the trace that is that channel (code 19 is the reaction mass's: the Vibrator window opens
+on such a file with the reaction mass on the code-19 trace, so no swap is needed). A file that cannot follow
+the choice (no weights in the profile) is judged on the record and says so in its warnings.
+
 The **Files** tab picks what to run. **Folder...** opens the system's folder dialog;
 **Include subfolders** (off at first) also takes the folders under it. **Files...** opens the
 system's file dialog for single signature files. What was chosen is shown, and the signature

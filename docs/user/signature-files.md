@@ -126,8 +126,8 @@ and a file that breaks its format are refused in words.
 
 Under the verdict one strip of buttons (Roles, Limits..., Details, the settings
 wheel and Freeze) holds the controls; the wheel's popover has headed groups, only those that apply to the
-file (a signature file has no Masses group: its channels are forces already, or the file's own
-weights are used). A finding a group holds is also told in words under the verdict, and the wheel
+file (a signature file asks for no masses: its channels are forces already, or the file's own
+weights are used; see "Which ground force the window uses" below). A finding a group holds is also told in words under the verdict, and the wheel
 carries a warning sign.
 
 - **The project's vibrator QC configuration.** With a project open, what you set in this
@@ -160,6 +160,50 @@ carries a warning sign.
 The roles come from the trace codes (reference 21, reaction mass 18, baseplate 19, ground force
 20) and no typed mass is applied: trace 4 is the ground force, as the file has it. The trace
 pickers are read-only; the polarity can be chosen.
+
+## Which ground force the window uses
+
+In the settings wheel, **Ground force** has two values, for every file that has a ground-force
+trace and the traces of the mass and the baseplate (an ordinary SEG-Y, the external converter's
+SEG-Y from a signature file, a `.dat`, a `.vib`):
+
+- **In the record**: the trace coded as ground force, as it is. This is what every file does
+  until you choose otherwise.
+- **Made from mass and baseplate**: the window forms the ground force itself from the two
+  traces, `Mr x M + Mb x B`. Its plots, numbers, table, verdict and exports then all use that one;
+  the other is still drawn as a second curve under Details. The choice is remembered with the
+  roles for the file layout, and "Use as profile" keeps it for the folder QC.
+
+What the two traces are decides the weights, so the window treats each kind of file its own way:
+
+| File | What M and B are | "Made from mass and baseplate" |
+|---|---|---|
+| An ordinary SEG-Y | accelerations of the reaction mass and the baseplate | `Mr x M + Mb x B` with the masses typed in the Masses group (the old behaviour of the window) |
+| The external converter's SEG-Y (traces coded 21, 19, 18, 20) | each force channel, mean removed and divided by its own weight, so acceleration-like | the same sum with the two **weights** typed as the masses: they undo the converter's scaling, and the result is the true ground force up to one constant factor |
+| A `.dat` | forces already, weighted by the controller | their plain sum, with no mass applied (typed masses are never used here): the same curve as the file's own ground-force trace |
+| A `.vib` | accelerations | the file's own weights from its header times the two accelerations: the same curve as the file's computed ground force |
+
+In a converter file the fourth trace (hold-down weight times the sum of the two channels with
+equal weights) is **not** the ground force: it adds two accelerations as if both had the same
+weight, and on a poorly coupled sweep it hardly resembles the true one. Choose **Made from mass
+and baseplate** and type the file's reaction-mass and baseplate weights to judge the real thing.
+The converter codes its two channels the other way round from a `.dat`: the trace coded 19 is the
+reaction mass's channel and the one coded 18 the baseplate's. For this layout only, the window opens with
+the reaction mass on the trace coded 19 and the baseplate on the one coded 18 (the other way
+round from the codes' usual meaning), so no swap is needed; the Masses group says which trace
+each mass multiplies (trace number and code), and **Swap mass and baseplate** in Roles still
+works and is remembered for the file layout. The role pickers are free for these files.
+
+For a `.dat` and a `.vib` a line under the choice says that both choices give the same ground
+force. When a file cannot follow the choice (no mass or baseplate trace, masses not typed, a `.vib`
+whose header gives no weights), a line says why and the ground force in the record is judged.
+
+**The 100 % force.** The force limits are percent of a 100 % force in the unit of the signal
+judged: the recorded ground force's in counts (or newtons with your scale), the made one's in
+weight times the traces' unit. The box shows and stores the one for the choice made and its unit
+is said next to it. Changing the choice never reuses the other value: when the one needed is
+not set, the force limits read "not judged" and say which box to fill. A `.dat` and a `.vib`
+share one value (same unit, same curve).
 
 - **The ground force against the reference.** A line under the verdict says how the ground force
   stands to the reference over the judged part, as recorded: "opposite" with its mean phase in
