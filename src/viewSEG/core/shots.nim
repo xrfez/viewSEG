@@ -28,8 +28,8 @@
 ## shot in the folder when a listed record's source station is its station
 ## (as parseSEG's join matches stations: the same index, index 0 any), or,
 ## for a record whose headers name no source station, when its source's
-## coordinates are its place, or else when the relation files plan the
-## record's FFID for that source. A source several listed records were shot
+## coordinates are its place (never by its FFID: a record number finds no
+## relation record). A source several listed records were shot
 ## at (a reshoot, a copy of a file) lists them latest first: the newest file
 ## (by its time), files of one time by path, and in one file its last record
 ## first; a click shows the first (`ckShowPoints`), the point's menu each.
@@ -227,8 +227,8 @@ proc pruneRefs(x: var ShotIndex) =
 proc matchOne*(x: var ShotIndex; s: Survey; path: string; shot: ShotOf) =
   ## Matches listed record `shot` of file `path` to the survey files'
   ## sources: by its source station; without one, by its source's place
-  ## (within `SamePlace`), else by its FFID through the relation files (the
-  ## source whose X record has its number).
+  ## (within `SamePlace`). Never by its FFID: a record number finds no
+  ## relation record.
   var places: seq[PointRef]
   for i in 0 ..< s.layers.len: # by index: `for l in` copies every layer
     template l: untyped = s.layers[i]
@@ -244,18 +244,6 @@ proc matchOne*(x: var ShotIndex; s: Survey; path: string; shot: ShotOf) =
       if l.origin == loSurveyFile and places.len == 0:
         let q = l.points[prSource].index.nearest(shot.x, shot.y, SamePlace)
         if q >= 0: places.add PointRef(layer: l.id, role: prSource, point: q)
-  if places.len == 0 and not shot.hasStation and abs(shot.record) < 9e18 and
-      shot.record == round(shot.record):
-    for i in 0 ..< s.layers.len:
-      template m: untyped = s.layers[i]
-      if m.origin == loSurveyFile and m.xRuns > 0:
-        for run in m.relations[].relationRuns(int64(shot.record)):
-          for j in 0 ..< s.layers.len:
-            template l: untyped = s.layers[j]
-            if l.origin == loSurveyFile and places.len == 0:
-              let p = l.stationPoint(prSource, Station(line: run.fixed.line,
-                point: run.fixed.point, index: run.fixed.index))
-              if p >= 0: places.add PointRef(layer: l.id, role: prSource, point: p)
   for p in places: x.place(p, (path, shot.gather, shot.record))
 
 proc match*(x: var ShotIndex; s: Survey) =
