@@ -1747,6 +1747,7 @@ traces"); the selection stays as it was. Over no trace it says "No trace here".
 | New plot > FFT | `F` | that trace's amplitude spectrum, or the selection's averaged, raw and through the plot's filters, in a window of its own ([Spectra](#spectra)); several can be open. The same submenu lists the other views of the selected traces |
 | Compare > Set as A / Set as B | | copies the trace under the pointer into that slot, even when it is one of a selection. The copy does not follow the plot. Filling the second slot opens Compare two traces (the user guide) |
 | Store as reference... | | keeps the trace under the pointer as a reference |
+| Correlate auxiliary trace *N* > In this file / In the project (every file) / Shift... | | on an auxiliary trace only: marks its position for correlation in the file or in the project, and sets the shift in milliseconds the marked trace gets before it is correlated (see Correlate in the user guide) |
 | **Map** | | |
 | Select its receiver on the map | `M` | the receiver the trace was recorded at (in a receiver gather, its source), or those of the selection, with their traces; greyed out where the trace has no place on the map |
 | **Whole record** | | |

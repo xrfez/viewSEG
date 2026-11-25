@@ -60,6 +60,15 @@ What is written:
   every file of it. For a position of a file, the file's own entry decides; a file may also say
   *not marked*, which wins over the project's mark. With no entry of the file, the project's
   decides; with neither, the trace is not correlated.
+  To mark, right-click an auxiliary trace in the Seismic or the Aux window and open
+  **Correlate auxiliary trace *N***. Its first line says what is in force ("Marked in this
+  file, shift 500 ms", "Marked in the project, shift 0 ms" or "Not marked: ..."). **In this
+  file** ticks or unticks the mark of the file (unticking writes *not marked* when the project
+  marks the position, else takes the entry away; Undo takes either back). **In the project
+  (every file)** does the same for the project, and is off when no project that can be
+  written to is open. **Shift...** asks for the shift in milliseconds of the mark in force
+  (the file's when it has one, else the project's); it is off while the position is not
+  marked. The menu appears on auxiliary traces only.
   Each mark carries its own **shift**, in milliseconds, positive later (0 when none is given).
   The marked trace is shifted by it before it is correlated: zeros in front, the end cut, the
   record length kept, so both sides of the wavelet show. A shift that is not a whole number of
@@ -81,7 +90,8 @@ What is written:
   A file with **no seismic trace** takes its record length and sample interval from its marked
   auxiliary traces (they must share one length and one interval); the unmarked ones are padded
   or cut to that length. With none marked, the file is refused: "the file has no seismic traces
-  and no auxiliary trace is marked for correlation."
+  and no auxiliary trace is marked for correlation." The Correlate button's tooltip and the
+  status line then say to right-click an auxiliary trace and mark it for correlation.
 - **An unreadable trace fails the file.** A trace that cannot be read (the file is cut short,
   the drive fails) fails that file, with the reason in its row of the results, and the part
   of the file already written is removed. The other files of the run go on.

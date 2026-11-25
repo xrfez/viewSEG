@@ -96,8 +96,8 @@ import ../../gpu/[plotimage, textures]
 import ../../view/[areabands, breakbars, displayheader, maplayers, plotink, strip, theme, timeaxis,
   vendorfieldmenu]
 from windows import awAux, beginClosable
-import breakdraw, chrome, dpi, explainmenu, fittext, focus, fonts, icons, menus, plotbars,
-    plotfilters, plotgain, plotsort,
+import auxmarkmenu, breakdraw, chrome, dpi, explainmenu, fittext, focus, fonts, icons, menus,
+    plotbars, plotfilters, plotgain, plotsort,
   shortcutkeys,
   plotviews, references, style,
   symbols
@@ -230,6 +230,8 @@ type
     markChoices: seq[MarkChoice]
     markMouse: ImVec2_c ## where it opened, for the filter popover
     store: StoreDialog ## Store as reference, opened from the plot's menu
+    aux: AuxMarkUi ## the auxiliary trace's mark and shift, from the plot's menu
+    menuAux: int ## the auxiliary position of the trace under the menu; 0 for none
     cursorText: string ## the time the cursor's time line showed last; "" for none
     cursorHeader: seq[string] ## the header values it showed over the rows; none for none
     focus: FocusClicks ## a click selects only in a window that had the focus
@@ -591,6 +593,15 @@ proc axisLabel(v: cdouble; buf: cstring; size: cint; data: pointer): cint {.cdec
     snprintf(buf, csize_t(size), "%*s", cint(axisChars), "")
   else:
     snprintf(buf, csize_t(size), "%*g", cint(axisChars), v)
+
+func auxHint(st: AppState; k: int): string =
+  ## What to do when the shown file holds auxiliary traces only and none is marked for
+  ## correlation; "" otherwise.
+  let i = st.shownFile(k)
+  if i >= 0 and st.sessions[i].noSeismic and
+      not anyMarked(st.editsAt(st.sessions[i].diskPath).auxMarks, st.projectAuxMarks):
+    AuxMarkHint
+  else: ""
 
 proc tip(text: string; dim = Rgba()) =
   ## The last item's tooltip. A line that starts "Shortcut: " is drawn in
@@ -1592,8 +1603,10 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
       let back = igGetCursorScreenPos()
       igSetCursorScreenPos(ImVec2_c(x: lineRight[slot] + gap, y: lineTop[slot]))
       let hasRef = st.chosenReference.len > 0
+      let hint = st.auxHint(st.findPanel(p.id))
       let corrTip = if not hasRef: NoReferenceChosen
                     elif st.correlateOn: "Correlate with the selected reference (on)"
+                    elif hint.len > 0: "Correlate with the selected reference\n" & hint
                     else: "Correlate with the selected reference"
       if iconButton(IconCorrelation, "Correlate", "C", icon, t, marks,
           selected = st.correlateOn, tipText = corrTip, enabled = hasRef,
@@ -2017,6 +2030,8 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.store")
   tip("Keep this trace as a reference: as recorded, reversed when the trace is reversed; " &
     "never the plot's filters, reverse-all or gain, and no filter")
+  if tp.menuAux > 0:
+    tp.aux.drawAuxGroup(st, under, tp.menuAux, tp.menuMouse, marks, res.commands)
   if caps.menuMap:
     menuHeading(marks, "Map", "plot.menu.heading.find")
     # Its station on the map: the receiver (in a receiver gather, the source).
@@ -2037,7 +2052,9 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
       res.commands.add Command(kind: ckCorrelate, panel: p.id,
         correlate: not st.correlateOn)
     marks.mark("plot.menu.correlate")
-    if canCorrelate: tip("Correlate with the selected reference")
+    let hint = st.auxHint(k)
+    if canCorrelate: tip("Correlate with the selected reference" &
+      (if hint.len > 0: "\n" & hint else: ""))
     else: tipAlways(NoReferenceChosen)
     # An operation on the samples (processSEG's polarityOp), not a colour.
     let reversed = p.layers[0].reversed
@@ -2965,6 +2982,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     if menu:
       tp.menuTarget = targetOf(under, res.pick, st.selection)
       tp.menuUnder = under
+      tp.menuAux = if under >= 0: st.auxPositionOf(under) else: 0
       tp.menuPick = res.pick
       tp.menuMouse = igGetIO_Nil().MousePos
       tp.menuStations = if under >= 0: stationCommand(st, k, under)
@@ -3013,6 +3031,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       res.commands.add Command(kind: ckOwnFilter, panel: st.panels[k].id, edited: tp.ownTraces,
         on: true, processing: tp.ownDraft.spec, filterPlace: tp.ownDraft.place)
   for c in tp.store.drawStore(st, t, marks): res.commands.add c
+  tp.aux.drawAuxShift(st, marks, res.commands)
   drawHeaderMenu(p, st, marks, res)
   tp.sortKeys.drawSortKeys(p, st, marks, res.commands)
   tp.drawGoTo(st, p, marks, res)

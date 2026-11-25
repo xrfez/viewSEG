@@ -49,7 +49,8 @@ import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
 import curveplot as curveplotui
 import ../../view/[jobstatus, missingwords, outputwords, qualitywords, vibfolderwords]
-import aboutbox, agentshot, chrome, clearsurvey, dpi, filelist, fonts, frames, genpreview,
+import aboutbox, agentshot, auxmarkmenu, chrome, clearsurvey, dpi, filelist, fonts, frames,
+    genpreview,
   headerswindow, icons, settingswindow, shortcutswindow,
   jobswindow, joindialog, leapdialog, cutgatherdialog, mapwindow, memorywindow, menus, messages,
   missingwindow,
@@ -1563,7 +1564,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
       socket: ui.agent.path, lastCall: ui.agent.lastCall,
       lingering: ui.agent.clients == 0 and ui.agent.lingers(getMonoTime()))), job,
     ui.core.settings.readout, ui.pick, ui.marks, ui.mapCursor,
-    if ui.core.hoverNote.len > 0: ui.core.hoverNote else: ui.core.correlateNote,
+    if ui.core.hoverNote.len > 0: ui.core.hoverNote
+    else: withAuxHint(ui.core.correlateNote),
     if ui.core.profileNoted: ProfileStored else: "")
   if status.cancel != NoJob:
     ui.core.apply Command(kind: ckCancelJob, job: status.cancel)

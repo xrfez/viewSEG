@@ -4199,6 +4199,21 @@ func gatherOf*(s: Session; trace: int): int =
     else: return mid
   -1
 
+func auxPositionOf*(state: AppState; id: int): int =
+  ## The position, from 1, of survey-wide trace `id` among the auxiliary traces of its
+  ## record in file order (the position an auxiliary mark names); 0 for a seismic trace
+  ## or a trace that is in no record.
+  let i = state.findTrace(id)
+  if i < 0: return 0
+  let s = state.sessions[i]
+  let local = id - s.base
+  let f = s.filePtr
+  if f == nil or local notin 0 ..< f[].len or isSeismic(f[].index, local): return 0
+  let g = s.gatherOf(local)
+  if g < 0: return 0
+  for t in max(s.gathers[g].traces.a, 0) .. local:
+    if not isSeismic(f[].index, t): inc result
+
 func fileTrace(s: Session; record, trace: int): int =
   ## The index in the file of trace `trace` of SEG-D record `record` (as
   ## parseSEG's diagnostics count them); `trace` itself for a record below
