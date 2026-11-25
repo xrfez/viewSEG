@@ -211,6 +211,11 @@ proc main*() =
     block words:
       doAssert keptWords(lists([1, 2], [], all = true)) == "2 killed, all reversed"
       doAssert keptWords(EditLists()) == "nothing"
+      var marked = EditLists()
+      marked.auxMarks = @[AuxMarkEntry(position: 1, marked: true, ms: 500.0)]
+      doAssert keptWords(marked) == "1 auxiliary mark", keptWords(marked)
+      marked.auxMarks.add AuxMarkEntry(position: 2, marked: true)
+      doAssert keptWords(marked) == "2 auxiliary marks", keptWords(marked)
   finally:
     removeDir(dir)
   echo "tfilememory: ok"

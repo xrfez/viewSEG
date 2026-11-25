@@ -1184,7 +1184,8 @@ func keptWords*(l: EditLists): string =
   if l.lists[teExcluded].len > 0: parts.add $l.lists[teExcluded].len & " excluded"
   if l.filters.len > 0: parts.add $l.filters.len & " filtered"
   if l.shifts.len > 0: parts.add $l.shifts.len & " shifted"
-  if l.auxMarks.len > 0: parts.add $l.auxMarks.len & " auxiliary marks"
+  if l.auxMarks.len > 0:
+    parts.add $l.auxMarks.len & (if l.auxMarks.len == 1: " auxiliary mark" else: " auxiliary marks")
   if l.allReversed: parts.add "all reversed"
   if parts.len == 0: "nothing" else: parts.join(", ")
 
