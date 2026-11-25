@@ -18,7 +18,8 @@
 ## options, the rows of files opened at another sample interval were not the windows'; with the
 ## signature files' 100 % force applied raw to the converter's SEG-Y, its row read 0 % average
 ## force and failed; with the top frequency of the window's layout used for every file, the
-## converter's row was judged in another band than its window.
+## converter's row was judged in another band than its window; with the unclear polarity lines
+## left without the reversal, a reversed ground force of noise was not said to be reversed.
 
 import std/[math, os, strutils]
 import parseSSDAT
@@ -193,6 +194,38 @@ proc main*() =
       let next = st.run(files)
       st.parity(files, next)
       doAssert next.totals.failed == 4 and next.totals.passed == 1, summaryLine(next.totals)
+      st.shutdown()
+
+  block unclearReversed:
+    # a ground force reversed for the analysis whose relation to the reference is unclear (it is
+    # noise) says it was reversed, in the window, the folder's row and its CSV
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      var s = SynthDat(samples: Samples, vibrator: 11, fileNumber: 7001)
+      s.data[dcReference] = tone(Samples, 1)
+      var x = 12345'u32
+      for c in [dcMass, dcBaseplate]:
+        s.data[c] = newSeq[int32](Samples)
+        for v in s.data[c].mitems:
+          x = x * 1103515245'u32 + 12345'u32
+          v = int32(x shr 20) - 2048
+      let noise = datFile(fx.dir / "sweeps", "noise.dat", s)
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let w = st.window(noise)
+      var p = st.plots[w].params
+      (p.roles.groundForcePolarity, p.harmonics) = (poReversed, 4) # (the limits: a profile)
+      st.change(w, p)
+      let line = st.plots[w].result.polarity.line
+      doAssert "unclear" in line and "reversed for the analysis, as you chose" in line, line
+      st.close(w)
+      let files = @[listed(noise)]
+      let t = st.run(files)
+      doAssert rowOf(t, noise).polarity == line, rowOf(t, noise).polarity
+      doAssert "reversed for the analysis, as you chose" in resultsCsv(t), resultsCsv(t)
       st.shutdown()
 
   block noProject:

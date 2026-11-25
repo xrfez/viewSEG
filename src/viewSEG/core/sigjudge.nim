@@ -122,10 +122,14 @@ func polarityOf*(phasesDeg: openArray[float64]; reversed, byUser: bool;
       sy += sin(degToRad(p))
       inc n
   result.reversed = reversed
+  # (a reversed ground force says so whatever its relation, an unclear one too)
+  let turned = if not reversed: ""
+    elif byUser: "; reversed for the analysis, as you chose"
+    else: "; reversed for the analysis by the Automatic polarity"
   if n < MinPolarityPoints:
     result.kind = pkUnclear
     result.line = "Ground force against the reference: unclear: no part of the sweep could " &
-      "be compared with the reference"
+      "be compared with the reference" & turned
     return
   result.consistency = sqrt(sx * sx + sy * sy) / float64(n)
   var mean = radToDeg(arctan2(sy, sx))
@@ -139,7 +143,7 @@ func polarityOf*(phasesDeg: openArray[float64]; reversed, byUser: bool;
   let head = "Ground force against the reference: "
   if result.kind == pkUnclear:
     result.line = head & "unclear: the ground force follows the reference weakly (phase " &
-      "consistency " & formatFloat(result.consistency, ffDecimal, 2) & ")"
+      "consistency " & formatFloat(result.consistency, ffDecimal, 2) & ")" & turned
   else:
     let words = case result.kind
       of pkInPhase: "in phase"
@@ -149,12 +153,7 @@ func polarityOf*(phasesDeg: openArray[float64]; reversed, byUser: bool;
     let shown = if result.kind == pkOther: " (mean phase " & degText(result.meanPhaseDeg) &
         ")" elif result.kind == pkOpposite: " (mean phase " & degText(abs(result.meanPhaseDeg)) &
         ")" else: " (" & degText(result.meanPhaseDeg) & ")"
-    if reversed:
-      result.line = head & words & " as recorded" & shown &
-        (if byUser: "; reversed for the analysis, as you chose"
-          else: "; reversed for the analysis by the Automatic polarity")
-    else:
-      result.line = head & words & shown
+    result.line = head & words & (if reversed: " as recorded" else: "") & shown & turned
   if s.isDat and s.correlationStored and result.kind != pkUnclear:
     let v = s.correlationLagZero
     let sign = if v < 0: "negative" elif v > 0: "positive" else: "zero"
