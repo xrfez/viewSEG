@@ -89,12 +89,6 @@ type
     byPlace*: bool ## its record found with the station at the record's place
     box*: SpreadBox
 
-proc firstRecord(g: SurveyGeometry; station: StationKey; domain: RelationDomain): int64 =
-  ## The first record of `domain` at `station` (a source shot again has
-  ## several); -1 for none.
-  let r = g.recordsAt(station, domain)
-  if r.len > 0: r[0] else: -1
-
 func stationKeyOf*(s: Station): StationKey {.inline.} =
   ## Station `s` as parseSEG keys it.
   stationKey(s.line, s.point, s.index)
@@ -159,52 +153,63 @@ func boxOf*(places: openArray[MapPoint]; along: MapPoint): SpreadBox =
   func at(a, c: float64): MapPoint = mapPoint(o.x + a * u.x + c * v.x, o.y + a * u.y + c * v.y)
   SpreadBox(corners: [at(aLo, cLo), at(aHi, cLo), at(aHi, cHi), at(aLo, cHi)], shown: true)
 
+proc recordsSpread*(s: Survey; g: SurveyGeometry; records: openArray[int64];
+    domain: RelationDomain): PlannedSpread =
+  ## The spread the records `records` of `g` plan together in `domain` (the
+  ## records of one station, a source shot again has several): the union of
+  ## their runs, each station once, their places in the loaded survey files
+  ## and the box round them. `record` is the first of them; -1 for none.
+  result = PlannedSpread(domain: domain, record: if records.len > 0: records[0] else: -1)
+  let role = plannedRole(domain)
+  var seen: HashSet[StationKey]
+  var best = (count: 0, first: mapPoint(NaN, NaN), last: mapPoint(NaN, NaN))
+  for record in records:
+    for run in g.relationRuns(record, domain):
+      result.fixed = run.fixed
+      var placed = (count: 0, first: mapPoint(NaN, NaN), last: mapPoint(NaN, NaN))
+      for i in 0 ..< run.stations:
+        let st = run.station(i)
+        if not seen.containsOrIncl(st):
+          inc result.stations
+          let p = s.placeOf(role, st)
+          if p.x.isNaN: inc result.unplaced
+          else:
+            result.places.add p
+            if placed.count == 0: placed.first = p
+            placed.last = p
+            inc placed.count
+      if placed.count > best.count: best = placed
+  let along = if best.count >= 2: mapPoint(best.last.x - best.first.x, best.last.y - best.first.y)
+              else: mapPoint(0, 0)
+  result.box = boxOf(result.places, along)
+
 proc recordSpread*(s: Survey; g: SurveyGeometry; record: int64;
     domain: RelationDomain): PlannedSpread =
   ## The spread record `record` of `g` plans in `domain`: its stations,
   ## their places in the loaded survey files and the box round them.
-  result = PlannedSpread(domain: domain, record: record)
-  let role = plannedRole(domain)
-  var seen: HashSet[StationKey]
-  var best = (count: 0, first: mapPoint(NaN, NaN), last: mapPoint(NaN, NaN))
-  for run in g.relationRuns(record, domain):
-    result.fixed = run.fixed
-    var placed = (count: 0, first: mapPoint(NaN, NaN), last: mapPoint(NaN, NaN))
-    for i in 0 ..< run.stations:
-      let st = run.station(i)
-      if not seen.containsOrIncl(st):
-        inc result.stations
-        let p = s.placeOf(role, st)
-        if p.x.isNaN: inc result.unplaced
-        else:
-          result.places.add p
-          if placed.count == 0: placed.first = p
-          placed.last = p
-          inc placed.count
-    if placed.count > best.count: best = placed
-  let along = if best.count >= 2: mapPoint(best.last.x - best.first.x, best.last.y - best.first.y)
-              else: mapPoint(0, 0)
-  result.box = boxOf(result.places, along)
+  s.recordsSpread(g, [record], domain)
 
 proc plannedSpread*(s: Survey; made: Spreads; domain: RelationDomain;
     fixed: StationKey): PlannedSpread =
   ## The spread planned for the shot of source station `fixed`
   ## (`rdSource`: its first X record) or for the receiver gather of
-  ## receiver station `fixed` (`rdReceiver`: its first O record): from the
+  ## receiver station `fixed` (`rdReceiver`: its O records): the union of
+  ## the runs of every record at that station, found by the station alone,
+  ## from the
   ## first loaded survey file with relation records of `domain`, else from
   ## the records made (`made`). `record` is -1 when none plans it.
   result = PlannedSpread(domain: domain, fixed: fixed)
   let i = s.listedLayer(domain)
   if i >= 0:
     template g: untyped = s.layers[i].relations[]
-    let record = g.firstRecord(fixed, domain)
-    if record >= 0:
-      result = s.recordSpread(g, record, domain)
+    let records = g.recordsAt(fixed, domain)
+    if records.len > 0:
+      result = s.recordsSpread(g, records, domain)
       result.source = s.layers[i].name
   elif not made.relations.isNil:
-    let record = made.relations[].firstRecord(fixed, domain)
-    if record >= 0:
-      result = s.recordSpread(made.relations[], record, domain)
+    let records = made.relations[].recordsAt(fixed, domain)
+    if records.len > 0:
+      result = s.recordsSpread(made.relations[], records, domain)
       result.generated = true
 
 proc checkedSpread*(s: Survey; made: Spreads; domain: RelationDomain;
