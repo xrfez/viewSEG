@@ -700,7 +700,9 @@ proc mapJson(state: AppState; limit: int): JsonNode =
         "positionNotJudged": g.positionWhy, "offsetDisagrees": g.offsetOff,
         "midpointDisagrees": g.midpointOff, "positionDisagrees": g.positionOff,
         "receiversOff": g.receiversOff, "sourcesOff": g.sourcesOff,
-        "noOffset": g.noOffset, "noPositions": g.noPositions}
+        "positionTolerance": g.tolerance, "notInSurvey": g.notInSurvey,
+        "movedToAgree": g.movedAgree, "sharedShiftStations": g.shift.stations,
+        "noOffset": g.noOffset, "noMidpoint": g.noMidpoint, "noPositions": g.noPositions}
   var selected = newJArray()
   for i in 0 ..< min(state.selection.points.len, limit):
     selected.add state.pointJson(state.selection.points[i])

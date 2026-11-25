@@ -369,7 +369,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
     against: string; traceMatch: TraceMatch; placed: Placed;
     samples: bool; own: seq[FilterEntry]; reversed: seq[int]; shifts: seq[ShiftEntry];
     noise: NoiseWork; to: Poster; view: ref CorrelateView = nil;
-    geometry = GeometryAsk(); ownOpen = OwnOpen()): JobWork =
+    geometry = GeometryAsk(); ownOpen = OwnOpen(); cachedOwn = OwnHeaders()): JobWork =
   ## The work of a job that reads gather `gather` (`traces`) of open file
   ## `session` (`file`, at `path`; its trace 0 is survey-wide `base`) and
   ## posts what the filters in `TraceFilters` find in it (`mkRecordQc`):
@@ -388,9 +388,11 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
   ## with the file in `reads`; `relations` is read in place, never copied.
   ## When `view` is set, the samples are that view's listen time, not the raw
   ## record, and `path` (the virtual path) is not mapped. `geometry` says what the geometry
-  ## filters are given (`core/geometryqc`): they are found from the keys alone, and from the
-  ## file's own headers (read again with `ownOpen`) when `geometry.own`, whether or not the
-  ## samples can be read.
+  ## filters are given (`core/geometryqc`): they are found from the keys and from the file's
+  ## own headers (`cachedOwn`, what an earlier job read of them; what it lacks is read, the
+  ## positions by opening the file again with `ownOpen` when `geometry.own`), and posted
+  ## first, on their own (`qcGeometryOnly`, with what was read), so a record whose samples
+  ## cannot be read, or whose read hangs, still has them.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var hits: array[MapFilter, FilterHits]
     for m in TraceFilters: hits[m].state = fsDone
@@ -400,7 +402,6 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
     var onStations = false
     var outside: seq[bool] = @[]
     var summary = NoiseSummary()
-    var geometrySummary = GeometrySummary()
     var found = FirstBreaks()
     var picked = false
     var noiseError = ""
@@ -408,12 +409,27 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
     {.cast(gcsafe).}:
       template f: untyped = file[]
       revision = f.keysRevision
-      var ownKeys: seq[TraceKeys] = @[]
-      var ownWhy = ""
-      if geometry.own:
+      var ownHeaders = cachedOwn
+      var fresh = false
+      if geometry.given and ownHeaders.given.len != traces.len:
+        ctx.setPhase "reading the record's own headers"
+        try:
+          ownHeaders.given = givenOf(file, path, traces)
+          fresh = true
+        except CatchableError:
+          ownHeaders.given.setLen 0 # (the offsets are then said not judged)
+      if geometry.own and ownHeaders.rows.len != traces.len and ownHeaders.why.len == 0:
         ctx.setPhase "reading the record's own header positions"
-        ownWhy = ownKeysOf(file, path, traces, ownOpen, ownKeys)
-      geometrySummary = checkGeometryOf(f, traces, base, geometry, ownKeys, ownWhy, hits)
+        ownHeaders.why = ownRowsOf(file, path, traces, ownOpen,
+          proc (): bool {.gcsafe, raises: [].} = ctx.cancelled, ownHeaders.rows)
+        fresh = true
+      var geometrySummary = checkGeometryOf(f, traces, base, geometry, ownHeaders, hits)
+      var first: array[MapFilter, FilterHits]
+      for m in GeometryFilters: first[m] = hits[m]
+      to.post Msg(job: ctx.id, kind: mkRecordQc, qcSession: session, qcGather: gather,
+        qcKeys: revision, qcHits: move first, qcRecord: -1'i64, qcGeometry: move geometrySummary,
+        qcGeometryOnly: true, qcTraces: traces,
+        qcOwn: (if fresh: move ownHeaders else: OwnHeaders()))
       try:
         let n = traces.len
         var amps = newSeq[TraceAmplitude](n)
@@ -556,6 +572,5 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
           qcRecords: records,
       qcByPlace: byPlace,
       qcOnStations: onStations,
-      qcNoise: move summary, qcGeometry: move geometrySummary, qcBreaks: move found,
-          qcPicked: picked)
+      qcNoise: move summary, qcBreaks: move found, qcPicked: picked)
     if failure != nil: raise failure

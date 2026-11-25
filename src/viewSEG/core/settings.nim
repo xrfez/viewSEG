@@ -154,6 +154,10 @@ type
       ## the survey's sources whose record is in a file of the folder listed are marked
     filters*: set[MapFilter]
       ## the filters the map marks (none by default)
+    positionTolerance*: float64
+      ## how far a trace's own header position may be from its position in force before the
+      ## filter "header position disagrees with the survey" marks it, in the survey's unit;
+      ## 0: the default, 5 (16 when the survey is in feet)
 
   HeadersTab* = enum
     ## The Headers window's tabs.

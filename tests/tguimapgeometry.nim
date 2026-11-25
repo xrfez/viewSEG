@@ -4,13 +4,17 @@
 ##
 ## - In the Layers popover, under "Filters: the record shown", ticking the three geometry
 ##   filters lists each with its count (offset 2: the bad one and the moved receiver, whose
-##   offset no longer fits where its header puts it; header position 1) and midpoint 0.
+##   offset no longer fits where its header puts it; header position 1) and midpoint not
+##   checked (the headers give no midpoint of their own).
 ## - The two receivers are ringed in the filter's colour (a triangle with a dot inside); one
 ##   along the line is not.
 ## - The point under the pointer says which filters mark it.
+## - Beside the header position filter, the tolerance box says "more than 5 m from the
+##   survey"; 40 typed into it, the moved receiver (30 m off) is no longer marked; emptied, the
+##   default (5) is back and it is.
 ##
 ## Seen to fail: with the offset filter's traces left empty, "counted" found none and the
-## receivers were not ringed.
+## receivers were not ringed; with no tolerance box drawn, "the tolerance box" found no mark.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-geometry-ringed.png, and geomflag.png (the whole
@@ -123,9 +127,44 @@ proc runMain() =
           "Offset disagrees with the positions  (2)", filterLabel(mfOffsetOff, h[mfOffsetOff])
         doAssert filterLabel(mfPositionOff, h[mfPositionOff]) ==
           "Header position disagrees with the survey  (1)"
-        doAssert filterLabel(mfMidpointOff, h[mfMidpointOff]) ==
-          "Midpoint disagrees with the positions  (0)", $h[mfMidpointOff]
+        # (the shot's headers give no midpoint: not judged, never "(0)")
+        doAssert h[mfMidpointOff].state == fsNotChecked and
+          "(0)" notin filterLabel(mfMidpointOff, h[mfMidpointOff]), $h[mfMidpointOff]
+        doAssert f.markOf("map.filter tolerance").size.x > 0, "no tolerance box"
         f.desktop("geomflag.png"))
+    proc typeTolerance(text: string; want: float64; marked: int) =
+      # click the box, empty it, type, Enter: a key a frame
+      var phase = 0
+      var held = 0
+      step("typed " & text & " as the tolerance", noop, proc (f: FrameInfo): bool =
+        let r = f.markOf("map.filter tolerance")
+        if r.size.x == 0: return false
+        if phase == 0:
+          f.click(r.centre)
+          phase = 1
+        elif phase == 1:
+          f.pressKey(skEnd, true)
+          f.pressKey(skEnd, false)
+          phase = 2
+        elif phase == 2:
+          f.pressKey(skBackspace, true)
+          f.pressKey(skBackspace, false)
+          inc held
+          if held >= 6: phase = 3
+        elif phase == 3:
+          if text.len > 0: f.typeText(text)
+          phase = 4
+        elif phase == 4:
+          f.pressKey(skEnter, true)
+          f.pressKey(skEnter, false)
+          phase = 5
+        else:
+          let h = f.core.filterHits[mfPositionOff]
+          result = f.core.settings.map.positionTolerance == want and
+            f.core.recordQc.job == NoJob and h.state == fsDone and h.traces.len == marked and
+            f.core.recordQc.geometry.tolerance == (if want > 0: want else: 5.0))
+    typeTolerance("40", 40, 0)
+    typeTolerance("", 0, 1)
     step("ringed", proc (f: FrameInfo) =
       f.pressKey(skEscape, true)
       f.pressKey(skEscape, false)

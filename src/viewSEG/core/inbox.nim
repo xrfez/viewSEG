@@ -263,7 +263,14 @@ type
       qcNoise*: NoiseSummary
         ## what the noisy-trace test found (not `ready` when it did not run)
       qcGeometry*: GeometrySummary
-        ## what the geometry check found
+        ## what the geometry check found (`qcGeometryOnly`)
+      qcGeometryOnly*: bool
+        ## the geometry filters alone, posted first: `qcHits`' others are not found yet
+      qcTraces*: Slice[int]
+        ## the record's traces (`qcGeometryOnly`)
+      qcOwn*: OwnHeaders
+        ## what the job read of the record's own headers (`qcGeometryOnly`); empty when it
+        ## read nothing new
       qcBreaks*: FirstBreaks
         ## the record's first breaks, when the job found them itself (`qcPicked`)
       qcPicked*: bool

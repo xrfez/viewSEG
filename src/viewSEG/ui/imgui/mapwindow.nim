@@ -214,6 +214,9 @@ type
     foldSplitFor: tuple[offsets: string; sectors: int] ## the settings the text boxes show
     foldSplitSet: bool
     foldSplitError: tuple[offsets, sectors: string]
+    toleranceBuf: array[24, char] ## the position filter's tolerance as typed
+    toleranceFor: float64 ## the tolerance the box shows
+    toleranceSet: bool
       ## why the last text typed in each box was refused (the setting keeps its last value)
 
   MapOutput* = object
@@ -642,6 +645,10 @@ proc binBox(id: string; buf: var array[24, char]; hint: string): bool =
 
 func boxText(v: float64): string = (if v > 0: $v else: "")
 
+func numberText(v: float64): string =
+  ## `v` as a box shows it: "5", "0.5".
+  if v == round(v) and abs(v) < 1e15: $int64(v) else: $v
+
 proc fillBox(buf: var array[24, char]; text: string) =
   for i in 0 ..< buf.len: buf[i] = '\0'
   for i in 0 ..< min(text.len, buf.len - 1): buf[i] = text[i]
@@ -892,8 +899,40 @@ const FilterOrder = [mfDead, mfUndecodable, mfKilled, mfNoisy, mfLouder, mfWeak,
   ## the order the filters are listed in: the noisy-trace test's findings together
 static: doAssert FilterOrder.len == ord(high(MapFilter)) + 1, "a filter is not listed"
 
-proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; marks: var Marks;
-    res: var MapOutput) =
+proc toleranceRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput) =
+  ## Beside the position filter: how far a header position may be from the position in
+  ## force, in the survey's unit ("more than [ 5 ] m from the survey"); emptied, the default.
+  let g = st.recordQc.geometry
+  let unit = if g.ready and g.tolerance > 0: g.positionUnit else: st.surveyUnit
+  let shown = positionTolerance(st.settings.map.positionTolerance, unit)
+  if not mu.toleranceSet or mu.toleranceFor != shown:
+    mu.toleranceBuf.fillBox(numberText(shown))
+    (mu.toleranceFor, mu.toleranceSet) = (shown, true)
+  igIndent(0)
+  igAlignTextToFramePadding()
+  igTextUnformatted("more than", nil)
+  igSameLine(0, -1)
+  if binBox("##positiontolerance", mu.toleranceBuf, numberText(positionTolerance(0, unit))):
+    let v = boxValue(mu.toleranceBuf)
+    if v == 0 or v in MinPositionTolerance .. MaxPositionTolerance:
+      var s = st.settings
+      s.map.positionTolerance = v
+      res.commands.add Command(kind: ckSettings, settings: s)
+    mu.toleranceSet = false # (refused: the box shows the tolerance in force again)
+  marks.mark("map.filter tolerance")
+  tip("How far a trace's own header position may be from its station's position in force " &
+    "(the survey's, or a station move's) before it is marked, in the survey's unit: from " &
+    $MinPositionTolerance & " to " & $MaxPositionTolerance & ". Empty: " &
+    lengthWords(DefaultMetres, suMetres) & ", or " & lengthWords(DefaultFeet, suFeet) &
+    " when the survey is in feet.")
+  igSameLine(0, -1)
+  let words = if unit.abbreviation.len > 0: unit.abbreviation & " from the survey"
+              else: "from the survey (in its unit)"
+  igTextUnformatted(words.cstring, nil)
+  igUnindent(0)
+
+proc drawFilters(mu: var MapUi; st: AppState; hits: array[MapFilter, FilterHits]; t: Theme;
+    marks: var Marks; res: var MapOutput) =
   ## The map's filters on the record shown: each with its colour, its tick
   ## and what it found (a count, "..." while its job runs, "not checked"
   ## with the reason in its tooltip), and Select for those that found
@@ -935,6 +974,7 @@ proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; mar
         res.commands.add Command(kind: ckSelect, traces: h.traces, mode: smReplace)
       marks.mark("map.filter select " & $f)
       tip("Select these " & $h.traces.len & " traces in the plot")
+    if f == mfPositionOff and on: mu.toleranceRow(st, marks, res)
     igPopID()
   let geometry = geometryShown(st)
   if geometry.len > 0:
@@ -944,8 +984,11 @@ proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; mar
     igPopTextWrapPos()
     igPopStyleColor(1)
     marks.mark("map.geometry")
-    tip("The header offset and midpoint are compared with the source and receiver positions. " &
-      "A trace with no offset, or no position, cannot be compared.")
+    tip("The header offset and midpoint are compared with the source and receiver positions, " &
+      "and the header positions with the positions in force. A trace with no offset, no " &
+      "midpoint or no position cannot be compared." & (if st.recordQc.geometry.projectSurvey:
+      " This file is not joined to the project's survey: its headers are compared with it " &
+      "by the stations they name." else: ""))
 
 proc drawLayers(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
     res: var MapOutput; hits: array[MapFilter, FilterHits]; t: Theme) =
@@ -998,7 +1041,7 @@ proc drawLayers(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ma
     for i, l in layers:
       if l.key.kind == mlShotLog: layerRow(l, i, marks, res)
     igUnindent(0)
-  drawFilters(st, hits, t, marks, res)
+  mu.drawFilters(st, hits, t, marks, res)
   igSeparator()
   for i, l in layers:
     if l.key.kind == mlHighlight: layerRow(l, i, marks, res)

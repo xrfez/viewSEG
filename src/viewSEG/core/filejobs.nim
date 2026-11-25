@@ -19,8 +19,8 @@
 
 import std/[algorithm, monotimes, os, sequtils, strutils, times]
 import parseSEG
-import cutfile, filelist, filememory, filesystem, identity, inbox, jobs, leapfile, log,
-  recordingprobe, session, sweepinfo, threads, vendormaps
+import cutfile, filelist, filememory, filesystem, geometryqc, identity, inbox, jobs, leapfile,
+  log, recordingprobe, session, sweepinfo, threads, vendormaps
 from parseSEG/model/traceindex import mappedSize
 from project import ProjectFileName
 
@@ -272,36 +272,83 @@ const
   OwnNoIndexWhy* = "the file has no index to read one trace from (a multiplexed SEG-D " &
     "file, a file opened with other options, or a large file)"
   OwnUnreadableWhy* = "the trace could not be read from the file"
+  OwnRecordNoIndexWhy* = "no index for this file"
+    ## why a record's own headers are not read (`ownRowsOf`): the file would be walked again
+  OwnRecordUnreadableWhy* = "the file could not be read"
+    ## why they were not: the open or the read failed
 
 type OwnOpen* = object
-  ## How a file is opened again to read its own headers' keys (`ownKeysOf`).
+  ## How a file is opened again to read its own headers' keys (`ownRowsOf`).
   choice*: OpenChoice
   cache*: string ## its index cache file; "" for none
   limit*: int64 = OwnReadLimit
 
-proc ownKeysOf*(file: ptr SeismicFile; path: string; traces: Slice[int]; how: OwnOpen;
-    keys: var seq[TraceKeys]): string =
-  ## The keys the file's own headers give the traces `traces` of open file `file` (at `path`),
-  ## from the file on disk and not from the keys in memory, which a join or a station move
-  ## may have replaced, into `keys`; "" when read, else why not (as `ownPositionWork`: the
-  ## file is opened again without keys, through its index cache when there is one). Worker
-  ## only. Never writes the file.
-  keys.setLen 0
+proc ownRowsOf*(file: ptr SeismicFile; path: string; traces: Slice[int]; how: OwnOpen;
+    cancelled: proc (): bool {.gcsafe, raises: [].}; rows: var seq[OwnHeader]): string =
+  ## The keys the file's own headers give the traces `traces` of open file `file` (at
+  ## `path`), from the file on disk and not from the keys in memory, which a join or a station
+  ## move may have replaced, into `rows`; "" when read, else why not. The file is opened
+  ## again without keys as `ownPositionWork` opens it, by the same rules: through its index
+  ## cache when there is one, else by sampling a fixed-length SEG-Y file, else a file of at
+  ## most `how.limit` bytes that is not SEG-D. An index cache that cannot be used as it is (a
+  ## stale one) is not followed by a walk of a larger file: the walk stops at its first step
+  ## and the answer is `OwnRecordNoIndexWhy`. Raises `JobCancelledError` once `cancelled` says so
+  ## (asked at each step of the open). Worker only. Never writes the file.
+  rows.setLen 0
   let cached = how.cache.len > 0 and how.choice.usesCache and fs.fileExists(how.cache)
   let sampled = file[].kind == skSegy and file[].log.anyIt(it.code == dcIndexSampled)
-  let cheap = cached or sampled or (file[].kind != skSegd and file[].mappedSize <= how.limit)
-  if file[].inMemory or traces.a < 0 or traces.b >= file[].len or not cheap:
-    return OwnNoIndexWhy
+  let walk = sampled or (file[].kind != skSegd and file[].mappedSize <= how.limit)
+  if file[].inMemory or traces.a < 0 or traces.b >= file[].len or not (cached or walk):
+    return OwnRecordNoIndexWhy
+  var refused, stopped = false
+  let step: Progress = proc (done, total: int64): bool {.closure, gcsafe, raises: [].} =
+    if cancelled():
+      stopped = true
+      false
+    elif not walk and done < total:
+      refused = true # (the cache was not used: the file is being walked)
+      false
+    else: true
+  var keys: seq[TraceKeys] = @[]
   try:
     fs.mappedRead(path, headers = true)
-    let disk = openSeismic(path, keys = false,
+    let disk = openSeismic(path, keys = false, progress = step,
       opts = openOptions(how.choice, if cached: how.cache else: "", currentVendors()))
-    if traces.b >= disk.len: return OwnUnreadableWhy
+    if not walk and not disk.fromCache: return OwnRecordNoIndexWhy # (a walk too short to stop)
+    if traces.b >= disk.len: return OwnRecordUnreadableWhy
     keys = newSeq[TraceKeys](traces.len)
     disk.traceKeysInto(traces, keys)
+  except SegCancelledError:
+    if stopped: raise newException(JobCancelledError, "cancelled")
+    return (if refused: OwnRecordNoIndexWhy else: OwnRecordUnreadableWhy)
   except CatchableError:
-    keys.setLen 0
-    return OwnUnreadableWhy
+    return OwnRecordUnreadableWhy
+  rows = newSeq[OwnHeader](keys.len)
+  for i, k in keys:
+    rows[i] = OwnHeader(rcvX: k.rcvX, rcvY: k.rcvY, srcX: k.srcX, srcY: k.srcY,
+      offset: k.offset, cmpX: k.cmpX, cmpY: k.cmpY)
+
+const
+  OwnOffsetFields = ["trace.offset", "ext1.extOffset"]
+    ## the fields a SEG-Y trace header gives its offset in (Extension 1's when there is one)
+  OwnMidpointFields = ["trace.cdpX", "trace.cdpY", "ext1.extCdpX", "ext1.extCdpY"]
+    ## and its midpoint
+
+proc givenOf*(file: ptr SeismicFile; path: string; traces: Slice[int]): seq[set[OwnField]] =
+  ## Whether the SEG-Y trace headers of `traces` of open file `file` (at `path`) give their
+  ## offset and their midpoint themselves: a field that is not 0 (parseSEG's keys fill an
+  ## empty one from the positions). Read from the file's own header bytes, which no join or
+  ## move changes. Worker only. Raises `IOError`, `OSError` or `ValueError` when the headers
+  ## cannot be read.
+  result = newSeq[set[OwnField]](traces.len)
+  if file[].kind != skSegy: return
+  if not file[].inMemory: fs.mappedRead(path, headers = true)
+  var column = newSeq[float64](traces.len)
+  for (field, names) in [(ofOffset, @OwnOffsetFields), (ofMidpoint, @OwnMidpointFields)]:
+    for name in names:
+      file[].traceFieldColumnInto(name, traces, column)
+      for i, x in column:
+        if not x.isNaN and x != 0: result[i].incl field
 
 proc ownPositionWork*(file: ptr SeismicFile; path: string; session: SessionId; index: int;
     choice: OpenChoice; cache: string; to: Poster; limit = OwnReadLimit): JobWork =

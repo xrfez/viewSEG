@@ -143,6 +143,8 @@ const
   MaxNotices* = 20       ## notices kept
   MaxOwnPositions = 32
     ## traces whose own header position is kept (`askOwnPosition`), at most
+  MaxOwnHeaderBytes* = 16 * 1024 * 1024
+    ## the bytes of the records' own headers kept (`ownHeaders`: 57 a trace), at most
   MaxTraceReads* = 16
     ## traces read for agent control and not taken, kept at most
   MaxPanelValues* = 48 * 1024 * 1024
@@ -1076,6 +1078,9 @@ type
       ## the geometry joins ended so far (`joinReport.serial`): a join
       ## changes the keys the Trace tab shows (read here, never the file's
       ## `keysRevision`, which a join's job writes)
+    positions: int
+      ## the record checks' revision (`RecordQc.revision`) while the trace table shows the
+      ## position error, which they find; 0 otherwise
     keysRev: seq[int]
       ## the shown files' keys revisions (`Session.keysRevision`), in the
       ## order of the traces asked for, then the table's file if it is
@@ -1265,6 +1270,9 @@ type
       ## the join under way (its geometry, too, destroyed after `jobs`)
     moveBases: seq[tuple[session: SessionId; bases: seq[ReceiverBase]]]
       ## per open file, the receiver fields a station move replaced
+    ownHeaders: seq[tuple[session: SessionId; traces: Slice[int]; own: OwnHeaders]]
+      ## per record of an open file, what its own headers give (`core/geometryqc`), read once
+      ## while the file is open; the newest last, at most `MaxOwnHeaderBytes` together
     moveQueue: seq[SessionId]
       ## open files waiting for a station-move job
     movesJob: JobId = NoJob
@@ -3001,18 +3009,60 @@ func stationsOf(state: AppState; i: int): ref SurveyGeometry =
   else: nil
 
 func geometryAskOf(state: AppState; i: int; filters: set[MapFilter];
-    stations: ref SurveyGeometry): GeometryAsk =
+    stations: ref SurveyGeometry; surveyUnit: SurveyUnit): GeometryAsk =
   ## What the geometry filters of open file `sessions[i]` are given: its units, whether a
   ## join replaced its coordinates, the stations it was joined with (`stations`, from
-  ## `stationsOf`), and whether its own headers are to be read: for the positions, and for the
-  ## offsets and midpoints of a SEG-Y file that a join or a station move may have recomputed.
+  ## `stationsOf`), the survey's unit (its join's, else `surveyUnit`, the map's), the position
+  ## tolerance in it and the station moves, and which of its own
+  ## headers are to be read: the positions, and the offsets and midpoints of a SEG-Y file
+  ## (whose values a join or a station move may have recomputed).
   let s = state.sessions[i]
   let joined = state.joinedOf(s.id)
-  result = GeometryAsk(units: state.geometryUnitsOf(i),
+  let units = state.geometryUnitsOf(i)
+  let position = mfPositionOff in filters
+  let offsets = filters * {mfOffsetOff, mfMidpointOff} != {} and s.file.kind == skSegy
+  let moves = state.project.doc.stationMoves
+  var unit = if joined >= 0: state.joins[joined].units.survey else: suNotGiven
+  if unit == suNotGiven: unit = surveyUnit
+  if unit == suNotGiven: unit = units.unit
+  result = GeometryAsk(units: units, unit: unit,
     replaced: joined >= 0 and state.joins[joined].plan.replace,
-    survey: (if stations.isNil: nil else: addr stations[]))
-  result.own = mfPositionOff in filters or
-    (filters * {mfOffsetOff, mfMidpointOff} != {} and s.file.kind == skSegy and joined >= 0)
+    survey: (if stations.isNil: nil else: addr stations[]),
+    projectSurvey: joined < 0 and not stations.isNil,
+    tolerance: positionTolerance(state.settings.map.positionTolerance, unit),
+    given: offsets)
+  result.own = position or (offsets and (joined >= 0 or moves.len > 0))
+  if position or offsets: result.moves = moves
+
+func ownHeadersAt(state: AppState; session: SessionId; traces: Slice[int]): int =
+  ## Where what the own headers of record `traces` of open file `session` give is kept in
+  ## `ownHeaders`; -1 when nowhere.
+  result = -1
+  for k, e in state.ownHeaders:
+    if e.session == session and e.traces == traces: return k
+
+func bytesOf(own: OwnHeaders): int =
+  own.given.len * sizeof(set[OwnField]) + own.rows.len * sizeof(OwnHeader) + own.why.len
+
+proc keepOwnHeaders(state: var AppState; session: SessionId; traces: Slice[int];
+    read: sink OwnHeaders) =
+  ## Keeps what a record job read of the own headers of record `traces` of open file
+  ## `session`, with what was read of them before; the oldest records go once all of them
+  ## pass `MaxOwnHeaderBytes`. A position read that failed for a reason that may pass (the
+  ## file could not be read) is not kept, so the next job tries again.
+  if not state.sessions.anyIt(it.id == session): return # (closed meanwhile)
+  let k = state.ownHeadersAt(session, traces)
+  var own = if k >= 0: state.ownHeaders[k].own else: OwnHeaders()
+  if k >= 0: state.ownHeaders.delete(k)
+  if read.given.len == traces.len: own.given = move read.given
+  if read.rows.len == traces.len: (own.rows, own.why) = (move read.rows, "")
+  elif read.why == OwnRecordNoIndexWhy: own.why = read.why
+  state.ownHeaders.add (session, traces, own)
+  var total = 0
+  for e in state.ownHeaders: total += bytesOf(e.own)
+  while total > MaxOwnHeaderBytes and state.ownHeaders.len > 1:
+    total -= bytesOf(state.ownHeaders[0].own)
+    state.ownHeaders.delete(0)
 
 func spreads*(state: AppState): lent Spreads {.inline.} =
   ## The relation records made for the map's planned spreads, and what was
@@ -4284,6 +4334,7 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
   var s = move state.sessions[i]
   state.sessions.delete(i)
   state.dropMoveBases(s.id)
+  state.ownHeaders.keepItIf(it.session != s.id)
   state.moveQueue.keepItIf(it != s.id)
   state.leapQueue.keepItIf(it != s.id)
   for job in state.jobs.list:
@@ -4690,6 +4741,8 @@ proc followInspect(state: var AppState) =
     want.tableOf = (s.id, scope)
     want.table = ins.table
   want.joins = state.joinReport.serial
+  if want.tableOf[0] != NoSession and PositionErrorColumn in want.table.fields:
+    want.positions = state.recordQc.revision
   block shownKeys:
     var seen: seq[SessionId] = @[]
     for t in want.traces:
@@ -4732,6 +4785,7 @@ proc followInspect(state: var AppState) =
   if want.parts == was.parts and want.traces == was.traces and want.edits == was.edits and
       want.own == was.own and want.hasOwn == was.hasOwn and want.shiftMs == was.shiftMs and
       want.joins == was.joins and want.keysRev == was.keysRev and
+      want.positions == was.positions and
       want.displayed == was.displayed and
       want.table == was.table and want.tableOf == was.tableOf and
       want.shown == was.shown and want.record == was.record and
@@ -4781,7 +4835,11 @@ proc followInspect(state: var AppState) =
     req.table = TableAsk(at: state.fileOf(req, held, state.findSession(want.tableOf[0])),
       traces: want.tableOf[1], view: want.table, joins: want.joins,
       lengths: state.geometryUnitsOf(state.findSession(want.tableOf[0])).judged,
-      angles: state.geometryUnitsOf(state.findSession(want.tableOf[0])).angles)
+      angles: state.geometryUnitsOf(state.findSession(want.tableOf[0])).angles,
+      positions: want.positions)
+    let g = state.recordQc.geometry
+    if want.positions != 0 and state.recordQc.key.file == want.tableOf[0] and g.ready:
+      (req.table.positionTraces, req.table.positionErrors) = (g.span, g.positionDistance)
   for n, t in want.traces:
     let i = state.findTrace(t)
     if i >= 0:
@@ -9921,10 +9979,12 @@ proc followRecordQc(state: var AppState) =
       for b in state.breaks:
         if b.key.sameRecord(work.key):
           share = 2 # failed or stopped: a result too, the job does not ask again
+  let units = state.unitSources
+  let ask = state.geometryAskOf(i, filters, stations,
+    if units.len > 0: units[0].unit else: suNotGiven)
   let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
     domain, state.settings.join.traceMatch, placed, samples,
-    ownKeyOf(state.editsAt(s.path), gatherTraces), work.settings, work.key, share,
-    state.geometryAskOf(i, filters, stations))
+    ownKeyOf(state.editsAt(s.path), gatherTraces), work.settings, work.key, share, ask)
   if key == q.key: return
   if q.job != NoJob:
     discard state.jobs.cancel(q.job)
@@ -9940,14 +10000,15 @@ proc followRecordQc(state: var AppState) =
   q.job = NoJob
   inc q.revision
   if share == 1: return # the overlay's job is finding the first breaks: this one follows it
+  let at = state.ownHeadersAt(s.id, tr)
+  let cached = if at >= 0: state.ownHeaders[at].own else: OwnHeaders()
   q.job = state.jobs.submit(JobSpec(title: "Check the record shown for the map's filters",
     lane: jlBackground, auto: true, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
     g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
     state.settings.join.traceMatch, placed, samples,
-    own, reversed, shifts, work, state.inbox.poster, s.correlatedView,
-    state.geometryAskOf(i, filters, stations),
+    own, reversed, shifts, work, state.inbox.poster, s.correlatedView, ask,
     OwnOpen(choice: s.facts.opened.choice, cache: indexCacheFile(state.indexCache, s.path),
-      limit: state.ownReadLimit)))
+      limit: state.ownReadLimit), cached))
   if not rel.isNil: state.qcHeld.add (q.job, rel)
   if not stations.isNil: state.qcHeld.add (q.job, stations)
 
@@ -9977,13 +10038,20 @@ proc takeRecordQc(state: var AppState; m: sink Msg) =
   ## What the filters' job found in the record it read, while that record,
   ## as it is now, is the one shown.
   template q: untyped = state.recordQc
+  if m.qcGeometryOnly and (m.qcOwn.given.len > 0 or m.qcOwn.rows.len > 0 or
+      m.qcOwn.why.len > 0):
+    state.keepOwnHeaders(m.qcSession, m.qcTraces, move m.qcOwn)
   if m.job == q.job and m.qcSession == q.key.file and m.qcGather == q.key.gather and
+      m.qcKeys == q.key.keys and m.qcGeometryOnly:
+    for f in GeometryFilters: q.hits[f] = move m.qcHits[f]
+    q.geometry = move m.qcGeometry
+    inc q.revision
+  elif m.job == q.job and m.qcSession == q.key.file and m.qcGather == q.key.gather and
       m.qcKeys == q.key.keys:
-    for f in TraceFilters: q.hits[f] = move m.qcHits[f]
+    for f in TraceFilters - GeometryFilters: q.hits[f] = move m.qcHits[f]
     (q.record, q.byPlace, q.onStations) = (m.qcRecord, m.qcByPlace, m.qcOnStations)
     q.records = move m.qcRecords
     q.noise = move m.qcNoise
-    q.geometry = move m.qcGeometry
     q.picks = false
     inc q.revision
     if m.qcPicked:

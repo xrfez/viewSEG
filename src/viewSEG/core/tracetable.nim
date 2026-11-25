@@ -70,7 +70,10 @@ const
   MaxGraphBuckets* = 2048 ## the graph's points along the rows, at most
   MaxTableColumns* = 32   ## the columns a table shows, at most
   ColumnStep* = 65_536    ## traces a whole column is read by, between looks for a newer request
-  KeyColumns*: array[27, tuple[name, label: string]] = [
+  PositionErrorColumn* = "keys.positionError"
+    ## the computed column of a trace's own header receiver position's distance from its
+    ## position in force: the record checks' (`core/geometryqc`), for the record they checked
+  KeyColumns*: array[28, tuple[name, label: string]] = [
     ("keys.record", "FFID"), ("keys.channel", "Channel"),
     ("keys.channelSet", "Channel set (SEG-D, from 1)"),
     ("keys.traceCode", "Trace ID code (SEG-Y)"),
@@ -85,9 +88,11 @@ const
     ("keys.time", "Time (UTC, POSIX seconds)"), ("keys.t0Ms", "First sample (ms)"),
     ("keys.intervalUs", "Sample interval (µs)"),
     ("keys.distance", "Distance, source to receiver"),
-    ("keys.offsetError", "Offset error (offset less distance)")]
-    ## the columns of the file's keys, in the column chooser's order; the last two are
-    ## computed from the positions (`keyValue`)
+    ("keys.offsetError", "Offset error (offset less distance)"),
+    (PositionErrorColumn, "Position error (header receiver from the survey's)")]
+    ## the columns of the file's keys, in the column chooser's order; the last three are
+    ## computed from the positions (`keyValue`; the position error from the map's record
+    ## check, empty for a trace of another record and while the filter is off)
   DefaultTableFields* = ["keys.record", "keys.channel", "keys.srcLine", "keys.srcPoint",
     "keys.rcvLine", "keys.rcvPoint", "keys.offset", "keys.ensemble"]
     ## the columns of a first table

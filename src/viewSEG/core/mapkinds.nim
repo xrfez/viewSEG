@@ -168,6 +168,9 @@ const
     ## the filters found by reading the record shown on a job (`core/recordqc`)
   GeometryFilters* = {mfOffsetOff, mfMidpointOff, mfPositionOff}
     ## those found from the trace keys and the file's own headers (`core/geometryqc`)
+  MinPositionTolerance* = 0.1
+    ## the least tolerance of "header position disagrees with the survey" that can be set
+  MaxPositionTolerance* = 1000.0 ## the most
   NoiseFilters* = {mfNoisy, mfWeak, mfLouder, mfNotJudged}
     ## those that come from the noisy-trace test (`core/noisearea`): they run it, and the
     ## Seismic window marks the exclusion area while one is on
