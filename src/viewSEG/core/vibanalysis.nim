@@ -801,7 +801,6 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       # finding of the verdict's, only a note
       result.qc.plan.sweep = ""
       readAs = d.readAs
-    let pe = if pilotOwn.len > 0: pilotOwn[0].tracks[vsReference].extent else: SweepExtent()
     let avgPhase = result.qc.plan.rows[ord(qlAvgPhase)].measured
     # the plan's sweep negated (as a pilot wired the other way reads): a finding, said as it
     # is; the pilot is not reversed, and the file fails
@@ -822,13 +821,18 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
           " " & (if gap > 0: "after" else: "before") & " the stored reference's (alignment " &
           "looks no further than " & seconds(MaxAlignShiftMs) & " either way)")
     var past: seq[string] = @[]
-    if not (pe.startMs.isNaN or e0.startMs.isNaN):
-      if pe.endMs - e0.endMs > SweepTimeSteps * stepMs:
-        past.add "the last " & gapText(pe.endMs - e0.endMs) & " of this file's pilot sweep " &
-          "lie past the end of the reference sweep: not judged"
-      if e0.startMs - pe.startMs > SweepTimeSteps * stepMs:
-        past.add "the first " & gapText(e0.startMs - pe.startMs) & " of this file's pilot " &
-          "sweep lie before the start of the reference sweep: not judged"
+    # the gaps are the sweeps' as read (-20 dB, as `sweepFails` trusts), not the tracker's
+    # extent, which reads noise in a listen time or before a lead-in as sweep
+    if planShape.why.len == 0 and pilotShape.why.len == 0:
+      # beyond the length's tolerance: two sweeps' ends are read no closer than that
+      let tolMs = max([SweepTimeSteps * stepMs, SweepLengthShare * planShape.lengthMs,
+        SweepLengthFloorMs])
+      if pilotShape.lastMs - planShape.lastMs > tolMs:
+        past.add "the last " & gapText(pilotShape.lastMs - planShape.lastMs) & " of this " &
+          "file's pilot sweep lie past the end of the reference sweep: not judged"
+      if planShape.firstMs - pilotShape.firstMs > tolMs:
+        past.add "the first " & gapText(planShape.firstMs - pilotShape.firstMs) & " of this " &
+          "file's pilot sweep lie before the start of the reference sweep: not judged"
     result.qc.lengthWords = past.join("; ")
   block coverage:
     # the reference sweep past the force traces' end (zero-padded, never judged): the verdict

@@ -117,6 +117,11 @@ func planCell(row: FolderRow): string =
     if m.limit == qlAvgPhase:
       let q = QcRow(limit: m.limit, measured: m.measured, bound: m.bound, atMs: m.atMs,
         status: m.status, why: m.why)
+      var phaseFails = false
+      for r in row.plan:
+        if r.status == qsFail: phaseFails = true
+      if row.sweepFails and not phaseFails:
+        return q.measuredText & " ✗ other sweep"
       return q.measuredText & " " & q.markText
   if row.outcome == foJudged and row.ownPilot: "own pilot" else: "-"
 

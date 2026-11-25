@@ -63,6 +63,8 @@ type
     fileMeasures*: seq[FolderMeasure]
       ## the judged ground force's average and peak phase against the file's own reference
       ## trace, beside `measures` against the plan: shown, never judged; empty without both
+    sweepFails*: bool
+      ## the recorded pilot's sweep is not the plan's (`PlanCheck.sweepFails`)
     ownPilot*: bool
       ## judged against the file's own pilot: it shows the vibrator followed its pilot, not that
       ## the pilot is the planned sweep

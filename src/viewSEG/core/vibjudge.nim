@@ -331,10 +331,7 @@ func planWords*(p: PlanCheck): string =
   ## (average phase N°)"; for one whose phase passes but whose sweep is another
   ## (`sweepFails`), no phase.
   let avg = p.rows[ord(qlAvgPhase)]
-  var phaseFails = false
-  for row in p.rows:
-    if row.status == qsFail: phaseFails = true
-  if p.sweepFails and not phaseFails:
+  if p.sweepFails and avg.status != qsFail:
     return "the recorded pilot is not the project's reference sweep"
   let phase = "(average phase " &
     (if avg.measured.isNaN: "not measured" else: plain(avg.measured) & "°") & ")"

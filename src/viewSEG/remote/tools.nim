@@ -801,6 +801,7 @@ proc plotJson(w: AnalysisWindow; fe: Frontend; units: UnitSystem; limit: int): J
     # was judged against
     result["plan"] = %*{"compared": q.plan.compared, "verdict": $q.plan.verdict,
       "limits": planRows, "shiftMs": toJson(q.plan.shiftMs), "sameSweep": q.plan.sameSweep,
+      "sweepFails": q.plan.sweepFails,
       "sweep": q.plan.sweep, "ownPilot": q.ownPilot,
       "recordedPct": toJson(q.recordedPct), "notJudged": q.lengthWords}
     result["windowStats"] = %*{"windowMs": toJson(s.windowMs),

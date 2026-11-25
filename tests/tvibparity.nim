@@ -362,6 +362,8 @@ proc main*() =
         "project reference sweeps 8-80 Hz in 10.0 s; the recorded pilot sweeps 8-44 Hz in 5.0 s"
       doAssert row.verdict == qvFail and row.sentence.startsWith(said), row.sentence
       doAssert row.plan.len == 2 and row.plan[0].status == qsPass, $row.plan
+      # its phase passes where the sweeps overlap: no tick in the plan cell
+      doAssert "° ✗ other sweep" in resultsCsv(t), resultsCsv(t)
       doAssert said in resultsCsv(t) and t.totals.failed == 1, summaryLine(t.totals)
       st.shutdown()
 

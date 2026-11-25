@@ -1053,6 +1053,37 @@ proc anotherSweepFailsWhateverItsPhase() =
     doAssert r.qc.plan.sweep == "the two are the same sweep (8-80 Hz in 10.0 s), in step, " &
       "but the phase differs", r.qc.plan.sweep
 
+proc noiseOutsideTheSweepIsNoSweep() =
+  ## Noise in the pilot's listen time, or before a lead-in, is no sweep: the verdict of a file
+  ## that is the plan says nothing of a part of its pilot's sweep past the plan's end or before
+  ## its start; a pilot that really runs past, or traces cut short, still say it.
+  ## Seen to fail: with the gaps read off the tracker's extent (-40 dB), 1 % and 1.5 % noise in
+  ## a 3 s listen time read "PASS: 6 of 6 limits met; the last 3.0 s of this file's pilot sweep
+  ## lie past the end of the reference sweep: not judged", 2 % noise before a 1 s lead-in "the
+  ## first 0.8 s of this file's pilot sweep lie before the start ...".
+  let base = planSweep().referenceOf.sweepRow
+  let tailFile = planSweep(tailS = 3.001)
+  for (level, seed) in [(0.005, 3'i64), (0.01, 4'i64), (0.015, 5'i64), (0.02, 6'i64)]:
+    var g = initRand(seed)
+    var pilot = tailFile.referenceOf.sweepRow
+    for j in 10050 ..< pilot.len: pilot[j] = float32(level * (g.rand(2.0) - 1.0))
+    let r = againstPlan(tailFile, base, pilot = pilot)
+    doAssert r.qc.verdict == qvPass and r.qc.line.startsWith("✓ PASS: 6 of 6 limits met"),
+      r.qc.line
+    doAssert "past the end" notin r.qc.line and "before the start" notin r.qc.line, r.qc.line
+  block before_a_lead_in:
+    var g = initRand(8)
+    let file = planSweep(tailS = 3.001, delayMs = 1000)
+    var pilot = file.referenceOf.sweepRow
+    for j in 0 ..< 950: pilot[j] = float32(0.02 * (g.rand(2.0) - 1.0))
+    let r = againstPlan(file, base, pilot = pilot)
+    doAssert r.qc.verdict == qvPass, r.qc.line
+    doAssert "past the end" notin r.qc.line and "before the start" notin r.qc.line, r.qc.line
+  block a_pilot_that_runs_past_still_says_so:
+    let r = againstPlan(planSweep(seconds = 12), base)
+    doAssert r.qc.verdict == qvFail and "the last 2" in r.qc.line and
+      "lie past the end of the reference sweep" in r.qc.line, r.qc.line
+
 proc aPassNeedsHalfTheSweep() =
   ## A file whose traces hold less than half the reference sweep (`LeastSweepShare`) is not
   ## judged, its limits still listed; from half up it passes on the part recorded; a fail on
@@ -1096,6 +1127,7 @@ proc main*() =
   againstThePlan()
   anotherSweepFailsWhateverItsPhase()
   aPassNeedsHalfTheSweep()
+  noiseOutsideTheSweepIsNoSweep()
   sameSweepReadsTheSame()
   sweepTolerances()
   baseTests()
