@@ -3,6 +3,7 @@
 ## (`ui/imgui/shell`) names each dialog with a stable string and asks for its start.
 
 import std/os
+import filesystem
 
 const MaxPickerPlaces* = 64 ## the table keeps at most this many pickers
 
@@ -31,7 +32,7 @@ proc remember*(places: var seq[PickerPlace]; name, folder: string) =
 proc nearestFolder*(folder: string): string =
   ## `folder` when it exists, else its nearest parent that does; "" when none does.
   result = folder
-  while result.len > 0 and not dirExists(result):
+  while result.len > 0 and not fs.dirExists(result):
     let up = result.parentDir
     result = if up == result: "" else: up
 
@@ -41,11 +42,11 @@ proc startAt*(places: openArray[PickerPlace]; name, location: string;
   ## it (`explicit`: a folder or file the user is editing) and its folder exists; else
   ## the folder last used with this picker, when it, or a parent of it, exists (a save
   ## picker keeps the file name `location` proposes, in that folder); else `location`.
-  let proposed = location.len > 0 and (dirExists(location) or dirExists(location.parentDir))
+  let proposed = location.len > 0 and (fs.dirExists(location) or fs.dirExists(location.parentDir))
   if explicit and proposed: location
   else:
     let folder = nearestFolder(places.folderOf(name))
     if folder.len == 0: location
     else:
-      let leaf = if save and not dirExists(location): location.extractFilename else: ""
+      let leaf = if save and not fs.dirExists(location): location.extractFilename else: ""
       if leaf.len > 0: folder / leaf else: folder & DirSep

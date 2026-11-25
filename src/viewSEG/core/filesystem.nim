@@ -125,6 +125,13 @@ proc dirExists*(_: FileSystem; path: string): bool {.raises: [].} =
     return false
   os.dirExists(path)
 
+proc sameFile*(_: FileSystem; a, b: string): bool {.raises: [OSError].} =
+  ## `os.sameFile`: whether two paths name one file; raises `OSError` when
+  ## either cannot be looked at.
+  enter(foStat, a)
+  enter(foStat, b)
+  os.sameFile(a, b)
+
 proc getFileSize*(_: FileSystem; path: string): int64 {.raises: [OSError].} =
   ## `os.getFileSize`; of the file a link points to, on Windows too (where
   ## `os.getFileSize` answers the link's own size, 0).

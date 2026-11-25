@@ -227,7 +227,7 @@ proc refusedTarget*(dest: string; sources: openArray[string]): string =
     var same = p == dest
     if not same and exists:
       try:
-        same = sameFile(p, dest)
+        same = fs.sameFile(p, dest)
       except OSError:
         discard
     if same:
