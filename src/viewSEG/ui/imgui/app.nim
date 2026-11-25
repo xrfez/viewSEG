@@ -1587,6 +1587,14 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: bar.plotView)
   let job = jobStatus(ui.core.jobs.active, getMonoTime(), fs.now(), ui.statusJob)
   ui.statusJob = job.job
+  # In a receiver gather, the file the trace under the pointer was read from.
+  var fromFile = ""
+  let hovered = ui.core.selection.hover
+  let hoveredIn = if hovered >= 0: ui.core.findTrace(hovered) else: -1
+  if hoveredIn >= 0 and ui.core.sessions[hoveredIn].gathered:
+    template ses: untyped = ui.core.sessions[hoveredIn]
+    let source = ses.gatherSource(hovered - ses.base)
+    if source.len > 0: fromFile = "Source file: " & source.extractFilename
   # The readout is last frame's pick: the bar is drawn before the plot.
   let status = drawStatusBar(ui.fonts, ui.theme,
     ChromeInfo(themeName: ui.theme.name, scale: ui.scale, agent: AgentSign(
@@ -1595,6 +1603,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
       lingering: ui.agent.clients == 0 and ui.agent.lingers(getMonoTime()))), job,
     ui.core.settings.readout, ui.pick, ui.marks, ui.mapCursor,
     if ui.core.hoverNote.len > 0: ui.core.hoverNote
+    elif fromFile.len > 0: fromFile
     else: withAuxHint(ui.core.correlateNote),
     if ui.core.profileNoted: ProfileStored else: "")
   if status.cancel != NoJob:

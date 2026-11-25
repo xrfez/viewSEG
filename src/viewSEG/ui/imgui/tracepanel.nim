@@ -1903,6 +1903,24 @@ proc menuHeading(marks: var Marks; text, mark: string) =
   let right = igGetWindowPos().x + igGetWindowWidth()
   marks.markRect(mark, a, ImVec2_c(x: right - igGetStyle().WindowPadding.x, y: max(b.y, a.y + 1)))
 
+func gatherRefusal(st: AppState; under: int; keys: Option[TraceKeys]): string =
+  ## Why the receiver gather cannot be asked for from trace `under`; "" when it can.
+  let i = if under >= 0: st.findTrace(under) else: -1
+  if i < 0: "There is no trace here."
+  elif st.sessions[i].gathered: "The window already shows a receiver gather."
+  elif keys.isNone: "This trace's header values are not available yet."
+  elif keys.get.rcvLine.isNaN or keys.get.rcvPoint.isNaN:
+    "This trace has no receiver station (its line or point is not known)."
+  else: ""
+
+func receiverGatherCommand(st: AppState; under: int; keys: Option[TraceKeys]): Command =
+  ## `ckReceiverGather` for the receiver station and component of trace `under`.
+  result = Command(kind: ckReceiverGather)
+  if keys.isSome:
+    result.gatherLine = keys.get.rcvLine
+    result.gatherPoint = keys.get.rcvPoint
+    result.gatherComponent = int(keys.get.component)
+
 proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
     res: var PanelOutput) =
   ## The plot's right-click menu: functions on the data only. Its first
@@ -2049,6 +2067,16 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
       res.commands.add tp.menuStations
     marks.mark("plot.menu.station")
     tip("Select this trace's station on the map (M)")
+    let gatherAsk = receiverGatherCommand(st, under, tp.menuKeys)
+    let gatherLabel = "Show this receiver across the listed files"
+    let gatherWhy = gatherRefusal(st, under, tp.menuKeys)
+    if igMenuItem_Bool(gatherLabel.cstring, nil, false, gatherWhy.len == 0):
+      res.commands.add gatherAsk
+    marks.mark("plot.menu.gather")
+    tipAlways(if gatherWhy.len == 0:
+        "Collects this receiver's trace from every seismic file the Files window lists " &
+          "into a temporary, read-only view."
+      else: gatherWhy)
     if under >= 0: tp.station.drawStationMoveGroup(st, under, tp.menuKeys, tp.menuBusy, marks,
       res.commands)
   template e: untyped = st.editsOf(k) # not copied
@@ -3117,6 +3145,7 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
   var corr = ""
   if panel == MainPanel and not aux:
     if st.correlating: corr = "  \u00b7  correlating"
+    elif shown >= 0 and st.sessions[shown].gathered: corr = "  \u00b7  read-only"
     elif shown >= 0 and st.sessions[shown].derived: corr = "  \u00b7  correlated"
   let title = IconPlot & "  " & name & (if opened.isDefault: "" else: "  \u00b7  " &
     choiceMark(opened)) & (if hidden.len > 0: "  \u00b7  " & hidden else: "") &
@@ -3179,6 +3208,13 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
         igPopStyleColor(1)
         marks.mark("plot.opened as")
         tip("Opened with options: " & choiceText(c) & ".\nFile > Reopen with options... changes them.")
+      if s >= 0 and st.sessions[s].gathered:
+        # Made in memory, from many files: its title, and that it cannot be edited.
+        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+        igTextUnformatted((name & " (read-only: the traces come from the listed files)").cstring,
+          nil)
+        igPopStyleColor(1)
+        marks.mark("plot.gather title")
       let again = if s < 0: st.reopening(panel) else: ("", false)
       let wait = st.waiting(k)
       if tp.gpuError.len > 0:

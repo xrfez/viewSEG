@@ -1806,6 +1806,33 @@ is never changed, and a file that exists is never overwritten.
 The details (each field, the size estimate, gaps and overlaps, the part file) are in
 [Slice by shot log](slice-by-shot-log.md).
 
+## Receiver gather across files
+
+A receiver's records are spread over many shot files. **Show this receiver across the listed
+files** collects that receiver's trace from every seismic file the Files window lists and
+shows them together, one trace per shot, in the Seismic window. Right-click a trace and pick
+it under **Map** (it asks for that trace's receiver and component), or right-click a receiver
+on the map (every component at that station). It is dim, with a tooltip saying why, when the
+trace has no receiver station or the window already shows a gather.
+
+The gather is made in memory by a job in the Jobs window (Cancel stops it) and is temporary
+and read-only: no file is written, its traces cannot be killed, reversed, filtered or moved,
+and every edit is refused with a sentence in Messages (show a file itself to edit it). The
+Seismic window's title says "read-only", the Headers window's Trace table gains a **Source
+file** column (the full path in its tooltip), and the status bar names the file of the trace
+under the pointer. Traces come in order of the shots' times.
+
+Each file is read with its default reading, as the Files window opens it, and the files are
+not changed. Messages says what the gather came to and what it left out, naming the files:
+a file with no trace at the station, a file that cannot be read, a trace of another sample
+interval, a trace that starts a part of a sample away or whose samples fall outside the first
+trace's time window, and killed traces. A trace that starts a whole number of samples away is
+shifted onto the first trace's time axis, and a shorter or longer one is padded with zeros or
+cut to its length, and Messages says how many. A file listed twice is read once. The gather
+stops at 20 000 traces or 512 MiB of samples and says so; a survey still loading on the
+map is waited for, and a project whose survey is not loaded gathers from the headers and the
+survey files on the map.
+
 ## Spectra
 
 **FFT** (right-click a trace > New plot > FFT, or `F` over it) opens its amplitude
