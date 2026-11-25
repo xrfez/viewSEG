@@ -19,7 +19,7 @@ import ../../core/[edits, filejobs, filekinds, filesystem, geometry, jobs, outpu
   settings, state, vendormaps]
 import ../../view/[filetable, outputbinaryedit, outputlog, outputtextedit, outputtextimport,
   outputwords, theme]
-import fittext, focus, fonts, icons, marks, overflow, style
+import chosensweep, fittext, focus, fonts, icons, marks, overflow, style
 from windows import awOutput, beginClosable
 
 type
@@ -631,28 +631,6 @@ func chosenLabel(st: AppState): string =
   ## The chosen pattern's own label, or "" when no pattern is in use.
   let p = chosenPattern(st)
   if p.parts.len > 0: p.name else: ""
-
-proc chosenSweep(st: AppState): tuple[name, path, why: string; pilot: Option[PilotRule]] =
-  ## The project's chosen reference as a sweep the batch can load, or as the pilot
-  ## rule each file's records are read with, or why it cannot be used. Reads no file.
-  result = ("", "", CorrelatedNeedRef, none(PilotRule))
-  if st.chosenReference.len == 0: return
-  if not st.referencesLoaded:
-    result.why = CorrelatedNeedArchive
-    return
-  let at = st.references.findId(st.chosenReference)
-  if at < 0:
-    result.why = referenceGone(st.chosenReference)
-    return
-  let e = st.references.entries[at]
-  if e.missing or e.blocked:
-    result.why = referenceGone(e.name)
-  elif e.isPilot:
-    result = (e.name, "", "", some(e.pilotRuleOf))
-  elif e.file.len == 0 or st.referencesHome.len == 0:
-    result.why = referenceGone(e.name)
-  else:
-    result = (e.name, st.referencesHome / e.file, "", none(PilotRule))
 
 proc sourceKinds(ui: OutputUi): set[FileKind] =
   ## The standards of the ticked files; of every listed file when none is ticked.

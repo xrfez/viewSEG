@@ -1174,7 +1174,8 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maOpenVib, maOpenDat: ui.core.apply Command(kind: ckOpenPair, panel: MainPanel)
     of maReloadVendors: ui.core.apply Command(kind: ckReloadVendors)
     of maLeapSeconds: ui.leap.open()
-    of maCutGather: ui.cut.open(ui.shotLog.shownId, ui.core.settings.cutGather.recordMs)
+    of maCutGather: ui.cut.open(ui.shotLog.shownId, ui.core.settings.cutGather.recordMs,
+      ui.core.settings.cutGather.correlated)
     of maAbout: ui.about.open()
     of maShortcuts:
       ui.shortcuts.open()

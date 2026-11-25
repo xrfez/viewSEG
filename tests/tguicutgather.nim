@@ -26,8 +26,10 @@
 
 import std/[monotimes, options, os, strutils]
 import parseSEG
-import viewSEG/core/[cutfolderjobs, geometry, outputbinary, outputtext, shotlog, state]
+import viewSEG/core/[cutfolderjobs, geometry, outputbinary, outputtext, references, shotlog,
+  state, threads]
 import viewSEG/ui/imgui/[app, cutgatherdialog, shell]
+import viewSEG/view/[cutwords, outputwords]
 
 import utils/[faultyfs, fixtures, waiting]
 
@@ -115,6 +117,15 @@ proc main*() =
     makeRecording(many / "b.sgy", 86_400)
     writeFile(many / "notes.txt", "not a recording\n")
     let before = readFile(many / "a.sgy")
+    # the reference archive: a stored sweep of 16 samples at 2 ms and a pilot rule
+    var sweep = newSeq[float32](16)
+    for i in 0 ..< sweep.len: sweep[i] = float32(i + 1) * 0.25
+    markWorkerThread() # the archive is written off the UI thread; run() marks it again
+    let archive = referencesFolder(fx.dir / "config")
+    let sweepId = storeSamples(archive, "test sweep", 2000.0, sweep,
+      ReferenceOrigin(generated: true, dtMs: 2.0, durationMs: 32))
+    let pilotId = storePilotRule(archive, PilotRule(name: "a pilot", aux: true, trace: 1,
+      startMs: 0.0, spanMs: 32.0))
     install()
     let hook = proc (kind: DialogKind; location: string): seq[string] =
       if kind == dkCutDest: @[fx.dir / "out"]
@@ -222,8 +233,80 @@ proc main*() =
         doAssert f.savePng(dir / "cut-dialog.png"), "cannot save the dialog"
       shot = true
     step("the picture", picture, proc (f: FrameInfo): bool = true)
+    # The tick that correlates each record with the project's stored sweep: dim with no
+    # reference chosen and with a pilot, usable with a stored sweep, remembered, and the cut
+    # that follows holds the listen time (500 samples of the record less the sweep's 16).
+    proc dim(f: FrameInfo): bool =
+      doAssert f.hasMark("cut.correlate.disabled"), "the tick is usable with no reference"
+      f.markNames("cut.correlate.why " & CorrelatedNeedRef).len == 1
+    step("the tick is dim with no reference", proc (f: FrameInfo) = discard, dim)
+    step("a pilot is chosen", proc (f: FrameInfo) =
+      f.apply(Command(kind: ckSelectReference, refId: pilotId)),
+      proc (f: FrameInfo): bool =
+      f.hasMark("cut.correlate.disabled") and
+        f.markNames("cut.correlate.why " & CorrelatedPilotWhy).len == 1)
+    step("a stored sweep is chosen", proc (f: FrameInfo) =
+      f.apply(Command(kind: ckSelectReference, refId: sweepId)),
+      proc (f: FrameInfo): bool =
+      f.hasMark("cut.correlate") and not f.hasMark("cut.correlate.disabled"))
+    step("the tick is ticked", proc (f: FrameInfo) = f.click(f.markOf("cut.correlate").centre),
+      proc (f: FrameInfo): bool =
+      let says = f.markNames("cut.correlate.says ")
+      if says.len == 0: return false
+      doAssert "'test sweep'" in says[0] and "(484 samples)" in says[0], says[0]
+      doAssert f.core.settings.cutGather.correlated, "the tick was not remembered"
+      doAssert not f.hasMark("cut.correlate.noCarry"), "a SEG-Y recording has no headers to carry"
+      f.hasMark("cut.correlate.on"))
+    var corrShot = false
+    proc corrPicture(f: FrameInfo) =
+      let dir = getEnv("VIEWSEG_SCREENSHOTS")
+      if dir.len > 0 and not corrShot:
+        createDir(dir)
+        doAssert f.savePng(dir / "slicecorr.png"), "cannot save the dialog"
+      corrShot = true
+    step("the picture of the tick", corrPicture, proc (f: FrameInfo): bool = true)
+    # The tick on and a record no longer than the sweep (10 samples of 16): the tick cannot
+    # be honoured, so Slice is dim with the sentence and nothing is written; the tick can be
+    # cleared, and Slice is usable again. Broken to see it fail: `problem` not set from
+    # `whyNotCorrelated` (Slice then cut an uncorrelated file) and the box disabled.
+    const ShortWhy = "the record must be the sweep plus the listen time"
+    step("a record no longer than the sweep", clickLength, proc (f: FrameInfo): bool =
+      inc clicks
+      if clicks == 4: f.typeText("20")
+      clicks > 8 and ShortWhy in f.why)
+    var refusedShot = false
+    proc refusedPicture(f: FrameInfo) =
+      let dir = getEnv("VIEWSEG_SCREENSHOTS")
+      if dir.len > 0 and not refusedShot:
+        createDir(dir)
+        doAssert f.savePng(dir / "slicecorr-refused.png"), "cannot save the dialog"
+      refusedShot = true
+      clicks = 0
+      f.click(f.markOf("cut.run").centre)
+    step("Slice is dim with the sentence", refusedPicture, proc (f: FrameInfo): bool =
+      inc clicks
+      doAssert f.core.settings.cutGather.correlated and ShortWhy in f.why
+      doAssert not f.core.cutRunning and not fileExists(dest), "a file was written"
+      clicks >= 6)
+    step("the tick is cleared", proc (f: FrameInfo) = f.click(f.markOf("cut.correlate").centre),
+      proc (f: FrameInfo): bool =
+      not f.core.settings.cutGather.correlated and f.why.len == 0 and f.summary.len > 0)
+    step("the length restored", clickLength, proc (f: FrameInfo): bool =
+      inc clicks
+      if clicks == 4: f.typeText("1000")
+      clicks > 8 and f.why.len == 0 and f.summary.len > 0)
+    step("the tick, usable again", proc (f: FrameInfo) = f.click(f.markOf("cut.correlate").centre),
+      proc (f: FrameInfo): bool =
+      f.core.settings.cutGather.correlated and f.hasMark("cut.correlate.on"))
     step("Cut", proc (f: FrameInfo) = f.click(f.markOf("cut.run").centre),
       proc (f: FrameInfo): bool = f.hasMark("cut.open") and fileExists(dest))
+    step("the cut file holds the listen time", proc (f: FrameInfo) = discard,
+      proc (f: FrameInfo): bool =
+      var sliced = openSeismic(dest, keys = true)
+      defer: sliced.close()
+      doAssert sliced.len == 6 and int(sliced.traceEntry(0).numSamples) == 484,
+        $sliced.len & " traces of " & $sliced.traceEntry(0).numSamples & " samples"
+      true)
     # The file now exists: the window says so and Cut stays dim (the check
     # looked at the disk again because the cut finished).
     step("the destination exists", proc (f: FrameInfo) = discard,
@@ -273,6 +356,10 @@ proc main*() =
       proc (f: FrameInfo): bool = f.hasMark("cut.format SEG-Y"))
     step("SEG-Y", proc (f: FrameInfo) = f.click(f.markOf("cut.format SEG-Y").centre),
       proc (f: FrameInfo): bool = not f.hasMark("cut.format SEG-Y") and f.hasMark("cut.order"))
+    # a new project has no reference: the tick still on would refuse every slice, so it is cleared
+    step("the tick is cleared for the plain slices",
+      proc (f: FrameInfo) = f.click(f.markOf("cut.correlate").centre),
+      proc (f: FrameInfo): bool = not f.core.settings.cutGather.correlated)
     step("no project, no boxes", proc (f: FrameInfo) =
       f.apply(Command(kind: ckNewProject, projectPath: fx.dir / "job",
         dataFolders: @[fx.dir / "in"])),

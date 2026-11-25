@@ -73,7 +73,8 @@ proc everyFieldSet(): Settings =
     headers: HeadersView(tab: htTable, traceTab: ttData, followPointer: false,
       asDisplayed: true, columns: {hcName, hcOffset}, tableFields: @["keys.offset",
       "trace.sourceX"], tableScope: tsFile),
-    shotLog: ShotLogView(followPlot: true), cutGather: CutGatherView(recordMs: 2500.5),
+    shotLog: ShotLogView(followPlot: true), cutGather: CutGatherView(recordMs: 2500.5,
+        correlated: true),
     output: OutputView(segyRevision: orSegy1, segdRevision: orSegd31),
     missing: MissingView(folder: "/jobs/line 7", subfolders: true, untold: ukReceiver),
     quality: QualityView(folder: "/jobs/line 8", subfolders: true, untold: ukShot),
@@ -261,10 +262,13 @@ proc main*() =
     let old = readSettings("(settings (version 1) (hideKilled true))", "settings.nif",
       Settings(), problems)
     doAssert problems.len == 0, $problems
-    doAssert old.cutGather.recordMs == 10_000.0, $old.cutGather
+    doAssert old.cutGather.recordMs == 10_000.0 and not old.cutGather.correlated,
+      $old.cutGather
     var top = Settings()
     top.cutGather.recordMs = 4000.5
+    top.cutGather.correlated = true
     doAssert roundTrip(top)[0].cutGather.recordMs == 4000.5
+    doAssert roundTrip(top)[0].cutGather.correlated, "the tick was not remembered"
     let bad = readSettings("(settings (version 1) (cutGather (recordMs -5.0)))",
       "settings.nif", Settings(), problems)
     doAssert bad.cutGather.recordMs == 10_000.0 and problems.len == 1, $problems

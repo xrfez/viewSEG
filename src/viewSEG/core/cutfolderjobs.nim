@@ -37,9 +37,8 @@
 import std/[algorithm, math, options, os, sequtils, strutils, tables, times]
 import parseSEG
 import processSEG/continuous/slice
-import cutfile, cutgather, cutgatherjobs, filejobs, filelist, filesystem, jobs, outputjobs,
-    recordingkind,
-  session, shotlog, threads, treatas, vendormaps
+import cutcorrelate, cutfile, cutgather, cutgatherjobs, filejobs, filelist, filesystem, jobs,
+  outputjobs, recordingkind, session, shotlog, threads, treatas, vendormaps
 
 const
   NotRecording* = "not a SEG-Y, SEG-D or SEG-2 file" ## why a file that is not seismic is skipped
@@ -237,9 +236,18 @@ proc place(plan: FolderPlan; facts: openArray[ptr FolderFacts]; files: var seq[F
   var taken = newSeq[bool](cut.shots.len)
   let window = SliceWindow(startMs: plan.opts.startMs, lengthMs: plan.opts.recordMs)
   let startOffsetUs = int64(round(plan.opts.startMs * 1000))
+  # With the tick on, each file is judged as the slice judges it: the sweep is read once.
+  var sweep: seq[float32] = @[]
+  var sweepDtMs = 0.0
+  var sweepWhy = ""
+  if plan.opts.sweepPath.len > 0 and cut.shots.len > 0:
+    sweepWhy = readSweep(plan.opts.sweepPath, plan.opts.sweepName, sweep, sweepDtMs)
   for i, f in facts:
     if f.skip.len > 0 or cut.shots.len == 0: continue
-    let wrong = checkOptions(plan.opts, f.dtMs)
+    var wrong = checkOptions(plan.opts, f.dtMs)
+    if wrong.len == 0 and plan.opts.sweepPath.len > 0:
+      wrong = if sweepWhy.len > 0: sweepWhy
+        else: correlationWhy(sweep.len, sweepDtMs * 1000.0, plan.opts.recordMs, f.dtMs)
     if wrong.len > 0:
       files[i].skip = wrong
       continue

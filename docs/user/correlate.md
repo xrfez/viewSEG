@@ -36,6 +36,10 @@ being written, so every record is correlated with its own pilot; a record withou
 auxiliary trace fails the file. The pilot's own trace is correlated only when it is marked,
 as any other auxiliary trace.
 
+To correlate straight from a continuous recording, cutting a record for each shot of a log in
+the same step, use the tick of the same name in **Project > Slice by shot log...**: see
+[Correlated](slice-by-shot-log.md#correlated).
+
 What is written:
 
 - **The order.** Each trace is correlated first. The edits you chose in the window are applied

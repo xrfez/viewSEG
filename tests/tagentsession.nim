@@ -117,6 +117,7 @@ const Reached = {
   "headers.tab": "", "headers.traceTab": "", "headers.followPointer": "",
   "headers.asDisplayed": "", "headers.columns": "", "headers.tableFields": "",
   "headers.tableScope": "", "shotLog.followPlot": "", "cutGather.recordMs": "",
+  "cutGather.correlated": "",
   "output.segyRevision": "", "output.segdRevision": "", "missing.folder": "",
   "missing.subfolders": "", "missing.untold": "", "quality.folder": "",
   "quality.subfolders": "", "quality.untold": "", "hideKilled": "",

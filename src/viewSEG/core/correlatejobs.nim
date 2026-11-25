@@ -260,6 +260,28 @@ proc listenShape*(file: ptr SeismicFile; reference: openArray[float32];
   result.padded = shape.padded
   result.cut = shape.cut
 
+proc storedSweepPlan*(sweep: seq[float32]; sweepDtMs, dtMs: float64;
+    recordSamples: int): CorrelationPlan[float32] =
+  ## The plan every correlation with a stored sweep uses (the Output window's, and the
+  ## slice's): `sweep` at `sweepDtMs`, records of `recordSamples` at `dtMs`.
+  initCorrelationPlan(float32, initPilot(sweep, sweepDtMs), dtMs, recordSamples)
+
+proc correlateRows*(plan: CorrelationPlan[float32]; src: openArray[float32];
+    dst: var openArray[float32]; dead: openArray[bool]; samples, listen: int; dtMs: float64;
+    ws: var Workspace) =
+  ## Correlates `dead.len` rows of `samples` samples in `src` into rows of `listen` samples
+  ## in `dst`, one call of the library on the calling thread. A row marked dead comes out as
+  ## zeros. `ws` holds `plan.workspaceSize`. Raises `ValueError` as the library does.
+  let rows = dead.len
+  var keys = newSeq[TraceKeys](rows)
+  var counts = newSeq[int](rows)
+  for i in 0 ..< rows:
+    keys[i] = initTraceKeys()
+    keys[i].status = if dead[i]: tsDead else: tsLive
+    counts[i] = samples
+  let meta = initChunkMeta(rowsOf(keys, counts), dtMs)
+  plan.correlateInto(rowBlock(src, rows, samples), rowBlock(dst, rows, listen), meta, ws)
+
 proc addSat(a, b: int64): int64 {.inline.} =
   if b > 0 and a > high(int64) - b: high(int64) else: a + b
 
