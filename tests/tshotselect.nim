@@ -218,6 +218,74 @@ proc main*() =
     doAssert seen == @[@[0], @[1], @[2], @[3]], "grouped: " & $seen
     discard st.shutdown()
 
+  block answers_after_the_user_moved_on:
+    # the map is built on a job: what happens meanwhile decides what its answer does
+    proc tracesNow(st: AppState): seq[int] =
+      for t in 0 ..< 6:
+        if t + st.sessions[0].base in st.selection.selected: result.add t
+
+    block another_shot_at_once:
+      var st = initAppState()
+      st.openBoth(sliced, log)
+      let id = st.shotLogId(0)
+      st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1010)],
+        pointMode: smReplace)
+      st.apply Command(kind: ckSelectShotRows, shotLogId: id, shotRows: @[3], shotTraces: true)
+      doAssert st.settle(st.jobs.active.len == 0 and st.tracesNow == @[3]), "only the second " &
+        "shot's traces: " & $st.tracesNow
+
+    block a_row_clicked_in_the_grid_meanwhile:
+      var st = initAppState()
+      st.openBoth(sliced, log)
+      let id = st.shotLogId(0)
+      st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1010)],
+        pointMode: smReplace)
+      st.apply Command(kind: ckSelectShotRows, shotLogId: id, shotRows: @[3], shotTraces: false)
+      doAssert st.settle(st.jobs.active.len == 0)
+      doAssert st.shotRowsChosen.rows == @[3] and st.tracesNow.len == 0,
+        "the first click's traces came after a row was chosen in the grid: " & $st.tracesNow
+
+    block clear_selection_meanwhile:
+      var st = initAppState()
+      st.openBoth(sliced, log)
+      st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1010)],
+        pointMode: smReplace)
+      st.apply Command(kind: ckClearSelection)
+      doAssert st.settle(st.jobs.active.len == 0)
+      doAssert st.tracesNow.len == 0 and st.selection.points.len == 0,
+        "a Clear selection was undone by the answer: " & $st.tracesNow
+
+    block stepped_to_another_record_meanwhile:
+      var st = initAppState()
+      st.openBoth(sliced, log)
+      st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1010)],
+        pointMode: smReplace)
+      st.apply Command(kind: ckGather, panel: MainPanel, gather: 3)
+      doAssert st.settle(st.jobs.active.len == 0 and st.tracesNow == @[1, 4]),
+        "the traces are still selected: " & $st.tracesNow
+      doAssert st.panels[0].layers[0].source.gather == 3,
+        "the record the user stepped to was replaced"
+
+    block taking_a_shot_out_while_the_map_is_rebuilt:
+      var st = initAppState()
+      st.openBoth(sliced, log)
+      st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1010)],
+        pointMode: smReplace)
+      doAssert st.settle(st.tracesNow == @[1, 4] and st.jobs.active.len == 0)
+      st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1030)],
+        pointMode: smToggle)
+      doAssert st.tracesNow == @[1, 3, 4], $st.tracesNow
+      # the log is read again: its map of traces is made again
+      var m = logMap()
+      st.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: m)
+      doAssert st.settle(st.jobs.active.len == 0 and st.survey.findShotLog(st.shotLogId(0)) >= 0)
+      st.apply Command(kind: ckSelectPoints, points: @[st.pointWithX(1010)],
+        pointMode: smToggle)
+      doAssert st.shotRowsChosen.rows == @[3], $st.shotRowsChosen.rows
+      doAssert st.settle(st.jobs.active.len == 0 and st.tracesNow == @[3]),
+        "the traces of the shot taken out stayed: " & $st.tracesNow
+      discard st.shutdown()
+
   block stale_ids_and_empty_rows:
     var st = initAppState()
     st.openBoth(sliced, log)

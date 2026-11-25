@@ -1479,6 +1479,15 @@ type
     stMap: ShotTraceMap
     stHave: bool ## `stMap` is the answer for `stKey`
     stWant: int = -1
+    stSelRev: int
+      ## the trace selection's revision once the click `stWant` is for had made its changes: the
+      ## answer is dropped when it is not the same (something else changed the selection)
+    stShown: tuple[file, gather: int]
+      ## the file and gather the main panel showed at that click: the answer does not jump when
+      ## the user stepped to another record
+    stRemoved: seq[int]
+      ## rows taken out of the choice while the map was not ready: their traces are taken out
+      ## when it answers
       ## the revision of the rows chosen whose traces are selected when the job answers; -1 none
     followTrace: int = -1
       ## last seismic trace hovered while this file is on show; -1 until one is
@@ -5066,6 +5075,11 @@ func shotTraceKey(state: AppState; i, log: int): tuple[session, keys, log, revis
   (int(state.sessions[i].id), state.sessions[i].keysRevision, state.shotLogs[log].id,
     state.shotLogs[log].revision)
 
+func shownGather(state: AppState; k: int): tuple[file, gather: int] =
+  ## The file (its session id) and the gather panel `k` shows; (-1, -1) for none.
+  let i = state.shownFile(k)
+  if i < 0: (-1, -1) else: (int(state.sessions[i].id), state.panels[k].layers[0].source.gather)
+
 proc stopShotTraces(state: var AppState) =
   ## Lets go of the map of traces, and of the job that makes one.
   if state.stJob != NoJob: discard state.jobs.cancel(state.stJob)
@@ -5074,6 +5088,7 @@ proc stopShotTraces(state: var AppState) =
   state.stHave = false
   state.stMap = ShotTraceMap()
   state.stWant = -1
+  state.stRemoved.setLen 0
 
 proc shotTracesFor(state: var AppState; k, log: int; rows: seq[int]; found: var seq[int];
     removing: bool): string =
@@ -5110,11 +5125,16 @@ proc shotTracesFor(state: var AppState; k, log: int; rows: seq[int]; found: var 
     state.stWant = state.shotRows.revision
 
 proc applyShotTraces(state: var AppState) =
-  ## The map of traces is ready: the traces of the rows chosen are selected and shown, when
-  ## they are still the rows asked for, and the file and the log are the ones the map is for.
+  ## The map of traces is ready: the traces of the rows chosen are selected (those of rows taken
+  ## out meanwhile unselected) and shown, when nothing has changed since the click that asked:
+  ## the same rows, the same trace selection, the file and the log the map is for. The record
+  ## is not changed when the user stepped to another meanwhile.
   let want = state.stWant
   state.stWant = -1
+  let removed = state.stRemoved
+  state.stRemoved.setLen 0
   if want != state.shotRows.revision or state.shotRows.log < 0: return
+  if state.selection.selectedRevision != state.stSelRev: return
   let k = state.findPanel(MainPanel)
   let i = state.shownFile(k)
   let log = state.findShotLog(state.shotRows.log)
@@ -5125,14 +5145,20 @@ proc applyShotTraces(state: var AppState) =
     why = state.sessions[i].name & " was opened without trace keys, so its traces cannot be " &
       "told to shots; no trace was chosen."
   else:
+    var gone: seq[int]
+    for r in removed:
+      if r notin state.shotRows.rows: gone.add r
+    var taken: seq[int]
+    for t in state.stMap.tracesOfRows(gone): taken.add state.sessions[i].base + t
+    if taken.len > 0: state.selection.select(taken, smRemove)
     for t in state.stMap.tracesOfRows(state.shotRows.rows): found.add state.sessions[i].base + t
     if found.len == 0:
       why = "No trace of " & state.sessions[i].name & " belongs to " &
         (if state.shotRows.rows.len == 1: "that shot." else: "those shots.")
   if found.len > 0:
     state.selection.select(found, smAdd)
-    state.showShotTraces(k, found)
-  else: state.log.add(sevInfo, "Shot log", why)
+    if state.shownGather(k) == state.stShown: state.showShotTraces(k, found)
+  elif why.len > 0: state.log.add(sevInfo, "Shot log", why)
 
 proc selectShotRows(state: var AppState; logId: int; wanted: seq[int]; traces: bool;
     mode = smReplace; others = false) =
@@ -5171,8 +5197,12 @@ proc selectShotRows(state: var AppState; logId: int; wanted: seq[int]; traces: b
   let asked = if op == smReplace: final else: valid
   var found: seq[int]
   var why = ""
+  if op == smReplace: state.stRemoved.setLen 0
   if traces and asked.len > 0:
     why = state.shotTracesFor(k, at, asked, found, op == smRemove)
+    if state.stWant == state.shotRows.revision: # the map is not ready: its answer settles it
+      if op == smRemove: state.stRemoved.add valid
+      else: state.stRemoved.keepItIf(it notin valid)
   var points: seq[PointRef]
   let layer = state.survey.findShotLog(logId)
   if layer >= 0:
@@ -5190,6 +5220,9 @@ proc selectShotRows(state: var AppState; logId: int; wanted: seq[int]; traces: b
     if traces: state.selection.select(found, smAdd)
   if found.len > 0 and op != smRemove: state.showShotTraces(k, found)
   elif why.len > 0 and found.len == 0: state.log.add(sevInfo, "Shot log", why)
+  if state.stWant == state.shotRows.revision:
+    state.stSelRev = state.selection.selectedRevision
+    state.stShown = state.shownGather(k)
 
 proc mark(state: var AppState; path: string; short, seen: bool) =
   ## Marks the file list's entry of `path`: with `short`, as ending before
