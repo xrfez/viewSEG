@@ -6,6 +6,11 @@
 ## of the map's highest fold, looked up in the Viridis colour map the density
 ## plot uses (`lutOf(cmViridis)`), so the legend's gradient and the bins agree.
 ##
+## The recorded fold ("Actual fold") is coloured the same way. The difference (planned less
+## recorded) uses the diverging red, white and blue map (`cmRedWhiteBlue`) centred on 0, the
+## largest magnitude at either end: 0 is the neutral colour, positive (short of the plan) goes
+## to blue, negative (more than planned) to red; a bin with neither a plan nor a trace is clear.
+##
 ## **Levels.** Level 1 is the grid itself. A bin smaller than `MinBinPixels`
 ## on the screen would vanish or flicker as a quad, so when the bins are
 ## smaller than that the map draws a coarser level: blocks of `f x f` bins
@@ -40,6 +45,19 @@ func legendColour*(t: float64): Rgba =
   ## The colour at fraction `t` (0 to 1) of the maximum fold.
   let c = lutOf(cmViridis)[int(round(clamp(t, 0.0, 1.0) * 255))]
   Rgba(r: c.r, g: c.g, b: c.b, a: 255)
+
+func diffLegendColour*(t: float64): Rgba =
+  ## The colour at fraction `t` (0 to 1) along the difference's bar: the most negative at 0,
+  ## zero in the middle, the most positive at 1.
+  let c = lutOf(cmRedWhiteBlue)[int(round(clamp(t, 0.0, 1.0) * 255))]
+  Rgba(r: c.r, g: c.g, b: c.b, a: 255)
+
+func foldTitle*(kind: FoldKind): string =
+  ## The layer's name in the popover, the legend and the hover.
+  case kind
+  of fkPreplot: "Pre-plot fold"
+  of fkActual: "Actual fold"
+  of fkDifference: "Fold difference (planned − recorded)"
 
 func initFoldGrid*(res: ref FoldResult): FoldGrid = FoldGrid(res: res)
 
@@ -84,22 +102,46 @@ func sizeText*(v: float64): string =
   result = formatFloat(v, ffDefault, 6)
   result.trimZeros()
 
+func plural(n: int; word: string): string = $n & " " & word & (if n == 1: "" else: "s")
+
 func totalsText*(r: FoldResult; unit: string): string =
   ## The totals line of the layer's popover for map `r`, with lengths in `unit`.
-  if r.inlines * r.crosslines == 1:
-    "One bin holds " & $r.binned & " pairs (" & $r.outside & " outside the grid, " &
+  if r.kind != fkPreplot:
+    result = "Counted " & plural(r.files, "file") & ", " & plural(r.traces, "trace") & ": " &
+      $r.binned & " in the bins; left out " & $r.notLive & " not live, " & $r.killed &
+      " killed, " & $r.noCoordinates & " without coordinates and " & $r.outside &
+      " outside the grid."
+    if r.unplaced > 0:
+      result.add " " & plural(r.unplaced, "file") & " give no source or receiver positions " &
+        "and the survey does not place them."
+    if r.skipped.len > 0: result.add " " & plural(r.skipped.len, "file") & " could not be read."
+    result.add " Bins " & sizeText(r.binAlong) & " x " & sizeText(r.binAcross) & " " & unit &
+      "; max " & (if r.kind == fkActual: "fold " else: "difference ") & $r.maxFold & "."
+  elif r.inlines * r.crosslines == 1:
+    result = "One bin holds " & $r.binned & " pairs (" & $r.outside & " outside the grid, " &
       $r.noCoordinates & " without coordinates)."
   else:
-    $r.binned & " pairs in " & $r.inlines & " x " & $r.crosslines & " bins, max fold " &
+    result = $r.binned & " pairs in " & $r.inlines & " x " & $r.crosslines & " bins, max fold " &
       $r.maxFold & "; " & $r.outside & " pairs outside the grid, " & $r.noCoordinates &
       " without coordinates. Bins " & sizeText(r.binAlong) & " x " & sizeText(r.binAcross) &
       " " & unit & "."
 
 func foldText*(r: FoldResult; bin: int): string =
-  ## "fold 12 (inline 3, crossline 41)" for bin `bin` (in `0 ..< len`).
+  ## "fold 12 (inline 3, crossline 41)" for bin `bin` (in `0 ..< len`); for the recorded
+  ## fold "recorded 10 (planned 12) at inline 3, crossline 41"; for the difference "2 short
+  ## of the plan" or "2 more than planned" at the bin.
   let (i, j) = (bin div r.crosslines, bin mod r.crosslines)
-  "fold " & $r.counts[bin] & " (inline " & $(r.firstInline + float64(i)).int &
-    ", crossline " & $(r.firstCrossline + float64(j)).int & ")"
+  let place = "inline " & $(r.firstInline + float64(i)).int & ", crossline " &
+    $(r.firstCrossline + float64(j)).int
+  case r.kind
+  of fkPreplot: "fold " & $r.counts[bin] & " (" & place & ")"
+  of fkActual:
+    "recorded " & $r.counts[bin] & " (planned " & $r.planned[bin] & ") at " & place
+  of fkDifference:
+    let d = r.counts[bin]
+    (if d > 0: $d & " short of the plan" elif d < 0: $(-int64(d)) & " more than planned"
+      else: "as planned") & " (planned " & $r.planned[bin] & ", recorded " &
+       $(int64(r.planned[bin]) - d) & ") at " & place
 
 type
   FoldSpan* = tuple[row, first, last: int] ## blocks `first .. last` of block row `row`
