@@ -47,6 +47,7 @@ proc bytesOf(path: string): seq[byte] =
 
 const
   DtMs = 2.0
+  AuxLeadMs = 500.0 # the shift given to the marked reference trace
   Record = 1000
   SweepLen = 200
   Listen = 800
@@ -102,7 +103,7 @@ proc correlated(file: ptr SeismicFile; path: string; sweep: openArray[float32]):
   try:
     let id = jobs.submit(jobSpec(path), correlateWork(CorrelateAsk(
       file: file, path: path, reference: @sweep, referenceDtMs: DtMs,
-      referenceTraces: @[RefAux]), addr result))
+      marked: marksOf([RefAux], AuxLeadMs)), addr result))
     doAssert finish(jobs, id) == jsDone, result.failure
   finally:
     jobs.stop()
@@ -149,7 +150,7 @@ proc segdEstimate() =
   try:
     let id = jobs.submit(jobSpec(path), correlateWork(CorrelateAsk(
       file: raw.filePtr, path: path, reference: @sweep, referenceDtMs: DtMs,
-      referenceTraces: @[]), addr slot))
+      marked: @[]), addr slot))
     doAssert finish(jobs, id) == jsDone, slot.failure
   finally:
     jobs.stop()
@@ -194,7 +195,7 @@ proc plainBinary(rows: openArray[FieldRow]): bool =
 proc openView(path: string; sweep: openArray[float32]): tuple[raw, view: Session] =
   var opened = openSeismic(path, keys = true)
   result.raw = newSession(path, opened)
-  let built = initCorrelateView(result.raw.filePtr, sweep, DtMs, [])
+  let built = initCorrelateView(result.raw.filePtr, sweep, DtMs, @[])
   doAssert built.refusal.len == 0, built.refusal
   result.view = asCorrelatedView(result.raw, built.view)
 
@@ -303,7 +304,7 @@ proc viewOfSweep() =
   let slot = correlated(raw.filePtr, path, sweep)
   let written = slot.opened
   doAssert written.facts.summary.samplesPerTrace == Listen
-  let built = initCorrelateView(raw.filePtr, sweep, DtMs, [RefAux])
+  let built = initCorrelateView(raw.filePtr, sweep, DtMs, marksOf([RefAux], AuxLeadMs))
   doAssert built.refusal.len == 0, built.refusal
   let view = asCorrelatedView(raw, built.view)
   doAssert view.isCorrelatedView

@@ -39,7 +39,8 @@
 ## `correlation` set: each written trace is correlated with that loaded
 ## reference into the listen time, and the writer is opened with that sample
 ## count. SEG-Y samples are IEEE float32, whatever the source format. A
-## reference auxiliary is shifted by its lag first. Time shift,
+## marked auxiliary trace is shifted by its own mark first (the file's marks, or the
+## project's in `projectMarks`). Time shift,
 ## polarity, an own filter and the plot's filters are applied after that, on
 ## the listen-length trace, in the order a plain write applies them. The
 ## reference and its spectrum are prepared once. None leaves every sample as
@@ -136,12 +137,14 @@ type
     ofSegd = "SEG-D"
 
   OutputCorrelation* = object
-    ## A loaded reference, the sweep `correlateWork` takes, and the auxiliary
-    ## traces that hold one. None on `OutputOptions` leaves every sample as
+    ## A loaded reference, the sweep `correlateWork` takes, and the project's
+    ## marked auxiliary positions. None on `OutputOptions` leaves every sample as
     ## it is written today.
     reference*: seq[float32]
     referenceDtMs*: float64
-    referenceTraces*: seq[int]
+    projectMarks*: seq[AuxMarkEntry]
+      ## The project's auxiliary positions marked for correlation. The file's own
+      ## marks are in the edits the write is given, and win over these.
     pilot*: Option[PilotRule]
       ## Set: `reference` is not used. Each record of the file being written
       ## takes its own pilot by this rule, as the Correlate button does, from
@@ -622,7 +625,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var correlating = false
       var listen = 0
       var recordSamples = 0
-      var lag = 0
+      var lags = initTable[int, int]()
+      var marked: seq[AuxMark] = @[]
       var outUs = 0.0
       var refs = initHashSet[int]()
       var odd = initHashSet[int]()
@@ -639,6 +643,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var corrMeta: ChunkMeta
       var corrDtMs = 0.0
       var shape: ListenShape
+      var markNotes: seq[string] = @[]
       if opts.correlation.isSome:
         if file == nil or not file[].isOpen:
           raise newException(ValueError, "The source file is not open.")
@@ -672,13 +677,16 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             for t in rec.span: planOf[t] = k
           if pilotLoads.len == 0:
             raise newException(ValueError, "The file has no record to take a pilot from.")
-        let ready = listenShape(file, first, sweepDt)
-        refs = referenceSet(file[].len, loaded.referenceTraces)
+        let picked = markedAuxiliaries(file, edits.auxMarks, loaded.projectMarks)
+        marked = picked.marked
+        markNotes = picked.notes
+        let ready = listenShape(file, first, sweepDt, marked)
+        refs = referenceSet(file[].len, marked)
         listen = ready.listen
         recordSamples = ready.samples
         sweepLen = first.len
         for t in ready.odd: odd.incl(t)
-        lag = wholeSamples(-AuxLeadMs, ready.dtMs)
+        lags = appliedLags(file, marked, odd, ready.dtMs)
         if opts.format == ofSegd: outUs = wholeMicroseconds(ready.dtMs)
         planDt = sweepDt
         corrPlans.add initCorrelationPlan(float32, initPilot(first, sweepDt), ready.dtMs,
@@ -828,11 +836,13 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       # from the keys carries it. SEG-D keeps one start time per channel set: it
       # is written only when every auxiliary trace of a record is such a
       # reference with the same delay.
-      let leadMs = float64(abs(lag)) * corrDtMs
       let like = srcKind == outKind and not oddSegd and
         (srcKind == skSegy or (sameOrder and dropped == 0))
+      template leadOf(t: int): float64 =
+        ## How much later trace `t` was put, in the whole samples applied.
+        float64(-lags.getOrDefault(t, 0)) * corrDtMs
       var segdDelays = false
-      if correlating and segdOut and lag != 0 and not like:
+      if correlating and segdOut and lags.len > 0 and not like:
         var want = initTable[int64, float64]()
         var fits = true
         for i in 0 ..< n:
@@ -841,7 +851,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           if keys.status == tsAuxiliary:
             if i in refs and i notin odd:
               let r = boundary(file[], i, byEntry, true)
-              let delay = sourceDelayMs(keys) - leadMs
+              let delay = sourceDelayMs(keys) - leadOf(i)
               if want.getOrDefault(r, delay) != delay: fits = false
               want[r] = delay
             else: fits = false
@@ -1040,8 +1050,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             let aux = status == tsAuxiliary
             let isOdd = t in odd
             let isRef = t in refs
-            if aux and isRef and not isOdd and lag != 0:
-              timeShift(samples, lag)
+            if aux and isRef and not isOdd and t in lags:
+              timeShift(samples, lags[t])
               shifted = true
             # A dead seismic trace stays dead. correlateInto then writes zeros,
             # as the correlation job does; marking it live would correlate it.
@@ -1073,7 +1083,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             if correlating:
               var over = correlatedOver
               if shifted and not segdOut:
-                case referenceDelay(file[], t, file[].traceKeys(t).t0Ms, leadMs, over)
+                case referenceDelay(file[], t, file[].traceKeys(t).t0Ms, leadOf(t), over)
                 of dwAdded: discard
                 of dwScalar: delayLost = true
                 of dwUnread: delayUnread = true
@@ -1097,7 +1107,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             if correlating:
               if segdOut: keys.intervalUs = outUs
               if shifted and (not segdOut or segdDelays):
-                keys.t0Ms = sourceDelayMs(keys) - leadMs
+                keys.t0Ms = sourceDelayMs(keys) - leadOf(t)
               w.writeTrace(keys, toOpenArray(samples, 0, listen - 1),
                 overrides = correlatedOver, channelType = channel)
             else:
@@ -1154,14 +1164,11 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           # The job's notes read only the index and the keys, so a file cut
           # after its traces were read keeps them. The binary header's note
           # reads the file, and a cut refuses that read.
-          var delayed = 0
-          for t in opts.correlation.get.referenceTraces:
-            if file[].traceKeys(t).status == tsAuxiliary and t notin odd: inc delayed
-          let leadSamples = abs(lag)
           lines.add correlationLines(file, file[].len, shape.listen, sweepLen,
             float64(shape.listen) * shape.dtMs, float64(sweepLen) * shape.dtMs, shape.dtMs,
-            delayed, leadSamples, shape.padded, shape.cut, refs, shape.odd)
-          if delayed > 0 and lag != 0:
+            lags, shape.padded, shape.cut, refs, shape.odd)
+          lines.add markNotes
+          if lags.len > 0:
             if delayLost: lines.add RefDelayScalar
             if segdOut and not segdDelays:
               lines.add(if like: RefDelayKeptHeaders else: RefDelaySharedSet)

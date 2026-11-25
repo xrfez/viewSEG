@@ -4,7 +4,7 @@
 ## threads share the plan. The fields are that state: a caller does not build
 ## a view by setting them.
 
-import std/sets
+import std/[sets, tables]
 import processSEG
 
 type
@@ -15,10 +15,12 @@ type
     plan*: ref CorrelationPlan[float32]
     pilot*: seq[float32]
     path*: string ## the raw file's path, copied once so a later read does not allocate
-    refs*: HashSet[int]
+    refs*: HashSet[int] ## the marked auxiliary traces, correlated
     odd*: HashSet[int]
     recordSamples*: int
     listenSamples*: int ## samples of listen time: the record minus the sweep
     dtMs*: float64
     t0Ms*: float64 ## time of listen sample 0: the first seismic trace's finite t0, else 0
-    lag*: int ## `wholeSamples(-AuxLeadMs, dtMs)`; 0 when the lead is not a shift
+    lags*: Table[int, int]
+      ## the marked traces that are shifted before they are correlated, by `lagOf`
+      ## (negative moves later)

@@ -45,7 +45,8 @@
 
 import std/[json, math, options, os, sequtils, strutils, tables]
 import parseSEG
-import viewSEG/core/[analysis, breakmodel, colourmaps, geometry, nif, outputtext, phasepicture,
+import viewSEG/core/[analysis, breakmodel, colourmaps, edits, geometry, nif, outputtext,
+  phasepicture,
   plotoptions, project, recordingkind, state, treatas]
 import viewSEG/remote/[schema, tools]
 import utils/[fixtures, waiting]
@@ -518,6 +519,14 @@ proc main*() =
       st.agent(%*{"kind": "reopen", "reopenPath": third, "openChoice": {"verifyAll": true}})
       doAssert st.settle(st.sessions.anyIt(it.path == third and
         it.facts.opened.choice.verifyAll)), "not reopened"
+      # an auxiliary position marked for correlation: shown for the session, not kept
+      st.agent(%*{"kind": "file aux mark", "auxFile": third, "auxPosition": 1,
+        "auxMarked": "yes", "auxShiftMs": 500.0})
+      doAssert st.editsAt(third).auxMarks == @[AuxMarkEntry(position: 1, marked: true,
+        ms: 500.0)] and st.editsAt(third).keptAuxMarks.len == 0, "the agent's mark was not taken"
+      st.agent(%*{"kind": "file aux mark", "auxFile": third, "auxPosition": 1,
+        "auxMarked": "forget"})
+      doAssert st.editsAt(third).auxMarks.len == 0
       # seismic stays on above (the spectrum is of a trace shown); off here,
       # while a file is shown, so the choice is seen to change and not be saved
       st.agent(%*{"kind": "trace filter", "filter": {"seismic": false, "auxiliary": true,
@@ -550,6 +559,11 @@ proc main*() =
       st.agent(%*{"kind": "close project"})
       st.agent(%*{"kind": "open project", "projectPath": fx.dir / "the agent's job"})
       doAssert st.inProject
+      st.agent(%*{"kind": "project aux mark", "auxPosition": 2, "auxMarked": "yes",
+        "auxShiftMs": 40.0})
+      doAssert st.project.doc.auxMarks == @[AuxMarkEntry(position: 2, marked: true, ms: 40.0)]
+      st.agent(%*{"kind": "project aux mark", "auxPosition": 2, "auxMarked": "forget"})
+      doAssert st.project.doc.auxMarks.len == 0
       st.agent(%*{"kind": "vendor map", "vendorMap": "none"})
       st.agent(%*{"kind": "vendor map", "vendorMap": "automatic"})
       st.agent(%*{"kind": "name pattern", "patternAction": "choose",

@@ -76,6 +76,11 @@ const
   OwnSrcX = 10.0
   JoinedSrcX = 111.0
   OwnSrcY = 20.0
+  LeadMarks = @[AuxMarkEntry(position: 1, marked: true, ms: 500.0)]
+    ## the first auxiliary position, shifted 500 ms: what the reference trace of these
+    ## files was given before marks
+  AuxFirstMarks = @[AuxMarkEntry(position: 2, marked: true, ms: 500.0)]
+    ## the reference trace of the file whose trace 0 is an auxiliary of its own
   StoredHash = -8343397523865439994
     ## The bytes of the stored-sweep write: those of before pilots, except the reference
     ## trace's delay field (bytes 109-110 of its header), 0 then and -500 ms now.
@@ -353,22 +358,22 @@ proc correlate(file: var SeismicFile; path: string; sweep: seq[float32];
   try:
     let id = jobs.submit(spec(path), correlateWork(CorrelateAsk(
       file: addr file, path: path, reference: sweep, referenceDtMs: DtMs,
-      referenceTraces: refs), addr result))
+      marked: marksOf(refs, 500.0)), addr result))
     doAssert waitUntil(state(jobs, id) in {jsDone, jsFailed, jsCancelled})
     doAssert state(jobs, id) == jsDone, result.failure
   finally:
     jobs.stop()
   doAssert result.ok, result.failure
 
-proc option(sweep: seq[float32]; format: OutputFormat): OutputOptions =
+proc option(sweep: seq[float32]; format: OutputFormat; marks = LeadMarks): OutputOptions =
   OutputOptions(format: format, correlation: some(OutputCorrelation(
-    reference: sweep, referenceDtMs: DtMs, referenceTraces: @[RefAux])))
+    reference: sweep, referenceDtMs: DtMs, projectMarks: marks)))
 
 proc withCorrelation(opts: OutputOptions; sweep: seq[float32]): OutputOptions =
   result = opts
   result.format = ofSegy
   result.correlation = some(OutputCorrelation(reference: sweep, referenceDtMs: DtMs,
-    referenceTraces: @[RefAux]))
+    projectMarks: LeadMarks))
 
 proc withoutCorrelation(opts: OutputOptions): OutputOptions =
   result = opts
@@ -425,10 +430,10 @@ proc writeRecords(path: string; sweeps: seq[seq[float32]]) =
       w.writeTrace(k, buf)
   doAssert w.close().len == 0, "the records file did not close"
 
-proc pilotOutput(sweep: seq[float32]; refs = @[2]): OutputOptions =
+proc pilotOutput(sweep: seq[float32]): OutputOptions =
   ## The rule: the first auxiliary trace, from 0 ms, as long as the sweep.
   OutputOptions(format: ofSegy, correlation: some(OutputCorrelation(
-    referenceDtMs: DtMs, referenceTraces: refs, pilot: some(PilotRule(aux: true,
+    referenceDtMs: DtMs, projectMarks: LeadMarks, pilot: some(PilotRule(aux: true,
     trace: 1, startMs: 0.0, spanMs: float64(sweep.len) * DtMs)))))
 
 proc buttonPilot(file: var SeismicFile; path: string; rule: PilotRule; trace: int):
@@ -648,7 +653,7 @@ proc main*() =
     let dest = outDir / "mismatch.sgy"
     let got = runWrite(file, path, dest, OutputOptions(format: ofSegy,
       correlation: some(OutputCorrelation(reference: sweep, referenceDtMs: 4.0,
-        referenceTraces: @[RefAux]))))
+        projectMarks: LeadMarks))))
     doAssert got.st == jsFailed, "an interval mismatch was written"
     doAssert got.wrote.reason.find(
       "the reference sweep is sampled every 4 ms and the record every 2 ms.") >= 0,
@@ -835,7 +840,7 @@ proc main*() =
     let own = bounded(OwnFilter(spec: Processing(band: pbBandPass, f1: 8, f2: 12,
       f3: 40, f4: 50)))
     doAssert edits.setOwnFilters([1], own) == 1
-    var optedOpts = option(sweep, ofSegd)
+    var optedOpts = option(sweep, ofSegd, AuxFirstMarks)
     optedOpts.applyOwnFilters = true
     let fromButton = outDir / "auxfirst-button.sgd"
     let fromOption = outDir / "auxfirst-option.sgd"
@@ -863,7 +868,7 @@ proc main*() =
     defer: src.close()
     doAssert src.sampleIntervalUs(0) == 4000.0, $src.sampleIntervalUs(0)
     let fromOption = outDir / "oddlike-option.sgd"
-    let opted = runWrite(src, auxFirst, fromOption, option(sweep, ofSegd))
+    let opted = runWrite(src, auxFirst, fromOption, option(sweep, ofSegd, AuxFirstMarks))
     doAssert opted.st == jsDone, opted.error & " / " & opted.wrote.reason
     var a = openSeismic(fromOption, keys = true)
     defer: a.close()
@@ -1011,7 +1016,7 @@ proc main*() =
       let storedB = outDir / "own-b-stored.sgy"
       let gotStored = runWrite(b, bPath, storedB, OutputOptions(format: ofSegy,
         correlation: some(OutputCorrelation(reference: other, referenceDtMs: DtMs,
-        referenceTraces: @[2]))))
+        projectMarks: LeadMarks))))
       doAssert gotStored.st == jsDone, gotStored.error
       var stored = openSeismic(storedB, keys = true)
       sameTraces(viaB, stored, Listen)
@@ -1026,7 +1031,7 @@ proc main*() =
       writeRecords(twoPath, @[sweep, other])
       var two = openSeismic(twoPath, keys = true)
       let outTwo = outDir / "own-two.sgy"
-      let got = runWrite(two, twoPath, outTwo, pilotOutput(sweep, @[2, 5]))
+      let got = runWrite(two, twoPath, outTwo, pilotOutput(sweep))
       doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
       var made = openSeismic(outTwo, keys = true)
       var firstOne = openSeismic(outDir / "own-a.sgy", keys = true)
@@ -1051,9 +1056,7 @@ proc main*() =
       writeRecords(manyPath, many)
       var big = openSeismic(manyPath, keys = true)
       let outMany = outDir / "own-many.sgy"
-      var auxes: seq[int] = @[]
-      for r in 0 ..< 300: auxes.add 3 * r + 2
-      let got = runWrite(big, manyPath, outMany, pilotOutput(sweep, auxes))
+      let got = runWrite(big, manyPath, outMany, pilotOutput(sweep))
       doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
       var made = openSeismic(outMany, keys = true)
       doAssert made.len == 900, "trace count " & $made.len
@@ -1093,7 +1096,7 @@ proc main*() =
         viaPilot.applyReversals = on
         var viaSweep = option(if on: negated else: sweep, ofSegy)
         viaSweep.applyReversals = on
-        viaSweep.correlation.get.referenceTraces = @[2]
+        viaSweep.correlation.get.projectMarks = LeadMarks
         let name = if on: "on" else: "off"
         let gotPilot = runWrite(a, aPath, outDir / ("opt-pilot-" & name & ".sgy"), viaPilot,
           edits)
@@ -1150,7 +1153,7 @@ proc main*() =
       let halfPath = srcDir / "pilot-half.sgy"
       writeRecords(halfPath, @[sweep, other])
       var tail = openSeismic(halfPath, keys = true)
-      var strict = pilotOutput(sweep, @[2, 5])
+      var strict = pilotOutput(sweep)
       strict.correlation.get.pilot.get.trace = 2
       let bad = runWrite(tail, halfPath, outDir / "pilot-half-out.sgy", strict)
       doAssert bad.st == jsFailed and bad.wrote.reason.endsWith("."), bad.wrote.reason
@@ -1178,8 +1181,9 @@ proc main*() =
       BatchItem(source: from1 / "b.sgy", relative: "b.sgy"),
       BatchItem(source: from1 / "c.sgy", relative: "c.sgy")],
       destRoot: outDir / "batch", options: OutputOptions(format: ofSegy),
-      correlate: BatchCorrelate(on: true, name: "Pilot", pilot: some(PilotRule(aux: true,
-      trace: 1, startMs: 0.0, spanMs: float64(SweepLen) * DtMs))))
+      correlate: BatchCorrelate(on: true, name: "Pilot", projectMarks: LeadMarks,
+      pilot: some(PilotRule(aux: true, trace: 1, startMs: 0.0,
+      spanMs: float64(SweepLen) * DtMs))))
     let jobs = initJobs()
     let sink = BatchSink()
     let id = jobs.submit(outputBatchSpec(ask), outputBatchWork(ask, Store(), @[], sink))

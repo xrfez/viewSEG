@@ -130,6 +130,9 @@ type
       ## Set: no sweep is loaded; each file's records take their own pilot.
     why*: string
       ## Set when the reference is already known to be unusable.
+    projectMarks*: seq[AuxMarkEntry]
+      ## The project's auxiliary positions marked for correlation; each file's own
+      ## marks (its saved edits) win over them.
 
   BatchResult* = object
     ## What the batch did. `reason` is set when the batch itself was refused,
@@ -755,7 +758,7 @@ proc runBatch(ctx: JobContext; ask: BatchAsk; store: Store; openFiles: seq[OpenF
             if not file[].inMemory: fs.mappedRead(item.source, headers = true)
             file[].ensureKeys()
           opts.correlation = some(OutputCorrelation(reference: refSamples,
-            referenceDtMs: refDt, referenceTraces: referenceTraces(file),
+            referenceDtMs: refDt, projectMarks: writing.correlate.projectMarks,
             pilot: writing.correlate.pilot))
       let report = proc (done, total: int): bool {.gcsafe.} =
         ctx.progress(int64(doneFiles) * BatchScale + shareOf(int64(done), int64(total)),

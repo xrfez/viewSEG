@@ -31,6 +31,7 @@ import utils/waiting
 
 const
   DtMs = 2.0
+  AuxLeadMs = 500.0 # the shift given to the marked reference trace
   Record = 1000
   SweepLen = 200
   Listen = 800
@@ -108,7 +109,7 @@ proc correlate(file: ptr SeismicFile; path: string; sweep: seq[float32]): Correl
   try:
     let id = jobs.submit(spec(path), correlateWork(CorrelateAsk(
       file: file, path: path, reference: sweep, referenceDtMs: DtMs,
-      referenceTraces: @[RefAux]), addr result))
+      marked: marksOf([RefAux], AuxLeadMs)), addr result))
     doAssert finish(jobs, id) == jsDone, result.failure
   finally:
     jobs.stop()
@@ -237,7 +238,7 @@ proc checkBlocks(dir: string; sweep: seq[float32]) =
   writeBlockFile(path, sweep)
   var f = openSeismic(path, keys = true)
   defer: f.close()
-  let built = initCorrelateView(addr f, sweep, DtMs, BlockRefs)
+  let built = initCorrelateView(addr f, sweep, DtMs, marksOf(BlockRefs, AuxLeadMs))
   doAssert built.refusal.len == 0, built.refusal
   let view = built.view
   doAssert view.odd.len == OddAux.len, "the odd traces were not found"
@@ -286,7 +287,7 @@ proc main*() =
   checkBlocks(dir, sweep)
   var rawFile = openSeismic(path, keys = true)
   let raw = newSession(path, rawFile)
-  let built = initCorrelateView(raw.filePtr, sweep, DtMs, [RefAux])
+  let built = initCorrelateView(raw.filePtr, sweep, DtMs, marksOf([RefAux], AuxLeadMs))
   doAssert built.refusal.len == 0, built.refusal
   let view = asCorrelatedView(raw, built.view)
   let slot = correlate(raw.filePtr, path, sweep)
@@ -423,7 +424,7 @@ proc main*() =
     writeRaw(deadPath, sweep, dead = 1)
     var deadFile = openSeismic(deadPath, keys = true)
     let deadRaw = newSession(deadPath, deadFile)
-    let built = initCorrelateView(deadRaw.filePtr, sweep, DtMs, [RefAux])
+    let built = initCorrelateView(deadRaw.filePtr, sweep, DtMs, marksOf([RefAux], AuxLeadMs))
     doAssert built.refusal.len == 0, built.refusal
     let deadView = asCorrelatedView(deadRaw, built.view)
     defer:
@@ -471,7 +472,7 @@ proc main*() =
     writeRaw(cutPath, sweep)
     var cutFile = openSeismic(cutPath, keys = true)
     let cutRawS = newSession(cutPath, cutFile)
-    let built = initCorrelateView(cutRawS.filePtr, sweep, DtMs, [RefAux])
+    let built = initCorrelateView(cutRawS.filePtr, sweep, DtMs, marksOf([RefAux], AuxLeadMs))
     doAssert built.refusal.len == 0, built.refusal
     let cutView = asCorrelatedView(cutRawS, built.view)
     defer:

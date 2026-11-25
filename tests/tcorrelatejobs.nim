@@ -31,6 +31,7 @@ import utils/[faultyfs, waiting]
 
 const
   DtMs = 2.0
+  AuxLeadMs = 500.0 # the shift given to the marked reference trace
   Record = 1000
   SweepLen = 200
   Listen = 800
@@ -266,7 +267,7 @@ proc correlated(file: var SeismicFile; path: string; sweep: openArray[float32];
   try:
     let id = jobs.submit(spec(path), correlateWork(CorrelateAsk(
       file: addr file, path: path, reference: @sweep, referenceDtMs: dtMs,
-      referenceTraces: @refs), addr result))
+      marked: marksOf(refs, AuxLeadMs)), addr result))
     doAssert finish(jobs, id) == jsDone, result.failure
   finally:
     jobs.stop()
@@ -352,7 +353,7 @@ proc main*() =
     try:
       let id = jobs.submit(spec(path), correlateWork(CorrelateAsk(
         file: addr file, path: path, reference: sweep, referenceDtMs: DtMs,
-        referenceTraces: @[RefAux]), addr slot))
+        marked: marksOf([RefAux], AuxLeadMs)), addr slot))
       doAssert finish(jobs, id) == jsDone, slot.failure
     finally:
       jobs.stop()
@@ -422,7 +423,7 @@ proc main*() =
         var slot: CorrelateResult
         let id = jobs.submit(spec(path), correlateWork(CorrelateAsk(
           file: addr file, path: path, reference: reference, referenceDtMs: dt,
-          referenceTraces: @[RefAux]), addr slot))
+          marked: marksOf([RefAux], AuxLeadMs)), addr slot))
         doAssert finish(jobs, id) == jsFailed, slot.failure
         doAssert not slot.ok
         doAssert slot.opened.isNil
@@ -455,7 +456,7 @@ proc main*() =
       try:
         let id = jobs.submit(spec(cutPath), correlateWork(CorrelateAsk(
           file: addr cutFile, path: cutPath, reference: sweep, referenceDtMs: DtMs,
-          referenceTraces: @[]), addr slot))
+          marked: @[]), addr slot))
         doAssert finish(jobs, id) == jsFailed, slot.failure
       finally:
         jobs.stop()
@@ -483,7 +484,7 @@ proc main*() =
       try:
         let id = jobs.submit(spec(cutPath), correlateWork(CorrelateAsk(
           file: addr cutFile, path: cutPath, reference: sweep, referenceDtMs: DtMs,
-          referenceTraces: @[]), addr slot))
+          marked: @[]), addr slot))
         doAssert finish(jobs, id) == jsFailed, slot.failure
       finally:
         jobs.stop()
@@ -504,7 +505,7 @@ proc main*() =
     try:
       let id = jobs.submit(spec(chPath), correlateWork(CorrelateAsk(
         file: addr chFile, path: chPath, reference: sweep, referenceDtMs: DtMs,
-        referenceTraces: @[4]), addr slot))
+        marked: marksOf([4], AuxLeadMs)), addr slot))
       doAssert finish(jobs, id) == jsDone, slot.failure
     finally:
       jobs.stop()
@@ -529,7 +530,7 @@ proc main*() =
     try:
       let id = jobs.submit(spec(badPath), correlateWork(CorrelateAsk(
         file: addr bad, path: badPath, reference: sweep, referenceDtMs: DtMs,
-        referenceTraces: @[]), addr slot))
+        marked: @[]), addr slot))
       doAssert finish(jobs, id) == jsFailed, slot.failure
     finally:
       jobs.stop()
@@ -557,7 +558,7 @@ proc main*() =
     try:
       let id = jobs.submit(spec(mixedPath), correlateWork(CorrelateAsk(
         file: addr mixed, path: mixedPath, reference: sweep, referenceDtMs: DtMs,
-        referenceTraces: @[1]), addr slot))
+        marked: marksOf([1], AuxLeadMs)), addr slot))
       doAssert finish(jobs, id) == jsDone, slot.failure
     finally:
       jobs.stop()
@@ -592,14 +593,14 @@ proc main*() =
     try:
       let id = jobs.submit(spec(oddPath), correlateWork(CorrelateAsk(
         file: addr odd, path: oddPath, reference: sweep, referenceDtMs: DtMs,
-        referenceTraces: @[1]), addr slot))
+        marked: marksOf([1], AuxLeadMs)), addr slot))
       doAssert finish(jobs, id) == jsDone, slot.failure
     finally:
       jobs.stop()
     doAssert slot.ok, slot.failure
     doAssert slot.lines == @[
       "2 traces, 600 samples (1200 ms of listen time).",
-      "sweep 400 ms. 0 reference traces delayed by 500 ms.",
+      "sweep 400 ms.",
       "reference trace 1 is sampled every 4 ms, the record every 2 ms: " &
         "not correlated, written as zeros."]
     template got: untyped = session.file(slot.opened)
@@ -620,14 +621,14 @@ proc main*() =
     try:
       let id = jobs.submit(spec(p), correlateWork(CorrelateAsk(
         file: addr odd, path: p, reference: sweep, referenceDtMs: DtMs,
-        referenceTraces: @[1]), addr slot))
+        marked: marksOf([1], AuxLeadMs)), addr slot))
       doAssert finish(jobs, id) == jsDone, slot.failure
     finally:
       jobs.stop()
     doAssert slot.ok, slot.failure
     doAssert slot.lines == @[
       "3 traces, 600 samples (1200 ms of listen time).",
-      "sweep 400 ms. 0 reference traces delayed by 500 ms.",
+      "sweep 400 ms.",
       "reference trace 1 is sampled every 4 ms, the record every 2 ms: " &
         "not correlated, written as zeros.",
       "auxiliary trace 2 is sampled every 3 ms, the record every 2 ms: " &
@@ -689,7 +690,7 @@ proc main*() =
     let slot = correlated(f, p, sweep, DtMs, [])
     doAssert slot.lines == @[
       "2 traces, 200 samples (400 ms of listen time).",
-      "sweep 400 ms. 0 reference traces delayed by 500 ms."],
+      "sweep 400 ms."],
       $slot.lines
 
   block cutSweep:
@@ -802,7 +803,7 @@ proc main*() =
     try:
       let id = jobs.submit(spec(path), correlateWork(CorrelateAsk(
         file: addr file, path: path, reference: sweep, referenceDtMs: DtMs,
-        referenceTraces: @[RefAux]), addr slot))
+        marked: marksOf([RefAux], AuxLeadMs)), addr slot))
       doAssert waitUntil(corrHeld.isOpen), "the job never reached correlating"
       doAssert jobs.cancel(id)
       holdCorr.open()

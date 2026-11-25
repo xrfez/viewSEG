@@ -26,13 +26,14 @@ import utils/waiting
 
 const
   DtMs = 2.0
+  AuxLeadMs = 500.0 # the shift given to the marked reference trace
   T0Ms = 12.0
-  OtherT0Ms = 16.0 ## trace 1's own time zero; the auxiliary traces start at 0
+  OtherT0Ms = 16.0  ## trace 1's own time zero; the auxiliary traces start at 0
   Record = 1000
   SweepLen = 200
   Listen = 800
   RefAux = 3
-  Extra = 6        ## live traces after the reference auxiliary
+  Extra = 6         ## live traces after the reference auxiliary
   Constant = 2
 
 var
@@ -103,7 +104,7 @@ proc correlate(file: ptr SeismicFile; path: string; sweep: seq[float32]): Correl
     let id = jobs.submit(JobSpec(title: "Correlate " & path.extractFilename, lane: jlBackground,
       reads: @[path], cancellable: true), correlateWork(CorrelateAsk(
       file: file, path: path, reference: sweep, referenceDtMs: DtMs,
-      referenceTraces: @[RefAux]), addr result))
+      marked: marksOf([RefAux], AuxLeadMs)), addr result))
     doAssert finish(jobs, id) == jsDone, result.failure
   finally:
     jobs.stop()
@@ -220,7 +221,7 @@ proc main*() =
   writeRaw(path, sweep)
   var rawFile = openSeismic(path, keys = true)
   let raw = newSession(path, rawFile)
-  let built = initCorrelateView(raw.filePtr, sweep, DtMs, [RefAux])
+  let built = initCorrelateView(raw.filePtr, sweep, DtMs, marksOf([RefAux], AuxLeadMs))
   doAssert built.refusal.len == 0, built.refusal
   doAssert built.view.t0Ms == T0Ms, "listen time zero " & $built.view.t0Ms
   doAssert built.view.listenSamples == Listen
@@ -350,7 +351,7 @@ proc main*() =
     var viewFile = openSeismic(cutPath, keys = true)
     let plain = newSession(cutPath, plainFile)
     let viewOf = newSession(cutPath, viewFile)
-    let cutBuilt = initCorrelateView(viewOf.filePtr, sweep, DtMs, [RefAux])
+    let cutBuilt = initCorrelateView(viewOf.filePtr, sweep, DtMs, marksOf([RefAux], AuxLeadMs))
     doAssert cutBuilt.refusal.len == 0, cutBuilt.refusal
     let cutView = asCorrelatedView(viewOf, cutBuilt.view)
     defer:
@@ -389,7 +390,7 @@ proc main*() =
     doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut and
       st.jobs.active.len == 0), "the raw file was not shown"
     let base = st.sessions[0]
-    let made = initCorrelateView(base.filePtr, sweep, DtMs, [RefAux])
+    let made = initCorrelateView(base.filePtr, sweep, DtMs, marksOf([RefAux], AuxLeadMs))
     doAssert made.refusal.len == 0, made.refusal
     st.adoptDerived(asCorrelatedView(base, made.view))
     let shown = st.shownFile(st.findPanel(MainPanel))

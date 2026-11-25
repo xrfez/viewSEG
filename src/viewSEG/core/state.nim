@@ -345,6 +345,12 @@ type
     ckTreatAs = "treat as"
       ## force the kind of recording and the order of the traces a file is treated as, or give
       ## them back to what is told from the file; remembered for the file
+    ckFileAuxMark = "file aux mark"
+      ## mark an auxiliary trace position of a file for correlation (with its shift), make it
+      ## explicitly not marked, or forget the mark; remembered with the file's edits
+    ckProjectAuxMark = "project aux mark"
+      ## mark an auxiliary trace position for correlation in every file of the project (with
+      ## its shift), or forget the mark; kept in the project
     ckSubfolders = "subfolders"
       ## the file list includes the subfolders' files, or not; the folder is listed again
     ckVibProfile = "vibrator profile"
@@ -683,6 +689,16 @@ type
       treatGrouping*: string
         ## "none", "flag" or "component" forces the grouping of the traces; "automatic"; ""
       treatSubSort*: string ## "station" or "time" forces the sort inside it; "automatic"; ""
+    of ckFileAuxMark, ckProjectAuxMark:
+      auxFile*: string ## ckFileAuxMark: the open file whose mark it is
+      auxPosition*: int
+        ## the auxiliary trace's position, from 1, counted among a record's auxiliary traces in
+        ## file order: the mark holds for that position in every record
+      auxMarked*: AuxMarkState
+        ## "yes": marked for correlation; "no": explicitly not marked (a file's, over the
+        ## project's mark); "forget": no entry (a project's takes only "yes" and "forget")
+      auxShiftMs*: float64
+        ## the shift before correlating, in milliseconds, positive later; 0 for none
     of ckVibProfile:
       vibProfile*: VibQcProfile
         ## the settings to keep as the project's vibrator QC profile
@@ -6524,12 +6540,25 @@ type
     why: string
     refId: string
     load: CorrelateLoad
-    traces: seq[int]
+    marked: seq[AuxMark]
+    notes: seq[string]
 
-proc planReference(state: AppState; i: int): RefPlan =
+func projectAuxMarks*(state: AppState): seq[AuxMarkEntry] =
+  ## The auxiliary positions marked for correlation in the project open; none when no
+  ## project is open.
+  if state.inProject: state.project.doc.auxMarks else: @[]
+
+func marksKey(marked: openArray[AuxMark]): string =
+  ## The marks a correlation was made with, as text: a change of a mark is a change of the key.
+  for m in marked: result.add "|" & $m.trace & ":" & $m.shiftMs
+
+proc planReferenceOf(state: AppState; i: int): RefPlan =
   ## The chosen reference as a correlation takes it, or why it cannot. Reads no file.
   let s = state.sessions[i]
-  result.traces = referenceTraces(s.filePtr)
+  let picked = markedAuxiliaries(s.filePtr, state.editsAt(s.path).auxMarks,
+    state.projectAuxMarks)
+  result.marked = picked.marked
+  result.notes = picked.notes
   result.load.pilotTrace = -1
   if state.chosenRef.len == 0:
     result.why = NoReferenceChosen
@@ -6561,7 +6590,7 @@ proc planReference(state: AppState; i: int): RefPlan =
       flip: edits.has(teReversed, picked.trace), shiftMs: edits.shiftOf(picked.trace),
       record: picked.record)
     return
-  let dt = seismicDtMs(s.filePtr)
+  let dt = markedDtMs(s.filePtr, result.marked)
   let refMs = if entry.intervalUs > 0 and entry.intervalUs < Inf: entry.intervalUs / 1000.0
               else: NaN
   if refMs > 0 and dt > 0 and not sameInterval(refMs, dt):
@@ -6571,6 +6600,12 @@ proc planReference(state: AppState; i: int): RefPlan =
     result.why = referenceGone(entry.name)
     return
   result.load = CorrelateLoad(refPath: state.refsHome / entry.file, pilotTrace: -1)
+
+proc planReference(state: AppState; i: int): RefPlan =
+  ## `planReferenceOf`, its `refId` also naming the marks, so a change of a mark is a new
+  ## correlation.
+  result = state.planReferenceOf(i)
+  result.refId.add marksKey(result.marked)
 
 proc startCorrelate(state: var AppState; originIndex: int; keepView: bool) =
   ## Correlates open raw session `originIndex` with the chosen reference.
@@ -6607,7 +6642,8 @@ proc startCorrelate(state: var AppState; originIndex: int; keepView: bool) =
   inc state.correlateGen
   let hold = CorrelateHold(origin: s.diskPath, refId: plan.refId, gen: state.correlateGen,
     job: NoJob)
-  var ask = CorrelateAsk(file: s.filePtr, path: s.diskPath, referenceTraces: plan.traces)
+  var ask = CorrelateAsk(file: s.filePtr, path: s.diskPath, marked: plan.marked,
+    markNotes: plan.notes)
   let load = plan.load
   let slot = addr hold.result
   let job = state.jobs.submit(JobSpec(title: "Correlate " & s.diskPath.extractFilename,
@@ -10541,6 +10577,8 @@ proc goToGather(state: var AppState; cmd: Command) =
   elif cmd.gather != shown.gather:
     state.show(cmd.panel, shown.file, cmd.gather)
 
+proc askCorrelateAgain(state: var AppState; path: string)
+
 proc editTraces(state: var AppState; cmd: Command) =
   ## `ckEdit`, `ckReverseAll`, `ckUndoEdit`, `ckRedoEdit`, `ckClearEdits`
   ## on the file `cmd.panel` shows: a step of its history, kept with the
@@ -10659,6 +10697,8 @@ proc editTraces(state: var AppState; cmd: Command) =
     if keep and at >= 0:
       state.hashFile(at) # its document will name every byte
       state.sayNotYetRemembered(at)
+    if changed.auxOn.len > 0 or changed.auxOff.len > 0:
+      state.askCorrelateAgain(s.diskPath) # an undo, redo or clear moved a mark
 
 # ---------------------------------------------------------------- changes --
 
@@ -10955,6 +10995,94 @@ proc outputText(state: var AppState; cmd: Command) =
     if state.project.doc.outputText != stored:
       state.project.doc.outputText = stored
       state.projectChanged()
+
+const
+  NeedProjectAuxMarks* = "Open or make a project to keep auxiliary marks in it."
+    ## said when a project's auxiliary mark is set with no project open
+
+proc askCorrelateAgain(state: var AppState; path: string) =
+  ## A mark in force for the file at `path` changed: the correlated view of it on show, if
+  ## any, is asked for again, as a change of the reference is.
+  let oi = state.originIndex(path)
+  if oi >= 0 and state.correlateOn and state.derivedShown(state.sessions[oi].diskPath):
+    state.startCorrelate(oi, keepView = true)
+
+func auxMarkWords(position: int; state: AuxMarkState; ms: float64): string =
+  let what = "Auxiliary trace " & $position
+  case state
+  of amMarked:
+    let text = if ms == trunc(ms) and abs(ms) < 1e15: $int64(ms) else: formatFloat(ms, ffDecimal, 3)
+    what & " is marked for correlation, shifted by " & text & " ms"
+  of amNotMarked: what & " is marked not for correlation"
+  of amForget: what & " has no mark"
+
+proc fileAuxMark(state: var AppState; cmd: Command) =
+  ## `ckFileAuxMark`: the mark of an auxiliary position of an open file, a step of the file's
+  ## edits (undo takes it back), kept with them when `keeps(cmd.origin)`.
+  let path = canonical(cmd.auxFile)
+  let oi = state.originIndex(path)
+  if oi < 0:
+    state.ignore(cmd, path & " is not open")
+    return
+  if not auxPositionStorable(cmd.auxPosition):
+    state.ignore(cmd, "the auxiliary trace position is from 1 to " & $MaxAuxPosition)
+    return
+  if cmd.auxMarked == amMarked and not shiftStorable(cmd.auxShiftMs):
+    state.ignore(cmd, shiftRefusal(cmd.auxShiftMs))
+    return
+  let s = state.sessions[oi]
+  let keep = keeps(cmd.origin)
+  template e: untyped = state.edits.mgetOrPut(state.keyOf(s.path), FileEdits())
+  if e.setAuxMark(cmd.auxPosition, cmd.auxMarked, cmd.auxShiftMs, keep) > 0:
+    let changed = e.nextUndo
+    state.stampEdits(s)
+    state.log.add(sevInfo, s.name, auxMarkWords(cmd.auxPosition, cmd.auxMarked,
+      cmd.auxShiftMs) & (if keep: "." else:
+      " (For this session only: an agent's change is not remembered with the file.)"))
+    state.editsChanged(s.diskPath, changed)
+    let at = state.rememberedAt(s.path)
+    if keep and at >= 0:
+      state.hashFile(at)
+      state.sayNotYetRemembered(at)
+    state.askCorrelateAgain(s.diskPath)
+
+proc projectAuxMark(state: var AppState; cmd: Command) =
+  ## `ckProjectAuxMark`: the mark of an auxiliary position for every file of the project open,
+  ## kept in the project document as a project's list is; what cannot be done is said.
+  if not state.inProject:
+    state.log.add(sevWarning, "commands", NeedProjectAuxMarks)
+    return
+  if state.project.readOnly:
+    state.log.add(sevWarning, "commands", ReadOnlyPatterns)
+    return
+  if not auxPositionStorable(cmd.auxPosition):
+    state.ignore(cmd, "the auxiliary trace position is from 1 to " & $MaxAuxPosition)
+    return
+  if cmd.auxMarked == amNotMarked:
+    state.ignore(cmd, "a project's mark is \"yes\" or \"forget\"; a file's \"no\" overrides it")
+    return
+  if cmd.auxMarked == amMarked and not shiftStorable(cmd.auxShiftMs):
+    state.ignore(cmd, shiftRefusal(cmd.auxShiftMs))
+    return
+  var marks = state.project.doc.auxMarks
+  var at = -1
+  for i, m in marks:
+    if m.position == cmd.auxPosition: at = i
+  let want = AuxMarkEntry(position: cmd.auxPosition, marked: true, ms: cmd.auxShiftMs)
+  if cmd.auxMarked == amMarked:
+    if at < 0:
+      marks.add want
+      marks.sort(proc (a, b: AuxMarkEntry): int = cmp(a.position, b.position))
+    elif marks[at] != want: marks[at] = want
+    else: return
+  elif at >= 0: marks.delete(at)
+  else: return
+  state.project.doc.auxMarks = marks
+  state.projectChanged()
+  state.log.add(sevInfo, "project", auxMarkWords(cmd.auxPosition, cmd.auxMarked,
+    cmd.auxShiftMs) & " in every file of the project.")
+  for s in state.sessions:
+    if not s.derived: state.askCorrelateAgain(s.diskPath)
 
 const
   NeedProjectBinaries* = "Open or make a project to keep binary header sets."
@@ -12769,6 +12897,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckCorrelate: state.setCorrelate(cmd)
   of ckSubfolders: state.setSubfolders(cmd)
   of ckTreatAs: state.treatAs(cmd)
+  of ckFileAuxMark: state.fileAuxMark(cmd)
+  of ckProjectAuxMark: state.projectAuxMark(cmd)
   of ckVibProfile: state.storeVibProfile(cmd.origin, cmd.vibProfile)
   of ckVibWeights: state.storeVibWeights(cmd.origin, cmd.vibWeights)
   of ckImportShotLog: state.importShotLogCmd(cmd)

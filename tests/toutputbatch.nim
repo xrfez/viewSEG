@@ -122,6 +122,9 @@ proc runBatch(ask: BatchAsk; store: Store; openFiles: seq[OpenFile]):
   let info = jobs.info(id).get
   (info.state, sink.result, info.error)
 
+const LeadMarks = @[AuxMarkEntry(position: 1, marked: true, ms: 500.0)]
+  ## the reference trace, the first auxiliary one, shifted 500 ms
+
 var lane: Jobs
 var refMaps = 0
 
@@ -166,7 +169,7 @@ proc writeRecord(path: string; n: int; us: float64) =
 proc writeSame(source, dest: string; sweep: seq[float32]; dtMs: float64) =
   var file = openSeismic(source, keys = true)
   let opts = OutputOptions(format: ofSegy, correlation: some(OutputCorrelation(
-    reference: sweep, referenceDtMs: dtMs, referenceTraces: @[3])))
+    reference: sweep, referenceDtMs: dtMs, projectMarks: LeadMarks)))
   let jobs = initJobs()
   let sink = OutputSink()
   let id = jobs.submit(outputSpec(source, dest),
@@ -902,7 +905,8 @@ proc main*() =
       BatchItem(source: a, relative: "a.sgy"),
       BatchItem(source: b, relative: "b.sgy")],
       destRoot: dest, options: OutputOptions(format: ofSegy),
-      correlate: BatchCorrelate(on: true, name: "sweep", path: refPath))
+      correlate: BatchCorrelate(on: true, name: "sweep", path: refPath,
+        projectMarks: LeadMarks))
     let got = runBatch(ask, Store(), @[])
     setFsHook(nil)
     doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
@@ -934,7 +938,8 @@ proc main*() =
       BatchItem(source: good, relative: "good.sgy"),
       BatchItem(source: bad, relative: "bad.sgy")],
       destRoot: dest, options: OutputOptions(format: ofSegy),
-      correlate: BatchCorrelate(on: true, name: "sweep", path: refPath))
+      correlate: BatchCorrelate(on: true, name: "sweep", path: refPath,
+        projectMarks: LeadMarks))
     let got = runBatch(ask, Store(), @[])
     doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
     doAssert got.wrote.written == 1 and got.wrote.failed == 1
@@ -966,7 +971,8 @@ proc main*() =
       BatchItem(source: seismic, relative: "rec.sgy"),
       BatchItem(source: dat, relative: "ctrl.dat")],
       destRoot: dest, options: OutputOptions(format: ofSegy),
-      correlate: BatchCorrelate(on: true, name: "sweep", path: refPath))
+      correlate: BatchCorrelate(on: true, name: "sweep", path: refPath,
+        projectMarks: LeadMarks))
     let got = runBatch(ask, Store(), @[])
     doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
     doAssert got.wrote.referenceLoads == 1

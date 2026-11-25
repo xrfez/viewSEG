@@ -376,6 +376,20 @@ proc memoryDocument*(r: FileRecord): string =
       w.close
       w.close
     w.close
+  if r.edits.auxMarks.len > 0:
+    w.open "auxMarks"
+    for e in r.edits.auxMarks:
+      w.open "aux"
+      w.add int64(e.position)
+      w.open "marked"
+      w.add e.marked
+      w.close
+      if e.marked:
+        w.open "ms"
+        w.add e.ms
+        w.close
+      w.close
+    w.close
   for n in r.later: w.add n
   w.close
   w.finish
@@ -593,6 +607,40 @@ proc readShifts(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo: 
       inc n
   r.edits.shifts.setLen n
 
+proc readAuxMarks(n: NifNode; r: var FileRecord; problems: var seq[string]) =
+  ## The `(auxMarks ...)` node: one `(aux N (marked true) (ms ...))` per
+  ## auxiliary position, from 1. A child this version does not know is
+  ## skipped; one that is not an entry is a problem and left out.
+  for k in n.kids:
+    if k.kind != nkTree or k.tag != "aux": continue
+    if k.kids.len < 1 or k.kids[0].kind != nkInt or
+        not auxPositionStorable(int(clamp(k.kids[0].intVal, 0, high(int32)))):
+      problems.add "auxMarks: an entry is not an auxiliary trace position"
+      continue
+    let position = int(k.kids[0].intVal)
+    let m = k.child("marked")
+    if m.kind != nkTree or m.kids.len != 1 or m.kids[0].kind != nkIdent or
+        m.kids[0].text notin ["true", "false"]:
+      problems.add "auxMarks: marked is not true or false"
+      continue
+    let marked = m.kids[0].text == "true"
+    var ms = 0.0
+    if marked:
+      if not k.floatChild("ms", ms):
+        problems.add "auxMarks: ms is not a number"
+        continue
+      if not shiftStorable(ms):
+        problems.add "auxMarks: a shift of " & $ms & " ms is not kept"
+        continue
+    r.edits.auxMarks.add AuxMarkEntry(position: position, marked: marked, ms: ms)
+  r.edits.auxMarks.sort(proc (a, b: AuxMarkEntry): int = cmp(a.position, b.position))
+  var n = 0
+  for i in 0 ..< r.edits.auxMarks.len:
+    if n == 0 or r.edits.auxMarks[n - 1].position != r.edits.auxMarks[i].position:
+      r.edits.auxMarks[n] = r.edits.auxMarks[i]
+      inc n
+  r.edits.auxMarks.setLen n
+
 proc readEditsIn(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo: int;
     outside: var int) =
   ## The edit lists of the document `n` (its top node), into `r.edits`; the
@@ -622,6 +670,8 @@ proc readEditsIn(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo:
         readFilters(k, r, problems, upTo, outside)
       of "shifted":
         readShifts(k, r, problems, upTo, outside)
+      of "auxMarks":
+        readAuxMarks(k, r, problems)
       else: discard
   for edit in TraceEdit:
     if runs[edit].len > 0: r.edits.lists[edit] = expandRuns(runs[edit], problems, $edit, MaxListTraces)
@@ -660,7 +710,7 @@ proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string
             result.unconfirmed = k.kids.len == 1 and k.kids[0].kind == nkIdent and
               k.kids[0].text == "true"
           of "treat": readTreat(k, result, problems)
-          of "killed", "reversed", "excluded", "allReversed", "filtered", "shifted":
+          of "killed", "reversed", "excluded", "allReversed", "filtered", "shifted", "auxMarks":
             discard # readEditsIn
           else: result.later.add k # a later version's: kept as it is
       readEditsIn(n, result, problems, upTo, outside)
@@ -1123,6 +1173,7 @@ func merged*(base, ours, theirs: EditLists): EditLists =
                        else: theirs.allReversed
   result.filters = mergedFilters(base, ours, theirs)
   result.shifts = mergedShifts(base, ours, theirs)
+  result.auxMarks = mergedAux(base, ours, theirs)
 
 func keptWords*(l: EditLists): string =
   ## What `l` keeps, in words: "3 killed, 1 reversed, all reversed";
@@ -1133,6 +1184,7 @@ func keptWords*(l: EditLists): string =
   if l.lists[teExcluded].len > 0: parts.add $l.lists[teExcluded].len & " excluded"
   if l.filters.len > 0: parts.add $l.filters.len & " filtered"
   if l.shifts.len > 0: parts.add $l.shifts.len & " shifted"
+  if l.auxMarks.len > 0: parts.add $l.auxMarks.len & " auxiliary marks"
   if l.allReversed: parts.add "all reversed"
   if parts.len == 0: "nothing" else: parts.join(", ")
 

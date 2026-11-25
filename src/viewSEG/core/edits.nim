@@ -87,6 +87,7 @@ type
     skFilter = "filter"      ## a trace's own filter set or removed
     skTimeShift = "shift"    ## a trace's time shift set or removed
     skDrop = "drop"          ## edits taken off the traces named, as one step
+    skAuxMark = "aux mark"   ## an auxiliary position marked for correlation, or not, or forgotten
 
   ListsChange = object
     ## What a step does to the lists kept, where that is not what it does
@@ -95,6 +96,7 @@ type
     allChanged, allBefore, allAfter: bool
     filterOn, filterOff: seq[FilterSnap]
     shiftOn, shiftOff: seq[ShiftSnap]
+    auxOn, auxOff: seq[AuxSnap]
 
   EditStep* = object
     ## One change of a file's edits: what it gave and took away.
@@ -113,6 +115,9 @@ type
     shiftOn*, shiftOff*: seq[ShiftSnap]
       ## skTimeShift, and a clear or an import that moved shifts: each changed
       ## trace's shift after the step, and before it
+    auxOn*, auxOff*: seq[AuxSnap]
+      ## skAuxMark, and a clear or an import that moved marks: each changed
+      ## position's mark after the step, and before it
     keptOwn: bool ## what is kept changes by `keptChange`
     keptChange: ListsChange ## what it does to what is kept, with `keptOwn`
 
@@ -134,13 +139,37 @@ type
     had*: bool   ## it had a shift
     ms*: float64 ## that shift, when `had`
 
+  AuxMarkEntry* = object
+    ## An auxiliary position's mark for correlation. `position` counts from 1
+    ## among a record's auxiliary traces, in file order. `marked` false is an
+    ## explicit "not marked" (it overrides the project's mark). `ms` is the
+    ## shift applied before correlating, positive later; 0 when not `marked`.
+    position*: int
+    marked*: bool
+    ms*: float64
+
+  AuxSnap* = object
+    ## An auxiliary position's mark at one side of a step.
+    position*: int
+    had*: bool ## the position has an entry
+    marked*: bool
+    ms*: float64
+
+  AuxMarkState* = enum
+    ## What a change of an auxiliary position's mark says.
+    amMarked = "yes"    ## marked for correlation, with a shift
+    amNotMarked = "no"  ## explicitly not marked
+    amForget = "forget" ## no entry: the project's mark, if any, decides
+
   EditLists* = object
     ## A file's edits: each list ascending, each trace once. `filters` and
-    ## `shifts` are ascending by trace, each trace once.
+    ## `shifts` are ascending by trace, each trace once. `auxMarks` is
+    ## ascending by position, each position once.
     lists*: array[TraceEdit, seq[int]]
     allReversed*: bool
     filters*: seq[FilterEntry]
     shifts*: seq[ShiftEntry]
+    auxMarks*: seq[AuxMarkEntry]
 
   FileEdits* = object
     ## The edits of one file's traces, by their index in the file: those
@@ -177,13 +206,14 @@ func span(list: openArray[int]; traces: Slice[int]): Slice[int] =
 func isEmpty*(l: EditLists): bool =
   ## Whether `l` holds no edit.
   not l.allReversed and l.lists[teReversed].len == 0 and l.lists[teKilled].len == 0 and
-    l.lists[teExcluded].len == 0 and l.filters.len == 0 and l.shifts.len == 0
+    l.lists[teExcluded].len == 0 and l.filters.len == 0 and l.shifts.len == 0 and
+    l.auxMarks.len == 0
 
 func count*(l: EditLists): int =
   ## How many edits `l` holds: traces per list, a filter as one, a shift as
   ## one, and all reversed as one.
   l.lists[teReversed].len + l.lists[teKilled].len + l.lists[teExcluded].len + l.filters.len +
-    l.shifts.len + ord(l.allReversed)
+    l.shifts.len + l.auxMarks.len + ord(l.allReversed)
 
 func placeOf(filters: openArray[FilterEntry]; trace: int): tuple[at: int; found: bool] =
   ## Where `trace` sits in `filters` (ascending), and whether it is there.
@@ -303,6 +333,50 @@ func anyShift*(l: EditLists; traces: Slice[int]): bool =
   let (a, _) = placeShift(l.shifts, traces.a)
   a < l.shifts.len and l.shifts[a].trace <= traces.b
 
+func placeAux(marks: openArray[AuxMarkEntry]; position: int): tuple[at: int; found: bool] =
+  ## Where `position` sits in `marks` (ascending), and whether it is there.
+  var lo = 0
+  var hi = marks.len
+  while lo < hi:
+    let mid = (lo + hi) shr 1
+    if marks[mid].position < position: lo = mid + 1
+    else: hi = mid
+  (lo, lo < marks.len and marks[lo].position == position)
+
+func auxEntry*(l: EditLists; position: int): tuple[has: bool; entry: AuxMarkEntry] =
+  ## The entry of auxiliary position `position`, and whether there is one.
+  let (at, found) = placeAux(l.auxMarks, position)
+  if found: (true, l.auxMarks[at]) else: (false, AuxMarkEntry(position: position))
+
+func snapAux(l: EditLists; position: int): AuxSnap =
+  ## Position `position`'s entry as a step would put it back.
+  let (at, found) = placeAux(l.auxMarks, position)
+  if found:
+    AuxSnap(position: position, had: true, marked: l.auxMarks[at].marked, ms: l.auxMarks[at].ms)
+  else: AuxSnap(position: position, had: false)
+
+func snapsAllAux(l: EditLists; had: bool): seq[AuxSnap] =
+  ## Every entry of `l`, as snaps with `had` (false: each removed).
+  result = newSeqOfCap[AuxSnap](l.auxMarks.len)
+  for e in l.auxMarks:
+    result.add AuxSnap(position: e.position, had: had, marked: e.marked, ms: e.ms)
+
+proc assignAux(l: var EditLists; position: int; had, marked: bool; ms: float64) =
+  ## Puts the entry on `position` (`had`), or takes it away.
+  let (at, found) = placeAux(l.auxMarks, position)
+  if had:
+    let e = AuxMarkEntry(position: position, marked: marked, ms: if marked: ms else: 0.0)
+    if found: l.auxMarks[at] = e
+    else: l.auxMarks.insert(e, at)
+  elif found:
+    l.auxMarks.delete(at)
+
+proc applyAuxSnaps(l: var EditLists; snaps: openArray[AuxSnap]) =
+  for s in snaps: l.assignAux(s.position, s.had, s.marked, s.ms)
+
+func sameAux(a, b: AuxSnap): bool {.inline.} =
+  a.had == b.had and (not a.had or (a.marked == b.marked and a.ms == b.ms))
+
 func sortedTraces*(traces: openArray[int]): seq[int] =
   ## `traces` ascending, each once. Raises `ValueError` for a negative one.
   var ascending = traces.len == 0 or traces[0] >= 0
@@ -369,6 +443,9 @@ func minus*(a, b: EditLists): EditLists =
   for e in a.shifts:
     let (at, found) = placeShift(b.shifts, e.trace)
     if not found or b.shifts[at].ms != e.ms: result.shifts.add e
+  for e in a.auxMarks:
+    let (at, found) = placeAux(b.auxMarks, e.position)
+    if not found or b.auxMarks[at] != e: result.auxMarks.add e
 
 func shown*(e: FileEdits): lent EditLists {.inline.} = e.shown
   ## The edits as shown.
@@ -446,6 +523,15 @@ func keptShift*(e: FileEdits; trace: int): float64 {.inline.} =
   ## The shift trace `trace` carries as kept, in milliseconds; 0 for none.
   e.kept.shiftOf(trace)
 
+func auxMarks*(e: FileEdits): seq[AuxMarkEntry] {.inline.} =
+  ## The file's entries for auxiliary positions marked for correlation (as
+  ## shown), ascending by position.
+  e.shown.auxMarks
+
+func keptAuxMarks*(e: FileEdits): seq[AuxMarkEntry] {.inline.} =
+  ## The entries as kept.
+  e.kept.auxMarks
+
 func shiftsIn*(e: FileEdits; traces: Slice[int]): seq[ShiftEntry] {.inline.} =
   ## The shifts of traces in `traces` (as shown), ascending.
   e.shown.shiftsIn(traces)
@@ -507,10 +593,12 @@ proc turnShown(l: var EditLists; s: EditStep; back: bool) =
     l.turn(s.removed, s.added, s.allChanged, s.allBefore)
     l.applySnaps(s.filterOff)
     l.applyShiftSnaps(s.shiftOff)
+    l.applyAuxSnaps(s.auxOff)
   else:
     l.turn(s.added, s.removed, s.allChanged, s.allAfter)
     l.applySnaps(s.filterOn)
     l.applyShiftSnaps(s.shiftOn)
+    l.applyAuxSnaps(s.auxOn)
 
 proc turnKept(l: var EditLists; s: EditStep; back: bool) =
   if not s.keptOwn: l.turnShown(s, back)
@@ -520,19 +608,23 @@ proc turnKept(l: var EditLists; s: EditStep; back: bool) =
       l.turn(c.removed, c.added, c.allChanged, c.allBefore)
       l.applySnaps(c.filterOff)
       l.applyShiftSnaps(c.shiftOff)
+      l.applyAuxSnaps(c.auxOff)
     else:
       l.turn(c.added, c.removed, c.allChanged, c.allAfter)
       l.applySnaps(c.filterOn)
       l.applyShiftSnaps(c.shiftOn)
+      l.applyAuxSnaps(c.auxOn)
 
 func size(s: EditStep): int =
   ## The traces `s` names, all told.
-  result = s.traces.len + s.filterOn.len + s.filterOff.len + s.shiftOn.len + s.shiftOff.len
+  result = s.traces.len + s.filterOn.len + s.filterOff.len + s.shiftOn.len + s.shiftOff.len +
+    s.auxOn.len + s.auxOff.len
   for edit in TraceEdit:
     result += s.added[edit].len + s.removed[edit].len +
       s.keptChange.added[edit].len + s.keptChange.removed[edit].len
   result += s.keptChange.filterOn.len + s.keptChange.filterOff.len
   result += s.keptChange.shiftOn.len + s.keptChange.shiftOff.len
+  result += s.keptChange.auxOn.len + s.keptChange.auxOff.len
 
 proc keptChanges(s: var EditStep; c: sink ListsChange) =
   ## `c` is what `s` does to what is kept; noted apart only where it is not
@@ -540,7 +632,8 @@ proc keptChanges(s: var EditStep; c: sink ListsChange) =
   if c.added != s.added or c.removed != s.removed or c.allChanged != s.allChanged or
       (c.allChanged and (c.allBefore, c.allAfter) != (s.allBefore, s.allAfter)) or
       c.filterOn != s.filterOn or c.filterOff != s.filterOff or
-      c.shiftOn != s.shiftOn or c.shiftOff != s.shiftOff:
+      c.shiftOn != s.shiftOn or c.shiftOff != s.shiftOff or
+      c.auxOn != s.auxOn or c.auxOff != s.auxOff:
     s.keptOwn = true
     s.keptChange = c
 
@@ -601,9 +694,12 @@ proc clearAll*(e: var FileEdits; keep = true; kind = skClear): bool =
     s.filterOn = e.shown.snapsAll(false)
     s.shiftOff = e.shown.snapsAllShifts(true)
     s.shiftOn = e.shown.snapsAllShifts(false)
+    s.auxOff = e.shown.snapsAllAux(true)
+    s.auxOn = e.shown.snapsAllAux(false)
     s.keptChanges(ListsChange(removed: e.kept.lists, allChanged: e.kept.allReversed,
       allBefore: true, filterOff: e.kept.snapsAll(true), filterOn: e.kept.snapsAll(false),
-      shiftOff: e.kept.snapsAllShifts(true), shiftOn: e.kept.snapsAllShifts(false)))
+      shiftOff: e.kept.snapsAllShifts(true), shiftOn: e.kept.snapsAllShifts(false),
+      auxOff: e.kept.snapsAllAux(true), auxOn: e.kept.snapsAllAux(false)))
     e.make(s, keep)
 
 proc setAllReversed*(e: var FileEdits; on: bool; keep = true): bool =
@@ -709,6 +805,51 @@ proc preferShifts(a, b: EditLists): seq[ShiftEntry] =
       inc i
     else:
       result.add b.shifts[j]
+      inc j
+
+proc auxDelta(before, after: EditLists): tuple[off, on: seq[AuxSnap]; n: int] =
+  ## The positions whose entry differs, as snaps before (`off`) and after (`on`).
+  var i, j = 0
+  while i < before.auxMarks.len or j < after.auxMarks.len:
+    let pi = if i < before.auxMarks.len: before.auxMarks[i].position else: high(int)
+    let pj = if j < after.auxMarks.len: after.auxMarks[j].position else: high(int)
+    let p = min(pi, pj)
+    let b = before.snapAux(p)
+    let a = after.snapAux(p)
+    if not sameAux(a, b):
+      result.off.add b
+      result.on.add a
+      inc result.n
+    if pi == p: inc i
+    if pj == p: inc j
+
+proc auxAdded(have, incoming: EditLists): tuple[off, on: seq[AuxSnap]; n: int] =
+  ## Entries of `incoming` that `have` has no entry for, as snaps (an existing
+  ## entry is left as it is).
+  for e in incoming.auxMarks:
+    if not have.auxEntry(e.position).has:
+      result.off.add AuxSnap(position: e.position, had: false)
+      result.on.add AuxSnap(position: e.position, had: true, marked: e.marked, ms: e.ms)
+      inc result.n
+
+proc unionAux(l: var EditLists; extra: EditLists) =
+  ## Adds the entries of `extra` for positions `l` has none for.
+  for e in extra.auxMarks:
+    if not l.auxEntry(e.position).has: l.assignAux(e.position, true, e.marked, e.ms)
+
+proc preferAux(a, b: EditLists): seq[AuxMarkEntry] =
+  ## The entries of `a` and of `b`, ascending; where both name a position, `a`'s.
+  result = newSeqOfCap[AuxMarkEntry](a.auxMarks.len + b.auxMarks.len)
+  var i, j = 0
+  while i < a.auxMarks.len or j < b.auxMarks.len:
+    let pi = if i < a.auxMarks.len: a.auxMarks[i].position else: high(int)
+    let pj = if j < b.auxMarks.len: b.auxMarks[j].position else: high(int)
+    if pi <= pj:
+      result.add a.auxMarks[i]
+      if pi == pj: inc j
+      inc i
+    else:
+      result.add b.auxMarks[j]
       inc j
 
 proc preferFilters(a, b: EditLists): seq[FilterEntry] =
@@ -824,6 +965,44 @@ proc clearTimeShifts*(e: var FileEdits; traces: openArray[int]; keep = true): in
       traces: if shownChanged.len > 0: shownChanged else: keptChanged,
       shiftOff: off, shiftOn: on)
     step.keptChanges(ListsChange(shiftOff: kOff, shiftOn: kOn))
+    e.make(step, keep)
+
+const MaxAuxPosition* = 1000
+  ## The highest auxiliary position a mark may name.
+
+func auxPositionStorable*(position: int): bool {.inline.} =
+  ## Whether `position` (from 1) may carry a mark.
+  position in 1 .. MaxAuxPosition
+
+proc setAuxMark*(e: var FileEdits; position: int; state: AuxMarkState; ms = 0.0;
+    keep = true): int =
+  ## Marks auxiliary position `position` for correlation with a shift of `ms`
+  ## milliseconds (`amMarked`), makes it explicitly not marked (`amNotMarked`),
+  ## or takes its entry away (`amForget`), as one step (in what is kept too
+  ## with `keep`). Returns 1 when something changed, else 0. A position
+  ## outside `1 .. MaxAuxPosition`, or an `ms` that `shiftStorable` refuses,
+  ## changes nothing.
+  if not auxPositionStorable(position): return 0
+  if state == amMarked and not shiftStorable(ms): return 0
+  let want = case state
+    of amMarked: AuxSnap(position: position, had: true, marked: true, ms: ms)
+    of amNotMarked: AuxSnap(position: position, had: true, marked: false)
+    of amForget: AuxSnap(position: position, had: false)
+  let s = e.shown.snapAux(position)
+  let k = e.kept.snapAux(position)
+  let shownChanged = not sameAux(s, want)
+  let keptChanged = keep and not sameAux(k, want)
+  if shownChanged or keptChanged:
+    result = 1
+    var step = EditStep(kind: skAuxMark, on: state == amMarked)
+    if shownChanged:
+      step.auxOff = @[s]
+      step.auxOn = @[want]
+    var c = ListsChange()
+    if keptChanged:
+      c.auxOff = @[k]
+      c.auxOn = @[want]
+    step.keptChanges(c)
     e.make(step, keep)
 
 proc dropEdits*(e: var FileEdits; traces: openArray[int]; kinds: set[TraceEdit];
@@ -946,6 +1125,14 @@ proc setTo*(e: var FileEdits; l: EditLists; source: string; keep = true): int =
   c.shiftOn = keptS.on
   result += shownS.n
   kept += keptS.n
+  let shownA = auxDelta(e.shown, l)
+  let keptA = auxDelta(e.kept, l)
+  s.auxOff = shownA.off
+  s.auxOn = shownA.on
+  c.auxOff = keptA.off
+  c.auxOn = keptA.on
+  result += shownA.n
+  kept += keptA.n
   if keep and result == 0: result = kept
   if result > 0:
     s.keptChanges(c)
@@ -986,6 +1173,14 @@ proc takeIn*(e: var FileEdits; l: EditLists; source: string; keep = true): int =
   c.shiftOn = keptS.on
   result += shownS.n
   kept += keptS.n
+  let shownA = auxAdded(e.shown, l)
+  let keptA = auxAdded(e.kept, l)
+  s.auxOff = shownA.off
+  s.auxOn = shownA.on
+  c.auxOff = keptA.off
+  c.auxOn = keptA.on
+  result += shownA.n
+  kept += keptA.n
   if keep and result == 0: result = kept
   if result > 0:
     s.keptChanges(c)
@@ -1005,6 +1200,8 @@ proc remembered*(e: var FileEdits; l: EditLists) =
   e.kept.unionFilters(l)
   e.shown.unionShifts(l)
   e.kept.unionShifts(l)
+  e.shown.unionAux(l)
+  e.kept.unionAux(l)
   if e.shown != was: inc e.revision
 
 proc setInSession*(e: FileEdits): tuple[shown, kept: EditLists] =
@@ -1043,6 +1240,12 @@ proc keepIncoming*(e: var FileEdits; incomingShown, incomingKept, baseline: Edit
   for s in incomingKept.shifts:
     if not baseline.hasShift(s.trace) or baseline.shiftOf(s.trace) != s.ms:
       e.kept.assignShift(s.trace, true, s.ms)
+  for a in incomingShown.auxMarks:
+    let b = baseline.auxEntry(a.position)
+    if not b.has or b.entry != a: e.shown.assignAux(a.position, true, a.marked, a.ms)
+  for a in incomingKept.auxMarks:
+    let b = baseline.auxEntry(a.position)
+    if not b.has or b.entry != a: e.kept.assignAux(a.position, true, a.marked, a.ms)
   if e.shown != wasShown: inc e.revision
   if e.kept != wasKept: inc e.keptRevision
 
@@ -1053,7 +1256,8 @@ func shownChange(s: EditStep): ListsChange =
   ## What `s` does to what is shown.
   ListsChange(added: s.added, removed: s.removed, allChanged: s.allChanged,
     allBefore: s.allBefore, allAfter: s.allAfter, filterOn: s.filterOn,
-    filterOff: s.filterOff, shiftOn: s.shiftOn, shiftOff: s.shiftOff)
+    filterOff: s.filterOff, shiftOn: s.shiftOn, shiftOff: s.shiftOff, auxOn: s.auxOn,
+    auxOff: s.auxOff)
 
 func names(x: EditStep | ListsChange; trace: int): bool =
   ## Whether `x` (a step, or its change of what is kept) changes `trace`.
@@ -1088,6 +1292,12 @@ proc leaveOut(x: var (EditStep | ListsChange); l: EditLists) =
   for s in x.shiftOff:
     if not l.hasShift(s.trace): shiftOff.add s
   (x.filterOn, x.filterOff, x.shiftOn, x.shiftOff) = (filterOn, filterOff, shiftOn, shiftOff)
+  var auxOn, auxOff: seq[AuxSnap]
+  for s in x.auxOn:
+    if not l.auxEntry(s.position).has: auxOn.add s
+  for s in x.auxOff:
+    if not l.auxEntry(s.position).has: auxOff.add s
+  (x.auxOn, x.auxOff) = (auxOn, auxOff)
 
 func tracesOf(l: EditLists): seq[int] =
   ## Every trace `l` names, ascending.
@@ -1163,6 +1373,8 @@ proc merge*(e: var FileEdits; other: sink FileEdits) =
   e.kept.filters = preferFilters(e.kept, other.kept)
   e.shown.shifts = preferShifts(e.shown, other.shown)
   e.kept.shifts = preferShifts(e.kept, other.kept)
+  e.shown.auxMarks = preferAux(e.shown, other.shown)
+  e.kept.auxMarks = preferAux(e.kept, other.kept)
   if e.shown != wasShown: inc e.revision
   if e.kept != wasKept: inc e.keptRevision
   for r in e.redos: e.held -= r.size
@@ -1214,6 +1426,18 @@ proc adopt*(e: var FileEdits; l: EditLists) =
       e.shown.assignShift(t, after.had, after.ms)
     if ti == t: inc i
     if tj == t: inc j
+  i = 0
+  j = 0
+  while i < e.kept.auxMarks.len or j < l.auxMarks.len:
+    let pi = if i < e.kept.auxMarks.len: e.kept.auxMarks[i].position else: high(int)
+    let pj = if j < l.auxMarks.len: l.auxMarks[j].position else: high(int)
+    let p = min(pi, pj)
+    let before = e.kept.snapAux(p)
+    let after = l.snapAux(p)
+    if not sameAux(before, after) and sameAux(e.shown.snapAux(p), before):
+      e.shown.assignAux(p, after.had, after.marked, after.ms)
+    if pi == p: inc i
+    if pj == p: inc j
   if l != e.kept:
     e.kept = l
     inc e.keptRevision
@@ -1296,11 +1520,11 @@ func describe*(s: EditStep): string =
   of skImport:
     var n = ord(s.allChanged)
     for edit in TraceEdit: n += s.added[edit].len
-    n += s.filterOn.len + s.shiftOn.len
+    n += s.filterOn.len + s.shiftOn.len + s.auxOn.len
     if n == 0 and s.keptOwn: # shown already (an agent's), kept by the import
       n = ord(s.keptChange.allChanged)
       for edit in TraceEdit: n += s.keptChange.added[edit].len
-      n += s.keptChange.filterOn.len + s.keptChange.shiftOn.len
+      n += s.keptChange.filterOn.len + s.keptChange.shiftOn.len + s.keptChange.auxOn.len
     $n & (if n == 1: " edit" else: " edits") & " imported from " & s.source
   of skChange:
     let what = tracesText(s.traces)
@@ -1320,6 +1544,15 @@ func describe*(s: EditStep): string =
     elif s.traces.len == 1: "shift of " & what & " removed"
     else: "shifts of " & what & " removed"
   of skDrop: "edits of " & tracesText(s.traces) & " removed"
+  of skAuxMark:
+    let position = if s.auxOn.len > 0: s.auxOn[0].position
+                   elif s.keptChange.auxOn.len > 0: s.keptChange.auxOn[0].position
+                   else: 0
+    let after = if s.auxOn.len > 0: s.auxOn[0] else: s.keptChange.auxOn[0]
+    let what = "auxiliary trace " & $position
+    if not after.had: "mark of " & what & " forgotten"
+    elif after.marked: what & " marked for correlation"
+    else: what & " marked not for correlation"
 
 func undoText*(e: FileEdits): string =
   ## `describe` of the step `undo` takes back, without a copy of it (the
@@ -1366,6 +1599,26 @@ func mergedShifts*(base, ours, theirs: EditLists): seq[ShiftEntry] =
     let use = if base.snapShift(t) != ours.snapShift(t): ours.snapShift(t)
               else: theirs.snapShift(t)
     if use.had: result.add ShiftEntry(trace: t, ms: use.ms)
+
+func mergedAux*(base, ours, theirs: EditLists): seq[AuxMarkEntry] =
+  ## The auxiliary marks of a document two programs changed from `base`: a
+  ## position this program (`ours`) changed keeps `ours` (a removal included);
+  ## a position it left keeps `theirs`.
+  var positions = newSeqOfCap[int](base.auxMarks.len + ours.auxMarks.len + theirs.auxMarks.len)
+  for e in base.auxMarks: positions.add e.position
+  for e in ours.auxMarks: positions.add e.position
+  for e in theirs.auxMarks: positions.add e.position
+  positions.sort()
+  var n = 0
+  for p in positions:
+    if n == 0 or positions[n - 1] != p:
+      positions[n] = p
+      inc n
+  positions.setLen n
+  for p in positions:
+    let use = if not sameAux(base.snapAux(p), ours.snapAux(p)): ours.snapAux(p)
+              else: theirs.snapAux(p)
+    if use.had: result.add AuxMarkEntry(position: p, marked: use.marked, ms: use.ms)
 
 func redoText*(e: FileEdits): string =
   ## `describe` of the step `redo` makes again, without a copy of it; ""

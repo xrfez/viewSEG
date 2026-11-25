@@ -2,7 +2,8 @@
 ##
 ## Correlate off, then on: the record shortens to the listen time, peaks sit
 ## where the delays put them, the title says correlated, and the Aux window's
-## reference trace peaks at 500 ms. The next file in the folder follows.
+## reference trace, whose position is marked for correlation with a 500 ms shift, peaks at
+## 500 ms. The next file in the folder follows, with no mark: its reference trace is cut raw.
 ## A sweep as long as the record is refused: the raw file is shown and the
 ## button goes off. A kill made while correlated is kept under the raw path.
 ## Saving a project while correlated does not write the virtual key.
@@ -26,6 +27,7 @@ import utils/[fixtures, waiting]
 
 const
   DtMs = 2.0
+  AuxLeadMs = 500.0 # the shift given to the marked reference trace
   Record = 1000
   SweepLen = 200
   Listen = 800
@@ -240,9 +242,14 @@ proc main*() =
     proc peaksOk(f: FrameInfo; s: Session): bool =
       if peaked == s.path: return true
       let got = @[peakOf(s, 0), peakOf(s, 1), peakOf(s, 2)]
-      let aux = peakOf(s, RefAux)
       doAssert got == @[Delays[0], Delays[1], Delays[2]], s.name & " peaks " & $got
-      doAssert aux == LeadSamples, s.name & " reference peak " & $aux
+      let aux = peakOf(s, RefAux)
+      if s.diskPath == rawA:
+        doAssert aux == LeadSamples, s.name & " reference peak " & $aux
+      else:
+        # no mark: nothing is correlated because of its trace code, so the reference trace is
+        # the raw one cut to the listen time
+        doAssert aux != LeadSamples, s.name & " reference trace was correlated unmarked"
       peaked = s.path
       true
 
@@ -289,6 +296,10 @@ proc main*() =
     proc storeAaa(f: FrameInfo) {.closure.} =
       let i = f.shown
       doAssert i >= 0
+      # the reference trace of this file is marked for correlation, shifted by 500 ms; the
+      # next file has no mark
+      f.apply Command(kind: ckFileAuxMark, auxFile: rawA, auxPosition: 1, auxMarked: amMarked,
+        auxShiftMs: AuxLeadMs)
       f.apply Command(kind: ckStoreReference, refStore: StoredReference(
         name: "aaa sweep", trace: f.core.sessions[i].base + RefAux, fromMs: 0, toMs: 398.0))
     proc aaaStored(f: FrameInfo): bool {.closure.} =

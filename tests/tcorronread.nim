@@ -26,6 +26,7 @@ import utils/[faultyfs, waiting]
 
 const
   DtMs = 2.0
+  AuxLeadMs = 500.0 # the shift given to the marked reference trace
   Record = 1000
   SweepLen = 200
   Listen = 800
@@ -101,7 +102,7 @@ proc jobFailure(file: var SeismicFile; path: string; reference: seq[float32]; dt
   try:
     let id = jobs.submit(spec(path), correlateWork(CorrelateAsk(
       file: addr file, path: path, reference: reference, referenceDtMs: dtMs,
-      referenceTraces: refs), addr slot))
+      marked: marksOf(refs, AuxLeadMs)), addr slot))
     discard finish(jobs, id)
   finally:
     jobs.stop()
@@ -110,7 +111,7 @@ proc jobFailure(file: var SeismicFile; path: string; reference: seq[float32]; dt
 proc sameRefusal(file: var SeismicFile; path: string; reference: seq[float32];
     dtMs: float64; refs: seq[int]; sentence: string) =
   let fromJob = jobFailure(file, path, reference, dtMs, refs)
-  let fromView = initCorrelateView(addr file, reference, dtMs, refs).refusal
+  let fromView = initCorrelateView(addr file, reference, dtMs, marksOf(refs, AuxLeadMs)).refusal
   doAssert fromView == fromJob, sentence & ": view `" & fromView & "` job `" & fromJob & "`"
   doAssert fromJob == sentence, fromJob
 
@@ -157,7 +158,7 @@ proc correlate(file: var SeismicFile; path: string; sweep: seq[float32];
   try:
     let id = jobs.submit(spec(path), correlateWork(CorrelateAsk(
       file: addr file, path: path, reference: sweep, referenceDtMs: DtMs,
-      referenceTraces: refs), addr result))
+      marked: marksOf(refs, AuxLeadMs)), addr result))
     doAssert finish(jobs, id) == jsDone, result.failure
   finally:
     jobs.stop()
@@ -197,7 +198,7 @@ proc main*() =
   defer: file.close()
   doAssert file.path == path
 
-  let built = initCorrelateView(addr file, sweep, DtMs, [RefAux])
+  let built = initCorrelateView(addr file, sweep, DtMs, marksOf([RefAux], AuxLeadMs))
   doAssert built.refusal.len == 0, built.refusal
   doAssert built.view.listenSamples == Listen
   doAssert built.view.dtMs == DtMs
@@ -367,14 +368,15 @@ proc main*() =
     writePairShape(auxPath, Record, Record, DtMs, DtMs, true)
     var auxOnly = openSeismic(auxPath, keys = true)
     defer: auxOnly.close()
-    sameRefusal(auxOnly, auxPath, sweep, DtMs, @[], "the file has no seismic traces.")
+    sameRefusal(auxOnly, auxPath, sweep, DtMs, @[],
+      "the file has no seismic traces and no auxiliary trace is marked for correlation.")
 
   block oddTrace:
     let oddPath = dir / "odd.sgy"
     writeOdd(oddPath)
     var oddFile = openSeismic(oddPath, keys = true)
     defer: oddFile.close()
-    let oddView = initCorrelateView(addr oddFile, sweep, DtMs, [1])
+    let oddView = initCorrelateView(addr oddFile, sweep, DtMs, marksOf([1], AuxLeadMs))
     doAssert oddView.refusal.len == 0, oddView.refusal
     let oddSlot = correlate(oddFile, oddPath, sweep, @[1])
     template oddOpened: untyped = session.file(oddSlot.opened)
@@ -394,7 +396,7 @@ proc main*() =
       writeRaw(p, scaled, fmt)
       var src = openSeismic(p, keys = true)
       defer: src.close()
-      let built = initCorrelateView(addr src, scaled, DtMs, [RefAux])
+      let built = initCorrelateView(addr src, scaled, DtMs, marksOf([RefAux], AuxLeadMs))
       doAssert built.refusal.len == 0, built.refusal
       let made = correlate(src, p, scaled, @[RefAux])
       template opened: untyped = session.file(made.opened)

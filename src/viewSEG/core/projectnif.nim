@@ -87,6 +87,13 @@
 ## kept and written back; so is one of `(outputBinaries)`. A chosen name that
 ## names no set reads as none, and is said.
 ##
+## The auxiliary traces marked for correlation in every file of the project are
+## `(auxMarks (aux 1 (ms 500.0)) (aux 3 (ms 0.0)))`: the position counts from 1 among a
+## record's auxiliary traces, `ms` is the shift applied before correlating, positive
+## later. A position given twice (the first counts), one outside what a mark may name, or a
+## shift that is not a finite number a mark may hold is said and left out. A child this
+## version does not know is kept and written back. Absent means no position is marked.
+##
 ## A station moved during a deployment is
 ## `(stationMoves (move (line ...) (point ...) (index ...) (x ...) (y ...)))`.
 ## `fromTime` (the same absolute time as `TraceKeys.time`) and `elev` are
@@ -94,10 +101,10 @@
 ## the station. Absent means no moves. The position is not written into the
 ## seismic file or the survey file.
 
-import std/[math, options, sequtils, strutils, times, unicode]
+import std/[algorithm, math, options, sequtils, strutils, times, unicode]
 import parseSEG
-import analysis, breakmodel, identity, join, nif, outputbinary, outputnames, outputtext, processing,
-    project, settings,
+import analysis, breakmodel, edits, identity, join, nif, outputbinary, outputnames, outputtext,
+    processing, project, settings,
   settingsnif, shotlog, stationmoves, vendormaps, vibprofile
 
 const
@@ -334,6 +341,16 @@ proc writeOutputTexts(w: var NifWriter; d: ProjectDoc) =
   for n in d.outputTextsLater: w.add n
   w.close
 
+proc writeAuxMarks(w: var NifWriter; d: ProjectDoc) =
+  w.open "auxMarks"
+  for e in d.auxMarks:
+    w.open "aux"
+    w.add int64(e.position)
+    w.value("ms", e.ms)
+    w.close
+  for n in d.auxMarksLater: w.add n
+  w.close
+
 proc projectDocument*(d: ProjectDoc): string =
   ## `d` as the project document (the module's documentation).
   var w = initNifWriter(breakDepth = 2)
@@ -419,6 +436,7 @@ proc projectDocument*(d: ProjectDoc): string =
   if d.outputText.len > 0: w.value("outputText", d.outputText)
   if d.hasOutputBinaries: w.writeOutputBinaries(d)
   if d.outputBinary.len > 0: w.value("outputBinary", d.outputBinary)
+  if d.auxMarks.len > 0 or d.auxMarksLater.len > 0: w.writeAuxMarks(d)
   if d.hasBreakModel: w.writeBreakModel(d.breakModel)
   if d.shotLogs.len > 0 or d.shotLogsLater.len > 0:
     w.open "shotLogs"
@@ -1207,6 +1225,34 @@ proc outputBinaries(r: var Reading; n: NifNode; d: var ProjectDoc) =
   d.outputBinaryLater = later
   d.outputBinariesLater = rest
 
+proc auxMarks(r: var Reading; n: NifNode; d: var ProjectDoc) =
+  ## `(auxMarks (aux N (ms X)) ...)`. An entry that is not one, whose position is given
+  ## twice, or whose shift cannot be kept is left out and said. A child this version does
+  ## not know is kept.
+  d.auxMarks = @[]
+  d.auxMarksLater = @[]
+  for c in n.kids:
+    if c.isTree("aux"):
+      var position = 0
+      var ms = NaN
+      if c.kids.len >= 1 and c.kids[0].kind == nkInt:
+        position = int(clamp(c.kids[0].intVal, 0, high(int32)))
+      for k in c.kids:
+        if k.isTree("ms") and k.kids.len == 1 and k.kids[0].kind in {nkFloat, nkInt}:
+          ms = if k.kids[0].kind == nkFloat: k.kids[0].floatVal
+               else: float64(k.kids[0].intVal)
+      if not auxPositionStorable(position):
+        r.problem(c, "(aux) needs a position from 1 to " & $MaxAuxPosition)
+      elif not shiftStorable(ms):
+        r.problem(c, "(aux " & $position & ") needs a shift in ms that can be kept")
+      elif d.auxMarks.anyIt(it.position == position):
+        r.problem(c, "auxiliary trace " & $position & " is marked twice; the first counts.")
+      else:
+        d.auxMarks.add AuxMarkEntry(position: position, marked: true, ms: ms)
+    elif c.kind == nkTree: d.auxMarksLater.add c
+    else: r.problem(c, "(auxMarks) holds entries")
+  d.auxMarks.sort(proc (a, b: AuxMarkEntry): int = cmp(a.position, b.position))
+
 proc settleBinaryChoice(r: var Reading; d: var ProjectDoc; choice: NifNode; saw: bool) =
   ## A chosen name that names no kept set reads as none, with a sentence.
   if not saw: return
@@ -1311,6 +1357,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
         else:
           r.problem(c, "(outputText) needs a name that is not too long")
       of "outputBinaries": r.outputBinaries(c, result)
+      of "auxMarks": r.auxMarks(c, result)
       of "outputBinary":
         if c.kids.len >= 1 and c.kids[0].kind == nkString and
             c.kids[0].text.len <= MaxBinaryName * 4 + 64:

@@ -7,7 +7,7 @@
 ## `correlateBlock` is the same for a block of rows at once, across a pool's
 ## workers. `readListenTraces` is that read for a whole listen trace. The
 ## result of a window matches that file, including the auxiliary-trace policy
-## (a reference auxiliary shifted by `-AuxLeadMs`, any other auxiliary not
+## (a marked auxiliary shifted by its own mark, any other auxiliary not
 ## correlated). Correlated samples are IEEE float32.
 ##
 ## The kernel rejects a windowed record (`firstSample != 0`), so each trace is
@@ -15,7 +15,7 @@
 ## `CorrelateWorkspace` per thread; `correlateRead` allocates nothing once it
 ## exists. Threads share the plan and must not share a workspace.
 
-import std/[math, sets]
+import std/[math, sets, tables]
 import parseSEG
 import processSEG
 import correlatejobs, correlateview, filesystem, jobs, threads
@@ -61,19 +61,29 @@ proc copyPath(file: ptr SeismicFile): string =
   result = newString(lent.len)
   for i, c in lent: result[i] = c
 
-proc listenOrigin(file: ptr SeismicFile): float64 =
+proc listenOrigin(file: ptr SeismicFile; marked: openArray[AuxMark]): float64 =
   ## Correlation does not move the origin. Listen sample 0 is the first seismic
-  ## trace's finite time zero, or 0 when that trace has none.
+  ## trace's finite time zero, or 0 when that trace has none. A file with no
+  ## seismic trace takes the first marked auxiliary trace's.
+  var seismic = false
   for t in 0 ..< file[].len:
     let k = file[].traceKeys(t)
     if k.status == tsAuxiliary: continue
+    seismic = true
     let t0 = k.t0Ms
     if t0.classify notin {fcNan, fcInf, fcNegInf}: return t0
     break
+  if not seismic:
+    for m in marked:
+      if m.trace in 0 ..< file[].len:
+        let k = file[].traceKeys(m.trace)
+        let t0 = k.t0Ms
+        if k.status == tsAuxiliary and t0.classify notin {fcNan, fcInf, fcNegInf}: return t0
+        break
   0.0
 
 proc initCorrelateView*(file: ptr SeismicFile; reference: openArray[float32];
-    referenceDtMs: float64; referenceTraces: openArray[int]):
+    referenceDtMs: float64; marked: openArray[AuxMark]):
     tuple[view: CorrelateView; refusal: string] =
   ## The view `correlateWork` would use for `file` and this sweep, or that
   ## job's refusal (interval mismatch, a record shorter than the sweep, and
@@ -90,7 +100,7 @@ proc initCorrelateView*(file: ptr SeismicFile; reference: openArray[float32];
     return (result.view, "the reference sweep has no sample interval.")
   var shape = RecordShape(odd: @[])
   try:
-    shape = recordShape(file)
+    shape = recordShape(file, marked)
   except ValueError as e:
     return (result.view, e.msg)
   discard shape.padded
@@ -105,7 +115,7 @@ proc initCorrelateView*(file: ptr SeismicFile; reference: openArray[float32];
       "so there is no listen time.")
   var refs = initHashSet[int]()
   try:
-    refs = referenceSet(file[].len, referenceTraces)
+    refs = referenceSet(file[].len, marked)
   except ValueError as e:
     return (result.view, e.msg)
   var pilotSamples = copySamples(reference)
@@ -126,8 +136,8 @@ proc initCorrelateView*(file: ptr SeismicFile; reference: openArray[float32];
   result.view.recordSamples = recordSamples
   result.view.listenSamples = recordSamples - reference.len
   result.view.dtMs = dtMs
-  result.view.t0Ms = listenOrigin(file)
-  result.view.lag = wholeSamples(-AuxLeadMs, dtMs)
+  result.view.t0Ms = listenOrigin(file, marked)
+  result.view.lags = appliedLags(file, marked, result.view.odd, dtMs)
 
 proc newWorkspace*(view: CorrelateView): CorrelateWorkspace =
   ## Scratch for one thread. Call it once; later `correlateRead` calls on it
@@ -199,8 +209,8 @@ proc fillRow(view: CorrelateView; file: ptr SeismicFile; trace, firstSample, cou
     let raw = rowBlock(ws.raw)
     paint(raw.rowPtr(0), view.listenSamples, firstSample, count, dst, at)
     return true
-  if aux and view.lag != 0:
-    timeShift(rowBlock(ws.raw).row(0), view.lag)
+  if aux and trace in view.lags:
+    timeShift(rowBlock(ws.raw).row(0), view.lags.getOrDefault(trace))
   ws.key[0] = keys
   try:
     correlateRow(view, ws)
@@ -385,8 +395,8 @@ proc correlateBlock*(view: CorrelateView; file: ptr SeismicFile; traces: openArr
         ws.blockRaw[j] = keptRaw(view, keys, trace)
         if trace in view.odd or ws.blockRaw[j]:
           ws.blockKeys[j].status = tsDead
-        elif keys.status == tsAuxiliary and view.lag != 0:
-          timeShift(src.row(j), view.lag)
+        elif keys.status == tsAuxiliary and trace in view.lags:
+          timeShift(src.row(j), view.lags.getOrDefault(trace))
     if m > ws.blockOut.len:
       try:
         let meta = initChunkMeta(rowsOf(ws.blockKeys.toOpenArray(0, m - 1),
@@ -449,7 +459,7 @@ proc correlateOrView*(ask: sink CorrelateAsk; load: CorrelateLoad; limit: int64;
         ready.reference = got.samples
         ready.referenceDtMs = got.dtMs
         try:
-          estimate = correlatedBytesEstimate(ready.file, ready.reference.len)
+          estimate = correlatedBytesEstimate(ready.file, ready.reference.len, ready.marked)
         except ValueError:
           estimate = -1 # the copy's own job gives the refusal
     except CatchableError as e:
@@ -471,21 +481,17 @@ proc correlateOrView*(ask: sink CorrelateAsk; load: CorrelateLoad; limit: int64;
       slot[].onDemand = false
       ctx.checkCancelled()
       let made = initCorrelateView(ready.file, ready.reference, ready.referenceDtMs,
-        ready.referenceTraces)
+        ready.marked)
       if made.refusal.len > 0:
         slot[].failure = made.refusal
         raise newException(ValueError, made.refusal)
-      let shape = listenShape(ready.file, ready.reference, ready.referenceDtMs)
-      let refs = referenceSet(ready.file[].len, ready.referenceTraces)
-      var delayed = 0
-      for t in ready.referenceTraces:
-        if ready.file[].traceKeys(t).status == tsAuxiliary and t notin made.view.odd:
-          inc delayed
+      let shape = listenShape(ready.file, ready.reference, ready.referenceDtMs, ready.marked)
+      let refs = referenceSet(ready.file[].len, ready.marked)
       slot[].traces = ready.file[].len
       slot[].samples = shape.listen
       slot[].listenMs = float64(shape.listen) * shape.dtMs
       slot[].sweepMs = float64(ready.reference.len) * shape.dtMs
-      slot[].lines = jobLines(ready, shape, delayed, abs(made.view.lag), refs)
+      slot[].lines = jobLines(ready, shape, made.view.lags, refs)
       slot[].view = made.view
       slot[].estimate = estimate
       slot[].onDemand = true

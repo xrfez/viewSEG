@@ -536,7 +536,7 @@ proc submitRun(ui: var OutputUi; st: AppState) =
   let sweep = chosenSweep(st)
   if ui.correlate and sweep.why.len == 0:
     ask.correlate = BatchCorrelate(on: true, name: sweep.name, path: sweep.path,
-      pilot: sweep.pilot)
+      pilot: sweep.pilot, projectMarks: projectAuxMarks(st))
   ui.sink = BatchSink()
   ui.haveResult = false
   ui.stopped = false

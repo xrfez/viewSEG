@@ -20,8 +20,8 @@
 
 import std/[options, os, strutils, times]
 import parseSEG
-import breakmodel, displaypresets, filesystem, join, nif, outputbinary, outputnames, outputtext,
-    processing, shotlog,
+import breakmodel, displaypresets, edits, filesystem, join, nif, outputbinary, outputnames,
+    outputtext, processing, shotlog,
   stationmoves, vendormaps, vibprofile
 
 const
@@ -166,8 +166,13 @@ type
       ## children of each set this version does not know, written back
     outputBinariesLater*: seq[NifNode]
       ## children of `(outputBinaries)` this version does not know, written back
-    breakModel*: BreakModel        ## the first-break overlay's model in the project
-    hasBreakModel*: bool           ## `breakModel` was set in the project (else the user's)
+    auxMarks*: seq[AuxMarkEntry]
+      ## the auxiliary positions marked for correlation in every file of the project, ascending
+      ## by position; each `marked`, with its shift in `ms`
+    auxMarksLater*: seq[NifNode]
+      ## children of `(auxMarks)` this version does not know, written back
+    breakModel*: BreakModel ## the first-break overlay's model in the project
+    hasBreakModel*: bool ## `breakModel` was set in the project (else the user's)
     referenceId*: string
       ## the reference the plots use in this project; "" is the file's own pilot
     lastFolder*: string

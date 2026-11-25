@@ -5,6 +5,12 @@
 ## count before it is handled; one whose sample interval differs is written
 ## as zeros of the listen length.
 ##
+## Which auxiliary traces are correlated is the user's: a trace is correlated only when its
+## auxiliary position is marked (`AuxMarkEntry`, in the file's edits or the project), and
+## then after a shift of its own (`AuxMark.shiftMs`, positive later). `markedAuxiliaries`
+## turns the marks into the traces of one file. A file with no seismic trace takes the
+## record length and interval from its marked auxiliary traces.
+##
 ## Submit `correlateWork` on the background lane, cancellable, with the source
 ## path in `reads`, and keep the open file alive until the job has finished.
 ## `opened` is in memory (`inMemory`). Its path is the source path, which is
@@ -34,7 +40,7 @@
 ## external header. The job still writes the copy; `fitsInMemory` is how a
 ## caller decides whether it fits.
 
-import std/[algorithm, cpuinfo, formatfloat, math, sets, strutils]
+import std/[algorithm, cpuinfo, formatfloat, math, sets, strutils, tables]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
@@ -42,15 +48,19 @@ import cutfile, correlateview, edits, filesystem, jobs, processing, references, 
   traceids
 
 const
-  AuxLeadMs* = 500.0
-    ## Reference auxiliary traces are shifted later by this many milliseconds
-    ## before they are correlated: zeros in front, the end cut, the record
-    ## length kept, then the same reference and the same listen length, so
-    ## both sides of the wavelet show.
   BlockTraces = 64
   CorrelatedYes* = 2 ## SEG-Y trace header byte 125: 2 = yes.
 
 type
+  AuxMark* = object
+    ## An auxiliary trace of one file that is correlated, and how far it is
+    ## shifted later first: zeros in front, the end cut, the record length
+    ## kept, then the same reference and the same listen length, so both sides
+    ## of the wavelet show. A shift that is not a whole number of samples
+    ## follows `wholeSamples`.
+    trace*: int
+    shiftMs*: float64
+
   CorrelateAsk* = object
     ## One correlation. The file stays the caller's, and must stay open until
     ## the job has finished.
@@ -58,9 +68,11 @@ type
     path*: string ## The file's path, for the result and for `reads`.
     reference*: seq[float32] ## The sweep, at `referenceDtMs`.
     referenceDtMs*: float64 ## The sweep's sample interval, in ms.
-    referenceTraces*: seq[int]
-      ## Auxiliary traces that hold a reference. Any other auxiliary trace is
-      ## cut to the listen time and not correlated.
+    marked*: seq[AuxMark]
+      ## The auxiliary traces to correlate, each after its own shift. Any
+      ## other auxiliary trace is cut to the listen time and not correlated.
+    markNotes*: seq[string]
+      ## What `markedAuxiliaries` said of marks this file lacks, for the report.
 
   CorrelateResult* = object
     ## Filled when the job ends. Read it only then. `opened` is nil unless
@@ -116,10 +128,11 @@ proc isSeismic*(status: TraceStatus): bool {.inline.} =
   ## A trace that is not auxiliary.
   status != tsAuxiliary
 
-proc recordShape*(file: ptr SeismicFile): RecordShape =
-  ## The seismic traces' length and interval. A shorter or longer auxiliary
-  ## trace is counted as padded or cut; one at another known interval is
-  ## listed in `odd` and not counted.
+proc recordShape*(file: ptr SeismicFile; marked: openArray[AuxMark] = []): RecordShape =
+  ## The seismic traces' length and interval; a file with no seismic trace
+  ## takes them from its `marked` auxiliary traces instead. A shorter or longer
+  ## auxiliary trace is counted as padded or cut; one at another known interval
+  ## is listed in `odd` and not counted.
   let n = file[].len
   if n == 0: refuse("the file has no traces.")
   result.odd = @[]
@@ -138,9 +151,27 @@ proc recordShape*(file: ptr SeismicFile): RecordShape =
       if d.isNaN or not sameInterval(d, result.dtMs):
         refuse("the traces do not share one sample interval.")
     inc seismic
-  if seismic == 0: refuse("the file has no seismic traces.")
+  var shaping = initHashSet[int]() # the marked auxiliary traces that set the shape
+  if seismic == 0:
+    for m in marked:
+      if m.trace in 0 ..< n and file[].traceKeys(m.trace).status == tsAuxiliary and
+          m.trace notin shaping:
+        let d = traceDt(file, m.trace)
+        let samples = int(file[].traceEntry(m.trace).numSamples)
+        if shaping.len == 0:
+          if d.isNaN: refuse("the marked auxiliary trace has no sample interval.")
+          result.samples = samples
+          result.dtMs = d
+        else:
+          if samples != result.samples:
+            refuse("the marked auxiliary traces do not share one length.")
+          if d.isNaN or not sameInterval(d, result.dtMs):
+            refuse("the marked auxiliary traces do not share one sample interval.")
+        shaping.incl m.trace
+    if shaping.len == 0:
+      refuse("the file has no seismic traces and no auxiliary trace is marked for correlation.")
   for i in 0 ..< n:
-    if isSeismic(file[].traceKeys(i).status): continue
+    if isSeismic(file[].traceKeys(i).status) or i in shaping: continue
     let d = traceDt(file, i)
     if not d.isNaN and not sameInterval(d, result.dtMs):
       result.odd.add i
@@ -162,14 +193,35 @@ proc checkReference*(samples: openArray[float32]) =
     energy += x * x
   if energy == 0: refuse("the reference sweep is all zeros.")
 
-proc referenceSet*(n: int; traces: openArray[int]): HashSet[int] =
-  ## The reference traces, or the refusal a repeated or out-of-range index gets.
+proc referenceSet*(n: int; marked: openArray[AuxMark]): HashSet[int] =
+  ## The marked traces, or the refusal a repeated or out-of-range index gets.
   result = initHashSet[int]()
-  for t in traces:
+  for m in marked:
+    let t = m.trace
     if t < 0 or t >= n:
       refuse("reference trace " & $t & " is outside 0 .. " & $(n - 1) & ".")
     if t in result: refuse("reference trace " & $t & " is listed twice.")
     result.incl(t)
+
+func marksOf*(traces: openArray[int]; shiftMs: float64): seq[AuxMark] =
+  ## The marks of `traces`, each shifted later by `shiftMs`.
+  for t in traces: result.add AuxMark(trace: t, shiftMs: shiftMs)
+
+func lagOf*(shiftMs, dtMs: float64): int {.inline.} =
+  ## The `timeShift` count of a shift later by `shiftMs`: negative moves later.
+  wholeSamples(-shiftMs, dtMs)
+
+proc appliedLags*(file: ptr SeismicFile; marked: openArray[AuxMark]; odd: HashSet[int];
+    dtMs: float64): Table[int, int] =
+  ## The traces that are correlated after a shift, by their `lagOf`: marked
+  ## auxiliary traces at the record's interval whose shift is a sample or more.
+  ## Every marked trace is a key of `refs`, but only these are shifted.
+  result = initTable[int, int]()
+  for m in marked:
+    if m.trace in 0 ..< file[].len and file[].traceKeys(m.trace).status == tsAuxiliary and
+        m.trace notin odd:
+      let lag = lagOf(m.shiftMs, dtMs)
+      if lag != 0: result[m.trace] = lag
 
 type
   ListenShape* = object
@@ -185,14 +237,14 @@ type
     cut*: int
 
 proc listenShape*(file: ptr SeismicFile; reference: openArray[float32];
-    referenceDtMs: float64): ListenShape =
+    referenceDtMs: float64; marked: openArray[AuxMark] = []): ListenShape =
   ## What `correlateWork` needs before it writes, or the same refusal.
   ## A record that is not longer than the sweep, or a sample interval that
   ## differs, is refused here. No file is written.
   checkReference(reference)
   if referenceDtMs.isNaN or referenceDtMs <= 0 or referenceDtMs == Inf:
     refuse("the reference sweep has no sample interval.")
-  let shape = recordShape(file)
+  let shape = recordShape(file, marked)
   if not sameInterval(referenceDtMs, shape.dtMs):
     refuse("the reference sweep is sampled every " & msText(referenceDtMs) &
       " ms and the record every " & msText(shape.dtMs) & " ms.")
@@ -323,7 +375,8 @@ type
   ListenCount = concept v
     v.listenSamples is int
 
-proc correlatedBytesEstimate*(file: ptr SeismicFile; sweepLen: int): int64 =
+proc correlatedBytesEstimate*(file: ptr SeismicFile; sweepLen: int;
+    marked: openArray[AuxMark] = []): int64 =
   ## Bytes the in-memory correlated copy of `file` would have for a sweep of
   ## `sweepLen` samples. Listen time is the record length minus the sweep, as
   ## `correlateWork` writes it. A SEG-D copy is a new file from keys, so this
@@ -332,7 +385,7 @@ proc correlatedBytesEstimate*(file: ptr SeismicFile; sweepLen: int): int64 =
   ## include the source external header. Raises `ValueError` for a closed
   ## file, a file the job would refuse, or a sweep that leaves no listen time.
   if file == nil or not file[].isOpen: refuse("the file is not open.")
-  let shape = recordShape(file)
+  let shape = recordShape(file, marked)
   if sweepLen < 0 or sweepLen >= shape.samples:
     refuse("the reference sweep is as long as the record or longer, " &
       "so there is no listen time.")
@@ -433,9 +486,28 @@ proc writtenChannelType*(code: uint8): SegdChannelType =
   of 0xF0: sctCalibration
   else: refuse("channel type 0x" & toHex(int(code), 2) & " cannot be written.")
 
-proc sweepLine(sweepMs: float64; delayed: int; delayMs: float64): string =
-  let n = if delayed == 1: "1 reference trace" else: $delayed & " reference traces"
-  "sweep " & msText(sweepMs) & " ms. " & n & " delayed by " & msText(delayMs) & " ms."
+func leadMsOf(lag: int; dtMs: float64): float64 {.inline.} =
+  ## How much later a shifted trace was put, in the whole samples applied.
+  float64(-lag) * dtMs
+
+func leadRange(lags: Table[int, int]; dtMs: float64): tuple[lo, hi: float64] =
+  ## The smallest and the largest shift later of the traces in `lags`.
+  result = (Inf, -Inf)
+  for lag in lags.values:
+    let ms = leadMsOf(lag, dtMs)
+    result.lo = min(result.lo, ms)
+    result.hi = max(result.hi, ms)
+
+proc sweepLine(sweepMs: float64; lags: Table[int, int]; dtMs: float64): string =
+  result = "sweep " & msText(sweepMs) & " ms."
+  if lags.len > 0:
+    let n = if lags.len == 1: "1 reference trace" else: $lags.len & " reference traces"
+    let (lo, hi) = leadRange(lags, dtMs)
+    if lo == hi and lo > 0: result.add " " & n & " delayed by " & msText(lo) & " ms."
+    elif lo == hi: result.add " " & n & " advanced by " & msText(-lo) & " ms."
+    else:
+      result.add " " & n & " shifted by their own marks, from " & msText(lo) & " ms to " &
+        msText(hi) & " ms."
 
 proc waveletLine(listenMs, delayMs: float64): string =
   if listenMs <= delayMs:
@@ -456,9 +528,10 @@ proc fitLine(padded, cut: int): string =
   if parts.len > 0: result = parts.join(". ") & "."
 
 proc cutSweepLine(trace: int; heldMs, sweepMs, leadMs: float64): string =
-  "reference trace " & $trace & " holds " & msText(heldMs) &
-    " ms, less than the " & msText(sweepMs) & " ms sweep plus the " &
-    msText(leadMs) & " ms lead: its wavelet is of a cut sweep."
+  result = "reference trace " & $trace & " holds " & msText(heldMs) &
+    " ms, less than the " & msText(sweepMs) & " ms sweep"
+  if leadMs > 0: result.add " plus the " & msText(leadMs) & " ms lead"
+  result.add ": its wavelet is of a cut sweep."
 
 proc intervalLine(trace: int; reference: bool; traceMs, recordMs: float64): string =
   let kind = if reference: "reference" else: "auxiliary"
@@ -492,28 +565,29 @@ proc binaryUncorrelatedLine*(file: ptr SeismicFile): string =
       "(byte 3249 is 1); this writer cannot change it."
 
 proc correlationLines*(file: ptr SeismicFile; nTraces, listen, sweepLen: int;
-    listenMs, sweepMs, dtMs: float64; delayed, leadSamples, padded, cut: int;
+    listenMs, sweepMs, dtMs: float64; lags: Table[int, int]; padded, cut: int;
     refs: HashSet[int]; odd: openArray[int]): seq[string] =
   ## The notes `correlateWork` gives for this file, in its order, but the
   ## binary header's (`binaryUncorrelatedLine`, which follows them). Only the
-  ## in-memory index and keys are read. `odd` is that job's list, so an
-  ## odd-interval note keeps its place.
-  let leadMs = float64(leadSamples) * dtMs
+  ## in-memory index and keys are read. `lags` is `appliedLags`; `odd` is that
+  ## job's list, so an odd-interval note keeps its place.
   var oddSet = initHashSet[int]()
   for t in odd: oddSet.incl(t)
   result = @[
     $nTraces & " traces, " & $listen & " samples (" & msText(listenMs) &
       " ms of listen time).",
-    sweepLine(sweepMs, delayed, leadMs)]
-  if delayed > 0 and listenMs < 2.0 * leadMs:
+    sweepLine(sweepMs, lags, dtMs)]
+  let leadMs = if lags.len > 0: leadRange(lags, dtMs).hi else: 0.0
+  if leadMs > 0 and listenMs < 2.0 * leadMs:
     result.add waveletLine(listenMs, leadMs)
   let fitted = fitLine(padded, cut)
   if fitted.len > 0: result.add fitted
   for t in 0 ..< nTraces:
     if t in refs and file[].traceKeys(t).status == tsAuxiliary and t notin oddSet:
       let held = int(file[].traceEntry(t).numSamples)
-      if held < sweepLen + leadSamples:
-        result.add cutSweepLine(t, float64(held) * dtMs, sweepMs, leadMs)
+      let lead = max(0, -lags.getOrDefault(t, 0))
+      if held < sweepLen + lead:
+        result.add cutSweepLine(t, float64(held) * dtMs, sweepMs, float64(lead) * dtMs)
   for t in odd:
     result.add intervalLine(t, t in refs, traceDt(file, t), dtMs)
 
@@ -539,15 +613,16 @@ proc writeRow(w: var SeismicWriter; file: ptr SeismicFile; trace, row, listen: i
     w.writeTrace(file[], trace, dst, row, count = listen,
       overrides = [headerOverride("trace.correlated", CorrelatedYes)])
 
-proc jobLines*(ask: CorrelateAsk; ready: ListenShape; delayed, leadSamples: int;
+proc jobLines*(ask: CorrelateAsk; ready: ListenShape; lags: Table[int, int];
     refs: HashSet[int]): seq[string] =
-  ## The report of a correlation of `ask.file`: the notes of `correlationLines`, then
-  ## the binary header's.
+  ## The report of a correlation of `ask.file`: the notes of `correlationLines`, those
+  ## of the marks the file lacks, then the binary header's.
   let file = ask.file
   let listenMs = float64(ready.listen) * ready.dtMs
   let sweepMs = float64(ask.reference.len) * ready.dtMs
   result = correlationLines(file, file[].len, ready.listen, ask.reference.len, listenMs,
-    sweepMs, ready.dtMs, delayed, leadSamples, ready.padded, ready.cut, refs, ready.odd)
+    sweepMs, ready.dtMs, lags, ready.padded, ready.cut, refs, ready.odd)
+  result.add ask.markNotes
   let uncorrelated = binaryUncorrelatedLine(file)
   if uncorrelated.len > 0: result.add uncorrelated
 
@@ -559,7 +634,7 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   if not file[].hasKeys: refuse("the file was opened without its keys.")
   fs.mappedRead(ask.path)
   let modified = fs.getFileInfo(ask.path).lastWriteTime
-  let ready = listenShape(file, ask.reference, ask.referenceDtMs)
+  let ready = listenShape(file, ask.reference, ask.referenceDtMs, ask.marked)
   let dtMs = ready.dtMs
   let nTraces = file[].len
   let recordSamples = ready.samples
@@ -567,10 +642,8 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   for t in ready.odd: odd.incl(t)
   let sweepLen = ask.reference.len
   let listen = ready.listen
-  let refs = referenceSet(nTraces, ask.referenceTraces)
-  var delayed = 0
-  for t in ask.referenceTraces:
-    if file[].traceKeys(t).status == tsAuxiliary and t notin odd: inc delayed
+  let refs = referenceSet(nTraces, ask.marked)
+  let lags = appliedLags(file, ask.marked, odd, dtMs)
   let pilot = initPilot(ask.reference, ask.referenceDtMs)
   let plan = initCorrelationPlan(float32, pilot, dtMs, recordSamples)
   let segd = file[].kind == skSegd
@@ -586,7 +659,6 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   var workKeys = newSeq[TraceKeys](BlockTraces)
   var counts = newSeq[int](BlockTraces)
   var failed = newSeq[int]()
-  let lag = wholeSamples(-AuxLeadMs, dtMs)
   let outUs = round(dtMs * 1000.0)
   ctx.setPhase("correlating")
   ctx.checkCancelled()
@@ -598,12 +670,12 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
     discard file[].readTracesInto(span, src, failed)
     if failed.len > 0: refuse(unreadWhy(file[]))
     file[].traceKeysInto(span, keys.toOpenArray(0, n - 1))
-    if lag != 0:
+    if lags.len > 0:
       let rows = rowBlock(src)
       for r in 0 ..< n:
         let trace = start + r
-        if trace in refs and keys[r].status == tsAuxiliary and trace notin odd:
-          timeShift(rows.row(r), lag)
+        if keys[r].status == tsAuxiliary and trace in lags:
+          timeShift(rows.row(r), lags[trace])
     for r in 0 ..< n:
       let trace = start + r
       workKeys[r] = keys[r]
@@ -632,7 +704,7 @@ proc run(ask: CorrelateAsk; slot: ptr CorrelateResult; ctx: JobContext) =
   slot[].samples = listen
   slot[].listenMs = float64(listen) * dtMs
   slot[].sweepMs = float64(sweepLen) * dtMs
-  slot[].lines = jobLines(ask, ready, delayed, abs(lag), refs)
+  slot[].lines = jobLines(ask, ready, lags, refs)
   slot[].opened = made
   slot[].ok = true
 
@@ -750,24 +822,82 @@ proc recordPilots*(file: ptr SeismicFile; rule: PilotRule; e: FileEdits;
       flip: reversals and e.has(teReversed, picked.trace),
       shiftMs: if shifts: e.shiftOf(picked.trace) else: 0.0, record: name))
 
-proc referenceTraces*(file: ptr SeismicFile): seq[int] =
-  ## Auxiliary traces that hold a reference: trace code 5, or a vibrator reference (21).
-  ## The keys already read; no file is opened.
-  result = @[]
-  if file == nil: return
-  for t in 0 ..< file[].len:
-    let k = file[].traceKeys(t)
-    if k.status == tsAuxiliary and (k.traceCode == 5'i16 or k.traceCode == VibReferenceCode):
-      result.add t
+proc effectiveMark(position: int; fileMarks, projectMarks: openArray[AuxMarkEntry]):
+    tuple[marked: bool; ms: float64] =
+  ## The mark in force for auxiliary position `position`: the file's entry when it
+  ## has one, else the project's, else not marked.
+  for e in fileMarks:
+    if e.position == position: return (e.marked, e.ms)
+  for e in projectMarks:
+    if e.position == position and e.marked: return (true, e.ms)
+  (false, 0.0)
 
-proc seismicDtMs*(file: ptr SeismicFile): float64 =
-  ## The seismic traces' sample interval, from keys already read; NaN when none is known.
+proc markedAuxiliaries*(file: ptr SeismicFile; fileMarks, projectMarks: openArray[AuxMarkEntry]):
+    tuple[marked: seq[AuxMark]; notes: seq[string]] =
+  ## The auxiliary traces of `file` to correlate, each with its shift: in every record (the
+  ## gathers of a session of it) the trace at each marked auxiliary position, counted
+  ## among the record's auxiliary traces in file order, as the pilot rule counts them.
+  ## A marked position some record lacks is skipped there and said once in `notes`. Reads
+  ## the keys already held, never the file.
+  result.marked = @[]
+  result.notes = @[]
+  if file == nil or not file[].isOpen or file[].len == 0: return
+  var positions: seq[int] = @[]
+  for e in fileMarks: positions.add e.position
+  for e in projectMarks:
+    if e.position notin positions: positions.add e.position
+  positions.sort()
+  var shifts = initTable[int, float64]()
+  for p in positions:
+    let m = effectiveMark(p, fileMarks, projectMarks)
+    if m.marked: shifts[p] = m.ms
+  if shifts.len == 0: return
+  var wanted: seq[int] = @[]
+  for p in shifts.keys: wanted.add p
+  wanted.sort()
+  let (gathers, rows) = recordsOf(file[])
+  var lacking = initTable[int, tuple[count: int; first: string]]()
+  for g, gather in gathers:
+    var aux: seq[int] = @[]
+    for t in gather.traces:
+      if t in 0 ..< file[].len and not isSeismic(file[].index, t): aux.add t
+    for p in wanted:
+      if p <= aux.len: result.marked.add AuxMark(trace: aux[p - 1], shiftMs: shifts[p])
+      else:
+        let name =
+          if g >= rows.len: "record " & $(g + 1)
+          elif abs(rows[g].record) < 1e15: "FFID " & $int64(rows[g].record)
+          else: "record " & $(g + 1)
+        var got = lacking.getOrDefault(p, (0, name))
+        inc got.count
+        lacking[p] = got
+  result.marked.sort(proc (a, b: AuxMark): int = cmp(a.trace, b.trace))
+  for p in wanted:
+    if p in lacking:
+      let got = lacking[p]
+      result.notes.add "Auxiliary trace " & $p & " is marked for correlation but " &
+        (if got.count == 1: "1 record has" else: $got.count & " records have") &
+        " no such trace (the first is " & got.first & "): it is skipped there."
+
+proc markedDtMs*(file: ptr SeismicFile; marked: openArray[AuxMark] = []): float64 =
+  ## The record's sample interval from keys already read: the first seismic trace's, else
+  ## (a file with no seismic trace) the first marked auxiliary trace's; NaN when none is
+  ## known.
   if file == nil: return NaN
   for t in 0 ..< file[].len:
     let k = file[].traceKeys(t)
     if k.status != tsAuxiliary and k.intervalUs > 0 and k.intervalUs < Inf:
       return k.intervalUs / 1000.0
+  for m in marked:
+    if m.trace in 0 ..< file[].len:
+      let k = file[].traceKeys(m.trace)
+      if k.status == tsAuxiliary and k.intervalUs > 0 and k.intervalUs < Inf:
+        return k.intervalUs / 1000.0
   NaN
+
+proc seismicDtMs*(file: ptr SeismicFile): float64 =
+  ## The seismic traces' sample interval, from keys already read; NaN when none is known.
+  markedDtMs(file)
 
 proc correlateLoaded*(ask: sink CorrelateAsk; load: CorrelateLoad;
     slot: ptr CorrelateResult): JobWork =

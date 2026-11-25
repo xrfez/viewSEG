@@ -61,7 +61,7 @@ proc refusedBy(raw: string; limit: int64): CorrelateResult =
   var file = openSeismic(raw, keys = true)
   var jobs = initJobs()
   try:
-    let ask = CorrelateAsk(file: addr file, path: raw, referenceTraces: @[])
+    let ask = CorrelateAsk(file: addr file, path: raw, marked: @[])
     let load = CorrelateLoad(pilotTrace: 0, record: "the record",
       pilot: PilotRule(name: "one", trace: 1, startMs: 0, spanMs: DtMs))
     let spec = JobSpec(title: "Correlate", lane: jlBackground, reads: @[raw],
