@@ -70,9 +70,12 @@ type
       ## the record and its code sequence), kept in the project or the user's settings
 
   JudgeOn* = enum
-    ## Which ground force the verdict judges when the unit has both.
-    joRecorded = "GF"        ## the recorded ground force
-    joWeighted = "GF (M, B)" ## GF from M and B: the same sum formed here with the typed masses
+    ## The ground force switch: which ground force the window judges and draws as its
+    ## ground force when the unit has both.
+    joRecorded = "GF" ## "In the record": the trace coded as ground force, as it is
+    joWeighted = "GF (M, B)"
+      ## "Made from mass and baseplate": the weighted sum formed here, `Mr·a_M + Mb·a_B`, with
+      ## the typed masses (a converter's file: its weights), or a signature file's own weights
 
   VibRoles* = object
     ## A vibrator signature's roles: each one's place among the window's
@@ -293,6 +296,15 @@ type
       ## (`core/signalend`); "" for none
     judged*: string ## a vibrator signature's judged signal: "GF" or "GF (M, B)"
     bothSignals*: bool ## it has both ground forces: the user may choose which is judged
+    canMake*: bool
+      ## the window has the traces to make the ground force from mass and baseplate (a ground
+      ## force, M and B): the switch `roles.judge` is offered, whether or not it can be made
+    sameAsRecorded*: bool
+      ## a signature file's ground force made from M and B, in the unit of its recorded one:
+      ## it is judged against the recorded ground force's 100 % force
+    madeNote*: string
+      ## a signature file's: what making the ground force from M and B gives there ("both
+      ## choices give the same ground force"); "" for another file
     judgeWarning*: string ## the recorded GF does not match M and B with the typed masses; "" none
     judgedAxis*: string ## the judged force's axis label (its unit), for the 100 % box
     qc*: QcReport ## a vibrator signature's verdict, its limits table and window statistics
@@ -380,6 +392,15 @@ func withCodeRoles*(roles: VibRoles; codes: openArray[int16]; file: string): Vib
     result.baseplate = places.baseplate
     result.source = rsCodes
     result.handFile = ""
+
+func isConverterLayout*(codes: openArray[int16]): bool =
+  ## Whether `codes` start as the external converter's SEG-Y from a vibrator signature file
+  ## writes them: reference (21), then the two force channels coded 19 and 18, then the
+  ## ground force (20). In such a file the trace coded 19 is the converter's second channel,
+  ## the reaction mass's, and the one coded 18 the baseplate's: the other way round from the
+  ## SEG-Y standard's codes and from a `.dat`'s own traces.
+  codes.len >= 4 and codes[0] == VibReferenceCode and codes[1] == VibBaseplateCode and
+    codes[2] == VibReactionMassCode and codes[3] == VibGroundForceCode
 
 const MaxLayoutKeyCodes = 64
 

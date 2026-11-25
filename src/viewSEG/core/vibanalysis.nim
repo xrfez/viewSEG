@@ -253,8 +253,22 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   var unit = VibUnit()
   unit.rows = at
   let pair = at[vsMass] >= 0 and at[vsBaseplate] >= 0
-  let masses = forceNote.len == 0 and p.reactionMassKg > 0 and p.reactionMassKg < Inf and
-    p.baseplateMassKg > 0 and p.baseplateMassKg < Inf
+  # The weights the ground force is made from M and B with: the typed masses (a SEG-Y: the
+  # masses of the unit, or, for a converter's file, the weights its scaling divided by); a
+  # signature file's own (a `.dat`'s two force channels are weighted already: 1 and 1; a
+  # `.vib`'s are its header's), only when the user chose to make it (`JudgeOn`), and in the
+  # force unit of the scale given
+  let signature = forceNote.len > 0
+  let made = p.roles.judge == joWeighted
+  var (massR, massB) = (p.reactionMassKg, p.baseplateMassKg)
+  if signature:
+    (massR, massB) = if sig.given and made: (sig.madeReaction, sig.madeBaseplate)
+      else: (NaN, NaN)
+    if scaled:
+      massR *= sig.gfToN
+      massB *= sig.gfToN
+  let masses = massR > 0 and massR < Inf and massB > 0 and massB < Inf
+  let canMake = at[vsGroundForce] >= 0 and pair
   var said: seq[string] = @[]
   unit.polarity[vsGroundForce] = p.roles.groundForcePolarity
   if sig.given and unit.polarity[vsGroundForce] == poAutomatic:
@@ -276,8 +290,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   var readWhy = "" # the sentence shown when that reading is not sure, or unusable
   try:
     if pair and masses:
-      unit.reactionMass = mass(p.reactionMassKg, muKilogram)
-      unit.baseplateMass = mass(p.baseplateMassKg, muKilogram)
+      unit.reactionMass = mass(massR, muKilogram)
+      unit.baseplateMass = mass(massB, muKilogram)
     let meta = initChunkMeta(rowsOf(keys, counts), dtMs)
     band = if topHz.isNaN: exactTopHz else: topHz
     func planFor(band: float64): SweepTrackPlan[float32] =
@@ -350,7 +364,31 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   # trace's end when it is shorter than the reference. With both ground forces the
   # choice is the user's (`roles.judge`); the recorded one is the default.
   let both = vsGroundForce in u.signals and vsWeightedSum in u.signals
-  let judged = if both and p.roles.judge == joWeighted: vsWeightedSum else: main
+  let judged = if both and made: vsWeightedSum else: main
+  # a signature file's ground force made from M and B is in the unit of its recorded one (the
+  # same sum), so it is judged against the same 100 % force
+  let sameUnit = signature and judged == vsWeightedSum
+  func madeUnit(): string =
+    ## the unit of the ground force made from M and B: a signature file's is its recorded one's
+    if signature: gfUnit(u.units[vsGroundForce], sig, scaled)
+    else: weightedUnit(u.units[vsWeightedSum])
+  result.canMake = canMake
+  result.sameAsRecorded = sameUnit
+  if made and not both and canMake:
+    result.judgeWarning = if signature:
+        "the file gives no weights to make the ground force from M and B with: the ground " &
+        "force in the record is judged"
+      else: "the ground force is made from M and B once both masses are typed (Masses): the " &
+        "ground force in the record is judged until then"
+  elif made and not canMake and vsGroundForce in u.signals:
+    result.judgeWarning = "the ground force cannot be made from M and B: this window has no " &
+      "trace in the M or the B role. The ground force in the record is judged"
+  if canMake and signature and sig.given:
+    result.madeNote = if sig.isDat:
+        "In this file the two force channels are already weighted: both choices give the " &
+        "same ground force."
+      else: "In this file the ground force is made from the two accelerations with the " &
+        "header's weights: both choices give the same ground force."
   let judging = VibLimits(skipStartMs: limits.skipStartMs,
     skipEndMs: limits.skipEndMs,
     fromMs: limits.fromMs, toMs: limits.toMs)
@@ -360,9 +398,11 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     except ValueError: windowStats(t, judging)
   let stats = statsOf(u.tracks[judged])
   # each signal has its own full scale (counts, or kg × counts)
-  var hundredFor = if judged == vsWeightedSum: p.forceHundredWeighted else: p.forceHundredPct
+  var hundredFor = if judged == vsWeightedSum and not sameUnit: p.forceHundredWeighted
+    else: p.forceHundredPct
   var hundredFromFile = false
-  if sig.given and judged == vsGroundForce and hundredFor > 0 and hundredFor < Inf:
+  if sig.given and (judged == vsGroundForce or sameUnit) and hundredFor > 0 and
+      hundredFor < Inf:
     # a typed 100 % force keeps the unit it was typed in. It is converted only from this
     # file's own raw unit (counts of a .dat, pound-counts of a .vib) to newtons with the scale
     # now given; pound-counts are those of the accelerometer set they were typed on. Any
@@ -391,7 +431,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   let typedHundred = hundredFor > 0 and hundredFor < Inf
   let fileHundred = sig.hundredN > 0 and sig.hundredN < Inf
   # (a typed force not applied is said, and the file's own does not take its place unseen)
-  if sig.given and judged == vsGroundForce and scaled and not typedHundred and fileHundred and
+  if sig.given and (judged == vsGroundForce or sameUnit) and scaled and not typedHundred and
+      fileHundred and
       result.hundredProblem.len == 0:
     (hundredFor, hundredFromFile) = (sig.hundredN, true)
     result.hundredWords = sig.hundredWords
@@ -403,7 +444,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   result.judged = $judged
   result.bothSignals = both
   result.judgedAxis = if judged == vsWeightedSum:
-      "GF (M, B) (" & weightedUnit(u.units[vsWeightedSum]) & ")"
+      "GF (M, B) (" & madeUnit() & ")"
     else: "Force (" & gfUnit(u.units[vsGroundForce], sig, scaled) & ")"
   if both and p.roles.judge == joRecorded:
     # the recorded GF is the weighted sum the recorder wrote with its own masses: say so when
@@ -513,8 +554,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       else: "Force (GF as recorded)"),
       yLabel: (if percent: "Force (%)"
       elif fromMasses:
-        (if details and both: "GF from M and B" else: "Force") & " (" &
-          weightedUnit(u.units[vsWeightedSum]) & ")"
+        (if details and both: "GF from M and B" else: "Force") & " (" & madeUnit() & ")"
       else: "Force (" & (if s == vsGroundForce: gfUnit(u.units[s], sig, scaled)
         else: forceUnit(u.units[s])) & ")"),
       yUnit: (if percent: "%" else: ""))
@@ -591,7 +631,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       number(m.maxThdPct), forceCell(m.meanForce), forceCell(m.minForce),
       forceCell(m.maxPeak)]
     result.table.add row
-    result.forceUnits.add(if s == vsWeightedSum: weightedUnit(u.units[s])
+    result.forceUnits.add(if s == vsWeightedSum: madeUnit()
                            elif s == vsGroundForce: gfUnit(u.units[s], sig, scaled)
                            else: forceUnit(u.units[s]))
   if withRecorded:
@@ -676,7 +716,9 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   for role in VibRole:
     if at[role] >= 0: roles.add $role & " " & names[at[role]]
   var words = roles.join(" · ")
-  if vsWeightedSum in u.signals:
+  if vsWeightedSum in u.signals and signature:
+    words.add "; GF (M, B) = M + B with the file's own weights, made here (" & forceNote & ")"
+  elif vsWeightedSum in u.signals:
     words.add "; GF (M, B) = " & number(p.reactionMassKg, 0) & " kg·M + " &
       number(p.baseplateMassKg, 0) & " kg·B"
   elif forceNote.len > 0:
@@ -700,7 +742,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       elif not exactTopHz.isNaN: "the generated sweep's end frequency"
       else: "estimated from the reference's frequency track") & ")") &
     ", never one above 80 % of Nyquist"
-  if vsWeightedSum in u.signals:
+  if vsWeightedSum in u.signals and not signature:
     words.add "; GF (M, B) is uncalibrated without accelerometer sensitivities: in " &
       weightedUnit(u.units[vsWeightedSum]) & ", on an axis of its own"
   let e = u.reference.extent

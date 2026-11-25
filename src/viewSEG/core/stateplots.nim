@@ -592,7 +592,7 @@ proc rolesOf(state: AppState; s: Session; fileTraces: openArray[int]; roles: Vib
     # the polarity the user chose for this file layout comes back (the places are the codes');
     # Automatic is never offered here, and M and B have no polarity of their own
     result.massPolarity = poAsRecorded
-    result.judge = joRecorded
+    result.judge = joRecorded # (what the kind does unless the switch was set for this layout)
     if fileTraces.len > 0:
       let g = s.gatherOf(fileTraces[0])
       var places: array[4, int]
@@ -600,6 +600,7 @@ proc rolesOf(state: AppState; s: Session; fileTraces: openArray[int]; roles: Vib
       if g in 0 ..< s.gathers.len and state.vibLayouts.choiceFor(
           layoutKey(s.recordCodes(g), s.gathers[g].traces.len), places, polarity):
         result.groundForcePolarity = polarity.gf
+        result.judge = polarity.judge
     if result.groundForcePolarity == poAutomatic: result.groundForcePolarity = poAsRecorded
     return
   if fileTraces.len == 0 or roles.source == rsHand and roles.handFile == file: return
@@ -682,10 +683,10 @@ proc rememberRoles(state: var AppState; w: int; roles: VibRoles; origin: Command
         mb: roles.massPolarity, judge: roles.judge))
   state.persistVibLayouts(origin)
 
-proc rememberSigPolarity(state: var AppState; w: int; polarity: Polarity;
+proc rememberSigPolarity(state: var AppState; w: int; polarity: Polarity; judge: JudgeOn;
     origin: CommandOrigin) =
-  ## The ground force's polarity chosen on a signature file's window is remembered for its
-  ## layout (in the project, else the settings): the places are the codes' own, so the
+  ## The ground force's polarity and the ground force switch chosen on a signature file's
+  ## window are remembered for its layout (in the project, else the settings): the places are the codes' own, so the
   ## record's trace of Ref, GF, M and B is the one with code 21, 20, 18 and 19.
   let i = state.vibWindowFile(w)
   if i < 0: return
@@ -702,7 +703,7 @@ proc rememberSigPolarity(state: var AppState; w: int; polarity: Polarity;
     of VibBaseplateCode: (if places[3] < 0: places[3] = t - record.a)
     else: discard
   state.vibLayouts = state.vibLayouts.withChoice(layoutKey(s.recordCodes(g), record.len),
-    places, ChosenPolarity(gf: polarity))
+    places, ChosenPolarity(gf: polarity, judge: judge))
   state.persistVibLayouts(origin)
 
 proc forgetRoles(state: var AppState; w: int; origin: CommandOrigin) =
@@ -724,6 +725,18 @@ proc codeWordsOf(state: AppState; w: AnalysisWindow; n: int): string =
     let local = w.traces[n] - state.sessions[i].base
     if local in 0 ..< state.sessions[i].filePtr[].len:
       result = traceIdText(int(state.sessions[i].filePtr[].traceKeys(local).traceCode))
+
+proc vibConverter*(state: AppState; w: AnalysisWindow): bool =
+  ## Whether window `w`'s traces are laid out as the external converter's SEG-Y from a
+  ## signature file lays them out (`isConverterLayout`).
+  var codes: seq[int16] = @[]
+  for n in 0 ..< min(w.traces.len, 4):
+    let i = state.findTrace(w.traces[n])
+    let local = if i >= 0: w.traces[n] - state.sessions[i].base else: -1
+    if i >= 0 and state.sessions[i].filePtr != nil and
+        local in 0 ..< state.sessions[i].filePtr[].len:
+      codes.add state.sessions[i].filePtr[].traceKeys(local).traceCode
+  isConverterLayout(codes)
 
 proc vibTraceNames*(state: AppState; w: AnalysisWindow): seq[string] =
   ## The window's traces as the vibrator signature's pickers list them: "trace 7 · code
@@ -1024,10 +1037,13 @@ proc showPlot(state: var AppState; cmd: Command) =
     var local: seq[int] = @[]
     for t in pw.traces: local.add t - s.base
     let (found, byCodes) = s.codeRolesIn(local, had, params.accelSet)
+    let judge = params.roles.judge # (the places are the codes'; the switch is the window's)
     params.roles = if found: byCodes else: had
+    params.roles.judge = judge
     params.roles.groundForcePolarity = pol
-    (params.roles.massPolarity, params.roles.judge) = (poAsRecorded, joRecorded)
-    if pol != had.groundForcePolarity: state.rememberSigPolarity(w, pol, cmd.origin)
+    params.roles.massPolarity = poAsRecorded
+    if pol != had.groundForcePolarity or params.roles.judge != had.judge:
+      state.rememberSigPolarity(w, pol, params.roles.judge, cmd.origin)
     if not (params.forceHundredPct == pw.params.forceHundredPct or
         (params.forceHundredPct.isNaN and pw.params.forceHundredPct.isNaN)) or
         params.forceHundredUnit != pw.params.forceHundredUnit:

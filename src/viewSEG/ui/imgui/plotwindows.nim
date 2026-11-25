@@ -442,9 +442,9 @@ proc drawGroundForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: fl
     igTextUnformatted(cstring(text), nil)
     igSameLine(0, -1)
   group("Ground force", name, marks)
-  if w.result.bothSignals:
-    const judgeNames = [joRecorded: "as recorded", joWeighted: "from M and B (typed masses)"]
-    label("Judged:")
+  if w.result.bothSignals or w.result.canMake:
+    const judgeNames = [joRecorded: "In the record", joWeighted: "Made from mass and baseplate"]
+    label("Ground force:")
     igSetNextItemWidth(buttonWidth(judgeNames[joWeighted]) + igGetFrameHeight())
     if igBeginCombo("##judge", judgeNames[p.roles.judge].cstring, 0):
       for j in JudgeOn:
@@ -455,9 +455,14 @@ proc drawGroundForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: fl
       igEndCombo()
     marks.mark(name & ".judge")
     tip("Which ground force the window uses: its plots, the verdict and the limits table. " &
-      "As recorded is the weighted sum of mass and baseplate acceleration the recorder wrote " &
-      "with its own masses; from M and B is the same sum formed here with the masses you " &
-      "typed. Remembered with the roles, for this file layout")
+      "In the record is the trace coded as ground force, as it is. Made from mass and " &
+      "baseplate is the weighted sum formed here, Mr·M + Mb·B, with the masses you typed (a " &
+      "converter's SEG-Y file: its reaction-mass and baseplate weights, which undo the " &
+      "converter's scaling). A .dat's channels are forces already (plain sum) and a .vib " &
+      "uses its header's weights. Remembered with the roles, for this file layout")
+    if w.result.madeNote.len > 0:
+      wrapped(w.result.madeNote, t)
+      marks.mark(name & ".judge note")
   label("Harmonics to")
   var h = cint(p.harmonics)
   igSetNextItemWidth(box)
@@ -496,7 +501,8 @@ proc drawGroundForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: fl
     (if not typedTop.isNaN: "(typed)" elif band.hz.isNaN: "" else: "(from the reference)").cstring)
   marks.mark(name & ".top frequency source")
 
-proc drawMassesGroup(w: AnalysisWindow; name: string; box: float32; forceNote: string; t: Theme;
+proc drawMassesGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
+    forceNote: string; t: Theme;
     marks: var Marks; p: var AnalysisParams; changed: var bool; res: var PlotWindowsOutput;
     st: AppState) =
   ## The reaction and baseplate masses, kg or lb: only where M and B are accelerations that
@@ -508,7 +514,8 @@ proc drawMassesGroup(w: AnalysisWindow; name: string; box: float32; forceNote: s
     igTextUnformatted(cstring(text), nil)
     igSameLine(0, -1)
   if forceNote.len > 0:
-    wrapped("No masses are asked for this file. " & forceNote & ".", t)
+    wrapped("No masses are asked for this file. " & forceNote & ". Made from mass and " &
+      "baseplate (Ground force) uses the file's own weights.", t)
     marks.mark(name & ".masses note")
     return
   let units = st.settings.units
@@ -523,6 +530,17 @@ proc drawMassesGroup(w: AnalysisWindow; name: string; box: float32; forceNote: s
         res.notes.add "The " & which & " must be " & massLimitWords(units) & ", not " &
           sensible(typed) & " " & unitWord & "."
   group("Masses", name, marks)
+  # which trace each mass multiplies, as the roles say (the pickers can swap them)
+  if planeAt >= 0 and p.roles.mass >= 0 and p.roles.baseplate >= 0:
+    let names = st.vibTraceNames(w)
+    if p.roles.mass < names.len and p.roles.baseplate < names.len:
+      wrapped("The reaction mass multiplies " & names[p.roles.mass] & "; the baseplate mass " &
+        names[p.roles.baseplate] & ". For a converter's SEG-Y file these are its reaction-" &
+        "mass and baseplate weights, which undo the converter's scaling" &
+        (if st.vibConverter(w): ", and its code 19 trace is the reaction mass's channel " &
+          "(Swap mass and baseplate in Roles if the masses are the wrong way round)"
+        else: "") & ".", t)
+      marks.mark(name & ".masses traces")
   label("Reaction mass")
   let shownReaction = massBoxValue(p.reactionMassKg, units)
   if limitBox("##reaction." & $units, shownReaction, box, typed):
@@ -584,7 +602,7 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
   let forceShown = forceLimitOf(judgedAxis, units)
   label("100 % force =")
   # the full scale of the signal judged (GF in counts, GF (M, B) in kg × counts)
-  let weighted = w.result.judged == "GF (M, B)"
+  let weighted = w.result.judged == "GF (M, B)" and not w.result.sameAsRecorded
   let judgedUnit = unitOfLabel(judgedAxis)
   # (a signature file's typed 100 % force is shown as it is applied: in the unit now on the
   # axis, or not at all when it was typed in another unit and cannot be converted)
@@ -610,8 +628,9 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
       res.notes.add "100 % force must be above 0, not " & sensible(typed) & "."
   marks.mark(name & ".force target")
   tip("The force that is 100 % (full scale) of " &
-    (if weighted: "GF from M and B" else: "GF as recorded") &
-    " (each has its own: counts, or kg x counts), in the file's own unit" &
+    (if weighted: "the ground force made from M and B" else: "the ground force") &
+    " (each has its own: counts, or kg x counts; a .dat's or .vib's two are the same), " &
+    "in the unit of the signal judged" &
     (if forceShown.unit.len > 0: " (" & forceShown.unit & ")" else: "") &
     ". The file cannot tell it (no sensor sensitivities): take it from the vibrator's " &
     "own QC of one sweep. The peak force limit is in % of it; the average force limit is " &
@@ -785,7 +804,7 @@ proc drawWheel(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: str
   ui.wheelSize = igGetWindowSize()
   marks.markWindow(name & ".wheel popover")
   drawGroundForceGroup(w, name, planeAt, box, t, marks, p, changed, res, st)
-  drawMassesGroup(w, name, box, forceNote, t, marks, p, changed, res, st)
+  drawMassesGroup(w, name, planeAt, box, forceNote, t, marks, p, changed, res, st)
   drawForceGroup(w, name, planeAt, box, kind, forceNote, t, marks, p, changed, res, st)
   if kind != sgNone: drawJobWeightsGroup(st, name, box, marks, res)
   if kind == sgVib:
