@@ -126,6 +126,9 @@ type
     bytesWritten*, expectedBytes*: int64
     lines*: seq[string] ## plain sentences for the log
 
+  SourceReadError* = object of CatchableError
+    ## the recording could not be read while it was sliced (not a failure to write)
+
   CutSink* = ref object
     ## Filled when the job ends. Read it after the job is no longer running.
     result*: CutResult
@@ -186,6 +189,18 @@ func failureReason*(why: string; claimed, removed: bool): string =
       "The partial file could not be removed.")
   elif result.len > 0 and result[^1] notin {'.', '!', '?'}:
     result.add '.'
+
+func readFailure*(msg: string): string =
+  ## An operating-system error from reading the recording, as a sentence.
+  let first = firstLine(msg)
+  "Reading the recording failed: " & first & (if first.endsWith('.'): "" else: ".")
+
+template readingSource(body: untyped) =
+  ## A failed read of the recording is a `SourceReadError`, not a failure to write.
+  try:
+    body
+  except OSError as e:
+    raise newException(SourceReadError, readFailure(e.msg))
 
 func writeFailure*(msg: string): string =
   ## An operating-system error from the output, as a sentence.
@@ -564,13 +579,16 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let dtMs = file[].sampleIntervalUs(0) / 1000
       let wrong = checkOptions(opts, dtMs)
       if wrong.len > 0: abort(sink, dest, part, false, wrong, false)
-      if not file[].hasKeys:
-        if not file[].inMemory: fs.mappedRead(source, headers = true)
-        file[].ensureKeys()
+      readingSource:
+        if not file[].hasKeys:
+          if not file[].inMemory: fs.mappedRead(source, headers = true)
+          file[].ensureKeys()
 
       ctx.setPhase "planning"
-      let recording = planRecording(file, source, dtMs, currentVendors(),
-        proc () {.gcsafe.} = ctx.checkCancelled())
+      var recording: RecordingPlan
+      readingSource:
+        recording = planRecording(file, source, dtMs, currentVendors(),
+          proc () {.gcsafe.} = ctx.checkCancelled())
       # The vendor blocks are read without raising: a recording cut short reads as traces
       # without a start time, so the cut is looked for here, before the plan is judged.
       if file[].cutShort: abort(sink, dest, part, false, cutWhy(file[]), false)
@@ -896,7 +914,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         of skProducer:
           let m = pipe.stopMessage()
           case m[0]
-          of 'O': raise newException(OSError, m[1 .. ^1])
+          of 'O': raise newException(SourceReadError, readFailure(m[1 .. ^1]))
           else: raise newException(IOError, m[1 .. ^1])
         of skNone: discard
         else: abort(sink, dest, part, claimed, "The slice stopped before its end.", false)

@@ -998,6 +998,7 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     of dkOutputText: ui.output.setTextFile(ev.paths[0])
     of dkOutputLog: ui.output.setLogFile(ev.paths[0])
     of dkCutDest: ui.cut.setFolder(ev.paths[0])
+    of dkCutSourceFolder: ui.cut.setSourceFolder(ev.paths[0])
     of dkMissingFolder: ui.missing.setFolder(ev.paths[0])
     of dkQualityFolder: ui.quality.setFolder(ev.paths[0])
     of dkVibFolder: ui.vibfolder.setFolder(ev.paths[0])
@@ -1776,6 +1777,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   for c in cut.commands.mitems:
     ui.core.apply move c
   if cut.askFolder: ui.ask(dkCutDest, cut.askAt, explicit = true)
+  if cut.askSourceFolder: ui.ask(dkCutSourceFolder, cut.askSourceAt, explicit = true)
   if cut.askFile: ui.askOpenFile()
   if ui.windows.shortcutsOpen and not ui.shortcuts.shown:
     ui.shortcuts.shown = true
@@ -2458,6 +2460,7 @@ proc run*(opts = RunOptions()): int =
       try: ui.savingFrame(window, opts, frame)
       except Exception: discard) # a frame that fails only stops the message
   if not ended: ui.map.keepForStragglers() # the fold's count may still be reading
+  ui.cut.keepForStragglers(ui.core.jobs) # a folder slice left running reads its facts
   when RoutedChecks:
     if opts.onFrame != nil and not opts.allowToolkitErrors and checkCount() > 0:
       raise newException(AssertionDefect, "Dear ImGui's checks failed:\n" & checkReport())

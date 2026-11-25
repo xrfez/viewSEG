@@ -5,7 +5,7 @@
 
 import std/[math, strutils]
 import ../core/[cutgather, shotlog]
-export cutRefusal
+export cutRefusal, standardExt, defaultName
 import processSEG/continuous/slice
 
 const
@@ -36,6 +36,10 @@ const
   HeadersNotRead* = "The recording's headers are still being read."
   RecordingBeingRead* = "The recording is being read to see whether the slice can use it."
   OpenCut* = "Open the sliced file"
+  ChooseFolderTip* = "Choose a folder: every recording in it is sliced in one run, each to a " &
+    "file of its own in the destination folder"
+  NeedSourceFolder* = "Choose the folder whose recordings are sliced."
+  FolderBeingRead* = "Reading the folder..."
 
 func alignWords*(a: SliceAlign): string =
   ## The drop-down's words for an alignment.
@@ -89,17 +93,6 @@ func standardWords*(s: CutStandard; sourceSegd = false): string =
   if s == csSegy: FormatSegy
   elif sourceSegd: FormatSegdKeep
   else: FormatSegd
-
-func standardExt*(s: CutStandard): string =
-  ## The extension of a file of that format.
-  if s == csSegy: ".sgy" else: ".sgd"
-
-func defaultName*(source: string; s: CutStandard): string =
-  ## The source's stem, "_slice", and the format's extension; "slice" with no source.
-  var stem = source
-  let dot = stem.rfind('.')
-  if dot > 0: stem.setLen dot
-  (if stem.len == 0: "slice" else: stem & "_slice") & standardExt(s)
 
 func sizeWords*(bytes: int64): string =
   ## "about 1.5 GB" style, decimal units.

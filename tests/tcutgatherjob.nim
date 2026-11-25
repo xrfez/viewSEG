@@ -597,12 +597,24 @@ proc main*() =
       doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}, limit),
         what & ": the job did not end"
       doAssert jobs.info(id).get.state == jsFailed, what & ": " & $jobs.info(id).get.state
-      doAssert "Writing the file failed: Input/output error" in sink.result.reason and
+      doAssert "Reading the recording failed: Input/output error" in sink.result.reason and
         "partial file was removed" in sink.result.reason, what & ": " & sink.result.reason
       doAssert not fileExists(dest), what
       doAssert partFiles(outDir).len == 0, what & ": " & $partFiles(outDir)
     failFrom.store 0
     napFrom.store 1
+    napMs.store 0
+    # the headers of a recording opened without its keys cannot be read: a read, not a write
+    block:
+      var bare = openSeismic(same.path, keys = false)
+      defer: bare.close()
+      mappedCalls.store 0
+      failFrom.store 1
+      let got = runCut(jobs, bare, same.path, outDir / "bare.sgd", shots, opts)
+      failFrom.store 0
+      doAssert got.st == jsFailed and "Reading the recording failed" in got.res.reason,
+        got.res.reason
+      doAssert not fileExists(outDir / "bare.sgd")
     # a cancel while the writer waits for a slow cutter
     napMs.store 40
     mappedCalls.store 0

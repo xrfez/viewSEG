@@ -1911,6 +1911,12 @@ func treatInForce(state: AppState; path: string): TreatAs =
   ## hash confirmed, never what a listing found in a document not yet confirmed.
   state.treats.getOrDefault(path)
 
+func forcedKinds*(state: AppState): Table[string, RecordingKind] =
+  ## The kind the user set for each file, by path: what a slice of a folder treats the files
+  ## as, as the slice of one file does (`treatInForce`).
+  for path, t in state.treats:
+    if t.kind.isSome: result[path] = t.kind.get
+
 func shownTreat(state: AppState; path: string): TreatAs =
   ## What the file is shown as treated as: what is in force, and under it, for the parts none
   ## of it sets, what a listing found in a document not yet confirmed.
