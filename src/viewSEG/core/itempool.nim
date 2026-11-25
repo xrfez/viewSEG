@@ -73,11 +73,18 @@ proc hasCaseBranch(n: NimNode): bool =
   for c in n:
     if hasCaseBranch(c): return true
 
-macro isVariantObject(T: typedesc): bool =
-  ## Whether `T` is an object type with a `case` part (a variant object).
-  var n = getTypeImpl(T)
+proc isVariantType(t: NimNode): bool =
+  ## Whether `t` is an object type with a `case` part (a variant object), or an
+  ## object that inherits from one: its parent's fields are part of it too.
+  var n = getTypeImpl(t)
   if n.kind == nnkBracketExpr and n.len == 2: n = getTypeImpl(n[1]) # typedesc[T]
-  result = newLit(n.kind == nnkObjectTy and hasCaseBranch(n[2]))
+  if n.kind != nnkObjectTy: return false
+  if hasCaseBranch(n[2]): return true
+  n[1].kind == nnkOfInherit and isVariantType(n[1][0])
+
+macro isVariantObject(T: typedesc): bool =
+  ## Whether `T` is a variant object, see `isVariantType`.
+  result = newLit(isVariantType(T))
 
 func plainData*(T: typedesc): bool =
   ## Whether values of `T` can be handed from one thread to another by move: no

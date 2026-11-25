@@ -171,6 +171,12 @@ proc plainDataChecks() =
       of sRef: n: int
     Nested = object
       inner: seq[RefFirst]
+    PdBase = object of RootObj
+      case k: bool
+      of true: r: ref int
+      of false: n: int
+    PdSub = object of PdBase
+      extra: int
   static:
     doAssert plainData(int) and plainData(string) and plainData(seq[string])
     doAssert plainData(Row) and plainData(seq[Row]) and plainData(ItemFailure)
@@ -183,6 +189,8 @@ proc plainDataChecks() =
     # holds none of it, and so is what holds one
     doAssert not plainData(Plain) and not plainData(RefFirst) and not plainData(RefDefault)
     doAssert not plainData(Nested)
+    # an object whose parent is a variant object is refused too
+    doAssert not plainData(PdSub), "an object of a variant parent passed"
   # a result type with a ref is refused at compile time
   var pool: ItemPool
   var p: Probe
