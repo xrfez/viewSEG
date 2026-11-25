@@ -311,6 +311,11 @@ proc ownShape(x: openArray[float32]; dtMs: float64): SweepShape =
     result = SweepShape(startHz: NaN, endHz: NaN, lengthMs: NaN, startStepHz: NaN,
       endStepHz: NaN, stepMs: NaN, firstMs: NaN, lastMs: NaN, why: e.msg)
 
+func gapText(ms: float64): string =
+  ## A gap between two sweeps' (or a sweep's and a trace's) ends for a sentence: in ms below
+  ## a tenth of a second ("30 ms", where "0.0 s" would hide it), else in seconds ("2.0 s").
+  if round(ms) < 100: plain(round(ms), 0) & " ms" else: seconds(ms)
+
 func shapeWords(s: SweepShape; hzDigits, sDigits: int): string =
   plain(s.startHz, hzDigits) & "-" & plain(s.endHz, hzDigits) & " Hz in " &
     formatFloat(s.lengthMs / 1000, ffDecimal, sDigits) & " s"
@@ -765,7 +770,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       let gap = pilotShape.firstMs - planShape.firstMs
       let how = if abs(gap) <= SweepTimeSteps * stepMs:
           "they start together and still differ in phase"
-        else: "the recorded pilot's sweep starts " & seconds(abs(gap)) & " " &
+        else: "the recorded pilot's sweep starts " & gapText(abs(gap)) & " " &
           (if gap > 0: "after" else: "before") & " the stored reference's (alignment " &
           "looks no further than " & seconds(MaxAlignShiftMs) & " either way)"
       result.qc.plan.sweep = "the two are the same sweep (" & shapeWords(planShape, 1, 1) &
@@ -773,10 +778,10 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     var past: seq[string] = @[]
     if not (pe.startMs.isNaN or e0.startMs.isNaN):
       if pe.endMs - e0.endMs > SweepTimeSteps * stepMs:
-        past.add "the last " & seconds(pe.endMs - e0.endMs) & " of this file's pilot sweep " &
+        past.add "the last " & gapText(pe.endMs - e0.endMs) & " of this file's pilot sweep " &
           "lie past the end of the reference sweep: not judged"
       if e0.startMs - pe.startMs > SweepTimeSteps * stepMs:
-        past.add "the first " & seconds(e0.startMs - pe.startMs) & " of this file's pilot " &
+        past.add "the first " & gapText(e0.startMs - pe.startMs) & " of this file's pilot " &
           "sweep lie before the start of the reference sweep: not judged"
     result.qc.lengthWords = past.join("; ")
   block coverage:
@@ -793,7 +798,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       # traces, `cutMs`), not to their last sample
       let judgedEnd = if cutMs.isNaN: traceEnd else: min(cutMs, traceEnd)
       result.qc.recordedPct = 100 * max(0.0, judgedEnd - e0.startMs) / (e0.endMs - e0.startMs)
-      let words = "the last " & seconds(e0.endMs - max(traceEnd, e0.startMs)) &
+      let words = "the last " & gapText(e0.endMs - max(traceEnd, e0.startMs)) &
         " of the reference sweep lie past the end of this file's traces: not judged"
       result.qc.lengthWords = if result.qc.lengthWords.len > 0:
           words & "; " & result.qc.lengthWords

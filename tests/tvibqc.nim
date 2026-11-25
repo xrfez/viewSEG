@@ -763,7 +763,8 @@ proc againstThePlan() =
   ## reference have no data"; with `recordedPct` not read, "traces shorter than the sweep"
   ## read a clean "✓ PASS"; with the file's reference unit dropped, the phase plot had one line;
   ## with the share taken to the traces' last sample, not the judged part's end, "traces
-  ## shorter than the sweep" read 80 % (8 s of 10) where 7.95 s was judged.
+  ## shorter than the sweep" read 80 % (8 s of 10) where 7.95 s was judged; with every gap
+  ## in tenths of a second, "a short gap is said in ms" read "the last 0.0 s".
   block same_sweep_longer_listen_tail_is_no_difference:
     # 12 001 samples stored, the same 10 s sweep and 2 s of listen time: nothing to say
     let file = planSweep()
@@ -851,6 +852,23 @@ proc againstThePlan() =
       "sweep): "), r.qc.line
     doAssert "the last 2.0 s of the reference sweep lie past the end of this file's " &
       "traces: not judged" in r.qc.line, r.qc.line
+  block a_short_gap_is_said_in_ms:
+    # the traces end 30 ms before the reference sweep: more than one tracked step (10 ms), so
+    # part recorded, said in ms ("0.0 s" before)
+    var file = planSweep()
+    file.cutAtS = 9.97
+    let r = againstPlan(file, planSweep().referenceOf.sweepRow)
+    doAssert r.qc.verdict == qvPass and not r.qc.recordedPct.isNaN, r.qc.line
+    doAssert " ms of the reference sweep lie past the end of this file's traces" in r.qc.line,
+      r.qc.line
+    doAssert "0.0 s" notin r.qc.line, r.qc.line
+  block a_gap_under_one_step_is_whole:
+    # 5 ms short of the sweep's end: under one tracked step, the whole sweep
+    var file = planSweep()
+    file.cutAtS = 9.995
+    let r = againstPlan(file, planSweep().referenceOf.sweepRow)
+    doAssert r.qc.verdict == qvPass and r.qc.recordedPct.isNaN, r.qc.line
+    doAssert r.qc.line.startsWith("✓ PASS") and "part recorded" notin r.qc.line, r.qc.line
   block judged_against_the_files_own_pilot:
     let r = judgeOf(good())
     doAssert r.qc.ownPilot and r.qc.line.endsWith("; " & OwnPilotWords), r.qc.line
