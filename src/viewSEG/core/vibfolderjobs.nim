@@ -553,6 +553,12 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
         infoOf(files, partner), partner)
     inc done
     discard ctx.progress(int64(done) * FolderScale, int64(count) * FolderScale)
+  if oneWeightsForAll(ask.hundredByVibrator, ask.judge) and
+      typedForce(ask.options.reactionMassKg) and typedForce(ask.options.baseplateMassKg):
+    # (said once, when a SEG-Y file was judged on those weights)
+    for row in table.rows:
+      if row.kind == sgNone and row.outcome == foJudged and OneWeightsSet notin table.problems:
+        table.problems.add OneWeightsSet
   finish(sink, table)
 
 proc folderQcWork*(ask: VibQcAsk; weights: VibJobWeights; files: seq[FolderListed];

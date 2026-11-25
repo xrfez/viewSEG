@@ -588,6 +588,13 @@ proc drawMassesGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32
   tip("The baseplate's mass, in " & unitWord & ". Empty: none. A mass is " &
     massLimitWords(units) & ".")
   drawUnitToggle(name, t, marks, res, st)
+  if st.inProject and st.vibConverter(w):
+    # a converter's weights are the project's one set (not per vibrator): said, never asked
+    var kept: seq[VibHundred] = @[]
+    if st.project.doc.hasVibProfile: kept = st.project.doc.vibProfile.hundredByVibrator
+    for n, line in weightsNotes(kept, p.roles.judge):
+      wrapped(line, t)
+      marks.mark(name & ".masses project " & $n)
 
 proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
     kind: SignatureKind; forceNote: string; t: Theme; marks: var Marks;

@@ -13,12 +13,17 @@
 ##   the record, with a warning on its row; the profile's text says which is judged;
 ## - Swap mass and baseplate pressed on a converter's window is kept for its layout, and the
 ##   folder judges a file of that layout on the swapped roles with the window's numbers and its
-##   word that the other order fits better.
+##   word that the other order fits better;
+## - a converter's weights are the project's one set: its window writes them into the profile and
+##   a new one opens with them; with 100 % forces of two vibrators kept, the made signal says once
+##   that the one set serves every vibrator.
 ##
 ## Seen to fail: with the converter's role swap left out of `withCodeRoles`, the made row's numbers no
 ## longer matched those of the true ground force (`mixedFolder`); with the profile's masses always dropped (`masses = NaN`),
 ## the made row was judged on the record; with the layouts' choices not applied, the swapped row's
-## numbers were not the window's; with the order check left off, its row had no word of it.
+## numbers were not the window's; with the order check left off, its row had no word of it; with
+## the converter's window kept out of the profile, its weights did not reach the project; with
+## the note added per row, the run said it twice.
 
 import std/[math, os, strutils]
 import viewSEG/core/[analysis, jobs, nif, project, projectnif, settings, signatures, sigtypes,
@@ -243,6 +248,72 @@ proc main*() =
       for x in plain.warnings:
         doAssert "with the two weights on the other traces" notin x, x
       st.shutdown()
+
+  block oneSetOfWeights:
+    # the made signal's weights are one set for the project: a converter's window writes them
+    # (with the switch and that signal's 100 % force) into the profile and a new one opens with
+    # them; with 100 % forces kept for two vibrators the made signal says, once, that the one set
+    # serves every vibrator (the window beside the boxes, the folder run above its rows)
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let c = converterOf()
+      let sgy = fx.dir / "a.sgy"
+      writeVibSegy(sgy, [c.reference, c.mass, c.plate, c.record], 1.0, [21'i16, 19, 18, 20])
+      let w = st.window(sgy)
+      var p = st.plots[w].params
+      (p.reactionMassKg, p.baseplateMassKg, p.forceHundredWeighted) = (Wm, Wb, 1000.0)
+      p.roles.judge = joWeighted
+      st.change(w, p)
+      doAssert st.project.doc.hasVibProfile, "the converter's weights did not reach the project"
+      let kept = st.project.doc.vibProfile
+      doAssert kept.madeReactionKg == Wm and kept.madeBaseplateKg == Wb and
+        kept.forceHundredWeighted == 1000 and kept.judge == joWeighted, $kept
+      doAssert kept.forceHundredPct.isNaN and kept.hundredByVibrator.len == 0,
+        "a converter's window wrote another setting"
+      # a new window of a converter's file takes the project's set, not the kind's last masses
+      var settings = st.settings
+      (settings.plotOptions.vibrator.reactionMassKg,
+        settings.plotOptions.vibrator.forceHundredWeighted) = (5.0, 7.0)
+      st.apply Command(kind: ckSettings, settings: settings)
+      doAssert st.settings.plotOptions.vibrator.reactionMassKg == 5
+      let b = fx.dir / "b.sgy"
+      writeVibSegy(b, [c.reference, c.mass, c.plate, c.record], 1.0, [21'i16, 19, 18, 20])
+      let w2 = st.window(b)
+      doAssert st.plots[w2].params.reactionMassKg == Wm and
+        st.plots[w2].params.forceHundredWeighted == 1000, $st.plots[w2].params.reactionMassKg
+      st.shutdown()
+    # the window's lines
+    let two = @[VibHundred(vibrator: 11, pct: 1.0), VibHundred(vibrator: 12, pct: 2.0)]
+    doAssert weightsNotes(two, joWeighted) == @[OneSetOfWeights, OneWeightsSet]
+    doAssert weightsNotes(two, joRecorded) == @[OneSetOfWeights]
+    doAssert weightsNotes(two[0 .. 0], joWeighted) == @[OneSetOfWeights]
+    # the folder run: once, when a SEG-Y file was judged on the one set
+    block folderRun:
+      withFixtures fx:
+        let c = converterOf()
+        var files: seq[FolderListed] = @[]
+        for name in ["a.sgy", "b.sgy"]:
+          writeVibSegy(fx.dir / name, [c.reference, c.mass, c.plate, c.record], 1.0,
+            [21'i16, 19, 18, 20])
+          files.add listed(fx.dir / name)
+        let dat = listed(datFile(fx.dir, "a.dat"))
+        var prof = profile(joWeighted, Wm, Wb, 1000.0)
+        prof.hundredByVibrator = two
+        var count = 0
+        for x in runJob(files & dat, applied(prof, [])).problems:
+          if x == OneWeightsSet: inc count
+        doAssert count == 1, $count
+        doAssert OneWeightsSet notin runJob(@[dat], applied(prof, [])).problems
+        prof.hundredByVibrator = two[0 .. 0]
+        doAssert OneWeightsSet notin runJob(files, applied(prof, [])).problems
+        prof.hundredByVibrator = two
+        prof.judge = joRecorded
+        doAssert OneWeightsSet notin runJob(files, applied(prof, [])).problems
 
 when isMainModule:
   main()

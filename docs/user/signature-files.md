@@ -172,7 +172,15 @@ SEG-Y from a signature file, a `.dat`, a `.vib`):
 - **Made from mass and baseplate**: the window forms the ground force itself from the two
   traces, `Mr x M + Mb x B`. Its plots, numbers, table, verdict and exports then all use that one;
   the other is still drawn as a second curve under Details. The choice is remembered with the
-  roles for the file layout, and "Use as profile" keeps it for the folder QC.
+  roles for the file layout, and in a project it is the vibrator QC profile's, which the folder
+  QC follows.
+
+In a project the weights typed for a converter's file (with the choice and the made signal's
+100 % force) are **one set for the project**, as a line beside the boxes says: the folder QC uses
+them and a new window of a converter's file opens with them. They are not kept per vibrator (use
+another project, or change them, for another set). When the profile keeps 100 % forces for more
+than one vibrator and the ground force is made, one line in the window, and one above the folder
+QC's rows, says that the made signal uses that one set for every vibrator.
 
 What the two traces are decides the weights, so the window treats each kind of file its own way:
 

@@ -987,6 +987,16 @@ proc openPlot(state: var AppState; cmd: Command) =
     else: # the command names the places: that is a choice made on this file
       w.params.roles.source = rsHand
       w.params.roles.handFile = s.name
+    if not s.isSignature and state.inProject and state.project.doc.hasVibProfile and
+        cmd.plotParams == AnalysisParams() and state.vibConverter(w):
+      # a converter's file: the weights of its made ground force and that signal's 100 % force
+      # are the project's one set, so a window opens with them when the profile holds them
+      let p = state.project.doc.vibProfile
+      if not (p.madeReactionKg.isNaN or p.madeBaseplateKg.isNaN):
+        (w.params.reactionMassKg, w.params.baseplateMassKg) = (p.madeReactionKg,
+          p.madeBaseplateKg)
+      if not p.forceHundredWeighted.isNaN:
+        w.params.forceHundredWeighted = p.forceHundredWeighted
     if state.inProject:
       # the top frequencies typed in this project come with the window
       for t in topsOf(state.project.doc.vibTops):
@@ -1103,6 +1113,8 @@ proc showPlot(state: var AppState; cmd: Command) =
       # a polarity chosen on the window is remembered with the roles, for the layout
       state.rememberRoles(w, params.roles, cmd.origin)
   let profileHad = if signature: state.vibProfileOf(pw) else: VibQcProfile()
+  let madeHad = (pw.params.reactionMassKg, pw.params.baseplateMassKg,
+    pw.params.forceHundredWeighted, pw.params.roles.judge)
   if pw.view == avVibrator and params.tops != pw.params.tops and state.inProject and
       keeps(cmd.origin) and not state.project.readOnly:
     # a top frequency typed on the window is kept with its reference in the project
@@ -1137,6 +1149,19 @@ proc showPlot(state: var AppState; cmd: Command) =
     # change touched are written; the rest of the stored profile stays as it is
     let now = state.vibProfileOf(pw)
     if now != profileHad: state.keepVibProfile(profileHad, now)
+  elif pw.view == avVibrator and state.inProject and keeps(cmd.origin) and
+      not state.project.readOnly and state.vibConverter(pw):
+    # a converter's window: the switch, the weights its made ground force is formed with and that
+    # signal's own 100 % force are the project's one set (the folder QC's); nothing else of the
+    # window is a setting of the profile
+    var had = state.project.doc.vibProfile
+    var now = had
+    (had.madeReactionKg, had.madeBaseplateKg, had.forceHundredWeighted, had.judge) = madeHad
+    (now.madeReactionKg, now.madeBaseplateKg, now.forceHundredWeighted, now.judge) = (
+      pw.params.reactionMassKg, pw.params.baseplateMassKg, pw.params.forceHundredWeighted,
+      pw.params.roles.judge)
+    (had.fromFile, now.fromFile) = (pw.file, pw.file)
+    if now != had: state.keepVibProfile(had, now)
   # what the user set becomes what a new window of the kind opens with
   # (a signature file's typed 100 % force belongs to its window: never remembered for the kind)
   # (nor its drive level: a new window of a signature file opens with none typed)

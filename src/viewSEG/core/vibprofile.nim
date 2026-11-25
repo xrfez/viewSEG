@@ -101,6 +101,29 @@ const ForceNotJudged* = "No 100 % force: the force limits are not judged."
   ## file may give its force (a `.dat` from its target force, a `.vib` from its
   ## hold-down weight), and the file that cannot says why.
 
+const OneWeightsSet* = "The ground force made from mass and baseplate uses the project's one " &
+  "set of weights for every vibrator."
+  ## What a window and a folder run say once when the made ground force is judged while the
+  ## profile keeps 100 % forces for more than one vibrator: the weights are not per vibrator.
+
+func oneWeightsForAll*(entries: openArray[VibHundred]; judge: JudgeOn): bool =
+  ## Whether `OneWeightsSet` is to be said: the ground force is made from mass and baseplate and
+  ## `entries` hold 100 % forces of more than one vibrator.
+  result = false
+  if judge == joWeighted:
+    for e in entries:
+      if e.vibrator != entries[0].vibrator: return true
+
+const OneSetOfWeights* = "One set of weights for the project: the folder QC uses them too."
+  ## The note beside a converter's weight boxes in a project.
+
+func weightsNotes*(entries: openArray[VibHundred]; judge: JudgeOn): seq[string] =
+  ## The lines beside a converter's weight boxes in a project with the 100 % forces `entries`:
+  ## they are the project's one set and, while the ground force is made from them for a fleet,
+  ## `OneWeightsSet`.
+  result = @[OneSetOfWeights]
+  if oneWeightsForAll(entries, judge): result.add OneWeightsSet
+
 func sameFloat(x, y: float64): bool {.inline.} =
   x == y or (x.isNaN and y.isNaN)
 
