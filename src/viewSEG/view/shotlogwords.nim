@@ -8,6 +8,9 @@ const
   WindowTip* = "A shot log: one row per shot, with a time in UTC and the problems the reader found."
   ImportTip* = "A shot log (a CSV or text table of shots). With a project open it is kept with " &
     "the project; otherwise it lasts for this run only."
+  ClearShotLogHelp* = "Remove the imported shot log: the Shot log window empties, the map loses " &
+    "its shots, and a project keeps no copy of it. The log file on disk is not touched"
+  NoShotLogHelp* = "No shot log is loaded"
   SessionOnly* = "session only"
   NoLog* = "No shot log is loaded."
   Reading* = "Reading..."

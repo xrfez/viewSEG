@@ -43,7 +43,7 @@ type
     maReloadVendors = "Reload vendor maps",
     maLeapSeconds = "Leap seconds...",
     maImportSurvey = "Import survey...", maImportShotLog = "Import shot log...",
-    maCutGather = "Slice by shot log...",
+    maCutGather = "Slice by shot log...", maClearShotLog = "Clear shot log...",
     maClearSurvey = "Clear survey",
     maImportSettings = "Import settings...",
     maImportLayout = "Import layout...", maImportEdits = "Import trace edits...",
@@ -126,8 +126,9 @@ type
     outputReady*: bool ## File > Output... can run
     outputWhy*: string ## why it cannot; "" when it can
     cutWhy*: string
-      ## why Project > Slice by shot log cannot start (the file or the log is missing, or a cut
-      ## is under way); "" when it can
+      ## why Project > Slice by shot log cannot open (no log is loaded, or a slice is under
+      ## way); "" when it can: the file is chosen in the window
+    shotLogsLoaded*: int ## how many shot logs are loaded (Clear shot log is dim at none)
     shotLogFocused*: bool
       ## the Shot log window takes Ctrl+Z and Ctrl+Y for its cell edits
 
@@ -160,7 +161,8 @@ const
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
     maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
     maReopen: 0, maOpenVib: 0, maOpenDat: 0, maReloadVendors: 0, maLeapSeconds: 0,
-    maImportSurvey: 0, maImportShotLog: 0, maCutGather: 0, maClearSurvey: 0, maImportSettings: 0,
+    maImportSurvey: 0, maImportShotLog: 0, maCutGather: 0, maClearShotLog: 0, maClearSurvey: 0,
+    maImportSettings: 0,
     maImportLayout: 0,
     maImportEdits: 0,
     maExportLog: 0, maExportSettings: 0, maExportLayout: 0, maExportEdits: 0,
@@ -185,6 +187,7 @@ const
     maReopen: IconRefresh, maOpenVib: IconStep, maOpenDat: IconStep,
     maReloadVendors: IconRefresh, maLeapSeconds: IconInfo,
     maImportSurvey: IconSurvey, maImportShotLog: IconTable, maCutGather: IconExport,
+    maClearShotLog: IconTrash,
     maClearSurvey: IconTrash,
     maImportSettings: IconSliders,
     maImportLayout: IconLayout,
@@ -361,6 +364,10 @@ proc drawProjects(input: MenuInput; res: var MenuResult) =
   item(maCutGather, res)
   igEndDisabled()
   tip(if input.cutWhy.len > 0: input.cutWhy else: CutMenuTip)
+  igBeginDisabled(input.shotLogsLoaded == 0)
+  item(maClearShotLog, res)
+  igEndDisabled()
+  tip(if input.shotLogsLoaded > 0: ClearShotLogHelp else: NoShotLogHelp)
   igBeginDisabled(not input.surveyImported)
   item(maClearSurvey, res)
   igEndDisabled()

@@ -21,7 +21,7 @@ import ../core/state
 const
   WritesAFile* = {ckExportSettings, ckExportLayout, ckExportLog, ckSaveLayout,
     ckImportLayout, ckResetSettings, ckExportEdits, ckImportEdits, ckForgetFiles,
-    ckImportShotLog, ckRemoveShotLog, ckRemapShotLog, ckEditShotCell,
+    ckImportShotLog, ckRemoveShotLog, ckClearShotLog, ckRemapShotLog, ckEditShotCell,
     ckUndoShotEdit, ckRedoShotEdit,
     ckAddLeap, ckRemoveLeap, ckReloadLeaps, ckResetLeaps, ckCutGather,
     ckExportShotSps, ckGenerateOFile}

@@ -362,6 +362,9 @@ type
       ## read a shot log and keep it; stored in the project when one is open and writable
     ckRemoveShotLog = "remove shot log"
       ## drop a loaded shot log; a writable project also drops its copy
+    ckClearShotLog = "clear shot log"
+      ## drop every shot log (loaded or being read) and the project's copies of them; the
+      ## log files the user imported are not touched
     ckRemapShotLog = "remap shot log"
       ## parse a loaded shot log again with another map, on a job
     ckEditShotCell = "edit shot log cell"
@@ -631,7 +634,8 @@ type
       folderAction*: FolderAction ## add, remove, or locate (found at `folderPath`)
       folderPath*: string ## the folder added or removed, or where a missing one is now
       folderWas*: string ## locate: the missing folder, as the project names it
-    of ckCloseProject, ckUpdateSurvey, ckClearSurvey, ckListReferences, ckReloadVendors:
+    of ckCloseProject, ckUpdateSurvey, ckClearSurvey, ckClearShotLog, ckListReferences,
+        ckReloadVendors:
       discard
     of ckVendorMap:
       vendorMap*: string
@@ -3056,6 +3060,13 @@ func findPanel*(state: AppState; id: PanelId): int =
   for i, p in state.panels:
     if p.id == id: return i
   -1
+
+func cutMenuProblem*(state: AppState): string =
+  ## Why Project > Slice by shot log cannot be opened, in a sentence; "" when it can. The
+  ## window needs a shot log, not a file: the file is chosen in the window.
+  if state.shotLogs.len == 0: CutNeedLog
+  elif state.cutJob != NoJob: CutRunning
+  else: ""
 
 func cutProblem*(state: AppState): string =
   ## Why Project > Slice by shot log cannot start, in a sentence; "" when it can.
@@ -7711,6 +7722,37 @@ proc removeShotLogCmd(state: var AppState; cmd: Command) =
   state.project.doc.shotLogs = left
   state.projectChanged()
   state.submitShotDelete(stored)
+
+proc clearShotLogCmd(state: var AppState; cmd: Command) =
+  ## `ckClearShotLog`: every shot log is taken away wherever it is held: the loaded ones
+  ## (rows, map layer, follow and shot-trace selection), a read or a save under way (cancelled,
+  ## nothing of it applied later), and a writable project's copies (the document and, on a job,
+  ## the files). The files the logs were read from are never opened or removed.
+  let held = state.shotLogs.len
+  var reading = false
+  for w in state.shotWork:
+    if w.kind in {sjImport, sjLoad, sjRemap, sjRebuild}: reading = true
+  var copies: seq[string] = @[] # the project's copies, and those a save under way is writing
+  if state.inProject:
+    for s in state.project.doc.shotLogs: copies.add s.file
+    for w in state.shotWork:
+      if w.kind == sjSave and w.stored.len > 0 and w.stored notin copies: copies.add w.stored
+  let stored = copies
+  if held == 0 and not reading and stored.len == 0:
+    state.ignore(cmd, "no shot log is loaded")
+  elif stored.len > 0 and state.readOnlyProject:
+    state.ignore(cmd, "the project is open read-only (" & state.project.whyReadOnly &
+      "), and it keeps the shot log")
+  else:
+    state.dropShotLogs()
+    if stored.len > 0:
+      state.project.doc.shotLogs = @[]
+      state.projectChanged()
+      for file in stored: state.submitShotDelete(file)
+    state.log.add(sevInfo, "shot log", "The shot log" & (if held == 1: " was" else: "s were") &
+      " cleared" & (if held > 1: " (" & $held & " logs)" else: "") &
+      (if stored.len > 0: "; the project " & state.project.doc.name & " keeps none now" else: "") &
+      ". The files they were read from are not touched.")
 
 proc remapShotLogCmd(state: var AppState; cmd: Command) =
   if cmd.logIndex < 0 or cmd.logIndex >= state.shotLogs.len:
@@ -13101,6 +13143,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckVibWeights: state.storeVibWeights(cmd.origin, cmd.vibWeights)
   of ckImportShotLog: state.importShotLogCmd(cmd)
   of ckRemoveShotLog: state.removeShotLogCmd(cmd)
+  of ckClearShotLog: state.clearShotLogCmd(cmd)
   of ckRemapShotLog: state.remapShotLogCmd(cmd)
   of ckEditShotCell: state.editShotCellCmd(cmd)
   of ckUndoShotEdit: state.undoShotEditCmd(cmd)

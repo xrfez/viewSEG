@@ -1560,12 +1560,20 @@ a value that does not fit its columns, such as a missing easting, is not rounded
 The window stays open if the log is read again, if a project is opened or closed, or if
 the log is removed. `samples/land/shotlog.csv` is a small table of this kind.
 
+**Project > Clear shot log...** takes the loaded shot logs away again (all of them, when
+there are several; the question says how many). The Shot log window empties, the map loses the
+shots, and an open project keeps no copy of them and no longer brings them back when it is
+opened. The log files on disk are never opened for writing or removed. The item is dim, with a
+tooltip saying why, while no log is loaded; a project opened read-only keeps its log, and the
+command says so in Messages. Edits to cells are not kept, and there is no undo.
+
 ### Slice by shot log
 
 A node records for days without stopping. **Project > Slice by shot log...** slices the recording
 the Seismic window shows at the times of a loaded shot log: one record per shot, holding the
 recording's components, written to a new file. The item is dim, with a tooltip saying what is
-missing, until a file is shown and a log is loaded.
+missing, until a log is loaded; no file need be shown, since the window has a **Choose file...**
+button for the recording to slice, and says so until one is shown.
 
 The window asks for the shot log (the one the Shot log window shows to begin with), the record
 length in milliseconds (a record begins at the shot's time; the length must be a whole
