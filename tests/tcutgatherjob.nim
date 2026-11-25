@@ -603,6 +603,18 @@ proc main*() =
       doAssert partFiles(outDir).len == 0, what & ": " & $partFiles(outDir)
     failFrom.store 0
     napFrom.store 1
+    napMs.store 0
+    # the headers of a recording opened without its keys cannot be read: a read, not a write
+    block:
+      var bare = openSeismic(same.path, keys = false)
+      defer: bare.close()
+      mappedCalls.store 0
+      failFrom.store 1
+      let got = runCut(jobs, bare, same.path, outDir / "bare.sgd", shots, opts)
+      failFrom.store 0
+      doAssert got.st == jsFailed and "Reading the recording failed" in got.res.reason,
+        got.res.reason
+      doAssert not fileExists(outDir / "bare.sgd")
     # a cancel while the writer waits for a slow cutter
     napMs.store 40
     mappedCalls.store 0

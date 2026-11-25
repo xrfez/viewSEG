@@ -45,7 +45,7 @@ type
     runSink: FolderSink
     ran: FolderResult          ## what the last run did
     runFolder: string          ## the folder the run in flight, or the last, was of
-    known: seq[FolderFacts]    ## what the last job found out about each file of the folder
+    known: FactsHold           ## what the last job found out about each file of the folder
     lengthActive: bool         ## the record length is being typed: no check meanwhile
     haveRan: bool
 
@@ -81,7 +81,7 @@ proc setFolder*(ui: var CutUi; folder: string) =
 proc setSourceFolder*(ui: var CutUi; folder: string) =
   ## The answer of the dialog that chooses the folder whose recordings are sliced.
   ui.srcFolder = folder
-  ui.known = @[]
+  ui.known = nil
   ui.checkKey = ""
   ui.checked = FolderResult()
   ui.haveRan = false
@@ -236,7 +236,8 @@ proc folderPlan(ui: CutUi; st: AppState; opts: CutOptions; write: bool): FolderP
   ## What the folder jobs are given: a copy of the log's rows, the options, the open files.
   let li = st.findShotLog(ui.logId)
   result = FolderPlan(folder: ui.srcFolder, destFolder: ui.folder, rows: st.shotView(li).rows,
-    opts: opts, cacheDir: st.indexCache, write: write, known: ui.known, treats: st.forcedKinds)
+    opts: opts, cacheDir: st.indexCache, write: write, known: ui.known, treats: st.forcedKinds,
+    vendorGen: st.vendorGen)
   result.opts.logName = extractFilename(st.shotLogSource(li))
   if result.opts.logName.len == 0: result.opts.logName = st.shotLogName(li)
   for x in st.sessions: result.others.add x.diskPath
@@ -290,7 +291,7 @@ proc considerFolder(ui: var CutUi; st: AppState; opts: CutOptions) =
   for path, kind in st.forcedKinds: treated.add path & ':' & $ord(kind) & ';'
   let key = if ui.srcFolder.len > 0 and li >= 0 and ui.haveShots and usableRecordMs(ui.recordMs):
       ui.srcFolder & '\0' & $ui.shotsKey & '\0' & $ui.recordMs & '\0' & $ord(ui.standard) &
-        '\0' & $ord(ui.align) & '\0' & ui.folder & '\0' & treated
+        '\0' & $ord(ui.align) & '\0' & ui.folder & '\0' & treated & '\0' & $st.vendorGen
     else: ""
   if key == ui.checkKey: return
   ui.stopCheck(st)

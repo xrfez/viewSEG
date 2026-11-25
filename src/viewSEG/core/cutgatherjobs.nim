@@ -195,6 +195,13 @@ func readFailure*(msg: string): string =
   let first = firstLine(msg)
   "Reading the recording failed: " & first & (if first.endsWith('.'): "" else: ".")
 
+template readingSource(body: untyped) =
+  ## A failed read of the recording is a `SourceReadError`, not a failure to write.
+  try:
+    body
+  except OSError as e:
+    raise newException(SourceReadError, readFailure(e.msg))
+
 func writeFailure*(msg: string): string =
   ## An operating-system error from the output, as a sentence.
   "Writing the file failed: " & msg & (if msg.endsWith('.'): "" else: ".")
@@ -572,13 +579,16 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let dtMs = file[].sampleIntervalUs(0) / 1000
       let wrong = checkOptions(opts, dtMs)
       if wrong.len > 0: abort(sink, dest, part, false, wrong, false)
-      if not file[].hasKeys:
-        if not file[].inMemory: fs.mappedRead(source, headers = true)
-        file[].ensureKeys()
+      readingSource:
+        if not file[].hasKeys:
+          if not file[].inMemory: fs.mappedRead(source, headers = true)
+          file[].ensureKeys()
 
       ctx.setPhase "planning"
-      let recording = planRecording(file, source, dtMs, currentVendors(),
-        proc () {.gcsafe.} = ctx.checkCancelled())
+      var recording: RecordingPlan
+      readingSource:
+        recording = planRecording(file, source, dtMs, currentVendors(),
+          proc () {.gcsafe.} = ctx.checkCancelled())
       # The vendor blocks are read without raising: a recording cut short reads as traces
       # without a start time, so the cut is looked for here, before the plan is judged.
       if file[].cutShort: abort(sink, dest, part, false, cutWhy(file[]), false)

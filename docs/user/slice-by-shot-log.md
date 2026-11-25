@@ -173,7 +173,8 @@ and the format's extension. A folder usually holds one recording for each node, 
 same time, so **every file takes every shot it holds**: a file takes a shot when the start of
 the shot's record lies inside the time the file covers. The start is placed as a single slice
 places it (with **Nearest sample**, a start half a sample before the first sample is the first
-sample), and a record that runs past the end of the file is written zero-padded, with the
+sample, and a start in the last half sample of a file is the first sample of the next one), and
+a record that runs past the end of the file is written zero-padded, with the
 missing samples counted as gaps, as in a single slice. Day files of one node, one after the
 other, each take the shots that start in them. A shot that no file takes (it starts before every
 recording or after them all) is counted once and the first few are named, "3 shots are in no file
@@ -196,7 +197,9 @@ never changed.
 What the check found about each file is kept while the file's size and time and the kind you set
 for it stay as they are, so changing the record length, the alignment, the format or the
 destination does not read the files again; the check waits until you leave the record length
-box.
+box. The facts also change with the vendor header maps in force, so loading a map checks the
+files again. A file replaced by another of the same size and time is not read again until you
+choose the folder again.
 
 ## What the file holds
 

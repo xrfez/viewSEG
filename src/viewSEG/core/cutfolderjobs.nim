@@ -28,7 +28,8 @@
 import std/[algorithm, math, options, os, strutils, tables, times]
 import parseSEG
 import processSEG/continuous/slice
-import cutfile, cutgather, cutgatherjobs, filejobs, filesystem, jobs, outputjobs, recordingkind,
+import cutfile, cutgather, cutgatherjobs, filejobs, filelist, filesystem, jobs, outputjobs,
+    recordingkind,
   session, shotlog, threads, treatas, vendormaps
 
 const
@@ -40,16 +41,25 @@ const
   Unit = 1000'i64 ## the job's progress is this many units for each step of a file
 
 type
-  FolderFacts* = object
-    ## What the first step found out about a file, kept while the file stays as it was.
+  FolderFacts* = ref object
+    ## What the first step found out about a file, kept while the file stays as it was. Built
+    ## by the job and never changed after it is posted, so the window and later jobs share it.
+    ## A file of N traces keeps about 48 bytes for each trace plus one `TraceKeys` for each
+    ## receiver in `streams`; nothing else is large.
     path*: string
+    vendorGen*: int ## the vendor header maps' generation it was read under
     size*: int64
     modified*: Time
     forced*: Option[RecordingKind] ## the kind the user set for the file
-    skip*: string                  ## why the file cannot be sliced; "" when it can
+    skip*: string ## why the file cannot be sliced; "" when it can
     dtMs*: float64
-    firstUs*, lastUs*: int64       ## the span of its segments, UTC microseconds
-    streams*: SliceStreams         ## where its segments lie, for placing the shots
+    firstUs*, lastUs*: int64 ## the span of its segments, UTC microseconds
+    streams*: SliceStreams ## where its segments lie, for placing the shots
+
+  FactsHold* = ref object
+    ## The facts of every file of a folder, behind one reference: a new check makes a new hold
+    ## that shares the entries of the files that have not changed.
+    items*: seq[FolderFacts]
 
   FolderFile* = object
     path*: string
@@ -60,12 +70,13 @@ type
     written*: bool
     reason*: string          ## why writing it failed
     line*: string            ## the slice's own first sentence when it was written
+    gaps*: string            ## its sentence about output samples that fall in gaps; "" when none
     shotsWritten*: int
 
   FolderResult* = object
     folder*: string
     files*: seq[FolderFile]
-    facts*: seq[FolderFacts]    ## for the next job's `known`
+    facts*: FactsHold           ## for the next job's `known`
     noTime*: int                ## rows of the log without a time
     unplaced*: int              ## shots no file takes
     unplacedNamed*: seq[string] ## the first few, by their file number or time
@@ -86,7 +97,8 @@ type
     opts*: CutOptions
     cacheDir*: string                     ## the folder of the index caches
     others*: seq[string]                  ## the paths of the files that are open: never a destination
-    known*: seq[FolderFacts]              ## the facts of an earlier job, used for a file that has not changed
+    known*: FactsHold                     ## the facts of an earlier job, used for a file that has not changed
+    vendorGen*: int                       ## the generation of the vendor header maps in force
     treats*: Table[string, RecordingKind] ## the kinds the user set, by absolute path
     write*: bool
 
@@ -131,9 +143,10 @@ proc shotWords(s: Shot): string =
     fromUnix(s.timeUtcUs.get div 1_000_000).utc.format("yyyy-MM-dd HH:mm:ss") & " UTC"
   else: "a row"
 
-proc inspect(ctx: JobContext; path, cacheDir: string; forced: Option[RecordingKind]): FolderFacts =
+proc inspect(ctx: JobContext; path, cacheDir: string; forced: Option[RecordingKind];
+    vendorGen: int): FolderFacts =
   ## Opens `path` and says whether it can be sliced, and where its segments lie.
-  result = FolderFacts(path: path, forced: forced)
+  result = FolderFacts(path: path, forced: forced, vendorGen: vendorGen)
   var s: Session = nil
   try:
     fs.unmappedFail(path)
@@ -216,8 +229,12 @@ proc place(plan: FolderPlan; facts: seq[FolderFacts]; files: var seq[FolderFile]
       continue
     try:
       let sp = planSlices(f.streams, cut.shots, window, soShotRecords, plan.opts.align)
+      if sp.receiverCount == 0: continue
       for k in 0 ..< cut.shots.len:
-        let at = timed[cut.rows[k]].timeUtcUs.get + startOffsetUs
+        # the start on the file's grid, as the plan placed it: a start in the last half sample
+        # is the sample after the span with the nearest-sample alignment, and no file's
+        let at = timed[cut.rows[k]].timeUtcUs.get + startOffsetUs -
+          int64(round(sp.fraction(k * sp.receiverCount) * f.dtMs * 1000))
         # a start in a gap between segments of the file is inside it, too
         if sp.startCovered(k) or (at >= f.firstUs and at < f.lastUs):
           held[i].add timed[cut.rows[k]]
@@ -269,6 +286,8 @@ proc sliceOne(ctx: JobContext; plan: FolderPlan; f: var FolderFile; shots: seq[S
       f.written = true
       f.shotsWritten = sink.result.shotsWritten
       f.line = if sink.result.lines.len > 0: sink.result.lines[0] else: "Sliced."
+      for l in sink.result.lines:
+        if "fall in gaps" in l: f.gaps = l
     except SegCancelledError:
       raise newException(JobCancelledError, "cancelled")
     except JobCancelledError:
@@ -283,8 +302,9 @@ proc sliceOne(ctx: JobContext; plan: FolderPlan; f: var FolderFile; shots: seq[S
     clearCycleRoots()
 
 proc sameAsKnown(k: FolderFacts; path: string; info: FileInfo;
-    forced: Option[RecordingKind]): bool =
-  k.path == path and k.size == info.size and k.modified == info.lastWriteTime and
+    forced: Option[RecordingKind]; vendorGen: int): bool =
+  k.vendorGen == vendorGen and k.path == path and k.size == info.size and k.modified ==
+      info.lastWriteTime and
     k.forced == forced
 
 proc cutFolderWork*(plan: FolderPlan; sink: FolderSink): JobWork =
@@ -299,6 +319,9 @@ proc cutFolderWork*(plan: FolderPlan; sink: FolderSink): JobWork =
       try:
         if not fs.dirExists(plan.folder): raise newException(OSError, "not a folder")
         paths = listedNames(@[plan.folder], false, capped)
+        if paths.len > MaxTreeFiles:
+          paths.setLen MaxTreeFiles
+          capped = true
       except OSError:
         sink.result.reason = "The folder could not be listed."
         raise newException(ValueError, sink.result.reason)
@@ -318,14 +341,14 @@ proc cutFolderWork*(plan: FolderPlan; sink: FolderSink): JobWork =
         except OSError: discard
         var found = false
         if have:
-          for k in plan.known:
-            if k.sameAsKnown(path, info, forced):
+          for k in (if plan.known == nil: @[] else: plan.known.items):
+            if k.sameAsKnown(path, info, forced, plan.vendorGen):
               facts.add k
               found = true
               break
         if not found:
           ctx.setPhase "reading " & path.extractFilename
-          var f = inspect(ctx, path, plan.cacheDir, forced)
+          var f = inspect(ctx, path, plan.cacheDir, forced, plan.vendorGen)
           if have:
             f.size = info.size
             f.modified = info.lastWriteTime
@@ -336,7 +359,7 @@ proc cutFolderWork*(plan: FolderPlan; sink: FolderSink): JobWork =
       for f in facts:
         files.add FolderFile(path: f.path, skip: f.skip, firstUs: f.firstUs, lastUs: f.lastUs)
       var held: seq[seq[Shot]] = @[]
-      var res = FolderResult(folder: plan.folder, facts: facts, capped: capped)
+      var res = FolderResult(folder: plan.folder, facts: FactsHold(items: facts), capped: capped)
       place(plan, facts, files, held, res)
       if plan.destFolder.len > 0:
         let probe = plan.destFolder / "slice"

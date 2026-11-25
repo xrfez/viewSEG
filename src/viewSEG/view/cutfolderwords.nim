@@ -55,7 +55,9 @@ func outcomeLines*(r: FolderResult): seq[string] =
   ## The files written and the files that failed, one line each (the first few of the
   ## failures), then the shots that no file holds.
   for f in r.files:
-    if f.written: result.add f.path.extractFilename & " -> " & f.dest.extractFilename & ": " & f.line
+    if f.written: result.add f.path.extractFilename & " -> " & f.dest.extractFilename & ": " &
+        f.line &
+      (if f.gaps.len > 0: " " & f.gaps else: "")
   var named = 0
   for f in r.files:
     if f.reason.len > 0 and named < NamedFiles:

@@ -279,8 +279,8 @@ proc main*() =
       opts: initCutOptions(1000.0), cacheDir: dir / "cache")
     let first = run(jobs, p)
     p.known = first.res.facts
-    p.known[0].skip = "kept from before"
-    p.known[1].skip = "kept from before"
+    p.known.items[0].skip = "kept from before"
+    p.known.items[1].skip = "kept from before"
     setLastModificationTime(h / "in" / "m.sgy", getLastModificationTime(h / "in" / "m.sgy") +
       initDuration(seconds = 5))
     let second = run(jobs, p)
@@ -311,6 +311,54 @@ proc main*() =
     for q in walkFiles(w / "out" / "*"): left.add q.extractFilename
     left.sort()
     doAssert left == @["a_slice.sgd", "c_slice.sgd"], $left
+
+  block a_start_in_the_last_half_sample_belongs_to_the_next_file_only:
+    # a covers 0 to 12 s and b 12 to 24 s: a start 0.25 sample before 12 s is sample 12 s
+    # with the nearest sample, which is the first sample of b and no sample of a
+    let n = dir / "seam"
+    createDir(n / "in")
+    createDir(n / "out")
+    makeRecording(n / "in" / "a.sgy", 0)
+    makeRecording(n / "in" / "b.sgy", 12)
+    let v = logOf([1], [11_999_500'i64])
+    let got = run(jobs, FolderPlan(folder: n / "in", destFolder: n / "out", rows: v.rows,
+      opts: initCutOptions(1000.0), cacheDir: dir / "cache", write: true))
+    doAssert fileOf(got.res, "a.sgy").shots == 0 and fileOf(got.res, "b.sgy").shots == 1,
+      $(fileOf(got.res, "a.sgy").shots, fileOf(got.res, "b.sgy").shots)
+    doAssert not fileExists(n / "out" / "a_slice.sgd") and fileExists(n / "out" / "b_slice.sgd")
+    # one file only: the shot is in no file
+    let m = dir / "seam1"
+    createDir(m / "in")
+    makeRecording(m / "in" / "a.sgy", 0)
+    let one = run(jobs, FolderPlan(folder: m / "in", destFolder: m / "out", rows: v.rows,
+      opts: initCutOptions(1000.0), cacheDir: dir / "cache"))
+    doAssert one.res.unplaced == 1 and fileOf(one.res, "a.sgy").shots == 0
+
+  block the_gaps_of_a_slice_are_in_its_outcome:
+    # the second shot's record runs 250 samples past the end of the file
+    let q = dir / "gapsentence"
+    createDir(q / "in")
+    createDir(q / "out")
+    makeRecording(q / "in" / "a.sgy", 0)
+    let v = logOf([1], [11_500_000'i64])
+    let got = run(jobs, FolderPlan(folder: q / "in", destFolder: q / "out", rows: v.rows,
+      opts: initCutOptions(1000.0), cacheDir: dir / "cache", write: true))
+    doAssert "fall in gaps" in fileOf(got.res, "a.sgy").gaps, fileOf(got.res, "a.sgy").gaps
+    doAssert outcomeLines(got.res).anyIt("fall in gaps" in it), $outcomeLines(got.res)
+
+  block the_facts_depend_on_the_vendor_header_maps:
+    let h = dir / "vendor"
+    createDir(h / "in")
+    makeRecording(h / "in" / "k.sgy", 0)
+    let v = logOf([1], [2_000_000'i64])
+    var p = FolderPlan(folder: h / "in", destFolder: dir / "vendorout", rows: v.rows,
+      opts: initCutOptions(1000.0), cacheDir: dir / "cache")
+    let first = run(jobs, p)
+    p.known = first.res.facts
+    p.known.items[0].skip = "kept from before"
+    doAssert fileOf(run(jobs, p).res, "k.sgy").skip == "kept from before"
+    p.vendorGen = 1
+    doAssert fileOf(run(jobs, p).res, "k.sgy").sliceable, "facts of other maps were kept"
 
   block a_folder_that_cannot_be_listed_fails:
     var bad = plan
