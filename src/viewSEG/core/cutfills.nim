@@ -26,7 +26,7 @@
 ## A value that rounds to 0 or does not fit 16 bits is left out and said.
 ##
 ## A filter slope of 0 says the filter is out: neither its frequency nor its slope is
-## written. A slope the source does not state (a Rev 2 channel set descriptor whose slope
+## written. A slope the source does not state (a SEG-D Rev 0 to 2 channel set whose slope
 ## digits are all F or not decimal) says nothing of the filter: a stated frequency is
 ## written, the slope stays unset, and the result says so once. A Rev 3 channel set holds the
 ## slope as a float with no "not set" value, so there 0 and absent both mean out.

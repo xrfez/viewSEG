@@ -324,6 +324,7 @@ proc check(dir: string; jobs: Jobs) =
   # a SEG-D output built from keys carries no frequency, so it does not say the sentence
   let ud = cut(jobs, unset, dir / "out" / "u.sgd", csSegdRev3)
   doAssert "slope of a filter is not stated" notin linesOf(ud), linesOf(ud)
+  doAssert "filter slope not stated" notin linesOf(ud), linesOf(ud)
 
   # --- a trace no segment reaches is dead and says nothing of the recording
   let gapAt = shotsAt([BaseUs - 3 * 86_400_000_000'i64, shotUs(0)])
