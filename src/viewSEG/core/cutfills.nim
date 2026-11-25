@@ -217,7 +217,7 @@ proc keysOnly*(facts: Facts; notes: var FillNotes) =
   ## Notes the facts of a source whose output is built from keys alone (SEG-D): the keys
   ## carry the sensor type, nothing else of these. The channel set has fields for most, which
   ## the writer does not set; the rest have none.
-  if facts.has(fkSlopeUnstated): notes.slopeUnstated = true
+  # the frequency is not written here, so the unstated slope is not said either
   for k in FactKind:
     if facts.has(k) and k notin {fkSensor, fkSensorOther, fkSlopeUnstated}:
       if k in ChannelSetFacts: notes.notSet.incl k else: notes.noField.incl k
