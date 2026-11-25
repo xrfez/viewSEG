@@ -70,6 +70,7 @@ const Reached = {
   "window.height": "",
   "window.maximized": "", "recentFiles": "open", "recentFolders": "browse",
   "recentProjects": "new project", "lastProject": "", "reopenProject": "",
+  "pickerPlaces": "", "shotLayouts": "",
   "plot.display.visible": "", "plot.display.orientation": "display",
   "plot.display.mode": "display", "plot.display.fills": "display",
   "plot.display.colours": "display", "plot.display.custom.background": "display",

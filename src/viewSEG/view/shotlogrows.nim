@@ -36,6 +36,15 @@ func nextShown*(shown: openArray[int]; col: int): int =
   for c in shown:
     if c > col: return c
 
+func nextInOrder*(order: openArray[int]; col: int): int =
+  ## The column after `col` in `order` (the columns as the grid shows them, which the
+  ## user may have rearranged), or -1 when `col` is last or not shown. Tab moves to it.
+  result = -1
+  for k, c in order:
+    if c == col:
+      if k + 1 < order.len: result = order[k + 1]
+      break
+
 func sortedUnique(rows: openArray[int]): seq[int] =
   result = @rows
   result.sort()

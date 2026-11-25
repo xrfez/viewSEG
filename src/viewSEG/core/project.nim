@@ -21,7 +21,7 @@
 import std/[options, os, strutils, times]
 import parseSEG
 import breakmodel, displaypresets, edits, filesystem, join, nif, outputbinary, outputnames,
-    outputtext, processing, shotlog,
+    outputtext, processing, shotlayout, shotlog,
   stationmoves, vendormaps, vibprofile
 
 const
@@ -95,6 +95,8 @@ type
     name*: string
     file*: string ## a plain file name; the copy is `shotlogs/` & file
     map*: ShotLogMap
+    layout*: ShotLayout
+      ## how the grid shows it: columns, widths, order and sort, by column name
     later*: seq[NifNode]
       ## fields of the log this version does not know, written back
     mapLater*: seq[NifNode]

@@ -117,7 +117,7 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif,
     outputbinary, outputnames, outputtext, reader,
   recordingkind, recordqc, referencejobs, references, selection, session, settings,
-      shotfollowtarget, shotlog,
+      shotfollowtarget, shotlayout, shotlog, shotsort,
   ofile, shotlogjobs, shotlogsps, shotselect, shotselectjobs, shotspsjobs,
   shots, spectra,
   spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids,
@@ -368,6 +368,9 @@ type
       ## overlay one cell of a loaded shot log; a writable project writes the copy
     ckUndoShotEdit = "undo shot log edit"
       ## put back the text a cell of a loaded shot log had before the last edit
+    ckShotLayout = "shot log layout"
+      ## keep how a loaded shot log's grid is laid out (its columns' order, widths and
+      ## visibility, and its sort); a writable project stores it with the log
     ckRedoShotEdit = "redo shot log edit"
       ## apply again a shot-log cell edit that was undone
     ckAddLeap = "add leap second"
@@ -477,6 +480,9 @@ type
     of ckRememberPlace:
       placeName*: string ## the picker's stable name
       placePath*: string ## the folder it was used in
+    of ckShotLayout:
+      slogIndex*: int ## which loaded shot log
+      slogLayout*: ShotLayout ## how its grid shows it
     of ckLayout: arrangement*: string ## the toolkit's layout text
     of ckSaveLayout: layoutName*: string
       ## the name to keep it under
@@ -1143,6 +1149,7 @@ type
     source: string          ## the file it was read from
     stored: string          ## the copy's file name under shotlogs/; "" when not stored
     map: ShotLogMap
+    layout: ShotLayout      ## how the grid shows it; kept by column name
     log: ShotLog
     view: ShotView
     revision: int           ## bumps when a job assigns a new view
@@ -2804,6 +2811,22 @@ func shotLogReading*(state: AppState): bool =
 func shotLogMap*(state: AppState; i: int): ShotLogMap {.inline.} =
   ## The map loaded shot log `i` was parsed with.
   state.shotLogs[i].map
+
+func shotLayout*(state: AppState; i: int): ShotLayout =
+  ## How loaded shot log `i`'s grid is laid out (the default when it was never changed).
+  if i < 0 or i >= state.shotLogs.len: ShotLayout() else: state.shotLogs[i].layout
+
+proc shotLogKeys*(state: AppState; i: int): seq[string] =
+  ## The names a layout keeps loaded shot log `i`'s columns under (`columnKey`).
+  if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: return
+  let log = state.shotLogs[i].log
+  for c in 0 ..< log.width: result.add columnKey(log.columnName(c), c)
+
+proc shotSortStep*(state: AppState; i: int; sort: SortBuild; batch: int): bool =
+  ## Reads `batch` more rows into `sort` (made for loaded shot log `i`); true once it is done.
+  if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: return true
+  let loaded = state.shotLogs[i]
+  sort.advance(loaded.log, loaded.view, loaded.map, batch)
 
 proc shotCell*(state: AppState; i, row, col: int): string =
   ## One cell of loaded shot log `i`, as a grid shows it.
@@ -7730,6 +7753,27 @@ proc remapShotLogCmd(state: var AppState; cmd: Command) =
 
 const ShotEditCap = 1000
 
+proc shotLayoutCmd(state: var AppState; cmd: Command) =
+  ## Keeps a grid layout: with the log in a writable project, and as the settings' last
+  ## layout for the log's headers (a log read again, or one that is not stored, gets it).
+  if cmd.slogIndex < 0 or cmd.slogIndex >= state.shotLogs.len:
+    state.ignore(cmd, "no such shot log")
+    return
+  let loaded = state.shotLogs[cmd.slogIndex]
+  if loaded.log == nil:
+    state.ignore(cmd, "the shot log is not loaded")
+    return
+  var layout = cmd.slogLayout
+  if layout.columns.len > MaxLayoutColumns: layout.columns.setLen MaxLayoutColumns
+  if layout.sort.len > MaxLayoutSort: layout.sort.setLen MaxLayoutSort
+  loaded.layout = layout
+  let key = headerKey(state.shotLogKeys(cmd.slogIndex))
+  state.change(cmd.origin, s): s.shotLayouts.remember(key, layout)
+  if loaded.stored.len > 0 and state.inProject and not state.readOnlyProject:
+    for s in state.project.doc.shotLogs.mitems:
+      if s.file == loaded.stored: s.layout = layout
+    state.projectChanged()
+
 proc finishShotCell(state: var AppState; index: int) =
   let loaded = state.shotLogs[index]
   if loaded.stored.len > 0 and state.inProject and state.readOnlyProject:
@@ -7831,6 +7875,9 @@ proc tookShotImport(state: var AppState; w: ShotLogWork) =
   let r = w.sink.result
   let loaded = LoadedShotLog(id: state.nextShotId, name: w.name, source: w.source,
     map: r.map, log: r.log, view: r.view, revision: 1)
+  var names: seq[string] = @[]
+  for c in 0 ..< r.log.width: names.add columnKey(r.log.columnName(c), c)
+  loaded.layout = state.settings.shotLayouts.layoutFor(headerKey(names))
   inc state.nextShotId
   state.shotLogs.add loaded
   state.follow.keep(loaded.id, r.index)
@@ -7845,6 +7892,8 @@ proc tookShotLoad(state: var AppState; w: ShotLogWork) =
   let r = w.sink.result
   let loaded = LoadedShotLog(id: state.nextShotId, name: w.name, source: w.source,
     stored: w.stored, map: r.map, log: r.log, view: r.view, revision: 1)
+  for s in state.project.doc.shotLogs:
+    if s.file == w.stored: loaded.layout = s.layout
   inc state.nextShotId
   state.shotLogs.add loaded
   state.follow.keep(loaded.id, r.index)
@@ -7872,7 +7921,8 @@ proc tookShotSave(state: var AppState; w: ShotLogWork) =
       s.name = w.name
       found = true
   if not found:
-    state.project.doc.shotLogs.add StoredShotLog(name: w.name, file: w.stored, map: w.map)
+    state.project.doc.shotLogs.add StoredShotLog(name: w.name, file: w.stored, map: w.map,
+      layout: loaded.layout)
   state.projectChanged()
 
 proc tookShotRemap(state: var AppState; w: ShotLogWork) =
@@ -12618,6 +12668,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
       s.recentFiles = was.recentFiles # memory, not preferences
       s.recentFolders = was.recentFolders
       s.pickerPlaces = was.pickerPlaces
+      s.shotLayouts = was.shotLayouts
       s.window = was.window
   of ckDisplay:
     let k = state.findPanel(cmd.panel)
@@ -13087,6 +13138,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckEditShotCell: state.editShotCellCmd(cmd)
   of ckUndoShotEdit: state.undoShotEditCmd(cmd)
   of ckRedoShotEdit: state.redoShotEditCmd(cmd)
+  of ckShotLayout: state.shotLayoutCmd(cmd)
   of ckAddLeap:
     let date = LeapDate(year: cmd.leapYear, month: cmd.leapMonth, day: 1)
     try:

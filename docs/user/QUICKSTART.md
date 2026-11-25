@@ -1534,6 +1534,26 @@ and the reason is shown under it. **Filter** keeps rows whose cells hold the tex
 **Problems only** keeps rows that have a problem. The **Problems** list names each
 problem; a click shows that row in the grid.
 
+**Sort and arrange the columns.** A click on a column's header sorts the rows by it, a second
+click turns the order round, and Shift-click adds a further key: the header shows an arrow
+for the direction and, with more than one key, the key's place (1, 2 ...). Numbers sort by
+value, Time (UTC) and GPSTB by instant, anything else as text without regard to case; a
+user defined column whose filled cells are all numbers sorts by value; rows that tie keep the
+file's order; an empty cell comes last whichever way the key goes. The sort only changes the
+order shown: a row keeps its own place in the log, so a selection, an edit, a Problems entry,
+**Only selected**, **Filter**, **Follow the plot**, the map's selection and Tab to the next cell
+all go by the row, not by its place in the list. A sort of a long log is read a few thousand
+rows a frame and made once ("Sorting..." shows meanwhile), not again until the sort, the
+log or an edit changes. Drag a header onto another to move the column there. A right-click on
+a header opens a menu: **Hide this column**, **Clear sort** (the file's order again),
+**Reset columns** (every column shown, in the file's order, at its first width) and a list
+that shows or hides each column. A column mapped to Ignore is not in the grid or in this
+list. The order, the hidden columns, the widths and the sort are kept by the column's header
+name: with a project open, in the project beside the log; and, for every log, in the settings
+as the last layout for that set of headers, so a log read again with the same headers (also
+one that is not stored) comes back as it was left. A column the layout does not know is shown
+at the end.
+
 **Follow the plot**, beside **Allow editing**, starts unticked and is remembered.
 While it is ticked, the grid shows the row of the trace under the pointer, of a
 selected vibrator signature, or of the selected file, matched by time. One row
