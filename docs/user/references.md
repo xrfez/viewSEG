@@ -101,7 +101,9 @@ trace of the record, the window cut from it, and a phase.
 
 - **Which trace.** Auxiliary trace N (counted among the record's auxiliary traces: a
   pilot, a time break), or trace N of the record (counted among all of its traces, in
-  file order). N starts at 1.
+  file order). N starts at 1. The same count names an auxiliary trace that is marked for
+  correlation (see [Correlate](correlate.md)): the pilot's own trace is correlated only
+  when its position is marked.
 - **Start** and **Length**, in milliseconds. The length starts as the whole trace of the
   record on show (samples times the interval) and is required. The window is Length / interval
   samples (12 000 ms at 1 ms: 12 000 samples; a length that is not a whole number of intervals

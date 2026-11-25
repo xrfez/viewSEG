@@ -33,7 +33,8 @@ reference's name.
 
 A stored sweep is loaded once for the whole run. A pilot reference is taken from each record
 being written, so every record is correlated with its own pilot; a record without that
-auxiliary trace fails the file.
+auxiliary trace fails the file. The pilot's own trace is correlated only when it is marked,
+as any other auxiliary trace.
 
 What is written:
 
@@ -48,18 +49,39 @@ What is written:
   arrival shaped like the sweep with amplitude *a* correlates to a peak of *a*.
 - **Dead traces stay dead.** A trace marked dead in the file is written as zeros, not
   correlated.
-- **Auxiliary traces.** A trace of the file that holds a reference is correlated like the
-  others, after it is shifted by its lag. Any other auxiliary trace is cut to the listen
-  time and written as it is.
-  Reference traces are written with the lead and a matching negative delay (their own delay
-  less the lead), so a reader that honours the delay puts the wavelet peak at time 0. A SEG-D
-  file written from a SEG-D file keeps its own headers, which hold one start time per channel
-  set, so there the reference traces keep the delay the file had and the notes say so; a note
-  also says so when a SEG-Y trace's time scalar cannot hold the delay, or when the delay is
-  not where the standard puts it in the file (it is then left as it is).
-  viewSEG itself draws every trace of a panel on one time axis, so on reopening the file here
-  the reference wavelet still shows with its lead (the peak at the lead time), while a program
-  that honours each trace's delay puts the peak at zero.
+- **Auxiliary traces.** An auxiliary trace is correlated only when it is **marked for
+  correlation**; none is marked unless you say so, whatever its trace code (a trace that
+  holds a reference included). Any other auxiliary trace is cut to the listen time and written
+  as it is.
+  A mark is for an auxiliary position: the *N*th auxiliary trace of a record, counted in file
+  order as the pilot rule counts "Auxiliary trace *N*" (see [References](references.md)). It
+  holds for that position in every record of the file. A mark is made for one file, and is kept
+  with that file's edits, or for the whole project, and is kept in the project and applies to
+  every file of it. For a position of a file, the file's own entry decides; a file may also say
+  *not marked*, which wins over the project's mark. With no entry of the file, the project's
+  decides; with neither, the trace is not correlated.
+  Each mark carries its own **shift**, in milliseconds, positive later (0 when none is given).
+  The marked trace is shifted by it before it is correlated: zeros in front, the end cut, the
+  record length kept, so both sides of the wavelet show. A shift that is not a whole number of
+  samples is taken as the nearest whole number of samples, and the notes give the shift
+  applied. The trace is written with a matching negative delay (its own delay less the shift),
+  so a reader that honours the delay puts the wavelet peak at time 0; with a shift of 0 the
+  delay is left as it was. A SEG-D file written from a SEG-D file keeps its own headers, which
+  hold one start time per channel set, so there the shifted traces keep the delay the file had
+  and the notes say so; a note also says so when a SEG-Y trace's time scalar cannot hold the
+  delay, or when the delay is not where the standard puts it in the file (it is then left as it
+  is). viewSEG itself draws every trace of a panel on one time axis, so on reopening the file
+  here a shifted wavelet still shows later (its peak at the shift), while a program that
+  honours each trace's delay puts the peak at zero.
+  A marked position that a record does not have is skipped in that record, and the notes say so
+  once for the file. A marked trace at another sample interval than the record is written as
+  zeros, and the notes say so. The Correlate button, the on-demand view and the Correlated tick
+  of the Output window all take the marks in force: changing a mark asks an open correlated view
+  again.
+  A file with **no seismic trace** takes its record length and sample interval from its marked
+  auxiliary traces (they must share one length and one interval); the unmarked ones are padded
+  or cut to that length. With none marked, the file is refused: "the file has no seismic traces
+  and no auxiliary trace is marked for correlation."
 - **An unreadable trace fails the file.** A trace that cannot be read (the file is cut short,
   the drive fails) fails that file, with the reason in its row of the results, and the part
   of the file already written is removed. The other files of the run go on.
