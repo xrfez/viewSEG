@@ -10,7 +10,8 @@
 ## the one asked for (another file shown, another folder or the subfolders tick
 ## changed, another survey): the job is cancelled and its result never read.
 ## The relation records a job reads are given to it by address, never as a `ref`, and the
-## state keeps them until the job's work is back (`holdGeometry`).
+## state keeps them until the job's work is back (`holdGeometry`); so are the sink it fills
+## and the note it sets (`holdRef`).
 
 import std/[algorithm, os, strutils, tables]
 import parseSEG
@@ -342,8 +343,10 @@ proc submitFile(ui: var MissingUi; st: AppState; key, path: string) =
   ui.file.job = st.jobs.submit(spec,
     scanMissing(folder, @[path], x.addrOf, ui.file.sink, st.indexCache, st.forcedKinds,
       receivers.addrOf, derived))
-  # the job reads them in place: the state keeps them until its work is back
+  # the job reads them, and fills the sink, in place: the state keeps them until its work is
+  # back
   for g in [x, receivers]: st.holdGeometry(ui.file.job, g)
+  st.holdRef(ui.file.job, ui.file.sink)
 
 proc submitFolder(ui: var MissingUi; st: AppState; key: string) =
   let layer = st.relationsLayer
@@ -356,6 +359,7 @@ proc submitFolder(ui: var MissingUi; st: AppState; key: string) =
     folderScan(folder, st.settings.missing.subfolders, st.indexCache, x.addrOf, ui.folder.sink,
       ui.folder.note, st.forcedKinds, receivers.addrOf, derived, st.settings.missing.untold))
   for g in [x, receivers]: st.holdGeometry(ui.folder.job, g)
+  for pin in [RootRef(ui.folder.sink), ui.folder.note]: st.holdRef(ui.folder.job, pin)
 
 proc startFile(ui: var MissingUi; st: AppState) =
   ## Called while the File tab is on screen: starts the computation for the file shown, after

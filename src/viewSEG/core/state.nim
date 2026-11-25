@@ -890,6 +890,11 @@ type
       ## per running job
     left: seq[tuple[job: JobId; geometry: ref SurveyGeometry]]
       ## those of jobs abandoned while their work still ran, until it is back
+    pins: seq[tuple[job: JobId; pin: RootRef]]
+      ## the other objects jobs fill or read through their addresses (a window's sink, its
+      ## note), per running job (`holdRef`)
+    pinsLeft: seq[tuple[job: JobId; pin: RootRef]]
+      ## those of jobs abandoned while their work still ran, until it is back
 
   CorrelateHold = ref object
     ## One correlation, kept until its job has ended. A ref, not shared memory:
@@ -2363,6 +2368,8 @@ proc keepForStragglers(state: var AppState) =
   for c in state.qcHeld: GC_ref(c.relations)
   for c in state.batchSurvey.held: GC_ref(c.geometry) # a batch write or a scan reads it
   for c in state.batchSurvey.left: GC_ref(c.geometry)
+  for c in state.batchSurvey.pins: GC_ref(c.pin) # a scan fills its sink through its address
+  for c in state.batchSurvey.pinsLeft: GC_ref(c.pin)
   if not state.joining.geometry.isNil: GC_ref(state.joining.geometry) # `joinApplyWork` reads it
   if not state.joining.relations.isNil: GC_ref(state.joining.relations)
   for r in state.joining.reused: GC_ref(r) # `joinReadWork` reads them
@@ -2664,6 +2671,17 @@ proc holdGeometry*(state: AppState; job: JobId; geometry: ref SurveyGeometry) =
   assertUiThread()
   if job != NoJob and not geometry.isNil:
     state.batchSurvey.held.add (job, geometry)
+
+proc holdRef*(state: AppState; job: JobId; pin: RootRef) =
+  ## Keeps `pin` alive until `job` has ended, as `holdGeometry` keeps a geometry: a job given
+  ## its address (a window's sink, which the job fills, or its note) shares no `ref` with this
+  ## thread, so the window may let go of its own meanwhile (a cancel, a new answer asked for).
+  ## Released when the job is seen finished or cancelled, and, for one abandoned, when its
+  ## work is back (`Jobs.workingOn`); at the quit, kept to the end of the process. Nil holds
+  ## nothing.
+  assertUiThread()
+  if job != NoJob and not pin.isNil:
+    state.batchSurvey.pins.add (job, pin)
 
 proc holdSurvey*(state: AppState; job: JobId) =
   ## Keeps the project's survey (the one `projectSurvey` gave when `job` was
@@ -10407,10 +10425,14 @@ proc finishO(state: var AppState; job: JobInfo) =
     state.log.add(sevError, "generate O file", state.oOutcome)
 
 proc releaseSurvey(state: AppState; job: JobInfo) =
-  ## Lets go of the geometries `job` read (`holdGeometry`).
+  ## Lets go of the geometries `job` read (`holdGeometry`) and of what else it was given by
+  ## address (`holdRef`).
   for c in state.batchSurvey.held:
     if c.job == job.id and job.abandoned: state.batchSurvey.left.add c # its work still runs
   state.batchSurvey.held.keepItIf(it.job != job.id)
+  for c in state.batchSurvey.pins:
+    if c.job == job.id and job.abandoned: state.batchSurvey.pinsLeft.add c
+  state.batchSurvey.pins.keepItIf(it.job != job.id)
 
 proc kindFromOpen(state: var AppState) =
   ## The shown file's facts (`recFacts`, read from its own header keys) give its row of Files
@@ -14173,6 +14195,8 @@ proc drainInbox*(state: var AppState): bool =
     state.releaseSurvey(job)
   if state.batchSurvey.left.len > 0:
     state.batchSurvey.left.keepItIf(state.jobs.workingOn(it.job))
+  if state.batchSurvey.pinsLeft.len > 0:
+    state.batchSurvey.pinsLeft.keepItIf(state.jobs.workingOn(it.job))
   if state.leftChecks.len > 0: state.leftChecks.keepItIf(state.jobs.workingOn(it.job))
   state.prepareNext() # (once the main panel has its tile; or a prepare ended)
   if state.stoppedWaiting: state.followNewest() # (a stopped .dat's time may be up)

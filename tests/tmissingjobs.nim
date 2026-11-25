@@ -30,7 +30,9 @@
 ## With the X record at a shared source picked by the record number,
 ## `several_x_records_at_one_source` rejected found 0 missing 4 at record number 2. With the
 ## `holdGeometry` call left out of `the_survey_is_held_*`, the records were freed under the job
-## and another geometry took their place: it found 9 stations missing where 1 was.
+## and another geometry took their place: it found 9 stations missing where 1 was. With the
+## sink and the note captured by the works as `ref`s (as before), `the_work_holds_no_ref_*`
+## saw them shared; with `holdRef` left out, the state did not hold them for the job.
 
 import std/[atomics, os, strutils, tables, times]
 when defined(release):
@@ -896,6 +898,43 @@ proc main*() =
     doAssert st.jobs.state(id) == jsDone, st.jobs.info(id).get.error
     doAssert sink.result.shot.stats.missing == 1, $sink.result.shot.stats
     doAssert other[].relationCount(rdSource) == 1
+    st.shutdown()
+
+  block the_work_holds_no_ref_of_its_sink_or_note:
+    ## The work fills the sink and sets the note through their addresses (it is destroyed on
+    ## the job's thread: a `ref` in it would be counted there and on the UI thread at once);
+    ## the app keeps them for the job (`holdRef`) and lets go once its work is back.
+    mainThread = getThreadId()
+    let folder = dir / "pinned"
+    createDir(folder)
+    let one = folder / "held.sgd"
+    shotFile(one, [(record: 1, src: 1.0, receivers: 1 .. 3)])
+    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4))
+    let sink = MissingSink()
+    let note = ScanNote()
+    block:
+      let file = scanMissing(folder, @[one], addr survey[], sink)
+      let all = folderScan(folder, false, "", addr survey[], sink, note)
+      doAssert isUniqueRef(sink) and isUniqueRef(note), "a work holds the sink or the note"
+    var st = initAppState()
+    st.rememberFilesIn(dir / "pinned-config")
+    gate.close()
+    reached.store(false)
+    setFsHook(holdOpen)
+    let id = st.jobs.submit(missingSpec(folder, @[folder]),
+      folderScan(folder, false, "", addr survey[], sink, note))
+    st.holdGeometry(id, survey)
+    for pin in [RootRef(sink), note]: st.holdRef(id, pin)
+    doAssert waitUntil(reached.load), "the job did not reach its file"
+    doAssert not isUniqueRef(sink) and not isUniqueRef(note), "the state does not hold them"
+    gate.open
+    doAssert waitUntil((discard st.drainInbox(); st.persist();
+      st.jobs.state(id) in {jsDone, jsFailed, jsCancelled} and isUniqueRef(sink) and
+      isUniqueRef(note))), "the state still holds them after the job"
+    setFsHook(nil)
+    doAssert st.jobs.state(id) == jsDone, st.jobs.info(id).get.error
+    doAssert sink.result.ok and sink.result.shot.stats.missing == 1, $sink.result.shot.stats
+    doAssert not note.capped
     st.shutdown()
 
   echo "tmissingjobs: ok"

@@ -30,7 +30,9 @@
 ## five records whole. With the traces at no station not left out of a known template (as a
 ## trace whose headers name no station is never outside it), `a_known_template_leaves_out_*`
 ## measured 8 traces where 5 were expected and counted none at no station; with `absorb` not
-## summing them, the folder counted 3 where 18 were expected.
+## summing them, the folder counted 3 where 18 were expected. With the sink and the note
+## captured by the works as `ref`s (as before), `the_work_holds_no_ref_*` saw them shared; with
+## `holdRef` left out, the state did not hold them for the job.
 
 import std/[atomics, math, os, strutils, tables]
 import parseSEG
@@ -398,6 +400,43 @@ proc main*() =
       doAssert sink.result.receivers.totals.outside == 3,
         "outside " & $sink.result.receivers.totals.outside
       doAssert other[].relationCount(rdSource) == 1
+      st.shutdown()
+
+  block the_work_holds_no_ref_of_its_sink_or_note:
+    # the work fills the sink and sets the note through their addresses (it is destroyed on the
+    # job's thread: a `ref` in it would be counted there and on the UI thread at once); the
+    # app keeps them for the job (`holdRef`) and lets go once its work is back
+    mainThread = getThreadId()
+    withFixtures fx:
+      let path = fx.dir / "held.sgd"
+      shotFile(path)
+      let x = surveyOf(xRec(1, "1.00", "99.00", 1, 5, 10, 1, 5))
+      let sink = QualitySink()
+      let note = QualityNote()
+      block:
+        let one = scanQuality(@[path], initTable[string, FileEdits](), sink)
+        let file = fileScan(path, "", EditsSnapshot(), sink, NoiseSettings())
+        let all = folderScan(fx.dir, false, "", EditsSnapshot(), sink, note, NoiseSettings())
+        doAssert isUniqueRef(sink) and isUniqueRef(note), "a work holds the sink or the note"
+      var st = initAppState()
+      st.rememberFilesIn(fx.dir / "config")
+      gate.close()
+      reached.store(false)
+      setFsHook(holdOpen)
+      let id = st.jobs.submit(qualitySpec(@[fx.dir]), folderScan(fx.dir, false, "",
+        EditsSnapshot(), sink, note, NoiseSettings(), forcedKinds([path], rkShotGather),
+        relations = addr x[]))
+      st.holdGeometry(id, x)
+      for pin in [RootRef(sink), note]: st.holdRef(id, pin)
+      doAssert waitUntil(reached.load), "the job did not reach its file"
+      doAssert not isUniqueRef(sink) and not isUniqueRef(note), "the state does not hold them"
+      gate.open
+      doAssert st.settle(st.jobs.info(id).get.state in {jsDone, jsFailed} and
+        isUniqueRef(sink) and isUniqueRef(note)), "the state still holds them after the job"
+      setFsHook(nil)
+      doAssert sink.result.ok, sink.result.reason
+      doAssert sink.result.receivers.totals.outside == 3, $sink.result.receivers.totals
+      doAssert not note.capped
       st.shutdown()
 
 when isMainModule:

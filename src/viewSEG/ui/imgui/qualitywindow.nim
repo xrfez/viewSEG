@@ -11,7 +11,7 @@
 ## cancelled and its result never read. Edits are copied on the UI thread (`editsSnapshot`)
 ## before a job is submitted: the worker must not read `AppState`. The relation records a job
 ## reads are given to it by address, never as a `ref`, and the state keeps them until the job's
-## work is back (`holdGeometry`). Nothing here is looked up by a record number.
+## work is back (`holdGeometry`); so are the sink it fills and the note it sets (`holdRef`). Nothing here is looked up by a record number.
 
 import std/[algorithm, os, strutils, tables]
 from parseSEG import SurveyGeometry
@@ -293,8 +293,10 @@ proc submitFile(ui: var QualityUi; st: AppState; key, path: string) =
     fileScan(path, st.indexCache, st.editsSnapshot, ui.file.sink, st.settings.noise,
       st.forcedKinds, relations = x.addrOf, receivers = o.addrOf,
       traceMatch = st.settings.join.traceMatch, join = join))
-  # the job reads them in place: the state keeps them until its work is back
+  # the job reads them, and fills the sink, in place: the state keeps them until its work is
+  # back
   for g in [x, o, survey]: st.holdGeometry(ui.file.job, g)
+  st.holdRef(ui.file.job, ui.file.sink)
 
 proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
   let folder = st.settings.quality.folder
@@ -311,6 +313,7 @@ proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
       st.settings.quality.untold, relations = x.addrOf, receivers = o.addrOf,
       traceMatch = st.settings.join.traceMatch, join = join))
   for g in [x, o, survey]: st.holdGeometry(ui.folder.job, g)
+  for pin in [RootRef(ui.folder.sink), ui.folder.note]: st.holdRef(ui.folder.job, pin)
 
 proc consider(ui: var QualityUi; st: AppState) =
   ## Polls the jobs, drops an answer that is stale, and starts the File computation for
