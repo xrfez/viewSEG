@@ -10,9 +10,10 @@
 ## Seen to fail: with the item for file `i` reading file `i xor 1`, `scenariosSayWhatTheyShould`
 ## finds the skipped files named wrongly (the threads agree with each other, so the figures are
 ## pinned); with the reason a file could not be read not kept, `oneFileFails` finds the victim
-## missing from the skipped list.
+## missing from the skipped list; with the mix not announced to the items, `mixedFolderStopsReading`
+## finds 8 files read on one thread, not 2.
 
-import std/[os, strutils, tables, times]
+import std/[atomics, os, strutils, tables, times]
 import parseSEG
 import viewSEG/core/[jobs, missingjobs, missingreport, recordingkind, reportside, settings]
 import utils/[faultyfs, waiting]
@@ -268,6 +269,13 @@ proc runOn(sc: Scenario; threads: int): tuple[st: JobState; result: MissingJobRe
 var lane: Jobs
 var reads: int
 
+var phases: seq[string]
+
+proc notePhase(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
+  if back: return
+  {.cast(gcsafe).}:
+    phases.add phase
+
 proc stopOnScanning(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
   if not back and phase.startsWith("scanning"): discard lane.cancel(id)
 
@@ -326,6 +334,41 @@ proc main*() =
       by["untold-as-receiver"].sides.receivers == 9
     doAssert by["untold-file-tab"].notChecked.len == 5
     doAssert by["mixed"].mixed.len > 0
+
+  block mixedFolderStopsReading:
+    ## once the files taken are of both sides the gathers of the rest are not read: on one
+    ## thread exactly the files up to the one that made the mix, on more no more than the
+    ## files in hand then
+    var mixed: Scenario
+    for sc in all:
+      if sc.name == "mixed": mixed = sc
+    let serial = mixed.runOn(1)
+    for threads in [1, 4]:
+      gatherFiles.store(0)
+      let got = mixed.runOn(threads)
+      let read = gatherFiles.load()
+      doAssert fingerprint(got.result) == fingerprint(serial.result)
+      doAssert got.result.mixed.len > 0
+      if threads == 1: doAssert read == 2, $read
+      else: doAssert read <= 2 + 2 * threads and read < 13, $read
+
+  block secondBatchSaysNoFileRead:
+    ## the files whose kind cannot be told are read in a second batch, which names no file
+    ## as being read: the last "reading" phase comes before the second "scanning" one
+    var sc: Scenario
+    for one in all:
+      if one.name == "untold-shot": sc = one
+    phases = @[]
+    setJobHook(notePhase)
+    let got = sc.runOn(1)
+    setJobHook(nil)
+    doAssert got.st == jsDone and got.result.taken.len > 0
+    var scanning: seq[int] = @[]
+    var lastReading = -1
+    for i, p in phases:
+      if p.startsWith("scanning"): scanning.add i
+      elif p.startsWith("reading"): lastReading = i
+    doAssert scanning.len == 2 and lastReading < scanning[1], $phases
 
   block budgetInForce:
     ## a budget no file fits: one file at a time, the same report

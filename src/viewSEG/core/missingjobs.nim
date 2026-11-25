@@ -52,7 +52,7 @@
 ## and index 1 are one receiver, and the index splits it only where the survey
 ## has the point at several indices.
 
-import std/[bitops, math, options, os, sets, strutils, tables]
+import std/[atomics, bitops, math, options, os, sets, strutils, tables]
 import parseSEG
 import processSEG/qc/record
 import processSEG/survey/relwalk
@@ -392,12 +392,16 @@ type
     folderRun: bool
     round: int ## 0: the files; 1: those whose kind cannot be told, as `takenAs`
     takenAs: ReportSide
+    lead: int ## items before this one are padding, already counted: not read
 
   MissingItems = object
     ## The items' arguments. The survey is reached through a pointer the job keeps
     ## alive until the batch has returned, and is only read.
     shared: MissingShared
     relations: ptr SurveyGeometry
+    mixed: Atomic[bool]
+      ## set by the job once the files taken are of both sides: what the gathers of the
+      ## files still to be taken would add is dropped, so they are not read
 
   MissingFile = object
     ## What reading one file came to: its side, and what its gathers add to the scan
@@ -417,6 +421,9 @@ type
 
 static:
   doAssert plainData(MissingShared) and plainData(MissingFile)
+
+var gatherFiles*: Atomic[int]
+  ## Files whose gathers were read since the program started. Read only by tests.
 
 var missingBudget* = 256'i64 shl 20
   ## Most bytes of files in hand at once. The first file not yet taken runs whatever its
@@ -453,6 +460,7 @@ proc readItem(it: ItemContext; a: ptr MissingItems; i: int): MissingFile {.nimca
   ## error after the side is told is `gatherSkip`, with what was gathered before it; a
   ## cancel is raised. The file is closed before this returns.
   template sh: untyped = a.shared
+  if i < sh.lead: return
   let path = sh.paths[i]
   let rel = sh.rels[i]
   result.shot = initTally(ssReceivers)
@@ -481,9 +489,10 @@ proc readItem(it: ItemContext; a: ptr MissingItems; i: int): MissingFile {.nimca
         (result.classified, result.side, result.why) = (true, fileSide.side, fileSide.why)
         if sh.round == 0 and fileSide.side == rsCannotTell and sh.folderRun:
           result.deferred = true
-        elif fileSide.side in {rsShot, rsReceiver}:
+        elif fileSide.side in {rsShot, rsReceiver} and not a.mixed.load(moAcquire):
           # (a folder of both sides is not calculated; the job drops what a file adds
           # once both are seen)
+          discard gatherFiles.fetchAdd(1, moRelaxed)
           var slotOf = initTable[StationKey, int]()
           var sourceOf = initTable[StationKey, int32]()
           for g in s.gathers:
@@ -552,21 +561,24 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
     var takenAs = rsCannotTell
     var deferred: seq[tuple[path, why: string]] = @[]
     var taken = 0
-    proc readFiles(list: seq[string]; round: int) {.gcsafe.} =
-      ## Reads each of `list` (a batch of items) and adds it to the scan, in order.
+    proc readFiles(list: seq[string]; round: int; lead = 0) {.gcsafe.} =
+      ## Reads each of `list` (a batch of items) and adds it to the scan, in order. The
+      ## `lead` items before it are done already (the bar goes on from there).
       var args = MissingItems(relations: unsafeAddr relations[], shared: MissingShared(
-        paths: list, cacheDir: cacheDir, forced: forced, untold: untold,
-        folderRun: folderRun, round: round, takenAs: takenAs))
-      var sizes = newSeq[int64](list.len)
+        paths: newSeq[string](lead) & list, cacheDir: cacheDir, forced: forced, untold: untold,
+        folderRun: folderRun, round: round, takenAs: takenAs, lead: lead))
+      var sizes = newSeq[int64](lead + list.len)
+      args.shared.rels = newSeq[string](lead)
       for i, path in list:
         args.shared.rels.add relTo(folder, path)
         try:
-          sizes[i] = max(0'i64, fs.getFileSize(path))
+          sizes[lead + i] = max(0'i64, fs.getFileSize(path))
         except OSError:
-          sizes[i] = 0 # the item says why it cannot be read
+          discard # the item says why it cannot be read
       proc take(i: int; outcome: sink ItemOutcome[MissingFile]) {.closure, gcsafe.} =
+        if i < lead: return
         let rel = args.shared.rels[i]
-        ctx.setPhase "reading " & list[i].extractFilename
+        if round == 0: ctx.setPhase "reading " & list[i].extractFilename
         ctx.checkCancelled()
         if not outcome.ok:
           if outcome.failure.cancelled: raise newException(JobCancelledError, "cancelled")
@@ -581,9 +593,10 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
           inc taken
         if r.deferred:
           # taken for the side of the files that are told, when all are of one
-          deferred.add (path: list[i], why: r.why)
+          deferred.add (path: list[i - lead], why: r.why)
           return
         counts.note r.side
+        if counts.isMixed: args.mixed.store(true, moRelease)
         case r.side
         of rsNotGather, rsCannotTell:
           notChecked.add (path: rel, why: r.why)
@@ -597,15 +610,18 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
             if r.anyShot: shot.noteFile()
           else:
             merge.addPart(rel, r.part)
+      let total = lead + list.len
       ctx.setPhase "scanning " & $list.len & (if list.len == 1: " file" else: " files")
-      let ran = ctx.parallelItems(list.len, addr args, readItem, take,
+      if lead > 0: discard ctx.progress(int64(lead) * 1000, int64(total) * 1000)
+      let ran = ctx.parallelItems(total, addr args, readItem, take,
         ItemOptions(cost: sizes, budget: missingBudget))
-      if ran.taken < list.len: raise newException(JobCancelledError, "cancelled")
+      if ran.taken < total: raise newException(JobCancelledError, "cancelled")
     try:
       var list: seq[string] = @[]
       var seen = initHashSet[string]()
       for path in paths:
         if not seen.containsOrIncl(path.normalizedPath): list.add path
+      let uniqueCount = list.len
       if list.len > 0: readFiles(list, 0)
       if deferred.len > 0:
         # the files that cannot be told: the side of those that are, when all are of one
@@ -620,7 +636,7 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
           list = @[]
           for d in deferred: list.add d.path
           deferred.setLen 0
-          readFiles(list, 1)
+          readFiles(list, 1, uniqueCount - list.len)
       if merge.list.len > 0 and not counts.isMixed:
         ctx.setPhase "checking the receivers"
         let rels = oSource[].receiverRelationsOf(oSource[].highestRecord + 1)
