@@ -320,6 +320,9 @@ that is cut into records is checked against the O record of its receiver (the so
 stations expected); when no O records are loaded they are worked out from the X records.
 Each receiver is checked once in a file, however many records (one for each shot slice) its
 traces are cut into, so for receivers the window counts receivers, not records.
+A record is never matched to the survey by its record (file) number alone: one whose trace
+headers hold no source station (no receiver station, for a receiver gather) is not checked
+and is listed under **Unmatched**.
 A continuous receiver recording is not checked, and the window says so.
 
 A station is one line and point, however many components it has: a station with three

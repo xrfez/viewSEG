@@ -213,8 +213,12 @@ func isAmbiguous(c: RecordCompleteness): bool =
 
 func unmatchedWhy(c: RecordCompleteness; asReceiver: bool): string =
   ## Why the record could not be checked against a template record; "" when it
-  ## can.
-  if c.isAmbiguous:
+  ## can. A record is never matched to the survey by its record number alone:
+  ## without the station in the trace headers it is not checked.
+  if not c.hasSource:
+    "no " & (if asReceiver: "receiver" else: "source") & " station in the trace headers: " &
+      "it could only be matched to the survey by its record number, which is not trusted"
+  elif c.isAmbiguous:
     $c.candidates.len & " survey records share this source and the record number matches " &
       "neither"
   elif not asReceiver and c.recordMatch == rmFieldRecord and c.hasSource and

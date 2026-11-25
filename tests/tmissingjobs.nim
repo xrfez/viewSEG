@@ -8,7 +8,9 @@
 ## one sentence; a cancel leaves the sink empty; the folder walk goes into
 ## subfolders only when asked.
 ##
-## Seen to fail: with a receiver checked in each gather alone,
+## Seen to fail: with the record number allowed to match a gather with no source station,
+## `record_number_alone_never_matches` rejected a checked record; with a receiver checked in
+## each gather alone,
 ## `receiver_slices_are_one_check` rejected 3 records for 1; with the subfolder flag ignored (always on),
 ## `subfolders_only_when_asked` rejected 3 files for the walk without them;
 ## with the continuous kind not looked for, `continuous_is_not_checked`
@@ -134,6 +136,31 @@ proc slicedFile(path: string; stations: openArray[tuple[receiver: float64;
       k.status = tsLive
       w.writeTrace(k, samples)
   doAssert w.close().len == 0, "sliced file was not written: " & path
+
+proc plainFile(path: string; record: int; receivers: Slice[int]; stationless = false;
+    sourceless = false) =
+  ## One shot record (source 1) of the receivers; `sourceless`: no source station in
+  ## the headers, `stationless`: no receiver station either.
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
+    numSamples: 1, time: 1_700_000_000.0))
+  var ch = 0
+  for point in receivers:
+    inc ch
+    var k = initTraceKeys()
+    k.record = float64(record)
+    k.channel = float64(ch)
+    if not sourceless:
+      k.srcLine = 1
+      k.srcPoint = 1
+      k.srcIndex = 1
+    if not stationless:
+      k.rcvLine = 10
+      k.rcvPoint = float64(point)
+      k.rcvIndex = 1
+    k.intervalUs = 2000
+    k.status = tsLive
+    w.writeTrace(k, @[0'f32])
+  doAssert w.close().len == 0, "file was not written: " & path
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
@@ -408,6 +435,29 @@ proc main*() =
     doAssert t2.files == 1 and t2.records == 2, $t2
     doAssert t2.expectedInRecords == 6 and t2.presentInRecords == 5 and
       t2.missingInRecords == 1, $t2
+
+  block record_number_alone_never_matches:
+    ## X1 is source 1 with receivers 1..4, X2 source 2 with receivers 5..8. The file is
+    ## shot 1 with all of 1..4, no source station in the headers, file number 2: it is
+    ## not checked against X2 by its number; it is listed as unmatched, nothing counted.
+    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4),
+      xRec(2, "1.00", "2.00", 1, 4, 10, 5, 8))
+    let path = dir / "no-source.sgd"
+    plainFile(path, 2, 1 .. 4, sourceless = true)
+    let got = run(dir, @[path], survey)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    let r = got.sink.result
+    doAssert r.shot.stats.records == 0 and r.shot.rows.len == 0, $r.shot.stats
+    doAssert r.unmatched.len == 1, $r.unmatched
+    doAssert r.unmatched[0].path == "no-source.sgd" and r.unmatched[0].record == 2
+    doAssert r.unmatched[0].why == "no source station in the trace headers: it could " &
+      "only be matched to the survey by its record number, which is not trusted",
+      r.unmatched[0].why
+    let same = dir / "with-source.sgd"
+    plainFile(same, 2, 1 .. 4)
+    let ok = run(dir, @[same], survey).sink.result
+    doAssert ok.unmatched.len == 0 and ok.shot.stats.records == 1 and
+      ok.shot.stats.missing == 0, $ok.shot.stats
 
   block cancel_leaves_the_sink:
     reads = 0
