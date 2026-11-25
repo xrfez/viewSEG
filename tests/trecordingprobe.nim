@@ -17,7 +17,7 @@
 ## "fewFollow" reads rkReceiverContinuous; with the reason not said, the "fewFollow" sentence
 ## stops at the kind; with the counts of the first starts kept, "thirds" says abutting 12.
 
-import std/[algorithm, assertions, os, sets, strutils, times]
+import std/[algorithm, assertions, os, sequtils, sets, strutils, times]
 import parseSEG
 import viewSEG/core/[correlatejobs, cutgather, recordingkind, recordingprobe, segmentclock,
   vendormaps]
@@ -149,6 +149,7 @@ proc main*() =
       order: TraceOrder]
     const
       byStation = TraceOrder(grouping: tgNone, subSort: tsByStation)
+      byTime = TraceOrder(grouping: tgNone, subSort: tsByTime)
       flagStation = TraceOrder(grouping: tgByFlag, subSort: tsByStation)
       notKnown = TraceOrder(grouping: tgNotKnown, subSort: tsNotKnown)
       stationInRecords = TraceOrder(grouping: tgNone, subSort: tsByStation, sortInRecords: true,
@@ -166,7 +167,19 @@ proc main*() =
         ("vib/field/signature_4trace_b.sgy", poNone, rkShotGather, notKnown),
         ("vib/vib_correlated.sgd", poKnown, rkShotGather, byStation),
         ("vib/vib_signature.sgd", poNone, rkShotGather, notKnown),
-        ("vib/vib_uncorrelated.sgd", poKnown, rkShotGather, byStation)]
+        ("vib/vib_uncorrelated.sgd", poKnown, rkShotGather, byStation),
+        # a one-trace sweep: the probe finds no order and names no recording
+        ("vibroseis/reference/sweep-1.sgy", poNone, rkShotGather, notKnown)]
+    # the two synthetic surveys are checked by folder: every file of a folder reads as the
+    # folder's kind, in the folder's order
+    type Folder = tuple[name: string; kind: RecordingKind; order: TraceOrder]
+    const folders: seq[Folder] = @[
+      ("vibroseis/continuous", rkReceiverContinuous, byTime),
+      ("vibroseis/shots", rkShotGather, byStation),
+      ("vibroseis/receiver-gathers", rkReceiverSliced, byTime),
+      ("impulsive/continuous", rkReceiverContinuous, byTime),
+      ("impulsive/shots", rkShotGather, byStation),
+      ("impulsive/receiver-gathers", rkReceiverSliced, byTime)]
     let root = currentSourcePath().parentDir.parentDir / "samples"
     var listed: seq[string] = @[]
     for path in walkDirRec(root, relative = true):
@@ -174,7 +187,19 @@ proc main*() =
     listed.sort()
     var named: seq[string] = @[]
     for w in wants: named.add w.name
-    doAssert listed == named, "samples/ holds " & $listed
+    var byFolder: seq[string] = @[]
+    for path in listed:
+      if path notin named:
+        doAssert path.parentDir in folders.mapIt(it.name), "samples/ holds " & path
+        byFolder.add path
+    for fo in folders:
+      # no folder is empty, or the check would pass on nothing
+      doAssert byFolder.anyIt(it.parentDir == fo.name), fo.name
+    for path in byFolder:
+      let fo = folders[folders.mapIt(it.name).find(path.parentDir)]
+      let probe = kindOfFile(root / path, VendorRegistry())
+      doAssert probe.outcome == poKnown and probe.kind == fo.kind, path & ": " & $probe
+      doAssert probe.order == fo.order, path & ": " & $probe.order
     for w in wants:
       let path = root / w.name
       let probe = kindOfFile(path, VendorRegistry())
