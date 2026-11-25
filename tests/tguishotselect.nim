@@ -140,9 +140,31 @@ proc runMain() =
       of 7: f.pressMouse(b, false)
       else: discard
       wait > 10
+    step("every control in reach at the default width", noop, proc (f: FrameInfo): bool =
+      result = wait > 6
+      if result:
+        let win = f.markOf("shotlog")
+        for name in ["shotlog.filter", "shotlog.problemsbox", "shotlog.onlybox",
+            "shotlog.allowbox", "shotlog.followbox", "shotlog.pointerbox", "shotlog.columns",
+            "shotlog.exportsps"]:
+          let r = f.markOf(name)
+          doAssert r.size.x > 0 and r.pos.x + r.size.x <= win.pos.x + win.size.x and
+            r.pos.y + r.size.y <= win.pos.y + win.size.y, name & " is cut off at the default width"
+        f.shot("shotselect-default.png"))
     # the grid is made narrower, to leave the map (at the right) in sight
     step("the grid narrower", noop, proc (f: FrameInfo): bool =
       f.dragged(vec2(1509, 907), vec2(1090, 1000)))
+    step("every control in reach at a narrow width", noop, proc (f: FrameInfo): bool =
+      result = wait > 6
+      if result:
+        let win = f.markOf("shotlog")
+        for name in ["shotlog.filter", "shotlog.problemsbox", "shotlog.onlybox",
+            "shotlog.allowbox", "shotlog.followbox", "shotlog.pointerbox", "shotlog.columns",
+            "shotlog.exportsps"]:
+          let r = f.markOf(name)
+          doAssert r.size.x > 0 and r.pos.x + r.size.x <= win.pos.x + win.size.x and
+            r.pos.y + r.size.y <= win.pos.y + win.size.y, name & " is cut off at the narrow width"
+        f.shot("shotselect-narrow.png"))
     step("fit", proc (f: FrameInfo) = f.click(f.markOf("map.fit").centre),
       proc (f: FrameInfo): bool =
       result = wait > 12 and f.mapWindow.mapShown.isSet

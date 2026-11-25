@@ -264,6 +264,21 @@ proc drawSps(ui: var ShotLogUi; st: AppState; i: int; t: Theme;
     marks.mark("shotlog.sps.outcome " & st.spsOutcome)
   igSeparator()
 
+proc textWidth(label: string): float32 =
+  igCalcTextSize(label.cstring, nil, false, -1).x
+
+proc buttonWidth(label: string): float32 =
+  textWidth(label) + igGetStyle().FramePadding.x * 2 + 8
+
+proc checkWidth(label: string): float32 =
+  igGetFrameHeight() + igGetStyle().ItemInnerSpacing.x + textWidth(label) + 8
+
+proc sameLineIfFits(need: float32) =
+  ## The next control goes beside the last when it fits in the window, else on a line of its
+  ## own (as the Missing traces window's top line does), so that every control can be reached.
+  let edge = igGetCursorScreenPos().x + igGetContentRegionAvail().x
+  if edge - igGetItemRectMax().x >= need + igGetStyle().ItemSpacing.x: igSameLine(0, -1)
+
 proc follow(ui: var ShotLogUi; st: AppState) =
   ## The newest import, or the newest log when the one on show is gone.
   var maxId = -1
@@ -920,20 +935,20 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
         ui.filterText = typed
         ui.needle = typed.toLowerAscii
         ui.resetScan()
-      igSameLine(0, -1)
+      sameLineIfFits(checkWidth(ProblemsOnly))
       var only = ui.problemsOnly
       if igCheckbox(ProblemsOnly.cstring, addr only) and ui.focus.acts:
         ui.problemsOnly = only
         ui.resetScan()
       marks.mark("shotlog.problemsbox")
-      igSameLine(0, -1)
+      sameLineIfFits(checkWidth(OnlySelected))
       var onlyChosen = ui.onlySelected
       if igCheckbox(OnlySelected.cstring, addr onlyChosen) and ui.focus.acts:
         ui.onlySelected = onlyChosen
       marks.mark("shotlog.onlybox")
       if ui.onlySelected: marks.mark("shotlog.onlyon")
       tip(OnlySelectedTip)
-      igSameLine(0, -1)
+      sameLineIfFits(checkWidth(AllowEditing))
       var allow = ui.allowEditing
       if igCheckbox(AllowEditing.cstring, addr allow) and ui.focus.acts:
         ui.allowEditing = allow
@@ -941,7 +956,7 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
       marks.mark("shotlog.allowbox")
       if ui.allowEditing: marks.mark("shotlog.allowon")
       tip(AllowEditingTip)
-      igSameLine(0, -1)
+      sameLineIfFits(checkWidth(FollowPlot))
       var follow = st.settings.shotLog.followPlot
       if igCheckbox(FollowPlot.cstring, addr follow) and ui.focus.acts:
         var s = st.settings
@@ -950,7 +965,7 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
       marks.mark("shotlog.followbox")
       if st.settings.shotLog.followPlot: marks.mark("shotlog.followon")
       tip(FollowPlotTip)
-      igSameLine(0, -1)
+      sameLineIfFits(checkWidth(FollowPointer))
       var pointer = st.settings.headers.followPointer
       if igCheckbox(FollowPointer.cstring, addr pointer) and ui.focus.acts:
         var s = st.settings
@@ -959,7 +974,7 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
       marks.mark("shotlog.pointerbox")
       if st.settings.headers.followPointer: marks.mark("shotlog.pointeron")
       tip(FollowPointerTip)
-      igSameLine(0, -1)
+      sameLineIfFits(buttonWidth(ColumnsButton))
       igBeginDisabled(reading)
       if igButton(ColumnsButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts and
           not reading:
@@ -968,7 +983,7 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
       igEndDisabled()
       marks.mark("shotlog.columns")
       tip("How the table was read, and what each column means")
-      igSameLine(0, -1)
+      sameLineIfFits(buttonWidth(ExportSpsButton))
       ui.countSpsRows(st, i, rev)
       let spsWhy = if reading: SpsReading
                    elif ui.spsRows == 0: NoSpsRows
