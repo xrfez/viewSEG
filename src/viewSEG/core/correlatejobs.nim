@@ -832,7 +832,8 @@ proc effectiveMark(position: int; fileMarks, projectMarks: openArray[AuxMarkEntr
     if e.position == position and e.marked: return (true, e.ms)
   (false, 0.0)
 
-proc markedAuxiliaries*(file: ptr SeismicFile; fileMarks, projectMarks: openArray[AuxMarkEntry]):
+proc markedAuxiliaries*(file: ptr SeismicFile; gathers: openArray[Gather];
+    rows: openArray[RecordRow]; fileMarks, projectMarks: openArray[AuxMarkEntry]):
     tuple[marked: seq[AuxMark]; notes: seq[string]] =
   ## The auxiliary traces of `file` to correlate, each with its shift: in every record (the
   ## gathers of a session of it) the trace at each marked auxiliary position, counted
@@ -855,7 +856,6 @@ proc markedAuxiliaries*(file: ptr SeismicFile; fileMarks, projectMarks: openArra
   var wanted: seq[int] = @[]
   for p in shifts.keys: wanted.add p
   wanted.sort()
-  let (gathers, rows) = recordsOf(file[])
   var lacking = initTable[int, tuple[count: int; first: string]]()
   for g, gather in gathers:
     var aux: seq[int] = @[]
@@ -878,6 +878,17 @@ proc markedAuxiliaries*(file: ptr SeismicFile; fileMarks, projectMarks: openArra
       result.notes.add "Auxiliary trace " & $p & " is marked for correlation but " &
         (if got.count == 1: "1 record has" else: $got.count & " records have") &
         " no such trace (the first is " & got.first & "): it is skipped there."
+
+proc markedAuxiliaries*(file: ptr SeismicFile; fileMarks, projectMarks: openArray[AuxMarkEntry]):
+    tuple[marked: seq[AuxMark]; notes: seq[string]] =
+  ## `markedAuxiliaries` with the records read from `file` itself: for a job's thread; the UI
+  ## thread passes the session's.
+  result.marked = @[]
+  result.notes = @[]
+  if file == nil or not file[].isOpen or file[].len == 0: return
+  if fileMarks.len > 0 or projectMarks.len > 0:
+    let (gathers, rows) = recordsOf(file[])
+    result = markedAuxiliaries(file, gathers, rows, fileMarks, projectMarks)
 
 proc markedDtMs*(file: ptr SeismicFile; marked: openArray[AuxMark] = []): float64 =
   ## The record's sample interval from keys already read: the first seismic trace's, else

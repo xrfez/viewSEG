@@ -6560,8 +6560,8 @@ func marksKey(marked: openArray[AuxMark]): string =
 proc planReferenceOf(state: AppState; i: int): RefPlan =
   ## The chosen reference as a correlation takes it, or why it cannot. Reads no file.
   let s = state.sessions[i]
-  let picked = markedAuxiliaries(s.filePtr, state.editsAt(s.path).auxMarks,
-    state.projectAuxMarks)
+  let picked = markedAuxiliaries(s.filePtr, s.gathers, s.records,
+    state.editsAt(s.path).auxMarks, state.projectAuxMarks)
   result.marked = picked.marked
   result.notes = picked.notes
   result.load.pilotTrace = -1
