@@ -342,7 +342,9 @@ keeps the place you last gave it. It has two tabs.
   missing, and the percent of the template missing. A file with several records also has
   a line that counts per record (each station once for each record that calls for it:
   expected, present, missing, percent). The table has the columns **Line**, **Point** and
-  **Missing**: how many records of the file call for that station and do not have it.
+  **Missing**: how many records of the file call for that station and do not have it. The
+  file is read from disk, so killed traces and other edits of the session count as
+  present; the tab says so when the file has killed traces.
 - **Folder** checks the files of a folder you choose, and does nothing until you press
   **Run**. **Folder...** opens the folder dialog and the chosen path is shown and kept for
   next time. **Include subfolders** is off until you tick it; changing the folder or the

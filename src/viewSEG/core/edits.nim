@@ -481,6 +481,10 @@ func listIn*(e: FileEdits; edit: TraceEdit; traces: Slice[int]): seq[int] =
   let s = span(e.shown.lists[edit], traces)
   if s.len > 0: e.shown.lists[edit][s] else: @[]
 
+func anyKilled*(e: FileEdits): bool =
+  ## Whether any trace is killed (as shown).
+  e.shown.lists[teKilled].len > 0
+
 func anyIn*(e: FileEdits; traces: Slice[int]): bool =
   ## Whether a trace in `traces` has an edit (as shown).
   for edit in TraceEdit:

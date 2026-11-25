@@ -254,6 +254,19 @@ proc main*() =
           $f.markNames("missing.row ")
     step("the File tab follows the file shown", fileTab, followsFile)
 
+    proc killOne(f: FrameInfo) =
+      doAssert not f.has("missing.message " & KilledNote), "the note without a killed trace"
+      let shown = f.core.shownFile(f.core.findPanel(MainPanel))
+      f.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, on: true,
+        edited: @[f.core.sessions[shown].base])
+    proc killedNote(f: FrameInfo): bool =
+      result = f.has("missing.message " & KilledNote)
+      if result:
+        doAssert f.has("missing.stat Receiver stations found in the file: 3") and
+          f.has("missing.stat Receiver stations missing: 1"),
+          "a killed trace changed the figures: " & $f.markNames("missing.stat ")
+    step("a killed trace counts as present and the window says so", killOne, killedNote)
+
     var closed = false
     proc closeIt(f: FrameInfo) = discard
     proc closedDone(f: FrameInfo): bool =

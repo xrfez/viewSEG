@@ -15,6 +15,7 @@ const
   NeedFolder* = "Choose a folder, then press Run."
   NoTemplate* = "No relation records (X records) are imported, so there is nothing to " &
     "check against: import a survey with an X or O relation file."
+  KilledNote* = "Killed traces count as present: the file is checked as it is on disk."
   Continuous* = "This file is a continuous receiver recording; it is not checked."
   NoTemplateRecord* = "No record of the file has a record in the relation records."
   NothingMissing* = "Every station the template calls for is in the data."

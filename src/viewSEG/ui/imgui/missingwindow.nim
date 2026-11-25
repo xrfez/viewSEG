@@ -13,7 +13,7 @@
 import std/[os, strutils]
 import parseSEG
 import imguin/cimgui
-import ../../core/[filejobs, filelist, filesystem, jobs, missingjobs, missingreport, state]
+import ../../core/[edits, filejobs, filelist, filesystem, jobs, missingjobs, missingreport, state]
 import ../../core/records as filerecs
 import ../../view/missingwords
 import focus, icons, marks, overflow
@@ -80,6 +80,12 @@ proc shownPath(st: AppState): string =
   let panel = st.findPanel(MainPanel)
   let shown = if panel >= 0: st.shownFile(panel) else: -1
   if shown >= 0: st.sessions[shown].diskPath else: ""
+
+proc shownHasKilled(st: AppState): bool =
+  ## Whether the file shown in the main panel has killed traces.
+  let panel = st.findPanel(MainPanel)
+  let shown = if panel >= 0: st.shownFile(panel) else: -1
+  shown >= 0 and st.editsAt(st.sessions[shown].path).anyKilled
 
 proc writeCsv(path, text: string) =
   ## `text` written to `path`: a temporary file beside it, then a rename.
@@ -483,6 +489,9 @@ proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks
     for line in statisticLines(side.stats, folderTab):
       igTextUnformatted(line.cstring, nil)
       marks.mark("missing.stat " & line)
+    if not folderTab and st.shownHasKilled:
+      igTextUnformatted(KilledNote.cstring, nil)
+      marks.mark("missing.message " & KilledNote)
     if igButton(ExportButton.cstring, ImVec2_c(x: 0, y: 0)):
       ui.ask = ExportAsk(rows: side.rows, stats: side.stats, withStats: ui.withStats,
         live: true)
