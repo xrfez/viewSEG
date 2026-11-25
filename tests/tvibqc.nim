@@ -764,7 +764,9 @@ proc againstThePlan() =
   ## read a clean "✓ PASS"; with the file's reference unit dropped, the phase plot had one line;
   ## with the share taken to the traces' last sample, not the judged part's end, "traces
   ## shorter than the sweep" read 80 % (8 s of 10) where 7.95 s was judged; with every gap
-  ## in tenths of a second, "a short gap is said in ms" read "the last 0.0 s".
+  ## in tenths of a second, "a short gap is said in ms" read "the last 0.0 s"; a pilot of
+  ## opposite polarity read "the two are the same sweep ... but not in step: they start
+  ## together and still differ in phase".
   block same_sweep_longer_listen_tail_is_no_difference:
     # 12 001 samples stored, the same 10 s sweep and 2 s of listen time: nothing to say
     let file = planSweep()
@@ -852,6 +854,20 @@ proc againstThePlan() =
       "sweep): "), r.qc.line
     doAssert "the last 2.0 s of the reference sweep lie past the end of this file's " &
       "traces: not judged" in r.qc.line, r.qc.line
+  block a_pilot_of_opposite_polarity_is_said:
+    # the recorded pilot is the plan's sweep negated: a finding, said as it is, nothing flipped;
+    # the file still fails
+    let base = planSweep().referenceOf.sweepRow
+    var pilot = base
+    for v in pilot.mitems: v = -v
+    let r = againstPlan(planSweep(), base, pilot = pilot)
+    doAssert r.qc.verdict == qvFail and r.qc.plan.verdict == qvFail and r.qc.plan.opposite,
+      r.qc.line
+    doAssert r.qc.line.startsWith("✗ FAIL: the recorded pilot is the project's reference " &
+      "sweep with opposite polarity (average phase " & "180°); ground force "), r.qc.line
+    doAssert "not in step" notin r.qc.line and "is not the project's" notin r.qc.line,
+      r.qc.line
+    doAssert r.qc.plan.rows[ord(qlAvgPhase)].measured > 170, $r.qc.plan.rows[0].measured
   block a_short_gap_is_said_in_ms:
     # the traces end 30 ms before the reference sweep: more than one tracked step (10 ms), so
     # part recorded, said in ms ("0.0 s" before)

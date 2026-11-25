@@ -102,6 +102,9 @@ type
       ## 8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in 10.0 s"), or why they could
       ## not be compared ("sweeps not compared: ..."); "" when they are the same sweep
     sameSweep*: bool ## start, end and length agree within the tolerances
+    opposite*: bool
+      ## the recorded pilot is the plan's sweep with opposite polarity: its average phase to it
+      ## lies within the average phase limit of 180°. A finding, said; nothing is reversed
     fileRows*: seq[QcRow]
       ## the judged ground force's average and peak phase against the file's own reference
       ## trace, beside the judged ones against the plan: shown, never judged
@@ -312,10 +315,15 @@ func judgePlan*(s: WindowSummary; windowMs: float64; limits: QcLimits;
 
 func planWords*(p: PlanCheck): string =
   ## "the recorded pilot is not the project's reference sweep (average phase N°)": the
-  ## sentence a failing plan check opens the verdict with.
+  ## sentence a failing plan check opens the verdict with; for a pilot of opposite polarity
+  ## (`opposite`) "the recorded pilot is the project's reference sweep with opposite polarity
+  ## (average phase N°)".
   let avg = p.rows[ord(qlAvgPhase)]
-  "the recorded pilot is not the project's reference sweep (average phase " &
+  let phase = "(average phase " &
     (if avg.measured.isNaN: "not measured" else: plain(avg.measured) & "°") & ")"
+  if p.opposite: "the recorded pilot is the project's reference sweep with opposite polarity " &
+    phase
+  else: "the recorded pilot is not the project's reference sweep " & phase
 
 func unsigned(line: string): string =
   ## `line` without the sign `judge` opens it with ("✓ ", "✗ ").

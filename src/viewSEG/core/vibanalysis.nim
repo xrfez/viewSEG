@@ -765,7 +765,14 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       result.qc.plan.sweep = ""
       readAs = d.readAs
     let pe = if pilotOwn.len > 0: pilotOwn[0].tracks[vsReference].extent else: SweepExtent()
-    if d.same and pilotFails:
+    let avgPhase = result.qc.plan.rows[ord(qlAvgPhase)].measured
+    # the plan's sweep negated (as a pilot wired the other way reads): a finding, said as it
+    # is; the pilot is not reversed, and the file fails
+    result.qc.plan.opposite = pilotFails and not (avgPhase.isNaN or p.qc.avgPhaseDeg.isNaN) and
+      180 - avgPhase <= p.qc.avgPhaseDeg
+    if result.qc.plan.opposite and d.same:
+      result.qc.plan.sweep = ""
+    elif d.same and pilotFails:
       # the same sweep, out of step: alignment found no clear shift within its reach
       let gap = pilotShape.firstMs - planShape.firstMs
       let how = if abs(gap) <= SweepTimeSteps * stepMs:

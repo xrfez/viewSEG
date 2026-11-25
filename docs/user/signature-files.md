@@ -284,8 +284,11 @@ share one value (same unit, same curve).
   length within 50 ms or 1 % of it: noise on a recorded pilot, or a taper of another length,
   moves its ends by a few tens of ms. A pilot that follows the plan in phase never has a
   difference in its verdict; the two sweeps as read are then only in the note ("sweeps read
-  as ..."). The limits table adds the pilot's two rows ("recorded pilot to the plan") and the
-  ground force's phase to the file's own reference trace ("not judged": what the vibrator did
+  as ..."). A recorded pilot that is the plan's sweep with its sign reversed (average phase
+  to the plan within the average phase limit of 180°) is said as such, "the recorded pilot is
+  the project's reference sweep with opposite polarity (average phase N°)", N near 180°: a
+  finding, nothing is reversed, and the file still fails. The limits table adds the pilot's
+  two rows ("recorded pilot to the plan") and the ground force's phase to the file's own reference trace ("not judged": what the vibrator did
   against what it was told). The phase plot draws the ground force against the file's
   reference and against the stored reference; the frequency plot the file's reference, the
   stored reference and the ground force. When the file's traces end before the reference
