@@ -214,16 +214,12 @@ proc drawOptions(ui: var JoinUi; opts: var JoinOptions; t: Theme; marks: var Mar
     "Coordinates at (0, 0) count as none when every coordinate the headers give is (0, 0).")
   igTextUnformatted("The records' check against the relation records (Records, Missing):", nil)
   igAlignTextToFramePadding()
-  igTextUnformatted("a record by", nil)
-  igSameLine(0, -1)
-  if enumCombo("##recordmatch", opts.recordMatch, igGetFontSize() * 6): result = true
-  igSameLine(0, -1)
-  igTextUnformatted("its traces by", nil)
+  igTextUnformatted("a record's traces by", nil)
   igSameLine(0, -1)
   if enumCombo("##tracematch", opts.traceMatch, igGetFontSize() * 6): result = true
-  tip("processSEG's record completeness: auto finds a record's X record by its source " &
-    "station, else its field record number, and its traces by their receiver stations, " &
-    "else their channel numbers")
+  tip("A shot is checked against the X record at its source station, a receiver gather " &
+    "against the O records at its receiver station; never by a record number. Auto finds " &
+    "a record's traces by their receiver stations, else their channel numbers")
 
 proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     marks: var Marks): JoinOutput =

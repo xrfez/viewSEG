@@ -105,18 +105,6 @@ proc main*() =
     doAssert h[mfMissing].stations.len == 2
     st.shutdown()
 
-  block explicitFfidStillChecks:
-    # the user chose to match by file number: X record 7 (5 receivers) judges the shot
-    var st = initAppState()
-    var s = st.settings
-    s.join.recordMatch = rmFieldRecord
-    st.apply Command(kind: ckSettings, settings: s)
-    st.open(xp, other)
-    doAssert st.settle(st.settled)
-    let h = st.filterHits
-    doAssert h[mfMissing].state == fsDone and h[mfMissing].count == 2, $h[mfMissing].count
-    st.shutdown()
-
   block noBasisRecordList:
     var st = initAppState()
     st.open(xp, other)

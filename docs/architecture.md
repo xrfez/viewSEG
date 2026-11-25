@@ -641,7 +641,7 @@ document and `survey/` folder lose the survey; an import under way is cancelled 
 A joined file keeps what it was joined with (`AppState.joins`: the files, options, units,
 the plan, the geometry and the relation records when they are apart): its positions are read again from its keys (the map), its records
 are checked against the joined relation records (`checkWork` with the join's
-`RecordMatch` and `TraceMatch`, every relation file of the join merged, as a loaded layer
+`TraceMatch`, every relation file of the join merged, as a loaded layer
 cannot), the units the user confirmed label the map and the status bar first
 (`surveyUnit`: then a survey file's SPS H20 and H201, then a seismic file's headers; named
 exactly, `m`, `ft`, `ftUS`, and never guessed; `shownLengths` converts the scale bar's and
@@ -871,7 +871,7 @@ for each shot gather's FFID, source station and source coordinates, the file clo
 job's thread; each file posted as it is done (`mkShots`), and kept beside the index cache
 (`<name>-<hash>.shots`), so a file whose size and time are unchanged is not opened again.
 The UI thread takes each file in and matches its records to the survey files' sources
-(`ShotIndex.matchOne`: by station, by place, by FFID through the relation files), all
+(`ShotIndex.matchOne`: by station, by place), all
 again only when the survey changes; a job that has not answered for `StallAfter` is
 cancelled (`Jobs.tend` abandons it), the file it was on tried again after `RetryAfter` and
 not before that job's work is back (`ShotIndex.stuck`: a try that hangs holds a thread), the

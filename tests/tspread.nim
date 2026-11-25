@@ -124,8 +124,7 @@ proc main*() =
 
   block oneRecordForBoxAndFilters:
     # A SEG-Y record without stations: the box and the filters' check name
-    # the same X record, found by the source at the record's place, with the
-    # user's record match.
+    # the same X record, found by the source at the record's place.
     withFixtures fx:
       let sps = fx.mapSps()
       var st = initAppState()
@@ -137,17 +136,7 @@ proc main*() =
       doAssert hits.state == fsDone, "the filters name no X record: " & hits.note
       doAssert ("X record " & $want & " plans") in hits.note, hits.note
       doAssert st.shownSpread.record == want, $st.shownSpread.record
-      # By the FFID only: neither finds one (the FFIDs are not the X records').
-      var set = st.settings
-      set.join.recordMatch = rmFieldRecord
-      st.apply Command(kind: ckSettings, settings: set)
-      doAssert st.checked
-      doAssert st.shownSpread.record == -1 and st.filterHits[mfMissing].state == fsNotChecked,
-        "by its FFID: X record " & $st.shownSpread.record
-      set.join.recordMatch = rmSourceStation
-      st.apply Command(kind: ckSettings, settings: set)
-      doAssert st.checked and st.shownSpread.record == want and
-        st.filterHits[mfMissing].state == fsDone
+      # (the FFIDs are not the X records': a record number finds none)
 
   block receiverGathers:
     withFixtures fx:

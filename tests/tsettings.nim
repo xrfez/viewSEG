@@ -61,7 +61,7 @@ proc everyFieldSet(): Settings =
       inlineHalf: 2500.5, crosslineHalf: 750), folderShots: false,
       filters: {mfNoisy, mfClipped, mfMissing, mfSpreadDiffers}),
     join: JoinOptions(trailingDigits: true, multiComponent: true, coordinates: hcReplace,
-      recordMatch: rmFieldRecord, traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
+      traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
       line: 4960), LineName(name: "A line", line: 12.5)]),
     headers: HeadersView(tab: htTable, traceTab: ttData, followPointer: false,
       asDisplayed: true, columns: {hcName, hcOffset}, tableFields: @["keys.offset",

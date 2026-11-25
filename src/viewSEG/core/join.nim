@@ -42,7 +42,7 @@ import parseSEG
 import processSEG/qc/record
 import session, stationindex, survey
 
-export RecordMatch, TraceMatch
+export TraceMatch
 
 type
   JoinFileKind* = enum
@@ -83,9 +83,6 @@ type
     lineNames*: seq[LineName]
       ## line names mapped to numbers, before the trailing digits
     coordinates*: HeaderCoordinates
-    recordMatch*: RecordMatch
-      ## the records' check against the relation records: how a record
-      ## finds its X record
     traceMatch*: TraceMatch
       ## and how its traces find their channels
 

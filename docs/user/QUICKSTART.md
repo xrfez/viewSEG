@@ -288,9 +288,14 @@ receiver, a CDP), and its key information: its seismic **Traces**, its auxiliary
 **Missing** from its patch. Missing counts against what the file itself declares for the
 record (a SEG-D record's seismic channel sets, a SEG-Y file's traces per ensemble) and,
 once the survey's relation file (SPS X) is loaded, or imported for the file (Project >
-Import survey, below), against the stations its X record plans for the shot; the cell's
-tooltip says which, and how many of the record's traces are at stations the plan does
-not list. A record with traces missing is drawn
+Import survey, below), against the stations its relation record plans: a shot's X record,
+found by its source station, and a receiver gather's O records (made from the X records
+when none are loaded), found by its receiver station, all of a receiver's together; a
+time-sliced receiver gather of one shot is a receiver's too. A record number (the FFID, or
+the number in an X or O record) never finds a relation record: a record whose headers name
+no station, or whose source has two equally fitting X records, has an empty cell. The
+cell's tooltip says which, and how many of the record's traces are at stations the plan
+does not list. A record with traces missing is drawn
 in the warning colour, and the footer counts them; where nothing says how many traces a
 record should hold, the cell is empty, as it is for every record of a file whose traces
 are all auxiliary (there are no seismic traces to miss). The record shown is highlighted. Click a column's
