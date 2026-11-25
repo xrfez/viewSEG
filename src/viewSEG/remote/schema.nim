@@ -24,13 +24,13 @@ const
     ckImportShotLog, ckRemoveShotLog, ckRemapShotLog, ckEditShotCell,
     ckUndoShotEdit, ckRedoShotEdit,
     ckAddLeap, ckRemoveLeap, ckReloadLeaps, ckResetLeaps, ckCutGather,
-    ckExportShotSps}
+    ckExportShotSps, ckGenerateOFile}
     ## refused: each writes a file (a reset keeps a backup of the settings;
     ## edits imported are remembered with the file; forgetting files removes
     ## what is remembered about them; a shot log is copied into the project
     ## and its copy rewritten or removed; a leap-second change is written
     ## beside the settings; a slice by shot log writes a new file; an SPS export of a
-    ## shot log does)
+    ## shot log does, and so does an O file made from the survey's X records)
   Preferences* = {ckSettings, ckImportSettings, ckLayout, ckLoadLayout, ckProjectFolder,
     ckUpdateSurvey, ckVibProfile, ckVibWeights}
     ## refused: the user's preferences and the windows' arrangement; a

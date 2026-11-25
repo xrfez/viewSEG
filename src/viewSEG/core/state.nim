@@ -118,7 +118,7 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
     outputbinary, outputnames, outputtext, reader,
   recordingkind, recordqc, referencejobs, references, selection, session, settings,
       shotfollowtarget, shotlog,
-  shotlogjobs, shotlogsps, shotselect, shotselectjobs, shotspsjobs,
+  ofile, shotlogjobs, shotlogsps, shotselect, shotselectjobs, shotspsjobs,
   shots, spectra,
   spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids,
       vendorfieldjobs,
@@ -383,6 +383,9 @@ type
     ckExportShotSps = "export SPS"
       ## write the shots of a loaded shot log, with its edits, as an SPS file of source points,
       ## on a job; an existing file is never replaced
+    ckGenerateOFile = "generate O file"
+      ## write the receiver-domain (O) records of the imported survey's X records as an SPS file,
+      ## on a job; never one of the survey's own files or an open file
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -727,6 +730,8 @@ type
       spsLog*: int ## the loaded shot log to write (its index)
       spsOptions*: ShotSpsOptions ## the revision, defaults, point code and time
       spsDest*: string ## the file to write: a new name, in a folder that exists
+    of ckGenerateOFile:
+      oDest*: string ## the file to write: not one of the survey's files or an open file
     of ckNamePattern:
       patternAction*: NamePatternAction
         ## ckNamePattern: save (add, or replace the one with the same label,
@@ -1230,6 +1235,14 @@ type
       ## the file the last export wrote; "" when it wrote none
     spsLogId: int = -1
       ## the id of the shot log the last export was of; -1 before any
+    oJob: JobId = NoJob
+      ## the O file generation under way; `NoJob` for none
+    oSink: OFileSink
+      ## what that job found, read once the job has ended
+    oOutcome: string
+      ## the last generation's outcome line, for the Imported Survey window; "" before any
+    oPath: string
+      ## the file the last generation wrote; "" when it wrote none
     recJob: JobId = NoJob
       ## the job that describes the shown file as a recording for the cut dialog
     recSink: RecordingSink
@@ -3051,6 +3064,18 @@ func spsOutcome*(state: AppState): string {.inline.} =
 func spsOutcomeLog*(state: AppState): int {.inline.} =
   ## The id of the shot log the last export (or the one under way) was of; -1 before any.
   state.spsLogId
+
+func oFileRunning*(state: AppState): bool {.inline.} =
+  ## Whether an O file is being generated.
+  state.oJob != NoJob
+
+func oFileOutcome*(state: AppState): string {.inline.} =
+  ## The last generation's outcome in a few sentences; "" before any.
+  state.oOutcome
+
+func oFileWritten*(state: AppState): string {.inline.} =
+  ## The file the last generation wrote; "" when it wrote none.
+  state.oPath
 
 func spsWritten*(state: AppState): string {.inline.} =
   ## The file the last SPS export wrote; "" when it wrote none.
@@ -7895,6 +7920,7 @@ proc clearSession(state: var AppState) =
   if state.leapJob != NoJob: discard state.jobs.cancel(state.leapJob)
   if state.cutJob != NoJob: discard state.jobs.cancel(state.cutJob)
   if state.spsJob != NoJob: discard state.jobs.cancel(state.spsJob)
+  if state.oJob != NoJob: discard state.jobs.cancel(state.oJob)
   if state.recJob != NoJob: discard state.jobs.cancel(state.recJob)
   state.recJob = NoJob
   state.stopShotTraces()
@@ -9735,6 +9761,30 @@ proc finishSps(state: var AppState; job: JobInfo) =
     state.spsOutcome = "The SPS export failed: " & why
     state.log.add(sevError, "export SPS", state.spsOutcome)
 
+proc finishO(state: var AppState; job: JobInfo) =
+  ## The O file generation ended: the Messages say what was written and what
+  ## the O records leave out.
+  let sink = state.oSink
+  let res = if sink.isNil: OFileSummary() else: sink.summary
+  let dest = if sink.isNil: "" else: sink.dest
+  let source = if sink.isNil: "" else: sink.source.extractFilename
+  state.oJob = NoJob
+  state.oSink = nil
+  state.oPath = ""
+  if job.state == jsDone and res.error.len == 0:
+    state.oPath = dest
+    state.oOutcome = oFileSentences(res, dest.extractFilename, source)
+    state.log.add(sevInfo, "generate O file", state.oOutcome)
+  elif job.state == jsCancelled:
+    state.oOutcome = "The O file was not written: generating it was cancelled."
+    state.log.add(sevWarning, "generate O file", state.oOutcome)
+  else:
+    let why = if res.error.len > 0: res.error
+              elif job.error.len > 0: job.error
+              else: "it did not finish"
+    state.oOutcome = "The O file was not written: " & why
+    state.log.add(sevError, "generate O file", state.oOutcome)
+
 proc releaseSurvey(state: AppState; job: JobInfo) =
   ## Lets go of the survey a batch write's job joined from.
   for c in state.batchSurvey.held:
@@ -9818,6 +9868,9 @@ proc onFinished(state: var AppState; job: JobInfo) =
     return
   if job.id == state.spsJob:
     state.finishSps(job)
+    return
+  if job.id == state.oJob:
+    state.finishO(job)
     return
   if job.id == state.stJob:
     state.stJob = NoJob
@@ -12193,6 +12246,41 @@ proc exportShotSpsCmd(state: var AppState; cmd: Command) =
   state.spsJob = state.jobs.submit(spsExportSpec(dest),
     spsExportWork(state.shotLogs[cmd.spsLog].view, cmd.spsOptions, dest, state.spsSink))
 
+proc generateOFileCmd(state: var AppState; cmd: Command) =
+  ## Starts the write of the O records of the imported survey's X records.
+  if state.oJob != NoJob:
+    state.ignore(cmd, "an O file is already being generated")
+    return
+  let r = state.relationLayer
+  if r < 0:
+    state.ignore(cmd, "the imported survey has no X records to take O records from")
+    return
+  if cmd.oDest.len == 0:
+    state.ignore(cmd, "no file name was given")
+    return
+  let dest = canonical(cmd.oDest)
+  if fs.dirExists(dest):
+    state.ignore(cmd, extractFilename(dest) & " is a folder")
+    return
+  var own: seq[string]
+  for l in state.survey.layers:
+    if l.origin == loSurveyFile: own.add l.path
+  for x in state.joins:
+    for f in x.files: own.add canonical(f.path)
+  for s in state.sessions: own.add canonical(s.path)
+  for l in state.shotLogs: own.add canonical(l.source)
+  let why = refusedTarget(dest, own)
+  if why.len > 0:
+    state.oOutcome = "The O file was not written: " & why & "."
+    state.log.add(sevError, "generate O file", state.oOutcome)
+    state.ignore(cmd, why)
+    return
+  template l: untyped = state.survey.layers[r]
+  state.oSink = OFileSink(source: l.path, dest: dest)
+  state.oOutcome = ""
+  state.oPath = ""
+  state.oJob = state.jobs.submit(oFileSpec(dest), oFileWork(l.relations, state.oSink))
+
 proc watchRecording*(state: var AppState; wanted: bool) =
   ## Keeps a job reading the shown file as a recording (`describeRecording`)
   ## while `wanted` (the cut dialog is open) or while the Files panel does not know the
@@ -12985,6 +13073,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
     state.adoptLeap(shipped, resetSentence(shipped.checkedTo))
   of ckCutGather: state.cutGatherCmd(cmd)
   of ckExportShotSps: state.exportShotSpsCmd(cmd)
+  of ckGenerateOFile: state.generateOFileCmd(cmd)
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept

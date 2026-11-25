@@ -368,7 +368,7 @@ proc nothingError(r: ShotSpsResult): string {.raises: [].} =
   result = "No row could be written."
   if r.problems.len > 0: result.add " " & problemWords(r)
 
-proc writeBeside(path, text: string; replace: bool): string {.raises: [].} =
+proc writeBeside*(path, text: string; replace: bool): string {.raises: [].} =
   ## `text` to a temporary file beside `path`, flushed, then renamed onto
   ## `path`. Empty when `path` was written. When `replace` is false and `path`
   ## exists, nothing is changed and the answer says so.
