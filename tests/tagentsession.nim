@@ -65,7 +65,8 @@ import utils/[fixtures, waiting]
 # at the quit (`lastProject`) is the agent's for the session, and its
 # `close project` takes it back.
 const Reached = {
-  "theme": "theme", "pickerPlaces": "", "units": "", "noise.choice": "", "noise.edgeMs": "",
+  "theme": "theme", "pickerPlaces": "", "units": "", "amplitudeIn": "", "noise.choice": "",
+  "noise.edgeMs": "",
   "noise.radius": "",
   "noise.steps": "", "noise.allLines": "", "noise.templateOnly": "", "window.x": "", "window.y": "",
   "window.width": "",
@@ -579,6 +580,12 @@ proc main*() =
       st.agent(%*{"kind": "station move", "moveLine": 100, "movePoint": 101, "moveIndex": 1,
         "moveForget": true})
       doAssert st.project.doc.stationMoves.len == 0
+      # a sensor: kept for this run with no project
+      st.agent(%*{"kind": "sensor", "sensorComponent": 2, "sensorValue": 2.032,
+        "sensorUnit": "V/(in/s)"})
+      doAssert st.project.doc.sensors.len == 1 and st.project.doc.sensors[0].value == 2.032
+      st.agent(%*{"kind": "sensor", "sensorComponent": 2, "sensorForget": true})
+      doAssert st.project.doc.sensors.len == 0
       st.agent(%*{"kind": "own position", "ownTrace": 0})
       st.agent(%*{"kind": "vendor map", "vendorMap": "none"})
       st.agent(%*{"kind": "vendor map", "vendorMap": "automatic"})

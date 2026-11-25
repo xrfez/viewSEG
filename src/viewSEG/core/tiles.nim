@@ -23,6 +23,7 @@ from parseSEG import TraceKeys, JoinGroup
 from processSEG/gain/gain import dbToFactor
 from processSEG/gain/stats import percentileAbs, percentileWorkspace, traceStats
 from processSEG/core/workspace import Workspace, reserve
+from processSEG/core/units import FileScale
 import colourmaps, edits, geometry, panels, viewport
 
 export TraceEdit, colourmaps
@@ -65,6 +66,9 @@ type
       ## when asked for (`ReaderRequest.raw`): the samples as the file has
       ## them, before polarity, edits, processing and gain, cut and
       ## decimated as `data`; empty otherwise
+    scales*: seq[FileScale]
+      ## when asked for (`ReaderRequest.scales`): per row, what the file's own headers say of
+      ## the trace's counts-to-volts factor (NaN where they say nothing); empty otherwise
     dead*: seq[bool]
       ## per row: the trace is marked dead in the file, so it is drawn blank;
       ## empty when none is

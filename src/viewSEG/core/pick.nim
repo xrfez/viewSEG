@@ -13,6 +13,7 @@
 
 import std/math
 import parseSEG
+from processSEG/core/units import FileScale, initFileScale
 import edits, geometry, tiles, viewport, zoom
 
 type
@@ -28,11 +29,18 @@ type
     channelSet*: string       ## its SEG-D channel set in words ("2 · seismic"); "" for none
     amplitude*: float32 = NaN ## the value drawn at the nearest sample; NaN when not held
     raw*: float32 = NaN       ## the file's sample there, before anything; NaN when not held
-    binned*: int = 1          ## samples behind `amplitude`: more than 1 zoomed out
-    edits*: set[TraceEdit]    ## the trace's edits, as drawn: killed, reversed
-    filterNote*: string       ## its own filter, in words; "" for none
-    shiftNote*: string        ## its time shift, in words; "" for none
-    joined*: set[JoinGroup]   ## the groups of its keys a geometry join gave
+    scale*: FileScale
+      ## its file's own scale (the headers' counts-to-volts factor), when `hasScale`
+    hasScale*: bool           ## the tile carried the file's scale (`Tile.scales`)
+    rawText*: string
+      ## what the raw amplitude says when it is read in volts or physical units, for
+      ## whoever converted it (`core/readout.convertRaw`); "" shows the sample as the file has it
+    rawTip*: string ## the tooltip that goes with `rawText` when it is no number
+    binned*: int = 1 ## samples behind `amplitude`: more than 1 zoomed out
+    edits*: set[TraceEdit] ## the trace's edits, as drawn: killed, reversed
+    filterNote*: string ## its own filter, in words; "" for none
+    shiftNote*: string ## its time shift, in words; "" for none
+    joined*: set[JoinGroup] ## the groups of its keys a geometry join gave
     breaks*: string
       ## the first-break overlay's model time, pick time and their difference for
       ## this trace, in words (`core/firstbreaks`); "" when the overlay is off or
@@ -40,7 +48,7 @@ type
 
 func noPick*(): Pick =
   ## A point over nothing.
-  Pick(keys: initTraceKeys())
+  Pick(keys: initTraceKeys(), scale: initFileScale())
 
 func pickAt*(tiles: openArray[Tile]; layout: PanelLayout; at: DataPoint): Pick =
   ## What lies at data point `at` of a panel with `layout` showing `tiles`
@@ -75,6 +83,9 @@ func pickAt*(tiles: openArray[Tile]; layout: PanelLayout; at: DataPoint): Pick =
       t.columns - 1)
     result.amplitude = t.data[row * t.columns + c]
     if t.raw.len == t.data.len: result.raw = t.raw[row * t.columns + c]
+    if row < t.scales.len:
+      result.scale = t.scales[row]
+      result.hasScale = true
     result.binned = r.decimation
 
 func pick*(tiles: openArray[Tile]; layout: PanelLayout; view: Viewport; plot: Rect;

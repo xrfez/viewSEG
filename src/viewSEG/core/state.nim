@@ -363,6 +363,10 @@ type
     ckStationMove = "station move"
       ## say that a receiver station sits at another position (from a time on), or take that
       ## move away; kept in the project, never written into a survey or seismic file
+    ckSensor = "sensor"
+      ## type the sensitivity of the sensor of one component (as wired, in the unit it was
+      ## typed in), or take that row away; kept in the project, for the amplitude readout in
+      ## physical units
     ckOwnPosition = "own position"
       ## read the position a trace's own header gives its receiver, as the file has it on disk,
       ## off the UI thread, for the station move's choice; changes nothing
@@ -735,6 +739,16 @@ type
       moveForget*: bool
         ## ckStationMove: take away the move of this station (at `moveFrom` when `moveHasFrom`,
         ## else the undated one); the position fields are then not used
+    of ckSensor:
+      sensorComponent*: int
+        ## ckSensor: the component (`componentOf`: 2 vertical geophone, 1 hydrophone, ...) whose
+        ## sensor this is, 1 to 255
+      sensorValue*: float64
+        ## ckSensor: the sensitivity as wired, in `sensorUnit`: finite, above 0, within 1e-12
+        ## and 1e12 volts per SI unit
+      sensorUnit*: string
+        ## ckSensor: "V/(m/s)", "V/(in/s)", "V/(m/s²)", "V/g", "V/bar", "V/Pa" or "µV/Pa"
+      sensorForget*: bool ## ckSensor: take away the row of this component; the value is then not used
     of ckOwnPosition:
       ownTrace*: int
         ## ckOwnPosition: the survey-wide id of the trace whose own header position is read
@@ -1537,6 +1551,10 @@ type
     memoryWork: seq[JobId]
       ## the identifications and hashes under way: they end quietly
     exports: seq[JobId] ## the exports of edits under way
+    scalesNoted: string
+      ## the file and sensors the Messages last summed up the physical-units conversion for
+    scalesStamp: tuple[path: string; panel, project: int]
+      ## what the summary was last looked at for, so a frame that changed none of it does no work
     editImports: seq[tuple[job: JobId; path: string; by: CommandOrigin; replace: bool;
       label: string]]
       ## the imports of edits under way: each job, and the file it is for
@@ -4109,14 +4127,15 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
     flowAux: p.layers[0].flowReachesAux(state.gatherKind(p.layers[0])),
     clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
     excluded: excluded, own: own, shifts: shifts,
-    raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0,
+    raw: state.settings.carriesRaw, scales: state.settings.amplitudeIn != aiCounts,
+    chunkTraces: if slow: SlowChunkTraces else: 0,
     basis: first and req.sameReach(p.basis))
   if p.relevel and not p.levelAsked and not req.sameReach(p.basis):
     var whole = asked
     whole.read = p.basis
     (whole.read.gen, whole.read.margin, whole.read.envelope) = (req.gen, req.margin, false)
     whole.fields.setLen 0
-    (whole.raw, whole.basis) = (false, false)
+    (whole.raw, whole.scales, whole.basis) = (false, false, false)
     state.readers[k].askLevel(whole)
     p.levelAsked = true
   state.readers[k].request asked
@@ -8852,6 +8871,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   if news.created and wasIn: discard
   elif news.created: state.saveMemory(getMonoTime(), force = true)
   let carried = if not wasIn and news.created: p.doc.stationMoves else: StationMoves()
+  let carriedSensors = if not wasIn and news.created: p.doc.sensors else: SensorTable()
   p = ProjectState(dir: dir, doc: move news.doc, lock: news.lock, owner: news.owner,
     folders: move news.folders, originals: move news.originals, by: by,
     userArrangement: userArrangement, userPresets: userPresets,
@@ -8865,6 +8885,9 @@ proc takeOpened(state: var AppState; m: sink Msg) =
                   else: ""
   if carried.len > 0 and not p.readOnly:
     p.doc.stationMoves = carried # (the open files already follow them)
+    state.projectChanged()
+  if carriedSensors.len > 0 and not p.readOnly:
+    p.doc.sensors = carriedSensors
     state.projectChanged()
   inc p.revision
   state.store = Store(home: dir / ProjectStoreFolder)
@@ -9195,6 +9218,54 @@ proc setStationMoves*(state: var AppState; moves: StationMoves) =
     state.log.add(sevWarning, "project", "The project is read-only: the station moves are for " &
       "this run only.")
   state.queueOpenMoves()
+
+proc noteScales(state: var AppState) =
+  ## While the amplitude is read in physical units: one Messages line for the shown record,
+  ## when a file is shown, or the sensors change, or the choice is made: how many of its
+  ## traces convert, how many lack a descale in the file, how many lack a sensor. Looks at
+  ## the main panel's newest tile that carries the file's scales; reads no file.
+  if state.settings.amplitudeIn != aiPhysical:
+    state.scalesNoted = ""
+    return
+  let k = state.findPanel(MainPanel)
+  if k < 0 or state.tiles[k].len == 0: return
+  let shown = state.shownFile(k)
+  if shown < 0: return
+  let stamp = (state.sessions[shown].path, state.panels[k].revision, state.project.revision)
+  if stamp == state.scalesStamp: return
+  state.scalesStamp = stamp
+  var at = -1
+  for i in countdown(state.tiles[k].high, 0):
+    if state.tiles[k][i].scales.len > 0 and
+        state.tiles[k][i].scales.len == state.tiles[k][i].keys.len:
+      at = i
+      break
+  if at < 0: return
+  var key = state.sessions[shown].path & "|"
+  for r in state.project.doc.sensors: key.add $r.component & ":" & $r.value & $r.unit & ";"
+  if key == state.scalesNoted: return
+  state.scalesNoted = key
+  let plan = initCalibrationPlan(state.project.doc.sensors.calibrationOf)
+  var typed, fromFile, volts, noVolts, noSensor, other, conflicts = 0
+  for i, keys in state.tiles[k][at].keys:
+    let r = scaleSample(plan, keys, state.tiles[k][at].scales[i], 1.0, aiPhysical)
+    case r.kind
+    of skValue:
+      if r.unit == auVolt: inc volts
+      elif r.source == ssFile: inc fromFile
+      else: inc typed
+      if r.conflict: inc conflicts
+    of skNoVolts: inc noVolts
+    of skNoSensor: inc noSensor
+    of skCounts, skNotFitting, skKept: inc other
+  state.log.add(sevInfo, "project", "Physical units, " & state.sessions[shown].name & ": " &
+    $(typed + fromFile + volts) & " of " & $state.tiles[k][at].keys.len &
+    " traces shown convert, " & $typed & " with the typed sensor, " & $fromFile &
+    " with the file's own sensitivity, " &
+    (if volts > 0: $volts & " in volts only (auxiliary), " else: "") &
+    $noVolts & " lack a descale in the file, " & $noSensor & " lack a sensor for their " &
+    "component" & (if other > 0: ", " & $other & " are left as recorded" else: "") &
+    (if conflicts > 0: "; " & $conflicts & " differ from the file's headers" else: "") & ".")
 
 proc followMoves(state: var AppState) =
   ## The next open file takes the project's station moves, once no import and
@@ -11949,6 +12020,64 @@ const
   MaxStationNumber = 1e8 ## a line or point a move may name (SPS: F10.2)
   MaxMovePosition = 1e9  ## the largest x, y or elevation of a move, in the survey's units
 
+proc setSensors*(state: var AppState; table: SensorTable) =
+  ## Replaces the project's sensors. A project with a folder records the change; without
+  ## one the table is kept for this run. Reads no file.
+  assertUiThread()
+  state.project.doc.sensors = table
+  inc state.project.revision
+  if state.project.dir.len > 0 and not state.project.readOnly: state.projectChanged()
+  elif state.project.dir.len > 0:
+    state.log.add(sevWarning, "project", "The project is read-only: the sensors are for " &
+      "this run only.")
+
+func sensorUnitOf(word: string): Option[SensitivityUnit] =
+  ## The unit a command names, by its symbol (`$unit`), or the plain-text form of one.
+  let w = word.strip.replace("u", "µ")
+  for u in OfferedUnits:
+    if $u == w or $u == w.replace("2", "²"): return some(u)
+
+proc sensorCommand(state: var AppState; cmd: Command) =
+  ## `ckSensor`: the sensitivity of one component's sensor is typed, or its row taken away.
+  ## Kept in the project, or for this run when none is open or it is read-only, and said so.
+  if cmd.sensorComponent notin 1 .. 255:
+    state.ignore(cmd, "a component is a number from 1 to 255")
+    return
+  let component = uint8(cmd.sensorComponent)
+  var table = state.project.doc.sensors
+  let keptIn =
+    if not state.inProject: "for this run only (no project is open)"
+    elif state.project.readOnly: "for this run only (the project is read-only)"
+    else: "in the project"
+  if cmd.sensorForget:
+    if not table.remove(component):
+      state.ignore(cmd, "no sensor of " & componentName(component) & " is kept")
+      return
+    state.setSensors(table)
+    state.log.add(sevInfo, "project", "The sensor of " & componentName(component) &
+      " is removed " & keptIn & ".")
+  else:
+    let unit = sensorUnitOf(cmd.sensorUnit)
+    if unit.isNone:
+      state.ignore(cmd, "a sensitivity's unit is one of " & OfferedUnits.mapIt($it).join(", "))
+      return
+    let old = table.get(component)
+    var row = SensorRow(component: component, value: cmd.sensorValue, unit: unit.get)
+    if old.isSome: row.later = old.get.later
+    if not row.sensorOk:
+      state.ignore(cmd, "a sensitivity is a finite number above 0 whose value in SI is " &
+        "between " & $MinSensitivity & " and " & $MaxSensitivity & " volts per unit")
+      return
+    if not table.put(row):
+      state.ignore(cmd, "at most " & $MaxSensors & " sensors are kept")
+      return
+    state.setSensors(table)
+    state.log.add(sevInfo, "project", "The sensor of " & componentName(component) & " is " &
+      significant(row.value, 6) & " " & $row.unit & ", " & keptIn & ", as wired (a shunt " &
+      "lowers a data sheet's open-circuit figure); only the flat band is converted." &
+      (if old.isSome: " It replaces " & significant(old.get.value, 6) & " " & $old.get.unit &
+        "." else: ""))
+
 proc stationMove(state: var AppState; cmd: Command) =
   ## `ckStationMove`: a receiver station sits at another position (from a time on), or its
   ## move is taken away. Kept in the project, or for this run when none is open or it is
@@ -13339,7 +13468,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
         "be used (a calibration that is not a positive number, an entry given twice, a " &
         "sort preset without a name or keys) and were left out.")
     let follow = s.files.followLatest and not state.settings.files.followLatest
-    let raw = (rfRawAmplitude in s.readout) != (rfRawAmplitude in state.settings.readout)
+    let raw = s.carriesRaw != state.settings.carriesRaw or
+      s.amplitudeIn != state.settings.amplitudeIn
     # The settings a window sends are those in effect with its change: only
     # that change is the user's (what an agent changed meanwhile is not).
     let scaled = not sameScale(s.forceScale, state.settings.forceScale)
@@ -13887,6 +14017,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckFileAuxMark: state.fileAuxMark(cmd)
   of ckProjectAuxMark: state.projectAuxMark(cmd)
   of ckStationMove: state.stationMove(cmd)
+  of ckSensor: state.sensorCommand(cmd)
   of ckOwnPosition: state.askOwnPosition(cmd)
   of ckVibProfile: state.storeVibProfile(cmd.origin, cmd.vibProfile)
   of ckVibWeights: state.storeVibWeights(cmd.origin, cmd.vibWeights)
@@ -14178,5 +14309,6 @@ proc drainInbox*(state: var AppState): bool =
   state.followMapWork()
   state.followMemoryLook()
   state.followProject()
+  state.noteScales()
   state.followMoves()
   state.followLeap()

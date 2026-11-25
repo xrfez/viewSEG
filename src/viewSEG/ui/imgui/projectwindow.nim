@@ -7,9 +7,9 @@
 ## comes forward by itself when an original changed, since the change is
 ## never taken unasked.
 
-import std/[os, strutils, times]
+import std/[algorithm, os, strutils, times]
 import imguin/cimgui
-import ../../core/[join, state, stationmoves]
+import ../../core/[components, join, sensors, state, stationmoves]
 import ../../view/theme
 import chrome, clearsurvey, focus, icons, stationmovemenu, style
 
@@ -33,7 +33,12 @@ type
     locating*: string         ## the missing folder a Locate... is for
     wasOffered: bool          ## the project offered an update at the frame before
     earlierSeen: int          ## earlier outputs of the file shown, at the frame before
-    focus: FocusClicks        ## the New project window's
+    editing: uint8            ## the component whose sensitivity is being typed (0: none)
+    draft: float64            ## ... as typed so far
+    unitPicked: array[256, int8]
+      ## per component, the unit chosen for a row not made yet, as an index into the
+      ## units offered it (0 until the user chooses)
+    focus: FocusClicks ## the New project window's
     focusProject: FocusClicks ## the Project window's
 
   ProjectOutput* = object
@@ -281,6 +286,88 @@ proc drawMoves(ui: var ProjectUi; st: AppState; t: Theme; marks: var Marks;
       marks.mark("project.move." & $i)
       igPopID()
 
+proc presentComponents(st: AppState): seq[uint8] =
+  ## The components of the files shown (the main plot's buttons) and of the sensors typed, in
+  ## order, each once.
+  let k = st.findPanel(MainPanel)
+  if k >= 0:
+    for c in st.panels[k].componentCodes:
+      if c > 0 and c notin result: result.add c
+  for r in st.project.doc.sensors:
+    if r.component notin result: result.add r.component
+  result.sort
+
+proc drawSensors(ui: var ProjectUi; st: AppState; t: Theme; marks: var Marks;
+    res: var ProjectOutput) =
+  ## The sensors: one row per component present in the open files or already typed, its
+  ## sensitivity as wired and its unit, and what is converted.
+  igSeparatorText("Sensors")
+  marks.mark("project.sensors")
+  let imperial = st.settings.units == usImperial
+  t.dim((if st.inProject: "Sensors are kept in the project" else:
+    "No project is open: these sensors hold for this run only") & ". They turn the status " &
+    "bar's raw amplitude into physical units, with the counts-to-volts factor the file itself " &
+    "gives.")
+  t.dim("Type the sensitivity as wired: a data sheet's figure is usually the open-circuit " &
+    "sensitivity, and a damping shunt lowers it, so use the figure for your shunt.")
+  t.dim("Only the flat band is converted: below the sensor's natural frequency the true " &
+    "motion is larger than shown.")
+  igTextUnformatted("Raw amplitude in:", nil)
+  for a in AmplitudeIn:
+    igSameLine(0, 8)
+    if igRadioButton_Bool(($a).capitalizeAscii.cstring, st.settings.amplitudeIn == a) and
+        st.settings.amplitudeIn != a:
+      res.commands.add Command(kind: ckSettings, settings: st.settings.withAmplitudeIn(a))
+    marks.mark("project.amplitude." & $a)
+  tip("What the status bar's raw amplitude shows: the sample as the file has it (counts), " &
+    "volts at the recorder's input, or ground motion or pressure through the sensors below. " &
+    "Choosing volts or physical units adds the raw amplitude to the status bar.")
+  let comps = st.presentComponents
+  if comps.len == 0:
+    t.dim("Open a seismic file to list its components here.")
+  for c in comps:
+    igPushID_Int(cint(c))
+    let have = st.project.doc.sensors.get(c)
+    let units = unitsFor(kindOf(c), imperial)
+    var unit = units[0]
+    if have.isSome: unit = have.get.unit
+    elif ui.unitPicked[c] in 0'i8 ..< int8(units.len): unit = units[ui.unitPicked[c]]
+    igTextUnformatted(componentName(c).cstring, nil)
+    igSameLine(max(igGetFontSize() * 13, 0), -1)
+    var v = if ui.editing == c: ui.draft elif have.isSome: have.get.value else: 0.0
+    igSetNextItemWidth(igGetFontSize() * 7)
+    if igInputDouble("##value", addr v, 0, 0, "%.6g".cstring, 0): (ui.editing, ui.draft) = (c, v)
+    let typed = igIsItemDeactivatedAfterEdit()
+    if igIsItemActive(): (ui.editing, ui.draft) = (c, v)
+    elif ui.editing == c: ui.editing = 0
+    marks.mark("project.sensor.value." & $c)
+    tip("The sensitivity as wired, in the unit beside it, as typed: it is kept as typed and " &
+      "never shown in another unit. Press Enter, or click elsewhere, to keep it.")
+    igSameLine(0, 6)
+    igSetNextItemWidth(igGetFontSize() * 8)
+    var picked = unit
+    if igBeginCombo("##unit", ($unit).cstring, 0):
+      for u in units:
+        if igSelectable_Bool(($u).cstring, u == unit, 0, ImVec2_c(x: 0, y: 0)): picked = u
+      igEndCombo()
+    marks.mark("project.sensor.unit." & $c)
+    tip("Changing the unit keeps the number as typed; it is not converted.")
+    if picked != unit:
+      ui.unitPicked[c] = int8(units.find(picked))
+      if have.isSome:
+        res.commands.add Command(kind: ckSensor, sensorComponent: int(c),
+          sensorValue: have.get.value, sensorUnit: $picked)
+    elif typed:
+      res.commands.add Command(kind: ckSensor, sensorComponent: int(c), sensorValue: v,
+        sensorUnit: $unit)
+    if have.isSome:
+      igSameLine(0, 6)
+      if igSmallButton("Remove"):
+        res.commands.add Command(kind: ckSensor, sensorComponent: int(c), sensorForget: true)
+      marks.mark("project.sensor.remove." & $c)
+      tip("Take this sensor away: this component's raw amplitude then has no sensor to convert with")
+    igPopID()
+
 proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks: var Marks;
     res: var ProjectOutput) =
   let p = st.project
@@ -296,6 +383,7 @@ proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks
         "No project is open. Project > New project... makes one; Project > Open project... opens " &
         "one.").cstring)
       ui.drawMoves(st, t, marks, res)
+      ui.drawSensors(st, t, marks, res)
     else:
       igTextUnformatted((IconFolder & "  " & p.doc.name).cstring, nil)
       t.dim(p.dir)
@@ -373,6 +461,7 @@ proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks
             else: ClearSurveyHelp), not p.readOnly, marks) and ui.focusProject.acts:
           res.clearSurvey = true
       ui.drawMoves(st, t, marks, res)
+      ui.drawSensors(st, t, marks, res)
       igSeparator()
       if button(IconClose & "  Close project", "project.close", "Write what is pending, close " &
           "its files and survey and go back to working without a project", true, marks):

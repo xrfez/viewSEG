@@ -43,7 +43,7 @@ Land 2026/                  the project folder: this is what is opened
   such as `.viewseg`: a later step.)
 - **`project.nif`** says what the project is: its name, its data folders, its survey files
   with their originals, the import's options and units, what `survey.bin` holds, the
-  project's filters, display presets, output name patterns, text header templates and binary header sets (`core/projectnif`). A station
+  project's filters, display presets, output name patterns, text header templates and binary header sets (`core/projectnif`). The sensors typed for the amplitude readout in physical units are a `sensors` entry: one `sensor` for each component, the sensitivity as typed and the unit it was typed in (`vPerMPerS`, `vPerInPerS`, `vPerMPerS2`, `vPerG`, `vPerBar`, `vPerPa`, `microVPerPa`), never converted; a row with a value that is not a finite figure within 1e-12 and 1e12 volts per unit in SI, a unit not in that list or a second row of one component is said and left out. A station
   moved during a deployment is a `stationMoves` entry there: a new receiver position from a time on,
   not written into the seismic file or the survey file. While a file is open that
   position replaces the header's and the survey's for a trace recorded at or after

@@ -24,11 +24,11 @@
 
 import std/[math, sequtils]
 import components, displaypresets, geometry, itempool, join, log, mapkinds, noisearea,
-  outputrevision, panels, pickerplaces, plotoptions, readout, scales, shotlayout, spectra,
+  outputrevision, panels, pickerplaces, plotoptions, readout, scales, sensors, shotlayout, spectra,
       tracetable, units
 
 export displaypresets, join, mapkinds, noisearea, pickerplaces, plotoptions, readout, scales,
-    shotlayout, spectra, units
+    sensors, shotlayout, spectra, units
 
 const
   DefaultRecordMs* = 10_000.0 ## the Slice by shot log window's record length to begin with
@@ -245,6 +245,9 @@ type
     units*: UnitSystem
       ## how a plot shows a physical value (a mass, a force, a velocity);
       ## Metric, the default. An older file that does not say loads as Metric.
+    amplitudeIn*: AmplitudeIn
+      ## what the raw amplitude of the status bar is given in: counts (the default; an
+      ## older file loads so), volts, or physical units through the project's sensors
     noise*: NoiseSettings
       ## how the noisy-trace test sets its exclusion area: automatic, or a fixed time, a
       ## radius or a number of stations
@@ -296,6 +299,19 @@ type
     componentColours*: array[4, Rgba] = DefaultComponentColours
       ## hydrophone, vertical, inline, crossline: the Seismic window's
       ## component buttons and, on a multi-component record, its traces
+
+func withAmplitudeIn*(s: Settings; a: AmplitudeIn): Settings =
+  ## `s` with the amplitude read in `a`; in volts or physical units the raw amplitude is shown
+  ## in the status bar, since that is the field that is converted.
+  result = s
+  result.amplitudeIn = a
+  if a != aiCounts and rfRawAmplitude notin result.readout:
+    result.readout.add rfRawAmplitude
+
+func carriesRaw*(s: Settings): bool =
+  ## Whether the tiles carry the samples as the file has them: the raw amplitude is a field of
+  ## the status bar, or the amplitude is read in volts or physical units (which convert them).
+  rfRawAmplitude in s.readout or s.amplitudeIn != aiCounts
 
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not
