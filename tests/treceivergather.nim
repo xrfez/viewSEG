@@ -25,7 +25,8 @@
 ## - The gather's key reaches no file system call, a reopen is refused, a station move leaves
 ##   its keys alone, and replacing it says it was closed.
 ##
-## Seen to fail: with the refusal in `editTraces` taken out, "an edit is refused" failed on
+## Seen to fail: with the window test taken out, "b-far.sgy" came as a trace of zeros; with the
+## refusal in `editTraces` taken out, "an edit is refused" failed on
 ## the first edit; with the sort by record time left out, trace 0 was the first file's, not
 ## the earliest shot's; with the listed files back in the job's reads, "stepAway" ended with
 ## a cancelled gather; with the shift taken out, "a later start was not shifted"; with no
@@ -412,6 +413,28 @@ proc main*() =
       st.ask(component = 7)
       doAssert st.settle(st.jobs.active.len == 0 and
         "No listed file holds receiver station 100/105 (component 7)" in st.lastSaid), st.lastSaid
+
+    block outsideWindow:
+      # a trace that starts so far away that none of its samples is in the gather's window is
+      # left out and named; one that overlaps partly is shifted and counted as having lost
+      # samples
+      let d3 = fx.dir / "window"
+      createDir(d3)
+      shotFile(d3 / "a-first.sgy", 1, Time0 + 100)
+      shotFile(d3 / "b-far.sgy", 2, Time0 + 200, t0Ms = 100.0)
+      shotFile(d3 / "c-near.sgy", 3, Time0 + 300, t0Ms = -2.0)
+      st.apply Command(kind: ckBrowse, paths: @[d3])
+      doAssert st.settle(not st.fileList.scanning and st.fileList.folder == d3)
+      st.ask()
+      doAssert st.settle(st.jobs.active.len == 0 and st.sessions.len == 1 and
+        st.sessions[0].gathered), st.lastSaid
+      let said = st.lastSaid
+      doAssert st.sessions[0].len == 2, $st.sessions[0].len & ": " & said
+      doAssert "b-far.sgy (starts outside the gather's time window)" in said, said
+      doAssert "1 trace starts at another time and was shifted to the gather's; " &
+        "1 of them lost samples at an end" in said, said
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: d3 / "a-first.sgy")
+      doAssert st.settle(st.sessions.len == 1 and not st.sessions[0].gathered)
 
     block listedTwice:
       let top = fx.dir / "top"

@@ -24,7 +24,8 @@
 ##   one shot stay in file order);
 ## - takes the sample interval, the length and the start time of the first trace that has a
 ##   finite interval above zero: a trace of another interval, or whose start differs by a
-##   part of a sample, is left out and its file named; one of another length is padded with
+##   part of a sample, or so far that none of its samples is in the gather's window, is left
+##   out and its file named; one of another length is padded with
 ##   zeros or cut; one that starts a whole number of samples away is shifted onto the
 ##   gather's time axis; and that is said;
 ## - stops at `gatherTraces` traces or `gatherBytes` bytes of samples (traces times samples
@@ -121,7 +122,7 @@ type
     length: int             ## samples per trace; 0 until a trace was taken
     absent, unreadable: int ## files with no trace at the station, files that could not be read
     others: seq[string]     ## sentences of the files left out for another reason
-    padded, cut, mismatched, notAdded, shifted, killed, twice: int
+    padded, cut, mismatched, notAdded, shifted, lostEnds, killed, twice: int
     capped: string
     maxTraces: int
     maxBytes: int64
@@ -288,6 +289,8 @@ proc add(c: var Collected; path: string; part: sink GatherPart) =
           if abs(off - whole) > WholeSample:
             nameOnce "starts " & numText(t.keys.startMs - c.t0Ms) &
               " ms from the gather's start, not a whole number of samples"
+          elif int(whole) >= c.length or int(whole) + t.samples.len <= 0:
+            nameOnce "starts outside the gather's time window"
           elif not c.fits(c.length):
             c.capped = if c.rows.len >= c.maxTraces: "the limit of " & plural(c.maxTraces, "trace")
                        else: "the memory limit of " &
@@ -299,6 +302,7 @@ proc add(c: var Collected; path: string; part: sink GatherPart) =
             elif t.samples.len > c.length: inc c.cut
             if whole != 0:
               inc c.shifted
+              if whole < 0 or int(whole) + t.samples.len > c.length: inc c.lostEnds
               t.samples = t.samples.shiftedBy(int(whole), c.length)
             else: t.samples.setLen c.length
             t.keys.t0Ms = c.t0Ms
@@ -341,7 +345,10 @@ func sentence(c: Collected; ask: GatherAsk; kept, listed: int): string =
   if c.shifted > 0:
     result.add " " & plural(c.shifted, "trace") & " start" & (if c.shifted == 1: "s" else: "") &
       " at another time and " & (if c.shifted == 1: "was" else: "were") &
-      " shifted to the gather's."
+      " shifted to the gather's"
+    if c.lostEnds > 0:
+      result.add "; " & $c.lostEnds & " of them lost samples at an end"
+    result.add "."
   if c.capped.len > 0:
     result.add " Stopped at " & c.capped & ": the traces of " &
       plural(c.notAdded, "later file") & " (or the rest of one) were not added."
