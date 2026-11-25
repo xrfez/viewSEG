@@ -102,7 +102,8 @@ proc forcedPath*(path: string): string =
   try: absolutePath(path).normalizedPath
   except OSError, ValueError: path.normalizedPath
 
-proc autoKindOf*(s: Session; path: string; ctx: JobContext): Option[RecordingKind] =
+proc autoKindOf*[C: JobContext | ItemContext](s: Session; path: string; ctx: C):
+    Option[RecordingKind] =
   ## The kind of the open file told from itself, as the Files window tells it; none when
   ## the file has no sample interval or no live trace, when the plan cannot be made, or
   ## when it reads as continuous only for want of a boundary between segments to judge

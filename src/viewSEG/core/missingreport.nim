@@ -110,6 +110,21 @@ proc addGather*(t: var StationTally; calls: openArray[StationKey];
     do:
       t.cells[key] = StationCell(found: not lost, missingIn: ord(lost))
 
+proc merge*(t: var StationTally; part: StationTally) =
+  ## Adds every record of `part` to `t`, as if its gathers had been added to `t` one by
+  ## one: the figures are sums and a station is found when any record has it. The files
+  ## of `part` are not counted (`noteFile`).
+  t.records += part.records
+  t.expected += part.expected
+  t.present += part.present
+  t.missing += part.missing
+  for key, cell in part.cells:
+    t.cells.withValue(key, mine):
+      mine[].found = mine[].found or cell.found
+      mine[].missingIn += cell.missingIn
+    do:
+      t.cells[key] = cell
+
 func percentOf(part, whole: int): float64 =
   if whole <= 0: 0.0 else: 100.0 * float64(part) / float64(whole)
 

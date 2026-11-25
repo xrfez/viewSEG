@@ -6,12 +6,15 @@
 ## they sit under, so a path in a message is relative to that folder, and the
 ## imported survey's relations (`SurveyGeometry`, or nil). The job does not
 ## look at app state and does not change the relations. One file's keys are
-## in memory at a time; each shot gather is added to a `StationTally` as it
-## is checked. The receiver side keeps, for each receiver station of the whole
-## scan, only the source stations it recorded, a bit for each source station
-## of the scan (`IdSet`), and checks each receiver once when every file is read. The File tab runs it on
-## one path, the Folder tab on the paths `folderScan` lists (subfolders only
-## when asked).
+## in memory at a time for each thread the item pool gives the job (several
+## files are open at once). Each file's shot gathers are checked on the thread that read
+## it; what a file adds to the scan (its own `StationTally`, its receivers and the sources
+## they recorded, its unmatched gathers) is added on the job's thread in file order, so
+## the report is the same on any number of threads. The receiver side keeps, for each
+## receiver station of the whole scan, only the source stations it recorded, a bit for
+## each source station of the scan (`IdSet`), and checks each receiver once when every
+## file is read. The File tab runs it on one path, the Folder tab on the paths
+## `folderScan` lists (subfolders only when asked).
 ##
 ## A file that cannot be opened, or that has no trace keys, is skipped and
 ## the scan goes on. A path already scanned (compared normalised) is not
@@ -49,7 +52,7 @@
 ## and index 1 are one receiver, and the index splits it only where the survey
 ## has the point at several indices.
 
-import std/[math, options, os, sets, strutils, tables]
+import std/[atomics, bitops, math, options, os, sets, strutils, tables]
 import parseSEG
 import processSEG/qc/record
 import processSEG/survey/relwalk
@@ -145,7 +148,7 @@ proc receiverRelationsOf(g: SurveyGeometry; first: int64): seq[SpsRelation] =
   else:
     result = g.receiverRelations(first, 'X')
 
-proc beat(ctx: JobContext; n: int) =
+proc beat[C: JobContext | ItemContext](ctx: C; n: int) =
   ## A cancel check every `TraceChunk` traces of a gather, so a long file
   ## stops before its completeness is computed.
   var i = 0
@@ -153,7 +156,7 @@ proc beat(ctx: JobContext; n: int) =
     ctx.checkCancelled()
     i += TraceChunk
 
-proc openKeys(path, cacheDir: string; ctx: JobContext): Session =
+proc openKeys[C: JobContext | ItemContext](path, cacheDir: string; ctx: C): Session =
   ## The file at `path`, keys only, closed by the caller. A cancel during
   ## the open is `SegCancelledError`. An unmapped read that fails (`fkIo`)
   ## raises here, before the file is opened. A current index cache in
@@ -239,35 +242,59 @@ proc addFile(m: var ReceiverMerge; path: string): int =
   result = m.files.len
   m.files.add ReceiverFile(path: path, first: -1)
 
-proc add(m: var ReceiverMerge; file: int; k: TraceKeys) =
-  ## Adds a trace that has a receiver station. A trace with no source station
-  ## adds its receiver only.
-  let station = stationKey(k.rcvLine, k.rcvPoint, 0)
-  var slot = m.at.getOrDefault(station, -1)
-  if slot < 0:
-    slot = m.list.len
-    m.at[station] = slot
-    m.list.add ReceiverAt(station: station, firstFile: file,
-      firstRecord: wholeRecord(k.record))
-  template f: untyped = m.files[file]
-  if f.first < 0: f.first = slot
-  elif f.first != slot:
-    if f.more.bits.len == 0: f.more.incl f.first
-    f.more.incl slot
-  if hasStation(k.srcLine, k.srcPoint):
-    let source = stationKey(k.srcLine, k.srcPoint, 0)         # a station is its line and point
+type
+  PartReceiver = object
+    ## A receiver station of one file: the first record it was seen with, and for each
+    ## receiver index its traces have, the source stations it recorded there (bits over
+    ## `ReceiverPart.sources`).
+    station: StationKey
+    firstRecord: int64
+    heard: seq[tuple[index: int16; sources: IdSet]]
+
+  ReceiverPart = object
+    ## What one file of receiver data adds to a `ReceiverMerge`: its receivers in the
+    ## order its traces first name them, and the source stations they name, in that
+    ## order. `hasFile`: a gather of the file was read, so it is a file of the merge
+    ## even when none of its traces has a receiver station.
+    hasFile: bool
+    receivers: seq[PartReceiver]
+    sources: seq[StationKey]
+
+proc addPart(m: var ReceiverMerge; path: string; part: ReceiverPart) =
+  ## Adds a file's receivers, each as the traces that name it would be added one by one.
+  if not part.hasFile: return
+  let file = m.addFile(path)
+  var ids = newSeq[int32](part.sources.len)
+  for i, source in part.sources:
     var id = m.sourceIds.getOrDefault(source, -1)
     if id < 0:
       id = int32(m.sourceIds.len)
       m.sourceIds[source] = id
-    let index = max(k.rcvIndex, 0'i16)
-    var at = -1
-    for i, h in m.list[slot].heard:
-      if h.index == index: at = i
-    if at < 0:
-      at = m.list[slot].heard.len
-      m.list[slot].heard.add (index: index, sources: IdSet())
-    m.list[slot].heard[at].sources.incl int(id)
+    ids[i] = id
+  for pr in part.receivers:
+    var slot = m.at.getOrDefault(pr.station, -1)
+    if slot < 0:
+      slot = m.list.len
+      m.at[pr.station] = slot
+      m.list.add ReceiverAt(station: pr.station, firstFile: file, firstRecord: pr.firstRecord)
+    template f: untyped = m.files[file]
+    if f.first < 0: f.first = slot
+    elif f.first != slot:
+      if f.more.bits.len == 0: f.more.incl f.first
+      f.more.incl slot
+    for h in pr.heard:
+      var at = -1
+      for i, mine in m.list[slot].heard:
+        if mine.index == h.index: at = i
+      if at < 0:
+        at = m.list[slot].heard.len
+        m.list[slot].heard.add (index: h.index, sources: IdSet())
+      for w, word in h.sources.bits:
+        var bits = word
+        while bits != 0:
+          let b = countTrailingZeroBits(bits)
+          m.list[slot].heard[at].sources.incl int(ids[w * 64 + b])
+          bits = bits and (bits - 1)
 
 func isHeard(m: ReceiverMerge; r: ReceiverAt; source: StationKey;
     indices: openArray[int16]): bool =
@@ -340,8 +367,9 @@ proc fail(sink: MissingSink; why: string; skipped: seq[tuple[path, why: string]]
     sink.result = MissingJobResult(ok: false, reason: why, skipped: skipped)
   raise newException(ValueError, why)
 
-proc checkShot(tally: var StationTally; g: SurveyGeometry; rows: TraceRows; path: string;
-    ctx: JobContext; unmatched: var seq[tuple[path: string; record: int64; why: string]]):
+proc checkShot[C: JobContext | ItemContext](tally: var StationTally; g: SurveyGeometry;
+    rows: TraceRows; path: string; ctx: C; unmatched: var seq[tuple[path: string; record: int64;
+        why: string]]):
     bool =
   ## Checks one shot against its X record and adds it to `tally`, or lists it in
   ## `unmatched`; true when it was checked.
@@ -352,14 +380,159 @@ proc checkShot(tally: var StationTally; g: SurveyGeometry; rows: TraceRows; path
     tally.addGather(g.templateStations(checked.xpsRecord), checked)
   why.len == 0
 
+type
+  MissingShared = object
+    ## What every item of a batch reads and never writes: the files of the batch (and
+    ## their paths relative to the folder), the cache folder, the kinds the user set,
+    ## and the rules for files whose kind cannot be told.
+    paths, rels: seq[string]
+    cacheDir: string
+    forced: Table[string, RecordingKind]
+    untold: UntoldKind
+    folderRun: bool
+    round: int ## 0: the files; 1: those whose kind cannot be told, as `takenAs`
+    takenAs: ReportSide
+    lead: int ## items before this one are padding, already counted: not read
+
+  MissingItems = object
+    ## The items' arguments. The survey is reached through a pointer the job keeps
+    ## alive until the batch has returned, and is only read.
+    shared: MissingShared
+    relations: ptr SurveyGeometry
+    mixed: Atomic[bool]
+      ## set by the job once the files taken are of both sides: what the gathers of the
+      ## files still to be taken would add is dropped, so they are not read
+
+  MissingFile = object
+    ## What reading one file came to: its side, and what its gathers add to the scan
+    ## (the shot side's figures, the receiver side's stations, unmatched gathers). The
+    ## job adds them in file order. `skip`: the file could not be read or has no keys;
+    ## `gatherSkip`: a gather could not be checked (what came before it stays).
+    classified: bool
+    skip, gatherSkip: string
+    side: ReportSide
+    why: string
+    untoldTaken: bool ## the folder's choice for a file that cannot be told was applied
+    deferred: bool ## the file cannot be told: its gathers were left unread
+    anyShot: bool
+    shot: StationTally
+    part: ReceiverPart
+    unmatched: seq[tuple[path: string; record: int64; why: string]]
+
+static:
+  doAssert plainData(MissingShared) and plainData(MissingFile)
+
+var gatherFiles*: Atomic[int]
+  ## Files whose gathers were read since the program started. Read only by tests.
+
+var missingBudget* = 256'i64 shl 20
+  ## Most bytes of files in hand at once. The first file not yet taken runs whatever its
+  ## size. Set only by tests.
+
+proc notePart(part: var ReceiverPart; slotOf: var Table[StationKey, int];
+    sourceOf: var Table[StationKey, int32]; k: TraceKeys) =
+  ## Adds a trace that has a receiver station to `part`, as `add` does a merge.
+  let station = stationKey(k.rcvLine, k.rcvPoint, 0)
+  var slot = slotOf.getOrDefault(station, -1)
+  if slot < 0:
+    slot = part.receivers.len
+    slotOf[station] = slot
+    part.receivers.add PartReceiver(station: station, firstRecord: wholeRecord(k.record))
+  if hasStation(k.srcLine, k.srcPoint):
+    let source = stationKey(k.srcLine, k.srcPoint, 0)
+    var id = sourceOf.getOrDefault(source, -1)
+    if id < 0:
+      id = int32(part.sources.len)
+      part.sources.add source
+      sourceOf[source] = id
+    let index = max(k.rcvIndex, 0'i16)
+    var at = -1
+    for i, h in part.receivers[slot].heard:
+      if h.index == index: at = i
+    if at < 0:
+      at = part.receivers[slot].heard.len
+      part.receivers[slot].heard.add (index: index, sources: IdSet())
+    part.receivers[slot].heard[at].sources.incl int(id)
+
+proc readItem(it: ItemContext; a: ptr MissingItems; i: int): MissingFile {.nimcall, gcsafe.} =
+  ## Opens file `i` for its keys, tells its side, and checks its gathers: the shot
+  ## side's against the survey, the receiver side's gathered by receiver station. An
+  ## error after the side is told is `gatherSkip`, with what was gathered before it; a
+  ## cancel is raised. The file is closed before this returns.
+  template sh: untyped = a.shared
+  if i < sh.lead: return
+  let path = sh.paths[i]
+  let rel = sh.rels[i]
+  result.shot = initTally(ssReceivers)
+  var s: Session = nil
+  try:
+    {.cast(gcsafe).}:
+      s = openKeys(path, sh.cacheDir, it)
+      if s.file.kind == skUnknown: result.skip = "not a SEG-Y, SEG-D or SEG-2 file"
+      elif s.file.index.keys.len == 0: result.skip = "has no trace keys"
+      else:
+        var fileSide: FileSide
+        if sh.round == 1:
+          fileSide = (sh.takenAs, "")
+        else:
+          let isForced = forcedPath(path) in sh.forced
+          let kind = if isForced: some(sh.forced[forcedPath(path)])
+            else: autoKindOf(s, path, it)
+          var whole = initStations()
+          for k in s.file.index.keys: whole.note(k)
+          fileSide = reportSide(kind, isForced, whole)
+          if fileSide.side == rsCannotTell and sh.untold != ukNotChecked:
+            # the user's choice for the files that cannot be told
+            let chosen = if sh.untold == ukShot: rsShot else: rsReceiver
+            fileSide = (chosen, "")
+            result.untoldTaken = true
+        (result.classified, result.side, result.why) = (true, fileSide.side, fileSide.why)
+        if sh.round == 0 and fileSide.side == rsCannotTell and sh.folderRun:
+          result.deferred = true
+        elif fileSide.side in {rsShot, rsReceiver} and not a.mixed.load(moAcquire):
+          # (a folder of both sides is not calculated; the job drops what a file adds
+          # once both are seen)
+          discard gatherFiles.fetchAdd(1, moRelaxed)
+          var slotOf = initTable[StationKey, int]()
+          var sourceOf = initTable[StationKey, int32]()
+          for g in s.gathers:
+            if g.traces.len == 0: continue
+            beat(it, g.traces.len)
+            if fileSide.side == rsShot:
+              if result.shot.checkShot(a.relations[], s.file.rowsOf(g.traces), rel, it,
+                  result.unmatched):
+                result.anyShot = true
+            else:
+              result.part.hasFile = true
+              var stations = 0
+              for t in g.traces:
+                let k = s.file.index.keys[t]
+                if k.status != tsAuxiliary and hasStation(k.rcvLine, k.rcvPoint):
+                  result.part.notePart(slotOf, sourceOf, k)
+                  inc stations
+              if stations == 0:
+                let k = s.file.index.keys[g.traces.a]
+                result.unmatched.add (path: rel, record: wholeRecord(k.record),
+                  why: NoReceiverStation)
+  except SegCancelledError:
+    raise newException(JobCancelledError, "cancelled")
+  except JobCancelledError:
+    raise
+  except CatchableError as e:
+    let why = if e.msg.len > 0: e.msg else: $e.name
+    if result.classified: result.gatherSkip = why else: result.skip = why
+  finally:
+    s = nil
+    clearCycleRoots()
+
 proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeometry;
-    sink: MissingSink; cacheDir = ""; forced = initTable[string, RecordingKind]();
+    target: MissingSink; cacheDir = ""; forced = initTable[string, RecordingKind]();
     receivers: ref SurveyGeometry = nil; receiversDerived = false;
     untold = ukNotChecked; folderRun = false): JobWork =
   ## The work of a job that scans `paths` (relative to `folder` in messages)
-  ## against `relations` and fills `sink` (`missingSpec` is the spec to
+  ## against `relations` and fills `target` (`missingSpec` is the spec to
   ## submit it with). Worker-only. A cancel raises `JobCancelledError` and
-  ## leaves `sink` as it was. `cacheDir` is the index cache folder: a current
+  ## leaves `target` as it was. `cacheDir` is the index cache folder: a current
   ## cache is read instead of walking the file, and a walk saves one.
   ## "" leaves the cache alone. `forced` holds the kind the user set for a file in the
   ## Files window, by the path normalised (`normalizedPath`): it replaces the kind told
@@ -369,10 +542,12 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
   ## keyed by `forcedPath` (the canonical path). Files whose kind cannot be told are taken
   ## for what `untold` says; with "not checked" and `folderRun`, for the side of the files
   ## that are told when all of those are of one (`takenNote` says so), else left out.
+  ## Up to the item pool's threads of files are open at once, one file's keys each; their
+  ## results are added to the scan in file order, so the report is the same on any number.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     if relations == nil or not relations[].hasRelations:
-      fail(sink, NoSurvey, @[])
+      fail(target, NoSurvey, @[])
     var skipped: seq[tuple[path, why: string]] = @[]
     var notChecked: seq[tuple[path, why: string]] = @[]
     var unmatched: seq[tuple[path: string; record: int64; why: string]] = @[]
@@ -383,102 +558,85 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
     var recv = initTally(ssSources, derived)
     var merge = initReceiverMerge()
     var counts: SideCounts
-    var seen = initHashSet[string]()
-    var list = paths
-    var round = 0 # 0: the files; 1: those whose kind cannot be told, taken as `takenAs`
     var takenAs = rsCannotTell
     var deferred: seq[tuple[path, why: string]] = @[]
     var taken = 0
+    proc readFiles(list: seq[string]; round: int; lead = 0) {.gcsafe.} =
+      ## Reads each of `list` (a batch of items) and adds it to the scan, in order. The
+      ## `lead` items before it are done already (the bar goes on from there).
+      var args = MissingItems(relations: unsafeAddr relations[], shared: MissingShared(
+        paths: newSeq[string](lead) & list, cacheDir: cacheDir, forced: forced, untold: untold,
+        folderRun: folderRun, round: round, takenAs: takenAs, lead: lead))
+      var sizes = newSeq[int64](lead + list.len)
+      args.shared.rels = newSeq[string](lead)
+      for i, path in list:
+        args.shared.rels.add relTo(folder, path)
+        try:
+          sizes[lead + i] = max(0'i64, fs.getFileSize(path))
+        except OSError:
+          discard # the item says why it cannot be read
+      proc take(i: int; outcome: sink ItemOutcome[MissingFile]) {.closure, gcsafe.} =
+        if i < lead: return
+        let rel = args.shared.rels[i]
+        if round == 0: ctx.setPhase "reading " & list[i].extractFilename
+        ctx.checkCancelled()
+        if not outcome.ok:
+          if outcome.failure.cancelled: raise newException(JobCancelledError, "cancelled")
+          let e = outcome.failure
+          skipped.add (path: rel, why: if e.msg.len > 0: e.msg else: e.name)
+          return
+        template r: untyped = outcome.value
+        if r.skip.len > 0: skipped.add (path: rel, why: r.skip)
+        if not r.classified: return
+        if r.untoldTaken:
+          takenAs = if untold == ukShot: rsShot else: rsReceiver
+          inc taken
+        if r.deferred:
+          # taken for the side of the files that are told, when all are of one
+          deferred.add (path: list[i - lead], why: r.why)
+          return
+        counts.note r.side
+        if counts.isMixed: args.mixed.store(true, moRelease)
+        case r.side
+        of rsNotGather, rsCannotTell:
+          notChecked.add (path: rel, why: r.why)
+        of rsShot, rsReceiver:
+          # (a mix is not calculated: once both sides are seen, only the files are counted)
+          if counts.isMixed: return
+          if r.gatherSkip.len > 0: skipped.add (path: rel, why: r.gatherSkip)
+          unmatched.add r.unmatched
+          if r.side == rsShot:
+            shot.merge r.shot
+            if r.anyShot: shot.noteFile()
+          else:
+            merge.addPart(rel, r.part)
+      let total = lead + list.len
+      ctx.setPhase "scanning " & $list.len & (if list.len == 1: " file" else: " files")
+      if lead > 0: discard ctx.progress(int64(lead) * 1000, int64(total) * 1000)
+      let ran = ctx.parallelItems(total, addr args, readItem, take,
+        ItemOptions(cost: sizes, budget: missingBudget))
+      if ran.taken < total: raise newException(JobCancelledError, "cancelled")
     try:
-      while true:
-        for i, path in list:
-          ctx.setPhase "reading " & path.extractFilename
-          ctx.checkCancelled()
-          let key = path.normalizedPath
-          if round == 1 or key notin seen:
-            seen.incl key
-            let rel = relTo(folder, path)
-            var s: Session = nil
-            var skip = ""
-            var anyShot = false
-            try:
-              s = openKeys(path, cacheDir, ctx)
-              if s.file.kind == skUnknown: skip = "not a SEG-Y, SEG-D or SEG-2 file"
-              elif s.file.index.keys.len == 0: skip = "has no trace keys"
-              else:
-                let isForced = forcedPath(path) in forced
-                let kind = if isForced: some(forced[forcedPath(path)]) else: autoKindOf(s, path, ctx)
-                var fileId = -1
-                var whole = initStations()
-                for k in s.file.index.keys: whole.note(k)
-                var fileSide = reportSide(kind, isForced, whole)
-                if round == 1: fileSide = (takenAs, "")
-                elif fileSide.side == rsCannotTell and untold != ukNotChecked:
-                  # the user's choice for the files that cannot be told
-                  takenAs = if untold == ukShot: rsShot else: rsReceiver
-                  fileSide = (takenAs, "")
-                  inc taken
-                if round == 0 and fileSide.side == rsCannotTell and folderRun:
-                  # taken for the side of the files that are told, when all are of one
-                  deferred.add (path: path, why: fileSide.why)
-                else:
-                  counts.note fileSide.side
-                  case fileSide.side
-                  of rsNotGather, rsCannotTell:
-                    notChecked.add (path: rel, why: fileSide.why)
-                  of rsShot, rsReceiver:
-                    # (a mix is not calculated: once both sides are seen, only the files
-                    # are counted)
-                    if not counts.isMixed:
-                      {.cast(gcsafe).}:
-                        for g in s.gathers:
-                          if g.traces.len == 0: continue
-                          beat(ctx, g.traces.len)
-                          if fileSide.side == rsShot:
-                            if shot.checkShot(relations[], s.file.rowsOf(g.traces), rel, ctx,
-                                unmatched):
-                              anyShot = true
-                          else:
-                            # Kept by receiver station over the whole scan: each receiver is
-                            # checked once at the end, over every slice and file of it.
-                            if fileId < 0: fileId = merge.addFile(rel)
-                            var stations = 0
-                            for t in g.traces:
-                              let k = s.file.index.keys[t]
-                              if k.status != tsAuxiliary and hasStation(k.rcvLine, k.rcvPoint):
-                                merge.add(fileId, k)
-                                inc stations
-                            if stations == 0:
-                              let k = s.file.index.keys[g.traces.a]
-                              unmatched.add (path: rel, record: wholeRecord(k.record),
-                                why: NoReceiverStation)
-            except SegCancelledError:
-              raise newException(JobCancelledError, "cancelled")
-            except JobCancelledError:
-              raise
-            except CatchableError as e:
-              skip = if e.msg.len > 0: e.msg else: $e.name
-            finally:
-              s = nil
-              clearCycleRoots()
-            if skip.len > 0: skipped.add (path: rel, why: skip)
-            if anyShot: shot.noteFile()
-          if round == 0 and not ctx.progress(i + 1, paths.len):
-            raise newException(JobCancelledError, "cancelled")
-        if round == 1 or deferred.len == 0: break
+      var list: seq[string] = @[]
+      var seen = initHashSet[string]()
+      for path in paths:
+        if not seen.containsOrIncl(path.normalizedPath): list.add path
+      let uniqueCount = list.len
+      if list.len > 0: readFiles(list, 0)
+      if deferred.len > 0:
         # the files that cannot be told: the side of those that are, when all are of one
         let one = unanimousSide(counts)
         if one == rsCannotTell:
           counts.untold += deferred.len
           for d in deferred:
             notChecked.add (path: relTo(folder, d.path), why: d.why)
+        else:
+          takenAs = one
+          taken = deferred.len
+          list = @[]
+          for d in deferred: list.add d.path
           deferred.setLen 0
-          break
-        takenAs = one
-        taken = deferred.len
-        list = @[]
-        for d in deferred: list.add d.path
-        round = 1
+          readFiles(list, 1, uniqueCount - list.len)
       if merge.list.len > 0 and not counts.isMixed:
         ctx.setPhase "checking the receivers"
         let rels = oSource[].receiverRelationsOf(oSource[].highestRecord + 1)
@@ -488,21 +646,21 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
       ctx.setPhase "reporting"
       ctx.checkCancelled()
       clearCycleRoots()
-      if sink != nil:
-        sink.result = MissingJobResult(ok: true, sides: counts, skipped: skipped,
+      if target != nil:
+        target.result = MissingJobResult(ok: true, sides: counts, skipped: skipped,
           notChecked: notChecked, taken: takenNote(taken, takenAs, untold != ukNotChecked))
         if counts.isMixed:
-          sink.result.mixed = mixedNote(counts)
+          target.result.mixed = mixedNote(counts)
         else:
-          sink.result.shot = shot.report
-          sink.result.receiver = recv.report
-          sink.result.unmatched = unmatched
+          target.result.shot = shot.report
+          target.result.receiver = recv.report
+          target.result.unmatched = unmatched
     except JobCancelledError:
       raise
     except SegCancelledError:
       raise newException(JobCancelledError, "cancelled")
     except CatchableError as e:
-      fail(sink, if e.msg.len > 0: e.msg else: $e.name, skipped)
+      fail(target, if e.msg.len > 0: e.msg else: $e.name, skipped)
 
 proc folderScan*(folder: string; subfolders: bool; cacheDir: string;
     relations: ref SurveyGeometry; sink: MissingSink; note: ScanNote = nil;

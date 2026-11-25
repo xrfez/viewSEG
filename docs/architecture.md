@@ -235,7 +235,10 @@ so the wait the user notices is never behind a long job.
   `docs/models/itempoollanes.nif`; `tests/titempool.nim` runs the pool under many shapes.
   The vibrator QC of a folder (`core/vibfolderjobs`) is the first caller: one item per
   file, `FolderRow` out, the rows' words added in `take`, the files' sizes as costs under
-  a 256 MiB budget; `tests/tvibfolderpool.nim` holds its table equal on 1 to 8 threads.
+  a 256 MiB budget; `tests/tvibfolderpool.nim` holds its table equal on 1 to 8 threads. The
+  Missing traces scan (`core/missingjobs`) is the second: one item per file (open for its
+  keys, tell its side, check its gathers), `MissingFile` out, added to the scan in file order
+  in `take`; `tests/tmissingpool.nim` holds its report and CSV equal on 1 to 8 threads.
 - **A job** (`JobSpec`, `JobInfo`) has a title in plain words, a lane, a state (queued,
   running, done, failed, cancelled), progress (done of total, a phase label), and the
   files it reads or needs to itself. Queued jobs can be reordered, removed or cancelled;
