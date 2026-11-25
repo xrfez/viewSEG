@@ -8,7 +8,8 @@
 ## one sentence; a cancel leaves the sink empty; the folder walk goes into
 ## subfolders only when asked.
 ##
-## Seen to fail: with the subfolder flag ignored (always on),
+## Seen to fail: with a receiver checked in each gather alone,
+## `receiver_slices_are_one_check` rejected 3 records for 1; with the subfolder flag ignored (always on),
 ## `subfolders_only_when_asked` rejected 3 files for the walk without them;
 ## with the continuous kind not looked for, `continuous_is_not_checked`
 ## rejected a checked record of 4 missing stations; with no stored index cache,
@@ -104,6 +105,35 @@ proc receiverFile(path: string; record: int; receiver: float64;
     k.status = tsLive
     w.writeTrace(k, samples)
   doAssert w.close().len == 0, "receiver file was not written: " & path
+
+proc slicedFile(path: string; stations: openArray[tuple[receiver: float64;
+    sources: seq[float64]]]; oneRecord = false) =
+  ## Receiver gathers cut in slices, as the slicer writes them: each receiver
+  ## has a record for each shot slice (one trace), or all its traces in one
+  ## record (`oneRecord`).
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
+    numSamples: 10, time: 1_700_000_000.0, receiverGather: true))
+  let samples = newSeq[float32](10)
+  var ch = 0
+  var rec = 0
+  for st in stations:
+    for slice, src in st.sources:
+      inc ch
+      if not oneRecord or slice == 0: inc rec
+      var k = initTraceKeys()
+      k.record = float64(100 + rec)
+      k.channel = float64(ch)
+      k.srcLine = 1
+      k.srcPoint = src
+      k.srcIndex = 1
+      k.rcvLine = 10
+      k.rcvPoint = st.receiver
+      k.rcvIndex = 1
+      k.intervalUs = 2000
+      k.time = 1_700_000_000.0 + 60.0 * float64(slice)
+      k.status = tsLive
+      w.writeTrace(k, samples)
+  doAssert w.close().len == 0, "sliced file was not written: " & path
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
@@ -340,6 +370,44 @@ proc main*() =
     doAssert rightGot.sink.result.unmatched.len == 0, $rightGot.sink.result.unmatched
     let t = rightGot.sink.result.receiver.stats
     doAssert t.records == 1 and t.inTemplate == 1 and t.found == 1 and t.missing == 0, $t
+
+  block receiver_slices_are_one_check:
+    ## A receiver that recorded sources 1, 2 and 4 of 1..4 as three records is one
+    ## check of that receiver: template 4, found 3, missing 1; the same traces as
+    ## one record give the same answer; two receivers in one file are two checks.
+    let survey = surveyOf(
+      xRec(1, "1.00", "1.00", 1, 1, 10, 7, 7),
+      xRec(2, "1.00", "2.00", 1, 1, 10, 7, 7),
+      xRec(3, "1.00", "3.00", 1, 1, 10, 7, 7),
+      xRec(4, "1.00", "4.00", 1, 1, 10, 7, 7))
+    for oneRecord in [false, true]:
+      let path = dir / ("slices" & $oneRecord & ".sgd")
+      slicedFile(path, [(receiver: 7.0, sources: @[1.0, 2.0, 4.0])], oneRecord)
+      let got = run(dir, @[path], survey)
+      doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+      let r = got.sink.result
+      let t = r.receiver.stats
+      doAssert r.unmatched.len == 0, $r.unmatched
+      doAssert t.files == 1 and t.records == 1, $oneRecord & " " & $t
+      doAssert t.inTemplate == 4 and t.found == 3 and t.missing == 1, $oneRecord & " " & $t
+      doAssert t.expectedInRecords == 4 and t.presentInRecords == 3, $t
+      doAssert r.receiver.rows.len == 1 and rowAt(r.receiver.rows, 1, 3).missing == 1,
+        $r.receiver.rows
+    let two = dir / "two-receivers.sgd"
+    slicedFile(two, [(receiver: 7.0, sources: @[1.0, 2.0, 4.0]),
+      (receiver: 8.0, sources: @[1.0, 2.0])])
+    let survey2 = surveyOf(
+      xRec(1, "1.00", "1.00", 1, 2, 10, 7, 8),
+      xRec(2, "1.00", "2.00", 1, 2, 10, 7, 8),
+      xRec(3, "1.00", "3.00", 1, 1, 10, 7, 7),
+      xRec(4, "1.00", "4.00", 1, 1, 10, 7, 7))
+    let got2 = run(dir, @[two], survey2)
+    doAssert got2.st == jsDone, got2.error & " / " & got2.sink.result.reason
+    let t2 = got2.sink.result.receiver.stats
+    doAssert got2.sink.result.unmatched.len == 0, $got2.sink.result.unmatched
+    doAssert t2.files == 1 and t2.records == 2, $t2
+    doAssert t2.expectedInRecords == 6 and t2.presentInRecords == 5 and
+      t2.missingInRecords == 1, $t2
 
   block cancel_leaves_the_sink:
     reads = 0

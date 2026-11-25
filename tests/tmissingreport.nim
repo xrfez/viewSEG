@@ -13,6 +13,7 @@ import std/strutils
 import parseSEG
 import processSEG/qc/record
 import viewSEG/core/missingreport
+import viewSEG/view/missingwords
 
 proc st(line, point: float64): StationKey = stationKey(line, point, 1)
 
@@ -132,6 +133,22 @@ proc main*() =
     doAssert text.startsWith("stations,files,records,inTemplate,found,missing,percentMissing,"),
       text
     doAssert "receivers,0,1,4,3,1,25," in text, text
+
+  block receivers_are_counted_as_receivers:
+    var t = initTally(ssSources)
+    t.addGather(template4(), rec(template4(), [4]))
+    t.addGather(template4(), rec(template4(), [3]))
+    let s = t.report.stats
+    doAssert countsLine(s, false) == "2 receivers", countsLine(s, false)
+    doAssert countsLine(s, true) == "0 files, 2 receivers", countsLine(s, true)
+    let lines = statisticLines(s, false)
+    doAssert lines[^1].startsWith("Counted per receiver, "), $lines
+    var one = initTally(ssSources)
+    one.addGather(template4(), rec(template4(), [4]))
+    doAssert countsLine(one.report.stats, false) == "1 receiver"
+    var shots = initTally(ssReceivers)
+    shots.addGather(template4(), rec(template4(), [4]))
+    doAssert countsLine(shots.report.stats, false) == "1 record"
 
   echo "tmissingreport: ok"
 

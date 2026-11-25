@@ -71,13 +71,17 @@ func statisticLines*(s: MissingStats; folder: bool): seq[string] =
   result.add noun & " stations missing: " & $s.missing
   result.add "Percent of the template missing: " & percentText(s.percentMissing) & "%"
   if s.records > 1:
-    result.add "Counted per record, each station once for each record that calls for it: " &
+    let each = if s.side == ssSources: "receiver" else: "record"
+    result.add "Counted per " & each & ", each station once for each " & each &
+      " that calls for it: " &
       $s.expectedInRecords & " expected, " & $s.presentInRecords & " present, " &
       $s.missingInRecords & " missing, " & percentText(s.percentMissingInRecords) & "% missing"
 
 func countsLine*(s: MissingStats; folder: bool): string =
-  ## What was read: files (for a folder) and records.
-  let records = $s.records & (if s.records == 1: " record" else: " records")
+  ## What was read: files (for a folder) and records; for a receiver side, the
+  ## receivers checked (a receiver cut into slices is one check).
+  let noun = if s.side == ssSources: "receiver" else: "record"
+  let records = $s.records & " " & noun & (if s.records == 1: "" else: "s")
   if folder: $s.files & (if s.files == 1: " file, " else: " files, ") & records
   else: records
 

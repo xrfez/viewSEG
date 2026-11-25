@@ -318,6 +318,8 @@ them the window says so in one sentence and shows no table. A shot gather is che
 against the X record of its shot (the receiver stations expected). A receiver gather
 that is cut into records is checked against the O record of its receiver (the source
 stations expected); when no O records are loaded they are worked out from the X records.
+Each receiver is checked once in a file, however many records (one for each shot slice) its
+traces are cut into, so for receivers the window counts receivers, not records.
 A continuous receiver recording is not checked, and the window says so.
 
 A station is one line and point, however many components it has: a station with three
