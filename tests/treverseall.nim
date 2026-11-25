@@ -238,13 +238,13 @@ proc main*() =
     doAssert st.plots[w].result.problem == "", st.plots[w].result.problem
     var before: seq[float64] = @[]
     for c in st.plots[w].result.plots[0].curves:
-      if c.name == "GF": before = c.ys
+      if c.name == "GF against the file's reference": before = c.ys
     doAssert before.len > 8, "no ground-force phase"
     st.reverse(@[base + 1], true)
     doAssert st.settle(st.plots[w].result.gen == st.plots[w].asked and not st.plots[w].waiting)
     var after: seq[float64] = @[]
     for c in st.plots[w].result.plots[0].curves:
-      if c.name == "GF": after = c.ys
+      if c.name == "GF against the file's reference": after = c.ys
     # the plot shows the size of the phase (Absolute)
     var mirrored = before
     for v in mirrored.mitems: v = -v # 180 degrees from -v is 180 - |p| for the size shown

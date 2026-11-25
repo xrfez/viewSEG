@@ -119,7 +119,8 @@ proc main*() =
     doAssert r.plots.len == 5 and r.used == 4 and r.plots[2].title == "Force from M and B"
     let lib = library(unitRows, inOrder)
     doAssert r.plots[0].xs.sameAs(lib.tracks[vsReference].timeMs)
-    doAssert r.curve(0, "GF as recorded").sameAs(sizes(lib.tracks[vsGroundForce].phaseDeg)),
+    doAssert r.curve(0, "GF as recorded " & AgainstFile).sameAs(sizes(lib.tracks[
+        vsGroundForce].phaseDeg)),
       "GF's phase is not the library's"
     doAssert r.curve(0, "GF from M and B").sameAs(sizes(lib.tracks[vsWeightedSum].phaseDeg))
     doAssert r.curve(0, "M").sameAs(sizes(lib.tracks[vsMass].phaseDeg))
@@ -128,7 +129,7 @@ proc main*() =
     doAssert r.curve(1, "GF as recorded peak (with harmonics)").sameAs(lib.tracks[
         vsGroundForce].peak)
     doAssert r.curve(2, "GF from M and B fundamental").sameAs(lib.tracks[vsWeightedSum].amplitude[0])
-    doAssert r.curve(3, "Ref").sameAs(lib.tracks[vsReference].referenceHz)
+    doAssert r.curve(3, FileRefName).sameAs(lib.tracks[vsReference].referenceHz)
     doAssert r.curve(3, "GF as recorded").sameAs(lib.tracks[vsGroundForce].frequencyHz)
     doAssert r.curve(4, "GF as recorded THD").sameAs(lib.tracks[vsGroundForce].thdPct)
     doAssert r.curve(4, "GF from M and B THD").sameAs(lib.tracks[vsWeightedSum].thdPct)
@@ -153,7 +154,7 @@ proc main*() =
     # all along the sweep)
     let r = vibratorOf(unitRows, names, inOrder, Dt, params, -1, 1000.0)
     let xs = r.plots[0].xs
-    let phase = r.curve(0, "GF as recorded")
+    let phase = r.curve(0, "GF as recorded " & AgainstFile)
     let fund = r.curve(1, "GF as recorded fundamental")
     let thd = r.curve(4, "GF as recorded THD")
     let h2 = r.curve(4, "GF as recorded H2")
@@ -206,7 +207,7 @@ proc main*() =
         doAssert c.style != csLimit, "a limit line: " & c.name
         if c.style == csFail:
           inc stretches
-          doAssert c.name == "GF as recorded (past a limit)", c.name
+          doAssert c.name == "GF as recorded " & AgainstFile & " (past a limit)", c.name
           for y in c.ys:
             if not y.isNaN:
               doAssert abs(y) > 10, $y
@@ -237,7 +238,7 @@ proc main*() =
     var alone = p
     alone.details = false
     let one = vibratorOf(unitRows, names, inOrder, Dt, alone)
-    doAssert one.plots.len == 4 and one.plots[0].curves[0].name == "GF", $one.plots.len
+    doAssert one.plots.len == 4 and one.plots[0].curves[0].name == "GF " & AgainstFile, $one.plots.len
     for c in one.plots[0].curves: doAssert c.name notin ["M", "B", "GF from M and B",
         "GF as recorded"], c.name
 
@@ -349,13 +350,18 @@ proc main*() =
     for m in judged(r.plots[0].xs):
       if not phase[m].isNaN: (sum += phase[m]; n += 1)
     doAssert n > 10 and abs(sum / n - 5) < 0.5, "the recorded pilot's phase " & $(sum / n)
-    discard r.curve(3, RecordedRef)
+    # the frequency plot: the file's reference trace's own sweep beside the stored one's
+    discard r.curve(3, FileRefName)
+    discard r.curve(3, StoredRefName)
     let plain = vibratorOf(unitRows, names, inOrder, Dt, params)
     doAssert plain.table.len == 6
     var alone = params
     alone.details = false
-    for c in vibratorOf(rows, all, inOrder, Dt, alone, recorded = 4).plots[0].curves:
-      doAssert c.name != RecordedRef, "the recorded pilot drawn without Details"
+    # without Details the recorded pilot is drawn only when it fails against the plan
+    let undetailed = vibratorOf(rows, all, inOrder, Dt, alone, recorded = 4)
+    for c in undetailed.plots[0].curves:
+      doAssert c.name != RecordedRef or undetailed.qc.plan.verdict == qvFail,
+        "the recorded pilot drawn without Details: " & undetailed.qc.line
     for row in plain.table: doAssert row[0] != RecordedRef
 
   echo "tvibrator: ok"

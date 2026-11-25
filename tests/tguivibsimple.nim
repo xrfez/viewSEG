@@ -185,7 +185,8 @@ proc main*() =
       if result:
         var names: seq[string] = @[]
         for c in w.result.plots[0].curves: names.add c.name
-        doAssert "GF as recorded" in names and "GF from M and B" in names and "M" in names,
+        doAssert "GF as recorded against the file's reference" in names and
+          "GF from M and B" in names and "M" in names,
           $names)
     step("settle details", noop, after(25))
     step("the Details view", noop, proc (f: FrameInfo): bool =

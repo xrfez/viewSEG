@@ -212,8 +212,11 @@ proc main*() =
       do:
         f.shown(W & ".polarity") and f.shown(W & ".wheel") and f.shown(W & ".controller")
       list.step "the default window":
-        doAssert not f.shown(W & ".scrolls") and not f.shown(W & ".plots scroll"),
-          "the plots are in view without scrolling, a .vib with its pair"
+        # (the window does not scroll; with the controller's table, its tripped limits and the
+        # verdict's words on the file's own pilot, the plots scroll in a region of their own)
+        doAssert not f.shown(W & ".scrolls"),
+          "the window scrolls, a .vib with its pair"
+        doAssert f.shown(W & ".verdict") and f.shown(W & ".controller")
         f.shoot("sigvib-vib-default.png")
       do: true
       list.step "the controller's set is a finding, the weights are not":

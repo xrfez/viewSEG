@@ -601,6 +601,18 @@ the accelerometer constant). A file whose force limits could not be judged says 
 missing in its warnings, its Verdict reads "pass (force not judged)", the totals say "N with
 force not judged", and a line above the table says that some force limits were not judged.
 
+Each row is judged as a Vibrator window on that file judges it, against the plan or against
+the file's own pilot (see the Vibrator window above). Against a stored reference, the
+**Pilot to the plan (°)** column gives the recorded pilot's average phase to it with its mark,
+and **Phase to the file's reference (°)** the ground force's average phase to the file's own
+reference trace, beside the measures against the plan; a file whose pilot is not the plan
+fails, and the sentence says why first. A file judged on part of the reference sweep reads
+"pass (N % recorded)" and the totals say "N passes on part of the reference sweep"; one whose
+traces hold less than half of it is not judged, and counted so. A file
+judged against its own pilot says so in its sentence, its Pilot to the plan column reads "own
+pilot", and the totals count those files apart: "N judged against their own pilot, not the
+project's reference".
+
 **Run** lists nothing new: it judges the ticked files. Listing and judging are background jobs
 with progress; while it runs, the button is **Cancel**. When it finishes, the **Results** tab is
 the one in front. **Copy** puts the whole table on the clipboard. **Export CSV...** writes the
@@ -2089,6 +2101,22 @@ What you see, top down:
    colour is a piece of the sweep past a peak limit: that is where the vibrator did not do
    what it should. There are no limit lines and no window means on the plots. The four
    plots share their time axis, so what happens at one time is one column down.
+6. **Against the plan, or against its own pilot.** With a stored reference chosen (the
+   plan: what the vibrator should sweep), the file's recorded pilot (what the vibrator was
+   told to sweep) is judged against it too, with the same two phase limits. A pilot that is
+   not the planned sweep fails the file, first in the verdict: "the recorded pilot is not
+   the project's reference sweep (average phase N°)", with how the two sweeps differ ("the
+   project reference sweeps 8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in
+   10.0 s"). The phase plot then has two lines, the ground force **against the file's
+   reference** and **against the stored reference** (the one judged), and the frequency plot
+   three: the **file's reference**, the **stored reference** and the ground force. When the
+   traces end before the reference sweep does, the verdict says what was not judged and a
+   pass reads "pass on the part recorded (N % of the reference sweep)", or under half of it
+   "not judged: only N % of the reference sweep is in this file's traces"; a reference that is
+   longer only by listen time after its sweep is no difference. With no stored reference
+   (none chosen, the project reference switched off, or a reference that is a trace of the
+   record), the verdict says "judged against the file's own pilot: this shows the vibrator
+   followed its pilot, not that the pilot is the planned sweep".
 
 **Details** (off at first, kept) adds the other ground force, M and B, the recorded pilot
 and the harmonics to the plots, the force of each ground force on its own axis, and the table

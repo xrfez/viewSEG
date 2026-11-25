@@ -1080,7 +1080,12 @@ right of that line's first row. A change works it out again.
     offers **Project reference: name** first, and it is the default: the phase, frequency
     and force are measured against what the unit was meant to sweep. The recorded R trace
     (what it says it swept) is then measured against it too, as **Ref (recorded)**: a row
-    of the table and a line in the phase and frequency plots. Picking a trace for Ref
+    of the table, two rows of the limits table ("recorded pilot to the plan", judged with the
+    ground force's phase limits: a pilot that is not the plan fails the file, the verdict
+    says so first, with how the two sweeps differ), and a line in the phase plot with
+    Details or when it fails. The phase plot then draws the ground force against the file's
+    reference and against the stored reference (the one judged), and the frequency plot the
+    file's reference, the stored reference and the ground force. Picking a trace for Ref
     measures against that trace instead; with no reference chosen the trace is used as
     well. The window says which in one sentence under the settings ("Measured against the
     project reference ..." or "Measured against the recorded reference, trace N"); the

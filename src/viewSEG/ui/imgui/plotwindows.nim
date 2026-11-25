@@ -1340,13 +1340,17 @@ proc drawIdentity(w: AnalysisWindow; name: string; t: Theme; marks: var Marks) =
 
 proc drawVerdict(name: string; q: QcReport; t: Theme; marks: var Marks) =
   ## A vibrator signature's verdict, one line, in words and a sign (never colour alone):
-  ## pass, fail with the worst failing value and its time, or not judged.
+  ## pass, fail with the worst failing value and its time, or not judged; wrapped, never cut
+  ## (it says what the file was judged against, and what of the sweep was not judged). A pass
+  ## on part of the reference sweep is in the warning colour.
   let colour = case q.verdict
-    of qvPass: t.roles[rlOk]
+    of qvPass: (if q.recordedPct.isNaN: t.roles[rlOk] else: t.roles[rlWarning])
     of qvFail: t.roles[rlError]
     of qvNotJudged: t.roles[rlWarning]
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(colour))
-  fittedText(q.line, igGetContentRegionAvail().x)
+  igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
+  igTextUnformatted(q.line.cstring, nil)
+  igPopTextWrapPos()
   igPopStyleColor(1)
   marks.mark(name & ".verdict")
   tip("The sweep judged as a vibrator controller's QC does: the mean of each " &
@@ -1431,6 +1435,7 @@ proc drawQcTable(name: string; q: QcReport; judged: string; t: Theme; marks: var
       ImGui_TableFlags_BordersInnerH.cint or ImGui_TableFlags_Resizable.cint or
       ImGui_TableFlags_BordersInnerV.cint
   let table = q.tableOf
+  let rows = q.allRows
   igPushStyleVar_Vec2(ImGui_StyleVar_CellPadding.cint, ImVec2_c(x: 4, y: 1))
   defer: igPopStyleVar(1)
   if igBeginTable(("##qctable" & name).cstring, 5, flags, ImVec2_c(x: 0, y: 0), 0):
@@ -1441,7 +1446,7 @@ proc drawQcTable(name: string; q: QcReport; judged: string; t: Theme; marks: var
     igTableHeadersRow()
     for i, row in table[1 .. ^1]:
       igTableNextRow(0, 0)
-      let status = q.rows[i].status
+      let status = rows[i].status
       for k, cell in row:
         discard igTableSetColumnIndex(cint(k))
         if k == 0 and status != qsNotJudged:
@@ -1457,7 +1462,8 @@ proc drawQcTable(name: string; q: QcReport; judged: string; t: Theme; marks: var
           if status == qsNotJudged: igPopStyleColor(1)
         else:
           igTextUnformatted(cell.cstring, nil)
-          if k == 1 and q.rows[i].limit == qlPeakForce and judged == "GF (M, B)":
+          if k == 1 and i < q.rows.len and q.rows[i].limit == qlPeakForce and
+              judged == "GF (M, B)":
             tip(PeakFromMassesTip)
     igEndTable()
     marks.mark(name & ".qc table")
@@ -1618,6 +1624,7 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   let lineH = igGetTextLineHeightWithSpacing()
   let avail = igGetContentRegionAvail()
   var text = ""
+  var wraps = false # the readout wrapped: two lines are kept for it
   if refProblem:
     igTextWrapped("%s", r.problem.cstring)
     if igSmallButton("References##area"): res.openReferences = true
@@ -1637,7 +1644,11 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     text = ui.drawImage(st, w, name, t, ImVec2_c(x: avail.x, y: max(80'f32, avail.y - lineH)),
       marks, focused, res)
   else:
-    let plots = r.curvePlots(t, st.settings.units)
+    var plots = r.curvePlots(t, st.settings.units)
+    if w.params.details:
+      # (with Details the phase plot's legend stays in its corner, where its swatches have been
+      # what shows a recorded pilot lying at 0°, on the plot's floor)
+      for p in plots.mitems: p.legendAbove = false
     var uis = ui.curves.getOrDefault(w.id)
     var keys: seq[string] = @[]
     for p in plots: keys.add p.xLabel & "|" & p.yLabel
@@ -1652,8 +1663,16 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     let gap = igGetStyle().ItemSpacing.y
     # Each plot the room shared out, but no lower than nine lines: below
     # that the plots scroll, in a region of their own.
-    let room = avail.y - lineH
-    var each = (room - gap * float32(max(plots.len - 1, 0))) / float32(max(
+    # A plot's legend in rows above it takes its room from all the plots, not its own alone;
+    # such a plot's readout names its long curves: two lines, wrapped, are kept for it.
+    var legends = newSeq[float32](plots.len)
+    var legendRoom = 0'f32
+    for i, p in plots:
+      legends[i] = legendAboveHeight(p, avail.x)
+      legendRoom += legends[i]
+    wraps = legendRoom > 0
+    let room = avail.y - lineH * (if wraps: 2'f32 else: 1'f32)
+    var each = (room - legendRoom - gap * float32(max(plots.len - 1, 0))) / float32(max(
         plots.len, 1))
     let minLines = if w.view == avVibrator: VibratorPlotLines else: 9
     let scrolls = each < round(igGetFontSize() * float32(minLines))
@@ -1689,7 +1708,8 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
                  else: PlotCursor()
       if uis[i].shift > 0: igIndent(uis[i].shift)
       let o = uis[i].drawCurvePlot(name & ".plot " & $i, p, t,
-        ImVec2_c(x: max(80'f32, wide - uis[i].shift + uis[i].widen), y: each), key, marks, held)
+        ImVec2_c(x: max(80'f32, wide - uis[i].shift + uis[i].widen), y: each + legends[i]), key,
+        marks, held)
       if uis[i].shift > 0: igUnindent(uis[i].shift)
       areas.add (o.plotPos.x, o.plotPos.x + o.plotSize.x)
       explainMenu(name & ".explain" & (if i == 0: "" else: " " & $(i + 1)), o.plotPos, t, marks,
@@ -1743,7 +1763,9 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     elif w.cursor.held and (k.escape or (hoveredOn >= 0 and moved)):
       res.commands.add Command(kind: ckPlotCursor, plot: w.id, plotCursor: PlotCursor())
   ui.readout[w.id] = text
+  if wraps: igPushTextWrapPos(0)
   igTextUnformatted((if text.len > 0: text else: " ").cstring, nil)
+  if wraps: igPopTextWrapPos()
   # a window that has to scroll, said, so a test can see a unit fits (a vibrator's does)
   if igGetScrollMaxY() > 0: marks.mark(name & ".scrolls")
   if w.view == avFk and r.image.velocityUnit.len > 0:

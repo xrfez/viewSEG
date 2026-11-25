@@ -273,6 +273,43 @@ is said next to it. Changing the choice never reuses the other value: when the o
 not set, the force limits read "not judged" and say which box to fill. A `.dat` and a `.vib`
 share one value (same unit, same curve).
 
+- **Against the plan, or against its own pilot.** The vibrator window asks whether the vibrator
+  did what it should, not only what its pilot said. With a stored reference chosen (the plan),
+  the file's recorded pilot is measured against it after the same alignment and judged with the
+  same two phase limits as the ground force; a pilot that is not the plan fails the file, the
+  verdict opening with "the recorded pilot is not the project's reference sweep (average
+  phase N°)" and, when the two sweeps differ, both in numbers ("the project reference sweeps
+  8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in 10.0 s"). Two sweeps are the same
+  when each end frequency agrees within 0.5 Hz or 1 % of the band, whichever is more, and the
+  length within 50 ms or 1 % of it: noise on a recorded pilot, or a taper of another length,
+  moves its ends by a few tens of ms. Phase is judged only where the two sweeps overlap, so a
+  pilot that follows the plan in phase but is another sweep (it stops early, or sweeps on past
+  the plan's end, at the plan's rate) still fails the file: the verdict opens with "the recorded
+  pilot is not the project's reference sweep: the project reference sweeps 8-80 Hz in 10.0 s;
+  the recorded pilot sweeps 8-44 Hz in 5.0 s", and the limits table has a failed row for it
+  ("recorded pilot to the plan: the same sweep"). An end the traces do not hold is not compared:
+  traces that stop while the sweep still runs pass on the part recorded (below). A difference
+  within those tolerances, or read only outside the traces (a start taken on through a taper
+  to before the record's first sample), is never in the verdict; the two sweeps as read are
+  then only in the note ("sweeps read as ..."). The same sweep failing in phase with the two
+  starting together is said as "the same sweep, in step, but the phase differs". A recorded
+  pilot that is the plan's sweep with its sign reversed (average phase
+  to the plan within the average phase limit of 180°) is said as such, "the recorded pilot is
+  the project's reference sweep with opposite polarity (average phase N°)", N near 180°: a
+  finding, nothing is reversed, and the file still fails. The limits table adds the pilot's
+  two rows ("recorded pilot to the plan") and the ground force's phase to the file's own reference trace ("not judged": what the vibrator did
+  against what it was told). The phase plot draws the ground force against the file's
+  reference and against the stored reference; the frequency plot the file's reference, the
+  stored reference and the ground force. When the file's traces end before the reference
+  sweep, the verdict says how much was not judged and a pass reads "pass on the part recorded
+  (N % of the reference sweep)", N the share of the sweep judged. Less than half of the sweep
+  is no pass: the verdict reads "not judged: only N % of the reference sweep is in this file's
+  traces (a pass needs half of it)", the limits measured on that part still listed, and the
+  folder QC counts the file as not judged. A reference longer only by listen time after its
+  sweep is no difference. Against the file's own pilot (no stored reference chosen, the project reference
+  switched off, or a reference that is a trace of each record), every verdict says "judged
+  against the file's own pilot: this shows the vibrator followed its pilot, not that the pilot
+  is the planned sweep". The folder QC says the same on each row, and counts those files apart.
 - **The ground force against the reference.** A line under the verdict says how the ground force
   stands to the reference over the judged part, as recorded: "opposite" with its mean phase in
   degrees, "in phase", "neither in phase nor opposite", or "unclear" when it follows the

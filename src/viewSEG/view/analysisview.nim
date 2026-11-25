@@ -6,6 +6,7 @@
 
 import std/[math, strutils]
 import ../core/[analysis, plotcursor, units]
+from ../core/vibanalysis import AgainstFile, AgainstStored
 import curveplot, theme
 
 func scaled(ys: seq[float64]; divisor: float64): seq[float64] =
@@ -28,6 +29,13 @@ func forceAxisLabel*(plots: openArray[AnalysisPlot]): string =
     if p.title == "Force from M and B": fromMasses = p.yLabel
   fromMasses
 
+func readoutName(name: string): string =
+  ## A curve's name in the one-line readout under the plots when its legend name is long
+  ## ("GF/file ref" for "GF against the file's reference"); "": the name itself.
+  result = ""
+  for (long, short) in [(" " & AgainstFile, "/file ref"), (" " & AgainstStored, "/stored ref")]:
+    if name.endsWith(long): return name[0 ..< name.len - long.len] & short
+
 func curvePlots*(r: AnalysisResult; t: Theme; units = usMetric): seq[CurvePlot] =
   ## The result's plots as curve plots: each data curve a colour of the
   ## theme's series, in order; a limit a thin line in the error colour, the
@@ -47,7 +55,8 @@ func curvePlots*(r: AnalysisResult; t: Theme; units = usMetric): seq[CurvePlot] 
       case curve.style
       of csLine:
         c.curves.add Curve(name: curve.name, colour: t.series[i mod t.series.len],
-          ys: ys, xs: curve.xs, brackets: scaled(curve.brackets, axis.divisor))
+          ys: ys, xs: curve.xs, brackets: scaled(curve.brackets, axis.divisor),
+          short: readoutName(curve.name))
         inc i
       of csLimit:
         c.curves.add Curve(name: curve.name, colour: t.roles[rlError], ys: ys,
@@ -64,12 +73,16 @@ func curvePlots*(r: AnalysisResult; t: Theme; units = usMetric): seq[CurvePlot] 
   # plot has the whole width
   if r.view == avVibrator:
     for i in 0 ..< result.high: result[i].bareX = true
-    for c in result.mitems:
+    for i, c in result.mpairs:
       var shown = 0
       for k in c.curves:
         if not k.overlay: inc shown
       c.legendInside = true
-      c.legend = shown > 1
+      # (the phase plot's one line has a legend too: it says which reference it is against)
+      c.legend = shown > 1 or (i == 0 and shown == 1)
+      # the phase plot's names are long ("GF against the stored reference"): in the corner
+      # they cover its lines, so they go in rows above it
+      c.legendAbove = i == 0 and shown > 1
 
 func cellAt*(img: AnalysisImage; x, y: float64): PlotCursor =
   ## The cell whose centre is nearest (`x`, `y`), within the image; `x` -1

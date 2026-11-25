@@ -22,6 +22,12 @@ const
   ColPolarity* = "Polarity"
   ColWarnings* = "Warnings"
   ColProblem* = "Problem"
+  ColFileRef* = "Phase to the file's reference (°)"
+    ## the judged ground force's average phase against the file's own reference trace, when
+    ## it was judged against the project's stored reference ("-" otherwise)
+  ColPlan* = "Pilot to the plan (°)"
+    ## the recorded pilot's average phase against the project's reference; "own pilot" when the
+    ## file was judged against its own
   DatKindLabel* = ".dat signature file"
   VibKindLabel* = ".vib file"
   SegyKindLabel* = "converted SEG-Y"
@@ -42,6 +48,8 @@ func headers*(): seq[string] =
   result = @[ColFile, ColController, ColVibrator, ColTime, ColFfid, ColSourceLine,
     ColSourcePoint, ColKind, ColPair, ColVerdict, ColSentence]
   for l in QcLimit: result.add measureHead(l)
+  result.add ColFileRef
+  result.add ColPlan
   result.add ColPolarity
   result.add ColWarnings
   result.add ColProblem
@@ -56,6 +64,11 @@ func summaryLine*(t: FolderTotals): string =
     plural(t.problems, "problem", "problems") & ", " &
     plural(t.skipped, "skipped", "skipped") &
     (if t.forceNotJudged > 0: ", " & $t.forceNotJudged & " with force not judged" else: "") &
+    (if t.partial > 0: ", " & plural(t.partial, "pass", "passes") &
+      " on part of the reference sweep" else: "") &
+    (if t.ownPilot > 0: ", " & $t.ownPilot & " judged against " &
+      (if t.ownPilot == 1: "its" else: "their") & " own pilot, not the project's reference"
+      else: "") &
     "."
 
 func kindLabel*(kind: SignatureKind): string =
@@ -74,7 +87,10 @@ func sentenceOf*(row: FolderRow): string =
 func verdictCell(row: FolderRow): string =
   case row.outcome
   of foJudged:
-    if row.forceWhy.len > 0 and row.verdict == qvPass: "pass (force not judged)"
+    if row.verdict == qvPass and (row.forceWhy.len > 0 or row.partial):
+      "pass (" & (if row.partial: plain(floor(row.recordedPct), 0) & " % recorded" else: "") &
+        (if row.partial and row.forceWhy.len > 0: ", " else: "") &
+        (if row.forceWhy.len > 0: "force not judged" else: "") & ")"
     else: $row.verdict
   of foProblem: "problem"
   of foSkipped: "skipped"
@@ -85,6 +101,29 @@ func measureCell(row: FolderRow; limit: QcLimit): string =
       return measuredText(QcRow(limit: m.limit, measured: m.measured, bound: m.bound,
         atMs: m.atMs, status: m.status, why: m.why))
   "-"
+
+func fileRefCell(row: FolderRow): string =
+  ## The judged ground force's average phase against the file's own reference ("0.4°"): shown
+  ## beside the one against the plan; "-" without both.
+  for m in row.fileMeasures:
+    if m.limit == qlAvgPhase:
+      return measuredText(QcRow(limit: m.limit, measured: m.measured, bound: m.bound))
+  "-"
+
+func planCell(row: FolderRow): string =
+  ## The recorded pilot's average phase to the plan, with its mark ("47.3° ✗"); "own pilot"
+  ## for a file judged against its own; "-" otherwise.
+  for m in row.plan:
+    if m.limit == qlAvgPhase:
+      let q = QcRow(limit: m.limit, measured: m.measured, bound: m.bound, atMs: m.atMs,
+        status: m.status, why: m.why)
+      var phaseFails = false
+      for r in row.plan:
+        if r.status == qsFail: phaseFails = true
+      if row.sweepFails and not phaseFails:
+        return q.measuredText & " ✗ other sweep"
+      return q.measuredText & " " & q.markText
+  if row.outcome == foJudged and row.ownPilot: "own pilot" else: "-"
 
 func joinWords(parts: seq[string]): string =
   var kept: seq[string] = @[]
@@ -129,6 +168,8 @@ func cells(row: FolderRow): seq[string] =
     numberCell(row.vibrator), timeCell(row), row.shot.ffid, row.shot.line, row.shot.point,
     kindLabel(row.kind), row.pair.extractFilename, verdictCell(row), sentenceOf(row)]
   for l in QcLimit: result.add measureCell(row, l)
+  result.add fileRefCell(row)
+  result.add planCell(row)
   result.add polarityCell(row)
   result.add warningsCell(row)
   result.add row.problem
