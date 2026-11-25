@@ -70,11 +70,11 @@ proc setFolder*(ui: var MissingUi; path: string) =
   ui.chosen = path
 
 proc surveyKey(st: AppState): string =
-  ## Which survey the answers are for: the layer holding the relation records and
-  ## its relations (a reloaded file is another).
+  ## Which survey the answers are for: the layer holding the relation records, by the
+  ## id its load gave it (a reloaded file is another layer with a new id).
   let layer = st.relationLayer
   if layer < 0: ""
-  else: $layer & "@" & $cast[int](st.survey.layers[layer].relations)
+  else: $layer & "#" & $int(st.survey.layers[layer].id)
 
 proc shownPath(st: AppState): string =
   ## The disk path of the file shown in the main panel; "" for none.
@@ -498,6 +498,7 @@ proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks
     for line in statisticLines(side.stats, folderTab):
       igTextUnformatted(line.cstring, nil)
       marks.mark("missing.stat " & line)
+      tip(FiguresTip)
     if not folderTab and st.shownHasKilled:
       igTextUnformatted(KilledNote.cstring, nil)
       marks.mark("missing.message " & KilledNote)

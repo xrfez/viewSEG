@@ -11,7 +11,8 @@
 ## Seen to fail: with the Folder tab's job started as soon as a folder is chosen,
 ## "Folder... chooses the folder" found a folder job before Run; with the
 ## subfolders tick ignored by the walk, "Run: the folder without its subfolders"
-## did not happen (3 files, not 2); with the export taking every row whatever the filter,
+## did not happen (3 files, not 2); "a reloaded survey is checked again" guards the survey
+## key (a reload that reuses an address is not reproducible here); with the export taking every row whatever the filter,
 ## "Export CSV... writes the rows the filter shows" read both stations back.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
@@ -295,6 +296,17 @@ proc main*() =
           f.has("missing.stat Receiver stations missing: 1"),
           "a killed trace changed the figures: " & $f.markNames("missing.stat ")
     step("a killed trace counts as present and the window says so", killOne, killedNote)
+
+    var scans = 0
+    proc scansOfTwo(f: FrameInfo): int =
+      for j in f.core.jobs.list():
+        if j.spec.title == "Missing traces in two.sgd": inc result
+    proc reloadSurvey(f: FrameInfo) =
+      scans = f.scansOfTwo
+      f.apply Command(kind: ckLoadSurvey, paths: @[plan])
+    proc scannedAgain(f: FrameInfo): bool =
+      result = f.scansOfTwo > scans and f.has("missing.ready")
+    step("a reloaded survey is checked again", reloadSurvey, scannedAgain)
 
     var closed = false
     proc closeIt(f: FrameInfo) = discard

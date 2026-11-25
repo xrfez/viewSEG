@@ -19,6 +19,10 @@ const
   Continuous* = "This file is a continuous receiver recording; it is not checked."
   NoTemplateRecord* = "No record of the file has a record in the relation records."
   NothingMissing* = "Every station the template calls for is in the data."
+  FiguresTip* = "In the template, found and missing: each station (line and point) counts " &
+    "once, over all the records. In the line counted per record, a station counts once for " &
+    "each record that calls for it, so found and missing can add up to more than the " &
+    "template: a station found in one record and missing from another is in both."
   ExportButton* = "Export CSV..."
   StopButton* = "Stop"
   RunButton* = "Run"
