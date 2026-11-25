@@ -758,7 +758,8 @@ func tracePointsOf*(s: Survey; trace: int): seq[PointRef] =
           if p >= 0: result.add PointRef(layer: m.id, role: r, point: p)
 
 proc recordPoints*(s: Survey; base: int; traces: Slice[int];
-    domain = rdSource; fixed = StationKey(); hasFixed = false): seq[PointRef] =
+    domain = rdSource; fixed = StationKey(); hasFixed = false;
+    made: ref SurveyGeometry = nil): seq[PointRef] =
   ## Where the traces `traces` (indices in the open file whose trace 0 is
   ## survey-wide `base`: a gather) were recorded, each point once: their
   ## points in the file's traces layer and the points of their stations in
@@ -767,7 +768,9 @@ proc recordPoints*(s: Survey; base: int; traces: Slice[int];
   ## files give the station `fixed` stand in for theirs, when `hasFixed`:
   ## the X records of a source station (`domain` `rdSource`: a shot) or the
   ## O records of a receiver station (`rdReceiver`: a receiver gather). The
-  ## records are found by that station only, never by a record number.
+  ## records are found by that station only, never by a record number. The
+  ## records are the first loaded survey file's of `domain`, else `made`
+  ## (the O records derived from the X records, as the map's box uses them).
   ## None while the file's positions are not read.
   var own = -1
   for i in 0 ..< s.layers.len:
@@ -799,14 +802,18 @@ proc recordPoints*(s: Survey; base: int; traces: Slice[int];
         stations[r].add asStation(k)
     let fixedRole = if domain == rdSource: prSource else: prReceiver
     let plannedRole = if domain == rdSource: prReceiver else: prSource
+    var g: ref SurveyGeometry = nil
     for i in 0 ..< s.layers.len:
       template m: untyped = s.layers[i]
-      if m.origin == loSurveyFile and
+      if g.isNil and m.origin == loSurveyFile and
           (if domain == rdSource: m.xRuns > 0 else: m.relationRuns > m.xRuns):
-        for record in m.relations[].recordsAt(fixed, domain):
-          for run in m.relations[].relationRuns(record, domain):
-            plan(fixedRole, run.fixed)
-            for k in 0 ..< run.stations: plan(plannedRole, run.station(k))
+        g = m.relations
+    if g.isNil: g = made
+    if not g.isNil:
+      for record in g[].recordsAt(fixed, domain):
+        for run in g[].relationRuns(record, domain):
+          plan(fixedRole, run.fixed)
+          for k in 0 ..< run.stations: plan(plannedRole, run.station(k))
   for r in PointRole:
     for st in stations[r]:
       for i in 0 ..< s.layers.len:
