@@ -3,7 +3,7 @@
 ## for every file its row and all its notes, in file order. No toolkit; the
 ## window holds the run's record and the job writes the text.
 
-import std/[strutils, times]
+import std/[os, sequtils, strutils, times]
 import ../core/[outputbatch, outputjobs, outputrevision]
 import filetable, outputbinaryedit, outputtextedit, outputwords
 
@@ -32,7 +32,22 @@ func nowText*(t: DateTime): string =
 func onOff(b: bool): string =
   if b: "on" else: "off"
 
-func slashed(path: string): string = path.replace('\\', '/')
+func oneLine(s: string): string =
+  ## `s` with a line end or a tab written as `\n`, `\r` or `\t`, so one item stays on
+  ## its lines (a Linux file name may hold them).
+  if s.anyIt(it in {'\n', '\r', '\t'}):
+    for c in s:
+      case c
+      of '\n': result.add "\\n"
+      of '\r': result.add "\\r"
+      of '\t': result.add "\\t"
+      else: result.add c
+  else:
+    result = s
+
+func slashed(path: string): string =
+  ## A Windows path with `/`; on Linux a backslash is a character of the name.
+  oneLine(if DirSep == '\\': path.replace('\\', '/') else: path)
 
 func logText*(rec: RunRecord; r: BatchResult; sizes: openArray[int64]): string =
   ## `sizes[i]`: the bytes of the file written for `r.items[i]`, -1 when not known
@@ -40,8 +55,8 @@ func logText*(rec: RunRecord; r: BatchResult; sizes: openArray[int64]): string =
   var lines: seq[string] = @[]
   lines.add "viewSEG output log"
   lines.add "Run: " & rec.startedAt
-  lines.add "Source: " & rec.source
-  lines.add "Destination: " & rec.dest
+  lines.add "Source: " & oneLine(rec.source)
+  lines.add "Destination: " & oneLine(rec.dest)
   lines.add "Format: " & $rec.format
   lines.add "Revision: " & rec.revision.revisionLabel
   lines.add OptReversals & ": " & onOff(rec.reversals)
@@ -64,14 +79,14 @@ func logText*(rec: RunRecord; r: BatchResult; sizes: openArray[int64]): string =
       else: BinaryAsSource)
   lines.add summaryLine(r.written, r.failed, r.skipped, r.correlatedWith)
   if r.cancelled: lines.add "The run was stopped before every file was written."
-  if r.reason.len > 0: lines.add r.reason
+  if r.reason.len > 0: lines.add oneLine(r.reason)
   for i, item in r.items:
     lines.add ""
     lines.add "File: " & slashed(item.relative)
     lines.add "  Written as: " & (if item.outcome == boWritten and item.destination.len > 0:
-      item.destination else: "-")
+      oneLine(item.destination) else: "-")
     var outcome = $item.outcome
-    if item.outcome == boFailed and item.why.len > 0: outcome.add ": " & item.why
+    if item.outcome == boFailed and item.why.len > 0: outcome.add ": " & oneLine(item.why)
     lines.add "  Result: " & outcome
     lines.add "  Size: " & (if i < sizes.len and sizes[i] >= 0: sizeText(sizes[i]) & " (" &
       $sizes[i] & " bytes)" else: "-")
@@ -80,5 +95,5 @@ func logText*(rec: RunRecord; r: BatchResult; sizes: openArray[int64]): string =
     if item.lines.len == 0: lines.add "  Notes: none"
     else:
       lines.add "  Notes:"
-      for note in item.lines: lines.add "    - " & note
+      for note in item.lines: lines.add "    - " & oneLine(note)
   lines.join("\n") & "\n"
