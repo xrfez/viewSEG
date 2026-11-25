@@ -895,6 +895,10 @@ type
       ## note), per running job (`holdRef`)
     pinsLeft: seq[tuple[job: JobId; pin: RootRef]]
       ## those of jobs abandoned while their work still ran, until it is back
+    joined: RootRef
+      ## what the trace quality scans join, made from the survey files `joinedFrom` (`keepJoin`):
+      ## the next scan of the same survey is given it again
+    joinedFrom: seq[int] ## the ids of the survey files' layers it was made from, in order
 
   CorrelateHold = ref object
     ## One correlation, kept until its job has ended. A ref, not shared memory:
@@ -2370,6 +2374,7 @@ proc keepForStragglers(state: var AppState) =
   for c in state.batchSurvey.left: GC_ref(c.geometry)
   for c in state.batchSurvey.pins: GC_ref(c.pin) # a scan fills its sink through its address
   for c in state.batchSurvey.pinsLeft: GC_ref(c.pin)
+  if not state.batchSurvey.joined.isNil: GC_ref(state.batchSurvey.joined)
   if not state.joining.geometry.isNil: GC_ref(state.joining.geometry) # `joinApplyWork` reads it
   if not state.joining.relations.isNil: GC_ref(state.joining.relations)
   for r in state.joining.reused: GC_ref(r) # `joinReadWork` reads them
@@ -2682,6 +2687,29 @@ proc holdRef*(state: AppState; job: JobId; pin: RootRef) =
   assertUiThread()
   if job != NoJob and not pin.isNil:
     state.batchSurvey.pins.add (job, pin)
+
+proc keepJoin*(state: AppState; joined: RootRef) =
+  ## Keeps `joined` (what the trace quality scans join, made from the survey as it is now) for
+  ## the next scan, which is given it again (`keptJoin`); let go of when the survey changes.
+  assertUiThread()
+  state.batchSurvey.joined = joined
+  state.batchSurvey.joinedFrom.setLen 0
+  for i in 0 ..< state.survey.layers.len:
+    if state.survey.layers[i].origin == loSurveyFile:
+      state.batchSurvey.joinedFrom.add int(state.survey.layers[i].id)
+
+func surveyFilesAre(s: Survey; ids: openArray[int]): bool =
+  ## Whether the survey files' layers of `s` are those of `ids`, in order.
+  var k = 0
+  for i in 0 ..< s.layers.len:
+    if s.layers[i].origin == loSurveyFile:
+      if k >= ids.len or int(s.layers[i].id) != ids[k]: return false
+      inc k
+  k == ids.len
+
+func keptJoin*(state: AppState): RootRef {.inline.} =
+  ## What `keepJoin` kept; nil for none.
+  state.batchSurvey.joined
 
 proc holdSurvey*(state: AppState; job: JobId) =
   ## Keeps the project's survey (the one `projectSurvey` gave when `job` was
@@ -14197,6 +14225,9 @@ proc drainInbox*(state: var AppState): bool =
     state.batchSurvey.left.keepItIf(state.jobs.workingOn(it.job))
   if state.batchSurvey.pinsLeft.len > 0:
     state.batchSurvey.pinsLeft.keepItIf(state.jobs.workingOn(it.job))
+  if not state.batchSurvey.joined.isNil and
+      not state.survey.surveyFilesAre(state.batchSurvey.joinedFrom):
+    state.batchSurvey.joined = nil # a survey file came or went (a job that reads it holds it)
   if state.leftChecks.len > 0: state.leftChecks.keepItIf(state.jobs.workingOn(it.job))
   state.prepareNext() # (once the main panel has its tile; or a prepare ended)
   if state.stoppedWaiting: state.followNewest() # (a stopped .dat's time may be up)

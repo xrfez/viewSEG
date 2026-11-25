@@ -32,7 +32,12 @@
 ## measured 8 traces where 5 were expected and counted none at no station; with `absorb` not
 ## summing them, the folder counted 3 where 18 were expected. With the sink and the note
 ## captured by the works as `ref`s (as before), `the_work_holds_no_ref_*` saw them shared; with
-## `holdRef` left out, the state did not hold them for the job.
+## `holdRef` left out, the state did not hold them for the job. With the survey joined made
+## in each scan and the O records derived at the start of every scan given X records only (as
+## before), `the_survey_joined_is_made_once_*` counted 3 joins where 1 was expected and 1
+## derivation for shot gathers; with `qualityJoin` making a new one for each call,
+## `the_app_makes_what_a_scan_joins_once_*` saw it made again for the same survey; with it
+## never let go of, it was kept after the survey went.
 
 import std/[atomics, math, os, strutils, tables]
 import parseSEG
@@ -267,8 +272,9 @@ proc main*() =
       let path = fx.dir / "shot.sgd"
       writeFile(path, shotRows(0, 0, true), false)
       let x = surveyOf(xRec(7, "1.00", "99.00", 1, 5, 10, 1, 5))
+      let js = newJoinedSurvey(x, mapSurvey())
       let joined = scanOne(path, rkShotGather, x, nil,
-        join = QualityJoin(relations: addr x[], stations: mapSurvey())).receivers
+        join = QualityJoin(survey: addr js[])).receivers
       doAssert joined.totals.traces == 5 and joined.totals.outside == 3, $joined.totals
       doAssert joined.totals.unknown == default(array[TemplateUnknown, int]), $joined.totals
       doAssert wholeLine(joined.totals, ssReceivers) == ""
@@ -289,7 +295,8 @@ proc main*() =
       let path = fx.dir / "shot.sgd"
       writeFile(path, shotRows(0, 0, false), false)
       let x = surveyOf(xRec(7, "1.00", "99.00", 1, 5, 10, 1, 5))
-      let join = QualityJoin(relations: addr x[], stations: mapSurvey())
+      let js = newJoinedSurvey(x, mapSurvey())
+      let join = QualityJoin(survey: addr js[])
       let r = scanOne(path, rkShotGather, x, nil, join = join).receivers
       doAssert r.totals.traces == 5 and r.totals.outside == 0 and r.totals.noStation == 3, $r.totals
       doAssert r.totals.stations == 5 and r.stations.len == 5, $r.stations.len
@@ -400,6 +407,57 @@ proc main*() =
       doAssert sink.result.receivers.totals.outside == 3,
         "outside " & $sink.result.receivers.totals.outside
       doAssert other[].relationCount(rdSource) == 1
+      st.shutdown()
+
+  block the_survey_joined_is_made_once_and_o_records_only_for_a_receiver_gather:
+    withFixtures fx:
+      let shot = fx.dir / "shot.sgd"
+      writeFile(shot, shotRows(0, 0, true), false)
+      let x = surveyOf(xRec(7, "1.00", "99.00", 1, 5, 10, 1, 5))
+      let js = newJoinedSurvey(x, mapSurvey())
+      let before = (scanBuilds[0].load, scanBuilds[1].load)
+      for i in 1 .. 3:
+        let r = scanOne(shot, rkShotGather, x, nil, join = QualityJoin(survey: addr js[]))
+        doAssert r.receivers.totals.traces == 5, $r.receivers.totals
+      # one geometry for the three scans of one survey; no O records for shot gathers
+      doAssert scanBuilds[0].load == before[0] + 1 and scanBuilds[1].load == before[1],
+        $(scanBuilds[0].load - before[0]) & " joins, " & $(scanBuilds[1].load - before[1]) &
+        " derivations"
+      # receiver gathers on four threads: their O records derived once for the job
+      var lines: seq[string] = @[]
+      for s in 1 .. 3: lines.add xRec(s, "5.00", $s & ".00", 1, 1, 20, 90, 90)
+      let xs = surveyOf(lines.join("\n"))
+      var paths: seq[string] = @[]
+      for i in 1 .. 4:
+        paths.add fx.dir / ("receiver" & $i & ".sgd")
+        receiverFile(paths[^1])
+      let sink = QualitySink()
+      run(scanQuality(paths, initTable[string, FileEdits](), sink, "", NoiseSettings(),
+        forcedKinds(paths, rkReceiverSliced), relations = addr xs[]), paths, sink, 4)
+      doAssert sink.result.sources.totals.traces == 12 and
+        sink.result.sources.totals.outside == 8, $sink.result.sources.totals
+      doAssert scanBuilds[1].load == before[1] + 1, $(scanBuilds[1].load - before[1])
+
+  block the_app_makes_what_a_scan_joins_once_for_each_survey:
+    withFixtures fx:
+      let plan = fx.dir / "plan.x"
+      writeFile(plan, H00 & "\n" & xRec(7, "1.00", "99.00", 1, 5, 10, 1, 5) & "\n")
+      var st = initAppState()
+      st.rememberFilesIn(fx.dir / "config")
+      st.apply Command(kind: ckLoadSurvey, paths: @[plan])
+      doAssert st.settle(st.jobs.active.len == 0 and st.survey.layers.len == 1)
+      let first = st.qualityJoin
+      doAssert st.qualityJoin == first, "made again for the same survey"
+      discard st.drainInbox()
+      doAssert st.qualityJoin == first, "let go of while the survey is the same"
+      # the same file loaded again is another survey: made anew, the old one let go of
+      st.apply Command(kind: ckClearSurvey)
+      doAssert st.settle(st.jobs.active.len == 0 and st.survey.layers.len == 0)
+      doAssert st.keptJoin.isNil, "kept after the survey went"
+      st.apply Command(kind: ckLoadSurvey, paths: @[plan])
+      doAssert st.settle(st.jobs.active.len == 0 and st.survey.layers.len == 1)
+      let again = st.qualityJoin
+      doAssert again != first and again.key != first.key
       st.shutdown()
 
   block the_work_holds_no_ref_of_its_sink_or_note:

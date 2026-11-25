@@ -48,6 +48,9 @@
 ## is not found is measured whole and counted by why (`Totals.unknown`): never left unsaid. In
 ## a record whose template is known, a trace that neither the headers nor the survey place at
 ## a station cannot be in it: it is left out and counted on its own (`Totals.noStation`).
+## What is joined is made on the UI thread once for each survey and join (`qualityJoin`,
+## `JoinedSurveyObj`), its geometry on the first job's thread that needs it; a scan asked for
+## again copies nothing of the survey.
 ##
 ## `folderScan` lists a folder (its subfolders only when asked) and scans its files.
 
@@ -62,6 +65,9 @@ from missingreport import StationSide
 export StationSide
 
 const
+  Unbuilt = 0
+  Building = 1
+  Built = 2
   Listing* = "Listing the folder."
   CannotList* = "The folder could not be listed."
   QcChunk = 512            ## traces read and measured at a time
@@ -93,17 +99,35 @@ type
     capped*: bool
   QualityNote* = ref QualityNoteObj
 
+  OnceGeometry = object
+    ## A geometry made once, by the first thread that asks for it (`builtOnce`), and read in
+    ## place by every thread after.
+    stage: Atomic[int] ## `Unbuilt`, `Building` or `Built`
+    geometry: SurveyGeometry ## written only by the thread that builds it, before `Built`
+
+  JoinedSurveyObj* = object of RootObj
+    ## What a scan joins to each file's keys in memory before it tells the file's side and
+    ## finds its records' templates, as the recorded fold joins it (`foldactual`): the survey
+    ## files loaded on the map, the join options and the station moves. A file is never
+    ## written. Made on the UI thread once for each `key` (`qualityJoin`) and kept by the app;
+    ## the jobs reach it by its address (`QualityJoin`). The relations and the stations are
+    ## made into one geometry once, on the first job's thread that needs it, and every later
+    ## scan of the same key reads that one.
+    key*: string ## names what it holds (`qualityJoinKey`)
+    relations: ref SurveyGeometry ## kept for `rel`; touched on the UI thread only
+    rel: ptr SurveyGeometry
+      ## the first survey file's X records; nil: no survey is joined, only the moves applied
+    stations: array[PointRole, FoldStations] ## the survey files' stations with coordinates
+    options: JoinOptions
+    moves: StationMoves
+    joined: OnceGeometry ## `rel` and `stations` as one geometry, once built
+
+  JoinedSurvey* = ref JoinedSurveyObj
+
   QualityJoin* = object
-    ## The survey the scan joins to each file's keys in memory before it tells the file's side
-    ## and finds its records' templates, as the recorded fold joins it (`foldactual`): the
-    ## survey files loaded on the map, the join options and the station moves (`qualityJoin`).
-    ## A file is never written.
-    relations*: ptr SurveyGeometry
-      ## the first survey file's X records, read in place: the caller keeps them alive and
-      ## unchanged until the work is back; nil: no survey is joined, only the moves applied
-    stations*: array[PointRole, FoldStations] ## the survey files' stations with coordinates
-    options*: JoinOptions
-    moves*: StationMoves
+    ## What a scan joins: `survey`, read in place (nil: nothing is joined). The caller keeps it
+    ## alive and unchanged until the work is back (the app's `holdRef`).
+    survey*: ptr JoinedSurveyObj
 
   QualitySinkObj* = object of RootObj
     ## Filled when the job ends, except when it is cancelled, through its address: the work
@@ -112,6 +136,49 @@ type
     ## running. Nil is not filled.
     result*: QualityJobResult
   QualitySink* = ref QualitySinkObj
+
+var scanBuilds*: array[2, Atomic[int]]
+  ## How many times scans made a joined survey's geometry (0) and derived O records (1):
+  ## read only by tests.
+
+proc newJoinedSurvey*(relations: ref SurveyGeometry; stations: sink array[PointRole,
+    FoldStations]; options = JoinOptions(); moves = StationMoves(); key = ""): JoinedSurvey =
+  ## What a scan joins (`JoinedSurveyObj`): `relations` (nil: none) and `stations`, the join
+  ## `options` and the station `moves`, named `key`. The joined geometry is made later, by the
+  ## first job that needs it.
+  JoinedSurvey(key: key, relations: relations,
+    rel: (if relations.isNil: nil else: addr relations[]), stations: stations,
+    options: options, moves: moves)
+
+proc builtOnce[C: JobContext | ItemContext](o: ptr OnceGeometry; ctx: C;
+    build: proc (g: var SurveyGeometry) {.gcsafe.}): ptr SurveyGeometry =
+  ## The geometry of `o`, made by `build` on the first thread that asks for it; another that
+  ## asks meanwhile waits for it, and sees its own cancel while it waits. A build that raises
+  ## (a cancel) leaves it unmade, for the next thread that asks.
+  while true:
+    var stage = o.stage.load
+    if stage == Built: return addr o.geometry
+    if stage == Unbuilt and o.stage.compareExchange(stage, Building):
+      try:
+        build(o.geometry)
+      except CatchableError:
+        o.geometry = SurveyGeometry()
+        o.stage.store Unbuilt
+        raise
+      o.stage.store Built
+      return addr o.geometry
+    ctx.checkCancelled()
+    sleep 1
+
+proc joinedGeometry(j: ptr JoinedSurveyObj; ctx: JobContext): ptr SurveyGeometry =
+  ## The relations and the stations of `j` as one geometry (nil when `j` has no relations),
+  ## made once for every scan of `j` (`geometryOf`, as the recorded fold makes it).
+  if j.rel == nil: return nil
+  builtOnce(addr j.joined, ctx, proc (g: var SurveyGeometry) {.gcsafe.} =
+    ctx.setPhase "gathering the survey"
+    {.cast(gcsafe).}:
+      g = geometryOf(j.rel, j.stations)
+      discard scanBuilds[0].fetchAdd(1))
 
 proc qualitySpec*(paths: openArray[string]): JobSpec =
   ## The job that scans `paths`: background, reading each path.
@@ -397,11 +464,14 @@ type
     shotTemplate, receiverTemplate: ptr SurveyGeometry
       ## the relation records the shot gathers' X records and the receiver gathers' O records
       ## are read from (nil for none); the job keeps them alive and unchanged
+    deriveFrom: ptr SurveyGeometry
+      ## with no `receiverTemplate`: the X records the receiver gathers' O records are derived
+      ## from, by the first receiver gather measured (`derived`); nil for none
+    derived: ptr OnceGeometry ## the O records derived, the job's own
     traceMatch: TraceMatch
     templates: bool ## the template is asked for, and some relation records are given
-    survey: ptr SurveyGeometry ## the survey joined to each file (nil: none), the job's own
-    options: JoinOptions
-    moves: StationMoves
+    join: ptr JoinedSurveyObj ## what is joined to each file (nil: nothing)
+    survey: ptr SurveyGeometry ## its geometry (nil: no survey, only the moves)
     untold: UntoldKind
     folderRun: bool
     sizes: seq[int64] ## the file sizes: what an item can tell of what runs beside it
@@ -468,12 +538,13 @@ proc qualityItem(it: ItemContext; a: ptr QualityItems; i: int): QualityOne
     if s.file.kind == skUnknown: result.why = "not a SEG-Y, SEG-D or SEG-2 file"
     elif s.file.len == 0: result.why = "has no trace keys"
     else:
-      if a.survey != nil or a.moves.len > 0:
+      if a.join != nil and (a.survey != nil or a.join.moves.len > 0):
         # the survey on the map and the moves, in memory only, as the recorded fold joins them:
         # a record whose headers name no station finds its template by the survey's
         let progress = proc (done, total: int): bool {.gcsafe, raises: [].} = not it.cancelled
         {.cast(gcsafe).}:
-          discard joinOwnFile(s.filePtr, a.survey, a.options, a.moves, false, progress)
+          discard joinOwnFile(s.filePtr, a.survey, a.join.options, a.join.moves, false,
+            progress)
       let isForced = a.files[i].forced
       let kind =
         if isForced: some(a.files[i].forcedKind)
@@ -502,9 +573,20 @@ proc qualityItem(it: ItemContext; a: ptr QualityItems; i: int): QualityOne
             let alone = a.files.len == 1 or a.sizes[i] * 2 > a.budget
             workers = newProcessPool(if alone: a.wide else: a.narrow)
           let shot = fileSide.side == rsShot
+          var relation = if shot: a.shotTemplate else: a.receiverTemplate
+          if not shot and relation == nil and a.deriveFrom != nil and s.gathers.len > 0:
+            # the O records derived from the X records, once for the job, by the first
+            # receiver gather measured
+            it.checkCancelled()
+            let x = a.deriveFrom
+            relation = builtOnce(a.derived, it, proc (g: var SurveyGeometry) {.gcsafe.} =
+              {.cast(gcsafe).}:
+                g = derivedReceiverRecords(x[])
+                discard scanBuilds[1].fetchAdd(1))
+            it.checkCancelled()
           measure(s.filePtr, path, {side}, a.files[i].killed, part, partUnread, s.gathers,
-            a.noise, it, addr workers, (if shot: a.shotTemplate else: a.receiverTemplate),
-            (if shot: rdSource else: rdReceiver), a.traceMatch, a.templates)
+            a.noise, it, addr workers, relation, (if shot: rdSource else: rdReceiver),
+            a.traceMatch, a.templates)
           result.measured = true
           result.build = part[side]
           result.unread = partUnread
@@ -602,30 +684,24 @@ proc scanInto(ctx: JobContext; paths: seq[string]; edits: Table[string, FileEdit
   ctx.checkCancelled()
   var st = ScanState(builds: [initQualityBuild(), initQualityBuild()])
   try:
-    var survey = SurveyGeometry() # the survey joined, read by every item
-    if join.relations != nil:
-      ctx.setPhase "gathering the survey"
-      {.cast(gcsafe).}:
-        survey = geometryOf(join.relations, join.stations)
-      ctx.checkCancelled()
-    # no O records given: those of `relations`, else derived here from its X records
-    var made = SurveyGeometry()
+    # the survey joined, read by every item: made once for every scan of the same survey
+    let survey = if join.survey != nil: joinedGeometry(join.survey, ctx) else: nil
+    ctx.checkCancelled()
+    # no O records given: those of `relations`, else derived from its X records, once, when a
+    # receiver gather is measured (a scan of shot gathers derives none)
+    var derived = OnceGeometry()
     var oRecords = receivers
+    var deriveFrom: ptr SurveyGeometry = nil
     if oRecords == nil and relations != nil and noise.templateOnly:
       if relations[].relationCount(rdReceiver) > 0: oRecords = relations
-      elif relations[].relationCount(rdSource) > 0:
-        ctx.setPhase "deriving the receivers' shots"
-        {.cast(gcsafe).}:
-          made = derivedReceiverRecords(relations[])
-        oRecords = addr made
-        ctx.checkCancelled()
+      elif relations[].relationCount(rdSource) > 0: deriveFrom = relations
     # the files, each path once (compared normalised)
     var args = QualityItems(cacheDir: cacheDir, noise: noise, untold: untold,
       folderRun: folderRun, traceMatch: traceMatch,
-      shotTemplate: relations, receiverTemplate: oRecords,
+      shotTemplate: relations, receiverTemplate: oRecords, deriveFrom: deriveFrom,
+      derived: addr derived,
       templates: noise.templateOnly and (relations != nil or oRecords != nil),
-      survey: (if join.relations != nil: addr survey else: nil), options: join.options,
-      moves: join.moves)
+      join: join.survey, survey: survey)
     var seen = initHashSet[string]()
     var at: seq[int] = @[]
     for path in paths:
@@ -646,8 +722,8 @@ proc scanInto(ctx: JobContext; paths: seq[string]; edits: Table[string, FileEdit
         var again = QualityItems(cacheDir: cacheDir, noise: noise, untold: untold,
           folderRun: folderRun, round: 1, takenAs: one, traceMatch: traceMatch,
           shotTemplate: args.shotTemplate, receiverTemplate: args.receiverTemplate,
-          templates: args.templates, survey: args.survey, options: args.options,
-          moves: args.moves)
+          deriveFrom: args.deriveFrom, derived: args.derived, templates: args.templates,
+          join: args.join, survey: args.survey)
         for k in st.deferredAt: again.files.add args.files[k]
         st.deferred.setLen 0
         st.deferredAt.setLen 0
@@ -690,19 +766,22 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
   ## most 256 MiB together (a file larger than that runs alone). With `noise.templateOnly`
   ## (the setting's default), the traces a record's template does not list are left out: a
   ## shot's X record in `relations`, a receiver gather's O records in `receivers` (nil: the O
-  ## records of `relations`, else those derived here from its X records, as the map derives
-  ## them: `derivedReceiverRecords`), found as the map's check finds them
+  ## records of `relations`, else those derived from its X records as the map derives them,
+  ## `derivedReceiverRecords`, once for the job and only when a receiver gather is measured),
+  ## found as the map's check finds them
   ## (`recordqc.leftOutOfTemplate`, `traceMatch` as the join's). They are not measured, not
   ## counted in a station or a total, and counted apart (`Totals.outside`); so is a trace at
   ## no station in a record whose template is known (`Totals.noStation`). Before that,
   ## `join` is joined to each file's keys in memory (a record whose headers name no station
-  ## finds its template by the survey's). A record whose template is not found is measured
+  ## finds its template by the survey's; its geometry is made by the first scan that needs it,
+  ## and read by every later one). A record whose template is not found is measured
   ## whole and counted by why (`Totals.unknown`), and so is a record of a side with no
   ## relation records when the other side has some; with `relations` and `receivers` both nil
   ## every record is measured whole and none is counted. They are read in place: the work
   ## holds their addresses, never a `ref`, and the caller keeps them alive and unchanged until
-  ## the work is back (`Jobs.workingOn`; the app's `holdGeometry`). So is `sink`: the work
-  ## fills it through its address and touches no `ref` (the app's `holdRef`).
+  ## the work is back (`Jobs.workingOn`; the app's `holdGeometry`). So are `join.survey` and
+  ## `sink`: the work fills the sink through its address and touches no `ref` (the app's
+  ## `holdRef`).
   let into = sink.addrOf
   result = proc (ctx: JobContext) {.gcsafe.} =
     scanInto(ctx, paths, edits, into, cacheDir, noise, forced, untold, folderRun, relations,
@@ -761,22 +840,27 @@ proc folderScan*(folder: string; subfolders: bool; cacheDir: string; snap: Edits
     scanInto(ctx, paths, editsFor(paths, snap), into, cacheDir, noise, forced, untold, true,
       relations, receivers, traceMatch, join)
 
-proc qualityJoin*(st: AppState): tuple[join: QualityJoin; held: ref SurveyGeometry] =
-  ## What a scan joins (`QualityJoin`), taken from `st` on the UI thread as the recorded fold
-  ## takes it (`foldInputs`, `actualInputs`): the survey files loaded on the map, in a project
-  ## and outside one, the join options (the project's, else the session's) and the station
-  ## moves. `held` is the `ref` of `join.relations`: the caller keeps it until the work is back.
-  let fold = foldInputs(st.survey, NaN, NaN)
-  result.held = fold.relations
-  result.join = QualityJoin(relations: (if fold.relations.isNil: nil else: addr fold.relations[]),
-    stations: fold.stations, options: st.joinOptions, moves: st.project.doc.stationMoves)
-
 proc qualityJoinKey*(st: AppState): string =
   ## Names what `qualityJoin` gives, cheaply enough for every frame: the survey files loaded
   ## (`surveySignature`), the join options, in a project its revision (the station moves are
   ## its), and the vendor maps' load.
   surveySignature(st.survey) & "|" & $st.joinOptions & "|" &
     (if st.inProject: $st.project.revision else: "-") & "|" & $st.vendorGen
+
+proc qualityJoin*(st: AppState): JoinedSurvey =
+  ## What a scan joins (`JoinedSurveyObj`), taken from `st` on the UI thread as the recorded
+  ## fold takes it (`surveyStations`, `actualInputs`): the survey files loaded on the map, in a
+  ## project and outside one, the join options (the project's, else the session's) and the
+  ## station moves; made once for each `qualityJoinKey`: asked for again with the same key, it
+  ## is the one made before, and nothing is copied. The app keeps it until the survey changes
+  ## (`keepJoin`); the caller holds it for its job (`holdRef`) and gives the job its address.
+  let key = st.qualityJoinKey
+  let kept = st.keptJoin
+  if kept of JoinedSurvey and JoinedSurvey(kept).key == key: return JoinedSurvey(kept)
+  var (relations, stations) = surveyStations(st.survey)
+  result = newJoinedSurvey(relations, move stations, st.joinOptions,
+    st.project.doc.stationMoves, key)
+  st.keepJoin(result)
 
 proc relationsKey(st: AppState; domain: RelationDomain): string =
   ## Names the relation records of `domain` a scan is given (`qcRelations`), or for a receiver

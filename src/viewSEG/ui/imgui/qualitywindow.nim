@@ -288,15 +288,15 @@ proc submitFile(ui: var QualityUi; st: AppState; key, path: string) =
   spec.title = "Trace quality in " & path.extractFilename
   spec.auto = true # started by the program as the file shown changes: its end is not announced
   let (x, o) = (st.qcRelations(rdSource)[0], st.qcRelations(rdReceiver)[0])
-  let (join, survey) = st.qualityJoin
+  let joined = st.qualityJoin # (the one made before, while the survey and its join are the same)
   ui.file.job = st.jobs.submit(spec,
     fileScan(path, st.indexCache, st.editsSnapshot, ui.file.sink, st.settings.noise,
       st.forcedKinds, relations = x.addrOf, receivers = o.addrOf,
-      traceMatch = st.settings.join.traceMatch, join = join))
+      traceMatch = st.settings.join.traceMatch, join = QualityJoin(survey: addr joined[])))
   # the job reads them, and fills the sink, in place: the state keeps them until its work is
   # back
-  for g in [x, o, survey]: st.holdGeometry(ui.file.job, g)
-  st.holdRef(ui.file.job, ui.file.sink)
+  for g in [x, o]: st.holdGeometry(ui.file.job, g)
+  for pin in [RootRef(ui.file.sink), joined]: st.holdRef(ui.file.job, pin)
 
 proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
   let folder = st.settings.quality.folder
@@ -306,14 +306,14 @@ proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
   var spec = qualitySpec(@[folder])
   spec.title = if name.len == 0: "Trace quality" else: "Trace quality in " & name
   let (x, o) = (st.qcRelations(rdSource)[0], st.qcRelations(rdReceiver)[0])
-  let (join, survey) = st.qualityJoin
+  let joined = st.qualityJoin
   ui.folder.job = st.jobs.submit(spec,
     folderScan(folder, st.settings.quality.subfolders, st.indexCache, st.editsSnapshot,
       ui.folder.sink, ui.folder.note, st.settings.noise, st.forcedKinds,
       st.settings.quality.untold, relations = x.addrOf, receivers = o.addrOf,
-      traceMatch = st.settings.join.traceMatch, join = join))
-  for g in [x, o, survey]: st.holdGeometry(ui.folder.job, g)
-  for pin in [RootRef(ui.folder.sink), ui.folder.note]: st.holdRef(ui.folder.job, pin)
+      traceMatch = st.settings.join.traceMatch, join = QualityJoin(survey: addr joined[])))
+  for g in [x, o]: st.holdGeometry(ui.folder.job, g)
+  for pin in [RootRef(ui.folder.sink), ui.folder.note, joined]: st.holdRef(ui.folder.job, pin)
 
 proc consider(ui: var QualityUi; st: AppState) =
   ## Polls the jobs, drops an answer that is stale, and starts the File computation for
