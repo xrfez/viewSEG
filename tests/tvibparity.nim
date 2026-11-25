@@ -440,6 +440,37 @@ proc main*() =
           st.jobs.active.len == 0), what
         doAssert st.stale(r), "a file reopened at " & what & " left the run current"
         r = st.ran
+      # the same folder listed again (Include subfolders, Retry): its files are gone from the
+      # list until the scan ends, so every path reads the default options meanwhile; the run
+      # is not stale for that, and a run asked for in the meantime is refused
+      # Seen to fail with the flag recomputed during the scan (the first assertion below).
+      # (a file never reopened by itself takes the options given for every file of its kind,
+      # and only while it is in the listing)
+      let b12 = sweep(fx.dir / "sweeps", "b12.dat", 12, 7002, 1.0)
+      st.apply Command(kind: ckBrowse, paths: @[fx.dir / "sweeps"])
+      doAssert st.settle(not st.fileList.scanning and st.fileList.entries.len == 2 and
+        st.jobs.active.len == 0)
+      st.apply Command(kind: ckReopen, reopenPath: a11, reopenAll: true,
+        openChoice: OpenChoice(signature: SignatureChoice(intervalUs: 2000.0)))
+      let others = @[listed(b12)]
+      doAssert st.folderChoices(others)[0].intervalUs == 2000.0
+      r = (configLines(vibQcConfig(st)), runKeyOf(vibQcConfig(st), st.folderChoices(others)))
+      doAssert runRefusal(st).len == 0
+      st.apply Command(kind: ckRetry)
+      doAssert st.fileList.scanning
+      let now = vibQcConfig(st)
+      let during = st.choicesAt(canonicalPaths(others))
+      doAssert settingsChanged(r.lines, r.key, now, during),
+        "the listing scan did not hide the options (the test proves nothing)"
+      doAssert not settingsChangedKept(true, false, r.lines, r.key, now, during),
+        "a run was marked stale while its folder was listed again"
+      doAssert runRefusal(st) == StillListing, runRefusal(st)
+      doAssert st.settle(not st.fileList.scanning)
+      doAssert not settingsChanged(r.lines, r.key, vibQcConfig(st),
+        st.choicesAt(canonicalPaths(others))), "a run was stale after the listing ended"
+      doAssert not settingsChangedKept(false, false, r.lines, r.key, now,
+        st.choicesAt(canonicalPaths(others)))
+      doAssert runRefusal(st).len == 0
       st.shutdown()
 
   block segyLimitsSaid:

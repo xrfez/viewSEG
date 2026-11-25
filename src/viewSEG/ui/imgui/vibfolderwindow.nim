@@ -52,6 +52,7 @@ type
     ranLines: seq[string] ## the configuration the results were made with
     ranKey: FolderRunKey  ## ... and everything else they were judged with (`runKeyOf`)
     ranPaths: seq[string] ## the files they were made of, canonical (`choicesAt`)
+    changed: bool         ## the last decided "settings changed since this run"
     viewRows: seq[FolderRow]
     viewCells: seq[seq[string]]
     viewWidths: seq[float32]
@@ -71,6 +72,7 @@ proc clearRun(ui: var VibFolderUi) =
   ui.ranLines.setLen 0
   ui.ranKey = FolderRunKey()
   ui.ranPaths.setLen 0
+  ui.changed = false
   ui.listed.setLen 0
   ui.haveList = false
   ui.have = false
@@ -237,6 +239,10 @@ proc ticked(ui: VibFolderUi): seq[FolderListed] =
 proc submitQc(ui: var VibFolderUi; st: AppState) =
   if ui.listJob != NoJob or not ui.haveList: return
   let config = vibQcConfig(st)
+  let refusal = runRefusal(st)
+  if refusal.len > 0:
+    ui.status = refusal
+    return
   if not config.configured:
     ui.status = NotConfigured
     return
@@ -254,6 +260,7 @@ proc submitQc(ui: var VibFolderUi; st: AppState) =
   ui.ranLines = configLines(config)
   ui.ranKey = runKeyOf(config, choices)
   ui.ranPaths = canonicalPaths(files)
+  ui.changed = false
   ui.sink = FolderQcSink()
   ui.running = true
   ui.have = false
@@ -634,9 +641,9 @@ proc drawVibFolder*(ui: var VibFolderUi; title: string; st: AppState;
     marks.markWindow("vibfolder")
     discard ui.refreshShots(st)
     let config = vibQcConfig(st)
-    let changed = ui.have and
-      settingsChanged(ui.ranLines, ui.ranKey, config, st.choicesAt(ui.ranPaths))
-    drawConfig(config, if ui.have: ui.ranLines else: @[], changed, marks)
+    ui.changed = ui.have and settingsChangedKept(st.fileList.scanning, ui.changed,
+      ui.ranLines, ui.ranKey, config, st.choicesAt(ui.ranPaths))
+    drawConfig(config, if ui.have: ui.ranLines else: @[], ui.changed, marks)
     if ui.status.len > 0 and ui.status != NothingChosen:
       igTextUnformatted(ui.status.cstring, nil)
     if ui.capped and not ui.listing:

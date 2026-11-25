@@ -12,6 +12,7 @@ const
   WhereToConfigure* = "Set it in a Vibrator signature window: Analysis > New plot > " &
     "Vibrator, on a signature file."
 
+  StillListing* = "The folder is still being listed: run again when the listing is done."
   ReadOnlyProject* = "The project is read-only: the QC settings cannot be kept in it."
   ReferencesLoading* = "The references are being read."
   ReferenceMissing* = "The chosen reference is not in the archive: choose a reference " &
@@ -110,6 +111,11 @@ func choicesAt*(st: AppState; paths: openArray[string]): seq[SignatureChoice] =
   ## kind in the listing, else the defaults. In memory: no file is read.
   result = newSeq[SignatureChoice](paths.len)
   for i, path in paths: result[i] = st.openChoiceOf(path).signature
+
+proc runRefusal*(st: AppState): string =
+  ## Why a folder run is not started now: the Files listing is still being made, so the
+  ## options its files open with are not known. Empty when a run may start.
+  if st.fileList.scanning: StillListing else: ""
 
 proc canonicalPaths*(files: openArray[FolderListed]): seq[string] =
   ## The canonical path of each of `files` (`canonical`), as `choicesAt` takes them.

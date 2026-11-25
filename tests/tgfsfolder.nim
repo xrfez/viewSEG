@@ -118,9 +118,9 @@ proc main*() =
       kept.forceHundredWeighted == 1000.0, $kept
     doAssert "ground force made from mass and baseplate" in changeWords(stored, flipped)
     # the profile's text says which ground force is judged
-    doAssert "Ground force in the record." in profileLines(profile(joRecorded))[0]
-    doAssert "Ground force made from mass and baseplate (3600 kg, 1400 kg)." in
-      profileLines(p)[0], profileLines(p)[0]
+    const Said = "Ground force: each file layout's own choice (recorded when none was made)."
+    doAssert Said in profileLines(profile(joRecorded))[0]
+    doAssert Said in profileLines(p)[0], profileLines(p)[0]
 
   block listing:
     withFixtures fx:

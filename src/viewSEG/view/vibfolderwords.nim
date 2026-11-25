@@ -278,11 +278,7 @@ func profileLines*(p: VibQcProfile): seq[string] =
     line.add " Top " & sensible(p.topHz) & " Hz."
   if p.referenceId.len > 0:
     line.add " Reference " & p.referenceId & "."
-  line.add (if p.judge == joWeighted: " Ground force made from mass and baseplate" &
-    (if not (p.madeReactionKg.isNaN or p.madeBaseplateKg.isNaN):
-      " (" & sensible(p.madeReactionKg) & " kg, " & sensible(p.madeBaseplateKg) & " kg)"
-    else: "") & "."
-    else: " Ground force in the record.")
+  line.add " Ground force: each file layout's own choice (recorded when none was made)."
   result = @[line]
   let lim = p.limits
   result.add "Average phase " & offOr(lim.avgPhaseDeg, "°") &
@@ -322,6 +318,13 @@ proc settingsChanged*(ranLines: seq[string]; ranKey: FolderRunKey; now: VibQcCon
   ## (`runKeyOf`) would be judged otherwise now, with `now` on files decoded with `choices`
   ## (`choicesAt`): the run shown then says `SettingsChanged`.
   not now.configured or configLines(now) != ranLines or runKeyOf(now, choices) != ranKey
+
+proc settingsChangedKept*(scanning, kept: bool; ranLines: seq[string]; ranKey: FolderRunKey;
+    now: VibQcConfig; choices: seq[SignatureChoice]): bool =
+  ## `settingsChanged`, except that while the Files listing is being made again (`scanning`)
+  ## the options of its files are not known, so the value decided before (`kept`) stands.
+  if scanning: kept
+  else: settingsChanged(ranLines, ranKey, now, choices)
 
 proc sortColumn*(name: string; col: var FolderColumn): bool =
   ## The sort key `name` is, when that header sorts. False for Warnings.
