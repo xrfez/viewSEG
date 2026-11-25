@@ -377,15 +377,16 @@ proc main*() =
       $made.summary.pairs
     var st = initAppState()
     st.apply Command(kind: ckLoadSurvey, paths: @[one, two])
-    doAssert st.settle(st.survey.layers.len == 2 and st.relationLayer >= 0), "no two X files"
+    # one X file is loaded at a time: the later in the list is the survey's
+    doAssert st.settle(st.survey.layers.len == 1 and st.relationLayer >= 0 and
+      st.jobs.active.len == 0), "no X file"
     let dest = dir / "both.ops"
     st.apply Command(kind: ckGenerateOFile, oDest: dest)
     doAssert st.settle(not st.oFileRunning and st.oFileWritten.len > 0), st.oFileOutcome
-    doAssert "one.x, two.x" in st.oFileOutcome and "once" notin st.oFileOutcome,
-      st.oFileOutcome
+    doAssert "two.x" in st.oFileOutcome and "one.x" notin st.oFileOutcome, st.oFileOutcome
     var file = initSurveyGeometry()
     file.addSps(dest)
-    doAssert file.oPairs == union and file.expectedChannels(2, rdReceiver) == 4
+    doAssert file.oPairs.len == 6, $file.oPairs.len
 
   block several_x_files_are_one_file:
     # Shot point 5 is shot on day 1 and again on day 2, each day's records numbered from 1:

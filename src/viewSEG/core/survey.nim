@@ -67,6 +67,13 @@ type
     loSurveyFile = "survey file" ## an SPS or P1 file
     loShotLog = "shot log"       ## the shots of a shot log whose column map gives positions
 
+  SurveyContent* = enum
+    ## What a survey file holds, by kind of record: one file of each is loaded.
+    scReceivers = "R"
+    scSources = "S"
+    scXRecords = "X"
+    scORecords = "O"
+
   Station* = object
     ## A station: line, point and point index. Line and point are NaN when
     ## not known.
@@ -110,6 +117,7 @@ type
     modified*: Time
     session*: SessionId   ## traces: the open file; `NoSession` for a survey file
     shotLog*: int         ## shot logs: the loaded log's id; 0 for the others
+    order*: int           ## survey files: when its load was asked, against another's (larger: later)
     base*: int            ## traces: the survey-wide id of the file's trace 0
     keysRevision*: int    ## traces: the keys it was made from (parseSEG's `keysRevision`)
     traces*: int          ## traces: the file's traces
@@ -673,38 +681,100 @@ func findTraces*(s: Survey; session: SessionId): int =
     if l.origin == loTraces and l.session == session: return i
   -1
 
-proc add*(s: var Survey; layer: sink SurveyLayer): SurveyLayerId =
-  ## Adds `layer` under a new id, which it returns; it takes the place of
-  ## the layer of the same survey file, or of the same open file's traces.
+func contents*(l: SurveyLayer): set[SurveyContent] =
+  ## The kinds of record a survey file's layer holds; empty for any other layer.
+  if l.origin != loSurveyFile: return {}
+  if l.counts[prReceiver].given > 0: result.incl scReceivers
+  if l.counts[prSource].given > 0: result.incl scSources
+  if l.xRuns > 0: result.incl scXRecords
+  if l.relationRuns > l.xRuns: result.incl scORecords
+
+func kindsText*(c: set[SurveyContent]; joiner = "and"): string =
+  ## The kinds in `c` as the messages say them: "R", "R and S", "R, S and X".
+  var names: seq[string] = @[]
+  for k in c: names.add $k
+  if names.len <= 1: return names.join("")
+  names[0 ..< names.len - 1].join(", ") & " " & joiner & " " & names[^1]
+
+func held*(s: Survey): set[SurveyContent] =
+  ## The kinds of record the loaded survey files hold.
+  for i in 0 ..< s.layers.len: result = result + s.layers[i].contents
+
+func contentsOf*(kind: FileKind; domain: RelationDomain): set[SurveyContent] =
+  ## The kinds of record a survey file of `kind` holds, as far as the kind says (a relation
+  ## file by the domain of its records); none for a file of several kinds, or no survey file.
+  case kind
+  of fkSpsSource, fkP1: {scSources}
+  of fkSpsReceiver: {scReceivers}
+  of fkSpsRelation: (if domain == rdSource: {scXRecords} else: {scORecords})
+  else: {}
+
+func clashes*(old, layer: SurveyLayer): bool =
+  ## Whether survey file layer `old` goes when `layer` is loaded: the same file, or one
+  ## that holds a kind of record `layer` holds (one file of each kind is loaded).
+  old.origin == loSurveyFile and (old.path == layer.path or (old.contents * layer.contents) != {})
+
+func supersededBy*(s: Survey; layer: SurveyLayer): int =
+  ## The index of a loaded survey file's layer that was asked for after `layer` and holds
+  ## one of its kinds (or is its file): `layer` is not kept then; -1 for none.
+  if layer.origin != loSurveyFile: return -1
+  for i in 0 ..< s.layers.len:
+    if s.layers[i].order > layer.order and s.layers[i].clashes(layer): return i
+  -1
+
+proc add*(s: var Survey; layer: sink SurveyLayer; replaced: var seq[SurveyLayer]): SurveyLayerId =
+  ## Adds `layer` under a new id, which it returns. It takes the place of the layer of the
+  ## same open file's traces, and of every survey file's layer of the same file or holding
+  ## a kind of record it holds (whole, whatever else that holds): the first at its place.
+  ## The layers it replaces are moved into `replaced` (else empty), to be put back
+  ## (`putBack`).
+  replaced.setLen 0
   inc s.nextId
   result = SurveyLayerId(s.nextId)
   layer.id = result
-  let old = case layer.origin
-    of loSurveyFile: s.findFile(layer.path)
-    of loTraces: s.findTraces(layer.session)
-    of loShotLog: s.findShotLog(layer.shotLog)
-  if old >= 0: s.layers[old] = layer
+  var at = -1
+  var k = 0
+  while k < s.layers.len:
+    let hit = case layer.origin
+      of loSurveyFile: s.layers[k].clashes(layer)
+      of loTraces: s.layers[k].origin == loTraces and s.layers[k].session == layer.session
+      of loShotLog: s.layers[k].origin == loShotLog and s.layers[k].shotLog == layer.shotLog
+    if hit:
+      if at < 0: at = k
+      replaced.add move s.layers[k]
+      if at != k: s.layers.delete k else: inc k
+    else: inc k
+  if at >= 0: s.layers[at] = layer
   else: s.layers.add layer
   inc s.revision
 
-proc add*(s: var Survey; layer: sink SurveyLayer; replaced: var SurveyLayer): SurveyLayerId =
-  ## As `add`; the layer `layer` takes the place of, if any, is moved into
-  ## `replaced` (else its id is `NoSurveyLayer`), to be put back
-  ## (`putBack`).
-  replaced = SurveyLayer(id: NoSurveyLayer)
-  let old = case layer.origin
-    of loSurveyFile: s.findFile(layer.path)
-    of loTraces: s.findTraces(layer.session)
-    of loShotLog: s.findShotLog(layer.shotLog)
-  if old >= 0: replaced = move s.layers[old]
-  s.add(layer)
+proc add*(s: var Survey; layer: sink SurveyLayer): SurveyLayerId =
+  ## As `add`, the layers replaced dropped.
+  var replaced: seq[SurveyLayer] = @[]
+  s.add(layer, replaced)
 
-proc putBack*(s: var Survey; id: SurveyLayerId; layer: sink SurveyLayer) =
-  ## Puts `layer` (one `add` replaced, with its own id) back in the place of
-  ## layer `id`, or at the end when `id` is gone.
-  let i = s.find(id)
-  if i >= 0: s.layers[i] = layer
-  else: s.layers.add layer
+func clashIndex*(s: Survey; layer: SurveyLayer): int =
+  ## The index of a loaded survey file's layer `layer` would replace; -1 for none.
+  if layer.origin != loSurveyFile: return -1
+  for i in 0 ..< s.layers.len:
+    if s.layers[i].clashes(layer): return i
+  -1
+
+proc putBack*(s: var Survey; id: SurveyLayerId; layers: sink seq[SurveyLayer]):
+    seq[SurveyLayer] =
+  ## Puts `layers` (what `add` replaced, with their own ids) back: the first in the place
+  ## of layer `id` (which goes), the others after the last, or all at the end when `id` is
+  ## gone. A layer that clashes with one loaded since (not `id`'s) is not put back: those
+  ## are returned.
+  var at = s.find(id)
+  if at >= 0: s.layers.delete at
+  for l in layers:
+    if s.clashIndex(l) >= 0:
+      result.add l
+    elif at >= 0:
+      s.layers.insert(l, at)
+      at = -1
+    else: s.layers.add l
   inc s.revision
 
 proc remove*(s: var Survey; id: SurveyLayerId): bool =

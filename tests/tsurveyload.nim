@@ -150,11 +150,11 @@ proc main*() =
       let p1 = fx.surveyP1()
       let before = [snapshot(sps.s), snapshot(sps.r), snapshot(sps.x), snapshot(p1)]
       var st = initAppState()
-      st.load(sps.s, sps.r, sps.x, p1)
+      st.load(sps.s, sps.r, sps.x)
       st.load(sps.r)
       doAssert st.log.has("planted.r is already being loaded.")
       doAssert st.surveyLoading(sps.r)
-      doAssert st.settle(st.survey.layers.len == 4 and st.jobs.active.len == 0), st.log.lastLines
+      doAssert st.settle(st.survey.layers.len == 3 and st.jobs.active.len == 0), st.log.lastLines
       for j in st.jobs.list:
         doAssert j.spec.title.startsWith("Load ") and j.state == jsDone, $j
         doAssert j.progress.done == j.progress.total and j.progress.total > 0, $j.progress
@@ -167,18 +167,24 @@ proc main*() =
         "given again (1 at other coordinates: the last is kept).", sevWarning), st.log.lastLines
       doAssert st.log.has("Loaded planted.x (SPS X): " & $Shots & " X records for " &
         $Shots & " field records.")
-      doAssert st.log.has("Loaded survey.p1 (P1): " & $(P1Shots + 1) & " source points. 1 record " &
-        "with the source at (0, 0).", sevWarning), st.log.lastLines
       # parseSEG's own word on the record without coordinates, by line.
       doAssert st.log.said("line "), st.log.lastLines
       doAssert st.fileLayer(sps.x).relationRuns == Shots
       # Not listed: loaded again on request, in place of the layer before.
       st.load(sps.r)
       doAssert st.settle(st.log.has("Loaded planted.r (SPS R) again", sevWarning))
-      doAssert st.survey.layers.len == 4
+      doAssert st.survey.layers.len == 3
+      # A P1 file holds sources, as the S file does: one source file is loaded at a time.
+      st.load(p1)
+      doAssert st.settle(st.survey.findFile(p1) >= 0 and st.jobs.active.len == 0)
+      doAssert st.log.has("Loaded survey.p1 (P1): " & $(P1Shots + 1) & " source points. 1 " &
+        "record with the source at (0, 0). It replaces planted.s: one S file is loaded at a " &
+        "time.", sevWarning), st.log.lastLines
+      doAssert st.survey.findFile(sps.s) < 0 and st.survey.layers.len == 3
       # Taken out again.
-      st.apply Command(kind: ckUnloadSurvey, layer: st.fileLayer(sps.s).id)
-      doAssert st.log.has("planted.s was taken out of the survey.") and st.survey.layers.len == 3
+      st.apply Command(kind: ckUnloadSurvey, layer: st.fileLayer(p1).id)
+      doAssert st.log.has("survey.p1 was taken out of the survey.") and
+        st.survey.layers.len == 2
       st.apply Command(kind: ckUnloadSurvey, layer: SurveyLayerId(999))
       doAssert st.log.has("Ignored \"unload survey\": survey layer 999 is not loaded.",
         sevWarning)
@@ -311,13 +317,16 @@ proc main*() =
         let pipe = fx.dir / "hostile" / "pipe.sps"
         doAssert posix.mkfifo(pipe.cstring, 0o600) == 0
         paths.add pipe
-      st.load(paths)
-      doAssert st.idle(), "a hostile survey file hung its load"
-      discard st.drainInbox()
-      template layerOf(h: HostileSurvey): untyped = st.fileLayer(fx.hostileSurvey(h))
+      # one at a time: of the files that hold receivers only the last loaded stays
+      template layerOf(h: HostileSurvey): untyped =
+        st.load(fx.hostileSurvey(h))
+        doAssert st.idle(), "a hostile survey file hung its load"
+        discard st.drainInbox()
+        st.fileLayer(fx.hostileSurvey(h))
       # The last record lost its coordinates: read, and counted without them.
-      doAssert layerOf(hsTruncated).points[prReceiver].len == Channels - 1 and
-        layerOf(hsTruncated).counts[prReceiver].missing == 1
+      let truncated = layerOf(hsTruncated)
+      doAssert truncated.points[prReceiver].len == Channels - 1 and
+        truncated.counts[prReceiver].missing == 1
       doAssert layerOf(hsHugeLine).points[prReceiver].len == Channels
       doAssert st.log.said("longer than 65536 bytes"), st.log.lastLines
       doAssert layerOf(hsJunkTail).points[prReceiver].len == JunkTailReceivers
@@ -332,6 +341,10 @@ proc main*() =
         "records), so it was read up to byte"), st.log.lastLines
       doAssert layerOf(hsNoLineEnds).points[prReceiver].len == Channels
       doAssert layerOf(hsHeadersOnly).points[prReceiver].len == 0
+      var refused = @[fx.hostileSurvey(hsBinary), fx.hostileSurvey(hsEmpty)]
+      when not defined(windows): refused.add paths[^1]
+      st.load(refused)
+      doAssert st.idle(), "a hostile survey file hung its load"
       for h in [hsBinary, hsEmpty]:
         let p = fx.hostileSurvey(h)
         doAssert st.survey.findFile(p) < 0

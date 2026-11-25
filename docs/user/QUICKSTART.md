@@ -82,6 +82,18 @@ survey file, or a damaged one, is refused or read as far as it goes, and the pro
 on. Each open seismic file's source and receiver positions are read into the survey too,
 and everything in the survey is drawn on the **Map** (below).
 
+Only one file of each kind is loaded at a time: one with receiver points (R), one with
+source points (S, or a P1 file), one with X records and one with O records. A file loaded
+takes the place of the loaded file that holds the same kind of record, and Messages says so
+("It replaces land.x: one X file is loaded at a time."); a file that holds several kinds
+(R and S points) is replaced whole. Files of different kinds, also dropped or chosen
+together, are all loaded; of two of one kind in one action, the later in the list stays.
+Loading the same file again replaces it as before. When that leaves a kind with no file (an
+R and S file, then an S file), Messages warns that no R file is loaded now. An import that
+names two files of one kind uses the later and keeps only that one in the project; a project
+saved earlier with two of a kind opens with the last and says the other is no longer used.
+While an import runs, a file of a kind it reads is not loaded (Messages says to wait or cancel).
+
 **File > Open recent** lists the files and the folders opened last (the start screen
 shows the newest ones); the file dialogs start in the folder of the last file opened. Every file and
 folder dialog (the Missing traces folder, the Output folders, the exports, the survey files and so

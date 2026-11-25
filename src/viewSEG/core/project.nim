@@ -290,6 +290,8 @@ type
       geometry*: ref SurveyGeometry ## moved, never shared; nil when it failed
       survey*: JoinSurvey
       layers*: int                  ## the layers posted before it
+      unused*: seq[string]
+        ## the copies of the files it left out (another of their kind is later in the store)
       restoreMs*: float64           ## how long the restore took
       surveyFailure*: string
     of pnKept:
@@ -297,6 +299,7 @@ type
       store*: StoreInfo
       keptFailure*: string
       updated*: bool                ## the copies were updated from their originals
+      refused*: seq[string]         ## copies no longer in the document that were not removed, and why
     of pnImporting:
       identities*: seq[ImportFile]
     of pnLooked, pnOriginals:
