@@ -29,13 +29,15 @@
 ## for each receiver, which no continuity can be judged from) a gather is a
 ## receiver gather when its own kind is `gkReceiver`, as the record on show.
 ##
-## `recordCompleteness` reads only the source domain, so a receiver gather
-## is checked against the receiver-domain relations stored as source-domain
-## records (the receiver as the record's source, the sources as its
-## receivers) and keys with those stations swapped. Those relations are the
-## loaded O records, or, when none are loaded, the ones `receiverRelations`
-## derives from the X records, numbered after the survey's. The match is by
-## that station (`rmSourceStation`), not by the derived record number.
+## A receiver is checked here rather than by `recordCompleteness`: its
+## template is every source its O records call for (two O records of one
+## receiver are one template), so no record number ever picks between them.
+## The O records are the loaded ones, or, when none are loaded, the ones
+## `receiverRelations` derives from the X records, both stored as
+## source-domain records (the receiver as the record's source, the sources as
+## its receivers). A receiver is its line and point: traces of it with index 0
+## and index 1 are one receiver, and the index splits it only where the survey
+## has the point at several indices.
 
 import std/[math, os, sets, strutils, tables]
 import parseSEG
@@ -156,79 +158,173 @@ proc openKeys(path, cacheDir: string; ctx: JobContext): Session =
   except ValueError, IOError, OSError:
     discard
 
-proc exchange(a, b: var float64) =
-  let t = a
-  a = b
-  b = t
+func hasStation(line, point: float64): bool {.inline.} =
+  ## A finite line and point that are not both 0 (a header left empty), as the
+  ## record check reads a station.
+  line == line and point == point and abs(line) < Inf and abs(point) < Inf and
+    not (line == 0 and point == 0)
 
-proc exchangeIndex(a, b: var int16) =
-  let t = a
-  a = b
-  b = t
-
-proc swappedCompleteness(g: SurveyGeometry; f: SeismicFile; traces: openArray[int];
-    ctx: JobContext): RecordCompleteness =
-  ## `recordCompleteness` of the traces of one receiver: the receiver station
-  ## stands in as the source, and each trace's source stands in as a receiver,
-  ## so the source-domain check sees the receiver's expected sources.
-  let n = traces.len
-  var keys = newSeq[TraceKeys](n)
-  var counts = newSeq[int](n)
-  for i in 0 ..< n:
-    if i mod TraceChunk == 0: ctx.checkCancelled()
-    var k = f.index.keys[traces[i]]
-    exchange(k.srcLine, k.rcvLine)
-    exchange(k.srcPoint, k.rcvPoint)
-    exchangeIndex(k.srcIndex, k.rcvIndex)
-    keys[i] = k
-  g.recordCompleteness(rowsOf(keys, counts), rmSourceStation)
-
-type ReceiverKey = tuple[line, point: float64; index: int16; gather: int]
-
-proc receiverGroups(f: SeismicFile; gathers: openArray[Gather];
-    chosen: openArray[int]): seq[seq[int]] =
-  ## The traces of the gathers `chosen`, grouped by receiver station across all
-  ## of them, in the order the stations first appear. A trace with no receiver
-  ## station is grouped with the others of its own gather (the key's `gather`).
-  var at = initTable[ReceiverKey, int]()
-  for gi in chosen:
-    for t in gathers[gi].traces:
-      let k = f.index.keys[t]
-      let key: ReceiverKey =
-        if k.rcvLine.isNaN or k.rcvPoint.isNaN: (line: 0.0, point: 0.0, index: 0'i16, gather: gi)
-        else: (line: k.rcvLine, point: k.rcvPoint, index: k.rcvIndex, gather: -1)
-      let slot = at.getOrDefault(key, -1)
-      if slot < 0:
-        at[key] = result.len
-        result.add @[t]
-      else:
-        result[slot].add t
+func wholeRecord(f: float64): int64 =
+  ## The record number `f`, or −1 when it is not a whole number.
+  if f == f and abs(f) < 9e18 and float64(int64(f)) == f: int64(f) else: -1
 
 func fieldId(c: RecordCompleteness): int64 =
   ## The header record number, or −1 when it is not a whole number.
-  let f = c.fieldRecord
-  if f == f and abs(f) < 9e18 and float64(int64(f)) == f: int64(f) else: -1
+  wholeRecord(c.fieldRecord)
 
-func isAmbiguous(c: RecordCompleteness): bool =
-  c.xpsRecord < 0 and c.candidates.len > 1
-
-func unmatchedWhy(c: RecordCompleteness; asReceiver: bool): string =
-  ## Why the record could not be checked against a template record; "" when it
+func unmatchedWhy(c: RecordCompleteness): string =
+  ## Why a shot record could not be checked against an X record; "" when it
   ## can. A record is never matched to the survey by its record number alone:
-  ## without the station in the trace headers it is not checked.
+  ## without the source station in the trace headers it is not checked.
   if not c.hasSource:
-    "no " & (if asReceiver: "receiver" else: "source") & " station in the trace headers: " &
-      "it could only be matched to the survey by its record number, which is not trusted"
-  elif c.isAmbiguous:
+    "no source station in the trace headers: it could only be matched to the survey by " &
+      "its record number, which is not trusted"
+  elif c.xpsRecord < 0 and c.candidates.len > 1:
     $c.candidates.len & " survey records share this source and the record number matches " &
       "neither"
-  elif not asReceiver and c.recordMatch == rmFieldRecord and c.hasSource and
-      c.sourceMismatch:
+  elif c.recordMatch == rmFieldRecord and c.sourceMismatch:
     "the record's source station has no X record; X record " & $c.xpsRecord &
       ", matched by file number alone, belongs to another source"
-  elif c.xpsRecord < 0:
-    if asReceiver: "no O record matches this receiver" else: "no X record matches this source"
+  elif c.xpsRecord < 0: "no X record matches this source"
   else: ""
+
+const
+  NoReceiverStation = "no receiver station in the trace headers: it could only be " &
+    "matched to the survey by its record number, which is not trusted"
+  NoSourceStation = "no source station in the trace headers: the sources this receiver " &
+    "recorded cannot be told"
+  NoORecord = "no O record matches this receiver"
+  UnknownIndex = "the trace headers give no receiver index (0) and the survey has this " &
+    "point at several indices"
+
+type
+  ReceiverAt = object
+    ## One receiver station (line and point) of the data: the source stations
+    ## it holds traces of, each with the receiver index of its trace (`heardKey`),
+    ## and the first file and record number it was seen in, for Unmatched.
+    station: StationKey ## line and point; index 0
+    heard: HashSet[int64]
+    firstFile: int
+    firstRecord: int64
+
+  ReceiverMerge = object
+    ## The receiver side of the data, by receiver station. A source station is
+    ## kept as a number (`sourceIds`), so a receiver holds one integer for each
+    ## source it recorded, whatever its number of traces.
+    at: Table[StationKey, int]
+    list: seq[ReceiverAt]
+    sourceIds: Table[StationKey, int32]
+
+func heardKey(source: int32; index: int16): int64 {.inline.} =
+  (int64(cast[uint16](index)) shl 32) or int64(source)
+
+func heardIndex(key: int64): int16 {.inline.} = cast[int16](uint16((key shr 32) and 0xFFFF))
+
+proc initReceiverMerge(): ReceiverMerge =
+  ReceiverMerge(at: initTable[StationKey, int](), sourceIds: initTable[StationKey, int32]())
+
+proc add(m: var ReceiverMerge; file: int; k: TraceKeys) =
+  ## Adds a trace that has a receiver station. A trace with no source station
+  ## adds its receiver only.
+  let station = stationKey(k.rcvLine, k.rcvPoint, 0)
+  var slot = m.at.getOrDefault(station, -1)
+  if slot < 0:
+    slot = m.list.len
+    m.at[station] = slot
+    m.list.add ReceiverAt(station: station, heard: initHashSet[int64](),
+      firstFile: file, firstRecord: wholeRecord(k.record))
+  if hasStation(k.srcLine, k.srcPoint):
+    let source = stationKey(k.srcLine, k.srcPoint, k.srcIndex)
+    var id = m.sourceIds.getOrDefault(source, -1)
+    if id < 0:
+      id = int32(m.sourceIds.len)
+      m.sourceIds[source] = id
+    m.list[slot].heard.incl heardKey(id, max(k.rcvIndex, 0'i16))
+
+type ORecord = tuple[index: int16; sources: seq[StationKey]]
+
+proc oRecordsAt(g: SurveyGeometry; station: StationKey): seq[ORecord] =
+  ## The O records (stored as source-domain records, see `receiverRelationsOf`)
+  ## of the receiver at `station`'s line and point, at any index: the receiver
+  ## index each is for (0 read as 1) and the sources it calls for.
+  for rec in g.recordsAt(station):
+    var r: ORecord = (index: -1'i16, sources: @[])
+    for (_, rel) in g.channelRelations(rec):
+      if r.index < 0: r.index = (if rel.source.index == 0: 1'i16 else: rel.source.index)
+      r.sources.add rel.receiver
+    if r.index >= 0: result.add r
+
+func isHeard(m: ReceiverMerge; r: ReceiverAt; source: StationKey;
+    indices: openArray[int16]): bool =
+  ## Whether the receiver recorded `source` at one of the receiver `indices`.
+  ## The source matches as a record check matches a station: with its index,
+  ## else with none (0) in the headers; a template index 0 takes the usual 1.
+  let key = stationKey(source.line, source.point, source.index)
+  let alt = stationKey(source.line, source.point, (if source.index == 0: 1'i16 else: 0'i16))
+  for k in [key, alt]:
+    let id = m.sourceIds.getOrDefault(k, -1)
+    if id >= 0:
+      for i in indices:
+        if heardKey(id, i) in r.heard: return true
+  false
+
+proc checkReceiver(tally: var StationTally; m: ReceiverMerge; r: ReceiverAt;
+    records: openArray[ORecord]; indices: openArray[int16]) =
+  ## Adds one check of receiver `r` to `tally`: the template is every source
+  ## the `records` call for (several O records of one receiver are one
+  ## template), present when the receiver recorded it at one of `indices`.
+  var calls: seq[StationKey] = @[]
+  var listed = initHashSet[StationKey]()
+  for rec in records:
+    for s in rec.sources:
+      if not listed.containsOrIncl(s): calls.add s
+  var c = RecordCompleteness(fieldRecord: float64(r.firstRecord), source: r.station,
+    hasSource: true, recordMatch: rmSourceStation, traceMatch: tmStation, xpsRecord: -1)
+  for s in calls:
+    inc c.expected
+    if m.isHeard(r, s, indices): inc c.present
+    else: c.missingStations.add s
+  c.missing = c.missingStations.len
+  tally.addGather(calls, c)
+
+proc checkReceivers(tally: var StationTally; m: ReceiverMerge; g: SurveyGeometry;
+    paths: openArray[string]; ctx: JobContext;
+    unmatched: var seq[tuple[path: string; record: int64; why: string]]): HashSet[int] =
+  ## Checks each receiver of `m` once against its O records in `g`, and gives the
+  ## files (indices into `paths`) of the receivers checked. The receiver index
+  ## splits a receiver into several checks only where the survey has its point at
+  ## several indices.
+  result = initHashSet[int]()
+  for r in m.list:
+    ctx.checkCancelled()
+    var data: seq[int16] = @[]
+    for key in r.heard:
+      let i = heardIndex(key)
+      if i notin data: data.add i
+    let records = g.oRecordsAt(r.station)
+    var indices: seq[int16] = @[]
+    for rec in records:
+      if rec.index notin indices: indices.add rec.index
+    let path = paths[r.firstFile]
+    if r.heard.len == 0:
+      unmatched.add (path: path, record: r.firstRecord, why: NoSourceStation)
+    elif records.len == 0:
+      unmatched.add (path: path, record: r.firstRecord, why: NoORecord)
+    elif indices.len == 1:
+      tally.checkReceiver(m, r, records, data)
+      result.incl r.firstFile
+    else:
+      for i in data:
+        var chosen: seq[ORecord] = @[]
+        for rec in records:
+          if rec.index == i: chosen.add rec
+        if i == 0:
+          unmatched.add (path: path, record: r.firstRecord, why: UnknownIndex)
+        elif chosen.len == 0:
+          unmatched.add (path: path, record: r.firstRecord, why: NoORecord)
+        else:
+          tally.checkReceiver(m, r, chosen, [i])
+          result.incl r.firstFile
 
 proc fail(sink: MissingSink; why: string; skipped: seq[tuple[path, why: string]]) =
   if sink != nil:
@@ -317,7 +413,7 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
                       if asReceiver: receiverGathers.add gi
                       else:
                         let checked = relations[].recordCompleteness(s.file.rowsOf(g.traces))
-                        let why = unmatchedWhy(checked, false)
+                        let why = unmatchedWhy(checked)
                         if why.len > 0:
                           unmatched.add (path: rel, record: fieldId(checked), why: why)
                         else:
@@ -334,15 +430,20 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
                       receiver[] = built
                     # A receiver gather cut in slices holds one record for each shot
                     # slice: the receiver is checked once in the file, over all of them.
-                    for traces in receiverGroups(s.file, gathers, receiverGathers):
-                      let checked = swappedCompleteness(receiver[], s.file, traces, ctx)
-                      let why = unmatchedWhy(checked, true)
-                      if why.len > 0:
-                        unmatched.add (path: rel, record: fieldId(checked), why: why)
-                      else:
-                        recv.addGather(receiver[].templateStations(checked.xpsRecord),
-                          checked)
-                        anyReceiver = true
+                    var merge = initReceiverMerge()
+                    for gi in receiverGathers:
+                      var stations = 0
+                      for t in gathers[gi].traces:
+                        let k = s.file.index.keys[t]
+                        if k.status != tsAuxiliary and hasStation(k.rcvLine, k.rcvPoint):
+                          merge.add(0, k)
+                          inc stations
+                      if stations == 0:
+                        let k = s.file.index.keys[gathers[gi].traces.a]
+                        unmatched.add (path: rel, record: wholeRecord(k.record),
+                          why: NoReceiverStation)
+                    anyReceiver = checkReceivers(recv, merge, receiver[], [rel], ctx,
+                      unmatched).len > 0
           except SegCancelledError:
             raise newException(JobCancelledError, "cancelled")
           except JobCancelledError:

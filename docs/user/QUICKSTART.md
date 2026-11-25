@@ -319,7 +319,9 @@ against the X record of its shot (the receiver stations expected). A receiver ga
 that is cut into records is checked against the O record of its receiver (the source
 stations expected); when no O records are loaded they are worked out from the X records.
 Each receiver is checked once in a file, however many records (one for each shot slice) its
-traces are cut into, so for receivers the window counts receivers, not records.
+traces are cut into, so for receivers the window counts receivers, not records. A
+receiver with two O records is checked against the sources of both at once: the record
+number does not choose between them.
 A record is never matched to the survey by its record (file) number alone: one whose trace
 headers hold no source station (no receiver station, for a receiver gather) is not checked
 and is listed under **Unmatched**.

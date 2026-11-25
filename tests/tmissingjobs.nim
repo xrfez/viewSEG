@@ -19,7 +19,9 @@
 ## rejected a checked record of 4 missing stations; with no stored index cache,
 ## `second_scan_uses_the_index` rejected a second scan that walked headers
 ## (3 then 3); with a cancel during the report still stored,
-## `cancel_during_the_report` rejected a job that finished done.
+## `cancel_during_the_report` rejected a job that finished done; with the receiver
+## checked by the library on keys that kept the file number,
+## `two_o_records_of_one_receiver` rejected 3 sources found 0 at file number 5.
 
 import std/[os, strutils, times]
 when defined(release):
@@ -557,6 +559,27 @@ proc main*() =
     # one trace cannot say whether it is a shot or a receiver gather: it is checked
     doAssert r.shot.stats.records + r.receiver.stats.records == 1 and
       r.unmatched.len == 0, $r.shot.stats & $r.unmatched
+
+  block two_o_records_of_one_receiver:
+    ## Receiver 2 has two O records, sources 1..3 (record 50) and 4..6 (record 51). Its
+    ## data holds sources 1..3 with a file number of 5 or 9, neither of them the O
+    ## records' own: the receiver is one check against both, 6 sources, 3 missing,
+    ## whatever the number.
+    let xs = [xRec(1, "1.00", "1.00", 1, 3, 10, 1, 3), xRec(2, "1.00", "2.00", 1, 3, 10, 1, 3),
+      xRec(3, "1.00", "3.00", 1, 3, 10, 1, 3)]
+    let survey = surveyOf(@xs & @[oRec(50, "10.00", "2.00", "1", 1, 3),
+      oRec(51, "10.00", "2.00", "1", 4, 6)])
+    for ffid in [5, 9, 50, 51]:
+      let path = dir / ("two-o-" & $ffid & ".sgd")
+      receiverFile(path, ffid, 2.0, [1.0, 2.0, 3.0])
+      let got = run(dir, @[path], survey)
+      doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+      let r = got.sink.result
+      doAssert r.unmatched.len == 0, $ffid & " " & $r.unmatched
+      let t = r.receiver.stats
+      doAssert t.records == 1 and t.inTemplate == 6 and t.found == 3 and t.missing == 3,
+        $ffid & " " & $t
+      for src in 4 .. 6: doAssert rowAt(r.receiver.rows, 1, float64(src)).missing == 1
 
   block cancel_leaves_the_sink:
     reads = 0
