@@ -625,7 +625,7 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
   if limitBox("##hundred." & (if weighted: "m." else: "g.") & forceShown.unit, hundred, box,
       typed):
     let stored = storeScaled(typed, forceShown.divisor)
-    if typed.isNaN or MassKgRange.allows(stored):
+    if typed.isNaN or ForceHundredRange.allows(stored):
       if sigWin and stored.isNaN:
         # emptied: no typed force (one not applied, shown empty, goes too)
         if not p.forceHundredPct.isNaN:
@@ -691,7 +691,7 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
   # 100 % from this very sweep: its average force (the verdict's) over the target's share
   let average = w.result.qc.stats.avgForce
   let fromSweep = average / ((if p.targetPct > 0: p.targetPct else: 100.0) / 100)
-  let fromSweepOk = MassKgRange.allows(fromSweep)
+  let fromSweepOk = ForceHundredRange.allows(fromSweep)
   igBeginDisabled(not fromSweepOk)
   if igSmallButton("Set from this sweep##hundred"):
     if weighted: p.forceHundredWeighted = fromSweep
@@ -705,7 +705,7 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
     (if p.targetPct > 0: sensible(p.targetPct) else: "100") & " %). Kept like a typed value" &
     (if fromSweepOk: "" else: ". Not available here: this sweep's value is " &
       (if fromSweep.isNaN: "not a number" else: sensible(fromSweep)) &
-      ", which the setting does not take (" & MassKgRange.words & ")"))
+      ", which the setting does not take (" & ForceHundredRange.words & ")"))
   label("Target force (%)")
   # (a signature file's window: empty until typed, and emptied by clearing it; the limits
   # then take 100)

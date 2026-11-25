@@ -236,12 +236,16 @@ proc main*() =
 
   block unitlessValues:
     # a value kept under the older tag, which had one unit for every vibrator, is read with no
-    # unit (set it again), and stands over the same vibrator's value written before it
+    # unit (set it again), and stands over the same vibrator's value written before it; a
+    # vibrator given twice keeps the last; a force out of range is said as a force, not a mass
     let text = "(project (name \"Old\") (vibProfile (harmonics 5) (accelSet B) " &
       "(forceHundredUnit \"N\") " &
       "(vibratorHundred (vibrator 11) (pct 750000.0) (unit \"counts\") (set B)) " &
       "(vibratorHundred (vibrator 13) (pct 9.0) (unit \"kg\")) " &
-      "(hundredFor (vibrator 11) (pct 417000.0)) (hundredFor (vibrator 12) (pct 5.0))))"
+      "(hundredFor (vibrator 11) (pct 417000.0)) (hundredFor (vibrator 12) (pct 5.0)) " &
+      "(vibratorHundred (vibrator 14) (pct 1.0) (unit \"N\")) " &
+      "(vibratorHundred (vibrator 14) (pct 2.0) (unit \"N\")) " &
+      "(vibratorHundred (vibrator 15) (pct 20000000000.0) (unit \"N\"))))"
     var problems: seq[string]
     let back = readProject(text, "project.nif", problems)
     let p = back.vibProfile
@@ -252,6 +256,20 @@ proc main*() =
     for x in problems:
       if "(unit) needs one of counts, pound-counts and N" in x: inc unitProblems
     doAssert p.hundredOf(13).unit == "" and unitProblems == 1, $problems
+    # one value per vibrator: a second is said, and the last is kept
+    var twice = 0
+    for e in p.hundredByVibrator:
+      if e.vibrator == 14: inc twice
+    doAssert twice == 1 and p.hundredOf(14).pct == 2, $p.hundredByVibrator
+    var said: seq[string] = @[]
+    for x in problems:
+      if "vibrator 14" in x or "(pct)" in x: said.add x
+    doAssert said.len == 2, $said
+    doAssert said[0].endsWith(
+      "(vibratorHundred) of vibrator 14 is given more than once: the last is kept"), said[0]
+    doAssert said[1].endsWith("(pct) needs a number above 0 and at most 1000000000 in its unit") and
+      "kg" notin said[1], said[1]
+    doAssert p.hundredOf(15).pct.isNaN
     doAssert "unit not known: set it again" in profileLines(p)[0], profileLines(p)[0]
 
   block noProject:

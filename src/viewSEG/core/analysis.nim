@@ -623,6 +623,10 @@ const
     words: "above 0 and at most 1000 %")
   MassKgRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
     words: "above 0 and at most 1000000000 kg")
+  ForceHundredRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
+    words: "above 0 and at most 1000000000 in its unit")
+    ## a 100 % force: in the unit of the signal judged (counts, pound-counts, newtons, or kg
+    ## times the traces' unit), never a mass
   HundredUnits* = ["", "counts", "pound-counts", "N"]
     ## the units a typed 100 % force may be in ("": not said)
   ForceScaleRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
@@ -669,8 +673,8 @@ func settingProblem*(p: AnalysisParams; view: AnalysisView; signature = false): 
     check("qcWindowMs", p.qcWindowMs, WindowMsRange)
     for name, v in fieldPairs(p.qc):
       check("qc." & name, v, NumberRange, none = true)
-    check("forceHundredPct", p.forceHundredPct, MassKgRange, none = true)
-    check("forceHundredWeighted", p.forceHundredWeighted, MassKgRange, none = true)
+    check("forceHundredPct", p.forceHundredPct, ForceHundredRange, none = true)
+    check("forceHundredWeighted", p.forceHundredWeighted, ForceHundredRange, none = true)
     check("targetPct", p.targetPct, TargetPctRange, none = signature)
     if signature and p.forceHundredUnit notin HundredUnits:
       return "forceHundredUnit must be one of \"\", \"counts\", \"pound-counts\" and \"N\", " &

@@ -766,6 +766,15 @@ proc hundredUnit(r: var Reading; n: NifNode; unit: var string) =
   if said in HundredUnits: unit = said
   else: r.problem(n, "(" & n.tag & ") needs one of counts, pound-counts and N")
 
+proc addHundred(r: var Reading; n: NifNode; into: var seq[VibHundred]; e: VibHundred) =
+  ## `e` added to `into`: one value per vibrator, the last, as a later write would leave it; a
+  ## vibrator given again is a problem.
+  if into.anyIt(it.vibrator == e.vibrator):
+    r.problem(n, "(" & n.tag & ") of vibrator " & $e.vibrator &
+      " is given more than once: the last is kept")
+    into.keepItIf(it.vibrator != e.vibrator)
+  into.add e
+
 proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
   ## One profile. A field this version does not know is kept and written back.
   d.hasVibProfile = true
@@ -780,7 +789,7 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "accelSet": discard r.accel(c, d.vibProfile.accelSet)
       of "limits": r.limits(c, d.vibProfile)
       of "forceScale": r.forceScale(c, d.vibProfile)
-      of "forceHundredPct": r.number(c, MassKgRange, d.vibProfile.forceHundredPct)
+      of "forceHundredPct": r.number(c, ForceHundredRange, d.vibProfile.forceHundredPct)
       of "forceHundredUnit": r.hundredUnit(c, d.vibProfile.forceHundredUnit)
       of "forceHundredSet":
         if r.accel(c, d.vibProfile.forceHundredSet):
@@ -800,7 +809,7 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
           if k.kind == nkTree:
             case k.tag
             of "vibrator": r.whole(k, 1, 1_000_000, e.vibrator)
-            of "pct": r.number(k, MassKgRange, e.pct)
+            of "pct": r.number(k, ForceHundredRange, e.pct)
             of "unit": r.hundredUnit(k, e.unit)
             of "set": e.setKnown = r.accel(k, e.accelSet)
             of "how": e.how = hhSweep
@@ -809,8 +818,8 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
             else: discard
         if c.tag == "hundredFor": (e.unit, e.setKnown) = ("", false)
         if e.vibrator > 0 and not e.pct.isNaN:
-          if c.tag == "hundredFor": unitless.add e
-          else: d.vibProfile.hundredByVibrator.add e
+          if c.tag == "hundredFor": r.addHundred(c, unitless, e)
+          else: r.addHundred(c, d.vibProfile.hundredByVibrator, e)
       of "judge":
         if c.kids.len == 1 and c.kids[0].kind == nkIdent and c.kids[0].text == "made":
           d.vibProfile.judge = joWeighted
@@ -819,7 +828,8 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
         else: r.problem(c, "(judge) needs record or made")
       of "madeReactionKg": r.number(c, MassKgRange, d.vibProfile.madeReactionKg)
       of "madeBaseplateKg": r.number(c, MassKgRange, d.vibProfile.madeBaseplateKg)
-      of "forceHundredWeighted": r.number(c, MassKgRange, d.vibProfile.forceHundredWeighted)
+      of "forceHundredWeighted":
+        r.number(c, ForceHundredRange, d.vibProfile.forceHundredWeighted)
       of "referenceId": r.text(c, d.vibProfile.referenceId)
       of "topHz": r.number(c, TopHzRange, d.vibProfile.topHz)
       of "fromFile": r.text(c, d.vibProfile.fromFile)
