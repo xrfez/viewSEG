@@ -37,15 +37,14 @@ type
     haveShots: bool
     dest: DestWatch            ## whether a file or folder of the chosen name is already there
     srcFolder: string          ## the folder whose recordings are all sliced
-    checkJob: JobId = NoJob
-    checkSink: FolderSink
+    check: FolderFlight        ## the check in flight
     checkKey: string           ## what the check in flight, or the last one, was made for
     checked: FolderResult      ## what the last check found
-    runJob: JobId = NoJob
-    runSink: FolderSink
+    run: FolderFlight          ## the run in flight
     ran: FolderResult          ## what the last run did
     runFolder: string          ## the folder the run in flight, or the last, was of
-    known: FactsHold           ## what the last job found out about each file of the folder
+    known: KnownFacts          ## what the last job found out about each file of the folder
+    left: seq[FolderFlight]    ## jobs given up whose work has not come back yet
     lengthActive: bool         ## the record length is being typed: no check meanwhile
     haveRan: bool
 
@@ -81,7 +80,7 @@ proc setFolder*(ui: var CutUi; folder: string) =
 proc setSourceFolder*(ui: var CutUi; folder: string) =
   ## The answer of the dialog that chooses the folder whose recordings are sliced.
   ui.srcFolder = folder
-  ui.known = nil
+  ui.known = KnownFacts()
   ui.checkKey = ""
   ui.checked = FolderResult()
   ui.haveRan = false
@@ -236,56 +235,68 @@ proc folderPlan(ui: CutUi; st: AppState; opts: CutOptions; write: bool): FolderP
   ## What the folder jobs are given: a copy of the log's rows, the options, the open files.
   let li = st.findShotLog(ui.logId)
   result = FolderPlan(folder: ui.srcFolder, destFolder: ui.folder, rows: st.shotView(li).rows,
-    opts: opts, cacheDir: st.indexCache, write: write, known: ui.known, treats: st.forcedKinds,
+    opts: opts, cacheDir: st.indexCache, write: write, treats: st.forcedKinds,
     vendorGen: st.vendorGen)
   result.opts.logName = extractFilename(st.shotLogSource(li))
   if result.opts.logName.len == 0: result.opts.logName = st.shotLogName(li)
   for x in st.sessions: result.others.add x.diskPath
 
 proc stopCheck(ui: var CutUi; st: AppState) =
-  if ui.checkJob != NoJob: discard st.jobs.cancel(ui.checkJob)
-  ui.checkJob = NoJob
-  ui.checkSink = nil
+  ## Gives the check in flight up; what its work reads stays until it is back.
+  ui.left.retire(ui.check, st.jobs)
 
-proc ended(st: AppState; job: JobId; state: var JobState; error: var string): bool =
-  ## Whether `job` is over (or gone), with how it ended.
+proc keepForStragglers*(ui: CutUi; jobs: Jobs) =
+  ## At the quit: what the work of a folder job left running uses stays to the end of the
+  ## process.
+  keepForStragglers([ui.check, ui.run], jobs)
+  keepForStragglers(ui.left, jobs)
+
+proc endedHow(st: AppState; job: JobId; state: var JobState; error: var string) =
+  ## How `job` ended; failed when it is gone.
   let info = st.jobs.info(job)
   if info.isNone:
     state = jsFailed
     error = "the job is gone"
-    return true
-  if info.get.state in {jsQueued, jsRunning}: return false
-  state = info.get.state
-  error = info.get.error
-  true
+  else:
+    state = info.get.state
+    error = info.get.error
 
 proc pollFolder(ui: var CutUi; st: AppState) =
-  ## Takes what the folder jobs made once they are over.
+  ## Takes what the folder jobs made once they are over. A job listed as over whose work still
+  ## runs (cancelled from the Jobs window, and not stopping) is given up: what it filled is
+  ## not read, and what it uses stays until it is back.
   var state = jsQueued
   var error = ""
-  if ui.checkJob != NoJob and st.ended(ui.checkJob, state, error):
-    if ui.checkSink != nil:
-      ui.checked = ui.checkSink.result
-      ui.known = ui.checked.facts
+  if ui.check.job != NoJob and ui.check.ended(st.jobs):
+    st.endedHow(ui.check.job, state, error)
+    if ui.check.over(st.jobs):
+      let (res, known) = ui.check.take()
+      ui.checked = res
+      if res.listed: ui.known = known
+    else:
+      ui.checked = FolderResult(folder: ui.srcFolder)
+      ui.left.retire(ui.check, st.jobs)
     if state == jsFailed and ui.checked.reason.len == 0: ui.checked.reason = error
-    ui.checkJob = NoJob
-    ui.checkSink = nil
-  if ui.runJob != NoJob and st.ended(ui.runJob, state, error):
-    if ui.runSink != nil and ui.runFolder == ui.srcFolder:
-      ui.ran = ui.runSink.result
-      ui.known = ui.ran.facts
+  if ui.run.job != NoJob and ui.run.ended(st.jobs):
+    st.endedHow(ui.run.job, state, error)
+    var res = FolderResult(folder: ui.runFolder)
+    if ui.run.over(st.jobs):
+      let (done, known) = ui.run.take()
+      res = done
+      if res.listed and ui.runFolder == ui.srcFolder: ui.known = known
+    else: ui.left.retire(ui.run, st.jobs)
+    if ui.runFolder == ui.srcFolder:
+      ui.ran = res
       if state == jsFailed and ui.ran.reason.len == 0: ui.ran.reason = error
       elif state == jsCancelled: ui.ran.reason = "The run was cancelled."
       ui.haveRan = true
-    ui.runJob = NoJob
-    ui.runSink = nil
     ui.checkKey = "" # the folder is looked at again: its slices are there now
 
 proc considerFolder(ui: var CutUi; st: AppState; opts: CutOptions) =
   ## Starts the check of the chosen folder when what it depends on changed. Nothing is
   ## read until a folder is chosen, and nothing is checked while a run writes.
   ui.pollFolder(st)
-  if ui.runJob != NoJob or ui.lengthActive: return
+  if ui.run.job != NoJob or ui.lengthActive: return
   let li = st.findShotLog(ui.logId)
   var treated = ""
   for path, kind in st.forcedKinds: treated.add path & ':' & $ord(kind) & ';'
@@ -298,17 +309,14 @@ proc considerFolder(ui: var CutUi; st: AppState; opts: CutOptions) =
   ui.checkKey = key
   ui.checked = FolderResult()
   if key.len == 0: return
-  ui.checkSink = FolderSink()
-  ui.checkJob = st.jobs.submit(cutFolderSpec(ui.srcFolder, false),
-    cutFolderWork(ui.folderPlan(st, opts, false), ui.checkSink))
+  ui.check = st.jobs.startFolder(ui.folderPlan(st, opts, false), ui.known)
 
 proc startFolder(ui: var CutUi; st: AppState; opts: CutOptions) =
   ui.stopCheck(st)
   ui.haveRan = false
   ui.runFolder = ui.srcFolder
-  ui.runSink = FolderSink()
-  ui.runJob = st.jobs.submit(cutFolderSpec(ui.srcFolder, true),
-    cutFolderWork(ui.folderPlan(st, opts, true), ui.runSink))
+  ui.left.retire(ui.run, st.jobs) # none while one runs: the button is off then
+  ui.run = st.jobs.startFolder(ui.folderPlan(st, opts, true), ui.known)
 
 proc drawFolder(ui: var CutUi; st: AppState; t: Theme; marks: var Marks; wide: float32;
     opts: CutOptions) =
@@ -323,13 +331,13 @@ proc drawFolder(ui: var CutUi; st: AppState; t: Theme; marks: var Marks; wide: f
   elif li < 0: why = "Load a shot log first."
   elif not usableRecordMs(ui.recordMs): why = "The record length is not usable."
   elif ui.folder.len == 0: why = NeedFolder
-  elif ui.checkJob != NoJob or ui.checkKey.len == 0 or ui.lengthActive: why = FolderBeingRead
+  elif ui.check.job != NoJob or ui.checkKey.len == 0 or ui.lengthActive: why = FolderBeingRead
   elif ui.checked.reason.len > 0: why = ui.checked.reason
   elif ui.checked.refused.len > 0: why = ui.checked.refused
   elif ui.checked.countSliceable == 0: why = "No recording of the folder can be sliced."
   elif st.cutRunning: why = CutRunning
   if ui.srcFolder.len > 0:
-    if ui.checkJob != NoJob:
+    if ui.check.job != NoJob:
       wrapped(FolderBeingRead, wide)
       marks.mark("cut.folderReading")
     elif ui.checked.reason.len > 0:
@@ -348,7 +356,7 @@ proc drawFolder(ui: var CutUi; st: AppState; t: Theme; marks: var Marks; wide: f
       if lost.len > 0:
         coloured(lost, t.roles[rlWarning], wide)
         marks.mark("cut.folderUnplaced")
-  let running = ui.runJob != NoJob
+  let running = ui.run.job != NoJob
   igBeginDisabled(why.len > 0 or running)
   if igButton("Slice the folder##cut".cstring, ImVec2_c(x: 0, y: 0)): ui.startFolder(st, opts)
   igEndDisabled()
@@ -371,6 +379,7 @@ proc drawFolder(ui: var CutUi; st: AppState; t: Theme; marks: var Marks; wide: f
 proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw =
   ## The window, while it is open. Cut posts the command when the options can
   ## be used; the outcome of the last cut is under the buttons.
+  ui.left.dropOver(st.jobs) # also while the window is closed
   if not ui.shown: return
   if ui.bringUp:
     igSetWindowFocus_Str(CutWindowTitle.cstring)
@@ -487,7 +496,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
         marks.mark("cut.numbering")
     let canCut = why.len == 0 and problem.len == 0 and ui.folder.len > 0 and
       nameWhy.len == 0 and not ui.dest.exists and not ui.dest.pending and
-      summary.len > 0 and ui.runJob == NoJob
+      summary.len > 0 and ui.run.job == NoJob
     igBeginDisabled(not canCut)
     if igButton("Slice##cut".cstring, ImVec2_c(x: 0, y: 0)):
       result.commands.add Command(kind: ckCutGather, cutLog: st.findShotLog(ui.logId),

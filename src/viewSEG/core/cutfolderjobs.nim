@@ -1,5 +1,5 @@
 ## Slices every recording of a folder at the times of a shot log. A background job
-## (`cutFolderWork`) with two steps: the first opens each file of the folder in name
+## (`startFolder`) with two steps: the first opens each file of the folder in name
 ## order and works out whether it can be sliced and where its segments lie (its facts,
 ## kept by the caller while the file's size and time and the kind the user forced for it
 ## stay as they are); the second writes, for each file that can be sliced, the records of
@@ -24,8 +24,17 @@
 ## With `write` false the job only does the first step and the placing: what the window
 ## shows before a run. The result is filled as the job goes, so a cancel leaves what was
 ## done.
+##
+## **Threads.** The job shares no `ref` with the UI thread. `startFolder` gives it the
+## facts of an earlier job by address (`FolderFacts` is plain data, never changed once
+## made) and the result it fills by address too; the `FolderFlight` it returns keeps both
+## on the UI thread until the job's work is back (`over`), also when the job was cancelled
+## and its work still runs, and gives them up to the process at the quit when it is not
+## (`keepForStragglers`). The job posts the facts it read as plain data and, for the
+## others, the index of the facts it was lent; `take` makes the next `KnownFacts` from
+## them on the UI thread, sharing the unchanged entries without copying them.
 
-import std/[algorithm, math, options, os, strutils, tables, times]
+import std/[algorithm, math, options, os, sequtils, strutils, tables, times]
 import parseSEG
 import processSEG/continuous/slice
 import cutfile, cutgather, cutgatherjobs, filejobs, filelist, filesystem, jobs, outputjobs,
@@ -41,11 +50,11 @@ const
   Unit = 1000'i64 ## the job's progress is this many units for each step of a file
 
 type
-  FolderFacts* = ref object
-    ## What the first step found out about a file, kept while the file stays as it was. Built
-    ## by the job and never changed after it is posted, so the window and later jobs share it.
-    ## A file of N traces keeps about 48 bytes for each trace plus one `TraceKeys` for each
-    ## receiver in `streams`; nothing else is large.
+  FolderFacts* = object
+    ## What the first step found out about a file, kept while the file stays as it was. Made
+    ## by the job and never changed after it is posted. A file of N traces keeps about 48 bytes
+    ## for each trace plus one `TraceKeys` for each receiver in `streams`, gaps or not; nothing
+    ## else is large.
     path*: string
     vendorGen*: int ## the vendor header maps' generation it was read under
     size*: int64
@@ -56,10 +65,11 @@ type
     firstUs*, lastUs*: int64 ## the span of its segments, UTC microseconds
     streams*: SliceStreams ## where its segments lie, for placing the shots
 
-  FactsHold* = ref object
-    ## The facts of every file of a folder, behind one reference: a new check makes a new hold
-    ## that shares the entries of the files that have not changed.
-    items*: seq[FolderFacts]
+  KnownFacts* = object
+    ## The facts of every file of a folder, kept on the UI thread between jobs. A new check
+    ## shares the entries of the files that have not changed; only the UI thread ever counts
+    ## the references to them (a job reads them by address).
+    items*: seq[ref FolderFacts]
 
   FolderFile* = object
     path*: string
@@ -76,7 +86,8 @@ type
   FolderResult* = object
     folder*: string
     files*: seq[FolderFile]
-    facts*: FactsHold           ## for the next job's `known`
+    reused*: seq[int]           ## per file, the index of the facts it was lent; -1: read again
+    fresh*: seq[FolderFacts]    ## per file, the facts read again (an empty entry where lent)
     noTime*: int                ## rows of the log without a time
     unplaced*: int              ## shots no file takes
     unplacedNamed*: seq[string] ## the first few, by their file number or time
@@ -86,10 +97,6 @@ type
     finished*: bool             ## the job ended well
     reason*: string             ## why the job failed, when it did
 
-  FolderSink* = ref object
-    ## Filled as the job goes. Read it after the job is no longer running.
-    result*: FolderResult
-
   FolderPlan* = object
     ## What the job needs.
     folder*, destFolder*: string
@@ -97,10 +104,19 @@ type
     opts*: CutOptions
     cacheDir*: string                     ## the folder of the index caches
     others*: seq[string]                  ## the paths of the files that are open: never a destination
-    known*: FactsHold                     ## the facts of an earlier job, used for a file that has not changed
     vendorGen*: int                       ## the generation of the vendor header maps in force
     treats*: Table[string, RecordingKind] ## the kinds the user set, by absolute path
     write*: bool
+    known: seq[ptr FolderFacts]
+      ## the facts of an earlier job, used for a file that has not changed: kept alive and
+      ## unchanged by the `FolderFlight` until the job's work is back
+
+  FolderFlight* = object
+    ## A folder job and what its work reads and fills in place, kept on the UI thread until the
+    ## work is back (`over`), also after a cancel (`retire`). `job` is `NoJob` for none.
+    job*: JobId = NoJob
+    output: ref FolderResult ## filled by the job through its address
+    lent: seq[ref FolderFacts] ## the facts the job reads through their addresses
 
 func nameTakenWords(name, other: string): string =
   ## Why a file's slice is not written: another file's slice has its name.
@@ -209,7 +225,7 @@ func startCovered(plan: SlicePlan; shot: int): bool =
         if pc.row >= 0: return true
         break
 
-proc place(plan: FolderPlan; facts: seq[FolderFacts]; files: var seq[FolderFile];
+proc place(plan: FolderPlan; facts: openArray[ptr FolderFacts]; files: var seq[FolderFile];
     held: var seq[seq[Shot]]; res: var FolderResult) =
   ## Gives each file the shots whose window start it holds; counts the shots none takes.
   held.setLen files.len
@@ -307,13 +323,14 @@ proc sameAsKnown(k: FolderFacts; path: string; info: FileInfo;
       info.lastWriteTime and
     k.forced == forced
 
-proc cutFolderWork*(plan: FolderPlan; sink: FolderSink): JobWork =
-  ## The job: see the module's comment. `sink.result` is filled as it goes.
+proc cutFolderWork(plan: FolderPlan; into: ptr FolderResult): JobWork =
+  ## The job: see the module's comment. `into[]` is filled as it goes; it and the facts of
+  ## `plan.known` stay alive until the work is back (`FolderFlight`).
   result = proc (ctx: JobContext) {.gcsafe.} =
     {.cast(gcsafe).}:
       ctx.checkCancelled()
       ctx.setPhase "listing"
-      sink.result = FolderResult(folder: plan.folder)
+      into[] = FolderResult(folder: plan.folder)
       var paths: seq[string] = @[]
       var capped = false
       try:
@@ -323,9 +340,12 @@ proc cutFolderWork*(plan: FolderPlan; sink: FolderSink): JobWork =
           paths.setLen MaxTreeFiles
           capped = true
       except OSError:
-        sink.result.reason = "The folder could not be listed."
-        raise newException(ValueError, sink.result.reason)
-      var facts: seq[FolderFacts] = @[]
+        into.reason = "The folder could not be listed."
+        raise newException(ValueError, into.reason)
+      # the facts of each file: lent ones by address, the others read here; `fresh` is
+      # never resized below, so the addresses taken of its entries stay good
+      var fresh = newSeq[FolderFacts](paths.len)
+      var reused = newSeq[int](paths.len)
       var forcedOf: seq[Option[RecordingKind]] = @[]
       for i, path in paths:
         ctx.checkCancelled()
@@ -339,27 +359,27 @@ proc cutFolderWork*(plan: FolderPlan; sink: FolderSink): JobWork =
           info = fs.getFileInfo(path)
           have = true
         except OSError: discard
-        var found = false
+        reused[i] = -1
         if have:
-          for k in (if plan.known == nil: @[] else: plan.known.items):
-            if k.sameAsKnown(path, info, forced, plan.vendorGen):
-              facts.add k
-              found = true
-              break
-        if not found:
+          for j, k in plan.known:
+            if reused[i] < 0 and k[].sameAsKnown(path, info, forced, plan.vendorGen):
+              reused[i] = j
+        if reused[i] < 0:
           ctx.setPhase "reading " & path.extractFilename
-          var f = inspect(ctx, path, plan.cacheDir, forced, plan.vendorGen)
+          fresh[i] = inspect(ctx, path, plan.cacheDir, forced, plan.vendorGen)
           if have:
-            f.size = info.size
-            f.modified = info.lastWriteTime
-          facts.add f
+            fresh[i].size = info.size
+            fresh[i].modified = info.lastWriteTime
         if not ctx.progress(Unit * int64(i + 1), Unit * int64(max(1, paths.len) * 2)):
           raise newException(JobCancelledError, "cancelled")
+      var facts = newSeq[ptr FolderFacts](paths.len)
+      for i in 0 ..< paths.len:
+        facts[i] = if reused[i] >= 0: plan.known[reused[i]] else: addr fresh[i]
       var files: seq[FolderFile] = @[]
       for f in facts:
         files.add FolderFile(path: f.path, skip: f.skip, firstUs: f.firstUs, lastUs: f.lastUs)
       var held: seq[seq[Shot]] = @[]
-      var res = FolderResult(folder: plan.folder, facts: FactsHold(items: facts), capped: capped)
+      var res = FolderResult(folder: plan.folder, capped: capped)
       place(plan, facts, files, held, res)
       if plan.destFolder.len > 0:
         let probe = plan.destFolder / "slice"
@@ -371,9 +391,11 @@ proc cutFolderWork*(plan: FolderPlan; sink: FolderSink): JobWork =
       nameOutputs(plan, files)
       res.files = files
       res.listed = true
-      sink.result = res
-      if not plan.write or res.refused.len > 0:
-        sink.result.finished = true
+      res.reused = move reused
+      res.fresh = move fresh # the addresses in `facts` are not used after this
+      into[] = move res
+      if not plan.write or into.refused.len > 0:
+        into.finished = true
         return
       let total = int64(max(1, paths.len) * 2) # the first step is half of the bar
       var unit = int64(paths.len)
@@ -383,5 +405,64 @@ proc cutFolderWork*(plan: FolderPlan; sink: FolderSink): JobWork =
           ctx.checkCancelled()
           sliceOne(ctx, plan, files[i], held[i], forcedOf[i], unit, total)
           inc unit
-          sink.result.files = files
-      sink.result.finished = true
+          into.files = files
+      into.finished = true
+
+proc startFolder*(jobs: Jobs; plan: FolderPlan; known: KnownFacts): FolderFlight =
+  ## Submits the job of `plan`, which uses the facts of `known` for the files that have not
+  ## changed. The UI thread's: keep the flight until it is `over`, then `take` it, or `retire`
+  ## it to give the job up.
+  result = FolderFlight(output: new FolderResult, lent: known.items)
+  var plan = plan
+  plan.known = newSeqOfCap[ptr FolderFacts](result.lent.len)
+  for k in result.lent: plan.known.add addr k[]
+  result.job = jobs.submit(cutFolderSpec(plan.folder, plan.write),
+    cutFolderWork(plan, addr result.output[]))
+
+proc ended*(f: FolderFlight; jobs: Jobs): bool =
+  ## Whether the job is listed as over (or is gone): done, failed or cancelled. Its work may
+  ## still run when it was cancelled and did not stop (`over` tells).
+  if f.job == NoJob: return true
+  let info = jobs.info(f.job)
+  info.isNone or info.get.state notin {jsQueued, jsRunning}
+
+proc over*(f: FolderFlight; jobs: Jobs): bool =
+  ## Whether the job's work is back: the job is over and no thread runs its work any more
+  ## (`Jobs.workingOn`). Only then may the result be read and the flight be dropped.
+  f.ended(jobs) and not jobs.workingOn(f.job)
+
+proc take*(f: var FolderFlight): tuple[res: FolderResult; known: KnownFacts] =
+  ## What the job made, once it is `over`: its result, and the facts of the folder's files for
+  ## the next job (the entries it was lent and kept, and new ones for those it read). The
+  ## flight names no job after.
+  if f.output != nil:
+    result.res = move f.output[]
+    for i, j in result.res.reused:
+      if j >= 0 and j < f.lent.len: result.known.items.add f.lent[j]
+      elif i < result.res.fresh.len:
+        let k = new FolderFacts
+        k[] = move result.res.fresh[i]
+        result.known.items.add k
+    result.res.reused = @[]
+    result.res.fresh = @[]
+  f = FolderFlight()
+
+proc retire*(left: var seq[FolderFlight]; f: var FolderFlight; jobs: Jobs) =
+  ## Gives the job of `f` up: it is cancelled, and what its work uses is kept in `left` until
+  ## the work is back (`dropOver`). The flight names no job after.
+  if f.job != NoJob:
+    discard jobs.cancel(f.job)
+    left.add move f
+  f = FolderFlight()
+
+proc dropOver*(left: var seq[FolderFlight]; jobs: Jobs) =
+  ## Lets go of the flights whose work is back.
+  if left.len > 0: left.keepItIf(not it.over(jobs))
+
+proc keepForStragglers*(flights: openArray[FolderFlight]; jobs: Jobs) =
+  ## At the quit: what the work of a job left running uses stays to the end of the process,
+  ## instead of being released under it.
+  for f in flights:
+    if f.job != NoJob and not f.over(jobs):
+      if f.output != nil: GC_ref(f.output)
+      for k in f.lent: GC_ref(k)

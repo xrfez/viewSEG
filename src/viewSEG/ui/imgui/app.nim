@@ -2459,6 +2459,7 @@ proc run*(opts = RunOptions()): int =
       inc frame
       try: ui.savingFrame(window, opts, frame)
       except Exception: discard) # a frame that fails only stops the message
+  ui.cut.keepForStragglers(ui.core.jobs) # a folder slice left running reads its facts
   when RoutedChecks:
     if opts.onFrame != nil and not opts.allowToolkitErrors and checkCount() > 0:
       raise newException(AssertionDefect, "Dear ImGui's checks failed:\n" & checkReport())

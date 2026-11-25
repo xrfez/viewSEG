@@ -5,15 +5,19 @@
 ## file takes every shot), a start half a sample before the first sample and a record
 ## past the end (zero-padded), day files, names that clash (also by case), a destination
 ## inside the source folder, the kind the user set, the facts kept for an unchanged file, a
-## file whose read fails. The sources are never changed.
+## file whose read fails. The sources are never changed. The job shares no reference with
+## the thread that starts it: what it is given and what it posts hold none, and what it reads
+## in place stays while its work runs, also after it was given up.
 ##
 ## Each was seen to fail with a deliberate fault: a shot given to the first file only
 ## ("Sliced 1 file." for two nodes); the user's kind ignored (the forced file refused); a
 ## read of the recording reported as a write failure; the span of a file ignored when the
 ## shots are given out ("shots of one.sgy 4"); the shots no file takes not counted
-## (`r.unplaced == 1`); the name clash not looked for.
+## (`r.unplaced == 1`); the name clash not looked for; the facts kept as one reference in the
+## result (`holdsRef`); a flight let go once its job was listed cancelled, its work still
+## running (`over` as `ended`); the kept facts copied, not shared.
 
-import std/[algorithm, assertions, atomics, os, sequtils, strutils, tables, times]
+import std/[algorithm, assertions, atomics, monotimes, os, sequtils, strutils, tables, times]
 import parseSEG
 import viewSEG/core/[cutfolderjobs, cutgather, filesystem, jobs, recordingkind, shotlog]
 import viewSEG/view/cutfolderwords
@@ -57,13 +61,14 @@ proc logOf(files: openArray[int]; offsetsUs: openArray[int64]): ShotView =
   m.dateTimePattern = EpochMicros
   shots(parseShotLog(text, m), m)
 
-proc run(jobs: Jobs; plan: FolderPlan): tuple[st: JobState; res: FolderResult; error: string] =
-  let sink = FolderSink()
-  let id = jobs.submit(cutFolderSpec(plan.folder, plan.write), cutFolderWork(plan, sink))
-  doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}),
-    "the job did not finish"
+proc run(jobs: Jobs; plan: FolderPlan; known = KnownFacts()): tuple[st: JobState;
+    res: FolderResult; error: string; known: KnownFacts] =
+  var flight = jobs.startFolder(plan, known)
+  let id = flight.job
+  doAssert waitUntil(flight.over(jobs)), "the job did not finish"
   let info = jobs.info(id).get
-  (info.state, sink.result, info.error)
+  let (res, kept) = flight.take()
+  (info.state, res, info.error, kept)
 
 proc fileOf(r: FolderResult; name: string): FolderFile =
   for f in r.files:
@@ -81,6 +86,32 @@ proc failingHook(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} 
       for k, q in walkDir(failOut):
         if q.extractFilename.startsWith("b_slice.sgd.part-"):
           raise newException(OSError, "Input/output error")
+
+var
+  slowName: string
+  slowGate: Gate
+  slowIn: Atomic[bool]
+
+proc slowHook(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
+  ## Any call on `slowName` waits until the gate opens, as on a drive that does not answer.
+  {.cast(gcsafe).}:
+    if path.extractFilename == slowName:
+      slowIn.store true
+      let deadline = getMonoTime() + Patience * 2
+      while not slowGate.isOpen and getMonoTime() < deadline: sleep 1
+
+proc holdsRef[T](x: T): bool =
+  ## Whether a value of type `T` can hold a `ref` or a proc (a `ptr` is not counted).
+  result = false
+  when T is ref:
+    result = true
+  elif T is (proc):
+    result = true
+  elif T is seq or T is array:
+    result = holdsRef(default(typeof(x[0])))
+  elif T is object or T is tuple:
+    for f in fields(x):
+      if holdsRef(f): result = true
 
 proc samplesOf(f: SeismicFile; trace: int): seq[float32] =
   let x = f.readTraces(trace .. trace)
@@ -278,14 +309,54 @@ proc main*() =
     var p = FolderPlan(folder: h / "in", destFolder: dir / "knownout", rows: v.rows,
       opts: initCutOptions(1000.0), cacheDir: dir / "cache")
     let first = run(jobs, p)
-    p.known = first.res.facts
-    p.known.items[0].skip = "kept from before"
-    p.known.items[1].skip = "kept from before"
+    first.known.items[0].skip = "kept from before"
+    first.known.items[1].skip = "kept from before"
     setLastModificationTime(h / "in" / "m.sgy", getLastModificationTime(h / "in" / "m.sgy") +
       initDuration(seconds = 5))
-    let second = run(jobs, p)
+    let second = run(jobs, p, first.known)
     doAssert fileOf(second.res, "k.sgy").skip == "kept from before", "the facts were not reused"
     doAssert fileOf(second.res, "m.sgy").sliceable, "a changed file was not read again"
+    doAssert second.known.items.len == 2 and second.known.items[0] == first.known.items[0],
+      "the kept facts were copied"
+    doAssert second.known.items[1] != first.known.items[1]
+
+  block the_job_is_given_and_posts_no_reference:
+    doAssert not holdsRef(FolderPlan()), "the plan holds a reference"
+    doAssert not holdsRef(FolderResult()), "the result holds a reference"
+    doAssert holdsRef(KnownFacts()) # the walk sees a reference where there is one
+
+  block a_job_given_up_keeps_what_it_reads_until_its_work_is_back:
+    let h = dir / "slow"
+    createDir(h / "in")
+    makeRecording(h / "in" / "k.sgy", 0)
+    makeRecording(h / "in" / "slow.sgy", 0, 8)
+    let v = logOf([1], [2_000_000'i64])
+    let p = FolderPlan(folder: h / "in", destFolder: dir / "slowout", rows: v.rows,
+      opts: initCutOptions(1000.0), cacheDir: dir / "cache")
+    let first = run(jobs, p)
+    setLastModificationTime(h / "in" / "slow.sgy",
+      getLastModificationTime(h / "in" / "slow.sgy") + initDuration(seconds = 5))
+    slowName = "slow.sgy"
+    slowGate.close()
+    slowIn.store false
+    setFsHook(slowHook)
+    var left: seq[FolderFlight] = @[]
+    var flight = jobs.startFolder(p, first.known)
+    doAssert waitUntil(slowIn.load), "the job did not reach the slow file"
+    left.retire(flight, jobs)
+    doAssert flight.job == NoJob and left.len == 1
+    # it does not stop: listed cancelled while its work still runs
+    discard jobs.tend(fs.now() + CancelGrace * 2)
+    doAssert left[0].ended(jobs) and jobs.info(left[0].job).get.state == jsCancelled
+    doAssert jobs.workingOn(left[0].job)
+    doAssert not left[0].over(jobs)
+    left.dropOver(jobs)
+    doAssert left.len == 1, "what the job reads was let go while its work ran"
+    slowGate.open()
+    doAssert waitUntil(left[0].over(jobs)), "the work did not come back"
+    setFsHook(nil)
+    left.dropOver(jobs)
+    doAssert left.len == 0
 
   block a_file_that_fails_does_not_stop_the_others:
     let w = dir / "fail"
@@ -354,11 +425,11 @@ proc main*() =
     var p = FolderPlan(folder: h / "in", destFolder: dir / "vendorout", rows: v.rows,
       opts: initCutOptions(1000.0), cacheDir: dir / "cache")
     let first = run(jobs, p)
-    p.known = first.res.facts
-    p.known.items[0].skip = "kept from before"
-    doAssert fileOf(run(jobs, p).res, "k.sgy").skip == "kept from before"
+    first.known.items[0].skip = "kept from before"
+    doAssert fileOf(run(jobs, p, first.known).res, "k.sgy").skip == "kept from before"
     p.vendorGen = 1
-    doAssert fileOf(run(jobs, p).res, "k.sgy").sliceable, "facts of other maps were kept"
+    doAssert fileOf(run(jobs, p, first.known).res, "k.sgy").sliceable,
+      "facts of other maps were kept"
 
   block a_folder_that_cannot_be_listed_fails:
     var bad = plan
