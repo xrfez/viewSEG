@@ -24,7 +24,7 @@
 ## renamed over it, so a crash leaves the old file or the new one. Everything
 ## here runs on a job; every file call goes through `fs`.
 
-import std/[os, strutils, times]
+import std/[atomics, os, strutils, times]
 when defined(posix):
   from std/posix import fsync
 import parseSEG
@@ -415,12 +415,59 @@ proc storeHash*(path: string; ctx: JobContext): uint64 =
   finally:
     close(f)
 
+var storeReads*: Atomic[int]
+  ## how many times `readStore` was called (for tests)
+
+proc storeFiles*(path: string): seq[StoredFile] =
+  ## The files a store holds, in order, from their headers alone: the blocks of records are
+  ## passed over, not read, hashed or decoded (`readStore` does that, and checks the whole).
+  ## Raises `IOError` for a file that is not a store or ends early. Worker-only.
+  var f: File
+  if not fs.open(f, path): raise newException(IOError, "cannot open " & path)
+  try:
+    let size = fs.getFileSize(path)
+    var h = initHasher()
+    var buf = ""
+    readExact(f, path, buf, StoreMagic.len + 4, h)
+    if buf[0 ..< StoreMagic.len] != StoreMagic:
+      raise newException(IOError, "it is not a survey kept by viewSEG")
+    var at = int64(StoreMagic.len + 4)
+    while true:
+      readExact(f, path, buf, 13, h)
+      at += 13
+      var c = Cursor(s: move buf)
+      let kind = c.read8(bkNone, bkEnd)
+      var count = 0'u32
+      c.get count
+      var bytes = 0'i64
+      c.get bytes
+      if bytes < 0 or bytes > MaxBlockBytes or at + bytes > size:
+        raise newException(IOError, "survey.bin is damaged")
+      buf = move c.s
+      case kind
+      of bkFile:
+        readExact(f, path, buf, int(bytes), h)
+        c = Cursor(s: move buf)
+        var s = StoredFile(copy: c.getStr, name: c.getStr)
+        s.kind = c.read8(jkSps, jkCsv)
+        s.fileKind = c.read8(low(FileKind), high(FileKind))
+        s.role = c.read8(low(CsvRole), high(CsvRole))
+        s.domain = c.read8(rdSource, rdReceiver)
+        result.add s
+        buf = move c.s
+      of bkEnd: break
+      else: f.setFilePos(at + bytes)
+      at += bytes
+  finally:
+    close(f)
+
 proc readStore*(path: string; ctx: JobContext; r: StoreReader) =
   ## Reads the store file at `path` (written by `writeStore`) and hands what
   ## it holds to `r`, file by file, in order. The whole file's hash is
   ## checked first, so nothing is handed over from a damaged one. Raises
   ## `IOError` for a file that is not one, damaged or cut short,
   ## `JobCancelledError` at a cancel. Worker-only.
+  discard storeReads.fetchAdd(1)
   let expected = block:
     var f: File
     if not fs.open(f, path): raise newException(IOError, "cannot open " & path)

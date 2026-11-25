@@ -441,6 +441,22 @@ proc resolveResume(dir: string; f: ImportFile; existing: seq[SurveyCopy];
     except IOError, OSError:
       discard
 
+proc ownCopy*(dir, copy: string): tuple[path, why: string] =
+  ## The path of `copy` (a name from a project's document) when it is a plain file name
+  ## directly in the project's own survey/files folder and no folder on the way there is a
+  ## symlink; else "" and why not. The entry itself may be a link: only the link goes.
+  let name = copy.extractFilename
+  if name.len == 0 or name in [".", ".."] or copy != SurveyCopies & "/" & name or
+      name.find({'\\', ':'}) >= 0:
+    return ("", "it is not a plain file name in " & SurveyCopies)
+  for folder in [dir.partOf("survey"), dir.partOf(SurveyCopies)]:
+    var kind = pcDir
+    try: kind = fs.getFileInfo(folder, followSymlink = false).kind
+    except OSError: return ("", folder & " cannot be looked at")
+    if kind in {pcLinkToDir, pcLinkToFile}:
+      return ("", folder & " is a link")
+  (dir.partOf(copy), "")
+
 proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy];
     to: Poster; resume: seq[ImportFile] = @[]; dataFolders: seq[string] = @[]): JobWork =
   ## The work of a job that copies survey files `files` into the project in
@@ -519,10 +535,9 @@ proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy
           for x in news.copies:
             if x.copy == c.copy: still = true
           if not still:
-            # only a file directly in survey/files is a copy: a copy named
-            # outside it (a hand-edited document) is never removed
-            let old = dir.partOf(c.copy)
-            if old.parentDir == copies: discard fs.tryRemoveFile(old)
+            let (old, why) = ownCopy(dir, c.copy)
+            if old.len > 0: discard fs.tryRemoveFile(old)
+            else: news.refused.add c.copy & " was not removed: " & why
       except JobCancelledError:
         dropCopies(tmps)
         raise
@@ -626,9 +641,14 @@ proc restoreWork*(dir: string; doc: ProjectDoc; layers: bool; to: Poster): JobWo
         var building = false
         # one file of each kind: of two the store holds the later is used, the earlier is
         # neither on the map nor in the geometry (a project saved when more were allowed)
+        # (the kinds come from the store's file headers: its record blocks are passed over,
+        # so the store is read once, below)
         var stored: seq[tuple[copy: string; kinds: set[SurveyContent]]] = @[]
-        readStore(dir.partOf(SurveyStoreName), ctx, StoreReader(onFile: proc (f: StoredFile) =
-          stored.add (f.copy, contentsOf(f.fileKind, f.domain))))
+        try:
+          for f in storeFiles(dir.partOf(SurveyStoreName)):
+            stored.add (f.copy, contentsOf(f.fileKind, f.domain))
+        except IOError:
+          discard # the read below says why the store cannot be used
         var skip = newSeq[bool](stored.len)
         var taken: set[SurveyContent] = {}
         for k in countdown(stored.high, 0):

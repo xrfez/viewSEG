@@ -297,6 +297,7 @@ type
       store*: StoreInfo
       keptFailure*: string
       updated*: bool                ## the copies were updated from their originals
+      refused*: seq[string]         ## copies no longer in the document that were not removed, and why
     of pnImporting:
       identities*: seq[ImportFile]
     of pnLooked, pnOriginals:

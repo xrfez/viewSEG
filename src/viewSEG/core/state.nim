@@ -887,7 +887,8 @@ type
     added: seq[SurveyLayerId]
       ## the layers they gave (taken out again at a cancel)
     orders: seq[tuple[path: string; order: int]]
-      ## when each file its read makes a layer of was asked (`loadSerial`)
+      ## when each file its read makes a layer of was asked (`loadSerial`); guards two
+      ## interactive jobs running at once (not reachable while that lane runs one at a time)
     replaced: seq[tuple[by: SurveyLayerId; layers: seq[SurveyLayer]]]
       ## the layers of the same files they took the place of (put back at a
       ## cancel or a failure)
@@ -6571,7 +6572,7 @@ func contentsListed(state: AppState; path: string): set[SurveyContent] =
 func importRefusal(state: AppState; path: string): string =
   ## Why survey file `path` is not loaded now: an import is under way that reads a file of
   ## its kind (or the file's kind is not known before it is read); "" when it may be.
-  if not state.importing: return ""
+  if not state.importing or state.joining.auto: return "" # (the project's own match is none)
   let name = path.extractFilename
   let kinds = state.contentsListed(path)
   var first = ""
@@ -6700,6 +6701,8 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
       if orphans != {}: said.add " " & orphanText(name, layer.contents, orphans, "was not kept")
       state.log.add(sevWarning, name, said)
       template j: untyped = state.joining
+      # (reached only with two interactive jobs running at once, which that lane does not
+      # do now)
       if winner in j.added: # the import's: taken off at a cancel, this file is wanted then
         var at = -1
         for k in 0 ..< j.replaced.len:
@@ -7840,7 +7843,8 @@ proc selectUnmatched(state: var AppState; cmd: Command) =
 proc startListing(state: var AppState; paths: seq[string]; title, folder: string;
     by: CommandOrigin)
 
-proc keepSurvey(state: var AppState; files: seq[JoinFile]; resume: seq[ImportFile] = @[])
+proc keepSurvey(state: var AppState; files: seq[JoinFile]; resume: seq[ImportFile] = @[];
+  before: seq[SurveyCopy] = @[])
 
 proc projectChanged(state: var AppState) =
   ## The project's document changed: written `SaveDelay` later. A survey file the project
@@ -7848,6 +7852,7 @@ proc projectChanged(state: var AppState) =
   ## it now.
   template p: untyped = state.project
   if p.unused.len > 0 and not p.readOnly:
+    let before = p.doc.survey
     var kept: seq[SurveyCopy] = @[]
     var looks: seq[OriginalLook] = @[]
     for n, c in p.doc.survey:
@@ -7860,7 +7865,8 @@ proc projectChanged(state: var AppState) =
     # the survey store is written again from the copies that stay
     var files: seq[JoinFile] = @[]
     for c in kept: files.add JoinFile(path: p.dir.partOf(c.copy), kind: c.kind, role: c.role)
-    if files.len > 0 and p.survey == srLoaded: state.keepSurvey(files)
+    if files.len > 0 and p.survey == srLoaded:
+      state.keepSurvey(files, before = before)
   inc state.project.docRev
   inc state.project.revision
   state.project.changedAt = getMonoTime()
@@ -8442,16 +8448,18 @@ proc restoreSurvey(state: var AppState; layers: bool) =
     restoreWork(p.dir, p.doc, layers, state.inbox.poster))
   inc p.revision
 
-proc keepSurvey(state: var AppState; files: seq[JoinFile]; resume: seq[ImportFile] = @[]) =
+proc keepSurvey(state: var AppState; files: seq[JoinFile]; resume: seq[ImportFile] = @[];
+    before: seq[SurveyCopy] = @[]) =
   ## Copies survey files `files` into the project and writes its
-  ## `survey.bin` (`keepSurveyWork`).
+  ## `survey.bin` (`keepSurveyWork`). The copies of the files in `before` (the document's
+  ## survey as it was, when it is not what is in `p.doc.survey`) that stay out are removed.
   template p: untyped = state.project
   if p.surveyJob != NoJob: discard state.jobs.cancel(p.surveyJob)
   p.survey = srKeeping
   let found = p.folders.filterIt(it.state == psFound).mapIt(it.path)
   p.surveyJob = state.jobs.submit(JobSpec(title: "Keep the survey in the project",
     lane: jlBackground, exclusive: @[p.dir.partOf(SurveyFolder)]), keepSurveyWork(p.dir, files,
-    p.doc.survey, state.inbox.poster, resume, found))
+    (if before.len > 0: before else: p.doc.survey), state.inbox.poster, resume, found))
   inc p.revision
 
 proc markImporting(state: var AppState; files: seq[JoinFile]) =
@@ -8853,6 +8861,7 @@ proc takeKept(state: var AppState; m: sink Msg) =
   inc p.revision
   let layers = p.layersAfterKeep
   p.layersAfterKeep = false
+  for why in news.refused: state.log.add(sevWarning, "project", "The survey copy " & why & ".")
   if news.keptFailure.len > 0:
     p.rebuilding = false
     # An update that was refused leaves the survey as it was, on the map.

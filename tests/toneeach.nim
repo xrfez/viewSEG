@@ -13,10 +13,11 @@
 ## listed in some runs (the reversed list found the other); with `putBack` placing only one
 ## layer, `putBack` found the second one lost.
 
-import std/[os, strutils, times]
+import std/[atomics, os, sequtils, strutils, times]
 import parseSEG
-import viewSEG/core/[vibprofile, filekinds, jobs, project, projectnif, survey, surveystore, state]
-import utils/[fixtures, waiting]
+import viewSEG/core/[projectjobs, vibprofile, filekinds, jobs, project, projectnif, survey,
+    surveystore, state]
+import utils/[fixtures, steps, waiting]
 
 proc header(): SpsHeader =
   SpsHeader(code: "00", description: "SPS format version num.", data: "SPS 2.1;")
@@ -280,64 +281,129 @@ proc main*() =
     doAssert st.said("a.x is left out of the import"), "left-out file not said"
     st.shutdown()
 
+  block autoMatchIsNoImport:
+    # the project's own match of an opened file to its survey is no import: a survey file
+    # may be loaded while it runs
+    withFixtures fx:
+      let sv = fx.surveySps()
+      let seg = fx.stationsSegd()
+      let config = fx.dir / "config"
+      createDir(config)
+      let job = dir & "-project" / "Auto"
+      installSteps()
+      var st = initAppState()
+      st.rememberFilesIn(config)
+      st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[fx.dir])
+      doAssert st.keepSettled(st.inProject and st.projectOpening.len == 0)
+      st.apply Command(kind: ckJoin, joinFile: NoSession, joinFiles: @[
+        JoinFile(path: sv.s, kind: jkSps), JoinFile(path: sv.r, kind: jkSps),
+        JoinFile(path: sv.x, kind: jkSps)])
+      doAssert st.keepSettled(st.project.survey == srLoaded and st.project.doc.hasStore and
+        not st.project.doc.hasImport)
+      st.flushFiles()
+      st.shutdown()
+      var again = initAppState()
+      again.rememberFilesIn(config)
+      again.apply Command(kind: ckOpenProject, projectPath: job)
+      doAssert again.keepSettled(again.inProject and again.project.survey == srLoaded)
+      holdStep("matching the traces")
+      again.apply Command(kind: ckShowFile, panel: MainPanel, path: seg)
+      doAssert again.keepSettled(again.importing), "the automatic match did not start"
+      let extra = fx.dir / "extra.x"
+      write(extra, relations = @[relation('X', 1, 5)])
+      again.load extra
+      doAssert again.surveyLoading(extra), "a file was refused during the project's own match"
+      releaseStep("matching the traces")
+      doAssert again.keepSettled(not again.importing and again.jobs.active.len == 0)
+      again.shutdown()
+
   block oldProjectStore:
     # a project whose store holds two X files (as an earlier build allowed): it opens with
     # the last, the first is neither on the map nor in the geometry the matching uses, one
     # message says so, and the next save writes the store without it
-    let config = dir / "config3"
-    createDir(config)
-    let job = dir & "-project" / "Old store"
-    var st = initAppState()
-    st.rememberFilesIn(config)
-    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[dir])
-    doAssert st.keepSettled(st.inProject and st.projectOpening.len == 0)
-    st.apply Command(kind: ckJoin, joinFile: NoSession, joinFiles: @[
-      JoinFile(path: ax, kind: jkSps)])
-    doAssert st.keepSettled(st.project.survey == srLoaded and st.project.doc.hasStore and
-      not st.project.doc.hasImport), "not imported: " & st.project.surveyNote
-    st.flushFiles()
-    st.shutdown()
-    # the second X file, written into the store as the earlier build wrote it
-    var problems: seq[string] = @[]
-    var doc = readProject(readFile(job / "project.nif"), "project.nif", problems)
-    doAssert doc.survey.len == 1, $doc.survey.len
-    var second = doc.survey[0]
-    second.copy = "survey/files/b.x"
-    copyFile(bx, job / "survey" / "files" / "b.x")
-    doc.survey.add second
-    var info = StoreInfo()
-    let copies = doc.survey
-    let at = addr info
-    block:
-      let jobs = initJobs()
-      let id = jobs.submit(JobSpec(title: "store", lane: jlBackground),
-        proc (ctx: JobContext) {.gcsafe.} =
-        {.cast(gcsafe).}: at[] = writeStore(job, copies, ctx))
-      doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
-      doAssert jobs.info(id).get.state == jsDone, $jobs.info(id)
-    doc.store = info
-    writeFile(job / "project.nif", projectDocument(doc))
-    var again = initAppState()
-    again.rememberFilesIn(config)
-    again.apply Command(kind: ckOpenProject, projectPath: job)
-    doAssert again.keepSettled(again.inProject and again.project.survey == srLoaded and
-      again.surveyFiles.len == 1), $again.surveyFiles
-    doAssert again.surveyFiles == @["b.x"], $again.surveyFiles
-    doAssert again.said("a.x is no longer used and will not be kept when the project is " &
-      "next saved"), "not said"
-    doAssert not again.said("It replaces a.x"), "the unused file was loaded"
-    doAssert again.said(", 2 X records, "), "the geometry holds more than b.x's two X records"
-    doAssert "survey/files/a.x" in readFile(job / "project.nif"), "the open rewrote the project"
-    # an ordinary change: the document and the store lose the unused file
-    again.apply Command(kind: ckVibProfile, origin: coWindow,
-      vibProfile: VibQcProfile(harmonics: 7))
-    doAssert again.keepSettled(again.project.survey == srLoaded and
-      again.project.doc.survey.len == 1), "the unused file stays: " & $again.project.doc.survey.len
-    doAssert again.project.doc.store.relations == 2, "the store still holds a.x: " &
-      $again.project.doc.store
-    again.flushFiles()
-    doAssert "survey/files/a.x" notin readFile(job / "project.nif")
-    again.shutdown()
+    for planted in [false, true]:
+      let config = dir / ("config3" & $planted)
+      createDir(config)
+      let job = dir & "-project" / ("Old store" & $planted)
+      var st = initAppState()
+      st.rememberFilesIn(config)
+      st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[dir])
+      doAssert st.keepSettled(st.inProject and st.projectOpening.len == 0)
+      st.apply Command(kind: ckJoin, joinFile: NoSession, joinFiles: @[
+        JoinFile(path: ax, kind: jkSps)])
+      doAssert st.keepSettled(st.project.survey == srLoaded and st.project.doc.hasStore and
+        not st.project.doc.hasImport), "not imported: " & st.project.surveyNote
+      st.flushFiles()
+      st.shutdown()
+      # the second X file, written into the store as the earlier build wrote it
+      var problems: seq[string] = @[]
+      var doc = readProject(readFile(job / "project.nif"), "project.nif", problems)
+      doAssert doc.survey.len == 1, $doc.survey.len
+      var second = doc.survey[0]
+      let outside = dir / ("outside" & $planted)
+      if planted:
+        # the unused entry is named through a planted link to a file outside the project
+        createDir(outside / "sub")
+        copyFile(ax, outside / "x")
+        copyFile(ax, job / "survey" / "files" / "x") # (where a path made plain finds it)
+        createSymlink(outside / "sub", job / "survey" / "files" / "a")
+        doc.survey[0].copy = "survey/files/a/../x"
+      second.copy = "survey/files/b.x"
+      copyFile(bx, job / "survey" / "files" / "b.x")
+      doc.survey.add second
+      var info = StoreInfo()
+      let copies = doc.survey
+      let at = addr info
+      block:
+        let jobs = initJobs()
+        let id = jobs.submit(JobSpec(title: "store", lane: jlBackground),
+          proc (ctx: JobContext) {.gcsafe.} =
+          {.cast(gcsafe).}: at[] = writeStore(job, copies, ctx))
+        doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
+        doAssert jobs.info(id).get.state == jsDone, $jobs.info(id)
+      doc.store = info
+      writeFile(job / "project.nif", projectDocument(doc))
+      var again = initAppState()
+      again.rememberFilesIn(config)
+      let reads0 = storeReads.load
+      again.apply Command(kind: ckOpenProject, projectPath: job)
+      doAssert again.keepSettled(again.inProject and again.project.survey == srLoaded and
+        again.surveyFiles.len == 1), $again.surveyFiles
+      doAssert again.surveyFiles == @["b.x"], $again.surveyFiles
+      doAssert again.said("is no longer used and will not be kept when the project is " &
+        "next saved"), "not said"
+      doAssert not again.said("It replaces a.x"), "the unused file was loaded"
+      doAssert storeReads.load - reads0 == 1, "the store was read " & $(storeReads.load - reads0) &
+        " times by the open"
+      doAssert again.said(", 2 X records, "), "the geometry holds more than b.x's two X records"
+      doAssert (if planted: "a/../x" else: "survey/files/a.x") in readFile(job / "project.nif"),
+        "the open rewrote the project"
+      let before = toSeq(walkFiles(job / "survey" / "files" / "*"))
+      # an ordinary change: the document and the store lose the unused file
+      again.apply Command(kind: ckVibProfile, origin: coWindow,
+        vibProfile: VibQcProfile(harmonics: 7))
+      doAssert again.keepSettled(again.project.survey == srLoaded and
+        again.project.doc.survey.len == 1), "the unused file stays: " &
+            $again.project.doc.survey.len
+      doAssert again.project.doc.store.relations == 2, "the store still holds a.x: " &
+        $again.project.doc.store
+      again.flushFiles()
+      doAssert "survey/files/a.x" notin readFile(job / "project.nif")
+      if planted:
+        doAssert fileExists(outside / "x"), "a file outside the project was removed"
+        # (the document reader already drops such a name; the removal refuses it as well)
+        doAssert ownCopy(job, "survey/files/a/../x").path.len == 0
+        doAssert ownCopy(job, "survey/files/a/../x").why.len > 0
+        doAssert ownCopy(job, "survey/files/x").path == job / "survey" / "files" / "x"
+        doAssert ownCopy(job, "survey/files/a").path.len > 0, "the link itself may go"
+      else:
+        doAssert not fileExists(job / "survey" / "files" / "a.x"), "the unused copy stays"
+        var gone: seq[string] = @[]
+        for f in before:
+          if not fileExists(f): gone.add f.extractFilename
+        doAssert gone == @["a.x"], "removed: " & $gone
+      doAssert fileExists(job / "survey" / "files" / "b.x")
+      again.shutdown()
 
   removeDir(dir)
   removeDir(dir & "-project")
