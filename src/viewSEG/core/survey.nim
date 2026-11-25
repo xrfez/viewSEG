@@ -757,13 +757,17 @@ func tracePointsOf*(s: Survey; trace: int): seq[PointRef] =
           let p = m.stationPoint(r, st)
           if p >= 0: result.add PointRef(layer: m.id, role: r, point: p)
 
-proc recordPoints*(s: Survey; base: int; traces: Slice[int]; record = -1'i64): seq[PointRef] =
+proc recordPoints*(s: Survey; base: int; traces: Slice[int];
+    domain = rdSource; fixed = StationKey(); hasFixed = false): seq[PointRef] =
   ## Where the traces `traces` (indices in the open file whose trace 0 is
   ## survey-wide `base`: a gather) were recorded, each point once: their
   ## points in the file's traces layer and the points of their stations in
   ## each survey file's layer. Where none of them names a station (headers
   ## with a record and a channel only), the stations the loaded relation
-  ## files give field record `record` (-1 for none) stand in for theirs.
+  ## files give the station `fixed` stand in for theirs, when `hasFixed`:
+  ## the X records of a source station (`domain` `rdSource`: a shot) or the
+  ## O records of a receiver station (`rdReceiver`: a receiver gather). The
+  ## records are found by that station only, never by a record number.
   ## None while the file's positions are not read.
   var own = -1
   for i in 0 ..< s.layers.len:
@@ -786,19 +790,23 @@ proc recordPoints*(s: Survey; base: int; traces: Slice[int]; record = -1'i64): s
         if st >= 0 and st notin named[r]:
           named[r].incl st
           stations[r].add asStation(l.stations[r].keys[st])
-  if stations[prSource].len + stations[prReceiver].len == 0 and record >= 0:
+  if stations[prSource].len + stations[prReceiver].len == 0 and hasFixed:
     var given: array[PointRole, IntSet] # by station hash: each once
     template plan(r: PointRole; k: StationKey) =
       let h = int(stationHash(k) shr 1)
       if h notin given[r]:
         given[r].incl h
         stations[r].add asStation(k)
+    let fixedRole = if domain == rdSource: prSource else: prReceiver
+    let plannedRole = if domain == rdSource: prReceiver else: prSource
     for i in 0 ..< s.layers.len:
       template m: untyped = s.layers[i]
-      if m.origin == loSurveyFile and m.relationRuns > 0:
-        for run in m.relations[].relationRuns(record):
-          plan(prSource, run.fixed)
-          for k in 0 ..< run.stations: plan(prReceiver, run.station(k))
+      if m.origin == loSurveyFile and
+          (if domain == rdSource: m.xRuns > 0 else: m.relationRuns > m.xRuns):
+        for record in m.relations[].recordsAt(fixed, domain):
+          for run in m.relations[].relationRuns(record, domain):
+            plan(fixedRole, run.fixed)
+            for k in 0 ..< run.stations: plan(plannedRole, run.station(k))
   for r in PointRole:
     for st in stations[r]:
       for i in 0 ..< s.layers.len:

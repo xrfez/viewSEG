@@ -190,9 +190,12 @@ proc activePoints*(st: AppState): array[PointRole, seq[PointRef]] =
   let i = st.findSession(g.file)
   if i < 0 or g.gather notin 0 ..< st.sessions[i].gathers.len: return
   let s = st.sessions[i]
-  let f = s.records[g.gather].record
-  for p in st.survey.recordPoints(s.base, s.gathers[g.gather].traces,
-      (if f >= 0 and f < 1e15: int64(f) else: -1'i64)):
+  # A record whose headers name no station: the survey files' station at its
+  # own place stands in, in the domain of its kind (never its record number).
+  let domain = st.shownDomain
+  let placed = st.shownPlace(s, g.gather, domain)
+  for p in st.survey.recordPoints(s.base, s.gathers[g.gather].traces, domain,
+      placed.station, placed.found):
     result[p.role].add p
 
 func recordKind(st: AppState; trace: int): (bool, GatherKind) =

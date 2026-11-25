@@ -8766,7 +8766,7 @@ func shownDomain*(state: AppState): RelationDomain =
       state.sessions[i].gathers[g.gather].kind == gkReceiver: rdReceiver
   else: rdSource
 
-func shownPlace(state: AppState; s: Session; gather: int;
+func shownPlace*(state: AppState; s: Session; gather: int;
     domain: RelationDomain): Placed =
   ## For a record whose headers name no station of the role its relation
   ## record is found by (a shot's source, a receiver gather's receiver): the
