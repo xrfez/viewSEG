@@ -15,18 +15,25 @@
 ##   a move gives another key; the follower keeps the recorded fold and the difference of one
 ##   count (switching between them starts no job) and keeps at most three results.
 ## - A cancel leaves the sink empty.
+## - The survey on the map places files that carry station numbers and no coordinates, also
+##   outside a project; in a project whose stored survey is the map's nothing is said, and
+##   with another survey loaded on the map the totals say the map's placed the traces.
 ##
 ## Seen to fail: with the kill test in the item turned off "a killed trace" found 0 killed
 ## and 576 binned; with the not-live test turned off the dead trace was counted in a bin;
 ## with the kills left out of the key "a kill gives another key" failed; with the item for
-## file `i` reading file `i xor 1` the single-file counts raised an index error.
+## file `i` reading file `i xor 1` the single-file counts raised an index error; with the
+## project's survey alone joined (none outside a project), "the map's survey places the files"
+## found none of the 6 placed; with `otherSurvey` always false, "a survey loaded on the map is
+## another" failed.
 
 import std/[algorithm, math, os, sequtils, strutils, tables]
 import parseSEG
 import processSEG/adapters
 import processSEG/qc/fold
 import processSEG/stack/binning
-import viewSEG/core/[colourmaps, edits, foldactual, foldgrid, foldjobs, jobs, state, stationmoves]
+import viewSEG/core/[colourmaps, edits, foldactual, foldgrid, foldjobs, jobs, join, state,
+  stationmoves]
 import utils/[fixtures, waiting]
 
 const Land = "samples/land/land"
@@ -49,7 +56,8 @@ proc readStations(): tuple[sources, receivers: Table[(int, int), Spot]] =
 proc shotFile(path: string; shot: int; coordinates: bool; dead = -1; stationless = false) =
   ## Shot `shot` (1 to 6) of the sample: 96 traces, one per receiver, with the station numbers
   ## and, with `coordinates`, the positions in the headers. Trace `dead` (0-based) is marked
-  ## dead; `stationless` leaves the stations and coordinates out.
+  ## dead; `stationless` leaves the stations and coordinates out and gives the record a number
+  ## the X records do not list, so the survey cannot place it either.
   let table = readStations()
   var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 2))
   var ch = 0
@@ -57,7 +65,7 @@ proc shotFile(path: string; shot: int; coordinates: bool; dead = -1; stationless
     for point in 101 .. 148:
       inc ch
       var k = initTraceKeys()
-      k.record = float64(shot)
+      k.record = float64(if stationless: 9000 + shot else: shot)
       k.channel = float64(ch)
       if not stationless:
         (k.srcLine, k.srcPoint, k.srcIndex) = (2001.0, float64(100 + shot), 1'i16)
@@ -83,10 +91,9 @@ proc survey(): SurveyGeometry =
 
 proc sizeOf(path: string): int64 = (if fileExists(path): getFileSize(path) else: 0)
 
-proc inputsOf(paths: seq[string]; g: ptr SurveyGeometry; kills: Table[string, seq[int]] =
+proc inputsOf(paths: seq[string]; kills: Table[string, seq[int]] =
     initTable[string, seq[int]]()): ref ActualInputs =
   result = new ActualInputs
-  result.survey = g
   for p in paths:
     result.files.add ActualFile(path: p, size: sizeOf(p), kills: kills.getOrDefault(p))
     result.key.add p & "|" & $sizeOf(p) & "|" & $kills.getOrDefault(p) & ";"
@@ -129,15 +136,13 @@ proc main*() =
       filesXy.add dirXy / ("shot" & $s & ".sgy")
       shotFile(files[^1], s, coordinates = false)
       shotFile(filesXy[^1], s, coordinates = true)
-    var g = survey()
     let planned = preplotCounts()
     var st = initAppState()
     doAssert st.loaded(Land & ".s", Land & ".r", Land & ".x")
 
     block complete:
-      for (name, paths, joined) in [("joined by the survey", files, true),
-          ("header coordinates", filesXy, false)]:
-        let sink = st.count(inputsOf(paths, if joined: addr g else: nil))
+      for (name, paths) in [("joined by the survey", files), ("header coordinates", filesXy)]:
+        let sink = st.count(inputsOf(paths))
         doAssert sink.result.ok, name & ": " & sink.result.reason
         doAssert sink.result.kind == fkActual and sink.other.kind == fkDifference and
           sink.other.ok
@@ -164,8 +169,8 @@ proc main*() =
     block oneShotMissing:
       for out0 in 0 ..< files.len:
         let rest = files[0 ..< out0] & files[out0 + 1 .. ^1]
-        let sink = st.count(inputsOf(rest, addr g))
-        let only = st.count(inputsOf(@[files[out0]], addr g))
+        let sink = st.count(inputsOf(rest))
+        let only = st.count(inputsOf(@[files[out0]]))
         doAssert sink.result.ok and only.result.ok
         doAssert sink.other.kind == fkDifference
         let d = sink.result.kind
@@ -176,7 +181,7 @@ proc main*() =
         doAssert sink.result.traces == 480 and sink.other.files == 5
 
     block differenceAsked:
-      let sink = st.count(inputsOf(files[1 .. ^1], addr g), fkDifference)
+      let sink = st.count(inputsOf(files[1 .. ^1]), fkDifference)
       doAssert sink.result.kind == fkDifference and sink.other.kind == fkActual and
         sink.result.ok and sink.other.ok
       var dsum = 0
@@ -187,10 +192,10 @@ proc main*() =
         "a short bin is not neutral"
 
     block killedAndDead:
-      let all = st.count(inputsOf(files, addr g))
+      let all = st.count(inputsOf(files))
       var kills = initTable[string, seq[int]]()
       kills[files[2]] = @[10]
-      let k = st.count(inputsOf(files, addr g, kills))
+      let k = st.count(inputsOf(files, kills))
       doAssert k.result.killed == 1 and k.result.traces == 576 and k.result.binned == 575
       var changed: seq[int] = @[]
       for b in 0 ..< all.result.counts.len:
@@ -202,13 +207,13 @@ proc main*() =
       # a dead trace is not live: left out, not counted in a bin
       let deadFile = fx.dir / "dead.sgy"
       shotFile(deadFile, 1, coordinates = false, dead = 7)
-      let d = st.count(inputsOf(@[deadFile], addr g))
+      let d = st.count(inputsOf(@[deadFile]))
       doAssert d.result.notLive == 1 and d.result.binned == 95
 
     block threads:
       var fingerprints: seq[(seq[int32], seq[int32], int, int)] = @[]
       for n in [1, 2, 4, 8]:
-        let sink = st.count(inputsOf(files & @["gone.sgy"], addr g), fkActual, n)
+        let sink = st.count(inputsOf(files & @["gone.sgy"]), fkActual, n)
         doAssert sink.result.ok, sink.result.reason
         fingerprints.add (sink.result.counts, sink.other.counts, sink.result.files,
           sink.result.skipped.len)
@@ -221,30 +226,64 @@ proc main*() =
     block noPositions:
       let bare = fx.dir / "bare.sgy"
       shotFile(bare, 1, coordinates = false, stationless = true)
-      # no survey given, no coordinates, no stations: left out, and said
-      let some = st.count(inputsOf(files & @[bare], nil))
-      doAssert not some.result.ok, "files with no coordinates, no survey: nothing placed"
-      let mixed = st.count(inputsOf(filesXy & @[bare], nil))
+      # no coordinates and no stations: the survey cannot place it, left out, and said
+      let mixed = st.count(inputsOf(files & @[bare]))
       doAssert mixed.result.ok and mixed.result.unplaced == 1 and
         mixed.result.noCoordinates == 96, "a file with no positions is reported, not dropped: " &
         $(mixed.result.unplaced, mixed.result.noCoordinates)
       doAssert mixed.result.counts == planned and mixed.result.files == 7
       doAssert "1 file give no source or receiver positions" in
         mixed.result.totalsText("ft"), mixed.result.totalsText("ft")
-      let none = st.count(inputsOf(@[bare], nil))
+      let none = st.count(inputsOf(@[bare]))
       doAssert not none.result.ok and "None of the 1 file gives source or receiver positions" in
         none.result.reason, none.result.reason
-      let nothing = st.count(inputsOf(@["gone.sgy"], nil))
+      let nothing = st.count(inputsOf(@["gone.sgy"]))
       doAssert not nothing.result.ok and "could be read" in nothing.result.reason
 
     block cancel:
-      let inp = foldInputs(st.survey, NaN, NaN, fkActual, inputsOf(files, addr g))
+      let inp = foldInputs(st.survey, NaN, NaN, fkActual, inputsOf(files))
       let sink = FoldSink()
       let id = st.jobs.submit(foldSpec(fkActual), foldWork(inp, sink))
       discard st.jobs.cancel(id)
       doAssert waitUntil(st.jobs.active.len == 0)
       doAssert sink.result.counts.len == 0 and not sink.result.ok and not sink.other.ok,
         "a cancel leaves nothing"
+
+    block mapSurveyPlaces:
+      # station numbers and no coordinates, no project: the survey on the map places them
+      doAssert st.folder(dir) and not st.inProject
+      let sink = st.count(actualInputs(st))
+      doAssert sink.result.ok, "the map's survey places the files: " & sink.result.reason
+      doAssert sink.result.counts == planned and sink.result.unplaced == 0
+
+    block projectSurvey:
+      # in a project whose survey is the map's, nothing is said; another survey loaded on the
+      # map places the traces and the totals say so
+      var p = initAppState()
+      p.apply Command(kind: ckJoin, joinFile: NoSession, joinFiles: @[
+        JoinFile(path: Land & ".s", kind: jkSps), JoinFile(path: Land & ".r", kind: jkSps),
+        JoinFile(path: Land & ".x", kind: jkSps)])
+      doAssert p.settle(not p.importing and p.survey.layers.len > 0)
+      p.apply Command(kind: ckNewProject, projectPath: fx.dir / "Job", useSurvey: true)
+      doAssert p.settle(p.inProject and p.project.survey == srLoaded and
+        p.jobs.active.len == 0), "the project did not keep the survey"
+      doAssert p.folder(dir)
+      let own = actualInputs(p)
+      doAssert not own.otherSurvey, "the project's own survey is not another"
+      let sink = p.count(own)
+      doAssert sink.result.ok and sink.result.counts == planned and
+        "not the project's" notin sink.result.totalsText("ft")
+      let other = fx.dir / "other"
+      createDir other
+      for ext in [".s", ".r", ".x"]: copyFile(Land & ext, other / ("land" & ext))
+      doAssert p.loaded(other / "land.s", other / "land.r", other / "land.x")
+      let moved = actualInputs(p)
+      doAssert moved.otherSurvey, "a survey loaded on the map is another than the project's"
+      let said = p.count(moved)
+      doAssert said.result.ok and said.result.counts == planned
+      doAssert "The survey on the map, not the project's stored one, placed the traces." in
+        said.result.totalsText("ft"), said.result.totalsText("ft")
+      discard p.shutdown()
 
     block keys:
       doAssert st.folder(dir)
@@ -260,7 +299,7 @@ proc main*() =
       let added = actualInputs(st)
       doAssert added.files.len == 7 and added.key != first.key, "a file added is another key"
       doAssert actualStamp(st) != stamp
-      let sink = st.count(inputsOf(added.files.mapIt(it.path), addr g))
+      let sink = st.count(inputsOf(added.files.mapIt(it.path)))
       doAssert sink.result.ok and sink.result.counts != planned and sink.result.files == 7,
         "a file added changes the result"
       removeFile dir / "shot7.sgy"

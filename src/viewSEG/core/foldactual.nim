@@ -3,11 +3,13 @@
 ## pre-plot), for the map's "Actual fold" and "Fold difference" layers.
 ##
 ## `actualInputs` takes what the job needs from the app on the UI thread: each listed seismic
-## file's path and size, the traces its edits kill, the project's survey (a pointer: the
-## caller keeps the survey alive until the job has ended, as `AppState.holdSurvey` does), its
-## join options and station moves. `countActual` is the job's part: it opens each file for
-## its keys (the index cache is read when it is current), gives it the project's join and
-## moves in memory only (`joinOwnFile`: a file is never written), and counts its live traces
+## file's path and size, the traces its edits kill, the join options (the project's, else the
+## session's) and the station moves. The survey that places the traces is the one the grid is
+## laid from: the survey files loaded on the map, in a project and outside one (the job builds
+## it, `foldjobs`); when a project's stored survey is another, the totals say the map's was
+## used (`ActualInputs.otherSurvey`). `countActual` is the job's part: it opens each file for
+## its keys (the index cache is read when it is current), joins that survey and the moves to
+## them in memory only (`joinOwnFile`: a file is never written), and counts its live traces
 ## that are not killed into the bin their midpoint falls in. Each trace goes the way the
 ## library's `addFold` takes it: a trace that is not live (dead, auxiliary) is left out, then
 ## one the user killed, then one with no midpoint and no source and receiver coordinates,
@@ -16,26 +18,25 @@
 ## The files are read several at a time on the item pool. An item's result is plain data (its
 ## own tallies and the bins it fills, as a sparse list in bin order); the job's thread adds
 ## them into the one dense count in file order, so the counts are the same on any number of
-## threads. The survey and the edits are reached read-only through the pointer the job keeps
+## threads. The survey and the inputs are reached read-only through pointers the job keeps
 ## alive until every item has returned; no `ref` is shared between threads. A file that cannot
 ## be read or has no keys is skipped with the reason and the count goes on; a file that gives
 ## no positions and that the survey does not place is counted as such (`unplaced`), not
 ## dropped silently. A cancel stops the count and leaves nothing.
 
-import std/[algorithm, hashes, math, os, times]
+import std/[algorithm, hashes, math, os, sets, times]
 import arraymancer/tensor
 import parseSEG
 import processSEG/qc/fold
 import processSEG/stack/binning
-import edits, filejobs, filekinds, filelist, filesystem, itempool, jobs, join, session, state,
-  stationmoves, surveyjobs, threads
+import edits, filejobs, filekinds, filelist, filesystem, itempool, jobs, join, project, session,
+  state, stationmoves, survey, surveyjobs, threads
 
 const
   ActualKinds* = {fkSegy, fkSegd, fkSeg2}
     ## the kinds of file whose traces are counted (a signature file is decoded elsewhere)
   NoSeismicFiles* = "No seismic files are listed in the Files window."
   Listing* = "The Files window is still listing the folder."
-  SurveyLoading* = "The project's survey is still loading."
   KeysChunk = 65_536 ## traces whose keys are read at a time
   CancelEvery = 4096 ## traces between cancel checks
 
@@ -50,14 +51,13 @@ type
     kills*: seq[int] ## the file's killed traces, ascending
 
   ActualInputs* = object
-    ## What the count needs, copied on the UI thread. `survey` is read, never changed: the
-    ## caller keeps it alive until the job's work has returned.
-    key*: string ## names the files, their sizes and times, the edits and the moves
+    ## What the count needs, copied on the UI thread.
+    key*: string          ## names the files (sizes, times, edits), the options and the moves
     files*: seq[ActualFile]
-    survey*: ptr SurveyGeometry
-    options*: JoinOptions
+    options*: JoinOptions ## how the survey is joined to the files' keys
     moves*: StationMoves
-    tableOnly*: bool
+    otherSurvey*: bool
+      ## the project's stored survey is not the one on the map (the map's places the traces)
     cacheDir*: string
 
   ActualPart* = object
@@ -77,6 +77,7 @@ type
 
   ActualItems = object
     inp: ptr ActualInputs
+    survey: ptr SurveyGeometry
     grid: Binning
 
 static:
@@ -115,7 +116,7 @@ proc openKeys(path, cacheDir: string; it: ItemContext): Session =
     discard
 
 proc readActual(it: ItemContext; a: ptr ActualItems; i: int): ActualPart {.nimcall, gcsafe.} =
-  ## Opens file `i`, joins the project's survey and moves to its keys in memory, and counts
+  ## Opens file `i`, joins the survey and the moves to its keys in memory, and counts
   ## its traces into the grid's bins. The file is closed before this returns; a cancel is raised.
   template f: untyped = a.inp.files[i]
   var s: Session = nil
@@ -127,8 +128,7 @@ proc readActual(it: ItemContext; a: ptr ActualItems; i: int): ActualPart {.nimca
       else:
         let file = s.filePtr
         let progress = proc (done, total: int): bool {.gcsafe, raises: [].} = not it.cancelled
-        discard joinOwnFile(file, a.inp.survey, a.inp.options, a.inp.moves, a.inp.tableOnly,
-          progress)
+        discard joinOwnFile(file, a.survey, a.inp.options, a.inp.moves, false, progress)
         let n = file[].len
         var keys = newSeq[TraceKeys](min(n, KeysChunk))
         var bins = newSeqOfCap[int32](n)
@@ -168,14 +168,15 @@ proc readActual(it: ItemContext; a: ptr ActualItems; i: int): ActualPart {.nimca
     s = nil
     clearCycleRoots()
 
-proc countActual*(ctx: JobContext; inp: ptr ActualInputs; grid: Binning;
-    actual: var FoldMap): ActualTally =
+proc countActual*(ctx: JobContext; inp: ptr ActualInputs; survey: ptr SurveyGeometry;
+    grid: Binning; actual: var FoldMap): ActualTally =
   ## Counts the traces of `inp`'s files into `actual` (a fold map over `grid`, empty), adding
-  ## each file's bins in file order. Worker-only. A cancel raises `JobCancelledError`; `actual`
-  ## is then partly filled, and the caller drops it.
+  ## each file's bins in file order; `survey` (nil: none) places traces by their stations.
+  ## Worker-only. A cancel raises `JobCancelledError`; `actual` is then partly filled, and the
+  ## caller drops it.
   let total = inp.files.len
   ctx.setPhase "counting " & $total & (if total == 1: " file" else: " files")
-  var args = ActualItems(inp: inp, grid: grid)
+  var args = ActualItems(inp: inp, survey: survey, grid: grid)
   var sizes = newSeq[int64](total)
   for i, f in inp.files: sizes[i] = max(0'i64, f.size)
   var tally = ActualTally()
@@ -216,8 +217,7 @@ func seismicEntries(st: AppState): seq[int] =
 
 func actualReason*(st: AppState): string =
   ## Why the recorded fold cannot be counted now; "" when it can.
-  if st.projectSurveyLoading: SurveyLoading
-  elif st.fileList.scanning: Listing
+  if st.fileList.scanning: Listing
   elif st.seismicEntries.len == 0: NoSeismicFiles
   else: ""
 
@@ -227,34 +227,44 @@ func movesKey(moves: StationMoves): string =
     result.add $m.station.line & "," & $m.station.point & "," & $m.station.index & "," &
       $m.x & "," & $m.y & "," & $m.elev & "," & $m.fromTime & ";"
 
-func projectMoves(st: AppState): StationMoves =
-  if st.inProject: st.project.doc.stationMoves else: StationMoves()
+func joinOptions(st: AppState): JoinOptions =
+  ## The project's join options, else the session's.
+  if st.inProject: st.project.doc.options else: st.settings.join
+
+proc otherSurvey(st: AppState): bool =
+  ## Whether the project has a stored survey and a survey file on the map is neither one of
+  ## its copies nor one of their originals.
+  if not (st.inProject and st.project.doc.hasSurvey): return false
+  var own: HashSet[string]
+  for c in st.project.doc.survey:
+    own.incl normalizedPath(st.project.dir.partOf(c.copy))
+    if c.original.absolute.len > 0: own.incl normalizedPath(c.original.absolute)
+  for i in 0 ..< st.survey.layers.len:
+    template l: untyped = st.survey.layers[i]
+    if l.origin == loSurveyFile and normalizedPath(l.path) notin own: return true
 
 proc actualStamp*(st: AppState): int =
   ## A number that changes when anything `actualInputs` reads changes; cheap, so the window
   ## asks each frame and builds the inputs only when it moved.
   var h: Hash = 0
   h = h !& hash(st.fileList.entriesRev) !& hash(st.fileList.gen) !& hash(st.fileList.recursive) !&
-    hash(st.fileList.scanning) !& hash(st.survey.revision) !&
-    hash(cast[int](st.projectSurvey)) !& hash(st.projectSurveyLoading) !&
-    hash(st.projectTableOnly) !& hash(st.fileList.entries.len)
+    hash(st.fileList.scanning) !& hash(st.survey.revision) !& hash(st.inProject) !&
+    hash(st.fileList.entries.len)
   for i in st.seismicEntries:
     let e = st.editsAt(st.fileList.entries[i].path)
     h = h !& hash(e.revision) !& hash(e.shown.lists[teKilled].len)
-  h = h !& hash(st.projectMoves.movesKey)
-  if st.inProject: h = h !& hash($st.project.doc.options)
+  h = h !& hash(st.project.doc.stationMoves.movesKey) !& hash($st.joinOptions)
   !$h
 
 proc actualInputs*(st: AppState): ref ActualInputs =
   ## What the count needs from `st`: every seismic file of the Files window's list (its
-  ## subfolders' files when it lists them), the edits' kills, the project's survey, join
-  ## options and moves. The key names them all.
+  ## subfolders' files when it lists them), the edits' kills, the join options and the station
+  ## moves. The key names them all; the survey is named by the fold's own key.
   result = new ActualInputs
   result.cacheDir = st.indexCache
-  result.survey = st.projectSurvey
-  result.moves = st.projectMoves
-  result.tableOnly = st.projectTableOnly
-  if st.inProject and not result.survey.isNil: result.options = st.project.doc.options
+  result.moves = st.project.doc.stationMoves
+  result.options = st.joinOptions
+  result.otherSurvey = st.otherSurvey
   var key = "files:" & $st.fileList.recursive & ";"
   for i in st.seismicEntries:
     let e = st.fileList.entries[i]
@@ -264,6 +274,6 @@ proc actualInputs*(st: AppState): ref ActualInputs =
     f.kills.sort()
     key.add e.path & "|" & $e.size & "|" & $e.modified.toUnix & "|" & $hash(f.kills) & ";"
     result.files.add f
-  key.add "survey:" & $cast[int](result.survey) & "|" & $result.tableOnly & "|" &
-    (if result.survey.isNil: "" else: $result.options) & ";moves:" & result.moves.movesKey
+  key.add "options:" & $result.options & ";moves:" & result.moves.movesKey & ";other:" &
+    $result.otherSurvey
   result.key = key

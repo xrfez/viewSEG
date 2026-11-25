@@ -1239,10 +1239,13 @@ A size that would make too many bins is refused with a sentence, not counted.
 Two more ticks sit under it, on the same grid (the same bins, whatever the bin sizes). **Actual
 fold** counts the traces recorded in the seismic files the Files window lists (SEG-Y, SEG-D and
 SEG-2; the subfolders' files too when **Include subfolders** is on): each live trace is counted
-once, in the bin of the midpoint of its source and receiver. Where the project has a survey,
-its join and its station moves are applied to each file's trace headers in memory first (as
-Output does for a file it opens itself; no file is changed), and a file with no positions of
-its own takes them from the survey. Left out, and counted in the line under the ticks: traces
+once, in the bin of the midpoint of its source and receiver. The survey the grid is laid from
+(the survey files on the map, in a project or not) is joined to each file's trace headers in
+memory first, with the join options (the project's, else those set last) and the station moves
+(as Output does for a file it opens itself; no file is changed), so a file with station
+numbers and no positions of its own takes them from the survey. When the project's stored
+survey is another than the one on the map, the map's is used and the line under the ticks
+says so. Left out, and counted in the line under the ticks: traces
 that are not live (dead or auxiliary), traces you killed, traces with no coordinates and no
 midpoint, and traces outside the grid. A file that gives no source or receiver positions, and
 that the survey does not place, is named in that line; when no file gives any, the layer says

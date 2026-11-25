@@ -18,8 +18,9 @@
 ## recorded in the seismic files the Files window lists (`fkActual`), and the difference, pre-plot
 ## less recorded (`fkDifference`). One count gives both: `FoldSink.result` is the layer asked for
 ## and `other` the second, and both are kept, so switching from one to the other starts no job.
-## The recorded fold's cache key names the files (path, size and time), the edits, the station
-## moves and the project's survey as well as the bin sizes.
+## The recorded fold's cache key names the files (path, size and time), the edits, the join
+## options and the station moves as well as the survey and the bin sizes. The survey that places
+## the recorded traces by their stations is the one the grid is laid from (`geometryOf`).
 ##
 ## The result (`FoldResult`) is plain data: the grid's origin (the first
 ## bin's centre), its azimuth and bin sizes, the counts `[inlines x
@@ -97,6 +98,9 @@ type
       ## actual and difference only: files read, traces in them, left out as not live and as
       ## killed, and files that gave no position
     skipped*: seq[tuple[path, why: string]] ## files that could not be read
+    otherSurvey*: bool
+      ## actual and difference only: the project's stored survey is another than the map's,
+      ## and the map's placed the traces
 
   FoldSink* = ref object
     ## Filled when the job ends, except when it is cancelled.
@@ -400,7 +404,7 @@ proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
         res.describe(grid, along, across)
         if kind.isActual:
           var actual = initFoldMap(grid)
-          let tally = ctx.countActual(addr files, grid, actual)
+          let tally = ctx.countActual(addr files, addr g, grid, actual)
           ctx.checkCancelled()
           var made = res.recorded(ctx, m, actual)
           for r in [addr made.actual, addr made.difference]:
@@ -409,6 +413,7 @@ proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
                tally.skipped)
             (r.binned, r.outside, r.noCoordinates) = (tally.binned, tally.outside,
               tally.noCoordinates)
+            r.otherSurvey = files.otherSurvey
             r.ok = true
           if tally.files == 0:
             let why = if files.files.len == 0: NoSeismicFiles
@@ -601,8 +606,7 @@ proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; on: bool; along, across:
   t.follow(jobs, s, FoldWant(kind: fkPreplot, on: on), along, across)
 
 func running*(t: FoldTracker): JobId {.inline.} =
-  ## The job counting now, `NoJob` for none: the window holds what it reads (the project's
-  ## survey) until that job ends.
+  ## The job counting now, `NoJob` for none.
   t.job
 
 proc keepForStragglers*(t: FoldTracker) =

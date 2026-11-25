@@ -1878,13 +1878,9 @@ proc drawMap*(mu: var MapUi; id: string; st: AppState; t: Theme; marks: var Mark
     igSetScrollY_Float(0)
     marks.markWindow("map")
     let map = st.settings.map
-    let before = mu.fold.running
-    let wanted = mu.foldWant(st)
-    mu.fold.follow(st.jobs, st.survey, wanted, (if map.foldAlong > 0: map.foldAlong else: NaN),
+    mu.fold.follow(st.jobs, st.survey, mu.foldWant(st),
+      (if map.foldAlong > 0: map.foldAlong else: NaN),
       (if map.foldAcross > 0: map.foldAcross else: NaN))
-    # the count reads the project's survey: it is kept until the job has ended
-    if mu.fold.running != before and mu.fold.running != NoJob and not wanted.actual.isNil:
-      st.holdSurvey(mu.fold.running)
     let ink = mapInk(t, st.settings.plot.display.colours, st.settings.plot.display.custom)
     let layers = mapLayers(st, ink)
     var points = 0
