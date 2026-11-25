@@ -25,7 +25,8 @@
 ## - The gather's key reaches no file system call, a reopen is refused, a station move leaves
 ##   its keys alone, and replacing it says it was closed.
 ##
-## Seen to fail: with the window test taken out, "b-far.sgy" came as a trace of zeros; with the
+## Seen to fail: with the refusal on `projectSurveyLoading` back, a cancelled project survey load
+## refused the gather for good; with the window test taken out, "b-far.sgy" came as a trace of zeros; with the
 ## refusal in `editTraces` taken out, "an edit is refused" failed on
 ## the first edit; with the sort by record time left out, trace 0 was the first file's, not
 ## the earliest shot's; with the listed files back in the job's reads, "stepAway" ended with
@@ -60,6 +61,15 @@ proc holdOpen(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
   {.cast(gcsafe).}:
     if op in {foOpen, foMapped} and path.endsWith("b-shot2.sgy") and
         getThreadId() != mainThread:
+      reached.store(true)
+      var waited = 0
+      while not gate.isOpen and waited < 60_000:
+        sleep 1
+        inc waited
+
+proc holdSurvey(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
+  {.cast(gcsafe).}:
+    if op == foOpen and path.endsWith("survey.bin") and getThreadId() != mainThread:
       reached.store(true)
       var waited = 0
       while not gate.isOpen and waited < 60_000:
@@ -484,7 +494,38 @@ proc main*() =
         lone.sessions[0].gathered), lone.lastSaid
       doAssert lone.sessions[0].len == 5, $lone.sessions[0].len & ": " & lone.lastSaid
       lone.shutdown()
-    st.shutdown()
+
+    block surveyCancelled:
+      # the project's survey load is cancelled: the document still has a survey, which is
+      # not loaded, and that is no reason to refuse: the gather runs and says so
+      st.flushFiles()
+      st.shutdown()
+      var re = initAppState()
+      re.rememberFilesIn(fx.dir / "config3")
+      gate.close()
+      reached.store(false)
+      setFsHook(holdSurvey)
+      re.apply Command(kind: ckOpenProject, projectPath: fx.dir / "Job 1")
+      doAssert re.settle(reached.load), "the survey load did not start"
+      doAssert re.settle(re.jobs.active.anyIt(it.spec.title == "Load the project's survey"))
+      let load = re.jobs.active.filterIt(it.spec.title == "Load the project's survey")[0].id
+      re.apply Command(kind: ckCancelJob, job: load)
+      gate.open
+      doAssert re.settle(re.jobs.info(load).get.state == jsCancelled)
+      setFsHook(nil)
+      doAssert re.project.survey == srNone and re.project.doc.hasSurvey and
+        re.projectSurveyLoading, "the survey is not left cancelled"
+      re.apply Command(kind: ckBrowse, paths: @[dir])
+      doAssert re.settle(not re.fileList.scanning and re.fileList.folder == dir)
+      re.ask()
+      # (no survey file is on the map, so no station is found: the gather ran and said so)
+      doAssert re.settle(re.jobs.active.len == 0 and
+        "No listed file holds receiver station 100/105" in re.lastSaid),
+        "refused: " & re.lastSaid
+      doAssert re.sayings("still loading") == 0
+      doAssert "The project's survey is not loaded: stations come from the headers and " &
+        "the survey files on the map." in re.lastSaid, re.lastSaid
+      re.shutdown()
   echo "treceivergather: done"
 
 when isMainModule:

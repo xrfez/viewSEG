@@ -7410,8 +7410,8 @@ proc startReceiverGather(state: var AppState; cmd: Command) =
   if cmd.gatherComponent notin AnyComponent .. 255:
     state.ignore(cmd, "a component is a number from 0 to 255, or -1 for any")
     return
-  if (state.importing and not state.joining.auto) or state.projectSurveyLoading or
-      state.loading.anyIt(it.session == NoSession):
+  if (state.importing and not state.joining.auto) or
+      state.project.survey in {srLoading, srKeeping} or state.loading.anyIt(it.session == NoSession):
     state.ignore(cmd, GatherSurveyLoading)
     return
   # the survey that places the recorded fold's traces: the survey files loaded on the map
@@ -7432,7 +7432,8 @@ proc startReceiverGather(state: var AppState; cmd: Command) =
     component: cmd.gatherComponent,
     relations: (if relations.isNil: nil else: addr relations[]), stations: stations,
     options: (if state.inProject: state.project.doc.options else: state.settings.join),
-    moves: state.project.doc.stationMoves, cacheDir: state.indexCache)
+    moves: state.project.doc.stationMoves, cacheDir: state.indexCache,
+    surveyNotLoaded: state.projectSurveyLoading)
   for i in 0 ..< state.fileList.entries.len:
     if state.fileList.entries[i].kind in SeismicKinds - SignatureFileKinds:
       var kills = state.editsAt(state.fileList.entries[i].path).shown.lists[teKilled]

@@ -88,6 +88,7 @@ type
     options*: JoinOptions
     moves*: StationMoves
     cacheDir*: string
+    surveyNotLoaded*: bool ## the project has a survey that is not loaded (said in the result)
     maxTraces, maxBytes, budget: int ## the limits, as `gatherWork` found them
 
   GatherTrace = object
@@ -352,6 +353,9 @@ func sentence(c: Collected; ask: GatherAsk; kept, listed: int): string =
   if c.capped.len > 0:
     result.add " Stopped at " & c.capped & ": the traces of " &
       plural(c.notAdded, "later file") & " (or the rest of one) were not added."
+  if ask.surveyNotLoaded:
+    result.add " The project's survey is not loaded: stations come from the headers and the " &
+      "survey files on the map."
 
 func compareRows(a, b: GatherRow): int =
   ## Record time first (a trace with none last), then the source station, then file order.
