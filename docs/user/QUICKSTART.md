@@ -1346,16 +1346,23 @@ for noise** (below), **clipped**, spiky, constant, DC offset, all zero, not a nu
 the template** (planned in the X file, no trace in the record), traces **not in the
 template**, stations **recorded twice**; auxiliary traces, traces **without a position**,
 **reversed** ones; the shots whose X record stands out from its template (**spread not
-the template**); and traces whose header **offset** is not the distance between their
-source and receiver positions, or whose header **midpoint** is not halfway between them
-(more than 1 unit or 1% of the distance off, the larger, in the survey's unit; a processed
-file's midpoint is often its bin's centre, so expect some). That check reads the headers
-only, as they are after a survey import or a station move. A trace with no offset, or
-whose positions are not known, cannot be compared: the list says how many ("N traces give
-no offset; M give no positions: not judged"), and does not mark them. Where the
-coordinates are degrees or arc seconds, or the offsets are in another unit than the
-coordinates, no trace is judged and the list says why, instead of marking every one.
-Hover a filter for what it counts; **Select** selects its traces in the
+the template**); and three geometry checks, read from the headers only:
+**offset disagrees with the positions** and **midpoint disagrees with the positions** (the
+header's against the distance and the halfway point of the source and receiver positions in
+force, more than 1 unit or 1% of the distance off, the larger, in the survey's unit; a
+processed file's midpoint is often its bin's centre, so expect some), and **header position
+disagrees with the survey** (the file's own header receiver or source position against the
+position the survey it was joined to gives the station, more than 1 unit off; any format; a
+flagged trace is the one to move the station for: "Move this station to the position in this
+trace's headers"). Each says "not checked" and why, never a count of 0, when it could not
+compare: the offset and midpoint of a SEG-D or SEG-2 file (they are computed from the
+positions), of a SEG-Y file whose own headers cannot be read after a survey import replaced
+its coordinates, where the coordinates are angles (degrees, arc seconds), where the offsets
+are in another unit than the coordinates or are all about 3.28 or 0.3048 times the distance,
+and the header position with no survey joined, with no station or header position to
+compare, or where nearly every station differs (the units or the frame differ). A trace with
+no offset, or whose positions are not known, cannot be compared: the list says how many ("N
+traces give no offset; M give no positions: not judged") and does not mark them. Hover a filter for what it counts; **Select** selects its traces in the
 plot; point at a ringed receiver and its description says which filters mark it.
 
 **Noisy traces and the area left out.** With a relation file, **noisy** and **weak** are
@@ -2112,7 +2119,7 @@ holds, read-only, in four tabs:
   record; selected rows are marked, and so is the row of the trace under the plot's
   pointer. Two columns are worked out from the positions: **Distance, source to receiver**
   and **Offset error** (the offset's size less that distance; empty where the units
-  differ or a position is not known). Right-click a row to copy it or every row read. Only the rows on screen are
+  differ or a position is not known; both empty where the coordinates are angles). Right-click a row to copy it or every row read. Only the rows on screen are
   read; a column you sort, find or graph by is read whole once, in the background (a
   million traces scroll at frame rate).
 

@@ -273,6 +273,36 @@ const
     "file, a file opened with other options, or a large file)"
   OwnUnreadableWhy* = "the trace could not be read from the file"
 
+type OwnOpen* = object
+  ## How a file is opened again to read its own headers' keys (`ownKeysOf`).
+  choice*: OpenChoice
+  cache*: string ## its index cache file; "" for none
+  limit*: int64 = OwnReadLimit
+
+proc ownKeysOf*(file: ptr SeismicFile; path: string; traces: Slice[int]; how: OwnOpen;
+    keys: var seq[TraceKeys]): string =
+  ## The keys the file's own headers give the traces `traces` of open file `file` (at `path`),
+  ## from the file on disk and not from the keys in memory, which a join or a station move
+  ## may have replaced, into `keys`; "" when read, else why not (as `ownPositionWork`: the
+  ## file is opened again without keys, through its index cache when there is one). Worker
+  ## only. Never writes the file.
+  keys.setLen 0
+  let cached = how.cache.len > 0 and how.choice.usesCache and fs.fileExists(how.cache)
+  let sampled = file[].kind == skSegy and file[].log.anyIt(it.code == dcIndexSampled)
+  let cheap = cached or sampled or (file[].kind != skSegd and file[].mappedSize <= how.limit)
+  if file[].inMemory or traces.a < 0 or traces.b >= file[].len or not cheap:
+    return OwnNoIndexWhy
+  try:
+    fs.mappedRead(path, headers = true)
+    let disk = openSeismic(path, keys = false,
+      opts = openOptions(how.choice, if cached: how.cache else: "", currentVendors()))
+    if traces.b >= disk.len: return OwnUnreadableWhy
+    keys = newSeq[TraceKeys](traces.len)
+    disk.traceKeysInto(traces, keys)
+  except CatchableError:
+    keys.setLen 0
+    return OwnUnreadableWhy
+
 proc ownPositionWork*(file: ptr SeismicFile; path: string; session: SessionId; index: int;
     choice: OpenChoice; cache: string; to: Poster; limit = OwnReadLimit): JobWork =
   ## The work of a job that reads the receiver position trace `index` of open file `file` (at

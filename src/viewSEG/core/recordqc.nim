@@ -52,7 +52,7 @@ import parseSEG
 import processSEG/core/[rows, types, workspace]
 import processSEG/pipeline
 import processSEG/qc/[amplitude, exclusion, record]
-import components, correlateread, edits, filesystem, firstbreakjobs, firstbreaks, inbox, jobs,
+import components, correlateread, edits, filejobs, filesystem, firstbreakjobs, firstbreaks, inbox, jobs,
   geometryqc, mapkinds, noisearea, processing, relationcheck, session, threads
 
 export geometryqc, mapkinds, relationcheck.placeTraces
@@ -71,7 +71,7 @@ type
     key*: tuple[file: SessionId; gather, keys: int; relations: pointer; domain: RelationDomain;
         traceMatch: TraceMatch; placed: Placed; samples: bool;
         own: string; noise: NoiseSettings; breaks: BreakKey; share: int;
-        geometry: GeometryUnits]
+        geometry: GeometryAsk]
       ## what the job, or `hits`, were made from (`noise`, `breaks` and `share` only when the
       ## noisy-trace test runs: `share` 0 finds the first breaks itself, 1 waits for the
       ## overlay's job to end, 2 takes the overlay's result)
@@ -369,7 +369,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
     against: string; traceMatch: TraceMatch; placed: Placed;
     samples: bool; own: seq[FilterEntry]; reversed: seq[int]; shifts: seq[ShiftEntry];
     noise: NoiseWork; to: Poster; view: ref CorrelateView = nil;
-    geometry = GeometryUnits()): JobWork =
+    geometry = GeometryAsk(); ownOpen = OwnOpen()): JobWork =
   ## The work of a job that reads gather `gather` (`traces`) of open file
   ## `session` (`file`, at `path`; its trace 0 is survey-wide `base`) and
   ## posts what the filters in `TraceFilters` find in it (`mkRecordQc`):
@@ -387,9 +387,10 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
   ## holds none, on those it finds itself and posts with the result. Submitted
   ## with the file in `reads`; `relations` is read in place, never copied.
   ## When `view` is set, the samples are that view's listen time, not the raw
-  ## record, and `path` (the virtual path) is not mapped. `geometry` says whether the
-  ## record's offsets and coordinates can be compared (`core/geometryqc`), for the two
-  ## geometry filters, which are found from the keys alone.
+  ## record, and `path` (the virtual path) is not mapped. `geometry` says what the geometry
+  ## filters are given (`core/geometryqc`): they are found from the keys alone, and from the
+  ## file's own headers (read again with `ownOpen`) when `geometry.own`, whether or not the
+  ## samples can be read.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var hits: array[MapFilter, FilterHits]
     for m in TraceFilters: hits[m].state = fsDone
@@ -403,138 +404,152 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
     var found = FirstBreaks()
     var picked = false
     var noiseError = ""
+    var failure: ref CatchableError = nil
     {.cast(gcsafe).}:
       template f: untyped = file[]
       revision = f.keysRevision
-      let n = traces.len
-      var amps = newSeq[TraceAmplitude](n)
-      var ws = initWorkspace()
-      let cols = if view == nil: max(1, f.maxSamples(traces)) else: view.listenSamples
-      if cols > 0: ws.reserve(traceAmplitudeWorkspace(cols))
-      var viewWs: CorrelateWorkspace
-      if view != nil: viewWs = newWorkspace(view[])
-      let wantNoise = samples and noise.on
-      var br = FirstBreaks()
-      if wantNoise:
-        if noise.shared.state == bkDone: br = noise.shared
-        else:
-          ctx.setPhase "picking the first breaks"
-          br = breaksOfRecord(file, path, traces, noise.key.killed,
-            proc (done, total: int): bool = ctx.progress(done, 2 * total), noise.key.off,
-              noise.key.guide, noise.key.pick, view = view)
-          br.key = noise.key
-          found = br
-          picked = true
-      let span = if picked: 2 * n else: n
-      let spent = if picked: n else: 0
-      var unreadRows: seq[int] # rows of the record whose samples could not be read
-      ctx.setPhase "reading the record"
-      discard f.cutShort # parseSEG's guard: stale cached bytes are not read past a cut
-      var first = if samples and cols > 0: traces.a else: traces.b + 1
-      while first <= traces.b:
-        let part = first .. min(traces.b, first + QcChunk - 1)
-        var samples: Tensor[float32]
-        var failed, notDecoded: seq[int]
-        var listenKeys: seq[TraceKeys]
-        if view == nil:
-          if not f.inMemory: fs.mappedRead(path) # (tests: the drive's next pages come late)
-          var log: DiagLog
-          samples = f.readTraces(part, 0 ..< cols, log)
-          for d in log:
-            # (a trace the file's cut or its drive made unreadable is not an
-            # undecodable one: it is left out of that count)
-            if d.loc.trace in part and (d.loc.trace - part.a) notin failed:
-              failed.add d.loc.trace - part.a
-          for r in failed:
-            var unread = false
-            for d in log:
-              if d.loc.trace == part.a + r and d.code in {dcTruncated, dcIo}: unread = true
-            if not unread: notDecoded.add r
-          failed.sort()
-        else:
-          let rows = part.len
-          samples = readListenChunk(view[], file, part, viewWs)
-          failed = viewWs.failed
-          # (as a plain file's: a cut or a failed drive is unread, not undecodable)
-          for k, r in failed:
-            if viewWs.why[k] == rfOther: notDecoded.add r
-          listenKeys.setLen(rows)
-          for i in 0 ..< rows:
-            listenKeys[i] = f.traceKeys(part.a + i)
-        if reversed.len > 0: negateQc(samples, part, reversed)
-        let dtOverride = if view == nil: NaN else: view.dtMs
-        if shifts.len > 0: applyShiftsQc(samples, f, part, shifts, dtOverride)
-        if own.len > 0: applyOwnQc(samples, f, part, own, ws, dtOverride)
-        for r in failed: unreadRows.add part.a - traces.a + r
-        for r in notDecoded: hits[mfUndecodable].traces.add base + part.a + r
-        let dt = if view != nil: view.dtMs else: f.index.keys[part.a].intervalUs / 1000
-        let meta = if view == nil:
-            initChunkMeta(f.rowsOf(part), (if dt > 0: dt else: 1.0), 0, failed)
+      var ownKeys: seq[TraceKeys] = @[]
+      var ownWhy = ""
+      if geometry.own:
+        ctx.setPhase "reading the record's own header positions"
+        ownWhy = ownKeysOf(file, path, traces, ownOpen, ownKeys)
+      geometrySummary = checkGeometryOf(f, traces, base, geometry, ownKeys, ownWhy, hits)
+      try:
+        let n = traces.len
+        var amps = newSeq[TraceAmplitude](n)
+        var ws = initWorkspace()
+        let cols = if view == nil: max(1, f.maxSamples(traces)) else: view.listenSamples
+        if cols > 0: ws.reserve(traceAmplitudeWorkspace(cols))
+        var viewWs: CorrelateWorkspace
+        if view != nil: viewWs = newWorkspace(view[])
+        let wantNoise = samples and noise.on
+        var br = FirstBreaks()
+        if wantNoise:
+          if noise.shared.state == bkDone: br = noise.shared
           else:
-            var counts = newSeq[int](listenKeys.len)
-            for i in 0 ..< counts.len: counts[i] = cols
-            initChunkMeta(rowsOf(listenKeys, counts), (if dt > 0: dt else: 1.0), 0, failed)
-        traceAmplitudeInto(samples, meta, AmplitudeParams(), amps.toOpenArray(part.a - traces.a,
-          part.b - traces.a), ws)
-        if not ctx.progress(spent + part.b - traces.a + 1, span):
-          raise newException(JobCancelledError, "cancelled")
-        first = part.b + 1
-      # The record's statistics over its seismic traces.
-      var seismic: seq[int]
-      for i in 0 ..< n:
-        let k = f.index.keys[traces.a + i]
-        if not k.isSeismic: hits[mfAuxiliary].traces.add base + traces.a + i
-        else:
-          seismic.add i
-          if k.status == tsDead: hits[mfDead].traces.add base + traces.a + i
-      if relations.isNil:
-        for m in [mfMissing, mfUnlisted, mfDuplicate]:
-          (hits[m].state, hits[m].note) = (fsNotChecked, "no relation file is loaded, and " &
-            "no template generated")
-      else:
-        ctx.setPhase "checking the record against the template"
-        try:
-          records = hits.completeness(f, base, traces, relations[], against, domain,
-            traceMatch, placed, ctx, byPlace, onStations)
-        except ValueError as e:
+            ctx.setPhase "picking the first breaks"
+            br = breaksOfRecord(file, path, traces, noise.key.killed,
+              proc (done, total: int): bool = ctx.progress(done, 2 * total), noise.key.off,
+                noise.key.guide, noise.key.pick, view = view)
+            br.key = noise.key
+            found = br
+            picked = true
+        let span = if picked: 2 * n else: n
+        let spent = if picked: n else: 0
+        var unreadRows: seq[int] # rows of the record whose samples could not be read
+        ctx.setPhase "reading the record"
+        discard f.cutShort # parseSEG's guard: stale cached bytes are not read past a cut
+        var first = if samples and cols > 0: traces.a else: traces.b + 1
+        while first <= traces.b:
+          let part = first .. min(traces.b, first + QcChunk - 1)
+          var samples: Tensor[float32]
+          var failed, notDecoded: seq[int]
+          var listenKeys: seq[TraceKeys]
+          if view == nil:
+            if not f.inMemory: fs.mappedRead(path) # (tests: the drive's next pages come late)
+            var log: DiagLog
+            samples = f.readTraces(part, 0 ..< cols, log)
+            for d in log:
+              # (a trace the file's cut or its drive made unreadable is not an
+              # undecodable one: it is left out of that count)
+              if d.loc.trace in part and (d.loc.trace - part.a) notin failed:
+                failed.add d.loc.trace - part.a
+            for r in failed:
+              var unread = false
+              for d in log:
+                if d.loc.trace == part.a + r and d.code in {dcTruncated, dcIo}: unread = true
+              if not unread: notDecoded.add r
+            failed.sort()
+          else:
+            let rows = part.len
+            samples = readListenChunk(view[], file, part, viewWs)
+            failed = viewWs.failed
+            # (as a plain file's: a cut or a failed drive is unread, not undecodable)
+            for k, r in failed:
+              if viewWs.why[k] == rfOther: notDecoded.add r
+            listenKeys.setLen(rows)
+            for i in 0 ..< rows:
+              listenKeys[i] = f.traceKeys(part.a + i)
+          if reversed.len > 0: negateQc(samples, part, reversed)
+          let dtOverride = if view == nil: NaN else: view.dtMs
+          if shifts.len > 0: applyShiftsQc(samples, f, part, shifts, dtOverride)
+          if own.len > 0: applyOwnQc(samples, f, part, own, ws, dtOverride)
+          for r in failed: unreadRows.add part.a - traces.a + r
+          for r in notDecoded: hits[mfUndecodable].traces.add base + part.a + r
+          let dt = if view != nil: view.dtMs else: f.index.keys[part.a].intervalUs / 1000
+          let meta = if view == nil:
+              initChunkMeta(f.rowsOf(part), (if dt > 0: dt else: 1.0), 0, failed)
+            else:
+              var counts = newSeq[int](listenKeys.len)
+              for i in 0 ..< counts.len: counts[i] = cols
+              initChunkMeta(rowsOf(listenKeys, counts), (if dt > 0: dt else: 1.0), 0, failed)
+          traceAmplitudeInto(samples, meta, AmplitudeParams(), amps.toOpenArray(part.a - traces.a,
+            part.b - traces.a), ws)
+          if not ctx.progress(spent + part.b - traces.a + 1, span):
+            raise newException(JobCancelledError, "cancelled")
+          first = part.b + 1
+        # The record's statistics over its seismic traces.
+        var seismic: seq[int]
+        for i in 0 ..< n:
+          let k = f.index.keys[traces.a + i]
+          if not k.isSeismic: hits[mfAuxiliary].traces.add base + traces.a + i
+          else:
+            seismic.add i
+            if k.status == tsDead: hits[mfDead].traces.add base + traces.a + i
+        if relations.isNil:
           for m in [mfMissing, mfUnlisted, mfDuplicate]:
-            (hits[m].state, hits[m].note) = (fsNotChecked, e.msg)
-      if records.len > 0 and onStations and noise.settings.templateOnly:
-        outside = outsideTemplate(f.index.keys, traces, relations[], records, domain)
-      if wantNoise:
-        ctx.setPhase "judging the noisy traces"
-        try:
-          # a killed trace is not judged and not in the statistics, as an unread one
-          var left = unreadRows
-          for t in noise.key.killed:
-            if t in traces and (t - traces.a) notin left: left.add t - traces.a
-          summary = noiseOfRecord(f, traces, amps, left, outside, br, noise.settings)
-        except ValueError as e:
-          noiseError = e.msg
-      if samples:
-        for i in seismic:
-          for flag in amps[i].flags:
-            if wantNoise or flag notin {afNoisy, afWeak}:
-              hits[AmplitudeFilters[flag]].traces.add base + traces.a + i
-        if summary.ready:
+            (hits[m].state, hits[m].note) = (fsNotChecked, "no relation file is loaded, and " &
+              "no template generated")
+        else:
+          ctx.setPhase "checking the record against the template"
+          try:
+            records = hits.completeness(f, base, traces, relations[], against, domain,
+              traceMatch, placed, ctx, byPlace, onStations)
+          except ValueError as e:
+            for m in [mfMissing, mfUnlisted, mfDuplicate]:
+              (hits[m].state, hits[m].note) = (fsNotChecked, e.msg)
+        if records.len > 0 and onStations and noise.settings.templateOnly:
+          outside = outsideTemplate(f.index.keys, traces, relations[], records, domain)
+        if wantNoise:
+          ctx.setPhase "judging the noisy traces"
+          try:
+            # a killed trace is not judged and not in the statistics, as an unread one
+            var left = unreadRows
+            for t in noise.key.killed:
+              if t in traces and (t - traces.a) notin left: left.add t - traces.a
+            summary = noiseOfRecord(f, traces, amps, left, outside, br, noise.settings)
+          except ValueError as e:
+            noiseError = e.msg
+        if samples:
           for i in seismic:
-            if summary.louder[i]: hits[mfLouder].traces.add base + traces.a + i
-            if summary.state[i] in {nsInArea, nsUngrouped, nsIncompleteNode} or
-                summary.outsideAt(traces.a + i):
-              hits[mfNotJudged].traces.add base + traces.a + i
-      for m in TraceFilters - {mfMissing, mfUnlisted, mfDuplicate}:
-        hits[m].count = hits[m].traces.len
-        hits[m].note = "traces"
-      geometrySummary = checkGeometryOf(f, traces, base, geometry, hits)
-      if noiseError.len > 0:
-        for m in NoiseFilters: (hits[m].state, hits[m].note) = (fsNotChecked, noiseError)
-      if summary.ready:
-        hits[mfNotJudged].note = "traces not judged for noise: " & summary.notJudgedWords
-        hits[mfLouder].note = "traces outside the area louder than those beside them"
-      if not samples:
-        for m in SampleFilters:
-          (hits[m].state, hits[m].note) = (fsNotChecked, "the samples were not read")
-    discard ctx.progress(1, 1)
+            for flag in amps[i].flags:
+              if wantNoise or flag notin {afNoisy, afWeak}:
+                hits[AmplitudeFilters[flag]].traces.add base + traces.a + i
+          if summary.ready:
+            for i in seismic:
+              if summary.louder[i]: hits[mfLouder].traces.add base + traces.a + i
+              if summary.state[i] in {nsInArea, nsUngrouped, nsIncompleteNode} or
+                  summary.outsideAt(traces.a + i):
+                hits[mfNotJudged].traces.add base + traces.a + i
+        for m in TraceFilters - {mfMissing, mfUnlisted, mfDuplicate} - GeometryFilters:
+          hits[m].count = hits[m].traces.len
+          hits[m].note = "traces"
+        if noiseError.len > 0:
+          for m in NoiseFilters: (hits[m].state, hits[m].note) = (fsNotChecked, noiseError)
+        if summary.ready:
+          hits[mfNotJudged].note = "traces not judged for noise: " & summary.notJudgedWords
+          hits[mfLouder].note = "traces outside the area louder than those beside them"
+        if not samples:
+          for m in SampleFilters:
+            (hits[m].state, hits[m].note) = (fsNotChecked, "the samples were not read")
+      except JobCancelledError: raise
+      except CatchableError as e: failure = e
+    if failure != nil:
+      # (the geometry filters need no samples: they stand; the others say why not)
+      for m in TraceFilters - GeometryFilters:
+        (hits[m].state, hits[m].note) = (fsNotChecked, "the record could not be read: " &
+          failure.msg)
+    else: discard ctx.progress(1, 1)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkRecordQc, qcSession: session, qcGather: gather,
       qcKeys: revision, qcHits: move hits, qcRecord: (if records.len > 0: records[0] else: -1'i64),
@@ -543,3 +558,4 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       qcOnStations: onStations,
       qcNoise: move summary, qcGeometry: move geometrySummary, qcBreaks: move found,
           qcPicked: picked)
+    if failure != nil: raise failure

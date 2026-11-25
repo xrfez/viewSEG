@@ -409,6 +409,7 @@ proc glyphIcon(c, background: Rgba; shape: FlagShape; symbol: FlagSymbol; id: st
   of syRing: ImDrawList_AddCircle(dl, p(0, 0), 0.7 * k, col, 0, ws)
   of syDot: ImDrawList_AddCircleFilled(dl, p(0, 0), 0.35 * k, col, 0)
   of syDash: ImDrawList_AddLine(dl, p(-0.7 * k, 0.7 * k), p(0.7 * k, -0.7 * k), col, ws)
+  of syBackslash: ImDrawList_AddLine(dl, p(-0.7 * k, -0.7 * k), p(0.7 * k, 0.7 * k), col, ws)
 
 proc layerRow(l: MapLayerView; i: int; marks: var Marks; res: var MapOutput) =
   ## One layer of the popover: its colour, its own toggle and its points.
@@ -862,16 +863,19 @@ const filterTips: array[MapFilter, string] = [
   "Traces whose header offset is not the distance between their source and receiver positions" &
     " (coordinates and offsets in one unit; a trace with no offset or no position is not judged)",
   "Traces whose header midpoint is not halfway between their source and receiver positions" &
-    " (a processed file's midpoint is often its bin's centre: expect some)"]
+    " (a processed file's midpoint is often its bin's centre: expect some)",
+  "Traces whose own header receiver or source position is not where the survey puts their" &
+    " station (a station that moved, or a survey that is not the file's). Any format. In the" &
+    " station-move menu, \"Move this station to the position in this trace's headers\"" &
+    " follows it"]
 
 const NoiseWrapEm = 30'f32 ## the words' lines wrap at this many font sizes
 
-func geometryLines(st: AppState): seq[string] =
-  ## The line the geometry check's words take under "Filters": why the record is not judged,
-  ## or the traces it did not judge (none while neither geometry filter is on).
-  if st.settings.map.filters * {mfOffsetOff, mfMidpointOff} != {}:
-    let line = st.recordQc.geometry.geometryWords
-    if line.len > 0: result.add line
+func geometryShown(st: AppState): seq[string] =
+  ## The lines the geometry checks' words take under "Filters": why a filter that is on is
+  ## not judged, and the traces not judged (none while no geometry filter is on).
+  let on = st.settings.map.filters
+  st.recordQc.geometry.geometryLines(mfOffsetOff in on, mfMidpointOff in on, mfPositionOff in on)
 
 func noiseLines(st: AppState): seq[string] =
   ## The lines the noisy-trace test's words take under "Filters" (none while no
@@ -884,7 +888,7 @@ func noiseLines(st: AppState): seq[string] =
 const FilterOrder = [mfDead, mfUndecodable, mfKilled, mfNoisy, mfLouder, mfWeak, mfNotJudged,
   mfClipped, mfSpiky, mfConstant, mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted,
   mfDuplicate, mfAuxiliary, mfNoPosition, mfReversed, mfSpreadDiffers, mfOffsetOff,
-  mfMidpointOff]
+  mfMidpointOff, mfPositionOff]
   ## the order the filters are listed in: the noisy-trace test's findings together
 static: doAssert FilterOrder.len == ord(high(MapFilter)) + 1, "a filter is not listed"
 
@@ -932,7 +936,7 @@ proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; mar
       marks.mark("map.filter select " & $f)
       tip("Select these " & $h.traces.len & " traces in the plot")
     igPopID()
-  let geometry = geometryLines(st)
+  let geometry = geometryShown(st)
   if geometry.len > 0:
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
     igPushTextWrapPos(igGetCursorPosX() + NoiseWrapEm * igGetFontSize())

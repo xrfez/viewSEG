@@ -95,6 +95,8 @@ type
       ## traces whose header offset is not the distance between their source and receiver
     mfMidpointOff = "midpoint disagrees with the positions"
       ## traces whose header midpoint is not halfway between their source and receiver
+    mfPositionOff = "header position disagrees with the survey"
+      ## traces whose own header receiver or source position is not the survey's station's
 
   FlagFamily* = enum
     ## What kind of finding a filter's mark says, in its colour.
@@ -122,6 +124,7 @@ type
     syRing = "a ring"
     syDot = "a dot"
     syDash = "a slash"
+    syBackslash = "a backslash"
 
   FilterMark* = tuple[family: FlagFamily; symbol: FlagSymbol]
     ## how a filter's points are marked on the map: its kind's colour and
@@ -153,7 +156,7 @@ const
     (ffAmplitude, syPlus), (ffFailed, syRing), (ffFailed, syCross), (ffSpread, syNone),
     (ffSpread, syPlus), (ffSpread, syRing), (ffSpread, syBar), (ffSpread, syUpright),
     (ffEdited, syNone), (ffSpread, syCross), (ffAmplitude, syDot), (ffAmplitude, syDash),
-    (ffSpread, syDot), (ffSpread, syDash)]
+    (ffSpread, syDot), (ffSpread, syDash), (ffSpread, syBackslash)]
     ## each filter's mark, in `MapFilter`'s order: no two alike, and the
     ## filters most used plain outlines (dead a square, noisy a circle,
     ## missing from the template a triangle, reversed a diamond; killed an X
@@ -161,8 +164,10 @@ const
     ## position are counted, not marked
   TraceFilters* = {mfDead, mfUndecodable, mfNoisy, mfClipped, mfSpiky, mfConstant, mfWeak,
     mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted, mfDuplicate, mfAuxiliary,
-    mfLouder, mfNotJudged, mfOffsetOff, mfMidpointOff}
+    mfLouder, mfNotJudged, mfOffsetOff, mfMidpointOff, mfPositionOff}
     ## the filters found by reading the record shown on a job (`core/recordqc`)
+  GeometryFilters* = {mfOffsetOff, mfMidpointOff, mfPositionOff}
+    ## those found from the trace keys and the file's own headers (`core/geometryqc`)
   NoiseFilters* = {mfNoisy, mfWeak, mfLouder, mfNotJudged}
     ## those that come from the noisy-trace test (`core/noisearea`): they run it, and the
     ## Seismic window marks the exclusion area while one is on

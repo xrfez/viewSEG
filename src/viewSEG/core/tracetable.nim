@@ -99,12 +99,14 @@ func keyLabel*(name: string): string =
   for (n, label) in KeyColumns:
     if n == name: return label
 
-func keyValue*(k: TraceKeys; name: string; channelSet = 0; lengths = true): float64 =
+func keyValue*(k: TraceKeys; name: string; channelSet = 0; lengths = true;
+    angles = false): float64 =
   ## Key column `name` of a trace's keys and channel set number `channelSet` (0
   ## for none); NaN for a name of no key, and for a value the trace lacks. The distance
   ## and the offset error (the offset's size less the distance, in the coordinates' unit)
-  ## are NaN unless `lengths`: the file's offsets and coordinates are lengths of one unit
-  ## (`core/geometryqc`'s `geometryUnits`).
+  ## are NaN where the coordinates are `angles`; the offset error also unless `lengths`: the
+  ## file's offsets and coordinates are lengths of one unit (`core/geometryqc`'s
+  ## `geometryUnits`).
   case name
   of "keys.channelSet": (if channelSet <= 0: NaN else: float64(channelSet))
   of "keys.traceCode": (if k.traceCode == 0: NaN else: float64(k.traceCode))
@@ -131,8 +133,8 @@ func keyValue*(k: TraceKeys; name: string; channelSet = 0; lengths = true): floa
   of "keys.time": k.time
   of "keys.t0Ms": k.t0Ms
   of "keys.intervalUs": k.intervalUs
-  of "keys.distance": (if lengths: checkGeometry(k).distance else: NaN)
-  of "keys.offsetError": (if lengths: checkGeometry(k).offsetError else: NaN)
+  of "keys.distance": (if not angles: checkGeometry(k).distance else: NaN)
+  of "keys.offsetError": (if lengths and not angles: checkGeometry(k).offsetError else: NaN)
   else: NaN
 
 type

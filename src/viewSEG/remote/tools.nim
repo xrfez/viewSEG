@@ -695,8 +695,11 @@ proc mapJson(state: AppState; limit: int): JsonNode =
         "louder": n.louderCount, "lines": n.lines, "linesReached": n.linesReached}
     let g = state.recordQc.geometry
     if g.ready:
-      result["geometry"] = %*{"judged": g.units.judged, "words": g.geometryWords,
-        "offsetDisagrees": g.offsetOff, "midpointDisagrees": g.midpointOff,
+      result["geometry"] = %*{"words": g.geometryLines(true, true, true),
+        "offsetNotJudged": g.offsetWhy, "midpointNotJudged": g.midpointWhy,
+        "positionNotJudged": g.positionWhy, "offsetDisagrees": g.offsetOff,
+        "midpointDisagrees": g.midpointOff, "positionDisagrees": g.positionOff,
+        "receiversOff": g.receiversOff, "sourcesOff": g.sourcesOff,
         "noOffset": g.noOffset, "noPositions": g.noPositions}
   var selected = newJArray()
   for i in 0 ..< min(state.selection.points.len, limit):

@@ -1,16 +1,16 @@
-## The geometry filters in the running frontend, headless, with real clicks: `mapSps`'s S, R
-## and X files and a SEG-Y shot of source 1003 of line 0 whose receiver (1, 2)'s trace has an
-## offset header 50 over the distance its positions give.
+## The geometry filters in the running frontend, headless, with real clicks: `surveySps`'s S,
+## R and X files, joined to a SEG-Y shot of it whose channel 8's offset header is 50 over its
+## distance and whose channel 12's receiver position is 30 east of its station.
 ##
-## - In the Layers popover, under "Filters: the record shown", ticking "offset disagrees with
-##   the positions" and "midpoint disagrees with the positions" lists each with its count: 1
-##   and 0.
-## - The receiver of the trace is ringed in the filter's colour (a triangle with a dot inside);
-##   one further along its line is not.
-## - The point under the pointer says which filter marks it.
+## - In the Layers popover, under "Filters: the record shown", ticking the three geometry
+##   filters lists each with its count (offset 2: the bad one and the moved receiver, whose
+##   offset no longer fits where its header puts it; header position 1) and midpoint 0.
+## - The two receivers are ringed in the filter's colour (a triangle with a dot inside); one
+##   along the line is not.
+## - The point under the pointer says which filters mark it.
 ##
-## Seen to fail: with the offset filter's traces left empty ("hits" never filled), "counted"
-## found 0 and the receiver was not ringed.
+## Seen to fail: with the offset filter's traces left empty, "counted" found none and the
+## receivers were not ringed.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-geometry-ringed.png, and geomflag.png (the whole
@@ -46,13 +46,14 @@ proc ring(f: FrameInfo; at: Vec2; c: Rgba): int =
           int(round(at.y)) + dy), c): inc result
 
 const
-  BadReceiver = (line: 1, k: 2)                              ## the receiver whose trace's offset header is 50 over
-  BadTrace = BadReceiver.line * MapRcvPoints + BadReceiver.k ## its trace in the file
+  BadChannel = 7    ## the trace (0-based) whose offset header is 50 over its distance
+  MovedChannel = 11 ## the trace whose receiver position is 30 east of its station
 
 proc runMain() =
   withFixtures fx:
-    let sps = fx.mapSps()
-    let shotPath = fx.mapShotSegy(0, 2, "bad-offset.sgy", badOffset = BadTrace)
+    let sps = fx.surveySps()
+    let shotPath = fx.surveyShotSegy("shot.sgy", badOffset = BadChannel,
+      movedReceiver = MovedChannel)
     let shots = getEnv("VIEWSEG_SCREENSHOTS")
     var steps: seq[Step]
     var at = 0
@@ -72,9 +73,8 @@ proc runMain() =
       f.moveMouse(p)
       f.pressMouse(p, true)
       f.pressMouse(p, false)
-    proc receiver(f: FrameInfo; d: tuple[line, k: int]): Vec2 =
-      let (x, y) = mapRcv(d.line, d.k)
-      let p = f.screen(x, y)
+    proc receiver(f: FrameInfo; channel: int): Vec2 =
+      let p = f.screen(rcvX(channel + 1), OriginY)
       vec2(round(p.x), round(p.y))
     proc desktop(f: FrameInfo; name: string) =
       ## The whole display, where an open popover (a window of its own) shows.
@@ -92,6 +92,14 @@ proc runMain() =
       result = f.core.survey.layers.len == 4 and f.core.sessions.len == 1 and
         f.mapWindow.mapShown.isSet and wait > 8 and f.core.jobs.active.len == 0
       if result: ink = mapInk(f.theme, pcPaper))
+    proc joinNow(f: FrameInfo) =
+      f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id,
+        joinFiles: @[JoinFile(path: sps.s, kind: jkSps), JoinFile(path: sps.r, kind: jkSps),
+          JoinFile(path: sps.x, kind: jkSps)], joinOptions: JoinOptions(),
+        joinUnits: JoinUnits(survey: suMetres))
+    proc joined(f: FrameInfo): bool =
+      f.core.joins.len == 1 and f.core.joinUnderWay.job == NoJob and wait > 8
+    step("joined to the survey", joinNow, joined)
     step("the Layers popover", proc (f: FrameInfo) =
       f.click(f.markOf("map.layers").centre), proc (f: FrameInfo): bool =
       wait > 3 and f.markOf("map.filter " & $mfOffsetOff).size.x > 0)
@@ -100,18 +108,23 @@ proc runMain() =
       # (the popover is a window of its own: the pointer rests on it, then the wheel turns)
       if wait in 4 .. 14: f.scrollWheel(f.markOf("map.filter " & $mfDead).centre, -3)
       wait > 18 and f.markOf("map.filter " & $mfOffsetOff).pos.y < 1000)
-    for m in [mfOffsetOff, mfMidpointOff]: step("ticked " & $m, filterTick(m), ticked(m))
+    for m in [mfOffsetOff, mfMidpointOff, mfPositionOff]: step("ticked " & $m, filterTick(m),
+        ticked(m))
     step("counted", noop, proc (f: FrameInfo): bool =
       result = f.core.recordQc.job == NoJob and
-        f.core.recordQc.hits[mfOffsetOff].state == fsDone and wait > 4
+        f.core.recordQc.hits[mfPositionOff].state == fsDone and wait > 4
       if result:
+        let base = f.core.sessions[0].base
         let h = f.core.filterHits
-        doAssert h[mfOffsetOff].count == 1 and h[mfMidpointOff].count == 0,
-          $(h[mfOffsetOff].count, h[mfMidpointOff].count)
+        doAssert h[mfOffsetOff].traces == @[base + BadChannel, base + MovedChannel],
+          $h[mfOffsetOff].traces
+        doAssert h[mfPositionOff].traces == @[base + MovedChannel], $h[mfPositionOff].traces
         doAssert filterLabel(mfOffsetOff, h[mfOffsetOff]) ==
-          "Offset disagrees with the positions  (1)", filterLabel(mfOffsetOff, h[mfOffsetOff])
+          "Offset disagrees with the positions  (2)", filterLabel(mfOffsetOff, h[mfOffsetOff])
+        doAssert filterLabel(mfPositionOff, h[mfPositionOff]) ==
+          "Header position disagrees with the survey  (1)"
         doAssert filterLabel(mfMidpointOff, h[mfMidpointOff]) ==
-          "Midpoint disagrees with the positions  (0)"
+          "Midpoint disagrees with the positions  (0)", $h[mfMidpointOff]
         f.desktop("geomflag.png"))
     step("ringed", proc (f: FrameInfo) =
       f.pressKey(skEscape, true)
@@ -120,15 +133,17 @@ proc runMain() =
       result = wait > 4 and f.markOf("map.filter " & $mfOffsetOff).size.x == 0
       if result:
         let c = filterInk(f.theme, mfOffsetOff, ink.background)
-        doAssert f.ring(f.receiver(BadReceiver), c) >= 6, "no mark round the receiver: " &
-          $f.ring(f.receiver(BadReceiver), c)
-        doAssert f.ring(f.receiver((1, 12)), c) == 0, "a receiver along its line ringed"
+        for ch in [BadChannel, MovedChannel]:
+          doAssert f.ring(f.receiver(ch), c) >= 6, "no mark round channel " & $ch & ": " &
+            $f.ring(f.receiver(ch), c)
+        doAssert f.ring(f.receiver(3), c) == 0, "a receiver along its line ringed"
         f.shot("map-geometry-ringed.png"))
     step("the point under the pointer says so", proc (f: FrameInfo) =
-      f.moveMouse(f.receiver(BadReceiver)), proc (f: FrameInfo): bool =
+      f.moveMouse(f.receiver(MovedChannel)), proc (f: FrameInfo): bool =
       result = wait > 4 and f.mapWindow.hoveredPoints.len > 0
       if result:
-        doAssert "Marked: " & $mfOffsetOff in f.mapWindow.pointTexts, $f.mapWindow.pointTexts)
+        doAssert "Marked: " & $mfOffsetOff & ", " & $mfPositionOff in f.mapWindow.pointTexts,
+            $f.mapWindow.pointTexts)
 
     proc onFrame(f: FrameInfo) =
       if f.index == 0: f.moveMouse(vec2(4, 4))
@@ -147,7 +162,7 @@ proc runMain() =
         elif overdue(wait, 600, since):
           failed = steps[at].name & " did not happen"
           f.stop()
-    let code = run(RunOptions(openPaths: @[sps.s, sps.r, fx.mapXps, shotPath],
+    let code = run(RunOptions(openPaths: @[sps.s, sps.r, sps.x, shotPath],
       windowSize: (1400, 1100), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0, "run() exit code " & $code

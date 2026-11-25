@@ -783,7 +783,7 @@ proc addCsv*(g: var SurveyGeometry; text, name: string; role: CsvRole;
 
 # ----------------------------------------------------------------- plan --
 
-func lookup(t: Table[StationKey, Coordinates]; line, point: float64; index: int16;
+func stationAt*(t: Table[StationKey, Coordinates]; line, point: float64; index: int16;
     c: var Coordinates): bool =
   ## The station as parseSEG's join finds it: the same index, else one given
   ## for any index (0), else, for a trace without an index (0), the first
@@ -872,7 +872,7 @@ proc planJoin*(file: ptr SeismicFile; g, relations: SurveyGeometry; opts: JoinOp
           # (by address: an `if` that gives the table copies it, every
           # station of the survey, for each trace)
           let table = if r == prSource: addr g.table.sources else: addr g.table.receivers
-          if table[].lookup(line, point, index, c):
+          if table[].stationAt(line, point, index, c):
             inc result.found[r]
             if usable(hx, hy):
               let d = hypot(hx - c.x, hy - c.y)

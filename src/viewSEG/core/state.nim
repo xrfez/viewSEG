@@ -2978,13 +2978,41 @@ func joinedOf*(state: AppState; session: SessionId): int =
 
 func geometryUnitsOf(state: AppState; i: int): GeometryUnits =
   ## Whether the offsets and the coordinates of open file `sessions[i]` are lengths of one
-  ## unit, so its geometry can be checked (`core/geometryqc`): the units its join confirmed,
-  ## else those its headers give (as an analysis reads them).
+  ## unit, so its geometry can be checked (`core/geometryqc`): the units its join confirmed
+  ## (the survey's when the join replaced the coordinates and the offsets with them),
+  ## else those its headers give (as an analysis reads them). The offsets keep their own
+  ## unit, the header's measurement system, unless the join replaced them.
   let s = state.sessions[i]
   let joined = state.joinedOf(s.id)
   if joined >= 0 and state.joins[joined].units.file != suNotGiven:
-    geometryUnits(state.joins[joined].units.file, state.joins[joined].units.file)
+    template units: untyped = state.joins[joined].units
+    if state.joins[joined].plan.replace:
+      let u = if units.survey in {suMetres, suFeet, suUsFeet}: units.survey else: units.file
+      geometryUnits(u, u)
+    else: geometryUnits(units.file, offsetUnitOf(s.crs))
   else: geometryUnits(headerUnitOf(s.crs), offsetUnitOf(s.crs))
+
+func stationsOf(state: AppState; i: int): ref SurveyGeometry =
+  ## The stations open file `sessions[i]` is joined with: its join's, else the project's
+  ## survey; nil when none.
+  let joined = state.joinedOf(state.sessions[i].id)
+  if joined >= 0 and not state.joins[joined].geometry.isNil: state.joins[joined].geometry
+  elif joined >= 0 or state.project.dir.len > 0: state.project.geometry
+  else: nil
+
+func geometryAskOf(state: AppState; i: int; filters: set[MapFilter];
+    stations: ref SurveyGeometry): GeometryAsk =
+  ## What the geometry filters of open file `sessions[i]` are given: its units, whether a
+  ## join replaced its coordinates, the stations it was joined with (`stations`, from
+  ## `stationsOf`), and whether its own headers are to be read: for the positions, and for the
+  ## offsets and midpoints of a SEG-Y file that a join or a station move may have recomputed.
+  let s = state.sessions[i]
+  let joined = state.joinedOf(s.id)
+  result = GeometryAsk(units: state.geometryUnitsOf(i),
+    replaced: joined >= 0 and state.joins[joined].plan.replace,
+    survey: (if stations.isNil: nil else: addr stations[]))
+  result.own = mfPositionOff in filters or
+    (filters * {mfOffsetOff, mfMidpointOff} != {} and s.file.kind == skSegy and joined >= 0)
 
 func spreads*(state: AppState): lent Spreads {.inline.} =
   ## The relation records made for the map's planned spreads, and what was
@@ -4752,7 +4780,8 @@ proc followInspect(state: var AppState) =
   if want.tableOf[0] != NoSession:
     req.table = TableAsk(at: state.fileOf(req, held, state.findSession(want.tableOf[0])),
       traces: want.tableOf[1], view: want.table, joins: want.joins,
-      lengths: state.geometryUnitsOf(state.findSession(want.tableOf[0])).judged)
+      lengths: state.geometryUnitsOf(state.findSession(want.tableOf[0])).judged,
+      angles: state.geometryUnitsOf(state.findSession(want.tableOf[0])).angles)
   for n, t in want.traces:
     let i = state.findTrace(t)
     if i >= 0:
@@ -9869,6 +9898,7 @@ proc followRecordQc(state: var AppState) =
   let domain = state.shownDomain
   let (rel, against) = state.qcRelations(domain)
   let placed = state.shownPlace(s, g.gather, domain)
+  let stations = state.stationsOf(i)
   let samples = filters * SampleFilters != {}
   let tr = s.gathers[g.gather].traces
   var gatherTraces = newSeq[int](tr.len)
@@ -9894,7 +9924,7 @@ proc followRecordQc(state: var AppState) =
   let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
     domain, state.settings.join.traceMatch, placed, samples,
     ownKeyOf(state.editsAt(s.path), gatherTraces), work.settings, work.key, share,
-    state.geometryUnitsOf(i))
+    state.geometryAskOf(i, filters, stations))
   if key == q.key: return
   if q.job != NoJob:
     discard state.jobs.cancel(q.job)
@@ -9915,8 +9945,11 @@ proc followRecordQc(state: var AppState) =
     g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
     state.settings.join.traceMatch, placed, samples,
     own, reversed, shifts, work, state.inbox.poster, s.correlatedView,
-    state.geometryUnitsOf(i)))
+    state.geometryAskOf(i, filters, stations),
+    OwnOpen(choice: s.facts.opened.choice, cache: indexCacheFile(state.indexCache, s.path),
+      limit: state.ownReadLimit)))
   if not rel.isNil: state.qcHeld.add (q.job, rel)
+  if not stations.isNil: state.qcHeld.add (q.job, stations)
 
 proc nextBreakRevision(state: var AppState): int =
   ## A revision no result had before: a view made of a result is of that result as it was.
