@@ -397,45 +397,59 @@ extension and the filter text in its last column.
 
 ## Trace quality
 
-**Reports > Trace quality** scans the folder open in the file list, including the
-folders under it. The item stays in the menu. It is inactive until a folder is open,
-and it says so. A relation file is not needed.
+**Reports > Trace quality** measures the traces of the file shown, or of the files of a
+folder you choose. The item is always active, and opening the window computes nothing on
+a folder: the **File** tab measures the file shown in the main window (it follows the
+file, and measures it again after a kill or an undo), and the **Folder** tab does nothing
+until you press **Run**.
 
-The **Trace quality** window stays closed until you ask for it. It opens as a tab
-beside the **Seismic** window, and that tab is the one in front. Closing it and opening
-it again keeps the place you last gave it. A line of totals wraps onto the next line
-when the window is narrow: files, records, traces, killed, bad, stations, each
-finding, and the traces tested for noisy and the noisy among them, then the same for weak
-("120 tested (noisy), 3 noisy"). The totals use the words of the column headers.
-A killed trace is counted as killed, not as bad, and it is not measured.
+The **Trace quality** window stays closed until you ask for it. It opens as a tab beside
+the **Seismic** window, and that tab is the one in front. The close button on its tab (or
+**View**, the window's entry) hides it and stops what runs; the entry brings it back where
+you last left it.
 
-**Rescan** runs the scan again. While one is running, that button is **Cancel** and a
-progress bar shows how far the scan is. When a file or a trace could not be read, a line
-under the totals says how many. **Unread** opens that list, each with the reason.
-**totals in a second file** sits next to **Export CSV...**.
+**Folder** takes the folder from **Folder...** (remembered, with the **Include
+subfolders** box, which is off until you tick it). Only the files of the folder itself are
+measured unless the box is ticked; changing the folder or the box drops the answer, and
+**Run** measures again. A run is a background job with its progress bar and **Stop**.
 
-The **Stations** tab is one row per receiver station and component: how many traces
-there are (**Traces**, killed ones included), how many were killed, how many were bad, and the
-count of each finding (**Dead**, **All zero**, **Constant**, **Clipped**, **Spiky**,
-**DC offset**, **Not finite**). Every column header has a tooltip that says what it counts. The
-last counts, **Noisy** and **Weak**, are the traces the map's noisy and weak filters
-show for each field record, found the same way (the exclusion area you chose in Tools >
-Settings applies, and a record's first breaks are found for it, so a scan takes longer).
-They are not counted as bad. Each comes after the traces tested for it,
-**Tested (noisy)** and **Tested (weak)**: a trace inside the exclusion area is tested for
-weak but not for noisy, as on the map. Killed, dead and auxiliary traces, a record that
-could not be read and one the test cannot judge are tested for neither. A Noisy or Weak
-cell is empty where no trace was tested for it. The CSV has the same columns.
-The scan judges the samples as recorded, with your kills and noise settings, but without
-the per-trace filters, reversals, shifts or template-only restriction the map applies to
-the record shown.
-The **Records** tab is one row per file and record. A box above the table narrows the
-rows. Click a column header to sort by it (again for the other way; Shift-click adds
-a column). The sort's place is a small number after the header name.
+Under the tab's own controls come the figures, one per line: the stations measured, the
+traces (read, killed, measured), the bad traces and the stations with one, each finding
+(**Dead**, **All zero**, **Constant**, **Clipped**, **Spiky**, **DC offset**, **Not
+finite**), the noisy and the weak among the traces tested for them, each with its percent,
+and, when the data has more than one component, how many stations lack a component. The
+stations are the receiver stations of a shot gather's traces, the source stations of a
+receiver gather's (the rule the Missing traces window uses for a file); when a folder holds
+both, **Receiver stations** and **Source stations** choose which are shown. A killed trace
+is counted as killed, not as bad, and it is not measured.
 
-**Export CSV...** writes the table, not only the rows the filter leaves in sight.
-**totals in a second file** also writes a file beside the one you save, with `-totals`
-before the extension. Double-click a record to open that file at that record.
+The table has one row per station (line and point), whatever its components and files: a
+station's traces in every file measured count in its one row, so on the Folder tab the
+counts add up across the files. **Traces** counts the traces of the station (killed ones
+included), **Killed** and **Bad** the killed and the bad ones, then the count of each
+finding. **Lacks component** (shown when the data has more than one component) names the
+components the data has that the station has no trace of, while it has a trace of another
+component; a station that has them all leaves it empty. The last counts, **Noisy** and
+**Weak**, are the traces the map's noisy and weak filters show for each field record,
+found the same way (the exclusion area you chose in Tools > Settings applies, and a
+record's first breaks are found for it, so a scan takes longer). They are not counted as
+bad. Each comes after the traces tested for it, **Tested (noisy)** and **Tested (weak)**: a
+trace inside the exclusion area is tested for weak but not for noisy, as on the map.
+Killed, dead and auxiliary traces, a record that could not be read and one the test cannot
+judge are tested for neither. A Noisy or Weak cell is empty where no trace was tested for
+it. The scan judges the samples as recorded, with your kills and noise settings, but
+without the per-trace filters, reversals, shifts or template-only restriction the map
+applies to the record shown. Every column header has a tooltip that says what it counts.
+Nothing is looked up by a record number, and the table has no column for one.
+
+A box above the table narrows the rows by line, point or component. Click a column header
+to sort by it (again for the other way; Shift-click adds a column). The sort's place is a
+small number after the header name. When a file or a trace could not be read, a line says
+how many; **Unread** opens that list, each with the reason.
+
+**Export CSV...** writes the table, only the rows the filter leaves in sight.
+**statistics in a second file** also writes the figures beside the one you save, with
+`-statistics` before the extension.
 
 ## Vibrator QC of a folder
 
