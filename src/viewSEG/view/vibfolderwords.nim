@@ -9,7 +9,7 @@ const
   ColFile* = "File"
   ColController* = "Electronics number"
   ColVibrator* = "Vibrator number"
-  ColTime* = "Time"
+  ColTime* = "Time (UTC)"
   ColFfid* = "FFID"
   ColSourceLine* = "Source line"
   ColSourcePoint* = "Source point"
@@ -198,6 +198,7 @@ const
   ProfileStored* = "Stored as the project's vibrator QC profile."
   FolderTip* = "Judge the vibrator signature files you choose, with the project's " &
     "vibrator QC configuration."
+  SettingsChanged* = "The settings changed since this run."
   NoShotLog* = "No shot log is loaded: FFID and source point are not shown."
   NothingChosen* = "Choose a folder or files."
   FolderButton* = "Folder..."

@@ -565,14 +565,27 @@ proc main*() =
     doAssert one == @["deep.dat"], $one
     let both = names(FolderChoice(folder: tree, files: @[tree / "sub" / "deep.dat"]))
     doAssert both == @["deep.dat", "top.dat"], $both
-    doAssert names(FolderChoice(files: @[tree / "notes.txt"])).len == 0,
-      "a text file was listed"
+    doAssert names(FolderChoice(files: @[tree / "notes.txt"])) == @["notes.txt"],
+      "a chosen text file was dropped, not listed with its problem"
     let sink = FolderListSink()
     let jobs = initJobs()
     let gone = FolderChoice(folder: tree / "missing")
     let id = jobs.submit(folderListSpec(gone), folderListWork(gone, sink))
     doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled})
-    doAssert jobs.state(id) == jsDone and sink.files.len == 0, "a missing folder listed files"
+    doAssert jobs.state(id) == jsFailed and
+      jobs.info(id).get.error == CannotListFolder, "a missing folder: " & $jobs.state(id)
+    doAssert sink.files.len == 0, "a missing folder listed files"
+    # a chosen file that cannot be read, or is no signature file, is listed with its problem
+    for (name, why) in [("absent.dat", "absent.dat cannot be read."),
+        ("notes.txt", "notes.txt is not a signature file.")]:
+      let sink2 = FolderListSink()
+      let pick = FolderChoice(files: @[tree / name])
+      let id2 = jobs.submit(folderListSpec(pick), folderListWork(pick, sink2))
+      doAssert waitUntil(jobs.state(id2) in {jsDone, jsFailed, jsCancelled})
+      doAssert jobs.state(id2) == jsDone and sink2.files.len == 1, name
+      doAssert sink2.files[0].info.problem == why, sink2.files[0].info.problem
+      let run = runJob(sink2.files, ask)
+      doAssert run.table.rows[0].outcome == foProblem and run.table.rows[0].problem == why
 
   block rowIdentity:
     ## Each row names the electronics number, the vibrator and the trigger time of its
@@ -697,6 +710,25 @@ proc main*() =
       cfg = vibQcConfig(st)
       doAssert cfg.profile.referenceId == first, "no fallback to the stored reference"
 
+    block readOnlyReason:
+      ## A read-only project cannot keep the QC settings: not configured, and the window
+      ## says why. Seen to fail when the config carried no reason.
+      var st = started()
+      let job = fx.dir / "job-ro"
+      st.apply Command(kind: ckNewProject, projectPath: job, projectName: "Job")
+      doAssert st.settle(st.inProject)
+      doAssert vibQcConfig(st).unsetWhy.len == 0, "a reason with a writable project"
+      var other = initAppState()
+      other.keepSettingsIn(configDir, loadSettings(configDir / "settings.nif"))
+      other.apply Command(kind: ckOpenProject, projectPath: job)
+      doAssert other.settle(other.inProject and other.project.readOnly),
+        "the second program did not open it read-only"
+      let cfg = vibQcConfig(other)
+      doAssert not cfg.configured
+      doAssert cfg.unsetWhy == "The project is read-only: the QC settings cannot be kept in it."
+      other.shutdown()
+      st.shutdown()
+
     block twoWindowsMerge:
       ## A window that never had a drive level cannot wipe the one another window set:
       ## only what a window changed reaches the profile; a new window starts from the
@@ -716,7 +748,8 @@ proc main*() =
       p.forceHundredUnit = "counts"
       st.change(a, p, frozen = true)
       var cfg = vibQcConfig(st)
-      doAssert cfg.ask.options.targetPct == 60 and cfg.profile.fromFile == "good.dat", $(cfg.ask.options.targetPct, cfg.profile.fromFile, st.plots[a].file, st.plots[b].file)
+      doAssert cfg.ask.options.targetPct == 60 and cfg.profile.fromFile == "good.dat", $(
+          cfg.ask.options.targetPct, cfg.profile.fromFile, st.plots[a].file, st.plots[b].file)
       # the user touches one limit in the other window
       var q = st.plots[b].params
       q.qc.avgPhaseDeg = 7

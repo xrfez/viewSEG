@@ -8,7 +8,7 @@
 ## Polarity is reported and never changed. Job weights are never applied as
 ## masses: a header that disagrees is words only.
 
-import std/[math, os, strutils, tables]
+import std/[math, os, sets, strutils, tables]
 import parseSEG
 import parseSEG/common/diagnostics
 import processSEG/core/shift
@@ -80,6 +80,8 @@ proc folderListWork*(c: FolderChoice; sink: FolderListSink): JobWork =
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     ctx.setPhase(ListingPhase)
+    if c.folder.len > 0 and not fs.dirExists(c.folder):
+      raise newException(ValueError, CannotListFolder)
     var capped = false
     var paths: seq[string] = @[]
     try:
@@ -89,12 +91,20 @@ proc folderListWork*(c: FolderChoice; sink: FolderListSink): JobWork =
     except OSError:
       raise newException(ValueError, CannotListFolder)
     ctx.checkCancelled()
+    var chosen = initHashSet[string]()
+    for f in c.files: chosen.incl f.normalizedPath
     var files: seq[FolderListed] = @[]
     for i, path in paths:
       ctx.checkCancelled()
       discard ctx.progress(int64(i), int64(paths.len))
       let kind = sniff(path)
-      if kind notin SignatureFileKinds: continue
+      if kind notin SignatureFileKinds:
+        if path in chosen:
+          # a file the user chose is listed with its problem, never dropped
+          let why = if fs.fileExists(path): path.extractFilename &
+              " is not a signature file." else: path.extractFilename & " cannot be read."
+          files.add FolderListed(path: path, info: SweepInfo(problem: why))
+        continue
       var info = SweepInfo(kind: kind.sweepKindOf)
       try:
         info = readSweepInfo(path, kind.sweepKindOf, fs.getFileSize(path))

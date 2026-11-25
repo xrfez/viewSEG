@@ -12,6 +12,7 @@ const
   WhereToConfigure* = "Set it in a Vibrator signature window: Analysis > New plot > " &
     "Vibrator, on a signature file."
 
+  ReadOnlyProject* = "The project is read-only: the QC settings cannot be kept in it."
   ReferencesLoading* = "The references are being read."
   ReferenceMissing* = "The chosen reference is not in the archive: choose a reference " &
     "(Analysis > References). To measure against each file's recorded reference, choose a " &
@@ -20,11 +21,11 @@ const
 type
   ReferenceState* = enum
     ## Which reference a run measures against.
-    rfNone      ## none is chosen: each file's recorded reference
-    rfStored    ## a stored sweep of the archive
-    rfRecorded  ## a reference that is a trace of the record: each file's recorded reference
-    rfLoading   ## the archive is still being read: not known yet
-    rfMissing   ## the chosen reference is not in the archive
+    rfNone     ## none is chosen: each file's recorded reference
+    rfStored   ## a stored sweep of the archive
+    rfRecorded ## a reference that is a trace of the record: each file's recorded reference
+    rfLoading  ## the archive is still being read: not known yet
+    rfMissing  ## the chosen reference is not in the archive
 
   VibQcConfig* = object
     ## What a run uses. Copied out of `AppState`, so a job never reads the state.
@@ -35,6 +36,7 @@ type
     reference*: FolderReference ## the archive reference; no path: the recorded pilot
     referenceName*: string      ## the name of the reference measured against; "": the recorded one
     referenceState*: ReferenceState
+    unsetWhy*: string           ## when not configured: why no settings could be kept, if known
     blocked*: string            ## why a run cannot start (the reference is not known); "": it can
 
 func archiveIds(st: AppState): seq[string] =
@@ -70,7 +72,9 @@ func vibQcConfig*(st: AppState): VibQcConfig =
   ## The configuration in force. The project's chosen reference is used; the
   ## profile's stored one only when none is chosen. The force scale is the
   ## one set now. Not configured without an open project that holds a profile.
-  if not (st.inProject and st.project.doc.hasVibProfile): return
+  if not (st.inProject and st.project.doc.hasVibProfile):
+    if st.inProject and st.project.readOnly: result.unsetWhy = ReadOnlyProject
+    return
   result.configured = true
   result.profile = st.project.doc.vibProfile
   let chosen = st.chosenReference

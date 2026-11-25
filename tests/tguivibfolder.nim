@@ -479,6 +479,22 @@ proc main*() =
       true
     step("the rows match an independent run", runQc, ran)
 
+    proc identityFits(f: FrameInfo): bool =
+      ## At the docked width the identity columns that open the table are wide enough
+      ## for their values: nothing is squeezed to a few pixels. The shot is taken here,
+      ## with the table scrolled to the left.
+      for name in [ColFile, ColController, ColVibrator, ColTime]:
+        if f.markOf("vibfolder.header " & name).size.x == 0: return false
+      for (name, value) in [(ColController, "4321"), (ColVibrator, "12"),
+          (ColTime, "2001-02-03 04:05:01.789")]:
+        let cell = f.markOf("vibfolder.cell " & name & " good.dat " & value)
+        let head = f.markOf("vibfolder.col " & name)
+        if cell.size.x == 0 or head.size.x == 0: return false
+        doAssert head.size.x >= cell.size.x, name & " is narrower than " & value
+      doAssert f.savePng(resultsShot), "results shot was not written"
+      true
+    step("the identity columns fit at the docked width", noop, identityFits)
+
     proc seek(f: FrameInfo; name: string): bool =
       ## True once the header `name` is drawn; else the table is scrolled one notch
       ## sideways toward it (a cell of a column off to the side is not drawn).
@@ -576,7 +592,11 @@ proc main*() =
         "the second sweep was not matched: " & $f.markNames("vibfolder.cell " & ColSourcePoint)
       doAssert f.markNames("vibfolder.cell " & ColFfid & " corrupt.dat 7").len == 0,
         "a guess for a sweep the log does not have"
-      doAssert f.savePng(resultsShot), "results shot was not written"
+      for (name, value) in [(ColFfid, "7001"), (ColSourceLine, "100"),
+          (ColSourcePoint, "1010")]:
+        doAssert f.markOf("vibfolder.col " & name).size.x >=
+          f.markOf("vibfolder.cell " & name & " good.dat " & value).size.x,
+          name & " is narrower than " & value
       true
     step("the shot log fills FFID and source point", importLog, logMatched)
 

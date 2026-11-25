@@ -468,7 +468,7 @@ file; **None** clears the ticks. Untick a file to leave it out. The choice is ke
 program runs.
 
 The **Results** tab is one row per file that was run. The columns are File (the name; the
-full path is in its tooltip), Electronics number, Vibrator number, Time (the sweep's trigger
+full path is in its tooltip), Electronics number, Vibrator number, Time (UTC) (the sweep's trigger
 time), FFID, Source line and Source point from the shot log, then Kind, Pair, the verdict, the
 sentence, the measures, the polarity, the warnings and any problem. A `.vib` takes its `.dat`'s
 electronics number, vibrator number and time. FFID and the source line and point come from the
@@ -480,6 +480,10 @@ sentence, warnings and problem on the lines under the table. A file that could n
 puts its reason in the sentence column. A box above the table narrows the rows. Click a column
 header to sort by it (again for the other way); Warnings, FFID and the source columns do not
 sort. The totals count the whole run, not only the rows the filter leaves in sight.
+The configuration text above the results is the one the run used; when the settings differ
+now, a line says so. A chosen file that cannot be read, or is no signature file, is listed with
+that problem; a chosen folder that does not exist says that it could not be listed. In a
+project opened read-only, the window says that the QC settings cannot be kept in it.
 
 Every file gives its own 100 % force where it can: a `.dat` from its target force (needs the
 counts-per-pound scale and the drive level), a `.vib` from its header's hold-down weight (needs

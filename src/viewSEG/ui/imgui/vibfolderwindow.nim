@@ -49,6 +49,7 @@ type
     shownGen: int
     viewKey: string
     shotKey: string
+    ranLines: seq[string] ## the configuration the results were made with
     viewRows: seq[FolderRow]
     viewCells: seq[seq[string]]
     viewWidths: seq[float32]
@@ -65,6 +66,7 @@ type
 proc stopJobs(ui: var VibFolderUi; st: AppState)
 
 proc clearRun(ui: var VibFolderUi) =
+  ui.ranLines.setLen 0
   ui.listed.setLen 0
   ui.haveList = false
   ui.have = false
@@ -244,6 +246,7 @@ proc submitQc(ui: var VibFolderUi; st: AppState) =
   if ui.qcJob != NoJob:
     discard st.jobs.cancel(ui.qcJob)
     ui.qcJob = NoJob
+  ui.ranLines = configLines(config)
   ui.sink = FolderQcSink()
   ui.running = true
   ui.have = false
@@ -254,10 +257,20 @@ proc submitQc(ui: var VibFolderUi; st: AppState) =
     folderQcWork(config.ask, config.weights, files, ui.sink,
     reference = config.reference))
 
+proc refreshShots(ui: var VibFolderUi; st: AppState): string =
+  ## Matches the rows with the loaded shot logs again when the logs changed, whichever
+  ## tab is drawn, so a copy or an export is current. In memory: no file is read.
+  ## Returns the logs' key.
+  result = $st.shotLogCount & "|" & $st.shotLogsRevision
+  if result != ui.shotKey:
+    ui.shotKey = result
+    ui.table.rows.withShots(st)
+
 proc startExport*(ui: var VibFolderUi; st: AppState; path: string) =
   ## Writes the full table, not the filtered rows. `path` gains ".csv" when
   ## it has no extension.
   if not ui.have: return
+  discard ui.refreshShots(st)
   var dest = path
   if dest.splitFile.ext.len == 0: dest.add ".csv"
   let text = resultsCsv(ui.table)
@@ -328,9 +341,12 @@ proc textCell(text, markName: string; marks: var Marks) =
   if text.len == 0 or not igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint): return
   if textWidth(text) > room: tip(text)
 
-proc columnWidths(rows: seq[FolderRow]; names: seq[string]): seq[float32] =
+proc columnWidths(rows: seq[FolderRow]; cells: seq[seq[string]];
+    names: seq[string]): seq[float32] =
   ## Fixed column widths for the rows in sight. File fits the longest name,
-  ## up to a cap; Sentence is filled in by the caller from the room left.
+  ## up to a cap; the identity columns (electronics and vibrator numbers, time,
+  ## FFID, source line and point) fit the wider of their header and their widest
+  ## value; Sentence is filled in by the caller from the room left.
   let font = igGetFontSize()
   let extra = font * 1.5
   let cap = font * 28
@@ -344,15 +360,16 @@ proc columnWidths(rows: seq[FolderRow]; names: seq[string]): seq[float32] =
   for i, name in names:
     if name == ColFile: result[i] = fileW
     elif name == ColKind: result[i] = max(result[i], kindW)
+    elif name in [ColController, ColVibrator, ColTime, ColFfid, ColSourceLine,
+        ColSourcePoint]:
+      for row in cells:
+        if i < row.len: result[i] = max(result[i], min(cap, textWidth(row[i]) + extra))
 
 proc ensureView(ui: var VibFolderUi; st: AppState) =
   ## Sort, filter, cell text and column widths for the current result. Rebuilt
   ## when the result, the sort, the filter or the loaded shot logs change, not on
-  ## every frame. The shot log match is made here, in memory: no file is read.
-  let shots = $st.shotLogCount & "|" & $st.shotLogsRevision
-  if shots != ui.shotKey:
-    ui.shotKey = shots
-    ui.table.rows.withShots(st)
+  ## every frame.
+  let shots = ui.refreshShots(st)
   let key = $ui.shownGen & "|" & $ord(ui.sortCol) & "|" & $ui.sortDown & "|" &
     bufText(ui.filterBuf) & "|" & shots
   if key == ui.viewKey: return
@@ -361,7 +378,7 @@ proc ensureView(ui: var VibFolderUi; st: AppState) =
   ui.viewCells.setLen(shown.rows.len)
   for i, row in shown.rows:
     ui.viewCells[i] = rowCells(row)
-  ui.viewWidths = columnWidths(shown.rows, headers())
+  ui.viewWidths = columnWidths(shown.rows, ui.viewCells, headers())
   ui.viewKey = key
   inc ui.viewBuilds
 
@@ -569,13 +586,24 @@ proc runWhy(ui: VibFolderUi; config: VibQcConfig; n: int): string =
   elif n == 0: NoTicked
   else: ""
 
-proc drawConfig(config: VibQcConfig; marks: var Marks) =
-  ## The configuration in force, as read-only text; or the one sentence that
-  ## says it is not configured, and where to configure it.
+proc drawConfig(config: VibQcConfig; ran: seq[string]; marks: var Marks) =
+  ## The configuration as read-only text: the one the shown results were made with
+  ## (and a line when the settings differ now), else the one in force; or the one
+  ## sentence that says it is not configured, and where to configure it.
   igPushTextWrapPos(0)
-  if not config.configured:
+  if ran.len > 0:
+    for line in ran:
+      igTextUnformatted(line.cstring, nil)
+    marks.mark("vibfolder.profile " & ran.join(" "))
+    if not config.configured or configLines(config) != ran:
+      igTextUnformatted(SettingsChanged.cstring, nil)
+      marks.mark("vibfolder.changed")
+  elif not config.configured:
     igTextUnformatted(NotConfigured.cstring, nil)
     marks.mark("vibfolder.notconfigured")
+    if config.unsetWhy.len > 0:
+      igTextUnformatted(config.unsetWhy.cstring, nil)
+      marks.mark("vibfolder.unsetwhy " & config.unsetWhy)
     igTextUnformatted(WhereToConfigure.cstring, nil)
     marks.mark("vibfolder.configure where")
   else:
@@ -596,8 +624,9 @@ proc drawVibFolder*(ui: var VibFolderUi; title: string; st: AppState;
   if igBegin(title.cstring, addr open, 0):
     ui.focus.watch()
     marks.markWindow("vibfolder")
+    discard ui.refreshShots(st)
     let config = vibQcConfig(st)
-    drawConfig(config, marks)
+    drawConfig(config, if ui.have: ui.ranLines else: @[], marks)
     if ui.status.len > 0 and ui.status != NothingChosen:
       igTextUnformatted(ui.status.cstring, nil)
     if ui.capped and not ui.listing:
@@ -612,7 +641,8 @@ proc drawVibFolder*(ui: var VibFolderUi; title: string; st: AppState;
         result.commands.add Command(kind: ckCancelJob, job: ui.qcJob)
       marks.mark("vibfolder.cancel")
     else:
-      let canRun = ui.haveList and not ui.listing and config.configured and config.blocked.len == 0 and
+      let canRun = ui.haveList and not ui.listing and config.configured and config.blocked.len ==
+          0 and
         n > 0
       igBeginDisabled(not canRun)
       if igButton(RunButton.cstring, ImVec2_c(x: 0, y: 0)): ui.submitQc(st)
