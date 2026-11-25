@@ -435,12 +435,12 @@ proc scanFilter(ui: var ShotLogUi; st: AppState; i, width, n: int) =
   ui.scanAt = stop
   ui.filterDone = ui.scanAt >= n
 
-proc rowFiltered(ui: ShotLogUi; st: AppState; i, row, width, n: int): bool =
+proc rowFiltered(ui: ShotLogUi; st: AppState; i, row, n: int; shown: openArray[int]): bool =
   ## Whether data row `row` is left out by the filter box or Problems only.
+  ## `shown` is `shownColumns`, built once for all the rows a pass asks about.
   if row < 0 or row >= n: return false
   if ui.problemsOnly and not ui.faultText.hasKey(row): return true
-  if ui.needle.len > 0 and
-      not rowHits(st, i, row, shownColumns(st, i, width), ui.needle): return true
+  if ui.needle.len > 0 and not rowHits(st, i, row, shown, ui.needle): return true
   false
 
 proc noteFollow(ui: var ShotLogUi; st: var AppState; i, width, n: int): string =
@@ -455,7 +455,8 @@ proc noteFollow(ui: var ShotLogUi; st: var AppState; i, width, n: int): string =
   ui.followSeen = true
   ui.followId = ui.currentId
   ui.followRev = a.revision
-  let hidden = a.match.row >= 0 and ui.rowFiltered(st, i, a.match.row, width, n)
+  let hidden = a.match.row >= 0 and
+    ui.rowFiltered(st, i, a.match.row, n, shownColumns(st, i, width))
   if changed and a.match.row >= 0 and not hidden:
     ui.selected = a.match.row
     ui.selectedCol = -1
@@ -485,8 +486,9 @@ proc markChosen(ui: var ShotLogUi; st: var AppState; i, width, n: int) =
   if ui.onlySelected:
     let me = addr ui
     let state = addr st
+    let shown = shownColumns(st, i, width)
     ui.onlyRows = onlySelected(selected, n,
-      proc (row: int): bool = me[].rowFiltered(state[], i, row, width, n))
+      proc (row: int): bool = me[].rowFiltered(state[], i, row, n, shown))
 
 proc chooseRow(ui: ShotLogUi; row: int): Command =
   ## A click on a row of the grid chooses it: the map selects its point (not its traces).
