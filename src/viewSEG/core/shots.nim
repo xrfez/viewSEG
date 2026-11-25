@@ -84,6 +84,10 @@ type
     pointRefs*: seq[PointRef] ## those points, each once
     placedAt*: Table[string, seq[int]]
       ## per file: the points (`PointRef.key`) its records are at
+    unplacedIn*: Table[string, int]
+      ## per file: its records with no source station and no place, so placed
+      ## nowhere (an FFID finds no relation record)
+    unplacedSaid*: int ## the count said in the messages
     revision*: int ## bumped on every change of `files` or `points`
     started*: MonoTime ## when the listing's first job started (`fs.now`)
     finished*: MonoTime ## when the last file was answered
@@ -244,6 +248,7 @@ proc matchOne*(x: var ShotIndex; s: Survey; path: string; shot: ShotOf) =
       if l.origin == loSurveyFile and places.len == 0:
         let q = l.points[prSource].index.nearest(shot.x, shot.y, SamePlace)
         if q >= 0: places.add PointRef(layer: l.id, role: prSource, point: q)
+  if places.len == 0 and not shot.hasStation: inc x.unplacedIn.mgetOrPut(path, 0)
   for p in places: x.place(p, (path, shot.gather, shot.record))
 
 proc match*(x: var ShotIndex; s: Survey) =
@@ -252,6 +257,7 @@ proc match*(x: var ShotIndex; s: Survey) =
   x.points.clear()
   x.pointRefs.setLen 0
   x.placedAt.clear()
+  x.unplacedIn.clear()
   x.surveyRev = s.revision
   for path, f in x.files.pairs:
     for shot in f.shots: x.matchOne(s, path, shot)
@@ -263,6 +269,7 @@ proc forget*(x: var ShotIndex; s: Survey; paths: openArray[string]) =
   ## seconds when the rest were matched again).
   var (any, emptied) = (false, false)
   for path in paths:
+    x.unplacedIn.del path
     if path in x.files:
       emptied = x.unplace(path) or emptied
       x.files.del path
@@ -278,6 +285,7 @@ proc take*(x: var ShotIndex; s: Survey; f: sink FileShots) =
   # A file read again (changed): its records before taken off, not every
   # file matched again (many files copied over at once).
   if path in x.files and x.unplace(path): x.pruneRefs()
+  x.unplacedIn.del path
   x.files[path] = f
   for shot in x.files[path].shots: x.matchOne(s, path, shot)
   inc x.revision
@@ -285,6 +293,10 @@ proc take*(x: var ShotIndex; s: Survey; f: sink FileShots) =
 func shotsAt*(x: ShotIndex; p: PointRef): seq[ShotPlace] =
   ## The listed records shot at survey source point `p`; none for another point.
   x.points.getOrDefault(p.key)
+
+func unplacedShots*(x: ShotIndex): int =
+  ## The listed records with no source station and no place: on no point.
+  for n in x.unplacedIn.values: result += n
 
 func shotFiles*(x: ShotIndex): int =
   ## The listed files read, with a shot or not.

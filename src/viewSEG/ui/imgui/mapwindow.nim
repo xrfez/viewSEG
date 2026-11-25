@@ -501,6 +501,11 @@ proc drawShotsRow(st: AppState; marks: var Marks; res: var MapOutput) =
     let left = x.pending.len + x.jobPaths.len
     if left > 0:
       wrapped("Reading the folder's files: " & $x.shotFiles & " read, " & $left & " to go.")
+    let lost = x.unplacedShots
+    if lost > 0:
+      wrapped($lost & (if lost == 1: " shot has" else: " shots have") &
+        " no source line and point and " & (if lost == 1: "is" else: "are") &
+        " not on the map.")
     if x.waiting:
       wrapped("The folder does not answer: its files are read on once it does.")
     elif x.later.len > 0:

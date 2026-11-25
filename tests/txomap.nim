@@ -7,6 +7,10 @@
 ##   no place in its headers it is placed nowhere (its FFID names no X record);
 ## - a receiver gather's points on the map come from the O records of its
 ##   receiver station while the X records are loaded too;
+## - with only the X records loaded, the receiver gather's points are those of
+##   the O records derived from them (as the map's box uses them);
+## - a folder's shots with no source station and no place are counted and
+##   said once in the messages and the map's status; none said for none;
 ## - a station with two X records plans the union of their receivers;
 ## - a station with two O records likewise.
 ##
@@ -16,7 +20,7 @@
 ## source of the X record numbered by its trace record (the shot's, not its
 ## sources); the station's spread had the lowest record's receivers only.
 
-import std/[math, os, sets, tables]
+import std/[math, os, sets, strutils, tables]
 import parseSEG
 import viewSEG/core/[state, shots, spread]
 import viewSEG/view/maplayers
@@ -85,6 +89,65 @@ proc main*() =
         if st.survey.layers[i].origin == loSurveyFile:
           got.incl stationKeyOf(st.survey.layers[i].points[prSource].station[p.point])
       doAssert got == want, "sources of the O records: " & $got.len & " of " & $want.len
+
+  block receiverGatherFromDerivedO:
+    withFixtures fx:
+      let sps = fx.mapSps()
+      var st = initAppState()
+      var set = st.settings
+      set.map.templateBox = true
+      st.apply Command(kind: ckSettings, settings: set)
+      doAssert st.loaded(sps.s, sps.r, fx.mapXps)
+      doAssert st.show(fx.mapReceiverSegy(1, 4))
+      doAssert st.settle(st.spreads.job == NoJob and not st.spreads.relations.isNil)
+      var g = initSurveyGeometry()
+      g.addSps(fx.mapOps)
+      var want: HashSet[StationKey]
+      for r in g.recordsAt(stationKey(MapRcvLines[1], 105, 1), rdReceiver):
+        for run in g.relationRuns(r, rdReceiver):
+          for i in 0 ..< run.stations: want.incl run.station(i)
+      doAssert want.len > 0
+      var got: HashSet[StationKey]
+      for p in st.activePoints[prSource]:
+        let i = st.survey.find(p.layer)
+        if st.survey.layers[i].origin == loSurveyFile:
+          got.incl stationKeyOf(st.survey.layers[i].points[prSource].station[p.point])
+      doAssert got == want, "sources of the derived O records: " & $got.len & " of " & $want.len
+
+  block unplacedShots:
+    for lost in [0, 2]:
+      withFixtures fx:
+        let dir = fx.dir / "folder"
+        createDir(dir)
+        var s = SpsFile(headers: @[SpsHeader(code: "00",
+          description: "SPS format version num.", data: "SPS 2.1;")])
+        s.points.add SpsPoint(kind: pkSource, line: 1, point: 1, index: 1, code: "E1",
+          easting: 500, northing: 700, elevation: 0, dayOfYear: -1, hour: -1, minute: -1,
+          second: -1)
+        let sPath = fx.dir / "one.s"
+        doAssert writeSps(s, sPath).len == 0
+        for n in 0 ..< 1 + lost:
+          var w = openSeismicWriter(dir / ("f" & $n & ".sgy"),
+            SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+          var k = initTraceKeys()
+          (k.record, k.channel, k.intervalUs, k.status) = (float64(n + 1), 1.0, 2000.0, tsLive)
+          if n == 0: (k.srcX, k.srcY) = (500.0, 700.0)
+          w.writeTrace(k, newSeq[float32](10))
+          doAssert w.close().len == 0
+        var st = initAppState()
+        st.apply Command(kind: ckLoadSurvey, paths: @[sPath])
+        doAssert st.settle(st.survey.layers.len == 1)
+        st.apply Command(kind: ckBrowse, paths: @[dir])
+        doAssert st.settle(st.shots.shotFiles == 1 + lost and st.shots.job == NoJob and
+          st.shots.pending.len == 0)
+        doAssert st.shots.unplacedShots == lost, $st.shots.unplacedShots
+        var said = 0
+        for e in st.log:
+          if "no source line and point" in e.text:
+            inc said
+            doAssert e.text == $lost & " shots have no source line and point and are not on the map.",
+              e.text
+        doAssert said == (if lost > 0: 1 else: 0), "said " & $said
 
   block unionOfRecords:
     withFixtures fx:

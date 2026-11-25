@@ -8991,7 +8991,14 @@ proc takeShots(state: var AppState; m: sink Msg) =
     let path = m.shots.path
     x.queued.excl path
     x.take(state.survey, move m.shots)
-    if x.pending.len == 0 and x.jobPaths.len == 0 and x.later.len == 0: x.finished = fs.now()
+    if x.pending.len == 0 and x.jobPaths.len == 0 and x.later.len == 0:
+      x.finished = fs.now()
+      let n = x.unplacedShots
+      if n > 0 and n != x.unplacedSaid:
+        state.log.add(sevInfo, "map", $n & (if n == 1: " shot has" else: " shots have") &
+          " no source line and point and " & (if n == 1: "is" else: "are") &
+          " not on the map.")
+      x.unplacedSaid = n
 
 func qcRelations(state: AppState; domain: RelationDomain): (ref SurveyGeometry, string) =
   ## The relation records the record shown is checked against: the first
