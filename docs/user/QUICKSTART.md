@@ -1236,6 +1236,29 @@ without coordinates. Point at a bin and the description adds "fold 12 (inline 3,
 41)". Zoomed far out, a block of bins is drawn as one, in the highest fold of the block.
 A size that would make too many bins is refused with a sentence, not counted.
 
+Two more ticks sit under it, on the same grid (the same bins, whatever the bin sizes). **Actual
+fold** counts the traces recorded in the seismic files the Files window lists (SEG-Y, SEG-D and
+SEG-2; the subfolders' files too when **Include subfolders** is on): each live trace is counted
+once, in the bin of the midpoint of its source and receiver. Where the project has a survey,
+its join and its station moves are applied to each file's trace headers in memory first (as
+Output does for a file it opens itself; no file is changed), and a file with no positions of
+its own takes them from the survey. Left out, and counted in the line under the ticks: traces
+that are not live (dead or auxiliary), traces you killed, traces with no coordinates and no
+midpoint, and traces outside the grid. A file that gives no source or receiver positions, and
+that the survey does not place, is named in that line; when no file gives any, the layer says
+so and draws nothing; a file that cannot be read is skipped with its reason. The legend is
+titled "Actual fold" (0 to the highest fold, Viridis), and the description of a bin adds
+"recorded 10 (planned 12) at inline 3, crossline 41". **Fold difference** draws the pre-plot
+fold less the recorded fold in each bin: red to white to blue, centred on 0 (white: as
+planned; blue: short of the plan; red: more than planned), the largest difference at either end
+of the legend "Fold difference (planned - recorded)"; a bin with no plan and no trace is clear.
+Its description says "2 short of the plan" or "2 more than planned". Only one of the three fold
+layers is drawn at a time: ticking one unticks the others. Both are dim, with the reason, when
+the survey cannot give a pre-plot fold or no seismic file is listed ("No seismic files are
+listed in the Files window."), and while the folder is still being listed. They are counted in
+the background, several files at a time, and counted again when a file is added to the folder
+or changed, a trace is killed or restored, a station move changes, or a survey is loaded.
+
 Under the Recorded, **Shots in the folder** rings the survey's sources whose record is in a
 file of the folder listed in Files (read in the background, while a survey file with
 sources is loaded): point at one and its description names the file; click it and the plot
